@@ -260,10 +260,19 @@ enum ParamFlags : uint {
     // Everything else — the UI renderers, `isUserSet`, `serializeParams` —
     // sees a plain String param and needs no case of its own.
     JsonText = 1 << 4,
+    // Action (tool session model, slice M3) — the param is a MOMENTARY ACTION
+    // TRIGGER (a Loop Slice insert/remove, the Edge Slice chain driver): writing
+    // it performs an action rather than storing a setting. Two readers: a tool's
+    // declared attribute image (`ToolSessionPolicy.imageAttrs`) may never name
+    // one (the policy table pins it), and an Action write to a tool with a live
+    // operation is its own undo step, pushed by the session BEFORE the write
+    // acts (C-H2-ls-insert, gap 311).
+    Action = 1 << 5,
 }
 
 struct Param {
-    enum Kind { Bool, Int, Float, Enum, String, Vec3_, IntEnum, IntArray, Vec3Array }
+    enum Kind { Bool, Int, Float, Enum, String, Vec3_, IntEnum, IntArray, Vec3Array,
+                PodArray }
 
     string name;          // internal id — matches JSON wire key
     string label;         // UI label
@@ -283,6 +292,7 @@ struct Param {
     bool transient_() const { return (flags & ParamFlags.Transient) != 0; }
     bool enforceBounds_() const { return (flags & ParamFlags.EnforceBounds) != 0; }
     bool jsonText_()   const { return (flags & ParamFlags.JsonText)   != 0; }
+    bool action_()     const { return (flags & ParamFlags.Action)     != 0; }
 
     // Exactly one pointer is non-null, matching `kind`.
     union {
@@ -294,7 +304,14 @@ struct Param {
         int*     iePtr;   // backing field for IntEnum kind (cast from D enum*)
         uint[]*  uiaPtr;  // IntArray:  pointer to a uint[] slice header
         Vec3[]*  v3aPtr;  // Vec3Array: pointer to a Vec3[] slice header
+        // PodArray: the address of a `T[]` slice header, TYPE-ERASED. Its
+        // length counts ELEMENTS of `T`, never bytes, which is why the element
+        // size travels beside it in `podElemSize` (a `void[]` view of the same
+        // header would read a byte count that is off by `T.sizeof`).
+        void*    podPtr;
     }
+    // PodArray only: `T.sizeof` of the erased element type (0 for every other kind).
+    size_t podElemSize;
 
     // Additional wire spellings this parameter answers to (task 4062). Read by
     // exactly one consumer, `command_args.bindArgs`, and only for a NAMED key:
@@ -450,6 +467,26 @@ struct Param {
         return p;
     }
 
+    // A tool's own plain-data array as a Param (tool session model, slice M3,
+    // plan R4.3): the storage IS the tool's field — no mirror copy — so the
+    // session's attribute image can snapshot and restore it raw. Always
+    // `.hidden().transient()`: it is session state, never a panel row and never
+    // a remembered setting. Not injectable from outside (`injectParamsInto`
+    // refuses it), which is the Param-side half of its length bound; the
+    // kernel-side half is each tool's own cap at the point the array grows.
+    static Param podArray_(T)(string name, string label, T[]* storage)
+        if (__traits(isPOD, T))
+    {
+        Param p;
+        p.name        = name;
+        p.label       = label;
+        p.kind        = Kind.PodArray;
+        p.podPtr      = cast(void*) storage;
+        p.podElemSize = T.sizeof;
+        p.flags       = ParamFlags.Hidden | ParamFlags.Transient;
+        return p;
+    }
+
     // -----------------------------------------------------------------------
     // Chainable hint setters (return by value for literal chaining)
     // -----------------------------------------------------------------------
@@ -475,6 +512,91 @@ struct Param {
     // ParamFlags.EnforceBounds above for when this is (and is NOT) the
     // right choice for a given param.
     Param enforceBounds() { flags |= ParamFlags.EnforceBounds; return this; }
+    /// A momentary action trigger — see ParamFlags.Action.
+    Param action()    { flags |= ParamFlags.Action;    return this; }
+
+    // -----------------------------------------------------------------------
+    // Raw snapshot / restore (tool session model, slice M3, plan R4.3).
+    //
+    // The attribute image of a tool's session is these bytes, one entry per
+    // declared image attribute. Restoring writes the storage and NOTHING else:
+    // no `onParamChanged`, no `evaluate`, no live-session re-run, no history —
+    // a write through the `tool.attr` path would fire exactly the side effects
+    // the image must not (Slice's `axis` write latches `axisLocked`). The tool
+    // rebuilds whatever it derives from them in ONE `rebuildPreviewFromAttrs`.
+    //
+    // The copy is allocated as `void[]`, which the collector SCANS: a PodArray
+    // element may hold a GC pointer (Edge Slice's chain point carries a slice),
+    // and an `ubyte[]` copy would be NO_SCAN and let its target be collected.
+    // -----------------------------------------------------------------------
+
+    immutable(void)[] snapshotRaw() const
+    {
+        static immutable(void)[] bytesOf(const(void)* ptr, size_t n) {
+            auto m = new void[](n);
+            if (n) m[] = ptr[0 .. n];
+            return cast(immutable(void)[]) m;
+        }
+        final switch (kind) {
+            case Kind.Bool:     return bytesOf(bptr, bool.sizeof);
+            case Kind.Int:      return bytesOf(iptr, int.sizeof);
+            case Kind.Float:    return bytesOf(fptr, float.sizeof);
+            case Kind.IntEnum:  return bytesOf(iePtr, int.sizeof);
+            case Kind.Vec3_:    return bytesOf(vptr, Vec3.sizeof);
+            case Kind.Enum:
+            case Kind.String:   return bytesOf((*sptr).ptr, (*sptr).length);
+            case Kind.IntArray:
+                return bytesOf((*uiaPtr).ptr, (*uiaPtr).length * uint.sizeof);
+            case Kind.Vec3Array:
+                return bytesOf((*v3aPtr).ptr, (*v3aPtr).length * Vec3.sizeof);
+            case Kind.PodArray: {
+                const hdr = *cast(const(ubyte)[]*) podPtr;   // length = ELEMENTS
+                return bytesOf(hdr.ptr, hdr.length * podElemSize);
+            }
+        }
+    }
+
+    void restoreRaw(const(void)[] raw)
+    {
+        static void[] fresh(const(void)[] r) {
+            auto m = new void[](r.length);
+            if (r.length) m[] = r[];
+            return m;
+        }
+        void fixed(void* dst, size_t n) {
+            assert(raw.length == n, "restoreRaw: '" ~ name ~ "' image has the wrong size");
+            dst[0 .. n] = raw[];
+        }
+        final switch (kind) {
+            case Kind.Bool:     fixed(bptr, bool.sizeof);   return;
+            case Kind.Int:      fixed(iptr, int.sizeof);    return;
+            case Kind.Float:    fixed(fptr, float.sizeof);  return;
+            case Kind.IntEnum:  fixed(iePtr, int.sizeof);   return;
+            case Kind.Vec3_:    fixed(vptr, Vec3.sizeof);   return;
+            case Kind.Enum:
+            case Kind.String:   *sptr = (cast(const(char)[]) raw).idup; return;
+            case Kind.IntArray: {
+                assert(raw.length % uint.sizeof == 0, "restoreRaw: ragged IntArray image");
+                *uiaPtr = cast(uint[]) fresh(raw);
+                return;
+            }
+            case Kind.Vec3Array: {
+                assert(raw.length % Vec3.sizeof == 0, "restoreRaw: ragged Vec3Array image");
+                *v3aPtr = cast(Vec3[]) fresh(raw);
+                return;
+            }
+            case Kind.PodArray: {
+                assert(podElemSize != 0 && raw.length % podElemSize == 0,
+                       "restoreRaw: ragged PodArray image");
+                auto m = fresh(raw);
+                // Write the header in ELEMENTS: pointer from the copy, length
+                // = bytes / element size.
+                *cast(ubyte[]*) podPtr =
+                    (cast(ubyte*) m.ptr)[0 .. raw.length / podElemSize];
+                return;
+            }
+        }
+    }
 
     /// Additional wire spellings for a NAMED argument — see `aliasNames`.
     Param aliases(string[] names) { aliasNames = names; return this; }
@@ -517,6 +639,7 @@ bool isStickyCapturable(const ref Param p)
 {
     return p.kind != Param.Kind.IntArray
         && p.kind != Param.Kind.Vec3Array
+        && p.kind != Param.Kind.PodArray
         && !p.readonly_
         && !p.transient_;
 }
@@ -556,6 +679,8 @@ bool isUserSet(const ref Param p)
             return (*p.uiaPtr).length > 0;
         case Param.Kind.Vec3Array:
             return (*p.v3aPtr).length > 0;
+        case Param.Kind.PodArray:
+            return (*cast(const(ubyte)[]*) p.podPtr).length > 0;
     }
 }
 
@@ -843,6 +968,7 @@ bool parseInto(ref Param p, string value) {
             } catch (Exception) { return false; }
         case Param.Kind.IntArray:   return false;   // out of scope
         case Param.Kind.Vec3Array:  return false;   // out of scope
+        case Param.Kind.PodArray:   return false;   // session state, never a wire token
     }
 }
 
@@ -869,6 +995,7 @@ string stringifyParam(ref Param p) {
         case Param.Kind.Vec3_:     return format("%g,%g,%g", p.vptr.x, p.vptr.y, p.vptr.z);
         case Param.Kind.IntArray:  return "";
         case Param.Kind.Vec3Array: return "";
+        case Param.Kind.PodArray:  return "";
     }
 }
 
@@ -890,6 +1017,8 @@ string stringifyParam(ref Param p) {
 //               the raw integer if no entry matches the live value)
 //   IntArray  → JSON array of integers
 //   Vec3Array → JSON array of [x, y, z] arrays
+//   PodArray  → JSON integer: the element COUNT only (the elements are a
+//               tool's opaque session state; slice M3)
 //
 // Pure (no allocation beyond the returned JSONValue); never mutates the Param.
 // ---------------------------------------------------------------------------
@@ -938,6 +1067,8 @@ JSONValue paramToJson(const ref Param p)
                 ]);
             return JSONValue(a);
         }
+        case Param.Kind.PodArray:
+            return JSONValue((*cast(const(ubyte)[]*) p.podPtr).length);
     }
 }
 
@@ -1070,6 +1201,7 @@ string[2][] choicesOf(const ref Param p)
         case Param.Kind.Vec3_:
         case Param.Kind.IntArray:
         case Param.Kind.Vec3Array:
+        case Param.Kind.PodArray:
             return [];
     }
 }
@@ -1416,6 +1548,11 @@ private void injectParamsImpl(Param[] params, ref JSONValue pj,
                 *p.v3aPtr = result;
                 break;
             }
+            case Param.Kind.PodArray:
+                // A tool's session state (slice M3): no wire route may write
+                // it. The refusal is the Param-side half of its length bound.
+                throw new Exception(
+                    "param '" ~ p.name ~ "' is not injectable");
         }
     }
 }

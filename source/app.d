@@ -56,7 +56,7 @@ version (web) {
 import http_server;
 import tool_activation_ownership : ToolTransition, ActivationDoor,
     activationDoorFor, pipeArmScopeFor, armUsesAttrCache, CloseReason,
-    CloseOutcome, CommandDoor, closeReasonFor;
+    CloseOutcome, CommandDoor, closeReasonFor, armDoorFor;
 import guarded_action_controller : GuardedActionController,
     GuardedActionPorts, GuardObservationPorts;
 import ui.guard_modal_state : GuardModalState;
@@ -3867,11 +3867,17 @@ void main(string[] args) {
             },
             // Slice M5: the per-preset attribute cache, except where the
             // transition table says the arm re-arms at declared defaults.
-            armUsesAttrCache(why) ? &g_prefs.toolAttrCache : null);
+            armUsesAttrCache(why) ? &g_prefs.toolAttrCache : null,
+            // Slice M3: the door decides whether the activation row joins the
+            // first undo group of the tool's window (C-H1-door, gap 300).
+            armDoorFor(why, executor.applyingFromUi));
         preToolTickStall.arm();
         if (!commitPreparedArm(activeTool, activeToolId, prepared))
             throw new Exception("prepared tool arm was already consumed");
-        if (session !is null) session.finishClose();
+        if (session !is null) {
+            session.noteArm(id);
+            session.finishClose();
+        }
     }
     toolHost.activatePrepared = (string id, ref JSONValue namedArgs) {
         armPreparedTool(ToolTransition.commandArm, id, namedArgs);

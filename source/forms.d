@@ -451,6 +451,7 @@ WidgetKind widgetForKind(Param.Kind kind, ParamHints hints)
         // editable value). Treat as unrenderable.
         case Param.Kind.IntArray:
         case Param.Kind.Vec3Array:
+        case Param.Kind.PodArray:   // a tool's session state (slice M3)
             return WidgetKind.none;
     }
 }

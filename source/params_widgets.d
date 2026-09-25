@@ -35,6 +35,10 @@ bool drawParamWidget(ref Param p) {
                                      (*p.v3aPtr).length));
             return false;
         }
+        // Always `.hidden()` (session state, slice M3): the renderers skip the
+        // row before they get here; no widget either way.
+        case Param.Kind.PodArray:
+            return false;
     }
 }
 

@@ -254,6 +254,44 @@ bool armUsesAttrCache(ToolTransition t) pure nothrow @safe @nogc {
     }
 }
 
+/// Slice M3 (plan R4.5; capture C-H1-door, gap 300): WHICH DOOR an arm came
+/// through decides whether its activation history row joins the first undo
+/// group of the tool's operation window. `key`: a key, a tool button, the tool
+/// panel, or a command typed at the UI's command line (the typed command line
+/// behaves like the key, C-H1-door-es-cl) — the activation joins, so the undo
+/// that removes the first gesture also ends the tool. `script`: a command from
+/// the script door (`/api/command`) — the activation is its own row
+/// (C-H1-door-es-api): the first undo removes the gesture and the tool stays,
+/// the second removes the activation. `none`: the arm replays or rebuilds a row
+/// it did not write through a user door (a lifecycle redo keeps the row's own
+/// door; the tool reset re-arms at defaults).
+enum ArmDoor : ubyte { none, key, script }
+
+ArmDoor armDoorFor(ToolTransition t, bool uiOrigin) pure nothrow @safe @nogc {
+    final switch (t) {
+        case ToolTransition.interactiveArm:
+            return ArmDoor.key;
+        case ToolTransition.commandArm:
+            return uiOrigin ? ArmDoor.key : ArmDoor.script;
+        case ToolTransition.replayArm:
+        case ToolTransition.resetRearm:
+            return ArmDoor.none;
+        case ToolTransition.explicitDrop:
+        case ToolTransition.sameIdToggleDrop:
+        case ToolTransition.replayDrop:
+        case ToolTransition.selTypeFlipDrop:
+        case ToolTransition.activeLayerChangedDrop:
+        case ToolTransition.documentReplaceDisarm:
+        case ToolTransition.sceneResetDrop:
+        case ToolTransition.meshRebuildDrop:
+        case ToolTransition.commandPreApplyDrop:
+        case ToolTransition.editCancelDrop:
+        case ToolTransition.panelDrop:
+        case ToolTransition.shutdownDrop:
+            assert(0, "a drop has no arm door");
+    }
+}
+
 /// True when the transition publishes a NEW active tool. Kept beside the table
 /// so "is this an arm?" has one answer too.
 bool isArm(ToolTransition t) pure nothrow @safe @nogc {

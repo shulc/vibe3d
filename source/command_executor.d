@@ -34,6 +34,11 @@ public:
         this.finishClose = finishClose;
     }
 
+    // True for the extent of a UI-door invocation — the arm door of a tool
+    // armed by a command reads it (slice M3, `armDoorFor`: a typed command
+    // line is the key door, a script command is its own row).
+    bool applyingFromUi() const pure nothrow @nogc { return uiOrigin_; }
+
     // The UI door (keys, buttons, panels, `?origin=ui`): the same funnel with
     // the door marked, so a recording command closes a live operation of a
     // `uiDoor` tool first (slice M2; the captured C1-h-sel family law).

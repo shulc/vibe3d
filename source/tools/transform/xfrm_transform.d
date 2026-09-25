@@ -1486,16 +1486,16 @@ public:
     }
 
     // Re-arm after the command (captured: C-H1-xfrm-rot/-scl and C-H3-move
-    // re-arm, C-H1-xfrm-elem-b does not — the Element branch below). The law is
-    // keyed on the PRESET's transform node (C-rearm-key, gap 370), NOT on the
-    // action-centre mode this branch reads: a hand-set Element centre under
-    // TransformMove, or a Selection centre under Element Move, diverges. Kept
-    // as carried in slice M2; the per-preset field is slice M3's.
-    override void resumeAfterClose() {
+    // re-arm, C-H1-xfrm-elem-b does not). `rearm` is the PRESET's field
+    // (`rearmAfterCommand` in config/tool_presets.yaml, read by the session;
+    // C-rearm-key, gap 370): TransformMove under a hand-set Element centre
+    // re-arms (C-rearm-a), Element Move under a hand-set Selection centre does
+    // not (C-rearm-b1) — never the action-centre mode (slice M3).
+    override void resumeAfterClose(bool rearm) {
         auto ac = activeAcenStage();
-        if (ac !is null && ac.mode == ActionCenterStage.Mode.Element) {
-            // Element keeps the picked pin and displayed channels exactly as
-            // committed, but ends the live input session. The wrapper stays
+        if (!rearm) {
+            // The tag stays with the picked pin and displayed channels exactly
+            // as committed, but the live input session ends. The wrapper stays
             // armed so the next press can reopen it as an ordinary fresh pick.
             foreignEditSessionClosed_ = true;
             activeDrag = null;
@@ -1510,7 +1510,7 @@ public:
         resetTransientState(false);
         // W5a of the authoring-side latch (task 7144): the re-arm after a
         // foreign edit is an activation — the re-centred handle's side is
-        // latched at the next evaluation. (Element returned above: no re-arm.)
+        // latched at the next evaluation. (No re-arm returned above.)
         if (ac !is null && ownsActivationLatch_) ac.notePlacement();
         lastSelectionHash   = computeSelectionHash();
         // Construction-held stamp: the foreign edit has already landed, so

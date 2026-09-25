@@ -206,7 +206,10 @@ void bindArgs(Command cmd, ref JSONValue payload) {
         auto p = schema[slot];
         fromPositional[p.name] = true;
         // An array slot ABSORBS the tail: `select.element vertex add 3 4 5`.
-        if (p.kind == Param.Kind.IntArray || p.kind == Param.Kind.Vec3Array) {
+        // A PodArray slot absorbs it too, and the injector then refuses it by
+        // name ("not injectable"): a tool's session state is no argument.
+        if (p.kind == Param.Kind.IntArray || p.kind == Param.Kind.Vec3Array
+            || p.kind == Param.Kind.PodArray) {
             named[p.name] = JSONValue(pos[i .. $].dup);
             break;
         }
@@ -289,6 +292,7 @@ private JSONValue coerceToSlot(JSONValue v, ref Param p) {
         case Param.Kind.Vec3_:
         case Param.Kind.IntArray:
         case Param.Kind.Vec3Array:
+        case Param.Kind.PodArray:   // reaches the injector, which refuses it
             return v;
     }
 }

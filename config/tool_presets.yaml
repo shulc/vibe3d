@@ -159,6 +159,10 @@ presets:
   # the falloff stage activation).
   - id: xfrm.elementMove
     base: xfrm.transform
+    # After a recording command closes its live operation the tool keeps its
+    # tag but does not re-open a window (captured: the preset's transform
+    # node decides, not the action centre; tool session model slice M3).
+    rearmAfterCommand: false
     # The reference's stock ElementMove: T=1, R=0, S=0 (translate-only).
     # User flips R/S via the property panel for the unified Transform.
     attrs:
@@ -186,6 +190,9 @@ presets:
 
   - id: move.element
     base: move
+    # The element-move family, carried from xfrm.elementMove (no re-arm after a
+    # recording command; not captured for this compat preset itself).
+    rearmAfterCommand: false
     pipe:
       actionCenter:
         mode: element

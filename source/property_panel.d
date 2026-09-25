@@ -80,6 +80,7 @@ private:
             case Param.Kind.IntEnum:
             case Param.Kind.IntArray:
             case Param.Kind.Vec3Array:
+            case Param.Kind.PodArray:   // hidden, never drawn (slice M3)
                 return true;
             case Param.Kind.Int:
             case Param.Kind.Float:

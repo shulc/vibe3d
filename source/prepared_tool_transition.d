@@ -22,7 +22,7 @@ import tool_presets : prepareStickyToolDefaults;
 import toolpipe.attr_cache : DroppedNodes, NodeAttrs, PipelineAttrCache,
     captureDroppedNodes, kToolNode;
 import toolpipe.pipeline : Pipeline;
-import tool_activation_ownership : PipeArmScope;
+import tool_activation_ownership : ArmDoor, PipeArmScope;
 
 /// Actual candidate lifetime owner. Tool references do not enter the prepared
 /// effect algebra; the transaction exchanges them only through this owner.
@@ -90,14 +90,11 @@ private void abandon(PreparedRecordContext context) nothrow @nogc {
 
 /// One classification for both sides of a prepared tool boundary: the tool's
 /// `sessionPolicy().activationRow` (slice M1 replaced the marker interface;
-/// the surface basis is `toolcards/undo_surfaces/`). The cutting sessions
-/// Slice, Edge Slice and Loop Slice declare the field too, and are still
-/// named by id here: the id arm is REDUNDANT since M1 and is removed by slice
-/// M3 (§22, task 7137; Loop Slice's re-arm is its arm-time loop, gap row 205).
-bool toolArmEmitsLifecycle(Tool candidate, string id) nothrow @nogc {
-    return (candidate !is null && candidate.sessionPolicy().activationRow) ||
-           id == "mesh.sliceTool" || id == "mesh.edgeSliceTool" ||
-           id == "mesh.loopSliceTool";
+/// the surface basis is `toolcards/undo_surfaces/`). Slice M3 removed the
+/// redundant id arm that still named the three cutting sessions: their policy
+/// declares the field, and nothing is decided by id.
+bool toolArmEmitsLifecycle(Tool candidate) nothrow @nogc {
+    return candidate !is null && candidate.sessionPolicy().activationRow;
 }
 
 /// Prepare a complete arm with zero live writes. The candidate's direct Param
@@ -112,7 +109,8 @@ PreparedArm prepareArm(ToolFactory factory, string id, Tool retainedOld,
         bool lifecycleReplay = false,
         PipeArmScope pipeScope = PipeArmScope.presetArm,
         void delegate(string, JSONValue) restoreById = null,
-        PipelineAttrCache* attrCache = null) {
+        PipelineAttrCache* attrCache = null,
+        ArmDoor door = ArmDoor.none) {
     if (factory is null || id.length == 0 || history is null ||
         observers is null || layer is null || gizmoHost is null)
         throw new Exception("prepared tool arm requires complete owners");
@@ -134,11 +132,11 @@ PreparedArm prepareArm(ToolFactory factory, string id, Tool retainedOld,
         throw new Exception("tool factory returned null");
     result.id_ = id.idup;
 
-    const classifiedIncoming = toolArmEmitsLifecycle(candidate, id);
+    const classifiedIncoming = toolArmEmitsLifecycle(candidate);
     string previousId;
     JSONValue previousArgs;
     if (retainedOld !is null) {
-        if (toolArmEmitsLifecycle(retainedOld, retainedOldId))
+        if (toolArmEmitsLifecycle(retainedOld))
             previousId = retainedOldId;
         // An unclassified predecessor that is switch-restorable (Edge Extend;
         // task 7118, gap 221) is restored by the incoming row's undo with its
@@ -208,7 +206,8 @@ PreparedArm prepareArm(ToolFactory factory, string id, Tool retainedOld,
             "' (lifecycleReplay=" ~ (lifecycleReplay ? "true" : "false") ~ ")");
     if (classifiedIncoming) {
         auto lifecycle = new ToolActivationCommand(mesh, view, editMode,
-            id, previousId, previousArgs);
+            id, previousId, previousArgs,
+            candidate.sessionPolicy().sessionSteps, door == ArmDoor.key);
         lifecycle.onActivate = activateById;
         lifecycle.onDeactivate = deactivate;
         lifecycle.onRestore = restoreById;

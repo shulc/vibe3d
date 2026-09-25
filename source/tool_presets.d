@@ -79,7 +79,8 @@ ToolPreset[] loadToolPresets(string path) {
             // carry ONLY `id` + `alias`. Mixing in `base`/`pipe`/`attrs`/`flags`
             // would leave it ambiguous which side wins, so reject it outright.
             if (node.containsKey("base") || node.containsKey("pipe")
-                    || node.containsKey("attrs") || node.containsKey("flags"))
+                    || node.containsKey("attrs") || node.containsKey("flags")
+                    || node.containsKey("rearmAfterCommand"))
                 throw new Exception(format(
                     "tool_presets: preset '%s' in '%s' has 'alias' plus "
                     ~ "'base'/'pipe'/'attrs'/'flags' — an alias entry may only "
@@ -127,6 +128,13 @@ ToolPreset[] loadToolPresets(string path) {
                     "tool_presets: preset '%s' has non-sequence/scalar `flags`", p.id));
             }
         }
+        // Tool session model, slice M3 (C-rearm-key, gap 370): whether a
+        // recording command re-opens the tool's window after closing it is a
+        // field of the PRESET (its transform node), not of the class and not
+        // of the action-centre stage. Default: it does.
+        if (node.containsKey("rearmAfterCommand")
+                && !node["rearmAfterCommand"].as!bool)
+            p.flags |= ToolFlag.NoRearmAfterCommand;
         presets ~= p;
     }
 
@@ -221,6 +229,7 @@ private void applyToolAttrs(Tool t, string[string] attrs, string presetId) {
                 break;
             case Param.Kind.IntArray:
             case Param.Kind.Vec3Array:
+            case Param.Kind.PodArray:   // a tool's session state (slice M3)
                 throw new Exception(format(
                     "tool_presets: preset '%s' attr '%s' kind not "
                     ~ "supported for YAML injection", presetId, name));

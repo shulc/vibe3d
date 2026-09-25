@@ -81,7 +81,9 @@ string serializeParams(Param[] params)
 {
     string[] parts;
     foreach (ref p; params) {
-        if (!isUserSet(p)) continue;
+        // A PodArray is a tool's session state (slice M3), never a replayable
+        // argument: skipped, like a default-valued param.
+        if (!isUserSet(p) || p.kind == Param.Kind.PodArray) continue;
         parts ~= p.name ~ ":" ~ _formatValue(p);
     }
     return parts.join(" ");
@@ -231,6 +233,9 @@ private string _formatValue(ref Param p)
 
         case Param.Kind.Vec3Array:
             return format("<%d>", (*p.v3aPtr).length);
+
+        case Param.Kind.PodArray:
+            return "";   // never emitted: the loop above skips the kind
     }
 }
 

@@ -61,6 +61,13 @@ enum ToolFlag : uint {
     HoverVertices = 1u << 3,
     HoverEdges    = 1u << 4,
     HoverPolygons = 1u << 5,
+    // Preset-applied (tool session model, slice M3; C-rearm-key, gap 370): the
+    // preset's field `rearmAfterCommand: false`. After a recording command has
+    // closed the tool's live operation, the tool keeps its tag but does not
+    // re-open a window — Element Move's transform node; TransformMove re-arms
+    // whatever centre is set by hand, so the answer is the PRESET's, never the
+    // action-centre mode. Read by the session (`ToolSession.finishClose`).
+    NoRearmAfterCommand = 1u << 6,
 }
 
 // ---------------------------------------------------------------------------
@@ -185,6 +192,49 @@ enum CommandClose : ubyte { none, uiDoor, allDoors }
 /// capability. Each field arrives with the slice that READS it; its `.init` is
 /// the answer for every tool that does not override. The id-to-policy table,
 /// with provenance per id, is tests/unit/tool_session_policy_test.d.
+/// H1: WHEN a tool's operation window opens (slice M3). `firstPress`: the
+/// first gesture IS the window's first group (Edge Slice, Slice). `arm`: the
+/// tool's own arm is the first group (`Tool.sessionOperationArmed`), and what
+/// the arming press does after it is an ordinary step (Loop Slice — whose arm is
+/// the arming press, not the tool activation: gap 205 (b)).
+enum OpensAt : ubyte { firstPress, arm }
+
+/// H5: the kind of press that opens a gesture step (slice M3).
+enum PressKind : ubyte { plain, shift, middle }
+
+/// A tool's ATTRIBUTE IMAGE (slice M3, plan R4.3): the raw bytes of the
+/// attributes its policy declares in `imageAttrs`, in that order. An undo of a
+/// gesture step restores the image the step started from (H2); the tool's
+/// preview is a function of it (`Tool.rebuildPreviewFromAttrs`).
+struct AttrImage {
+    string[] names;
+    immutable(void)[][] raw;
+
+    bool empty() const pure nothrow @nogc { return names.length == 0; }
+
+    bool opEquals(const AttrImage o) const pure nothrow @nogc {
+        if (names.length != o.names.length) return false;
+        foreach (i; 0 .. names.length)
+            if (names[i] != o.names[i]
+                || cast(const(ubyte)[]) raw[i] != cast(const(ubyte)[]) o.raw[i])
+                return false;
+        return true;
+    }
+}
+
+/// What a tool reports to the session it is bound to (slice M3). Delegates,
+/// not an interface: the tool is never CAST to anything for this, so the
+/// census's session capabilities do not grow. Installed by `EditSession` when
+/// the tool is armed (`EditSession.noteArm`); an unbound tool's reports are
+/// no-ops and its own closes run directly.
+struct ToolSessionLink {
+    void delegate(Tool, PressKind) stepBegins;   // a gesture step starts (before it acts)
+    void delegate(Tool) stepEnds;                // ... and completes
+    void delegate(Tool) operationArmed;          // the tool armed its operation (OpensAt.arm)
+    void delegate(Tool) operationEnded;          // the tool's operation ended by itself
+    bool delegate(Tool, bool commit) closeOwn;   // Enter (commit) / RMB (discard)
+}
+
 struct ToolSessionPolicy {
     /// H1: arming writes the activation history row (a ToolActivationCommand)
     /// — read by `toolArmEmitsLifecycle` for both the incoming tool and the
@@ -199,6 +249,23 @@ struct ToolSessionPolicy {
     /// old drop rules). The UI half is captured; the SCRIPT half of `allDoors`
     /// is carried from today's behaviour, not captured (opponent R3 C7).
     CommandClose commandClose;
+    /// H2 PORTED (slice M3): the session owns this tool's gesture steps — the
+    /// stack of attribute images, their redo, the window's first group and the
+    /// activation row it joins. `false` = "H2 not yet ported", not "special".
+    bool sessionSteps;
+    /// H1: when the operation window opens (see `OpensAt`). Read only for
+    /// `sessionSteps` tools.
+    OpensAt opensAt;
+    /// H5: a Middle press opens an operation boundary WITHOUT cloning the
+    /// previous operation's haul attributes (the no-clone flag: Edge Slice only).
+    bool noClone;
+    /// The attribute image (R4.3): what a gesture step restores. Every name is
+    /// one of the tool's `params()` and none is an `Action` trigger (the policy
+    /// table pins both).
+    immutable(string)[] imageAttrs;
+    /// H5: what a Middle press clones from the previous operation's end and a
+    /// Shift press resets to the declared defaults.
+    immutable(string)[] haulAttrs;
 }
 
 class Tool : ParamProvider {
@@ -828,10 +895,142 @@ public:
         return true;
     }
 
-    // After the command has applied (and recorded), once per close: the tool
-    // re-arms if its law says so. Default: nothing — the tool keeps its tag
-    // with no live operation, and the next gesture opens a new one.
-    void resumeAfterClose() {}
+    // After the command has applied (and recorded), once per close. `rearm` is
+    // the PRESET's answer (`ToolFlag.NoRearmAfterCommand`, C-rearm-key; read by
+    // the session): true re-opens the window, false keeps the tag with no live
+    // operation. Default: nothing either way — the next gesture opens one.
+    void resumeAfterClose(bool rearm) {}
+
+    // ----- the tool session model's image operations (slice M3, R4.3) -------
+
+    /// The raw image of the attributes the policy declares. `final`: what is
+    /// restorable is decided by the declaration, never by an override.
+    final AttrImage captureAttrImage() {
+        AttrImage img;
+        const names = sessionPolicy().imageAttrs;
+        if (names.length == 0) return img;
+        auto ps = params();
+        foreach (n; names) {
+            bool found;
+            foreach (ref p; ps) {
+                if (p.name != n) continue;
+                img.names ~= n;
+                img.raw ~= p.snapshotRaw();
+                found = true;
+                break;
+            }
+            assert(found, "captureAttrImage: '" ~ n ~ "' is not a param of " ~ name());
+        }
+        return img;
+    }
+
+    /// Restore an image: RAW writes (no `onParamChanged`, no `evaluate`, no
+    /// live re-evaluation, no history), then ONE rebuild of what the tool
+    /// derives from its attributes.
+    final void applyAttrImage(in AttrImage img) {
+        if (img.empty) return;
+        writeRaw(img, null);
+        rebuildPreviewFromAttrs();
+    }
+
+    /// H5: a press opens an operation boundary. `middle` clones the previous
+    /// operation's end (`prevEnd`) into the haul attributes unless the policy
+    /// says `noClone`; `shift` resets them to their declared defaults; `plain`
+    /// changes nothing (no ported tool resets on a plain press, H5 verdict).
+    final void openOperation(PressKind kind, in AttrImage prevEnd) {
+        const pol = sessionPolicy();
+        final switch (kind) {
+            case PressKind.plain:
+                return;
+            case PressKind.middle:
+                if (pol.noClone || pol.haulAttrs.length == 0) return;
+                writeRaw(prevEnd, pol.haulAttrs);
+                rebuildPreviewFromAttrs();
+                return;
+            case PressKind.shift: {
+                if (pol.haulAttrs.length == 0) return;
+                auto ps = params();
+                foreach (n; pol.haulAttrs)
+                    foreach (ref p; ps)
+                        if (p.name == n) { resetParamToDefault(p); break; }
+                rebuildPreviewFromAttrs();
+                return;
+            }
+        }
+    }
+
+    /// Re-derive everything the tool computes FROM its attributes (preview,
+    /// phase) after `applyAttrImage` — the tool's Evaluate. Default: nothing.
+    void rebuildPreviewFromAttrs() {}
+
+    private void writeRaw(in AttrImage img, const(string)[] only) {
+        auto ps = params();
+        foreach (i, n; img.names) {
+            if (only !is null) {
+                bool wanted;
+                foreach (o; only) if (o == n) { wanted = true; break; }
+                if (!wanted) continue;
+            }
+            bool found;
+            foreach (ref p; ps) {
+                if (p.name != n) continue;
+                p.restoreRaw(img.raw[i]);
+                found = true;
+                break;
+            }
+            assert(found, "applyAttrImage: '" ~ n ~ "' is not a param of " ~ name());
+        }
+    }
+
+    private static void resetParamToDefault(ref Param p) {
+        final switch (p.kind) {
+            case Param.Kind.Bool:      *p.bptr = p.default_.b;  break;
+            case Param.Kind.Int:       *p.iptr = p.default_.i;  break;
+            case Param.Kind.Float:     *p.fptr = p.default_.f;  break;
+            case Param.Kind.IntEnum:   *p.iePtr = p.default_.i; break;
+            case Param.Kind.Vec3_:     *p.vptr = p.default_.v3; break;
+            case Param.Kind.Enum:
+            case Param.Kind.String:    *p.sptr = p.default_.s;  break;
+            case Param.Kind.IntArray:  *p.uiaPtr = null;        break;
+            case Param.Kind.Vec3Array: *p.v3aPtr = null;        break;
+            case Param.Kind.PodArray:  p.restoreRaw(null);      break;
+        }
+    }
+
+    // ----- what the tool reports to its session (slice M3) ------------------
+
+    private ToolSessionLink sessionLink_;
+
+    /// Installed by the session at the tool's arm.
+    final void bindSession(ToolSessionLink link) nothrow @nogc { sessionLink_ = link; }
+
+    /// A gesture step starts: call BEFORE the gesture changes any attribute.
+    protected final void sessionStepBegins(PressKind kind = PressKind.plain) {
+        if (sessionLink_.stepBegins !is null) sessionLink_.stepBegins(this, kind);
+    }
+    /// The gesture step started by the last `sessionStepBegins` completed.
+    protected final void sessionStepEnds() {
+        if (sessionLink_.stepEnds !is null) sessionLink_.stepEnds(this);
+    }
+    /// The tool armed its operation (the `OpensAt.arm` moment).
+    protected final void sessionOperationArmed() {
+        if (sessionLink_.operationArmed !is null) sessionLink_.operationArmed(this);
+    }
+    /// The tool's operation ENDED on its own — its preview dropped (a commit,
+    /// a cancel, a mesh swapped from under it). The session ends its account
+    /// with it: no step of an ended operation may be restored later.
+    protected final void sessionOperationEnded() {
+        if (sessionLink_.operationEnded !is null) sessionLink_.operationEnded(this);
+    }
+    /// The tool closes its own operation — Enter commits (`commitOperation`),
+    /// an RMB cancel discards (`cancelUncommittedEdit`) — through the session,
+    /// which ends its account of the operation with it. Unbound: directly.
+    protected final bool closeOwnOperation(bool commit) {
+        if (sessionLink_.closeOwn !is null) return sessionLink_.closeOwn(this, commit);
+        if (commit) return commitOperation();
+        cancelUncommittedEdit();
+        return true;
+    }
 
     // Edit modes in which this tool makes sense. Side-panel /
     // status-bar buttons auto-disable when the current edit mode is
@@ -966,6 +1165,11 @@ private enum string[] kToolVirtualWhitelist = [
     // `EditSession` for every tool whose policy closes on a command — not a
     // one-tool hook: the default body serves the whole in-place family.
     "commitOperation", "resumeAfterClose",
+    // Slice M3: the image's ONE rebuild (R4.3) — what a tool derives from its
+    // restored attributes, the analogue of the tool's Evaluate. Overridden by
+    // every tool whose session owns its steps; the image operations beside it
+    // are `final`.
+    "rebuildPreviewFromAttrs",
     // Middling — 4 to 8 overriders. Fine on the base; listed so the next
     // reader can see where the line currently sits.
     "flags", "isDragging", "onKeyDown",

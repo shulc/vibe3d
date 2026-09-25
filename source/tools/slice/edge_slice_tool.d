@@ -10,8 +10,6 @@ import d_imgui.imgui_h;   // ImDrawList / ImVec2 / IM_COL32 for the `t = %` HUD
 import operator : VectorStack;
 
 import tool;
-import edit_session : KeepAliveOnCancel, SessionStepUndo, SessionFirstGesture;
-import log : logWarn;
 import mesh;
 import mesh_gpu : GpuMesh;
 import math;
@@ -59,15 +57,6 @@ private struct EdgeSliceChainPoint {
     uint m0 = ~0u, m1 = ~0u; bool mflip;
     bool facePoint;
     uint[] latchFaces;
-}
-
-// The session's first point, carried by EditSession across the undo of the
-// activation row to the redo that re-arms it (task 7137). The key is sealed
-// AFTER the peel, over the mesh the redo will find.
-private final class EdgeSliceFirstGesture {
-    EdgeSliceChainPoint point;
-    uint edge;
-    SessionMeshKey key;
 }
 
 struct PreparedEdgeSliceActivationImage {
@@ -243,11 +232,13 @@ bool pointInPolygon(Vec3 q, const Vec3[] vs, const uint[] f, out float dist) {
 // sequence would produce, without committing, so a synthetic Enter / tool-off
 // can exercise the real interactive commit path in a test.
 // ---------------------------------------------------------------------------
-// KeepAliveOnCancel + SessionStepUndo (task 0428; the former renamed in
-// 0430): the survivesEditCancel / tryUndoStepInSession overrides below are
-// the interfaces' implementations (EditSession discovers them by cast).
-final class EdgeSliceTool : Tool, KeepAliveOnCancel, SessionStepUndo,
-                            SessionFirstGesture, TargetHighlightKeeper,
+// Session (tool session model, slice M3): the chain IS the tool's attribute
+// image — `chain` (a PodArray over `latchedPoints_`), `edges`, `activePoint` —
+// and the SESSION owns its gesture steps (each latch, re-pick drag or Middle
+// boundary is one), their redo, and the first point's group with the
+// activation row it joins. The tool reports its step boundaries and rebuilds
+// its preview from the image (`rebuildPreviewFromAttrs`).
+final class EdgeSliceTool : Tool, TargetHighlightKeeper,
                             PreparedToolDoorClient, PreparedToolParamDoorClient {
     mixin PreparedNamedGpuParamDoorClient;
 public:
@@ -390,14 +381,24 @@ public:
     override string name() const { return "Edge Slice"; }
 
     // Its arm is the activation row the first-gesture undo pops (§22).
-    // The id arm of toolArmEmitsLifecycle still names it until slice M3.
     // A recording command through the UI door closes its live operation first
-    // and the tool stays (slice M2; captured C1-h-sel-fam, K-commit).
+    // and the tool stays (slice M2; captured C1-h-sel-fam, K-commit). Slice M3:
+    // its session owns the steps (H2), the window opens at the first press
+    // (C-H1-es), and a Middle press is a boundary without a clone (the static no-clone flag,
+    // C-H5-es-mmb). `pointT` is a proxy (`syncProxy`), not part of the image.
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
         static immutable ToolSessionPolicy policy = {
-            activationRow: true, commandClose: CommandClose.uiDoor };
+            activationRow: true, commandClose: CommandClose.uiDoor,
+            sessionSteps: true, opensAt: OpensAt.firstPress, noClone: true,
+            imageAttrs: ["chain", "edges", "activePoint"],
+            haulAttrs: ["chain", "edges", "activePoint"] };
         return policy;
     }
+
+    /// The kernel-side cap of the chain (slice M3, R4.3): a vibe3d budget,
+    /// not a captured law. A latch past it is refused; the `chain` Param is
+    /// not injectable, so no other route can grow it.
+    enum size_t kMaxEdgeSliceChainPoints = 4096;
 
     override EditMode[] supportedModes() const { return [EditMode.Edges]; }
 
@@ -412,7 +413,8 @@ public:
     override Param[] params() {
         return [
             Param.intArray_("edges", "Edges", &edgesParam_).transient(),
-            Param.intArray_("chainArm", "Chain Arm", &chainArm_).transient(),
+            Param.intArray_("chainArm", "Chain Arm", &chainArm_).transient().action(),
+            Param.podArray_("chain", "Chain", &latchedPoints_),
             Param.float_("tA", "t on Edge A", &tA_, 0.5f).min(0.0f).max(1.0f).transient(),
             Param.float_("tB", "t on Edge B", &tB_, 0.5f).min(0.0f).max(1.0f).transient(),
             // Active-point index + numeric edit (task 0321, D2) — re-targets
@@ -743,63 +745,29 @@ public:
         return ue.length ? ue[$ - 1].cmd : null;
     }
 
-    // Task 0400 (see the task doc): EdgeSliceTool is a standing preview
-    // (armed_ sits on the mesh across arbitrary frames, re-armable after
-    // commit/cancel; Loop Slice left this family, gap row 205),
-    // so an interactive Ctrl+Z that reaches navHistory()'s whole-edit-cancel
-    // branch (only when tryUndoStepInSession() below has nothing left to
-    // peel) must not drop the tool either. tryUndoStepInSession() absorbs
-    // every Ctrl+Z while points are latched — and the peel of the FIRST
-    // point ends the tool there — so this guard covers only the
-    // residual armed_-but-no-latched-points case.
-    public override bool survivesEditCancel() const {
-        return active;
-    }
-
-    // Mid-chain per-click undo peel (task 0321, D1). Reached from the app's
-    // navHistory() chokepoint BEFORE its whole-edit cancel branch: while a
-    // live latched chain exists, Ctrl+Z peels exactly the LAST latched point
-    // (keeping earlier ones) instead of unwinding the whole chain. Peeling
-    // the FIRST point leaves no uncommitted edit, and navigate() then ends
-    // the tool (owner's slice law). Returns false once the chain is empty (committed or
-    // never started), so navHistory falls through to the ordinary
-    // hasUncommittedEdit()/history.undo() path — the post-commit whole-chain
-    // undo (chainBefore_ + the single MeshSessionEdit at commitChain) is
-    // completely unaffected: dropArmedPreview() has already cleared
-    // latchedPoints_ by the time a commit lands.
-    override bool tryUndoStepInSession() {
-        if (!active || latchedPoints_.length == 0) return false;
-        peelLastPoint();
-        return true;
-    }
-
-    // SessionFirstGesture (task 7137, §22): the undo that peels the last
-    // point also pops the activation row; the navigate redo of that row
-    // re-arms this (fresh) tool with the point, released.
-    override Object soleFirstGesture() {
-        if (!active || latchedPoints_.length != 1 || edgesParam_.length != 1) return null;
-        auto g = new EdgeSliceFirstGesture;
-        g.point = latchedPoints_[0];
-        g.edge  = edgesParam_[0];
-        return g;
-    }
-    override void sealFirstGesture(Object gesture) {
-        if (auto g = cast(EdgeSliceFirstGesture) gesture) g.key.stamp(*mesh);
-    }
-    override bool replayFirstGesture(Object gesture) {
-        auto g = cast(EdgeSliceFirstGesture) gesture;
-        if (g is null || !active) return false;
-        if (!g.key.matches(*mesh) || g.edge >= mesh.edges.length) {
-            logWarn("tool", "edge slice redo: the mesh changed since the session ended; re-armed bare");
-            return false;
-        }
-        seatFirstPoint(g.point, g.edge);
-        // Released, as onMouseButtonUp leaves it (a latch leaves it scrubbing).
+    // Everything the tool derives from its chain attributes (slice M3, R4.3):
+    // the phase and arm by the chain's length, the proxy, the preview — the
+    // former per-point peel's tail, now the image's one rebuild. The chain's
+    // baseline is the mesh as the first point found it; a chain seated on a
+    // tool that has none yet (the session's redo replay of the first group)
+    // takes the current mesh, which the session checked is the mesh that
+    // group left. Released: an undo or redo never leaves a scrub running.
+    override void rebuildPreviewFromAttrs() {
         scrubbing_ = false;
         dragPart_  = -1;
-        return true;
+        const n = latchedPoints_.length;
+        if (n == 0) { cancelLiveEdit(); return; }
+        if (!chainBefore_.filled) {
+            chainBefore_ = MeshSnapshot.capture(*mesh);
+            armedKey_.stamp(*mesh);
+            if (history !is null) history.invalidateRedo();
+        }
+        if (activePoint_ < 0 || activePoint_ >= cast(int)n) activePoint_ = cast(int)n - 1;
+        armed_ = n >= 2;
+        phase_ = n >= 2 ? Phase.EdgeB : Phase.EdgeA;
+        syncProxy();
+        rebuildPreview();
     }
-    override string sessionToolId() const { return "mesh.edgeSliceTool"; }
 
     public override void resyncSession() {
         if (!active) return;
@@ -812,6 +780,7 @@ public:
     /// to call after scene.reset has already swapped the underlying mesh — see
     /// the defensive `file.new` callback in registration.d.
     public void dropArmedPreview() {
+        sessionOperationEnded();   // the operation ends with its preview (slice M3)
         armed_         = false;
         scrubbing_     = false;
         built_         = false;
@@ -1062,7 +1031,15 @@ public:
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         if (!active) return false;
-        if (e.button == SDL_BUTTON_RIGHT) { cancelLiveEdit(); return true; }
+        if (e.button == SDL_BUTTON_RIGHT) { closeOwnOperation(false); return true; }
+        // H5 (C-H5-es-mmb): a Middle press inside the live chain opens an
+        // operation boundary of its own — one step, no point, no clone
+        // (no-clone is the policy's, applied by the session).
+        if (e.button == SDL_BUTTON_MIDDLE && latchedPoints_.length > 0) {
+            sessionStepBegins(PressKind.middle);
+            sessionStepEnds();
+            return true;
+        }
         if (e.button != SDL_BUTTON_LEFT)  return false;
         SDL_Keymod mods = SDL_GetModState();
         if (mods & (KMOD_ALT | KMOD_SHIFT)) return false;
@@ -1077,6 +1054,7 @@ public:
         if (toolHandles_ !is null && latchedPoints_.length >= 1) {
             int part = toolHandles_.test(cast(int)e.x, cast(int)e.y, vpWorld_);
             if (part >= 0 && part < cast(int)latchedPoints_.length) {
+                sessionStepBegins();   // a re-pick drag is a gesture step (H2, EW)
                 activePoint_ = part;
                 syncProxy();
                 scrubbing_   = true;
@@ -1095,6 +1073,7 @@ public:
 
         const SymmetryPacket* sym = vts.get!SymmetryPacket();
         if (phase_ == Phase.Idle) {
+            sessionStepBegins();
             latchFirstPoint(h, cast(float)e.x, cast(float)e.y, sym);
             return true;
         }
@@ -1111,6 +1090,8 @@ public:
         // wraparound, not stated. Guard the sentinel by name instead.
         uint lastEdge = (*mesh).edgeIndexOf(latchedPoints_[$ - 1].v0, latchedPoints_[$ - 1].v1);
         if (lastEdge != ~0u && lastEdge == cast(uint)h) return false;
+        if (latchedPoints_.length >= kMaxEdgeSliceChainPoints) return true;   // the cap refuses the point
+        sessionStepBegins();
         appendPoint(h, cast(float)e.x, cast(float)e.y, sym);
         return true;
     }
@@ -1144,7 +1125,9 @@ public:
         scrubbing_ = false;
         dragPart_  = -1;
         // Model B: mouse-up never commits — the preview (once built) STANDS
-        // until Enter / tool-drop / another click extends it.
+        // until Enter / tool-drop / another click extends it. The press..release
+        // is one gesture step of the session (slice M3).
+        sessionStepEnds();
         return true;
     }
 
@@ -1153,7 +1136,9 @@ public:
         switch (e.keysym.sym) {
             case SDLK_RETURN:
             case SDLK_KP_ENTER:
-                commitOperation();   // the same body the command close runs
+                // The same body the command close runs, through the session
+                // (slice M3), which closes its account of the operation.
+                closeOwnOperation(true);
                 return true;
             default:
                 return false;
@@ -1304,6 +1289,19 @@ private:
     void armChain() {
         auto pts = pointsFromEdgesParam();
         if (pts.length < 2) return;
+        // It stands for the click sequence, so the session records what that
+        // sequence would: one gesture step per point (slice M3) — the first
+        // is the window's first group. The images need only the prefixes; the
+        // chain is baked once, below.
+        const edges = edgesParam_.dup;
+        foreach (k; 0 .. pts.length) {
+            sessionStepBegins();
+            latchedPoints_ = pts[0 .. k + 1].dup;
+            edgesParam_    = k + 1 <= edges.length ? edges[0 .. k + 1].dup : edges.dup;
+            activePoint_   = cast(int)k;
+            sessionStepEnds();
+        }
+        edgesParam_ = edges.dup;
         latchedPoints_ = pts;
         activePoint_   = cast(int)latchedPoints_.length - 1;
         syncProxy();
@@ -1328,45 +1326,6 @@ private:
         // step (mirrors rebuildPreview/commitChain),
         // so this stays consistent if ever exercised with a visible window.
         refreshCaches();
-    }
-
-    // Mid-chain per-click undo peel (task 0321, D1) — pops exactly the LAST
-    // latched point, clamps every piece of chain state to the shrunk range
-    // (including `activePoint_` — Risk #5), then re-bakes by the remaining
-    // length:
-    //   >=2 points left -> still a real chain: re-arm + re-bake the shorter
-    //     polyline.
-    //   ==1 point left  -> a lone point bakes NO cut; rebuildPreview()'s
-    //     `bakeChainFrom` restores `chainBefore_` (the base mesh) via its own
-    //     `pts.length < 2` guard.
-    //   ==0 points left -> the mesh is ALREADY at `chainBefore_` (from the
-    //     length-1 case above, or was never cut at all); just clear the
-    //     session state (dropArmedPreview) WITHOUT touching the mesh again.
-    //     The tool stays active-idle — NOT dropped — so a further Ctrl+Z
-    //     falls through to the ordinary global history.
-    void peelLastPoint() {
-        if (latchedPoints_.length == 0) return;
-        latchedPoints_.length = latchedPoints_.length - 1;
-        if (edgesParam_.length > 0) edgesParam_.length = edgesParam_.length - 1;
-        scrubbing_ = false;
-        dragPart_  = -1;
-
-        if (latchedPoints_.length >= 2) {
-            armed_       = true;
-            phase_       = Phase.EdgeB;
-            activePoint_ = cast(int)(latchedPoints_.length - 1);
-            syncProxy();
-            rebuildPreview();
-        } else if (latchedPoints_.length == 1) {
-            armed_       = false;
-            phase_       = Phase.EdgeA;
-            activePoint_ = 0;
-            syncProxy();
-            rebuildPreview();
-        } else {
-            activePoint_ = -1;
-            dropArmedPreview();
-        }
     }
 
     // Keep the Param-bound `pointProxy_` mirror in sync with

@@ -1662,7 +1662,8 @@ private void wireSelectionProviders(HttpServer httpServer, ref EditorApp app,
             root["handles"] = activeTool is null ? JSONValue(null) : activeTool.toolHandlesJson();
             return root.toString();
         });
-        new ToolStateHttpAdapter(() => activeTool).wire(httpServer);
+        new ToolStateHttpAdapter(() => activeTool,
+                                 () => session.sessionStateJson()).wire(httpServer);
         httpServer.setRecordedEventsProvider(() {
             import std.file : exists, readText;
             if (!exists("recording.jsonl")) return null;
@@ -1681,15 +1682,19 @@ private void wireSelectionProviders(HttpServer httpServer, ref EditorApp app,
 final class ToolStateHttpAdapter {
 private:
     Tool delegate() activeTool_;
+    // Slice M3: the session's account of a tool whose session owns its steps,
+    // merged as `session` (null answers add nothing).
+    JSONValue delegate() sessionState_;
     version(unittest) {
         shared size_t providerThreadForTest_;
         shared int providerCallsForTest_;
     }
 
 public:
-    this(Tool delegate() activeTool) {
+    this(Tool delegate() activeTool, JSONValue delegate() sessionState = null) {
         assert(activeTool !is null, "ToolStateHttpAdapter requires a live slot");
         activeTool_ = activeTool;
+        sessionState_ = sessionState;
     }
 
     string read() {
@@ -1701,7 +1706,13 @@ public:
             atomicOp!"+="(providerCallsForTest_, 1);
         }
         auto active = activeTool_();
-        return active is null ? "{}" : active.toolStateJson().toString();
+        if (active is null) return "{}";
+        auto j = active.toolStateJson();
+        if (sessionState_ !is null && j.type == JSONType.object) {
+            auto ss = sessionState_();
+            if (ss.type != JSONType.null_) j["session"] = ss;
+        }
+        return j.toString();
     }
 
     void wire(HttpServer server) {

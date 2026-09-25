@@ -38,8 +38,11 @@ string topLabel() {
     return l.length ? l[$ - 1] : "";
 }
 
-/// The Loop Slice fields this file reads. An absent `gestureDepth` reads as
-/// -1, so a binary without the field can never satisfy a depth floor.
+/// The Loop Slice fields this file reads. Since slice M3 the gesture steps
+/// are the SESSION's: `gestureDepth` is `session.steps` and `armStateValid`
+/// (the arm-time loop latched) is `session.live` — the window the arm opened
+/// (`OpensAt.arm`). An absent `session` reads as depth -1, so a binary without
+/// it can never satisfy a depth floor.
 struct LsState {
     string tool;
     bool armed, dragging, armStateValid;
@@ -58,8 +61,11 @@ LsState lsState() {
     bool flag(string k) { return (k in s.object) !is null && s[k].type == JSONType.true_; }
     r.armed = flag("armed");
     r.dragging = flag("dragging");
-    r.armStateValid = flag("armStateValid");
-    if ("gestureDepth" in s.object) r.depth = s["gestureDepth"].integer;
+    if ("session" in s.object && s["session"].type == JSONType.object) {
+        auto ss = s["session"];
+        r.armStateValid = ss["live"].type == JSONType.true_;
+        r.depth = ss["steps"].integer;
+    }
     if ("positions" in s.object && s["positions"].array.length) {
         auto p = s["positions"].array[0];
         r.pos0 = p.type == JSONType.integer ? cast(double)p.integer : p.floating;

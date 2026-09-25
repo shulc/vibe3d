@@ -31,7 +31,8 @@ module edit_session;
 // locks are needed here.
 // ---------------------------------------------------------------------------
 
-import tool            : Tool, CommandClose;
+import tool            : Tool, CommandClose, AttrImage, PressKind, OpensAt,
+                         ToolSessionLink;
 import command         : Command, ToolRunRecord;
 import std.json        : JSONValue;
 import command_history : CommandHistory;
@@ -40,6 +41,7 @@ import std.typecons    : Rebindable;
 import params          : ParamProvider;
 import toolpipe.stage  : Stage;
 import tool_activation_ownership : CloseReason, CommandDoor, CloseOutcome;
+import tools.common.session_mesh_key : SessionMeshKey;
 
 // Computed classification of the session protocol's current phase. There is
 // deliberately NO stored state machine mirroring this: the truth about an
@@ -207,13 +209,10 @@ interface RefireClient {
 // KeepAliveOnCancel — optional capability (task 0400's interface, renamed in
 // task 0430 when the second implementor family joined): cancelling the
 // tool's open uncommitted edit from history navigation (navigate()'s
-// whole-edit-cancel branch) does not end the tool's life. Three implementor
-// families:
-//   * the Edge Slice standing preview (0232 + 0400): its survival covers
-//     only the residual armed-without-points state: a peel that empties its
-//     chain ends the tool in navigate()'s step branch. SliceTool and
-//     LoopSliceTool (gap row 205) deliberately do NOT implement this
-//     interface, so a cancel with no session step left ends them;
+// whole-edit-cancel branch) does not end the tool's life. Two implementor
+// families (the Edge Slice standing preview left in slice M3: a tool whose
+// session owns its steps never reaches that branch while its operation is
+// live — the session answers its undo first):
 //   * the create family (the PrimitiveCreateTool hierarchy + BoxTool —
 //     task 0430, capture-measured): a cancelled create gesture leaves the
 //     tool armed for a fresh gesture;
@@ -246,14 +245,16 @@ interface KeepAliveOnCancel {
 
 // ---------------------------------------------------------------------------
 // SessionStepUndo — optional capability: mid-session per-step undo peel
-// (task 0321). Implementors: grep `SessionStepUndo` in `source/tools`.
+// (task 0321). Implementors: grep `SessionStepUndo` in `source/tools` (Edge
+// Extend since slice M3: the three cutting tools' steps are the session's own,
+// `ToolSessionPolicy.sessionSteps`, and M4 moves Extend there too).
 // ---------------------------------------------------------------------------
 interface SessionStepUndo {
     // navigate() calls this FIRST, before its whole-edit-cancel branch
     // (invariant C): a tool holding some internal sequence of not-yet-
-    // committed steps (EdgeSliceTool's latched chain points) can peel exactly
-    // ONE of those steps here and report true, so a real undo keystroke
-    // un-does one step at a time instead of unwinding the whole live edit.
+    // committed steps can peel exactly ONE of those steps here and report
+    // true, so a real undo keystroke un-does one step at a time instead of
+    // unwinding the whole live edit.
     bool tryUndoStepInSession();
 }
 
@@ -263,27 +264,6 @@ interface SessionStepUndo {
 // stack; false == the former behaviour.
 interface SessionLiveRedo {
     bool tryRedoLiveInSession();
-}
-
-// ---------------------------------------------------------------------------
-// SessionFirstGesture — optional capability of a cutting session whose arm is
-// a history row (Slice, Edge Slice; task 7137, §22; Loop Slice, whose "first
-// gesture" is its arm-time loop, gap row 205): the undo that removes the
-// session's first gesture also pops that row, and the navigate redo of the row
-// re-arms the tool WITH that gesture. The payload is opaque to the session.
-// ---------------------------------------------------------------------------
-interface SessionFirstGesture {
-    /// Non-null only while exactly ONE gesture of the live session is
-    /// left, i.e. the next undo step ends the session. Read BEFORE the
-    /// step (the step itself destroys what it describes).
-    Object soleFirstGesture();
-    /// Stamp the gesture's mesh key over the mesh AS IT STANDS AFTER the
-    /// step, immediately before the activation row is undone.
-    void sealFirstGesture(Object gesture);
-    /// Re-arm with that gesture on the freshly activated tool, RELEASED.
-    bool replayFirstGesture(Object gesture);
-    /// The registration id the activation row carries ("mesh.…Tool").
-    string sessionToolId() const;
 }
 
 // SwitchRestorablePredecessor — undoing the arm row of the tool that replaced
@@ -377,14 +357,18 @@ final class EditSession {
                         auto t = cast(Tool)provider;
                         assert(t !is null,
                             "interactive parameter source requires a Tool");
+                        const step = tools_.actionStepBegins(t, name);
                         t.notifyInteractiveParamChanged(name);
+                        if (step) tools_.stepEnds(t);
                         return;
                     }
                     case ParameterChangeSource.ScriptedValue: {
                         auto t = cast(Tool)provider;
                         assert(t !is null,
                             "scripted parameter source requires a Tool");
+                        const step = tools_.actionStepBegins(t, name);
                         t.onParamChanged(name);
+                        if (step) tools_.stepEnds(t);
                         return;
                     }
                     case ParameterChangeSource.StageAttribute:
@@ -641,6 +625,17 @@ final class EditSession {
     // row slice M4 tags with the predecessor token.
     const(Command) lastClosedRow() const { return tools_.closedRow_.get; }
 
+    // An arm has published the active tool (slice M3; called by the one arm
+    // door, `armPreparedTool`, for every arm transition). The session binds
+    // the tool — installs the link it reports its gesture steps through — and
+    // starts a fresh account: no operation, no steps, no redo.
+    void noteArm(string id) { tools_.noteArm(id); }
+
+    // Test introspection (`/api/tool/state`'s `session` member): the operation
+    // of a tool whose session owns its steps — `live`, `steps`, `redo` — and
+    // JSON null for every other tool.
+    JSONValue sessionStateJson() { return tools_.stateJson(); }
+
     // Discard the active tool's in-progress edit WITHOUT committing it and
     // WITHOUT touching history (cancel bodies are pure mesh restores). The
     // tool.reset path uses this so a reset THROWS the open edit away rather
@@ -657,23 +652,18 @@ final class EditSession {
 // doc/tool_session_model_plan_2026-09-24.md R2.5 / R3.5). EditSession owns
 // exactly one, privately; it moves the history-navigation branches out of
 // `EditSession.navigate` with the branch order unchanged, split by direction.
-// It stores no phase (the header's "no stored state machine" still holds):
-// its state is the held first gesture and the operation's close account
-// (slice M2) below. What it will own next — the gesture steps, the redo
-// stash, the token — is added by the slice that reads it.
+// Slice M3 gives it the operation of a tool whose policy says `sessionSteps`
+// (R2.2, R4.3, R4.5): whether that operation's window is open, the image it
+// opened from, the stack of gesture-step images, their redo (H4), and the end
+// of the window's first group — with the activation row that group joins when
+// the tool was armed through the key/UI door (H1, C-H1-door). Everything it
+// stores is keyed to the tool it BOUND at the arm (`noteArm`); what the tool
+// reports goes through that link, never through a cast.
 // ---------------------------------------------------------------------------
 private struct ToolSession {
     private Tool delegate() tool_;
     private CommandHistory  history_;
     private void delegate() dropTool_;
-    // The first gesture of a cutting session this session ended, held for
-    // the navigate redo of the activation row it popped (task 7137). Kept
-    // HERE, keyed by the row's identity, not in the history: a replay from
-    // inside `ToolActivationCommand.apply` would run under the history's
-    // Suspend state (its redo invalidation dropped) and would also fire from
-    // the raw redo doors, which re-arm bare by design.
-    private Object pendingGesture_;
-    private Rebindable!(const Command) pendingFor_;
     // The operation's close (slice M2). `topBefore_` is the undo top when the
     // close began; a row counts as written BY the close only if the top is a
     // different entry afterwards — identity, never the depth, which stops
@@ -689,6 +679,35 @@ private struct ToolSession {
     private bool pendingMark_;
     private bool pendingResume_;
     private Tool resumeTool_;
+
+    // ----- the operation of a `sessionSteps` tool (slice M3) ----------------
+    // `bound_` / `armedId_`: the tool the last arm published and its id.
+    // `live_`: its operation window is open. `openImage_`: the image the window
+    // opened from — what undoing its first group restores. `steps_`: the image
+    // before each later gesture step, newest last (capped, oldest dropped).
+    // `redo_`: the image AFTER each step an undo popped, newest last (H4: a
+    // redo returns it live); a new step clears it. `pending_`: the image at the
+    // start of the step in flight; `pendingIfChanged_`: it is the rest of the
+    // press that armed an `OpensAt.arm` tool, a step only if it changed the image.
+    enum size_t kMaxSessionSteps = 256;
+    private Tool bound_;
+    private string armedId_;
+    private bool live_;
+    private AttrImage openImage_;
+    private AttrImage[] steps_;
+    private AttrImage[] redo_;
+    private AttrImage pending_;
+    private bool pendingSet_;
+    private bool pendingIfChanged_;
+    // The first group a key-door undo ended together with its activation row
+    // (task 7137, §22), held for the NAVIGATE redo of that row — keyed by the
+    // row's identity, sealed with the mesh as the redo will find it. Not in
+    // the history: a replay from inside `ToolActivationCommand.apply` would run
+    // under the history's Suspend state and fire from the raw redo doors too,
+    // which re-arm bare by design.
+    private AttrImage replay_;
+    private Rebindable!(const Command) replayFor_;
+    private SessionMeshKey replayKey_;
 
     this(Tool delegate() tool, CommandHistory history,
          void delegate() dropTool) {
@@ -724,6 +743,10 @@ private struct ToolSession {
     // hasUncommittedEdit()==true yet must redo their own param changes, redo
     // exactly as before.
     //
+    // A `sessionSteps` tool's live operation is answered FIRST, by the
+    // session itself (slice M3): its steps are attribute images here, not
+    // tool state, so no branch below ever sees it.
+    //
     // NOTE the deliberate RE-READS of tool_() after cancelUncommittedEdit():
     // the absorbed app.d block re-evaluated `activeTool` live at each mention,
     // and that tolerant shape is preserved byte-for-byte — the postcondition
@@ -732,31 +755,35 @@ private struct ToolSession {
     // Each returns true if anything happened (edit cancelled OR stack moved).
 
     bool undo() {
-        // A held first gesture is valid only for the NEXT navigate step
-        // after the undo that ended its session; a raw redo in between
-        // has already re-armed that row bare.
-        pendingGesture_ = null;
-        pendingFor_ = null;
-        // A cutting session's sole first gesture, read BEFORE the step or
-        // cancel below destroys it (see endSession_).
-        Object firstGesture;
-        if (auto sfg = cast(SessionFirstGesture) tool_())
-            firstGesture = sfg.soleFirstGesture();
+        // A held first group is valid only for the NEXT navigate step after
+        // the undo that ended its window; a raw redo in between has already
+        // re-armed that row bare.
+        replay_ = AttrImage.init;
+        replayFor_ = null;
+        // H2: the newest gesture step of the live operation, restored as the
+        // image it started from; the first group ends the window (H1).
+        if (auto t = liveSteps_()) {
+            if (steps_.length == 0) return undoFirstGroup_(t);
+            redo_ ~= t.captureAttrImage();
+            auto img = steps_[$ - 1];
+            steps_ = steps_[0 .. $ - 1];
+            t.applyAttrImage(img);
+            return true;
+        }
         // Mid-session per-step undo peel (task 0321) — checked BEFORE the
         // whole-edit cancel branch below, so a tool holding an internal
-        // sequence of not-yet-committed steps (EdgeSliceTool's latched chain)
-        // can peel exactly one step per undo keystroke instead of unwinding
-        // everything. Absence of the SessionStepUndo interface == the former
-        // base-Tool default (false) ⇒ every other tool is byte-identical.
+        // sequence of not-yet-committed steps can peel exactly one step per
+        // undo keystroke instead of unwinding everything. Absence of the
+        // SessionStepUndo interface == the former base-Tool default (false) ⇒
+        // every other tool is byte-identical.
         {
             auto su = cast(SessionStepUndo) tool_();
             if (su !is null && su.tryUndoStepInSession()) {
-                // Task 7112 (owner's law for the slice tools, capture-
-                // verified for Edge Slice): the peel that removes the
-                // session's FIRST gesture also ends the tool. RE-READ, as
-                // below — the peel may itself have changed the active tool.
+                // The peel that removes the session's LAST step ends the tool
+                // (task 7112). RE-READ, as below — the peel may itself have
+                // changed the active tool.
                 auto tp = tool_();
-                if (tp !is null && !tp.hasUncommittedEdit()) endSession_(tp, firstGesture);
+                if (tp !is null && !tp.hasUncommittedEdit()) dropTool_();
                 return true;
             }
         }
@@ -775,19 +802,17 @@ private struct ToolSession {
             // through to the drop branch. (Codifying the stronger claim as
             // an assert aborted the editor on the first box-gesture Ctrl+Z.)
             // Task 0400 + 0430: a KeepAliveOnCancel tool
-            // (survivesEditCancel()==true — EdgeSliceTool, the create
-            // family PrimitiveCreateTool/BoxTool, and Edge Extend in an
+            // (survivesEditCancel()==true — the create family
+            // PrimitiveCreateTool/BoxTool, and Edge Extend in an
             // apply-and-continue operation, task 7118) is never dropped by this
-            // cancel. Every other tool — SliceTool and LoopSliceTool
-            // included, whose cancel with no step left ends the tool by the
-            // owner's slice law —
-            // keeps the pre-0400 cancel-then-drop behavior. RE-READ, not the `t` cached above — see the
-            // contract above.
+            // cancel. Every other tool keeps the pre-0400 cancel-then-drop
+            // behavior. RE-READ, not the `t` cached above — see the contract
+            // above.
             auto t2  = tool_();
             auto ka2 = cast(KeepAliveOnCancel) t2;
             if (t2 !is null && !t2.hasUncommittedEdit()
                 && !(ka2 !is null && ka2.survivesEditCancel())) {
-                endSession_(t2, firstGesture);
+                dropTool_();
             }
             return true;
         }
@@ -809,18 +834,33 @@ private struct ToolSession {
     }
 
     bool redo() {
+        // H4: a step an undo popped comes back LIVE — the window re-opens if
+        // that undo had closed it (the first group of a script-door arm).
+        {
+            auto t = tool_();
+            if (redo_.length && t !is null && t is bound_
+                && t.sessionPolicy().sessionSteps) {
+                auto cur = t.captureAttrImage();
+                if (live_) pushStep_(cur);
+                else { openImage_ = cur; live_ = true; }
+                auto img = redo_[$ - 1];
+                redo_ = redo_[0 .. $ - 1];
+                t.applyAttrImage(img);
+                return true;
+            }
+        }
         // A redo that brings the cancelled open operation back LIVE (task
-        // 7118, gap 232). pendingGesture_ is always null here: only a cancel
-        // stashes, and every cancel runs in undo(), which clears it.
+        // 7118, gap 232). replay_ is always empty here: only an undo stashes,
+        // and every undo clears it first.
         if (auto lr = cast(SessionLiveRedo) tool_())
             if (lr.tryRedoLiveInSession()) return true;
         // Replay only when the redo head IS the activation row this session
-        // popped (identity, read before the redo moves it; see endSession_).
+        // popped (identity, read before the redo moves it; see undoFirstGroup_).
         bool replay;
         {
             const re = history_.redoEntries();
-            replay = pendingGesture_ !is null && re.length > 0
-                && re[0].cmd is pendingFor_.get;
+            replay = !replay_.empty && re.length > 0
+                && re[0].cmd is replayFor_.get;
         }
         bool ok = history_.redo();
         if (ok) {
@@ -829,13 +869,11 @@ private struct ToolSession {
             auto t3 = tool_();
             if (t3 !is null) t3.resyncSession();
         }
-        // AFTER the redo: it is the redo that arms the tool (and its
-        // `activate` clears whatever a replay before it would have seated).
-        if (ok && replay)
-            if (auto s = cast(SessionFirstGesture) tool_())
-                s.replayFirstGesture(pendingGesture_);
-        pendingGesture_ = null;
-        pendingFor_ = null;
+        // AFTER the redo: it is the redo that arms the tool (its arm binds
+        // the fresh instance, `noteArm`), and the replay re-seats the group.
+        if (ok && replay) replayFirstGroup_();
+        replay_ = AttrImage.init;
+        replayFor_ = null;
         return ok;
     }
 
@@ -845,11 +883,22 @@ private struct ToolSession {
         pendingMark_ = false;
         closedRow_ = null;
         auto t = tool_();
-        if (t is null) return CloseOutcome(false, false);
+        if (t is null) { endOperation_(); return CloseOutcome(false, false); }
         topBefore_ = undoTop_();
+        if (r == CloseReason.enter) {
+            // The tool's own close (Enter, slice M3): its body commits now,
+            // synchronously; the tool stays armed with no operation.
+            const committed = t.commitOperation();
+            endOperation_();
+            if (!committed) return CloseOutcome(false, true);
+            markClosedRow_();
+            return CloseOutcome(true, true);
+        }
         if (r != CloseReason.command) {
             // The door commits (or discards, or has nothing left); the
-            // session only accounts for the row it may write.
+            // session only accounts for the row it may write, and the
+            // operation ends with the door.
+            endOperation_();
             pendingMark_ = r != CloseReason.none;
             return CloseOutcome(false, false);
         }
@@ -864,6 +913,7 @@ private struct ToolSession {
         // (4) the tool closes its own operation; the row (if any) is written
         // now, synchronously, BEFORE the command applies and records.
         if (!t.commitOperation()) return CloseOutcome(false, false);
+        endOperation_();
         markClosedRow_();
         pendingResume_ = true;
         resumeTool_ = t;
@@ -878,7 +928,186 @@ private struct ToolSession {
         auto closed = resumeTool_;
         resumeTool_ = null;
         if (t is null || t !is closed) return;   // the closed tool is gone
-        t.resumeAfterClose();
+        // C-rearm-key (gap 370): whether the window re-opens is the PRESET's
+        // answer, never the tool's centre mode.
+        import tool : ToolFlag;
+        t.resumeAfterClose(!t.hasFlag(ToolFlag.NoRearmAfterCommand));
+    }
+
+    // ----- the bound tool's reports (slice M3) ------------------------------
+
+    void noteArm(string id) {
+        auto t = tool_();
+        bound_ = t;
+        armedId_ = id.idup;
+        endOperation_();
+        if (t is null) return;
+        ToolSessionLink link;
+        link.stepBegins     = &stepBegins;
+        link.stepEnds       = &stepEnds;
+        link.operationArmed = &operationArmed;
+        link.operationEnded = &operationEnded;
+        link.closeOwn       = &closeOwn;
+        t.bindSession(link);
+    }
+
+    void stepBegins(Tool t, PressKind kind) {
+        if (!reporting_(t)) return;
+        auto before = t.captureAttrImage();
+        // H5: an in-window press opens an operation boundary of its kind; the
+        // step restores the image from BEFORE it.
+        if (live_ && kind != PressKind.plain) t.openOperation(kind, before);
+        pending_ = before;
+        pendingSet_ = true;
+        pendingIfChanged_ = false;
+    }
+
+    void stepEnds(Tool t) {
+        if (!reporting_(t) || !pendingSet_) return;
+        pendingSet_ = false;
+        if (!live_) {
+            // H1: under `firstPress` this whole gesture is the window's first
+            // group; an `arm` tool's window opens only at its arm.
+            final switch (t.sessionPolicy().opensAt) {
+                case OpensAt.firstPress:
+                    live_ = true;
+                    openImage_ = pending_;
+                    steps_ = null;
+                    redo_ = null;
+                    return;
+                case OpensAt.arm:
+                    return;
+            }
+        }
+        if (pendingIfChanged_ && t.captureAttrImage() == pending_) return;
+        pushStep_(pending_);
+        redo_ = null;
+    }
+
+    void operationArmed(Tool t) {
+        if (!reporting_(t) || live_) return;
+        if (t.sessionPolicy().opensAt != OpensAt.arm) return;   // opens at the gesture's end
+        // The arm is the first group; what the arming press does after it is
+        // an ordinary step if it changes anything.
+        live_ = true;
+        openImage_ = pendingSet_ ? pending_ : AttrImage.init;
+        steps_ = null;
+        redo_ = null;
+        pending_ = t.captureAttrImage();
+        pendingSet_ = true;
+        pendingIfChanged_ = true;
+    }
+
+    void operationEnded(Tool t) {
+        if (reporting_(t)) endOperation_();
+    }
+
+    bool closeOwn(Tool t, bool commit) {
+        if (t !is tool_()) {
+            // Not the active tool (a stale instance): its own body, no account.
+            if (commit) return t.commitOperation();
+            t.cancelUncommittedEdit();
+            return true;
+        }
+        if (commit) return close(CloseReason.enter, CommandDoor.ui).closed;
+        t.cancelUncommittedEdit();
+        endOperation_();
+        return true;
+    }
+
+    // A `sessionStepBegins` for an Action parameter write (C-H2-ls-insert:
+    // the write is its own undo step, pushed before it acts). True iff the
+    // caller must close it with `stepEnds`.
+    bool actionStepBegins(Tool t, string name) {
+        if (!reporting_(t)) return false;
+        foreach (ref p; t.params())
+            if (p.name == name) {
+                if (!p.action_) return false;
+                stepBegins(t, PressKind.plain);
+                return true;
+            }
+        return false;
+    }
+
+    JSONValue stateJson() {
+        auto t = tool_();
+        if (!reporting_(t)) return JSONValue(null);
+        auto j = JSONValue.emptyObject;
+        j["live"]  = JSONValue(live_);
+        j["steps"] = JSONValue(steps_.length);
+        j["redo"]  = JSONValue(redo_.length);
+        return j;
+    }
+
+    private bool reporting_(Tool t) {
+        return t !is null && t is bound_ && t is tool_()
+            && t.sessionPolicy().sessionSteps;
+    }
+
+    private Tool liveSteps_() {
+        auto t = tool_();
+        return live_ && reporting_(t) ? t : null;
+    }
+
+    private void pushStep_(AttrImage img) {
+        if (steps_.length >= kMaxSessionSteps) steps_ = steps_[1 .. $];
+        steps_ ~= img;
+    }
+
+    private void endOperation_() {
+        live_ = false;
+        openImage_ = AttrImage.init;
+        steps_ = null;
+        redo_ = null;
+        pending_ = AttrImage.init;
+        pendingSet_ = false;
+        pendingIfChanged_ = false;
+    }
+
+    // The undo of the window's first group (H1, 283): back to the image the
+    // window opened from. Armed through the key/UI door, the activation row
+    // joined that group, so it is popped too — the tool ends through the row's
+    // revert and the row goes to redo carrying the group. Any other top is a
+    // script-door arm (its own row, gap 300) or a re-arm inside one activation
+    // (rule K, verdict K1): the tool stays, armed with nothing, and nothing
+    // else is undone; the group waits in the redo stash (H4).
+    private bool undoFirstGroup_(Tool t) {
+        import commands.tool.lifecycle : ToolActivationCommand;
+        auto end = t.captureAttrImage();
+        auto open = openImage_;
+        endOperation_();
+        t.applyAttrImage(open);
+        const ue = history_.undoEntries();
+        auto act = ue.length ? cast(const ToolActivationCommand) ue[$ - 1].cmd : null;
+        if (act is null || !act.joinsFirstGroup() || act.armedId != armedId_) {
+            redo_ = [end];
+            return true;
+        }
+        if (act.armedMesh() !is null) replayKey_.stamp(*act.armedMesh());
+        replay_ = end;
+        replayFor_ = ue[$ - 1].cmd;
+        if (!history_.undo()) { replay_ = AttrImage.init; replayFor_ = null; }
+        return true;
+    }
+
+    // After the navigate redo of the popped activation row re-armed the tool:
+    // the group comes back LIVE and released, on the same mesh or not at all.
+    private void replayFirstGroup_() {
+        import commands.tool.lifecycle : ToolActivationCommand;
+        import log : logWarn;
+        auto t = tool_();
+        if (!reporting_(t)) return;
+        auto act = cast(const ToolActivationCommand) replayFor_.get;
+        if (act is null || act.armedMesh() is null || !replayKey_.matches(*act.armedMesh())) {
+            logWarn("tool", "session redo: the mesh changed since the session ended; re-armed bare");
+            return;
+        }
+        auto open = t.captureAttrImage();
+        t.applyAttrImage(replay_);
+        live_ = true;
+        openImage_ = open;
+        steps_ = null;
+        redo_ = null;
     }
 
     private const(Command) undoTop_() {
@@ -890,25 +1119,5 @@ private struct ToolSession {
         const top = undoTop_();
         closedRow_ = (top !is null && top !is topBefore_.get) ? top : null;
     }
-
-    // End of a live session whose last gesture the undo just removed (task
-    // 7112; task 7137 for the cutting sessions). A tool without
-    // SessionFirstGesture is dropped, as before. A cutting session whose
-    // activation row is the undo top pops it — the tool ends through the
-    // row's revert and the row goes to redo carrying the first gesture. Any
-    // other top means the session was re-armed inside its activation (Edge
-    // Slice's Enter commit): rule K, captured verdict K1 — the tool stays,
-    // armed with nothing latched, and nothing else is undone.
-    private void endSession_(Tool t, Object firstGesture) {
-        auto sfg = cast(SessionFirstGesture) t;
-        if (sfg is null) { dropTool_(); return; }
-        import commands.tool.lifecycle : ToolActivationCommand;
-        const ue = history_.undoEntries();
-        auto act = ue.length ? cast(const ToolActivationCommand) ue[$ - 1].cmd : null;
-        if (act is null || act.armedId != sfg.sessionToolId()) return;   // rule K (K1)
-        if (firstGesture !is null) sfg.sealFirstGesture(firstGesture);
-        pendingGesture_ = firstGesture;
-        pendingFor_ = ue[$ - 1].cmd;
-        if (!history_.undo()) { pendingGesture_ = null; pendingFor_ = null; }
-    }
 }
+
