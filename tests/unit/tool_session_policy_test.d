@@ -261,12 +261,29 @@ unittest { // (1) id -> policy, over every registered id
     assert(closeCount == [22, 24, 24],
            format("M2 policy table: commandClose none/uiDoor/allDoors on %s ids, recorded "
                   ~ "22/24/24", closeCount));
-    // The M7 ratchet: ids whose arm writes no activation row yet.
-    // M3b ported poly.bevel: 42 (38) -> 41 (37); M4 ported edge.extend: -> 40 (36).
-    assert(falseRows == 40 && notPorted == 36,
-           format("M1 policy table: activationRow=false on %s ids (%s not ported), "
-                  ~ "recorded 40 (36)", falseRows, notPorted));
+    // The M7 ratchet, only down: ids whose arm writes no activation row yet
+    // (gap 369). M3b ported poly.bevel: 42 (38) -> 41 (37); M4 ported
+    // edge.extend: -> 40 (36). Growth is a new id born off the H1 law, or a
+    // ported one regressed; a fall is recorded by lowering the ceiling.
+    assert(falseRows <= kActivationRowFalseCeiling && notPorted <= kNotPortedCeiling,
+           format("M7 ratchet: activationRow=false grew to %s ids (%s not ported), ceiling "
+                  ~ "%s (%s): a tool's arm writes its activation row (H1, gap 369) — declare "
+                  ~ "`activationRow` in its policy instead", falseRows, notPorted,
+                  kActivationRowFalseCeiling, kNotPortedCeiling));
+    assert(falseRows == kActivationRowFalseCeiling && notPorted == kNotPortedCeiling,
+           format("M7 ratchet: activationRow=false fell to %s ids (%s not ported), ceiling "
+                  ~ "%s (%s): lower the ceiling in the same commit", falseRows, notPorted,
+                  kActivationRowFalseCeiling, kNotPortedCeiling));
 }
+
+/// Slice M7: the down-only ceilings of the policy table (plan R3.1, R3.5, R2.2
+/// "sessionSteps"): ids whose arm writes no activation row, of them the ones
+/// not ported (the rest have no counterpart or an unsure one), and ids whose
+/// session does not own their gesture steps (H2 not ported). Measured on the
+/// M7 tree; each only falls.
+private enum size_t kActivationRowFalseCeiling = 40;
+private enum size_t kNotPortedCeiling = 36;
+private enum size_t kSessionStepsFalseCeiling = 65;
 
 unittest { // (2) exactly seven tool classes declare the activation row
     string[] declared;
@@ -417,12 +434,13 @@ unittest { // (4)
     foreach (p; manifest["products"].array)
         moduleOf[p["aggregate"].str] = p["module"].str;
     string[] stepIds;
-    size_t checkedNames, actionNames, armAttrs;
+    size_t checkedNames, actionNames, armAttrs, stepsFalse;
     foreach (row; kTable) {
         auto ci = TypeInfo_Class.find(moduleOf[row.cls] ~ "." ~ row.cls);
         auto t = blit(ci);
         const pol = t.sessionPolicy();
         if (!pol.sessionSteps) {
+            ++stepsFalse;
             assert(pol.imageAttrs.length == 0 && pol.haulAttrs.length == 0,
                    "M3 step table: " ~ row.id ~ " declares an image without sessionSteps");
             continue;
@@ -473,6 +491,19 @@ unittest { // (4)
         }
         assert(found, "M3 step table: " ~ row.id ~ " has sessionSteps but no step-table row");
     }
+    // The M7 ratchet, only down: ids whose session does not own their gesture
+    // steps yet (H2, measured on all six families; `false` = not ported). The
+    // floor beside it: every table row was visited (70, measured in (1)).
+    assert(stepsFalse + stepIds.length == kTable.length && kTable.length == 70,
+           format("M7 ratchet: visited %s + %s of %s table rows", stepsFalse, stepIds.length,
+                  kTable.length));
+    assert(stepsFalse <= kSessionStepsFalseCeiling,
+           format("M7 ratchet: sessionSteps=false grew to %s ids, ceiling %s: the tool session "
+                  ~ "owns a tool's gesture steps (H2) — declare `sessionSteps` and its image "
+                  ~ "instead of a per-tool stack", stepsFalse, kSessionStepsFalseCeiling));
+    assert(stepsFalse == kSessionStepsFalseCeiling,
+           format("M7 ratchet: sessionSteps=false fell to %s ids, ceiling %s: lower the ceiling "
+                  ~ "in the same commit", stepsFalse, kSessionStepsFalseCeiling));
     // Population floors (measured): 5 ids, 39 image names, 3 Action triggers
     // on them (chainArm; insertAt, removeCurrent), 1 arm attribute (M3b).
     sort(stepIds);
@@ -697,4 +728,37 @@ unittest { // (7)
         assert(squeeze(vr).count(n) == 1, "M6 wiring census: missing `" ~ n ~ "`");
     assert(!vr.canFind("TargetHighlightKeeper"),
            "M6 wiring census: the retired highlight capability is read again");
+}
+
+// ---------------------------------------------------------------------------
+// (8) Slice M7 — the prepared arm's sticky-name replay reads policy DATA
+// (`armRestoresWholeImage`), not a tool id: exactly Loop Slice declares it,
+// and `prepareArm` names no tool id (it held `id != "mesh.loopSliceTool"`).
+// ---------------------------------------------------------------------------
+
+static assert(ToolSessionPolicy.init.armRestoresWholeImage == false);
+
+unittest { // (8)
+    string[] declared;
+    size_t scanned;
+    foreach (m; ModuleInfo) {
+        if (m is null || !m.name.startsWith("tools.")) continue;
+        foreach (c; m.localClasses) {
+            if (!derivesFromTool(c) || (c.m_flags & TypeInfo_Class.ClassFlags.isAbstract))
+                continue;
+            ++scanned;
+            if (blit(c).sessionPolicy().armRestoresWholeImage) declared ~= c.name;
+        }
+    }
+    assert(scanned == 48, format("M7 policy classes: scanned %s, measured 48", scanned));
+    assert(declared == ["tools.slice.loop_slice_tool.LoopSliceTool"],
+           format("M7 policy classes: armRestoresWholeImage declared by %s", declared));
+    auto pt = squeeze(blankNonCode(readText("source/prepared_tool_transition.d")));
+    assert(pt.count("if(!candidate.sessionPolicy().armRestoresWholeImage)foreach(name;sticky.changedNames)") == 1,
+           "M7 wiring census: prepareArm no longer gates the sticky replay on the policy");
+    // blankNonCode keeps string literals' quotes but blanks their contents, so
+    // an id literal is matched on the raw source.
+    auto raw = readText("source/prepared_tool_transition.d");
+    foreach (id; ["\"mesh.loopSliceTool\"", "\"mesh.edgeSliceTool\"", "\"mesh.sliceTool\""])
+        assert(!raw.canFind(id), "M7 wiring census: prepared_tool_transition.d names " ~ id);
 }
