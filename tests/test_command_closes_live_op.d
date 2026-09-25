@@ -306,7 +306,8 @@ unittest { // MV-B: the haul already recorded its row; `[` closes the run and re
     kCommit("move", "[", K_INVERT, label, [], "xfrm", base);
 }
 
-unittest { // MV-R: the re-arm is a FRESH run — the panel's channels start from zero.
+unittest { // MV-R: the re-arm is a FRESH run — the panel's channels start from zero
+    // (law C-H3-move; not the resume's witness, see MV-H).
     moveLive();
     slLine("tool.set TransformMove on");
     Thread.sleep(300.msecs);
@@ -345,8 +346,11 @@ unittest { // MV-LA: `layer.attr` through the UI door CONTINUES the transform ru
 }
 
 unittest { // MV-H: H (mesh.hide, UiState) — the transform closes and re-arms the
-    // same way; hiding changes no selection, so the channel reset here is the
-    // command close's resume and not the transform's own selection-change path.
+    // same way. NOT a witness of the close's resume: measured with the resume
+    // disabled (mutation m2e), the Move channels still read zero here and in
+    // MV-R — the transform's own idle guard resets them after the command's
+    // mesh change. The resume's witness is x3 in tests/test_session_laws_xfrm.d
+    // (a rotation channel that guard does not reset).
     moveLive();
     const base = slMesh();
     const label = keyLabel(K_HIDE, "H");
