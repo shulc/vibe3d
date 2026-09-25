@@ -1775,10 +1775,10 @@ protected:
     /// Project a click pixel onto the appropriate relocation plane for
     /// the current ACEN mode:
     ///
-    ///   Auto / None : active work plane — camera-most-facing principal
-    ///                 axis (argmax|fwd|) through the camera focus by
-    ///                 default; the user-pinned work plane when one is set.
-    ///                 In-plane numeric point is PROVISIONAL (0058 follow-up).
+    ///   Auto / None : orthographic — the view plane through the centre
+    ///                 held before the press (plane-local under a pin);
+    ///                 perspective — the camera-most-facing principal plane
+    ///                 through the camera focus, or the pinned work plane.
     ///   Screen      : camera-perpendicular plane through the current
     ///                 selection bbox center.
     ///
@@ -1836,29 +1836,22 @@ protected:
     }
 
     // Geometry-only click-relocate: project the cursor ray onto the
-    // appropriate plane for the current ACEN mode (active work plane —
-    // through the camera focus, normal = the principal world axis the
-    // camera most directly faces, by default, for Auto/None; camera-
-    // perpendicular through selection center for Screen). Returns false
+    // appropriate plane for the current ACEN mode (see
+    // `computeClickRelocateHit` above for the per-mode planes). Returns false
     // in modes with no projection surface (`hasProjectionSurface` above). No
     // snap, no side-effects — pure geometry. Used by computeClickRelocateHit
     // (which then optionally snaps the result) and by updateLiveSnapPreview
     // (which decides separately what to do with the hit).
-    // Both projection kinds are handled: screenPointToRay builds a
-    // perspective ray from the eye or an ortho ray parallel to the view
-    // forward. Under ortho a plane edge-on to the view would hold that
-    // parallel ray and degenerate, so the Auto/None branch never leaves one
-    // reachable — a PINNED plane and a non-axis-aligned ortho camera swap in
-    // a camera-perpendicular plane (task 0226), and an axis-aligned ortho
-    // camera on the AUTO plane goes through the ported law's no-ray arm,
-    // which computes the same landing without intersecting anything.
+    // Both projection kinds are handled. Under ortho every Auto/None landing
+    // lies on the view-perpendicular plane, which the parallel ortho ray
+    // always crosses, so no edge-on plane is reachable there.
     protected bool computeClickRelocateHitRaw(int sx, int sy, out Vec3 worldHit) {
         import toolpipe.pipeline           : g_pipeCtx;
         import toolpipe.stages.actcenter   : ActionCenterStage;
         import toolpipe.stage              : TaskCode;
-        import tools.create.create_common         : currentWorkplaneFrame, mostFacingAxis;
+        import tools.create.create_common         : currentWorkplaneFrame, mostFacingAxis,
+                                                    primitiveParameterFrame;
         import tools.transform.relocate_plane     : RelocatePlanePrefs, principalPlaneCenter;
-        import math : isAxisView;
         import viewgrid : g_viewGrid, viewWorldPerPixel, relocateQuantum,
                           viewGridSize, viewGridSubStep;
         import math : rayPlaneIntersect, screenPointToRay, isOrtho;
@@ -1878,6 +1871,43 @@ protected:
                 // (no pipeline.evaluate, no re-entrancy).
                 auto wf = currentWorkplaneFrame();
 
+                // --- ORTHOGRAPHIC: THE VIEW PLANE THROUGH THE PRIOR CENTRE. ---
+                //
+                // Gap 364 / task 7134 (fixture relocate_axis_view_depth.json):
+                // an off-gizmo press drags a handle standing at the centre held
+                // BEFORE the press across the view plane, so the landing keeps
+                // that centre's depth along the view axis — plane-local under a
+                // pinned plane — and never reads the camera focus. ONE rule for
+                // every ortho view, unpinned, pinned or turned; it replaces the
+                // focus-depth locked arm, the non-axis-ortho carve-out and the
+                // pinned plane-origin swap (task 0226) that stood here, all
+                // refuted by that capture. The prior centre is the action-centre
+                // stage's own answer, the single source of the pivot.
+                // Perspective keeps the chains below: nothing measured there.
+                if (isOrtho(cachedVp)) {
+                    import tools.create.create_common : planeLocalViewport;
+                    import tools.transform.relocate_plane : orthoRelocateThroughPrior;
+                    import math : transformPoint;
+                    auto frame = wf.isAuto ? primitiveParameterFrame() : wf;
+                    Viewport l = planeLocalViewport(cachedVp, frame);
+                    Vec3 o, d;
+                    screenPointToRay(cast(float)sx, cast(float)sy, l, o, d);
+                    Vec3 prior = cachedVp.focus;
+                    if (g_pipeCtx !is null)
+                        if (auto ac = cast(ActionCenterStage)
+                                      g_pipeCtx.pipeline.findByTask(TaskCode.Acen))
+                            prior = ac.currentCenter();
+                    immutable float px = viewWorldPerPixel(cachedVp);
+                    immutable float snap =
+                        viewGridSubStep(px, viewGridSize(px, g_viewGrid), g_viewGrid);
+                    Vec3 cl;
+                    if (!orthoRelocateThroughPrior(l, o, d,
+                            transformPoint(frame.toLocal, prior), snap, cl))
+                        return false;
+                    worldHit = transformPoint(frame.toWorld, cl);
+                    return true;
+                }
+
                 // --- A USER-PINNED WORK PLANE KEEPS ITS FULL FRAME. ---
                 //
                 // This branch is deliberately NOT routed through the ported
@@ -1885,95 +1915,25 @@ protected:
                 // not a shortcut. A pinned plane here is an arbitrary
                 // orientation plus an arbitrary point: WorkplaneStage carries
                 // `rotation` as Euler degrees (B = Rz·Rx·Ry) and `center` as a
-                // full Vec3, both reachable from shipped commands
-                // (`workplane.edit rotX/Y/Z`, `workplane.rotate`,
-                // `workplane.offset`, `workplane.alignToSelection`).
-                //
-                // The law's lock arm cannot express that. Its whole pinned
-                // state is one PRINCIPAL AXIS INDEX plus one SCALAR offset
-                // along it — a free user preference in the reference, with no
-                // rotation and no second/third origin component anywhere in
-                // the structure. Collapsing our frame onto it would silently
-                // discard the rotation and two thirds of the origin, so a
-                // user who tilted the plane 30 degrees would get the pivot of
-                // an axis-aligned plane instead and never be told. So the
-                // pinned plane keeps `rayPlaneIntersect` against the full
-                // (origin, normal), exactly as it did before the port.
-                if (!wf.isAuto) {
-                    Vec3 planeOrigin = wf.origin;
-                    Vec3 planeNormal = wf.normal;
-                    // Ortho fix (task 0226): an orthographic camera projects
-                    // all rays parallel to its forward vector, so a pinned
-                    // plane that is edge-on to the view holds the ray IN the
-                    // plane and rayPlaneIntersect degenerates (denom≈0 →
-                    // false) — the relocate would silently no-op. Swap in a
-                    // camera-perpendicular plane through the same origin so
-                    // the click always projects to the point under the cursor
-                    // at plane-origin depth.
-                    if (isOrtho(cachedVp))
-                        planeNormal = Vec3(cachedVp.view[2],
-                                           cachedVp.view[6],
-                                           cachedVp.view[10]);
+                // full Vec3, both reachable from shipped commands. The law's
+                // lock arm can hold one principal axis index plus one scalar,
+                // so collapsing our frame onto it would silently discard the
+                // rotation and two thirds of the origin. So the pinned plane
+                // keeps `rayPlaneIntersect` against the full (origin, normal)
+                // (perspective only: every ortho view took the arm above).
+                if (!wf.isAuto)
                     return rayPlaneIntersect(crHitOrig, dir,
-                                             planeOrigin, planeNormal, worldHit);
-                }
+                                             wf.origin, wf.normal, worldHit);
 
-                // --- AUTO: the ported plane law. ---
+                // --- AUTO, PERSPECTIVE: the ported plane law. ---
                 //
                 // Everything about WHERE this lands lives in
                 // `tools.transform.relocate_plane` as pure functions; this
-                // call site's only job is to supply the argmax axis.
-                //
-                // `mostFacingAxis` is the SAME argmax `pickMostFacingPlane`
-                // runs — same function, same tie-break, and that picker's
-                // normal is exactly `e_k` for the same `k` — so the principal
-                // axis, and hence the plane, is the one this branch already
-                // used. It is a pure function of `cachedVp` (no
-                // pipeline.evaluate), so this stays re-entrancy-safe on the
-                // event-handling path.
-                //
-                // WHAT THIS CHANGES TODAY: NOTHING, and that is the honest
-                // reading. With every optional term dormant (below) the law's
-                // ray arm is `t = (focus[k] - P0[k]) / D[k]`, which is
-                // `rayPlaneIntersect` against the plane through the focus with
-                // normal `e_k` term for term; and in an axis-locked
-                // orthographic view its no-ray arm returns the click with
-                // coordinate `k` replaced by `focus[k]`, which is what the
-                // 0226 camera-perpendicular plane already computed there
-                // (under ortho the ray is parallel to `e_k`, so the
-                // intersection only ever changed that one coordinate). The
-                // port's gain is structural: the law is now stated where it
-                // was read, each term is named and tested, and the parallel-ray
-                // degeneracy is gone by construction in the one view class
-                // that could hit it rather than papered over by a plane swap.
-                //
-                // The law's other terms are implemented and tested but
-                // DORMANT, because each needs a number vibe3d has no field for
-                // and no capture pinned: the out-of-plane quantum (whose step
-                // our own two rigs contradict — see
-                // `RelocatePlanePrefs.quantumStep`), the preferred-plane bias,
-                // the view's vector-snap, and the lock arm (which this call
-                // site refuses to feed, per the pinned branch above). Each
-                // defaults to the value at which the reference itself skips
-                // the feature.
-                //
-                // ONE VIEW CLASS IS CARVED OUT AND KEEPS THE 0226 FIX: an
-                // orthographic camera that is NOT axis-aligned — vibe3d's
-                // Perspective/Camera preset under ProjKind.Ortho. The
-                // reference has no such view (its orthographic views are
-                // exactly the six axis presets), so the read says nothing
-                // about it and taking the law there would be a change with no
-                // evidence behind it. Under ortho every point of the ray is
-                // under the cursor, so the two answers differ only in DEPTH
-                // along the view axis; 0226 chose focus depth and nothing
-                // measured says otherwise.
-                if (isOrtho(cachedVp) && !isAxisView(cachedVp)) {
-                    Vec3 camPerp = Vec3(cachedVp.view[2],
-                                        cachedVp.view[6],
-                                        cachedVp.view[10]);
-                    return rayPlaneIntersect(crHitOrig, dir,
-                                             cachedVp.focus, camPerp, worldHit);
-                }
+                // call site's only job is to supply the argmax axis
+                // (`mostFacingAxis`, the same argmax and tie-break
+                // `pickMostFacingPlane` runs). Its no-ray locked arm is ortho
+                // only and so is not reached from here any more; the create
+                // tools still use it.
                 Vec3 camBack = Vec3(cachedVp.view[2],
                                     cachedVp.view[6],
                                     cachedVp.view[10]);
