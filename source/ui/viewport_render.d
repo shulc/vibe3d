@@ -689,7 +689,7 @@ public:
             litShader.setFillColor(activePlan.fillColor);
             bool toolFaceHover = activeTool !is null
                               && activeTool.wantsHoverForType(EditMode.Polygons)
-                              && faceHovForDraw >= 0;
+                              && hoveredFace >= 0;
             if (selFeedbackType == SelType.Polygon || toolFaceHover) {
                 gpu.drawFacesHighlighted(litShader, faceHovForDraw);
             } else {
