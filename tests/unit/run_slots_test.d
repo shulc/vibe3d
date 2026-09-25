@@ -128,6 +128,13 @@ unittest // 1. N=2: distinct slots, disjoint ports, the third waits, reuse
     auto fourth = execute([runnerPath, "--probe-run-lock", "0", "--lock-timeout", "5"], env);
     assert(fourth.status == 0 && slotAndPort(fourth.output)[0] == freed, format(
         "a run after release did not take the freed slot %d:\n%s", freed, fourth.output));
+
+    // A count outside 1..6 is refused loudly, never clamped into a guess.
+    auto bad = env.dup;
+    bad["VIBE3D_RUN_SLOTS"] = "7";
+    auto invalid = execute([runnerPath, "--probe-run-lock", "0", "--lock-timeout", "1"], bad);
+    assert(invalid.status != 0 && invalid.output.canFind("invalid run-slot count"), format(
+        "VIBE3D_RUN_SLOTS=7 was not refused (status %d):\n%s", invalid.status, invalid.output));
 }
 
 unittest // 2. one checkout, two runs: refused before any build
@@ -155,6 +162,8 @@ unittest // 2. one checkout, two runs: refused before any build
 
     const run = [runnerPath, "--lock-timeout", "1", "--no-build", "--stale-ok",
                  "test_harness_load_log"];
+    const record = base ~ ".harness.jsonl";
+    env["VIBE3D_HARNESS_LOG"] = record;
     {
         // Hold the checkout's build lock as a live first run would.
         const fd = open(wtLock.toStringz, O_RDWR | O_CREAT, octal!"644");
@@ -170,6 +179,9 @@ unittest // 2. one checkout, two runs: refused before any build
         assert(!second.output.canFind("run slots"),
             "the duplicate run reached the slot wait before being refused:\n"
           ~ second.output);
+        assert(exists(record) && readText(record).canFind(`"stage":"worktree_busy"`),
+            "the refused duplicate run did not record stage worktree_busy:\n"
+          ~ (exists(record) ? readText(record) : "(no record)"));
     }
     // Control: the checkout lock released, the same command reaches the slot.
     auto third = execute(run, env, Config.none, size_t.max, repoRoot);
@@ -212,6 +224,39 @@ unittest // 3. a lease is read through /proc, and an unlocked fd is not one
     assert(decoy.status != 0 && decoy.output.canFind("NO TESTS RAN"), format(
         "an unlocked descriptor on the slot file was accepted as a lease "
       ~ "(status %d):\n%s", decoy.status, decoy.output));
+    // The same unlocked descriptor, INHERITED this time (the other route).
+    auto inherited = execute([runnerPath, "--probe-run-lock", "0", "--lock-timeout", "1"],
+                             leased, Config.inheritFDs);
+    assert(inherited.status != 0 && inherited.output.canFind("NO TESTS RAN"), format(
+        "an inherited unlocked descriptor on the slot file was accepted as a lease "
+      ~ "(status %d):\n%s", inherited.status, inherited.output));
+
+    // A process that is NOT a descendant of the holder cannot borrow, even
+    // with the holder's real descriptor inherited.
+    leased["VIBE3D_INHERITED_RUN_LOCK_FD"] = slot.fd.to!string;
+    auto orphan = execute(["setsid", "--fork", runnerPath, "--probe-run-lock", "0",
+                           "--lock-timeout", "1"], leased, Config.inheritFDs);
+    assert(orphan.output.canFind("NO TESTS RAN") && !orphan.output.canFind("RUN SLOT:"),
+        "a reparented (non-descendant) process borrowed the slot:\n" ~ orphan.output);
+}
+
+unittest // 5. a real run's workers take the HELD slot's port window
+{
+    // Slot 0 is held, so this run gets slot 1; -j 40 exceeds the 36-port
+    // window, so the run refuses right after deriving its ports and prints
+    // them, before any barrier, build or worker. The window printed is the
+    // one `port` was set to, not the probe's own arithmetic.
+    const base = privateBase("ports");
+    scope(exit) removeFamily(base);
+    auto env = childEnv(base, 2);
+    RunSlot zero;
+    enforce(tryAcquireFreeSlot(base, 1, zero, "ports witness"), "could not take slot 0");
+    scope(exit) releaseSlot(zero);
+    auto r = execute([runnerPath, "-j", "40", "--no-build", "--lock-timeout", "1"],
+                     env, Config.none, size_t.max, repoRoot);
+    assert(r.status == 2 && r.output.canFind("exceeds this slot's 36-port window (28116..28151)"),
+        format("a slot-1 run did not derive the slot-1 window 28116.. (status %d):\n%s",
+               r.status, r.output));
 }
 
 unittest // 4. inside a user namespace the lease is read from the INHERITED fd

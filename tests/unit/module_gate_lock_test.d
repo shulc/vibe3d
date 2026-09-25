@@ -29,6 +29,7 @@ private enum kModuleGateTimeoutEnv = "VIBE3D_MODULE_GATE_LOCK_TIMEOUT_SECONDS";
 private enum kDefaultModuleGateTimeoutSeconds = 600;
 private enum kRunLockPathEnv = "VIBE3D_PERF_RUNTEST_LOCK_PATH";
 private enum kHarnessLogEnv = "VIBE3D_HARNESS_LOG";
+private enum kProbeOnlyEnv = "VIBE3D_MODULE_GATE_PROBE_ONLY";
 private enum kInheritedRunLockPidEnv = "VIBE3D_INHERITED_RUN_LOCK_PID";
 private enum kInheritedRunLockFdEnv = "VIBE3D_INHERITED_RUN_LOCK_FD";
 
@@ -105,6 +106,15 @@ private void acquireModuleGateLock()
 shared static this()
 {
     acquireModuleGateLock();
+    // Test seam for the standalone probe below: report the slot and stop, so a
+    // cell can witness acquisition without running this module's cells again.
+    if (environment.get(kProbeOnlyEnv, "") == "1") {
+        import core.stdc.stdlib : exit;
+        stderr.writefln("module gate slot: %d %s", gModuleGateSlot.index,
+                        gModuleGateSlot.borrowed ? "borrowed" : "own");
+        stderr.flush();
+        exit(0);
+    }
 }
 
 private string[string] isolatedChildEnvironment()
@@ -172,6 +182,27 @@ unittest // a second module gate must fail loudly while every slot is held
     assert(child.status != 0, format(
         "module-gate timeout returned success (%d), so CI could report a green "
       ~ "gate after running no unittests:\n%s", child.status, child.output));
+
+    // The same full family, but the probe runs under a gate-pool style LEASE
+    // on the held slot: it must borrow it, not queue behind it. The lease
+    // descriptor is NOT inherited, exactly as `dub test` delivers it.
+    auto leased = env.dup;
+    leased[kProbeOnlyEnv] = "1";
+    leased[kInheritedRunLockPidEnv] = thisProcessID.to!string;
+    leased[kInheritedRunLockFdEnv] = full.fd.to!string;
+    auto borrow = execute([probeBin], leased);
+    assert(borrow.status == 0 && borrow.output.canFind("module gate slot: 0 borrowed"), format(
+        "the module gate did not borrow its caller's held slot (status %d):\n%s",
+        borrow.status, borrow.output));
+
+    // Control: the slot released, the same probe takes it as its own.
+    { import tools.harness.runslots : releaseSlot; releaseSlot(full); }
+    auto own = env.dup;
+    own[kProbeOnlyEnv] = "1";
+    auto freeRun = execute([probeBin], own);
+    assert(freeRun.status == 0 && freeRun.output.canFind("module gate slot: 0 own"), format(
+        "with its slot free the module gate did not take it (status %d):\n%s",
+        freeRun.status, freeRun.output));
 }
 
 unittest // a nested runner's private seam stays independent of the parent lock
