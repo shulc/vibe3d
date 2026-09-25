@@ -360,6 +360,18 @@ unittest { // openOperation: Middle clones the haul attributes from the given en
     assert(t.v == 9 && t.rebuilds == 1, "M3 openOperation: a plain press changed the image");
     t.openOperation(PressKind.shift, AttrImage.init);
     assert(t.v == 0 && t.rebuilds == 2, "M3 openOperation: Shift did not reset the haul to defaults");
+    // A no-clone tool's Middle press is a boundary only (Edge Slice, C-H5-es-mmb).
+    static final class NoCloneTool : StepTool {
+        override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+            static immutable ToolSessionPolicy p = { sessionSteps: true, noClone: true,
+                imageAttrs: ["v", "arr"], haulAttrs: ["v"] };
+            return p;
+        }
+    }
+    auto nc = new NoCloneTool;
+    nc.v = 1;
+    nc.openOperation(PressKind.middle, prev);
+    assert(nc.v == 1 && nc.rebuilds == 0, "M3 openOperation: a no-clone tool cloned on Middle");
     // An empty image restores nothing and still rebuilds once.
     t.v = 5;
     t.applyAttrImage(AttrImage.init);
