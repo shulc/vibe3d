@@ -1,0 +1,427 @@
+{
+    "TransformMove x off": {
+        "panel": {},
+        "tool": "",
+        "undo": [
+            {
+                "args": "",
+                "command": "tool.activate",
+                "flags": 1041,
+                "inSession": false,
+                "label": "Activate Tool",
+                "opInverse": false,
+                "refire": false,
+                "runId": 0,
+                "tweakGen": 0,
+                "ui": false
+            },
+            {
+                "args": "indices:<2> before:<2> after:<2>",
+                "command": "mesh.vertex_edit",
+                "flags": 17,
+                "inSession": false,
+                "label": "Transform 2 verts",
+                "opInverse": false,
+                "refire": false,
+                "runId": 0,
+                "tweakGen": 1,
+                "ui": false
+            },
+            {
+                "args": "indices:<2> before:<2> after:<2>",
+                "command": "mesh.vertex_edit",
+                "flags": 17,
+                "inSession": false,
+                "label": "Transform 2 verts",
+                "opInverse": false,
+                "refire": false,
+                "runId": 0,
+                "tweakGen": 1,
+                "ui": false
+            }
+        ],
+        "verts": "8:7A52C781"
+    },
+    "TransformMove x select": {
+        "panel": {
+            "editOpen": false,
+            "pivot": "0.2772,-0.5000,0.0000",
+            "runOpen": false,
+            "sessionOpen": true
+        },
+        "tool": "xfrm",
+        "undo": [
+            {
+                "args": "",
+                "command": "tool.activate",
+                "flags": 1041,
+                "inSession": false,
+                "label": "Activate Tool",
+                "opInverse": false,
+                "refire": false,
+                "runId": 0,
+                "tweakGen": 0,
+                "ui": false
+            },
+            {
+                "args": "indices:<2> before:<2> after:<2>",
+                "command": "mesh.vertex_edit",
+                "flags": 17,
+                "inSession": false,
+                "label": "Transform 2 verts",
+                "opInverse": false,
+                "refire": false,
+                "runId": 0,
+                "tweakGen": 1,
+                "ui": false
+            },
+            {
+                "args": "indices:<2> before:<2> after:<2>",
+                "command": "mesh.vertex_edit",
+                "flags": 17,
+                "inSession": false,
+                "label": "Transform 2 verts",
+                "opInverse": false,
+                "refire": false,
+                "runId": 0,
+                "tweakGen": 1,
+                "ui": false
+            },
+            {
+                "args": "mode:vertices indices:<1>",
+                "command": "mesh.select",
+                "flags": 49,
+                "inSession": false,
+                "label": "Select",
+                "opInverse": false,
+                "refire": false,
+                "runId": 0,
+                "tweakGen": 0,
+                "ui": true
+            }
+        ],
+        "verts": "8:7A52C781"
+    },
+    "TransformMove x subdivide": {
+        "panel": {},
+        "tool": "",
+        "undo": [
+            {
+                "args": "",
+                "command": "tool.activate",
+                "flags": 1041,
+                "inSession": false,
+                "label": "Activate Tool",
+                "opInverse": false,
+                "refire": false,
+                "runId": 0,
+                "tweakGen": 0,
+                "ui": false
+            },
+            {
+                "args": "indices:<2> before:<2> after:<2>",
+                "command": "mesh.vertex_edit",
+                "flags": 17,
+                "inSession": false,
+                "label": "Transform 2 verts",
+                "opInverse": false,
+                "refire": false,
+                "runId": 0,
+                "tweakGen": 1,
+                "ui": false
+            },
+            {
+                "args": "indices:<2> before:<2> after:<2>",
+                "command": "mesh.vertex_edit",
+                "flags": 17,
+                "inSession": false,
+                "label": "Transform 2 verts",
+                "opInverse": false,
+                "refire": false,
+                "runId": 0,
+                "tweakGen": 1,
+                "ui": false
+            },
+            {
+                "args": "",
+                "command": "mesh.subdivide",
+                "flags": 17,
+                "inSession": false,
+                "label": "mesh.subdivide",
+                "opInverse": false,
+                "refire": false,
+                "runId": 0,
+                "tweakGen": 0,
+                "ui": false
+            }
+        ],
+        "verts": "26:07C45796"
+    },
+    "TransformMove x subpatch_toggle": {
+        "panel": {
+            "editOpen": false,
+            "pivot": "0.2772,-0.5000,0.0000",
+            "runOpen": false,
+            "sessionOpen": true
+        },
+        "tool": "xfrm",
+        "undo": [
+            {
+                "args": "",
+                "command": "tool.activate",
+                "flags": 1041,
+                "inSession": false,
+                "label": "Activate Tool",
+                "opInverse": false,
+                "refire": false,
+                "runId": 0,
+                "tweakGen": 0,
+                "ui": false
+            },
+            {
+                "args": "indices:<2> before:<2> after:<2>",
+                "command": "mesh.vertex_edit",
+                "flags": 17,
+                "inSession": false,
+                "label": "Transform 2 verts",
+                "opInverse": false,
+                "refire": false,
+                "runId": 0,
+                "tweakGen": 1,
+                "ui": false
+            },
+            {
+                "args": "indices:<2> before:<2> after:<2>",
+                "command": "mesh.vertex_edit",
+                "flags": 17,
+                "inSession": false,
+                "label": "Transform 2 verts",
+                "opInverse": false,
+                "refire": false,
+                "runId": 0,
+                "tweakGen": 1,
+                "ui": false
+            },
+            {
+                "args": "",
+                "command": "mesh.subpatch_toggle",
+                "flags": 17,
+                "inSession": false,
+                "label": "mesh.subpatch_toggle",
+                "opInverse": false,
+                "refire": false,
+                "runId": 0,
+                "tweakGen": 0,
+                "ui": false
+            }
+        ],
+        "verts": "8:7A52C781"
+    },
+    "edge.extend x off": {
+        "panel": {},
+        "tool": "",
+        "undo": [
+            {
+                "args": "",
+                "command": "mesh.edge_extend_edit",
+                "flags": 17,
+                "inSession": false,
+                "label": "Edge Extend",
+                "opInverse": true,
+                "refire": false,
+                "runId": 0,
+                "tweakGen": 0,
+                "ui": false
+            }
+        ],
+        "verts": "12:70030EC9"
+    },
+    "edge.extend x select": {
+        "panel": {
+            "offsetX": "0.1827",
+            "offsetY": "0.0000",
+            "offsetZ": "0.0000"
+        },
+        "tool": "edgeExtend",
+        "undo": [
+            {
+                "args": "mode:edges indices:<1>",
+                "command": "mesh.select",
+                "flags": 49,
+                "inSession": false,
+                "label": "Select",
+                "opInverse": false,
+                "refire": false,
+                "runId": 0,
+                "tweakGen": 0,
+                "ui": true
+            }
+        ],
+        "verts": "12:70030EC9"
+    },
+    "edge.extend x subdivide": {
+        "panel": {},
+        "tool": "",
+        "undo": [
+            {
+                "args": "",
+                "command": "mesh.edge_extend_edit",
+                "flags": 17,
+                "inSession": false,
+                "label": "Edge Extend",
+                "opInverse": true,
+                "refire": false,
+                "runId": 0,
+                "tweakGen": 0,
+                "ui": false
+            },
+            {
+                "args": "",
+                "command": "mesh.subdivide",
+                "flags": 17,
+                "inSession": false,
+                "label": "mesh.subdivide",
+                "opInverse": false,
+                "refire": false,
+                "runId": 0,
+                "tweakGen": 0,
+                "ui": false
+            }
+        ],
+        "verts": "35:DF6763FB"
+    },
+    "edge.extend x subpatch_toggle": {
+        "panel": {},
+        "tool": "",
+        "undo": [
+            {
+                "args": "",
+                "command": "mesh.edge_extend_edit",
+                "flags": 17,
+                "inSession": false,
+                "label": "Edge Extend",
+                "opInverse": true,
+                "refire": false,
+                "runId": 0,
+                "tweakGen": 0,
+                "ui": false
+            },
+            {
+                "args": "",
+                "command": "mesh.subpatch_toggle",
+                "flags": 17,
+                "inSession": false,
+                "label": "mesh.subpatch_toggle",
+                "opInverse": false,
+                "refire": false,
+                "runId": 0,
+                "tweakGen": 0,
+                "ui": false
+            }
+        ],
+        "verts": "12:70030EC9"
+    },
+    "poly.bevel x off": {
+        "panel": {},
+        "tool": "",
+        "undo": [
+            {
+                "args": "",
+                "command": "mesh.bevel_edit",
+                "flags": 17,
+                "inSession": false,
+                "label": "Poly Bevel",
+                "opInverse": false,
+                "refire": false,
+                "runId": 0,
+                "tweakGen": 0,
+                "ui": false
+            }
+        ],
+        "verts": "12:45A0F156"
+    },
+    "poly.bevel x select": {
+        "panel": {
+            "inset": "0.0000",
+            "shift": "0.1495"
+        },
+        "tool": "polyBevel",
+        "undo": [
+            {
+                "args": "mode:polygons indices:<1>",
+                "command": "mesh.select",
+                "flags": 49,
+                "inSession": false,
+                "label": "Select",
+                "opInverse": false,
+                "refire": false,
+                "runId": 0,
+                "tweakGen": 0,
+                "ui": true
+            }
+        ],
+        "verts": "12:45A0F156"
+    },
+    "poly.bevel x subdivide": {
+        "panel": {},
+        "tool": "",
+        "undo": [
+            {
+                "args": "",
+                "command": "mesh.bevel_edit",
+                "flags": 17,
+                "inSession": false,
+                "label": "Poly Bevel",
+                "opInverse": false,
+                "refire": false,
+                "runId": 0,
+                "tweakGen": 0,
+                "ui": false
+            },
+            {
+                "args": "",
+                "command": "mesh.subdivide",
+                "flags": 17,
+                "inSession": false,
+                "label": "mesh.subdivide",
+                "opInverse": false,
+                "refire": false,
+                "runId": 0,
+                "tweakGen": 0,
+                "ui": false
+            }
+        ],
+        "verts": "17:8EAE886C"
+    },
+    "poly.bevel x subpatch_toggle": {
+        "panel": {},
+        "tool": "",
+        "undo": [
+            {
+                "args": "",
+                "command": "mesh.bevel_edit",
+                "flags": 17,
+                "inSession": false,
+                "label": "Poly Bevel",
+                "opInverse": false,
+                "refire": false,
+                "runId": 0,
+                "tweakGen": 0,
+                "ui": false
+            },
+            {
+                "args": "",
+                "command": "mesh.subpatch_toggle",
+                "flags": 17,
+                "inSession": false,
+                "label": "mesh.subpatch_toggle",
+                "opInverse": false,
+                "refire": false,
+                "runId": 0,
+                "tweakGen": 0,
+                "ui": false
+            }
+        ],
+        "verts": "12:45A0F156"
+    }
+}
