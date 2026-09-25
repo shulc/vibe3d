@@ -314,6 +314,30 @@ unittest { // C-H7-xfrm-falloff-elem / -center-elem (M0e): EITHER element node l
     }
 }
 
+unittest { // gap 384, the other half: a no-tool `none` is not a choice
+    // A mode set to `none` with no tool armed chooses nothing, so it does not
+    // make the next ARMED write durable: that write stays loose and goes with
+    // its tool (L1, 5911). Control first: the same sequence without the
+    // no-tool write.
+    string armLooseSwitch(bool noToolNone) {
+        run("scene.reset");
+        if (noToolNone) run("tool.pipe.attr actionCenter mode none");
+        auto r = postJson("/api/script", "tool.set TransformMove on");
+        assert(r["status"].str == "ok", "arm TransformMove failed: " ~ r.toString);
+        run("tool.pipe.attr actionCenter mode local");
+        assert(pipeAttr("actionCenter", "mode") == "local", "rig: the armed write did not land");
+        r = postJson("/api/script", "tool.set TransformScale on");
+        assert(r["status"].str == "ok", "arm TransformScale failed: " ~ r.toString);
+        return pipeAttr("actionCenter", "mode");
+    }
+    immutable ctl = armLooseSwitch(false);
+    assert(ctl == "none", format("control: an armed loose centre write survived the tool switch as '%s'",
+                                 ctl));
+    immutable got = armLooseSwitch(true);
+    assert(got == "none", format("gap 384: a no-tool `actionCenter mode none` made the next armed "
+                                 ~ "write durable ('%s' after the tool switch)", got));
+}
+
 unittest { // Magnet: no rollover flag in the table — its hovered vertex is not drawn
     immutable size_t noTool = noToolPx("vertex", kV, "vertex");
     assert(noTool > 0, "magnet control: no tool, vertex mode, the hovered vertex draws nothing");
