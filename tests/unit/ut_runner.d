@@ -428,7 +428,6 @@ private UnitTestResult runParallelParent(size_t jobs)
     Pid[] pids;
     string[][] assignedNames;
     string[] logs;
-    auto devnull = File("/dev/null", "r");
     const self = "/proc/self/exe";
     foreach (s, shard; shards)
     {
@@ -449,7 +448,10 @@ private UnitTestResult runParallelParent(size_t jobs)
         env[shardEnvironment] = format("%d:%d:%s", s, pid, dir);
         const log = buildPath(dir, format("shard-%d.log", s));
         logs ~= log;
+        // spawnProcess closes the File objects it is handed, so both are
+        // opened afresh for every worker.
         auto logFile = File(log, "w");
+        auto devnull = File("/dev/null", "r");
         // /proc/self/exe is resolved in the forked child before exec, so every
         // worker runs THIS binary's inode even if a rebuild replaced the path.
         pids ~= spawnProcess([self] ~ Runtime.args[1 .. $], devnull, logFile,
