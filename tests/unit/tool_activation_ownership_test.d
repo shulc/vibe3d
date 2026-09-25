@@ -176,7 +176,8 @@ private immutable SiteCount[] kSites = [
     SiteCount("documentReplaceDisarm",  1, "the tool_disarm seam body"),
     SiteCount("sceneResetDrop",         2, "the shared reset effects plus the raw mesh load"),
     SiteCount("meshRebuildDrop",        1, "the narrow door passed to the mesh registrar"),
-    SiteCount("commandPreApplyDrop",    2, "the command funnel's two pre-apply drop branches"),
+    SiteCount("commandPreApplyDrop",    1, "the command funnel's one pre-apply drop, after the "
+                                          ~ "close (slice M2 folded the two branches)"),
     SiteCount("editCancelDrop",         1, "EditSession's cancel-then-drop"),
     SiteCount("panelDrop",              1, "the shared status action that changes the edit mode"),
     SiteCount("shutdownDrop",           2, "the scope(exit) comment and its door assert — the "
@@ -268,8 +269,8 @@ unittest {
     // through the per-row message rather than through a bare total.
     size_t total;
     foreach (r; kSites) total += r.count;
-    assert(total == 23,
-        format("task 4053: the site ledger now sums to %s, recorded 23 — say in "
+    assert(total == 22,
+        format("task 4053: the site ledger now sums to %s, recorded 22 — say in "
                ~ "the commit which sites arrived or left", total));
 
     // And the total DECOMPOSES, which is what keeps 22 from being a number
@@ -304,9 +305,10 @@ unittest {
         dropCalls += occurrences(text, "dropActiveTool(ToolTransition.");
         armCalls  += occurrences(text, "armPreparedTool(ToolTransition.");
     }
-    assert(dropCalls == 16 && armCalls == 5,
+    // Slice M2 folded the funnel's two pre-apply drop calls into one (16 -> 15).
+    assert(dropCalls == 15 && armCalls == 5,
         format("task 4053: wired call sites moved — %s drops and %s arms, "
-               ~ "recorded 16 and 5. With the 2 shutdownDrop mentions (no call) "
+               ~ "recorded 15 and 5. With the 2 shutdownDrop mentions (no call) "
                ~ "these must sum to the ledger's %s.",
                dropCalls, armCalls, total));
     assert(dropCalls + armCalls + 2 == total,
