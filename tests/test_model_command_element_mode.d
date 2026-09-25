@@ -1,6 +1,10 @@
-// Task 6250 revision 3: mesh.subpatch_toggle follows the live action-centre
-// mode.  These cells deliberately arm the generic Transform preset and then
-// set actr.element, separating the discriminator from preset/tool identity.
+// Task 6250: mesh.subpatch_toggle closes the live transform and re-arms or not.
+// Revision 3 keyed that on the live action-centre mode — an INFERENCE (gap
+// 171). The capture C-rearm-key (slice M3, gap 370) settled it the other way:
+// the PRESET decides (`rearmAfterCommand`), a hand-set Element centre does not
+// stop TransformMove re-arming. So the Element-close cells arm the element-move
+// preset (`xfrm.elementMove`, no re-arm) and the origin controls the generic
+// `Transform` preset (re-arms), each with the same pipe as before.
 
 import core.thread : Thread;
 import core.time : msecs;
@@ -65,9 +69,13 @@ private V3[] modelVertices()
     return result;
 }
 
+/// The id of the preset the last `establish` armed.
+private string gPreset = "xfrm.elementMove";
+
 private V3[] establish(bool elementFalloff = true, bool startSubpatch = false,
-                       bool createMorph = false)
+                       bool createMorph = false, string preset = "xfrm.elementMove")
 {
+    gPreset = preset;
     postJson("/api/command", commandBody("scene.reset"));
     command("tool.pipe.attr snap enabled false");
     command("tool.pipe.attr symmetry enabled false");
@@ -78,9 +86,9 @@ private V3[] establish(bool elementFalloff = true, bool startSubpatch = false,
     if (createMorph) command("mesh.morph.create name:f1 kind:relative");
     command("viewport.view Top");
     postJson("/api/camera", `{"distance":6,"focus":{"x":0,"y":0,"z":0}}`);
-    if (!elementFalloff) command("tool.pipe.attr falloff type none");
-    command("tool.set Transform on");
+    command("tool.set " ~ gPreset ~ " on");
     command("tool.pipe.attr actionCenter mode element");
+    if (!elementFalloff) command("tool.pipe.attr falloff type none");
     if (elementFalloff) {
         command("tool.pipe.attr falloff type element");
         command("tool.pipe.attr falloff mode vertex");
@@ -290,7 +298,7 @@ unittest { // N1 — at-rest handle/T/run state after two complete gestures.
         "6250 N1: Element toggle zeroed T instead of retaining it");
     assert(!afterState["sessionOpen"].boolean,
         "6250 N1: Element toggle re-armed the session unconditionally");
-    command("tool.set Transform off");
+    command("tool.set " ~ gPreset ~ " off");
 }
 
 private struct AtRestGesture {
@@ -308,7 +316,8 @@ private AtRestGesture runAtRestGesture(bool toggle, bool originArm = false,
                                        bool collectRows = false,
                                        bool startSubpatch = false)
 {
-    const original = establish(true, startSubpatch);
+    const original = establish(true, startSubpatch, false,
+                               originArm ? "Transform" : "xfrm.elementMove");
     const initialSubpatch = allSubpatch();
     assert(initialSubpatch == startSubpatch,
         "6250 population: requested initial subpatch state was not established");
@@ -341,7 +350,7 @@ private AtRestGesture runAtRestGesture(bool toggle, bool originArm = false,
         dragArrow(camera, 80);
         result.rows = undoRows()[beforeRows .. $].dup;
     }
-    command("tool.set Transform off");
+    command("tool.set " ~ gPreset ~ " off");
     return result;
 }
 
@@ -410,7 +419,7 @@ unittest { // N1b — a post-toggle gesture settles like the no-toggle control.
 }
 
 unittest { // N1d — a real +1 UiState mesh mutation is not our deferred settle.
-    establish(true, false, true);
+    establish(true, false, true, "Transform");
     command("tool.pipe.attr actionCenter mode origin");
     command("tool.pipe.attr falloff type none");
     assert(selectionEmpty(),
@@ -439,11 +448,11 @@ unittest { // N1d — a real +1 UiState mesh mutation is not our deferred settle
         format("6250 N1d: foreign +1 mesh mutation was swallowed as own settle; "
              ~ "T=%s valid=%s runOpen=%s",
                afterT, after["runFrame"]["valid"], after["runOpen"]));
-    command("tool.set Transform off");
+    command("tool.set " ~ gPreset ~ " off");
 }
 
 unittest { // N1f — after the real settle, the next +1 still is foreign.
-    establish(true, true, true);
+    establish(true, true, true, "Transform");
     command("tool.pipe.attr actionCenter mode origin");
     command("tool.pipe.attr falloff type none");
     assert(allSubpatch() && selectionEmpty(),
@@ -470,7 +479,7 @@ unittest { // N1f — after the real settle, the next +1 still is foreign.
         format("6250 N1f: post-settle foreign +1 mutation was swallowed; "
              ~ "T=%s valid=%s runOpen=%s",
                afterT, after["runFrame"]["valid"], after["runOpen"]));
-    command("tool.set Transform off");
+    command("tool.set " ~ gPreset ~ " off");
 }
 
 unittest { // N1e — reopening after a subpatch-off boundary stamps that mesh.
@@ -524,7 +533,7 @@ unittest { // N2 — no handle is published while the Element session is closed.
                x, y, reopenedState["activeBank"], reopenedState["dragAxis"], reopenedState["dragging"],
                pin, stalePin));
     releaseAt(camera, x, y);
-    command("tool.set Transform off");
+    command("tool.set " ~ gPreset ~ " off");
 }
 
 unittest { // N2c — pipe writes and the test opener cannot clear the latch.
@@ -548,18 +557,18 @@ unittest { // N2c — pipe writes and the test opener cannot clear the latch.
     assert(getJson("/api/tool/state")["sessionOpen"].boolean,
         "6250 N2c: physical press did not clear the closed-session latch");
     releaseAt(camera, x, y);
-    command("tool.set Transform off");
+    command("tool.set " ~ gPreset ~ " off");
 }
 
-unittest { // N2d — OUR branch keys on ACEN Element, not Element falloff.
+unittest { // N2d — the close branch is the preset's, whatever its falloff (C-rearm-key).
     const original = establish(false);
     assert(weightType() != "element",
-        "6250 N2d population: ACEN-only arm unexpectedly enabled Element falloff");
+        "6250 N2d population: the arm kept Element falloff after `falloff type none`");
     const pin = vector(getJson("/api/toolpipe/eval")["actionCenter"]["center"]);
     assert(distance(pin, original[6]) <= 2e-5,
         format("6250 N2d population: ACEN-only selected-element pick was %s", pin));
     command("tool.beginSession");
-    command("tool.attr Transform TX 0.5");
+    command("tool.attr " ~ gPreset ~ " TX 0.5");
     assert(getJson("/api/tool/state")["editOpen"].boolean
         && distance(modelVertices()[6], original[6]) > 0.1,
         "6250 N2d population: ACEN-only pending edit did not open and move");
@@ -569,8 +578,8 @@ unittest { // N2d — OUR branch keys on ACEN Element, not Element falloff.
     const handles = getJson("/api/tool/handles")["handles"];
     assert(!state["sessionOpen"].boolean
         && handles.type == JSONType.object && handles["parts"].array.length == 0,
-        "6250 N2d: ACEN Element without Element falloff missed the close branch");
-    command("tool.set Transform off");
+        "6250 N2d: the no-re-arm preset without Element falloff missed the close branch");
+    command("tool.set " ~ gPreset ~ " off");
 }
 
 unittest { // N3 — frozen pin plus an accepted, inert numeric edit.
@@ -581,7 +590,7 @@ unittest { // N3 — frozen pin plus an accepted, inert numeric edit.
     command("mesh.subpatch_toggle");
     settle();
     const consolidated = modelVertices();
-    script("tool.attr Transform TX 1.0");
+    script("tool.attr " ~ gPreset ~ " TX 1.0");
     settle();
     const state = getJson("/api/tool/state");
     const eval = getJson("/api/toolpipe/eval");
@@ -593,14 +602,14 @@ unittest { // N3 — frozen pin plus an accepted, inert numeric edit.
         "6250 N3 control: numeric write reopened the closed session");
     assert(modelVertices() == consolidated,
         "6250 N3: post-toggle numeric write moved a vertex");
-    command("tool.set Transform off");
+    command("tool.set " ~ gPreset ~ " off");
 }
 
 unittest { // N4 — next press re-picks/re-grades the consolidated mesh.
     const original = establish();
     const camera = fetchCamera();
     initialDrag(camera, original);
-    script("tool.attr Transform TX 0.5");
+    script("tool.attr " ~ gPreset ~ " TX 0.5");
     settle();
     command("mesh.subpatch_toggle");
     settle();
@@ -640,5 +649,5 @@ unittest { // N4 — next press re-picks/re-grades the consolidated mesh.
             format("6250 N4: consolidated-mesh falloff weight v%s got %.6f want %.6f",
                    i, observed[i], expected));
     }
-    command("tool.set Transform off");
+    command("tool.set " ~ gPreset ~ " off");
 }

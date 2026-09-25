@@ -111,8 +111,6 @@ private immutable LedgerRow[] kCommentSites = [
         "read 2026-09-03; true: historical reproduction before the seam"),
     LedgerRow("(module scope).primaryIdentity|onResetTool", 1,
         "read 2026-09-03; true: historical identity-key failure analysis"),
-    LedgerRow("EdgeSliceTool|dropArmedPreview", 2,
-        "read 2026-09-03; true: chain cleanup and the remaining reset path"),
     LedgerRow("LoopSliceTool|onResetTool", 1,
         "read 2026-09-03; true: defensive reset callback after the main seam"),
 ];

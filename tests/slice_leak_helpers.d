@@ -494,7 +494,9 @@ void slUndoLawWitness(string deleteMode, int[] function() deleteSel,
     assert(base.verts == expectVerts && base.faces == expectFaces,
            format("slice floor: the prologue mesh is %s, expected %d verts / %d faces",
                   base.toString, expectVerts, expectFaces));
-    slLine("tool.set mesh.edgeSliceTool on");
+    // The UI door: step 3's law (the first peel ends the tool with its row)
+    // is the key/UI door's; a script arm keeps its own row (slice M3, gap 300).
+    slLineUi("tool.set mesh.edgeSliceTool on");
     assert(slTool() == "edgeSlice", "slice floor: Edge Slice did not activate");
     // Task 7137: the arm writes its activation row on top of the prologue.
     const recordedHistoryLen = slHistoryLen();

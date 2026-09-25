@@ -232,6 +232,7 @@ private enum LedgerRow[] kSurfaceRoster = [
     LedgerRow("EdgeSliceTool.seatFirstPoint|invalidateRedo", 1, "legal non-recorder (moved from latchFirstPoint, task 7137)"),
     LedgerRow("EdgeSliceTool.armChain|invalidateRedo", 1, "legal non-recorder"),
     LedgerRow("EdgeSliceTool.rebuildPreview|invalidateRedo", 1, "legal non-recorder"),
+    LedgerRow("EdgeSliceTool.rebuildPreviewFromAttrs|invalidateRedo", 1, "legal non-recorder (slice M3: the session's replay seats a chain baseline — a standing-preview write-point)"),
     LedgerRow("EdgeSliceTool.topHistoryCommand|undoEntries", 1, "read only: Shift+click apply compares the top entry's identity (task 7114)"),
     LedgerRow("LoopSliceTool.rebuildCut|invalidateRedo", 1, "legal non-recorder"),
 ];
@@ -258,7 +259,8 @@ unittest {
     const problems = reconcile(kSurfaceRoster, ledgerHits);
     assert(problems.length == 0,
         "G5 census: the family's history call surface changed.\n" ~ problems);
-    assert(totalHits == 9,
+    // Measured 10 since slice M3 (+ EdgeSliceTool.rebuildPreviewFromAttrs).
+    assert(totalHits == 10,
         "G5 census: history-surface population changed");
 }
 
