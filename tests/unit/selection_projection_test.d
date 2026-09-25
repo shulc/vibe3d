@@ -1,5 +1,7 @@
 module tests.unit.selection_projection_test;
 
+import tests.unit.http_test_client : receiveUntilClosed;
+
 import core.atomic : atomicLoad, atomicOp, atomicStore;
 import core.memory : GC;
 import core.thread : Thread;
@@ -59,12 +61,7 @@ private Thread startHttpGet(ushort port, AsyncHttpReply reply) {
                              7.seconds);
             socket.send("GET /api/selection HTTP/1.1\r\n"
                       ~ "Host: 127.0.0.1\r\nConnection: close\r\n\r\n");
-            ubyte[4096] buf;
-            for (;;) {
-                auto n = socket.receive(buf[]);
-                if (n <= 0) break;
-                reply.wire ~= cast(string) buf[0 .. n].idup;
-            }
+            receiveUntilClosed(socket, reply.wire);
         } catch (Exception e) {
             reply.failure = e.msg;
         }

@@ -1,5 +1,7 @@
 module tests.unit.model_handles_owned_transport_test;
 
+import tests.unit.http_test_client : receiveUntilClosed;
+
 import core.atomic : atomicLoad, atomicOp, atomicStore;
 import core.thread : Thread;
 import core.time : Duration, MonoTime, msecs, seconds;
@@ -49,12 +51,7 @@ private Thread startHttpGet(ushort port, string path, AsyncHttpReply reply) {
                              10.seconds);
             socket.send("GET " ~ path ~ " HTTP/1.1\r\n"
                       ~ "Host: 127.0.0.1\r\nConnection: close\r\n\r\n");
-            ubyte[4096] buf;
-            for (;;) {
-                auto n = socket.receive(buf[]);
-                if (n <= 0) break;
-                reply.wire ~= cast(string) buf[0 .. n].idup;
-            }
+            receiveUntilClosed(socket, reply.wire);
         } catch (Exception e) {
             reply.failure = e.msg;
         }

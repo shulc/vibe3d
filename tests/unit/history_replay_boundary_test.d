@@ -1,5 +1,7 @@
 module tests.unit.history_replay_boundary_test;
 
+import tests.unit.http_test_client : receiveUntilClosed;
+
 import ai.exploration : AiExplorationController;
 import ai.state : EditorAiState;
 import application_command_binding : ApplicationCommandBinding;
@@ -275,12 +277,7 @@ private Thread startRequest(ushort port, string method, string path,
                          ~ "Content-Length: " ~ body.length.to!string
                          ~ "\r\n\r\n" ~ body;
             socket.send(request);
-            ubyte[8192] buf;
-            for (;;) {
-                auto n = socket.receive(buf[]);
-                if (n <= 0) break;
-                reply.wire ~= cast(string) buf[0 .. n].idup;
-            }
+            receiveUntilClosed(socket, reply.wire);
         } catch (Exception e) {
             reply.failure = e.msg;
         }

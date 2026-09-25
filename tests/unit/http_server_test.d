@@ -1,5 +1,7 @@
 module tests.unit.http_server_test;
 
+import tests.unit.http_test_client : receiveUntilClosed;
+
 import core.atomic : atomicLoad, atomicStore;
 import core.thread : Thread;
 import core.time : Duration, MonoTime, msecs, seconds;
@@ -71,12 +73,7 @@ private Thread requestSocket(ushort port, string method, string path,
                       ~ "Host: 127.0.0.1\r\nContent-Length: "
                       ~ to!string(body_.length) ~ "\r\n"
                       ~ "Connection: close\r\n\r\n" ~ body_);
-            ubyte[4096] buffer;
-            for (;;) {
-                auto n = socket.receive(buffer[]);
-                if (n <= 0) break;
-                reply.wire ~= cast(string) buffer[0 .. n].idup;
-            }
+            receiveUntilClosed(socket, reply.wire);
         } catch (Exception error) {
             reply.failure = error.msg;
         }
@@ -283,12 +280,7 @@ unittest {
     client.setOption(SocketOptionLevel.SOCKET, SocketOption.RCVTIMEO, 10.seconds);
 
     string reply;
-    ubyte[2048] buf;
-    for (;;) {
-        auto n = client.receive(buf[]);
-        if (n <= 0) break;
-        reply ~= cast(string) buf[0 .. n].idup;
-    }
+    receiveUntilClosed(client, reply);
 
     assert(reply.canFind("HTTP/1.1 200 OK"),
         "0652: a silent peer must not stop a well-behaved peer being ANSWERED"

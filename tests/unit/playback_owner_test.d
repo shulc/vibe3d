@@ -1,5 +1,7 @@
 module tests.unit.playback_owner_test;
 
+import tests.unit.http_test_client : receiveUntilClosed;
+
 import bindbc.sdl : KMOD_NONE, SDL_Event, SDL_Keymod, SDL_KEYDOWN,
     SDL_MOUSEBUTTONDOWN, SDL_MOUSEBUTTONUP, SDL_MOUSEMOTION;
 import core.atomic : atomicLoad, atomicOp, atomicStore;
@@ -58,12 +60,7 @@ private void performRequest(ushort port, string method, string path,
                      ~ requestBody.length.to!string ~ "\r\n\r\n"
                      ~ requestBody;
         socket.send(request);
-        ubyte[8192] buf;
-        for (;;) {
-            auto n = socket.receive(buf[]);
-            if (n <= 0) break;
-            reply.wire ~= cast(string) buf[0 .. n].idup;
-        }
+        receiveUntilClosed(socket, reply.wire);
     } catch (Exception e) {
         reply.failure = e.msg;
     }

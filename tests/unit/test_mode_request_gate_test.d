@@ -4,6 +4,8 @@
 // stop this module at the first failed assert.
 module tests.unit.test_mode_request_gate_test;
 
+import tests.unit.http_test_client : receiveUntilClosed;
+
 import core.atomic : atomicLoad, atomicStore;
 import core.thread : Thread;
 import core.time : Duration, MonoTime, msecs, seconds;
@@ -83,12 +85,7 @@ private Thread requestSocket(ushort port, string method, string path,
                       ~ "Host: 127.0.0.1\r\nContent-Length: "
                       ~ to!string(body_.length) ~ "\r\n"
                       ~ "Connection: close\r\n\r\n" ~ body_);
-            ubyte[4096] buffer;
-            for (;;) {
-                immutable n = socket.receive(buffer[]);
-                if (n <= 0) break;
-                reply.wire ~= cast(string) buffer[0 .. n].idup;
-            }
+            receiveUntilClosed(socket, reply.wire);
         } catch (Exception error) {
             reply.failure = error.msg;
         }

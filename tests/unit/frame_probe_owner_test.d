@@ -1,5 +1,7 @@
 module tests.unit.frame_probe_owner_test;
 
+import tests.unit.http_test_client : receiveUntilClosed;
+
 import core.atomic : atomicLoad, atomicStore;
 import core.thread : Thread;
 import core.time : Duration, MonoTime, msecs, seconds;
@@ -57,12 +59,7 @@ private Thread request(ushort port, string method, string path, Reply reply) {
             socket.send(method ~ " " ~ path ~ " HTTP/1.1\r\n"
                       ~ "Host: 127.0.0.1\r\nContent-Length: 0\r\n"
                       ~ "Connection: close\r\n\r\n");
-            ubyte[4096] buffer;
-            for (;;) {
-                auto n = socket.receive(buffer[]);
-                if (n <= 0) break;
-                reply.wire ~= cast(string)buffer[0 .. n].idup;
-            }
+            receiveUntilClosed(socket, reply.wire);
         } catch (Exception error) {
             reply.failure = error.msg;
         }

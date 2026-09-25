@@ -284,6 +284,7 @@ tests.unit.history_replay_boundary_test
 tests.unit.hover_stale_writer_census_test
 tests.unit.http_endpoint_census_test
 tests.unit.http_server_test
+tests.unit.http_test_client
 tests.unit.idle_handle_pose_census_test
 tests.unit.image_cache_test
 tests.unit.image_plane_test

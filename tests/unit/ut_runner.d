@@ -4,9 +4,8 @@
 // and exact population floor keep a missing registration from becoming a
 // quiet successful run.
 //
-// PARALLEL (task 7900): with VIBE3D_UT_JOBS=N > 1 (default min(8, CPUs);
-// serial in the PerfProbe build, see requestedJobs) this process becomes a
-// PARENT that runs no module itself. It packs the roster onto N worker
+// PARALLEL (task 7900): with VIBE3D_UT_JOBS=N > 1 (default min(8, CPUs))
+// this process becomes a PARENT that runs no module itself. It packs the roster onto N worker
 // processes of this same binary (tests/unit/ut_shard_plan.d), each running
 // its disjoint shard serially and writing one result file, and merges them.
 // A module counts as passed only when its shard reported it and then closed
@@ -173,18 +172,7 @@ private size_t requestedJobs()
     const raw = environment.get(jobsEnvironment, "");
     // Workers borrow the parent's run slot through /proc (runslots.d) and
     // re-exec /proc/self/exe, so the parallel gate is Linux-only.
-    version (PerfProbe)
-    {
-        // The PerfProbe build defaults to SERIAL, on a measurement: in a
-        // worker running the port group, history_replay_boundary_test's null
-        // UI callback cell loses its CmdReq for the full 120 s budget in 4 of
-        // 5 runs, and passes with --DRT-gcopt=disable:1; serially it passed
-        // 3 of 3. A GC-timing defect in that path, not in this runner; until
-        // it is fixed a parallel perf-unit gate is opt-in (VIBE3D_UT_JOBS=8).
-        // Card: doc/tasks/work/parallel-module-gate.md.
-        enum size_t fallback = 1;
-    }
-    else version (linux)
+    version (linux)
     {
         import std.parallelism : totalCPUs;
         const fallback = totalCPUs < defaultJobs ? totalCPUs : defaultJobs;
