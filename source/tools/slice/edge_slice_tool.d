@@ -394,7 +394,6 @@ public:
     // A recording command through the UI door closes its live operation first
     // and the tool stays (slice M2; captured C1-h-sel-fam, K-commit).
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
-        import tool_activation_ownership : CommandClose;
         static immutable ToolSessionPolicy policy = {
             activationRow: true, commandClose: CommandClose.uiDoor };
         return policy;

@@ -17,7 +17,6 @@ import tool_input : ToolAction, PassThrough, InputPhase, InputButton, InputMod,
 import prepared_tool_effect : OwnedId, PreparedParamDelta, PreparedParamKind;
 import display_state : DrawPlan;
 import core.atomic : atomicOp;
-import tool_activation_ownership : CommandClose;
 
 private shared ulong nextPreparedToolOwnerId_;
 private struct ToolPreparedParamHandle {
@@ -173,6 +172,12 @@ private enum string gestureCarrierRefusal(F) =
 // RefireClient, KeepAliveOnCancel, SessionStepUndo), discovered by cast on the
 // active tool — or DATA the tool declares in its ToolSessionPolicy below.
 // ---------------------------------------------------------------------------
+
+/// A tool's policy for a recording command met while it is armed (the
+/// `commandClose` field below; slice M2): `none` keeps the command funnel's
+/// old drop rules, `uiDoor` closes the live operation first when the command
+/// came through the UI, `allDoors` does so on either door.
+enum CommandClose : ubyte { none, uiDoor, allDoors }
 
 /// What a tool's session does, as DATA rather than as a marker interface (tool
 /// session model, slice M1; doc/tool_session_model_plan_2026-09-24.md R3.1).

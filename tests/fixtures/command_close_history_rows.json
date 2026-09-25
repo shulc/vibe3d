@@ -1,4 +1,14 @@
 {
+    "provenance": {
+        "schema": 1,
+        "source": "simulated",
+        "reference": "vibe3d-selfgen",
+        "method": "self-drive",
+        "captured_utc": "2026-09-25T08:13:00Z",
+        "harness": "tests/test_command_close_history_rows.d with VIBE3D_RECORD_GOLDEN=1, driven over /api/play-events and /api/command against vibe3d's own running instance at main daefbc0f (the M1 tip) -- no reference editor involved",
+        "task": "M2",
+        "notes": "A regression golden of OUR history rows around a command meeting a live tool edit, recorded on the parent of slice M2 before its code change; the cells are compared canonicalised (see the test header)."
+    },
     "TransformMove x off": {
         "panel": {},
         "tool": "",

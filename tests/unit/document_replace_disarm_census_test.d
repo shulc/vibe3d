@@ -86,8 +86,9 @@ private immutable LedgerRow[] kCodeSites = [
         "command registration, not tool-drop policy"),
     LedgerRow("LayerAttr|" ~ kLayerAttrLiteral, 1,
         "the command name definition, not tool-drop policy"),
-    LedgerRow("dropsActiveToolBeforeApply|" ~ kLayerAttrLiteral, 1,
-        "the one authoritative pre-apply exclusion"),
+    LedgerRow("sparesToolSession|" ~ kLayerAttrLiteral, 1,
+        "the one authoritative pre-apply exclusion, read by the drop rule and the UI-door "
+        ~ "close rule alike (slice M2)"),
     LedgerRow("dropsActiveToolBeforeApply|commitsActiveToolEditBeforeApply", 1,
         "the pre-apply commit set is excluded from the drop set by construction"),
 ];

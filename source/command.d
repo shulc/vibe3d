@@ -139,33 +139,34 @@ bool commitsActiveToolEditBeforeApply(const Command cmd) {
 /// registry startup evaluates this policy on cold command instances.
 bool dropsActiveToolBeforeApply(const Command cmd) {
     if (commitsActiveToolEditBeforeApply(cmd)) return false;
-    import std.string : startsWith;
     if (!(cmd.cmdFlags() & CmdFlags.Model)) return false;
-    const cn = cmd.name();
-    return !cn.startsWith("tool.")
-        && !cn.startsWith("scene.")
-        && !cn.startsWith("file.")
-        && cn != "layer.attr";
+    return !sparesToolSession(cmd.name());
+}
+
+/// The command families the funnel never ends a tool session for — the ONE
+/// exclusion both pre-apply rules read (the drop above, the UI close below):
+/// the tool's own commands (`tool.*` continue the session), the document
+/// lifecycle (`scene.*` / `file.*` own their disarm policy) and `layer.attr`
+/// (the Layers panel's transform rows continue a transform run).
+bool sparesToolSession(string cn) {
+    import std.string : startsWith;
+    return cn.startsWith("tool.")
+        || cn.startsWith("scene.")
+        || cn.startsWith("file.")
+        || cn == "layer.attr";
 }
 
 /// Whether `cmd`, reaching the funnel through the UI door, closes a live tool
 /// operation first (slice M2 of the tool session model; the captured
 /// C1-h-sel family law, doc/editor_bugfix_wave_plan_2026-09-23.md §S2b R20):
 /// any command that records an undo entry, whatever its class — a selection
-/// command and a model command close the same way (P-uniform) — except the
-/// tool's own commands (`tool.*` continue the session), history navigation,
-/// the document lifecycle (`scene.*` / `file.*` have their own disarm policy)
-/// and `layer.attr` (the Layers panel's transform rows continue a
-/// transform run, the same carve-out as `dropsActiveToolBeforeApply`).
+/// command and a model command close the same way (P-uniform) — except
+/// history navigation and the families `sparesToolSession` names.
 bool endsLiveEditBeforeUiCommand(const Command cmd) {
     import std.string : startsWith;
     if (!cmd.isUndoable()) return false;
     const cn = cmd.name();
-    return !cn.startsWith("tool.")
-        && !cn.startsWith("history.")
-        && !cn.startsWith("scene.")
-        && !cn.startsWith("file.")
-        && cn != "layer.attr";
+    return !cn.startsWith("history.") && !sparesToolSession(cn);
 }
 
 // Result of comparing a freshly-applied command against the command that

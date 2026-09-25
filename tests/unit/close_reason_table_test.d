@@ -23,7 +23,7 @@ import command_executor : CommandExecutor;
 import command_history : CommandHistory, RecordMode;
 import edit_session : EditSession;
 import editmode : EditMode;
-import tool : Tool, ToolSessionPolicy;
+import tool : CommandClose, Tool, ToolSessionPolicy;
 import tool_activation_ownership;
 import view : View;
 
@@ -331,6 +331,21 @@ unittest {
     assert(ex.applyOrRefire(new StubCommand("mesh.subpatch_toggle", CmdFlags.Model), RecordMode.Record, null));
     assert(xf.commitCalls == 1 && drops == 0 && held is xf,
            "M2 funnel: the 6250 command no longer closes an `allDoors` tool on the script door");
+
+    // The 6250 command reached RE-ENTRANTLY (inside another command's apply)
+    // neither closes nor drops: the re-entry suppresses the close branch, and
+    // the command is not in the drop set.
+    log = null;
+    drops = 0;
+    auto re = new CountingTool(CommandClose.none, true, &log);
+    held = re;
+    auto host = new StubCommand("mesh.hide", CmdFlags.UiState, () {
+        return ex.applyOrRefire(new StubCommand("mesh.subpatch_toggle", CmdFlags.Model),
+                                RecordMode.Record, null);
+    });
+    assert(ex.applyOrRefire(host, RecordMode.Record, null));
+    assert(held is re && drops == 0 && re.commitCalls == 0,
+           format("M2 funnel: a re-entrant 6250 command dropped or closed the tool: drops %s", drops));
 
     // A nested command inside the outer command's apply: the nested frame
     // must not run the outer close's resume before the outer command records.

@@ -115,8 +115,7 @@ import params : Param;
 import tools.transform.transform : TransformTool, VertexEditFactory,
     MorphEditFactory, PreparedTransformActivationImage,
     PreparedTransformEditCloseImage;
-import tool            : ToolFlag, ToolSessionPolicy;
-import tool_activation_ownership : CommandClose;
+import tool            : ToolFlag, ToolSessionPolicy, CommandClose;
 import edit_session    : LiveEvalClient, ParameterChangeBatch,
                          ParameterChangeSource, SlotActivationClient;
 import tools.transform.move      : MoveTool;

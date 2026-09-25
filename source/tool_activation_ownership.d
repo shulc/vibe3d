@@ -157,12 +157,6 @@ enum CloseReason : ubyte { none, command, drop, switch_, discard, undoFirstGroup
 /// the UI (keys, buttons, panels, `?origin=ui`).
 enum CommandDoor : ubyte { script, ui }
 
-/// A tool's policy for a recording command met while it is armed (the
-/// `commandClose` field of `ToolSessionPolicy`): `none` keeps the command
-/// funnel's old drop rules, `uiDoor` closes the live operation first when the
-/// command came through the UI, `allDoors` does so on either door.
-enum CommandClose : ubyte { none, uiDoor, allDoors }
-
 /// What `EditSession.closeOperation` did: whether it committed a live
 /// operation, and whether the tool stays armed across the command.
 struct CloseOutcome { bool closed; bool staysArmed; }

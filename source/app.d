@@ -3816,9 +3816,10 @@ void main(string[] args) {
         if (factory is null)
             throw new Exception("unknown tool '" ~ id ~ "'");
         // Slice M2: the retained predecessor's close is accounted before the
-        // transaction's door deactivates it, and finished after the arm.
+        // transaction's door deactivates it, and finished after the arm (or
+        // after a refused one, so no account outlives this call).
         if (session !is null) session.closeOperation(closeReasonFor(why));
-        scope(exit) if (session !is null) session.finishClose();
+        scope(failure) if (session !is null) session.finishClose();
 
         import prepared_tool_transition : prepareArm, commitPreparedArm;
         import registry : PreparedPipeAttrs;
@@ -3870,6 +3871,7 @@ void main(string[] args) {
         preToolTickStall.arm();
         if (!commitPreparedArm(activeTool, activeToolId, prepared))
             throw new Exception("prepared tool arm was already consumed");
+        if (session !is null) session.finishClose();
     }
     toolHost.activatePrepared = (string id, ref JSONValue namedArgs) {
         armPreparedTool(ToolTransition.commandArm, id, namedArgs);

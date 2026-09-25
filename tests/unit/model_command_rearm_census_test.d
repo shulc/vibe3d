@@ -18,7 +18,7 @@ import std.file : dirEntries, readText, SpanMode;
 import std.json : parseJSON;
 import std.path : buildPath, dirName;
 import std.regex : matchAll, regex;
-import std.string : indexOf;
+import std.string : indexOf, lastIndexOf;
 import tool_activation_ownership : CloseOutcome, CommandDoor, ToolTransition;
 import view : View;
 import tests.unit.census_symbols : blankNonCode;
@@ -236,8 +236,12 @@ unittest { // The production wiring names the close and its finish, once each.
         "M2 wiring census: dropActiveTool must account the close, then run the door, then finish it");
     const arm = bodyAt(app, "void armPreparedTool(ToolTransition why, string id, ref JSONValue namedArgs,");
     const aClose = arm.indexOf("closeOperation(closeReasonFor(why))");
-    const aFinish = arm.indexOf("scope(exit) if (session !is null) session.finishClose()");
     const aPrepare = arm.indexOf("prepareArm(factory");
-    assert(aClose >= 0 && aFinish > aClose && aPrepare > aFinish,
-        "M2 wiring census: armPreparedTool must account the predecessor's close before its door");
+    const aCommit = arm.indexOf("commitPreparedArm(activeTool, activeToolId, prepared)");
+    const aFinish = arm.lastIndexOf("session.finishClose();");
+    assert(aClose >= 0 && aPrepare > aClose && aCommit > aPrepare && aFinish > aCommit,
+        "M2 wiring census: armPreparedTool must account the predecessor's close before its "
+        ~ "door and finish it after the arm");
+    assert(arm.count("scope(failure) if (session !is null) session.finishClose();") == 1,
+        "M2 wiring census: a refused arm no longer finishes the close account");
 }

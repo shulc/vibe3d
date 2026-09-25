@@ -255,6 +255,11 @@ unittest {
     assert(cells == 12, format("golden rows: cell population changed: %d, expected 12", cells));
 
     if (environment.get("VIBE3D_RECORD_GOLDEN", "") == "1") {
+        // The provenance block is carried over from the file being replaced.
+        if (exists(fixturePath())) {
+            auto old = parseJSON(readText(fixturePath()));
+            if (auto p = "provenance" in old.object) got["provenance"] = *p;
+        }
         write(fixturePath(), got.toPrettyString ~ "\n");
         assert(false, "golden rows: RECORDED " ~ fixturePath() ~ " (" ~ cells.to!string
                ~ " cells), not verified — unset VIBE3D_RECORD_GOLDEN and run again");
@@ -263,6 +268,8 @@ unittest {
            "golden rows: fixture " ~ fixturePath() ~ " is missing; it is recorded on the slice's "
            ~ "parent with VIBE3D_RECORD_GOLDEN=1, never created by a verifying run");
     auto want = parseJSON(readText(fixturePath()));
+    assert("provenance" in want.object, "golden rows: the fixture lost its provenance block");
+    want.object.remove("provenance");
     assert(want.object.length == 12,
            format("golden rows: the fixture holds %d cells, expected 12", want.object.length));
     string[] red;

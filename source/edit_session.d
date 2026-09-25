@@ -31,7 +31,7 @@ module edit_session;
 // locks are needed here.
 // ---------------------------------------------------------------------------
 
-import tool            : Tool;
+import tool            : Tool, CommandClose;
 import command         : Command, ToolRunRecord;
 import std.json        : JSONValue;
 import command_history : CommandHistory;
@@ -39,8 +39,7 @@ import held_gesture_buttons : g_heldGestureButtons;
 import std.typecons    : Rebindable;
 import params          : ParamProvider;
 import toolpipe.stage  : Stage;
-import tool_activation_ownership : CloseReason, CommandClose, CommandDoor,
-                                   CloseOutcome;
+import tool_activation_ownership : CloseReason, CommandDoor, CloseOutcome;
 
 // Computed classification of the session protocol's current phase. There is
 // deliberately NO stored state machine mirroring this: the truth about an
@@ -836,10 +835,12 @@ private struct ToolSession {
 
     // The one close routine (EditSession.closeOperation's body; plan R4.2).
     CloseOutcome close(CloseReason r, CommandDoor door) {
+        // A new close starts a new account, whatever an unfinished one left.
+        pendingMark_ = false;
+        closedRow_ = null;
         auto t = tool_();
         if (t is null) return CloseOutcome(false, false);
         topBefore_ = undoTop_();
-        closedRow_ = null;
         if (r != CloseReason.command) {
             // The door commits (or discards, or has nothing left); the
             // session only accounts for the row it may write.

@@ -157,16 +157,18 @@ public:
         // close), run from the non-reentrant frame only.
         if (activeTool()) {
             const bool commits = commitsActiveToolEditBeforeApply(cmd);
-            if (!reentrant && (commits
-                    || (uiOrigin_ && endsLiveEditBeforeUiCommand(cmd)))) {
+            const bool drops = dropsActiveToolBeforeApply(cmd);
+            const bool closes = !reentrant
+                && (commits || (uiOrigin_ && endsLiveEditBeforeUiCommand(cmd)));
+            bool kept = false;
+            if (closes) {
                 const o = closeForCommand !is null
                     ? closeForCommand(uiOrigin_ ? CommandDoor.ui : CommandDoor.script)
                     : CloseOutcome.init;
-                if (!o.staysArmed && (commits || dropsActiveToolBeforeApply(cmd)))
-                    dropActiveTool(ToolTransition.commandPreApplyDrop);
-            } else if (dropsActiveToolBeforeApply(cmd)) {
-                dropActiveTool(ToolTransition.commandPreApplyDrop);
+                kept = o.staysArmed;
             }
+            if (!kept && (drops || (closes && commits)))
+                dropActiveTool(ToolTransition.commandPreApplyDrop);
         }
         scope(exit) if (!reentrant && finishClose !is null) finishClose();
         if (cmd.apply()) {

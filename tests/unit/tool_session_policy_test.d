@@ -33,8 +33,7 @@ import edit_tool_registration;
 import transform_tool_registration;
 
 import prepared_tool_transition : toolArmEmitsLifecycle;
-import tool         : Tool, ToolSessionPolicy;
-import tool_activation_ownership : CommandClose;
+import tool         : CommandClose, Tool, ToolSessionPolicy;
 import tool_presets : loadToolPresets;
 import tests.unit.census_symbols : blankNonCode;
 
