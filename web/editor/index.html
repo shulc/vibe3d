@@ -4,6 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Vibe3D Web Editor</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="alternate icon" href="favicon.ico">
   <style>
     html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #202124; }
     #canvas { display: block; width: 100vw; height: 100vh; outline: none; }
@@ -21,6 +23,12 @@
   <script>
     const canvas = document.getElementById('canvas');
     const status = document.getElementById('status');
+    window.__vibeDocumentDirty = false;
+    window.addEventListener('beforeunload', event => {
+      if (!window.__vibeDocumentDirty) return;
+      event.preventDefault();
+      event.returnValue = '';
+    });
     const query = new URLSearchParams(location.search);
     const probe = query.get('probe');
     const args = ['--no-http'];

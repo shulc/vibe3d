@@ -5,6 +5,10 @@
 // exports. Save: the MEMFS file D just wrote is handed to the browser as a
 // Blob download. The page never touches FS or the heap.
 mergeInto(LibraryManager.library, {
+  vibe3d_web_set_dirty: function(dirty) {
+    if (typeof window !== 'undefined') window.__vibeDocumentDirty = dirty !== 0;
+  },
+
   // The browser opens its own dialogs for these; the editor owns them.
   // A capture listener on window sees the key before the canvas does, and
   // preventDefault leaves the user activation the chooser needs intact

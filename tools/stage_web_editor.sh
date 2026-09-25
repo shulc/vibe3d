@@ -17,6 +17,8 @@ done
 
 cmake -E make_directory "$editor_root"
 cmake -E copy "$repo_root/web/editor/index.html" "$editor_root/index.html"
+cmake -E copy "$repo_root/assets/icon/vibe3d.svg" "$editor_root/favicon.svg"
+cmake -E copy "$repo_root/assets/icon/vibe3d.ico" "$editor_root/favicon.ico"
 cmake -E copy "$artifact_root/vibe3d.js" "$editor_root/vibe3d.js"
 cmake -E copy "$artifact_root/vibe3d.wasm" "$editor_root/vibe3d.wasm"
 cmake -E copy "$artifact_root/vibe3d.data" "$editor_root/vibe3d.data"

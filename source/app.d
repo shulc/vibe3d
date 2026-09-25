@@ -10,6 +10,7 @@ import std.json : JSONValue, JSONType;
 
 version (web) {
     import web_gl_loader : loadWebOpenGL;
+    private extern(C) void vibe3d_web_set_dirty(int) nothrow @nogc;
 
     private alias EmscriptenMainLoopArg = extern(C) void function(void*);
     version (Emscripten) {
@@ -3285,6 +3286,7 @@ void main(string[] args) {
     // application-owned by GuardedActionController (task 5640).
     string lastWindowTitle;
     version (web) string webLastDocState;   // last WEB-DOC-STATE printed
+    version (web) bool webLastDirty;         // last browser unload-guard state
     version (web) string webLastWorkDirs;   // last WEB-WORK-DIRS printed
     version (web) string webLastPickQueue;  // last WEB-PICK-QUEUE printed
     version (web) {
@@ -6297,7 +6299,12 @@ void main(string[] args) {
             // when no native document is open. Only touch SDL on change.
             const p     = currentDocPath();
             const fname = p.length ? baseName(p) : "untitled";
-            string title = (docDirty() ? "*" : "") ~ fname ~ " - Vibe3d";
+            const dirty = docDirty();
+            version (web) if (dirty != webLastDirty) {
+                vibe3d_web_set_dirty(dirty ? 1 : 0);
+                webLastDirty = dirty;
+            }
+            string title = (dirty ? "*" : "") ~ fname ~ " - Vibe3d";
             // Task 1500 phase 4 — the second half of the indicator. The
             // viewport overlay (below, with the RMB trail) is the one the
             // user looks at; the title is what survives the window being

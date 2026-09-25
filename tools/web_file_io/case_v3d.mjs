@@ -44,12 +44,26 @@ const openChooser = async () => {
 };
 const lastState = () => [...b.lines].reverse().find(l => l.startsWith('WEB-DOC-STATE '));
 const undoOf = line => Number(/ undo=(\d+) /.exec(line)[1]);
+const unloadGuard = async () => {
+  const { result, exceptionDetails } = await b.send('Runtime.evaluate', {
+    expression: `(() => {
+      const event = new Event('beforeunload', { cancelable: true });
+      window.dispatchEvent(event);
+      return { dirty: window.__vibeDocumentDirty, blocked: event.defaultPrevented };
+    })()`,
+    returnByValue: true
+  });
+  if (exceptionDetails) throw new Error(`beforeunload probe threw: ${JSON.stringify(exceptionDetails)}`);
+  return result.value;
+};
 
 try {
   await b.waitFor(/WEB-FIRST-FRAME-COMPLETE/, 90000);
 
   // C0 start: the default cube, clean. Floor and negative control for C1.
   const c0 = (await b.waitFor(/^WEB-DOC-STATE layers=1 verts=8 faces=6 images=0 docPath= dirty=0 /, DEADLINE)).line;
+  if (JSON.stringify(await unloadGuard()) !== '{"dirty":false,"blocked":false}')
+    fail('C0', 'clean document must allow tab close');
   const u0 = undoOf(c0);
   ok('C0', c0);
 
@@ -90,10 +104,14 @@ try {
   await f9();
   await b.waitFor(/^WEB-PROBE-DISPATCH id=mesh\.subdivide/, DEADLINE, mark);
   const dirty = await b.waitFor(/^WEB-DOC-STATE .* dirty=1 /, DEADLINE, mark);
+  if (JSON.stringify(await unloadGuard()) !== '{"dirty":true,"blocked":true}')
+    fail('C4b', 'dirty document must prevent tab close');
   known = new Set(b.downloads.keys());
   await ctrlS();
   const d4b = await b.waitDownload(known, DEADLINE);
   const clean = (await b.waitFor(/^WEB-DOC-STATE .* dirty=0 /, DEADLINE, dirty.index + 1)).line;
+  if (JSON.stringify(await unloadGuard()) !== '{"dirty":false,"blocked":false}')
+    fail('C4b', 'successful save must allow tab close');
   ok('C4b', `download=${d4b.name} then ${clean}`);
 
   // C7 cancel is silent: no notice, no document change. The browser's own

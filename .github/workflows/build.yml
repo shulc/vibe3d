@@ -1,8 +1,14 @@
 name: Build
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
+      web_only:
+        description: 'Build and publish only the web editor to GitHub Pages'
+        type: boolean
+        default: false
       tag:
         description: 'Release tag (e.g. v1.0.0)'
         required: true
@@ -31,6 +37,7 @@ jobs:
   # commits in the last 24h. A manual dispatch keeps its tag / with_render inputs
   # (so with-render can still be exercised on demand).
   check:
+    if: ${{ github.event_name != 'push' && inputs.web_only != true }}
     runs-on: [self-hosted, Linux, ci-vm]
     outputs:
       should_run:  ${{ steps.decide.outputs.should_run }}
@@ -742,3 +749,63 @@ jobs:
               --generate-notes \
               "${ASSETS[@]}"
           fi
+
+  # The web editor is published on each main push. A manual web_only dispatch
+  # can rebuild the current main without starting the desktop release matrix.
+  web-build:
+    if: ${{ github.event_name == 'push' || inputs.web_only == true }}
+    runs-on: [self-hosted, Linux, ci-vm]
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use pinned toolchains on ubuntu-runner
+        run: |
+          ldc_root="$HOME/.local/dlang/ldc2-1.43.0-linux-x86_64"
+          emsdk_root="$HOME/emsdk"
+          test -x "$ldc_root/bin/ldc2"
+          test -x "$ldc_root/bin/ldc-build-runtime"
+          test -f "$emsdk_root/emsdk_env.sh"
+          echo "VIBE3D_LDC_ROOT=$ldc_root" >> "$GITHUB_ENV"
+          echo "VIBE3D_LDC=$ldc_root/bin/ldc2" >> "$GITHUB_ENV"
+          echo "EMSDK=$emsdk_root" >> "$GITHUB_ENV"
+          "$ldc_root/bin/ldc2" --version | head -1
+          source "$emsdk_root/emsdk_env.sh" >/dev/null
+          emcc --version | head -1
+
+      - uses: actions/cache@v4
+        with:
+          path: .build/web-runtime
+          key: web-runtime-linux-ldc-1.43.0-em-6.0.9-${{ hashFiles('tools/web_runtime_fingerprint.py') }}
+
+      - name: Build and stage web editor
+        env:
+          VIBE3D_WEB_OPTIMIZED: '1'
+          VIBE3D_WEB_JOBS: '3'
+        run: |
+          tools/stage_web_editor.sh
+          for file in index.html favicon.svg favicon.ico vibe3d.js vibe3d.wasm vibe3d.data assimp_module.js assimp_module.wasm; do
+            test -s ".build/web-editor/$file"
+          done
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .build/web-editor
+
+  web-deploy:
+    needs: web-build
+    if: ${{ needs.web-build.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      pages: write
+      id-token: write
+    concurrency:
+      group: github-pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
