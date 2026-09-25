@@ -97,10 +97,15 @@ unittest { // u2: capture and recall are one rule for every node
     again.label = "kept";
     NodeAttrs stale = image.dup;
     stale["noSuchParam"] = "9";
+    // A hand-edited or older prefs file can name a transient Param; the
+    // recall applies the same capture rule and leaves it alone.
+    stale["drawn"] = "7";
     changed = recallNodeAttrs(again, stale, true);
     assert(changed == ["width"] && again.changed == ["width"],
         format("M5 u2: equal/stale filtering or notify broken (changed %s, hooks %s)",
                changed, again.changed));
+    assert(again.drawn == 0.0f,
+        format("M5 u2: the recall wrote a transient Param (drawn %s)", again.drawn));
 }
 
 private Pipeline fourStagePipe(out ActionCenterStage acen, out FalloffStage falloff) {
