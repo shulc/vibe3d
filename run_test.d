@@ -457,6 +457,7 @@ bool acquireRunLock(int timeoutSec) {
 
     writeln(yellow(format("all %d run slots on this host are held by other "
         ~ "test runs or a nightly perf measurement — waiting...", count.n)));
+    stdout.flush();   // a queued run must say so now, not when its buffer fills
     int waited = 0;
     while (waited < timeoutSec) {
         Thread.sleep(1.seconds);

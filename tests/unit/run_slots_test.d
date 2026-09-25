@@ -22,6 +22,7 @@ import std.process   : Config, environment, execute, pipe, Pid, spawnProcess,
                        thisProcessID, wait;
 import std.regex     : matchFirst, regex;
 import std.stdio     : File;
+static import std.stdio;
 import std.string    : lineSplitter, startsWith, strip, toStringz;
 import core.thread   : Thread;
 import core.time     : msecs;
@@ -122,12 +123,28 @@ unittest // 1. N=2: distinct slots, disjoint ports, the third waits, reuse
         "run N+1 did not wait and give up while both slots were held (status %d):\n%s",
         third.status, third.output));
 
+    // A run that is ALREADY WAITING when a slot frees takes it from its wait
+    // loop (not only a fresh run's first pass).
     const freed = sb[0];
+    const waiterLog = base ~ ".waiter.log";
+    auto wOut = File(waiterLog, "w");
+    auto waiter = spawnProcess([runnerPath, "--probe-run-lock", "0", "--lock-timeout", "30"],
+                               std.stdio.stdin, wOut, wOut, env);
+    wOut.close();
+    foreach (_; 0 .. 100) {
+        if (readText(waiterLog).canFind("waiting")) break;
+        Thread.sleep(100.msecs);
+    }
+    enforce(readText(waiterLog).canFind("waiting"),
+        "the waiter never reported waiting:\n" ~ readText(waiterLog));
     stopHolder(b);
     bStopped = true;
-    auto fourth = execute([runnerPath, "--probe-run-lock", "0", "--lock-timeout", "5"], env);
-    assert(fourth.status == 0 && slotAndPort(fourth.output)[0] == freed, format(
-        "a run after release did not take the freed slot %d:\n%s", freed, fourth.output));
+    const waiterStatus = wait(waiter);
+    const waited = readText(waiterLog);
+    assert(waiterStatus == 0 && waited.canFind(format("acquired run slot %d after", freed))
+        && slotAndPort(waited)[0] == freed, format(
+        "a waiting run did not take the freed slot %d from its wait loop (status %d):\n%s",
+        freed, waiterStatus, waited));
 
     // A count outside 1..6 is refused loudly, never clamped into a guess.
     auto bad = env.dup;
