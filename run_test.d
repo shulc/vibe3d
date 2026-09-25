@@ -11,7 +11,8 @@
  *                                      gets its own vibe3d on a private port)
  *   VIBE3D_TEST_DISPLAY=:1 ./run_test.d # explicitly give workers one X display
  *   ./run_test.d --print-scratch     # name this checkout's scratch tree, exit
- *   ./run_test.d --print-run-lock    # name the host-wide run lock, exit
+ *   ./run_test.d --print-run-lock    # name the run-slot family's base (slot 0), exit
+ *   ./run_test.d --print-run-slots   # slot count, held/free + holder per slot, exit
  *   ./run_test.d --probe-worker-display # report an owned worker's /proc env
  *   ./run_test.d --check-protocol    # prepared-protocol census alone, exit 0/2
  *   ./run_test.d --timeout N         # per-test wall-clock cap in seconds
@@ -175,11 +176,11 @@ string bold  (string s) { return col("1",  s); }
 //   * the mainline checkout  → its own root, so an ad-hoc run from ~/Code/vibe3d
 //                              is a third tree, not a squatter in a lane's.
 //   * two runs, one checkout → SAME tree, deliberately: that is one lane running
-//                              itself twice, which the host-wide run lock below
-//                              already serialises. The lock is what keeps that
-//                              case apart; the key is what keeps the OTHER three
-//                              apart, and no amount of locking could (the lock
-//                              cannot help a tree left by a run that is over).
+//                              itself twice, which the per-checkout build lock
+//                              below REFUSES (task 6205). That lock is what keeps
+//                              this case apart; the key is what keeps the OTHER
+//                              three apart, and no amount of locking could (a
+//                              lock cannot help a tree left by a run that is over).
 //
 // The name carries a readable slug of the last two path components so `ls
 // /tmp` names the lane, plus a hash of the full absolute path so two lanes that
@@ -554,8 +555,8 @@ bool acquireWorktreeLock(string root) {
 // at all only to say that this is RAM, and the RAM cost is what the argument
 // rests on -- so read `free`'s `shared` column, which IS this mount, and note
 // that the OOM killer reads `free` rather than `available` (card 6685). It is
-// host-wide for the same reason the LOCK
-// is host-wide: every worktree shares one slot, so a per-checkout log would
+// host-wide for the same reason the run SLOTS
+// are host-wide: every worktree draws on one family, so a per-checkout log would
 // hide precisely the contention it exists to show.
 //
 // IT NEVER FAILS THE RUN. Every write is best-effort under a catch-all: a full

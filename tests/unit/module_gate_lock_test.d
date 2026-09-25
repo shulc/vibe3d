@@ -30,6 +30,12 @@ private enum kDefaultModuleGateTimeoutSeconds = 600;
 private enum kRunLockPathEnv = "VIBE3D_PERF_RUNTEST_LOCK_PATH";
 private enum kHarnessLogEnv = "VIBE3D_HARNESS_LOG";
 private enum kProbeOnlyEnv = "VIBE3D_MODULE_GATE_PROBE_ONLY";
+// Build-only (task 6205): `dub test` has no build-without-run mode, and ai-gate
+// must hold its cross-slot dub lock for the BUILD only, never for a run or a
+// slot wait. With this set the binary stops before taking a slot and before any
+// unittest, says so, and prints no UT-TOTAL line -- so no caller can read the
+// exit 0 as a verdict. The caller then runs ./vibe3d-test-tests itself.
+private enum kBuildOnlyEnv = "VIBE3D_MODULE_GATE_BUILD_ONLY";
 private enum kInheritedRunLockPidEnv = "VIBE3D_INHERITED_RUN_LOCK_PID";
 private enum kInheritedRunLockFdEnv = "VIBE3D_INHERITED_RUN_LOCK_FD";
 
@@ -105,6 +111,13 @@ private void acquireModuleGateLock()
 // main. gModuleGateSlot keeps the acquired descriptor alive until exit.
 shared static this()
 {
+    if (environment.get(kBuildOnlyEnv, "") == "1") {
+        import core.stdc.stdlib : exit;
+        stderr.writeln("MODULE TESTS DID NOT RUN — " ~ kBuildOnlyEnv
+                     ~ "=1: the test binary was built; run it to get a verdict");
+        stderr.flush();
+        exit(0);
+    }
     acquireModuleGateLock();
     // Test seam for the standalone probe below: report the slot and stop, so a
     // cell can witness acquisition without running this module's cells again.
@@ -195,6 +208,15 @@ unittest // a second module gate must fail loudly while every slot is held
         "the module gate did not borrow its caller's held slot (status %d):\n%s",
         borrow.status, borrow.output));
 
+    // Build-only stops BEFORE the slot: with the family still full it exits at
+    // once instead of queueing, and it never claims to have run anything.
+    auto buildOnly = env.dup;
+    buildOnly[kBuildOnlyEnv] = "1";
+    auto bo = execute([probeBin], buildOnly);
+    assert(bo.status == 0 && bo.output.canFind("MODULE TESTS DID NOT RUN")
+        && !bo.output.canFind("UT-TOTAL") && !bo.output.canFind("module gate slot"), format(
+        "build-only did not stop before the slot (status %d):\n%s", bo.status, bo.output));
+
     // Control: the slot released, the same probe takes it as its own.
     { import tools.harness.runslots : releaseSlot; releaseSlot(full); }
     auto own = env.dup;
@@ -270,5 +292,8 @@ unittest // the six runner-spawning witnesses must stay on private lock paths
         const text = readText(buildPath(repoRoot, ".github", "workflows", workflow));
         assert(!text.canFind(kModuleGateTimeoutEnv),
             workflow ~ " overrides the module-gate timeout test seam");
+        foreach (seam; [kBuildOnlyEnv, kProbeOnlyEnv])
+            assert(!text.canFind(seam),
+                workflow ~ " sets " ~ seam ~ ", which stops the module gate before it runs");
     }
 }

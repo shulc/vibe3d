@@ -238,6 +238,9 @@ unittest // 3. a lease is read through /proc, and an unlocked fd is not one
     leased["VIBE3D_INHERITED_RUN_LOCK_FD"] = bare.to!string;
     auto decoy = execute([runnerPath, "--probe-run-lock", "0", "--lock-timeout", "1"],
                          leased);
+    assert(decoy.output.canFind("run-slot lease") && decoy.output.canFind("rejected")
+        && decoy.output.canFind("holds no flock"),
+        "a set-but-rejected lease was dropped silently:\n" ~ decoy.output);
     assert(decoy.status != 0 && decoy.output.canFind("NO TESTS RAN"), format(
         "an unlocked descriptor on the slot file was accepted as a lease "
       ~ "(status %d):\n%s", decoy.status, decoy.output));
@@ -253,6 +256,8 @@ unittest // 3. a lease is read through /proc, and an unlocked fd is not one
     leased["VIBE3D_INHERITED_RUN_LOCK_FD"] = slot.fd.to!string;
     auto orphan = execute(["setsid", "--fork", runnerPath, "--probe-run-lock", "0",
                            "--lock-timeout", "1"], leased, Config.inheritFDs);
+    assert(orphan.output.canFind("the holder is not my ancestor"),
+        "the orphan's rejected lease was not reported:\n" ~ orphan.output);
     assert(orphan.output.canFind("NO TESTS RAN") && !orphan.output.canFind("RUN SLOT:"),
         "a reparented (non-descendant) process borrowed the slot:\n" ~ orphan.output);
 }

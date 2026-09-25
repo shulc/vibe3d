@@ -259,18 +259,31 @@ int heldSlotOf(string base, int holder, int fd)
 }
 
 /// A descendant may borrow a slot its live ANCESTOR holds (a nested runner, or
-/// the gates under a gate-pool dispatcher). Everyone else must queue.
+/// the gates under a gate-pool dispatcher). Everyone else must queue. A lease
+/// that is SET but rejected is said out loud: the caller then takes a second
+/// slot while its ancestor holds the first, which is legal but is exactly the
+/// "wait while holding" shape a lease exists to avoid.
 bool borrowInheritedSlot(string base, ref RunSlot s)
 {
+    import std.stdio : stderr;
     const rawPid = environment.get(kInheritedRunLockPidEnv, "");
     const rawFd  = environment.get(kInheritedRunLockFdEnv, "");
-    if (!rawPid.length || !rawFd.length) return false;
+    if (!rawPid.length && !rawFd.length) return false;
+    bool reject(string why)
+    {
+        stderr.writefln("warning: run-slot lease %s=%s %s=%s rejected (%s); "
+                      ~ "taking a slot of my own instead",
+                        kInheritedRunLockPidEnv, rawPid, kInheritedRunLockFdEnv,
+                        rawFd, why);
+        return false;
+    }
     int holder, fd;
     try { holder = rawPid.to!int; fd = rawFd.to!int; }
-    catch (Exception) return false;
-    if (holder <= 1 || fd < 0 || !processHasAncestor(holder)) return false;
+    catch (Exception) return reject("not two integers");
+    if (holder <= 1 || fd < 0) return reject("out of range");
+    if (!processHasAncestor(holder)) return reject("the holder is not my ancestor");
     const k = heldSlotOf(base, holder, fd);
-    if (k < 0) return false;
+    if (k < 0) return reject("that descriptor holds no flock on a slot of " ~ base);
     s = RunSlot(-1, k, runSlotPath(base, k), true);
     return true;
 }
