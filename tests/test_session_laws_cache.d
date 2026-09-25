@@ -355,7 +355,7 @@ unittest {
 // the replay arm, which reads the cache (armUsesAttrCache(replayArm) == true).
 // The re-arm itself is captured (C-M4-token-switch, M0b: "the undone
 // activation restores Edge Extrude live"); the VALUES the restored predecessor
-// carries are not — gap row 314. Ours follows H6: every arm recalls the cache.
+// carries are not — gap row 370. Ours follows H6: every arm recalls the cache.
 // ---------------------------------------------------------------------------
 
 unittest {
