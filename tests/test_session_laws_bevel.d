@@ -64,8 +64,14 @@ double num(JSONValue v) {
     return v.type == JSONType.integer ? cast(double) v.integer
          : v.type == JSONType.uinteger ? cast(double) v.uinteger : v.floating;
 }
-double shiftV() { return num(st()["shift"]); }
-double insetV() { return num(st()["inset"]); }
+// NaN when no Bevel is armed, so a cell whose tool ended reddens on its own
+// assert rather than on a missing key.
+double stNum(string k) {
+    auto s = st();
+    return (s.type == JSONType.object && k in s.object) ? num(s[k]) : double.nan;
+}
+double shiftV() { return stNum("shift"); }
+double insetV() { return stNum("inset"); }
 // Absent before slice M3b (read `false` / -1 there), so a cell reddens on
 // BEHAVIOUR on an older binary, not on a missing key.
 bool applied() {
