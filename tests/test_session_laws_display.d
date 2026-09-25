@@ -243,6 +243,21 @@ unittest { // C-H7-elem: Element Move highlights only the hovered VERTEX, in eve
                             ~ "hover, captured 0 (no tool %s)", pEm, pNo));
 }
 
+unittest { // C-H7-elem, polygons: Element Move never highlights a FACE
+    // The captured polygon-mode cell hovered a spot where no tool lights a
+    // FACE (2606 px) and Element Move lit nothing. Our pick gives an edge
+    // priority over a face, so on the edge the face never reaches the draw;
+    // the face interior is where our face pass would decide it.
+    // A point of the top face well off the transform handle, which stands at
+    // the centre and lights its own parts under the pointer.
+    immutable DHVec3 top = DHVec3(0.3f, 0.5f, -0.3f);
+    immutable size_t pNo = noToolPx("polygon", top, "face");
+    assert(pNo > 0, "C-H7-elem control: no tool, polygon mode, the hovered face draws nothing");
+    immutable size_t pEm = cellPx("polygon", "ElementMove", top, "face");
+    assert(pEm == 0, format("C-H7-elem (polygon mode, face interior): Element Move drew %s px "
+                            ~ "of face hover (no tool %s)", pEm, pNo));
+}
+
 unittest { // Magnet: no rollover flag in the table — its hovered vertex is not drawn
     immutable size_t noTool = noToolPx("vertex", kV, "vertex");
     assert(noTool > 0, "magnet control: no tool, vertex mode, the hovered vertex draws nothing");
