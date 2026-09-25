@@ -3,7 +3,8 @@
 A polygonal 3D mesh editor in the spirit of modern box-modeling DCCs —
 gizmo-driven direct manipulation, a configurable tool pipeline (action center /
 axis / falloff / snap), falloff deformers, and Catmull-Clark subdivision.
-Written in **D**, with OpenGL 3.3 Core Profile, SDL2 and Dear ImGui.
+Written in **D**, with OpenGL 3.3 Core Profile, SDL2 and Dear ImGui on desktop;
+also available in the browser through WebAssembly.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Language: D](https://img.shields.io/badge/language-D-b03931.svg)
@@ -39,9 +40,17 @@ ground-up polygon modelers in the D ecosystem.
 
 ## Download
 
-Prebuilt binaries for **Linux, Windows and macOS** are on the releases page:
+### → [Open the web editor](https://shulc.github.io/vibe3d/)
 
-### → [Download the latest release](https://github.com/shulc/vibe3d/releases)
+The browser version runs without installation. It includes the modeling editor
+and file import/export; the current source build also includes Quad Remesh in a
+separate Web Worker. The published Pages build is updated when `main` is pushed,
+so it may lag the latest local changes. The optional Cycles/Radeon ProRender IPR
+and AI image→3D add-on are desktop features.
+
+### → [Download the latest desktop release](https://github.com/shulc/vibe3d/releases)
+
+Prebuilt binaries for **Linux, Windows and macOS** are on the releases page.
 
 Downloads are self-contained per platform — Linux **AppImage** (`chmod +x` and
 run), Windows zip or installer, macOS `.app` — with no extra dependencies to
@@ -143,6 +152,21 @@ this build. `modeling-noai` drops the ONNX-based candidate ranker (this is the
 Windows 7-capable build). The `with-render` configuration adds the optional IPR
 panel (see below). All render code lives behind a `version (WithRender)` boundary
 and is excluded from both modeling builds.
+
+### Build and run the web editor locally
+
+The web build needs the Emscripten SDK (`EMSDK`, default `~/emsdk`), the
+WebAssembly-capable LDC toolchain (`VIBE3D_LDC_ROOT`, default
+`~/.local/dlang/ldc2-1.43.0-linux-x86_64`), DUB, CMake and Ninja. From the
+repository root:
+
+```sh
+tools/serve_web_editor.sh       # build, stage and serve at http://127.0.0.1:8788/
+```
+
+`tools/stage_web_editor.sh` builds a static site under `.build/web-editor/` for
+deployment. Assimp and Quad Remesh run in separate wasm instances; see
+[web/ASSIMP.md](web/ASSIMP.md) and [web/REMESH.md](web/REMESH.md) for details.
 
 You can also produce a self-contained release bundle locally:
 
