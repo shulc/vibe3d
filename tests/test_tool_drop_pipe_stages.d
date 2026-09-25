@@ -4,7 +4,7 @@
 module test_tool_drop_pipe_stages;
 
 import drag_helpers : buildDragLog, playAndWait;
-import http_client : getJson, postJson, frameFence;
+import http_client : getJson, postJson, frameFence, playPacedAndWait;
 import http_command_helpers : commandBody;
 import tool_drop_pipe_stages_helpers : applyHistoryDelta;
 import std.algorithm : sort;
@@ -227,7 +227,7 @@ private void key(int sym, int scan, int mod = 0) {
         `{"t":0.000,"type":"VIEWPORT","vpX":150,"vpY":28,"vpW":650,"vpH":544,"fovY":0.785398}` ~ "\n" ~
         format(`{"t":50.000,"type":"SDL_KEYDOWN","sym":%d,"scan":%d,"mod":%d,"repeat":0}`, sym, scan, mod) ~ "\n" ~
         format(`{"t":100.000,"type":"SDL_KEYUP","sym":%d,"scan":%d,"mod":%d,"repeat":0}`, sym, scan, mod) ~ "\n";
-    playAndWait(log);
+    playPacedAndWait(log);
     settle();
 }
 
@@ -237,7 +237,7 @@ private void click(int x, int y) {
         format(`{"t":50.000,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,"state":0,"mod":0}`, x, y) ~ "\n" ~
         format(`{"t":55.000,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}`, x, y) ~ "\n" ~
         format(`{"t":60.000,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}`, x, y) ~ "\n";
-    playAndWait(log);
+    playPacedAndWait(log);
     settle();
 }
 
