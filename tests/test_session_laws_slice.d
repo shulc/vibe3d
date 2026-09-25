@@ -20,6 +20,8 @@
 //   SW         Slice: a relocated line cut on the frozen plane N1, an orbit, a
 //              fresh line on N2; the undo restores N1 (attribute, FIRST) and
 //              the (L1, N1) cut (mesh).  (frozenNormal out of the image)
+//   C-H1-ls    Loop Slice (UI door): the arming press's cut is the first group,
+//              its drag a step of its own.                         (m3c)
 //   LW(a)      Loop Slice: scrub A, scrub B, Ctrl+Z -> positions after A, then
 //              the cut at A.                         (empty rebuild)
 //   LW(b)      Loop Slice: scrub, `insertAt` (an Action write), Ctrl+Z -> the
@@ -358,6 +360,44 @@ Rail lsRig(out long Hp) {
     slCmd("mesh.select", format(`{"mode":"polygons","indices":[%d,%d]}`, front, right));
     Hp = slHistoryLen();
     return seedRail();
+}
+
+// C-H1-ls — Loop Slice opens its window at the ARM (ours: the arming press,
+// gap 205 (b)): the arm's cut is the first group and the drag of that same
+// press is a step of its own, so the first Ctrl+Z keeps the tool at the
+// arm-time loop and the second ends it with its activation row. The arming
+// press WITH a drag is the discriminating cell: under `firstPress` the whole
+// press would be the first group and the first Ctrl+Z would end the tool. (m3c)
+unittest {
+    if (!cell("C-H1-ls")) return;
+    long Hp;
+    const rail = lsRig(Hp);
+    const base = slMesh();
+    slLineUi("tool.set mesh.loopSliceTool on");
+    const pa = at(rail, 0.5);
+    slClickDown(pa[0], pa[1], "C-H1-ls arming press");
+    const A0 = slMesh();
+    const pArm = positions();
+    string log;
+    foreach (i; 1 .. 9) {
+        const q = at(rail, 0.5 - 0.25 * i / 8.0);
+        log ~= slMotion(20 + 20 * i, q[0], q[1], 1) ~ "\n";
+    }
+    const e = at(rail, 0.25);
+    slPlay(log ~ slButton(220, false, 1, e[0], e[1]), "C-H1-ls arming drag + release");
+    assert(A0.faces > base.faces && slMesh().canon != A0.canon,
+           "slice floor (C-H1-ls): the arming press did not cut and drag the loop");
+    ctrlZ("C-H1-ls Ctrl+Z 1");
+    const p1 = positions();
+    assert(slTool() == "loopSlice" && slMesh().canon == A0.canon && p1.length == 1
+           && abs(p1[0] - pArm[0]) <= 1e-6,
+           format("C-H1-ls: the first Ctrl+Z must pop the arming drag and keep the tool at the "
+                  ~ "arm-time loop: tool '%s', positions %s (arm %s), mesh %s",
+                  slTool(), p1, pArm, slMesh().toString));
+    ctrlZ("C-H1-ls Ctrl+Z 2");
+    assert(slTool() != "loopSlice" && slMesh().canon == base.canon && slHistoryLen() == Hp,
+           format("C-H1-ls: the second Ctrl+Z did not end the tool with its activation row: "
+                  ~ "tool '%s', history %s", slTool(), slHistoryLabels()));
 }
 
 // LW(a) — scrub A, scrub B, Ctrl+Z: the positions after A, then the cut at A.
