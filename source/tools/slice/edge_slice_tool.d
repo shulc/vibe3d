@@ -763,7 +763,6 @@ public:
             armedKey_.stamp(*mesh);
             if (history !is null) history.invalidateRedo();
         }
-        if (activePoint_ < 0 || activePoint_ >= cast(int)n) activePoint_ = cast(int)n - 1;
         armed_ = n >= 2;
         phase_ = n >= 2 ? Phase.EdgeB : Phase.EdgeA;
         syncProxy();

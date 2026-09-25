@@ -908,10 +908,10 @@ private struct ToolSession {
         // own Enter (slice M3) — and the row (if any) is written now,
         // synchronously, BEFORE a command applies and records. Refused before
         // a command, the funnel drops the tool as before; refused on Enter,
-        // the tool stays.
+        // the tool's own key reads only `closed` and the tool stays.
         const committed = t.commitOperation();
         endOperation_();
-        if (!committed) return CloseOutcome(false, !command);
+        if (!committed) return CloseOutcome(false, false);
         markClosedRow_();
         if (command) {
             pendingResume_ = true;

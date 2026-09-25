@@ -207,6 +207,9 @@ unittest {
     assert(slTool() == "edgeSlice" && slChain().pairs.length == 1 && slMesh().canon == base.canon,
            format("slice floor (C-H4-es): Ctrl+Z did not pop the second point: tool '%s', points %d",
                   slTool(), slChain().pairs.length));
+    // One point is no armed cut: the rebuild re-derives the phase from the chain.
+    assert(toolState()["armed"].type == JSONType.false_ && toolState()["phase"].str == "edgeA",
+           format("C-H4-es: a one-point chain restored as armed: %s", toolState().toString));
     ctrlShiftZ("C-H4-es Ctrl+Shift+Z");
     assert(slChain().pairs.length == 2 && slMesh().canon == M2.canon,
            format("C-H4-es: the redo did not return the popped point LIVE: points %d, mesh %s "

@@ -66,7 +66,7 @@ private class StepTool : Tool {
     int v;
     Pt[] arr;
     bool act;
-    int rebuilds, commits, cancels;
+    int rebuilds, commits, cancels, resumes;
     OpensAt opens = OpensAt.firstPress;
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
         static immutable ToolSessionPolicy first = { activationRow: true, sessionSteps: true,
@@ -85,6 +85,7 @@ private class StepTool : Tool {
     override bool hasUncommittedEdit() const { return arr.length > 0; }
     override void cancelUncommittedEdit() { ++cancels; arr = null; }
     override bool commitOperation() { ++commits; arr = null; return true; }
+    override void resumeAfterClose(bool rearm) { ++resumes; }
     // A gesture that writes the image: v = to, and one more element.
     void gesture(int to, PressKind k = PressKind.plain) {
         sessionStepBegins(k);
@@ -296,6 +297,9 @@ unittest {
     r.t.gesture(2);
     r.t.enter();
     assert(r.t.commits == 1 && !isLive(r) && steps(r) == 0, "M3 Enter: not closed through the session");
+    // Enter resumes nothing: a later door's finish must not resume the tool.
+    r.session.finishClose();
+    assert(r.t.resumes == 0, "M3 Enter: the tool's own close left a resume pending");
     // A tool-reported end drops the account.
     r.t.gesture(3);
     r.t.gesture(4);
@@ -344,6 +348,38 @@ unittest { // a `firstPress` tool's arm report opens nothing: its gesture's end 
     assert(isLive(r) && steps(r) == 0, "M3 arm: the firstPress gesture did not open the window");
 }
 
+unittest { // openOperation: Middle clones the haul attributes from the given end, unless noClone
+    auto t = new StepTool;
+    t.v = 1;
+    AttrImage prev;
+    { auto u = new StepTool; u.v = 9; u.arr = [Pt(9, 0, null)]; prev = u.captureAttrImage(); }
+    t.openOperation(PressKind.middle, prev);
+    assert(t.v == 9 && t.arr.length == 0 && t.rebuilds == 1,
+           format("M3 openOperation: Middle cloned %s / %s (haul is v only)", t.v, t.arr));
+    t.openOperation(PressKind.plain, AttrImage.init);
+    assert(t.v == 9 && t.rebuilds == 1, "M3 openOperation: a plain press changed the image");
+    t.openOperation(PressKind.shift, AttrImage.init);
+    assert(t.v == 0 && t.rebuilds == 2, "M3 openOperation: Shift did not reset the haul to defaults");
+    // An empty image restores nothing and still rebuilds once.
+    t.v = 5;
+    t.applyAttrImage(AttrImage.init);
+    assert(t.v == 5 && t.rebuilds == 2, "M3 applyAttrImage: an empty image wrote or rebuilt");
+}
+
+unittest { // the session reports for the tool it BOUND only
+    auto r = rig();
+    r.t.gesture(1);
+    r.t.gesture(2);
+    auto other = new StepTool;             // published without the arm door's noteArm
+    other.v = 7;
+    r.active = other;
+    r.session.navigate(true);
+    assert(other.v == 7 && other.rebuilds == 0,
+           format("M3 bound: an unbound active tool received the session's image: v %s", other.v));
+    assert(r.session.sessionStateJson().type == JSONType.null_,
+           "M3 bound: the state of an unbound tool was reported");
+}
+
 // ---- (6) PodArray -------------------------------------------------------------------
 
 unittest {
@@ -352,9 +388,17 @@ unittest {
     assert(p.kind == Param.Kind.PodArray && p.podElemSize == Pt.sizeof && p.hidden_ && p.transient_);
     auto raw = p.snapshotRaw();
     assert(raw.length == 2 * Pt.sizeof, format("M3 PodArray: %s bytes for 2 elements", raw.length));
+    // The copy is a SCANNED block (a collection alone may not reach the case:
+    // a conservative stack word can keep the inner array alive).
+    import core.memory : GC;
+    assert((GC.getAttr(cast(void*) raw.ptr) & GC.BlkAttr.NO_SCAN) == 0,
+           "M3 PodArray: the raw image is a NO_SCAN block; a GC slice inside it is not traced");
+    const probe = p.snapshotRaw();
+    p.restoreRaw(probe);
+    assert((GC.getAttr(cast(void*) store.ptr) & GC.BlkAttr.NO_SCAN) == 0,
+           "M3 PodArray: the restored array is a NO_SCAN block");
     store = [Pt(9, 9, [1])];
     // Collect with the only reference to [7, 8, 9] held inside the raw image.
-    import core.memory : GC;
     foreach (_; 0 .. 3) { GC.collect(); auto junk = new int[](64); junk[] = 0x5A5A5A5A; }
     p.restoreRaw(raw);
     assert(store.length == 2 && store[0].a == 1 && store[0].b == 2.5f && store[0].tail == [7, 8, 9]

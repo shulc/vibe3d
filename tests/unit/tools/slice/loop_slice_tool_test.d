@@ -233,4 +233,14 @@ unittest {
     assert(live() && steps() == 0,
         "loop slice: a re-arm after a prepared key-mismatch disarm inherited the "
         ~ "old operation's steps (the arm must open a fresh one)");
+    assert(tool.onMouseButtonUp(e, vts));
+    assert(tool.onMouseButtonDown(e, vts) && tool.onMouseButtonUp(e, vts));
+    assert(steps() == 1, "setup: the second re-scrub was not a step");
+
+    // A scrub finding the mesh swapped under it drops the preview itself: the
+    // tool reports the end, and the session keeps no step of it.
+    m.addVertex(Vec3(8, 8, 8));
+    tool.scrubPosition(0.3f);
+    assert(!live() && steps() == 0,
+        "loop slice: the preview dropped on a key mismatch, but the session kept its steps");
 }
