@@ -343,3 +343,25 @@ unittest { // MV-LA: `layer.attr` through the UI door CONTINUES the transform ru
            "move layer.attr: the Layers-panel command closed the transform run (channels reset "
            ~ JSONValue(t0).toString ~ " -> " ~ JSONValue(t1).toString ~ ")");
 }
+
+unittest { // MV-H: H (mesh.hide, UiState) — the transform closes and re-arms the
+    // same way; hiding changes no selection, so the channel reset here is the
+    // command close's resume and not the transform's own selection-change path.
+    moveLive();
+    const base = slMesh();
+    const label = keyLabel(K_HIDE, "H");
+    slLine("tool.set TransformMove on");
+    Thread.sleep(300.msecs);
+    ssh.haul([0.5, -0.3, 0.5], 8, 0, 5);
+    auto t0 = getJson("/api/tool/state")["values"]["t"].array;
+    assert(abs(t0[0].floating) > 1e-3, "MV-H floor: the haul wrote no TX");
+    const L0 = slHistoryLabels();
+    slKey(K_HIDE, 0, "H (MV-H)");
+    assert(addedSince(L0) == [label], format("MV-H floor: H wrote %s", addedSince(L0)));
+    auto st = getJson("/api/tool/state");
+    assert(st["tool"].str == "xfrm", "move H: the UI command dropped the transform");
+    auto t1 = st["values"]["t"].array;
+    assert(abs(t1[0].floating) < 1e-6 && abs(t1[1].floating) < 1e-6 && abs(t1[2].floating) < 1e-6,
+           "move H: the transform did not re-arm in place after the command (TX kept "
+           ~ JSONValue(t1).toString ~ ")");
+}
