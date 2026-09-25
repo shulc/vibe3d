@@ -270,7 +270,7 @@ private string pipeAttr(string stage, string attr) {
 
 /// C-H7-xfrm-*-elem (M0e): TransformMove with ONE element node set by hand.
 /// The capture set the node, then armed the tool; ours: a hand-set centre
-/// mode does not survive the arm (the arm's transient pipe reset; gap 385),
+/// mode does not survive the arm (the arm's transient pipe reset; gap 384),
 /// so the node is set after it — the state under test is the same pipe.
 private size_t handSetCell(string type, string node, DHVec3 at, string kind) {
     run("scene.reset");

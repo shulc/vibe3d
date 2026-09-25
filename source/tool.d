@@ -210,7 +210,7 @@ enum PressKind : ubyte { plain, shift, middle }
 /// under the cursor while a tool is armed. It is DATA — the rollover flag of
 /// the tool's policy (`ToolSessionPolicy.rollovers`) and of the pipe stages it
 /// runs with (`Stage.rollovers`), each from the captured flags table and the
-/// C-H7 cells (`toolcards/tool_session_model/`, gap 309/312) — read by ONE
+/// C-H7 cells (`toolcards/tool_session_model/`, gap 309/312/380) — read by ONE
 /// viewport path (`ui/viewport_render.d : rolloverShown`). WHICH elements are
 /// hovered is a separate question, the tool's pick need
 /// (`Tool.wantsHoverForType`): a tool that picks no type shows nothing
@@ -227,7 +227,7 @@ enum Rollover : ubyte {
     /// Only a hovered VERTEX, in every selection mode: the element falloff's
     /// flag (C-H7-elem: Element Move 36 px on a vertex, 0 on an edge in edge
     /// and polygon mode). A drag keeps it — the element picked at drag start
-    /// stays lit, as before the slice (not captured; gap 382).
+    /// stays lit, as before the slice (not captured; gap 383).
     vertices,
 }
 
