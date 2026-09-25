@@ -261,7 +261,62 @@ void runCell(string mode) {
     cmd("tool.set move off");
 }
 
+/// C5-a-f (gap 363; fixture tests/fixtures/selection_centre_falloff_trajectory.json):
+/// the same law WITH a non-linear falloff — the one rig where a live centre, a
+/// weighted centre and `c0 + D` part company. x lines 0, 1, 2; the three z = 0
+/// vertices selected; linear ramp (0,0,0) -> (2,0,0) on the ease-out curve
+/// (1 - t)^2, weights 1 / 0.25 / 0. The handle must be `c0 + D` with D the
+/// shift of the WEIGHT-1 vertex (index 0) — where a full-weight vertex goes —
+/// at every increment of both drags (12-px increments, as captured).
+void runFalloffCell() {
+    auto fx = parseJSON(readText("tests/fixtures/selection_centre_falloff_trajectory.json"));
+    auto r = postJson("/api/command", `{"id":"scene.reset"}`);
+    assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
+    loadStrip(0, 3);
+    cmdId("mesh.select", `{"mode":"vertices","indices":[0,2,4]}`);
+    cmd("tool.set move on");
+    cmd("actr.select");
+    cmd("tool.pipe.attr symmetry enabled false");
+    cmd("tool.pipe.attr falloff type linear");
+    cmd("tool.pipe.attr falloff shape easeOut");
+    cmd(`tool.pipe.attr falloff start "0,0,0"`);
+    cmd(`tool.pipe.attr falloff end "2,0,0"`);
+    cmd("viewport.view Top");
+    r = postJson("/api/camera", `{"focus":{"x":1,"y":0,"z":0.5}}`);
+    assert(r["status"].str == "ok", "camera failed: " ~ r.toString);
+    cmd("history.clear");
+    settle(250);
+    foreach (st; getJson("/api/toolpipe")["stages"].array)
+        if (st["id"].str == "falloff")
+            assert(st["attrs"]["type"].str == "linear", "rig premise: falloff is not linear: " ~ st.toString);
+
+    immutable V3 c0 = handle();
+    immutable V3 fxC = vec(fx["rig"]["centre_at_press"]);
+    assert(len(sub(c0, fxC)) <= kTol,
+        format("gizmo centre at press is not the selection box centre (f): handle %s, fixture %s", c0, fxC));
+
+    Px horiz, vert; int hAxis, vAxis;
+    arms(horiz, hAxis, vert, vAxis);
+    string trace;
+    auto m0 = model();
+    immutable V3 s0 = vtx(m0, 0), s1 = vtx(m0, 2), s2 = vtx(m0, 4);
+    dragAndTrace("f", "D1", horiz, hAxis, 10, 12, 0, 0, c0, s0, trace);
+    // Floor: the falloff really is non-linear here — the measured middle
+    // weight is the capture's 0.25 and far from the linear 0.5 at which a
+    // weighted centre and c0 + D would coincide.
+    auto m1 = model();
+    immutable double d0 = len(sub(vtx(m1, 0), s0));
+    immutable double w1 = len(sub(vtx(m1, 2), s1)) / d0, w2 = len(sub(vtx(m1, 4), s2)) / d0;
+    assert(abs(w1 - 0.25) <= 0.02 && abs(w2) <= 1e-4 && abs(w1 - 0.5) >= 0.1,
+        format("rig floor (f): measured weights 1 / %g / %g, the capture's are 1 / 0.25 / 0", w1, w2));
+    arms(horiz, hAxis, vert, vAxis);
+    dragAndTrace("f", "D2", vert, vAxis, 5, 0, -12, 0, c0, s0, trace);
+    cmd("tool.pipe.attr falloff type none");
+    cmd("tool.set move off");
+}
+
 unittest { runCell("v"); }
 unittest { runCell("e"); }
 unittest { runCell("p"); }
 unittest { runCell("v-off"); }
+unittest { runFalloffCell(); }

@@ -1,0 +1,376 @@
+{
+ "schema": 1,
+ "source": "live-capture",
+ "reference": "ref-editor@11.2v3",
+ "captured_utc": "2026-09-25",
+ "method": "debug-live",
+ "notes": "Move under the Selection action centre with a linear falloff ramp from (0,0,0) (weight 1) to (2,0,0) (weight 0) on the base-squared curve; strip in XZ with x lines 0,1,2, top ortho, the three z=0 vertices selected. Drag 1: first in-plane arm 10 x 12 px; drag 2: the other in-plane arm 5 x 12 px, same run. Handle and tool delta read by a debugger hook at the handle update on every draw; D = M.T in world. Law: handle = c0 + D at every increment and after release (c0 = selection box centre, frozen); the live box centre, the live mean and c0 + w(c0) D are refuted at every moving state.",
+ "rig": {
+  "x_lines": [
+   0,
+   1,
+   2
+  ],
+  "selected": [
+   [
+    0,
+    0,
+    0
+   ],
+   [
+    1,
+    0,
+    0
+   ],
+   [
+    2,
+    0,
+    0
+   ]
+  ],
+  "falloff": {
+   "start": [
+    0,
+    0,
+    0
+   ],
+   "end": [
+    2,
+    0,
+    0
+   ],
+   "curve": "base_squared"
+  },
+  "centre_at_press": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "axis_rows": [
+   [
+    -1,
+    0,
+    0
+   ],
+   [
+    0,
+    1,
+    0
+   ],
+   [
+    0,
+    0,
+    -1
+   ]
+  ]
+ },
+ "weights_measured": [
+  1.0,
+  0.25,
+  0.0
+ ],
+ "law": "handle = centre_at_press + D",
+ "states": [
+  {
+   "drag": "d1",
+   "at": "PRESSED D1",
+   "handle": [
+    1.0,
+    0.0,
+    0.0
+   ],
+   "D": [
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "drag": "d1",
+   "at": "INC D1 k=1",
+   "handle": [
+    1.03,
+    0.0,
+    0.0
+   ],
+   "D": [
+    0.03,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "drag": "d1",
+   "at": "INC D1 k=2",
+   "handle": [
+    1.065,
+    0.0,
+    0.0
+   ],
+   "D": [
+    0.065,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "drag": "d1",
+   "at": "INC D1 k=3",
+   "handle": [
+    1.095,
+    0.0,
+    0.0
+   ],
+   "D": [
+    0.095,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "drag": "d1",
+   "at": "INC D1 k=4",
+   "handle": [
+    1.125,
+    0.0,
+    0.0
+   ],
+   "D": [
+    0.125,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "drag": "d1",
+   "at": "INC D1 k=5",
+   "handle": [
+    1.155,
+    0.0,
+    0.0
+   ],
+   "D": [
+    0.155,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "drag": "d1",
+   "at": "INC D1 k=6",
+   "handle": [
+    1.19,
+    0.0,
+    0.0
+   ],
+   "D": [
+    0.19,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "drag": "d1",
+   "at": "INC D1 k=7",
+   "handle": [
+    1.22,
+    0.0,
+    0.0
+   ],
+   "D": [
+    0.22,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "drag": "d1",
+   "at": "INC D1 k=8",
+   "handle": [
+    1.25,
+    0.0,
+    0.0
+   ],
+   "D": [
+    0.25,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "drag": "d1",
+   "at": "INC D1 k=9",
+   "handle": [
+    1.285,
+    0.0,
+    0.0
+   ],
+   "D": [
+    0.285,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "drag": "d1",
+   "at": "INC D1 k=10",
+   "handle": [
+    1.315,
+    0.0,
+    0.0
+   ],
+   "D": [
+    0.315,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "drag": "d1",
+   "at": "RELEASED D1",
+   "handle": [
+    1.315,
+    0.0,
+    0.0
+   ],
+   "D": [
+    0.315,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "drag": "d1",
+   "at": "IDLE1",
+   "handle": [
+    1.315,
+    0.0,
+    0.0
+   ],
+   "D": [
+    0.315,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "drag": "d2",
+   "at": "PRESSED D2",
+   "handle": [
+    1.315,
+    0.0,
+    0.0
+   ],
+   "D": [
+    0.315,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "drag": "d2",
+   "at": "INC D2 k=1",
+   "handle": [
+    1.315,
+    0.0,
+    -0.03
+   ],
+   "D": [
+    0.315,
+    0.0,
+    -0.03
+   ]
+  },
+  {
+   "drag": "d2",
+   "at": "INC D2 k=2",
+   "handle": [
+    1.315,
+    0.0,
+    -0.065
+   ],
+   "D": [
+    0.315,
+    0.0,
+    -0.065
+   ]
+  },
+  {
+   "drag": "d2",
+   "at": "INC D2 k=3",
+   "handle": [
+    1.315,
+    0.0,
+    -0.095
+   ],
+   "D": [
+    0.315,
+    0.0,
+    -0.095
+   ]
+  },
+  {
+   "drag": "d2",
+   "at": "INC D2 k=4",
+   "handle": [
+    1.315,
+    0.0,
+    -0.125
+   ],
+   "D": [
+    0.315,
+    0.0,
+    -0.125
+   ]
+  },
+  {
+   "drag": "d2",
+   "at": "INC D2 k=5",
+   "handle": [
+    1.315,
+    0.0,
+    -0.155
+   ],
+   "D": [
+    0.315,
+    0.0,
+    -0.155
+   ]
+  },
+  {
+   "drag": "d2",
+   "at": "RELEASED D2",
+   "handle": [
+    1.315,
+    0.0,
+    -0.155
+   ],
+   "D": [
+    0.315,
+    0.0,
+    -0.155
+   ]
+  },
+  {
+   "drag": "d2",
+   "at": "IDLE2",
+   "handle": [
+    1.315,
+    0.0,
+    -0.155
+   ],
+   "D": [
+    0.315,
+    0.0,
+    -0.155
+   ]
+  }
+ ],
+ "rival_min_error_over_moving_states": {
+  "G-alpha": 0.0,
+  "G-beta": 0.015,
+  "G-beta'": 0.0175,
+  "G-w": 0.0225,
+  "G-gamma": 0.03
+ }
+}

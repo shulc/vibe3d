@@ -1,0 +1,214 @@
+{
+ "schema": 1,
+ "source": "live-capture",
+ "reference": "ref-editor@11.2v3",
+ "captured_utc": "2026-09-25",
+ "method": "gui-gesture",
+ "notes": "Off-gizmo press with the automatic action centre in a front orthographic cell, unpinned and turned by a pinned plane (rotX 30 rotY 55, B = Rx*Ry; world = origin + B.local). Values are plane-local (identity when unpinned). The press keeps the view-axis (local z) component of the centre held BEFORE the press and takes x, y from the clicked pixel, snapped to 0.01 at this zoom (pixel 0.0078125). The camera focus depth never enters. Clicks are root-pixel offsets from the cell centre; the pre-press centre is the selection box centre (whole mesh when nothing is selected) in every admissible cell.",
+ "pixel_size": 0.0078125,
+ "snap_step": 0.01,
+ "click_offsets_px": [
+  [
+   210,
+   -160
+  ],
+  [
+   -220,
+   150
+  ]
+ ],
+ "cells": {
+  "R-control": {
+   "pinned_plane": [
+    -0.0,
+    -0.0,
+    -0.0,
+    0.0,
+    -0.0,
+    -0.0
+   ],
+   "focus_local": [
+    0.25,
+    0.15,
+    0.37
+   ],
+   "centre_before": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "centre_after_clicks": [
+    [
+     1.89,
+     1.4,
+     0.0
+    ],
+    [
+     -1.47,
+     -1.02,
+     0.0
+    ]
+   ]
+  },
+  "R-turned": {
+   "pinned_plane": [
+    -0.0,
+    -0.0,
+    -0.0,
+    0.5235987755982988,
+    0.9599310885968813,
+    -0.0
+   ],
+   "focus_local": [
+    0.25,
+    0.15,
+    0.37
+   ],
+   "centre_before": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "centre_after_clicks": [
+    [
+     1.89,
+     1.4,
+     0.0
+    ],
+    [
+     -1.47,
+     -1.02,
+     0.0
+    ]
+   ]
+  },
+  "T2-control": {
+   "pinned_plane": [
+    -0.0,
+    -0.0,
+    -0.0,
+    0.0,
+    -0.0,
+    -0.0
+   ],
+   "focus_local": [
+    0.25,
+    0.15,
+    2.3
+   ],
+   "centre_before": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "centre_after_clicks": [
+    [
+     1.89,
+     1.4,
+     0.0
+    ],
+    [
+     -1.47,
+     -1.02,
+     0.0
+    ]
+   ]
+  },
+  "T2-turned": {
+   "pinned_plane": [
+    0.30000000000000016,
+    -0.20000000000000007,
+    0.6000000000000001,
+    0.5235987755982988,
+    0.9599310885968813,
+    -0.0
+   ],
+   "focus_local": [
+    0.25,
+    0.15,
+    2.3
+   ],
+   "centre_before": [
+    0.335486177,
+    -0.126794919,
+    -0.60114231
+   ],
+   "centre_after_clicks": [
+    [
+     1.89,
+     1.4,
+     -0.60114231
+    ],
+    [
+     -1.47,
+     -1.02,
+     -0.60114231
+    ]
+   ]
+  },
+  "T3-control": {
+   "pinned_plane": [
+    -0.0,
+    -0.0,
+    -0.0,
+    0.0,
+    -0.0,
+    -0.0
+   ],
+   "focus_local": [
+    0.25,
+    0.15,
+    12.3
+   ],
+   "centre_before": [
+    0.0,
+    0.0,
+    1.700000048
+   ],
+   "centre_after_clicks": [
+    [
+     1.89,
+     1.4,
+     1.700000048
+    ],
+    [
+     -1.47,
+     -1.02,
+     1.700000048
+    ]
+   ]
+  },
+  "T4-control": {
+   "pinned_plane": [
+    -0.0,
+    -0.0,
+    -0.0,
+    0.0,
+    -0.0,
+    -0.0
+   ],
+   "focus_local": [
+    0.25,
+    0.15,
+    2.3
+   ],
+   "centre_before": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "centre_after_clicks": [
+    [
+     1.89,
+     1.4,
+     0.0
+    ],
+    [
+     -1.47,
+     -1.02,
+     0.0
+    ]
+   ]
+  }
+ }
+}
