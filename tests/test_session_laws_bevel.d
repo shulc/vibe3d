@@ -69,6 +69,14 @@ bool applied() { return st()["applied"].type == JSONType.true_; }
 long opIx() { return st()["op"].integer; }
 bool near(double a, double b) { return abs(a - b) < 1e-4; }
 
+/// The screen position of the Shift handle (part 0), as last drawn.
+double[2] handle0() {
+    foreach (p; getJson("/api/tool/handles")["handles"]["parts"].array)
+        if (p["part"].integer == 0)
+            return [num(p["screen"].array[0]), num(p["screen"].array[1])];
+    assert(false, "bevel floor: the Shift handle is not published");
+}
+
 string btnEv(double t, bool down, int btn, int x, int y, int mod) {
     return format(`{"t":%.1f,"type":"%s","btn":%d,"x":%d,"y":%d,"clicks":1,"mod":%d}`,
                   t, down ? "SDL_MOUSEBUTTONDOWN" : "SDL_MOUSEBUTTONUP", btn, x, y, mod);
@@ -150,6 +158,17 @@ unittest {
            format("C-H1-bev: the navigate redo must re-arm with the arm's ring live: tool '%s', "
                   ~ "applied %s, rows %s, mesh %s", tool(), applied(), slHistoryLabels(),
                   slMesh().toString));
+    // ... and that group is the window's FIRST again: its undo ends the tool
+    // and records nothing (the replayed arm was bare, the group re-seated).
+    ctrlZ("C-H1-bev Ctrl+Z 3");
+    assert(tool() == "" && slHistoryLen() == 0 && slMesh().canon == base.canon,
+           format("C-H1-bev: the undo after the redo must pop the group with its row again: "
+                  ~ "tool '%s', rows %s, mesh %s", tool(), slHistoryLabels(), slMesh().toString));
+    // A RAW redo re-arms bare: the activation comes back without the ring.
+    slLine("history.redo");
+    assert(tool() == "polyBevel" && !applied() && slMesh().canon == base.canon,
+           format("C-H1-bev: a raw redo of the arm must re-arm bare: tool '%s', applied %s, mesh %s",
+                  tool(), applied(), slMesh().toString));
     slLine("tool.set poly.bevel off");
 }
 
@@ -197,7 +216,7 @@ unittest {
     assert(applied1.verts == 12 && applied1.canon != base.canon && !applied(),
            format("bevel floor (doApply): the headless apply did not bevel: mesh %s, applied %s",
                   applied1.toString, applied()));
-    slLine("history.undo");
+    ctrlZ("doApply Ctrl+Z");
     assert(slMesh().canon == base.canon,
            format("doApply: undoing the headless apply must return the window's base, not the "
                   ~ "arm's ring: mesh %s, rows %s", slMesh().toString, slHistoryLabels()));
@@ -235,20 +254,51 @@ unittest {
     if (!cell("C-H5-mmb")) return;
     rig("C-H5-mmb");
     armUi("C-H5-mmb");
+    const a0 = slMesh();
     haul(0, -40, "C-H5-mmb h1");
     const s1 = shiftV(), i1 = insetV();
     const g1 = slMesh();
+    const hp1 = handle0();
     tap(2, "C-H5-mmb tap");
     assert(slMesh().verts == 16 && opIx() == 1 && applied() && near(shiftV(), s1),
            format("C-H5-bev-mmb: a Middle tap must apply a CLONED second operation (nv 12 -> 16, "
                   ~ "shift kept): mesh %s, op %s, applied %s, shift %s (h1 %s)",
                   slMesh().toString, opIx(), applied(), shiftV(), s1));
+    // The handle sits on the NEW operation's base (the clone's cap).
+    const hp2 = handle0();
+    assert(abs(hp2[0] - hp1[0]) + abs(hp2[1] - hp1[1]) > 2,
+           format("C-H5-bev-mmb: the handle did not move onto the new operation's base: %s -> %s",
+                  hp1, hp2));
     ctrlZ("C-H5-mmb Ctrl+Z");
     assert(tool() == "polyBevel" && slMesh().canon == g1.canon && near(shiftV(), s1)
            && near(insetV(), i1),
            format("C-H5-bev-mmb z1: Ctrl+Z must pop the whole clone and keep its start: tool '%s', "
                   ~ "mesh %s (h1 %s), shift %s (clone start %s)",
                   tool(), slMesh().toString, g1.toString, shiftV(), s1));
+    // The next Ctrl+Z is the first operation's haul: back to the arm's ring.
+    ctrlZ("C-H5-mmb Ctrl+Z 2");
+    assert(slMesh().canon == a0.canon && opIx() == 0 && applied() && near(shiftV(), 0),
+           format("C-H5-bev-mmb z2: the first operation's haul must pop onto the arm's ring: "
+                  ~ "mesh %s (a0 %s), op %s, applied %s, shift %s",
+                  slMesh().toString, a0.toString, opIx(), applied(), shiftV()));
+    // A new haul and a new clone: the clone stands on THIS haul's result.
+    haul(0, -20, "C-H5-mmb h1'");
+    const g1b = slMesh();
+    tap(2, "C-H5-mmb tap 2");
+    ctrlZ("C-H5-mmb Ctrl+Z 3");
+    assert(slMesh().canon == g1b.canon && opIx() == 1 && !applied(),
+           format("C-H5-bev-mmb: the second clone's undo must return ITS base (the new haul), not "
+                  ~ "the popped clone's: mesh %s (h1' %s), op %s", slMesh().toString, g1b.toString,
+                  opIx()));
+    // Between operations the window still holds the first operation's result:
+    // a UI-door command commits it.
+    const L = slHistoryLabels();
+    slLineUi("select.invert");
+    const added = slHistoryLabels()[L.length .. $];
+    assert(added.length == 2 && added[0] == "Poly Bevel" && tool() == "polyBevel"
+           && slMesh().canon != a0.canon,
+           format("C-H5-bev-mmb: a command between operations must commit the window first: added "
+                  ~ "%s, tool '%s', mesh %s", added, tool(), slMesh().toString));
     slLine("tool.set poly.bevel off");
 }
 
@@ -257,7 +307,7 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     if (!cell("C-H5-shift")) return;
-    rig("C-H5-shift");
+    const base = rig("C-H5-shift");
     armUi("C-H5-shift");
     haul(0, -40, "C-H5-shift h1");
     const s1 = shiftV();
@@ -275,6 +325,19 @@ unittest {
            format("C-H5-bev-shift z1: Ctrl+Z must pop the Shift operation to its start (0/0) over "
                   ~ "the first one: tool '%s', mesh %s (h1 %s), shift %s, inset %s",
                   tool(), slMesh().toString, g1.toString, shiftV(), insetV()));
+    // Between operations nothing is applied, so a new Shift press has nothing
+    // to bake: it opens the SAME next operation, not one more.
+    haul(0, -40, "C-H5-shift hs2", 1, SL_KMOD_LSHIFT);
+    assert(opIx() == 1 && applied() && slMesh().verts == 16,
+           format("C-H5-bev-shift: a Shift press between operations must not stack another: op %s, "
+                  ~ "applied %s, mesh %s", opIx(), applied(), slMesh().toString));
+    // RMB discards the whole window, both operations: the base, the tool stays.
+    auto c = fetchCamera();
+    slPlay(motEv(20, c.vpX + 70, c.vpY + 70, 0, 0) ~ "\n" ~ btnEv(40, true, 3, c.vpX + 70, c.vpY + 70, 0)
+           ~ "\n" ~ btnEv(60, false, 3, c.vpX + 70, c.vpY + 70, 0), "C-H5-shift RMB");
+    assert(tool() == "polyBevel" && !applied() && opIx() == 0 && slMesh().canon == base.canon,
+           format("C-H5-bev-shift: RMB must discard the window to its base: tool '%s', applied %s, "
+                  ~ "op %s, mesh %s", tool(), applied(), opIx(), slMesh().toString));
     slLine("tool.set poly.bevel off");
 }
 
@@ -296,6 +359,12 @@ unittest {
     assert(applied() && slMesh().verts == 16,
            format("C-K-tab: the next press must open a window and apply (nv 12 -> 16): applied %s, "
                   ~ "mesh %s", applied(), slMesh().toString));
+    // That press OPENED a window: its haul is a step of it, the tool stays.
+    ctrlZ("C-K-tab Ctrl+Z");
+    assert(tool() == "polyBevel" && applied() && slMesh().verts == 16 && near(shiftV(), 0),
+           format("C-K-tab: the Ctrl+Z after the liveness haul must pop the haul inside the window "
+                  ~ "the press opened: tool '%s', applied %s, mesh %s, shift %s",
+                  tool(), applied(), slMesh().toString, shiftV()));
     slLine("tool.set poly.bevel off");
 }
 

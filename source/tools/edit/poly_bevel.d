@@ -241,7 +241,6 @@ public:
         if (!image.valid) return;
         active = true; built = false; dragPart = -1;
         inset_ = 0.0f; shift_ = 0.0f;
-        opApplied_ = false; opIndex_ = 0; opBases_ = null; previewOp_ = -1;
         preview_.reset(); image.before.moveInto(before);
         gizmoValid = image.gizmoValid; anchor = image.anchor;
         baseAnchor = image.baseAnchor; shiftAxis = image.shiftAxis;
@@ -290,10 +289,6 @@ public:
         built      = false;
         dragPart   = -1;
         gizmoValid = false;
-        opApplied_ = false;
-        opIndex_   = 0;
-        opBases_   = null;
-        previewOp_ = -1;
         preview_.reset();          // drop the clean-cage scratch with the session
         toolHandles.clearHaul();
     }
@@ -319,21 +314,14 @@ public:
     // tool's own operation boundary — so `commitUncommittedEdit` keeps the
     // base `false` and `EditSession.applyAndContinue` leaves the press to it.
     override bool commitOperation() {
-        if (!active) return false;
         if (hasUncommittedEdit()) commitEdit();
         rebase();
-        refreshCaches();
         return true;
     }
 
     // The attributes restored by the session (slice M3b): the live
     // operation's base by `op`, the operation on it by `applied`.
-    override void rebuildPreviewFromAttrs() {
-        if (!active) return;
-        dragPart = -1;
-        toolHandles.clearHaul();
-        rebuildPreview();
-    }
+    override void rebuildPreviewFromAttrs() { rebuildPreview(); }
 
     override void onParamChanged(string pname) {
         if (interactiveParamEdit) rebuildPreview();
@@ -465,12 +453,10 @@ public:
 
     override bool applyHeadless() {
         if (*editMode != EditMode.Polygons) return false;
-        // The one-shot apply replaces the live window: back to its base.
-        if ((built || opIndex_ > 0) && before.filled)
+        if (built && before.filled) {
             before.restore(*mesh);
-        built = false; opApplied_ = false; opIndex_ = 0; opBases_ = null;
-        previewOp_ = -1;
-        sessionOperationEnded();
+            built = false;
+        }
         // This path rebuilds the live mesh behind the seam's back, so the
         // key it remembers no longer describes what is standing.
         preview_.reset();
@@ -678,18 +664,16 @@ private:
             opApplied_ = true;
             rebuildPreview();
         }
-        if (!windowOpen && opApplied_) sessionOperationArmed();
+        if (!windowOpen) sessionOperationArmed();
     }
 
+    // The next `rebuildPreview` sees the new index and re-seats the preview
+    // seam and the gizmo frame on the new base.
     void bakeLiveOperation() {
         if (opBases_.length > cast(size_t) opIndex_) opBases_.length = cast(size_t) opIndex_;
         opBases_ ~= MeshSnapshot.capture(*mesh);
         ++opIndex_;
         opApplied_ = false;
-        built      = false;
-        previewOp_ = -1;
-        preview_.reset();
-        computeGizmoFrame();
     }
 
     bool[] currentMask() {

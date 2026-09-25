@@ -886,7 +886,7 @@
     {
       "aggregate": "PolyBevelTool",
       "module": "tools.edit.poly_bevel",
-      "semantic_sha256": "027209bf256475141cceee0d2349d0ff99c1c6a82d22c2d2001c7b5fb4bf0608",
+      "semantic_sha256": "19bfbbf490fe9bd3684e5cbf04ff2c2273c2fcf1079db1612862bb1882894ce2",
       "signature": "void()",
       "symbol": "deactivate"
     },

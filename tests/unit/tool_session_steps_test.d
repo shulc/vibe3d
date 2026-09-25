@@ -24,7 +24,7 @@
 // Fast loop: tools/local/ut-standalone.sh tests/unit/tool_session_steps_test.d
 module tests.unit.tool_session_steps_test;
 
-import command_history : CommandHistory;
+import command_history : CommandHistory, UndoState;
 import commands.tool.lifecycle : ToolActivationCommand;
 import edit_session : EditSession, ParameterChangeSource, ParameterChangePhase;
 import editmode : EditMode;
@@ -415,6 +415,10 @@ unittest { // openOperation: Middle clones the haul attributes from the given en
     nc.v = 1;
     nc.openOperation(PressKind.middle, prev);
     assert(nc.v == 1 && nc.rebuilds == 0, "M3 openOperation: a no-clone tool cloned on Middle");
+    // M3b: a no-clone tool's Middle applies nothing; every other press does.
+    assert(!nc.pressAppliesOperation(PressKind.middle) && nc.pressAppliesOperation(PressKind.shift)
+           && nc.pressAppliesOperation(PressKind.plain) && t.pressAppliesOperation(PressKind.middle),
+           "M3b pressAppliesOperation: the no-clone Middle rule is not the only exception");
     // An empty image restores nothing and still rebuilds once.
     t.v = 5;
     t.applyAttrImage(AttrImage.init);
@@ -494,4 +498,55 @@ unittest { // every consumer site of the array kinds has a PodArray arm (opponen
     assert(vec3Sites == 18 && podSites == 19,
            format("M3 PodArray: %s Vec3Array / %s PodArray code sites, measured 18 / 19",
                   vec3Sites, podSites));
+}
+
+// ---- slice M3b -----------------------------------------------------------------
+
+unittest { // a boundary step restores the image the new operation STARTED from (H2, 283)
+    auto r = rig();
+    r.t.gesture(1);
+    r.t.gesture(5);
+    r.t.gesture(7, PressKind.shift);    // Shift resets v to 0, then the gesture writes 7
+    assert(r.t.v == 7 && steps(r) == 2, format("M3b boundary floor: v %s, steps %s", r.t.v, steps(r)));
+    r.session.navigate(true);
+    assert(r.t.v == 0, format("M3b boundary: the undo of a Shift step must restore the reset start "
+                              ~ "(0), not the previous operation's end (5): v %s", r.t.v));
+}
+
+/// A stand-in whose arm applies it (`armAttr`), as Polygon Bevel's does.
+private final class ArmTool : StepTool {
+    bool on;
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy p = { sessionSteps: true, opensAt: OpensAt.arm,
+            imageAttrs: ["v", "on"], haulAttrs: ["v"], armAttr: "on" };
+        return p;
+    }
+    override Param[] params() {
+        return [Param.int_("v", "V", &v, 0), Param.bool_("on", "On", &on, false)];
+    }
+    override bool hasUncommittedEdit() const { return on; }
+}
+
+unittest { // the arm raises `armAttr` as the window's first group; a history-step arm is bare
+    auto t = new ArmTool;
+    Tool active = t;
+    auto h = new CommandHistory();
+    auto s = new EditSession(() => active, h, () { active = null; });
+    s.noteArm("t.arm");
+    auto j = s.sessionStateJson();
+    assert(t.on && t.rebuilds == 1 && j["live"].boolean && j["steps"].integer == 0,
+           format("M3b arm: the arm did not apply as the first group: on %s, rebuilds %s, %s",
+                  t.on, t.rebuilds, j));
+    s.navigate(true);   // no activation row: rule K, the tool stays with its group undone
+    assert(!t.on && active is t && !s.sessionStateJson()["live"].boolean,
+           format("M3b arm: the first group's undo must lower the arm attribute: on %s", t.on));
+
+    auto b = new ArmTool;
+    active = b;
+    h.setState(UndoState.Suspend);
+    s.noteArm("t.arm");
+    h.setState(UndoState.Active);
+    assert(!b.on && b.rebuilds == 0 && !s.sessionStateJson()["live"].boolean,
+           format("M3b arm: an arm under a history step must be bare: on %s, rebuilds %s",
+                  b.on, b.rebuilds));
 }
