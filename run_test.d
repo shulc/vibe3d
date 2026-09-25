@@ -582,6 +582,7 @@ enum HarnessStage : string {
     lockTimeout  = "lock_timeout",
     worktreeBusy = "worktree_busy",       // another run of this checkout is live
     slotConfigInvalid = "slot_config_invalid",
+    portWindowRefused = "port_window_refused", // -j wider than the slot's ports
     noSuchTest   = "no_such_test",
     noBinary     = "no_binary",
     runIncomplete = "run_incomplete", // acquired the slot, but no Total/verdict was produced
@@ -3000,7 +3001,7 @@ int main(string[] args) {
                 ~ "%d-port window (%d..%d); pass an explicit -p whose range "
                 ~ "no other run on this host uses."), j, kSlotPortStride,
                 port, port + kSlotPortStride - 1);
-            g_harness.stage = HarnessStage.gateRefused;
+            g_harness.stage = HarnessStage.portWindowRefused;
             g_harness.rc = 2;
             return 2;
         }
