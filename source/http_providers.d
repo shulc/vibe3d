@@ -270,10 +270,10 @@ version (web) {
     import ai3d.worker_manager       : Ai3dWorkerManager, Ai3dWorkerState,
         Ai3dInstallState, ai3dDefaultInstallLocation;
     import commands.ai3d.import_result : Ai3dImportResult;
-    import remesh.remesh_job         : RemeshJob, RemeshParams,
-        MAX_REMESH_TARGET_QUADS, MIN_REMESH_TARGET_QUADS;
-    import commands.mesh.remesh      : Remesh, RemeshStart, RemeshOpen;
 }
+import remesh.remesh_job : RemeshJob, RemeshParams,
+    MAX_REMESH_TARGET_QUADS, MIN_REMESH_TARGET_QUADS;
+import commands.mesh.remesh : Remesh, RemeshStart, RemeshOpen;
 import property_panel : PropertyPanel, toolPropsIdsJson;
 import ui.availability : buttonAvailabilityJson;
 import ui.discard_guard : uiPolicyJson;
@@ -1126,8 +1126,8 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                 } else {
                     modal("ai3d.generate",  ai3dModalOpen);
                     modal("ai3d.install",   ai3dInstallConfirmOpen);
-                    modal("mesh.remesh",    remeshModalState.open);
                 }
+                modal("mesh.remesh", remeshModalState.open);
                 modal("discard.confirm",
                       guardModalState.discardConfirmOpen);
                 modal("command.notice", guardModalState.noticeOpen);

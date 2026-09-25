@@ -118,21 +118,18 @@ private bool isGatedTarget(string moduleName)
 {
     return moduleName.startsWith("ai3d.")
         || moduleName.startsWith("commands.ai3d.")
-        || moduleName == "ai3d_command_registration"
-        || moduleName.startsWith("remesh.")
-        || moduleName == "commands.mesh.remesh"
-        || moduleName == "ui.remesh_modal_state";
+        || moduleName == "ai3d_command_registration";
 }
 
 unittest
 {
     foreach (moduleName; [
             "ai3d.job_controller", "commands.ai3d.import_result",
-            "ai3d_command_registration", "remesh.remesh_job",
-            "commands.mesh.remesh", "ui.remesh_modal_state",
+            "ai3d_command_registration",
         ])
         assert(isGatedTarget(moduleName), moduleName);
-    foreach (moduleName; ["ai.model_adapter", "commands.mesh.bevel", "ui.panels"])
+    foreach (moduleName; ["ai.model_adapter", "commands.mesh.bevel", "ui.panels",
+            "remesh.remesh_job", "commands.mesh.remesh", "ui.remesh_modal_state"])
         assert(!isGatedTarget(moduleName), moduleName);
 }
 
@@ -311,14 +308,8 @@ SH";
         "app", "editor_app", "http_providers", "mesh_command_registration",
         "registration", "ui.panels",
     ];
-    enum fullyGatedModules = [
-        "commands.mesh.remesh", "remesh.region_stitch",
-        "remesh.remesh_job", "ui.remesh_modal_state",
-    ];
     bool[string] subjectSet;
     foreach (subject; subjects) subjectSet[subject] = true;
-    bool[string] fullyGatedSet;
-    foreach (subject; fullyGatedModules) fullyGatedSet[subject] = true;
 
     bool[string] importersSeen;
     bool[string] leakSet;
@@ -330,15 +321,10 @@ SH";
             foreach (target; targets)
                 if (isGatedTarget(target)) leakSet[importer] = true;
         }
-        if (importer in fullyGatedSet)
-            foreach (target; targets)
-                if (target != "object") leakSet[importer] = true;
     }
 
     string[] leaks;
     foreach (subject; subjects)
-        if (subject in leakSet) leaks ~= subject;
-    foreach (subject; fullyGatedModules)
         if (subject in leakSet) leaks ~= subject;
     leaks.sort;
     const gatedModulesSeen = importersSeen.length;
@@ -349,9 +335,7 @@ SH";
         format("W15-D+D2 gated-module population changed: expected 6 composition modules, got %d",
                gatedModulesSeen));
     assert(leaks.length == 0,
-        format("W15-D+D2 web graph still has direct ai3d/remesh edges: %s; "
-             ~ "removing version (web) from one use in source/ui/panels.d "
-             ~ "must report [\"ui.panels\"] here", leaks));
+        format("W15-D+D2 web graph still has direct ai3d edges: %s", leaks));
 
     bool[string] appClosure;
     foreach (moduleName; webGraph.ours.byKey)
@@ -361,6 +345,10 @@ SH";
         format("W16-A web app-closure population fell below the non-vacuity floor %d: got %d; "
              ~ "this floor is not a W16-A dependency witness",
                appClosurePopulationFloor, appClosure.length));
+    foreach (moduleName; ["remesh.remesh_job", "remesh.region_stitch",
+            "commands.mesh.remesh", "ui.remesh_modal_state"])
+        assert(moduleName in appClosure,
+            "web quad-remesh module absent from production app closure: " ~ moduleName);
 
     foreach (path; excluded)
     {
@@ -600,14 +588,7 @@ SH";
     assert(editorApp.indexOf("version (web) {\n} else {\nstruct Ai3dModalState") >= 0,
         "W15-D web builds must compile out the native AI modal state");
 
-    // The three ARM-INDEPENDENT checks, and they are pinned OUTSIDE any version block on
-    // purpose. The earlier form of this assert matched the same three asserts at the web
-    // constructor's own indentation, which pinned them for ONE arm only; when the two
-    // constructors collapsed into one behind a build-keyed alias, that exact text stopped
-    // existing and the assert went red for a reason that was not a defect. Deleting it was
-    // the wrong repair -- a removed check leaves no trace in a green gate -- so it is
-    // re-pinned at the stronger property: these three run on EVERY arm, and only the two
-    // remesh checks are gated.
+    // All five dependency checks now run in both browser and native builds.
     const meshRegistration = readText(buildPath(repoRoot, "source",
         "mesh_command_registration.d"));
     enum sharedMeshDepsChecks =
@@ -617,15 +598,10 @@ SH";
       ~ "            \"6509 mesh registration requires a resolved viewport provider\");\n"
       ~ "        assert(promoteGeometryType !is null,\n"
       ~ "            \"6509 mesh registration requires the geometry promote door\");\n"
-      ~ "        version (web) {";
+      ~ "        assert(remeshJob !is null,\n"
+      ~ "            \"6509 mesh registration requires the remesh job\");\n"
+      ~ "        assert(requestRemeshOpen !is null,\n"
+      ~ "            \"6509 mesh registration requires the remesh open door\");";
     assert(meshRegistration.indexOf(sharedMeshDepsChecks) >= 0,
-        "W15-D2 the three arm-independent mesh dependency checks must stay OUTSIDE the "
-      ~ "version block: they run on web and native alike, and the gate begins after them");
-    enum gatedRemeshChecks =
-        "            assert(remeshJob !is null,\n"
-      ~ "                \"6509 mesh registration requires the remesh job\");\n"
-      ~ "            assert(requestRemeshOpen !is null,\n"
-      ~ "                \"6509 mesh registration requires the remesh open door\");";
-    assert(meshRegistration.indexOf(gatedRemeshChecks) >= 0,
-        "W15-D2 the two remesh dependency checks must stay INSIDE the native arm");
+        "web/native remesh dependency checks left the shared constructor");
 }

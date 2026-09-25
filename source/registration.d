@@ -123,9 +123,9 @@ version (web) {
     import ai3d.scene_validator      : Ai3dMaxTotalFaces;
     import ai3d.worker_manager       : Ai3dWorkerManager, Ai3dWorkerState,
         Ai3dInstallState, ai3dDefaultInstallLocation;
-    import remesh.remesh_job         : RemeshJob, RemeshParams,
-        MAX_REMESH_TARGET_QUADS, MIN_REMESH_TARGET_QUADS;
 }
+import remesh.remesh_job : RemeshJob, RemeshParams,
+    MAX_REMESH_TARGET_QUADS, MIN_REMESH_TARGET_QUADS;
 import property_panel : PropertyPanel;
 import forms_render;
 import layer_params   : LayerPropsProvider;
@@ -314,13 +314,7 @@ private void registerMeshFamily(EditorApp app) {
     auto meshRebuildDropDoor =
         () => dropActiveTool(ToolTransition.meshRebuildDrop);
     auto promoteGeometryType = app.promoteGeometryType;
-    version (web) {
-    } else
     auto remeshModalState = app.remeshModalState;
-    version (web)
-    auto meshCommandDeps = MeshCommandDeps(meshRebuildDropDoor,
-        &viewports.originSnapshot, null, null, promoteGeometryType);
-    else
     auto meshCommandDeps = MeshCommandDeps(meshRebuildDropDoor,
         &viewports.originSnapshot, app.remeshJob,
         &remeshModalState.requestOpen, promoteGeometryType);

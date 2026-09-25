@@ -264,7 +264,7 @@ static assert([__traits(allMembers, LiveSessionRole)] == [
 static assert([__traits(allMembers, LiveViewModeRole)] == [
     "view_", "mode_", "__ctor", "view", "mode", "modeCell"]);
 static assert([__traits(allMembers, mesh_command_registration)] == [
-    "object", "commands", "RemeshJobRef", "MeshCommandDeps", "registerMeshCommands"],
+    "object", "commands", "MeshCommandDeps", "registerMeshCommands"],
     "6509 mesh registrar module member set changed: "
   ~ [__traits(allMembers, mesh_command_registration)].stringof);
 
@@ -389,11 +389,7 @@ private enum kExpectedCall = "registerMeshCommands(app.reg(), "
     ~ "LiveSessionRole(app.sessionOwner), "
     ~ "LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()), "
     ~ "meshCommandDeps);";
-private enum kExpectedWebDeps = "version (web) "
-    ~ "auto meshCommandDeps = MeshCommandDeps(meshRebuildDropDoor, "
-    ~ "&viewports.originSnapshot, null, null, promoteGeometryType);";
-private enum kExpectedNativeDeps = "else "
-    ~ "auto meshCommandDeps = MeshCommandDeps(meshRebuildDropDoor, "
+private enum kExpectedDeps = "auto meshCommandDeps = MeshCommandDeps(meshRebuildDropDoor, "
     ~ "&viewports.originSnapshot, app.remeshJob, "
     ~ "&remeshModalState.requestOpen, promoteGeometryType);";
 
@@ -408,19 +404,18 @@ unittest { // L4/L4b: direct composition, lambda domains, and app wiring.
         countOccurrences(lambdaFree(root), "app.")));
     assert(identifierCount(lambdaScopes(root), "app") == 0
             && countOccurrences(root, "&app.") == 0
-            && countOccurrences(root, "{") == 2,
+            && countOccurrences(root, "{") == 1,
         "6509 closure: the mesh composition root reaches an EditorApp member "
-      ~ "inside a lambda (expression body or block body), through a method "
-      ~ "address, or outside the one empty web-version block — the channel came back");
+      ~ "inside a lambda (expression body or block body), or through a method address");
     assert(countOccurrences(root, "=>") == 1,
         "6509 composition root: a second expression lambda appeared in the mesh "
       ~ "root — the one permitted lambda adapts ToolTransition only");
     assert(countOccurrences(collapseWhitespace(code), kExpectedCall) == 1,
         "6509 call text: the mesh composition-root call text or its multiplicity changed");
-    assert(countOccurrences(collapsed, kExpectedWebDeps) == 1,
-        "6509 web deps: the remesh-free mesh dependency set changed");
-    assert(countOccurrences(collapsed, kExpectedNativeDeps) == 1,
-        "6509 native deps: the remesh job or modal-open door left the composition root");
+    assert(countOccurrences(collapsed, kExpectedDeps) == 1,
+        "6509 deps: the remesh job or modal-open door left the composition root");
+    assert(countOccurrences(root, "version (web)") == 0,
+        "6509 remesh dependencies became browser-gated again");
     assert(collapsed.length > 300,
         "6509 composition-root population: root body is unexpectedly small");
 

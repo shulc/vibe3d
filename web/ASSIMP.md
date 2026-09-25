@@ -1,7 +1,8 @@
 # Browser interchange I/O
 
-`tools/build_web.sh` builds two independent wasm instances. The editor is LDC/D
-with DRuntime; `tools/build_web_assimp.sh` builds Assimp and
+`tools/build_web.sh` builds the editor and separate native-library wasm
+instances. The editor is LDC/D with DRuntime;
+`tools/build_web_assimp.sh` builds Assimp and
 `web/assimp_module.cpp` with Emscripten's `-fwasm-exceptions`. No C++ object,
 exception or pointer crosses into the editor instance. The page initializes
 Assimp first, then starts the editor. If Assimp cannot load, the editor starts

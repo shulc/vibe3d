@@ -1,8 +1,5 @@
 module remesh.region_stitch;
 
-version (web) {
-} else {
-
 // ---------------------------------------------------------------------------
 // region_stitch — boundary-pinned stitch of a remeshed OPEN patch back into
 // its surrounding mesh (task 0385, "Approach 1" / band-bridge boundary
@@ -742,6 +739,4 @@ unittest {
     auto res = stitchRegion(big.verts, keepFaces, regionLoops, bogusPatch.verts, bogusPatch.faces);
     assert(!res.ok, "a single-loop patch must not satisfy a 2-loop region");
     assert(res.failReason.length > 0);
-}
-
 }

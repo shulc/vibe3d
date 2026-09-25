@@ -59,10 +59,7 @@ import tool_activation_ownership : ToolTransition, ActivationDoor,
 import guarded_action_controller : GuardedActionController,
     GuardedActionPorts, GuardObservationPorts;
 import ui.guard_modal_state : GuardModalState;
-version (web) {
-} else {
-    import ui.remesh_modal_state : RemeshModalState;
-}
+import ui.remesh_modal_state : RemeshModalState;
 import layout_reset_action : LayoutResetAction, seedDefaultLayoutIfMissing;
 version (web) {
 } else {
@@ -297,10 +294,10 @@ version (web) {
     import ai3d.worker_manager       : Ai3dWorkerManager, Ai3dWorkerState,
         Ai3dInstallState, ai3dDefaultInstallLocation, ai3dDefaultWorkerUrl;
     import commands.ai3d.import_result : Ai3dImportResult;
-    import remesh.remesh_job         : RemeshJob, RemeshParams,
-        MAX_REMESH_TARGET_QUADS, MIN_REMESH_TARGET_QUADS;
-    import commands.mesh.remesh : Remesh, RemeshStart;
 }
+import remesh.remesh_job : RemeshJob, RemeshParams,
+    MAX_REMESH_TARGET_QUADS, MIN_REMESH_TARGET_QUADS;
+import commands.mesh.remesh : Remesh, RemeshStart;
 import property_panel : PropertyPanel;
 import forms_render;
 import document       : Layer;
@@ -986,6 +983,7 @@ void main(string[] args) {
     // --web-probe-dispatch <id>: every F9 press routed through
     // the production input router dispatches <id> through the UI button door.
     version (web) string webProbeDispatchId;
+    version (web) string webProbeDispatchArgs = "{}";
 
     for (size_t i = 1; i < args.length; ++i) {
         if (args[i] == "--playback") {
@@ -1056,6 +1054,11 @@ void main(string[] args) {
             } else {
                 writeln("Error: --web-probe-dispatch requires --config=web");
                 return;
+            }
+        } else if (args[i] == "--web-probe-dispatch-args") {
+            version (web) {
+                if (i + 1 >= args.length) return;
+                webProbeDispatchArgs = args[++i];
             }
         } else if (args[i] == "--http-port") {
             startHttpServer = true;
@@ -1381,17 +1384,9 @@ void main(string[] args) {
     } else
     scope(exit) ai3dWorkerManager.shutdown();
 
-    // Quad-remesh job (source/remesh/remesh_job.d) — a crash-isolated
-    // SUBPROCESS (the external autoremesher_cli helper), polled once per
-    // frame near the ai3d drain below; never a worker thread (the helper's
-    // geogram backend can abort() on bad input, and only process isolation
-    // survives that). Cancel any in-flight subprocess at shutdown so vibe3d
-    // never leaves an orphaned helper running.
-    version (web) {
-    } else
+    // Quad-remesh job: native uses a subprocess, web a separate wasm Worker.
+    // Both are polled once per frame and cancelled at shutdown.
     auto remeshJob = new RemeshJob();
-    version (web) {
-    } else
     scope(exit) remeshJob.cancel();
 
     version (web) static EventLogger evLog;
@@ -3317,11 +3312,12 @@ void main(string[] args) {
     bool     ai3dInstallConfirmOpen;
     bool     ai3dInstallConfirmPendingOpen;
 
+    }
+
     // Quad Remesh modal. One reference-semantics owner carries its handshake,
     // parameters and result text across registration, drawing, polling and
     // diagnostics (task 6360; ui/remesh_modal_state.d).
     auto remeshModalState = new RemeshModalState();
-    }
 
     auto propertyPanel = new PropertyPanel();
     auto formsPanel    = new forms_render.FormsPanel();
@@ -3736,10 +3732,10 @@ void main(string[] args) {
         app.ai3dInstallConfirmPendingOpenPtr = &ai3dInstallConfirmPendingOpen;
         app.ai3dMaxFacesPtr               = &ai3dMaxFaces;
         app.ai3dWorkerManager             = ai3dWorkerManager;
-        app.remeshModalState              = remeshModalState;
         app.ai3dController                = ai3dController;
-        app.remeshJob                     = remeshJob;
     }
+    app.remeshModalState = remeshModalState;
+    app.remeshJob = remeshJob;
     app.guardModalState               = guardModalState;
     app.history         = history;
     app.vpm             = vpm;
@@ -4067,14 +4063,13 @@ void main(string[] args) {
         setPieMenus(loadPies("config/pies.yaml"));
     }
     version (web) {
-        // These command families are deliberately absent from the browser
+        // AI3D is deliberately absent from the browser
         // closure. Keep their shipped buttons visible as disabled placeholders
         // instead of making startup's registry validation reject the frame.
         void disableUnavailableWebButton(ref Button btn) {
             bool unavailable(Action action) {
                 return action.kind == ActionKind.command &&
-                    (action.id == "ai3d.generate.open" ||
-                     action.id == "mesh.remesh.open");
+                    action.id == "ai3d.generate.open";
             }
             if (unavailable(btn.action) ||
                 (btn.ctrl.present && unavailable(btn.ctrl.action)) ||
@@ -4145,8 +4140,7 @@ void main(string[] args) {
         void check(Action a) {
             version (web) {
                 if (a.kind == ActionKind.command &&
-                    (a.id == "ai3d.generate.open" ||
-                     a.id == "mesh.remesh.open"))
+                    a.id == "ai3d.generate.open")
                     return;
             }
             final switch (a.kind) {
@@ -4485,14 +4479,15 @@ void main(string[] args) {
         }
     }
 
+    }
+
     // Quad Remesh (source/remesh/remesh_job.d) per-frame tick. poll() is
-    // non-blocking (a single tryWait() on the subprocess). On a
+    // non-blocking (tryWait on native, a completion flag on web). On a
     // running->succeeded transition, fire the undoable `mesh.remesh` apply
     // through the ordinary runCommand path (one Model-undo entry —
     // commands/mesh/remesh.d) and clear the job; on running->failed,
     // capture the message for the modal and clear. Mirrors onAi3dEvent's
-    // shape but simpler — no worker thread / event queue, since RemeshJob
-    // is polled synchronously in this same thread.
+    // shape but simpler: RemeshJob is polled on the main thread.
     void tickRemeshJob() {
         remeshJob.poll();
         final switch (remeshJob.state()) {
@@ -4513,6 +4508,9 @@ void main(string[] args) {
                     break;
                 }
                 const nFaces = remeshJob.resultFaces().length;
+                size_t nQuads;
+                foreach (face; remeshJob.resultFaces())
+                    if (face.length == 4) ++nQuads;
                 // Task 0386: on a region remesh, message() carries a non-fatal
                 // "remeshed N of M region components (...)" note when some
                 // components were too complex/degenerate to stitch (partial
@@ -4528,6 +4526,8 @@ void main(string[] args) {
                 // out-of-range guard — the mesh is unchanged, so don't lie
                 // "Done". Mirror onAi3dEvent's imp.succeeded() check.
                 if (cmd.applied()) {
+                    version (web) if (webFirstFrameProbe)
+                        writefln("WEB-REMESH-RESULT faces=%d quads=%d", nFaces, nQuads);
                     // The mesh changed (visible in the viewport) — the action
                     // happened, so auto-close the modal. A failed/no-op remesh
                     // (below) keeps it open so the error stays visible.
@@ -4545,7 +4545,6 @@ void main(string[] args) {
                 remeshJob.clear();
                 break;
         }
-    }
     }
 
     // Intercept commands that surface an args dialog (the popup that
@@ -5082,8 +5081,9 @@ void main(string[] args) {
         webPanelProbeSnapshot;
     version (web) {
     } else {
-        import ui.panels : drawAi3dModal, drawRemeshModal;
+        import ui.panels : drawAi3dModal;
     }
+    import ui.panels : drawRemeshModal;
     // Task 0669 — the per-frame button-availability record (see ui/availability.d).
     import ui.availability : beginButtonAvailabilityFrame,
                              endButtonAvailabilityFrame;
@@ -5253,9 +5253,9 @@ void main(string[] args) {
             // same "always outside httpServer.running" reasoning as the
             // ai3d drain above: a normal editor run with HTTP off must still
             // be able to complete a remesh job. tickRemeshJob() never
-            // blocks (a single non-blocking tryWait() on the subprocess).
-            tickRemeshJob();
+            // blocks (tryWait on native, a completion flag on web).
             }
+            tickRemeshJob();
 
             // ---- Events ----
             while (SDL_PollEvent(&event)) {
@@ -5321,7 +5321,7 @@ void main(string[] args) {
                         && event.key.repeat == 0
                         && event.key.keysym.sym == SDLK_F9) {
                         writefln("WEB-PROBE-DISPATCH id=%s", webProbeDispatchId);
-                        commandBinding.dispatchUi(webProbeDispatchId, "{}");
+                        commandBinding.dispatchUi(webProbeDispatchId, webProbeDispatchArgs);
                     }
                     if (webFirstFrameProbe && webProbeInputReported
                         && eventAccepted && event.type == SDL_KEYDOWN
@@ -5779,12 +5779,12 @@ void main(string[] args) {
         // Moved VERBATIM to ui/panels.d's drawAi3dModal (app.d decomp,
         // phase B; same `with (app)` seam as the 0419 panels).
         drawAi3dModal(app);
+        }
 
         // ---- Quad Remesh modal (source/remesh/remesh_job.d) -----------------
-        // The panel receives only its persistent state, subprocess owner and
+        // The panel receives only its persistent state, job owner and
         // live mesh provider; result application remains in tickRemeshJob().
         drawRemeshModal(remeshModalState, remeshJob, app.meshDg);
-        }
 
         // ---- Unsaved-changes quit guard + confirmation modal (task 0434) ----
         // The panel receives only its stable handshake state, the window gate

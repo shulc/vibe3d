@@ -1,8 +1,5 @@
 module commands.mesh.remesh;
 
-version (web) {
-} else {
-
 // ---------------------------------------------------------------------------
 // Remesh — `mesh.remesh`, the undoable landing command for a completed
 // RemeshJob (source/remesh/remesh_job.d). Mirrors commands/mesh/subdivide.d
@@ -246,6 +243,4 @@ final class RemeshOpen : Command {
         if (onOpen !is null) onOpen();
         return false;
     }
-}
-
 }

@@ -276,20 +276,17 @@ version (web) {
         Ai3dInstallState, ai3dDefaultInstallLocation, ai3dDefaultWorkerUrl;
     import core.time : MonoTime;
     import commands.ai3d.import_result : Ai3dImportResult;
-    import remesh.remesh_job         : RemeshJob, RemeshParams,
-        MAX_REMESH_TARGET_QUADS, MIN_REMESH_TARGET_QUADS;
-    import commands.mesh.remesh      : Remesh, RemeshStart, RemeshOpen;
 }
+import remesh.remesh_job : RemeshJob, RemeshParams,
+    MAX_REMESH_TARGET_QUADS, MIN_REMESH_TARGET_QUADS;
+import commands.mesh.remesh : Remesh, RemeshStart, RemeshOpen;
 import property_panel : PropertyPanel;
 import forms_render;
 import layer_params   : LayerPropsProvider, itemPropsTarget;
 import snap           : ItemSnapFrame;
 import viewport       : LayoutPreset, ViewportManager, Viewport3D;
 import ui.guard_modal_state : GuardModalState;
-version (web) {
-} else {
-    import ui.remesh_modal_state : RemeshModalState;
-}
+import ui.remesh_modal_state : RemeshModalState;
 import ui.viewport_props_role : ViewportCommandDispatch,
     ViewportPropertiesReadRole;
 import layout_reset_action : LayoutResetAction;
@@ -1645,6 +1642,7 @@ void drawAi3dModal(EditorApp app) {
         }
     }
 }
+}
 
 void drawRemeshModal(RemeshModalState state, RemeshJob remeshJob, MeshDg currentMesh) {
     assert(state !is null, "remesh modal requires panel state");
@@ -1655,8 +1653,8 @@ void drawRemeshModal(RemeshModalState state, RemeshJob remeshJob, MeshDg current
         // Same BeginPopupModal convention as the AI3D modal above. Opened by
         // `mesh.remesh.open` (registered below, near the other mesh.remesh.*
         // factories). Unlike ai3dModal, this reads remeshJob.state()/busy()/
-        // message() DIRECTLY every frame — RemeshJob is polled synchronously
-        // in this same thread (no worker thread / event queue to snapshot).
+        // message() DIRECTLY every frame — RemeshJob completion is polled on
+        // this thread, whether its helper is a process or a browser Worker.
         if (open) {
             if (consumePendingOpen()) {
                 ImGui.OpenPopup("Remesh (Quad)");
@@ -1756,7 +1754,6 @@ void drawRemeshModal(RemeshModalState state, RemeshJob remeshJob, MeshDg current
             }
         }
     }
-}
 }
 
 version (unittest) {

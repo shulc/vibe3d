@@ -111,6 +111,11 @@ fi
 cmake -E copy "$repo_root/.build/web-assimp/assimp_module.js" "$artifact_root/assimp_module.js"
 cmake -E copy "$repo_root/.build/web-assimp/assimp_module.wasm" "$artifact_root/assimp_module.wasm"
 
+# The quad-remesher has its own wasm memory and runs in a disposable Worker.
+"$repo_root/tools/build_web_remesh.sh" "$repo_root/.build/web-remesh"
+cmake -E copy "$repo_root/.build/web-remesh/remesh_module.js" "$artifact_root/remesh_module.js"
+cmake -E copy "$repo_root/.build/web-remesh/remesh_module.wasm" "$artifact_root/remesh_module.wasm"
+
 cd "$repo_root"
 cmake -E make_directory "$artifact_root" "$link_root"
 export VIBE3D_WEB_ARTIFACT_ROOT="$artifact_root"

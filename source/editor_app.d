@@ -26,8 +26,8 @@ import ui.discard_guard : UiRunOutcome;
 import ui.guard_modal_state : GuardModalState;
 version (web) {
 } else {
-    import ui.remesh_modal_state : RemeshModalState;
 }
+import ui.remesh_modal_state : RemeshModalState;
 import ui.history_panel : HistoryPanelState;
 import log : logInfo, logWarn, logError;
 import prefs;
@@ -262,10 +262,10 @@ version (web) {
         Ai3dInstallState, ai3dDefaultInstallLocation;
     import core.time : MonoTime;
     import commands.ai3d.import_result : Ai3dImportResult;
-    import remesh.remesh_job         : RemeshJob, RemeshParams,
-        MAX_REMESH_TARGET_QUADS, MIN_REMESH_TARGET_QUADS;
-    import commands.mesh.remesh      : Remesh, RemeshStart, RemeshOpen;
 }
+import remesh.remesh_job : RemeshJob, RemeshParams,
+    MAX_REMESH_TARGET_QUADS, MIN_REMESH_TARGET_QUADS;
+import commands.mesh.remesh : Remesh, RemeshStart, RemeshOpen;
 import forms_render;
 import layer_params   : LayerPropsProvider;
 import document       : Layer;
@@ -734,8 +734,8 @@ struct EditorApp {
     version (web) {
     } else {
         Ai3dJobController  ai3dController;
-        RemeshJob          remeshJob;
     }
+    RemeshJob remeshJob;
     EditorAiState      aiState;
     version (WithAI) CopilotPanel copilotPanel;
     AiExplorationController aiExplore;
@@ -942,10 +942,7 @@ struct EditorApp {
     // Stable class reference shared by the registrar, renderer, async result
     // continuation and HTTP diagnostic. Its eight mutable fields live in the
     // state owner rather than in main()-frame pointer slots.
-    version (web) {
-    } else {
-        RemeshModalState remeshModalState;
-    }
+    RemeshModalState remeshModalState;
 
     bool delegate(bool) navHistory;
 }

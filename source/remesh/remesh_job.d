@@ -1,24 +1,16 @@
 module remesh.remesh_job;
 
-version (web) {
-} else {
-
 // ---------------------------------------------------------------------------
 // RemeshJob — a crash-isolated, per-frame-polled quad-remesh job.
 //
-// Runs the external `autoremesher_cli` helper (D-AutoRemesher, built and
-// maintained separately — this module never links it, only spawns it) as a
-// SUBPROCESS, never a worker thread: the helper's geogram backend can call
-// abort() on non-manifold/degenerate input, and only process-level
-// isolation survives that (a thread sharing our address space would take
-// the whole vibe3d process down with it). UI responsiveness comes from
-// non-blocking per-frame polling — app.d calls poll() once per frame; it
-// never blocks. Marshalling is via temp OBJ files: the multi-second remesh
-// cost dwarfs the file I/O overhead.
+// Native runs `autoremesher_cli` as a subprocess. Web runs the same CLI and
+// core in an independent wasm instance inside a disposable Web Worker. Either
+// boundary contains geogram aborts, which a thread sharing the editor's
+// address space could not. app.d calls non-blocking poll() once per frame.
+// Marshalling remains via OBJ files in each instance's filesystem.
 //
 // Lifecycle mirrors ai3d.job_controller's shape (start / poll~drain /
-// cancel) but is simpler: no HTTP, no worker thread — the "worker" is the
-// OS process itself, and "drain" is a single per-frame tryWait() poll
+// cancel) but is simpler: no HTTP; completion is a single per-frame poll
 // instead of an event queue.
 //
 // Corner-provenance (task 0901, `CornerDrop.ForeignTopology`): verified NOT
@@ -37,7 +29,23 @@ import std.array   : array, split;
 import std.conv    : to;
 import std.file    : exists, tempDir, mkdirRecurse, rmdirRecurse, readText, thisExePath;
 import std.path    : buildPath, expandTilde, dirName;
-import std.process : Pid, spawnProcess, tryWait, kill, wait, environment, thisProcessID;
+version (web) {
+    version (Emscripten) {
+        private extern(C) int vibe3d_web_remesh_start(const(char)* path,
+            const(char)* output, const(char)* log, int mode, int target,
+            double adaptivity, double sharp);
+        private extern(C) int vibe3d_web_remesh_poll();
+        private extern(C) void vibe3d_web_remesh_cancel();
+    } else {
+        private int vibe3d_web_remesh_start(const(char)*, const(char)*,
+            const(char)*, int, int, double, double) { return 0; }
+        private int vibe3d_web_remesh_poll() { return -1; }
+        private void vibe3d_web_remesh_cancel() {}
+    }
+} else {
+    import std.process : Pid, spawnProcess, tryWait, kill, wait, environment, thisProcessID;
+}
+version (unittest) import std.process : environment;
 import std.stdio   : File, stdin;
 import std.string  : strip;
 import core.time   : MonoTime, Duration;
@@ -83,8 +91,11 @@ final class RemeshJob {
     private State  state_ = State.idle;
     private SourceKey sourceKey_;
     private string message_;
-    private Pid    pid_;
-    private bool   hasPid_;
+    version (web) {
+    } else {
+        private Pid  pid_;
+        private bool hasPid_;
+    }
     private string workDir_;
     private string outPath_;
     private string logPath_;
@@ -158,7 +169,7 @@ final class RemeshJob {
         sourceKey_.invalidate();
     }
 
-    /// Spawn the helper against `mesh`. No-op if a job is already running
+    /// Start the helper against `mesh`. No-op if a job is already running
     /// (single-in-flight, mirroring Ai3dJobController.start()). `p` is
     /// clamped/sanitized HERE — the kernel boundary — before it ever reaches
     /// the subprocess args, regardless of what a caller (UI modal, HTTP
@@ -181,7 +192,8 @@ final class RemeshJob {
         paramsAdaptivity_  = p.adaptivity;
         paramsSharpEdge_   = p.sharpEdge;
 
-        auto bin = locateHelper();
+        version (web) auto bin = "web-worker";
+        else auto bin = locateHelper();
         if (bin is null) {
             state_   = State.failed;
             message_ = "remesher not found (set VIBE3D_AUTOREMESHER_BIN or "
@@ -197,8 +209,9 @@ final class RemeshJob {
 
         string dir;
         try {
-            dir = buildPath(tempDir(),
-                "vibe3d_remesh_" ~ thisProcessID.to!string ~ "_"
+            version (web) enum processTag = "web";
+            else auto processTag = thisProcessID.to!string;
+            dir = buildPath(tempDir(), "vibe3d_remesh_" ~ processTag ~ "_"
                 ~ MonoTime.currTime.ticks.to!string);
             mkdirRecurse(dir);
         } catch (Exception e) {
@@ -229,6 +242,20 @@ final class RemeshJob {
                 return;
             }
 
+            version (web) {
+                import std.string : toStringz;
+                if (!vibe3d_web_remesh_start(inPath.toStringz,
+                        outPath.toStringz, logPath.toStringz, 0,
+                        paramsTargetQuads_, paramsAdaptivity_, paramsSharpEdge_)) {
+                    cleanupFiles();
+                    state_ = State.failed;
+                    message_ = "failed to start remesh worker";
+                    return;
+                }
+                state_ = State.running;
+                message_ = null;
+                return;
+            } else {
             File log;
             try {
                 log = File(logPath, "w");
@@ -255,6 +282,7 @@ final class RemeshJob {
             state_   = State.running;
             message_ = null;
             return;
+            }
         }
 
         // ---- region mode (task 0385; hole-fill + per-component queue: 0386) --
@@ -318,6 +346,16 @@ final class RemeshJob {
     /// then treats the job as a hard failure.
     private bool spawnRegionAttempt(int attempt) {
         const string modeStr = attempt == 1 ? "open-patch" : "triangle";
+        version (web) {
+            import std.string : toStringz;
+            if (!vibe3d_web_remesh_start(regionInPath_.toStringz,
+                    outPath_.toStringz, logPath_.toStringz, attempt,
+                    paramsTargetQuads_, paramsAdaptivity_, paramsSharpEdge_))
+                return false;
+            regionAttempt_ = attempt;
+            state_ = State.running;
+            return true;
+        } else {
         try {
             if (logFile_.isOpen) try logFile_.close(); catch (Exception) {}
             logFile_ = File(logPath_, attempt == 1 ? "w" : "a");
@@ -341,10 +379,11 @@ final class RemeshJob {
         } catch (Exception) {
             return false;
         }
+        }
     }
 
     /// Non-blocking — call once per frame. Transitions running -> succeeded
-    /// or running -> failed once the subprocess has terminated; a no-op
+    /// or running -> failed once the helper has finished; a no-op
     /// otherwise (including when idle/succeeded/failed already, so it is
     /// always safe to call unconditionally from the main loop).
     ///
@@ -359,14 +398,23 @@ final class RemeshJob {
     void poll() {
         if (state_ != State.running) return;
 
-        typeof(tryWait(pid_)) w;
+        struct WaitResult { bool terminated; int status; }
+        WaitResult w;
+        version (web) {
+            auto status = vibe3d_web_remesh_poll();
+            w.terminated = status != 0;
+            w.status = status == 1 ? 0 : 1;
+        } else {
         try {
-            w = tryWait(pid_);
+            auto result = tryWait(pid_);
+            w.terminated = result.terminated;
+            w.status = result.status;
         } catch (Exception e) {
             state_   = State.failed;
             message_ = "tryWait failed: " ~ e.msg;
             cleanupFiles();
             return;
+        }
         }
         if (!w.terminated) return;
 
@@ -567,10 +615,12 @@ final class RemeshJob {
         cleanupFiles();
     }
 
-    /// Cooperative cancel: signal the subprocess, reap it, clean up temp
+    /// Cooperative cancel: terminate the helper, clean up temp
     /// files, and drop back to idle. No-op if not running.
     void cancel() {
         if (state_ != State.running) return;
+        version (web) vibe3d_web_remesh_cancel();
+        else {
         if (hasPid_) {
             try {
                 // SIGKILL, not the default SIGTERM: cancel() runs on the UI
@@ -587,6 +637,7 @@ final class RemeshJob {
                 wait(pid_);
             } catch (Exception) {}
         }
+        }
         cleanupFiles();
         state_   = State.idle;
         message_ = null;
@@ -601,7 +652,7 @@ final class RemeshJob {
         workDir_ = null;
         outPath_ = null;
         logPath_ = null;
-        hasPid_  = false;
+        version (web) {} else hasPid_ = false;
     }
 }
 
@@ -662,7 +713,7 @@ unittest {
 /// checkout path, then the same relative layout off the running exe's dir
 /// (a sibling `D-AutoRemesher` checkout next to the vibe3d one). Returns
 /// null if none of the three exist.
-private string locateHelper() {
+version (web) {} else private string locateHelper() {
     auto envPath = environment.get("VIBE3D_AUTOREMESHER_BIN");
     if (envPath.length && exists(envPath)) return envPath;
 
@@ -1368,8 +1419,6 @@ unittest {
            "stitched mesh's boundary-edge set must equal the original mesh's");
 
     job.clear();
-}
-
 }
 
 version (Posix)

@@ -44,6 +44,18 @@ in the Windows zip. Both are MIT-licensed (see below). The Inter UI font
 (`Inter-Regular.ttf`) is embedded into the executable as a string import in all
 builds and is covered by the SIL Open Font License 1.1 reproduced below.
 
+### Browser Quad Remesh module
+
+The separately loaded `remesh_module.wasm` contains the pinned
+[D-AutoRemesher](https://github.com/shulc/D-AutoRemesher) C shim and CLI (MIT),
+[AutoRemesher](https://github.com/huxingyi/autoremesher) by Jeremy HU / Dust3D
+(MIT), [geogram](https://github.com/BrunoLevy/geogram) by INRIA / Bruno Lévy
+(BSD-3-Clause), [Eigen](https://eigen.tuxfamily.org/) (MPL-2.0) and
+`isotropicremesher` from the AutoRemesher source tree (MIT). The build uses a
+serial compatibility interface in place of TBB; no TBB library is linked into
+this wasm module. Their source and license files are available from the pinned
+D-AutoRemesher checkout used by `tools/build_web_remesh.sh`.
+
 ### Render build (`with-render` only)
 
 | Component | Version | License | Copyright |
