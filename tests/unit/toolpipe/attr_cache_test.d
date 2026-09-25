@@ -124,7 +124,9 @@ unittest { // u3: a drop captures the tool and only the stages the preset claims
     tool.width = 0.5f;
 
     auto unclaimed = captureDroppedNodes("xfrm.elementMove", tool, pipe.allMut());
-    assert(unclaimed.nodes.length == 1 && kToolNode in unclaimed.nodes,
+    assert(kToolNode in unclaimed.nodes,
+        format("M5 u3: the drop did not capture the tool node: %s", unclaimed.nodes.keys));
+    assert(unclaimed.nodes.length == 1,
         format("M5 u3: an unclaimed stage was captured under the preset: %s",
                unclaimed.nodes.keys));
 
@@ -206,9 +208,11 @@ unittest { // u5: the cache is a section of the prefs document (M5b)
         `{"version":1,"toolDefaults":{"bevel":{"width":"0.25"},"edge.extend":{"offsetX":"9"}},`
         ~ `"toolAttrCache":{"edge.extend":{"tool":{"offsetX":"-0.1"}}}}`);
     auto legacy = loadPrefs(dir);
-    assert((*legacy.toolAttrCache.lookup("bevel", kToolNode))["width"] == "0.25",
+    auto bevel = legacy.toolAttrCache.lookup("bevel", kToolNode);
+    assert(bevel !is null && (*bevel)["width"] == "0.25",
         "M5b u5: the legacy toolDefaults entry was not read into the tool node");
-    assert((*legacy.toolAttrCache.lookup("edge.extend", kToolNode))["offsetX"] == "-0.1",
+    auto extend = legacy.toolAttrCache.lookup("edge.extend", kToolNode);
+    assert(extend !is null && (*extend)["offsetX"] == "-0.1",
         "M5b u5: a legacy entry overrode the current section");
 }
 

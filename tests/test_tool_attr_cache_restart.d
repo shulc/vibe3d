@@ -15,7 +15,7 @@
 
 import http_client : getJson, postJson;
 import std.conv : to;
-import std.file : exists, mkdirRecurse, readText, rmdirRecurse;
+import std.file : exists, mkdirRecurse, rmdirRecurse;
 import std.format : format;
 import std.json : JSONValue;
 import std.math : abs;
@@ -23,7 +23,6 @@ import std.path : buildPath;
 import std.process : Pid, spawnProcess, thisProcessID, tryWait, wait;
 import std.socket : AddressFamily, InternetAddress, ProtocolType, Socket, SocketType;
 import std.stdio : File, stdin, stderr;
-import std.algorithm.searching : canFind;
 
 import core.sys.posix.signal : SIGKILL, SIGTERM, kill;
 import core.thread : Thread;
@@ -115,8 +114,9 @@ unittest {
     command(first, "tool.set xfrm.elementMove off");
     assert(quit(first), "floor: the first instance did not exit on SIGTERM");
     const prefsPath = buildPath(saved, "prefs.json");
-    assert(exists(prefsPath) && readText(prefsPath).canFind(`"toolAttrCache"`),
-        "floor: the clean exit wrote no tool attribute cache section to prefs.json");
+    // The floor is the FILE, not its key: the needle below is what says the
+    // cache was in it.
+    assert(exists(prefsPath), "floor: the clean exit wrote no prefs.json");
 
     // Control: a fresh config directory reads the default.
     auto control = launch(fresh, "control");
