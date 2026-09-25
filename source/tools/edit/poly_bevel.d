@@ -109,7 +109,8 @@ class PolyBevelTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient 
             activationRow: true, commandClose: CommandClose.uiDoor,
             sessionSteps: true, opensAt: OpensAt.arm, noClone: false,
             imageAttrs: ["inset", "shift", "applied", "op"],
-            haulAttrs: ["inset", "shift"], armAttr: "applied" };
+            haulAttrs: ["inset", "shift"], armAttr: "applied",
+            headlessReplacesWindow: true };
         return policy;
     }
 
@@ -241,6 +242,7 @@ public:
         if (!image.valid) return;
         active = true; built = false; dragPart = -1;
         inset_ = 0.0f; shift_ = 0.0f;
+        clearOperations();
         preview_.reset(); image.before.moveInto(before);
         gizmoValid = image.gizmoValid; anchor = image.anchor;
         baseAnchor = image.baseAnchor; shiftAxis = image.shiftAxis;
@@ -271,10 +273,7 @@ public:
     private void rebase() {
         built      = false;
         dragPart   = -1;
-        opApplied_ = false;
-        opIndex_   = 0;
-        opBases_   = null;
-        previewOp_ = -1;
+        clearOperations();
         preview_.reset();          // a new clean cage ⇒ a new topology key
         before   = MeshSnapshot.capture(*mesh);
         computeGizmoFrame();
@@ -289,6 +288,7 @@ public:
         built      = false;
         dragPart   = -1;
         gizmoValid = false;
+        clearOperations();         // one activation's window ends with it (review R2)
         preview_.reset();          // drop the clean-cage scratch with the session
         toolHandles.clearHaul();
     }
@@ -451,30 +451,41 @@ public:
         return root;
     }
 
+    // The one-shot apply (slice M3b review R1): computed on a SCRATCH copy of
+    // the window's base (the live mesh when no window is open), so a refusal
+    // touches nothing — not the mesh, not the window. On success the result
+    // is written to the live mesh and the window fields stay, so
+    // `tool.doApply` can end the window through `cancelUncommittedEdit` and
+    // read its base (`headlessReplacesWindow`). At 0/0 the result is the base
+    // itself (gap row: the arm's zero ring is removed, nothing is applied).
     override bool applyHeadless() {
         if (*editMode != EditMode.Polygons) return false;
-        if (built && before.filled) {
-            before.restore(*mesh);
-            built = false;
+        const bool window = hasUncommittedEdit() && before.filled;
+        Mesh work;
+        {
+            auto shadow = beginPreparedShadow(work);
+            (window ? before : MeshSnapshot.capture(*mesh)).restore(work);
+            if (work.faces.length == 0) { shadow.close(); return false; }
+            if (inset_ != 0.0f || shift_ != 0.0f) {
+                // Task 1903 Stage F2 — the batch opens at the TOOL boundary
+                // (§4.1), on the COMMIT path (`tool.doApply` / panel Apply).
+                // UNRECORDED: this tool's undo is the whole-mesh
+                // `MeshSnapshot` pair its commit records.
+                auto ed = MeshEditBatch.unrecorded(work, kPolyBevelEditScope);
+                const n = ed.bevelFacesByMask(ed.operandFaceMask(), inset_, shift_,
+                                              group_, segments_, square_);
+                ed.close();
+                if (n == 0) { shadow.close(); return false; }
+            }
+            uint flags, domains;
+            drainPreparedShadowDelivery(work, flags, domains);
+            shadow.close();
         }
         // This path rebuilds the live mesh behind the seam's back, so the
         // key it remembers no longer describes what is standing.
         preview_.reset();
-        if (mesh.faces.length == 0) return false;
-        if (inset_ == 0.0f && shift_ == 0.0f) return true;
-        auto mask = currentMask();
-        // Task 1903 Stage F2 — the batch opens at the TOOL boundary (§4.1),
-        // on the COMMIT path (`tool.doApply` / panel Apply). UNRECORDED: this
-        // tool's undo is the whole-mesh `MeshSnapshot` pair `commitEdit()`
-        // records. Stage M owns the tool pair-holders, Stage L7 the family's
-        // delta undo.
-        size_t n;
-        {
-            auto ed = MeshEditBatch.unrecorded(*mesh, kPolyBevelEditScope);
-            n = ed.bevelFacesByMask(mask, inset_, shift_, group_, segments_, square_);
-            ed.close();
-        }
-        if (n == 0) return false;
+        previewOp_ = -1;
+        MeshSnapshot.capture(work).restore(*mesh);
         gpu.upload(*mesh);
         return true;
     }
@@ -638,6 +649,14 @@ public:
     }
 
 private:
+    // No operation: the window's session image and its per-operation bases.
+    void clearOperations() nothrow @nogc {
+        opApplied_ = false;
+        opIndex_   = 0;
+        opBases_   = null;
+        previewOp_ = -1;
+    }
+
     // The live operation's base: the window's for op 0, else the result of
     // the operation before it (an index past the known bases clamps).
     ref MeshSnapshot opBase() return nothrow @nogc {
@@ -658,6 +677,9 @@ private:
     // closed one: K-tab's liveness haul opens at the press).
     void beginOperationStep(PressKind kind) {
         const bool windowOpen = opApplied_ || opIndex_ > 0;
+        // A press that OPENS a window: the mesh as it stands is its base (a
+        // one-shot apply or a command may have changed it since the last one).
+        if (!windowOpen) rebase();
         if (opApplied_ && kind != PressKind.plain) bakeLiveOperation();
         sessionStepBegins(kind);
         if (!opApplied_ && pressAppliesOperation(kind)) {
@@ -674,11 +696,6 @@ private:
         opBases_ ~= MeshSnapshot.capture(*mesh);
         ++opIndex_;
         opApplied_ = false;
-    }
-
-    bool[] currentMask() {
-        // L1 funnel (task 0613, S5): the selection, else every VISIBLE element.
-        return mesh.operandFaceMask();
     }
 
     void computeGizmoFrame() {
@@ -812,10 +829,7 @@ private:
         preview_.reset();
         built      = false;
         dragPart   = -1;
-        opApplied_ = false;
-        opIndex_   = 0;
-        opBases_   = null;
-        previewOp_ = -1;
+        clearOperations();
         toolHandles.clearHaul();
         sessionOperationEnded();   // the whole window is gone (slice M3b)
         refreshCaches();

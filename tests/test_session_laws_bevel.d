@@ -135,6 +135,13 @@ SlMesh rig(string tag) {
     return base;
 }
 
+/// Discard the live window (RMB), leaving the tool armed with no window.
+void closeIdle() {
+    auto c = fetchCamera();
+    slPlay(motEv(20, c.vpX + 70, c.vpY + 70, 0, 0) ~ "\n" ~ btnEv(40, true, 3, c.vpX + 70, c.vpY + 70, 0)
+           ~ "\n" ~ btnEv(60, false, 3, c.vpX + 70, c.vpY + 70, 0), "RMB discard");
+}
+
 /// Arm through the UI door (the typed command line = the key door, C-H1-door).
 void armUi(string tag) {
     slLineUi("tool.set poly.bevel on");
@@ -232,6 +239,14 @@ unittest {
     assert(applied1.verts == 12 && applied1.canon != base.canon && !applied(),
            format("bevel floor (doApply): the headless apply did not bevel: mesh %s, applied %s",
                   applied1.toString, applied()));
+    // The next press opens a window on the one-shot RESULT (review R1: the
+    // tool re-bases when a press opens a window), not on the pre-apply mesh.
+    const hBefore = slHistoryLen();
+    haul(0, -40, "doApply next haul");
+    assert(slMesh().verts == applied1.verts + 4 && slHistoryLen() == hBefore,
+           format("doApply: the press after the apply must bevel ON its result (+4): mesh %s "
+                  ~ "(applied %s)", slMesh().toString, applied1.toString));
+    closeIdle();
     ctrlZ("doApply Ctrl+Z");
     assert(slMesh().canon == base.canon && slHistoryLen() == 1,
            format("doApply: the Ctrl+Z must undo the headless apply's ROW (the window ended with "

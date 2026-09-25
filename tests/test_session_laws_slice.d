@@ -588,3 +588,39 @@ unittest {
                   ~ "bare): tool '%s', points %d", slTool(), slChain().pairs.length));
     slLine("tool.set mesh.edgeSliceTool off");
 }
+
+// ---------------------------------------------------------------------------
+// doApply-es — `tool.doApply` on a tool whose policy does NOT say the headless
+// apply replaces its window (slice M3b review R1): Edge Slice keeps today's
+// door. (a) A REFUSED apply (one point: fewer than two edges) changes nothing
+// — the live chain, the mesh and the rows stand; (b) an accepted one's undo
+// returns the mesh as it stood, live chain and all (the status quo; a door
+// that ended the window first would return the base instead).
+// ---------------------------------------------------------------------------
+unittest {
+    if (!cell("doApply-es")) return;
+    long Hp;
+    const base = boxRig(Hp);
+    slLineUi("tool.set mesh.edgeSliceTool on");
+    latch(slFrontRightChain(), 0, "doApply-es");
+    const m1 = slMesh();
+    const L1 = slHistoryLabels();
+    auto r = slPost("/api/command", "tool.doApply");
+    assert(r["status"].str == "error",
+           "doApply-es floor: one point must refuse the headless apply: " ~ r.toString);
+    assert(slTool() == "edgeSlice" && slChain().pairs.length == 1 && slMesh().canon == m1.canon
+           && slHistoryLabels() == L1,
+           format("doApply-es (a): a refused tool.doApply changed something: tool '%s', points %d, "
+                  ~ "mesh %s (before %s), rows %s (before %s)", slTool(), slChain().pairs.length,
+                  slMesh().toString, m1.toString, slHistoryLabels(), L1));
+    latch(slFrontRightChain(), 1, "doApply-es");
+    const m2 = slMesh();
+    assert(m2.canon != base.canon, "doApply-es floor: two points cut nothing");
+    slLine("tool.doApply");
+    slLine("history.undo");
+    assert(slMesh().canon == m2.canon,
+           format("doApply-es (b): the undo of an accepted tool.doApply must return the mesh as it "
+                  ~ "stood (live chain included), not the window's base: mesh %s (stood %s, base %s)",
+                  slMesh().toString, m2.toString, base.toString));
+    slLine("tool.set mesh.edgeSliceTool off");
+}

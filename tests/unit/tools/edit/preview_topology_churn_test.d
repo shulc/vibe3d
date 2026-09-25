@@ -632,3 +632,55 @@ unittest {
         "the poly-bevel topology key mis-declared a sample: "
       ~ c.keyMisses.to!string ~ " key miss(es)");
 }
+
+// ---------------------------------------------------------------------------
+// Slice M3b review R1 — `tool.doApply` over a Polygon Bevel window, through the
+// production `ToolDoApplyCommand`. (a) REFUSED (not polygon mode): the window
+// and the mesh are untouched — the command must not end the window before the
+// apply answered; (b) ACCEPTED: the result stands, the window has ended, and
+// the row's undo returns the mesh UNDER the window (the arm's ring is not
+// geometry any row created).
+// ---------------------------------------------------------------------------
+unittest {
+    import commands.tool.do_apply : ToolDoApplyCommand;
+    import commands.tool.host : ToolHost;
+    import view : View;
+    auto rig = new Rig(subdividedCube(), EditMode.Polygons);
+    scope(exit) rig.release();
+    rig.mesh.selectFace(0);
+    rig.frame();
+    const size_t vBase = rig.mesh.vertices.length;
+    const baseVerts = rig.mesh.vertices.dup;
+
+    auto tool = new PolyBevelTool(() => &rig.mesh, &rig.gpu, &rig.editMode, null);
+    tool.activate();
+    tool.applyArmAttr();                 // what the session does at the arm
+    setFloatParam(tool, "inset", 0.05f);
+    rig.frame();
+    assert(tool.hasUncommittedEdit() && rig.mesh.vertices.length == vBase + 4,
+           "M3b doApply floor: no live window over the arm's ring");
+    const windowVerts = rig.mesh.vertices.dup;
+
+    ToolHost host;
+    host.getActiveTool   = () => cast(Tool) tool;
+    host.getActiveToolId = () => "poly.bevel";
+    auto view = new View(0, 0, 1, 1);
+
+    rig.editMode = EditMode.Vertices;
+    auto refused = new ToolDoApplyCommand(&rig.mesh, view, rig.editMode, host);
+    assert(!refused.apply(), "M3b doApply floor: the apply must refuse outside polygon mode");
+    assert(tool.hasUncommittedEdit() && rig.mesh.vertices == windowVerts,
+           "M3b doApply (a): a REFUSED tool.doApply ended the window or moved the mesh");
+
+    rig.editMode = EditMode.Polygons;
+    setFloatParam(tool, "inset", 0.1f);
+    rig.frame();
+    auto accepted = new ToolDoApplyCommand(&rig.mesh, view, rig.editMode, host);
+    assert(accepted.apply(), "M3b doApply floor: the apply must succeed in polygon mode");
+    const resultVerts = rig.mesh.vertices.dup;
+    assert(!tool.hasUncommittedEdit() && resultVerts.length == vBase + 4,
+           "M3b doApply (b): the accepted apply must stand with the window ended");
+    assert(accepted.revert() && rig.mesh.vertices == baseVerts,
+           "M3b doApply (b): the row's undo must return the mesh UNDER the window");
+    rig.frame();
+}

@@ -272,6 +272,13 @@ struct ToolSessionPolicy {
     /// group and its undo lowers it again through the image. Empty: the tool
     /// reports its arm itself (Loop Slice, whose arm is its press, gap 205 (b)).
     string armAttr;
+    /// `tool.doApply` REPLACES this tool's live window (slice M3b review R1):
+    /// the one-shot apply runs on the window's base and, only once it has
+    /// succeeded, the window ends and the row's undo returns that base. A
+    /// refused apply changes nothing. Polygon Bevel only (its arm applies at
+    /// once); every other tool keeps today's `tool.doApply`. Its long-term
+    /// home is the single command-meets-tool rule of slice M4.
+    bool headlessReplacesWindow;
 }
 
 class Tool : ParamProvider {

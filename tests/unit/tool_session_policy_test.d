@@ -214,6 +214,7 @@ unittest { // (1) id -> policy, over every registered id
 
     size_t falseRows, notPorted;
     size_t[3] closeCount;
+    string[] replacesIds;
     foreach (row; kTable) {
         auto cls = row.id in classOf;
         assert(cls !is null, "M1 policy table: row " ~ row.id ~ " is not a registered id");
@@ -246,7 +247,13 @@ unittest { // (1) id -> policy, over every registered id
         assert((row.commandClose == CommandClose.none) == (row.closeProv == CloseProv.notCaptured),
                "M2 policy table: provenance of " ~ row.id ~ " disagrees with its commandClose");
         ++closeCount[row.commandClose];
+        if (policy.headlessReplacesWindow) replacesIds ~= row.id;
     }
+    // Slice M3b review R1: `tool.doApply` replaces the live window of exactly
+    // one tool (measured); every other id keeps today's door.
+    assert(replacesIds == ["poly.bevel"],
+           format("M3b policy table: headlessReplacesWindow on %s, recorded [poly.bevel]",
+                  replacesIds));
     // Measured on the M2 tree (`grep -c 'CommandClose.<value>, CloseProv'` over this file).
     assert(closeCount == [22, 24, 24],
            format("M2 policy table: commandClose none/uiDoor/allDoors on %s ids, recorded "
