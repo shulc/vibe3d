@@ -154,6 +154,10 @@ unittest { // panel refire keeps only the last result; empty result records none
     assert(close(coord(0, 0), before),
         "panel refire must undo in one step");
 
+    // The drop above cached X/Y/Z = 0.3 (the tool attribute cache, slice M5),
+    // and the next arm would recall them; the empty-result cell needs the
+    // declared defaults, so it starts past the automation boundary.
+    resetCube();
     cmd("tool.set xfrm.quantize on");
     const noOpBefore = historyCount();
     assert(postJson("/api/refire", `{"action":"begin"}`)["status"].str == "ok");

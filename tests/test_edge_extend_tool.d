@@ -87,6 +87,12 @@ void loadCubeAt(double cx) {
     // makeCube() winding: [0,3,2,1],[4,5,6,7],[0,4,7,3],[1,2,6,5],[3,7,6,2],[0,1,5,4].
     string faces =
         "[[0,3,2,1],[4,5,6,7],[0,4,7,3],[1,2,6,5],[3,7,6,2],[0,1,5,4]]";
+    // Every block arms Edge Extend expecting its declared defaults. The tool
+    // attribute cache (slice M5) keeps the previous block's attributes across a
+    // drop, as the reference does; the script scene.reset is the automation
+    // boundary that clears it.
+    auto reset = post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
+    assert(parseJSON(reset)["status"].str == "ok", "scene.reset failed: " ~ reset);
     postLoadMesh(`{"vertices":` ~ verts ~ `,"faces":` ~ faces ~ `}`);
 }
 
