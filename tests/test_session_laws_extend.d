@@ -165,3 +165,53 @@ unittest { // (R) boundary, not captured (§8): RMB cancels the live operation a
         format("(R) the press after the RMB cancel did not open a new operation from 0: %d v, offset %s",
                vertexCount(), o));
 }
+
+unittest { // (P) review of M4: over an unclassified predecessor, the pair's redo stays (§22)
+    // Edge Extrude armed first (it writes no row of its own). Undoing the first
+    // run with its activation row restores Edge Extrude (C-M4-token-switch);
+    // the redo brings the row AND run 1 back — the redo is kept because the
+    // predecessor is not a row-writing tool (the parent's scope of gap 205).
+    rigNoArm(kRidge, true, 0.3, 0.55, false);
+    cmdUi("tool.set edge.extrude on");
+    settle(250);
+    immutable long h0 = undoLen();
+    keyArm();
+    frontHaul(PX, PY, kIncrementPx, kIncrementPx, 10);
+    click(frontScreen(PX, PY), 1, KMOD_LSHIFT);   // closes run 1, opens op 2
+    assert(vertexCount() == 13 && undoLen() == h0 + 2,
+        format("rig (P): the Shift press did not commit run 1: %d v, %d records", vertexCount(), undoLen() - h0));
+    ctrlZ();
+    ctrlZ();
+    assert(vertexCount() == 9 && undoLen() == h0 && toolId() == "edgeExtrude",
+        format("(P) the first run did not pop with its row back to Edge Extrude: %d v, %d records, tool '%s'",
+               vertexCount(), undoLen() - h0, toolId()));
+    ctrlShiftZ();
+    assert(vertexCount() == 11 && undoLen() == h0 + 2 && toolId() == "edgeExtend",
+        format("(P) the redo over an unclassified predecessor did not bring the row and run 1 back "
+             ~ "(§22 redo, review BLOCKER): %d v, %d records, tool '%s'", vertexCount(), undoLen() - h0, toolId()));
+}
+
+unittest { // (MB) review of M4: a redone arm continues the ROW's session (redo adopts its token)
+    // Key arm, haul, Ctrl+Z (the first group with its row), Ctrl+Shift+Z (the
+    // row re-arms and the group comes back live), haul, Shift click (run 1
+    // closed), Ctrl+Z (op 2 whole), Ctrl+Z: run 1 pops WITH its row only if
+    // the re-armed session holds the row's token.
+    rigNoArm(kRidge, true, 0.3, 0.55, false);
+    immutable long h0 = undoLen();
+    keyArm();
+    frontHaul(PX, PY, kIncrementPx, kIncrementPx, 10);
+    ctrlZ();
+    assert(toolId() == "" && vertexCount() == 9, "rig (MB): the first group did not pop with its row");
+    ctrlShiftZ();
+    assert(toolId() == "edgeExtend" && vertexCount() == 11,
+        format("rig (MB): the redo did not re-arm and replay the group: tool '%s', %d v", toolId(), vertexCount()));
+    frontHaul(PX, PY, kIncrementPx, kIncrementPx, 4);
+    click(frontScreen(PX, PY), 1, KMOD_LSHIFT);
+    ctrlZ();
+    assert(toolId() == "edgeExtend" && vertexCount() == 11,
+        format("rig (MB): op 2 did not pop whole: tool '%s', %d v", toolId(), vertexCount()));
+    ctrlZ();
+    assert(toolId() == "" && vertexCount() == 9 && undoLen() == h0,
+        format("(MB) run 1 of a REDONE arm did not pop with its row (the redo must adopt the row's session "
+             ~ "token): tool '%s', %d v, %d records", toolId(), vertexCount(), undoLen() - h0));
+}

@@ -206,7 +206,7 @@ unittest { // a key-door row of THIS arm joins the group; the navigate redo repl
     assert(r.t.v == 0, "M3 replay: the first group was replayed twice (S7)");
 }
 
-private final class Stub : imported!"command".Command {
+private class Stub : imported!"command".Command {
     import command : CmdFlags;
     import view : View;
     View v;
@@ -600,14 +600,22 @@ private class CarryTool : StepTool {
         arr = null;
         return true;
     }
+    bool refuseRedo;
     Stub writeRow() {
-        auto s = new Stub(new View(0, 0, 1, 1));
+        auto s = refuseRedo ? new OnceStub(new View(0, 0, 1, 1)) : new Stub(new View(0, 0, 1, 1));
         assert(s.apply());
         writeTo.record(s);
         return s;
     }
     void quietGesture() { sessionStepBegins(); sessionStepEnds(true); }
     void loudGesture() { sessionStepBegins(); sessionStepEnds(false); }
+}
+
+/// A record that applies once and refuses its redo.
+private final class OnceStub : Stub {
+    int applies;
+    this(View view) { super(view); }
+    protected override bool applyImpl() { return ++applies == 1; }
 }
 
 private ToolActivationCommand tokenRow(Mesh* m, string id, string prev, bool joins,
@@ -857,4 +865,59 @@ unittest { // M4 pair, boundary (not captured): with its session gone, a record 
     assert(r.history.undoEntries().length == 1,
            format("M4 pair: a record of a session that is gone popped its row: depth %s",
                   r.history.undoEntries().length));
+}
+
+unittest { // M4 review: a pair whose row refuses its undo is reported, the record's step stands
+    Mesh m = makeCube();
+    static final class RefusingRow : ToolActivationCommand {
+        this(Mesh* m, View v) { super(m, v, EditMode.Vertices, "t.carry", "", true, true, true, 5); }
+        protected override void revertImpl() { failRevert("refused (test)"); }
+    }
+    auto r = rig();
+    auto t = new CarryTool;
+    t.writeTo = r.history;
+    r.active = t;
+    r.history.recordToolLifecycle(new RefusingRow(&m, new View(0, 0, 1, 1)));
+    r.session.noteArm("t.carry", 5);
+    t.arr = [Pt(1, 0, null)];
+    assert(r.session.applyAndContinue());
+    assert(r.session.navigate(true), "M4 split pair: the record's undo step was not reported as taken");
+    assert(r.history.undoEntries().length == 0 && r.history.redoEntries().length == 1 && r.active is t,
+           format("M4 split pair: undo %s, redo %s", r.history.undoEntries().length,
+                  r.history.redoEntries().length));
+}
+
+unittest { // M4 review: a key-door row over an UNCLASSIFIED predecessor keeps its redo (§22)
+    Mesh m = makeCube();
+    auto v = new View(0, 0, 1, 1);
+    auto h = new CommandHistory();
+    auto overPlain = new ToolActivationCommand(&m, v, EditMode.Vertices, "t.step", "t.plain",
+                                               true, true, false, 3, 2, false);
+    auto overRow = new ToolActivationCommand(&m, v, EditMode.Vertices, "t.step", "t.emitter",
+                                             true, true, false, 4, 3, true);
+    assert(overPlain.carriesRedoAfterUndo() && !overRow.carriesRedoAfterUndo(),
+           "M4 review: the redo of a row depends on whether its predecessor writes rows, not on "
+           ~ "whether it restores one");
+}
+
+unittest { // M4 review: a pair whose record refuses its redo leaves the row redone, reported
+    Mesh m = makeCube();
+    auto r = rig();
+    auto t = new CarryTool;
+    t.writeTo = r.history;
+    t.refuseRedo = true;
+    r.active = t;
+    auto act = tokenRow(&m, "t.carry", "", true, true, 5);
+    act.onDeactivate = () { r.active = null; };
+    act.onActivate = (string id) { r.active = t; r.session.noteArm(id, 55); };
+    r.history.recordToolLifecycle(act);
+    r.session.noteArm("t.carry", 5);
+    t.arr = [Pt(1, 0, null)];
+    assert(r.session.applyAndContinue());
+    assert(r.session.navigate(true) && r.history.undoEntries().length == 0);
+    assert(r.session.navigate(false), "M4 split redo: the row's redo was not reported as taken");
+    assert(r.history.undoEntries().length == 1 && r.history.redoEntries().length == 1
+           && r.active is t && tokenOf(r) == 5,
+           format("M4 split redo: undo %s, redo %s, token %s", r.history.undoEntries().length,
+                  r.history.redoEntries().length, tokenOf(r)));
 }

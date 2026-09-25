@@ -42,6 +42,11 @@ class ToolActivationCommand : Command, ToolArmLifecyclePolicy {
     // so the restored instance continues ITS session (gap 221/241).
     private bool recordCarries_;
     private ulong previousToken_;
+    // Whether the predecessor itself writes activation rows (review of slice
+    // M4): the redo of this row is kept only over a predecessor that does NOT
+    // (the none->session law of gap 205 / §22 counts an unclassified
+    // predecessor as "none"), whatever `previousId_` now records for the restore.
+    private bool previousClassified_;
 
     // Hooks wired by app.d after construction.
     void delegate(string) onActivate;
@@ -51,7 +56,7 @@ class ToolActivationCommand : Command, ToolArmLifecyclePolicy {
          string armedId, string previousId,
          bool sessionSteps = false, bool joinsFirstGroup = false,
          bool recordCarries = false, ulong sessionToken = 0,
-         ulong previousToken = 0) {
+         ulong previousToken = 0, bool previousClassified = false) {
         super(mesh, view, editMode);
         armedId_ = armedId.idup;
         previousId_ = previousId.idup;
@@ -59,6 +64,7 @@ class ToolActivationCommand : Command, ToolArmLifecyclePolicy {
         joinsFirstGroup_ = joinsFirstGroup;
         recordCarries_ = recordCarries;
         previousToken_ = previousToken;
+        previousClassified_ = previousClassified;
         markSession(sessionToken);
         // The whole undo image is the predecessor identity. It exists from the
         // constructor, so the flag is raised there.
@@ -95,7 +101,7 @@ class ToolActivationCommand : Command, ToolArmLifecyclePolicy {
     string armedId() const { return armedId_; }
     string previousId() const { return previousId_; }
     bool carriesRedoAfterUndo() const {
-        return previousId_.length == 0 && sessionSteps_;
+        return sessionSteps_ && !previousClassified_;
     }
     bool joinsFirstGroup() const { return joinsFirstGroup_; }
     /// Whether the record closing this session's first operation is undone

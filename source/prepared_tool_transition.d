@@ -199,7 +199,8 @@ PreparedArm prepareArm(ToolFactory factory, string id, Tool retainedOld,
         const pol = candidate.sessionPolicy();
         auto lifecycle = new ToolActivationCommand(mesh, view, editMode,
             id, previousId, pol.sessionSteps, door == ArmDoor.key,
-            pol.recordCarriesActivation, sessionToken, previousToken);
+            pol.recordCarriesActivation, sessionToken, previousToken,
+            retainedOld !is null && toolArmEmitsLifecycle(retainedOld));
         lifecycle.onActivate = activateById;
         lifecycle.onDeactivate = deactivate;
         result.incoming_.prepareLifecycle(lifecycle);

@@ -588,7 +588,7 @@ final class EditSession {
     // door, `armPreparedTool`, for every arm transition). The session binds
     // the tool — installs the link it reports its gesture steps through — and
     // starts a fresh account: no operation, no steps, no redo.
-    void noteArm(string id, ulong token) { tools_.noteArm(id, token); }
+    void noteArm(string id, ulong token = 0) { tools_.noteArm(id, token); }
 
     // The session token (slice M4): a fresh one for every arm — the arm's
     // activation row carries it — and the bound tool's current one, which the
@@ -778,9 +778,17 @@ private struct ToolSession {
         // Identity, read BEFORE the step moves the stack: the record's token is
         // the active session's and the row below carries the same token.
         const bool pair = recordCarriesActivation_();
-        const Command last = undoEntryAt_(pair ? 1 : 0);
+        Rebindable!(const Command) last = undoEntryAt_(pair ? 1 : 0);
         bool ok = history_.undo();
-        if (ok && pair) ok = history_.undo();
+        if (ok && pair && !history_.undo()) {
+            // The row refused its undo (review of slice M4): the record is
+            // already reverted, so the pair is split. The step taken stands, the
+            // resync below re-baselines the tool on the mesh it now sees, and
+            // no predecessor was restored — said, not silent.
+            import log : logWarn;
+            logWarn("tool", "session undo: the activation row paired with the record refused its undo");
+            last = null;
+        }
         if (ok) {
             // Only AFTER a successful stack step, with no open edit remaining:
             // re-sync the still-live tool's baseline to the now-current mesh.
@@ -830,7 +838,12 @@ private struct ToolSession {
         bool ok = history_.redo();
         // The redo that re-armed a tool re-armed the ROW's session: its token.
         if (ok && act !is null) adoptToken_(act.armedId, act.sessionToken());
-        if (ok && pair) history_.redo();
+        if (ok && pair && !history_.redo()) {
+            // The row came back but its record refused (review of slice M4): the
+            // tool is armed without the record; the resync below re-baselines it.
+            import log : logWarn;
+            logWarn("tool", "session redo: the record paired with its activation row refused its redo");
+        }
         if (ok) {
             // Only AFTER a successful stack step: re-sync the still-live
             // tool's baseline to the now-current mesh.
