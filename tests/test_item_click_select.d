@@ -92,7 +92,7 @@
 //   * the border drawn one pixel wide, like a mesh's edges
 //       -> U6 "…carries 1 such pixels" where the fixture says 2.
 
-import http_client : getJson, testBaseUrl;
+import http_client : getJson, testBaseUrl, quiesce;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -122,7 +122,8 @@ private void cmd(string body_) {
 
 /// The picks below run on the event-playback thread and the reads on the HTTP
 /// one; a frame between them is what makes the second see the first.
-private void settle() { Thread.sleep(400.msecs); }
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (400.msecs).
+private void settle() { quiesce(); }
 
 private struct Cell { int vx, vy, vw, vh; }
 

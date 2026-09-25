@@ -23,7 +23,7 @@
 // pair under a live subpatch preview, which is the lasso's second polygon
 // branch with its own cull.
 
-import http_client : testBaseUrl, getJson, postJson;
+import http_client : testBaseUrl, getJson, postJson, quiesce;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -41,7 +41,9 @@ void main() {}
 
 enum string kFixture = import("fixtures/lasso_polygon_facing_by_style.json");
 
-void settle() { Thread.sleep(300.msecs); }
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (300.msecs).
+
+void settle() { quiesce(); }
 
 void cmdOk(string body_) {
     auto r = postJson("/api/command", body_);

@@ -23,7 +23,7 @@
 //       with the chain live: the highlight is still drawn).
 
 import slice_leak_helpers;
-import http_client : getJson;
+import http_client : getJson, quiesce;
 import drag_helpers : Vec3, fetchCamera, viewportFromCamera, projectToWindow;
 import std.format : format;
 import std.stdio : writeln;
@@ -61,7 +61,8 @@ private bool near(Px a, Px b, int slack = 1) {
 }
 
 /// A probe reads the last COMPLETED frame, so a state change needs two.
-private void settle() { Thread.sleep(450.msecs); }
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (450.msecs).
+private void settle() { quiesce(); }
 
 /// Probe WINDOW pixels of cell 0 (converted to FBO coordinates here).
 private Px[] probeWin(const int[2][] pts) {

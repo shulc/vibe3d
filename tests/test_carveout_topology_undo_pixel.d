@@ -43,7 +43,7 @@
 // NOT A CUBE: the patch is an OPEN 4x4 grid, so the deleted half leaves a real
 // hole with background behind it.
 // ===========================================================================
-import http_client : testBaseUrl, getJson, postJson;
+import http_client : testBaseUrl, getJson, postJson, quiesce;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -70,7 +70,8 @@ void cmd(string line) {
 
 /// A state change is visible only once a frame has RENDERED with it, and a
 /// probe reads the last COMPLETED frame — so this has to cover two.
-void settle() { Thread.sleep(450.msecs); }
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (450.msecs).
+void settle() { quiesce(); }
 
 struct Px {
     int r, g, b, a;

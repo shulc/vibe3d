@@ -70,7 +70,7 @@
 //
 // Run via: ./run_test.d test_bus_surface_raycast_after_drag
 
-import http_client : testBaseUrl, getJson, postJson;
+import http_client : testBaseUrl, getJson, postJson, quiesce;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -95,7 +95,9 @@ void cmd(string line) {
         "/api/command '" ~ line ~ "' failed: " ~ r.toString);
 }
 
-void settle() { Thread.sleep(250.msecs); }
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (250.msecs).
+
+void settle() { quiesce(); }
 
 /// The unit cube of `test_fixture_topology_pen_version_invalidation.d`, so the
 /// two files' geometry (and therefore their Y ~ 0.5 top face) is the same.

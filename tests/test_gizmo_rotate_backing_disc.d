@@ -141,7 +141,7 @@
 //
 // --------------------------------------------------------------------------
 
-import http_client : getJson, testBaseUrl;
+import http_client : getJson, testBaseUrl, quiesce;
 import http_command_helpers : commandBody;
 import std.format    : format;
 import std.json;
@@ -203,7 +203,9 @@ private double num(JSONValue j, string[] path...) {
     }
 }
 
-private void settle() { Thread.sleep(350.msecs); }
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (350.msecs).
+
+private void settle() { quiesce(); }
 
 private struct Cell { int vx, vy, vw, vh; }
 

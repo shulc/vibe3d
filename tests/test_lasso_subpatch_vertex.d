@@ -24,7 +24,7 @@
 // B -> C -> D. A red B stops the file there; C and D are then run by
 // renaming B's block (procedure recorded in the task card).
 
-import http_client : testBaseUrl, getJson, postJson;
+import http_client : testBaseUrl, getJson, postJson, quiesce;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -41,7 +41,9 @@ void main() {}
 
 enum string kFixture = import("fixtures/delete_makepoly_lasso_hide_keys.json");
 
-void settle() { Thread.sleep(250.msecs); }
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (250.msecs).
+
+void settle() { quiesce(); }
 
 void cmdOk(string body_) {
     auto r = postJson("/api/command", body_);

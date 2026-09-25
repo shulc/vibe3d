@@ -83,7 +83,7 @@
 //       -> U2 "the parking pixel must be over empty space" — the app still
 //          reported item 1 with the pointer in the gap.
 
-import http_client : getJson, testBaseUrl;
+import http_client : getJson, testBaseUrl, quiesce;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -131,7 +131,8 @@ private void cmd(string body_) {
 
 /// The probe reads the last COMPLETED frame and the HTTP bridge is serviced
 /// before the render, so a change needs a frame to become visible.
-private void settle() { Thread.sleep(400.msecs); }
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (400.msecs).
+private void settle() { quiesce(); }
 
 private struct Cell { int vx, vy, vw, vh; }
 

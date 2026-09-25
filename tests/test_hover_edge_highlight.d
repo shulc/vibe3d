@@ -44,7 +44,7 @@
 // from the publish channel, which the decoy does not touch), so the positive
 // control passes and the HASH assertion is the one that fires.
 
-import http_client : testBaseUrl, getJson, postJson;
+import http_client : testBaseUrl, getJson, postJson, quiesce;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -61,7 +61,10 @@ void main() {}
 alias BASE = testBaseUrl;
 
 
-void settle() { Thread.sleep(300.msecs); }
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (300.msecs).
+
+
+void settle() { quiesce(); }
 
 // The three-quad open rig from test_wireframe_select_through.d: a near quad at
 // z=+1, a small far quad at z=-1, and a side quad off to +X. No closed volume

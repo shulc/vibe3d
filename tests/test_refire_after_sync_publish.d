@@ -56,7 +56,7 @@
 //     (2026-08-25). Mutation: delete `armedUndoEpoch`'s arm in
 //     `armRegradeStamp` and this reddens with the count.
 
-import http_client : testBaseUrl, getJson, postJson;
+import http_client : testBaseUrl, getJson, postJson, quiesce;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -80,7 +80,9 @@ void cmd(string line) {
         "/api/command '" ~ line ~ "' failed: " ~ r.toString);
 }
 
-void settle() { Thread.sleep(180.msecs); }
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (180.msecs).
+
+void settle() { quiesce(); }
 
 long undoCount()  { return getJson("/api/history")["undo"].array.length; }
 long deliveries() { return getJson("/api/changes")["deliveryCount"].integer; }

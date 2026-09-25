@@ -20,7 +20,7 @@
 // Camera-agnostic: reconstructs the same most-facing construction plane the tool
 // picks and lays the slice line on it (mirrors test_slice_session.d).
 
-import http_client : testBaseUrl;
+import http_client : testBaseUrl, quiesce;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -64,7 +64,9 @@ double sumAbsCoord() {
     return s;
 }
 
-void settle() { Thread.sleep(dur!"msecs"(180)); }   // post-playback drain guard
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (dur!"msecs"(180)).
+
+void settle() { quiesce(); }   // post-playback drain guard
 
 void scr(Vec3 w, const ref Viewport vp, out int px, out int py) {
     float fx, fy;

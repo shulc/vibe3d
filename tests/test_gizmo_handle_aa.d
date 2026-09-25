@@ -37,7 +37,7 @@
 // with "no intermediate coverage on any of N shaft cross-sections". Flow B
 // passes before and after — it is the half that stops the fix overshooting.
 
-import http_client : testBaseUrl;
+import http_client : testBaseUrl, quiesce;
 import http_command_helpers : commandBody;
 import std.stdio      : writeln, writefln;
 import std.net.curl   : HTTP;
@@ -79,7 +79,9 @@ void script(string line) {
             "script `" ~ line ~ "` failed: " ~ resp);
 }
 
-void settle() { Thread.sleep(400.msecs); }
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (400.msecs).
+
+void settle() { quiesce(); }
 
 void resetApp() {
     httpPost("/api/command", commandBody("scene.reset", "{}"));

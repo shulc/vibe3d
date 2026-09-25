@@ -138,7 +138,7 @@
 //
 // MUTATIONS THAT REDDEN IT: recorded at the bottom of this file.
 
-import http_client : testBaseUrl, getJson, postJson;
+import http_client : testBaseUrl, getJson, postJson, quiesce;
 import http_command_helpers : commandBody;
 import std.json;
 import std.net.curl : get, post;
@@ -199,7 +199,10 @@ enum float kCutReachWorld = 0.9f;
 // ---------------------------------------------------------------------------
 
 
-void settle() { Thread.sleep(250.msecs); }
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (250.msecs).
+
+
+void settle() { quiesce(); }
 
 void script(string line) {
     auto r = postJson("/api/command", line);

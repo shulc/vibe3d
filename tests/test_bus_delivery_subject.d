@@ -39,7 +39,7 @@
 // Both `unittest` blocks below redden, and the record of what they printed is
 // in the card.
 
-import http_client : testBaseUrl, getJson;
+import http_client : testBaseUrl, getJson, quiesce;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -61,7 +61,9 @@ void cmd(string text) {
     assert(r["status"].str == "ok", "command failed: " ~ text ~ " → " ~ r.toString);
 }
 
-void settle() { Thread.sleep(130.msecs); }
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (130.msecs).
+
+void settle() { quiesce(); }
 
 void play(string log) { playAndWait(log, BASE); settle(); }
 

@@ -3,7 +3,7 @@
 module test_escape_ladder;
 
 import drag_helpers : playAndWait;
-import http_client : getJson, postJson;
+import http_client : getJson, postJson, quiesce;
 import http_command_helpers : commandBody;
 import tool_drop_pipe_stages_helpers : applyHistoryDelta;
 import core.thread : Thread;
@@ -25,7 +25,9 @@ private JSONValue fixture() {
     return cached;
 }
 
-private void settle() { Thread.sleep(dur!"msecs"(150)); }
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (dur!"msecs"(150)).
+
+private void settle() { quiesce(); }
 
 private void cmd(string text) {
     const body = text.indexOf(' ') < 0 ? commandBody(text) : text;

@@ -42,7 +42,7 @@
 // 20 → 20, `totalPolygons` == 1 throughout). A drag that never entered
 // `onParamChanged` reads 0 there and the op-log zero below would be free.
 
-import http_client : testBaseUrl, getJson;
+import http_client : testBaseUrl, getJson, quiesce;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -81,7 +81,8 @@ void cmd(string s) {
 JSONValue changes() { return getJson("/api/changes"); }
 JSONValue model()   { return getJson("/api/model"); }
 JSONValue state()   { return getJson("/api/tool/state"); }
-void settle() { Thread.sleep(140.msecs); }
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (140.msecs).
+void settle() { quiesce(); }
 
 long counter(JSONValue a, JSONValue b, string key) {
     return b[key].integer - a[key].integer;

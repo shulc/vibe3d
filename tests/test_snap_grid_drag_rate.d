@@ -58,7 +58,7 @@
 //
 // Run via: ./run_test.d test_snap_grid_drag_rate
 
-import http_client : testBaseUrl, getJson, postJson;
+import http_client : testBaseUrl, getJson, postJson, quiesce;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -87,7 +87,9 @@ void cmd(string line) {
         "/api/command '" ~ line ~ "' failed: " ~ r.toString);
 }
 
-void settle() { Thread.sleep(250.msecs); }
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (250.msecs).
+
+void settle() { quiesce(); }
 
 /// The always-on rate counter, monotone and never reset — read as a DELTA.
 long gridBuilds() {

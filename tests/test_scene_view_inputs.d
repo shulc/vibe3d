@@ -2,7 +2,7 @@
 // display inputs. The oracle is the actual FBO hash, never the DrawPlan dump.
 module test_scene_view_inputs;
 
-import http_client : testBaseUrl;
+import http_client : testBaseUrl, quiesce;
 import http_command_helpers : commandBody;
 import std.net.curl : HTTP, get;
 import std.json : JSONValue, JSONType, parseJSON;
@@ -53,7 +53,9 @@ void script(string line) {
             line ~ " failed: " ~ r.toString);
 }
 
-void settle() { Thread.sleep(400.msecs); }
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (400.msecs).
+
+void settle() { quiesce(); }
 
 string cellHash(int cell) {
     auto j = parseJSON(httpGet(format(

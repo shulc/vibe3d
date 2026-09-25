@@ -50,7 +50,7 @@
 module test_quad_overlay_all_cells;
 
 
-import http_client : testBaseUrl;
+import http_client : testBaseUrl, quiesce;
 import http_command_helpers : commandBody;
 import std.stdio     : writeln, writefln;
 import std.net.curl  : HTTP;
@@ -104,7 +104,8 @@ void script(string s) {
 // The probe and the dump read the last COMPLETED frame (the HTTP bridge is
 // serviced before the scene render), so anything that changes the scene needs
 // a frame or two to land before it is visible.
-void settle() { Thread.sleep(400.msecs); }
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (400.msecs).
+void settle() { quiesce(); }
 
 void resetApp() {
     httpPost("/api/command", commandBody("scene.reset", "{}"));

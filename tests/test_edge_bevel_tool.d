@@ -4,7 +4,7 @@
 // separate event batches.  This catches the old last-event/base-width mix-up:
 // its final width depended on how SDL split one physical drag into motions.
 
-import http_client : testBaseUrl, getJson;
+import http_client : testBaseUrl, getJson, quiesce;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -31,7 +31,9 @@ void interactiveCmd(string text) {
     assert(r["status"].str == "ok", "interactive command failed: " ~ text ~ " → " ~ r.toString);
 }
 
-void settle() { Thread.sleep(130.msecs); }
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (130.msecs).
+
+void settle() { quiesce(); }
 
 void play(string log) {
     playAndWait(log, BASE);

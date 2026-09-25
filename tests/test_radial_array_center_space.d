@@ -65,7 +65,7 @@
 // clicked point is measured, never predicted. Block 5 needs its own view for a
 // reason that IS about the geometry, and says so in place.
 
-import http_client : testBaseUrl, getJson, postJson;
+import http_client : testBaseUrl, getJson, postJson, quiesce;
 import http_command_helpers : commandBody;
 import std.net.curl : get, post;
 import std.json;
@@ -96,7 +96,8 @@ void cmd(string argstring) {
 
 // The handle registry is rebuilt on every interactive draw, and the tool's
 // cached viewport is written there too — a press must follow a frame.
-void settle() { Thread.sleep(dur!"msecs"(200)); }
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (dur!"msecs"(200)).
+void settle() { quiesce(); }
 
 double num(JSONValue v) {
     return (v.type == JSONType.integer)  ? cast(double) v.integer

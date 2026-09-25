@@ -10,7 +10,7 @@
 // (risk 8), whose answer is recorded in the behaviour-gap registry rather than
 // predicted.
 
-import http_client : testBaseUrl;
+import http_client : testBaseUrl, quiesce;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -47,7 +47,9 @@ void cmd(string line) {
             "command `" ~ line ~ "` failed: " ~ resp);
 }
 
-void settle() { Thread.sleep(400.msecs); }
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (400.msecs).
+
+void settle() { quiesce(); }
 void resetApp() { httpPost("/api/command", commandBody("scene.reset", "{}")); settle(); }
 
 // The panel is a floating window and `/api/reset` does not close it: a block

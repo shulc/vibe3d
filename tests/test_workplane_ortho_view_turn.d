@@ -20,7 +20,7 @@
 import create_law_helpers : command, number;
 import drag_helpers : Vec3, Viewport, viewportFromCameraMatrices, pixelRay,
                       projectToWindow, cross, dot, buildDragLog, playAndWait;
-import http_client : testBaseUrl, getJson, postJson;
+import http_client : testBaseUrl, getJson, postJson, quiesce;
 import http_command_helpers : commandBody;
 import core.thread : Thread;
 import core.time : msecs;
@@ -65,7 +65,9 @@ private Vec3 focus() {
                 cast(float)number(j["focus"]["z"]));
 }
 
-private void settle() { Thread.sleep(450.msecs); }
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (450.msecs).
+
+private void settle() { quiesce(); }
 
 /// View matrix with rows right/up/back and eye `e` (column-major).
 private float[16] viewFrom(Vec3 r, Vec3 u, Vec3 b, Vec3 e) {

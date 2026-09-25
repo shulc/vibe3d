@@ -22,7 +22,7 @@
 //   * and the ring is Custom-ONLY (part id absent from /api/tool/handles for a
 //     non-Custom axis).
 
-import http_client : testBaseUrl;
+import http_client : testBaseUrl, quiesce;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -59,7 +59,9 @@ JSONValue getToolState() { return parseJSON(cast(string) get(BASE ~ "/api/tool/s
 size_t vertCount() { return getModel()["vertices"].array.length; }
 size_t faceCount() { return getModel()["faces"].array.length; }
 
-void settle() { Thread.sleep(dur!"msecs"(180)); }   // post-playback drain guard
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (dur!"msecs"(180)).
+
+void settle() { quiesce(); }   // post-playback drain guard
 
 void scr(Vec3 w, const ref Viewport vp, out int px, out int py) {
     float fx, fy;

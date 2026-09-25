@@ -31,7 +31,7 @@
 // touching the camera, the projection, or any of the numbers this test would
 // otherwise have to derive from the view matrix.
 
-import http_client : testBaseUrl, getJson;
+import http_client : testBaseUrl, getJson, quiesce;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -55,7 +55,8 @@ JSONValue cmd(string body_) {
 
 /// The probe reads the last COMPLETED frame, and the HTTP bridge is serviced
 /// before the render, so a change needs one full frame to become visible.
-void settle() { Thread.sleep(400.msecs); }
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (400.msecs).
+void settle() { quiesce(); }
 
 immutable scratch = "/tmp/vibe3d_planedraw";
 

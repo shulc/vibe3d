@@ -12,7 +12,7 @@
 // constant that changes; a test that leaned on it would go red for a reason
 // that has nothing to do with what it checks.
 
-import http_client : testBaseUrl;
+import http_client : testBaseUrl, quiesce;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -49,7 +49,8 @@ void cmd(string line) {
 
 /// A state change is visible in the DRAWN record only once a frame has drawn
 /// with it.
-void settle() { Thread.sleep(400.msecs); }
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (400.msecs).
+void settle() { quiesce(); }
 
 void resetApp() { httpPost("/api/command", commandBody("scene.reset", "{}")); settle(); }
 

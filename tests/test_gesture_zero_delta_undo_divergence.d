@@ -168,7 +168,7 @@
 //        that reddens: "the zero-distance gesture produced 0 change-bus
 //        deliveries against the control's 0 — the press was never delivered".
 
-import http_client : testBaseUrl, getJson, postJson;
+import http_client : testBaseUrl, getJson, postJson, quiesce;
 import http_command_helpers : commandBody;
 import std.json;
 import std.net.curl : get, post;
@@ -209,7 +209,10 @@ enum string kStatus = "open";
 // ---------------------------------------------------------------------------
 
 
-void settle() { Thread.sleep(250.msecs); }
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (250.msecs).
+
+
+void settle() { quiesce(); }
 
 void script(string line) {
     auto r = postJson("/api/command", line);

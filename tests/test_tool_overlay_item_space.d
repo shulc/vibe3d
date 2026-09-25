@@ -54,7 +54,7 @@
 // header says which one it picked and why.  The POSITION question — the one
 // this task exists for — is fully separated.
 
-import http_client : testBaseUrl, getJson, postJson;
+import http_client : testBaseUrl, getJson, postJson, quiesce;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -91,7 +91,8 @@ double attr(string tool, string name) {
 }
 // The registry is rebuilt on every interactive draw, so a read must follow a
 // frame. Same 130 ms the other handle tests settle for.
-void settle() { Thread.sleep(dur!"msecs"(160)); }
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (dur!"msecs"(160)).
+void settle() { quiesce(); }
 
 // --------------------------------------------------------------------------
 // The stand: a unit cube, its top face (index 4, local normal +Y) selected.

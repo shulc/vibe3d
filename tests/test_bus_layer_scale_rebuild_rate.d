@@ -73,7 +73,7 @@
 // the cliff", not "what does the geometry consumer specifically pay" — that
 // remains a named non-goal (a hover/snap sweep over background layers would
 // need its own stand and its own card).
-import http_client : testBaseUrl, getJson, postJson;
+import http_client : testBaseUrl, getJson, postJson, quiesce;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -95,7 +95,8 @@ void resetApp() {
     auto r = postJson("/api/command", commandBody("scene.reset"));
     assert(r["status"].str == "ok", "/api/reset failed: " ~ r.toString);
 }
-void settle() { Thread.sleep(400.msecs); }
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (400.msecs).
+void settle() { quiesce(); }
 
 long bgGpuUploads()      { return getJson("/api/changes")["bgGpuUploads"].integer; }
 int  dirtySlotCeiling()  { return cast(int)getJson("/api/changes")["meshDirtySlotCeiling"].integer; }

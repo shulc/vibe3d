@@ -44,7 +44,7 @@
 // Each block asserts the geometry first — a refusal makes every zero below it
 // vacuous.
 
-import http_client : testBaseUrl, getJson;
+import http_client : testBaseUrl, getJson, quiesce;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -86,7 +86,9 @@ void selectEdgeZero() {
     assert(r["status"].str == "ok", "edge select failed: " ~ r.toString);
 }
 
-void settle() { Thread.sleep(140.msecs); }
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (140.msecs).
+
+void settle() { quiesce(); }
 
 /// The Poly Inset tool publishes no `/api/tool/state`, so its live value is
 /// read the way `tests/test_poly_inset_drag.d` reads it.

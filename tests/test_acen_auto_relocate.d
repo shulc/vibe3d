@@ -21,7 +21,7 @@
 // post-click relocated state without a GPU-hover-driven click, so this
 // test is fully deterministic and needs no raw event injection.
 
-import http_client : testBaseUrl, getJson, postJson;
+import http_client : testBaseUrl, getJson, postJson, quiesce;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -315,7 +315,8 @@ private bool testRayPlaneIntersect(Vec3 origin, Vec3 dir,
 
 // settle: identical to test_relocate_boundary.d — wait ~120ms for the
 // main loop to process the injected events before reading geometry/pivot.
-private void settle() { Thread.sleep(120.msecs); }
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (120.msecs).
+private void settle() { quiesce(); }
 
 // Read the authoritative gizmo pivot from /api/toolpipe/eval.
 private Vec3 evalPivotLocal() {

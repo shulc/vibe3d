@@ -5,7 +5,7 @@
 // geometry + camera framing guarantee). See tests/test_tack_tool.d for the
 // commit/undo/parity coverage this file does NOT duplicate.
 
-import http_client : testBaseUrl, postJson;
+import http_client : testBaseUrl, postJson, quiesce;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -61,7 +61,9 @@ void toolOff(string id) { cmd("tool.set " ~ id ~ " off"); }
 
 JSONValue getToolState() { return parseJSON(cast(string) get(baseUrl ~ "/api/tool/state")); }
 
-void settle() { Thread.sleep(150.msecs); }
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (150.msecs).
+
+void settle() { quiesce(); }
 
 void frameTargetFace() {
     // Same framing as test_tack_tool.d: eye above (+Y) and in front (-Z) of

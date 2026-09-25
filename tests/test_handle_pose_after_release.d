@@ -6,7 +6,7 @@ import core.thread : Thread;
 import core.time : msecs;
 import drag_helpers : CameraState, Vec3, fetchCamera, playAndWait,
     projectToWindow, viewportFromCamera;
-import http_client : getJson, postJson;
+import http_client : getJson, postJson, quiesce;
 import http_command_helpers : commandBody;
 import std.format : format;
 import std.json : JSONType, JSONValue;
@@ -34,7 +34,8 @@ private void command(string s) {
     auto r = postJson("/api/command", s);
     assert(r["status"].str == "ok", "command `"~s~"` failed: "~r.toString);
 }
-private void settle() { Thread.sleep(180.msecs); }
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (180.msecs).
+private void settle() { quiesce(); }
 
 private string viewportLine(CameraState c) {
     return format(`{"t":0,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}`~"\n",

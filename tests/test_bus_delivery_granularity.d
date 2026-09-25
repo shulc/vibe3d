@@ -110,7 +110,7 @@
 // NOT for the COMMAND. Stage 2 must key on that distinction; this block pins
 // the number so the distinction cannot drift unobserved.
 
-import http_client : testBaseUrl, getJson, postJson;
+import http_client : testBaseUrl, getJson, postJson, quiesce;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -146,7 +146,9 @@ void cmd(string line) {
         "/api/command '" ~ line ~ "' failed: " ~ r.toString);
 }
 
-void settle() { Thread.sleep(200.msecs); }
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (200.msecs).
+
+void settle() { quiesce(); }
 
 long deliveries()    { return getJson("/api/changes")["deliveryCount"].integer; }
 uint lastDeliveryFlagsNow() {

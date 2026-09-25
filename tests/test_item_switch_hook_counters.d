@@ -3,7 +3,7 @@
 
 import core.thread : Thread;
 import core.time : dur;
-import http_client : getJson, postRaw;
+import http_client : getJson, postRaw, quiesce;
 import http_command_helpers : commandBody;
 import std.format : format;
 import std.json : parseJSON;
@@ -23,7 +23,8 @@ private void cmd(string script) { postOk(script); }
 private void command(string id, string params = "{}") {
     postOk(commandBody(id, params));
 }
-private void settle() { Thread.sleep(dur!"msecs"(180)); }
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (dur!"msecs"(180)).
+private void settle() { quiesce(); }
 
 private void resetCube() {
     command("scene.reset");

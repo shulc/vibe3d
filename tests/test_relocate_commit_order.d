@@ -17,7 +17,7 @@
 
 import core.thread : Thread;
 import core.time : msecs;
-import http_client : getJson, postJson;
+import http_client : getJson, postJson, quiesce;
 import http_command_helpers : commandBody;
 import std.conv : to;
 import std.format : format;
@@ -35,7 +35,9 @@ struct BankCase {
     double value;
 }
 
-void settle() { Thread.sleep(120.msecs); }
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (120.msecs).
+
+void settle() { quiesce(); }
 
 void cmd(string line) {
     auto r = postJson("/api/command", line);

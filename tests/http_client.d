@@ -226,3 +226,24 @@ void playPacedAndWait(string log, string baseUrl = null) {
     assert(r["status"].str == "success", "play-events failed: " ~ r.toString());
     waitPlaybackProcessed(baseUrl);
 }
+
+/// A frame fence that also outlasts the one asynchronous producer the frame
+/// loop does not own: an in-flight subpatch preview build. After it returns,
+/// no build is pending and a frame has completed since the last one landed.
+/// Never use it while a test HOLDS a build (`/api/subpatch/hold`): the build
+/// cannot land and this times out. Card test-sleep-removal.
+void quiesce(string baseUrl = null) {
+    frameFence(baseUrl);
+    immutable deadline = MonoTime.currTime + 30.seconds;
+    bool waited = false;
+    for (;;) {
+        auto s = getJson("/api/subpatch/preview", baseUrl);
+        auto p = "pending" in s;
+        if (p is null || !p.boolean) break;
+        waited = true;
+        assert(MonoTime.currTime < deadline,
+            "quiesce: a subpatch preview build stayed pending: " ~ s.toString());
+        Thread.sleep(2.msecs);
+    }
+    if (waited) frameFence(baseUrl);
+}

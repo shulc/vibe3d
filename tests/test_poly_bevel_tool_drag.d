@@ -14,7 +14,7 @@
 // (monotonic multi-batch growth + backward-restores-baseline + one-step ==
 // three-step) DO catch the accumulation bug directly.
 
-import http_client : testBaseUrl, getJson;
+import http_client : testBaseUrl, getJson, quiesce;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -36,7 +36,9 @@ void cmd(string text) {
     assert(r["status"].str == "ok", "command failed: " ~ text ~ " → " ~ r.toString);
 }
 
-void settle() { Thread.sleep(140.msecs); }
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (140.msecs).
+
+void settle() { quiesce(); }
 
 void play(string log) {
     auto r = parseJSON(cast(string)post(BASE ~ "/api/play-events", log));

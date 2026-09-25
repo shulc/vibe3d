@@ -43,7 +43,7 @@
 // Each block asserts the geometry first — a refusal makes every zero below it
 // vacuous, and `bevelEdgesByMask` refuses on a great many preconditions.
 
-import http_client : testBaseUrl, getJson;
+import http_client : testBaseUrl, getJson, quiesce;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -77,7 +77,8 @@ JSONValue model()   { return getJson("/api/model"); }
 JSONValue changes() { return getJson("/api/changes"); }
 long vertCount(JSONValue m) { return m["vertexCount"].integer; }
 long faceCount(JSONValue m) { return m["faceCount"].integer; }
-void settle() { Thread.sleep(140.msecs); }
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (140.msecs).
+void settle() { quiesce(); }
 
 int edgeIndexOf(int a, int b) {
     auto m = model();

@@ -28,7 +28,7 @@
 
 import edge_extend_gesture_helpers : Offset, armRig, ctrlZ, engage,
     keyArm, offset, tapKey, toolId, vertexCount;
-import http_client : getJson, postJson;
+import http_client : getJson, postJson, quiesce;
 import http_command_helpers : commandBody;
 import std.conv : to;
 import std.file : exists, remove;
@@ -47,7 +47,9 @@ void main() {}
 private enum double kTyped = 0.37;
 private enum int kSymW = 119;
 
-private void settle() { Thread.sleep(150.msecs); }
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (150.msecs).
+
+private void settle() { quiesce(); }
 
 private JSONValue command(string text) {
     auto r = postJson("/api/command", text);

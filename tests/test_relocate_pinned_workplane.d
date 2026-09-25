@@ -31,7 +31,7 @@
 // the origin, which would satisfy a bare "lands near zero" check for the
 // wrong reason.
 
-import http_client : testBaseUrl, getJson, postJson;
+import http_client : testBaseUrl, getJson, postJson, quiesce;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -70,7 +70,9 @@ float floatAttr(string[string] attrs, string key) {
     return attrs[key].to!float;
 }
 
-void settle() { Thread.sleep(150.msecs); }
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (150.msecs).
+
+void settle() { quiesce(); }
 
 // Cube + Move tool + the given viewport preset + a PINNED work plane + the
 // given ACEN mode. Order matters: tool.set / viewport.view re-stamp the

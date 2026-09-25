@@ -34,7 +34,7 @@
 // The file-level `scope(exit)` restores the projection, the style AND the
 // selection type the run started in.
 
-import http_client : getJson, postJson, testBaseUrl;
+import http_client : getJson, postJson, testBaseUrl, quiesce;
 import http_command_helpers : commandBody;
 import std.json;
 import std.format : format;
@@ -51,7 +51,9 @@ void main() {}
 
 alias baseUrl = testBaseUrl;
 
-private void settle() { Thread.sleep(450.msecs); }
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (450.msecs).
+
+private void settle() { quiesce(); }
 
 private void cmdOk(string body) {
     auto r = postJson("/api/command", body);

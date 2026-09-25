@@ -25,7 +25,7 @@
 // `dub test` build, and a by-value regression here compiles cleanly with
 // zero warnings — this HTTP round-trip is the only oracle.
 
-import http_client : testBaseUrl, getJson, postJson;
+import http_client : testBaseUrl, getJson, postJson, quiesce;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -38,7 +38,10 @@ void main() {}
 alias baseUrl = testBaseUrl;
 
 
-void settle() { Thread.sleep(150.msecs); }
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (150.msecs).
+
+
+void settle() { quiesce(); }
 
 int gpuFaceVertCount() {
     return cast(int) getJson("/api/gpu/face-vbo")["faceVertCount"].integer;

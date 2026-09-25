@@ -21,7 +21,7 @@
 // fixtures use), so it exercises the actual onMouseButtonDown/Motion/Up +
 // deactivate lifecycle.
 
-import http_client : testBaseUrl;
+import http_client : testBaseUrl, quiesce;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -58,7 +58,9 @@ JSONValue getSelection() { return parseJSON(cast(string) get(BASE ~ "/api/select
 // ("selectedVertices" / "selectedEdges" / "selectedFaces").
 size_t selCount(string key) { return getSelection()[key].array.length; }
 
-void settle() { Thread.sleep(dur!"msecs"(180)); }   // post-playback drain guard
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (dur!"msecs"(180)).
+
+void settle() { quiesce(); }   // post-playback drain guard
 
 // Screen pixel for a world point on the active viewport.
 void scr(Vec3 w, const ref Viewport vp, out int px, out int py) {

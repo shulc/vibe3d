@@ -19,7 +19,7 @@
 // crossing vertex whole. Per the fix, BOTH halves of EACH selected parent
 // stay selected: 2 selected in -> 4 selected out.
 
-import http_client : testBaseUrl;
+import http_client : testBaseUrl, quiesce;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -56,7 +56,9 @@ size_t faceCount() { return getModel()["faces"].array.length; }
 JSONValue getSelection() { return parseJSON(cast(string) get(BASE ~ "/api/selection")); }
 size_t selCount(string key) { return getSelection()[key].array.length; }
 
-void settle() { Thread.sleep(dur!"msecs"(180)); }   // post-command settle guard
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (dur!"msecs"(180)).
+
+void settle() { quiesce(); }   // post-command settle guard
 
 // Headless x=0 infinite plane slice (mirrors tests/fixture_helpers.d's
 // "slice" step / tests/fixtures/slice_selection.json): line along Z through

@@ -110,7 +110,7 @@
 //   rings are a different batch and the mutation was not global.
 // --------------------------------------------------------------------------
 
-import http_client : testBaseUrl;
+import http_client : testBaseUrl, quiesce;
 import http_command_helpers : commandBody;
 import std.stdio      : writeln, writefln;
 import std.net.curl   : HTTP;
@@ -155,7 +155,8 @@ void script(string line) {
 // The probe reads the last COMPLETED frame (the HTTP bridge is serviced before
 // the scene render), so anything that changes the scene needs a frame to land
 // before it is visible to a probe.
-void settle() { Thread.sleep(400.msecs); }
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (400.msecs).
+void settle() { quiesce(); }
 
 void resetApp() {
     httpPost("/api/command", commandBody("scene.reset", "{}"));

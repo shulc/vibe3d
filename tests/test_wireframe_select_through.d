@@ -72,7 +72,7 @@
 // term: without the policy term in that key the slot stays `valid` and B is
 // answered out of A's FBO.
 
-import http_client : testBaseUrl, getJson, postJson;
+import http_client : testBaseUrl, getJson, postJson, quiesce;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -90,7 +90,10 @@ void main() {}
 alias BASE = testBaseUrl;
 
 
-void settle() { Thread.sleep(300.msecs); }
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (300.msecs).
+
+
+void settle() { quiesce(); }
 
 void cmdOk(string body_) {
     auto resp = cast(string)post(BASE ~ "/api/command", body_);

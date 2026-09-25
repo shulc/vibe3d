@@ -36,7 +36,7 @@
 //      pixel offset from two different press pixels gives two DIFFERENT deltas.
 //      Guards against "fixing" the pinned modes by making every mode pinned.
 
-import http_client : testBaseUrl;
+import http_client : testBaseUrl, quiesce;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -54,7 +54,8 @@ alias baseUrl = testBaseUrl;
 
 JSONValue pj(string p, string b) { return parseJSON(cast(string) post(baseUrl ~ p, b)); }
 JSONValue gj(string p)           { return parseJSON(cast(string) get(baseUrl ~ p)); }
-void settle()                    { Thread.sleep(150.msecs); }
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (150.msecs).
+void settle() { quiesce(); }
 void cmd(string c)               { pj("/api/command", c); }
 
 Vec3[] verts() {

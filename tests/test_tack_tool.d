@@ -16,7 +16,7 @@
 // Phase-0 capture (private doc) — see tests/fixtures/tack.json for the full
 // derivation note.
 
-import http_client : testBaseUrl, postJson;
+import http_client : testBaseUrl, postJson, quiesce;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -77,7 +77,9 @@ JSONValue getModel()     { return parseJSON(cast(string) get(baseUrl ~ "/api/mod
 JSONValue getHistory()   { return parseJSON(cast(string) get(baseUrl ~ "/api/history")); }
 JSONValue getToolState() { return parseJSON(cast(string) get(baseUrl ~ "/api/tool/state")); }
 
-void settle() { Thread.sleep(150.msecs); }
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (150.msecs).
+
+void settle() { quiesce(); }
 
 // Poll the undo history until it holds at least `target` entries — i.e. the
 // interactive click's Tack commit has actually LANDED — or a generous timeout

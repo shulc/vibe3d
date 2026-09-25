@@ -29,7 +29,7 @@
 // The two answers differ by more than half a world unit, so no tolerance
 // question arises.
 
-import http_client : testBaseUrl, getJson, postJson;
+import http_client : testBaseUrl, getJson, postJson, quiesce;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -46,7 +46,10 @@ void main() {}
 alias baseUrl = testBaseUrl;
 
 
-void settle() { Thread.sleep(200.msecs); }
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (200.msecs).
+
+
+void settle() { quiesce(); }
 
 string[string] getAcenAttrs() {
     auto j = getJson("/api/toolpipe");

@@ -27,7 +27,7 @@
 // instrument with a nonzero ImGui floor. The one thing asserted about it is
 // that it responds at all (in perf_probe.d's own unittest).
 
-import http_client : testBaseUrl;
+import http_client : testBaseUrl, quiesce;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -68,7 +68,8 @@ void cmd(string line) {
 // with it. `settle` is generous on purpose: at ~230 fps in --test this is
 // dozens of frames, and the counters it reads are frame-exact, so a longer
 // sleep cannot make a passing assertion pass "more".
-void settle() { Thread.sleep(400.msecs); }
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (400.msecs).
+void settle() { quiesce(); }
 
 void resetApp() { httpPost("/api/command", commandBody("scene.reset", "{}")); settle(); }
 

@@ -1,4 +1,4 @@
-import http_client : testBaseUrl, getJson, postJson;
+import http_client : testBaseUrl, getJson, postJson, quiesce;
 import http_command_helpers : commandBody;
 import std.json : JSONValue, JSONType, parseJSON;
 import std.file : readText;
@@ -15,7 +15,10 @@ alias BASE = testBaseUrl;
 enum string fixtureConsumerProvenance = `{"schema":1,"source":"live-capture","reference_token":"ref-editor@11.2v3","method":"debug-live","captured_utc":"2026-08-31","task":"3690"}`;
 
 
-void settle(){Thread.sleep(150.msecs);}
+// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (150.msecs).
+
+
+void settle() { quiesce(); }
 void cmd(string s){auto r=postJson("/api/command",s);assert(r["status"].str=="ok",r.toString);settle();}
 void baseline(){postJson("/api/script","tool.set move off");settle();postJson("/api/command", commandBody("scene.reset"));cmd("history.clear");}
 JSONValue toolGeometryBaseline;
