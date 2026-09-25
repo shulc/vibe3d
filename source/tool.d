@@ -6,7 +6,6 @@ import math;
 import shader;
 import params : Param, ParamProvider;
 import editmode : EditMode;
-public import hover_state : Rollover;   // a field type of ToolSessionPolicy
 import operator : VectorStack;
 import command : Command;
 import command_history : CommandHistory;
@@ -207,6 +206,41 @@ enum OpensAt : ubyte { firstPress, arm }
 /// H5: the kind of press that opens a gesture step (slice M3).
 enum PressKind : ubyte { plain, shift, middle }
 
+/// H7 (tool session model, slice M6): whether the viewport draws the element
+/// under the cursor while a tool is armed. It is DATA — the rollover flag of
+/// the tool's policy (`ToolSessionPolicy.rollovers`) and of the pipe stages it
+/// runs with (`Stage.rollovers`), each from the captured flags table and the
+/// C-H7 cells (`toolcards/tool_session_model/`, gap 309/312) — read by ONE
+/// viewport path (`ui/viewport_render.d : rolloverShown`). WHICH elements are
+/// hovered is a separate question, the tool's pick need
+/// (`Tool.wantsHoverForType`): a tool that picks no type shows nothing
+/// whatever its flag. No tool armed: the selection type decides, as before.
+enum Rollover : ubyte {
+    /// Nothing is drawn under the armed tool (C-H7: Slice, Edge Extend,
+    /// Polygon Bevel, Move, vertex Bevel — 0 px).
+    none,
+    /// The hovered target outside a drag, live edit or not (Edge Slice keeps
+    /// its target edge through a live chain, C-H7: 286 px). A drag hides it:
+    /// the picker holds its drag-start index while the preview rebuilds the
+    /// edge array under it (the stale-alias rule of the viewport's edge pass).
+    target,
+    /// Only a hovered VERTEX, in every selection mode: the element falloff's
+    /// flag (C-H7-elem: Element Move 36 px on a vertex, 0 on an edge in edge
+    /// and polygon mode). A drag keeps it — the element picked at drag start
+    /// stays lit, as before the slice (not captured; gap 382).
+    vertices,
+}
+
+/// The rule of one flag, as a pure function of the frame's facts.
+bool rolloverDraws(Rollover r, EditMode type, bool dragging)
+        pure nothrow @nogc @safe {
+    final switch (r) {
+        case Rollover.none:      return false;
+        case Rollover.target:    return !dragging;
+        case Rollover.vertices:  return type == EditMode.Vertices;
+    }
+}
+
 /// H8 (slice M6, C-H8-ctl): what the tool's transform handle is posed from.
 /// `acenPlusT`: the action centre plus the run's translation (the transform
 /// family; a press off the handle may place the centre). `opBasePlusAttr`: the
@@ -311,8 +345,8 @@ struct ToolSessionPolicy {
     /// Mirror; slice M4 moved it here from the `KeepAliveOnCancel` interface).
     bool keepAliveOnCancel;
     /// H7 (slice M6): whether the hovered target is drawn while the tool is
-    /// armed — the rollover flag of the tool's own node (`hover_state.Rollover`;
-    /// the flags table, generated into tests/fixtures/tool_rollover_flags.json).
+    /// armed — the rollover flag of the tool's own node (`Rollover` above;
+    /// the flags table, tests/fixtures/tool_rollover_flags.json).
     Rollover rollovers;
     /// H8 (slice M6): what the tool's transform handle is posed from.
     HandleAnchor handleAnchor;

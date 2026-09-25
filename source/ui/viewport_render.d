@@ -33,7 +33,7 @@ import viewport              : Viewport3D;
 import viewport_overlay_mode : OverlayMode;
 import display_state         : DrawPlan, SurfaceShading;
 import perf_probe            : g_fc, g_perf, DrawPass, Cat;
-import tool                  : Tool;
+import tool                  : Tool, rolloverDraws;
 import toolpipe.pipeline     : ToolPipeContext;
 import toolpipe.stage        : TaskCode;
 import toolpipe.packets      : SubjectPacket;
@@ -43,7 +43,6 @@ import viewgrid              : ViewGridPrefs, viewGridSizeFor, viewGridFadeRadiu
 import shader                : Shader, LitShader, CheckerShader, GridShader;
 import pipe_gizmo_host       : PipeGizmoHost;
 import tools.slice.loop_slice_tool : LoopSliceTool;
-import hover_state : rolloverDraws;
 import tools.transform.transform   : TransformTool;
 
 // The copilot ghost overlay at the tail of the scene pass; compiled out of
@@ -245,15 +244,14 @@ public:
     // H7 (tool session model, slice M6): the ONE read of the rollover data.
     // With no tool armed the selection type decides (the branches below). With
     // one, the hovered element of `type` is drawn iff the tool's policy flag or
-    // a flag of its pipe's stages draws it (`hover_state.rolloverDraws`: none /
+    // a flag of its pipe's stages draws it (`tool.rolloverDraws`: none /
     // target / vertices; C-H7, C-H7-vert, C-H7-elem, gap 309/312).
     // Which elements are hovered at all is the tool's pick need, not this.
     bool rolloverShown(EditMode type) {
         if (activeTool is null) return true;
         immutable bool drag = activeTool.isDragging();
-        immutable bool live = activeTool.hasUncommittedEdit();
-        return rolloverDraws(activeTool.sessionPolicy().rollovers, type, drag, live)
-            || scene.pipeContext.pipeline.rolloverDraws(type, drag, live);
+        return rolloverDraws(activeTool.sessionPolicy().rollovers, type, drag)
+            || scene.pipeContext.pipeline.rolloverDraws(type, drag);
     }
     immutable int vertHovForDraw = rolloverShown(EditMode.Vertices) ? hoveredVertex : -1;
     immutable int edgeHovForDraw = rolloverShown(EditMode.Edges)    ? hoveredEdge   : -1;

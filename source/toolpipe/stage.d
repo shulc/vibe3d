@@ -1,7 +1,7 @@
 module toolpipe.stage;
 
 import params : Param, ParamProvider, parseInto, stringifyParam;
-import hover_state : Rollover;
+import tool : Rollover;
 
 // ---------------------------------------------------------------------------
 // Tool pipe task codes.
@@ -117,7 +117,7 @@ abstract class Stage : ParamProvider {
 
     /// H7 (tool session model, slice M6): this node's rollover flag — what of
     /// the hovered element the viewport draws while a tool runs with this
-    /// stage in its pipe, OR-ed with the tool's own (`hover_state.Rollover`).
+    /// stage in its pipe, OR-ed with the tool's own (`tool.Rollover`).
     /// Default: none.
     Rollover rollovers() const nothrow @nogc { return Rollover.none; }
 

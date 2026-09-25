@@ -554,6 +554,7 @@ static assert(ToolSessionPolicy.init.rollovers == Rollover.none
               && ToolSessionPolicy.init.handleAnchor == HandleAnchor.acenPlusT);
 // The capability interface the rollover replaced is gone.
 static assert(!__traits(compiles, { import hover_state : TargetHighlightKeeper; }));
+static assert(!__traits(compiles, { import hover_state : Rollover; }));
 static assert(__traits(isVirtualMethod, Tool.handleAnchorPoint));
 
 /// The ids with no mapped counterpart (or an unsure one) keep their pre-M6
@@ -670,9 +671,8 @@ unittest { // (7)
     auto vr = blankNonCode(readText("source/ui/viewport_render.d"));
     const fn = squeeze(bodyAt(vr, "bool rolloverShown(EditMode type)"));
     assert(fn == "{if(activeToolisnull)returntrue;immutablebooldrag=activeTool.isDragging();"
-               ~ "immutableboollive=activeTool.hasUncommittedEdit();"
-               ~ "returnrolloverDraws(activeTool.sessionPolicy().rollovers,type,drag,live)"
-               ~ "||scene.pipeContext.pipeline.rolloverDraws(type,drag,live);}",
+               ~ "returnrolloverDraws(activeTool.sessionPolicy().rollovers,type,drag)"
+               ~ "||scene.pipeContext.pipeline.rolloverDraws(type,drag);}",
            "M6 wiring census: viewport_render.d rolloverShown changed: " ~ fn);
     // The three hover indices the draw hands to GL go through it.
     foreach (n; ["vertHovForDraw=rolloverShown(EditMode.Vertices)?hoveredVertex:-1",
