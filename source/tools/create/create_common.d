@@ -153,7 +153,7 @@ WorkplaneFrame pickWorkplaneFrame(const ref Viewport vp) {
         f.axis1  = bp.axis1;
         f.axis2  = bp.axis2;
         // Auto plane passes through the camera focus, not the world origin,
-        // so primitives and relocates land on the plane the user is looking at.
+        // so primitives land on the plane the user is looking at.
         f.origin = vp.focus;
         f.isAuto = true;
     } else {
@@ -197,11 +197,12 @@ private WorkplaneFrame frameFromPacket(const WorkplanePacket p) {
 /// The frame accessor used by every plane-consuming tool: the `applyHeadless`
 /// of all 8 interactive Create-tools (sphere/cone/box/tube/torus/cylinder/
 /// capsule + arc), the interactive commit at `arc.d:317`, and the
-/// ACEN.Auto relocate plane in `transform.d` (`computeClickRelocateHitRaw`)
-/// all call this — it is a live production path, not a headless-only shim.
-/// The relocate call site additionally calls `pickMostFacingPlane` directly
-/// for its auto-mode plane NORMAL (see below); this accessor still supplies
-/// its `isAuto` flag and the pinned-plane fallback. `WorkplaneStage` is the
+/// ACEN.Auto relocate in `transform.d` (`computeClickRelocateHitRaw`) all
+/// call this — it is a live production path, not a headless-only shim. The
+/// relocate reads its `isAuto` flag and the pinned plane; in perspective it
+/// takes its auto-mode plane NORMAL from `mostFacingAxis` directly, and in
+/// ortho it keeps the pre-press centre's depth instead (gap 364, task 7134),
+/// so no focus plane is involved there. `WorkplaneStage` is the
 /// single owner of the answer:
 ///   - auto  ⇒ the `WorkplanePacket.init` default (world XZ, origin 0) —
 ///     there is no headless equivalent of the camera-facing pick THROUGH

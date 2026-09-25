@@ -588,11 +588,14 @@ unittest {
     }
 }
 
-// AXIS-LOCKED ORTHO: the no-ray arm reproduces the camera-perpendicular
-// plane through the focus — the task-0226 fix — for all six presets. Under
+// AXIS-LOCKED ORTHO: `principalPlaneCenter`'s no-ray arm equals the
+// camera-perpendicular plane through the FOCUS for all six presets. Under
 // ortho the ray is parallel to the view axis, so the intersection only ever
-// changed that one coordinate, which is the coordinate the no-ray arm
-// replaces.
+// changes that one coordinate, which is the coordinate the no-ray arm
+// replaces. A property of the chain alone: since task 7134 the action-centre
+// relocate no longer reaches this arm in ortho (it keeps the PRE-PRESS
+// centre's depth, gap 364, `orthoRelocateThroughPrior`); the create tools'
+// placement click still does.
 unittest {
     import math : rayPlaneIntersect;
     RelocatePlanePrefs p;                       // defaults
@@ -612,7 +615,7 @@ unittest {
                    "premise: the camera-perpendicular plane is always hit");
             assert(nearV(lawHit, oldHit, 1e-4f),
                    format("preset axis=%d sign=%.0f: the no-ray arm must "
-                          ~ "reproduce the 0226 camera-perpendicular landing — "
+                          ~ "equal the camera-perpendicular focus-plane landing — "
                           ~ "law (%.6f, %.6f, %.6f) vs old (%.6f, %.6f, %.6f)",
                           axis, sign, lawHit.x, lawHit.y, lawHit.z,
                           oldHit.x, oldHit.y, oldHit.z));
@@ -620,12 +623,12 @@ unittest {
     }
 }
 
-// AND THE CARVE-OUT IS LOAD-BEARING. An orthographic camera that is NOT
-// axis-aligned is a view class the reference does not have (its orthographic
-// views are exactly the six axis presets), so the read says nothing about
-// it and the relocate call site keeps the 0226 plane there. This test says
-// that carve-out is not decorative: the law and the 0226 fix genuinely
-// disagree on such a camera, so removing the carve-out WOULD move a landing.
+// OBLIQUE ORTHO: `principalPlaneCenter` is NOT the camera-perpendicular
+// plane through the focus on an orthographic camera that is not axis-aligned
+// — with no locked axis it takes the ray arm onto the principal plane, which
+// lands elsewhere along the ray. A property of the chain only: no caller
+// feeds it such a view for a relocate any more (task 7134 routes every ortho
+// relocate through `orthoRelocateThroughPrior`, gap 366).
 unittest {
     import math : rayPlaneIntersect, lookAt, orthographicMatrix;
     Vec3 focus = Vec3(0.4f, 1.7f, 0.2f);
@@ -640,7 +643,7 @@ unittest {
 
     assert(lockedViewAxis(vp) == -1,
            "an oblique orthographic camera must NOT read as axis-locked — if "
-           ~ "it does, the carve-out never fires and this test proves nothing");
+           ~ "it does, the ray arm is never taken and this test proves nothing");
 
     Vec3 camPerp = Vec3(vp.view[2], vp.view[6], vp.view[10]);
     Vec3 fwd     = Vec3(-vp.view[2], -vp.view[6], -vp.view[10]);
@@ -652,10 +655,10 @@ unittest {
     assert(principalPlaneCenter(vp, origin, fwd, 0, p, lawHit, used));
     assert(rayPlaneIntersect(origin, fwd, vp.focus, camPerp, orthoFixHit));
     assert(!nearV(lawHit, orthoFixHit, 1e-3f),
-           format("the law and the 0226 ortho fix must DIFFER on an oblique "
-                  ~ "orthographic camera — they agreed, so the call site's "
-                  ~ "carve-out is untested by construction: law "
-                  ~ "(%.6f, %.6f, %.6f), 0226 (%.6f, %.6f, %.6f)",
+           format("principalPlaneCenter must DIFFER from the camera-"
+                  ~ "perpendicular plane through the focus on an oblique "
+                  ~ "orthographic camera — they agreed: chain "
+                  ~ "(%.6f, %.6f, %.6f), focus plane (%.6f, %.6f, %.6f)",
                   lawHit.x, lawHit.y, lawHit.z,
                   orthoFixHit.x, orthoFixHit.y, orthoFixHit.z));
 }

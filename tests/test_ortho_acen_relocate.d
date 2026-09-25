@@ -18,10 +18,12 @@
 // because its forward equals the plane normal; perspective works because
 // its rays diverge from the eye.)
 //
-// The fix (source/tools/transform.d computeClickRelocateHitRaw) swaps in a
-// camera-perpendicular plane through the same origin when the camera is
-// orthographic, so the ray always hits and the click lands under the
-// cursor at focus depth. This is the ONE shared relocate projection every
+// The fix (source/tools/transform/transform.d computeClickRelocateHitRaw)
+// lands an orthographic click on the view-perpendicular plane, which the
+// parallel ray always hits, so the click lands under the cursor. Its depth is
+// the pre-press centre's depth (gap 364, task 7134); it equals the focus depth
+// and the plane origin's in this rig (cube centred at the origin, focus at the
+// origin). This is the ONE shared relocate projection every
 // transform tool (Move / Rotate / Scale) and every relocate-allowed mode
 // (None / Auto / Screen) routes through, so the fix is uniform.
 //

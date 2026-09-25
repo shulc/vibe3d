@@ -119,9 +119,9 @@ void assertRelocated(string[string] a, string where) {
 // argmax — so the collapsed lock arm kept k=Z and wrote the plane's X
 // offset, 3, into the Z component.
 //
-// Correct landing: the pinned plane is edge-on to a Front camera, so the
-// relocate uses the camera-perpendicular plane through the pinned origin
-// (the task-0226 fix) — which for a Front view is z = 0.
+// Correct landing: an ortho relocate keeps the pre-press centre's depth
+// (gap 364, task 7134) — the cube's centre, z = 0; it equals the plane
+// origin's depth in this rig (the origin is (3, 0, 0)).
 //
 // The discriminator is a full 3.0 world units and nothing in this rig
 // quantises: the law's out-of-plane quantum is off by default, and even at
@@ -146,7 +146,8 @@ unittest {
                ~ "been collapsed onto an axis+scalar again.", z));
     assert(abs(z) < 5e-2,
         format("Front ortho relocate must land on the camera-perpendicular "
-               ~ "plane through the pinned origin, z~0; cenZ=%.4f", z));
+               ~ "plane at the pre-press centre's depth (gap 364; equals the "
+               ~ "plane origin in this rig), z~0; cenZ=%.4f", z));
 }
 
 // -------------------------------------------------------------------------
@@ -170,7 +171,8 @@ unittest {
                ~ "axis's Y component: cenY=%.4f", y));
     assert(abs(y) < 5e-2,
         format("Right ortho relocate must land on the camera-perpendicular "
-               ~ "plane through the pinned origin, y~0; cenY=%.4f", y));
+               ~ "plane at the pre-press centre's depth (gap 364; equals the "
+               ~ "plane origin in this rig), y~0; cenY=%.4f", y));
 }
 
 // -------------------------------------------------------------------------

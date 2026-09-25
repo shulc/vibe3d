@@ -50,7 +50,7 @@ module tools.transform.relocate_plane;
 // `RelocatePlanePrefs.lock`.
 // ---------------------------------------------------------------------------
 
-import math : Vec3, Viewport, isOrtho, normalize, dot;
+import math : Vec3, Viewport, isOrtho, isAxisView, normalize, dot;
 import std.math : abs, floor, ceil;
 
 /// Round half AWAY FROM ZERO — the reference's `Dnint`, which is Fortran's
@@ -400,12 +400,16 @@ bool principalPlaneCenter(const ref Viewport vp, Vec3 rayOrigin, Vec3 rayDir,
 bool orthoRelocateThroughPrior(const ref Viewport vp, Vec3 rayOrigin, Vec3 rayDir,
                                Vec3 prior, float inPlaneSnap, out Vec3 c)
         @safe pure nothrow @nogc {
-    immutable int k = lockedViewAxis(vp);
-    if (k >= 0) {
+    immutable Vec3 n = Vec3(vp.view[2], vp.view[6], vp.view[10]);
+    // The view TYPE decides the arm (`isAxisView`, the one axis-view
+    // predicate); the axis it looks along is then the largest component of
+    // its direction in the caller's frame.
+    if (isAxisView(vp)) {
+        immutable int k = abs(n.x) >= abs(n.y) && abs(n.x) >= abs(n.z) ? 0
+                        : (abs(n.y) >= abs(n.z) ? 1 : 2);
         c = withAxisComp(vectorSnap(rayOrigin, inPlaneSnap), k, axisComp(prior, k));
         return true;
     }
-    immutable Vec3 n = Vec3(vp.view[2], vp.view[6], vp.view[10]);
     immutable float denom = dot(n, rayDir);
     if (abs(denom) < 1e-9f) return false;
     c = rayOrigin + rayDir * (dot(n, prior - rayOrigin) / denom);

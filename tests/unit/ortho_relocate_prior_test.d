@@ -12,8 +12,9 @@ import tools.transform.relocate_plane : orthoRelocateThroughPrior;
 import std.format : format;
 import std.math : abs, PI, tan;
 
-private Viewport ortho(Vec3 eye, Vec3 focus, Vec3 up) {
+private Viewport ortho(Vec3 eye, Vec3 focus, Vec3 up, bool axisPreset) {
     Viewport vp;
+    vp.axisPreset = axisPreset;
     vp.eye    = eye;
     vp.focus  = focus;
     vp.view   = lookAt(eye, focus, up);
@@ -27,7 +28,7 @@ private bool near(float a, float b, float eps) { return abs(a - b) <= eps; }
 
 unittest { // axis view: depth from the prior centre, in-plane snapped
     // Front (looks along -Z), focus at depth 2.3, prior centre at depth 1.7.
-    auto vp = ortho(Vec3(0.25f, 0.15f, 5.3f), Vec3(0.25f, 0.15f, 2.3f), Vec3(0, 1, 0));
+    auto vp = ortho(Vec3(0.25f, 0.15f, 5.3f), Vec3(0.25f, 0.15f, 2.3f), Vec3(0, 1, 0), true);
     Vec3 o, d;
     screenPointToRay(400.0f + 210.0f, 400.0f - 160.0f, vp, o, d);
     Vec3 c;
@@ -47,7 +48,7 @@ unittest { // axis view: depth from the prior centre, in-plane snapped
 }
 
 unittest { // ortho with no locked axis: the view-perpendicular plane through the prior centre, unsnapped
-    auto vp = ortho(Vec3(3, 4, 5), Vec3(0.3f, 0.2f, 0.1f), Vec3(0, 1, 0));
+    auto vp = ortho(Vec3(3, 4, 5), Vec3(0.3f, 0.2f, 0.1f), Vec3(0, 1, 0), false);
     Vec3 o, d;
     screenPointToRay(517.0f, 333.0f, vp, o, d);
     immutable Vec3 prior = Vec3(-1.2f, 0.7f, 2.9f);
