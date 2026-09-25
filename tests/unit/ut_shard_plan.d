@@ -624,6 +624,15 @@ unittest // census: every unittest module that listens on a chosen port is pinne
         "these unittest modules listen on a port but are neither in kPortGroup "
       ~ "nor exempt, so the parallel module gate may run them beside another "
       ~ "server test and collide on a port: %s", offenders));
+    // The group only protects anything if the PRODUCTION runner packs and
+    // validates with it: pin the table and the two call texts in ut_runner.d.
+    assert(kPinnedGroups.canFind(kPortGroup),
+        "kPortGroup is no longer one of kPinnedGroups, so nothing pins it");
+    const runner = readText(buildPath(repoRoot, "tests", "unit", "ut_runner.d"));
+    foreach (call; ["packShards(roster, weights, jobs, kPinnedGroups)",
+                    "validatePlan(roster, shards, kPinnedGroups)"])
+        assert(runner.canFind(call),
+            "tests/unit/ut_runner.d no longer calls `" ~ call ~ "`");
     // Population floor, measured 2026-09-25: a scan that matched nothing
     // would pass the check above.
     assert(population == kPortGroup.length + exempt.length, format(
