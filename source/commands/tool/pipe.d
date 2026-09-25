@@ -7,7 +7,7 @@ import editmode;
 import commands.tool.host : ToolHost;
 
 import toolpipe.pipeline : g_pipeCtx, noteUserStageChoice;
-import toolpipe.stage    : Stage;
+import toolpipe.stage    : PresetClaimable, Stage;
 import params : Param, paramToJson, wireArgs;
 
 import std.json : JSONValue;
@@ -125,6 +125,15 @@ class ToolPipeAttrCommand : Command {
         } else if ((stageId_ == "actionCenter" || stageId_ == "axis") &&
                    attrName_ == "mode") {
             noteUserStageChoice(g_pipeCtx.pipeline, matched, false);
+            // With NO tool armed there is no session for the write to belong
+            // to: it is the user's choice and survives the next arm, as a
+            // hand-set node does (gap 384, M0e floor; slice M7). Armed, the
+            // write stays loose (L1-L3, below).
+            const bool noTool = toolHost.getActiveTool !is null
+                                && toolHost.getActiveTool() is null;
+            if (noTool && attrValue_ != "none")
+                if (auto choice = cast(PresetClaimable) matched)
+                    choice.promoteClaimToUserChoice();
         }
 
         // A falloff TYPE write here locks the stage until `none`; if the armed

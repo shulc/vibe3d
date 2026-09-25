@@ -269,15 +269,21 @@ private string pipeAttr(string stage, string attr) {
 }
 
 /// C-H7-xfrm-*-elem (M0e): TransformMove with ONE element node set by hand.
-/// The capture set the node, then armed the tool; ours: a hand-set centre
-/// mode does not survive the arm (the arm's transient pipe reset; gap 384),
-/// so the node is set after it — the state under test is the same pipe.
-private size_t handSetCell(string type, string node, DHVec3 at, string kind) {
+/// As captured: the node is set with no tool armed, THEN the tool is armed,
+/// and the node survives the arm (M0e floor: node tag on at `tool_armed`;
+/// gap 384, fixed by slice M7 — a pipe write with no tool armed is the user's
+/// choice). `stage`/`attr`/`value` name the node's own attribute.
+private size_t handSetCell(string type, string node, string stage, string attr,
+                           string value, DHVec3 at, string kind) {
     run("scene.reset");
     run("select.typeFrom " ~ type);
+    run(node);
     auto r = postJson("/api/script", "tool.set TransformMove on");
     assert(r["status"].str == "ok", "arm TransformMove failed: " ~ r.toString);
-    run(node);
+    assert(pipeAttr(stage, attr) == value,
+           format("gap 384 (M0e floor): `%s` set before the arm reads %s %s = '%s' once "
+                  ~ "TransformMove is armed; captured: the node survives the arm", node, stage,
+                  attr, pipeAttr(stage, attr)));
     settleFrames();
     immutable int[2] p = windowPx(at);
     immutable size_t n = changedPx(p);
@@ -297,10 +303,10 @@ unittest { // C-H7-xfrm-falloff-elem / -center-elem (M0e): EITHER element node l
     rig("edge", "TransformMove");
     immutable size_t plain = changedPx(windowPx(kV));
     assert(plain == 0, format("M0e control: plain TransformMove drew %s px at v in edge mode", plain));
-    foreach (node; ["tool.pipe.attr falloff type element",
-                    "tool.pipe.attr actionCenter mode element"]) {
-        immutable size_t v = handSetCell("vertex", node, kV, "vertex");
-        immutable size_t e = handSetCell("edge", node, kV, "vertex");
+    foreach (nd; [["falloff", "type"], ["actionCenter", "mode"]]) {
+        immutable node = "tool.pipe.attr " ~ nd[0] ~ " " ~ nd[1] ~ " element";
+        immutable size_t v = handSetCell("vertex", node, nd[0], nd[1], "element", kV, "vertex");
+        immutable size_t e = handSetCell("edge", node, nd[0], nd[1], "element", kV, "vertex");
         assert(v > 0 && e == v,
                format("C-H7-xfrm (%s): TransformMove drew %s px (vertex mode) / %s px (edge mode, "
                       ~ "on v); captured 36 / 36 — the vertex dot, from either element node alone",
