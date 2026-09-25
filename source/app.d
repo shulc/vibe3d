@@ -241,6 +241,7 @@ import command_history : RecordMode;
 import application_command_binding : ApplicationCommandBinding;
 import http_command_adapter : AutomationResetContext, CommandHttpAdapter;
 import held_gesture_buttons : clearHeldGestureButtonsForAutomation;
+import prefs : clearPipelineAttrCacheForAutomation;
 import registry;
 // Task 0415 (campaign 0407 §B.V1 step 1): registerTools/registerCommands
 // host the command/tool factory registration moved out of main() below,
@@ -1521,7 +1522,7 @@ void main(string[] args) {
     // SDL_DestroyWindow guard so LIFO runs this FIRST — the window is still
     // alive, so SDL_GetWindowSize returns the live size. Crash paths skip
     // scope(exit) entirely and simply don't save (clean-shutdown-only, like
-    // imgui.ini). lastDir / recentFiles / toolDefaults are already in g_prefs.
+    // imgui.ini). lastDir / recentFiles / toolAttrCache are already in g_prefs.
     // Captures the live window size into g_prefs and writes the file. A try/
     // catch cannot sit lexically inside a scope(exit), so the body lives in
     // this nested function that the guard below merely calls.
@@ -2684,27 +2685,19 @@ void main(string[] args) {
         removeStackedFalloffs();
     }
 
-    // Sticky tool-option defaults: on a CLEAN tool drop (dropActiveTool
-    // with a known preset id), snapshot the dropped tool's TOOL-LEVEL params
-    // into g_prefs.toolDefaults[presetId], so the next activation of that
-    // preset starts from the user's last-used settings (re-applied in the
-    // preset factory, overriding the YAML). Captured here — before
-    // deactivate()/destroy() invalidates the tool's param pointers — only at a
-    // clean drop, never mid-gesture and never on crash (scope(exit)-free).
-    // Pipe-stage attrs (falloff / acen) are session state and are NOT captured.
-    void captureStickyToolDefaults() {
-        if (!prefsActive) return;
+    // The drop half of the per-preset tool attribute cache (slice M5,
+    // source/toolpipe/attr_cache.d): the dropped preset's tool node and the
+    // pipe nodes it claimed go into the cache BEFORE deactivate()/destroy()
+    // invalidates the tool's Param pointers and before the stages reset. NOT
+    // gated on `prefsActive`: the in-memory cache is editor session state; only
+    // its file section is gated (loadPrefs / persistPrefsOnExit).
+    void storeDroppedToolNodes() {
+        import toolpipe.attr_cache : captureDroppedNodes;
+        import toolpipe.pipeline : g_pipeCtx;
         if (activeTool is null || activeToolId.length == 0) return;
-        import params : stringifyParam, isStickyCapturable;
-        string[string] attrs;
-        foreach (ref p; activeTool.params()) {
-            // Array kinds, read-only, and transient (gesture geometry /
-            // momentary triggers) params are not remembered settings — see
-            // `isStickyCapturable`.
-            if (!isStickyCapturable(p)) continue;
-            attrs[p.name] = stringifyParam(p);
-        }
-        if (attrs.length > 0) g_prefs.toolDefaults[activeToolId] = attrs;
+        captureDroppedNodes(activeToolId, activeTool,
+            g_pipeCtx is null ? null : g_pipeCtx.pipeline.allMut())
+            .commitTo(g_prefs.toolAttrCache);
     }
 
     // Falloff stage-gizmo refactor (steps 3-4): the single persistent
@@ -2776,7 +2769,7 @@ void main(string[] args) {
         // only live drag at this boundary is the no-tool one, which must be
         // dropped. This is a single cancel per drop, NOT a per-frame guard.
         pipeGizmoHost.cancelDrag();
-        captureStickyToolDefaults();
+        storeDroppedToolNodes();
         // The `final switch` is OUTSIDE `if (activeTool)` deliberately. It used
         // to sit inside it, which made the routing refusal below unreachable on
         // every drop that runs with nothing armed — and those are the majority
@@ -3854,7 +3847,9 @@ void main(string[] args) {
                         restoreId ~ "': " ~ e.msg);
                     throw e;
                 }
-            });
+            },
+            // Slice M5: a tool reset re-arms at declared defaults.
+            why != ToolTransition.resetRearm);
         preToolTickStall.arm();
         if (!commitPreparedArm(activeTool, activeToolId, prepared))
             throw new Exception("prepared tool arm was already consumed");
@@ -4271,12 +4266,14 @@ void main(string[] args) {
         // cleared, the rebuild's deactivate()->commitNow() below is a no-op
         // even if suspend alone didn't also gate record().
         session.discardOpenEdit();
-        g_prefs.toolDefaults.remove(id);   // clear sticky (B step 1)
+        // Clear the preset's cached attributes (B step 1); the resetRearm
+        // below neither stores the instance it replaces nor recalls (M5).
+        g_prefs.toolAttrCache.removePreset(id);
         auto s = history.suspended();       // no spurious lifecycle/vertex-edit entry
         JSONValue noNamed = JSONValue(cast(JSONValue[string]) null);
         armPreparedTool(ToolTransition.resetRearm, id, noNamed);
                                             // rebuild -> constructor + YAML defaults,
-                                             // empty sticky = declared defaults (B step 2)
+                                             // empty cache = declared defaults (B step 2)
         return true;
     };
 
@@ -4814,7 +4811,8 @@ void main(string[] args) {
             &parkOverrideMouse,
             &resetPieForAutomation,
             &clearImGuiInputKeysForAutomation,
-            &clearHeldGestureButtonsForAutomation));
+            &clearHeldGestureButtonsForAutomation,
+            &clearPipelineAttrCacheForAutomation));
     wireHttpProviders(httpServer, app, ifs, executor, commandHttpAdapter);
 
     // Interactive history-navigation chokepoint (undo/redo migration P0;
@@ -7620,7 +7618,12 @@ void main(string[] args) {
                             vpm.crossBothAxes = false;
                             g_prefs.hRatio = vpm.hRatio;
                             g_prefs.vRatio = vpm.vRatio;
-                            try savePrefs(); catch (Exception) {}
+                            // Behind prefsActive like every prefs write: the
+                            // file also carries the tool attribute cache (M5b),
+                            // and a --test session must not overwrite it.
+                            if (prefsActive) {
+                                try savePrefs(); catch (Exception) {}
+                            }
                         }
 
                         // A center drag (crossBothAxes) is owned by exactly one

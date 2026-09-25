@@ -14,11 +14,14 @@ import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
 import record_observer_hub : RecordObserverHub;
 import registry : PreparedPipeAttrs, ToolFactory;
 import std.json : JSONType, JSONValue;
+import prefs : g_prefs;
 import tool : Tool;
 import view : View;
 import editmode : EditMode;
 import edit_session : SwitchRestorablePredecessor;
 import tool_presets : prepareStickyToolDefaults;
+import toolpipe.attr_cache : DroppedNodes, NodeAttrs, captureDroppedNodes,
+    kToolNode;
 import toolpipe.pipeline : Pipeline;
 import tool_activation_ownership : PipeArmScope;
 
@@ -69,6 +72,9 @@ private:
     PreparedRecordContext incoming_;
     PreparedRecordContext params_;
     PreparedRecordContext pose_;
+    // The predecessor's nodes for the per-preset attribute cache (slice M5),
+    // captured here and committed by the publication suffix.
+    DroppedNodes dropped_;
     string id_;
     bool consumed_;
 public:
@@ -105,7 +111,8 @@ PreparedArm prepareArm(ToolFactory factory, string id, Tool retainedOld,
         void delegate(string) activateById, void delegate() deactivate,
         bool lifecycleReplay = false,
         PipeArmScope pipeScope = PipeArmScope.presetArm,
-        void delegate(string, JSONValue) restoreById = null) {
+        void delegate(string, JSONValue) restoreById = null,
+        bool attrCache = true) {
     if (factory is null || id.length == 0 || history is null ||
         observers is null || layer is null || gizmoHost is null)
         throw new Exception("prepared tool arm requires complete owners");
@@ -142,14 +149,29 @@ PreparedArm prepareArm(ToolFactory factory, string id, Tool retainedOld,
         }
     }
 
-    auto sticky = prepareStickyToolDefaults(candidate, id);
+    // Slice M5: this switch DROPS the predecessor, so its preset's nodes are
+    // captured now, before any stage is reset, and committed to the cache by
+    // commitPreparedArm. The incoming preset's image is the cache overlaid with
+    // that capture, so re-arming the SAME preset reads the values it is
+    // leaving rather than the ones cached before them.
+    // `attrCache == false` is the tool reset's re-arm: declared defaults, so
+    // it neither stores the instance it replaces nor recalls anything.
+    if (retainedOld !is null && attrCache)
+        result.dropped_ = captureDroppedNodes(retainedOldId, retainedOld,
+                                              pipeline.allMut());
+    NodeAttrs[string] presetImage;
+    if (attrCache) presetImage = g_prefs.toolAttrCache.presetNodes(id);
+    if (result.dropped_.preset == id)
+        foreach (node, attrs; result.dropped_.nodes) presetImage[node] = attrs;
+    auto sticky = prepareStickyToolDefaults(candidate, kToolNode in presetImage);
     string[] namedNames;
     if (namedArgs.type == JSONType.object && namedArgs.object.length > 0)
         namedNames = injectPreparedParamsInto(candidate.params(), namedArgs);
 
     result.pipe_ = new PreparedRecordContext(null, observers);
     result.pipe_.setResourceIdentity(threadIdentity, contextIdentity);
-    if (!result.pipe_.preparePipeActivation(pipeline, pipeAttrs, gizmoHost, pipeScope) ||
+    if (!result.pipe_.preparePipeActivation(pipeline, pipeAttrs, gizmoHost, pipeScope,
+                                             presetImage) ||
         !result.pipe_.markNoHistoryInstall())
         throw new Exception("prepared tool arm refused pipe activation");
 
@@ -251,6 +273,7 @@ PreparedArm prepareArm(ToolFactory factory, string id, Tool retainedOld,
 bool commitPreparedArm(ref Tool active, ref string activeId,
         ref PreparedArm prepared) nothrow {
     if (prepared.consumed_) return false;
+    prepared.dropped_.commitTo(g_prefs.toolAttrCache);
     prepared.pipe_.install();
     if (prepared.outgoing_ !is null) prepared.outgoing_.install();
     prepared.candidate_.publish(active);

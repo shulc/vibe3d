@@ -17,7 +17,10 @@
 //   C-H6-ext   - Edge Extend: the hauled offset survives a switch to Move and
 //                a re-arm by the key; the next haul still starts from 0;
 //   C-H6-bev   - Poly Bevel: the arm opens the operation and resets the haul
-//                attributes, while a setting attribute is recalled.
+//                attributes, while a setting attribute is recalled;
+//   same-preset re-arm - re-arming the armed preset keeps its live values;
+//   recall before auto-fit - a size-bearing preset's fit wins over a cached
+//                geometry attribute, a cached setting is still recalled.
 //
 // Order inside each cell: every floor first, then the needle.
 
@@ -266,4 +269,65 @@ unittest {
         format("the arm did not reset the Poly Bevel haul attribute (inset %s; the arm "
              ~ "opens the operation, C-H6-bev)", inset));
     command("tool.set poly.bevel off");
+}
+
+// ---------------------------------------------------------------------------
+// Re-arming the SAME preset while it is armed reads the values it is leaving,
+// not the ones cached before them (the prepared switch captures the outgoing
+// instance and the incoming image overlays that capture).
+// ---------------------------------------------------------------------------
+
+unittest {
+    enum cell = "same-preset re-arm";
+    commandId("scene.reset");
+    command("tool.set mesh.radialArrayTool");
+    command("tool.attr mesh.radialArrayTool count 8");
+    assert(toolAttr("mesh.radialArrayTool", "count").integer == 8,
+        cell ~ ": floor - the count write did not land");
+    command("tool.set mesh.radialArrayTool on");
+    settle();
+    immutable long count = toolAttr("mesh.radialArrayTool", "count").integer;
+    assert(count == 8,
+        format("re-arming the armed preset lost its live attribute (count %d, set 8)", count));
+    command("tool.set mesh.radialArrayTool off");
+}
+
+// ---------------------------------------------------------------------------
+// A size-bearing preset: the recall lands BEFORE the activation auto-fit, so
+// the fit wins over a cached geometry attribute while a cached setting stays.
+// ---------------------------------------------------------------------------
+
+private double[3] vec3Attr(string text) {
+    import std.array : split;
+    auto p = text.split(",");
+    assert(p.length == 3, "not a vec3: " ~ text);
+    return [p[0].to!double, p[1].to!double, p[2].to!double];
+}
+
+unittest {
+    enum cell = "recall before auto-fit";
+    commandId("scene.reset");
+    command("tool.set xfrm.taper on");
+    settle();
+    auto fitted = falloffAttrs();
+    assert(fitted["type"] == "linear", cell ~ ": floor - taper armed without its linear falloff");
+    immutable double[3] fitStart = vec3Attr(fitted["start"]);
+    command(`tool.pipe.attr falloff start "9,8,7"`);
+    command("tool.pipe.attr falloff shape smooth");
+    assert(falloffAttrs()["start"] == "9,8,7",
+        cell ~ ": floor - the start write did not land: " ~ falloffAttrs()["start"]);
+    command("tool.set xfrm.taper off");
+    settle();
+
+    command("tool.set xfrm.taper on");
+    settle();
+    auto again = falloffAttrs();
+    immutable double[3] start = vec3Attr(again["start"]);
+    assert(abs(start[0] - fitStart[0]) <= 1e-5 && abs(start[1] - fitStart[1]) <= 1e-5
+        && abs(start[2] - fitStart[2]) <= 1e-5,
+        format("the activation auto-fit did not win over the cached start (read %s, fit %s)",
+               again["start"], fitStart));
+    assert(again["shape"] == "smooth",
+        "the cached falloff shape was not recalled at the re-arm: " ~ again["shape"]);
+    command("tool.set xfrm.taper off");
 }

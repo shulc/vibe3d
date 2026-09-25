@@ -27,6 +27,7 @@ struct AutomationResetContext {
     AutomationResetHook closePie;
     AutomationResetHook clearImGuiInputKeys;
     AutomationResetHook clearHeldGestureButtons;
+    AutomationResetHook clearPipelineAttrCache;
 
     @disable this();
 
@@ -40,7 +41,8 @@ struct AutomationResetContext {
          AutomationResetHook parkMouse,
          AutomationResetHook closePie,
          AutomationResetHook clearImGuiInputKeys,
-         AutomationResetHook clearHeldGestureButtons) {
+         AutomationResetHook clearHeldGestureButtons,
+         AutomationResetHook clearPipelineAttrCache) {
         assert(guardController !is null,
             "AutomationResetContext requires guarded-action policy");
         assert(pipeGizmoHost !is null,
@@ -61,6 +63,8 @@ struct AutomationResetContext {
             "AutomationResetContext requires ImGui input reset hook");
         assert(clearHeldGestureButtons !is null,
             "AutomationResetContext requires held-button reset hook");
+        assert(clearPipelineAttrCache !is null,
+            "AutomationResetContext requires tool attribute cache reset hook");
         this.guardController = guardController;
         this.pipeGizmoHost = pipeGizmoHost;
         this.aiState = aiState;
@@ -72,6 +76,7 @@ struct AutomationResetContext {
         this.closePie = closePie;
         this.clearImGuiInputKeys = clearImGuiInputKeys;
         this.clearHeldGestureButtons = clearHeldGestureButtons;
+        this.clearPipelineAttrCache = clearPipelineAttrCache;
     }
 }
 
@@ -121,6 +126,10 @@ private:
         automation_.closePie();
         automation_.clearImGuiInputKeys();
         automation_.clearHeldGestureButtons();
+        // Slice M5: the one clear of the per-preset tool attribute cache. It
+        // runs AFTER the reset applied, so the reset's own tool drop has
+        // already stored its nodes and they are cleared with the rest.
+        automation_.clearPipelineAttrCache();
         automation_.exploration.discardPending();
         if (automation_.trace !is null) automation_.trace.reset();
     }

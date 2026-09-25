@@ -503,9 +503,9 @@ struct Param {
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// isStickyCapturable — single-sourced rule for the sticky-tool-defaults
-// capture filter (app.d `captureStickyToolDefaults`): which params are
-// eligible to be snapshotted into `g_prefs.toolDefaults` on a clean tool
+// isStickyCapturable — single-sourced rule for the per-preset tool attribute
+// cache (`toolpipe.attr_cache.captureNodeAttrs`, every node kind): which params
+// are eligible to be snapshotted into `g_prefs.toolAttrCache` on a tool
 // drop. Array kinds don't round-trip through the string<->param path
 // (stringifyParam/parseInto return ""/false for them); read-only params are
 // derived display, not user settings; transient params are drawn gesture

@@ -2315,6 +2315,12 @@ bool prepareWorker(ref Worker w) {
 // the held set. NOT closed at the end of a replay, deliberately: tests split
 // one held gesture across two play-events calls (press, then a key, then the
 // release) and a replay-end clear would release the button they are holding.
+// A TENTH, THE TOOL ATTRIBUTE CACHE (slice M5): every tool drop stores the
+// preset's attributes and the next arm of that preset reads them back, so a
+// test that arms a tool would start from the previous test's values. Closed
+// by the scene.reset in step 3: its automation tail
+// (CommandHttpAdapter.resetAutomationAfter) clears the cache. A user-visible
+// scene.reset deliberately keeps it, as the reference does.
 //
 // This is the documented cross-test state-bleed flake family (test_http_endpoint
 // asserting the pristine startup cube, test_selection's "expected 2 got 0",

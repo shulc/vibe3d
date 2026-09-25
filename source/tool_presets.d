@@ -11,6 +11,7 @@ import tools.deform.smooth_shift_tool : SmoothShiftTool;
 import toolpipe.pipeline : g_pipeCtx;
 import params : Param, ParamProvider, injectParamsInto, parseInto;
 import prefs  : g_prefs, Prefs;
+import toolpipe.attr_cache : NodeAttrs, recallNodeAttrs;
 
 // ---------------------------------------------------------------------------
 // Tool presets — declarative `<base tool> + <per-pipe-stage attrs>` bundles.
@@ -248,16 +249,10 @@ private void applyToolAttrs(Tool t, string[string] attrs, string presetId) {
 // what makes last-used settings restore for EVERY tool (base/direct tools
 // included), not just preset-derived ones.
 void applyStickyToolDefaults(ParamProvider t, string presetId) {
-    auto sticky = presetId in g_prefs.toolDefaults;
+    import toolpipe.attr_cache : kToolNode, recallNodeAttrs;
+    auto sticky = g_prefs.toolAttrCache.lookup(presetId, kToolNode);
     if (sticky is null) return;
-    auto schema = t.params();
-    foreach (name, valueStr; *sticky) {
-        foreach (ref p; schema)
-            if (p.name == name) {
-                if (parseInto(p, valueStr)) t.onParamChanged(name);
-                break;
-            }
-    }
+    recallNodeAttrs(t, *sticky, true);
 }
 
 /// Detached-candidate half of sticky restoration for the unified activation
@@ -269,22 +264,12 @@ struct PreparedStickyDefaults {
 }
 
 PreparedStickyDefaults prepareStickyToolDefaults(ParamProvider candidate,
-                                                  string presetId) {
+                                                  const(NodeAttrs)* toolNode) {
     PreparedStickyDefaults result;
-    auto sticky = presetId in g_prefs.toolDefaults;
-    if (sticky is null) return result;
-    auto schema = candidate.params();
-    foreach (name, valueStr; *sticky) {
-        foreach (ref p; schema) {
-            if (p.name != name) continue;
-            // A String/Enum Param stores the supplied slice directly. Own the
-            // wire buffer before parsing so the candidate never borrows prefs.
-            const ownedValue = valueStr.idup;
-            if (parseInto(p, ownedValue))
-                result.changedNames ~= name.idup;
-            break;
-        }
-    }
+    // The tool node of the per-preset attribute cache (slice M5). The recall
+    // owns every value it parses, so the candidate never borrows the cache.
+    if (toolNode is null) return result;
+    result.changedNames = recallNodeAttrs(candidate, *toolNode, false);
     return result;
 }
 
@@ -311,12 +296,14 @@ unittest {
     scope(exit) g_prefs = saved;
     g_prefs = Prefs.init;
 
+    import toolpipe.attr_cache : kToolNode;
     char[] producerName = "label".dup;
     char[] producerValue = "owned-value".dup;
-    g_prefs.toolDefaults["fake"][cast(string)producerName] =
-        cast(string)producerValue;
+    g_prefs.toolAttrCache.store("fake", kToolNode,
+        [cast(string)producerName: cast(string)producerValue]);
     auto fake = new FakeStickyProvider();
-    auto prepared = prepareStickyToolDefaults(fake, "fake");
+    auto prepared = prepareStickyToolDefaults(fake,
+        g_prefs.toolAttrCache.lookup("fake", kToolNode));
     assert(fake.label == "owned-value" && prepared.changedNames == ["label"]);
     assert(fake.changedNames.length == 0,
            "prepared sticky values invoked a live hook during preparation");
@@ -336,7 +323,8 @@ unittest {
     scope(exit) g_prefs = saved;
     g_prefs = Prefs.init;
 
-    g_prefs.toolDefaults["fake"] = ["width": "0.25"];
+    import toolpipe.attr_cache : kToolNode;
+    g_prefs.toolAttrCache.store("fake", kToolNode, ["width": "0.25"]);
     auto fake = new FakeStickyProvider();
     applyStickyToolDefaults(fake, "fake");
     assert(fake.width == 0.25f);
@@ -362,7 +350,8 @@ unittest {
     scope(exit) g_prefs = saved;
     g_prefs = Prefs.init;
 
-    g_prefs.toolDefaults["fake"] = ["noSuchParam": "9"];
+    import toolpipe.attr_cache : kToolNode;
+    g_prefs.toolAttrCache.store("fake", kToolNode, ["noSuchParam": "9"]);
     auto fake = new FakeStickyProvider();
     applyStickyToolDefaults(fake, "fake");
     assert(fake.width == 1.0f);

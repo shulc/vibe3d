@@ -11,6 +11,8 @@ import toolpipe.stages.constrain : ConstrainStage,
 import toolpipe.stages.falloff : FalloffStage, PreparedFalloffAutoFit;
 import toolpipe.packets : FalloffType, FalloffShape, ElementMode;
 import tool_activation_ownership : PipeArmScope;
+import toolpipe.attr_cache : NodeAttrs, recallNodeAttrs;
+import toolpipe.stage : Stage;
 
 /// Owner-held prepared image for the universal tool-switch pipe prefix.
 /// References stay inside this final owner; no reference enters the closed
@@ -50,12 +52,31 @@ private:
     string acenWire_, axisWire_, falloffTypeWire_, falloffShapeWire_;
     PreparedFalloffAutoFit falloffAutoFit_;
     PipeArmScope armScope_;
+    // Slice M5: the incoming preset's cached node attributes, owned, recalled
+    // onto each stage the preset claims after its preset image and before the
+    // activation auto-fit.
+    NodeAttrs recallAcen_, recallAxis_, recallFalloff_;
+
+    static NodeAttrs ownedNode(in NodeAttrs[string] recall, string node) {
+        NodeAttrs owned;
+        if (auto attrs = node in recall)
+            foreach (k, v; *attrs) owned[k.idup] = v.idup;
+        return owned;
+    }
+
+    static void recallStage(Stage stage, in NodeAttrs attrs) nothrow {
+        if (attrs.length == 0) return;
+        // A stale or unparsable entry must never block an arm.
+        try recallNodeAttrs(stage, attrs, true);
+        catch (Exception) {}
+    }
 
 public:
     static PreparedPipeActivationOwner prepare(ref Pipeline pipeline,
                                                 in PreparedPipeAttrs attrs,
                                                 PipeGizmoHost gizmoHost = null,
-                                                PipeArmScope armScope = PipeArmScope.presetArm) {
+                                                PipeArmScope armScope = PipeArmScope.presetArm,
+                                                in NodeAttrs[string] recall = null) {
         auto result = new PreparedPipeActivationOwner();
         result.armScope_ = armScope;
         result.gizmoHost_ = gizmoHost;
@@ -172,6 +193,10 @@ public:
         if (result.hasFalloff_)
             result.falloffAutoFit_ = result.falloff_
                 .prepareAutoFitForActivation(result.falloffType_);
+        if (result.hasAcen_) result.recallAcen_ = ownedNode(recall, result.acen_.id());
+        if (result.hasAxis_) result.recallAxis_ = ownedNode(recall, result.axis_.id());
+        if (result.hasFalloff_)
+            result.recallFalloff_ = ownedNode(recall, result.falloff_.id());
         return result;
     }
 
@@ -200,11 +225,18 @@ public:
         axis_.installPreparedTransientReset();
         constrain_.installPreparedTransientReset();
         falloff_.installPreparedTransientReset();
-        if (hasAcen_) acen_.installPreparedMode(acenMode_, acenWire_);
-        if (hasAxis_) axis_.installPreparedMode(axisMode_, axisWire_);
+        if (hasAcen_) {
+            acen_.installPreparedMode(acenMode_, acenWire_);
+            recallStage(acen_, recallAcen_);
+        }
+        if (hasAxis_) {
+            axis_.installPreparedMode(axisMode_, axisWire_);
+            recallStage(axis_, recallAxis_);
+        }
         if (hasFalloff_) {
             falloff_.installPreparedPreset(falloffType_, falloffShape_,
                 falloffMode_, falloffTransparent_, falloffTypeWire_, falloffShapeWire_);
+            recallStage(falloff_, recallFalloff_);
             falloff_.installPreparedAutoFit(falloffAutoFit_);
         }
         if (hasAcen_) acen_.claimForPreset();

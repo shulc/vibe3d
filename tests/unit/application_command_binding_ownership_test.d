@@ -34,6 +34,7 @@ private size_t parkMouseCalls;
 private size_t closePieCalls;
 private size_t clearInputKeysCalls;
 private size_t clearHeldButtonsCalls;
+private size_t clearAttrCacheCalls;
 
 private void resetUiRecordProbe() { ++uiResetCalls; }
 private void clearAiTraceProbe() { ++aiTraceResetCalls; }
@@ -41,6 +42,7 @@ private void parkMouseProbe() { ++parkMouseCalls; }
 private void closePieProbe() { ++closePieCalls; }
 private void clearInputKeysProbe() { ++clearInputKeysCalls; }
 private void clearHeldButtonsProbe() { ++clearHeldButtonsCalls; }
+private void clearAttrCacheProbe() { ++clearAttrCacheCalls; }
 
 private AutomationResetHook resetHook(void function() hook) {
     static if (is(AutomationResetHook == void function())) {
@@ -215,6 +217,7 @@ unittest { // command adapter owns reset policy without an EditorApp capture
     closePieCalls = 0;
     clearInputKeysCalls = 0;
     clearHeldButtonsCalls = 0;
+    clearAttrCacheCalls = 0;
 
     auto history = new CommandHistory();
     Tool activeTool;
@@ -267,7 +270,8 @@ unittest { // command adapter owns reset policy without an EditorApp capture
             resetHook(&parkMouseProbe),
             resetHook(&closePieProbe),
             resetHook(&clearInputKeysProbe),
-            resetHook(&clearHeldButtonsProbe)));
+            resetHook(&clearHeldButtonsProbe),
+            resetHook(&clearAttrCacheProbe)));
     adapter.wire();
 
     // Seed a real pending guard, then drive scene.reset through the UI door.
@@ -296,6 +300,9 @@ unittest { // command adapter owns reset policy without an EditorApp capture
         && aiTraceResetCalls == 0 && parkMouseCalls == 0 && closePieCalls == 0
         && clearInputKeysCalls == 0 && clearHeldButtonsCalls == 0,
         "adapter UI scene.reset incorrectly ran automation-after");
+    // Slice M5: a user-visible reset keeps the tool attribute cache.
+    assert(clearAttrCacheCalls == 0,
+        "adapter UI scene.reset cleared the tool attribute cache");
 
     // Successful script reset runs before and then the complete after policy.
     dirty = true;
@@ -320,6 +327,8 @@ unittest { // command adapter owns reset policy without an EditorApp capture
         && aiTraceResetCalls == 1 && parkMouseCalls == 1 && closePieCalls == 1
         && clearInputKeysCalls == 1 && clearHeldButtonsCalls == 1,
         "successful script scene.reset did not run the complete automation-after policy");
+    assert(clearAttrCacheCalls == 1,
+        "successful script scene.reset did not clear the tool attribute cache");
     assert(trace.snapshotJson() == "[]",
         "successful script scene.reset left non-empty automation trace state");
 
@@ -356,6 +365,8 @@ unittest { // command adapter owns reset policy without an EditorApp capture
         && aiTraceResetCalls == 1 && parkMouseCalls == 1 && closePieCalls == 1
         && clearInputKeysCalls == 1 && clearHeldButtonsCalls == 1,
         "refused script scene.reset incorrectly ran automation-after");
+    assert(clearAttrCacheCalls == 1,
+        "refused script scene.reset cleared the tool attribute cache");
 
     resetSucceeds = true;
     auto query = adapter.dispatchScript("probe.query", "", false);
@@ -383,6 +394,7 @@ unittest { // command adapter owns reset policy without an EditorApp capture
     const pieBeforeNonTest = closePieCalls;
     const inputBeforeNonTest = clearInputKeysCalls;
     const heldBeforeNonTest = clearHeldButtonsCalls;
+    const attrCacheBeforeNonTest = clearAttrCacheCalls;
     auto nonTestResult = adapter.dispatchScript("scene.reset", "", false);
     assert(nonTestResult.outcome == CommandInvocationOutcome.applied,
         "non-test scene.reset did not apply");
@@ -397,4 +409,6 @@ unittest { // command adapter owns reset policy without an EditorApp capture
         && clearInputKeysCalls == inputBeforeNonTest
         && clearHeldButtonsCalls == heldBeforeNonTest,
         "non-test scene.reset incorrectly ran automation-after");
+    assert(clearAttrCacheCalls == attrCacheBeforeNonTest,
+        "non-test scene.reset cleared the tool attribute cache");
 }

@@ -495,6 +495,7 @@ tests.unit.tool_presets_test
 tests.unit.tool_session_policy_test
 tests.unit.tool_state_owned_route_test
 tests.unit.toolchain_floor_test
+tests.unit.toolpipe.attr_cache_test
 tests.unit.toolpipe.obbox_test
 tests.unit.toolpipe.packets_test
 tests.unit.toolpipe.pipeline_order_test

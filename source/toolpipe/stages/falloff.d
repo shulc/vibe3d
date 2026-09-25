@@ -1762,7 +1762,7 @@ private:
     }
 
     // Preserve the falloff kinds excluded from activation auto-fit. Screen
-    // and Element retain their selection-based type-switch sizing; Selection,
+    // retains its selection-based type-switch sizing; Element, Selection,
     // Lasso and VertexMap remain no-ops.
     private void autoSizeUntouchedType() {
         final switch (type) {
@@ -1826,20 +1826,10 @@ private:
                 screenSize = maxR > 1.0f ? maxR : 20.0f;
                 break;
             }
-            case FalloffType.Element: {
-                if (mesh_ is null || editMode_ is null) break;
-                Vec3 bbMinLocal, bbMaxLocal;
-                if (!selectionBBoxLocal(bbMinLocal, bbMaxLocal)) break;
-                Vec3 bbMin, bbMax;
-                worldBBox(primaryModelSpace(), bbMinLocal, bbMaxLocal,
-                          bbMin, bbMax);
-                Vec3 bbHalf = (bbMax - bbMin) * 0.5f;
-                float maxHalf = bbHalf.x;
-                if (bbHalf.y > maxHalf) maxHalf = bbHalf.y;
-                if (bbHalf.z > maxHalf) maxHalf = bbHalf.z;
-                if (maxHalf > 0) pickedRadius = maxHalf;
-                break;
-            }
+            // Element is never fitted to the selection (gap 284, C-H6-elem):
+            // its range is an attribute like any other, kept by the per-preset
+            // attribute cache (toolpipe.attr_cache), not derived here.
+            case FalloffType.Element: break;
             case FalloffType.Selection: break;
             case FalloffType.Lasso: break;
             case FalloffType.VertexMap: break;

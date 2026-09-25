@@ -31,6 +31,7 @@ import std.process : environment;
 import std.format : format;
 
 import log            : logWarn;
+import toolpipe.attr_cache : PipelineAttrCache, NodeAttrs, kToolNode;
 import viewport       : LayoutPreset;
 import display_state  : DisplayStyle, WireOverlay;
 import coord_rounding : CoordinateRounding, kCoordRoundingDefault,
@@ -52,7 +53,7 @@ enum int kPrefsVersion = 1;
 enum size_t kRecentFilesMax = 10;
 
 /// Persisted user preferences (schema v1). Field order mirrors the JSON
-/// shape: `version`, `window`, `recentFiles`, `lastDir`, `toolDefaults`,
+/// shape: `version`, `window`, `recentFiles`, `lastDir`, `toolAttrCache`,
 /// `viewportLayout`.
 struct Prefs {
     /// Schema version of the loaded document (kPrefsVersion for a fresh struct).
@@ -71,10 +72,14 @@ struct Prefs {
     /// dialog's defaultPath.
     string lastDir;
 
-    /// Sticky tool-option defaults: presetId -> (attrName -> value-string).
-    /// Captured on clean tool drop, re-applied at activation so they override
-    /// config/tool_presets.yaml. TOOL-LEVEL attrs only — never pipe-stage.
-    string[string][string] toolDefaults;
+    /// The per-preset tool attribute cache (slice M5,
+    /// `toolpipe.attr_cache`): preset -> node -> attr -> wire value, the tool
+    /// node AND the pipe nodes the preset claimed. Written at every tool drop
+    /// and read at every arm whether or not prefs are active; only the FILE
+    /// section (`toolAttrCache`, read here and written by `savePrefs`) is
+    /// gated, by the caller's `prefsActive`. The pre-M5 file key
+    /// `toolDefaults` (tool node only) is still read.
+    PipelineAttrCache toolAttrCache;
 
     /// Persisted viewport-cell split preset (Single/SplitH/SplitV/Quad). The
     /// ImGui layout ini also carries a `Viewport##k` cell-node subtree, but
@@ -204,6 +209,14 @@ struct ViewportCellDisplay {
 /// note* helpers + sticky-default capture, written at clean shutdown.
 __gshared Prefs g_prefs;
 
+/// The test-automation boundary of the per-preset tool attribute cache (slice
+/// M5): `AutomationResetContext.clearPipelineAttrCache`, called only from the
+/// script `scene.reset` tail in test mode. A user-visible reset keeps the
+/// cache, as the reference does; tests must not inherit each other's values.
+void clearPipelineAttrCacheForAutomation() {
+    g_prefs.toolAttrCache.clear();
+}
+
 // ---------------------------------------------------------------------------
 // File location
 // ---------------------------------------------------------------------------
@@ -293,16 +306,28 @@ Prefs loadPrefs(string dir) {
         if (auto lp = "lastDir" in doc)
             if (lp.type == JSONType.string) p.lastDir = lp.str;
 
+        // Attribute objects: a non-string value is skipped, an empty object
+        // stores nothing (PipelineAttrCache.store).
+        static NodeAttrs attrsOf(ref const JSONValue attrsJson) {
+            NodeAttrs attrs;
+            if (attrsJson.type == JSONType.object)
+                foreach (attrName, valJson; attrsJson.object)
+                    if (valJson.type == JSONType.string)
+                        attrs[attrName] = valJson.str;
+            return attrs;
+        }
+        // Pre-M5 files: `toolDefaults` held the tool node only.
         if (auto tp = "toolDefaults" in doc)
             if (tp.type == JSONType.object)
                 foreach (presetId, attrsJson; tp.object)
-                    if (attrsJson.type == JSONType.object) {
-                        string[string] attrs;
-                        foreach (attrName, valJson; attrsJson.object)
-                            if (valJson.type == JSONType.string)
-                                attrs[attrName] = valJson.str;
-                        if (attrs.length > 0) p.toolDefaults[presetId] = attrs;
-                    }
+                    p.toolAttrCache.store(presetId, kToolNode, attrsOf(attrsJson));
+        // Read second, so the current section wins over a legacy entry.
+        if (auto cp = "toolAttrCache" in doc)
+            if (cp.type == JSONType.object)
+                foreach (presetId, nodesJson; cp.object)
+                    if (nodesJson.type == JSONType.object)
+                        foreach (node, attrsJson; nodesJson.object)
+                            p.toolAttrCache.store(presetId, node, attrsOf(attrsJson));
 
         if (auto vlp = "viewportLayout" in doc)
             if (vlp.type == JSONType.string)
@@ -501,13 +526,15 @@ void savePrefs(ref const Prefs p, string dir) {
 
     doc["lastDir"] = JSONValue(p.lastDir);
 
-    JSONValue td = JSONValue(cast(JSONValue[string]) null);
-    foreach (presetId, attrs; p.toolDefaults) {
+    JSONValue tc = JSONValue(cast(JSONValue[string]) null);
+    foreach (presetId, node, attrs; p.toolAttrCache) {
+        if (presetId !in tc.object)
+            tc[presetId] = JSONValue(cast(JSONValue[string]) null);
         JSONValue av = JSONValue(cast(JSONValue[string]) null);
         foreach (k, v; attrs) av[k] = JSONValue(v);
-        td[presetId] = av;
+        tc[presetId][node] = av;
     }
-    doc["toolDefaults"] = td;
+    doc["toolAttrCache"] = tc;
 
     import std.conv : to;
     doc["viewportLayout"] = JSONValue(to!string(p.viewportLayout));
@@ -700,7 +727,8 @@ unittest {
     p.window = Prefs.Window(1426, 966);
     p.recentFiles = ["/abs/a.v3d", "/abs/b.obj"];
     p.lastDir = "/abs/dir";
-    p.toolDefaults["bevel"] = ["width": "0.25", "segments": "4"];
+    p.toolAttrCache.store("bevel", kToolNode, ["width": "0.25", "segments": "4"]);
+    p.toolAttrCache.store("xfrm.elementMove", "falloff", ["dist": "0.37"]);
     p.viewportLayout = LayoutPreset.SplitH;
 
     savePrefs(p, dir);
@@ -710,8 +738,9 @@ unittest {
     assert(q.window.w == 1426 && q.window.h == 966);
     assert(q.recentFiles == ["/abs/a.v3d", "/abs/b.obj"]);
     assert(q.lastDir == "/abs/dir");
-    assert(q.toolDefaults["bevel"]["width"] == "0.25");
-    assert(q.toolDefaults["bevel"]["segments"] == "4");
+    assert((*q.toolAttrCache.lookup("bevel", kToolNode))["width"] == "0.25");
+    assert((*q.toolAttrCache.lookup("bevel", kToolNode))["segments"] == "4");
+    assert((*q.toolAttrCache.lookup("xfrm.elementMove", "falloff"))["dist"] == "0.37");
     assert(q.viewportLayout == LayoutPreset.SplitH);
 }
 
@@ -1045,7 +1074,7 @@ unittest {
     assert(p.window.w == 0 && p.window.h == 0);
     assert(p.recentFiles.length == 0);
     assert(p.lastDir.length == 0);
-    assert(p.toolDefaults.length == 0);
+    assert(p.toolAttrCache.empty);
 }
 
 // malformed JSON → defaults, no throw.
@@ -1128,7 +1157,7 @@ unittest {
 // The audit asked for a generic `__traits(allMembers, Prefs)` SERIALIZER. That
 // is not expressible: of the 17 fields a naive generic handles about 10, and
 // the other 7 carry per-field policy a generic would have to be told anyway —
-// `version_` writes the CONSTANT rather than the field, `toolDefaults` drops
+// `version_` writes the CONSTANT rather than the field, `toolAttrCache` drops
 // empty inner maps, `recentFiles` caps at load, four floats clamp at load, and
 // `viewportDisplay[].styleUserSet` is decided by the PRESENCE of the cell
 // object rather than by its key. Replacing hand-written I/O that encodes real
@@ -1201,8 +1230,9 @@ unittest {
             p.tupleof[i] = ["/abs/a.v3d", "/abs/b.obj"];
         } else static if (is(F == Prefs.Window)) {
             p.tupleof[i] = Prefs.Window(1426, 966);
-        } else static if (is(F == string[string][string])) {
-            p.tupleof[i]["bevel"] = ["width": "0.25"];
+        } else static if (is(F == PipelineAttrCache)) {
+            p.tupleof[i].store("bevel", kToolNode, ["width": "0.25"]);
+            p.tupleof[i].store("bevel", "falloff", ["dist": "0.5"]);
         } else {
             static assert(false,
                 "Prefs." ~ name ~ " has a type the round-trip gate does not "
