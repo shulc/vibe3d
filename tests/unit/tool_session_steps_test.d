@@ -194,30 +194,41 @@ unittest { // a key-door row of THIS arm joins the group; the navigate redo repl
     assert(r.t.v == 0, "M3 replay: the first group was replayed twice (S7)");
 }
 
-unittest { // the held group is for the NEXT navigate step only, and only on its own row
-    import command : Command, CmdFlags;
-    static final class Stub : Command {
-        View v;
-        this(View view) { v = view; super(null, v, EditMode.Vertices); }
-        override string name() const { return "stub"; }
-        override CmdFlags cmdFlags() const { return CmdFlags.Model; }
-        protected override bool applyImpl() { return true; }
-        protected override void revertImpl() {}
-    }
+private final class Stub : imported!"command".Command {
+    import command : CmdFlags;
+    import view : View;
+    View v;
+    this(View view) { v = view; super(null, v, EditMode.Vertices); }
+    override string name() const { return "stub"; }
+    override CmdFlags cmdFlags() const { return CmdFlags.Model; }
+    protected override bool applyImpl() { return true; }
+    protected override void revertImpl() {}
+}
+
+unittest { // the held group is for the NEXT navigate step only
+    Mesh m = makeCube();
+    auto r = rig();
+    r.history.recordToolLifecycle(row(&m, "t.step", true));
+    r.t.gesture(21);
+    assert(r.session.navigate(true));          // ends the group with its row: held
+    assert(!r.session.navigate(true));         // a navigate step with nothing to undo
+    assert(r.session.navigate(false));         // redo the activation row: the hold expired
+    assert(r.t.v == 0 && !isLive(r),
+           format("M3 replay: the hold outlived the navigate step after its undo: v %s", r.t.v));
+}
+
+unittest { // ...and only on the redo of its own row
     Mesh m = makeCube();
     auto r = rig();
     auto prior = new Stub(new View(0, 0, 1, 1));
     assert(prior.apply());
     r.history.record(prior);
     r.history.recordToolLifecycle(row(&m, "t.step", true));
-    r.t.gesture(21);
+    r.t.gesture(22);
     assert(r.session.navigate(true));          // ends the group with its row: held
-    assert(r.session.navigate(true));          // a second undo: the hold expires
-    assert(r.session.navigate(false));         // redo the prior row: not the held row
+    assert(r.history.undo());                  // a RAW undo: the redo head is now the prior row
+    assert(r.session.navigate(false));         // redo the prior row
     assert(r.t.v == 0, "M3 replay: the held group was replayed on another row's redo");
-    assert(r.session.navigate(false));         // redo the activation row: the hold expired
-    assert(r.t.v == 0 && !isLive(r),
-           format("M3 replay: the hold outlived the navigate step after its undo: v %s", r.t.v));
 }
 
 unittest { // a mesh changed since the group ended: the redo re-arms bare

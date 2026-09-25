@@ -1018,10 +1018,10 @@ public:
     // A recording command through the UI door closes its live operation first
     // and the tool stays (slice M2; captured C1-h-sel-fam, K-commit). Slice M3:
     // its session owns the steps (H2), the window opens at the first gesture
-    // (M0 H1: Slice opens at the press), a Middle press clones (no no-clone flag,
-    // static flag read). The image is the nine fields of one gesture's line (plan R4.3:
-    // four of them — frozenNormal, haveFrozen, axisLocked, hasLine — lived
-    // outside the Params until this slice).
+    // (M0 H1: Slice opens at the press), a Middle press clones (the static
+    // flag read found no no-clone bit). The image is the nine fields of one
+    // gesture's line (plan R4.3: four of them — frozenNormal, haveFrozen,
+    // axisLocked, hasLine — lived outside the Params until this slice).
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
         static immutable ToolSessionPolicy policy = {
             activationRow: true, commandClose: CommandClose.uiDoor,

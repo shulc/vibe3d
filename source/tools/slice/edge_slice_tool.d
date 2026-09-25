@@ -384,8 +384,9 @@ public:
     // A recording command through the UI door closes its live operation first
     // and the tool stays (slice M2; captured C1-h-sel-fam, K-commit). Slice M3:
     // its session owns the steps (H2), the window opens at the first press
-    // (C-H1-es), and a Middle press is a boundary without a clone (the static no-clone flag,
-    // C-H5-es-mmb). `pointT` is a proxy (`syncProxy`), not part of the image.
+    // (C-H1-es), and a Middle press is a boundary without a clone (the static
+    // no-clone flag, C-H5-es-mmb). `pointT` is a proxy (`syncProxy`), not part
+    // of the image.
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
         static immutable ToolSessionPolicy policy = {
             activationRow: true, commandClose: CommandClose.uiDoor,
