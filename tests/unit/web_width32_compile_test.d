@@ -74,7 +74,7 @@ mapfile -t files < <(dub describe --config=web --data=source-files --data-list \
     2>>"$2" | sed '/^$/d' | grep '\.d$')
 # Every file is explicit. This is required by the nine command modules whose declared
 # names end in `_` while their paths do not; import lookup alone cannot resolve them.
-dmd -deps="$3" -o- -c $flags "${files[@]}"
+python3 tools/ci/dmd_with_dub_flags.py "$flags" -deps="$3" -o- -c "${files[@]}"
 SH";
     const inventory = execute(["bash", "-c", inventoryWebGraph,
                                "w16-w-width32-inventory", repoRoot,
@@ -144,7 +144,7 @@ flags=$(dub describe --config=web \
     --data=import-paths,string-import-paths,versions,debug-versions,dflags \
     2>"$2") || { cat "$2"; exit 1; }
 mapfile -t files < "$3"
-dmd -v -m32 $6 -o- -c -od="$5" $flags "${files[@]}" "$4"
+python3 tools/ci/dmd_with_dub_flags.py "$flags" -v -m32 ${6:+"$6"} -o- -c -od="$5" "${files[@]}" "$4"
 SH";
 
     size_t[string] rootsExpected;

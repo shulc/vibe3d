@@ -69,6 +69,9 @@ jobs:
         #   trip each — 109 s for a 21-revision lane, against 0.23 s on this one.
         fetch-depth: 0
 
+    - name: Add runner's user-installed Chromium to PATH
+      run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
     # task 2040 — a nightly-perf run that never happened reads identically to
     # one that ran and failed: the run list's "latest" entry is just old, and
     # nothing says so on its own. `schedule` cron delivery is GitHub's own

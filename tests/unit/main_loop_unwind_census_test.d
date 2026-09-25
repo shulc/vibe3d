@@ -327,7 +327,7 @@ cp -a "$repo/source" "$out/source"
 flags=$(dub describe --config="$config" \
   --data=import-paths,string-import-paths,versions,debug-versions)
 mapfile -t files < <(find "$out/source" -name '*.d' -print | LC_ALL=C sort)
-dmd -o- -vcg-ast -I"$out/source" $flags "${files[@]}"
+python3 tools/ci/dmd_with_dub_flags.py "$flags" -o- -vcg-ast -I"$out/source" "${files[@]}"
 SH";
     const run = execute(["bash", "-c", lowerScript, "w16-m-lower",
                          repoRoot, scratchRoot, config],

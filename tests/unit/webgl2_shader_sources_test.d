@@ -85,7 +85,7 @@ flags=$(dub describe --config=web \
 case " $flags " in *" -version=web "*) ;; *)
   echo "FATAL: web shader extraction has no -version=web" >&2; exit 2;;
 esac
-dmd -o- -c $flags "$3" 2>&1
+python3 tools/ci/dmd_with_dub_flags.py "$flags" -o- -c "$3" 2>&1
 SH";
     const extracted = execute(["bash", "-c", extractCommand,
         "w16-b-extract", repoRoot, describeErrors, extractorPath],

@@ -379,7 +379,7 @@ set -o pipefail
 cd "$1"
 flags=$(dub describe --config=web \
   --data=import-paths,string-import-paths,versions,debug-versions 2>"$2")
-dmd -deps="$3" -o- -c $flags $(find source -name '*.d' -print)
+python3 tools/ci/dmd_with_dub_flags.py "$flags" -deps="$3" -o- -c $(find source -name '*.d' -print)
 SH";
     const run = execute(["bash", "-c", compileGraph, "w16-ld-deps",
                          repoRoot, errPath, depsPath],

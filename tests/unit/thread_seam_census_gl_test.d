@@ -91,7 +91,7 @@ cd "$1"
 flags=$(dub describe --config=tests \
     --data=import-paths,string-import-paths,versions,debug-versions \
     2>"$2") || { cat "$2"; exit 1; }
-dmd -deps="$3" -o- -c -version=web $flags $(find source -name '*.d' -print)
+python3 tools/ci/dmd_with_dub_flags.py "$flags" -deps="$3" -o- -c -version=web $(find source -name '*.d' -print)
 SH";
     const run = execute(["bash", "-c", compileWebGraph, "w15-a-web-deps",
                          repoRoot, describeErrorPath, depsPath],
