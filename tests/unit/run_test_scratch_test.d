@@ -49,8 +49,8 @@
 //     died with `worker_1: Directory not empty` and SUITE_EXIT=1, and the
 //     post-fix runner in the same situation went green and left the other
 //     tree alone). None of that is reproduced here: the suite would have to
-//     spawn two full runs on one host, which the host-wide run lock exists to
-//     prevent.
+//     spawn two full runs of ONE checkout, which the per-checkout build lock
+//     refuses (task 6205; tests/unit/run_slots_test.d cell 2).
 //   * It says nothing about `prepareScratchDir`'s adoption of a leftover tree
 //     (wipe, then park aside when the wipe cannot win, then a pid-suffixed
 //     fallback). That path is reached only when a tree is BUSY, which needs a
