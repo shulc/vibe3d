@@ -375,7 +375,7 @@ private UnitTestResult runParallelParent(size_t jobs)
     import core.sys.posix.unistd : getpid;
     import std.file : exists, mkdirRecurse, rmdirRecurse, tempDir, write;
     import std.format : format;
-    import std.process : Config, Pid, spawnProcess, wait;
+    import std.process : Config, Pid, spawnProcess, tryWait;
     import std.stdio : stdout;
     import tests.unit.module_gate_lock_test : moduleGateSlot;
     import tests.unit.ut_shard_plan : kPinnedGroups, mergeShards, packShards,
@@ -461,19 +461,57 @@ private UnitTestResult runParallelParent(size_t jobs)
     }
 
     const started = MonoTime.currTime;
-    ShardOutcome[] outcomes;
-    foreach (s, p; pids)
+    // Reap in completion order, so each shard's wall time is its own.
+    auto statuses = new int[](pids.length);
+    auto done = new bool[](pids.length);
+    size_t remaining = pids.length;
+    while (remaining)
     {
-        const status = wait(p);
-        const wallS = (MonoTime.currTime - started).total!"msecs" / 1000.0;
+        bool reaped;
+        foreach (s, p; pids)
+        {
+            if (done[s])
+                continue;
+            const r = tryWait(p);
+            if (!r.terminated)
+                continue;
+            done[s] = true;
+            statuses[s] = r.status;
+            --remaining;
+            reaped = true;
+            // std.process reports a signal as a negative status.
+            stderr.writefln("UT-PARALLEL shard %d finished: %s %d at %.1f s", s,
+                            r.status >= 0 ? "exit" : "signal",
+                            r.status >= 0 ? r.status : -r.status,
+                            (MonoTime.currTime - started).total!"msecs" / 1000.0);
+        }
+        if (!reaped)
+        {
+            import core.thread : Thread;
+            import core.time : msecs;
+            Thread.sleep(20.msecs);
+        }
+    }
+
+    ShardOutcome[] outcomes;
+    foreach (s, status; statuses)
+    {
         const resultPath = buildPath(dir, format("shard-%d.result", s));
         const text = exists(resultPath) ? readText(resultPath) : "";
-        // std.process.wait reports a signal as a negative status.
         outcomes ~= ShardOutcome(s, assignedNames[s], text, status >= 0,
                                  status >= 0 ? status : -status);
-        stderr.writefln("UT-PARALLEL shard %d finished: %s %d at %.1f s", s,
-                        status >= 0 ? "exit" : "signal",
-                        status >= 0 ? status : -status, wallS);
+        // Busy time inside modules, beside the wall above: the difference is
+        // the worker's startup/teardown plus host contention.
+        double busyMs = 0;
+        foreach (line; text.splitLines)
+        {
+            import std.array : split;
+            const f = line.split;
+            if (f.length == 4 && f[0] == "UT-MOD")
+                try busyMs += f[2].to!double; catch (Exception) {}
+        }
+        stderr.writefln("UT-PARALLEL shard %d: %d modules, %.1f s inside modules",
+                        s, assignedNames[s].length, busyMs / 1000.0);
     }
 
     // Each worker's own output, whole and in shard order.
