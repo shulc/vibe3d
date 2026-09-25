@@ -27,7 +27,8 @@
 // Selection-domain bit values mirror change_bus.SelDomain:
 //   Vertex=1, Edge=2, Face=4.
 
-import http_client : testBaseUrl, getJson, postJson;
+import http_client : testBaseUrl, getJson, postJson, frameFence,
+    waitPlaybackProcessed;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -35,7 +36,7 @@ import std.conv    : to;
 import std.string  : strip;
 import std.file    : readText;
 import core.thread : Thread;
-import core.time   : dur;
+import core.time   : dur, seconds;
 
 void main() {}
 
@@ -139,12 +140,15 @@ bool meshCountersUnchanged(Changes before, Changes after) {
 // full 3 s and returned a reading nobody had waited for. `deliveryCount` is the
 // mesh channel's own counter, and since delivery is SYNCHRONOUS with the edit
 // the wait is now usually one poll long rather than one frame.
+//
+// Card test-sleep-removal: a frame FENCE, not a timeout. Mesh delivery is
+// synchronous with the request that caused it, and the document-level
+// accumulators (layer kinds, current type) drain at the flush of the frame that
+// served it; one completed frame after the last answered request therefore
+// makes the read final. The old loop waited the full 3 s whenever nothing was
+// delivered, which is exactly the case the negative rows below assert.
 Changes settleAfter(Changes before) {
-    foreach (i; 0 .. 60) {                 // up to ~3s
-        Thread.sleep(dur!"msecs"(50));
-        auto now = readChanges();
-        if (now.deliveryCount > before.deliveryCount) return now;
-    }
+    frameFence();
     return readChanges();
 }
 
@@ -152,15 +156,9 @@ Changes settleAfter(Changes before) {
 void playAndWait(string logPath) {
     auto r = postJson("/api/play-events", readText(logPath));
     assert(r["status"].str == "success", "play-events failed: " ~ r.toString);
-    foreach (i; 0 .. 400) {                // up to 40s headroom
-        auto s = getJson("/api/play-events/status");
-        if (s["finished"].type == JSONType.TRUE) break;
-        Thread.sleep(dur!"msecs"(100));
-    }
-    // Post-playback settle: /api/play-events/status flips to finished once events
-    // are POSTED to the SDL queue, not processed; give the main loop a few frames
-    // to dispatch + flush the drag's accumulated Position notes.
-    Thread.sleep(dur!"msecs"(200));
+    // `processed`: every event dispatched and the frame that consumed the
+    // last one (its flush included) has completed.
+    waitPlaybackProcessed(null, 40.seconds);
 }
 
 // mesh.move_vertex → Position published, no Geometry, no Marks.
@@ -282,7 +280,7 @@ unittest {
         if (st["pending"].type != JSONType.true_) break;
         Thread.sleep(dur!"msecs"(20));
     }
-    Thread.sleep(dur!"msecs"(60));
+    frameFence();   // the adopted build is uploaded by the frame loop
 
     // Guard: the preview must actually be ACTIVE, else the suppressCageUpload
     // redirect never fires and this test would false-pass. The subdivided
@@ -453,7 +451,7 @@ unittest {
 
     cmd("select.typeFrom polygon");            // already current → no flip
     cmd("select.typeFrom polygon");
-    Thread.sleep(dur!"msecs"(300));            // nothing accumulates → no new flush
+    frameFence();                              // nothing accumulates → no new flush
     auto after = readChanges();
 
     assert(after.currentTypeChanged == before.currentTypeChanged,

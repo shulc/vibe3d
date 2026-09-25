@@ -24,7 +24,7 @@ module symmetry_selection_helpers;
 // `sideFloorSummary` — placed after `lawSummary` — requires every floor to have
 // run, so the floor cannot stay silently skipped on a tree that has the law.
 
-import http_client : getJson, postJson;
+import http_client : frameFence, getJson, postJson, waitPlaybackProcessed;
 import drag_helpers : fetchCamera, viewportFromCamera, projectToWindow,
                       CameraState, DHVec3 = Vec3;
 
@@ -129,7 +129,8 @@ void cmd(string s) {
     assert(r["status"].str == "ok", "rig: /api/command `" ~ s ~ "` failed: " ~ r.toString);
 }
 
-void settle(int ms = 120) { Thread.sleep(ms.msecs); }
+// One completed frame (card test-sleep-removal); `ms` is the retired sleep.
+void settle(int ms = 120) { frameFence(); }
 
 string intList(int[] ix) {
     string s = "[";
@@ -280,14 +281,7 @@ string vpLine() {
 void play(string events) {
     auto r = postJson("/api/play-events", vpLine() ~ events);
     assert(r["status"].str == "success", "rig: play-events failed: " ~ r.toString);
-    foreach (i; 0 .. 200) {
-        if (getJson("/api/play-events/status")["finished"].type == JSONType.true_) {
-            settle(200);
-            return;
-        }
-        settle(50);
-    }
-    assert(false, "rig: play-events did not finish within 10 s");
+    waitPlaybackProcessed();
 }
 
 int[2] px(V3 w) {

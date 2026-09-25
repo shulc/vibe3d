@@ -16,7 +16,7 @@ module drag_helpers;
 // duplicate small (<150 LOC) is cheaper than the alternative of dragging
 // vibe3d's source tree into every test's compilation unit.
 
-import http_client : testBaseUrl;
+import http_client : testBaseUrl, waitPlaybackProcessed;
 import std.json;
 import std.math : sin, cos, tan, sqrt, PI;
 import std.format : format;
@@ -301,12 +301,7 @@ void playAndWait(string log, string baseUrl = testBaseUrl()) {
     auto resp = post(baseUrl ~ "/api/play-events", log);
     auto j = parseJSON(cast(string)resp);
     assert(j["status"].str == "success", "play-events failed: " ~ cast(string)resp);
-    foreach (i; 0 .. 200) {
-        auto s = parseJSON(cast(string)get(baseUrl ~ "/api/play-events/status"));
-        if (s["finished"].type == JSONType.TRUE) return;
-        Thread.sleep(dur!"msecs"(50));
-    }
-    assert(false, "play-events did not finish within 10s");
+    waitPlaybackProcessed(baseUrl);
 }
 
 double[3] vertexPos(int idx, string baseUrl = testBaseUrl()) {

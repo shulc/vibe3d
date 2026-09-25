@@ -23,7 +23,7 @@ module topopen_place_helpers;
 
 
 public import http_client : getJson, postJson;
-import http_client : testBaseUrl;
+import http_client : testBaseUrl, waitPlaybackProcessed;
 import http_command_helpers : commandBody;
 import std.json;
 import std.math    : sqrt, sin, cos, PI, abs;
@@ -76,20 +76,10 @@ HistorySurfaceCounts historySurfaceCounts() {
     return classifyHistorySurfaceRows(getJson("/api/history")["undo"].array);
 }
 
-/// Post-`/api/play-events` settle: `/status` reports `finished` once events
-/// are delivered through the input sink, before later tool update/draw work in
-/// that frame — a fixed settle avoids reading 1-2-frame-stale derived state.
+/// Post-`/api/play-events` barrier: `processed` holds once the frame that
+/// dispatched the last event has run its tool update and draw.
 void waitPlayerIdle() {
-    for (int i = 0; i < 200; ++i) {
-        auto s = parseJSON(cast(string) get(baseUrl ~ "/api/play-events/status"));
-        auto f = "finished" in s;
-        if (f is null || f.type != JSONType.FALSE) {
-            Thread.sleep(dur!"msecs"(120));
-            return;
-        }
-        Thread.sleep(dur!"msecs"(10));
-    }
-    assert(false, "play-events did not finish within ~2s");
+    waitPlaybackProcessed(baseUrl);
 }
 
 // ---------------------------------------------------------------------------

@@ -31,7 +31,7 @@ module edge_extend_gesture_helpers;
 // press starts a fresh extend", gap 174, is refuted), so every witness reads
 // state freely between presses.
 
-import http_client : getJson, postJson;
+import http_client : frameFence, getJson, postJson, waitPlaybackProcessed;
 import std.conv : to;
 import std.format : format;
 import std.json;
@@ -201,7 +201,8 @@ void armRig(int[2][] pairs, double focusX, bool symmetry = false, string axisMod
     assert(offset() == Offset(0, 0, 0), "armed extend does not start at offset 0");
 }
 
-void settle(int ms = 120) { Thread.sleep(dur!"msecs"(ms)); }
+// One completed frame (card test-sleep-removal); `ms` is the retired sleep.
+void settle(int ms = 120) { frameFence(); }
 
 // --- screen geometry ------------------------------------------------------
 
@@ -279,14 +280,7 @@ private string header() {
 void play(string body_) {
     auto r = postJson("/api/play-events", header() ~ body_);
     assert(r["status"].str == "success", "play-events failed: " ~ r.toString);
-    foreach (i; 0 .. 200) {
-        if (getJson("/api/play-events/status")["finished"].type == JSONType.true_) {
-            settle();
-            return;
-        }
-        settle(50);
-    }
-    assert(false, "play-events did not finish within 10 s");
+    waitPlaybackProcessed();
 }
 
 /// Hover (button up) then press — the hover lets the arbiter see the arm.

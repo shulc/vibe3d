@@ -17,6 +17,8 @@ import std.json      : JSONValue, parseJSON;
 import std.net.curl  : get, post, HTTP;
 import std.process   : environment;
 import std.stdio     : stderr;
+import core.thread   : Thread;
+import core.time     : Duration, MonoTime, msecs, seconds;
 
 struct ClientResponse
 {
@@ -169,4 +171,46 @@ string postRawAllowingErrorStatus(string path, string body_, string baseUrl = nu
     http.onReceiveStatusLine = (HTTP.StatusLine) {};   // never throw on 4xx/5xx
     http.perform();
     return resp;
+}
+
+// ---------------------------------------------------------------------------
+// Frame barriers (card test-sleep-removal). Both read /api/play-events/status,
+// which is served on the main thread inside a tickAll pass and reports that
+// pass as `frame`. They replace fixed sleeps with an observation of the frame
+// loop, so they cost a few frames rather than a guessed wall-clock margin.
+// ---------------------------------------------------------------------------
+
+/// Wait until the HTTP replay reads `processed`: every event of the posted log
+/// has been dispatched AND the frame that dispatched the last one has run to
+/// completion (tool update, change flush, draw). `finished` alone flips before
+/// that frame's tail, which is what the old post-replay sleeps covered.
+void waitPlaybackProcessed(string baseUrl = null,
+                           Duration budget = 60.seconds) {
+    immutable deadline = MonoTime.currTime + budget;
+    for (;;) {
+        auto s = getJson("/api/play-events/status", baseUrl);
+        if (auto p = "processed" in s)
+            if (p.boolean) return;
+        assert(MonoTime.currTime < deadline,
+            "play-events did not reach processed within budget: " ~ s.toString());
+        Thread.sleep(2.msecs);
+    }
+}
+
+/// Frame fence: return once `frames` whole frames have completed after the
+/// fence's first read. Every effect of a request ANSWERED before the call —
+/// its synchronous edit and the per-frame flush and draw of the frame that
+/// served it — has then run, so a counter read afterwards is final for that
+/// request. It says nothing about work on another thread (an asynchronous
+/// preview build): wait for that on its own route.
+void frameFence(string baseUrl = null, uint frames = 1) {
+    immutable start = getJson("/api/play-events/status", baseUrl)["frame"].integer;
+    immutable deadline = MonoTime.currTime + 30.seconds;
+    for (;;) {
+        auto s = getJson("/api/play-events/status", baseUrl);
+        if (s["frame"].integer >= start + frames) return;
+        assert(MonoTime.currTime < deadline,
+            "frame fence: the main loop did not advance: " ~ s.toString());
+        Thread.sleep(1.msecs);
+    }
 }
