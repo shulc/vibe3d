@@ -5,14 +5,14 @@
 // quiet successful run.
 //
 // PARALLEL (task 7900): with VIBE3D_UT_JOBS=N > 1 (default min(8, CPUs))
-// this process becomes a PARENT that runs no module itself. It packs the roster onto N worker
-// processes of this same binary (tests/unit/ut_shard_plan.d), each running
-// its disjoint shard serially and writing one result file, and merges them.
-// A module counts as passed only when its shard reported it and then closed
-// its file and exited consistently; anything missing is counted
-// executed-and-failed, so a dead shard can never print a smaller green.
-// VIBE3D_UT_JOBS=1 is the serial loop, unchanged. Card:
-// doc/tasks/work/parallel-module-gate.md.
+// this process becomes a PARENT that runs no module itself. It packs the
+// roster onto N worker processes of this same binary
+// (tests/unit/ut_shard_plan.d), each running its disjoint shard serially and
+// writing one result file, and merges them. A module counts as passed only
+// when its shard reported it and then closed its file and exited
+// consistently; anything missing is counted executed-and-failed, so a dead
+// shard can never print a smaller green. VIBE3D_UT_JOBS=1 is the serial
+// loop, unchanged. Card: doc/tasks/work/parallel-module-gate.md.
 module tests.unit.ut_runner;
 
 import core.exception : AssertError;
