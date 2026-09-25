@@ -219,9 +219,11 @@ unittest {
     // Task 7122: `value_drag`, reached through the edit-tool registrar (+1 each).
     // Slice M1a review: `edit_session` refuses navigation while a button is
     // held, which reaches the leaf `held_gesture_buttons` (+1 each).
-    assert(transform.queue.length == 255 && positive.queue.length == 519,
-        format("6506 import closure census changed: transform=%d/255 "
-            ~ "registration=%d/519", transform.queue.length,
+    // Slice M5: `prefs` holds the tool attribute cache, which reaches the leaf
+    // `toolpipe.attr_cache` (+1 each).
+    assert(transform.queue.length == 256 && positive.queue.length == 520,
+        format("6506 import closure census changed: transform=%d/256 "
+            ~ "registration=%d/520", transform.queue.length,
             positive.queue.length));
 }
 

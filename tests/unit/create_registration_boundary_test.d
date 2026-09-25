@@ -227,7 +227,9 @@ unittest {
     // Task 7122: `value_drag` (the shared no-handle value drag) (+1).
     // Slice M1a review: `edit_session` refuses navigation while a button is
     // held, which reaches the leaf `held_gesture_buttons` (+1 each).
-    assert(sourceFiles >= 500 && createSeen == 1 && create.queue.length == 257,
+    // Slice M5: `prefs` holds the tool attribute cache, which reaches the leaf
+    // `toolpipe.attr_cache` (+1 each).
+    assert(sourceFiles >= 500 && createSeen == 1 && create.queue.length == 258,
         format("6507 import scanner population: files=%d create=%d closure=%d",
             sourceFiles, createSeen, create.queue.length));
     assert("editor_app" in positive.reached,

@@ -128,6 +128,14 @@ unittest { // T-4f: every arm transition has one explicit pipe scope.
     assert(visited == 4,
         format("T-4f: visited %s arm transitions, expected 4", visited));
 
+    // Slice M5: only the tool reset re-arms without the attribute cache.
+    size_t cacheArms;
+    foreach (t; EnumMembers!ToolTransition)
+        if (isArm(t) && armUsesAttrCache(t)) ++cacheArms;
+    assert(cacheArms == 3 && !armUsesAttrCache(ToolTransition.resetRearm),
+        format("M5: %s arms use the attribute cache, expected 3 (all but resetRearm)",
+               cacheArms));
+
     const app = maskComments(readText(repoRoot ~ "/source/app.d"));
     const anchor = app.indexOf(
         "void armPreparedTool(ToolTransition why, string id,");
@@ -138,6 +146,8 @@ unittest { // T-4f: every arm transition has one explicit pipe scope.
     assert(occurrences(body_,
                "pipeArmScopeFor(why, id == activeToolId)") == 1,
         "T-4f: armPreparedTool must call the transition scope table exactly once");
+    assert(occurrences(body_, "armUsesAttrCache(why)") == 1,
+        "M5: armPreparedTool must ask the transition table whether the arm uses the cache");
 }
 
 /// The recorded per-transition SITE census, read 2026-09-05 over `source/**`

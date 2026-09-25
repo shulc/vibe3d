@@ -55,7 +55,7 @@ version (web) {
 // HTTP server module
 import http_server;
 import tool_activation_ownership : ToolTransition, ActivationDoor,
-    activationDoorFor, pipeArmScopeFor;
+    activationDoorFor, pipeArmScopeFor, armUsesAttrCache;
 import guarded_action_controller : GuardedActionController,
     GuardedActionPorts, GuardObservationPorts;
 import ui.guard_modal_state : GuardModalState;
@@ -3849,7 +3849,7 @@ void main(string[] args) {
                 }
             },
             // Slice M5: a tool reset re-arms at declared defaults.
-            why != ToolTransition.resetRearm);
+            armUsesAttrCache(why));
         preToolTickStall.arm();
         if (!commitPreparedArm(activeTool, activeToolId, prepared))
             throw new Exception("prepared tool arm was already consumed");

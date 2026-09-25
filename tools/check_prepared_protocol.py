@@ -1595,9 +1595,12 @@ prepare_start = transition.find("PreparedArm prepareArm(")
 prepare_open = transition.find("{", prepare_start) + 1
 prepare_body = transition[prepare_open:balanced_source(transition, prepare_open)-1]
 for required in (
-        "prepareStickyToolDefaults(candidate, id)",
+        # Slice M5: the tool node and the pipe nodes are recalled from ONE
+        # preset image, built after the predecessor's nodes are captured.
+        "captureDroppedNodes(retainedOldId, retainedOld,",
+        "prepareStickyToolDefaults(candidate, kToolNode in presetImage)",
         "injectPreparedParamsInto(candidate.params(), namedArgs)",
-        "preparePipeActivation(pipeline, pipeAttrs, gizmoHost, pipeScope)",
+        "preparePipeActivation(pipeline, pipeAttrs, gizmoHost, pipeScope,\n                                             presetImage)",
         "outgoingDoor.prepareDoorDeactivate",
         "incomingDoor.prepareDoorActivate",
         "paramDoor.prepareDoorParamChanged",

@@ -181,6 +181,33 @@ PipeArmScope pipeArmScopeFor(ToolTransition t, bool rearmsActiveId)
     }
 }
 
+/// Slice M5: does this arm store the tool it replaces into the per-preset
+/// attribute cache and recall the incoming preset's nodes? Every arm does,
+/// except the tool reset, which rebuilds at declared defaults.
+bool armUsesAttrCache(ToolTransition t) pure nothrow @safe @nogc {
+    final switch (t) {
+        case ToolTransition.commandArm:
+        case ToolTransition.interactiveArm:
+        case ToolTransition.replayArm:
+            return true;
+        case ToolTransition.resetRearm:
+            return false;
+        case ToolTransition.explicitDrop:
+        case ToolTransition.sameIdToggleDrop:
+        case ToolTransition.replayDrop:
+        case ToolTransition.selTypeFlipDrop:
+        case ToolTransition.activeLayerChangedDrop:
+        case ToolTransition.documentReplaceDisarm:
+        case ToolTransition.sceneResetDrop:
+        case ToolTransition.meshRebuildDrop:
+        case ToolTransition.commandPreApplyDrop:
+        case ToolTransition.editCancelDrop:
+        case ToolTransition.panelDrop:
+        case ToolTransition.shutdownDrop:
+            assert(0, "a drop does not arm");
+    }
+}
+
 /// True when the transition publishes a NEW active tool. Kept beside the table
 /// so "is this an arm?" has one answer too.
 bool isArm(ToolTransition t) pure nothrow @safe @nogc {
