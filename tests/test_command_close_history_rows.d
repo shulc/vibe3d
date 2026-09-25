@@ -28,7 +28,8 @@
 //   * the four `poly.bevel` cells — M3b (Bevel's activation row and gesture
 //     steps join the session);
 //   * the four `edge.extend` cells — M4 (Edge Extend's run record and token
-//     move into the session);
+//     move into the session); RE-RECORDED by M4: each gains the script-door
+//     activation row at its head (the fixture's provenance says so);
 //   * the four `TransformMove` cells — no slice of this wave.
 //
 // Canonical form, so the comparison is byte-for-byte over what the law is

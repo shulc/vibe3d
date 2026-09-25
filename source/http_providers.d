@@ -2356,6 +2356,9 @@ private JSONValue encodeHistoryRow(ref const(HistoryEntry) entry) {
     // is complete. Geometry round-trip tests remain the payload witness.
     obj["opInverse"] = JSONValue(entry.cmd !is null
         && entry.cmd.isOperationInverse());
+    // The tool session that wrote the record (slice M4; 0 = none) — the
+    // token a close marks and an activation row carries.
+    obj["session"]   = JSONValue(entry.cmd is null ? 0L : cast(long) entry.cmd.sessionToken());
     return obj;
 }
 

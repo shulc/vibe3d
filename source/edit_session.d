@@ -1038,7 +1038,7 @@ private struct ToolSession {
         j["live"]  = JSONValue(live_);
         j["steps"] = JSONValue(cast(long) steps_.length);
         j["redo"]  = JSONValue(cast(long) redo_.length);
-        j["token"] = JSONValue(token_);
+        j["token"] = JSONValue(cast(long) token_);
         return j;
     }
 

@@ -21,6 +21,13 @@
 //     inside an element survives a collection, the kind is not injectable, is
 //     not sticky, reads back as its count; and every consumer site of the
 //     array kinds has a PodArray arm (opponent R3 C4).
+// (7) Slice M4: a close marks the row it WROTE with the closing session's token
+//     (the door's row under a switch, nothing when nothing was written — C2);
+//     that session's first-operation record pops with the activation row it
+//     carries, and redoes with it (not across a new session, a script row or a
+//     non-carrying policy); a restored predecessor adopts its token;
+//     `keepAliveOnCancel` is data; Shift through the session closes and resets
+//     the haul; `ifChanged` steps.
 // Fast loop: tools/local/ut-standalone.sh tests/unit/tool_session_steps_test.d
 module tests.unit.tool_session_steps_test;
 
@@ -569,4 +576,205 @@ unittest { // an arm attribute applies only on an arm-opened tool (opensAt, not 
     s.noteArm("t.first");
     assert(!t.on && t.rebuilds == 0 && !s.sessionStateJson()["live"].boolean,
            format("M3b arm: a first-press tool's arm applied its arm attribute: on %s", t.on));
+}
+
+// ---- (7) Slice M4: the session token, the record that carries its activation,
+// ---- the restored predecessor, keep-alive as data, Shift through the session -
+
+/// A tool whose FIRST operation's closing record carries its activation row
+/// (Edge Extend's policy), and whose in-place commit writes a row.
+private class CarryTool : StepTool {
+    bool carries = true;
+    CommandHistory writeTo;
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy yes = { activationRow: true, sessionSteps: true,
+            opensAt: OpensAt.firstPress, imageAttrs: ["v", "arr"], haulAttrs: ["v"],
+            recordCarriesActivation: true };
+        static immutable ToolSessionPolicy no = { activationRow: true, sessionSteps: true,
+            opensAt: OpensAt.firstPress, imageAttrs: ["v", "arr"], haulAttrs: ["v"] };
+        return carries ? yes : no;
+    }
+    override bool commitUncommittedEdit() {
+        if (arr.length == 0) return false;
+        writeRow();
+        arr = null;
+        return true;
+    }
+    Stub writeRow() {
+        auto s = new Stub(new View(0, 0, 1, 1));
+        assert(s.apply());
+        writeTo.record(s);
+        return s;
+    }
+    void quietGesture() { sessionStepBegins(); sessionStepEnds(true); }
+    void loudGesture() { sessionStepBegins(); sessionStepEnds(false); }
+}
+
+private ToolActivationCommand tokenRow(Mesh* m, string id, string prev, bool joins,
+                                       bool carries, ulong token, ulong prevToken = 0) {
+    auto v = new View(0, 0, 1, 1);
+    return new ToolActivationCommand(m, v, EditMode.Vertices, id, prev, true, joins,
+                                     carries, token, prevToken);
+}
+
+private long tokenOf(Rig r) { return r.session.sessionStateJson()["token"].integer; }
+
+unittest { // M4 marks: the row a close WROTE carries the closing session's token
+    Mesh m = makeCube();
+    auto r = rig();
+    auto t = new CarryTool;
+    t.writeTo = r.history;
+    r.active = t;
+    r.session.noteArm("t.carry", 7);
+    // A switch: the door writes the outgoing row, then the incoming arm row
+    // lands ABOVE it; the mark goes to the door's row, with the OUTGOING token.
+    r.session.closeOperation(CloseReason.switch_);
+    auto doorRow = t.writeRow();
+    auto incoming = tokenRow(&m, "t.next", "t.carry", true, false, 8, 7);
+    r.history.recordToolLifecycle(incoming);
+    r.active = new StepTool;
+    r.session.noteArm("t.next", 8);
+    r.session.finishClose();
+    assert(doorRow.sessionToken() == 7 && incoming.sessionToken() == 8,
+           format("M4 mark: the switch marked door %s / incoming %s (want 7 / 8)",
+                  doorRow.sessionToken(), incoming.sessionToken()));
+    assert(r.session.lastClosedRow() is doorRow, "M4 mark: the closed row is not the door's");
+    // Opponent R3 C2: a command close that commits NOTHING marks nothing — not
+    // the row that happened to be on top.
+    auto quiet = new StepTool;          // commitOperation writes no row
+    quiet.arr = [Pt(1, 0, null)];       // an open edit, so the uiDoor close commits
+    r.active = quiet;
+    r.session.noteArm("t.quiet", 9);
+    const top = r.history.undoEntries()[$ - 1].cmd;
+    const o = r.session.closeOperation(CloseReason.command, CommandDoor.ui);
+    assert(r.session.lastClosedRow() is null && top.sessionToken() == 8,
+           format("M4 mark: a close that wrote nothing marked the top (token %s, closed %s)",
+                  top.sessionToken(), r.session.lastClosedRow() !is null));
+    assert(!o.dropsTool, "M4 mark rig: the command close dropped the tool");
+}
+
+unittest { // M4 pair: the record that closed THIS session's first operation pops with its row
+    import command : Command;
+    Mesh m = makeCube();
+    // (a) the law: key-door row + this session's record -> one undo step, one redo step
+    {
+        auto r = rig();
+        auto t = new CarryTool;
+        t.writeTo = r.history;
+        r.active = t;
+        auto act = tokenRow(&m, "t.carry", "", true, true, 5);
+        act.onDeactivate = () { r.active = null; };
+        act.onActivate = (string id) { r.active = t; r.session.noteArm(id, 55); };
+        r.history.recordToolLifecycle(act);
+        r.session.noteArm("t.carry", 5);
+        t.arr = [Pt(1, 0, null)];
+        assert(r.session.applyAndContinue(), "M4 pair rig: the in-place commit refused");
+        const rec = r.history.undoEntries()[$ - 1].cmd;
+        assert(rec.sessionToken() == 5, format("M4 pair rig: record token %s", rec.sessionToken()));
+        assert(r.session.navigate(true));
+        assert(r.history.undoEntries().length == 0 && r.active is null,
+               format("M4 pair: the record did not pop with its activation row: depth %s, tool %s",
+                      r.history.undoEntries().length, r.active !is null));
+        assert(r.session.navigate(false));
+        assert(r.history.undoEntries().length == 2 && r.active is t && tokenOf(r) == 5,
+               format("M4 pair: the redo did not bring the row and its record back as one step "
+                      ~ "in the row's session: depth %s, token %s", r.history.undoEntries().length,
+                      tokenOf(r)));
+    }
+    // (b) m4c: the same tool re-armed as a NEW session (token 6) — the old
+    // session's record pops ALONE (class would pair it; the token does not).
+    // (c) a script-door row (not joined) and (d) a policy that does not carry.
+    foreach (cell; ["new session", "script door", "no carry"]) {
+        auto r = rig();
+        auto t = new CarryTool;
+        t.writeTo = r.history;
+        t.carries = cell != "no carry";
+        r.active = t;
+        auto act = tokenRow(&m, "t.carry", "", cell != "script door", t.carries, 5);
+        act.onDeactivate = () { r.active = null; };
+        r.history.recordToolLifecycle(act);
+        r.session.noteArm("t.carry", 5);
+        t.arr = [Pt(1, 0, null)];
+        assert(r.session.applyAndContinue());
+        if (cell == "new session") r.session.noteArm("t.carry", 6);
+        assert(r.session.navigate(true));
+        assert(r.history.undoEntries().length == 1 && r.active is t,
+               format("M4 pair (%s): the record popped its activation row too: depth %s",
+                      cell, r.history.undoEntries().length));
+    }
+}
+
+unittest { // M4 restorePredecessor: undoing the successor's row hands the predecessor its token
+    Mesh m = makeCube();
+    auto r = rig();
+    auto pred = new CarryTool;
+    auto succ = new StepTool;
+    r.active = succ;
+    auto act = tokenRow(&m, "t.succ", "t.pred", true, false, 9, 5);
+    act.onActivate = (string id) { r.active = pred; r.session.noteArm(id, 10); };
+    r.history.recordToolLifecycle(act);
+    r.session.noteArm("t.succ", 9);
+    assert(r.session.navigate(true));
+    assert(r.active is pred && tokenOf(r) == 5,
+           format("M4 restore: the restored predecessor holds token %s, not its own session's 5",
+                  tokenOf(r)));
+}
+
+unittest { // M4 keepAliveOnCancel is data: the whole-edit cancel keeps or drops by the policy
+    import tool : ToolSessionPolicy;
+    static class OpenTool : Tool {
+        bool open = true, keep;
+        override bool hasUncommittedEdit() const { return open; }
+        override void cancelUncommittedEdit() { open = false; }
+        override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+            static immutable ToolSessionPolicy k = { keepAliveOnCancel: true };
+            return keep ? k : ToolSessionPolicy.init;
+        }
+    }
+    foreach (keep; [true, false]) {
+        auto t = new OpenTool;
+        t.keep = keep;
+        Tool held = t;
+        bool dropped;
+        auto es = new EditSession(() => held, new CommandHistory(), () { dropped = true; });
+        assert(es.navigate(true) && !t.open);
+        assert(dropped == !keep, format("M4 keep-alive: keep %s dropped %s", keep, dropped));
+    }
+}
+
+unittest { // M4 Shift through the session: the commit is a close, the next operation opens as Shift
+    auto r = rig();
+    auto t = new CarryTool;
+    t.writeTo = r.history;
+    r.active = t;
+    r.session.noteArm("t.carry", 3);
+    t.gesture(4);
+    assert(isLive(r) && t.v == 4);
+    assert(r.session.applyAndContinue());
+    assert(!isLive(r) && steps(r) == 0, "M4 Shift: the session kept the closed operation's account");
+    assert(r.history.undoEntries()[$ - 1].cmd.sessionToken() == 3,
+           "M4 Shift: the committed row does not carry the session");
+    assert(t.v == 0, format("M4 Shift: the haul attribute was not reset for the next operation: v %s", t.v));
+    // A tool that refuses the in-place commit: false, nothing marked or reset.
+    auto s = new StepTool;
+    r.active = s;
+    r.session.noteArm("t.step", 4);
+    s.v = 7;
+    s.arr = [Pt(1, 0, null)];
+    const depth = r.history.undoEntries().length;
+    assert(!r.session.applyAndContinue() && s.v == 7 && r.history.undoEntries().length == depth,
+           "M4 Shift: a refused in-place commit changed the tool or the history");
+}
+
+unittest { // M4 steps only on change, when the tool asks (Edge Extend's gestures)
+    auto r = rig();
+    auto t = new CarryTool;
+    r.active = t;
+    r.session.noteArm("t.carry", 1);
+    t.quietGesture();                   // the opening gesture is the first group regardless
+    assert(isLive(r) && steps(r) == 0);
+    t.quietGesture();
+    assert(steps(r) == 0, "M4 steps: a gesture that changed nothing became a step (ifChanged)");
+    t.loudGesture();
+    assert(steps(r) == 1, "M4 steps control: without ifChanged an unchanged gesture is a step");
 }
