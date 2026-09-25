@@ -206,6 +206,29 @@ interface RefireClient {
 }
 
 // ---------------------------------------------------------------------------
+// commandMeetsTool — the command funnel's rule for an armed tool (slice M4,
+// the "M2 follow-up" of doc/tool_session_model_plan_2026-09-24.md). A command
+// that closes a live operation first (the 6250 command on either door, any
+// recording command on the UI door; never re-entrantly) asks the tool's close
+// (`close`, the session's `closeOperation`, which reads the policy's
+// `commandClose`); when the tool does not stay armed, the policy's fallback
+// applies — a Model command drops it, a UiState one leaves it, and the 6250
+// command drops a tool it could not close. `close` null: no session (the
+// fallback alone, for a funnel wired without one).
+// ---------------------------------------------------------------------------
+CloseOutcome commandMeetsTool(const Command cmd, CommandDoor door, bool reentrant,
+                              scope CloseOutcome delegate(CommandDoor) close) {
+    import command : commitsActiveToolEditBeforeApply, dropsActiveToolBeforeApply,
+                     endsLiveEditBeforeUiCommand;
+    const bool commits = commitsActiveToolEditBeforeApply(cmd);
+    const bool closes = !reentrant
+        && (commits || (door == CommandDoor.ui && endsLiveEditBeforeUiCommand(cmd)));
+    CloseOutcome o = closes && close !is null ? close(door) : CloseOutcome.init;
+    o.dropsTool = !o.staysArmed && (dropsActiveToolBeforeApply(cmd) || (closes && commits));
+    return o;
+}
+
+// ---------------------------------------------------------------------------
 // EditSession
 // ---------------------------------------------------------------------------
 final class EditSession {
@@ -540,6 +563,16 @@ final class EditSession {
         if (r == CloseReason.command && g_heldGestureButtons.any)
             return CloseOutcome(false, false);
         return tools_.close(r, door);
+    }
+
+    // The command funnel's one question (slice M4, the plan's "M2 follow-up"):
+    // what an armed tool does before `cmd` applies — close its operation (the
+    // policy's `commandClose`, through `closeOperation`), stay armed, or be
+    // dropped (the `none` fallback). The funnel executes the outcome and reads
+    // no command predicate itself.
+    CloseOutcome closeForCommand(const Command cmd, CommandDoor door, bool reentrant) {
+        return commandMeetsTool(cmd, door, reentrant,
+            (CommandDoor d) => closeOperation(CloseReason.command, d));
     }
 
     // After the door (a drop / switch) or after the command applied: marks the

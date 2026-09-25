@@ -305,14 +305,16 @@ unittest {
 
 private CommandExecutor wire(CommandHistory history, EditSession es, ref Tool held,
                              size_t* drops) {
-    // Exactly app.d's two close delegates (census:
+    // Exactly app.d's two close delegates (slice M4: the session's
+    // closeForCommand; census:
     // tests/unit/model_command_rearm_census_test.d reads them from app.d).
     Tool* h = &held;
     return new CommandExecutor(history,
         () => *h !is null,
         (ToolTransition why) { ++*drops; es.closeOperation(closeReasonFor(why));
                                *h = null; es.finishClose(); },
-        (CommandDoor door) => es.closeOperation(CloseReason.command, door),
+        (const Command cmd, CommandDoor door, bool reentrant) =>
+            es.closeForCommand(cmd, door, reentrant),
         () { es.finishClose(); });
 }
 

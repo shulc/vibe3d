@@ -10,6 +10,7 @@ module tests.unit.model_command_rearm_census_test;
 import command : CmdFlags, Command;
 import command_history : CommandHistory, RecordMode;
 import command_executor : CommandExecutor;
+import edit_session : commandMeetsTool;
 import editmode : EditMode;
 import registry : Registry;
 import std.algorithm : canFind, count;
@@ -96,14 +97,20 @@ unittest { // Production ordering: close before apply, finish from scope(exit).
     const latch = body.indexOf("const bool reentrant = inPreApplyToolHandling_");
     const latchExit = body.indexOf("scope(exit) if (!reentrant) inPreApplyToolHandling_");
     const refire = body.indexOf("if (history.refireActive)");
-    const uiTerm = body.indexOf("(uiOrigin_ && endsLiveEditBeforeUiCommand(cmd))");
-    const close = body.indexOf("closeForCommand(uiOrigin_ ? CommandDoor.ui : CommandDoor.script)");
+    const close = body.indexOf("closeForCommand(cmd, door, reentrant)");
+    const drop = body.indexOf("if (o.dropsTool)");
     const finishScope = body.indexOf("scope(exit) if (!reentrant && finishClose !is null) finishClose();");
     const apply = body.indexOf("if (cmd.apply()) {");
     assert(latch >= 0 && latchExit > latch && refire > latchExit && close > refire,
         "6250 order census: invocation latch is absent or not function-scoped");
-    assert(uiTerm > refire && uiTerm < close,
-        "M2 order census: the UI-door term no longer guards the close");
+    assert(drop > close && drop < apply,
+        "M4 order census: the funnel no longer drops on the session's outcome before apply");
+    // Slice M4 (the plan's "M2 follow-up"): the funnel reads no command
+    // predicate — what happens to the tool is the session's answer.
+    foreach (pred; ["commitsActiveToolEditBeforeApply", "dropsActiveToolBeforeApply",
+                    "endsLiveEditBeforeUiCommand"])
+        assert(blankNonCode(body).indexOf(pred) < 0,
+            "M4 order census: the funnel reads the command predicate " ~ pred ~ " itself");
     assert(apply > close,
         "6250 order census: the live operation is no longer closed before cmd.apply()");
     assert(finishScope > close && apply > finishScope,
@@ -121,14 +128,16 @@ unittest { // Re-entry suppresses the finish only; the ordinary drop arm survive
     executor = new CommandExecutor(history,
         () => armed,
         (ToolTransition) { ++drops; armed = false; },
-        (CommandDoor) {
-            ++closes;
-            auto inner = new PolicyCommand("layer.rename", CmdFlags.Model,
-                () { innerApplied = true; return true; });
-            assert(executor.applyOrRefire(inner, RecordMode.Record, null),
-                "6250 re-entry control: nested Model command was refused");
-            return CloseOutcome(true, true);
-        },
+        // The production rule, with a stand-in close (slice M4).
+        (const Command c, CommandDoor d, bool re) => commandMeetsTool(c, d, re,
+            (CommandDoor) {
+                ++closes;
+                auto inner = new PolicyCommand("layer.rename", CmdFlags.Model,
+                    () { innerApplied = true; return true; });
+                assert(executor.applyOrRefire(inner, RecordMode.Record, null),
+                    "6250 re-entry control: nested Model command was refused");
+                return CloseOutcome(true, true);
+            }),
         () { ++finishes; });
     auto outer = new PolicyCommand("mesh.subpatch_toggle", CmdFlags.Model,
         () { outerApplied = true; return true; });
@@ -151,7 +160,8 @@ unittest { // A Model command inside refire never enters post-mode handling.
     auto executor = new CommandExecutor(history,
         () => armed,
         (ToolTransition) { ++drops; armed = false; },
-        (CommandDoor) { ++commits; return CloseOutcome(true, true); },
+        (const Command c, CommandDoor d, bool re) => commandMeetsTool(c, d, re,
+            (CommandDoor) { ++commits; return CloseOutcome(true, true); }),
         () { ++resumes; });
     history.refireBegin();
     auto cmd = new PolicyCommand("layer.rename", CmdFlags.Model,
@@ -216,8 +226,11 @@ unittest { // The production wiring names the close and its finish, once each.
     size_t commandCloses;
     foreach (entry; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth))
         commandCloses += blankNonCode(readText(entry.name)).count("closeOperation(CloseReason.command");
-    assert(commandCloses == 1 && app.count("closeOperation(CloseReason.command, door)") == 1,
-        "M2 wiring census: the command close is not reached from exactly one site (app.d's executor)");
+    const es = blankNonCode(readText(buildPath(repoRoot, "source", "edit_session.d")));
+    assert(commandCloses == 1 && es.count("closeOperation(CloseReason.command, d)") == 1
+        && app.count("session.closeForCommand(cmd, door, reentrant)") == 1,
+        "M4 wiring census: the command close is not reached from exactly one site (the session's "
+        ~ "closeForCommand, which app.d's executor delegate names)");
     assert(blankNonCode(binding).count("closeOperation") == 0
         && blankNonCode(binding).count("applyOrRefireFromUi") == 0,
         "M2 wiring census: the application binding calls the close itself");
@@ -227,9 +240,9 @@ unittest { // The production wiring names the close and its finish, once each.
     assert(ctorAt >= 0, "M2 wiring census: the executor construction moved");
     const ctor = app[ctorAt .. $];
     const ctorText = ctor[0 .. ctor.indexOf(");\n") + 2];
-    assert(ctorText.indexOf("session.closeOperation(CloseReason.command, door)") >= 0
+    assert(ctorText.indexOf("session.closeForCommand(cmd, door, reentrant)") >= 0
         && ctorText.indexOf("session.finishClose()") >= 0,
-        "M2 wiring census: the executor's delegates no longer name closeOperation / finishClose: "
+        "M4 wiring census: the executor's delegates no longer name closeForCommand / finishClose: "
         ~ ctorText);
     const drop = bodyAt(app, "void dropActiveTool(ToolTransition why)");
     const dClose = drop.indexOf("closeOperation(closeReasonFor(why))");

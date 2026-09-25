@@ -39,10 +39,12 @@ private immutable string[] kCommentWords = [
 private enum string kLayerAttrLiteral = `"layer.attr"`;
 
 private immutable LedgerRow[] kCodeSites = [
-    LedgerRow("CommandExecutor.applyOrRefire|dropsActiveToolBeforeApply", 1,
-        "the single command-funnel policy call"),
-    LedgerRow("CommandExecutor.applyOrRefire|commitsActiveToolEditBeforeApply", 1,
-        "the single command-funnel pre-apply commit policy call"),
+    // Slice M4 moved the funnel's reading of the policy into the session's
+    // rule (`edit_session.commandMeetsTool`): import plus call, each.
+    LedgerRow("commandMeetsTool|dropsActiveToolBeforeApply", 2,
+        "the single command-funnel policy read (import + call), in the session's rule"),
+    LedgerRow("commandMeetsTool|commitsActiveToolEditBeforeApply", 2,
+        "the single pre-apply commit policy read (import + call), in the session's rule"),
     LedgerRow("main|g_disarmActiveTool", 2,
         "the app-side hook assignment and its delegate target"),
     LedgerRow("(module scope)|dropsActiveToolBeforeApply", 1,

@@ -159,7 +159,10 @@ enum CommandDoor : ubyte { script, ui }
 
 /// What `EditSession.closeOperation` did: whether it committed a live
 /// operation, and whether the tool stays armed across the command.
-struct CloseOutcome { bool closed; bool staysArmed; }
+/// `dropsTool` (slice M4): the command funnel must drop the tool before the
+/// command applies — the policy's fallback, decided by the session
+/// (`closeForCommand`), never by the funnel.
+struct CloseOutcome { bool closed; bool staysArmed; bool dropsTool; }
 
 /// The close reason of every transition, carried from what each transition's
 /// door already does (M2 moves no commit): an arm closes the retained

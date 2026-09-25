@@ -3,6 +3,7 @@ module command_executor;
 import command;
 import command_history : CommandHistory, RecordMode;
 import tool_activation_ownership : CloseOutcome, CommandDoor, ToolTransition;
+import edit_session : commandMeetsTool;
 
 // Project-owned command/history orchestration. Exact `grep -rl -w` checks for
 // both `CommandExecutor` and `command_executor` in the SDK tree returned zero
@@ -12,7 +13,7 @@ private:
     CommandHistory history;
     bool delegate() activeTool;
     void delegate(ToolTransition) dropActiveTool;
-    CloseOutcome delegate(CommandDoor) closeForCommand;
+    CloseOutcome delegate(const Command, CommandDoor, bool) closeForCommand;
     void delegate() finishClose;
     bool inPreApplyToolHandling_;
     // Set for the extent of one UI-door invocation (`applyOrRefireFromUi`);
@@ -22,7 +23,7 @@ private:
 public:
     this(CommandHistory history, bool delegate() activeTool,
          void delegate(ToolTransition) dropActiveTool,
-         CloseOutcome delegate(CommandDoor) closeForCommand = null,
+         CloseOutcome delegate(const Command, CommandDoor, bool) closeForCommand = null,
          void delegate() finishClose = null) {
         assert(history !is null, "CommandExecutor requires CommandHistory");
         assert(activeTool !is null, "CommandExecutor requires an armed-tool reader");
@@ -160,19 +161,16 @@ public:
         // close has already closed the operation, as the old pre-apply drop
         // had. The resume is the session's own (`finishClose`, at most once per
         // close), run from the non-reentrant frame only.
+        // Slice M4 (the plan's "M2 follow-up"): WHAT happens to the tool is
+        // the session's answer from the tool's policy (`closeForCommand`,
+        // `edit_session.commandMeetsTool`); the funnel executes it and reads
+        // no command predicate itself.
         if (activeTool()) {
-            const bool commits = commitsActiveToolEditBeforeApply(cmd);
-            const bool drops = dropsActiveToolBeforeApply(cmd);
-            const bool closes = !reentrant
-                && (commits || (uiOrigin_ && endsLiveEditBeforeUiCommand(cmd)));
-            bool kept = false;
-            if (closes) {
-                const o = closeForCommand !is null
-                    ? closeForCommand(uiOrigin_ ? CommandDoor.ui : CommandDoor.script)
-                    : CloseOutcome.init;
-                kept = o.staysArmed;
-            }
-            if (!kept && (drops || (closes && commits)))
+            const door = uiOrigin_ ? CommandDoor.ui : CommandDoor.script;
+            const o = closeForCommand !is null
+                ? closeForCommand(cmd, door, reentrant)
+                : commandMeetsTool(cmd, door, reentrant, null);
+            if (o.dropsTool)
                 dropActiveTool(ToolTransition.commandPreApplyDrop);
         }
         scope(exit) if (!reentrant && finishClose !is null) finishClose();

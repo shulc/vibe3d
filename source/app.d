@@ -2727,7 +2727,7 @@ void main(string[] args) {
     // exists only from there). Null until wired — same pattern as
     // lifecycleRecordHook above; users that can run pre-wiring guard on
     // non-null.
-    import edit_session : EditSession;
+    import edit_session : EditSession, commandMeetsTool;
     EditSession session;
     import command_history : CommandHistory;
     import record_observer_hub : RecordObserverHub;
@@ -2922,8 +2922,9 @@ void main(string[] args) {
     history = new CommandHistory();
     auto executor = new CommandExecutor(history,
         () => activeTool !is null, &dropActiveTool,
-        (CommandDoor door) => session is null ? CloseOutcome.init
-            : session.closeOperation(CloseReason.command, door),
+        (const Command cmd, CommandDoor door, bool reentrant) => session is null
+            ? commandMeetsTool(cmd, door, reentrant, null)
+            : session.closeForCommand(cmd, door, reentrant),
         () { if (session !is null) session.finishClose(); });
     ApplicationCommandBinding commandBinding;
     GuardedActionController guardController;
