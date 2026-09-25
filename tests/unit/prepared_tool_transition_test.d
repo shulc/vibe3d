@@ -150,6 +150,9 @@ unittest {
         "the Slice compatibility arm lost its lifecycle classification");
     assert(!toolArmEmitsLifecycle(new CountingPreparedTool, "mesh.plain"),
         "an unmarked ordinary tool acquired a lifecycle record");
+    // No candidate classifies as no row, as the marker cast answered for null.
+    assert(!toolArmEmitsLifecycle(null, "mesh.plain"),
+        "a null candidate acquired a lifecycle record");
 }
 
 unittest {

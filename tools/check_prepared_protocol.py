@@ -1516,6 +1516,18 @@ def add_bypass_callsite(root):
 if not mutation_rejected(add_bypass_callsite, "activation/lifecycle bypass callsite set changed"):
     fail("P1.0b.0 added activation/lifecycle bypass callsite did not fail")
 
+# Tool session model slice M1: a product is admitted by its sessionPolicy
+# override's `activationRow: true`, not by overriding at all. An override that
+# answers false must leave the lifecycle product set.
+def clear_activation_row(root):
+    p = root / "source/tools/transform/xfrm_transform.d"
+    text = p.read_text()
+    needle = "static immutable ToolSessionPolicy policy = { activationRow: true };"
+    if text.count(needle) != 1: fail("P1.0b.0 activationRow mutation anchor vanished")
+    p.write_text(text.replace(needle, needle.replace("true", "false"), 1))
+if not mutation_rejected(clear_activation_row, "lifecycle_products symbol mismatch"):
+    fail("P1.0b.0 an activationRow=false override stayed a lifecycle product")
+
 def bypass_gate(text):
     return not re.search(r"\b(?:prepareArm|commitPreparedArm)\s*\(", text)
 if bypass_gate("void mutant() { prepareArm(); }"):
