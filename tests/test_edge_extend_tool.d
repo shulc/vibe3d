@@ -264,17 +264,20 @@ unittest {
     cmd("tool.set edge.extend on");
     cmd("tool.attr edge.extend offsetY 0.3");
     cmd("tool.doApply");
+    // The script arm writes its activation row as its own step (H1 + the
+    // script door, C-H1-door; slice M4), then doApply adds ONE entry.
     auto afterApply = getHistory();
-    assert(afterApply["undo"].array.length == 1,
-        "expected ONE undo entry after doApply, got "
-        ~ afterApply["undo"].array.length.to!string);
+    assert(afterApply["undo"].array.length == 2
+           && afterApply["undo"].array[0]["label"].str == "Activate Tool",
+        "expected the activation row + ONE undo entry after doApply, got "
+        ~ afterApply["undo"].toString);
     // Turning the tool OFF (deactivate) must NOT add a second extend entry — the
     // headless ToolDoApplyCommand already owns the single commit, and `built` was
     // reset by applyHeadless so deactivate's commitEdit() is a no-op.
     cmd("tool.set edge.extend off");
     auto afterOff = getHistory();
-    assert(afterOff["undo"].array.length == 1,
-        "tool.set off double-committed: expected ONE undo entry, got "
+    assert(afterOff["undo"].array.length == 2,
+        "tool.set off double-committed: expected the activation row + ONE undo entry, got "
         ~ afterOff["undo"].array.length.to!string);
 }
 
@@ -474,13 +477,15 @@ unittest {
     cmd("tool.attr edge.extend rotateZ 55.4");
     setDragPivot(V3(2.0, 0.5, 0.5));
     cmd("tool.doApply");
+    // The script arm's own activation row (slice M4) + ONE doApply entry.
     auto afterApply = getHistory();
-    assert(afterApply["undo"].array.length == 1,
-        "rotate 4b undo: expected ONE undo entry after doApply, got "
-        ~ afterApply["undo"].array.length.to!string);
+    assert(afterApply["undo"].array.length == 2
+           && afterApply["undo"].array[0]["label"].str == "Activate Tool",
+        "rotate 4b undo: expected the activation row + ONE undo entry after doApply, got "
+        ~ afterApply["undo"].toString);
     cmd("tool.set edge.extend off");
     auto afterOff = getHistory();
-    assert(afterOff["undo"].array.length == 1,
+    assert(afterOff["undo"].array.length == 2,
         "rotate 4b undo: tool.set off double-committed");
 
     auto u = postUndo();

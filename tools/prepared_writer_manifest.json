@@ -830,7 +830,7 @@
     {
       "aggregate": "EdgeExtendTool",
       "module": "tools.edit.edge_extend",
-      "semantic_sha256": "50e44da24e1564fc10761b92fcb27e5e80e6b97cb4477f84b00ec0f80f37ab33",
+      "semantic_sha256": "9981c482779e81ea37922b45a54c38fc1d913d807b0e1e4e2117e20ef73ffa42",
       "signature": "void()",
       "symbol": "activate"
     },
@@ -1208,25 +1208,32 @@
   ],
   "internal_publishers": [
     {
-      "line": 102,
+      "line": 101,
       "path": "source/prepared_tool_transition.d",
-      "semantic_sha256": "86861354c11d16a4a2c7749db89b1f53b4d53d5b4ffbe912f44030bec35c3ae3",
+      "semantic_sha256": "5da956b0a396e16a3f45bda84e95e340049e935b5d7ea1187faa437fdb760adb",
       "symbol": "prepareArm"
     },
     {
-      "line": 274,
+      "line": 265,
       "path": "source/prepared_tool_transition.d",
       "semantic_sha256": "22c2e28c0998d02d2da53cf75b6080820e329e066ae4f35250aed4147875b68b",
       "symbol": "commitPreparedArm"
     }
   ],
   "lifecycle_classifier": {
-    "line": 96,
+    "line": 95,
     "path": "source/prepared_tool_transition.d",
     "semantic_sha256": "268f709c68823f0f4f34dafe01b83e844caa86ae9fe9d64fe2e931f5b035c518",
     "symbol": "toolArmEmitsLifecycle"
   },
   "lifecycle_products": [
+    {
+      "admission": "activationRow",
+      "aggregate": "EdgeExtendTool",
+      "module": "tools.edit.edge_extend",
+      "signature": "EdgeExtendTool",
+      "symbol": "lifecycleProduct"
+    },
     {
       "admission": "activationRow",
       "aggregate": "EdgeSliceTool",
@@ -1456,7 +1463,7 @@
     {
       "aggregate": "EdgeExtendTool",
       "module": "tools.edit.edge_extend",
-      "semantic_sha256": "a9e15f5d6a4e6e6ed351f4271c16fc5bb6a972e78cfb5e0e8d153fa343b8b21c",
+      "semantic_sha256": "ea79b2e613a8b44bc7a190623f2701b9a934107da83a3398c62fd471fdd71e29",
       "signature": "Param[]()",
       "symbol": "params"
     },

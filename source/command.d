@@ -179,17 +179,21 @@ bool endsLiveEditBeforeUiCommand(const Command cmd) {
 // merge mechanism is driven by CommandHistory.recordCoalescing().
 enum CompareResult { Different, Compatible }
 
-// ToolRunRecord — optional capability of a history record: undoing it while
-// its owner tool is active also ends that tool, because the record is the
-// session's first run and the tool's activation is joined to it (Edge Extend,
-// task 7118, gap 218). `Object`, not `Tool`: this module does not import tool.
-interface ToolRunRecord {
-    bool endsToolOnUndo(const Object active) const;
-}
-
 class Command {
     // Internal command id (e.g. "mesh.bevel"). Used by the dispatcher.
     string name() const { return "Command"; }
+
+    // The tool session that wrote this record (slice M4 of the tool session
+    // model; doc/tool_session_model_plan_2026-09-24.md R2.5 M4, R4.2): 0 for a
+    // record no session closed. Set once, by the session, on the row its close
+    // wrote (`CommandHistory.markTopSession`) or on an activation row at its arm.
+    // It is the session's IDENTITY, issued at every arm and carried by a restored
+    // predecessor, so "whose record is this" never falls back to the tool CLASS.
+    private ulong sessionToken_;
+    final ulong sessionToken() const nothrow @nogc { return sessionToken_; }
+    final void markSession(ulong token) nothrow @nogc {
+        if (sessionToken_ == 0) sessionToken_ = token;
+    }
 
     // Every command crosses one synchronous delivery boundary (task 1906).
     // `apply` is final and only `applyImpl` is overridable, so even a command

@@ -8785,7 +8785,7 @@ alignment_door_clients = {
     # Task 7116: no GPU owner at either door — the copy is a live edit of
     # the document mesh, uploaded by the ordinary display path.
     "source/tools/alignment/mirror.d": (
-        "class MirrorTool : Tool, KeepAliveOnCancel, PreparedToolDoorClient",
+        "class MirrorTool : Tool, PreparedToolDoorClient",
         "return prepareActivate(context).accepted;",
         "return prepareDeactivate(context, layer).resourceAccepted;"),
     "source/tools/alignment/radial_array_tool.d": (
@@ -8805,11 +8805,11 @@ create_bridge_door_clients = {
         "context.preparePrivateState(owner)",
         "return prepareDoorIdle(context);"),
     "source/tools/create/box.d": (
-        "class BoxTool : Tool, KeepAliveOnCancel, PreparedToolDoorClient",
+        "class BoxTool : Tool, PreparedToolDoorClient",
         "new GpuCreateOwner(&previewGpu, threadIdentity,",
         "prepareDeactivate(context, layer, upload, destroy,"),
     "source/tools/create/primitive_create_tool.d": (
-        "abstract class PrimitiveCreateTool : Tool, KeepAliveOnCancel, PreparedToolDoorClient",
+        "abstract class PrimitiveCreateTool : Tool, PreparedToolDoorClient",
         "new GpuCreateOwner(&previewGpu, threadIdentity,",
         "prepareDeactivate(context, layer, upload, destroy,"),
     "source/tools/create/pen.d": (

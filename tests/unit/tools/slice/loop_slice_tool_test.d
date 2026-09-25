@@ -8,7 +8,6 @@ import std.json : JSONValue;
 import std.algorithm : sort;
 import operator : VectorStack;
 import tool;
-import edit_session : KeepAliveOnCancel;
 import mesh;
 import math;
 import editmode : EditMode;
@@ -202,7 +201,7 @@ unittest {
     tool.activate();
     Tool active = tool;
     auto session = new EditSession(() => active, new CommandHistory(), () {});
-    session.noteArm("mesh.loopSliceTool");
+    session.noteArm("mesh.loopSliceTool", 1);
     long steps() { return session.sessionStateJson()["steps"].integer; }
     bool live() { return session.sessionStateJson()["live"].boolean; }
     VectorStack vts;

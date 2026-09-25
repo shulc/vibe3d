@@ -4,7 +4,8 @@ import application_command_binding : ApplicationCommandBinding;
 import command : Command;
 import command_executor : CommandExecutor;
 import command_history : CommandHistory, RecordMode;
-import edit_session : EditSession, KeepAliveOnCancel;
+import edit_session : EditSession;
+import tool : ToolSessionPolicy;
 import editmode : EditMode;
 import guarded_action_controller : GuardedActionController,
     GuardedActionPorts, GuardObservationPorts;
@@ -50,7 +51,7 @@ private final class HistoryPanelProbeCommand : Command {
     }
 }
 
-private final class HistoryPanelKeepAliveTool : Tool, KeepAliveOnCancel {
+private final class HistoryPanelKeepAliveTool : Tool {
     bool editOpen = true;
     size_t cancels;
     size_t resyncs;
@@ -61,7 +62,11 @@ private final class HistoryPanelKeepAliveTool : Tool, KeepAliveOnCancel {
         editOpen = false;
     }
     override void resyncSession() { ++resyncs; }
-    override bool survivesEditCancel() const { return true; }
+    // Keep-alive as policy data (slice M4; the former KeepAliveOnCancel).
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy policy = { keepAliveOnCancel: true };
+        return policy;
+    }
 }
 
 private final class HistoryPanelActionHarness {

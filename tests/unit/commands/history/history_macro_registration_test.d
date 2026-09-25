@@ -11,7 +11,8 @@ import std.string : indexOf;
 import command : CmdFlags, Command;
 import command_history : CommandHistory, HistoryFlags;
 import commands.macros.save_recorded : MacroSaveRecorded;
-import edit_session : EditSession, KeepAliveOnCancel;
+import edit_session : EditSession;
+import tool : ToolSessionPolicy;
 import editmode : EditMode;
 import history_macro_registration : registerHistoryCommands;
 import live_registration_roles : LiveSessionRole, LiveView, LiveViewModeRole;
@@ -54,7 +55,7 @@ private final class RegistrationProbeCommand : Command {
     protected override void revertImpl() { --*value_; }
 }
 
-private final class RegistrationKeepAliveTool : Tool, KeepAliveOnCancel {
+private final class RegistrationKeepAliveTool : Tool {
     bool editOpen = true;
     size_t cancels;
     size_t resyncs;
@@ -65,7 +66,11 @@ private final class RegistrationKeepAliveTool : Tool, KeepAliveOnCancel {
         editOpen = false;
     }
     override void resyncSession() { ++resyncs; }
-    override bool survivesEditCancel() const { return true; }
+    // Keep-alive as policy data (slice M4; the former KeepAliveOnCancel).
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy policy = { keepAliveOnCancel: true };
+        return policy;
+    }
 }
 
 private final class RegistrationHarness {

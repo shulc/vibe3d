@@ -61,6 +61,19 @@ void cmd(string line) {
     assert(r["status"].str == "ok", "/api/command `" ~ line ~ "` failed: " ~ r.toString);
 }
 
+/// The same line through the UI door (`?origin=ui`) — the typed command line,
+/// which arms a tool like its key does (C-H1-door): the activation row joins
+/// the first undo group. A script arm (`cmd`) keeps its row as its own step.
+void cmdUi(string line) {
+    auto r = postJson("/api/command?origin=ui", line);
+    assert(r["status"].str == "ok", "/api/command?origin=ui `" ~ line ~ "` failed: " ~ r.toString);
+}
+
+/// The activation row a key/UI arm of Edge Extend writes (H1, gap 218: one row
+/// at once, undone TOGETHER with the first run). A walk that pops the first run
+/// therefore ends one row below a depth read after the arm (slice M4).
+enum long kActivationRow = 1;
+
 void cmdId(string id, string params) {
     auto r = postJson("/api/command", `{"id":"` ~ id ~ `","params":` ~ params ~ `}`);
     assert(r["status"].str == "ok", id ~ " failed: " ~ r.toString);

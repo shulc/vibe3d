@@ -17,7 +17,6 @@ import std.json : JSONType, JSONValue;
 import tool : Tool;
 import view : View;
 import editmode : EditMode;
-import edit_session : SwitchRestorablePredecessor;
 import tool_presets : prepareStickyToolDefaults;
 import toolpipe.attr_cache : DroppedNodes, NodeAttrs, PipelineAttrCache,
     captureDroppedNodes, kToolNode;
@@ -108,9 +107,9 @@ PreparedArm prepareArm(ToolFactory factory, string id, Tool retainedOld,
         void delegate(string) activateById, void delegate() deactivate,
         bool lifecycleReplay = false,
         PipeArmScope pipeScope = PipeArmScope.presetArm,
-        void delegate(string, JSONValue) restoreById = null,
         PipelineAttrCache* attrCache = null,
-        ArmDoor door = ArmDoor.none) {
+        ArmDoor door = ArmDoor.none,
+        ulong sessionToken = 0, ulong previousToken = 0) {
     if (factory is null || id.length == 0 || history is null ||
         observers is null || layer is null || gizmoHost is null)
         throw new Exception("prepared tool arm requires complete owners");
@@ -133,19 +132,11 @@ PreparedArm prepareArm(ToolFactory factory, string id, Tool retainedOld,
     result.id_ = id.idup;
 
     const classifiedIncoming = toolArmEmitsLifecycle(candidate);
-    string previousId;
-    JSONValue previousArgs;
-    if (retainedOld !is null) {
-        if (toolArmEmitsLifecycle(retainedOld))
-            previousId = retainedOldId;
-        // An unclassified predecessor that is switch-restorable (Edge Extend;
-        // task 7118, gap 221) is restored by the incoming row's undo with its
-        // values, read here, before its door deactivates it.
-        else if (auto r = cast(SwitchRestorablePredecessor)retainedOld) {
-            previousId = retainedOldId;
-            previousArgs = r.switchRestoreArgs();
-        }
-    }
+    // Undoing the incoming row restores the predecessor, whichever tool it
+    // was (slice M4: the C-M4-token switch twin brings an unclassified Edge
+    // Extrude back armed; the restore recalls its values from the per-preset
+    // cache, slice M5, and the session hands it `previousToken`).
+    const string previousId = retainedOld !is null ? retainedOldId : null;
 
     // Slice M5: this switch DROPS the predecessor, so its preset's nodes are
     // captured now, before any stage is reset, and committed to the cache by
@@ -205,12 +196,12 @@ PreparedArm prepareArm(ToolFactory factory, string id, Tool retainedOld,
         throw new Exception("prepared candidate activation refused for '" ~ id ~
             "' (lifecycleReplay=" ~ (lifecycleReplay ? "true" : "false") ~ ")");
     if (classifiedIncoming) {
+        const pol = candidate.sessionPolicy();
         auto lifecycle = new ToolActivationCommand(mesh, view, editMode,
-            id, previousId, previousArgs,
-            candidate.sessionPolicy().sessionSteps, door == ArmDoor.key);
+            id, previousId, pol.sessionSteps, door == ArmDoor.key,
+            pol.recordCarriesActivation, sessionToken, previousToken);
         lifecycle.onActivate = activateById;
         lifecycle.onDeactivate = deactivate;
-        lifecycle.onRestore = restoreById;
         result.incoming_.prepareLifecycle(lifecycle);
     }
 

@@ -26,7 +26,8 @@
 //
 // Provenance: `carried` = today's classification moved from the deleted
 // marker interface and the cutting-session ids, unchanged; `captured` = ported
-// by a later slice on its own capture (poly.bevel, M3b: C-H1-bev); `notPorted` = the
+// by a later slice on its own capture (poly.bevel, M3b: C-H1-bev; Edge Extend,
+// M4: H1 + gap 218, whose first run carries the activation row; C-M4-token); `notPorted` = the
 // captured law H1 (every tool's arm is an activation row) is not ported for
 // this id yet (gap row 369, backlog 7307); `noCounterpart` / `uncertain` = the
 // id has no mapped counterpart, or an unsure one, in the captured flags table.
@@ -79,7 +80,7 @@ private immutable Row[] kTable = [
     Row("TransformRotate", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
     Row("TransformScale", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
     Row("edge.bevel", "EdgeBevelTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
-    Row("edge.extend", "EdgeExtendTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.captured),
+    Row("edge.extend", "EdgeExtendTool", true, Prov.captured, CommandClose.uiDoor, CloseProv.captured),
     Row("edge.extrude", "EdgeExtrudeTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
     Row("edge.slide", "EdgeSlideTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
     Row("mesh.arrayTool", "ArrayTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
@@ -146,8 +147,10 @@ private immutable Row[] kTable = [
 ];
 
 /// The classes whose policy answers `activationRow`: the deleted marker's two
-/// implementors plus the three cutting sessions (R3.5), and Polygon Bevel (M3b).
+/// implementors plus the three cutting sessions (R3.5), Polygon Bevel (M3b) and
+/// Edge Extend (M4).
 private immutable string[] kActivationRowClasses = [
+    "tools.edit.edge_extend.EdgeExtendTool",
     "tools.edit.poly_bevel.PolyBevelTool",
     "tools.edit.topology_pen.tool.TopologyPenTool",
     "tools.slice.edge_slice_tool.EdgeSliceTool",
@@ -259,13 +262,13 @@ unittest { // (1) id -> policy, over every registered id
            format("M2 policy table: commandClose none/uiDoor/allDoors on %s ids, recorded "
                   ~ "22/24/24", closeCount));
     // The M7 ratchet: ids whose arm writes no activation row yet.
-    // M3b ported poly.bevel: 42 (38) -> 41 (37).
-    assert(falseRows == 41 && notPorted == 37,
+    // M3b ported poly.bevel: 42 (38) -> 41 (37); M4 ported edge.extend: -> 40 (36).
+    assert(falseRows == 40 && notPorted == 36,
            format("M1 policy table: activationRow=false on %s ids (%s not ported), "
-                  ~ "recorded 41 (37)", falseRows, notPorted));
+                  ~ "recorded 40 (36)", falseRows, notPorted));
 }
 
-unittest { // (2) exactly six tool classes declare the activation row
+unittest { // (2) exactly seven tool classes declare the activation row
     string[] declared;
     size_t scanned;
     foreach (m; ModuleInfo) {
@@ -348,18 +351,22 @@ unittest { // (3) the doors reach the tool session only through EditSession
     // The branch order the navigate contract fixes, per direction.
     // Slice M3: the session's own steps answer first, before every tool-held
     // branch.
+    // Slice M4: the tool-held peel, keep-alive, live-redo and run-record
+    // branches are gone; the record that carries its activation row is read
+    // before the stack steps, and a restored predecessor adopts its token after.
     inOrder(bodyAt(ts, "bool undo()"),
-            ["undoFirstGroup_(t)", "tryUndoStepInSession()", "cancelUncommittedEdit()",
-             "history_.undo()", "resyncSession()", "endsToolOnUndo("],
+            ["undoFirstGroup_(t)", "cancelUncommittedEdit()", "recordCarriesActivation_()",
+             "resyncSession()", "adoptPredecessorToken_("],
             "ToolSession.undo");
     inOrder(bodyAt(ts, "bool redo()"),
-            ["applyAttrImage(img)", "tryRedoLiveInSession()", "history_.redo()",
+            ["applyAttrImage(img)", "carriesFirstRecord()", "adoptToken_(",
              "resyncSession()", "replayFirstGroup_()"],
             "ToolSession.redo");
     // Nothing else in the module steps the history.
-    assert(es.count("history_.undo()") == 2 && es.count("history_.redo()") == 1,
+    assert(es.count("history_.undo()") == 3 && es.count("history_.redo()") == 2,
            format("M1 wiring census: edit_session.d steps the history %s/%s times, "
-                  ~ "expected undo 2 (ToolSession.undo, undoFirstGroup_) and redo 1",
+                  ~ "expected undo 3 (ToolSession.undo and its pair, undoFirstGroup_) and "
+                  ~ "redo 2 (ToolSession.redo and its pair)",
                   es.count("history_.undo()"), es.count("history_.redo()")));
 }
 
@@ -388,6 +395,10 @@ private struct StepRow {
 /// the static flags read (Edge Slice only); the images — plan R4.3 plus
 /// `count` (C-H2-ls-insert P1) and Loop Slice's seed set (PLAN-FINDING, card M3).
 private immutable StepRow[] kStepTable = [
+    // Slice M4: the 11 haul attributes plus the operation-open state.
+    StepRow("edge.extend", OpensAt.firstPress, false,
+            ["opOpen", "inset", "shift", "offsetX", "offsetY", "offsetZ",
+             "rotateX", "rotateY", "rotateZ", "scaleX", "scaleY", "scaleZ"]),
     StepRow("mesh.edgeSliceTool", OpensAt.firstPress, true,
             ["chain", "edges", "activePoint"]),
     StepRow("mesh.loopSliceTool", OpensAt.arm, false,
@@ -462,14 +473,71 @@ unittest { // (4)
         }
         assert(found, "M3 step table: " ~ row.id ~ " has sessionSteps but no step-table row");
     }
-    // Population floors (measured): 4 ids, 27 image names, 3 Action triggers
+    // Population floors (measured): 5 ids, 39 image names, 3 Action triggers
     // on them (chainArm; insertAt, removeCurrent), 1 arm attribute (M3b).
     sort(stepIds);
-    assert(stepIds == ["mesh.edgeSliceTool", "mesh.loopSliceTool", "mesh.sliceTool", "poly.bevel"],
+    assert(stepIds == ["edge.extend", "mesh.edgeSliceTool", "mesh.loopSliceTool", "mesh.sliceTool",
+                       "poly.bevel"],
            format("M3 step table: sessionSteps ids %s", stepIds));
-    assert(checkedNames == 27, format("M3 step table: %s image names checked, measured 27",
+    assert(checkedNames == 39, format("M3 step table: %s image names checked, measured 39",
                                       checkedNames));
     assert(armAttrs == 1, format("M3b step table: %s arm attributes, measured 1", armAttrs));
-    assert(actionNames == 3, format("M3 step table: %s Action params on the four tools, "
+    assert(actionNames == 3, format("M3 step table: %s Action params on the five tools, "
                                     ~ "measured 3", actionNames));
+}
+
+// ---------------------------------------------------------------------------
+// (5) Slice M4 — the two data fields that replaced per-tool capabilities:
+// `keepAliveOnCancel` (the former KeepAliveOnCancel interface: the create
+// family, tasks 0400/0430, and Mirror) and `recordCarriesActivation` (the
+// former ToolRunRecord / markRunOwner: Edge Extend's first run, gap 218).
+// ---------------------------------------------------------------------------
+
+/// Measured on the M4 tree: the create family's eight CONCRETE classes (the
+/// census's nine create rows less the abstract HandledCreateTool; they inherit
+/// the datum from the abstract PrimitiveCreateTool, or declare it, BoxTool)
+/// and Mirror (the tenth keep-alive tool, S3 review).
+private immutable string[] kKeepAliveClasses = [
+    "tools.alignment.mirror.MirrorTool",
+    "tools.create.box.BoxTool",
+    "tools.create.capsule.CapsuleTool",
+    "tools.create.cone.ConeTool",
+    "tools.create.cylinder.CylinderTool",
+    "tools.create.sphere.SphereTool",
+    "tools.create.torus.TorusTool",
+    "tools.create.tube.TubeTool",
+];
+
+static assert(ToolSessionPolicy.init.keepAliveOnCancel == false
+              && ToolSessionPolicy.init.recordCarriesActivation == false);
+// The capability interfaces they replaced are gone.
+static assert(!__traits(compiles, { import edit_session : KeepAliveOnCancel; }));
+static assert(!__traits(compiles, { import edit_session : SessionStepUndo; }));
+static assert(!__traits(compiles, { import edit_session : SessionLiveRedo; }));
+static assert(!__traits(compiles, { import edit_session : SwitchRestorablePredecessor; }));
+static assert(!__traits(compiles, { import command : ToolRunRecord; }));
+
+unittest { // (5)
+    string[] keep, carries;
+    size_t scanned;
+    foreach (m; ModuleInfo) {
+        if (m is null || !m.name.startsWith("tools.")) continue;
+        foreach (c; m.localClasses) {
+            if (!derivesFromTool(c) || (c.m_flags & TypeInfo_Class.ClassFlags.isAbstract))
+                continue;
+            ++scanned;
+            const pol = blit(c).sessionPolicy();
+            if (pol.keepAliveOnCancel) keep ~= c.name;
+            if (pol.recordCarriesActivation) carries ~= c.name;
+        }
+    }
+    assert(scanned == 48, format("M4 policy classes: scanned %s concrete tools.* classes, "
+                                 ~ "measured 48", scanned));
+    sort(keep);
+    sort(carries);
+    assert(keep == kKeepAliveClasses,
+           format("M4 policy classes: keepAliveOnCancel declared by %s, expected %s",
+                  keep, kKeepAliveClasses));
+    assert(carries == ["tools.edit.edge_extend.EdgeExtendTool"],
+           format("M4 policy classes: recordCarriesActivation declared by %s", carries));
 }

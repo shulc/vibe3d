@@ -35,7 +35,6 @@ module tests.unit.tool_model_census_test;
 import edit_tool_registration;
 
 import command_history : CommandHistory;
-import edit_session    : KeepAliveOnCancel, SessionStepUndo;
 import tool            : Tool;
 import tests.unit.census_symbols : blankNonCode, blankUnittestBodies,
                                    isIdentChar;
@@ -76,8 +75,10 @@ private enum string[] kNamedExceptions = [
 
 /// Public `CommandHistory` methods seen by the census build (which is always a
 /// `-unittest` build, so the test-only `pushEntryForTest` is one of them).
-/// A new method reddens until the axis-3 needles are reviewed.
-private enum size_t kHistorySurface = 62;
+/// A new method reddens until the axis-3 needles are reviewed. Slice M4 added
+/// `markEntrySession` (reviewed: the tool session tags the record its close
+/// wrote; no tool calls it, so it is no axis-3 write).
+private enum size_t kHistorySurface = 63;
 
 /// Tool-side history wrappers, counted as identifier tokens (every spelling:
 /// call, declaration, address-of).
@@ -188,18 +189,11 @@ private string[] historySurface() {
 // module is not a SOURCE module, so they never enter the population.
 // ---------------------------------------------------------------------------
 version (unittest) {
-    class CensusProbeOwn : Tool, SessionStepUndo {
+    class CensusProbeOwn : Tool {
         override bool hasUncommittedEdit() const { return true; }
-        bool tryUndoStepInSession() { return false; }
     }
     final class CensusProbeInherit : CensusProbeOwn {}
     final class CensusProbeBare : Tool {}
-    // Reaches SessionStepUndo only through a BASE interface, so the recursive
-    // arm of `implementsIface` is the one that answers.
-    interface CensusProbeStepChild : SessionStepUndo {}
-    final class CensusProbeViaChild : Tool, CensusProbeStepChild {
-        bool tryUndoStepInSession() { return false; }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -230,15 +224,6 @@ private TypeInfo_Class slotOwner(TypeInfo_Class c, size_t slot) {
            && o.base.vtbl[slot] is impl)
         o = o.base;
     return o;
-}
-
-private bool implementsIface(TypeInfo_Class c, TypeInfo_Class iface) {
-    for (auto k = c; k !is null; k = k.base)
-        foreach (ref i; k.interfaces) {
-            if (i.classinfo is iface) return true;
-            if (implementsIface(i.classinfo, iface)) return true;
-        }
-    return false;
 }
 
 /// Strictly derived: the walk starts at `c.base`, so `Tool` itself is out.
@@ -693,7 +678,6 @@ private bool isDigitStart(char c) { return c >= '0' && c <= '9'; }
 private struct ToolRow {
     string name;
     string[kHooks.length] owners;
-    bool step, keep;
     string live;     // "yes" | "no" | "?"
     size_t snap;
     string reason;
@@ -711,9 +695,9 @@ private struct Ledger {
 private string yn(bool b) { return b ? "yes" : "no"; }
 
 private string toolLine(const ToolRow r) {
-    return format("tool %s has=%s cancel=%s resync=%s commit=%s step=%s keep=%s snap=%s live=%s | %s",
+    return format("tool %s has=%s cancel=%s resync=%s commit=%s snap=%s live=%s | %s",
         r.name, r.owners[0], r.owners[1], r.owners[2], r.owners[3],
-        yn(r.step), yn(r.keep), r.snap, r.live, r.reason);
+        r.snap, r.live, r.reason);
 }
 
 private Ledger parseLedger(string text) {
@@ -739,8 +723,6 @@ private Ledger parseLedger(string text) {
                     kv[p[0 .. eq]] = p[eq + 1 .. $];
                 }
                 foreach (k, key; kHookKeys) r.owners[k] = kv.get(key, "");
-                r.step = kv.get("step", "") == "yes";
-                r.keep = kv.get("keep", "") == "yes";
                 r.snap = kv.get("snap", "0").to!size_t;
                 r.live = kv.get("live", "?");
                 r.reason = bar >= 0 ? line[bar + 2 .. $].strip : "";
@@ -812,13 +794,9 @@ unittest {
     }
     auto pOwn = typeid(CensusProbeOwn), pInh = typeid(CensusProbeInherit),
          pBare = typeid(CensusProbeBare);
-    auto stepInfo = cast(TypeInfo_Class) typeid(SessionStepUndo).info;
-    auto keepInfo = cast(TypeInfo_Class) typeid(KeepAliveOnCancel).info;
     assert(ownerName(pOwn, 0) == pOwn.name && ownerName(pInh, 0) == pOwn.name
            && ownerName(pBare, 0) == typeid(Tool).name
-           && ownerName(pOwn, 1) == typeid(Tool).name
-           && implementsIface(pInh, stepInfo) && !implementsIface(pBare, stepInfo)
-           && implementsIface(typeid(CensusProbeViaChild), stepInfo),
+           && ownerName(pOwn, 1) == typeid(Tool).name,
            "tool census probe: inheritance not resolved");
 
     size_t noModule;
@@ -925,8 +903,6 @@ unittest {
         ToolRow r;
         r.name = n;
         foreach (k; 0 .. kHooks.length) r.owners[k] = ownerName(c, k);
-        r.step = implementsIface(c, stepInfo);
-        r.keep = implementsIface(c, keepInfo);
         const file = fileOfModule.get(n[0 .. n.length - n.split(".")[$ - 1].length - 1], "");
         foreach (f; files) if (f.path == file) r.snap = snapshotDecls(blankNonCode(f.src));
         if (auto old = n in recorded.tools) { r.live = old.live; r.reason = old.reason; }
@@ -1028,9 +1004,11 @@ unittest {
     foreach (n; kNonSessionIfaces)
         assert(ifaceCompiler.canFind(n),
                "tool census: named non-session interface " ~ n ~ " no longer declared");
-    // (SessionFirstGesture left with slice M3; SessionLiveRedo stands in until M4.)
-    foreach (n; ["SessionStepUndo", "KeepAliveOnCancel", "SessionLiveRedo",
-                 "ToolRunRecord"])
+    // Slice M4: the four session interfaces that remain after the per-tool
+    // step / keep-alive / live-redo / switch-restore / run-record specials
+    // moved onto the general model (policy data and the tool session).
+    foreach (n; ["LiveEvalClient", "FrameParameterEvalClient", "SlotActivationClient",
+                 "RefireClient"])
         assert((n in sessionIfaces) !is null,
                "tool census: session-debt floor: " ~ n ~ " not seen by the census");
     assert(toolClasses.length == scanned.length + templateTools.length

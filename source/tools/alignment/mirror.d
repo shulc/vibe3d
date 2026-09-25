@@ -30,7 +30,6 @@ import prepared_mirror_activation : PreparedMirrorActivationOwner,
 import document : Layer, primaryModelSpace;
 import command_history : PreparedHistoryKind;
 import display_sync : refreshDisplay;
-import edit_session : KeepAliveOnCancel;
 
 version (unittest) import std.conv : to;
 private struct MirrorPreparedState {
@@ -202,7 +201,7 @@ Vec3 derivedLeft(in MirrorParams p) {
 // `rotateBox` (small — drags `angle`, tilting the plane about the fixed
 // `refAxis(axis)`), plus a wire-quad + dashed-axis plane visualization.
 // ---------------------------------------------------------------------------
-class MirrorTool : Tool, KeepAliveOnCancel, PreparedToolDoorClient,
+class MirrorTool : Tool, PreparedToolDoorClient,
         PreparedToolParamDoorClient {
 private:
     Mesh* delegate() nothrow @nogc meshSrc_;
@@ -465,9 +464,12 @@ public:
     // The first Ctrl+Z drops the live copy and keeps the tool armed (owner's
     // law, CLAUDE.md "Undo / redo"); the next press starts a fresh live edit
     // from the same base. The shared cancel-then-drop default is opted out of
-    // through the existing KeepAliveOnCancel capability, as the create family
-    // and the slice tools do.
-    public override bool survivesEditCancel() const { return true; }
+    // by the policy datum `keepAliveOnCancel`, as the create family does
+    // (slice M4 moved it off the former capability interface).
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy policy = { keepAliveOnCancel: true };
+        return policy;
+    }
 
     public override void cancelUncommittedEdit() {
         if (liveApplied) {

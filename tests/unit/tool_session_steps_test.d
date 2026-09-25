@@ -120,7 +120,7 @@ private final class Rig {
         active = t;
         history = new CommandHistory();
         session = new EditSession(() => active, history, () { dropped = true; });
-        session.noteArm("t.step");
+        session.noteArm("t.step", 1);
     }
     long steps() { return session.sessionStateJson()["steps"].integer; }
     bool isLive() { return session.sessionStateJson()["live"].boolean; }
@@ -176,7 +176,7 @@ unittest { // no activation row of this arm on top: the tool stays, the image op
 
 private ToolActivationCommand row(Mesh* m, string id, bool joins) {
     auto v = new View(0, 0, 1, 1);
-    return new ToolActivationCommand(m, v, EditMode.Vertices, id, "", JSONValue.init, true, joins);
+    return new ToolActivationCommand(m, v, EditMode.Vertices, id, "", true, joins);
 }
 
 unittest { // a key-door row of THIS arm joins the group; the navigate redo replays once
@@ -365,7 +365,7 @@ unittest { // an idle bound tool: the session has nothing to undo; a re-arm star
     r.t.gesture(2);
     r.t.endRelease();                          // an end with no step in flight: nothing
     assert(steps(r) == 1, format("M3 steps: an unmatched end pushed a step (%s)", steps(r)));
-    r.session.noteArm("t.step");               // a re-arm: a fresh account
+    r.session.noteArm("t.step", 2);            // a re-arm: a fresh account
     assert(!isLive(r) && steps(r) == 0, "M3 arm: a re-arm inherited the previous account");
     // The panel's (interactive) door is the same Action rule.
     r.t.gesture(3);

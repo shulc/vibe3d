@@ -2727,7 +2727,7 @@ void main(string[] args) {
     // exists only from there). Null until wired — same pattern as
     // lifecycleRecordHook above; users that can run pre-wiring guard on
     // non-null.
-    import edit_session : EditSession, SwitchRestorablePredecessor;
+    import edit_session : EditSession;
     EditSession session;
     import command_history : CommandHistory;
     import record_observer_hub : RecordObserverHub;
@@ -3820,6 +3820,7 @@ void main(string[] args) {
         // after a refused one, so no account outlives this call).
         if (session !is null) session.closeOperation(closeReasonFor(why));
         scope(failure) if (session !is null) session.finishClose();
+        const ulong token = session !is null ? session.issueToken() : 0;
 
         import prepared_tool_transition : prepareArm, commitPreparedArm;
         import registry : PreparedPipeAttrs;
@@ -3850,32 +3851,20 @@ void main(string[] args) {
             },
             () { dropActiveTool(ToolTransition.replayDrop); }, lifecycleReplay,
             pipeArmScopeFor(why, id == activeToolId),
-            // The switch-restorable predecessor (task 7118, gap 221/241):
-            // re-armed with the run's values, as a continuation.
-            (string restoreId, JSONValue restoreArgs) {
-                JSONValue a = restoreArgs;
-                try {
-                    armPreparedTool(ToolTransition.replayArm, restoreId, a, true);
-                    if (auto r = cast(SwitchRestorablePredecessor) activeTool)
-                        r.resumeAfterSwitchRestore();
-                }
-                catch (Throwable e) {
-                    logWarn("tool", "lifecycle restore failed for '" ~
-                        restoreId ~ "': " ~ e.msg);
-                    throw e;
-                }
-            },
             // Slice M5: the per-preset attribute cache, except where the
             // transition table says the arm re-arms at declared defaults.
             armUsesAttrCache(why) ? &g_prefs.toolAttrCache : null,
             // Slice M3: the door decides whether the activation row joins the
             // first undo group of the tool's window (C-H1-door, gap 300).
-            armDoorFor(why, executor.applyingFromUi));
+            armDoorFor(why, executor.applyingFromUi),
+            // Slice M4: the session token this arm issues (its row carries it)
+            // and the retained predecessor's, which undoing the row hands back.
+            token, session !is null ? session.currentToken() : 0);
         preToolTickStall.arm();
         if (!commitPreparedArm(activeTool, activeToolId, prepared))
             throw new Exception("prepared tool arm was already consumed");
         if (session !is null) {
-            session.noteArm(id);
+            session.noteArm(id, token);
             session.finishClose();
         }
     }

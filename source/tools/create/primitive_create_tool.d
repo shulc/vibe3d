@@ -62,7 +62,6 @@ import operator : VectorStack;
 import bindbc.sdl;
 
 import tool;
-import edit_session : KeepAliveOnCancel;
 import mesh;
 import mesh_gpu : GpuMesh;
 import math;
@@ -115,7 +114,7 @@ struct PreparedPrimitiveDeactivateImage {
 // adds those) — draw()'s default handle rig is mover-only, matching
 // TubeTool's id scheme (arrowX/Y/Z=0/1/2, centerBox=10).
 // ---------------------------------------------------------------------------
-abstract class PrimitiveCreateTool : Tool, KeepAliveOnCancel, PreparedToolDoorClient {
+abstract class PrimitiveCreateTool : Tool, PreparedToolDoorClient {
 protected:
     final ulong preparedBytesWitness(const(void)* data, size_t length) const
             nothrow @nogc {
@@ -512,15 +511,15 @@ public:
     public override void cancelUncommittedEdit() { cancelToIdle(); }
     public override void resyncSession()         { cancelToIdle(); }
 
-    // KeepAliveOnCancel (task 0430, reference-measured — 0428 capture Q2):
-    // an interactive undo that cancels the open create gesture leaves the
-    // tool armed for a fresh gesture instead of dropping it; the NEXT
-    // navigate() finds no open edit and steps prior history. Unconditional
-    // `true` — no `active` guard, unlike the slices' overrides: EditSession
-    // consults this only by cast on the ACTIVE tool (its tool_() delegate),
-    // so the guard would be dead here; the slices need theirs because of
-    // the cross-activation state they keep across tool switches.
-    public override bool survivesEditCancel() const { return true; }
+    // keepAliveOnCancel (task 0430, reference-measured — 0428 capture Q2;
+    // policy data since slice M4): an interactive undo that cancels the open
+    // create gesture leaves the tool armed for a fresh gesture instead of
+    // dropping it; the NEXT navigate() finds no open edit and steps prior
+    // history. Every subclass inherits it.
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy policy = { keepAliveOnCancel: true };
+        return policy;
+    }
 
     // Full-cancel sanitization (task 0430 D3): with keep-alive, the state
     // after a cancel/resync must equal fresh-armed (activate()) for every

@@ -17,7 +17,6 @@ import operator : VectorStack;
 import bindbc.sdl;
 
 import tool;
-import edit_session : KeepAliveOnCancel;
 import mesh;
 import math;
 import handler : MoveHandler, BoxHandler, getGizmoPixels, gizmoSize,
@@ -149,7 +148,7 @@ struct PreparedBoxParamProjection {
     int liveUndoDepth;
 }
 
-class BoxTool : Tool, KeepAliveOnCancel, PreparedToolDoorClient,
+class BoxTool : Tool, PreparedToolDoorClient,
                 PreparedToolParamDoorClient {
 private:
     Mesh* delegate() meshSrc_;
@@ -477,13 +476,14 @@ public:
             || (state >= BoxState.DrawingHeight && abs(currentHeight()) > 1e-5f);
     }
 
-    // KeepAliveOnCancel (task 0430, reference-measured — 0428 capture Q2 on
-    // this very tool): the interactive-undo cancel (a ladder step or the
-    // final wipe below) leaves the tool armed instead of dropping it; the
-    // press after the wipe steps prior history. Unconditional `true` — no
-    // `active` guard: EditSession consults this only by cast on the ACTIVE
-    // tool (see PrimitiveCreateTool's identical note).
-    public override bool survivesEditCancel() const { return true; }
+    // keepAliveOnCancel (task 0430, reference-measured — 0428 capture Q2 on
+    // this very tool; policy data since slice M4): the interactive-undo cancel
+    // (a ladder step or the final wipe below) leaves the tool armed instead of
+    // dropping it; the press after the wipe steps prior history.
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy policy = { keepAliveOnCancel: true };
+        return policy;
+    }
 
     // Category B cancel — preview-only reset (the RMB body in
     // onMouseButtonDown). Box builds a separate previewMesh/previewGpu; the

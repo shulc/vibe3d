@@ -1388,7 +1388,7 @@ public:
     // condition under which `commitCurrentSlice` would record (the base-class
     // invariant "hasUncommittedEdit() <=> a commit would fire"); the key is
     // not a term — it no longer moves on position, and a foreign topology is
-    // dropped by `deactivate` via `dropPreview`. No `KeepAliveOnCancel`: the
+    // dropped by `deactivate` via `dropPreview`. No `keepAliveOnCancel`: the
     // cancel removes the session's only gesture, which ends the tool (owner's
     // slice law; `EditSession.navigate` drops it).
     public override bool hasUncommittedEdit() const {

@@ -171,13 +171,8 @@ private enum LedgerRow[] kSurfaceRoster = [
     LedgerRow("BoxTool.cancelUncommittedEdit|undo", 1,
         "the interactive undo LADDER inside cancelUncommittedEdit (task 0414); "
       ~ "it pops a live step and is not a record"),
-    // Edge Extend's live-redo stash (task 7118, gap 232): the undo top is READ
-    // as the stash's key when a continuation is cancelled and again when the
-    // redo asks for it. Reads, not records.
-    LedgerRow("EdgeExtendTool.cancelUncommittedEdit|undoEntries", 1,
-        "a continuation's cancel keys its live-redo stash on the undo top (read)"),
-    LedgerRow("EdgeExtendTool.tryRedoLiveInSession|undoEntries", 1,
-        "the live redo refuses when the undo top moved under the stash (read)"),
+    // (Edge Extend's two live-redo stash reads left with slice M4: the redo of
+    // a cancelled operation is the tool session's own stash.)
 ];
 
 unittest {
@@ -213,8 +208,9 @@ unittest {
     assert(problems.length == 0,
         "G1 census: the family's history call surface is not what the seam "
       ~ "leaves behind.\n" ~ problems);
-    assert(ledgerHits.length == 8,
-        "G1 census: expected exactly eight history-surface sites");
+    assert(ledgerHits.length == 6,
+        "G1 census: expected exactly six history-surface sites (slice M4 removed "
+      ~ "Edge Extend's two live-redo stash reads)");
 }
 
 // ---------------------------------------------------------------------------

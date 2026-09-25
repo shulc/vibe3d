@@ -370,7 +370,7 @@ void undoAfterClick(int btn, int mod, string sfx, bool middle) {
             ~ "(reference: 0 after Shift, gap 225): " ~ offset().to!string);
     assert(!built(), "Ctrl+Z after a Shift press left the operation live" ~ sfx);
     ctrlZ();
-    assert(undoLen() == h0 && vertexCount() == 9,
+    assert(undoLen() == h0 - kActivationRow && vertexCount() == 9,
         format("second Ctrl+Z after a Shift press did not remove the first run (gap 225)%s: %d records, %d v",
                sfx, undoLen() - h0, vertexCount()));
     assert(!extendActive(), "second Ctrl+Z after a Shift press did not end the tool (reference: the first run "
@@ -407,7 +407,7 @@ unittest { // (uc) Shift drag, then Ctrl+Z x3 (undo_after_shift_drag_after_haul)
     assert(zero(offset()), "Ctrl+Z after a Shift drag left the dragged offset in the panel (reference: the "
         ~ "new operation's start value 0, gap 225): " ~ offset().to!string);
     ctrlZ();
-    assert(undoLen() == h0 && vertexCount() == 9,
+    assert(undoLen() == h0 - kActivationRow && vertexCount() == 9,
         format("second Ctrl+Z after a Shift press did not remove the first run (gap 225)%s: %d records, %d v",
                sfx, undoLen() - h0, vertexCount()));
     assert(!extendActive(), "second Ctrl+Z after a Shift press did not end the tool (reference: the first run "
@@ -487,7 +487,7 @@ unittest { // (ut) T-live (two_continuation_ops_undo_walk)
     assert(zero(offset()), "the panel changed when history popped a closed operation (reference: unchanged, "
         ~ "gap 229/230): " ~ offset().to!string);
     ctrlZ();
-    assert(undoLen() == h0 && vertexCount() == 9 && !extendActive(),
+    assert(undoLen() == h0 - kActivationRow && vertexCount() == 9 && !extendActive(),
         format("Ctrl+Z #4 did not pop the first run with the tool: %d records, %d v, tool %s",
                undoLen() - h0, vertexCount(), toolId()));
 }
@@ -542,7 +542,7 @@ unittest { // (uk) K-op (continuation_op_then_tool_switch_undo_walk)
     assert(dist(offset(), kO1) <= 1e-4, "the panel changed when history popped a closed operation (reference: "
         ~ "unchanged, gap 229/230): " ~ offset().to!string);
     ctrlZ();
-    assert(undoLen() == h0 && vertexCount() == 9 && !extendActive(),
+    assert(undoLen() == h0 - kActivationRow && vertexCount() == 9 && !extendActive(),
         format("third Ctrl+Z after a switch from a continued operation did not end the tool (reference: the "
              ~ "first run carries the activation, gap 229): %d records, %d v, tool %s",
                undoLen() - h0, vertexCount(), toolId()));
@@ -581,7 +581,7 @@ unittest { // (sr) law SR-op (gap 241) (operation_after_restored_switch_undo_wal
     assert(ringAt(lastRing(), 1.125, -0.125, 1e-4), "Ctrl+Z after a haul in a restored Edge Extend did not "
         ~ "leave the first ring: " ~ newVertices().to!string);
     ctrlZ();
-    assert(vertexCount() == 9 && undoLen() == h0 && !extendActive(),
+    assert(vertexCount() == 9 && undoLen() == h0 - kActivationRow && !extendActive(),
         format("second Ctrl+Z after a restored operation did not pop the first run with the activation (gap 241): "
              ~ "%d v, %d records, tool %s", vertexCount(), undoLen() - h0, toolId()));
     ctrlZ();
@@ -635,14 +635,23 @@ unittest { // (un2) the redo is dropped by a new press
     cmd("tool.set edge.extend off");
 }
 
-unittest { // (up) boundary, not captured
+unittest { // (up) boundary, not captured — re-pinned by slice M4
+    // The undo of a continued operation leaves NO operation open (the next
+    // press opens one from 0, gap 231), so a panel edit there only writes the
+    // attribute, as before the first press (gap 220); the session's redo of
+    // the undone operation is keyed on the history, which that write does not
+    // move, so the redo brings the operation back with ITS values. Before M4 a
+    // panel edit here opened an operation (F8t) that the redo then refused to
+    // replace; neither side of this boundary is captured.
     undoneContinuation();
     typePanel("tool.attr edge.extend offsetX 0.3");
-    assert(built() && vertexCount() == 13, format("rig: the panel edit after the undo did not open an operation "
-        ~ "(F8t): built %s, %d v", built(), vertexCount()));
+    assert(!built() && vertexCount() == 11 && abs(offset().x - 0.3) <= 1e-6,
+        format("boundary (not captured): the panel edit after the undo opened an operation: built %s, %d v, "
+             ~ "offsetX %s", built(), vertexCount(), offset().x));
     ctrlShiftZ();
-    assert(abs(offset().x - 0.3) <= 1e-6, "boundary (not captured): a redo replaced the operation a panel edit "
-        ~ "opened after the undo: offsetX " ~ offset().x.to!string);
+    assert(built() && vertexCount() == 13 && dist(offset(), kO1) <= 1e-4,
+        format("boundary (not captured): the redo after a panel write did not bring the undone operation back: "
+             ~ "built %s, %d v, offset %s", built(), vertexCount(), offset()));
     cmd("tool.set edge.extend off");
 }
 
@@ -729,7 +738,8 @@ unittest { // (uz) law F-step (gap 240) (motionless_first_click_then_haul_undo_w
     assert(zero(offset()), "Ctrl+Z #1 after a motionless first click: panel " ~ offset().to!string ~ ", expected 0");
     assert(extendActive(), "Ctrl+Z #1 after a motionless first click ended the tool (gap 240)");
     ctrlZ();
-    assert(vertexCount() == 9 && undoLen() == h0, format("Ctrl+Z #2 did not pop the motionless first click (gap 240): "
+    assert(vertexCount() == 9 && undoLen() == h0 - kActivationRow, format("Ctrl+Z #2 did not pop the motionless "
+        ~ "first click with its activation row (gap 240/218): "
         ~ "%d v, %d records", vertexCount(), undoLen() - h0));
     assert(!extendActive(), "Ctrl+Z #2 popped the first click but kept the tool (reference: the click goes with "
         ~ "the activation, gap 240/218)");

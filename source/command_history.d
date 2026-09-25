@@ -1798,6 +1798,16 @@ final class CommandHistory {
         return true;
     }
 
+    /// Tag a record on the undo stack with the tool session that wrote it
+    /// (slice M4) — by IDENTITY, the entry the session's close observed, so a
+    /// stale close can never tag some other record. Returns whether it did.
+    bool markEntrySession(const Command expect, ulong token) nothrow @nogc {
+        if (token == 0 || expect is null) return false;
+        foreach_reverse (ref e; undoStack)
+            if (e.cmd is expect) { e.cmd.markSession(token); return true; }
+        return false;
+    }
+
     // ----- inspection (Edit menu, /api/history) ---------------------------
 
     // Composed format: "Label  args" (two spaces) for non-empty args,

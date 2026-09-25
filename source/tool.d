@@ -176,7 +176,7 @@ private enum string gestureCarrierRefusal(F) =
 // navigation, refire, live re-eval, lifecycle-undo emit) lives in
 // edit_session.d: EditSession is the sole driver, and the narrow per-tool
 // opt-ins are its optional capability interfaces (LiveEvalClient,
-// RefireClient, KeepAliveOnCancel, SessionStepUndo), discovered by cast on the
+// RefireClient, FrameParameterEvalClient, SlotActivationClient), discovered by cast on the
 // active tool — or DATA the tool declares in its ToolSessionPolicy below.
 // ---------------------------------------------------------------------------
 
@@ -229,7 +229,7 @@ struct AttrImage {
 /// no-ops and its own closes run directly.
 struct ToolSessionLink {
     void delegate(Tool, PressKind) stepBegins;   // a gesture step starts (before it acts)
-    void delegate(Tool) stepEnds;                // ... and completes
+    void delegate(Tool, bool ifChanged) stepEnds; // ... and completes (a step only if the image changed, when asked)
     void delegate(Tool) operationArmed;          // the tool armed its operation (OpensAt.arm)
     void delegate(Tool) operationEnded;          // the tool's operation ended by itself
     bool delegate(Tool, bool commit) closeOwn;   // Enter (commit) / RMB (discard)
@@ -279,6 +279,16 @@ struct ToolSessionPolicy {
     /// once); every other tool keeps today's `tool.doApply`. Its long-term
     /// home is the single command-meets-tool rule of slice M4.
     bool headlessReplacesWindow;
+    /// H1 (gap 218, slice M4): the record that CLOSES the window's first
+    /// operation carries the activation row that group joined — undoing it pops
+    /// both as one step and ends the tool (Edge Extend, captured). `false`: the
+    /// record is its own step (the other families; not captured for them).
+    bool recordCarriesActivation;
+    /// Whether an undo that cancels the open edit (the whole-edit cancel of
+    /// `EditSession.navigate`, for a tool whose session does not own its
+    /// steps) leaves the tool armed (tasks 0400/0430: the create family and
+    /// Mirror; slice M4 moved it here from the `KeepAliveOnCancel` interface).
+    bool keepAliveOnCancel;
 }
 
 class Tool : ParamProvider {
@@ -639,14 +649,11 @@ public:
     // this is not uniformly "reuse the RMB handler".
     void cancelUncommittedEdit() {}
 
-    // The cancel-survival shape (task 0400 — survivesEditCancel) and the
-    // mid-session per-step undo peel (task 0321 — tryUndoStepInSession)
-    // moved to the optional KeepAliveOnCancel / SessionStepUndo interfaces
-    // in edit_session.d (task 0428). A tool not implementing them keeps the
-    // former base defaults (cancel-then-drop; no per-step peel) — but note
-    // the cancel-then-drop default no longer covers the create family:
-    // PrimitiveCreateTool and BoxTool implement KeepAliveOnCancel (task
-    // 0430). The redo direction never cancels an open edit for ANY tool: a
+    // The cancel-survival shape (task 0400) is the policy datum
+    // `keepAliveOnCancel` (slice M4; the create family and Mirror declare it),
+    // and the mid-session per-step undo peel (task 0321) is the session's own
+    // gesture steps (`sessionSteps`, slices M3/M4). The redo direction never
+    // cancels an open edit for ANY tool: a
     // standing preview's write-points invalidate the redo timeline instead
     // (task 0429), so the former redo-cancel hook is gone.
 
@@ -1048,8 +1055,11 @@ public:
         if (sessionLink_.stepBegins !is null) sessionLink_.stepBegins(this, kind);
     }
     /// The gesture step started by the last `sessionStepBegins` completed.
-    protected final void sessionStepEnds() {
-        if (sessionLink_.stepEnds !is null) sessionLink_.stepEnds(this);
+    /// `ifChanged`: inside an open window it is a step only if it changed the
+    /// attribute image (a gesture that moved nothing; the window's opening
+    /// gesture is its first group regardless).
+    protected final void sessionStepEnds(bool ifChanged = false) {
+        if (sessionLink_.stepEnds !is null) sessionLink_.stepEnds(this, ifChanged);
     }
     /// The tool armed its operation (the `OpensAt.arm` moment).
     protected final void sessionOperationArmed() {
@@ -1061,8 +1071,9 @@ public:
     protected final void sessionOperationEnded() {
         if (sessionLink_.operationEnded !is null) sessionLink_.operationEnded(this);
     }
-    /// The tool closes its own operation — Enter commits (`commitOperation`),
-    /// an RMB cancel discards (`cancelUncommittedEdit`) — through the session,
+    /// The tool closes its own operation — Enter or a press that opens the next
+    /// operation commits (`commitOperation`), an RMB cancel discards
+    /// (`cancelUncommittedEdit`) — through the session,
     /// which ends its account of the operation with it. Unbound: directly.
     protected final bool closeOwnOperation(bool commit) {
         if (sessionLink_.closeOwn !is null) return sessionLink_.closeOwn(this, commit);
@@ -1134,7 +1145,8 @@ static assert(!__traits(compiles, {
 // all three phases.
 //
 // Precedent: the session capabilities in `edit_session.d`
-// (LiveEvalClient / RefireClient / KeepAliveOnCancel / SessionStepUndo),
+// (LiveEvalClient / RefireClient / FrameParameterEvalClient /
+// SlotActivationClient),
 // all discovered the same way.
 // ---------------------------------------------------------------------------
 interface InputBindable {

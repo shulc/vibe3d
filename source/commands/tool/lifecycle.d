@@ -4,7 +4,6 @@ import command;
 import mesh;
 import view;
 import editmode;
-import std.json : JSONType, JSONValue;
 
 // ---------------------------------------------------------------------------
 // ToolActivationCommand — tool.activate
@@ -28,9 +27,6 @@ interface ToolArmLifecyclePolicy {
 class ToolActivationCommand : Command, ToolArmLifecyclePolicy {
     private string armedId_;
     private string previousId_;
-    // A switch-restorable predecessor's parameter values (task 7118, gap
-    // 221): undo re-arms it through `onRestore` with them.
-    private JSONValue previousArgs_;
     // Slice M3 — DATA the arm decided, replacing the id list this row used to
     // read. `sessionSteps_`: the armed tool's session owns its gesture steps
     // (`ToolSessionPolicy.sessionSteps`). `joinsFirstGroup_`: the arm came
@@ -39,22 +35,31 @@ class ToolActivationCommand : Command, ToolArmLifecyclePolicy {
     // script-door row is its own undo step.
     private bool sessionSteps_;
     private bool joinsFirstGroup_;
+    // Slice M4 — `recordCarries_`: the armed tool's policy says the record
+    // that closes its window's first operation carries this row (gap 218).
+    // The row's own session token is `Command.sessionToken` (the arm's);
+    // `previousToken_` is the predecessor's, which a restore hands back to it
+    // so the restored instance continues ITS session (gap 221/241).
+    private bool recordCarries_;
+    private ulong previousToken_;
 
     // Hooks wired by app.d after construction.
     void delegate(string) onActivate;
     void delegate() onDeactivate;
-    void delegate(string, JSONValue) onRestore;
 
     this(Mesh* mesh, ref View view, EditMode editMode,
          string armedId, string previousId,
-         JSONValue previousArgs = JSONValue.init,
-         bool sessionSteps = false, bool joinsFirstGroup = false) {
+         bool sessionSteps = false, bool joinsFirstGroup = false,
+         bool recordCarries = false, ulong sessionToken = 0,
+         ulong previousToken = 0) {
         super(mesh, view, editMode);
         armedId_ = armedId.idup;
         previousId_ = previousId.idup;
-        previousArgs_ = previousArgs;
         sessionSteps_ = sessionSteps;
         joinsFirstGroup_ = joinsFirstGroup;
+        recordCarries_ = recordCarries;
+        previousToken_ = previousToken;
+        markSession(sessionToken);
         // The whole undo image is the predecessor identity. It exists from the
         // constructor, so the flag is raised there.
         noteUndoRecorded();
@@ -75,12 +80,13 @@ class ToolActivationCommand : Command, ToolArmLifecyclePolicy {
         return true;
     }
 
-    // Undo restores the classified predecessor, or leaves no active family.
+    // Undo restores the predecessor (whichever tool it was: slice M4, the
+    // C-M4-token switch twin), or leaves no active family. The predecessor
+    // re-arms through the replay arm, which recalls the values its drop stored
+    // (the per-preset cache, slice M5); the session hands it its token.
     protected override void revertImpl() {
         if (previousId_.length == 0) {
             if (onDeactivate !is null) onDeactivate();
-        } else if (onRestore !is null && previousArgs_.type == JSONType.object) {
-            onRestore(previousId_, previousArgs_);
         } else if (onActivate !is null) {
             onActivate(previousId_);
         }
@@ -92,6 +98,11 @@ class ToolActivationCommand : Command, ToolArmLifecyclePolicy {
         return previousId_.length == 0 && sessionSteps_;
     }
     bool joinsFirstGroup() const { return joinsFirstGroup_; }
+    /// Whether the record closing this session's first operation is undone
+    /// together with this row (slice M4, gap 218): the arm's policy, and only
+    /// for a row that joined the first group (the key/UI door).
+    bool carriesFirstRecord() const { return recordCarries_ && joinsFirstGroup_; }
+    ulong previousToken() const { return previousToken_; }
     /// The mesh the armed tool edits (the first-gesture replay checks it is
     /// the same mesh, unchanged, before re-seating the gesture).
     inout(Mesh)* armedMesh() inout { return mesh; }

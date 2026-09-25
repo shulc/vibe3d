@@ -120,7 +120,9 @@ unittest { // (S) R after the release switches to scale, extension kept
 /// W/X/Y rig: symmetry off, the selection a RECORDED edit, the tool armed.
 size_t[] recordedRig() {
     auto sel0 = rigNoArm(kPlusRidge, false, 1.0, 0, true);
-    cmd("tool.set edge.extend on");
+    // The UI door, as the key: the walk below is the KEY-armed law (gap 218);
+    // a script arm keeps its row as its own step (gap 215, C-H1-door).
+    cmdUi("tool.set edge.extend on");
     settle(250);
     return sel0;
 }
@@ -164,8 +166,9 @@ unittest { // (W) the undo walk after R (switch_key_undo_walk_no_read)
     auto sel0 = recordedRig();
     auto w = switchAndUndoOnce();
     ctrlZ();
-    assert(vertexCount() == 9 && undoLen() == w.h0,
-        format("the committed run is not one undo step (gap 215): %d v, %d records", vertexCount(), undoLen() - w.h0));
+    assert(vertexCount() == 9 && undoLen() == w.h0 - kActivationRow,
+        format("the committed run and its activation row are not one undo step (gap 215/218): %d v, %d records",
+               vertexCount(), undoLen() - w.h0));
     assert(toolId() != "edgeExtend",
         "undo of the committed run did not end the tool (reference: the activation is undone with the run, gap 218)");
     ctrlZ();
@@ -203,7 +206,11 @@ unittest { // (Y) R-fresh-noact (switch_undo_restore_then_haul)
         ~ (undoLen() - w.h0).to!string ~ " records over the run's H0");
 }
 
-unittest { // (O) only Edge Extend is a restorable predecessor
+unittest { // (O) every tool is a restorable predecessor (slice M4, C-M4-token-switch)
+    // Flipped by slice M4: undoing an activation row restores the tool it
+    // replaced, whichever it was — the captured C-M4-token switch twin brings
+    // Edge Extrude back armed when the row that replaced it is undone. The
+    // cell used to pin "only Edge Extend is restorable" (our gap-221 scope).
     armRig(kPlusRidge, 1.0);
     cmd("tool.set edge.extend off");
     cmd("tool.set edge.extrude on");
@@ -212,7 +219,6 @@ unittest { // (O) only Edge Extend is a restorable predecessor
     settle(250);
     assert(toolId() == "xfrm", "rig: R did not switch Edge Extrude to scale: tool " ~ toolId());
     ctrlZ();
-    // "No tool" reads as an EMPTY /api/tool/state object, i.e. toolId() == "".
-    assert(toolId() == "", "undoing a switch away from a tool without the restorable marker restored it (only "
-        ~ "Edge Extend is restorable, gap 221 scope): tool " ~ toolId());
+    assert(toolId() == "edgeExtrude", "undoing a switch away from Edge Extrude did not restore it (C-M4-token "
+        ~ "switch twin: the predecessor comes back armed): tool " ~ toolId());
 }

@@ -32,7 +32,9 @@ __gshared Offset symO1, symO12;   // (u) control: after the first / the second h
 /// The top rig with the selection recorded, then the tool armed.
 size_t[] recordedRig() {
     auto sel0 = rigNoArm(kPlusRidge, false, 1.0, 0, true);
-    cmd("tool.set edge.extend on");
+    // The UI door, as the key: the law below is the KEY-armed walk (gap 218);
+    // a script arm keeps its row as its own step (gap 215, C-H1-door).
+    cmdUi("tool.set edge.extend on");
     settle(250);
     return sel0;
 }
@@ -61,8 +63,9 @@ unittest { // (u0) no symmetry: two hauls, Ctrl+Z x3 — the red line on HEAD
                                                   offset(), o1));
     allNewX(1 + o1.x, "live undo did not rebuild the ring");
     ctrlZ();
-    assert(vertexCount() == 9 && undoLen() == h0,
-        format("second live undo did not remove the rest of the run: %d v, %d records", vertexCount(), undoLen() - h0));
+    assert(vertexCount() == 9 && undoLen() == h0 - kActivationRow,
+        format("second live undo did not remove the rest of the run with its activation row: %d v, %d records",
+               vertexCount(), undoLen() - h0));
     assert(toolId() != "edgeExtend",
         "second live undo did not end the tool (reference: the activation is undone with the run, gap 218)");
     ctrlZ();

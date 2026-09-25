@@ -33,7 +33,7 @@ module edit_session;
 
 import tool            : Tool, CommandClose, AttrImage, PressKind, OpensAt,
                          ToolSessionLink;
-import command         : Command, ToolRunRecord;
+import command         : Command;
 import std.json        : JSONValue;
 import command_history : CommandHistory, UndoState;
 import held_gesture_buttons : g_heldGestureButtons;
@@ -206,79 +206,6 @@ interface RefireClient {
 }
 
 // ---------------------------------------------------------------------------
-// KeepAliveOnCancel — optional capability (task 0400's interface, renamed in
-// task 0430 when the second implementor family joined): cancelling the
-// tool's open uncommitted edit from history navigation (navigate()'s
-// whole-edit-cancel branch) does not end the tool's life. Two implementor
-// families (the Edge Slice standing preview left in slice M3: a tool whose
-// session owns its steps never reaches that branch while its operation is
-// live — the session answers its undo first):
-//   * the create family (the PrimitiveCreateTool hierarchy + BoxTool —
-//     task 0430, capture-measured): a cancelled create gesture leaves the
-//     tool armed for a fresh gesture;
-//   * Edge Extend while its live operation was opened by apply-and-continue
-//     (task 7118, gap 225).
-// One predicate: whether a cancel ends the tool's session. (The former
-// second predicate — task 0232's redo-cancel hook, "a redo while armed
-// cancels the preview first" — was removed by task 0429: a standing
-// preview's writes now invalidate the redo timeline at their own
-// write-points (CommandHistory.invalidateRedo), so a redo pressed while a
-// preview is up finds an empty stack and is a no-op by construction —
-// reference-captured semantics; no cancel-press exists in that direction
-// at all.)
-// ---------------------------------------------------------------------------
-interface KeepAliveOnCancel {
-    // Task 0400: whether cancelling this tool's open uncommitted edit (via
-    // cancelUncommittedEdit(), reached from navigate()'s whole-edit-cancel
-    // branch) leaves the tool with a still-meaningful session to stay in,
-    // versus nothing further to do. The reference editor's interactive
-    // undo NEVER drops an active interactive tool — measured for the slice
-    // standing previews (task 0400) and for the create family (task 0428
-    // capture Q2; adopted by 0430). For a tool implementing neither shape
-    // (e.g. the chain creators pen / arc / vertex_place — unmeasured),
-    // navigate()'s default of cancel-then-drop mirrors Esc and stays the
-    // conservative pre-0400 behavior. Implementors answer true: for them a
-    // cancelled preview / create gesture is a normal step WITHIN an ongoing
-    // session, not the end of the tool's usefulness.
-    bool survivesEditCancel() const;
-}
-
-// ---------------------------------------------------------------------------
-// SessionStepUndo — optional capability: mid-session per-step undo peel
-// (task 0321). Implementors: grep `SessionStepUndo` in `source/tools` (Edge
-// Extend since slice M3: the three cutting tools' steps are the session's own,
-// `ToolSessionPolicy.sessionSteps`, and M4 moves Extend there too).
-// ---------------------------------------------------------------------------
-interface SessionStepUndo {
-    // navigate() calls this FIRST, before its whole-edit-cancel branch
-    // (invariant C): a tool holding some internal sequence of not-yet-
-    // committed steps can peel exactly ONE of those steps here and report
-    // true, so a real undo keystroke un-does one step at a time instead of
-    // unwinding the whole live edit.
-    bool tryUndoStepInSession();
-}
-
-// SessionLiveRedo — optional capability: a redo keystroke that brings back, LIVE,
-// the open operation the previous undo cancelled (Edge Extend's continued
-// operation; task 7118, gap 232). navigate() asks it before stepping the redo
-// stack; false == the former behaviour.
-interface SessionLiveRedo {
-    bool tryRedoLiveInSession();
-}
-
-// SwitchRestorablePredecessor — undoing the arm row of the tool that replaced
-// this one re-arms this one with these parameter values; it does not make this
-// tool's own arm a history row (task 7118, gap 221). Edge Extend only.
-interface SwitchRestorablePredecessor {
-    JSONValue switchRestoreArgs();
-    // Called on the instance the restore re-armed, right after the arm: the
-    // session it resumes already holds the committed first run, so the next
-    // operation is a continuation (popped alone, the tool stays; task 7118,
-    // gap 241).
-    void resumeAfterSwitchRestore();
-}
-
-// ---------------------------------------------------------------------------
 // EditSession
 // ---------------------------------------------------------------------------
 final class EditSession {
@@ -359,7 +286,7 @@ final class EditSession {
                             "interactive parameter source requires a Tool");
                         const step = tools_.actionStepBegins(t, name);
                         t.notifyInteractiveParamChanged(name);
-                        if (step) tools_.stepEnds(t);
+                        if (step) tools_.stepEnds(t, false);
                         return;
                     }
                     case ParameterChangeSource.ScriptedValue: {
@@ -368,7 +295,7 @@ final class EditSession {
                             "scripted parameter source requires a Tool");
                         const step = tools_.actionStepBegins(t, name);
                         t.onParamChanged(name);
-                        if (step) tools_.stepEnds(t);
+                        if (step) tools_.stepEnds(t, false);
                         return;
                     }
                     case ParameterChangeSource.StageAttribute:
@@ -588,15 +515,14 @@ final class EditSession {
     // load-bearing: it guarantees a tool with an open edit it can't finalize
     // in place (e.g. a transform tool's panel session) is left fully intact
     // for the caller's normal path, never re-armed onto a lost edit.
+    //
+    // Slice M4: the commit is accounted as a close of the tool's operation (its
+    // row carries the session token) and the continuing press opens the next
+    // operation as a Shift press (ToolSession.applyAndContinue).
     bool applyAndContinue() {
         auto t = tool_();
         if (t is null || !t.hasUncommittedEdit()) return false;
-        if (!t.commitUncommittedEdit()) return false;   // opted out ⇒ leave the edit
-        // Re-read (same tolerant discipline as navigate()): the commit ran
-        // main-thread synchronously, so t is stable, but mirror the pattern.
-        auto t2 = tool_();
-        if (t2 !is null) t2.resyncSession();
-        return true;
+        return tools_.applyAndContinue(t);   // opted out ⇒ false, the edit left alone
     }
 
     // The operation's close — ONE routine for every reason (slice M2, H3;
@@ -622,14 +548,20 @@ final class EditSession {
     void finishClose() { tools_.finishClose(); }
 
     // The history row the last close WROTE, or null when it wrote none — the
-    // row slice M4 tags with the predecessor token.
+    // row slice M4 tags with the closing session's token.
     const(Command) lastClosedRow() const { return tools_.closedRow_.get; }
 
     // An arm has published the active tool (slice M3; called by the one arm
     // door, `armPreparedTool`, for every arm transition). The session binds
     // the tool — installs the link it reports its gesture steps through — and
     // starts a fresh account: no operation, no steps, no redo.
-    void noteArm(string id) { tools_.noteArm(id); }
+    void noteArm(string id, ulong token) { tools_.noteArm(id, token); }
+
+    // The session token (slice M4): a fresh one for every arm — the arm's
+    // activation row carries it — and the bound tool's current one, which the
+    // incoming row records as its predecessor's.
+    ulong issueToken() { return tools_.issueToken(); }
+    ulong currentToken() { return tools_.currentToken(); }
 
     // Test introspection (`/api/tool/state`'s `session` member): the operation
     // of a tool whose session owns its steps — `live`, `steps`, `redo` — and
@@ -677,6 +609,13 @@ private struct ToolSession {
     private Rebindable!(const Command) topBefore_;
     private Rebindable!(const Command) closedRow_;
     private bool pendingMark_;
+    // The session token (slice M4): issued at every arm (`issueToken`), held
+    // by the bound tool's session (`token_`) and written onto the row each
+    // close of THAT session writes (`closingToken_`, taken when the close
+    // began — a switch's row is marked after the incoming tool was bound).
+    private static ulong lastToken_;
+    private ulong token_;
+    private ulong closingToken_;
     private bool pendingResume_;
     private Tool resumeTool_;
 
@@ -775,23 +714,6 @@ private struct ToolSession {
             t.applyAttrImage(img);
             return true;
         }
-        // Mid-session per-step undo peel (task 0321) — checked BEFORE the
-        // whole-edit cancel branch below, so a tool holding an internal
-        // sequence of not-yet-committed steps can peel exactly one step per
-        // undo keystroke instead of unwinding everything. Absence of the
-        // SessionStepUndo interface == the former base-Tool default (false) ⇒
-        // every other tool is byte-identical.
-        {
-            auto su = cast(SessionStepUndo) tool_();
-            if (su !is null && su.tryUndoStepInSession()) {
-                // The peel that removes the session's LAST step ends the tool
-                // (task 7112). RE-READ, as below — the peel may itself have
-                // changed the active tool.
-                auto tp = tool_();
-                if (tp !is null && !tp.hasUncommittedEdit()) dropTool_();
-                return true;
-            }
-        }
         auto t = tool_();
         if (t !is null && t.hasUncommittedEdit()) {
             t.cancelUncommittedEdit();
@@ -806,41 +728,40 @@ private struct ToolSession {
             // undo steps it again; a tool that fully cancelled falls
             // through to the drop branch. (Codifying the stronger claim as
             // an assert aborted the editor on the first box-gesture Ctrl+Z.)
-            // Task 0400 + 0430: a KeepAliveOnCancel tool
-            // (survivesEditCancel()==true — the create family
-            // PrimitiveCreateTool/BoxTool, and Edge Extend in an
-            // apply-and-continue operation, task 7118) is never dropped by this
-            // cancel. Every other tool keeps the pre-0400 cancel-then-drop
-            // behavior. RE-READ, not the `t` cached above — see the contract
-            // above.
-            auto t2  = tool_();
-            auto ka2 = cast(KeepAliveOnCancel) t2;
+            // Tasks 0400 + 0430: a tool whose policy says `keepAliveOnCancel`
+            // (the create family, Mirror) is never dropped by this cancel;
+            // every other tool keeps the pre-0400 cancel-then-drop behavior.
+            // RE-READ, not the `t` cached above — see the contract above.
+            auto t2 = tool_();
             if (t2 !is null && !t2.hasUncommittedEdit()
-                && !(ka2 !is null && ka2.survivesEditCancel())) {
+                && !t2.sessionPolicy().keepAliveOnCancel) {
                 dropTool_();
             }
             return true;
         }
-        // A record that is its tool's first run ends that tool when undone
-        // (task 7118, gap 218). Read BEFORE the step moves it.
-        const(ToolRunRecord) runRec = history_.undoEntries().length
-            ? cast(const ToolRunRecord) history_.undoEntries()[$ - 1].cmd : null;
+        // H1 + the session token (slice M4, gap 218): the record that closed
+        // THIS session's first operation is undone together with the
+        // activation row it joined, and the row's revert ends the tool.
+        // Identity, read BEFORE the step moves the stack: the record's token is
+        // the active session's and the row below carries the same token.
+        const bool pair = recordCarriesActivation_();
+        const Command last = undoEntryAt_(pair ? 1 : 0);
         bool ok = history_.undo();
+        if (ok && pair) ok = history_.undo();
         if (ok) {
             // Only AFTER a successful stack step, with no open edit remaining:
             // re-sync the still-live tool's baseline to the now-current mesh.
             auto t3 = tool_();
             if (t3 !is null) t3.resyncSession();
-            if (runRec !is null && runRec.endsToolOnUndo(t3)
-                && !t3.hasUncommittedEdit())
-                dropTool_();
+            adoptPredecessorToken_(last);
         }
         return ok;
     }
 
     bool redo() {
         // H4: a step an undo popped comes back LIVE — the window re-opens if
-        // that undo had closed it (the first group of a script-door arm).
+        // that undo had closed it (the first group of a script-door arm, or a
+        // later operation's first group: rule K).
         {
             auto t = tool_();
             if (!live_ && redo_.length && undoTop_() !is stashAt_.get)
@@ -856,20 +777,27 @@ private struct ToolSession {
                 return true;
             }
         }
-        // A redo that brings the cancelled open operation back LIVE (task
-        // 7118, gap 232). replay_ is always empty here: only an undo stashes,
-        // and every undo clears it first.
-        if (auto lr = cast(SessionLiveRedo) tool_())
-            if (lr.tryRedoLiveInSession()) return true;
         // Replay only when the redo head IS the activation row this session
         // popped (identity, read before the redo moves it; see undoFirstGroup_).
         bool replay;
+        bool pair;
+        import commands.tool.lifecycle : ToolActivationCommand;
+        Rebindable!(const ToolActivationCommand) act;
         {
             const re = history_.redoEntries();
             replay = !replay_.empty && re.length > 0
                 && re[0].cmd is replayFor_.get;
+            act = re.length ? cast(const ToolActivationCommand) re[0].cmd : null;
+            // The inverse of the undo pair: the row, then the record that
+            // carries it (same token), in one redo step (slice M4).
+            pair = act !is null && act.carriesFirstRecord() && re.length > 1
+                && act.sessionToken() != 0
+                && re[1].cmd.sessionToken() == act.sessionToken();
         }
         bool ok = history_.redo();
+        // The redo that re-armed a tool re-armed the ROW's session: its token.
+        if (ok && act !is null) adoptToken_(act.armedId, act.sessionToken());
+        if (ok && pair) history_.redo();
         if (ok) {
             // Only AFTER a successful stack step: re-sync the still-live
             // tool's baseline to the now-current mesh.
@@ -892,6 +820,7 @@ private struct ToolSession {
         auto t = tool_();
         if (t is null) { endOperation_(); return CloseOutcome(false, false); }
         topBefore_ = undoTop_();
+        closingToken_ = currentToken();
         if (r != CloseReason.command && r != CloseReason.enter) {
             // The door commits (or discards, or has nothing left); the
             // session only accounts for the row it may write, and the
@@ -943,10 +872,20 @@ private struct ToolSession {
 
     // ----- the bound tool's reports (slice M3) ------------------------------
 
-    void noteArm(string id) {
+    ulong issueToken() { return ++lastToken_; }
+
+    /// The token of the bound tool's session; 0 when the active tool is not
+    /// the one the last arm bound (or there is none).
+    ulong currentToken() {
+        auto t = tool_();
+        return t !is null && t is bound_ ? token_ : 0;
+    }
+
+    void noteArm(string id, ulong token) {
         auto t = tool_();
         bound_ = t;
         armedId_ = id.idup;
+        token_ = token;
         endOperation_();
         if (t is null) return;
         ToolSessionLink link;
@@ -989,7 +928,7 @@ private struct ToolSession {
         pendingIfChanged_ = false;
     }
 
-    void stepEnds(Tool t) {
+    void stepEnds(Tool t, bool ifChanged) {
         if (!reporting_(t) || !pendingSet_) return;
         pendingSet_ = false;
         if (!live_) {
@@ -1006,7 +945,7 @@ private struct ToolSession {
                     return;
             }
         }
-        if (pendingIfChanged_ && t.captureAttrImage() == pending_) return;
+        if ((pendingIfChanged_ || ifChanged) && t.captureAttrImage() == pending_) return;
         pushStep_(pending_);
         redo_ = null;
     }
@@ -1066,6 +1005,7 @@ private struct ToolSession {
         j["live"]  = JSONValue(live_);
         j["steps"] = JSONValue(cast(long) steps_.length);
         j["redo"]  = JSONValue(cast(long) redo_.length);
+        j["token"] = JSONValue(token_);
         return j;
     }
 
@@ -1146,9 +1086,87 @@ private struct ToolSession {
         return ue.length ? ue[$ - 1].cmd : null;
     }
 
+    // The row the close wrote: the FIRST entry above the undo top the close
+    // began at — by identity, never the depth, which stops moving at the
+    // history cap. Not the top: after a switch the incoming tool's activation
+    // row lands above the row the outgoing door wrote. The row carries the
+    // session that wrote it (slice M4, R4.2 N6); the same test for every
+    // reason, so a close that wrote nothing marks nothing (opponent R3 C2).
     private void markClosedRow_() {
-        const top = undoTop_();
-        closedRow_ = (top !is null && top !is topBefore_.get) ? top : null;
+        import commands.tool.lifecycle : ToolActivationCommand;
+        closedRow_ = null;
+        const ue = history_.undoEntries();
+        size_t first = 0;
+        if (topBefore_.get !is null) {
+            bool found;
+            foreach_reverse (i, ref e; ue)
+                if (e.cmd is topBefore_.get) { first = i + 1; found = true; break; }
+            if (!found) return;   // trimmed under the cap: nothing is known
+        }
+        if (first >= ue.length) return;
+        const row = ue[first].cmd;
+        if (cast(const ToolActivationCommand) row !is null) return;
+        closedRow_ = row;
+        history_.markEntrySession(row, closingToken_);
+    }
+
+    // Apply-and-continue (Shift+click, task 0461) through the session: the
+    // tool's in-place commit is a close of its operation — the row it writes
+    // carries the session — and the press it continues into opens the next
+    // operation as a SHIFT press (H5: the haul attributes reset; slice M4).
+    // False — and nothing — when the tool opts out of the in-place commit.
+    bool applyAndContinue(Tool t) {
+        pendingMark_ = false;
+        closedRow_ = null;
+        topBefore_ = undoTop_();
+        closingToken_ = currentToken();
+        if (!t.commitUncommittedEdit()) return false;
+        // Re-read (the tolerant discipline of navigate): the commit ran
+        // main-thread synchronously, so t is stable, but mirror the pattern.
+        auto t2 = tool_();
+        if (t2 !is null) t2.resyncSession();
+        if (t2 is t) {
+            if (t is bound_) endOperation_();
+            markClosedRow_();
+            t.openOperation(PressKind.shift, t.captureAttrImage());
+        }
+        return true;
+    }
+
+    // Whether the undo top is the record that closed the ACTIVE session's
+    // first operation, sitting on the activation row it carries (gap 218).
+    private bool recordCarriesActivation_() {
+        import commands.tool.lifecycle : ToolActivationCommand;
+        const ue = history_.undoEntries();
+        if (ue.length < 2) return false;
+        const top = ue[$ - 1].cmd;
+        const tok = top.sessionToken();
+        if (tok == 0 || tok != currentToken()) return false;
+        if (cast(const ToolActivationCommand) top !is null) return false;
+        auto act = cast(const ToolActivationCommand) ue[$ - 2].cmd;
+        return act !is null && act.carriesFirstRecord() && act.sessionToken() == tok;
+    }
+
+    private const(Command) undoEntryAt_(size_t fromTop) {
+        const ue = history_.undoEntries();
+        return ue.length > fromTop ? ue[$ - 1 - fromTop].cmd : null;
+    }
+
+    // restorePredecessor (slice M4): undoing an activation row re-armed its
+    // predecessor (the row's revert, a replay arm); the restored instance
+    // continues the predecessor's SESSION — its token, carried by the row —
+    // so the record that closed that session's first operation still pairs
+    // with its own activation row (gap 221/241).
+    private void adoptPredecessorToken_(const Command undone) {
+        import commands.tool.lifecycle : ToolActivationCommand;
+        auto act = cast(const ToolActivationCommand) undone;
+        if (act is null || act.previousId.length == 0) return;
+        adoptToken_(act.previousId, act.previousToken());
+    }
+
+    private void adoptToken_(string id, ulong token) {
+        auto t = tool_();
+        if (token != 0 && t !is null && t is bound_ && armedId_ == id) token_ = token;
     }
 }
 
