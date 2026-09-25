@@ -350,6 +350,11 @@ struct ToolSessionPolicy {
     Rollover rollovers;
     /// H8 (slice M6): what the tool's transform handle is posed from.
     HandleAnchor handleAnchor;
+    /// The prepared arm restores this tool's complete setting image and the
+    /// tool rebuilds from it once at activation, so the arm replays none of
+    /// its changed sticky names one by one (slice M7, formerly an id test in
+    /// `prepareArm`). Loop Slice only; named arguments are still replayed.
+    bool armRestoresWholeImage;
 }
 
 class Tool : ParamProvider {

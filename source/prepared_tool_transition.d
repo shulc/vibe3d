@@ -209,10 +209,10 @@ PreparedArm prepareArm(ToolFactory factory, string id, Tool retainedOld,
     result.params_ = new PreparedRecordContext(null, observers);
     result.params_.setResourceIdentity(threadIdentity, contextIdentity);
     if (auto paramDoor = cast(PreparedToolParamDoorClient)candidate) {
-        // Loop Slice activation consumes the complete restored setting image
-        // and rebuilds its derived positions once. Replaying every sticky
-        // name would prepare that same full image repeatedly before publish.
-        if (id != "mesh.loopSliceTool")
+        // A tool whose activation consumes the complete restored setting
+        // image and rebuilds once (the policy's `armRestoresWholeImage`: Loop
+        // Slice) would prepare that same full image once per sticky name.
+        if (!candidate.sessionPolicy().armRestoresWholeImage)
             foreach (name; sticky.changedNames)
                 if (!paramDoor.prepareDoorParamChanged(name, result.params_, layer,
                         threadIdentity, contextIdentity))

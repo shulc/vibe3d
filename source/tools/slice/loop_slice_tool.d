@@ -476,7 +476,7 @@ public:
             activationRow: true, commandClose: CommandClose.uiDoor,
             sessionSteps: true, opensAt: OpensAt.arm, noClone: false,
             imageAttrs: ["positions", "current", "count", "seeds", "armedSelFaces"],
-            haulAttrs: ["positions", "current"] };
+            haulAttrs: ["positions", "current"], armRestoresWholeImage: true };
         return policy;
     }
 
