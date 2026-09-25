@@ -122,18 +122,34 @@ private string[] sessionModuleIfaces() {
 }
 
 // Slice M7: the composition pin (plan R2.5 "M7", R2.8 item 1). The session
-// modules declare exactly these interfaces — the two non-session ones and the
-// four clients that are not the tool session; a per-tool session special is
-// expressed as `ToolSessionPolicy` data or a `Tool` operation instead. This
-// stops the BUILD; the census rows below still carry their own signal (a
-// mutation build without this pin reddens `session-capabilities`, card M7).
+// modules — the census's three plus `commands.tool.lifecycle`, whose arm-row
+// interface the history casts to (M7 review) — declare exactly these
+// interfaces: the two non-session ones, the four clients that are not the
+// tool session, and `ToolArmLifecyclePolicy` (one implementor, a candidate for
+// a field of the activation row, card M7 PF-2). A per-tool session special is
+// `ToolSessionPolicy` data or a `Tool` operation instead. This stops the BUILD;
+// the census rows below still carry their own signal over the three modules
+// (a mutation build without this pin reddens `session-capabilities`, card M7).
+// The interfaces the TOOLS implement are pinned by
+// tests/unit/tool_session_policy_test.d (9).
+private string[] pinnedModuleIfaces() {
+    import std.meta : AliasSeq;
+    static import command, edit_session, tool, commands.tool.lifecycle;
+    string[] names;
+    static foreach (M; AliasSeq!(command, edit_session, tool, commands.tool.lifecycle))
+        static foreach (m; __traits(allMembers, M))
+            static if (__traits(compiles, __traits(getMember, M, m)))
+                static if (is(__traits(getMember, M, m) == interface))
+                    names ~= m;
+    return names.sort.array;
+}
 private enum string[] kPinnedSessionModuleIfaces = [
     "FrameParameterEvalClient", "InputBindable", "LiveEvalClient", "RefireClient",
-    "RunMergeable", "SlotActivationClient",
+    "RunMergeable", "SlotActivationClient", "ToolArmLifecyclePolicy",
 ];
-static assert(sessionModuleIfaces() == kPinnedSessionModuleIfaces,
+static assert(pinnedModuleIfaces() == kPinnedSessionModuleIfaces,
     "tool census (M7 pin): the session modules declare interfaces ["
-    ~ sessionModuleIfaces().join(", ") ~ "], pinned [" ~ kPinnedSessionModuleIfaces.join(", ")
+    ~ pinnedModuleIfaces().join(", ") ~ "], pinned [" ~ kPinnedSessionModuleIfaces.join(", ")
     ~ "]: express a per-tool session special on the tool-session model ("
     ~ kSessionPlan ~ ") instead of a new interface");
 

@@ -46,7 +46,7 @@ import tests.unit.census_symbols : blankNonCode;
 
 import core.memory  : GC;
 import std.algorithm : canFind, count, sort;
-import std.array     : array;
+import std.array     : array, join;
 import std.file      : readText;
 import std.format    : format;
 import std.json      : JSONType, parseJSON;
@@ -761,4 +761,101 @@ unittest { // (8)
     auto raw = readText("source/prepared_tool_transition.d");
     foreach (id; ["\"mesh.loopSliceTool\"", "\"mesh.edgeSliceTool\"", "\"mesh.sliceTool\""])
         assert(!raw.canFind(id), "M7 wiring census: prepared_tool_transition.d names " ~ id);
+}
+
+// ---------------------------------------------------------------------------
+// (9) Slice M7 review — the second composition pin: the UNION of interfaces
+// (base classes walked, `InterfacesTuple`) that the concrete tool classes
+// block (8) scans implement, fixed at COMPILE time. A capability interface a
+// tool opts into — wherever it is declared (`prepared_record_context.d`,
+// `toolpipe/*`, …) — stops the build instead of joining the session model
+// silently. The module list is the scan's: the unittest below proves it is
+// exactly the set of `tools.*` modules with a concrete tool class, so a new
+// tool module cannot sit outside the pin.
+// ---------------------------------------------------------------------------
+
+private enum string[] kToolClassModules = [
+    "tools.alignment.array_tool", "tools.alignment.clone_tool",
+    "tools.alignment.linear_align_tool", "tools.alignment.mirror",
+    "tools.alignment.radial_align_tool", "tools.alignment.radial_array_tool",
+    "tools.alignment.radial_sweep_tool", "tools.common.command_wrapper", "tools.create.arc",
+    "tools.create.box", "tools.create.capsule", "tools.create.cone", "tools.create.cylinder",
+    "tools.create.pen", "tools.create.sphere", "tools.create.torus", "tools.create.tube",
+    "tools.create.vertex_place", "tools.deform.bend", "tools.deform.magnet",
+    "tools.deform.push", "tools.deform.smooth_shift_tool", "tools.deform.stroke_extrude_tool",
+    "tools.edit.bridge_tool", "tools.edit.drag_weld", "tools.edit.edge_bevel",
+    "tools.edit.edge_extend", "tools.edit.edge_extrude", "tools.edit.poly_bevel",
+    "tools.edit.poly_extrude", "tools.edit.poly_inset_tool", "tools.edit.reduce",
+    "tools.edit.tack", "tools.edit.topology_pen.tool", "tools.edit.vert_merge_tool",
+    "tools.edit.vertex_bevel_tool", "tools.edit.vertex_extrude_tool",
+    "tools.slice.edge_slice_tool", "tools.slice.edge_slide", "tools.slice.loop_slice_tool",
+    "tools.slice.slice_tool", "tools.transform.move", "tools.transform.rotate",
+    "tools.transform.scale", "tools.transform.transform", "tools.transform.xfrm_transform",
+];
+
+/// [concrete tool class names..., "|", interface names...] of those modules.
+private string[] toolClassComposition() {
+    import std.traits : InterfacesTuple, fullyQualifiedName;
+    string[] classes, ifaces;
+    static foreach (mn; kToolClassModules) {{
+        mixin("static import " ~ mn ~ ";");
+        alias M = mixin(mn);
+        static foreach (m; __traits(allMembers, M)) {{
+            static if (__traits(compiles, __traits(getMember, M, m))) {
+                alias T = __traits(getMember, M, m);
+                static if (is(T == class)) {
+                    static if (is(T : Tool) && !__traits(isAbstractClass, T)) {
+                        classes ~= fullyQualifiedName!T;
+                        static foreach (I; InterfacesTuple!T)
+                            ifaces ~= fullyQualifiedName!I;
+                    }
+                }
+            }
+        }}
+    }}
+    string[] u;
+    foreach (n; ifaces.sort.array) if (u.length == 0 || u[$ - 1] != n) u ~= n;
+    return classes.sort.array ~ ["|"] ~ u;
+}
+
+private enum string[] kPinnedToolInterfaces = [
+    "edit_session.FrameParameterEvalClient", "edit_session.LiveEvalClient",
+    "edit_session.RefireClient", "edit_session.SlotActivationClient", "params.ParamProvider",
+    "prepared_record_context.PreparedToolDoorClient",
+    "prepared_record_context.PreparedToolParamDoorClient",
+    "prepared_record_context.PreparedToolPoseDoorClient", "tool.InputBindable",
+];
+
+private enum string[] kToolComposition = toolClassComposition();
+static assert(kToolComposition.length == 48 + 1 + kPinnedToolInterfaces.length,
+    format("M7 tool pin: %s entries (48 classes + | + %s interfaces measured)",
+           kToolComposition.length, kPinnedToolInterfaces.length));
+static assert(kToolComposition[49 .. $] == kPinnedToolInterfaces,
+    "M7 tool pin: the concrete tool classes implement [" ~ kToolComposition[49 .. $].join(", ")
+    ~ "], pinned [" ~ kPinnedToolInterfaces.join(", ") ~ "]: express a per-tool capability as "
+    ~ "ToolSessionPolicy data or a Tool operation (doc/tool_session_model_plan_2026-09-24.md), "
+    ~ "not a new interface");
+
+unittest { // (9) the compile-time module list IS the runtime scan
+    bool[string] mods, classes, ifaces;
+    foreach (m; ModuleInfo) {
+        if (m is null || !m.name.startsWith("tools.")) continue;
+        foreach (c; m.localClasses) {
+            if (!derivesFromTool(c) || (c.m_flags & TypeInfo_Class.ClassFlags.isAbstract))
+                continue;
+            mods[m.name] = true;
+            classes[c.name] = true;
+            for (auto k = cast(TypeInfo_Class) c; k !is null; k = k.base)
+                foreach (i; k.interfaces) ifaces[i.classinfo.name] = true;
+        }
+    }
+    assert(mods.keys.sort.array == kToolClassModules,
+           format("M7 tool pin: tool modules with a concrete class %s, pinned list %s",
+                  mods.keys.sort, kToolClassModules));
+    assert(classes.keys.sort.array == kToolComposition[0 .. 48],
+           format("M7 tool pin: runtime classes %s, compile-time %s", classes.keys.sort,
+                  kToolComposition[0 .. 48]));
+    assert(ifaces.keys.sort.array == kPinnedToolInterfaces,
+           format("M7 tool pin: runtime interfaces %s, pinned %s", ifaces.keys.sort,
+                  kPinnedToolInterfaces));
 }
