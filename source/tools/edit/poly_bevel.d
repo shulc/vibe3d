@@ -798,7 +798,8 @@ private:
     void commitEdit() {
         if (history is null || gestureFactory is null) return;
         if (!before.filled) return;
-        foreach (i, ref post; operationEnds()) {
+        auto ends = operationEnds();
+        foreach (i, ref post; ends) {
             auto cmd = cast(MeshSessionEdit) gestureFactory();
             if (cmd is null) { noteGestureCarrierMismatch(); return; }
             cmd.setSnapshots(i == 0 ? before : opBases_[i - 1], post, "Poly Bevel");
