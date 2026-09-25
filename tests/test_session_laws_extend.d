@@ -70,6 +70,8 @@ void exitThrough(string door) {
 
 void tokenTwin(string door) {
     immutable Offset o1 = runOne();
+    assert(undoRows().length > 0, format("(%s) the key wrote no activation row (H1, gap 218): "
+                                         ~ "the history is empty after the arm", door));
     immutable long act1 = sessionOf(undoRows()[$ - 1]);
     assert(undoRows()[$ - 1]["label"].str == "Activate Tool" && act1 != 0,
         format("rig (%s): the key did not write a session-bearing activation row: %s", door,
@@ -146,4 +148,20 @@ unittest { // (S) C-H8-sc z2 / gap 225: the whole Shift-opened operation pops to
     assert(abs(o.x) <= 1e-9 && abs(o.y) <= 1e-9 && abs(o.z) <= 1e-9,
         "(S) popping the whole operation did not restore its start image (offsets 0, C-H8-sc z2): "
         ~ o.to!string);
+}
+
+unittest { // (R) boundary, not captured (§8): RMB cancels the live operation and closes it
+    // The cancel drops the built ring and ENDS the operation — through the
+    // session — so the next press opens a new one (offset 0, a zero-length
+    // ring), as after a commit.
+    runOne();
+    click(frontScreen(PX, PY), 3);
+    assert(vertexCount() == 9 && !built() && !runStarted() && toolId() == "edgeExtend",
+        format("(R) RMB did not cancel and close the operation: %d v, built %s, runStarted %s, tool '%s'",
+               vertexCount(), built(), runStarted(), toolId()));
+    click(frontScreen(PX, PY));
+    immutable Offset o = offset();
+    assert(vertexCount() == 11 && abs(o.x) <= 1e-9 && abs(o.y) <= 1e-9 && abs(o.z) <= 1e-9,
+        format("(R) the press after the RMB cancel did not open a new operation from 0: %d v, offset %s",
+               vertexCount(), o));
 }
