@@ -178,6 +178,17 @@ unittest {
 
     // Selection A: vertices 6 and 18, box 1.0 x 1.0 (a fit would give 0.5).
     command("select.element vertex set 6 18");
+
+    // The type switch is where our code used to fit an Element range to the
+    // selection (FalloffStage.autoSizeUntouchedType, gap 284). The reference
+    // fits it on no path.
+    command("tool.pipe.attr falloff type element");
+    immutable double switched = falloffRange();
+    assert(abs(switched - 0.5) > 1e-3,
+        format("the Element falloff range was fitted to the selection at the type switch "
+             ~ "(read %s = the half extent of the 1.0 x 1.0 selection; gap 284)", switched));
+    command("tool.pipe.attr falloff type none");
+
     armElementMove(cell);
     immutable double first = falloffRange();
     assert(abs(first - 0.5) > 1e-3,
