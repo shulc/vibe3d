@@ -299,6 +299,7 @@ unittest {
 
 // ---------------------------------------------------------------------------
 // (j) C-H9-rmb — no tool, a held RIGHT-button lasso: W is dropped, not queued.
+// (l) focus loss (SDL_WINDOWEVENT_FOCUS_LOST) clears the held set.
 // (k) C-H9-orbit — Move armed, a held Alt+LMB orbit: Escape and E are dropped
 //     (the orbit runs on); after the release both act.
 // ---------------------------------------------------------------------------
@@ -316,6 +317,23 @@ unittest { // (j)
     assert(slTool() == "", "(j) C-H9-rmb: the dropped W was queued and ran at the release: " ~ slTool());
     tap(K_w, K_w_SCAN, 0, "(j) W after the release");
     assert(slTool() != "", "(j) positive control: W after the release armed nothing");
+    slLine("tool.set move off");
+}
+
+unittest { // (l) focus loss clears the held set: a release the window never sees
+    resetCube();
+    assert(slTool() == "", "(l) floor: a tool is armed after the reset: " ~ slTool());
+    auto cam = fetchCamera();
+    const x0 = cam.vpX + 20, y0 = cam.vpY + 20;
+    slPlay(slMotion(10, x0, y0, 0) ~ "\n" ~ slButton(20, true, 3, x0, y0) ~ "\n"
+           ~ slMotion(40, x0 + 30, y0 + 10, 4), "(l) RMB press + held lasso");
+    tap(K_w, K_w_SCAN, 0, "(l) W while held");
+    assert(slTool() == "", "(l) floor: the held RMB did not lock the keys: " ~ slTool());
+    slPlay(`{"t":20.0,"type":"SDL_WINDOWEVENT","sub":13}`, "(l) window focus lost");
+    tap(K_w, K_w_SCAN, 0, "(l) W after the focus loss, button never released");
+    assert(slTool() != "",
+           "(l) focus loss did not clear the held buttons: W after it armed nothing");
+    slPlay(slButton(20, false, 3, x0 + 30, y0 + 10), "(l) stray RMB release");
     slLine("tool.set move off");
 }
 

@@ -35,6 +35,7 @@ import tool            : Tool;
 import command         : Command, ToolRunRecord;
 import std.json        : JSONValue;
 import command_history : CommandHistory;
+import held_gesture_buttons : g_heldGestureButtons;
 import std.typecons    : Rebindable;
 import params          : ParamProvider;
 import toolpipe.stage  : Stage;
@@ -632,6 +633,11 @@ final class EditSession {
     //
     // Returns true if anything happened (edit cancelled OR stack moved).
     bool navigate(bool isUndo) {
+        // No history step while a mouse button is held (slice M1a): the same
+        // held-button rule the key router applies, here for every door that
+        // reaches this chokepoint (keyboard, panel Undo/Redo, History rows).
+        // Refused, not queued; nothing happened, so false.
+        if (g_heldGestureButtons.any) return false;
         if (isUndo) {
             // A held first gesture is valid only for the NEXT navigate step
             // after the undo that ended its session; a raw redo in between

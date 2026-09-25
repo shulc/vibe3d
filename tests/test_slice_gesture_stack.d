@@ -202,6 +202,11 @@ unittest {
     assert(mid.canon != M2.canon,
            "slice floor (block D): the in-flight gesture 3 did not move the cut: " ~ which(mid));
     ctrlShiftZ("block D Ctrl+Shift+Z mid-drag");
+    const rz = slMesh();
+    assert(slTool() == "slice" && rz.canon == mid.canon && slHistoryLen() == Ha,
+           format("ctrl+shift+z mid-drag reached the Slice session (it must be dropped): "
+                  ~ "tool '%s', mesh %s (expected the in-flight cut), history %d",
+                  slTool(), which(rz), slHistoryLen()));
     ctrlZ("block D Ctrl+Z mid-drag");
     const d = slMesh();
     assert(slTool() == "slice" && d.canon == mid.canon && slHistoryLen() == Ha,

@@ -8,7 +8,7 @@ module tests.unit.held_gesture_buttons_test;
 import std.algorithm.searching : canFind, startsWith;
 import std.file : readText;
 import std.string : indexOf, strip;
-import held_gesture_buttons : HeldGestureButtons;
+import held_gesture_buttons : HeldGestureButtons, g_heldGestureButtons;
 import tests.unit.census_symbols : blankNonCode;
 
 unittest { // u1: per-button release — the set empties only when every button is up
@@ -75,6 +75,9 @@ private string firstStatement(string body_) {
 }
 
 unittest { // u3: the router's order and its gates, read from production text
+    // Deliberately a SOURCE-TEXT check: under --test the viewport swallow gate
+    // is bypassed (`!app.testMode`), so no scenario log can witness that the
+    // release clears its bit above it. This cell is the only witness of X1.
     auto code = blankNonCode(readText("source/input_router.d"));
 
     // The release clears its bit ABOVE everything that may swallow it.
@@ -122,4 +125,46 @@ unittest { // u4: the automation reset clears the SAME set, wired in production
     assert(bodyAt(mod, "void clearHeldGestureButtonsForAutomation(")
                .canFind("g_heldGestureButtons.clear();"),
            "M1a u4: the automation hook does not clear the router's set");
+}
+
+unittest { // u5: the history chokepoint refuses while a button is held
+    // Every non-key door (panel Undo/Redo, History rows) reaches the same
+    // EditSession.navigate as the keyboard; a left click on the panel during
+    // a middle-button drag must not cancel the live edit under the drag.
+    import command_history : CommandHistory;
+    import edit_session : EditSession;
+    import tool : Tool;
+    final class LiveEditTool : Tool {
+        size_t cancels;
+        override bool hasUncommittedEdit() const { return cancels == 0; }
+        override void cancelUncommittedEdit() { ++cancels; }
+    }
+    auto live = new LiveEditTool();
+    Tool held = live;
+    auto es = new EditSession(() => held, new CommandHistory(), () {});
+    scope (exit) g_heldGestureButtons.clear();
+
+    g_heldGestureButtons.clear();
+    g_heldGestureButtons.press(2);                // middle button held
+    assert(g_heldGestureButtons.any, "M1a u5 floor: the middle button did not register");
+    assert(!es.navigate(true) && live.cancels == 0,
+           "M1a u5: navigate(undo) cancelled the live edit while a button was held");
+    assert(!es.navigate(false) && live.cancels == 0,
+           "M1a u5: navigate(redo) acted while a button was held");
+    g_heldGestureButtons.release(2);
+    assert(es.navigate(true) && live.cancels == 1,
+           "M1a u5 positive control: navigate(undo) after the release did not cancel the edit");
+
+    // The doors: the panel rows and the keyboard all reach this navigate.
+    auto app = blankNonCode(readText("source/app.d"));
+    assert(bodyAt(app, "bool navHistory(bool isUndo)").canFind("session.navigate(isUndo)"),
+           "M1a u5: app.d navHistory no longer ends at EditSession.navigate");
+    auto menu = readText("source/ui/action_menu.d");   // string literals matter here
+    assert(menu.canFind(`if (id == "history.undo") { nav_(true); return; }`)
+           && menu.canFind(`if (id == "history.redo") { nav_(false); return; }`),
+           "M1a u5: the panel Undo/Redo rows no longer route through the navigator");
+    auto es_ = blankNonCode(readText("source/edit_session.d"));
+    assert(bodyAt(es_, "bool navigate(bool isUndo)").strip[1 .. $].strip
+               .startsWith("if (g_heldGestureButtons.any) return false;"),
+           "M1a u5: navigate does not start with the held-button refusal");
 }
