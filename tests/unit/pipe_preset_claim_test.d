@@ -469,7 +469,9 @@ unittest { // W-2a/W-2b: the mutable writer surface is an exact ledger.
         "commands/actr.d 2\n" ~
         "commands/constrain/toggle.d 1\n" ~
         "commands/falloff.d 4\n" ~
-        "commands/tool/pipe.d 2\n" ~
+        // pipe.d 3: slice M7 adds the no-tool centre `none` unlock (gap 384),
+        // after its noteUserStageChoice (W-1 order above).
+        "commands/tool/pipe.d 3\n" ~
         "prepared_pipe_activation.d 1\n" ~
         "prepared_topology_pen_activation.d 1\n" ~
         "toolpipe/stages/actcenter.d 13\n" ~
