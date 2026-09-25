@@ -132,12 +132,13 @@ unittest { // u5: the history chokepoint refuses while a button is held
     // EditSession.navigate as the keyboard; a left click on the panel during
     // a middle-button drag must not cancel the live edit under the drag.
     import command_history : CommandHistory;
-    import edit_session : EditSession;
+    import edit_session : EditSession, SessionLiveRedo;
     import tool : Tool;
-    final class LiveEditTool : Tool {
-        size_t cancels;
+    final class LiveEditTool : Tool, SessionLiveRedo {
+        size_t cancels, redos;
         override bool hasUncommittedEdit() const { return cancels == 0; }
         override void cancelUncommittedEdit() { ++cancels; }
+        bool tryRedoLiveInSession() { ++redos; return true; }
     }
     auto live = new LiveEditTool();
     Tool held = live;
@@ -149,9 +150,11 @@ unittest { // u5: the history chokepoint refuses while a button is held
     assert(g_heldGestureButtons.any, "M1a u5 floor: the middle button did not register");
     assert(!es.navigate(true) && live.cancels == 0,
            "M1a u5: navigate(undo) cancelled the live edit while a button was held");
-    assert(!es.navigate(false) && live.cancels == 0,
+    assert(!es.navigate(false) && live.redos == 0,
            "M1a u5: navigate(redo) acted while a button was held");
     g_heldGestureButtons.release(2);
+    assert(es.navigate(false) && live.redos == 1,
+           "M1a u5 positive control: navigate(redo) after the release did not reach the tool");
     assert(es.navigate(true) && live.cancels == 1,
            "M1a u5 positive control: navigate(undo) after the release did not cancel the edit");
 
