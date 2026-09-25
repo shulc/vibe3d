@@ -316,6 +316,22 @@ unittest {
     assert(log == ["apply"] && drops == 1 && held is null,
            format("M2 funnel: the script door is no longer raw: %s, drops %s", log, drops));
 
+    // An `allDoors` tool (the transform) on the SCRIPT door: only the 6250
+    // command closes it there; any other command keeps the old drop rule.
+    log = null;
+    drops = 0;
+    auto xf = new CountingTool(CommandClose.allDoors, false, &log);
+    held = xf;
+    assert(ex.applyOrRefire(new StubCommand("select.invert", CmdFlags.Model), RecordMode.Record, null));
+    assert(xf.commitCalls == 0 && drops == 1 && held is null,
+           format("M2 funnel: a script command other than the 6250 one closed an `allDoors` tool: "
+                  ~ "commits %s, drops %s", xf.commitCalls, drops));
+    held = xf;
+    drops = 0;
+    assert(ex.applyOrRefire(new StubCommand("mesh.subpatch_toggle", CmdFlags.Model), RecordMode.Record, null));
+    assert(xf.commitCalls == 1 && drops == 0 && held is xf,
+           "M2 funnel: the 6250 command no longer closes an `allDoors` tool on the script door");
+
     // A nested command inside the outer command's apply: the nested frame
     // must not run the outer close's resume before the outer command records.
     log = null;
