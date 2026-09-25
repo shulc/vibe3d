@@ -431,6 +431,13 @@ SH";
     assert(nativeThreadEdges.length > 0,
         "W16-A native positive control has no project module with a direct core.thread* edge");
 
+    version (SanitizerSelfTest) {
+        // The instrumented nightly runs this unittest in an LDC-only DUB_HOME.
+        // This nested host probe links with dmd, so DUB supplies LDC-built
+        // archives (dyaml among them) and the link fails before the probe can
+        // exercise web transport. The regular dmd module lane and browser lane
+        // run the probe; all graph and source checks above still run here.
+    } else {
     enum webProbeSource = q"PROBE
 module w16_a_web_inproc_probe;
 import commands.file.load : FileLoad;
@@ -581,6 +588,7 @@ SH";
           ~ "decoderBlocked=2 loadApplied=false") >= 0,
         format("W16-DEP web assimp surface lost its exact success witness:\n%s",
                webProbe.output));
+    }
 
     const editorApp = readText(buildPath(repoRoot, "source", "editor_app.d"));
     assert(editorApp.indexOf("version (web) {\n    enum bool kGenerateAiAvailable = false;\n}") >= 0,
