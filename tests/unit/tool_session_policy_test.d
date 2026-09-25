@@ -42,6 +42,7 @@ import std.array     : array;
 import std.file      : readText;
 import std.format    : format;
 import std.json      : parseJSON;
+import std.regex     : matchFirst, regex;
 import std.string    : indexOf, startsWith, strip;
 
 private enum Prov { carried, notPorted, noCounterpart, uncertain }
@@ -262,6 +263,14 @@ private string bodyAt(string code, string marker) {
     assert(false, "M1 wiring census: unbalanced body after " ~ marker);
 }
 
+/// `s` with every whitespace character removed.
+private string squeeze(string s) {
+    import std.ascii : isWhite;
+    string r;
+    foreach (c; s) if (!isWhite(c)) r ~= c;
+    return r;
+}
+
 /// Offsets of `needles` in `hay`, each present exactly once, in order.
 private void inOrder(string hay, string[] needles, string where) {
     ptrdiff_t last = -1;
@@ -276,16 +285,19 @@ private void inOrder(string hay, string[] needles, string where) {
 
 unittest { // (3) the doors reach the tool session only through EditSession
     auto app = blankNonCode(readText("source/app.d"));
-    const nav = bodyAt(app, "bool navHistory(bool isUndo)");
-    assert(nav.canFind("session.navigate(isUndo)") && !nav.canFind(".undo(")
-           && !nav.canFind(".redo("),
-           "M1 wiring census: app.d navHistory no longer ends at EditSession.navigate alone");
+    // The whole body, whitespace-free: any other statement (a direct
+    // `history.undo ()`, a bare `history.undo;`) changes it.
+    const nav = squeeze(bodyAt(app, "bool navHistory(bool isUndo)"));
+    assert(nav == "{returnsession.navigate(isUndo);}",
+           "M1 wiring census: app.d navHistory is no longer exactly "
+           ~ "`return session.navigate(isUndo);`, got " ~ nav);
 
     auto router = blankNonCode(readText("source/input_router.d"));
     assert(router.canFind("navHistory(true)") && router.canFind("navHistory(false)"),
            "M1 wiring census: the key router no longer routes Ctrl+Z through navHistory");
-    assert(!router.canFind(".undo(") && !router.canFind(".redo("),
-           "M1 wiring census: the key router steps the history directly");
+    auto step = matchFirst(router, regex(`\.\s*(undo|redo)\b`));
+    assert(step.empty,
+           "M1 wiring census: the key router steps the history directly: " ~ step.hit);
 
     auto es = blankNonCode(readText("source/edit_session.d"));
     const navigate = bodyAt(es, "bool navigate(bool isUndo)");
