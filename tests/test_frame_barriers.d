@@ -14,7 +14,8 @@
 // is a population floor for the real route.
 
 import http_client : ClientResponse, clearInProcessTransport, getJson,
-    postJson, setInProcessTransport, frameFence, waitPlaybackProcessed;
+    postJson, quiesce, setInProcessTransport, frameFence,
+    waitPlaybackProcessed;
 import std.format : format;
 import std.json : JSONType;
 
@@ -83,4 +84,24 @@ unittest { // B3: the live route reports the barrier (population floor)
     frameFence();
     assert(getJson("/api/play-events/status")["frame"].integer > f1,
         "B3 frame did not advance across a fence");
+}
+
+unittest { // B4: quiesce outlasts a held (asynchronous) subpatch preview build
+    postJson("/api/command", `{"id":"scene.reset"}`);
+    postJson("/api/command", "select.typeFrom polygon");
+    auto held = postJson("/api/subpatch/hold", `{"ms":800,"ceilingMs":15000}`);
+    assert(held["status"].str == "ok", "B4 hold did not arm: " ~ held.toString);
+    scope(exit) {
+        postJson("/api/subpatch/hold", `{"ms":0,"ceilingMs":15000}`);
+        postJson("/api/command", `{"id":"scene.reset"}`);
+    }
+    auto tog = postJson("/api/command", `{"id":"mesh.subpatch_toggle"}`);
+    assert(tog["status"].str == "ok", "B4 subpatch toggle failed: " ~ tog.toString);
+    assert(getJson("/api/subpatch/preview")["pending"].type == JSONType.true_,
+        "B4 population floor: no held preview build to outlast");
+    quiesce();
+    auto after = getJson("/api/subpatch/preview");
+    assert(after["pending"].type == JSONType.false_,
+        "B4 quiesce returned while a preview build was still pending: "
+        ~ after.toString);
 }
