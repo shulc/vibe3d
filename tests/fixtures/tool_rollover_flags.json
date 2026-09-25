@@ -1,4 +1,14 @@
 {
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "static-read",
+  "captured_utc": "2026-09-24",
+  "harness": "objdump over the reference's shipped libraries, per mapped tool node; the flag words, node names and source instructions are in the private capture card toolcards/tool_session_model/ (evidence/S-flags); this file is its neutral copy, written by that card's harness/gen_rollover_fixture.py",
+  "task": "M6",
+  "notes": "One row per registered tool id of ours. `actor`: the node the tool itself is carries the rollover flag; `stage`: another node of its pipe does. `mapping`: whether the id maps to a counterpart node at all. Behaviour cross-checks: C-H7, C-H7-vert, C-H7-elem (gap 309/312)."
+ },
  "about": "Tool session model slice M6: per registered tool id, whether the tool's own node and whether another node of its pipe carry the rollover (target highlight) flag. Static read of the reference's flag words, 2026-09-24 (gap 309); generated, do not edit.",
  "rows": [
   {
