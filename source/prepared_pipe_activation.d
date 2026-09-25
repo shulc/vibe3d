@@ -193,10 +193,10 @@ public:
         if (result.hasFalloff_)
             result.falloffAutoFit_ = result.falloff_
                 .prepareAutoFitForActivation(result.falloffType_);
-        if (result.hasAcen_) result.recallAcen_ = ownedNode(recall, result.acen_.id());
-        if (result.hasAxis_) result.recallAxis_ = ownedNode(recall, result.axis_.id());
-        if (result.hasFalloff_)
-            result.recallFalloff_ = ownedNode(recall, result.falloff_.id());
+        // Recalled only onto a stage the preset claims (install's hasX_ arms).
+        result.recallAcen_ = ownedNode(recall, result.acen_.id());
+        result.recallAxis_ = ownedNode(recall, result.axis_.id());
+        result.recallFalloff_ = ownedNode(recall, result.falloff_.id());
         return result;
     }
 

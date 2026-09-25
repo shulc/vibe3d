@@ -173,6 +173,20 @@ unittest { // u4: the prepared arm recalls a claimed stage after its preset imag
     assert(falloff.shape == FalloffShape.Smooth,
         "M5 u4: the recall did not override the preset's own shape");
 
+    // Every claimed node, not only the falloff: an action-centre image is
+    // recalled over the preset's own mode the same way. (No shipped path
+    // stores a mode that differs from the preset's — a mode write releases
+    // the claim — so this is the owner's wiring, driven directly.)
+    auto pipe3 = fourStagePipe(acen, falloff);
+    PreparedPipeAttrs acenPreset;
+    acenPreset["actionCenter"] = ["mode": "element"];
+    NodeAttrs[string] acenRecall;
+    acenRecall["actionCenter"] = ["mode": "origin"];
+    PreparedPipeActivationOwner.prepare(pipe3, acenPreset, null,
+        PipeArmScope.presetArm, acenRecall).install();
+    assert(acen.mode == ActionCenterStage.Mode.Origin,
+        format("M5 u4: the action-centre node was not recalled (mode %s)", acen.mode));
+
     // A preset that does not claim the falloff does not recall it.
     auto pipe2 = fourStagePipe(acen, falloff);
     PreparedPipeAttrs noFalloff;
