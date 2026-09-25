@@ -626,6 +626,11 @@ unittest { // M4 marks: the row a close WROTE carries the closing session's toke
     t.writeTo = r.history;
     r.active = t;
     r.session.noteArm("t.carry", 7);
+    // An earlier record, so the close starts from a non-empty top (the row it
+    // wrote is the first ABOVE that top, not the stack's first).
+    auto earlier = new Stub(new View(0, 0, 1, 1));
+    assert(earlier.apply());
+    r.history.record(earlier);
     // A switch: the door writes the outgoing row, then the incoming arm row
     // lands ABOVE it; the mark goes to the door's row, with the OUTGOING token.
     r.session.closeOperation(CloseReason.switch_);
@@ -831,4 +836,25 @@ unittest { // M4 pair: the row below must carry the RECORD's token, and redo pai
                format("M4 pair: a non-carrying row redid its session's record with it: undo %s, redo %s",
                       r.history.undoEntries().length, r.history.redoEntries().length));
     }
+}
+
+unittest { // M4 pair, boundary (not captured): with its session gone, a record pops alone
+    // The record carries its activation row only while THAT session is the
+    // active one; after the tool dropped (no tool, token 0) the record is its
+    // own step and the row stays (gap 377 names the uncaptured half).
+    Mesh m = makeCube();
+    auto r = rig();
+    auto t = new CarryTool;
+    t.writeTo = r.history;
+    r.active = t;
+    auto act = tokenRow(&m, "t.carry", "", true, true, 5);
+    r.history.recordToolLifecycle(act);
+    r.session.noteArm("t.carry", 5);
+    t.arr = [Pt(1, 0, null)];
+    assert(r.session.applyAndContinue());
+    r.active = null;                           // dropped, no re-arm
+    assert(r.session.navigate(true));
+    assert(r.history.undoEntries().length == 1,
+           format("M4 pair: a record of a session that is gone popped its row: depth %s",
+                  r.history.undoEntries().length));
 }

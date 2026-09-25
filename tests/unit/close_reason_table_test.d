@@ -428,3 +428,18 @@ unittest {
     assert(next.resumeCalls == 0 && t4.resumeCalls == 0,
            "M2 funnel: the closed tool's resume reached the tool that replaced it");
 }
+
+unittest { // M4: the 6250 command meeting a tool that does not close on it drops the tool
+    // (`commandMeetsTool`'s `closes && commits` term: the command is not in the
+    // Model drop set, yet a tool it could not close must not survive it).
+    auto history = new CommandHistory();
+    Tool held;
+    size_t drops;
+    auto es = new EditSession(() => held, history, () {});
+    auto ex = wire(history, es, held, &drops);
+    auto t = new CountingTool(CommandClose.none, true);
+    held = t;
+    assert(ex.applyOrRefire(new StubCommand("mesh.subpatch_toggle", CmdFlags.Model), RecordMode.Record, null));
+    assert(drops == 1 && held is null && t.commitCalls == 0,
+           format("M4 funnel: the 6250 command left a tool it could not close armed: drops %s", drops));
+}
