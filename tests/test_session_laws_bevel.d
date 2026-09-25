@@ -65,8 +65,17 @@ double num(JSONValue v) {
 }
 double shiftV() { return num(st()["shift"]); }
 double insetV() { return num(st()["inset"]); }
-bool applied() { return st()["applied"].type == JSONType.true_; }
-long opIx() { return st()["op"].integer; }
+// Absent before slice M3b (read `false` / -1 there), so a cell reddens on
+// BEHAVIOUR on an older binary, not on a missing key.
+bool applied() {
+    auto s = st();
+    return s.type == JSONType.object && "applied" in s.object
+        && s["applied"].type == JSONType.true_;
+}
+long opIx() {
+    auto s = st();
+    return (s.type == JSONType.object && "op" in s.object) ? s["op"].integer : -1;
+}
 bool near(double a, double b) { return abs(a - b) < 1e-4; }
 
 /// The screen position of the Shift handle (part 0), as last drawn.
