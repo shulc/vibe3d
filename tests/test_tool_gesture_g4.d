@@ -318,7 +318,8 @@ struct Cell {
 /// `gesture` is the play-events drive; `drop` deactivates the tool.
 Cell runCell(string name, string tool, string recordSite, string mode,
              string payload,
-             void delegate() stand, void delegate() gesture, void delegate() drop)
+             void delegate() stand, void delegate() gesture, void delegate() drop,
+             void delegate() arm = null)
 {
     Cell c;
     c.name = name; c.tool = tool; c.recordSite = recordSite;
@@ -334,6 +335,12 @@ Cell runCell(string name, string tool, string recordSite, string mode,
       ~ "selects");
     c.preOp = planes();
 
+    // `arm`: a tool whose ARM applies it (poly.bevel since slice M3b,
+    // C-H1-bev: a zero-width ring, the first group of its window) is armed
+    // AFTER the pre-operation dump, so the undo oracle still compares against
+    // the mesh the operation started from. Its activation row stands in the
+    // live and the committed entry names; the delta counts the commit alone.
+    immutable long uArm = arm is null ? u0 : (() { arm(); return undoLen(); })();
     gesture();
     c.liveEntryNames = historyNames();
 
@@ -341,7 +348,7 @@ Cell runCell(string name, string tool, string recordSite, string mode,
     settle();
     c.postCommit = planes();
     c.entryNames = historyNames();
-    c.undoDelta  = undoLen() - u0;
+    c.undoDelta  = undoLen() - uArm;
     c.drove      = gDrove;   // task 3091: captured after stand+gesture+drop
 
     // ANTI-VACUITY, BEFORE anything is compared. A gesture that moved no plane
@@ -362,9 +369,9 @@ Cell runCell(string name, string tool, string recordSite, string mode,
     assert(ru["status"].str == "ok", name ~ ": /api/undo failed: " ~ ru.toString);
     settle();
     c.postUndo = planes();
-    assert(undoLen() == u0,
+    assert(undoLen() == uArm,
         name ~ ": the undo moved the stack to " ~ undoLen().to!string
-      ~ ", expected back to " ~ u0.to!string ~ " — more than one step means the "
+      ~ ", expected back to " ~ uArm.to!string ~ " — more than one step means the "
       ~ "entry's revert() answered false and the suffix behind it was truncated");
 
     auto rr = postJ("/api/command", commandBody("history.redo"));
@@ -876,7 +883,7 @@ unittest {
         "source/tools/edit/poly_bevel.d PolyBevelTool.commitEdit",
         "Plain", "MeshSessionEdit",
         { resetCube(); selectMode("polygons", [0]); cmd("history.clear");
-          setOrbitCamera(); cmd("tool.set poly.bevel on"); settle(250); },
+          setOrbitCamera(); },
         {
             int hx, hy; handlePx(0, hx, hy);
             dragPixels(hx, hy, hx + 70, hy - 40, 16);
@@ -885,7 +892,8 @@ unittest {
                 "poly.bevel: the Shift haul left `built` false — the kernel "
               ~ "touched no face, so the drop will record nothing");
         },
-        { cmd("tool.set poly.bevel off"); });
+        { cmd("tool.set poly.bevel off"); },
+        { cmd("tool.set poly.bevel on"); settle(250); });
 
     // --- (b) PolyInsetTool. NO handle at all: the haul is anchored at the
     //     selection centroid wherever the press lands, so the press is the

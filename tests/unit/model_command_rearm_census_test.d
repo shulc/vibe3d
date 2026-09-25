@@ -200,8 +200,11 @@ unittest { // The tools that close their operation their own way, exactly.
     }
     // Measured on the M2 tree: the transform family and the three cutting
     // tools; every other closing tool uses the base's in-place default.
-    assert(commits == 4, "M2 override census: commitOperation overriders changed: " ~ owners.to!string);
-    foreach (want; ["xfrm_transform.d", "edge_slice_tool.d", "loop_slice_tool.d", "slice_tool.d"])
+    // Slice M3b adds Polygon Bevel, whose Shift press is its own operation
+    // boundary, not the in-place commit the default reaches.
+    assert(commits == 5, "M2 override census: commitOperation overriders changed: " ~ owners.to!string);
+    foreach (want; ["xfrm_transform.d", "edge_slice_tool.d", "loop_slice_tool.d", "slice_tool.d",
+                    "poly_bevel.d"])
         assert(owners.canFind!(o => o.canFind(want)),
             "M2 override census: " ~ want ~ " no longer overrides commitOperation");
     assert(resumes == 1, "M2 override census: resumeAfterClose overriders changed");

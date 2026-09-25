@@ -37,8 +37,8 @@
     {
       "name": "poly.bevel/shift-drag", "tool": "poly.bevel",
       "recordSite": "source/tools/edit/poly_bevel.d PolyBevelTool.commitEdit", "mode": "Plain", "payload": "MeshSessionEdit",
-      "liveEntryNames": [],
-      "entryNames": ["mesh.bevel_edit"],
+      "liveEntryNames": ["tool.activate"],
+      "entryNames": ["tool.activate","mesh.bevel_edit"],
       "undoDelta": 1,
       "undoResidual": [],
       "redoResidual": [],

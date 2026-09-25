@@ -782,17 +782,28 @@ private:
     }
 
     final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext c) {
-        bool ok; if (hasUncommittedEdit() && c !is null && history !is null && gestureFactory !is null && before.filled) { auto cmd=cast(MeshSessionEdit)gestureFactory(); if(cmd !is null){cmd.setSnapshots(before,MeshSnapshot.capture(*mesh),"Poly Bevel");ok=c.prepare(cmd,PreparedHistoryKind.Plain).accepted;}}
+        bool ok; if (hasUncommittedEdit() && c !is null && history !is null && gestureFactory !is null && before.filled) { ok = true; foreach (i, ref post; operationEnds()) { auto cmd=cast(MeshSessionEdit)gestureFactory(); if(cmd is null){ok=false;break;} cmd.setSnapshots(i == 0 ? before : opBases_[i - 1],post,"Poly Bevel"); if(!c.prepare(cmd,PreparedHistoryKind.Plain).accepted){ok=false;break;}}}
         return PreparedDeactivateEffect(preparedToolStateOwner,PreparedDeactivateKind.PolyBevel,ok);
+    }
+    // The close writes ONE row per operation of the window, in order (the
+    // "series of bevels, each undoable" granularity of task 0461; slice M3b):
+    // operation k's row runs from its base to the next one's, the live one's
+    // to the current mesh when it is applied.
+    MeshSnapshot[] operationEnds() {
+        MeshSnapshot[] ends = opBases_[0 .. opIndex_ > opBases_.length
+                                             ? opBases_.length : cast(size_t) opIndex_].dup;
+        if (opApplied_ && built) ends ~= MeshSnapshot.capture(*mesh);
+        return ends;
     }
     void commitEdit() {
         if (history is null || gestureFactory is null) return;
         if (!before.filled) return;
-        auto cmd = cast(MeshSessionEdit) gestureFactory();
-        if (cmd is null) { noteGestureCarrierMismatch(); return; }
-        auto post = MeshSnapshot.capture(*mesh);
-        cmd.setSnapshots(before, post, "Poly Bevel");
-        recordGestureEdit(cmd, GestureRecordMode.Plain);
+        foreach (i, ref post; operationEnds()) {
+            auto cmd = cast(MeshSessionEdit) gestureFactory();
+            if (cmd is null) { noteGestureCarrierMismatch(); return; }
+            cmd.setSnapshots(i == 0 ? before : opBases_[i - 1], post, "Poly Bevel");
+            recordGestureEdit(cmd, GestureRecordMode.Plain);
+        }
     }
 
     void cancelLiveEdit() {

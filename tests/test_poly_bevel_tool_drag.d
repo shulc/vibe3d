@@ -279,12 +279,12 @@ unittest {
     cmd("tool.set poly.bevel off");
 }
 
-// Shift+click "apply and continue" (task 0461 — the reference editor's `reset`
-// input role). A standing bevel is committed as its OWN undo entry and the
-// tool re-arms in place: params zero, the built flag clears, but the mesh
-// KEEPS the committed bevel. The generic driver (EditSession.applyAndContinue)
-// fires from app.d BEFORE the tool sees the click, so the click is consumed —
-// no fresh drag starts (dragPart stays -1) and no edit is lost.
+// Shift+click (task 0461 — the reference editor's `reset` input role; since
+// slice M3b the captured law C-H5-bev-shift): the press opens a NEW operation
+// on the standing one's result, reset to 0 and APPLIED at the press (a zero-
+// width ring; C-H5-bev-mmb shows the same for a motionless Middle), inside the
+// same live window. The close writes one row per operation, so the committed
+// bevel is still its own undo step.
 unittest {
     enum int EX = 400, EY = 450;
     auto reset = parseJSON(cast(string)post(BASE ~ "/api/command", commandBody("scene.reset", `{"type":"cube"}`)));
@@ -303,27 +303,30 @@ unittest {
     assert(getJson("/api/tool/state")["built"].type == JSONType.true_,
         "expected an uncommitted standing edit before Shift+click");
 
-    // Shift+LMB elsewhere with NO drag motion: the apply+rearm fires, the
-    // combined gesture starts a zero-length haul on the re-armed tool, and the
-    // mouse-up ends it — so the tool lands back idle with a zeroed baseline
-    // (params 0, built cleared) while the mesh keeps the committed bevel.
+    // Shift+LMB elsewhere with NO drag motion: a new operation, reset to 0 and
+    // applied at the press over the kept first bevel (flipped by slice M3b:
+    // it was "idle, built cleared" under the old apply-and-continue).
+    const long vFirst = getJson("/api/model")["vertexCount"].integer;
     play(button("SDL_MOUSEBUTTONDOWN", EX + 120, EY, LSHIFT));
     play(button("SDL_MOUSEBUTTONUP",   EX + 120, EY, LSHIFT));
     auto st = getJson("/api/tool/state");
-    assert(st["dragPart"].integer == -1, "zero-motion apply gesture left a drag open");
-    assert(fabs(st["shift"].floating) < 1e-6, "re-arm did not zero shift");
-    assert(fabs(st["inset"].floating) < 1e-6, "re-arm did not zero inset");
-    assert(st["built"].type == JSONType.false_, "re-arm did not clear the built flag");
-    assert(getJson("/api/model")["vertices"].array.length > 8,
-        "apply-and-continue must KEEP the committed bevel in the mesh");
+    assert(st["dragPart"].integer == -1, "zero-motion Shift gesture left a drag open");
+    assert(fabs(st["shift"].floating) < 1e-6, "the Shift operation did not start from shift 0");
+    assert(fabs(st["inset"].floating) < 1e-6, "the Shift operation did not start from inset 0");
+    assert(st["built"].type == JSONType.true_ && st["op"].integer == 1,
+        "C-H5-bev-shift: a Shift press must open and apply a second operation: " ~ st.toString);
+    assert(getJson("/api/model")["vertexCount"].integer == vFirst + 4,
+        "the Shift operation must stand on the KEPT first bevel (+4, a zero-width ring)");
 
-    // One discrete undo entry: dropping the tool must NOT double-commit
-    // (hasUncommittedEdit is false after re-arm), and one undo restores the cube.
+    // One row per operation at the close: two undos back to the cube.
     cmd("tool.set poly.bevel off");
     auto undo = parseJSON(cast(string)post(BASE ~ "/api/command", commandBody("history.undo")));
     assert(undo["status"].str == "ok", "undo failed");
+    assert(getJson("/api/model")["vertexCount"].integer == vFirst,
+        "the first undo must peel the Shift operation alone");
+    post(BASE ~ "/api/command", commandBody("history.undo"));
     assert(getJson("/api/model")["vertexCount"].integer == 8,
-        "one undo after apply-and-continue did not restore the cube (commit granularity)");
+        "the second undo must restore the cube (each operation is its own step)");
 }
 
 // Series of bevels: two Shift+click applies ⇒ two DISCRETE undo steps, never a
@@ -355,13 +358,18 @@ unittest {
     long v2 = getJson("/api/model")["vertexCount"].integer;
     assert(v2 > v1, "second chained bevel did not add geometry");
 
+    // Three operations at the close (slice M3b): the first haul, the second
+    // (opened by Shift #1, hauled), and the zero-width one Shift #2 opened.
     cmd("tool.set poly.bevel off");
     post(BASE ~ "/api/command", commandBody("history.undo"));
     assert(getJson("/api/model")["vertexCount"].integer == v1,
-        "first undo did not peel exactly the second bevel (steps must not collapse)");
+        "first undo did not peel exactly the trailing Shift operation (steps must not collapse)");
+    post(BASE ~ "/api/command", commandBody("history.undo"));
+    assert(getJson("/api/model")["vertexCount"].integer == v1 - 4,
+        "second undo did not peel exactly the second bevel");
     post(BASE ~ "/api/command", commandBody("history.undo"));
     assert(getJson("/api/model")["vertexCount"].integer == 8,
-        "second undo did not restore the cube (each apply is its own undo step)");
+        "third undo did not restore the cube (each operation is its own undo step)");
 }
 
 // Post-mode finalize (task 0463): firing a Model (scene-mutating) command —
@@ -428,8 +436,9 @@ unittest {
     auto mid = getJson("/api/tool/state");
     assert(mid["dragPart"].integer == 2,
         "combined gesture: Shift+LMB down must start a fresh free-drag on the re-armed tool");
-    assert(mid["built"].type == JSONType.false_ && fabs(mid["shift"].floating) < 1e-6,
-        "combined gesture: the new haul must start from a zeroed re-armed baseline");
+    // Slice M3b (C-H5-bev-shift): the new operation is applied at the press.
+    assert(mid["op"].integer == 1 && fabs(mid["shift"].floating) < 1e-6,
+        "combined gesture: the new haul must start a new operation from 0");
 
     // Drag within the SAME gesture (Shift still physically held) → new bevel grows.
     play(motion(EX, EY - 80, 1, LSHIFT));

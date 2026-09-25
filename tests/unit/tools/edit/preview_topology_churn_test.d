@@ -546,9 +546,12 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// poly.bevel — the seam carried to a second kernel with a two-parameter
-// degenerate branch (`inset == 0 && shift == 0`). Same three cells folded
-// into one block: a position-only drag, and a crossing.
+// poly.bevel — the seam carried to a second kernel. Since slice M3b the
+// degenerate branch is "the operation is not applied" (`applied`), not
+// `inset == 0 && shift == 0`: the arm applies a zero-width ring (C-H1-bev),
+// whose topology a drag through zero keeps. Same cells: the arm dispatches,
+// a position-only drag (through zero included) does not, and the crossing of
+// the applied attribute (the undo of the arm's group and its redo) does.
 // ---------------------------------------------------------------------------
 unittest {
     auto rig = new Rig(subdividedCube(), EditMode.Polygons);
@@ -564,13 +567,17 @@ unittest {
     tool.activate();
 
     const size_t vertsBare = rig.mesh.vertices.length;
-    setFloatParam(tool, "inset", 0.05f);
+    tool.applyArmAttr();   // what the session does at the arm
     rig.frame();
     assert(rig.mesh.vertices.length > vertsBare,
-        "the poly-bevel kernel must have built geometry on the first sample");
+        "the poly-bevel arm must have built the zero-width ring");
     const ulong buildsAfterFirst = rig.preview.topologyBuilds;
     assert(buildsAfterFirst > buildsAtArm,
-        "the FIRST sample must dispatch");
+        "the arm's apply must dispatch");
+    setFloatParam(tool, "inset", 0.05f);
+    rig.frame();
+    assert(rig.preview.topologyBuilds == buildsAfterFirst,
+        "the first inset sample on the arm's ring is position-only");
 
     const ulong topoAfterFirst = rig.mesh.topologyVersion;
     auto posAfterFirst = rig.mesh.vertices.dup;
@@ -593,17 +600,30 @@ unittest {
       ~ topoAfterFirst.to!string ~ " -> "
       ~ rig.mesh.topologyVersion.to!string);
 
-    // The crossing, on the same armed tool: inset back to zero (with shift
-    // already zero, that is the degenerate branch) and out again.
-    const ulong buildsBeforeCross = rig.preview.topologyBuilds;
-    setFloatParam(tool, "inset", 0.0f);
-    rig.frame();
+    // Through zero: the ring stays, so nothing dispatches.
+    const ulong buildsBeforeZero = rig.preview.topologyBuilds;
     setFloatParam(tool, "inset", 0.0f);
     rig.frame();
     setFloatParam(tool, "inset", 0.05f);
     rig.frame();
+    assert(rig.preview.topologyBuilds == buildsBeforeZero,
+        "an inset drag through zero on an APPLIED bevel keeps the ring's "
+      ~ "topology: expected " ~ buildsBeforeZero.to!string ~ " dispatches, saw "
+      ~ rig.preview.topologyBuilds.to!string);
+
+    // The crossing: the image without `applied` (the arm's group undone) and
+    // back (its redo) — exactly two builds.
+    const ulong buildsBeforeCross = rig.preview.topologyBuilds;
+    auto on = tool.captureAttrImage();
+    auto off = on;
+    off.raw = on.raw.dup;
+    foreach (i, n; off.names) if (n == "applied") off.raw[i] = [cast(ubyte) 0].idup;
+    tool.applyAttrImage(off);
+    rig.frame();
+    tool.applyAttrImage(on);
+    rig.frame();
     assert(rig.preview.topologyBuilds == buildsBeforeCross + 2,
-        "an inset drag through zero and back must dispatch EXACTLY TWO "
+        "the applied attribute off and on again must dispatch EXACTLY TWO "
       ~ "builds: expected " ~ (buildsBeforeCross + 2).to!string ~ ", saw "
       ~ rig.preview.topologyBuilds.to!string);
 
