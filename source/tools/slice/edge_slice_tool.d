@@ -1036,9 +1036,12 @@ public:
         if (!active) return false;
         if (e.button == SDL_BUTTON_RIGHT) { closeOwnOperation(false); return true; }
         // H5 (C-H5-es-mmb): a Middle press inside the live chain opens an
-        // operation boundary of its own — one step, no point, no clone
-        // (no-clone is the policy's, applied by the session).
-        if (e.button == SDL_BUTTON_MIDDLE && latchedPoints_.length > 0) {
+        // operation boundary of its own — one step, no point, no clone. Whether
+        // the press applies anything is the model's (`pressAppliesOperation`,
+        // from the policy's `noClone`, slice M7); this tool has no clone to
+        // apply, so it takes the Middle press only as that bare boundary.
+        if (e.button == SDL_BUTTON_MIDDLE && latchedPoints_.length > 0
+                && !pressAppliesOperation(PressKind.middle)) {
             sessionStepBegins(PressKind.middle);
             sessionStepEnds();
             return true;
