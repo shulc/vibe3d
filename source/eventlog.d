@@ -191,6 +191,9 @@ struct ParsedEventLog {
     immutable(EventLogEntry)[] entries;
     ViewportMeta viewport;
     size_t skipped;
+    /// A `{"type":"PACE","mode":"frames"}` line: deliver one timestamp group
+    /// per frame instead of gating on wall-clock time (see EventPlayer.tick).
+    bool framePaced;
 }
 
 /// A rejected parse still carries its locally parsed metadata for diagnostics,
@@ -336,6 +339,7 @@ EventLogParseResult parseEventLog(string data) {
     EventLogEntry[] entries;
     ViewportMeta viewport;
     size_t skipped;
+    bool framePaced;
 
     foreach (raw; data.splitLines()) {
         string line = cast(string)raw.idup;
@@ -386,6 +390,10 @@ EventLogParseResult parseEventLog(string data) {
                 try { viewport.fovY = cast(float)obj["fovY"].floating; }
                 catch (Exception) { viewport.fovY = 0.7853982f; }
                 viewport.valid = true;
+                continue;
+            case "PACE":
+                try framePaced = obj["mode"].str == "frames";
+                catch (Exception) { ++skipped; }
                 continue;
             case "SDL_QUIT":
                 e.type = SDL_QUIT;
@@ -447,7 +455,8 @@ EventLogParseResult parseEventLog(string data) {
     }
 
     EventLogParseResult result;
-    result.log = ParsedEventLog(entries.assumeUnique, viewport, skipped);
+    result.log = ParsedEventLog(entries.assumeUnique, viewport, skipped,
+                                framePaced);
     if (result.log.entries.length == 0)
         result.error = "event log contains no playable events";
     return result;
@@ -471,6 +480,15 @@ struct EventPlayer {
     // final state happens to settle to the same value.
     private ImmediateEventSink immediateSink_;
     private size_t immediateMotions_;
+
+    // Frame pacing (card test-sleep-removal), set per log by its PACE line.
+    // A log's `t` is a SCHEDULE, and for a synthetic test log its gaps only
+    // ever meant "let a frame pass between these": paced, each distinct `t`
+    // is delivered on its own frame, in order, with no wall-clock wait. That
+    // is also the stronger guarantee, since under load wall-clock gating can
+    // fold two due events into one frame. SDL timestamps come from `ts`, not
+    // from `t`, so a handler that measures intervals is unaffected.
+    private bool framePaced_;
 
     void setImmediateSink(ImmediateEventSink sink) {
         immediateSink_ = sink;
@@ -577,6 +595,7 @@ struct EventPlayer {
         active       = entries.length > 0;
         idx          = 0;
         immediateMotions_ = 0;
+        framePaced_  = log.framePaced;
         {
             import log : logInfo;
             import std.format : format;
@@ -634,7 +653,12 @@ struct EventPlayer {
             ? double.infinity
             : cast(double)(_perfCounter() - startCounter)
               / cast(double)freq * 1000.0;
-        while (idx < entries.length && entries[idx].timeMs <= nowMs) {
+        // Paced: exactly the group sharing the next entry's `t` is due.
+        immutable bool paced = framePaced_ && !fastForward;
+        immutable double groupMs = paced ? entries[idx].timeMs : 0.0;
+        while (idx < entries.length
+               && (paced ? entries[idx].timeMs == groupMs
+                         : entries[idx].timeMs <= nowMs)) {
             auto  entry = entries[idx];
             SDL_Event e = entry.event;
             // Remap mouse pixels from the recorded viewport into the current one.

@@ -549,3 +549,34 @@ unittest { // U9: `processed` needs one COMPLETED frame after the dispatching on
     assert(later["processed"].type == JSONType.true_,
         "U9 an idle player tick re-opened the barrier: " ~ later.toString());
 }
+
+unittest { // U10: a PACE line delivers one timestamp group per frame, no clock
+    // Card test-sleep-removal. The clock is frozen at acceptance, so an
+    // un-paced player would deliver only the t=0 group, ever.
+    setEventPlayerClockForTest(0, 1000);
+    setEventPlayerModifierForTest(KMOD_NONE);
+    scope(exit) clearEventPlayerControlsForTest();
+    shared size_t delivered;
+    immutable port = freePort();
+    auto server = new HttpServer(port);
+    server.setEventPlayerSink((SDL_Event*, bool) { atomicOp!"+="(delivered, 1); });
+    startReady(server);
+    scope(exit) if (server.running) server.stop();
+    immutable log =
+        `{"t":0,"type":"PACE","mode":"frames"}` ~ "\n" ~
+        `{"t":0,"type":"SDL_MOUSEMOTION","x":1,"y":1,"xrel":0,"yrel":0,"state":0,"mod":0}` ~ "\n" ~
+        `{"t":0,"type":"SDL_MOUSEMOTION","x":2,"y":2,"xrel":0,"yrel":0,"state":0,"mod":0}` ~ "\n" ~
+        `{"t":500,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":2,"y":2,"clicks":1,"mod":0}` ~ "\n" ~
+        `{"t":900,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":2,"y":2,"clicks":1,"mod":0}`;
+    jsonReply(requestAndTick(server, port, "POST", "/api/play-events", log),
+        "HTTP/1.1 200 OK", "U10 load");
+    immutable size_t[3] expected = [2, 3, 4];
+    foreach (frame, want; expected) {
+        server.tickEventPlayer();
+        assert(atomicLoad(delivered) == want,
+            "U10 paced frame " ~ frame.to!string ~ " delivered "
+            ~ atomicLoad(delivered).to!string ~ ", expected " ~ want.to!string);
+    }
+    assert(server.playbackStatusForTest().finished,
+        "U10 the paced log did not finish on its third frame");
+}
