@@ -57,6 +57,14 @@ void slLine(string line) {
     assert(r["status"].str == "ok", "rig line `" ~ line ~ "` failed: " ~ r.toString);
 }
 
+/// The same line through the UI door (`?origin=ui`) — the door of the typed
+/// command line, which arms a tool like its key does (slice M3, C-H1-door: the
+/// activation row joins the first undo group; a script arm keeps its own row).
+void slLineUi(string line) {
+    auto r = slPost("/api/command?origin=ui", line);
+    assert(r["status"].str == "ok", "rig ui line `" ~ line ~ "` failed: " ~ r.toString);
+}
+
 bool slAlive() {
     try {
         auto j = getJson("/api/ping");

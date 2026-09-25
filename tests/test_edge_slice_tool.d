@@ -193,6 +193,14 @@ void cmd(string s) {
     assert(r["status"].str == "ok", "cmd `" ~ s ~ "` failed: " ~ r.toString);
 }
 
+// Slice M3 (C-H1-door, gap 300): the arm door decides whether the activation
+// row joins the first undo group. The law below was captured with a KEY arm, so
+// the tool is armed through the UI door (`?origin=ui`, the typed command line =
+// the key); a script-door arm keeps its own row (tests/test_session_laws_slice.d).
+void activateToolUi() {
+    auto r = postCmd("/api/command?origin=ui", "tool.set mesh.edgeSliceTool on");
+    assert(r["status"].str == "ok", "ui arm failed: " ~ r.toString);
+}
 void activateTool() { cmd("tool.set mesh.edgeSliceTool on"); }
 void deactivateTool() { cmd("tool.set mesh.edgeSliceTool off"); }
 
@@ -1046,7 +1054,7 @@ unittest {
     uint e1 = edgeIndexByVerts(m0, 1, 2);
     uint e2 = edgeIndexByVerts(m0, 5, 6);
 
-    activateTool();
+    activateToolUi();
     cmd(format("tool.attr mesh.edgeSliceTool edges {%d,%d,%d}", e0, e1, e2));
     cmd("tool.attr mesh.edgeSliceTool chainArm {1}");
 

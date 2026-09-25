@@ -114,3 +114,46 @@ unittest { // (x4)
     assert(s["sessionOpen"].type == JSONType.false_,
            "x4: ElementMove re-opened its window after the command (C-H1-xfrm-elem-b: it does not)");
 }
+
+// ---------------------------------------------------------------------------
+// The re-arm key is the PRESET, not the action centre (slice M3; C-rearm-key,
+// gap 370 — toolcards/tool_session_model M0d). `rearmAfterCommand` is preset
+// data (config/tool_presets.yaml), read by the session.
+//   (x5) C-rearm-a: TransformMove with an Element centre set BY HAND re-arms.
+//   (x6) C-rearm-b1: ElementMove with a Selection centre set BY HAND does not.
+// Both are red on a binary that keyed the re-arm on the centre mode.
+// ---------------------------------------------------------------------------
+
+/// Arm `preset`, set the action centre BY HAND, then a live numeric edit.
+void liveUnderCentre(string preset, string mode, string attr) {
+    ssh.rig();
+    ssh.selectVerts([6, 7]);
+    ssh.cmd("history.clear");
+    ssh.cmd("tool.set " ~ preset ~ " on");
+    ssh.settle(300);
+    ssh.cmd("tool.pipe.attr actionCenter mode " ~ mode);
+    ssh.cmd("tool.attr " ~ preset ~ " " ~ attr);
+    assert(ssh.toolId() == "xfrm", "rearm rig: " ~ preset ~ " is not armed");
+}
+
+unittest { // (x5) C-rearm-a
+    liveUnderCentre("TransformMove", "element", "TX 0.3");
+    ssh.tapKey(K_INVERT);
+    auto s = st();
+    assert(s.type == JSONType.object && "tool" in s.object && s["tool"].str == "xfrm",
+           "x5 C-rearm-a: the UI command dropped TransformMove: " ~ s.toString);
+    assert(s["sessionOpen"].type == JSONType.true_,
+           "x5 C-rearm-a: TransformMove under a hand-set Element centre did not re-open its "
+           ~ "window after the command (the re-arm is the preset's, not the centre's)");
+}
+
+unittest { // (x6) C-rearm-b1
+    liveUnderCentre("ElementMove", "select", "TX 0.3");
+    ssh.tapKey(K_INVERT);
+    auto s = st();
+    assert(s.type == JSONType.object && "tool" in s.object && s["tool"].str == "xfrm",
+           "x6 C-rearm-b1: the UI command dropped ElementMove: " ~ s.toString);
+    assert(s["sessionOpen"].type == JSONType.false_,
+           "x6 C-rearm-b1: ElementMove under a hand-set Selection centre re-opened its window "
+           ~ "after the command (the re-arm is the preset's, not the centre's)");
+}

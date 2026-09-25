@@ -525,17 +525,27 @@ struct Param {
     // the image must not (Slice's `axis` write latches `axisLocked`). The tool
     // rebuilds whatever it derives from them in ONE `rebuildPreviewFromAttrs`.
     //
-    // The copy is allocated as `void[]`, which the collector SCANS: a PodArray
-    // element may hold a GC pointer (Edge Slice's chain point carries a slice),
-    // and an `ubyte[]` copy would be NO_SCAN and let its target be collected.
+    // Every copy is a GC block the collector SCANS (`scannedCopy`): a
+    // PodArray element may hold a GC pointer (Edge Slice's chain point carries
+    // a slice), and a NO_SCAN copy lets its target be collected and reused
+    // under the image. `new void[]` is NOT such a block — its allocation is
+    // NO_SCAN (measured: a restored chain point's `latchFaces` read back as
+    // garbage after one collection) — so the block is taken from `GC.malloc`
+    // with no attributes.
     // -----------------------------------------------------------------------
+
+    private static void[] scannedCopy(const(void)* ptr, size_t n) {
+        import core.memory : GC;
+        if (n == 0) return null;
+        auto m = GC.malloc(n)[0 .. n];   // attrs 0: scanned
+        m[] = ptr[0 .. n];
+        return m;
+    }
 
     immutable(void)[] snapshotRaw() const
     {
         static immutable(void)[] bytesOf(const(void)* ptr, size_t n) {
-            auto m = new void[](n);
-            if (n) m[] = ptr[0 .. n];
-            return cast(immutable(void)[]) m;
+            return cast(immutable(void)[]) scannedCopy(ptr, n);
         }
         final switch (kind) {
             case Kind.Bool:     return bytesOf(bptr, bool.sizeof);
@@ -559,9 +569,7 @@ struct Param {
     void restoreRaw(const(void)[] raw)
     {
         static void[] fresh(const(void)[] r) {
-            auto m = new void[](r.length);
-            if (r.length) m[] = r[];
-            return m;
+            return scannedCopy(r.ptr, r.length);
         }
         void fixed(void* dst, size_t n) {
             assert(raw.length == n, "restoreRaw: '" ~ name ~ "' image has the wrong size");

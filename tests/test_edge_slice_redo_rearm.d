@@ -79,7 +79,7 @@ void redoBlock(bool subpatchOn) {
     assert(base.verts == 8 && base.faces == 4,
            "slice floor: the prologue is not the 8v/4f open box: " ~ base.toString);
 
-    slLine("tool.set mesh.edgeSliceTool on");
+    slLineUi("tool.set mesh.edgeSliceTool on");
     assert(slTool() == "edgeSlice", "slice floor: Edge Slice did not activate");
     // The named red on HEAD (plan §S1b design item 1).
     assert(slHistoryLen() == Hp + 1 && topLabel() == "Activate Tool",
@@ -160,7 +160,7 @@ unittest {
     const base = slMesh();
     assert(base.verts == 8 && base.faces == 4,
            "slice floor: the prologue is not the 8v/4f open box: " ~ base.toString);
-    slLine("tool.set mesh.edgeSliceTool on");
+    slLineUi("tool.set mesh.edgeSliceTool on");
     const P = slFrontRightChain();
     latchPoints(P, HINT_OFF, 2, "block C chain 1");
     const Hc = slHistoryLen();
@@ -206,7 +206,7 @@ unittest {
 // source census of `replayFirstGesture(` calls (acceptance (5)).
 unittest {
     auto pro = slPrologue(false, "polygons", &slBackAndLeft, true);
-    slLine("tool.set mesh.edgeSliceTool on");
+    slLineUi("tool.set mesh.edgeSliceTool on");
     const P = slFrontRightChain();
     latchPoints(P, HINT_OFF, 3, "block D");
     foreach (k; 1 .. 4) ctrlZ(format("block D Ctrl+Z %d", k));
@@ -228,7 +228,7 @@ unittest {
 // identity term stayed green.
 unittest {
     auto pro = slPrologue(false, "polygons", &slBackAndLeft, true);
-    slLine("tool.set mesh.edgeSliceTool on");
+    slLineUi("tool.set mesh.edgeSliceTool on");
     const P = slFrontRightChain();
     latchPoints(P, HINT_OFF, 3, "block E");
     foreach (k; 1 .. 4) ctrlZ(format("block E Ctrl+Z %d", k));
@@ -259,7 +259,7 @@ unittest {
 // key check also neutralised this cell reddens (measured in the 7137 sweep).
 unittest {
     auto pro = slPrologue(false, "polygons", &slBackAndLeft, true);
-    slLine("tool.set mesh.edgeSliceTool on");
+    slLineUi("tool.set mesh.edgeSliceTool on");
     const P = slFrontRightChain();
     latchPoints(P, HINT_OFF, 1, "block F");
     ctrlZ("block F Ctrl+Z (ends the session)");

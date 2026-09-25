@@ -143,7 +143,7 @@ unittest {
     Rail rail;
     const Hp = rig(base, rail);
 
-    slLine("tool.set mesh.loopSliceTool on");
+    slLineUi("tool.set mesh.loopSliceTool on");
     assert(slTool() == "loopSlice", "slice floor: Loop Slice did not activate: " ~ slTool());
     assert(slHistoryLen() == Hp + 1 && topLabel() == "Activate Tool",
            format("loop slice arm wrote no activation row: history %s, prologue %d",
@@ -266,7 +266,7 @@ unittest {
     SlMesh base;
     Rail rail;
     const Hp = rig(base, rail);
-    slLine("tool.set mesh.loopSliceTool on");
+    slLineUi("tool.set mesh.loopSliceTool on");
     slLine("tool.attr mesh.loopSliceTool position 0.3");
     assert(slHistoryLen() == Hp + 1 && topLabel() == "Activate Tool",
            format("slice floor (block R2): the Position write moved the history: %s",
@@ -301,7 +301,7 @@ unittest {
     SlMesh base;
     Rail rail;
     const Hp = rig(base, rail);
-    slLine("tool.set mesh.loopSliceTool on");
+    slLineUi("tool.set mesh.loopSliceTool on");
     gesture(rail, F_ARM, F_A30, "block S arming drag");
     gesture(rail, F_A30, F_G1, "block S g1");
     assert(lsState().depth == 2, "slice floor (block S): two steps before RMB: " ~ lsState().toString);
@@ -323,7 +323,7 @@ unittest {
     SlMesh base;
     Rail rail;
     rig(base, rail);
-    slLine("tool.set mesh.loopSliceTool on");
+    slLineUi("tool.set mesh.loopSliceTool on");
     gesture(rail, F_ARM, F_A30, "block M arming drag");
     const A30 = slMesh();
     const pm = at(rail, F_A30);
@@ -357,7 +357,7 @@ unittest {
     SlMesh base;
     Rail rail;
     rig(base, rail);
-    slLine("tool.set mesh.loopSliceTool on");
+    slLineUi("tool.set mesh.loopSliceTool on");
     const pa = at(rail, F_ARM);
     slClickDown(pa[0], pa[1], "block M0 arming press");
     const A0 = slMesh();

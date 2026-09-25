@@ -83,7 +83,14 @@ long faceCount(JSONValue m) { return m["faceCount"].integer; }
 // — the direct, cheapest "was the tool dropped?" probe.
 bool toolIsActive(JSONValue st) { return ("tool" in st.object) !is null; }
 
-void activateLoopSlice() { cmd("tool.set mesh.loopSliceTool on"); }
+// Slice M3 (C-H1-door, gap 300): the arm door decides whether the activation
+// row joins the first undo group. The law below was captured with a KEY arm, so
+// the tool is armed through the UI door (`?origin=ui`, the typed command line =
+// the key); a script-door arm keeps its own row (tests/test_session_laws_slice.d).
+void activateLoopSlice() {
+    auto r = postCmd("/api/command?origin=ui", "tool.set mesh.loopSliceTool on");
+    assert(r["status"].str == "ok", "ui arm failed: " ~ r.toString);
+}
 void deactivateLoopSlice() { cmd("tool.set mesh.loopSliceTool off"); }
 
 // --- geometry helpers (mirror tests/test_loop_slice_tool.d) ----------------
