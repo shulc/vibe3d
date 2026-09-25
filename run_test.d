@@ -2451,12 +2451,19 @@ bool resetBetweenTests(ushort port, ref string failure) {
         // 2. Drain any in-flight event-log replay so its leftover mouse events
         //    cannot perturb the reset. /api/play-events/status reports
         //    {"finished":true} when idle (absent ⇒ never played ⇒ idle).
-        foreach (_; 0 .. 200) {
+        //    `"processed":true` (card test-sleep-removal) is the frame barrier:
+        //    every event dispatched AND the frame that consumed the last one
+        //    has completed, which is exactly what 2b below used to sleep for.
+        //    A binary that predates the field falls back to 2b.
+        bool processed = false;
+        foreach (_; 0 .. 1000) {
             auto s = curl("GET", "/api/play-events/status");
-            if (s.length == 0 || !s.canFind("\"finished\":false")) break;
-            Thread.sleep(10.msecs);
+            if (s.canFind(`"processed":true`)) { processed = true; break; }
+            if (s.length == 0 || (!s.canFind("\"finished\":false")
+                                  && !s.canFind(`"processed":false`))) break;
+            Thread.sleep(2.msecs);
         }
-        // 2b. Settle. The event player reports "finished" once all its events
+        // 2b. Settle (only without the barrier above). The event player reports "finished" once all its events
         //     have returned from the production input sink, before the later
         //     tool update/draw work in that frame. If we reset before those
         //     derived effects settle across the next 1–2 main-loop frames,
@@ -2466,7 +2473,7 @@ bool resetBetweenTests(ushort port, ref string failure) {
         //     "got (-1,0,1)" bleed.
         //     A short settle lets the queue drain onto the OLD mesh first; the
         //     reset below then wipes whatever they did.
-        Thread.sleep(120.msecs);
+        if (!processed) Thread.sleep(120.msecs);
         // 3. Reset to the pristine startup cube.
         if (!command("scene.reset")) {
             failure = "scene.reset did not apply: " ~ (lastBody.length
