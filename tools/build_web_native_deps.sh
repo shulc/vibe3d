@@ -29,7 +29,7 @@ fi
 source "$emsdk_root/emsdk_env.sh" >/dev/null
 export PATH="/usr/bin:$PATH"
 
-for tool in dub git emcmake cmake ninja emar python3; do
+for tool in dub git emcmake embuilder cmake ninja emar python3; do
     if ! command -v "$tool" >/dev/null; then
         echo "required tool not found after emsdk setup: $tool" >&2
         exit 2
@@ -94,7 +94,16 @@ cmake -E copy_directory "$imgui_src/source" "$source_root/d_imgui/source"
 python3 "$repo_root/tools/patch_imgui_font_atlas_abi.py" \
     "$source_root/d_imgui/source/imgui_vibe3d.cpp"
 
-emcmake cmake -S "$source_root/d_imgui" -B "$build_root/d_imgui" -G Ninja \
+# d_imgui's CMake probes the host SDL2 first. On Ubuntu that header contains
+# native multiarch includes which em++ cannot use. Point its SDL2_DIR override
+# at the Emscripten port headers after ensuring the port is installed.
+embuilder build sdl2
+web_sdl2_headers="$emsdk_root/upstream/emscripten/cache/sysroot/include/SDL2"
+[[ -f "$web_sdl2_headers/SDL.h" ]] || { echo "Emscripten SDL2 headers missing" >&2; exit 2; }
+web_sdl2_dir="$out_root/emscripten-sdl2"
+cmake -E make_directory "$web_sdl2_dir/include"
+cmake -E copy_directory "$web_sdl2_headers" "$web_sdl2_dir/include"
+SDL2_DIR="$web_sdl2_dir" emcmake cmake -S "$source_root/d_imgui" -B "$build_root/d_imgui" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_C_FLAGS="-sUSE_SDL=2" \
     -DCMAKE_CXX_FLAGS="-sUSE_SDL=2 -DIMGUI_IMPL_OPENGL_ES3"
