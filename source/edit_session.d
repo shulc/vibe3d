@@ -956,14 +956,15 @@ private struct ToolSession {
         link.operationEnded = &operationEnded;
         link.closeOwn       = &closeOwn;
         t.bindSession(link);
-        // H1 (slice M3b, C-H1-bev): a tool whose policy names the attribute its
-        // arm raises (only an `OpensAt.arm` session tool may: the policy table
-        // pins it) is APPLIED by the arm, and that apply is the window's first
-        // group — the image before it is the group's start. An arm replayed by
-        // a history step (Suspend: the redo of an activation row) re-arms bare,
-        // like every raw redo door; the navigate redo re-seats the group itself
-        // (`replayFirstGroup_`).
-        if (t.sessionPolicy().armAttr.length && history_.state() != UndoState.Suspend) {
+        // H1 (slice M3b, C-H1-bev): an `OpensAt.arm` tool whose policy names the
+        // attribute its arm raises is APPLIED by the arm, and that apply is the
+        // window's first group — the image before it is the group's start. An
+        // arm replayed by a history step (Suspend: the redo of an activation
+        // row) re-arms bare, like every raw redo door; the navigate redo
+        // re-seats the group itself (`replayFirstGroup_`).
+        const pol = t.sessionPolicy();
+        if (pol.opensAt == OpensAt.arm && pol.armAttr.length
+            && history_.state() != UndoState.Suspend) {
             stepBegins(t, PressKind.plain);
             t.applyArmAttr();
             operationArmed(t);
