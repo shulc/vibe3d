@@ -447,14 +447,65 @@ unittest // a module run twice (one per shard, or twice in one) is red
     const v = mergeShards(kRoster, run);
     assert(mentions(v.problems, "m.c was reported 2 times"),
         format("cross-shard duplicate not named: %s", v.problems));
+    // Neither shard lied about its own assignment, so no shard is tainted:
+    // only the single-report rule keeps the duplicate from counting twice.
+    assert(v.passed < v.executed, format(
+        "a cross-shard duplicate merged to a clean %d/%d", v.passed, v.executed));
 
     auto twice = cleanRun();
     twice[0].resultText = cleanResult(0, ["m.a", "m.c", "m.c", "m.e"]);
     const w = mergeShards(kRoster, twice);
     assert(mentions(w.problems, "reported m.c 2 times"),
         format("in-shard duplicate not named: %s", w.problems));
-    assert(w.passed < w.executed || w.problems.length,
-        "a duplicated module merged to a clean total");
+    assert(w.passed < w.executed, format(
+        "an in-shard duplicate merged to a clean %d/%d", w.passed, w.executed));
+}
+
+unittest // each merge rule names its own breach (one cell per rule)
+{
+    // A result file that belongs to another shard (files swapped).
+    auto swapped = cleanRun();
+    swapped[0].resultText = cleanResult(1, ["m.a", "m.c", "m.e"]);
+    assert(mentions(mergeShards(kRoster, swapped).problems,
+        "shard 0 (3 modules): result file has no valid UT-SHARD-BEGIN"));
+
+    // A shard that ran a module it was not given.
+    auto stray = cleanRun();
+    stray[0].resultText = cleanResult(0, ["m.a", "m.b", "m.c", "m.e"]);
+    stray[1].resultText = cleanResult(1, ["m.d"]);
+    assert(mentions(mergeShards(kRoster, stray).problems,
+        "shard 0 (3 modules) reported m.b, which it was not assigned"));
+
+    // An END line that disagrees with the module lines above it.
+    auto liar = cleanRun();
+    liar[1].resultText = "UT-SHARD-BEGIN 1\nUT-MOD PASS 1.0 m.b\nUT-MOD PASS 1.0 m.d\n"
+                       ~ "UT-SHARD-END executed=3 passed=3\n";
+    assert(mentions(mergeShards(kRoster, liar).problems,
+        "UT-SHARD-END says executed=3 passed=3, its module lines say 2 and 2"));
+
+    // A roster module that no shard was given at all.
+    auto orphan = cleanRun();
+    orphan[0].assigned = ["m.a", "m.c"];
+    orphan[0].resultText = cleanResult(0, ["m.a", "m.c"]);
+    const o = mergeShards(kRoster, orphan);
+    assert(mentions(o.problems, "module m.e was reported 0 times"),
+        format("an undispatched roster module was not named: %s", o.problems));
+    assert(o.executed == 5 && o.passed == 4, format("%d/%d", o.executed, o.passed));
+
+    // A module nobody dispatched, reported anyway.
+    auto ghost = cleanRun();
+    ghost[1].assigned = ["m.b", "m.d", "m.z"];
+    ghost[1].resultText = cleanResult(1, ["m.b", "m.d", "m.z"]);
+    assert(mentions(mergeShards(kRoster, ghost).problems,
+        "module m.z was reported but never dispatched"));
+
+    // A worker that refused its assignment.
+    auto refused = cleanRun();
+    refused[1].resultText = "UT-SHARD-BEGIN 1\nUT-SHARD-REFUSED assigned 2 modules, "
+                          ~ "this binary has 1 of them with unittests\n";
+    refused[1].status = 2;
+    assert(mentions(mergeShards(kRoster, refused).problems,
+        "UT-SHARD-REFUSED assigned 2 modules"));
 }
 
 unittest // a crashed shard is red with the module it died in, never a smaller green
