@@ -176,6 +176,11 @@ unittest // a second module gate must fail loudly while every slot is held
     enforce(build.status == 0, format(
         "could not compile the standalone module-gate probe (status %d):\n%s",
         build.status, build.output));
+    // dmd leaves `<probeBin>.o` beside the binary; nothing removed it, and
+    // 154 of them (4.6 MB each) had piled up in /tmp by 2026-09-25 (card
+    // gate-speedup). Removed at once, and checked, so a leak is red here.
+    cast(void) collectException(remove(probeBin ~ ".o"));
+    assert(!exists(probeBin ~ ".o"), "the probe build's object file leaks: " ~ probeBin ~ ".o");
 
     // Fill the private one-slot family ourselves, so the probe's only way
     // forward is the give-up path.

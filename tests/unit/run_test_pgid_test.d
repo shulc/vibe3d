@@ -79,6 +79,11 @@ unittest
     enforce(build.status == 0, format(
         "compiling %s with -unittest failed (status %d):\n%s",
         runnerPath, build.status, build.output));
+    // dmd leaves `<outBin>.o` beside the binary; nothing removed it, and
+    // 150 of them (4.6 MB each) had piled up in /tmp by 2026-09-25 (card
+    // gate-speedup). Removed at once, and checked, so a leak is red here.
+    cast(void) collectException(remove(outBin ~ ".o"));
+    assert(!exists(outBin ~ ".o"), "the runner build's object file leaks: " ~ outBin ~ ".o");
 
     // See tests/unit/harness_log_isolation_census_test.d: a runner spawned by a
     // test must isolate both host-owned channels. Both are harmless today —
