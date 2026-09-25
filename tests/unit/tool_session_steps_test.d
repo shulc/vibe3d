@@ -66,7 +66,7 @@ private class StepTool : Tool {
     int v;
     Pt[] arr;
     bool act;
-    int rebuilds, commits, cancels, resumes;
+    int rebuilds, commits, cancels, resumes, imageNotified;
     OpensAt opens = OpensAt.firstPress;
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
         static immutable ToolSessionPolicy first = { activationRow: true, sessionSteps: true,
@@ -79,7 +79,10 @@ private class StepTool : Tool {
         return [Param.int_("v", "V", &v, 0), Param.podArray_("arr", "Arr", &arr),
                 Param.bool_("act", "Act", &act, false).action()];
     }
-    override void onParamChanged(string n) { if (n == "act") v += 100; }
+    override void onParamChanged(string n) {
+        if (n == "act") v += 100;
+        if (n == "v" || n == "arr") ++imageNotified;
+    }
     override void rebuildPreviewFromAttrs() { ++rebuilds; }
     // Its live edit is a function of its image, as the cutting tools' are.
     override bool hasUncommittedEdit() const { return arr.length > 0; }
@@ -142,6 +145,7 @@ unittest {
     assert(r.t.v == 2 && r.t.arr.length == 2 && r.t.arr[1].a == 2 && r.t.arr[1].tail == [2, 2],
            format("M3 steps: undo did not restore the step's image: v %s, arr %s", r.t.v, r.t.arr));
     assert(r.t.rebuilds == rb + 1, "M3 steps: an undo must rebuild exactly once");
+    assert(r.t.imageNotified == 0, "M3 steps: a raw restore fired onParamChanged");
     assert(steps(r) == 1 && r.t.commits == 0 && !r.dropped);
     // H4: the redo returns the popped step live.
     assert(r.session.navigate(false));
@@ -230,6 +234,45 @@ unittest { // ...and only on the redo of its own row
     assert(r.history.undo());                  // a RAW undo: the redo head is now the prior row
     assert(r.session.navigate(false));         // redo the prior row
     assert(r.t.v == 0, "M3 replay: the held group was replayed on another row's redo");
+}
+
+unittest { // the first group's stash is bound to the history position it was made at
+    // (review B1): no activation row joins the group (K1 / script door), so
+    // its undo stashes it — valid only while the undo top is unchanged.
+    import command : CmdFlags;
+    { // R1: a command recorded after the group's undo — the group stays gone
+        auto r = rig();
+        r.t.gesture(6);
+        assert(r.session.navigate(true) && r.t.v == 0 && !isLive(r));
+        auto later = new Stub(new View(0, 0, 1, 1));
+        assert(later.apply());
+        r.history.record(later);
+        r.session.navigate(false);
+        assert(r.t.v == 0 && !isLive(r),
+               format("M3 stash: the group came back live over a later command: v %s", r.t.v));
+    }
+    { // R2: an older row undone after the group — redo is that row's
+        auto r = rig();
+        auto prior = new Stub(new View(0, 0, 1, 1));
+        assert(prior.apply());
+        r.history.record(prior);
+        r.t.gesture(6);
+        assert(r.session.navigate(true) && !isLive(r));
+        assert(r.session.navigate(true) && r.history.redoEntries().length == 1,
+               "M3 stash rig: the older row was not undone");
+        assert(r.session.navigate(false));
+        assert(r.t.v == 0 && !isLive(r) && r.history.redoEntries().length == 0
+               && r.history.undoEntries().length == 1,
+               format("M3 stash: redo replayed the group instead of the older row: v %s, "
+                      ~ "live %s, redo %s", r.t.v, isLive(r), r.history.redoEntries().length));
+    }
+    { // control: nothing moved — the stash still returns the group live (H4)
+        auto r = rig();
+        r.t.gesture(6);
+        r.session.navigate(true);
+        r.session.navigate(false);
+        assert(r.t.v == 6 && isLive(r), "M3 stash control: an unmoved stash did not re-open");
+    }
 }
 
 unittest { // a mesh changed since the group ended: the redo re-arms bare

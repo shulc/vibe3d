@@ -696,6 +696,11 @@ private struct ToolSession {
     private AttrImage openImage_;
     private AttrImage[] steps_;
     private AttrImage[] redo_;
+    // The undo top when `undoFirstGroup_` stashed a group it could not pop
+    // with a row (rule K, script door): that stash is valid only while the
+    // history has not moved since (review B1) — otherwise its point would be
+    // re-seated on a mesh it was never taken on.
+    private Rebindable!(const Command) stashAt_;
     private AttrImage pending_;
     private bool pendingSet_;
     private bool pendingIfChanged_;
@@ -838,6 +843,8 @@ private struct ToolSession {
         // that undo had closed it (the first group of a script-door arm).
         {
             auto t = tool_();
+            if (!live_ && redo_.length && undoTop_() !is stashAt_.get)
+                redo_ = null;   // the history moved: the stash is stale
             if (redo_.length && t !is null && t is bound_
                 && t.sessionPolicy().sessionSteps) {
                 auto cur = t.captureAttrImage();
@@ -1084,6 +1091,7 @@ private struct ToolSession {
         auto act = ue.length ? cast(const ToolActivationCommand) ue[$ - 1].cmd : null;
         if (act is null || !act.joinsFirstGroup() || act.armedId != armedId_) {
             redo_ = [end];
+            stashAt_ = undoTop_();
             return true;
         }
         if (act.armedMesh() !is null) replayKey_.stamp(*act.armedMesh());

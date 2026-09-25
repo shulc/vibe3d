@@ -474,6 +474,10 @@ struct Param {
     // a remembered setting. Not injectable from outside (`injectParamsInto`
     // refuses it), which is the Param-side half of its length bound; the
     // kernel-side half is each tool's own cap at the point the array grows.
+    // CONTRACT: an image copy is SHALLOW — elements are copied by value, but
+    // an array INSIDE an element (Edge Slice's `latchFaces`) is shared by the
+    // live array and every image. So such an inner array is never mutated in
+    // place, only reassigned whole (review m1).
     static Param podArray_(T)(string name, string label, T[]* storage)
         if (__traits(isPOD, T))
     {

@@ -191,6 +191,45 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
+// RV-stash (review B1) — rule K after Enter: the first group of the re-armed
+// chain stashes on its undo; once the history moves (the committed chain is
+// undone), redo must redo the COMMITTED row, not re-seat the stale point on
+// the pre-commit mesh.
+// ---------------------------------------------------------------------------
+unittest {
+    if (!cell("RV-stash")) return;
+    long Hp;
+    const base = boxRig(Hp);
+    slLineUi("tool.set mesh.edgeSliceTool on");
+    const P = slFrontRightChain();
+    latch(P, 0, "RV-stash");
+    latch(P, 1, "RV-stash");
+    slKey(13, 0, "RV-stash Enter");
+    const C = slMesh();
+    assert(C.faces > base.faces && slChain().pairs.length == 0,
+           "slice floor (RV-stash): Enter did not commit the chain");
+    {   // point 3 starts a NEW chain (one point) on the committed mesh
+        const px = slEdgePixel(P[2][0], P[2][1], HINT_OFF[2], "RV-stash point 3");
+        slClickDown(px[0], px[1], "RV-stash click 3");
+        slDragUp(px[0], px[1], 0, 4, 3, "RV-stash drag 3");
+        assert(slChain().pairs.length == 1, "slice floor (RV-stash): point 3 did not latch");
+    }
+    ctrlZ("RV-stash Z1");
+    assert(slTool() == "edgeSlice" && slChain().pairs.length == 0 && slMesh().canon == C.canon,
+           format("slice floor (RV-stash): Z1 is not K1: points %d, mesh %s",
+                  slChain().pairs.length, slMesh().toString));
+    ctrlZ("RV-stash Z2");
+    assert(slMesh().canon == base.canon,
+           format("slice floor (RV-stash): Z2 did not undo the committed chain: %s", slMesh().toString));
+    ctrlShiftZ("RV-stash redo");
+    assert(slMesh().canon == C.canon && slChain().pairs.length == 0,
+           format("RV-stash: the redo after Z2 must bring back the committed Edge Slice row: mesh %s "
+                  ~ "(committed %s), points %d, history %s", slMesh().toString, C.toString,
+                  slChain().pairs.length, slHistoryLabels()));
+    slLine("tool.set mesh.edgeSliceTool off");
+}
+
+// ---------------------------------------------------------------------------
 // C-H4-es — the redo of a popped live step returns it live; the window goes on.
 // ---------------------------------------------------------------------------
 unittest {
