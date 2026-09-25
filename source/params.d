@@ -1076,7 +1076,7 @@ JSONValue paramToJson(const ref Param p)
             return JSONValue(a);
         }
         case Param.Kind.PodArray:
-            return JSONValue((*cast(const(ubyte)[]*) p.podPtr).length);
+            return JSONValue(cast(long)(*cast(const(ubyte)[]*) p.podPtr).length);
     }
 }
 

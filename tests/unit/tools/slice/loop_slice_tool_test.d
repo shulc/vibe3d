@@ -174,15 +174,18 @@ unittest {
 
 // ---------------------------------------------------------------------------
 // A prepared param update whose shadow DISARMS on a key mismatch installs
-// `armed_ = false` through `installPreparedParamUpdate`, which leaves the
-// session-step stack alone. The next arming press must still open a FRESH
-// session: `seatArm` clears the stack, so the arm is the session's only step
-// and `soleFirstGesture` (the activation pop) is reachable. Without that
-// clear the old session's step leaks in and the pop answers null.
-// The GPU never draws here: `suppressCageUpload` routes every upload to the
-// bus publisher, so no GL context is needed.
+// `armed_ = false` through `installPreparedParamUpdate`, which reports no end
+// of the operation to the session. The next arming press must still open a
+// FRESH operation (slice M3: the steps are the SESSION's — `operationArmed`
+// starts a new account whatever one it still counted live), so the arm is the
+// operation's first group with no step, and its undo reaches the activation
+// pop. Without that, the old operation's step leaks in and the pop is hidden.
+// Driven through a real EditSession bound to the tool (`noteArm`), as the arm
+// door binds it. The GPU never draws here: `suppressCageUpload` routes every
+// upload to the bus publisher, so no GL context is needed.
 // ---------------------------------------------------------------------------
 unittest {
+    import edit_session : EditSession;
     loadSDL();
     SDL_SetModState(cast(SDL_Keymod)0);
 
@@ -197,6 +200,11 @@ unittest {
 
     auto tool = new LoopSliceTool(() => &m, &gpu, &em, null);
     tool.activate();
+    Tool active = tool;
+    auto session = new EditSession(() => active, new CommandHistory(), () {});
+    session.noteArm("mesh.loopSliceTool");
+    long steps() { return session.sessionStateJson()["steps"].integer; }
+    bool live() { return session.sessionStateJson()["live"].boolean; }
     VectorStack vts;
     SDL_MouseButtonEvent e;
     e.button = SDL_BUTTON_LEFT;
@@ -204,10 +212,10 @@ unittest {
     // Arm (motionless: no step), then one motionless re-scrub: one step.
     assert(tool.onMouseButtonDown(e, vts), "setup: the arming press did not arm");
     assert(tool.onMouseButtonUp(e, vts));
+    assert(live() && steps() == 0, "setup: the arm did not open the operation alone");
     assert(tool.onMouseButtonDown(e, vts) && tool.onMouseButtonUp(e, vts),
         "setup: the re-scrub press was not taken");
-    assert(tool.soleFirstGesture() is null,
-        "setup: a pushed step must hide the activation pop");
+    assert(steps() == 1, "setup: the motionless re-scrub was not a step");
 
     // Change the live topology behind the armed key, then a prepared Count
     // update: its shadow's rebuildCut sees the mismatch and disarms.
@@ -222,7 +230,7 @@ unittest {
     m.resetSelection();
     m.selectEdge(0);
     assert(tool.onMouseButtonDown(e, vts), "setup: the re-arming press did not arm");
-    assert(tool.soleFirstGesture() !is null,
+    assert(live() && steps() == 0,
         "loop slice: a re-arm after a prepared key-mismatch disarm inherited the "
-        ~ "old session's steps (seatArm must clear the gesture stack)");
+        ~ "old operation's steps (the arm must open a fresh one)");
 }

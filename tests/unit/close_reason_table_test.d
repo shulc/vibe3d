@@ -116,7 +116,7 @@ private class CountingTool : Tool {
         open = false;
         return true;
     }
-    override void resumeAfterClose() {
+    override void resumeAfterClose(bool rearm) {
         ++resumeCalls;
         if (log !is null) *log ~= "resume";
     }

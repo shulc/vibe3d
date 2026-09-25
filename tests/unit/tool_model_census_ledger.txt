@@ -12,8 +12,8 @@ axis2-violators 0
 # Session-special debt, only-down (3b; doc/tool_session_model_plan_2026-09-24.md (section 5.1 (d), slice M7)):
 # interfaces of the session modules, casts to them in source/, and casts
 # to a concrete tool class outside source/tools/.
-session-capabilities 10
-session-branches 15
+session-capabilities 9
+session-branches 12
 special-tool-casts 27
 
 tool tools.alignment.array_tool.ArrayTool has=tools.alignment.array_tool.ArrayTool cancel=tools.alignment.array_tool.ArrayTool resync=tools.alignment.array_tool.ArrayTool commit=tools.alignment.array_tool.ArrayTool step=no keep=no snap=4 live=yes | live array preview built on activation, restored from MeshSnapshot baseline until drop/apply
@@ -58,10 +58,10 @@ tool tools.edit.topology_pen.tool.TopologyPenTool has=tool.Tool cancel=tool.Tool
 tool tools.edit.vert_merge_tool.VertexMergeTool has=tools.edit.vert_merge_tool.VertexMergeTool cancel=tools.edit.vert_merge_tool.VertexMergeTool resync=tools.edit.vert_merge_tool.VertexMergeTool commit=tools.edit.vert_merge_tool.VertexMergeTool step=no keep=no snap=3 live=yes | built merge preview over a MeshSnapshot baseline until drop/apply
 tool tools.edit.vertex_bevel_tool.VertexBevelTool has=tools.edit.vertex_bevel_tool.VertexBevelTool cancel=tools.edit.vertex_bevel_tool.VertexBevelTool resync=tools.edit.vertex_bevel_tool.VertexBevelTool commit=tools.edit.vertex_bevel_tool.VertexBevelTool step=no keep=no snap=3 live=yes | built bevel preview over a MeshSnapshot baseline until drop/apply
 tool tools.edit.vertex_extrude_tool.VertexExtrudeTool has=tools.edit.vertex_extrude_tool.VertexExtrudeTool cancel=tools.edit.vertex_extrude_tool.VertexExtrudeTool resync=tools.edit.vertex_extrude_tool.VertexExtrudeTool commit=tools.edit.vertex_extrude_tool.VertexExtrudeTool step=no keep=no snap=3 live=yes | built extrude preview over a MeshSnapshot baseline until drop/apply
-tool tools.slice.edge_slice_tool.EdgeSliceTool has=tools.slice.edge_slice_tool.EdgeSliceTool cancel=tools.slice.edge_slice_tool.EdgeSliceTool resync=tools.slice.edge_slice_tool.EdgeSliceTool commit=tools.slice.edge_slice_tool.EdgeSliceTool step=yes keep=yes snap=7 live=yes | armed cut / latched chain over a MeshSnapshot baseline, committed at drop
+tool tools.slice.edge_slice_tool.EdgeSliceTool has=tools.slice.edge_slice_tool.EdgeSliceTool cancel=tools.slice.edge_slice_tool.EdgeSliceTool resync=tools.slice.edge_slice_tool.EdgeSliceTool commit=tools.slice.edge_slice_tool.EdgeSliceTool step=no keep=no snap=7 live=yes | armed cut / latched chain over a MeshSnapshot baseline, committed at drop
 tool tools.slice.edge_slide.EdgeSlideTool has=tools.common.command_wrapper.CommandWrapperTool cancel=tools.common.command_wrapper.CommandWrapperTool resync=tools.common.command_wrapper.CommandWrapperTool commit=tools.common.command_wrapper.CommandWrapperTool step=no keep=no snap=0 live=yes | CommandWrapperTool subclass: dirty re-fired slide preview
-tool tools.slice.loop_slice_tool.LoopSliceTool has=tools.slice.loop_slice_tool.LoopSliceTool cancel=tools.slice.loop_slice_tool.LoopSliceTool resync=tools.slice.loop_slice_tool.LoopSliceTool commit=tool.Tool step=yes keep=no snap=5 live=yes | armed loop-slice preview over a MeshSnapshot baseline, committed at drop
-tool tools.slice.slice_tool.SliceTool has=tools.slice.slice_tool.SliceTool cancel=tools.slice.slice_tool.SliceTool resync=tools.slice.slice_tool.SliceTool commit=tool.Tool step=yes keep=no snap=6 live=yes | armed cut preview over a MeshSnapshot baseline with a deferred commit at deactivate (armedKey_)
+tool tools.slice.loop_slice_tool.LoopSliceTool has=tools.slice.loop_slice_tool.LoopSliceTool cancel=tools.slice.loop_slice_tool.LoopSliceTool resync=tools.slice.loop_slice_tool.LoopSliceTool commit=tool.Tool step=no keep=no snap=5 live=yes | armed loop-slice preview over a MeshSnapshot baseline, committed at drop
+tool tools.slice.slice_tool.SliceTool has=tools.slice.slice_tool.SliceTool cancel=tools.slice.slice_tool.SliceTool resync=tools.slice.slice_tool.SliceTool commit=tool.Tool step=no keep=no snap=6 live=yes | armed cut preview over a MeshSnapshot baseline with a deferred commit at deactivate (armedKey_)
 tool tools.transform.move.MoveTool has=tool.Tool cancel=tool.Tool resync=tools.transform.transform.TransformTool commit=tool.Tool step=no keep=no snap=0 live=no | sub-tool composed by XfrmTransformTool, never the active tool; the composing tool owns the session hooks
 tool tools.transform.rotate.RotateTool has=tool.Tool cancel=tool.Tool resync=tools.transform.transform.TransformTool commit=tool.Tool step=no keep=no snap=0 live=no | sub-tool composed by XfrmTransformTool, never the active tool; the composing tool owns the session hooks
 tool tools.transform.scale.ScaleTool has=tool.Tool cancel=tool.Tool resync=tools.transform.transform.TransformTool commit=tool.Tool step=no keep=no snap=0 live=no | sub-tool composed by XfrmTransformTool, never the active tool; the composing tool owns the session hooks
@@ -71,9 +71,9 @@ tool tools.transform.xfrm_transform.XfrmTransformTool has=tools.transform.xfrm_t
 key source/tools/alignment/radial_sweep_tool.d mck=0 smk=1
 key source/tools/deform/magnet.d mck=0 smk=2
 key source/tools/edit/bridge_tool.d mck=0 smk=3
-key source/tools/slice/edge_slice_tool.d mck=0 smk=5
-key source/tools/slice/loop_slice_tool.d mck=0 smk=4
-key source/tools/slice/slice_tool.d mck=0 smk=5
+key source/tools/slice/edge_slice_tool.d mck=0 smk=4
+key source/tools/slice/loop_slice_tool.d mck=0 smk=3
+key source/tools/slice/slice_tool.d mck=0 smk=4
 
 write source/tools/alignment/array_tool.d recordGestureEdit 1
 write source/tools/alignment/clone_tool.d recordGestureEdit 1
@@ -116,7 +116,7 @@ write source/tools/edit/topology_pen/tool.d recordSnapshotUndo 14
 write source/tools/edit/vert_merge_tool.d recordGestureEdit 1
 write source/tools/edit/vertex_bevel_tool.d recordGestureEdit 1
 write source/tools/edit/vertex_extrude_tool.d recordGestureEdit 1
-write source/tools/slice/edge_slice_tool.d history.invalidateRedo 3
+write source/tools/slice/edge_slice_tool.d history.invalidateRedo 4
 write source/tools/slice/edge_slice_tool.d history.undoEntries 1
 write source/tools/slice/edge_slice_tool.d recordGestureEdit 1
 write source/tools/slice/loop_slice_tool.d history.invalidateRedo 1

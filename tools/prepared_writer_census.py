@@ -455,13 +455,8 @@ def scan(root):
                            for product in factory["product_types"]}):
         if _policy_activation_row(classes, product):
             lifecycle_admissions[product] = "activationRow"
-    # The cutting sessions admitted by id in toolArmEmitsLifecycle (task 7137
-    # added Edge Slice, then Loop Slice); mirror that id set here, the body digest forces review.
-    for factory in factories:
-        if factory["id"] in ("mesh.sliceTool", "mesh.edgeSliceTool",
-                             "mesh.loopSliceTool"):
-            for product in factory["product_types"]:
-                lifecycle_admissions[product] = "legacy-id:" + factory["id"]
+    # (Slice M3 removed the cutting-session id arm of toolArmEmitsLifecycle and
+    # its mirror here: those three classes are admitted by their policy.)
     lifecycle_products = [
         {"module": classes[name]["module"], "aggregate": name,
          "symbol": "lifecycleProduct", "signature": name,

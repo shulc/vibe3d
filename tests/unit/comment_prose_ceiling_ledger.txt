@@ -9,7 +9,7 @@
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
 source-files 576
-task-citation-lines 5288
+task-citation-lines 5274
 citing-files 446
 long-comment-runs 271
 files-with-long-runs 145
@@ -204,7 +204,7 @@ allow source/document.d 38
 allow source/document_selection.d 63
 allow source/drag.d 12
 allow source/drag_identity.d 1
-allow source/edit_session.d 27
+allow source/edit_session.d 25
 allow source/edit_tool_registration.d 12
 allow source/editor_app.d 32
 allow source/eventlog.d 1
@@ -309,7 +309,7 @@ allow source/playback_controller.d 1
 allow source/prefs.d 31
 allow source/prepared_pipe_activation.d 1
 allow source/prepared_record_context.d 2
-allow source/prepared_tool_transition.d 3
+allow source/prepared_tool_transition.d 2
 allow source/prepared_xfrm_activation_session.d 2
 allow source/property_panel.d 3
 allow source/record_observer_hub.d 1
@@ -407,9 +407,9 @@ allow source/tools/edit/topology_pen/tool.d 150
 allow source/tools/edit/vert_merge_tool.d 8
 allow source/tools/edit/vertex_bevel_tool.d 9
 allow source/tools/edit/vertex_extrude_tool.d 9
-allow source/tools/slice/edge_slice_tool.d 43
+allow source/tools/slice/edge_slice_tool.d 37
 allow source/tools/slice/loop_slice_tool.d 90
-allow source/tools/slice/slice_tool.d 97
+allow source/tools/slice/slice_tool.d 92
 allow source/tools/transform/item_xform_kernels.d 3
 allow source/tools/transform/morph_route.d 3
 allow source/tools/transform/move.d 9

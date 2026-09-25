@@ -184,7 +184,7 @@ unittest { // One close routine: the session decides by policy, the tool by its 
         assert(close.indexOf(generic) < 0,
             "M2 close census: the routine gained a per-tool branch: " ~ generic);
     const finish = bodyAt(source, "void finishClose() {\n        if (pendingMark_)");
-    assert(finish.count("resumeAfterClose()") == 1 && finish.count("pendingResume_ = false") == 1,
+    assert(finish.count("resumeAfterClose(") == 1 && finish.count("pendingResume_ = false") == 1,
         "M2 close census: finishClose no longer resumes exactly once");
 }
 
@@ -192,7 +192,7 @@ unittest { // The tools that close their operation their own way, exactly.
     size_t commits, resumes;
     string[] owners;
     auto commitRx = regex(r"override bool commitOperation\(\)");
-    auto resumeRx = regex(r"override void resumeAfterClose\(\)");
+    auto resumeRx = regex(r"override void resumeAfterClose\(bool rearm\)");
     foreach (entry; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth)) {
         const source = readText(entry.name);
         foreach (_; source.matchAll(commitRx)) { ++commits; owners ~= entry.name; }

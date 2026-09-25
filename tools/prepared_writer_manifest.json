@@ -1103,14 +1103,14 @@
     {
       "aggregate": "SliceTool",
       "module": "tools.slice.slice_tool",
-      "semantic_sha256": "334b9bbcd71a22e0d2b71ea8c79df6ea761795a27462526c01e2a4bd9c449317",
+      "semantic_sha256": "8de5b18e3f3a99a9bb1303686e5e6f54c795c8dd46ec66d5315a6a707f64d56d",
       "signature": "void()",
       "symbol": "activate"
     },
     {
       "aggregate": "SliceTool",
       "module": "tools.slice.slice_tool",
-      "semantic_sha256": "ed0033260030e92eae5a31b3ce979ebbc8cf934fa0581f6d351e0296a92b8c1c",
+      "semantic_sha256": "c6620c7c24ea0dd40fb731fb32d4879abb9168705ae88d16d6569d9bc48ba633",
       "signature": "void()",
       "symbol": "deactivate"
     },
@@ -1208,41 +1208,41 @@
   ],
   "internal_publishers": [
     {
-      "line": 105,
+      "line": 102,
       "path": "source/prepared_tool_transition.d",
-      "semantic_sha256": "2baeaabc4c4a6aa11bd1de9c705cdf0a600433374ee282862c8a2d92a0ad03c2",
+      "semantic_sha256": "86861354c11d16a4a2c7749db89b1f53b4d53d5b4ffbe912f44030bec35c3ae3",
       "symbol": "prepareArm"
     },
     {
-      "line": 275,
+      "line": 274,
       "path": "source/prepared_tool_transition.d",
       "semantic_sha256": "22c2e28c0998d02d2da53cf75b6080820e329e066ae4f35250aed4147875b68b",
       "symbol": "commitPreparedArm"
     }
   ],
   "lifecycle_classifier": {
-    "line": 97,
+    "line": 96,
     "path": "source/prepared_tool_transition.d",
-    "semantic_sha256": "df43b76fb9b24d0a46a8243faae76a11824567b4bce917e7c820bcb11b74c2f7",
+    "semantic_sha256": "268f709c68823f0f4f34dafe01b83e844caa86ae9fe9d64fe2e931f5b035c518",
     "symbol": "toolArmEmitsLifecycle"
   },
   "lifecycle_products": [
     {
-      "admission": "legacy-id:mesh.edgeSliceTool",
+      "admission": "activationRow",
       "aggregate": "EdgeSliceTool",
       "module": "tools.slice.edge_slice_tool",
       "signature": "EdgeSliceTool",
       "symbol": "lifecycleProduct"
     },
     {
-      "admission": "legacy-id:mesh.loopSliceTool",
+      "admission": "activationRow",
       "aggregate": "LoopSliceTool",
       "module": "tools.slice.loop_slice_tool",
       "signature": "LoopSliceTool",
       "symbol": "lifecycleProduct"
     },
     {
-      "admission": "legacy-id:mesh.sliceTool",
+      "admission": "activationRow",
       "aggregate": "SliceTool",
       "module": "tools.slice.slice_tool",
       "signature": "SliceTool",
@@ -1526,21 +1526,21 @@
     {
       "aggregate": "EdgeSliceTool",
       "module": "tools.slice.edge_slice_tool",
-      "semantic_sha256": "e4bff7bf8fc35d913baac9b28a2da1ad7f133bba83d5f8fa5e1c97d2a67c3d91",
+      "semantic_sha256": "513f83b4ce75a7e4e152bb87d3a7950ccc0f2999781e7cc15916dc7ff0653dff",
       "signature": "Param[]()",
       "symbol": "params"
     },
     {
       "aggregate": "LoopSliceTool",
       "module": "tools.slice.loop_slice_tool",
-      "semantic_sha256": "0e0fff3289f9bb33aee5126af347020fba20e63756decad1d5976cf1f8c2108f",
+      "semantic_sha256": "b059b491c690c597ba591d40ebe583706b012a6a652305a1904540e229ea6b40",
       "signature": "Param[]()",
       "symbol": "params"
     },
     {
       "aggregate": "SliceTool",
       "module": "tools.slice.slice_tool",
-      "semantic_sha256": "2bd3784f6d56d912693be4bdb930d83d43bd2c8132e34c80a237614decd04839",
+      "semantic_sha256": "81a40195263c54b95365c4fff6537eaa5f2424d219eda405ab68d75302915785",
       "signature": "Param[]()",
       "symbol": "params"
     },

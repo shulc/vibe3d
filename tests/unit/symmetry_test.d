@@ -538,7 +538,7 @@ unittest {
         assert(gate.indexOf("Mode.Element") >= 0 && gate.indexOf("ownsActivationLatch_") >= 0,
                "(u6)(c) W5b lost its Element / preset-arm gate");
         // W5a is gated like W5b: only a preset-armed transform re-arms.
-        const res = bodyAfter(xf, "override void resumeAfterClose()");
+        const res = bodyAfter(xf, "override void resumeAfterClose(bool rearm)");
         const w5a = res.indexOf("notePlacement()");
         assert(res.length > 100 && w5a >= 0, "(u6)(c) W5a not in resumeAfterClose");
         const w5aStmt = res[(w5a >= 80 ? w5a - 80 : 0) .. w5a];

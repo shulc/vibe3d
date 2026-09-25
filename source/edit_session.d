@@ -885,16 +885,7 @@ private struct ToolSession {
         auto t = tool_();
         if (t is null) { endOperation_(); return CloseOutcome(false, false); }
         topBefore_ = undoTop_();
-        if (r == CloseReason.enter) {
-            // The tool's own close (Enter, slice M3): its body commits now,
-            // synchronously; the tool stays armed with no operation.
-            const committed = t.commitOperation();
-            endOperation_();
-            if (!committed) return CloseOutcome(false, true);
-            markClosedRow_();
-            return CloseOutcome(true, true);
-        }
-        if (r != CloseReason.command) {
+        if (r != CloseReason.command && r != CloseReason.enter) {
             // The door commits (or discards, or has nothing left); the
             // session only accounts for the row it may write, and the
             // operation ends with the door.
@@ -902,21 +893,30 @@ private struct ToolSession {
             pendingMark_ = r != CloseReason.none;
             return CloseOutcome(false, false);
         }
-        const cc = t.sessionPolicy().commandClose;
-        // (2) not this tool's door: the funnel keeps its old rules, untouched.
-        if (cc == CommandClose.none
-            || (door == CommandDoor.script && cc != CommandClose.allDoors))
-            return CloseOutcome(false, false);
-        // (3) an idle covered tool stays armed and is not called (R20 law).
-        if (cc == CommandClose.uiDoor && !t.hasUncommittedEdit())
-            return CloseOutcome(false, true);
-        // (4) the tool closes its own operation; the row (if any) is written
-        // now, synchronously, BEFORE the command applies and records.
-        if (!t.commitOperation()) return CloseOutcome(false, false);
+        const bool command = r == CloseReason.command;
+        if (command) {
+            const cc = t.sessionPolicy().commandClose;
+            // (2) not this tool's door: the funnel keeps its old rules, untouched.
+            if (cc == CommandClose.none
+                || (door == CommandDoor.script && cc != CommandClose.allDoors))
+                return CloseOutcome(false, false);
+            // (3) an idle covered tool stays armed and is not called (R20 law).
+            if (cc == CommandClose.uiDoor && !t.hasUncommittedEdit())
+                return CloseOutcome(false, true);
+        }
+        // (4) the tool closes its own operation — before a command, or by its
+        // own Enter (slice M3) — and the row (if any) is written now,
+        // synchronously, BEFORE a command applies and records. Refused before
+        // a command, the funnel drops the tool as before; refused on Enter,
+        // the tool stays.
+        const committed = t.commitOperation();
         endOperation_();
+        if (!committed) return CloseOutcome(false, !command);
         markClosedRow_();
-        pendingResume_ = true;
-        resumeTool_ = t;
+        if (command) {
+            pendingResume_ = true;
+            resumeTool_ = t;
+        }
         return CloseOutcome(true, true);
     }
 
@@ -985,14 +985,17 @@ private struct ToolSession {
     }
 
     void operationArmed(Tool t) {
-        if (!reporting_(t) || live_) return;
+        if (!reporting_(t)) return;
         if (t.sessionPolicy().opensAt != OpensAt.arm) return;   // opens at the gesture's end
-        // The arm is the first group; what the arming press does after it is
-        // an ordinary step if it changes anything.
+        // An arm opens a NEW operation: one still counted live here ended
+        // without a report (a prepared update disarmed the tool), and none of
+        // its steps may leak into this one. The arm is the first group; what
+        // the arming press does after it is an ordinary step if it changes
+        // anything.
+        auto before = pendingSet_ ? pending_ : AttrImage.init;
+        endOperation_();
         live_ = true;
-        openImage_ = pendingSet_ ? pending_ : AttrImage.init;
-        steps_ = null;
-        redo_ = null;
+        openImage_ = before;
         pending_ = t.captureAttrImage();
         pendingSet_ = true;
         pendingIfChanged_ = true;
@@ -1034,8 +1037,8 @@ private struct ToolSession {
         if (!reporting_(t)) return JSONValue(null);
         auto j = JSONValue.emptyObject;
         j["live"]  = JSONValue(live_);
-        j["steps"] = JSONValue(steps_.length);
-        j["redo"]  = JSONValue(redo_.length);
+        j["steps"] = JSONValue(cast(long) steps_.length);
+        j["redo"]  = JSONValue(cast(long) redo_.length);
         return j;
     }
 

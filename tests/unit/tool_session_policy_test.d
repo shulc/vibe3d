@@ -18,6 +18,11 @@
 // (3) The history wiring: the keyboard/panel doors reach the tool session
 //     through `EditSession.navigate`, and nothing in the input router steps
 //     the history itself.
+// (4) Slice M3: the tools whose SESSION owns their gesture steps
+//     (`sessionSteps`), with `opensAt`, `noClone` and the declared attribute
+//     image per id — every image and haul name is a param of the tool, and no
+//     image name is an `Action` trigger (plan R4.3). The image operations are
+//     `final` (a compiler pin, R3.2).
 //
 // Provenance: `carried` = today's classification moved from the deleted
 // marker interface and the cutting-session ids, unchanged; `notPorted` = the
@@ -33,7 +38,7 @@ import edit_tool_registration;
 import transform_tool_registration;
 
 import prepared_tool_transition : toolArmEmitsLifecycle;
-import tool         : CommandClose, Tool, ToolSessionPolicy;
+import tool         : CommandClose, OpensAt, Tool, ToolSessionPolicy;
 import tool_presets : loadToolPresets;
 import tests.unit.census_symbols : blankNonCode;
 
@@ -221,9 +226,9 @@ unittest { // (1) id -> policy, over every registered id
         assert(policy.activationRow == row.activationRow,
                format("M1 policy table: %s (%s) activationRow %s, table says %s",
                       row.id, row.cls, policy.activationRow, row.activationRow));
-        // The production arm classifier: today it equals the field for every
-        // registered id (the cutting-session id arm is redundant since M1).
-        assert(toolArmEmitsLifecycle(t, row.id) == row.activationRow,
+        // The production arm classifier IS the field (slice M3 removed the
+        // cutting-session id arm, redundant since M1).
+        assert(toolArmEmitsLifecycle(t) == row.activationRow,
                format("M1 policy table: toolArmEmitsLifecycle(%s) is %s, table says %s",
                       row.id, !row.activationRow, row.activationRow));
         assert(row.activationRow == (row.prov == Prov.carried),
@@ -331,17 +336,114 @@ unittest { // (3) the doors reach the tool session only through EditSession
             "EditSession.navigate");
     const ts = bodyAt(es, "private struct ToolSession");
     // The branch order the navigate contract fixes, per direction.
+    // Slice M3: the session's own steps answer first, before every tool-held
+    // branch.
     inOrder(bodyAt(ts, "bool undo()"),
-            ["soleFirstGesture()", "tryUndoStepInSession()", "cancelUncommittedEdit()",
-             "history_.undo()", "resyncSession()", "dropTool_()"],
+            ["undoFirstGroup_(t)", "tryUndoStepInSession()", "cancelUncommittedEdit()",
+             "history_.undo()", "resyncSession()", "endsToolOnUndo("],
             "ToolSession.undo");
     inOrder(bodyAt(ts, "bool redo()"),
-            ["tryRedoLiveInSession()", "history_.redo()", "resyncSession()",
-             "replayFirstGesture("],
+            ["applyAttrImage(img)", "tryRedoLiveInSession()", "history_.redo()",
+             "resyncSession()", "replayFirstGroup_()"],
             "ToolSession.redo");
     // Nothing else in the module steps the history.
     assert(es.count("history_.undo()") == 2 && es.count("history_.redo()") == 1,
            format("M1 wiring census: edit_session.d steps the history %s/%s times, "
-                  ~ "expected undo 2 (ToolSession.undo, endSession_) and redo 1",
+                  ~ "expected undo 2 (ToolSession.undo, undoFirstGroup_) and redo 1",
                   es.count("history_.undo()"), es.count("history_.redo()")));
+}
+
+// ---------------------------------------------------------------------------
+// (4) Slice M3 — the session-owned steps, per id.
+// ---------------------------------------------------------------------------
+
+/// The image operations are `final`: what is restorable is the declaration's.
+static assert(__traits(isFinalFunction, Tool.captureAttrImage));
+static assert(__traits(isFinalFunction, Tool.applyAttrImage));
+static assert(__traits(isFinalFunction, Tool.openOperation));
+static assert(__traits(isVirtualMethod, Tool.rebuildPreviewFromAttrs));
+static assert(ToolSessionPolicy.init.sessionSteps == false
+              && ToolSessionPolicy.init.imageAttrs.length == 0);
+
+private struct StepRow {
+    string id;
+    OpensAt opensAt;
+    bool noClone;
+    string[] imageAttrs;
+}
+
+/// Measured on the M3 tree. Provenance: `opensAt` — M0 H1 (Edge Slice and Slice
+/// open at the press, Loop Slice at its arm, C-H1-es / C-H1-ls); `noClone` —
+/// the static flags read (Edge Slice only); the images — plan R4.3 plus
+/// `count` (C-H2-ls-insert P1) and Loop Slice's seed set (PLAN-FINDING, card M3).
+private immutable StepRow[] kStepTable = [
+    StepRow("mesh.edgeSliceTool", OpensAt.firstPress, true,
+            ["chain", "edges", "activePoint"]),
+    StepRow("mesh.loopSliceTool", OpensAt.arm, false,
+            ["positions", "current", "count", "seeds", "armedSelFaces"]),
+    StepRow("mesh.sliceTool", OpensAt.firstPress, false,
+            ["startX", "startY", "startZ", "endX", "endY", "endZ", "vectorX", "vectorY",
+             "vectorZ", "axis", "gap", "frozenNormal", "haveFrozen", "axisLocked", "hasLine"]),
+];
+
+unittest { // (4)
+    auto manifest = parseJSON(readText("tools/prepared_writer_manifest.json"));
+    string[string] moduleOf;
+    foreach (p; manifest["products"].array)
+        moduleOf[p["aggregate"].str] = p["module"].str;
+    string[] stepIds;
+    size_t checkedNames, actionNames;
+    foreach (row; kTable) {
+        auto ci = TypeInfo_Class.find(moduleOf[row.cls] ~ "." ~ row.cls);
+        auto t = blit(ci);
+        const pol = t.sessionPolicy();
+        if (!pol.sessionSteps) {
+            assert(pol.imageAttrs.length == 0 && pol.haulAttrs.length == 0,
+                   "M3 step table: " ~ row.id ~ " declares an image without sessionSteps");
+            continue;
+        }
+        // Only these three: `params()` of a blitted (unconstructed) instance
+        // is safe for them (field addresses only), not for every tool.
+        auto ps = t.params();
+        bool hasParam(string n) {
+            foreach (ref p; ps) if (p.name == n) return true;
+            return false;
+        }
+        bool isAction(string n) {
+            foreach (ref p; ps) if (p.name == n) return p.action_;
+            return false;
+        }
+        foreach (ref p; ps) if (p.action_) ++actionNames;
+        stepIds ~= row.id;
+        foreach (n; pol.imageAttrs) {
+            assert(hasParam(n), format("M3 step table: %s image names '%s', not one of its params",
+                                       row.id, n));
+            assert(!isAction(n), format("M3 step table: %s image names the Action trigger '%s' "
+                                        ~ "(a restore would fire it)", row.id, n));
+            ++checkedNames;
+        }
+        foreach (n; pol.haulAttrs)
+            assert(hasParam(n), format("M3 step table: %s haul names '%s', not one of its params",
+                                       row.id, n));
+        bool found;
+        foreach (sr; kStepTable) {
+            if (sr.id != row.id) continue;
+            found = true;
+            assert(pol.opensAt == sr.opensAt && pol.noClone == sr.noClone
+                   && pol.imageAttrs == sr.imageAttrs,
+                   format("M3 step table: %s policy {opensAt %s, noClone %s, image %s}, table "
+                          ~ "says {%s, %s, %s}", row.id, pol.opensAt, pol.noClone, pol.imageAttrs,
+                          sr.opensAt, sr.noClone, sr.imageAttrs));
+        }
+        assert(found, "M3 step table: " ~ row.id ~ " has sessionSteps but no step-table row");
+    }
+    // Population floors (measured): 3 ids, 23 image names, 3 Action triggers
+    // on them (chainArm; insertAt, removeCurrent).
+    sort(stepIds);
+    assert(stepIds == ["mesh.edgeSliceTool", "mesh.loopSliceTool", "mesh.sliceTool"],
+           format("M3 step table: sessionSteps ids %s", stepIds));
+    assert(checkedNames == 23, format("M3 step table: %s image names checked, measured 23",
+                                      checkedNames));
+    assert(actionNames == 3, format("M3 step table: %s Action params on the three tools, "
+                                    ~ "measured 3", actionNames));
 }

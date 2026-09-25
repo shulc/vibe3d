@@ -11,6 +11,14 @@ import d_imgui.imgui_h;   // ImDrawList / ImVec2 / IM_COL32 for the `t = %` HUD
 import operator : VectorStack;
 import tool;
 import edit_session : KeepAliveOnCancel, SessionStepUndo;
+
+// Slice M3: Edge Slice's gesture steps are its SESSION's (`sessionSteps`), not
+// a tool-held peel; it no longer answers either tool-side capability.
+static assert(!is(EdgeSliceTool : SessionStepUndo) && !is(EdgeSliceTool : KeepAliveOnCancel));
+unittest {
+    assert((new EdgeSliceTool(null, null, null, null)).sessionPolicy().sessionSteps,
+        "Edge Slice's policy lost the session-owned steps (slice M3)");
+}
 import mesh;
 import math;
 import editmode : EditMode;

@@ -144,14 +144,23 @@ private class LifecyclePreparedTool : Tool {
 unittest {
     assert((new TopologyPenTool).sessionPolicy().activationRow,
         "Topology Pen arm must opt into lifecycle history");
-    assert(toolArmEmitsLifecycle(new LifecyclePreparedTool, "mesh.marker"),
+    assert(toolArmEmitsLifecycle(new LifecyclePreparedTool),
         "the activationRow policy must classify the prepared arm for recording");
-    assert(toolArmEmitsLifecycle(new CountingPreparedTool, "mesh.sliceTool"),
-        "the Slice compatibility arm lost its lifecycle classification");
-    assert(!toolArmEmitsLifecycle(new CountingPreparedTool, "mesh.plain"),
+    // Slice M3: the cutting tools' rows come from their CLASS's policy, never
+    // from an id (the id arm and its parameter are gone).
+    import tools.slice.slice_tool : SliceTool;
+    import tools.slice.edge_slice_tool : EdgeSliceTool;
+    import tools.slice.loop_slice_tool : LoopSliceTool;
+    assert((new SliceTool(null, null, null, null)).sessionPolicy().activationRow
+           && (new EdgeSliceTool(null, null, null, null)).sessionPolicy().activationRow
+           && (new LoopSliceTool(null, null, null, null)).sessionPolicy().activationRow,
+        "a cutting-tool class lost the activation row its policy declares");
+    static assert(!__traits(compiles, toolArmEmitsLifecycle(null, "mesh.sliceTool")),
+        "the arm classifier takes an id again");
+    assert(!toolArmEmitsLifecycle(new CountingPreparedTool),
         "an unmarked ordinary tool acquired a lifecycle record");
     // No candidate classifies as no row, as the marker cast answered for null.
-    assert(!toolArmEmitsLifecycle(null, "mesh.plain"),
+    assert(!toolArmEmitsLifecycle(null),
         "a null candidate acquired a lifecycle record");
 }
 
