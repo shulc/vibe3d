@@ -6,6 +6,8 @@ import std.conv      : to;
 
 import math : Viewport;
 import toolpipe.stage   : Stage, TaskCode;
+import editmode : EditMode;
+static import hover_state;
 import toolpipe.packets : SubjectPacket, ActionCenterPacket, AxisPacket,
                           WorkplanePacket, FalloffPacket, SymmetryPacket,
                           SnapPacket, ConstrainPacket;
@@ -126,6 +128,16 @@ public:
                 return true;
             }
         }
+        return false;
+    }
+
+    /// H7 (tool session model, slice M6): whether some stage's rollover flag
+    /// draws the hovered element of `type` (`Stage.rollovers`, OR-ed across
+    /// the pipe as the flags of a tool's nodes are).
+    bool rolloverDraws(EditMode type, bool dragging, bool live) const nothrow @nogc {
+        foreach (s; stages_)
+            if (hover_state.rolloverDraws(s.rollovers(), type, dragging, live))
+                return true;
         return false;
     }
 

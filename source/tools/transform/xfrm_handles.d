@@ -20,9 +20,11 @@ module tools.transform.xfrm_handles;
 /// silently WINS over one of the same name mixed in. Never leave a copy behind.
 
 mixin template XfrmHandlesImpl() {
-    /// Idle T-only handles follow the translated run centre (task 6207).
+    /// Idle T-only handles follow the translated run centre (task 6207). The
+    /// anchor is the owner's policy (H8, slice M6): `acenPlusT` below, or the
+    /// owner's operation base plus its offset attributes (Edge Extend).
     private Vec3 idleHandleCentre(ref VectorStack vts) {
-        if (hostCentreActive_) return hostCentre_;
+        if (anchoredOnOperation()) return handleOwner().handleAnchorPoint().at;
         immutable Vec3 acen = queryActionCenter(vts);
         if (!flagT || !runFrameValid) return acen;
         return runFrameOrigin

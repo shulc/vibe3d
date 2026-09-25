@@ -301,11 +301,27 @@ public:
         return preparedToolStateOwner;
     }
 
-    /// A host that owns its handle pose sets this on its embedded banks; an
-    /// off-gizmo press then hauls about the handle and never places the
-    /// action centre (task 7118, Q-pose, gap 245 — Edge Extend's three banks
-    /// and nothing else). It answers `pressPlacesCenter()` first.
-    bool hostPinsCentre = false;
+    /// H8 (tool session model, slice M6): the tool whose policy poses this
+    /// tool's handle (`ToolSessionPolicy.handleAnchor`) — itself, unless a tool
+    /// that EMBEDS it for its gizmo banks says otherwise (Edge Extend, once, at
+    /// construction). Read as data: `handleAnchor` and `handleAnchorPoint()`.
+    private Tool handleOwner_;
+    void setHandleOwner(Tool owner) nothrow @nogc { handleOwner_ = owner; }
+    final inout(Tool) handleOwner() inout nothrow @nogc {
+        return handleOwner_ is null ? this : handleOwner_;
+    }
+    /// True when the handle stands on the owner's own operation
+    /// (`HandleAnchor.opBasePlusAttr`): no press places the action centre, and
+    /// the idle pose is the owner's `handleAnchorPoint()` (Q-pose, gap 245).
+    final bool anchoredOnOperation() const nothrow @nogc {
+        return handleOwner().sessionPolicy().handleAnchor == HandleAnchor.opBasePlusAttr;
+    }
+    /// Whether a press may hit-test this tool's handle: one anchored on an
+    /// operation is drawn only while that operation is open (gap 217), and a
+    /// handle that is not drawn cannot be hit.
+    final bool handleHittable() const {
+        return !anchoredOnOperation() || handleOwner().handleAnchorPoint().shown;
+    }
 protected:
     bool          active;
 
@@ -1719,7 +1735,9 @@ protected:
     /// classify them 260 lines below, in `computeClickRelocateHitRaw`'s `final switch`,
     /// and sailed past this chain without a word.
     bool pressPlacesCenter() {
-        if (hostPinsCentre) return false;
+        // H8: a press never places the centre of a handle anchored on the
+        // tool's own operation (the second role of the retired `hostPinsCentre`).
+        if (anchoredOnOperation()) return false;
         import toolpipe.pipeline           : g_pipeCtx;
         import toolpipe.stages.actcenter   : ActionCenterStage;
         import toolpipe.stage              : TaskCode;

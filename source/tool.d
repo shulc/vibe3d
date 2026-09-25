@@ -6,6 +6,7 @@ import math;
 import shader;
 import params : Param, ParamProvider;
 import editmode : EditMode;
+public import hover_state : Rollover;   // a field type of ToolSessionPolicy
 import operator : VectorStack;
 import command : Command;
 import command_history : CommandHistory;
@@ -206,6 +207,22 @@ enum OpensAt : ubyte { firstPress, arm }
 /// H5: the kind of press that opens a gesture step (slice M3).
 enum PressKind : ubyte { plain, shift, middle }
 
+/// H8 (slice M6, C-H8-ctl): what the tool's transform handle is posed from.
+/// `acenPlusT`: the action centre plus the run's translation (the transform
+/// family; a press off the handle may place the centre). `opBasePlusAttr`: the
+/// base the tool's own operation took plus its offset attributes
+/// (`Tool.handleAnchorPoint`, Edge Extend); no press places the action centre,
+/// and with no operation open there is no handle to hit (gap 217).
+enum HandleAnchor : ubyte { acenPlusT, opBasePlusAttr }
+
+/// The anchor a `HandleAnchor.opBasePlusAttr` tool answers (slice M6): where
+/// its handle stands, and whether it is drawn (an operation is open). The pose
+/// is reported either way — the first press of an operation hauls about it.
+struct HandleAnchorPoint {
+    Vec3 at;
+    bool shown;
+}
+
 /// A tool's ATTRIBUTE IMAGE (slice M3, plan R4.3): the raw bytes of the
 /// attributes its policy declares in `imageAttrs`, in that order. An undo of a
 /// gesture step restores the image the step started from (H2); the tool's
@@ -293,6 +310,12 @@ struct ToolSessionPolicy {
     /// steps) leaves the tool armed (tasks 0400/0430: the create family and
     /// Mirror; slice M4 moved it here from the `KeepAliveOnCancel` interface).
     bool keepAliveOnCancel;
+    /// H7 (slice M6): whether the hovered target is drawn while the tool is
+    /// armed — the rollover flag of the tool's own node (`hover_state.Rollover`;
+    /// the flags table, generated into tests/fixtures/tool_rollover_flags.json).
+    Rollover rollovers;
+    /// H8 (slice M6): what the tool's transform handle is posed from.
+    HandleAnchor handleAnchor;
 }
 
 class Tool : ParamProvider {
@@ -905,6 +928,12 @@ public:
         return ToolSessionPolicy.init;
     }
 
+    // H8 (slice M6): the handle anchor of a tool whose policy says
+    // `HandleAnchor.opBasePlusAttr` — its operation's base plus its offset
+    // attributes, and whether a handle is drawn. Read only through that policy
+    // (the transform banks a tool embeds, `TransformTool.handleOwner`).
+    HandleAnchorPoint handleAnchorPoint() const { return HandleAnchorPoint.init; }
+
     // The operation's close before a recording command (slice M2, H3; read
     // only by `EditSession.closeOperation`, per `sessionPolicy().commandClose`).
     // True = the operation is closed and the tool stays armed; false = it could
@@ -1225,6 +1254,12 @@ private enum string[] kToolVirtualWhitelist = [
     // every tool whose session owns its steps; the image operations beside it
     // are `final`.
     "rebuildPreviewFromAttrs",
+    // Slice M6: the H8 handle anchor (plan R2.5 M6 names it a base virtual,
+    // read only through the `handleAnchor` policy datum, never by cast). ONE
+    // overrider today (Edge Extend) — under this moratorium's own rule a
+    // standing question, recorded on the M6 card: the plan's alternative, a
+    // capability interface, is the per-tool shape the model retires.
+    "handleAnchorPoint",
     // Middling — 4 to 8 overriders. Fine on the base; listed so the next
     // reader can see where the line currently sits.
     "flags", "isDragging", "onKeyDown",

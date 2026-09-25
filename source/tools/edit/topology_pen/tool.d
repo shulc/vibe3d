@@ -1207,7 +1207,10 @@ public:
 
     // Its visible arm is a strict-LIFO history row (slice M1 carries the former marker).
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
-        static immutable ToolSessionPolicy policy = { activationRow: true };
+        // Rollovers (slice M6): the flags table sets the flag on this tool (and
+        // on Drag Weld); no hover type is picked here yet, so nothing is drawn.
+        static immutable ToolSessionPolicy policy = {
+            activationRow: true, rollovers: Rollover.target };
         return policy;
     }
 

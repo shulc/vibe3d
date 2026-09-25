@@ -10,6 +10,7 @@ import document : primaryModelSpace;
 import mesh : Mesh, MapDomain, layerBBoxMinMax;
 import mesh_dirty : MeshDirtyKey, g_topoEpochs;  // task 1906 stage 2d (row 14)
 import editmode : EditMode;
+import hover_state : Rollover;
 import toolpipe.stage    : Stage, TaskCode, ordWght, ToolSwitchTransient,
                            PresetClaimable;
 import toolpipe.pipeline : g_pipeCtx;
@@ -332,6 +333,15 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient, PresetClaimable {
     }
 
     override TaskCode taskCode() const pure nothrow @nogc @safe { return TaskCode.Wght; }
+
+    /// H7 (slice M6): the element falloff carries the rollover flag and it
+    /// highlights a VERTEX only, in every selection mode (C-H7-elem, gap 310;
+    /// the flags table: Element Move's flag is on its centre and falloff nodes,
+    /// not on its transform node). Keyed like the transform tool's element pick
+    /// (`XfrmTransformTool.wantsHoverForType`): on the falloff TYPE.
+    override Rollover rollovers() const nothrow @nogc {
+        return type == FalloffType.Element ? Rollover.vertices : Rollover.none;
+    }
     override string   id()       const                          { return instanceId_; }
     // Every falloff instance (primary "falloff" + stacked "falloff#N") resolves
     // the SAME config form; the per-instance params() filter + the stageId write

@@ -707,11 +707,6 @@ public:
         return -1;
     }
 
-    /// `resolvedAxis` sentinel: the caller decided the press is OFF every
-    /// handle without hit-testing (Edge Extend's first press, when no handle
-    /// is drawn yet; task 7118, gap 217). -1 still means "hit-test here".
-    enum int kPressOffGizmo = -2;
-
     bool onMouseButtonDownWithResolvedAxis(ref const SDL_MouseButtonEvent e,
                                            ref VectorStack vts,
                                            int resolvedAxis,
@@ -747,8 +742,10 @@ public:
         ctrlLockActive = false;   // clear stale lock before re-deciding
         lastClickWasRelocate = false;
         lastClickWasOffGizmo = false;
+        // -1 = "hit-test here" — unless no handle is drawn (H8, gap 217: an
+        // operation-anchored handle before its operation opens).
         dragAxis = resolvedAxis >= 0 ? resolvedAxis
-                 : (resolvedAxis == kPressOffGizmo ? -1 : hitTestAxes(e.x, e.y));
+                 : (handleHittable() ? hitTestAxes(e.x, e.y) : -1);
         if (dragAxis >= 0) {
             // Ctrl constraint applies only to the most-facing plane (dragAxis==3)
             if (ctrl && dragAxis == 3) {

@@ -182,6 +182,13 @@ public:
 
     // Every click is committed immediately — nothing is ever pending.
     override bool hasUncommittedEdit() const { return false; }
+
+    // H7 (slice M6): the flags table sets the rollover flag on this tool; it
+    // picks no hover type yet (`wantsHoverForType`), so nothing is drawn.
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy policy = { rollovers: Rollover.target };
+        return policy;
+    }
     override void cancelUncommittedEdit() {}
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e,

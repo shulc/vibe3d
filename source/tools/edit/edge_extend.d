@@ -203,8 +203,17 @@ class EdgeExtendTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient
             imageAttrs: kExtendImage,
             haulAttrs: kExtendHaul,
             recordCarriesActivation: true,
+            // H8 (slice M6, C-H8-ctl): the handle stands on the operation's own
+            // base plus the offset attributes; no press places the centre.
+            handleAnchor: HandleAnchor.opBasePlusAttr,
         };
         return policy;
+    }
+
+    /// H8 (slice M6): the anchor the embedded banks read through this tool's
+    /// `handleAnchor` policy — drawn only while an operation is open.
+    override HandleAnchorPoint handleAnchorPoint() const {
+        return HandleAnchorPoint(handleCentre(), runStarted());
     }
 
     mixin PreparedNamedGpuParamDoorClient;
@@ -356,11 +365,9 @@ public:
         // bank switches land immediately, so a tool that is constructed and
         // never activated already reports the right set.
         xfrm = new XfrmTransformTool(meshSrc, gpu, editMode);
-        // Edge Extend owns its handle pose (Q-pose, gap 245): a press of its
-        // banks never places the action centre.
-        xfrm.moveBank().hostPinsCentre = true;
-        xfrm.rotateBank().hostPinsCentre = true;
-        xfrm.scaleBank().hostPinsCentre = true;
+        // Edge Extend's policy poses the embedded handle (H8, Q-pose, gap
+        // 245): the wrapper and its banks read `handleAnchor` from THIS tool.
+        xfrm.setHandleOwner(this);
         syncBankFlags();
     }
 
@@ -892,7 +899,6 @@ public:
     override void update(ref VectorStack vts) {
         if (!active) return;
         if (dragBank == DragBank.None) readSymmetry(vts);
-        xfrm.setHostGizmoCentre(handleCentre());
         xfrm.update(vts);
     }
 
@@ -907,7 +913,6 @@ public:
             return PreparedXfrmUpdateEffect(preparedToolStateOwner,
                 PreparedXfrmUpdateKind.None, false);
         }
-        xfrm.setHostGizmoCentre(handleCentre());
         auto inner = xfrm.prepareUpdate(vts, context, layer, uploadOwner);
         return PreparedXfrmUpdateEffect(preparedToolStateOwner,
             inner.kind, inner.accepted);
@@ -1075,8 +1080,9 @@ public:
         DragBank picked = DragBank.None;
         bool totalMiss = false;
         if (first) {
-            if (moveHandle_ && mv.onMouseButtonDownWithResolvedAxis(le, vts,
-                        MoveTool.kPressOffGizmo) && mv.dragAxisPublic() >= 0)
+            // No handle is drawn before the operation opens (gap 217), so the
+            // bank does not hit-test it (`TransformTool.handleHittable`, H8).
+            if (moveHandle_ && mv.onMouseButtonDown(le, vts) && mv.dragAxisPublic() >= 0)
                 picked = DragBank.Move;
             else
                 totalMiss = true;
@@ -1269,7 +1275,6 @@ public:
         // No handle before the first press (gap 217) — in the owner cell and
         // in every replica, which come through this same draw.
         if (!runStarted()) return;
-        xfrm.setHostGizmoCentre(handleCentre());
         // The embedded wrapper renders the gizmo banks + runs the shared arbiter
         // (hover highlight) at the tool's handle pose (Q-pose, gap 245).
         xfrm.draw(shader, vp, vts, plan);

@@ -43,7 +43,7 @@ import viewgrid              : ViewGridPrefs, viewGridSizeFor, viewGridFadeRadiu
 import shader                : Shader, LitShader, CheckerShader, GridShader;
 import pipe_gizmo_host       : PipeGizmoHost;
 import tools.slice.loop_slice_tool : LoopSliceTool;
-import hover_state : TargetHighlightKeeper;
+import hover_state : rolloverDraws;
 import tools.transform.transform   : TransformTool;
 
 // The copilot ghost overlay at the tail of the scene pass; compiled out of
@@ -241,6 +241,23 @@ public:
     immutable bool showEdgeHover = display.showEdgeHover;
     immutable bool showFaceHover = display.showFaceHover;
     import bindbc.opengl;
+
+    // H7 (tool session model, slice M6): the ONE read of the rollover data.
+    // With no tool armed the selection type decides (the branches below). With
+    // one, the hovered element of `type` is drawn iff the tool's policy flag or
+    // a flag of its pipe's stages draws it (`hover_state.rolloverDraws`: none /
+    // target / untilLive / vertices; C-H7, C-H7-vert, C-H7-elem, gap 309/310).
+    // Which elements are hovered at all is the tool's pick need, not this.
+    bool rolloverShown(EditMode type) {
+        if (activeTool is null) return true;
+        immutable bool drag = activeTool.isDragging();
+        immutable bool live = activeTool.hasUncommittedEdit();
+        return rolloverDraws(activeTool.sessionPolicy().rollovers, type, drag, live)
+            || scene.pipeContext.pipeline.rolloverDraws(type, drag, live);
+    }
+    immutable int vertHovForDraw = rolloverShown(EditMode.Vertices) ? hoveredVertex : -1;
+    immutable int edgeHovForDraw = rolloverShown(EditMode.Edges)    ? hoveredEdge   : -1;
+    immutable int faceHovForDraw = rolloverShown(EditMode.Polygons) ? hoveredFace   : -1;
 
     // The value `LitShader`'s constructor seeds `u_fillColor` to. Restoring to
     // it (rather than to whichever plan just drew) keeps the program in the
@@ -672,9 +689,9 @@ public:
             litShader.setFillColor(activePlan.fillColor);
             bool toolFaceHover = activeTool !is null
                               && activeTool.wantsHoverForType(EditMode.Polygons)
-                              && hoveredFace >= 0;
+                              && faceHovForDraw >= 0;
             if (selFeedbackType == SelType.Polygon || toolFaceHover) {
-                gpu.drawFacesHighlighted(litShader, hoveredFace);
+                gpu.drawFacesHighlighted(litShader, faceHovForDraw);
             } else {
                 gpu.drawFaces(litShader);
             }
@@ -745,49 +762,26 @@ public:
         if (selFeedbackType == SelType.Edge) {
             // A tool can pre-highlight the WHOLE ring it will act on: Loop
             // Slice shows the ring its cut will land on (via wantsEdgeLoop-
-            // Hover + rebuildLoopHoverMask). And while that tool DRAGS, the
-            // per-frame edge picker is frozen (pickEdges early-returns on
-            // isDragging), so `hoveredEdge` keeps a stale numeric index that
-            // now aliases an unrelated edge once the tool's mutate/revert
-            // preview rebuilds the edge array — highlighting it would light
-            // a random edge far from the cursor (task 0231). Suppress the
-            // single-edge hover then; the live cut geometry already shows
-            // what will happen. Task 0232 widens this suppression to
-            // ALSO cover an ARMED (but not currently dragging) Loop Slice
-            // standing preview: `isDragging()` alone (== `scrubbing_`)
-            // goes false the instant the mouse releases, but the
-            // preview's edge array keeps getting rebuilt on every HUD/
-            // panel scrub while armed — so the same frozen-numeric-index
-            // aliasing risk applies for the WHOLE armed period, not just
-            // the held-drag sub-window. `hasUncommittedEdit()` (==
-            // `armed_` for this tool) is the generic, already-existing
-            // Tool hook for exactly this "an uncommitted edit is live"
-            // condition — every other tool defaults it to false, so this
-            // is a no-op change for them. ONE exception (task 7114, measured
-            // law): Edge Slice outside a drag keeps its target-edge highlight
-            // through a live chain.
-            //
-            // Why that index is not a stale alias: outside a drag Edge Slice's
-            // hover is re-picked every frame against the current (cut) mesh;
-            // while the preview's index space is stale the picker holds its
-            // last answer, but the screen then also holds the previous preview
-            // buffer, so the index and the drawn edges come from one space.
-            // During a drag the suppression stays.
-            int          hovForDraw = hoveredEdge;
+            // Hover + rebuildLoopHoverMask); that ring is NOT the rollover and
+            // keeps its own gate — hidden during a drag or a live edit, where
+            // the preview's rebuilt edge array would alias a stale index
+            // (tasks 0231/0232). The single hovered edge is the rollover
+            // (`rolloverShown`, slice M6): Edge Slice keeps its target edge
+            // through a live chain outside a drag (C-H7), every other tool
+            // with no flag shows none. Outside a drag Edge Slice's hover is
+            // re-picked every frame against the current (cut) mesh; while the
+            // preview's index space is stale the picker holds its last answer,
+            // but the screen then also holds the previous preview buffer, so
+            // the index and the drawn edges come from one space.
+            int          hovForDraw = edgeHovForDraw;
             const(bool)[] loopMask  = (bool[]).init;
-            if (activeTool !is null) {
-                const keepEdgeSliceTarget = activeTool.hasUncommittedEdit()
-                    && !activeTool.isDragging()
-                    && cast(TargetHighlightKeeper) activeTool !is null;
-                if ((activeTool.isDragging() || activeTool.hasUncommittedEdit())
-                        && !keepEdgeSliceTarget)
-                    hovForDraw = -1;
-                else if (activeTool.wantsEdgeLoopHover()
-                         && showEdgeHover && hoveredEdge >= 0)
-                    loopMask = rebuildLoopHoverMask(
-                        mesh, hoveredEdge,
-                        activeTool.edgeLoopHoverSliceRing());
-            }
+            if (activeTool !is null
+                && !(activeTool.isDragging() || activeTool.hasUncommittedEdit())
+                && activeTool.wantsEdgeLoopHover()
+                && showEdgeHover && hoveredEdge >= 0)
+                loopMask = rebuildLoopHoverMask(
+                    mesh, hoveredEdge,
+                    activeTool.edgeLoopHoverSliceRing());
             gpu.drawEdges(shader.locColor, hovForDraw, mesh.selectedEdgeView(),
                           loopMask, baseWire, occluded);
         } else if (selFeedbackType == SelType.Polygon) {
@@ -928,14 +922,16 @@ public:
                                   loopSelMask, baseWire, occluded);
                 }
             }
-        } else if (showEdgeHover && hoveredEdge >= 0) {
+        } else if (showEdgeHover && hoveredEdge >= 0
+                   && (edgeHovForDraw >= 0
+                       || (activeTool !is null && activeTool.wantsEdgeLoopHover()))) {
             const bool[] loopMask =
                 (activeTool !is null && activeTool.wantsEdgeLoopHover())
                     ? rebuildLoopHoverMask(
                         mesh, hoveredEdge,
                         activeTool.edgeLoopHoverSliceRing())
                     : (bool[]).init;
-            gpu.drawEdges(shader.locColor, hoveredEdge, MarkView.init, loopMask,
+            gpu.drawEdges(shader.locColor, edgeHovForDraw, MarkView.init, loopMask,
                           baseWire, occluded);
         } else if (activePlan.drawWire) {
             // The bare-overlay branch: no selection set, no hover index, so
@@ -1081,12 +1077,12 @@ public:
         auto zOv = g_perf.scope_(Cat.drawOverlays);
         immutable bool edgeArm = selFeedbackType == SelType.Edge;
         gpu.drawVertices(shader.locColor, shader.locPointSize,
-                         edgeArm && !showVertHover ? -1 : hoveredVertex,
+                         edgeArm && !showVertHover ? -1 : vertHovForDraw,
                          edgeArm ? MarkView.init : mesh.selectedVertexView(),
                          occluded);
-    } else if (showVertHover && hoveredVertex >= 0) {
+    } else if (showVertHover && vertHovForDraw >= 0) {
         auto zOv = g_perf.scope_(Cat.drawOverlays);
-        gpu.drawVertices(shader.locColor, shader.locPointSize, hoveredVertex,
+        gpu.drawVertices(shader.locColor, shader.locPointSize, vertHovForDraw,
                          MarkView.init, occluded);
     }
 

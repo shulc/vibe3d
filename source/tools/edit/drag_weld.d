@@ -100,6 +100,13 @@ public:
     // A drag is in progress between button-down and button-up.
     override bool hasUncommittedEdit() const { return dragging_; }
 
+    // H7 (slice M6): the flags table sets the rollover flag on this tool; it
+    // picks no hover type yet (`wantsHoverForType`), so nothing is drawn.
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy policy = { rollovers: Rollover.target };
+        return policy;
+    }
+
     override void cancelUncommittedEdit() {
         dragging_ = false;
         source_   = -1;

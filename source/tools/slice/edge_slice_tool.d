@@ -15,7 +15,7 @@ import mesh_gpu : GpuMesh;
 import math;
 import editmode : EditMode;
 import params : Param, IntEnumEntry, wireTagForValue;
-import hover_state : g_hoveredEdge, g_hoverIndexSpaceStale, TargetHighlightKeeper;
+import hover_state : g_hoveredEdge, g_hoverIndexSpaceStale;
 import shader : Shader, LitShader;
 import command_history : CommandHistory, PreparedHistoryKind;
 import commands.mesh.session_edit : MeshSessionEdit;
@@ -238,7 +238,7 @@ bool pointInPolygon(Vec3 q, const Vec3[] vs, const uint[] f, out float dist) {
 // boundary is one), their redo, and the first point's group with the
 // activation row it joins. The tool reports its step boundaries and rebuilds
 // its preview from the image (`rebuildPreviewFromAttrs`).
-final class EdgeSliceTool : Tool, TargetHighlightKeeper,
+final class EdgeSliceTool : Tool,
                             PreparedToolDoorClient, PreparedToolParamDoorClient {
     mixin PreparedNamedGpuParamDoorClient;
 public:
@@ -392,7 +392,10 @@ public:
             activationRow: true, commandClose: CommandClose.uiDoor,
             sessionSteps: true, opensAt: OpensAt.firstPress, noClone: true,
             imageAttrs: ["chain", "edges", "activePoint"],
-            haulAttrs: ["chain", "edges", "activePoint"] };
+            haulAttrs: ["chain", "edges", "activePoint"],
+            // H7 (slice M6): the target edge stays drawn through a live chain,
+            // outside a drag (C-H7: 286 px; the flags table, gap 309).
+            rollovers: Rollover.target };
         return policy;
     }
 

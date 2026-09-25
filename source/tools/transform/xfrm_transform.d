@@ -115,7 +115,7 @@ import params : Param;
 import tools.transform.transform : TransformTool, VertexEditFactory,
     MorphEditFactory, PreparedTransformActivationImage,
     PreparedTransformEditCloseImage;
-import tool            : ToolFlag, ToolSessionPolicy, CommandClose;
+import tool            : Tool, ToolFlag, ToolSessionPolicy, CommandClose;
 import edit_session    : LiveEvalClient, ParameterChangeBatch,
                          ParameterChangeSource, SlotActivationClient;
 import tools.transform.move      : MoveTool;
@@ -2677,14 +2677,13 @@ public:
     // and (in 4b) as the action-center pivot.
     public Vec3 moveGizmoCenter() const { return moveSub.handler.center; }
 
-    // A host that draws its own handle pose (Edge Extend, Q-pose, gap 245)
-    // sets it here every tick; the idle pose then ignores the action centre.
-    // Nobody else calls it, so every other tool's pose is untouched.
-    private bool hostCentreActive_;
-    private Vec3 hostCentre_;
-    final void setHostGizmoCentre(Vec3 c) nothrow @nogc {
-        hostCentre_ = c;
-        hostCentreActive_ = true;
+    // H8 (slice M6): the owner of the handle poses the wrapper AND its three
+    // banks — one datum for the idle pose, the press and the relocate.
+    override void setHandleOwner(Tool owner) nothrow @nogc {
+        super.setHandleOwner(owner);
+        moveSub.setHandleOwner(owner);
+        rotateSub.setHandleOwner(owner);
+        scaleSub.setHandleOwner(owner);
     }
 
     // Test seam — the Move bank's live drag axis (0/1/2 axis, 3 center-box / most-

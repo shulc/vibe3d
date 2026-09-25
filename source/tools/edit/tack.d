@@ -308,6 +308,14 @@ public:
     // same mechanism XfrmTransformTool's element-falloff hover relies on.
     override ToolFlag flags() const { return ToolFlag.HoverPolygons; }
 
+    // H7 (slice M6): no counterpart in the flags table; the hovered face it
+    // aims at stays drawn, as before the slice (a vibe3d divergence, recorded
+    // in the policy table). It holds no live edit, so the rule is `target`'s.
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy policy = { rollovers: Rollover.untilLive };
+        return policy;
+    }
+
     override void activate() {
         sourceFace_ = firstSelectedFace();
         islandMask_ = (sourceFace_ >= 0)

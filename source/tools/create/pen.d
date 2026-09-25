@@ -1244,6 +1244,13 @@ private:
     public override bool hasUncommittedEdit() const {
         return state == PenState.Drawing && vertices_.length >= minDropCommitVerts();
     }
+
+    // H7 (slice M6): the flags table sets the rollover flag on this tool; it
+    // picks no hover type yet (`wantsHoverForType`), so nothing is drawn.
+    public override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy policy = { rollovers: Rollover.target };
+        return policy;
+    }
     // Cancel: drop the in-progress sequence (cancelPolygon resets state + clears
     // the preview / vert handlers, records nothing).
     public override void cancelUncommittedEdit() { cancelPolygon(); }
