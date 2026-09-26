@@ -1264,6 +1264,22 @@ struct PlaneJacobian {
     }
 }
 
+/// A plane-drag Jacobian prepared at one caller-owned press anchor.
+///
+/// The viewport, basis and anchor are inputs rather than hidden state. A tool
+/// that stores this image at Down therefore gets the reference translator's
+/// cumulative, press-frozen conversion without re-reading a live viewport.
+struct PreparedPlaneDrag {
+    bool valid;
+    PlaneJacobian jacobian;
+
+    Vec3 apply(int mx, int my, int pressX, int pressY) const {
+        if (!valid) return Vec3(0, 0, 0);
+        return jacobian.apply(cast(float)(mx - pressX),
+                              cast(float)(my - pressY));
+    }
+}
+
 // The finite-difference step, in world units, for the Jacobian below.
 //
 // It is ONLY a step. The Jacobian divides the projected difference by the
@@ -1426,6 +1442,70 @@ private int dragPlaneAxis(Vec3 dir, Vec3 a, Vec3 b, Vec3 c) {
     return 2;
 }
 
+private bool planeDragNormal(int dragAxis, const ref Viewport vp,
+                             Vec3 axisX, Vec3 axisY, Vec3 axisZ,
+                             Vec3 planeNormal, out Vec3 n)
+{
+    if      (dragAxis == 4) n = axisZ;
+    else if (dragAxis == 5) n = axisX;
+    else if (dragAxis == 6) n = axisY;
+    else if (!isNaN(planeNormal.x)) n = planeNormal;
+    else {
+        final switch (dragPlaneAxis(planePickDirection(vp), axisX, axisY, axisZ)) {
+            case 0: n = axisX; break;
+            case 1: n = axisY; break;
+            case 2: n = axisZ; break;
+        }
+    }
+
+    float nl = sqrt(n.x*n.x + n.y*n.y + n.z*n.z);
+    if (!(nl > 1e-9f)) return false;
+    n = n / nl;
+    return true;
+}
+
+/// Raw automatic principal-plane hit at the press pixel.
+///
+/// This is the press half of LAW B and shares its plane election verbatim.
+/// The plane passes through the frozen view focus; construction-workplane
+/// state is deliberately not an input. The captured Polygon law snaps
+/// this raw H before preparing the translator Jacobian.
+bool automaticPlanePressHit(int mx, int my, const ref Viewport vp,
+                            out Vec3 hit,
+                            Vec3 axisX = Vec3(1, 0, 0),
+                            Vec3 axisY = Vec3(0, 1, 0),
+                            Vec3 axisZ = Vec3(0, 0, 1))
+{
+    Vec3 n;
+    if (!planeDragNormal(3, vp, axisX, axisY, axisZ,
+                         Vec3(float.nan, float.nan, float.nan), n))
+        return false;
+    Vec3 rayO, rayD;
+    screenPointToRay(cast(float)mx, cast(float)my, vp, rayO, rayD);
+    return rayPlaneIntersect(rayO, rayD, vp.focus, n, hit);
+}
+
+/// Prepare LAW B's inverse screen Jacobian at an already chosen press anchor.
+PreparedPlaneDrag preparePlaneDrag(Vec3 anchor, int dragAxis,
+                                   const ref Viewport vp,
+                                   Vec3 axisX = Vec3(1, 0, 0),
+                                   Vec3 axisY = Vec3(0, 1, 0),
+                                   Vec3 axisZ = Vec3(0, 0, 1),
+                                   Vec3 planeNormal = Vec3(float.nan,
+                                                           float.nan,
+                                                           float.nan))
+{
+    PreparedPlaneDrag prepared;
+    Vec3 n;
+    if (!planeDragNormal(dragAxis, vp, axisX, axisY, axisZ, planeNormal, n))
+        return prepared;
+    Vec3 axisU, axisV;
+    inPlaneAxes(n, axisX, axisY, axisZ, axisU, axisV);
+    prepared.jacobian = planeJacobian(anchor, axisU, axisV, vp);
+    prepared.valid = prepared.jacobian.valid;
+    return prepared;
+}
+
 // Plane drag (dragAxis 3/4/5/6).
 //   3 = most-facing plane (normal derived from the view's line of sight)
 //   4 = XY plane (normal Z)   5 = YZ plane (normal X)   6 = XZ plane (normal Y)
@@ -1473,21 +1553,8 @@ Vec3 planeDragDelta(int mx,     int my,
 {
     skip = false;
     Vec3 n;
-    if      (dragAxis == 4) n = axisZ;
-    else if (dragAxis == 5) n = axisX;
-    else if (dragAxis == 6) n = axisY;
-    else if (!isNaN(planeNormal.x)) n = planeNormal;
-    else {
-        final switch (dragPlaneAxis(planePickDirection(vp), axisX, axisY, axisZ)) {
-            case 0: n = axisX; break;
-            case 1: n = axisY; break;
-            case 2: n = axisZ; break;
-        }
-    }
-
-    float nl = sqrt(n.x*n.x + n.y*n.y + n.z*n.z);
-    if (!(nl > 1e-9f)) { skip = true; return Vec3(0,0,0); }
-    n = n / nl;
+    if (!planeDragNormal(dragAxis, vp, axisX, axisY, axisZ, planeNormal, n))
+    { skip = true; return Vec3(0,0,0); }
 
     Vec3 axisU, axisV;
     inPlaneAxes(n, axisX, axisY, axisZ, axisU, axisV);

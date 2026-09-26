@@ -8,8 +8,29 @@ import math;
 import handler : MoveHandler, gizmoSize, getGizmoPixels;
 import toolpipe.packets : GesturePacket, GestureTrack;
 import coord_rounding : CoordinateRounding, kFixedIncrementDefault;
-import std.math : PI, sin, cos, tan;
+import std.math : PI, sin, cos, tan, atan;
 import drag;
+import tools.transform.relocate_plane : vectorSnap;
+import viewgrid : ViewGridPrefs, viewGridSize, viewGridSubStep,
+    viewWorldPerPixel;
+
+private Viewport capturedPerspective(Vec3 eye, float pixelSize) {
+    Viewport vp;
+    vp.x = 4; vp.y = 4; vp.width = 1144; vp.height = 966;
+    vp.eye = eye; vp.focus = Vec3(0, 0, 0);
+    vp.view = lookAt(eye, vp.focus, Vec3(0, 1, 0));
+    const float focalPx = 0.8f * (eye - vp.focus).length / pixelSize;
+    const float fovY = 2.0f * atan(0.5f * vp.height / focalPx);
+    vp.proj = perspectiveMatrix(fovY,
+        cast(float)vp.width / vp.height, 0.001f, 100.0f);
+    return vp;
+}
+
+private bool nearCaptured(Vec3 got, Vec3 want, float epsilon = 2e-6f) {
+    return abs(got.x - want.x) <= epsilon &&
+           abs(got.y - want.y) <= epsilon &&
+           abs(got.z - want.z) <= epsilon;
+}
 
 unittest {
     // No packet at all → the caller's own pair, untouched.
@@ -212,4 +233,115 @@ unittest {  // LAW B: degenerate views skip instead of exploding.
                             Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1),
                             Vec3(0, 0, 0));
     assert(skip && z == Vec3(0, 0, 0));
+}
+
+unittest { // LAW B: frozen Polygon cameras use snapped press anchors.
+    immutable ViewGridPrefs grid;
+
+    auto defaultVp = capturedPerspective(Vec3(
+        -2.079347162902738f, 1.690473046962798f, -2.969615506024416f),
+        0.003184857364427978f);
+    const defaultPixel = viewWorldPerPixel(defaultVp);
+    const defaultStep = viewGridSubStep(defaultPixel,
+        viewGridSize(defaultPixel, grid), grid);
+    assert(abs(defaultStep - 0.005f) < 1e-8f);
+
+    Vec3 h;
+    assert(automaticPlanePressHit(900, 250, defaultVp, h));
+    assert(nearCaptured(h, Vec3(-1.158565f, 1.0758446f, 0), 3e-6f),
+        "default-camera raw principal-plane press hit drifted");
+    const b0 = vectorSnap(h, defaultStep);
+    assert(nearCaptured(b0, Vec3(-1.160f, 1.075f, 0)));
+    const defaultDrag = preparePlaneDrag(b0, 3, defaultVp);
+    assert(defaultDrag.valid);
+    const defaultR = defaultDrag.apply(940, 220, 900, 250);
+    const defaultD = vectorSnap(b0 + defaultR, defaultStep) - b0;
+    assert(nearCaptured(defaultD, Vec3(-0.105f, 0.100f, 0)),
+        "default-camera snapped endpoint no longer matches the frozen capture");
+
+    auto alternateVp = capturedPerspective(Vec3(
+        3.8976265487139683f, 1.285207906652404f, -1.5747433441918124f),
+        0.003500000000175f);
+    const alternatePixel = viewWorldPerPixel(alternateVp);
+    const alternateStep = viewGridSubStep(alternatePixel,
+        viewGridSize(alternatePixel, grid), grid);
+    assert(abs(alternateStep - 0.005f) < 1e-8f);
+    assert(automaticPlanePressHit(903, 257, alternateVp, h));
+    const alternateB0 = vectorSnap(h, alternateStep);
+    assert(nearCaptured(alternateB0, Vec3(0, 1.020f, -1.280f)));
+    const alternateDrag = preparePlaneDrag(alternateB0, 3, alternateVp);
+    assert(alternateDrag.valid);
+    const alternateR = alternateDrag.apply(940, 228, 903, 257);
+    const alternateD = vectorSnap(alternateB0 + alternateR, alternateStep)
+                     - alternateB0;
+    assert(nearCaptured(alternateD, Vec3(0, 0.105f, -0.120f)),
+        "alternate-camera snapped endpoint no longer matches the frozen capture");
+}
+
+unittest { // LAW B: signed half-step cells round spatial endpoints, not deltas.
+    immutable ViewGridPrefs grid;
+    auto vp = capturedPerspective(Vec3(
+        -2.079347162902738f, 1.690473046962798f, -2.969615506024416f),
+        0.003184857364427978f);
+    const pixel = viewWorldPerPixel(vp);
+    const step = viewGridSubStep(pixel, viewGridSize(pixel, grid), grid);
+
+    Vec3 h;
+    assert(automaticPlanePressHit(900, 250, vp, h));
+    const b0 = vectorSnap(h, step);
+    const p900 = preparePlaneDrag(b0, 3, vp);
+    assert(p900.valid);
+    assert(nearCaptured(vectorSnap(b0 + p900.apply(901, 250, 900, 250), step)
+            - b0, Vec3(-0.005f, 0, 0)));
+    assert(nearCaptured(vectorSnap(b0 + p900.apply(899, 250, 900, 250), step)
+            - b0, Vec3(0.005f, 0, 0)));
+
+    assert(automaticPlanePressHit(901, 251, vp, h));
+    const b901 = vectorSnap(h, step);
+    const p901 = preparePlaneDrag(b901, 3, vp);
+    assert(p901.valid && nearCaptured(b901, b0));
+    assert(nearCaptured(vectorSnap(b901 + p901.apply(903, 251, 901, 251), step)
+            - b901, Vec3(-0.005f, 0, 0)));
+    assert(nearCaptured(vectorSnap(b901 + p901.apply(899, 251, 901, 251), step)
+            - b901, Vec3(0.005f, 0, 0)));
+}
+
+unittest { // Polygon free drag keeps the captured phase order in production.
+    import std.algorithm : canFind;
+    import std.file : readText;
+    import std.path : buildPath, dirName;
+    import std.string : count, indexOf;
+
+    enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
+    const source = readText(buildPath(repoRoot, "source", "tools", "edit",
+        "poly_extrude.d"));
+    const classAt = source.indexOf("class PolyExtrudeTool");
+    const testsAt = source.indexOf("\nunittest {", classAt);
+    assert(classAt >= 0 && testsAt > classAt);
+    const production = source[classAt .. testsAt];
+
+    assert(production.canFind(
+        "dragUpstreamBase = vectorSnap(rawHit, dragSnapStep);"));
+    assert(production.canFind("const Vec3 jacobianInput = dragUpstreamBase;"));
+    assert(production.canFind("preparePlaneDrag(jacobianInput, 3, dragVp"));
+    assert(production.canFind(
+        "dragSnapBase = vectorSnap(dragUpstreamBase, dragSnapStep);"));
+    assert(production.canFind("vectorSnap(dragSnapBase + raw, dragSnapStep)"));
+    assert(production.canFind("e.x - dragVp.x") &&
+           production.canFind("dragPressContentX, dragPressContentY"));
+    assert(production.canFind("dragBaseShift + dragOverlay.toLocalDelta(d)"));
+    assert(production.count("applyCapShift(ed, extentToMesh(") == 2,
+        "live and prepared paths must share the cached-frame conversion");
+    assert(!production.canFind("FREE_HAUL_") &&
+           !production.canFind("snapShift(") &&
+           !production.canFind("0.005f"),
+        "Polygon production code regained fitted gains or a literal quantum");
+
+    const motionAt = production.indexOf("if (dragPart == PART_FREE)");
+    const axisAt = production.indexOf("// PART_EXTRUDE:", motionAt);
+    assert(motionAt >= 0 && axisAt > motionAt);
+    const motion = production[motionAt .. axisAt];
+    assert(!motion.canFind("cachedVp") && !motion.canFind("g_viewGrid") &&
+           !motion.canFind("extrudeAxis"),
+        "Motion must consume only the viewport, grid and basis frozen at Down");
 }

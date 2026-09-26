@@ -2,6 +2,7 @@ module prepared_poly_extrude_param_update;
 
 import core.atomic : atomicOp;
 import document : Layer;
+import math : Vec3;
 import mesh : Mesh;
 import prepared_tool_effect : PreparedPolyExtrudeParamKind;
 import tools.edit.poly_extrude : PolyExtrudeTool, PreparedPolyExtrudeParamImage;
@@ -89,11 +90,34 @@ version(unittest) unittest {
         LitShader.init);
     tool.seedPreparedParamForTest(layer.meshRef());
     tool.mutatePreparedParamForTest(0.0f);
-    bool seededShift;
-    foreach (ref p; tool.params()) if (p.name == "shiftX") {
-        *p.fptr = 0.2f; seededShift = true;
+    auto sourcePositions = layer.meshRef().vertices.dup;
+    auto sourceRing = layer.meshRef().faces[0].dup;
+    void setShift(string name, float value) {
+        bool found;
+        foreach (ref p; tool.params()) if (p.name == name) {
+            *p.fptr = value; found = true;
+        }
+        assert(found, "Polygon parameter list lost " ~ name);
     }
-    assert(seededShift);
+    void expectFullCandidate(Vec3 shift) {
+        auto image = tool.buildPreparedParamUpdate(layer.meshRef());
+        scope(exit) image.clear();
+        assert(image.valid && image.applies && image.candidate.vertices.length == 12 &&
+            image.candidate.faces.length == 10 && image.candidate.edges.length == 20,
+            "prepared Polygon candidate lost full cap topology");
+        foreach (i, p; sourcePositions)
+            assert(image.candidate.vertices[i] == p,
+                "prepared Polygon candidate moved a survivor vertex");
+        foreach (i, vi; sourceRing)
+            assert(image.candidate.vertices[sourcePositions.length + i] ==
+                sourcePositions[vi] + shift,
+                "prepared Polygon candidate cap position differs from frozen parameter state");
+        foreach (fi; 0 .. image.candidate.faces.length)
+            assert(image.candidate.isFaceSelected(cast(uint)fi) == (fi == 9),
+                "prepared Polygon candidate selection differs from frozen cap state");
+    }
+    setShift("shiftX", 0.125f);
+    expectFullCandidate(Vec3(0.125f, 0, 0));
     const oldVertices = layer.meshRef().vertices.length;
     auto context = new PreparedRecordContext(new CommandHistory(),
         new RecordObserverHub()); context.setResourceIdentity(7, 11);
@@ -109,11 +133,16 @@ version(unittest) unittest {
     assert(layer.meshRef().faces.length == 10 &&
         layer.meshRef().isFaceSelected(9),
         "prepared Polygon parameter preview did not install the W2 walls-before-cap selection");
-    assert(abs(layer.meshRef().faceCentroid(9).x - 0.2f) < 1e-6f,
+    assert(abs(layer.meshRef().faceCentroid(9).x - 0.125f) < 1e-6f,
         "prepared Polygon parameter preview lost the cap shift");
     foreach (fi; 0 .. layer.meshRef().faces.length)
         if (fi != 9) assert(!layer.meshRef().isFaceSelected(fi),
             "prepared Polygon parameter preview selected a wall or survivor");
+
+    setShift("shiftY", -0.235f);
+    expectFullCandidate(Vec3(0.125f, -0.235f, 0));
+    setShift("shiftZ", 0.345f);
+    expectFullCandidate(Vec3(0.125f, -0.235f, 0.345f));
 
     auto noopLayer = new Layer; noopLayer.meshRef() = makeCube();
     GpuMesh noopGpu;
@@ -139,6 +168,21 @@ version(unittest) unittest {
         GpuUploadOwner.fakeForTest(&staleGpu)).accepted);
     staleTool.mutatePreparedParamForTest(17.0f);
     assert(!staleContext.validate() && staleLayer.meshRef().vertices.length == 8);
+
+    auto frameLayer = new Layer; frameLayer.meshRef() = makeCube();
+    frameLayer.meshRef().syncSelection(); frameLayer.meshRef().selectFace(0);
+    GpuMesh frameGpu;
+    auto frameTool = new PolyExtrudeTool(() => &frameLayer.meshRef(), &frameGpu,
+        &mode, LitShader.init);
+    frameTool.seedPreparedParamForTest(frameLayer.meshRef());
+    auto frameContext = new PreparedRecordContext(null,
+        new RecordObserverHub());
+    frameContext.setResourceIdentity(7, 11);
+    assert(frameTool.prepareParamChanged(frameContext, frameLayer,
+        GpuUploadOwner.fakeForTest(&frameGpu)).accepted);
+    frameTool.mutatePreparedFrameForTest(Vec3(0, 1, 0));
+    assert(!frameContext.validate() && frameLayer.meshRef().vertices.length == 8,
+        "prepared Polygon projection omitted its frozen Extent frame");
 
     foreach (shiftName; ["shiftX", "shiftY", "shiftZ"]) {
         auto shiftLayer = new Layer; shiftLayer.meshRef() = makeCube();

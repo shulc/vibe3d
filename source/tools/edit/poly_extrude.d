@@ -16,7 +16,8 @@ import editmode : EditMode;
 import params : Param;
 import handler : Arrow, ToolHandles, HandleState, gizmoSize;
 import viewport_scheme : schemeColor, SchemeColor;
-import drag : planeDragDelta, screenAxisDelta, gesturePrevPixel;
+import drag : PreparedPlaneDrag, automaticPlanePressHit, preparePlaneDrag,
+    screenAxisDelta, gesturePrevPixel;
 import overlay_space : OverlaySpace;
 import eventlog : queryMouse;
 import shader : Shader, LitShader;
@@ -25,7 +26,7 @@ import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
 
-import std.math : abs, round, sqrt;
+import std.math : abs, sqrt;
 import std.json : JSONValue;
 import perf_probe : g_perf, Cat;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
@@ -40,6 +41,19 @@ import document : Layer;
 import mesh_gpu : GpuUploadOwner;
 import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
 import core.stdc.string : memcmp;
+import tools.transform.relocate_plane : vectorSnap;
+import tools.create.create_common : primitiveParameterFrame, transformDir;
+import viewgrid : g_viewGrid, viewWorldPerPixel, viewGridSize,
+    viewGridSubStep;
+
+version (unittest) {
+    private enum PolyDragPressStage { upstreamB0, jacobianInput }
+    private struct PolyDragPressRecord { PolyDragPressStage stage; Vec3 value; }
+    private PolyDragPressRecord[] polyDragPressRecords;
+    private void recordPolyDragPress(PolyDragPressStage stage, Vec3 value) {
+        polyDragPressRecords ~= PolyDragPressRecord(stage, value);
+    }
+}
 
 struct PreparedPolyExtrudeActivationImage {
     MeshSnapshot before;
@@ -52,13 +66,19 @@ struct PreparedPolyExtrudeActivationImage {
 struct PolyExtrudeParamProjection {
     bool interactive, active, built;
     float distance, shiftX, shiftY, shiftZ;
+    Vec3 extentFrameX = Vec3(1, 0, 0);
+    Vec3 extentFrameY = Vec3(0, 1, 0);
+    Vec3 extentFrameZ = Vec3(0, 0, 1);
     bool opEquals(const PolyExtrudeParamProjection other) const nothrow @nogc {
         return interactive == other.interactive && active == other.active &&
             built == other.built &&
             memcmp(&distance, &other.distance, float.sizeof) == 0 &&
             memcmp(&shiftX, &other.shiftX, float.sizeof) == 0 &&
             memcmp(&shiftY, &other.shiftY, float.sizeof) == 0 &&
-            memcmp(&shiftZ, &other.shiftZ, float.sizeof) == 0;
+            memcmp(&shiftZ, &other.shiftZ, float.sizeof) == 0 &&
+            extentFrameX == other.extentFrameX &&
+            extentFrameY == other.extentFrameY &&
+            extentFrameZ == other.extentFrameZ;
     }
 }
 
@@ -142,6 +162,18 @@ private:
     int   dragLastMX, dragLastMY;
     int   dragStartMX, dragStartMY;
     Vec3  dragBaseShift;
+    Viewport dragVp;
+    int dragPressContentX, dragPressContentY;
+    float dragSnapStep;
+    Vec3 dragUpstreamBase, dragSnapBase;
+    PreparedPlaneDrag dragPlane;
+    OverlaySpace dragOverlay;
+
+    // Cached workplane/overlay frame image. Parameters remain Extent-local;
+    // this basis is the sole conversion used by live and prepared cap writes.
+    Vec3 extentFrameX = Vec3(1, 0, 0);
+    Vec3 extentFrameY = Vec3(0, 1, 0);
+    Vec3 extentFrameZ = Vec3(0, 0, 1);
 
     Arrow       extrudeArrow;
     ToolHandles toolHandles;
@@ -197,6 +229,7 @@ public:
         if (!image.valid) return;
         active = true; built = false; dragPart = -1;
         distance_ = shiftX_ = shiftY_ = shiftZ_ = 0.0f;
+        resetExtentFrame();
         image.before.moveInto(before);
         gizmoValid = image.gizmoValid; anchor = image.anchor;
         baseAnchor = image.baseAnchor; extrudeAxis = image.extrudeAxis;
@@ -220,6 +253,7 @@ public:
         dragPart  = -1;
         distance_ = shiftX_ = shiftY_ = shiftZ_ = 0.0f;
         before    = MeshSnapshot.capture(*mesh);
+        resetExtentFrame();
         computeGizmoFrame();
     }
 
@@ -293,7 +327,8 @@ public:
     }
     private PolyExtrudeParamProjection paramProjection() const nothrow @nogc {
         return PolyExtrudeParamProjection(interactiveParamEdit, active, built,
-            distance_, shiftX_, shiftY_, shiftZ_);
+            distance_, shiftX_, shiftY_, shiftZ_,
+            extentFrameX, extentFrameY, extentFrameZ);
     }
     final PreparedPolyExtrudeParamImage buildPreparedParamUpdate(ref Mesh live) {
         PreparedPolyExtrudeParamImage image;
@@ -316,7 +351,7 @@ public:
             const n = ed.extrudeFacesByMask(mask, distance_, false,
                 UvWallLaw.SweepU, shiftVec() != Vec3(0, 0, 0),
                 FaceExtrudeOrder.WallsThenCap);
-            if (n != 0) applyCapShift(ed, shiftVec());
+            if (n != 0) applyCapShift(ed, extentToMesh(shiftVec()));
             ed.close(); image.nextBuilt = (n != 0);
         }
         drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
@@ -390,6 +425,12 @@ public:
         if (mesh.faces.length == 0 || !gizmoValid) return false;
 
         const bool boundary = e.button == SDL_BUTTON_MIDDLE || (mods & KMOD_SHIFT);
+        int part = toolHandles.test(e.x, e.y, cachedVp);
+        const bool freeDrag = boundary || part != PART_EXTRUDE;
+        const Vec3 downExtent = boundary || topologyDormant
+            ? Vec3(0, 0, 0) : shiftVec();
+        if (freeDrag && !prepareFreeDrag(e.x, e.y, downExtent)) return false;
+
         sessionStepBegins(e.button == SDL_BUTTON_MIDDLE ? PressKind.middle
             : boundary ? PressKind.shift : PressKind.plain);
         if (boundary) {
@@ -404,13 +445,11 @@ public:
         // boundary opts into coincident topology.
         rebuildPreview(true);
 
-        int part = toolHandles.test(e.x, e.y, cachedVp);
-
         dragLastMX       = e.x;
         dragLastMY       = e.y;
         dragStartMX      = e.x;
         dragStartMY      = e.y;
-        dragBaseShift    = topologyDormant ? Vec3(0, 0, 0) : shiftVec();
+        dragBaseShift    = downExtent;
         dragButton_       = e.button;
 
         if (boundary) {
@@ -432,27 +471,20 @@ public:
         if (!active || dragPart < 0 || !gizmoValid) return false;
 
         if (dragPart == PART_FREE) {
-            bool skip;
-            const auto os = OverlaySpace.ofPrimary();
-            const auto ax = os.axis(Vec3(1, 0, 0));
-            const auto ay = os.axis(Vec3(0, 1, 0));
-            const auto az = os.axis(Vec3(0, 0, 1));
-            Vec3 world = planeDragDelta(e.x, e.y, dragStartMX, dragStartMY,
-                3, os.pos(baseAnchor), cachedVp, skip,
-                ax.dir, ay.dir, az.dir, os.axis(extrudeAxis).dir);
-            if (!skip) {
-                // Calibrate the captured free-haul response after solving the
-                // view plane; the topology kernel receives a plain cap offset.
-                enum float FREE_HAUL_XZ_GAIN = 0.35f;
-                enum float FREE_HAUL_Y_GAIN = 4.0f / 11.0f;
-                auto d = os.toLocalDelta(world);
-                Vec3 local = dragBaseShift +
-                    Vec3(d.x * FREE_HAUL_XZ_GAIN,
-                        d.y * FREE_HAUL_Y_GAIN,
-                        d.z * FREE_HAUL_XZ_GAIN);
-                shiftX_ = snapShift(local.x);
-                shiftY_ = snapShift(local.y);
-                shiftZ_ = snapShift(local.z);
+            if (dragPlane.valid) {
+                // Exact captured Polygon law: the shared inverse
+                // Jacobian is frozen at upstream-snapped B0; Polygon Down
+                // freezes the idempotently snapped B1. Endpoint snap is
+                // spatially anchored, cached-frame conversion follows it,
+                // and the press-time Extent is added last.
+                const Vec3 raw = dragPlane.apply(e.x - dragVp.x,
+                    e.y - dragVp.y, dragPressContentX, dragPressContentY);
+                const Vec3 d = vectorSnap(dragSnapBase + raw, dragSnapStep)
+                             - dragSnapBase;
+                const Vec3 local = dragBaseShift + dragOverlay.toLocalDelta(d);
+                shiftX_ = local.x;
+                shiftY_ = local.y;
+                shiftZ_ = local.z;
             }
             // A Polygon gesture owns topology even when its current distance
             // is zero (captured zero-tap/Middle law).  Keep that opt-in for
@@ -575,7 +607,7 @@ private:
         size_t n = ed.extrudeFacesByMask(mask, distance_, false,
             UvWallLaw.SweepU, allowCoincidentTopology || shift != Vec3(0, 0, 0),
             FaceExtrudeOrder.WallsThenCap);
-        if (n != 0) applyCapShift(ed, shift);
+        if (n != 0) applyCapShift(ed, extentToMesh(shift));
         ed.close();
         built = (n != 0);
         refreshCaches();
@@ -621,9 +653,56 @@ private:
         return Vec3(shiftX_, shiftY_, shiftZ_);
     }
 
-    static float snapShift(float value) nothrow @nogc {
-        enum float quantum = 0.005f;
-        return cast(float)round(value / quantum) * quantum;
+    void resetExtentFrame() nothrow @nogc {
+        extentFrameX = Vec3(1, 0, 0);
+        extentFrameY = Vec3(0, 1, 0);
+        extentFrameZ = Vec3(0, 0, 1);
+    }
+
+    Vec3 extentToMesh(Vec3 extent) const nothrow @nogc {
+        return extentFrameX * extent.x + extentFrameY * extent.y
+             + extentFrameZ * extent.z;
+    }
+
+    bool prepareFreeDrag(int mx, int my, Vec3 downExtent) {
+        dragVp = cachedVp;
+        dragPressContentX = mx - dragVp.x;
+        dragPressContentY = my - dragVp.y;
+        dragBaseShift = downExtent;
+        dragOverlay = OverlaySpace.ofPrimary();
+
+        auto frame = primitiveParameterFrame();
+        extentFrameX = dragOverlay.toLocalDelta(
+            transformDir(frame.toWorld, Vec3(1, 0, 0)));
+        extentFrameY = dragOverlay.toLocalDelta(
+            transformDir(frame.toWorld, Vec3(0, 1, 0)));
+        extentFrameZ = dragOverlay.toLocalDelta(
+            transformDir(frame.toWorld, Vec3(0, 0, 1)));
+
+        const auto ax = dragOverlay.axis(Vec3(1, 0, 0));
+        const auto ay = dragOverlay.axis(Vec3(0, 1, 0));
+        const auto az = dragOverlay.axis(Vec3(0, 0, 1));
+        Vec3 rawHit;
+        if (!automaticPlanePressHit(mx, my, dragVp, rawHit,
+                                    ax.dir, ay.dir, az.dir))
+            return false;
+
+        const float px = viewWorldPerPixel(dragVp);
+        dragSnapStep = viewGridSubStep(px,
+            viewGridSize(px, g_viewGrid), g_viewGrid);
+        dragUpstreamBase = vectorSnap(rawHit, dragSnapStep);
+        const Vec3 jacobianInput = dragUpstreamBase;
+        version (unittest) {
+            recordPolyDragPress(PolyDragPressStage.upstreamB0,
+                                dragUpstreamBase);
+            recordPolyDragPress(PolyDragPressStage.jacobianInput,
+                                jacobianInput);
+        }
+        dragPlane = preparePlaneDrag(jacobianInput, 3, dragVp,
+                                     ax.dir, ay.dir, az.dir);
+        if (!dragPlane.valid) return false;
+        dragSnapBase = vectorSnap(dragUpstreamBase, dragSnapStep);
+        return true;
     }
 
     static void applyCapShift(ref MeshEditBatch ed, Vec3 shift) {
@@ -684,6 +763,8 @@ public:
     }
     version(unittest) final void mutatePreparedParamForTest(float value)
             nothrow @nogc { distance_ = value; }
+    version(unittest) final void mutatePreparedFrameForTest(Vec3 x)
+            nothrow @nogc { extentFrameX = x; }
     version(unittest) final bool preparedParamBuiltForTest() const nothrow @nogc {
         return built;
     }
@@ -746,4 +827,162 @@ unittest { // P1.0b.3d identity preview must not prepare history.
     assert(context.validate()); context.install();
     size_t modelDepth, uiDepth; context.installedDepths(modelDepth, uiDepth);
     assert(modelDepth == 0 && uiDepth == 0 && hub.macroLength == 0);
+}
+
+unittest { // free drag press prepares Jacobian from captured upstream-snapped B0
+    import document : primaryModelSpaceResolver;
+    import display_sync : activeMeshResolver;
+    import std.format : format;
+    import std.math : atan;
+    import toolpipe.pipeline : g_pipeCtx;
+    import viewgrid : ViewGridPrefs;
+
+    Viewport capturedViewport(Vec3 eye, float pixelSize) {
+        Viewport vp;
+        vp.x = 4; vp.y = 4; vp.width = 1144; vp.height = 966;
+        vp.eye = eye; vp.focus = Vec3(0, 0, 0);
+        vp.view = lookAt(eye, vp.focus, Vec3(0, 1, 0));
+        const float focalPx = 0.8f * (eye - vp.focus).length / pixelSize;
+        const float fovY = 2.0f * atan(0.5f * vp.height / focalPx);
+        vp.proj = perspectiveMatrix(fovY,
+            cast(float)vp.width / vp.height, 0.001f, 100.0f);
+        return vp;
+    }
+    Mesh capturedRig() {
+        Mesh result;
+        foreach (v; [Vec3(-.5f,-.5f,-.5f), Vec3(-.5f,-.5f,.5f),
+                     Vec3(-.5f,.5f,-.5f),  Vec3(-.5f,.5f,.5f),
+                     Vec3(.5f,-.5f,-.5f),  Vec3(.5f,-.5f,.5f),
+                     Vec3(.5f,.5f,-.5f),   Vec3(.5f,.5f,.5f)])
+            result.addVertex(v);
+        result.addFace([0u,2u,6u,4u]); result.addFace([0u,1u,3u,2u]);
+        result.addFace([2u,3u,7u,6u]); result.addFace([0u,4u,5u,1u]);
+        result.buildLoops(); result.syncSelection(); result.selectFace(0);
+        return result;
+    }
+    bool near(Vec3 a, Vec3 b, float epsilon = 2e-6f) {
+        return abs(a.x-b.x) < epsilon && abs(a.y-b.y) < epsilon &&
+               abs(a.z-b.z) < epsilon;
+    }
+    Vec3 rotateZXY(Vec3 v, Vec3 degrees) {
+        enum float k = 0.017453292519943295f;
+        const rx = degrees.x*k, ry = degrees.y*k, rz = degrees.z*k;
+        import std.math : cos, sin;
+        auto a = Vec3(cos(ry)*v.x + sin(ry)*v.z, v.y,
+                      -sin(ry)*v.x + cos(ry)*v.z);
+        auto b = Vec3(a.x, cos(rx)*a.y - sin(rx)*a.z,
+                      sin(rx)*a.y + cos(rx)*a.z);
+        return Vec3(cos(rz)*b.x - sin(rz)*b.y,
+                    sin(rz)*b.x + cos(rz)*b.y, b.z);
+    }
+
+    auto savedResolver = primaryModelSpaceResolver;
+    auto savedDisplayResolver = activeMeshResolver;
+    auto savedPipe = g_pipeCtx;
+    auto savedGrid = g_viewGrid;
+    Mesh offscreen;
+    scope(exit) {
+        primaryModelSpaceResolver = savedResolver;
+        activeMeshResolver = savedDisplayResolver;
+        g_pipeCtx = savedPipe;
+        g_viewGrid = savedGrid;
+    }
+    primaryModelSpaceResolver = () => ModelSpace.world();
+    activeMeshResolver = () => &offscreen;
+    g_pipeCtx = null;
+    g_viewGrid = ViewGridPrefs.init;
+
+    Mesh m; GpuMesh gpu; EditMode mode = EditMode.Polygons;
+    auto tool = new PolyExtrudeTool(() => &m, &gpu, &mode, LitShader.init);
+    tool.cachedVp = capturedViewport(Vec3(-2.079347162902738f,
+        1.690473046962798f, -2.969615506024416f),
+        0.003184857364427978f);
+
+    polyDragPressRecords.length = 0;
+    assert(tool.prepareFreeDrag(900, 250, Vec3(0, 0, 0)));
+    assert(polyDragPressRecords.length == 2,
+        "production press preparation must expose exactly B0 and Jacobian input");
+    assert(polyDragPressRecords[0].stage == PolyDragPressStage.upstreamB0);
+    assert(polyDragPressRecords[1].stage == PolyDragPressStage.jacobianInput);
+    const capturedB0 = Vec3(-1.160f, 1.075f, 0);
+    bool atCapturedB0(Vec3 v) {
+        return abs(v.x - capturedB0.x) < 2e-6f &&
+               abs(v.y - capturedB0.y) < 2e-6f &&
+               abs(v.z - capturedB0.z) < 2e-6f;
+    }
+    assert(atCapturedB0(polyDragPressRecords[0].value),
+        format("upstream press checkpoint used %s instead of captured B0",
+            polyDragPressRecords[0].value));
+    assert(atCapturedB0(polyDragPressRecords[1].value),
+        "Jacobian was not prepared at captured upstream-snapped B0");
+    assert(tool.dragPressContentX == 896 && tool.dragPressContentY == 246 &&
+        tool.dragVp.x == 4 && tool.dragVp.y == 4,
+        "press viewport and content-local pixels were not frozen at Down");
+    assert(atCapturedB0(tool.dragSnapBase) && tool.dragPlane.valid);
+
+    void expectCapturedCap(Viewport vp, int pressX, int pressY,
+            int endX, int endY, Vec3 downExtent, Vec3 wantExtent,
+            bool tilted = false) {
+        auto rig = capturedRig(); GpuMesh rigGpu;
+        auto candidateTool = new PolyExtrudeTool(() => &rig, &rigGpu, &mode,
+            LitShader.init);
+        candidateTool.seedPreparedParamForTest(rig);
+        candidateTool.mutatePreparedParamForTest(0.0f);
+        candidateTool.cachedVp = vp;
+        assert(candidateTool.prepareFreeDrag(pressX, pressY, downExtent));
+        const raw = candidateTool.dragPlane.apply(endX, endY, pressX, pressY);
+        const d = vectorSnap(candidateTool.dragSnapBase + raw,
+            candidateTool.dragSnapStep) - candidateTool.dragSnapBase;
+        const extent = downExtent + candidateTool.dragOverlay.toLocalDelta(d);
+        assert(near(extent, wantExtent),
+            format("captured Polygon Extent drifted: got %s want %s",
+                extent, wantExtent));
+
+        if (tilted) {
+            const angles = Vec3(55, 20, 15);
+            candidateTool.extentFrameX = rotateZXY(Vec3(1,0,0), angles);
+            candidateTool.extentFrameY = rotateZXY(Vec3(0,1,0), angles);
+            candidateTool.extentFrameZ = rotateZXY(Vec3(0,0,1), angles);
+        }
+        candidateTool.shiftX_ = extent.x;
+        candidateTool.shiftY_ = extent.y;
+        candidateTool.shiftZ_ = extent.z;
+        auto image = candidateTool.buildPreparedParamUpdate(rig);
+        scope(exit) image.clear();
+        assert(image.valid && image.applies && image.candidate.vertices.length == 12 &&
+            image.candidate.faces.length == 8 && image.candidate.edges.length == 19,
+            "captured Polygon candidate lost full W2 topology");
+        Vec3 meshDelta = tilted
+            ? Vec3(-0.091958761f, -0.001721144f, 0.088264525f)
+            : extent;
+        foreach (i; 0 .. 8)
+            assert(image.candidate.vertices[i] == rig.vertices[i]);
+        foreach (i, vi; [0u,2u,6u,4u])
+            assert(near(image.candidate.vertices[8+i], rig.vertices[vi] + meshDelta),
+                "captured Polygon candidate lost a full cap position");
+        foreach (fi; 0 .. image.candidate.faces.length)
+            assert(image.candidate.isFaceSelected(cast(uint)fi) == (fi == 7));
+
+        candidateTool.rebuildPreview(true);
+        assert(rig.vertices.length == image.candidate.vertices.length &&
+            rig.faces == image.candidate.faces && rig.edges == image.candidate.edges,
+            "live Polygon preview differs from the prepared full-state candidate");
+        foreach (i, p; image.candidate.vertices)
+            assert(near(rig.vertices[i], p),
+                "live Polygon cap position differs from the prepared candidate");
+        foreach (fi; 0 .. rig.faces.length)
+            assert(rig.isFaceSelected(cast(uint)fi) == (fi == 7));
+    }
+
+    auto defaultVp = tool.cachedVp;
+    expectCapturedCap(defaultVp, 900, 250, 940, 220,
+        Vec3(0,0,0), Vec3(-.105f,.100f,0));
+    expectCapturedCap(defaultVp, 900, 250, 940, 220,
+        Vec3(-.030f,.025f,0), Vec3(-.135f,.125f,0));
+    auto alternateVp = capturedViewport(Vec3(3.8976265487139683f,
+        1.285207906652404f, -1.5747433441918124f), 0.003500000000175f);
+    expectCapturedCap(alternateVp, 903, 257, 940, 228,
+        Vec3(0,0,0), Vec3(0,.105f,-.120f));
+    expectCapturedCap(defaultVp, 900, 250, 935, 225,
+        Vec3(0,0,0), Vec3(-.095f,.085f,0), true);
 }

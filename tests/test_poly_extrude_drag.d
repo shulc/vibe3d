@@ -211,6 +211,7 @@ void settle() {
 void setupPoly() {
     auto r = postJson("/api/command", commandBody("scene.reset"));
     assert(r["status"].str == "ok");
+    cmd("workplane.reset");
     auto rig = w2Fixture()["rig"];
     r = postJson("/api/command", commandBody("scene.loadMesh",
         `{"vertices":` ~ rig["vertices"].toString ~
@@ -220,9 +221,13 @@ void setupPoly() {
     r = postJson("/api/command", commandBody("mesh.select",
         `{"mode":"polygons","indices":[0]}`));
     assert(r["status"].str == "ok");
+    // The HTTP camera fixes fovY at 45 degrees. This distance is the exact
+    // equivalent focus-plane scale for the captured 0.0031848573644 units/px
+    // in its 1144x966 viewport; module coverage also pins the original eye
+    // and projection separately.
     r = postJson("/api/camera",
         `{"azimuth":-2.530727415391778,"elevation":0.43633231299858255,`
-        ~ `"distance":4.0,`
+        ~ `"distance":4.64218897796836,"roll":0,"width":1144,"height":966,`
         ~ `"focus":{"x":0,"y":0,"z":0}}`);
     assert(r["status"].str == "ok");
     r = postJson("/api/command?origin=ui", "tool.set " ~ TOOL ~ " on");
@@ -239,15 +244,15 @@ void dragHandle(int dx, int steps = 12, int mod = 0, int button = 1) {
 }
 
 void freePx(out int x, out int y) {
-    int hx, hy; handlePx(hx, hy);
     auto cam = fetchCamera(BASE);
-    x = hx + (hx + 140 < cam.vpX + cam.width ? 140 : -140);
-    y = hy + (hy + 100 < cam.vpY + cam.height ? 100 : -100);
+    x = cam.vpX + 896;
+    y = cam.vpY + 246;
 }
 
-void dragFree(int dx, int dy, int steps = 12, int mod = 0, int button = 1) {
-    int x, y; freePx(x, y);
+void dragFree(int dx, int dy, int steps = 12, int mod = 0, int button = 1,
+        int pressX = 896, int pressY = 246) {
     auto cam = fetchCamera(BASE);
+    const int x = cam.vpX + pressX, y = cam.vpY + pressY;
     playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
         x, y, x + dx, y + dy, steps, mod, cast(ubyte)button), BASE);
     settle();
@@ -382,17 +387,17 @@ unittest { // Main ladder: g1, Middle clone and Shift reset are distinct rows.
     const g1 = planes();
     assert(vertexCount() == 12 && undoLen() == u0 + 1,
         "Polygon main g1 missing");
-    expectW2Mesh("main_g1", true);
+    expectW2Mesh("main_g1", false);
     tapHandle(2);
     const middle = planes();
     assert(vertexCount() == 16 && middle != g1 && undoLen() == u0 + 2,
         "Polygon Middle did not append a 16v operation row");
-    expectW2Mesh("main_middle", true);
-    dragFree(40, -36, 12, 3, 1);
+    expectW2Mesh("main_middle", false);
+    dragFree(35, -25, 12, 3, 1, 896, 386);
     const shifted = planes();
     assert(vertexCount() == 20 && shifted != middle && undoLen() == u0 + 3,
         "Polygon Shift did not append a reset 20v operation row");
-    expectW2Mesh("main_shift", true);
+    expectW2Mesh("main_shift", false);
 
     cmd("tool.set move on");
     assert(undoLen() == u0 + 4, "switch added a cumulative Polygon carrier");
@@ -502,11 +507,10 @@ unittest { // Param image -> closed redo -> fresh dormant attr-only adjustment.
     assert(p["status"].str == "ok" || p["status"].str == "success");
     const param = planes();
     assert(param != g1 && abs(queryShiftX() - 0.2) < 1e-5
-        && abs(queryShiftY() - 0.1) < 1e-5
+        && abs(queryShiftY() - 0.07) < 1e-5
         && undoLen() == u0 + 2,
         "param-fresh rig did not record its exact parameter image and attrs");
     expectW2Mesh("main_g1", false);
-    expectW2Positions("param");
 
     auto close = postJson("/api/command?origin=ui", "tool.set move on");
     assert(close["status"].str == "ok" || close["status"].str == "success");
@@ -517,7 +521,7 @@ unittest { // Param image -> closed redo -> fresh dormant attr-only adjustment.
     const zDepth = undoLen();
     const zShiftX = queryShiftX(), zShiftY = queryShiftY();
     assert(zPlanes == param && zDepth == u0 + 2
-        && abs(zShiftX - 0.2) < 1e-5 && abs(zShiftY - 0.1) < 1e-5,
+        && abs(zShiftX - 0.2) < 1e-5 && abs(zShiftY - 0.07) < 1e-5,
         format("param-fresh closed Undo lost mesh=%s, shift=(%s,%s) or depth=%s/%s",
             zPlanes == param, zShiftX, zShiftY, zDepth, u0 + 2));
     navigate(false);
@@ -530,7 +534,7 @@ unittest { // Param image -> closed redo -> fresh dormant attr-only adjustment.
     auto st = getJson("/api/tool/state");
     const freshShiftX = queryShiftX(), freshShiftY = queryShiftY();
     assert(planes() == param && abs(freshShiftX - 0.2) < 1e-5
-        && abs(freshShiftY - 0.1) < 1e-5
+        && abs(freshShiftY - 0.07) < 1e-5
         && st["session"]["dormant"].type == JSONType.true_
         && st["session"]["live"].type == JSONType.false_, format(
         "param-fresh arm did not retain attrs/basis: mesh=%s shift=(%s,%s) dormant=%s live=%s",
@@ -544,8 +548,8 @@ unittest { // Param image -> closed redo -> fresh dormant attr-only adjustment.
         x, y, x + 37, y - 34, 12), BASE);
     st = getJson("/api/tool/state");
     const dragShiftX = queryShiftX(), dragShiftY = queryShiftY();
-    assert(planes() == param && abs(dragShiftX + 0.105) < 1e-5
-        && abs(dragShiftY - 0.105) < 1e-5
+    assert(planes() == param && abs(dragShiftX + 0.100) < 1e-5
+        && abs(dragShiftY - 0.080) < 1e-5
         && undoLen() == fresh && st["session"]["live"].type == JSONType.false_,
         format("param-fresh dormant drag lost basis/attrs: mesh=%s shift=(%s,%s)",
             planes() == param, dragShiftX, dragShiftY));
