@@ -18,9 +18,11 @@
 // 215/218/221): (W) undoing the scale tool's arm row re-arms Edge Extend with
 // the committed run's values in the panel, NOT live; the next Ctrl+Z removes
 // the run together with the tool; the third reaches the edit before the tool.
-// (X) is a BOUNDARY, not a law: an undone Edge Extend run must not end a
-// DIFFERENT tool. (Y) a haul after the restore starts a new ring from 0 over
-// the committed run and records no activation row. (O) only Edge Extend is a
+// (X) pins strict LIFO when the incoming Edge Extrude now owns an activation
+// row: the first Undo removes that row and restores Extend without changing
+// its committed mesh; only the second Undo reaches the Extend run. (Y) a haul
+// after the restore starts a new ring from 0 over the committed run and records
+// no activation row. (O) only Edge Extend is a
 // restorable predecessor: undoing a switch away from Edge Extrude leaves no
 // tool, as today. W/X/Y rigs record the selection AFTER `history.clear`, so
 // the third undo is never vacuous. Ctrl+Z is the real keystroke (navHistory),
@@ -176,17 +178,24 @@ unittest { // (W) the undo walk after R (switch_key_undo_walk_no_read)
         "third undo after the switch did not undo the edit before the tool (gap 218): " ~ selectedEdgeList().to!string);
 }
 
-unittest { // (X) boundary (not a law): an undone Extend run ends no other tool
+unittest { // (X) incoming Edge Extrude activation stands above the Extend close
     recordedRig();
     engage();
     cmd("tool.set edge.extrude on");
     settle(250);
-    assert(topHistoryLabel() == "Edge Extend", "rig: the switch did not record the Extend run: " ~ topHistoryLabel());
+    auto rows = getJson("/api/history")["undo"].array;
+    assert(rows.length >= 2 && rows[$ - 2]["label"].str == "Edge Extend" &&
+           rows[$ - 1]["label"].str == "Activate Tool",
+        "rig: the switch did not order Extend close then Edge Extrude activation: " ~ rows.to!string);
+    immutable size_t committed = vertexCount();
     ctrlZ();
-    assert(vertexCount() == 9 && toolId() == "edgeExtrude",
-        format("divergence scope (not captured, gap 218): an undone Edge Extend run ended a different tool: "
-             ~ "%d v, tool %s", vertexCount(), toolId()));
-    cmd("tool.set edge.extrude off");
+    assert(vertexCount() == committed && toolId() == "edgeExtend",
+        format("undo of the incoming Edge Extrude activation changed the committed Extend run: "
+             ~ "%d v (expected %d), tool %s", vertexCount(), committed, toolId()));
+    ctrlZ();
+    assert(vertexCount() == 9 && toolId() != "edgeExtend",
+        format("second undo did not remove the Extend run and its activation: %d v, tool %s",
+               vertexCount(), toolId()));
 }
 
 unittest { // (Y) R-fresh-noact (switch_undo_restore_then_haul)

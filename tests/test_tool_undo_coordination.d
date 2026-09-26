@@ -203,25 +203,10 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// 3. (undo/redo migration P1) navHistory -> resyncSession() path: with an
-//    interactive tool ACTIVE but holding NO open edit, a committed history step
-//    popped via keyboard Ctrl+Z must (a) pop the step, (b) drive the active
-//    tool's resyncSession() (re-init the cached pre-edit baseline + gizmo to the
-//    now-current mesh) without throwing or corrupting state, and (c) leave the
-//    tool coherent so a subsequent edit operates on the POST-undo geometry.
-//
-//    EdgeExtrudeTool is the witness: its activate() captures a `before`
-//    MeshSnapshot of the current mesh; P1's resyncSession() re-captures `before`
-//    from the now-current mesh after the pop (reinitSession()). Without that, a
-//    later commit would pair against a stale baseline. We can't read `before`
-//    over HTTP, but we CAN assert the end-to-end invariant: pop is clean,
-//    redo re-applies, and a fresh edit lands on the post-undo mesh.
-//
-//    NOTE: the deeper golden-fixture "commit live drag -> undo -> live drag
-//    again, assert gizmo recentered + baseline" lock is a documented follow-up
-//    (same reason as the §2 note: the interactive `built` preview is panel-
-//    gated, not reachable over HTTP). This pins the navHistory->resyncSession
-//    wiring + post-undo coherence, which is P1's behavioural contract.
+// 3. Edge Extrude now owns a lifecycle row. A SCRIPT arm keeps that activation
+//    as its own strict-LIFO step, so the first keyboard Undo removes the arm and
+//    must not tunnel through it to the older model edit. Redo re-arms the tool
+//    without changing the already-committed geometry.
 // ---------------------------------------------------------------------------
 unittest {
     postJson("/api/command", commandBody("scene.reset"));
@@ -254,32 +239,36 @@ unittest {
     long extrudedVerts = vertCount();
     assert(extrudedVerts != baseVerts, "extrude should change vertex count");
 
-    // Activate an interactive tool on the MAIN thread (tool.set runs through the
-    // command bridge). It captures `before` from the CURRENT (extruded) mesh.
-    // No open live edit (built==false right after activate) -> hasUncommittedEdit
-    // is false, so keyboard Ctrl+Z takes the pop+resync branch, NOT the cancel
-    // branch.
+    // SCRIPT-origin activation is deliberately its own row (C-H1-door).
     auto act = postJson("/api/command", "tool.set edge.extrude");
     assert(act["status"].str == "ok" || act["status"].str == "success",
         "tool.set edge.extrude failed: " ~ act.toString);
+    immutable size_t armedDepth = undoLen();
+    auto rows = getJson("/api/history")["undo"].array;
+    assert(armedDepth == undoAfterEdit + 1 && rows[$ - 1]["command"].str == "tool.activate",
+        "Edge Extrude script arm did not append its activation row: " ~ rows.to!string);
 
-    // Keyboard Ctrl+Z: navHistory(true) -> history.undo() (pops the extrude) ->
-    // activeTool.resyncSession() (re-init `before`/gizmo against the now-current,
-    // pre-extrude mesh). Must not throw; must pop exactly one entry.
+    // The activation is the top entry; the older topology edit must stay put.
     playKey(SDLK_z, KMOD_LCTRL);
-    assert(undoLen() == undoAfterEdit - 1,
-        "Ctrl+Z under an active tool did not pop one undo entry");
-    assert(redoLen() >= 1, "Ctrl+Z under an active tool did not push redo");
-    assert(vertCount() == baseVerts,
-        "Ctrl+Z under an active tool did not restore pre-edit geometry");
-
-    // The tool is still active and coherent: redo re-applies cleanly (the resync
-    // left no half-built/stale state that would corrupt a subsequent step).
-    playKey(SDLK_z, KMOD_LCTRL | KMOD_LSHIFT);
     assert(undoLen() == undoAfterEdit,
-        "redo under an active tool did not restore the undo entry");
+        "Ctrl+Z did not pop the Edge Extrude activation row");
+    assert(redoLen() >= 1, "Ctrl+Z under an active tool did not push redo");
     assert(vertCount() == extrudedVerts,
-        "redo under an active tool did not re-apply the edit geometry");
+        "Ctrl+Z tunneled through the activation row and changed older geometry");
+    auto state = getJson("/api/tool/state");
+    assert(state.type != JSONType.object || !("tool" in state.object),
+        "undo of the Edge Extrude activation left the tool armed: " ~ state.toString);
+
+    // Redo restores only the activation and keeps the older edit unchanged.
+    playKey(SDLK_z, KMOD_LCTRL | KMOD_LSHIFT);
+    assert(undoLen() == armedDepth,
+        "redo did not restore the Edge Extrude activation row");
+    assert(vertCount() == extrudedVerts,
+        "activation redo changed the older edit geometry");
+    state = getJson("/api/tool/state");
+    assert(state.type == JSONType.object && "tool" in state.object &&
+           state["tool"].str == "edgeExtrude",
+        "activation redo did not re-arm Edge Extrude: " ~ state.toString);
 
     // Deactivate the tool so we don't leak an active edge.extrude into later
     // tests (its deactivate() would no-op: built==false, nothing to commit).

@@ -10,8 +10,9 @@
 //     here: switch (to Edge Extrude), `q`, Space, key `3`, the typed command line
 //     `tool.set edge.extend off` (ours: the UI door). The SCRIPT exit door was
 //     not driven (bridge rule) and is not asserted here.
-//     The record the exit door wrote carries the FIRST session's token, the new
-//     activation row a new one (R4.2: the token is on the row the close wrote).
+//     The record the exit door wrote carries the FIRST session's token.  For a
+//     switch to a lifecycle-owning tool, that record sits immediately BELOW the
+//     incoming tool's activation row; the two rows carry different tokens.
 // (M) C-H5-ext-mmb-rs: a Middle press clones EVERY haul attribute (rotate and
 //     scale with the offset) into the new operation.
 // (S) C-H8-sc z2 / gap 225: popping a Shift-opened operation whole restores
@@ -77,11 +78,20 @@ void tokenTwin(string door) {
         format("rig (%s): the key did not write a session-bearing activation row: %s", door,
                undoRows()[$ - 1].toString));
     exitThrough(door);
-    // The row the exit door wrote carries run 1's session (R4.2, R4.7).
+    // The row the exit door wrote carries run 1's session (R4.2, R4.7).  A
+    // switch to Edge Extrude also writes the incoming activation above it.
     auto rows = undoRows();
-    assert(rows[$ - 1]["label"].str == "Edge Extend" && sessionOf(rows[$ - 1]) == act1,
+    assert(rows.length >= (door == "switch" ? 2 : 1),
+        format("(%s) the exit door left too few rows: %s", door, rows.to!string));
+    immutable size_t closeAt = door == "switch" ? rows.length - 2 : rows.length - 1;
+    assert(rows[closeAt]["label"].str == "Edge Extend" && sessionOf(rows[closeAt]) == act1,
         format("(%s) the record the exit door wrote does not carry the first session's token %s: %s",
-               door, act1, rows[$ - 1].toString));
+               door, act1, rows.to!string));
+    if (door == "switch")
+        assert(rows[$ - 1]["label"].str == "Activate Tool" &&
+               sessionOf(rows[$ - 1]) != 0 && sessionOf(rows[$ - 1]) != act1,
+            "(switch) the incoming Edge Extrude activation is not a distinct row above the Extend close: "
+            ~ rows.to!string);
     keyArm();
     immutable long h1 = undoLen();
     immutable long act2 = sessionOf(undoRows()[$ - 1]);

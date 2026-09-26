@@ -267,7 +267,9 @@ struct Cell {
     Drove[]  drove;           // task 3091: this cell's captured `parameters` drive
 }
 
-/// Drive one gesture and score it. `stand` builds the scene AND clears history;
+/// Drive one gesture and score it. `stand` builds the scene and clears the
+/// setup history. Edge Extrude then leaves its captured activation row as the
+/// baseline; the fixture continues to describe only the gesture-created suffix.
 /// `gesture` is the play-events drive; `drop` deactivates the tool.
 Cell runCell(string name, string tool, string recordSite, string mode,
              string payload,
@@ -280,20 +282,30 @@ Cell runCell(string name, string tool, string recordSite, string mode,
     gDrove = [];   // task 3091: this cell's own (stand, gesture, drop) drive
     stand();
     immutable long u0 = undoLen();
-    assert(u0 == 0,
-        name ~ ": the stand left " ~ u0.to!string ~ " undo entr(ies) standing. "
-      ~ "`undoDelta` is measured from a CLEARED stack, and a selection POST "
-      ~ "records `mesh.select`, so the stand must clear history AFTER it "
-      ~ "selects");
+    auto baselineEntries = historyNames();
+    immutable string[] expectedBaseline = tool == "edge.extrude"
+        ? ["tool.activate"] : [];
+    assert(baselineEntries == expectedBaseline,
+        name ~ ": the stand's history baseline is " ~ baselineEntries.to!string
+      ~ ", expected " ~ expectedBaseline.to!string ~ ". Selection setup must "
+      ~ "still be cleared; Edge Extrude alone retains its captured activation row");
     c.preOp = planes();
 
     gesture();
-    c.liveEntryNames = historyNames();
+    auto liveNames = historyNames();
+    assert(liveNames.length >= baselineEntries.length &&
+           liveNames[0 .. baselineEntries.length] == baselineEntries,
+        name ~ ": the gesture replaced its standing activation prefix");
+    c.liveEntryNames = liveNames[baselineEntries.length .. $];
 
     drop();
     settle();
     c.postCommit = planes();
-    c.entryNames = historyNames();
+    auto committedNames = historyNames();
+    assert(committedNames.length >= baselineEntries.length &&
+           committedNames[0 .. baselineEntries.length] == baselineEntries,
+        name ~ ": the drop replaced its standing activation prefix");
+    c.entryNames = committedNames[baselineEntries.length .. $];
     c.undoDelta  = undoLen() - u0;
     c.drove      = gDrove;   // task 3091: captured after stand+gesture+drop
 
@@ -305,24 +317,39 @@ Cell runCell(string name, string tool, string recordSite, string mode,
         name ~ ": the gesture moved NO plane. Its record, its undo and its redo "
       ~ "are then all satisfied by doing nothing. Either the drive missed the "
       ~ "handle, or the tool refused on this stand — check `/api/tool/state`");
-    assert(c.undoDelta == 1,
+    immutable long expectedUndoDelta = tool == "edge.extrude" ? 2 : 1;
+    assert(c.undoDelta == expectedUndoDelta,
         name ~ ": the gesture left " ~ c.undoDelta.to!string ~ " undo entr(ies), "
-      ~ "expected exactly 1. Zero means the commit never recorded; more than "
-      ~ "one means an in-session run was left unspliced");
+      ~ "expected exactly " ~ expectedUndoDelta.to!string ~ ". Edge Extrude's "
+      ~ "width and extrude drags are two captured topology steps; every other "
+      ~ "cell has one. Zero means the commit never recorded");
 
-    auto ru = postJ("/api/command", commandBody("history.undo"));
-    assert(ru["status"].str == "ok", name ~ ": /api/undo failed: " ~ ru.toString);
-    settle();
+    string betweenUndo;
+    foreach (step; 0 .. expectedUndoDelta) {
+        auto ru = postJ("/api/command", commandBody("history.undo"));
+        assert(ru["status"].str == "ok", name ~ ": /api/undo failed: " ~ ru.toString);
+        settle();
+        if (expectedUndoDelta == 2 && step == 0) betweenUndo = planes();
+    }
     c.postUndo = planes();
     assert(undoLen() == u0,
         name ~ ": the undo moved the stack to " ~ undoLen().to!string
-      ~ ", expected back to " ~ u0.to!string ~ " — more than one step means the "
-      ~ "entry's revert() answered false and the suffix behind it was truncated");
+      ~ ", expected back to " ~ u0.to!string);
+    if (expectedUndoDelta == 2)
+        assert(betweenUndo != c.preOp && betweenUndo != c.postCommit,
+            name ~ ": the first Undo did not expose the independent first drag image");
 
-    auto rr = postJ("/api/command", commandBody("history.redo"));
-    assert(rr["status"].str == "ok", name ~ ": /api/redo failed: " ~ rr.toString);
-    settle();
+    string betweenRedo;
+    foreach (step; 0 .. expectedUndoDelta) {
+        auto rr = postJ("/api/command", commandBody("history.redo"));
+        assert(rr["status"].str == "ok", name ~ ": /api/redo failed: " ~ rr.toString);
+        settle();
+        if (expectedUndoDelta == 2 && step == 0) betweenRedo = planes();
+    }
     c.postRedo = planes();
+    if (expectedUndoDelta == 2)
+        assert(betweenRedo == betweenUndo,
+            name ~ ": the first Redo did not restore the first drag image");
 
     c.undoResidual = planeDiff(c.preOp,      c.postUndo);
     c.redoResidual = planeDiff(c.postCommit, c.postRedo);
@@ -517,6 +544,12 @@ void scoreCell(const ref Cell fresh, const ref JSONValue frozen) {
           frozen["undoDelta"].integer == fresh.undoDelta,
           "frozen " ~ frozen["undoDelta"].integer.to!string
         ~ " vs fresh " ~ fresh.undoDelta.to!string);
+    field("recordSite", frozen["recordSite"].str == fresh.recordSite,
+          "frozen '" ~ frozen["recordSite"].str ~ "' vs fresh '" ~ fresh.recordSite ~ "'");
+    field("mode", frozen["mode"].str == fresh.mode,
+          "frozen '" ~ frozen["mode"].str ~ "' vs fresh '" ~ fresh.mode ~ "'");
+    field("payload", frozen["payload"].str == fresh.payload,
+          "frozen '" ~ frozen["payload"].str ~ "' vs fresh '" ~ fresh.payload ~ "'");
 
     void dump(string what, const ref JSONValue frozenDump, string freshText) {
         auto d = planeDiff(frozenDump.toString(), freshText);
@@ -972,8 +1005,8 @@ unittest {
     //     anti-vacuity in `runCell` is what would catch a regression back to
     //     the attribute-only drag.
     cells ~= runCell("edge.extrude/drag", "edge.extrude",
-        "source/tools/edit/edge_extrude.d EdgeExtrudeTool.commitEdit (cmd.setDelta)",
-        "Plain", "MeshSessionEdit+delta",
+        "source/edit_session.d ToolSession.stepEnds (setSnapshots + recordTopologyStep)",
+        "Plain", "MeshSessionEdit+snapshots",
         {
             resetCube();
             auto r = postJ("/api/command", commandBody("mesh.select", `{"mode":"edges","indices":[` ~ findEdgeXPosZNeg().to!string ~ `]}`));
