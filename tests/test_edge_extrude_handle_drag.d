@@ -72,6 +72,12 @@ double queryExtrude() {
     return r["value"].floating;
 }
 
+double queryWidth() {
+    auto r = postJson("/api/command", "tool.attr " ~ TOOL ~ " width ?");
+    assert(r["status"].str == "ok", "query width failed: " ~ r.toString);
+    return r["value"].floating;
+}
+
 // --- the acceptance witness -------------------------------------------------
 //
 // THESE THREE CHANNELS FAIL CLOSED, which is why this file carries no separate
@@ -543,6 +549,103 @@ unittest { // Interactive Width follows the same closed-redo dormant path.
         getJson("/api/history")["undo"].array[$ - 1]["command"].str ==
             "tool.topology_adjustment",
         "post-param fresh drag must write only an attribute adjustment");
+}
+
+unittest { // A restored dormant predecessor keeps its activation provenance.
+    setupEdge();
+    int x, y; handlePx(1, x, y);
+    drag(x, y, x - 40, y);
+    cmd("tool.set move on");
+    navigate(true); navigate(true); navigate(true);
+    navigate(false); navigate(false); navigate(false);
+    auto r = postJson("/api/command?origin=ui", "tool.set " ~ TOOL ~ " on");
+    assert(r["status"].str == "ok" || r["status"].str == "success");
+    cmd("tool.set move on");
+    navigate(true); // Move reverts to the fresh dormant Edge activation.
+    const image = planes();
+    const depth = undoLen();
+    auto st = getJson("/api/tool/state");
+    assert(st["session"]["dormant"].type == JSONType.true_,
+        "Undo Move lost the dormant state of its Edge predecessor");
+    handlePx(1, x, y);
+    drag(x, y, x - 40, y);
+    assert(planes() == image && undoLen() == depth + 1,
+        "restored dormant Edge drag changed mesh/selection or omitted its row");
+    assert(getJson("/api/history")["undo"].array[$ - 1]["command"].str ==
+        "tool.topology_adjustment",
+        "restored dormant Edge drag wrote a topology row");
+}
+
+unittest { // A scripted write is the actual before-image of the next step.
+    setupEdge();
+    const initial = planes();
+    cmd("tool.attr edge.extrude width 0.1");
+    assert(abs(queryWidth() - 0.1) < 1e-5,
+        "scripted Width did not reach the armed Edge tool");
+    auto p = postJson("/api/script?interactive=true",
+        "tool.attr edge.extrude width 0.2\n");
+    assert(p["status"].str == "ok" || p["status"].str == "success");
+    const after = planes();
+    assert(after != initial && abs(queryWidth() - 0.2) < 1e-5,
+        "interactive Width fixture did not change preview and attribute");
+    navigate(true);
+    assert(planes() == initial && abs(queryWidth() - 0.1) < 1e-5,
+        "interactive Width undo lost the scripted pre-step attribute");
+    navigate(false);
+    assert(planes() == after && abs(queryWidth() - 0.2) < 1e-5,
+        "interactive Width redo lost the exact post-step image");
+}
+
+unittest { // The same scripted before-image survives an ordinary handle drag.
+    setupEdge();
+    const initial = planes();
+    cmd("tool.attr edge.extrude width 0.1");
+    int x, y; handlePx(0, x, y);
+    drag(x, y, x + 70, y);
+    const after = planes();
+    const extrude = queryExtrude();
+    assert(after != initial && extrude > 1e-3,
+        "scripted Width and handle haul did not build a topology step");
+    navigate(true);
+    assert(planes() == initial && abs(queryWidth() - 0.1) < 1e-5
+        && abs(queryExtrude()) < 1e-5,
+        "handle undo lost the scripted pre-step attributes or mesh");
+    navigate(false);
+    assert(planes() == after && abs(queryWidth() - 0.1) < 1e-5
+        && abs(queryExtrude() - extrude) < 1e-5,
+        "handle redo lost the exact scripted plus gesture after-image");
+}
+
+unittest { // Pointer-written interactive dormant parameter creates an attr row.
+    setupEdge();
+    int x, y; handlePx(1, x, y);
+    drag(x, y, x - 40, y);
+    cmd("tool.set move on");
+    navigate(true); navigate(true); navigate(true);
+    navigate(false); navigate(false); navigate(false);
+    auto r = postJson("/api/command?origin=ui", "tool.set " ~ TOOL ~ " on");
+    assert(r["status"].str == "ok" || r["status"].str == "success");
+    const image = planes();
+    const depth = undoLen();
+    auto p = postJson("/api/script?interactive=true",
+        "tool.attr edge.extrude width 0.2\n");
+    assert(p["status"].str == "ok" || p["status"].str == "success");
+    assert(planes() == image && undoLen() == depth + 1 &&
+        abs(queryWidth() - 0.2) < 1e-5 &&
+        getJson("/api/history")["undo"].array[$ - 1]["command"].str ==
+            "tool.topology_adjustment",
+        "dormant interactive Width omitted its attribute-only row");
+    navigate(true);
+    assert(planes() == image && undoLen() == depth - 1,
+        "dormant interactive Width undo lost mesh or activation pairing");
+    navigate(false);
+    assert(planes() == image && abs(queryWidth()) < 1e-5,
+        "dormant interactive Width activation redo lost its before attribute");
+    navigate(false);
+    assert(planes() == image && abs(queryWidth() - 0.2) < 1e-5,
+        "dormant interactive Width redo lost mesh or after attribute: width "
+        ~ queryWidth().to!string ~ ", history "
+        ~ getJson("/api/history").toString);
 }
 
 unittest { // Explicit drop while held must preserve its single pending row.

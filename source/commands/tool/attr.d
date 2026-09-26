@@ -7,6 +7,7 @@ import editmode;
 import params : Param, injectParamsInto, paramToJson, wireArgs;
 import commands.tool.host : ToolHost;
 import edit_session : ParameterChangePhase, ParameterChangeSource;
+import tool : AttrImage;
 
 import std.json : JSONValue, JSONType;
 
@@ -130,6 +131,8 @@ class ToolAttrCommand : Command {
         // Build a single-key object and inject it.
         JSONValue pj = JSONValue(cast(JSONValue[string]) null);
         pj[attrName_] = attrValue_;
+        auto beforeWrite = t.sessionPolicy().historyTopologySteps
+            ? t.captureAttrImage() : AttrImage.init;
         injectParamsInto(t.params(), pj);
         if (toolHost.session is null || toolHost.session() is null)
             throw new Exception("tool.attr: EditSession not wired");
@@ -138,7 +141,8 @@ class ToolAttrCommand : Command {
             : ParameterChangeSource.ScriptedValue;
         auto session = toolHost.session();
         session.orchestrateParameterChange(
-            t, attrName_, source, ParameterChangePhase.ValueWritten);
+            t, attrName_, source, ParameterChangePhase.ValueWritten,
+            beforeWrite);
         session.orchestrateParameterChange(
             t, "", source, ParameterChangePhase.BatchComplete);
         return true;

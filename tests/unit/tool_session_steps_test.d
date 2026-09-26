@@ -38,7 +38,9 @@ import editmode : EditMode;
 import mesh : Mesh, makeCube;
 import math : Vec3;
 import params;
-import tool : AttrImage, OpensAt, PressKind, Tool, ToolSessionPolicy;
+import tool : AttrImage, OpensAt, PressKind, Tool, ToolSessionPolicy, TopologyStepClient;
+import command : Command;
+import snapshot : MeshSnapshot;
 import tool_activation_ownership;
 import view : View;
 
@@ -924,4 +926,72 @@ unittest { // M4 review: a pair whose record refuses its redo leaves the row red
            && r.active is t && tokenOf(r) == 5,
            format("M4 split redo: undo %s, redo %s, token %s", r.history.undoEntries().length,
                   r.history.redoEntries().length, tokenOf(r)));
+}
+
+private final class DormantRefusalTool : Tool, TopologyStepClient {
+    Mesh* m;
+    Command carrier;
+    int v;
+    bool dormant;
+    bool refuse;
+
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy policy = {
+            activationRow: true, sessionSteps: true,
+            historyTopologySteps: true, dormantAfterClosedRedo: true,
+            opensAt: OpensAt.arm, imageAttrs: ["v"]
+        };
+        return policy;
+    }
+    override Param[] params() { return [Param.int_("v", "V", &v, 0)]; }
+    override Mesh* topologyStepMesh() { return m; }
+    override MeshSnapshot topologyStepBasis() { return MeshSnapshot.capture(*m); }
+    override Command topologyStepCarrier() { return carrier; }
+    override bool recordTopologyStep(Command cmd) { return !refuse; }
+    override string topologyStepLabel() { return "Dormant Refusal"; }
+    override void setTopologyDormant(bool value) { dormant = value; }
+    override void restoreTopologyStep(in AttrImage attrs, MeshSnapshot basis) {
+        restoreRecordedAttrs(attrs);
+    }
+    void writeStep() {
+        sessionStepBegins();
+        v = 9;
+        m.vertices[0].x += 1;
+        sessionStepEnds();
+    }
+    void cancelPendingStep() {
+        sessionStepBegins();
+        v = 7;
+        m.vertices[0].x += 1;
+        closeOwnOperation(false);
+    }
+}
+
+unittest { // 7990 refusal: null carrier and refused record restore both images.
+    foreach (refuse; [false, true]) {
+        Mesh m = makeCube();
+        auto h = new CommandHistory();
+        auto t = new DormantRefusalTool;
+        t.m = &m;
+        Tool active = t;
+        auto s = new EditSession(() => active, h, () { active = null; });
+        auto arm = tokenRow(&m, "t.dormant", "", true, false, 1);
+        arm.markDormantTopology();
+        h.recordToolLifecycle(arm);
+        if (refuse) { t.carrier = arm; t.refuse = true; }
+        h.setState(UndoState.Suspend);
+        s.noteArm("t.dormant", 1);
+        h.setState(UndoState.Active);
+        assert(t.dormant && s.sessionStateJson()["dormant"].boolean,
+            "7990 refusal fixture did not enter dormant topology mode");
+        auto before = MeshSnapshot.capture(m);
+        const depth = h.undoEntries().length;
+        t.writeStep();
+        assert(before.matches(m) && t.v == 0 && h.undoEntries().length == depth,
+            refuse ? "7990 refused history left dormant mesh or attrs changed"
+                   : "7990 null carrier left dormant mesh or attrs changed");
+        t.cancelPendingStep();
+        assert(before.matches(m) && t.v == 0 && h.undoEntries().length == depth,
+            "7990 dormant pending cancel restored an invalid topology basis");
+    }
 }

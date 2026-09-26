@@ -844,10 +844,12 @@ unittest { // Task 7990: production topology R wiring, not a helper replica.
     auto es = blankNonCode(readText("source/edit_session.d"));
     auto edge = blankNonCode(readText("source/tools/edit/edge_extrude.d"));
     auto carrier = blankNonCode(readText("source/commands/mesh/session_edit.d"));
+    auto panel = squeeze(blankNonCode(readText("source/property_panel.d")));
+    auto attr = squeeze(blankNonCode(readText("source/commands/tool/attr.d")));
     assert(es.canFind("if (navigateTopology_(true)) return true;")
         && es.canFind("if (navigateTopology_(false)) return true;"),
         "Edge topology navigation bypassed the production ToolSession door");
-    assert(es.canFind("topologyParameterStepBegins(t)")
+    assert(es.canFind("topologyParameterStepBegins(t, beforeWrite)")
         && es.canFind("cmd.setTopologyStep(topologyPendingAttrs_, attrs,"),
         "interactive parameter or history-owned step payload was disconnected");
     assert(edge.canFind("sessionStepBegins(e.button == SDL_BUTTON_MIDDLE")
@@ -874,6 +876,11 @@ unittest { // Task 7990: production topology R wiring, not a helper replica.
         && carrier.canFind("stepBeforeBasis_")
         && carrier.canFind("stepAfterAttrs_"),
         "history command lost topology basis or attributes");
+    assert(panel.canFind("beforeWrite=tisnull||!t.sessionPolicy().historyTopologySteps?AttrImage.init:t.captureAttrImage();")
+        && panel.canFind("p,par.name,source,ParameterChangePhase.ValueWritten,beforeWrite);")
+        && attr.canFind("beforeWrite=t.sessionPolicy().historyTopologySteps?t.captureAttrImage():AttrImage.init;")
+        && attr.canFind("t,attrName_,source,ParameterChangePhase.ValueWritten,beforeWrite);"),
+        "pointer-written parameter producer lost the actual prewrite image");
 }
 
 unittest { // (9) the compile-time module list IS the runtime scan

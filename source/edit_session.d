@@ -290,16 +290,19 @@ final class EditSession {
     // ----- live-eval (re-eval plan D4) --------------------------------------
 
     /// Orchestrate one parameter-change batch after the widget or command has
-    /// already written the value.  Call ValueWritten for every actual write,
-    /// then BatchComplete exactly once.  This keeps notifications per value
-    /// while grouping evaluate/live-session work per user gesture.
+    /// already written the value. `beforeWrite` carries the image captured by
+    /// that pointer-writing producer when a topology step needs its real
+    /// start. Call ValueWritten for every actual write, then BatchComplete
+    /// exactly once. This keeps notifications per value while grouping
+    /// evaluate/live-session work per user gesture.
     ///
     /// A pointer-written stage batch uses both phases; ValueWritten supplies
     /// its notification and, for a slot-selector row, its slot epoch.  An
     /// already-published stage command or stack change instead uses the
     /// compatibility entry below and therefore carries no write-set names.
     void orchestrateParameterChange(ParamProvider provider, string name,
-            ParameterChangeSource source, ParameterChangePhase phase) {
+            ParameterChangeSource source, ParameterChangePhase phase,
+            AttrImage beforeWrite = AttrImage.init) {
         final switch (phase) {
             case ParameterChangePhase.ValueWritten:
                 assert(provider !is null,
@@ -311,7 +314,7 @@ final class EditSession {
                         assert(t !is null,
                             "interactive parameter source requires a Tool");
                         const step = tools_.actionStepBegins(t, name)
-                            || tools_.topologyParameterStepBegins(t);
+                            || tools_.topologyParameterStepBegins(t, beforeWrite);
                         t.notifyInteractiveParamChanged(name);
                         if (step) tools_.stepEnds(t, false);
                         return;
@@ -921,9 +924,13 @@ private struct ToolSession {
         }
         if (ok) {
             // Only AFTER a successful stack step: re-sync the still-live
-            // tool's baseline to the now-current mesh.
+            // tool's baseline to the now-current mesh. An attribute-only
+            // topology row already restored its exact image and has no mesh
+            // basis to re-sync; doing so would reset its parameters.
             auto t3 = tool_();
-            if (t3 !is null) t3.resyncSession();
+            if (t3 !is null && cast(const TopologyAdjustmentEdit)
+                    history_.undoEntries()[$ - 1].cmd is null)
+                t3.resyncSession();
         }
         // AFTER the redo: it is the redo that arms the tool (its arm binds
         // the fresh instance, `noteArm`), and the replay re-seats the group.
@@ -1019,13 +1026,18 @@ private struct ToolSession {
         if (t is null) return;
         import commands.tool.lifecycle : ToolActivationCommand;
         auto arm = cast(ToolActivationCommand)undoTop_();
-        if (history_.state() == UndoState.Suspend) {
+        if (history_.state() == UndoState.Suspend &&
+            (arm is null || arm.armedId() != id)) {
+            // During an undo the reverted row is off the undo stack, while
+            // its redo entry is not installed until revertImpl returns. A
+            // restored predecessor is already the undo top. During a redo
+            // the activating row is still the redo head instead.
             const re = history_.redoEntries();
             arm = re.length ? cast(ToolActivationCommand)re[0].cmd : null;
         }
         topologyDormant_ = t.sessionPolicy().dormantAfterClosedRedo &&
             (history_.state() == UndoState.Suspend
-                ? arm !is null && arm.dormantTopology()
+                ? arm !is null && arm.armedId() == id && arm.dormantTopology()
                 : closedTopologyRedo_);
         if (topologyDormant_ && arm !is null) {
             if (history_.state() != UndoState.Suspend) arm.markDormantTopology();
@@ -1072,19 +1084,28 @@ private struct ToolSession {
     }
 
     void stepBegins(Tool t, PressKind kind) {
+        stepBegins(t, kind, AttrImage.init);
+    }
+
+    void stepBegins(Tool t, PressKind kind, AttrImage beforeWrite) {
         if (!reporting_(t)) return;
         if (t.sessionPolicy().historyTopologySteps) {
+            auto client = cast(TopologyStepClient)t;
             if (topologyDormant_) {
-                topologyPendingAttrs_ = t.captureAttrImage();
+                topologyPendingAttrs_ = beforeWrite.empty
+                    ? t.captureAttrImage() : beforeWrite;
+                auto m = client is null ? null : client.topologyStepMesh();
+                topologyPendingMesh_ = m is null ? MeshSnapshot.init
+                    : MeshSnapshot.capture(*m);
                 topologyPending_ = true;
                 return;
             }
-            auto client = cast(TopologyStepClient)t;
             auto m = client is null ? null : client.topologyStepMesh();
             if (m is null) return;
             topologyPendingMesh_ = MeshSnapshot.capture(*m);
             topologyPendingBasis_ = client.topologyStepBasis();
-            topologyPendingAttrs_ = topologyAttrs_;
+            topologyPendingAttrs_ = beforeWrite.empty
+                ? t.captureAttrImage() : beforeWrite;
             topologyPending_ = true;
             return;
         }
@@ -1108,17 +1129,23 @@ private struct ToolSession {
                 if (!topologyPending_) return;
                 topologyPending_ = false;
                 auto after = t.captureAttrImage();
-                if (after.opEquals(topologyPendingAttrs_)) return;
                 auto client = cast(TopologyStepClient)t;
+                auto m = client is null ? null : client.topologyStepMesh();
+                if (m !is null) topologyPendingMesh_.restore(*m);
+                topologyPendingMesh_ = MeshSnapshot.init;
+                if (after.opEquals(topologyPendingAttrs_)) return;
                 auto context = client.topologyStepCarrier();
-                if (context is null) return;
+                if (context is null) {
+                    t.restoreRecordedAttrs(topologyPendingAttrs_);
+                    return;
+                }
                 auto cmd = new TopologyAdjustmentEdit(context, tool_,
                     topologyPendingAttrs_, after);
                 if (client.recordTopologyStep(cmd) && undoTop_() is cmd) {
                     history_.markEntrySession(cmd, token_);
                     topologyAttrs_ = after;
                 } else {
-                    t.applyAttrImage(topologyPendingAttrs_);
+                    t.restoreRecordedAttrs(topologyPendingAttrs_);
                 }
                 return;
             }
@@ -1204,7 +1231,10 @@ private struct ToolSession {
                 auto client = cast(TopologyStepClient)t;
                 auto m = client.topologyStepMesh();
                 if (m !is null) topologyPendingMesh_.restore(*m);
-                client.restoreTopologyStep(topologyPendingAttrs_, topologyPendingBasis_);
+                if (topologyDormant_)
+                    t.restoreRecordedAttrs(topologyPendingAttrs_);
+                else
+                    client.restoreTopologyStep(topologyPendingAttrs_, topologyPendingBasis_);
                 topologyAttrs_ = topologyPendingAttrs_;
             }
             endOperation_();
@@ -1229,10 +1259,10 @@ private struct ToolSession {
         return false;
     }
 
-    bool topologyParameterStepBegins(Tool t) {
+    bool topologyParameterStepBegins(Tool t, AttrImage beforeWrite) {
         if (!reporting_(t) || !t.sessionPolicy().historyTopologySteps)
             return false;
-        stepBegins(t, PressKind.plain);
+        stepBegins(t, PressKind.plain, beforeWrite);
         return topologyPending_;
     }
 

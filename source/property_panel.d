@@ -1,6 +1,6 @@
 module property_panel;
 
-import tool   : Tool;
+import tool   : Tool, AttrImage;
 import params : Param, ParamProvider;
 import params_widgets : drawParamWidget;
 import edit_session : EditSession, ParameterChangePhase, ParameterChangeSource;
@@ -191,6 +191,10 @@ public:
             // state (paramEnabled) OR the param is flagged readonly (static).
             bool disabled = !p.paramEnabled(par.name) || par.readonly_;
             if (disabled) ImGui.BeginDisabled();
+            // The widget writes through Param's pointer before it returns.
+            // Keep the real prewrite image for topology session rows.
+            auto beforeWrite = t is null || !t.sessionPolicy().historyTopologySteps
+                ? AttrImage.init : t.captureAttrImage();
             bool changed = drawParamWidget(par);
             if (disabled) ImGui.EndDisabled();
             if (changed) {
@@ -199,7 +203,8 @@ public:
                     source = ParameterChangeSource.SlotActivation;
                 }
                 session.orchestrateParameterChange(
-                    p, par.name, source, ParameterChangePhase.ValueWritten);
+                    p, par.name, source, ParameterChangePhase.ValueWritten,
+                    beforeWrite);
                 batchSource = source;
                 changedInBatch = true;
             }
