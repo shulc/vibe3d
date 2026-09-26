@@ -604,6 +604,35 @@ unittest { // Polygon -> Edge undo/redo never gives a fresh Edge Polygon attrs.
         "fresh Edge arm inherited Polygon's closed-redo dormant ownership");
 }
 
+unittest { // Unwinding a closed redo makes the next Polygon arm topology-live.
+    setupPoly();
+    const initial = planes();
+    const u0 = undoLen();
+    dragFree(40, -30);
+    assert(vertexCount() == 12 && undoLen() == u0 + 1,
+        "closed-redo unwind rig did not create Polygon topology");
+
+    auto edge = postJson("/api/command?origin=ui", "tool.set edge.extrude on");
+    assert(edge["status"].str == "ok" || edge["status"].str == "success",
+        "closed-redo unwind rig could not arm Edge Extrude");
+    navigate(true);    // Edge activation -> Polygon.
+    navigate(false);   // Edge activation redo marks its closed Polygon predecessor.
+    navigate(true);    // Unwind the Edge row that sourced that marker.
+    navigate(true);    // Unwind Polygon topology + activation.
+    assert(planes() == initial && vertexCount() == 8 && undoLen() == u0 - 1,
+        "closed-redo unwind rig did not restore the base Polygon mesh");
+
+    auto polygon = postJson("/api/command?origin=ui", "tool.set " ~ TOOL ~ " on");
+    assert(polygon["status"].str == "ok" || polygon["status"].str == "success",
+        "fresh Polygon arm after closed-redo unwind was refused");
+    const fresh = undoLen();
+    dragFree(40, -30);
+    auto st = getJson("/api/tool/state");
+    assert(vertexCount() == 12 && planes() != initial && undoLen() == fresh + 1
+        && st["session"]["dormant"].type == JSONType.false_,
+        "fresh Polygon drag after source-row unwind stayed dormant and created no topology");
+}
+
 unittest { // Prepared switch closes a held drag once, without a cumulative row.
     setupPoly();
     const initial = planes();

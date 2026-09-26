@@ -734,6 +734,7 @@ private struct ToolSession {
     private bool topologyFirstGroupLive_;
     private bool redoneTopologyStep_;
     private bool closedTopologyRedo_;
+    private Rebindable!(const Command) closedTopologyRedoSource_;
     private string closedTopologyId_;
     private ulong closedTopologyToken_;
     // The first group a key-door undo ended together with its activation row
@@ -893,6 +894,8 @@ private struct ToolSession {
             last = null;
         }
         if (ok) {
+            if (last.get is closedTopologyRedoSource_.get)
+                clearClosedTopologyRedo_();
             // Only AFTER a successful stack step, with no open edit remaining:
             // re-sync the still-live tool's baseline to the now-current mesh.
             auto t3 = tool_();
@@ -954,8 +957,10 @@ private struct ToolSession {
             closedTopologyToken_ = act.previousToken();
         }
         if (ok && act !is null &&
-            (redoneTopologyStep_ || act.previousHistoryTopology()))
+            (redoneTopologyStep_ || act.previousHistoryTopology())) {
             closedTopologyRedo_ = true;
+            closedTopologyRedoSource_ = act;
+        }
         if (ok && pair && !history_.redo()) {
             // The row came back but its record refused (review of slice M4): the
             // tool is armed without the record; the resync below re-baselines it.
@@ -1076,8 +1081,8 @@ private struct ToolSession {
             arm = re.length ? cast(ToolActivationCommand)re[0].cmd : null;
         }
         AttrImage closedAttrs;
-        if (history_.state() != UndoState.Suspend && closedTopologyRedo_ &&
-            closedTopologyId_ == id)
+        if (history_.state() != UndoState.Suspend &&
+            validClosedTopologyRedo_(arm, id))
             closedAttrs = topologyAttrsFor_(id, closedTopologyToken_);
         topologyDormant_ = t.sessionPolicy().dormantAfterClosedRedo &&
             (history_.state() == UndoState.Suspend
@@ -1091,7 +1096,7 @@ private struct ToolSession {
             topologyFirstGroupLive_ = t.sessionPolicy().historyTopologySteps
                 && !topologyDormant_;
         if (history_.state() != UndoState.Suspend) {
-            closedTopologyRedo_ = false;
+            clearClosedTopologyRedo_();
             redoneTopologyStep_ = false;
         }
         ToolSessionLink link;
@@ -1350,6 +1355,31 @@ private struct ToolSession {
         auto t = tool_();
         return live_ && reporting_(t) &&
             !t.sessionPolicy().historyTopologySteps ? t : null;
+    }
+
+    // A closed-topology redo is a one-arm continuation of the exact lifecycle
+    // row that recreated it. The new activation must sit directly above that
+    // row at the current cursor and continue its armed id/token lineage; an
+    // undone or bypassed source row cannot make a later same-class arm dormant.
+    private bool validClosedTopologyRedo_(const Command armRow, string id) {
+        import commands.tool.lifecycle : ToolActivationCommand;
+        if (!closedTopologyRedo_) return false;
+        auto source = cast(const ToolActivationCommand)
+            closedTopologyRedoSource_.get;
+        auto arm = cast(const ToolActivationCommand)armRow;
+        if (source is null || arm is null || closedTopologyId_ != id ||
+            arm.armedId() != id || arm.previousId() != source.armedId() ||
+            arm.previousToken() != source.sessionToken()) return false;
+        const ue = history_.undoEntries();
+        return ue.length >= 2 && ue[$ - 1].cmd is arm &&
+            ue[$ - 2].cmd is source;
+    }
+
+    private void clearClosedTopologyRedo_() {
+        closedTopologyRedo_ = false;
+        closedTopologyRedoSource_ = null;
+        closedTopologyId_ = null;
+        closedTopologyToken_ = 0;
     }
 
     private void pushStep_(AttrImage img) {

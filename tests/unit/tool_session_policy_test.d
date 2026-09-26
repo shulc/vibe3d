@@ -902,6 +902,12 @@ unittest { // Tasks 7990/8030: production topology R wiring, not a helper replic
         && poly.canFind("opensAt: OpensAt.firstPress")
         && poly.canFind("if (topologyDormant) return;"),
         "Polygon first-group or full-closed-redo production policy disconnected");
+    assert(es.canFind("closedTopologyRedoSource_ = act;")
+        && es.canFind("last.get is closedTopologyRedoSource_.get")
+        && es.canFind("validClosedTopologyRedo_(arm, id)")
+        && esFlat.canFind("sourceisnull||armisnull||closedTopologyId_!=id||arm.armedId()!=id||arm.previousId()!=source.armedId()||arm.previousToken()!=source.sessionToken()")
+        && esFlat.canFind("ue.length>=2&&ue[$-1].cmdisarm&&ue[$-2].cmdissource"),
+        "closed topology redo lost its source-row cursor or activation lineage");
     assert(es.canFind("pendingTopologyCarriesActivation_()")
         && es.canFind("pair ? cmd.stepBeforeAttrs() : cmd.stepAfterAttrs()"),
         "generic first-topology activation replay lost Polygon attrs/basis law");
