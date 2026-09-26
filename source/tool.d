@@ -286,6 +286,8 @@ interface TopologyStepClient {
     MeshSnapshot topologyStepBasis();
     Command topologyStepCarrier();
     bool recordTopologyStep(Command cmd);
+    string topologyStepLabel();
+    void setTopologyDormant(bool dormant);
     void restoreTopologyStep(in AttrImage attrs, MeshSnapshot basis);
 }
 
@@ -325,6 +327,12 @@ struct ToolSessionPolicy {
     /// they finish. ToolSession keeps only the in-flight image and latest
     /// attributes, never a live mesh-image stack.
     bool historyTopologySteps;
+    /// The first topology row remains separate from activation. Undoing the
+    /// activation discards that row's redo branch while keeping the activation.
+    bool discardFirstTopologyRedoOnActivationUndo;
+    /// A fresh activation after a fully redone closed run is an attribute-only
+    /// dormant tool until another operation explicitly arms its postmode.
+    bool dormantAfterClosedRedo;
     /// H1: when the operation window opens (see `OpensAt`). Read only for
     /// `sessionSteps` tools.
     OpensAt opensAt;

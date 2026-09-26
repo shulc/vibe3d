@@ -47,6 +47,8 @@ class ToolActivationCommand : Command, ToolArmLifecyclePolicy {
     // (the none->session law of gap 205 / §22 counts an unclassified
     // predecessor as "none"), whatever `previousId_` now records for the restore.
     private bool previousClassified_;
+    private bool previousHistoryTopology_;
+    private bool dormantTopology_;
 
     // Hooks wired by app.d after construction.
     void delegate(string) onActivate;
@@ -56,7 +58,8 @@ class ToolActivationCommand : Command, ToolArmLifecyclePolicy {
          string armedId, string previousId,
          bool sessionSteps = false, bool joinsFirstGroup = false,
          bool recordCarries = false, ulong sessionToken = 0,
-         ulong previousToken = 0, bool previousClassified = false) {
+         ulong previousToken = 0, bool previousClassified = false,
+         bool previousHistoryTopology = false) {
         super(mesh, view, editMode);
         armedId_ = armedId.idup;
         previousId_ = previousId.idup;
@@ -65,6 +68,7 @@ class ToolActivationCommand : Command, ToolArmLifecyclePolicy {
         recordCarries_ = recordCarries;
         previousToken_ = previousToken;
         previousClassified_ = previousClassified;
+        previousHistoryTopology_ = previousHistoryTopology;
         markSession(sessionToken);
         // The whole undo image is the predecessor identity. It exists from the
         // constructor, so the flag is raised there.
@@ -101,8 +105,11 @@ class ToolActivationCommand : Command, ToolArmLifecyclePolicy {
     string armedId() const { return armedId_; }
     string previousId() const { return previousId_; }
     bool carriesRedoAfterUndo() const {
-        return sessionSteps_ && !previousClassified_;
+        return dormantTopology_ || previousHistoryTopology_ ||
+            (sessionSteps_ && !previousClassified_);
     }
+    void markDormantTopology() { dormantTopology_ = true; }
+    bool dormantTopology() const { return dormantTopology_; }
     bool joinsFirstGroup() const { return joinsFirstGroup_; }
     /// Whether the record closing this session's first operation is undone
     /// together with this row (slice M4, gap 218): the arm's policy, and only

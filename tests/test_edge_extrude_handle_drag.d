@@ -126,6 +126,32 @@ void navigate(bool undo) {
         mod, mod), BASE);
 }
 
+void setupEdge() {
+    auto r = postJson("/api/command", commandBody("scene.reset"));
+    assert(r["status"].str == "ok");
+    cmd("history.clear");
+    int ei = findEdgeXPosZNeg();
+    assert(ei >= 0);
+    r = postJson("/api/command", commandBody("mesh.select",
+        `{"mode":"edges","indices":[` ~ ei.to!string ~ `]}`));
+    assert(r["status"].str == "ok");
+    r = postJson("/api/camera",
+        `{"azimuth":0.4,"elevation":1.1,"distance":4.0,`
+        ~ `"focus":{"x":0,"y":0,"z":0}}`);
+    assert(r["status"].str == "ok");
+    r = postJson("/api/command?origin=ui", "tool.set " ~ TOOL ~ " on");
+    assert(r["status"].str == "ok" || r["status"].str == "success");
+    import core.thread : Thread;
+    import core.time : dur;
+    Thread.sleep(dur!"msecs"(250));
+}
+
+void rightClick(int x, int y) {
+    auto cam = fetchCamera(BASE);
+    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+        x, y, x, y, 1, 0, 3), BASE);
+}
+
 // The cube's edge index whose two endpoints both sit at x=+0.5, z=-0.5.
 // Looked up rather than hard-coded: edge order is a mesh-build detail.
 int findEdgeXPosZNeg() {
@@ -305,7 +331,7 @@ unittest { // A zero Middle boundary has its own cursor despite equal images.
     cmd("tool.set " ~ TOOL ~ " off");
 }
 
-unittest { // First-group pair replays on a fresh tool and accepts a new haul.
+unittest { // Edge first group: two Undos remove g1 and then its activation.
     auto r = postJson("/api/command", commandBody("scene.reset"));
     assert(r["status"].str == "ok");
     cmd("history.clear");
@@ -331,20 +357,29 @@ unittest { // First-group pair replays on a fresh tool and accepts a new haul.
     assert(first != initial && undoLen() == u0 + 1,
         "fresh replay fixture did not build first step");
     navigate(true);
-    assert(planes() == initial && undoLen() == u0 - 1,
-        "first-group undo did not remove its activation pair: u0 " ~ u0.to!string
+    assert(planes() == initial && undoLen() == u0,
+        "Edge z1 must remove g1 while retaining its armed activation: u0 " ~ u0.to!string
         ~ ", now " ~ undoLen().to!string ~ ", plane delta "
         ~ planeDiff(initial, planes()).to!string);
-    navigate(false);
-    assert(planes() == first && undoLen() == u0 + 1,
-        "fresh activation redo did not replay the first step exactly");
-    int ex, ey; handlePx(0, ex, ey);
-    drag(ex, ey, ex + 70, ey);
-    assert(planes() != first && undoLen() == u0 + 2,
-        "freshly replayed Edge tool did not continue with one new step");
     navigate(true);
-    assert(planes() == first,
-        "undo of fresh continuation did not restore the replayed first step");
+    assert(planes() == initial && undoLen() == u0 - 1,
+        "Edge z2 must remove the activation after g1 undo");
+    navigate(false);
+    assert(planes() == initial && undoLen() == u0,
+        "Edge r1 re-arms bare; the old g1 redo row must be gone");
+    navigate(false);
+    assert(planes() == initial && undoLen() == u0,
+        "Edge r2 must not restore the erased g1 row");
+    handlePx(1, x, y);
+    drag(x, y, x - 40, y);
+    assert(planes() != initial && undoLen() == u0 + 1,
+        "new Edge haul after bare re-arm must create a new g1 row");
+    navigate(true);
+    assert(planes() == initial && undoLen() == u0,
+        "undo of the new g1 must restore the original mesh");
+    navigate(false);
+    assert(planes() != initial && undoLen() == u0 + 1,
+        "redo of the new g1 must restore its mesh");
     cmd("tool.set " ~ TOOL ~ " off");
 }
 
@@ -389,4 +424,145 @@ unittest { // A recording UI command closes after Middle without a carrier row.
     assert(planes() == first && undoLen() == u0 + 1,
         "recording-command z2 did not remove Middle alone");
     cmd("tool.set " ~ TOOL ~ " off");
+}
+
+unittest { // A recorded Edge step remains the mesh owner after RMB cancel.
+    setupEdge();
+    immutable string initial = planes();
+    immutable long u0 = undoLen();
+    int x, y; handlePx(1, x, y);
+    drag(x, y, x - 40, y);
+    immutable string first = planes();
+    assert(first != initial && undoLen() == u0 + 1,
+        "RMB fixture needs a completed history-owned step");
+    rightClick(x, y);
+    assert(planes() == first && undoLen() == u0 + 1,
+        "RMB reverted the mesh but retained its completed history row");
+    navigate(true);
+    assert(planes() == initial && undoLen() == u0,
+        "RMB left the next Undo inconsistent with the visible mesh");
+}
+
+unittest { // A close while a drag is held records its pending image once.
+    setupEdge();
+    immutable string initial = planes();
+    immutable long u0 = undoLen();
+    int x, y; handlePx(1, x, y);
+    auto cam = fetchCamera(BASE);
+    playAndWait(buildDragDownLog(cam.vpX, cam.vpY, cam.width, cam.height,
+        x, y), BASE);
+    playAndWait(buildDragMotionLog(cam.vpX, cam.vpY, cam.width, cam.height,
+        x, y, x - 40, y, 12), BASE);
+    immutable string preview = planes();
+    assert(preview != initial, "held-drag fixture did not build a preview");
+    cmd("tool.set move on");
+    assert(planes() == preview && undoLen() == u0 + 2,
+        "mid-gesture close lost the pending Edge image or duplicated a row");
+    playAndWait(buildDragUpLog(cam.vpX, cam.vpY, cam.width, cam.height,
+        x - 40, y), BASE);
+    navigate(true);
+    navigate(true);
+    assert(planes() == initial,
+        "mid-gesture close image did not round-trip through history: "
+        ~ planeDiff(initial, planes()).to!string ~ ", undo " ~ undoLen().to!string);
+}
+
+unittest { // Full closed redo leaves a fresh Edge activation dormant.
+    setupEdge();
+    immutable string initial = planes();
+    immutable long u0 = undoLen();
+    int x, y; handlePx(1, x, y);
+    drag(x, y, x - 40, y);
+    immutable string first = planes();
+    assert(first != initial && undoLen() == u0 + 1,
+        "dormant fixture needs a topology row");
+    cmd("tool.set move on");
+    navigate(true);  // Move activation
+    navigate(true);  // Edge topology row
+    navigate(true);  // Edge activation
+    navigate(false);
+    navigate(false);
+    navigate(false);
+    assert(planes() == first && undoLen() == u0 + 2,
+        "full closed redo did not restore its mesh and Move row: undo "
+        ~ undoLen().to!string ~ ", u0 " ~ u0.to!string ~ ", delta "
+        ~ planeDiff(first, planes()).to!string ~ ", history "
+        ~ getJson("/api/history").toString);
+    auto r = postJson("/api/command?origin=ui", "tool.set " ~ TOOL ~ " on");
+    assert(r["status"].str == "ok" || r["status"].str == "success");
+    immutable string rearmed = planes();
+    immutable long fresh = undoLen();
+    assert(rearmed == first, "fresh arm after closed redo changed full mesh");
+    handlePx(1, x, y);
+    drag(x, y, x - 40, y);
+    assert(planes() == rearmed && undoLen() == fresh + 1,
+        "dormant Edge drag must add one attr-only row without moving mesh");
+    auto h = getJson("/api/history");
+    assert(h["undo"].array[$ - 1]["command"].str == "tool.topology_adjustment",
+        "dormant Edge drag wrote a topology carrier instead of an adjustment");
+    auto st = getJson("/api/tool/state");
+    assert(st["session"]["live"].type == JSONType.false_,
+        "dormant Edge drag armed a topology operation");
+    navigate(true);
+    assert(planes() == rearmed && undoLen() == fresh - 1,
+        "dormant z1 must remove adjustment and fresh activation together");
+    navigate(false);
+    assert(planes() == rearmed && undoLen() == fresh,
+        "dormant r1 restores the bare activation, leaving adjustment in redo");
+    st = getJson("/api/tool/state");
+    assert(st["session"]["dormant"].type == JSONType.true_ &&
+        abs(st["width"].floating) < 1e-5,
+        "dormant r1 restored a live postmode or carried drag attrs");
+}
+
+unittest { // Interactive Width follows the same closed-redo dormant path.
+    setupEdge();
+    immutable string initial = planes();
+    immutable long u0 = undoLen();
+    auto p = postJson("/api/script?interactive=true",
+        "tool.attr edge.extrude width 0.2\n");
+    assert(p["status"].str == "ok" || p["status"].str == "success");
+    immutable string param = planes();
+    assert(param != initial && undoLen() == u0 + 1,
+        "interactive Width fixture did not create a mesh row");
+    cmd("tool.set move on");
+    navigate(true);
+    navigate(true);
+    navigate(true);
+    navigate(false);
+    navigate(false);
+    navigate(false);
+    assert(planes() == param && undoLen() == u0 + 2,
+        "interactive Width did not survive full closed redo");
+    auto r = postJson("/api/command?origin=ui", "tool.set " ~ TOOL ~ " on");
+    assert(r["status"].str == "ok" || r["status"].str == "success");
+    immutable long fresh = undoLen();
+    int x, y; handlePx(1, x, y);
+    drag(x, y, x - 40, y);
+    assert(planes() == param && undoLen() == fresh + 1 &&
+        getJson("/api/history")["undo"].array[$ - 1]["command"].str ==
+            "tool.topology_adjustment",
+        "post-param fresh drag must write only an attribute adjustment");
+}
+
+unittest { // Explicit drop while held must preserve its single pending row.
+    setupEdge();
+    immutable string initial = planes();
+    immutable long u0 = undoLen();
+    int x, y; handlePx(1, x, y);
+    auto cam = fetchCamera(BASE);
+    playAndWait(buildDragDownLog(cam.vpX, cam.vpY, cam.width, cam.height,
+        x, y), BASE);
+    playAndWait(buildDragMotionLog(cam.vpX, cam.vpY, cam.width, cam.height,
+        x, y, x - 40, y, 12), BASE);
+    immutable string preview = planes();
+    assert(preview != initial, "held explicit-drop fixture has no preview");
+    cmd("tool.set " ~ TOOL ~ " off");
+    assert(planes() == preview && undoLen() == u0 + 1,
+        "explicit drop discarded pending image or appended duplicate row");
+    playAndWait(buildDragUpLog(cam.vpX, cam.vpY, cam.width, cam.height,
+        x - 40, y), BASE);
+    navigate(true);
+    assert(planes() == initial && undoLen() == u0,
+        "explicit-drop pending row did not undo its full mesh");
 }

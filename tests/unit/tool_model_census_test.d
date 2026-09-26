@@ -784,7 +784,7 @@ private string renderLedger(const Ledger l) {
     o.put("# Axis 3 (`write` rows) is descriptive: any change reddens until recorded.\n");
     o.put(format("axis1-violators %s\naxis2-violators %s\n\n", l.axis1, l.axis2));
     o.put("# Session-special debt (3b). Task 7990 adds one generic TopologyStepClient\n"
-        ~ "# and four casts in ToolSession; history owns its completed images. The\n"
+        ~ "# and seven casts in ToolSession; history owns its completed images. The\n"
         ~ "# ceilings remain exact after this named W2 expansion.\n");
     o.put("# interfaces of the session modules, casts to them in source/, and casts\n");
     o.put("# to a concrete tool class outside source/tools/.\n");

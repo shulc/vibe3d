@@ -381,9 +381,9 @@ unittest { // (3) the doors reach the tool session only through EditSession
              "resyncSession()", "replayFirstGroup_()"],
             "ToolSession.redo");
     // Nothing else in the module steps the history.
-    assert(es.count("history_.undo()") == 5 && es.count("history_.redo()") == 4,
+    assert(es.count("history_.undo()") == 7 && es.count("history_.redo()") == 4,
            format("M1 wiring census: edit_session.d steps the history %s/%s times, "
-                  ~ "expected undo 5 (ToolSession.undo and its pair, undoFirstGroup_, topology pair) and "
+                  ~ "expected undo 7 (ToolSession.undo and its pairs, dormant adjustment pair, undoFirstGroup_, topology pair) and "
                   ~ "redo 4 (ToolSession.redo and its pair, topology pair)",
                   es.count("history_.undo()"), es.count("history_.redo()")));
 }
@@ -417,7 +417,7 @@ private immutable StepRow[] kStepTable = [
     StepRow("edge.extend", OpensAt.firstPress, false,
             ["opOpen", "inset", "shift", "offsetX", "offsetY", "offsetZ",
              "rotateX", "rotateY", "rotateZ", "scaleX", "scaleY", "scaleZ"]),
-    StepRow("edge.extrude", OpensAt.firstPress, false,
+    StepRow("edge.extrude", OpensAt.arm, false,
             ["extrude", "width"]),
     StepRow("mesh.edgeSliceTool", OpensAt.firstPress, true,
             ["chain", "edges", "activePoint"]),
@@ -572,8 +572,7 @@ unittest { // (5)
     assert(keep == kKeepAliveClasses,
            format("M4 policy classes: keepAliveOnCancel declared by %s, expected %s",
                   keep, kKeepAliveClasses));
-    assert(carries == ["tools.edit.edge_extend.EdgeExtendTool",
-                       "tools.edit.edge_extrude.EdgeExtrudeTool"],
+    assert(carries == ["tools.edit.edge_extend.EdgeExtendTool"],
            format("M4 policy classes: recordCarriesActivation declared by %s", carries));
 }
 
@@ -858,6 +857,19 @@ unittest { // Task 7990: production topology R wiring, not a helper replica.
     assert(edge.canFind("recordGestureEdit(cmd, GestureRecordMode.Plain)")
         && !edge.canFind("GestureRecordMode.ReplaceRunTail"),
         "Edge topology rows must stay separate Plain records");
+    assert(edge.canFind("discardFirstTopologyRedoOnActivationUndo: true")
+        && edge.canFind("dormantAfterClosedRedo: true")
+        && edge.canFind("opensAt: OpensAt.arm")
+        && es.canFind("history_.invalidateRedo()")
+        && es.canFind("topologyFirstGroupLive_")
+        && es.canFind("arm.markDormantTopology()")
+        && es.canFind("new TopologyAdjustmentEdit(context, tool_")
+        && edge.canFind("if (topologyDormant) return;"),
+        "Edge first-group or full-closed-redo production policy disconnected");
+    assert(es.canFind("if (topologyPending_ && reporting_(t)")
+        && es.canFind("if (topologyPending_) {")
+        && edge.canFind("closeOwnOperation(false);"),
+        "Edge pending close or RMB history consistency path disconnected");
     assert(carrier.canFind("void setTopologyStep(")
         && carrier.canFind("stepBeforeBasis_")
         && carrier.canFind("stepAfterAttrs_"),

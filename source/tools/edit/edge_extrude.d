@@ -108,10 +108,12 @@ class EdgeExtrudeTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClien
     // its already-recorded rows; the tool remains armed after the command.
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
         static immutable ToolSessionPolicy policy = {
-            activationRow: true, recordCarriesActivation: true,
+            activationRow: true, recordCarriesActivation: false,
             commandClose: CommandClose.uiDoor,
             sessionSteps: true, historyTopologySteps: true,
-            opensAt: OpensAt.firstPress,
+            discardFirstTopologyRedoOnActivationUndo: true,
+            dormantAfterClosedRedo: true,
+            opensAt: OpensAt.arm,
             imageAttrs: ["extrude", "width"],
             haulAttrs: ["extrude", "width"]
         };
@@ -136,6 +138,7 @@ private:
     // Interactive session state.
     bool          active;          // between activate() and deactivate()
     bool          built;           // true once a nonzero extrude/width built topology
+    bool          topologyDormant;
     /// Current operation's preview basis (geometry and selection). The
     /// completed step pairs and their bases belong to CommandHistory.
     MeshSnapshot  before;
@@ -323,6 +326,10 @@ public:
     public override bool recordTopologyStep(Command cmd) {
         return recordGestureEdit(cmd, GestureRecordMode.Plain);
     }
+    public override string topologyStepLabel() { return "Edge Extrude"; }
+    public override void setTopologyDormant(bool dormant) {
+        topologyDormant = dormant;
+    }
     public override void restoreTopologyStep(in AttrImage attrs,
             MeshSnapshot basis) {
         before = basis;
@@ -467,8 +474,7 @@ public:
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         if (!active) return false;
         if (e.button == SDL_BUTTON_RIGHT) {
-            // Cancel: drop any built topology, restore the original cage.
-            cancelLiveEdit();
+            closeOwnOperation(false);
             return true;
         }
         if (e.button != SDL_BUTTON_LEFT && e.button != SDL_BUTTON_MIDDLE) return false;
@@ -700,6 +706,7 @@ private:
     // current extrude/width. Identity params leave the mesh restored (no-op).
     void rebuildPreview() {
         if (!active) return;
+        if (topologyDormant) return;
         // Perf (task 1370) — AFTER the guard(s) above, never on the first
         // line: an early-out must record no sample, or `count` tallies
         // refusals as work. See Cat.toolPreview for the decomposition.
@@ -740,6 +747,7 @@ private:
     // restore path: drop any built topology, restore the original cage, reset
     // params + drag state, and clear the gizmo haul. Records nothing.
     void cancelLiveEdit() {
+        if (dragPart < 0) return; // completed images belong to history
         before.restore(*mesh);
         refreshCaches();
         extrude_ = 0.0f;

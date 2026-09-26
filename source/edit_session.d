@@ -33,7 +33,7 @@ module edit_session;
 
 import tool            : Tool, CommandClose, AttrImage, PressKind, OpensAt,
                          ToolSessionLink, TopologyStepClient;
-import command         : Command;
+import command         : Command, CmdFlags;
 import std.json        : JSONValue;
 import command_history : CommandHistory, UndoState;
 import held_gesture_buttons : g_heldGestureButtons;
@@ -44,6 +44,7 @@ import tool_activation_ownership : CloseReason, CommandDoor, CloseOutcome;
 import tools.common.session_mesh_key : SessionMeshKey;
 import snapshot : MeshSnapshot;
 import commands.mesh.session_edit : MeshSessionEdit;
+import commands.mesh.gesture_payload : GesturePayload;
 
 // Computed classification of the session protocol's current phase. There is
 // deliberately NO stored state machine mirroring this: the truth about an
@@ -628,6 +629,36 @@ final class EditSession {
 // stores is keyed to the tool it BOUND at the arm (`noteArm`); what the tool
 // reports goes through that link, never through a cast.
 // ---------------------------------------------------------------------------
+/// The dormant postmode records an attribute adjustment without a mesh image.
+/// The activation row guarantees the target tool exists when this row is
+/// traversed; command history owns the completed before/after image.
+private class TopologyAdjustmentEdit : Command, GesturePayload {
+    private Tool delegate() currentTool_;
+    private AttrImage before_, after_;
+
+    this(Command context, Tool delegate() currentTool,
+            AttrImage before, AttrImage after) {
+        super(context.meshPtr(), context.viewRef(), context.editModeVal());
+        currentTool_ = currentTool;
+        before_ = before;
+        after_ = after;
+        noteUndoRecorded();
+    }
+    override string name() const { return "tool.topology_adjustment"; }
+    override string label() const { return "Tool Adjustment"; }
+    override CmdFlags cmdFlags() const { return CmdFlags.UiState; }
+    override bool hasGesturePayload() const { return !before_.opEquals(after_); }
+    protected override bool applyImpl() {
+        auto t = currentTool_();
+        if (t is null) return false;
+        t.applyAttrImage(after_);
+        return true;
+    }
+    protected override void revertImpl() {
+        if (auto t = currentTool_()) t.applyAttrImage(before_);
+    }
+}
+
 private struct ToolSession {
     private Tool delegate() tool_;
     private CommandHistory  history_;
@@ -686,6 +717,11 @@ private struct ToolSession {
     private AttrImage topologyPendingAttrs_;
     private AttrImage topologyAttrs_;
     private bool topologyPending_;
+    private Rebindable!(const Command) dormantActivation_;
+    private bool topologyDormant_;
+    private bool topologyFirstGroupLive_;
+    private bool redoneTopologyStep_;
+    private bool closedTopologyRedo_;
     // The first group a key-door undo ended together with its activation row
     // (task 7137, §22), held for the NAVIGATE redo of that row — keyed by the
     // row's identity, sealed with the mesh as the redo will find it. Not in
@@ -748,6 +784,16 @@ private struct ToolSession {
         replay_ = AttrImage.init;
         replayFor_ = null;
         if (navigateTopology_(true)) return true;
+        if (topologyDormant_) {
+            const ue = history_.undoEntries();
+            if (ue.length >= 2 &&
+                cast(const TopologyAdjustmentEdit)ue[$ - 1].cmd !is null &&
+                ue[$ - 2].cmd is dormantActivation_.get &&
+                history_.undo()) {
+                history_.undo();
+                return true;
+            }
+        }
         // H2: the newest gesture step of the live operation, restored as the
         // image it started from; the first group ends the window (H1).
         if (auto t = liveSteps_()) {
@@ -759,6 +805,21 @@ private struct ToolSession {
             return true;
         }
         auto t = tool_();
+        // The Edge first step is a separate row. Its undone branch is erased
+        // when the activation itself is undone, leaving that activation as
+        // the only redo candidate. The policy states the first-group law;
+        // history remains the sole owner of completed mesh images.
+        if (t !is null && topologyFirstGroupLive_ &&
+            t.sessionPolicy().discardFirstTopologyRedoOnActivationUndo) {
+            import commands.tool.lifecycle : ToolActivationCommand;
+            auto act = cast(const ToolActivationCommand)undoTop_();
+            const re = history_.redoEntries();
+            if (act !is null && re.length > 0 &&
+                re[0].cmd.sessionToken() == act.sessionToken() &&
+                cast(const MeshSessionEdit)re[0].cmd !is null)
+                history_.invalidateRedo();
+            if (act !is null) topologyFirstGroupLive_ = false;
+        }
         if (t !is null && t.hasUncommittedEdit()) {
             t.cancelUncommittedEdit();
             // NO postcondition assert here — deliberately. The one-shot
@@ -850,6 +911,8 @@ private struct ToolSession {
         bool ok = history_.redo();
         // The redo that re-armed a tool re-armed the ROW's session: its token.
         if (ok && act !is null) adoptToken_(act.armedId, act.sessionToken());
+        if (ok && act !is null && redoneTopologyStep_)
+            closedTopologyRedo_ = true;
         if (ok && pair && !history_.redo()) {
             // The row came back but its record refused (review of slice M4): the
             // tool is armed without the record; the resync below re-baselines it.
@@ -879,6 +942,10 @@ private struct ToolSession {
         if (t is null) { endOperation_(); return CloseOutcome(false, false); }
         topBefore_ = undoTop_();
         closingToken_ = currentToken();
+        topologyFirstGroupLive_ = false;
+        if (topologyPending_ && reporting_(t) &&
+            t.sessionPolicy().historyTopologySteps)
+            stepEnds(t, false);
         if (r != CloseReason.command && r != CloseReason.enter) {
             // The door commits (or discards, or has nothing left); the
             // session only accounts for the row it may write, and the
@@ -950,6 +1017,27 @@ private struct ToolSession {
         token_ = token;
         endOperation_();
         if (t is null) return;
+        import commands.tool.lifecycle : ToolActivationCommand;
+        auto arm = cast(ToolActivationCommand)undoTop_();
+        if (history_.state() == UndoState.Suspend) {
+            const re = history_.redoEntries();
+            arm = re.length ? cast(ToolActivationCommand)re[0].cmd : null;
+        }
+        topologyDormant_ = t.sessionPolicy().dormantAfterClosedRedo &&
+            (history_.state() == UndoState.Suspend
+                ? arm !is null && arm.dormantTopology()
+                : closedTopologyRedo_);
+        if (topologyDormant_ && arm !is null) {
+            if (history_.state() != UndoState.Suspend) arm.markDormantTopology();
+            dormantActivation_ = arm;
+        }
+        if (history_.state() != UndoState.Suspend)
+            topologyFirstGroupLive_ = t.sessionPolicy().historyTopologySteps
+                && !topologyDormant_;
+        if (history_.state() != UndoState.Suspend) {
+            closedTopologyRedo_ = false;
+            redoneTopologyStep_ = false;
+        }
         ToolSessionLink link;
         link.stepBegins     = &stepBegins;
         link.stepEnds       = &stepEnds;
@@ -959,6 +1047,13 @@ private struct ToolSession {
         t.bindSession(link);
         if (t.sessionPolicy().historyTopologySteps)
             topologyAttrs_ = t.captureAttrImage();
+        if (auto client = cast(TopologyStepClient)t)
+            client.setTopologyDormant(topologyDormant_);
+        if (t.sessionPolicy().historyTopologySteps &&
+            t.sessionPolicy().opensAt == OpensAt.arm && !topologyDormant_) {
+            live_ = true;
+            openImage_ = t.captureAttrImage();
+        }
         // H1 (slice M3b, C-H1-bev): an `OpensAt.arm` tool whose policy names the
         // attribute its arm raises is APPLIED by the arm, and that apply is the
         // window's first group — the image before it is the group's start. An
@@ -979,6 +1074,11 @@ private struct ToolSession {
     void stepBegins(Tool t, PressKind kind) {
         if (!reporting_(t)) return;
         if (t.sessionPolicy().historyTopologySteps) {
+            if (topologyDormant_) {
+                topologyPendingAttrs_ = t.captureAttrImage();
+                topologyPending_ = true;
+                return;
+            }
             auto client = cast(TopologyStepClient)t;
             auto m = client is null ? null : client.topologyStepMesh();
             if (m is null) return;
@@ -1004,6 +1104,24 @@ private struct ToolSession {
 
     void stepEnds(Tool t, bool ifChanged) {
         if (reporting_(t) && t.sessionPolicy().historyTopologySteps) {
+            if (topologyDormant_) {
+                if (!topologyPending_) return;
+                topologyPending_ = false;
+                auto after = t.captureAttrImage();
+                if (after.opEquals(topologyPendingAttrs_)) return;
+                auto client = cast(TopologyStepClient)t;
+                auto context = client.topologyStepCarrier();
+                if (context is null) return;
+                auto cmd = new TopologyAdjustmentEdit(context, tool_,
+                    topologyPendingAttrs_, after);
+                if (client.recordTopologyStep(cmd) && undoTop_() is cmd) {
+                    history_.markEntrySession(cmd, token_);
+                    topologyAttrs_ = after;
+                } else {
+                    t.applyAttrImage(topologyPendingAttrs_);
+                }
+                return;
+            }
             if (!topologyPending_) return;
             topologyPending_ = false;
             auto client = cast(TopologyStepClient)t;
@@ -1017,7 +1135,7 @@ private struct ToolSession {
             }
             auto after = MeshSnapshot.capture(*m);
             auto attrs = t.captureAttrImage();
-            cmd.setSnapshots(topologyPendingMesh_, after, "Edge Extrude");
+            cmd.setSnapshots(topologyPendingMesh_, after, client.topologyStepLabel());
             cmd.setTopologyStep(topologyPendingAttrs_, attrs,
                 topologyPendingBasis_, client.topologyStepBasis());
             if (client.recordTopologyStep(cmd) && undoTop_() is cmd) {
@@ -1081,6 +1199,17 @@ private struct ToolSession {
             return true;
         }
         if (commit) return close(CloseReason.enter, CommandDoor.ui).closed;
+        if (reporting_(t) && t.sessionPolicy().historyTopologySteps) {
+            if (topologyPending_) {
+                auto client = cast(TopologyStepClient)t;
+                auto m = client.topologyStepMesh();
+                if (m !is null) topologyPendingMesh_.restore(*m);
+                client.restoreTopologyStep(topologyPendingAttrs_, topologyPendingBasis_);
+                topologyAttrs_ = topologyPendingAttrs_;
+            }
+            endOperation_();
+            return true;
+        }
         t.cancelUncommittedEdit();
         endOperation_();
         return true;
@@ -1112,8 +1241,11 @@ private struct ToolSession {
         if (!reporting_(t)) return JSONValue(null);
         auto j = JSONValue.emptyObject;
         j["live"]  = JSONValue(live_);
-        j["steps"] = JSONValue(cast(long) steps_.length);
-        j["redo"]  = JSONValue(cast(long) redo_.length);
+        j["steps"] = JSONValue(cast(long) (t.sessionPolicy().historyTopologySteps
+            ? topologyHistoryDepth_(false) : steps_.length));
+        j["redo"]  = JSONValue(cast(long) (t.sessionPolicy().historyTopologySteps
+            ? topologyHistoryDepth_(true) : redo_.length));
+        j["dormant"] = JSONValue(topologyDormant_);
         j["token"] = JSONValue(cast(long) token_);
         return j;
     }
@@ -1125,7 +1257,8 @@ private struct ToolSession {
 
     private Tool liveSteps_() {
         auto t = tool_();
-        return live_ && reporting_(t) ? t : null;
+        return live_ && reporting_(t) &&
+            !t.sessionPolicy().historyTopologySteps ? t : null;
     }
 
     private void pushStep_(AttrImage img) {
@@ -1144,6 +1277,20 @@ private struct ToolSession {
         topologyPending_ = false;
         topologyPendingMesh_ = MeshSnapshot.init;
         topologyPendingBasis_ = MeshSnapshot.init;
+    }
+
+    private size_t topologyHistoryDepth_(bool redo) {
+        size_t n;
+        if (redo) {
+            foreach (e; history_.redoEntries())
+                if (e.cmd.sessionToken() == token_ &&
+                    cast(const MeshSessionEdit)e.cmd !is null) ++n;
+        } else {
+            foreach (e; history_.undoEntries())
+                if (e.cmd.sessionToken() == token_ &&
+                    cast(const MeshSessionEdit)e.cmd !is null) ++n;
+        }
+        return n;
     }
 
     private bool navigateTopology_(bool isUndo) {
@@ -1182,6 +1329,7 @@ private struct ToolSession {
             adoptToken_(act.armedId, act.sessionToken());
         }
         if (!history_.redo()) return pair;
+        redoneTopologyStep_ = true;
         auto current = tool_();
         if (current !is null && reporting_(current)) {
             (cast(TopologyStepClient)current).restoreTopologyStep(

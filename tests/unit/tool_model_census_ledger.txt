@@ -10,12 +10,12 @@ axis1-violators 1
 axis2-violators 0
 
 # Session-special debt (3b). Task 7990 adds one generic TopologyStepClient
-# and four casts in ToolSession; history owns its completed images. The
+# and seven casts in ToolSession; history owns its completed images. The
 # ceilings remain exact after this named W2 expansion.
 # interfaces of the session modules, casts to them in source/, and casts
 # to a concrete tool class outside source/tools/.
 session-capabilities 5
-session-branches 10
+session-branches 13
 special-tool-casts 27
 
 tool tools.alignment.array_tool.ArrayTool has=tools.alignment.array_tool.ArrayTool cancel=tools.alignment.array_tool.ArrayTool resync=tools.alignment.array_tool.ArrayTool commit=tools.alignment.array_tool.ArrayTool snap=4 live=yes | live array preview built on activation, restored from MeshSnapshot baseline until drop/apply
