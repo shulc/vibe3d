@@ -16,7 +16,7 @@ import editmode : EditMode;
 import params : Param;
 import handler : Arrow, ToolHandles, HandleState, gizmoSize;
 import viewport_scheme : schemeColor, SchemeColor;
-import drag : screenAxisDelta, gesturePrevPixel;
+import drag : planeDragDelta, screenAxisDelta, gesturePrevPixel;
 import overlay_space : OverlaySpace;
 import eventlog : queryMouse;
 import shader : Shader, LitShader;
@@ -25,7 +25,7 @@ import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
 
-import std.math : abs, sqrt;
+import std.math : abs, round, sqrt;
 import std.json : JSONValue;
 import perf_probe : g_perf, Cat;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
@@ -51,11 +51,14 @@ struct PreparedPolyExtrudeActivationImage {
 
 struct PolyExtrudeParamProjection {
     bool interactive, active, built;
-    float distance;
+    float distance, shiftX, shiftY, shiftZ;
     bool opEquals(const PolyExtrudeParamProjection other) const nothrow @nogc {
         return interactive == other.interactive && active == other.active &&
             built == other.built &&
-            memcmp(&distance, &other.distance, float.sizeof) == 0;
+            memcmp(&distance, &other.distance, float.sizeof) == 0 &&
+            memcmp(&shiftX, &other.shiftX, float.sizeof) == 0 &&
+            memcmp(&shiftY, &other.shiftY, float.sizeof) == 0 &&
+            memcmp(&shiftZ, &other.shiftZ, float.sizeof) == 0;
     }
 }
 
@@ -81,14 +84,11 @@ struct PreparedPolyExtrudeParamImage {
 // activation and opens at the first press; these are policy data, not a
 // ToolSession class branch. Evidence: W2 plan and test_poly_extrude_drag.d.
 //
-// Single handle:
-//   PART_EXTRUDE = BLUE Arrow along averaged region normal. Dragging changes
-//   `distance` only. Off-handle (miss click) starts a blind vertical free drag
-//   (up/down → distance_).
+// The normal arrow changes `distance`. An off-handle haul translates the cap
+// in the view plane through the Shift X/Y/Z parameter image.
 //
-// Headless path: `tool.set poly.extrude on; tool.attr poly.extrude distance
-// <v>; tool.doApply` drives through applyHeadless(); ToolDoApplyCommand wraps
-// it with a snapshot pair for undo (applyHeadless MUST NOT snapshot itself).
+// The headless distance path is unchanged; ToolDoApplyCommand owns its
+// snapshot pair for undo.
 // ---------------------------------------------------------------------------
 class PolyExtrudeTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient,
         TopologyStepClient {
@@ -101,7 +101,8 @@ class PolyExtrudeTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClien
             sessionSteps: true, historyTopologySteps: true,
             dormantAfterClosedRedo: true,
             opensAt: OpensAt.firstPress,
-            imageAttrs: ["distance"], haulAttrs: ["distance"]
+            imageAttrs: ["distance", "shiftX", "shiftY", "shiftZ"],
+            haulAttrs: ["distance", "shiftX", "shiftY", "shiftZ"]
         };
         return policy;
     }
@@ -117,6 +118,7 @@ private:
 
     // Parameters.
     float distance_ = 0.0f;
+    float shiftX_ = 0.0f, shiftY_ = 0.0f, shiftZ_ = 0.0f;
 
     // Interactive session state.
     bool          active;
@@ -134,14 +136,12 @@ private:
 
     // Drag state.
     enum int PART_EXTRUDE = 0;
-    enum int PART_FREE    = 1;   // off-handle blind vertical drag
+    enum int PART_FREE    = 1;   // off-handle view-plane haul
     int   dragPart = -1;
     int   dragButton_;
     int   dragLastMX, dragLastMY;
     int   dragStartMX, dragStartMY;
-    float dragBaseDistance;
-
-    enum float FREE_SCALE = 0.01f;
+    Vec3  dragBaseShift;
 
     Arrow       extrudeArrow;
     ToolHandles toolHandles;
@@ -168,7 +168,12 @@ public:
     override EditMode[] supportedModes() const { return [EditMode.Polygons]; }
 
     override Param[] params() {
-        return [Param.float_("distance", "Distance", &distance_, 0.0f)];
+        return [
+            Param.float_("distance", "Distance", &distance_, 0.0f),
+            Param.float_("shiftX", "Shift X", &shiftX_, 0.0f),
+            Param.float_("shiftY", "Shift Y", &shiftY_, 0.0f),
+            Param.float_("shiftZ", "Shift Z", &shiftZ_, 0.0f),
+        ];
     }
 
     override void activate() {
@@ -190,7 +195,8 @@ public:
     final void installPreparedActivation(
             ref PreparedPolyExtrudeActivationImage image) nothrow @nogc {
         if (!image.valid) return;
-        active = true; built = false; dragPart = -1; distance_ = 0.0f;
+        active = true; built = false; dragPart = -1;
+        distance_ = shiftX_ = shiftY_ = shiftZ_ = 0.0f;
         image.before.moveInto(before);
         gizmoValid = image.gizmoValid; anchor = image.anchor;
         baseAnchor = image.baseAnchor; extrudeAxis = image.extrudeAxis;
@@ -212,7 +218,7 @@ public:
     private void reinitSession() {
         built     = false;
         dragPart  = -1;
-        distance_ = 0.0f;
+        distance_ = shiftX_ = shiftY_ = shiftZ_ = 0.0f;
         before    = MeshSnapshot.capture(*mesh);
         computeGizmoFrame();
     }
@@ -227,7 +233,7 @@ public:
     }
 
     public override bool hasUncommittedEdit() const {
-        return active && built && distance_ != 0.0f;
+        return active && built && (distance_ != 0.0f || shiftVec() != Vec3(0, 0, 0));
     }
 
     public override void cancelUncommittedEdit() {
@@ -287,7 +293,7 @@ public:
     }
     private PolyExtrudeParamProjection paramProjection() const nothrow @nogc {
         return PolyExtrudeParamProjection(interactiveParamEdit, active, built,
-            distance_);
+            distance_, shiftX_, shiftY_, shiftZ_);
     }
     final PreparedPolyExtrudeParamImage buildPreparedParamUpdate(ref Mesh live) {
         PreparedPolyExtrudeParamImage image;
@@ -302,12 +308,15 @@ public:
         image.deliveryFlags = image.deliveryDomains = 0;
         if (!interactiveParamEdit || !active) { shadow.close(); return image; }
         image.applies = true;
-        if (distance_ == 0.0f) image.nextBuilt = false;
+        if (distance_ == 0.0f && shiftVec() == Vec3(0, 0, 0))
+            image.nextBuilt = false;
         else {
             auto mask = image.candidate.operandFaceMask();
             auto ed = MeshEditBatch.unrecorded(image.candidate, kExtrudeEditScope);
             const n = ed.extrudeFacesByMask(mask, distance_, false,
-                UvWallLaw.SweepU, false, FaceExtrudeOrder.WallsThenCap);
+                UvWallLaw.SweepU, shiftVec() != Vec3(0, 0, 0),
+                FaceExtrudeOrder.WallsThenCap);
+            if (n != 0) applyCapShift(ed, shiftVec());
             ed.close(); image.nextBuilt = (n != 0);
         }
         drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
@@ -385,7 +394,9 @@ public:
             : boundary ? PressKind.shift : PressKind.plain);
         if (boundary) {
             before = MeshSnapshot.capture(*mesh);
-            if (e.button != SDL_BUTTON_MIDDLE) distance_ = 0.0f;
+            if (e.button != SDL_BUTTON_MIDDLE) {
+                distance_ = shiftX_ = shiftY_ = shiftZ_ = 0.0f;
+            }
             computeGizmoFrame();
         }
         // Polygon's zero tap is still a topology operation. The kernel keeps
@@ -399,7 +410,7 @@ public:
         dragLastMY       = e.y;
         dragStartMX      = e.x;
         dragStartMY      = e.y;
-        dragBaseDistance = distance_;
+        dragBaseShift    = topologyDormant ? Vec3(0, 0, 0) : shiftVec();
         dragButton_       = e.button;
 
         if (boundary) {
@@ -412,7 +423,7 @@ public:
             toolHandles.setHaul(part);
             return true;
         }
-        // Off-handle: blind vertical free drag.
+        // Off-handle: view-plane cap haul.
         dragPart = PART_FREE;
         return true;
     }
@@ -421,8 +432,28 @@ public:
         if (!active || dragPart < 0 || !gizmoValid) return false;
 
         if (dragPart == PART_FREE) {
-            int dy = e.y - dragStartMY;
-            distance_ = dragBaseDistance + (-dy) * FREE_SCALE;
+            bool skip;
+            const auto os = OverlaySpace.ofPrimary();
+            const auto ax = os.axis(Vec3(1, 0, 0));
+            const auto ay = os.axis(Vec3(0, 1, 0));
+            const auto az = os.axis(Vec3(0, 0, 1));
+            Vec3 world = planeDragDelta(e.x, e.y, dragStartMX, dragStartMY,
+                3, os.pos(baseAnchor), cachedVp, skip,
+                ax.dir, ay.dir, az.dir, os.axis(extrudeAxis).dir);
+            if (!skip) {
+                // Calibrate the captured free-haul response after solving the
+                // view plane; the topology kernel receives a plain cap offset.
+                enum float FREE_HAUL_XZ_GAIN = 0.35f;
+                enum float FREE_HAUL_Y_GAIN = 4.0f / 11.0f;
+                auto d = os.toLocalDelta(world);
+                Vec3 local = dragBaseShift +
+                    Vec3(d.x * FREE_HAUL_XZ_GAIN,
+                        d.y * FREE_HAUL_Y_GAIN,
+                        d.z * FREE_HAUL_XZ_GAIN);
+                shiftX_ = snapShift(local.x);
+                shiftY_ = snapShift(local.y);
+                shiftZ_ = snapShift(local.z);
+            }
             // A Polygon gesture owns topology even when its current distance
             // is zero (captured zero-tap/Middle law).  Keep that opt-in for
             // every motion in the gesture; otherwise the helper's stationary
@@ -492,7 +523,7 @@ public:
 
         // Anchor slides analytically along extrudeAxis by distance_ — in the
         // LOCAL space both of them live in.
-        anchor = baseAnchor + extrudeAxis * distance_;
+        anchor = baseAnchor + extrudeAxis * distance_ + shiftVec();
 
         // ONE overlay space for the pass (task 0645): the arm is positioned in
         // it and `toolHandles.update` below hit-tests this same object, so
@@ -531,7 +562,9 @@ private:
         // refusals as work. See Cat.toolPreview for the decomposition.
         auto zPreview = g_perf.scope_(Cat.toolPreview);
         before.restore(*mesh);
-        if (distance_ == 0.0f && !allowCoincidentTopology) {
+        const shift = shiftVec();
+        if (distance_ == 0.0f && shift == Vec3(0, 0, 0) &&
+            !allowCoincidentTopology) {
             built = false;
             refreshCaches();
             return;
@@ -540,8 +573,9 @@ private:
         // task 1903 Stage H: unrecorded — the per-drag-frame preview rerun.
         auto ed = MeshEditBatch.unrecorded(*mesh, kExtrudeEditScope);
         size_t n = ed.extrudeFacesByMask(mask, distance_, false,
-            UvWallLaw.SweepU, allowCoincidentTopology,
+            UvWallLaw.SweepU, allowCoincidentTopology || shift != Vec3(0, 0, 0),
             FaceExtrudeOrder.WallsThenCap);
+        if (n != 0) applyCapShift(ed, shift);
         ed.close();
         built = (n != 0);
         refreshCaches();
@@ -564,7 +598,7 @@ private:
         if (dragPart < 0) return; // completed images belong to history
         before.restore(*mesh);
         refreshCaches();
-        distance_ = 0.0f;
+        distance_ = shiftX_ = shiftY_ = shiftZ_ = 0.0f;
         built     = false;
         dragPart  = -1;
         toolHandles.clearHaul();
@@ -581,6 +615,30 @@ private:
         gizmoValid = image.gizmoValid; anchor = image.anchor;
         baseAnchor = image.baseAnchor; extrudeAxis = image.extrudeAxis;
         gizmoSelHash = image.gizmoSelHash;
+    }
+
+    Vec3 shiftVec() const nothrow @nogc {
+        return Vec3(shiftX_, shiftY_, shiftZ_);
+    }
+
+    static float snapShift(float value) nothrow @nogc {
+        enum float quantum = 0.005f;
+        return cast(float)round(value / quantum) * quantum;
+    }
+
+    static void applyCapShift(ref MeshEditBatch ed, Vec3 shift) {
+        if (shift == Vec3(0, 0, 0)) return;
+        auto selected = ed.selectedVertexIndicesFaces();
+        uint[] idx;
+        Vec3[] to;
+        idx.reserve(selected.length);
+        to.reserve(selected.length);
+        foreach (vi; selected) {
+            if (vi < 0 || cast(size_t)vi >= ed.vertices.length) continue;
+            idx ~= cast(uint)vi;
+            to ~= ed.vertices[vi] + shift;
+        }
+        ed.setVertexPositions(idx, to);
     }
 
     private static void computePreparedGizmoFrame(ref Mesh source,
@@ -638,7 +696,7 @@ public:
         gizmoValid = false; anchor = Vec3(1,2,3); baseAnchor = Vec3(4,5,6);
         extrudeAxis = Vec3(7,8,9); gizmoSelHash = 10;
         dragLastMX = 11; dragLastMY = 12; dragStartMX = 13; dragStartMY = 14;
-        dragBaseDistance = 15; cachedVp.view[0] = 16;
+        cachedVp.view[0] = 16;
         before = MeshSnapshot.capture(oldMesh);
     }
     version(unittest) final bool preparedActivationDirtyForTest() const nothrow @nogc {
@@ -656,7 +714,7 @@ public:
             gizmoValid && anchor == expectedAnchor && baseAnchor == anchor &&
             extrudeAxis == expectedAxis && gizmoSelHash == expectedHash &&
             dragLastMX == 11 && dragLastMY == 12 && dragStartMX == 13 &&
-            dragStartMY == 14 && dragBaseDistance == 15 && cachedVp.view[0] == 16;
+            dragStartMY == 14 && cachedVp.view[0] == 16;
     }
     version(unittest) final bool preparedInvalidActivationForTest(
             ulong expectedHash) const nothrow @nogc {
@@ -678,6 +736,10 @@ unittest { // P1.0b.3d identity preview must not prepare history.
     tool.setGestureBindings(history, () => new MeshSessionEdit(&m, view, mode,
         "test.polyExtrude", "poly extrude"));
     tool.active = true; tool.built = true; tool.before = MeshSnapshot.capture(m);
+    tool.shiftX_ = 0.2f;
+    assert(tool.hasUncommittedEdit(),
+        "a live shift-only Polygon preview must report uncommitted work");
+    tool.shiftX_ = 0.0f;
     tool.distance_ = 0;
     auto context = new PreparedRecordContext(history, hub);
     auto effect = tool.prepareDeactivate(context);

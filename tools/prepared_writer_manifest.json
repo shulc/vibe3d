@@ -1498,7 +1498,7 @@
     {
       "aggregate": "PolyExtrudeTool",
       "module": "tools.edit.poly_extrude",
-      "semantic_sha256": "272d926fb56947d04f267a65533dade30b36d71e805f93e8492ce893a8ab347d",
+      "semantic_sha256": "e29cb57c3d37fe0e2bad43fe07586702e734d1fd8b13db17ff87a79a956c8cb0",
       "signature": "Param[]()",
       "symbol": "params"
     },

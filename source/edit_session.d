@@ -862,6 +862,12 @@ private struct ToolSession {
         // the active session's and the row below carries the same token.
         const bool pair = recordCarriesActivation_();
         Rebindable!(const Command) last = undoEntryAt_(pair ? 1 : 0);
+        // A lifecycle row may restore the topology tool that preceded it.
+        // Its new instance starts from parameter defaults, while the completed
+        // mesh image below that row still belongs to the prior session. Keep
+        // that session's raw attribute image across the lifecycle undo; the
+        // mesh remains exclusively history-owned.
+        auto topologyRestore = topologyAttrs_;
         bool ok = history_.undo();
         if (ok && pair && !history_.undo()) {
             // The row refused its undo (review of slice M4): the record is
@@ -878,6 +884,14 @@ private struct ToolSession {
             auto t3 = tool_();
             if (t3 !is null) t3.resyncSession();
             adoptPredecessorToken_(last);
+            import commands.tool.lifecycle : ToolActivationCommand;
+            auto activation = cast(const ToolActivationCommand)last.get;
+            if (t3 !is null && activation !is null &&
+                activation.previousHistoryTopology() &&
+                !topologyRestore.empty) {
+                t3.restoreRecordedAttrs(topologyRestore);
+                topologyAttrs_ = topologyRestore;
+            }
         }
         return ok;
     }
@@ -923,7 +937,8 @@ private struct ToolSession {
         bool ok = history_.redo();
         // The redo that re-armed a tool re-armed the ROW's session: its token.
         if (ok && act !is null) adoptToken_(act.armedId, act.sessionToken());
-        if (ok && act !is null && redoneTopologyStep_)
+        if (ok && act !is null &&
+            (redoneTopologyStep_ || act.previousHistoryTopology()))
             closedTopologyRedo_ = true;
         if (ok && pair && !history_.redo()) {
             // The row came back but its record refused (review of slice M4): the
@@ -1066,6 +1081,9 @@ private struct ToolSession {
         link.operationEnded = &operationEnded;
         link.closeOwn       = &closeOwn;
         t.bindSession(link);
+        if (t.sessionPolicy().historyTopologySteps && topologyDormant_ &&
+            !topologyAttrs_.empty)
+            t.restoreRecordedAttrs(topologyAttrs_);
         if (t.sessionPolicy().historyTopologySteps)
             topologyAttrs_ = t.captureAttrImage();
         if (auto client = cast(TopologyStepClient)t)

@@ -72,6 +72,7 @@ private:
 }
 
 version(unittest) unittest {
+    import std.math : abs;
     import command_history : CommandHistory;
     import editmode : EditMode;
     import mesh : makeCube;
@@ -87,6 +88,12 @@ version(unittest) unittest {
     auto tool = new PolyExtrudeTool(() => &layer.meshRef(), &gpu, &mode,
         LitShader.init);
     tool.seedPreparedParamForTest(layer.meshRef());
+    tool.mutatePreparedParamForTest(0.0f);
+    bool seededShift;
+    foreach (ref p; tool.params()) if (p.name == "shiftX") {
+        *p.fptr = 0.2f; seededShift = true;
+    }
+    assert(seededShift);
     const oldVertices = layer.meshRef().vertices.length;
     auto context = new PreparedRecordContext(new CommandHistory(),
         new RecordObserverHub()); context.setResourceIdentity(7, 11);
@@ -102,6 +109,8 @@ version(unittest) unittest {
     assert(layer.meshRef().faces.length == 10 &&
         layer.meshRef().isFaceSelected(9),
         "prepared Polygon parameter preview did not install the W2 walls-before-cap selection");
+    assert(abs(layer.meshRef().faceCentroid(9).x - 0.2f) < 1e-6f,
+        "prepared Polygon parameter preview lost the cap shift");
     foreach (fi; 0 .. layer.meshRef().faces.length)
         if (fi != 9) assert(!layer.meshRef().isFaceSelected(fi),
             "prepared Polygon parameter preview selected a wall or survivor");
@@ -130,6 +139,24 @@ version(unittest) unittest {
         GpuUploadOwner.fakeForTest(&staleGpu)).accepted);
     staleTool.mutatePreparedParamForTest(17.0f);
     assert(!staleContext.validate() && staleLayer.meshRef().vertices.length == 8);
+
+    auto shiftLayer = new Layer; shiftLayer.meshRef() = makeCube();
+    shiftLayer.meshRef().syncSelection(); shiftLayer.meshRef().selectFace(0);
+    GpuMesh shiftGpu;
+    auto shiftTool = new PolyExtrudeTool(() => &shiftLayer.meshRef(), &shiftGpu,
+        &mode, LitShader.init);
+    shiftTool.seedPreparedParamForTest(shiftLayer.meshRef());
+    auto shiftContext = new PreparedRecordContext(null, new RecordObserverHub());
+    shiftContext.setResourceIdentity(7, 11);
+    assert(shiftTool.prepareParamChanged(shiftContext, shiftLayer,
+        GpuUploadOwner.fakeForTest(&shiftGpu)).accepted);
+    bool changedShift;
+    foreach (ref p; shiftTool.params()) if (p.name == "shiftX") {
+        *p.fptr = 0.25f; changedShift = true;
+    }
+    assert(changedShift && !shiftContext.validate() &&
+        shiftLayer.meshRef().vertices.length == 8,
+        "prepared Polygon parameter projection omitted a shift channel");
 
     auto wrongLayer = new Layer; wrongLayer.meshRef() = makeCube();
     wrongLayer.meshRef().syncSelection(); wrongLayer.meshRef().selectFace(0);

@@ -110,6 +110,7 @@ class ToolActivationCommand : Command, ToolArmLifecyclePolicy {
     }
     void markDormantTopology() { dormantTopology_ = true; }
     bool dormantTopology() const { return dormantTopology_; }
+    bool previousHistoryTopology() const { return previousHistoryTopology_; }
     bool joinsFirstGroup() const { return joinsFirstGroup_; }
     /// Whether the record closing this session's first operation is undone
     /// together with this row (slice M4, gap 218): the arm's policy, and only

@@ -431,7 +431,8 @@ private immutable StepRow[] kStepTable = [
              "vectorZ", "axis", "gap", "frozenNormal", "haveFrozen", "axisLocked", "hasLine"]),
     // Task 8030: the first Polygon topology record carries activation; each
     // later operation remains a separate history-owned row.
-    StepRow("poly.extrude", OpensAt.firstPress, false, ["distance"]),
+    StepRow("poly.extrude", OpensAt.firstPress, false,
+        ["distance", "shiftX", "shiftY", "shiftZ"]),
     // M3b: the arm applies (C-H1-bev), Middle clones (C-H5-bev-mmb); the image
     // is the haul plus the operation's applied flag and its base index.
     StepRow("poly.bevel", OpensAt.arm, false, ["inset", "shift", "applied", "op"], "applied"),
@@ -497,6 +498,9 @@ unittest { // (4)
                           ~ "table says {%s, %s, %s, '%s'}", row.id, pol.opensAt, pol.noClone,
                           pol.imageAttrs, pol.armAttr, sr.opensAt, sr.noClone, sr.imageAttrs,
                           sr.armAttr));
+            if (row.id == "poly.extrude")
+                assert(pol.haulAttrs == sr.imageAttrs,
+                    "M3 step table: Polygon haul image drifted from its full parameter image");
         }
         assert(found, "M3 step table: " ~ row.id ~ " has sessionSteps but no step-table row");
     }
@@ -513,13 +517,13 @@ unittest { // (4)
     assert(stepsFalse == kSessionStepsFalseCeiling,
            format("M7 ratchet: sessionSteps=false fell to %s ids, ceiling %s: lower the ceiling "
                   ~ "in the same commit", stepsFalse, kSessionStepsFalseCeiling));
-    // Population floors: 7 ids, 42 image names, 3 Action triggers
+    // Population floors: 7 ids, 45 image names, 3 Action triggers
     // on them (chainArm; insertAt, removeCurrent), 1 arm attribute (M3b).
     sort(stepIds);
     assert(stepIds == ["edge.extend", "edge.extrude", "mesh.edgeSliceTool", "mesh.loopSliceTool", "mesh.sliceTool",
                        "poly.bevel", "poly.extrude"],
            format("M3 step table: sessionSteps ids %s", stepIds));
-    assert(checkedNames == 42, format("M3 step table: %s image names checked, measured 42",
+    assert(checkedNames == 45, format("M3 step table: %s image names checked, measured 45",
                                       checkedNames));
     assert(armAttrs == 1, format("M3b step table: %s arm attributes, measured 1", armAttrs));
     assert(actionNames == 3, format("M3 step table: %s Action params on the seven tools, "

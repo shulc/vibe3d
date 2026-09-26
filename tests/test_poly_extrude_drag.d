@@ -1,19 +1,15 @@
 // Interactive drag coverage for the Polygon Extrude tool's ON-HANDLE drag.
 //
-// The suite already drove this tool's OFF-handle branch (a blind vertical free
-// drag measured from the press pixel), but never the handle itself — and the
+// The suite already drove this tool's OFF-handle view-plane haul, but never
+// the handle itself — and the
 // handle is the branch that runs the per-event increment. That increment now
 // takes its previous pixel from the cooked gesture and cross-checks it against
 // the tool's own, so it needs a test that actually enters it.
 //
 // Telling the two branches apart is the whole design of this test. A press that
-// MISSES the arrow silently becomes the free drag, which also moves `distance`
-// — so "distance changed" alone would prove nothing. The gesture here is
-// therefore purely HORIZONTAL: the free branch reads only `e.y - dragStartMY`,
-// so a horizontal drag leaves it at exactly zero, while the on-handle branch
-// projects the pixel delta onto the extrude axis and moves. The +X face is
-// chosen because its axis projects with a large horizontal component under the
-// default camera, so that projection is far from degenerate.
+// MISSES the arrow silently becomes a free haul. This case therefore presses
+// the published handle and verifies the normal-distance path through mesh and
+// history, not merely an attribute change.
 //
 // The original cell reconstructs the press point from the same projected
 // geometry; the session-law cells below read `/api/tool/handles` directly so
@@ -108,6 +104,16 @@ double[][] positions(JSONValue rows) {
     return result;
 }
 
+bool positionsMatch(const double[][] got, const double[][] want) {
+    if (got.length != want.length) return false;
+    foreach (i; 0 .. got.length) {
+        if (got[i].length != want[i].length) return false;
+        foreach (j; 0 .. got[i].length)
+            if (abs(got[i][j] - want[i][j]) > 1e-6) return false;
+    }
+    return true;
+}
+
 void expectW2Mesh(string checkpoint, bool comparePositions) {
     auto want = w2Fixture()["checkpoints"][checkpoint];
     auto got = getJson("/api/model");
@@ -117,9 +123,12 @@ void expectW2Mesh(string checkpoint, bool comparePositions) {
     assert(got["vertices"].array.length > 8 && got["faces"].array.length > 4
         && got["edges"].array.length > 11,
         checkpoint ~ ": W2 exact mesh channels are unexpectedly empty");
-    if (comparePositions)
-        assert(positions(got["vertices"]) == positions(want["positions"]),
+    if (comparePositions) {
+        const gotPositions = positions(got["vertices"]),
+              wantPositions = positions(want["positions"]);
+        assert(positionsMatch(gotPositions, wantPositions),
             checkpoint ~ ": full positions differ from accepted raw");
+    }
     const gotFaces = intRings(got["faces"]), wantFaces = intRings(want["faces"]);
     assert(gotFaces == wantFaces, format(
         "%s: ordered face rings differ from accepted raw: got %s, want %s",
@@ -139,6 +148,15 @@ void expectW2Mesh(string checkpoint, bool comparePositions) {
         checkpoint ~ ": selected polygons differ from accepted raw");
 }
 
+void expectW2Positions(string checkpoint) {
+    auto got = getJson("/api/model");
+    auto want = w2Fixture()["checkpoints"][checkpoint];
+    assert(got["vertices"].array.length > 8,
+        checkpoint ~ ": W2 position population is unexpectedly empty");
+    assert(positionsMatch(positions(got["vertices"]), positions(want["positions"])),
+        checkpoint ~ ": full positions differ from accepted raw");
+}
+
 void cmd(string line) {
     auto r = postJson("/api/command", line);
     assert(r["status"].str == "ok" || r["status"].str == "success",
@@ -148,6 +166,18 @@ void cmd(string line) {
 double queryDistance() {
     auto r = postJson("/api/command", "tool.attr " ~ TOOL ~ " distance ?");
     assert(r["status"].str == "ok", "query distance failed: " ~ r.toString);
+    return r["value"].floating;
+}
+
+double queryShiftX() {
+    auto r = postJson("/api/command", "tool.attr " ~ TOOL ~ " shiftX ?");
+    assert(r["status"].str == "ok", "query shiftX failed: " ~ r.toString);
+    return r["value"].floating;
+}
+
+double queryShiftY() {
+    auto r = postJson("/api/command", "tool.attr " ~ TOOL ~ " shiftY ?");
+    assert(r["status"].str == "ok", "query shiftY failed: " ~ r.toString);
     return r["value"].floating;
 }
 
@@ -191,7 +221,8 @@ void setupPoly() {
         `{"mode":"polygons","indices":[0]}`));
     assert(r["status"].str == "ok");
     r = postJson("/api/camera",
-        `{"azimuth":0.4,"elevation":1.1,"distance":4.0,`
+        `{"azimuth":-2.530727415391778,"elevation":0.43633231299858255,`
+        ~ `"distance":4.0,`
         ~ `"focus":{"x":0,"y":0,"z":0}}`);
     assert(r["status"].str == "ok");
     r = postJson("/api/command?origin=ui", "tool.set " ~ TOOL ~ " on");
@@ -204,6 +235,21 @@ void dragHandle(int dx, int steps = 12, int mod = 0, int button = 1) {
     auto cam = fetchCamera(BASE);
     playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
         x, y, x + dx, y, steps, mod, cast(ubyte)button), BASE);
+    settle();
+}
+
+void freePx(out int x, out int y) {
+    int hx, hy; handlePx(hx, hy);
+    auto cam = fetchCamera(BASE);
+    x = hx + (hx + 140 < cam.vpX + cam.width ? 140 : -140);
+    y = hy + (hy + 100 < cam.vpY + cam.height ? 100 : -100);
+}
+
+void dragFree(int dx, int dy, int steps = 12, int mod = 0, int button = 1) {
+    int x, y; freePx(x, y);
+    auto cam = fetchCamera(BASE);
+    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+        x, y, x + dx, y + dy, steps, mod, cast(ubyte)button), BASE);
     settle();
 }
 
@@ -302,7 +348,7 @@ unittest { // Polygon first group is one activation+topology navigation step.
     setupPoly();
     const initial = planes();
     const u0 = undoLen();
-    dragHandle(80);
+    dragFree(40, -30);
     const first = planes();
     assert(vertexCount() == 12 && first != initial && undoLen() == u0 + 1,
         "Polygon g1 did not create its 12v history row");
@@ -312,8 +358,9 @@ unittest { // Polygon first group is one activation+topology navigation step.
         "one Polygon Undo must remove g1 and its activation");
     navigate(false);
     assert(vertexCount() == 12 && planes() != initial && undoLen() == u0 + 1
-        && abs(queryDistance()) < 1e-6,
-        "one Polygon Redo must restore 12v with default distance");
+        && abs(queryDistance()) < 1e-6 && abs(queryShiftX()) < 1e-6
+        && abs(queryShiftY()) < 1e-6,
+        "one Polygon Redo must restore 12v with default attributes");
     const replayed = planes();
 
     dragHandle(60);
@@ -331,21 +378,21 @@ unittest { // Polygon first group is one activation+topology navigation step.
 unittest { // Main ladder: g1, Middle clone and Shift reset are distinct rows.
     setupPoly();
     const u0 = undoLen();
-    dragHandle(80);
+    dragFree(40, -30);
     const g1 = planes();
     assert(vertexCount() == 12 && undoLen() == u0 + 1,
         "Polygon main g1 missing");
-    expectW2Mesh("main_g1", false);
+    expectW2Mesh("main_g1", true);
     tapHandle(2);
     const middle = planes();
     assert(vertexCount() == 16 && middle != g1 && undoLen() == u0 + 2,
         "Polygon Middle did not append a 16v operation row");
-    expectW2Mesh("main_middle", false);
-    dragHandle(60, 12, 3, 1);
+    expectW2Mesh("main_middle", true);
+    dragFree(40, -36, 12, 3, 1);
     const shifted = planes();
     assert(vertexCount() == 20 && shifted != middle && undoLen() == u0 + 3,
         "Polygon Shift did not append a reset 20v operation row");
-    expectW2Mesh("main_shift", false);
+    expectW2Mesh("main_shift", true);
 
     cmd("tool.set move on");
     assert(undoLen() == u0 + 4, "switch added a cumulative Polygon carrier");
@@ -369,13 +416,15 @@ unittest { // Zero tap and zero Middle create 12v then 16v at zero attrs.
     const u0 = undoLen();
     tapHandle(1);
     const zero = planes();
-    assert(abs(queryDistance()) < 1e-6 && vertexCount() == 12
+    assert(abs(queryDistance()) < 1e-6 && abs(queryShiftX()) < 1e-6
+        && abs(queryShiftY()) < 1e-6 && vertexCount() == 12
         && zero != initial && undoLen() == u0 + 1,
         "zero Polygon tap did not create its coincident 12v topology row");
     expectW2Mesh("zero", true);
     tapHandle(2);
     const middle = planes();
-    assert(abs(queryDistance()) < 1e-6 && vertexCount() == 16
+    assert(abs(queryDistance()) < 1e-6 && abs(queryShiftX()) < 1e-6
+        && abs(queryShiftY()) < 1e-6 && vertexCount() == 16
         && middle != zero && undoLen() == u0 + 2,
         "zero Polygon Middle did not create its coincident 16v row");
     expectW2Mesh("middle", true);
@@ -390,7 +439,7 @@ unittest { // Zero tap and zero Middle create 12v then 16v at zero attrs.
 unittest { // Plain second drag stays on one topology and replaces redo branch.
     setupPoly();
     const u0 = undoLen();
-    dragHandle(80);
+    dragFree(40, -30);
     const first = planes();
     dragHandle(35);
     const oldSecond = planes();
@@ -413,19 +462,19 @@ unittest { // Plain second drag stays on one topology and replaces redo branch.
 unittest { // Interactive parameter is a row; recording command adds only itself.
     setupPoly();
     const u0 = undoLen();
-    dragHandle(80);
+    dragFree(40, -30);
     const first = planes();
     auto p = postJson("/api/script?interactive=true",
-        "tool.attr poly.extrude distance 0.2\n");
+        "tool.attr poly.extrude shiftX 0.2\n");
     assert(p["status"].str == "ok" || p["status"].str == "success");
     const param = planes();
     assert(param != first && vertexCount() == 12 && undoLen() == u0 + 2,
-        "interactive Polygon distance did not append its preview row");
+        "interactive Polygon shift did not append its preview row");
     navigate(true);
-    assert(planes() == first, "interactive distance undo lost g1");
+    assert(planes() == first, "interactive shift undo lost g1");
     navigate(false);
-    assert(planes() == param && abs(queryDistance() - 0.2) < 1e-5,
-        "interactive distance redo lost its exact mesh/attr image");
+    assert(planes() == param && abs(queryShiftX() - 0.2) < 1e-5,
+        "interactive shift redo lost its exact mesh/attr image");
 
     tapHandle(2);
     const middle = planes();
@@ -445,19 +494,19 @@ unittest { // Interactive parameter is a row; recording command adds only itself
 
 unittest { // Param image -> closed redo -> fresh dormant attr-only adjustment.
     setupPoly();
-    const initial = planes();
     const u0 = undoLen();
-    dragHandle(80);
+    dragFree(40, -30);
     const g1 = planes();
-    const g1Distance = queryDistance();
     auto p = postJson("/api/script?interactive=true",
-        "tool.attr poly.extrude distance 0.2\n");
+        "tool.attr poly.extrude shiftX 0.2\n");
     assert(p["status"].str == "ok" || p["status"].str == "success");
     const param = planes();
-    assert(param != g1 && abs(queryDistance() - 0.2) < 1e-5
+    assert(param != g1 && abs(queryShiftX() - 0.2) < 1e-5
+        && abs(queryShiftY() - 0.1) < 1e-5
         && undoLen() == u0 + 2,
         "param-fresh rig did not record its exact parameter image and attrs");
     expectW2Mesh("main_g1", false);
+    expectW2Positions("param");
 
     auto close = postJson("/api/command?origin=ui", "tool.set move on");
     assert(close["status"].str == "ok" || close["status"].str == "success");
@@ -466,49 +515,42 @@ unittest { // Param image -> closed redo -> fresh dormant attr-only adjustment.
     navigate(true);
     const zPlanes = planes();
     const zDepth = undoLen();
-    const zDistance = queryDistance();
+    const zShiftX = queryShiftX(), zShiftY = queryShiftY();
     assert(zPlanes == param && zDepth == u0 + 2
-        && abs(zDistance) < 1e-6, format(
-        "param-fresh closed Undo lost mesh=%s, distance=%s or depth=%s/%s",
-        zPlanes == param, zDistance, zDepth, u0 + 2));
-    navigate(true);
-    assert(planes() == g1 && undoLen() == u0 + 1
-        && abs(queryDistance() - g1Distance) < 1e-5,
-        "param-fresh parameter Undo lost its prior attrs/basis image");
-    navigate(true);
-    assert(planes() == initial && vertexCount() == 8 && undoLen() == u0 - 1,
-        "param-fresh first-group Undo did not remove topology and activation");
-    navigate(false);
-    assert(vertexCount() == 12 && planes() != initial && undoLen() == u0 + 1
-        && abs(queryDistance()) < 1e-6,
-        "param-fresh first-group Redo lost replay-default attrs/basis");
-    navigate(false);
-    assert(planes() == param && undoLen() == u0 + 2
-        && abs(queryDistance() - 0.2) < 1e-5,
-        "param-fresh parameter Redo lost its exact attrs/basis image");
+        && abs(zShiftX - 0.2) < 1e-5 && abs(zShiftY - 0.1) < 1e-5,
+        format("param-fresh closed Undo lost mesh=%s, shift=(%s,%s) or depth=%s/%s",
+            zPlanes == param, zShiftX, zShiftY, zDepth, u0 + 2));
     navigate(false);
     assert(planes() == param && undoLen() == u0 + 3,
-        "param-fresh full closed Redo lost the parameter image or Move row");
+        "param-fresh r1 lost the parameter image or Move row");
 
     auto r = postJson("/api/command?origin=ui", "tool.set " ~ TOOL ~ " on");
     assert(r["status"].str == "ok" || r["status"].str == "success");
     const fresh = undoLen();
     auto st = getJson("/api/tool/state");
-    assert(planes() == param && abs(queryDistance()) < 1e-6
+    const freshShiftX = queryShiftX(), freshShiftY = queryShiftY();
+    assert(planes() == param && abs(freshShiftX - 0.2) < 1e-5
+        && abs(freshShiftY - 0.1) < 1e-5
         && st["session"]["dormant"].type == JSONType.true_
-        && st["session"]["live"].type == JSONType.false_,
-        "param-fresh arm did not retain the basis with replay-default attrs");
+        && st["session"]["live"].type == JSONType.false_, format(
+        "param-fresh arm did not retain attrs/basis: mesh=%s shift=(%s,%s) dormant=%s live=%s",
+        planes() == param, freshShiftX, freshShiftY,
+        st["session"]["dormant"].toString, st["session"]["live"].toString));
 
-    int x, y; handlePx(x, y);
+    int x, y; freePx(x, y);
     auto cam = fetchCamera(BASE);
     playAndWait(buildDragDownLog(cam.vpX, cam.vpY, cam.width, cam.height, x, y), BASE);
     playAndWait(buildDragMotionLog(cam.vpX, cam.vpY, cam.width, cam.height,
-        x, y, x + 60, y, 12), BASE);
+        x, y, x + 37, y - 34, 12), BASE);
     st = getJson("/api/tool/state");
-    assert(planes() == param && abs(queryDistance()) > 1e-5
+    const dragShiftX = queryShiftX(), dragShiftY = queryShiftY();
+    assert(planes() == param && abs(dragShiftX + 0.105) < 1e-5
+        && abs(dragShiftY - 0.105) < 1e-5
         && undoLen() == fresh && st["session"]["live"].type == JSONType.false_,
-        "param-fresh dormant drag did not stay attr-only over the frozen basis");
-    playAndWait(buildDragUpLog(cam.vpX, cam.vpY, cam.width, cam.height, x + 60, y), BASE);
+        format("param-fresh dormant drag lost basis/attrs: mesh=%s shift=(%s,%s)",
+            planes() == param, dragShiftX, dragShiftY));
+    playAndWait(buildDragUpLog(cam.vpX, cam.vpY, cam.width, cam.height,
+        x + 37, y - 34), BASE);
     auto h = getJson("/api/history");
     assert(planes() == param && undoLen() == fresh + 1
         && h["undo"].array[$ - 1]["command"].str == "tool.topology_adjustment",
@@ -521,7 +563,7 @@ unittest { // Param image -> closed redo -> fresh dormant attr-only adjustment.
     st = getJson("/api/tool/state");
     h = getJson("/api/history");
     assert(planes() == param && undoLen() == fresh
-        && abs(queryDistance()) < 1e-6
+        && abs(queryShiftX()) < 1e-6 && abs(queryShiftY()) < 1e-6
         && st["session"]["dormant"].type == JSONType.true_
         && h["redo"].array.length == 1
         && h["redo"].array[$ - 1]["command"].str == "tool.topology_adjustment",
@@ -587,6 +629,7 @@ unittest { // Full closed redo makes a fresh Polygon arm dormant and attr-only.
     st = getJson("/api/tool/state");
     assert(planes() == freshImage && undoLen() == fresh
         && st["session"]["dormant"].type == JSONType.true_
-        && abs(queryDistance()) < 1e-6,
+        && abs(queryDistance()) < 1e-6 && abs(queryShiftX()) < 1e-6
+        && abs(queryShiftY()) < 1e-6,
         "dormant Polygon r1 did not restore bare default activation");
 }

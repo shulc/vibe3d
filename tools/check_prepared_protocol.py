@@ -4408,7 +4408,8 @@ def poly_extrude_activation_gate(owner, context, tool):
         tool.count("image.anchor = anchor; image.baseAnchor = baseAnchor;\n"
                    "        image.extrudeAxis = extrudeAxis;") == 2 and
         "computePreparedGizmoFrame(*source, image);" in tool and
-        "active = true; built = false; dragPart = -1; distance_ = 0.0f;" in installer and
+        "active = true; built = false; dragPart = -1;\n"
+        "        distance_ = shiftX_ = shiftY_ = shiftZ_ = 0.0f;" in installer and
         "image.before.moveInto(before);" in installer and
         "gizmoValid = image.gizmoValid; anchor = image.anchor;" in installer and
         "baseAnchor = image.baseAnchor; extrudeAxis = image.extrudeAxis;" in installer and
@@ -4450,14 +4451,26 @@ for target, old, new, label in (
     ("owner", "!image_.before.matches(*source_)", "false", "drop content guard"),
     ("owner", "target_.installPreparedActivation(image_);", "", "drop install"),
     ("owner", "image_.clear(); target_ = null; source_ = null;", "target_ = null;", "retain payload"),
-    ("tool", "active = true; built = false; dragPart = -1; distance_ = 0.0f;",
-     "built = false; dragPart = -1; distance_ = 0.0f;", "drop active reset"),
-    ("tool", "active = true; built = false; dragPart = -1; distance_ = 0.0f;",
-     "active = true; dragPart = -1; distance_ = 0.0f;", "drop built reset"),
-    ("tool", "active = true; built = false; dragPart = -1; distance_ = 0.0f;",
-     "active = true; built = false; distance_ = 0.0f;", "drop drag reset"),
-    ("tool", "active = true; built = false; dragPart = -1; distance_ = 0.0f;",
-     "active = true; built = false; dragPart = -1;", "drop distance reset"),
+    ("tool", "active = true; built = false; dragPart = -1;\n"
+     "        distance_ = shiftX_ = shiftY_ = shiftZ_ = 0.0f;",
+     "built = false; dragPart = -1;\n"
+     "        distance_ = shiftX_ = shiftY_ = shiftZ_ = 0.0f;", "drop active reset"),
+    ("tool", "active = true; built = false; dragPart = -1;\n"
+     "        distance_ = shiftX_ = shiftY_ = shiftZ_ = 0.0f;",
+     "active = true; dragPart = -1;\n"
+     "        distance_ = shiftX_ = shiftY_ = shiftZ_ = 0.0f;", "drop built reset"),
+    ("tool", "active = true; built = false; dragPart = -1;\n"
+     "        distance_ = shiftX_ = shiftY_ = shiftZ_ = 0.0f;",
+     "active = true; built = false;\n"
+     "        distance_ = shiftX_ = shiftY_ = shiftZ_ = 0.0f;", "drop drag reset"),
+    ("tool", "distance_ = shiftX_ = shiftY_ = shiftZ_ = 0.0f;",
+     "shiftX_ = shiftY_ = shiftZ_ = 0.0f;", "drop distance reset"),
+    ("tool", "distance_ = shiftX_ = shiftY_ = shiftZ_ = 0.0f;",
+     "distance_ = shiftY_ = shiftZ_ = 0.0f;", "drop shiftX reset"),
+    ("tool", "distance_ = shiftX_ = shiftY_ = shiftZ_ = 0.0f;",
+     "distance_ = shiftX_ = shiftZ_ = 0.0f;", "drop shiftY reset"),
+    ("tool", "distance_ = shiftX_ = shiftY_ = shiftZ_ = 0.0f;",
+     "distance_ = shiftX_ = shiftY_ = 0.0f;", "drop shiftZ reset"),
     ("tool", "image.before.moveInto(before);", "before = image.before;", "shallow snapshot"),
     ("tool", "image.anchor = anchor; image.baseAnchor = baseAnchor;\n"
      "        image.extrudeAxis = extrudeAxis;", "", "drop invalid-frame preservation"),
