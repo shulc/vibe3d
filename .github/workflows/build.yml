@@ -122,7 +122,9 @@ jobs:
           - runner: [self-hosted, macOS, ARM64]
             name: macos-arm64
             binary: vibe3d
-          - runner: [self-hosted, macOS, X64]
+          # Both macOS variants run on the M1 Mac mini; x64 uses Rosetta and a
+          # separate toolchain/cache selected by matrix.name below.
+          - runner: [self-hosted, macOS, ARM64]
             name: macos-x64
             binary: vibe3d
           - runner: [self-hosted, Windows]
@@ -135,7 +137,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Add Homebrew to PATH (macOS)
-        if: runner.os == 'macOS'
+        if: matrix.name == 'macos-arm64'
         run: |
           if [ -x /opt/homebrew/bin/brew ]; then
             echo "/opt/homebrew/bin" >> "$GITHUB_PATH"
@@ -153,10 +155,15 @@ jobs:
 
       - name: Set deployment target (macOS)
         if: runner.os == 'macOS'
-        run: echo "MACOSX_DEPLOYMENT_TARGET=11.0" >> "$GITHUB_ENV"
+        run: |
+          # ONNX Runtime 1.22.0's Intel SDK has minos 13.3.
+          version=11.0
+          if [ "${{ matrix.name }}" = macos-x64 ]; then version=13.3; fi
+          echo "MACOSX_DEPLOYMENT_TARGET=$version" >> "$GITHUB_ENV"
+          echo "VIBE3D_MIN_MACOS_VERSION=$version" >> "$GITHUB_ENV"
 
-      - name: Install build dependencies (macOS)
-        if: runner.os == 'macOS'
+      - name: Install build dependencies (macOS arm64)
+        if: matrix.name == 'macos-arm64'
         run: |
           missing=()
           for pkg in sdl2 cmake ninja; do
@@ -167,6 +174,44 @@ jobs:
           if [ "${#missing[@]}" -gt 0 ]; then
             brew install "${missing[@]}"
           fi
+          echo "VIBE3D_EXPECT_ARCH=arm64" >> "$GITHUB_ENV"
+          echo "SDL2_DIR=$(brew --prefix sdl2)" >> "$GITHUB_ENV"
+
+      - name: Activate macOS x64 toolchain
+        if: matrix.name == 'macos-x64'
+        run: |
+          root="$HOME/opt/vibe3d-macos-x64"
+          test -x "$root/ldc/bin/ldc2" || {
+            echo "::error::x64 toolchain missing; run tools/macos/setup_x64_toolchain.sh on this runner"
+            exit 1
+          }
+          test -f "$root/sdl2/lib/libSDL2-2.0.0.dylib"
+          test -x "$root/bin/cmake"
+          test -f "$root/sdl2/lib/libdruntime-ldc.a"
+          test -f "$root/sdl2/lib/libphobos2-ldc.a"
+          /usr/bin/arch -x86_64 /usr/bin/true
+          lipo -archs "$root/ldc/bin/ldc2" | grep -qw x86_64
+          lipo -archs "$root/sdl2/lib/libSDL2-2.0.0.dylib" | grep -qw x86_64
+          vtool -show-build "$root/sdl2/lib/libSDL2-2.0.0.dylib" | grep -q 'minos 11.0' || {
+            echo "::error::x64 SDL2 must target macOS 11.0; rerun tools/macos/setup_x64_toolchain.sh"
+            exit 1
+          }
+          mkdir -p "$root/dub"
+          {
+            echo "VIBE3D_X64_ROOT=$root"
+            echo "VIBE3D_EXPECT_ARCH=x86_64"
+            echo "DUB_HOME=$root/dub"
+            echo "SDL2_DIR=$root/sdl2"
+            echo "SDL2_DYLIB=$root/sdl2/lib/libSDL2-2.0.0.dylib"
+            echo "CFLAGS=-arch x86_64"
+            echo "CXXFLAGS=-arch x86_64"
+            echo "PKG_CONFIG_PATH=$root/sdl2/lib/pkgconfig"
+            echo "CMAKE_PREFIX_PATH=$root/sdl2"
+          } >> "$GITHUB_ENV"
+          echo "/opt/homebrew/bin" >> "$GITHUB_PATH"
+          echo "$root/sdl2/bin" >> "$GITHUB_PATH"
+          echo "$root/ldc/bin" >> "$GITHUB_PATH"
+          echo "$root/bin" >> "$GITHUB_PATH"
 
       # Windows C: is small; put the dub package cache (nfde + heavy render git
       # deps / LFS) on F: where there's room. Must precede any dub command.
@@ -180,8 +225,8 @@ jobs:
       # Release is built with LDC (optimized). LDC must be pre-installed on the
       # runner host — these steps only LOCATE it (PATH or common dlang install
       # dirs) and fail with a clear message if absent; they never download it.
-      - name: Locate LDC (Linux/macOS)
-        if: runner.os != 'Windows'
+      - name: Locate LDC (Linux/macOS arm64)
+        if: runner.os != 'Windows' && matrix.name != 'macos-x64'
         run: |
           if ! command -v ldc2 >/dev/null 2>&1; then
             for d in "$HOME"/dlang/ldc*/bin "$HOME"/.local/dlang/ldc*/bin \
@@ -350,8 +395,15 @@ jobs:
       # picked up depended on the container's dub cache being cold. Now only one
       # build ever writes it.
       - name: Build
-        if: runner.os != 'Linux'
+        if: runner.os != 'Linux' && matrix.name != 'macos-x64'
         run: dub build --compiler=ldc2 --build=release --d-version=ReleaseBuild
+
+      - name: Build macOS x64
+        if: matrix.name == 'macos-x64'
+        run: |
+          export PATH="$VIBE3D_X64_ROOT/bin:$VIBE3D_X64_ROOT/ldc/bin:$VIBE3D_X64_ROOT/sdl2/bin:/opt/homebrew/bin:$PATH"
+          test "$(command -v cmake)" = "$VIBE3D_X64_ROOT/bin/cmake"
+          dub build --config=modeling --compiler="$VIBE3D_X64_ROOT/ldc/bin/ldc2" --arch=x86_64 --build=release --d-version=ReleaseBuild
 
       - name: Build app bundle (macOS)
         if: runner.os == 'macOS'

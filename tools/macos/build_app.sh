@@ -47,13 +47,18 @@ rm -rf "$APP_PATH"
 mkdir -p "$APP_PATH/Contents/MacOS" "$APP_PATH/Contents/Resources" "$APP_PATH/Contents/Frameworks"
 
 cp -p ./vibe3d "$APP_PATH/Contents/MacOS/vibe3d"
+if [[ -n "${VIBE3D_EXPECT_ARCH:-}" ]]; then
+    lipo -archs "$APP_PATH/Contents/MacOS/vibe3d" | grep -qw "$VIBE3D_EXPECT_ARCH" || {
+        echo "[app] executable has no $VIBE3D_EXPECT_ARCH slice" >&2; exit 1;
+    }
+fi
 cp -p assets/icon/vibe3d.icns "$APP_PATH/Contents/Resources/vibe3d.icns"
 cp -R config "$APP_PATH/Contents/Resources/config"
 
 # Bundle SDL2 so the .app runs on a clean macOS without Homebrew. It is the
-# only non-system runtime dependency — every other dylib vibe3d links or
-# dlopens (OpenGL, AppKit, libc++, libobjc, CoreFoundation, Foundation,
-# libSystem) ships with macOS 11+. SDL2 in turn pulls in only system
+# only non-system runtime dependency besides ONNX Runtime — other libraries
+# (OpenGL, AppKit, libc++, libobjc, CoreFoundation, Foundation,
+# libSystem) ship with macOS. SDL2 in turn pulls in only system
 # frameworks, so the single dylib is self-contained. The app loads it from
 # Contents/Frameworks by explicit path (see bundledSDL2Path() in app.d).
 SDL2_DYLIB_NAME="libSDL2-2.0.0.dylib"
@@ -83,6 +88,14 @@ chmod u+w "$APP_PATH/Contents/Frameworks/${SDL2_DYLIB_NAME}"   # Homebrew copy i
 # (the app dlopens it by path, but a stray absolute reference is cleaner).
 install_name_tool -id "@rpath/${SDL2_DYLIB_NAME}" \
     "$APP_PATH/Contents/Frameworks/${SDL2_DYLIB_NAME}" 2>/dev/null || true
+# The linker may record SDL2's absolute installation path. Make the app use
+# its bundled copy even on a machine without Homebrew or this CI toolchain.
+SDL2_LINK="$(otool -L "$APP_PATH/Contents/MacOS/vibe3d" | awk '$1 ~ /libSDL2[^ ]*\.dylib/ { print $1; exit }')"
+if [[ -n "$SDL2_LINK" ]]; then
+    install_name_tool -change "$SDL2_LINK" \
+        "@executable_path/../Frameworks/${SDL2_DYLIB_NAME}" \
+        "$APP_PATH/Contents/MacOS/vibe3d"
+fi
 echo "[app] bundled SDL2 from ${SDL2_SRC}"
 
 # Bundle ONNX Runtime (AI candidate ranker backend; hard dependency). The
@@ -102,9 +115,18 @@ for f in "${onnx_libs[@]}"; do
     cp -P "$f" "$APP_PATH/Contents/Frameworks/$(basename "$f")"
 done
 chmod -R u+w "$APP_PATH/Contents/Frameworks"
+if [[ -n "${VIBE3D_EXPECT_ARCH:-}" ]]; then
+    for dylib in "$APP_PATH"/Contents/Frameworks/*.dylib; do
+        lipo -archs "$dylib" | grep -qw "$VIBE3D_EXPECT_ARCH" || {
+            echo "[app] library has no $VIBE3D_EXPECT_ARCH slice: $dylib" >&2
+            exit 1
+        }
+    done
+fi
 echo "[app] bundled ONNX Runtime from ${ONNX_LIB_BASE}"
 
-cat > "$APP_PATH/Contents/Info.plist" <<'PLIST'
+MIN_MACOS_VERSION="${VIBE3D_MIN_MACOS_VERSION:-11.0}"
+cat > "$APP_PATH/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -131,7 +153,7 @@ cat > "$APP_PATH/Contents/Info.plist" <<'PLIST'
     <key>CFBundleVersion</key>
     <string>0.1.0</string>
     <key>LSMinimumSystemVersion</key>
-    <string>11.0</string>
+    <string>${MIN_MACOS_VERSION}</string>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSPrincipalClass</key>
