@@ -99,6 +99,12 @@ version(unittest) unittest {
     assert(layer.meshRef().vertices.length > oldVertices &&
         tool.preparedParamBuiltForTest() &&
         context.installTraceForTest() == [3,4,49,2,8]);
+    assert(layer.meshRef().faces.length == 10 &&
+        layer.meshRef().isFaceSelected(9),
+        "prepared Polygon parameter preview did not install the W2 walls-before-cap selection");
+    foreach (fi; 0 .. layer.meshRef().faces.length)
+        if (fi != 9) assert(!layer.meshRef().isFaceSelected(fi),
+            "prepared Polygon parameter preview selected a wall or survivor");
 
     auto noopLayer = new Layer; noopLayer.meshRef() = makeCube();
     GpuMesh noopGpu;

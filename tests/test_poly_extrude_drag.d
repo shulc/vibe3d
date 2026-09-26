@@ -55,6 +55,7 @@ void main() {}
 
 alias BASE = testBaseUrl;
 enum string TOOL = "poly.extrude";
+enum string W2_FIXTURE = import("fixtures/poly_extrude_w2_topology.json");
 
 string getRaw(string path) { return cast(string) get(BASE ~ path); }
 
@@ -73,6 +74,70 @@ string getRaw(string path) { return cast(string) get(BASE ~ path); }
 string planes() { return getRaw("/api/mesh/planes"); }
 long undoLen() { return cast(long) getJson("/api/history")["undo"].array.length; }
 size_t vertexCount() { return getJson("/api/model")["vertices"].array.length; }
+
+JSONValue w2Fixture() { return parseJSON(W2_FIXTURE); }
+
+int[] intList(JSONValue values) {
+    int[] result;
+    foreach (value; values.array) result ~= cast(int)value.integer;
+    return result;
+}
+
+int[][] intRings(JSONValue rows) {
+    int[][] result;
+    foreach (row; rows.array) result ~= intList(row);
+    return result;
+}
+
+int[][] endpointPairs(JSONValue rows) {
+    auto result = intRings(rows);
+    foreach (ref pair; result)
+        if (pair.length == 2 && pair[0] > pair[1]) {
+            const tmp = pair[0]; pair[0] = pair[1]; pair[1] = tmp;
+        }
+    return result;
+}
+
+double[][] positions(JSONValue rows) {
+    double[][] result;
+    foreach (row; rows.array) {
+        double[] point;
+        foreach (value; row.array) point ~= value.floating;
+        result ~= point;
+    }
+    return result;
+}
+
+void expectW2Mesh(string checkpoint, bool comparePositions) {
+    auto want = w2Fixture()["checkpoints"][checkpoint];
+    auto got = getJson("/api/model");
+    auto sel = getJson("/api/selection");
+
+    // Population floors make the exact comparisons below non-vacuous.
+    assert(got["vertices"].array.length > 8 && got["faces"].array.length > 4
+        && got["edges"].array.length > 11,
+        checkpoint ~ ": W2 exact mesh channels are unexpectedly empty");
+    if (comparePositions)
+        assert(positions(got["vertices"]) == positions(want["positions"]),
+            checkpoint ~ ": full positions differ from accepted raw");
+    const gotFaces = intRings(got["faces"]), wantFaces = intRings(want["faces"]);
+    assert(gotFaces == wantFaces, format(
+        "%s: ordered face rings differ from accepted raw: got %s, want %s",
+        checkpoint, gotFaces, wantFaces));
+    const gotEdges = endpointPairs(got["edges"]),
+          wantEdges = endpointPairs(want["edges"]);
+    assert(gotEdges == wantEdges, format(
+        "%s: ordered edges differ from accepted raw: got %s, want %s",
+        checkpoint, gotEdges, wantEdges));
+    assert(intList(sel["selectedVertices"]) ==
+               intList(want["selected"]["vertices"]),
+        checkpoint ~ ": selected vertices differ from accepted raw");
+    assert(intList(sel["selectedEdges"]) == intList(want["selected"]["edges"]),
+        checkpoint ~ ": selected edges differ from accepted raw");
+    assert(intList(sel["selectedFaces"]) ==
+               intList(want["selected"]["polygons"]),
+        checkpoint ~ ": selected polygons differ from accepted raw");
+}
 
 void cmd(string line) {
     auto r = postJson("/api/command", line);
@@ -116,9 +181,14 @@ void settle() {
 void setupPoly() {
     auto r = postJson("/api/command", commandBody("scene.reset"));
     assert(r["status"].str == "ok");
+    auto rig = w2Fixture()["rig"];
+    r = postJson("/api/command", commandBody("scene.loadMesh",
+        `{"vertices":` ~ rig["vertices"].toString ~
+        `,"faces":` ~ rig["faces"].toString ~ `}`));
+    assert(r["status"].str == "ok", "W2 Polygon open rig failed to load");
     cmd("history.clear");
     r = postJson("/api/command", commandBody("mesh.select",
-        `{"mode":"polygons","indices":[3]}`));
+        `{"mode":"polygons","indices":[0]}`));
     assert(r["status"].str == "ok");
     r = postJson("/api/camera",
         `{"azimuth":0.4,"elevation":1.1,"distance":4.0,`
@@ -265,14 +335,17 @@ unittest { // Main ladder: g1, Middle clone and Shift reset are distinct rows.
     const g1 = planes();
     assert(vertexCount() == 12 && undoLen() == u0 + 1,
         "Polygon main g1 missing");
+    expectW2Mesh("main_g1", false);
     tapHandle(2);
     const middle = planes();
     assert(vertexCount() == 16 && middle != g1 && undoLen() == u0 + 2,
         "Polygon Middle did not append a 16v operation row");
+    expectW2Mesh("main_middle", false);
     dragHandle(60, 12, 3, 1);
     const shifted = planes();
     assert(vertexCount() == 20 && shifted != middle && undoLen() == u0 + 3,
         "Polygon Shift did not append a reset 20v operation row");
+    expectW2Mesh("main_shift", false);
 
     cmd("tool.set move on");
     assert(undoLen() == u0 + 4, "switch added a cumulative Polygon carrier");
@@ -299,11 +372,13 @@ unittest { // Zero tap and zero Middle create 12v then 16v at zero attrs.
     assert(abs(queryDistance()) < 1e-6 && vertexCount() == 12
         && zero != initial && undoLen() == u0 + 1,
         "zero Polygon tap did not create its coincident 12v topology row");
+    expectW2Mesh("zero", true);
     tapHandle(2);
     const middle = planes();
     assert(abs(queryDistance()) < 1e-6 && vertexCount() == 16
         && middle != zero && undoLen() == u0 + 2,
         "zero Polygon Middle did not create its coincident 16v row");
+    expectW2Mesh("middle", true);
     navigate(true);
     assert(planes() == zero && vertexCount() == 12,
         "zero Middle undo did not restore 12v");
@@ -366,6 +441,91 @@ unittest { // Interactive parameter is a row; recording command adds only itself
     navigate(true);
     assert(planes() == param && undoLen() == u0 + 2,
         "recording-command z2 did not remove Middle alone");
+}
+
+unittest { // Param image -> closed redo -> fresh dormant attr-only adjustment.
+    setupPoly();
+    const initial = planes();
+    const u0 = undoLen();
+    dragHandle(80);
+    const g1 = planes();
+    const g1Distance = queryDistance();
+    auto p = postJson("/api/script?interactive=true",
+        "tool.attr poly.extrude distance 0.2\n");
+    assert(p["status"].str == "ok" || p["status"].str == "success");
+    const param = planes();
+    assert(param != g1 && abs(queryDistance() - 0.2) < 1e-5
+        && undoLen() == u0 + 2,
+        "param-fresh rig did not record its exact parameter image and attrs");
+    expectW2Mesh("main_g1", false);
+
+    auto close = postJson("/api/command?origin=ui", "tool.set move on");
+    assert(close["status"].str == "ok" || close["status"].str == "success");
+    assert(planes() == param && undoLen() == u0 + 3,
+        "param-fresh close changed the parameter basis or added a carrier");
+    navigate(true);
+    const zPlanes = planes();
+    const zDepth = undoLen();
+    const zDistance = queryDistance();
+    assert(zPlanes == param && zDepth == u0 + 2
+        && abs(zDistance) < 1e-6, format(
+        "param-fresh closed Undo lost mesh=%s, distance=%s or depth=%s/%s",
+        zPlanes == param, zDistance, zDepth, u0 + 2));
+    navigate(true);
+    assert(planes() == g1 && undoLen() == u0 + 1
+        && abs(queryDistance() - g1Distance) < 1e-5,
+        "param-fresh parameter Undo lost its prior attrs/basis image");
+    navigate(true);
+    assert(planes() == initial && vertexCount() == 8 && undoLen() == u0 - 1,
+        "param-fresh first-group Undo did not remove topology and activation");
+    navigate(false);
+    assert(vertexCount() == 12 && planes() != initial && undoLen() == u0 + 1
+        && abs(queryDistance()) < 1e-6,
+        "param-fresh first-group Redo lost replay-default attrs/basis");
+    navigate(false);
+    assert(planes() == param && undoLen() == u0 + 2
+        && abs(queryDistance() - 0.2) < 1e-5,
+        "param-fresh parameter Redo lost its exact attrs/basis image");
+    navigate(false);
+    assert(planes() == param && undoLen() == u0 + 3,
+        "param-fresh full closed Redo lost the parameter image or Move row");
+
+    auto r = postJson("/api/command?origin=ui", "tool.set " ~ TOOL ~ " on");
+    assert(r["status"].str == "ok" || r["status"].str == "success");
+    const fresh = undoLen();
+    auto st = getJson("/api/tool/state");
+    assert(planes() == param && abs(queryDistance()) < 1e-6
+        && st["session"]["dormant"].type == JSONType.true_
+        && st["session"]["live"].type == JSONType.false_,
+        "param-fresh arm did not retain the basis with replay-default attrs");
+
+    int x, y; handlePx(x, y);
+    auto cam = fetchCamera(BASE);
+    playAndWait(buildDragDownLog(cam.vpX, cam.vpY, cam.width, cam.height, x, y), BASE);
+    playAndWait(buildDragMotionLog(cam.vpX, cam.vpY, cam.width, cam.height,
+        x, y, x + 60, y, 12), BASE);
+    st = getJson("/api/tool/state");
+    assert(planes() == param && abs(queryDistance()) > 1e-5
+        && undoLen() == fresh && st["session"]["live"].type == JSONType.false_,
+        "param-fresh dormant drag did not stay attr-only over the frozen basis");
+    playAndWait(buildDragUpLog(cam.vpX, cam.vpY, cam.width, cam.height, x + 60, y), BASE);
+    auto h = getJson("/api/history");
+    assert(planes() == param && undoLen() == fresh + 1
+        && h["undo"].array[$ - 1]["command"].str == "tool.topology_adjustment",
+        "param-fresh dormant drop did not append exactly its attr history row");
+
+    navigate(true);
+    assert(planes() == param && undoLen() == fresh - 1,
+        "param-fresh dormant Undo changed the frozen basis or row pairing");
+    navigate(false);
+    st = getJson("/api/tool/state");
+    h = getJson("/api/history");
+    assert(planes() == param && undoLen() == fresh
+        && abs(queryDistance()) < 1e-6
+        && st["session"]["dormant"].type == JSONType.true_
+        && h["redo"].array.length == 1
+        && h["redo"].array[$ - 1]["command"].str == "tool.topology_adjustment",
+        "param-fresh dormant Redo lost default attrs, basis, or adjustment redo");
 }
 
 unittest { // Prepared switch closes a held drag once, without a cumulative row.

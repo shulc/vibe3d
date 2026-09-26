@@ -306,7 +306,8 @@ public:
         else {
             auto mask = image.candidate.operandFaceMask();
             auto ed = MeshEditBatch.unrecorded(image.candidate, kExtrudeEditScope);
-            const n = ed.extrudeFacesByMask(mask, distance_);
+            const n = ed.extrudeFacesByMask(mask, distance_, false,
+                UvWallLaw.SweepU, false, FaceExtrudeOrder.WallsThenCap);
             ed.close(); image.nextBuilt = (n != 0);
         }
         drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
@@ -539,7 +540,8 @@ private:
         // task 1903 Stage H: unrecorded — the per-drag-frame preview rerun.
         auto ed = MeshEditBatch.unrecorded(*mesh, kExtrudeEditScope);
         size_t n = ed.extrudeFacesByMask(mask, distance_, false,
-            UvWallLaw.SweepU, allowCoincidentTopology);
+            UvWallLaw.SweepU, allowCoincidentTopology,
+            FaceExtrudeOrder.WallsThenCap);
         ed.close();
         built = (n != 0);
         refreshCaches();

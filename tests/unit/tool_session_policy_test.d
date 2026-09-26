@@ -856,6 +856,10 @@ unittest { // Tasks 7990/8030: production topology R wiring, not a helper replic
     auto panelCode = blankNonCode(readText("source/property_panel.d"));
     auto panel = squeeze(panelCode);
     auto attr = squeeze(blankNonCode(readText("source/commands/tool/attr.d")));
+    const edgePreparedClose = squeeze(bodyAt(edge,
+        "final PreparedDeactivateEffect prepareDeactivate("));
+    const polyPreparedClose = squeeze(bodyAt(poly,
+        "final PreparedDeactivateEffect prepareDeactivate("));
     assert(es.canFind("if (navigateTopology_(true)) return true;")
         && es.canFind("if (navigateTopology_(false)) return true;"),
         "Edge topology navigation bypassed the production ToolSession door");
@@ -867,7 +871,8 @@ unittest { // Tasks 7990/8030: production topology R wiring, not a helper replic
         "interactive parameter or history-owned step payload was disconnected");
     assert(edge.canFind("sessionStepBegins(e.button == SDL_BUTTON_MIDDLE")
         && edge.canFind("sessionStepEnds();")
-        && edge.canFind("context.markNoHistoryInstall()"),
+        && edgePreparedClose.count("context.markNoHistoryInstall()") == 1
+        && !edgePreparedClose.canFind("markHistoryInstall("),
         "Edge drag/Middle or prepared close lost its production seam");
     assert(edge.canFind("recordGestureEdit(cmd, GestureRecordMode.Plain)")
         && !edge.canFind("GestureRecordMode.ReplaceRunTail"),
@@ -875,7 +880,8 @@ unittest { // Tasks 7990/8030: production topology R wiring, not a helper replic
     assert(poly.canFind("sessionStepBegins(e.button == SDL_BUTTON_MIDDLE")
         && poly.canFind("sessionStepEnds();")
         && poly.canFind("recordGestureEdit(cmd, GestureRecordMode.Plain)")
-        && poly.canFind("context.markNoHistoryInstall()")
+        && polyPreparedClose.count("c.markNoHistoryInstall()") == 1
+        && !polyPreparedClose.canFind("markHistoryInstall(")
         && !poly.canFind("GestureRecordMode.ReplaceRunTail"),
         "Polygon drag/boundary, Plain owner or prepared close lost its production seam");
     assert(edge.canFind("discardFirstTopologyRedoOnActivationUndo: true")

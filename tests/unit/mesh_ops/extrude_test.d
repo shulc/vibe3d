@@ -32,6 +32,45 @@ private static Vec3 extrudeHiddenCentroid(ref Mesh m, size_t fi) {
     return Vec3(c.x / f.length, c.y / f.length, c.z / f.length);
 }
 
+unittest { // W2 Polygon order is opt-in; default/headless order stays stable.
+    Vec3[] verts = [
+        Vec3(-0.5f, -0.5f, -0.5f), Vec3(-0.5f, -0.5f, 0.5f),
+        Vec3(-0.5f,  0.5f, -0.5f), Vec3(-0.5f,  0.5f, 0.5f),
+        Vec3( 0.5f, -0.5f, -0.5f), Vec3( 0.5f, -0.5f, 0.5f),
+        Vec3( 0.5f,  0.5f, -0.5f), Vec3( 0.5f,  0.5f, 0.5f),
+    ];
+    uint[][] faces = [
+        [0, 2, 6, 4], [0, 1, 3, 2], [2, 3, 7, 6], [0, 4, 5, 1],
+    ];
+    Mesh rig() {
+        auto m = buildRawMesh(verts, faces);
+        m.syncSelection(); m.selectFace(0);
+        return m;
+    }
+    bool[] mask = [true, false, false, false];
+
+    auto legacy = rig();
+    assert(kernelOnce!extrudeFacesByMask(legacy, mask, 0.25f) == 1);
+    assert(legacy.faces.length == 8 && legacy.faces[3] == [8, 9, 10, 11]
+        && legacy.isFaceSelected(3),
+        "default/headless face extrude no longer emits and selects cap first");
+
+    auto captured = rig();
+    assert(kernelOnce!extrudeFacesByMask(captured, mask, 0.25f, false,
+        UvWallLaw.SweepU, false, FaceExtrudeOrder.WallsThenCap) == 1);
+    assert(captured.faces.length == 8 && captured.faces[7] == [8, 9, 10, 11]
+        && captured.isFaceSelected(7),
+        "interactive W2 face extrude no longer emits and selects cap after walls");
+    foreach (fi; 0 .. captured.faces.length) {
+        if (fi != 7) assert(!captured.isFaceSelected(fi),
+            "interactive W2 face extrude selected a wall or survivor");
+        if (fi >= 3 && fi < 7) assert(captured.faceSelectionOrder[fi] == 0,
+            "interactive W2 face extrude left a carried order stamp on a wall");
+    }
+    assert(captured.faceSelectionOrder[7] != 0,
+        "interactive W2 face extrude cap lacks its selected order stamp");
+}
+
 unittest { // T-S1 (extrude) — hidden mark follows its surviving face.
     Vec3[] verts = [
         Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(2, 0, 0),

@@ -3140,6 +3140,11 @@ size_t extendEdgesByMask(ref MeshEditBatch ed, in bool[] maskIn,
     return exEdges.length;
 }
 
+enum FaceExtrudeOrder : ubyte {
+    CapThenWalls,
+    WallsThenCap,
+}
+
 /// Face Extrude: duplicate the selected polygon region as a lifted cap, bridge
 /// the region boundary with side quads, and offset the cap by `distance` along
 /// the averaged region normal. Region boundary = edges where exactly one
@@ -3186,7 +3191,8 @@ size_t extendEdgesByMask(ref MeshEditBatch ed, in bool[] maskIn,
 /// it keeps the source face's corner values verbatim. See `UvWallLaw`.
 size_t extrudeFacesByMask(ref MeshEditBatch ed, in bool[] maskIn, float distance, bool smooth = false,
                           UvWallLaw uvWall = UvWallLaw.SweepU,
-                          bool allowCoincidentTopology = false) {
+                          bool allowCoincidentTopology = false,
+                          FaceExtrudeOrder faceOrder = FaceExtrudeOrder.CapThenWalls) {
     const mask = ed.maskMinusHiddenFaces(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
     if (mask.length != ed.faces.length) return 0;
     size_t selCount = 0;
@@ -3405,6 +3411,29 @@ size_t extrudeFacesByMask(ref MeshEditBatch ed, in bool[] maskIn, float distance
         bEdges ~= BEdge(va, vb, s0 ? fp[0] : fp[1]);
     }
 
+    // The captured interactive law walks each selected ring from its closing
+    // edge and then forward. Keep the historical associative-array order for
+    // every default caller; only the explicit W2 order asks for this list.
+    if (faceOrder == FaceExtrudeOrder.WallsThenCap) {
+        BEdge[] capturedOrder;
+        foreach (fi; 0 .. ed.faces.length) {
+            if (!mask[fi]) continue;
+            auto f = ed.faces[fi];
+            foreach (offset; 0 .. f.length) {
+                const k = (offset + f.length - 1) % f.length;
+                const uint u = f[k], v = f[(k + 1) % f.length];
+                const key = edgeKey(u, v);
+                const fp = edgeFaces[key];
+                const bool s0 = fp[0] >= 0 && fp[0] < cast(int)mask.length && mask[fp[0]];
+                const bool s1 = fp[1] >= 0 && fp[1] < cast(int)mask.length && mask[fp[1]];
+                if (s0 == s1) continue;
+                capturedOrder ~= BEdge(cast(uint)(key >> 32),
+                    cast(uint)(key & 0xffffffffUL), cast(int)fi);
+            }
+        }
+        bEdges = capturedOrder;
+    }
+
     // Empty-boundary pin: closed island → clean no-op BEFORE any geometry.
     // Without this, the degenerate-normal fallback (+Y) would silently
     // translate the whole mesh.
@@ -3449,7 +3478,9 @@ size_t extrudeFacesByMask(ref MeshEditBatch ed, in bool[] maskIn, float distance
     foreach (fi; 0 .. ed.faces.length) if (mask[fi]) toCloneFace ~= fi;
 
     // Reconstruct faces + parallel arrays (deleteFacesByMask rebuild idiom).
-    // Order: [non-selected originals] + [cap clones] + [wall quads].
+    // Headless/default callers retain the historical cap-before-walls order.
+    // The interactive Polygon tool opts into the captured W2 walls-before-cap
+    // order, which also makes the selected cap keep the captured face identity.
     uint[][] newFaces;
     // Per-NEW-FACE newToOld correspondence (task 1902,
     // mesh_planes.rewriteFaces): an untouched face names itself, a cap
@@ -3477,62 +3508,82 @@ size_t extrudeFacesByMask(ref MeshEditBatch ed, in bool[] maskIn, float distance
         oldOfNew ~= cast(uint) fi;
         if (remapUv) cornerCursor += ed.faces[fi].length;
     }
-    immutable size_t capStart = newFaces.length;   // first cap index in newFaces
-
-    // Cap clones: re-emit each selected face with cloned (offset) verts.
-    foreach (fi; toCloneFace) {
-        auto src = ed.faces[fi];
-        uint[] cloned;
-        cloned.length = src.length;
-        int island = islandOf[fi];
-        foreach (k, vid; src) cloned[k] = vertMap[ivKey(island, vid)];
-        newFaces ~= cloned;
-        oldOfNew ~= cast(uint) fi;
-        if (remapUv) cornerCursor += cloned.length;
+    void appendCaps() {
+        foreach (fi; toCloneFace) {
+            auto src = ed.faces[fi];
+            uint[] cloned;
+            cloned.length = src.length;
+            int island = islandOf[fi];
+            foreach (k, vid; src) cloned[k] = vertMap[ivKey(island, vid)];
+            newFaces ~= cloned;
+            oldOfNew ~= cast(uint) fi;
+            if (remapUv) cornerCursor += cloned.length;
+        }
     }
 
     // Wall quads: one per boundary edge, oriented by the orientability rule.
     // The cap face traverses (cloneA, cloneB) in the SAME direction as the
     // original selected face traverses (a, b), since we only substituted indices.
     // The wall must share the cap's top edge in the OPPOSITE direction.
-    foreach (ref be; bEdges) {
-        uint a = be.va, b = be.vb;
-        int island = islandOf[be.selFi];
-        uint cloneA = vertMap[ivKey(island, a)], cloneB = vertMap[ivKey(island, b)];
-        // Determine direction (a → b) in the original selected face.
-        bool origAtoB = false;
-        auto orig = ed.faces[be.selFi];
-        foreach (k; 0 .. orig.length) {
-            uint u = orig[k], w = orig[(k + 1) % orig.length];
-            if (u == a && w == b) { origAtoB = true;  break; }
-            if (u == b && w == a) { origAtoB = false; break; }
-        }
-        // Cap walks cloneA→cloneB iff orig walks a→b.
-        // Wall traverses the shared top edge in the opposite direction.
-        if (origAtoB) newFaces ~= [cloneB, cloneA, a, b];
-        else          newFaces ~= [cloneA, cloneB, b, a];
-        oldOfNew ~= be.selFi;
-        if (remapUv) {
-            // The wall skirts exactly ONE selected face — its island is the
-            // one every corner of this wall reads.
-            const size_t wallLoop0 = cornerCursor;
-            cornerCursor += newFaces[$ - 1].length;
-            if (uvWall == UvWallLaw.SweepU) {
-                // Fresh wall parameterisation (frozen: `face_extrude_uv_sweep_u`)
-                // — u = 0 on the base ring, u = 1 on the top ring, v = the
-                // BASE corner's own v in the source face's island. The base
-                // corners' original u is discarded ON THE WALL ONLY; the
-                // faces that share those vertices keep their own corners.
-                foreach (k, v; newFaces[$ - 1]) {
-                    const bool top  = (v == cloneA || v == cloneB);
-                    const uint baseV = (v == cloneA || v == a) ? a : b;
-                    const uint sc = Mesh.cornerOfVertexInFace(oldFaces[be.selFi], baseV);
-                    if (sc == ~0u) continue;    // no source corner ⇒ honest zero
-                    gens ~= PolyVertexGen(wallLoop0 + k, cast(uint)be.selFi, sc,
-                                          PolyVertexGen.Law.SweepU, top ? 1.0f : 0.0f);
+    void appendWalls() {
+        foreach (ref be; bEdges) {
+            uint a = be.va, b = be.vb;
+            int island = islandOf[be.selFi];
+            uint cloneA = vertMap[ivKey(island, a)], cloneB = vertMap[ivKey(island, b)];
+            // Determine direction (a → b) in the original selected face.
+            bool origAtoB = false;
+            auto orig = ed.faces[be.selFi];
+            foreach (k; 0 .. orig.length) {
+                uint u = orig[k], w = orig[(k + 1) % orig.length];
+                if (u == a && w == b) { origAtoB = true;  break; }
+                if (u == b && w == a) { origAtoB = false; break; }
+            }
+            // Cap walks cloneA→cloneB iff orig walks a→b. The captured form
+            // starts at the clone of the directed boundary edge's first base
+            // vertex; the historical form retains its old rotated tuple.
+            if (faceOrder == FaceExtrudeOrder.WallsThenCap) {
+                const uint u = origAtoB ? a : b;
+                const uint v = origAtoB ? b : a;
+                const uint cloneU = origAtoB ? cloneA : cloneB;
+                const uint cloneV = origAtoB ? cloneB : cloneA;
+                newFaces ~= [cloneU, u, v, cloneV];
+            } else if (origAtoB) newFaces ~= [cloneB, cloneA, a, b];
+            else                 newFaces ~= [cloneA, cloneB, b, a];
+            oldOfNew ~= be.selFi;
+            if (remapUv) {
+                // The wall skirts exactly ONE selected face — its island is the
+                // one every corner of this wall reads.
+                const size_t wallLoop0 = cornerCursor;
+                cornerCursor += newFaces[$ - 1].length;
+                if (uvWall == UvWallLaw.SweepU) {
+                    // Fresh wall parameterisation (frozen: `face_extrude_uv_sweep_u`)
+                    // — u = 0 on the base ring, u = 1 on the top ring, v = the
+                    // BASE corner's own v in the source face's island. The base
+                    // corners' original u is discarded ON THE WALL ONLY; the
+                    // faces that share those vertices keep their own corners.
+                    foreach (k, v; newFaces[$ - 1]) {
+                        const bool top  = (v == cloneA || v == cloneB);
+                        const uint baseV = (v == cloneA || v == a) ? a : b;
+                        const uint sc = Mesh.cornerOfVertexInFace(oldFaces[be.selFi], baseV);
+                        if (sc == ~0u) continue;    // no source corner ⇒ honest zero
+                        gens ~= PolyVertexGen(wallLoop0 + k, cast(uint)be.selFi, sc,
+                                              PolyVertexGen.Law.SweepU, top ? 1.0f : 0.0f);
+                    }
                 }
             }
         }
+    }
+
+    immutable size_t changedStart = newFaces.length;
+    size_t capStart;
+    if (faceOrder == FaceExtrudeOrder.WallsThenCap) {
+        appendWalls();
+        capStart = newFaces.length;
+        appendCaps();
+    } else {
+        capStart = newFaces.length;
+        appendCaps();
+        appendWalls();
     }
 
     // task 1902: mesh_planes.rewriteFaces assigns `faces` AND carries
@@ -3568,7 +3619,7 @@ size_t extrudeFacesByMask(ref MeshEditBatch ed, in bool[] maskIn, float distance
     // call — the immediately following reselect loop below overwrites
     // the CAP portion of this range again (via selectFace); the WALL
     // portion is what this line alone determines.
-    foreach (i; capStart .. ed.faces.length) ed.faceSelectionOrder[i] = 0;
+    foreach (i; changedStart .. ed.faces.length) ed.faceSelectionOrder[i] = 0;
     // Re-mask the just-carried word in place — src here IS faceMarks
     // (self-aliasing; see Mesh.setFaceMarksFrom's own doc comment for
     // why that is safe), dropping stale Select from the old ordering
