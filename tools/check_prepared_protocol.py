@@ -646,7 +646,7 @@ B3D_PRODUCER_DIGESTS = {
     "tools/deform/smooth_shift_tool":"5c1c9ace215d2a239f08501c9f7a8a02b8ea27ec1d8a1c3ede1cd5de46ac6c27",
     "tools/deform/stroke_extrude_tool":"48fd9fad9f7c4566468ebf746ab9ba38548cb5d7c2f6d7004d162ffa1a3c7d5f",
     "tools/edit/edge_bevel":"8c47f66199de95b827047be61df795f14fb018e720c32e4cb151bab20d1d547d",
-    "tools/edit/edge_extrude":"293c94c99cb663a063dc0dfd59c345dce2a68a141bdf41972b21b9ba58cbcf8a",
+    "tools/edit/edge_extrude":"3f126a0516e4d82f2d2e208b4262b5444710148841404d8db2baaf4fcd1bf537",
     "tools/edit/poly_bevel":"904bd0a0820bba150b7f4bcc3f873121013d1b383d2f0276bd70def1171b7c9e",
     "tools/edit/poly_extrude":"1645a6f9603d75a3bd03662a7a47db845c018bf38b6b754471f658113ae8f192",
     "tools/edit/poly_inset_tool":"7b39c23988c01f31c8956395c1834b00bfaefde748ed19646cfe40465d320dd4",
@@ -809,9 +809,22 @@ except SystemExit as error:
         fail("P1.0b.3d wrong-original mutation failed for wrong reason")
 else: fail("P1.0b.3d wrong-original mutation did not RED")
 
+# Edge topology steps are installed at their own boundaries, so prepared
+# deactivation must explicitly decline a second cumulative history carrier.
+mutation_module = "tools.edit.edge_extrude"
+mutation_sources = dict(b3d_sources)
+edge_no_install = "const accepted = context.markNoHistoryInstall();"
+if mutation_sources[mutation_module].count(edge_no_install) != 1:
+    fail("P1.0b.3d Edge no-history mutation anchor vanished")
+mutation_sources[mutation_module] = mutation_sources[mutation_module].replace(
+    edge_no_install, "const accepted = context.markHistoryInstall();", 1)
+try: validate_b3d_producers(mutation_sources, {mutation_module})
+except SystemExit as error:
+    if "producer parity drifted" not in str(error):
+        fail("P1.0b.3d Edge cumulative-history mutation failed for wrong reason")
+else: fail("P1.0b.3d Edge cumulative-history mutation did not RED")
+
 for module, guard, inverted in (
-    ("tools.edit.edge_extrude", "(extrude_ != 0.0f || width_ != 0.0f) &&",
-     "(extrude_ == 0.0f && width_ == 0.0f) &&"),
     # Slice M3b: the arm's zero-width ring is an applied operation, not an
     # identity preview; the guard is the window's own "holds geometry" answer.
     ("tools.edit.poly_bevel", "hasUncommittedEdit() &&",

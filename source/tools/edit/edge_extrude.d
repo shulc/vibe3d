@@ -274,7 +274,7 @@ public:
     }
 
     override void deactivate() {
-        // Task 7990: completed steps already live in CommandHistory.
+        // Completed steps already live in CommandHistory.
         active     = false;
         built      = false;
         dragPart   = -1;
@@ -727,7 +727,7 @@ private:
         refreshCaches();
     }
 
-    // Task 7990: all applied images have already been handed to history at
+    // All applied images have already been handed to history at
     // their step boundary. A prepared switch installs no cumulative carrier.
     final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context) {
         if (context is null) return PreparedDeactivateEffect(

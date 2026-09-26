@@ -62,7 +62,7 @@ class MeshSessionEdit : Command, Operator, GesturePayload {
 
     private MeshSnapshot before;
     private MeshSnapshot after;
-    // Task 7990: history owns each topology step's navigation image. The
+    // History owns each topology step's navigation image. The
     // preview basis is distinct from the visible mesh after a plain drag.
     private AttrImage stepBeforeAttrs_;
     private AttrImage stepAfterAttrs_;
@@ -79,8 +79,8 @@ class MeshSessionEdit : Command, Operator, GesturePayload {
     }
     MeshSnapshot stepBeforeBasis() const { return stepBeforeBasis_.ownedDup(); }
     MeshSnapshot stepAfterBasis() const { return stepAfterBasis_.ownedDup(); }
-    void setTopologyStep(AttrImage beforeAttrs, AttrImage afterAttrs,
-            MeshSnapshot beforeBasis, MeshSnapshot afterBasis) {
+    void setTopologyStep(
+            AttrImage beforeAttrs, AttrImage afterAttrs, MeshSnapshot beforeBasis, MeshSnapshot afterBasis) {
         stepBeforeAttrs_ = beforeAttrs;
         stepAfterAttrs_ = afterAttrs;
         stepBeforeBasis_ = beforeBasis;

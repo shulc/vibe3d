@@ -713,7 +713,7 @@ private struct ToolSession {
     private AttrImage pending_;
     private bool pendingSet_;
     private bool pendingIfChanged_;
-    // Task 7990: only an in-flight topology image lives here. Completed
+    // Only an in-flight topology image lives here. Completed
     // images, attributes and preview bases belong to history commands.
     private MeshSnapshot topologyPendingMesh_;
     private MeshSnapshot topologyPendingBasis_;
@@ -770,7 +770,7 @@ private struct ToolSession {
     // exactly as before.
     //
     // A `sessionSteps` tool's live operation is answered FIRST. Attribute
-    // steps use the session stack; task 7990's topology steps use history
+    // steps use the session stack; topology steps use history
     // commands with mesh, attrs and basis, via the same navigation door.
     //
     // NOTE the deliberate RE-READS of tool_() after cancelUncommittedEdit():
@@ -823,7 +823,7 @@ private struct ToolSession {
                 history_.invalidateRedo();
             if (act !is null) topologyFirstGroupLive_ = false;
         }
-        // Task 7990: once a topology step has ended, its mesh image belongs
+        // Once a topology step has ended, its mesh image belongs
         // to history even though the tool may retain `built` parameters for
         // command-close policy. A foreign row above that image must reach the
         // stack; the legacy cancel hook is only first responder while this

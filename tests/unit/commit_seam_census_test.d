@@ -4374,7 +4374,8 @@ private static immutable LedgerRow[] kSnapHolders = [
     LedgerRow("SelectSetEdit", 1, "bucket A permanently dense registry"),
     LedgerRow("SelectSetRename", 1, "bucket A permanently dense registry"),
     LedgerRow("SelectSetDelete", 1, "bucket A permanently dense registry"),
-    LedgerRow("MeshSessionEdit", 2, "bucket E carrier before/after pair"),
+    LedgerRow("MeshSessionEdit", 4,
+              "bucket E history-owned visible pair plus topology preview-basis pair"),
     LedgerRow("(module scope)", 1, "bucket E session-edit unittest stand"),
 ];
 
@@ -4400,7 +4401,7 @@ unittest // Stage M - the closing MeshSnapshot declaration census
     const problems = reconcile(kSnapHolders, hits);
     assert(problems.length == 0,
         "the source/commands MeshSnapshot-holder symbol ledger changed.\n" ~ problems);
-    assert(hits.length == 19 && filesRead >= 150,
-        format("expected 19 MeshSnapshot declarations over a live commands walk; got %d over %d files",
+    assert(hits.length == 21 && filesRead >= 150,
+        format("expected 21 MeshSnapshot declarations over a live commands walk; got %d over %d files",
                hits.length, filesRead));
 }

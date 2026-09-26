@@ -865,7 +865,7 @@
     {
       "aggregate": "EdgeExtrudeTool",
       "module": "tools.edit.edge_extrude",
-      "semantic_sha256": "c0b879d5c71676620805baa6fe07c85328c4ee2b6a237f62b3555de019f2269c",
+      "semantic_sha256": "d7966e12c491d27c21f4fd9e7d66f4dbcd69eeab936769580923681f0ed76233",
       "signature": "void()",
       "symbol": "deactivate"
     },
@@ -1210,11 +1210,11 @@
     {
       "line": 101,
       "path": "source/prepared_tool_transition.d",
-      "semantic_sha256": "c68d752955fbf96b4e6d9e47852f791ee4e53e975f44a42f23e6fe3c9188e94b",
+      "semantic_sha256": "07d3ce4397ee49560b9159368c64a645983279c05b771e468e9c5290df376309",
       "symbol": "prepareArm"
     },
     {
-      "line": 266,
+      "line": 267,
       "path": "source/prepared_tool_transition.d",
       "semantic_sha256": "22c2e28c0998d02d2da53cf75b6080820e329e066ae4f35250aed4147875b68b",
       "symbol": "commitPreparedArm"
@@ -1232,6 +1232,13 @@
       "aggregate": "EdgeExtendTool",
       "module": "tools.edit.edge_extend",
       "signature": "EdgeExtendTool",
+      "symbol": "lifecycleProduct"
+    },
+    {
+      "admission": "activationRow",
+      "aggregate": "EdgeExtrudeTool",
+      "module": "tools.edit.edge_extrude",
+      "signature": "EdgeExtrudeTool",
       "symbol": "lifecycleProduct"
     },
     {

@@ -323,7 +323,7 @@ struct ToolSessionPolicy {
     /// ToolSession; `historyTopologySteps` instead puts full completed step
     /// images in CommandHistory. `false` means H2 is not ported.
     bool sessionSteps;
-    /// Task 7990 R: full topology steps are recorded in CommandHistory as
+    /// Full topology steps are recorded in CommandHistory as
     /// they finish. ToolSession keeps only the in-flight image and latest
     /// attributes, never a live mesh-image stack.
     bool historyTopologySteps;

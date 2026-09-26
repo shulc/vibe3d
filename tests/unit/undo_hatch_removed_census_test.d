@@ -142,8 +142,8 @@ unittest {
     // NON-VACUITY, and this is the half that makes the zero mean something.
     // The historical comments are supposed to be there; if this reads 0 the
     // scanner was handed blank text and the gate above passed for free.
-    assert(s.rawHits == 64, format(
-        "the census found %d RAW mention(s) of the hatch, expected exactly 64, across %d file(s) / "
+    assert(s.rawHits == 63, format(
+        "the census found %d RAW mention(s) of the hatch, expected exactly 63, across %d file(s) / "
       ~ "%d byte(s). Zero here does not mean the tree is clean — it means the "
       ~ "scanner read nothing, and the `codeHits == 0` gate above is then "
       ~ "satisfied for free. The historical comments naming the flag are "
