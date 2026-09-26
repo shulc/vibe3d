@@ -249,8 +249,8 @@ private enum LedgerRow[] kCallRoster = [
     LedgerRow("MagnetTool.commitEdit|plain", 1, "magnet mode"),
     LedgerRow("EdgeExtendTool.commitEdit|call", 2, "edge-extend commit paths"),
     LedgerRow("EdgeExtendTool.commitEdit|plain", 2, "edge-extend modes"),
-    LedgerRow("EdgeExtrudeTool.commitEdit|call", 2, "edge-extrude commit paths"),
-    LedgerRow("EdgeExtrudeTool.commitEdit|plain", 2, "edge-extrude modes"),
+    LedgerRow("EdgeExtrudeTool.recordTopologyStep|call", 1, "history-owned topology step"),
+    LedgerRow("EdgeExtrudeTool.recordTopologyStep|plain", 1, "plain row mode"),
 ];
 
 unittest {
@@ -268,9 +268,9 @@ unittest {
         hits ~= symbolTokenHits(src, rel, "GestureRecordMode.ReplaceRunTail", "replaceTail");
     }
 
-    assert(totalCalls >= 13,
+    assert(totalCalls >= 12,
         "G1 census: only " ~ totalCalls.to!string ~ " `recordGestureEdit(` in the "
-      ~ "whole family. Twelve tool sites plus the seam's own declaration are "
+      ~ "whole family. Eleven tool sites plus the seam's own declaration are "
       ~ "expected; a number near zero means the scanner read nothing, not that "
       ~ "the family stopped recording.");
 

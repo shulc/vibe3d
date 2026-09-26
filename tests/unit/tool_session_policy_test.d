@@ -81,7 +81,7 @@ private immutable Row[] kTable = [
     Row("TransformScale", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
     Row("edge.bevel", "EdgeBevelTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
     Row("edge.extend", "EdgeExtendTool", true, Prov.captured, CommandClose.uiDoor, CloseProv.captured),
-    Row("edge.extrude", "EdgeExtrudeTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
+    Row("edge.extrude", "EdgeExtrudeTool", true, Prov.captured, CommandClose.uiDoor, CloseProv.inferred),
     Row("edge.slide", "EdgeSlideTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
     Row("mesh.arrayTool", "ArrayTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
     Row("mesh.bridgeTool", "BridgeTool", false, Prov.notPorted, CommandClose.none, CloseProv.notCaptured),
@@ -151,6 +151,7 @@ private immutable Row[] kTable = [
 /// Edge Extend (M4).
 private immutable string[] kActivationRowClasses = [
     "tools.edit.edge_extend.EdgeExtendTool",
+    "tools.edit.edge_extrude.EdgeExtrudeTool",
     "tools.edit.poly_bevel.PolyBevelTool",
     "tools.edit.topology_pen.tool.TopologyPenTool",
     "tools.slice.edge_slice_tool.EdgeSliceTool",
@@ -281,9 +282,9 @@ unittest { // (1) id -> policy, over every registered id
 /// not ported (the rest have no counterpart or an unsure one), and ids whose
 /// session does not own their gesture steps (H2 not ported). Measured on the
 /// M7 tree; each only falls.
-private enum size_t kActivationRowFalseCeiling = 40;
-private enum size_t kNotPortedCeiling = 36;
-private enum size_t kSessionStepsFalseCeiling = 65;
+private enum size_t kActivationRowFalseCeiling = 39;
+private enum size_t kNotPortedCeiling = 35;
+private enum size_t kSessionStepsFalseCeiling = 64;
 
 unittest { // (2) exactly seven tool classes declare the activation row
     string[] declared;
@@ -372,18 +373,18 @@ unittest { // (3) the doors reach the tool session only through EditSession
     // branches are gone; the record that carries its activation row is read
     // before the stack steps, and a restored predecessor adopts its token after.
     inOrder(bodyAt(ts, "bool undo()"),
-            ["undoFirstGroup_(t)", "cancelUncommittedEdit()", "recordCarriesActivation_()",
+            ["navigateTopology_(true)", "undoFirstGroup_(t)", "cancelUncommittedEdit()", "recordCarriesActivation_()",
              "resyncSession()", "adoptPredecessorToken_("],
             "ToolSession.undo");
     inOrder(bodyAt(ts, "bool redo()"),
-            ["applyAttrImage(img)", "carriesFirstRecord()", "adoptToken_(",
+            ["navigateTopology_(false)", "applyAttrImage(img)", "carriesFirstRecord()", "adoptToken_(",
              "resyncSession()", "replayFirstGroup_()"],
             "ToolSession.redo");
     // Nothing else in the module steps the history.
-    assert(es.count("history_.undo()") == 3 && es.count("history_.redo()") == 2,
+    assert(es.count("history_.undo()") == 5 && es.count("history_.redo()") == 4,
            format("M1 wiring census: edit_session.d steps the history %s/%s times, "
-                  ~ "expected undo 3 (ToolSession.undo and its pair, undoFirstGroup_) and "
-                  ~ "redo 2 (ToolSession.redo and its pair)",
+                  ~ "expected undo 5 (ToolSession.undo and its pair, undoFirstGroup_, topology pair) and "
+                  ~ "redo 4 (ToolSession.redo and its pair, topology pair)",
                   es.count("history_.undo()"), es.count("history_.redo()")));
 }
 
@@ -416,6 +417,8 @@ private immutable StepRow[] kStepTable = [
     StepRow("edge.extend", OpensAt.firstPress, false,
             ["opOpen", "inset", "shift", "offsetX", "offsetY", "offsetZ",
              "rotateX", "rotateY", "rotateZ", "scaleX", "scaleY", "scaleZ"]),
+    StepRow("edge.extrude", OpensAt.firstPress, false,
+            ["extrude", "width"]),
     StepRow("mesh.edgeSliceTool", OpensAt.firstPress, true,
             ["chain", "edges", "activePoint"]),
     StepRow("mesh.loopSliceTool", OpensAt.arm, false,
@@ -507,13 +510,13 @@ unittest { // (4)
     // Population floors (measured): 5 ids, 39 image names, 3 Action triggers
     // on them (chainArm; insertAt, removeCurrent), 1 arm attribute (M3b).
     sort(stepIds);
-    assert(stepIds == ["edge.extend", "mesh.edgeSliceTool", "mesh.loopSliceTool", "mesh.sliceTool",
+    assert(stepIds == ["edge.extend", "edge.extrude", "mesh.edgeSliceTool", "mesh.loopSliceTool", "mesh.sliceTool",
                        "poly.bevel"],
            format("M3 step table: sessionSteps ids %s", stepIds));
-    assert(checkedNames == 39, format("M3 step table: %s image names checked, measured 39",
+    assert(checkedNames == 41, format("M3 step table: %s image names checked, measured 41",
                                       checkedNames));
     assert(armAttrs == 1, format("M3b step table: %s arm attributes, measured 1", armAttrs));
-    assert(actionNames == 3, format("M3 step table: %s Action params on the five tools, "
+    assert(actionNames == 3, format("M3 step table: %s Action params on the six tools, "
                                     ~ "measured 3", actionNames));
 }
 
@@ -569,7 +572,8 @@ unittest { // (5)
     assert(keep == kKeepAliveClasses,
            format("M4 policy classes: keepAliveOnCancel declared by %s, expected %s",
                   keep, kKeepAliveClasses));
-    assert(carries == ["tools.edit.edge_extend.EdgeExtendTool"],
+    assert(carries == ["tools.edit.edge_extend.EdgeExtendTool",
+                       "tools.edit.edge_extrude.EdgeExtrudeTool"],
            format("M4 policy classes: recordCarriesActivation declared by %s", carries));
 }
 
@@ -824,6 +828,7 @@ private enum string[] kPinnedToolInterfaces = [
     "prepared_record_context.PreparedToolDoorClient",
     "prepared_record_context.PreparedToolParamDoorClient",
     "prepared_record_context.PreparedToolPoseDoorClient", "tool.InputBindable",
+    "tool.TopologyStepClient",
 ];
 
 private enum string[] kToolComposition = toolClassComposition();
@@ -835,6 +840,29 @@ static assert(kToolComposition[kToolBar + 1 .. $] == kPinnedToolInterfaces,
     ~ "not a new interface");
 // Population floor: the pin read the 48 classes block (8) scans.
 static assert(kToolBar == 48, "M7 tool pin: read concrete tool classes, measured 48");
+
+unittest { // Task 7990: production topology R wiring, not a helper replica.
+    auto es = blankNonCode(readText("source/edit_session.d"));
+    auto edge = blankNonCode(readText("source/tools/edit/edge_extrude.d"));
+    auto carrier = blankNonCode(readText("source/commands/mesh/session_edit.d"));
+    assert(es.canFind("if (navigateTopology_(true)) return true;")
+        && es.canFind("if (navigateTopology_(false)) return true;"),
+        "Edge topology navigation bypassed the production ToolSession door");
+    assert(es.canFind("topologyParameterStepBegins(t)")
+        && es.canFind("cmd.setTopologyStep(topologyPendingAttrs_, attrs,"),
+        "interactive parameter or history-owned step payload was disconnected");
+    assert(edge.canFind("sessionStepBegins(e.button == SDL_BUTTON_MIDDLE")
+        && edge.canFind("sessionStepEnds();")
+        && edge.canFind("context.markNoHistoryInstall()"),
+        "Edge drag/Middle or prepared close lost its production seam");
+    assert(edge.canFind("recordGestureEdit(cmd, GestureRecordMode.Plain)")
+        && !edge.canFind("GestureRecordMode.ReplaceRunTail"),
+        "Edge topology rows must stay separate Plain records");
+    assert(carrier.canFind("void setTopologyStep(")
+        && carrier.canFind("stepBeforeBasis_")
+        && carrier.canFind("stepAfterAttrs_"),
+        "history command lost topology basis or attributes");
+}
 
 unittest { // (9) the compile-time module list IS the runtime scan
     bool[string] mods, classes, ifaces;

@@ -9,11 +9,13 @@
 axis1-violators 1
 axis2-violators 0
 
-# Session-special debt, only-down (3b; doc/tool_session_model_plan_2026-09-24.md (section 5.1 (d), slice M7)):
+# Session-special debt (3b). Task 7990 adds one generic TopologyStepClient
+# and four casts in ToolSession; history owns its completed images. The
+# ceilings remain exact after this named W2 expansion.
 # interfaces of the session modules, casts to them in source/, and casts
 # to a concrete tool class outside source/tools/.
-session-capabilities 4
-session-branches 6
+session-capabilities 5
+session-branches 10
 special-tool-casts 27
 
 tool tools.alignment.array_tool.ArrayTool has=tools.alignment.array_tool.ArrayTool cancel=tools.alignment.array_tool.ArrayTool resync=tools.alignment.array_tool.ArrayTool commit=tools.alignment.array_tool.ArrayTool snap=4 live=yes | live array preview built on activation, restored from MeshSnapshot baseline until drop/apply
@@ -48,7 +50,7 @@ tool tools.edit.bridge_tool.BridgeTool has=tools.edit.bridge_tool.BridgeTool can
 tool tools.edit.drag_weld.DragWeldTool has=tools.edit.drag_weld.DragWeldTool cancel=tools.edit.drag_weld.DragWeldTool resync=tool.Tool commit=tool.Tool snap=1 live=yes | weld drag in progress (dragging_) is uncommitted until release
 tool tools.edit.edge_bevel.EdgeBevelTool has=tools.edit.edge_bevel.EdgeBevelTool cancel=tools.edit.edge_bevel.EdgeBevelTool resync=tools.edit.edge_bevel.EdgeBevelTool commit=tools.edit.edge_bevel.EdgeBevelTool snap=3 live=yes | built bevel preview over a MeshSnapshot baseline until drop/apply
 tool tools.edit.edge_extend.EdgeExtendTool has=tools.edit.edge_extend.EdgeExtendTool cancel=tools.edit.edge_extend.EdgeExtendTool resync=tools.edit.edge_extend.EdgeExtendTool commit=tools.edit.edge_extend.EdgeExtendTool snap=4 live=yes | built extend preview over a MeshSnapshot baseline until drop/apply
-tool tools.edit.edge_extrude.EdgeExtrudeTool has=tools.edit.edge_extrude.EdgeExtrudeTool cancel=tools.edit.edge_extrude.EdgeExtrudeTool resync=tools.edit.edge_extrude.EdgeExtrudeTool commit=tools.edit.edge_extrude.EdgeExtrudeTool snap=3 live=yes | built extrude preview over a MeshSnapshot baseline until drop/apply
+tool tools.edit.edge_extrude.EdgeExtrudeTool has=tools.edit.edge_extrude.EdgeExtrudeTool cancel=tools.edit.edge_extrude.EdgeExtrudeTool resync=tools.edit.edge_extrude.EdgeExtrudeTool commit=tools.edit.edge_extrude.EdgeExtrudeTool snap=5 live=yes | current preview basis in tool; completed topology step images in CommandHistory
 tool tools.edit.poly_bevel.PolyBevelTool has=tools.edit.poly_bevel.PolyBevelTool cancel=tools.edit.poly_bevel.PolyBevelTool resync=tools.edit.poly_bevel.PolyBevelTool commit=tool.Tool snap=7 live=yes | built bevel preview over a MeshSnapshot baseline until drop/apply
 tool tools.edit.poly_extrude.PolyExtrudeTool has=tools.edit.poly_extrude.PolyExtrudeTool cancel=tools.edit.poly_extrude.PolyExtrudeTool resync=tools.edit.poly_extrude.PolyExtrudeTool commit=tools.edit.poly_extrude.PolyExtrudeTool snap=3 live=yes | built extrude preview over a MeshSnapshot baseline until drop/apply
 tool tools.edit.poly_inset_tool.PolyInsetTool has=tools.edit.poly_inset_tool.PolyInsetTool cancel=tools.edit.poly_inset_tool.PolyInsetTool resync=tools.edit.poly_inset_tool.PolyInsetTool commit=tools.edit.poly_inset_tool.PolyInsetTool snap=3 live=yes | built inset preview over a MeshSnapshot baseline until drop/apply
@@ -104,7 +106,7 @@ write source/tools/edit/bridge_tool.d recordGestureEdit 1
 write source/tools/edit/drag_weld.d recordGestureEdit 1
 write source/tools/edit/edge_bevel.d recordGestureEdit 1
 write source/tools/edit/edge_extend.d recordGestureEdit 2
-write source/tools/edit/edge_extrude.d recordGestureEdit 2
+write source/tools/edit/edge_extrude.d recordGestureEdit 1
 write source/tools/edit/poly_bevel.d recordGestureEdit 1
 write source/tools/edit/poly_extrude.d recordGestureEdit 1
 write source/tools/edit/poly_inset_tool.d recordGestureEdit 1

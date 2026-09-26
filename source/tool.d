@@ -8,6 +8,8 @@ import params : Param, ParamProvider;
 import editmode : EditMode;
 import operator : VectorStack;
 import command : Command;
+import mesh : Mesh;
+import snapshot : MeshSnapshot;
 import command_history : CommandHistory;
 import commands.mesh.gesture_payload : GesturePayload;
 import change_bus : changeBus;
@@ -277,6 +279,16 @@ struct AttrImage {
     }
 }
 
+/// A topology tool's current preview basis and gesture carrier. History owns
+/// every completed image; this capability exposes only the live operation.
+interface TopologyStepClient {
+    Mesh* topologyStepMesh();
+    MeshSnapshot topologyStepBasis();
+    Command topologyStepCarrier();
+    bool recordTopologyStep(Command cmd);
+    void restoreTopologyStep(in AttrImage attrs, MeshSnapshot basis);
+}
+
 /// What a tool reports to the session it is bound to (slice M3). Delegates,
 /// not an interface: the tool is never CAST to anything for this, so the
 /// census's session capabilities do not grow. Installed by `EditSession` when
@@ -304,10 +316,15 @@ struct ToolSessionPolicy {
     /// old drop rules). The UI half is captured; the SCRIPT half of `allDoors`
     /// is carried from today's behaviour, not captured (opponent R3 C7).
     CommandClose commandClose;
-    /// H2 PORTED (slice M3): the session owns this tool's gesture steps — the
-    /// stack of attribute images, their redo, the window's first group and the
-    /// activation row it joins. `false` = "H2 not yet ported", not "special".
+    /// H2 PORTED: ToolSession coordinates this tool's gesture navigation and
+    /// activation pairing. Most ported tools keep attribute-image stacks in
+    /// ToolSession; `historyTopologySteps` instead puts full completed step
+    /// images in CommandHistory. `false` means H2 is not ported.
     bool sessionSteps;
+    /// Task 7990 R: full topology steps are recorded in CommandHistory as
+    /// they finish. ToolSession keeps only the in-flight image and latest
+    /// attributes, never a live mesh-image stack.
+    bool historyTopologySteps;
     /// H1: when the operation window opens (see `OpensAt`). Read only for
     /// `sessionSteps` tools.
     OpensAt opensAt;
@@ -1024,6 +1041,12 @@ public:
         writeRaw(img, null);
         rebuildPreviewFromAttrs();
     }
+
+    /// Restore recorded values without evaluating the kernel a second time.
+    final void restoreRecordedAttrs(in AttrImage img) {
+        if (!img.empty) writeRaw(img, null);
+    }
+
 
     /// H5: a press opens an operation boundary. `middle` clones the previous
     /// operation's end (`prevEnd`) into the haul attributes unless the policy

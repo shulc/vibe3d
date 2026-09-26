@@ -46,6 +46,7 @@ import std.algorithm : canFind, sort;
 import std.conv : to;
 import std.json;
 import std.math : abs;
+import std.format : format;
 import std.net.curl : get, post;
 
 import plane_diff_helpers;
@@ -117,6 +118,14 @@ void drag(int x0, int y0, int x1, int y1, int steps = 12) {
     Thread.sleep(dur!"msecs"(120));
 }
 
+void navigate(bool undo) {
+    const mod = undo ? 64 : 65;
+    playAndWait(format(
+        `{"t":50,"type":"SDL_KEYDOWN","sym":122,"scan":0,"mod":%s,"repeat":0}` ~ "\n"
+      ~ `{"t":60,"type":"SDL_KEYUP","sym":122,"scan":0,"mod":%s,"repeat":0}` ~ "\n",
+        mod, mod), BASE);
+}
+
 // The cube's edge index whose two endpoints both sit at x=+0.5, z=-0.5.
 // Looked up rather than hard-coded: edge order is a mesh-build detail.
 int findEdgeXPosZNeg() {
@@ -165,10 +174,55 @@ unittest { // width, then a horizontal haul on the extrude arrow, and the tool b
     //    far the extrude arrow is hauled.
     int wx, wy; handlePx(1, wx, wy);
     drag(wx, wy, wx - 40, wy);
+    immutable string firstImage = planes();
+    assert(firstImage != planesBefore, "first handle drag changed no mesh plane");
 
     // 2. the EXTRUDE arrow, purely horizontal.
     int ex, ey; handlePx(0, ex, ey);
     drag(ex, ey, ex + 70, ey);
+    immutable string secondImage = planes();
+    assert(secondImage != firstImage, "second handle drag changed no mesh plane");
+    navigate(true);
+    assert(planes() == firstImage,
+        "live Ctrl+Z did not restore the first completed Edge step");
+    assert(undoLen() == u0 + 1, "live Ctrl+Z did not move one history row");
+    navigate(false);
+    assert(planes() == secondImage,
+        "live Ctrl+Shift+Z did not restore the second Edge step");
+    assert(undoLen() == u0 + 2, "live redo did not restore one history row");
+
+    // A motionless Middle press clones the current operation on the selected
+    // ridge. It is a row of its own and its undo restores the prior group.
+    auto cam = fetchCamera(BASE);
+    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+        ex, ey, ex, ey, 1, 0, 2), BASE);
+    immutable string middleImage = planes();
+    assert(middleImage != secondImage,
+        "Middle clone did not build a second topology operation");
+    assert(undoLen() == u0 + 3,
+        "Middle boundary did not append its own history row");
+    navigate(true);
+    assert(planes() == secondImage,
+        "Middle undo did not restore the first operation end");
+    navigate(false);
+    assert(planes() == middleImage,
+        "Middle redo did not restore the cloned operation");
+
+    auto pr = postJson("/api/script?interactive=true",
+        "tool.attr edge.extrude width 0.2\n");
+    assert(pr["status"].str == "ok" || pr["status"].str == "success",
+        "interactive Edge parameter write failed: " ~ pr.toString);
+    immutable string paramImage = planes();
+    assert(paramImage != middleImage,
+        "interactive Width did not update the preview mesh");
+    assert(undoLen() == u0 + 4,
+        "interactive Width did not append its own history row");
+    navigate(true);
+    assert(planes() == middleImage,
+        "interactive Width undo did not restore Middle image");
+    navigate(false);
+    assert(planes() == paramImage,
+        "interactive Width redo did not restore its preview");
 
     double after = queryExtrude();
     assert(after > 1e-3,
@@ -189,8 +243,19 @@ unittest { // width, then a horizontal haul on the extrude arrow, and the tool b
         ~ "the tool built nothing and the drop will record nothing, and an "
         ~ "attribute assertion cannot tell the difference");
 
-    cmd("tool.set " ~ TOOL ~ " off");
+    cmd("tool.set move on");
     Thread.sleep(dur!"msecs"(250));
+    assert(undoLen() == u0 + 5,
+        "switch wrote a duplicate cumulative Edge row");
+    navigate(true);
+    assert(planes() == paramImage && undoLen() == u0 + 4,
+        "outside z1 did not remove the Move activation alone");
+    navigate(true);
+    assert(planes() == middleImage && undoLen() == u0 + 3,
+        "outside z2 did not remove the independent Width row");
+    navigate(true);
+    assert(planes() == secondImage && undoLen() == u0 + 2,
+        "outside z3 did not remove the independent Middle row");
 
     // ...and half two: a PLANE actually moved, and the drop recorded it.
     auto moved = planeDiff(planesBefore, planes());
@@ -202,8 +267,126 @@ unittest { // width, then a horizontal haul on the extrude arrow, and the tool b
     immutable size_t v1 = getJson("/api/model")["vertices"].array.length;
     assert(v1 > v0,
         "the extrude added no vertex (still " ~ v0.to!string ~ ")");
-    assert(undoLen() - u0 == 1,
-        "the drop recorded " ~ (undoLen() - u0).to!string ~ " undo entr(ies), "
-        ~ "expected exactly 1 — `deactivate()` commits only when the tool is "
-        ~ "`built`, so 0 here means the whole gesture was a no-op");
+    assert(undoLen() - u0 == 2,
+        "outside z3 must leave the two distinct handle rows");
+}
+
+unittest { // A zero Middle boundary has its own cursor despite equal images.
+    auto r = postJson("/api/command", commandBody("scene.reset"));
+    assert(r["status"].str == "ok");
+    cmd("history.clear");
+    int ei = findEdgeXPosZNeg();
+    assert(ei >= 0);
+    r = postJson("/api/command", commandBody("mesh.select",
+        `{"mode":"edges","indices":[` ~ ei.to!string ~ `]}`));
+    assert(r["status"].str == "ok");
+    r = postJson("/api/camera",
+        `{"azimuth":0.4,"elevation":1.1,"distance":4.0,`
+        ~ `"focus":{"x":0,"y":0,"z":0}}`);
+    assert(r["status"].str == "ok");
+    cmd("tool.set " ~ TOOL ~ " on");
+    import core.thread : Thread;
+    import core.time : dur;
+    Thread.sleep(dur!"msecs"(250));
+    immutable string image = planes();
+    immutable long u0 = undoLen();
+    int x, y; handlePx(0, x, y);
+    auto cam = fetchCamera(BASE);
+    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+        x, y, x, y, 1, 0, 2), BASE);
+    assert(planes() == image, "zero Middle changed mesh image");
+    assert(undoLen() == u0 + 1, "zero Middle omitted cursor row");
+    navigate(true);
+    assert(planes() == image && undoLen() == u0,
+        "zero Middle undo failed to step its distinct row");
+    navigate(false);
+    assert(planes() == image && undoLen() == u0 + 1,
+        "zero Middle redo failed to restore its distinct row");
+    cmd("tool.set " ~ TOOL ~ " off");
+}
+
+unittest { // First-group pair replays on a fresh tool and accepts a new haul.
+    auto r = postJson("/api/command", commandBody("scene.reset"));
+    assert(r["status"].str == "ok");
+    cmd("history.clear");
+    int ei = findEdgeXPosZNeg();
+    assert(ei >= 0);
+    r = postJson("/api/command", commandBody("mesh.select",
+        `{"mode":"edges","indices":[` ~ ei.to!string ~ `]}`));
+    assert(r["status"].str == "ok");
+    r = postJson("/api/camera",
+        `{"azimuth":0.4,"elevation":1.1,"distance":4.0,`
+        ~ `"focus":{"x":0,"y":0,"z":0}}`);
+    assert(r["status"].str == "ok");
+    r = postJson("/api/command?origin=ui", "tool.set " ~ TOOL ~ " on");
+    assert(r["status"].str == "ok" || r["status"].str == "success");
+    import core.thread : Thread;
+    import core.time : dur;
+    Thread.sleep(dur!"msecs"(250));
+    immutable string initial = planes();
+    immutable long u0 = undoLen();
+    int x, y; handlePx(1, x, y);
+    drag(x, y, x - 40, y);
+    immutable string first = planes();
+    assert(first != initial && undoLen() == u0 + 1,
+        "fresh replay fixture did not build first step");
+    navigate(true);
+    assert(planes() == initial && undoLen() == u0 - 1,
+        "first-group undo did not remove its activation pair: u0 " ~ u0.to!string
+        ~ ", now " ~ undoLen().to!string ~ ", plane delta "
+        ~ planeDiff(initial, planes()).to!string);
+    navigate(false);
+    assert(planes() == first && undoLen() == u0 + 1,
+        "fresh activation redo did not replay the first step exactly");
+    int ex, ey; handlePx(0, ex, ey);
+    drag(ex, ey, ex + 70, ey);
+    assert(planes() != first && undoLen() == u0 + 2,
+        "freshly replayed Edge tool did not continue with one new step");
+    navigate(true);
+    assert(planes() == first,
+        "undo of fresh continuation did not restore the replayed first step");
+    cmd("tool.set " ~ TOOL ~ " off");
+}
+
+unittest { // A recording UI command closes after Middle without a carrier row.
+    auto r = postJson("/api/command", commandBody("scene.reset"));
+    assert(r["status"].str == "ok");
+    cmd("history.clear");
+    int ei = findEdgeXPosZNeg();
+    assert(ei >= 0);
+    r = postJson("/api/command", commandBody("mesh.select",
+        `{"mode":"edges","indices":[` ~ ei.to!string ~ `]}`));
+    assert(r["status"].str == "ok");
+    r = postJson("/api/camera",
+        `{"azimuth":0.4,"elevation":1.1,"distance":4.0,`
+        ~ `"focus":{"x":0,"y":0,"z":0}}`);
+    assert(r["status"].str == "ok");
+    cmd("tool.set " ~ TOOL ~ " on");
+    import core.thread : Thread;
+    import core.time : dur;
+    Thread.sleep(dur!"msecs"(250));
+    immutable long u0 = undoLen();
+    int x, y; handlePx(1, x, y);
+    drag(x, y, x - 40, y);
+    immutable string first = planes();
+    auto cam = fetchCamera(BASE);
+    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+        x, y, x, y, 1, 0, 2), BASE);
+    immutable string middle = planes();
+    assert(middle != first && undoLen() == u0 + 2,
+        "recording-close fixture lacks two topology rows");
+    r = postJson("/api/command?origin=ui", "mesh.flip");
+    assert(r["status"].str == "ok" || r["status"].str == "success",
+        "recording UI command failed: " ~ r.toString);
+    assert(undoLen() == u0 + 3,
+        "recording command close added a cumulative Edge row");
+    navigate(true);
+    assert(planes() == middle && undoLen() == u0 + 2,
+        "recording-command z1 did not remove command alone: undo "
+        ~ undoLen().to!string ~ ", expected " ~ (u0 + 2).to!string
+        ~ ", planes " ~ planeDiff(middle, planes()).to!string);
+    navigate(true);
+    assert(planes() == first && undoLen() == u0 + 1,
+        "recording-command z2 did not remove Middle alone");
+    cmd("tool.set " ~ TOOL ~ " off");
 }

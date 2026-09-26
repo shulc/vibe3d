@@ -15,13 +15,12 @@ import mesh_gpu : GpuUploadOwner;
 import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
 import mesh_gpu : GpuMesh;
 import core.stdc.string : memcmp;
-import command_history : PreparedHistoryKind;
-import mesh : detachedPreparedMesh;
 
 import bindbc.sdl;
 import operator : VectorStack;
 
 import tool;
+import command : Command;
 import mesh;
 import mesh_ops.extrude;
 import math;
@@ -37,7 +36,6 @@ import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
-import mesh_edit_delta : MeshEditDelta, MeshEditScope;
 
 import std.math : abs, sqrt;
 import std.json : JSONValue;
@@ -74,37 +72,15 @@ struct PreparedEdgeExtrudeParamImage {
     }
 }
 
-/// The interactive tool records into `MeshSessionEdit` — a before/after
-/// `MeshSnapshot` pair, or an operation-log `MeshEditDelta` — with the label
-/// reading "Edge Extrude". Its `EdgeExtrudeEditFactory` alias is gone as of
-/// task 1905 phase B (as are `BoxEditFactory` and the rest of the create
-/// family's): the carrier is built through `Tool.gestureFactory`, a plain
-/// `Command delegate()`, and this file downcasts to the class it fills.
+// Task 7990: the Edge session records each completed drag, Middle clone and
+// interactive parameter edit as its own full-mesh MeshSessionEdit row. The
+// command also owns attrs and the preview basis so history navigation can
+// restore a fresh tool instance. `before` below is only the current kernel
+// basis: every motion restores it and re-runs that operation once. Prepared
+// and ordinary close write no cumulative carrier. Evidence: W2 plan and
+// tests/test_edge_extrude_handle_drag.d.
 // ---------------------------------------------------------------------------
 // EdgeExtrudeTool — interactive Edge Extrude (factory id `edge.extrude`).
-//
-// Modelled on BoxTool / PenTool (NOT TransformTool): topology-creating tools
-// own their undo plumbing and commit ONE before/after MeshSnapshot record
-// command at deactivate. TransformTool's vertex-position-delta MeshVertexEdit
-// cannot undo added verts/faces, so it is unusable here.
-//
-// Session model (the BoxTool commit pattern):
-//   activate()  — capture `before` = MeshSnapshot.capture(mesh) (geometry +
-//                 selection); reset extrude/width to 0 (identity ⇒ no-op).
-//                 ALSO compute the gizmo anchor (selection centroid) + the two
-//                 handle axes (extrude = averaged neighbour-polygon normal;
-//                 width = in-plane inset direction) from the ORIGINAL
-//                 pre-extrude selection, so the gizmo doesn't jump as the mesh
-//                 changes during the drag.
-//   drag        — restore `before` (re-establishes the original cage AND the
-//                 original edge selection), recompute the (extrude,width) pair
-//                 from the accumulated screen-space mouse delta, re-run
-//                 Mesh.extrudeEdgesByMask on the restored selection, then
-//                 gpu.upload + cache refresh.
-//   deactivate() — if any geometry was built (extrude or width nonzero),
-//                 capture `after`, build a MeshSessionEdit via the injected
-//                 factory, setSnapshots(before, after, "Edge Extrude"), and push
-//                 it onto history as ONE undo step.
 //
 // Interaction (two REAL clickable gizmo handles, matching the reference
 // modeler's edge-extrude tool, registered in a `ToolHandles` arbiter):
@@ -126,13 +102,19 @@ struct PreparedEdgeExtrudeParamImage {
 // SAME kernel through applyHeadless(); ToolDoApplyCommand wraps it with a
 // snapshot pair for undo (so applyHeadless MUST NOT snapshot itself).
 // ---------------------------------------------------------------------------
-class EdgeExtrudeTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient {
-    // A recording command through the UI door closes the live edit first —
-    // `Tool.commitOperation`'s in-place default — and the tool stays armed
-    // (slice M2; the C1-h-sel-fam law, captured for Edge Extend and Polygon
-    // Bevel and inferred for the rest of the in-place family, R20 gap g5).
+class EdgeExtrudeTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient,
+        TopologyStepClient {
+    // The UI recording door closes the current operation while preserving
+    // its already-recorded rows; the tool remains armed after the command.
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
-        static immutable ToolSessionPolicy policy = { commandClose: CommandClose.uiDoor };
+        static immutable ToolSessionPolicy policy = {
+            activationRow: true, recordCarriesActivation: true,
+            commandClose: CommandClose.uiDoor,
+            sessionSteps: true, historyTopologySteps: true,
+            opensAt: OpensAt.firstPress,
+            imageAttrs: ["extrude", "width"],
+            haulAttrs: ["extrude", "width"]
+        };
         return policy;
     }
 
@@ -154,20 +136,8 @@ private:
     // Interactive session state.
     bool          active;          // between activate() and deactivate()
     bool          built;           // true once a nonzero extrude/width built topology
-    /// Captured at activate() (geometry + selection). TWO readers, and after
-    /// task 1903 Stage N only one of them is about undo:
-    ///   1. `commitEdit`'s rewind — `before.restore(*mesh)` puts the clean cage
-    ///      and the ORIGINAL edge selection back so the committed re-run
-    ///      extrudes the right edges. That is a preview baseline, the use
-    ///      `MeshSnapshot` is correct for, and it is permanent.
-    ///   2. the DEGENERATE-DELTA fallback — when the committed re-run records
-    ///      an empty delta, this pairs with a fresh capture through
-    ///      `setSnapshots` so the history entry is still well-formed.
-    /// Reader 2 used to be the `VIBE3D_UNDO_TRACKER=0` arm as well; Stage N
-    /// deleted the flag and kept the fallback (ruling N-R1). The open question
-    /// it answers — should a zero-delta tool commit record a whole-mesh pair or
-    /// refuse? — is task 1905's, because it is a tool COMMIT-semantics
-    /// decision, and this field cannot go until 1905 answers it.
+    /// Current operation's preview basis (geometry and selection). The
+    /// completed step pairs and their bases belong to CommandHistory.
     MeshSnapshot  before;
     Viewport      cachedVp;        // last frame's viewport (for the gizmo handles)
 
@@ -187,6 +157,7 @@ private:
     enum int PART_WIDTH    = 1;
     enum int PART_FREE     = 2;    // off-handle blind 2-axis screen drag
     int   dragPart = -1;           // -1 = none, PART_EXTRUDE / PART_WIDTH / PART_FREE
+    int   dragButton_;
     int   dragLastMX, dragLastMY;  // last mouse pos (incremental on-handle drags)
     int   dragStartMX, dragStartMY;// drag-start mouse pos (total-delta free drag)
     float dragBaseExtrude, dragBaseWidth;
@@ -300,9 +271,7 @@ public:
     }
 
     override void deactivate() {
-        // Commit one undo step iff a nonzero param actually built topology.
-        if (active && built && (extrude_ != 0.0f || width_ != 0.0f))
-            commitEdit();
+        // Task 7990: completed steps already live in CommandHistory.
         active     = false;
         built      = false;
         dragPart   = -1;
@@ -337,9 +306,35 @@ public:
     // with resyncSession() to re-arm in place. Mirrors deactivate()'s commit
     // guard minus the teardown.
     public override bool commitUncommittedEdit() {
-        if (!hasUncommittedEdit()) return false;
-        commitEdit();
+        return false; // Shift starts the next topology operation below.
+    }
+
+    public override bool commitOperation() {
+        if (!active) return false;
+        resyncSession();
         return true;
+    }
+
+    public override Mesh* topologyStepMesh() { return mesh; }
+    public override MeshSnapshot topologyStepBasis() { return before; }
+    public override Command topologyStepCarrier() {
+        return gestureFactory is null ? null : gestureFactory();
+    }
+    public override bool recordTopologyStep(Command cmd) {
+        return recordGestureEdit(cmd, GestureRecordMode.Plain);
+    }
+    public override void restoreTopologyStep(in AttrImage attrs,
+            MeshSnapshot basis) {
+        before = basis;
+        auto visible = MeshSnapshot.capture(*mesh);
+        before.restore(*mesh);
+        computeGizmoFrame();
+        visible.restore(*mesh);
+        restoreRecordedAttrs(attrs);
+        built = !before.matches(*mesh);
+        dragPart = -1;
+        toolHandles.clearHaul();
+        refreshCaches();
     }
 
     // A parameter changed. Two callers, distinguished by `interactiveParamEdit`
@@ -476,11 +471,24 @@ public:
             cancelLiveEdit();
             return true;
         }
-        if (e.button != SDL_BUTTON_LEFT) return false;
+        if (e.button != SDL_BUTTON_LEFT && e.button != SDL_BUTTON_MIDDLE) return false;
         SDL_Keymod mods = SDL_GetModState();
-        if (mods & (KMOD_ALT | KMOD_SHIFT)) return false;   // reserved for camera
+        if (mods & KMOD_ALT) return false;
+        if (e.button == SDL_BUTTON_MIDDLE && (mods & (KMOD_SHIFT | KMOD_CTRL)))
+            return false;
         if (*editMode != EditMode.Edges) return false;
         if (mesh.edges.length == 0 || !gizmoValid) return false;
+
+        const bool boundary = e.button == SDL_BUTTON_MIDDLE || (mods & KMOD_SHIFT);
+        sessionStepBegins(e.button == SDL_BUTTON_MIDDLE ? PressKind.middle
+            : boundary ? PressKind.shift : PressKind.plain);
+        if (boundary) {
+            before = MeshSnapshot.capture(*mesh);
+            if (e.button != SDL_BUTTON_MIDDLE)
+                extrude_ = width_ = 0.0f;
+            computeGizmoFrame();
+            rebuildPreview();
+        }
 
         // Ask the arbiter which handle (if any) the click landed on.
         int part = toolHandles.test(e.x, e.y, cachedVp);
@@ -492,6 +500,12 @@ public:
         dragBaseExtrude = extrude_;
         dragBaseWidth   = width_;
         freeLockAxis    = 0;   // fresh latch for any new free drag
+        dragButton_ = e.button;
+
+        if (boundary) {
+            dragPart = PART_FREE;
+            return true;
+        }
 
         if (part == PART_EXTRUDE || part == PART_WIDTH) {
             // On-handle: single-axis world-projected incremental drag.
@@ -590,9 +604,10 @@ public:
 
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         if (!active || dragPart < 0) return false;
-        if (e.button != SDL_BUTTON_LEFT) return false;
+        if (e.button != dragButton_) return false;
         dragPart = -1;
         toolHandles.clearHaul();
+        sessionStepEnds();
         return true;
     }
 
@@ -705,110 +720,15 @@ private:
         refreshCaches();
     }
 
+    // Task 7990: all applied images have already been handed to history at
+    // their step boundary. A prepared switch installs no cumulative carrier.
     final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context) {
-        bool accepted;
-        if (active && built && (extrude_ != 0.0f || width_ != 0.0f) &&
-            context !is null && history !is null &&
-            gestureFactory !is null && before.filled) {
-            auto cmd = cast(MeshSessionEdit) gestureFactory();
-            if (cmd !is null) {
-                auto shadow = detachedPreparedMesh(*mesh);
-                before.restore(shadow);
-                auto ed = MeshEditBatch(shadow,
-                    MeshEditScope.Geometry | MeshEditScope.Marks);
-                auto mask = shadow.operandEdgeMask();
-                cast(void)ed.extrudeEdgesByMask(mask, extrude_, width_);
-                auto delta = ed.close();
-                if (!delta.isEmpty) cmd.setDelta(delta, "Edge Extrude");
-                else cmd.setSnapshots(before, MeshSnapshot.capture(*mesh),
-                                      "Edge Extrude");
-                accepted = context.prepare(cmd, PreparedHistoryKind.Plain).accepted;
-            }
-        }
+        if (context is null) return PreparedDeactivateEffect(
+            preparedToolStateOwner, PreparedDeactivateKind.EdgeExtrude,
+            false, false);
+        const accepted = context.markNoHistoryInstall();
         return PreparedDeactivateEffect(preparedToolStateOwner,
-            PreparedDeactivateKind.EdgeExtrude, accepted);
-    }
-
-    void commitEdit() {
-        if (history is null || gestureFactory is null) return;
-        if (!before.filled) return;
-        auto cmd = cast(MeshSessionEdit) gestureFactory();
-        if (cmd is null) { noteGestureCarrierMismatch(); return; }
-
-        // Delta path. Re-run the kernel ONCE inside a Mesh edit batch so the
-        // committed extrude self-records an operation-log delta. This adds one
-        // extra kernel run per session (cheap, off the per-drag hot path); the
-        // interactive preview loop in rebuildPreview() stays batchless (HP5 —
-        // zero tracker cost per mouse-motion frame).
-        //
-        // before.restore MUST precede the batch: a built preview left the mesh
-        // as the lifted ridge AND reselected the post-extrude ridge edges.
-        // currentMask() reads mesh.selectedEdges, so without the rewind the
-        // batch would extrude the WRONG (ridge) edges. The restore rewinds the
-        // clean cage + the ORIGINAL edge selection; it is the un-tracked
-        // rewind, NOT part of the logged batch.
-        before.restore(*mesh);
-
-        // task 1903 Stage H: the RECORDING `MeshEditBatch` struct replaces the
-        // legacy `beginEditBatch(&rec, …)` / `endEditBatch()` /
-        // `abortEditBatch()` trio — `extrudeEdgesByMask` now takes
-        // `ref MeshEditBatch ed`, so a handle is the only way to call it, and
-        // `pushEditFrame`/`closeEditFrame` are the SAME primitives both
-        // spellings drive (mesh.d's own comment on the legacy pair: "the two
-        // spellings cannot drift"). The manual
-        // `scope(failure) mesh.abortEditBatch();` this replaces is now
-        // unconditional and automatic: `MeshEditBatch.~this()` runs the
-        // identical pop-without-stamping + `changeBus.batchLeaks` tick on ANY
-        // unwind, recording or not (plan §2.2c) — this site no longer needs to
-        // spell it.
-        auto ed = MeshEditBatch(*mesh, MeshEditScope.Geometry | MeshEditScope.Marks);
-        auto mask = currentMask();
-        // task 1905 Stage P0-a: catch the return value the kernel already
-        // produces (it used to be discarded here) — the `edge_extend.d` twin
-        // carries the full note. INSTRUMENT ONLY — `affected` is not read
-        // below and decides nothing yet; the degenerate-delta fallback's own
-        // rule stays exactly where it was.
-        size_t affected = ed.extrudeEdgesByMask(mask, extrude_, width_);
-        auto delta = ed.close();
-
-        // After the re-run the mesh is back in the post-extrude state the user
-        // was viewing; refresh the display so the GPU buffer reflects it.
-        refreshCaches();
-
-        if (!delta.isEmpty) {
-            cmd.setDelta(delta, "Edge Extrude");
-            recordGestureEdit(cmd, GestureRecordMode.Plain);
-            return;
-        }
-
-        // THE DEGENERATE-DELTA FALLBACK, and it is RETAINED DELIBERATELY —
-        // ruling N-R1, task 1903 Stage N. Until that stage this block was two
-        // things at once: the undo hatch's arm AND the answer for a commit
-        // whose re-run recorded nothing. Deleting the flag deleted the first
-        // reading only. What a zero-delta tool commit OUGHT to do — record a
-        // whole-mesh pair as it does here, or refuse — is a change to tool
-        // COMMIT semantics and belongs to the session-boundary work (task
-        // 1905), not to a commit whose subject is a process-wide flag. So the
-        // behaviour is unchanged and the question is written down where the
-        // field lives (see `before`'s declaration). `affected` above is now
-        // available to that answer but is not yet consulted.
-        //
-        // MEASURED, SO NOBODY MISTAKES IT FOR A COVERED PATH: with the hatch
-        // gone this block has NO witness in either lane. An `assert(false)`
-        // planted here at Stage N left `test_undo_tracker_extrude` and
-        // `test_edge_extrude_tool` green, i.e. nothing the suite drives reaches
-        // it. That is not an oversight in the tests — `deactivate` only commits
-        // when the preview already BUILT topology, and the commit re-runs the
-        // same kernel on the same restored mesh, so an empty delta here needs
-        // the kernel to disagree with itself. It is a defensive arm, and the
-        // reason it is retained rather than deleted is the ruling above: what a
-        // zero-delta tool commit should do is 1905's decision, and an
-        // unreachable branch is the wrong thing to change in a flag-removal
-        // commit. Whoever answers that question should delete it or reach it,
-        // not leave it as it stands.
-        auto post = MeshSnapshot.capture(*mesh);
-        cmd.setSnapshots(before, post, "Edge Extrude");
-        recordGestureEdit(cmd, GestureRecordMode.Plain);
+            PreparedDeactivateKind.EdgeExtrude, false, accepted);
     }
 
     void refreshCaches() {

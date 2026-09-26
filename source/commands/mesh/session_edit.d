@@ -8,6 +8,7 @@ import editmode;
 import snapshot : MeshSnapshot;
 import mesh_edit_delta : MeshEditDelta, MeshEditScope;
 import commands.mesh.gesture_payload : GesturePayload;
+import tool : AttrImage;
 
 /// Generic record-flavor command for an interactive mesh-editing session
 /// (see e.g. BevelTool, EdgeExtrudeTool, ArrayTool, LoopSliceTool, ...). The
@@ -61,6 +62,31 @@ class MeshSessionEdit : Command, Operator, GesturePayload {
 
     private MeshSnapshot before;
     private MeshSnapshot after;
+    // Task 7990: history owns each topology step's navigation image. The
+    // preview basis is distinct from the visible mesh after a plain drag.
+    private AttrImage stepBeforeAttrs_;
+    private AttrImage stepAfterAttrs_;
+    private MeshSnapshot stepBeforeBasis_;
+    private MeshSnapshot stepAfterBasis_;
+    private bool topologyStep_;
+
+    bool isTopologyStep() const { return topologyStep_; }
+    AttrImage stepBeforeAttrs() const {
+        return AttrImage(stepBeforeAttrs_.names.dup, stepBeforeAttrs_.raw.dup);
+    }
+    AttrImage stepAfterAttrs() const {
+        return AttrImage(stepAfterAttrs_.names.dup, stepAfterAttrs_.raw.dup);
+    }
+    MeshSnapshot stepBeforeBasis() const { return stepBeforeBasis_.ownedDup(); }
+    MeshSnapshot stepAfterBasis() const { return stepAfterBasis_.ownedDup(); }
+    void setTopologyStep(AttrImage beforeAttrs, AttrImage afterAttrs,
+            MeshSnapshot beforeBasis, MeshSnapshot afterBasis) {
+        stepBeforeAttrs_ = beforeAttrs;
+        stepAfterAttrs_ = afterAttrs;
+        stepBeforeBasis_ = beforeBasis;
+        stepAfterBasis_ = afterBasis;
+        topologyStep_ = true;
+    }
     private string editLabel;
 
     private string       wireName_;

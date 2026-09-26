@@ -146,6 +146,7 @@ private string[] pinnedModuleIfaces() {
 private enum string[] kPinnedSessionModuleIfaces = [
     "FrameParameterEvalClient", "InputBindable", "LiveEvalClient", "RefireClient",
     "RunMergeable", "SlotActivationClient", "ToolArmLifecyclePolicy",
+    "TopologyStepClient",
 ];
 static assert(pinnedModuleIfaces() == kPinnedSessionModuleIfaces,
     "tool census (M7 pin): the session modules declare interfaces ["
@@ -782,7 +783,9 @@ private string renderLedger(const Ledger l) {
     o.put("# Axis 2 violator: a `key` file with mck > 0 (a MeshCacheKey FIELD).\n");
     o.put("# Axis 3 (`write` rows) is descriptive: any change reddens until recorded.\n");
     o.put(format("axis1-violators %s\naxis2-violators %s\n\n", l.axis1, l.axis2));
-    o.put("# Session-special debt, only-down (3b; " ~ kSessionPlan ~ "):\n");
+    o.put("# Session-special debt (3b). Task 7990 adds one generic TopologyStepClient\n"
+        ~ "# and four casts in ToolSession; history owns its completed images. The\n"
+        ~ "# ceilings remain exact after this named W2 expansion.\n");
     o.put("# interfaces of the session modules, casts to them in source/, and casts\n");
     o.put("# to a concrete tool class outside source/tools/.\n");
     o.put(format("session-capabilities %s\nsession-branches %s\nspecial-tool-casts %s\n\n",
@@ -1036,13 +1039,17 @@ unittest {
     foreach (n; kNonSessionIfaces)
         assert(ifaceCompiler.canFind(n),
                "tool census: named non-session interface " ~ n ~ " no longer declared");
-    // Slice M4: the four session interfaces that remain after the per-tool
-    // step / keep-alive / live-redo / switch-restore / run-record specials
-    // moved onto the general model (policy data and the tool session).
+    // Task 7990 adds exactly one generic capability: TopologyStepClient
+    // supplies the live mesh/basis/carrier/restore hooks while history owns
+    // completed images. The Tool virtual whitelist stays unchanged.
     foreach (n; ["LiveEvalClient", "FrameParameterEvalClient", "SlotActivationClient",
-                 "RefireClient"])
+                 "RefireClient", "TopologyStepClient"])
         assert((n in sessionIfaces) !is null,
                "tool census: session-debt floor: " ~ n ~ " not seen by the census");
+    assert(sessionIfaces.keys.sort.array ==
+        ["FrameParameterEvalClient", "LiveEvalClient", "RefireClient",
+         "SlotActivationClient", "TopologyStepClient"],
+        "tool census: unexpected session capability beside W2 TopologyStepClient");
     assert(toolClasses.length == scanned.length + templateTools.length
            && ("EdgeExtendTool" in toolClasses) !is null,
            format("tool census: session-debt floor: %s tool class leaf names for %s classes",
