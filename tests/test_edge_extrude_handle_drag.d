@@ -303,6 +303,30 @@ unittest { // width, then a horizontal haul on the extrude arrow, and the tool b
         "outside z3 must leave the two distinct handle rows");
 }
 
+unittest { // A foreign UiState row must beat completed-step cancel handling.
+    setupEdge();
+    immutable string initial = planes();
+    int x, y; handlePx(1, x, y);
+    drag(x, y, x - 40, y);
+    immutable string completed = planes();
+    immutable long d0 = undoLen();
+    assert(completed != initial,
+        "foreign-row fixture did not complete an Edge topology step");
+
+    auto r = postJson("/api/command", commandBody("mesh.select",
+        `{"mode":"edges","indices":[]}`));
+    assert(r["status"].str == "ok" && undoLen() == d0 + 1,
+        "script-origin mesh.select did not append its UiState row");
+
+    navigate(true);
+    assert(undoLen() == d0,
+        "completed Edge state intercepted Undo ahead of the foreign UiState row: depth "
+        ~ undoLen().to!string ~ ", expected " ~ d0.to!string);
+    navigate(true);
+    assert(undoLen() == d0 - 1 && planes() == initial,
+        "Undo remained trapped instead of reaching the completed Edge row");
+}
+
 unittest { // A zero Middle boundary has its own cursor despite equal images.
     auto r = postJson("/api/command", commandBody("scene.reset"));
     assert(r["status"].str == "ok");
@@ -500,13 +524,23 @@ unittest { // Full closed redo leaves a fresh Edge activation dormant.
     immutable long fresh = undoLen();
     assert(rearmed == first, "fresh arm after closed redo changed full mesh");
     handlePx(1, x, y);
-    drag(x, y, x - 40, y);
+    auto cam = fetchCamera(BASE);
+    playAndWait(buildDragDownLog(cam.vpX, cam.vpY, cam.width, cam.height,
+        x, y), BASE);
+    playAndWait(buildDragMotionLog(cam.vpX, cam.vpY, cam.width, cam.height,
+        x, y, x - 40, y, 12), BASE);
+    auto st = getJson("/api/tool/state");
+    assert(planes() == rearmed && undoLen() == fresh &&
+        st["session"]["live"].type == JSONType.false_,
+        "dormant Edge held drag armed or previewed topology before release");
+    playAndWait(buildDragUpLog(cam.vpX, cam.vpY, cam.width, cam.height,
+        x - 40, y), BASE);
     assert(planes() == rearmed && undoLen() == fresh + 1,
         "dormant Edge drag must add one attr-only row without moving mesh");
     auto h = getJson("/api/history");
     assert(h["undo"].array[$ - 1]["command"].str == "tool.topology_adjustment",
         "dormant Edge drag wrote a topology carrier instead of an adjustment");
-    auto st = getJson("/api/tool/state");
+    st = getJson("/api/tool/state");
     assert(st["session"]["live"].type == JSONType.false_,
         "dormant Edge drag armed a topology operation");
     navigate(true);

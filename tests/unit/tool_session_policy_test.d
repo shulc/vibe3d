@@ -842,13 +842,18 @@ static assert(kToolBar == 48, "M7 tool pin: read concrete tool classes, measured
 
 unittest { // Task 7990: production topology R wiring, not a helper replica.
     auto es = blankNonCode(readText("source/edit_session.d"));
+    auto esFlat = squeeze(es);
     auto edge = blankNonCode(readText("source/tools/edit/edge_extrude.d"));
     auto carrier = blankNonCode(readText("source/commands/mesh/session_edit.d"));
-    auto panel = squeeze(blankNonCode(readText("source/property_panel.d")));
+    auto panelCode = blankNonCode(readText("source/property_panel.d"));
+    auto panel = squeeze(panelCode);
     auto attr = squeeze(blankNonCode(readText("source/commands/tool/attr.d")));
     assert(es.canFind("if (navigateTopology_(true)) return true;")
         && es.canFind("if (navigateTopology_(false)) return true;"),
         "Edge topology navigation bypassed the production ToolSession door");
+    assert(esFlat.canFind("constcompletedTopologyIsHistoryOwned=reporting_(t)&&t.sessionPolicy().historyTopologySteps&&!topologyPending_;")
+        && esFlat.canFind("t.hasUncommittedEdit()&&!completedTopologyIsHistoryOwned"),
+        "completed topology state regained the legacy cancel-first responder");
     assert(es.canFind("topologyParameterStepBegins(t, beforeWrite)")
         && es.canFind("cmd.setTopologyStep(topologyPendingAttrs_, attrs,"),
         "interactive parameter or history-owned step payload was disconnected");
@@ -876,8 +881,15 @@ unittest { // Task 7990: production topology R wiring, not a helper replica.
         && carrier.canFind("stepBeforeBasis_")
         && carrier.canFind("stepAfterAttrs_"),
         "history command lost topology basis or attributes");
-    assert(panel.canFind("beforeWrite=tisnull||!t.sessionPolicy().historyTopologySteps?AttrImage.init:t.captureAttrImage();")
-        && panel.canFind("p,par.name,source,ParameterChangePhase.ValueWritten,beforeWrite);")
+    const panelDraw = squeeze(bodyAt(panelCode,
+        "void drawProvider(ParamProvider p, EditSession session)"));
+    inOrder(panelDraw, [
+        "beforeWrite=tisnull||!t.sessionPolicy().historyTopologySteps?AttrImage.init:t.captureAttrImage();",
+        "boolchanged=drawParamWidget(par);",
+        "session.orchestrateParameterChange(p,par.name,source,ParameterChangePhase.ValueWritten,beforeWrite);",
+    ], "PropertyPanel.drawProvider topology prewrite");
+    assert(panel.count("beforeWrite=tisnull||!t.sessionPolicy().historyTopologySteps?AttrImage.init:t.captureAttrImage();") == 1
+        && panel.count("session.orchestrateParameterChange(p,par.name,source,ParameterChangePhase.ValueWritten,beforeWrite);") == 1
         && attr.canFind("beforeWrite=t.sessionPolicy().historyTopologySteps?t.captureAttrImage():AttrImage.init;")
         && attr.canFind("t,attrName_,source,ParameterChangePhase.ValueWritten,beforeWrite);"),
         "pointer-written parameter producer lost the actual prewrite image");

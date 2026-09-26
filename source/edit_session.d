@@ -823,7 +823,15 @@ private struct ToolSession {
                 history_.invalidateRedo();
             if (act !is null) topologyFirstGroupLive_ = false;
         }
-        if (t !is null && t.hasUncommittedEdit()) {
+        // Task 7990: once a topology step has ended, its mesh image belongs
+        // to history even though the tool may retain `built` parameters for
+        // command-close policy. A foreign row above that image must reach the
+        // stack; the legacy cancel hook is only first responder while this
+        // session still owns a pending topology image.
+        const completedTopologyIsHistoryOwned = reporting_(t) &&
+            t.sessionPolicy().historyTopologySteps && !topologyPending_;
+        if (t !is null && t.hasUncommittedEdit() &&
+            !completedTopologyIsHistoryOwned) {
             t.cancelUncommittedEdit();
             // NO postcondition assert here — deliberately. The one-shot
             // "cancel ⇒ !hasUncommittedEdit" reading of the base-class
