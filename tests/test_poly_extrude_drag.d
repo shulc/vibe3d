@@ -570,6 +570,30 @@ unittest { // Param image -> closed redo -> fresh dormant attr-only adjustment.
         "param-fresh dormant Redo lost default attrs, basis, or adjustment redo");
 }
 
+unittest { // Polygon -> Edge activation undo restores Polygon's owned attrs.
+    setupPoly();
+    dragFree(40, -30);
+    const polygonImage = planes();
+    const polygonDepth = undoLen();
+    const polygonShiftX = queryShiftX();
+    const polygonShiftY = queryShiftY();
+    assert(abs(polygonShiftX) > 1e-5 || abs(polygonShiftY) > 1e-5,
+        "mixed topology-tool rig did not produce a non-default Polygon attr image");
+
+    auto edge = postJson("/api/command?origin=ui", "tool.set edge.extrude on");
+    assert(edge["status"].str == "ok" || edge["status"].str == "success",
+        "mixed topology-tool rig could not activate Edge Extrude");
+    assert(undoLen() == polygonDepth + 1,
+        "Edge activation did not stand as the one lifecycle row above Polygon");
+
+    navigate(true);
+    assert(planes() == polygonImage && undoLen() == polygonDepth,
+        "undoing Edge activation changed Polygon's history-owned mesh image");
+    assert(abs(queryShiftX() - polygonShiftX) < 1e-6
+        && abs(queryShiftY() - polygonShiftY) < 1e-6,
+        "undoing Edge activation did not restore Polygon's session-owned attrs");
+}
+
 unittest { // Prepared switch closes a held drag once, without a cumulative row.
     setupPoly();
     const initial = planes();

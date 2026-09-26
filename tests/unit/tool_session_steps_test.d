@@ -995,3 +995,96 @@ unittest { // 7990 refusal: null carrier and refused record restore both images.
             "7990 dormant pending cancel restored an invalid topology basis");
     }
 }
+
+// ---- Polygon S2: completed topology attrs belong to an identity/session ---
+
+private final class OwnedPolyAttrTool : Tool {
+    int shift;
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy policy = {
+            activationRow: true, sessionSteps: true, historyTopologySteps: true,
+            imageAttrs: ["polyShift"]
+        };
+        return policy;
+    }
+    override Param[] params() {
+        return [Param.int_("polyShift", "Polygon Shift", &shift, 0)];
+    }
+}
+
+private final class OwnedEdgeAttrTool : Tool {
+    int offset;
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy policy = {
+            activationRow: true, sessionSteps: true, historyTopologySteps: true,
+            imageAttrs: ["edgeOffset"]
+        };
+        return policy;
+    }
+    override Param[] params() {
+        return [Param.int_("edgeOffset", "Edge Offset", &offset, 0)];
+    }
+}
+
+private OwnedPolyAttrTool undoToOwnedPoly(EditSession s, CommandHistory h,
+                                          ref Tool active, ref Mesh m,
+                                          ulong previousToken) {
+    auto v = new View(0, 0, 1, 1);
+    auto act = new ToolActivationCommand(&m, v, EditMode.Vertices,
+        "t.edge", "t.poly", true, false, false, 9, previousToken, true, true);
+    OwnedPolyAttrTool restored;
+    act.onActivate = (string id) {
+        assert(id == "t.poly", "owned-attrs rig restored the wrong predecessor id");
+        restored = new OwnedPolyAttrTool;
+        active = restored;
+        // The replay arm is fresh. navigate() adopts `previousToken` only
+        // after the lifecycle callback returns.
+        s.noteArm(id, 50);
+    };
+    h.recordToolLifecycle(act);
+    auto successor = new OwnedEdgeAttrTool;
+    active = successor;
+    s.noteArm("t.edge", 9);
+    assert(s.navigate(true), "owned-attrs rig could not undo the successor activation");
+    return restored;
+}
+
+unittest { // The identity half rejects a foreign image even under the same token.
+    Mesh m = makeCube();
+    auto h = new CommandHistory;
+    Tool active;
+    auto s = new EditSession(() => active, h, () { active = null; });
+    auto poly = new OwnedPolyAttrTool;
+    poly.shift = 17;
+    active = poly;
+    s.noteArm("t.poly", 5);
+    auto foreign = new OwnedEdgeAttrTool;
+    foreign.offset = 23;
+    active = foreign;
+    s.noteArm("t.foreign-edge", 5);
+
+    auto restored = undoToOwnedPoly(s, h, active, m, 5);
+    assert(restored.shift == 17,
+        format("topology attr ownership ignored predecessor identity: restored %s, expected 17",
+               restored.shift));
+}
+
+unittest { // The session half selects the predecessor run, not its newer sibling.
+    Mesh m = makeCube();
+    auto h = new CommandHistory;
+    Tool active;
+    auto s = new EditSession(() => active, h, () { active = null; });
+    auto first = new OwnedPolyAttrTool;
+    first.shift = 17;
+    active = first;
+    s.noteArm("t.poly", 5);
+    auto newer = new OwnedPolyAttrTool;
+    newer.shift = 29;
+    active = newer;
+    s.noteArm("t.poly", 7);
+
+    auto restored = undoToOwnedPoly(s, h, active, m, 5);
+    assert(restored.shift == 17,
+        format("topology attr ownership ignored predecessor session: restored %s, expected 17",
+               restored.shift));
+}

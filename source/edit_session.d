@@ -718,13 +718,24 @@ private struct ToolSession {
     private MeshSnapshot topologyPendingMesh_;
     private MeshSnapshot topologyPendingBasis_;
     private AttrImage topologyPendingAttrs_;
-    private AttrImage topologyAttrs_;
+    private struct TopologyAttrOwner {
+        string id;
+        ulong token;
+        AttrImage attrs;
+    }
+    // Completed mesh images remain history-owned. Retained raw attributes are
+    // keyed by the tool identity AND the session that produced them, so a
+    // lifecycle undo can restore its predecessor without ever feeding the
+    // incoming tool's foreign parameter names through Tool.writeRaw.
+    private TopologyAttrOwner[] topologyAttrOwners_;
     private bool topologyPending_;
     private Rebindable!(const Command) dormantActivation_;
     private bool topologyDormant_;
     private bool topologyFirstGroupLive_;
     private bool redoneTopologyStep_;
     private bool closedTopologyRedo_;
+    private string closedTopologyId_;
+    private ulong closedTopologyToken_;
     // The first group a key-door undo ended together with its activation row
     // (task 7137, §22), held for the NAVIGATE redo of that row — keyed by the
     // row's identity, sealed with the mesh as the redo will find it. Not in
@@ -863,11 +874,14 @@ private struct ToolSession {
         const bool pair = recordCarriesActivation_();
         Rebindable!(const Command) last = undoEntryAt_(pair ? 1 : 0);
         // A lifecycle row may restore the topology tool that preceded it.
-        // Its new instance starts from parameter defaults, while the completed
-        // mesh image below that row still belongs to the prior session. Keep
-        // that session's raw attribute image across the lifecycle undo; the
-        // mesh remains exclusively history-owned.
-        auto topologyRestore = topologyAttrs_;
+        // Resolve the raw image by that predecessor's identity/session, never
+        // from the incoming tool currently bound to the session.
+        import commands.tool.lifecycle : ToolActivationCommand;
+        auto activation = cast(const ToolActivationCommand)last.get;
+        auto topologyRestore = activation !is null &&
+                activation.previousHistoryTopology()
+            ? topologyAttrsFor_(activation.previousId(), activation.previousToken())
+            : AttrImage.init;
         bool ok = history_.undo();
         if (ok && pair && !history_.undo()) {
             // The row refused its undo (review of slice M4): the record is
@@ -884,13 +898,11 @@ private struct ToolSession {
             auto t3 = tool_();
             if (t3 !is null) t3.resyncSession();
             adoptPredecessorToken_(last);
-            import commands.tool.lifecycle : ToolActivationCommand;
-            auto activation = cast(const ToolActivationCommand)last.get;
             if (t3 !is null && activation !is null &&
                 activation.previousHistoryTopology() &&
                 !topologyRestore.empty) {
                 t3.restoreRecordedAttrs(topologyRestore);
-                topologyAttrs_ = topologyRestore;
+                rememberTopologyAttrs_(topologyRestore);
             }
         }
         return ok;
@@ -937,6 +949,10 @@ private struct ToolSession {
         bool ok = history_.redo();
         // The redo that re-armed a tool re-armed the ROW's session: its token.
         if (ok && act !is null) adoptToken_(act.armedId, act.sessionToken());
+        if (ok && act !is null && act.previousHistoryTopology()) {
+            closedTopologyId_ = act.previousId().idup;
+            closedTopologyToken_ = act.previousToken();
+        }
         if (ok && act !is null &&
             (redoneTopologyStep_ || act.previousHistoryTopology()))
             closedTopologyRedo_ = true;
@@ -1004,7 +1020,7 @@ private struct ToolSession {
         const committed = t.commitOperation();
         endOperation_();
         if (t.sessionPolicy().historyTopologySteps)
-            topologyAttrs_ = t.captureAttrImage();
+            rememberTopologyAttrs_(t.captureAttrImage());
         if (!committed) return CloseOutcome(false, false);
         markClosedRow_();
         if (command) {
@@ -1027,7 +1043,7 @@ private struct ToolSession {
         import tool : ToolFlag;
         t.resumeAfterClose(!t.hasFlag(ToolFlag.NoRearmAfterCommand));
         if (t.sessionPolicy().historyTopologySteps)
-            topologyAttrs_ = t.captureAttrImage();
+            rememberTopologyAttrs_(t.captureAttrImage());
     }
 
     // ----- the bound tool's reports (slice M3) ------------------------------
@@ -1081,11 +1097,18 @@ private struct ToolSession {
         link.operationEnded = &operationEnded;
         link.closeOwn       = &closeOwn;
         t.bindSession(link);
+        auto ownedAttrs = topologyAttrsFor_(id, token);
+        if (topologyDormant_ && ownedAttrs.empty)
+            ownedAttrs = topologyAttrsFor_(closedTopologyId_, closedTopologyToken_);
         if (t.sessionPolicy().historyTopologySteps && topologyDormant_ &&
-            !topologyAttrs_.empty)
-            t.restoreRecordedAttrs(topologyAttrs_);
-        if (t.sessionPolicy().historyTopologySteps)
-            topologyAttrs_ = t.captureAttrImage();
+            !ownedAttrs.empty)
+            t.restoreRecordedAttrs(ownedAttrs);
+        // A lifecycle replay binds a fresh instance before navigate() can
+        // finish the stack step. Preserve any image already owned by this
+        // exact session; a new arm (or an unremembered replay) seeds one.
+        if (t.sessionPolicy().historyTopologySteps &&
+            (history_.state() != UndoState.Suspend || ownedAttrs.empty || topologyDormant_))
+            rememberTopologyAttrs_(t.captureAttrImage());
         if (auto client = cast(TopologyStepClient)t)
             client.setTopologyDormant(topologyDormant_);
         if (t.sessionPolicy().historyTopologySteps &&
@@ -1170,7 +1193,7 @@ private struct ToolSession {
                     topologyPendingAttrs_, after);
                 if (client.recordTopologyStep(cmd) && undoTop_() is cmd) {
                     history_.markEntrySession(cmd, token_);
-                    topologyAttrs_ = after;
+                    rememberTopologyAttrs_(after);
                 } else {
                     t.restoreRecordedAttrs(topologyPendingAttrs_);
                 }
@@ -1201,7 +1224,7 @@ private struct ToolSession {
                     ? after : client.topologyStepBasis());
             if (client.recordTopologyStep(cmd) && undoTop_() is cmd) {
                 history_.markEntrySession(cmd, token_);
-                topologyAttrs_ = attrs;
+                rememberTopologyAttrs_(attrs);
             } else {
                 topologyPendingMesh_.restore(*m);
                 client.restoreTopologyStep(topologyPendingAttrs_, topologyPendingBasis_);
@@ -1269,7 +1292,7 @@ private struct ToolSession {
                     t.restoreRecordedAttrs(topologyPendingAttrs_);
                 else
                     client.restoreTopologyStep(topologyPendingAttrs_, topologyPendingBasis_);
-                topologyAttrs_ = topologyPendingAttrs_;
+                rememberTopologyAttrs_(topologyPendingAttrs_);
             }
             endOperation_();
             return true;
@@ -1370,11 +1393,10 @@ private struct ToolSession {
             if (!history_.undo()) return false;
             if (pair) {
                 history_.undo();
-                topologyAttrs_ = AttrImage.init;
             } else {
                 (cast(TopologyStepClient)t).restoreTopologyStep(
                     cmd.stepBeforeAttrs(), cmd.stepBeforeBasis());
-                topologyAttrs_ = cmd.stepBeforeAttrs();
+                rememberTopologyAttrs_(cmd.stepBeforeAttrs());
             }
             return true;
         }
@@ -1400,9 +1422,27 @@ private struct ToolSession {
             (cast(TopologyStepClient)current).restoreTopologyStep(
                 pair ? cmd.stepBeforeAttrs() : cmd.stepAfterAttrs(),
                 cmd.stepAfterBasis());
-            topologyAttrs_ = pair ? cmd.stepBeforeAttrs() : cmd.stepAfterAttrs();
+            rememberTopologyAttrs_(pair ? cmd.stepBeforeAttrs() : cmd.stepAfterAttrs());
         }
         return true;
+    }
+
+    private AttrImage topologyAttrsFor_(string id, ulong token) {
+        foreach_reverse (ref owner; topologyAttrOwners_)
+            if (owner.id == id && owner.token == token) return owner.attrs;
+        return AttrImage.init;
+    }
+
+    private void rememberTopologyAttrs_(AttrImage attrs) {
+        if (armedId_.length == 0) return;
+        foreach_reverse (ref owner; topologyAttrOwners_)
+            if (owner.id == armedId_ && owner.token == token_) {
+                owner.attrs = attrs;
+                return;
+            }
+        if (topologyAttrOwners_.length >= kMaxSessionSteps)
+            topologyAttrOwners_ = topologyAttrOwners_[1 .. $];
+        topologyAttrOwners_ ~= TopologyAttrOwner(armedId_.idup, token_, attrs);
     }
 
     /// The first topology row is about to be appended immediately above the

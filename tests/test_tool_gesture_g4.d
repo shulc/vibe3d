@@ -29,7 +29,7 @@
 // WHY THE DRIVE IS `/api/play-events` AND NEVER `tool.doApply`. `tool.doApply`
 // records a `ToolDoApplyCommand` — a different entry, from a different site —
 // so a cell built on it would freeze the geometry of a command while claiming
-// to pin a tool's own `commitEdit`. Every cell below therefore drives the input
+// to pin a tool's own record producer. Every cell below therefore drives the input
 // that REALLY reaches the tool's record site, and the one tool with no mouse
 // handler at all (`mesh.reduceTool`) is driven by the only other input that
 // reaches it: `/api/script?interactive=true`, which is the sole path that sets
@@ -920,17 +920,18 @@ unittest {
     //     averaged normal +X. The arrow shaft is re-derived here because the
     //     tool's single published part sits at the arrow TIP, not mid-shaft.
     cells ~= runCell("poly.extrude/axis-drag", "poly.extrude",
-        "source/tools/edit/poly_extrude.d PolyExtrudeTool.commitEdit",
+        "source/tools/edit/poly_extrude.d PolyExtrudeTool.recordTopologyStep",
         "Plain", "MeshSessionEdit",
         { resetCube(); selectMode("polygons", [3]); cmd("history.clear");
-          setOrbitCamera(); cmd("tool.set poly.extrude on"); settle(250); },
+          setOrbitCamera(); },
         {
             axisDrag(Vec3(0.5f, 0, 0), Vec3(1, 0, 0), 80, false);
             assert(attrOf("poly.extrude", "distance") > 1e-3,
                 "poly.extrude: the drag left `distance` at zero — the press "
               ~ "missed the arrow and fell into the free branch");
         },
-        { cmd("tool.set poly.extrude off"); });
+        { cmd("tool.set poly.extrude off"); },
+        { cmd("tool.set poly.extrude on"); settle(250); });
 
     // --- (d) EdgeBevelTool on the cube's top-front edge. The second of the two
     //     tools in this group that publish `built`.

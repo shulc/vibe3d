@@ -445,11 +445,16 @@ unittest {
            format("bevel floor (switch-rows): two operations: op %s, mesh %s", opIx(), g2.toString));
     slLineUi("tool.set poly.extrude on");
     const L = slHistoryLabels();
-    assert(tool() != "polyBevel" && L.length == 3 && L[1] == "Poly Bevel" && L[2] == "Poly Bevel"
+    assert(tool() != "polyBevel" &&
+           L == ["Activate Tool", "Poly Bevel", "Poly Bevel", "Activate Tool"]
            && slMesh().canon == g2.canon,
            format("switch-rows: the switch must write one row per operation: tool '%s', rows %s, "
                   ~ "mesh %s", tool(), L, slMesh().toString));
-    slLine("tool.set poly.extrude off");
+    slLine("history.undo");
+    assert(tool() == "polyBevel" && slMesh().canon == g2.canon,
+           format("switch-rows: undoing Polygon's activation must restore Bevel without "
+                  ~ "consuming either operation: tool '%s', rows %s, mesh %s",
+                  tool(), slHistoryLabels(), slMesh().toString));
     slLine("history.undo");
     assert(slMesh().canon == g1.canon,
            format("switch-rows: the first undo must return the first operation's result: mesh %s "

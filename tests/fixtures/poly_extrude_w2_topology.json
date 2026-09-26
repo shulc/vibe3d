@@ -1,5 +1,12 @@
 {
   "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "gui-gesture",
+    "captured_utc": "2026-09-26",
+    "harness": "toolcards/tool_session_topology_step_wave2 raw GUI+gdb capture",
+    "task": "8030",
     "toolcard": "tool_session_topology_step_wave2/fixture/full_mesh_capture.json",
     "cells": ["C-W2-poly-zero", "C-W2-poly-main", "C-W2-poly-param-fresh"],
     "note": "Frozen from accepted raw checkpoints; positions, ordered topology and selection are exact."
