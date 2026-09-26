@@ -570,7 +570,7 @@ unittest { // Param image -> closed redo -> fresh dormant attr-only adjustment.
         "param-fresh dormant Redo lost default attrs, basis, or adjustment redo");
 }
 
-unittest { // Polygon -> Edge activation undo restores Polygon's owned attrs.
+unittest { // Polygon -> Edge undo/redo never gives a fresh Edge Polygon attrs.
     setupPoly();
     dragFree(40, -30);
     const polygonImage = planes();
@@ -592,6 +592,16 @@ unittest { // Polygon -> Edge activation undo restores Polygon's owned attrs.
     assert(abs(queryShiftX() - polygonShiftX) < 1e-6
         && abs(queryShiftY() - polygonShiftY) < 1e-6,
         "undoing Edge activation did not restore Polygon's session-owned attrs");
+
+    navigate(false);
+    assert(planes() == polygonImage && undoLen() == polygonDepth + 1,
+        "redoing Edge activation changed Polygon's history-owned mesh image");
+    edge = postJson("/api/command?origin=ui", "tool.set edge.extrude on");
+    assert(edge["status"].str == "ok" || edge["status"].str == "success",
+        "fresh Edge arm after its closed redo did not return through /api/command");
+    auto st = getJson("/api/tool/state");
+    assert(st["session"]["dormant"].type == JSONType.false_,
+        "fresh Edge arm inherited Polygon's closed-redo dormant ownership");
 }
 
 unittest { // Prepared switch closes a held drag once, without a cumulative row.

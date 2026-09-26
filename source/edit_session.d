@@ -1075,10 +1075,14 @@ private struct ToolSession {
             const re = history_.redoEntries();
             arm = re.length ? cast(ToolActivationCommand)re[0].cmd : null;
         }
+        AttrImage closedAttrs;
+        if (history_.state() != UndoState.Suspend && closedTopologyRedo_ &&
+            closedTopologyId_ == id)
+            closedAttrs = topologyAttrsFor_(id, closedTopologyToken_);
         topologyDormant_ = t.sessionPolicy().dormantAfterClosedRedo &&
             (history_.state() == UndoState.Suspend
                 ? arm !is null && arm.armedId() == id && arm.dormantTopology()
-                : closedTopologyRedo_);
+                : !closedAttrs.empty);
         if (topologyDormant_ && arm !is null) {
             if (history_.state() != UndoState.Suspend) arm.markDormantTopology();
             dormantActivation_ = arm;
@@ -1099,7 +1103,7 @@ private struct ToolSession {
         t.bindSession(link);
         auto ownedAttrs = topologyAttrsFor_(id, token);
         if (topologyDormant_ && ownedAttrs.empty)
-            ownedAttrs = topologyAttrsFor_(closedTopologyId_, closedTopologyToken_);
+            ownedAttrs = closedAttrs;
         if (t.sessionPolicy().historyTopologySteps && topologyDormant_ &&
             !ownedAttrs.empty)
             t.restoreRecordedAttrs(ownedAttrs);
