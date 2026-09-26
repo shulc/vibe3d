@@ -105,7 +105,7 @@ private immutable Row[] kTable = [
     Row("move.element", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
     Row("pen", "PenTool", false, Prov.notPorted, CommandClose.none, CloseProv.notCaptured),
     Row("poly.bevel", "PolyBevelTool", true, Prov.captured, CommandClose.uiDoor, CloseProv.captured),
-    Row("poly.extrude", "PolyExtrudeTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
+    Row("poly.extrude", "PolyExtrudeTool", true, Prov.captured, CommandClose.uiDoor, CloseProv.inferred),
     Row("prim.arc", "ArcTool", false, Prov.noCounterpart, CommandClose.none, CloseProv.notCaptured),
     Row("prim.capsule", "CapsuleTool", false, Prov.notPorted, CommandClose.none, CloseProv.notCaptured),
     Row("prim.cone", "ConeTool", false, Prov.notPorted, CommandClose.none, CloseProv.notCaptured),
@@ -153,6 +153,7 @@ private immutable string[] kActivationRowClasses = [
     "tools.edit.edge_extend.EdgeExtendTool",
     "tools.edit.edge_extrude.EdgeExtrudeTool",
     "tools.edit.poly_bevel.PolyBevelTool",
+    "tools.edit.poly_extrude.PolyExtrudeTool",
     "tools.edit.topology_pen.tool.TopologyPenTool",
     "tools.slice.edge_slice_tool.EdgeSliceTool",
     "tools.slice.loop_slice_tool.LoopSliceTool",
@@ -266,6 +267,8 @@ unittest { // (1) id -> policy, over every registered id
     // (gap 369). M3b ported poly.bevel: 42 (38) -> 41 (37); M4 ported
     // edge.extend: -> 40 (36). Growth is a new id born off the H1 law, or a
     // ported one regressed; a fall is recorded by lowering the ceiling.
+    // Task 7990 ported edge.extrude to 39 (35); task 8030 ports
+    // poly.extrude to 38 (34).
     assert(falseRows <= kActivationRowFalseCeiling && notPorted <= kNotPortedCeiling,
            format("M7 ratchet: activationRow=false grew to %s ids (%s not ported), ceiling "
                   ~ "%s (%s): a tool's arm writes its activation row (H1, gap 369) — declare "
@@ -282,11 +285,11 @@ unittest { // (1) id -> policy, over every registered id
 /// not ported (the rest have no counterpart or an unsure one), and ids whose
 /// session does not own their gesture steps (H2 not ported). Measured on the
 /// M7 tree; each only falls.
-private enum size_t kActivationRowFalseCeiling = 39;
-private enum size_t kNotPortedCeiling = 35;
-private enum size_t kSessionStepsFalseCeiling = 64;
+private enum size_t kActivationRowFalseCeiling = 38;
+private enum size_t kNotPortedCeiling = 34;
+private enum size_t kSessionStepsFalseCeiling = 63;
 
-unittest { // (2) exactly seven tool classes declare the activation row
+unittest { // (2) exactly nine tool classes declare the activation row
     string[] declared;
     size_t scanned;
     foreach (m; ModuleInfo) {
@@ -426,6 +429,9 @@ private immutable StepRow[] kStepTable = [
     StepRow("mesh.sliceTool", OpensAt.firstPress, false,
             ["startX", "startY", "startZ", "endX", "endY", "endZ", "vectorX", "vectorY",
              "vectorZ", "axis", "gap", "frozenNormal", "haveFrozen", "axisLocked", "hasLine"]),
+    // Task 8030: the first Polygon topology record carries activation; each
+    // later operation remains a separate history-owned row.
+    StepRow("poly.extrude", OpensAt.firstPress, false, ["distance"]),
     // M3b: the arm applies (C-H1-bev), Middle clones (C-H5-bev-mmb); the image
     // is the haul plus the operation's applied flag and its base index.
     StepRow("poly.bevel", OpensAt.arm, false, ["inset", "shift", "applied", "op"], "applied"),
@@ -507,16 +513,16 @@ unittest { // (4)
     assert(stepsFalse == kSessionStepsFalseCeiling,
            format("M7 ratchet: sessionSteps=false fell to %s ids, ceiling %s: lower the ceiling "
                   ~ "in the same commit", stepsFalse, kSessionStepsFalseCeiling));
-    // Population floors (measured): 5 ids, 39 image names, 3 Action triggers
+    // Population floors: 7 ids, 42 image names, 3 Action triggers
     // on them (chainArm; insertAt, removeCurrent), 1 arm attribute (M3b).
     sort(stepIds);
     assert(stepIds == ["edge.extend", "edge.extrude", "mesh.edgeSliceTool", "mesh.loopSliceTool", "mesh.sliceTool",
-                       "poly.bevel"],
+                       "poly.bevel", "poly.extrude"],
            format("M3 step table: sessionSteps ids %s", stepIds));
-    assert(checkedNames == 41, format("M3 step table: %s image names checked, measured 41",
+    assert(checkedNames == 42, format("M3 step table: %s image names checked, measured 42",
                                       checkedNames));
     assert(armAttrs == 1, format("M3b step table: %s arm attributes, measured 1", armAttrs));
-    assert(actionNames == 3, format("M3 step table: %s Action params on the six tools, "
+    assert(actionNames == 3, format("M3 step table: %s Action params on the seven tools, "
                                     ~ "measured 3", actionNames));
 }
 
@@ -572,7 +578,8 @@ unittest { // (5)
     assert(keep == kKeepAliveClasses,
            format("M4 policy classes: keepAliveOnCancel declared by %s, expected %s",
                   keep, kKeepAliveClasses));
-    assert(carries == ["tools.edit.edge_extend.EdgeExtendTool"],
+    assert(carries == ["tools.edit.edge_extend.EdgeExtendTool",
+                       "tools.edit.poly_extrude.PolyExtrudeTool"],
            format("M4 policy classes: recordCarriesActivation declared by %s", carries));
 }
 
@@ -840,10 +847,11 @@ static assert(kToolComposition[kToolBar + 1 .. $] == kPinnedToolInterfaces,
 // Population floor: the pin read the 48 classes block (8) scans.
 static assert(kToolBar == 48, "M7 tool pin: read concrete tool classes, measured 48");
 
-unittest { // Task 7990: production topology R wiring, not a helper replica.
+unittest { // Tasks 7990/8030: production topology R wiring, not a helper replica.
     auto es = blankNonCode(readText("source/edit_session.d"));
     auto esFlat = squeeze(es);
     auto edge = blankNonCode(readText("source/tools/edit/edge_extrude.d"));
+    auto poly = blankNonCode(readText("source/tools/edit/poly_extrude.d"));
     auto carrier = blankNonCode(readText("source/commands/mesh/session_edit.d"));
     auto panelCode = blankNonCode(readText("source/property_panel.d"));
     auto panel = squeeze(panelCode);
@@ -864,6 +872,12 @@ unittest { // Task 7990: production topology R wiring, not a helper replica.
     assert(edge.canFind("recordGestureEdit(cmd, GestureRecordMode.Plain)")
         && !edge.canFind("GestureRecordMode.ReplaceRunTail"),
         "Edge topology rows must stay separate Plain records");
+    assert(poly.canFind("sessionStepBegins(e.button == SDL_BUTTON_MIDDLE")
+        && poly.canFind("sessionStepEnds();")
+        && poly.canFind("recordGestureEdit(cmd, GestureRecordMode.Plain)")
+        && poly.canFind("context.markNoHistoryInstall()")
+        && !poly.canFind("GestureRecordMode.ReplaceRunTail"),
+        "Polygon drag/boundary, Plain owner or prepared close lost its production seam");
     assert(edge.canFind("discardFirstTopologyRedoOnActivationUndo: true")
         && edge.canFind("dormantAfterClosedRedo: true")
         && edge.canFind("opensAt: OpensAt.arm")
@@ -873,6 +887,14 @@ unittest { // Task 7990: production topology R wiring, not a helper replica.
         && es.canFind("new TopologyAdjustmentEdit(context, tool_")
         && edge.canFind("if (topologyDormant) return;"),
         "Edge first-group or full-closed-redo production policy disconnected");
+    assert(poly.canFind("recordCarriesActivation: true")
+        && poly.canFind("dormantAfterClosedRedo: true")
+        && poly.canFind("opensAt: OpensAt.firstPress")
+        && poly.canFind("if (topologyDormant) return;"),
+        "Polygon first-group or full-closed-redo production policy disconnected");
+    assert(es.canFind("pendingTopologyCarriesActivation_()")
+        && es.canFind("pair ? cmd.stepBeforeAttrs() : cmd.stepAfterAttrs()"),
+        "generic first-topology activation replay lost Polygon attrs/basis law");
     assert(es.canFind("if (topologyPending_ && reporting_(t)")
         && es.canFind("if (topologyPending_) {")
         && edge.canFind("closeOwnOperation(false);"),

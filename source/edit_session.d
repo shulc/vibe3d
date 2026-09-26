@@ -915,7 +915,8 @@ private struct ToolSession {
             act = re.length ? cast(const ToolActivationCommand) re[0].cmd : null;
             // The inverse of the undo pair: the row, then the record that
             // carries it (same token), in one redo step (slice M4).
-            pair = act !is null && act.carriesFirstRecord() && re.length > 1
+            pair = act !is null && !act.dormantTopology() &&
+                act.carriesFirstRecord() && re.length > 1
                 && act.sessionToken() != 0
                 && re[1].cmd.sessionToken() == act.sessionToken();
         }
@@ -1170,9 +1171,16 @@ private struct ToolSession {
             }
             auto after = MeshSnapshot.capture(*m);
             auto attrs = t.captureAttrImage();
+            // A first topology record that carries its activation replays as
+            // an applied image with the operation's default attrs and with
+            // that image as the next operation's basis. Later records retain
+            // the tool-reported preview basis. Task 8030, W2 Polygon first
+            // group (12v/default attrs, then the next drag builds 16v).
+            const carriesActivation = pendingTopologyCarriesActivation_();
             cmd.setSnapshots(topologyPendingMesh_, after, client.topologyStepLabel());
             cmd.setTopologyStep(topologyPendingAttrs_, attrs,
-                topologyPendingBasis_, client.topologyStepBasis());
+                topologyPendingBasis_, carriesActivation
+                    ? after : client.topologyStepBasis());
             if (client.recordTopologyStep(cmd) && undoTop_() is cmd) {
                 history_.markEntrySession(cmd, token_);
                 topologyAttrs_ = attrs;
@@ -1355,7 +1363,8 @@ private struct ToolSession {
         const re = history_.redoEntries();
         if (re.length == 0) return false;
         auto act = cast(const ToolActivationCommand)re[0].cmd;
-        const bool pair = act !is null && act.carriesFirstRecord() &&
+        const bool pair = act !is null && !act.dormantTopology() &&
+            act.carriesFirstRecord() &&
             re.length > 1 && re[1].cmd.sessionToken() == act.sessionToken();
         auto cmd = cast(const MeshSessionEdit)re[pair ? 1 : 0].cmd;
         if (cmd is null || !cmd.isTopologyStep()) return false;
@@ -1371,10 +1380,20 @@ private struct ToolSession {
         auto current = tool_();
         if (current !is null && reporting_(current)) {
             (cast(TopologyStepClient)current).restoreTopologyStep(
-                cmd.stepAfterAttrs(), cmd.stepAfterBasis());
-            topologyAttrs_ = cmd.stepAfterAttrs();
+                pair ? cmd.stepBeforeAttrs() : cmd.stepAfterAttrs(),
+                cmd.stepAfterBasis());
+            topologyAttrs_ = pair ? cmd.stepBeforeAttrs() : cmd.stepAfterAttrs();
         }
         return true;
+    }
+
+    /// The first topology row is about to be appended immediately above the
+    /// activation it carries. This is policy/adjacency data, never a tool id.
+    private bool pendingTopologyCarriesActivation_() {
+        import commands.tool.lifecycle : ToolActivationCommand;
+        auto act = cast(const ToolActivationCommand)undoTop_();
+        return act !is null && !act.dormantTopology() && act.carriesFirstRecord()
+            && act.sessionToken() != 0 && act.sessionToken() == currentToken();
     }
 
     // The undo of the window's first group (H1, 283): back to the image the
@@ -1487,7 +1506,8 @@ private struct ToolSession {
         if (tok == 0 || tok != currentToken()) return false;
         if (cast(const ToolActivationCommand) top !is null) return false;
         auto act = cast(const ToolActivationCommand) ue[$ - 2].cmd;
-        return act !is null && act.carriesFirstRecord() && act.sessionToken() == tok;
+        return act !is null && !act.dormantTopology() &&
+            act.carriesFirstRecord() && act.sessionToken() == tok;
     }
 
     private const(Command) undoEntryAt_(size_t fromTop) {

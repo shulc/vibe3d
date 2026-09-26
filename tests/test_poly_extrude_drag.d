@@ -15,9 +15,9 @@
 // chosen because its axis projects with a large horizontal component under the
 // default camera, so that projection is far from degenerate.
 //
-// The press point is reconstructed from the arrow's own geometry rather than
-// from /api/tool/handles: this tool does not override toolHandlesJson, so the
-// endpoint reports no parts for it.
+// The original cell reconstructs the press point from the same projected
+// geometry; the session-law cells below read `/api/tool/handles` directly so
+// every successive operation grabs the newly posed production handle.
 //
 // WHAT THIS FILE WAS MISSING (task 2690), and it is NOT the failure the two
 // extrude handle pins had. Measured on this stand, THE DRAG HERE IS REAL: it
@@ -43,6 +43,7 @@ import http_client : testBaseUrl, getJson, postJson;
 import http_command_helpers : commandBody;
 import std.algorithm : canFind, sort;
 import std.conv : to;
+import std.format : format;
 import std.json;
 import std.math : abs;
 import std.net.curl : get, post;
@@ -83,6 +84,61 @@ double queryDistance() {
     auto r = postJson("/api/command", "tool.attr " ~ TOOL ~ " distance ?");
     assert(r["status"].str == "ok", "query distance failed: " ~ r.toString);
     return r["value"].floating;
+}
+
+void navigate(bool undo) {
+    const mod = undo ? 64 : 65;
+    playAndWait(format(
+        `{"t":50,"type":"SDL_KEYDOWN","sym":122,"scan":0,"mod":%s,"repeat":0}` ~ "\n"
+      ~ `{"t":60,"type":"SDL_KEYUP","sym":122,"scan":0,"mod":%s,"repeat":0}` ~ "\n",
+        mod, mod), BASE);
+}
+
+void handlePx(out int x, out int y) {
+    auto h = getJson("/api/tool/handles")["handles"];
+    assert(h.type != JSONType.null_, "poly.extrude publishes no handle arbiter");
+    foreach (p; h["parts"].array) {
+        if (cast(int)p["part"].integer != 0) continue;
+        assert(p["screen"].type != JSONType.null_, "Polygon extrude handle is off-camera");
+        x = cast(int)p["screen"].array[0].floating;
+        y = cast(int)p["screen"].array[1].floating;
+        return;
+    }
+    assert(false, "Polygon extrude handle part 0 is absent");
+}
+
+void settle() {
+    import core.thread : Thread;
+    import core.time : dur;
+    Thread.sleep(dur!"msecs"(180));
+}
+
+void setupPoly() {
+    auto r = postJson("/api/command", commandBody("scene.reset"));
+    assert(r["status"].str == "ok");
+    cmd("history.clear");
+    r = postJson("/api/command", commandBody("mesh.select",
+        `{"mode":"polygons","indices":[3]}`));
+    assert(r["status"].str == "ok");
+    r = postJson("/api/camera",
+        `{"azimuth":0.4,"elevation":1.1,"distance":4.0,`
+        ~ `"focus":{"x":0,"y":0,"z":0}}`);
+    assert(r["status"].str == "ok");
+    r = postJson("/api/command?origin=ui", "tool.set " ~ TOOL ~ " on");
+    assert(r["status"].str == "ok" || r["status"].str == "success");
+    settle();
+}
+
+void dragHandle(int dx, int steps = 12, int mod = 0, int button = 1) {
+    int x, y; handlePx(x, y);
+    auto cam = fetchCamera(BASE);
+    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+        x, y, x + dx, y, steps, mod, cast(ubyte)button), BASE);
+    settle();
+}
+
+void tapHandle(int button, int mod = 0) {
+    dragHandle(0, 1, mod, button);
 }
 
 unittest { // a purely horizontal drag on the arrow moves `distance`
@@ -170,4 +226,207 @@ unittest { // a purely horizontal drag on the arrow moves `distance`
         "the drop recorded " ~ (undoLen() - u0).to!string ~ " undo entr(ies), "
         ~ "expected exactly 1 — `deactivate()` commits only when the tool "
         ~ "built, so 0 here means the whole gesture was a no-op");
+}
+
+unittest { // Polygon first group is one activation+topology navigation step.
+    setupPoly();
+    const initial = planes();
+    const u0 = undoLen();
+    dragHandle(80);
+    const first = planes();
+    assert(vertexCount() == 12 && first != initial && undoLen() == u0 + 1,
+        "Polygon g1 did not create its 12v history row");
+
+    navigate(true);
+    assert(vertexCount() == 8 && planes() == initial && undoLen() == u0 - 1,
+        "one Polygon Undo must remove g1 and its activation");
+    navigate(false);
+    assert(vertexCount() == 12 && planes() != initial && undoLen() == u0 + 1
+        && abs(queryDistance()) < 1e-6,
+        "one Polygon Redo must restore 12v with default distance");
+    const replayed = planes();
+
+    dragHandle(60);
+    const second = planes();
+    assert(vertexCount() == 16 && second != replayed && undoLen() == u0 + 2,
+        "selected-face drag after Polygon first-group redo did not create 16v");
+    navigate(true);
+    assert(vertexCount() == 12 && planes() == replayed,
+        "Polygon continuation undo did not restore the 12v replay image");
+    navigate(false);
+    assert(vertexCount() == 16 && planes() == second,
+        "Polygon continuation redo did not restore the 16v image");
+}
+
+unittest { // Main ladder: g1, Middle clone and Shift reset are distinct rows.
+    setupPoly();
+    const u0 = undoLen();
+    dragHandle(80);
+    const g1 = planes();
+    assert(vertexCount() == 12 && undoLen() == u0 + 1,
+        "Polygon main g1 missing");
+    tapHandle(2);
+    const middle = planes();
+    assert(vertexCount() == 16 && middle != g1 && undoLen() == u0 + 2,
+        "Polygon Middle did not append a 16v operation row");
+    dragHandle(60, 12, 3, 1);
+    const shifted = planes();
+    assert(vertexCount() == 20 && shifted != middle && undoLen() == u0 + 3,
+        "Polygon Shift did not append a reset 20v operation row");
+
+    cmd("tool.set move on");
+    assert(undoLen() == u0 + 4, "switch added a cumulative Polygon carrier");
+    navigate(true);
+    assert(planes() == shifted && undoLen() == u0 + 3,
+        "outside z1 did not remove Move alone");
+    navigate(true);
+    assert(planes() == middle && vertexCount() == 16,
+        "outside z2 did not remove Shift alone");
+    navigate(true);
+    assert(planes() == g1 && vertexCount() == 12,
+        "outside z3 did not remove Middle alone");
+    navigate(true);
+    assert(vertexCount() == 8 && undoLen() == u0 - 1,
+        "outside z4 did not remove Polygon g1 with its activation");
+}
+
+unittest { // Zero tap and zero Middle create 12v then 16v at zero attrs.
+    setupPoly();
+    const initial = planes();
+    const u0 = undoLen();
+    tapHandle(1);
+    const zero = planes();
+    assert(abs(queryDistance()) < 1e-6 && vertexCount() == 12
+        && zero != initial && undoLen() == u0 + 1,
+        "zero Polygon tap did not create its coincident 12v topology row");
+    tapHandle(2);
+    const middle = planes();
+    assert(abs(queryDistance()) < 1e-6 && vertexCount() == 16
+        && middle != zero && undoLen() == u0 + 2,
+        "zero Polygon Middle did not create its coincident 16v row");
+    navigate(true);
+    assert(planes() == zero && vertexCount() == 12,
+        "zero Middle undo did not restore 12v");
+    navigate(false);
+    assert(planes() == middle && vertexCount() == 16,
+        "zero Middle redo did not restore 16v");
+}
+
+unittest { // Plain second drag stays on one topology and replaces redo branch.
+    setupPoly();
+    const u0 = undoLen();
+    dragHandle(80);
+    const first = planes();
+    dragHandle(35);
+    const oldSecond = planes();
+    assert(vertexCount() == 12 && oldSecond != first && undoLen() == u0 + 2,
+        "plain Polygon second drag did not append a position row");
+    navigate(true);
+    assert(planes() == first && undoLen() == u0 + 1,
+        "plain second-drag undo did not restore g1");
+    dragHandle(-55);
+    const branch = planes();
+    assert(vertexCount() == 12 && branch != first && branch != oldSecond
+        && undoLen() == u0 + 2,
+        "new Polygon drag after Undo did not replace the redo branch");
+    navigate(true);
+    assert(planes() == first, "replacement branch undo did not restore g1");
+    navigate(false);
+    assert(planes() == branch, "replacement branch redo restored the old branch");
+}
+
+unittest { // Interactive parameter is a row; recording command adds only itself.
+    setupPoly();
+    const u0 = undoLen();
+    dragHandle(80);
+    const first = planes();
+    auto p = postJson("/api/script?interactive=true",
+        "tool.attr poly.extrude distance 0.2\n");
+    assert(p["status"].str == "ok" || p["status"].str == "success");
+    const param = planes();
+    assert(param != first && vertexCount() == 12 && undoLen() == u0 + 2,
+        "interactive Polygon distance did not append its preview row");
+    navigate(true);
+    assert(planes() == first, "interactive distance undo lost g1");
+    navigate(false);
+    assert(planes() == param && abs(queryDistance() - 0.2) < 1e-5,
+        "interactive distance redo lost its exact mesh/attr image");
+
+    tapHandle(2);
+    const middle = planes();
+    assert(vertexCount() == 16 && undoLen() == u0 + 3,
+        "recording-command fixture lacks the Middle row");
+    auto r = postJson("/api/command?origin=ui", "mesh.flip");
+    assert(r["status"].str == "ok" || r["status"].str == "success");
+    assert(undoLen() == u0 + 4,
+        "recording command close added a cumulative Polygon row");
+    navigate(true);
+    assert(planes() == middle && undoLen() == u0 + 3,
+        "recording-command z1 did not remove the command alone");
+    navigate(true);
+    assert(planes() == param && undoLen() == u0 + 2,
+        "recording-command z2 did not remove Middle alone");
+}
+
+unittest { // Prepared switch closes a held drag once, without a cumulative row.
+    setupPoly();
+    const initial = planes();
+    const u0 = undoLen();
+    int x, y; handlePx(x, y);
+    auto cam = fetchCamera(BASE);
+    playAndWait(buildDragDownLog(cam.vpX, cam.vpY, cam.width, cam.height, x, y), BASE);
+    playAndWait(buildDragMotionLog(cam.vpX, cam.vpY, cam.width, cam.height,
+        x, y, x + 80, y, 12), BASE);
+    const preview = planes();
+    assert(preview != initial && vertexCount() == 12,
+        "held Polygon drag did not build a preview");
+    cmd("tool.set move on");
+    assert(planes() == preview && undoLen() == u0 + 2,
+        "prepared switch lost the pending Polygon image or duplicated a row");
+    playAndWait(buildDragUpLog(cam.vpX, cam.vpY, cam.width, cam.height, x + 80, y), BASE);
+    navigate(true);
+    navigate(true);
+    assert(planes() == initial && vertexCount() == 8 && undoLen() == u0 - 1,
+        "prepared close row did not round-trip with its activation");
+}
+
+unittest { // Full closed redo makes a fresh Polygon arm dormant and attr-only.
+    setupPoly();
+    const u0 = undoLen();
+    dragHandle(80);
+    const first = planes();
+    cmd("tool.set move on");
+    navigate(true);   // Move activation
+    navigate(true);   // Polygon first row + activation
+    navigate(false);
+    navigate(false);
+    assert(planes() == first && vertexCount() == 12 && undoLen() == u0 + 2,
+        "full closed redo did not restore Polygon image and Move row");
+    auto r = postJson("/api/command?origin=ui", "tool.set " ~ TOOL ~ " on");
+    assert(r["status"].str == "ok" || r["status"].str == "success");
+    const freshImage = planes();
+    const fresh = undoLen();
+    int x, y; handlePx(x, y);
+    auto cam = fetchCamera(BASE);
+    playAndWait(buildDragDownLog(cam.vpX, cam.vpY, cam.width, cam.height, x, y), BASE);
+    playAndWait(buildDragMotionLog(cam.vpX, cam.vpY, cam.width, cam.height,
+        x, y, x + 60, y, 12), BASE);
+    auto st = getJson("/api/tool/state");
+    assert(planes() == freshImage && undoLen() == fresh
+        && st["session"]["live"].type == JSONType.false_,
+        "dormant Polygon held drag armed or previewed topology");
+    playAndWait(buildDragUpLog(cam.vpX, cam.vpY, cam.width, cam.height, x + 60, y), BASE);
+    auto h = getJson("/api/history");
+    assert(planes() == freshImage && undoLen() == fresh + 1
+        && h["undo"].array[$ - 1]["command"].str == "tool.topology_adjustment",
+        "dormant Polygon drag must append one attr-only row with exact mesh/selection");
+    navigate(true);
+    assert(planes() == freshImage && undoLen() == fresh - 1,
+        "dormant Polygon z1 did not remove adjustment and activation");
+    navigate(false);
+    st = getJson("/api/tool/state");
+    assert(planes() == freshImage && undoLen() == fresh
+        && st["session"]["dormant"].type == JSONType.true_
+        && abs(queryDistance()) < 1e-6,
+        "dormant Polygon r1 did not restore bare default activation");
 }

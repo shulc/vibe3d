@@ -3185,13 +3185,14 @@ size_t extendEdgesByMask(ref MeshEditBatch ed, in bool[] maskIn,
 /// tests/fixtures/uv_corner_transfer.json). The cap is the same under both:
 /// it keeps the source face's corner values verbatim. See `UvWallLaw`.
 size_t extrudeFacesByMask(ref MeshEditBatch ed, in bool[] maskIn, float distance, bool smooth = false,
-                          UvWallLaw uvWall = UvWallLaw.SweepU) {
+                          UvWallLaw uvWall = UvWallLaw.SweepU,
+                          bool allowCoincidentTopology = false) {
     const mask = ed.maskMinusHiddenFaces(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
     if (mask.length != ed.faces.length) return 0;
     size_t selCount = 0;
     foreach (b; mask) if (b) ++selCount;
     if (selCount == 0) return 0;
-    if (distance == 0.0f) return 0;
+    if (distance == 0.0f && !allowCoincidentTopology) return 0;
 
     // Non-manifold-region reject (fuzz-found): reject the whole operation
     // if any edge of a SELECTED face is already shared by more than 2

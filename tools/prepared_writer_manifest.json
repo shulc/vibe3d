@@ -907,7 +907,7 @@
     {
       "aggregate": "PolyExtrudeTool",
       "module": "tools.edit.poly_extrude",
-      "semantic_sha256": "78488ad7011555fba40a02e7d858152078e881510a9f4021a9361abe32b00afa",
+      "semantic_sha256": "d7966e12c491d27c21f4fd9e7d66f4dbcd69eeab936769580923681f0ed76233",
       "signature": "void()",
       "symbol": "deactivate"
     },
@@ -1260,6 +1260,13 @@
       "aggregate": "PolyBevelTool",
       "module": "tools.edit.poly_bevel",
       "signature": "PolyBevelTool",
+      "symbol": "lifecycleProduct"
+    },
+    {
+      "admission": "activationRow",
+      "aggregate": "PolyExtrudeTool",
+      "module": "tools.edit.poly_extrude",
+      "signature": "PolyExtrudeTool",
       "symbol": "lifecycleProduct"
     },
     {

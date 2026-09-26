@@ -7,6 +7,7 @@ import bindbc.sdl;
 import operator : VectorStack;
 
 import tool;
+import command : Command;
 import mesh;
 import mesh_gpu : GpuMesh;
 import mesh_ops.extrude;
@@ -30,7 +31,6 @@ import perf_probe : g_perf, Cat;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
     PreparedSimpleToolDoorClient;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
-import command_history : PreparedHistoryKind;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_poly_extrude_activation : PreparedPolyExtrudeActivationOwner;
 import prepared_poly_extrude_param_update : PreparedPolyExtrudeParamUpdateOwner;
@@ -74,14 +74,12 @@ struct PreparedPolyExtrudeParamImage {
 // ---------------------------------------------------------------------------
 // PolyExtrudeTool — interactive Face Extrude (factory id `poly.extrude`).
 //
-// Cloned from EdgeExtrudeTool and simplified to a SINGLE axis (distance) with
-// no width axis. Polygon-mode only; topology-creating: one snapshot-based undo
-// entry per session (Phase 5 delta undo is deferred).
-//
-// Session model (matches EdgeExtrudeTool):
-//   activate()   — snapshot cage+selection; reset distance to 0; build gizmo.
-//   drag         — restore cage, reapply extrudeFacesByMask(mask, distance_).
-//   deactivate() — if built && distance != 0: commit MeshSessionEdit.
+// Task 8030: Polygon Extrude uses the same history-owned topology-step
+// contract as Edge Extrude. Each completed drag, Middle/Shift boundary and
+// interactive parameter write owns one MeshSessionEdit; `before` is only the
+// current operation's preview basis. The Polygon first group carries its
+// activation and opens at the first press; these are policy data, not a
+// ToolSession class branch. Evidence: W2 plan and test_poly_extrude_drag.d.
 //
 // Single handle:
 //   PART_EXTRUDE = BLUE Arrow along averaged region normal. Dragging changes
@@ -92,13 +90,19 @@ struct PreparedPolyExtrudeParamImage {
 // <v>; tool.doApply` drives through applyHeadless(); ToolDoApplyCommand wraps
 // it with a snapshot pair for undo (applyHeadless MUST NOT snapshot itself).
 // ---------------------------------------------------------------------------
-class PolyExtrudeTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient {
-    // A recording command through the UI door closes the live edit first —
-    // `Tool.commitOperation`'s in-place default — and the tool stays armed
-    // (slice M2; the C1-h-sel-fam law, captured for Edge Extend and Polygon
-    // Bevel and inferred for the rest of the in-place family, R20 gap g5).
+class PolyExtrudeTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient,
+        TopologyStepClient {
+    // Polygon opens at its first press and its first topology row carries the
+    // activation; later rows remain independent history entries.
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
-        static immutable ToolSessionPolicy policy = { commandClose: CommandClose.uiDoor };
+        static immutable ToolSessionPolicy policy = {
+            activationRow: true, recordCarriesActivation: true,
+            commandClose: CommandClose.uiDoor,
+            sessionSteps: true, historyTopologySteps: true,
+            dormantAfterClosedRedo: true,
+            opensAt: OpensAt.firstPress,
+            imageAttrs: ["distance"], haulAttrs: ["distance"]
+        };
         return policy;
     }
 
@@ -117,6 +121,7 @@ private:
     // Interactive session state.
     bool          active;
     bool          built;
+    bool          topologyDormant;
     MeshSnapshot  before;
     Viewport      cachedVp;
 
@@ -131,6 +136,7 @@ private:
     enum int PART_EXTRUDE = 0;
     enum int PART_FREE    = 1;   // off-handle blind vertical drag
     int   dragPart = -1;
+    int   dragButton_;
     int   dragLastMX, dragLastMY;
     int   dragStartMX, dragStartMY;
     float dragBaseDistance;
@@ -212,8 +218,7 @@ public:
     }
 
     override void deactivate() {
-        if (active && built && distance_ != 0.0f)
-            commitEdit();
+        // Completed images already belong to CommandHistory.
         active     = false;
         built      = false;
         dragPart   = -1;
@@ -239,9 +244,39 @@ public:
     // with resyncSession() to re-arm in place. Mirrors deactivate()'s commit
     // guard minus the teardown.
     public override bool commitUncommittedEdit() {
-        if (!hasUncommittedEdit()) return false;
-        commitEdit();
+        return false; // Shift starts the next topology operation below.
+    }
+
+    public override bool commitOperation() {
+        if (!active) return false;
+        resyncSession();
         return true;
+    }
+
+    public override Mesh* topologyStepMesh() { return mesh; }
+    public override MeshSnapshot topologyStepBasis() { return before; }
+    public override Command topologyStepCarrier() {
+        return gestureFactory is null ? null : gestureFactory();
+    }
+    public override bool recordTopologyStep(Command cmd) {
+        return recordGestureEdit(cmd, GestureRecordMode.Plain);
+    }
+    public override string topologyStepLabel() { return "Face Extrude"; }
+    public override void setTopologyDormant(bool dormant) {
+        topologyDormant = dormant;
+    }
+    public override void restoreTopologyStep(in AttrImage attrs,
+            MeshSnapshot basis) {
+        before = basis;
+        auto visible = MeshSnapshot.capture(*mesh);
+        before.restore(*mesh);
+        computeGizmoFrame();
+        visible.restore(*mesh);
+        restoreRecordedAttrs(attrs);
+        built = !before.matches(*mesh);
+        dragPart = -1;
+        toolHandles.clearHaul();
+        refreshCaches();
     }
 
     override void onParamChanged(string pname) {
@@ -333,14 +368,29 @@ public:
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         if (!active) return false;
         if (e.button == SDL_BUTTON_RIGHT) {
-            cancelLiveEdit();
+            closeOwnOperation(false);
             return true;
         }
-        if (e.button != SDL_BUTTON_LEFT) return false;
+        if (e.button != SDL_BUTTON_LEFT && e.button != SDL_BUTTON_MIDDLE) return false;
         SDL_Keymod mods = SDL_GetModState();
-        if (mods & (KMOD_ALT | KMOD_SHIFT)) return false;
+        if (mods & KMOD_ALT) return false;
+        if (e.button == SDL_BUTTON_MIDDLE && (mods & (KMOD_SHIFT | KMOD_CTRL)))
+            return false;
         if (*editMode != EditMode.Polygons) return false;
         if (mesh.faces.length == 0 || !gizmoValid) return false;
+
+        const bool boundary = e.button == SDL_BUTTON_MIDDLE || (mods & KMOD_SHIFT);
+        sessionStepBegins(e.button == SDL_BUTTON_MIDDLE ? PressKind.middle
+            : boundary ? PressKind.shift : PressKind.plain);
+        if (boundary) {
+            before = MeshSnapshot.capture(*mesh);
+            if (e.button != SDL_BUTTON_MIDDLE) distance_ = 0.0f;
+            computeGizmoFrame();
+        }
+        // Polygon's zero tap is still a topology operation. The kernel keeps
+        // its default zero-distance refusal for commands; only this interactive
+        // boundary opts into coincident topology.
+        rebuildPreview(true);
 
         int part = toolHandles.test(e.x, e.y, cachedVp);
 
@@ -349,6 +399,12 @@ public:
         dragStartMX      = e.x;
         dragStartMY      = e.y;
         dragBaseDistance = distance_;
+        dragButton_       = e.button;
+
+        if (boundary) {
+            dragPart = PART_FREE;
+            return true;
+        }
 
         if (part == PART_EXTRUDE) {
             dragPart = PART_EXTRUDE;
@@ -366,7 +422,11 @@ public:
         if (dragPart == PART_FREE) {
             int dy = e.y - dragStartMY;
             distance_ = dragBaseDistance + (-dy) * FREE_SCALE;
-            rebuildPreview();
+            // A Polygon gesture owns topology even when its current distance
+            // is zero (captured zero-tap/Middle law).  Keep that opt-in for
+            // every motion in the gesture; otherwise the helper's stationary
+            // motion event would erase the coincident preview opened on down.
+            rebuildPreview(true);
             dragLastMX = e.x;
             dragLastMY = e.y;
             return true;
@@ -394,7 +454,7 @@ public:
                                      os.pos(anchor), ax.dir, cachedVp, skip);
         if (!skip) {
             distance_ += ax.toLocal(dot(delta, ax.dir));
-            rebuildPreview();
+            rebuildPreview(true);
         }
         dragLastMX = e.x;
         dragLastMY = e.y;
@@ -403,9 +463,10 @@ public:
 
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         if (!active || dragPart < 0) return false;
-        if (e.button != SDL_BUTTON_LEFT) return false;
+        if (e.button != dragButton_) return false;
         dragPart = -1;
         toolHandles.clearHaul();
+        sessionStepEnds();
         return true;
     }
 
@@ -461,14 +522,15 @@ private:
         return mesh.operandFaceMask();
     }
 
-    void rebuildPreview() {
+    void rebuildPreview(bool allowCoincidentTopology = false) {
         if (!active) return;
+        if (topologyDormant) return;
         // Perf (task 1370) — AFTER the guard(s) above, never on the first
         // line: an early-out must record no sample, or `count` tallies
         // refusals as work. See Cat.toolPreview for the decomposition.
         auto zPreview = g_perf.scope_(Cat.toolPreview);
         before.restore(*mesh);
-        if (distance_ == 0.0f) {
+        if (distance_ == 0.0f && !allowCoincidentTopology) {
             built = false;
             refreshCaches();
             return;
@@ -476,24 +538,20 @@ private:
         auto mask = currentMask();
         // task 1903 Stage H: unrecorded — the per-drag-frame preview rerun.
         auto ed = MeshEditBatch.unrecorded(*mesh, kExtrudeEditScope);
-        size_t n = ed.extrudeFacesByMask(mask, distance_);
+        size_t n = ed.extrudeFacesByMask(mask, distance_, false,
+            UvWallLaw.SweepU, allowCoincidentTopology);
         ed.close();
         built = (n != 0);
         refreshCaches();
     }
 
     final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext c) {
-        bool ok; if (active && built && distance_ != 0.0f && c !is null && history !is null && gestureFactory !is null && before.filled) { auto cmd=cast(MeshSessionEdit)gestureFactory(); if(cmd !is null){cmd.setSnapshots(before,MeshSnapshot.capture(*mesh),"Face Extrude");ok=c.prepare(cmd,PreparedHistoryKind.Plain).accepted;}}
-        return PreparedDeactivateEffect(preparedToolStateOwner,PreparedDeactivateKind.PolyExtrude,ok);
-    }
-    void commitEdit() {
-        if (history is null || gestureFactory is null) return;
-        if (!before.filled) return;
-        auto cmd = cast(MeshSessionEdit) gestureFactory();
-        if (cmd is null) { noteGestureCarrierMismatch(); return; }
-        auto post = MeshSnapshot.capture(*mesh);
-        cmd.setSnapshots(before, post, "Face Extrude");
-        recordGestureEdit(cmd, GestureRecordMode.Plain);
+        if (c is null) return PreparedDeactivateEffect(
+            preparedToolStateOwner, PreparedDeactivateKind.PolyExtrude,
+            false, false);
+        const accepted = c.markNoHistoryInstall();
+        return PreparedDeactivateEffect(preparedToolStateOwner,
+            PreparedDeactivateKind.PolyExtrude, false, accepted);
     }
 
     void refreshCaches() {
@@ -501,6 +559,7 @@ private:
     }
 
     void cancelLiveEdit() {
+        if (dragPart < 0) return; // completed images belong to history
         before.restore(*mesh);
         refreshCaches();
         distance_ = 0.0f;
