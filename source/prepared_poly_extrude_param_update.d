@@ -140,23 +140,26 @@ version(unittest) unittest {
     staleTool.mutatePreparedParamForTest(17.0f);
     assert(!staleContext.validate() && staleLayer.meshRef().vertices.length == 8);
 
-    auto shiftLayer = new Layer; shiftLayer.meshRef() = makeCube();
-    shiftLayer.meshRef().syncSelection(); shiftLayer.meshRef().selectFace(0);
-    GpuMesh shiftGpu;
-    auto shiftTool = new PolyExtrudeTool(() => &shiftLayer.meshRef(), &shiftGpu,
-        &mode, LitShader.init);
-    shiftTool.seedPreparedParamForTest(shiftLayer.meshRef());
-    auto shiftContext = new PreparedRecordContext(null, new RecordObserverHub());
-    shiftContext.setResourceIdentity(7, 11);
-    assert(shiftTool.prepareParamChanged(shiftContext, shiftLayer,
-        GpuUploadOwner.fakeForTest(&shiftGpu)).accepted);
-    bool changedShift;
-    foreach (ref p; shiftTool.params()) if (p.name == "shiftX") {
-        *p.fptr = 0.25f; changedShift = true;
+    foreach (shiftName; ["shiftX", "shiftY", "shiftZ"]) {
+        auto shiftLayer = new Layer; shiftLayer.meshRef() = makeCube();
+        shiftLayer.meshRef().syncSelection(); shiftLayer.meshRef().selectFace(0);
+        GpuMesh shiftGpu;
+        auto shiftTool = new PolyExtrudeTool(() => &shiftLayer.meshRef(), &shiftGpu,
+            &mode, LitShader.init);
+        shiftTool.seedPreparedParamForTest(shiftLayer.meshRef());
+        auto shiftContext = new PreparedRecordContext(null,
+            new RecordObserverHub());
+        shiftContext.setResourceIdentity(7, 11);
+        assert(shiftTool.prepareParamChanged(shiftContext, shiftLayer,
+            GpuUploadOwner.fakeForTest(&shiftGpu)).accepted);
+        bool changedShift;
+        foreach (ref p; shiftTool.params()) if (p.name == shiftName) {
+            *p.fptr = 0.25f; changedShift = true;
+        }
+        assert(changedShift && !shiftContext.validate() &&
+            shiftLayer.meshRef().vertices.length == 8,
+            "prepared Polygon parameter projection omitted " ~ shiftName);
     }
-    assert(changedShift && !shiftContext.validate() &&
-        shiftLayer.meshRef().vertices.length == 8,
-        "prepared Polygon parameter projection omitted a shift channel");
 
     auto wrongLayer = new Layer; wrongLayer.meshRef() = makeCube();
     wrongLayer.meshRef().syncSelection(); wrongLayer.meshRef().selectFace(0);

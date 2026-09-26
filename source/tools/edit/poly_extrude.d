@@ -634,7 +634,6 @@ private:
         idx.reserve(selected.length);
         to.reserve(selected.length);
         foreach (vi; selected) {
-            if (vi < 0 || cast(size_t)vi >= ed.vertices.length) continue;
             idx ~= cast(uint)vi;
             to ~= ed.vertices[vi] + shift;
         }
