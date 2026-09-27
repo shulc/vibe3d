@@ -1139,6 +1139,47 @@ def controls(scratch):
             print(f"positive control: {name}: lexErrors {r['lexErrors']}")
         if not good:
             ok = False
+    # Contract cells for the census's PRODUCTION primitives (task 5330 step 3):
+    # the edge cases of each old contract that today's tree never exercises, so
+    # the census itself cannot redden on them (sweep of 2026-09-27: C2, C3, C6,
+    # C7, C10, C13, C14 all left the census green). Each calls the function the
+    # census calls -- the writer module's, or the census's own definition taken
+    # from its source -- never a stand-in.
+    wsrc = CENSUS.read_text()
+    ws = wsrc.index("def without_unittests(source):")
+    we = wsrc.index("prepared_source_texts =", ws)
+    exec(wsrc[ws:we], ns)
+
+    def raised(fn, *a):
+        try:
+            return ("returned", fn(*a))
+        except ValueError as error:
+            return ("ValueError", str(error))
+    nested = "unittest { struct S { unittest { } } }\nint x;\n"
+    cells = [
+        ("_balanced: unpaired `{` raises the old message",
+         raised(w._balanced, "{ {", 1), ("ValueError", "unbalanced D source")),
+        ("_balanced: a `{` inside a comment is not a brace",
+         raised(w._balanced, "// {\n{ }", 4)[0], "ValueError"),
+        ("_mask_unittests: version(unittest) branch blanked",
+         w._mask_unittests("version(unittest) { int x; }\nint y;"),
+         " " * len("version(unittest) { int x; }") + "\nint y;"),
+        ("_aggregate: an interface is not a class/struct",
+         w._aggregate("class C { interface J { int x; } }", 26), "C"),
+        ("_private_function_body: only the private overload",
+         w._private_function_body("void helper() { a(); }\nprivate void helper(int) { b(); }", "helper"),
+         " b(); "),
+        ("d_declaration_span: an ambiguous name has no span",
+         ns["d_declaration_span"]("struct A { struct S { } }\nstruct B { struct S { } }", "struct", "S"),
+         None),
+        ("without_unittests: the OUTERMOST block is cut once",
+         ns["without_unittests"](nested), "\nint x;\n"),
+    ]
+    for label, got, want in cells:
+        good = got == want
+        print(f"contract cell: {label}: {'ok' if good else f'got {got!r}, want {want!r}'}")
+        if not good:
+            ok = False
     print(f"positive control: versionUnittest spans {got} {'==' if got == want else '!='} {want}")
     if got != want:
         ok = False
