@@ -1,0 +1,10 @@
+{
+	"name": "dspans",
+	"description": "Byte/code-point spans of D declarations, comments and literals, from libdparse (task 5330).",
+	"license": "BSL-1.0",
+	"targetType": "executable",
+	"targetPath": "bin",
+	"dependencies": {
+		"libdparse": "~>0.25.1"
+	}
+}
