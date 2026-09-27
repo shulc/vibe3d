@@ -1350,14 +1350,19 @@ def main():
     not_d = [d for d in open_ if d.verdict and "lexErrors" in d.verdict]
     print(f"\nOPEN verdicts: {len(open_)} ({len(not_d)} in texts with lexErrors)")
     if not opts.inject_control:
-        if len(divs) > DIVERGENCE_CEILING:
+        # Both gates are evaluated and printed, so one run shows each witness.
+        over = len(divs) > DIVERGENCE_CEILING
+        unconfirmed = len(open_) - len(not_d)
+        if over:
             print(f"TOOL: {len(divs)} raw divergences exceed the ceiling {DIVERGENCE_CEILING}",
                   file=sys.stderr)
-            return 5
-        if len(open_) > len(not_d):
-            print(f"TOOL: {len(open_) - len(not_d)} divergence(s) in valid D carry no confirmed verdict",
+        if unconfirmed:
+            print(f"TOOL: {unconfirmed} divergence(s) in valid D carry no confirmed verdict",
                   file=sys.stderr)
+        if unconfirmed:
             return 6
+        if over:
+            return 5
     return 0
 
 
