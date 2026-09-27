@@ -17,6 +17,7 @@ disagreement by name.
 Usage:
   python3 tools/dspans/compare.py                 # full comparison
   python3 tools/dspans/compare.py --controls      # positive controls only
+  python3 tools/dspans/compare.py --swap-trial    # census copy on dspans primitives
   python3 tools/dspans/compare.py --inject-control
         # the full comparison over a census run in which ONE file the census
         # reads carries an artificial backtick string holding `}`: proves the
@@ -881,6 +882,143 @@ def controls(scratch):
     return ok
 
 
+# ---------------------------------------------------------------------------
+# Swap trial: the census with every primitive answered by dspans
+# ---------------------------------------------------------------------------
+# NOT a replacement (task 5330 step 3 is a separate decision): the census file
+# is untouched. This executes an in-memory copy whose primitive definitions are
+# rebound, right after each `def`, to implementations that read dspans spans,
+# and reports whether the census's own assertions still hold. A divergence the
+# comparison lists is LIVE if this run fails on it and LATENT if it passes.
+def swap_trial(scratch):
+    import ast
+    import importlib
+    cache = {}
+    work = scratch / "swap"
+    work.mkdir(parents=True, exist_ok=True)
+    stats = {"texts": 0, "secs": 0.0}
+
+    def spans_of(text):
+        k = sha(text)
+        sp = cache.get(k)
+        if sp is None:
+            path = work / f"{k}.d"
+            with open(path, "w", encoding="utf-8", newline="") as out:
+                out.write(text)
+            started = time.monotonic()
+            run = subprocess.run([str(DSPANS), str(path)], stdout=subprocess.PIPE, check=True)
+            stats["secs"] += time.monotonic() - started
+            stats["texts"] += 1
+            sp = cache[k] = Spans(json.loads(run.stdout)["files"][0])
+        return sp
+
+    def balanced(text, start):
+        r = new_balanced(spans_of(text), text, start)
+        if isinstance(r, tuple):
+            raise ValueError("unbalanced D source" if r[0] == "ValueError" else f"no brace token at {r[1]}")
+        return r
+
+    def balanced_parentheses(text, open_pos):
+        r = new_balanced_parentheses(spans_of(text), text, open_pos)
+        if isinstance(r, tuple):
+            raise ValueError("unbalanced D call expression" if r[0] == "ValueError" else f"no paren token at {r[1]}")
+        return r
+
+    def private_function_body(text, name):
+        r = new_private_function_body(spans_of(text), text, name)
+        if isinstance(r, tuple):
+            raise ValueError(f"expression factory helper {name} resolved to {r[1]} "
+                             "private same-module function bodies")
+        return r
+
+    sys.path.insert(0, str(TOOLS))
+    writer = importlib.import_module("prepared_writer_census")
+    writer_swap = {
+        "_balanced": balanced,
+        "_balanced_parentheses": balanced_parentheses,
+        "_mask_comments": lambda text: masked(text, spans_of(text).comments, False),
+        "_mask_unittests": lambda text: new_mask_unittests(spans_of(text), text),
+        "_aggregate": lambda text, pos: new_aggregate(spans_of(text), text, pos),
+        "_function_at": lambda text, pos: new_function_at(spans_of(text), text, pos),
+        "_private_function_body": private_function_body,
+        "_calls": lambda body: new_calls(spans_of(body), writer, body),
+        "_semantic_digest": lambda body: new_semantic_digest(spans_of(body), body),
+    }
+    counts = defaultdict(int)
+    broken = os.environ.get("DSPANS_SWAP_BREAK", "")
+
+    def counted(name, fn):
+        # A population floor for the trial (a rebinding nobody reaches passes
+        # vacuously), and a break knob: DSPANS_SWAP_BREAK=<primitive> makes
+        # that one primitive return a deliberately wrong answer (an empty
+        # body, nothing masked, no span, a constant digest), which the census
+        # must then refuse -- the trial's own positive control.
+        def wrapper(*args):
+            counts[name] += 1
+            if name == broken:
+                first = args[0]
+                if name in ("_balanced", "_balanced_parentheses"):
+                    return args[1] + 1
+                if name in ("_mask_comments", "mask_d_noncode", "mask_d_comments",
+                            "_mask_unittests", "without_unittests"):
+                    return first
+                if name == "d_declaration_span":
+                    return None
+                if name in ("_aggregate", "_function_at"):
+                    return "<module>"
+                if name == "_private_function_body":
+                    return ""
+                if name == "_semantic_digest":
+                    return "0" * 64
+                if name == "_calls":
+                    return []
+            return fn(*args)
+        return wrapper
+
+    writer_swap = {n: counted(n, f) for n, f in writer_swap.items()}
+    saved = {name: getattr(writer, name) for name in writer_swap}
+    for name, fn in writer_swap.items():
+        setattr(writer, name, fn)
+    census_swap = {n: counted(n, f) for n, f in {
+        "mask_d_noncode": lambda source: masked(source, spans_of(source).comments + spans_of(source).strings, True),
+        "mask_d_comments": lambda source: masked(source, spans_of(source).comments, True),
+        "d_declaration_span": lambda source, kind, name: new_declaration_span(spans_of(source), source, kind, name),
+        "without_unittests": lambda source: new_without_unittests(spans_of(source), source),
+    }.items()}
+    tree = ast.parse(CENSUS.read_text(), str(CENSUS))
+    body, rebound = [], []
+    for node in tree.body:
+        body.append(node)
+        if isinstance(node, ast.FunctionDef) and node.name in census_swap:
+            body.append(ast.parse(f"{node.name} = __dspans_swap__[{node.name!r}]").body[0])
+            rebound.append(node.name)
+    tree.body = body
+    ast.fix_missing_locations(tree)
+    namespace = {"__name__": "__main__", "__file__": str(CENSUS), "__dspans_swap__": census_swap}
+    started = time.monotonic()
+    rc, message = 0, ""
+    try:
+        exec(compile(tree, str(CENSUS), "exec"), namespace)
+    except SystemExit as stop:
+        c = stop.code
+        rc, message = (0, "") if c is None else (c, "") if isinstance(c, int) else (1, str(c))
+    finally:
+        for name, fn in saved.items():
+            setattr(writer, name, fn)
+    elapsed = time.monotonic() - started
+    print(f"swap trial: rebound {len(writer_swap)} writer primitives and {len(rebound)} census "
+          f"primitives ({', '.join(sorted(rebound))})")
+    print(f"swap trial: census exit {rc} in {elapsed:.1f}s; dspans answered {stats['texts']} "
+          f"distinct texts in {stats['secs']:.1f}s")
+    print("swap trial: calls answered by dspans: " + ", ".join(
+        f"{n} {counts.get(n, 0)}" for n in sorted(set(writer_swap) | set(census_swap))))
+    if broken:
+        print(f"swap trial: DSPANS_SWAP_BREAK={broken} (a positive control: the census must refuse)")
+    if message:
+        print("swap trial: census message: " + message)
+    return rc
+
+
 def report(recorder, spans, labels, divs, pairs):
     print("\nprimitive calls recorded: raw calls / distinct (text, args) calls / span pairs compared")
     distinct = defaultdict(int)
@@ -935,6 +1073,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--controls", action="store_true")
     ap.add_argument("--inject-control", action="store_true")
+    ap.add_argument("--swap-trial", action="store_true",
+                    help="run an in-memory copy of the census with every primitive answered by dspans")
     ap.add_argument("--no-build", action="store_true")
     ap.add_argument("--scratch", default=os.environ.get("DSPANS_SCRATCH",
                     os.path.join(os.environ.get("TMPDIR", "/var/tmp"), "dspans-compare")))
@@ -945,6 +1085,9 @@ def main():
         build_dspans()
     if opts.controls:
         return 0 if controls(scratch) else 4
+    if opts.swap_trial:
+        swap_trial(scratch)
+        return 0
 
     recorder = Recorder()
     rc, namespace, writer, census_secs, hits = run_census(recorder, opts.inject_control)
