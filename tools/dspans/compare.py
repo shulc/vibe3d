@@ -1358,6 +1358,18 @@ def main():
 
     recorder = Recorder()
     rc, namespace, writer, census_secs, hits = run_census(recorder, opts.inject_control)
+    # MIGRATED is a literal; cross-check it against what the census's CURRENT
+    # functions actually call, or dropping a name from it would quietly make
+    # this script compare the census with itself for that primitive.
+    import inspect
+    reads_dspans = set()
+    for name in ALL_PRIMITIVES:
+        fn = namespace.get(name) if name in CENSUS_PRIMITIVES else getattr(writer, name, None)
+        if fn is not None and "dspans_client" in inspect.getsource(fn):
+            reads_dspans.add(name)
+    if reads_dspans != MIGRATED:
+        raise SystemExit(f"TOOL: MIGRATED {sorted(MIGRATED)} != primitives that read dspans "
+                         f"{sorted(reads_dspans)}")
     expect = opts.expect_census_exit
     if expect is None:
         expect = None if opts.inject_control else 0
