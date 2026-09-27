@@ -15,6 +15,7 @@ from prepared_writer_census import (scan as scan_writer_graph,
     _semantic_digest as semantic_digest, module_path,
     persisted_manifest as persisted_writer_manifest,
     REGISTRATION_SOURCE_NAMES as writer_registration_source_names)
+import dspans_client  # made importable by prepared_writer_census (tools/dspans)
 
 ROOT = Path(__file__).resolve().parents[1]
 DMD_FLAGS_RUN = subprocess.run(
@@ -56,19 +57,15 @@ def mask_d_comments(source):
         "\n" if char == "\n" else " " for char in match.group()), source)
 
 def d_declaration_span(source, kind, name):
-    """Return one parsed aggregate declaration span, or None on absence/ambiguity."""
-    visible = mask_d_noncode(source)
-    qualifier = r"(?:\b(?:private|package|protected|public|static|final)\s+)*"
-    matches = list(re.finditer(
-        qualifier + rf"\b{re.escape(kind)}\s+{re.escape(name)}\b[^{{;]*\{{",
-        visible))
+    """Return one parsed aggregate declaration span, or None on absence/ambiguity.
+    The span runs from the declaration's first ATTRIBUTE (`private final class`
+    starts at `private`) to just past its closing brace, as libdparse reads it
+    through tools/dspans (task 5330); a forward declaration has no span."""
+    matches = [agg for agg in dspans_client.aggregates(source)
+               if agg["kind"] == kind and agg["name"] == name and agg["body"]]
     if len(matches) != 1:
         return None
-    match = matches[0]
-    try:
-        return match.start(), balanced_source(source, match.end())
-    except ValueError:
-        return None
+    return matches[0]["declStart"], matches[0]["body"][1]
 
 def has_final_class(source, name):
     """Whether name is declared exactly once as a named final class."""
@@ -679,9 +676,11 @@ def validate_b3d_producers(sources, only=None):
 validate_b3d_producers(b3d_sources)
 
 def without_unittests(source):
+    """The source with every outermost `unittest` block (keyword to `}`) cut
+    out, as libdparse finds them through tools/dspans (task 5330)."""
     result = source
-    for match in reversed(list(re.finditer(r"\bunittest\s*\{", result))):
-        result = result[:match.start()] + result[balanced_source(result, match.end()):]
+    for start, end in reversed(dspans_client.outermost(dspans_client.unittest_ranges(source))):
+        result = result[:start] + result[end:]
     return result
 
 prepared_source_texts = {path: path.read_text()

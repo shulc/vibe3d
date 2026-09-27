@@ -9,6 +9,7 @@ from pathlib import Path
 import hashlib
 import json
 import re
+import sys
 
 DOMAINS = ("ToolState", "Mesh", "CommandHistory", "GpuGl",
            "SessionPipeStickyParam")
@@ -23,91 +24,51 @@ def _mask_comments(text):
     return re.sub(r"//[^\n]*|/\*.*?\*/|/\+.*?\+/", lambda m: " " * len(m.group()),
                   text, flags=re.S)
 
+# Brace pairs, unittest blocks and declarations come from libdparse through
+# tools/dspans (task 5330), not from a character scanner: the old one lost
+# sync on backtick strings, r-strings, nested comments and `unittest // note`,
+# measured on this tree by tools/dspans/compare.py. Each function keeps the
+# CONTRACT of the scanner it replaced (verbatim in tools/dspans/legacy_primitives.py).
+sys.path.insert(0, str(Path(__file__).resolve().parent / "dspans"))
+import dspans_client  # noqa: E402
+
 def _mask_unittests(text):
+    """Blank every `unittest` block and braced `version(unittest)` branch."""
     masked = list(text)
-    for match in list(re.finditer(r"(?:\bversion\s*\(\s*unittest\s*\)\s*|\bunittest\s*)\{", _mask_comments(text)))[::-1]:
-        try: end = _balanced(text, match.end())
-        except ValueError: continue
-        masked[match.start():end] = " " * (end - match.start())
+    for start, end in dspans_client.unittest_ranges(text, with_version=True):
+        masked[start:end] = " " * (end - start)
     return "".join(masked)
 
 def _balanced(text, start):
-    depth = 1
-    i = start
-    quote = None
-    comment = None
-    while i < len(text) and depth:
-        c = text[i]
-        if comment == "//":
-            if c == "\n": comment = None
-        elif comment in ("/*", "/+"):
-            close = "*/" if comment == "/*" else "+/"
-            if text.startswith(close, i): comment = None; i += 2; continue
-        elif quote:
-            if c == "\\": i += 2; continue
-            if c == quote: quote = None
-        elif text.startswith("//", i): comment = "//"; i += 2; continue
-        elif text.startswith("/*", i): comment = "/*"; i += 2; continue
-        elif text.startswith("/+", i): comment = "/+"; i += 2; continue
-        elif c in "\"'": quote = c
-        elif c == "{" : depth += 1
-        elif c == "}" : depth -= 1
-        i += 1
-    if depth: raise ValueError("unbalanced D source")
-    return i
+    """Offset after the `}` paired with the `{` at start - 1."""
+    return dspans_client.balanced(text, start)
 
 def _balanced_parentheses(text, open_pos):
     """Return the offset after the parenthesis paired with open_pos."""
-    if open_pos >= len(text) or text[open_pos] != "(":
-        raise ValueError("expected opening parenthesis")
-    depth = 1
-    i = open_pos + 1
-    quote = None
-    comment = None
-    while i < len(text) and depth:
-        c = text[i]
-        if comment == "//":
-            if c == "\n": comment = None
-        elif comment in ("/*", "/+"):
-            close = "*/" if comment == "/*" else "+/"
-            if text.startswith(close, i): comment = None; i += 2; continue
-        elif quote:
-            if c == "\\": i += 2; continue
-            if c == quote: quote = None
-        elif text.startswith("//", i): comment = "//"; i += 2; continue
-        elif text.startswith("/*", i): comment = "/*"; i += 2; continue
-        elif text.startswith("/+", i): comment = "/+"; i += 2; continue
-        elif c in "\"'": quote = c
-        elif c == "(": depth += 1
-        elif c == ")": depth -= 1
-        i += 1
-    if depth: raise ValueError("unbalanced D call expression")
-    return i
+    return dspans_client.balanced_parentheses(text, open_pos)
 
 def _aggregate(text, pos):
-    found = "<module>"
-    declarations = _mask_comments(text)
-    for m in re.finditer(r"\b(?:class|struct)\s+(\w+)[^{;]*\{", declarations[:pos]):
-        try:
-            if _balanced(text, m.end()) > pos: found = m.group(1)
-        except ValueError: pass
+    """Name the innermost class/struct whose body holds offset pos."""
+    found, found_open = "<module>", -1
+    for agg in dspans_client.aggregates(text):
+        if agg["kind"] not in ("class", "struct") or not agg["body"]:
+            continue
+        open_, end = agg["body"]
+        if open_ < pos < end and open_ > found_open:
+            found, found_open = agg["name"], open_
     return found
 
 # Project-owned scanner identifier: exact `grep -rl -w _function_at` over the
 # SDK tree returned zero files; `caller` is generic call-graph vocabulary there.
 def _function_at(text, pos):
     """Name the innermost function declaration containing byte offset pos."""
-    found = "<module>"
-    declarations = _mask_comments(text)
-    pattern = re.compile(
-        r"(?m)^[ \t]*(?:[A-Za-z_]\w*[ \t]+)+([A-Za-z_]\w*)\s*"
-        r"\([^;{}]*\)\s*[^;{]*\{")
-    for match in pattern.finditer(declarations, 0, pos):
-        try:
-            if _balanced(text, match.end()) > pos:
-                found = match.group(1)
-        except ValueError:
-            pass
+    found, found_open = "<module>", -1
+    for fn in dspans_client.functions(text):
+        if not fn["body"]:
+            continue
+        open_, end = fn["body"]
+        if open_ < pos < end and open_ > found_open:
+            found, found_open = fn["name"], open_
     return found
 
 def _derives(classes, name, base, seen=None):
@@ -159,21 +120,9 @@ def _semantic_digest(body):
 
 def _private_function_body(text, name):
     """Resolve one private same-module function body by its unqualified name."""
-    declarations = _mask_comments(text)
-    pattern = re.compile(
-        r"(?m)^[ \t]*private[ \t]+"
-        r"(?:[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*[ \t]+)+"
-        + re.escape(name) + r"\s*\(")
-    bodies = []
-    for match in pattern.finditer(declarations):
-        open_pos = match.end() - 1
-        params_end = _balanced_parentheses(text, open_pos)
-        body_open = declarations.find("{", params_end)
-        declaration_end = declarations.find(";", params_end)
-        if body_open < 0 or (declaration_end >= 0 and declaration_end < body_open):
-            continue
-        body_end = _balanced(text, body_open + 1)
-        bodies.append(text[body_open + 1:body_end - 1])
+    bodies = [text[fn["body"][0] + 1:fn["body"][1] - 1]
+              for fn in dspans_client.functions(text)
+              if fn["name"] == name and fn["body"] and "private" in fn["attrs"]]
     if len(bodies) != 1:
         raise ValueError(
             f"expression factory helper {name} resolved to {len(bodies)} "

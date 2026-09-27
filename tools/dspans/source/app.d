@@ -10,6 +10,7 @@
  * Usage:
  *   dspans [--units=codepoints|bytes] [--lex-only] FILE...
  *   dspans [--units=...] [--lex-only] --list LISTFILE     (one path per line)
+ *   dspans [--units=...] --serve       (length-prefixed texts on stdin; see serve())
  *
  * UNITS. Every span is HALF-OPEN [start, end). The default unit is the
  * Unicode CODE POINT, because the consumer is Python and a Python `str` is
@@ -390,7 +391,12 @@ void writeNullableString(ref Appender!string o, string s)
 void processFile(ref Appender!string o, string path, Units units, bool lexOnly,
     ref StringCache cache)
 {
-    const(ubyte)[] src = cast(const(ubyte)[]) read(path);
+    processSource(o, path, cast(const(ubyte)[]) read(path), units, lexOnly, cache);
+}
+
+void processSource(ref Appender!string o, string path, const(ubyte)[] src, Units units,
+    bool lexOnly, ref StringCache cache)
+{
     const bom = src.length >= 3 && src[0] == 0xef && src[1] == 0xbb && src[2] == 0xbf;
     const crlf = (cast(const(char)[]) src).canFind('\r');
     auto m = OffsetMap(src, units);
@@ -541,10 +547,45 @@ void processFile(ref Appender!string o, string path, Units units, bool lexOnly,
     o.put("]}");
 }
 
+/// `--serve`: one long-lived process for a caller that asks about many texts
+/// (the census asks about ~2600, most of them mutants that exist only in its
+/// memory). Request: a header line `L <n>` (lex only) or `P <n>` (lex and
+/// parse), then exactly n bytes of source. Reply: one line holding the same
+/// per-file JSON object the batch mode prints, path `<stdin>`. EOF ends it.
+int serve(Units units)
+{
+    import std.stdio : stdin;
+    auto cache = StringCache(StringCache.defaultBucketCount);
+    for (;;)
+    {
+        auto header = stdin.readln();
+        if (header.length == 0) return 0;
+        header = header.strip;
+        if (header.length < 3 || (header[0] != 'L' && header[0] != 'P') || header[1] != ' ')
+        {
+            stderr.writeln("dspans --serve: bad request header ", header);
+            return 2;
+        }
+        const n = header[2 .. $].to!size_t;
+        auto buf = new ubyte[n];
+        if (n && stdin.rawRead(buf).length != n)
+        {
+            stderr.writeln("dspans --serve: short read");
+            return 2;
+        }
+        auto o = appender!string;
+        processSource(o, "<stdin>", buf, units, header[0] == 'L', cache);
+        o.put('\n');
+        stdout.rawWrite(o.data);
+        stdout.flush();
+    }
+}
+
 int main(string[] args)
 {
     Units units = Units.codepoints;
     bool lexOnly;
+    bool serveMode;
     string[] files;
     for (size_t i = 1; i < args.length; ++i)
     {
@@ -552,6 +593,7 @@ int main(string[] args)
         if (a == "--units=bytes") units = Units.bytes;
         else if (a == "--units=codepoints") units = Units.codepoints;
         else if (a == "--lex-only") lexOnly = true;
+        else if (a == "--serve") serveMode = true;
         else if (a == "--list" && i + 1 < args.length)
         {
             foreach (line; readText(args[++i]).lineSplitter)
@@ -564,6 +606,8 @@ int main(string[] args)
         }
         else files ~= a;
     }
+    if (serveMode)
+        return serve(units);
     if (!files.length)
     {
         stderr.writeln("usage: dspans [--units=codepoints|bytes] [--lex-only] "

@@ -48,12 +48,16 @@ import sys
 import time
 from collections import defaultdict
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import legacy_primitives  # noqa: E402
+import dspans_client  # noqa: E402
+
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 TOOLS = ROOT / "tools"
 CENSUS = TOOLS / "check_prepared_protocol.py"
 WRITER = TOOLS / "prepared_writer_census.py"
-DSPANS = HERE / "bin" / "dspans"
+DSPANS = None  # set by build_dspans()
 
 # Every lexing primitive, by (defining file, function name). `body_of` sits
 # inside a retained raw-string specimen in the census and is expected to be
@@ -68,11 +72,24 @@ CENSUS_PRIMITIVES = {
     "without_unittests", "body_of",
 }
 ALL_PRIMITIVES = sorted(WRITER_PRIMITIVES | CENSUS_PRIMITIVES)
+# Task 5330 step 3 moved these onto dspans_client. For them the comparison is
+# the frozen old scanner (legacy_primitives.py) against the census's CURRENT
+# function; for the masks and scrubbers that stayed, it is the census's own
+# definition against this script's dspans-backed restatement.
+MIGRATED = {"_balanced", "_balanced_parentheses", "_mask_unittests", "_aggregate",
+            "_function_at", "_private_function_body", "d_declaration_span",
+            "without_unittests"}
 # Primitives the census does not call today (measured 2026-09-27: 0 calls
 # each). The recorder floor wants every OTHER primitive called at least once
 # and these exactly zero, so neither a silenced recorder nor a newly woken
 # primitive passes unnoticed (review M6).
 ZERO_CALL_PRIMITIVES = {"body_of", "_calls", "_domains", "_mask_unittests"}
+# ...and the ones it does call, as a LITERAL: deriving this set from the
+# monitored names would let a name dropped from both go unnoticed (review M6).
+CALLED_PRIMITIVES = {"_aggregate", "_balanced", "_balanced_parentheses", "_function_at",
+                     "_mask_comments", "_private_function_body", "_semantic_digest",
+                     "d_declaration_span", "mask_d_comments", "mask_d_noncode",
+                     "without_unittests"}
 # Ceiling on raw divergences. Measured 957 on 2026-09-27; the population is
 # dominated by backtick strings in the JSON writers (http_providers.d and
 # http_server.d hold 265 of the 702 mask_d_noncode ones), which grow with the
@@ -222,10 +239,11 @@ def run_census(recorder: Recorder, inject: bool):
 # dspans
 # ---------------------------------------------------------------------------
 def build_dspans():
-    run = subprocess.run(["dub", "build", "-q", "--root", str(HERE)],
-                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    if run.returncode or not DSPANS.exists():
-        raise SystemExit("dspans build failed:\n" + run.stdout)
+    """The SAME cached binary the census uses (dspans_client.binary(): built on
+    first use, keyed by the package's sources), so the comparison can never
+    read a different dspans than the census it judges."""
+    global DSPANS
+    DSPANS = dspans_client.binary()
 
 
 def dspans_for(texts: dict, scratch: pathlib.Path):
@@ -694,8 +712,11 @@ def verdict_for(primitive, category):
     return None
 
 
-def call_old(namespace, writer, name, text, *args):
-    fn = namespace.get(name) if name in CENSUS_PRIMITIVES else getattr(writer, name)
+def _census_fn(namespace, writer, name):
+    return namespace.get(name) if name in CENSUS_PRIMITIVES else getattr(writer, name)
+
+
+def _call(fn, text, *args):
     try:
         return fn(text, *args)
     except ValueError as error:
@@ -704,11 +725,26 @@ def call_old(namespace, writer, name, text, *args):
         return ("SystemExit", str(error))
 
 
+def call_old(namespace, writer, name, text, *args):
+    """The OLD answer: the frozen scanner for a migrated primitive, the
+    census's own (still old) definition for the rest."""
+    if name in MIGRATED:
+        return _call(getattr(legacy_primitives, name), text, *args)
+    return _call(_census_fn(namespace, writer, name), text, *args)
+
+
+def call_production(namespace, writer, name, text, *args):
+    """The census's CURRENT answer for a migrated primitive -- the function the
+    census really calls, not a stand-in built here."""
+    assert name in MIGRATED, name
+    return _call(_census_fn(namespace, writer, name), text, *args)
+
+
 def outermost_old_unittests(text, namespace):
     # The ranges the OLD `without_unittests` removes, recomputed with its own
     # regex and balancer (it removes the LAST match first, so an outer block
     # swallows an inner one exactly as `outermost` keeps it).
-    balanced = namespace["balanced_source"]
+    balanced = legacy_primitives._balanced
     out = []
     for m in re.finditer(r"\bunittest\s*\{", text):
         try:
@@ -754,7 +790,7 @@ def compare(recorder, namespace, writer, spans, labels, origins):
         if name in ("_balanced", "_balanced_parentheses"):
             old = call_old(namespace, writer, name, text, *args)
             open_pos = args[0] - 1 if name == "_balanced" else args[0]
-            new = (new_balanced if name == "_balanced" else new_balanced_parentheses)(sp, text, args[0])
+            new = call_production(namespace, writer, name, text, *args)
             pairs[name] += 1
             if old != new:
                 limit = max(v for v in (old, new, open_pos + 1) if isinstance(v, int))
@@ -769,20 +805,20 @@ def compare(recorder, namespace, writer, spans, labels, origins):
                     evidence=evidence, **common)
         elif name in ("_aggregate", "_function_at"):
             old = call_old(namespace, writer, name, text, *args)
-            new = (new_aggregate if name == "_aggregate" else new_function_at)(sp, text, args[0])
+            new = call_production(namespace, writer, name, text, *args)
             pairs[name] += 1
             if old != new:
                 add(category="containing name differs", symbol=f"offset {args[0]} (L{line_no(text, args[0])})",
                     old=old, new=new, old_pos=args[0], new_pos=args[0], **common)
         elif name == "_private_function_body":
             old = call_old(namespace, writer, name, text, *args)
-            new = new_private_function_body(sp, text, args[0])
+            new = call_production(namespace, writer, name, text, *args)
             pairs[name] += 1
             if old != new:
                 add(category="body differs", symbol=args[0], old=str(old)[:80], new=str(new)[:80], **common)
         elif name == "d_declaration_span":
             old = call_old(namespace, writer, name, text, *args)
-            new = new_declaration_span(sp, text, *args)
+            new = call_production(namespace, writer, name, text, *args)
             pairs[name] += 1
             if old != new:
                 evidence = []
@@ -820,7 +856,7 @@ def compare(recorder, namespace, writer, spans, labels, origins):
                     old_pos=pos, new_pos=None, **common)
         elif name == "without_unittests":
             old_out = call_old(namespace, writer, name, text)
-            new_out = new_without_unittests(sp, text)
+            new_out = call_production(namespace, writer, name, text)
             old_r = outermost_old_unittests(text, namespace)
             new_r = outermost(unittest_ranges(sp, False))
             pairs[name] += len(new_r)
@@ -869,7 +905,7 @@ def compare(recorder, namespace, writer, spans, labels, origins):
         elif name == "_mask_unittests":
             old = call_old(namespace, writer, name, text)
             pairs[name] += 1
-            if old != new_mask_unittests(sp, text):
+            if old != call_production(namespace, writer, name, text):
                 add(category="output differs", symbol="-", **common)
         elif name == "_calls":
             old = call_old(namespace, writer, name, text)
@@ -970,12 +1006,14 @@ def controls(scratch):
     import prepared_writer_census as w
     ns = {"__name__": "controls"}
     src = CENSUS.read_text()
-    # Only the two mask/span helpers are needed; take their source verbatim
-    # rather than executing the whole census.
+    # The census's CURRENT mask/span helpers, taken from its source verbatim
+    # rather than executing the whole census; the old ones are the frozen
+    # copies in legacy_primitives.py.
     start = src.index("def mask_d_noncode(source):")
     end = src.index("def has_final_class(source, name):")
-    exec("import re\nfrom prepared_writer_census import _balanced as balanced_source\n"
+    exec("import re\nimport dspans_client\nfrom prepared_writer_census import _balanced as balanced_source\n"
          + src[start:end], ns)
+    old_ns = legacy_primitives
     cases = [
         ("backtick", "void f() { auto s = `a\"b`; }\n"),
         ("raw-string", "void f() { auto s = r\"C:\\\"; }\n"),
@@ -992,10 +1030,13 @@ def controls(scratch):
         open_pos = t.index("{")
         truth = len(t) - 1  # every body closes at the file's last `}` (a '\n' follows)
         try:
-            old = w._balanced(t, open_pos + 1)
+            old = old_ns._balanced(t, open_pos + 1)
         except ValueError as error:
             old = f"ValueError({error})"
-        new = new_balanced(spans[sha(t)], t, open_pos + 1)
+        try:
+            new = w._balanced(t, open_pos + 1)       # the census's production primitive
+        except ValueError as error:
+            new = f"ValueError({error})"
         new_right = new == truth
         old_right = old == truth
         verdict = ("new right, old WRONG" if new_right and not old_right
@@ -1005,8 +1046,8 @@ def controls(scratch):
             ok = False
         print(f"  {name:15s} truth={truth:3d} old={old!s:32s} new={new!s:6s} -> {verdict}")
     print("positive control: d_declaration_span over a token string")
-    old = ns["d_declaration_span"](decl, "class", "Fake")
-    new = new_declaration_span(spans[sha(decl)], decl, "class", "Fake")
+    old = old_ns.d_declaration_span(decl, "class", "Fake")
+    new = ns["d_declaration_span"](decl, "class", "Fake")
     print(f"  class Fake (only inside q{{}}): old={old} new={new} -> "
           + ("new right, old WRONG" if new is None and old is not None else "UNEXPECTED"))
     if new is not None:
@@ -1054,7 +1095,7 @@ def controls(scratch):
             continue
         sp = spans[sha(t)]
         new_mask = masked(t, sp.comments + sp.strings, True)
-        old_mask = ns["mask_d_noncode"](t)
+        old_mask = old_ns.mask_d_noncode(t)
         new_right = new_mask == expected[name]
         old_right = old_mask == expected[name]
         print(f"  {name:15s} new {'==' if new_right else '!='} expected, old {'==' if old_right else '!='} expected"
@@ -1297,14 +1338,14 @@ def main():
     ap.add_argument("--inject-control", action="store_true")
     ap.add_argument("--swap-trial", action="store_true",
                     help="run an in-memory copy of the census with every primitive answered by dspans")
-    ap.add_argument("--no-build", action="store_true")
+    ap.add_argument("--no-build", action="store_true",
+                    help="accepted for compatibility; the binary is always the census's cached one")
     ap.add_argument("--scratch", default=os.environ.get("DSPANS_SCRATCH",
                     os.path.join(os.environ.get("TMPDIR", "/var/tmp"), "dspans-compare")))
     ap.add_argument("--expect-census-exit", type=int, default=None)
     opts = ap.parse_args()
     scratch = pathlib.Path(opts.scratch)
-    if not opts.no_build:
-        build_dspans()
+    build_dspans()
     if opts.controls:
         return 0 if controls(scratch) else 4
     if opts.swap_trial:
@@ -1331,13 +1372,13 @@ def main():
     # whole tree files. A census that stops early (the inject control) reads
     # far fewer, so the floor is on reaching the primitives at all.
     if not opts.inject_control:
-        silent = [n for n in ALL_PRIMITIVES if n not in ZERO_CALL_PRIMITIVES
-                  and recorder.raw_calls.get(n, 0) == 0]
+        silent = sorted(n for n in CALLED_PRIMITIVES if recorder.raw_calls.get(n, 0) == 0)
+        silent += sorted((CALLED_PRIMITIVES | ZERO_CALL_PRIMITIVES) ^ set(ALL_PRIMITIVES))
         woke = [n for n in ZERO_CALL_PRIMITIVES if recorder.raw_calls.get(n, 0)]
         if silent or woke or recorder.raw_calls.get("_balanced", 0) < 1000:
             raise SystemExit("TOOL: recorder population changed: never called "
                              f"{silent}, expected-zero but called {woke} "
-                             f"({dict(recorder.raw_calls)}); measured 45339 calls on 2026-09-27")
+                             f"({dict(recorder.raw_calls)}); measured 23110 calls after step 3, 2026-09-27")
     spans, dspans_secs, n_texts = dspans_for(recorder.texts, scratch / "texts")
     print(f"dspans: {n_texts} distinct texts in {dspans_secs:.2f}s")
     labels, origins = label_texts(recorder.texts)
@@ -1351,6 +1392,7 @@ def main():
     print(f"\nOPEN verdicts: {len(open_)} ({len(not_d)} in texts with lexErrors)")
     if not opts.inject_control:
         # Both gates are evaluated and printed, so one run shows each witness.
+        sys.stdout.flush()  # keep the TOOL lines below on lines of their own
         over = len(divs) > DIVERGENCE_CEILING
         unconfirmed = len(open_) - len(not_d)
         if over:

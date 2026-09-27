@@ -5,6 +5,6 @@
 	"targetType": "executable",
 	"targetPath": "bin",
 	"dependencies": {
-		"libdparse": "~>0.25.1"
+		"libdparse": "==0.25.1"
 	}
 }
