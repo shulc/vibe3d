@@ -9083,9 +9083,7 @@ for target, old, new, label in (
 # (tools/dspans/census_contracts.py, task 5330): edge cases no gate above
 # reaches, and the refusal to trust spans for a tree file libdparse cannot lex.
 import census_contracts
-contract_failures = census_contracts.run(sys.modules["prepared_writer_census"], globals(), ROOT)
-if contract_failures:
-    fail("\n".join(contract_failures))
+contract_cells = census_contracts.enforce(sys.modules["prepared_writer_census"], globals(), ROOT)
 
 # The old line read "{len(fixtures) + 6} compile-fail fixtures" and said 13 --
 # `fixtures` was bound once, to the seven `prepared_effect_*` files, and the
@@ -9095,4 +9093,4 @@ if contract_failures:
 print(f"prepared protocol census PASS ({len(MANIFEST)} symbols, "
       f"{len(expected_callers)} shared-funnel callers, {len(token_declarations)} prepared tokens "
       f"over {len({m for m, _ in token_declarations})} modules cross-checked "
-      f"against {TOKEN_CENSUS_D.relative_to(ROOT)})")
+      f"against {TOKEN_CENSUS_D.relative_to(ROOT)}; {contract_cells} dspans contract cells)")

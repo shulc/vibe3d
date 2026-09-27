@@ -59,6 +59,15 @@ def _raised(fn, *args):
         return ("ValueError", str(error))
 
 
+def _value(fn, *args):
+    """fn(*args), or a description of what it raised: a cell reports a broken
+    primitive as a cell failure, never as a traceback out of the census."""
+    try:
+        return fn(*args)
+    except Exception as error:  # noqa: BLE001 -- reported as the cell's value
+        return f"<raised {type(error).__name__}: {error}>"
+
+
 def cells(writer, census):
     """(label, got, want) for every contract cell. `writer` is the
     prepared_writer_census module, `census` the census's own namespace (or any
@@ -81,33 +90,33 @@ def cells(writer, census):
         ("_balanced_parentheses: pairs by token, not by character",
          _raised(writer._balanced_parentheses, 'f(")", x)', 1), ("returned", 9)),
         ("_mask_unittests: version(unittest) branch blanked",
-         writer._mask_unittests("version(unittest) { int x; }\nint y;"),
+         _value(writer._mask_unittests, "version(unittest) { int x; }\nint y;"),
          " " * len("version(unittest) { int x; }") + "\nint y;"),
         ("_aggregate: an interface is not a class/struct",
-         writer._aggregate("class C { interface J { int x; } }", 26), "C"),
+         _value(writer._aggregate, "class C { interface J { int x; } }", 26), "C"),
         ("_aggregate: the INNERMOST aggregate",
-         writer._aggregate("class C { struct S { int x; } }", 21), "S"),
+         _value(writer._aggregate, "class C { struct S { int x; } }", 21), "S"),
         ("_function_at: the INNERMOST function",
-         writer._function_at("void f() { void g() { int x; } }", 22), "g"),
+         _value(writer._function_at, "void f() { void g() { int x; } }", 22), "g"),
         ("_private_function_body: only the private overload",
-         writer._private_function_body(
-             "void helper() { a(); }\nprivate void helper(int) { b(); }", "helper"),
+         _value(writer._private_function_body,
+               "void helper() { a(); }\nprivate void helper(int) { b(); }", "helper"),
          " b(); "),
         ("d_declaration_span: an ambiguous name has no span",
-         census["d_declaration_span"](
-             "struct A { struct S { } }\nstruct B { struct S { } }", "struct", "S"),
+         _value(census["d_declaration_span"],
+               "struct A { struct S { } }\nstruct B { struct S { } }", "struct", "S"),
          None),
         ("d_declaration_span: a class only inside q{} is not declared",
-         census["d_declaration_span"]("enum s = q{ class Fake { } };\nclass Real { }\n",
-                                      "class", "Fake"),
+         _value(census["d_declaration_span"], "enum s = q{ class Fake { } };\nclass Real { }\n",
+               "class", "Fake"),
          None),
         ("d_declaration_span: starts at the first attribute",
-         census["d_declaration_span"]("private final class K { }", "class", "K"), (0, 25)),
+         _value(census["d_declaration_span"], "private final class K { }", "class", "K"), (0, 25)),
         ("without_unittests: the OUTERMOST block is cut once",
-         census["without_unittests"]("unittest { struct S { unittest { } } }\nint x;\n"),
+         _value(census["without_unittests"], "unittest { struct S { unittest { } } }\nint x;\n"),
          "\nint x;\n"),
         ("without_unittests: `unittest // note` then `{` is a unittest",
-         census["without_unittests"]("unittest // note\n{ x(); }\nint y;"), "\nint y;"),
+         _value(census["without_unittests"], "unittest // note\n{ x(); }\nint y;"), "\nint y;"),
     ]
     # dspans itself: the three version(unittest) forms, lexer diagnostics and a
     # body the parser invents by error recovery.
@@ -138,3 +147,13 @@ def run(writer, census, root=None):
     if root is not None:
         failures += production_lexer_census(root)
     return failures
+
+
+def enforce(writer, census, root):
+    """The census's call: exit with every failure, else return the number of
+    cells that held (the census prints it in its PASS line, so the call cannot
+    be dropped without the line changing)."""
+    failures = run(writer, census, root)
+    if failures:
+        raise SystemExit("\n".join(failures))
+    return len(cells(writer, census))
