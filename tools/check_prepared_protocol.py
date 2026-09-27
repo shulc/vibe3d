@@ -9079,6 +9079,14 @@ for target, old, new, label in (
     if p10c_door_capability_gate(c, sources, xfrm):
         fail(f"P1.0c door capability mutation did not RED: {label}")
 
+# The dspans-backed primitives' contract cells and the tree's lexer census
+# (tools/dspans/census_contracts.py, task 5330): edge cases no gate above
+# reaches, and the refusal to trust spans for a tree file libdparse cannot lex.
+import census_contracts
+contract_failures = census_contracts.run(sys.modules["prepared_writer_census"], globals(), ROOT)
+if contract_failures:
+    fail("\n".join(contract_failures))
+
 # The old line read "{len(fixtures) + 6} compile-fail fixtures" and said 13 --
 # `fixtures` was bound once, to the seven `prepared_effect_*` files, and the
 # `+ 6` was a literal nobody had recomputed since the copy set grew to 66. It

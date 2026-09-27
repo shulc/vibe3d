@@ -31,6 +31,13 @@ import subprocess
 import sys
 
 try:
+    import select  # POSIX pipes; on Windows replies are read without a timeout
+    if os.name == "nt":
+        select = None
+except ImportError:
+    select = None
+
+try:
     import fcntl  # POSIX; on Windows the build is unlocked and the install is still atomic
 except ImportError:
     fcntl = None
@@ -41,9 +48,14 @@ CACHE_ROOT = pathlib.Path(os.environ.get("XDG_CACHE_HOME") or pathlib.Path.home(
     / "vibe3d" / "dspans"
 
 
-def _fail(message):
+def _fail(message, remedy="fix the build (`dub build --force --root tools/dspans`)"):
     raise SystemExit("dspans: " + message + "\n  The census has NO fallback to its old "
-                     "scanner; fix the build (tools/dspans, `dub build --root tools/dspans`).")
+                     f"scanner; {remedy}.")
+
+
+# A hung dspans must not hang the gate: each reply must arrive within this
+# many seconds (the largest text the census sends parses in well under 1 s).
+REPLY_TIMEOUT = float(os.environ.get("VIBE3D_DSPANS_TIMEOUT", "60"))
 
 
 def cache_key():
@@ -67,7 +79,10 @@ def binary():
         if exe.exists():
             return exe
         try:
-            run = subprocess.run(["dub", "build", "-q", "--root", str(PACKAGE)],
+            # --force: dub decides "up to date" by timestamps, so without it a
+            # stale bin/dspans could be installed under a key that names
+            # different sources. A cache miss therefore always compiles.
+            run = subprocess.run(["dub", "build", "--force", "-q", "--root", str(PACKAGE)],
                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         except FileNotFoundError:
             _fail("`dub` is not on PATH, so tools/dspans cannot be built")
@@ -76,8 +91,12 @@ def binary():
             _fail(f"`dub build --root {PACKAGE}` failed (exit {run.returncode}):\n" + run.stdout)
         exe.parent.mkdir(parents=True, exist_ok=True)
         staging = exe.with_name(EXE_NAME + f".tmp{os.getpid()}")
-        shutil.copy2(built, staging)
-        os.replace(staging, exe)
+        try:
+            shutil.copy2(built, staging)
+            os.replace(staging, exe)
+        finally:
+            if staging.exists():
+                staging.unlink()
     return exe
 
 
@@ -127,11 +146,20 @@ class _Server:
         try:
             self.proc.stdin.write(f"{'P' if parse else 'L'} {len(data)}\n".encode() + data)
             self.proc.stdin.flush()
+            if select is not None:
+                ready, _w, _x = select.select([self.proc.stdout], [], [], REPLY_TIMEOUT)
+                if not ready:
+                    self.proc.kill()
+                    _fail(f"the --serve process gave no reply within {REPLY_TIMEOUT:g} s "
+                          f"(a {len(data)}-byte text); killed it",
+                          "reproduce with `tools/dspans/bin/dspans <file>` and fix dspans")
             line = self.proc.stdout.readline()
         except BrokenPipeError:
             line = b""
         if not line:
-            _fail(f"the --serve process died (exit {self.proc.poll()})")
+            _fail(f"the --serve process died (exit {self.proc.poll()}) on a "
+                  f"{len(data)}-byte text",
+                  "reproduce with `tools/dspans/bin/dspans <file>` and fix dspans")
         self.requests += 1
         sp = Spans(json.loads(line), parse)
         self.cache[key] = sp
