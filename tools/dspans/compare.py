@@ -26,7 +26,10 @@ Usage:
 
 Exit status: 0 when the comparison ran (divergences are a REPORT, not a
 failure), 3 when the census exit code differs from the one the caller
-expected (`--expect-census-exit`, default 0), 4 on a tool failure.
+expected (`--expect-census-exit`, default 0), 4 when a positive control
+fails, and 1 with a `TOOL:` / `dspans` message when the tool itself cannot
+vouch for a comparison (a restated old pattern that no longer reproduces the
+census output, a size mismatch between dspans and the Python text).
 
 Offsets: dspans prints CODE POINT offsets by default, which is what a Python
 `str` index is (see tools/dspans/source/app.d, "UNITS"). A file with `\\r` is
@@ -860,10 +863,17 @@ def controls(scratch):
     with open(upath, "w", encoding="utf-8", newline="") as out:
         out.write(uni)
     per_unit = {}
-    for unit in ("codepoints", "bytes"):
-        run = subprocess.run([str(DSPANS), f"--units={unit}", str(upath)],
+    for unit in ("codepoints", "bytes", "default"):
+        flag = [] if unit == "default" else [f"--units={unit}"]
+        run = subprocess.run([str(DSPANS), *flag, str(upath)],
                              stdout=subprocess.PIPE, check=True)
         per_unit[unit] = json.loads(run.stdout)["files"][0]["braces"][0]
+    # The comparison runs dspans WITHOUT a flag, so the default is what it
+    # indexes Python strings by: it must be the code-point answer.
+    if per_unit["default"] != per_unit["codepoints"]:
+        print(f"units control: the DEFAULT unit gave {per_unit['default']}, "
+              f"not the code-point answer {per_unit['codepoints']}")
+        ok = False
     cp_open, cp_close = per_unit["codepoints"]
     by_open, by_close = per_unit["bytes"]
     raw = uni.encode("utf-8")
@@ -1099,6 +1109,15 @@ def main():
     if writer is None:
         print("census never imported prepared_writer_census", file=sys.stderr)
         return 4
+    # Population floor: a recorder that saw nothing would report "0
+    # divergences" honestly and uselessly. Measured 2026-09-27 on a passing
+    # census: 45339 raw primitive calls, 21660 of them `_balanced`, over 577
+    # whole tree files. A census that stops early (the inject control) reads
+    # far fewer, so the floor is on reaching the primitives at all.
+    if not opts.inject_control and (recorder.raw_calls.get("_balanced", 0) < 1000
+                                    or recorder.raw_calls.get("mask_d_noncode", 0) < 100):
+        raise SystemExit("TOOL: the recorder saw too few primitive calls "
+                         f"({dict(recorder.raw_calls)}); measured 45339 on 2026-09-27")
     spans, dspans_secs, n_texts = dspans_for(recorder.texts, scratch / "texts")
     print(f"dspans: {n_texts} distinct texts in {dspans_secs:.2f}s")
     labels, origins = label_texts(recorder.texts)
