@@ -97,8 +97,6 @@ CALLED_PRIMITIVES = {"_aggregate", "_balanced", "_balanced_parentheses", "_funct
 # above it (review M1: 19824, M7: 397458). Raise it deliberately, with the
 # measured count, never to make a run green.
 DIVERGENCE_CEILING = 1500
-# Population floor for the contract cells (census_contracts.cells), measured.
-CONTRACT_CELLS = 21
 
 CONTROL_FILE = "source/prepared_tool_transition.d"
 CONTROL_ANCHOR = "PreparedArm prepareArm("
@@ -1157,8 +1155,8 @@ def controls(scratch):
         print(f"contract cell: {cell_label}: {'ok' if cell_ok else f'got {cell_got!r}, want {cell_want!r}'}")
         if not cell_ok:
             ok = False
-    if len(cell_list) != CONTRACT_CELLS:
-        print(f"contract cells: {len(cell_list)} ran, expected {CONTRACT_CELLS}")
+    if len(cell_list) != census_contracts.CONTRACT_CELLS:
+        print(f"contract cells: {len(cell_list)} ran, expected {census_contracts.CONTRACT_CELLS}")
         ok = False
     return ok
 

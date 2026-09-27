@@ -26,6 +26,10 @@ import dspans_client
 # are unaffected; any OTHER file, or a different count here, is a refusal.
 KNOWN_LEX_ERRORS = {"source/subpatch_osd.d": 4}
 
+# Population floor for cells(), measured; enforce() refuses any other count, so
+# a deleted cell reddens the census itself (review round 3, M1).
+CONTRACT_CELLS = 21
+
 
 def production_lexer_census(root):
     """Failures: tree files under source/ whose lexer diagnostics differ from
@@ -156,4 +160,7 @@ def enforce(writer, census, root):
     failures = run(writer, census, root)
     if failures:
         raise SystemExit("\n".join(failures))
-    return len(cells(writer, census))
+    n = len(cells(writer, census))
+    if n != CONTRACT_CELLS:
+        raise SystemExit(f"census contract cells: {n} ran, expected {CONTRACT_CELLS}")
+    return n
