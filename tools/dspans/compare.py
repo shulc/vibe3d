@@ -68,6 +68,18 @@ CENSUS_PRIMITIVES = {
     "without_unittests", "body_of",
 }
 ALL_PRIMITIVES = sorted(WRITER_PRIMITIVES | CENSUS_PRIMITIVES)
+# Primitives the census does not call today (measured 2026-09-27: 0 calls
+# each). The recorder floor wants every OTHER primitive called at least once
+# and these exactly zero, so neither a silenced recorder nor a newly woken
+# primitive passes unnoticed (review M6).
+ZERO_CALL_PRIMITIVES = {"body_of", "_calls", "_domains", "_mask_unittests"}
+# Ceiling on raw divergences. Measured 957 on 2026-09-27; the population is
+# dominated by backtick strings in the JSON writers (http_providers.d and
+# http_server.d hold 265 of the 702 mask_d_noncode ones), which grow with the
+# HTTP API. 1.5x leaves room for that growth; a broken span printer lands far
+# above it (review M1: 19824, M7: 397458). Raise it deliberately, with the
+# measured count, never to make a run green.
+DIVERGENCE_CEILING = 1500
 
 CONTROL_FILE = "source/prepared_tool_transition.d"
 CONTROL_ANCHOR = "PreparedArm prepareArm("
@@ -259,6 +271,7 @@ class Spans:
         self.version_unittests = rec["versionUnittest"]
         self.errors = rec["parseErrors"]
         self.unmatched = set(rec["unmatched"])
+        self.lex_errors = rec.get("lexErrors", [])
 
     def inside(self, pos, spans):
         for s, e in spans:
@@ -454,9 +467,122 @@ def ctx(text, pos):
     return f"L{line_no(text, pos)}: {t}" if t or isinstance(pos, int) else ""
 
 
+def token_valid(text, s, e):
+    """Whether text[s:e] is, by its own characters, ONE whole comment or
+    literal: it starts with an opener and ends with the matching closer. A
+    verdict of "new right" rests on dspans' spans; this is what keeps a broken
+    dspans (a span one character long, comments dropped) from being reported
+    as the old lexer's fault (review of 2026-09-27, mutations M1 / M7)."""
+    if not (0 <= s < e <= len(text)):
+        return False, f"span [{s},{e}) outside the text"
+    tok = text[s:e]
+    if tok.startswith("//"):
+        ok = "\n" not in tok and (e == len(text) or text[e] == "\n")
+        return ok, "" if ok else "line comment does not end at the newline"
+    if tok.startswith("/*"):
+        ok = len(tok) >= 4 and tok.endswith("*/") and tok.find("*/", 2) == len(tok) - 2
+        return ok, "" if ok else "block comment does not end at its first `*/`"
+    if tok.startswith("/+"):
+        depth, i = 0, 0
+        while i + 1 < len(tok):
+            pair = tok[i:i + 2]
+            if pair == "/+":
+                depth, i = depth + 1, i + 2
+                continue
+            if pair == "+/":
+                depth, i = depth - 1, i + 2
+                if depth == 0:
+                    ok = i == len(tok)
+                    return ok, "" if ok else "nesting comment closes before its span ends"
+                continue
+            i += 1
+        return False, "nesting comment never closes"
+    core = tok
+    if len(core) > 2 and core[-1] in "cwd" and core[-2] in "\"`}'":
+        core = core[:-1]
+    if core.startswith(("i\"", "i`")):
+        core = core[1:]
+    if core.startswith("`"):
+        ok = len(core) >= 2 and core.endswith("`") and "`" not in core[1:-1]
+    elif core.startswith('r"'):
+        ok = len(core) >= 3 and core.endswith('"') and '"' not in core[2:-1]
+    elif core.startswith("q{"):
+        ok = core.endswith("}")
+    elif core.startswith('q"') or core.startswith('x"'):
+        ok = len(core) >= 3 and core.endswith('"')
+    elif core.startswith('"'):
+        body = core[1:-1]
+        trailing = len(body) - len(body.rstrip("\\"))
+        ok = len(core) >= 2 and core.endswith('"') and trailing % 2 == 0
+    elif core.startswith("'"):
+        ok = len(core) >= 3 and core.endswith("'")
+    else:
+        ok = False
+    return ok, "" if ok else f"{tok[:20]!r} is not one whole literal"
+
+
+def containing(spans_list, pos):
+    for s, e in spans_list:
+        if s <= pos < e:
+            return (s, e)
+    return None
+
+
+def check_evidence(text, sp, evidence):
+    """Every fact a verdict leans on, re-read from the characters.
+    ("token", s, e)     text[s:e] is one whole comment/literal
+    ("in-literal", p)   p lies inside a string literal that validates
+    ("in-noncode", p)   p lies inside a comment or literal that validates
+    ("char", p, c)      text[p] == c
+    ("prefix", p, w)    text starts with w at p
+    ("gap", s, e)       text[s:e] is whitespace and whole comments only
+    ("attrs", s, e)     text[s:e] is whitespace and attribute words only"""
+    if not evidence:
+        return "no evidence recorded for this verdict"
+    for item in evidence:
+        kind = item[0]
+        if kind == "token":
+            ok, why = token_valid(text, item[1], item[2])
+            if not ok:
+                return why
+        elif kind in ("in-literal", "in-noncode"):
+            pool = sp.strings if kind == "in-literal" else sp.strings + sp.comments
+            hit = containing(pool, item[1])
+            if hit is None:
+                return f"offset {item[1]} is inside no {'literal' if kind == 'in-literal' else 'comment/literal'}"
+            ok, why = token_valid(text, *hit)
+            if not ok:
+                return why
+        elif kind == "char":
+            if not (0 <= item[1] < len(text)) or text[item[1]] != item[2]:
+                return f"expected {item[2]!r} at {item[1]}"
+        elif kind == "prefix":
+            if not text.startswith(item[2], item[1]):
+                return f"expected {item[2]!r} at {item[1]}"
+        elif kind == "gap":
+            i = item[1]
+            while i < item[2]:
+                if text[i].isspace():
+                    i += 1
+                    continue
+                hit = containing(sp.comments, i)
+                if hit is None or hit[0] != i or not token_valid(text, *hit)[0]:
+                    return f"gap [{item[1]},{item[2]}) holds non-comment text at {i}"
+                i = hit[1]
+        elif kind == "attrs":
+            gap = text[item[1]:item[2]]
+            if not re.fullmatch(r"(?:\s|@\w+(?:\([^()]*\))?|\b(?:private|package|protected|public|"
+                                r"static|final|abstract|override|export|extern(?:\([^()]*\))?|"
+                                r"shared|__gshared|synchronized|deprecated|align(?:\([^()]*\))?|"
+                                r"immutable|const|scope)\b)*", gap):
+                return f"{gap[:40]!r} is not attributes only"
+    return None
+
+
 class Divergence:
     __slots__ = ("primitive", "origin", "label", "category", "symbol", "old",
-                 "new", "old_pos", "new_pos", "text", "site", "verdict", "count")
+                 "new", "old_pos", "new_pos", "text", "site", "verdict", "count",
+                 "evidence")
 
     def __init__(self, **kw):
         self.count = 1
@@ -507,14 +633,17 @@ def unknown_to_old(tok):
 
 
 def balance_cause(sp, text, open_pos, limit):
-    """The first token the old balancer does not know, inside the body."""
+    """The first token the old balancer does not know, inside the body, as
+    (message, evidence); evidence is empty when no cause is found."""
     for s, e in sorted(sp.strings + sp.comments):
         if open_pos < s < limit and unknown_to_old(text[s:e]):
-            return f"{literal_kind(text[s:e])} {text[s:e][:40]!r} at L{line_no(text, s)}"
+            return (f"{literal_kind(text[s:e])} {text[s:e][:40]!r} at L{line_no(text, s)}",
+                    [("token", s, e)])
     inside = sp.inside(open_pos, sp.comments) or sp.inside(open_pos, sp.strings)
     if inside:
-        return f"the `{{` itself is inside a {literal_kind(text[inside[0]:inside[1]])} at L{line_no(text, open_pos)}"
-    return "no unknown token found"
+        return (f"the `{{` itself is inside a {literal_kind(text[inside[0]:inside[1]])} at L{line_no(text, open_pos)}",
+                [("token", inside[0], inside[1])])
+    return "no unknown token found", []
 
 
 def mask_clusters(text, old_ranges, new_ranges):
@@ -597,6 +726,14 @@ def compare(recorder, namespace, writer, spans, labels, origins):
         d = Divergence(**kw)
         if d.verdict is None:
             d.verdict = verdict_for(d.primitive, d.category)
+        sp_ = kw.get("sp")
+        if d.verdict and not d.verdict.startswith("OPEN") and sp_ is not None:
+            if sp_.lex_errors:
+                d.verdict = f"OPEN -- the text has lexErrors ({sp_.lex_errors[0]}); {d.verdict}"
+            else:
+                why = check_evidence(d.text, sp_, d.evidence or [])
+                if why:
+                    d.verdict = f"OPEN -- verdict not confirmed by the text: {why}"
         divs.append(d)
 
     for key, entry in recorder.calls.items():
@@ -612,7 +749,7 @@ def compare(recorder, namespace, writer, spans, labels, origins):
         site = ", ".join(f"{fn}:{ln}" for _f, fn, ln in sites[:4]) + (" ..." if len(sites) > 4 else "")
         if entry["parents"]:
             site += " (via " + ",".join(sorted(entry["parents"])) + ")"
-        common = dict(primitive=name, origin=origins[k], label=labels[k], text=text, site=site)
+        common = dict(primitive=name, origin=origins[k], label=labels[k], text=text, site=site, sp=sp)
 
         if name in ("_balanced", "_balanced_parentheses"):
             old = call_old(namespace, writer, name, text, *args)
@@ -621,11 +758,15 @@ def compare(recorder, namespace, writer, spans, labels, origins):
             pairs[name] += 1
             if old != new:
                 limit = max(v for v in (old, new, open_pos + 1) if isinstance(v, int))
-                cause = balance_cause(sp, text, open_pos, limit)
-                verdict = ("new right: " + cause) if not cause.startswith("no unknown") else None
+                cause, evidence = balance_cause(sp, text, open_pos, limit)
+                verdict = ("new right: " + cause) if evidence else None
+                closer = "}" if name == "_balanced" else ")"
+                if isinstance(new, int):
+                    evidence = evidence + [("char", new - 1, closer), ("char", open_pos, "{" if closer == "}" else "(")]
                 add(category="close differs", symbol=f"{text[open_pos]!r} at L{line_no(text, open_pos)} in {sp.owner(open_pos)}",
                     old=old, new=new, old_pos=old - 1 if isinstance(old, int) else None,
-                    new_pos=new - 1 if isinstance(new, int) else None, verdict=verdict, **common)
+                    new_pos=new - 1 if isinstance(new, int) else None, verdict=verdict,
+                    evidence=evidence, **common)
         elif name in ("_aggregate", "_function_at"):
             old = call_old(namespace, writer, name, text, *args)
             new = (new_aggregate if name == "_aggregate" else new_function_at)(sp, text, args[0])
@@ -644,12 +785,14 @@ def compare(recorder, namespace, writer, spans, labels, origins):
             new = new_declaration_span(sp, text, *args)
             pairs[name] += 1
             if old != new:
+                evidence = []
                 if old is not None and new is not None and old[1] == new[1]:
                     lo, hi = sorted((old[0], new[0]))
                     cat = f"start-only: {text[lo:hi].strip()!r} counted by {'new' if new[0] < old[0] else 'old'} only"
+                    evidence = [("attrs", lo, hi), ("char", new[1] - 1, "}")]
                 else:
                     cat = "end or presence differs"
-                add(category=cat, symbol=f"{args[0]} {args[1]}", old=old, new=new,
+                add(category=cat, symbol=f"{args[0]} {args[1]}", old=old, new=new, evidence=evidence,
                     old_pos=old[0] if old else None, new_pos=new[0] if new else None, **common)
         elif name in ("mask_d_noncode", "mask_d_comments", "_mask_comments"):
             old_out = call_old(namespace, writer, name, text)
@@ -665,7 +808,13 @@ def compare(recorder, namespace, writer, spans, labels, origins):
                 cat, pos = classify_cluster(text, cluster)
                 s = min(c[0] for c in cluster)
                 e = max(c[1] for c in cluster)
-                add(category=cat, symbol=f"{text[s:e][:50]!r} in {sp.owner(s)}",
+                # The verdict leans on every NEW span being one whole
+                # comment/literal, and on every OLD-only range starting inside
+                # a comment/literal (an opener the old regex read in one).
+                evidence = [("token", a, b) for a, b, side in cluster if side == "new"]
+                evidence += [("in-noncode", a) for a, b, side in cluster if side == "old"
+                             and not any(na <= a < nb for na, nb, ns in cluster if ns == "new")]
+                add(category=cat, symbol=f"{text[s:e][:50]!r} in {sp.owner(s)}", evidence=evidence,
                     old=[(a, b) for a, b, side in cluster if side == "old"],
                     new=[(a, b) for a, b, side in cluster if side == "new"],
                     old_pos=pos, new_pos=None, **common)
@@ -679,13 +828,17 @@ def compare(recorder, namespace, writer, spans, labels, origins):
                 continue
             for r in [r for r in old_r if r not in new_r]:
                 inner = [n for n in new_r if r[0] <= n[0] and n[1] <= r[1]]
+                evidence = []
                 if sp.inside(r[0], sp.comments) or sp.inside(r[0], sp.strings):
                     cat = "old removes a `unittest {` found inside a comment/string"
                     verdict = "new right: that text is not a unittest; latent unless a counted pattern sits in the removed span"
+                    evidence = [("in-noncode", r[0])]
                 elif r[1] == -1 or any(n[0] == r[0] for n in new_r):
                     same = [n for n in new_r if n[0] == r[0]]
                     cat = f"old removes {r[0]}..{r[1]} where the block ends at {same[0][1] if same else '?'}"
-                    cause = balance_cause(sp, text, text.find('{', r[0]), max(r[1], same[0][1] if same else 0))
+                    cause, evidence = balance_cause(sp, text, text.find('{', r[0]), max(r[1], same[0][1] if same else 0))
+                    if same:
+                        evidence = evidence + [("prefix", r[0], "unittest"), ("char", same[0][1] - 1, "}")]
                     removed_code = r[1] - (same[0][1] if same else r[1]) - sum(n[1] - n[0] for n in inner if n[0] != r[0])
                     verdict = (f"new right: {cause}; the old range swallows {len(inner) - 1} later unittest "
                                f"block(s) and ~{max(removed_code, 0)} chars of PRODUCTION code")
@@ -693,12 +846,15 @@ def compare(recorder, namespace, writer, spans, labels, origins):
                     cat = "old removes a range the parser does not call a unittest"
                     verdict = None
                 add(category=cat, symbol=f"unittest at L{line_no(text, r[0])}", old=r, new=None,
-                    old_pos=r[0], new_pos=None, verdict=verdict, **common)
+                    old_pos=r[0], new_pos=None, verdict=verdict, evidence=evidence, **common)
             covered = [r for r in old_r if r[1] != -1]
             for r in [r for r in new_r if r not in old_r]:
                 if any(o[0] <= r[0] and r[1] <= o[1] for o in covered):
                     continue  # swallowed by an old range already reported
-                head = text[r[0]:text.find("{", r[0])]
+                brace = text.find("{", r[0])
+                head = text[r[0]:brace]
+                evidence = [("prefix", r[0], "unittest"), ("char", r[1] - 1, "}"),
+                            ("gap", r[0] + len("unittest"), brace)]
                 if "//" in head or "/*" in head or "/+" in head:
                     cat = "old keeps a unittest whose keyword is followed by a comment before `{`"
                     verdict = "new right: `unittest // ...\\n{` is a unittest; old counts its body as production"
@@ -709,7 +865,7 @@ def compare(recorder, namespace, writer, spans, labels, origins):
                     cat = "old keeps a unittest"
                     verdict = None
                 add(category=cat, symbol=f"unittest at L{line_no(text, r[0])}", old=None, new=r,
-                    old_pos=None, new_pos=r[0], verdict=verdict, **common)
+                    old_pos=None, new_pos=r[0], verdict=verdict, evidence=evidence, **common)
         elif name == "_mask_unittests":
             old = call_old(namespace, writer, name, text)
             pairs[name] += 1
@@ -885,10 +1041,66 @@ def controls(scratch):
           f"a byte offset used as a str index reads {uni[by_open]!r}")
     if not (cp_ok and by_ok and uni[by_open] != "{"):
         ok = False
-    old_mask = ns["mask_d_noncode"](cases[0][1])
-    new_mask = masked(cases[0][1], spans[sha(cases[0][1])].comments + spans[sha(cases[0][1])].strings, True)
-    print(f"  mask_d_noncode backtick: old={old_mask.rstrip()!r}\n"
-          f"                           new={new_mask.rstrip()!r}")
+    # Masks: the EXACT masked text is asserted, not printed (review finding 2).
+    # Each expected string blanks exactly the literal/comment and nothing else.
+    print("positive controls: mask_d_noncode, exact output")
+    expected = {
+        "backtick": "void f() {" + " auto s = " + " " * 5 + "; }\n",
+        "raw-string": "void f() {" + " auto s = " + " " * 6 + "; }\n",
+        "nested-comment": "void f() { " + " " * 17 + " int x; }\n",
+    }
+    for name, t in cases:
+        if name not in expected:
+            continue
+        sp = spans[sha(t)]
+        new_mask = masked(t, sp.comments + sp.strings, True)
+        old_mask = ns["mask_d_noncode"](t)
+        new_right = new_mask == expected[name]
+        old_right = old_mask == expected[name]
+        print(f"  {name:15s} new {'==' if new_right else '!='} expected, old {'==' if old_right else '!='} expected"
+              + ("" if new_right else f"   new={new_mask!r}"))
+        if not new_right or old_right:
+            ok = False
+
+    # version(unittest): block, colon and statement forms, spans asserted.
+    vtext = ("version(unittest) { int a; }\n"
+             "version (unittest):\nint b;\n"
+             "void f() { version(unittest) { g(); } }\n")
+    vpath = scratch / "controls" / "version_unittest.d"
+    with open(vpath, "w", encoding="utf-8", newline="") as out:
+        out.write(vtext)
+    rec = json.loads(subprocess.run([str(DSPANS), str(vpath)], stdout=subprocess.PIPE,
+                                    check=True).stdout)["files"][0]
+    got = [(v["span"][0], tuple(v["trueBody"]) if v["trueBody"] else None) for v in rec["versionUnittest"]]
+    first = vtext.index("{")
+    stmt = vtext.index("version(unittest) { g")
+    want = [(0, (first, vtext.index("}") + 1)),
+            (vtext.index("version (unittest):"), None),
+            (stmt, (vtext.index("{", stmt), vtext.index("}", stmt) + 1))]
+    # Lexer diagnostics and recovered bodies (review findings 5 and 7): an
+    # unterminated string or comment must be REPORTED (a consumer refuses such
+    # a text), and a body the parser invents by recovery must not be printed.
+    bad = {"unterminated-string": 'auto s = "abc\n',
+           "unterminated-comment": "/* unterminated\nint x;\n",
+           "recovered-body": "class A { void f( { int x = ; }\n"}
+    for name, t in bad.items():
+        bpath = scratch / "controls" / f"{name}.d"
+        with open(bpath, "w", encoding="utf-8", newline="") as out:
+            out.write(t)
+        r = json.loads(subprocess.run([str(DSPANS), str(bpath)], stdout=subprocess.PIPE,
+                                      check=True).stdout)["files"][0]
+        if name == "recovered-body":
+            bodies = [a["body"] for a in r["aggregates"]]
+            good = bodies == [None]
+            print(f"positive control: {name}: aggregate bodies {bodies} (want [None])")
+        else:
+            good = bool(r["lexErrors"])
+            print(f"positive control: {name}: lexErrors {r['lexErrors']}")
+        if not good:
+            ok = False
+    print(f"positive control: versionUnittest spans {got} {'==' if got == want else '!='} {want}")
+    if got != want:
+        ok = False
     return ok
 
 
@@ -1096,7 +1308,11 @@ def main():
     if opts.controls:
         return 0 if controls(scratch) else 4
     if opts.swap_trial:
-        swap_trial(scratch)
+        rc = swap_trial(scratch)
+        expect = 0 if opts.expect_census_exit is None else opts.expect_census_exit
+        if rc != expect:
+            print(f"swap trial: census exit {rc} != expected {expect}", file=sys.stderr)
+            return 3
         return 0
 
     recorder = Recorder()
@@ -1114,10 +1330,14 @@ def main():
     # census: 45339 raw primitive calls, 21660 of them `_balanced`, over 577
     # whole tree files. A census that stops early (the inject control) reads
     # far fewer, so the floor is on reaching the primitives at all.
-    if not opts.inject_control and (recorder.raw_calls.get("_balanced", 0) < 1000
-                                    or recorder.raw_calls.get("mask_d_noncode", 0) < 100):
-        raise SystemExit("TOOL: the recorder saw too few primitive calls "
-                         f"({dict(recorder.raw_calls)}); measured 45339 on 2026-09-27")
+    if not opts.inject_control:
+        silent = [n for n in ALL_PRIMITIVES if n not in ZERO_CALL_PRIMITIVES
+                  and recorder.raw_calls.get(n, 0) == 0]
+        woke = [n for n in ZERO_CALL_PRIMITIVES if recorder.raw_calls.get(n, 0)]
+        if silent or woke or recorder.raw_calls.get("_balanced", 0) < 1000:
+            raise SystemExit("TOOL: recorder population changed: never called "
+                             f"{silent}, expected-zero but called {woke} "
+                             f"({dict(recorder.raw_calls)}); measured 45339 calls on 2026-09-27")
     spans, dspans_secs, n_texts = dspans_for(recorder.texts, scratch / "texts")
     print(f"dspans: {n_texts} distinct texts in {dspans_secs:.2f}s")
     labels, origins = label_texts(recorder.texts)
@@ -1126,6 +1346,18 @@ def main():
     if expect is not None and rc != expect:
         print(f"census exit {rc} != expected {expect}", file=sys.stderr)
         return 3
+    open_ = [d for d in divs if d.verdict is None or d.verdict.startswith("OPEN")]
+    not_d = [d for d in open_ if d.verdict and "lexErrors" in d.verdict]
+    print(f"\nOPEN verdicts: {len(open_)} ({len(not_d)} in texts with lexErrors)")
+    if not opts.inject_control:
+        if len(divs) > DIVERGENCE_CEILING:
+            print(f"TOOL: {len(divs)} raw divergences exceed the ceiling {DIVERGENCE_CEILING}",
+                  file=sys.stderr)
+            return 5
+        if len(open_) > len(not_d):
+            print(f"TOOL: {len(open_) - len(not_d)} divergence(s) in valid D carry no confirmed verdict",
+                  file=sys.stderr)
+            return 6
     return 0
 
 

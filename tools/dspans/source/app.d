@@ -55,6 +55,10 @@
  *                 declarations AND statements; trueBody is the braced true
  *                 branch or null for `version(unittest):` / a single
  *                 declaration
+ *   lexErrors     [string...]          lexer diagnostics (an unterminated string
+ *                 or comment; a literal the lexer gave up on is NOT in
+ *                 `strings`, so a consumer must refuse a text with lexErrors
+ *                 rather than trust its masks)
  *   parseErrors   [string...]          parser diagnostics (a fragment that is
  *                 not a module still lexes; its parse-level lists are then
  *                 whatever the error-recovering parser produced)
@@ -108,6 +112,26 @@ size_t tokenEnd(const ref Token t)
     return t.index + (t.text.length ? t.text.length : str(t.type).length);
 }
 
+/// The lexer runs a `/*` or `/+` comment to end of file without an error
+/// when it never closes; report it, since a mask built from such a span
+/// blanks the rest of the file.
+bool commentCloses(const(char)[] c)
+{
+    if (c.length >= 2 && c[0 .. 2] == "/*")
+        return c.length >= 4 && c[$ - 2 .. $] == "*/";
+    if (c.length >= 2 && c[0 .. 2] == "/+")
+    {
+        size_t depth;
+        for (size_t i = 0; i + 1 < c.length; ++i)
+        {
+            if (c[i] == '/' && c[i + 1] == '+') { ++depth; ++i; }
+            else if (c[i] == '+' && c[i + 1] == '/') { if (--depth == 0) return i + 2 == c.length; ++i; }
+        }
+        return false;
+    }
+    return true;
+}
+
 bool isStringToken(IdType type)
 {
     return type == tok!"stringLiteral" || type == tok!"wstringLiteral"
@@ -159,6 +183,16 @@ final class Collector : ASTVisitor
 
     this(const(size_t[size_t])* pairs) { bracePairs = pairs; }
 
+    /// A body is printed only when the LEXER pairs its braces the same way:
+    /// the error-recovering parser can close a body the token stream never
+    /// closed (`class A { void f( { ... }` gives A a body from recovery).
+    private bool paired(size_t open, size_t close) const
+    {
+        if (bracePairs is null) return false;
+        auto c = open in *bracePairs;
+        return c !is null && *c == close;
+    }
+
     private size_t currentDeclStart(size_t fallback) const
     {
         return declStarts.length ? declStarts[$ - 1] : fallback;
@@ -193,7 +227,7 @@ final class Collector : ASTVisitor
         a.parent = aggStack.length ? aggStack[$ - 1] : null;
         a.span = sp;
         a.declStart = ds;
-        if (sb !is null && sb.endLocation > sb.startLocation)
+        if (sb !is null && paired(sb.startLocation, sb.endLocation))
         {
             a.hasBody = true;
             a.body = Span(sb.startLocation, sb.endLocation + 1);
@@ -247,8 +281,8 @@ final class Collector : ASTVisitor
         f.attrs = declAttrs.length ? declAttrs[$ - 1] : null;
         if (fb !is null && fb.specifiedFunctionBody !is null
             && fb.specifiedFunctionBody.blockStatement !is null
-            && fb.specifiedFunctionBody.blockStatement.endLocation
-                > fb.specifiedFunctionBody.blockStatement.startLocation)
+            && paired(fb.specifiedFunctionBody.blockStatement.startLocation,
+                fb.specifiedFunctionBody.blockStatement.endLocation))
         {
             const bs = fb.specifiedFunctionBody.blockStatement;
             f.hasBody = true;
@@ -270,7 +304,7 @@ final class Collector : ASTVisitor
     override void visit(const Unittest n)
     {
         if (n.tokens.length && n.blockStatement !is null
-            && n.blockStatement.endLocation > n.blockStatement.startLocation)
+            && paired(n.blockStatement.startLocation, n.blockStatement.endLocation))
         {
             auto sp = nodeSpan(n);
             size_t ds = currentDeclStart(sp.s);
@@ -362,6 +396,7 @@ void processFile(ref Appender!string o, string path, Units units, bool lexOnly,
     auto m = OffsetMap(src, units);
 
     Span[] comments;
+    string[] lexErrors;
     Span[] strings;
     string[] stringKinds;
     size_t[size_t] bracePairs;
@@ -373,10 +408,17 @@ void processFile(ref Appender!string o, string path, Units units, bool lexOnly,
         config.whitespaceBehavior = WhitespaceBehavior.include;
         config.commentBehavior = CommentBehavior.noIntern;
         size_t[] braceStack, parenStack;
-        foreach (t; DLexer(src, config, &cache))
+        auto lexer = DLexer(src, config, &cache);
+        for (; !lexer.empty; lexer.popFront())
         {
+            const t = lexer.front;
             if (t.type == tok!"comment")
+            {
                 comments ~= Span(t.index, tokenEnd(t));
+                if (!commentCloses(t.text))
+                    lexErrors ~= to!string(t.line) ~ ":" ~ to!string(t.column)
+                        ~ ": unterminated comment (runs to end of file)";
+            }
             else if (isStringToken(t.type))
             {
                 strings ~= Span(t.index, tokenEnd(t));
@@ -406,6 +448,9 @@ void processFile(ref Appender!string o, string path, Units units, bool lexOnly,
         }
         unmatched ~= braceStack;
         unmatched ~= parenStack;
+        foreach (msg; lexer.messages)
+            if (msg.isError)
+                lexErrors ~= to!string(msg.line) ~ ":" ~ to!string(msg.column) ~ ": " ~ msg.message;
     }
 
     string[] errors;
@@ -489,6 +534,8 @@ void processFile(ref Appender!string o, string path, Units units, bool lexOnly,
         o.put(`,"trueBody":`); writeNullableSpan(o, v.hasTrueBody, v.trueBody, m);
         o.put('}');
     }
+    o.put(`],"lexErrors":[`);
+    foreach (i, e; lexErrors) { if (i) o.put(','); writeJsonString(o, e); }
     o.put(`],"parseErrors":[`);
     foreach (i, e; errors) { if (i) o.put(','); writeJsonString(o, e); }
     o.put("]}");
