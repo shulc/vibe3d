@@ -7,6 +7,7 @@ import bindbc.sdl;
 import operator : VectorStack;
 
 import tool;
+import command : Command;
 import mesh;
 import mesh_gpu : GpuMesh;
 import mesh_ops.edge_bevel : bevelEdgesByMask, kEdgeBevelEditScope;
@@ -20,7 +21,6 @@ import overlay_space : OverlaySpace;
 import eventlog : queryMouse;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
-import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
 import tools.edit.preview_rebuild : PreviewRebuild, PreviewTopologyKey,
@@ -41,7 +41,6 @@ import document : Layer;
 import mesh_gpu : GpuUploadOwner;
 import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
 import core.stdc.string : memcmp;
-import command_history : PreparedHistoryKind;
 
 struct PreparedEdgeBevelActivationImage {
     MeshSnapshot before;
@@ -81,8 +80,8 @@ struct PreparedEdgeBevelParamImage {
 // ---------------------------------------------------------------------------
 // EdgeBevelTool — interactive Edge Bevel (factory id `edge.bevel`).
 //
-// Topology-creating tool, modelled on PolyExtrudeTool. One snapshot undo entry
-// per gesture (MeshSessionEdit before/after pair, via bevelEditFactory).
+// Topology-creating tool, modelled on PolyExtrudeTool. ToolSession records
+// a mesh and attribute image for each completed gesture.
 //
 // Single handle:
 //   PART_WIDTH = BLUE Arrow along the averaged adjacent-face normal.
@@ -90,13 +89,18 @@ struct PreparedEdgeBevelParamImage {
 // Headless: tool.set edge.bevel on; tool.attr edge.bevel width <v>;
 //           tool.doApply → applyHeadless(); ToolDoApplyCommand wraps undo.
 // ---------------------------------------------------------------------------
-class EdgeBevelTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient {
-    // A recording command through the UI door closes the live edit first —
-    // `Tool.commitOperation`'s in-place default — and the tool stays armed
-    // (slice M2; the C1-h-sel-fam law, captured for Edge Extend and Polygon
-    // Bevel and inferred for the rest of the in-place family, R20 gap g5).
+class EdgeBevelTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient,
+        TopologyStepClient {
+    // A recording command through the UI door closes the active operation;
+    // completed gestures already belong to ToolSession history.
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
-        static immutable ToolSessionPolicy policy = { commandClose: CommandClose.uiDoor };
+        static immutable ToolSessionPolicy policy = {
+            activationRow: true, commandClose: CommandClose.uiDoor,
+            sessionSteps: true, historyTopologySteps: true,
+            opensAt: OpensAt.firstPress,
+            imageAttrs: ["width", "roundLevel", "widthMode"],
+            haulAttrs: ["width", "roundLevel", "widthMode"]
+        };
         return policy;
     }
 
@@ -243,8 +247,6 @@ public:
     }
 
     override void deactivate() {
-        if (active && built && width_ != 0.0f)
-            commitEdit();
         active     = false;
         built      = false;
         dragPart   = -1;
@@ -254,7 +256,7 @@ public:
     }
 
     public override bool hasUncommittedEdit() const {
-        return active && built && width_ != 0.0f;
+        return active && dragPart >= 0 && built && width_ != 0.0f;
     }
 
     public override void cancelUncommittedEdit() {
@@ -266,14 +268,44 @@ public:
         reinitSession();
     }
 
-    // Framework "apply and continue" (task 0461, Shift+click): commit the live
-    // edit as its own undo entry, keeping the tool active; the driver follows
-    // with resyncSession() to re-arm in place. Mirrors deactivate()'s commit
-    // guard minus the teardown.
     public override bool commitUncommittedEdit() {
-        if (!hasUncommittedEdit()) return false;
-        commitEdit();
+        return false;
+    }
+
+    public override bool commitOperation() {
+        if (!active) return false;
+        resyncSession();
         return true;
+    }
+
+    public override Mesh* topologyStepMesh() { return mesh; }
+    public override MeshSnapshot topologyStepBasis() { return before; }
+    public override Command topologyStepCarrier() {
+        return gestureFactory is null ? null : gestureFactory();
+    }
+    public override bool recordTopologyStep(Command cmd) {
+        return recordGestureEdit(cmd, GestureRecordMode.Plain);
+    }
+    public override string topologyStepLabel() { return "Edge Bevel"; }
+    public override void setTopologyDormant(bool dormant) {}
+    public override void rebaseTopologyStep(MeshSnapshot basis) {
+        before = basis;
+        built = false;
+        preview_.reset();
+        computeGizmoFrame();
+    }
+    public override void restoreTopologyStep(in AttrImage attrs, MeshSnapshot basis) {
+        before = basis;
+        preview_.reset();
+        auto visible = MeshSnapshot.capture(*mesh);
+        before.restore(*mesh);
+        computeGizmoFrame();
+        visible.restore(*mesh);
+        restoreRecordedAttrs(attrs);
+        built = !before.matches(*mesh);
+        dragPart = -1;
+        toolHandles.clearHaul();
+        refreshCaches();
     }
 
     override void onParamChanged(string pname) {
@@ -395,12 +427,8 @@ public:
         if (mesh.edges.length == 0) return false;
         if (width_ == 0.0f) return true;
         auto mask = currentMask();
-        // Task 1903 Stage G — the COMMIT door's batch, opened at the tool
-        // boundary (§4.1) and scoped to the kernel call alone. UNRECORDED:
-        // this tool undoes through the whole-mesh `before`/`post` snapshot
-        // pair `commitEdit` records, so a recording batch would build an
-        // op-log nothing reads and `close()` would drop. Stage M owns the
-        // flip.
+        // The kernel batch is unrecorded; ToolSession records the completed
+        // gesture as a mesh image when the handle is released.
         size_t n;
         {
             auto ed = MeshEditBatch.unrecorded(*mesh, kEdgeBevelEditScope);
@@ -414,7 +442,7 @@ public:
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         if (!active) return false;
-        if (e.button == SDL_BUTTON_RIGHT) { cancelLiveEdit(); return true; }
+        if (e.button == SDL_BUTTON_RIGHT) { closeOwnOperation(false); return true; }
         if (e.button != SDL_BUTTON_LEFT)  return false;
         SDL_Keymod mods = SDL_GetModState();
         if (mods & (KMOD_ALT | KMOD_SHIFT)) return false;
@@ -429,6 +457,7 @@ public:
         dragBaseWidth = width_;
 
         if (part == PART_WIDTH) {
+            sessionStepBegins();
             dragPart = PART_WIDTH;
             toolHandles.setHaul(part);
             return true;
@@ -441,6 +470,7 @@ public:
         if (e.button != SDL_BUTTON_LEFT) return false;
         dragPart = -1;
         toolHandles.clearHaul();
+        sessionStepEnds();
         return true;
     }
 
@@ -700,17 +730,11 @@ private:
     }
 
     final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext c) {
-        bool ok; if (active && built && width_ != 0 && c !is null && history !is null && gestureFactory !is null && before.filled) { auto cmd=cast(MeshSessionEdit)gestureFactory(); if(cmd !is null){cmd.setSnapshots(before,MeshSnapshot.capture(*mesh),"Edge Bevel");ok=c.prepare(cmd,PreparedHistoryKind.Plain).accepted;}}
-        return PreparedDeactivateEffect(preparedToolStateOwner,PreparedDeactivateKind.EdgeBevel,ok);
-    }
-    void commitEdit() {
-        if (history is null || gestureFactory is null) return;
-        if (!before.filled) return;
-        auto cmd = cast(MeshSessionEdit) gestureFactory();
-        if (cmd is null) { noteGestureCarrierMismatch(); return; }
-        auto post = MeshSnapshot.capture(*mesh);
-        cmd.setSnapshots(before, post, "Edge Bevel");
-        recordGestureEdit(cmd, GestureRecordMode.Plain);
+        if (c is null) return PreparedDeactivateEffect(
+            preparedToolStateOwner, PreparedDeactivateKind.EdgeBevel, false, false);
+        const accepted = c.markNoHistoryInstall();
+        return PreparedDeactivateEffect(preparedToolStateOwner,
+            PreparedDeactivateKind.EdgeBevel, false, accepted);
     }
 
     void cancelLiveEdit() {

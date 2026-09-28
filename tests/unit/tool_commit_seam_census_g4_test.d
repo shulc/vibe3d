@@ -277,8 +277,8 @@ private enum LedgerRow[] kCallRoster = [
     LedgerRow("BridgeTool.commitBridgeEdit|plain", 1, "plain mode"),
     LedgerRow("DragWeldTool.onMouseButtonUp|call", 1, "tool commit"),
     LedgerRow("DragWeldTool.onMouseButtonUp|plain", 1, "plain mode"),
-    LedgerRow("EdgeBevelTool.commitEdit|call", 1, "tool commit"),
-    LedgerRow("EdgeBevelTool.commitEdit|plain", 1, "plain mode"),
+    LedgerRow("EdgeBevelTool.recordTopologyStep|call", 1, "history-owned topology step"),
+    LedgerRow("EdgeBevelTool.recordTopologyStep|plain", 1, "plain row mode"),
     LedgerRow("PolyBevelTool.commitEdit|call", 1, "tool commit"),
     LedgerRow("PolyBevelTool.commitEdit|plain", 1, "plain mode"),
     LedgerRow("PolyExtrudeTool.recordTopologyStep|call", 1, "history-owned topology step"),
@@ -293,8 +293,8 @@ private enum LedgerRow[] kCallRoster = [
     LedgerRow("VertexMergeTool.commitEdit|plain", 1, "plain mode"),
     LedgerRow("VertexBevelTool.recordTopologyStep|call", 1, "history-owned topology step"),
     LedgerRow("VertexBevelTool.recordTopologyStep|plain", 1, "plain row mode"),
-    LedgerRow("VertexExtrudeTool.commitEdit|call", 1, "tool commit"),
-    LedgerRow("VertexExtrudeTool.commitEdit|plain", 1, "plain mode"),
+    LedgerRow("VertexExtrudeTool.recordTopologyStep|call", 1, "history-owned topology step"),
+    LedgerRow("VertexExtrudeTool.recordTopologyStep|plain", 1, "plain row mode"),
 ];
 
 unittest {

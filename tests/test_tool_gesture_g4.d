@@ -20,11 +20,9 @@
 // `mesh.reduceTool` (`mesh.reduce_edit`) stand apart. So a mutation that has to
 // redden EXACTLY ONE cell of this group cannot key on `entryNames` either — the
 // same correction the G1 lane forced on plan §5.5. `liveEntryNames` is carried
-// here for the same reason it was added there, and in G4 it separates a real
-// distinction: nine tools record at the DROP (`deactivate`), so their
-// `liveEntryNames` is EMPTY, while `mesh.dragWeld` and `mesh.tack` record
-// SYNCHRONOUSLY inside their own event handler and already show
-// `["mesh.bevel_edit"]` before the tool is switched off.
+// here for the same reason it was added there: it separates records made
+// during the gesture from records deferred until the tool closes. Edge Bevel
+// and Vertex Extrude now join the first group.
 //
 // WHY THE DRIVE IS `/api/play-events` AND NEVER `tool.doApply`. `tool.doApply`
 // records a `ToolDoApplyCommand` — a different entry, from a different site —
@@ -35,11 +33,10 @@
 // reaches it: `/api/script?interactive=true`, which is the sole path that sets
 // `interactiveParamEdit` and makes `onParamChanged` build a preview.
 //
-// TWO SHIPPED HANDLE-DRAG TESTS OF THIS GROUP ARE HOLLOW, and they are the
-// reason this file measures `postCommit != preOp` before it measures anything
-// else. Measured on this stand, at the tree this fixture was frozen against:
+// Two handle-drag tests were hollow when this fixture was first frozen, which
+// is why this file measures `postCommit != preOp` before anything else:
 //
-//   * `tests/test_vertex_extrude_handle_drag.d` grabs the EXTRUDE arrow only.
+//   * The old `tests/test_vertex_extrude_handle_drag.d` grabbed the EXTRUDE arrow only.
 //     `shift` reaches 0.028 and its assertion passes — while `width` stays 0,
 //     the kernel merges/extrudes NOTHING, `built` stays false, the drop records
 //     NOTHING and not one plane moves. The cell below therefore grabs the WIDTH
@@ -51,11 +48,8 @@
 //     to distance 40, where the same haul buys dist 1.53 and the four vertices
 //     actually collapse to one.
 //
-// Both files are green today and would stay green if their tool stopped
-// recording altogether: their only anti-vacuity is a tool ATTRIBUTE, which
-// moves whether or not the kernel touched an element. That is the same shape
-// the G0-G1 lane found in `tests/test_edge_extrude_handle_drag.d`, and it is
-// now three instances, not one.
+// Vertex Extrude's test now checks geometry and each released row. The
+// element-count guard here still protects the frozen G4 drive.
 //
 // WHY THE FAILURES ACCUMULATE INSTEAD OF FAILING FAST. The acceptance criterion
 // for this lane is plan §5.4's mutation table, whose every row names both the
@@ -78,8 +72,7 @@
 // `edge.bevel` and `poly.bevel` publish it to `/api/tool/state`; the other nine
 // publish nothing (`{}`) or a tool-specific object without it. So the cells that
 // CAN assert `built` do, and the rest lean on the geometric anti-vacuity in
-// `runCell` plus, for the two hollow-coverage tools, a named element-count
-// assertion that says in as many words what the shipped test failed to see.
+// `runCell` plus named element-count checks for both historical misses.
 //
 // RESIDUALS ARE FROZEN EXACTLY, NEVER TOLERATED. All eleven cells round-trip
 // byte-for-byte in both directions on this tree, so every residual list is
@@ -319,7 +312,7 @@ struct Cell {
 Cell runCell(string name, string tool, string recordSite, string mode,
              string payload,
              void delegate() stand, void delegate() gesture, void delegate() drop,
-             void delegate() arm = null)
+             void delegate() arm = null, size_t gestureRows = 1)
 {
     Cell c;
     c.name = name; c.tool = tool; c.recordSite = recordSite;
@@ -360,13 +353,14 @@ Cell runCell(string name, string tool, string recordSite, string mode,
         name ~ ": the gesture moved NO plane. Its record, its undo and its redo "
       ~ "are then all satisfied by doing nothing. Either the drive missed the "
       ~ "handle, or the tool refused on this stand — check `/api/tool/state`");
-    assert(c.undoDelta == 1,
+    assert(c.undoDelta == gestureRows,
         name ~ ": the gesture left " ~ c.undoDelta.to!string ~ " undo entr(ies), "
-      ~ "expected exactly 1. Zero means the commit never recorded; more than "
-      ~ "one means an in-session run was left unspliced");
+      ~ "expected exactly " ~ gestureRows.to!string ~ " completed step(s)");
 
-    auto ru = postJ("/api/command", commandBody("history.undo"));
-    assert(ru["status"].str == "ok", name ~ ": /api/undo failed: " ~ ru.toString);
+    foreach (_; 0 .. gestureRows) {
+        auto ru = postJ("/api/command", commandBody("history.undo"));
+        assert(ru["status"].str == "ok", name ~ ": /api/undo failed: " ~ ru.toString);
+    }
     settle();
     c.postUndo = planes();
     assert(undoLen() == uArm,
@@ -374,8 +368,10 @@ Cell runCell(string name, string tool, string recordSite, string mode,
       ~ ", expected back to " ~ uArm.to!string ~ " — more than one step means the "
       ~ "entry's revert() answered false and the suffix behind it was truncated");
 
-    auto rr = postJ("/api/command", commandBody("history.redo"));
-    assert(rr["status"].str == "ok", name ~ ": /api/redo failed: " ~ rr.toString);
+    foreach (_; 0 .. gestureRows) {
+        auto rr = postJ("/api/command", commandBody("history.redo"));
+        assert(rr["status"].str == "ok", name ~ ": /api/redo failed: " ~ rr.toString);
+    }
     settle();
     c.postRedo = planes();
 
@@ -870,8 +866,8 @@ unittest {
 //    this group is bound to (`bevelEditFactory`, `polyExtrudeEditFactory`,
 //    `reduceEditFactory`, `source/app.d`) all construct that one class. G4 is
 //    therefore the group with ONE record primitive and ONE payload shape and
-//    ELEVEN hand-written commit bodies, which is exactly the redundancy plan
-//    §6 migrates — and exactly why a per-body geometric oracle is what pins it.
+//    a mix of ToolSession and class-local record owners. The plane oracle
+//    pins each gesture while these owners migrate.
 // ---------------------------------------------------------------------------
 unittest {
     Cell[] cells;
@@ -937,11 +933,10 @@ unittest {
     // --- (d) EdgeBevelTool on the cube's top-front edge. The second of the two
     //     tools in this group that publish `built`.
     cells ~= runCell("edge.bevel/width-drag", "edge.bevel",
-        "source/tools/edit/edge_bevel.d EdgeBevelTool.commitEdit",
+        "source/tools/edit/edge_bevel.d EdgeBevelTool.recordTopologyStep",
         "Plain", "MeshSessionEdit",
         { resetCube(); selectMode("edges", [findEdgeMid(0.0, 0.5, -0.5)]);
-          cmd("history.clear"); setOrbitCamera();
-          cmd("tool.set edge.bevel on"); settle(250); },
+          cmd("history.clear"); setOrbitCamera(); },
         {
             int hx, hy; handlePx(0, hx, hy);
             hover(hx, hy);
@@ -951,7 +946,8 @@ unittest {
                 "edge.bevel: the Width drag left `built` false — the kernel "
               ~ "chamfered no edge and the drop will record nothing");
         },
-        { cmd("tool.set edge.bevel off"); });
+        { cmd("tool.set edge.bevel off"); },
+        { cmd("tool.set edge.bevel on"); settle(250); });
 
     // --- (e) VertexBevelTool on cube vertex 6 = (0.5,0.5,0.5): its three
     //     adjacent faces average to the (1,1,1) diagonal, which is the inset
@@ -971,19 +967,14 @@ unittest {
         { cmd("tool.set mesh.vertexBevel off"); },
         { cmd("tool.set mesh.vertexBevel on"); settle(250); });
 
-    // --- (f) VertexExtrudeTool, and the cell that cost this lane a drive path.
-    //     The shipped `test_vertex_extrude_handle_drag.d` grabs the EXTRUDE
-    //     arrow only; measured on this stand that leaves `width == 0`, the
-    //     kernel affects NOTHING, the drop records nothing and no plane moves,
-    //     while the `shift` attribute the file asserts on reads 0.028. So this
-    //     cell grabs the WIDTH part (1) first and the extrude arrow (0) second,
-    //     and asserts the vertex count actually GREW — the check the shipped
-    //     file does not have.
+    // --- (f) VertexExtrudeTool. Width must move first so the kernel creates
+    //     geometry; the Shift drag then adjusts that same topology. Both
+    //     completed drags have their own history row.
     cells ~= runCell("vertex.extrude/width-then-shift", "mesh.vertexExtrude",
-        "source/tools/edit/vertex_extrude_tool.d VertexExtrudeTool.commitEdit",
+        "source/tools/edit/vertex_extrude_tool.d VertexExtrudeTool.recordTopologyStep",
         "Plain", "MeshSessionEdit",
         { resetCube(); selectMode("vertices", [6]); cmd("history.clear");
-          setOrbitCamera(); cmd("tool.set mesh.vertexExtrude on"); settle(250); },
+          setOrbitCamera(); },
         {
             immutable size_t v0 = vertexCount();
             int wx, wy; handlePx(1, wx, wy);       // Width
@@ -1001,7 +992,8 @@ unittest {
               ~ "extrude arrow only, `shift` moves off zero and its assertion "
               ~ "passes while `width` stays 0 and the kernel builds nothing");
         },
-        { cmd("tool.set mesh.vertexExtrude off"); });
+        { cmd("tool.set mesh.vertexExtrude off"); },
+        { cmd("tool.set mesh.vertexExtrude on"); settle(250); }, 2);
 
     // --- (g) VertexMergeTool, the second hollow-coverage tool. `dist` is a
     //     WORLD threshold hauled in SCREEN pixels, so its gain per pixel scales

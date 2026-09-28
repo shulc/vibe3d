@@ -39,6 +39,12 @@ void play(string log) {
     settle(); // Let frame-driven tool/preview updates observe the delivered input.
 }
 
+void navigate(bool redo) {
+    play(format(
+        `{"t":0.000,"type":"SDL_KEYDOWN","sym":122,"scan":0,"mod":%d,"repeat":0}`,
+        redo ? 65 : 64));
+}
+
 string motion(double t, int x, int y, int state = 1) {
     return format(`{"t":%.3f,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,"state":%d,"mod":0}`,
                   t, x, y, state);
@@ -178,6 +184,64 @@ unittest {
     cmd("tool.set edge.bevel off");
 }
 
+// Two released drags adjust one bevel, and history owns both images while
+// the tool stays armed. The second drag must not bevel the first result again.
+unittest {
+    auto reset = parseJSON(cast(string)post(BASE ~ "/api/command",
+        commandBody("scene.reset", `{"type":"cube"}`)));
+    assert(reset["status"].str == "ok", "cube reset failed");
+    selectTopFrontEdge();
+    long depthBefore = modelDepth();
+    auto d = armHandle();
+    auto firstDrag = (int x0, int y0, int x1, int y1) {
+        play(button("SDL_MOUSEBUTTONDOWN", 0.0, x0, y0));
+        play(motion(0.0, x1, y1));
+        play(button("SDL_MOUSEBUTTONUP", 0.0, x1, y1));
+    };
+    firstDrag(d.x0, d.y0, d.x1, d.y1);
+    auto first = model();
+    string firstVertices = first["vertices"].toString;
+    immutable long firstCount = first["vertexCount"].integer;
+    immutable double firstWidth = getJson("/api/tool/state")["width"].floating;
+    assert(firstCount > 8 && firstWidth > 1e-5 &&
+           modelDepth() == depthBefore + 1,
+        "first released Edge Bevel gesture must own one topology row");
+
+    double sx, sy; bool found;
+    fetchHandlePart(0, sx, sy, found, BASE);
+    assert(found, "second Edge Bevel handle disappeared");
+    int x0 = cast(int)sx, y0 = cast(int)sy;
+    play(motion(0.0, x0, y0, 0));
+    firstDrag(x0, y0, x0 + d.x1 - d.x0, y0 + d.y1 - d.y0);
+    auto second = model();
+    string secondVertices = second["vertices"].toString;
+    immutable double secondWidth = getJson("/api/tool/state")["width"].floating;
+    assert(second["vertexCount"].integer == firstCount &&
+           secondVertices != firstVertices && secondWidth > firstWidth &&
+           modelDepth() == depthBefore + 2,
+        "second Edge Bevel gesture must adjust the existing bevel");
+
+    navigate(false);
+    assert(model()["vertices"].toString == firstVertices &&
+           fabs(getJson("/api/tool/state")["width"].floating - firstWidth) < 1e-6,
+        format("undo second Edge Bevel: mesh matches %s, width %.6f vs %.6f, depth %d",
+               model()["vertices"].toString == firstVertices,
+               getJson("/api/tool/state")["width"].floating, firstWidth,
+               modelDepth()));
+    navigate(false);
+    assert(model()["vertexCount"].integer == 8 &&
+           fabs(getJson("/api/tool/state")["width"].floating) < 1e-6,
+        "second undo restores the cube while Edge Bevel stays armed");
+    navigate(true);
+    navigate(true);
+    assert(model()["vertices"].toString == secondVertices &&
+           fabs(getJson("/api/tool/state")["width"].floating - secondWidth) < 1e-6,
+        "two redos restore both Edge Bevel images");
+    cmd("tool.set edge.bevel off");
+    assert(modelDepth() == depthBefore + 2,
+        "close must not add a cumulative Edge Bevel snapshot");
+}
+
 // Round Level is a live property of the standing K3 Edge Bevel preview. These
 // interactive ToolAttrCommand writes happen after Width has made one preview and
 // before the tool is dropped. Returning to L0 must replay its activation
@@ -240,12 +304,12 @@ unittest {
         "returning to Round Level 0 did not reproduce the original flat preview");
 
     cmd("tool.set edge.bevel off");
-    assert(modelDepth() == depthBefore + 1,
-        "dropping the standing preview must record exactly one undo entry");
-    auto undo = parseJSON(cast(string)post(BASE ~ "/api/command", commandBody("history.undo")));
-    assert(undo["status"].str == "ok", "undo failed");
+    assert(modelDepth() == depthBefore + 4,
+        format("four interactive parameter writes need four session rows: before %d, after %d",
+               depthBefore, modelDepth()));
+    foreach (_; 0 .. 4) cmd("history.undo");
     assert(model()["vertexCount"].integer == 8 && model()["faceCount"].integer == 6,
-        "undo after Round Level edits did not restore the cube");
+        "four parameter undos after Round Level edits did not restore the cube");
 }
 
 // Idempotency guard: a standing interactive preview (built==true, mesh already

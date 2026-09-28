@@ -14,11 +14,11 @@
 //     shift = 0.028    <- the shipped assertion (abs(shift) > 1e-3) passed on this
 //     width = 0
 //     /api/mesh/planes before vs after: NOT ONE PLANE MOVED
-//     the drop recorded ZERO undo entries
+//     the drop had no geometry change
 //
 // The extrude arrow alone moves a number; the kernel needs a non-zero WIDTH
-// before it emits a single vertex, and with nothing emitted `deactivate()`
-// commits nothing. So the gesture now grabs the WIDTH part (1) FIRST and the
+// before it emits a single vertex, and with nothing emitted the session has no
+// topology step. So the gesture now grabs the WIDTH part (1) FIRST and the
 // extrude arrow (0) second, and the assertions are the two the acceptance
 // criterion names: the tool built, and a plane actually moved.
 //
@@ -43,6 +43,7 @@ import http_command_helpers : commandBody;
 import std.algorithm : canFind, sort;
 import std.conv : to;
 import std.format : format;
+import std.math : abs;
 import std.json;
 import std.net.curl : get, post;
 
@@ -66,6 +67,12 @@ void cmd(string line) {
 double queryShift() {
     auto r = postJson("/api/command", "tool.attr " ~ TOOL ~ " shift ?");
     assert(r["status"].str == "ok", "query shift failed: " ~ r.toString);
+    return r["value"].floating;
+}
+
+double queryWidth() {
+    auto r = postJson("/api/command", "tool.attr " ~ TOOL ~ " width ?");
+    assert(r["status"].str == "ok", "query width failed: " ~ r.toString);
     return r["value"].floating;
 }
 
@@ -124,6 +131,15 @@ void drag(int x0, int y0, int x1, int y1, int steps = 16) {
     Thread.sleep(dur!"msecs"(120));
 }
 
+void navigate(bool redo) {
+    import core.thread : Thread;
+    import core.time : dur;
+    playAndWait(format(
+        `{"t":0.000,"type":"SDL_KEYDOWN","sym":122,"scan":0,"mod":%d,"repeat":0}`,
+        redo ? 65 : 64), BASE);
+    Thread.sleep(dur!"msecs"(150));
+}
+
 unittest { // width, then the extrude arrow — and the kernel emits geometry
     import core.thread : Thread;
     import core.time   : dur;
@@ -156,6 +172,12 @@ unittest { // width, then the extrude arrow — and the kernel emits geometry
     int wx, wy; handlePx(1, wx, wy);
     hover(wx, wy);
     drag(wx, wy, wx + 70, wy - 50);
+    immutable size_t firstCount = vertexCount();
+    immutable string firstVertices = getJson("/api/model")["vertices"].toString;
+    immutable double firstWidth = queryWidth();
+    assert(firstCount > v0 && abs(firstWidth) > 1e-3 && undoLen() == u0 + 1,
+        format("released Width row: vertices %d→%d, width %.6f, undo %d→%d",
+               v0, firstCount, firstWidth, u0, undoLen()));
 
     // 2. the EXTRUDE arrow.
     int sx, sy; handlePx(0, sx, sy);
@@ -171,6 +193,24 @@ unittest { // width, then the extrude arrow — and the kernel emits geometry
         ~ "empty gesture this file shipped for months: the extrude arrow moves "
         ~ "`shift` whether or not `width` ever left zero, and with width == 0 "
         ~ "the kernel touches nothing and the drop records nothing");
+    immutable string secondVertices = getJson("/api/model")["vertices"].toString;
+    immutable double secondShift = queryShift();
+    assert(v1 == firstCount && secondVertices != firstVertices &&
+           abs(secondShift) > 1e-3 && undoLen() == u0 + 2,
+        "second Vertex Extrude gesture must adjust the same topology");
+
+    navigate(false);
+    assert(getJson("/api/model")["vertices"].toString == firstVertices
+           && queryWidth() == firstWidth && abs(queryShift()) < 1e-6,
+        "undo of second Vertex Extrude step restores first width image");
+    navigate(false);
+    assert(vertexCount() == v0 && abs(queryWidth()) < 1e-6,
+        "second undo restores the original mesh with the tool armed");
+    navigate(true);
+    navigate(true);
+    assert(getJson("/api/model")["vertices"].toString == secondVertices
+           && abs(queryShift() - secondShift) < 1e-6,
+        "two redos restore both Vertex Extrude images");
 
     cmd("tool.set " ~ TOOL ~ " off");
     Thread.sleep(dur!"msecs"(250));
@@ -182,8 +222,7 @@ unittest { // width, then the extrude arrow — and the kernel emits geometry
         ~ " — `vertices` and `counts` are not both among them, so the mesh is "
         ~ "byte-identical to what it was before the drag. A tool attribute can "
         ~ "hold any value over that");
-    assert(undoLen() - u0 == 1,
+    assert(undoLen() - u0 == 2,
         "the drop recorded " ~ (undoLen() - u0).to!string ~ " undo entr(ies), "
-        ~ "expected exactly 1 — `deactivate()` commits only when the tool "
-        ~ "built, so 0 here means the whole gesture was a no-op");
+        ~ "expected exactly two released gestures and no close-time duplicate");
 }

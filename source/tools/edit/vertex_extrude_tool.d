@@ -5,6 +5,7 @@ import bindbc.sdl;
 import operator : VectorStack;
 
 import tool;
+import command : Command;
 import mesh;
 import mesh_gpu : GpuMesh;
 import mesh_ops.extrude;
@@ -18,7 +19,6 @@ import overlay_space : OverlaySpace;
 import eventlog : queryMouse;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
-import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
 
@@ -32,7 +32,6 @@ import prepared_record_context : PreparedToolParamDoorClient,
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_vertex_extrude_activation : PreparedVertexExtrudeActivationOwner;
-import command_history : PreparedHistoryKind;
 import prepared_vertex_extrude_param_update : PreparedVertexExtrudeParamUpdateOwner;
 import prepared_tool_effect : PreparedVertexExtrudeParamEffect,
     PreparedVertexExtrudeParamKind;
@@ -100,16 +99,20 @@ struct PreparedVertexExtrudeActivationImage {
 //   PART_SHIFT = BLUE Arrow along the averaged vertex normal ("Extrude").
 //   PART_WIDTH = RED CubicArrow along an in-plane axis ("Width").
 //
-// Session lifecycle mirrors PolyBevelTool (topology-creating, own
-// before/after snapshot undo via the shared MeshSessionEdit/bevelEditFactory).
+// Topology previews start from the arm-time mesh; ToolSession owns each
+// released gesture and restores the tool attributes with the mesh.
 // ---------------------------------------------------------------------------
-class VertexExtrudeTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient {
-    // A recording command through the UI door closes the live edit first —
-    // `Tool.commitOperation`'s in-place default — and the tool stays armed
-    // (slice M2; the C1-h-sel-fam law, captured for Edge Extend and Polygon
-    // Bevel and inferred for the rest of the in-place family, R20 gap g5).
+class VertexExtrudeTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient,
+        TopologyStepClient {
+    // A recording command through the UI door closes the active operation;
+    // completed gestures already belong to ToolSession history.
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
-        static immutable ToolSessionPolicy policy = { commandClose: CommandClose.uiDoor };
+        static immutable ToolSessionPolicy policy = {
+            activationRow: true, commandClose: CommandClose.uiDoor,
+            sessionSteps: true, historyTopologySteps: true,
+            opensAt: OpensAt.firstPress,
+            imageAttrs: ["shift", "width"], haulAttrs: ["shift", "width"]
+        };
         return policy;
     }
 
@@ -228,8 +231,6 @@ public:
     }
 
     override void deactivate() {
-        if (active && built && (shift_ != 0.0f || width_ != 0.0f))
-            commitEdit();
         active     = false;
         built      = false;
         dragPart   = -1;
@@ -238,7 +239,8 @@ public:
     }
 
     public override bool hasUncommittedEdit() const {
-        return active && built && (shift_ != 0.0f || width_ != 0.0f);
+        return active && dragPart >= 0 && built &&
+            (shift_ != 0.0f || width_ != 0.0f);
     }
 
     public override void cancelUncommittedEdit() {
@@ -250,14 +252,42 @@ public:
         reinitSession();
     }
 
-    // Framework "apply and continue" (task 0461, Shift+click): commit the live
-    // edit as its own undo entry, keeping the tool active; the driver follows
-    // with resyncSession() to re-arm in place. Mirrors deactivate()'s commit
-    // guard minus the teardown.
     public override bool commitUncommittedEdit() {
-        if (!hasUncommittedEdit()) return false;
-        commitEdit();
+        return false;
+    }
+
+    public override bool commitOperation() {
+        if (!active) return false;
+        resyncSession();
         return true;
+    }
+
+    public override Mesh* topologyStepMesh() { return mesh; }
+    public override MeshSnapshot topologyStepBasis() { return before; }
+    public override Command topologyStepCarrier() {
+        return gestureFactory is null ? null : gestureFactory();
+    }
+    public override bool recordTopologyStep(Command cmd) {
+        return recordGestureEdit(cmd, GestureRecordMode.Plain);
+    }
+    public override string topologyStepLabel() { return "Vertex Extrude"; }
+    public override void setTopologyDormant(bool dormant) {}
+    public override void rebaseTopologyStep(MeshSnapshot basis) {
+        before = basis;
+        built = false;
+        computeGizmoFrame();
+    }
+    public override void restoreTopologyStep(in AttrImage attrs, MeshSnapshot basis) {
+        before = basis;
+        auto visible = MeshSnapshot.capture(*mesh);
+        before.restore(*mesh);
+        computeGizmoFrame();
+        visible.restore(*mesh);
+        restoreRecordedAttrs(attrs);
+        built = !before.matches(*mesh);
+        dragPart = -1;
+        toolHandles.clearHaul();
+        refreshCaches();
     }
 
     override void onParamChanged(string pname) {
@@ -346,9 +376,8 @@ public:
         if (mesh.vertices.length == 0) return false;
         if (width_ == 0.0f) return true;
         auto mask = currentMask();
-        // task 1903 Stage H: extrudeVerticesByMask takes `ref MeshEditBatch`
-        // now. `commitEdit` below undoes via a MeshSnapshot pair, not the
-        // op-log, so the batch is unrecorded.
+        // The kernel batch is unrecorded; ToolSession records the completed
+        // gesture as a mesh image when the handle is released.
         auto ed = MeshEditBatch.unrecorded(*mesh, kExtrudeEditScope);
         size_t n = ed.extrudeVerticesByMask(mask, shift_, width_);
         ed.close();
@@ -359,7 +388,7 @@ public:
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         if (!active) return false;
-        if (e.button == SDL_BUTTON_RIGHT) { cancelLiveEdit(); return true; }
+        if (e.button == SDL_BUTTON_RIGHT) { closeOwnOperation(false); return true; }
         if (e.button != SDL_BUTTON_LEFT)  return false;
         SDL_Keymod mods = SDL_GetModState();
         if (mods & (KMOD_ALT | KMOD_SHIFT)) return false;
@@ -375,6 +404,7 @@ public:
         dragBaseWidth = width_;
 
         if (part == PART_SHIFT || part == PART_WIDTH) {
+            sessionStepBegins();
             dragPart = part;
             toolHandles.setHaul(part);
             return true;
@@ -387,6 +417,7 @@ public:
         if (e.button != SDL_BUTTON_LEFT) return false;
         dragPart = -1;
         toolHandles.clearHaul();
+        sessionStepEnds();
         return true;
     }
 
@@ -533,17 +564,11 @@ private:
     }
 
     final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext c) {
-        bool ok; if (active && built && (shift_ != 0 || width_ != 0) && c !is null && history !is null && gestureFactory !is null && before.filled) { auto cmd=cast(MeshSessionEdit)gestureFactory(); if(cmd !is null){cmd.setSnapshots(before,MeshSnapshot.capture(*mesh),"Vertex Extrude");ok=c.prepare(cmd,PreparedHistoryKind.Plain).accepted;}}
-        return PreparedDeactivateEffect(preparedToolStateOwner,PreparedDeactivateKind.VertexExtrude,ok);
-    }
-    void commitEdit() {
-        if (history is null || gestureFactory is null) return;
-        if (!before.filled) return;
-        auto cmd = cast(MeshSessionEdit) gestureFactory();
-        if (cmd is null) { noteGestureCarrierMismatch(); return; }
-        auto post = MeshSnapshot.capture(*mesh);
-        cmd.setSnapshots(before, post, "Vertex Extrude");
-        recordGestureEdit(cmd, GestureRecordMode.Plain);
+        if (c is null) return PreparedDeactivateEffect(
+            preparedToolStateOwner, PreparedDeactivateKind.VertexExtrude, false, false);
+        const accepted = c.markNoHistoryInstall();
+        return PreparedDeactivateEffect(preparedToolStateOwner,
+            PreparedDeactivateKind.VertexExtrude, false, accepted);
     }
 
     void cancelLiveEdit() {

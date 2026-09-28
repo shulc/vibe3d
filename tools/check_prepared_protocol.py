@@ -642,7 +642,7 @@ B3D_PRODUCER_DIGESTS = {
     "tools/deform/magnet":"1191f71bae9f8cb4dc7fed605de2172db7e268f3ba9e9c62c0db2668cdcbdddf",
     "tools/deform/smooth_shift_tool":"da7b3298401dfebc0e77082b51b33a5dde9dc5bf000f1b1ff48b0e4c20f11e69",
     "tools/deform/stroke_extrude_tool":"48fd9fad9f7c4566468ebf746ab9ba38548cb5d7c2f6d7004d162ffa1a3c7d5f",
-    "tools/edit/edge_bevel":"8c47f66199de95b827047be61df795f14fb018e720c32e4cb151bab20d1d547d",
+    "tools/edit/edge_bevel":"0961493349ae01396e5b74aede66c771b4e8795356d9d4d20bf3a098e23f331f",
     "tools/edit/edge_extrude":"3f126a0516e4d82f2d2e208b4262b5444710148841404d8db2baaf4fcd1bf537",
     "tools/edit/poly_bevel":"904bd0a0820bba150b7f4bcc3f873121013d1b383d2f0276bd70def1171b7c9e",
     "tools/edit/poly_extrude":"d3b460bc686e4064233e5a571ad03b686bc50a391186775289627dca2e01da22",
@@ -650,7 +650,7 @@ B3D_PRODUCER_DIGESTS = {
     "tools/edit/reduce":"e7df0a7a19f56f8b8f1e29ad3e05974a10dcae535be2e155dd105e69ddb126d4",
     "tools/edit/vert_merge_tool":"9bf5d97f4da62f907be50eb4b72c73b9a01ab816cbbb537714af24667da20eaf",
     "tools/edit/vertex_bevel_tool":"85bfe0c67743a7f002b0fd89ef6aa4ca1292023b0fefde466ebf834463d686fc",
-    "tools/edit/vertex_extrude_tool":"5bd4def636ee6e51247ad7c4b11055ffa57985038233cb97c82c86d13200dcca",
+    "tools/edit/vertex_extrude_tool":"2a6eb43fe9c6e2d585dd1a473c5be0a25b88367afd59495ddfcecace9482bb7a",
     "tools/transform/xfrm_transform":"65b18f87900816d267af281f4773a73bf8c22014bf6e7a01bdcbb6987b9f8623",
     "tools/create/box":"1d507a4771e54f922d240817b5f2d6f5d77b49cb4014605509194675fc1869e3",
 }

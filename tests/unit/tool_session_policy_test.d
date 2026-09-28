@@ -79,7 +79,7 @@ private immutable Row[] kTable = [
     Row("TransformMove", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
     Row("TransformRotate", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
     Row("TransformScale", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
-    Row("edge.bevel", "EdgeBevelTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
+    Row("edge.bevel", "EdgeBevelTool", true, Prov.inferred, CommandClose.uiDoor, CloseProv.inferred),
     Row("edge.extend", "EdgeExtendTool", true, Prov.captured, CommandClose.uiDoor, CloseProv.captured),
     Row("edge.extrude", "EdgeExtrudeTool", true, Prov.captured, CommandClose.uiDoor, CloseProv.inferred),
     Row("edge.slide", "EdgeSlideTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
@@ -100,7 +100,7 @@ private immutable Row[] kTable = [
     Row("mesh.thickenTool", "SmoothShiftTool", true, Prov.inferred, CommandClose.uiDoor, CloseProv.inferred),
     Row("mesh.topoPen", "TopologyPenTool", true, Prov.carried, CommandClose.none, CloseProv.notCaptured),
     Row("mesh.vertexBevel", "VertexBevelTool", true, Prov.inferred, CommandClose.uiDoor, CloseProv.inferred),
-    Row("mesh.vertexExtrude", "VertexExtrudeTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
+    Row("mesh.vertexExtrude", "VertexExtrudeTool", true, Prov.inferred, CommandClose.uiDoor, CloseProv.inferred),
     Row("move", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
     Row("move.element", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
     Row("pen", "PenTool", false, Prov.notPorted, CommandClose.none, CloseProv.notCaptured),
@@ -146,10 +146,10 @@ private immutable Row[] kTable = [
     Row("xfrm.vortex", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
 ];
 
-/// The classes whose policy answers `activationRow`, including the four
-/// measured preview IDs represented by three implementation classes.
+/// The classes whose policy answers `activationRow`.
 private immutable string[] kActivationRowClasses = [
     "tools.deform.smooth_shift_tool.SmoothShiftTool",
+    "tools.edit.edge_bevel.EdgeBevelTool",
     "tools.edit.edge_extend.EdgeExtendTool",
     "tools.edit.edge_extrude.EdgeExtrudeTool",
     "tools.edit.poly_bevel.PolyBevelTool",
@@ -157,6 +157,7 @@ private immutable string[] kActivationRowClasses = [
     "tools.edit.poly_inset_tool.PolyInsetTool",
     "tools.edit.topology_pen.tool.TopologyPenTool",
     "tools.edit.vertex_bevel_tool.VertexBevelTool",
+    "tools.edit.vertex_extrude_tool.VertexExtrudeTool",
     "tools.slice.edge_slice_tool.EdgeSliceTool",
     "tools.slice.loop_slice_tool.LoopSliceTool",
     "tools.slice.slice_tool.SliceTool",
@@ -288,11 +289,11 @@ unittest { // (1) id -> policy, over every registered id
 /// not ported (the rest have no counterpart or an unsure one), and ids whose
 /// session does not own their gesture steps (H2 not ported). Measured on the
 /// M7 tree; each only falls.
-private enum size_t kActivationRowFalseCeiling = 34;
-private enum size_t kNotPortedCeiling = 30;
-private enum size_t kSessionStepsFalseCeiling = 59;
+private enum size_t kActivationRowFalseCeiling = 32;
+private enum size_t kNotPortedCeiling = 28;
+private enum size_t kSessionStepsFalseCeiling = 57;
 
-unittest { // (2) exactly twelve tool classes declare the activation row
+unittest { // (2) tool classes that declare the activation row
     string[] declared;
     size_t scanned;
     foreach (m; ModuleInfo) {
@@ -419,6 +420,8 @@ private struct StepRow {
 /// the static flags read (Edge Slice only); the images — plan R4.3 plus
 /// `count` (C-H2-ls-insert P1) and Loop Slice's seed set (PLAN-FINDING, card M3).
 private immutable StepRow[] kStepTable = [
+    StepRow("edge.bevel", OpensAt.firstPress, false,
+            ["width", "roundLevel", "widthMode"]),
     // Slice M4: the 11 haul attributes plus the operation-open state.
     StepRow("edge.extend", OpensAt.firstPress, false,
             ["opOpen", "inset", "shift", "offsetX", "offsetY", "offsetZ",
@@ -438,6 +441,8 @@ private immutable StepRow[] kStepTable = [
     StepRow("mesh.thickenTool", OpensAt.firstPress, false,
             ["shift", "scale", "maxAngle", "thicken", "sharp"]),
     StepRow("mesh.vertexBevel", OpensAt.firstPress, false, ["inset"]),
+    StepRow("mesh.vertexExtrude", OpensAt.firstPress, false,
+            ["shift", "width"]),
     // Task 8030: the first Polygon topology record carries activation; each
     // later operation remains a separate history-owned row.
     StepRow("poly.extrude", OpensAt.firstPress, false,
@@ -526,17 +531,19 @@ unittest { // (4)
     assert(stepsFalse == kSessionStepsFalseCeiling,
            format("M7 ratchet: sessionSteps=false fell to %s ids, ceiling %s: lower the ceiling "
                   ~ "in the same commit", stepsFalse, kSessionStepsFalseCeiling));
-    // Population floors: 11 ids, 57 image names, 3 Action triggers
+    // Population floors: 13 ids, 62 image names, 3 Action triggers
     // on them (chainArm; insertAt, removeCurrent), 1 arm attribute (M3b).
     sort(stepIds);
-    assert(stepIds == ["edge.extend", "edge.extrude", "mesh.edgeSliceTool", "mesh.loopSliceTool",
+    assert(stepIds == ["edge.bevel", "edge.extend", "edge.extrude",
+                       "mesh.edgeSliceTool", "mesh.loopSliceTool",
                        "mesh.polyInsetTool", "mesh.sliceTool", "mesh.smoothShiftTool",
-                       "mesh.thickenTool", "mesh.vertexBevel", "poly.bevel", "poly.extrude"],
+                       "mesh.thickenTool", "mesh.vertexBevel", "mesh.vertexExtrude",
+                       "poly.bevel", "poly.extrude"],
            format("M3 step table: sessionSteps ids %s", stepIds));
-    assert(checkedNames == 57, format("M3 step table: %s image names checked, measured 57",
+    assert(checkedNames == 62, format("M3 step table: %s image names checked, measured 62",
                                       checkedNames));
     assert(armAttrs == 1, format("M3b step table: %s arm attributes, measured 1", armAttrs));
-    assert(actionNames == 3, format("M3 step table: %s Action params on the seven tools, "
+    assert(actionNames == 3, format("M3 step table: %s Action params on the session tools, "
                                     ~ "measured 3", actionNames));
 }
 
