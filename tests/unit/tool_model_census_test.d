@@ -863,9 +863,13 @@ unittest {
            && ownerName(pOwn, 1) == typeid(Tool).name,
            "tool census probe: inheritance not resolved");
     auto pAbs = typeid(CensusProbeAbstractOwn), pLeaf = typeid(CensusProbeAbstractLeaf);
+    // A recorded owner is taken only when it IS a candidate: Tool is not one
+    // for the leaf's overridden slot, the abstract class is not one for its
+    // inherited slot. (The abstract class's OWN row stays ambiguous under LDC.)
     assert(ownerName(pLeaf, 0, pAbs.name) == pAbs.name
+           && ownerName(pLeaf, 0, typeid(Tool).name) != typeid(Tool).name
            && ownerName(pLeaf, 1, pAbs.name) == typeid(Tool).name
-           && ownerName(pAbs, 1, pAbs.name) == typeid(Tool).name,
+           && ownerName(pAbs, 1, typeid(Tool).name) == typeid(Tool).name,
            "tool census probe: an abstract owner not resolved");
     version (DigitalMars)
         assert(ownerName(pLeaf, 0, pLeaf.name) == pAbs.name
