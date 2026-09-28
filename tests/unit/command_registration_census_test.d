@@ -271,13 +271,23 @@ unittest { // a header broken before `:` is read (task 8130)
 unittest { // headers the regex cannot read are accounted as `unread` (task 8130)
     enum sample = "class B(T) if (is(T == int)) : Command {}\n"
                 ~ "class C(T = typeof(f())) : Command {}\n"
-                ~ "class D : .Command {}\n";
+                ~ "class D : .Command {}\n"
+                // `{` and `;` inside the constraint's parentheses do not end
+                // the header, so R's depth-0 `:` is still seen.
+                ~ "class R(T) if (is(typeof({ return 1; }))) : Command {}\n";
     const r = scanClasses(sample, "x.d");
-    assert(r.keywordSites == 3, format("expected 3 keyword sites; got %d", r.keywordSites));
+    assert(r.keywordSites == 4, format("expected 4 keyword sites; got %d", r.keywordSites));
     assert(r.decls.length == 0, format("expected no decls; got %s", r.decls));
     string[] names;
     foreach (ref u; r.unread) names ~= u.name;
-    assert(names == ["B", "C", "D"], format("expected unread [B, C, D]; got %s", r.unread));
+    assert(names == ["B", "C", "D", "R"],
+        format("expected unread [B, C, D, R]; got %s", r.unread));
+}
+
+unittest { // a newline after the keyword is still a keyword site (task 8130)
+    const r = scanClasses("class\nN(T) if (is(T == int)) : Command {}\n", "x.d");
+    assert(r.unread.length == 1 && r.unread[0].name == "N" && r.unread[0].line == 1,
+        format("expected N unread at line 1; got %s (sites %d)", r.unread, r.keywordSites));
 }
 
 unittest { // no base, or a colon inside brackets, is NOT unread (task 8130)
