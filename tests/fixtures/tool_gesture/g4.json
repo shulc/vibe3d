@@ -28,7 +28,7 @@
     "source": "simulated",
     "reference": "vibe3d-selfgen",
     "method": "self-drive",
-    "captured_utc": "2026-09-28T09:03:54Z",
+    "captured_utc": "2026-09-28T09:27:12Z",
     "harness": "tests/test_tool_gesture_g4.d, driven over /api/play-events against vibe3d's own running instance -- no reference editor involved (recipe: stand -> gesture (/api/play-events) -> drop -> undo -> redo)",
     "task": "1905",
     "notes": "emitted by this producer at capture time (task 3370), from its own `kWrittenBy`/`kRecipe`; `captured_utc` is the wall clock of the capture run itself. Before 3370 the block was a hand insert (task 3140) that any re-capture would have dropped, and `captured_utc` was the commit date of the `producedBy` SHA."
@@ -114,9 +114,9 @@
     },
     {
       "name": "vert.merge/far-haul", "tool": "vert.merge",
-      "recordSite": "source/tools/edit/vert_merge_tool.d VertexMergeTool.commitEdit", "mode": "Plain", "payload": "MeshSessionEdit",
-      "liveEntryNames": [],
-      "entryNames": ["mesh.bevel_edit"],
+      "recordSite": "source/tools/edit/vert_merge_tool.d VertexMergeTool.recordTopologyStep", "mode": "Plain", "payload": "MeshSessionEdit",
+      "liveEntryNames": ["tool.activate","mesh.bevel_edit"],
+      "entryNames": ["tool.activate","mesh.bevel_edit"],
       "undoDelta": 1,
       "undoResidual": [],
       "redoResidual": [],

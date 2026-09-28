@@ -1005,7 +1005,7 @@
     {
       "aggregate": "VertexMergeTool",
       "module": "tools.edit.vert_merge_tool",
-      "semantic_sha256": "18101145a3ef33274b4494c4aa5519ebc86cd915497ade139d6800d8df50d06c",
+      "semantic_sha256": "5a0848e5c9ef4bf669e12128e6186d6254d2669cb09a4c099f106baf72372f95",
       "signature": "void()",
       "symbol": "deactivate"
     },
@@ -1316,6 +1316,13 @@
       "aggregate": "VertexExtrudeTool",
       "module": "tools.edit.vertex_extrude_tool",
       "signature": "VertexExtrudeTool",
+      "symbol": "lifecycleProduct"
+    },
+    {
+      "admission": "activationRow",
+      "aggregate": "VertexMergeTool",
+      "module": "tools.edit.vert_merge_tool",
+      "signature": "VertexMergeTool",
       "symbol": "lifecycleProduct"
     },
     {

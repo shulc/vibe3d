@@ -7,6 +7,7 @@ import bindbc.sdl;
 import operator : VectorStack;
 
 import tool;
+import command : Command;
 import mesh;
 import mesh_gpu : GpuMesh;
 import math;
@@ -18,14 +19,12 @@ import overlay_space : OverlaySpace;
 import eventlog : queryMouse;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
-import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
 import perf_probe : g_perf, Cat;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
     PreparedSimpleToolDoorClient;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
-import command_history : PreparedHistoryKind;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_vertex_merge_activation : PreparedVertexMergeActivationOwner;
 import prepared_vertex_merge_param_update : PreparedVertexMergeParamUpdateOwner;
@@ -101,17 +100,20 @@ struct PreparedVertexMergeActivationImage {
 //     (which keeps its own `range`/`keep`/`morph` params for the
 //     one-shot/menu path, untouched by this tool).
 //
-// Session lifecycle mirrors PolyInsetTool (one attribute, no drawn handle,
-// generic viewport haul, topology-mutating via a shared MeshSessionEdit
-// before/after snapshot).
+// A generic viewport haul records a completed topology image in ToolSession.
+// The next haul starts on the welded mesh and may change only the distance.
 // ---------------------------------------------------------------------------
-class VertexMergeTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient {
-    // A recording command through the UI door closes the live edit first —
-    // `Tool.commitOperation`'s in-place default — and the tool stays armed
-    // (slice M2; the C1-h-sel-fam law, captured for Edge Extend and Polygon
-    // Bevel and inferred for the rest of the in-place family, R20 gap g5).
+class VertexMergeTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient,
+        TopologyStepClient {
+    // Completed hauls already belong to ToolSession history. A recording UI
+    // command closes the active operation and leaves the tool armed.
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
-        static immutable ToolSessionPolicy policy = { commandClose: CommandClose.uiDoor };
+        static immutable ToolSessionPolicy policy = {
+            activationRow: true, commandClose: CommandClose.uiDoor,
+            sessionSteps: true, historyTopologySteps: true,
+            rebaseTopologyAfterStep: true, opensAt: OpensAt.firstPress,
+            imageAttrs: ["dist"], haulAttrs: ["dist"]
+        };
         return policy;
     }
 
@@ -231,14 +233,13 @@ public:
     }
 
     override void deactivate() {
-        if (active && built) commitEdit();
         active   = false;
         built    = false;
         dragging = false;
     }
 
     public override bool hasUncommittedEdit() const {
-        return active && built;
+        return active && dragging && built;
     }
 
     public override void cancelUncommittedEdit() {
@@ -250,14 +251,36 @@ public:
         reinitSession();
     }
 
-    // Framework "apply and continue" (task 0461, Shift+click): commit the live
-    // edit as its own undo entry, keeping the tool active; the driver follows
-    // with resyncSession() to re-arm in place. Mirrors deactivate()'s commit
-    // guard minus the teardown.
     public override bool commitUncommittedEdit() {
-        if (!hasUncommittedEdit()) return false;
-        commitEdit();
+        return false;
+    }
+
+    public override bool commitOperation() {
+        if (!active) return false;
+        resyncSession();
         return true;
+    }
+
+    public override Mesh* topologyStepMesh() { return mesh; }
+    public override MeshSnapshot topologyStepBasis() { return before; }
+    public override Command topologyStepCarrier() {
+        return gestureFactory is null ? null : gestureFactory();
+    }
+    public override bool recordTopologyStep(Command cmd) {
+        return recordGestureEdit(cmd, GestureRecordMode.Plain);
+    }
+    public override string topologyStepLabel() { return "Merge Vertices"; }
+    public override void setTopologyDormant(bool dormant) {}
+    public override void rebaseTopologyStep(MeshSnapshot basis) {
+        before = basis;
+        built = false;
+    }
+    public override void restoreTopologyStep(in AttrImage attrs, MeshSnapshot basis) {
+        before = basis;
+        restoreRecordedAttrs(attrs);
+        built = !before.matches(*mesh);
+        dragging = false;
+        refreshCaches();
     }
 
     override void onParamChanged(string pname) {
@@ -367,7 +390,7 @@ public:
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         if (!active) return false;
-        if (e.button == SDL_BUTTON_RIGHT) { cancelLiveEdit(); return true; }
+        if (e.button == SDL_BUTTON_RIGHT) { closeOwnOperation(false); return true; }
         if (e.button != SDL_BUTTON_LEFT)  return false;
         SDL_Keymod mods = SDL_GetModState();
         if (mods & (KMOD_ALT | KMOD_SHIFT)) return false;   // reserved for camera nav
@@ -377,6 +400,7 @@ public:
         // No drawn handle to hit-test (task 0360 toolcard: confirmed no
         // gizmo graphic at idle/hover/drag) — any qualifying click begins
         // the generic haul directly.
+        sessionStepBegins();
         dragging = true;
         // The gain is the VIEW's pixel size (§26: no anchor term), converted
         // into the LOCAL units the merge threshold means (task 0645) by the
@@ -394,6 +418,7 @@ public:
         // §26: the value kept after release is max(0, last). No rebuild: a
         // negative value already previewed as zero (`kernelEpsSq`).
         dist_ = cast(float) valueDrag_.release();
+        sessionStepEnds();
         return true;
     }
 
@@ -439,17 +464,11 @@ private:
     }
 
     final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext c) {
-        bool ok; if (active && built && c !is null && history !is null && gestureFactory !is null && before.filled) { auto cmd=cast(MeshSessionEdit)gestureFactory(); if(cmd !is null){cmd.setSnapshots(before,MeshSnapshot.capture(*mesh),"Merge Vertices");ok=c.prepare(cmd,PreparedHistoryKind.Plain).accepted;}}
-        return PreparedDeactivateEffect(preparedToolStateOwner,PreparedDeactivateKind.VertexMerge,ok);
-    }
-    void commitEdit() {
-        if (history is null || gestureFactory is null) return;
-        if (!before.filled) return;
-        auto cmd = cast(MeshSessionEdit) gestureFactory();
-        if (cmd is null) { noteGestureCarrierMismatch(); return; }
-        auto post = MeshSnapshot.capture(*mesh);
-        cmd.setSnapshots(before, post, "Merge Vertices");
-        recordGestureEdit(cmd, GestureRecordMode.Plain);
+        if (c is null) return PreparedDeactivateEffect(
+            preparedToolStateOwner, PreparedDeactivateKind.VertexMerge, false, false);
+        const accepted = c.markNoHistoryInstall();
+        return PreparedDeactivateEffect(preparedToolStateOwner,
+            PreparedDeactivateKind.VertexMerge, false, accepted);
     }
 
     // The threshold the weld kernel runs with: a negative drag value (signed

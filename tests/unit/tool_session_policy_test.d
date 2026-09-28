@@ -119,7 +119,7 @@ private immutable Row[] kTable = [
     Row("rotate", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
     Row("scale", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
     Row("tool.strokeExtrude", "StrokeExtrudeTool", false, Prov.uncertain, CommandClose.uiDoor, CloseProv.inferred),
-    Row("vert.merge", "VertexMergeTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
+    Row("vert.merge", "VertexMergeTool", true, Prov.inferred, CommandClose.uiDoor, CloseProv.inferred),
     Row("xfrm.bend", "BendTool", false, Prov.notPorted, CommandClose.none, CloseProv.notCaptured),
     Row("xfrm.bulge", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
     Row("xfrm.elementMove", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
@@ -156,6 +156,7 @@ private immutable string[] kActivationRowClasses = [
     "tools.edit.poly_extrude.PolyExtrudeTool",
     "tools.edit.poly_inset_tool.PolyInsetTool",
     "tools.edit.topology_pen.tool.TopologyPenTool",
+    "tools.edit.vert_merge_tool.VertexMergeTool",
     "tools.edit.vertex_bevel_tool.VertexBevelTool",
     "tools.edit.vertex_extrude_tool.VertexExtrudeTool",
     "tools.slice.edge_slice_tool.EdgeSliceTool",
@@ -289,9 +290,9 @@ unittest { // (1) id -> policy, over every registered id
 /// not ported (the rest have no counterpart or an unsure one), and ids whose
 /// session does not own their gesture steps (H2 not ported). Measured on the
 /// M7 tree; each only falls.
-private enum size_t kActivationRowFalseCeiling = 32;
-private enum size_t kNotPortedCeiling = 28;
-private enum size_t kSessionStepsFalseCeiling = 57;
+private enum size_t kActivationRowFalseCeiling = 31;
+private enum size_t kNotPortedCeiling = 27;
+private enum size_t kSessionStepsFalseCeiling = 56;
 
 unittest { // (2) tool classes that declare the activation row
     string[] declared;
@@ -450,6 +451,7 @@ private immutable StepRow[] kStepTable = [
     // M3b: the arm applies (C-H1-bev), Middle clones (C-H5-bev-mmb); the image
     // is the haul plus the operation's applied flag and its base index.
     StepRow("poly.bevel", OpensAt.arm, false, ["inset", "shift", "applied", "op"], "applied"),
+    StepRow("vert.merge", OpensAt.firstPress, false, ["dist"]),
 ];
 
 unittest { // (4)
@@ -531,16 +533,16 @@ unittest { // (4)
     assert(stepsFalse == kSessionStepsFalseCeiling,
            format("M7 ratchet: sessionSteps=false fell to %s ids, ceiling %s: lower the ceiling "
                   ~ "in the same commit", stepsFalse, kSessionStepsFalseCeiling));
-    // Population floors: 13 ids, 62 image names, 3 Action triggers
+    // Population floors: 14 ids, 63 image names, 3 Action triggers
     // on them (chainArm; insertAt, removeCurrent), 1 arm attribute (M3b).
     sort(stepIds);
     assert(stepIds == ["edge.bevel", "edge.extend", "edge.extrude",
                        "mesh.edgeSliceTool", "mesh.loopSliceTool",
                        "mesh.polyInsetTool", "mesh.sliceTool", "mesh.smoothShiftTool",
                        "mesh.thickenTool", "mesh.vertexBevel", "mesh.vertexExtrude",
-                       "poly.bevel", "poly.extrude"],
+                       "poly.bevel", "poly.extrude", "vert.merge"],
            format("M3 step table: sessionSteps ids %s", stepIds));
-    assert(checkedNames == 62, format("M3 step table: %s image names checked, measured 62",
+    assert(checkedNames == 63, format("M3 step table: %s image names checked, measured 63",
                                       checkedNames));
     assert(armAttrs == 1, format("M3b step table: %s arm attributes, measured 1", armAttrs));
     assert(actionNames == 3, format("M3 step table: %s Action params on the session tools, "

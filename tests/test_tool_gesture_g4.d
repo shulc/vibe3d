@@ -41,14 +41,13 @@
 //     the kernel merges/extrudes NOTHING, `built` stays false, the drop records
 //     NOTHING and not one plane moves. The cell below therefore grabs the WIDTH
 //     part FIRST and the extrude arrow second.
-//   * `tests/test_vert_merge_drag.d` hauls 60 px and asserts `dist` rose. It
+//   * The old `tests/test_vert_merge_drag.d` hauled 60 px and asserted `dist` rose. It
 //     does — to 0.033. The cube's selected vertices are 1.0 apart, so nothing
 //     merges; and no haul reachable on that framing can close the gap (measured
 //     at 700 px: dist 0.82, zero planes moved). The cell below moves the CAMERA
-//     to distance 40, where the same haul buys dist 1.53 and the four vertices
-//     actually collapse to one.
+//     to distance 60, where the longer haul collapses four vertices to one.
 //
-// Vertex Extrude's test now checks geometry and each released row. The
+// Both tests now check geometry and each released row. The
 // element-count guard here still protects the frozen G4 drive.
 //
 // WHY THE FAILURES ACCUMULATE INSTEAD OF FAILING FAST. The acceptance criterion
@@ -995,7 +994,7 @@ unittest {
         { cmd("tool.set mesh.vertexExtrude off"); },
         { cmd("tool.set mesh.vertexExtrude on"); settle(250); }, 2);
 
-    // --- (g) VertexMergeTool, the second hollow-coverage tool. `dist` is a
+    // --- (g) VertexMergeTool. `dist` is a
     //     WORLD threshold hauled in SCREEN pixels, so its gain per pixel scales
     //     with camera distance: on the default framing the shipped 60 px haul
     //     buys dist 0.033 against a cube whose selected vertices are 1.0 apart,
@@ -1003,10 +1002,10 @@ unittest {
     //     700 px: dist 0.82, zero planes moved). Distance 40 is what makes the
     //     same gesture a real merge, and the cell asserts the count FELL.
     cells ~= runCell("vert.merge/far-haul", "vert.merge",
-        "source/tools/edit/vert_merge_tool.d VertexMergeTool.commitEdit",
+        "source/tools/edit/vert_merge_tool.d VertexMergeTool.recordTopologyStep",
         "Plain", "MeshSessionEdit",
         { resetCube(); selectMode("vertices", [0, 1, 2, 3]); cmd("history.clear");
-          setOrbitCamera(60.0); cmd("tool.set vert.merge on"); settle(250); },
+          setOrbitCamera(60.0); },
         {
             immutable size_t v0 = vertexCount();
             auto cam = fetchCamera(BASE);
@@ -1019,12 +1018,12 @@ unittest {
             assert(vertexCount() < v0,
                 "vert.merge: the haul merged nothing (still " ~ v0.to!string
               ~ " vertices) even though `dist` reads "
-              ~ attrOf("vert.merge", "dist").to!string ~ ". That is the shipped "
-              ~ "`test_vert_merge_drag.d` failure exactly: its only anti-vacuity "
-              ~ "is `dist`, which rises whether or not two vertices ever came "
+              ~ attrOf("vert.merge", "dist").to!string ~ ". The old drag test's "
+              ~ "only anti-vacuity was `dist`, which rises even if vertices never come "
               ~ "within it");
         },
-        { cmd("tool.set vert.merge off"); });
+        { cmd("tool.set vert.merge off"); },
+        { cmd("tool.set vert.merge on"); settle(250); });
 
     // --- (h) ReductionTool. It has NO mouse handler of any kind — the only
     //     input that reaches its record site is a panel parameter write, and

@@ -648,7 +648,7 @@ B3D_PRODUCER_DIGESTS = {
     "tools/edit/poly_extrude":"d3b460bc686e4064233e5a571ad03b686bc50a391186775289627dca2e01da22",
     "tools/edit/poly_inset_tool":"7c80d5679502eb2ad26d49dea4d2dcc364a208e1b24c776eae98e598b706a86b",
     "tools/edit/reduce":"e7df0a7a19f56f8b8f1e29ad3e05974a10dcae535be2e155dd105e69ddb126d4",
-    "tools/edit/vert_merge_tool":"9bf5d97f4da62f907be50eb4b72c73b9a01ab816cbbb537714af24667da20eaf",
+    "tools/edit/vert_merge_tool":"ac8f0d7faa48c40395546de997931556fbd764db770a8e0cbb3579c8de868644",
     "tools/edit/vertex_bevel_tool":"85bfe0c67743a7f002b0fd89ef6aa4ca1292023b0fefde466ebf834463d686fc",
     "tools/edit/vertex_extrude_tool":"2a6eb43fe9c6e2d585dd1a473c5be0a25b88367afd59495ddfcecace9482bb7a",
     "tools/transform/xfrm_transform":"65b18f87900816d267af281f4773a73bf8c22014bf6e7a01bdcbb6987b9f8623",

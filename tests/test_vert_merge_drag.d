@@ -23,7 +23,7 @@
 //
 // What makes the same gesture a real merge is the CAMERA: at distance 40 a
 // 400 px haul reaches dist 1.53, four vertices collapse into one (8 -> 5) and
-// the drop records. So the framing below is PART OF THE GESTURE, not decoration,
+// release records the step. So the framing below is PART OF THE GESTURE, not decoration,
 // and the assertion is that the vertex count FELL — not that a number rose.
 //
 // `built` IS NOT AVAILABLE HERE, and that is measured: `/api/tool/state`
@@ -46,6 +46,8 @@ import http_client : testBaseUrl, getJson, postJson;
 import http_command_helpers : commandBody;
 import std.algorithm : canFind, sort;
 import std.conv : to;
+import std.format : format;
+import std.math : abs;
 import std.json;
 import std.net.curl : get, post;
 
@@ -82,6 +84,15 @@ double queryDist() {
 string planes() { return getRaw("/api/mesh/planes"); }
 long undoLen() { return cast(long) getJson("/api/history")["undo"].array.length; }
 size_t vertexCount() { return getJson("/api/model")["vertices"].array.length; }
+
+void navigate(bool redo) {
+    import core.thread : Thread;
+    import core.time : dur;
+    playAndWait(format(
+        `{"t":0.000,"type":"SDL_KEYDOWN","sym":122,"scan":0,"mod":%d,"repeat":0}`,
+        redo ? 65 : 64), BASE);
+    Thread.sleep(dur!"msecs"(150));
+}
 
 unittest { // a rightward haul at a framing where `dist` can actually reach a neighbour
     import core.thread : Thread;
@@ -135,16 +146,41 @@ unittest { // a rightward haul at a framing where `dist` can actually reach a ne
         ~ "1.0 spacing of the selected cube vertices at every haul the viewport "
         ~ "can hold. The fix is the CAMERA, not a longer drag");
 
+    immutable string firstVertices = getJson("/api/model")["vertices"].toString;
+    assert(undoLen() == u0 + 1,
+        "released merge haul must record its topology step before tool close");
+
+    // The first weld leaves one selected survivor. A second haul adjusts the
+    // distance without merging another vertex, and still has its own row.
+    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                             cx - 200, cy, cx + 200, cy, 16), BASE);
+    Thread.sleep(dur!"msecs"(120));
+    immutable double secondDist = queryDist();
+    assert(vertexCount() == v1 && secondDist > after && undoLen() == u0 + 2,
+        "second merge haul must record an attribute step on the same topology");
+
+    navigate(false);
+    assert(getJson("/api/model")["vertices"].toString == firstVertices &&
+           abs(queryDist() - after) < 1e-5,
+        "undo second merge haul restores the first mesh and distance");
+    navigate(false);
+    assert(vertexCount() == v0 && abs(queryDist() - before) < 1e-5,
+        "second undo restores the original vertices while merge stays armed");
+    navigate(true);
+    navigate(true);
+    assert(vertexCount() == v1,
+        "two redos restore the completed merge topology");
+
     cmd("tool.set " ~ TOOL ~ " off");
     Thread.sleep(dur!"msecs"(250));
 
-    // ...and half two: a PLANE actually moved, and the drop recorded it.
+    // ...and half two: a PLANE actually moved, and close added no extra row.
     auto moved = planeDiff(planesBefore, planes());
     assert(moved.canFind("vertices") && moved.canFind("counts"),
-        "the gesture and its drop moved planes " ~ moved.to!string
+        "the gesture moved planes " ~ moved.to!string
         ~ " — `vertices` and `counts` are not both among them, so the mesh is "
         ~ "byte-identical to what it was before the haul");
-    assert(undoLen() - u0 == 1,
-        "the drop recorded " ~ (undoLen() - u0).to!string ~ " undo entr(ies), "
-        ~ "expected exactly 1 — a haul that merged nothing commits nothing");
+    assert(undoLen() - u0 == 2,
+        "the operation recorded " ~ (undoLen() - u0).to!string ~ " undo entr(ies), "
+        ~ "expected two released hauls and no close-time duplicate");
 }
