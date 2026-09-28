@@ -215,9 +215,10 @@ unittest { // The tools that close their operation their own way, exactly.
     // Edge Extrude because its completed topology rows are already history-
     // owned and close only re-baselines the continuing tool. Task 8030 adds
     // Polygon Extrude through the same generic history owner.
-    assert(commits == 7, "M2 override census: commitOperation overriders changed: " ~ owners.to!string);
+    assert(commits == 10, "M2 override census: commitOperation overriders changed: " ~ owners.to!string);
     foreach (want; ["xfrm_transform.d", "edge_slice_tool.d", "loop_slice_tool.d", "slice_tool.d",
-                    "poly_bevel.d", "edge_extrude.d", "poly_extrude.d"])
+                    "poly_bevel.d", "edge_extrude.d", "poly_extrude.d",
+                    "smooth_shift_tool.d", "poly_inset_tool.d", "vertex_bevel_tool.d"])
         assert(owners.canFind!(o => o.canFind(want)),
             "M2 override census: " ~ want ~ " no longer overrides commitOperation");
     assert(resumes == 1, "M2 override census: resumeAfterClose overriders changed");

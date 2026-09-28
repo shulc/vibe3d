@@ -288,6 +288,9 @@ interface TopologyStepClient {
     bool recordTopologyStep(Command cmd);
     string topologyStepLabel();
     void setTopologyDormant(bool dormant);
+    /// Adopt a newly completed image as the next preview basis, without
+    /// replaying its attributes or applying undo/redo-specific normalization.
+    void rebaseTopologyStep(MeshSnapshot basis);
     void restoreTopologyStep(in AttrImage attrs, MeshSnapshot basis);
 }
 
@@ -327,6 +330,13 @@ struct ToolSessionPolicy {
     /// they finish. ToolSession keeps only the in-flight image and latest
     /// attributes, never a live mesh-image stack.
     bool historyTopologySteps;
+    /// A first topology row paired with activation restores the completed
+    /// attribute image on redo. The extrude family instead restores the arm
+    /// image; preview tools use the completed image measured at release.
+    bool firstTopologyRedoUsesAfterAttrs;
+    /// Once a completed topology row is recorded, the next preview begins on
+    /// its resulting mesh. This also covers interactive parameter writes.
+    bool rebaseTopologyAfterStep;
     /// The first topology row remains separate from activation. Undoing the
     /// activation discards that row's redo branch while keeping the activation.
     bool discardFirstTopologyRedoOnActivationUndo;

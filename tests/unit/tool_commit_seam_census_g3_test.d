@@ -255,8 +255,8 @@ private enum LedgerRow[] kCallRoster = [
     LedgerRow("Tool.recordGestureEdit|inSession", 1, "session dispatch"),
     LedgerRow("Tool.recordGestureEdit|replaceTail", 1, "tail dispatch"),
     LedgerRow("Tool.refuseGestureRecord|replaceTail", 1, "tail refusal belt"),
-    LedgerRow("SmoothShiftTool.commitEdit|call", 1, "tool commit"),
-    LedgerRow("SmoothShiftTool.commitEdit|plain", 1, "plain mode"),
+    LedgerRow("SmoothShiftTool.recordTopologyStep|call", 1, "history-owned topology step"),
+    LedgerRow("SmoothShiftTool.recordTopologyStep|plain", 1, "plain row mode"),
     LedgerRow("StrokeExtrudeTool.commitEdit|call", 1, "tool commit"),
     LedgerRow("StrokeExtrudeTool.commitEdit|plain", 1, "plain mode"),
 ];

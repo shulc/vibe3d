@@ -7,6 +7,7 @@ import bindbc.sdl;
 import operator : VectorStack;
 
 import tool;
+import command : Command;
 import mesh;
 import mesh_gpu : GpuMesh;
 import mesh_ops.bevel_vertex : bevelVerticesByMask, kBevelVertexEditScope;
@@ -20,7 +21,6 @@ import overlay_space : OverlaySpace;
 import eventlog : queryMouse;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
-import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
 
@@ -32,7 +32,6 @@ import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_vertex_bevel_activation : PreparedVertexBevelActivationOwner;
-import command_history : PreparedHistoryKind;
 import prepared_vertex_bevel_param_update : PreparedVertexBevelParamUpdateOwner;
 import prepared_tool_effect : PreparedVertexBevelParamEffect,
     PreparedVertexBevelParamKind;
@@ -107,13 +106,20 @@ struct PreparedVertexBevelActivationImage {
 // attribute, ACTR-anchored single handle, topology-creating, generic
 // before/after-snapshot undo).
 // ---------------------------------------------------------------------------
-class VertexBevelTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient {
+class VertexBevelTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient,
+        TopologyStepClient {
     // A recording command through the UI door closes the live edit first —
     // `Tool.commitOperation`'s in-place default — and the tool stays armed
     // (slice M2; the C1-h-sel-fam law, captured for Edge Extend and Polygon
     // Bevel and inferred for the rest of the in-place family, R20 gap g5).
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
-        static immutable ToolSessionPolicy policy = { commandClose: CommandClose.uiDoor };
+        static immutable ToolSessionPolicy policy = {
+            activationRow: true,
+            commandClose: CommandClose.uiDoor,
+            sessionSteps: true, historyTopologySteps: true,
+            opensAt: OpensAt.firstPress,
+            imageAttrs: ["inset"], haulAttrs: ["inset"]
+        };
         return policy;
     }
 
@@ -219,8 +225,7 @@ public:
     }
 
     override void deactivate() {
-        if (active && built && inset_ != 0.0f)
-            commitEdit();
+        // Completed bevel steps are owned by history.
         active     = false;
         built      = false;
         dragPart   = -1;
@@ -229,7 +234,7 @@ public:
     }
 
     public override bool hasUncommittedEdit() const {
-        return active && built && inset_ != 0.0f;
+        return active && dragPart >= 0 && built && inset_ != 0.0f;
     }
 
     public override void cancelUncommittedEdit() {
@@ -241,14 +246,43 @@ public:
         reinitSession();
     }
 
-    // Framework "apply and continue" (task 0461, Shift+click): commit the live
-    // edit as its own undo entry, keeping the tool active; the driver follows
-    // with resyncSession() to re-arm in place. Mirrors deactivate()'s commit
-    // guard minus the teardown.
+    // Completed rows are already in CommandHistory.
     public override bool commitUncommittedEdit() {
-        if (!hasUncommittedEdit()) return false;
-        commitEdit();
+        return false;
+    }
+
+    public override bool commitOperation() {
+        if (!active) return false;
+        resyncSession();
         return true;
+    }
+
+    public override Mesh* topologyStepMesh() { return mesh; }
+    public override MeshSnapshot topologyStepBasis() { return before; }
+    public override Command topologyStepCarrier() {
+        return gestureFactory is null ? null : gestureFactory();
+    }
+    public override bool recordTopologyStep(Command cmd) {
+        return recordGestureEdit(cmd, GestureRecordMode.Plain);
+    }
+    public override string topologyStepLabel() { return "Vertex Bevel"; }
+    public override void setTopologyDormant(bool dormant) {}
+    public override void rebaseTopologyStep(MeshSnapshot basis) {
+        before = basis;
+        built = false;
+        computeGizmoFrame();
+    }
+    public override void restoreTopologyStep(in AttrImage attrs, MeshSnapshot basis) {
+        before = basis;
+        auto visible = MeshSnapshot.capture(*mesh);
+        before.restore(*mesh);
+        computeGizmoFrame();
+        visible.restore(*mesh);
+        restoreRecordedAttrs(attrs);
+        built = !before.matches(*mesh);
+        dragPart = -1;
+        toolHandles.clearHaul();
+        refreshCaches();
     }
 
     override void onParamChanged(string pname) {
@@ -358,7 +392,7 @@ public:
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         if (!active) return false;
-        if (e.button == SDL_BUTTON_RIGHT) { cancelLiveEdit(); return true; }
+        if (e.button == SDL_BUTTON_RIGHT) { closeOwnOperation(false); return true; }
         if (e.button != SDL_BUTTON_LEFT)  return false;
         SDL_Keymod mods = SDL_GetModState();
         if (mods & (KMOD_ALT | KMOD_SHIFT)) return false;
@@ -373,6 +407,7 @@ public:
         dragBaseInset = inset_;
 
         if (part == PART_INSET) {
+            sessionStepBegins();
             dragPart = PART_INSET;
             toolHandles.setHaul(part);
             return true;
@@ -385,6 +420,7 @@ public:
         if (e.button != SDL_BUTTON_LEFT) return false;
         dragPart = -1;
         toolHandles.clearHaul();
+        sessionStepEnds();
         return true;
     }
 
@@ -539,17 +575,11 @@ private:
     }
 
     final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext c) {
-        bool ok; if (active && built && inset_ != 0 && c !is null && history !is null && gestureFactory !is null && before.filled) { auto cmd=cast(MeshSessionEdit)gestureFactory(); if(cmd !is null){cmd.setSnapshots(before,MeshSnapshot.capture(*mesh),"Vertex Bevel");ok=c.prepare(cmd,PreparedHistoryKind.Plain).accepted;}}
-        return PreparedDeactivateEffect(preparedToolStateOwner,PreparedDeactivateKind.VertexBevel,ok);
-    }
-    void commitEdit() {
-        if (history is null || gestureFactory is null) return;
-        if (!before.filled) return;
-        auto cmd = cast(MeshSessionEdit) gestureFactory();
-        if (cmd is null) { noteGestureCarrierMismatch(); return; }
-        auto post = MeshSnapshot.capture(*mesh);
-        cmd.setSnapshots(before, post, "Vertex Bevel");
-        recordGestureEdit(cmd, GestureRecordMode.Plain);
+        if (c is null) return PreparedDeactivateEffect(
+            preparedToolStateOwner, PreparedDeactivateKind.VertexBevel, false, false);
+        const accepted = c.markNoHistoryInstall();
+        return PreparedDeactivateEffect(preparedToolStateOwner,
+            PreparedDeactivateKind.VertexBevel, false, accepted);
     }
 
     void cancelLiveEdit() {

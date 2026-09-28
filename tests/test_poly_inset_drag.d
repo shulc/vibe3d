@@ -13,10 +13,11 @@
 // changed this file's gesture from 60 px UP to 60 px RIGHT with the same
 // assertion; per-increment values: tests/test_poly_inset_drag_value.d).
 
-import http_client : testBaseUrl, postJson;
+import http_client : testBaseUrl, getJson, postJson;
 import http_command_helpers : commandBody;
 import std.json;
 import std.math : abs;
+import std.format : format;
 import std.net.curl : get, post;
 
 import drag_helpers;
@@ -39,6 +40,15 @@ double queryInset() {
     return r["value"].floating;
 }
 
+void navigate(int modifiers) {
+    playAndWait(format(
+        `{"t":0.000,"type":"SDL_KEYDOWN","sym":122,"scan":0,"mod":%d,"repeat":0}`,
+        modifiers), BASE);
+    import core.thread : Thread;
+    import core.time : dur;
+    Thread.sleep(dur!"msecs"(150));
+}
+
 unittest { // a rightward haul drives `inset` positive through the motion path
     auto r = postJson("/api/command", commandBody("scene.reset"));
     assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
@@ -48,6 +58,7 @@ unittest { // a rightward haul drives `inset` positive through the motion path
     assert(r["status"].str == "ok", "select failed: " ~ r.toString);
 
     cmd("tool.set " ~ TOOL ~ " on");
+    const pre = getJson("/api/model");
     assert(abs(queryInset()) < 1e-6,
         "a freshly armed inset tool should start at 0");
 
@@ -68,6 +79,40 @@ unittest { // a rightward haul drives `inset` positive through the motion path
     assert(after > 1e-4,
         "a 60 px rightward haul should have driven inset positive, got "
         ~ after.to!string);
+
+    const dragged = getJson("/api/model");
+    assert(dragged["vertexCount"].integer > pre["vertexCount"].integer,
+        "the released inset gesture must change topology");
+    navigate(64); // Ctrl+Z: the completed gesture, not a pending preview.
+    assert(getJson("/api/model")["vertices"].toString == pre["vertices"].toString,
+        "first undo must restore the pre-gesture mesh");
+    navigate(65); // Ctrl+Shift+Z
+    assert(getJson("/api/model")["vertices"].toString == dragged["vertices"].toString,
+        "redo must restore the completed inset mesh");
+    assert(abs(queryInset() - after) < 1e-6,
+        "redo must restore the released Inset amount");
+
+    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                             cx, cy, cx + 60, cy, 12), BASE);
+    Thread.sleep(dur!"msecs"(120));
+    const dragged2 = getJson("/api/model");
+    const after2 = queryInset();
+    assert(dragged2["vertexCount"].integer > dragged["vertexCount"].integer,
+        "second released Inset must use the completed first mesh as its basis");
+    navigate(64);
+    assert(getJson("/api/model")["vertices"].toString == dragged["vertices"].toString
+           && abs(queryInset() - after) < 1e-6,
+        "undo of second Inset restores the first mesh and amount");
+    navigate(64);
+    assert(getJson("/api/model")["vertices"].toString == pre["vertices"].toString,
+        "second undo restores the initial mesh");
+    navigate(65);
+    assert(getJson("/api/model")["vertices"].toString == dragged["vertices"].toString,
+        "first redo restores first Inset step");
+    navigate(65);
+    assert(getJson("/api/model")["vertices"].toString == dragged2["vertices"].toString
+           && abs(queryInset() - after2) < 1e-6,
+        "second redo restores second Inset mesh and amount");
 
     cmd("tool.set " ~ TOOL ~ " off");
 }

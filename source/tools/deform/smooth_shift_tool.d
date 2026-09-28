@@ -5,6 +5,7 @@ import bindbc.sdl;
 import operator : VectorStack;
 
 import tool;
+import command : Command;
 import mesh;
 import mesh_gpu : GpuMesh;
 import mesh_ops.extrude;
@@ -18,7 +19,6 @@ import overlay_space : OverlaySpace;
 import eventlog : queryMouse;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
-import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
 
@@ -39,7 +39,6 @@ import document : Layer;
 import mesh_gpu : GpuUploadOwner;
 import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
 import core.stdc.string : memcmp;
-import command_history : PreparedHistoryKind;
 
 struct PreparedSmoothShiftActivationImage {
     MeshSnapshot before;
@@ -124,13 +123,23 @@ struct PreparedSmoothShiftParamImage {
 // ToolDoApplyCommand wraps it with a snapshot pair for undo (applyHeadless
 // MUST NOT snapshot itself).
 // ---------------------------------------------------------------------------
-class SmoothShiftTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient {
+class SmoothShiftTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient,
+        TopologyStepClient {
     // A recording command through the UI door closes the live edit first —
     // `Tool.commitOperation`'s in-place default — and the tool stays armed
     // (slice M2; the C1-h-sel-fam law, captured for Edge Extend and Polygon
     // Bevel and inferred for the rest of the in-place family, R20 gap g5).
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
-        static immutable ToolSessionPolicy policy = { commandClose: CommandClose.uiDoor };
+        static immutable ToolSessionPolicy policy = {
+            activationRow: true, recordCarriesActivation: true,
+            commandClose: CommandClose.uiDoor,
+            sessionSteps: true, historyTopologySteps: true,
+            firstTopologyRedoUsesAfterAttrs: true,
+            rebaseTopologyAfterStep: true,
+            opensAt: OpensAt.firstPress,
+            imageAttrs: ["shift", "scale", "maxAngle", "thicken", "sharp"],
+            haulAttrs: ["shift", "scale", "maxAngle", "thicken", "sharp"]
+        };
         return policy;
     }
 
@@ -160,6 +169,7 @@ private:
 
     bool         active;
     bool         built;
+    bool         completedGesture;
     MeshSnapshot before;
     Viewport     cachedVp;
 
@@ -242,6 +252,7 @@ public:
             ref PreparedSmoothShiftActivationImage image) nothrow @nogc {
         if (!image.valid) return;
         active = true; built = false; dragPart = -1;
+        completedGesture = false;
         image.before.moveInto(before);
         gizmoValid = image.gizmoValid; anchor = image.anchor;
         baseAnchor = image.baseAnchor; offsetAxis = image.offsetAxis;
@@ -286,23 +297,24 @@ public:
     // transient state and belongs here; the 5 attrs are not.
     private void reinitSession() {
         built    = false;
+        completedGesture = false;
         dragPart = -1;
         before   = MeshSnapshot.capture(*mesh);
         computeGizmoFrame();
     }
 
     override void deactivate() {
-        if (active && built)
-            commitEdit();
+        // Completed previews are already history entries.
         active     = false;
         built      = false;
+        completedGesture = false;
         dragPart   = -1;
         gizmoValid = false;
         toolHandles.clearHaul();
     }
 
     public override bool hasUncommittedEdit() const {
-        return active && built;
+        return active && dragPart >= 0 && built;
     }
 
     public override void cancelUncommittedEdit() {
@@ -314,14 +326,46 @@ public:
         reinitSession();
     }
 
-    // Framework "apply and continue" (task 0461, Shift+click): commit the live
-    // edit as its own undo entry, keeping the tool active; the driver follows
-    // with resyncSession() to re-arm in place. Mirrors deactivate()'s commit
-    // guard minus the teardown.
+    // Completed rows are already in CommandHistory.
     public override bool commitUncommittedEdit() {
-        if (!hasUncommittedEdit()) return false;
-        commitEdit();
+        return false;
+    }
+
+    public override bool commitOperation() {
+        if (!active) return false;
+        resyncSession();
         return true;
+    }
+
+    public override Mesh* topologyStepMesh() { return mesh; }
+    public override MeshSnapshot topologyStepBasis() { return before; }
+    public override Command topologyStepCarrier() {
+        return gestureFactory is null ? null : gestureFactory();
+    }
+    public override bool recordTopologyStep(Command cmd) {
+        return recordGestureEdit(cmd, GestureRecordMode.Plain);
+    }
+    public override string topologyStepLabel() { return "Smooth Shift"; }
+    public override void setTopologyDormant(bool dormant) {}
+    public override void rebaseTopologyStep(MeshSnapshot basis) {
+        before = basis;
+        built = false;
+        completedGesture = true;
+        computeGizmoFrame();
+    }
+    public override void restoreTopologyStep(in AttrImage attrs, MeshSnapshot basis) {
+        before = basis;
+        auto visible = MeshSnapshot.capture(*mesh);
+        before.restore(*mesh);
+        computeGizmoFrame();
+        visible.restore(*mesh);
+        restoreRecordedAttrs(attrs);
+        if (thicken_) shift_ = 0.0f; // Measured Thicken redo keeps mesh, resets Shift.
+        built = !before.matches(*mesh);
+        completedGesture = before.filled && before.matches(*mesh);
+        dragPart = -1;
+        toolHandles.clearHaul();
+        refreshCaches();
     }
 
     override void onParamChanged(string pname) {
@@ -403,9 +447,9 @@ public:
         // Deliberately UNCONDITIONAL — unlike PolyExtrudeTool/PolyBevelTool,
         // the reference does not short-circuit shift==0 (see the kernel's
         // doc comment + the frozen "base_noop" fixture).
-        // task 1903 Stage H: smoothShiftFacesByMask takes `ref MeshEditBatch`
-        // now. `commitEdit` below undoes via a MeshSnapshot pair, not the
-        // op-log, so the batch is unrecorded.
+        // task 1903 Stage H: smoothShiftFacesByMask takes `ref MeshEditBatch`.
+        // ToolDoApplyCommand owns the headless snapshot pair, so this batch
+        // does not record an op-log.
         auto ed = MeshEditBatch.unrecorded(*mesh, kExtrudeEditScope);
         size_t n = ed.smoothShiftFacesByMask(mask, shift_, scale_, thicken_);
         ed.close();
@@ -416,7 +460,7 @@ public:
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         if (!active) return false;
-        if (e.button == SDL_BUTTON_RIGHT) { cancelLiveEdit(); return true; }
+        if (e.button == SDL_BUTTON_RIGHT) { closeOwnOperation(false); return true; }
         if (e.button != SDL_BUTTON_LEFT)  return false;
         SDL_Keymod mods = SDL_GetModState();
         if (mods & (KMOD_ALT | KMOD_SHIFT)) return false;
@@ -427,11 +471,15 @@ public:
         queryMouse(hmx, hmy);
         int part = toolHandles.test(hmx, hmy, cachedVp);
 
-        dragLastMX    = e.x; dragLastMY = e.y;
-        dragBaseShift = shift_;
-        dragBaseScale = scale_;
-
         if (part == PART_OFFSET || part == PART_SCALE) {
+            // The next captured offset haul starts at zero on the completed
+            // mesh. Its undo restores zero Shift on the prior mesh even when
+            // the prior step's own redo shows its released Shift value.
+            if (part == PART_OFFSET && completedGesture) shift_ = 0.0f;
+            dragLastMX    = e.x; dragLastMY = e.y;
+            dragBaseShift = shift_;
+            dragBaseScale = scale_;
+            sessionStepBegins();
             dragPart = part;
             toolHandles.setHaul(part);
             return true;
@@ -444,6 +492,7 @@ public:
         if (e.button != SDL_BUTTON_LEFT) return false;
         dragPart = -1;
         toolHandles.clearHaul();
+        sessionStepEnds();
         return true;
     }
 
@@ -596,22 +645,11 @@ private:
     }
 
     final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context) {
-        bool accepted;
-        if (active && built && context !is null && history !is null && gestureFactory !is null && before.filled) {
-            auto cmd = cast(MeshSessionEdit) gestureFactory();
-            if (cmd !is null) { cmd.setSnapshots(before, MeshSnapshot.capture(*mesh), "Smooth Shift"); accepted = context.prepare(cmd, PreparedHistoryKind.Plain).accepted; }
-        }
-        return PreparedDeactivateEffect(preparedToolStateOwner, PreparedDeactivateKind.SmoothShift, accepted);
-    }
-
-    void commitEdit() {
-        if (history is null || gestureFactory is null) return;
-        if (!before.filled) return;
-        auto cmd = cast(MeshSessionEdit) gestureFactory();
-        if (cmd is null) { noteGestureCarrierMismatch(); return; }
-        auto post = MeshSnapshot.capture(*mesh);
-        cmd.setSnapshots(before, post, "Smooth Shift");
-        recordGestureEdit(cmd, GestureRecordMode.Plain);
+        if (context is null) return PreparedDeactivateEffect(
+            preparedToolStateOwner, PreparedDeactivateKind.SmoothShift, false, false);
+        const accepted = context.markNoHistoryInstall();
+        return PreparedDeactivateEffect(preparedToolStateOwner,
+            PreparedDeactivateKind.SmoothShift, false, accepted);
     }
 
     void cancelLiveEdit() {

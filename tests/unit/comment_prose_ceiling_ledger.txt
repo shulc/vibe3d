@@ -9,7 +9,7 @@
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
 source-files 577
-task-citation-lines 5241
+task-citation-lines 5237
 citing-files 446
 long-comment-runs 270
 files-with-long-runs 144
@@ -384,7 +384,7 @@ allow source/tools/create/vertex_place.d 4
 allow source/tools/deform/bend.d 3
 allow source/tools/deform/magnet.d 7
 allow source/tools/deform/push.d 3
-allow source/tools/deform/smooth_shift_tool.d 12
+allow source/tools/deform/smooth_shift_tool.d 11
 allow source/tools/deform/stroke_extrude_tool.d 6
 allow source/tools/edit/bridge_tool.d 19
 allow source/tools/edit/drag_weld.d 3
@@ -393,7 +393,7 @@ allow source/tools/edit/edge_extend.d 30
 allow source/tools/edit/edge_extrude.d 11
 allow source/tools/edit/poly_bevel.d 15
 allow source/tools/edit/poly_extrude.d 10
-allow source/tools/edit/poly_inset_tool.d 12
+allow source/tools/edit/poly_inset_tool.d 10
 allow source/tools/edit/preview_rebuild.d 1
 allow source/tools/edit/reduce.d 5
 allow source/tools/edit/smooth_relax.d 2
@@ -405,7 +405,7 @@ allow source/tools/edit/topology_pen/render.d 10
 allow source/tools/edit/topology_pen/snap_guide.d 6
 allow source/tools/edit/topology_pen/tool.d 150
 allow source/tools/edit/vert_merge_tool.d 8
-allow source/tools/edit/vertex_bevel_tool.d 9
+allow source/tools/edit/vertex_bevel_tool.d 8
 allow source/tools/edit/vertex_extrude_tool.d 9
 allow source/tools/slice/edge_slice_tool.d 37
 allow source/tools/slice/loop_slice_tool.d 90

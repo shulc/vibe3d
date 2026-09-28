@@ -15,12 +15,9 @@
 // a script-origin refusal throws and becomes `{"status":"error"}`, a
 // UI-origin one becomes a notice — so both are driven here (C-1, C-5).
 //
-// WHY C-3 CARRIES THREE ASSERTIONS AND NOT ONE. `/api/history` and
-// `/api/history/replay` now share the RAW strict-LIFO index space, including
-// lifecycle rows. The test still pins `toolLifecycleCount == 0` so its target
-// entry cannot be displaced by unrelated transition choreography, searches
-// for the entry BY NAME rather than assuming a position, and asserts the
-// refusal's TEXT, which is what tells a real refusal apart from a missed entry.
+// C-3 pins its replay index explicitly. The Inset activation is now a
+// lifecycle row below the mesh edit: `/api/history` shows activation at index
+// 0 and the edit at index 1, which `/api/history/replay` also addresses as 1.
 
 import http_client : testBaseUrl, getJson, postJson;
 import http_command_helpers : commandBody;
@@ -93,9 +90,8 @@ unittest { // C-2 — a refusal leaves NO undo entry behind
 
 unittest { // C-3 — Re-run of a REAL recorded session refuses, mesh intact
     // The recipe is imported verbatim from tests/test_poly_inset_drag.d: a
-    // polygon-mode drag sets `built` inside onMouseMotion, so deactivating
-    // the tool commits through `commitEdit()`, which records the session
-    // under the wire name "mesh.bevel_edit". No latch plumbing to trust.
+    // polygon-mode drag records a topology step on release under the wire
+    // name "mesh.bevel_edit". No latch plumbing to trust.
     resetScene();
 
     auto r = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
@@ -121,15 +117,11 @@ unittest { // C-3 — Re-run of a REAL recorded session refuses, mesh intact
 
     cmd("tool.set " ~ TOOL ~ " off");
 
-    // (a) PIN THE INDEX SPACE. /api/history hides ToolLifecycle entries and
-    // /api/history/replay does not; at zero such entries the two number the
-    // stack identically. Measured, not assumed — this is an assertion about
-    // the state this recipe produced, not a fact about the tool.
+    // (a) PIN THE INDEX SPACE. Activation and edit are both visible here.
     auto st = getJson("/api/undo/status");
-    assert(st["toolLifecycleCount"].integer == 0,
-        "this check reads an index out of /api/history and feeds it to "
-        ~ "/api/history/replay; those are the same numbering ONLY while no "
-        ~ "ToolLifecycle entry sits on the stack. Got: " ~ st.toString);
+    assert(st["toolLifecycleCount"].integer == 1,
+        "expected exactly one Inset activation row below its mesh step: "
+        ~ st.toString);
 
     // (b) ANTI-VACUUM. If the recipe failed to record a session, everything
     // below would pass vacuously against some other entry (or none).
@@ -141,6 +133,9 @@ unittest { // C-3 — Re-run of a REAL recorded session refuses, mesh intact
         "no mesh.bevel_edit entry was recorded — the drag recipe did not "
         ~ "commit a session, so the replay below would prove nothing. "
         ~ "/api/history was: " ~ hist.toString);
+    assert(idx == 1 && hist["undo"].array.length == 2
+           && hist["undo"].array[0]["command"].str == "tool.activate",
+        "the Inset activation must precede exactly one released mesh edit");
 
     // (c) THE LOAD-BEARING ASSERT. The message is what separates "the command
     // refused" from "there was no entry at that index" — both of which are

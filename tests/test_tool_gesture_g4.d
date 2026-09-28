@@ -899,10 +899,10 @@ unittest {
     //     selection centroid wherever the press lands, so the press is the
     //     viewport centre by construction.
     cells ~= runCell("mesh.polyInsetTool/centroid-haul", "mesh.polyInsetTool",
-        "source/tools/edit/poly_inset_tool.d PolyInsetTool.commitEdit",
+        "source/tools/edit/poly_inset_tool.d PolyInsetTool.recordTopologyStep",
         "Plain", "MeshSessionEdit",
         { resetCube(); selectMode("polygons", [4]); cmd("history.clear");
-          setOrbitCamera(); cmd("tool.set mesh.polyInsetTool on"); settle(250); },
+          setOrbitCamera(); },
         {
             auto cam = fetchCamera(BASE);
             immutable int cx = cam.vpX + cam.width / 2;
@@ -914,7 +914,8 @@ unittest {
                 "mesh.polyInsetTool: the 60 px haul left `inset` at zero — the press "
               ~ "fell outside the viewport the haul is anchored in");
         },
-        { cmd("tool.set mesh.polyInsetTool off"); });
+        { cmd("tool.set mesh.polyInsetTool off"); },
+        { cmd("tool.set mesh.polyInsetTool on"); settle(250); });
 
     // --- (c) PolyExtrudeTool on the cube's +X face: centroid (0.5,0,0),
     //     averaged normal +X. The arrow shaft is re-derived here because the
@@ -956,10 +957,10 @@ unittest {
     //     adjacent faces average to the (1,1,1) diagonal, which is the inset
     //     axis the arrow is drawn along.
     cells ~= runCell("vertex.bevel/inset-drag", "mesh.vertexBevel",
-        "source/tools/edit/vertex_bevel_tool.d VertexBevelTool.commitEdit",
+        "source/tools/edit/vertex_bevel_tool.d VertexBevelTool.recordTopologyStep",
         "Plain", "MeshSessionEdit",
         { resetCube(); selectMode("vertices", [6]); cmd("history.clear");
-          setOrbitCamera(); cmd("tool.set mesh.vertexBevel on"); settle(250); },
+          setOrbitCamera(); },
         {
             enum float T = 0.57735027f;
             axisDrag(Vec3(0.5f, 0.5f, 0.5f), Vec3(T, T, T), 80, true);
@@ -967,7 +968,8 @@ unittest {
                 "vertex.bevel: the drag left `inset` at zero — the press "
               ~ "missed the arrow");
         },
-        { cmd("tool.set mesh.vertexBevel off"); });
+        { cmd("tool.set mesh.vertexBevel off"); },
+        { cmd("tool.set mesh.vertexBevel on"); settle(250); });
 
     // --- (f) VertexExtrudeTool, and the cell that cost this lane a drive path.
     //     The shipped `test_vertex_extrude_handle_drag.d` grabs the EXTRUDE

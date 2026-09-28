@@ -281,7 +281,8 @@ struct Cell {
 /// `gesture` is the play-events drive; `drop` deactivates the tool.
 Cell runCell(string name, string tool, string recordSite, string mode,
              string payload,
-             void delegate() stand, void delegate() gesture, void delegate() drop)
+             void delegate() stand, void delegate() gesture, void delegate() drop,
+             void delegate() arm = null)
 {
     Cell c;
     c.name = name; c.tool = tool; c.recordSite = recordSite;
@@ -297,6 +298,7 @@ Cell runCell(string name, string tool, string recordSite, string mode,
       ~ "selects");
     c.preOp = planes();
 
+    immutable long uArm = arm is null ? u0 : (() { arm(); return undoLen(); })();
     gesture();
     c.liveEntryNames = historyNames();
 
@@ -304,7 +306,7 @@ Cell runCell(string name, string tool, string recordSite, string mode,
     settle();
     c.postCommit = planes();
     c.entryNames = historyNames();
-    c.undoDelta  = undoLen() - u0;
+    c.undoDelta  = undoLen() - uArm;
     c.drove      = gDrove;   // task 3091: captured after stand+gesture+drop
 
     // ANTI-VACUITY, BEFORE anything is compared. A gesture that moved no plane
@@ -325,9 +327,9 @@ Cell runCell(string name, string tool, string recordSite, string mode,
     assert(ru["status"].str == "ok", name ~ ": /api/undo failed: " ~ ru.toString);
     settle();
     c.postUndo = planes();
-    assert(undoLen() == u0,
+    assert(undoLen() == uArm,
         name ~ ": the undo moved the stack to " ~ undoLen().to!string
-      ~ ", expected back to " ~ u0.to!string ~ " — more than one step means the "
+      ~ ", expected back to " ~ uArm.to!string ~ " — more than one step means the "
       ~ "entry's revert() answered false and the suffix behind it was truncated");
 
     auto rr = postJ("/api/command", commandBody("history.redo"));
@@ -752,10 +754,10 @@ unittest {
     //     drifts from the tool turns the drag into the "attribute moved,
     //     nothing built" non-gesture this file exists to reject.
     cells ~= runCell("smooth.shift/offset-drag", "mesh.smoothShiftTool",
-        "source/tools/deform/smooth_shift_tool.d SmoothShiftTool.commitEdit",
+        "source/tools/deform/smooth_shift_tool.d SmoothShiftTool.recordTopologyStep",
         "Plain", "MeshSessionEdit",
         { resetCube(); selectMode("polygons", [4]); cmd("history.clear");
-          setOrbitCamera(); cmd("tool.set mesh.smoothShiftTool on"); settle(250); },
+          setOrbitCamera(); },
         {
             immutable size_t v0 = vertexCount();
             int hx, hy; handlePx(0, hx, hy);
@@ -770,7 +772,8 @@ unittest {
               ~ "see: its only anti-vacuity is that attribute, which moves "
               ~ "whether or not the kernel touched a face");
         },
-        { cmd("tool.set mesh.smoothShiftTool off"); });
+        { cmd("tool.set mesh.smoothShiftTool off"); },
+        { cmd("tool.set mesh.smoothShiftTool on"); settle(250); });
 
     // --- (b) StrokeExtrudeTool, the member with no interactive witness in the
     //     suite at all. NO handle and NO headless path: the press anchors the

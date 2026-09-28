@@ -1228,12 +1228,16 @@ private struct ToolSession {
             // group (12v/default attrs, then the next drag builds 16v).
             const carriesActivation = pendingTopologyCarriesActivation_();
             cmd.setSnapshots(topologyPendingMesh_, after, client.topologyStepLabel());
+            const rebaseAfter = carriesActivation ||
+                t.sessionPolicy().rebaseTopologyAfterStep;
             cmd.setTopologyStep(topologyPendingAttrs_, attrs,
-                topologyPendingBasis_, carriesActivation
+                topologyPendingBasis_, rebaseAfter
                     ? after : client.topologyStepBasis());
             if (client.recordTopologyStep(cmd) && undoTop_() is cmd) {
                 history_.markEntrySession(cmd, token_);
                 rememberTopologyAttrs_(attrs);
+                if (t.sessionPolicy().rebaseTopologyAfterStep)
+                    client.rebaseTopologyStep(after);
             } else {
                 topologyPendingMesh_.restore(*m);
                 client.restoreTopologyStep(topologyPendingAttrs_, topologyPendingBasis_);
@@ -1453,10 +1457,13 @@ private struct ToolSession {
         redoneTopologyStep_ = true;
         auto current = tool_();
         if (current !is null && reporting_(current)) {
+            const restoreBefore = pair &&
+                !current.sessionPolicy().firstTopologyRedoUsesAfterAttrs;
             (cast(TopologyStepClient)current).restoreTopologyStep(
-                pair ? cmd.stepBeforeAttrs() : cmd.stepAfterAttrs(),
+                restoreBefore ? cmd.stepBeforeAttrs() : cmd.stepAfterAttrs(),
                 cmd.stepAfterBasis());
-            rememberTopologyAttrs_(pair ? cmd.stepBeforeAttrs() : cmd.stepAfterAttrs());
+            rememberTopologyAttrs_(restoreBefore
+                ? cmd.stepBeforeAttrs() : cmd.stepAfterAttrs());
         }
         return true;
     }

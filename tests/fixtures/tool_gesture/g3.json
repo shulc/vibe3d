@@ -73,9 +73,9 @@
   "cells": [
     {
       "name": "smooth.shift/offset-drag", "tool": "mesh.smoothShiftTool",
-      "recordSite": "source/tools/deform/smooth_shift_tool.d SmoothShiftTool.commitEdit", "mode": "Plain", "payload": "MeshSessionEdit",
-      "liveEntryNames": [],
-      "entryNames": ["mesh.smooth_shift_edit"],
+      "recordSite": "source/tools/deform/smooth_shift_tool.d SmoothShiftTool.recordTopologyStep", "mode": "Plain", "payload": "MeshSessionEdit",
+      "liveEntryNames": ["tool.activate", "mesh.smooth_shift_edit"],
+      "entryNames": ["tool.activate", "mesh.smooth_shift_edit"],
       "undoDelta": 1,
       "undoResidual": [],
       "redoResidual": [],

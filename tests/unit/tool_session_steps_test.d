@@ -950,6 +950,7 @@ private final class DormantRefusalTool : Tool, TopologyStepClient {
     override bool recordTopologyStep(Command cmd) { return !refuse; }
     override string topologyStepLabel() { return "Dormant Refusal"; }
     override void setTopologyDormant(bool value) { dormant = value; }
+    override void rebaseTopologyStep(MeshSnapshot basis) {}
     override void restoreTopologyStep(in AttrImage attrs, MeshSnapshot basis) {
         restoreRecordedAttrs(attrs);
     }

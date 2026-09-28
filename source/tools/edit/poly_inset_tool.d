@@ -7,6 +7,7 @@ import bindbc.sdl;
 import operator : VectorStack;
 
 import tool;
+import command : Command;
 import mesh;
 import mesh_gpu : GpuMesh;
 import mesh_ops.poly_bevel;
@@ -18,14 +19,12 @@ import value_drag : ValueDrag, insetValueDragLaw;
 import overlay_space : OverlaySpace;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
-import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
 import perf_probe : g_perf, Cat;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
     PreparedSimpleToolDoorClient;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
-import command_history : PreparedHistoryKind;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_poly_inset_activation : PreparedPolyInsetActivationOwner;
 import prepared_poly_inset_param_update : PreparedPolyInsetParamUpdateOwner;
@@ -91,25 +90,26 @@ struct PreparedPolyInsetParamImage {
 // 36-px hold, signed, kept after release — the Stepped quantiser of the
 // shared `value_drag.ValueDrag`.
 //
-// Session lifecycle mirrors PolyBevelTool (its closest sibling: one
-// attribute, topology-creating, per-face independent): activate() snapshots
-// the clean cage; a drag/param-edit reverts to that cage and RE-RUNS the
-// kernel from the current `inset_` (rebuildPreview — never vertex-transforms
-// the already-split ridge); deactivate() commits ONE undo entry if any
-// topology was built. This does NOT reproduce the reference editor's
-// per-release auto-chain (each haul-release committing its own step, so a
-// second drag insets the FRESH inner faces) — that would need a materially
-// different commit lifecycle than every other topology tool in this
-// codebase uses, and the toolcard does not treat it as a load-bearing
-// requirement. Deferred; see task 0359 Лог.
+// Each release records a history-owned mesh step and re-baselines the next
+// drag on the completed image. The two-drag Z/Z/R/R chain is MCP-captured in
+// toolcards/tool_session_preview_mcp_capture/raw/poly-inset-second-20260928.
 // ---------------------------------------------------------------------------
-class PolyInsetTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient {
+class PolyInsetTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient,
+        TopologyStepClient {
     // A recording command through the UI door closes the live edit first —
     // `Tool.commitOperation`'s in-place default — and the tool stays armed
     // (slice M2; the C1-h-sel-fam law, captured for Edge Extend and Polygon
     // Bevel and inferred for the rest of the in-place family, R20 gap g5).
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
-        static immutable ToolSessionPolicy policy = { commandClose: CommandClose.uiDoor };
+        static immutable ToolSessionPolicy policy = {
+            activationRow: true, recordCarriesActivation: true,
+            commandClose: CommandClose.uiDoor,
+            sessionSteps: true, historyTopologySteps: true,
+            firstTopologyRedoUsesAfterAttrs: true,
+            rebaseTopologyAfterStep: true,
+            opensAt: OpensAt.firstPress,
+            imageAttrs: ["inset"], haulAttrs: ["inset"]
+        };
         return policy;
     }
 
@@ -239,14 +239,14 @@ public:
     }
 
     override void deactivate() {
-        if (active && built) commitEdit();
+        // Completed inset steps are owned by history.
         active   = false;
         built    = false;
         dragging = false;
     }
 
     public override bool hasUncommittedEdit() const {
-        return active && built;
+        return active && dragging && built;
     }
 
     public override void cancelUncommittedEdit() {
@@ -258,14 +258,37 @@ public:
         reinitSession();
     }
 
-    // Framework "apply and continue" (task 0461, Shift+click): commit the live
-    // edit as its own undo entry, keeping the tool active; the driver follows
-    // with resyncSession() to re-arm in place. Mirrors deactivate()'s commit
-    // guard minus the teardown.
+    // Completed rows are already in CommandHistory.
     public override bool commitUncommittedEdit() {
-        if (!hasUncommittedEdit()) return false;
-        commitEdit();
+        return false;
+    }
+
+    public override bool commitOperation() {
+        if (!active) return false;
+        resyncSession();
         return true;
+    }
+
+    public override Mesh* topologyStepMesh() { return mesh; }
+    public override MeshSnapshot topologyStepBasis() { return before; }
+    public override Command topologyStepCarrier() {
+        return gestureFactory is null ? null : gestureFactory();
+    }
+    public override bool recordTopologyStep(Command cmd) {
+        return recordGestureEdit(cmd, GestureRecordMode.Plain);
+    }
+    public override string topologyStepLabel() { return "Inset"; }
+    public override void setTopologyDormant(bool dormant) {}
+    public override void rebaseTopologyStep(MeshSnapshot basis) {
+        before = basis;
+        built = false;
+    }
+    public override void restoreTopologyStep(in AttrImage attrs, MeshSnapshot basis) {
+        before = basis;
+        restoreRecordedAttrs(attrs);
+        built = !before.matches(*mesh);
+        dragging = false;
+        refreshCaches();
     }
 
     override void onParamChanged(string pname) {
@@ -344,8 +367,8 @@ public:
         // Task 1903 Stage F2 — the batch opens at the TOOL boundary (§4.1).
         // This is the COMMIT path (`tool.doApply` / the panel Apply button),
         // so one deferred stamp at `close()`. UNRECORDED all the same: this
-        // tool's undo is the whole-mesh `MeshSnapshot` pair `commitEdit()`
-        // records, so a recording batch would build an op-log nothing reads.
+        // ToolDoApplyCommand owns this headless edit's snapshot pair, so a
+        // recording batch would build an op-log nothing reads.
         // Stage M owns the tool pair-holders; Stage L7 owns this family's
         // delta undo.
         size_t n;
@@ -361,7 +384,7 @@ public:
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         if (!active) return false;
-        if (e.button == SDL_BUTTON_RIGHT) { cancelLiveEdit(); return true; }
+        if (e.button == SDL_BUTTON_RIGHT) { closeOwnOperation(false); return true; }
         if (e.button != SDL_BUTTON_LEFT)  return false;
         SDL_Keymod mods = SDL_GetModState();
         if (mods & (KMOD_ALT | KMOD_SHIFT)) return false;   // reserved for camera nav
@@ -371,6 +394,7 @@ public:
         // No drawn handle to hit-test (task 0359 toolcard: confirmed no
         // gizmo graphic at idle/hover/drag) — any qualifying click begins
         // the generic haul directly.
+        sessionStepBegins();
         dragging = true;
         // Step and detent come from the VIEW's pixel size (§27: no anchor
         // term), converted into the LOCAL units `insetFacesByMask` means by
@@ -387,6 +411,7 @@ public:
         dragging = false;
         // §27: the last value is kept, signed.
         inset_ = cast(float) valueDrag_.release();
+        sessionStepEnds();
         return true;
     }
 
@@ -453,17 +478,11 @@ private:
     }
 
     final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext c) {
-        bool ok; if (active && built && c !is null && history !is null && gestureFactory !is null && before.filled) { auto cmd=cast(MeshSessionEdit)gestureFactory(); if(cmd !is null){cmd.setSnapshots(before,MeshSnapshot.capture(*mesh),"Inset");ok=c.prepare(cmd,PreparedHistoryKind.Plain).accepted;}}
-        return PreparedDeactivateEffect(preparedToolStateOwner,PreparedDeactivateKind.PolyInset,ok);
-    }
-    void commitEdit() {
-        if (history is null || gestureFactory is null) return;
-        if (!before.filled) return;
-        auto cmd = cast(MeshSessionEdit) gestureFactory();
-        if (cmd is null) { noteGestureCarrierMismatch(); return; }
-        auto post = MeshSnapshot.capture(*mesh);
-        cmd.setSnapshots(before, post, "Inset");
-        recordGestureEdit(cmd, GestureRecordMode.Plain);
+        if (c is null) return PreparedDeactivateEffect(
+            preparedToolStateOwner, PreparedDeactivateKind.PolyInset, false, false);
+        const accepted = c.markNoHistoryInstall();
+        return PreparedDeactivateEffect(preparedToolStateOwner,
+            PreparedDeactivateKind.PolyInset, false, accepted);
     }
 
     void cancelLiveEdit() {

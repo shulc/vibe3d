@@ -18,7 +18,7 @@
 //
 // WHAT THIS FILE WAS MISSING (task 2900). The drive here is REAL — measured on
 // this stand, the drag takes the cube from 8 vertices / 6 faces to 12 / 10 and
-// the drop pushes one undo entry. The defect was the ASSERTION:
+// release pushes one undo entry. The defect was the ASSERTION:
 // `abs(shift) > 1e-3` and nothing else. `shift` is a gizmo ATTRIBUTE the motion
 // handler moves whether or not `smoothShiftFacesByMask` ever produced a face,
 // so a SmoothShiftTool whose kernel touched nothing — no geometry, no record —
@@ -55,7 +55,6 @@ import drag_helpers;
 void main() {}
 
 alias BASE = testBaseUrl;
-enum string TOOL = "mesh.smoothShiftTool";
 
 string getRaw(string path) { return cast(string) get(BASE ~ path); }
 
@@ -73,8 +72,8 @@ void cmd(string line) {
         "/api/command '" ~ line ~ "' failed: " ~ r.toString);
 }
 
-double queryShift() {
-    auto r = postJson("/api/command", "tool.attr " ~ TOOL ~ " shift ?");
+double queryShift(string tool) {
+    auto r = postJson("/api/command", "tool.attr " ~ tool ~ " shift ?");
     assert(r["status"].str == "ok", "query shift failed: " ~ r.toString);
     return r["value"].floating;
 }
@@ -90,7 +89,7 @@ string buildHoverLog(int vpX, int vpY, int vpW, int vpH, int x, int y) {
         vpX, vpY, vpW, vpH, x, y);
 }
 
-unittest { // dragging the offset arrow moves `shift` off zero
+void dragCell(string tool, bool thicken) { // both IDs share SmoothShiftTool
     // NO PRE-DISARM, DELIBERATELY (task 3130). `/api/reset` cancels and DROPS the
     // active tool BEFORE it replaces the geometry, so a gesture left standing by
     // an earlier stand — or by an earlier RED run of this one — cannot commit
@@ -107,7 +106,7 @@ unittest { // dragging the offset arrow moves `shift` off zero
     r = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
     assert(r["status"].str == "ok", "select failed: " ~ r.toString);
 
-    cmd("tool.set " ~ TOOL ~ " on");
+    cmd("tool.set " ~ tool ~ " on");
 
     import core.thread : Thread;
     import core.time   : dur;
@@ -145,11 +144,11 @@ unittest { // dragging the offset arrow moves `shift` off zero
                              x0, y0, x1, y1, 16), BASE);
     Thread.sleep(dur!"msecs"(120));
 
-    double after = queryShift();
+    double after = queryShift(tool);
     assert(abs(after) > 1e-3,
         "dragging the offset arrow should have moved shift off zero — this "
         ~ "tool consumes nothing when the press misses the handle, so a zero "
-        ~ "here means the drag never began. Got " ~ after.to!string);
+        ~ "here means the drag never began. Tool " ~ tool ~ ", got " ~ after.to!string);
 
     // THE CHECKS THIS FILE DID NOT HAVE, half one: the kernel emitted geometry.
     // This stands in for `built`, which this tool does not publish. Read while
@@ -166,19 +165,68 @@ unittest { // dragging the offset arrow moves `shift` off zero
         ~ "and the `shift` attribute above reads exactly the same in that "
         ~ "state, which is where this test used to stop looking");
 
-    cmd("tool.set " ~ TOOL ~ " off");
+    playAndWait(format(
+        `{"t":0.000,"type":"SDL_KEYDOWN","sym":122,"scan":0,"mod":64,"repeat":0}`), BASE);
+    Thread.sleep(dur!"msecs"(150));
+    assert(vertexCount() == v0 && faceCount() == f0,
+        "Smooth Shift first undo must restore the pre-gesture topology");
+    playAndWait(format(
+        `{"t":0.000,"type":"SDL_KEYDOWN","sym":122,"scan":0,"mod":65,"repeat":0}`), BASE);
+    Thread.sleep(dur!"msecs"(150));
+    assert(vertexCount() == v1 && faceCount() == f1,
+        "Smooth Shift redo must restore the completed topology");
+    assert(abs(queryShift(tool) - (thicken ? 0.0 : after)) < 1e-6,
+        "redo must restore the captured Shift amount for this exact ID");
+
+    double sx, sy;
+    bool handleFound;
+    fetchHandlePart(0, sx, sy, handleFound, BASE);
+    assert(handleFound, "completed Smooth Shift/Thicken step lost its offset handle");
+    const x2 = cast(int)sx, y2 = cast(int)sy;
+    playAndWait(buildHoverLog(cam.vpX, cam.vpY, cam.width, cam.height, x2, y2), BASE);
+    Thread.sleep(dur!"msecs"(150));
+    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                             x2, y2, x2, y2 - 80, 16), BASE);
+    Thread.sleep(dur!"msecs"(120));
+    const size_t v2 = vertexCount(), f2 = faceCount();
+    const double secondShift = queryShift(tool);
+    assert(v2 > v1 && f2 > f1,
+        "second Smooth Shift/Thicken gesture must build from completed topology");
+    assert(abs(secondShift) > 1e-3,
+        "second Smooth Shift/Thicken haul must move Shift from its new zero");
+    playAndWait(format(
+        `{"t":0.000,"type":"SDL_KEYDOWN","sym":122,"scan":0,"mod":64,"repeat":0}`), BASE);
+    Thread.sleep(dur!"msecs"(150));
+    assert(vertexCount() == v1 && faceCount() == f1,
+        "undo of second Smooth Shift/Thicken step restores the first step");
+    assert(abs(queryShift(tool)) < 1e-6,
+        "undo of second gesture restores its zero Shift start");
+    playAndWait(format(
+        `{"t":0.000,"type":"SDL_KEYDOWN","sym":122,"scan":0,"mod":65,"repeat":0}`), BASE);
+    Thread.sleep(dur!"msecs"(150));
+    assert(vertexCount() == v2 && faceCount() == f2,
+        "redo of second Smooth Shift/Thicken step restores its topology");
+    assert(abs(queryShift(tool) - (thicken ? 0.0 : secondShift)) < 1e-6,
+        "second redo must restore the captured Shift state for this ID");
+
+    cmd("tool.set " ~ tool ~ " off");
     Thread.sleep(dur!"msecs"(300));
 
-    // ...half two: a PLANE actually moved, and the drop recorded it.
+    // ...half two: a PLANE actually moved, and release recorded it.
     auto moved = planeDiff(planesBefore, planes());
     assert(moved.canFind("vertices") && moved.canFind("counts"),
-        "the gesture and its drop moved planes " ~ moved.to!string
+        "the gesture and its release moved planes " ~ moved.to!string
         ~ " — `vertices` and `counts` are not both among them, so the mesh is "
         ~ "byte-identical to what it was before the drag. A tool attribute can "
         ~ "hold any value over that");
     immutable long undoDelta = undoLen() - u0;
-    assert(undoDelta == 1,
+    assert(undoDelta == 2,
         "the gesture recorded " ~ undoDelta.to!string ~ " undo entr(ies), "
-        ~ "expected exactly 1 — 0 means the whole drag was a no-op that left "
+        ~ "expected exactly 2 — 0 means the drags were no-ops that left "
         ~ "nothing undoable behind it");
+}
+
+unittest {
+    dragCell("mesh.smoothShiftTool", false);
+    dragCell("mesh.thickenTool", true);
 }

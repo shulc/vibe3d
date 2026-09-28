@@ -53,7 +53,7 @@ import std.json      : JSONType, parseJSON;
 import std.regex     : matchFirst, regex;
 import std.string    : indexOf, startsWith, strip;
 
-private enum Prov { carried, captured, notPorted, noCounterpart, uncertain }
+private enum Prov { carried, captured, inferred, notPorted, noCounterpart, uncertain }
 
 /// Where a row's `commandClose` comes from (slice M2): `carriedScript` = the
 /// UI half captured (C1-h-sel-fam `move`), the SCRIPT half carried from the
@@ -90,16 +90,16 @@ private immutable Row[] kTable = [
     Row("mesh.edgeSliceTool", "EdgeSliceTool", true, Prov.carried, CommandClose.uiDoor, CloseProv.captured),
     Row("mesh.loopSliceTool", "LoopSliceTool", true, Prov.carried, CommandClose.uiDoor, CloseProv.captured),
     Row("mesh.mirrorTool", "MirrorTool", false, Prov.notPorted, CommandClose.none, CloseProv.notCaptured),
-    Row("mesh.polyInsetTool", "PolyInsetTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
+    Row("mesh.polyInsetTool", "PolyInsetTool", true, Prov.inferred, CommandClose.uiDoor, CloseProv.inferred),
     Row("mesh.radialArrayTool", "RadialArrayTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
     Row("mesh.radialSweepTool", "RadialSweepTool", false, Prov.uncertain, CommandClose.none, CloseProv.notCaptured),
     Row("mesh.reduceTool", "ReductionTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
     Row("mesh.sliceTool", "SliceTool", true, Prov.carried, CommandClose.uiDoor, CloseProv.captured),
-    Row("mesh.smoothShiftTool", "SmoothShiftTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
+    Row("mesh.smoothShiftTool", "SmoothShiftTool", true, Prov.inferred, CommandClose.uiDoor, CloseProv.inferred),
     Row("mesh.tack", "TackTool", false, Prov.noCounterpart, CommandClose.none, CloseProv.notCaptured),
-    Row("mesh.thickenTool", "SmoothShiftTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
+    Row("mesh.thickenTool", "SmoothShiftTool", true, Prov.inferred, CommandClose.uiDoor, CloseProv.inferred),
     Row("mesh.topoPen", "TopologyPenTool", true, Prov.carried, CommandClose.none, CloseProv.notCaptured),
-    Row("mesh.vertexBevel", "VertexBevelTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
+    Row("mesh.vertexBevel", "VertexBevelTool", true, Prov.inferred, CommandClose.uiDoor, CloseProv.inferred),
     Row("mesh.vertexExtrude", "VertexExtrudeTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
     Row("move", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
     Row("move.element", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
@@ -146,15 +146,17 @@ private immutable Row[] kTable = [
     Row("xfrm.vortex", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
 ];
 
-/// The classes whose policy answers `activationRow`: the deleted marker's two
-/// implementors plus the three cutting sessions (R3.5), Polygon Bevel (M3b) and
-/// Edge Extend (M4).
+/// The classes whose policy answers `activationRow`, including the four
+/// measured preview IDs represented by three implementation classes.
 private immutable string[] kActivationRowClasses = [
+    "tools.deform.smooth_shift_tool.SmoothShiftTool",
     "tools.edit.edge_extend.EdgeExtendTool",
     "tools.edit.edge_extrude.EdgeExtrudeTool",
     "tools.edit.poly_bevel.PolyBevelTool",
     "tools.edit.poly_extrude.PolyExtrudeTool",
+    "tools.edit.poly_inset_tool.PolyInsetTool",
     "tools.edit.topology_pen.tool.TopologyPenTool",
+    "tools.edit.vertex_bevel_tool.VertexBevelTool",
     "tools.slice.edge_slice_tool.EdgeSliceTool",
     "tools.slice.loop_slice_tool.LoopSliceTool",
     "tools.slice.slice_tool.SliceTool",
@@ -239,7 +241,8 @@ unittest { // (1) id -> policy, over every registered id
         assert(toolArmEmitsLifecycle(t) == row.activationRow,
                format("M1 policy table: toolArmEmitsLifecycle(%s) is %s, table says %s",
                       row.id, !row.activationRow, row.activationRow));
-        assert(row.activationRow == (row.prov == Prov.carried || row.prov == Prov.captured),
+        assert(row.activationRow == (row.prov == Prov.carried || row.prov == Prov.captured
+                                     || row.prov == Prov.inferred),
                "M1 policy table: provenance of " ~ row.id ~ " disagrees with its value");
         if (!row.activationRow) ++falseRows;
         if (row.prov == Prov.notPorted) ++notPorted;
@@ -285,11 +288,11 @@ unittest { // (1) id -> policy, over every registered id
 /// not ported (the rest have no counterpart or an unsure one), and ids whose
 /// session does not own their gesture steps (H2 not ported). Measured on the
 /// M7 tree; each only falls.
-private enum size_t kActivationRowFalseCeiling = 38;
-private enum size_t kNotPortedCeiling = 34;
-private enum size_t kSessionStepsFalseCeiling = 63;
+private enum size_t kActivationRowFalseCeiling = 34;
+private enum size_t kNotPortedCeiling = 30;
+private enum size_t kSessionStepsFalseCeiling = 59;
 
-unittest { // (2) exactly nine tool classes declare the activation row
+unittest { // (2) exactly twelve tool classes declare the activation row
     string[] declared;
     size_t scanned;
     foreach (m; ModuleInfo) {
@@ -426,9 +429,15 @@ private immutable StepRow[] kStepTable = [
             ["chain", "edges", "activePoint"]),
     StepRow("mesh.loopSliceTool", OpensAt.arm, false,
             ["positions", "current", "count", "seeds", "armedSelFaces"]),
+    StepRow("mesh.polyInsetTool", OpensAt.firstPress, false, ["inset"]),
     StepRow("mesh.sliceTool", OpensAt.firstPress, false,
             ["startX", "startY", "startZ", "endX", "endY", "endZ", "vectorX", "vectorY",
              "vectorZ", "axis", "gap", "frozenNormal", "haveFrozen", "axisLocked", "hasLine"]),
+    StepRow("mesh.smoothShiftTool", OpensAt.firstPress, false,
+            ["shift", "scale", "maxAngle", "thicken", "sharp"]),
+    StepRow("mesh.thickenTool", OpensAt.firstPress, false,
+            ["shift", "scale", "maxAngle", "thicken", "sharp"]),
+    StepRow("mesh.vertexBevel", OpensAt.firstPress, false, ["inset"]),
     // Task 8030: the first Polygon topology record carries activation; each
     // later operation remains a separate history-owned row.
     StepRow("poly.extrude", OpensAt.firstPress, false,
@@ -455,8 +464,8 @@ unittest { // (4)
                    "M3 step table: " ~ row.id ~ " declares an image without sessionSteps");
             continue;
         }
-        // Only these four: `params()` of a blitted (unconstructed) instance
-        // is safe for them (field addresses only), not for every tool.
+        // Session-step classes expose field-backed params, so `params()` of a
+        // blitted (unconstructed) instance is safe here.
         auto ps = t.params();
         bool hasParam(string n) {
             foreach (ref p; ps) if (p.name == n) return true;
@@ -517,13 +526,14 @@ unittest { // (4)
     assert(stepsFalse == kSessionStepsFalseCeiling,
            format("M7 ratchet: sessionSteps=false fell to %s ids, ceiling %s: lower the ceiling "
                   ~ "in the same commit", stepsFalse, kSessionStepsFalseCeiling));
-    // Population floors: 7 ids, 45 image names, 3 Action triggers
+    // Population floors: 11 ids, 57 image names, 3 Action triggers
     // on them (chainArm; insertAt, removeCurrent), 1 arm attribute (M3b).
     sort(stepIds);
-    assert(stepIds == ["edge.extend", "edge.extrude", "mesh.edgeSliceTool", "mesh.loopSliceTool", "mesh.sliceTool",
-                       "poly.bevel", "poly.extrude"],
+    assert(stepIds == ["edge.extend", "edge.extrude", "mesh.edgeSliceTool", "mesh.loopSliceTool",
+                       "mesh.polyInsetTool", "mesh.sliceTool", "mesh.smoothShiftTool",
+                       "mesh.thickenTool", "mesh.vertexBevel", "poly.bevel", "poly.extrude"],
            format("M3 step table: sessionSteps ids %s", stepIds));
-    assert(checkedNames == 45, format("M3 step table: %s image names checked, measured 45",
+    assert(checkedNames == 57, format("M3 step table: %s image names checked, measured 57",
                                       checkedNames));
     assert(armAttrs == 1, format("M3b step table: %s arm attributes, measured 1", armAttrs));
     assert(actionNames == 3, format("M3 step table: %s Action params on the seven tools, "
@@ -582,8 +592,10 @@ unittest { // (5)
     assert(keep == kKeepAliveClasses,
            format("M4 policy classes: keepAliveOnCancel declared by %s, expected %s",
                   keep, kKeepAliveClasses));
-    assert(carries == ["tools.edit.edge_extend.EdgeExtendTool",
-                       "tools.edit.poly_extrude.PolyExtrudeTool"],
+    assert(carries == ["tools.deform.smooth_shift_tool.SmoothShiftTool",
+                       "tools.edit.edge_extend.EdgeExtendTool",
+                       "tools.edit.poly_extrude.PolyExtrudeTool",
+                       "tools.edit.poly_inset_tool.PolyInsetTool"],
            format("M4 policy classes: recordCarriesActivation declared by %s", carries));
 }
 
@@ -909,7 +921,9 @@ unittest { // Tasks 7990/8030: production topology R wiring, not a helper replic
         && esFlat.canFind("ue.length>=2&&ue[$-1].cmdisarm&&ue[$-2].cmdissource"),
         "closed topology redo lost its source-row cursor or activation lineage");
     assert(es.canFind("pendingTopologyCarriesActivation_()")
-        && es.canFind("pair ? cmd.stepBeforeAttrs() : cmd.stepAfterAttrs()"),
+        && es.canFind("!current.sessionPolicy().firstTopologyRedoUsesAfterAttrs")
+        && es.canFind("restoreBefore ? cmd.stepBeforeAttrs() : cmd.stepAfterAttrs()")
+        && !poly.canFind("firstTopologyRedoUsesAfterAttrs: true"),
         "generic first-topology activation replay lost Polygon attrs/basis law");
     assert(es.canFind("if (topologyPending_ && reporting_(t)")
         && es.canFind("if (topologyPending_) {")

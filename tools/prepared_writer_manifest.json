@@ -760,7 +760,7 @@
     {
       "aggregate": "SmoothShiftTool",
       "module": "tools.deform.smooth_shift_tool",
-      "semantic_sha256": "182fb540f92acc189db84294447409a03424e87421fcb6c320fdcee88f6cf301",
+      "semantic_sha256": "6470a1b9ffed2d01ba9415b18317dd41c982f7dff983a36812368e134ac11771",
       "signature": "void()",
       "symbol": "deactivate"
     },
@@ -928,7 +928,7 @@
     {
       "aggregate": "PolyInsetTool",
       "module": "tools.edit.poly_inset_tool",
-      "semantic_sha256": "18101145a3ef33274b4494c4aa5519ebc86cd915497ade139d6800d8df50d06c",
+      "semantic_sha256": "5a0848e5c9ef4bf669e12128e6186d6254d2669cb09a4c099f106baf72372f95",
       "signature": "void()",
       "symbol": "deactivate"
     },
@@ -1026,7 +1026,7 @@
     {
       "aggregate": "VertexBevelTool",
       "module": "tools.edit.vertex_bevel_tool",
-      "semantic_sha256": "e9fd12759d155197d0e381aaeffc648a8f63b0f33a00d813001093f280c6e232",
+      "semantic_sha256": "d7966e12c491d27c21f4fd9e7d66f4dbcd69eeab936769580923681f0ed76233",
       "signature": "void()",
       "symbol": "deactivate"
     },
@@ -1271,6 +1271,13 @@
     },
     {
       "admission": "activationRow",
+      "aggregate": "PolyInsetTool",
+      "module": "tools.edit.poly_inset_tool",
+      "signature": "PolyInsetTool",
+      "symbol": "lifecycleProduct"
+    },
+    {
+      "admission": "activationRow",
       "aggregate": "SliceTool",
       "module": "tools.slice.slice_tool",
       "signature": "SliceTool",
@@ -1278,9 +1285,23 @@
     },
     {
       "admission": "activationRow",
+      "aggregate": "SmoothShiftTool",
+      "module": "tools.deform.smooth_shift_tool",
+      "signature": "SmoothShiftTool",
+      "symbol": "lifecycleProduct"
+    },
+    {
+      "admission": "activationRow",
       "aggregate": "TopologyPenTool",
       "module": "tools.edit.topology_pen.tool",
       "signature": "TopologyPenTool",
+      "symbol": "lifecycleProduct"
+    },
+    {
+      "admission": "activationRow",
+      "aggregate": "VertexBevelTool",
+      "module": "tools.edit.vertex_bevel_tool",
+      "signature": "VertexBevelTool",
       "symbol": "lifecycleProduct"
     },
     {

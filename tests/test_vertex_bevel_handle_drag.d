@@ -208,17 +208,57 @@ unittest { // dragging the inset arrow moves `inset` off zero
         ~ "never popped, so every later commit on this mesh defers forever and "
         ~ "the app silently stops publishing (plan §2.2c).");
 
+    playAndWait(format(
+        `{"t":0.000,"type":"SDL_KEYDOWN","sym":122,"scan":0,"mod":64,"repeat":0}`), BASE);
+    Thread.sleep(dur!"msecs"(150));
+    assert(vertexCount() == v0,
+        "Vertex Bevel first undo must restore the pre-gesture topology");
+    assert(abs(queryInset()) < 1e-6,
+        "Vertex Bevel remains armed with zero Inset after first undo");
+    playAndWait(format(
+        `{"t":0.000,"type":"SDL_KEYDOWN","sym":122,"scan":0,"mod":65,"repeat":0}`), BASE);
+    Thread.sleep(dur!"msecs"(150));
+    assert(vertexCount() == v1,
+        "Vertex Bevel redo must restore the completed topology");
+    assert(abs(queryInset() - after) < 1e-6,
+        "Vertex Bevel redo must restore the released Inset amount");
+    assert(undoLen() - u0 == 1,
+        "first released Vertex Bevel gesture must own one row");
+
+    const firstMesh = getJson("/api/model");
+    playAndWait(buildHoverLog(cam.vpX, cam.vpY, cam.width, cam.height, x0, y0), BASE);
+    Thread.sleep(dur!"msecs"(150));
+    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                             x0, y0, x1, y1, 16), BASE);
+    Thread.sleep(dur!"msecs"(120));
+    const secondMesh = getJson("/api/model");
+    const secondInset = queryInset();
+    assert(secondMesh["vertexCount"].integer == firstMesh["vertexCount"].integer
+           && secondMesh["vertices"].toString != firstMesh["vertices"].toString
+           && secondInset > after,
+        "second Vertex Bevel gesture must adjust the same topology");
+    playAndWait(format(
+        `{"t":0.000,"type":"SDL_KEYDOWN","sym":122,"scan":0,"mod":64,"repeat":0}`), BASE);
+    Thread.sleep(dur!"msecs"(150));
+    assert(getJson("/api/model")["vertices"].toString == firstMesh["vertices"].toString,
+        "undo of second Vertex Bevel gesture restores the first image");
+    playAndWait(format(
+        `{"t":0.000,"type":"SDL_KEYDOWN","sym":122,"scan":0,"mod":65,"repeat":0}`), BASE);
+    Thread.sleep(dur!"msecs"(150));
+    assert(getJson("/api/model")["vertices"].toString == secondMesh["vertices"].toString
+           && abs(queryInset() - secondInset) < 1e-6,
+        "redo of second Vertex Bevel gesture restores its adjusted image");
+
     cmd("tool.set " ~ TOOL ~ " off");
     Thread.sleep(dur!"msecs"(250));
 
-    // …and a PLANE actually moved, with the drop recording it.
+    // …and a PLANE actually moved, with release recording it.
     auto moved = planeDiff(planesBefore, planes());
     assert(moved.canFind("vertices") && moved.canFind("counts"),
-        "the gesture and its drop moved planes " ~ moved.to!string
+        "the gesture and its release moved planes " ~ moved.to!string
         ~ " — `vertices` and `counts` are not both among them, so the mesh is "
         ~ "byte-identical to what it was before the drag");
-    assert(undoLen() - u0 == 1,
-        "the drop recorded " ~ (undoLen() - u0).to!string ~ " undo entr(ies), "
-        ~ "expected exactly 1 — `deactivate()` commits only when the tool "
-        ~ "built, so 0 here means the whole gesture was a no-op");
+    assert(undoLen() - u0 == 2,
+        "the released gesture recorded " ~ (undoLen() - u0).to!string
+        ~ " undo entries, expected two completed gestures");
 }

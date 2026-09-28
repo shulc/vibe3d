@@ -640,16 +640,16 @@ B3D_PRODUCER_DIGESTS = {
     "tools/alignment/clone_tool":"3e0d910456a613f77df81476010005d5fc7d229bec4197175a6fe5fe528688d0",
     "tools/alignment/radial_array_tool":"65148a02ac2b032c5ee0fb890f009775feb9d3a96c9c2550bb3dbbba6dcb8a85",
     "tools/deform/magnet":"1191f71bae9f8cb4dc7fed605de2172db7e268f3ba9e9c62c0db2668cdcbdddf",
-    "tools/deform/smooth_shift_tool":"5c1c9ace215d2a239f08501c9f7a8a02b8ea27ec1d8a1c3ede1cd5de46ac6c27",
+    "tools/deform/smooth_shift_tool":"da7b3298401dfebc0e77082b51b33a5dde9dc5bf000f1b1ff48b0e4c20f11e69",
     "tools/deform/stroke_extrude_tool":"48fd9fad9f7c4566468ebf746ab9ba38548cb5d7c2f6d7004d162ffa1a3c7d5f",
     "tools/edit/edge_bevel":"8c47f66199de95b827047be61df795f14fb018e720c32e4cb151bab20d1d547d",
     "tools/edit/edge_extrude":"3f126a0516e4d82f2d2e208b4262b5444710148841404d8db2baaf4fcd1bf537",
     "tools/edit/poly_bevel":"904bd0a0820bba150b7f4bcc3f873121013d1b383d2f0276bd70def1171b7c9e",
     "tools/edit/poly_extrude":"d3b460bc686e4064233e5a571ad03b686bc50a391186775289627dca2e01da22",
-    "tools/edit/poly_inset_tool":"7b39c23988c01f31c8956395c1834b00bfaefde748ed19646cfe40465d320dd4",
+    "tools/edit/poly_inset_tool":"7c80d5679502eb2ad26d49dea4d2dcc364a208e1b24c776eae98e598b706a86b",
     "tools/edit/reduce":"e7df0a7a19f56f8b8f1e29ad3e05974a10dcae535be2e155dd105e69ddb126d4",
     "tools/edit/vert_merge_tool":"9bf5d97f4da62f907be50eb4b72c73b9a01ab816cbbb537714af24667da20eaf",
-    "tools/edit/vertex_bevel_tool":"935c400d06133076e34d5c6a5d62d1ba2a93eb7b4eac88a7a1c9bdd42639aabf",
+    "tools/edit/vertex_bevel_tool":"85bfe0c67743a7f002b0fd89ef6aa4ca1292023b0fefde466ebf834463d686fc",
     "tools/edit/vertex_extrude_tool":"5bd4def636ee6e51247ad7c4b11055ffa57985038233cb97c82c86d13200dcca",
     "tools/transform/xfrm_transform":"65b18f87900816d267af281f4773a73bf8c22014bf6e7a01bdcbb6987b9f8623",
     "tools/create/box":"1d507a4771e54f922d240817b5f2d6f5d77b49cb4014605509194675fc1869e3",
@@ -813,6 +813,9 @@ else: fail("P1.0b.3d wrong-original mutation did not RED")
 for mutation_module, no_install in (
     ("tools.edit.edge_extrude", "const accepted = context.markNoHistoryInstall();"),
     ("tools.edit.poly_extrude", "const accepted = c.markNoHistoryInstall();"),
+    ("tools.deform.smooth_shift_tool", "const accepted = context.markNoHistoryInstall();"),
+    ("tools.edit.poly_inset_tool", "const accepted = c.markNoHistoryInstall();"),
+    ("tools.edit.vertex_bevel_tool", "const accepted = c.markNoHistoryInstall();"),
 ):
     mutation_sources = dict(b3d_sources)
     if mutation_sources[mutation_module].count(no_install) != 1:

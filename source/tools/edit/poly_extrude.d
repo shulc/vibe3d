@@ -305,6 +305,7 @@ public:
     public override void setTopologyDormant(bool dormant) {
         topologyDormant = dormant;
     }
+    public override void rebaseTopologyStep(MeshSnapshot basis) { before = basis; }
     public override void restoreTopologyStep(in AttrImage attrs,
             MeshSnapshot basis) {
         before = basis;
