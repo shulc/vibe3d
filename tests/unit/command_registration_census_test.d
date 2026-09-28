@@ -25,13 +25,19 @@
 // with the file that builds them, and each row is checked against that file
 // so a row cannot outlive its reason.
 //
-// WHAT IT DOES NOT SEE, said plainly: a Command subclass declared OUTSIDE
-// source/commands/ (registry.d's `_RegTestCmd` family is test-local and lives
-// in a unittest; nothing in source/tools/ derives from Command today), a
-// class whose base is declared outside the scanned tree, and a registration
-// that builds the class through a factory helper that never spells `new X`
-// — none of those exist at the time of writing, and the population floor
-// below is what says the scanner found the tree it was pointed at.
+// WHAT IT DOES NOT SEE, said plainly. Command subclasses declared OUTSIDE
+// source/commands/ exist and are out of scope (BoxLiveEditCommand in
+// source/tools/create/box.d, TopologyAdjustmentEdit, CompositeCommand,
+// SelfTestFaultCommand, plus test-local seams such as registry.d's
+// `_RegTestCmd`; follow-up 8131). A class built by a string mixin — `mixin("…")`
+// or `mixin(q{…})`, since `blankNonCode` blanks token strings as literals — and
+// an ANONYMOUS class (`new class Base {…}`, e.g. source/ui/availability.d) are
+// seen by no scanner here; a class whose base is declared outside the scanned
+// tree reddens the base-resolution assert; a registration that never spells
+// `new X` is invisible. What the scanner does NOT read is no longer silent
+// (task 8130): every `class Name` keyword whose header carries a base must be a
+// scanner hit, or `unread` reddens the gate — evidence and the declined parser
+// comparison in doc/d_census_libdparse_plan_2026-09-28.md.
 module tests.unit.command_registration_census_test;
 
 import std.algorithm : canFind, count, sort, splitter;
@@ -73,9 +79,47 @@ struct ClassDecl {
 // the matcher unwinds, so the cost shows up only as time: this module carried
 // the worst rate in the census family, 198.8 ms/MiB against a 101.7 mean.
 // The modifiers are recovered from the text instead, below, which is exact and
-// linear. Do not reintroduce a quantified group here.
+// linear. Do not reintroduce a quantified group here. (Task 8130 widened the
+// blank classes to `[ \t\r\n]` so a header broken before `:` reads; still no
+// quantifier inside a quantifier.)
 private enum classDeclRe = ctRegex!(
-    `(?<!\w)class[ \t]+(\w+)(?:\([^)]*\))?[ \t]*:[ \t]*(\w+)`);
+    `(?<!\w)class[ \t\r\n]+(\w+)(?:\([^)]*\))?[ \t\r\n]*:[ \t\r\n]*(\w+)`);
+
+/// Every `class Name` keyword site; `scanClasses` accounts for each one.
+private enum kwClassRe = ctRegex!(`(?<!\w)class[ \t\r\n]+(\w+)`);
+
+/// A `class Name` keyword with a base that `classDeclRe` did not read.
+struct UnreadHeader {
+    string name;
+    string file;
+    size_t line;       /// 1-based, the line of the keyword
+}
+
+struct ClassScan {
+    ClassDecl[]    decls;
+    UnreadHeader[] unread;
+    size_t         keywordSites;
+}
+
+/// Does the header after `class Name` declare a base? Reads to the first `{`
+/// or `;` at bracket depth 0; a `:` at depth 0 is a base list. Colons and
+/// braces inside `(…)`/`[…]` (template specialisation `T : int`, a constraint
+/// `if (is(T : Foo))`, a lambda in a constraint) do not count. There is no arm
+/// for a negative depth: valid D never closes an enclosing bracket inside a
+/// class header, so such an arm would have no witness (task 8130 review).
+private bool headerDeclaresBase(const(char)[] rest) {
+    int depth;
+    foreach (ch; rest) {
+        switch (ch) {
+            case '(': case '[': ++depth; break;
+            case ')': case ']': --depth; break;
+            case '{': case ';': if (depth == 0) return false; break;
+            case ':':           if (depth == 0) return true;  break;
+            default: break;
+        }
+    }
+    return false;
+}
 
 /// Does the modifier run immediately before a `class` keyword contain the
 /// word `abstract`? Walks back over word characters and blanks only, so it
@@ -94,10 +138,15 @@ private bool precedingRunHasAbstract(const(char)[] pre) {
     return false;
 }
 
-/// Every `class X : Y` declaration in `src` (a file's raw text).
-ClassDecl[] scanClassDecls(string src, string file) {
+/// One masking, two passes: every `class X : Y` declaration in `src` (a
+/// file's raw text), and an account of every `class Name` keyword — each is a
+/// declaration hit, carries no base, or is an `unread` header the census
+/// cannot judge (task 8130: a scanner reports what it skipped).
+ClassScan scanClasses(string src, string file) {
     const code = blankUnittestBodies(blankNonCode(src));
+    ClassScan r;
     auto hits = appender!(ClassDecl[]);
+    bool[size_t] hitStarts;
     // Modifiers on the same line (`private abstract final …`), then `class`,
     // the name (an optional template parameter list is tolerated), then the
     // base. Interfaces after the base are not captured — the base is what the
@@ -108,10 +157,31 @@ ClassDecl[] scanClassDecls(string src, string file) {
         foreach (ch; code[scanned .. m.pre.length])
             if (ch == '\n') line++;
         scanned = m.pre.length;
+        hitStarts[m.pre.length] = true;
         hits.put(ClassDecl(m[1].idup, m[2].idup,
                            precedingRunHasAbstract(m.pre), file, line));
     }
-    return hits.data;
+    r.decls = hits.data;
+    // Both regexes start their match on the `c` of the keyword.
+    line = 1;
+    scanned = 0;
+    auto unread = appender!(UnreadHeader[]);
+    foreach (m; matchAll(code, kwClassRe)) {
+        foreach (ch; code[scanned .. m.pre.length])
+            if (ch == '\n') line++;
+        scanned = m.pre.length;
+        r.keywordSites++;
+        if (m.pre.length in hitStarts) continue;
+        if (headerDeclaresBase(code[m.pre.length + m.hit.length .. $]))
+            unread.put(UnreadHeader(m[1].idup, file, line));
+    }
+    r.unread = unread.data;
+    return r;
+}
+
+/// Every `class X : Y` declaration in `src` (a file's raw text).
+ClassDecl[] scanClassDecls(string src, string file) {
+    return scanClasses(src, file).decls;
 }
 
 /// The transitive `Command`-derived subset of `decls`, concrete and abstract.
@@ -141,15 +211,19 @@ bool instantiates(string code, string name) {
     return instantiates(code, instantiationRegex(name));
 }
 
-private ClassDecl[] scanCommandsTree(string root) {
-    auto all = appender!(ClassDecl[]);
+private ClassScan scanCommandsTree(string root) {
+    ClassScan all;
     string[] files;
     foreach (de; dirEntries(buildPath(root, "source", "commands"), "*.d", SpanMode.depth))
         files ~= de.name;
     sort(files);
-    foreach (f; files)
-        all.put(scanClassDecls(readText(f), f[root.length + 1 .. $]));
-    return all.data;
+    foreach (f; files) {
+        const one = scanClasses(readText(f), f[root.length + 1 .. $]);
+        all.decls        ~= one.decls;
+        all.unread       ~= one.unread;
+        all.keywordSites += one.keywordSites;
+    }
+    return all;
 }
 
 // ---------------------------------------------------------------------------
@@ -183,6 +257,38 @@ unittest { // a class in a comment, a string, or a unittest body is not a decl
     const d = scanClassDecls(sample, "x.d");
     assert(d.length == 1 && d[0].name == "Seam",
         format("only the version(unittest) seam is a live declaration; got %s", d));
+}
+
+unittest { // a header broken before `:` is read (task 8130)
+    const d = scanClassDecls("final class A\n    : Command {}\n", "x.d");
+    assert(d.length == 1 && d[0].name == "A" && d[0].base == "Command"
+        && d[0].line == 1,
+        format("expected exactly A : Command at line 1; got %s", d));
+}
+
+unittest { // headers the regex cannot read are accounted as `unread` (task 8130)
+    enum sample = "class B(T) if (is(T == int)) : Command {}\n"
+                ~ "class C(T = typeof(f())) : Command {}\n"
+                ~ "class D : .Command {}\n";
+    const r = scanClasses(sample, "x.d");
+    assert(r.keywordSites == 3, format("expected 3 keyword sites; got %d", r.keywordSites));
+    assert(r.decls.length == 0, format("expected no decls; got %s", r.decls));
+    string[] names;
+    foreach (ref u; r.unread) names ~= u.name;
+    assert(names == ["B", "C", "D"], format("expected unread [B, C, D]; got %s", r.unread));
+}
+
+unittest { // no base, or a colon inside brackets, is NOT unread (task 8130)
+    enum sample = "final class J : Command {}\nfinal class H {}\nclass F;\n"
+                ~ "enum b = is(T == class);\n"
+                ~ "class I(T) : Command if (is(T == int)) {}\n"
+                ~ "class P(T : int) {}\nclass Q(T) if (is(T : Foo)) {}\n";
+    const r = scanClasses(sample, "x.d");
+    assert(r.keywordSites == 6,
+        format("expected 6 keyword sites (J H F I P Q); got %d", r.keywordSites));
+    assert(r.unread.length == 0, format("expected nothing unread; got %s", r.unread));
+    assert(r.decls.length == 2 && r.decls[0].name == "J" && r.decls[1].name == "I",
+        format("expected decls J, I; got %s", r.decls));
 }
 
 unittest { // `subclass` / `new Xy` boundaries
@@ -251,7 +357,8 @@ unittest {
     assert(regCode.length > 50_000,
         format("registration modules blanked to only %d bytes — wrong files", regCode.length));
 
-    const decls   = scanCommandsTree(repoRoot);
+    const scan    = scanCommandsTree(repoRoot);
+    const decls   = scan.decls;
     const derived = commandDerived(decls);
 
     // POPULATION FLOORS — the scanner found the tree it was pointed at.
@@ -272,6 +379,22 @@ unittest {
       ~ "modifier capture");
     assert(abstractCount >= 1 && abstractCount <= 8,
         format("%d abstract Command bases — 4 measured at task 4066", abstractCount));
+
+    // Every `class Name` keyword is accounted for (task 8130). The floor first,
+    // or an empty keyword set makes the zero below vacuous.
+    assert(scan.keywordSites >= 200,
+        format("only %d `class Name` keywords under source/commands (226 measured "
+             ~ "at task 8130) — the keyword account is not seeing the tree",
+               scan.keywordSites));
+    string[] unreadRows;
+    foreach (ref u; scan.unread)
+        unreadRows ~= format("%s:%d class %s", u.file, u.line, u.name);
+    assert(scan.unread.length == 0,
+        format("%d class header(s) under source/commands declare a base the scanner "
+             ~ "cannot read: %s. The census CANNOT say whether these are registered. "
+             ~ "Write the header as `class Name(params) : Base` (a constraint after "
+             ~ "the base, the base unqualified), or extend the scanner (task 8130).",
+               scan.unread.length, unreadRows));
 
     // Every base named under source/commands resolves inside it. A class whose
     // base lives elsewhere would be silently outside the census; say so.
@@ -379,6 +502,24 @@ unittest {
                  ~ "raise that file's unregistered count from %d to %d; the "
                  ~ "scanner saw %d — the census below cannot fail",
                    base, base + 1, withCanary));
+        // Task 8130: a header broken before `:` is read on real text, and a
+        // header the regex cannot read raises `unread` — both differential.
+        const withSplit = unregisteredIn(
+            sampleText ~ "\nfinal class _RegistrationCensusSplitCanary\n    : Command {}\n");
+        assert(withSplit == base + 1,
+            format("a header broken before `:` appended to redo.d must raise its "
+                 ~ "unregistered count from %d to %d; the scanner saw %d",
+                   base, base + 1, withSplit));
+        size_t unreadIn(string text) {
+            return scanClasses(text, "source/commands/history/redo.d").unread.length;
+        }
+        const unreadBase = unreadIn(sampleText);
+        const withUnread = unreadIn(sampleText
+            ~ "\nclass _RegistrationCensusUnreadCanary(T) if (is(T == int)) : Command {}\n");
+        assert(withUnread == unreadBase + 1,
+            format("a constrained header appended to redo.d must raise its unread "
+                 ~ "count from %d to %d; the keyword account saw %d — the unread "
+                 ~ "assert above cannot fail", unreadBase, unreadBase + 1, withUnread));
     }
 
     assert(unregistered.length == 0,
