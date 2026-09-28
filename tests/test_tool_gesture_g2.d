@@ -333,7 +333,8 @@ struct Cell {
 /// `gesture` is the play-events drive; `drop` deactivates the tool.
 Cell runCell(string name, string tool, string recordSite, string mode,
              string payload, string previewSubject,
-             void delegate() stand, void delegate() gesture, void delegate() drop)
+             void delegate() stand, void delegate() gesture, void delegate() drop,
+             long expectedUndoDelta = 1)
 {
     Cell c;
     c.name = name; c.tool = tool; c.recordSite = recordSite;
@@ -375,10 +376,11 @@ Cell runCell(string name, string tool, string recordSite, string mode,
         name ~ ": the gesture moved NO plane. Its record, its undo and its redo "
       ~ "are then all satisfied by doing nothing. Either the drive missed the "
       ~ "handle, or the tool refused on this stand — check `/api/tool/handles`");
-    assert(c.undoDelta == 1,
+    assert(c.undoDelta == expectedUndoDelta,
         name ~ ": the gesture left " ~ c.undoDelta.to!string ~ " undo entr(ies), "
-      ~ "expected exactly 1. Zero means the commit never recorded; more than "
-      ~ "one means an in-session run was left unspliced");
+      ~ "expected exactly " ~ expectedUndoDelta.to!string
+      ~ ". Zero means the commit never recorded; surplus means an in-session "
+      ~ "run was left unspliced");
 
     // THE PREVIEW WITNESS, and it is a BAND ACROSS TWO SPANS on purpose. Three
     // of these tools preview on the DOCUMENT mesh and must move both counters
@@ -409,10 +411,10 @@ Cell runCell(string name, string tool, string recordSite, string mode,
     assert(ru["status"].str == "ok", name ~ ": /api/undo failed: " ~ ru.toString);
     settle();
     c.postUndo = planes();
-    assert(undoLen() == u0,
+    assert(undoLen() == u0 + expectedUndoDelta - 1,
         name ~ ": the undo moved the stack to " ~ undoLen().to!string
-      ~ ", expected back to " ~ u0.to!string ~ " — more than one step means the "
-      ~ "entry's revert() answered false and the suffix behind it was truncated");
+      ~ ", expected " ~ (u0 + expectedUndoDelta - 1).to!string
+      ~ " after one revert");
 
     auto rr = postJ("/api/command", commandBody("history.redo"));
     assert(rr["status"].str == "ok", name ~ ": /api/redo failed: " ~ rr.toString);
@@ -952,12 +954,13 @@ unittest {
     //     the press is the viewport centre by construction — the same drive
     //     `tests/test_tool_overlay_item_space.d` block 5 uses.
     cells ~= runCell("array/centre-haul", "mesh.arrayTool",
-        "source/tools/alignment/array_tool.d ArrayTool.commitEdit (from onMouseButtonUp)",
+        "source/tools/alignment/array_tool.d ArrayTool.recordTopologyStep (from onMouseButtonUp)",
         "Plain", "MeshSessionEdit",
         "the DOCUMENT mesh (array_tool.d rebuildPreview) — batchless, both channels see it",
         { resetCube(); selectMode("polygons", [4]); cmd("history.clear");
-          setOrbitCamera(); cmd("tool.set mesh.arrayTool on"); settle(300); },
+          setOrbitCamera(); },
         {
+            cmd("tool.set mesh.arrayTool on"); settle(300);
             auto cam = fetchCamera(BASE);
             immutable int cx = cam.vpX + cam.width / 2;
             immutable int cy = cam.vpY + cam.height / 2;
@@ -969,7 +972,7 @@ unittest {
               ~ "gesture asserts only the offset ATTRIBUTE, which moves whether "
               ~ "or not the grid kernel copied one face");
         },
-        { cmd("tool.set mesh.arrayTool off"); });
+        { cmd("tool.set mesh.arrayTool off"); }, 2);
 
     // --- (e) CloneTool. The one tool in this group with NO interactive
     //     coverage anywhere in the tree — `tool.set mesh.clone` appears in no

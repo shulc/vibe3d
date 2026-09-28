@@ -15,6 +15,7 @@ import bindbc.sdl;
 import operator : VectorStack;
 
 import tool;
+import command : Command;
 import mesh;
 import mesh_gpu : GpuMesh;
 import math;
@@ -23,14 +24,11 @@ import drag : planeDragDelta;
 import overlay_space : OverlaySpace;
 import params : Param, IntEnumEntry;
 import shader : Shader;
-import command_history : CommandHistory;
-import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
 import perf_probe : g_perf, Cat;
 import prepared_record_context : PreparedRecordContext;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
-import command_history : PreparedHistoryKind;
 import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
 import core.stdc.string : memcmp;
 
@@ -49,9 +47,8 @@ import core.stdc.string : memcmp;
 // 1m/1m/1m, Jitter/Scale/Rotate/Between at neutral, Clone Effector all
 // off, Source=Active Meshes).
 //
-// Lifecycle mirrors EdgeExtendTool/EdgeExtrudeTool's template (topology-
-// creating tools own their own undo plumbing, commit ONE before/after
-// MeshSnapshot pair per session): activate() captures `before` but does
+// The completed grid images belong to ToolSession history. Activation captures
+// `before` but does
 // NOT build a preview immediately — the captured doc itself requires a
 // SEPARATE "click in the 3D viewport to enable interactive tool mode"
 // gesture after selecting the tool from the toolbox, so a bare activation
@@ -63,7 +60,7 @@ import core.stdc.string : memcmp;
 // EVERY haul step, rather than accumulating a transform delta on the built
 // preview — this tool follows that "revert-then-re-run-from-baseline" model
 // (rebuildPreview() below), same as LoopSliceTool/EdgeExtendTool/CloneTool.
-// The whole drag gesture still collapses to ONE undo entry at mouse-up,
+// Each completed drag is one undo entry at mouse-up,
 // matching vibe3d's established per-gesture undo granularity (every other
 // interactive tool in this codebase does the same; the reference's own
 // Command History also nests each step's ToolAdjustment+doApply inside one
@@ -140,13 +137,24 @@ struct PreparedArrayParamImage {
     }
 }
 
-final class ArrayTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient {
-    // A recording command through the UI door closes the live edit first —
-    // `Tool.commitOperation`'s in-place default — and the tool stays armed
-    // (slice M2; the C1-h-sel-fam law, captured for Edge Extend and Polygon
-    // Bevel and inferred for the rest of the in-place family, R20 gap g5).
+final class ArrayTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient,
+        TopologyStepClient {
+    // A recording UI command closes the current grid operation and leaves
+    // the tool armed. Completed grids already have ToolSession rows.
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
-        static immutable ToolSessionPolicy policy = { commandClose: CommandClose.uiDoor };
+        static immutable ToolSessionPolicy policy = {
+            activationRow: true, commandClose: CommandClose.uiDoor,
+            sessionSteps: true, historyTopologySteps: true,
+            opensAt: OpensAt.firstPress,
+            imageAttrs: ["numX", "numY", "numZ", "offX", "offY", "offZ",
+                "jitX", "jitY", "jitZ", "sclX", "sclY", "sclZ", "angP",
+                "angH", "angB", "between", "replace", "flip", "merge",
+                "dist", "source", "item"],
+            haulAttrs: ["numX", "numY", "numZ", "offX", "offY", "offZ",
+                "jitX", "jitY", "jitZ", "sclX", "sclY", "sclZ", "angP",
+                "angH", "angB", "between", "replace", "flip", "merge",
+                "dist", "source", "item"]
+        };
         return policy;
     }
 
@@ -192,7 +200,7 @@ private:
     bool         active;
     bool         built;        // a preview is baked into the live mesh
     bool         dragging;     // between LMB-down and LMB-up
-    MeshSnapshot before;       // session baseline (recaptured after each commit)
+    MeshSnapshot before;       // source cage of the current array operation
 
     int  anchorMX, anchorMY;   // drag-start pixel coords
     // The drag anchor, in the space the geometry is DRAWN in — the selection
@@ -305,14 +313,13 @@ public:
             const nothrow @nogc { return built == expectedBuilt; }
 
     override void deactivate() {
-        if (active && built) commitEdit();
         active   = false;
         built    = false;
         dragging = false;
     }
 
     override bool hasUncommittedEdit() const {
-        return active && built;
+        return active && dragging && built;
     }
 
     override void cancelUncommittedEdit() {
@@ -328,14 +335,35 @@ public:
         refreshCaches();
     }
 
-    // Framework "apply and continue" (task 0461, Shift+click): commit the live
-    // edit as its own undo entry, keeping the tool active; the driver follows
-    // with resyncSession() to re-arm in place. Mirrors deactivate()'s commit
-    // guard minus the teardown.
+    // A completed haul already has its own row; there is no extra pending
+    // edit to commit when the framework asks to continue.
     override bool commitUncommittedEdit() {
-        if (!hasUncommittedEdit()) return false;
-        commitEdit();
+        return false;
+    }
+
+    override bool commitOperation() {
+        if (!active) return false;
+        before = MeshSnapshot.capture(*mesh);
+        built = dragging = false;
         return true;
+    }
+
+    override Mesh* topologyStepMesh() { return mesh; }
+    override MeshSnapshot topologyStepBasis() { return before; }
+    override Command topologyStepCarrier() {
+        return gestureFactory is null ? null : gestureFactory();
+    }
+    override bool recordTopologyStep(Command cmd) {
+        return recordGestureEdit(cmd, GestureRecordMode.Plain);
+    }
+    override string topologyStepLabel() { return "Array"; }
+    override void setTopologyDormant(bool dormant) {}
+    override void rebaseTopologyStep(MeshSnapshot basis) { before = basis; }
+    override void restoreTopologyStep(in AttrImage attrs, MeshSnapshot basis) {
+        before = basis;
+        restoreRecordedAttrs(attrs);
+        built = dragging = false;
+        refreshCaches();
     }
 
     override void onParamChanged(string pname) {
@@ -426,7 +454,7 @@ public:
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         if (!active) return false;
-        if (e.button == SDL_BUTTON_RIGHT) { cancelLiveEdit(); return true; }
+        if (e.button == SDL_BUTTON_RIGHT) { closeOwnOperation(false); return true; }
         if (e.button != SDL_BUTTON_LEFT)  return false;
 
         SDL_Keymod mods = SDL_GetModState();
@@ -434,6 +462,7 @@ public:
 
         if (mesh.faces.length == 0) return false;
 
+        sessionStepBegins();
         anchorMX       = e.x;
         anchorMY       = e.y;
         dragSpace      = OverlaySpace.ofPrimary();
@@ -447,11 +476,8 @@ public:
         if (!active || !dragging) return false;
         if (e.button != SDL_BUTTON_LEFT) return false;
         dragging = false;
-        if (built) {
-            commitEdit();
-            built  = false;
-            before = MeshSnapshot.capture(*mesh);   // new baseline for the next drag
-        }
+        sessionStepEnds();
+        built = false;
         return true;
     }
 
@@ -524,33 +550,14 @@ private:
         refreshCaches();
     }
 
-    // The record is the base seam's (task 1905 phase C, group G2); what stays
-    // here is what only this tool knows — which carrier, which snapshot pair,
-    // which label. The trigger is unchanged: this body is reached from
-    // `onMouseButtonUp`, INSIDE the gesture, which is why the cell's
-    // `liveEntryNames` is already filled at the drop.
+    // Completed steps are already installed at release. Deactivation only
+    // installs the tool transition and cannot add a cumulative mesh record.
     final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context) {
-        bool accepted;
-        if (active && built && context !is null && history !is null &&
-            gestureFactory !is null && before.filled) {
-            auto cmd = cast(MeshSessionEdit) gestureFactory();
-            if (cmd !is null) {
-                cmd.setSnapshots(before, MeshSnapshot.capture(*mesh), "Array");
-                accepted = context.prepare(cmd, PreparedHistoryKind.Plain).accepted;
-            }
-        }
+        if (context is null) return PreparedDeactivateEffect(
+            preparedToolStateOwner, PreparedDeactivateKind.Array, false, false);
+        const accepted = context.markNoHistoryInstall();
         return PreparedDeactivateEffect(preparedToolStateOwner,
-            PreparedDeactivateKind.Array, accepted);
-    }
-
-    void commitEdit() {
-        if (history is null || gestureFactory is null) return;
-        if (!before.filled) return;
-        auto cmd = cast(MeshSessionEdit) gestureFactory();
-        if (cmd is null) { noteGestureCarrierMismatch(); return; }
-        auto post = MeshSnapshot.capture(*mesh);
-        cmd.setSnapshots(before, post, "Array");
-        recordGestureEdit(cmd, GestureRecordMode.Plain);
+            PreparedDeactivateKind.Array, false, accepted);
     }
 
     void cancelLiveEdit() {

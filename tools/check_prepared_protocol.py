@@ -636,7 +636,7 @@ b3d_modules = {module for module, _, _ in B3D_PREPARED_LEGACY}
 b3d_sources = {module: (ROOT / "source" /
     (module.replace(".", "/") + ".d")).read_text() for module in b3d_modules}
 B3D_PRODUCER_DIGESTS = {
-    "tools/alignment/array_tool":"abbc9240a3fcfbb03c06b768a75440e39d6baadf000455ab75dd8e5804556ff0",
+    "tools/alignment/array_tool":"1363ac0ac98e1f38dcd9d470e34a644d3b0388d9026569714f662326028c1404",
     "tools/alignment/clone_tool":"3e0d910456a613f77df81476010005d5fc7d229bec4197175a6fe5fe528688d0",
     "tools/alignment/radial_array_tool":"65148a02ac2b032c5ee0fb890f009775feb9d3a96c9c2550bb3dbbba6dcb8a85",
     "tools/deform/magnet":"1191f71bae9f8cb4dc7fed605de2172db7e268f3ba9e9c62c0db2668cdcbdddf",
@@ -798,19 +798,10 @@ except SystemExit as error:
         fail("P1.0b.3d early-route mutation failed for wrong reason")
 else: fail("P1.0b.3d early-route mutation did not RED")
 
-mutation_sources = dict(b3d_sources)
-mutation_sources[mutation_module] = mutation_sources[mutation_module].replace(
-    "cmd.setSnapshots(before, MeshSnapshot.capture(*mesh), \"Array\")",
-    "cmd.setSnapshots(MeshSnapshot.capture(*mesh), before, \"Array\")", 1)
-try: validate_b3d_producers(mutation_sources, {mutation_module})
-except SystemExit as error:
-    if "producer parity drifted" not in str(error):
-        fail("P1.0b.3d wrong-original mutation failed for wrong reason")
-else: fail("P1.0b.3d wrong-original mutation did not RED")
-
 # Topology steps are installed at their own boundaries, so prepared
 # deactivation must explicitly decline a second cumulative history carrier.
 for mutation_module, no_install in (
+    ("tools.alignment.array_tool", "const accepted = context.markNoHistoryInstall();"),
     ("tools.edit.edge_extrude", "const accepted = context.markNoHistoryInstall();"),
     ("tools.edit.poly_extrude", "const accepted = c.markNoHistoryInstall();"),
     ("tools.deform.smooth_shift_tool", "const accepted = context.markNoHistoryInstall();"),

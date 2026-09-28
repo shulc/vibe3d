@@ -13,13 +13,10 @@
 //
 // `tests/test_fixture_array.d` does not close that either: it drives
 // `tool.doApply`, which records a `ToolDoApplyCommand` — a different entry from
-// a different site than `ArrayTool.commitEdit`.
+// a different site than Array's ToolSession step.
 //
-// WHERE IT RECORDS. Like CloneTool and unlike Mirror / Radial Sweep, ArrayTool
-// commits INSIDE the gesture, at `onMouseButtonUp`. So the entry is on the
-// stack before the tool is dropped, and the drop must add NOTHING — asserted
-// below, because `deactivate()`'s `if (active && built) commitEdit()` would
-// otherwise push a duplicate for one gesture.
+// WHERE IT RECORDS. ArrayTool ends its ToolSession step at mouse-up. The
+// entry is on the stack before the tool is dropped; drop adds nothing.
 //
 // `built` IS NOT ON THE WIRE HERE, measured rather than assumed: it is
 // published for exactly six tools tree-wide (`grep -rn '"built"' source/`) and
@@ -41,6 +38,7 @@ import std.algorithm : canFind, sort;
 import std.conv : to;
 import std.json;
 import std.math : abs;
+import std.format : format;
 import std.net.curl : get, post;
 
 import plane_diff_helpers;
@@ -71,6 +69,15 @@ double attrOf(string name) {
 string planes() { return getRaw("/api/mesh/planes"); }
 long undoLen() { return cast(long) getJson("/api/history")["undo"].array.length; }
 size_t vertexCount() { return getJson("/api/model")["vertices"].array.length; }
+
+void navigate(bool redo) {
+    import core.thread : Thread;
+    import core.time : dur;
+    playAndWait(format(
+        `{"t":0.000,"type":"SDL_KEYDOWN","sym":122,"scan":0,"mod":%d,"repeat":0}`,
+        redo ? 65 : 64), BASE);
+    Thread.sleep(dur!"msecs"(150));
+}
 
 unittest { // a free centre haul arrays face 4 and records exactly one entry
     // NO PRE-DISARM, DELIBERATELY (task 3130). `/api/reset` cancels and DROPS the
@@ -152,23 +159,46 @@ unittest { // a free centre haul arrays face 4 and records exactly one entry
     immutable long afterHaul = undoLen() - u0;
     assert(afterHaul == 1,
         "the haul recorded " ~ afterHaul.to!string ~ " undo entr(ies), expected "
-        ~ "exactly 1 (`mesh.array_edit`, label \"Array\") — ArrayTool records at "
-        ~ "`onMouseButtonUp`, so 0 here means the gesture left nothing undoable");
+        ~ "exactly 1 (label \"Array\") at mouse-up");
+
+    immutable string firstImage = planes();
+    immutable double firstOffX = attrOf("offX");
+    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                             cx, cy, cx + 70, cy - 40, 12), BASE);
+    Thread.sleep(dur!"msecs"(200));
+    immutable string secondImage = planes();
+    immutable double secondOffX = attrOf("offX");
+    assert(vertexCount() == v1 && secondImage != firstImage &&
+           abs(secondOffX - firstOffX) > 1e-3 && undoLen() == u0 + 2,
+        "second haul must adjust the same array grid and record a second step");
+    navigate(false);
+    assert(planes() == firstImage && abs(attrOf("offX") - firstOffX) < 1e-5,
+        "first undo must restore the first completed grid and offset");
+    navigate(false);
+    assert(planes() == planesBefore && abs(attrOf("offX") - preOffX) < 1e-5,
+        "second undo must restore the source polygon mesh and offset");
+    navigate(true);
+    assert(planes() == firstImage && abs(attrOf("offX") - firstOffX) < 1e-5,
+        "first redo must restore the first grid and offset");
+    navigate(true);
+    assert(planes() == secondImage && abs(attrOf("offX") - secondOffX) < 1e-5,
+        "two redos must restore the adjusted grid and offset");
 
     // And the drop adds NOTHING.
     cmd("tool.set " ~ TOOL ~ " off");
     Thread.sleep(dur!"msecs"(300));
     immutable long afterDrop = undoLen() - u0;
-    assert(afterDrop == 1,
-        "dropping the tool took the gesture's undo delta from "
-        ~ afterHaul.to!string ~ " to " ~ afterDrop.to!string ~ " — one gesture "
-        ~ "must leave exactly one entry, and a second one here means the "
-        ~ "mouse-up commit and the deactivate commit both fired");
+    assert(afterDrop == 2,
+        "dropping the tool took the first gesture's undo delta from "
+        ~ afterHaul.to!string ~ " to " ~ afterDrop.to!string
+        ~ " — two released gestures must leave exactly two entries");
 
-    // The undo takes the copies back off, which is what makes the entry above a
-    // real edit record rather than a bookmark.
+    // Two undos take the copies back off, which is what makes the entries above
+    // real edit records rather than bookmarks.
     auto u = postJson("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok", "undo failed: " ~ u.toString);
+    u = postJson("/api/command", commandBody("history.undo"));
+    assert(u["status"].str == "ok", "second undo failed: " ~ u.toString);
     Thread.sleep(dur!"msecs"(150));
     assert(vertexCount() == v0,
         "after one undo the mesh has " ~ vertexCount().to!string ~ " vertices, "

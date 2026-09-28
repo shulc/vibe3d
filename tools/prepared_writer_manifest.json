@@ -501,7 +501,7 @@
     {
       "aggregate": "ArrayTool",
       "module": "tools.alignment.array_tool",
-      "semantic_sha256": "18101145a3ef33274b4494c4aa5519ebc86cd915497ade139d6800d8df50d06c",
+      "semantic_sha256": "5a0848e5c9ef4bf669e12128e6186d6254d2669cb09a4c099f106baf72372f95",
       "signature": "void()",
       "symbol": "deactivate"
     },
@@ -1227,6 +1227,13 @@
     "symbol": "toolArmEmitsLifecycle"
   },
   "lifecycle_products": [
+    {
+      "admission": "activationRow",
+      "aggregate": "ArrayTool",
+      "module": "tools.alignment.array_tool",
+      "signature": "ArrayTool",
+      "symbol": "lifecycleProduct"
+    },
     {
       "admission": "activationRow",
       "aggregate": "EdgeBevelTool",

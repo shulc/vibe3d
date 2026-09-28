@@ -216,12 +216,14 @@ unittest { // The tools that close their operation their own way, exactly.
     // owned and close only re-baselines the continuing tool. Task 8030 adds
     // Polygon Extrude through the same generic history owner. Task 8150 adds
     // Edge Bevel and Vertex Extrude, whose gesture rows are history-owned too.
-    // Task 8180 adds Vertex Merge with a new basis after each weld.
-    assert(commits == 13, "M2 override census: commitOperation overriders changed: " ~ owners.to!string);
+    // Task 8180 adds Vertex Merge with a new basis after each weld. Array
+    // closes a completed grid without discarding the current mesh.
+    assert(commits == 14, "M2 override census: commitOperation overriders changed: " ~ owners.to!string);
     foreach (want; ["xfrm_transform.d", "edge_slice_tool.d", "loop_slice_tool.d", "slice_tool.d",
                     "poly_bevel.d", "edge_extrude.d", "poly_extrude.d",
                     "smooth_shift_tool.d", "poly_inset_tool.d", "vertex_bevel_tool.d",
-                    "edge_bevel.d", "vertex_extrude_tool.d", "vert_merge_tool.d"])
+                    "edge_bevel.d", "vertex_extrude_tool.d", "vert_merge_tool.d",
+                    "array_tool.d"])
         assert(owners.canFind!(o => o.canFind(want)),
             "M2 override census: " ~ want ~ " no longer overrides commitOperation");
     assert(resumes == 1, "M2 override census: resumeAfterClose overriders changed");

@@ -83,7 +83,7 @@ private immutable Row[] kTable = [
     Row("edge.extend", "EdgeExtendTool", true, Prov.captured, CommandClose.uiDoor, CloseProv.captured),
     Row("edge.extrude", "EdgeExtrudeTool", true, Prov.captured, CommandClose.uiDoor, CloseProv.inferred),
     Row("edge.slide", "EdgeSlideTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
-    Row("mesh.arrayTool", "ArrayTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
+    Row("mesh.arrayTool", "ArrayTool", true, Prov.inferred, CommandClose.uiDoor, CloseProv.inferred),
     Row("mesh.bridgeTool", "BridgeTool", false, Prov.notPorted, CommandClose.none, CloseProv.notCaptured),
     Row("mesh.clone", "CloneTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
     Row("mesh.dragWeld", "DragWeldTool", false, Prov.notPorted, CommandClose.none, CloseProv.notCaptured),
@@ -148,6 +148,7 @@ private immutable Row[] kTable = [
 
 /// The classes whose policy answers `activationRow`.
 private immutable string[] kActivationRowClasses = [
+    "tools.alignment.array_tool.ArrayTool",
     "tools.deform.smooth_shift_tool.SmoothShiftTool",
     "tools.edit.edge_bevel.EdgeBevelTool",
     "tools.edit.edge_extend.EdgeExtendTool",
@@ -290,9 +291,9 @@ unittest { // (1) id -> policy, over every registered id
 /// not ported (the rest have no counterpart or an unsure one), and ids whose
 /// session does not own their gesture steps (H2 not ported). Measured on the
 /// M7 tree; each only falls.
-private enum size_t kActivationRowFalseCeiling = 31;
-private enum size_t kNotPortedCeiling = 27;
-private enum size_t kSessionStepsFalseCeiling = 56;
+private enum size_t kActivationRowFalseCeiling = 30;
+private enum size_t kNotPortedCeiling = 26;
+private enum size_t kSessionStepsFalseCeiling = 55;
 
 unittest { // (2) tool classes that declare the activation row
     string[] declared;
@@ -421,6 +422,11 @@ private struct StepRow {
 /// the static flags read (Edge Slice only); the images — plan R4.3 plus
 /// `count` (C-H2-ls-insert P1) and Loop Slice's seed set (PLAN-FINDING, card M3).
 private immutable StepRow[] kStepTable = [
+    StepRow("mesh.arrayTool", OpensAt.firstPress, false,
+        ["numX", "numY", "numZ", "offX", "offY", "offZ",
+         "jitX", "jitY", "jitZ", "sclX", "sclY", "sclZ", "angP",
+         "angH", "angB", "between", "replace", "flip", "merge",
+         "dist", "source", "item"]),
     StepRow("edge.bevel", OpensAt.firstPress, false,
             ["width", "roundLevel", "widthMode"]),
     // Slice M4: the 11 haul attributes plus the operation-open state.
@@ -533,16 +539,16 @@ unittest { // (4)
     assert(stepsFalse == kSessionStepsFalseCeiling,
            format("M7 ratchet: sessionSteps=false fell to %s ids, ceiling %s: lower the ceiling "
                   ~ "in the same commit", stepsFalse, kSessionStepsFalseCeiling));
-    // Population floors: 14 ids, 63 image names, 3 Action triggers
+    // Population floors: 15 ids, 85 image names, 3 Action triggers
     // on them (chainArm; insertAt, removeCurrent), 1 arm attribute (M3b).
     sort(stepIds);
     assert(stepIds == ["edge.bevel", "edge.extend", "edge.extrude",
-                       "mesh.edgeSliceTool", "mesh.loopSliceTool",
+                       "mesh.arrayTool", "mesh.edgeSliceTool", "mesh.loopSliceTool",
                        "mesh.polyInsetTool", "mesh.sliceTool", "mesh.smoothShiftTool",
                        "mesh.thickenTool", "mesh.vertexBevel", "mesh.vertexExtrude",
                        "poly.bevel", "poly.extrude", "vert.merge"],
            format("M3 step table: sessionSteps ids %s", stepIds));
-    assert(checkedNames == 63, format("M3 step table: %s image names checked, measured 63",
+    assert(checkedNames == 85, format("M3 step table: %s image names checked, measured 85",
                                       checkedNames));
     assert(armAttrs == 1, format("M3b step table: %s arm attributes, measured 1", armAttrs));
     assert(actionNames == 3, format("M3 step table: %s Action params on the session tools, "
