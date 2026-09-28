@@ -967,6 +967,12 @@ private struct ToolSession {
             import log : logWarn;
             logWarn("tool", "session redo: the record paired with its activation row refused its redo");
         }
+        if (ok && pair) {
+            auto rearmed = tool_();
+            if (rearmed !is null && rearmed.sessionPolicy()
+                    .discardLaterTopologyRedoOnRearm)
+                history_.invalidateRedo();
+        }
         if (ok) {
             // Only AFTER a successful stack step: re-sync the still-live
             // tool's baseline to the now-current mesh. An attribute-only
@@ -1465,6 +1471,9 @@ private struct ToolSession {
             rememberTopologyAttrs_(restoreBefore
                 ? cmd.stepBeforeAttrs() : cmd.stepAfterAttrs());
         }
+        if (pair && current !is null && current.sessionPolicy()
+                .discardLaterTopologyRedoOnRearm)
+            history_.invalidateRedo();
         return true;
     }
 

@@ -29,10 +29,8 @@
 // re-pointing exactly one of those two still reddens exactly one cell, because
 // the other keeps the shared name. `liveEntryNames` is carried anyway, for the
 // reason the G1 lane added it and because in G2 it separates the group along a
-// second, independent axis: the MOMENT of the record. `mesh.arrayTool` and
-// `mesh.clone` record INSIDE the gesture (`onMouseButtonUp`), so their live
-// names are already populated before the tool is dropped; the other three
-// record at `deactivate()` and read EMPTY there.
+// second, independent axis: the MOMENT of the record. Array, Clone, Mirror,
+// and Radial Array record on release. Radial Sweep records at drop.
 //
 // WHY THE DRIVE IS `/api/play-events` AND NEVER `tool.doApply`. `tool.doApply`
 // records a `ToolDoApplyCommand` — a different entry, from a different site —
@@ -67,10 +65,9 @@
 //     array (doc mesh)           24 /  84                    0 / 0
 //     clone (doc mesh)           24 /  60                    0 / 0
 //
-// The zero is NOT a bare zero: the SAME cell, on the SAME two counters, in the
-// SAME run, requires them to move at the drop. A dead counter fails that half,
-// so the zero half cannot be satisfied for free. Every one of those assertions
-// says in its own message which mesh it is watching. (The numbers above were
+// The preview-mesh zero is paired with a nonzero drop in the same cell. The
+// document-mesh tools have a nonzero drag and zero drop. Every assertion
+// says which mesh it is watching. (The numbers above were
 // measured on the lane's own stand; the frozen ones are whatever the capture
 // run produced on the suite lane's viewport, and they are pinned EXACTLY.)
 //
@@ -81,7 +78,7 @@
 //
 //   * `tests/test_mirror_tool_drag.d` — two real drags, both asserting only the
 //     `center` ATTRIBUTE. The gesture does reach the record site (measured: the
-//     drop takes the cube from 8 to 16 vertices and pushes one
+//     drag takes the cube from 8 to 16 vertices and pushes one
 //     `mesh.bevel_edit`), and not one line of the file would notice if it
 //     stopped.
 //   * `tests/test_radial_sweep_handle_drag.d` — a real drag asserting
@@ -101,8 +98,8 @@
 //     does not appear in one test in the tree. `tests/test_mesh_clone.d` drives
 //     the one-shot COMMAND of the same name.
 //
-// So: no shipped test in this repository asserts that ANY of G2's five tools
-// records anything when a real gesture commits. Five cells below are the first.
+// These five cells assert the record at the correct boundary; the alignment
+// tools also have two-gesture navigation coverage in the session-step test.
 //
 // `built` IS NOT A CHANNEL IN THIS GROUP — measured, all five: `/api/tool/state`
 // answers `{}` for every one of them while armed and while built. The brief's
@@ -334,7 +331,7 @@ struct Cell {
 Cell runCell(string name, string tool, string recordSite, string mode,
              string payload, string previewSubject,
              void delegate() stand, void delegate() gesture, void delegate() drop,
-             long expectedUndoDelta = 1)
+             long expectedUndoDelta = 1, long expectedStandRows = 0)
 {
     Cell c;
     c.name = name; c.tool = tool; c.recordSite = recordSite;
@@ -343,7 +340,7 @@ Cell runCell(string name, string tool, string recordSite, string mode,
     gDrove = [];   // task 3091: this cell's own (stand, gesture, drop) drive
     stand();
     immutable long u0 = undoLen();
-    assert(u0 == 0,
+    assert(u0 == expectedStandRows,
         name ~ ": the stand left " ~ u0.to!string ~ " undo entr(ies) standing. "
       ~ "`undoDelta` is measured from a CLEARED stack, and a selection POST "
       ~ "records `mesh.select`, so the stand must clear history AFTER it "
@@ -859,16 +856,15 @@ unittest {
 unittest {
     Cell[] cells;
 
-    // --- (a) MirrorTool. Commits from `deactivate()`, so `liveEntryNames` is
-    //     EMPTY; since task 7116 the copy is already in the document mesh from
-    //     the press, and the drop only records it. The gesture is the
+    // --- (a) MirrorTool. Records on release; since task 7116 the copy is
+    //     already in the document mesh from the press. The gesture is the
     //     centre-box haul — the same drive `tests/test_mirror_tool_drag.d`'s
     //     second block runs, whose only assertion is the `center` attribute.
     //     No face selection: Mirror's mask rule is `operandFaceMask()`, so an
-    //     empty selection means the whole cube, which is what makes the drop's
+    //     empty selection means the whole cube, which is what makes the drag's
     //     8 -> 16 vertices a named, checkable number.
     cells ~= runCell("mirror/centre-box-haul", "mesh.mirrorTool",
-        "source/tools/alignment/mirror.d MirrorTool.commitMirrorEdit (from deactivate)",
+        "source/tools/alignment/mirror.d MirrorTool.recordTopologyStep (from release)",
         "Plain", "MeshSessionEdit",
         "the DOCUMENT mesh (live edit from the first press, §24) — both channels see the drag",
         { resetCube(); cmd("history.clear"); setOrbitCamera();
@@ -895,7 +891,7 @@ unittest {
               ~ "This is the assertion `tests/test_mirror_tool_drag.d` never "
               ~ "made: it reads the centre ATTRIBUTE and would stay green if "
               ~ "the tool mirrored nothing at all");
-        });
+        }, 1, 1);
 
     // --- (b) RadialSweepTool. Also commits from `deactivate()`. Driven exactly
     //     as `tests/test_radial_sweep_handle_drag.d` drives it — the Start
@@ -926,12 +922,12 @@ unittest {
               ~ "(deactivate() commits only when `inserted > 0`)");
         });
 
-    // --- (c) RadialArrayTool. Commits from `deactivate()`, but PREVIEWS ON THE
+    // --- (c) RadialArrayTool. Records on release and previews on the
     //     DOCUMENT MESH, so it is one of the three cells whose drag must move
     //     both bus channels. The Offset arrow is grabbed mid-shaft along the
     //     tool's own axis (+Y at the defaults).
     cells ~= runCell("radial.array/offset-arrow-haul", "mesh.radialArrayTool",
-        "source/tools/alignment/radial_array_tool.d RadialArrayTool.commitEdit (from deactivate)",
+        "source/tools/alignment/radial_array_tool.d RadialArrayTool.recordTopologyStep (from release)",
         "Plain", "MeshSessionEdit",
         "the DOCUMENT mesh (radial_array_tool.d rebuildPreview) — batchless, both channels see it",
         { resetCube(); selectMode("polygons", [4]); cmd("history.clear");
@@ -945,7 +941,7 @@ unittest {
                 "radial.array: the haul left `offset` at zero — a press that "
               ~ "missed the arrow only repositions the centre");
         },
-        { cmd("tool.set mesh.radialArrayTool off"); });
+        { cmd("tool.set mesh.radialArrayTool off"); }, 1, 1);
 
     // --- (d) ArrayTool. Records INSIDE the gesture, at `onMouseButtonUp`, so
     //     its `liveEntryNames` is already populated before the tool is dropped

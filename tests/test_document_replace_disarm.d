@@ -5,7 +5,7 @@
 import http_client : testBaseUrl, getJson, postJson;
 import http_command_helpers : commandBody;
 import drag_helpers : engageByPress;
-import std.algorithm : canFind;
+import std.algorithm : canFind, count;
 import std.conv : to;
 import std.file : exists, remove, write;
 import std.format : format;
@@ -150,6 +150,8 @@ unittest {
     armEngagedMirror();
     assert(crossings() == C0,
         "arming the native-load fixture must not itself cross the seam");
+    assert(editUndoLabels() == ["Mirror"],
+        "the released gesture must already own its history row");
 
     cmd("file.load", `{"path":"` ~ path ~ `"}`);
     exposeSurvivingLoadGesture();
@@ -157,8 +159,8 @@ unittest {
     assert(c == kCube,
         "a native .v3d load under a live mesh.mirrorTool gesture must hand "
         ~ "back exactly the loaded document (8v/12e/6f), got " ~ c.toString);
-    assert(!editUndoLabels().canFind("Mirror"),
-        "a native load must not commit the abandoned Mirror edit: "
+    assert(editUndoLabels() == ["Mirror", "file.load"],
+        "a native load must not record a second Mirror edit: "
         ~ editUndoLabels().to!string);
     assert(crossings() == C0 + 1,
         "a successful native load must cross the disarm seam exactly once");
@@ -202,6 +204,8 @@ unittest {
     armEngagedMirror();
     assert(crossings() == C0,
         "arming the interchange fixture must not itself cross the seam");
+    assert(editUndoLabels() == ["Mirror"],
+        "the released gesture must already own its history row");
 
     cmd("file.import.obj", `{"path":"` ~ path ~ `"}`);
     exposeSurvivingLoadGesture();
@@ -209,8 +213,8 @@ unittest {
     assert(c == kCube,
         "an interchange load under a live mesh.mirrorTool gesture must hand "
         ~ "back exactly the imported document (8v/12e/6f), got " ~ c.toString);
-    assert(!editUndoLabels().canFind("Mirror"),
-        "an interchange load must not commit the abandoned Mirror edit: "
+    assert(editUndoLabels().count("Mirror") == 1,
+        "an interchange load must not record a second Mirror edit: "
         ~ editUndoLabels().to!string);
     assert(crossings() == C0 + 1,
         "a successful interchange load must cross the disarm seam exactly once");
@@ -270,6 +274,9 @@ unittest {
         "clearing item selection keeps the latched primary and must keep the tool");
     assert(crossings() == C0,
         "the clear branch kept the primary but crossed the seam");
+    assert(editUndoLabels() == ["Mirror", "Select Layer"],
+        "the released mirror step and clear-selection row must be present before clearing history: "
+        ~ editUndoLabels().to!string);
     cmd("history.clear");
     cmd("layer.select", `{"index":1,"mode":"range"}`);
 
@@ -283,8 +290,8 @@ unittest {
         ~ other.toString);
     assert(crossings() == C0 + 1,
         "the range branch must cross the seam exactly once");
-    assert(editUndoLabels() == ["Mirror", "Select Layer"],
-        "the range branch must record Mirror before Select Layer, got "
+    assert(editUndoLabels() == ["Select Layer"],
+        "the range branch must not record Mirror again after history.clear: "
         ~ editUndoLabels().to!string);
 }
 

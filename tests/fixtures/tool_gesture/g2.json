@@ -14,7 +14,7 @@
     "notes": "collected live by this producer's own runCell/cmd() instrumentation (task 3091): tool.set/tool.attr values are parsed off the wire argstring cmd() actually sent; gesture magnitudes are recorded at their own driving call site"
   },
   "writtenBy": "tests/test_tool_gesture_g2.d",
-  "producedBy": "task-8210-linear-clone",
+  "producedBy": "task-8220-alignment-wave",
   "stand": "per-cell; see each cell's drive in the producer",
   "recipe": "stand -> gesture (/api/play-events) -> drop -> undo -> redo",
   "provenance": {
@@ -22,7 +22,7 @@
     "source": "simulated",
     "reference": "vibe3d-selfgen",
     "method": "self-drive",
-    "captured_utc": "2026-09-28T13:20:48Z",
+    "captured_utc": "2026-09-28T18:49:08Z",
     "harness": "tests/test_tool_gesture_g2.d, driven over /api/play-events against vibe3d's own running instance -- no reference editor involved (recipe: stand -> gesture (/api/play-events) -> drop -> undo -> redo)",
     "task": "1905",
     "notes": "emitted by this producer at capture time (task 3370), from its own `kWrittenBy`/`kRecipe`; `captured_utc` is the wall clock of the capture run itself. Before 3370 the block was a hand insert (task 3140) that any re-capture would have dropped, and `captured_utc` was the commit date of the `producedBy` SHA."
@@ -30,10 +30,10 @@
   "cells": [
     {
       "name": "mirror/centre-box-haul", "tool": "mesh.mirrorTool",
-      "recordSite": "source/tools/alignment/mirror.d MirrorTool.commitMirrorEdit (from deactivate)", "mode": "Plain", "payload": "MeshSessionEdit",
+      "recordSite": "source/tools/alignment/mirror.d MirrorTool.recordTopologyStep (from release)", "mode": "Plain", "payload": "MeshSessionEdit",
       "previewSubject": "the DOCUMENT mesh (live edit from the first press, §24) — both channels see the drag",
-      "liveEntryNames": [],
-      "entryNames": ["mesh.bevel_edit"],
+      "liveEntryNames": ["tool.activate","mesh.bevel_edit"],
+      "entryNames": ["tool.activate","mesh.bevel_edit"],
       "undoDelta": 1,
       "dragUnbatched": 39, "dragDeliveries": 158,
       "dropUnbatched": 0, "dropDeliveries": 0,
@@ -62,10 +62,10 @@
     },
     {
       "name": "radial.array/offset-arrow-haul", "tool": "mesh.radialArrayTool",
-      "recordSite": "source/tools/alignment/radial_array_tool.d RadialArrayTool.commitEdit (from deactivate)", "mode": "Plain", "payload": "MeshSessionEdit",
+      "recordSite": "source/tools/alignment/radial_array_tool.d RadialArrayTool.recordTopologyStep (from release)", "mode": "Plain", "payload": "MeshSessionEdit",
       "previewSubject": "the DOCUMENT mesh (radial_array_tool.d rebuildPreview) — batchless, both channels see it",
-      "liveEntryNames": [],
-      "entryNames": ["mesh.radial_array_edit"],
+      "liveEntryNames": ["tool.activate","mesh.radial_array_edit"],
+      "entryNames": ["tool.activate","mesh.radial_array_edit"],
       "undoDelta": 1,
       "dragUnbatched": 32, "dragDeliveries": 432,
       "dropUnbatched": 0, "dropDeliveries": 0,

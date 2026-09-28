@@ -6422,9 +6422,7 @@ for target, old, new, label in (
 
 mirror_deactivate_effect = prepared_module_source("prepared_tool_effect")
 def mirror_deactivate_producer_gate(tool, effect):
-    # Task 7116: the drop commits what the live edit already wrote — base
-    # snapshot -> current mesh — with no second mirror, no mesh image and no
-    # upload; an untouched tool records nothing.
+    # Task 8220: release owns the history step; drop only installs state.
     start = tool.find("final PreparedDeactivateEffect prepareDeactivate(")
     end = tool.find("override void deactivate()", start)
     body = tool[start:end]
@@ -6435,32 +6433,26 @@ def mirror_deactivate_producer_gate(tool, effect):
         "scope(failure) context.discard();" in body and
         "PreparedMirrorDeactivateOwner.prepare(this)" in body and
         "&layer.meshRef() is mesh" in body and
-        "engaged && liveApplied && history !is null" in body and
-        "cmd.setSnapshots(baseSnap, MeshSnapshot.capture(*mesh), \"Mirror\");" in body and
+        "context.markNoHistoryInstall()" in body and
         "mirrorFacesPlane" not in body and
         "prepareStampedMeshImage" not in body and
         "prepareUpload(" not in body and
         "prepareDestroy(" not in body and
-        "context.prepareGestureCarrierMismatch()" in body and
-        "context.markHistoryInstall()" in body and
-        "context.markNoHistoryInstall()" in body and
+        "context.prepare(" not in body and
+        "context.markHistoryInstall()" not in body and
         "context.prepareMirrorDeactivate(stateOwner)" in body and
-        0 <= body.find("cmd.setSnapshots(baseSnap,") <
-            body.find("context.markHistoryInstall()") <
+        0 <= body.find("context.markNoHistoryInstall()") <
             body.find("context.prepareMirrorDeactivate(stateOwner)") and
-        "PreparedDeactivateKind.Mirror, historyPrepared, ok);" in body)
+        "PreparedDeactivateKind.Mirror, false, ok);" in body)
 if not mirror_deactivate_producer_gate(mirror_activation_tool,
                                        mirror_deactivate_effect):
     fail("Mirror deactivation producer contract drift")
 for target, old, new, label in (
     ("tool", "scope(failure) context.discard();", "", "drop failure cleanup"),
     ("tool", "&layer.meshRef() is mesh", "true", "drop layer identity"),
-    ("tool", "engaged && liveApplied && history !is null", "history !is null", "drop live-edit guard"),
-    ("tool", "cmd.setSnapshots(baseSnap,", "cmd.setSnapshots(MeshSnapshot.capture(*mesh),", "drop base pre-image"),
-    ("tool", "bool historyPrepared;", "bool historyPrepared; mesh.mirrorFacesPlane(baseMask, params_.center, toolNormal(params_), 0, true);", "reintroduce second mirror"),
-    ("tool", "bool historyPrepared;", "bool historyPrepared; context.prepareUpload(null, *mesh);", "reintroduce upload"),
-    ("tool", "context.prepareGestureCarrierMismatch()", "true", "drop carrier diagnostic"),
-    ("tool", "context.markHistoryInstall()", "true", "drop history marker"),
+    ("tool", "if (ok) ok = context.markNoHistoryInstall();", "if (ok) ok = true; mesh.mirrorFacesPlane(baseMask, params_.center, toolNormal(params_), 0, true);", "reintroduce second mirror"),
+    ("tool", "if (ok) ok = context.markNoHistoryInstall();", "if (ok) ok = context.markHistoryInstall();", "reintroduce history install"),
+    ("tool", "if (ok) ok = context.markNoHistoryInstall();", "if (ok) ok = context.prepareUpload(null, *mesh);", "reintroduce upload"),
     ("tool", "context.markNoHistoryInstall()", "true", "drop no-history marker"),
     ("tool", "context.prepareMirrorDeactivate(stateOwner)", "true", "drop final state"),
     ("effect", "Mirror,", "None,", "drop closed effect kind"),
@@ -7224,10 +7216,9 @@ def radial_array_owner_gate(owner, context, tool):
             "final PreparedRadialArrayEffect prepareSessionDeactivate(" in tool and
             tool.count("auto live = mesh;") == 2 and
             "if (live is null) {" in tool and
-            "cmd !is null && cmd.meshPtr() is live" in tool and
-            "MeshSnapshot.capture(*live)" in tool and
-            "else ok = context.prepareGestureCarrierMismatch();" in tool and
-            "historyPrepared ? context.markHistoryInstall()" in tool and
+            "bool ok = context.markNoHistoryInstall();" in tool and
+            "context.markHistoryInstall()" not in tool and
+            "context.prepareGestureCarrierMismatch()" not in tool and
             "PreparedRadialArrayTransitionOwner.deactivation(this)" in tool and
             tool.count("scope(failure) context.discard();") == 3)
 if not radial_array_owner_gate(radial_array_owner, record_context, radial_array_tool):
@@ -7248,11 +7239,10 @@ for target, old, new, label in (
     ("tool", "if (image.clearHaul) toolHandles.clearHaul(); image.clear();", "image.clear();", "drop haul reset"),
     ("context", "e.radialArrayTransition.abort();", "", "drop context abort"),
     ("tool", "PreparedRadialArrayTransitionOwner.activation(this, *live)", "null", "drop activation owner"),
-    ("tool", "historyPrepared ? context.markHistoryInstall()", "false ? context.markHistoryInstall()", "drop history branch"),
+    ("tool", "bool ok = context.markNoHistoryInstall();", "bool ok = context.markHistoryInstall();", "reintroduce drop history"),
     ("tool", "auto live = mesh;", "auto live = cast(Mesh*) null;", "drop cached live subject"),
     ("tool", "if (live is null) {", "if (false) {", "drop null subject refusal"),
-    ("tool", "cmd !is null && cmd.meshPtr() is live", "cmd !is null", "admit wrong-Mesh history carrier"),
-    ("tool", "else ok = context.prepareGestureCarrierMismatch();", "else ok = true;", "drop mismatch diagnostic"),
+    ("tool", "bool ok = context.markNoHistoryInstall();", "bool ok = context.prepareGestureCarrierMismatch();", "reintroduce drop carrier"),
     ("tool", "PreparedRadialArrayTransitionOwner.deactivation(this)", "null", "drop deactivate owner"),
     ("tool", "scope(failure) context.discard();", "", "drop producer failure cleanup"),
 ):

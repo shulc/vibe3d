@@ -282,14 +282,10 @@ version(unittest) unittest {
     auto historyContext = freshContext(history);
     auto historyEffect = historyTool.prepareDeactivate(historyContext,
         historyLayer);
-    assert(historyEffect.resourceAccepted && historyEffect.historyAccepted &&
+    assert(historyEffect.resourceAccepted && !historyEffect.historyAccepted &&
         historyLayer.meshRef().faces.length == 12 && historyContext.validate());
     historyContext.install(); size_t modelDepth, uiDepth;
     history.undoDepthCounts(modelDepth, uiDepth);
-    assert(historyLayer.meshRef().faces.length == 12 && modelDepth == 1 &&
-        uiDepth == 0 && historyContext.installTraceForTest() == [1,40]);
-    // The record's pre-image is the BASE (6 faces), not the live mesh.
-    history.undo();
-    assert(historyLayer.meshRef().faces.length == 6,
-        "the mirror record's pre-image is not the base snapshot");
+    assert(historyLayer.meshRef().faces.length == 12 && modelDepth == 0 &&
+        uiDepth == 0 && historyContext.installTraceForTest() == [8,40]);
 }

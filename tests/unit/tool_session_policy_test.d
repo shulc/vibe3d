@@ -89,9 +89,9 @@ private immutable Row[] kTable = [
     Row("mesh.dragWeld", "DragWeldTool", false, Prov.notPorted, CommandClose.none, CloseProv.notCaptured),
     Row("mesh.edgeSliceTool", "EdgeSliceTool", true, Prov.carried, CommandClose.uiDoor, CloseProv.captured),
     Row("mesh.loopSliceTool", "LoopSliceTool", true, Prov.carried, CommandClose.uiDoor, CloseProv.captured),
-    Row("mesh.mirrorTool", "MirrorTool", false, Prov.notPorted, CommandClose.none, CloseProv.notCaptured),
+    Row("mesh.mirrorTool", "MirrorTool", true, Prov.captured, CommandClose.none, CloseProv.notCaptured),
     Row("mesh.polyInsetTool", "PolyInsetTool", true, Prov.inferred, CommandClose.uiDoor, CloseProv.inferred),
-    Row("mesh.radialArrayTool", "RadialArrayTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
+    Row("mesh.radialArrayTool", "RadialArrayTool", true, Prov.captured, CommandClose.uiDoor, CloseProv.inferred),
     Row("mesh.radialSweepTool", "RadialSweepTool", false, Prov.uncertain, CommandClose.none, CloseProv.notCaptured),
     Row("mesh.reduceTool", "ReductionTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
     Row("mesh.sliceTool", "SliceTool", true, Prov.carried, CommandClose.uiDoor, CloseProv.captured),
@@ -150,6 +150,8 @@ private immutable Row[] kTable = [
 private immutable string[] kActivationRowClasses = [
     "tools.alignment.array_tool.ArrayTool",
     "tools.alignment.clone_tool.CloneTool",
+    "tools.alignment.mirror.MirrorTool",
+    "tools.alignment.radial_array_tool.RadialArrayTool",
     "tools.deform.smooth_shift_tool.SmoothShiftTool",
     "tools.edit.edge_bevel.EdgeBevelTool",
     "tools.edit.edge_extend.EdgeExtendTool",
@@ -292,9 +294,9 @@ unittest { // (1) id -> policy, over every registered id
 /// not ported (the rest have no counterpart or an unsure one), and ids whose
 /// session does not own their gesture steps (H2 not ported). Measured on the
 /// M7 tree; each only falls.
-private enum size_t kActivationRowFalseCeiling = 29;
-private enum size_t kNotPortedCeiling = 25;
-private enum size_t kSessionStepsFalseCeiling = 54;
+private enum size_t kActivationRowFalseCeiling = 27;
+private enum size_t kNotPortedCeiling = 23;
+private enum size_t kSessionStepsFalseCeiling = 52;
 
 unittest { // (2) tool classes that declare the activation row
     string[] declared;
@@ -444,7 +446,12 @@ private immutable StepRow[] kStepTable = [
             ["chain", "edges", "activePoint"]),
     StepRow("mesh.loopSliceTool", OpensAt.arm, false,
             ["positions", "current", "count", "seeds", "armedSelFaces"]),
+    StepRow("mesh.mirrorTool", OpensAt.firstPress, false,
+            ["axis", "center", "invertPolys", "mergeVerts", "distance",
+             "angle", "mode", "left", "up"]),
     StepRow("mesh.polyInsetTool", OpensAt.firstPress, false, ["inset"]),
+    StepRow("mesh.radialArrayTool", OpensAt.firstPress, false,
+            ["count", "axis", "center", "angle", "offset", "weld"]),
     StepRow("mesh.sliceTool", OpensAt.firstPress, false,
             ["startX", "startY", "startZ", "endX", "endY", "endZ", "vectorX", "vectorY",
              "vectorZ", "axis", "gap", "frozenNormal", "haveFrozen", "axisLocked", "hasLine"]),
@@ -544,16 +551,17 @@ unittest { // (4)
     assert(stepsFalse == kSessionStepsFalseCeiling,
            format("M7 ratchet: sessionSteps=false fell to %s ids, ceiling %s: lower the ceiling "
                   ~ "in the same commit", stepsFalse, kSessionStepsFalseCeiling));
-    // Population floors: 16 ids, 104 image names, 3 Action triggers
+    // Population floors: 18 ids, 119 image names, 3 Action triggers
     // on them (chainArm; insertAt, removeCurrent), 1 arm attribute (M3b).
     sort(stepIds);
     assert(stepIds == ["edge.bevel", "edge.extend", "edge.extrude",
                        "mesh.arrayTool", "mesh.clone", "mesh.edgeSliceTool", "mesh.loopSliceTool",
-                       "mesh.polyInsetTool", "mesh.sliceTool", "mesh.smoothShiftTool",
+                       "mesh.mirrorTool", "mesh.polyInsetTool", "mesh.radialArrayTool",
+                       "mesh.sliceTool", "mesh.smoothShiftTool",
                        "mesh.thickenTool", "mesh.vertexBevel", "mesh.vertexExtrude",
                        "poly.bevel", "poly.extrude", "vert.merge"],
            format("M3 step table: sessionSteps ids %s", stepIds));
-    assert(checkedNames == 104, format("M3 step table: %s image names checked, measured 104",
+    assert(checkedNames == 119, format("M3 step table: %s image names checked, measured 119",
                                       checkedNames));
     assert(armAttrs == 1, format("M3b step table: %s arm attributes, measured 1", armAttrs));
     assert(actionNames == 3, format("M3 step table: %s Action params on the session tools, "
@@ -612,7 +620,9 @@ unittest { // (5)
     assert(keep == kKeepAliveClasses,
            format("M4 policy classes: keepAliveOnCancel declared by %s, expected %s",
                   keep, kKeepAliveClasses));
-    assert(carries == ["tools.deform.smooth_shift_tool.SmoothShiftTool",
+    assert(carries == ["tools.alignment.mirror.MirrorTool",
+                       "tools.alignment.radial_array_tool.RadialArrayTool",
+                       "tools.deform.smooth_shift_tool.SmoothShiftTool",
                        "tools.edit.edge_extend.EdgeExtendTool",
                        "tools.edit.poly_extrude.PolyExtrudeTool",
                        "tools.edit.poly_inset_tool.PolyInsetTool"],

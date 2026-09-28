@@ -193,7 +193,7 @@ Vec3 derivedLeft(in MirrorParams p) {
 // task 0230). Since task 7116 it is an ordinary live edit of the DOCUMENT mesh
 // (the CloneTool shape): nothing is evaluated until the first viewport press;
 // from then on every change restores `baseSnap` and mirrors again, drawn by
-// the ordinary mesh path; the drop commits base -> current as one step.
+// the ordinary mesh path. Each release records a ToolSession topology step.
 //
 // v2 (task 0230) = ORIENTED plane (Axis + Angle + Center all live; Left/Up
 // derived readouts; Mode greyed to Axis). Two box handles: `mover.centerBox`
@@ -202,7 +202,7 @@ Vec3 derivedLeft(in MirrorParams p) {
 // `refAxis(axis)`), plus a wire-quad + dashed-axis plane visualization.
 // ---------------------------------------------------------------------------
 class MirrorTool : Tool, PreparedToolDoorClient,
-        PreparedToolParamDoorClient {
+        PreparedToolParamDoorClient, TopologyStepClient {
 private:
     Mesh* delegate() nothrow @nogc meshSrc_;
     @property Mesh* mesh() const nothrow @nogc { return meshSrc_(); }
@@ -240,8 +240,9 @@ private:
     // value (capture C3-m s1-s2). Prevents a mirror when the tool
     // is picked and dropped untouched.
     bool engaged;
+    bool stepOpen;
     // The document mesh currently holds the live copy (a restore from
-    // `baseSnap` is owed on cancel, a commit on drop). A flag, not a version
+    // `baseSnap` is owed on cancel, a step on release). A flag, not a version
     // key: the identity question is "did WE write it", nothing else.
     bool liveApplied;
 
@@ -304,6 +305,7 @@ public:
         baseSnap = MeshSnapshot.capture(*mesh);
         baseMask = buildMaskFromSelection();
         engaged  = false;
+        stepOpen = false;
         liveApplied = false;
         moverDragAxis = -1;
         toolHandles.clearHaul();
@@ -341,7 +343,7 @@ public:
         image.baseline.moveInto(baseSnap);
         baseMask = image.mask; image.mask = null;
         params_.left = image.left; params_.up = image.up;
-        engaged = false; liveApplied = false;
+        engaged = false; liveApplied = false; stepOpen = false;
         moverDragAxis = -1; toolHandles.clearHaul();
         havePreviewCache = false; image.valid = false;
     }
@@ -414,9 +416,8 @@ public:
             nothrow @nogc {
         engaged = false;
     }
-    // The drop commits what the live edit already wrote (the CloneTool
-    // shape): base -> current mesh, no second mirror, no mesh image, no
-    // upload — the ordinary display path uploaded the copy at the press.
+    // The completed gesture already owns its history row. Drop only prepares
+    // the tool state; the ordinary display path uploaded the copy at press.
     final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context,
             Layer layer) {
         if (context is null) return PreparedDeactivateEffect(
@@ -425,23 +426,11 @@ public:
         auto stateOwner = PreparedMirrorDeactivateOwner.prepare(this);
         bool ok = stateOwner !is null && layer !is null &&
             &layer.meshRef() is mesh;
-        bool historyPrepared;
-        if (ok && engaged && liveApplied && history !is null &&
-                gestureFactory !is null) {
-            auto cmd = cast(MeshSessionEdit)gestureFactory();
-            if (cmd !is null) {
-                cmd.setSnapshots(baseSnap, MeshSnapshot.capture(*mesh), "Mirror");
-                historyPrepared = context.prepare(cmd,
-                    PreparedHistoryKind.Plain).accepted;
-                ok = historyPrepared;
-            } else ok = context.prepareGestureCarrierMismatch();
-        }
-        if (ok) ok = historyPrepared ? context.markHistoryInstall()
-                                     : context.markNoHistoryInstall();
+        if (ok) ok = context.markNoHistoryInstall();
         if (ok) ok = context.prepareMirrorDeactivate(stateOwner);
         if (!ok) context.discard();
         return PreparedDeactivateEffect(preparedToolStateOwner,
-            PreparedDeactivateKind.Mirror, historyPrepared, ok);
+            PreparedDeactivateKind.Mirror, false, ok);
     }
     override bool prepareDoorDeactivate(PreparedRecordContext context, Layer layer,
             ulong, ulong) {
@@ -449,8 +438,8 @@ public:
     }
 
     override void deactivate() {
-        if (engaged && liveApplied) commitMirrorEdit(baseSnap);
         engaged = false;
+        stepOpen = false;
         liveApplied = false;
         havePreviewCache = false;
     }
@@ -458,7 +447,7 @@ public:
     // ----- History-coordination hooks (mirror BoxTool's, box.d:1963-1988) --
 
     public override bool hasUncommittedEdit() const {
-        return engaged && liveApplied;
+        return stepOpen && liveApplied;
     }
 
     // The first Ctrl+Z drops the live copy and keeps the tool armed (owner's
@@ -467,7 +456,16 @@ public:
     // by the policy datum `keepAliveOnCancel`, as the create family does
     // (slice M4 moved it off the former capability interface).
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
-        static immutable ToolSessionPolicy policy = { keepAliveOnCancel: true };
+        static immutable ToolSessionPolicy policy = {
+            activationRow: true, sessionSteps: true, historyTopologySteps: true,
+            recordCarriesActivation: true,
+            discardLaterTopologyRedoOnRearm: true,
+            opensAt: OpensAt.firstPress, keepAliveOnCancel: true,
+            imageAttrs: ["axis", "center", "invertPolys", "mergeVerts",
+                "distance", "angle", "mode", "left", "up"],
+            haulAttrs: ["axis", "center", "invertPolys", "mergeVerts",
+                "distance", "angle", "mode", "left", "up"]
+        };
         return policy;
     }
 
@@ -477,6 +475,7 @@ public:
             refreshDisplay(mesh, gpu);
         }
         engaged = false;
+        stepOpen = false;
         liveApplied = false;
         havePreviewCache = false;
     }
@@ -487,8 +486,34 @@ public:
         baseSnap = MeshSnapshot.capture(*mesh);
         baseMask = buildMaskFromSelection();
         engaged = false;
+        stepOpen = false;
         liveApplied = false;
         havePreviewCache = false;
+    }
+
+    override Mesh* topologyStepMesh() { return mesh; }
+    override MeshSnapshot topologyStepBasis() { return baseSnap; }
+    override Command topologyStepCarrier() {
+        return gestureFactory is null ? null : gestureFactory();
+    }
+    override bool recordTopologyStep(Command cmd) {
+        return recordGestureEdit(cmd, GestureRecordMode.Plain);
+    }
+    override string topologyStepLabel() { return "Mirror"; }
+    override void setTopologyDormant(bool dormant) {}
+    override void rebaseTopologyStep(MeshSnapshot basis) { baseSnap = basis; }
+    override void restoreTopologyStep(in AttrImage attrs, MeshSnapshot basis) {
+        baseSnap = basis;
+        restoreRecordedAttrs(attrs);
+        Mesh source;
+        basis.restore(source);
+        baseMask = source.operandFaceMask();
+        engaged = liveApplied = !basis.matches(*mesh);
+        stepOpen = false;
+        moverDragAxis = -1;
+        havePreviewCache = false;
+        toolHandles.clearHaul();
+        refreshDisplay(mesh, gpu);
     }
 
     // ----- Mask (fold #4: interactive commit + applyHeadless must build the
@@ -498,21 +523,6 @@ public:
     private bool[] buildMaskFromSelection() const {
         // L1 funnel (task 0613, S5): selected faces, else every VISIBLE face.
         return mesh.operandFaceMask();
-    }
-
-    // Records through the base seam (task 1905 phase C, group G2). The
-    // trigger is NOT moved: this body is still reached from `deactivate()`,
-    // which is why the cell's `liveEntryNames` is empty and its `entryNames`
-    // only fills at the drop. The edit it closes lives in the
-    // DOCUMENT mesh from the first press, so both change-bus channels see the
-    // drag — see `tests/test_tool_gesture_g2.d`.
-    private void commitMirrorEdit(MeshSnapshot pre) {
-        if (history is null || gestureFactory is null) return;
-        auto cmd = cast(MeshSessionEdit) gestureFactory();
-        if (cmd is null) { noteGestureCarrierMismatch(); return; }
-        auto post = MeshSnapshot.capture(*mesh);
-        cmd.setSnapshots(pre, post, "Mirror");
-        recordGestureEdit(cmd, GestureRecordMode.Plain);
     }
 
     // ----- Params / panel (§1.2-1.3 of the impl plan) -----------------------
@@ -808,6 +818,8 @@ public:
             Vec3 planeN = cameraForwardDir(cachedVp);
             Vec3 hitPt;
             if (rayPlaneIntersect(origin, dir, params_.center, planeN, hitPt)) {
+                sessionStepBegins();
+                stepOpen = true;
                 params_.center = hitPt;
                 engage();
                 evaluate();
@@ -820,6 +832,8 @@ public:
         moverDragAxis = hit;
         moverLastMX   = e.x;
         moverLastMY   = e.y;
+        sessionStepBegins();
+        stepOpen = true;
         engage();
         evaluate();
         return true;
@@ -827,9 +841,11 @@ public:
 
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         if (e.button != SDL_BUTTON_LEFT) return false;
-        if (moverDragAxis < 0) return false;
+        if (!stepOpen) return false;
         moverDragAxis = -1;
+        stepOpen = false;
         toolHandles.clearHaul();
+        sessionStepEnds();
         return true;
     }
 

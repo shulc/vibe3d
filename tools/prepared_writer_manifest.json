@@ -543,14 +543,14 @@
     {
       "aggregate": "MirrorTool",
       "module": "tools.alignment.mirror",
-      "semantic_sha256": "3759bb849f91440ea3db1854cc50994cb82f2b2907512041bec51a2bd12ca4c2",
+      "semantic_sha256": "1bff6e092e6996f2529e0ed0d4ab47acc95877679dd487b9a48760a9774b58e7",
       "signature": "void()",
       "symbol": "activate"
     },
     {
       "aggregate": "MirrorTool",
       "module": "tools.alignment.mirror",
-      "semantic_sha256": "37a0c5df090c7086b888ebfef3169a035a68658548102999fb41c87ffe305664",
+      "semantic_sha256": "af896cc06bf754ce48b84787434fef2f4ca0e044490c60630831757018f08185",
       "signature": "void()",
       "symbol": "deactivate"
     },
@@ -578,7 +578,7 @@
     {
       "aggregate": "RadialArrayTool",
       "module": "tools.alignment.radial_array_tool",
-      "semantic_sha256": "950375fbad4e8a667be3325b18aebd1f9d1d2539851de1ae4db12f7b99b6f2a2",
+      "semantic_sha256": "a565b9b1fab71b4f928820cbca1963a00d51020662904b46bf06c87c4096d1a3",
       "signature": "void()",
       "symbol": "deactivate"
     },
@@ -1285,6 +1285,13 @@
     },
     {
       "admission": "activationRow",
+      "aggregate": "MirrorTool",
+      "module": "tools.alignment.mirror",
+      "signature": "MirrorTool",
+      "symbol": "lifecycleProduct"
+    },
+    {
+      "admission": "activationRow",
       "aggregate": "PolyBevelTool",
       "module": "tools.edit.poly_bevel",
       "signature": "PolyBevelTool",
@@ -1302,6 +1309,13 @@
       "aggregate": "PolyInsetTool",
       "module": "tools.edit.poly_inset_tool",
       "signature": "PolyInsetTool",
+      "symbol": "lifecycleProduct"
+    },
+    {
+      "admission": "activationRow",
+      "aggregate": "RadialArrayTool",
+      "module": "tools.alignment.radial_array_tool",
+      "signature": "RadialArrayTool",
       "symbol": "lifecycleProduct"
     },
     {

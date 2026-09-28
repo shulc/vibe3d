@@ -3,9 +3,8 @@
 //
 // WHAT THIS PINS. `SceneReset.applyImpl` writes the new primitive INTO the
 // surviving layer (`*mesh = makeCube()`) and only fires `onResetTool()` — the
-// tool drop — 24 lines later. For a session tool the drop IS the commit point
-// (slice_tool.d: "this is the ONLY commit point (never mouse-up)"), so the
-// dying gesture ran its kernel against a document that had already replaced
+// tool drop — 24 lines later. At the time of the original capture Mirror
+// committed on drop, so the dying gesture ran its kernel against a replaced
 // the one it was armed on. Measured 2026-08-28 against the shipped binary:
 //
 //     /api/reset                                  -> v=8  e=12 f=6
@@ -26,11 +25,9 @@
 // as the most expensive. Reproducing that needs two stands in one process,
 // which is what blocks 2 and 3 below are.
 //
-// THE FIX HAS TWO LAYERS and this file exercises both (source/tool_disarm.d):
-// the gesture is CANCELLED (so the drop is silent — no kernel run, no history
-// entry), and then the tool is DROPPED, BOTH before the geometry is replaced
-// (so a tool whose cancel does not clear its commit guard still commits into
-// the mesh it was actually built against, never into the replacement).
+// THE FIX HAS TWO LAYERS (source/tool_disarm.d): cancel and drop before the
+// geometry is replaced. Since task 8220 Mirror records at gesture release,
+// its earlier row remains in history; the disarm must add no second row.
 //
 // THE ANTI-VACUITY CONTROL, and it is block 1. Every assertion here is of the
 // form "the foreign edit did NOT land" — which an arm that never engaged
@@ -49,7 +46,7 @@
 
 import http_client : testBaseUrl, getJson, postJson;
 import http_command_helpers : commandBody;
-import std.algorithm : canFind;
+import std.algorithm : canFind, count;
 import std.conv : to;
 import std.json;
 import std.math : fabs;
@@ -210,9 +207,8 @@ unittest {
     // READ THE HISTORY BEFORE CLEARING IT. The obvious spelling of an ordinary
     // stand opening is `reset; history.clear;` and then assert an empty stack —
     // which is a check that CANNOT come out differently: `history.clear` wipes
-    // the stray entry the mutation produces just as thoroughly as the fix
-    // prevents it, so that assertion is green on broken code. Block 2 left the
-    // stack empty, so what stands here is exactly what THIS reset recorded.
+    // a stray entry the mutation produces. Block 2 left one completed Mirror
+    // row, so the reset should append exactly its own row.
     auto recorded = editUndoLabels();
     cmd("history.clear");
 
@@ -228,13 +224,10 @@ unittest {
         ~ "source/tool_disarm.d — the tool must be cancelled and dropped "
         ~ "BEFORE the document is replaced, not 24 lines after.");
 
-    assert(recorded == ["Reset to "],
+    assert(recorded == ["Mirror", "Reset to "],
         "CROSS-STAND CONTAMINATION: this stand's opening reset must record "
-        ~ "ONLY itself, but the stack it left is " ~ recorded.to!string
-        ~ ". A \"Mirror\" entry here is the PREVIOUS stand's abandoned gesture, "
-        ~ "committed and recorded by the very reset that was supposed to "
-        ~ "discard it — and it is filed UNDER the reset, so a single undo "
-        ~ "would not even reveal it.");
+        ~ "only its own row after the already released Mirror step, but the "
+        ~ "stack it left is " ~ recorded.to!string ~ ".");
 }
 
 // ---------------------------------------------------------------------------
@@ -255,10 +248,9 @@ unittest {
         ~ "plain cube (" ~ kCube.toString ~ "), got " ~ c.toString
         ~ " — the abandoned gesture committed into the scene the reset had "
         ~ "just built.");
-    assert(editUndoLabels() == ["Reset to "],
-        "a reset under a live gesture must record ONLY itself; got "
-        ~ editUndoLabels().to!string ~ ". A \"Mirror\" entry here is an undo step "
-        ~ "for an edit the user never confirmed, filed underneath the reset.");
+    assert(editUndoLabels() == ["Mirror", "Reset to "],
+        "a reset must add only its own row after the released Mirror step; got "
+        ~ editUndoLabels().to!string);
 
     // …and the tool really is gone, not merely silent: `tool.attr` names the
     // active tool in its refusal, so this reads the app's own answer rather
@@ -292,8 +284,8 @@ unittest {
         ~ "the loaded mesh (8v/8e/2f — two coaxial squares), got "
         ~ c.toString ~ ". The abandoned gesture mirrored the freshly loaded "
         ~ "geometry.");
-    assert(!editUndoLabels().canFind("Mirror"),
-        "a raw load under a live gesture must record no \"Mirror\" entry; got "
+    assert(editUndoLabels().count("Mirror") == 1,
+        "a raw load must not record a second Mirror step; got "
         ~ editUndoLabels().to!string);
 }
 

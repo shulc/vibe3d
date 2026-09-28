@@ -212,7 +212,7 @@ version(unittest) unittest {
         historyContext.validate());
     historyContext.install();
     assert(historyTool.preparedTransitionForTest(false) &&
-        historyContext.installTraceForTest() == [1, 13]);
+        historyContext.installTraceForTest() == [8, 13]);
 
     Mesh foreignHistoryMesh = makeCube();
     historyTool.seedPreparedBuiltTransitionForTest(source);
@@ -223,7 +223,7 @@ version(unittest) unittest {
     assert(historyTool.prepareSessionDeactivate(mismatchContext).accepted &&
         mismatchContext.validate());
     mismatchContext.install();
-    assert(mismatchContext.installTraceForTest() == [11, 8, 13] &&
+    assert(mismatchContext.installTraceForTest() == [8, 13] &&
         historyTool.preparedTransitionForTest(false));
 
     historyTool.seedPreparedBuiltTransitionForTest(source);

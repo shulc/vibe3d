@@ -179,13 +179,22 @@ struct RadialArrayTransitionImage {
 // applyHeadless(); ToolDoApplyCommand wraps it with a snapshot pair for
 // undo (applyHeadless MUST NOT snapshot itself).
 // ---------------------------------------------------------------------------
-class RadialArrayTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient {
+class RadialArrayTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient,
+        TopologyStepClient {
     // A recording command through the UI door closes the live edit first —
     // `Tool.commitOperation`'s in-place default — and the tool stays armed
     // (slice M2; the C1-h-sel-fam law, captured for Edge Extend and Polygon
     // Bevel and inferred for the rest of the in-place family, R20 gap g5).
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
-        static immutable ToolSessionPolicy policy = { commandClose: CommandClose.uiDoor };
+        static immutable ToolSessionPolicy policy = {
+            activationRow: true, commandClose: CommandClose.uiDoor,
+            sessionSteps: true, historyTopologySteps: true,
+            discardLaterTopologyRedoOnRearm: true,
+            recordCarriesActivation: true,
+            opensAt: OpensAt.firstPress,
+            imageAttrs: ["count", "axis", "center", "angle", "offset", "weld"],
+            haulAttrs: ["count", "axis", "center", "angle", "offset", "weld"]
+        };
         return policy;
     }
 
@@ -209,6 +218,7 @@ private:
     // Interactive session state.
     bool          active;
     bool          built;
+    bool          gestureOpen;
     MeshSnapshot  before;
     Viewport      cachedVp;
 
@@ -391,15 +401,16 @@ public:
     // above (24/"Y"/origin/0/0/0) straight from the field initializers.
     private void reinitSession() {
         built     = false;
+        gestureOpen = false;
         dragPart  = -1;
         before    = MeshSnapshot.capture(*mesh);
         toolHandles.clearHaul();
     }
 
     override void deactivate() {
-        if (active && built) commitEdit();
         active     = false;
         built      = false;
+        gestureOpen = false;
         dragPart   = -1;
         toolHandles.clearHaul();
     }
@@ -436,19 +447,7 @@ public:
             return PreparedRadialArrayEffect(preparedToolStateOwner,
                 PreparedRadialArrayKind.Deactivate, false);
         }
-        bool ok = true, historyPrepared;
-        if (active && built && history !is null && gestureFactory !is null &&
-            before.filled) {
-            auto cmd = cast(MeshSessionEdit) gestureFactory();
-            if (cmd !is null && cmd.meshPtr() is live) {
-                cmd.setSnapshots(before, MeshSnapshot.capture(*live), "Radial Array");
-                historyPrepared = context.prepare(cmd,
-                    PreparedHistoryKind.Plain).accepted;
-                ok = historyPrepared;
-            } else ok = context.prepareGestureCarrierMismatch();
-        }
-        if (ok) ok = historyPrepared ? context.markHistoryInstall()
-                                     : context.markNoHistoryInstall();
+        bool ok = context.markNoHistoryInstall();
         auto transition = ok
             ? PreparedRadialArrayTransitionOwner.deactivation(this) : null;
         ok = transition !is null &&
@@ -462,7 +461,9 @@ public:
         return prepareSessionDeactivate(context).accepted;
     }
 
-    public override bool hasUncommittedEdit() const { return active && built; }
+    public override bool hasUncommittedEdit() const {
+        return active && gestureOpen && built;
+    }
 
     public override void cancelUncommittedEdit() {
         cancelLiveEdit();
@@ -473,14 +474,37 @@ public:
         reinitSession();
     }
 
-    // Framework "apply and continue" (task 0461, Shift+click): commit the live
-    // edit as its own undo entry, keeping the tool active; the driver follows
-    // with resyncSession() to re-arm in place. Mirrors deactivate()'s commit
-    // guard minus the teardown.
+    // Completed gestures have already recorded their topology steps. The
+    // framework's apply-and-continue door has no pending edit to commit.
     public override bool commitUncommittedEdit() {
-        if (!hasUncommittedEdit()) return false;
-        commitEdit();
+        return false;
+    }
+
+    override bool commitOperation() {
+        if (!active) return false;
+        before = MeshSnapshot.capture(*mesh);
+        built = gestureOpen = false;
         return true;
+    }
+
+    override Mesh* topologyStepMesh() { return mesh; }
+    override MeshSnapshot topologyStepBasis() { return before; }
+    override Command topologyStepCarrier() {
+        return gestureFactory is null ? null : gestureFactory();
+    }
+    override bool recordTopologyStep(Command cmd) {
+        return recordGestureEdit(cmd, GestureRecordMode.Plain);
+    }
+    override string topologyStepLabel() { return "Radial Array"; }
+    override void setTopologyDormant(bool dormant) {}
+    override void rebaseTopologyStep(MeshSnapshot basis) { before = basis; }
+    override void restoreTopologyStep(in AttrImage attrs, MeshSnapshot basis) {
+        before = basis;
+        restoreRecordedAttrs(attrs);
+        built = gestureOpen = false;
+        dragPart = -1;
+        toolHandles.clearHaul();
+        refreshCaches();
     }
 
     override void onParamChanged(string pname) {
@@ -539,6 +563,8 @@ public:
         lastMY = e.y;
 
         if (part == PART_OFFSET || part == PART_ANGLE) {
+            sessionStepBegins();
+            gestureOpen = true;
             dragPart = part;
             toolHandles.setHaul(part);
             return true;
@@ -563,6 +589,8 @@ public:
         // exact inverse of the `pos()` the same object uses to place the
         // handles in `draw()`, so the point the user clicked and the point the
         // copies turn about are one point.
+        sessionStepBegins();
+        gestureOpen = true;
         center_ = OverlaySpace.ofPrimary().toLocalPos(
                       screenToConstructionPlane(cast(float)e.x, cast(float)e.y,
                                                 cachedVp,
@@ -659,10 +687,13 @@ public:
     }
 
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
-        if (!active || dragPart < 0) return false;
+        if (!active || !gestureOpen) return false;
         if (e.button != SDL_BUTTON_LEFT) return false;
+        gestureOpen = false;
         dragPart = -1;
         toolHandles.clearHaul();
+        sessionStepEnds();
+        built = false;
         return true;
     }
 
@@ -772,16 +803,6 @@ private:
         refreshCaches();
     }
 
-    void commitEdit() {
-        if (history is null || gestureFactory is null) return;
-        if (!before.filled) return;
-        auto cmd = cast(MeshSessionEdit) gestureFactory();
-        if (cmd is null) { noteGestureCarrierMismatch(); return; }
-        auto post = MeshSnapshot.capture(*mesh);
-        cmd.setSnapshots(before, post, "Radial Array");
-        recordGestureEdit(cmd, GestureRecordMode.Plain);
-    }
-
     void refreshCaches() {
         refreshDisplay(mesh, gpu);
     }
@@ -792,6 +813,7 @@ private:
         angle_   = 0.0f;
         offset_  = 0.0f;
         built    = false;
+        gestureOpen = false;
         dragPart = -1;
         toolHandles.clearHaul();
     }
