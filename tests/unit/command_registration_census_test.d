@@ -29,8 +29,8 @@
 // source/commands/ exist and are out of scope (BoxLiveEditCommand in
 // source/tools/create/box.d, TopologyAdjustmentEdit, CompositeCommand,
 // SelfTestFaultCommand, plus test-local seams such as registry.d's
-// `_RegTestCmd`; follow-up 8131). A class built by a string mixin — `mixin("…")`
-// or `mixin(q{…})`, since `blankNonCode` blanks token strings as literals — and
+// `_RegTestCmd`; follow-up 8131). A class built by a string mixin — over a
+// string literal or a `q{…}` token string, which `blankNonCode` blanks — and
 // an ANONYMOUS class (`new class Base {…}`, e.g. source/ui/availability.d) are
 // seen by no scanner here; a class whose base is declared outside the scanned
 // tree reddens the base-resolution assert; a registration that never spells
