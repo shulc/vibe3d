@@ -3,7 +3,7 @@
 // private symbol stayed behind -- see the task for the count.
 module tests.unit.mesh_test;
 
-import std.math : sqrt;
+import std.math : sqrt, abs;
 import std.parallelism : parallel;
 import std.range : iota;
 import math;
@@ -5957,6 +5957,55 @@ unittest // triangulateFacesByMask (site 6): each triangle split off a masked
                  ~ "source face 1's part via faceOrigin (got %d)",
                    fi, m.facePart[fi]));
     }
+}
+
+unittest // reference editor poly.clone / gen.linear: asymmetric five-vertex capture,
+         // num=3, scaleX=120%, offset=(.31,-2.05,-.21). The first copied
+         // vertex distinguishes a bounding-box pivot from a centroid, and
+         // the later copies distinguish per-step scale from a flat 120%.
+{
+    Mesh rig() {
+        Mesh result;
+        foreach (p; [Vec3(-1.4f, -0.5f, 0), Vec3(-0.35f, -1.05f, 0),
+                     Vec3(0.95f, -0.7f, 0), Vec3(1.25f, 0.55f, 0),
+                     Vec3(-0.45f, 1.15f, 0)])
+            result.addVertex(p);
+        result.addFace([0u, 1u, 2u, 3u, 4u]);
+        return result;
+    }
+    Mesh m = rig();
+    bool[] mask = [true];
+    const n = m.arrayFacesGrid(mask, 4, 1, 1,
+        Vec3(0.31f, -2.05f, -0.21f), Vec3(0, 0, 0),
+        Vec3(1.2f, 1, 1), Vec3(0, 0, 0),
+        false, false, false, false, 0, true);
+    assert(n == 3 && m.vertices.length == 20 && m.faces.length == 4,
+        "linear generator must make exactly three copies");
+    foreach (i, expected; [-1.355f, -1.363f, -1.4346f]) {
+        const p = m.vertices[5 * (i + 1)];
+        assert(abs(p.x - expected) < 1e-4f &&
+               abs(p.y - (-0.5f - 2.05f * (i + 1))) < 1e-4f &&
+               abs(p.z - (-0.21f * (i + 1))) < 1e-4f,
+            "linear clone position differs from captured reference editor sequence");
+    }
+
+    Mesh scaleY = rig();
+    scaleY.arrayFacesGrid(mask, 4, 1, 1,
+        Vec3(0.31f, -2.05f, -0.21f), Vec3(0, 0, 0),
+        Vec3(1, 1.2f, 1), Vec3(0, 0, 0),
+        false, false, false, false, 0, true);
+    foreach (i, expected; [-2.44f, -4.358f, -6.2496f])
+        assert(abs(scaleY.vertices[5 * (i + 1)].y - expected) < 1e-4f,
+            "linear Y scale must use the reference editor's lower-center pivot");
+
+    Mesh rotateZ = rig();
+    rotateZ.arrayFacesGrid(mask, 4, 1, 1,
+        Vec3(0.31f, -2.05f, -0.21f), Vec3(0, 0, 0),
+        Vec3(1, 1, 1), Vec3(0, 0, 30),
+        false, false, false, false, 0, true);
+    foreach (i, expected; [-1.1874837f, -0.593814f, 0.305f])
+        assert(abs(rotateZ.vertices[5 * (i + 1)].x - expected) < 1e-4f,
+            "linear Z rotation must grow 30 degrees per copy around the lower-center pivot");
 }
 
 unittest // arrayFacesGrid (site 7, the Merge-Vertices DEDUP block only):

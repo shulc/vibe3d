@@ -14,7 +14,7 @@
     "notes": "collected live by this producer's own runCell/cmd() instrumentation (task 3091): tool.set/tool.attr values are parsed off the wire argstring cmd() actually sent; gesture magnitudes are recorded at their own driving call site"
   },
   "writtenBy": "tests/test_tool_gesture_g2.d",
-  "producedBy": "unknown",
+  "producedBy": "task-8210-linear-clone",
   "stand": "per-cell; see each cell's drive in the producer",
   "recipe": "stand -> gesture (/api/play-events) -> drop -> undo -> redo",
   "provenance": {
@@ -22,7 +22,7 @@
     "source": "simulated",
     "reference": "vibe3d-selfgen",
     "method": "self-drive",
-    "captured_utc": "2026-09-28T10:00:48Z",
+    "captured_utc": "2026-09-28T13:20:48Z",
     "harness": "tests/test_tool_gesture_g2.d, driven over /api/play-events against vibe3d's own running instance -- no reference editor involved (recipe: stand -> gesture (/api/play-events) -> drop -> undo -> redo)",
     "task": "1905",
     "notes": "emitted by this producer at capture time (task 3370), from its own `kWrittenBy`/`kRecipe`; `captured_utc` is the wall clock of the capture run itself. Before 3370 the block was a hand insert (task 3140) that any re-capture would have dropped, and `captured_utc` was the commit date of the `producedBy` SHA."
@@ -94,11 +94,11 @@
     },
     {
       "name": "clone/centre-haul", "tool": "mesh.clone",
-      "recordSite": "source/tools/alignment/clone_tool.d CloneTool.commitEdit (from onMouseButtonUp)", "mode": "Plain", "payload": "MeshSessionEdit",
+      "recordSite": "source/tools/alignment/clone_tool.d CloneTool.recordTopologyStep (ToolSession at onMouseButtonUp)", "mode": "Plain", "payload": "MeshSessionEdit",
       "previewSubject": "the DOCUMENT mesh (clone_tool.d rebuildPreview) — batchless, both channels see it",
-      "liveEntryNames": ["mesh.clone_edit"],
-      "entryNames": ["mesh.clone_edit"],
-      "undoDelta": 1,
+      "liveEntryNames": ["tool.activate","mesh.clone_edit"],
+      "entryNames": ["tool.activate","mesh.clone_edit"],
+      "undoDelta": 2,
       "dragUnbatched": 24, "dragDeliveries": 60,
       "dropUnbatched": 0, "dropDeliveries": 0,
       "undoResidual": [],

@@ -376,7 +376,7 @@ param_hooks = [r for r in CURRENT_WRITERS["hooks"]
                if r["symbol"] == "onParamChanged" and r["module"] != "tool"]
 relevant_roots = [r for r in CURRENT_WRITERS["hooks"]
                   if r["symbol"] in ("activate", "update", "onParamChanged")]
-if (len(deactivations), len(param_hooks), len(relevant_roots)) != (35, 25, 70):
+if (len(deactivations), len(param_hooks), len(relevant_roots)) != (35, 26, 71):
     fail("P1.0b.0 reviewed writer cardinality changed")
 
 # P1.0b.1 exact conversion/defer ledger. The frozen writer rows remain the
@@ -462,6 +462,7 @@ B5O_PREPARED_LEGACY = {
     ("tools.transform.xfrm_transform", "XfrmTransformTool", "activate"),
 }
 B5P_PREPARED_LEGACY = {
+    ("tools.alignment.clone_tool", "CloneTool", "onParamChanged"),
     ("tools.slice.slice_tool", "SliceTool", "deactivate"),
     ("tools.edit.vertex_extrude_tool", "VertexExtrudeTool", "onParamChanged"),
     ("tools.edit.vertex_bevel_tool", "VertexBevelTool", "onParamChanged"),
@@ -637,7 +638,7 @@ b3d_sources = {module: (ROOT / "source" /
     (module.replace(".", "/") + ".d")).read_text() for module in b3d_modules}
 B3D_PRODUCER_DIGESTS = {
     "tools/alignment/array_tool":"1363ac0ac98e1f38dcd9d470e34a644d3b0388d9026569714f662326028c1404",
-    "tools/alignment/clone_tool":"3e0d910456a613f77df81476010005d5fc7d229bec4197175a6fe5fe528688d0",
+    "tools/alignment/clone_tool":"bac8ed6a847636082d473f2424fc64607e7a87bd64495c0dbaaeb17ff74c2798",
     "tools/alignment/radial_array_tool":"65148a02ac2b032c5ee0fb890f009775feb9d3a96c9c2550bb3dbbba6dcb8a85",
     "tools/deform/magnet":"1191f71bae9f8cb4dc7fed605de2172db7e268f3ba9e9c62c0db2668cdcbdddf",
     "tools/deform/smooth_shift_tool":"da7b3298401dfebc0e77082b51b33a5dde9dc5bf000f1b1ff48b0e4c20f11e69",

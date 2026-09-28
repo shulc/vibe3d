@@ -1,63 +1,45 @@
 module tools.alignment.clone_tool;
+
 import display_state : DrawPlan;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
-    PreparedPrivateStateToolDoorClient;
+    PreparedToolParamDoorClient, PreparedPrivateStateToolDoorClient;
 import prepared_private_state : PreparedPrivateStateOwner;
-import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
+import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind,
+    PreparedDeactivateEffect, PreparedDeactivateKind;
 import document : Layer;
-import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
-import command_history : PreparedHistoryKind;
 
 import bindbc.sdl;
 import operator : VectorStack;
-
 import tool;
+import command : Command;
 import mesh;
 import mesh_gpu : GpuMesh;
 import math;
 import editmode : EditMode;
 import drag : planeDragDelta;
 import overlay_space : OverlaySpace;
+import params : Param, IntEnumEntry;
 import shader : Shader;
-import command_history : CommandHistory;
-import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
 
-
-// ---------------------------------------------------------------------------
-// CloneTool — interactive drag-clone (factory id `mesh.clone`).
-//
-// One drag gesture = one copy of the selected faces offset by the screen drag
-// delta, recorded as a single undo entry (MeshSessionEdit before/after pair).
-//
-// Behavior:
-//   - On activate: capture a baseline MeshSnapshot from the current mesh.
-//   - LMB drag start: require a non-empty face selection (no-op otherwise).
-//     Record the anchor pixel and the selection centroid in world space.
-//   - Each motion frame: restore the baseline → arrayFaces(mask,2,delta,0)
-//     where delta is the ABSOLUTE world displacement from the anchor to the
-//     current mouse position (never accumulate across frames).
-//   - LMB release: commit one MeshSessionEdit entry; recapture baseline from
-//     the post-clone state so the next drag is independent.
-//   - Deactivate: if a preview is live, commit first.
-//   - RMB: cancel live preview (restore baseline without recording).
-//
-// Gated to Polygons edit mode (duplicateSelectedFaces / arrayFaces are
-// face-selection operations; non-Polygons drag is a no-op).
-//
-// Drag→offset feel is a vibe3d-divergence (no reference tool-model exists;
-// we use our own planeDragDelta on the most-facing screen plane).  The
-// analytic success bar is: original + exactly one offset copy; original
-// verts byte-unchanged; single undo entry per gesture.
-// ---------------------------------------------------------------------------
-class CloneTool : Tool, PreparedToolDoorClient {
-    // A recording command through the UI door closes the live edit first —
-    // `Tool.commitOperation`'s in-place default — and the tool stays armed
-    // (slice M2; the C1-h-sel-fam law, captured for Edge Extend and Polygon
-    // Bevel and inferred for the rest of the in-place family, R20 gap g5).
+// the reference editor's poly.clone is a Linear Generator and a Clone Effector. `num` is the
+// number of ADDED copies; all copies advance by the same 3-D offset. A second
+// haul changes that offset and regenerates from the original source cage.
+class CloneTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient,
+        TopologyStepClient {
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
-        static immutable ToolSessionPolicy policy = { commandClose: CommandClose.uiDoor };
+        static immutable ToolSessionPolicy policy = {
+            activationRow: true, commandClose: CommandClose.uiDoor,
+            sessionSteps: true, historyTopologySteps: true,
+            opensAt: OpensAt.firstPress,
+            imageAttrs: ["num", "offX", "offY", "offZ", "sclX", "sclY", "sclZ",
+                "angP", "angH", "angB", "between", "snap", "snapAngle",
+                "replace", "flip", "merge", "dist", "source", "item"],
+            haulAttrs: ["num", "offX", "offY", "offZ", "sclX", "sclY", "sclZ",
+                "angP", "angH", "angB", "between", "snap", "snapAngle",
+                "replace", "flip", "merge", "dist", "source", "item"]
+        };
         return policy;
     }
 
@@ -66,49 +48,84 @@ class CloneTool : Tool, PreparedToolDoorClient {
 private:
     Mesh* delegate() meshSrc_;
     @property Mesh* mesh() const { return meshSrc_(); }
+    GpuMesh* gpu;
+    EditMode* editMode;
 
-    GpuMesh*         gpu;
-    EditMode*        editMode;
+    enum SourceMode { Active, Specific, Inactive, Random, Preset }
+    static immutable IntEnumEntry[5] sourceTable = [
+        IntEnumEntry(cast(int)SourceMode.Active, "active", "Active Meshes"),
+        IntEnumEntry(cast(int)SourceMode.Specific, "specific", "Specific Mesh"),
+        IntEnumEntry(cast(int)SourceMode.Inactive, "inactive", "All BG"),
+        IntEnumEntry(cast(int)SourceMode.Random, "random", "Random BG"),
+        IntEnumEntry(cast(int)SourceMode.Preset, "preset", "Preset Shape"),
+    ];
 
+    int num_ = 1;
+    float offX_ = 0, offY_ = 0, offZ_ = 0;
+    float sclX_ = 100, sclY_ = 100, sclZ_ = 100;
+    float angP_ = 0, angH_ = 0, angB_ = 0;
+    bool between_, snap_ = true;
+    float snapAngle_ = 45;
+    bool replace_, flip_, merge_;
+    float dist_ = 0;
+    SourceMode source_ = SourceMode.Active;
+    string item_ = "";
 
-    bool         active;
-    bool         built;       // true when a preview is baked into the live mesh
-    bool         dragging;    // true between LMB-down and LMB-up
-    MeshSnapshot before;      // session baseline (recaptured after each commit)
-
-    int  anchorMX, anchorMY;  // drag-start pixel coords
-    // The drag anchor, in the space the geometry is DRAWN in — the selection
-    // centroid lifted through the item matrix (task 0645). It used to be the
-    // raw LOCAL centroid under this same name, which is why the plane the drag
-    // resolved on sat where the geometry would be at the identity pose.
-    Vec3 anchorWorld;
-    // The item space, FROZEN at the press with the anchor. `planeDragDelta`'s
-    // law is "one matrix for the whole gesture"; the conversion of its answer
-    // back into layer coordinates has to be frozen with it or the two halves
-    // of the same drag could read different layers.
+    bool active, built, dragging;
+    MeshSnapshot before;
+    int anchorMX, anchorMY;
+    Vec3 anchorWorld, dragBaseOffset;
     OverlaySpace dragSpace;
-    Viewport cachedVp;         // last viewport from draw(), used by drag math
+    Viewport cachedVp;
 
 public:
     this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode) {
-        this.meshSrc_  = meshSrc;
-        this.gpu       = gpu;
-        this.editMode  = editMode;
+        this.meshSrc_ = meshSrc;
+        this.gpu = gpu;
+        this.editMode = editMode;
     }
 
     override string name() const { return "Clone"; }
-
     override EditMode[] supportedModes() const { return [EditMode.Polygons]; }
 
+    override Param[] params() {
+        return [
+            Param.int_("num", "Number of Clones", &num_, 1).min(1).max(255).enforceBounds(),
+            Param.float_("offX", "Offset X", &offX_, 0),
+            Param.float_("offY", "Offset Y", &offY_, 0),
+            Param.float_("offZ", "Offset Z", &offZ_, 0),
+            Param.float_("sclX", "Scale X", &sclX_, 100).min(0),
+            Param.float_("sclY", "Scale Y", &sclY_, 100).min(0),
+            Param.float_("sclZ", "Scale Z", &sclZ_, 100).min(0),
+            Param.float_("angP", "Rotate X", &angP_, 0).angle(),
+            Param.float_("angH", "Rotate Y", &angH_, 0).angle(),
+            Param.float_("angB", "Rotate Z", &angB_, 0).angle(),
+            Param.bool_("between", "Between", &between_, false),
+            Param.bool_("snap", "Angle Snap", &snap_, true),
+            Param.float_("snapAngle", "Angle", &snapAngle_, 45).angle().min(0),
+            Param.bool_("replace", "Replace Source", &replace_, false),
+            Param.bool_("flip", "Invert Polygons", &flip_, false),
+            Param.bool_("merge", "Merge Vertices", &merge_, false),
+            Param.float_("dist", "Distance", &dist_, 0).min(0),
+            Param.intEnum_("source", "Source", cast(int*)&source_,
+                           sourceTable, cast(int)SourceMode.Active),
+            Param.string_("item", "Mesh Item", &item_, ""),
+        ];
+    }
+    override bool paramEnabled(string pname) const {
+        if (pname == "dist") return merge_;
+        if (pname == "item") return source_ == SourceMode.Specific;
+        if (pname == "snapAngle") return snap_;
+        return true;
+    }
+
     override void activate() {
-        active   = true;
-        built    = false;
-        dragging = false;
-        before   = MeshSnapshot.capture(*mesh);
+        active = true; built = dragging = false;
+        before = MeshSnapshot.capture(*mesh);
     }
     final MeshSnapshot prepareActivationBaseline() { return MeshSnapshot.capture(*mesh); }
     final void installPreparedActivation(ref MeshSnapshot image) nothrow @nogc {
-        active = true; built = false; dragging = false; image.moveInto(before);
+        active = true; built = dragging = false; image.moveInto(before);
     }
     final PreparedSessionActivateEffect prepareActivate(PreparedRecordContext context,
             PreparedPrivateStateOwner owner) {
@@ -125,157 +142,128 @@ public:
         return active && !built && !dragging && before.filled;
     }
 
-    override void deactivate() {
-        if (active && built) commitEdit();
-        active   = false;
-        built    = false;
-        dragging = false;
-    }
-
-    override bool hasUncommittedEdit() const {
-        return active && built;
-    }
-
-    override void cancelUncommittedEdit() {
-        cancelLiveEdit();
-    }
-
+    override void deactivate() { active = built = dragging = false; }
+    override bool hasUncommittedEdit() const { return active && dragging && built; }
+    override void cancelUncommittedEdit() { cancelLiveEdit(); }
     override void resyncSession() {
         if (!active) return;
         if (built && before.filled) before.restore(*mesh);
-        built    = false;
-        dragging = false;
-        before   = MeshSnapshot.capture(*mesh);
+        built = dragging = false;
+        before = MeshSnapshot.capture(*mesh);
         refreshCaches();
     }
-
-    // Framework "apply and continue" (task 0461, Shift+click): commit the live
-    // edit as its own undo entry, keeping the tool active; the driver follows
-    // with resyncSession() to re-arm in place. Mirrors deactivate()'s commit
-    // guard minus the teardown.
-    override bool commitUncommittedEdit() {
-        if (!hasUncommittedEdit()) return false;
-        commitEdit();
+    override bool commitUncommittedEdit() { return false; }
+    override bool commitOperation() {
+        if (!active) return false;
+        before = MeshSnapshot.capture(*mesh);
+        built = dragging = false;
         return true;
     }
 
+    override Mesh* topologyStepMesh() { return mesh; }
+    override MeshSnapshot topologyStepBasis() { return before; }
+    override Command topologyStepCarrier() {
+        return gestureFactory is null ? null : gestureFactory();
+    }
+    override bool recordTopologyStep(Command cmd) {
+        return recordGestureEdit(cmd, GestureRecordMode.Plain);
+    }
+    override string topologyStepLabel() { return "Clone"; }
+    override void setTopologyDormant(bool dormant) {}
+    override void rebaseTopologyStep(MeshSnapshot basis) { before = basis; }
+    override void restoreTopologyStep(in AttrImage attrs, MeshSnapshot basis) {
+        before = basis;
+        restoreRecordedAttrs(attrs);
+        built = dragging = false;
+        refreshCaches();
+    }
+
+    override void onParamChanged(string pname) {
+        if (interactiveParamEdit && active) rebuildPreview();
+    }
+    // Prepared activation injects scripted/sticky values before the first
+    // press. Those writes only change the parameter image; there is no mesh
+    // preview to publish until an interactive edit or a viewport gesture.
+    override bool prepareDoorParamChanged(string, PreparedRecordContext context,
+            Layer, ulong, ulong) {
+        return context !is null && context.markNoHistoryInstall();
+    }
     override void evaluate() {}
+    override bool applyHeadless() {
+        if (mesh.faces.length == 0) return false;
+        if (built && before.filled) before.restore(*mesh);
+        auto mask = mesh.operandFaceMask();
+        size_t n = build(mask);
+        if (n == 0 && !replace_) return false;
+        gpu.upload(*mesh);
+        return true;
+    }
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         if (!active) return false;
-        if (e.button == SDL_BUTTON_RIGHT) { cancelLiveEdit(); return true; }
-        if (e.button != SDL_BUTTON_LEFT)  return false;
-
-        SDL_Keymod mods = SDL_GetModState();
-        if (mods & (KMOD_ALT | KMOD_SHIFT)) return false;
-
-        // Gated to Polygons mode.
-        if (*editMode != EditMode.Polygons) return false;
-
-        // Require a non-empty face selection — drag with nothing selected is
-        // a deliberate no-op (must not silently clone the whole mesh).
-        if (!mesh.hasAnySelectedFaces()) return false;
-
-        anchorMX    = e.x;
-        anchorMY    = e.y;
-        dragSpace   = OverlaySpace.ofPrimary();
-        anchorWorld = dragSpace.pos(mesh.selectionCentroidFaces());
-        dragging    = true;
-        return true;
-    }
-
-    override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
-        if (!active || !dragging) return false;
+        if (e.button == SDL_BUTTON_RIGHT) { closeOwnOperation(false); return true; }
         if (e.button != SDL_BUTTON_LEFT) return false;
-        dragging = false;
-        if (built) {
-            commitEdit();
-            built  = false;
-            before = MeshSnapshot.capture(*mesh);  // new baseline for next drag
-        }
+        if (SDL_GetModState() & (KMOD_ALT | KMOD_SHIFT)) return false;
+        if (*editMode != EditMode.Polygons || !mesh.hasAnySelectedFaces()) return false;
+        sessionStepBegins();
+        anchorMX = e.x; anchorMY = e.y;
+        dragSpace = OverlaySpace.ofPrimary();
+        anchorWorld = dragSpace.pos(mesh.selectionCentroidFaces());
+        dragBaseOffset = offsetVec();
+        dragging = true;
         return true;
     }
-
+    override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        if (!active || !dragging || e.button != SDL_BUTTON_LEFT) return false;
+        dragging = false;
+        sessionStepEnds();
+        built = false;
+        return true;
+    }
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
         if (!active || !dragging) return false;
         bool skip;
-        // ABSOLUTE delta from drag-start anchor to current pixel, projected
-        // onto the most-facing screen plane (dragAxis=3).
         Vec3 delta = planeDragDelta(e.x, e.y, anchorMX, anchorMY,
                                     3, anchorWorld, cachedVp, skip);
-        // `planeDragDelta` answers in WORLD; the copy offset it feeds is added
-        // to LAYER-space vertices, so it converts back (task 0645). A full
-        // linear inverse — a displacement has no direction to elect, so unlike
-        // the axis hauls there is no gain question here.
-        if (!skip) rebuildPreview(dragSpace.toLocalDelta(delta));
+        if (!skip) {
+            Vec3 local = dragSpace.toLocalDelta(delta);
+            offX_ = dragBaseOffset.x + local.x;
+            offY_ = dragBaseOffset.y + local.y;
+            offZ_ = dragBaseOffset.z + local.z;
+            rebuildPreview();
+        }
         return true;
     }
-
     override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts,
                        const ref DrawPlan plan, bool visualOnly = false) {
         cachedVp = vp;
-        // No gizmo arrows — the drag trace is the visual feedback.
     }
 
 private:
-    /// Restore baseline → place one offset copy at `delta`.
-    /// Never accumulates: every frame is computed off the pristine `before`.
-    void rebuildPreview(Vec3 delta) {
-        if (!active) return;
+    Vec3 offsetVec() const { return Vec3(offX_, offY_, offZ_); }
+    size_t build(in bool[] mask) {
+        return mesh.arrayFacesGrid(mask, num_ + 1, 1, 1, offsetVec(), Vec3(0, 0, 0),
+            Vec3(sclX_ / 100, sclY_ / 100, sclZ_ / 100),
+            Vec3(angP_, angH_, angB_), between_, replace_, flip_, merge_, dist_, true);
+    }
+    void rebuildPreview() {
+        if (!active || !before.filled) return;
         before.restore(*mesh);
-
-        // Zero delta → no visible copy yet (skip to avoid a coincident face
-        // at frame 0, though weld=0 would keep it; cosmetic only).
-        if (delta.x == 0.0f && delta.y == 0.0f && delta.z == 0.0f) {
-            built = false;
-            refreshCaches();
-            return;
-        }
-
-        // Build mask from the restored face selection.
-        bool[] mask = new bool[](mesh.faces.length);
-        bool any = false;
-        foreach (i, b; mesh.selectedFaces) {
-            if (b) { mask[i] = true; any = true; }
-        }
-        if (!any) { built = false; refreshCaches(); return; }
-
-        size_t n = mesh.arrayFaces(mask, 2, delta, 0.0f);  // weld=0 PINNED
-        built = (n != 0);
+        auto mask = mesh.operandFaceMask();
+        size_t n = build(mask);
+        built = (n != 0) || replace_;
         refreshCaches();
     }
-
-    // Records through the base seam (task 1905 phase C, group G2). Trigger
-    // unchanged — `onMouseButtonUp`, inside the gesture.
     final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context) {
-        bool accepted;
-        if (active && built && context !is null && history !is null && gestureFactory !is null && before.filled) {
-            auto cmd = cast(MeshSessionEdit) gestureFactory();
-            if (cmd !is null) { cmd.setSnapshots(before, MeshSnapshot.capture(*mesh), "Clone"); accepted = context.prepare(cmd, PreparedHistoryKind.Plain).accepted; }
-        }
-        return PreparedDeactivateEffect(preparedToolStateOwner, PreparedDeactivateKind.Clone, accepted);
+        if (context is null) return PreparedDeactivateEffect(
+            preparedToolStateOwner, PreparedDeactivateKind.Clone, false, false);
+        const accepted = context.markNoHistoryInstall();
+        return PreparedDeactivateEffect(preparedToolStateOwner,
+            PreparedDeactivateKind.Clone, false, accepted);
     }
-
-    void commitEdit() {
-        if (history is null || gestureFactory is null) return;
-        if (!before.filled) return;
-        auto cmd = cast(MeshSessionEdit) gestureFactory();
-        if (cmd is null) { noteGestureCarrierMismatch(); return; }
-        auto post = MeshSnapshot.capture(*mesh);
-        cmd.setSnapshots(before, post, "Clone");
-        recordGestureEdit(cmd, GestureRecordMode.Plain);
-    }
-
     void cancelLiveEdit() {
-        if (built && before.filled) {
-            before.restore(*mesh);
-            refreshCaches();
-        }
-        built    = false;
-        dragging = false;
+        if (built && before.filled) { before.restore(*mesh); refreshCaches(); }
+        built = dragging = false;
     }
-
-    void refreshCaches() {
-        refreshDisplay(mesh, gpu);
-    }
+    void refreshCaches() { refreshDisplay(mesh, gpu); }
 }

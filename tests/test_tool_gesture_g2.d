@@ -980,12 +980,13 @@ unittest {
     //     ArrayTool; gated to Polygons mode, and a zero drag delta builds
     //     nothing, which is why the haul is a real 70x40 px move.
     cells ~= runCell("clone/centre-haul", "mesh.clone",
-        "source/tools/alignment/clone_tool.d CloneTool.commitEdit (from onMouseButtonUp)",
+        "source/tools/alignment/clone_tool.d CloneTool.recordTopologyStep (ToolSession at onMouseButtonUp)",
         "Plain", "MeshSessionEdit",
         "the DOCUMENT mesh (clone_tool.d rebuildPreview) — batchless, both channels see it",
         { resetCube(); selectMode("polygons", [4]); cmd("history.clear");
-          setOrbitCamera(); cmd("tool.set mesh.clone on"); settle(300); },
+          setOrbitCamera(); },
         {
+            cmd("tool.set mesh.clone on"); settle(300);
             auto cam = fetchCamera(BASE);
             immutable int cx = cam.vpX + cam.width / 2;
             immutable int cy = cam.vpY + cam.height / 2;
@@ -997,7 +998,7 @@ unittest {
               ~ "Zero growth means `rebuildPreview` took its zero-delta early "
               ~ "exit and `built` stayed false, so the mouse-up records nothing");
         },
-        { cmd("tool.set mesh.clone off"); });
+        { cmd("tool.set mesh.clone off"); }, 2);
 
     // The own-preview population the control above speaks of: exactly one
     // cell previews on its OWN mesh, and it reads zero on both channels across

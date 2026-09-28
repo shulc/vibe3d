@@ -7846,9 +7846,8 @@ struct Mesh {
     /// `mesh.arrayTool`, task 0355) — grounded in the captured reference
     /// toolcard's 23-attribute "Array Generator" + "Clone Effector" panel
     /// (see `doc/tasks/*/0355-array-tool.md`). `arrayFaces` above is left
-    /// byte-for-byte UNTOUCHED — its callers (`mesh.array` one-shot command,
-    /// `CloneTool`) keep their exact 1D-line behaviour; this is an
-    /// ADDITIVE sibling, not a replacement.
+    /// byte-for-byte UNTOUCHED for the one-shot `mesh.array` command. With
+    /// `linear=true`, this kernel also backs reference-style interactive Clone.
     ///
     /// Grid layout: for step index (i,j,k) ∈ [0,numX)×[0,numY)×[0,numZ),
     /// the per-axis translation is `i*stepX, j*stepY, k*stepZ`, where
@@ -7857,6 +7856,9 @@ struct Mesh {
     /// as the total span from the FIRST to the LAST clone along that axis
     /// (`offset.x/(numX-1)` when numX>1, else 0 — a single-count axis has
     /// no span to divide).
+    /// In linear mode, `numX` is the number of instances INCLUDING the
+    /// source and each clone advances by the full 3-D offset vector. The
+    /// `between` span is divided by `numX-1` on all three components.
     ///
     /// Scale (`scale`, 1.0 = 100%) and Rotate (`rotateDeg`, ZYX euler
     /// degrees via `matrixFromEulerZYX` — the SAME convention the
@@ -7869,6 +7871,10 @@ struct Mesh {
     /// by the captured parity case, which uses the flat 100%/0° defaults)
     /// — the mask centroid is this port's documented choice, not a
     /// verified-live value; see the task's Лог for this gap.
+    /// In linear mode, scale and Euler rotation are raised/multiplied by
+    /// the clone index, and the pivot is the source bounds' lower centre
+    /// `(midX,minY,midZ)`. reference editor MCP captures for Scale X/Y and Rotate Z
+    /// pin that law on an asymmetric selected polygon.
     ///
     /// Jitter (`jitter`) is ONE random per-CLONE offset (not per-vertex —
     /// "Max random per-clone offset variation" per the captured spec),
@@ -7884,6 +7890,8 @@ struct Mesh {
     /// removed and replaced by a clone" (Jitter/Scale/Rotate now apply to
     /// what was the source). When false (default), grid slot (0,0,0) IS
     /// the untouched original: no new geometry is built for it.
+    /// In linear mode the source slot has index zero, so its compounded
+    /// scale/rotation are neutral even when replacement is enabled.
     ///
     /// `invertPolygons`: reverses winding on every NEWLY BUILT clone face
     /// (and on the in-place-mutated originals too, when `replaceSource` is
@@ -7918,8 +7926,10 @@ struct Mesh {
     size_t arrayFacesGrid(in bool[] mask, int numX, int numY, int numZ,
                           Vec3 offset, Vec3 jitter, Vec3 scale, Vec3 rotateDeg,
                           bool between, bool replaceSource, bool invertPolygons,
-                          bool mergeVertices, float mergeDistance) {
+                          bool mergeVertices, float mergeDistance,
+                          bool linear = false) {
         import std.random : Mt19937, uniform01;
+        import std.math : pow;
         import std.algorithm.mutation : reverse;
 
         if (mask.length != faces.length) return 0;
@@ -7950,8 +7960,12 @@ struct Mesh {
         foreach (fi, ref f; faces)
             if (mask[fi]) sourceFaces ~= fi;
 
-        // Pivot for scale/rotate: the mask's own vertex centroid. Captured
-        // ONCE from the ORIGINAL (pre-mutation) positions, alongside a
+        // Pivot for scale/rotate: the mask's own vertex centroid for grids.
+        // the reference editor's linear Clone Generator instead uses the selected bounds'
+        // lower centre (mid X, minimum Y, mid Z), measured with independent
+        // Scale X, Scale Y and Rotate Z captures on an asymmetric polygon.
+        // The pivot is captured ONCE from the ORIGINAL (pre-mutation)
+        // positions, alongside a
         // snapshot of every mask vertex's original position (`origPos`) —
         // review S1: with `replaceSource` on, the (0,0,0) slot is always
         // visited FIRST (the grid loop starts at i=j=k=0) and mutates
@@ -7968,6 +7982,7 @@ struct Mesh {
         // then reverse it AGAIN, net cancelling back to the original
         // winding for every clone after the first.
         Vec3 pivot = Vec3(0, 0, 0);
+        Vec3 boundsMin, boundsMax;
         Vec3[uint] origPos;
         uint[][size_t] origFaceVerts;
         {
@@ -7977,19 +7992,37 @@ struct Mesh {
                 foreach (vid; faces[fi])
                     if (vid !in origPos) {
                         origPos[vid] = vertices[vid];
-                        pivot = pivot + vertices[vid];
+                        Vec3 p = vertices[vid];
+                        pivot = pivot + p;
+                        if (n == 0) { boundsMin = boundsMax = p; }
+                        else {
+                            if (p.x < boundsMin.x) boundsMin.x = p.x;
+                            if (p.y < boundsMin.y) boundsMin.y = p.y;
+                            if (p.z < boundsMin.z) boundsMin.z = p.z;
+                            if (p.x > boundsMax.x) boundsMax.x = p.x;
+                            if (p.y > boundsMax.y) boundsMax.y = p.y;
+                            if (p.z > boundsMax.z) boundsMax.z = p.z;
+                        }
                         ++n;
                     }
             }
-            if (n > 0) pivot = pivot * (1.0f / n);
+            if (n > 0) pivot = linear
+                ? Vec3((boundsMin.x + boundsMax.x) * 0.5f, boundsMin.y,
+                       (boundsMin.z + boundsMax.z) * 0.5f)
+                : pivot * (1.0f / n);
         }
 
         float stepX = between ? (numX > 1 ? offset.x / (numX - 1) : 0.0f) : offset.x;
-        float stepY = between ? (numY > 1 ? offset.y / (numY - 1) : 0.0f) : offset.y;
-        float stepZ = between ? (numZ > 1 ? offset.z / (numZ - 1) : 0.0f) : offset.z;
+        float stepY = between ? ((linear ? numX : numY) > 1 ?
+            offset.y / ((linear ? numX : numY) - 1) : 0.0f) : offset.y;
+        float stepZ = between ? ((linear ? numX : numZ) > 1 ?
+            offset.z / ((linear ? numX : numZ) - 1) : 0.0f) : offset.z;
 
         bool anyRotate = (rotateDeg.x != 0.0f || rotateDeg.y != 0.0f || rotateDeg.z != 0.0f);
         float[16] rotMat = anyRotate ? matrixFromEulerZYX(rotateDeg) : identityMatrix;
+        Vec3 slotScale = scale;
+        float[16] slotRotMat = rotMat;
+        bool slotRotate = anyRotate;
 
         // Deterministic per-clone jitter — fixed seed, same convention as
         // commands.mesh.jitter.MeshJitter. Drained once per grid slot
@@ -8009,8 +8042,9 @@ struct Mesh {
         // position: de-pivot -> scale -> rotate -> re-pivot -> translate.
         Vec3 cloneVertex(Vec3 p, Vec3 shift, Vec3 jit) {
             Vec3 local = p - pivot;
-            local = Vec3(local.x * scale.x, local.y * scale.y, local.z * scale.z);
-            if (anyRotate) local = transformPoint(rotMat, local);
+            local = Vec3(local.x * slotScale.x, local.y * slotScale.y,
+                         local.z * slotScale.z);
+            if (slotRotate) local = transformPoint(slotRotMat, local);
             return pivot + local + shift + jit;
         }
 
@@ -8022,7 +8056,16 @@ struct Mesh {
                 foreach (k; 0 .. numZ) {
                     bool isSourceSlot = (i == 0 && j == 0 && k == 0);
                     Vec3 shift = isSourceSlot ? Vec3(0, 0, 0)
-                                              : Vec3(i * stepX, j * stepY, k * stepZ);
+                        : linear ? Vec3(i * stepX, i * stepY, i * stepZ)
+                                 : Vec3(i * stepX, j * stepY, k * stepZ);
+                    if (linear) {
+                        slotScale = Vec3(pow(scale.x, i), pow(scale.y, i),
+                                         pow(scale.z, i));
+                        slotRotate = anyRotate && i != 0;
+                        slotRotMat = slotRotate ? matrixFromEulerZYX(
+                            Vec3(i * rotateDeg.x, i * rotateDeg.y,
+                                 i * rotateDeg.z)) : identityMatrix;
+                    }
                     Vec3 jit = jitterFor();
 
                     if (isSourceSlot) {

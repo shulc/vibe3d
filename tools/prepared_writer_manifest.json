@@ -515,16 +515,23 @@
     {
       "aggregate": "CloneTool",
       "module": "tools.alignment.clone_tool",
-      "semantic_sha256": "a3ef0434124519c5ecfb65e6445f66747a2e03c51bd5104c88bd54f93fc4e898",
+      "semantic_sha256": "109a53a34dff82e6ff941e6ea1622aa5556ee76413863ef2c308f2d1c200d69b",
       "signature": "void()",
       "symbol": "activate"
     },
     {
       "aggregate": "CloneTool",
       "module": "tools.alignment.clone_tool",
-      "semantic_sha256": "18101145a3ef33274b4494c4aa5519ebc86cd915497ade139d6800d8df50d06c",
+      "semantic_sha256": "c7a81ce0e6f7542ee7a54f4c8cf2d27269e765b5bb46c6a1926216f29130224d",
       "signature": "void()",
       "symbol": "deactivate"
+    },
+    {
+      "aggregate": "CloneTool",
+      "module": "tools.alignment.clone_tool",
+      "semantic_sha256": "6423eb9275cac22d4b73556e53dab263046b7d11cc9c62d7f7b9aeab89a48745",
+      "signature": "void(string pname)",
+      "symbol": "onParamChanged"
     },
     {
       "aggregate": "LinearAlignTool",
@@ -1236,6 +1243,13 @@
     },
     {
       "admission": "activationRow",
+      "aggregate": "CloneTool",
+      "module": "tools.alignment.clone_tool",
+      "signature": "CloneTool",
+      "symbol": "lifecycleProduct"
+    },
+    {
+      "admission": "activationRow",
       "aggregate": "EdgeBevelTool",
       "module": "tools.edit.edge_bevel",
       "signature": "EdgeBevelTool",
@@ -1352,6 +1366,13 @@
       "aggregate": "ArrayTool",
       "module": "tools.alignment.array_tool",
       "semantic_sha256": "9c9dabab333efa0439095e94a42ae96d81b4b161fa08e0bedad8d9a8df3ded17",
+      "signature": "Param[]()",
+      "symbol": "params"
+    },
+    {
+      "aggregate": "CloneTool",
+      "module": "tools.alignment.clone_tool",
+      "semantic_sha256": "887209b0f5ac5c2e04d4fbf885cf561a37f8708538b06b911e0531df2bfdb15a",
       "signature": "Param[]()",
       "symbol": "params"
     },
