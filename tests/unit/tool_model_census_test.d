@@ -227,6 +227,11 @@ version (unittest) {
     }
     final class CensusProbeInherit : CensusProbeOwn {}
     final class CensusProbeBare : Tool {}
+    // An abstract owner: LDC reads its slots as null (see slotOwnerCandidates).
+    abstract class CensusProbeAbstractOwn : Tool {
+        override bool hasUncommittedEdit() const { return true; }
+    }
+    final class CensusProbeAbstractLeaf : CensusProbeAbstractOwn {}
 }
 
 // ---------------------------------------------------------------------------
@@ -247,16 +252,32 @@ private void*[kHooks.length] hookBaseImpls() {
     return impls;
 }
 
-/// The class that OWNS the implementation `c` dispatches to in `slot`: the
-/// most-derived class of the chain whose entry equals `c`'s and whose base's
-/// entry does not.
-private TypeInfo_Class slotOwner(TypeInfo_Class c, size_t slot) {
-    const impl = c.vtbl[slot];
+/// The classes that may OWN the implementation `c` dispatches to in `slot`,
+/// most-derived first: the most-derived class of the chain whose entry equals
+/// `c`'s and whose base's entry does not.
+///
+/// Under dmd that is always ONE class. LDC (the nightly check-unit build, task
+/// 8160) emits an ABSTRACT class's vtbl with every method slot null, so an
+/// abstract class between a concrete one and the next readable ancestor cannot
+/// be told apart from it: `XfrmJitterTool` read as its own owner where the
+/// ledger, measured under dmd, says `CommandWrapperTool`. Those unreadable
+/// classes are returned as further candidates rather than guessed.
+private TypeInfo_Class[] slotOwnerCandidates(TypeInfo_Class c, size_t slot) {
+    static bool unreadable(TypeInfo_Class t, size_t slot) {
+        return t.vtbl.length > slot && t.vtbl[slot] is null;
+    }
+    TypeInfo_Class[] above;              // abstract `c` and its abstract bases
     auto o = c;
-    while (o.base !is null && o.base.vtbl.length > slot
-           && o.base.vtbl[slot] is impl)
-        o = o.base;
-    return o;
+    while (unreadable(o, slot)) { above ~= o; o = o.base; }   // Tool is concrete
+    const impl = o.vtbl[slot];
+    for (;;) {
+        TypeInfo_Class[] gap;
+        auto b = o.base;
+        while (b !is null && unreadable(b, slot)) { gap ~= b; b = b.base; }
+        if (b is null || b.vtbl.length <= slot || b.vtbl[slot] !is impl)
+            return above ~ o ~ gap;
+        o = b;
+    }
 }
 
 /// Strictly derived: the walk starts at `c.base`, so `Tool` itself is out.
@@ -824,8 +845,16 @@ unittest {
         assert(typeid(Tool).vtbl[slots[k]] is baseImpls[k],
                "tool census: vtbl slot of " ~ h ~ " not located");
 
-    string ownerName(TypeInfo_Class c, size_t k) {
-        return slotOwner(c, slots[k]).name;
+    // `recorded` is the ledger's owner: taken when it is one of the
+    // candidates, which under dmd means when it IS the owner.
+    string ownerName(TypeInfo_Class c, size_t k, string recorded = null) {
+        const cands = slotOwnerCandidates(c, slots[k]);
+        version (DigitalMars)
+            assert(cands.length == 1,
+                   format("tool census: %s slot %s has %s owner candidates under dmd",
+                          c.name, kHooks[k], cands.length));
+        foreach (x; cands) if (x.name == recorded) return recorded;
+        return cands[0].name;
     }
     auto pOwn = typeid(CensusProbeOwn), pInh = typeid(CensusProbeInherit),
          pBare = typeid(CensusProbeBare);
@@ -833,6 +862,15 @@ unittest {
            && ownerName(pBare, 0) == typeid(Tool).name
            && ownerName(pOwn, 1) == typeid(Tool).name,
            "tool census probe: inheritance not resolved");
+    auto pAbs = typeid(CensusProbeAbstractOwn), pLeaf = typeid(CensusProbeAbstractLeaf);
+    assert(ownerName(pLeaf, 0, pAbs.name) == pAbs.name
+           && ownerName(pLeaf, 1, pAbs.name) == typeid(Tool).name
+           && ownerName(pAbs, 1, pAbs.name) == typeid(Tool).name,
+           "tool census probe: an abstract owner not resolved");
+    version (DigitalMars)
+        assert(ownerName(pLeaf, 0, pLeaf.name) == pAbs.name
+               && ownerName(pLeaf, 0) == pAbs.name,
+               "tool census probe: dmd must resolve an abstract owner exactly");
 
     size_t noModule;
     auto files = sourceFiles(noModule);
@@ -937,7 +975,8 @@ unittest {
         auto c = infoOf[n];
         ToolRow r;
         r.name = n;
-        foreach (k; 0 .. kHooks.length) r.owners[k] = ownerName(c, k);
+        const was = recorded.tools.get(n, ToolRow.init);
+        foreach (k; 0 .. kHooks.length) r.owners[k] = ownerName(c, k, was.owners[k]);
         const file = fileOfModule.get(n[0 .. n.length - n.split(".")[$ - 1].length - 1], "");
         foreach (f; files) if (f.path == file) r.snap = snapshotDecls(blankNonCode(f.src));
         if (auto old = n in recorded.tools) { r.live = old.live; r.reason = old.reason; }
