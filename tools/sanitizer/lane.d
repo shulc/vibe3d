@@ -1625,10 +1625,43 @@ string dropSourceLine(string sym) {
     return outp;
 }
 
-/// The same drop, applied to a whole `A ^ B` signature. Both sides of the
+// THE ORDINAL OF AN ANONYMOUS TEMPLATE MIXIN GOES TOO (task 8160). A
+// `mixin HttpServerTransport;` with no identifier is named `__mixin<n>`, and
+// `<n>` is a counter of the whole compilation, not a source position: it moved
+// 363 -> 366 between 2026-09-25 and 2026-09-26 while http_server.d's mixin line
+// stayed put, and the long-tolerated `start().__lambda ^ stop()` pair came back
+// as four NEW races on every night after. Dropping the whole ordinal (not only
+// its low digits) is the only stable key. The price: two anonymous mixins in one
+// aggregate that declare the same member collapse into one signature — the same
+// aggregate and member names still stand in the key.
+string dropMixinOrdinal(string sym) {
+    enum tag = "__mixin";
+    string outp;
+    size_t i = 0;
+    while (i < sym.length) {
+        if (sym[i .. $].startsWith(tag)) {
+            outp ~= tag;
+            i += tag.length;
+            while (i < sym.length && sym[i] >= '0' && sym[i] <= '9') ++i;
+            continue;
+        }
+        outp ~= sym[i];
+        ++i;
+    }
+    return outp;
+}
+
+unittest {
+    assert(dropMixinOrdinal("a.B.__mixin366.stop()") == "a.B.__mixin.stop()");
+    assert(dropMixinOrdinal("a.B.__mixin.stop()") == "a.B.__mixin.stop()");
+    assert(normaliseSignature("m.C.__mixin363.start().__lambda_L1564_C35()@t.d")
+           == "m.C.__mixin.start().__lambda_C35()@t.d");
+}
+
+/// Both drops, applied to a whole `A ^ B` signature. Both sides of the
 /// comparison go through THIS call — the parsed frame and the declared row —
 /// because a normalisation applied to one side only is a silent mismatch.
-string normaliseSignature(string sig) { return dropSourceLine(sig); }
+string normaliseSignature(string sig) { return dropMixinOrdinal(dropSourceLine(sig)); }
 
 /// `#0 some.symbol(args) /abs/path/file.d:123:4 (vibe3d-tsan+0x1234)`
 /// -> `some.symbol(args)@file.d`, but only when the path is under source/.
@@ -1663,7 +1696,7 @@ string frameKey(string line) {
     if (!sym.length) return null;
     // The line number is dropped HERE, at the one place an observed frame
     // becomes a key, so no caller can forget to do it. See dropSourceLine.
-    return dropSourceLine(sym) ~ "@" ~ baseName(path);
+    return dropMixinOrdinal(dropSourceLine(sym)) ~ "@" ~ baseName(path);
 }
 
 bool isAccessHeader(string line) {
@@ -1986,9 +2019,10 @@ ExpectedRow[] loadExpected(string path = kTsanExpected) {
         // verdict actually compares. The message names the text to write.
         const norm = normaliseSignature(f[2]);
         if (norm != f[2])
-            fail(format("%s:%d: the signature carries a source LINE, which "
-                      ~ "moves under any edit above the symbol and is dropped "
-                      ~ "before comparison. Write it without the `_L<n>`:\n"
+            fail(format("%s:%d: the signature carries a source LINE (`_L<n>`) "
+                      ~ "or a mixin ordinal (`__mixin<n>`); both move under "
+                      ~ "unrelated edits and are dropped before comparison. "
+                      ~ "Write it as:\n"
                       ~ "    %s", path, lineNo, norm));
         rows ~= ExpectedRow(f[0], scens, norm, f[3], f[4], f[5]);
     }
