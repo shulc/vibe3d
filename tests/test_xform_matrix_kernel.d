@@ -866,3 +866,87 @@ unittest {
     assert(producedTable, "MS35: gap table was not produced");
     assert(gate0Pool.length > 0, "MS35: Gate-0 pool empty — no pure-rot samples");
 }
+
+// ---------------------------------------------------------------------------
+// (m) the per-vertex frame memo (task 8170)
+// ---------------------------------------------------------------------------
+//
+// The per-vertex loop recomputes the blended matrix and its `off` column only
+// when (w, source matrix, pivot) changes from the previous vertex. The law it
+// must keep: ONE call over the whole operand gives the SAME BITS as one call
+// per vertex, where every call starts with an empty memo. Each cell below is
+// built so that exactly one key term separates two neighbouring vertices —
+// the other two agree — so dropping that term from the key reuses the wrong
+// frame and reddens that cell alone.
+
+private Vec3[] memoVerts() {
+    return [
+        Vec3(-1, -0.5f, -1), Vec3( 1, -0.5f, -1), Vec3( 1, 0.5f, 1),
+        Vec3(-1,  0.5f,  1), Vec3(0.3f, 0.7f, 0.2f), Vec3(-0.4f, 0.1f, 0.9f),
+        Vec3( 0.8f, -0.9f, 0.3f), Vec3(-0.6f, 0.4f, -0.2f),
+    ];
+}
+
+/// Whole-operand call vs one call per vertex; asserts bitwise equality and a
+/// population floor (every vertex moved), returns nothing.
+private void assertMemoMatchesFresh(string ctx, float[16] M, Vec3 pivot,
+                                    FalloffPacket fp,
+                                    TransformTool.ClusterPivots cp,
+                                    TransformTool.ClusterAxes ca,
+                                    float[16][] clusterM) {
+    auto vp = testViewport();
+    auto sp = noSymmetry();
+    auto verts = memoVerts();
+    auto idx = allIndices(verts.length);
+
+    auto whole = makeMesh(verts);
+    bool[] tpW = new bool[whole.vertices.length]; tpW[] = true;
+    applyXformMatrix(whole, idx, verts, pivot, M, verts[0],
+                     BlendMode.MatrixLerp, fp, vp, cp, ca, clusterM, sp, tpW);
+
+    auto fresh = makeMesh(verts);
+    bool[] tpF = new bool[fresh.vertices.length]; tpF[] = true;
+    foreach (k, vi; idx)
+        applyXformMatrix(fresh, idx[k .. k + 1], verts[k .. k + 1], pivot, M,
+                         verts[0], BlendMode.MatrixLerp, fp, vp, cp, ca,
+                         clusterM, sp, tpF);
+
+    size_t moved;
+    foreach (i; 0 .. verts.length) {
+        if (!(whole.vertices[i] is verts[i])) ++moved;
+        if (!(whole.vertices[i] is fresh.vertices[i]))
+            writefln("%s: vi=%d whole=(%.9g,%.9g,%.9g) fresh=(%.9g,%.9g,%.9g)", ctx, i,
+                     whole.vertices[i].x, whole.vertices[i].y, whole.vertices[i].z,
+                     fresh.vertices[i].x, fresh.vertices[i].y, fresh.vertices[i].z);
+        assert(whole.vertices[i] is fresh.vertices[i], ctx ~ ": memo reused a stale frame");
+    }
+    assert(moved == verts.length, ctx ~ ": population floor — every vertex must move");
+}
+
+unittest { // (m-w) the weight term: one global matrix, weights change between neighbours
+    assertMemoMatchesFresh("m-w",
+        pivotRotationMatrix(Vec3(0, 0, 0), normalize(Vec3(0.3f, 1, 0.2f)), 0.9f),
+        Vec3(0.2f, 0.1f, -0.3f),
+        weightedFalloff([1, 1, 0.5f, 0.5f, 0.25f, 1, 0.5f, 0.75f]),
+        noClusterPivots(), noClusterAxes(), null);
+}
+
+unittest { // (m-mv) the matrix term: two clusters sharing ONE pivot, different matrices
+    TransformTool.ClusterPivots cp;
+    cp.centers = [Vec3(0.1f, 0.2f, 0.3f), Vec3(0.1f, 0.2f, 0.3f)];
+    cp.clusterOf = [0, 0, 0, 0, 1, 1, 1, 1];
+    float[16][] clusterM = [
+        pivotRotationMatrix(Vec3(0, 0, 0), Vec3(1, 0, 0), 0.7f),
+        pivotRotationMatrix(Vec3(0, 0, 0), Vec3(0, 0, 1), -0.4f)];
+    assertMemoMatchesFresh("m-mv", identityMatrix, Vec3(0, 0, 0), noFalloff(),
+                           cp, twoClusterAxes(), clusterM);
+}
+
+unittest { // (m-pivot) the pivot term: two clusters, one global rotation, different pivots
+    TransformTool.ClusterPivots cp;
+    cp.centers = [Vec3(-1, 0, 0), Vec3(1.5f, 0.5f, 0)];
+    cp.clusterOf = [0, 0, 0, 0, 1, 1, 1, 1];
+    assertMemoMatchesFresh("m-pivot",
+        pivotRotationMatrix(Vec3(0, 0, 0), Vec3(0, 1, 0), 0.6f), Vec3(0, 0, 0),
+        noFalloff(), cp, noClusterAxes(), null);
+}

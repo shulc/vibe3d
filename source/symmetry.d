@@ -223,6 +223,14 @@ size_t frameSource(const ref SymmetryPacket sp, size_t vi) pure nothrow @nogc @s
 }
 
 /// The one authoring-frame evaluation: `kernel(p)` on A, `M·kernel(M·p)` off A.
+///
+/// Forced inline (task 8170): it runs once per vertex per drag step, and as an
+/// out-of-line call the `Vec3` crossing its ABI boundary was spilled as two
+/// 4-byte stores and reloaded as one 8-byte load (a store-forwarding stall),
+/// on top of an indirect call to `kernel`. Inlined, the caller's delegate
+/// literal is a known function and is inlined too; the float operations and
+/// their order are unchanged.
+pragma(inline, true)
 Vec3 authored(K)(const ref SymmetryPacket sp, size_t vi, Vec3 p, scope K kernel) {
     if (!offAuthoringSide(sp, vi)) return kernel(p);
     return mirrorPosition(sp, kernel(mirrorPosition(sp, p)));

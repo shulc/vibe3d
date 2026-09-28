@@ -1283,6 +1283,10 @@ bool projectToWindow(Vec3 world, const ref Viewport vp,
 // Like projectToWindow but does NOT reject points outside the screen boundary.
 // Only rejects points behind the camera (w <= 0).
 // Use this for hit-testing line segments that may extend off-screen.
+// Forced inline (task 8170): the per-vertex screen and lasso falloff weights
+// call it once per vertex per drag step, and out of line its three results went
+// through memory and the `ndcZ` divide those callers never read was kept.
+pragma(inline, true)
 bool projectToWindowFull(Vec3 world, const ref Viewport vp,
                          out float px, out float py, out float ndcZ) {
     Vec4 v = mulMV(vp.view, Vec4(world.x, world.y, world.z, 1.0f));

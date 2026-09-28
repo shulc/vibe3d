@@ -472,8 +472,7 @@ float[16] blendToIdentity(float[16] M, float w, BlendMode mode)
     final switch (mode) {
     case BlendMode.MatrixLerp:
         float[16] r;
-        foreach (i; 0 .. 16)
-            r[i] = (1.0f - w) * identityMatrix[i] + w * M[i];
+        lerpToIdentityInto(M, w, r);
         return r;
 
     case BlendMode.Decompose:
@@ -533,6 +532,19 @@ float[16] blendToIdentity(float[16] M, float w, BlendMode mode)
         r[12] = M[12] * w; r[13] = M[13] * w; r[14] = M[14] * w;   r[15] = 1;
         return r;
     }
+}
+
+/// The MatrixLerp blend body, `(1-w)·I + w·M` entrywise, for `0 < w < 1` —
+/// `blendToIdentity`'s own case, and called directly by `applyXformMatrix`'s
+/// per-vertex loop: through `blendToIdentity` every falloff vertex
+/// paid a call that copied the 64-byte matrix in and the 64-byte result out.
+/// One body, so the two cannot drift.
+pragma(inline, true)
+void lerpToIdentityInto(const ref float[16] M, float w, ref float[16] r)
+    @safe pure nothrow @nogc
+{
+    foreach (i; 0 .. 16)
+        r[i] = (1.0f - w) * identityMatrix[i] + w * M[i];
 }
 
 /// Blend modes for `blendToIdentity` — the plan's options a / b / c.
@@ -650,6 +662,30 @@ void applyXformMatrix(
     }
     immutable double u_ax = anchor.x, u_ay = anchor.y, u_az = anchor.z;
 
+    // A LOCAL shallow copy of the drag packet. Read through the
+    // `const ref`, every per-vertex `authored`/`frameSource` reloaded the
+    // packet's fields on each iteration — the compiler cannot prove the
+    // `mesh.vertices` stores below leave them alone. A local that never escapes
+    // stays in registers. Same fields, same values: the arithmetic is untouched.
+    const SymmetryPacket sym = dragSymmetry;
+
+    // THE PER-VERTEX FRAME MEMO (task 8170; declared ahead of the uniform
+    // loop's `goto`, used by the per-vertex loop). Everything the blended
+    // matrix and its `off` column are computed from — the source matrix (global
+    // `M` or one cluster's), the weight `w`, the pivot — repeats across long
+    // runs of vertices: a selection falloff grades in a handful of ring steps
+    // and gives most of the operand w == 1, and with no clusters the matrix and
+    // the pivot never change. So the (Mw, off) block is recomputed only when
+    // that key CHANGES, compared BITWISE (`is`), and otherwise reused. Same
+    // inputs, same expressions: the reused values are the bits a recomputation
+    // would give. Witness: tests/test_xform_matrix_kernel.d cells (m-*).
+    double m00, m10, m20, m01, m11, m21, m02, m12, m22;
+    double off0, off1, off2;
+    bool   memoValid = false;
+    float  memoW;
+    int    memoMv;          // -1 = the global M, else the cluster id
+    Vec3   memoPivot;
+
     if (uniform) {
         foreach (i, vi; indices) {
             if (vi >= mesh.vertices.length) continue;
@@ -659,7 +695,7 @@ void applyXformMatrix(
             // off — the same operations in the same order as before, bit for
             // bit; off A the kernel runs on the mirror image of the point and
             // its result is mirrored back (one hoisted set serves both).
-            const Vec3 moved = authored(dragSymmetry, vi, base, (Vec3 q) {
+            const Vec3 moved = authored(sym, vi, base, (Vec3 q) {
                 immutable double dx = cast(double)q.x - u_ax;
                 immutable double dy = cast(double)q.y - u_ay;
                 immutable double dz = cast(double)q.z - u_az;
@@ -674,6 +710,7 @@ void applyXformMatrix(
         goto tail;
     }
 
+
     foreach (i, vi; indices) {
         if (vi >= mesh.vertices.length) continue;
         if (i >= baseline.length) continue;
@@ -681,18 +718,18 @@ void applyXformMatrix(
         // Off the authoring side the cluster frame is the PARTNER's (task
         // 7144): the kernel runs on the mirror image, which sits in the
         // partner's cluster — see `symmetry.frameSource`.
-        const size_t fv = frameSource(dragSymmetry, vi);
+        const size_t fv = frameSource(sym, vi);
         Vec3 pivot = pivotFor(fv, clusterPivots, pivotFallback);
 
         // Per-cluster matrix override (ACEN.Local). When the vert belongs to
         // an active cluster and a per-cluster matrix array is supplied, use
         // that cluster's matrix; otherwise the global M.
-        float[16] Mv = M;
+        int mvKey = -1;
         if (clusterM !is null && clusterPivots.active
             && fv < clusterPivots.clusterOf.length) {
             int cid = clusterPivots.clusterOf[fv];
             if (cid >= 0 && cid < cast(int)clusterM.length)
-                Mv = clusterM[cid];
+                mvKey = cid;
         }
 
         float w = dragFalloff.enabled
@@ -702,7 +739,6 @@ void applyXformMatrix(
             : 1.0f;
         if (w == 0.0f) continue;
 
-        float[16] Mw = blendToIdentity(Mv, w, mode);
         // Precision-stable apply: re-center on `anchor` (near the geometry)
         // so `base − anchor` is a small-magnitude difference and avoids the
         // large-minus-large float32 cancellation `base − pivot` suffers at a
@@ -712,10 +748,17 @@ void applyXformMatrix(
         // never baked into the GPU matrix. The GPU fast-path (no-falloff) uses
         // wrapAboutPivotStable built from the same anchor → matrix-INPUT
         // consistency (not bit-identical apply — scalar CPU vs mat4 GPU).
-        {
-            double m00 = Mw[0], m10 = Mw[1], m20 = Mw[2];
-            double m01 = Mw[4], m11 = Mw[5], m21 = Mw[6];
-            double m02 = Mw[8], m12 = Mw[9], m22 = Mw[10];
+        if (!(memoValid && w is memoW && mvKey == memoMv && pivot is memoPivot)) {
+            // MatrixLerp inline for 0 < w < 1 (the one mode that needs no
+            // decomposition), `blendToIdentity` otherwise — the same values.
+            float[16] Mw = void;
+            if (mode == BlendMode.MatrixLerp && w > 0.0f && w < 1.0f)
+                lerpToIdentityInto(mvKey < 0 ? M : clusterM[mvKey], w, Mw);
+            else
+                Mw = blendToIdentity(mvKey < 0 ? M : clusterM[mvKey], w, mode);
+            m00 = Mw[0]; m10 = Mw[1]; m20 = Mw[2];
+            m01 = Mw[4]; m11 = Mw[5]; m21 = Mw[6];
+            m02 = Mw[8]; m12 = Mw[9]; m22 = Mw[10];
             double tf0 = Mw[12], tf1 = Mw[13], tf2 = Mw[14];
             // c - pivot (double, small when anchor is near geometry)
             double cpx = cast(double)anchor.x - cast(double)pivot.x;
@@ -723,14 +766,17 @@ void applyXformMatrix(
             double cpz = cast(double)anchor.z - cast(double)pivot.z;
             // off = M_lin*(c-pivot) + (pivot-c) + t_fold
             //     = M_lin*(c-pivot) - (c-pivot) + t_fold
-            double off0 = m00*cpx + m01*cpy + m02*cpz - cpx + tf0;
-            double off1 = m10*cpx + m11*cpy + m12*cpz - cpy + tf1;
-            double off2 = m20*cpx + m21*cpy + m22*cpz - cpz + tf2;
+            off0 = m00*cpx + m01*cpy + m02*cpz - cpx + tf0;
+            off1 = m10*cpx + m11*cpy + m12*cpz - cpy + tf1;
+            off2 = m20*cpx + m21*cpy + m22*cpz - cpz + tf2;
+            memoValid = true; memoW = w; memoMv = mvKey; memoPivot = pivot;
+        }
+        {
             // d = base - anchor (exact, both geometry-scale); v' = anchor +
             // M_lin*d + off — evaluated in the authoring frame (task 7144):
             // the weight above is the vertex's own, from its original
             // position; only the point is conjugated off A.
-            const Vec3 moved = authored(dragSymmetry, vi, base, (Vec3 q) {
+            const Vec3 moved = authored(sym, vi, base, (Vec3 q) {
                 double dx = cast(double)q.x - cast(double)anchor.x;
                 double dy = cast(double)q.y - cast(double)anchor.y;
                 double dz = cast(double)q.z - cast(double)anchor.z;
