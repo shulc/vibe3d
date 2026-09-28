@@ -102,17 +102,19 @@ struct ClassScan {
 }
 
 /// Does the header after `class Name` declare a base? Reads to the first `{`
-/// or `;` at bracket depth 0; a `:` at depth 0 is a base list. Colons and
-/// braces inside `(…)`/`[…]` (template specialisation `T : int`, a constraint
-/// `if (is(T : Foo))`, a lambda in a constraint) do not count. There is no arm
-/// for a negative depth: valid D never closes an enclosing bracket inside a
-/// class header, so such an arm would have no witness (task 8130 review).
+/// or `;` at parenthesis depth 0; a `:` at depth 0 is a base list. Colons and
+/// braces inside `(…)` (template specialisation `T : int`, a constraint
+/// `if (is(T : Foo))`, a lambda in a constraint) do not count. Only `(` is
+/// tracked, and there is no arm for a negative depth: before the base list a
+/// D class header has brackets only inside its parameter list or constraint,
+/// and never closes an enclosing one, so either arm would have no witness
+/// (task 8130 mutation sweep).
 private bool headerDeclaresBase(const(char)[] rest) {
     int depth;
     foreach (ch; rest) {
         switch (ch) {
-            case '(': case '[': ++depth; break;
-            case ')': case ']': --depth; break;
+            case '(': ++depth; break;
+            case ')': --depth; break;
             case '{': case ';': if (depth == 0) return false; break;
             case ':':           if (depth == 0) return true;  break;
             default: break;
@@ -279,16 +281,46 @@ unittest { // headers the regex cannot read are accounted as `unread` (task 8130
 }
 
 unittest { // no base, or a colon inside brackets, is NOT unread (task 8130)
-    enum sample = "final class J : Command {}\nfinal class H {}\nclass F;\n"
+    // H is followed by a depth-0 `:` before the next `;`, so its `{` must end
+    // the header; `Subclass s` is no keyword site.
+    enum sample = "final class J : Command {}\nclass F;\n"
                 ~ "enum b = is(T == class);\n"
                 ~ "class I(T) : Command if (is(T == int)) {}\n"
-                ~ "class P(T : int) {}\nclass Q(T) if (is(T : Foo)) {}\n";
+                ~ "class P(T : int) {}\nclass Q(T) if (is(T : Foo)) {}\n"
+                ~ "final class H {}\nenum e = x ? y : z;\nSubclass s;\n";
     const r = scanClasses(sample, "x.d");
     assert(r.keywordSites == 6,
-        format("expected 6 keyword sites (J H F I P Q); got %d", r.keywordSites));
+        format("expected 6 keyword sites (J F I P Q H); got %d", r.keywordSites));
     assert(r.unread.length == 0, format("expected nothing unread; got %s", r.unread));
     assert(r.decls.length == 2 && r.decls[0].name == "J" && r.decls[1].name == "I",
         format("expected decls J, I; got %s", r.decls));
+}
+
+unittest { // an unread header reports its own keyword line (task 8130)
+    const r = scanClasses("class L : .Command {}\n\nclass K : Command {}\n"
+                        ~ "class M : .Command {}\n", "x.d");
+    assert(r.unread.length == 2 && r.unread[0].name == "L" && r.unread[0].line == 1
+        && r.unread[1].name == "M" && r.unread[1].line == 4,
+        format("expected L at line 1 and M at line 4; got %s", r.unread));
+}
+
+unittest { // the tree walk aggregates decls, unread and sites per file (task 8130)
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.process : thisProcessID;
+    const root = buildPath(tempDir, format("crc8130-%d", thisProcessID));
+    scope (exit) if (exists(root)) rmdirRecurse(root);
+    mkdirRecurse(buildPath(root, "source", "commands", "b"));
+    write(buildPath(root, "source", "commands", "a.d"),
+          "class U(T) if (is(T == int)) : Command {}\nclass V : Command {}\n");
+    write(buildPath(root, "source", "commands", "b", "c.d"), "\nclass W : .Command {}\n");
+    const r = scanCommandsTree(root);
+    assert(r.keywordSites == 3, format("expected 3 keyword sites; got %d", r.keywordSites));
+    assert(r.decls.length == 1 && r.decls[0].name == "V",
+        format("expected decl V; got %s", r.decls));
+    string[] rows;
+    foreach (ref u; r.unread) rows ~= format("%s:%d %s", u.file, u.line, u.name);
+    assert(rows == ["source/commands/a.d:1 U", "source/commands/b/c.d:2 W"],
+        format("expected U and W with their files and lines; got %s", rows));
 }
 
 unittest { // `subclass` / `new Xy` boundaries
