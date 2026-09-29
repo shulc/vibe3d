@@ -91,7 +91,6 @@ write source/tools/create/arc.d recordGestureEdit 1
 write source/tools/create/box.d commitHistory.undoDepthCounts 1
 write source/tools/create/box.d history.currentRunId 2
 write source/tools/create/box.d history.nextRun 1
-write source/tools/create/box.d history.undo 1
 write source/tools/create/box.d recordGestureEdit 3
 write source/tools/create/box.d recordLiveDragEnd 5
 write source/tools/create/pen.d commitHistory.undoDepthCounts 1

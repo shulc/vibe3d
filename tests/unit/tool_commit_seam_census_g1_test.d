@@ -165,12 +165,9 @@ private enum LedgerRow[] kSurfaceRoster = [
         "GestureRecordMode.ReplaceRunTail -> CommandHistory.replaceInSessionTailWith"),
     LedgerRow("Tool.refuseGestureRecord|consolidate", 1,
         "the refusal belt closing the run the skipped splice would have closed"),
-    // The two legitimate non-recorders left inside a G1 tool.
+    // The one legitimate non-recorder left inside a G1 tool.
     LedgerRow("BoxTool.ensureLiveRun|nextRun", 1,
         "ensureLiveRun() opens the live-edit run id; a read/allocate, not a record"),
-    LedgerRow("BoxTool.cancelUncommittedEdit|undo", 1,
-        "the interactive undo LADDER inside cancelUncommittedEdit (task 0414); "
-      ~ "it pops a live step and is not a record"),
     // (Edge Extend's two live-redo stash reads left with slice M4: the redo of
     // a cancelled operation is the tool session's own stash.)
 ];
@@ -208,9 +205,9 @@ unittest {
     assert(problems.length == 0,
         "G1 census: the family's history call surface is not what the seam "
       ~ "leaves behind.\n" ~ problems);
-    assert(ledgerHits.length == 6,
-        "G1 census: expected exactly six history-surface sites (slice M4 removed "
-      ~ "Edge Extend's two live-redo stash reads)");
+    assert(ledgerHits.length == 5,
+        "G1 census: expected exactly five history-surface sites (Box's live "
+      ~ "Undo ladder now belongs to ToolSession)");
 }
 
 // ---------------------------------------------------------------------------
