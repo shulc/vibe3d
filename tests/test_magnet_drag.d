@@ -71,6 +71,7 @@ bool samePositions(V3[] a, V3[] b, double tol = 1e-4) {
     return true;
 }
 long undoLen() { return cast(long) jget("/api/history")["undo"].array.length; }
+string activeToolId() { return jget("/api/buttons/availability")["activeToolId"].str; }
 
 // SDL keyboard input reaches EditSession's in-session History navigator.
 void navigate(bool redo) {
@@ -152,7 +153,10 @@ unittest {
            "Point Attract subject lost its asymmetric eight-vertex population");
 
     // Activate xfrm.pointAttract.
-    mustOk(jpost("/api/command", "tool.set xfrm.pointAttract"), "tool.set xfrm.pointAttract");
+    mustOk(jpost("/api/command?origin=ui", "tool.set xfrm.pointAttract on"),
+           "UI arm Point Attract");
+    Thread.sleep(150.msecs);
+    assert(activeToolId() == "xfrm.pointAttract", "Point Attract UI arm did not activate exact ID");
     long armRows = undoLen();
 
     // Fetch the live camera so our screen projection matches vibe3d's.
@@ -213,6 +217,8 @@ unittest {
                                   x2, y2, x2 + 60, y2, 20), BASE);
     auto s2 = positions();
     assert(!samePositions(s1, s2), "Point Attract positive 2 changed no geometry");
+    assert(dist3(s1[6], s2[6]) > 0.02,
+           "Point Attract positive 2 missed the reprojected anchor vertex");
     assert(undoLen() == armRows + 2, "Point Attract positive 2 merged with positive 1");
 
     navigate(false);
@@ -225,6 +231,13 @@ unittest {
     assert(samePositions(positions(), s2), "Point Attract Redo 2 did not restore S2");
 
     // Deactivate tool so scene is clean for any subsequent tests.
-    mustOk(jpost("/api/command", "tool.set xfrm.pointAttract off"), "close Point Attract");
+    mustOk(jpost("/api/command?origin=ui", "tool.set xfrm.pointAttract off"),
+           "UI close Point Attract");
+    Thread.sleep(150.msecs);
+    assert(activeToolId().length == 0, "Point Attract UI close left a tool active");
     assert(samePositions(positions(), s2), "Point Attract close changed committed geometry");
+    auto afterClose = jget("/api/history");
+    assert(afterClose["undo"].array.length >= armRows + 2
+           && afterClose["redo"].array.length == 0,
+           "Point Attract close lost committed History or kept a redo tail");
 }
