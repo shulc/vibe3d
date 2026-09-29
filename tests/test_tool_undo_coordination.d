@@ -319,8 +319,8 @@ unittest {
     assert(act["status"].str == "ok" || act["status"].str == "success",
         "tool.set xfrm.smooth failed: " ~ act.toString);
 
-    // H1: the first Undo steps Smooth's activation row. The next reaches the
-    // earlier extrude, then Redo restores both rows in history order.
+    // H1: the first Undo steps Smooth's activation row and discards its redo.
+    // The next reaches the earlier extrude; Redo restores that model row.
     playKey(SDLK_z, KMOD_LCTRL);
     assert(undoLen() == undoAfterEdit,
            "Ctrl+Z did not pop Smooth's activation row first");
@@ -332,7 +332,6 @@ unittest {
 
     playKey(SDLK_z, KMOD_LCTRL | KMOD_LSHIFT);   // redo
     assert(vertCount() == extrudedVerts, "redo did not re-apply the extrude");
-    playKey(SDLK_z, KMOD_LCTRL | KMOD_LSHIFT);   // re-arm Smooth
 
     postJson("/api/command", "tool.set xfrm.smooth off");
 }

@@ -1332,11 +1332,7 @@ private struct ToolSession {
     void recordCompleted(Tool t, const(Command) cmd) {
         if (!reporting_(t) || !t.sessionPolicy().historyRecordedSteps ||
             cmd is null) return;
-        if (history_.markBlockChildSession(cmd, token_)) {
-            live_ = true;
-            return;
-        }
-        if (undoTop_() !is cmd) return;
+        if (!history_.blockActive() && undoTop_() !is cmd) return;
         if (history_.markEntrySession(cmd, token_)) live_ = true;
     }
 

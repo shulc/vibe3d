@@ -201,7 +201,8 @@ PreparedArm prepareArm(ToolFactory factory, string id, Tool retainedOld,
             id, previousId, pol.sessionSteps, door == ArmDoor.key,
             pol.recordCarriesActivation, sessionToken, previousToken,
             retainedOld !is null && toolArmEmitsLifecycle(retainedOld),
-            retainedOld !is null && retainedOld.sessionPolicy().historyTopologySteps);
+            retainedOld !is null && retainedOld.sessionPolicy().historyTopologySteps,
+            pol.historyRecordedSteps);
         lifecycle.onActivate = activateById;
         lifecycle.onDeactivate = deactivate;
         result.incoming_.prepareLifecycle(lifecycle);

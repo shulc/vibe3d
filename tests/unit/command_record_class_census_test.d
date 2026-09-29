@@ -95,13 +95,15 @@ private enum LedgerRow[] kResidue = [
         "transform re-grade — an explicit run boundary collapses its tail"),
     LedgerRow("EditSession.tryRefireDispatch|fire", 1,
         "refire-built Command — the session dispatches it inside the bracket"),
-    LedgerRow("EditSession|refireBegin", 1,
-        "refire-built Command — the one-line wrapper's defensive begin lands "
+    LedgerRow("EditSession.refireBegin|refireBegin", 1,
+        "refire-built Command — the session's defensive begin lands "
       ~ "a dangling command"),
     LedgerRow("EditSession.refireEnded|refireEnd", 1,
         "refire-built Command — the session lands the bracket's final entry"),
     LedgerRow("InputRouter.commitInteractiveSelEdit|recordCoalescing", 1,
         "MeshSelectionEdit — the UI-selection undo class"),
+    LedgerRow("(module scope)|consolidate", 1,
+        "XfrmTransformTool private-symbol unittest consolidates two session-tagged gestures"),
 ];
 
 // Test-only scanner vocabulary: exact SDK-tree searches returned no files for
@@ -625,8 +627,8 @@ package:
                 "executor.applyOrRefire(cmd, RecordMode.Record",
                 "LayerAdd-executor");
     }
-    assert(records.length == 27,
-        "command-record class census: expected twenty-seven allowlisted history "
+    assert(records.length == 28,
+        "command-record class census: expected twenty-eight allowlisted history "
         ~ "writer sites, found " ~ records.length.to!string);
     foreach (record; records)
         assert(record.key !=

@@ -283,12 +283,13 @@ Cell runCell(string name, string tool, string recordSite, string mode,
     stand();
     immutable long u0 = undoLen();
     auto baselineEntries = historyNames();
-    immutable string[] expectedBaseline = tool == "edge.extrude"
+    immutable string[] expectedBaseline = tool == "edge.extrude" ||
+            tool == "xfrm.pointAttract"
         ? ["tool.activate"] : [];
     assert(baselineEntries == expectedBaseline,
         name ~ ": the stand's history baseline is " ~ baselineEntries.to!string
       ~ ", expected " ~ expectedBaseline.to!string ~ ". Selection setup must "
-      ~ "still be cleared; Edge Extrude alone retains its captured activation row");
+      ~ "still be cleared; activation-row tools retain their arm record");
     c.preOp = planes();
 
     gesture();

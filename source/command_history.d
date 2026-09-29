@@ -1818,6 +1818,9 @@ final class CommandHistory {
     /// stale close can never tag some other record. Returns whether it did.
     bool markEntrySession(const Command expect, ulong token) nothrow @nogc {
         if (token == 0 || expect is null) return false;
+        if (blockDepth > 0)
+            foreach_reverse (child; blockChildren)
+                if (child is expect) { child.markSession(token); return true; }
         foreach_reverse (ref e; undoStack)
             if (e.cmd is expect) { e.cmd.markSession(token); return true; }
         return false;
@@ -2048,15 +2051,6 @@ final class CommandHistory {
     // undefined and not exercised by any consumer.
 
     bool blockActive() const { return blockDepth > 0; }
-
-    /// The tool may publish a completed row while a named command block is
-    /// collecting children. Tag only a child actually accepted by the block.
-    bool markBlockChildSession(const Command expect, ulong token) nothrow @nogc {
-        if (blockDepth == 0 || token == 0 || expect is null) return false;
-        foreach_reverse (child; blockChildren)
-            if (child is expect) { child.markSession(token); return true; }
-        return false;
-    }
 
     /// Open a command block. `label` names the resulting composite entry; for
     /// nested calls only the outermost label is used.

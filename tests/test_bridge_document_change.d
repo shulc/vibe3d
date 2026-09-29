@@ -338,9 +338,9 @@ unittest { // Magnet: a reset TO A PRIMITIVE with the haul still under way
     // HISTORY is the whole observable here — hence the exact compare, whose
     // left-hand entry doubles as the channel's positive control.
     auto labels = undoLabels();
-    assert(labels == ["Reset to cube"],
+    assert(labels == ["Activate Tool", "Reset to cube"],
         "history after the document change is " ~ labels.to!string
-        ~ ", expected exactly [\"Reset to cube\"] — `commitEdit` built an "
+        ~ ", expected only the arm and reset rows — `commitEdit` built an "
         ~ "undo AFTER-image out of `touchedIdx_`, which indexes the document "
         ~ "the reset just replaced");
 }
@@ -423,7 +423,7 @@ unittest { // Magnet: reset TO EMPTY with the haul still under way
                    ~ "`applyMagnet` displaced nothing and `built` is false"));
 
     auto labels = undoLabels();
-    assert(labels == ["Reset to empty"],
+    assert(labels == ["Activate Tool", "Reset to empty"],
         "history after the document change is " ~ labels.to!string
-        ~ ", expected exactly [\"Reset to empty\"]");
+        ~ ", expected only the arm and reset rows");
 }

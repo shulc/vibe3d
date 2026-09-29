@@ -121,19 +121,20 @@ unittest {
     // 3. Activate xfrm.smooth — tool now ACTIVE on the MAIN thread (tool.set
     //    runs through the command bridge). CommandWrapperTool.activate() dups
     //    its baseline from the CURRENT (translated) mesh. No open live edit
-    //    right after activate (dirty==false) -> hasUncommittedEdit() is false,
-    //    so the upcoming Ctrl+Z takes the pop+resync branch, not the cancel
-    //    branch. The selection [2,3,6,7] is unchanged, so smooth will act on it.
+    //    right after activate (dirty==false). Its activation is now a History
+    //    row, so the first Ctrl+Z removes that row before reaching translate.
     auto act = postJson("/api/command", "tool.set xfrm.smooth");
     assert(act["status"].str == "ok" || act["status"].str == "success",
         "tool.set xfrm.smooth failed: " ~ act.toString);
 
-    // 4. Ctrl+Z under the active tool: navHistory(true) -> history.undo() pops
-    //    the translate AND drives activeTool.resyncSession(), which re-dups the
-    //    smooth baseline from the now-current (un-translated) mesh.
+    // 4. Undo the activation, then the translate. Re-arm Smooth on the
+    //    un-translated mesh; its next drag must use that current baseline.
+    playCtrlZ();
+    assert(undoLen() == undoAfterEdit,
+        "first Ctrl+Z did not step the Smooth activation row");
     playCtrlZ();
     assert(undoLen() == undoAfterEdit - 1,
-        "Ctrl+Z under an active tool did not pop one undo entry (undo="
+        "second Ctrl+Z did not pop translate (undo="
         ~ undoLen().to!string ~ " expected " ~ (undoAfterEdit - 1).to!string ~ ")");
     assert(redoLen() >= 1, "Ctrl+Z under an active tool did not push a redo entry");
     auto undone = getJson("/api/model")["vertices"].array;
@@ -141,6 +142,9 @@ unittest {
     assert(approx(undone[6].array[1].floating, 0.5, 1e-6),
         "Ctrl+Z did not restore the pre-translate geometry (v6.y): "
         ~ undone[6].toString);
+    act = postJson("/api/command", "tool.set xfrm.smooth");
+    assert(act["status"].str == "ok" || act["status"].str == "success",
+        "re-arm Smooth failed: " ~ act.toString);
 
     // 5. Free-drag the smooth tool (LMB-down + motion + up anywhere in the
     //    viewport — the smooth wrapper's drag is a free screen drag, NOT gizmo-

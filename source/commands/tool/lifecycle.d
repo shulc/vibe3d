@@ -34,6 +34,7 @@ class ToolActivationCommand : Command, ToolArmLifecyclePolicy {
     // window's first group also pops this row (C-H1-door, gap 300); a
     // script-door row is its own undo step.
     private bool sessionSteps_;
+    private bool historyRecordedSteps_;
     private bool joinsFirstGroup_;
     // Slice M4 — `recordCarries_`: the armed tool's policy says the record
     // that closes its window's first operation carries this row (gap 218).
@@ -59,11 +60,13 @@ class ToolActivationCommand : Command, ToolArmLifecyclePolicy {
          bool sessionSteps = false, bool joinsFirstGroup = false,
          bool recordCarries = false, ulong sessionToken = 0,
          ulong previousToken = 0, bool previousClassified = false,
-         bool previousHistoryTopology = false) {
+         bool previousHistoryTopology = false,
+         bool historyRecordedSteps = false) {
         super(mesh, view, editMode);
         armedId_ = armedId.idup;
         previousId_ = previousId.idup;
         sessionSteps_ = sessionSteps;
+        historyRecordedSteps_ = historyRecordedSteps;
         joinsFirstGroup_ = joinsFirstGroup;
         recordCarries_ = recordCarries;
         previousToken_ = previousToken;
@@ -106,7 +109,7 @@ class ToolActivationCommand : Command, ToolArmLifecyclePolicy {
     string previousId() const { return previousId_; }
     bool carriesRedoAfterUndo() const {
         return dormantTopology_ || previousHistoryTopology_ ||
-            (sessionSteps_ && !previousClassified_);
+            (sessionSteps_ && !historyRecordedSteps_ && !previousClassified_);
     }
     void markDormantTopology() { dormantTopology_ = true; }
     bool dormantTopology() const { return dormantTopology_; }
