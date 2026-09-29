@@ -4,7 +4,8 @@
 //   1. Activating xfrm.pointAttract and hovering over vertex 6 sets the pick target.
 //   2. An LMB-drag moves the anchor vertex toward the cursor (convergent pull).
 //   3. Vertices outside the falloff sphere (dist=1.0, default) are unmoved.
-//   4. Releasing commits a MeshVertexEdit undo entry — Ctrl+Z restores geometry.
+//   4. Two separate releases commit distinct History rows on an asymmetric
+//      eight-vertex subject; keyboard Undo/Redo walks S2→S1→S0→S1→S2.
 //
 // Hover-pick mechanism: a MOUSEMOTION event (state=0) at v6's screen position
 // is injected 180 ms before the MOUSEBUTTONDOWN.  Within that gap several
@@ -25,6 +26,8 @@ import std.net.curl;
 import std.json;
 import std.math   : abs, sqrt;
 import std.format : format;
+import core.thread : Thread;
+import core.time : msecs;
 
 void main() {}
 
@@ -53,6 +56,28 @@ V3 vert(int idx) {
 double dist3(V3 a, V3 b) {
     double dx = a.x-b.x, dy = a.y-b.y, dz = a.z-b.z;
     return sqrt(dx*dx + dy*dy + dz*dz);
+}
+V3[] positions() {
+    V3[] out_;
+    foreach (v; jget("/api/model")["vertices"].array) {
+        auto a = v.array;
+        out_ ~= V3(a[0].floating, a[1].floating, a[2].floating);
+    }
+    return out_;
+}
+bool samePositions(V3[] a, V3[] b, double tol = 1e-4) {
+    if (a.length != b.length) return false;
+    foreach (i; 0 .. a.length) if (dist3(a[i], b[i]) > tol) return false;
+    return true;
+}
+long undoLen() { return cast(long) jget("/api/history")["undo"].array.length; }
+
+// SDL keyboard input reaches EditSession's in-session History navigator.
+void navigate(bool redo) {
+    playAndWait(format(
+        `{"t":0.000,"type":"SDL_KEYDOWN","sym":122,"scan":0,"mod":%d,"repeat":0}`,
+        redo ? 65 : 64), BASE);
+    Thread.sleep(150.msecs);
 }
 
 // Build an event log: hover at (hx,hy) at t=20ms, then DOWN+motion+UP
@@ -103,7 +128,7 @@ string buildHoverDragLog(
 }
 
 // ---------------------------------------------------------------------------
-// Test — hover v6, drag right, check v6 moved + v5 unmoved + undo restores.
+// Test — hover v6 twice, compare full geometry and History navigation.
 // ---------------------------------------------------------------------------
 unittest {
     // Reset to cube.
@@ -111,8 +136,24 @@ unittest {
     // (reset may return ok or may use the cube primitive path; any 2xx is fine,
     //  just proceed; if cube isn't there we'll fail on geometry assertions.)
 
+    // Break the cube's symmetry without touching the picked vertex or its
+    // falloff-boundary neighbour. The full eight-vertex image is compared
+    // through both completed gestures and every History navigation step.
+    mustOk(jpost("/api/command", "select.element vertex set 0"), "select v0");
+    mustOk(jpost("/api/command", `{"id":"mesh.setPosition","axis":"x","value":-0.8}`), "asymmetric v0");
+    mustOk(jpost("/api/command", "select.element vertex set 1"), "select v1");
+    mustOk(jpost("/api/command", `{"id":"mesh.setPosition","axis":"y","value":-0.35}`), "asymmetric v1");
+    mustOk(jpost("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[]}`)),
+           "clear rig selection");
+    mustOk(jpost("/api/command", "history.clear"), "clear rig history");
+    auto s0 = positions();
+    assert(s0.length == 8 && abs(s0[0].x + 0.8) < 1e-4
+           && abs(s0[1].y + 0.35) < 1e-4,
+           "Point Attract subject lost its asymmetric eight-vertex population");
+
     // Activate xfrm.pointAttract.
     mustOk(jpost("/api/command", "tool.set xfrm.pointAttract"), "tool.set xfrm.pointAttract");
+    long armRows = undoLen();
 
     // Fetch the live camera so our screen projection matches vibe3d's.
     auto cam = fetchCamera(BASE);
@@ -134,6 +175,9 @@ unittest {
     auto log = buildHoverDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
                                  x0, y0, x1, y1, 20);
     playAndWait(log, BASE);
+    auto s1 = positions();
+    assert(!samePositions(s0, s1), "Point Attract positive 1 changed no geometry");
+    assert(undoLen() == armRows + 1, "Point Attract positive 1 has no distinct History row");
 
     // After the UP event MagnetTool.onMouseButtonUp committed the edit.
     auto m = jget("/api/model");
@@ -159,19 +203,28 @@ unittest {
     assert(abs(v5z - 0.5) < 1e-3,
            format("v5.z must be unchanged (%.5f)", v5z));
 
-    // Undo — MeshVertexEdit.revert() restores v6 to (0.5, 0.5, 0.5).
-    jpost("/api/command", commandBody("history.undo"));
+    // Reproject the moved anchor, hover-pick again, and release a second drag.
+    float sx2, sy2;
+    assert(projectToWindow(Vec3(cast(float)v6Now.x, cast(float)v6Now.y,
+                                cast(float)v6Now.z), vp, sx2, sy2),
+           "moved Point Attract anchor left the viewport");
+    int x2 = cast(int)sx2, y2 = cast(int)sy2;
+    playAndWait(buildHoverDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                                  x2, y2, x2 + 60, y2, 20), BASE);
+    auto s2 = positions();
+    assert(!samePositions(s1, s2), "Point Attract positive 2 changed no geometry");
+    assert(undoLen() == armRows + 2, "Point Attract positive 2 merged with positive 1");
 
-    auto m2     = jget("/api/model");
-    auto verts2 = m2["vertices"].array;
-    V3 v6After  = V3(verts2[6].array[0].floating,
-                     verts2[6].array[1].floating,
-                     verts2[6].array[2].floating);
-    double d6Restored = dist3(v6After, v6Orig);
-    assert(d6Restored < 1e-4,
-           format("v6 must be restored to (0.5,0.5,0.5) after undo (dist=%.6f)",
-                  d6Restored));
+    navigate(false);
+    assert(samePositions(positions(), s1), "Point Attract Undo 1 did not restore S1");
+    navigate(false);
+    assert(samePositions(positions(), s0), "Point Attract Undo 2 did not restore S0");
+    navigate(true);
+    assert(samePositions(positions(), s1), "Point Attract Redo 1 did not restore S1");
+    navigate(true);
+    assert(samePositions(positions(), s2), "Point Attract Redo 2 did not restore S2");
 
     // Deactivate tool so scene is clean for any subsequent tests.
-    jpost("/api/command", "tool.set select");
+    mustOk(jpost("/api/command", "tool.set xfrm.pointAttract off"), "close Point Attract");
+    assert(samePositions(positions(), s2), "Point Attract close changed committed geometry");
 }
