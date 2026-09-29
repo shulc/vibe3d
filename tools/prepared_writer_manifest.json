@@ -1194,7 +1194,7 @@
     {
       "aggregate": "XfrmTransformTool",
       "module": "tools.transform.xfrm_transform",
-      "semantic_sha256": "68edfc0a7f9cf3adb942c3616d8540414bac4e5959e216525ad3198c25546516",
+      "semantic_sha256": "0e613fccf0ce60268b229a0f463f63446af3c1c669fdb1e86479f41c7a00e3c9",
       "signature": "void()",
       "symbol": "deactivate"
     },

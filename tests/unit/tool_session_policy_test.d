@@ -382,12 +382,11 @@ private void inOrder(string hay, string[] needles, string where) {
 
 unittest { // (3) the doors reach the tool session only through EditSession
     auto app = blankNonCode(readText("source/app.d"));
-    // The whole body, whitespace-free: any other statement (a direct
-    // `history.undo ()`, a bare `history.undo;`) changes it.
+    // The whole body, whitespace-free: History still flows through the session,
+    // and only a failed outside Redo can publish the terminal notice.
     const nav = squeeze(bodyAt(app, "bool navHistory(bool isUndo)"));
-    assert(nav == "{returnsession.navigate(isUndo);}",
-           "M1 wiring census: app.d navHistory is no longer exactly "
-           ~ "`return session.navigate(isUndo);`, got " ~ nav);
+    assert(nav == "{constmoved=session.navigate(isUndo);if(!isUndo&&!moved&&session.terminalRedoRequested())guardModalState.publishHistoryTerminal();returnmoved;}",
+           "M1 wiring census: app.d navHistory body changed: " ~ nav);
 
     auto router = blankNonCode(readText("source/input_router.d"));
     assert(router.canFind("navHistory(true)") && router.canFind("navHistory(false)"),
@@ -419,9 +418,9 @@ unittest { // (3) the doors reach the tool session only through EditSession
              "resyncSession()", "replayFirstGroup_()"],
             "ToolSession.redo");
     // Nothing else in the module steps the history.
-    assert(es.count("history_.undo()") == 9 && es.count("history_.redo()") == 5,
+    assert(es.count("history_.undo()") == 10 && es.count("history_.redo()") == 5,
            format("M1 wiring census: edit_session.d steps the history %s/%s times, "
-                  ~ "expected undo 9 (live recorded ladder, topology and prior ToolSession branches) and "
+                  ~ "expected undo 10 (closed-run replay, live recorded ladder, topology and prior ToolSession branches) and "
                   ~ "redo 5 (recorded producer, topology and prior ToolSession branches)",
                   es.count("history_.undo()"), es.count("history_.redo()")));
 }

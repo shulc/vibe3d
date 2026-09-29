@@ -381,6 +381,8 @@ private enum LedgerRow[] kReceiverDisposition = [
         "EXCUSE: read-only UI-tail query"),
     LedgerRow("CommandHistory.clear", 1,
         "EXCUSE: clears both timelines but cannot create a caller entry"),
+    LedgerRow("CommandHistory.closeRunVisible", 1,
+        "EXCUSE: marks an existing run tail closed and assigns owner metadata; creates no entry"),
     LedgerRow("CommandHistory.consolidate", 1,
         "gesture primitive — rewrites an already-open run tail"),
     LedgerRow("CommandHistory.discardPreparedToken", 1,

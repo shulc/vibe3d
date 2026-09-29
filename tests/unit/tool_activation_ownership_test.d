@@ -166,7 +166,7 @@ private struct SiteCount { string transition; size_t count; string why; }
 private immutable SiteCount[] kSites = [
     SiteCount("commandArm",             1, "toolHost.activatePrepared"),
     SiteCount("interactiveArm",         1, "toolHost.activate"),
-    SiteCount("replayArm",              1, "the lifecycle restore delegate inside armPreparedTool (slice M4 removed the switch-restorable one: a restore is the same replay arm)"),
+    SiteCount("replayArm",              2, "the lifecycle restore delegate and closed-run owner rearm, both through armPreparedTool"),
     SiteCount("resetRearm",             1, "tool.reset rebuilding the same id"),
     SiteCount("explicitDrop",           3, "toolHost.deactivate, Space key and Esc ladder first rung"),
     SiteCount("sameIdToggleDrop",       1, "activateToolById's already-active toggle"),
@@ -269,15 +269,15 @@ unittest {
     // through the per-row message rather than through a bare total.
     size_t total;
     foreach (r; kSites) total += r.count;
-    assert(total == 21,
-        format("task 4053: the site ledger now sums to %s, recorded 21 (slice M4: the "
-               ~ "switch-restore replay arm left) — say in "
+    assert(total == 22,
+        format("task 4053: the site ledger now sums to %s, recorded 22 (task 8261: the "
+               ~ "closed-run owner rearm arrived) — say in "
                ~ "the commit which sites arrived or left", total));
 
     // And the total DECOMPOSES, which is what keeps 22 from being a number
     // with no structure:
-    //     16  dropActiveTool(ToolTransition.…) calls
-    //   +  4  armPreparedTool(ToolTransition.…) calls
+    //     15  dropActiveTool(ToolTransition.…) calls
+    //   +  5  armPreparedTool(ToolTransition.…) calls
     //   +  2  shutdownDrop mentions — a comment and the door assert, the one
     //         drop with no call at all, because its scope(exit) is declared
     //         above the verb
@@ -307,10 +307,11 @@ unittest {
         armCalls  += occurrences(text, "armPreparedTool(ToolTransition.");
     }
     // Slice M2 folded the funnel's two pre-apply drop calls into one (16 -> 15);
-    // slice M4 removed the switch-restore replay arm (5 -> 4).
-    assert(dropCalls == 15 && armCalls == 4,
+    // slice M4 removed the switch-restore replay arm (5 -> 4), then task 8261
+    // added the closed-run owner replay arm (4 -> 5).
+    assert(dropCalls == 15 && armCalls == 5,
         format("task 4053: wired call sites moved — %s drops and %s arms, "
-               ~ "recorded 15 and 4. With the 2 shutdownDrop mentions (no call) "
+               ~ "recorded 15 and 5. With the 2 shutdownDrop mentions (no call) "
                ~ "these must sum to the ledger's %s.",
                dropCalls, armCalls, total));
     assert(dropCalls + armCalls + 2 == total,

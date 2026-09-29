@@ -947,9 +947,9 @@ def validate_prepared_history(source):
         "prepareRecord": ("PreparedHistoryResult", "b1562eca7f69448b1b5b446824856772bfa3dac0e65f9d4c0b9e8f1a64c7492a"),
         # Transform ToolSession rows retain their token when a prepared run
         # replaces its constituent commands with one merged carrier.
-        "consolidatePrepared": (r"private\s+static\s+void", "04302180443861c7230c8be0221aae1fd592879238d8b9c16ce6978111a79392"),
+        "consolidatePrepared": (r"private\s+static\s+void", "1e940ae41008739eb304f2405c77bd9485b1070afd114700aca14555da305a7f"),
         "prepareConsolidate": ("PreparedHistoryResult", "3ad88567f5495afac0c68db6f9d627afb5c407afe9152446d15b3271e12db818"),
-        "prepareLifecycle": ("PreparedHistoryResult", "a53797c1a2ae58675b40b96a8567c22931f20ff60a2bb0072c56372a5e306bb2"),
+        "prepareLifecycle": ("PreparedHistoryResult", "7ed743a0551aad983e5642ff0212e515917642dcf85efd47ca1dc530a5bb3777"),
         "installPreparedToken": ("void", "15772113e5f3f97b80bb8f6d403f80297f53d0b97810571c18a3fc2ca67e8603"),
     }
     for name, (returns, digest) in expected.items():
