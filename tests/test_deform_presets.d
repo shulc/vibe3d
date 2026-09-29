@@ -56,6 +56,10 @@ unittest { // softMove = Move + Radial
     assertPreset("xfrm.softMove", "radial", "false");
 }
 
+unittest { // xfrm.magnet = transform Move bank + Radial
+    assertPreset("xfrm.magnet", "radial", "false");
+}
+
 unittest { // softRotate = Rotate + Radial
     assertPreset("xfrm.softRotate", "radial", "false");
 }

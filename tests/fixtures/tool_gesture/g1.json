@@ -213,10 +213,10 @@
         ]
       },
       {
-        "cell": "xfrm.magnet/drag",
+        "cell": "xfrm.pointAttract/drag",
         "drove": [
           {
-            "op": "tool.set xfrm.magnet",
+            "op": "tool.set xfrm.pointAttract",
             "values": {}
           },
           {
@@ -231,7 +231,7 @@
             }
           },
           {
-            "op": "tool.set xfrm.magnet",
+            "op": "tool.set xfrm.pointAttract",
             "values": {
               "off": true
             }
@@ -395,7 +395,7 @@
       "postRedo": {"provenance": {"producedBy": "", "path": "", "family": "", "stand": ""}, "counts": {"vertices": 3, "edges": 3, "faces": 1}, "vertices": [[-0.567562461, 0.09265697, 0], [-0.204322502, 0.09265697, 0], [-0.393180192, -0.188789248, 0]], "faces": [[0, 1, 2]], "vertexMarks": [0, 0, 0], "faceMarks": [0], "vertexSelectionOrder": [0, 0, 0], "faceSelectionOrder": [0], "selectionOrderCounters": {"vertex": 0, "edge": 0, "face": 0}, "edgePlanes": [{"ends": [0, 1], "marks": 0, "order": 0}, {"ends": [0, 2], "marks": 0, "order": 0}, {"ends": [1, 2], "marks": 0, "order": 0}], "faceMaterial": [0], "facePart": [0], "surfaces": [], "vertexSetNames": [], "vertexSetMask": [0, 0, 0], "polygonSetNames": [], "faceSetMask": [0], "edgeSetNames": [], "edgeSetMask": [], "meshMaps": []}
     },
     {
-      "name": "xfrm.magnet/drag", "tool": "xfrm.magnet",
+      "name": "xfrm.pointAttract/drag", "tool": "xfrm.pointAttract",
       "recordSite": "source/tools/deform/magnet.d MagnetTool.commitEdit (cmd.setEdit)", "mode": "Plain", "payload": "MeshVertexEdit",
       "liveEntryNames": ["mesh.vertex_edit"],
       "entryNames": ["mesh.vertex_edit"],

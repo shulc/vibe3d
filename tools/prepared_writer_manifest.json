@@ -237,12 +237,12 @@
     },
     {
       "aggregate": "<module>",
-      "id": "xfrm.magnet",
+      "id": "xfrm.pointAttract",
       "product_types": [
         "MagnetTool"
       ],
       "semantic_sha256": "31d7084fcf453c7eaae4183834b88c87a635d9023b748386d48191a636aed53f",
-      "symbol": "registerTool(\"xfrm.magnet\")"
+      "symbol": "registerTool(\"xfrm.pointAttract\")"
     },
     {
       "aggregate": "<module>",
@@ -1243,6 +1243,13 @@
     },
     {
       "admission": "activationRow",
+      "aggregate": "BendTool",
+      "module": "tools.deform.bend",
+      "signature": "BendTool",
+      "symbol": "lifecycleProduct"
+    },
+    {
+      "admission": "activationRow",
       "aggregate": "CloneTool",
       "module": "tools.alignment.clone_tool",
       "signature": "CloneTool",
@@ -1278,9 +1285,23 @@
     },
     {
       "admission": "activationRow",
+      "aggregate": "LinearAlignTool",
+      "module": "tools.alignment.linear_align_tool",
+      "signature": "LinearAlignTool",
+      "symbol": "lifecycleProduct"
+    },
+    {
+      "admission": "activationRow",
       "aggregate": "LoopSliceTool",
       "module": "tools.slice.loop_slice_tool",
       "signature": "LoopSliceTool",
+      "symbol": "lifecycleProduct"
+    },
+    {
+      "admission": "activationRow",
+      "aggregate": "MagnetTool",
+      "module": "tools.deform.magnet",
+      "signature": "MagnetTool",
       "symbol": "lifecycleProduct"
     },
     {
@@ -1309,6 +1330,20 @@
       "aggregate": "PolyInsetTool",
       "module": "tools.edit.poly_inset_tool",
       "signature": "PolyInsetTool",
+      "symbol": "lifecycleProduct"
+    },
+    {
+      "admission": "activationRow",
+      "aggregate": "PushTool",
+      "module": "tools.deform.push",
+      "signature": "PushTool",
+      "symbol": "lifecycleProduct"
+    },
+    {
+      "admission": "activationRow",
+      "aggregate": "RadialAlignTool",
+      "module": "tools.alignment.radial_align_tool",
+      "signature": "RadialAlignTool",
       "symbol": "lifecycleProduct"
     },
     {
@@ -1358,6 +1393,27 @@
       "aggregate": "VertexMergeTool",
       "module": "tools.edit.vert_merge_tool",
       "signature": "VertexMergeTool",
+      "symbol": "lifecycleProduct"
+    },
+    {
+      "admission": "activationRow",
+      "aggregate": "XfrmJitterTool",
+      "module": "tools.common.command_wrapper",
+      "signature": "XfrmJitterTool",
+      "symbol": "lifecycleProduct"
+    },
+    {
+      "admission": "activationRow",
+      "aggregate": "XfrmQuantizeTool",
+      "module": "tools.common.command_wrapper",
+      "signature": "XfrmQuantizeTool",
+      "symbol": "lifecycleProduct"
+    },
+    {
+      "admission": "activationRow",
+      "aggregate": "XfrmSmoothTool",
+      "module": "tools.common.command_wrapper",
+      "signature": "XfrmSmoothTool",
       "symbol": "lifecycleProduct"
     },
     {

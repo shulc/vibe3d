@@ -802,11 +802,11 @@ unittest { // T4: Magnet pulls the vertex to the cursor on the DRAWN surface
                (hitCorrect - hitWrong2).length));
 
     cmd("select.typeFrom vertex");
-    cmd("tool.set xfrm.magnet");
+    cmd("tool.set xfrm.pointAttract");
     playAndWait(hoverThenDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
                                  x0, y0, x1, y1, 12));
     Thread.sleep(dur!"msecs"(200));
-    cmd("tool.set xfrm.magnet off");
+    cmd("tool.set xfrm.pointAttract off");
 
     Vec3[] after = fetchVerts();
     assert(after.length == 4, format("magnet must not change topology, got %d", after.length));

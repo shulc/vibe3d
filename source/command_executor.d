@@ -15,6 +15,7 @@ private:
     void delegate(ToolTransition) dropActiveTool;
     CloseOutcome delegate(const Command, CommandDoor, bool) closeForCommand;
     void delegate() finishClose;
+    void delegate(Command) recordedToolApply;
     bool inPreApplyToolHandling_;
     // Set for the extent of one UI-door invocation (`applyOrRefireFromUi`);
     // nested invocations inherit it, the outermost clears it.
@@ -24,7 +25,8 @@ public:
     this(CommandHistory history, bool delegate() activeTool,
          void delegate(ToolTransition) dropActiveTool,
          CloseOutcome delegate(const Command, CommandDoor, bool) closeForCommand = null,
-         void delegate() finishClose = null) {
+         void delegate() finishClose = null,
+         void delegate(Command) recordedToolApply = null) {
         assert(history !is null, "CommandExecutor requires CommandHistory");
         assert(activeTool !is null, "CommandExecutor requires an armed-tool reader");
         assert(dropActiveTool !is null, "CommandExecutor requires a tool-drop hook");
@@ -33,6 +35,7 @@ public:
         this.dropActiveTool = dropActiveTool;
         this.closeForCommand = closeForCommand;
         this.finishClose = finishClose;
+        this.recordedToolApply = recordedToolApply;
     }
 
     // True for the extent of a UI-door invocation — the arm door of a tool
@@ -179,6 +182,8 @@ public:
                 case RecordMode.Record:     history.record(cmd);           break;
                 case RecordMode.Coalescing: history.recordCoalescing(cmd); break;
             }
+            if (cmd.name() == "tool.doApply" && recordedToolApply !is null)
+                recordedToolApply(cmd);
             return true;
         }
         if (throwMsg !is null) throw new Exception(failMsg());

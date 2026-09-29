@@ -319,14 +319,20 @@ unittest {
     assert(act["status"].str == "ok" || act["status"].str == "success",
         "tool.set xfrm.smooth failed: " ~ act.toString);
 
-    // Pop the extrude underneath it -> mesh shrinks to baseVerts; resyncSession()
-    // must re-dup the baseline to the new (shorter) length without asserting.
+    // H1: the first Undo steps Smooth's activation row. The next reaches the
+    // earlier extrude, then Redo restores both rows in history order.
+    playKey(SDLK_z, KMOD_LCTRL);
+    assert(undoLen() == undoAfterEdit,
+           "Ctrl+Z did not pop Smooth's activation row first");
+    assert(vertCount() == extrudedVerts,
+           "undoing an idle tool activation changed the mesh");
     playKey(SDLK_z, KMOD_LCTRL);
     assert(undoLen() == undoAfterEdit - 1, "Ctrl+Z did not pop one entry");
     assert(vertCount() == baseVerts, "Ctrl+Z did not restore pre-extrude verts");
 
     playKey(SDLK_z, KMOD_LCTRL | KMOD_LSHIFT);   // redo
     assert(vertCount() == extrudedVerts, "redo did not re-apply the extrude");
+    playKey(SDLK_z, KMOD_LCTRL | KMOD_LSHIFT);   // re-arm Smooth
 
     postJson("/api/command", "tool.set xfrm.smooth off");
 }

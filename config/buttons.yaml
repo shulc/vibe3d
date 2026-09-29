@@ -136,6 +136,10 @@ panels:
               action: { kind: tool, id: xfrm.softDrag } }
           - { label: "Soft Move",
               action: { kind: tool, id: xfrm.softMove } }
+          - { label: "Magnet (Soft Move)",
+              action: { kind: tool, id: xfrm.magnet } }
+          - { label: "Point Attract",
+              action: { kind: tool, id: xfrm.pointAttract } }
           - { label: "Soft Transform",
               action: { kind: tool, id: xfrm.softTransform } }
           - { label: "Shear",

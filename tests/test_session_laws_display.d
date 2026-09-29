@@ -356,7 +356,7 @@ unittest { // Magnet: no rollover flag in the table — its hovered vertex is no
     assert(noTool > 0, "magnet control: no tool, vertex mode, the hovered vertex draws nothing");
     // The magnet still PICKS the vertex (its gesture reads it): the pick need
     // and the rollover are two data.
-    immutable size_t n = cellPx("vertex", "xfrm.magnet", kV, "vertex");
+    immutable size_t n = cellPx("vertex", "xfrm.pointAttract", kV, "vertex");
     assert(n == 0, format("magnet (no rollover flag, M6 flip): drew %s px of hover at the vertex",
                           n));
 }

@@ -913,16 +913,16 @@ unittest {
     // --- (g) MagnetTool: the `setEdit` installer and the `MeshVertexEdit`
     //     payload — the one non-wrapper tool on that class, and the reason the
     //     seam's carrier interface cannot be a set of snapshot setters.
-    cells ~= runCell("xfrm.magnet/drag", "xfrm.magnet",
+    cells ~= runCell("xfrm.pointAttract/drag", "xfrm.pointAttract",
         "source/tools/deform/magnet.d MagnetTool.commitEdit (cmd.setEdit)",
         "Plain", "MeshVertexEdit",
-        { resetCube(); cmd("history.clear"); setOrbitCamera(); cmd("tool.set xfrm.magnet"); },
+        { resetCube(); cmd("history.clear"); setOrbitCamera(); cmd("tool.set xfrm.pointAttract"); },
         {
             int x0, y0; px(Vec3(0.5f, 0.5f, 0.5f), x0, y0);
             hoverDrag(x0, y0, x0 + 100, y0);
             gDrove ~= driveDrag(100, 0, 20, 1, 0, true);
         },
-        { cmd("tool.set xfrm.magnet off"); });
+        { cmd("tool.set xfrm.pointAttract off"); });
 
     // --- (h) edge.extend: the `setDelta` installer, a RECORDING MeshEditBatch,
     //     and the degenerate-arm site P0-a instrumented. Its REDO does not

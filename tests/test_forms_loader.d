@@ -432,6 +432,8 @@ unittest {
     assert(formIds("ElementMove")      == ["transform.position", "transform.options"]);
     // Deform presets (base move/rotate/scale): single bank each + options.
     assert(formIds("xfrm.softMove")   == ["transform.position", "transform.options"]);
+    assert(formIds("xfrm.magnet")     == ["transform.position", "transform.options"]);
+    assert(formIds("xfrm.pointAttract").length == 0);
     assert(formIds("xfrm.twist")      == ["transform.rotate",   "transform.options"]);
     assert(formIds("xfrm.taper")      == ["transform.scale",    "transform.options"]);
     // T+R+S ids: all three bank groups, Position->Rotate->Scale order, + options.

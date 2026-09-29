@@ -211,6 +211,12 @@ version (unittest) unittest {
 }
 
 class TransformTool : Tool {
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy policy = {
+            activationRow: true, sessionSteps: true,
+            historyRecordedSteps: true };
+        return policy;
+    }
 public:
     struct PreparedScalarDeactivateImage {
         bool valid, active, vertexCacheDirty, needsGpuUpdate, centerManual;
@@ -742,6 +748,7 @@ protected:
             history.recordInSession(cmd, history.currentRunId);
         else
             history.record(cmd);
+        sessionRecordCompleted(cmd);
         publishCommittedTransform();
     }
 

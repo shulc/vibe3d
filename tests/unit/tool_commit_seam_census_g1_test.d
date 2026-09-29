@@ -322,7 +322,7 @@ unittest {
 private enum string[] kG1WireIds = [
     "prim.cube", "prim.sphere", "prim.ellipsoid", "prim.cylinder", "prim.tube",
     "prim.cone", "prim.capsule", "prim.torus", "prim.arc", "pen", "prim.vertex",
-    "edge.extrude", "edge.extend", "xfrm.magnet",
+    "edge.extrude", "edge.extend", "xfrm.pointAttract",
 ];
 
 unittest {

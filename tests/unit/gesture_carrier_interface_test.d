@@ -49,7 +49,7 @@
 //           binding, which the compiler reaches before this block. That is not
 //           a weaker result, it is a stronger one — all four rows here mirror
 //           a REAL binding in `source/registration.d` (`bevelEditFactory` and
-//           its 23 siblings, `vxEditFactory` at `xfrm.magnet`, the inline
+//           its 23 siblings, `vxEditFactory` at `xfrm.pointAttract`, the inline
 //           `MeshVertexNew` at `mesh.topoPen`, the erasure at the belt probe),
 //           so an over-broad door cannot compile the tree at all. The rows
 //           stay because they say WHICH carrier and WHY at the place a reader

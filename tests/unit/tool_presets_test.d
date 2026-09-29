@@ -32,3 +32,18 @@ unittest {
     assert(aliased.toolAttrs == canonical.toolAttrs);
     assert(aliased.pipeAttrs == canonical.pipeAttrs);
 }
+
+// Magnet's ID must remain a radial Move composition. A plain Move
+// factory loses the explicit T-only xfrm.transform profile.
+unittest {
+    auto presets = loadToolPresets("config/tool_presets.yaml");
+    const(ToolPreset)* magnet = null;
+    foreach (ref p; presets)
+        if (p.id == "xfrm.magnet") magnet = &p;
+    assert(magnet !is null, "xfrm.magnet preset missing");
+    assert(magnet.base == "xfrm.transform");
+    assert(magnet.toolAttrs["T"] == "true");
+    assert(magnet.toolAttrs["R"] == "false");
+    assert(magnet.toolAttrs["S"] == "false");
+    assert(magnet.pipeAttrs["falloff"]["type"] == "radial");
+}

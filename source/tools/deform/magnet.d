@@ -58,7 +58,7 @@ struct PreparedMagnetParamImage {
     }
 }
 
-/// Convergent attraction deformer tool (`xfrm.magnet`).
+/// Convergent attraction deformer tool (`xfrm.pointAttract`).
 ///
 /// Workflow:
 ///   1. Hover over a vertex — it highlights (ToolFlag.HoverVertices enables GPU pick).
@@ -77,7 +77,9 @@ class MagnetTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient {
     // (slice M2; the C1-h-sel-fam law, captured for Edge Extend and Polygon
     // Bevel and inferred for the rest of the in-place family, R20 gap g5).
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
-        static immutable ToolSessionPolicy policy = { commandClose: CommandClose.uiDoor };
+        static immutable ToolSessionPolicy policy = {
+            activationRow: true, commandClose: CommandClose.uiDoor,
+            sessionSteps: true, historyRecordedSteps: true };
         return policy;
     }
 

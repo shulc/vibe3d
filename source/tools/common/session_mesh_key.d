@@ -16,7 +16,7 @@ import mesh_edit_delta : MeshEditScope;
 ///
 ///   * `mesh.bridgeTool`      ArrayIndexError@source/mesh_ops/bridge.d(204)
 ///   * `mesh.radialSweepTool` ArrayIndexError@source/mesh_ops/revolve.d(374)
-///   * `xfrm.magnet`          ArrayIndexError@source/tools/deform/magnet.d(298)
+///   * `xfrm.pointAttract`          ArrayIndexError@source/tools/deform/magnet.d(298)
 ///
 /// WHY THE OBVIOUS TERMS DO NOT WORK, MEASURED RATHER THAN REASONED.
 /// `SceneReset.applyImpl` writes `*mesh = Mesh.init` IN PLACE on the SURVIVING

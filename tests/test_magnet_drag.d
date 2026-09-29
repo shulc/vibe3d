@@ -1,7 +1,7 @@
-// Interactive drag test for the `xfrm.magnet` tool.
+// Interactive drag test for the `xfrm.pointAttract` tool.
 //
 // Tests that:
-//   1. Activating xfrm.magnet and hovering over vertex 6 sets the pick target.
+//   1. Activating xfrm.pointAttract and hovering over vertex 6 sets the pick target.
 //   2. An LMB-drag moves the anchor vertex toward the cursor (convergent pull).
 //   3. Vertices outside the falloff sphere (dist=1.0, default) are unmoved.
 //   4. Releasing commits a MeshVertexEdit undo entry — Ctrl+Z restores geometry.
@@ -111,8 +111,8 @@ unittest {
     // (reset may return ok or may use the cube primitive path; any 2xx is fine,
     //  just proceed; if cube isn't there we'll fail on geometry assertions.)
 
-    // Activate xfrm.magnet.
-    mustOk(jpost("/api/command", "tool.set xfrm.magnet"), "tool.set xfrm.magnet");
+    // Activate xfrm.pointAttract.
+    mustOk(jpost("/api/command", "tool.set xfrm.pointAttract"), "tool.set xfrm.pointAttract");
 
     // Fetch the live camera so our screen projection matches vibe3d's.
     auto cam = fetchCamera(BASE);

@@ -38,6 +38,19 @@ presets:
       falloff:
         type: radial
 
+  # xfrm.magnet is Soft Move: radial weighting followed by the
+  # translate bank of xfrm.transform. The point-convergence tool has its
+  # own ID, xfrm.pointAttract.
+  - id: xfrm.magnet
+    base: xfrm.transform
+    attrs:
+      T: "true"
+      R: "false"
+      S: "false"
+    pipe:
+      falloff:
+        type: radial
+
   - id: xfrm.softRotate
     base: rotate
     # Scale the rotation ANGLE by the falloff weight (radius-preserving),

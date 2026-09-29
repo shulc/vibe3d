@@ -486,6 +486,17 @@ struct PreparedHistoryResult {
 }
 
 final class CommandHistory {
+    /// A consolidated run keeps its ToolSession owner only when every source
+    /// row belongs to that same session. Shared by live and prepared images.
+    private static ulong commonSessionToken(const HistoryEntry[] entries,
+                                             size_t start, size_t end) nothrow @nogc {
+        if (start >= end) return 0;
+        const token = entries[start].cmd.sessionToken();
+        if (token == 0) return 0;
+        foreach (i; start + 1 .. end)
+            if (entries[i].cmd.sessionToken() != token) return 0;
+        return token;
+    }
     private immutable ulong preparedOwner_;
     private ulong preparedGeneration_;
     private bool preparedPending_;
@@ -624,6 +635,7 @@ final class CommandHistory {
                 return;
             }
             auto merged = MeshVertexEdit.mergeRun(gathered);
+            merged.markSession(commonSessionToken(p.undoStack, start, end));
             auto first = p.undoStack[start];
             auto entry = HistoryEntry(merged.label, serializeParams(merged.params()),
                 merged.name, merged, first.timestampMs, historyFlagsFor(merged), 0, 0);
@@ -643,6 +655,7 @@ final class CommandHistory {
         foreach (i; start + 1 .. end) later ~= p.undoStack[i].cmd;
         auto merged = mergeable.mergeRunTail(later);
         if (merged is null) return;
+        merged.markSession(commonSessionToken(p.undoStack, start, end));
         auto first = p.undoStack[start];
         auto entry = HistoryEntry(merged.label, serializeParams(merged.params()),
             merged.name, merged, first.timestampMs, historyFlagsFor(merged), 0, 0);
@@ -1523,6 +1536,7 @@ final class CommandHistory {
                 }
 
                 auto merged = MeshVertexEdit.mergeRun(gathered);
+                merged.markSession(commonSessionToken(undoStack, start, end));
 
                 // Replace the gathered entries with ONE entry at the first's
                 // position. The merged entry is an ordinary (non-in-session)
@@ -1575,6 +1589,7 @@ final class CommandHistory {
 
             auto merged = rmFirst.mergeRunTail(later);
             if (merged is null) return;   // declined — leave the stack untouched.
+            merged.markSession(commonSessionToken(undoStack, start, end));
 
             auto first = undoStack[start];
             HistoryEntry mergedEntry = {
@@ -2034,6 +2049,15 @@ final class CommandHistory {
 
     bool blockActive() const { return blockDepth > 0; }
 
+    /// The tool may publish a completed row while a named command block is
+    /// collecting children. Tag only a child actually accepted by the block.
+    bool markBlockChildSession(const Command expect, ulong token) nothrow @nogc {
+        if (blockDepth == 0 || token == 0 || expect is null) return false;
+        foreach_reverse (child; blockChildren)
+            if (child is expect) { child.markSession(token); return true; }
+        return false;
+    }
+
     /// Open a command block. `label` names the resulting composite entry; for
     /// nested calls only the outermost label is used.
     void blockBegin(string label) {
@@ -2066,6 +2090,10 @@ final class CommandHistory {
         // entry's label = the block label (the user named the group) and the
         // behaviour uniform. Wrap unconditionally.
         auto composite = new CompositeCommand(kids, lbl);
+        ulong token = kids[0].sessionToken();
+        foreach (child; kids)
+            if (child.sessionToken() != token) { token = 0; break; }
+        composite.markSession(token);
         record(composite);
     }
 

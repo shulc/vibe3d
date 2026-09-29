@@ -250,6 +250,8 @@ final class EditSession {
     // (tryRefireDispatch's non-reentrancy tripwire). Everything else is
     // computed from tool_() — see SessionPhase.
     private bool refireDriving_ = false;
+    private bool toolRefireOwned_ = false;
+    private Tool toolRefireOwner_;
     // The tool session: history navigation around the active tool (slice M1).
     private ToolSession tools_;
     // One write-set accumulator for the synchronous ValueWritten ->
@@ -461,7 +463,22 @@ final class EditSession {
     // Open a refire block on the history. The bracket is driven externally
     // (the /api/refire test endpoint today) — begin / end are separate calls,
     // not a scope; tryRefireDispatch handles the per-tick fires in between.
-    void refireBegin() { history_.refireBegin(); }
+    private void recordRefireRowAfter_(const Command previous, bool owned) {
+        if (!owned || tool_() !is toolRefireOwner_) return;
+        const after = history_.undoEntries();
+        if (after.length && after[$ - 1].cmd !is previous)
+            tools_.recordCompleted(tool_(), after[$ - 1].cmd);
+    }
+
+    void refireBegin() {
+        const before = history_.undoEntries();
+        const Command previous = before.length ? before[$ - 1].cmd : null;
+        const owned = toolRefireOwned_;
+        history_.refireBegin();
+        recordRefireRowAfter_(previous, owned);
+        toolRefireOwned_ = false;
+        toolRefireOwner_ = null;
+    }
 
     // Refire dispatch (see RefireClient): a `tool.attr` arriving inside an
     // open refire window on an opted-in tool routes through the tool's own
@@ -497,6 +514,8 @@ final class EditSession {
             if (!history_.fire(refireCmd))
                 throw new Exception(
                     "refire command did not apply");
+            toolRefireOwned_ = true;
+            toolRefireOwner_ = tool_();
         }
         return true;
     }
@@ -507,7 +526,13 @@ final class EditSession {
     // landed so its commit chokepoint (deactivate/Apply) records nothing for
     // the same edit.
     void refireEnded() {
+        const before = history_.undoEntries();
+        const Command previous = before.length ? before[$ - 1].cmd : null;
+        const owned = toolRefireOwned_;
         history_.refireEnd();
+        recordRefireRowAfter_(previous, owned);
+        toolRefireOwned_ = false;
+        toolRefireOwner_ = null;
         auto rc = cast(RefireClient) tool_();
         if (rc !is null && rc.wantsRefire()) rc.onRefireCommitted();
     }
@@ -586,6 +611,12 @@ final class EditSession {
     // row the close wrote, and resumes the tool at most once per command close.
     // Called only from a NON-reentrant frame (opponent R3 C3).
     void finishClose() { tools_.finishClose(); }
+
+    /// Headless tool.doApply is recorded by CommandExecutor, rather than by
+    /// the tool's gesture writer. Give that same history row to ToolSession.
+    void recordAppliedToolCommand(Command cmd) {
+        tools_.recordCompleted(tool_(), cmd);
+    }
 
     // The history row the last close WROTE, or null when it wrote none — the
     // row slice M4 tags with the closing session's token.
@@ -798,6 +829,7 @@ private struct ToolSession {
         // re-armed that row bare.
         replay_ = AttrImage.init;
         replayFor_ = null;
+        if (navigateRecorded_(true)) return true;
         if (navigateTopology_(true)) return true;
         if (topologyDormant_) {
             const ue = history_.undoEntries();
@@ -912,6 +944,7 @@ private struct ToolSession {
     }
 
     bool redo() {
+        if (navigateRecorded_(false)) return true;
         if (navigateTopology_(false)) return true;
         // H4: a step an undo popped comes back LIVE — the window re-opens if
         // that undo had closed it (the first group of a script-door arm, or a
@@ -1111,6 +1144,8 @@ private struct ToolSession {
         link.operationArmed = &operationArmed;
         link.operationEnded = &operationEnded;
         link.closeOwn       = &closeOwn;
+        link.recordCompleted = &recordCompleted;
+        link.tagPreparedCompleted = &tagPreparedCompleted;
         t.bindSession(link);
         auto ownedAttrs = topologyAttrsFor_(id, token);
         if (topologyDormant_ && ownedAttrs.empty)
@@ -1294,6 +1329,23 @@ private struct ToolSession {
         if (reporting_(t)) endOperation_();
     }
 
+    void recordCompleted(Tool t, const(Command) cmd) {
+        if (!reporting_(t) || !t.sessionPolicy().historyRecordedSteps ||
+            cmd is null) return;
+        if (history_.markBlockChildSession(cmd, token_)) {
+            live_ = true;
+            return;
+        }
+        if (undoTop_() !is cmd) return;
+        if (history_.markEntrySession(cmd, token_)) live_ = true;
+    }
+
+    void tagPreparedCompleted(Tool t, Command cmd) {
+        if (!reporting_(t) || !t.sessionPolicy().historyRecordedSteps ||
+            cmd is null) return;
+        cmd.markSession(token_);
+    }
+
     bool closeOwn(Tool t, bool commit) {
         if (t !is tool_()) {
             // Not the active tool (a stale instance): its own body, no account.
@@ -1348,9 +1400,11 @@ private struct ToolSession {
         auto j = JSONValue.emptyObject;
         j["live"]  = JSONValue(live_);
         j["steps"] = JSONValue(cast(long) (t.sessionPolicy().historyTopologySteps
-            ? topologyHistoryDepth_(false) : steps_.length));
+            ? topologyHistoryDepth_(false) : t.sessionPolicy().historyRecordedSteps
+            ? recordedHistoryDepth_(false) : steps_.length));
         j["redo"]  = JSONValue(cast(long) (t.sessionPolicy().historyTopologySteps
-            ? topologyHistoryDepth_(true) : redo_.length));
+            ? topologyHistoryDepth_(true) : t.sessionPolicy().historyRecordedSteps
+            ? recordedHistoryDepth_(true) : redo_.length));
         j["dormant"] = JSONValue(topologyDormant_);
         j["token"] = JSONValue(cast(long) token_);
         return j;
@@ -1364,7 +1418,8 @@ private struct ToolSession {
     private Tool liveSteps_() {
         auto t = tool_();
         return live_ && reporting_(t) &&
-            !t.sessionPolicy().historyTopologySteps ? t : null;
+            !t.sessionPolicy().historyTopologySteps &&
+            !t.sessionPolicy().historyRecordedSteps ? t : null;
     }
 
     // A closed-topology redo is a one-arm continuation of the exact lifecycle
@@ -1422,6 +1477,41 @@ private struct ToolSession {
                     cast(const MeshSessionEdit)e.cmd !is null) ++n;
         }
         return n;
+    }
+
+    private size_t recordedHistoryDepth_(bool redo) {
+        import commands.tool.lifecycle : ToolActivationCommand;
+        size_t n;
+        if (redo) {
+            foreach (e; history_.redoEntries())
+                if (e.cmd.sessionToken() == token_ &&
+                    cast(const ToolActivationCommand)e.cmd is null) ++n;
+        } else {
+            foreach (e; history_.undoEntries())
+                if (e.cmd.sessionToken() == token_ &&
+                    cast(const ToolActivationCommand)e.cmd is null) ++n;
+        }
+        return n;
+    }
+
+    private bool navigateRecorded_(bool isUndo) {
+        import commands.tool.lifecycle : ToolActivationCommand;
+        auto t = tool_();
+        if (!reporting_(t) || !t.sessionPolicy().historyRecordedSteps)
+            return false;
+        // A pending preview is still owned by the tool. The ordinary cancel
+        // branch must peel it before an older completed History row moves.
+        if (isUndo && t.hasUncommittedEdit()) return false;
+        const Command row = isUndo ? undoTop_() :
+            (history_.redoEntries().length ? history_.redoEntries()[0].cmd : null);
+        if (row is null || row.sessionToken() != token_ ||
+            cast(const ToolActivationCommand)row !is null) return false;
+        const moved = isUndo ? history_.undo() : history_.redo();
+        if (moved) {
+            auto current = tool_();
+            if (current !is null) current.resyncSession();
+        }
+        return moved;
     }
 
     private bool navigateTopology_(bool isUndo) {

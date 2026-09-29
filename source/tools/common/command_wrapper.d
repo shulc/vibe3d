@@ -995,6 +995,12 @@ public:
 // ---------------------------------------------------------------------------
 
 final class XfrmSmoothTool : CommandWrapperTool {
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy policy = {
+            activationRow: true, commandClose: CommandClose.uiDoor,
+            sessionSteps: true, historyRecordedSteps: true };
+        return policy;
+    }
     private MeshSmooth inner_;
     private float      lastStrn;
 
@@ -1029,6 +1035,12 @@ final class XfrmSmoothTool : CommandWrapperTool {
 }
 
 final class XfrmJitterTool : CommandWrapperTool {
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy policy = {
+            activationRow: true, commandClose: CommandClose.uiDoor,
+            sessionSteps: true, historyRecordedSteps: true };
+        return policy;
+    }
     private MeshJitter inner_;
     private float      lastRange;
 
@@ -1063,6 +1075,12 @@ final class XfrmJitterTool : CommandWrapperTool {
 }
 
 final class XfrmQuantizeTool : CommandWrapperTool {
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy policy = {
+            activationRow: true, commandClose: CommandClose.uiDoor,
+            sessionSteps: true, historyRecordedSteps: true };
+        return policy;
+    }
     private MeshQuantize inner_;
     private float        lastStep;
 

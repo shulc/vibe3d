@@ -51,7 +51,7 @@ mesh.edge_slide | api-only: headless counterpart of the configured edge.slide to
 mesh.jitter | api-only: headless counterpart of the configured xfrm.jitter tool
 mesh.linear_align | api-only: headless counterpart of the configured xfrm.linearAlignTool
 mesh.loopSlice | api-only: headless counterpart of the configured mesh.loopSliceTool
-mesh.magnet | no-ui-yet: magnet tool and one-shot command are both absent from configured UI
+mesh.magnet | api-only: headless point-attraction command; the xfrm.pointAttract tool has its own Move button
 mesh.morph.clear | no-ui-yet: morph target list is visible but clearing values has no action
 mesh.morph.remove | no-ui-yet: morph target list is visible but removal has no action
 mesh.morph.rename | no-ui-yet: morph target list is visible but rename has no action

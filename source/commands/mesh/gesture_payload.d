@@ -11,7 +11,7 @@ module commands.mesh.gesture_payload;
 // by it:
 //
 //   * `MeshVertexEdit.setEdit(uint[], Vec3[], Vec3[], string)` — a THIRD
-//     install form (`commands/mesh/vertex_edit.d`), the one `xfrm.magnet` uses;
+//     install form (`commands/mesh/vertex_edit.d`), the one `xfrm.pointAttract` uses;
 //   * `BoxLiveEditCommand` — built from the TOOL'S OWN STATE by a four-argument
 //     constructor (`tools/create/box.d`), not by any setter at all.
 //

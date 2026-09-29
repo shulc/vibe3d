@@ -305,6 +305,8 @@ struct ToolSessionLink {
     void delegate(Tool) operationArmed;          // the tool armed its operation (OpensAt.arm)
     void delegate(Tool) operationEnded;          // the tool's operation ended by itself
     bool delegate(Tool, bool commit) closeOwn;   // Enter (commit) / RMB (discard)
+    void delegate(Tool, const(Command)) recordCompleted; // history-owned completed gesture
+    void delegate(Tool, Command) tagPreparedCompleted;
 }
 
 struct ToolSessionPolicy {
@@ -330,6 +332,10 @@ struct ToolSessionPolicy {
     /// they finish. ToolSession keeps only the in-flight image and latest
     /// attributes, never a live mesh-image stack.
     bool historyTopologySteps;
+    /// Completed gesture payloads are commands already recorded by the tool.
+    /// ToolSession tags and navigates those rows; it stores no second completed
+    /// geometry or attribute stack for this producer.
+    bool historyRecordedSteps;
     /// A first topology row paired with activation restores the completed
     /// attribute image on redo. The extrude family instead restores the arm
     /// image; preview tools use the completed image measured at release.
@@ -937,6 +943,7 @@ public:
                 history.replaceInSessionTailWith(history.currentRunId, cmd);
                 break;
         }
+        sessionRecordCompleted(cmd);
         return true;
     }
 
@@ -1187,6 +1194,18 @@ public:
     /// with it: no step of an ended operation may be restored later.
     protected final void sessionOperationEnded() {
         if (sessionLink_.operationEnded !is null) sessionLink_.operationEnded(this);
+    }
+    /// Publish the command produced by a completed gesture to the one session
+    /// owner. The command must already be on CommandHistory's undo stack.
+    protected final void sessionRecordCompleted(Command cmd) {
+        if (sessionLink_.recordCompleted !is null)
+            sessionLink_.recordCompleted(this, cmd);
+    }
+    /// Stamp a detached prepared command before a switch transfers its
+    /// history install to the incoming arm transaction.
+    protected final void sessionTagPreparedCompleted(Command cmd) {
+        if (sessionLink_.tagPreparedCompleted !is null)
+            sessionLink_.tagPreparedCompleted(this, cmd);
     }
     /// The tool closes its own operation — Enter or a press that opens the next
     /// operation commits (`commitOperation`), an RMB cancel discards

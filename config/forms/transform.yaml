@@ -41,6 +41,7 @@
 # Bank/flag mapping per id (T -> Position, R -> Rotate, S -> Scale):
 #   move            T          xfrm.softDrag   T (base move)
 #   rotate          R          xfrm.softMove   T (base move)
+#   xfrm.magnet     T          radial Soft Move composition
 #   scale           S          xfrm.shear      T (base move)
 #   xfrm.transform  T+R+S      xfrm.softRotate R (base rotate)
 #   Transform       T+R+S      xfrm.twist      R (base rotate)
@@ -86,6 +87,7 @@ forms:
       - move.element
       - xfrm.softDrag
       - xfrm.softMove
+      - xfrm.magnet
       - xfrm.shear
     category: toolprops/main
     ordinal: 150.45
@@ -173,6 +175,7 @@ forms:
       - move.element
       - xfrm.softDrag
       - xfrm.softMove
+      - xfrm.magnet
       - xfrm.shear
       - xfrm.softRotate
       - xfrm.twist

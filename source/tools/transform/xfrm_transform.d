@@ -2956,10 +2956,14 @@ public:
 
     // The arm writes the activation row (see the class comment). A recording
     // command closes the run on BOTH doors (slice M2): the 6250 continuation,
-    // carried; the UI half is the captured C1-h-sel-fam `move` law.
+    // carried; the UI half is the captured C1-h-sel-fam `move` law. Every
+    // Xfrm preset uses this wrapper's single command producer: completed
+    // geometry lives in CommandHistory, and ToolSession owns its token and
+    // navigation without copying another geometry/attribute stack.
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
         static immutable ToolSessionPolicy policy = {
-            activationRow: true, commandClose: CommandClose.allDoors };
+            activationRow: true, commandClose: CommandClose.allDoors,
+            sessionSteps: true, historyRecordedSteps: true };
         return policy;
     }
 
@@ -5808,9 +5812,11 @@ public:
             PreparedRecordContext context) {
         if (context is null || !p.valid || p.stale || history is null)
             return false;
-        return context.prepare(p.command,
+        if (!context.prepare(p.command,
             PreparedHistoryKind.ReplaceInSessionTail,
-            history.currentRunId).accepted;
+            history.currentRunId).accepted) return false;
+        sessionTagPreparedCompleted(p.command);
+        return true;
     }
 
     private PipeRefireProjection projectPreparedPipeRefire(
@@ -6107,6 +6113,11 @@ public:
         const runId = kind == PreparedHistoryKind.InSession
             ? history.currentRunId : 0;
         if (!context.prepare(p.command, kind, runId).accepted) return false;
+        // The switch door transfers its detached history to the incoming
+        // activation and installs the outgoing state before that history.
+        // Tag the accepted command itself while this ToolSession is still
+        // bound; no second completed-state stack or installer-order coupling.
+        sessionTagPreparedCompleted(p.command);
         p.state.historyPrepared = true;
         return true;
     }
@@ -6173,6 +6184,7 @@ public:
                 history.replaceInSessionTail(cmd, history.currentRunId);
                 break;
         }
+        sessionRecordCompleted(cmd);
     }
 
     // ----- History-coordination hooks (undo/redo migration P0) -------------
@@ -7712,6 +7724,104 @@ unittest { // A fresh wrapper caches its live subject before any lifecycle tick.
 
     assert(tool.cachedSubjType_ == SelType.Item,
         "fresh Xfrm wrapper must cache the live item subject before update");
+}
+
+unittest { // Xfrm's completed gesture rows are navigated by one ToolSession.
+    import edit_session : EditSession;
+    import view : View;
+
+    auto savedPipe = g_pipeCtx;
+    scope(exit) g_pipeCtx = savedPipe;
+    g_pipeCtx = null;
+    Mesh owned = makeCube();
+    EditMode mode = EditMode.Vertices;
+    GpuMesh gpu;
+    auto view = new View(0, 0, 800, 600);
+    auto history = new CommandHistory;
+    auto xfrm = new XfrmTransformTool(() => &owned, &gpu, &mode);
+    xfrm.setUndoBindings(history,
+        () => new MeshVertexEdit(&owned, view, mode));
+    xfrm.activate();
+    Tool active = xfrm;
+    auto session = new EditSession(() => active, history,
+        () { active = null; });
+    session.noteArm("TransformMove", 51);
+    assert(xfrm.sessionPolicy().sessionSteps &&
+           xfrm.sessionPolicy().historyRecordedSteps);
+
+    const origin = owned.vertices[0];
+    foreach (step; [1.0f, 2.0f]) {
+        const before = owned.vertices[0];
+        const after = Vec3(origin.x + step, origin.y, origin.z);
+        owned.vertices[0] = after;
+        auto cmd = new MeshVertexEdit(&owned, view, mode);
+        cmd.setEdit([0u], [before], [after], "Move");
+        xfrm.recordTransformCommand(cmd,
+            XfrmTransformTool.TransformHistoryIntent.RunGesture);
+    }
+    auto state = session.sessionStateJson();
+    assert(state["steps"].integer == 2 && state["redo"].integer == 0 &&
+           history.undoEntries()[$ - 1].cmd.sessionToken() == 51);
+    assert(session.navigate(true) && owned.vertices[0].x == origin.x + 1);
+    state = session.sessionStateJson();
+    assert(state["steps"].integer == 1 && state["redo"].integer == 1);
+    assert(session.navigate(true) && owned.vertices[0] == origin);
+    assert(session.navigate(false) && owned.vertices[0].x == origin.x + 1);
+    assert(session.navigate(false) && owned.vertices[0].x == origin.x + 2);
+    history.consolidate(history.currentRunId);
+    state = session.sessionStateJson();
+    assert(state["steps"].integer == 1 && state["redo"].integer == 0,
+           "a consolidated Xfrm run lost its ToolSession token");
+    assert(session.navigate(true) && owned.vertices[0] == origin);
+    assert(session.navigate(false) && owned.vertices[0].x == origin.x + 2);
+}
+
+unittest { // A detached Xfrm close carries the same ToolSession token.
+    import edit_session : EditSession;
+    import view : View;
+
+    auto savedPipe = g_pipeCtx;
+    scope(exit) g_pipeCtx = savedPipe;
+    g_pipeCtx = null;
+    Mesh owned = makeCube();
+    owned.resetSelection();
+    owned.selectVertex(0);
+    EditMode mode = EditMode.Vertices;
+    GpuMesh gpu;
+    auto view = new View(0, 0, 800, 600);
+    auto history = new CommandHistory;
+    auto xfrm = new XfrmTransformTool(() => &owned, &gpu, &mode);
+    xfrm.setUndoBindings(history,
+        () => new MeshVertexEdit(&owned, view, mode));
+    xfrm.activate();
+    Tool active = xfrm;
+    auto session = new EditSession(() => active, history,
+        () { active = null; });
+    session.noteArm("TransformMove", 52);
+    xfrm.openLiveSessionForTest();
+    xfrm.editCauseBank = XfrmTransformTool.DragBank.Move;
+    owned.vertices[0].x += 1;
+    auto projected = xfrm.projectPreparedOwnedEditClose(
+        XfrmTransformTool.DragBank.Move, false);
+    assert(projected.command !is null);
+    auto context = new PreparedRecordContext(history, null);
+    assert(xfrm.prepareOwnedEditClose(projected, context,
+        XfrmTransformTool.TransformHistoryIntent.RunClose));
+    assert(projected.command.sessionToken() == 52,
+        "prepared Xfrm command lost the active ToolSession identity");
+    context.discard();
+
+    PipeRefireProjection regrade;
+    regrade.valid = true;
+    regrade.command = new MeshVertexEdit(&owned, view, mode);
+    const refireBefore = owned.vertices[0];
+    const refireAfter = Vec3(refireBefore.x + 1, refireBefore.y, refireBefore.z);
+    regrade.command.setEdit([0u], [refireBefore], [refireAfter], "Move");
+    auto refireContext = new PreparedRecordContext(history, null);
+    assert(xfrm.preparePipeRefireProjection(regrade, refireContext));
+    assert(regrade.command.sessionToken() == 52,
+           "prepared Xfrm refire lost the active ToolSession identity");
+    refireContext.discard();
 }
 
 unittest {

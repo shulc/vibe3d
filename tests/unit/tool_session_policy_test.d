@@ -72,7 +72,7 @@ private struct Row {
     CloseProv    closeProv;
 }
 
-/// Measured 2026-09-25 on the M1 tree: 70 ids (48 static + 22 presets).
+/// Task 8240: 71 ids after preserving point attraction under a distinct ID.
 private immutable Row[] kTable = [
     Row("ElementMove", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
     Row("Transform", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
@@ -120,20 +120,21 @@ private immutable Row[] kTable = [
     Row("scale", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
     Row("tool.strokeExtrude", "StrokeExtrudeTool", false, Prov.uncertain, CommandClose.uiDoor, CloseProv.inferred),
     Row("vert.merge", "VertexMergeTool", true, Prov.inferred, CommandClose.uiDoor, CloseProv.inferred),
-    Row("xfrm.bend", "BendTool", false, Prov.notPorted, CommandClose.none, CloseProv.notCaptured),
+    Row("xfrm.bend", "BendTool", true, Prov.inferred, CommandClose.none, CloseProv.notCaptured),
     Row("xfrm.bulge", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
     Row("xfrm.elementMove", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
-    Row("xfrm.flare", "PushTool", false, Prov.notPorted, CommandClose.none, CloseProv.notCaptured),
+    Row("xfrm.flare", "PushTool", true, Prov.inferred, CommandClose.none, CloseProv.notCaptured),
     Row("xfrm.flex", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
-    Row("xfrm.jitter", "XfrmJitterTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
-    Row("xfrm.linearAlignTool", "LinearAlignTool", false, Prov.notPorted, CommandClose.none, CloseProv.notCaptured),
-    Row("xfrm.magnet", "MagnetTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
-    Row("xfrm.push", "PushTool", false, Prov.notPorted, CommandClose.none, CloseProv.notCaptured),
-    Row("xfrm.quantize", "XfrmQuantizeTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
-    Row("xfrm.radialAlignTool", "RadialAlignTool", false, Prov.notPorted, CommandClose.none, CloseProv.notCaptured),
+    Row("xfrm.jitter", "XfrmJitterTool", true, Prov.inferred, CommandClose.uiDoor, CloseProv.inferred),
+    Row("xfrm.linearAlignTool", "LinearAlignTool", true, Prov.inferred, CommandClose.none, CloseProv.notCaptured),
+    Row("xfrm.magnet", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
+    Row("xfrm.pointAttract", "MagnetTool", true, Prov.inferred, CommandClose.uiDoor, CloseProv.inferred),
+    Row("xfrm.push", "PushTool", true, Prov.inferred, CommandClose.none, CloseProv.notCaptured),
+    Row("xfrm.quantize", "XfrmQuantizeTool", true, Prov.inferred, CommandClose.uiDoor, CloseProv.inferred),
+    Row("xfrm.radialAlignTool", "RadialAlignTool", true, Prov.inferred, CommandClose.none, CloseProv.notCaptured),
     Row("xfrm.scaleUniform", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
     Row("xfrm.shear", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
-    Row("xfrm.smooth", "XfrmSmoothTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
+    Row("xfrm.smooth", "XfrmSmoothTool", true, Prov.inferred, CommandClose.uiDoor, CloseProv.inferred),
     Row("xfrm.softDrag", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
     Row("xfrm.softMove", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
     Row("xfrm.softRotate", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
@@ -150,8 +151,16 @@ private immutable Row[] kTable = [
 private immutable string[] kActivationRowClasses = [
     "tools.alignment.array_tool.ArrayTool",
     "tools.alignment.clone_tool.CloneTool",
+    "tools.alignment.linear_align_tool.LinearAlignTool",
     "tools.alignment.mirror.MirrorTool",
+    "tools.alignment.radial_align_tool.RadialAlignTool",
     "tools.alignment.radial_array_tool.RadialArrayTool",
+    "tools.common.command_wrapper.XfrmJitterTool",
+    "tools.common.command_wrapper.XfrmQuantizeTool",
+    "tools.common.command_wrapper.XfrmSmoothTool",
+    "tools.deform.bend.BendTool",
+    "tools.deform.magnet.MagnetTool",
+    "tools.deform.push.PushTool",
     "tools.deform.smooth_shift_tool.SmoothShiftTool",
     "tools.edit.edge_bevel.EdgeBevelTool",
     "tools.edit.edge_extend.EdgeExtendTool",
@@ -166,6 +175,10 @@ private immutable string[] kActivationRowClasses = [
     "tools.slice.edge_slice_tool.EdgeSliceTool",
     "tools.slice.loop_slice_tool.LoopSliceTool",
     "tools.slice.slice_tool.SliceTool",
+    "tools.transform.move.MoveTool",
+    "tools.transform.rotate.RotateTool",
+    "tools.transform.scale.ScaleTool",
+    "tools.transform.transform.TransformTool",
     "tools.transform.xfrm_transform.XfrmTransformTool",
 ];
 
@@ -218,11 +231,11 @@ unittest { // (1) id -> policy, over every registered id
         ++presetIds;
     }
     // Population floors: measured, not derived from the table.
-    assert(staticIds == 48 && presetIds == 22,
+    assert(staticIds == 48 && presetIds == 23,
            format("M1 policy table: registry population changed: %s static + %s presets, "
-                  ~ "measured 48 + 22", staticIds, presetIds));
-    assert(kTable.length == 70 && classOf.length == 70,
-           format("M1 policy table: %s table rows, %s registered ids, measured 70",
+                  ~ "measured 48 + 23", staticIds, presetIds));
+    assert(kTable.length == 71 && classOf.length == 71,
+           format("M1 policy table: %s table rows, %s registered ids, measured 71",
                   kTable.length, classOf.length));
 
     size_t falseRows, notPorted;
@@ -269,9 +282,9 @@ unittest { // (1) id -> policy, over every registered id
            format("M3b policy table: headlessReplacesWindow on %s, recorded [poly.bevel]",
                   replacesIds));
     // Measured on the M2 tree (`grep -c 'CommandClose.<value>, CloseProv'` over this file).
-    assert(closeCount == [22, 24, 24],
+    assert(closeCount == [22, 24, 25],
            format("M2 policy table: commandClose none/uiDoor/allDoors on %s ids, recorded "
-                  ~ "22/24/24", closeCount));
+                  ~ "22/24/25", closeCount));
     // The M7 ratchet, only down: ids whose arm writes no activation row yet
     // (gap 369). M3b ported poly.bevel: 42 (38) -> 41 (37); M4 ported
     // edge.extend: -> 40 (36). Growth is a new id born off the H1 law, or a
@@ -294,9 +307,9 @@ unittest { // (1) id -> policy, over every registered id
 /// not ported (the rest have no counterpart or an unsure one), and ids whose
 /// session does not own their gesture steps (H2 not ported). Measured on the
 /// M7 tree; each only falls.
-private enum size_t kActivationRowFalseCeiling = 27;
-private enum size_t kNotPortedCeiling = 23;
-private enum size_t kSessionStepsFalseCeiling = 52;
+private enum size_t kActivationRowFalseCeiling = 18;
+private enum size_t kNotPortedCeiling = 14;
+private enum size_t kSessionStepsFalseCeiling = 19;
 
 unittest { // (2) tool classes that declare the activation row
     string[] declared;
@@ -385,18 +398,20 @@ unittest { // (3) the doors reach the tool session only through EditSession
     // branches are gone; the record that carries its activation row is read
     // before the stack steps, and a restored predecessor adopts its token after.
     inOrder(bodyAt(ts, "bool undo()"),
-            ["navigateTopology_(true)", "undoFirstGroup_(t)", "cancelUncommittedEdit()", "recordCarriesActivation_()",
+            ["navigateRecorded_(true)", "navigateTopology_(true)", "undoFirstGroup_(t)",
+             "cancelUncommittedEdit()", "recordCarriesActivation_()",
              "resyncSession()", "adoptPredecessorToken_("],
             "ToolSession.undo");
     inOrder(bodyAt(ts, "bool redo()"),
-            ["navigateTopology_(false)", "applyAttrImage(img)", "carriesFirstRecord()", "adoptToken_(",
+            ["navigateRecorded_(false)", "navigateTopology_(false)", "applyAttrImage(img)",
+             "carriesFirstRecord()", "adoptToken_(",
              "resyncSession()", "replayFirstGroup_()"],
             "ToolSession.redo");
     // Nothing else in the module steps the history.
-    assert(es.count("history_.undo()") == 7 && es.count("history_.redo()") == 4,
+    assert(es.count("history_.undo()") == 8 && es.count("history_.redo()") == 5,
            format("M1 wiring census: edit_session.d steps the history %s/%s times, "
-                  ~ "expected undo 7 (ToolSession.undo and its pairs, dormant adjustment pair, undoFirstGroup_, topology pair) and "
-                  ~ "redo 4 (ToolSession.redo and its pair, topology pair)",
+                  ~ "expected undo 8 (recorded producer, topology and prior ToolSession branches) and "
+                  ~ "redo 5 (recorded producer, topology and prior ToolSession branches)",
                   es.count("history_.undo()"), es.count("history_.redo()")));
 }
 
@@ -477,18 +492,31 @@ unittest { // (4)
     string[string] moduleOf;
     foreach (p; manifest["products"].array)
         moduleOf[p["aggregate"].str] = p["module"].str;
-    string[] stepIds;
-    size_t checkedNames, actionNames, armAttrs, stepsFalse;
+    string[] stepIds, imageStepIds;
+    size_t checkedNames, actionNames, armAttrs, stepsFalse, recordedSteps;
     foreach (row; kTable) {
         auto ci = TypeInfo_Class.find(moduleOf[row.cls] ~ "." ~ row.cls);
         auto t = blit(ci);
         const pol = t.sessionPolicy();
+        const transformId = row.id.startsWith("xfrm.") ||
+            ["ElementMove", "Transform", "TransformMove", "TransformRotate",
+             "TransformScale", "move", "move.element", "rotate", "scale"].canFind(row.id);
+        assert(pol.historyRecordedSteps == transformId,
+               "Transform history producer policy drifted for " ~ row.id);
         if (!pol.sessionSteps) {
             ++stepsFalse;
             assert(pol.imageAttrs.length == 0 && pol.haulAttrs.length == 0,
                    "M3 step table: " ~ row.id ~ " declares an image without sessionSteps");
             continue;
         }
+        stepIds ~= row.id;
+        if (pol.historyRecordedSteps) {
+            ++recordedSteps;
+            assert(pol.imageAttrs.length == 0 && pol.haulAttrs.length == 0,
+                   "history-owned Transform row declares a duplicate image: " ~ row.id);
+            continue;
+        }
+        imageStepIds ~= row.id;
         // Session-step classes expose field-backed params, so `params()` of a
         // blitted (unconstructed) instance is safe here.
         auto ps = t.params();
@@ -501,7 +529,6 @@ unittest { // (4)
             return false;
         }
         foreach (ref p; ps) if (p.action_) ++actionNames;
-        stepIds ~= row.id;
         foreach (n; pol.imageAttrs) {
             assert(hasParam(n), format("M3 step table: %s image names '%s', not one of its params",
                                        row.id, n));
@@ -540,8 +567,8 @@ unittest { // (4)
     }
     // The M7 ratchet, only down: ids whose session does not own their gesture
     // steps yet (H2, measured on all six families; `false` = not ported). The
-    // floor beside it: every table row was visited (70, measured in (1)).
-    assert(stepsFalse + stepIds.length == kTable.length && kTable.length == 70,
+    // floor beside it: every registered row was visited.
+    assert(stepsFalse + stepIds.length == kTable.length && kTable.length == 71,
            format("M7 ratchet: visited %s + %s of %s table rows", stepsFalse, stepIds.length,
                   kTable.length));
     assert(stepsFalse <= kSessionStepsFalseCeiling,
@@ -551,16 +578,18 @@ unittest { // (4)
     assert(stepsFalse == kSessionStepsFalseCeiling,
            format("M7 ratchet: sessionSteps=false fell to %s ids, ceiling %s: lower the ceiling "
                   ~ "in the same commit", stepsFalse, kSessionStepsFalseCeiling));
-    // Population floors: 18 ids, 119 image names, 3 Action triggers
+    assert(recordedSteps == 34,
+           format("Transform history-owned rows %s, expected 34", recordedSteps));
+    // Image-producing population floors: 18 ids, 119 image names, 3 Action triggers
     // on them (chainArm; insertAt, removeCurrent), 1 arm attribute (M3b).
-    sort(stepIds);
-    assert(stepIds == ["edge.bevel", "edge.extend", "edge.extrude",
+    sort(imageStepIds);
+    assert(imageStepIds == ["edge.bevel", "edge.extend", "edge.extrude",
                        "mesh.arrayTool", "mesh.clone", "mesh.edgeSliceTool", "mesh.loopSliceTool",
                        "mesh.mirrorTool", "mesh.polyInsetTool", "mesh.radialArrayTool",
                        "mesh.sliceTool", "mesh.smoothShiftTool",
                        "mesh.thickenTool", "mesh.vertexBevel", "mesh.vertexExtrude",
                        "poly.bevel", "poly.extrude", "vert.merge"],
-           format("M3 step table: sessionSteps ids %s", stepIds));
+           format("M3 step table: image-step ids %s", imageStepIds));
     assert(checkedNames == 119, format("M3 step table: %s image names checked, measured 119",
                                       checkedNames));
     assert(armAttrs == 1, format("M3b step table: %s arm attributes, measured 1", armAttrs));
@@ -709,8 +738,8 @@ unittest { // (6) id -> rollovers, over every registered id
            && carried == stageIds,
            format("M6 rollover table: stage flag on %s, carried by the element falloff on %s",
                   stageIds, carried));
-    assert(perValue == [64, 6, 0],
-           format("M6 rollover table: none/target/vertices on %s ids, recorded 64/6/0",
+    assert(perValue == [65, 6, 0],
+           format("M6 rollover table: none/target/vertices on %s ids, recorded 65/6/0",
                   perValue));
 }
 

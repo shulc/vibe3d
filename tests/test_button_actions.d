@@ -31,6 +31,33 @@ void main() {}
 
 alias baseUrl = testBaseUrl;
 
+// Keep three distinct Move actions. The old Soft Move button stays on its
+// original ID, while Soft Move and the preserved point pull each get one.
+unittest {
+    auto panels = loadButtons("config/buttons.yaml");
+    string[string] expected = [
+        "xfrm.softMove": "Soft Move",
+        "xfrm.magnet": "Magnet (Soft Move)",
+        "xfrm.pointAttract": "Point Attract",
+    ];
+    int[string] counts;
+    bool foundMove;
+    foreach (ref panel; panels)
+        foreach (ref item; panel.items)
+            if (panel.title == "Deform" && item.isGroup && item.group.title == "Move") {
+                foundMove = true;
+                foreach (ref btn; item.group.buttons)
+                    if (btn.action.id in expected) {
+                        assert(btn.action.kind == ActionKind.tool);
+                        assert(btn.label == expected[btn.action.id]);
+                        ++counts[btn.action.id];
+                    }
+            }
+    assert(foundMove, "Deform/Move group missing");
+    foreach (id, label; expected)
+        assert(counts[id] == 1, id ~ " must have exactly one Deform/Move button");
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------

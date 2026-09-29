@@ -2925,7 +2925,10 @@ void main(string[] args) {
         (const Command cmd, CommandDoor door, bool reentrant) => session is null
             ? commandMeetsTool(cmd, door, reentrant, null)
             : session.closeForCommand(cmd, door, reentrant),
-        () { if (session !is null) session.finishClose(); });
+        () { if (session !is null) session.finishClose(); },
+        (Command cmd) {
+            if (session !is null) session.recordAppliedToolCommand(cmd);
+        });
     ApplicationCommandBinding commandBinding;
     GuardedActionController guardController;
     auto guardModalState = new GuardModalState();

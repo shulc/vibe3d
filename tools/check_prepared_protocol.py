@@ -945,7 +945,9 @@ for path in (ROOT / "source").rglob("*.d"):
 def validate_prepared_history(source):
     expected = {
         "prepareRecord": ("PreparedHistoryResult", "b1562eca7f69448b1b5b446824856772bfa3dac0e65f9d4c0b9e8f1a64c7492a"),
-        "consolidatePrepared": (r"private\s+static\s+void", "ccaa223f13adc059804536520163db81c16a1343dda172d0c965e4a7b27d70f4"),
+        # Transform ToolSession rows retain their token when a prepared run
+        # replaces its constituent commands with one merged carrier.
+        "consolidatePrepared": (r"private\s+static\s+void", "04302180443861c7230c8be0221aae1fd592879238d8b9c16ce6978111a79392"),
         "prepareConsolidate": ("PreparedHistoryResult", "3ad88567f5495afac0c68db6f9d627afb5c407afe9152446d15b3271e12db818"),
         "prepareLifecycle": ("PreparedHistoryResult", "a53797c1a2ae58675b40b96a8567c22931f20ff60a2bb0072c56372a5e306bb2"),
         "installPreparedToken": ("void", "15772113e5f3f97b80bb8f6d403f80297f53d0b97810571c18a3fc2ca67e8603"),
@@ -1532,7 +1534,7 @@ def clear_activation_row(root):
     p = root / "source/tools/transform/xfrm_transform.d"
     text = p.read_text()
     # Slice M2 added the command-close field beside it (one policy literal).
-    needle = "activationRow: true, commandClose: CommandClose.allDoors };"
+    needle = "activationRow: true, commandClose: CommandClose.allDoors,"
     if text.count(needle) != 1: fail("P1.0b.0 activationRow mutation anchor vanished")
     p.write_text(text.replace(needle, needle.replace("true", "false"), 1))
 if not mutation_rejected(clear_activation_row, "lifecycle_products symbol mismatch"):

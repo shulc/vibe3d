@@ -338,7 +338,7 @@ private enum OtherRow[] kOtherRows = [
     OtherRow("source/edit_tool_registration.d", "vxEditFactory",
         "deps.vxEditFactory()",
         "MeshVertexEdit", 1,
-        "xfrm.magnet's one remaining gesture binding"),
+        "xfrm.pointAttract's one remaining gesture binding"),
     OtherRow("source/registration.d", "morphEditFactory", "morphEditFactory",
         "MeshMorphEdit", 0,
         "the transform family owns the only morph-edit spend"),

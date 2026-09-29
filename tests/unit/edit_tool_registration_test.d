@@ -28,7 +28,7 @@ private enum ExpectedBinding[] kEditBindings = [
     ExpectedBinding("poly.bevel", "bevelEditFactory"),
     ExpectedBinding("mesh.polyInsetTool", "bevelEditFactory"),
     ExpectedBinding("mesh.smoothShiftTool", "smoothShiftEditFactory"),
-    ExpectedBinding("xfrm.magnet", "vxEditFactory"),
+    ExpectedBinding("xfrm.pointAttract", "vxEditFactory"),
     ExpectedBinding("edge.bevel", "bevelEditFactory"),
     ExpectedBinding("mesh.vertexBevel", "bevelEditFactory"),
     ExpectedBinding("mesh.vertexExtrude", "bevelEditFactory"),
@@ -74,9 +74,9 @@ unittest {
         auto product = gesture();
         assert(product !is null,
             "6670 binding: " ~ binding.id ~ " built a null command");
-        if (binding.id == "xfrm.magnet") {
+        if (binding.id == "xfrm.pointAttract") {
             assert(cast(MeshVertexEdit) product !is null,
-                "6670 binding: xfrm.magnet did not retain vxEditFactory");
+                "6670 binding: xfrm.pointAttract did not retain vxEditFactory");
         } else {
             auto cmd = cast(MeshSessionEdit) product;
             assert(cmd !is null,

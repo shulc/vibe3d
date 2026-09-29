@@ -336,6 +336,12 @@
    "stage": false
   },
   {
+   "id": "xfrm.pointAttract",
+   "mapping": "noCounterpart",
+   "actor": false,
+   "stage": false
+  },
+  {
    "id": "xfrm.push",
    "mapping": "mapped",
    "actor": false,

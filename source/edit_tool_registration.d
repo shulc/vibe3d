@@ -228,7 +228,7 @@ void registerEditToolCommands(ref Registry reg, LiveSessionRole owner,
         return t;
     }));
     // TASK 1905 — `vxEditFactory` is spent at TEN sites across the registrar
-    // family: nine in transform_tool_registration.d and this xfrm.magnet
+    // family: nine in transform_tool_registration.d and this xfrm.pointAttract
     // gesture binding. The census keeps the per-file split explicit.
     //
     // THE G1 NOTE HERE SAID "FOURTEEN … the other thirteen", AND SAID THE
@@ -254,7 +254,7 @@ void registerEditToolCommands(ref Registry reg, LiveSessionRole owner,
     // `setUndoBindings` because that zone is OUT of task 1905's scope by
     // decision D1. Member 6 of the same census pins the ten-site 9/1 split,
     // and member 5 pins the surviving binder declarations.
-    reg.registerTool("xfrm.magnet", typedToolFactory!MagnetTool(() {
+    reg.registerTool("xfrm.pointAttract", typedToolFactory!MagnetTool(() {
         auto t = new MagnetTool(() => &owner.activeMesh(), deps.gpu(), live.modeCell());
         t.setGestureBindings(deps.history(), deps.vxEditFactory());
         return t;

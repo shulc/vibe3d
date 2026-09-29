@@ -23,7 +23,7 @@
 //
 //   mesh.bridgeTool       ArrayIndexError@source/mesh_ops/bridge.d(204)
 //   mesh.radialSweepTool  ArrayIndexError@source/mesh_ops/revolve.d(374)
-//   xfrm.magnet           ArrayIndexError@source/tools/deform/magnet.d(298)
+//   xfrm.pointAttract           ArrayIndexError@source/tools/deform/magnet.d(298)
 //
 // Magnet's window is narrower and had to be found by driving rather than by
 // reading: its mouse-UP path clears `built`, so a completed haul is safe and
@@ -219,7 +219,7 @@ void armOpenMagnetHaul(out int hx, out int hy, out int vpX, out int vpY,
     loadCapsStand();
     cmd("select.typeFrom vertex");
     cmd("history.clear");
-    cmd("tool.set xfrm.magnet on");
+    cmd("tool.set xfrm.pointAttract on");
     Thread.sleep(dur!"msecs"(300));
 
     auto cam = fetchCamera(BASE);

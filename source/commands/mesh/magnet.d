@@ -26,7 +26,7 @@ import deform_magnet : applyMagnet;
 ///   - strength == 0, OR
 ///   - no vertex falls inside the falloff sphere (all weights == 0).
 ///
-/// Interactive surface: `xfrm.magnet` tool.
+/// Interactive surface: `xfrm.pointAttract` tool.
 class MeshMagnet : Command, Operator, IFalloffAware {
 private:
 
