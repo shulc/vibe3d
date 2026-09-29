@@ -39,16 +39,25 @@ private final class ValueEdit : Command {
 
 private final class RecordedTool : Tool, RefireClient {
     int value, resyncs, refireTarget;
-    bool pending;
+    bool pending, ladder;
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
         static immutable ToolSessionPolicy policy = {
             activationRow: true, sessionSteps: true, historyRecordedSteps: true };
-        return policy;
+        static immutable ToolSessionPolicy ladderPolicy = {
+            activationRow: true, sessionSteps: true, historyRecordedSteps: true,
+            previewHistoryLadder: true, keepAliveOnCancel: true };
+        return ladder ? ladderPolicy : policy;
     }
     void gesture(CommandHistory history, int after) {
         auto cmd = new ValueEdit(&value, value, after);
         assert(cmd.apply());
         history.record(cmd);
+        sessionRecordCompleted(cmd);
+    }
+    void liveGesture(CommandHistory history, ulong runId, int after) {
+        auto cmd = new ValueEdit(&value, value, after);
+        assert(cmd.apply());
+        history.recordInSession(cmd, runId);
         sessionRecordCompleted(cmd);
     }
     override void resyncSession() { ++resyncs; }
@@ -175,6 +184,26 @@ unittest {
            "second Undo did not reach the completed History row");
     assert(!session.navigate(true),
            "history-owned producer exposed a phantom attribute-image step");
+}
+
+unittest {
+    auto tool = new RecordedTool;
+    tool.ladder = true;
+    Tool active = tool;
+    auto history = new CommandHistory;
+    auto session = new EditSession(() => active, history, () { active = null; });
+    session.noteArm("prim.preview-ladder-test", 7);
+    const runId = history.nextRun();
+    tool.pending = true;
+    tool.liveGesture(history, runId, 7);
+    tool.liveGesture(history, runId, 13);
+    assert(session.navigate(true) && tool.pending && tool.value == 7,
+           "first Undo skipped the live recorded row or cancelled the preview");
+    assert(session.navigate(true) && tool.pending && tool.value == 0,
+           "second Undo skipped the earlier live recorded row");
+    assert(session.navigate(true) && !tool.pending && active is tool,
+           "the preview was not cancelled after its recorded ladder emptied");
+    assert(!session.navigate(true), "empty live ladder exposed a phantom step");
 }
 
 unittest {

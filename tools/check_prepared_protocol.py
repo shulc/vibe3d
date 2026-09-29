@@ -642,18 +642,18 @@ B3D_PRODUCER_DIGESTS = {
     "tools/alignment/radial_array_tool":"65148a02ac2b032c5ee0fb890f009775feb9d3a96c9c2550bb3dbbba6dcb8a85",
     "tools/deform/magnet":"1191f71bae9f8cb4dc7fed605de2172db7e268f3ba9e9c62c0db2668cdcbdddf",
     "tools/deform/smooth_shift_tool":"da7b3298401dfebc0e77082b51b33a5dde9dc5bf000f1b1ff48b0e4c20f11e69",
-    "tools/deform/stroke_extrude_tool":"48fd9fad9f7c4566468ebf746ab9ba38548cb5d7c2f6d7004d162ffa1a3c7d5f",
+    "tools/deform/stroke_extrude_tool":"5b70e17b59efa0b9b7984a7567c053e62ab563cd45a95e2744dbbc4b5e23fb0a",
     "tools/edit/edge_bevel":"0961493349ae01396e5b74aede66c771b4e8795356d9d4d20bf3a098e23f331f",
     "tools/edit/edge_extrude":"3f126a0516e4d82f2d2e208b4262b5444710148841404d8db2baaf4fcd1bf537",
     "tools/edit/poly_bevel":"904bd0a0820bba150b7f4bcc3f873121013d1b383d2f0276bd70def1171b7c9e",
     "tools/edit/poly_extrude":"d3b460bc686e4064233e5a571ad03b686bc50a391186775289627dca2e01da22",
     "tools/edit/poly_inset_tool":"7c80d5679502eb2ad26d49dea4d2dcc364a208e1b24c776eae98e598b706a86b",
-    "tools/edit/reduce":"e7df0a7a19f56f8b8f1e29ad3e05974a10dcae535be2e155dd105e69ddb126d4",
+    "tools/edit/reduce":"321063c91800add4d327b60231609e40e3db634c3feeb64c51d54856dd6d09a0",
     "tools/edit/vert_merge_tool":"ac8f0d7faa48c40395546de997931556fbd764db770a8e0cbb3579c8de868644",
     "tools/edit/vertex_bevel_tool":"85bfe0c67743a7f002b0fd89ef6aa4ca1292023b0fefde466ebf834463d686fc",
     "tools/edit/vertex_extrude_tool":"2a6eb43fe9c6e2d585dd1a473c5be0a25b88367afd59495ddfcecace9482bb7a",
     "tools/transform/xfrm_transform":"65b18f87900816d267af281f4773a73bf8c22014bf6e7a01bdcbb6987b9f8623",
-    "tools/create/box":"1d507a4771e54f922d240817b5f2d6f5d77b49cb4014605509194675fc1869e3",
+    "tools/create/box":"c0683f4f4c05018057db4a0b1e040c9fc5b05e1b81eca95b2b2f4c591aec952e",
 }
 def validate_b3d_producers(sources, only=None):
     for module, aggregate, hook in B3D_PREPARED_LEGACY:
@@ -2224,7 +2224,7 @@ b4c2_contracts = {
     ),
 }
 b4c2_digests = {
-    "source/tools/common/command_wrapper.d": ("prepareDeactivate", "2706bdbb171025fe34dc9862e9fa01cb6b3a2c9a594e73a519c3137592012557"),
+    "source/tools/common/command_wrapper.d": ("prepareDeactivate", "b0c6b6b8d5ca6dbd81297b2ef2a17870406328a2aff91a80d2d4e90a3639ac9e"),
     "source/tools/edit/tack.d": ("prepareDeactivate", "0ea8fcdfa7a225b41d81f255ae8d44f55e7a4c6770c1e718f6066b6511cd0be3"),
     "source/tools/transform/transform.d": ("prepareDeactivateGpu", "50cd6d5c97ea2325bafd53a8b76ec530cee4a9144dc0a1ce79bbcbb6171ec0c5"),
 }

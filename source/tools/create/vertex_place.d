@@ -186,7 +186,9 @@ public:
     // H7 (slice M6): the flags table sets the rollover flag on this tool; it
     // picks no hover type yet (`wantsHoverForType`), so nothing is drawn.
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
-        static immutable ToolSessionPolicy policy = { rollovers: Rollover.target };
+        static immutable ToolSessionPolicy policy = {
+            rollovers: Rollover.target, sessionSteps: true,
+            historyRecordedSteps: true };
         return policy;
     }
     override void cancelUncommittedEdit() {}

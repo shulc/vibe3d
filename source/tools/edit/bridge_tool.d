@@ -272,6 +272,11 @@ void rebuildBridgePreview(const ref MeshSnapshot baseSnap, ref Mesh previewMesh,
 // count; Twist / Remove Polygons / Flip Loop Pairing are panel-only.
 // ---------------------------------------------------------------------------
 class BridgeTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient {
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy policy = {
+            sessionSteps: true, historyRecordedSteps: true };
+        return policy;
+    }
 private:
     Mesh* delegate() nothrow @nogc meshSrc_;
     @property Mesh* mesh() const nothrow @nogc { return meshSrc_(); }
@@ -541,6 +546,7 @@ public:
                 cmd.setSnapshots(pre, MeshSnapshot.capture(candidate), "Bridge");
                 historyPrepared = context.prepare(cmd,
                     PreparedHistoryKind.Plain).accepted;
+                if (historyPrepared) sessionTagPreparedCompleted(cmd);
                 ok = historyPrepared;
             } else ok = context.prepareGestureCarrierMismatch();
         }

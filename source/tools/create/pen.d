@@ -779,7 +779,9 @@ public:
             if (cmd !is null) {
                 cmd.setSnapshots(pre, MeshSnapshot.capture(candidate), "Pen Polygon");
                 historyPrepared = context.prepare(cmd,
-                    PreparedHistoryKind.Plain).accepted; ok = historyPrepared;
+                    PreparedHistoryKind.Plain).accepted;
+                if (historyPrepared) sessionTagPreparedCompleted(cmd);
+                ok = historyPrepared;
             } else ok = context.prepareGestureCarrierMismatch();
         }
         if (ok) ok = historyPrepared ? context.markHistoryInstall()
@@ -1248,7 +1250,9 @@ private:
     // H7 (slice M6): the flags table sets the rollover flag on this tool; it
     // picks no hover type yet (`wantsHoverForType`), so nothing is drawn.
     public override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
-        static immutable ToolSessionPolicy policy = { rollovers: Rollover.target };
+        static immutable ToolSessionPolicy policy = {
+            rollovers: Rollover.target, sessionSteps: true,
+            historyRecordedSteps: true };
         return policy;
     }
     // Cancel: drop the in-progress sequence (cancelPolygon resets state + clears

@@ -5,6 +5,7 @@ import mesh_gpu : GpuMesh;
 import view    : View;
 import editmode : EditMode;
 import tools.common.command_wrapper : CommandWrapperTool;
+import tool : ToolSessionPolicy, CommandClose;
 import commands.mesh.edge_slide : MeshEdgeSlide;
 import commands.mesh.vertex_position_result : VertexPositionResultBuilder;
 
@@ -26,6 +27,12 @@ import std.json : JSONValue;
 /// (before-baseline / after-preview diff) on deactivation — one gesture,
 /// one undo entry.  Operates in Edges mode only.
 final class EdgeSlideTool : CommandWrapperTool {
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy policy = {
+            commandClose: CommandClose.uiDoor,
+            sessionSteps: true, historyRecordedSteps: true };
+        return policy;
+    }
     private MeshEdgeSlide inner_;
     private float         lastT = 0.0f;
 

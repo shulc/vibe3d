@@ -271,6 +271,11 @@ void rebuildRadialSweepPreview(const ref MeshSnapshot baseSnap, ref Mesh preview
 // RadialSweepTool
 // ---------------------------------------------------------------------------
 class RadialSweepTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient {
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy policy = {
+            sessionSteps: true, historyRecordedSteps: true };
+        return policy;
+    }
     mixin PreparedRadialSweepParamDoorClient;
 private:
     Mesh* delegate() meshSrc_;
@@ -484,6 +489,7 @@ public:
             if (cmd !is null) {
                 cmd.setSnapshots(pre, MeshSnapshot.capture(candidate), "Radial Sweep");
                 historyPrepared = context.prepare(cmd, PreparedHistoryKind.Plain).accepted;
+                if (historyPrepared) sessionTagPreparedCompleted(cmd);
                 ok = historyPrepared;
             } else {
                 ok = context.prepareGestureCarrierMismatch();

@@ -450,6 +450,7 @@ public:
                     MeshSnapshot.capture(candidate), commitLabel());
                 historyPrepared = context.prepare(cmd,
                     PreparedHistoryKind.Plain).accepted;
+                if (historyPrepared) sessionTagPreparedCompleted(cmd);
                 ok = historyPrepared;
             } else ok = context.prepareGestureCarrierMismatch();
         }
@@ -517,7 +518,9 @@ public:
     // dropping it; the NEXT navigate() finds no open edit and steps prior
     // history. Every subclass inherits it.
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
-        static immutable ToolSessionPolicy policy = { keepAliveOnCancel: true };
+        static immutable ToolSessionPolicy policy = {
+            keepAliveOnCancel: true, sessionSteps: true,
+            historyRecordedSteps: true };
         return policy;
     }
 

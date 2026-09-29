@@ -418,6 +418,7 @@ public:
                     ? PreparedHistoryKind.ReplaceRunTail : PreparedHistoryKind.Plain;
                 historyPrepared = context.prepare(cmd, kind,
                     probe.expectedLiveRunActive ? history.currentRunId : 0).accepted;
+                if (historyPrepared) sessionTagPreparedCompleted(cmd);
                 ok = historyPrepared; clearTracking = historyPrepared;
             } else ok = context.prepareGestureCarrierMismatch();
         }
@@ -481,25 +482,19 @@ public:
     // (a ladder step or the final wipe below) leaves the tool armed instead of
     // dropping it; the press after the wipe steps prior history.
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
-        static immutable ToolSessionPolicy policy = { keepAliveOnCancel: true };
+        static immutable ToolSessionPolicy policy = {
+            keepAliveOnCancel: true, sessionSteps: true,
+            historyRecordedSteps: true, previewHistoryLadder: true };
         return policy;
     }
 
     // Category B cancel — preview-only reset (the RMB body in
     // onMouseButtonDown). Box builds a separate previewMesh/previewGpu; the
     // scene mesh is never touched until commit, so dropping back to Idle
-    // discards the whole live edit. The FIRST branch is the interactive
-    // undo LADDER (task 0414): one recorded live step popped per press,
-    // early return, session kept — everything else about it stays live, so
-    // NO sanitization there. Only the fall-through wipe is a full cancel,
-    // and with keep-alive (task 0430) the post-wipe state is lived-in
-    // rather than a stop on the way to deactivate(), so it also sanitizes
-    // the transient drag state back to fresh-armed.
+    // discards the whole live edit. ToolSession consumes the recorded live
+    // ladder (task 0414) first; this hook runs when its last row is gone and
+    // restores the fresh-armed state (task 0430).
     public override void cancelUncommittedEdit() {
-        if (history !is null && liveRunActive && liveUndoDepth > 0) {
-            if (history.undo())
-                return;
-        }
         state = BoxState.Idle;
         clearLiveEditTracking();
         resetTransientDragState();
@@ -1082,7 +1077,10 @@ public:
                     paramBeforeState, params_, state);
                 accepted = context.prepare(cmd, PreparedHistoryKind.InSession,
                                            runId).accepted;
-                if (accepted) ++nextUndoDepth;
+                if (accepted) {
+                    sessionTagPreparedCompleted(cmd);
+                    ++nextUndoDepth;
+                }
             }
         }
         return PreparedBoxParamEffect(preparedToolStateOwner, accepted,

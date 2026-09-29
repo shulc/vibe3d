@@ -309,7 +309,18 @@ unittest { // (1) id -> policy, over every registered id
 /// M7 tree; each only falls.
 private enum size_t kActivationRowFalseCeiling = 18;
 private enum size_t kNotPortedCeiling = 14;
-private enum size_t kSessionStepsFalseCeiling = 19;
+private enum size_t kSessionStepsFalseCeiling = 0;
+
+/// Task 8250: these 19 existing command producers now use the same completed
+/// History-row owner as Transform. The other 18 rows retain image/topology
+/// policies; this exact set catches a silent class-wide policy spill.
+private immutable string[] kAdditionalHistoryRows = [
+    "edge.slide", "mesh.bridgeTool", "mesh.dragWeld", "mesh.radialSweepTool",
+    "mesh.reduceTool", "mesh.tack", "mesh.topoPen", "pen", "prim.arc",
+    "prim.capsule", "prim.cone", "prim.cube", "prim.cylinder",
+    "prim.ellipsoid", "prim.sphere", "prim.torus", "prim.tube",
+    "prim.vertex", "tool.strokeExtrude",
+];
 
 unittest { // (2) tool classes that declare the activation row
     string[] declared;
@@ -408,9 +419,9 @@ unittest { // (3) the doors reach the tool session only through EditSession
              "resyncSession()", "replayFirstGroup_()"],
             "ToolSession.redo");
     // Nothing else in the module steps the history.
-    assert(es.count("history_.undo()") == 8 && es.count("history_.redo()") == 5,
+    assert(es.count("history_.undo()") == 9 && es.count("history_.redo()") == 5,
            format("M1 wiring census: edit_session.d steps the history %s/%s times, "
-                  ~ "expected undo 8 (recorded producer, topology and prior ToolSession branches) and "
+                  ~ "expected undo 9 (live recorded ladder, topology and prior ToolSession branches) and "
                   ~ "redo 5 (recorded producer, topology and prior ToolSession branches)",
                   es.count("history_.undo()"), es.count("history_.redo()")));
 }
@@ -501,8 +512,11 @@ unittest { // (4)
         const transformId = row.id.startsWith("xfrm.") ||
             ["ElementMove", "Transform", "TransformMove", "TransformRotate",
              "TransformScale", "move", "move.element", "rotate", "scale"].canFind(row.id);
-        assert(pol.historyRecordedSteps == transformId,
-               "Transform history producer policy drifted for " ~ row.id);
+        assert(pol.historyRecordedSteps ==
+               (transformId || kAdditionalHistoryRows.canFind(row.id)),
+               "history producer policy drifted for " ~ row.id);
+        assert(pol.previewHistoryLadder == (row.id == "prim.cube"),
+               "Box live History ladder policy drifted for " ~ row.id);
         if (!pol.sessionSteps) {
             ++stepsFalse;
             assert(pol.imageAttrs.length == 0 && pol.haulAttrs.length == 0,
@@ -513,7 +527,7 @@ unittest { // (4)
         if (pol.historyRecordedSteps) {
             ++recordedSteps;
             assert(pol.imageAttrs.length == 0 && pol.haulAttrs.length == 0,
-                   "history-owned Transform row declares a duplicate image: " ~ row.id);
+                   "history-owned row declares a duplicate image: " ~ row.id);
             continue;
         }
         imageStepIds ~= row.id;
@@ -578,8 +592,8 @@ unittest { // (4)
     assert(stepsFalse == kSessionStepsFalseCeiling,
            format("M7 ratchet: sessionSteps=false fell to %s ids, ceiling %s: lower the ceiling "
                   ~ "in the same commit", stepsFalse, kSessionStepsFalseCeiling));
-    assert(recordedSteps == 34,
-           format("Transform history-owned rows %s, expected 34", recordedSteps));
+    assert(recordedSteps == 53,
+           format("history-owned rows %s, expected 53", recordedSteps));
     // Image-producing population floors: 18 ids, 119 image names, 3 Action triggers
     // on them (chainArm; insertAt, removeCurrent), 1 arm attribute (M3b).
     sort(imageStepIds);

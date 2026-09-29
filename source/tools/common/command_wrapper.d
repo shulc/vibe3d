@@ -398,8 +398,10 @@ abstract class CommandWrapperTool : Tool, FrameParameterEvalClient, RefireClient
             gestureFactory !is null && baseline.length == meshPtr.vertices.length) {
             VertexPositionResult result;
             if (commitResult(result))
-                if (auto cmd = carrierFromResult(result, name(), false))
+                if (auto cmd = carrierFromResult(result, name(), false)) {
                     accepted = context.prepare(cmd, PreparedHistoryKind.Plain).accepted;
+                    if (accepted) sessionTagPreparedCompleted(cmd);
+                }
         }
         // Legacy order is commitNow() followed by click-handle destruction.
         if (!context.markHistoryInstall()) {

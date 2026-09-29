@@ -1210,7 +1210,8 @@ public:
         // Rollovers (slice M6): the flags table sets the flag on this tool (and
         // on Drag Weld); no hover type is picked here yet, so nothing is drawn.
         static immutable ToolSessionPolicy policy = {
-            activationRow: true, rollovers: Rollover.target };
+            activationRow: true, rollovers: Rollover.target,
+            sessionSteps: true, historyRecordedSteps: true };
         return policy;
     }
 
@@ -1468,6 +1469,7 @@ public:
                     image.historyPrepared = context.prepare(cmd,
                         PreparedHistoryKind.Plain).accepted;
                     if (!image.historyPrepared) return image;
+                    sessionTagPreparedCompleted(cmd);
                 }
             }
         }

@@ -1373,7 +1373,10 @@ private struct ToolSession {
     // the write is its own undo step, pushed before it acts). True iff the
     // caller must close it with `stepEnds`.
     bool actionStepBegins(Tool t, string name) {
-        if (!reporting_(t)) return false;
+        // A recorded producer writes the command that owns this step. Do not
+        // probe params() after the value write or build an attribute image;
+        // some tools capture their before-value in params() itself.
+        if (!reporting_(t) || t.sessionPolicy().historyRecordedSteps) return false;
         foreach (ref p; t.params())
             if (p.name == name) {
                 if (!p.action_) return false;
@@ -1492,12 +1495,23 @@ private struct ToolSession {
 
     private bool navigateRecorded_(bool isUndo) {
         import commands.tool.lifecycle : ToolActivationCommand;
+        import command_history : HistoryFlags;
         auto t = tool_();
         if (!reporting_(t) || !t.sessionPolicy().historyRecordedSteps)
             return false;
         // A pending preview is still owned by the tool. The ordinary cancel
         // branch must peel it before an older completed History row moves.
-        if (isUndo && t.hasUncommittedEdit()) return false;
+        if (isUndo && t.hasUncommittedEdit()) {
+            if (!t.sessionPolicy().previewHistoryLadder) return false;
+            const entries = history_.undoEntries();
+            if (entries.length == 0 ||
+                entries[$ - 1].cmd.sessionToken() != token_ ||
+                !(entries[$ - 1].flags & HistoryFlags.InSession)) return false;
+            // A live parameter row is part of this preview. Its command
+            // restores the tool state; the next Undo cancels only after the
+            // last such row has been consumed.
+            return history_.undo();
+        }
         const Command row = isUndo ? undoTop_() :
             (history_.redoEntries().length ? history_.redoEntries()[0].cmd : null);
         if (row is null || row.sessionToken() != token_ ||

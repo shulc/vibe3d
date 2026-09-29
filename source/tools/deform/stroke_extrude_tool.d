@@ -95,7 +95,9 @@ class StrokeExtrudeTool : Tool, PreparedToolDoorClient {
     // (slice M2; the C1-h-sel-fam law, captured for Edge Extend and Polygon
     // Bevel and inferred for the rest of the in-place family, R20 gap g5).
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
-        static immutable ToolSessionPolicy policy = { commandClose: CommandClose.uiDoor };
+        static immutable ToolSessionPolicy policy = {
+            commandClose: CommandClose.uiDoor,
+            sessionSteps: true, historyRecordedSteps: true };
         return policy;
     }
 
@@ -417,7 +419,11 @@ private:
         bool accepted;
         if (active && built_ && context !is null && history !is null && gestureFactory !is null && before.filled) {
             auto cmd = cast(MeshSessionEdit) gestureFactory();
-            if (cmd !is null) { cmd.setSnapshots(before, MeshSnapshot.capture(*mesh), "Stroke Extrude"); accepted = context.prepare(cmd, PreparedHistoryKind.Plain).accepted; }
+            if (cmd !is null) {
+                cmd.setSnapshots(before, MeshSnapshot.capture(*mesh), "Stroke Extrude");
+                accepted = context.prepare(cmd, PreparedHistoryKind.Plain).accepted;
+                if (accepted) sessionTagPreparedCompleted(cmd);
+            }
         }
         return PreparedDeactivateEffect(preparedToolStateOwner, PreparedDeactivateKind.StrokeExtrude, accepted);
     }

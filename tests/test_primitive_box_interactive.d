@@ -451,7 +451,9 @@ unittest { // Box active undo steps live edits; drop collapses to one history en
     double sx0 = qf("sizeX");
     cmd("tool.attr prim.cube sizeX 2.25");
     assert(approx(qf("sizeX"), 2.25), "sizeX write before undo failed");
-    assert(undoLen() == liveFloor + 1, "live property edit should create one in-session entry");
+    assert(undoLen() == liveFloor + 1,
+        format("live property edit should create one in-session entry: floor=%s actual=%s",
+               liveFloor, undoLen()));
     playCtrlZ();
     assert(approx(qf("sizeX"), sx0),
         "Ctrl+Z should undo only the property edit: before=" ~ sx0.to!string ~

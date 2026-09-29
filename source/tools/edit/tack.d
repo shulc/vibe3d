@@ -312,7 +312,9 @@ public:
     // aims at stays drawn, as before the slice (carried, recorded in the
     // policy table).
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
-        static immutable ToolSessionPolicy policy = { rollovers: Rollover.target };
+        static immutable ToolSessionPolicy policy = {
+            rollovers: Rollover.target,
+            sessionSteps: true, historyRecordedSteps: true };
         return policy;
     }
 

@@ -336,6 +336,9 @@ struct ToolSessionPolicy {
     /// ToolSession tags and navigates those rows; it stores no second completed
     /// geometry or attribute stack for this producer.
     bool historyRecordedSteps;
+    /// A live preview may itself contain in-session History rows. Undo those
+    /// rows before cancelling the preview (Box's recorded parameter ladder).
+    bool previewHistoryLadder;
     /// A first topology row paired with activation restores the completed
     /// attribute image on redo. The extrude family instead restores the arm
     /// image; preview tools use the completed image measured at release.

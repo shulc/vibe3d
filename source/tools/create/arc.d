@@ -285,6 +285,11 @@ public:
     public override bool hasUncommittedEdit() const { return false; }
     public override void cancelUncommittedEdit() { state = ArcState.Idle; }
     public override void resyncSession() { state = ArcState.Idle; }
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy policy = {
+            sessionSteps: true, historyRecordedSteps: true };
+        return policy;
+    }
 
 private:
     void applyFrameToMeshRange(Mesh* m, size_t firstIdx) {
