@@ -699,7 +699,7 @@ class XfrmTransformTool : TransformTool, LiveEvalClient, SlotActivationClient,
 public:
     // Task 8261: set by the composition root for the captured TransformMove
     // preset only. Other T-only presets have no post-close evidence yet.
-    bool retainClosedGestureRows;
+    string closedRunOwnerId;
     final Mesh* preparedMeshForUpdate() const { return mesh; }
     // T/R/S flags — `T integer 0/1` etc. in the preset config.
     // Default to all enabled (the bare `Transform` preset that shows
@@ -1537,8 +1537,8 @@ public:
         // sub-tool deactivation so the final consolidate sees the wrapper's
         // whole tagged tail. Stop the legacy routing flag afterward.
         if (history !is null) {
-            if (retainClosedGestureRows)
-                history.closeRunVisible(history.currentRunId);
+            if (closedRunOwnerId.length)
+                history.closeRunVisible(history.currentRunId, closedRunOwnerId);
             else
                 history.consolidate(history.currentRunId);
         }

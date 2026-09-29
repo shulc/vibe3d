@@ -120,7 +120,7 @@ version (unittest) private HistoryEntry preparedTestEntry(Command cmd,
         string name, uint extra = 0, ulong runId = 0, ulong generation = 0) {
     return HistoryEntry(name, "x=1", name, cmd, 17,
         HistoryFlags.Succeeded | HistoryFlags.Undoable | extra,
-        runId, generation);
+        runId, generation, "");
 }
 
 unittest { // P1.0b.3b scalar token, ordered shadow, joint observer ownership.
@@ -320,6 +320,8 @@ struct HistoryEntry {
                             //  slider deactivate / falloff-handle mouse-up). 0 for
                             //  ordinary entries (irrelevant — the gate consults it
                             //  only for Refire tails).
+    string closedOwnerId;  // Owner of a retained closed run. Travels with each
+                           // row so maxDepth eviction cannot orphan the tail.
 }
 
 /// Map a command's CmdFlags to the per-entry HistoryFlags recorded on
@@ -609,7 +611,7 @@ final class CommandHistory {
             ulong runId, ulong tweakGeneration) {
         auto args = serializeParams(cmd.params());
         return HistoryEntry(cmd.label, args, cmd.name, cmd, nowMs(), flags,
-                            runId, tweakGeneration);
+                            runId, tweakGeneration, "");
     }
 
     private static void consolidatePrepared(ref PreparedHistoryImage p,
@@ -640,7 +642,7 @@ final class CommandHistory {
             merged.markSession(commonSessionToken(p.undoStack, start, end));
             auto first = p.undoStack[start];
             auto entry = HistoryEntry(merged.label, serializeParams(merged.params()),
-                merged.name, merged, first.timestampMs, historyFlagsFor(merged), 0, 0);
+                merged.name, merged, first.timestampMs, historyFlagsFor(merged), 0, 0, "");
             p.undoStack = p.undoStack[0..start] ~ entry ~ p.undoStack[end..$];
             return;
         }
@@ -660,7 +662,7 @@ final class CommandHistory {
         merged.markSession(commonSessionToken(p.undoStack, start, end));
         auto first = p.undoStack[start];
         auto entry = HistoryEntry(merged.label, serializeParams(merged.params()),
-            merged.name, merged, first.timestampMs, historyFlagsFor(merged), 0, 0);
+            merged.name, merged, first.timestampMs, historyFlagsFor(merged), 0, 0, "");
         p.undoStack = p.undoStack[0..start] ~ entry ~ p.undoStack[end..$];
     }
 
@@ -845,7 +847,7 @@ final class CommandHistory {
                         batch.history.state == UndoState.Active;
         if (accepted) {
             auto entry = HistoryEntry(cmd.label, "", cmd.name, cmd, nowMs(),
-                historyFlagsFor(cmd), 0, 0);
+                historyFlagsFor(cmd), 0, 0, "");
             batch.history.undoStack ~= entry;
             if (batch.history.undoStack.length > batch.history.maxDepth)
                 batch.history.undoStack = batch.history.undoStack[$-batch.history.maxDepth..$].dup;
@@ -1623,8 +1625,9 @@ final class CommandHistory {
     /// closing their shared run. The e001 TransformMove close shows two groups;
     /// its outside Undo nevertheless returns to the run's start in one action.
     /// Only a contiguous in-session tail is eligible, as with consolidate().
-    size_t closeRunVisible(ulong runId) {
+    size_t closeRunVisible(ulong runId, string ownerId) {
         scope(exit) _runOpen = false;
+        if (ownerId.length == 0) return 0;
         size_t start = undoStack.length;
         while (start > 0 &&
                (undoStack[start - 1].flags & HistoryFlags.InSession) &&
@@ -1633,6 +1636,7 @@ final class CommandHistory {
             undoStack[i].flags &=
                 ~cast(uint)(HistoryFlags.InSession | HistoryFlags.Refire);
             undoStack[i].flags |= HistoryFlags.ClosedRun;
+            undoStack[i].closedOwnerId = ownerId.idup;
         }
         return undoStack.length - start;
     }

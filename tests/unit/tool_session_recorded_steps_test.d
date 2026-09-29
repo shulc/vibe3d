@@ -102,10 +102,12 @@ unittest { // 8261: open gestures, closed rows, one outside step, restored owner
     auto arm = new ToolActivationCommand(null, view, EditMode.Vertices,
         "TransformMove", "", true, false, false, 8261);
     history.recordToolLifecycle(arm);
-    auto session = new EditSession(() => active, history,
+    EditSession session;
+    session = new EditSession(() => active, history,
         () { active = null; }, (string id) {
             assert(id == "TransformMove", "closed run restored wrong tool owner");
             active = tool;
+            session.noteArm(id, 8262);
         });
     session.noteArm("TransformMove", 8261);
     const run = history.nextRun();
@@ -115,7 +117,7 @@ unittest { // 8261: open gestures, closed rows, one outside step, restored owner
            "internal Undo must peel one gesture");
     assert(session.navigate(false) && tool.value == 13,
            "internal Redo must restore the second gesture");
-    assert(history.closeRunVisible(run) == 2,
+    assert(history.closeRunVisible(run, "TransformMove") == 2,
            "closed run lost a visible adjustment group");
     active = null;
     session.noteArm("foreign owner", 9999); // stale session cache, history is authority
@@ -128,15 +130,54 @@ unittest { // 8261: open gestures, closed rows, one outside step, restored owner
            "close must retain two completed History rows");
     assert(session.navigate(true) && tool.value == 0 && active is tool,
            "one outside Undo must restore S0 and tool ownership");
+    assert(session.sessionStateJson()["token"].integer == 8261,
+           "restored owner must retain the activation row's session token");
     assert(history.undoEntries().length == 1 &&
            history.redoEntries().length == 0,
            "closed-run Undo must consume both rows and its redo branch");
     assert(!session.navigate(false) && session.terminalRedoRequested(),
            "outside Redo must request the terminal modal");
-    tool.liveGesture(history, history.nextRun(), 7);
+    const branchRun = history.nextRun();
+    tool.liveGesture(history, branchRun, 7);
     assert(tool.value == 7 && !session.navigate(false) &&
            !session.terminalRedoRequested(),
            "a fresh C-branch gesture must replace the terminal branch");
+    assert(history.closeRunVisible(branchRun, "TransformMove") == 1);
+    active = null;
+    assert(session.navigate(true) && tool.value == 0 && active is tool,
+           "a re-armed C branch must itself close and outside-Undo to S0");
+}
+
+unittest { // 8261: cap eviction keeps the oldest retained prestate recoverable.
+    auto tool = new RecordedTool;
+    Tool active = tool;
+    auto history = new CommandHistory;
+    auto view = new View(0, 0, 1, 1);
+    auto arm = new ToolActivationCommand(null, view, EditMode.Vertices,
+        "TransformMove", "", true, false, false, 8263);
+    history.recordToolLifecycle(arm);
+    EditSession session;
+    session = new EditSession(() => active, history,
+        () { active = null; }, (string id) {
+            assert(id == "TransformMove");
+            active = tool;
+            session.noteArm(id, 8264);
+        });
+    session.noteArm("TransformMove", 8263);
+    const run = history.nextRun();
+    foreach (i; 1 .. 52) tool.liveGesture(history, run, i);
+    assert(history.undoEntries().length == 50 &&
+           cast(const ToolActivationCommand)history.undoEntries()[0].cmd is null,
+           "setup must evict the activation row at History capacity");
+    assert(history.closeRunVisible(run, "TransformMove") == 50);
+    active = null;
+    assert(session.navigate(true) && tool.value == 1 && active is tool,
+           "capped closed run must undo to oldest retained prestate and restore owner");
+    assert(history.undoEntries().length == 0 && history.redoEntries().length == 0 &&
+           session.sessionStateJson()["token"].integer == 8263,
+           "cap recovery must preserve bounded History and session ownership");
+    assert(!session.navigate(false) && session.terminalRedoRequested(),
+           "capped closed run must still reach terminal Redo");
 }
 
 unittest {
@@ -265,10 +306,10 @@ unittest {
     assert(readText("source/tool.d").indexOf("sessionRecordCompleted(cmd);") >= 0,
            "Tool.recordGestureEdit no longer publishes wrapper/Magnet rows");
     assert(readText("source/app.d").indexOf(
-            "xf.retainClosedGestureRows = id == \"TransformMove\";") >= 0,
+            "xf.closedRunOwnerId = id == \"TransformMove\" ? id : \"\";") >= 0,
            "production TransformMove preset lost its measured closed-run policy");
     assert(readText("source/tools/transform/xfrm_transform.d").indexOf(
-            "history.closeRunVisible(history.currentRunId);") >= 0,
+            "history.closeRunVisible(history.currentRunId, closedRunOwnerId);") >= 0,
            "Xfrm drop stopped preserving the visible TransformMove groups");
     assert(readText("source/app.d").indexOf(
             "guardModalState.publishHistoryTerminal(\"Out of redos.\");") >= 0,

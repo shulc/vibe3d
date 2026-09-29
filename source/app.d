@@ -3872,7 +3872,7 @@ void main(string[] args) {
         // other presets on their established consolidation path.
         import tools.transform.xfrm_transform : XfrmTransformTool;
         if (auto xf = cast(XfrmTransformTool) activeTool)
-            xf.retainClosedGestureRows = id == "TransformMove";
+            xf.closedRunOwnerId = id == "TransformMove" ? id : "";
         if (session !is null) {
             session.noteArm(id, token);
             session.finishClose();

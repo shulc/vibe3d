@@ -702,6 +702,8 @@ private struct ToolSession {
     private void delegate() dropTool_;
     private void delegate(string) rearmClosedTool_;
     private Rebindable!(const Command) terminalClosedRunRow_;
+    private size_t terminalClosedRunDepth_;
+    private bool terminalClosedRunArmed_;
     private bool terminalRedoRequested_;
     // The operation's close (slice M2). `topBefore_` is the undo top when the
     // close began; a row counts as written BY the close only if the top is a
@@ -844,25 +846,28 @@ private struct ToolSession {
             (ueClosed[$ - 1].flags & HistoryFlags.ClosedRun)) {
             const runId = ueClosed[$ - 1].runId;
             const token = ueClosed[$ - 1].cmd.sessionToken();
+            const ownerId = ueClosed[$ - 1].closedOwnerId;
             size_t count;
             foreach_reverse (entry; ueClosed) {
                 if (!(entry.flags & HistoryFlags.ClosedRun) ||
                     entry.runId != runId ||
-                    entry.cmd.sessionToken() != token) break;
+                    entry.cmd.sessionToken() != token ||
+                    entry.closedOwnerId != ownerId) break;
                 ++count;
             }
-            import commands.tool.lifecycle : ToolActivationCommand;
-            auto arm = count < ueClosed.length
-                ? cast(const ToolActivationCommand)ueClosed[ueClosed.length - count - 1].cmd
-                : null;
-            if (count == 0 || rearmClosedTool_ is null || arm is null ||
-                arm.sessionToken() != token)
+            if (count == 0 || rearmClosedTool_ is null || ownerId.length == 0)
                 return false;
             foreach (_; 0 .. count)
                 if (!history_.undo()) return false;
             history_.invalidateRedo();
-            history_.replayWithoutRecord(() => rearmClosedTool_(arm.armedId()));
+            history_.replayWithoutRecord(() => rearmClosedTool_(ownerId));
+            // The replay arm continues this closed run's session even when
+            // maxDepth has evicted its original activation row. Keep its token
+            // across the next gesture so a C branch can close and undo too.
+            adoptToken_(ownerId, token);
             terminalClosedRunRow_ = undoTop_();
+            terminalClosedRunDepth_ = history_.undoEntries().length;
+            terminalClosedRunArmed_ = true;
             return true;
         }
         // A held first group is valid only for the NEXT navigate step after
@@ -987,7 +992,8 @@ private struct ToolSession {
     bool redo() {
         terminalRedoRequested_ = false;
         if (history_.redoEntries().length == 0 &&
-            terminalClosedRunRow_.get !is null &&
+            terminalClosedRunArmed_ &&
+            history_.undoEntries().length == terminalClosedRunDepth_ &&
             undoTop_() is terminalClosedRunRow_.get) {
             terminalRedoRequested_ = true;
             return false;
