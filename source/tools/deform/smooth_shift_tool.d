@@ -552,7 +552,10 @@ public:
                 shift_ = dragBaseShift + dragAccum;
             } else {
                 scale_ = dragBaseScale + dragAccum;
-                if (scale_ < SCALE_MIN) scale_ = SCALE_MIN;
+                if (scale_ < SCALE_MIN) {
+                    scale_ = SCALE_MIN;
+                    dragAccum = SCALE_MIN - dragBaseScale; // no dead zone on reversal
+                }
             }
             rebuildPreview();
         }

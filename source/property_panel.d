@@ -195,7 +195,11 @@ public:
             // Keep the real prewrite image for topology session rows.
             auto beforeWrite = t is null || !t.sessionPolicy().historyTopologySteps
                 ? AttrImage.init : t.captureAttrImage();
+            // One group per row, so a multi-widget row (a Vec3) reads as held
+            // while ANY of its widgets is active.
+            ImGui.BeginGroup();
             bool changed = drawParamWidget(par);
+            ImGui.EndGroup();
             // A topology row edited by a held widget is one step until the
             // widget lets go: a scrub is one History row.
             const held = t !is null && ImGui.IsItemActive();

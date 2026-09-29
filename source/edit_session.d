@@ -254,10 +254,6 @@ final class EditSession {
     private Tool toolRefireOwner_;
     // The tool session: history navigation around the active tool (slice M1).
     private ToolSession tools_;
-    // The widget-held topology parameter step; see
-    // `releaseParameterStep`.
-    private Tool   heldStepTool_;
-    private string heldStepName_;
     // One write-set accumulator for the synchronous ValueWritten ->
     // BatchComplete protocol.  It deliberately records names at write time;
     // reconstructing the set from final values would lose identity returns.
@@ -287,20 +283,13 @@ final class EditSession {
     }
 
     /// True while `name` of `provider` holds an open widget step.
-    bool parameterStepHeld(ParamProvider provider, string name) const {
-        return heldStepTool_ !is null && cast(const Object) heldStepTool_ is
-            cast(const Object) provider && heldStepName_ == name;
+    bool parameterStepHeld(ParamProvider provider, string name) {
+        return tools_.holdsParameter(cast(Object) provider, name);
     }
 
-    /// Close the widget-held parameter step, if any: its widget deactivated
-    /// or stopped drawing. The step closes on the tool that opened it only if
-    /// that tool is still the active one; a close in between already ended it.
-    void releaseParameterStep() {
-        auto t = heldStepTool_;
-        heldStepTool_ = null;
-        heldStepName_ = null;
-        if (t !is null && t is tool_()) tools_.stepEnds(t, false);
-    }
+    /// Close the widget-held parameter step, if it is still open: its widget
+    /// deactivated or stopped drawing. See `ToolSession.holdParameter`.
+    void releaseParameterStep() { tools_.releaseParameter(); }
 
     /// Give the active tool family that explicitly opted into frame-driven
     /// parameter observation one tick.  This is independent of whether the
@@ -339,19 +328,18 @@ final class EditSession {
                         // A held widget (a scrub, a typed edit in progress)
                         // is ONE topology step: open at its first write, closed
                         // by `releaseParameterStep` (captured: a scrub is one row).
-                        if (widgetHeld && heldStepTool_ is t && heldStepName_ == name) {
+                        if (widgetHeld && tools_.holdsParameter(t, name)) {
                             t.notifyInteractiveParamChanged(name);
                             return;
                         }
-                        releaseParameterStep();
+                        tools_.releaseParameter();
                         const action = tools_.actionStepBegins(t, name);
                         const topology = !action
                             && tools_.topologyParameterStepBegins(t, beforeWrite);
                         t.notifyInteractiveParamChanged(name);
-                        if (topology && widgetHeld) {
-                            heldStepTool_ = t;
-                            heldStepName_ = name;
-                        } else if (action || topology)
+                        if (topology && widgetHeld)
+                            tools_.holdParameter(t, name);
+                        else if (action || topology)
                             tools_.stepEnds(t, false);
                         return;
                     }
@@ -1275,6 +1263,7 @@ private struct ToolSession {
     }
 
     void stepBegins(Tool t, PressKind kind, AttrImage beforeWrite) {
+        releaseParameter();
         if (!reporting_(t)) return;
         if (t.sessionPolicy().historyTopologySteps) {
             auto client = cast(TopologyStepClient)t;
@@ -1473,9 +1462,38 @@ private struct ToolSession {
         return false;
     }
 
+    // A topology parameter step held open by its widget (a scrub, a typed
+    // edit in progress) — one step until the widget lets go (captured: a
+    // scrub is one row). Anything else that opens or ends a step, or ends
+    // the operation, closes or forgets it first, so a release can only ever
+    // end the step its own write opened.
+    private Tool   heldParamTool_;
+    private string heldParamName_;
+
+    bool holdsParameter(Object p, string name) {
+        return heldParamTool_ !is null && cast(Object) heldParamTool_ is p
+            && heldParamName_ == name;
+    }
+
+    void holdParameter(Tool t, string name) {
+        if (!topologyPending_) return;
+        heldParamTool_ = t;
+        heldParamName_ = name;
+    }
+
+    void releaseParameter() {
+        auto t = heldParamTool_;
+        if (t is null) return;
+        heldParamTool_ = null;
+        heldParamName_ = null;
+        stepEnds(t, false);
+    }
+
     bool topologyParameterStepBegins(Tool t, AttrImage beforeWrite) {
         if (!reporting_(t) || !t.sessionPolicy().historyTopologySteps)
             return false;
+        // A write that lands while a gesture's step is open joins that step.
+        if (topologyPending_) return false;
         stepBegins(t, PressKind.plain, beforeWrite);
         return topologyPending_;
     }
@@ -1539,6 +1557,8 @@ private struct ToolSession {
     }
 
     private void endOperation_() {
+        heldParamTool_ = null;
+        heldParamName_ = null;
         live_ = false;
         openImage_ = AttrImage.init;
         steps_ = null;

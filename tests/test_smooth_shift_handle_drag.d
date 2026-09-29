@@ -317,3 +317,41 @@ unittest {
         cmd("tool.set " ~ tool ~ " off");
     }
 }
+
+// Task 8290 cell F (captured): the redo that RE-ARMS the tool makes the redone
+// mesh the operation's base, so the first field write after it stacks one
+// layer at the typed value — no haul in between — and a later haul continues
+// that layer from the typed Offset.
+unittest {
+    foreach (tool; ["mesh.smoothShiftTool", "mesh.thickenTool"]) {
+        auto r = postJson("/api/command", commandBody("scene.reset"));
+        assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
+        cmd("history.clear");
+        r = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
+        assert(r["status"].str == "ok", "select failed: " ~ r.toString);
+        uiCmd("tool.set " ~ tool ~ " on");
+        auto cam = fetchCamera(BASE);
+        haul(cam);
+        const size_t v1 = vertexCount();
+        key(64);
+        key(65);
+        assert(vertexCount() == v1, "F rig: the re-arm redo lost the first layer on " ~ tool);
+        immutable string redone = planes();
+        field(tool, 0.3);
+        const size_t v2 = vertexCount();
+        assert(v2 > v1,
+            "the first field write after a re-arm must stack one layer; " ~ tool
+            ~ " has " ~ v2.to!string ~ " vertices, the redone mesh " ~ v1.to!string);
+        assert(planeDiff(redone, planes()).canFind("vertices"),
+            "the stacked layer did not move any vertex on " ~ tool);
+        haul(cam);
+        const s = queryShift(tool);
+        assert(vertexCount() == v2,
+            "a haul after the stacking field write must re-evaluate that layer; "
+            ~ tool ~ " has " ~ vertexCount().to!string ~ ", expected " ~ v2.to!string);
+        assert(s > 0.3 + 1e-3,
+            "a haul after the field write must continue from the typed 0.3; "
+            ~ tool ~ " got " ~ s.to!string);
+        cmd("tool.set " ~ tool ~ " off");
+    }
+}

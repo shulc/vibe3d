@@ -114,6 +114,8 @@ private class StepTool : Tool {
     void endRelease() { sessionStepEnds(); }
     void enter() { closeOwnOperation(true); }
     void discard() { closeOwnOperation(false); }
+    void gestureBegins() { sessionStepBegins(); }
+    void gestureEnds() { sessionStepEnds(); }
     void ended() { arr = null; sessionOperationEnded(); }
 }
 
@@ -1125,6 +1127,16 @@ private final class ScrubTopologyTool : Tool, TopologyStepClient {
         basis = b;
         restoreRecordedAttrs(attrs);
     }
+    void discard() { closeOwnOperation(false); }
+    void gestureBegins() { sessionStepBegins(); }
+    void gestureEnds() { sessionStepEnds(); }
+    // A viewport gesture of the same tool: its own step, begun and ended.
+    void haulStep(float to) {
+        sessionStepBegins();
+        shift = to;
+        onParamChanged("shift");
+        sessionStepEnds();
+    }
 }
 
 unittest { // a scrub (held widget) records one row; discrete writes record one each
@@ -1160,4 +1172,90 @@ unittest { // a scrub (held widget) records one row; discrete writes record one 
                    writes, held, rows, held ? 1 : writes));
         assert(!s.parameterStepHeld(t, "shift"), "8290: release left the step held");
     }
+}
+
+unittest { // a gesture that begins while a widget holds a step closes it first
+    Mesh m = makeCube();
+    auto h = new CommandHistory();
+    auto t = new ScrubTopologyTool;
+    t.m = &m; t.h = h; t.view = new View(0, 0, 1, 1);
+    t.basis = MeshSnapshot.capture(m);
+    Tool active = t;
+    auto s = new EditSession(() => active, h, () { active = null; });
+    s.noteArm("t.scrub", 1);
+    const depth = h.undoEntries().length;
+    auto before = t.captureAttrImage();
+    t.shift = 0.3f;
+    s.orchestrateParameterChange(t, "shift", ParameterChangeSource.InteractiveValue,
+        ParameterChangePhase.ValueWritten, before, true);
+    s.orchestrateParameterChange(t, "", ParameterChangeSource.InteractiveValue,
+        ParameterChangePhase.BatchComplete);
+    assert(s.parameterStepHeld(t, "shift") && h.undoEntries().length == depth,
+        "8290 takeover rig: the held write did not stay open");
+    t.haulStep(0.7f);
+    assert(!s.parameterStepHeld(t, "shift"),
+        "8290: a gesture step left the widget's step held");
+    s.releaseParameterStep();   // the widget lets go AFTER the gesture
+    const rows = h.undoEntries().length - depth;
+    assert(rows == 2, format("8290: held write + gesture recorded %s rows, expected 2 "
+        ~ "(the release must not close the gesture's step)", rows));
+    assert(m.vertices[0].y > 0.19f && m.vertices[0].y < 0.21f, // cube y -0.5 + 0.7
+        format("8290: the gesture's geometry was lost: y=%s", m.vertices[0].y));
+}
+
+unittest { // an operation that ends under a held widget forgets the hold
+    Mesh m = makeCube();
+    auto h = new CommandHistory();
+    auto t = new ScrubTopologyTool;
+    t.m = &m; t.h = h; t.view = new View(0, 0, 1, 1);
+    t.basis = MeshSnapshot.capture(m);
+    Tool active = t;
+    auto s = new EditSession(() => active, h, () { active = null; });
+    s.noteArm("t.scrub", 1);
+    const depth = h.undoEntries().length;
+    void heldWrite(float v) {
+        auto before = t.captureAttrImage();
+        t.shift = v;
+        s.orchestrateParameterChange(t, "shift", ParameterChangeSource.InteractiveValue,
+            ParameterChangePhase.ValueWritten, before, true);
+        s.orchestrateParameterChange(t, "", ParameterChangeSource.InteractiveValue,
+            ParameterChangePhase.BatchComplete);
+    }
+    heldWrite(0.3f);
+    t.discard();                 // RMB: the pending step is discarded
+    assert(h.undoEntries().length == depth, "8290 discard rig recorded a row");
+    heldWrite(0.4f);             // a NEW hold must open its own step
+    s.releaseParameterStep();
+    const rows = h.undoEntries().length - depth;
+    assert(rows == 1, format("8290: a hold that outlived its discarded operation "
+        ~ "swallowed the next write: %s rows, expected 1", rows));
+}
+
+unittest { // a field write that lands inside a gesture's step joins that step
+    Mesh m = makeCube();
+    const base = MeshSnapshot.capture(m);
+    auto h = new CommandHistory();
+    auto t = new ScrubTopologyTool;
+    t.m = &m; t.h = h; t.view = new View(0, 0, 1, 1);
+    t.basis = MeshSnapshot.capture(m);
+    Tool active = t;
+    auto s = new EditSession(() => active, h, () { active = null; });
+    s.noteArm("t.scrub", 1);
+    const depth = h.undoEntries().length;
+    t.gestureBegins();
+    t.shift = 0.5f; t.onParamChanged("shift");
+    auto before = t.captureAttrImage();
+    t.shift = 0.6f;
+    s.orchestrateParameterChange(t, "shift", ParameterChangeSource.InteractiveValue,
+        ParameterChangePhase.ValueWritten, before, false);
+    s.orchestrateParameterChange(t, "", ParameterChangeSource.InteractiveValue,
+        ParameterChangePhase.BatchComplete);
+    t.shift = 0.7f; t.onParamChanged("shift");
+    t.gestureEnds();
+    const rows = h.undoEntries().length - depth;
+    assert(rows == 1, format("8290: a write inside a gesture split it into %s rows", rows));
+    h.undo();
+    assert(base.matches(m),
+        "8290: undo of the gesture did not return to its start — the write "
+        ~ "inside it re-based the gesture's step mid-flight");
 }
