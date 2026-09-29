@@ -112,6 +112,8 @@ enum HistoryFlags : uint {
     ToolLifecycle = 1 << 10, // Entry is a strict-LIFO tool-lifecycle step.
                              // Never counted in modelDepth / uiDepth, but surfaced
                              // by /api/history as the named step that it is.
+    ClosedRun = 1 << 11, // A completed gesture row retained for a closed tool run.
+                         // The runId groups its contiguous rows for outside navigation.
 }
 
 version (unittest) private HistoryEntry preparedTestEntry(Command cmd,
@@ -966,6 +968,15 @@ final class CommandHistory {
     UndoState state() const { return _state; }
     void setState(UndoState s) { _state = s; }
 
+    /// Replay a tool owner without recording a second activation row. This is
+    /// the same suspended history context used by lifecycle undo/redo.
+    void replayWithoutRecord(scope void delegate() action) {
+        auto previous = _state;
+        _state = UndoState.Suspend;
+        scope(exit) _state = previous;
+        action();
+    }
+
     // RAII helper for "suspend during this scope, restore on exit".
     struct Suspend {
         private CommandHistory h;
@@ -1606,6 +1617,24 @@ final class CommandHistory {
         }
         // else: neither arm recognizes the run's type — leave the stack as-is
         // (exactly Arm 1's pre-Phase-4 "unexpected type — leave as-is" no-op).
+    }
+
+    /// Task 8261: retain each completed gesture as a visible History row while
+    /// closing their shared run. The e001 TransformMove close shows two groups;
+    /// its outside Undo nevertheless returns to the run's start in one action.
+    /// Only a contiguous in-session tail is eligible, as with consolidate().
+    size_t closeRunVisible(ulong runId) {
+        scope(exit) _runOpen = false;
+        size_t start = undoStack.length;
+        while (start > 0 &&
+               (undoStack[start - 1].flags & HistoryFlags.InSession) &&
+               undoStack[start - 1].runId == runId) --start;
+        foreach (i; start .. undoStack.length) {
+            undoStack[i].flags &=
+                ~cast(uint)(HistoryFlags.InSession | HistoryFlags.Refire);
+            undoStack[i].flags |= HistoryFlags.ClosedRun;
+        }
+        return undoStack.length - start;
     }
 
     /// Replace the current matching in-session tail with `cmd` as a normal

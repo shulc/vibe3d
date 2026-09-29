@@ -9,6 +9,26 @@ final class GuardModalState {
     string noticeText;
     bool noticeOpen;
     bool noticePending;
+    string historyTerminalText;
+    bool historyTerminalOpen;
+    bool historyTerminalPending;
+
+    void publishHistoryTerminal(string text) {
+        historyTerminalText = text;
+        historyTerminalOpen = true;
+        historyTerminalPending = true;
+    }
+
+    bool consumeHistoryTerminalOpen() {
+        if (!historyTerminalPending) return false;
+        historyTerminalPending = false;
+        return true;
+    }
+
+    void closeHistoryTerminal() {
+        historyTerminalOpen = false;
+        historyTerminalPending = false;
+    }
 
     void requestDiscardOpen(bool testMode, bool awaitingAnswer) {
         if (testMode || !awaitingAnswer || discardConfirmOpen) return;

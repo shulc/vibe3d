@@ -3,6 +3,8 @@ module tests.unit.tool_session_recorded_steps_test;
 import command : Command, CmdFlags;
 import command_history : CommandHistory;
 import command_history : RecordMode;
+import command_history : HistoryFlags;
+import commands.tool.lifecycle : ToolActivationCommand;
 import command_executor : CommandExecutor;
 import edit_session : EditSession, RefireClient;
 import editmode : EditMode;
@@ -90,6 +92,51 @@ unittest {
            "the named block lost its common Transform ToolSession owner");
     assert(session.navigate(true) && tool.value == 0);
     assert(session.navigate(false) && tool.value == 17);
+}
+
+unittest { // 8261: open gestures, closed rows, one outside step, restored owner.
+    auto tool = new RecordedTool;
+    Tool active = tool;
+    auto history = new CommandHistory;
+    auto view = new View(0, 0, 1, 1);
+    auto arm = new ToolActivationCommand(null, view, EditMode.Vertices,
+        "TransformMove", "", true, false, false, 8261);
+    history.recordToolLifecycle(arm);
+    auto session = new EditSession(() => active, history,
+        () { active = null; }, (string id) {
+            assert(id == "TransformMove", "closed run restored wrong tool owner");
+            active = tool;
+        });
+    session.noteArm("TransformMove", 8261);
+    const run = history.nextRun();
+    tool.liveGesture(history, run, 7);
+    tool.liveGesture(history, run, 13);
+    assert(session.navigate(true) && tool.value == 7,
+           "internal Undo must peel one gesture");
+    assert(session.navigate(false) && tool.value == 13,
+           "internal Redo must restore the second gesture");
+    assert(history.closeRunVisible(run) == 2,
+           "closed run lost a visible adjustment group");
+    active = null;
+    session.noteArm("foreign owner", 9999); // stale session cache, history is authority
+    auto rows = history.undoEntriesVisible();
+    assert(rows.length == 3 &&
+           (rows[1].flags & HistoryFlags.ClosedRun) &&
+           (rows[2].flags & HistoryFlags.ClosedRun) &&
+           !(rows[1].flags & HistoryFlags.InSession) &&
+           !(rows[2].flags & HistoryFlags.InSession),
+           "close must retain two completed History rows");
+    assert(session.navigate(true) && tool.value == 0 && active is tool,
+           "one outside Undo must restore S0 and tool ownership");
+    assert(history.undoEntries().length == 1 &&
+           history.redoEntries().length == 0,
+           "closed-run Undo must consume both rows and its redo branch");
+    assert(!session.navigate(false) && session.terminalRedoRequested(),
+           "outside Redo must request the terminal modal");
+    tool.liveGesture(history, history.nextRun(), 7);
+    assert(tool.value == 7 && !session.navigate(false) &&
+           !session.terminalRedoRequested(),
+           "a fresh C-branch gesture must replace the terminal branch");
 }
 
 unittest {
@@ -217,4 +264,19 @@ unittest {
            "XfrmTransformTool recordTransformCommand no longer publishes its completed row");
     assert(readText("source/tool.d").indexOf("sessionRecordCompleted(cmd);") >= 0,
            "Tool.recordGestureEdit no longer publishes wrapper/Magnet rows");
+    assert(readText("source/app.d").indexOf(
+            "xf.retainClosedGestureRows = id == \"TransformMove\";") >= 0,
+           "production TransformMove preset lost its measured closed-run policy");
+    assert(readText("source/tools/transform/xfrm_transform.d").indexOf(
+            "history.closeRunVisible(history.currentRunId);") >= 0,
+           "Xfrm drop stopped preserving the visible TransformMove groups");
+    assert(readText("source/app.d").indexOf(
+            "guardModalState.publishHistoryTerminal(\"Out of redos.\");") >= 0,
+           "interactive terminal Redo lost the captured modal text");
+    assert(readText("source/ui/panels.d").indexOf(
+            "ImGui.BeginPopupModal(\"Redo\"") >= 0,
+           "terminal Redo request no longer has a visible modal renderer");
+    assert(readText("source/http_providers.d").indexOf(
+            "modal(\"history.redo.terminal\", guardModalState.historyTerminalOpen);") >= 0,
+           "terminal Redo modal lost its independent input-state witness");
 }

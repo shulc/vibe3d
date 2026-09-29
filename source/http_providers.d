@@ -1131,6 +1131,7 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                 modal("discard.confirm",
                       guardModalState.discardConfirmOpen);
                 modal("command.notice", guardModalState.noticeOpen);
+                modal("history.redo.terminal", guardModalState.historyTerminalOpen);
                 ib.put("]}");
                 inputJson = ib.data;
             }

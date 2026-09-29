@@ -35,7 +35,7 @@ import tool            : Tool, CommandClose, AttrImage, PressKind, OpensAt,
                          ToolSessionLink, TopologyStepClient;
 import command         : Command, CmdFlags;
 import std.json        : JSONValue;
-import command_history : CommandHistory, UndoState;
+import command_history : CommandHistory, UndoState, HistoryFlags;
 import held_gesture_buttons : g_heldGestureButtons;
 import std.typecons    : Rebindable;
 import params          : ParamProvider;
@@ -263,14 +263,15 @@ final class EditSession {
     private bool parameterBatchSourceKnown_;
 
     this(Tool delegate() tool, CommandHistory history,
-         void delegate() dropTool) {
+         void delegate() dropTool,
+         void delegate(string) rearmClosedTool = null) {
         assert(tool !is null,     "EditSession: tool accessor required");
         assert(history !is null,  "EditSession: history required");
         assert(dropTool !is null, "EditSession: dropTool verb required");
         tool_     = tool;
         history_  = history;
         dropTool_ = dropTool;
-        tools_    = ToolSession(tool, history, dropTool);
+        tools_    = ToolSession(tool, history, dropTool, rearmClosedTool);
     }
 
     // Computed phase classification (see SessionPhase above).
@@ -554,6 +555,8 @@ final class EditSession {
         return isUndo ? tools_.undo() : tools_.redo();
     }
 
+    bool terminalRedoRequested() const { return tools_.terminalRedoRequested(); }
+
     // Framework "apply and continue" (task 0461 — the reference editor's
     // apply-and-continue gesture, Shift+click on a creation/interactive-edit
     // tool). If the active tool holds an open edit AND supports in-place
@@ -697,6 +700,9 @@ private struct ToolSession {
     private Tool delegate() tool_;
     private CommandHistory  history_;
     private void delegate() dropTool_;
+    private void delegate(string) rearmClosedTool_;
+    private Rebindable!(const Command) terminalClosedRunRow_;
+    private bool terminalRedoRequested_;
     // The operation's close (slice M2). `topBefore_` is the undo top when the
     // close began; a row counts as written BY the close only if the top is a
     // different entry afterwards — identity, never the depth, which stops
@@ -779,11 +785,15 @@ private struct ToolSession {
     private SessionMeshKey replayKey_;
 
     this(Tool delegate() tool, CommandHistory history,
-         void delegate() dropTool) {
+         void delegate() dropTool,
+         void delegate(string) rearmClosedTool) {
         tool_     = tool;
         history_  = history;
         dropTool_ = dropTool;
+        rearmClosedTool_ = rearmClosedTool;
     }
+
+    bool terminalRedoRequested() const { return terminalRedoRequested_; }
 
     // The contract of the two directions below (in-session record+consolidate
     // Phase 1; carried from EditSession.navigate by slice M1). The STRUCTURE
@@ -824,6 +834,37 @@ private struct ToolSession {
     // Each returns true if anything happened (edit cancelled OR stack moved).
 
     bool undo() {
+        terminalRedoRequested_ = false;
+        // Task 8261, e001/e005: two retained adjustment rows are visible
+        // after close, yet one outside Undo restores the run-start image.
+        // Their tag and run identity are history-owned, so this works for any
+        // producer that explicitly opts into visible closed rows.
+        const ueClosed = history_.undoEntries();
+        if (tool_() is null && ueClosed.length &&
+            (ueClosed[$ - 1].flags & HistoryFlags.ClosedRun)) {
+            const runId = ueClosed[$ - 1].runId;
+            const token = ueClosed[$ - 1].cmd.sessionToken();
+            size_t count;
+            foreach_reverse (entry; ueClosed) {
+                if (!(entry.flags & HistoryFlags.ClosedRun) ||
+                    entry.runId != runId ||
+                    entry.cmd.sessionToken() != token) break;
+                ++count;
+            }
+            import commands.tool.lifecycle : ToolActivationCommand;
+            auto arm = count < ueClosed.length
+                ? cast(const ToolActivationCommand)ueClosed[ueClosed.length - count - 1].cmd
+                : null;
+            if (count == 0 || rearmClosedTool_ is null || arm is null ||
+                arm.sessionToken() != token)
+                return false;
+            foreach (_; 0 .. count)
+                if (!history_.undo()) return false;
+            history_.invalidateRedo();
+            history_.replayWithoutRecord(() => rearmClosedTool_(arm.armedId()));
+            terminalClosedRunRow_ = undoTop_();
+            return true;
+        }
         // A held first group is valid only for the NEXT navigate step after
         // the undo that ended its window; a raw redo in between has already
         // re-armed that row bare.
@@ -944,6 +985,13 @@ private struct ToolSession {
     }
 
     bool redo() {
+        terminalRedoRequested_ = false;
+        if (history_.redoEntries().length == 0 &&
+            terminalClosedRunRow_.get !is null &&
+            undoTop_() is terminalClosedRunRow_.get) {
+            terminalRedoRequested_ = true;
+            return false;
+        }
         if (navigateRecorded_(false)) return true;
         if (navigateTopology_(false)) return true;
         // H4: a step an undo popped comes back LIVE — the window re-opens if

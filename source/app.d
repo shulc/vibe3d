@@ -3867,6 +3867,12 @@ void main(string[] args) {
         preToolTickStall.arm();
         if (!commitPreparedArm(activeTool, activeToolId, prepared))
             throw new Exception("prepared tool arm was already consumed");
+        // Task 8261: the immutable e001/e005 pair measured the closed-run
+        // History policy for TransformMove only. Keep the shared Xfrm engine's
+        // other presets on their established consolidation path.
+        import tools.transform.xfrm_transform : XfrmTransformTool;
+        if (auto xf = cast(XfrmTransformTool) activeTool)
+            xf.retainClosedGestureRows = id == "TransformMove";
         if (session !is null) {
             session.noteArm(id, token);
             session.finishClose();
@@ -3963,7 +3969,11 @@ void main(string[] args) {
     session = new EditSession(
         () => activeTool,
         history,
-        () { dropActiveTool(ToolTransition.editCancelDrop); });
+        () { dropActiveTool(ToolTransition.editCancelDrop); },
+        (string id) {
+            JSONValue noNamed = JSONValue(cast(JSONValue[string]) null);
+            armPreparedTool(ToolTransition.replayArm, id, noNamed, true);
+        });
     toolHost.session = () => session;
     // task 0415 Phase 1: wire the ctx's toolHostView now that `toolHost` is
     // fully assembled -- Span A (registerTools, above) never touches it;
@@ -4849,7 +4859,10 @@ void main(string[] args) {
     // document; do not "unify" them through navigate().
     // Returns true if anything happened (edit cancelled OR stack moved).
     bool navHistory(bool isUndo) {
-        return session.navigate(isUndo);
+        const moved = session.navigate(isUndo);
+        if (!isUndo && !moved && session.terminalRedoRequested())
+            guardModalState.publishHistoryTerminal("Out of redos.");
+        return moved;
     }
     // Phase-B panel wiring: the moved Command History panel
     // (ui/panels.d's drawCommandHistoryPanel) drags its cursor row through

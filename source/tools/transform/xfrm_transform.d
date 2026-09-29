@@ -697,6 +697,9 @@ class XfrmTransformTool : TransformTool, LiveEvalClient, SlotActivationClient,
                           PreparedToolDoorClient, PreparedToolParamDoorClient,
                           PreparedToolPoseDoorClient {
 public:
+    // Task 8261: set by the composition root for the captured TransformMove
+    // preset only. Other T-only presets have no post-close evidence yet.
+    bool retainClosedGestureRows;
     final Mesh* preparedMeshForUpdate() const { return mesh; }
     // T/R/S flags — `T integer 0/1` etc. in the preset config.
     // Default to all enabled (the bare `Transform` preset that shows
@@ -1533,7 +1536,12 @@ public:
         // leaves that surviving entry untouched (no-op gather). Done AFTER the
         // sub-tool deactivation so the final consolidate sees the wrapper's
         // whole tagged tail. Stop the legacy routing flag afterward.
-        if (history !is null) history.consolidate(history.currentRunId);
+        if (history !is null) {
+            if (retainClosedGestureRows)
+                history.closeRunVisible(history.currentRunId);
+            else
+                history.consolidate(history.currentRunId);
+        }
         recordViaInSession   = false;
         currentRunBank       = DragBank.None;
         // Tool drop: no live gesture, no re-grade anchor carries to the next

@@ -1939,6 +1939,27 @@ void drawQuitGuardModal(GuardModalState state, bool testMode,
                 closeNotice();   // closed via ESC / [X]
             }
         }
+        // Task 8261: the closed TransformMove run has consumed its redo
+        // branch. The terminal keyboard action presents the captured Redo
+        // notice, including in visible test captures.
+        if (historyTerminalOpen) {
+            if (consumeHistoryTerminalOpen()) ImGui.OpenPopup("Redo");
+            bool popupOpen = historyTerminalOpen;
+            if (ImGui.BeginPopupModal("Redo", &popupOpen,
+                                      ImGuiWindowFlags.AlwaysAutoResize)) {
+                if (!popupOpen) {
+                    closeHistoryTerminal();
+                    ImGui.CloseCurrentPopup();
+                } else {
+                    ImGui.TextUnformatted(historyTerminalText);
+                    if (ImGui.Button("OK")) {
+                        closeHistoryTerminal();
+                        ImGui.CloseCurrentPopup();
+                    }
+                }
+                ImGui.EndPopup();
+            } else if (!popupOpen) closeHistoryTerminal();
+        }
     }
 }
 
