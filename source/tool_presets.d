@@ -325,6 +325,11 @@ void registerToolPresets(ref Registry reg, ToolPreset[] presets) {
                 auto t = cast(T)baseFactory();
                 assert(t !is null, "typed preset base factory descriptor drift");
                 t.presetFlags = presetCopy.flags;
+                // Task 8261: only the measured TransformMove preset keeps its
+                // completed run rows; this typed factory owns the preset ID.
+                static if (is(T == XfrmTransformTool))
+                    t.closedRunOwnerId = presetCopy.id == "TransformMove"
+                        ? presetCopy.id : "";
                 if (presetCopy.toolAttrs.length > 0)
                     applyToolAttrs(t, presetCopy.toolAttrs, presetCopy.id);
                 // Sticky user defaults are applied at the activation

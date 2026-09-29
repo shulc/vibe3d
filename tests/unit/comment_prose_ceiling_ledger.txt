@@ -10,7 +10,7 @@
 # An unlisted source file has a ceiling of zero.
 source-files 577
 task-citation-lines 5232
-citing-files 445
+citing-files 446
 long-comment-runs 270
 files-with-long-runs 144
 
@@ -28,7 +28,7 @@ allow source/ai3d/stage_artifact.d 2
 allow source/ai3d/worker_manager.d 2
 allow source/ai3d_command_registration.d 1
 allow source/ai_command_registration.d 1
-allow source/app.d 296
+allow source/app.d 295
 allow source/app_version.d 1
 allow source/application_command_binding.d 2
 allow source/args_dialog.d 1
@@ -345,6 +345,7 @@ allow source/tool.d 32
 allow source/tool_activation_ownership.d 6
 allow source/tool_disarm.d 2
 allow source/tool_lifecycle_registration.d 1
+allow source/tool_presets.d 1
 allow source/toolpipe/obbox.d 2
 allow source/toolpipe/package.d 1
 allow source/toolpipe/packets.d 12

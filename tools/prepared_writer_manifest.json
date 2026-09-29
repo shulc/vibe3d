@@ -458,7 +458,7 @@
         "SmoothShiftTool",
         "XfrmTransformTool"
       ],
-      "semantic_sha256": "5ff3327d2abc6db4654216043f9879b09b2c17d43c0fc166544dfc67152abcfe",
+      "semantic_sha256": "58d7d1b891b14efada310675a7287e56ad30d52bf0b9589e80cbdf1e9a51d344",
       "symbol": "registerTool(p.id)"
     }
   ],

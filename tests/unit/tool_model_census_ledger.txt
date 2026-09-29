@@ -127,8 +127,9 @@ write source/tools/transform/transform.d history.record 1
 write source/tools/transform/transform.d history.recordInSession 1
 write source/tools/transform/xfrm_handles.d history.runOpen 7
 write source/tools/transform/xfrm_transform.d history.bumpTweakGeneration 1
+write source/tools/transform/xfrm_transform.d history.closeRunVisible 1
 write source/tools/transform/xfrm_transform.d history.consolidate 3
-write source/tools/transform/xfrm_transform.d history.currentRunId 9
+write source/tools/transform/xfrm_transform.d history.currentRunId 10
 write source/tools/transform/xfrm_transform.d history.nextRun 2
 write source/tools/transform/xfrm_transform.d history.record 1
 write source/tools/transform/xfrm_transform.d history.recordInSession 1

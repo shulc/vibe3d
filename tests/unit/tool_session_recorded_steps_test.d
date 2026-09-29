@@ -305,8 +305,8 @@ unittest {
            "XfrmTransformTool recordTransformCommand no longer publishes its completed row");
     assert(readText("source/tool.d").indexOf("sessionRecordCompleted(cmd);") >= 0,
            "Tool.recordGestureEdit no longer publishes wrapper/Magnet rows");
-    assert(readText("source/app.d").indexOf(
-            "xf.closedRunOwnerId = id == \"TransformMove\" ? id : \"\";") >= 0,
+    assert(readText("source/tool_presets.d").indexOf(
+            "t.closedRunOwnerId = presetCopy.id == \"TransformMove\"") >= 0,
            "production TransformMove preset lost its measured closed-run policy");
     assert(readText("source/tools/transform/xfrm_transform.d").indexOf(
             "history.closeRunVisible(history.currentRunId, closedRunOwnerId);") >= 0,

@@ -3867,12 +3867,6 @@ void main(string[] args) {
         preToolTickStall.arm();
         if (!commitPreparedArm(activeTool, activeToolId, prepared))
             throw new Exception("prepared tool arm was already consumed");
-        // Task 8261: the immutable e001/e005 pair measured the closed-run
-        // History policy for TransformMove only. Keep the shared Xfrm engine's
-        // other presets on their established consolidation path.
-        import tools.transform.xfrm_transform : XfrmTransformTool;
-        if (auto xf = cast(XfrmTransformTool) activeTool)
-            xf.closedRunOwnerId = id == "TransformMove" ? id : "";
         if (session !is null) {
             session.noteArm(id, token);
             session.finishClose();
