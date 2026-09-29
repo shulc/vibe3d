@@ -136,7 +136,7 @@ class SmoothShiftTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClien
             commandClose: CommandClose.uiDoor,
             sessionSteps: true, historyTopologySteps: true,
             firstTopologyRedoUsesAfterAttrs: true,
-            // Task 8290 (captured): every step of one live operation — a haul,
+            // Captured: every step of one live operation — a haul,
             // a field write, a scrub — re-evaluates the SAME layer from the
             // operation's base, so completed steps do not rebase it. Only a
             // redo that re-arms the tool starts a new layer (the first
@@ -177,7 +177,7 @@ private:
     bool         completedGesture;
     // The operation is ENGAGED by its first haul (or by a restored step).
     // Before that a field write changes only the attribute — no geometry —
-    // and the first haul starts Offset from zero (task 8290, captured).
+    // and the first haul starts Offset from zero (captured).
     bool         engaged;
     MeshSnapshot before;
     Viewport     cachedVp;
@@ -196,7 +196,7 @@ private:
     float dragBaseShift, dragBaseScale;
     // The haul's running length: each motion yields a PER-PIXEL increment, so
     // the attr is base + the SUM of increments, never base + the last one
-    // (task 8290 — the old form left Offset at one mouse step's worth).
+    // (the old form left Offset at one mouse step's worth).
     float dragAccum = 0.0f;
 
     // Floor for scale: prevents a drag from collapsing the cap footprint
@@ -379,7 +379,7 @@ public:
         built = !before.matches(*mesh);
         completedGesture = before.filled && before.matches(*mesh);
         // Measured: the Thicken redo that re-arms keeps the mesh and resets
-        // Shift; an in-session undo/redo restores its recorded Shift (8290 C).
+        // Shift; an in-session undo/redo restores its recorded Shift.
         if (thicken_ && completedGesture) shift_ = 0.0f;
         // A restored step belongs to an engaged operation; after a re-arm
         // redo the next field write stacks one layer (captured cell F). The
@@ -500,7 +500,7 @@ public:
             // The haul that engages the operation starts Offset from zero, as
             // does the first haul after a re-arm redo (on the completed mesh;
             // its undo restores zero Shift). Any later haul continues from
-            // the current Offset on the same layer (task 8290, captured).
+            // the current Offset on the same layer (captured).
             if (part == PART_OFFSET && (completedGesture || !engaged))
                 shift_ = 0.0f;
             completedGesture = false;

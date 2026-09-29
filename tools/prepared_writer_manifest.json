@@ -767,14 +767,14 @@
     {
       "aggregate": "SmoothShiftTool",
       "module": "tools.deform.smooth_shift_tool",
-      "semantic_sha256": "6470a1b9ffed2d01ba9415b18317dd41c982f7dff983a36812368e134ac11771",
+      "semantic_sha256": "e2979d0f9c8b7a851bc7b167db0f439630a4a7bd25c78c9ef8e4605ce93a28a4",
       "signature": "void()",
       "symbol": "deactivate"
     },
     {
       "aggregate": "SmoothShiftTool",
       "module": "tools.deform.smooth_shift_tool",
-      "semantic_sha256": "faa816189d3021af9a62bdb189d73719db6b1f1e192945b9cb122d7cf6c1ce46",
+      "semantic_sha256": "253ddfbf60a6c75c2fbc2d8c4e4c1849a54e0c9670990f1c4588b1c7204026e3",
       "signature": "void(string pname)",
       "symbol": "onParamChanged"
     },

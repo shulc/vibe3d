@@ -254,7 +254,7 @@ final class EditSession {
     private Tool toolRefireOwner_;
     // The tool session: history navigation around the active tool (slice M1).
     private ToolSession tools_;
-    // The widget-held topology parameter step (task 8290); see
+    // The widget-held topology parameter step; see
     // `releaseParameterStep`.
     private Tool   heldStepTool_;
     private string heldStepName_;
@@ -338,7 +338,7 @@ final class EditSession {
                             "interactive parameter source requires a Tool");
                         // A held widget (a scrub, a typed edit in progress)
                         // is ONE topology step: open at its first write, closed
-                        // by `releaseParameterStep` (task 8290, captured).
+                        // by `releaseParameterStep` (captured: a scrub is one row).
                         if (widgetHeld && heldStepTool_ is t && heldStepName_ == name) {
                             t.notifyInteractiveParamChanged(name);
                             return;

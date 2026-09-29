@@ -197,7 +197,7 @@ public:
                 ? AttrImage.init : t.captureAttrImage();
             bool changed = drawParamWidget(par);
             // A topology row edited by a held widget is one step until the
-            // widget lets go (task 8290): a scrub is one History row.
+            // widget lets go: a scrub is one History row.
             const held = t !is null && ImGui.IsItemActive();
             if (!held && session.parameterStepHeld(p, par.name))
                 session.releaseParameterStep();
