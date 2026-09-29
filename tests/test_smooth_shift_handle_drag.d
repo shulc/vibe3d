@@ -149,6 +149,14 @@ void dragCell(string tool, bool thicken) { // both IDs share SmoothShiftTool
         "dragging the offset arrow should have moved shift off zero — this "
         ~ "tool consumes nothing when the press misses the handle, so a zero "
         ~ "here means the drag never began. Tool " ~ tool ~ ", got " ~ after.to!string);
+    // Task 8290: the haul is the SUM of its per-step increments. 80 px along an
+    // axis that projects to `len` px per unit is ~80/len units; the old
+    // `base + last increment` form gave one step's worth (1/16 of that).
+    immutable double expected = 80.0 / len;
+    assert(abs(after - expected) < 0.25 * expected,
+        "an 80 px haul must move shift by ~" ~ expected.to!string
+        ~ " (80 px at " ~ len.to!string ~ " px/unit); got " ~ after.to!string
+        ~ " for " ~ tool);
 
     // THE CHECKS THIS FILE DID NOT HAVE, half one: the kernel emitted geometry.
     // This stands in for `built`, which this tool does not publish. Read while

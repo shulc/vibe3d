@@ -185,6 +185,10 @@ private:
     int   dragPart = -1;
     int   dragLastMX, dragLastMY;
     float dragBaseShift, dragBaseScale;
+    // The haul's running length: each motion yields a PER-PIXEL increment, so
+    // the attr is base + the SUM of increments, never base + the last one
+    // (task 8290 — the old form left Offset at one mouse step's worth).
+    float dragAccum = 0.0f;
 
     // Floor for scale: prevents a drag from collapsing the cap footprint
     // through zero (inverted/degenerate faces), mirroring PolyBevelTool's
@@ -479,6 +483,7 @@ public:
             dragLastMX    = e.x; dragLastMY = e.y;
             dragBaseShift = shift_;
             dragBaseScale = scale_;
+            dragAccum     = 0.0f;
             sessionStepBegins();
             dragPart = part;
             toolHandles.setHaul(part);
@@ -517,11 +522,11 @@ public:
         Vec3 delta = screenAxisDelta(e.x, e.y, prevMX, prevMY,
                                      os.pos(anchor), ax.dir, cachedVp, skip);
         if (!skip) {
-            float d = ax.toLocal(dot(delta, ax.dir));
+            dragAccum += ax.toLocal(dot(delta, ax.dir));
             if (dragPart == PART_OFFSET) {
-                shift_ = dragBaseShift + d;
+                shift_ = dragBaseShift + dragAccum;
             } else {
-                scale_ = dragBaseScale + d;
+                scale_ = dragBaseScale + dragAccum;
                 if (scale_ < SCALE_MIN) scale_ = SCALE_MIN;
             }
             rebuildPreview();
