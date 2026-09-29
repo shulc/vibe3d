@@ -196,6 +196,11 @@ public:
             auto beforeWrite = t is null || !t.sessionPolicy().historyTopologySteps
                 ? AttrImage.init : t.captureAttrImage();
             bool changed = drawParamWidget(par);
+            // A topology row edited by a held widget is one step until the
+            // widget lets go (task 8290): a scrub is one History row.
+            const held = t !is null && ImGui.IsItemActive();
+            if (!held && session.parameterStepHeld(p, par.name))
+                session.releaseParameterStep();
             if (disabled) ImGui.EndDisabled();
             if (changed) {
                 auto source = defaultSource;
@@ -204,7 +209,7 @@ public:
                 }
                 session.orchestrateParameterChange(
                     p, par.name, source, ParameterChangePhase.ValueWritten,
-                    beforeWrite);
+                    beforeWrite, held);
                 batchSource = source;
                 changedInBatch = true;
             }

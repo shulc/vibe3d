@@ -1089,3 +1089,75 @@ unittest { // The session half selects the predecessor run, not its newer siblin
         format("topology attr ownership ignored predecessor session: restored %s, expected 17",
                restored.shift));
 }
+
+// ---- 8290: a held widget is ONE topology step --------------------------------
+
+private final class ScrubTopologyTool : Tool, TopologyStepClient {
+    Mesh* m;
+    CommandHistory h;
+    View view;
+    float shift = 0.0f;
+    MeshSnapshot basis;
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy policy = {
+            activationRow: true, sessionSteps: true, historyTopologySteps: true,
+            opensAt: OpensAt.firstPress, imageAttrs: ["shift"]
+        };
+        return policy;
+    }
+    override Param[] params() { return [Param.float_("shift", "Offset", &shift, 0.0f)]; }
+    // The kernel stand-in: the layer re-evaluated from the operation's basis.
+    override void onParamChanged(string) {
+        basis.restore(*m);
+        m.vertices[0].y += shift;
+    }
+    override Mesh* topologyStepMesh() { return m; }
+    override MeshSnapshot topologyStepBasis() { return basis; }
+    override Command topologyStepCarrier() {
+        import commands.mesh.session_edit : MeshSessionEdit;
+        return new MeshSessionEdit(m, view, EditMode.Polygons, "t.scrub", "Scrub");
+    }
+    override bool recordTopologyStep(Command cmd) { h.record(cmd); return true; }
+    override string topologyStepLabel() { return "Scrub"; }
+    override void setTopologyDormant(bool) {}
+    override void rebaseTopologyStep(MeshSnapshot) {}
+    override void restoreTopologyStep(in AttrImage attrs, MeshSnapshot b) {
+        basis = b;
+        restoreRecordedAttrs(attrs);
+    }
+}
+
+unittest { // a scrub (held widget) records one row; discrete writes record one each
+    foreach (held; [true, false]) {
+        Mesh m = makeCube();
+        auto h = new CommandHistory();
+        auto t = new ScrubTopologyTool;
+        t.m = &m; t.h = h; t.view = new View(0, 0, 1, 1);
+        t.basis = MeshSnapshot.capture(m);
+        Tool active = t;
+        auto s = new EditSession(() => active, h, () { active = null; });
+        s.noteArm("t.scrub", 1);
+        const depth = h.undoEntries().length;
+        const writes = held ? 5 : 2;
+        foreach (i; 0 .. writes) {
+            auto before = t.captureAttrImage();
+            t.shift = 0.1f * (i + 1);
+            s.orchestrateParameterChange(t, "shift",
+                ParameterChangeSource.InteractiveValue,
+                ParameterChangePhase.ValueWritten, before, held);
+            s.orchestrateParameterChange(t, "",
+                ParameterChangeSource.InteractiveValue,
+                ParameterChangePhase.BatchComplete);
+            if (held)
+                assert(s.parameterStepHeld(t, "shift")
+                    && h.undoEntries().length == depth,
+                    "8290: a held write closed its step before the widget let go");
+        }
+        s.releaseParameterStep();
+        const rows = h.undoEntries().length - depth;
+        assert(rows == (held ? 1 : writes),
+            format("8290: %s writes (held=%s) recorded %s rows, expected %s",
+                   writes, held, rows, held ? 1 : writes));
+        assert(!s.parameterStepHeld(t, "shift"), "8290: release left the step held");
+    }
+}

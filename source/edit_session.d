@@ -254,6 +254,10 @@ final class EditSession {
     private Tool toolRefireOwner_;
     // The tool session: history navigation around the active tool (slice M1).
     private ToolSession tools_;
+    // The widget-held topology parameter step (task 8290); see
+    // `releaseParameterStep`.
+    private Tool   heldStepTool_;
+    private string heldStepName_;
     // One write-set accumulator for the synchronous ValueWritten ->
     // BatchComplete protocol.  It deliberately records names at write time;
     // reconstructing the set from final values would lose identity returns.
@@ -282,6 +286,22 @@ final class EditSession {
                                       : SessionPhase.Idle;
     }
 
+    /// True while `name` of `provider` holds an open widget step.
+    bool parameterStepHeld(ParamProvider provider, string name) const {
+        return heldStepTool_ !is null && cast(const Object) heldStepTool_ is
+            cast(const Object) provider && heldStepName_ == name;
+    }
+
+    /// Close the widget-held parameter step, if any: its widget deactivated
+    /// or stopped drawing. The step closes on the tool that opened it only if
+    /// that tool is still the active one; a close in between already ended it.
+    void releaseParameterStep() {
+        auto t = heldStepTool_;
+        heldStepTool_ = null;
+        heldStepName_ = null;
+        if (t !is null && t is tool_()) tools_.stepEnds(t, false);
+    }
+
     /// Give the active tool family that explicitly opted into frame-driven
     /// parameter observation one tick.  This is independent of whether the
     /// Tool Properties panel is visible.
@@ -305,7 +325,7 @@ final class EditSession {
     /// compatibility entry below and therefore carries no write-set names.
     void orchestrateParameterChange(ParamProvider provider, string name,
             ParameterChangeSource source, ParameterChangePhase phase,
-            AttrImage beforeWrite = AttrImage.init) {
+            AttrImage beforeWrite = AttrImage.init, bool widgetHeld = false) {
         final switch (phase) {
             case ParameterChangePhase.ValueWritten:
                 assert(provider !is null,
@@ -316,10 +336,23 @@ final class EditSession {
                         auto t = cast(Tool)provider;
                         assert(t !is null,
                             "interactive parameter source requires a Tool");
-                        const step = tools_.actionStepBegins(t, name)
-                            || tools_.topologyParameterStepBegins(t, beforeWrite);
+                        // A held widget (a scrub, a typed edit in progress)
+                        // is ONE topology step: open at its first write, closed
+                        // by `releaseParameterStep` (task 8290, captured).
+                        if (widgetHeld && heldStepTool_ is t && heldStepName_ == name) {
+                            t.notifyInteractiveParamChanged(name);
+                            return;
+                        }
+                        releaseParameterStep();
+                        const action = tools_.actionStepBegins(t, name);
+                        const topology = !action
+                            && tools_.topologyParameterStepBegins(t, beforeWrite);
                         t.notifyInteractiveParamChanged(name);
-                        if (step) tools_.stepEnds(t, false);
+                        if (topology && widgetHeld) {
+                            heldStepTool_ = t;
+                            heldStepName_ = name;
+                        } else if (action || topology)
+                            tools_.stepEnds(t, false);
                         return;
                     }
                     case ParameterChangeSource.ScriptedValue: {

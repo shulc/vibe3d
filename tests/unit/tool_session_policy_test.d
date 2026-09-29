@@ -1010,10 +1010,14 @@ unittest { // Tasks 7990/8030: production topology R wiring, not a helper replic
     inOrder(panelDraw, [
         "beforeWrite=tisnull||!t.sessionPolicy().historyTopologySteps?AttrImage.init:t.captureAttrImage();",
         "boolchanged=drawParamWidget(par);",
-        "session.orchestrateParameterChange(p,par.name,source,ParameterChangePhase.ValueWritten,beforeWrite);",
+        // 8290: the held widget is read right after ITS widget, and a row
+        // that let go closes its step before any new write.
+        "constheld=t!isnull&&ImGui.IsItemActive();",
+        "if(!held&&session.parameterStepHeld(p,par.name))session.releaseParameterStep();",
+        "session.orchestrateParameterChange(p,par.name,source,ParameterChangePhase.ValueWritten,beforeWrite,held);",
     ], "PropertyPanel.drawProvider topology prewrite");
     assert(panel.count("beforeWrite=tisnull||!t.sessionPolicy().historyTopologySteps?AttrImage.init:t.captureAttrImage();") == 1
-        && panel.count("session.orchestrateParameterChange(p,par.name,source,ParameterChangePhase.ValueWritten,beforeWrite);") == 1
+        && panel.count("session.orchestrateParameterChange(p,par.name,source,ParameterChangePhase.ValueWritten,beforeWrite,held);") == 1
         && attr.canFind("beforeWrite=t.sessionPolicy().historyTopologySteps?t.captureAttrImage():AttrImage.init;")
         && attr.canFind("t,attrName_,source,ParameterChangePhase.ValueWritten,beforeWrite);"),
         "pointer-written parameter producer lost the actual prewrite image");

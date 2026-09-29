@@ -51,14 +51,15 @@ struct PreparedSmoothShiftActivationImage {
 }
 
 struct SmoothShiftParamProjection {
-    bool interactive, active, built, thicken, sharp;
+    bool interactive, active, built, engaged, thicken, sharp;
     float shift, scale, maxAngle;
     bool opEquals(const SmoothShiftParamProjection other) const nothrow @nogc {
         bool sameFloat(ref const float a, ref const float b) nothrow @nogc {
             return memcmp(&a, &b, float.sizeof) == 0;
         }
         return interactive == other.interactive && active == other.active &&
-            built == other.built && thicken == other.thicken &&
+            built == other.built && engaged == other.engaged &&
+            thicken == other.thicken &&
             sharp == other.sharp && sameFloat(shift, other.shift) &&
             sameFloat(scale, other.scale) && sameFloat(maxAngle, other.maxAngle);
     }
@@ -135,7 +136,11 @@ class SmoothShiftTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClien
             commandClose: CommandClose.uiDoor,
             sessionSteps: true, historyTopologySteps: true,
             firstTopologyRedoUsesAfterAttrs: true,
-            rebaseTopologyAfterStep: true,
+            // Task 8290 (captured): every step of one live operation — a haul,
+            // a field write, a scrub — re-evaluates the SAME layer from the
+            // operation's base, so completed steps do not rebase it. Only a
+            // redo that re-arms the tool starts a new layer (the first
+            // record's `after` basis).
             opensAt: OpensAt.firstPress,
             imageAttrs: ["shift", "scale", "maxAngle", "thicken", "sharp"],
             haulAttrs: ["shift", "scale", "maxAngle", "thicken", "sharp"]
@@ -170,6 +175,10 @@ private:
     bool         active;
     bool         built;
     bool         completedGesture;
+    // The operation is ENGAGED by its first haul (or by a restored step).
+    // Before that a field write changes only the attribute — no geometry —
+    // and the first haul starts Offset from zero (task 8290, captured).
+    bool         engaged;
     MeshSnapshot before;
     Viewport     cachedVp;
 
@@ -256,7 +265,7 @@ public:
             ref PreparedSmoothShiftActivationImage image) nothrow @nogc {
         if (!image.valid) return;
         active = true; built = false; dragPart = -1;
-        completedGesture = false;
+        completedGesture = false; engaged = false;
         image.before.moveInto(before);
         gizmoValid = image.gizmoValid; anchor = image.anchor;
         baseAnchor = image.baseAnchor; offsetAxis = image.offsetAxis;
@@ -302,6 +311,7 @@ public:
     private void reinitSession() {
         built    = false;
         completedGesture = false;
+        engaged  = false;
         dragPart = -1;
         before   = MeshSnapshot.capture(*mesh);
         computeGizmoFrame();
@@ -312,6 +322,7 @@ public:
         active     = false;
         built      = false;
         completedGesture = false;
+        engaged    = false;
         dragPart   = -1;
         gizmoValid = false;
         toolHandles.clearHaul();
@@ -351,6 +362,7 @@ public:
     }
     public override string topologyStepLabel() { return "Smooth Shift"; }
     public override void setTopologyDormant(bool dormant) {}
+    // Not reached while the policy leaves `rebaseTopologyAfterStep` off.
     public override void rebaseTopologyStep(MeshSnapshot basis) {
         before = basis;
         built = false;
@@ -364,23 +376,32 @@ public:
         computeGizmoFrame();
         visible.restore(*mesh);
         restoreRecordedAttrs(attrs);
-        if (thicken_) shift_ = 0.0f; // Measured Thicken redo keeps mesh, resets Shift.
         built = !before.matches(*mesh);
         completedGesture = before.filled && before.matches(*mesh);
+        // Measured: the Thicken redo that re-arms keeps the mesh and resets
+        // Shift; an in-session undo/redo restores its recorded Shift (8290 C).
+        if (thicken_ && completedGesture) shift_ = 0.0f;
+        // A restored step belongs to an engaged operation; after a re-arm
+        // redo the next field write stacks one layer (captured cell F). The
+        // undo of a first haul that followed an unengaged field write is not
+        // captured and is treated the same way.
+        engaged  = true;
         dragPart = -1;
         toolHandles.clearHaul();
         refreshCaches();
     }
 
     override void onParamChanged(string pname) {
-        if (interactiveParamEdit) rebuildPreview();
+        if (!interactiveParamEdit || !engaged) return;
+        completedGesture = false;
+        rebuildPreview();
     }
     final bool ownsPreparedLayer(Layer layer) const {
         return layer !is null && &layer.meshRef() is mesh;
     }
     private SmoothShiftParamProjection paramProjection() const nothrow @nogc {
         return SmoothShiftParamProjection(interactiveParamEdit, active, built,
-            thicken_, sharp_, shift_, scale_, maxAngle_);
+            engaged, thicken_, sharp_, shift_, scale_, maxAngle_);
     }
     final PreparedSmoothShiftParamImage buildPreparedParamUpdate(ref Mesh live) {
         PreparedSmoothShiftParamImage image;
@@ -395,7 +416,7 @@ public:
         baselineShadow.close();
         image.expectedBefore = MeshSnapshot.capture(baseline);
         image.deliveryFlags = image.deliveryDomains = 0;
-        if (!interactiveParamEdit || !active) return image;
+        if (!interactiveParamEdit || !active || !engaged) return image;
         image.applies = true; image.candidate = baseline; baseline = Mesh.init;
         auto shadow = beginPreparedShadow(image.candidate);
         auto mask = image.candidate.operandFaceMask();
@@ -476,10 +497,14 @@ public:
         int part = toolHandles.test(hmx, hmy, cachedVp);
 
         if (part == PART_OFFSET || part == PART_SCALE) {
-            // The next captured offset haul starts at zero on the completed
-            // mesh. Its undo restores zero Shift on the prior mesh even when
-            // the prior step's own redo shows its released Shift value.
-            if (part == PART_OFFSET && completedGesture) shift_ = 0.0f;
+            // The haul that engages the operation starts Offset from zero, as
+            // does the first haul after a re-arm redo (on the completed mesh;
+            // its undo restores zero Shift). Any later haul continues from
+            // the current Offset on the same layer (task 8290, captured).
+            if (part == PART_OFFSET && (completedGesture || !engaged))
+                shift_ = 0.0f;
+            completedGesture = false;
+            engaged = true;
             dragLastMX    = e.x; dragLastMY = e.y;
             dragBaseShift = shift_;
             dragBaseScale = scale_;
@@ -673,6 +698,7 @@ public:
     version(unittest) final void seedPreparedParamForTest(ref Mesh live,
             bool interactive = true) {
         interactiveParamEdit = interactive; active = true; built = interactive;
+        engaged = interactive;
         shift_ = 0.5f; scale_ = 1.0f; thicken_ = false;
         before = MeshSnapshot.capture(live);
     }

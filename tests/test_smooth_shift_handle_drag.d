@@ -89,6 +89,46 @@ string buildHoverLog(int vpX, int vpY, int vpW, int vpH, int x, int y) {
         vpX, vpY, vpW, vpH, x, y);
 }
 
+// Rows the cell leaves above the arm: the three hauls (the field write was
+// undone). Measured 3 on this stand, task 8290.
+enum long UNDO_DELTA = 3;
+
+void key(int mod) {
+    import core.thread : Thread;
+    import core.time   : dur;
+    playAndWait(format(
+        `{"t":0.000,"type":"SDL_KEYDOWN","sym":122,"scan":0,"mod":%d,"repeat":0}`, mod), BASE);
+    Thread.sleep(dur!"msecs"(150));
+}
+
+void uiCmd(string line) {
+    auto r = postJson("/api/command?origin=ui", line);
+    assert(r["status"].str == "ok", "UI-door '" ~ line ~ "' failed: " ~ r.toString);
+}
+
+/// An interactive (panel-origin) value write, one discrete step.
+void field(string tool, double v) {
+    auto r = postJson("/api/script?interactive=true",
+        "tool.attr " ~ tool ~ " shift " ~ format("%.9g", v));
+    assert(r["status"].str == "ok", "field write failed: " ~ r.toString);
+}
+
+/// Haul the offset arrow 80 px up from wherever it is drawn now.
+void haul(CameraState cam) {
+    import core.thread : Thread;
+    import core.time   : dur;
+    double sx, sy;
+    bool found;
+    fetchHandlePart(0, sx, sy, found, BASE);
+    assert(found, "Smooth Shift/Thicken lost its offset handle");
+    const x = cast(int) sx, y = cast(int) sy;
+    playAndWait(buildHoverLog(cam.vpX, cam.vpY, cam.width, cam.height, x, y), BASE);
+    Thread.sleep(dur!"msecs"(150));
+    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                             x, y, x, y - 80, 16), BASE);
+    Thread.sleep(dur!"msecs"(120));
+}
+
 void dragCell(string tool, bool thicken) { // both IDs share SmoothShiftTool
     // NO PRE-DISARM, DELIBERATELY (task 3130). `/api/reset` cancels and DROPS the
     // active tool BEFORE it replaces the geometry, so a gesture left standing by
@@ -106,7 +146,7 @@ void dragCell(string tool, bool thicken) { // both IDs share SmoothShiftTool
     r = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
     assert(r["status"].str == "ok", "select failed: " ~ r.toString);
 
-    cmd("tool.set " ~ tool ~ " on");
+    uiCmd("tool.set " ~ tool ~ " on");
 
     import core.thread : Thread;
     import core.time   : dur;
@@ -173,49 +213,64 @@ void dragCell(string tool, bool thicken) { // both IDs share SmoothShiftTool
         ~ "and the `shift` attribute above reads exactly the same in that "
         ~ "state, which is where this test used to stop looking");
 
-    playAndWait(format(
-        `{"t":0.000,"type":"SDL_KEYDOWN","sym":122,"scan":0,"mod":64,"repeat":0}`), BASE);
-    Thread.sleep(dur!"msecs"(150));
+    // Task 8290 (captured, private fixture smooth_shift_panel_edit.json): the
+    // arm is the UI door, so the first haul's record carries the activation —
+    // its Ctrl+Z disarms, and the redo RE-ARMS on the completed mesh (cell F).
+    key(64);
     assert(vertexCount() == v0 && faceCount() == f0,
         "Smooth Shift first undo must restore the pre-gesture topology");
-    playAndWait(format(
-        `{"t":0.000,"type":"SDL_KEYDOWN","sym":122,"scan":0,"mod":65,"repeat":0}`), BASE);
-    Thread.sleep(dur!"msecs"(150));
+    key(65);
     assert(vertexCount() == v1 && faceCount() == f1,
         "Smooth Shift redo must restore the completed topology");
     assert(abs(queryShift(tool) - (thicken ? 0.0 : after)) < 1e-6,
         "redo must restore the captured Shift amount for this exact ID");
 
-    double sx, sy;
-    bool handleFound;
-    fetchHandlePart(0, sx, sy, handleFound, BASE);
-    assert(handleFound, "completed Smooth Shift/Thicken step lost its offset handle");
-    const x2 = cast(int)sx, y2 = cast(int)sy;
-    playAndWait(buildHoverLog(cam.vpX, cam.vpY, cam.width, cam.height, x2, y2), BASE);
-    Thread.sleep(dur!"msecs"(150));
-    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
-                             x2, y2, x2, y2 - 80, 16), BASE);
-    Thread.sleep(dur!"msecs"(120));
+    // After a re-arm the next haul starts from zero and STACKS one layer.
+    haul(cam);
     const size_t v2 = vertexCount(), f2 = faceCount();
     const double secondShift = queryShift(tool);
     assert(v2 > v1 && f2 > f1,
-        "second Smooth Shift/Thicken gesture must build from completed topology");
-    assert(abs(secondShift) > 1e-3,
-        "second Smooth Shift/Thicken haul must move Shift from its new zero");
-    playAndWait(format(
-        `{"t":0.000,"type":"SDL_KEYDOWN","sym":122,"scan":0,"mod":64,"repeat":0}`), BASE);
-    Thread.sleep(dur!"msecs"(150));
+        "the first haul after a re-arm must build from the completed topology");
+    assert(abs(secondShift) > 1e-3 && abs(secondShift) < abs(after) * 1.5,
+        "the first haul after a re-arm must start Shift from zero, got "
+        ~ secondShift.to!string);
+    immutable string layerTwo = planes();
+
+    // Inside the live operation every later step re-evaluates THAT layer: a
+    // haul continues from the current Shift (cell CTL) — right after the
+    // re-arm haul, with no history step between them.
+    haul(cam);
+    const double thirdShift = queryShift(tool);
+    assert(vertexCount() == v2 && faceCount() == f2,
+        "a later haul in the same operation must re-evaluate its layer, not "
+        ~ "stack another: " ~ vertexCount().to!string ~ " vertices, expected "
+        ~ v2.to!string);
+    assert(abs(thirdShift) > abs(secondShift) + 1e-3,
+        "a later haul must continue from the current Shift " ~ secondShift.to!string
+        ~ ", got " ~ thirdShift.to!string);
+    key(64);
+    assert(vertexCount() == v2 && abs(queryShift(tool) - secondShift) < 1e-6,
+        "undo of the continuing haul restores the re-arm haul's layer and Shift");
+    key(64);
     assert(vertexCount() == v1 && faceCount() == f1,
         "undo of second Smooth Shift/Thicken step restores the first step");
     assert(abs(queryShift(tool)) < 1e-6,
         "undo of second gesture restores its zero Shift start");
-    playAndWait(format(
-        `{"t":0.000,"type":"SDL_KEYDOWN","sym":122,"scan":0,"mod":65,"repeat":0}`), BASE);
-    Thread.sleep(dur!"msecs"(150));
+    key(65);
+    key(65);
+    assert(vertexCount() == v2 && faceCount() == f2
+        && abs(queryShift(tool) - thirdShift) < 1e-6,
+        "redo of both steps restores the continued layer and its Shift");
+    // ... and a field write sets the ABSOLUTE value on the same layer (cell A).
+    field(tool, secondShift);
     assert(vertexCount() == v2 && faceCount() == f2,
-        "redo of second Smooth Shift/Thicken step restores its topology");
-    assert(abs(queryShift(tool) - (thicken ? 0.0 : secondShift)) < 1e-6,
-        "second redo must restore the captured Shift state for this ID");
+        "a field write after a haul must re-evaluate the layer, not stack one");
+    assert(planeDiff(layerTwo, planes()).length == 0,
+        "a field write of the layer's own earlier Shift must reproduce that "
+        ~ "layer exactly — it moved planes " ~ planeDiff(layerTwo, planes()).to!string);
+    key(64);
+    assert(abs(queryShift(tool) - thirdShift) < 1e-6 && vertexCount() == v2,
+        "undo of the field write must restore the haul's Shift on the same layer");
 
     cmd("tool.set " ~ tool ~ " off");
     Thread.sleep(dur!"msecs"(300));
@@ -228,13 +283,37 @@ void dragCell(string tool, bool thicken) { // both IDs share SmoothShiftTool
         ~ "byte-identical to what it was before the drag. A tool attribute can "
         ~ "hold any value over that");
     immutable long undoDelta = undoLen() - u0;
-    assert(undoDelta == 2,
-        "the gesture recorded " ~ undoDelta.to!string ~ " undo entr(ies), "
-        ~ "expected exactly 2 — 0 means the drags were no-ops that left "
-        ~ "nothing undoable behind it");
+    assert(undoDelta == UNDO_DELTA,
+        "the gestures recorded " ~ undoDelta.to!string ~ " undo entr(ies), "
+        ~ "expected exactly " ~ UNDO_DELTA.to!string);
 }
 
 unittest {
     dragCell("mesh.smoothShiftTool", false);
     dragCell("mesh.thickenTool", true);
+}
+
+// Task 8290 cell B (captured): before the first haul engages the operation, a
+// field write changes the attribute only — no geometry — and the engaging haul
+// starts Offset from zero, discarding the typed value.
+unittest {
+    foreach (tool; ["mesh.smoothShiftTool", "mesh.thickenTool"]) {
+        auto r = postJson("/api/command", commandBody("scene.reset"));
+        assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
+        r = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
+        assert(r["status"].str == "ok", "select failed: " ~ r.toString);
+        uiCmd("tool.set " ~ tool ~ " on");
+        immutable string before = planes();
+        field(tool, 5.0);
+        assert(abs(queryShift(tool) - 5.0) < 1e-6, "the field write did not land on " ~ tool);
+        assert(planeDiff(before, planes()).length == 0,
+            "an unengaged field write must not build geometry; " ~ tool ~ " moved "
+            ~ planeDiff(before, planes()).to!string);
+        haul(fetchCamera(BASE));
+        const s = queryShift(tool);
+        assert(abs(s) > 1e-3 && abs(s) < 1.0,
+            "the engaging haul must start Offset from zero, not the typed 5.0; "
+            ~ tool ~ " got " ~ s.to!string);
+        cmd("tool.set " ~ tool ~ " off");
+    }
 }
