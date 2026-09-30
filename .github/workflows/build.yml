@@ -502,6 +502,7 @@ jobs:
         with:
           name: zip-${{ matrix.name }}
           path: vibe3d-${{ matrix.name }}.zip
+          retention-days: 1
 
       - name: Upload AppImage (Linux)
         if: runner.os == 'Linux'
@@ -509,6 +510,7 @@ jobs:
         with:
           name: appimage-linux
           path: Vibe3D-x86_64.AppImage
+          retention-days: 1
 
       # ---- Windows 7 variant -------------------------------------------------
       # A second Windows artifact built from the `modeling-noai` config: the AI
@@ -561,6 +563,7 @@ jobs:
         with:
           name: zip-windows-win7
           path: vibe3d-windows-win7.zip
+          retention-days: 1
 
       # ---- Windows installer (Inno Setup) ------------------------------------
       # Wrap the self-contained modeling payload (the vibe3d-windows.zip built
@@ -600,6 +603,7 @@ jobs:
         with:
           name: installer-windows
           path: dist/vibe3d-setup-*.exe
+          retention-days: 1
 
   # Heavy with-render variant. Builds D-Cycles (Blender LFS submodule
   # ~5 GB + CMake compile of Cycles) + bundles the Cycles + RPR runtime
@@ -737,6 +741,7 @@ jobs:
         with:
           name: zip-${{ matrix.name }}-render
           path: vibe3d-${{ matrix.name }}-render.zip
+          retention-days: 1
 
   release:
     # `needs: build` always; `build-render` is conditional so the
