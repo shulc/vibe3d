@@ -29,9 +29,10 @@
 //      mesh to the bit;
 //   6. one Ctrl+Shift+Z restores the re-snapped cut to the bit (the snap is
 //      part of the recorded after image, not a post-record write).
-// Cells 2..6 run twice: on the frozen rig, and with the foreground layer
-// translated (its local frame is not world), which is what pins the
-// local -> world -> local round trip of the background query.
+// Cells 2..6 run three times: on the frozen rig; with the foreground layer
+// translated (its local frame is not world), which pins the local -> world ->
+// local round trip of the background query; and over a background with the
+// same points but no face, where the inserted vertices stay on the chord.
 //
 // Run via: ./run_test.d topopen_addloop_bg_resnap
 
@@ -103,15 +104,25 @@ private double[3] sub(double[3] a, double[3] b) { return [a[0] - b[0], a[1] - b[
 
 /// One run of the gesture with the foreground layer translated by `T`
 /// (cells 2..6). `T = 0` is the frozen rig verbatim.
-private void runCell(JSONValue fx, double[3] T, string tag) {
+private void runCell(JSONValue fx, double[3] T, string tag, bool facelessBg = false) {
     immutable double tol = num(fx["tolerance"]);
     auto ex = fx["expected"];
     auto inserted = ex["inserted"].array;
 
     // ---- stand: background layer 0, foreground layer 1 (primary) ----------
     postJson("/api/command", commandBody("scene.reset"));
-    auto lb = postJson("/api/command", commandBody("scene.loadMesh", meshBody(fx["background"])));
+    JSONValue bg = fx["background"];
+    if (facelessBg) {   // the same points, no surface to land on
+        bg = JSONValue.emptyObject;
+        bg["vertices"] = fx["background"]["vertices"];
+        bg["faces"]    = JSONValue(cast(JSONValue[]) []);
+    }
+    auto lb = postJson("/api/command", commandBody("scene.loadMesh", bg.toString));
     assert(lb["status"].str == "ok", "load background failed: " ~ lb.toString);
+    assert(vertexCountLayer(0) == fx["background"]["vertices"].array.length
+        && faceCountLayer(0) == (facelessBg ? 0 : fx["background"]["faces"].array.length),
+        format("%s: stand: background layer holds %d vertices / %d faces", tag,
+               vertexCountLayer(0), faceCountLayer(0)));
     cmd("layer.add name:Edit");
     // The foreground is loaded in its LOCAL frame (world − T) and the layer
     // is translated by T, so its world geometry is the frozen one.
@@ -196,11 +207,11 @@ private void runCell(JSONValue fx, double[3] T, string tag) {
             if (!used[v] && shareFaceEdge(faces, a, v) && shareFaceEdge(faces, b, v)) { nv = v; break; }
         assert(nv >= 0, format("%s: no inserted vertex sits on rail (%d,%d)", tag, a, b));
         used[nv] = true;
-        immutable double[3] want = sub(triple(row["position"]), T);   // local
+        immutable double[3] want = sub(triple(row[facelessBg ? "chord_midpoint" : "position"]), T);   // local
         immutable double off = dist(post[nv], want);
         assert(off <= tol, format(
-            "%s: inserted vertex %d on rail (%d,%d) is %.3g from its frozen closest point on the "
-          ~ "background (tolerance %.3g; chord midpoint is %.3g away): got %s want %s",
+            "%s: inserted vertex %d on rail (%d,%d) is %.3g from its expected position "
+          ~ "(tolerance %.3g; chord midpoint is %.3g away): got %s want %s",
             tag, nv, a, b, off, tol, dist(post[nv], sub(triple(row["chord_midpoint"]), T)), post[nv], want));
         ++matched;
     }
@@ -256,4 +267,9 @@ unittest {
     // foot is taken of the local point and every inserted vertex misses by
     // |T·n| ≈ 0.065.
     runCell(fx, [-0.03, 0.03, 0.05], "translated");
+
+    // A background layer with points but no face is still a background
+    // source, and the closest-point query has nothing to answer with: the
+    // inserted vertices stay on their chord (never an unset position).
+    runCell(fx, [0.0, 0.0, 0.0], "faceless background", true);
 }
