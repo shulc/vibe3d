@@ -90,7 +90,9 @@ unittest {
         }
     }
     assert(defaultCount == 22 && optedCount == 1, "preset input policy population");
-    const path = "/var/tmp/vibe3d-8630-scale-policy.yaml";
+    import std.process : thisProcessID;
+    import std.conv : to;
+    const path = "/var/tmp/vibe3d-8630-scale-policy-" ~ to!string(thisProcessID) ~ ".yaml";
     write(path, `presets:
   - id: alternate
     alias: declared
@@ -113,6 +115,27 @@ unittest {
         alternate[0].scaleInput.ticksPerUnit == 80 && alternate[0].scaleInput.factorPerTick == .01,
         "generic numeric scale policy parser");
     assert(alternate[1].scaleInput == alternate[0].scaleInput, "alias copies entire scale input policy");
+    import registry : Registry, typedToolFactory;
+    import tool_presets : ToolPreset, registerToolPresets;
+    import tools.transform.xfrm_transform : XfrmTransformTool;
+    import mesh : Mesh, makeCube;
+    import mesh_gpu : GpuMesh;
+    import editmode : EditMode;
+    Mesh mesh = makeCube(); GpuMesh gpu; EditMode mode = EditMode.Polygons;
+    auto reused = new XfrmTransformTool(() => &mesh, &gpu, &mode);
+    Registry registry;
+    registry.registerTool("scale", typedToolFactory!XfrmTransformTool(() => reused));
+    ToolPreset control; control.id = "control"; control.base = "scale";
+    registerToolPresets(registry, alternate ~ control);
+    foreach (id; ["declared", "alternate"]) {
+        reused.scaleBank().centreInputPolicy = ScaleInputPolicy.init;
+        auto made = cast(XfrmTransformTool)registry.toolFactory(id)();
+        assert(made is reused && made.scaleBank().centreInputPolicy == alternate[0].scaleInput,
+            "alternate preset factory forwards identical declared policy");
+    }
+    auto reset = cast(XfrmTransformTool)registry.toolFactory("control")();
+    assert(reset.scaleBank().centreInputPolicy == ScaleInputPolicy.init,
+        "default typed factory resets inherited alternate policy");
     foreach (bad; ["normalization: invented", "accumulation: invented", "composition: invented",
                    "referencePixels: 0", "referenceScale: -1", "smallScale: 0", "ticksPerUnit: 0",
                    "factorPerTick: -1", "invented: 1"]) {
@@ -133,4 +156,47 @@ unittest {
     assert(factory.indexOf("t.scaleBank().centreInputPolicy = ScaleInputPolicy.init;") >= 0 &&
         factory.indexOf("t.scaleBank().centreInputPolicy = presetCopy.scaleInput;") >= 0,
         "typed preset factory resets and forwards declared scale input");
+}
+
+unittest {
+    import tools.transform.scale : ScaleTool;
+    import mesh : Mesh, makeCube;
+    import mesh_gpu : GpuMesh;
+    import editmode : EditMode;
+    import operator : VectorStack;
+    import bindbc.sdl : SDL_MouseButtonEvent, SDL_BUTTON_LEFT;
+    Mesh mesh = makeCube(); GpuMesh gpu; EditMode mode = EditMode.Polygons;
+    auto bank = new ScaleTool(() => &mesh, &gpu, &mode);
+    void seed() {
+        bank.pendingScaleValid = true;
+        bank.pendingScale = Vec3(2,3,4);
+        bank.pendingScaleComposition = ScaleSampleComposition.factorOffset;
+        bank.centreInput.previousDistance = 4;
+        bank.centreInput.offset = -.6;
+        bank.centreInput.displacement = Vec3(5,6,7);
+        bank.centreInput.screenRight = Vec3(0,1,0);
+        bank.centreInput.screenUp = Vec3(0,0,1);
+    }
+    void clear(string boundary) {
+        assert(!bank.pendingScaleValid && bank.pendingScale == Vec3(1,1,1) &&
+            bank.pendingScaleComposition == ScaleSampleComposition.ratio &&
+            bank.centreInput == ScaleCentreInputState.init,
+            "scale input transient resets at " ~ boundary);
+    }
+    seed(); bank.activate(); clear("activation");
+    seed(); bank.resyncSession(); clear("resync");
+    seed(); bank.deactivate(); clear("deactivate");
+    seed(); auto image = bank.buildPreparedEmbeddedDeactivateImage();
+    assert(bank.preparedEmbeddedDeactivateMatches(image), "prepared deactivation includes centre state");
+    bank.centreInput.previousDistance += 1;
+    assert(!bank.preparedEmbeddedDeactivateMatches(image), "prepared centre previous distance freshness");
+    bank.centreInput.previousDistance -= 1;
+    bank.pendingScaleComposition = ScaleSampleComposition.ratio;
+    assert(!bank.preparedEmbeddedDeactivateMatches(image), "prepared pending composition freshness");
+    bank.pendingScaleComposition = ScaleSampleComposition.factorOffset;
+    bank.installPreparedEmbeddedDeactivate(image); clear("prepared deactivate");
+    seed(); bank.dragAxis = 3;
+    SDL_MouseButtonEvent up; up.button = SDL_BUTTON_LEFT;
+    VectorStack vectors;
+    assert(bank.onMouseButtonUp(up, vectors)); clear("release");
 }

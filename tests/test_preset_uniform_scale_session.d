@@ -85,3 +85,30 @@ unittest {
         }
     }
 }
+
+// Same total motion at two actual event cadences separates ticks from smooth gain.
+unittest {
+    void setup() {
+        invoke("tool.set xfrm.scaleUniform off"); invoke("scene.reset", false);
+        invoke(`{"id":"scene.loadMesh","params":{"vertices":[[-0.5,0,0.1],[1,-0.25,0.2],[0.2,1.1,-0.3],[1.4,0.6,0.75]],"faces":[[0,1,2]]}}`, false);
+        invoke("select.typeFrom vertex", false);
+        invoke(`{"id":"mesh.select","params":{"mode":"vertices","indices":[0,1,2]}}`, false);
+        invoke("viewport.view Top"); invoke("history.clear"); invoke("tool.set xfrm.scaleUniform on");
+    }
+    void factor(double expected, string label) {
+        auto vertices = getJson("/api/model")["vertices"].array;
+        assert(vertices.length == 4, "uniform cadence selected/control population");
+        assert(abs((vertices[0][0].floating - .25) / -.75 - expected) < .0001,
+            "uniform actual event cadence: " ~ label);
+        assert(abs(vertices[3][0].floating - 1.4) < 1e-6, "uniform cadence control unchanged");
+    }
+    foreach (step; [2,4]) {
+        setup(); gesture(80, step); factor(step == 2 ? 1.4 : 1.5, "first");
+        gesture(60, step); factor(step == 2 ? 1.7 : 1.875, "held offset");
+    }
+    foreach (signedFactors; [true,false]) {
+        setup(); invoke("tool.attr xfrm.scaleUniform negScale " ~ (signedFactors ? "true" : "false"));
+        gesture(-240, 2); factor(signedFactors ? -.2 : 0, "negative crossing");
+        gesture(80, 2); factor(signedFactors ? .2 : .4, "positive motion from held floor");
+    }
+}
