@@ -633,6 +633,21 @@ unittest {
         immutable Px gh = probe1(at("G"));
         assert(maxDiff(gh, o[iG]) >= 5,
             format("6h premise: hovering G changed nothing (%s)", gh.c));
+        // 6h-c: the hover fill is the scheme's face-hover colour
+        // (`kFaceHoverFill`, 0.5 / 0.71 / 0.79) under the same light as the
+        // fill, predicted as cell 5 does: c = hover/base x (P1 - S(A)) + S(G),
+        // tolerance 1.5 + 0.5 x ratio + 0.5.
+        {
+            immutable double[3] kHov = [0.5, 0.71, 0.79];
+            foreach (k; 0 .. 3) {
+                immutable double cHG = 2.0 * gh.c[k] - u[iG].c[k];
+                immutable double ratio = kHov[k] / r.base;
+                immutable double pred = ratio * (u[iA].c[k] - S(fg[0].c)) + S(fg[7].c);
+                assert(abs(cHG - pred) <= 1.5 + 0.5 * ratio + 0.5,
+                    format("6h-c: channel %d hover fill %.1f, predicted %.2f from the "
+                           ~ "face-hover colour %.2f", k, cHG, pred, kHov[k]));
+            }
+        }
         pointerAt(r, at("D2"));
         immutable Px dh = probe1(at("D2"));
         assert(maxDiff(dh, o[iV2]) >= 5,
