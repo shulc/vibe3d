@@ -157,8 +157,24 @@ unittest // plan -> FacePass: mode off is FacePass.init; the mode and a mirror a
     DrawPlan orderOnly;
     orderOnly.reverseFaceOrder = true;
     immutable FacePass fOrder = facePassFor(orderOnly, ident);
-    assert(fOrder.reverseOrder && fOrder.alpha == 1.0f,
-        format("reverseFaceOrder alone must reverse an opaque pass, got %s", fOrder));
+    assert(fOrder.reverseOrder && fOrder.alpha == 1.0f && !fOrder.cullBack,
+        format("reverseFaceOrder alone must reverse an opaque, unculled pass, got %s",
+               fOrder));
+    // Reachable plans set cull, order and depth-clear together, so each is
+    // varied alone here: a mapping that derives one member from a sibling
+    // field is green on every reachable plan and red only on these.
+    DrawPlan cullOnly;
+    cullOnly.cullBackFaces = true;
+    immutable FacePass fCull = facePassFor(cullOnly, ident);
+    assert(fCull.cullBack && !fCull.reverseOrder,
+        format("a culling plan without reverseFaceOrder stays forward, got %s", fCull));
+    // `clearDepthFirst` belongs to the item head (`beginItem`), not the face
+    // pass: alone it leaves the face pass at today's default exactly.
+    DrawPlan clearOnly;
+    clearOnly.clearDepthFirst = true;
+    immutable FacePass fClear = facePassFor(clearOnly, ident);
+    assert(fClear == FacePass.init,
+        format("clearDepthFirst alone must not move the face pass, got %s", fClear));
     DrawPlan alphaOnly;
     alphaOnly.faceAlpha = 0.5f;
     immutable FacePass fAlpha = facePassFor(alphaOnly, ident);

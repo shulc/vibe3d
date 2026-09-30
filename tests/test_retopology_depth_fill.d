@@ -726,13 +726,22 @@ unittest {
         foreach (v; fv[6 * gi .. 6 * gi + 6])
             foreach (k; 0 .. 3) cc[k] += num(v.array[k]) / 6.0;
         immutable Quad gq = fg[gi];
-        assert(abs(cc[0] - gq.c[0]) > gq.half || abs(cc[1] - gq.c[1]) > gq.half,
-            format("6h-p premise: buffer child %s (centroid %s) lies inside G, so "
-                   ~ "it cannot separate a mapped index from an unmapped one", gi, cc));
+        // The unmapped-index witness must land where a wrongly taken hover
+        // fill would SHOW: inside A (face 0; flat, not reversed, front-facing,
+        // filled over P1 in cell 1), not inside G nor a culled or hidden face.
+        immutable Quad aq = fg[0];
+        assert(aq.name == "A" && !aq.reversed
+            && abs(cc[0] - aq.c[0]) < aq.half && abs(cc[1] - aq.c[1]) < aq.half,
+            format("6h-p premise: buffer child %s (centroid %s) must lie inside A "
+                   ~ "(%s, half %s), the front-facing visible face that shows a "
+                   ~ "wrongly mapped hover", gi, cc, aq.c, aq.half));
         immutable double[3] gp = [gq.c[0] + 0.1, gq.c[1] + 0.1, gq.c[2]];
         int[2][] pts6 = [atW(gp), atW(cc)];
         parkPointer(r);
         auto idle = probe(pts6);
+        assert(maxDiff(idle[1], u[iA]) >= 5,
+            format("6h-p premise: buffer child %s reads %s idle, A's under value "
+                   ~ "%s — no fill drawn there to move", gi, idle[1].c, u[iA].c));
         pointerAt(r, at("G"));
         auto hov = probe(pts6);
         writefln("  6h-p child %s at %s: idle %s, hover %s", gi, cc, idle, hov);
