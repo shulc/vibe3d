@@ -29,6 +29,7 @@ import http_client : getJson, postJson, quiesce, frameFence;
 import http_command_helpers : commandBody;
 import drag_helpers : viewportFromCameraMatrices, projectToWindow,
                       Viewport, DHVec3 = Vec3;
+import http_client : waitPlaybackProcessed;
 import std.json;
 import std.format : format;
 import std.math : abs, round, cos, sin, sqrt, pow, PI;
@@ -133,6 +134,7 @@ private struct Rig {
     int[2]    fgPx;
     double    base;          // layer 0's material base (grey)
     double[3] eye;
+    Viewport  vp;            // the cell's render viewport (window offsets)
 }
 
 private int[2] toPx(double[3] w, ref Viewport vp) {
@@ -185,6 +187,7 @@ private Rig buildRig() {
     auto vp = viewportFromCameraMatrices();
     assert(vp.proj[15] != 0.0f, "rig: the Front view must be orthographic: " ~ cam.toString);
     r.eye = [vp.eye.x, vp.eye.y, vp.eye.z];
+    r.vp  = vp;
     foreach (i; 0 .. 3) r.tilePx[i] = toPx(kTileCentre[i], vp);
     r.fgPx = toPx(kFgCentre, vp);
     // The probed pixel must be well inside each polygon: measure the
@@ -511,4 +514,73 @@ unittest {
     }
     cmd("viewport.layout", `"Single"`);
     writeln("  test_retopology_backdrop: all cells passed");
+}
+
+// ---------------------------------------------------------------------------
+// A8: the lit program's gain is RESTORED after the scene's face passes.
+// The pen's filled preview seeds its uniforms by hand and never sets a gain,
+// so it reads whatever the last scene pass left: under the mode that pass
+// set 5/3. Its fill must read the same with the mode on as with it off
+// (same click pixels, same rig). Positive half, ordered first: the preview
+// is lit above ambient, so a gain WOULD show.
+// ---------------------------------------------------------------------------
+private int[3] penPreviewFill(bool modeOn, out double ambientLsb) {
+    auto r = buildRig();
+    ambientLsb = kAmbient * 0.8 * 255.0;   // the preview mesh has no surfaces
+    if (modeOn) cmd("viewport.retopology", `{"value":"on"}`);
+    // A triangle in the empty lower-left region, clear of both layers,
+    // counter-clockwise on screen; the probe is its centroid.
+    immutable int[2] c = toPx([-2.3, -1.6, 0.0], r.vp);
+    immutable int[2][3] tri = [[c[0] - 30, c[1] + 20], [c[0] + 30, c[1] + 20],
+                               [c[0], c[1] - 30]];
+    int[2][] win;
+    foreach (t; tri) win ~= [t[0] + r.vp.x, t[1] + r.vp.y];
+    immutable int[2] centroid0 = [(tri[0][0] + tri[1][0] + tri[2][0]) / 3,
+                                  (tri[0][1] + tri[1][1] + tri[2][1]) / 3];
+    immutable Px emptyPx = probe([centroid0])[0];   // probed, not typed
+    cmdOk(`tool.set "pen" on 0`);
+    string log = format(`{"t":0,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,`
+        ~ `"fovY":0.785398}`, r.vp.x, r.vp.y, r.vp.width, r.vp.height) ~ "\n";
+    double t = 100.0;
+    foreach (w; win) {
+        log ~= format(`{"t":%g,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,`
+                      ~ `"state":0,"mod":0}`, t, w[0], w[1]) ~ "\n"
+             ~ format(`{"t":%g,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,`
+                      ~ `"clicks":1,"mod":0}`, t + 5, w[0], w[1]) ~ "\n"
+             ~ format(`{"t":%g,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,`
+                      ~ `"clicks":1,"mod":0}`, t + 10, w[0], w[1]) ~ "\n";
+        t += 100.0;
+    }
+    auto pr = postJson("/api/play-events", log);
+    assert(pr["status"].str == "success", "A8: /api/play-events failed: " ~ pr.toString);
+    waitPlaybackProcessed();
+    settle();
+    immutable int[2] centroid = [(tri[0][0] + tri[1][0] + tri[2][0]) / 3,
+                                 (tri[0][1] + tri[1][1] + tri[2][1]) / 3];
+    auto px = probe([centroid])[0];
+    assert(maxDiff(px, emptyPx) >= 3,
+        format("A8 premise: no preview fill was drawn (read %s, empty %s)",
+               px.c, emptyPx.c));
+    cmdRaw(`tool.set "pen" off 0`);
+    cmdRaw(commandBody("viewport.retopology", `{"value":"off"}`));
+    settle();
+    return px.c;
+}
+
+unittest {
+    double amb;
+    immutable int[3] offFill = penPreviewFill(false, amb);
+    immutable int[3] onFill  = penPreviewFill(true, amb);
+    writefln("  A8 pen preview fill: mode off %s, mode on %s (ambient %.1f)",
+             offFill, onFill, amb);
+    foreach (k; 0 .. 3)
+        assert(offFill[k] - amb >= 3,
+            format("A8 premise: the preview fill %s is not lit above ambient %.1f, "
+                   ~ "so a leaked gain could not show", offFill, amb));
+    // Same pixels, same inputs: +-1 is rounding only.
+    foreach (k; 0 .. 3)
+        assert(abs(onFill[k] - offFill[k]) <= 1,
+            format("A8: the pen preview reads %s with the mode on and %s off — the "
+                   ~ "scene pass left its light gain on the shared lit program",
+                   onFill, offFill));
 }
