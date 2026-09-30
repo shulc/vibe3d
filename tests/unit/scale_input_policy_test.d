@@ -102,7 +102,7 @@ unittest {
                 preset.scaleInput.composition == ScaleSampleComposition.factorOffset &&
                 preset.scaleInput.referencePixels == 120 && preset.scaleInput.referenceScale == 1 &&
                 preset.scaleInput.smallScale == .6f && preset.scaleInput.ticksPerUnit == 100 &&
-                preset.scaleInput.factorPerTick == .005 && preset.toolAttrs["negScale"] == "true",
+                preset.scaleInput.factorPerTick == .005 && preset.toolAttrs.get("negScale", "") == "true",
                 "measured uniform preset declares physical event input and signed factors");
         }
     }
