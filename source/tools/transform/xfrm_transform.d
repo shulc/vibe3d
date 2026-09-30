@@ -691,8 +691,8 @@ struct PreparedXfrmUpdateBoundaryImage {
 // LiveEvalClient (task 0428): the sole implementor of the live re-evaluation
 // capability — hasLiveEval / hasLiveAttrEval / reEvaluate below are the
 // interface's implementations (EditSession discovers them by cast).
-// Its arm records a ToolActivationCommand: `sessionPolicy().activationRow`
-// (task 0428 marker, carried as data by slice M1).
+// Its arm history is selected by the factory recipe through
+// `sessionPolicy().activationRow`.
 class XfrmTransformTool : TransformTool, LiveEvalClient, SlotActivationClient,
                           PreparedToolDoorClient, PreparedToolParamDoorClient,
                           PreparedToolPoseDoorClient {
@@ -701,6 +701,10 @@ public:
     // visible-row close policy. Other presets consolidate by default.
     string closedRunOwnerId;
     RunCloseMode runCloseMode = RunCloseMode.consolidate;
+    // The prepared activation door reads this policy before publishing the
+    // candidate. A bare actor may arm without consuming an Undo slot; presets
+    // can retain the ordinary lifecycle row independently.
+    bool activationHistoryRow = true;
     final Mesh* preparedMeshForUpdate() const { return mesh; }
     // T/R/S flags — `T integer 0/1` etc. in the preset config.
     // Default to all enabled (the bare `Transform` preset that shows
@@ -2962,16 +2966,18 @@ public:
     // stays highlighted, not every element under the moving cursor).
     override bool isDragging() const { return activeDrag !is null; }
 
-    // The arm writes the activation row (see the class comment). A recording
+    // The arm's lifecycle row is factory-selected. A recording
     // command closes the run on BOTH doors (slice M2): the 6250 continuation,
     // carried; the UI half is the captured C1-h-sel-fam `move` law. Every
     // Xfrm preset uses this wrapper's single command producer: completed
     // geometry lives in CommandHistory, and ToolSession owns its token and
     // navigation without copying another geometry/attribute stack.
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
-        static immutable ToolSessionPolicy policy = {
+        static immutable ToolSessionPolicy defaults = {
             activationRow: true, commandClose: CommandClose.allDoors,
             sessionSteps: true, historyRecordedSteps: true };
+        ToolSessionPolicy policy = defaults;
+        policy.activationRow = activationHistoryRow;
         return policy;
     }
 

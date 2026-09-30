@@ -347,6 +347,7 @@ void registerToolPresets(ref Registry reg, ToolPreset[] presets) {
                 // `rotate` does not silently inherit the base ID's law.
                 static if (is(T == XfrmTransformTool)) {
                     t.runCloseMode = presetCopy.runCloseMode;
+                    t.activationHistoryRow = true;
                     t.closedRunOwnerId = presetCopy.runCloseMode ==
                         RunCloseMode.consolidate ? "" : presetCopy.id;
                 }

@@ -128,6 +128,8 @@ unittest {
             "6351 row " ~ w.key ~ ": T/R/S/H/presentation = "
             ~ t.flagT.to!string ~ t.flagR.to!string ~ t.flagS.to!string
             ~ " " ~ t.handleFamily.to!string ~ " " ~ t.handlePresentation);
+        assert(t.sessionPolicy().activationRow == (w.key != "rotate"),
+            "8491 activation-row policy must come from the factory recipe: " ~ w.key);
     }
 
     Mesh m = makeCube(); GpuMesh g; EditMode mode;
