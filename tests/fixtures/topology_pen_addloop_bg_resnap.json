@@ -1,0 +1,306 @@
+{
+ "name": "topology_pen_addloop_bg_resnap",
+ "schema": "topology_pen.addloop.bg_resnap/1",
+ "description": "Topology Pen Add Loop over a background surface: every vertex the cut inserts is moved to the CLOSEST POINT on the background, after the cut fraction is applied. The background is one quad displaced behind the foreground grid AND tilted, so the perpendicular foot, the camera-ray hit and the unsnapped chord point are three different answers. The split-at-the-middle option forces the fraction to exactly 0.5, so the fraction cannot absorb the difference: the only thing that separates the candidates is where each inserted vertex lands.",
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "capture-drag",
+  "captured_utc": "2026-07-30T00:00:00Z",
+  "harness": "private atlas gesture harness (add-loop background re-snap run, shallow background)",
+  "task": "0493",
+  "notes": "One cell, the fraction forced to 0.5. The reference's own post-gesture dump, float32; the four inserted vertices lie on the background plane to 3.2e-9 of the camera distance and match the closest-point candidate to 4.7e-9 of it, against 5.7e-3 for the camera-ray candidate. Original vertices unchanged to the bit; one undo step restores the pre-cut mesh exactly."
+ },
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "capture",
+  "cells": [
+   {
+    "cell": "tilted_shallow_bg_middle",
+    "drove": [
+     {
+      "op": "mesh.topoPen_addloop",
+      "values": {
+       "middle": true
+      }
+     }
+    ]
+   }
+  ],
+  "notes": "The split-at-the-middle option was on; the free fraction is disabled by it, so no pointer position enters the result. The seed edge is part of the stand, not a parameter."
+ },
+ "camera_distance": 1.5601779077699254,
+ "tolerance_over_distance": 1e-06,
+ "tolerance": 1.5601779077699253e-06,
+ "units": "world units",
+ "camera": {
+  "eye": [
+   -0.6898679031733467,
+   0.6274419891154498,
+   1.2508213023287535
+  ],
+  "focus": [
+   0.0,
+   0.0,
+   0.0
+  ]
+ },
+ "foreground": {
+  "vertices": [
+   [
+    0.31930699944496155,
+    0.19092349708080292,
+    0.08033621311187744
+   ],
+   [
+    0.17261847853660583,
+    0.22445444762706757,
+    -0.017387131229043007
+   ],
+   [
+    0.025929953902959824,
+    0.2579854130744934,
+    -0.11511047184467316
+   ],
+   [
+    -0.12075857818126678,
+    0.29151636362075806,
+    -0.21283382177352905
+   ],
+   [
+    0.2531242072582245,
+    0.030110208317637444,
+    0.12450207769870758
+   ],
+   [
+    0.10643567144870758,
+    0.06364116817712784,
+    0.02677873708307743
+   ],
+   [
+    -0.04025285691022873,
+    0.09717211872339249,
+    -0.07094460725784302
+   ],
+   [
+    -0.18694138526916504,
+    0.13070307672023773,
+    -0.16866794228553772
+   ],
+   [
+    0.18694138526916504,
+    -0.13070307672023773,
+    0.16866794228553772
+   ],
+   [
+    0.04025285691022873,
+    -0.09717211872339249,
+    0.07094460725784302
+   ],
+   [
+    -0.10643567144870758,
+    -0.06364116817712784,
+    -0.02677873708307743
+   ],
+   [
+    -0.2531242072582245,
+    -0.030110208317637444,
+    -0.12450207769870758
+   ],
+   [
+    0.12075857818126678,
+    -0.29151636362075806,
+    0.21283382177352905
+   ],
+   [
+    -0.025929953902959824,
+    -0.2579854130744934,
+    0.11511047184467316
+   ],
+   [
+    -0.17261847853660583,
+    -0.22445444762706757,
+    0.017387131229043007
+   ],
+   [
+    -0.31930699944496155,
+    -0.19092349708080292,
+    -0.08033621311187744
+   ]
+  ],
+  "faces": [
+   [
+    0,
+    1,
+    5,
+    4
+   ],
+   [
+    1,
+    2,
+    6,
+    5
+   ],
+   [
+    2,
+    3,
+    7,
+    6
+   ],
+   [
+    4,
+    5,
+    9,
+    8
+   ],
+   [
+    5,
+    6,
+    10,
+    9
+   ],
+   [
+    6,
+    7,
+    11,
+    10
+   ],
+   [
+    8,
+    9,
+    13,
+    12
+   ],
+   [
+    9,
+    10,
+    14,
+    13
+   ],
+   [
+    10,
+    11,
+    15,
+    14
+   ]
+  ]
+ },
+ "background": {
+  "vertices": [
+   [
+    0.21553385257720947,
+    -0.5120044946670532,
+    0.3601391911506653
+   ],
+   [
+    -0.533240795135498,
+    -0.35211899876594543,
+    -0.17974142730236053
+   ],
+   [
+    -0.1879391372203827,
+    0.48690682649612427,
+    -0.4101720452308655
+   ],
+   [
+    0.5608354806900024,
+    0.3270213305950165,
+    0.12970857322216034
+   ]
+  ],
+  "faces": [
+   [
+    0,
+    1,
+    2,
+    3
+   ]
+  ]
+ },
+ "input": {
+  "seed_edge": [
+   5,
+   9
+  ],
+  "middle": true
+ },
+ "expected": {
+  "counts": {
+   "vertices_before": 16,
+   "edges_before": 24,
+   "faces_before": 9,
+   "vertices_after": 20,
+   "edges_after": 31,
+   "faces_after": 12
+  },
+  "inserted": [
+   {
+    "rail": [
+     4,
+     8
+    ],
+    "position": [
+     0.22972294688224792,
+     -0.058655332773923874,
+     0.1306699961423874
+    ],
+    "chord_midpoint": [
+     0.22003279626369476,
+     -0.050296434201300144,
+     0.14658500999212265
+    ]
+   },
+   {
+    "rail": [
+     5,
+     9
+    ],
+    "position": [
+     0.08643706887960434,
+     -0.028059562668204308,
+     0.027358176186680794
+    ],
+    "chord_midpoint": [
+     0.07334426417946815,
+     -0.016765475273132324,
+     0.048861672170460224
+    ]
+   },
+   {
+    "rail": [
+     6,
+     10
+    ],
+    "position": [
+     -0.056848812848329544,
+     0.0025362037122249603,
+     -0.0759536400437355
+    ],
+    "chord_midpoint": [
+     -0.07334426417946815,
+     0.016765475273132324,
+     -0.048861672170460224
+    ]
+   },
+   {
+    "rail": [
+     7,
+     11
+    ],
+    "position": [
+     -0.20013469457626343,
+     0.033131975680589676,
+     -0.17926546931266785
+    ],
+    "chord_midpoint": [
+     -0.22003279626369476,
+     0.050296434201300144,
+     -0.14658500999212265
+    ]
+   }
+  ],
+  "undo_steps": 1
+ }
+}

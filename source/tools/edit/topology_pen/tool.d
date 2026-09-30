@@ -4149,11 +4149,9 @@ public:
     // (REV1 point (c): `closestPointOnSegmentToRay` already clamps its
     // returned POINT to the segment, so this clamp is a defensive backstop,
     // not the primary mechanism). Falls back to 0.5 on a degenerate
-    // (zero-length) segment. The segment used to be hardwired to the armed
-    // Add Loop rail (`seedRailA_`/`seedRailB_`); it became a parameter so
-    // the mid-edge Split gesture could re-project against an arbitrary
-    // edge — `ratioFromCursor` below is the Add Loop caller's unchanged
-    // convenience wrapper. NOT used by Slide: Slide is a DELTA law
+    // (zero-length) segment. Its one caller is `ratioFromCursor` below,
+    // which passes the armed Add Loop rail (`seedRailA_`/`seedRailB_`).
+    // NOT used by Slide: Slide is a DELTA law
     // (`slideDeltaFromDrag`), not an absolute cursor parameterisation, and
     // has no `[0,1]` range at all.
     //
@@ -6522,6 +6520,7 @@ public:
         {
             auto ed = MeshEditBatch.unrecorded(*m, kLoopSliceEditScope);
             ok = ed.insertEdgeLoops(seedEdge, [r]);
+            if (ok) snapInsertedToBackground(ed, before.vertices.length);
             ed.close();
         }
         if (!ok) { before.restore(*m); return; }
@@ -6534,6 +6533,37 @@ public:
 
         m.syncSelection();
         if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_); }
+    }
+
+    // Add Loop's inserted vertices re-snap onto the background, CLOSEST
+    // POINT (the nearest-foot query `applySmoothPasses` uses, never a camera
+    // ray), after the cut fraction is applied and inside the same batch, so
+    // the gesture stays one step. Measured on a tilted background with the
+    // fraction forced to 0.5: every inserted vertex lands on the surface and
+    // matches the perpendicular foot to ~5e-9 of the camera distance, against
+    // ~6e-3 for the view ray; original vertices never move
+    // (toolcards/topology_pen/addloop_bgresnap_undo_capture.md, verdict V-1;
+    // pinned by tests/test_topopen_addloop_bg_resnap.d). `addVertex` only
+    // appends, so the inserted set is every index from `firstNew` on. With no
+    // background surface this is the identity.
+    private void snapInsertedToBackground(ref MeshEditBatch ed, size_t firstNew) {
+        auto sources = backgroundSourcesFull();
+        if (sources.length == 0) return;
+        const ms = primaryModelSpace();
+        uint[] idx;
+        Vec3[] to;
+        foreach (vi; firstNew .. ed.vertices.length) {
+            Vec3  hit, hitN;
+            int   si, fi;
+            float d2;
+            enum bool dblSided = false;   // matches the Smooth re-snap's own default
+            if (!closestPointOnMeshes(ms.toWorldPoint(ed.vertices[vi]), sources,
+                                      dblSided, hit, hitN, si, fi, d2))
+                continue;
+            idx ~= cast(uint) vi;
+            to  ~= ms.toLocalPoint(hit);
+        }
+        if (idx.length) ed.setVertexPositions(idx, to);
     }
 
     // P9 (doc/topopen_p9_split_plan.md Phase 2): commit the armed Split
@@ -6618,8 +6648,7 @@ public:
     // unit tests below do) bypasses the gate on purpose: that is what makes
     // the two testable apart.
     //
-    // Single mutation, unlike `commitSplitOnEdge`'s two-kernel composition
-    // — no partial-mutation rollback is needed here.
+    // Single mutation — no partial-mutation rollback is needed here.
     //
     // KILLER-2 (shared with every topology-growing sibling commit above):
     // `makePolygonFromVerts` runs `buildLoops()`, moving `faces[]`/
