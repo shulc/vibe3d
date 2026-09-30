@@ -13,7 +13,7 @@
 //   chords               L4  the five chords that record today: one step each
 //   switch-away          L9  (z1..z3) undo walks back through a tool switch
 //   chord-split-interior L4  MMB split v5 -> v10: an interior same-polygon target
-//   chord-remove         L35 a face remove takes exactly the orphans IT makes
+//   chord-remove-*       L35 a face remove takes exactly the orphans IT makes
 //
 // The fixture also carries rows that do not hold on this rig yet (card 8650):
 // the other four chords' outcomes (their port slices add `chord-*` cells), the
@@ -21,12 +21,13 @@
 // hold add their cells.
 //
 // `VIBE3D_CELL=<id>` runs one cell alone (druntime stops a module at its first
-// failed assert); the last block pins the population: 10 with no filter, 1 with
+// failed assert); the last block pins the population: 12 with no filter, 1 with
 // one (an unknown name must not pass by running nothing).
 //
 // Run via: ./run_test.d test_session_laws_topology_pen
 
 import topology_pen_session_helpers;
+import http_client : getJson;
 import fixture_helpers : requireProvenance;
 import std.format : format;
 import std.json;
@@ -456,27 +457,31 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// chord-remove — L35 (slice 8710): Ctrl+MMB on a face removes it with exactly
-// the vertices and edges it leaves with no polygon, and nothing else. Three
-// rigs: the corner f0 (v0 and edges 0-1, 0-4 go), the border f1 (no vertex is
-// orphaned; the border edge 1-2 goes), and f0 again with a vertex that was in
-// no polygon BEFORE the remove plus a two-point polygon, both added through
-// the script door before the arm (the capture's own re-rig): that vertex
-// stays. Each: one row, the survivors keep their positions in order, Ctrl+Z
-// is bit-exact and the tool stays armed.
+// chord-remove-* — L35 (slice 8710): Ctrl+MMB on a face removes it with exactly
+// the vertices and edges it leaves with no polygon, and nothing else. corner:
+// f0 (v0 and edges 0-1, 0-4 go); border: f1 (no vertex is orphaned, the border
+// edge 1-2 goes); leaves-loose: f0 again after the pen placed a point that is
+// in no polygon and drew a bare wire edge elsewhere: both stay. Each: one row,
+// the survivors keep their positions in order, Ctrl+Z is bit-exact and the tool
+// stays armed.
 // ---------------------------------------------------------------------------
-void removeCase(string tag, JSONValue c, const PenRig r) {
+
+/// Remove face `c["face"]` of `r.a0` with Ctrl+MMB (the pen armed) and check
+/// the law. `bareEdgeFaces`: faces the capture counted that our rig holds as
+/// a wire edge instead (the leaves-loose rig's bare edge).
+void removeCase(string cellId, JSONValue c, const PenRig r) {
     const f = c["face"].integer;
+    const long bare = ("bareEdgeFaces" in c.object) ? c["bareEdgeFaces"].integer : 0;
+    long[] ours(JSONValue n) { auto x = idxOf(n); x[1] -= bare; return x; }
     assert(r.a0.faces[cast(size_t)f] == idxOf(c["removedFace"])
-           && [r.a0.nv, r.a0.nf, r.a0.edges] == idxOf(c["before"]),
-           format("chord-remove %s rig: face %d is %s (expected %s), mesh %s (expected %s)", tag, f,
-                  r.a0.faces[cast(size_t)f], c["removedFace"], r.a0.toString, c["before"]));
-    penArmUi(r);
-    penTap(penFacePx(f), 2, PEN_KMOD_LCTRL, "chord-remove " ~ tag);
+           && [r.a0.nv, r.a0.nf, r.a0.edges] == ours(c["before"]),
+           format("%s rig: face %d is %s (expected %s), mesh %s (expected %s)", cellId, f,
+                  r.a0.faces[cast(size_t)f], c["removedFace"], r.a0.toString, ours(c["before"])));
+    penTap(penFacePx(f), 2, PEN_KMOD_LCTRL, cellId);
     const m = penMesh();
-    assert([m.nv, m.nf, m.edges] == idxOf(c["after"]) && penHistoryLen() == r.hp + 2,
-           format("chord-remove %s: counts %s (expected %s), history %s (expected one row after the arm)",
-                  tag, m.toString, c["after"], penHistoryLabels()));
+    assert([m.nv, m.nf, m.edges] == ours(c["after"]) && penHistoryLen() == r.hp + 1,
+           format("%s: counts %s (expected %s), history %s (expected one row after the rig)",
+                  cellId, m.toString, ours(c["after"]), penHistoryLabels()));
     // The expected mesh, from OUR a0: the survivors in order, the other faces
     // renumbered onto them.
     const surv = idxOf(c["survivors"]);
@@ -490,44 +495,78 @@ void removeCase(string tag, JSONValue c, const PenRig r) {
         want.faces ~= nf;
     }
     want.edges = m.edges;
-    assert(m == want, format("chord-remove %s: the survivors or the faces differ: faces %s (expected %s)",
-                             tag, m.faces, want.faces));
-    penCtrlZ("chord-remove " ~ tag ~ " Ctrl+Z");
-    expectState("chord-remove", tag ~ "_z", r.a0, true, r.hp + 1);
+    assert(m == want, format("%s: the survivors or the faces differ: faces %s (expected %s)",
+                             cellId, m.faces, want.faces));
+    penCtrlZ(cellId ~ " Ctrl+Z");
+    expectState(cellId, "z1", r.a0, c["undoArmed"].type == JSONType.true_, r.hp);
+}
+
+/// The grid rig armed through the UI door; `hp` counts the activation row.
+PenRig armedRig() {
+    PenRig r = rig();
+    penArmUi(r);
+    assert(penHistoryLen() == r.hp + 1,
+           format("chord-remove: the UI-door arm did not write its own row: %s", penHistoryLabels()));
+    r.hp = penHistoryLen();
+    return r;
 }
 
 unittest {
-    if (!cell("chord-remove")) return;
-    auto fx = cellFx("chord-remove");
-    size_t n;
-    foreach (tag; ["corner", "border"]) {
-        removeCase(tag, fx[tag], rig());
-        ++n;
+    if (!cell("chord-remove-corner")) return;
+    removeCase("chord-remove-corner", cellFx("chord-remove-corner"), armedRig());
+    writeln("PASS chord-remove-corner");
+}
+
+unittest {
+    if (!cell("chord-remove-border")) return;
+    removeCase("chord-remove-border", cellFx("chord-remove-border"), armedRig());
+    writeln("PASS chord-remove-border");
+}
+
+unittest {
+    if (!cell("chord-remove-leaves-loose")) return;
+    enum id = "chord-remove-leaves-loose";
+    auto c = cellFx(id);
+    PenRig r = armedRig();
+    // The rig, with the pen's own gestures: a Point-mode click places the
+    // loose point (16) and a second point (17); a Shift+LMB drag from 17
+    // duplicates it into the bare wire edge (17, 18).
+    double[3] pt(string k) {
+        auto a = c["rigPoints"][k].array;
+        return [penNum(a[0]), penNum(a[1]), penNum(a[2])];
     }
-    // The loose rig: three vertices and the two-point polygon, before the arm.
-    auto c = fx["leavesLoose"];
-    PenRig r = rig();
-    foreach (v; c["rigAdds"]["vertices"].array)
-        penCmd("mesh.addVertex", format(`{"pos":[%.17g,%.17g,%.17g]}`, penNum(v.array[0]),
-                                        penNum(v.array[1]), penNum(v.array[2])));
-    const two = idxOf(c["rigAdds"]["twoPointPolygon"]);
-    penCmd("mesh.select", format(`{"mode":"vertices","indices":[%d,%d]}`, two[0], two[1]));
-    penCmd("mesh.makePolygon");
-    penCmd("select.drop");
-    penCmd("history.clear");
+    {
+        auto a = penPost("/api/command", "tool.attr mesh.topoPen mode point");
+        assert(a["status"].str == "ok", id ~ " rig: mode point refused: " ~ a.toString);
+    }
+    penTap(penRound(penProject(pt("loose"))), 1, 0, id ~ " place the loose point");
+    penTap(penRound(penProject(pt("bareFrom"))), 1, 0, id ~ " place the bare edge's first point");
+    const from = penVertexPx(17, id ~ " bare edge");
+    const to = penRound(penProject(pt("bareTo")));
+    const sp = penSpacingPx();
+    penGesture(from, (to[0] - from[0]) / sp, (to[1] - from[1]) / sp, 1, PEN_KMOD_LSHIFT,
+               id ~ " duplicate drag");
+    {
+        auto a = penPost("/api/command", "tool.attr mesh.topoPen mode move");
+        assert(a["status"].str == "ok", id ~ " rig: mode move refused: " ~ a.toString);
+    }
     r.a0 = penMesh();
     r.hp = penHistoryLen();
-    const loose = c["rigAdds"]["loosePoint"].integer;
-    bool inPoly;
-    foreach (face; r.a0.faces) foreach (v; face) if (v == loose) inPoly = true;
-    assert(!inPoly && r.hp == 0,
-           format("chord-remove leavesLoose rig: vertex %d is in a polygon (%s) or history is not empty (%s)",
-                  loose, r.a0.faces, penHistoryLabels()));
-    removeCase("leavesLoose", c, r);
-    ++n;
-    assert(n == fx["population"].integer && n == 3,
-           format("chord-remove: %d of the fixture's %d rigs ran (expected 3)", n, fx["population"].integer));
-    writeln("PASS chord-remove");
+    // Floors (the capture's precondition): 16 is in no polygon and on no edge,
+    // (17, 18) is an edge no polygon holds.
+    bool onFace(long v) { foreach (face; r.a0.faces) foreach (x; face) if (x == v) return true; return false; }
+    bool onEdge(long v) {
+        foreach (e; getJson("/api/model")["edges"].array)
+            if (e.array[0].integer == v || e.array[1].integer == v) return true;
+        return false;
+    }
+    assert(r.a0.nv == 19 && !onFace(16) && !onEdge(16) && penEdgeId(17, 18) >= 0
+           && !onFace(17) && !onFace(18) && penArmed(),
+           format("%s rig: mesh %s, vertex 16 on a face %s / an edge %s, edge (17,18) id %d, "
+                  ~ "17/18 on a face %s/%s, armed %s", id, r.a0.toString, onFace(16), onEdge(16),
+                  penEdgeId(17, 18), onFace(17), onFace(18), penArmed()));
+    removeCase(id, c, r);
+    writeln("PASS ", id);
 }
 
 // ---------------------------------------------------------------------------
@@ -538,7 +577,7 @@ unittest {
     writeln("cells=", cellsRun);
     const only = environment.get("VIBE3D_CELL", "");
     if (only.length == 0)
-        assert(cellsRun == 10, format("topology pen session laws: %d cells ran, expected 10", cellsRun));
+        assert(cellsRun == 12, format("topology pen session laws: %d cells ran, expected 12", cellsRun));
     else
         assert(cellsRun == 1, format("topology pen session laws: VIBE3D_CELL=%s ran %d cells, expected 1 "
                                      ~ "(an unknown name runs none)", only, cellsRun));
