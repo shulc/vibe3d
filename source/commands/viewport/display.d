@@ -114,8 +114,9 @@ final class ViewportDisplayStyle : ViewportCommand {
         else               tv.display.active.style   = style_;
         // Task 0594: this cell's style is now a CHOICE, not an inheritance.
         // Only reached on success — every rejection above throws, so a
-        // refused value never marks the cell.
-        commitCellDisplay(cell_);
+        // refused value never marks the cell. Slot 1 is outside the template.
+        if (slotArg_ == 1) markCellDisplayDirty(cell_);
+        else               commitTemplateChoice(cell_);
         return true;
     }
 }
@@ -164,7 +165,7 @@ final class ViewportWireOverlay : ViewportCommand {
         setRaw(valueArg_, cellArg_);
         Viewport3D tv = vpm.views[cell_];
         tv.display.active.wire = mode_;
-        commitCellDisplay(cell_);
+        commitTemplateChoice(cell_);
         return true;
     }
 }
@@ -219,15 +220,16 @@ final class ViewportWireAlpha : ViewportCommand {
         setRaw(valueArg_, cellArg_, false, 0);
         Viewport3D tv = vpm.views[cell_];
         tv.display.active.wireAlpha = alpha_;
-        commitCellDisplay(cell_);
+        commitTemplateChoice(cell_);
         return true;
     }
 }
 
 // ---------------------------------------------------------------------------
 // viewport.backdropStyle / viewport.retopology — the backdrop representation
-// and the retopology display mode, per cell, with the same cell selector and
-// the same shared tail as the three commands above.
+// and the retopology display mode, per cell, with the same cell selector as the
+// three commands above; neither writes a template field, so both only mark the
+// cell dirty and never claim its template (plan §10.13).
 //
 // `backdropStyle` is a WRITER of the backdrop slot, not a second axis: `flat`
 // and `wireframe` set the coarse control AND write the slot's style, and the
@@ -280,7 +282,7 @@ final class ViewportBackdropStyle : ViewportCommand {
             tv.display.backdrop.style = DisplayStyle.Shaded;
         else if (mode_ == BackdropStyle.Wireframe)
             tv.display.backdrop.style = DisplayStyle.Wireframe;
-        commitCellDisplay(cell_);
+        markCellDisplayDirty(cell_);
         return true;
     }
 }
@@ -321,7 +323,7 @@ final class ViewportRetopology : ViewportCommand {
     protected override bool applyImpl() {
         setRaw(valueArg_, cellArg_);
         vpm.views[cell_].display.retopology = on_;
-        commitCellDisplay(cell_);
+        markCellDisplayDirty(cell_);
         return true;
     }
 }

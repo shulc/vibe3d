@@ -419,3 +419,50 @@ unittest { // U3: production uses the narrow registrar before LAST wrapping
     assert(assignAt >= 0 && registerAt > assignAt,
         "6010 manager wiring order witness: app.vpm is assigned after registration");
 }
+
+unittest { // U4: only a writer of a template field claims the template
+    // Through the production registrar and the real command classes, so the
+    // tail each writer picks is the one the script door reaches. Six writers
+    // over two passes of the four cells; all six mark the cell dirty, only the
+    // three writers of `T = {active.style, active.wire, active.wireAlpha}` set
+    // `displayUserSet` and its prefs mirror (plan §10.13).
+    import prefs : ViewportCellDisplay;
+    const prefsBefore = g_prefs.viewportDisplay;
+    scope(exit) g_prefs.viewportDisplay = prefsBefore;
+
+    auto fixture = new Fixture;
+    fixture.registerViewport();
+    assert(fixture.vpm.cellCount == 4, "U4 rig: Quad must expose four cells");
+
+    struct Row { string id; string value; bool template_; }
+    immutable Row[6] rows = [
+        Row("viewport.displayStyle",  `"value":"solid"`,           true),
+        Row("viewport.wireOverlay",   `"value":"none"`,            true),
+        Row("viewport.wireAlpha",     `"value":"0.5"`,             true),
+        Row("viewport.displayStyle",  `"value":"solid","slot":1`,  false),
+        Row("viewport.backdropStyle", `"value":"flat"`,            false),
+        Row("viewport.retopology",    `"value":"on"`,              false),
+    ];
+    int checked = 0;
+    foreach (i, row; rows) {
+        const k = cast(int)(i % 4);
+        fixture.vpm.views[k].displayUserSet = false;
+        fixture.vpm.views[k].dirty = false;
+        g_prefs.viewportDisplay[k] = ViewportCellDisplay.init;
+        assert(!g_prefs.viewportDisplay[k].styleUserSet,
+            "U4 rig: a fresh prefs row must start unchosen");
+        const params = format(`{%s,"viewport":%d}`, row.value, k);
+        assert(fixture.script(row.id, params) == CommandInvocationOutcome.applied,
+            format("U4: %s %s did not apply", row.id, params));
+        assert(fixture.vpm.views[k].dirty,
+            format("U4: %s %s must mark cell %d dirty", row.id, params, k));
+        assert(fixture.vpm.views[k].displayUserSet == row.template_,
+            format("U4: %s %s: displayUserSet must be %s", row.id, params,
+                   row.template_));
+        assert(g_prefs.viewportDisplay[k].styleUserSet == row.template_,
+            format("U4: %s %s: prefs styleUserSet must be %s", row.id, params,
+                   row.template_));
+        ++checked;
+    }
+    assert(checked == 6, format("U4 floor: expected six writers, ran %d", checked));
+}

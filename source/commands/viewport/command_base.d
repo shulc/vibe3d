@@ -44,23 +44,30 @@ abstract class ViewportCommand : Command {
         return cell;
     }
 
-    /// Shared tail for the three per-cell display commands: mark the cell as
-    /// user-chosen (not template-inherited), mark it dirty so the next frame
-    /// re-renders it, and mirror the resolved display state into the
-    /// in-memory prefs (flushed once at clean shutdown, harmless no-op under
-    /// `--test`). Verbatim from the original interception's shared tail,
-    /// which ran identically after all three id-specific switches.
-    protected final void commitCellDisplay(int cell) {
+    /// Tail for a per-cell display writer of a field OUTSIDE the template
+    /// set `T` (`ViewportManager.seedShippedDisplay`): mark the cell dirty so
+    /// the next frame re-renders it, and nothing else — such a write is not a
+    /// template choice, so it neither sets `displayUserSet` nor touches prefs.
+    protected final void markCellDisplayDirty(int cell) {
+        vpm.views[cell].dirty = true;
+    }
+
+    /// Tail for a writer of a template field `T = {active.style, active.wire,
+    /// active.wireAlpha}`: the cell's `T` is now a CHOICE (not inherited), so
+    /// mark `displayUserSet`, mirror `T` into the in-memory prefs (flushed at
+    /// clean shutdown, a no-op under `--test`) and mark dirty. Provenance is
+    /// owned by the template's fields (plan §10.13).
+    protected final void commitTemplateChoice(int cell) {
         import viewport : Viewport3D;
         import prefs     : g_prefs;
         Viewport3D tv = vpm.views[cell];
         tv.displayUserSet = true;
-        tv.dirty = true;
         if (cell < g_prefs.viewportDisplay.length) {
             g_prefs.viewportDisplay[cell].style        = tv.display.active.style;
             g_prefs.viewportDisplay[cell].wire         = tv.display.active.wire;
             g_prefs.viewportDisplay[cell].wireAlpha    = tv.display.active.wireAlpha;
             g_prefs.viewportDisplay[cell].styleUserSet = true;
         }
+        markCellDisplayDirty(cell);
     }
 }

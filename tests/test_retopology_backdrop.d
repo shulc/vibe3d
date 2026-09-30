@@ -491,16 +491,16 @@ unittest {
             "refusals must change nothing: " ~ c["state"].toString);
     }
     cmd("viewport.layout", `"Quad"`);
-    // Both commands run the shared per-cell tail, which marks the cell as
-    // user-configured: read on cells nobody has written yet.
+    // Neither command writes a template field, so neither may mark the cell
+    // as user-configured: read on cells nobody has written yet (plan §10.13).
     bool userSet(int k) {
         return jb(getJson("/api/viewport/display")["cells"].array[k]["userSet"]);
     }
     assert(!userSet(2) && !userSet(3), "cell selector: cells 2 and 3 start untouched");
     cmd("viewport.retopology", `{"value":"on","viewport":2}`);
-    assert(userSet(2), "viewport.retopology must run the shared cell tail");
+    assert(!userSet(2), "viewport.retopology: a non-template writer must not claim the template");
     cmd("viewport.backdropStyle", `{"value":"same","viewport":3}`);
-    assert(userSet(3), "viewport.backdropStyle must run the shared cell tail");
+    assert(!userSet(3), "viewport.backdropStyle: a non-template writer must not claim the template");
     cmd("viewport.backdropStyle", `{"value":"hidden","viewport":2}`);
     {
         auto cells = getJson("/api/viewport/display")["cells"].array;
@@ -536,6 +536,60 @@ unittest {
             "reset: cell 2's display must be back to its defaults: "
             ~ c2["state"].toString);
     }
+
+    // ---- L: a non-template write must not freeze the template ----------------
+    // Single (perspective, template Shaded) -> Quad (cell 0 becomes Top ortho,
+    // template Wireframe): the one direction where the layout switch itself
+    // moves cell 0's template. Each cycle writes cell 0 in Single, switches to
+    // Quad and reads cell 0. L0 (no write) is first: it proves the rig
+    // re-seeds; L4 (a slot-0 style choice) is the positive control. Quad ->
+    // Single cannot discriminate — `applyLayout` writes cameras only for Quad.
+    // Plan §10.13 block L.
+    int cycles = 0;
+    void cycle(string label, void delegate() write, string wantStyle,
+               bool wantUserSet, void delegate(JSONValue) extra) {
+        cmdOk(commandBody("scene.reset"));
+        settle();
+        {
+            auto c = cell0();
+            assert(!jb(c["ortho"]) && c["state"]["active"]["style"].str == "Shaded"
+                && !jb(c["userSet"]),
+                label ~ " precondition: cell 0 perspective, Shaded, unchosen: "
+                ~ c.toString);
+        }
+        if (write !is null) write();
+        cmd("viewport.layout", `"Quad"`);
+        auto c = cell0();
+        assert(jb(c["ortho"]), label ~ ": Quad cell 0 must be orthographic: " ~ c.toString);
+        assert(c["state"]["active"]["style"].str == wantStyle
+            && jb(c["userSet"]) == wantUserSet,
+            format("%s: cell 0 after Quad must be style %s, userSet %s: %s",
+                   label, wantStyle, wantUserSet, c.toString));
+        if (extra !is null) extra(c);
+        ++cycles;
+    }
+    cycle("L0 no write", null, "Wireframe", false, null);
+    cycle("L1 retopology on",
+        () { cmd("viewport.retopology", `{"value":"on"}`); },
+        "Wireframe", false,
+        (JSONValue c) { assert(jb(c["state"]["retopology"]),
+            "L1: the retopology write must have happened: " ~ c.toString); });
+    cycle("L2 backdropStyle flat",
+        () { cmd("viewport.backdropStyle", `{"value":"flat"}`); },
+        "Wireframe", false,
+        (JSONValue c) { assert(c["state"]["backdropStyle"].str == "Flat",
+            "L2: the backdropStyle write must have happened: " ~ c.toString); });
+    cycle("L3 displayStyle solid slot 1",
+        () { cmd("viewport.displayStyle", `{"value":"solid","slot":1}`); },
+        "Wireframe", false,
+        (JSONValue c) { assert(c["state"]["backdrop"]["style"].str == "Solid",
+            "L3: the slot-1 write must have happened: " ~ c.toString); });
+    cycle("L4 displayStyle solid slot 0",
+        () { cmd("viewport.displayStyle", `{"value":"solid"}`); },
+        "Solid", true, null);
+    assert(cycles == 5, "L: expected five cycles");
+    cmdOk(commandBody("scene.reset"));
+    settle();
     cmd("viewport.layout", `"Single"`);
     writeln("  test_retopology_backdrop: all cells passed");
 }

@@ -891,3 +891,31 @@ unittest {
     m.views[0].indRotate = true;
     m.views[0].masterId  = -1;
 }
+
+unittest { // C: the layout seed writes only the template's fields
+    // `seedShippedDisplay` owns `T = {active.style, active.wire,
+    // active.wireAlpha}` and nothing else, so every other per-cell field
+    // survives a layout switch. Single -> Quad turns cell 0 from perspective
+    // (template Shaded) into Top ortho (template Wireframe), so the style read
+    // is the proof the seed ran (plan §10.13 cell C).
+    import display_state : DisplayStyle, BackdropStyle;
+    auto m = new ViewportManager(0, 0, 800, 600);
+    m.applyLayout(LayoutPreset.Single);
+    assert(!m.views[0].isOrtho()
+        && m.views[0].display.active.style == DisplayStyle.Shaded,
+        "C rig: Single cell 0 must be perspective Shaded");
+    m.views[0].display.active.showVertices = true;
+    m.views[0].display.active.pointSize    = 6.0f;
+    m.views[0].display.retopology          = true;
+    m.views[0].display.backdropStyle       = BackdropStyle.Flat;
+    m.views[0].display.backdrop.style      = DisplayStyle.Solid;
+    m.applyLayout(LayoutPreset.Quad);
+    const d = m.views[0].display;
+    assert(m.views[0].isOrtho() && d.active.style == DisplayStyle.Wireframe,
+        "C: Quad must re-seed cell 0 to the ortho template (Wireframe)");
+    assert(d.active.showVertices, "C: the seed must not reset active.showVertices");
+    assert(d.active.pointSize == 6.0f, "C: the seed must not reset active.pointSize");
+    assert(d.retopology, "C: the seed must not reset retopology");
+    assert(d.backdropStyle == BackdropStyle.Flat, "C: the seed must not reset backdropStyle");
+    assert(d.backdrop.style == DisplayStyle.Solid, "C: the seed must not reset backdrop.style");
+}

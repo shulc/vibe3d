@@ -509,8 +509,9 @@ final class Viewport3D {
     // template (`shippedDisplayFor`). Without this bit, a user who sets cell 0
     // to Shaded and then switches Quad -> Single -> Quad silently loses it,
     // and a restored preference would be overwritten by the template on the
-    // first layout switch of the session. Set by the `viewport.display*`
-    // commands and by the preference restore; cleared only by a full reset.
+    // first layout switch of the session. Set by writers of a template field
+    // (`displayStyle` slot 0, `wireOverlay`, `wireAlpha`) and by the
+    // preference restore; cleared only by a full reset (plan §10.13).
     bool displayUserSet = false;
 
     // Phase-2..5 inert fields — declared now, unused in Phase 1.
@@ -930,8 +931,10 @@ final class ViewportManager {
     /// A DEFAULT, WITH TWO THINGS IT MUST NOT DO:
     ///
     ///  1. It must not overwrite a chosen style. `displayUserSet` is set by
-    ///     the `viewport.display*` commands and by the preference restore, and
-    ///     a cell carrying it is skipped entirely. Layout switching is a
+    ///     writers of a template field and by the preference restore, and a
+    ///     cell carrying it is skipped entirely. The seed writes only the
+    ///     template's fields `T = {style, wire, wireAlpha}`, so every other
+    ///     per-cell field survives a layout switch. Layout switching is a
     ///     routine action (Quad -> Single -> Quad); losing a style to it would
     ///     be exactly the "a default silently overwrote a saved choice"
     ///     defect.
@@ -955,7 +958,10 @@ final class ViewportManager {
         import display_state : shippedDisplayFor;
         foreach (k; 0..4) {
             if (views[k].displayUserSet) continue;
-            views[k].display.active = shippedDisplayFor(views[k].isOrtho());
+            immutable t = shippedDisplayFor(views[k].isOrtho());
+            views[k].display.active.style     = t.style;
+            views[k].display.active.wire      = t.wire;
+            views[k].display.active.wireAlpha = t.wireAlpha;
             views[k].dirty = true;
         }
     }
