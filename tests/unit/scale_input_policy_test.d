@@ -71,6 +71,7 @@ unittest {
 unittest {
     import std.file : readText;
     import std.string : indexOf;
+    import std.algorithm : count;
     auto consumer = readText("source/tools/transform/xfrm_transform.d");
     assert(consumer.indexOf("run.s = evaluateScaleSample(gestureStart.s, f,") >= 0 &&
         consumer.indexOf("scaleSub.pendingScaleComposition, negScale);") >= 0,
@@ -78,7 +79,7 @@ unittest {
     auto producer = readText("source/tools/transform/scale.d");
     assert(producer.indexOf("centreInputPolicy.referencePixels * centreInputPolicy.referenceScale * centreInputPolicy.smallScale") >= 0,
         "production physical normalization forwards every declared construction unit");
-    assert(producer.indexOf("publishScaleGesture(centreInputPolicy.composition);") >= 0,
+    assert(producer.count("publishScaleGesture(centreInputPolicy.composition);") == 2,
         "production centre producer forwards composition");
     assert(producer.indexOf("ScaleSampleComposition composition = ScaleSampleComposition.ratio") >= 0,
         "axis and plane publications default to ratio");
