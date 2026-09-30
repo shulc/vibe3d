@@ -592,11 +592,13 @@ public:
                 litShader.useProgram(bgModel, vp);
                 litShader.setSurfaces(lyr.meshRef().surfaces);
                 litShader.setDim(backdropPlan.dim);
+                litShader.setLightGain(backdropPlan.lightGain);
                 litShader.setShading(backdropPlan.shading);
                 litShader.setFillColor(backdropPlan.fillColor);
                 (*bg).drawFaces(litShader);
                 litShader.setShading(SurfaceShading.Material);
                 litShader.setFillColor(kDefaultFill);
+                litShader.setLightGain(1.0f);
                 litShader.setDim(1.0f);
             }
 
@@ -685,6 +687,7 @@ public:
             litShader.setSurfaces(mesh.surfaces);
             litShader.setShading(activePlan.shading);
             litShader.setFillColor(activePlan.fillColor);
+            litShader.setLightGain(activePlan.lightGain);
             bool toolFaceHover = activeTool !is null
                               && activeTool.wantsHoverForType(EditMode.Polygons)
                               && hoveredFace >= 0;
@@ -697,6 +700,7 @@ public:
             // program is shared with every preview/gizmo draw downstream.
             litShader.setShading(SurfaceShading.Material);
             litShader.setFillColor(kDefaultFill);
+            litShader.setLightGain(1.0f);
         }
     }
 

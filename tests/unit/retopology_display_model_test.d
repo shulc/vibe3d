@@ -13,7 +13,8 @@
 //   1b  style irrelevance under the mode (4 styles x 2 overlays);
 //   1c  mode-off neutrality against LITERALS (not `DrawPlan.init`, which
 //       would move with the defaults it is meant to judge);
-//   1d  the backdrop plan under the mode = mode-off plus the light gain;
+//   1d  the backdrop plan under the mode = mode-off plus the light gain,
+//       and under same-as-active the joined-item fields (undimmed, D6);
 //   1e  under the mode `drawVerts` follows show-vertices, not the style;
 //   1f  picking occlusion follows the STYLE under the mode (captured runs);
 //   1g  the mode's own values, field by field, against literals.
@@ -275,15 +276,20 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// 1d. The backdrop under the mode: exactly the mode-off plan plus the gain,
-//     for every coarse backdrop setting and every active style.
+// 1d. The backdrop under the mode: the mode-off plan plus the gain, for every
+//     coarse backdrop setting, every active style and both show-vertices
+//     values; under same-as-active the backdrop also joins the foreground
+//     item sequence — undimmed (owner decision D6), ordinary base dots when
+//     show-vertices is on, no selection-type dots (plan §10.3, §10.9 item 5).
+//     Then the D6 dim as LITERALS: 1.0 with the mode, 0.45 without.
 // ---------------------------------------------------------------------------
 unittest {
-    int k = 0;
-    foreach (bs; kBackdrops) foreach (s; kStyles) {
+    int k = 0, joined = 0;
+    foreach (bs; kBackdrops) foreach (s; kStyles) foreach (sv; [false, true]) {
         ViewportDisplay off;
-        off.backdropStyle = bs;
-        off.active.style  = s;
+        off.backdropStyle       = bs;
+        off.active.style        = s;
+        off.active.showVertices = sv;
         ViewportDisplay on = off;
         on.retopology = true;
 
@@ -293,15 +299,36 @@ unittest {
         assert(want.styleFills == want.drawFaces,
             format("1d: backdrop %s / style %s: styleFills %s but drawFaces %s",
                    bs, s, want.styleFills, want.drawFaces));
+        assert(!want.drawVerts && !want.joinsItemSequence,
+            format("1d: mode off, backdrop %s draws no dots and joins nothing", bs));
         want.lightGain = 5.0f / 3.0f;
+        if (bs == BackdropStyle.SameAsActive) {
+            want.dim                 = 1.0f;
+            want.joinsItemSequence   = true;
+            want.drawVerts           = sv;
+            want.baseDotsBySelection = false;
+            ++joined;
+        }
         immutable DrawPlan got = resolveDrawPlan(on, true);
         assert(got == want,
-            format("1d: backdrop %s / style %s under the mode must be the "
-                   ~ "mode-off plan with lightGain 5/3:\n  got  %s\n  want %s",
-                   bs, s, got, want));
+            format("1d: backdrop %s / style %s / showVertices %s under the mode "
+                   ~ "must be the mode-off plan with lightGain 5/3 (plus the "
+                   ~ "joined-item fields under same-as-active):\n  got  %s\n  want %s",
+                   bs, s, sv, got, want));
         ++k;
     }
-    assert(k == 16, format("1d: compared %s backdrop rows, expected 16", k));
+    assert(k == 32 && joined == 8,
+        format("1d: compared %s backdrop rows (%s joined), expected 32 (8)", k, joined));
+
+    ViewportDisplay d;
+    assert(d.backdropStyle == BackdropStyle.SameAsActive);
+    assert(resolveDrawPlan(d, true).dim == 0.45f,
+        "1d D6: mode off, the same-as-active backdrop keeps the 0.45 dim");
+    d.retopology = true;
+    assert(resolveDrawPlan(d, true).dim == 1.0f,
+        "1d D6: mode on, the same-as-active backdrop is undimmed");
+    assert(resolveDrawPlan(d, true).clearDepthFirst == false,
+        "1d: the joined backdrop has no depth clear of its own");
 }
 
 // ---------------------------------------------------------------------------

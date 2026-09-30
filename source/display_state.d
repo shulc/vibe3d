@@ -223,9 +223,14 @@ enum BackdropStyle : ubyte {
     /// Background layers draw exactly like the active mesh. Today's behaviour
     /// (plus our dim factor, below).
     SameAsActive,
-    /// Background layers draw as lines only.
+    /// Background layers draw as lines only. A WRITER: the
+    /// `viewport.backdropStyle` command also writes `Wireframe` into the
+    /// backdrop slot's style, and the resolver reads that slot.
     Wireframe,
-    /// Background layers draw as unshaded solid fill.
+    /// Background layers draw as a lit faceted surface. A WRITER like
+    /// `Wireframe`: the command writes `Shaded` into the backdrop slot's
+    /// style (faceted is our only shading), and the resolver reads the slot,
+    /// so a later slot-style write (`viewport.displayStyle slot=1`) is live.
     Flat,
     /// Background layers are not drawn at all — "solo" the active layer.
     Hidden,
@@ -431,7 +436,8 @@ struct DrawPlan {
 
     // ---- retopology-mode fields ------------------------------------------
     // Every default below is TODAY'S behaviour; only `applyRetopology` moves
-    // them. NOT YET CONSUMED except `styleFills` (by `select_visibility`):
+    // them. NOT YET CONSUMED except `styleFills` (by `select_visibility`)
+    // and `lightGain` (the lit program's `u_lightGain`, set per face pass):
     // no pass reads the rest, so no rendering may be inferred from them.
     // Measured values and their record: the constants block in
     // `viewport_scheme.d` and `tests/fixtures/retopology_display.json`.
@@ -484,14 +490,25 @@ float retopologyFaceAlpha(float t) pure nothrow @safe @nogc
 /// of `DrawPlan`. A no-op when `d.retopology` is false. The active side takes
 /// the mode's whole representation whatever the style (the style is
 /// irrelevant to the foreground's pixels under the mode); the backdrop side
-/// only gains the light multiplier. `styleFills` is left as the style
-/// resolved it, and `pointSize` as the display state's size resolved it.
+/// gains the light multiplier, and under `SameAsActive` it becomes an item of
+/// the foreground sequence: undimmed (owner decision D6 — mode off keeps the
+/// dim), drawn with no depth clear of its own, with ordinary base dots when
+/// show-vertices is on (captured; plan §10.3 / §10.9 item 5). `styleFills` is
+/// left as the style resolved it, and `pointSize` as the size resolved it.
 void applyRetopology(ref DrawPlan p, in ViewportDisplay d, bool isBackdrop)
     pure nothrow @safe @nogc
 {
     if (!d.retopology) return;
     p.lightGain = kRetopologyLightGain;
-    if (isBackdrop) return;
+    if (isBackdrop) {
+        if (d.backdropStyle == BackdropStyle.SameAsActive) {
+            p.dim                 = 1.0f;
+            p.joinsItemSequence   = true;
+            p.drawVerts           = d.active.showVertices;
+            p.baseDotsBySelection = false;
+        }
+        return;
+    }
 
     immutable face = schemeColor(SchemeColor.retopologyFace);
     immutable edge = schemeColor(SchemeColor.retopologyEdge);
@@ -519,15 +536,12 @@ void applyRetopology(ref DrawPlan p, in ViewportDisplay d, bool isBackdrop)
 /// Pure and GL-free — this is where the display model's facts live, and it is
 /// unit-testable without a window.
 ///
-/// Backdrop precedence, and the open question it brushes against: the coarse
-/// `backdropStyle` is the control that decides. `SameAsActive` ignores
-/// `d.backdrop` entirely and mirrors `d.active` (plus our dim); `Hidden` draws
-/// nothing; `Wireframe`/`Flat` name a surface style outright and take the
-/// remaining knobs (overlay, opacity) from `d.backdrop`. So `d.backdrop.style`
-/// is carried but not read. If the coarse control and the backdrop's own style
-/// turn out to be genuinely independent, the fix is a new `BackdropStyle`
-/// value that defers to `d.backdrop.style` — a change to this function only,
-/// not to the schema. That is why both shapes are carried.
+/// Backdrop precedence: `SameAsActive` ignores `d.backdrop` and mirrors
+/// `d.active` (plus our dim); `Hidden` draws nothing; `Wireframe` and `Flat`
+/// read the backdrop slot WHOLE, style included. The coarse control is a
+/// writer of that slot (the command writes the style), not a second axis read
+/// here — the frozen record is `tests/fixtures/backdrop_display_slots.json`
+/// (`coarse_control`), and neither mode is dimmed (its `brightness` law).
 DrawPlan resolveDrawPlan(in ViewportDisplay d, bool isBackdrop) pure nothrow @safe @nogc {
     DrawPlan p;
 
@@ -538,9 +552,9 @@ DrawPlan resolveDrawPlan(in ViewportDisplay d, bool isBackdrop) pure nothrow @sa
     bool solidRunsNoBackdropFacePass = false;
 
     if (isBackdrop) {
-        p.dim = kBackdropDim;
         final switch (d.backdropStyle) {
             case BackdropStyle.SameAsActive:
+                p.dim = kBackdropDim;
                 st = d.active;
                 // PREMISE REFUTED — it came from task 0592, and task 4340
                 // carries the read that supersedes it. What follows is a
@@ -570,21 +584,16 @@ DrawPlan resolveDrawPlan(in ViewportDisplay d, bool isBackdrop) pure nothrow @sa
                 // the move gap registry row 45 forbids by name, and block B of
                 // the same reader reddens on it.
                 //
-                // Scoped to `SameAsActive` on purpose. `Flat` below also
-                // resolves the backdrop to `Solid`, but that is the user
-                // naming a backdrop representation outright — a separate
-                // registered style in the reference, not the active surface
-                // style reaching across — so it keeps its fill.
+                // Scoped to `SameAsActive` on purpose. `Flat` and
+                // `Wireframe` below read the backdrop slot, which the user
+                // set outright — not the active surface style reaching
+                // across — so a `Solid` slot there keeps its fill.
                 solidRunsNoBackdropFacePass =
                     (d.active.style == DisplayStyle.Solid);
                 break;
             case BackdropStyle.Wireframe:
-                st       = d.backdrop;
-                st.style = DisplayStyle.Wireframe;
-                break;
             case BackdropStyle.Flat:
-                st       = d.backdrop;
-                st.style = DisplayStyle.Solid;
+                st = d.backdrop;
                 break;
             case BackdropStyle.Hidden:
                 p.drawFaces  = false;

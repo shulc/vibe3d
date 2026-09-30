@@ -6,7 +6,7 @@ import mesh;
 import editmode;
 import view;
 import viewport      : ViewportManager, Viewport3D;
-import display_state : DisplayStyle, WireOverlay;
+import display_state : BackdropStyle, DisplayStyle, WireOverlay;
 import params : Param, wireArgs;
 
 // TASK 4062 — the three commands below each declare their two arguments
@@ -53,6 +53,10 @@ final class ViewportDisplayStyle : ViewportCommand {
     private DisplayStyle style_;
     private string valueArg_;
     private int    cellArg_ = -1;
+    /// Which display slot the style is written to: 0 = the active slot (the
+    /// default, every existing call shape), 1 = the backdrop slot, which the
+    /// `Flat`/`Wireframe` backdrop representations read.
+    private int    slotArg_ = 0;
 
     this(Mesh* mesh, ref View view, EditMode editMode, ViewportManager vpm) {
         super(mesh, view, editMode, vpm);
@@ -68,13 +72,19 @@ final class ViewportDisplayStyle : ViewportCommand {
         return wireArgs(
             Param.string_("value", "Style", &valueArg_, "")
                 .aliases(["style", "wire", "overlay", "alpha"]),
-            Param.int_("viewport", "Viewport", &cellArg_, -1)
+            Param.int_("viewport", "Viewport", &cellArg_, -1),
+            Param.int_("slot", "Slot", &slotArg_, 0)
         );
     }
 
     void setRaw(string sval, int cellArg) {
         import std.string : toLower, strip;
+        import std.format : format;
         int cell = resolveCellOrThrow(cellArg, name());
+        if (slotArg_ != 0 && slotArg_ != 1)
+            throw new Exception(format(
+                "viewport.displayStyle: slot must be 0 (active) or 1 "
+                ~ "(backdrop), got %d", slotArg_));
         switch (sval.strip.toLower) {
             case "wireframe": style_ = DisplayStyle.Wireframe; break;
             case "shaded":    style_ = DisplayStyle.Shaded;    break;
@@ -100,7 +110,8 @@ final class ViewportDisplayStyle : ViewportCommand {
     protected override bool applyImpl() {
         setRaw(valueArg_, cellArg_);
         Viewport3D tv = vpm.views[cell_];
-        tv.display.active.style = style_;
+        if (slotArg_ == 1) tv.display.backdrop.style = style_;
+        else               tv.display.active.style   = style_;
         // Task 0594: this cell's style is now a CHOICE, not an inheritance.
         // Only reached on success — every rejection above throws, so a
         // refused value never marks the cell.
@@ -208,6 +219,108 @@ final class ViewportWireAlpha : ViewportCommand {
         setRaw(valueArg_, cellArg_, false, 0);
         Viewport3D tv = vpm.views[cell_];
         tv.display.active.wireAlpha = alpha_;
+        commitCellDisplay(cell_);
+        return true;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// viewport.backdropStyle / viewport.retopology — the backdrop representation
+// and the retopology display mode, per cell, with the same cell selector and
+// the same shared tail as the three commands above.
+//
+// `backdropStyle` is a WRITER of the backdrop slot, not a second axis: `flat`
+// and `wireframe` set the coarse control AND write the slot's style, and the
+// resolver reads the slot (frozen record `tests/fixtures/
+// backdrop_display_slots.json`, `coarse_control`). So a later
+// `viewport.displayStyle … slot=1` is live under either.
+// ---------------------------------------------------------------------------
+
+final class ViewportBackdropStyle : ViewportCommand {
+    private int cell_;
+    private BackdropStyle mode_;
+    private string valueArg_;
+    private int    cellArg_ = -1;
+
+    this(Mesh* mesh, ref View view, EditMode editMode, ViewportManager vpm) {
+        super(mesh, view, editMode, vpm);
+    }
+
+    override string name() const { return "viewport.backdropStyle"; }
+
+    override Param[] params() {
+        return wireArgs(
+            Param.string_("value", "Backdrop", &valueArg_, "")
+                .aliases(["style"]),
+            Param.int_("viewport", "Viewport", &cellArg_, -1)
+        );
+    }
+
+    void setRaw(string sval, int cellArg) {
+        import std.string : toLower, strip;
+        int cell = resolveCellOrThrow(cellArg, name());
+        switch (sval.strip.toLower) {
+            case "same":      mode_ = BackdropStyle.SameAsActive; break;
+            case "wireframe": mode_ = BackdropStyle.Wireframe;    break;
+            case "flat":      mode_ = BackdropStyle.Flat;         break;
+            case "hidden":    mode_ = BackdropStyle.Hidden;       break;
+            default:
+                throw new Exception(
+                    "viewport.backdropStyle: expected 'same', 'wireframe', "
+                    ~ "'flat' or 'hidden', got '" ~ sval ~ "'");
+        }
+        cell_ = cell;
+    }
+
+    protected override bool applyImpl() {
+        setRaw(valueArg_, cellArg_);
+        Viewport3D tv = vpm.views[cell_];
+        tv.display.backdropStyle = mode_;
+        if (mode_ == BackdropStyle.Flat)
+            tv.display.backdrop.style = DisplayStyle.Shaded;
+        else if (mode_ == BackdropStyle.Wireframe)
+            tv.display.backdrop.style = DisplayStyle.Wireframe;
+        commitCellDisplay(cell_);
+        return true;
+    }
+}
+
+final class ViewportRetopology : ViewportCommand {
+    private int  cell_;
+    private bool on_;
+    private string valueArg_;
+    private int    cellArg_ = -1;
+
+    this(Mesh* mesh, ref View view, EditMode editMode, ViewportManager vpm) {
+        super(mesh, view, editMode, vpm);
+    }
+
+    override string name() const { return "viewport.retopology"; }
+
+    override Param[] params() {
+        return wireArgs(
+            Param.string_("value", "Mode", &valueArg_, ""),
+            Param.int_("viewport", "Viewport", &cellArg_, -1)
+        );
+    }
+
+    void setRaw(string sval, int cellArg) {
+        import std.string : toLower, strip;
+        int cell = resolveCellOrThrow(cellArg, name());
+        switch (sval.strip.toLower) {
+            case "on":  on_ = true;  break;
+            case "off": on_ = false; break;
+            default:
+                throw new Exception(
+                    "viewport.retopology: expected 'on' or 'off', got '"
+                    ~ sval ~ "'");
+        }
+        cell_ = cell;
+    }
+
+    protected override bool applyImpl() {
+        setRaw(valueArg_, cellArg_);
+        vpm.views[cell_].display.retopology = on_;
         commitCellDisplay(cell_);
         return true;
     }

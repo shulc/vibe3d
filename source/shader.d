@@ -243,13 +243,27 @@ private immutable string litFragSrc = withShaderPreamble(q{
     uniform float u_specStr;
     uniform float u_specPow;
     uniform float u_dim;            // brightness multiplier; 1.0 = neutral (layers Stage 5)
-    uniform int   u_shading;        // display_state.SurfaceShading: 0 Material, 1 Fill, 2 Weight
+    uniform float u_lightGain;      // multiplier on the lit term ABOVE ambient; 1.0 = neutral
+    uniform int   u_shading;        // display_state.SurfaceShading: 0 Material, 1 Fill, 2 Weight, 3 Retopology
     uniform vec3  u_fillColor;      // the unlit fill's base; NOT the material (task 0592)
     layout(std140) uniform Materials {
         vec4 mat_base[64];     // .rgb = baseColor, .a = opacity
         vec4 mat_params[64];   // .x = diffuse, .y = specular, .z = glossiness
     };
     out vec4 fragColor;
+    // The ONE light function of the lit arms: ambient is left unscaled and
+    // `u_lightGain` multiplies everything above it, specular included (the
+    // measured fit is a scalar on the part above ambient; that it covers our
+    // specular term is inferred). Material and Retopology both call it, so
+    // "lit by the same function as the backdrop" is structural, not a copy.
+    vec3 litTerm(vec3 bc, vec3 N) {
+        vec3 V    = normalize(u_eyePos - vWorldPos);
+        vec3 H    = normalize(u_lightDir + V);
+        float dif = max(dot(N, u_lightDir), 0.0);
+        float spc = pow(max(dot(N, H), 0.0), u_specPow);
+        return bc * (u_ambient + u_lightGain * dif * (1.0 - u_ambient))
+             + vec3(1.0) * u_lightGain * spc * u_specStr;
+    }
     void main() {
         // TWO BASE COLOURS, NOT ONE SCALED. The lit path's base is the
         // MATERIAL; the unlit path's base is `u_fillColor`, the viewport
@@ -280,16 +294,14 @@ private immutable string litFragSrc = withShaderPreamble(q{
         if (u_shading == 0) {
             uint  mi  = (vMatId < uint(64)) ? vMatId : uint(0);
             vec3  bc  = mix(mat_base[mi].rgb, u_color, u_overrideMix);
-            vec3 N    = normalize(vNormal);
-            vec3 L    = u_lightDir;
-            vec3 V    = normalize(u_eyePos - vWorldPos);
-            vec3 H    = normalize(L + V);
-            float dif = max(dot(N, L), 0.0);
-            float spc = pow(max(dot(N, H), 0.0), u_specPow);
-            col = bc * (u_ambient + dif * (1.0 - u_ambient))
-                + vec3(1.0) * spc * u_specStr;
+            col = litTerm(bc, normalize(vNormal));
         } else if (u_shading == 1) {
             col = mix(u_fillColor, u_color, u_overrideMix);
+        } else if (u_shading == 3) {
+            // Retopology: the scheme's fill colour, LIT (not the material, not
+            // the unlit fill); the hover override survives as in every arm.
+            col = litTerm(mix(u_fillColor, u_color, u_overrideMix),
+                          normalize(vNormal));
         } else {
             // Weight (task 1090). UNLIT in the strong sense: no light term, no
             // material lookup, no gamma — the interpolated per-vertex colour
@@ -765,6 +777,7 @@ class LitShader {
     GLint locSpecStr;
     GLint locSpecPow;
     GLint locDim;
+    GLint locLightGain;
     GLint locShading;
     GLint locFillColor;
     GLuint matsUbo;            // Material Groups (MG3) — Materials UBO
@@ -783,8 +796,15 @@ class LitShader {
         locSpecStr     = glGetUniformLocation(program, "u_specStr");
         locSpecPow     = glGetUniformLocation(program, "u_specPow");
         locDim         = glGetUniformLocation(program, "u_dim");
+        locLightGain   = glGetUniformLocation(program, "u_lightGain");
         locShading     = glGetUniformLocation(program, "u_shading");
         locFillColor   = glGetUniformLocation(program, "u_fillColor");
+        // A GLSL uniform starts at 0, and a gain of 0 would leave only ambient
+        // for the draws that seed uniforms by hand without `useProgram`
+        // (`drawLitPreview`, the pen preview): park the neutral once here.
+        glUseProgram(program);
+        glUniform1f(locLightGain, 1.0f);
+        glUseProgram(0);
 
         // Materials UBO — std140-sized for two arrays of 64 × vec4.
         glGenBuffers(1, &matsUbo);
@@ -876,6 +896,9 @@ class LitShader {
         // dimmed background pass sets it explicitly with setDim() before
         // its draws and restores 1.0 afterwards.
         glUniform1f(locDim, 1.0f);
+        // Same neutrality contract as u_dim: only a plan-driven face pass sets
+        // a gain (`DrawPlan.lightGain`) and restores 1.0 after its draws.
+        glUniform1f(locLightGain, 1.0f);
         // Default to the MATERIAL (lit) arm, for exactly the reason u_dim
         // defaults to neutral: every caller that does not care about the
         // display style gets the behaviour that predates it. The Solid and
@@ -920,6 +943,13 @@ class LitShader {
     void setDim(float dim) {
         glUseProgram(program);
         glUniform1f(locDim, dim);
+    }
+
+    /// Multiplier on the lit term above ambient for the next draws on this
+    /// program (`DrawPlan.lightGain`). Same restore discipline as `setDim`.
+    void setLightGain(float gain) {
+        glUseProgram(program);
+        glUniform1f(locLightGain, gain);
     }
 
     /// How the next draws on this program shade the surface (task 0589's

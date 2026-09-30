@@ -222,8 +222,11 @@ unittest {
 }
 
 unittest {
-    // Backdrop axis truth table. Only `SameAsActive` is reachable today (no
-    // command sets it), but the resolution is the schema, so it is pinned.
+    // Backdrop axis truth table. `Wireframe` and `Flat` read the backdrop
+    // SLOT, and the coarse control is a writer of that slot
+    // (`tests/fixtures/backdrop_display_slots.json`, `coarse_control`): each
+    // row below sets the slot style the `viewport.backdropStyle` command
+    // writes, then one row writes the slot afterwards to show it is live.
     ViewportDisplay d;
 
     d.backdropStyle = BackdropStyle.Hidden;
@@ -231,15 +234,32 @@ unittest {
     assert(!b.drawFaces && !b.drawWire && !b.drawVerts,
         "Hidden must draw nothing at all");
 
-    d.backdropStyle = BackdropStyle.Wireframe;
+    d.backdropStyle  = BackdropStyle.Wireframe;
+    d.backdrop.style = DisplayStyle.Wireframe;
     b = resolveDrawPlan(d, true);
     assert(!b.drawFaces, "backdrop Wireframe draws no faces");
     assert(b.drawWire,   "backdrop Wireframe draws lines");
+    assert(b.dim == 1.0f, "backdrop Wireframe is not dimmed (fixture `brightness`)");
 
-    d.backdropStyle = BackdropStyle.Flat;
+    // The slot is read, not the coarse value: a shaded slot under the
+    // Wireframe control draws a lit surface (the capture's cross-check row).
+    d.backdrop.style = DisplayStyle.Shaded;
+    b = resolveDrawPlan(d, true);
+    assert(b.drawFaces && b.facesLit,
+        "backdrop Wireframe over a Shaded slot draws the slot's lit surface");
+
+    d.backdropStyle  = BackdropStyle.Flat;
+    d.backdrop.style = DisplayStyle.Shaded;
     b = resolveDrawPlan(d, true);
     assert(b.drawFaces,  "backdrop Flat draws a filled surface");
-    assert(!b.facesLit,  "backdrop Flat is unshaded");
+    assert(b.facesLit,   "backdrop Flat is LIT and faceted: it writes a shaded "
+        ~ "slot (fixture `retopology_display.json` backdrop.flat_writes)");
+    assert(b.dim == 1.0f, "backdrop Flat is not dimmed (fixture `brightness`)");
+
+    d.backdrop.style = DisplayStyle.Solid;
+    b = resolveDrawPlan(d, true);
+    assert(b.drawFaces && !b.facesLit,
+        "a Solid slot under Flat draws the unlit fill: the renderer reads the slot");
 
     // The backdrop axis is independent of the ACTIVE style: soloing the
     // active layer must not change how the active mesh draws.
@@ -340,8 +360,9 @@ unittest {
     ViewportDisplay f;
     f.active.style  = DisplayStyle.Solid;
     f.backdropStyle = BackdropStyle.Flat;
+    f.backdrop.style = DisplayStyle.Solid;
     const fb = resolveDrawPlan(f, true);
     assert(fb.drawFaces && !fb.facesLit,
-        "an explicitly chosen flat backdrop keeps its fill — the suppression "
-        ~ "is scoped to SameAsActive inheritance");
+        "an explicitly chosen flat backdrop over a Solid slot keeps its fill — "
+        ~ "the suppression is scoped to SameAsActive inheritance");
 }
