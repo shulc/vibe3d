@@ -654,7 +654,7 @@ unittest {
 
     auto move = runDrag("move", true);
     auto element = runDrag("move.element", true);
-    auto rotate = runDrag("rotate", true, null, false,
+    auto rotate = runDrag("TransformRotate", true, null, false,
                           10, 0, true, 90, 0);
     auto scale = runDrag("scale", true, null, false, 23, 20);
     writefln("[6450] releaseShift move/move.element/rotate/scale = "

@@ -9,11 +9,11 @@
 // point and the numeric edit stays open. The relocate is not an undo row: the
 // Ctrl+Z after the release pops the numeric edit AND the arm together (the tool
 // ends), and the pin is NOT restored to the pre-relocate point. Only the
-// held-key half and "the numeric edit is popped, no relocate row" are ours
-// (M1a). Two halves are NOT yet, pinned below as OUR model so the slice that
-// aligns them reddens here: our activation is its own row (H1, later slice),
-// so the tool stays; and Move's numeric edit undo restores the pin frozen at
-// the relocate press (Rotate and Scale keep it, as the reference; gap 304).
+// Held-key and numeric-edit halves are covered here. Bare Rotate now has a
+// silent arm carried by its first recorded step, so popping that step ends
+// the tool. Move/Scale still retain a separate activation row. Move's numeric
+// edit undo restores the pin frozen at the relocate press (Rotate and Scale
+// keep it, as the reference; gap 304).
 
 import core.thread : Thread;
 import core.time : msecs;
@@ -258,13 +258,14 @@ unittest {
         immutable string toolAfter = ("tool" in afterState.object) ? afterState["tool"].str : "";
         assert(sameGeometry(vertices(), floorGeometry),
             bank.name ~ ": Ctrl+Z after the release did not pop the numeric edit");
-        // Bare Rotate has no activation row; Move and Scale still have one.
-        // All three tools remain active after the numeric edit's Undo.
+        // Bare Rotate's first recorded step owns its silent arm. Move and
+        // Scale still have a separate activation row below the numeric edit.
         auto undoRows = getJson("/api/history")["undo"].array;
-        assert(toolAfter == armedTool && undoRows.length > 0
+        assert(toolAfter == (bank.name == "rotate" ? "" : armedTool)
+               && undoRows.length > 0
                && undoRows[$ - 1]["command"].str ==
                    (bank.name == "rotate" ? "mesh.move_vertex" : "tool.activate"),
-            bank.name ~ ": activation-row policy changed; tool="
+            bank.name ~ ": first-step owner policy changed; tool="
             ~ toolAfter ~ " top=" ~ (undoRows.length ? undoRows[$ - 1]["command"].str : "<none>"));
         assert(modelDepth() == floor,
             bank.name ~ ": the relocate or the numeric edit left a model row; floor="

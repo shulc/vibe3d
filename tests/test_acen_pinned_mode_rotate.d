@@ -1,4 +1,4 @@
-// A press away from the rotate rings turns the selection in EVERY action-centre
+// A press away from the TransformRotate rings turns the selection in EVERY action-centre
 // mode — and what it turns is one ball drawn in screen pixels.
 //
 // What was wrong. `RotateTool.onMouseButtonDown` asked "may this click relocate
@@ -111,13 +111,13 @@ Vec3 acenCenter() {
     return Vec3(a["cenX"].to!float, a["cenY"].to!float, a["cenZ"].to!float);
 }
 
-// Fresh cube, +Y face selected, Rotate armed, action centre `mode`.
+// Fresh cube, +Y face selected, arcball TransformRotate armed, action centre `mode`.
 void setup(string mode) {
     pj("/api/command", commandBody("scene.reset"));
     settle();
     pj("/api/command", commandBody("mesh.select", format(`{"mode":"polygons","indices":[%d]}`, topFaceIndex())));
     cmd("actr." ~ mode);
-    cmd("tool.set rotate");
+    cmd("tool.set TransformRotate");
     settle();
 }
 
