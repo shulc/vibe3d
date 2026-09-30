@@ -453,7 +453,7 @@ unittest {
 //     v6.x = 0.5).
 // ---------------------------------------------------------------------------
 unittest {
-    // --- Pass 1: 2 gestures → 2 in-session entries → DROP consolidates to 1. ---
+    // --- Pass 1: 2 gestures → 2 retained entries → outside Undo moves the group. ---
     establishCubeBaseline();
     cmd("tool.set TransformRotate");
     long floor = undoCount();
@@ -488,20 +488,20 @@ unittest {
     assert(fabs(v6Gesture2[1] - v6Gesture1[1]) + fabs(v6Gesture2[2] - v6Gesture1[2]) > 1e-2,
         "gesture 2 should rotate v6 further from its post-gesture-1 position");
 
-    // DROP consolidates the two-gesture run into ONE surviving entry.
+    // Task 8530: DROP retains both rows for grouped outside navigation.
     cmd("tool.set TransformRotate off");
     settle();
-    assert(undoCount() == floor + 1,
-        "drop consolidates the two-gesture run into ONE surviving entry; floor="
+    assert(undoCount() == floor + 2,
+        "drop retains both completed rotation gestures; floor="
         ~ floor.to!string ~ " now=" ~ undoCount().to!string);
 
     // A single post-drop Ctrl+Z reverts the WHOLE run back to the cube.
     playAndWait(ctrlZ(60.0));
     settle();
     assertVertex(6, 0.5, 0.5, 0.5,
-        "one post-drop Ctrl+Z reverts the consolidated run back to the cube");
+        "one post-drop Ctrl+Z reverts the retained group back to the cube");
     assert(undoCount() == floor,
-        "post-drop Ctrl+Z pops the single consolidated entry; floor="
+        "post-drop Ctrl+Z pops both retained entries; floor="
         ~ floor.to!string ~ " now=" ~ undoCount().to!string);
     drainHistory();
 

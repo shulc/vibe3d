@@ -10,7 +10,8 @@
 //                     gesture re-grades that gesture's geometry against the new
 //                     weights and bakes ONE tagged in-session entry in the SAME
 //                     run; one in-session Ctrl+Z reverts ONLY the re-grade; the
-//                     drop consolidates to ONE entry (contracts A/C/D).
+//                     close follows the preset policy: Rotate retains rows,
+//                     Scale consolidates them; UI navigation owns the run.
 //   R/S REPLACE     — consecutive tweaks REPLACE the prior re-grade (run stays
 //                     +1, not +N) with a widening support reverting cleanly.
 //   R/S MULTI-RUN   — case-D4 analogue: the REPLACE-vs-APPEND key is "is the tail
@@ -404,7 +405,7 @@ unittest {
     postJson("/api/command", commandBody("history.undo"));
     settle();
     assertVertex(6, 0.5, 0.5, 0.5,
-        "one post-drop Ctrl+Z reverts the consolidated rotate run to the cube");
+        "one post-drop Ctrl+Z reverts the rotation group to the cube");
     cmd("tool.pipe.attr falloff type none");
     drainHistory();
 }
@@ -475,7 +476,7 @@ unittest {
 // vert (each re-grade's once-per-window anchor covers its support, OBJ-3).
 //
 // drag → tweak1 (APPEND, inSession 2) → DISCRETE tweak2 (APPEND, inSession 3)
-// with a WIDENING support → drop (consolidate gesture + BOTH re-grades to ONE) →
+// with a WIDENING support → drop (retain gesture + BOTH re-grades as a group) →
 // one post-drop Ctrl+Z reverts the WHOLE run including the widened-support vert.
 // ===========================================================================
 unittest {
@@ -510,11 +511,11 @@ unittest {
 
     cmd("tool.set TransformRotate off");
     settle();
-    assert(undoCount() == floor + 1,
-        "drop consolidates gesture + BOTH discrete re-grades to ONE (D); now="
+    assert(undoCount() == floor + 3,
+        "drop retains gesture + both discrete re-grades for grouped navigation; now="
         ~ undoCount().to!string);
 
-    postJson("/api/command", commandBody("history.undo"));
+    playAndWait(ctrlZ(50.0));
     settle();
     // The once-per-window anchors cover the WIDENED support, so v0 reverts
     // cleanly to the cube even though the FIRST tweak's tighter support never
@@ -595,9 +596,9 @@ unittest {
 
     cmd("tool.set TransformRotate off");
     settle();
-    postJson("/api/command", commandBody("history.undo"));
+    playAndWait(ctrlZ(50.0));
     settle();
-    // The consolidated run reverts every touched vert to the run-START state.
+    // The retained group reverts every touched vert to the run-START state.
     assertVertex(6, 0.5, 0.5, 0.5,
         "one post-drop Ctrl+Z reverts the WHOLE multi-gesture rotate run to the "
         ~ "cube (g2's contribution was preserved through the merge)");
@@ -1408,17 +1409,17 @@ unittest {
 
     cmd("tool.set TransformRotate off");
     settle();
-    assert(undoCount() == floor + 1,
-        "drop consolidates the rotate run to ONE entry (D); now="
+    assert(undoCount() == floor + 2,
+        "drop retains the rotation gesture and config re-grade; now="
         ~ undoCount().to!string);
 
-    postJson("/api/command", commandBody("history.undo"));
+    playAndWait(ctrlZ(50.0));
     settle();
     assertVertex(6, 0.5, 0.5, 0.5,
-        "one post-drop Ctrl+Z reverts the consolidated rotate run to the cube");
+        "one post-drop Ctrl+Z reverts the rotation group to the cube");
     assert(queryFalloffSizeX() == 1.0,
         "P-A BLOCKER: post-drop Ctrl+Z restores the RUN-START falloff config "
-        ~ "(size 5→1) on the merged Rotate run; got "
+        ~ "(size 5→1) on the retained Rotate group; got "
         ~ queryFalloffSizeX().to!string);
 
     cmd("tool.pipe.attr falloff type none");
