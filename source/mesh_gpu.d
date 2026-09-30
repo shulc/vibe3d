@@ -2325,7 +2325,10 @@ final class GpuResourceOwner {
     bool beginPreparedDestroy(out PreparedGpuResourceToken token) nothrow @nogc {
         if (pending || target is null) return false;
         ++generation;
-        pendingDestroy = peekGpuMeshNames(*target);
+        pendingDestroy = GpuMeshNames(
+            target.faceVao, target.faceVbo, target.edgeVao, target.edgeVbo,
+            target.vertVao, target.vertVbo, target.faceIdVbo,
+            target.matIdVbo, target.weightColorVbo);
         pending = true;
         validated = false;
         token.ownerId = ownerId;
