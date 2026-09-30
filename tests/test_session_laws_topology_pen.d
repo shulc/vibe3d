@@ -18,7 +18,8 @@
 // `smooth-loop` (L13); the slices that make them hold add their cells.
 //
 // `VIBE3D_CELL=<id>` runs one cell alone (druntime stops a module at its first
-// failed assert); the last block pins the population when all cells run.
+// failed assert); the last block pins the population: 7 with no filter, 1 with
+// one (an unknown name must not pass by running nothing).
 //
 // Run via: ./run_test.d test_session_laws_topology_pen
 
@@ -152,11 +153,14 @@ unittest {
                   penHistoryLabels(), fx["rowsAfterArm"].integer, penArmed()));
     const PenMesh[string] at = ["a0": r.a0, "g1": g1];
     long hist = r.hp + 3;
+    size_t n;
     foreach (row; fx["undo"].array) {
         penCtrlZ("held-undo " ~ row["step"].str);
         expectState("held-undo", row["step"].str, at[row["equals"].str],
                     row["armed"].type == JSONType.true_, --hist);
+        ++n;
     }
+    assert(n == 2, format("held-undo: %d of the two undo steps ran", n));
     writeln("PASS held-undo");
 }
 
@@ -181,10 +185,13 @@ unittest {
                   penIdx(penMoved(g3, z1)), fx["moved"]["g3"], penHistoryLabels(), penCanRedo()));
     const PenMesh[string] at = ["a0": r.a0, "z1": z1];
     long hist = r.hp + 3;
+    size_t n;
     foreach (row; fx["undo"].array) {
         penCtrlZ("branch " ~ row["step"].str);
         expectState("branch", row["step"].str, at[row["equals"].str], true, --hist);
+        ++n;
     }
+    assert(n == 2, format("branch: %d of the two undo steps ran", n));
     writeln("PASS branch");
 }
 
@@ -374,6 +381,10 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     writeln("cells=", cellsRun);
-    if (environment.get("VIBE3D_CELL", "").length == 0)
+    const only = environment.get("VIBE3D_CELL", "");
+    if (only.length == 0)
         assert(cellsRun == 7, format("topology pen session laws: %d cells ran, expected 7", cellsRun));
+    else
+        assert(cellsRun == 1, format("topology pen session laws: VIBE3D_CELL=%s ran %d cells, expected 1 "
+                                     ~ "(an unknown name runs none)", only, cellsRun));
 }

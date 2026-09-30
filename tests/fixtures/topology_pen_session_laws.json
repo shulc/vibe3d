@@ -13,7 +13,7 @@
  "rig": {
   "file": "topology_pen_session_rig.v3d",
   "fg": "layer 0, primary: 4x4 vertex grid (3x3 quads) on the +Z cap of the unit sphere, vertex index j*4+i (i along +X, j along +Y)",
-  "bg": "layer 1, visible, not selected: UV sphere r=1, 32 segments x 16 rings, triangulated, outward winding",
+  "bg": "layer 1, visible, not selected: UV sphere r=1, 32 segments x 16 rings, quads with a triangle fan at each pole (482 vertices, 448 quads + 64 triangles), outward winding",
   "camera": {
    "projection": "perspective",
    "eye": [

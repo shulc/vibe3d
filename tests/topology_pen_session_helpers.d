@@ -294,15 +294,51 @@ PenRig penRigLoad(string rigPath) {
            format("pen rig: the primary is not the 16v/9f/24e grid with an empty history: %s, "
                   ~ "history %d", r.a0.toString, r.hp));
     assert(!penArmed(), "pen rig: a tool is armed before the arm");
+    penBackgroundLayerFloor();
     return r;
 }
 
-/// Arm the pen through the UI door; floor: armed. The activation ROW is a law
-/// (L1), asserted by the cells, not here.
+/// Floor on the loaded document: exactly the two rig layers, layer 0 the
+/// primary grid and layer 1 the capture's background sphere — 482 vertices,
+/// 512 polygons (448 quads + 64 pole triangles), visible and not selected, so
+/// it is a background. Without it the pen snaps to nothing and the cells still
+/// run (the counts below are the generator's, appendix A of card 8650).
+void penBackgroundLayerFloor() {
+    auto ls = getJson("/api/layers")["layers"].array;
+    assert(ls.length == 2, format("pen rig: %d layers loaded, expected 2 (grid + background)", ls.length));
+    auto fg = ls[0], bg = ls[1];
+    assert(fg["primary"].type == JSONType.true_ && fg["vertexCount"].integer == 16,
+           "pen rig: layer 0 is not the primary 16-vertex grid: " ~ fg.toString);
+    assert(bg["vertexCount"].integer == 482 && bg["faceCount"].integer == 512
+           && bg["visible"].type == JSONType.true_ && bg["selected"].type == JSONType.false_
+           && bg["background"].type == JSONType.true_,
+           "pen rig: layer 1 is not the visible, unselected 482v/512f background sphere: " ~ bg.toString);
+}
+
+/// Floor on the background's WINDING, readable only with the pen armed (its
+/// hover raycast is what hits the background, single-sided): hovering
+/// penEmptyBackgroundPx hits layer 1 on the NEAR hemisphere, at the sphere
+/// point (0, -0.6, 0.8) the pixel was projected from. An inward-wound sphere
+/// culls the near side and the ray hits the far one (z < 0), so the z term is
+/// the winding term. Restores no state: a hover writes no history.
+void penBackgroundHitFloor() {
+    penHover(penEmptyBackgroundPx());
+    auto s = getJson("/api/tool/state");
+    const p = [penNum(s["point"].array[0]), penNum(s["point"].array[1]), penNum(s["point"].array[2])];
+    assert(s["hit"].type == JSONType.true_ && s["layer"].integer == 1
+           && abs(p[0]) < 0.05 && abs(p[1] + 0.6) < 0.05 && abs(p[2] - 0.8) < 0.05,
+           format("pen rig: hovering the empty background does not hit the near side of layer 1 at "
+                  ~ "(0,-0.6,0.8): hit %s layer %d point %s", s["hit"].toString, s["layer"].integer, p));
+}
+
+/// Arm the pen through the UI door; floors: armed, and the background hit
+/// (penBackgroundHitFloor). The activation ROW is a law (L1), asserted by the
+/// cells, not here.
 void penArmUi(const PenRig rig) {
     penLineUi("tool.set " ~ kPenToolId ~ " on");
     assert(penArmed(), format("pen rig: the UI arm did not arm the pen: tool '%s', history %s",
                               penTool(), penHistoryLabels()));
+    penBackgroundHitFloor();
 }
 
 string penIdx(const long[] xs) { return "[" ~ xs.to!(string[]).join(",") ~ "]"; }
