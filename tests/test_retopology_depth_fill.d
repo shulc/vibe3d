@@ -255,13 +255,15 @@ private Rig buildRig() {
 }
 
 /// Move the pointer clear of every polygon so no rollover tint is drawn.
-private void parkPointer(ref Rig r) {
+private void parkPointer(ref Rig r) { pointerAt(r, [r.vp.width - 8, r.vp.height - 8]); }
+
+/// Move the pointer to cell pixel `p` (rolls over whatever is there).
+private void pointerAt(ref Rig r, int[2] p) {
     string log = format(`{"t":0,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,`
         ~ `"fovY":0.785398}`, r.vp.x, r.vp.y, r.vp.width, r.vp.height) ~ "\n";
     foreach (i; 0 .. 3)
         log ~= format(`{"t":%d,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,`
-            ~ `"state":0,"mod":0}`, 30 + i * 20, r.vp.x + r.vp.width - 8,
-            r.vp.y + r.vp.height - 8) ~ "\n";
+            ~ `"state":0,"mod":0}`, 30 + i * 20, r.vp.x + p[0], r.vp.y + p[1]) ~ "\n";
     auto pr = postJson("/api/play-events", log);
     assert(pr["status"].str == "success", "park: /api/play-events failed: " ~ pr.toString);
     waitPlaybackProcessed();
@@ -601,6 +603,61 @@ unittest {
         immutable string hw = hashCell();
         cmd("viewport.displayStyle", `{"value":"shaded"}`);
         assert(hs == hw, format("11: wireframe %s vs shaded %s under the mode", hw, hs));
+    }
+
+    // ---- 6h. the hovered face keeps its place in the reverse order ------------
+    // Polygon mode draws the faces in runs of equal hover state. Hover G alone
+    // first (a lit hover fill over the empty view: cH = 2 out - u, error 1.5),
+    // then D2 of the v2 stack: E2 is still drawn before the hovered D2, so the
+    // pixel is 0.5 cH(D2) + 0.25 c(E2) + 0.25 u, cH moved to D2 by the
+    // specular term. Error 0.5*1.5 + 0.25*1.5 + 0.25*0.5 + (0.5 + 0.25) = 2.0.
+    // A forward walk would give the single 0.5 cH + 0.5 u, ~15 LSB away.
+    {
+        cmdOk("select.typeFrom polygon");
+        settle();
+        pointerAt(r, at("G"));
+        immutable Px gh = probe1(at("G"));
+        assert(maxDiff(gh, o[iG]) >= 5,
+            format("6h premise: hovering G changed nothing (%s)", gh.c));
+        pointerAt(r, at("D2"));
+        immutable Px dh = probe1(at("D2"));
+        assert(maxDiff(dh, o[iV2]) >= 5,
+            format("6h premise: hovering D2 changed nothing (%s)", dh.c));
+        foreach (k; 0 .. 3) {
+            immutable double cH = 2.0 * gh.c[k] - u[iG].c[k] - S(fg[7].c) + S(fg[10].c);
+            immutable double pred = 0.5 * cH + 0.25 * cAt(k, fg[11]) + 0.25 * u[iV2].c[k];
+            assert(abs(dh.c[k] - pred) <= 2.0,
+                format("6h: hovered D2 over E2 channel %d reads %d, predicted %.2f "
+                       ~ "(E2 drawn first; forward order gives %.2f)", k, dh.c[k], pred,
+                       0.5 * cH + 0.5 * u[iV2].c[k]));
+        }
+        parkPointer(r);
+    }
+
+    // ---- 6r. the reverse order follows a LAYOUT change ------------------------
+    // Hiding F keeps its face slot with no triangles, so every later face's
+    // vertices move up in the face buffer: an index list kept from before
+    // would draw the wrong ranges. The stacks must read exactly as before.
+    {
+        cmdOk(commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
+        settle();
+        cmdOk(commandBody("mesh.hide"));
+        settle();
+        parkPointer(r);
+        immutable faces = getJson("/api/model")["faces"].array.length;
+        assert(faces == fg.length, "6r: hiding must keep the face slots");
+        auto h = probe([at("F"), at("D1"), at("D2"), at("S0"), at("G")]);
+        assert(maxDiff(h[0], u[iF]) <= 1, "6r premise: F is hidden (reads its under value)");
+        foreach (j, i; [iV1, iV2, iS, iG])
+            assert(maxDiff(h[j + 1], o[i]) <= 1,
+                format("6r: probe %d reads %s after the layout change, %s before",
+                       i, h[j + 1].c, o[i].c));
+        cmdOk(commandBody("mesh.unhideAll"));
+        settle();
+        cmdOk(commandBody("mesh.select", `{"mode":"polygons","indices":[]}`));
+        settle();
+        parkPointer(r);
+        assert(maxDiff(probe1(at("G")), o[iG]) <= 1, "6r: the rig did not come back");
     }
 
     // ---- 9. perspective: facing per eye; B = A again -------------------------

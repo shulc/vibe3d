@@ -131,3 +131,27 @@ unittest // plan -> FacePass: mode off is FacePass.init; the mode and a mirror a
     assert(!facePassFor(on, tm).mirrored,
         "a rotation with positive scales is not a mirror");
 }
+
+unittest // a face-layout build moves the layout generation, on the prepared path too
+{
+    import mesh : makeCube;
+    import mesh_gpu : GpuMesh, GpuUploadOwner, PreparedGpuUploadToken,
+                      ValidatedGpuUploadToken;
+    GpuMesh gpu;
+    gpu.faceLayoutGen = 3;
+    auto owner = GpuUploadOwner.fakeForTest(&gpu);
+    auto cube = makeCube();
+    PreparedGpuUploadToken prepared;
+    assert(owner.beginPreparedUpload(cube, null, null, null, prepared),
+        "prepared upload refused");
+    assert(gpu.faceLayoutGen == 3, "a PREPARED layout must not touch the live header");
+    ValidatedGpuUploadToken validated;
+    assert(owner.validatePreparedUpload(prepared, 7, 11, validated),
+        "prepared upload validation refused");
+    owner.installPreparedUpload(validated);
+    assert(gpu.faceTriStart.length == cube.faces.length,
+        "population: the install did not land the new layout");
+    assert(gpu.faceLayoutGen == 4,
+        format("the installed layout must carry a new generation (4), got %s",
+               gpu.faceLayoutGen));
+}
