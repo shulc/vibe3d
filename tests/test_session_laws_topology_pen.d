@@ -293,7 +293,7 @@ unittest {
     ];
     const r = rig();
     penArmUi(r);
-    size_t n, counted;
+    size_t n, counted, redone;
     foreach (g; fx["gestures"].array) {
         const id = g["id"].str;
         if (id !in spec) continue;
@@ -321,11 +321,14 @@ unittest {
             expectState("chords", id ~ "_r", m, true, r.hp + 2);
             penCtrlZ("chords " ~ id ~ " Ctrl+Z again");
             expectState("chords", id ~ "_rz", r.a0, true, r.hp + 1);
+            ++redone;
         }
         ++n;
     }
-    assert(n == 5 && counted == 4,
-           format("chords: %d chords ran (expected 5), %d with counts (expected 4)", n, counted));
+    // remove is the one chord here the fixture marks redo-bit-exact.
+    assert(n == 5 && counted == 4 && redone == 1,
+           format("chords: %d chords ran (expected 5), %d with counts (expected 4), %d redone "
+                  ~ "(expected 1)", n, counted, redone));
     penCtrlZ("chords final Ctrl+Z");
     expectState("chords", "arm_z", r.a0, fx["finalUndoArmed"].type == JSONType.true_, r.hp);
     writeln("PASS chords");
