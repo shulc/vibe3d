@@ -586,11 +586,12 @@ unittest {
 
     t.removeFaceAt(0);   // remove F0
 
-    assert(m.faces.length == 1 && m.vertices.length == 4 && m.edges.length == 4,
-        "F0's orphans (vertices 0, 3; edges 01, 23, 30) must go with it: 4v/4e/1f");
-    assert(m.vertices == [Vec3(1, 0, 0), Vec3(1, 0, 1), Vec3(2, 0, 0), Vec3(2, 0, 1)]
-        && m.faces[0] == [0u, 2u, 3u, 1u],
-        "F1 must survive, renumbered onto the survivors 1, 2, 4, 5 in order");
+    assert(m.faces.length == 1 && m.faces[0] == [0u, 2u, 3u, 1u],
+        "F1 must survive, renumbered onto the survivors 1, 2, 4, 5");
+    assert(m.edges.length == 4,
+        "F0's orphaned edges (01, 23, 30) must go with it, F1's four stay");
+    assert(m.vertices == [Vec3(1, 0, 0), Vec3(1, 0, 1), Vec3(2, 0, 0), Vec3(2, 0, 1)],
+        "F0's orphaned vertices 0 and 3 must go, the survivors keep their order");
     assert(history.canUndo(), "a real removal must record one undo entry");
 }
 
@@ -634,8 +635,8 @@ unittest {
 
     assert(m.faces.length == 3, "exactly one face must be removed");
     assert(facePos(m, 0) == others, "the other 3 faces must survive intact");
-    assert(m.edges.length == 10 && m.vertices.length == 8,
-        "the corner's orphaned vertex and its 2 edges must go: 8v/10e");
+    assert(m.edges.length == 10, "the corner's 2 orphaned edges must go: 10 edges");
+    assert(m.vertices.length == 8, "the corner's orphaned vertex must go: 8 vertices");
     assert(history.canUndo(), "a real removal must record one undo entry");
 }
 
