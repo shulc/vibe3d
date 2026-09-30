@@ -103,6 +103,7 @@ ToolPreset[] loadToolPresets(string path) {
             const value = node["historyClose"].as!string;
             switch (value) {
                 case "consolidate": p.runCloseMode = RunCloseMode.consolidate; break;
+                case "groupRedo": p.runCloseMode = RunCloseMode.groupRedo; break;
                 case "groupUndo": p.runCloseMode = RunCloseMode.groupUndo; break;
                 case "stepUndo": p.runCloseMode = RunCloseMode.stepUndo; break;
                 default: throw new Exception(format(

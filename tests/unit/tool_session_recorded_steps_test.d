@@ -282,18 +282,21 @@ unittest { // 8492: a silent arm is carried by its first recorded step.
 }
 
 unittest { // A preset based on rotate must not inherit the bare door's law.
-    size_t grouped, defaulted;
+    size_t grouped, restored, defaulted;
     foreach (p; loadToolPresets("config/tool_presets.yaml")) {
         if (p.id == "TransformMove") {
             assert(p.runCloseMode == RunCloseMode.groupUndo);
             ++grouped;
+        } else if (p.id == "TransformRotate") {
+            assert(p.runCloseMode == RunCloseMode.groupRedo);
+            ++restored;
         } else {
             assert(p.runCloseMode == RunCloseMode.consolidate,
                    "an unmeasured preset inherited the bare rotate close law");
             ++defaulted;
         }
     }
-    assert(grouped == 1 && defaulted > 0);
+    assert(grouped == 1 && restored == 1 && defaulted > 0);
 }
 
 unittest {
@@ -438,4 +441,39 @@ unittest {
     assert(readText("source/http_providers.d").indexOf(
             "modal(\"history.redo.terminal\", guardModalState.historyTerminalOpen);") >= 0,
            "terminal Redo modal lost its independent input-state witness");
+}
+
+
+
+unittest { // 8530: group navigation and each independent ownership boundary.
+    foreach (boundary; 0 .. 4) {
+        auto tool = new RecordedTool;
+        Tool active = tool;
+        auto history = new CommandHistory;
+        EditSession session;
+        session = new EditSession(() => active, history, () { active = null; },
+            (string id) { active = tool; session.noteArm(id, 999); });
+        session.noteArm("policy-selected", 8530);
+        void record(ulong run, ulong token, int before, int after) {
+            auto edit = new ValueEdit(&tool.value, before, after);
+            edit.markSession(token);
+            assert(edit.apply()); history.recordInSession(edit, run);
+        }
+        record(1, boundary == 1 ? 8531 : 8530, 0, 7);
+        assert(history.closeRunVisible(1, boundary == 2 ? "other-owner" : "policy-selected",
+            boundary == 3 ? RunCloseMode.groupUndo : RunCloseMode.groupRedo) == 1);
+        ulong secondRun = boundary == 0 ? 2 : 1;
+        record(secondRun, 8530, 7, 13); record(secondRun, 8530, 13, 19);
+        assert(history.closeRunVisible(secondRun, "policy-selected", RunCloseMode.groupRedo) == 2);
+        assert(history.undoEntries().length == 3);
+        active = null;
+        assert(session.navigate(true) && tool.value == 7 && active is tool,
+            format("8530 closed group crossed ownership boundary %s", boundary));
+        assert(history.undoEntries().length == 1 && history.redoEntries().length == 2);
+        assert(session.navigate(false) && tool.value == 19 && active is tool,
+            "8530 one Redo must replay both retained rows");
+        assert(history.undoEntries().length == 3 && history.redoEntries().length == 0);
+        assert(session.sessionStateJson()["token"].integer == 8530);
+        assert(!session.terminalRedoRequested(), "8530 retained group must not request discard modal");
+    }
 }

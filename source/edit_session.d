@@ -872,15 +872,13 @@ private struct ToolSession {
         if (tool_() is null && ueClosed.length &&
             (ueClosed[$ - 1].flags & HistoryFlags.ClosedRun)) {
             const stepUndo = (ueClosed[$ - 1].flags & HistoryFlags.ClosedStep) != 0;
-            const runId = ueClosed[$ - 1].runId;
+            const keepRedo = stepUndo ||
+                (ueClosed[$ - 1].flags & HistoryFlags.ClosedGroupRedo) != 0;
             const token = ueClosed[$ - 1].cmd.sessionToken();
             const ownerId = ueClosed[$ - 1].closedOwnerId;
             size_t count;
             foreach_reverse (entry; ueClosed) {
-                if (!(entry.flags & HistoryFlags.ClosedRun) ||
-                    entry.runId != runId ||
-                    entry.cmd.sessionToken() != token ||
-                    entry.closedOwnerId != ownerId) break;
+                if (!entry.sameClosedRun(ueClosed[$ - 1])) break;
                 ++count;
                 if (stepUndo) break;
             }
@@ -888,13 +886,13 @@ private struct ToolSession {
                 return false;
             foreach (_; 0 .. count)
                 if (!history_.undo()) return false;
-            if (!stepUndo) history_.invalidateRedo();
+            if (!keepRedo) history_.invalidateRedo();
             history_.replayWithoutRecord(() => rearmClosedTool_(ownerId));
             // The replay arm continues this closed run's session even when
             // maxDepth has evicted its original activation row. Keep its token
             // across the next gesture so a C branch can close and undo too.
             adoptToken_(ownerId, token);
-            if (!stepUndo) {
+            if (!keepRedo) {
                 terminalClosedRunRow_ = undoTop_();
                 terminalClosedRunDepth_ = history_.undoEntries().length;
                 terminalClosedRunArmed_ = true;
@@ -1021,23 +1019,31 @@ private struct ToolSession {
     }
 
     private bool redoClosedRecordedStep_() {
-        // A recorded first step can own the arm without an activation row.
-        // After its Undo the tool is absent, and this tagged step is the
-        // authoritative re-arm identity for Redo.
-        if (tool_() is null && rearmClosedTool_ !is null &&
-            history_.redoEntries().length) {
-            import command_history : HistoryFlags;
-            const e = history_.redoEntries()[0];
-            if ((e.flags & HistoryFlags.ClosedStep) && e.closedOwnerId.length) {
-                const ownerId = e.closedOwnerId.idup;
-                const token = e.cmd.sessionToken();
-                if (!history_.redo()) return false;
-                history_.replayWithoutRecord(() => rearmClosedTool_(ownerId));
-                adoptToken_(ownerId, token);
-                return true;
+        // Task 8530: closed rows retain their navigation policy and owner.
+        // A step replays one row; a retained group replays its contiguous run.
+        // Both restore through the same activation/token ownership path.
+        const entries = history_.redoEntries();
+        if (!entries.length || rearmClosedTool_ is null) return false;
+        const first = entries[0];
+        const grouped = (first.flags & HistoryFlags.ClosedGroupRedo) != 0;
+        if ((!grouped && (tool_() !is null ||
+                !(first.flags & HistoryFlags.ClosedStep))) ||
+            first.closedOwnerId.length == 0) return false;
+        const ownerId = first.closedOwnerId.idup;
+        const token = first.cmd.sessionToken();
+        size_t count = 1;
+        if (grouped) {
+            count = 0;
+            foreach (entry; entries) {
+                if (!entry.sameClosedRun(first)) break;
+                ++count;
             }
         }
-        return false;
+        foreach (_; 0 .. count)
+            if (!history_.redo()) return false;
+        history_.replayWithoutRecord(() => rearmClosedTool_(ownerId));
+        adoptToken_(ownerId, token);
+        return true;
     }
 
     bool redo() {

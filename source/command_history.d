@@ -54,7 +54,7 @@ enum UndoState { Invalid, Active, Suspend }
 /// How a transform producer exposes a completed run after its tool closes.
 /// The commands remain the single owner of finished geometry in both visible
 /// modes; ToolSession decides how many linked rows one outside Undo traverses.
-enum RunCloseMode : ubyte { consolidate, groupUndo, stepUndo }
+enum RunCloseMode : ubyte { consolidate, groupUndo, stepUndo, groupRedo }
 
 /// Per-entry status flags (Phase 7 of the history-panel design doc).
 /// Drives the history panel's per-row visual cues: badge column shows
@@ -119,6 +119,7 @@ enum HistoryFlags : uint {
                              // by /api/history as the named step that it is.
     ClosedRun = 1 << 11, // A completed gesture row retained for a closed tool run.
                          // The runId groups its contiguous rows for outside navigation.
+    ClosedGroupRedo = 1 << 13, // A closed group retains all linked rows for one Redo.
     ClosedStep = 1 << 12, // A closed run whose outside navigation moves one
                           // completed gesture and preserves its redo branch.
 }
@@ -327,6 +328,17 @@ struct HistoryEntry {
                             //  only for Refire tails).
     string closedOwnerId;  // Owner of a retained closed run. Travels with each
                            // row so maxDepth eviction cannot orphan the tail.
+
+    // Task 8530: both navigation directions group only rows with the same
+    // owner, token, run and close law. History commands remain the geometry owner.
+    bool sameClosedRun(const ref HistoryEntry other) const {
+        enum mask = HistoryFlags.ClosedRun | HistoryFlags.ClosedStep |
+                    HistoryFlags.ClosedGroupRedo;
+        return (flags & HistoryFlags.ClosedRun) != 0 &&
+            (flags & mask) == (other.flags & mask) &&
+            runId == other.runId && cmd.sessionToken() == other.cmd.sessionToken() &&
+            closedOwnerId == other.closedOwnerId;
+    }
 }
 
 /// Map a command's CmdFlags to the per-entry HistoryFlags recorded on
@@ -1663,6 +1675,8 @@ final class CommandHistory {
             undoStack[i].flags &=
                 ~cast(uint)(HistoryFlags.InSession | HistoryFlags.Refire);
             undoStack[i].flags |= HistoryFlags.ClosedRun;
+            if (mode == RunCloseMode.groupRedo)
+                undoStack[i].flags |= HistoryFlags.ClosedGroupRedo;
             if (mode == RunCloseMode.stepUndo)
                 undoStack[i].flags |= HistoryFlags.ClosedStep;
             undoStack[i].closedOwnerId = ownerId.idup;

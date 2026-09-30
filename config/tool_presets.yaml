@@ -252,6 +252,7 @@ presets:
 
   - id: TransformRotate
     base: xfrm.transform
+    historyClose: groupRedo
     attrs:
       T: "false"
       R: "true"
