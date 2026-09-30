@@ -47,6 +47,10 @@ unittest {
     assert(abs(state.offset - .015) < 1e-10, "successive distance updates without fractional remainder");
     assert(advanceScaleInput(state, double.nan, policy) == 1, "nonfinite input is identity");
     assert(abs(state.offset - .015) < 1e-10, "invalid input preserves finite accumulator");
+    ScaleCentreInputState enormous;
+    enormous.previousDistance = -double.max;
+    assert(advanceScaleInput(enormous, double.max, policy) == 1,
+        "overflowed successive delta preserves finite sample");
     assert(signedScaleDistance(Vec3(0,0,0), Vec3(1,0,0), 72) == 0, "zero vector distance");
     assert(signedScaleDistance(Vec3(-3,4,0), Vec3(1,0,0), 10) == -.5, "signed vector length");
     assert(signedScaleDistance(Vec3(0,-5,0), Vec3(1,0,0), 10) == .5, "zero sign dot is positive");

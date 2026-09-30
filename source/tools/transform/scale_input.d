@@ -51,7 +51,6 @@ Vec3 evaluateScaleSample(Vec3 start, Vec3 sample,
     if (composition == ScaleSampleComposition.ratio)
         return Vec3(start.x * sample.x, start.y * sample.y, start.z * sample.z);
     float apply(float held, float value) {
-        if (!isFinite(value)) return held;
         const total = held + (value - 1);
         if (!isFinite(total)) return held;
         return negativeEnabled || total >= 0 ? total : 0;
