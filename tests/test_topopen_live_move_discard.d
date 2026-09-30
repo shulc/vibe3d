@@ -63,8 +63,9 @@ double dist(double[3] a, double[3] b) {
 }
 
 /// Background sphere, one placed vertex on the edit layer, then a HELD Move
-/// drag of it: down + motion, no up. Returns with the drag live.
-Rig holdMoveDrag() {
+/// drag of it: down + motion, no up. Returns with the drag live. With
+/// `motion` false the press is held on the vertex and never moves.
+Rig holdMoveDrag(bool motion = true) {
     Rig r;
     setupSphereBg(R, LON, LAT);
     postJson("/api/camera", format(
@@ -93,6 +94,13 @@ Rig holdMoveDrag() {
     postJson("/api/play-events", buildDragDownLog(r.c.vpX, r.c.vpY,
         r.c.width, r.c.height, r.cx, r.cy));
     waitPlayerIdle();
+    if (!motion) {
+        auto s0 = toolState();
+        assert(s0["moveArmed"].type == JSONType.true_ &&
+               s0["moveDirty"].type == JSONType.false_,
+            "rig: a held press on the vertex must arm a clean Move: " ~ s0.toString);
+        return r;
+    }
     postJson("/api/play-events", buildDragMotionLog(r.c.vpX, r.c.vpY,
         r.c.width, r.c.height, r.cx, r.cy, r.nx, r.ny, 16));
     waitPlayerIdle();
@@ -138,24 +146,33 @@ unittest {
         "tool.reset must leave the pen armed: " ~ toolState().toString);
 }
 
-// Cell 2 (load-mid-drag): a document replace during a held Move drag cancels
-// it through the disarm seam instead of recording it at the drop.
-unittest {
+string loadSeed() {
     const path = format("/var/tmp/vibe3d_8660_load_seed_%d.v3d", thisProcessID);
     if (exists(path)) remove(path);
-    scope(exit) if (exists(path)) remove(path);
     postJson("/api/command", commandBody("scene.reset"));
     auto sv = postJson("/api/command",
         `{"id":"file.save","params":{"path":"` ~ path ~ `"}}`);
     assert(sv["status"].str == "ok" && exists(path),
         "file.save did not create the load seed: " ~ sv.toString);
+    return path;
+}
+
+void load(string path) {
+    auto ld = postJson("/api/command",
+        `{"id":"file.load","params":{"path":"` ~ path ~ `"}}`);
+    assert(ld["status"].str == "ok", "file.load failed: " ~ ld.toString);
+}
+
+// Cell 2 (load-mid-drag): a document replace during a held Move drag cancels
+// it through the disarm seam instead of recording it at the drop.
+unittest {
+    const path = loadSeed();
+    scope(exit) if (exists(path)) remove(path);
 
     auto r = holdMoveDrag();
     const crossings0 = getJson("/api/tool/disarm")["crossings"].integer;
 
-    auto ld = postJson("/api/command",
-        `{"id":"file.load","params":{"path":"` ~ path ~ `"}}`);
-    assert(ld["status"].str == "ok", "file.load failed: " ~ ld.toString);
+    load(path);
 
     auto d = getJson("/api/tool/disarm");
     assert(d["crossings"].integer == crossings0 + 1 &&
@@ -176,4 +193,26 @@ unittest {
     waitPlayerIdle();
     assert(undoLen() == afterLoad && !undoLabels().canFind(kMoveLabel), format(
         "the release after a mid-drag load must record nothing: %s", undoLabels()));
+}
+
+// Cell 3: a press held on the vertex that never moved is NOT an uncommitted
+// edit — the hook answers the commit guard (armed AND written), so the disarm
+// seam finds nothing to cancel.
+unittest {
+    const path = loadSeed();
+    scope(exit) if (exists(path)) remove(path);
+
+    holdMoveDrag(false);
+    const crossings0 = getJson("/api/tool/disarm")["crossings"].integer;
+    load(path);
+
+    auto d = getJson("/api/tool/disarm");
+    assert(d["crossings"].integer == crossings0 + 1 &&
+           d["hadTool"].type == JSONType.true_,
+        "the load must cross the disarm seam once with the pen armed: "
+        ~ d.toString);
+    assert(d["cancelSteps"].integer == 0,
+        "a held press that wrote nothing is no uncommitted edit: " ~ d.toString);
+    assert(!undoLabels().canFind(kMoveLabel), format(
+        "a load over an unmoved press must record no Move: %s", undoLabels()));
 }
