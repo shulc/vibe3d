@@ -155,7 +155,7 @@ unittest {
         "default typed factory resets inherited alternate policy");
     foreach (bad; ["normalization: invented", "accumulation: invented", "composition: invented",
                    "referencePixels: 0", "referenceScale: -1", "smallScale: 0", "ticksPerUnit: 0",
-                   "factorPerTick: -1", "invented: 1"]) {
+                   "factorPerTick: -1", "referencePixels: .nan", "factorPerTick: .inf", "invented: 1"]) {
         write(path, "presets:\n  - id: bad\n    base: scale\n    scaleInput:\n      " ~ bad ~ "\n");
         bool refused;
         try { loadToolPresets(path); } catch (Exception e) { refused = true; }
