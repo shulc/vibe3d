@@ -17,6 +17,7 @@ import tools.deform.bend : BendTool;
 import tools.deform.push : PushTool;
 import tools.slice.edge_slide : EdgeSlideTool;
 import tools.transform.xfrm_transform : XfrmTransformTool;
+import tools.transform.rotate : OffGizmoRotateInput;
 
 /// Narrow collaborators owned by transform-family registration. Task 6506;
 /// the exact roster and access paths are pinned by the boundary census.
@@ -86,10 +87,13 @@ private struct TransformFactoryDefaults {
     RunCloseMode runCloseMode;
     string id;
     bool activationHistoryRow = true;
+    bool recordedFirstUndoEndsTool = false;
+    OffGizmoRotateInput offGizmoRotateInput = OffGizmoRotateInput.arcball;
 
     enum move      = TransformFactoryDefaults(true,  false, false, 0, "full");
     enum rotate    = TransformFactoryDefaults(false, true,  false, 1, "full",
-                                               RunCloseMode.stepUndo, "rotate", false);
+                                               RunCloseMode.stepUndo, "rotate", false, true,
+                                               OffGizmoRotateInput.viewAxisHaul);
     enum scale     = TransformFactoryDefaults(false, false, true,  2, "full");
     // Equal to the XfrmTransformTool constructor defaults by contract, not by
     // omission: presets on this base that set no handle fields inherit it.
@@ -110,6 +114,8 @@ private XfrmTransformTool buildUnifiedTransform(LiveSessionRole owner,
     t.handlePresentation = defaults.handlePresentation;
     t.runCloseMode = defaults.runCloseMode;
     t.activationHistoryRow = defaults.activationHistoryRow;
+    t.recordedFirstUndoEndsTool = defaults.recordedFirstUndoEndsTool;
+    t.offGizmoRotateInput = defaults.offGizmoRotateInput;
     if (defaults.runCloseMode != RunCloseMode.consolidate)
         t.closedRunOwnerId = defaults.id;
     t.setUndoBindings(deps.history(), deps.vertexEditFactory(),

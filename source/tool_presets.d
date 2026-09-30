@@ -7,6 +7,7 @@ import command_history : RunCloseMode;
 import registry         : Registry, ToolFactory, typedToolFactory;
 import tool             : Tool, ToolFlag;
 import tools.transform.xfrm_transform : XfrmTransformTool;
+import tools.transform.rotate : OffGizmoRotateInput;
 import tools.deform.push : PushTool;
 import tools.deform.smooth_shift_tool : SmoothShiftTool;
 import toolpipe.pipeline : g_pipeCtx;
@@ -348,6 +349,8 @@ void registerToolPresets(ref Registry reg, ToolPreset[] presets) {
                 static if (is(T == XfrmTransformTool)) {
                     t.runCloseMode = presetCopy.runCloseMode;
                     t.activationHistoryRow = true;
+                    t.recordedFirstUndoEndsTool = false;
+                    t.offGizmoRotateInput = OffGizmoRotateInput.arcball;
                     t.closedRunOwnerId = presetCopy.runCloseMode ==
                         RunCloseMode.consolidate ? "" : presetCopy.id;
                 }

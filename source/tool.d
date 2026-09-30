@@ -336,6 +336,9 @@ struct ToolSessionPolicy {
     /// ToolSession tags and navigates those rows; it stores no second completed
     /// geometry or attribute stack for this producer.
     bool historyRecordedSteps;
+    /// Undoing this session's first recorded geometry step ends the live tool;
+    /// the step's redo re-arms it without a separate activation row.
+    bool recordedFirstUndoEndsTool;
     /// A live preview may itself contain in-session History rows. Undo those
     /// rows before cancelling the preview (Box's recorded parameter ladder).
     bool previewHistoryLadder;

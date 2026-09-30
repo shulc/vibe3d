@@ -1014,8 +1014,29 @@ private struct ToolSession {
         return ok;
     }
 
+    private bool redoClosedRecordedStep_() {
+        // A recorded first step can own the arm without an activation row.
+        // After its Undo the tool is absent, and this tagged step is the
+        // authoritative re-arm identity for Redo.
+        if (tool_() is null && rearmClosedTool_ !is null &&
+            history_.redoEntries().length) {
+            import command_history : HistoryFlags;
+            const e = history_.redoEntries()[0];
+            if ((e.flags & HistoryFlags.ClosedStep) && e.closedOwnerId.length) {
+                const ownerId = e.closedOwnerId.idup;
+                const token = e.cmd.sessionToken();
+                if (!history_.redo()) return false;
+                history_.replayWithoutRecord(() => rearmClosedTool_(ownerId));
+                adoptToken_(ownerId, token);
+                return true;
+            }
+        }
+        return false;
+    }
+
     bool redo() {
         terminalRedoRequested_ = false;
+        if (redoClosedRecordedStep_()) return true;
         if (history_.redoEntries().length == 0 &&
             terminalClosedRunArmed_ &&
             history_.undoEntries().length == terminalClosedRunDepth_ &&
@@ -1627,8 +1648,16 @@ private struct ToolSession {
             (history_.redoEntries().length ? history_.redoEntries()[0].cmd : null);
         if (row is null || row.sessionToken() != token_ ||
             cast(const ToolActivationCommand)row !is null) return false;
+        const bool endsTool = isUndo && t.sessionPolicy().recordedFirstUndoEndsTool
+            && recordedHistoryDepth_(false) == 1;
+        if (endsTool && !history_.markRecordedFirstStep(token_, armedId_))
+            return false;
         const moved = isUndo ? history_.undo() : history_.redo();
         if (moved) {
+            if (endsTool) {
+                dropTool_();
+                return true;
+            }
             auto current = tool_();
             if (current !is null) current.resyncSession();
         }

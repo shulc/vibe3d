@@ -26,6 +26,7 @@ import seltype : SelType, SelMode;
 import session_owner : Session;
 import tests.unit.census_symbols : blankNonCode, countOccurrences;
 import tools.transform.xfrm_transform : XfrmTransformTool;
+import tools.transform.rotate : OffGizmoRotateInput;
 import view : View;
 import std.conv : to;
 import std.file : readText;
@@ -130,6 +131,11 @@ unittest {
             ~ " " ~ t.handleFamily.to!string ~ " " ~ t.handlePresentation);
         assert(t.sessionPolicy().activationRow == (w.key != "rotate"),
             "8491 activation-row policy must come from the factory recipe: " ~ w.key);
+        assert(t.sessionPolicy().recordedFirstUndoEndsTool == (w.key == "rotate"),
+            "8492 first recorded Undo owner policy must come from the factory recipe: " ~ w.key);
+        assert(t.offGizmoRotateInput == (w.key == "rotate"
+                ? OffGizmoRotateInput.viewAxisHaul : OffGizmoRotateInput.arcball),
+            "8492 off-gizmo Rotate input must come from the factory recipe: " ~ w.key);
     }
 
     Mesh m = makeCube(); GpuMesh g; EditMode mode;

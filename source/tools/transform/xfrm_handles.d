@@ -297,13 +297,14 @@ tryRotateBank:
                 resetRun();
                 setSharedGizmoPose(idleHandleCentre(vts), vts);
             }
+            rotateSub.offGizmoInput = offGizmoRotateInput;
             if (!rotateSub.onMouseButtonDownWithResolvedAxis(e, vts,
                                                              resolvedRotateAxis,
                                                              &commitBeforeRotateRelocate,
                                                              &restartBeforePinnedRotateHaul))
                 goto tryScaleBank;
-            // An off-gizmo press now ALSO starts a drag — the screen-space
-            // arcball — so it no longer falls through to the else-branch's run
+            // An off-gizmo press now ALSO starts the factory-selected drag,
+            // so it no longer falls through to the else-branch's run
             // boundary below. That boundary still has to happen: an off-gizmo
             // press splits the undo run in every action-centre mode, and only
             // the PIN handling differs between a relocate (Auto/None/Screen —
@@ -320,7 +321,7 @@ tryRotateBank:
                 // A relocate closes the wrapper edit through its callback
                 // before publishing the moved user pin. A pinned press moves
                 // no pin; its callback already closed and reset the run before
-                // the arcball projected handler.center.
+                // the input law read handler.center.
                 if (rotWasPinnedOffGizmo)
                     assert(restartedPinnedRotate,
                         "pinned Rotate haul must restart before it projects its centre");
@@ -334,9 +335,9 @@ tryRotateBank:
                 }
             }
             // Principal-axis ring (0/1/2), view-ring (3) AND the off-gizmo
-            // arcball (which arms as 3) → wrapper owns geometry via applyTRS
+            // input law (which arms as 3) → wrapper owns geometry via applyTRS
             // (capture the drag state). Principal axes drain into headlessRotate
-            // (Euler); the view-ring and the arcball drain into the arbitrary-
+            // (Euler); the view-ring and off-gizmo law drain into the arbitrary-
             // world-axis fold. A press that starts no drag at all (dragAxis == -1
             // — a pivot that does not project) opens no session.
             if (rotateSub.dragAxis >= 0 && rotateSub.dragAxis <= 3) {

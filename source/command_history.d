@@ -1634,6 +1634,27 @@ final class CommandHistory {
                            RunCloseMode mode = RunCloseMode.groupUndo) {
         scope(exit) _runOpen = false;
         if (ownerId.length == 0 || mode == RunCloseMode.consolidate) return 0;
+        // Stepwise sessions can cross run boundaries (a click that relocates
+        // the pivot closes the previous geometry run). Their completed rows
+        // still belong to the same tool session and must all remain visible
+        // for one-step outside navigation.
+        if (mode == RunCloseMode.stepUndo && undoStack.length &&
+            (undoStack[$ - 1].flags & HistoryFlags.InSession) &&
+            undoStack[$ - 1].cmd.sessionToken() != 0) {
+            const token = undoStack[$ - 1].cmd.sessionToken();
+            size_t start = undoStack.length;
+            while (start > 0 &&
+                   undoStack[start - 1].cmd.sessionToken() == token &&
+                   !(undoStack[start - 1].flags & HistoryFlags.ToolLifecycle))
+                --start;
+            foreach (i; start .. undoStack.length) {
+                undoStack[i].flags &=
+                    ~cast(uint)(HistoryFlags.InSession | HistoryFlags.Refire);
+                undoStack[i].flags |= HistoryFlags.ClosedRun | HistoryFlags.ClosedStep;
+                undoStack[i].closedOwnerId = ownerId.idup;
+            }
+            return undoStack.length - start;
+        }
         size_t start = undoStack.length;
         while (start > 0 &&
                (undoStack[start - 1].flags & HistoryFlags.InSession) &&
@@ -1647,6 +1668,19 @@ final class CommandHistory {
             undoStack[i].closedOwnerId = ownerId.idup;
         }
         return undoStack.length - start;
+    }
+
+    /// Make the first completed recorded step a redo re-arm anchor before its
+    /// live Undo removes it. The caller supplies the active session token.
+    bool markRecordedFirstStep(ulong token, string ownerId) {
+        if (token == 0 || ownerId.length == 0 || undoStack.length == 0 ||
+            undoStack[$ - 1].cmd.sessionToken() != token ||
+            (undoStack[$ - 1].flags & HistoryFlags.ToolLifecycle)) return false;
+        auto e = &undoStack[$ - 1];
+        e.flags &= ~cast(uint)(HistoryFlags.InSession | HistoryFlags.Refire);
+        e.flags |= HistoryFlags.ClosedRun | HistoryFlags.ClosedStep;
+        e.closedOwnerId = ownerId.idup;
+        return true;
     }
 
     /// Replace the current matching in-session tail with `cmd` as a normal

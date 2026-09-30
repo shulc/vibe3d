@@ -119,7 +119,7 @@ import tool            : Tool, ToolFlag, ToolSessionPolicy, CommandClose;
 import edit_session    : LiveEvalClient, ParameterChangeBatch,
                          ParameterChangeSource, SlotActivationClient;
 import tools.transform.move      : MoveTool;
-import tools.transform.rotate    : RotateTool;
+import tools.transform.rotate    : RotateTool, OffGizmoRotateInput;
 import tools.transform.scale     : ScaleTool;
 import tools.transform.scale     : PreparedScaleEmbeddedDeactivateImage;
 import prepared_record_context : PreparedToolDoorClient,
@@ -705,6 +705,8 @@ public:
     // candidate. A bare actor may arm without consuming an Undo slot; presets
     // can retain the ordinary lifecycle row independently.
     bool activationHistoryRow = true;
+    bool recordedFirstUndoEndsTool = false;
+    OffGizmoRotateInput offGizmoRotateInput = OffGizmoRotateInput.arcball;
     final Mesh* preparedMeshForUpdate() const { return mesh; }
     // T/R/S flags — `T integer 0/1` etc. in the preset config.
     // Default to all enabled (the bare `Transform` preset that shows
@@ -2978,6 +2980,7 @@ public:
             sessionSteps: true, historyRecordedSteps: true };
         ToolSessionPolicy policy = defaults;
         policy.activationRow = activationHistoryRow;
+        policy.recordedFirstUndoEndsTool = recordedFirstUndoEndsTool;
         return policy;
     }
 

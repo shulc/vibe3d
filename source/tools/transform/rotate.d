@@ -45,6 +45,26 @@ import prepared_transform_product_activation : PreparedTransformProductActivatio
 import prepared_rotate_update : PreparedRotateUpdateOwner;
 import prepared_xfrm_refire_state : PreparedXfrmRefireStateImage;
 
+// The input law for a press away from the rotation rings. The factory chooses
+// the law; neither the session nor the history layer needs to know the tool ID.
+enum OffGizmoRotateInput : ubyte { arcball, viewAxisHaul }
+
+private float advanceViewAxisHaulAngle(float angle, float pressX, float currentX)
+        pure nothrow @nogc {
+    return angle + (currentX - pressX) * (PI / 1800.0f);
+}
+
+unittest {
+    import std.math : abs;
+    float angle = 0;
+    foreach (x; [106.0f, 116.0f, 124.0f, 124.0f])
+        angle = advanceViewAxisHaulAngle(angle, 100, x);
+    assert(abs(angle * (180.0f / PI) - 7.0f) < 1e-5f,
+        "8492 auto-haul must add each displacement from press, including repeated positions");
+    assert(advanceViewAxisHaulAngle(0, 10, 10) == 0,
+        "8492 zero-distance event must keep the angle at zero");
+}
+
 /// Closed observation of the branches owned by `RotateTool.update`.  This is
 /// deliberately pointer-free: the future prepared owner can retain the exact
 /// tool separately while this value records which legacy arm must be built.
@@ -155,14 +175,14 @@ public:
     // Meaningless for axes 0/1/2.
     Vec3  pendingRotateViewAxis = Vec3(0, 0, 0);
 
-    // ── the off-gizmo arcball (tools.transform.arcball) ──────────────────
-    // Set at a press that lands away from every ring, cleared at every other
-    // press and at mouse-up. While set, `dragAxis` is 3 (an arbitrary world
-    // axis, published with its angle) but the axis and angle come from the
-    // BALL, not from an arc plane.
+    // An off-gizmo press uses the selected input law. Both modes publish a
+    // world axis and angle through dragAxis 3; arcball computes both from the
+    // ball, while viewAxisHaul keeps the camera axis fixed.
     bool  arcballDrag = false;
+    OffGizmoRotateInput offGizmoInput = OffGizmoRotateInput.arcball;
+    bool  viewAxisHaulDrag = false;
     float arcballCx = 0, arcballCy = 0;          // ball centre, window pixels
-    float arcballPressX = 0, arcballPressY = 0;  // the gesture's fixed reference
+    float offGizmoPressX = 0, offGizmoPressY = 0; // the gesture's fixed reference
 
     // Read + cleared by the wrapper on the press that set them, exactly as the
     // Move bank's pair are: `lastClickWasRelocate` says this press MOVED the
@@ -517,6 +537,7 @@ public:
         }
         dragAxis = resolvedAxis >= 0 ? resolvedAxis : hitTestAxes(e.x, e.y);
         arcballDrag = false;
+        viewAxisHaulDrag = false;
         if (dragAxis < 0) {
             // A press away from every ring. TWO independent questions, and one
             // predicate used to answer both — the same conflation the Move bank
@@ -524,10 +545,9 @@ public:
             //
             //   (a) may this click MOVE the pivot?  Only Auto / None / Screen.
             //       The rest derive it from the selection or pin it.
-            //   (b) may this click start a ROTATE DRAG?  Always. The off-gizmo
-            //       gesture is an arcball centred on the pivot's screen
-            //       projection (tools.transform.arcball), and a pinned mode has
-            //       a perfectly good pivot to centre it on.
+            //   (b) may this click start a ROTATE DRAG?  Always. The factory
+            //       selects either an arcball centred on the pivot's screen
+            //       projection or a camera-axis auto-haul angle.
             //
             // (b) used to be answered by (a)'s predicate, so under every pinned
             // mode a press away from the rings returned false and the tool never
@@ -535,10 +555,8 @@ public:
             // the mode reported success. In the relocate modes it engaged only
             // far enough to MOVE the pivot and then also did nothing.
             //
-            // The two behaviours those modes show are one gesture: a relocate
-            // puts the pivot under the press, which is the arcball's trackball
-            // limit, and a pinned pivot leaves the press hundreds of pixels out,
-            // which is its rim limit. Same ball, same radius, same solve.
+            // In arcball mode a relocate puts the pivot under the press (the
+            // ball's trackball limit); a pinned pivot uses its projected centre.
             //
             // Element keeps the old answer to (b): there an off-gizmo click is
             // already spoken for — it PICKS the anchor element, in a wrapper
@@ -559,31 +577,29 @@ public:
                 gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
                 lastClickWasRelocate = true;
             } else if (beforePinnedHaul !is null) {
-                // The wrapper resets the prior run and re-publishes c before
-                // the arcball projects handler.center. Otherwise the ball is
-                // centred on the stale c+T pose from the run being closed.
+            // The wrapper resets the prior run and re-publishes c before a
+            // new gesture reads handler.center.
                 beforePinnedHaul();
             }
             lastClickWasOffGizmo = true;
-            // Centre the ball on the pivot AS IT NOW STANDS — after any
-            // relocate, so a relocate genuinely presses at the centre. A pivot
-            // that does not project (behind the eye, outside the frustum) has
-            // no ball to draw and no gesture: the relocate still happened, the
-            // drag does not start.
-            float ndcZ;
-            if (!projectToWindowFull(handler.center, cachedVp,
-                                     arcballCx, arcballCy, ndcZ))
-                return true;
-            arcballDrag  = true;
-            arcballPressX = cast(float)e.x;
-            arcballPressY = cast(float)e.y;
-            // The arcball rotates about an ARBITRARY world axis that moves with
-            // the cursor, which is the view-ring's own contract (dragAxis == 3
-            // publishes an axis alongside its angle) — so it arms as a view-ring
-            // drag and falls through to the shared setup below.
+            // Arcball needs the pivot's projection after relocation. A pivot
+            // behind the eye has no ball and starts no arcball gesture.
+            if (offGizmoInput == OffGizmoRotateInput.arcball) {
+                float ndcZ;
+                if (!projectToWindowFull(handler.center, cachedVp,
+                                         arcballCx, arcballCy, ndcZ))
+                    return true;
+                arcballDrag = true;
+            } else {
+                viewAxisHaulDrag = true;
+            }
+            offGizmoPressX = cast(float)e.x;
+            offGizmoPressY = cast(float)e.y;
+            // Both off-gizmo laws publish through the view-ring axis/angle
+            // channel, then fall through to shared gesture setup.
             dragAxis = 3;
         }
-        // A gizmo arc was grabbed (dragAxis >= 0), or the arcball just armed.
+        // A gizmo arc was grabbed, or the selected off-gizmo law just armed.
         lastMX = e.x; lastMY = e.y;
         totalAngle = 0;
         lastSnappedAngle = 0;
@@ -607,13 +623,13 @@ public:
                                         : inputBasisZ;
         }
 
-        // The arcball has no arc plane and no in-plane grab reference: its
-        // fixed reference is the PRESS PIXEL, already stored. Zero the
+        // Neither off-gizmo law has an arc plane or in-plane grab reference.
+        // Their fixed reference is the press pixel. Zero the
         // plane-grab fields so nothing downstream reads a stale one, and skip
         // the ray/plane solve that would only find the pivot's own plane.
         // `dragStartDir` staying zero also suppresses the ring sector overlay,
         // which draws an arc this gesture does not have.
-        if (arcballDrag) {
+        if (arcballDrag || viewAxisHaulDrag) {
             prevWrapped   = 0;
             dragStartDir  = Vec3(0,0,0);
             dragRefDir    = Vec3(0,0,0);
@@ -734,6 +750,7 @@ public:
         // Geometry, cumulative matrix truth, display Euler and upload are all
         // finalized by the owner after this input bank closes the gesture.
         arcballDrag   = false;
+        viewAxisHaulDrag = false;
 
         dragAxis   = -1;
         totalAngle = 0;
@@ -757,6 +774,20 @@ public:
 
         Vec3 center = handler.center;
 
+        // The auto-haul angle track receives the cursor's displacement
+        // from the original press on every processed motion. The track adds
+        // that value to its current angle in 0.1-degree steps, so the result
+        // depends on the delivered event sequence, not only the final pixel.
+        if (viewAxisHaulDrag) {
+            totalAngle = advanceViewAxisHaulAngle(totalAngle, offGizmoPressX,
+                                                   cast(float)e.x);
+            pendingRotateAxis = 3;
+            pendingRotateAngle = totalAngle;
+            pendingRotateViewAxis = -viewDragAxis;
+            lastMX = e.x; lastMY = e.y;
+            return true;
+        }
+
         // The off-gizmo gesture: read the ball, not an arc plane. Both pixels
         // are offsets from the ball's centre — the pivot's screen projection,
         // frozen at the press so the gesture cannot chase its own result — and
@@ -770,8 +801,8 @@ public:
         // the final angle to.
         if (arcballDrag) {
             Vec3 axisCam; float ang;
-            if (!arcballRotation(arcballPressX - arcballCx,
-                                 arcballPressY - arcballCy,
+            if (!arcballRotation(offGizmoPressX - arcballCx,
+                                 offGizmoPressY - arcballCy,
                                  cast(float)e.x - arcballCx,
                                  cast(float)e.y - arcballCy,
                                  ARCBALL_RADIUS_PX, axisCam, ang))
@@ -955,9 +986,9 @@ private:
     int hitTestAxes(int mx, int my) {
         SemicircleHandler[3] arcs = [handler.arcX, handler.arcY, handler.arcZ];
         foreach (i, arc; arcs)
-            if (arc.hitTest(mx, my, cachedVp))
+            if (arc.isVisible() && arc.hitTest(mx, my, cachedVp))
                 return cast(int)i;
-        if (handler.arcView.hitTest(mx, my, cachedVp))
+        if (handler.arcView.isVisible() && handler.arcView.hitTest(mx, my, cachedVp))
             return 3;
         return -1;
     }

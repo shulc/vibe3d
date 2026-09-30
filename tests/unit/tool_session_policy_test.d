@@ -418,10 +418,10 @@ unittest { // (3) the doors reach the tool session only through EditSession
              "resyncSession()", "replayFirstGroup_()"],
             "ToolSession.redo");
     // Nothing else in the module steps the history.
-    assert(es.count("history_.undo()") == 10 && es.count("history_.redo()") == 5,
+    assert(es.count("history_.undo()") == 10 && es.count("history_.redo()") == 6,
            format("M1 wiring census: edit_session.d steps the history %s/%s times, "
                   ~ "expected undo 10 (closed-run replay, live recorded ladder, topology and prior ToolSession branches) and "
-                  ~ "redo 5 (recorded producer, topology and prior ToolSession branches)",
+                  ~ "redo 6 (recorded first-step re-arm, recorded producer, topology and prior ToolSession branches)",
                   es.count("history_.undo()"), es.count("history_.redo()")));
 }
 

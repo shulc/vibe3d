@@ -383,6 +383,8 @@ private enum LedgerRow[] kReceiverDisposition = [
         "EXCUSE: clears both timelines but cannot create a caller entry"),
     LedgerRow("CommandHistory.closeRunVisible", 1,
         "EXCUSE: marks an existing run tail closed and assigns owner metadata; creates no entry"),
+    LedgerRow("CommandHistory.markRecordedFirstStep", 1,
+        "EXCUSE: tags an existing first gesture for redo re-arm; creates no entry"),
     LedgerRow("CommandHistory.consolidate", 1,
         "gesture primitive — rewrites an already-open run tail"),
     LedgerRow("CommandHistory.discardPreparedToken", 1,

@@ -43,14 +43,17 @@ private final class ValueEdit : Command {
 
 private final class RecordedTool : Tool, RefireClient {
     int value, resyncs, refireTarget;
-    bool pending, ladder;
+    bool pending, ladder, firstUndoEnds;
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
         static immutable ToolSessionPolicy policy = {
             activationRow: true, sessionSteps: true, historyRecordedSteps: true };
         static immutable ToolSessionPolicy ladderPolicy = {
             activationRow: true, sessionSteps: true, historyRecordedSteps: true,
             previewHistoryLadder: true, keepAliveOnCancel: true };
-        return ladder ? ladderPolicy : policy;
+        ToolSessionPolicy selected = ladder ? ladderPolicy : policy;
+        selected.recordedFirstUndoEndsTool = firstUndoEnds;
+        if (firstUndoEnds) selected.activationRow = false;
+        return selected;
     }
     void gesture(CommandHistory history, int after) {
         auto cmd = new ValueEdit(&value, value, after);
@@ -214,6 +217,42 @@ unittest { // 8490: a closed run may retain independent gesture steps.
            "closed step Redo must restore the last gesture");
     assert(!session.terminalRedoRequested(),
            "stepwise closed runs do not request a terminal Redo modal");
+}
+
+unittest { // 8492: a silent arm is carried by its first recorded step.
+    auto tool = new RecordedTool;
+    tool.firstUndoEnds = true;
+    Tool active = tool;
+    auto history = new CommandHistory;
+    EditSession session;
+    session = new EditSession(() => active, history,
+        () { active = null; }, (string id) {
+            assert(id == "rotate", "8492 recorded step re-armed the wrong owner");
+            active = tool;
+            session.noteArm(id, 999);
+        });
+    session.noteArm("rotate", 8492);
+    const firstRun = history.nextRun();
+    tool.liveGesture(history, firstRun, 7);
+    history.consolidate(firstRun); // off-gizmo relocation crosses a run boundary
+    const secondRun = history.nextRun();
+    tool.liveGesture(history, secondRun, 10);
+    assert(session.navigate(true) && tool.value == 7 && active is tool,
+        "8492 Undo latest gesture must keep the owner");
+    assert(session.navigate(true) && tool.value == 0 && active is null &&
+           (history.redoEntries()[0].flags & HistoryFlags.ClosedStep),
+        "8492 Undo first recorded gesture must end the silent arm");
+    assert(session.navigate(false) && tool.value == 7 && active is tool &&
+           session.sessionStateJson()["token"].integer == 8492,
+        "8492 Redo first gesture must re-arm the original session");
+    assert(session.navigate(false) && tool.value == 10,
+        "8492 Redo second gesture must restore the second geometry step");
+    assert(history.closeRunVisible(history.currentRunId, "rotate",
+                                  RunCloseMode.stepUndo) == 2,
+        "8492 close must tag both runs of one recorded session");
+    active = null;
+    assert(session.navigate(true) && tool.value == 7 && active is tool,
+        "8492 outside Undo must restore one step and its owner");
 }
 
 unittest { // A preset based on rotate must not inherit the bare door's law.

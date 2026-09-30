@@ -650,6 +650,7 @@ tools.transform.arcball
 tools.transform.item_xform_kernels
 tools.transform.morph_route
 tools.transform.relocate_plane_test
+tools.transform.rotate
 tools.transform.transform
 tools.transform.xfrm_transform
 trackball
