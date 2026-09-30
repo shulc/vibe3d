@@ -175,7 +175,7 @@ unittest {
  panelUndo();
  assert(itemRot()==resetArmed["item_rot"],
      "reset door did not return the panel item edit to RY=0 in one undo");
- assert(resetHistory==["tool.activate","layer.xform.edit"],
+ assert(resetHistory==["layer.xform.edit"],
      format("panel-edit reset history did not collapse to one edit step: %s",resetHistory));
 
  // --- law 1: the edit survives the SWITCH and owns its own step ----------
@@ -201,7 +201,7 @@ unittest {
      "panel item edit vanished on the FIRST switch undo; expected RY=40 to remain");
  assert(a[4]["item_rot"]==a[0]["item_rot"],
      "panel item edit survived the SECOND switch undo; expected RY=0 after its own history step");
- assert(switchHistory==["tool.activate","layer.xform.edit","tool.activate"],
+ assert(switchHistory==["layer.xform.edit","tool.activate"],
      format("panel-edit switch history lost its edit/activation order: %s",switchHistory));
  retirement(law(fx,"panel_edit_owns_its_undo_step"),JSONValue(a));
 

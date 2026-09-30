@@ -258,14 +258,13 @@ unittest {
         immutable string toolAfter = ("tool" in afterState.object) ? afterState["tool"].str : "";
         assert(sameGeometry(vertices(), floorGeometry),
             bank.name ~ ": Ctrl+Z after the release did not pop the numeric edit");
-        // The reference pops the ARM with that Ctrl+Z too (its activation row
-        // joins the first group, H1). Ours keeps the activation as its own row
-        // until the H1 slice lands, so the tool stays and that row is on top.
-        // Pinned as OUR model so the H1 slice's flip is a visible red here.
+        // Bare Rotate has no activation row; Move and Scale still have one.
+        // All three tools remain active after the numeric edit's Undo.
         auto undoRows = getJson("/api/history")["undo"].array;
         assert(toolAfter == armedTool && undoRows.length > 0
-               && undoRows[$ - 1]["command"].str == "tool.activate",
-            bank.name ~ ": our model (activation is its own row until H1) changed; tool="
+               && undoRows[$ - 1]["command"].str ==
+                   (bank.name == "rotate" ? "mesh.move_vertex" : "tool.activate"),
+            bank.name ~ ": activation-row policy changed; tool="
             ~ toolAfter ~ " top=" ~ (undoRows.length ? undoRows[$ - 1]["command"].str : "<none>"));
         assert(modelDepth() == floor,
             bank.name ~ ": the relocate or the numeric edit left a model row; floor="

@@ -285,8 +285,8 @@ unittest {
 
     auto h = history();
     long undoCountAfter = h["undo"].array.length;
-    assert(undoCountAfter == undoCountBefore + 2,
-        format("a panel rotate edit must surface one arm plus exactly ONE edit "
+    assert(undoCountAfter == undoCountBefore + 1,
+        format("a panel rotate edit must surface exactly ONE edit "
              ~ "(the blocker regression added no edit) — before=%d after=%d",
                undoCountBefore, undoCountAfter));
 
@@ -343,13 +343,12 @@ unittest {
 
     // An in-session cancel must record NOTHING on the undo stack.
     long undoCountAfterCancel = history()["undo"].array.length;
-    assert(undoCountAfterCancel == undoCountBefore + 1,
-        format("an in-session cancel must record no edit and leave only the surfaced arm — before=%d after=%d",
+    assert(undoCountAfterCancel == undoCountBefore,
+        format("an in-session cancel must record no edit or bare Rotate arm — before=%d after=%d",
                undoCountBefore, undoCountAfterCancel));
 
     cmd("tool.set rotate off");
     long undoCountAfterDrop = history()["undo"].array.length;
-    assert(undoCountAfterDrop == undoCountBefore + 1,
-        "dropping the tool after a fully-cancelled session must leave only "
-        ~ "the surfaced arm row");
+    assert(undoCountAfterDrop == undoCountBefore,
+        "dropping bare Rotate after a fully-cancelled session must leave no new row");
 }
