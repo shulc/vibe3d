@@ -62,10 +62,15 @@ double dist(double[3] a, double[3] b) {
     return sqrt(s);
 }
 
+/// How the held press moves before the door under test is reached.
+enum Motion { none, away, awayAndBack }
+
 /// Background sphere, one placed vertex on the edit layer, then a HELD Move
 /// drag of it: down + motion, no up. Returns with the drag live. With
-/// `motion` false the press is held on the vertex and never moves.
-Rig holdMoveDrag(bool motion = true) {
+/// `Motion.none` the press is held on the vertex and never moves; with
+/// `Motion.awayAndBack` it moves away and returns to the press pixel, so the
+/// mesh HAS been written but the net move is nothing.
+Rig holdMoveDrag(Motion motion = Motion.away) {
     Rig r;
     setupSphereBg(R, LON, LAT);
     postJson("/api/camera", format(
@@ -94,7 +99,7 @@ Rig holdMoveDrag(bool motion = true) {
     postJson("/api/play-events", buildDragDownLog(r.c.vpX, r.c.vpY,
         r.c.width, r.c.height, r.cx, r.cy));
     waitPlayerIdle();
-    if (!motion) {
+    if (motion == Motion.none) {
         auto s0 = toolState();
         assert(s0["moveArmed"].type == JSONType.true_ &&
                s0["moveDirty"].type == JSONType.false_,
@@ -114,6 +119,18 @@ Rig holdMoveDrag(bool motion = true) {
     assert(moved > 1e-3, "rig: the held drag must move the vertex, moved "
         ~ moved.to!string);
     assert(undoLen() == r.undoBefore, "rig: a held drag records nothing yet");
+    if (motion == Motion.awayAndBack) {
+        postJson("/api/play-events", buildDragMotionLog(r.c.vpX, r.c.vpY,
+            r.c.width, r.c.height, r.nx, r.ny, r.cx, r.cy, 16));
+        waitPlayerIdle();
+        auto sb = toolState();
+        assert(sb["moveArmed"].type == JSONType.true_ &&
+               sb["moveDirty"].type == JSONType.true_,
+            "rig: the returned drag must still be armed and written: " ~ sb.toString);
+        const home = dist(readVerticesLayer(1)[0], r.pre);
+        assert(home <= 1e-4, "rig: the drag must come home within the net "
+            ~ "epsilon, off by " ~ home.to!string);
+    }
     return r;
 }
 
@@ -168,6 +185,9 @@ void load(string path) {
 unittest {
     const path = loadSeed();
     scope(exit) if (exists(path)) remove(path);
+    const seedVerts = readVerticesLayer(0);
+    assert(seedVerts.length == 8, "rig: the load seed is the reset cube, "
+        ~ seedVerts.length.to!string ~ " vertices");
 
     auto r = holdMoveDrag();
     const crossings0 = getJson("/api/tool/disarm")["crossings"].integer;
@@ -186,6 +206,13 @@ unittest {
         "the disarm seam must cancel the held Move in one step: " ~ d.toString);
     assert(activeToolName() != "mesh.topoPen",
         "the load must disarm the pen: " ~ toolState().toString);
+    // The cancel ran BEFORE the replace: the loaded document is the seed,
+    // untouched. A cancel after it would restore the drag's snapshot over the
+    // loaded mesh.
+    assert(getJson("/api/layers")["layers"].array.length == 1 &&
+           readVerticesLayer(0) == seedVerts, format(
+        "the loaded document must be the seed, untouched by the cancel: "
+        ~ "seed %s, loaded %s", seedVerts, readVerticesLayer(0)));
 
     const afterLoad = undoLen();
     postJson("/api/play-events", buildDragUpLog(r.c.vpX, r.c.vpY,
@@ -202,7 +229,7 @@ unittest {
     const path = loadSeed();
     scope(exit) if (exists(path)) remove(path);
 
-    holdMoveDrag(false);
+    holdMoveDrag(Motion.none);
     const crossings0 = getJson("/api/tool/disarm")["crossings"].integer;
     load(path);
 
@@ -215,4 +242,73 @@ unittest {
         "a held press that wrote nothing is no uncommitted edit: " ~ d.toString);
     assert(!undoLabels().canFind(kMoveLabel), format(
         "a load over an unmoved press must record no Move: %s", undoLabels()));
+}
+
+// Cells 4-7: a drag that went away and came HOME is not an uncommitted edit.
+// It wrote the mesh (`moveDirty`), but the Move commit guard drops a net
+// no-op, so the hook (which must equal that guard) answers false. Each cell
+// reaches the shared guard through a different caller: the hook (load: the
+// disarm seam asks it), the release record, and the prepared tool-switch
+// record; cell 5 is the reset door. Cell 7 has its positive half first.
+
+// Cell 4: load over a returned drag — nothing to cancel, nothing recorded.
+unittest {
+    const path = loadSeed();
+    scope(exit) if (exists(path)) remove(path);
+
+    holdMoveDrag(Motion.awayAndBack);
+    const crossings0 = getJson("/api/tool/disarm")["crossings"].integer;
+    load(path);
+
+    auto d = getJson("/api/tool/disarm");
+    assert(d["crossings"].integer == crossings0 + 1 &&
+           d["hadTool"].type == JSONType.true_,
+        "the load must cross the disarm seam once with the pen armed: "
+        ~ d.toString);
+    assert(d["cancelSteps"].integer == 0,
+        "a drag that came home is no uncommitted edit: " ~ d.toString);
+    assert(!undoLabels().canFind(kMoveLabel), format(
+        "a load over a returned drag must record no Move: %s", undoLabels()));
+}
+
+// Cell 5: tool.reset over a returned drag records nothing and re-arms.
+unittest {
+    auto r = holdMoveDrag(Motion.awayAndBack);
+    cmd("tool.reset");
+    assert(undoLen() == r.undoBefore, format(
+        "tool.reset over a returned drag must record nothing: undo %s -> %s (%s)",
+        r.undoBefore, undoLen(), undoLabels()));
+    assert(activeToolName() == "mesh.topoPen",
+        "tool.reset must leave the pen armed: " ~ toolState().toString);
+}
+
+// Cell 6: the release of a returned drag records nothing.
+unittest {
+    auto r = holdMoveDrag(Motion.awayAndBack);
+    postJson("/api/play-events", buildDragUpLog(r.c.vpX, r.c.vpY,
+        r.c.width, r.c.height, r.cx, r.cy));
+    waitPlayerIdle();
+    assert(undoLen() == r.undoBefore && !undoLabels().canFind(kMoveLabel), format(
+        "the release of a returned drag must record nothing: undo %s -> %s (%s)",
+        r.undoBefore, undoLen(), undoLabels()));
+}
+
+// Cell 7: a tool switch mid-drag salvages a real drag as one Move row
+// (positive half), and records nothing for a returned one.
+unittest {
+    {
+        // The switch writes the salvaged Move and then its own activation.
+        auto r = holdMoveDrag();
+        cmd("tool.set move on");
+        assert(undoLabels()[r.undoBefore .. $] == [kMoveLabel, "Activate Tool"],
+            format("a tool switch over a real drag must record one Move, then "
+            ~ "the activation: %s", undoLabels()));
+    }
+    {
+        auto r = holdMoveDrag(Motion.awayAndBack);
+        cmd("tool.set move on");
+        assert(undoLabels()[r.undoBefore .. $] == ["Activate Tool"], format(
+            "a tool switch over a returned drag must record only the "
+            ~ "activation: %s", undoLabels()));
+    }
 }

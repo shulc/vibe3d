@@ -1452,28 +1452,16 @@ public:
         image.expectedMoveWelded = moveWelded_;
         image.expectedMoveBefore = moveBefore_.ownedDup();
 
-        if (moveArmed_ && moveDirty_) {
+        if (moveArmed_ && moveWouldRecord()) {
+            if (context is null) return image;
             auto m = meshOrNull();
-            if (m !is null && commitReady(factories_.move)) {
-                enum float kNetEps = 1e-4f;
-                bool net = moveWelded_;
-                foreach (i, vi; moveVerts_) {
-                    if (net) break;
-                    if (vi >= m.vertices.length ||
-                        (m.vertices[vi] - moveBase_[i]).length > kNetEps)
-                        net = true;
-                }
-                if (net) {
-                    if (context is null) return image;
-                    auto cmd = factories_.move();
-                    cmd.setSnapshots(moveBefore_.ownedDup(), MeshSnapshot.capture(*m),
-                        "Topology Move");
-                    image.historyPrepared = context.prepare(cmd,
-                        PreparedHistoryKind.Plain).accepted;
-                    if (!image.historyPrepared) return image;
-                    sessionTagPreparedCompleted(cmd);
-                }
-            }
+            auto cmd = factories_.move();
+            cmd.setSnapshots(moveBefore_.ownedDup(), MeshSnapshot.capture(*m),
+                "Topology Move");
+            image.historyPrepared = context.prepare(cmd,
+                PreparedHistoryKind.Plain).accepted;
+            if (!image.historyPrepared) return image;
+            sessionTagPreparedCompleted(cmd);
         }
         image.valid = true; return image;
     }
@@ -3843,7 +3831,7 @@ public:
     // so the drop's `deactivate` finds no drag left to record. The cancel
     // restores the first-write snapshot and records nothing.
     override bool hasUncommittedEdit() const {
-        return moveArmed_.armed && moveDirty_;
+        return moveArmed_.armed && moveWouldRecord();
     }
 
     override void cancelUncommittedEdit() {
@@ -3855,34 +3843,38 @@ public:
         if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_); }
     }
 
+    // THE Move commit guard (task 8660), shared by the release record
+    // (`recordLiveMove`), the prepared tool-switch record
+    // (`buildPreparedDeactivate`) and `hasUncommittedEdit`, which must equal
+    // it (the base contract in tool.d). True iff the drag wrote the mesh, the
+    // record is wired, and the net effect is not nothing: a drag that wandered
+    // and came home again HAS written the mesh (`moveDirty_`) but its undo
+    // entry would restore what is already there, so the moving set is compared
+    // against its arm-time base — O(set), only the moving set can have
+    // changed. A weld is never a net no-op (it removed geometry) and the loop
+    // could not judge it anyway: `moveVerts_` holds PRE-weld indices (task
+    // 0555). A stale index records rather than loses the drag.
+    private enum float kNetEps = 1e-4f;   // the same eps `applyMoveTargets` writes by
+    private bool moveWouldRecord() const {
+        if (!moveDirty_ || !commitReady(factories_.move)) return false;
+        const(Mesh)* m = meshSrc_();
+        if (m is null) return false;
+        if (moveWelded_) return true;
+        foreach (i, vi; moveVerts_) {
+            if (vi >= m.vertices.length) return true;
+            if ((m.vertices[vi] - moveBase_[i]).length > kNetEps) return true;
+        }
+        return false;
+    }
+
     // The single undo entry for an armed Move drag: `moveBefore_` (the first
     // live write's pre-gesture state) paired with the mesh as it stands now. A gesture that moved nothing
     // records nothing — a stationary click, or a drag whose every vertex
     // missed the background surface, stays the byte-identical no-op it has
     // always been.
     package void recordLiveMove() {
-        if (!moveDirty_) return;
+        if (!moveWouldRecord()) return;
         auto m = mesh;
-        if (m is null || !commitReady(factories_.move)) return;
-
-        // A drag that wandered and came home again HAS written the mesh
-        // (`moveDirty_`), but its net effect is nothing — recording it would
-        // put an undo entry on the stack that restores what is already there.
-        // Compare the moving set against its arm-time base and drop the
-        // entry when they agree; only the moving set can have changed, so
-        // this stays O(set), not O(mesh).
-        enum float kNetEps = 1e-4f;   // the same eps `applyMoveTargets` writes by
-        // A weld is never a net no-op — it removed geometry — and the loop
-        // below could not judge it anyway: `moveVerts_` holds PRE-weld indices
-        // and the weld compacted the vertex array under them (task 0555).
-        bool net = moveWelded_;
-        foreach (i, vi; moveVerts_) {
-            if (net) break;
-            if (vi >= m.vertices.length) { net = true; break; }   // stale: record, don't lose it
-            if ((m.vertices[vi] - moveBase_[i]).length > kNetEps) { net = true; break; }
-        }
-        if (!net) return;
-
         recordSnapshotUndo(m, moveBefore_, factories_.move, "Topology Move");
         // Position-only edit: no `resyncSession()` — no index this or any
         // sibling gesture caches can have been invalidated (the same
@@ -5568,7 +5560,7 @@ public:
     // BEFORE any mutation, so it never mutates-then-fails-to-record (which
     // would leave an applied-but-un-undoable edit — the same hazard
     // `placeVertexAt`'s own guard documents).
-    private bool commitReady(MeshSessionEdit delegate() factory) {
+    private bool commitReady(const MeshSessionEdit delegate() factory) const {
         return meshSrc_ !is null && history !is null && factory !is null;
     }
 
