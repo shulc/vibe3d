@@ -178,6 +178,19 @@ unittest { // 8. the key: each term moves it, and only when it changes
     assert(!k.matches(m, 7, view, proj, M2), "8: the model matrix is a term");
     Mesh other = rig();
     assert(!k.matches(other, 7, view, proj, M), "8: the mesh address is a term");
+    // A POSITION delivery alone (a gizmo drag is version-silent: no counter
+    // moves) must invalidate the list through the geometry epoch.
+    {
+        import mesh_dirty : g_geomEpochs;
+        import mesh_edit_delta : MeshEditScope;
+        immutable ulong tv0 = m.topologyVersion;
+        g_geomEpochs.note(cast(size_t)&m, MeshEditScope.Position);
+        assert(m.topologyVersion == tv0, "8 premise: a position note moved no counter");
+        assert(!k.matches(m, 7, view, proj, M),
+            "8: a position-only change (geometry epoch) must invalidate the list");
+        k.stamp(m, 7, view, proj, M);
+        assert(k.matches(m, 7, view, proj, M), "8: re-stamped after the position change");
+    }
 
     // A face delete that keeps the edge list: the FACE-set counter moves, the
     // edge-set counter does not (mesh.d's `MeshTopoKey` cell).

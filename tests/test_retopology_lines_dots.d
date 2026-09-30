@@ -918,6 +918,13 @@ unittest {
         foreach (x; o) if (x.c[0] == 184 && x.c[1] == 184 && x.c[2] == 184) found = true;
         assert(found, format("6: with the mode off no row at EG's edge reads the "
             ~ "scheme wireframe 184 (%s)", o));
+        // Mode off does not cull: F's own corners draw their dots.
+        auto n = dotPixels([px(kFOwn[0]), px(kFOwn[1]), px(kFOwn[2])], 2);
+        foreach (k; 0 .. 3)
+            assert(n[k] >= kCornerDot, format("6: with the mode off F's corner %s "
+                ~ "draws no dot (%s px) — the cull ran outside its plan bit",
+                kFOwn[k], n[k]));
+        showVertices(false);
     }
     writeln("  test_retopology_lines_dots: all cells passed");
 }
