@@ -477,3 +477,35 @@ unittest { // 8530: group navigation and each independent ownership boundary.
         assert(!session.terminalRedoRequested(), "8530 retained group must not request discard modal");
     }
 }
+
+unittest { // 8530: Redo leaves a foreign tail beyond the retained group.
+    foreach (boundary; 0 .. 4) {
+        auto tool = new RecordedTool;
+        Tool active = tool;
+        auto history = new CommandHistory;
+        EditSession session;
+        session = new EditSession(() => active, history, () { active = null; },
+            (string id) { active = tool; session.noteArm(id, 999); });
+        session.noteArm("policy-selected", 8530);
+        void record(ulong run, ulong token, int before, int after) {
+            auto edit = new ValueEdit(&tool.value, before, after);
+            edit.markSession(token);
+            assert(edit.apply()); history.recordInSession(edit, run);
+        }
+        record(1, 8530, 0, 7); record(1, 8530, 7, 13);
+        assert(history.closeRunVisible(1, "policy-selected", RunCloseMode.groupRedo) == 2);
+        ulong foreignRun = boundary == 0 ? 2 : 1;
+        record(foreignRun, boundary == 1 ? 8531 : 8530, 13, 19);
+        assert(history.closeRunVisible(foreignRun,
+            boundary == 2 ? "other-owner" : "policy-selected",
+            boundary == 3 ? RunCloseMode.groupUndo : RunCloseMode.groupRedo) == 1);
+        foreach (_; 0 .. 3) assert(history.undo());
+        assert(tool.value == 0 && history.redoEntries().length == 3);
+        active = null;
+        assert(session.navigate(false) && tool.value == 13 && active is tool,
+            format("8530 Redo crossed ownership boundary %s", boundary));
+        assert(history.undoEntries().length == 2 && history.redoEntries().length == 1,
+            "8530 Redo must leave the foreign tail untouched");
+        assert(session.sessionStateJson()["token"].integer == 8530);
+    }
+}
