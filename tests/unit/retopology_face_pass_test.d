@@ -155,3 +155,34 @@ unittest // a face-layout build moves the layout generation, on the prepared pat
         format("the installed layout must carry a new generation (4), got %s",
                gpu.faceLayoutGen));
 }
+
+unittest // the face pass restores every GL state it sets (source census)
+{
+    // The picker saves the cull ENABLE only, and nothing else in the frame
+    // resets the front face, the blend or the lit program's face alpha; a
+    // missing restore after a mirrored or translucent pass leaks into every
+    // later culled or lit draw. The pixels see the cull and the alpha leak;
+    // this pins all four restores at their one site.
+    import std.algorithm : canFind;
+    import std.string : indexOf;
+    const src = readText(buildPath(repoRoot, "source", "mesh_gpu.d"));
+    immutable at = src.indexOf("private void endFacePass(");
+    assert(at >= 0, "mesh_gpu.d: endFacePass not found");
+    immutable close = src[at .. $].indexOf("\n}\n");
+    assert(close > 0, "mesh_gpu.d: endFacePass has no closing brace");
+    const body = src[at .. at + close];
+    immutable string[5] restores = [
+        "glDisable(GL_CULL_FACE);", "glFrontFace(GL_CCW);",
+        "glUniform1f(shader.locFaceAlpha, 1.0f);", "glDisable(GL_BLEND);",
+        "glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);"];
+    int found = 0;
+    foreach (r; restores) {
+        assert(body.canFind(r), "endFacePass no longer restores: " ~ r);
+        ++found;
+    }
+    assert(found == 5);
+    // Both face entry points go through the pair.
+    assert(src.count("beginFacePass(shader, pass);") == 2
+        && src.count("endFacePass(shader, pass);") == 2,
+        "drawFaces and drawFacesHighlighted must each bracket their pass");
+}

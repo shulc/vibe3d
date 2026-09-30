@@ -113,8 +113,11 @@ private Quad flat(string n, double x, double y, double z, double half = kH,
     return Quad(n, [x, y, z], half, [0, 0, 0, 0], rev);
 }
 
-// The background: one big +Z quad over the left half of the view.
+// The background: one big +Z quad over the left half of the view, and P0, a
+// REVERSED quad over the empty view: the backdrop does not cull, so P0 is
+// filled — and stays filled only while the foreground's cull is restored.
 private immutable Quad kP1 = Quad("P1", [-1.5, 0.9, 0.0], 1.7, [0, 0, 0, 0], false);
+private immutable Quad kP0 = Quad("P0", [2.5, -0.5, 0.0], 0.3, [0, 0, 0, 0], true);
 
 // C's corners: z = +0.2 at its bottom edge, -0.2 at its top, so its lower
 // half is in front of P1 and its upper half behind; normal (0, 0.447, 0.894).
@@ -201,7 +204,7 @@ private Rig buildRig() {
     cmdOk(commandBody("scene.reset"));
     cmdOk(`{"id":"history.clear"}`);
     cmdOk(commandBody("viewport.layout", `"Single"`));
-    Quad[] p1 = [cast(Quad) kP1];
+    Quad[] p1 = [cast(Quad) kP1, cast(Quad) kP0];
     cmdOk(commandBody("scene.loadMesh", meshJson(p1).toString));
     cmdOk(`{"id":"layer.add"}`);
     auto fg = fgQuads();
@@ -511,6 +514,16 @@ unittest {
             assert(maxDiff(x, o[iV1]) <= 1,
                 format("6: E1's edge leaks through D1's fill (%s vs the fill %s)",
                        x.c, o[iV1].c));
+    }
+
+    // ---- 7a. the cull is the FOREGROUND item's: the backdrop's reversed P0 is
+    // still filled, frame after frame (a cull left enabled by the item's face
+    // pass would reach the next frame's backdrop draw first).
+    {
+        immutable Px p0 = probe1(atW(kP0.c));
+        assert(maxDiff(p0, u[iQ]) >= 5,
+            format("7a: the backdrop's reversed P0 reads the clear colour %s — the "
+                   ~ "foreground's back-face cull leaked into the backdrop", u[iQ].c));
     }
 
     // ---- 7. back faces: F unfilled, the rest filled --------------------------
