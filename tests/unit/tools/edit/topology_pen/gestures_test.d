@@ -10425,7 +10425,9 @@ unittest {
     // A fresh tool + mesh per case: Split MUTATES on success, so the two cases
     // cannot share a rig without the first one's cut changing the second's
     // topology (and its vertex indices).
-    static Rig makeRig(bool innerSnap, Mesh* m) {
+    // `snapOn` false / `backSide` true are the two remaining gates of the split
+    // target (task 8690): the master enable and the `backFace` orientation.
+    static Rig makeRig(bool innerSnap, Mesh* m, bool snapOn = true, bool backSide = false) {
         auto t       = new TopologyPenTool();
         auto view    = new View(0, 0, 100, 100);
         auto history = new CommandHistory();
@@ -10444,7 +10446,7 @@ unittest {
         // no-op would arrive through the `backFace` gate instead of through
         // the border rule, i.e. it would pass while testing nothing — the
         // same argument this rig already makes for keeping snapping on.
-        r.vp   = makeGridPlaneFrontViewport();
+        r.vp   = backSide ? makeGridPlaneTestViewport() : makeGridPlaneFrontViewport();
         r.subj = new SubjectPacket();
         r.subj.mesh     = m;
         r.subj.viewport = r.vp;
@@ -10454,7 +10456,7 @@ unittest {
         // with snapping off would reach the same no-op through the master
         // gate — the interior vertex would never be judged, and the case
         // would pass without exercising what it names.
-        r.vts.put(penTestSnapOn());
+        r.vts.put(snapOn ? penTestSnapOn() : new SnapPacket);
         return r;
     }
 
@@ -10562,6 +10564,31 @@ unittest {
         format("the split target is the nearest vertex SHARING A POLYGON with the source, not the "
              ~ "nearest vertex: preview %d (expected 4), faces %d (expected %d)", decPreview,
              mDec.faces.length, fBefore3 + 1));
+
+    // --- the gates the split target keeps. Snapping off: no target, no-op.
+    Mesh mGate;
+    auto gate = makeRig(false, &mGate, /*snapOn*/false);
+    immutable int gatePreview = driveSplit(gate, 0, px(gate, 4));
+    assert(gatePreview == -1 && mGate.faces.length == 4,
+        format("with snapping off the split target resolves nothing: preview %d, faces %d",
+               gatePreview, mGate.faces.length));
+    // Seen from the side the quads face away from, `backFace` off refuses the
+    // target; on, the same drag splits (so the refusal is the orientation's).
+    Mesh mBack, mBackOn;
+    auto back = makeRig(false, &mBack, true, /*backSide*/true);
+    immutable int backPreview = driveSplit(back, 0, px(back, 4));
+    auto backOn = makeRig(false, &mBackOn, true, /*backSide*/true);
+    backOn.t.backFace_ = true;
+    driveSplit(backOn, 0, px(backOn, 4));
+    assert(backPreview == -1 && mBack.faces.length == 4 && mBackOn.faces.length == 5,
+        format("backFace off must refuse a back-facing split target and on admit it: preview %d, "
+             ~ "faces %d (off) / %d (on)", backPreview, mBack.faces.length, mBackOn.faces.length));
+    // A source that is no vertex resolves nothing (never indexes the mesh).
+    back.t.dragSnap_ = *penTestSnapOn();
+    assert(back.t.resolveSplitTargetVert(cast(int)px(back, 4)[0], cast(int)px(back, 4)[1], back.vp, -1) < 0
+        && back.t.resolveSplitTargetVert(cast(int)px(back, 4)[0], cast(int)px(back, 4)[1], back.vp,
+                                         cast(int)mBack.vertices.length) < 0,
+        "a source index outside the mesh must resolve no split target");
 }
 
 // ---------------------------------------------------------------------------

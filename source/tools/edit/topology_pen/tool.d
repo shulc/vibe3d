@@ -2059,8 +2059,8 @@ public:
     package int resolveSplitTargetVert(int mx, int my, const ref Viewport vp, int a) {
         if (!dragSnap_.enabled) return -1;
         auto m = meshOrNull();
-        if (m is null || a < 0 || a >= cast(int)m.vertices.length) return -1;
-        uint[] partners;
+        if (m is null) return -1;
+        uint[] partners;   // empty for an out-of-mesh source (bounds-tolerant range)
         foreach (fi; m.facesAroundVertex(cast(uint)a)) partners ~= m.faces[fi];
         if (splitGuide_ is null) splitGuide_ = new PenSnapGuide();
         auto g = splitGuide_;
