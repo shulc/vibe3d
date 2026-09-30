@@ -28,6 +28,7 @@ import seltype;              // SelType, viewportPickType
 import mesh_gpu              : BaseDots, BaseWire, FacePass, GpuMesh, OccludedPass;
 import retopology_line_shade : lineShade;
 import retopology_dot_cull  : cullEyeOf, DotCullKey, DotList, visibleDots;
+import retopology_order     : entersItemSequence, retopologyDrawSequence, SeqEntry;
 import viewport_scheme       : schemeColor, SchemeColor;
 import handles.gl_util       : setThickLineScreenSize;
 import document              : Document, Layer, kindInfo;
@@ -113,6 +114,12 @@ BaseDots baseDotsFor(const ref DrawPlan plan, const ref float[16] model,
     d.locAlpha = locAlpha;
     return d;
 }
+
+/// The value `LitShader`'s constructor seeds `u_fillColor` to. Restoring to
+/// it (rather than to whichever plan just drew) keeps the program in the state
+/// every non-plan caller — create-tool previews, gizmo draws — was built
+/// expecting; taken from a default-constructed plan so there is one source.
+private static immutable float[3] kDefaultFill = DrawPlan.init.fillColor;
 
 /// Head of an item's draw: with `clearDepthFirst` the item starts on a clear
 /// depth buffer (captured: one depth clear per foreground item). The depth
@@ -249,6 +256,105 @@ private:
         foreach (k; stale) dotCull_.remove(k);
     }
 
+    /// `d` restricted to the dots the cull keeps, when the plan culls and the
+    /// item's vertex buffer is in cage slots (no live subpatch preview:
+    /// `faceOriginGpu` empty); otherwise `d` unchanged.
+    BaseDots culledBaseDots(BaseDots d, const ref DrawPlan plan, ref GpuMesh g,
+                            ref const Mesh m, const ref float[16] model,
+                            Viewport3D v, const ref Viewport vp) {
+        if (d.draw && plan.cullHiddenVerts && g.faceOriginGpu.length == 0) {
+            ulong listId;
+            const(DotList)* dl = dotCullFor(v, m, model, vp, listId);
+            d.useDrawList   = true;
+            d.drawList      = dl.slots;
+            d.drawListSlots = dl.slotCount;
+            d.drawListId    = listId;
+        }
+        return d;
+    }
+
+    // ---- the item sequence (task 8610, plan §10.3 / §10.12) ----------------
+    // Under a plan with `clearDepthFirst` every item is drawn through the same
+    // bracket: the non-primary ones by `drawPlainItem`, in the order
+    // `retopologyDrawSequence` gives, around the primary's own bracket; the
+    // primary's selection and hover feedback follows the LAST entry (captured:
+    // depth-tested against what the sequence left, with the occluded pass).
+    SeqEntry[] seqBefore_;
+    SeqEntry[] seqAfter_;
+
+    /// Bind layer `lyr`'s own materials (and, under the weight style, its own
+    /// weight colours) on the lit program, which must already be in use. The
+    /// materials buffer is SHARED by every lit draw, so each item binds its own.
+    void bindLayerSurfaces(ref GpuMesh g, Layer lyr, const ref DrawPlan plan,
+                           LitShader lit, string weightMapName) {
+        lit.setSurfaces(lyr.meshRef().surfaces);
+        if (plan.shading == SurfaceShading.Weight)
+            g.uploadWeightColors(lyr.meshRef(), weightMapName);
+    }
+
+    /// The base line and dot passes of an item under `plan`, with no selection
+    /// or hover: edges iff the plan draws wire, dots iff it draws vertices
+    /// (culled per `culledBaseDots`), both at the plan's dim, restored after.
+    void drawItemLinesAndDots(ref GpuMesh g, ref const Mesh m,
+                              const ref float[16] model, const ref DrawPlan plan,
+                              Shader shader, Viewport3D v, const ref Viewport vp) {
+        shader.useProgram(model, vp);
+        shader.setDim(plan.dim);
+        if (plan.drawWire)
+            g.drawEdges(shader.locColor, -1, MarkView.init, [],
+                        baseWireFor(plan, model, vp.eye, shader.locAlpha));
+        if (plan.drawVerts)
+            g.drawVertices(shader.locColor, shader.locPointSize, -1,
+                           MarkView.init, OccludedPass.init,
+                           culledBaseDots(baseDotsFor(plan, model, vp.eye,
+                                                      shader.locAlpha),
+                                          plan, g, m, model, v, vp));
+        shader.setDim(1.0f);
+    }
+
+    /// One non-primary item: the bracket's head, the face pass in the item's
+    /// own materials through its own matrix, then its base lines and dots. No
+    /// selection, hover or tool state reaches it; every uniform it sets is
+    /// restored.
+    void drawPlainItem(ref GpuMesh g, Layer lyr, const ref float[16] model,
+                       const ref DrawPlan plan, Shader shader, LitShader lit,
+                       Viewport3D v, const ref Viewport vp, string weightMapName) {
+        beginItem(plan);
+        if (plan.drawFaces) {
+            lit.useProgram(model, vp);
+            lit.setDim(plan.dim);
+            bindLayerSurfaces(g, lyr, plan, lit, weightMapName);
+            lit.setShading(plan.shading);
+            lit.setFillColor(plan.fillColor);
+            lit.setLightGain(plan.lightGain);
+            g.drawFaces(lit, facePassFor(plan, model));
+            lit.setShading(SurfaceShading.Material);
+            lit.setFillColor(kDefaultFill);
+            lit.setLightGain(1.0f);
+            lit.setDim(1.0f);
+        }
+        drawItemLinesAndDots(g, lyr.meshRef(), model, plan, shader, v, vp);
+    }
+
+    /// Draw `entries` in order: a foreground entry under `activePlan`, a joined
+    /// backdrop entry under `backdropPlan`, each from the buffers the backdrop
+    /// pass kept current this frame, attributed to the backdrop counters.
+    void drawItemSequence(const(SeqEntry)[] entries, ref Document document,
+                          BgGpuDrawCache cache, const ref DrawPlan activePlan,
+                          const ref DrawPlan backdropPlan, Shader shader,
+                          LitShader lit, Viewport3D v, const ref Viewport vp,
+                          string weightMapName) {
+        foreach (e; entries) {
+            Layer lyr = document.layers[e.layerIndex];
+            GpuMesh* g = cache.find(lyr);
+            if (g is null) continue;
+            auto zBackdrop = g_fc.backdrop();
+            float[16] model = lyr.xform.composedMatrix();
+            drawPlainItem(*g, lyr, model, e.foreground ? activePlan : backdropPlan,
+                          shader, lit, v, vp, weightMapName);
+        }
+    }
+
     uint[] faceSelEdgesCache_;
     uint[] faceSelEdgesPrevSel_;
     MeshStructKey faceSelEdgesKey_;
@@ -369,13 +475,6 @@ public:
     immutable int edgeHovForDraw = rolloverShown(EditMode.Edges)    ? hoveredEdge   : -1;
     immutable int faceHovForDraw = rolloverShown(EditMode.Polygons) ? hoveredFace   : -1;
 
-    // The value `LitShader`'s constructor seeds `u_fillColor` to. Restoring to
-    // it (rather than to whichever plan just drew) keeps the program in the
-    // state every non-plan caller — create-tool previews, gizmo draws — was
-    // built expecting. Taken from a default-constructed plan so there is one
-    // source of truth for it and not two.
-    static immutable float[3] kDefaultFill = DrawPlan.init.fillColor;
-
     // ---- Resolve this cell's display state into what each pass may draw ----
     //
     // Task 0559 Phase 1 (doc/viewport_display_modes_plan.md). Before this,
@@ -400,6 +499,13 @@ public:
     // constant here.
     immutable DrawPlan activePlan   = display.activePlan;
     immutable DrawPlan backdropPlan = display.backdropPlan;
+
+    // The item sequence runs iff the active plan clears depth per item; the
+    // backdrop pass below then leaves every layer the sequence draws to it.
+    immutable bool itemSequence = activePlan.clearDepthFirst;
+    if (itemSequence)
+        retopologyDrawSequence(document, backdropPlan.joinsItemSequence,
+                               seqBefore_, seqAfter_);
 
     // Bind FBO — scene draws go here instead of the default framebuffer.
     // Viewport covers the entire FBO (offsets zeroed: FBO origin IS the
@@ -685,6 +791,11 @@ public:
             float[16] bgModel = lyr.xform.composedMatrix();
 
             GpuMesh* bg = bgGpuCache.gpuFor(lyr);
+            // Upkeep above, draw below: a layer of the item sequence keeps its
+            // upload current here and is drawn by the item sequence.
+            if (itemSequence && entersItemSequence(document, i,
+                                                   backdropPlan.joinsItemSequence))
+                continue;
 
             // Perf: attribute this layer's submissions to the BACKDROP slots.
             // The two draws below are the same GpuMesh entry points the
@@ -699,10 +810,9 @@ public:
                 // and a background layer may or may not carry that name. One
                 // that does not takes the disable path and reads the neutral,
                 // dimmed, which is the same rule the active pass follows.
-                if (backdropPlan.shading == SurfaceShading.Weight)
-                    (*bg).uploadWeightColors(lyr.meshRef(), display.weightMapName);
                 litShader.useProgram(bgModel, vp);
-                litShader.setSurfaces(lyr.meshRef().surfaces);
+                bindLayerSurfaces(*bg, lyr, backdropPlan, litShader,
+                                  display.weightMapName);
                 litShader.setDim(backdropPlan.dim);
                 litShader.setLightGain(backdropPlan.lightGain);
                 litShader.setShading(backdropPlan.shading);
@@ -782,6 +892,10 @@ public:
     // a second draw path would buy is a second place for hover tint, selection
     // highlight and per-surface colour to quietly diverge, which is the actual
     // risk this axis carries.
+    if (itemSequence)
+        drawItemSequence(seqBefore_, document, bgGpuCache, activePlan,
+                         backdropPlan, shader, litShader, v, vp,
+                         display.weightMapName);
     beginItem(activePlan);
     {
         auto zMesh = g_perf.scope_(Cat.drawMesh);
@@ -816,6 +930,22 @@ public:
             litShader.setFillColor(kDefaultFill);
             litShader.setLightGain(1.0f);
         }
+    }
+
+    // Under the item sequence the primary's bracket ends with its base lines
+    // and dots; the entries after it follow, then the primary's materials are
+    // bound again (the buffer is shared with every later lit draw — the
+    // create-tool previews read slot 0 of it), and only then the primary's
+    // selection and hover feedback below, with the base passes switched off.
+    if (itemSequence) {
+        {
+            auto zEdges = g_perf.scope_(Cat.drawEdges);
+            drawItemLinesAndDots(gpu, mesh, meshModel, activePlan, shader, v, vp);
+        }
+        drawItemSequence(seqAfter_, document, bgGpuCache, activePlan,
+                         backdropPlan, shader, litShader, v, vp,
+                         display.weightMapName);
+        if (document.hasEditTarget()) litShader.setSurfaces(mesh.surfaces);
     }
 
     // Checkerboard overlay for selected faces (Polygons mode).
@@ -866,8 +996,9 @@ public:
     // whole point: switching the overlay off must not take selection feedback
     // with it. Gating the chain itself, or early-returning from drawEdges,
     // would do exactly that, and is the named wrong implementation.
-    immutable BaseWire baseWire =
+    BaseWire baseWire =
         baseWireFor(activePlan, meshModel, vp.eye, shader.locAlpha);
+    if (itemSequence) baseWire.draw = false;   // drawn in the primary's bracket
     // The occluded half of every selection / pre-highlight draw (task 1860).
     // One value for the whole frame, handed to both `drawEdges` and
     // `drawVertices` so the two passes cannot drift; the alpha itself is the
@@ -1049,7 +1180,7 @@ public:
                     : (bool[]).init;
             gpu.drawEdges(shader.locColor, edgeHovForDraw, MarkView.init, loopMask,
                           baseWire, occluded);
-        } else if (activePlan.drawWire) {
+        } else if (baseWire.draw) {
             // The bare-overlay branch: no selection set, no hover index, so
             // `baseWire` is the ONLY thing it would draw. Kept as an explicit
             // early-out rather than a `BaseWire(false, ...)` call so that an
@@ -1202,16 +1333,9 @@ public:
         immutable bool edgeArm = selFeedbackType == SelType.Edge;
         BaseDots baseDots = baseDotsFor(activePlan, meshModel, vp.eye,
                                         shader.locAlpha);
-        baseDots.draw = activePlan.drawVerts || activePlan.baseDotsBySelection;
-        if (baseDots.draw && activePlan.cullHiddenVerts
-            && gpu.faceOriginGpu.length == 0) {
-            ulong listId;
-            const(DotList)* dl = dotCullFor(v, mesh, meshModel, vp, listId);
-            baseDots.useDrawList   = true;
-            baseDots.drawList      = dl.slots;
-            baseDots.drawListSlots = dl.slotCount;
-            baseDots.drawListId    = listId;
-        }
+        baseDots.draw = !itemSequence
+            && (activePlan.drawVerts || activePlan.baseDotsBySelection);
+        baseDots = culledBaseDots(baseDots, activePlan, gpu, mesh, meshModel, v, vp);
         gpu.drawVertices(shader.locColor, shader.locPointSize,
                          edgeArm && !showVertHover ? -1 : vertHovForDraw,
                          edgeArm ? MarkView.init : mesh.selectedVertexView(),
@@ -1220,7 +1344,7 @@ public:
         auto zOv = g_perf.scope_(Cat.drawOverlays);
         BaseDots hoverBase = baseDotsFor(activePlan, meshModel, vp.eye,
                                          shader.locAlpha);
-        hoverBase.draw = activePlan.baseDotsBySelection;
+        hoverBase.draw = !itemSequence && activePlan.baseDotsBySelection;
         gpu.drawVertices(shader.locColor, shader.locPointSize, vertHovForDraw,
                          MarkView.init, occluded, hoverBase);
     }

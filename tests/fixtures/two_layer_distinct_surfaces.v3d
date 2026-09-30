@@ -1,0 +1,151 @@
+{
+    "focusedItem": 1,
+    "formatVersion": 8,
+    "layers": [
+        {
+            "channels": {
+                "name": "Red",
+                "pivot.x": 0.0,
+                "pivot.y": 0.0,
+                "pivot.z": 0.0,
+                "pos.x": 0.0,
+                "pos.y": 0.0,
+                "pos.z": 0.0,
+                "rot.x": 0.0,
+                "rot.y": 0.0,
+                "rot.z": 0.0,
+                "scl.x": 1.0,
+                "scl.y": 1.0,
+                "scl.z": 1.0,
+                "visible": true
+            },
+            "mesh": {
+                "faceMaterial": [
+                    0
+                ],
+                "faceSubpatch": [
+                    false
+                ],
+                "faces": [
+                    [
+                        0,
+                        1,
+                        2,
+                        3
+                    ]
+                ],
+                "surfaces": [
+                    {
+                        "baseColor": [
+                            0.8,
+                            0.2,
+                            0.2
+                        ],
+                        "diffuse": 1.0,
+                        "glossiness": 0.0,
+                        "name": "Red_surf",
+                        "opacity": 1.0,
+                        "specular": 0.0
+                    }
+                ],
+                "vertices": [
+                    [
+                        -2.0,
+                        0.09999999999999998,
+                        0.0
+                    ],
+                    [
+                        -0.3999999999999999,
+                        0.09999999999999998,
+                        0.0
+                    ],
+                    [
+                        -0.3999999999999999,
+                        1.7000000000000002,
+                        0.0
+                    ],
+                    [
+                        -2.0,
+                        1.7000000000000002,
+                        0.0
+                    ]
+                ]
+            },
+            "selected": false,
+            "type": "mesh"
+        },
+        {
+            "channels": {
+                "name": "Blue",
+                "pivot.x": 0.0,
+                "pivot.y": 0.0,
+                "pivot.z": 0.0,
+                "pos.x": 0.0,
+                "pos.y": 0.0,
+                "pos.z": 0.0,
+                "rot.x": 0.0,
+                "rot.y": 0.0,
+                "rot.z": 0.0,
+                "scl.x": 1.0,
+                "scl.y": 1.0,
+                "scl.z": 1.0,
+                "visible": true
+            },
+            "mesh": {
+                "faceMaterial": [
+                    0
+                ],
+                "faceSubpatch": [
+                    false
+                ],
+                "faces": [
+                    [
+                        0,
+                        1,
+                        2,
+                        3
+                    ]
+                ],
+                "surfaces": [
+                    {
+                        "baseColor": [
+                            0.2,
+                            0.2,
+                            0.8
+                        ],
+                        "diffuse": 1.0,
+                        "glossiness": 0.0,
+                        "name": "Blue_surf",
+                        "opacity": 1.0,
+                        "specular": 0.0
+                    }
+                ],
+                "vertices": [
+                    [
+                        -0.8,
+                        -0.09999999999999998,
+                        0.0
+                    ],
+                    [
+                        1.2,
+                        -0.09999999999999998,
+                        0.0
+                    ],
+                    [
+                        1.2,
+                        1.9,
+                        0.0
+                    ],
+                    [
+                        -0.8,
+                        1.9,
+                        0.0
+                    ]
+                ]
+            },
+            "selected": true,
+            "type": "mesh"
+        }
+    ],
+    "primaryLayer": 1
+}
