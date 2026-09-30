@@ -129,6 +129,12 @@ unittest { // All visible banks share the preset session's recorded navigation.
     gesture("R", 30, 0); check("positive3", 4, 0);
     gesture("T", -10, 0); check("positive4", 5, 0);
     gesture("S", 30, 0); check("positive5", 6, 0);
+    auto mixedRows = getJson("/api/history")["undo"].array;
+    assert(mixedRows[1]["runId"].integer == mixedRows[2]["runId"].integer,
+        "mixed same-bank gestures unexpectedly advanced history run");
+    foreach (i; 3 .. 6)
+        assert(mixedRows[i]["runId"].integer == mixedRows[i - 1]["runId"].integer + 1,
+            "mixed bank boundary did not advance history run exactly once");
     foreach (i; 1 .. 6) { navigate(false); check(format("undo%s", i), 6 - i, i); }
     foreach (i; 1 .. 6) { navigate(true); check(format("redo%s", i), 1 + i, 5 - i); }
     invoke("tool.set Transform off"); check("close", 6, 0);
