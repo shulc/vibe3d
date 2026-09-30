@@ -11,6 +11,9 @@ import pipe_gizmo_host : PipeGizmoHost;
 import step_trace : StepTrace;
 
 alias AutomationResetHook = void function();
+/// A reset step that needs a live application object (a delegate, unlike the
+/// stateless hooks above).
+alias AutomationResetAction = void delegate();
 
 /// Concrete application services reset at the test-automation scene boundary.
 /// The adapter owns their order; the application supplies only the narrow
@@ -28,6 +31,7 @@ struct AutomationResetContext {
     AutomationResetHook clearImGuiInputKeys;
     AutomationResetHook clearHeldGestureButtons;
     AutomationResetHook clearPipelineAttrCache;
+    AutomationResetAction clearViewDisplay;
 
     @disable this();
 
@@ -42,7 +46,8 @@ struct AutomationResetContext {
          AutomationResetHook closePie,
          AutomationResetHook clearImGuiInputKeys,
          AutomationResetHook clearHeldGestureButtons,
-         AutomationResetHook clearPipelineAttrCache) {
+         AutomationResetHook clearPipelineAttrCache,
+         AutomationResetAction clearViewDisplay) {
         assert(guardController !is null,
             "AutomationResetContext requires guarded-action policy");
         assert(pipeGizmoHost !is null,
@@ -65,6 +70,8 @@ struct AutomationResetContext {
             "AutomationResetContext requires held-button reset hook");
         assert(clearPipelineAttrCache !is null,
             "AutomationResetContext requires tool attribute cache reset hook");
+        assert(clearViewDisplay !is null,
+            "AutomationResetContext requires view display reset action");
         this.guardController = guardController;
         this.pipeGizmoHost = pipeGizmoHost;
         this.aiState = aiState;
@@ -77,6 +84,7 @@ struct AutomationResetContext {
         this.clearImGuiInputKeys = clearImGuiInputKeys;
         this.clearHeldGestureButtons = clearHeldGestureButtons;
         this.clearPipelineAttrCache = clearPipelineAttrCache;
+        this.clearViewDisplay = clearViewDisplay;
     }
 }
 
@@ -130,6 +138,8 @@ private:
         // runs AFTER the reset applied, so the reset's own tool drop has
         // already stored its nodes and they are cleared with the rest.
         automation_.clearPipelineAttrCache();
+        // Task 8620: the view display atoms a user-visible reset keeps.
+        automation_.clearViewDisplay();
         automation_.exploration.discardPending();
         if (automation_.trace !is null) automation_.trace.reset();
     }

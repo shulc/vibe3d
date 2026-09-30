@@ -604,6 +604,10 @@ version (unittest) {
         ImVec2[5] masterOptionMax;
         ImVec2 resetMin;
         ImVec2 resetMax;
+        ImVec2 retopologyMin;
+        ImVec2 retopologyMax;
+        ImVec2 presetMin;
+        ImVec2 presetMax;
     }
 
     // Test instrumentation only: mutable process-wide state intentionally
@@ -637,12 +641,22 @@ version (unittest) {
         g_viewportPropsDrawSnapshot.resetMin = ImGui.GetItemRectMin();
         g_viewportPropsDrawSnapshot.resetMax = ImGui.GetItemRectMax();
     }
+    private void recordViewportPropsRetopology() {
+        g_viewportPropsDrawSnapshot.retopologyMin = ImGui.GetItemRectMin();
+        g_viewportPropsDrawSnapshot.retopologyMax = ImGui.GetItemRectMax();
+    }
+    private void recordViewportPropsPreset() {
+        g_viewportPropsDrawSnapshot.presetMin = ImGui.GetItemRectMin();
+        g_viewportPropsDrawSnapshot.presetMax = ImGui.GetItemRectMax();
+    }
 } else {
     private void recordViewportPropsProjection(int, int) {}
     private void recordViewportPropsCenter() {}
     private void recordViewportPropsMaster() {}
     private void recordViewportPropsMasterOption(int) {}
     private void recordViewportPropsReset() {}
+    private void recordViewportPropsRetopology() {}
+    private void recordViewportPropsPreset() {}
 }
 
 void drawViewportPropsPanel(ViewportPropertiesReadRole viewportRead,
@@ -785,6 +799,73 @@ void drawViewportPropsPanel(ViewportPropertiesReadRole viewportRead,
                 if (wa > 1.0f) wa = 1.0f;
                 dispatch("viewport.wireAlpha",
                     positionalPayload([format("%.6f", wa)]));
+            }
+        }
+
+        // Retopology working view, for the ACTIVE cell. Each control
+        // dispatches exactly its own per-cell command: the checkbox writes the
+        // mode ONLY (the default same-as-active backdrop then follows the
+        // measured law), and the preset writes the whole working view in one
+        // command (task 8620). Nothing here arms a tool.
+        ImGui.Dummy(ImVec2(0, 2));
+        ImGui.SeparatorText("Retopology");
+        {
+            import display_state : BackdropStyle;
+            import viewport_scheme : MAX_POINT_SIZE;
+            import std.format : format;
+
+            bool retopo = v.display.retopology;
+            const retopoChanged = ImGui.Checkbox("Retopology", &retopo);
+            recordViewportPropsRetopology();
+            if (retopoChanged)
+                dispatch("viewport.retopology",
+                    positionalPayload([retopo ? "on" : "off"]));
+
+            ImGui.SameLine();
+            const presetPressed = ImGui.Button("Retopology Preset");
+            recordViewportPropsPreset();
+            if (presetPressed)
+                dispatch("viewport.retopologyPreset", positionalPayload([]));
+
+            static immutable string[4] backLabels =
+                ["Same as Active", "Wireframe", "Flat", "Hidden"];
+            static immutable string[4] backIds =
+                ["same", "wireframe", "flat", "hidden"];
+            static immutable BackdropStyle[4] backVals =
+                [BackdropStyle.SameAsActive, BackdropStyle.Wireframe,
+                 BackdropStyle.Flat, BackdropStyle.Hidden];
+            int bi = 0;
+            foreach (i, bv; backVals) if (bv == v.display.backdropStyle) bi = cast(int)i;
+            ImGui.Text("Backdrop");
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(-1.0f);
+            if (ImGui.BeginCombo("##vpBackdropStyle", backLabels[bi])) {
+                foreach (i, bl; backLabels) {
+                    bool sel = (i == bi);
+                    if (ImGui.Selectable(bl, sel))
+                        dispatch("viewport.backdropStyle",
+                            positionalPayload([backIds[i]]));
+                    if (sel) ImGui.SetItemDefaultFocus();
+                }
+                ImGui.EndCombo();
+            }
+
+            bool dots = v.display.active.showVertices;
+            if (ImGui.Checkbox("Vertices", &dots))
+                dispatch("viewport.showVertices",
+                    positionalPayload([dots ? "on" : "off"]));
+
+            // 0 = the scheme's default dot size. Clamped here for the same
+            // reason as the opacity slider above: ctrl-click text entry can
+            // leave the slider's range.
+            float ps = v.display.active.pointSize;
+            ImGui.SetNextItemWidth(-1.0f);
+            if (ImGui.SliderFloat("##vpPointSize", &ps, 0.0f, 16.0f,
+                                  "Point Size %.0f")) {
+                if (!(ps >= 0.0f)) ps = 0.0f;
+                if (ps > MAX_POINT_SIZE) ps = MAX_POINT_SIZE;
+                dispatch("viewport.pointSize",
+                    positionalPayload([format("%.6f", ps)]));
             }
         }
 

@@ -46,10 +46,15 @@ abstract class ViewportCommand : Command {
 
     /// Tail for a per-cell display writer of a field OUTSIDE the template
     /// set `T` (`ViewportManager.seedShippedDisplay`): mark the cell dirty so
-    /// the next frame re-renders it, and nothing else — such a write is not a
-    /// template choice, so it neither sets `displayUserSet` nor touches prefs.
+    /// the next frame re-renders it and mirror the cell's non-template fields
+    /// into the in-memory prefs. Such a write is not a template choice, so it
+    /// never sets `displayUserSet` or `styleUserSet` (task 8620).
     protected final void markCellDisplayDirty(int cell) {
+        import prefs : g_prefs, mirrorNonTemplateDisplay;
         vpm.views[cell].dirty = true;
+        if (cell < g_prefs.viewportDisplay.length)
+            mirrorNonTemplateDisplay(g_prefs.viewportDisplay[cell],
+                                     vpm.views[cell].display);
     }
 
     /// Tail for a writer of a template field `T = {active.style, active.wire,

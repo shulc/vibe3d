@@ -397,7 +397,8 @@ private final class Fixture {
                 resetHook(&closePieProbe),
                 resetHook(&clearInputKeysProbe),
                 resetHook(&clearHeldButtonsProbe),
-                resetHook(&clearAttrCacheProbe)));
+                resetHook(&clearAttrCacheProbe),
+                () {}));
         commandAdapter.wire();
         if (!withUiHandler) server.setUiCommandHandler(null);
         historyAdapter = new HistoryHttpAdapter(history, session, null);

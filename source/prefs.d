@@ -33,7 +33,9 @@ import std.format : format;
 import log            : logWarn;
 import toolpipe.attr_cache : PipelineAttrCache, NodeAttrs, kToolNode;
 import viewport       : LayoutPreset;
-import display_state  : DisplayStyle, WireOverlay;
+import display_state  : BackdropStyle, DisplayStyle, ViewportDisplay, WireOverlay,
+                        kDisplayStyleOrder;
+import viewport_scheme : MAX_POINT_SIZE;
 import coord_rounding : CoordinateRounding, kCoordRoundingDefault,
                         kFixedIncrementDefault, coordRoundingName,
                         parseCoordRounding;
@@ -203,6 +205,43 @@ struct ViewportCellDisplay {
     /// template application correct instead of pinning it to a default that
     /// was never chosen.
     bool styleUserSet = false;
+
+    /// The cell's display fields OUTSIDE the template set `T`: the retopology
+    /// mode, the backdrop representation and its slot style, and the vertex
+    /// dots. No template writes them, so they need no provenance bit — their
+    /// default is `ViewportDisplay.init` and an untouched cell round-trips as
+    /// the identity. Mirrored by `mirrorNonTemplateDisplay`, applied by
+    /// `restoreNonTemplateDisplay`; a field that ever joins the template
+    /// joins `T` and the `styleUserSet` gate instead (task 8620).
+    bool          retopology        = false;
+    BackdropStyle backdropStyle     = BackdropStyle.SameAsActive;
+    DisplayStyle  backdropSlotStyle = DisplayStyle.Shaded;
+    bool          showVertices      = false;
+    float         pointSize         = 0.0f;
+}
+
+/// Copy a live cell's non-template display fields into its persisted row.
+/// The one list of those fields on the write side; `restoreNonTemplateDisplay`
+/// is its exact inverse, and mirroring `ViewportDisplay.init` is the clear.
+void mirrorNonTemplateDisplay(ref ViewportCellDisplay c, in ViewportDisplay d)
+        pure nothrow @safe @nogc {
+    c.retopology        = d.retopology;
+    c.backdropStyle     = d.backdropStyle;
+    c.backdropSlotStyle = d.backdrop.style;
+    c.showVertices      = d.active.showVertices;
+    c.pointSize         = d.active.pointSize;
+}
+
+/// Apply a persisted row's non-template fields to a live cell. Leaves the
+/// template set `T` alone by construction, which is what lets the restore
+/// run unconditionally while `T` stays gated by `styleUserSet`.
+void restoreNonTemplateDisplay(ref ViewportDisplay d, in ViewportCellDisplay c)
+        pure nothrow @safe @nogc {
+    d.retopology          = c.retopology;
+    d.backdropStyle       = c.backdropStyle;
+    d.backdrop.style      = c.backdropSlotStyle;
+    d.active.showVertices = c.showVertices;
+    d.active.pointSize    = c.pointSize;
 }
 
 /// Module-level live preferences. Loaded once at startup, mutated by the
@@ -252,6 +291,47 @@ private string prefsFilePath(string dir) { return buildPath(dir, "prefs.json"); 
 // ---------------------------------------------------------------------------
 // Read
 // ---------------------------------------------------------------------------
+
+/// Read one cell's non-template display fields. Never throws; a
+/// missing or ill-typed key keeps the field's default. Names are matched
+/// against tables DERIVED from the enums (every `BackdropStyle` member, and
+/// `kDisplayStyleOrder`, which is statically complete), so a member added
+/// later round-trips with no edit here — the silent fallback a hand-kept
+/// switch gives a forgotten name (see the style switch in `loadPrefs`)
+/// cannot recur.
+private void readNonTemplateDisplay(ref ViewportCellDisplay c, JSONValue cellJson) {
+    import std.conv : to;
+    import std.math : isFinite;
+    import std.traits : EnumMembers;
+    static bool readBool(JSONValue j, string key, ref bool dst) {
+        if (auto b = key in j) {
+            if (b.type == JSONType.true_)  { dst = true;  return true; }
+            if (b.type == JSONType.false_) { dst = false; return true; }
+        }
+        return false;
+    }
+    readBool(cellJson, "retopology", c.retopology);
+    readBool(cellJson, "showVertices", c.showVertices);
+    if (auto bp = "backdropStyle" in cellJson)
+        if (bp.type == JSONType.string)
+            foreach (m; [EnumMembers!BackdropStyle])
+                if (to!string(m) == bp.str) c.backdropStyle = m;
+    if (auto sp = "backdropSlotStyle" in cellJson)
+        if (sp.type == JSONType.string)
+            foreach (m; kDisplayStyleOrder)
+                if (to!string(m) == sp.str) c.backdropSlotStyle = m;
+    if (auto pp = "pointSize" in cellJson) {
+        float v = float.nan;
+        if (pp.type == JSONType.float_)        v = cast(float)pp.floating;
+        else if (pp.type == JSONType.integer)  v = cast(float)pp.integer;
+        else if (pp.type == JSONType.uinteger) v = cast(float)pp.uinteger;
+        if (isFinite(v)) {
+            if (v < 0.0f) v = 0.0f;
+            if (v > MAX_POINT_SIZE) v = MAX_POINT_SIZE;
+            c.pointSize = v;
+        }
+    }
+}
 
 /// Load preferences from `dir`/prefs.json into a Prefs struct. NEVER throws:
 /// missing file → defaults; malformed JSON → logWarn + defaults; unknown keys
@@ -432,6 +512,7 @@ Prefs loadPrefs(string dir) {
                             p.viewportDisplay[i].wireAlpha = a;
                         }
                     }
+                    readNonTemplateDisplay(p.viewportDisplay[i], cellJson);
                 }
             }
 
@@ -564,6 +645,13 @@ void savePrefs(ref const Prefs p, string dir) {
         // the projection-dependent template apply instead of being pinned by
         // a value nobody picked.
         cj["styleUserSet"] = JSONValue(c.styleUserSet);
+        // The non-template fields, by the enums' own names; read back by
+        // `readNonTemplateDisplay` against tables derived from the enums.
+        cj["retopology"]        = JSONValue(c.retopology);
+        cj["backdropStyle"]     = JSONValue(to!string(c.backdropStyle));
+        cj["backdropSlotStyle"] = JSONValue(to!string(c.backdropSlotStyle));
+        cj["showVertices"]      = JSONValue(c.showVertices);
+        cj["pointSize"]         = JSONValue(c.pointSize);
         vd ~= cj;
     }
     doc["viewportDisplay"] = JSONValue(vd);

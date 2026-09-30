@@ -1000,10 +1000,11 @@ final class ViewportManager {
             // depending on slice order. Cleared BEFORE applyLayout, which is
             // what re-seeds the template.
             views[k].displayUserSet = false;
-            // The rest of the cell's display state (backdrop slot, backdrop
-            // representation, retopology mode) has commands of its own and no
-            // template, so it would otherwise survive the reset the same way.
-            views[k].display = ViewportDisplay.init;
+            // The rest of the cell's display state (retopology mode, backdrop
+            // representation and slot, vertex dots) is KEPT: a new or reset
+            // scene leaves the view's display atoms alone at the reference
+            // (captured C-R1, task 8620). The test-isolation boundary clears
+            // them instead, `scene_reset_effects.clearViewDisplayForAutomation`.
         }
         applyLayout(LayoutPreset.Single);
     }

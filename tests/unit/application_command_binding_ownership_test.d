@@ -35,6 +35,7 @@ private size_t closePieCalls;
 private size_t clearInputKeysCalls;
 private size_t clearHeldButtonsCalls;
 private size_t clearAttrCacheCalls;
+private size_t clearViewDisplayCalls;
 
 private void resetUiRecordProbe() { ++uiResetCalls; }
 private void clearAiTraceProbe() { ++aiTraceResetCalls; }
@@ -218,6 +219,7 @@ unittest { // command adapter owns reset policy without an EditorApp capture
     clearInputKeysCalls = 0;
     clearHeldButtonsCalls = 0;
     clearAttrCacheCalls = 0;
+    clearViewDisplayCalls = 0;
 
     auto history = new CommandHistory();
     Tool activeTool;
@@ -271,7 +273,8 @@ unittest { // command adapter owns reset policy without an EditorApp capture
             resetHook(&closePieProbe),
             resetHook(&clearInputKeysProbe),
             resetHook(&clearHeldButtonsProbe),
-            resetHook(&clearAttrCacheProbe)));
+            resetHook(&clearAttrCacheProbe),
+            () { ++clearViewDisplayCalls; }));
     adapter.wire();
 
     // Seed a real pending guard, then drive scene.reset through the UI door.
@@ -303,6 +306,9 @@ unittest { // command adapter owns reset policy without an EditorApp capture
     // Slice M5: a user-visible reset keeps the tool attribute cache.
     assert(clearAttrCacheCalls == 0,
         "adapter UI scene.reset cleared the tool attribute cache");
+    // Task 8620: a user-visible reset keeps the view display atoms.
+    assert(clearViewDisplayCalls == 0,
+        "adapter UI scene.reset cleared the view display atoms");
 
     // Successful script reset runs before and then the complete after policy.
     dirty = true;
@@ -329,6 +335,8 @@ unittest { // command adapter owns reset policy without an EditorApp capture
         "successful script scene.reset did not run the complete automation-after policy");
     assert(clearAttrCacheCalls == 1,
         "successful script scene.reset did not clear the tool attribute cache");
+    assert(clearViewDisplayCalls == 1,
+        "successful script scene.reset did not clear the view display atoms");
     assert(trace.snapshotJson() == "[]",
         "successful script scene.reset left non-empty automation trace state");
 
@@ -395,6 +403,7 @@ unittest { // command adapter owns reset policy without an EditorApp capture
     const inputBeforeNonTest = clearInputKeysCalls;
     const heldBeforeNonTest = clearHeldButtonsCalls;
     const attrCacheBeforeNonTest = clearAttrCacheCalls;
+    const viewDisplayBeforeNonTest = clearViewDisplayCalls;
     auto nonTestResult = adapter.dispatchScript("scene.reset", "", false);
     assert(nonTestResult.outcome == CommandInvocationOutcome.applied,
         "non-test scene.reset did not apply");
@@ -411,4 +420,6 @@ unittest { // command adapter owns reset policy without an EditorApp capture
         "non-test scene.reset incorrectly ran automation-after");
     assert(clearAttrCacheCalls == attrCacheBeforeNonTest,
         "non-test scene.reset cleared the tool attribute cache");
+    assert(clearViewDisplayCalls == viewDisplayBeforeNonTest,
+        "non-test scene.reset cleared the view display atoms");
 }

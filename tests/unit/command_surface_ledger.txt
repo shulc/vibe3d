@@ -112,7 +112,7 @@ undo.lockout.on | api-only: test-automation history lockout engagement
 undo.test.force | api-only: test-automation undoability override probe
 undo.test.suppress | api-only: test-automation undoability override probe
 uv.unwrap | no-ui-yet: user-facing UV unwrap operation has no action
-viewport.backdropStyle | no-ui-yet: per-cell backdrop representation has no surface until the retopology UI slice
+viewport.backdropStyle | code-ui: Viewport Properties backdrop chooser dispatches directly
 viewport.displayStyle | code-ui: Viewport Properties style chooser dispatches directly
 viewport.gridSteps | code-ui: Viewport Properties grid chooser dispatches directly
 viewport.indCenter | code-ui: Viewport Properties Center checkbox dispatches directly
@@ -120,9 +120,10 @@ viewport.indRotate | code-ui: Viewport Properties Rotate checkbox dispatches dir
 viewport.indScale | code-ui: Viewport Properties Scale checkbox dispatches directly
 viewport.layout | code-ui: Viewport Properties layout buttons dispatch directly
 viewport.master | code-ui: Viewport Properties master chooser dispatches directly
-viewport.pointSize | no-ui-yet: per-cell vertex dot size has no surface until the retopology UI slice
-viewport.retopology | no-ui-yet: per-cell retopology display mode has no surface until the retopology UI slice
-viewport.showVertices | no-ui-yet: per-cell vertex dot switch has no surface until the retopology UI slice
+viewport.pointSize | code-ui: Viewport Properties point size slider dispatches directly
+viewport.retopology | code-ui: Viewport Properties Retopology checkbox dispatches directly
+viewport.retopologyPreset | code-ui: Viewport Properties Retopology Preset button dispatches directly
+viewport.showVertices | code-ui: Viewport Properties Vertices checkbox dispatches directly
 viewport.wireAlpha | code-ui: Viewport Properties wire slider dispatches directly
 viewport.wireOverlay | code-ui: Viewport Properties wire chooser dispatches directly
 workplane.edit | no-ui-yet: command documents an Edit Work Plane panel that is absent

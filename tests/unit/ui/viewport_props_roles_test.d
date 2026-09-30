@@ -11,6 +11,8 @@ import command_args : bindArgs;
 import commands.viewport.independence : ViewportIndepAxis,
     ViewportIndependence;
 import commands.viewport.master : ViewportMaster;
+import commands.viewport.display : ViewportRetopology, ViewportRetopologyPreset;
+import display_state : BackdropStyle;
 import display_state : DisplayStyle;
 import editmode : EditMode;
 import layout_reset_action : LayoutResetAction;
@@ -333,4 +335,74 @@ unittest { // production wiring for the collaborators built above
         assert(!app.canFind(name) && !panel.canFind(name)
             && !editor.canFind(name),
             "5850 retired layout-reset storage remains beside the owner: " ~ name);
+}
+
+unittest { // 8620: the Retopology checkbox writes the mode ONLY; the preset writes all five
+    auto vpm = new ViewportManager(0, 0, 800, 600);
+    vpm.applyLayout(LayoutPreset.Quad);
+    vpm.activeId = 2;
+    auto mesh = makeCube();
+    Prefs prefs;
+    auto reset = inertReset(&prefs);
+    string[] ids;
+    string[] payloads;
+    void dispatch(string id, string payload) {
+        ids ~= id;
+        payloads ~= payload;
+        Command command;
+        if (id == "viewport.retopology")
+            command = new ViewportRetopology(&mesh,
+                vpm.views[vpm.activeId].camera, EditMode.Polygons, vpm);
+        else if (id == "viewport.retopologyPreset")
+            command = new ViewportRetopologyPreset(&mesh,
+                vpm.views[vpm.activeId].camera, EditMode.Polygons, vpm);
+        else
+            assert(false, "unexpected viewport properties dispatch: " ~ id);
+        bindArgs(command, payload);
+        assert(command.apply(), "viewport properties command fixture refused");
+    }
+    auto ui = openPanel(() {
+        drawViewportPropsPanel(ViewportPropertiesReadRole(vpm),
+                               cast(ViewportCommandDispatch)&dispatch, reset);
+    }, "Viewport retopology host");
+    resetViewportPropsDrawSnapshot();
+    scope (exit) ui.close();
+    ui.frame();
+    auto snap = viewportPropsDrawSnapshot();
+    const d0 = vpm.views[0].display;
+    assert(!vpm.views[2].display.retopology,
+        "8620 checkbox precondition: the mode starts off in the active cell");
+
+    ui.pressAt(center(snap.retopologyMin, snap.retopologyMax));
+    ui.release();
+    assert(ids == ["viewport.retopology"],
+        "8620 checkbox dispatch witness: expected exactly viewport.retopology");
+    assert(payloads[0].indexOf(`"on"`) >= 0,
+        "8620 checkbox did not dispatch its toggled value");
+    const t = vpm.views[2].display;
+    assert(t.retopology && t.backdropStyle == BackdropStyle.SameAsActive
+        && !t.active.showVertices && t.active.pointSize == 0.0f,
+        "8620 toggle-only: the checkbox must write the mode and nothing else");
+    assert(vpm.views[0].display == d0,
+        "8620 checkbox reached a cell other than the active one");
+
+    ui.frame();
+    snap = viewportPropsDrawSnapshot();
+    ui.pressAt(center(snap.presetMin, snap.presetMax));
+    ui.release();
+    assert(ids == ["viewport.retopology", "viewport.retopologyPreset"],
+        "8620 preset dispatch witness: expected exactly viewport.retopologyPreset");
+    const p = vpm.views[2].display;
+    assert(p.retopology && p.backdropStyle == BackdropStyle.Flat
+        && p.backdrop.style == DisplayStyle.Shaded
+        && p.active.showVertices && p.active.pointSize == 6.0f,
+        "8620 preset button: the active cell must carry the five preset atoms");
+
+    ui.frame();
+    snap = viewportPropsDrawSnapshot();
+    ui.pressAt(center(snap.retopologyMin, snap.retopologyMax));
+    ui.release();
+    assert(ids.length == 3 && ids[2] == "viewport.retopology"
+        && payloads[2].indexOf(`"off"`) >= 0 && !vpm.views[2].display.retopology,
+        "8620 checkbox must read the live mode and dispatch its inverse");
 }

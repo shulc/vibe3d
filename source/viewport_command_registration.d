@@ -2,7 +2,8 @@ module viewport_command_registration;
 
 import command : Command;
 import commands.viewport.display : ViewportBackdropStyle, ViewportDisplayStyle,
-    ViewportPointSize, ViewportRetopology, ViewportShowVertices,
+    ViewportPointSize, ViewportRetopology, ViewportRetopologyPreset,
+    ViewportShowVertices,
     ViewportWireAlpha, ViewportWireOverlay;
 import commands.viewport.fit : Fit;
 import commands.viewport.fit_selected : FitSelected;
@@ -52,6 +53,8 @@ void registerViewportCommands(ref Registry reg, LiveSessionRole owner,
         new ViewportBackdropStyle(&owner.activeMesh(), live.view(), live.mode, vpm));
     reg.registerCommand("viewport.retopology", () => cast(Command)
         new ViewportRetopology(&owner.activeMesh(), live.view(), live.mode, vpm));
+    reg.registerCommand("viewport.retopologyPreset", () => cast(Command)
+        new ViewportRetopologyPreset(&owner.activeMesh(), live.view(), live.mode, vpm));
     reg.registerCommand("viewport.showVertices", () => cast(Command)
         new ViewportShowVertices(&owner.activeMesh(), live.view(), live.mode, vpm));
     reg.registerCommand("viewport.pointSize", () => cast(Command)

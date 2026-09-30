@@ -131,7 +131,8 @@ final class LiveRegistrationRig {
                 &noOpClosePie,
                 &noOpClosePie,
                 &noOpClosePie,
-                &noOpClosePie));
+                &noOpClosePie,
+                () {}));
 
         host.getActiveTool = () => activeTool;
         host.getActiveToolId = () => activeToolId;

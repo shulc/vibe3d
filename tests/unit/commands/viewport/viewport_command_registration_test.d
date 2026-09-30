@@ -15,8 +15,8 @@ import application_command_binding : CommandInvocationContext,
     CommandInvocationOutcome;
 import command : CmdFlags, Command, CommandOrigin;
 import commands.viewport.display : ViewportBackdropStyle, ViewportDisplayStyle,
-    ViewportPointSize, ViewportRetopology, ViewportShowVertices,
-    ViewportWireAlpha, ViewportWireOverlay;
+    ViewportPointSize, ViewportRetopology, ViewportRetopologyPreset,
+    ViewportShowVertices, ViewportWireAlpha, ViewportWireOverlay;
 import commands.viewport.fit : Fit;
 import commands.viewport.fit_selected : FitSelected;
 import commands.viewport.grid_steps : ViewportGridSteps;
@@ -38,13 +38,14 @@ import viewport_command_registration : registerViewportCommands;
 private enum repoRoot = buildNormalizedPath(dirName(__FILE_FULL_PATH__),
                                              "..", "..", "..", "..");
 
-private immutable string[16] kIds = [
+private immutable string[17] kIds = [
     "viewport.fit", "viewport.fit_selected", "viewport.view",
     "viewport.layout", "viewport.indCenter", "viewport.indScale",
     "viewport.indRotate", "viewport.displayStyle", "viewport.wireOverlay",
     "viewport.wireAlpha", "viewport.gridSteps", "viewport.master",
     "viewport.backdropStyle", "viewport.retopology",
     "viewport.showVertices", "viewport.pointSize",
+    "viewport.retopologyPreset",
 ];
 
 private bool isExpectedClass(string id, Command command) {
@@ -65,6 +66,8 @@ private bool isExpectedClass(string id, Command command) {
         case "viewport.retopology":   return cast(ViewportRetopology) command !is null;
         case "viewport.showVertices": return cast(ViewportShowVertices) command !is null;
         case "viewport.pointSize":    return cast(ViewportPointSize) command !is null;
+        case "viewport.retopologyPreset":
+            return cast(ViewportRetopologyPreset) command !is null;
         default:                       return false;
     }
 }
@@ -139,8 +142,8 @@ unittest { // U1: every id builds its intended command class
         "6010 null-manager rejection registered a partial family");
 
     fixture.registerViewport();
-    assert(fixture.registry.commandIds().length == 16,
-        format("6010 id population: expected 16 viewport ids, got %d",
+    assert(fixture.registry.commandIds().length == 17,
+        format("6010 id population: expected 17 viewport ids, got %d",
                fixture.registry.commandIds().length));
     size_t checked;
     foreach (id; kIds) {
@@ -155,8 +158,8 @@ unittest { // U1: every id builds its intended command class
             "6010 camera-only witness: " ~ id ~ " is not a UI command");
         ++checked;
     }
-    assert(checked == 16,
-        "6010 id witness ran over fewer than 16 ids");
+    assert(checked == 17,
+        "6010 id witness ran over fewer than 17 ids");
 }
 
 unittest { // U2: primary, mode, and active cell resolve after registration
@@ -336,8 +339,8 @@ unittest { // U2: primary, mode, and active cell resolve after registration
                    id, got, want));
         ++views;
     }
-    assert(meshes == 16 && modes == 16 && views == 16,
-        "6010 live binding witness ran over fewer than 16 factories");
+    assert(meshes == 17 && modes == 17 && views == 17,
+        "6010 live binding witness ran over fewer than 17 factories");
 }
 
 unittest { // U3: production uses the narrow registrar before LAST wrapping
@@ -363,8 +366,8 @@ unittest { // U3: production uses the narrow registrar before LAST wrapping
                       "RemeshModalRefs", "with (", "with("])
         assert(registrar.count(banned) == 0,
             "6010 no-EditorApp witness: viewport registrar names " ~ banned);
-    assert(registrarRaw.count(`reg.registerCommand("viewport.`) == 16,
-        "6010 registrar population: expected 16 viewport factory rows");
+    assert(registrarRaw.count(`reg.registerCommand("viewport.`) == 17,
+        "6010 registrar population: expected 17 viewport factory rows");
 
     const registration = squash(blankNonCode(registrationRaw));
     enum productionCall = "registerViewportCommands(app.reg(), "
@@ -426,10 +429,11 @@ unittest { // U3: production uses the narrow registrar before LAST wrapping
 
 unittest { // U4: only a writer of a template field claims the template
     // Through the production registrar and the real command classes, so the
-    // tail each writer picks is the one the script door reaches. Eight writers
-    // over two passes of the four cells; all eight mark the cell dirty, only the
-    // three writers of `T = {active.style, active.wire, active.wireAlpha}` set
-    // `displayUserSet` and its prefs mirror (plan §10.13).
+    // tail each writer picks is the one the script door reaches. Nine writers
+    // over three passes of the four cells; all nine mark the cell dirty, only
+    // the three writers of `T = {active.style, active.wire, active.wireAlpha}`
+    // set `displayUserSet` and its prefs mirror (plan §10.13), and every one
+    // mirrors the cell's non-template fields into prefs (task 8620).
     import prefs : ViewportCellDisplay;
     const prefsBefore = g_prefs.viewportDisplay;
     scope(exit) g_prefs.viewportDisplay = prefsBefore;
@@ -439,7 +443,7 @@ unittest { // U4: only a writer of a template field claims the template
     assert(fixture.vpm.cellCount == 4, "U4 rig: Quad must expose four cells");
 
     struct Row { string id; string value; bool template_; }
-    immutable Row[8] rows = [
+    immutable Row[9] rows = [
         Row("viewport.displayStyle",  `"value":"solid"`,           true),
         Row("viewport.wireOverlay",   `"value":"none"`,            true),
         Row("viewport.wireAlpha",     `"value":"0.5"`,             true),
@@ -448,6 +452,7 @@ unittest { // U4: only a writer of a template field claims the template
         Row("viewport.retopology",    `"value":"on"`,              false),
         Row("viewport.showVertices",  `"value":"on"`,              false),
         Row("viewport.pointSize",     `"value":6`,                 false),
+        Row("viewport.retopologyPreset", ``,                       false),
     ];
     int checked = 0;
     foreach (i, row; rows) {
@@ -457,7 +462,9 @@ unittest { // U4: only a writer of a template field claims the template
         g_prefs.viewportDisplay[k] = ViewportCellDisplay.init;
         assert(!g_prefs.viewportDisplay[k].styleUserSet,
             "U4 rig: a fresh prefs row must start unchosen");
-        const params = format(`{%s,"viewport":%d}`, row.value, k);
+        const params = row.value.length
+            ? format(`{%s,"viewport":%d}`, row.value, k)
+            : format(`{"viewport":%d}`, k);
         assert(fixture.script(row.id, params) == CommandInvocationOutcome.applied,
             format("U4: %s %s did not apply", row.id, params));
         assert(fixture.vpm.views[k].dirty,
@@ -477,9 +484,20 @@ unittest { // U4: only a writer of a template field claims the template
                 && pr.wireAlpha == active.wireAlpha,
                 format("U4: %s %s must mirror T into prefs", row.id, params));
         }
+        {
+            const d = fixture.vpm.views[k].display;
+            const pr = g_prefs.viewportDisplay[k];
+            assert(pr.retopology == d.retopology
+                && pr.backdropStyle == d.backdropStyle
+                && pr.backdropSlotStyle == d.backdrop.style
+                && pr.showVertices == d.active.showVertices
+                && pr.pointSize == d.active.pointSize,
+                format("U4: %s %s must mirror the non-template fields into prefs",
+                       row.id, params));
+        }
         ++checked;
     }
-    assert(checked == 8, format("U4 floor: expected eight writers, ran %d", checked));
+    assert(checked == 9, format("U4 floor: expected nine writers, ran %d", checked));
 }
 
 unittest { // U5: the dot switch and size reach the addressed cell; size is clamped
@@ -507,4 +525,46 @@ unittest { // U5: the dot switch and size reach the addressed cell; size is clam
             ~ "expected %s", c[0], st(2).pointSize, c[1]));
     }
     assert(st(1).pointSize == 0.0f, "U5: pointSize leaked into cell 1");
+}
+
+unittest { // U6: the retopology preset writes exactly its five atoms, in one cell
+    import display_state : BackdropStyle;
+    auto fixture = new Fixture;
+    fixture.registerViewport();
+    const prefsBefore = g_prefs.viewportDisplay;
+    scope(exit) g_prefs.viewportDisplay = prefsBefore;
+    // Cell 2 starts with the backdrop slot written the OTHER way, so the
+    // preset's slot write is observable, and with a chosen template style the
+    // preset must leave alone.
+    auto v2 = fixture.vpm.views[2];
+    v2.display.backdrop.style = DisplayStyle.Wireframe;
+    v2.display.active.style = DisplayStyle.Solid;
+    v2.displayUserSet = false;
+    const before1 = fixture.vpm.views[1].display;
+    assert(fixture.script("viewport.retopologyPreset", `{"viewport":2}`)
+        == CommandInvocationOutcome.applied, "U6: the preset refused");
+    const d = v2.display;
+    int atoms = 0;
+    assert(d.retopology, "U6: the preset must turn the mode on"); ++atoms;
+    assert(d.backdropStyle == BackdropStyle.Flat,
+        "U6: the preset must set the backdrop Flat"); ++atoms;
+    assert(d.backdrop.style == DisplayStyle.Shaded,
+        "U6: the preset must write the backdrop slot style Shaded"); ++atoms;
+    assert(d.active.showVertices, "U6: the preset must show vertices"); ++atoms;
+    assert(d.active.pointSize == 6.0f,
+        format("U6: the preset must set point size 6, got %s",
+               d.active.pointSize)); ++atoms;
+    assert(atoms == 5, "U6 floor: five atoms");
+    assert(d.active.style == DisplayStyle.Solid && !v2.displayUserSet,
+        "U6: the preset must neither write nor claim the template");
+    assert(v2.dirty, "U6: the preset must mark the cell dirty");
+    assert(fixture.vpm.views[1].display == before1,
+        "U6: the preset must reach exactly the addressed cell");
+    // The active-cell default (no selector) reaches the active cell.
+    fixture.vpm.activeId = 3;
+    assert(fixture.script("viewport.retopologyPreset")
+        == CommandInvocationOutcome.applied, "U6: the bare preset refused");
+    assert(fixture.vpm.views[3].display.retopology
+        && !fixture.vpm.views[1].display.retopology,
+        "U6: the bare preset must reach the active cell only");
 }

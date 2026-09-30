@@ -242,7 +242,8 @@ import command_history : RecordMode;
 import application_command_binding : ApplicationCommandBinding;
 import http_command_adapter : AutomationResetContext, CommandHttpAdapter;
 import held_gesture_buttons : clearHeldGestureButtonsForAutomation;
-import prefs : clearPipelineAttrCacheForAutomation;
+import prefs : clearPipelineAttrCacheForAutomation, restoreNonTemplateDisplay;
+import scene_reset_effects : clearViewDisplayForAutomation;
 import registry;
 // Task 0415 (campaign 0407 §B.V1 step 1): registerTools/registerCommands
 // host the command/tool factory registration moved out of main() below,
@@ -2160,6 +2161,9 @@ void main(string[] args) {
         // profile keeps its appearance exactly.
         foreach (k, ref cd; g_prefs.viewportDisplay) {
             if (k >= vpm.views.length) break;
+            // Task 8620: the non-template fields have no template to protect,
+            // so they restore UNCONDITIONALLY and never set displayUserSet.
+            restoreNonTemplateDisplay(vpm.views[k].display, cd);
             if (!cd.styleUserSet) continue;
             vpm.views[k].display.active.style     = cd.style;
             vpm.views[k].display.active.wire      = cd.wire;
@@ -4840,7 +4844,8 @@ void main(string[] args) {
             &resetPieForAutomation,
             &clearImGuiInputKeysForAutomation,
             &clearHeldGestureButtonsForAutomation,
-            &clearPipelineAttrCacheForAutomation));
+            &clearPipelineAttrCacheForAutomation,
+            () { clearViewDisplayForAutomation(vpm, g_prefs); }));
     wireHttpProviders(httpServer, app, ifs, executor, commandHttpAdapter);
 
     // Interactive history-navigation chokepoint (undo/redo migration P0;

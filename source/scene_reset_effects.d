@@ -1,6 +1,8 @@
 module scene_reset_effects;
 
-import prefs : Prefs;
+import display_state : ViewportDisplay;
+import prefs : Prefs, ViewportCellDisplay, mirrorNonTemplateDisplay,
+    restoreNonTemplateDisplay;
 import subpatch_preview : SubpatchPreview;
 import tool_activation_ownership : ToolTransition;
 import viewport : LayoutPreset, ViewportManager;
@@ -54,4 +56,21 @@ public:
         preview_.deactivate();
         preview_.dropTopologyCache();
     }
+}
+
+/// The test-automation boundary of the per-cell display atoms outside the
+/// template (retopology mode, backdrop, vertex dots). A user-visible reset
+/// (`file.new`, `scene.reset` through the UI) keeps them, as the reference
+/// does (captured C-R1); the script `scene.reset` in test mode clears them in
+/// BOTH places, the live cells and their prefs mirror, so no test inherits
+/// another's mode (task 8620; `tests/test_retopology_preset.d`).
+void clearViewDisplayForAutomation(ViewportManager viewports, ref Prefs store) {
+    assert(viewports !is null, "display clear requires the viewport manager");
+    foreach (k; 0 .. viewports.views.length) {
+        restoreNonTemplateDisplay(viewports.views[k].display,
+                                  ViewportCellDisplay.init);
+        viewports.views[k].dirty = true;
+    }
+    foreach (ref c; store.viewportDisplay)
+        mirrorNonTemplateDisplay(c, ViewportDisplay.init);
 }

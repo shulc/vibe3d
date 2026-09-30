@@ -6,7 +6,7 @@ import mesh;
 import editmode;
 import view;
 import viewport      : ViewportManager, Viewport3D;
-import display_state : BackdropStyle, DisplayStyle, WireOverlay;
+import display_state : BackdropStyle, DisplayStyle, ViewportDisplay, WireOverlay;
 import params : Param, wireArgs;
 
 // TASK 4062 — the three commands below each declare their two arguments
@@ -238,6 +238,18 @@ final class ViewportWireAlpha : ViewportCommand {
 // `viewport.displayStyle … slot=1` is live under either.
 // ---------------------------------------------------------------------------
 
+/// The backdrop control's write: the coarse mode, plus the slot style for the
+/// two writer modes. Shared by `viewport.backdropStyle` and the preset, so the
+/// preset is data written through the ordinary writer.
+private void writeBackdropStyle(ref ViewportDisplay d, BackdropStyle mode)
+        pure nothrow @safe @nogc {
+    d.backdropStyle = mode;
+    if (mode == BackdropStyle.Flat)
+        d.backdrop.style = DisplayStyle.Shaded;
+    else if (mode == BackdropStyle.Wireframe)
+        d.backdrop.style = DisplayStyle.Wireframe;
+}
+
 final class ViewportBackdropStyle : ViewportCommand {
     private int cell_;
     private BackdropStyle mode_;
@@ -277,11 +289,7 @@ final class ViewportBackdropStyle : ViewportCommand {
     protected override bool applyImpl() {
         setRaw(valueArg_, cellArg_);
         Viewport3D tv = vpm.views[cell_];
-        tv.display.backdropStyle = mode_;
-        if (mode_ == BackdropStyle.Flat)
-            tv.display.backdrop.style = DisplayStyle.Shaded;
-        else if (mode_ == BackdropStyle.Wireframe)
-            tv.display.backdrop.style = DisplayStyle.Wireframe;
+        writeBackdropStyle(tv.display, mode_);
         markCellDisplayDirty(cell_);
         return true;
     }
@@ -398,6 +406,42 @@ final class ViewportPointSize : ViewportCommand {
         cell_ = resolveCellOrThrow(cellArg_, name());
         vpm.views[cell_].display.active.pointSize = size_;
         markCellDisplayDirty(cell_);
+        return true;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// viewport.retopologyPreset — the retopology working view in ONE cell: the mode
+// on, the backdrop Flat (slot style Shaded, through the backdrop writer above),
+// vertex dots on at 6 px. All five are non-template fields, so the preset marks
+// the cell dirty once and never claims its template: a later layout switch
+// still re-seeds the style (task 8620). The Topology Pen does not arm it.
+// ---------------------------------------------------------------------------
+
+/// The preset's dot size, in pixels (the measured working-view atoms).
+enum float kRetopologyPresetPointSize = 6.0f;
+
+final class ViewportRetopologyPreset : ViewportCommand {
+    private int cellArg_ = -1;
+
+    this(Mesh* mesh, ref View view, EditMode editMode, ViewportManager vpm) {
+        super(mesh, view, editMode, vpm);
+    }
+
+    override string name() const { return "viewport.retopologyPreset"; }
+
+    override Param[] params() {
+        return wireArgs(Param.int_("viewport", "Viewport", &cellArg_, -1));
+    }
+
+    protected override bool applyImpl() {
+        immutable int cell = resolveCellOrThrow(cellArg_, name());
+        Viewport3D tv = vpm.views[cell];
+        tv.display.retopology = true;
+        writeBackdropStyle(tv.display, BackdropStyle.Flat);
+        tv.display.active.showVertices = true;
+        tv.display.active.pointSize = kRetopologyPresetPointSize;
+        markCellDisplayDirty(cell);
         return true;
     }
 }
