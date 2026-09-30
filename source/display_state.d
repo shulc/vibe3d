@@ -432,7 +432,8 @@ struct DrawPlan {
     // ---- retopology-mode fields ------------------------------------------
     // Every default below is TODAY'S behaviour; only `applyRetopology` moves
     // them. NOT YET CONSUMED except `styleFills` (by `select_visibility`):
-    // no pass reads the rest, so no rendering may be inferred from them. Measured values and their record: the constants block in
+    // no pass reads the rest, so no rendering may be inferred from them.
+    // Measured values and their record: the constants block in
     // `viewport_scheme.d` and `tests/fixtures/retopology_display.json`.
     /// Face pass opacity (1 = opaque).
     float    faceAlpha = 1.0f;
@@ -469,6 +470,13 @@ struct DrawPlan {
     bool     styleFills = true;
 }
 
+/// The face-pass opacity of the retopology fill at transparency `t`: the
+/// measured law `1 - t` (fixture `face.alpha_law`, its `cells_alpha` rows).
+float retopologyFaceAlpha(float t) pure nothrow @safe @nogc
+{
+    return 1.0f - t;
+}
+
 /// The retopology display mode, applied to an already style-resolved plan.
 ///
 /// ONE override instead of a fifth style or a renderer-side branch: every
@@ -476,8 +484,8 @@ struct DrawPlan {
 /// of `DrawPlan`. A no-op when `d.retopology` is false. The active side takes
 /// the mode's whole representation whatever the style (the style is
 /// irrelevant to the foreground's pixels under the mode); the backdrop side
-/// only gains the light multiplier. `styleFills` and `pointSize` are left as
-/// the style resolved them.
+/// only gains the light multiplier. `styleFills` is left as the style
+/// resolved it, and `pointSize` as the display state's size resolved it.
 void applyRetopology(ref DrawPlan p, in ViewportDisplay d, bool isBackdrop)
     pure nothrow @safe @nogc
 {
@@ -492,7 +500,7 @@ void applyRetopology(ref DrawPlan p, in ViewportDisplay d, bool isBackdrop)
     p.drawFaces           = true;
     p.shading             = SurfaceShading.Retopology;
     p.fillColor           = [face.x, face.y, face.z];
-    p.faceAlpha           = 1.0f - kRetopologyFillTransparency;
+    p.faceAlpha           = retopologyFaceAlpha(kRetopologyFillTransparency);
     p.cullBackFaces       = true;
     p.clearDepthFirst     = true;
     p.drawWire            = true;

@@ -31,7 +31,7 @@ import std.string    : split;
 
 import display_state : BackdropStyle, DisplayStyle, DrawPlan, SurfaceShading,
                        ViewportDisplay, WireOverlay, applyRetopology,
-                       resolveDrawPlan;
+                       resolveDrawPlan, retopologyFaceAlpha;
 import select_visibility : SelectVisibility, resolveSelectVisibility;
 import viewport_scheme : SchemeColor, schemeColor, kBasePointSize,
                          kRetopologyFillTransparency, kRetopologyLineAlpha,
@@ -164,9 +164,31 @@ unittest {
         }
     }
     {
+        // The face rows go through the PRODUCTION alpha law, and the 0.8 rows
+        // are the ones that separate `1 - t` from `t` (at 0.5 they coincide).
         immutable double c = num(fx["face"]["unblended_front_facing"]);
-        foreach (cell; fx["face"]["cells_alpha"].array)
-            blend("face", 1.0 - num(cell["fill_transparency"]), [c, c, c], cell);
+        int offHalf = 0;
+        foreach (cell; fx["face"]["cells_alpha"].array) {
+            immutable float t = cast(float) num(cell["fill_transparency"]);
+            if (!feq(t, 0.5)) ++offHalf;
+            blend("face", retopologyFaceAlpha(t), [c, c, c], cell);
+        }
+        assert(offHalf == 2,
+            format("1a: %s face rows off transparency 0.5, expected 2", offHalf));
+        // ...and `applyRetopology` writes its face alpha through that law,
+        // once (a source census: the mode's constant is 0.5, where a bypass
+        // of the law cannot be told apart by value).
+        import std.algorithm.searching : count;
+        import std.ascii : isWhite;
+        import std.algorithm.iteration : filter;
+        import std.conv : text;
+        immutable src = readText(buildPath(
+            dirName(dirName(dirName(__FILE_FULL_PATH__))), "source",
+            "display_state.d")).filter!(ch => !isWhite(ch)).text;
+        assert(src.count("p.faceAlpha=") == 1
+            && src.count("p.faceAlpha=retopologyFaceAlpha(kRetopologyFillTransparency);") == 1,
+            "1a: applyRetopology must write faceAlpha exactly once, as "
+            ~ "retopologyFaceAlpha(kRetopologyFillTransparency)");
     }
     foreach (cell; fx["edge"]["cells"].array)
         blend("edge", kRetopologyLineAlpha,

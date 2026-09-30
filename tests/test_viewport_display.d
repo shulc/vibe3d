@@ -840,7 +840,11 @@ bool testFlowG() {
     enforce(jsonBool(pa, "drawWire"), "the lines-only style must draw lines");
     enforce(jsonBool(pa, "drawVerts"),
         "the lines-only style draws vertices as well as the edges between them");
-    writeln("    G1 PASS: plan = no faces, lines on, vertex dots forced on");
+    // A mode-on-independent key at its non-default value: the lines-only
+    // style does not fill, so `styleFills` must dump false (B2 only sees true).
+    enforce(!jsonBool(pa, "styleFills"),
+        "plan.active.styleFills must be false under the lines-only style");
+    writeln("    G1 PASS: plan = no faces, lines on, vertex dots forced on, styleFills false");
 
     // --- and the SELECTION-VISIBILITY policy the same plan resolves to ---
     // READ THIS BEFORE TRUSTING IT: the dump RE-DERIVES the policy from the
