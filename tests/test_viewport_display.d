@@ -283,6 +283,22 @@ bool testFlowB() {
         format("plan dump carries %s/%s keys, the list above names 21 — a "
                ~ "field was added without joining this list",
                pa.object.length, pb.object.length));
+    // Mode off, the retopology-mode fields dump their neutral values on both
+    // sides (literals; the mode itself has no writer yet).
+    foreach (side, pl; ["active": pa, "backdrop": pb]) {
+        foreach (f; ["faceAlpha", "lightGain", "vertAlpha"])
+            enforce(abs(jsonNum(pl, f) - 1.0) < 1e-6,
+                format("plan.%s.%s must be 1.0 with the mode off", side, f));
+        enforce(abs(jsonNum(pl, "pointSize") - 3.0) < 1e-6,
+            format("plan.%s.pointSize must be 3.0 by default", side));
+        foreach (f; ["cullBackFaces", "clearDepthFirst", "cullHiddenVerts",
+                     "shadeLinesByItem", "joinsItemSequence"])
+            enforce(!jsonBool(pl, f),
+                format("plan.%s.%s must be false with the mode off", side, f));
+        enforce(jsonBool(pl, "baseDotsBySelection"),
+            format("plan.%s.baseDotsBySelection must be true with the mode off", side));
+    }
+    enforce(jsonBool(pa, "styleFills"), "the default active style fills faces");
     writeln("    B2 PASS: plan.backdrop is a full DrawPlan, same shape as active");
 
     // And they are genuinely resolved apart: today the only difference is our
