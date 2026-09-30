@@ -389,10 +389,10 @@ unittest {
 //
 // A landed Move gesture already occupies one in-session row. An interactive
 // panel RZ write then opens a wrapper-owned Rotate edit without recording it.
-// Dropping the tool must append that close IN SESSION and consolidate both
-// contributions to one row. Routing the close as an ordinary boundary record
-// first consolidates Move and then appends Rotate, producing two rows; that is
-// the discriminating mutation for the RunClose intent.
+// Dropping Transform appends that close IN SESSION and retains both completed
+// contributions under its declared session-close policy. One outside UI Undo
+// still restores the whole session; raw History entry stepping is covered by
+// the surrounding consolidation cells.
 // ---------------------------------------------------------------------------
 unittest {
     establishCubeBaseline();
@@ -427,17 +427,21 @@ unittest {
 
     cmd("tool.set Transform off");
     settle();
-    assert(undoCount() == floor + 1,
-        "RunClose must append the open RZ edit in-session and consolidate "
-        ~ "gesture+panel to ONE row; got "
+    assert(undoCount() == floor + 2,
+        "RunClose must retain the Move and open RZ contributions as two rows; got "
         ~ (undoCount() - floor).to!string);
     assert(inSessionCount() == 0,
-        "tool drop must consolidate the RunClose row");
+        "tool drop must close both retained RunClose rows");
 
-    postJson("/api/command", commandBody("history.undo"));
+    playAndWait(ctrlZ(50.0));
     settle();
     assertVertex(6, 0.5, 0.5, 0.5,
-        "one undo after RunClose must revert both Move and panel Rotate");
+        "one UI Undo after RunClose must revert both Move and panel Rotate");
+    playAndWait(ctrlShiftZ(50.0));
+    settle();
+    assert(vertNear(vert(6), afterRotate),
+        "one UI Redo after RunClose must restore both retained contributions");
+    cmd("tool.set Transform off");
     drainHistory();
 }
 
@@ -446,9 +450,9 @@ unittest {
 //
 // A landed Move gesture contributes the run's first row. A non-empty TX panel
 // session then opens another Move edit, and the off-gizmo relocate closes it.
-// This is the pre-1905 commitEdit("Move") case: the close belongs to the same
-// run and must consolidate to one row. BoundaryCommit would silently split it
-// into two.
+// This is the pre-1905 commitEdit("Move") case. Transform retains both
+// completed contributions at the relocate boundary and groups them when the
+// session closes; its geometry and RunClose recording path remain unchanged.
 // ---------------------------------------------------------------------------
 unittest {
     establishCubeBaseline();
@@ -483,15 +487,16 @@ unittest {
     playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
                               xoff, yoff, xoff, yoff, 1));
     settle();
-    assert(undoCount() == floor + 1,
-        "same-bank Move relocate must consolidate gesture+TX to ONE row; got "
+    assert(undoCount() == floor + 2,
+        "same-bank Move relocate must retain gesture and TX contributions; got "
         ~ (undoCount() - floor).to!string);
 
     cmd("tool.set Transform off");
-    postJson("/api/command", commandBody("history.undo"));
+    playAndWait(ctrlZ(50.0));
     settle();
     assertVertex(6, 0.5, 0.5, 0.5,
-        "one undo must revert the same-bank gesture+TX run");
+        "one UI Undo must revert the retained same-bank gesture and TX session");
+    cmd("tool.set Transform off");
     drainHistory();
 }
 

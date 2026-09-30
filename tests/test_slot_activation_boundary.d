@@ -407,10 +407,10 @@ unittest {
     cmd("tool.pipe.attr falloff type linear");
     settle();
 
-    assert(undoCount() == floor + 1,
-        "slot activation must close the Rotate edit in-session and consolidate "
-        ~ "the Move+Rotate run to ONE row; got "
+    assert(undoCount() == floor + 2,
+        "slot activation must retain the closed Move and Rotate contributions; got "
         ~ (undoCount() - floor).to!string);
+    assert(!runIsHeld(), "slot activation left the retained Rotate run open");
     auto after = dumpVerts();
     foreach (i; 0 .. held.length)
         foreach (k; 0 .. 3)
