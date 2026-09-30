@@ -151,7 +151,7 @@ import tools.transform.xform_kernels :
     BlendMode,
     composeRunMatrix,
     runScaleAxes;
-import command_history : CommandHistory, PreparedHistoryKind, RunCloseMode;
+import command_history : CommandHistory, PreparedHistoryKind, RunCloseMode, RecordedRunBoundaryMode, RunCloseScope;
 import command : Command;
 import commands.mesh.vertex_edit : MeshVertexEdit;
 import change_bus : MeshEditScope;
@@ -701,6 +701,8 @@ public:
     // visible-row close policy. Other presets consolidate by default.
     string closedRunOwnerId;
     RunCloseMode runCloseMode = RunCloseMode.consolidate;
+    RecordedRunBoundaryMode runBoundaryMode;
+    RunCloseScope runCloseScope;
     // The prepared activation door reads this policy before publishing the
     // candidate. A bare actor may arm without consuming an Undo slot; presets
     // can retain the ordinary lifecycle row independently.
@@ -1545,7 +1547,7 @@ public:
         if (history !is null) {
             if (runCloseMode != RunCloseMode.consolidate)
                 history.closeRunVisible(history.currentRunId,
-                                        closedRunOwnerId, runCloseMode);
+                                        closedRunOwnerId, runCloseMode, runCloseScope, sessionRecordToken());
             else
                 history.consolidate(history.currentRunId);
         }
@@ -3434,7 +3436,10 @@ public:
     // into ONE surviving entry, then open a fresh run id so the next gesture
     // is tagged distinctly.
     private void consolidateRunAndAdvance() {
-        history.consolidate(history.currentRunId);
+        if (runBoundaryMode == RecordedRunBoundaryMode.retainSteps)
+            history.retireRunSteps(history.currentRunId, sessionRecordToken());
+        else
+            history.consolidate(history.currentRunId);
         history.nextRun();
     }
 

@@ -1125,18 +1125,17 @@ unittest {
 
     cmd("tool.set Transform off");
     settle();
-    // Drop consolidates the open Rotate run; the Move run was already a separate
-    // surviving entry. So TWO surviving entries: the Move run + the consolidated
-    // Rotate run. Two post-drop Ctrl+Z revert both back to the cube.
-    postJson("/api/command", commandBody("history.undo"));   // pop the consolidated Rotate run
+    // 8560 retains all three completed commands; raw History navigation peels
+    // the regrade, its Rotate gesture, then the earlier Move gesture.
+    postJson("/api/command", commandBody("history.undo"));
     settle();
-    assert(vertNear(vert(6), v6AfterMove),
-        "popping the Rotate run reverts v6 to its post-MOVE position (the Move "
-        ~ "run is a SEPARATE surviving entry, untouched by the Rotate re-grade)");
-    postJson("/api/command", commandBody("history.undo"));   // pop the Move run
+    assert(vertNear(vert(6), v6AfterRot), "retained regrade Undo restores the Rotate gesture");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
-    assertVertex(6, 0.5, 0.5, 0.5,
-        "popping the Move run reverts v6 to the cube — TWO distinct runs");
+    assert(vertNear(vert(6), v6AfterMove), "retained Rotate Undo preserves earlier Move");
+    postJson("/api/command", commandBody("history.undo"));
+    settle();
+    assertVertex(6, 0.5, 0.5, 0.5, "retained Move Undo restores the cube");
     cmd("tool.pipe.attr falloff type none");
     drainHistory();
 }
@@ -1870,4 +1869,36 @@ unittest {
     cmd("tool.set move off");
     cmd("tool.pipe.attr falloff type none");
     drainHistory();
+}
+
+
+unittest { // 8560: navigation invalidates regrade eligibility until a fresh gesture.
+    establishCubeBaseline();
+    cmd("tool.set Transform");
+    cmd("tool.pipe.attr falloff type radial");
+    cmd("tool.pipe.attr falloff shape linear");
+    cmd(`tool.pipe.attr falloff center "0.5,0.5,0.5"`);
+    cmd(`tool.pipe.attr falloff size "4,4,4"`);
+    settle();
+    auto floor = undoCount();
+    rotateGestureOnRing(floor + 1);
+    playAndWait(ctrlZ(0)); settle();
+    auto before = getJson("/api/model")["vertices"].toString;
+    auto depth = undoCount();
+    auto redo = getJson("/api/history")["redo"].array.length;
+    cmd(`tool.pipe.attr falloff size "8,8,8"`); settle();
+    assert(getJson("/api/model")["vertices"].toString == before && undoCount() == depth &&
+        getJson("/api/history")["redo"].array.length == redo,
+        "8560 immediate post-Undo regrade used a stale anchor");
+    playAndWait(ctrlShiftZ(0)); settle();
+    before = getJson("/api/model")["vertices"].toString; depth = undoCount();
+    cmd(`tool.pipe.attr falloff size "6,6,6"`); settle();
+    assert(getJson("/api/model")["vertices"].toString == before && undoCount() == depth,
+        "8560 immediate post-Redo regrade used a stale anchor");
+    rotateGestureOnRing(floor + 2);
+    before = getJson("/api/model")["vertices"].toString;
+    cmd(`tool.pipe.attr falloff size "10,10,10"`); settle();
+    assert(undoCount() == floor + 3 && getJson("/api/model")["vertices"].toString != before,
+        "8560 a fresh gesture did not restore regrade eligibility");
+    cmd("tool.set Transform off");
 }

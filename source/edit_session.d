@@ -878,7 +878,7 @@ private struct ToolSession {
             const ownerId = ueClosed[$ - 1].closedOwnerId;
             size_t count;
             foreach_reverse (entry; ueClosed) {
-                if (!entry.sameClosedRun(ueClosed[$ - 1])) break;
+                if (!entry.sameClosedNavigation(ueClosed[$ - 1])) break;
                 ++count;
                 if (stepUndo) break;
             }
@@ -1035,7 +1035,7 @@ private struct ToolSession {
         if (grouped) {
             count = 0;
             foreach (entry; entries) {
-                if (!entry.sameClosedRun(first)) break;
+                if (!entry.sameClosedNavigation(first)) break;
                 ++count;
             }
         }
@@ -1208,6 +1208,10 @@ private struct ToolSession {
 
     /// The token of the bound tool's session; 0 when the active tool is not
     /// the one the last arm bound (or there is none).
+    private ulong recordTokenFor_(Tool source) {
+        return source is bound_ ? currentToken() : 0;
+    }
+
     ulong currentToken() {
         auto t = tool_();
         return t !is null && t is bound_ ? token_ : 0;
@@ -1259,6 +1263,7 @@ private struct ToolSession {
         link.closeOwn       = &closeOwn;
         link.recordCompleted = &recordCompleted;
         link.tagPreparedCompleted = &tagPreparedCompleted;
+        link.recordToken = &recordTokenFor_;
         t.bindSession(link);
         auto ownedAttrs = topologyAttrsFor_(id, token);
         if (topologyDormant_ && ownedAttrs.empty)

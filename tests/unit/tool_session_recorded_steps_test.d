@@ -4,7 +4,7 @@ import command : Command, CmdFlags;
 import command_history : CommandHistory;
 import command_history : RecordMode;
 import command_history : HistoryFlags;
-import command_history : RunCloseMode;
+import command_history : RunCloseMode, RecordedRunBoundaryMode, RunCloseScope, HistoryEntry;
 import commands.tool.lifecycle : ToolActivationCommand;
 import command_executor : CommandExecutor;
 import edit_session : EditSession, RefireClient;
@@ -44,6 +44,7 @@ private final class ValueEdit : Command {
 
 private final class RecordedTool : Tool, RefireClient {
     int amount, resyncs, refireTarget;
+    ulong ownedRecordToken() { return sessionRecordToken(); }
     bool pending, ladder, firstUndoEnds;
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
         static immutable ToolSessionPolicy policy = {
@@ -287,7 +288,7 @@ unittest { // A preset based on rotate must not inherit the bare door's law.
         if (p.id == "TransformMove") {
             assert(p.runCloseMode == RunCloseMode.groupUndo);
             ++grouped;
-        } else if (p.id == "TransformRotate" || p.id == "TransformScale") {
+        } else if (p.id == "TransformRotate" || p.id == "TransformScale" || p.id == "Transform") {
             assert(p.runCloseMode == RunCloseMode.groupRedo);
             ++restored;
         } else {
@@ -296,7 +297,12 @@ unittest { // A preset based on rotate must not inherit the bare door's law.
             ++defaulted;
         }
     }
-    assert(grouped == 1 && restored == 2 && defaulted > 0);
+    foreach (p; loadToolPresets("config/tool_presets.yaml")) {
+        assert(p.runBoundaryMode == (p.id == "Transform" ?
+            RecordedRunBoundaryMode.retainSteps : RecordedRunBoundaryMode.consolidate));
+        assert(p.runCloseScope == (p.id == "Transform" ? RunCloseScope.session : RunCloseScope.run));
+    }
+    assert(grouped == 1 && restored == 3 && defaulted > 0);
 }
 
 unittest {
@@ -507,5 +513,175 @@ unittest { // 8530: Redo leaves a foreign tail beyond the retained group.
         assert(history.undoEntries().length == 2 && history.redoEntries().length == 1,
             "8530 Redo must leave the foreign tail untouched");
         assert(session.sessionStateJson()["token"].integer == 8530);
+    }
+}
+
+unittest { // 8560: retire geometry-bank rows, keep every live step, close one session.
+    auto tool = new RecordedTool;
+    Tool active = tool;
+    auto history = new CommandHistory;
+    EditSession session;
+    session = new EditSession(() => active, history, () { active = null; },
+        (string id) { active = tool; session.noteArm(id, 999); });
+    assert(tool.ownedRecordToken() == 0);
+    session.noteArm("policy-selected", 8560);
+    assert(tool.ownedRecordToken() == 8560, "8560 token forwarding lost session owner");
+    tool.liveGesture(history, 1, 7); tool.liveGesture(history, 1, 13);
+    assert(history.retireRunSteps(1, tool.ownedRecordToken()) == 2);
+    assert(history.undoEntries().length == 2 && !history.runOpen());
+    foreach (entry; history.undoEntries()) {
+        assert(entry.runId == 1 && entry.cmd.sessionToken() == 8560);
+        assert(!(entry.flags & (HistoryFlags.InSession | HistoryFlags.Refire)));
+    }
+    tool.liveGesture(history, 2, 19);
+    assert(session.navigate(true) && tool.amount == 13);
+    assert(session.navigate(true) && tool.amount == 7,
+        "8560 bank retirement lost the earlier same-bank gesture");
+    assert(session.navigate(false) && tool.amount == 13);
+    assert(session.navigate(false) && tool.amount == 19);
+    assert(history.retireRunSteps(2, 8560) == 1);
+    tool.liveGesture(history, 3, 23); tool.liveGesture(history, 3, 29);
+    foreach (expected; [23, 19, 13, 7, 0])
+        assert(session.navigate(true) && tool.amount == expected, "8560 five-step live Undo image lost");
+    foreach (expected; [7, 13, 19, 23, 29])
+        assert(session.navigate(false) && tool.amount == expected, "8560 five-step live Redo image lost");
+    assert(history.closeRunVisible(3, "policy-selected", RunCloseMode.groupRedo,
+        RunCloseScope.session, 8560) == 5, "8560 session close omitted previous banks");
+    const rows = history.undoEntries();
+    assert(rows.length == 5 && rows[0].closedNavigationGroupId != 0);
+    foreach (entry; rows) assert(entry.sameClosedNavigation(rows[0]));
+    active = null;
+    assert(session.navigate(true) && tool.amount == 0 && active is tool,
+        "8560 grouped outside Undo did not restore the whole session");
+    assert(history.undoEntries().length == 0 && history.redoEntries().length == 5);
+    assert(session.navigate(false) && tool.amount == 29,
+        "8560 grouped Redo did not restore every retained bank");
+    assert(history.undoEntries().length == 5 && history.redoEntries().length == 0);
+    const group = history.undoEntries()[0].closedNavigationGroupId;
+    active = null;
+    assert(session.navigate(true) && tool.amount == 0);
+    tool.liveGesture(history, 4, 35);
+    assert(history.redoEntries().length == 0, "8560 branch kept obsolete redo rows");
+    assert(history.closeRunVisible(4, "policy-selected", RunCloseMode.groupRedo,
+        RunCloseScope.session, 8560) == 1);
+    assert(history.undoEntries()[0].closedNavigationGroupId > group,
+        "8560 branch reused the prior closed group");
+    history.clear();
+    tool.liveGesture(history, 4, 31);
+    assert(history.closeRunVisible(4, "policy-selected", RunCloseMode.groupRedo,
+        RunCloseScope.session, 8560) == 1);
+    assert(history.undoEntries()[0].closedNavigationGroupId > group,
+        "8560 history clear reused a closed navigation identity");
+    active = null;
+    assert(tool.ownedRecordToken() == 0, "8560 dropped owner still exposes its token");
+    auto other = new RecordedTool;
+    active = other; session.noteArm("other", 8561);
+    assert(tool.ownedRecordToken() == 0 && other.ownedRecordToken() == 8561,
+        "8560 stale bound tool borrowed the new owner's token");
+}
+
+unittest { // Every explicit-group discriminator varies with equal group IDs.
+    foreach (boundary; 0 .. 10) {
+        int amount;
+        auto first = new ValueEdit(&amount, 0, 1); first.markSession(boundary == 3 ? 0 : 8560);
+        auto second = new ValueEdit(&amount, 1, 2);
+        second.markSession(boundary == 2 ? 8561 : boundary == 3 ? 0 : 8560);
+        HistoryEntry a = {cmd:first, flags:HistoryFlags.ClosedRun | HistoryFlags.ClosedGroupRedo,
+            runId:1, closedOwnerId:"policy", closedNavigationGroupId:1,
+            closedScope:RunCloseScope.session};
+        auto b = a; b.cmd = second; b.runId = 2;
+        if (boundary == 1) b.closedNavigationGroupId = 2;
+        if (boundary == 4) b.closedOwnerId = "other";
+        if (boundary == 5) { a.closedOwnerId = ""; b.closedOwnerId = ""; }
+        if (boundary == 6) b.flags &= ~cast(uint)HistoryFlags.ClosedGroupRedo;
+        if (boundary == 7) { a.closedScope = b.closedScope = RunCloseScope.run; }
+        if (boundary == 8) { a.flags = b.flags = 0; }
+        if (boundary == 9) b.closedScope = RunCloseScope.run;
+        assert(a.sameClosedNavigation(b) == (boundary == 0),
+            format("8560 explicit group crossed boundary %s", boundary));
+    }
+}
+
+unittest { // Close/retire stop at each independently varied suffix boundary.
+    foreach (boundary; 0 .. 7) {
+        int amount;
+        auto history = new CommandHistory;
+        void record(ulong token) {
+            auto cmd = new ValueEdit(&amount, amount, amount + 1);
+            cmd.markSession(token); assert(cmd.apply()); history.recordInSession(cmd, 1);
+        }
+        record(boundary == 1 ? 8561 : boundary == 2 ? 0 : 8560);
+        auto rows = cast(HistoryEntry[])history.undoEntries();
+        if (boundary == 3) rows[0].flags |= HistoryFlags.ToolLifecycle;
+        if (boundary == 4) rows[0].flags |= HistoryFlags.ClosedRun;
+        if (boundary == 5) rows[0].closedNavigationGroupId = 7;
+        if (boundary == 6) rows[0].closedOwnerId = "foreign";
+        record(8560);
+        assert(history.closeRunVisible(1, "policy", RunCloseMode.groupRedo,
+            RunCloseScope.session, 8560) == (boundary == 0 ? 2 : 1),
+            format("8560 session suffix crossed boundary %s", boundary));
+    }
+    foreach (boundary; 0 .. 8) {
+        int amount;
+        auto history = new CommandHistory;
+        auto cmd = new ValueEdit(&amount, 0, 1);
+        cmd.markSession(boundary == 1 ? 0 : boundary == 7 ? 8561 : 8560);
+        assert(cmd.apply()); history.recordInSession(cmd, 1);
+        auto rows = cast(HistoryEntry[])history.undoEntries();
+        if (boundary == 2) rows[0].flags |= HistoryFlags.ToolLifecycle;
+        if (boundary == 3) rows[0].flags |= HistoryFlags.ClosedRun;
+        if (boundary == 4) rows[0].closedNavigationGroupId = 7;
+        if (boundary == 5) rows[0].flags &= ~cast(uint)HistoryFlags.InSession;
+        if (boundary == 6) rows[0].runId = 2;
+        assert(history.retireRunSteps(1, boundary == 1 ? 0 : 8560) == (boundary == 0 ? 1 : 0),
+            format("8560 run retirement crossed boundary %s", boundary));
+    }
+    auto empty = new CommandHistory;
+    assert(empty.retireRunSteps(1, 8560) == 0);
+    assert(empty.closeRunVisible(1, "policy", RunCloseMode.groupRedo,
+        RunCloseScope.session, 8560) == 0);
+    int amount;
+    auto cmd = new ValueEdit(&amount, 0, 1); cmd.markSession(8560);
+    assert(cmd.apply()); empty.recordInSession(cmd, 1);
+    assert(empty.closeRunVisible(1, "policy", RunCloseMode.groupRedo,
+        RunCloseScope.session, 8560) == 1);
+    assert(empty.undoEntries()[0].closedNavigationGroupId == 1,
+        "8560 empty close allocated a navigation group");
+}
+
+unittest { // A depth-limited surviving suffix remains a complete navigation group.
+    auto tool = new RecordedTool;
+    Tool active = tool;
+    auto history = new CommandHistory;
+    EditSession session;
+    session = new EditSession(() => active, history, () { active = null; },
+        (string id) { active = tool; session.noteArm(id, 999); });
+    session.noteArm("policy", 8560);
+    foreach (i; 1 .. 56) tool.liveGesture(history, i, i);
+    assert(history.undoEntries().length == 50);
+    assert(history.closeRunVisible(55, "policy", RunCloseMode.groupRedo,
+        RunCloseScope.session, 8560) == 50);
+    active = null;
+    assert(session.navigate(true) && tool.amount == 5);
+    assert(history.redoEntries().length == 50 && session.navigate(false) && tool.amount == 55);
+}
+
+unittest { // Generic alias declarations carry both navigation policy fields.
+    import std.file : write, remove;
+    import core.sys.posix.unistd : getpid;
+    auto path = format("/var/tmp/preset-policy-%s.yaml", getpid());
+    scope(exit) remove(path);
+    write(path, "presets:\n  - id: canonical\n    base: xfrm.transform\n    historyClose: groupRedo\n    runBoundary: retainSteps\n    closeScope: session\n  - id: alias\n    alias: canonical\n");
+    auto presets = loadToolPresets(path);
+    assert(presets.length == 2);
+    foreach (p; presets) {
+        assert(p.runBoundaryMode == RecordedRunBoundaryMode.retainSteps);
+        assert(p.runCloseScope == RunCloseScope.session);
+    }
+    foreach (field; ["runBoundary", "closeScope"]) {
+        write(path, format("presets:\n  - id: invalid\n    base: xfrm.transform\n    %s: invalid\n", field));
+        bool refused;
+        try { loadToolPresets(path); } catch (Exception) { refused = true; }
+        assert(refused, "8560 invalid policy declaration accepted: " ~ field);
     }
 }

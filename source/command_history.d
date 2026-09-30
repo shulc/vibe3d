@@ -55,6 +55,8 @@ enum UndoState { Invalid, Active, Suspend }
 /// The commands remain the single owner of finished geometry in both visible
 /// modes; ToolSession decides how many linked rows one outside Undo traverses.
 enum RunCloseMode : ubyte { consolidate, groupUndo, stepUndo, groupRedo }
+enum RecordedRunBoundaryMode : ubyte { consolidate, retainSteps }
+enum RunCloseScope : ubyte { run, session }
 
 /// Per-entry status flags (Phase 7 of the history-panel design doc).
 /// Drives the history panel's per-row visual cues: badge column shows
@@ -328,6 +330,24 @@ struct HistoryEntry {
                             //  only for Refire tails).
     string closedOwnerId;  // Owner of a retained closed run. Travels with each
                            // row so maxDepth eviction cannot orphan the tail.
+    ulong closedNavigationGroupId;
+    RunCloseScope closedScope;
+
+    // Task 8560: closed session navigation may span separately retired runs.
+    // Commands keep their geometry and run identity; only navigation is grouped.
+    // Evidence: doc/transform_8560_navigation_group_amendment_2026-09-30.md.
+    bool sameClosedNavigation(const ref HistoryEntry other) const {
+        if (closedNavigationGroupId == 0 && other.closedNavigationGroupId == 0)
+            return sameClosedRun(other);
+        enum mask = HistoryFlags.ClosedRun | HistoryFlags.ClosedStep |
+                    HistoryFlags.ClosedGroupRedo;
+        return closedNavigationGroupId == other.closedNavigationGroupId &&
+            (flags & HistoryFlags.ClosedRun) != 0 &&
+            (flags & mask) == (other.flags & mask) &&
+            cmd.sessionToken() != 0 && cmd.sessionToken() == other.cmd.sessionToken() &&
+            closedOwnerId.length != 0 && closedOwnerId == other.closedOwnerId &&
+            closedScope == RunCloseScope.session && closedScope == other.closedScope;
+    }
 
     // Task 8530: both navigation directions group only rows with the same
     // owner, token, run and close law. History commands remain the geometry owner.
@@ -605,6 +625,7 @@ final class CommandHistory {
     // CommandHistory — needs no locking. A future HTTP-thread-direct recorder
     // would have to marshal to main like every existing path.
     private ulong _currentRunId = 0;
+    private ulong _lastClosedNavigationGroupId;
     private bool  _runOpen      = false;
 
     // Pipe-tweak GENERATION (P-E). A monotone token that distinguishes a
@@ -1643,9 +1664,36 @@ final class CommandHistory {
     /// traverses the whole run or only its latest step. Only a contiguous
     /// in-session tail is eligible, as with consolidate().
     size_t closeRunVisible(ulong runId, string ownerId,
-                           RunCloseMode mode = RunCloseMode.groupUndo) {
+                           RunCloseMode mode = RunCloseMode.groupUndo,
+                           RunCloseScope closeScope = RunCloseScope.run,
+                           ulong ownedToken = 0) {
         scope(exit) _runOpen = false;
         if (ownerId.length == 0 || mode == RunCloseMode.consolidate) return 0;
+        if (closeScope == RunCloseScope.session) {
+            if (ownedToken == 0) return 0;
+            size_t start = undoStack.length;
+            while (start > 0) {
+                const entry = undoStack[start - 1];
+                if (entry.cmd.sessionToken() != ownedToken ||
+                    (entry.flags & (HistoryFlags.ToolLifecycle | HistoryFlags.ClosedRun)) ||
+                    entry.closedNavigationGroupId != 0 || entry.closedOwnerId.length != 0)
+                    break;
+                --start;
+            }
+            if (start == undoStack.length) return 0;
+            const group = ++_lastClosedNavigationGroupId;
+            foreach (i; start .. undoStack.length) {
+                auto entry = &undoStack[i];
+                entry.flags &= ~cast(uint)(HistoryFlags.InSession | HistoryFlags.Refire);
+                entry.flags |= HistoryFlags.ClosedRun;
+                if (mode == RunCloseMode.groupRedo) entry.flags |= HistoryFlags.ClosedGroupRedo;
+                if (mode == RunCloseMode.stepUndo) entry.flags |= HistoryFlags.ClosedStep;
+                entry.closedOwnerId = ownerId.idup;
+                entry.closedScope = closeScope;
+                entry.closedNavigationGroupId = group;
+            }
+            return undoStack.length - start;
+        }
         // Stepwise sessions can cross run boundaries (a click that relocates
         // the pivot closes the previous geometry run). Their completed rows
         // still belong to the same tool session and must all remain visible
@@ -1681,6 +1729,25 @@ final class CommandHistory {
                 undoStack[i].flags |= HistoryFlags.ClosedStep;
             undoStack[i].closedOwnerId = ownerId.idup;
         }
+        return undoStack.length - start;
+    }
+
+    /// Retire an owned run without merging its completed commands. Geometry
+    /// and regrade windows stay producer-owned (8560 wave amendment).
+    size_t retireRunSteps(ulong runId, ulong token) {
+        scope(exit) _runOpen = false;
+        if (token == 0) return 0;
+        size_t start = undoStack.length;
+        while (start > 0) {
+            const entry = undoStack[start - 1];
+            if (entry.runId != runId || entry.cmd.sessionToken() != token ||
+                !(entry.flags & HistoryFlags.InSession) ||
+                (entry.flags & (HistoryFlags.ToolLifecycle | HistoryFlags.ClosedRun)) ||
+                entry.closedNavigationGroupId != 0) break;
+            --start;
+        }
+        foreach (i; start .. undoStack.length)
+            undoStack[i].flags &= ~cast(uint)(HistoryFlags.InSession | HistoryFlags.Refire);
         return undoStack.length - start;
     }
 

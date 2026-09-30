@@ -2,7 +2,7 @@ module tool_presets;
 
 import std.format : format;
 import std.json : JSONValue;
-import command_history : RunCloseMode;
+import command_history : RunCloseMode, RecordedRunBoundaryMode, RunCloseScope;
 
 import registry         : Registry, ToolFactory, typedToolFactory;
 import tool             : Tool, ToolFlag;
@@ -36,6 +36,8 @@ struct ToolPreset {
     string[string]            toolAttrs;     // tool-level attr → value
     uint                      flags;         // OR of ToolFlag bits
     RunCloseMode              runCloseMode;  // completed Transform run history
+    RecordedRunBoundaryMode   runBoundaryMode;
+    RunCloseScope             runCloseScope;
 }
 
 // Map YAML flag name → ToolFlag bit. Names match the enum members
@@ -99,6 +101,22 @@ ToolPreset[] loadToolPresets(string path) {
         ToolPreset p;
         p.id   = id;
         p.base = node["base"].as!string;
+        if (node.containsKey("runBoundary")) {
+            const value = node["runBoundary"].as!string;
+            switch (value) {
+                case "consolidate": p.runBoundaryMode = RecordedRunBoundaryMode.consolidate; break;
+                case "retainSteps": p.runBoundaryMode = RecordedRunBoundaryMode.retainSteps; break;
+                default: throw new Exception(format("tool_presets: unknown runBoundary '%s' for '%s'", value, id));
+            }
+        }
+        if (node.containsKey("closeScope")) {
+            const value = node["closeScope"].as!string;
+            switch (value) {
+                case "run": p.runCloseScope = RunCloseScope.run; break;
+                case "session": p.runCloseScope = RunCloseScope.session; break;
+                default: throw new Exception(format("tool_presets: unknown closeScope '%s' for '%s'", value, id));
+            }
+        }
         if (node.containsKey("historyClose")) {
             const value = node["historyClose"].as!string;
             switch (value) {
@@ -195,6 +213,8 @@ private ToolPreset resolveAliasPreset(const ref ToolPreset target, string aliasI
     r.base  = target.base;
     r.flags = target.flags;
     r.runCloseMode = target.runCloseMode;
+    r.runBoundaryMode = target.runBoundaryMode;
+    r.runCloseScope = target.runCloseScope;
     r.toolAttrs = target.toolAttrs.dup;
     foreach (stageId, attrs; target.pipeAttrs)
         r.pipeAttrs[stageId] = attrs.dup;
@@ -349,6 +369,8 @@ void registerToolPresets(ref Registry reg, ToolPreset[] presets) {
                 // `rotate` does not silently inherit the base ID's law.
                 static if (is(T == XfrmTransformTool)) {
                     t.runCloseMode = presetCopy.runCloseMode;
+                    t.runBoundaryMode = presetCopy.runBoundaryMode;
+                    t.runCloseScope = presetCopy.runCloseScope;
                     t.activationHistoryRow = true;
                     t.recordedFirstUndoEndsTool = false;
                     t.postmodeStartsOnPress = false;

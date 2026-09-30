@@ -307,6 +307,7 @@ struct ToolSessionLink {
     bool delegate(Tool, bool commit) closeOwn;   // Enter (commit) / RMB (discard)
     void delegate(Tool, const(Command)) recordCompleted; // history-owned completed gesture
     void delegate(Tool, Command) tagPreparedCompleted;
+    ulong delegate(Tool) recordToken;
 }
 
 struct ToolSessionPolicy {
@@ -1182,6 +1183,10 @@ public:
 
     /// Installed by the session at the tool's arm.
     final void bindSession(ToolSessionLink link) nothrow @nogc { sessionLink_ = link; }
+
+    protected final ulong sessionRecordToken() {
+        return sessionLink_.recordToken is null ? 0 : sessionLink_.recordToken(this);
+    }
 
     /// A gesture step starts: call BEFORE the gesture changes any attribute.
     protected final void sessionStepBegins(PressKind kind = PressKind.plain) {

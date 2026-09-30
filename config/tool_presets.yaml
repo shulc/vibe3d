@@ -274,6 +274,9 @@ presets:
   # edit session and history intent while each bank only produces input.
   - id: Transform
     base: xfrm.transform
+    historyClose: groupRedo
+    runBoundary: retainSteps
+    closeScope: session
     attrs:
       T: "true"
       R: "true"
