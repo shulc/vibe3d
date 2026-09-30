@@ -85,6 +85,8 @@ unittest {
     auto fx = cellFx("arm-two-moves");
     const r = rig();
     penArmUi(r);
+    assert(penHistoryLen() == r.hp + 1,
+           format("arm-two-moves a0: the UI-door arm did not write its own row: %s", penHistoryLabels()));
     moveV5("arm-two-moves g1");
     const g1 = penMesh();
     moveV10("arm-two-moves g2");

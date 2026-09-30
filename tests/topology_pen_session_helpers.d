@@ -297,12 +297,12 @@ PenRig penRigLoad(string rigPath) {
     return r;
 }
 
-/// Arm the pen through the UI door; floor: armed, one activation row.
+/// Arm the pen through the UI door; floor: armed. The activation ROW is a law
+/// (L1), asserted by the cells, not here.
 void penArmUi(const PenRig rig) {
     penLineUi("tool.set " ~ kPenToolId ~ " on");
-    assert(penArmed() && penHistoryLen() == rig.hp + 1,
-           format("pen rig: the UI arm did not arm with its row: tool '%s', history %s",
-                  penTool(), penHistoryLabels()));
+    assert(penArmed(), format("pen rig: the UI arm did not arm the pen: tool '%s', history %s",
+                              penTool(), penHistoryLabels()));
 }
 
 string penIdx(const long[] xs) { return "[" ~ xs.to!(string[]).join(",") ~ "]"; }
