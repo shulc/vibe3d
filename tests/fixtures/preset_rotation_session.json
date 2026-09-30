@@ -688,5 +688,74 @@
         ]
       ]
     }
+  },
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "capture-drag",
+    "captured_utc": "2026-09-30",
+    "harness": "semantic-8530-paired-capture",
+    "task": "8530",
+    "notes": "Top Y-ring; four asymmetric vertices; R/C session checkpoints; bound 0.02. Private raw/e8530_accept."
+  },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "capture",
+    "cells": [
+      {
+        "cell": "ring-session-R-C",
+        "drove": [
+          {
+            "op": "ring_drag",
+            "values": {
+              "selection": [
+                0,
+                1,
+                2
+              ],
+              "native_press": [
+                630,
+                390
+              ],
+              "native_positive": [
+                [
+                  30,
+                  0
+                ],
+                [
+                  19,
+                  11
+                ]
+              ],
+              "native_branch": [
+                19,
+                0
+              ],
+              "product_anchor_offset": [
+                2.5,
+                -117
+              ],
+              "product_positive": [
+                [
+                  43,
+                  0
+                ],
+                [
+                  27,
+                  16
+                ]
+              ],
+              "product_branch": [
+                27,
+                0
+              ],
+              "view": "Top"
+            }
+          }
+        ]
+      }
+    ]
   }
 }
