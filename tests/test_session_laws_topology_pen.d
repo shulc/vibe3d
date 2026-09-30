@@ -9,10 +9,13 @@
 //   branch               L10 a gesture after an undo replaces the redo branch
 //   alt-chords           L12 no Alt chord reaches the pen
 //   smooth-loop-interior L13 (interior) Smoothing + Edge Loop is the loop
+//   chords               L4  the five chords that record today: one step each
+//   switch-away          L9  (z1..z3) undo walks back through a tool switch
 //
-// The fixture also carries `chords` (L4), `switch-away` (L9), `no-op-presses`
-// (L5) and the border half of `smooth-loop` (L13): measured on this rig they do
-// not hold yet (card 8650), and the slices that make them hold add their cells.
+// The fixture also carries rows that do not hold on this rig yet (card 8650):
+// the other four chords' outcomes (their port slices add `chord-*` cells), the
+// switch-away redo walk, `no-op-presses` (L5) and the border half of
+// `smooth-loop` (L13); the slices that make them hold add their cells.
 //
 // `VIBE3D_CELL=<id>` runs one cell alone (druntime stops a module at its first
 // failed assert); the last block pins the population when all cells run.
@@ -256,11 +259,118 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
+// chords — L4: every chord that records today is exactly one Ctrl+Z step, undo
+// is bit-exact and the tool stays armed. Narrowed by the wave plan (§9.14
+// [A2-8]) to the five chords that record on this rig; the other four
+// (corner build, vertex slide, interior split, and remove's counts) diverge in
+// OUTCOME and land as their port slices' `chord-*` cells.
+// ---------------------------------------------------------------------------
+struct Chord { int btn; int mod; bool tap; double dx, dy; bool counts; }
+
+int[2] chordFrom(string id) {
+    switch (id) {
+    case "dup_edge": return penEdgePx(0, 1, id);
+    case "addloop":  return penEdgePx(5, 6, id);
+    case "moveloop": return penEdgePx(5, 6, id);
+    case "remove":   return penFacePx(0);
+    case "smooth":   return penFacePx(4);
+    default: assert(false, "chords: unknown gesture " ~ id);
+    }
+}
+
+unittest {
+    if (!cell("chords")) return;
+    auto fx = cellFx("chords");
+    enum S = PEN_KMOD_LSHIFT, C = PEN_KMOD_LCTRL;
+    // `counts`: whether (nv, nf, ne) is asserted. Not for remove: the orphan
+    // corner and its two edges are the port slice 8740's outcome.
+    const Chord[string] spec = [
+        "dup_edge": Chord(1, S, false, 0, 36 / kSp, true),
+        "addloop":  Chord(2, S, false, 10 / kSp, 0, true),
+        "moveloop": Chord(3, 0, false, 0, -15 / kSp, true),
+        "remove":   Chord(2, C, true, 0, 0, false),
+        "smooth":   Chord(1, S | C, true, 0, 0, true),
+    ];
+    const r = rig();
+    penArmUi(r);
+    size_t n, counted;
+    foreach (g; fx["gestures"].array) {
+        const id = g["id"].str;
+        if (id !in spec) continue;
+        const ch = spec[id];
+        const from = chordFrom(id);
+        if (ch.tap) penTap(from, ch.btn, ch.mod, id);
+        else penGesture(from, ch.dx, ch.dy, ch.btn, ch.mod, id);
+        const m = penMesh();
+        const cnt = idxOf(g["counts"]);
+        assert(m != r.a0 && penHistoryLen() == r.hp + 2,
+               format("chords %s: mesh %s (changed %s), history %s (expected one row after the arm)",
+                      id, m.toString, m != r.a0, penHistoryLabels()));
+        if (ch.counts) {
+            assert([m.nv, m.nf, m.edges] == cnt,
+                   format("chords %s: counts %s (expected %s)", id, m.toString, cnt));
+            ++counted;
+        }
+        if ("moved" in g.object)
+            assert(penMoved(m, r.a0) == idxOf(g["moved"]),
+                   format("chords %s: moved %s, expected %s", id, penIdx(penMoved(m, r.a0)), g["moved"]));
+        penCtrlZ("chords " ~ id ~ " Ctrl+Z");
+        expectState("chords", id ~ "_z", r.a0, g["undoArmed"].type == JSONType.true_, r.hp + 1);
+        if ("redoBitExact" in g.object) {
+            penCtrlShiftZ("chords " ~ id ~ " Ctrl+Shift+Z");
+            expectState("chords", id ~ "_r", m, true, r.hp + 2);
+            penCtrlZ("chords " ~ id ~ " Ctrl+Z again");
+            expectState("chords", id ~ "_rz", r.a0, true, r.hp + 1);
+        }
+        ++n;
+    }
+    assert(n == 5 && counted == 4,
+           format("chords: %d chords ran (expected 5), %d with counts (expected 4)", n, counted));
+    penCtrlZ("chords final Ctrl+Z");
+    expectState("chords", "arm_z", r.a0, fx["finalUndoArmed"].type == JSONType.true_, r.hp);
+    writeln("PASS chords");
+}
+
+// ---------------------------------------------------------------------------
+// switch-away — L9 (z1..z3): g1, W (another tool), then three Ctrl+Z walk back
+// through the switch, the gesture and the pen's activation. The redo walk
+// (r1..r3) is slice S5's `switch-away-redo` (wave plan §9.14 [A2-9]).
+// ---------------------------------------------------------------------------
+unittest {
+    if (!cell("switch-away")) return;
+    auto fx = cellFx("switch-away");
+    const r = rig();
+    penArmUi(r);
+    moveV5("switch-away g1");
+    const g1 = penMesh();
+    penKey(PEN_SDLK_w, 0, "switch-away W");
+    const moveTool = penTool();
+    assert(moveTool.length && moveTool != kPenToolId && penMesh() == g1,
+           format("switch-away exit: W did not switch to another tool keeping g1: tool '%s', mesh %s",
+                  moveTool, penMesh().toString));
+    const PenMesh[string] at = ["a0": r.a0, "g1": g1];
+    string[string] toolOf = ["pen": kPenToolId, "none": "", "move": moveTool];
+    size_t n;
+    foreach (row; fx["undo"].array) {
+        const step = row["step"].str;
+        penCtrlZ("switch-away " ~ step);
+        const want = toolOf[row["tool"].str];
+        assert(penMesh() == at[row["equals"].str] && penTool() == want,
+               format("switch-away %s: mesh %s (expected %s = %s), tool '%s' (expected '%s'), "
+                      ~ "history %s", step, penMesh().toString, row["equals"].str,
+                      at[row["equals"].str].toString, penTool(), want, penHistoryLabels()));
+        ++n;
+    }
+    assert(n == 3, format("switch-away: %d of the three undo steps ran", n));
+    writeln("PASS switch-away");
+}
+
+// ---------------------------------------------------------------------------
 // Population: with no VIBE3D_CELL every cell above ran (declared last, so it
 // runs last).
 // ---------------------------------------------------------------------------
 unittest {
     writeln("cells=", cellsRun);
     if (environment.get("VIBE3D_CELL", "").length == 0)
-        assert(cellsRun == 5, format("topology pen session laws: %d cells ran, expected 5", cellsRun));
+        assert(cellsRun == 7, format("topology pen session laws: %d cells ran, expected 7", cellsRun));
 }
