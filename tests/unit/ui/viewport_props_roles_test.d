@@ -387,6 +387,8 @@ unittest { // 8620: the Retopology checkbox writes the mode ONLY; the preset wri
     assert(vpm.views[0].display == d0,
         "8620 checkbox reached a cell other than the active one");
 
+    // Mode back off by hand, so the preset's own mode write is observable.
+    vpm.views[2].display.retopology = false;
     ui.frame();
     snap = viewportPropsDrawSnapshot();
     ui.pressAt(center(snap.presetMin, snap.presetMax));

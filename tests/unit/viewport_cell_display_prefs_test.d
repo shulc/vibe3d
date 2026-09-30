@@ -63,8 +63,15 @@ unittest { // P1: the defaults agree, so an untouched cell round-trips as the id
 unittest { // P2: one cell's preset atoms survive save -> load -> restore
     const dir = scratch("roundtrip");
     scope(exit) rmdirRecurse(dir);
+    // The preset's atoms, except the slot style: the preset's Shaded IS the
+    // default, so a dropped slot field would round-trip it unseen.
     auto live = presetDisplay();
-    assert(!sameNonTemplate(live, ViewportDisplay.init),
+    live.backdrop.style = DisplayStyle.Wireframe;
+    const ViewportDisplay def;
+    assert(live.retopology != def.retopology && live.backdropStyle != def.backdropStyle
+        && live.backdrop.style != def.backdrop.style
+        && live.active.showVertices != def.active.showVertices
+        && live.active.pointSize != def.active.pointSize,
         "P2 rig: the written cell must differ from the default in every atom");
     Prefs p;
     mirrorNonTemplateDisplay(p.viewportDisplay[2], live);
@@ -76,7 +83,7 @@ unittest { // P2: one cell's preset atoms survive save -> load -> restore
     assert(back.retopology, "P2: retopology lost in the round trip"); ++atoms;
     assert(back.backdropStyle == BackdropStyle.Flat,
         "P2: backdropStyle lost in the round trip"); ++atoms;
-    assert(back.backdrop.style == DisplayStyle.Shaded,
+    assert(back.backdrop.style == DisplayStyle.Wireframe,
         "P2: the backdrop slot style lost in the round trip"); ++atoms;
     assert(back.active.showVertices, "P2: showVertices lost in the round trip"); ++atoms;
     assert(back.active.pointSize == 6.0f,
