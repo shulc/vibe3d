@@ -23,7 +23,7 @@ import shader : Shader;
 import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
 
-// the reference editor's poly.clone is a Linear Generator and a Clone Effector. `num` is the
+// mesh.clone is a linear generator followed by a clone effector. `num` is the
 // number of ADDED copies; all copies advance by the same 3-D offset. A second
 // haul changes that offset and regenerates from the original source cage.
 class CloneTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient,

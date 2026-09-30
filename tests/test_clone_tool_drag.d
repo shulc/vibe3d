@@ -1,4 +1,4 @@
-// reference editor poly.clone: a linear generator, then a Clone Effector. Two direct
+// mesh.clone: a linear generator, then a clone effector. Two direct
 // drags must re-space the same copies and produce two ToolSession steps.
 import http_client : testBaseUrl, getJson, postJson;
 import http_command_helpers : commandBody;
@@ -127,7 +127,7 @@ unittest {
     assert(undoLen() == u0 + 2, "drop must not add a history row");
 }
 
-unittest { // captured gen.linear sclX=1.2 grows each successive copy by 20%
+unittest { // captured: a 1.2 per-copy X scale grows each successive copy by 20%
     import core.thread : Thread;
     import core.time : dur;
     auto r = postJson("/api/command", commandBody("scene.reset"));

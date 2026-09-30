@@ -5959,7 +5959,7 @@ unittest // triangulateFacesByMask (site 6): each triangle split off a masked
     }
 }
 
-unittest // reference editor poly.clone / gen.linear: asymmetric five-vertex capture,
+unittest // mesh.clone: asymmetric five-vertex capture,
          // num=3, scaleX=120%, offset=(.31,-2.05,-.21). The first copied
          // vertex distinguishes a bounding-box pivot from a centroid, and
          // the later copies distinguish per-step scale from a flat 120%.
