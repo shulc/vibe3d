@@ -7789,7 +7789,7 @@ for target, old, new, label in (
     ("scale", "handler.setPosition(Vec3(2,3,4));", "handler.setPosition(Vec3(8,8,8));", "collapse old/captured Scale center distinction"),
     ("scale", "Vec3 pendingScale = Vec3(1,1,1);", "Vec3 pendingScale = Vec3(0,0,0);", "change Scale pending ones"),
     ("scale", "bool pendingScaleValid, valid;", "bool pendingScaleValid = true, valid;", "change Scale pending-valid default"),
-    ("scale", "pendingScaleValid = image.pendingScaleValid;\n        pendingScale = image.pendingScale; image.clear();", "pendingScale = image.pendingScale;\n        pendingScaleValid = image.pendingScaleValid; image.clear();", "reorder Scale fixed install tail"),
+    ("scale", "pendingScaleValid = image.pendingScaleValid;\n        pendingScale = image.pendingScale;", "pendingScale = image.pendingScale;\n        pendingScaleValid = image.pendingScaleValid;", "reorder Scale fixed install tail"),
     ("context", "e.transformProductActivation.abort();", "", "drop context abort"),
     ("context", "if (validated_Once && !noHistoryMarker_) return;", "if (validated_Once) return;", "drop validated NoHistory discard"),
     ("context", "if (validated_Once && !noHistoryMarker_) return;", "if (validated_Once && false) return;", "widen discard to validated History"),
