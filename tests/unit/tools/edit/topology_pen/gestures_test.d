@@ -8593,7 +8593,6 @@ unittest {
 unittest {
     import mesh : makeGridPlane;
     import std.algorithm : canFind;
-    import std.math : hypot;
 
     auto t = new TopologyPenTool();
     Mesh m = makeGridPlane(3);
@@ -9168,7 +9167,6 @@ unittest {
 unittest {
     import mesh : makeGridPlane;
     import toolpipe.packets : SubjectPacket;
-    import std.math : hypot;
 
     auto t = new TopologyPenTool();
     Mesh m = makeGridPlane(3);
@@ -9346,7 +9344,6 @@ unittest {
 // distinction between the two modes (task 0483).
 unittest {
     import toolpipe.packets : SubjectPacket;
-    import std.math : hypot;
 
     auto t = new TopologyPenTool();
     Mesh m;
@@ -9575,7 +9572,6 @@ unittest {
 unittest {
     import mesh : makeGridPlane;
     import constraint : topoPenPressPickPx, topoPenSnapAcceptPx, topoPenSnapGatherPx;
-    import std.math : hypot;
 
     auto t = new TopologyPenTool();
     Mesh m = makeGridPlane(2);          // 3x3 verts, 4 quads, 80px per cell here
@@ -9663,7 +9659,6 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     import mesh : makeGridPlane;
-    import std.math : hypot;
 
     auto t = new TopologyPenTool();
     Mesh m = makeGridPlane(2);
@@ -9729,7 +9724,6 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     import mesh : makeGridPlane;
-    import std.math : hypot;
 
     auto t = new TopologyPenTool();
     Mesh m = makeGridPlane(2);
@@ -10395,21 +10389,27 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// Task 0496, claim (2) + claim (3b): the Split snap target through the REAL
-// dispatch path, and the press-time pick left alone.
+// Task 0496, claim (2) + claim (3b), and task 8690 (wave plan 8640 slice
+// 8730 P3): the Split target through the REAL dispatch path, and the
+// press-time pick left alone.
 //
 // Rig: `makeGridPlane(2)` (3x3 verts / 4 quads) looked at down -Y. A plain-MMB
 // press on corner vertex 0 arms Split; the release lands on the grid's INTERIOR
-// center vertex 4, which shares quad (0,1,4,3) with it — so before 0496 this
-// drag chord-split that quad. With `innerSnap` at its measured default the
-// target is not a candidate and the release is a clean no-op; with `innerSnap`
-// on, the same drag splits again.
+// center vertex 4, which shares a quad with it. Task 0496 made that a no-op at
+// `innerSnap`'s default by asking the weld's border-only snap query; the
+// captured chord (v5 -> v10 on the session rig) splits to an interior same-polygon
+// partner and `innerSnap` changes nothing, so since 8690 the drag SPLITS at
+// both settings through `resolveSplitTargetVert`, while the weld query
+// `resolveSnapTargetVert` keeps the border rule (asserted below). The last
+// case pins the shared-polygon admission with a decoy vertex nearer the
+// release than the partner.
 // ---------------------------------------------------------------------------
 unittest {
     import view : View;
     import editmode : EditMode;
     import mesh : makeGridPlane;
     import toolpipe.packets : SubjectPacket;
+    import std.format : format;
 
     loadSDL();
     SDL_SetModState(cast(SDL_Keymod)0);
@@ -10458,12 +10458,12 @@ unittest {
         return r;
     }
 
-    static void driveSplit(ref Rig r, uint fromVert, uint toVert) {
-        ImVec2 pa, pb;
+    // Returns the preview target (`splitTargetVert_`) a motion to the release
+    // pixel resolved, before the release commits.
+    static int driveSplit(ref Rig r, uint fromVert, float[2] at) {
+        ImVec2 pa;
         assert(TopologyPenTool.projectWorldPt(r.m.vertices[fromVert], r.vp, pa),
             "setup: the source vertex must project");
-        assert(TopologyPenTool.projectWorldPt(r.m.vertices[toVert], r.vp, pb),
-            "setup: the target vertex must project");
         SDL_MouseButtonEvent down;
         down.button = SDL_BUTTON_MIDDLE;
         down.x = cast(int)pa.x; down.y = cast(int)pa.y;
@@ -10472,14 +10472,32 @@ unittest {
         assert(r.t.splitSourceVert_ == cast(int)fromVert,
             "the press must arm the PRESSED vertex as the split source — the press-time pick is "
           ~ "NOT candidate-filtered, whatever innerSnap says");
+        SDL_MouseMotionEvent mv;
+        mv.x = cast(int)at[0]; mv.y = cast(int)at[1];
+        assert(r.t.onMouseMotion(mv, r.vts), "motion while Split is armed must consume");
+        immutable int preview = r.t.splitTargetVert_;
         SDL_MouseButtonEvent up;
         up.button = SDL_BUTTON_MIDDLE;
-        up.x = cast(int)pb.x; up.y = cast(int)pb.y;
+        up.x = cast(int)at[0]; up.y = cast(int)at[1];
         assert(r.t.onMouseButtonUp(up, r.vts), "a plain-MMB release must consume");
         assert(!r.t.splitArmed_, "the release must disarm Split whatever the outcome");
+        return preview;
+    }
+    static float[2] px(Rig r, uint v) {
+        return [projectedX(r.m, v, r.vp), projectedY(r.m, v, r.vp)];
+    }
+    // The shared quad became two triangles, each holding both 0 and 4.
+    static size_t trianglesOn04(Mesh* m) {
+        size_t n;
+        foreach (f; m.faces) {
+            bool h0, h4;
+            foreach (v; f) { h0 |= v == 0; h4 |= v == 4; }
+            if (h0 && h4 && f.length == 3) ++n;
+        }
+        return n;
     }
 
-    // --- default (innerSnap == false): the interior target is not a candidate.
+    // --- default (innerSnap == false): the interior same-polygon target splits.
     Mesh mOff;
     auto off = makeRig(false, &mOff);
     assert(isVertexInterior(&mOff, 4),
@@ -10487,26 +10505,29 @@ unittest {
     immutable size_t fBefore = mOff.faces.length;
     immutable size_t eBefore = mOff.edges.length;
 
-    // The CLAIM first, end to end through the real dispatch, so it is the
-    // assertion that breaks if the gate goes away.
-    driveSplit(off, 0, 4);
-    assert(mOff.faces.length == fBefore && mOff.edges.length == eBefore,
-        "a Split whose target vertex is INTERIOR must be a clean no-op at the measured default "
-      ~ "(before task 0496 this chord-split the quad)");
+    // The CLAIM first, end to end through the real dispatch.
+    immutable int offPreview = driveSplit(off, 0, px(off, 4));
+    assert(mOff.faces.length == fBefore + 1 && mOff.edges.length == eBefore + 1
+        && mOff.vertices.length == 9 && trianglesOn04(&mOff) == 2,
+        format("a Split to an INTERIOR same-polygon vertex must chord-split the shared quad at "
+             ~ "innerSnap's default (the captured chord); got %d faces (from %d), %d edges (from "
+             ~ "%d), %d triangles on 0-4", mOff.faces.length, fBefore, mOff.edges.length,
+             eBefore, trianglesOn04(&mOff)));
+    assert(offPreview == 4,
+        format("the ghost preview must resolve the same target as the commit; got %d", offPreview));
 
-    // Then WHY: the press-time pick still sees that interior vertex — only the
-    // SNAP TARGET is filtered (claim 3b).
+    // The press-time pick still sees that interior vertex (claim 3b).
     assert(off.t.findSourceVertex(cast(int)projectedX(&mOff, 4, off.vp),
                                  cast(int)projectedY(&mOff, 4, off.vp), off.vp) == 4,
         "the press-time pick must still resolve an INTERIOR vertex — the captures we hold show "
       ~ "the reference grabbing interior elements at this flag's default");
-    // The gesture is over, so the tool has dropped its snap snapshot; re-arm it
-    // by hand or the master gate (task 0523) answers -1 for this call and the
-    // assertion below would be about the gate rather than about `innerSnap`.
+    // The weld's snap query keeps the border rule. The gesture is over, so the
+    // tool has dropped its snap snapshot; re-arm it by hand or the master gate
+    // (task 0523) answers -1 and the assertion would be about the gate.
     off.t.dragSnap_ = *penTestSnapOn();
     assert(off.t.resolveSnapTargetVert(cast(int)projectedX(&mOff, 4, off.vp),
                                       cast(int)projectedY(&mOff, 4, off.vp), off.vp) < 0,
-        "the SNAP TARGET must refuse the interior vertex at innerSnap = false");
+        "the weld's SNAP TARGET must still refuse the interior vertex at innerSnap = false");
     off.t.innerSnap_ = true;
     assert(off.t.resolveSnapTargetVert(cast(int)projectedX(&mOff, 4, off.vp),
                                       cast(int)projectedY(&mOff, 4, off.vp), off.vp) == 4,
@@ -10514,13 +10535,33 @@ unittest {
       ~ "rule's answer and not the radius's or the gate's");
     off.t.innerSnap_ = false;
 
-    // --- innerSnap on: the very same drag splits.
+    // --- innerSnap on: the very same drag splits the same way.
     Mesh mOn;
     auto on = makeRig(true, &mOn);
     immutable size_t fBefore2 = mOn.faces.length;
-    driveSplit(on, 0, 4);
-    assert(mOn.faces.length == fBefore2 + 1,
+    driveSplit(on, 0, px(on, 4));
+    assert(mOn.faces.length == fBefore2 + 1 && trianglesOn04(&mOn) == 2,
         "with innerSnap on, the same corner-to-center drag must split the shared quad");
+
+    // --- the shared-polygon admission: a loose decoy vertex projecting ~5px
+    // from v4 is the release pixel's nearest vertex, but it shares no polygon
+    // with v0, so the target is still v4 and the quad splits.
+    Mesh mDec;
+    auto dec = makeRig(false, &mDec);
+    immutable uint decoy = mDec.addVertex(mDec.vertices[4] + Vec3(0.0625f, 0, 0));
+    mDec.buildLoops();
+    immutable float[2] at = px(dec, decoy);
+    immutable float[2] p4 = px(dec, 4);
+    immutable float dPartner = hypot(at[0] - p4[0], at[1] - p4[1]);
+    assert(dPartner > 2.0f && dPartner < 20.0f,
+        format("setup: the decoy must sit clearly off v4 yet inside the 24px acceptance; %.2fpx",
+               dPartner));
+    immutable size_t fBefore3 = mDec.faces.length;
+    immutable int decPreview = driveSplit(dec, 0, at);
+    assert(decPreview == 4 && mDec.faces.length == fBefore3 + 1,
+        format("the split target is the nearest vertex SHARING A POLYGON with the source, not the "
+             ~ "nearest vertex: preview %d (expected 4), faces %d (expected %d)", decPreview,
+             mDec.faces.length, fBefore3 + 1));
 }
 
 // ---------------------------------------------------------------------------
@@ -10553,7 +10594,6 @@ unittest {
     import mesh : makeGridPlane;
     import toolpipe.packets : SubjectPacket;
     import constraint : topoPenSnapAcceptPx;
-    import std.math : hypot;
 
     loadSDL();
     SDL_SetModState(cast(SDL_Keymod)0);
@@ -11171,7 +11211,6 @@ unittest { // a bare retopo chain elsewhere in the mesh SURVIVES a dissolve
 // be resolved from outside the acceptance range; that block tests it.)
 // ---------------------------------------------------------------------------
 unittest {
-    import std.math : hypot;
     import toolpipe.packets : SubjectPacket;
 
     auto t = new TopologyPenTool();

@@ -12,6 +12,7 @@
 //   smooth-loop-border   L13 (border) the loop holds its face-valence-1 corners
 //   chords               L4  the five chords that record today: one step each
 //   switch-away          L9  (z1..z3) undo walks back through a tool switch
+//   chord-split-interior L4  MMB split v5 -> v10: an interior same-polygon target
 //
 // The fixture also carries rows that do not hold on this rig yet (card 8650):
 // the other four chords' outcomes (their port slices add `chord-*` cells), the
@@ -396,6 +397,62 @@ unittest {
     }
     assert(n == 3, format("switch-away: %d of the three undo steps ran", n));
     writeln("PASS switch-away");
+}
+
+// ---------------------------------------------------------------------------
+// chord-split-interior — L4, port slice 8730 (task 8690): plain MMB from v5
+// onto v10, an INTERIOR vertex of the quad (5, 6, 10, 9), splits that quad into
+// the fixture's two triangles (vertex sets) at innerSnap's default; one row,
+// undo and redo bit-exact, the tool stays armed.
+// ---------------------------------------------------------------------------
+long[][] faceSets(const PenMesh m) {
+    import std.algorithm : sort;
+    long[][] r;
+    foreach (f; m.faces) { auto c = f.dup; sort(c); r ~= c; }
+    sort(r);
+    return r;
+}
+
+long[][] setDiff(long[][] a, long[][] b) {
+    import std.algorithm : canFind;
+    long[][] r;
+    foreach (f; a) if (!b.canFind(f)) r ~= f;
+    return r;
+}
+
+long[][] facesOf(JSONValue a) {
+    long[][] r;
+    foreach (f; a.array) r ~= idxOf(f);
+    return r;
+}
+
+unittest {
+    if (!cell("chord-split-interior")) return;
+    JSONValue g;
+    size_t found;
+    foreach (x; cellFx("chords")["gestures"].array) if (x["id"].str == "split") { g = x; ++found; }
+    assert(found == 1, format("chord-split-interior: %d split rows in the fixture, expected 1", found));
+    const r = rig();
+    penArmUi(r);
+    const from = penVertexPx(5, "chord-split-interior v5");
+    const to = penVertexPx(10, "chord-split-interior v10");
+    penPlay(penGestureEvents(from[0], from[1], to[0], to[1], 2, 0, 8), "chord-split-interior MMB v5 -> v10");
+    const m = penMesh();
+    const gone = setDiff(faceSets(r.a0), faceSets(m)), born = setDiff(faceSets(m), faceSets(r.a0));
+    assert([m.nv, m.nf, m.edges] == idxOf(g["counts"]) && penHistoryLen() == r.hp + 2
+           && gone == facesOf(g["goneFaces"]) && born == facesOf(g["newFaces"])
+           && penMoved(m, r.a0) == idxOf(g["moved"]),
+           format("chord-split-interior: mesh %s (expected counts %s), faces gone %s (expected %s), "
+                  ~ "born %s (expected %s), moved %s, history %s", m.toString, g["counts"], gone,
+                  g["goneFaces"], born, g["newFaces"], penIdx(penMoved(m, r.a0)), penHistoryLabels()));
+    penCtrlZ("chord-split-interior Ctrl+Z");
+    expectState("chord-split-interior", "split_z", r.a0, g["undoArmed"].type == JSONType.true_, r.hp + 1);
+    assert(g["redoBitExact"].type == JSONType.true_, "chord-split-interior: the fixture's split is redo-bit-exact");
+    penCtrlShiftZ("chord-split-interior Ctrl+Shift+Z");
+    expectState("chord-split-interior", "split_r", m, true, r.hp + 2);
+    penCtrlZ("chord-split-interior Ctrl+Z again");
+    expectState("chord-split-interior", "split_rz", r.a0, true, r.hp + 1);
+    writeln("PASS chord-split-interior");
 }
 
 // ---------------------------------------------------------------------------

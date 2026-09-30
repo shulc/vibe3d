@@ -532,7 +532,7 @@ private:
     // state above.
     package GestureArm splitArmed_;
     package int  splitSourceVert_  = -1;
-    int  splitTargetVert_  = -1;
+    package int  splitTargetVert_  = -1;
 
     // --- The snap CONFIGURATION this gesture runs on, snapshotted at press.
     //
@@ -1725,7 +1725,7 @@ public:
         // Loop/Slide/Smooth branches above.
         if (splitArmed_) {
             Viewport vp = viewportOf(vts);
-            splitTargetVert_ = resolveSnapTargetVert(e.x, e.y, vp);
+            splitTargetVert_ = resolveSplitTargetVert(e.x, e.y, vp, splitSourceVert_);
             return true;
         }
 
@@ -2025,7 +2025,7 @@ public:
     /// dragged vertex is its own nearest candidate at zero distance and every
     /// query answers "you have landed on yourself" — the same self-snap the
     /// transform path already excludes for, at `move.d:applySnapToDelta`.
-    /// Empty for the Split caller, which moves nothing.
+    /// Split does not ask this query (it asks `resolveSplitTargetVert`).
     package int resolveSnapTargetVert(int mx, int my, const ref Viewport vp,
                                       const(uint)[] exclude = null) {
         if (!dragSnap_.enabled) return -1;
@@ -2047,6 +2047,33 @@ public:
         };
         return findSourceVertex(mx, my, vp, topoPenSnapAcceptPx(vp, dragSnap_), admit);
     }
+
+    /// Split's target C (task 8690): the vertex within the drag-snap acceptance
+    /// that shares a polygon with the source `a`, at every `innerSnap` — the
+    /// captured chord splits to an INTERIOR same-polygon partner and flipping
+    /// `innerSnap` changes nothing (wave plan 8640 §9.14 [A2-8]). So the border
+    /// half of `PenSnapGuide.admits` is not applied here; the master enable and
+    /// the `backFace` orientation half still are. A private guide, never the
+    /// registered one, so the service's clients keep `innerSnap`. Motion (the
+    /// ghost preview) and release (the commit) both ask this, so they agree.
+    package int resolveSplitTargetVert(int mx, int my, const ref Viewport vp, int a) {
+        if (!dragSnap_.enabled) return -1;
+        auto m = meshOrNull();
+        if (m is null || a < 0 || a >= cast(int)m.vertices.length) return -1;
+        uint[] partners;
+        foreach (fi; m.facesAroundVertex(cast(uint)a)) partners ~= m.faces[fi];
+        if (splitGuide_ is null) splitGuide_ = new PenSnapGuide();
+        auto g = splitGuide_;
+        g.retarget(m, /*interiorOk*/true, backFace_);
+        g.aimAt(vp, mx, my);
+        scope admit = delegate bool(SnapType t, int idx, int slot) nothrow {
+            bool shared_ = false;
+            foreach (v; partners) if (cast(int)v == idx) { shared_ = true; break; }
+            return shared_ && g.admits(t, idx, slot);
+        };
+        return findSourceVertex(mx, my, vp, topoPenSnapAcceptPx(vp, dragSnap_), admit);
+    }
+    private PenSnapGuide splitGuide_;
 
     // -----------------------------------------------------------------------
     // THE DESTRUCTIVE LANDING (task 0555).
@@ -5268,7 +5295,7 @@ public:
     // Split is a VERTEX -> VERTEX chord split, and nothing else
     // (doc/tasks/work/0480-topopen-addloop-middle.md): a release that does
     // NOT land on an existing vertex within the drag-snap acceptance radius
-    // (`topoPenSnapAcceptPx`, via `resolveSnapTargetVert`) — mid-span over
+    // (`topoPenSnapAcceptPx`, via `resolveSplitTargetVert`) — mid-span over
     // an edge, or on empty space — is a clean no-op. Inserting a new vertex
     // partway along a crossed edge belongs to the Add Loop gesture
     // (`addLoopUp`/`addLoopFrac`), which owns both the fraction and the
@@ -5279,7 +5306,7 @@ public:
         splitArmed_      = false;
         splitSourceVert_ = -1;
         Viewport vp = viewportOf(vts);
-        int c = resolveSnapTargetVert(e.x, e.y, vp);
+        int c = resolveSplitTargetVert(e.x, e.y, vp, a);
         splitTargetVert_ = -1;
         if (c >= 0) commitSplit(a, c);
         // else: release on an edge / empty space -> clean no-op.

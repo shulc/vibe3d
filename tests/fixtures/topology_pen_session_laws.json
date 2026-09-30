@@ -203,7 +203,27 @@
      ],
      "undoArmed": true,
      "moved": [],
-     "redoBitExact": true
+     "redoBitExact": true,
+     "newFaces": [
+      [
+       5,
+       6,
+       10
+      ],
+      [
+       5,
+       9,
+       10
+      ]
+     ],
+     "goneFaces": [
+      [
+       5,
+       6,
+       9,
+       10
+      ]
+     ]
     },
     {
      "id": "remove",

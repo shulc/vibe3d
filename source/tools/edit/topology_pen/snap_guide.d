@@ -349,8 +349,8 @@ final class PenSnapGuide : SnapGuide {
     /// orientation test is SKIPPED rather than inverted into a rejection.
     /// Skipping is what the measured predicate itself does with a
     /// degenerate operand — a zero normal is admitted — while rejecting
-    /// would be a policy no measurement carries. The one production caller
-    /// (`resolveSnapTargetVert`) aims before it asks.
+    /// would be a policy no measurement carries. The production callers
+    /// (`resolveSnapTargetVert`, `resolveSplitTargetVert`) aim before they ask.
     ///
     /// NOT cached, deliberately. A per-vertex normal array keyed on
     /// `MeshCacheKey` would go stale under a position-only edit, because
