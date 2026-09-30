@@ -985,7 +985,7 @@ unittest {
     // with the mode off its plan lets the selection decide, so a hovered
     // vertex brings every base dot with it — far from the pointer, EA's
     // corners light up. Both readings keep the tool active; only the hover
-    // differs.
+    // differs. With the mode on the same hover draws none (the other side).
     {
         cmdOk("select.typeFrom polygon");
         cmdOk("tool.set xfrm.elementMove");
@@ -997,18 +997,22 @@ unittest {
         int[2][] cs = [px(ea[0]), px(ea[2])];
         int[2][] pts;
         foreach (c; cs) pts ~= window(c, 2);
-        immutable int[2] ip = px(kI0Pos);
-        string log = format(`{"t":0,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,`
-            ~ `"fovY":0.785398}`, r.vp.x, r.vp.y, r.vp.width, r.vp.height) ~ "\n";
-        foreach (i; 0 .. 3)
-            log ~= format(`{"t":%d,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,`
-                ~ `"state":0,"mod":0}`, 30 + i * 20, r.vp.x + ip[0], r.vp.y + ip[1]) ~ "\n";
-        auto pr = postJson("/api/play-events", log);
-        assert(pr["status"].str == "success", "7: /api/play-events failed: " ~ pr.toString);
-        waitPlaybackProcessed();
-        settle();
-        assert(hoverV() == kI0, format("7 premise: the pointer on I0 hovers vertex %s",
-                                        hoverV()));
+        void hoverI0() {
+            immutable int[2] ip = px(kI0Pos);
+            string log = format(`{"t":0,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,`
+                ~ `"vpH":%d,"fovY":0.785398}`, r.vp.x, r.vp.y, r.vp.width, r.vp.height) ~ "\n";
+            foreach (i; 0 .. 3)
+                log ~= format(`{"t":%d,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,`
+                    ~ `"yrel":0,"state":0,"mod":0}`, 30 + i * 20, r.vp.x + ip[0],
+                    r.vp.y + ip[1]) ~ "\n";
+            auto pr = postJson("/api/play-events", log);
+            assert(pr["status"].str == "success", "7: /api/play-events failed: " ~ pr.toString);
+            waitPlaybackProcessed();
+            settle();
+            assert(hoverV() == kI0, format("7 premise: the pointer on I0 hovers vertex %s",
+                                            hoverV()));
+        }
+        hoverI0();
         auto hov = probe(pts);
         parkPointer(r);
         assert(hoverV() == -1, format("7 premise: the parked pointer still hovers "
@@ -1028,6 +1032,19 @@ unittest {
         foreach (i; 0 .. pts.length)
             assert(maxDiff(hov[i], sv[i]) <= 1, format("7: the hover's base dot at %s "
                 ~ "reads %s, vertex display draws %s", pts[i], hov[i].c, sv[i].c));
+        // The mirror: with the mode ON the plan takes the base dots away from
+        // the selection, so the same hover leaves EA's corners untouched.
+        cmd("viewport.retopology", `{"value":"on"}`);
+        showVertices(false);
+        hoverI0();
+        auto hovOn = probe(pts);
+        parkPointer(r);
+        auto noneOn = probe(pts);
+        int changed = 0;
+        foreach (i; 0 .. pts.length) if (maxDiff(hovOn[i], noneOn[i]) >= 3) ++changed;
+        assert(changed == 0, format("7: with the mode on a vertex hover draws base dots "
+            ~ "(%s px changed around EA's corners)", changed));
+        cmd("viewport.retopology", `{"value":"off"}`);
         cmdOk("tool.set xfrm.elementMove off");
         settle();
     }
