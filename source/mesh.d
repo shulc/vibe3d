@@ -5341,6 +5341,30 @@ struct Mesh {
         return removed;
     }
 
+    /// Drop the faces marked in `mask` together with exactly the vertices and
+    /// edges THIS removal leaves with no face; face-less geometry that predates
+    /// the call (a loose point, a bare wire, registered or not) survives, and so
+    /// does a vertex still holding one of those wires. Neither half of
+    /// `deleteFacesByMask` says this: `keepOrphans=false` sweeps every
+    /// unreferenced vertex in the mesh, and `keepFloatingEdges=true` registers
+    /// the edges this call orphaned as wires, which then pin their endpoints.
+    /// Measured law: the topology pen's face remove (task 8710; fixture
+    /// cells K-chords, C1-R1 and C1-R2r). One delivery for the whole call.
+    size_t removeFacesWithOwnOrphans(in bool[] mask) {
+        const loose = captureLooseGeometry();
+        uint[] pins = looseVertPins(loose, null);
+        foreach (ref w; loose.wires) pins ~= [w[0], w[1]];
+        beginDeliveryBatch();
+        scope (exit) endDeliveryBatch();
+        const removed = deleteFacesByMask(mask, /*keepOrphans*/ true, /*keepFloatingEdges*/ false);
+        if (removed == 0) return 0;
+        uint[] remap;
+        compactUnreferenced(pins, &remap);
+        restoreLooseWires(loose, remap);
+        buildLoops();
+        return removed;
+    }
+
     /// Reverse the winding (vertex order) of every face selected by `mask`,
     /// inverting its normal. The undirected edge set is invariant under a
     /// winding flip (consecutive pairs are the same undirected set after

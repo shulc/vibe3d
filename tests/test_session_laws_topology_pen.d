@@ -13,6 +13,7 @@
 //   chords               L4  the five chords that record today: one step each
 //   switch-away          L9  (z1..z3) undo walks back through a tool switch
 //   chord-split-interior L4  MMB split v5 -> v10: an interior same-polygon target
+//   chord-remove         L35 a face remove takes exactly the orphans IT makes
 //
 // The fixture also carries rows that do not hold on this rig yet (card 8650):
 // the other four chords' outcomes (their port slices add `chord-*` cells), the
@@ -20,7 +21,7 @@
 // hold add their cells.
 //
 // `VIBE3D_CELL=<id>` runs one cell alone (druntime stops a module at its first
-// failed assert); the last block pins the population: 9 with no filter, 1 with
+// failed assert); the last block pins the population: 10 with no filter, 1 with
 // one (an unknown name must not pass by running nothing).
 //
 // Run via: ./run_test.d test_session_laws_topology_pen
@@ -292,9 +293,9 @@ unittest {
 // ---------------------------------------------------------------------------
 // chords — L4: every chord that records today is exactly one Ctrl+Z step, undo
 // is bit-exact and the tool stays armed. Narrowed by the wave plan (§9.14
-// [A2-8]) to the five chords that record on this rig; the other four
-// (corner build, vertex slide, interior split, and remove's counts) diverge in
-// OUTCOME and land as their port slices' `chord-*` cells.
+// [A2-8]) to the five chords that record on this rig; the other three
+// (corner build, vertex slide, interior split) diverge in OUTCOME and land as
+// their port slices' `chord-*` cells. Remove's counts hold since slice 8710.
 // ---------------------------------------------------------------------------
 struct Chord { int btn; int mod; bool tap; double dx, dy; bool counts; }
 
@@ -313,13 +314,12 @@ unittest {
     if (!cell("chords")) return;
     auto fx = cellFx("chords");
     enum S = PEN_KMOD_LSHIFT, C = PEN_KMOD_LCTRL;
-    // `counts`: whether (nv, nf, ne) is asserted. Not for remove: the orphan
-    // corner and its two edges are the port slice 8740's outcome.
+    // `counts`: whether (nv, nf, ne) is asserted.
     const Chord[string] spec = [
         "dup_edge": Chord(1, S, false, 0, 36 / kSp, true),
         "addloop":  Chord(2, S, false, 10 / kSp, 0, true),
         "moveloop": Chord(3, 0, false, 0, -15 / kSp, true),
-        "remove":   Chord(2, C, true, 0, 0, false),
+        "remove":   Chord(2, C, true, 0, 0, true),
         "smooth":   Chord(1, S | C, true, 0, 0, true),
     ];
     const r = rig();
@@ -357,8 +357,8 @@ unittest {
         ++n;
     }
     // remove is the one chord here the fixture marks redo-bit-exact.
-    assert(n == 5 && counted == 4 && redone == 1,
-           format("chords: %d chords ran (expected 5), %d with counts (expected 4), %d redone "
+    assert(n == 5 && counted == 5 && redone == 1,
+           format("chords: %d chords ran (expected 5), %d with counts (expected 5), %d redone "
                   ~ "(expected 1)", n, counted, redone));
     penCtrlZ("chords final Ctrl+Z");
     expectState("chords", "arm_z", r.a0, fx["finalUndoArmed"].type == JSONType.true_, r.hp);
@@ -456,6 +456,81 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
+// chord-remove — L35 (slice 8710): Ctrl+MMB on a face removes it with exactly
+// the vertices and edges it leaves with no polygon, and nothing else. Three
+// rigs: the corner f0 (v0 and edges 0-1, 0-4 go), the border f1 (no vertex is
+// orphaned; the border edge 1-2 goes), and f0 again with a vertex that was in
+// no polygon BEFORE the remove plus a two-point polygon, both added through
+// the script door before the arm (the capture's own re-rig): that vertex
+// stays. Each: one row, the survivors keep their positions in order, Ctrl+Z
+// is bit-exact and the tool stays armed.
+// ---------------------------------------------------------------------------
+void removeCase(string tag, JSONValue c, const PenRig r) {
+    const f = c["face"].integer;
+    assert(r.a0.faces[cast(size_t)f] == idxOf(c["removedFace"])
+           && [r.a0.nv, r.a0.nf, r.a0.edges] == idxOf(c["before"]),
+           format("chord-remove %s rig: face %d is %s (expected %s), mesh %s (expected %s)", tag, f,
+                  r.a0.faces[cast(size_t)f], c["removedFace"], r.a0.toString, c["before"]));
+    penArmUi(r);
+    penTap(penFacePx(f), 2, PEN_KMOD_LCTRL, "chord-remove " ~ tag);
+    const m = penMesh();
+    assert([m.nv, m.nf, m.edges] == idxOf(c["after"]) && penHistoryLen() == r.hp + 2,
+           format("chord-remove %s: counts %s (expected %s), history %s (expected one row after the arm)",
+                  tag, m.toString, c["after"], penHistoryLabels()));
+    // The expected mesh, from OUR a0: the survivors in order, the other faces
+    // renumbered onto them.
+    const surv = idxOf(c["survivors"]);
+    long[long] newOf;
+    PenMesh want;
+    foreach (i, o; surv) { newOf[o] = cast(long)i; want.pos ~= r.a0.pos[cast(size_t)o]; }
+    foreach (fi, face; r.a0.faces) {
+        if (fi == f) continue;
+        long[] nf;
+        foreach (v; face) nf ~= newOf[v];
+        want.faces ~= nf;
+    }
+    want.edges = m.edges;
+    assert(m == want, format("chord-remove %s: the survivors or the faces differ: faces %s (expected %s)",
+                             tag, m.faces, want.faces));
+    penCtrlZ("chord-remove " ~ tag ~ " Ctrl+Z");
+    expectState("chord-remove", tag ~ "_z", r.a0, true, r.hp + 1);
+}
+
+unittest {
+    if (!cell("chord-remove")) return;
+    auto fx = cellFx("chord-remove");
+    size_t n;
+    foreach (tag; ["corner", "border"]) {
+        removeCase(tag, fx[tag], rig());
+        ++n;
+    }
+    // The loose rig: three vertices and the two-point polygon, before the arm.
+    auto c = fx["leavesLoose"];
+    PenRig r = rig();
+    foreach (v; c["rigAdds"]["vertices"].array)
+        penCmd("mesh.addVertex", format(`{"pos":[%.17g,%.17g,%.17g]}`, penNum(v.array[0]),
+                                        penNum(v.array[1]), penNum(v.array[2])));
+    const two = idxOf(c["rigAdds"]["twoPointPolygon"]);
+    penCmd("mesh.select", format(`{"mode":"vertices","indices":[%d,%d]}`, two[0], two[1]));
+    penCmd("mesh.makePolygon");
+    penCmd("select.drop");
+    penCmd("history.clear");
+    r.a0 = penMesh();
+    r.hp = penHistoryLen();
+    const loose = c["rigAdds"]["loosePoint"].integer;
+    bool inPoly;
+    foreach (face; r.a0.faces) foreach (v; face) if (v == loose) inPoly = true;
+    assert(!inPoly && r.hp == 0,
+           format("chord-remove leavesLoose rig: vertex %d is in a polygon (%s) or history is not empty (%s)",
+                  loose, r.a0.faces, penHistoryLabels()));
+    removeCase("leavesLoose", c, r);
+    ++n;
+    assert(n == fx["population"].integer && n == 3,
+           format("chord-remove: %d of the fixture's %d rigs ran (expected 3)", n, fx["population"].integer));
+    writeln("PASS chord-remove");
+}
+
+// ---------------------------------------------------------------------------
 // Population: with no VIBE3D_CELL every cell above ran (declared last, so it
 // runs last).
 // ---------------------------------------------------------------------------
@@ -463,7 +538,7 @@ unittest {
     writeln("cells=", cellsRun);
     const only = environment.get("VIBE3D_CELL", "");
     if (only.length == 0)
-        assert(cellsRun == 9, format("topology pen session laws: %d cells ran, expected 9", cellsRun));
+        assert(cellsRun == 10, format("topology pen session laws: %d cells ran, expected 10", cellsRun));
     else
         assert(cellsRun == 1, format("topology pen session laws: VIBE3D_CELL=%s ran %d cells, expected 1 "
                                      ~ "(an unknown name runs none)", only, cellsRun));

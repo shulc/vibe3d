@@ -6292,9 +6292,10 @@ public:
         refreshDisplay(m, gpu_);
     }
 
-    // P5 (doc/topopen_p5_remove_plan.md D4/D5): commit a single-face removal
-    // — deletes ONLY `faceIdx`, keeping orphaned points AND orphaned edges
-    // (`deleteFacesByMask(keepOrphans:true, keepFloatingEdges:true)`, D5), as
+    // P5 (doc/topopen_p5_remove_plan.md D4): commit a single-face removal
+    // — deletes `faceIdx` and the vertices and edges THIS removal leaves with
+    // no face, keeping every pre-existing loose point and wire (task 8710,
+    // `Mesh.removeFacesWithOwnOrphans`; D5's keep-all was refuted), as
     // one atomic undo entry via the DEDICATED `removeEditFactory_`
     // (`MeshEditScope.Geometry` — a removal IS a topology change, unlike
     // Move's Position-only scope; opponent KILLER-1 — never
@@ -6320,7 +6321,7 @@ public:
 
         auto mask = new bool[](m.faces.length);
         mask[faceIdx] = true;
-        m.deleteFacesByMask(mask, /*keepOrphans*/true, /*keepFloatingEdges*/true);
+        m.removeFacesWithOwnOrphans(mask);
 
         recordSnapshotUndo(m, before, factories_.remove, "Topology Remove");
 

@@ -91,6 +91,13 @@
     "smooth-loop"
    ],
    "law": "Smoothing + Edge Loop processes only the pressed edge's loop: on an interior edge of an open 4-vertex row the two interior vertices; on a border edge the perimeter minus its four face-valence-1 corners. Plain smoothing on the same edge moves all 16. One step each, undo bit-exact."
+  },
+  {
+   "id": "L35-remove-drops-only-its-own-orphans",
+   "cells": [
+    "chord-remove"
+   ],
+   "law": "A face remove also deletes the vertices and edges THIS removal leaves with no polygon (corner f0: 15/8/22; border f1: the faceless border edge goes, 16/8/23), and nothing else: a vertex that belonged to no polygon before the remove survives it (19 -> 18). One step, undo bit-exact, the tool stays armed."
   }
  ],
  "cells": {
@@ -464,6 +471,301 @@
    "rowsAdded": 3,
    "meshUnchanged": true,
    "undoArmed": true
+  },
+  "chord-remove": {
+   "corner": {
+    "face": 0,
+    "removedFace": [
+     0,
+     1,
+     5,
+     4
+    ],
+    "before": [
+     16,
+     9,
+     24
+    ],
+    "after": [
+     15,
+     8,
+     22
+    ],
+    "survivors": [
+     1,
+     2,
+     3,
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10,
+     11,
+     12,
+     13,
+     14,
+     15
+    ],
+    "facesAfter": [
+     [
+      0,
+      1,
+      5,
+      4
+     ],
+     [
+      1,
+      2,
+      6,
+      5
+     ],
+     [
+      3,
+      4,
+      8,
+      7
+     ],
+     [
+      4,
+      5,
+      9,
+      8
+     ],
+     [
+      5,
+      6,
+      10,
+      9
+     ],
+     [
+      7,
+      8,
+      12,
+      11
+     ],
+     [
+      8,
+      9,
+      13,
+      12
+     ],
+     [
+      9,
+      10,
+      14,
+      13
+     ]
+    ]
+   },
+   "border": {
+    "face": 1,
+    "removedFace": [
+     1,
+     2,
+     6,
+     5
+    ],
+    "before": [
+     16,
+     9,
+     24
+    ],
+    "after": [
+     16,
+     8,
+     23
+    ],
+    "survivors": [
+     0,
+     1,
+     2,
+     3,
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10,
+     11,
+     12,
+     13,
+     14,
+     15
+    ],
+    "facesAfter": [
+     [
+      0,
+      1,
+      5,
+      4
+     ],
+     [
+      2,
+      3,
+      7,
+      6
+     ],
+     [
+      4,
+      5,
+      9,
+      8
+     ],
+     [
+      5,
+      6,
+      10,
+      9
+     ],
+     [
+      6,
+      7,
+      11,
+      10
+     ],
+     [
+      8,
+      9,
+      13,
+      12
+     ],
+     [
+      9,
+      10,
+      14,
+      13
+     ],
+     [
+      10,
+      11,
+      15,
+      14
+     ]
+    ]
+   },
+   "leavesLoose": {
+    "face": 0,
+    "removedFace": [
+     0,
+     1,
+     5,
+     4
+    ],
+    "before": [
+     19,
+     10,
+     25
+    ],
+    "after": [
+     18,
+     9,
+     23
+    ],
+    "survivors": [
+     1,
+     2,
+     3,
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10,
+     11,
+     12,
+     13,
+     14,
+     15,
+     16,
+     17,
+     18
+    ],
+    "facesAfter": [
+     [
+      0,
+      1,
+      5,
+      4
+     ],
+     [
+      1,
+      2,
+      6,
+      5
+     ],
+     [
+      3,
+      4,
+      8,
+      7
+     ],
+     [
+      4,
+      5,
+      9,
+      8
+     ],
+     [
+      5,
+      6,
+      10,
+      9
+     ],
+     [
+      7,
+      8,
+      12,
+      11
+     ],
+     [
+      8,
+      9,
+      13,
+      12
+     ],
+     [
+      9,
+      10,
+      14,
+      13
+     ],
+     [
+      16,
+      17
+     ]
+    ],
+    "rigAdds": {
+     "vertices": [
+      [
+       0.5,
+       0.25,
+       0.829156219959259
+      ],
+      [
+       -0.5,
+       0.25,
+       0.829156219959259
+      ],
+      [
+       -0.5,
+       0.4000000059604645,
+       0.7681145668029785
+      ]
+     ],
+     "loosePoint": 16,
+     "twoPointPolygon": [
+      17,
+      18
+     ],
+     "note": "added before the arm: vertex 16 in no polygon, and a two-point polygon (17, 18)"
+    }
+   },
+   "undoArmed": true,
+   "population": 3
   }
  }
 }
