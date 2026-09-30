@@ -433,8 +433,23 @@ unittest {
     }
 
     // ---- A7: the retopology face arm exists and is lit ---------------------
+    // Since the face pass honours the plan's faceAlpha (0.5) the fill BLENDS
+    // over the empty view: unblend with the pixel read with the layer moved
+    // out of the view (a hidden primary is still drawn): c = (out - (1-a)u)/a,
+    // carrying (0.5 + (1-a)*0.5)/a extra LSB.
     {
-        immutable Px fg = probe([r.fgPx])[0];
+        immutable double a = num(cell0()["plan"]["active"]["faceAlpha"]);
+        assert(a > 0.0 && a <= 1.0, format("A7: faceAlpha %s", a));
+        cmdOk("layer.attr 1 pos.x 1000");
+        settle();
+        immutable Px bgPx = probe([r.fgPx])[0];
+        cmdOk("layer.attr 1 pos.x 0");
+        settle();
+        immutable Px raw = probe([r.fgPx])[0];
+        assert(maxDiff(raw, bgPx) >= 3, format("A7: no fill drawn (%s)", raw.c));
+        Px fg;
+        foreach (k; 0 .. 3)
+            fg.c[k] = cast(int) round((raw.c[k] - (1.0 - a) * bgPx.c[k]) / a);
         immutable Px[] w = [Px([127, 140, 127])];
         assert(maxDiff(fg, w[0]) >= 3,
             format("A7: the primary reads the weight neutral %s", fg.c));
@@ -442,7 +457,9 @@ unittest {
         // fg = face*K + S and tile = base*K + S, S the unscaled specular.
         immutable double S = specLsb([0.0, 0.0, 1.0], r.eye, kFgCentre, kGain);
         immutable double ratio = kFace / r.base;
-        immutable double tol = 0.5 + 0.5 * ratio + abs(S) * (1.0 - ratio);
+        // + 0.5 for rounding the unblended value to an integer above.
+        immutable double tol = 0.5 + 0.5 * ratio + abs(S) * (1.0 - ratio)
+                             + (0.5 + (1.0 - a) * 0.5) / a + 0.5;
         foreach (k; 0 .. 3) {
             immutable double pred = ratio * (on[0].c[k] - S) + S;
             assert(abs(fg.c[k] - pred) <= tol,
