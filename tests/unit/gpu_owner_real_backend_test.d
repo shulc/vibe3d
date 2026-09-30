@@ -407,10 +407,11 @@ unittest // The module contains one typed low-level GPU-name delete sequence.
     assert(vaoDeletes == 3, format(
         "GPU-name deleter census: expected 3 VAO calls in one sequence, got %s",
         vaoDeletes));
-    // Seven: the six created names plus the lazily created reverse-order
-    // index buffer, deleted in the same sequence (0 when never created).
-    assert(vboDeletes == 7, format(
-        "GPU-name deleter census: expected 7 VBO calls in one sequence, got %s",
+    // Eight: the six created names plus the two lazily created index buffers
+    // (reverse-order faces, base-dot list), deleted in the same sequence (0
+    // when never created).
+    assert(vboDeletes == 8, format(
+        "GPU-name deleter census: expected 8 VBO calls in one sequence, got %s",
         vboDeletes));
 }
 
@@ -446,6 +447,45 @@ unittest // The lazily created reverse-order index buffer is released on both ro
             cell ~ ": the resource owner left the index buffer live");
         assert(gpuA.faceReverseEbo == 0 && !gpuA.faceReverseEboFilled
             && gpuA.faceLayoutGen == 0 && gpuA.faceReverseEboGen == 0,
+            cell ~ ": the consumed header still names or trusts the index buffer");
+        assert(glIsBuffer(eboB) == GL_TRUE, cell ~ ": the sibling was released");
+
+        // Route 2: legacy destroy (peek + delete).
+        gpuB.destroy();
+        assert(glIsBuffer(eboB) == GL_FALSE,
+            cell ~ ": GpuMesh.destroy left the index buffer live");
+    });
+}
+
+unittest // The lazily created base-dot index buffer is released on both routes.
+{
+    withGlBoundary({
+        enum cell = "dotIndexEbo release";
+        GpuMesh gpuA;
+        GpuMesh gpuB;
+        gpuA.init();
+        gpuB.init();
+        // Route 1: the prepared resource owner; the buffer is created after
+        // the prepare (a listed dot draw between prepare and validate).
+        auto owner = new GpuResourceOwner(&gpuA, 7, 11);
+        PreparedGpuResourceToken prepared;
+        assert(owner.beginPreparedDestroy(prepared), cell ~ " prepare refused");
+        glGenBuffers(1, &gpuA.dotIndexEbo);
+        glGenBuffers(1, &gpuB.dotIndexEbo);
+        gpuA.dotIndexEboId = 5;
+        gpuA.dotIndexEboFilled = true;
+        immutable GLuint eboA = gpuA.dotIndexEbo, eboB = gpuB.dotIndexEbo;
+        assert(eboA != 0 && eboB != 0 && eboA != eboB
+            && glIsBuffer(eboA) == GL_TRUE && glIsBuffer(eboB) == GL_TRUE,
+            cell ~ " population: two live index buffers before release");
+        ValidatedGpuResourceToken validated;
+        assert(owner.validatePrepared(prepared, 7, 11, validated),
+            cell ~ " validation refused");
+        owner.installPrepared(validated);
+        assert(glIsBuffer(eboA) == GL_FALSE,
+            cell ~ ": the resource owner left the index buffer live");
+        assert(gpuA.dotIndexEbo == 0 && !gpuA.dotIndexEboFilled
+            && gpuA.dotIndexEboId == 0,
             cell ~ ": the consumed header still names or trusts the index buffer");
         assert(glIsBuffer(eboB) == GL_TRUE, cell ~ ": the sibling was released");
 

@@ -9,6 +9,7 @@ import tool;
 import mesh;
 import mesh_gpu : GpuMesh;
 import math;
+import light_rig : kLightDirection, kLightAmbient, kLightSpecStrength, kLightSpecPower;
 import params : Param;
 import handler : BoxHandler, gizmoSize, ToolHandles;
 import viewport_scheme : schemeColor, SchemeColor;
@@ -1078,16 +1079,16 @@ public:
         // default polygon mode, ≥4 for the first quad in Make Quads. Faces
         // are rebuilt into previewMesh by uploadPreview.
         if (plan.drawFaces && vertices_.length >= minCommitVerts()) {
-            Vec3 lightDir = normalize(Vec3(0.6f, 1.0f, 0.5f));
+            Vec3 lightDir = normalize(kLightDirection);
             glUseProgram(litShader.program);
             glUniformMatrix4fv(litShader.locModel, 1, GL_FALSE, identity.ptr);
             glUniformMatrix4fv(litShader.locView,  1, GL_FALSE, vp.view.ptr);
             glUniformMatrix4fv(litShader.locProj,  1, GL_FALSE, vp.proj.ptr);
             glUniform3f(litShader.locLightDir, lightDir.x, lightDir.y, lightDir.z);
             glUniform3f(litShader.locEyePos,   vp.eye.x, vp.eye.y, vp.eye.z);
-            glUniform1f(litShader.locAmbient,  0.20f);
-            glUniform1f(litShader.locSpecStr,  0.25f);
-            glUniform1f(litShader.locSpecPow,  32.0f);
+            glUniform1f(litShader.locAmbient,  kLightAmbient);
+            glUniform1f(litShader.locSpecStr,  kLightSpecStrength);
+            glUniform1f(litShader.locSpecPow,  kLightSpecPower);
             previewGpu.drawFaces(litShader);
         }
 

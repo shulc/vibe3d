@@ -120,7 +120,9 @@ viewport.indRotate | code-ui: Viewport Properties Rotate checkbox dispatches dir
 viewport.indScale | code-ui: Viewport Properties Scale checkbox dispatches directly
 viewport.layout | code-ui: Viewport Properties layout buttons dispatch directly
 viewport.master | code-ui: Viewport Properties master chooser dispatches directly
+viewport.pointSize | no-ui-yet: per-cell vertex dot size has no surface until the retopology UI slice
 viewport.retopology | no-ui-yet: per-cell retopology display mode has no surface until the retopology UI slice
+viewport.showVertices | no-ui-yet: per-cell vertex dot switch has no surface until the retopology UI slice
 viewport.wireAlpha | code-ui: Viewport Properties wire slider dispatches directly
 viewport.wireOverlay | code-ui: Viewport Properties wire chooser dispatches directly
 workplane.edit | no-ui-yet: command documents an Edit Work Plane panel that is absent

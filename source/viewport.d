@@ -449,6 +449,10 @@ final class Viewport3D {
     ViewportFbo fbo;
     bool        dirty    = true;   // starts dirty → first frame always renders
     DirtyKey    lastKey;
+    /// How many times the renderer recomputed a base-dot cull list for this
+    /// cell: the witness that the base-dot cull is cached, and keyed, per
+    /// cell. Reported by `/api/viewport/display`; a monotone counter.
+    ulong       dotCullRecomputes;
 
     /// The overlay-draw mode the N-cell loop RESOLVED for this cell on the
     /// last frame that considered it (task 1650). It remains an `int` so task

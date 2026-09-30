@@ -436,7 +436,9 @@ tests.unit.removeverts_pointmap_test
 tests.unit.render_ipr_bus_witness_test
 tests.unit.request_result_ownership_test
 tests.unit.retopology_display_model_test
+tests.unit.retopology_dot_cull_test
 tests.unit.retopology_face_pass_test
+tests.unit.retopology_line_shade_test
 tests.unit.revert_entry_census_test
 tests.unit.run_slots_test
 tests.unit.run_test_display_environment_test

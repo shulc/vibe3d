@@ -25,7 +25,9 @@ import mesh;                 // Mesh, MeshStructKey, MeshTopoKey
 import mesh_ops.loop_slice   : loopSliceRingEdges;
 import editmode;             // EditMode
 import seltype;              // SelType, viewportPickType
-import mesh_gpu              : BaseWire, FacePass, GpuMesh, OccludedPass;
+import mesh_gpu              : BaseDots, BaseWire, FacePass, GpuMesh, OccludedPass;
+import retopology_line_shade : lineShade;
+import retopology_dot_cull  : cullEyeOf, DotCullKey, DotList, visibleDots;
 import viewport_scheme       : schemeColor, SchemeColor;
 import handles.gl_util       : setThickLineScreenSize;
 import document              : Document, Layer, kindInfo;
@@ -82,6 +84,34 @@ FacePass facePassFor(const ref DrawPlan plan, const ref float[16] model)
     fp.reverseOrder = plan.reverseFaceOrder;
     fp.mirrored     = matrixMirrorsWinding(model);
     return fp;
+}
+
+/// The base line pass of an item drawn under `plan` through `model`: the
+/// plan's colour, shaded by the light function at the item's local +Z when
+/// the plan says so (`shadeLinesByItem`), and its opacity. `eye` is the
+/// camera's world eye point, the value the lit program's `u_eyePos` gets.
+BaseWire baseWireFor(const ref DrawPlan plan, const ref float[16] model,
+                     Vec3 eye, int locAlpha) @safe pure nothrow @nogc
+{
+    Vec3 c = Vec3(plan.wireColor[0], plan.wireColor[1], plan.wireColor[2]);
+    if (plan.shadeLinesByItem) c = lineShade(c, model, eye, plan.lightGain);
+    return BaseWire(plan.drawWire, locAlpha, plan.wireAlpha, c);
+}
+
+/// The base dot pass of an item, the twin of `baseWireFor`: the plan's dot
+/// colour (shaded the same way), opacity and size. Whether it draws and which
+/// dots it draws are the caller's (the vertex-dot block and the cull).
+BaseDots baseDotsFor(const ref DrawPlan plan, const ref float[16] model,
+                     Vec3 eye, int locAlpha) @safe pure nothrow @nogc
+{
+    BaseDots d;
+    Vec3 c = Vec3(plan.vertColor[0], plan.vertColor[1], plan.vertColor[2]);
+    if (plan.shadeLinesByItem) c = lineShade(c, model, eye, plan.lightGain);
+    d.color    = c;
+    d.alpha    = plan.vertAlpha;
+    d.size     = plan.pointSize;
+    d.locAlpha = locAlpha;
+    return d;
 }
 
 /// Head of an item's draw: with `clearDepthFirst` the item starts on a clear
@@ -170,6 +200,55 @@ public:
     }
 
 private:
+    // ---- the base-dot cull cache ------------------------------------------
+    // One slot per (cell, item mesh); recomputed only when its `DotCullKey`
+    // no longer matches, counted per cell (`Viewport3D.dotCullRecomputes`, on
+    // `/api/viewport/display`). A cell's slots not visited by its latest draw
+    // are dropped at the end of that draw, so the table stays bounded.
+    static struct DotCullId { size_t cell; size_t mesh; }
+    static struct DotCullSlot { DotCullKey key; DotList list; ulong id; ulong visit; }
+    DotCullSlot[DotCullId] dotCull_;
+    ulong dotCullNextId_;
+    ulong drawSerial_;
+
+    /// The cached dot list of `mesh` drawn through `model` in cell `v`.
+    const(DotList)* dotCullFor(Viewport3D v, ref const Mesh mesh,
+                               const ref float[16] model, const ref Viewport vp,
+                               out ulong listId) {
+        import mesh_dirty : g_displayEpochs;
+        import morph_target : displayVertices;
+        immutable DotCullId id = DotCullId(cast(size_t)cast(void*)v,
+                                           cast(size_t)&mesh);
+        immutable ulong dispEpoch = g_displayEpochs.epochFor(cast(size_t)&mesh);
+        DotCullSlot* slot = id in dotCull_;
+        if (slot is null) {
+            dotCull_[id] = DotCullSlot.init;
+            slot = id in dotCull_;
+        }
+        slot.visit = drawSerial_;
+        if (!slot.key.matches(mesh, dispEpoch, vp.view, vp.proj, model)) {
+            auto dv = displayVertices(&mesh);
+            const(Vec3)[] vpos = (dv.length == mesh.vertices.length)
+                ? dv : mesh.vertices;
+            slot.list = visibleDots(mesh, vpos, model,
+                                    cullEyeOf(vp.view, vp.proj, vp.eye));
+            slot.key.stamp(mesh, dispEpoch, vp.view, vp.proj, model);
+            slot.id = ++dotCullNextId_;
+            ++v.dotCullRecomputes;
+        }
+        listId = slot.id;
+        return &slot.list;
+    }
+
+    /// Drop cell `v`'s slots that its latest draw did not visit.
+    void dropUnvisitedDotCull(Viewport3D v) {
+        immutable size_t cell = cast(size_t)cast(void*)v;
+        DotCullId[] stale;
+        foreach (k, ref sl; dotCull_)
+            if (k.cell == cell && sl.visit != drawSerial_) stale ~= k;
+        foreach (k; stale) dotCull_.remove(k);
+    }
+
     uint[] faceSelEdgesCache_;
     uint[] faceSelEdgesPrevSel_;
     MeshStructKey faceSelEdgesKey_;
@@ -253,6 +332,7 @@ public:
            && scene.pipeContext !is null);
     assert(view.cell !is null && view.viewport !is null);
     assert(gpuInputs.primary !is null);
+    ++drawSerial_;
     ref Document document = *scene.document;
     ref Mesh mesh = *scene.mesh;
     Viewport3D v = view.cell;
@@ -641,7 +721,7 @@ public:
                 // base pass is all there is here — and it reads the BACKDROP
                 // side of the activity axis, never the active side.
                 (*bg).drawEdges(shader.locColor, -1, MarkView.init, [],
-                    BaseWire(true, shader.locAlpha, backdropPlan.wireAlpha));
+                    baseWireFor(backdropPlan, bgModel, vp.eye, shader.locAlpha));
                 shader.setDim(1.0f);
             }
         }
@@ -786,8 +866,8 @@ public:
     // whole point: switching the overlay off must not take selection feedback
     // with it. Gating the chain itself, or early-returning from drawEdges,
     // would do exactly that, and is the named wrong implementation.
-    immutable BaseWire baseWire = BaseWire(
-        activePlan.drawWire, shader.locAlpha, activePlan.wireAlpha);
+    immutable BaseWire baseWire =
+        baseWireFor(activePlan, meshModel, vp.eye, shader.locAlpha);
     // The occluded half of every selection / pre-highlight draw (task 1860).
     // One value for the whole frame, handed to both `drawEdges` and
     // `drawVertices` so the two passes cannot drift; the alpha itself is the
@@ -1108,19 +1188,43 @@ public:
     // flag carries "this cell has the pointer", so in a split layout only one
     // cell lights it. Witnesses: tests/test_edge_mode_vertex_dots.d,
     // tests/unit/vertex_dot_arm_census_test.d.
+    //
+    // The BASE dots (task 8600) take colour, opacity and size from the plan
+    // (`baseDotsFor`) and run iff the plan forces dots or, where the plan's
+    // `baseDotsBySelection` policy allows it, the selection type asks for
+    // them; with the base pass off the highlight passes still run. Under
+    // `cullHiddenVerts` the base pass draws only the dots `visibleDots` keeps
+    // — except over a live subpatch preview (`faceOriginGpu` set), whose
+    // vertex buffer is not in cage slots, where every dot is drawn.
     if (activePlan.drawVerts || selFeedbackType == SelType.Vertex
         || selFeedbackType == SelType.Edge) {
         auto zOv = g_perf.scope_(Cat.drawOverlays);
         immutable bool edgeArm = selFeedbackType == SelType.Edge;
+        BaseDots baseDots = baseDotsFor(activePlan, meshModel, vp.eye,
+                                        shader.locAlpha);
+        baseDots.draw = activePlan.drawVerts || activePlan.baseDotsBySelection;
+        if (baseDots.draw && activePlan.cullHiddenVerts
+            && gpu.faceOriginGpu.length == 0) {
+            ulong listId;
+            const(DotList)* dl = dotCullFor(v, mesh, meshModel, vp, listId);
+            baseDots.useDrawList   = true;
+            baseDots.drawList      = dl.slots;
+            baseDots.drawListSlots = dl.slotCount;
+            baseDots.drawListId    = listId;
+        }
         gpu.drawVertices(shader.locColor, shader.locPointSize,
                          edgeArm && !showVertHover ? -1 : vertHovForDraw,
                          edgeArm ? MarkView.init : mesh.selectedVertexView(),
-                         occluded);
+                         occluded, baseDots);
     } else if (showVertHover && vertHovForDraw >= 0) {
         auto zOv = g_perf.scope_(Cat.drawOverlays);
+        BaseDots hoverBase = baseDotsFor(activePlan, meshModel, vp.eye,
+                                         shader.locAlpha);
+        hoverBase.draw = activePlan.baseDotsBySelection;
         gpu.drawVertices(shader.locColor, shader.locPointSize, vertHovForDraw,
-                         MarkView.init, occluded);
+                         MarkView.init, occluded, hoverBase);
     }
+    dropUnvisitedDotCull(v);
 
     // ---- Active tool / falloff gizmo draws ----
     // Task 0206 (Quad/Split multi-cell overlays): `overlayMode` decides

@@ -1166,8 +1166,8 @@ def validate_prepared_gpu(source):
         (r"bool\s+validatePrepared", "e431625354aa80b1012f59836227d249f0d4b6fb624829e1a5e6121dfab0f043"),
         (r"void\s+installPrepared", "7d060cedf3efd7bc2daa26352d0b139ff755d2e8d21f9ddb2cdb85a1ccc570f0"),
         (r"void\s+discardPrepared", "b31cf1d319a934c57aca2deb80e889b62b34a1e46b4093330434c08ad74f5794"),
-        (r"private\s+GpuMeshNames\s+takeGpuMeshNames", "2bee00f45782161c9c311432254598f5663c9b6d4eed7ac1019d8ab981cd8d03"),
-        (r"private\s+void\s+deleteGpuMeshNames", "60eaaa27f1bdc1fb8fb0915ec54c3617365eb85adc052087c0cb3b287f2552ff"),
+        (r"private\s+GpuMeshNames\s+takeGpuMeshNames", "cea2293a6062574b6001f21fcc1fe27d21745e86d941e0b30da858d607b76d1e"),
+        (r"private\s+void\s+deleteGpuMeshNames", "6a0f5c894bdcffa8cc76e4e3c286377caa47982f8fdc90dab696bf8733c162ab"),
     )
     for signature, digest in exact_bodies:
         match = re.search(signature + r"\s*\([^;{}]*\)[^{]*\{", source)

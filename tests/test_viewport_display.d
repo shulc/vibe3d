@@ -213,13 +213,12 @@ bool testFlowA() {
     enforce(jsonNum(pa, "dim") == 1.0, "the active pass must not be dimmed");
     writeln("    A2 PASS: plan = faces+lit+wire, alpha 1.0, no forced verts, dim 1.0");
 
-    // wireColor is CARRIED but not yet consumed by any pass (it is the
-    // per-item overlay colour a later phase needs). Assert only that the
-    // schema carries it — never infer rendering from it, or the assertion
-    // passes forever.
+    // wireColor is the base line pass's colour (consumed since task 8600;
+    // its pixels are asserted by test_retopology_lines_dots). Here: the
+    // schema carries it.
     enforce("wireColor" in pa && pa["wireColor"].array.length == 3,
         "plan must carry a 3-component overlay colour");
-    writeln("    A3 PASS: wireColor carried in the schema (not consumed yet)");
+    writeln("    A3 PASS: wireColor carried in the schema");
 
     return true;
 }
@@ -1081,9 +1080,8 @@ bool testFlowI() {
     // this value and nothing near it.
     //
     // 184 = round(0.72 * 255), the `wireframe` row of `viewport_scheme.d`.
-    // Written out rather than read from the plan dump: `plan.wireColor` is
-    // carried and NOT consumed by any pass (see A3), so using it as the oracle
-    // here would assert a relationship that does not exist.
+    // Written out rather than read from the plan dump, so this cell stays an
+    // independent oracle of the scheme row the mode-off pass draws in.
     enum int kWireLevel = 184;
     size_t[] candidate;
     foreach (i, p; opaque.points) {

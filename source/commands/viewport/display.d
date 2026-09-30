@@ -327,3 +327,77 @@ final class ViewportRetopology : ViewportCommand {
         return true;
     }
 }
+
+// ---------------------------------------------------------------------------
+// viewport.showVertices / viewport.pointSize — the cell's vertex-dot switch
+// and dot size (`DisplayState.showVertices` / `pointSize`), same cell selector
+// as above. Neither is a template field, so both only mark the cell dirty
+// (plan §10.13). `pointSize` is clamped twice: the Param's bounds here and
+// `display_state.resolvePointSize` where the plan resolves it; 0 = the
+// scheme's default size.
+// ---------------------------------------------------------------------------
+
+final class ViewportShowVertices : ViewportCommand {
+    private int  cell_;
+    private bool on_;
+    private string valueArg_;
+    private int    cellArg_ = -1;
+
+    this(Mesh* mesh, ref View view, EditMode editMode, ViewportManager vpm) {
+        super(mesh, view, editMode, vpm);
+    }
+
+    override string name() const { return "viewport.showVertices"; }
+
+    override Param[] params() {
+        return wireArgs(
+            Param.string_("value", "Show", &valueArg_, ""),
+            Param.int_("viewport", "Viewport", &cellArg_, -1)
+        );
+    }
+
+    protected override bool applyImpl() {
+        import std.string : toLower, strip;
+        immutable int cell = resolveCellOrThrow(cellArg_, name());
+        switch (valueArg_.strip.toLower) {
+            case "on":  on_ = true;  break;
+            case "off": on_ = false; break;
+            default:
+                throw new Exception(
+                    "viewport.showVertices: expected 'on' or 'off', got '"
+                    ~ valueArg_ ~ "'");
+        }
+        cell_ = cell;
+        vpm.views[cell_].display.active.showVertices = on_;
+        markCellDisplayDirty(cell_);
+        return true;
+    }
+}
+
+final class ViewportPointSize : ViewportCommand {
+    import viewport_scheme : MAX_POINT_SIZE;
+    private int   cell_;
+    private float size_ = 0.0f;
+    private int   cellArg_ = -1;
+
+    this(Mesh* mesh, ref View view, EditMode editMode, ViewportManager vpm) {
+        super(mesh, view, editMode, vpm);
+    }
+
+    override string name() const { return "viewport.pointSize"; }
+
+    override Param[] params() {
+        return wireArgs(
+            Param.float_("value", "Point Size", &size_, 0.0f)
+                .min(0.0f).max(MAX_POINT_SIZE).enforceBounds(),
+            Param.int_("viewport", "Viewport", &cellArg_, -1)
+        );
+    }
+
+    protected override bool applyImpl() {
+        cell_ = resolveCellOrThrow(cellArg_, name());
+        vpm.views[cell_].display.active.pointSize = size_;
+        markCellDisplayDirty(cell_);
+        return true;
+    }
+}

@@ -15,7 +15,8 @@ import application_command_binding : CommandInvocationContext,
     CommandInvocationOutcome;
 import command : CmdFlags, Command, CommandOrigin;
 import commands.viewport.display : ViewportBackdropStyle, ViewportDisplayStyle,
-    ViewportRetopology, ViewportWireAlpha, ViewportWireOverlay;
+    ViewportPointSize, ViewportRetopology, ViewportShowVertices,
+    ViewportWireAlpha, ViewportWireOverlay;
 import commands.viewport.fit : Fit;
 import commands.viewport.fit_selected : FitSelected;
 import commands.viewport.grid_steps : ViewportGridSteps;
@@ -37,12 +38,13 @@ import viewport_command_registration : registerViewportCommands;
 private enum repoRoot = buildNormalizedPath(dirName(__FILE_FULL_PATH__),
                                              "..", "..", "..", "..");
 
-private immutable string[14] kIds = [
+private immutable string[16] kIds = [
     "viewport.fit", "viewport.fit_selected", "viewport.view",
     "viewport.layout", "viewport.indCenter", "viewport.indScale",
     "viewport.indRotate", "viewport.displayStyle", "viewport.wireOverlay",
     "viewport.wireAlpha", "viewport.gridSteps", "viewport.master",
     "viewport.backdropStyle", "viewport.retopology",
+    "viewport.showVertices", "viewport.pointSize",
 ];
 
 private bool isExpectedClass(string id, Command command) {
@@ -61,6 +63,8 @@ private bool isExpectedClass(string id, Command command) {
         case "viewport.master":       return cast(ViewportMaster) command !is null;
         case "viewport.backdropStyle": return cast(ViewportBackdropStyle) command !is null;
         case "viewport.retopology":   return cast(ViewportRetopology) command !is null;
+        case "viewport.showVertices": return cast(ViewportShowVertices) command !is null;
+        case "viewport.pointSize":    return cast(ViewportPointSize) command !is null;
         default:                       return false;
     }
 }
@@ -135,8 +139,8 @@ unittest { // U1: every id builds its intended command class
         "6010 null-manager rejection registered a partial family");
 
     fixture.registerViewport();
-    assert(fixture.registry.commandIds().length == 14,
-        format("6010 id population: expected 14 viewport ids, got %d",
+    assert(fixture.registry.commandIds().length == 16,
+        format("6010 id population: expected 16 viewport ids, got %d",
                fixture.registry.commandIds().length));
     size_t checked;
     foreach (id; kIds) {
@@ -151,8 +155,8 @@ unittest { // U1: every id builds its intended command class
             "6010 camera-only witness: " ~ id ~ " is not a UI command");
         ++checked;
     }
-    assert(checked == 14,
-        "6010 id witness ran over fewer than 14 ids");
+    assert(checked == 16,
+        "6010 id witness ran over fewer than 16 ids");
 }
 
 unittest { // U2: primary, mode, and active cell resolve after registration
@@ -332,8 +336,8 @@ unittest { // U2: primary, mode, and active cell resolve after registration
                    id, got, want));
         ++views;
     }
-    assert(meshes == 14 && modes == 14 && views == 14,
-        "6010 live binding witness ran over fewer than 14 factories");
+    assert(meshes == 16 && modes == 16 && views == 16,
+        "6010 live binding witness ran over fewer than 16 factories");
 }
 
 unittest { // U3: production uses the narrow registrar before LAST wrapping
@@ -359,8 +363,8 @@ unittest { // U3: production uses the narrow registrar before LAST wrapping
                       "RemeshModalRefs", "with (", "with("])
         assert(registrar.count(banned) == 0,
             "6010 no-EditorApp witness: viewport registrar names " ~ banned);
-    assert(registrarRaw.count(`reg.registerCommand("viewport.`) == 14,
-        "6010 registrar population: expected 14 viewport factory rows");
+    assert(registrarRaw.count(`reg.registerCommand("viewport.`) == 16,
+        "6010 registrar population: expected 16 viewport factory rows");
 
     const registration = squash(blankNonCode(registrationRaw));
     enum productionCall = "registerViewportCommands(app.reg(), "
@@ -422,8 +426,8 @@ unittest { // U3: production uses the narrow registrar before LAST wrapping
 
 unittest { // U4: only a writer of a template field claims the template
     // Through the production registrar and the real command classes, so the
-    // tail each writer picks is the one the script door reaches. Six writers
-    // over two passes of the four cells; all six mark the cell dirty, only the
+    // tail each writer picks is the one the script door reaches. Eight writers
+    // over two passes of the four cells; all eight mark the cell dirty, only the
     // three writers of `T = {active.style, active.wire, active.wireAlpha}` set
     // `displayUserSet` and its prefs mirror (plan §10.13).
     import prefs : ViewportCellDisplay;
@@ -435,13 +439,15 @@ unittest { // U4: only a writer of a template field claims the template
     assert(fixture.vpm.cellCount == 4, "U4 rig: Quad must expose four cells");
 
     struct Row { string id; string value; bool template_; }
-    immutable Row[6] rows = [
+    immutable Row[8] rows = [
         Row("viewport.displayStyle",  `"value":"solid"`,           true),
         Row("viewport.wireOverlay",   `"value":"none"`,            true),
         Row("viewport.wireAlpha",     `"value":"0.5"`,             true),
         Row("viewport.displayStyle",  `"value":"solid","slot":1`,  false),
         Row("viewport.backdropStyle", `"value":"flat"`,            false),
         Row("viewport.retopology",    `"value":"on"`,              false),
+        Row("viewport.showVertices",  `"value":"on"`,              false),
+        Row("viewport.pointSize",     `"value":6`,                 false),
     ];
     int checked = 0;
     foreach (i, row; rows) {
@@ -473,5 +479,32 @@ unittest { // U4: only a writer of a template field claims the template
         }
         ++checked;
     }
-    assert(checked == 6, format("U4 floor: expected six writers, ran %d", checked));
+    assert(checked == 8, format("U4 floor: expected eight writers, ran %d", checked));
+}
+
+unittest { // U5: the dot switch and size reach the addressed cell; size is clamped
+    auto fixture = new Fixture;
+    fixture.registerViewport();
+    const prefsBefore = g_prefs.viewportDisplay;
+    scope(exit) g_prefs.viewportDisplay = prefsBefore;
+    auto st(int k) { return fixture.vpm.views[k].display.active; }
+    assert(!st(2).showVertices && st(2).pointSize == 0.0f, "U5 rig: fresh cell 2");
+    assert(fixture.script("viewport.showVertices", `{"value":"on","viewport":2}`)
+        == CommandInvocationOutcome.applied, "U5: showVertices on refused");
+    assert(st(2).showVertices && !st(1).showVertices,
+        "U5: showVertices must reach exactly the addressed cell");
+    assertThrown!Exception(fixture.script("viewport.showVertices",
+        `{"value":"maybe","viewport":2}`), "U5: a bad switch value must refuse");
+    assert(st(2).showVertices, "U5: a refused switch must not write");
+    // The Param's bounds: 1000 lands at the ceiling, -5 at 0 (= default size).
+    immutable float[3][3] cases = [[6, 6, 0], [1000, 64, 0], [-5, 0, 0]];
+    foreach (c; cases) {
+        assert(fixture.script("viewport.pointSize",
+                format(`{"value":%s,"viewport":2}`, c[0]))
+            == CommandInvocationOutcome.applied,
+            format("U5: pointSize %s refused", c[0]));
+        assert(st(2).pointSize == c[1], format("U5: pointSize %s stored %s, "
+            ~ "expected %s", c[0], st(2).pointSize, c[1]));
+    }
+    assert(st(1).pointSize == 0.0f, "U5: pointSize leaked into cell 1");
 }

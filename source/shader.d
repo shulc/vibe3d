@@ -14,6 +14,7 @@ version (web) {
 }
 import display_state : DrawPlan, kSchemeSolidFill, SurfaceShading;
 import weightmap_view : kWeightRamp;   // task 1090: the parked neutral
+import light_rig : kLightDirection, kLightAmbient, kLightSpecStrength, kLightSpecPower;
 // ---------------------------------------------------------------------------
 // Shaders
 // ---------------------------------------------------------------------------
@@ -882,7 +883,7 @@ class LitShader {
     }
 
     void useProgram(const ref float[16] meshModel, const ref Viewport vp) {
-        Vec3 lightDir = normalize(Vec3(0.6f, 1.0f, 0.5f));
+        Vec3 lightDir = normalize(kLightDirection);
         glUseProgram(program);
         glUniformMatrix4fv(locModel, 1, GL_FALSE, meshModel.ptr);
         glUniformMatrix4fv(locView,  1, GL_FALSE, vp.view.ptr);
@@ -893,9 +894,9 @@ class LitShader {
         // this to 1.0 for hover draws that need to override the
         // surface colour with u_color.
         glUniform1f(locOverrideMix, 0.0f);
-        glUniform1f(locAmbient,  0.20f);
-        glUniform1f(locSpecStr,  0.25f);
-        glUniform1f(locSpecPow,  32.0f);
+        glUniform1f(locAmbient,  kLightAmbient);
+        glUniform1f(locSpecStr,  kLightSpecStrength);
+        glUniform1f(locSpecPow,  kLightSpecPower);
         // Default to neutral brightness. The active-layer / single-layer
         // pass never touches u_dim ⇒ byte-identical to pre-Stage-5. The
         // dimmed background pass sets it explicitly with setDim() before
@@ -996,7 +997,7 @@ void drawLitPreview(const ref LitShader litShader, const ref Shader shader,
                      const ref Viewport vp, ref GpuMesh previewGpu,
                      const ref DrawPlan plan) {
     immutable float[16] identity = identityMatrix;
-    Vec3 lightDir = normalize(Vec3(0.6f, 1.0f, 0.5f));
+    Vec3 lightDir = normalize(kLightDirection);
 
     // The preview's surface pass obeys the cell plan. Its shading remains the
     // existing material preview whenever the plan permits faces; the plan is
@@ -1008,9 +1009,9 @@ void drawLitPreview(const ref LitShader litShader, const ref Shader shader,
         glUniformMatrix4fv(litShader.locProj,  1, GL_FALSE, vp.proj.ptr);
         glUniform3f(litShader.locLightDir, lightDir.x, lightDir.y, lightDir.z);
         glUniform3f(litShader.locEyePos,   vp.eye.x, vp.eye.y, vp.eye.z);
-        glUniform1f(litShader.locAmbient,  0.20f);
-        glUniform1f(litShader.locSpecStr,  0.25f);
-        glUniform1f(litShader.locSpecPow,  32.0f);
+        glUniform1f(litShader.locAmbient,  kLightAmbient);
+        glUniform1f(litShader.locSpecStr,  kLightSpecStrength);
+        glUniform1f(litShader.locSpecPow,  kLightSpecPower);
         // Task 0589: this site seeds every uniform it depends on BY HAND rather
         // than going through `LitShader.useProgram`, so a uniform that the scene
         // pass may have switched off has to be seeded here too — otherwise a

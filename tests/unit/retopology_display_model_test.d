@@ -432,15 +432,17 @@ unittest {
     assert(p.dim == 1.0f, format("1g: dim %s", p.dim));                          ++k;
     assert(k == 20, format("1g: asserted %s fields, expected 20", k));
 
-    // A set point size resolves through, under the mode as outside it; a
+    // A set point size resolves through, under the mode as outside it,
+    // clamped to [1, 64] (the kernel's own ceiling, task 8600); a
     // non-positive or non-finite one falls back to the base size.
-    foreach (ps; [6.0f, 0.0f, -2.0f, float.nan, float.infinity]) {
+    immutable float[2][8] sizes = [[6.0f, 6], [0.0f, 3], [-2.0f, 3], [float.nan, 3],
+        [float.infinity, 3], [1000.0f, 64], [64.0f, 64], [0.5f, 1]];
+    foreach (c; sizes) {
         ViewportDisplay e;
         e.retopology       = true;
-        e.active.pointSize = ps;
-        immutable float want = (ps == 6.0f) ? 6.0f : 3.0f;
-        assert(resolveDrawPlan(e, false).pointSize == want,
-            format("1g: pointSize %s must resolve to %s", ps, want));
+        e.active.pointSize = c[0];
+        assert(resolveDrawPlan(e, false).pointSize == c[1],
+            format("1g: pointSize %s must resolve to %s", c[0], c[1]));
     }
 
     // Off: a no-op, whatever the plan it is handed.

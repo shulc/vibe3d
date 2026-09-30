@@ -80,6 +80,34 @@ struct BaseWire {
     /// Base-line opacity, 0..1. Anything below 1.0 turns blending on for the
     /// duration of the base pass only.
     float alpha    = 1.0f;
+    /// Base-line colour (the plan's `wireColor`, shaded per item when the plan
+    /// says so); the default is the scheme row the pass always drew in.
+    Vec3  color    = schemeColor(SchemeColor.wireframe);
+}
+
+// ---------------------------------------------------------------------------
+// BaseDots — how `GpuMesh.drawVertices` should render its BASE dot pass
+// ---------------------------------------------------------------------------
+
+/// The base (unselected) vertex-dot knobs for `drawVertices`, the twin of
+/// `BaseWire` (task 8600). Defaults reproduce the historical pass exactly:
+/// drawn, scheme wireframe colour, opaque, `kBasePointSize`, every vertex.
+/// `size` is also the base the selection / hover highlight sizes multiply.
+/// `useDrawList` restricts the base pass to the vertex-VBO slots in `drawList`
+/// (`retopology_dot_cull.visibleDots`); it is honoured only while
+/// `drawListSlots` equals the uploaded vertex count, so a list built for a
+/// different upload can never index past the buffer. `drawListId` names the
+/// list's contents: the index buffer is refilled only when it changes.
+struct BaseDots {
+    bool  draw     = true;
+    Vec3  color    = schemeColor(SchemeColor.wireframe);
+    float alpha    = 1.0f;
+    float size     = kBasePointSize;
+    GLint locAlpha = -1;
+    bool  useDrawList;
+    const(uint)[] drawList;
+    uint  drawListSlots;
+    ulong drawListId;
 }
 
 // ---------------------------------------------------------------------------
@@ -512,6 +540,12 @@ struct GpuMesh {
     ulong  faceReverseEboGen;
     bool   faceReverseEboFilled;
     private uint[] scratchReverseIdx;
+    // The base-dot draw list (`BaseDots.drawList`), created lazily by the
+    // first listed dot draw and bound only with `vertVao` bound. `dotIndexEboId`
+    // names the list it holds (the renderer's recompute id).
+    GLuint dotIndexEbo;
+    ulong  dotIndexEboId;
+    bool   dotIndexEboFilled;
 
     // P3: scratch buffers re-used across upload() calls. Pre-sized to
     // the exact final length via a counting pre-pass, then filled by
@@ -1398,13 +1432,30 @@ struct GpuMesh {
     // The same rule as `dcArrays`, for the one indexed draw: EVERY
     // glDrawElements in this struct goes through here and is counted.
     // `offset` is in INDICES (uint) into the bound element buffer. That
-    // buffer's binding is VAO state: only `faceReverseEbo` is ever bound,
-    // only with `faceVao` bound, and it is never unbound with the VAO bound
-    // (that would detach it); `glDrawArrays` ignores it.
+    // buffer's binding is VAO state: `faceReverseEbo` is bound only with
+    // `faceVao` bound and `dotIndexEbo` only with `vertVao` bound, and neither
+    // is unbound with its VAO bound (that would detach it); `glDrawArrays`
+    // ignores them.
     private void dcElements(DrawPass p, GLenum mode, int count, size_t offset) {
         glDrawElements(mode, count, GL_UNSIGNED_INT,
                        cast(const(void)*)(offset * uint.sizeof));
         g_fc.draw(p, count);
+    }
+
+    // Bind (creating on first use) the base-dot index buffer and refill it
+    // when the list it holds is not `id`. `vertVao` must be bound: the
+    // binding attaches the buffer to it (VAO state, as for `faceReverseEbo`).
+    private void bindDotIndexEbo(const(uint)[] list, ulong id) {
+        if (dotIndexEbo == 0) glGenBuffers(1, &dotIndexEbo);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, dotIndexEbo);
+        if (dotIndexEboFilled && dotIndexEboId == id) return;
+        uint zero = 0;
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+            list.length > 0 ? cast(GLsizeiptr)(list.length * uint.sizeof)
+                            : cast(GLsizeiptr)uint.sizeof,
+            list.length > 0 ? list.ptr : &zero, GL_DYNAMIC_DRAW);
+        dotIndexEboId     = id;
+        dotIndexEboFilled = true;
     }
 
     // Bind (creating on first use) and, when the face layout moved since it
@@ -1738,8 +1789,7 @@ struct GpuMesh {
                                     GL_ZERO, GL_ONE);
             }
 
-            immutable Vec3 wireCol = schemeColor(SchemeColor.wireframe);
-            glUniform3f(locColor, wireCol.x, wireCol.y, wireCol.z);
+            glUniform3f(locColor, base.color.x, base.color.y, base.color.z);
             if (!anyHover && selectedEdges.empty) {
                 dcArrays(DrawPass.edges, GL_LINES, 0, edgeVertCount);
             } else if (!allEdgesSelected) {
@@ -1892,15 +1942,39 @@ struct GpuMesh {
     /// used as a raw glDrawArrays offset.
     void drawVertices(GLint locColor, GLint locPointSize,
                       int hovered, MarkView selected,
-                      OccludedPass occ = OccludedPass.init) {
+                      OccludedPass occ = OccludedPass.init,
+                      BaseDots base = BaseDots.init) {
         glBindVertexArray(vertVao);
 
-        // All vertices — small dots in the WIREFRAME colour, with depth test.
-        // One scheme row serves both; see `SchemeColor.wireframe`.
-        glUniform1f(locPointSize, pointSizePx(kBasePointSize, false));
-        immutable Vec3 wireCol = schemeColor(SchemeColor.wireframe);
-        glUniform3f(locColor, wireCol.x, wireCol.y, wireCol.z);
-        dcArrays(DrawPass.verts, GL_POINTS, 0, vertCount);
+        // The BASE pass — every (or every listed) vertex, depth-tested, in the
+        // plan's colour, opacity and size; `BaseDots.init` is the historical
+        // pass exactly (the scheme's wireframe row, opaque, base size). Like
+        // `BaseWire`, it is the only pass `base` addresses: the highlight
+        // passes below keep their own colours.
+        if (base.draw) {
+            glUniform1f(locPointSize, pointSizePx(base.size, false));
+            glUniform3f(locColor, base.color.x, base.color.y, base.color.z);
+            immutable bool blend = base.alpha < 1.0f && base.locAlpha >= 0;
+            if (blend) {
+                glUniform1f(base.locAlpha, base.alpha);
+                glEnable(GL_BLEND);
+                glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA,
+                                    GL_ZERO, GL_ONE);
+            }
+            if (base.useDrawList && base.drawListSlots == cast(uint)vertCount) {
+                bindDotIndexEbo(base.drawList, base.drawListId);
+                if (base.drawList.length > 0)
+                    dcElements(DrawPass.verts, GL_POINTS,
+                               cast(int)base.drawList.length, 0);
+            } else {
+                dcArrays(DrawPass.verts, GL_POINTS, 0, vertCount);
+            }
+            if (blend) {
+                glDisable(GL_BLEND);
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                glUniform1f(base.locAlpha, 1.0f);
+            }
+        }
 
         int cageOf(int vboIdx) {
             if (vboIdx >= cast(int)vertOriginGpu.length) return -1;
@@ -1963,7 +2037,7 @@ struct GpuMesh {
         // the `OccludedPass` header for the law. The point SIZE is set inside,
         // so both passes draw the same dot.
         void emitHighlights() {
-            glUniform1f(locPointSize, pointSizePx(kBasePointSize, true));
+            glUniform1f(locPointSize, pointSizePx(base.size, true));
             glUniform3f(locColor, selCol.x, selCol.y, selCol.z);
             if (selected.anySet()) {
                 int runStart = -1;
@@ -1990,7 +2064,7 @@ struct GpuMesh {
                 // (the reference's rollover pass asks for the selected size
                 // explicitly), and a law that holds only because of the order
                 // of two statements stops holding when they are reordered.
-                glUniform1f(locPointSize, pointSizePx(kBasePointSize, true));
+                glUniform1f(locPointSize, pointSizePx(base.size, true));
                 glUniform3f(locColor, preCol.x, preCol.y, preCol.z);
                 int runStart = -1;
                 for (int i = 0; i <= vertCount; i++) {
@@ -2208,6 +2282,9 @@ private struct GpuMeshNames {
     // validate against: a draw may create it between an owner's prepare and
     // its validate, and that must not refuse the transaction.
     GLuint faceReverseEbo;
+    // The base-dot index buffer: lazily created by the first listed dot draw,
+    // released and excluded from the identity exactly like `faceReverseEbo`.
+    GLuint dotIndexEbo;
 
     bool opEquals(const GpuMeshNames o) const nothrow @nogc @safe {
         return faceVao == o.faceVao && faceVbo == o.faceVbo
@@ -2222,8 +2299,11 @@ private GpuMeshNames takeGpuMeshNames(ref GpuMesh gpu) nothrow @nogc {
     GpuMeshNames names = GpuMeshNames(
         gpu.faceVao, gpu.faceVbo, gpu.edgeVao, gpu.edgeVbo,
         gpu.vertVao, gpu.vertVbo, gpu.faceIdVbo, gpu.matIdVbo,
-        gpu.weightColorVbo, gpu.faceReverseEbo);
+        gpu.weightColorVbo, gpu.faceReverseEbo, gpu.dotIndexEbo);
     gpu.faceReverseEbo = 0;
+    gpu.dotIndexEbo = 0;
+    gpu.dotIndexEboId = 0;
+    gpu.dotIndexEboFilled = false;
     gpu.faceLayoutGen = gpu.faceReverseEboGen = 0;
     gpu.faceReverseEboFilled = false;
     gpu.scratchReverseIdx = null;
@@ -2256,7 +2336,7 @@ private GpuMeshNames takeGpuMeshNames(ref GpuMesh gpu) nothrow @nogc {
 private GpuMeshNames peekGpuMeshNames(ref GpuMesh gpu) nothrow @nogc {
     return GpuMeshNames(gpu.faceVao, gpu.faceVbo, gpu.edgeVao, gpu.edgeVbo,
         gpu.vertVao, gpu.vertVbo, gpu.faceIdVbo, gpu.matIdVbo,
-        gpu.weightColorVbo, gpu.faceReverseEbo);
+        gpu.weightColorVbo, gpu.faceReverseEbo, gpu.dotIndexEbo);
 }
 
 private void deleteGpuMeshNames(ref GpuMeshNames n) nothrow @nogc {
@@ -2268,6 +2348,7 @@ private void deleteGpuMeshNames(ref GpuMeshNames n) nothrow @nogc {
     glDeleteBuffers(1, &n.matIdVbo);
     glDeleteBuffers(1, &n.weightColorVbo);
     glDeleteBuffers(1, &n.faceReverseEbo);   // 0 (never created) is a no-op
+    glDeleteBuffers(1, &n.dotIndexEbo);      // likewise
     n = GpuMeshNames.init;
 }
 
@@ -2453,8 +2534,8 @@ private GpuMesh cloneUploadState(ref GpuMesh src) {
     dst.vertVao = src.vertVao; dst.vertVbo = src.vertVbo;
     dst.faceIdVbo = src.faceIdVbo; dst.matIdVbo = src.matIdVbo;
     dst.weightColorVbo = src.weightColorVbo;
-    // The reverse-order index buffer stays with the live mesh (the clone is
-    // never drawn); only the layout generation travels, so installing a new
+    // The reverse-order and base-dot index buffers stay with the live mesh
+    // (the clone is never drawn); only the layout generation travels, so installing a new
     // layout makes the live buffer refill.
     dst.faceLayoutGen = src.faceLayoutGen;
     dst.faceVertCount = src.faceVertCount;

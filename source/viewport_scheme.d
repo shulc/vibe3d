@@ -159,6 +159,11 @@ Vec3 schemeColor(SchemeColor role) @safe pure nothrow @nogc {
 /// The unselected vertex dot, in pixels.
 enum float kBasePointSize = 3.0f;
 
+/// Ceiling of a cell's vertex dot size in pixels, applied where the plan
+/// resolves it (`display_state.resolvePointSize`) as well as by the
+/// `viewport.pointSize` command's bounds.
+enum float MAX_POINT_SIZE = 64.0f;
+
 /// How much bigger a SELECTED vertex dot is than an unselected one.
 ///
 /// A MULTIPLIER, not a second size, and that is the measured shape rather than

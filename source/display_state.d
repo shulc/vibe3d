@@ -256,7 +256,7 @@ enum float kBackdropDim = 0.45f;
 /// where the value comes from and for the per-item precedence we do not yet
 /// have. Value and behaviour are unchanged by the move.
 public import viewport_scheme : kSchemeSolidFill;
-import viewport_scheme : schemeColor, SchemeColor, kBasePointSize,
+import viewport_scheme : schemeColor, SchemeColor, kBasePointSize, MAX_POINT_SIZE,
     kRetopologyFillTransparency, kRetopologyLineAlpha, kRetopologyLightGain,
     kRetopologyVertexCulling;
 
@@ -353,12 +353,9 @@ struct ViewportDisplay {
 /// them off would make `WireOverlay.None` silently eat selection feedback.
 ///
 /// CONSUMED TODAY — `drawFaces`, `facesLit`, `fillColor`, `drawWire`,
-/// `wireAlpha`, `drawVerts`, `dim`. `wireColor` is resolved correctly and dumped by the
-/// display endpoint, but no pass reads it yet (the overlay still takes its
-/// colour from the edge shader's own default, and giving it a source is the
-/// per-item-colour question `WireOverlay.Colored` is parked on). Do not write
-/// a test that infers rendering from an unconsumed field — it would pass
-/// forever.
+/// `wireAlpha`, `wireColor`, `drawVerts`, `dim`, and the retopology fields
+/// below. Do not write a test that infers rendering from an unconsumed field —
+/// it would pass forever.
 ///
 /// `facesLit` joined the consumed list in task 0589, which is what made
 /// `DisplayStyle.Solid` reachable; before that it was resolved and read by
@@ -401,8 +398,8 @@ struct DrawPlan {
     /// a lit pass the shader takes its base colour from the material and this
     /// value is not observable.
     ///
-    /// CONSUMED (reaches GL as the lit shader's `u_fillColor`) — unlike the
-    /// sibling `wireColor`, so a test may assert rendering from it. See
+    /// CONSUMED (reaches GL as the lit shader's `u_fillColor`), so a test may
+    /// assert rendering from it. See
     /// `kSchemeSolidFill` for where the value comes from and for the per-item
     /// override that would resolve into this field ahead of it.
     float[3] fillColor = [kSchemeSolidFill, kSchemeSolidFill, kSchemeSolidFill];
@@ -412,17 +409,10 @@ struct DrawPlan {
     bool     drawWire  = true;
     /// Overlay opacity, 0..1.
     float    wireAlpha = 1.0f;
-    /// Overlay line colour. Defaults to the colour the edge pass already
-    /// uses, so resolving it changes nothing.
-    ///
-    /// STILL UNCONSUMED (task 1860 kept it that way): no pass reads this, so
-    /// the default below is bookkeeping and NOT evidence that the wire colour
-    /// is wired. It is synced to the scheme row the edge pass actually reads
-    /// so the field cannot start CONTRADICTING the code — a silent field and a
-    /// wrong field are different failures — but nothing about drawing can be
-    /// asserted from it, and the only check that could exist for this line is
-    /// a value assertion, which is a tautology. That stays true until the
-    /// consuming card lands.
+    /// Base (unselected) line colour. CONSUMED since task 8600: the base line
+    /// pass takes it through `BaseWire.color` (shaded per item when
+    /// `shadeLinesByItem`); the default is the scheme row that pass drew in
+    /// before, so a mode-off frame is byte-identical.
     float[3] wireColor = [schemeColor(SchemeColor.wireframe).x,
                           schemeColor(SchemeColor.wireframe).y,
                           schemeColor(SchemeColor.wireframe).z];
@@ -452,8 +442,8 @@ struct DrawPlan {
     bool     clearDepthFirst = false;
     /// Multiplier on the lit term above ambient (1 = today's light).
     float    lightGain = 1.0f;
-    /// Base (unselected) vertex dot colour. Defaults to the wireframe row,
-    /// which is the row the dot pass reads today.
+    /// Base (unselected) vertex dot colour, consumed through `BaseDots.color`.
+    /// Defaults to the wireframe row the dot pass always drew in.
     float[3] vertColor = [schemeColor(SchemeColor.wireframe).x,
                           schemeColor(SchemeColor.wireframe).y,
                           schemeColor(SchemeColor.wireframe).z];
@@ -477,6 +467,19 @@ struct DrawPlan {
     /// `applyRetopology`: picking occlusion follows the active style whether
     /// or not the mode is on (captured; `select_visibility` reads this).
     bool     styleFills = true;
+}
+
+/// A cell's vertex dot size as the plan carries it: a non-positive or
+/// non-finite request means the scheme's `kBasePointSize`; anything else is
+/// clamped to `[1, MAX_POINT_SIZE]` (the command clamps too; this is the
+/// kernel's own ceiling, so no route can scale the dot past it).
+float resolvePointSize(float requested) pure nothrow @safe @nogc
+{
+    import std.math : isFinite;
+    if (!isFinite(requested) || requested <= 0.0f) return kBasePointSize;
+    if (requested < 1.0f) return 1.0f;
+    if (requested > MAX_POINT_SIZE) return MAX_POINT_SIZE;
+    return requested;
 }
 
 /// The face-pass opacity of the retopology fill at transparency `t`: the
@@ -644,8 +647,7 @@ DrawPlan resolveDrawPlan(in ViewportDisplay d, bool isBackdrop) pure nothrow @sa
                || (st.style == DisplayStyle.Wireframe);
     p.wireAlpha = st.wireAlpha;
     p.drawVerts = (st.style == DisplayStyle.Wireframe) || st.showVertices;
-    p.pointSize = (st.pointSize > 0.0f && st.pointSize < float.infinity)
-                ? st.pointSize : kBasePointSize;
+    p.pointSize = resolvePointSize(st.pointSize);
 
     if (isBackdrop) {
         // The backdrop pass has no vertex-dot draw today. Resolve it to false
