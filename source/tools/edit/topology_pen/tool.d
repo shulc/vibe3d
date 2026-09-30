@@ -6062,6 +6062,12 @@ public:
             if (vi >= m.vertices.length) return;   // stale/corrupted arm — defensive
 
         auto loopNbrs = loopNeighborsOf(m, cast(uint)smoothLoopSeed_);   // new commit-time work
+        // Corner lock (task 8680, law L13 border; toolcard session_capture
+        // S-smoothloop): a loop vertex on exactly ONE polygon is a patch
+        // corner and is held fixed like an open-loop end, so a border loop
+        // relaxes its perimeter but not its corners. Face valence, not edge
+        // degree, is the predicate (the default `lockCorner` decode).
+        const polyCount = m.vertexPolygonCounts();
 
         // Two-layer clamp (mirrors applySmoothPasses's own): floor at 1 (a
         // click always applies exactly one pass), cap at
@@ -6082,6 +6088,7 @@ public:
                 // fixed identically; a missing AA entry (defensive) is the
                 // same as 0 neighbors.
                 if (pNbrs is null || (*pNbrs).length != 2) continue;
+                if (polyCount[vi] == 1) continue;   // corner lock (above)
 
                 bool hadNeighbors;
                 Vec3 relaxed = inverseEdgeLenRelax(read, vi, *pNbrs, hadNeighbors);

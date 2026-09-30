@@ -9,16 +9,17 @@
 //   branch               L10 a gesture after an undo replaces the redo branch
 //   alt-chords           L12 no Alt chord reaches the pen
 //   smooth-loop-interior L13 (interior) Smoothing + Edge Loop is the loop
+//   smooth-loop-border   L13 (border) the loop holds its face-valence-1 corners
 //   chords               L4  the five chords that record today: one step each
 //   switch-away          L9  (z1..z3) undo walks back through a tool switch
 //
 // The fixture also carries rows that do not hold on this rig yet (card 8650):
 // the other four chords' outcomes (their port slices add `chord-*` cells), the
-// switch-away redo walk, `no-op-presses` (L5) and the border half of
-// `smooth-loop` (L13); the slices that make them hold add their cells.
+// switch-away redo walk and `no-op-presses` (L5); the slices that make them
+// hold add their cells.
 //
 // `VIBE3D_CELL=<id>` runs one cell alone (druntime stops a module at its first
-// failed assert); the last block pins the population: 7 with no filter, 1 with
+// failed assert); the last block pins the population: 8 with no filter, 1 with
 // one (an unknown name must not pass by running nothing).
 //
 // Run via: ./run_test.d test_session_laws_topology_pen
@@ -266,6 +267,28 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
+// smooth-loop-border — L13 (border): Shift+Ctrl+RMB on border edge 0-1 gathers
+// the 12-vertex perimeter and moves it EXCEPT its four face-valence-1 corners
+// (slice S4, task 8680). One step, undo bit-exact, the tool stays armed.
+// ---------------------------------------------------------------------------
+unittest {
+    if (!cell("smooth-loop-border")) return;
+    auto fx = cellFx("smooth-loop");
+    const r = rig();
+    penArmUi(r);
+    const e = idxOf(fx["border"]["edge"]);
+    penTap(penEdgePx(e[0], e[1], "border"), 3, PEN_KMOD_LSHIFT | PEN_KMOD_LCTRL,
+           "Shift+Ctrl+RMB on the border edge");
+    const m = penMesh();
+    assert(penMoved(m, r.a0) == idxOf(fx["border"]["moved"]) && penHistoryLen() == r.hp + 2,
+           format("smooth-loop-border: moved %s (expected %s), history %s",
+                  penIdx(penMoved(m, r.a0)), fx["border"]["moved"], penHistoryLabels()));
+    penCtrlZ("smooth-loop-border z1");
+    expectState("smooth-loop-border", "border_z", r.a0, true, r.hp + 1);
+    writeln("PASS smooth-loop-border");
+}
+
+// ---------------------------------------------------------------------------
 // chords — L4: every chord that records today is exactly one Ctrl+Z step, undo
 // is bit-exact and the tool stays armed. Narrowed by the wave plan (§9.14
 // [A2-8]) to the five chords that record on this rig; the other four
@@ -383,7 +406,7 @@ unittest {
     writeln("cells=", cellsRun);
     const only = environment.get("VIBE3D_CELL", "");
     if (only.length == 0)
-        assert(cellsRun == 7, format("topology pen session laws: %d cells ran, expected 7", cellsRun));
+        assert(cellsRun == 8, format("topology pen session laws: %d cells ran, expected 8", cellsRun));
     else
         assert(cellsRun == 1, format("topology pen session laws: VIBE3D_CELL=%s ran %d cells, expected 1 "
                                      ~ "(an unknown name runs none)", only, cellsRun));
