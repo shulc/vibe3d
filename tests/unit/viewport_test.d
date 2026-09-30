@@ -925,4 +925,16 @@ unittest { // C: the layout seed writes only the template's fields
     assert(d.retopology, "C: the seed must not reset retopology");
     assert(d.backdropStyle == BackdropStyle.Flat, "C: the seed must not reset backdropStyle");
     assert(d.backdrop.style == DisplayStyle.Solid, "C: the seed must not reset backdrop.style");
+
+    // A user-chosen cell keeps ALL of `T`, not only its style: the skip must
+    // precede every template write.
+    m.views[0].displayUserSet            = true;
+    m.views[0].display.active.style     = DisplayStyle.Solid;
+    m.views[0].display.active.wire      = WireOverlay.None;
+    m.views[0].display.active.wireAlpha = 0.25f;
+    m.applyLayout(LayoutPreset.Quad);
+    const u = m.views[0].display.active;
+    assert(u.style == DisplayStyle.Solid, "C: a user-chosen cell must keep its style");
+    assert(u.wire == WireOverlay.None, "C: a user-chosen cell must keep its wire");
+    assert(u.wireAlpha == 0.25f, "C: a user-chosen cell must keep its wireAlpha");
 }
