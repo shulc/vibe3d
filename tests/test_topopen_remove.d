@@ -84,10 +84,12 @@ unittest {
 
     assert(faceCountLayer(0) == 5,
         format("Ctrl+MMB Remove must delete exactly 1 face; got %d", faceCountLayer(0)));
+    // A cube face orphans nothing (each of its corners and edges keeps a
+    // face), so nothing else goes; the orphan law is chord-remove's (8710).
     assert(vertexCountLayer(0) == 8,
-        "Remove must keepOrphans -- vertex count must be unchanged");
+        "a cube face remove orphans no vertex -- vertex count must be unchanged");
     assert(edgeCountLayer(0) == 12,
-        "Remove must keepFloatingEdges -- edge count must be unchanged");
+        "a cube face remove orphans no edge -- edge count must be unchanged");
 
     auto afterFaces = readFacesLayer(0);
     foreach (f; afterFaces)

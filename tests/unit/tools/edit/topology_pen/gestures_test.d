@@ -548,12 +548,12 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// removeFaceAt — T1 (P5, doc/topopen_p5_remove_plan.md §Testing, DOMINO):
-// removing an INTERIOR/shared-edge face must keep the OTHER face
-// byte-unchanged and every edge/vertex in place — the strongest
-// keepOrphans+keepFloatingEdges proof (default flags would drop the 3
-// now-floating edges instead, discriminating). Driven directly (private,
-// same-module access; no gpu_/BVH needed — the display tail is guarded off).
+// removeFaceAt — T1 (P5, DOMINO; law since task 8710, capture K-chords):
+// removing F0 of two quads sharing edge 1-2 takes F0's own orphans — corners
+// 0 and 3 and the edges 0-1, 2-3, 3-0 it leaves with no face — and keeps F1,
+// renumbered onto the survivors. (P5's keep-everything reading was refuted by
+// the capture.) Driven directly (private, same-module access; no gpu_/BVH
+// needed — the display tail is guarded off).
 // ---------------------------------------------------------------------------
 unittest {
     import view : View;
@@ -586,21 +586,19 @@ unittest {
 
     t.removeFaceAt(0);   // remove F0
 
-    assert(m.faces.length == 1 && m.faces[0] == [1u, 4u, 5u, 2u],
-        "F1 must survive byte-unchanged");
-    assert(m.edges.length == 7,
-        "keepFloatingEdges must preserve every edge, incl. the 3 now-floating ones (01,23,30)");
-    assert(m.vertices.length == 6,
-        "keepOrphans must preserve every vertex, incl. 0 and 3 now face-unreferenced");
+    assert(m.faces.length == 1 && m.vertices.length == 4 && m.edges.length == 4,
+        "F0's orphans (vertices 0, 3; edges 01, 23, 30) must go with it: 4v/4e/1f");
+    assert(m.vertices == [Vec3(1, 0, 0), Vec3(1, 0, 1), Vec3(2, 0, 0), Vec3(2, 0, 1)]
+        && m.faces[0] == [0u, 2u, 3u, 1u],
+        "F1 must survive, renumbered onto the survivors 1, 2, 4, 5 in order");
     assert(history.canUndo(), "a real removal must record one undo entry");
 }
 
 // ---------------------------------------------------------------------------
-// removeFaceAt — T2 (P5, doc/topopen_p5_remove_plan.md §Testing, GRID
-// CORNER): removing a CORNER face on a multi-face grid must leave the
-// other 3 faces byte-unchanged and the corner's 2 exclusive boundary edges
-// surviving as floating edges — confirms Remove leaves every OTHER face
-// intact on a mesh bigger than a single pair.
+// removeFaceAt — T2 (P5, GRID CORNER; law since task 8710, capture
+// K-chords): removing a CORNER face of a 2x2 grid takes its one orphaned
+// corner and that corner's two edges, and leaves the other 3 faces intact
+// (compared by position: the corner's removal renumbers the survivors).
 // ---------------------------------------------------------------------------
 unittest {
     import view : View;
@@ -621,18 +619,23 @@ unittest {
     assert(m.vertices.length == 9 && m.edges.length == 12 && m.faces.length == 4,
         "setup: pre-state must be the 2x2 grid");
 
-    auto other1 = m.faces[1].dup;
-    auto other2 = m.faces[2].dup;
-    auto other3 = m.faces[3].dup;
+    Vec3[][] facePos(const ref Mesh mm, size_t from) {
+        Vec3[][] r;
+        foreach (f; mm.faces[from .. $]) {
+            Vec3[] ps;
+            foreach (v; f) ps ~= mm.vertices[v];
+            r ~= ps;
+        }
+        return r;
+    }
+    const others = facePos(m, 1);
 
     t.removeFaceAt(0);   // corner face
 
     assert(m.faces.length == 3, "exactly one face must be removed");
-    assert(m.faces[0] == other1 && m.faces[1] == other2 && m.faces[2] == other3,
-        "the other 3 faces must survive byte-unchanged");
-    assert(m.edges.length == 12,
-        "keepFloatingEdges must preserve all 12 edges, incl. the corner's 2 now-floating ones");
-    assert(m.vertices.length == 9, "keepOrphans must preserve every vertex");
+    assert(facePos(m, 0) == others, "the other 3 faces must survive intact");
+    assert(m.edges.length == 10 && m.vertices.length == 8,
+        "the corner's orphaned vertex and its 2 edges must go: 8v/10e");
     assert(history.canUndo(), "a real removal must record one undo entry");
 }
 
@@ -674,7 +677,7 @@ unittest {
 // ---------------------------------------------------------------------------
 // removeFaceAt — T4 (P5, doc/topopen_p5_remove_plan.md §Testing): a real
 // removal must undo back to the exact pre-removal state, including the
-// kept orphan edges/vertices and the removed face itself.
+// orphaned edges/vertices it deleted and the removed face itself.
 // ---------------------------------------------------------------------------
 unittest {
     import view : View;
