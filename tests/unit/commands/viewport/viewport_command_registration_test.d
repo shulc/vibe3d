@@ -462,6 +462,15 @@ unittest { // U4: only a writer of a template field claims the template
         assert(g_prefs.viewportDisplay[k].styleUserSet == row.template_,
             format("U4: %s %s: prefs styleUserSet must be %s", row.id, params,
                    row.template_));
+        // A template writer mirrors the cell's `T` into prefs; each of the
+        // three writes a value that differs from the fresh row's default.
+        if (row.template_) {
+            const active = fixture.vpm.views[k].display.active;
+            const pr = g_prefs.viewportDisplay[k];
+            assert(pr.style == active.style && pr.wire == active.wire
+                && pr.wireAlpha == active.wireAlpha,
+                format("U4: %s %s must mirror T into prefs", row.id, params));
+        }
         ++checked;
     }
     assert(checked == 6, format("U4 floor: expected six writers, ran %d", checked));

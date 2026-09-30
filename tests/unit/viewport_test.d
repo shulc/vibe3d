@@ -898,7 +898,7 @@ unittest { // C: the layout seed writes only the template's fields
     // survives a layout switch. Single -> Quad turns cell 0 from perspective
     // (template Shaded) into Top ortho (template Wireframe), so the style read
     // is the proof the seed ran (plan §10.13 cell C).
-    import display_state : DisplayStyle, BackdropStyle;
+    import display_state : DisplayStyle, BackdropStyle, WireOverlay;
     auto m = new ViewportManager(0, 0, 800, 600);
     m.applyLayout(LayoutPreset.Single);
     assert(!m.views[0].isOrtho()
@@ -909,10 +909,17 @@ unittest { // C: the layout seed writes only the template's fields
     m.views[0].display.retopology          = true;
     m.views[0].display.backdropStyle       = BackdropStyle.Flat;
     m.views[0].display.backdrop.style      = DisplayStyle.Solid;
+    // Off-template values in the two constant members of `T`: an unchosen
+    // cell's seed must put them back (every T writer sets the bit, so only a
+    // direct write can reach here — this is the seed's own witness).
+    m.views[0].display.active.wire         = WireOverlay.None;
+    m.views[0].display.active.wireAlpha    = 0.25f;
     m.applyLayout(LayoutPreset.Quad);
     const d = m.views[0].display;
     assert(m.views[0].isOrtho() && d.active.style == DisplayStyle.Wireframe,
         "C: Quad must re-seed cell 0 to the ortho template (Wireframe)");
+    assert(d.active.wire == WireOverlay.Uniform && d.active.wireAlpha == 1.0f,
+        "C: the seed must write the template's wire and wireAlpha");
     assert(d.active.showVertices, "C: the seed must not reset active.showVertices");
     assert(d.active.pointSize == 6.0f, "C: the seed must not reset active.pointSize");
     assert(d.retopology, "C: the seed must not reset retopology");
