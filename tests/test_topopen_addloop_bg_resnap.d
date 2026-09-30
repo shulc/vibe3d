@@ -26,13 +26,18 @@
 //      within the fixture tolerance — population exactly 4;
 //   4. the background layer is untouched;
 //   5. the gesture is ONE history row, and one Ctrl+Z restores the pre-cut
-//      mesh to the bit.
+//      mesh to the bit;
+//   6. one Ctrl+Shift+Z restores the re-snapped cut to the bit (the snap is
+//      part of the recorded after image, not a post-record write).
+// Cells 2..6 run twice: on the frozen rig, and with the foreground layer
+// translated (its local frame is not world), which is what pins the
+// local -> world -> local round trip of the background query.
 //
 // Run via: ./run_test.d topopen_addloop_bg_resnap
 
 import http_command_helpers : commandBody;
 import topopen_place_helpers;
-import slice_leak_helpers : slLineUi, slKey, SL_SDLK_z, SL_KMOD_LCTRL;
+import slice_leak_helpers : slLineUi, slKey, SL_SDLK_z, SL_KMOD_LCTRL, SL_KMOD_LSHIFT;
 import fixture_helpers : requireProvenance;
 import std.json;
 import std.format : format;
@@ -93,32 +98,38 @@ private bool shareFaceEdge(JSONValue faces, long a, long b) {
     return false;
 }
 
-unittest {
-    enum string json = import("fixtures/topology_pen_addloop_bg_resnap.json");
-    auto fx = parseJSON(json);
-    requireProvenance(fx, fx["name"].str);
-    assert(fx["schema"].str == "topology_pen.addloop.bg_resnap/1", "unexpected fixture schema");
+private double[3] add(double[3] a, double[3] b) { return [a[0] + b[0], a[1] + b[1], a[2] + b[2]]; }
+private double[3] sub(double[3] a, double[3] b) { return [a[0] - b[0], a[1] - b[1], a[2] - b[2]]; }
+
+/// One run of the gesture with the foreground layer translated by `T`
+/// (cells 2..6). `T = 0` is the frozen rig verbatim.
+private void runCell(JSONValue fx, double[3] T, string tag) {
     immutable double tol = num(fx["tolerance"]);
     auto ex = fx["expected"];
     auto inserted = ex["inserted"].array;
-    assert(inserted.length == 4, "the frozen cut inserts four vertices (an open span of three quads)");
-
-    // ---- 1. the rig discriminates (fixture data alone) --------------------
-    foreach (row; inserted) {
-        immutable double sep = dist(triple(row["position"]), triple(row["chord_midpoint"]));
-        assert(sep >= 100 * tol, format(
-            "rig: rail %s's frozen position is only %.3g from its chord midpoint "
-          ~ "(tolerance %.3g) — this background cannot tell a re-snap from none",
-            row["rail"].toString, sep, tol));
-    }
 
     // ---- stand: background layer 0, foreground layer 1 (primary) ----------
     postJson("/api/command", commandBody("scene.reset"));
     auto lb = postJson("/api/command", commandBody("scene.loadMesh", meshBody(fx["background"])));
     assert(lb["status"].str == "ok", "load background failed: " ~ lb.toString);
     cmd("layer.add name:Edit");
-    auto lf = postJson("/api/command", commandBody("scene.loadMesh", meshBody(fx["foreground"])));
+    // The foreground is loaded in its LOCAL frame (world − T) and the layer
+    // is translated by T, so its world geometry is the frozen one.
+    JSONValue fgLocal = JSONValue.emptyObject;
+    JSONValue[] lv;
+    foreach (v; fx["foreground"]["vertices"].array) {
+        auto w = triple(v);
+        lv ~= JSONValue([w[0] - T[0], w[1] - T[1], w[2] - T[2]]);
+    }
+    fgLocal["vertices"] = JSONValue(lv);
+    fgLocal["faces"]    = fx["foreground"]["faces"];
+    auto lf = postJson("/api/command", commandBody("scene.loadMesh", fgLocal.toString));
     assert(lf["status"].str == "ok", "load foreground failed: " ~ lf.toString);
+    if (T != [0.0, 0.0, 0.0]) {
+        cmd(format("layer.attr 1 pos.x %.9g", T[0]));
+        cmd(format("layer.attr 1 pos.y %.9g", T[1]));
+        cmd(format("layer.attr 1 pos.z %.9g", T[2]));
+    }
 
     auto ct = ex["counts"];
     immutable size_t nv0 = cast(size_t) ct["vertices_before"].integer;
@@ -140,7 +151,7 @@ unittest {
     // Press on the seed edge's midpoint, drag along it to 70 % of the edge
     // (the fraction is forced, so the drag only has to land the press on it).
     auto seed = fx["input"]["seed_edge"].array;
-    auto sa = pre[seed[0].integer], sb = pre[seed[1].integer];
+    auto sa = add(pre[seed[0].integer], T), sb = add(pre[seed[1].integer], T);   // world
     Vec3 mid = Vec3(cast(float)((sa[0] + sb[0]) * 0.5), cast(float)((sa[1] + sb[1]) * 0.5),
                     cast(float)((sa[2] + sb[2]) * 0.5));
     Vec3 nearB = Vec3(cast(float)(sa[0] * 0.3 + sb[0] * 0.7), cast(float)(sa[1] * 0.3 + sb[1] * 0.7),
@@ -183,14 +194,14 @@ unittest {
         long nv = -1;
         foreach (v; nv0 .. post.length)
             if (!used[v] && shareFaceEdge(faces, a, v) && shareFaceEdge(faces, b, v)) { nv = v; break; }
-        assert(nv >= 0, format("no inserted vertex sits on rail (%d,%d)", a, b));
+        assert(nv >= 0, format("%s: no inserted vertex sits on rail (%d,%d)", tag, a, b));
         used[nv] = true;
-        immutable double[3] want = triple(row["position"]);
+        immutable double[3] want = sub(triple(row["position"]), T);   // local
         immutable double off = dist(post[nv], want);
         assert(off <= tol, format(
-            "inserted vertex %d on rail (%d,%d) is %.3g from its frozen closest point on the "
+            "%s: inserted vertex %d on rail (%d,%d) is %.3g from its frozen closest point on the "
           ~ "background (tolerance %.3g; chord midpoint is %.3g away): got %s want %s",
-            nv, a, b, off, tol, dist(post[nv], triple(row["chord_midpoint"])), post[nv], want));
+            tag, nv, a, b, off, tol, dist(post[nv], sub(triple(row["chord_midpoint"]), T)), post[nv], want));
         ++matched;
     }
     assert(matched == 4, format("population: 4 inserted vertices matched, got %d", matched));
@@ -209,5 +220,40 @@ unittest {
     assert(historySurfaceCounts().editRows == rowsBefore,
         "the Ctrl+Z must pop exactly the cut's row");
 
+    // ---- 6. Ctrl+Shift+Z brings the re-snapped cut back, not the chord one ---
+    slKey(SL_SDLK_z, SL_KMOD_LCTRL | SL_KMOD_LSHIFT, "Ctrl+Shift+Z after the undo");
+    auto redone = primaryPlanes();
+    assert(planeVerts(redone) == post && redone["faces"] == faces,
+        "one Ctrl+Shift+Z must restore the re-snapped cut exactly");
+
     cmd("tool.attr mesh.topoPen middle false");   // sticky option: leave it off for the next test
+}
+
+unittest {
+    enum string json = import("fixtures/topology_pen_addloop_bg_resnap.json");
+    auto fx = parseJSON(json);
+    requireProvenance(fx, fx["name"].str);
+    assert(fx["schema"].str == "topology_pen.addloop.bg_resnap/1", "unexpected fixture schema");
+    immutable double tol = num(fx["tolerance"]);
+    auto ex = fx["expected"];
+    auto inserted = ex["inserted"].array;
+    assert(inserted.length == 4, "the frozen cut inserts four vertices (an open span of three quads)");
+
+    // ---- 1. the rig discriminates (fixture data alone) --------------------
+    foreach (row; inserted) {
+        immutable double sep = dist(triple(row["position"]), triple(row["chord_midpoint"]));
+        assert(sep >= 100 * tol, format(
+            "rig: rail %s's frozen position is only %.3g from its chord midpoint "
+          ~ "(tolerance %.3g) — this background cannot tell a re-snap from none",
+            row["rail"].toString, sep, tol));
+    }
+
+    runCell(fx, [0.0, 0.0, 0.0], "untranslated");
+
+    // The same law with the foreground layer's item transform a translation
+    // that has a component along the background normal: the query must go
+    // to world and the foot come back to local. Without that round trip the
+    // foot is taken of the local point and every inserted vertex misses by
+    // |T·n| ≈ 0.065.
+    runCell(fx, [-0.03, 0.03, 0.05], "translated");
 }
