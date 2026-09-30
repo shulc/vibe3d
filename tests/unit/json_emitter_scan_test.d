@@ -505,6 +505,7 @@ unittest {
     // different floats can print identically and a dropped plane carry would
     // compare equal to the plane that carried; `%.9g` round-trips a `float`.
     // Task 7139 raised it to 112: GET /api/camera's view/proj matrices.
+    // Task 8570 raised it to 120: the retopology-mode plan/state floats.
     static immutable LedgerRow[] kFrozen = [
         LedgerRow("meshToJsonDetailed|%f", 10, "detailed mesh JSON"),
         LedgerRow("meshPlanesJson|%.9g", 11, "lossless mesh-plane JSON"),
@@ -528,10 +529,11 @@ unittest {
         LedgerRow("wireViewportProviders.setCameraDataProvider.mat|%.9g", 1,
             "camera view/proj matrices from the resolved snapshot (task 7139): "
           ~ "a turned ortho view is only visible here, `focus` stays world"),
-        LedgerRow("wireViewportProviders.setViewportDisplayProvider.planJson|%.6f", 8,
-            "viewport draw plan"),
-        LedgerRow("wireViewportProviders.setViewportDisplayProvider.stateJson|%.6f", 1,
-            "viewport display state"),
+        LedgerRow("wireViewportProviders.setViewportDisplayProvider.planJson|%.6f", 15,
+            "viewport draw plan (+7 retopology-mode fields: faceAlpha, lightGain, "
+          ~ "vertColor x3, vertAlpha, pointSize)"),
+        LedgerRow("wireViewportProviders.setViewportDisplayProvider.stateJson|%.6f", 2,
+            "viewport display state (+pointSize)"),
         LedgerRow("wireViewportProviders.setViewportDisplayProvider.gridJson|%.9g", 5,
             "viewport grid"),
         LedgerRow("wireViewportProviders.setSurfaceRaycastProvider|%.6f", 6,
@@ -570,14 +572,15 @@ unittest {
     size_t   total;
     foreach (e; kFrozen) total += e.count;
 
-    assert(total == 112, format("the frozen table must add up to the 112 "
+    assert(total == 120, format("the frozen table must add up to the 120 "
                               ~ "specifiers the conversion covered (100 from "
                               ~ "task 1550, plus meshPlanesJson's 11 from task "
                               ~ "1903 Stage B, plus the camera matrices from "
-                              ~ "task 7139), got %d", total));
+                              ~ "task 7139, plus 8 retopology-mode plan/state "
+                              ~ "floats), got %d", total));
     string drift = reconcile(kFrozen, censusHits);
-    if (censusHits.length != 112)
-        drift ~= format("\n    specifier population — recorded 112, scanner "
+    if (censusHits.length != 120)
+        drift ~= format("\n    specifier population — recorded 120, scanner "
                       ~ "found %d", censusHits.length);
     assert(drift.length == 0,
         "the per-symbol specifier census moved. This is the ONLY check that can "

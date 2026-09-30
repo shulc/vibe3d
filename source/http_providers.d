@@ -998,7 +998,12 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                     `{"drawFaces":%s,"facesLit":%s,"shading":"%s","dim":%s,` ~
                     `"fillColor":[%s,%s,%s],` ~
                     `"drawWire":%s,"wireAlpha":%s,` ~
-                    `"wireColor":[%s,%s,%s],"drawVerts":%s}`,
+                    `"wireColor":[%s,%s,%s],"drawVerts":%s,` ~
+                    `"faceAlpha":%s,"cullBackFaces":%s,"clearDepthFirst":%s,` ~
+                    `"lightGain":%s,"vertColor":[%s,%s,%s],"vertAlpha":%s,` ~
+                    `"pointSize":%s,"cullHiddenVerts":%s,` ~
+                    `"shadeLinesByItem":%s,"baseDotsBySelection":%s,` ~
+                    `"joinsItemSequence":%s,"styleFills":%s}`,
                     p.drawFaces ? "true" : "false",
                     p.facesLit  ? "true" : "false",
                     p.shading.to!string,
@@ -1011,12 +1016,29 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                     jsonNum(p.wireColor[0], "%.6f"),
                     jsonNum(p.wireColor[1], "%.6f"),
                     jsonNum(p.wireColor[2], "%.6f"),
-                    p.drawVerts ? "true" : "false");
+                    p.drawVerts ? "true" : "false",
+                    jsonNum(p.faceAlpha, "%.6f"),
+                    p.cullBackFaces   ? "true" : "false",
+                    p.clearDepthFirst ? "true" : "false",
+                    jsonNum(p.lightGain, "%.6f"),
+                    jsonNum(p.vertColor[0], "%.6f"),
+                    jsonNum(p.vertColor[1], "%.6f"),
+                    jsonNum(p.vertColor[2], "%.6f"),
+                    jsonNum(p.vertAlpha, "%.6f"),
+                    jsonNum(p.pointSize, "%.6f"),
+                    p.cullHiddenVerts     ? "true" : "false",
+                    p.shadeLinesByItem    ? "true" : "false",
+                    p.baseDotsBySelection ? "true" : "false",
+                    p.joinsItemSequence   ? "true" : "false",
+                    p.styleFills          ? "true" : "false");
             }
             static string stateJson(in DisplayState s) {
-                return format(`{"style":"%s","wire":"%s","wireAlpha":%s}`,
+                return format(`{"style":"%s","wire":"%s","wireAlpha":%s,` ~
+                    `"showVertices":%s,"pointSize":%s}`,
                     s.style.to!string, s.wire.to!string,
-                    jsonNum(s.wireAlpha, "%.6f"));
+                    jsonNum(s.wireAlpha, "%.6f"),
+                    s.showVertices ? "true" : "false",
+                    jsonNum(s.pointSize, "%.6f"));
             }
 
             // Task 0570: the grid terms, per cell, straight from the
@@ -1187,7 +1209,8 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                     `"toolPreviewKey":%d,` ~
                     `"ortho":%s,"userSet":%s,` ~
                     `"selectVisibility":{"policy":"%s","facing":%s,"occlusion":%s},` ~
-                    `"state":{"active":%s,"backdrop":%s,"backdropStyle":"%s"},` ~
+                    `"state":{"active":%s,"backdrop":%s,"backdropStyle":"%s",` ~
+                    `"retopology":%s},` ~
                     `"plan":{"active":%s,"backdrop":%s},"grid":%s}`,
                     k,
                     renders ? "true" : "false",
@@ -1215,6 +1238,7 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                     stateJson(cv.display.active),
                     stateJson(cv.display.backdrop),
                     cv.display.backdropStyle.to!string,
+                    cv.display.retopology ? "true" : "false",
                     planJson(resolveDrawPlan(cv.display, false)),
                     planJson(resolveDrawPlan(cv.display, true)),
                     gridJson(gvp)));

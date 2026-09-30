@@ -84,6 +84,12 @@ enum SchemeColor {
     toolPath,      /// slice + path handles and their plane
     toolPathLine,  /// the slice chord / path line itself
     toolPathRing,  /// the slice ring guide
+    // --- retopology display mode ---
+    // Measured palette rows; the fixture `retopology_display.json` freezes
+    // them and its reader compares every one.
+    retopologyFace,    /// translucent face fill (lit)
+    retopologyEdge,    /// base edge, before the per-item light shade
+    retopologyVertex,  /// base vertex dot, before the per-item light shade
 }
 
 private enum size_t kSchemeColorCount = SchemeColor.max + 1;
@@ -119,6 +125,10 @@ immutable Vec3[kSchemeColorCount] kSchemeDefaults = [
     SchemeColor.toolPath:     Vec3(0.30f, 0.60f, 1.00f),
     SchemeColor.toolPathLine: Vec3(0.90f, 0.92f, 0.98f),
     SchemeColor.toolPathRing: Vec3(0.35f, 0.85f, 0.85f),
+
+    SchemeColor.retopologyFace:   Vec3(0.20f, 0.20f, 0.20f),
+    SchemeColor.retopologyEdge:   Vec3(0.11f, 0.25f, 0.41f),
+    SchemeColor.retopologyVertex: Vec3(0.38f, 0.62f, 0.92f),
 ];
 
 /// Resolve a role to its colour.
@@ -190,6 +200,23 @@ float pointSizePx(float base, bool selected) @safe pure nothrow @nogc {
 /// row 76 of `doc/behavior_gap_registry.md`; do not "correct" this to 0.70 on
 /// the strength of the help text.
 enum float kOccludedSelectionAlpha = 0.30f;
+
+// ---- the retopology display mode (measured; task 8570) --------------------
+// Owner-signed as CONSTANTS, not preferences: they still flow through
+// `DrawPlan` (`faceAlpha`, `cullHiddenVerts`, ...) so a settings row can
+// replace any of them later without touching a pass. Every value is frozen
+// in `tests/fixtures/retopology_display.json` and compared by its reader.
+
+/// Face fill TRANSPARENCY; the fill's alpha is `1 - this`.
+enum float kRetopologyFillTransparency = 0.5f;
+/// Opacity of the base edges AND the base vertex dots (one literal for both).
+enum float kRetopologyLineAlpha = 0.4f;
+/// Multiplier on the lit term above ambient while the mode is on.
+enum float kRetopologyLightGain = 5.0f / 3.0f;
+/// Base dots whose every incident polygon faces away are not drawn.
+enum bool  kRetopologyVertexCulling = true;
+/// The point size the retopology preset writes into a cell.
+enum float kRetopologyPresetPointSize = 6.0f;
 
 // ---------------------------------------------------------------------------
 // Fixed constants — NOT preference rows (see the two-tier note up top)

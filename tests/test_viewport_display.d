@@ -244,23 +244,45 @@ bool testFlowB() {
     // Both activity states carry the FULL control set, not a scalar.
     foreach (side; ["active", "backdrop"]) {
         auto s = c0["state"][side];
-        foreach (field; ["style", "wire", "wireAlpha"])
+        foreach (field; ["style", "wire", "wireAlpha", "showVertices",
+                         "pointSize"])
             enforce(field in s,
                 format("state.%s is missing \"%s\" — the backdrop must be a "
                        ~ "full control set, not a dimming factor", side, field));
     }
-    writeln("    B1 PASS: state.active and state.backdrop both carry style/wire/wireAlpha");
+    writeln("    B1 PASS: state.active and state.backdrop both carry style/wire/wireAlpha/showVertices/pointSize");
+
+    // The retopology display mode is a per-cell flag, off by default, and
+    // nothing can set it yet.
+    enforce("retopology" in c0["state"] && !jsonBool(c0["state"], "retopology"),
+        "state.retopology must be present and false by default");
 
     // Both sides are RESOLVED, separately.
     enforce("active" in c0["plan"] && "backdrop" in c0["plan"],
         "plan must be resolved for both activity states");
     auto pa = c0["plan"]["active"];
     auto pb = c0["plan"]["backdrop"];
-    foreach (field; ["drawFaces", "facesLit", "drawWire", "wireAlpha",
-                     "wireColor", "drawVerts", "dim"])
+    // Every DrawPlan field, including the retopology-mode ones, so "same
+    // DrawPlan shape both sides" keeps meaning ALL fields.
+    int nFields = 0;
+    foreach (field; ["drawFaces", "facesLit", "shading", "dim", "fillColor",
+                     "drawWire", "wireAlpha", "wireColor", "drawVerts",
+                     "faceAlpha", "cullBackFaces", "clearDepthFirst",
+                     "lightGain", "vertColor", "vertAlpha", "pointSize",
+                     "cullHiddenVerts", "shadeLinesByItem",
+                     "baseDotsBySelection", "joinsItemSequence", "styleFills"]) {
+        ++nFields;
+        enforce(field in pa,
+            format("plan.active is missing \"%s\"", field));
         enforce(field in pb,
             format("plan.backdrop is missing \"%s\" — it must be the same "
                    ~ "DrawPlan shape as the active side", field));
+    }
+    enforce(nFields == 21, format("B2 checked %s plan fields, expected 21", nFields));
+    enforce(pa.object.length == 21 && pb.object.length == 21,
+        format("plan dump carries %s/%s keys, the list above names 21 — a "
+               ~ "field was added without joining this list",
+               pa.object.length, pb.object.length));
     writeln("    B2 PASS: plan.backdrop is a full DrawPlan, same shape as active");
 
     // And they are genuinely resolved apart: today the only difference is our

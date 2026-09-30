@@ -119,6 +119,11 @@ enum SurfaceShading : ubyte {
     Fill,
     /// The per-vertex weight colour, interpolated, with no light term at all.
     Weight,
+    /// The retopology display mode's translucent face fill: the scheme's
+    /// retopology face colour lit by the same light function as `Material`.
+    /// APPENDED LAST — `u_shading` is this enum's ordinal. Resolved only by
+    /// `applyRetopology`, never by a `DisplayStyle`.
+    Retopology,
 }
 
 /// The order the surface styles are OFFERED in, and their UI text.
@@ -246,7 +251,9 @@ enum float kBackdropDim = 0.45f;
 /// where the value comes from and for the per-item precedence we do not yet
 /// have. Value and behaviour are unchanged by the move.
 public import viewport_scheme : kSchemeSolidFill;
-import viewport_scheme : schemeColor, SchemeColor;
+import viewport_scheme : schemeColor, SchemeColor, kBasePointSize,
+    kRetopologyFillTransparency, kRetopologyLineAlpha, kRetopologyLightGain,
+    kRetopologyVertexCulling;
 
 /// One activity state's controls — the active mesh, or the backdrop.
 ///
@@ -261,6 +268,11 @@ struct DisplayState {
     /// every existing viewport looks like and is held for an explicit
     /// decision.
     float        wireAlpha = 1.0f;
+    /// Show vertex dots whatever the style. Default off = today's behaviour.
+    bool         showVertices = false;
+    /// Vertex dot size in pixels; 0 (or any non-positive / non-finite value)
+    /// means the scheme's `kBasePointSize`.
+    float        pointSize = 0.0f;
 }
 
 /// The SHIPPED display state for a freshly-established cell, as a function of
@@ -313,6 +325,12 @@ struct ViewportDisplay {
     /// Coarse backdrop representation. `SameAsActive` (the default) reproduces
     /// today's look.
     BackdropStyle backdropStyle = BackdropStyle.SameAsActive;
+    /// The retopology display mode: one override over BOTH resolved plans,
+    /// applied by `applyRetopology` after the style switch. Deliberately not
+    /// a `DisplayStyle` value — under the mode the active style does not
+    /// change the foreground's drawing at all, yet it still decides picking
+    /// occlusion (`DrawPlan.styleFills`). Per cell; off by default.
+    bool retopology = false;
 }
 
 /// The RESOLVED description of one scene pass: what it may draw, and how.
@@ -410,6 +428,82 @@ struct DrawPlan {
     /// vertex dots in vertex edit mode" behaviour is a separate, unmodelled
     /// axis and stays where it is. The renderer ORs the two.
     bool     drawVerts = false;
+
+    // ---- retopology-mode fields ------------------------------------------
+    // Every default below is TODAY'S behaviour; only `applyRetopology` moves
+    // them. NOT YET CONSUMED except `styleFills` (by `select_visibility`):
+    // no pass reads the rest, so no rendering may be inferred from them. Measured values and their record: the constants block in
+    // `viewport_scheme.d` and `tests/fixtures/retopology_display.json`.
+    /// Face pass opacity (1 = opaque).
+    float    faceAlpha = 1.0f;
+    /// Cull back-facing polygons in the face pass.
+    bool     cullBackFaces = false;
+    /// Clear the depth buffer before this item's passes.
+    bool     clearDepthFirst = false;
+    /// Multiplier on the lit term above ambient (1 = today's light).
+    float    lightGain = 1.0f;
+    /// Base (unselected) vertex dot colour. Defaults to the wireframe row,
+    /// which is the row the dot pass reads today.
+    float[3] vertColor = [schemeColor(SchemeColor.wireframe).x,
+                          schemeColor(SchemeColor.wireframe).y,
+                          schemeColor(SchemeColor.wireframe).z];
+    /// Base vertex dot opacity.
+    float    vertAlpha = 1.0f;
+    /// Base vertex dot size in pixels, resolved (never 0).
+    float    pointSize = kBasePointSize;
+    /// Skip base dots whose every incident polygon faces away.
+    bool     cullHiddenVerts = false;
+    /// Base wire / dot colours are shaded per item by the light function.
+    bool     shadeLinesByItem = false;
+    /// The base-dot pass also runs because of the vertex / edge selection
+    /// type (today's OR). A policy bit about the base pass, NOT a selection
+    /// term, so the no-selection invariant above holds.
+    bool     baseDotsBySelection = true;
+    /// Backdrop plan only: background layers are drawn inside the
+    /// foreground item sequence instead of before it.
+    bool     joinsItemSequence = false;
+    /// Does the resolved STYLE fill faces? Equal to `drawFaces` as the style
+    /// switch left it, BEFORE any mode override, and never written by
+    /// `applyRetopology`: picking occlusion follows the active style whether
+    /// or not the mode is on (captured; `select_visibility` reads this).
+    bool     styleFills = true;
+}
+
+/// The retopology display mode, applied to an already style-resolved plan.
+///
+/// ONE override instead of a fifth style or a renderer-side branch: every
+/// field the mode owns is written here, so the renderer stays a plain reader
+/// of `DrawPlan`. A no-op when `d.retopology` is false. The active side takes
+/// the mode's whole representation whatever the style (the style is
+/// irrelevant to the foreground's pixels under the mode); the backdrop side
+/// only gains the light multiplier. `styleFills` and `pointSize` are left as
+/// the style resolved them.
+void applyRetopology(ref DrawPlan p, in ViewportDisplay d, bool isBackdrop)
+    pure nothrow @safe @nogc
+{
+    if (!d.retopology) return;
+    p.lightGain = kRetopologyLightGain;
+    if (isBackdrop) return;
+
+    immutable face = schemeColor(SchemeColor.retopologyFace);
+    immutable edge = schemeColor(SchemeColor.retopologyEdge);
+    immutable vert = schemeColor(SchemeColor.retopologyVertex);
+
+    p.drawFaces           = true;
+    p.shading             = SurfaceShading.Retopology;
+    p.fillColor           = [face.x, face.y, face.z];
+    p.faceAlpha           = 1.0f - kRetopologyFillTransparency;
+    p.cullBackFaces       = true;
+    p.clearDepthFirst     = true;
+    p.drawWire            = true;
+    p.wireColor           = [edge.x, edge.y, edge.z];
+    p.wireAlpha           = kRetopologyLineAlpha;
+    p.drawVerts           = d.active.showVertices;
+    p.vertColor           = [vert.x, vert.y, vert.z];
+    p.vertAlpha           = kRetopologyLineAlpha;
+    p.cullHiddenVerts     = kRetopologyVertexCulling;
+    p.shadeLinesByItem    = true;
+    p.baseDotsBySelection = false;
 }
 
 /// Resolve `d` into the plan for one pass: the active mesh, or the backdrop.
@@ -485,9 +579,11 @@ DrawPlan resolveDrawPlan(in ViewportDisplay d, bool isBackdrop) pure nothrow @sa
                 st.style = DisplayStyle.Solid;
                 break;
             case BackdropStyle.Hidden:
-                p.drawFaces = false;
-                p.drawWire  = false;
-                p.drawVerts = false;
+                p.drawFaces  = false;
+                p.styleFills = false;
+                p.drawWire   = false;
+                p.drawVerts  = false;
+                applyRetopology(p, d, isBackdrop);
                 return p;
         }
     }
@@ -526,7 +622,9 @@ DrawPlan resolveDrawPlan(in ViewportDisplay d, bool isBackdrop) pure nothrow @sa
     p.drawWire  = (st.wire != WireOverlay.None)
                || (st.style == DisplayStyle.Wireframe);
     p.wireAlpha = st.wireAlpha;
-    p.drawVerts = (st.style == DisplayStyle.Wireframe);
+    p.drawVerts = (st.style == DisplayStyle.Wireframe) || st.showVertices;
+    p.pointSize = (st.pointSize > 0.0f && st.pointSize < float.infinity)
+                ? st.pointSize : kBasePointSize;
 
     if (isBackdrop) {
         // The backdrop pass has no vertex-dot draw today. Resolve it to false
@@ -536,6 +634,10 @@ DrawPlan resolveDrawPlan(in ViewportDisplay d, bool isBackdrop) pure nothrow @sa
         p.drawVerts = false;
     }
 
+    // Before the mode override, and never written by it: picking follows
+    // the style, not the mode (see `DrawPlan.styleFills`).
+    p.styleFills = p.drawFaces;
+    applyRetopology(p, d, isBackdrop);
     return p;
 }
 

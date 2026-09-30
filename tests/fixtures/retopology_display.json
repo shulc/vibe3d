@@ -1,0 +1,112 @@
+{
+  "name": "retopology_display",
+  "description": "Retopology display mode: how the edited (foreground) items are drawn over background layers. Measured on the reference editor through numeric commands and framebuffer reads; its own identifiers stay in the private toolcard. Colours are 0..1 palette values; pixel cells are 8-bit framebuffer reads, front orthographic view, empty viewport (92,102,107).",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "command",
+    "captured_utc": "2026-09-30",
+    "harness": "isolated GUI session, numeric commands, framebuffer reads",
+    "task": "8550",
+    "notes": "Base record from task 8550; the follow-up cells (order, facing, picking, same-as-active backdrop, dots by selection mode, selection placement) from task 8551, same date and harness. The picking cell drove four clicks on a vertex behind the item's own face plus an unoccluded control click. Identifiers stay in the private toolcard."
+  },
+  "depth": {
+    "law": "depth buffer cleared before each foreground item; depth test and write stay on within the item; no occlusion between foreground items",
+    "rival_refuted": [
+      "depth test off (an item's own face hides its own edge)",
+      "depth offset (an item 29.5 units behind the background stays fully visible)"
+    ],
+    "views": "holds in two rotated orthographic views and in perspective"
+  },
+  "face": {
+    "colour": [0.2, 0.2, 0.2],
+    "fill_transparency": 0.5,
+    "alpha_law": "1 - fill_transparency",
+    "lit": true,
+    "light": "the same light function as the background surface",
+    "back_facing_fill": false,
+    "back_facing_depth_write": false,
+    "unblended_front_facing": 36.5,
+    "cells_alpha": [
+      {"fill_transparency": 0.5, "under": [86, 86, 86],    "out": [61, 61, 61]},
+      {"fill_transparency": 0.5, "under": [92, 102, 107],  "out": [64, 69, 72]},
+      {"fill_transparency": 0.5, "under": [153, 153, 153], "out": [95, 95, 95]},
+      {"fill_transparency": 0.8, "under": [86, 86, 86],    "out": [76, 76, 76]},
+      {"fill_transparency": 0.8, "under": [92, 102, 107],  "out": [81, 89, 93]}
+    ]
+  },
+  "edge": {
+    "colour": [0.11, 0.25, 0.41],
+    "shade_rule": "light at the item's local +Z: the colour a polygon of the same item facing its local +Z would have, with the edge palette in place of the face palette; independent of the polygon the edge belongs to; changes with the view because the reference's light is camera-attached",
+    "alpha": 0.4,
+    "width_px": 1,
+    "normal_independent": true,
+    "back_facing_category": false,
+    "unblended_front_view": [19.5, 44.5, 74.5],
+    "cells": [
+      {"under": [86, 86, 86],    "out": [60, 70, 81]},
+      {"under": [61, 61, 61],    "out": [45, 55, 66]},
+      {"under": [153, 153, 153], "out": [100, 110, 121]}
+    ]
+  },
+  "vertex": {
+    "colour": [0.38, 0.62, 0.92],
+    "shade_rule": "as edge.shade_rule, with the vertex palette",
+    "alpha": 0.4,
+    "point_size": 3,
+    "preset_point_size": 6,
+    "culling": true,
+    "cull_rule": "hidden iff every incident polygon faces away and at least one has >= 3 vertices; isolated vertices drawn; a selected vertex is never culled",
+    "gate": "base dots drawn iff the cell shows vertices; the selection mode changes neither the gate, the colour nor the size",
+    "unblended_front_view": [68.5, 112, 164],
+    "cells": [
+      {"under": [86, 86, 86],    "out": [79, 96, 118]},
+      {"under": [92, 102, 107],  "out": [82, 106, 130]},
+      {"under": [153, 153, 153], "out": [119, 136, 158]}
+    ]
+  },
+  "light_gain": {
+    "value": "5/3",
+    "applies_to": "everything above ambient; ambient unscaled; background surfaces too",
+    "specular": "INFERRED, not measured: the fit cannot separate a specular term; ours scales it with diffuse",
+    "fit": "out = 18 + (5/3)*(out_off - 18), 10 tiles within 1 LSB"
+  },
+  "light_rig": "camera-attached at the reference (a fixed tile's value changes with the view); ours is world-fixed, so lit laws are ported as relations",
+  "selection": {
+    "occluded_alpha": 0.30,
+    "placement": "the primary item's selection passes run AFTER the whole item sequence, depth-tested against what it left, with the occluded pass, no depth clear",
+    "colour": [255, 168, 41],
+    "cells": [
+      {"what": "selected vertex behind a later-drawn background surface", "under": [86, 86, 86], "out": [136, 110, 73]},
+      {"what": "selected vertex behind the item's own fill",             "under": [64, 69, 72], "out": [121, 99, 63]}
+    ],
+    "front_control": [255, 168, 41]
+  },
+  "backdrop": {
+    "flat_writes": {"style": "shaded", "smoothing": false},
+    "wireframe_writes_slot": "see backdrop_display_slots.json (frozen); cross-checked by the retopology capture, agrees",
+    "renderer_reads_slot_style": true,
+    "dimmed": false,
+    "blocks_picking": false
+  },
+  "scope": {
+    "active_style_irrelevant": true,
+    "tool_arming_changes_pixels": false,
+    "per_viewport": true
+  },
+  "order_between_items": "reverse layer order, independent of which item is primary",
+  "within_item_polygon_order": "one depth-writing fill pass in reverse polygon index order (a depth pre-pass is refuted)",
+  "back_face_depth": "a back-facing polygon writes no depth (culled from the whole face pass)",
+  "picking_under_mode": "occlusion follows the active style regardless of the mode (shaded: the vertex behind the item's own face is not picked; wireframe: it is)",
+  "picking_runs": [
+    {"mode": true,  "style": "shaded",    "picked_behind_own_face": false},
+    {"mode": true,  "style": "wireframe", "picked_behind_own_face": true},
+    {"mode": false, "style": "shaded",    "picked_behind_own_face": false},
+    {"mode": false, "style": "wireframe", "picked_behind_own_face": true}
+  ],
+  "picking_control": "a click on an unoccluded vertex of the same item picks it",
+  "backdrop_under_mode_same_as_active": "drawn in the active style with the light gain, not dimmed, as ordinary items inside the reverse-layer item sequence with no depth clear of their own",
+  "facing_in_perspective": "per eye (screen winding) for both the fill and the dots",
+  "dots_by_selection_mode": "base dots follow show-vertices only; pixel-identical in vertex, edge and polygon selection modes"
+}

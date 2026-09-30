@@ -23,9 +23,13 @@ private DrawPlan planFor(DisplayStyle s) {
     return resolveDrawPlan(d, /*isBackdrop=*/false);
 }
 
+// Both fields set: the resolver reads `styleFills` (the style's answer,
+// untouched by the retopology mode), and a plan built by hand keeps the two
+// consistent so no row here depends on which one is read.
 private DrawPlan bareplan(bool facesDrawn) {
     DrawPlan p;
-    p.drawFaces = facesDrawn;
+    p.drawFaces  = facesDrawn;
+    p.styleFills = facesDrawn;
     return p;
 }
 

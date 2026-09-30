@@ -22,8 +22,10 @@ import display_state : DrawPlan;
 // WHAT THE STYLE LINK MEANS, and why it is not "wireframe is special": under a
 // style that draws no faces the far side of the model IS VISIBLE TO THE USER,
 // so a picker that still models an opaque surface is answering about a scene
-// that is not on screen. `drawFaces` is that fact, resolved once, on the
-// rendering side.
+// that is not on screen. `DrawPlan.styleFills` is that fact, resolved once,
+// on the rendering side — the STYLE's answer, which the retopology display
+// mode does not override (captured: pick occlusion follows the active style
+// with the mode on or off, although the mode itself always fills).
 //
 // CONSUMED TODAY — `occlusionTerm` by the ID-buffer picker
 // (`gpu_select.renderMode` runs its face depth pre-pass only when the term is
@@ -110,7 +112,7 @@ enum SelectVisibility kSelectVisibilityDefault = SelectVisibility.StyleAware;
 SelectVisibilityTerms resolveSelectVisibility(SelectVisibility v, in DrawPlan plan)
     pure nothrow @safe @nogc
 {
-    immutable bool facesDrawn = plan.drawFaces;
+    immutable bool facesDrawn = plan.styleFills;
     SelectVisibilityTerms t;
     final switch (v) {
         case SelectVisibility.StyleAware:
