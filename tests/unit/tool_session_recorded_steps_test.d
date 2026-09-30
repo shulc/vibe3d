@@ -636,6 +636,12 @@ unittest { // Close/retire stop at each independently varied suffix boundary.
         assert(history.retireRunSteps(1, boundary == 1 ? 0 : 8560) == (boundary == 0 ? 1 : 0),
             format("8560 run retirement crossed boundary %s", boundary));
     }
+    int zeroAmount;
+    auto zeroHistory = new CommandHistory;
+    auto zeroCommand = new ValueEdit(&zeroAmount, 0, 1);
+    assert(zeroCommand.apply()); zeroHistory.recordInSession(zeroCommand, 1);
+    assert(zeroHistory.closeRunVisible(1, "policy", RunCloseMode.groupRedo,
+        RunCloseScope.session, 0) == 0, "8560 zero owned token closed a zero-token row");
     auto empty = new CommandHistory;
     assert(empty.retireRunSteps(1, 8560) == 0);
     assert(empty.closeRunVisible(1, "policy", RunCloseMode.groupRedo,
