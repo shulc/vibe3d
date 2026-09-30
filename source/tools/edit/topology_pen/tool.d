@@ -347,8 +347,8 @@ private:
     //   2. WHEN the mesh changes. The move is applied LIVE on every motion
     //      event, not only at release — the geometry deforms under the
     //      cursor instead of a ghost line predicting it. `moveBefore_` is
-    //      captured ONCE at arm time and the whole drag records exactly ONE
-    //      undo entry at release: the `MeshSessionEdit` contract ("mutates
+    //      captured at the drag's FIRST live write and the whole drag records
+    //      exactly ONE undo entry at release: the `MeshSessionEdit` contract ("mutates
     //      the mesh freely while the user drags ... records this command
     //      holding (before, after) snapshots so the entire gesture is a
     //      single undo step").
@@ -368,7 +368,9 @@ private:
     // (no snapshot pair, no undo entry, no GPU churn). Cleared — like every
     // arm above — by `resetAllGestureArms()`; `deactivate()` finalizes a
     // still-dirty drag first, so switching tools mid-gesture cannot leave an
-    // un-undoable mutation behind.
+    // un-undoable mutation behind. A dirty armed drag is also the tool's
+    // uncommitted edit (`hasUncommittedEdit`), which `tool.reset` and a
+    // document replace DISCARD through `cancelUncommittedEdit`.
     //
     // `moveWelded_` records whether the release's destructive landing (task
     // 0555) actually absorbed anything. Set between the final placement and
@@ -1667,8 +1669,8 @@ public:
         // multi-vertex grab readable at all (a ghost line cannot show an edge
         // or a polygon dragging its incident faces along with it).
         //
-        // Still ONE undo entry: `moveBefore_` was captured at arm time and
-        // `finishMove` records the pair at release. The targets are absolute
+        // Still ONE undo entry: `moveBefore_` is captured at the first live
+        // write and `finishMove` records the pair at release. The targets are absolute
         // (always recomputed from `moveBase_`), so an event stream of any
         // density lands in exactly the same place — and the release recomputes
         // them once more for its OWN pixel, which is what actually decides
@@ -3013,7 +3015,7 @@ public:
         triN_ = quadP_ = quadQ_ = quadTriFi_ = -1;
         // P4 Move/Place (doc/topopen_p4_plan.md) + the task-0484 element grab.
         // `clearMoveArm` drops the live drag's base positions and its
-        // arm-time snapshot WITHOUT recording anything — correct for every
+        // first-write snapshot WITHOUT recording anything — correct for every
         // caller of this helper: a same-slot re-press starts a fresh gesture,
         // and `resyncSession` runs when an external history navigation has
         // already replaced the mesh this drag was editing, so there is no
@@ -3737,9 +3739,9 @@ public:
     }
 
     // Apply `targets` to the armed moving set in place — the live half of the
-    // drag (task 0484). No snapshot, no history: `moveBefore_` was taken at
-    // arm time and the single undo entry is recorded once, at release
-    // (`finishMove`). Sets `moveDirty_` so a gesture that never actually
+    // drag (task 0484). No history: `moveBefore_` is taken lazily at the
+    // gesture's first write (below) and the single undo entry is recorded
+    // once, at release (`finishMove`). Sets `moveDirty_` so a gesture that never actually
     // moved anything stays a true no-op.
     package void applyMoveTargets(const(Vec3)[] targets) {
         auto m = mesh;
@@ -3834,8 +3836,27 @@ public:
         recordLiveMove();
     }
 
-    // The single undo entry for an armed Move drag: `moveBefore_` (arm time)
-    // paired with the mesh as it stands now. A gesture that moved nothing
+    // The session's view of the held Move drag: Move is the only
+    // gesture that writes the mesh mid-press, so a dirty armed Move IS this
+    // tool's uncommitted edit. `tool.reset` (`EditSession.discardOpenEdit`)
+    // and a document replace (the disarm seam) cancel it BEFORE their drop,
+    // so the drop's `deactivate` finds no drag left to record. The cancel
+    // restores the first-write snapshot and records nothing.
+    override bool hasUncommittedEdit() const {
+        return moveArmed_.armed && moveDirty_;
+    }
+
+    override void cancelUncommittedEdit() {
+        auto m = mesh;
+        if (m !is null && moveDirty_) moveBefore_.restore(*m);
+        clearMoveArm();
+        if (m is null) return;
+        m.syncSelection();
+        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_); }
+    }
+
+    // The single undo entry for an armed Move drag: `moveBefore_` (the first
+    // live write's pre-gesture state) paired with the mesh as it stands now. A gesture that moved nothing
     // records nothing — a stationary click, or a drag whose every vertex
     // missed the background surface, stays the byte-identical no-op it has
     // always been.
@@ -3869,8 +3890,9 @@ public:
     }
 
     // Drop the arm WITHOUT recording. Every caller either has already
-    // recorded (`finishMove`, `commitLiveMoveIfDirty`) or genuinely has
-    // nothing to record — `resyncSession`, where an external history
+    // recorded (`finishMove`, `commitLiveMoveIfDirty`), has discarded the
+    // drag (`cancelUncommittedEdit`) or genuinely has nothing to record —
+    // `resyncSession`, where an external history
     // navigation has already replaced the mesh this drag was editing, so an
     // (arm-time, post-navigation) snapshot pair would describe a transition
     // that never happened.

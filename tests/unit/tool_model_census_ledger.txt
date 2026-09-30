@@ -6,7 +6,7 @@
 # Axis 1 violator: live=yes and has=tool.Tool (does not OVERRIDE the hook).
 # Axis 2 violator: a `key` file with mck > 0 (a MeshCacheKey FIELD).
 # Axis 3 (`write` rows) is descriptive: any change reddens until recorded.
-axis1-violators 1
+axis1-violators 0
 axis2-violators 0
 
 # Session-special debt (3b). Task 7990 adds one generic TopologyStepClient
@@ -56,7 +56,7 @@ tool tools.edit.poly_extrude.PolyExtrudeTool has=tools.edit.poly_extrude.PolyExt
 tool tools.edit.poly_inset_tool.PolyInsetTool has=tools.edit.poly_inset_tool.PolyInsetTool cancel=tools.edit.poly_inset_tool.PolyInsetTool resync=tools.edit.poly_inset_tool.PolyInsetTool commit=tools.edit.poly_inset_tool.PolyInsetTool snap=6 live=yes | current preview basis in tool; completed inset images in CommandHistory
 tool tools.edit.reduce.ReductionTool has=tools.edit.reduce.ReductionTool cancel=tools.edit.reduce.ReductionTool resync=tools.edit.reduce.ReductionTool commit=tools.edit.reduce.ReductionTool snap=4 live=yes | built reduction preview over a MeshSnapshot baseline until drop/apply
 tool tools.edit.tack.TackTool has=tools.edit.tack.TackTool cancel=tools.edit.tack.TackTool resync=tools.edit.tack.TackTool commit=tool.Tool snap=5 live=no | overrides hasUncommittedEdit to false: each tack commits at release; resyncSession only clears the arm
-tool tools.edit.topology_pen.tool.TopologyPenTool has=tool.Tool cancel=tool.Tool resync=tools.edit.topology_pen.tool.TopologyPenTool commit=tool.Tool snap=18 live=yes | Move gesture mutates the mesh mid-drag (moveBefore_ baseline) and records only at release; resyncSession clears arms, nothing cancels the moved geometry
+tool tools.edit.topology_pen.tool.TopologyPenTool has=tools.edit.topology_pen.tool.TopologyPenTool cancel=tools.edit.topology_pen.tool.TopologyPenTool resync=tools.edit.topology_pen.tool.TopologyPenTool commit=tool.Tool snap=18 live=yes | Move gesture mutates the mesh mid-drag (moveBefore_ baseline, first live write) and records only at release; the hooks report the held drag and cancel restores moveBefore_ (task 8660)
 tool tools.edit.vert_merge_tool.VertexMergeTool has=tools.edit.vert_merge_tool.VertexMergeTool cancel=tools.edit.vert_merge_tool.VertexMergeTool resync=tools.edit.vert_merge_tool.VertexMergeTool commit=tools.edit.vert_merge_tool.VertexMergeTool snap=6 live=yes | current merge basis in tool; completed weld images in CommandHistory
 tool tools.edit.vertex_bevel_tool.VertexBevelTool has=tools.edit.vertex_bevel_tool.VertexBevelTool cancel=tools.edit.vertex_bevel_tool.VertexBevelTool resync=tools.edit.vertex_bevel_tool.VertexBevelTool commit=tools.edit.vertex_bevel_tool.VertexBevelTool snap=6 live=yes | current preview basis in tool; completed bevel images in CommandHistory
 tool tools.edit.vertex_extrude_tool.VertexExtrudeTool has=tools.edit.vertex_extrude_tool.VertexExtrudeTool cancel=tools.edit.vertex_extrude_tool.VertexExtrudeTool resync=tools.edit.vertex_extrude_tool.VertexExtrudeTool commit=tools.edit.vertex_extrude_tool.VertexExtrudeTool snap=6 live=yes | current preview basis in tool; completed extrude images in CommandHistory
