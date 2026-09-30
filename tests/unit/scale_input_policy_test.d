@@ -195,8 +195,11 @@ unittest {
     assert(!bank.preparedEmbeddedDeactivateMatches(image), "prepared pending composition freshness");
     bank.pendingScaleComposition = ScaleSampleComposition.factorOffset;
     bank.installPreparedEmbeddedDeactivate(image); clear("prepared deactivate");
-    seed(); bank.dragAxis = 3;
-    SDL_MouseButtonEvent up; up.button = SDL_BUTTON_LEFT;
+    bank.activate();
+    SDL_MouseButtonEvent down; down.button = SDL_BUTTON_LEFT;
     VectorStack vectors;
+    assert(bank.onMouseButtonDownWithResolvedAxis(down, vectors, 3));
+    seed();
+    SDL_MouseButtonEvent up; up.button = SDL_BUTTON_LEFT;
     assert(bank.onMouseButtonUp(up, vectors)); clear("release");
 }
