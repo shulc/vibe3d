@@ -434,6 +434,7 @@ private void selectVerts(int[] idx) {
 unittest {
     auto r = buildRig();
     scope (exit) {
+        cmdRaw("tool.set xfrm.elementMove off");
         cmdRaw(commandBody("viewport.retopology", `{"value":"off"}`));
         cmdRaw(commandBody("viewport.showVertices", `{"value":"off"}`));
         cmdRaw(commandBody("viewport.pointSize", `{"value":0}`));
@@ -812,6 +813,55 @@ unittest {
         assert(dotPixels([px(kShared)], 2)[0] >= kCornerDot, "4h: the unhide did not come back");
     }
 
+    // ---- 4m. binding a morph target re-culls (display epoch in the key) ----
+    // `mesh.morph.select` moves no vertex, no topology and no geometry epoch —
+    // it publishes MapsDisplay only — yet the drawn positions change. The
+    // morph swaps F's first and last own corners, which reverses F's winding
+    // on screen: F faces the eye and all three own-corner pixels carry dots.
+    // The on-reading is taken FIRST, before any showVertices toggle (a toggle
+    // drops the cell's slot and forces a fresh list on its own).
+    {
+        auto pts3 = [px(kFOwn[0]), px(kFOwn[1]), px(kFOwn[2])];
+        cmdOk(commandBody("mesh.morph.create", `{"name":"m4","kind":"relative"}`));
+        cmdOk(commandBody("mesh.morph.select", `{"name":""}`));
+        cmdOk(commandBody("mesh.morph.set", format(
+            `{"name":"m4","vert":%d,"x":-0.6,"y":-0.6,"z":0}`, r.fg.fOwn[0])));
+        cmdOk(commandBody("mesh.morph.set", format(
+            `{"name":"m4","vert":%d,"x":0.6,"y":0.6,"z":0}`, r.fg.fOwn[2])));
+        settle();
+        auto pre = dotPixels(pts3, 2);
+        foreach (k; 0 .. 3)
+            assert(pre[k] == 0, format("4m premise: with no target bound F's corner %s "
+                ~ "draws a dot (%s px)", kFOwn[k], pre[k]));
+        immutable long b0 = recomputes(0);
+        cmdOk(commandBody("mesh.morph.select", `{"name":"m4"}`));
+        settle();
+        frameFence(null, 2);
+        immutable long dRe = recomputes(0) - b0;
+        assert(dRe >= 1, format("4m: binding a morph target recomputed the dot list "
+            ~ "%s times — the key does not read the display epoch", dRe));
+        int[2][] pts;
+        foreach (c; pts3) pts ~= window(c, 2);
+        auto on = probe(pts);
+        showVertices(false);
+        auto off = probe(pts);
+        showVertices(true);
+        int[3] n = 0;
+        foreach (i; 0 .. pts.length)
+            if (maxDiff(on[i], off[i]) >= 3) ++n[i / 25];
+        foreach (k; 0 .. 3)
+            assert(n[k] >= kCornerDot, format("4m: with the morph bound F faces the eye, "
+                ~ "yet the pixel %s draws no dot (%s px) — the list was culled at the "
+                ~ "unmorphed positions", kFOwn[k], n[k]));
+        cmdOk(commandBody("mesh.morph.select", `{"name":""}`));
+        cmdOk(commandBody("mesh.morph.remove", `{"name":"m4"}`));
+        settle();
+        auto post = dotPixels(pts3, 2);
+        foreach (k; 0 .. 3)
+            assert(post[k] == 0, format("4m: after unbinding, F's corner %s still "
+                ~ "draws a dot (%s px)", kFOwn[k], post[k]));
+    }
+
     // ---- 5d. the cull is cached per cell and keyed on what it reads --------
     {
         cmdOk(commandBody("viewport.layout", `"SplitH"`));
@@ -925,6 +975,61 @@ unittest {
                 ~ "draws no dot (%s px) — the cull ran outside its plan bit",
                 kFOwn[k], n[k]));
         showVertices(false);
+    }
+
+    // ---- 7. mode-off control: a vertex hover under the polygon type --------
+    // Vertex dots off, polygon selection type, a tool that picks and draws a
+    // vertex rollover (xfrm.elementMove — its element falloff answers
+    // `Rollover.vertices`; a tool whose rollover policy is `none`, such as
+    // xfrm.pointAttract, never reaches the arm): the hover-only arm runs, and
+    // with the mode off its plan lets the selection decide, so a hovered
+    // vertex brings every base dot with it — far from the pointer, EA's
+    // corners light up. Both readings keep the tool active; only the hover
+    // differs.
+    {
+        cmdOk("select.typeFrom polygon");
+        cmdOk("tool.set xfrm.elementMove");
+        settle();
+        int hoverV() {
+            return cast(int) getJson("/api/toolpipe/eval")["hover"]["vertex"].integer;
+        }
+        auto ea = cq("EA");
+        int[2][] cs = [px(ea[0]), px(ea[2])];
+        int[2][] pts;
+        foreach (c; cs) pts ~= window(c, 2);
+        immutable int[2] ip = px(kI0Pos);
+        string log = format(`{"t":0,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,`
+            ~ `"fovY":0.785398}`, r.vp.x, r.vp.y, r.vp.width, r.vp.height) ~ "\n";
+        foreach (i; 0 .. 3)
+            log ~= format(`{"t":%d,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,`
+                ~ `"state":0,"mod":0}`, 30 + i * 20, r.vp.x + ip[0], r.vp.y + ip[1]) ~ "\n";
+        auto pr = postJson("/api/play-events", log);
+        assert(pr["status"].str == "success", "7: /api/play-events failed: " ~ pr.toString);
+        waitPlaybackProcessed();
+        settle();
+        assert(hoverV() == kI0, format("7 premise: the pointer on I0 hovers vertex %s",
+                                        hoverV()));
+        auto hov = probe(pts);
+        parkPointer(r);
+        assert(hoverV() == -1, format("7 premise: the parked pointer still hovers "
+            ~ "vertex %s", hoverV()));
+        auto none = probe(pts);
+        int[2] n = 0;
+        foreach (i; 0 .. pts.length)
+            if (maxDiff(hov[i], none[i]) >= 3) ++n[i / 25];
+        foreach (k; 0 .. 2)
+            assert(n[k] >= kCornerDot, format("7: with the mode off a vertex hover under "
+                ~ "the polygon type draws no base dot at EA's corner %s (%s px)",
+                cs[k], n[k]));
+        // ...and they are the dots vertex display would draw: the same pixels.
+        showVertices(true);
+        auto sv = probe(pts);
+        showVertices(false);
+        foreach (i; 0 .. pts.length)
+            assert(maxDiff(hov[i], sv[i]) <= 1, format("7: the hover's base dot at %s "
+                ~ "reads %s, vertex display draws %s", pts[i], hov[i].c, sv[i].c));
+        cmdOk("tool.set xfrm.elementMove off");
+        settle();
     }
     writeln("  test_retopology_lines_dots: all cells passed");
 }
