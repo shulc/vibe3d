@@ -659,9 +659,11 @@ unittest {
         parkPointer(r);
         immutable faces = getJson("/api/model")["faces"].array.length;
         assert(faces == fg.length, "6r: hiding must keep the face slots");
-        auto h = probe([at("F"), at("D1"), at("D2"), at("S0"), at("G")]);
+        // A is face 0: a stale list would still END on its old range, which
+        // after the shift is not A's, so A is the probe that must survive.
+        auto h = probe([at("F"), at("D1"), at("D2"), at("S0"), at("G"), at("A")]);
         assert(maxDiff(h[0], u[iF]) <= 1, "6r premise: F is hidden (reads its under value)");
-        foreach (j, i; [iV1, iV2, iS, iG])
+        foreach (j, i; [iV1, iV2, iS, iG, iA])
             assert(maxDiff(h[j + 1], o[i]) <= 1,
                 format("6r: probe %d reads %s after the layout change, %s before",
                        i, h[j + 1].c, o[i].c));
@@ -760,13 +762,21 @@ unittest {
     }
 
     // ---- 12. mode off control: B is hidden behind P1 --------------------------
+    // Under the SOLID active style, so the primary's unlit fill differs from
+    // P1's lit backdrop value: with shading both would be the same lit grey on
+    // the same normal and a leaked clear could not show. A (in front) is the
+    // population witness that the primary is drawn at all.
     cmd("viewport.retopology", `{"value":"off"}`);
+    cmd("viewport.displayStyle", `{"value":"solid"}`);
     {
-        auto uo = under([at("B")]);
-        auto oo = probe([at("B")]);
+        auto uo = under([at("B"), at("A")]);
+        auto oo = probe([at("B"), at("A")]);
+        assert(maxDiff(oo[1], uo[1]) >= 5,
+            format("12 premise: A (in front of P1) reads P1 %s under the solid style", uo[1].c));
         assert(maxDiff(oo[0], uo[0]) <= 1,
             format("12: with the mode off B (behind P1) reads %s, P1 %s", oo[0].c, uo[0].c));
     }
+    cmd("viewport.displayStyle", `{"value":"shaded"}`);
     writeln("  test_retopology_depth_fill: all cells passed");
 }
 

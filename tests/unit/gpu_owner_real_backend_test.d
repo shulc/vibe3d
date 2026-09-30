@@ -408,7 +408,7 @@ unittest // The module contains one typed low-level GPU-name delete sequence.
         "GPU-name deleter census: expected 3 VAO calls in one sequence, got %s",
         vaoDeletes));
     // Seven: the six created names plus the lazily created reverse-order
-    // index buffer, deleted in the same sequence when non-zero.
+    // index buffer, deleted in the same sequence (0 when never created).
     assert(vboDeletes == 7, format(
         "GPU-name deleter census: expected 7 VBO calls in one sequence, got %s",
         vboDeletes));

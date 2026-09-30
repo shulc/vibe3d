@@ -61,6 +61,27 @@ unittest // faceNormalFirst3 is the upload's normal, bit for bit
     }
     assert(compared == 4 && degenerates == 1,
         format("population: compared %s (4), degenerate %s (1)", compared, degenerates));
+    // A deterministic spread of triangles: the three hand-picked ones above
+    // can round alike under a different operation order; a few hundred cannot.
+    uint seed = 12345;
+    float rnd() {
+        seed = seed * 1664525u + 1013904223u;
+        return (seed >> 8) * (1.0f / (1 << 24)) * 4.0f - 2.0f;
+    }
+    int spread = 0;
+    foreach (t; 0 .. 400) {
+        immutable Vec3 a0 = Vec3(rnd(), rnd(), rnd()), a1 = Vec3(rnd(), rnd(), rnd()),
+                       a2 = Vec3(rnd(), rnd(), rnd());
+        bool dg;
+        immutable Vec3 n = faceNormalFirst3(a0, a1, a2, dg);
+        float nx, ny, nz;
+        legacyNormal(a0, a1, a2, nx, ny, nz);
+        assert(n.x is nx && n.y is ny && n.z is nz,
+            format("triangle %s: faceNormalFirst3 %s, upload arithmetic (%s,%s,%s)",
+                   t, n, nx, ny, nz));
+        ++spread;
+    }
+    assert(spread == 400);
     bool deg;
     assert(faceNormalFirst3(Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(0, 1, 0), deg) == Vec3(0, 0, 1)
         && !deg, "a +Z triangle must give (0,0,1), not degenerate");

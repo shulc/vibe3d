@@ -123,8 +123,7 @@ private void beginFacePass(const ref LitShader shader, FacePass pass) {
 /// Undo `beginFacePass` to the GL defaults the rest of the frame assumes.
 private void endFacePass(const ref LitShader shader, FacePass pass) {
     if (pass.cullBack) {
-        glDisable(GL_CULL_FACE);
-        glCullFace(GL_BACK);
+        glDisable(GL_CULL_FACE);   // the cull face stays GL_BACK, as set
         glFrontFace(GL_CCW);
     }
     if (pass.alpha < 1.0f) {
@@ -2262,7 +2261,7 @@ private void deleteGpuMeshNames(ref GpuMeshNames n) nothrow @nogc {
     glDeleteBuffers(1, &n.faceIdVbo);
     glDeleteBuffers(1, &n.matIdVbo);
     glDeleteBuffers(1, &n.weightColorVbo);
-    if (n.faceReverseEbo != 0) glDeleteBuffers(1, &n.faceReverseEbo);
+    glDeleteBuffers(1, &n.faceReverseEbo);   // 0 (never created) is a no-op
     n = GpuMeshNames.init;
 }
 
