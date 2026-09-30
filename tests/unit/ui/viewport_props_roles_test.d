@@ -30,6 +30,7 @@ import d_imgui.imgui_h : ImGuiConfigFlags, ImGuiKey, ImVec2;
 
 private enum repoRoot = buildNormalizedPath(dirName(__FILE_FULL_PATH__),
                                              "..", "..", "..");
+private enum int KEY_UP_ARROW = 515;
 private enum int KEY_DOWN_ARROW = 516;
 
 private string bodyAt(string code, string marker) {
@@ -457,25 +458,46 @@ unittest { // 8620: the backdrop chooser, Vertices checkbox and point size slide
     assert(ids.length == 2 && ids[1] == "viewport.pointSize" && ps > 0.0f && ps <= 16.0f,
         "8620 point size slider must dispatch viewport.pointSize on the active cell");
 
-    // The chooser opens on "Same as Active"; two steps down select "Flat".
-    ui.frame();
-    snap = viewportPropsDrawSnapshot();
-    ui.pressAt(center(snap.backdropMin, snap.backdropMax));
-    ui.release();
-    foreach (_; 0 .. 2) {
-        ui.keyDown(KEY_DOWN_ARROW);
+    // Every chooser option, selected through the real parser. The combo
+    // opens with the current option focused, so each pick is a signed step
+    // from the previous one; the order visits all four with no repeat, and
+    // each pick changes the value, so an id or row swap reddens a named step.
+    // The steps are positional, so the panel's row order is pinned here too.
+    static struct Pick { int steps; BackdropStyle want; string name; }
+    static immutable Pick[4] picks = [
+        Pick( 1, BackdropStyle.Wireframe,    "wireframe"),
+        Pick( 2, BackdropStyle.Hidden,       "hidden"),
+        Pick(-1, BackdropStyle.Flat,         "flat"),
+        Pick(-2, BackdropStyle.SameAsActive, "same"),
+    ];
+    assert(vpm.views[1].display.backdropStyle == BackdropStyle.SameAsActive,
+        "8620 chooser precondition: the active cell starts on Same as Active");
+    size_t picked;
+    foreach (pk; picks) {
         ui.frame();
-        ui.keyUp(KEY_DOWN_ARROW);
+        snap = viewportPropsDrawSnapshot();
+        ui.pressAt(center(snap.backdropMin, snap.backdropMax));
+        ui.release();
+        const key = pk.steps > 0 ? KEY_DOWN_ARROW : KEY_UP_ARROW;
+        foreach (_; 0 .. (pk.steps > 0 ? pk.steps : -pk.steps)) {
+            ui.keyDown(key);
+            ui.frame();
+            ui.keyUp(key);
+            ui.frame();
+        }
+        ui.keyDown(cast(int)ImGuiKey.Enter);
         ui.frame();
+        ui.keyUp(cast(int)ImGuiKey.Enter);
+        ui.frame();
+        ++picked;
+        assert(ids.length == 2 + picked && ids[$ - 1] == "viewport.backdropStyle"
+            && vpm.views[1].display.backdropStyle == pk.want,
+            "8620 backdrop chooser must dispatch viewport.backdropStyle " ~ pk.name);
+        if (pk.want == BackdropStyle.Flat)
+            assert(vpm.views[1].display.backdrop.style == DisplayStyle.Shaded,
+                "8620 backdrop flat must write Shaded into the backdrop slot");
     }
-    ui.keyDown(cast(int)ImGuiKey.Enter);
-    ui.frame();
-    ui.keyUp(cast(int)ImGuiKey.Enter);
-    ui.frame();
-    assert(ids.length == 3 && ids[2] == "viewport.backdropStyle"
-        && vpm.views[1].display.backdropStyle == BackdropStyle.Flat
-        && vpm.views[1].display.backdrop.style == DisplayStyle.Shaded,
-        "8620 backdrop chooser must dispatch viewport.backdropStyle flat");
+    assert(picked == 4, "8620 chooser census: all four options must be picked");
     assert(vpm.views[0].display == d0,
         "8620 the retopology controls reached a cell other than the active one");
 }

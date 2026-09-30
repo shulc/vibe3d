@@ -2399,6 +2399,12 @@ bool prepareWorker(ref Worker w) {
 // (CommandHttpAdapter.resetAutomationAfter) clears the cache. A user-visible
 // scene.reset deliberately keeps it, as the reference does.
 //
+// AN ELEVENTH, THE VIEW DISPLAY ATOMS (task 8620): each cell's retopology
+// mode, backdropStyle, backdrop.style, showVertices and pointSize survive
+// file.new and a UI scene.reset by the captured law, so a test that sets them
+// would hand them to the next test. Closed by the same step-3 script
+// scene.reset: its automation tail calls clearViewDisplayForAutomation.
+//
 // This is the documented cross-test state-bleed flake family (test_http_endpoint
 // asserting the pristine startup cube, test_selection's "expected 2 got 0",
 // etc.). Resetting at the RUNNER level — between every binary — kills the whole

@@ -236,6 +236,20 @@ enum BackdropStyle : ubyte {
     Hidden,
 }
 
+/// The backdrop style's command-argument spelling (what
+/// `viewport.backdropStyle` parses). The command keeps its OWN switch on
+/// purpose: the panel derives its argument from this, so a swap here is seen
+/// by the panel test that selects every option through the real parser
+/// (`tests/unit/ui/viewport_props_roles_test.d`, task 8620).
+string backdropStyleId(BackdropStyle s) pure nothrow @safe @nogc {
+    final switch (s) {
+        case BackdropStyle.SameAsActive: return "same";
+        case BackdropStyle.Wireframe:    return "wireframe";
+        case BackdropStyle.Flat:         return "flat";
+        case BackdropStyle.Hidden:       return "hidden";
+    }
+}
+
 /// Brightness multiplier applied to background layers under
 /// `BackdropStyle.SameAsActive`.
 ///

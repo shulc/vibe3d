@@ -975,11 +975,15 @@ final class ViewportManager {
         foreach (v; views[0..cellCount]) v.dirty = true;
     }
 
-    /// Restore the launch default so viewport state never bleeds across the
-    /// shared `--test` instance (invoked by `/api/reset`, `file.new`, and bare
-    /// `scene.reset` via the `onViewportReset` delegate — the SOLE camera-reset
-    /// owner for these paths, V3): Single layout, one live cell, active/hovered
-    /// = 0, no in-flight drag, every cell back to free perspective.
+    /// Restore the launch default layout and cameras (invoked by `file.new`
+    /// and bare `scene.reset` via the `onViewportReset` delegate — the SOLE
+    /// camera-reset owner for these paths, V3). One exception: the per-cell
+    /// display atoms (retopology, backdrop style, dots, point size) SURVIVE
+    /// `file.new` and a UI `scene.reset`, per the captured law (task 8620);
+    /// the automation reset clears them instead, through
+    /// `scene_reset_effects.clearViewDisplayForAutomation`. Single layout,
+    /// one live cell, active/hovered = 0, no in-flight drag, every cell back
+    /// to free perspective.
     /// `applyLayout(Single)` already resets
     /// cellCount/activeId/hoveredId/dragOriginId/ind*/masterId/rects+size (the
     /// clamp forces activeId→0); this additionally resets every cell's camera —

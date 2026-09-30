@@ -831,7 +831,7 @@ void drawViewportPropsPanel(ViewportPropertiesReadRole viewportRead,
         ImGui.Dummy(ImVec2(0, 2));
         ImGui.SeparatorText("Retopology");
         {
-            import display_state : BackdropStyle;
+            import display_state : BackdropStyle, backdropStyleId;
             import viewport_scheme : MAX_POINT_SIZE;
             import std.format : format;
 
@@ -848,26 +848,30 @@ void drawViewportPropsPanel(ViewportPropertiesReadRole viewportRead,
             if (presetPressed)
                 dispatch("viewport.retopologyPreset", positionalPayload([]));
 
-            static immutable string[4] backLabels =
-                ["Same as Active", "Wireframe", "Flat", "Hidden"];
-            static immutable string[4] backIds =
-                ["same", "wireframe", "flat", "hidden"];
-            static immutable BackdropStyle[4] backVals =
-                [BackdropStyle.SameAsActive, BackdropStyle.Wireframe,
-                 BackdropStyle.Flat, BackdropStyle.Hidden];
+            // One row per option: the label and the value it writes. The
+            // command argument is derived from the value, never kept beside it.
+            static struct BackdropChoice { string label; BackdropStyle value; }
+            static immutable BackdropChoice[4] backChoices = [
+                BackdropChoice("Same as Active", BackdropStyle.SameAsActive),
+                BackdropChoice("Wireframe",      BackdropStyle.Wireframe),
+                BackdropChoice("Flat",           BackdropStyle.Flat),
+                BackdropChoice("Hidden",         BackdropStyle.Hidden),
+            ];
             int bi = 0;
-            foreach (i, bv; backVals) if (bv == v.display.backdropStyle) bi = cast(int)i;
+            foreach (i, c; backChoices)
+                if (c.value == v.display.backdropStyle) bi = cast(int)i;
             ImGui.Text("Backdrop");
             ImGui.SameLine();
             ImGui.SetNextItemWidth(-1.0f);
-            const backdropOpen = ImGui.BeginCombo("##vpBackdropStyle", backLabels[bi]);
+            const backdropOpen = ImGui.BeginCombo("##vpBackdropStyle",
+                                                  backChoices[bi].label);
             recordViewportPropsBackdrop();
             if (backdropOpen) {
-                foreach (i, bl; backLabels) {
+                foreach (i, c; backChoices) {
                     bool sel = (i == bi);
-                    if (ImGui.Selectable(bl, sel))
+                    if (ImGui.Selectable(c.label, sel))
                         dispatch("viewport.backdropStyle",
-                            positionalPayload([backIds[i]]));
+                            positionalPayload([backdropStyleId(c.value)]));
                     if (sel) ImGui.SetItemDefaultFocus();
                 }
                 ImGui.EndCombo();
@@ -880,9 +884,10 @@ void drawViewportPropsPanel(ViewportPropertiesReadRole viewportRead,
                 dispatch("viewport.showVertices",
                     positionalPayload([dots ? "on" : "off"]));
 
-            // 0 = the scheme's default dot size. Clamped here for the same
-            // reason as the opacity slider above: ctrl-click text entry can
-            // leave the slider's range.
+            // 0 = the scheme's default dot size. The slider offers 0..16, but
+            // the clamp is MAX_POINT_SIZE (64) on purpose: ctrl-click text
+            // entry may type past the slider's range up to the scheme's own
+            // ceiling, and the kernel caps at that same bound.
             float ps = v.display.active.pointSize;
             ImGui.SetNextItemWidth(-1.0f);
             const psChanged = ImGui.SliderFloat("##vpPointSize", &ps, 0.0f,
