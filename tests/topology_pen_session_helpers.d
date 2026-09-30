@@ -315,20 +315,24 @@ void penBackgroundLayerFloor() {
            "pen rig: layer 1 is not the visible, unselected 482v/512f background sphere: " ~ bg.toString);
 }
 
-/// Floor on the background's WINDING, readable only with the pen armed (its
-/// hover raycast is what hits the background, single-sided): hovering
-/// penEmptyBackgroundPx hits layer 1 on the NEAR hemisphere, at the sphere
-/// point (0, -0.6, 0.8) the pixel was projected from. An inward-wound sphere
-/// culls the near side and the ray hits the far one (z < 0), so the z term is
-/// the winding term. Restores no state: a hover writes no history.
+/// Floor on the background HIT and its WINDING, readable only with the pen
+/// armed (its hover is what reaches the background): hovering
+/// penEmptyBackgroundPx hits layer 1 at the near-side sphere point
+/// (0, -0.6, 0.8) the pixel was projected from, and the hit face's normal
+/// points OUTWARD (n . p > 0). The seed ray reaches the near side whatever the
+/// winding, so the normal term is the one an inward-wound sphere reddens.
+/// Restores no state: a hover writes no history.
 void penBackgroundHitFloor() {
     penHover(penEmptyBackgroundPx());
     auto s = getJson("/api/tool/state");
-    const p = [penNum(s["point"].array[0]), penNum(s["point"].array[1]), penNum(s["point"].array[2])];
+    double[3] v3(JSONValue a) { return [penNum(a.array[0]), penNum(a.array[1]), penNum(a.array[2])]; }
+    const p = v3(s["point"]), n = v3(s["normal"]);
+    const outward = n[0] * p[0] + n[1] * p[1] + n[2] * p[2];
     assert(s["hit"].type == JSONType.true_ && s["layer"].integer == 1
-           && abs(p[0]) < 0.05 && abs(p[1] + 0.6) < 0.05 && abs(p[2] - 0.8) < 0.05,
-           format("pen rig: hovering the empty background does not hit the near side of layer 1 at "
-                  ~ "(0,-0.6,0.8): hit %s layer %d point %s", s["hit"].toString, s["layer"].integer, p));
+           && abs(p[0]) < 0.05 && abs(p[1] + 0.6) < 0.05 && abs(p[2] - 0.8) < 0.05 && outward > 0.5,
+           format("pen rig: hovering the empty background does not hit the outward-facing near side "
+                  ~ "of layer 1 at (0,-0.6,0.8): hit %s layer %d point %s normal %s",
+                  s["hit"].toString, s["layer"].integer, p, n));
 }
 
 /// Arm the pen through the UI door; floors: armed, and the background hit
