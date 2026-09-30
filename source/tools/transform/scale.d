@@ -865,9 +865,10 @@ public:
                 const pixelLength = gizmoPixelSize(center, cachedVp, 1);
                 const modelLength = gizmoPixelSize(center, cachedVp,
                     centreInputPolicy.referencePixels * centreInputPolicy.referenceScale * centreInputPolicy.smallScale);
-                centreInput.displacement = centreInput.displacement +
-                    centreInput.screenRight * (dxRel * pixelLength) -
-                    centreInput.screenUp * (dyRel * pixelLength);
+                centreInput.screenDisplacement += Vec3(cast(float)dxRel, cast(float)dyRel, 0);
+                centreInput.displacement =
+                    centreInput.screenRight * (centreInput.screenDisplacement.x * pixelLength) -
+                    centreInput.screenUp * (centreInput.screenDisplacement.y * pixelLength);
                 const q = signedScaleDistance(centreInput.displacement, centreInput.screenRight, modelLength);
                 float sample = advanceScaleInput(centreInput, q, centreInputPolicy);
                 if (centreInputPolicy.composition == ScaleSampleComposition.ratio)

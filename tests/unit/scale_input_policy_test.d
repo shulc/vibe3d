@@ -178,6 +178,7 @@ unittest {
         bank.centreInput.previousDistance = 4;
         bank.centreInput.offset = -.6;
         bank.centreInput.displacement = Vec3(5,6,7);
+        bank.centreInput.screenDisplacement = Vec3(8,9,0);
         bank.centreInput.screenRight = Vec3(0,1,0);
         bank.centreInput.screenUp = Vec3(0,0,1);
     }
