@@ -491,7 +491,16 @@ unittest {
             "refusals must change nothing: " ~ c["state"].toString);
     }
     cmd("viewport.layout", `"Quad"`);
+    // Both commands run the shared per-cell tail, which marks the cell as
+    // user-configured: read on cells nobody has written yet.
+    bool userSet(int k) {
+        return jb(getJson("/api/viewport/display")["cells"].array[k]["userSet"]);
+    }
+    assert(!userSet(2) && !userSet(3), "cell selector: cells 2 and 3 start untouched");
     cmd("viewport.retopology", `{"value":"on","viewport":2}`);
+    assert(userSet(2), "viewport.retopology must run the shared cell tail");
+    cmd("viewport.backdropStyle", `{"value":"same","viewport":3}`);
+    assert(userSet(3), "viewport.backdropStyle must run the shared cell tail");
     cmd("viewport.backdropStyle", `{"value":"hidden","viewport":2}`);
     {
         auto cells = getJson("/api/viewport/display")["cells"].array;
