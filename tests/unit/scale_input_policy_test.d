@@ -11,6 +11,11 @@ unittest {
     auto offset = evaluateScaleSample(start, sample, ScaleSampleComposition.factorOffset, false);
     assert(abs(offset.x - 1.7f) < 1e-6 && offset.y == 2.5f && offset.z == 0,
         "absolute factor offset and composed clamp on every axis");
+    const negativeHeld = Vec3(-.2f,-.4f,-.6f);
+    assert(evaluateScaleSample(negativeHeld, Vec3(1,1,1), ScaleSampleComposition.ratio, false) == negativeHeld,
+        "ratio identity preserves finite negative held control");
+    assert(evaluateScaleSample(negativeHeld, Vec3(1,1,1), ScaleSampleComposition.factorOffset, false) == negativeHeld,
+        "offset identity preserves finite negative held even when permission is disabled");
     assert(evaluateScaleSample(start, Vec3(1,1,1), ScaleSampleComposition.factorOffset, false) == start,
         "offset identity preserves held start");
     assert(evaluateScaleSample(start, sample, ScaleSampleComposition.factorOffset, false) == offset,
