@@ -1344,7 +1344,7 @@ public:
         auto zOv = g_perf.scope_(Cat.drawOverlays);
         BaseDots hoverBase = baseDotsFor(activePlan, meshModel, vp.eye,
                                          shader.locAlpha);
-        hoverBase.draw = !itemSequence && activePlan.baseDotsBySelection;
+        hoverBase.draw = activePlan.baseDotsBySelection;
         gpu.drawVertices(shader.locColor, shader.locPointSize, vertHovForDraw,
                          MarkView.init, occluded, hoverBase);
     }
