@@ -1,0 +1,449 @@
+{
+ "schema": 1,
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "gui-gesture",
+  "notes": "GUI worker, command-line arm (key/UI door), pointer drags and keystrokes; state read between gestures only. Structural expectations re-derived from the raw checkpoints; no reference digest or coordinate is carried except the rig grid itself.",
+  "captured_utc": "2026-09-30",
+  "harness": "toolcards/topology_pen/session_capture/harness",
+  "task": "8640, 8650"
+ },
+ "rig": {
+  "file": "topology_pen_session_rig.v3d",
+  "fg": "layer 0, primary: 4x4 vertex grid (3x3 quads) on the +Z cap of the unit sphere, vertex index j*4+i (i along +X, j along +Y)",
+  "bg": "layer 1, visible, not selected: UV sphere r=1, 32 segments x 16 rings, triangulated, outward winding",
+  "camera": {
+   "projection": "perspective",
+   "eye": [
+    0.0,
+    0.0,
+    4.0
+   ],
+   "target": [
+    0.0,
+    0.0,
+    0.0
+   ]
+  }
+ },
+ "laws": [
+  {
+   "id": "L1-own-activation",
+   "cells": [
+    "arm-two-moves"
+   ],
+   "law": "Armed through the key/UI door, the activation is its own undo step: each Ctrl+Z pops exactly one gesture and the tool stays armed; the Ctrl+Z after the last gesture pops the activation and drops the tool."
+  },
+  {
+   "id": "L2-redo-symmetric",
+   "cells": [
+    "arm-two-moves"
+   ],
+   "law": "Redo after popping the activation re-arms the tool bare, then re-applies each gesture bit-exact."
+  },
+  {
+   "id": "L4-every-chord-one-step",
+   "cells": [
+    "chords"
+   ],
+   "law": "Every chord gesture is exactly one Ctrl+Z step; the undo restores the pre-gesture mesh bit-exact and the tool stays armed; redo of split/remove restores the gesture bit-exact."
+  },
+  {
+   "id": "L5-press-is-a-step",
+   "cells": [
+    "no-op-presses"
+   ],
+   "law": "Every press writes one undo step even when the mesh does not change; Ctrl+Z pops such a step and the tool stays armed."
+  },
+  {
+   "id": "L6-held-key-dropped",
+   "cells": [
+    "held-undo"
+   ],
+   "law": "A Ctrl+Z pressed while the button of a Move drag is held is dropped; the drag completes and afterwards two gestures are on the stack."
+  },
+  {
+   "id": "L9-switch-keeps-gesture",
+   "cells": [
+    "switch-away"
+   ],
+   "law": "Switching to another tool keeps the gesture; one Ctrl+Z pops the new tool's activation and re-arms the pen with the gesture intact; the next pops the gesture, the next the pen's activation; redo is symmetric."
+  },
+  {
+   "id": "L10-branch-replace",
+   "cells": [
+    "branch"
+   ],
+   "law": "A gesture after an undo discards the redo branch: after g1, g2, Ctrl+Z, g3 the next Ctrl+Z pops g3, the next g1."
+  },
+  {
+   "id": "L12-alt-never-reaches-tool",
+   "cells": [
+    "alt-chords"
+   ],
+   "law": "No Alt chord reaches the pen: Alt drags started on a vertex leave the mesh bit-identical, add no undo step, and the tool stays armed."
+  },
+  {
+   "id": "L13-smooth-loop-is-the-loop",
+   "cells": [
+    "smooth-loop"
+   ],
+   "law": "Smoothing + Edge Loop processes only the pressed edge's loop: on an interior edge of an open 4-vertex row the two interior vertices; on a border edge the perimeter minus its four face-valence-1 corners. Plain smoothing on the same edge moves all 16. One step each, undo bit-exact."
+  }
+ ],
+ "cells": {
+  "arm-two-moves": {
+   "moved": {
+    "g1": [
+     5
+    ],
+    "g2": [
+     10
+    ]
+   },
+   "undo": [
+    {
+     "step": "z1",
+     "equals": "g1",
+     "armed": true
+    },
+    {
+     "step": "z2",
+     "equals": "a0",
+     "armed": true
+    },
+    {
+     "step": "z3",
+     "equals": "a0",
+     "armed": false
+    }
+   ],
+   "redo": [
+    {
+     "step": "r1",
+     "equals": "a0",
+     "armed": true
+    },
+    {
+     "step": "r2",
+     "equals": "g1",
+     "armed": true
+    },
+    {
+     "step": "r3",
+     "equals": "g2",
+     "armed": true
+    }
+   ]
+  },
+  "chords": {
+   "gestures": [
+    {
+     "id": "dup_vtx",
+     "counts": [
+      17,
+      10,
+      26
+     ],
+     "undoArmed": true
+    },
+    {
+     "id": "dup_edge",
+     "counts": [
+      18,
+      10,
+      27
+     ],
+     "undoArmed": true
+    },
+    {
+     "id": "addloop",
+     "counts": [
+      20,
+      12,
+      31
+     ],
+     "undoArmed": true
+    },
+    {
+     "id": "moveloop",
+     "counts": [
+      16,
+      9,
+      24
+     ],
+     "undoArmed": true,
+     "moved": [
+      4,
+      5,
+      6,
+      7
+     ]
+    },
+    {
+     "id": "slide",
+     "counts": [
+      16,
+      9,
+      24
+     ],
+     "undoArmed": true,
+     "moved": [
+      5
+     ]
+    },
+    {
+     "id": "split",
+     "counts": [
+      16,
+      10,
+      25
+     ],
+     "undoArmed": true,
+     "moved": [],
+     "redoBitExact": true
+    },
+    {
+     "id": "remove",
+     "counts": [
+      15,
+      8,
+      22
+     ],
+     "undoArmed": true,
+     "redoBitExact": true
+    },
+    {
+     "id": "smooth",
+     "counts": [
+      16,
+      9,
+      24
+     ],
+     "undoArmed": true,
+     "moved": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15
+     ]
+    }
+   ],
+   "population": 8,
+   "finalUndoArmed": false
+  },
+  "held-undo": {
+   "moved": {
+    "rel": [
+     10
+    ]
+   },
+   "rowsAfterArm": 2,
+   "undo": [
+    {
+     "step": "z1",
+     "equals": "g1",
+     "armed": true
+    },
+    {
+     "step": "z2",
+     "equals": "a0",
+     "armed": true
+    }
+   ]
+  },
+  "branch": {
+   "moved": {
+    "g3": [
+     6
+    ]
+   },
+   "undo": [
+    {
+     "step": "z2",
+     "equals": "z1"
+    },
+    {
+     "step": "z3",
+     "equals": "a0"
+    }
+   ]
+  },
+  "alt-chords": {
+   "chords": [
+    {
+     "id": "alt-lmb",
+     "mods": [
+      "alt"
+     ],
+     "button": 1,
+     "meshUnchanged": true,
+     "armed": true
+    },
+    {
+     "id": "alt-mmb",
+     "mods": [
+      "alt"
+     ],
+     "button": 2,
+     "meshUnchanged": true,
+     "armed": true
+    },
+    {
+     "id": "alt-rmb",
+     "mods": [
+      "alt"
+     ],
+     "button": 3,
+     "meshUnchanged": true,
+     "armed": true
+    },
+    {
+     "id": "alt-shift-lmb",
+     "mods": [
+      "alt",
+      "shift"
+     ],
+     "button": 1,
+     "meshUnchanged": true,
+     "armed": true
+    },
+    {
+     "id": "alt-ctrl-lmb",
+     "mods": [
+      "alt",
+      "ctrl"
+     ],
+     "button": 1,
+     "meshUnchanged": true,
+     "armed": true
+    },
+    {
+     "id": "alt-shift-ctrl-lmb",
+     "mods": [
+      "alt",
+      "shift",
+      "ctrl"
+     ],
+     "button": 1,
+     "meshUnchanged": true,
+     "armed": true
+    },
+    {
+     "id": "alt-shift-mmb",
+     "mods": [
+      "alt",
+      "shift"
+     ],
+     "button": 2,
+     "meshUnchanged": true,
+     "armed": true
+    },
+    {
+     "id": "alt-ctrl-mmb",
+     "mods": [
+      "alt",
+      "ctrl"
+     ],
+     "button": 2,
+     "meshUnchanged": true,
+     "armed": true
+    }
+   ],
+   "population": 8
+  },
+  "smooth-loop": {
+   "interior": {
+    "edge": [
+     5,
+     6
+    ],
+    "moved": [
+     5,
+     6
+    ],
+    "dragMoved": [
+     5,
+     6
+    ]
+   },
+   "border": {
+    "edge": [
+     0,
+     1
+    ],
+    "moved": [
+     1,
+     2,
+     4,
+     7,
+     8,
+     11,
+     13,
+     14
+    ]
+   },
+   "plainMovedCount": 16
+  },
+  "switch-away": {
+   "undo": [
+    {
+     "step": "z1",
+     "equals": "g1",
+     "tool": "pen"
+    },
+    {
+     "step": "z2",
+     "equals": "a0",
+     "tool": "pen"
+    },
+    {
+     "step": "z3",
+     "equals": "a0",
+     "tool": "none"
+    }
+   ],
+   "redo": [
+    {
+     "step": "r1",
+     "equals": "a0",
+     "tool": "pen"
+    },
+    {
+     "step": "r2",
+     "equals": "g1",
+     "tool": "pen"
+    },
+    {
+     "step": "r3",
+     "equals": "g1",
+     "tool": "move"
+    }
+   ]
+  },
+  "no-op-presses": {
+   "presses": [
+    "tap-vertex-5",
+    "tap-empty-background",
+    "zero-drag-vertex-10"
+   ],
+   "rowsAdded": 3,
+   "meshUnchanged": true,
+   "undoArmed": true
+  }
+ }
+}
