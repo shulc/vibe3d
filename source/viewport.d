@@ -990,6 +990,10 @@ final class ViewportManager {
             // depending on slice order. Cleared BEFORE applyLayout, which is
             // what re-seeds the template.
             views[k].displayUserSet = false;
+            // The rest of the cell's display state (backdrop slot, backdrop
+            // representation, retopology mode) has commands of its own and no
+            // template, so it would otherwise survive the reset the same way.
+            views[k].display = ViewportDisplay.init;
         }
         applyLayout(LayoutPreset.Single);
     }

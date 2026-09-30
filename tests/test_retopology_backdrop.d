@@ -512,6 +512,21 @@ unittest {
         }
         assert(k == 4);
     }
+    // A reset restores the WHOLE cell display — these fields have commands
+    // and no template, so without it one test's mode would bleed into the
+    // next in the shared instance.
+    cmd("viewport.displayStyle", `{"value":"solid","slot":1,"viewport":2}`);
+    cmdOk(commandBody("scene.reset"));
+    settle();
+    cmd("viewport.layout", `"Quad"`);
+    {
+        auto c2 = getJson("/api/viewport/display")["cells"].array[2];
+        assert(!jb(c2["state"]["retopology"])
+            && c2["state"]["backdropStyle"].str == "SameAsActive"
+            && c2["state"]["backdrop"]["style"].str == "Shaded",
+            "reset: cell 2's display must be back to its defaults: "
+            ~ c2["state"].toString);
+    }
     cmd("viewport.layout", `"Single"`);
     writeln("  test_retopology_backdrop: all cells passed");
 }
