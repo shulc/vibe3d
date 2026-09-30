@@ -177,8 +177,10 @@ unittest {
         "W16-C shared vertex shader must assign its point-size uniform once");
     assert(shaderCode.count(`glGetUniformLocation(program, "u_pointSize")`) == 1,
         "W16-C Shader must resolve its point-size uniform exactly once");
-    assert(viewport.count("drawVertices(shader.locColor, shader.locPointSize,") == 2,
-        "W16-C both production vertex-dot paths must pass the uniform location");
+    // Three since the retopology item bracket (task 8610): the primary's two
+    // dot arms and the per-item base dots of `drawItemLinesAndDots`.
+    assert(viewport.count("drawVertices(shader.locColor, shader.locPointSize,") == 3,
+        "W16-C all three production vertex-dot paths must pass the uniform location");
     assert(compactApp.count(
             "version(web){}elseglEnable(GL_PROGRAM_POINT_SIZE);") == 1,
         "W16-C GL_PROGRAM_POINT_SIZE must be enabled by the desktop arm and "

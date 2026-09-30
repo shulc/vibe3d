@@ -820,6 +820,18 @@ unittest {
                    ~ "%d) = the gain-lit undimmed value — it must be drawn by the joined "
                    ~ "sequence", on.c, pred, k));
     }
+    // 8b: the dots say WHICH pass drew it. The joined plan draws ordinary base
+    // dots with show-vertices on; the backdrop pass never draws dots. With a
+    // single layer the two passes otherwise issue the same plan (D6 undims
+    // both), so the fill alone cannot tell them apart.
+    {
+        immutable double[3] corner = [t.c[0] + t.h[0], t.c[1] + t.h[1], t.z];
+        auto n = dotPixels([toPx(corner, r.vp)], 2);
+        assert(n[0] >= kCornerDot,
+            format("8b: with no edit target the layer's corner draws no base dot (%s px) — "
+                   ~ "it was drawn by the backdrop pass, not the joined sequence", n[0]));
+        cmd("viewport.showVertices", `{"value":"off"}`);
+    }
     writeln("  rig N: cell 8 passed");
 }
 
