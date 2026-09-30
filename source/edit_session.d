@@ -865,6 +865,7 @@ private struct ToolSession {
         const ueClosed = history_.undoEntries();
         if (tool_() is null && ueClosed.length &&
             (ueClosed[$ - 1].flags & HistoryFlags.ClosedRun)) {
+            const stepUndo = (ueClosed[$ - 1].flags & HistoryFlags.ClosedStep) != 0;
             const runId = ueClosed[$ - 1].runId;
             const token = ueClosed[$ - 1].cmd.sessionToken();
             const ownerId = ueClosed[$ - 1].closedOwnerId;
@@ -875,20 +876,23 @@ private struct ToolSession {
                     entry.cmd.sessionToken() != token ||
                     entry.closedOwnerId != ownerId) break;
                 ++count;
+                if (stepUndo) break;
             }
             if (count == 0 || rearmClosedTool_ is null || ownerId.length == 0)
                 return false;
             foreach (_; 0 .. count)
                 if (!history_.undo()) return false;
-            history_.invalidateRedo();
+            if (!stepUndo) history_.invalidateRedo();
             history_.replayWithoutRecord(() => rearmClosedTool_(ownerId));
             // The replay arm continues this closed run's session even when
             // maxDepth has evicted its original activation row. Keep its token
             // across the next gesture so a C branch can close and undo too.
             adoptToken_(ownerId, token);
-            terminalClosedRunRow_ = undoTop_();
-            terminalClosedRunDepth_ = history_.undoEntries().length;
-            terminalClosedRunArmed_ = true;
+            if (!stepUndo) {
+                terminalClosedRunRow_ = undoTop_();
+                terminalClosedRunDepth_ = history_.undoEntries().length;
+                terminalClosedRunArmed_ = true;
+            }
             return true;
         }
         // A held first group is valid only for the NEXT navigate step after

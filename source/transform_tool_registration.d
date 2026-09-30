@@ -1,6 +1,6 @@
 module transform_tool_registration;
 
-import command_history : CommandHistory;
+import command_history : CommandHistory, RunCloseMode;
 import commands.layer.xform_edit : LayerXformEdit;
 import commands.mesh.morph_edit : MeshMorphEdit;
 import commands.mesh.vertex_edit : MeshVertexEdit;
@@ -83,9 +83,12 @@ private struct TransformFactoryDefaults {
     bool flagT, flagR, flagS;
     int handleFamily;
     string handlePresentation;
+    RunCloseMode runCloseMode;
+    string id;
 
     enum move      = TransformFactoryDefaults(true,  false, false, 0, "full");
-    enum rotate    = TransformFactoryDefaults(false, true,  false, 1, "full");
+    enum rotate    = TransformFactoryDefaults(false, true,  false, 1, "full",
+                                               RunCloseMode.stepUndo, "rotate");
     enum scale     = TransformFactoryDefaults(false, false, true,  2, "full");
     // Equal to the XfrmTransformTool constructor defaults by contract, not by
     // omission: presets on this base that set no handle fields inherit it.
@@ -104,6 +107,9 @@ private XfrmTransformTool buildUnifiedTransform(LiveSessionRole owner,
     t.flagS = defaults.flagS;
     t.handleFamily = defaults.handleFamily;
     t.handlePresentation = defaults.handlePresentation;
+    t.runCloseMode = defaults.runCloseMode;
+    if (defaults.runCloseMode != RunCloseMode.consolidate)
+        t.closedRunOwnerId = defaults.id;
     t.setUndoBindings(deps.history(), deps.vertexEditFactory(),
         deps.morphEditFactory());
     t.setItemUndoFactory(deps.itemEditFactory());

@@ -4,11 +4,13 @@ import command : Command, CmdFlags;
 import command_history : CommandHistory;
 import command_history : RecordMode;
 import command_history : HistoryFlags;
+import command_history : RunCloseMode;
 import commands.tool.lifecycle : ToolActivationCommand;
 import command_executor : CommandExecutor;
 import edit_session : EditSession, RefireClient;
 import editmode : EditMode;
 import tool : Tool, ToolSessionPolicy;
+import tool_presets : loadToolPresets;
 import tool_activation_ownership : ToolTransition;
 import view : View;
 import std.file : readText;
@@ -180,6 +182,55 @@ unittest { // 8261: cap eviction keeps the oldest retained prestate recoverable.
            "capped closed run must still reach terminal Redo");
 }
 
+unittest { // 8490: a closed run may retain independent gesture steps.
+    auto tool = new RecordedTool;
+    Tool active = tool;
+    auto history = new CommandHistory;
+    EditSession session;
+    session = new EditSession(() => active, history,
+        () { active = null; }, (string id) {
+            assert(id == "rotate");
+            active = tool;
+            session.noteArm(id, 999);
+        });
+    session.noteArm("rotate", 8490);
+    const run = history.nextRun();
+    tool.liveGesture(history, run, 7);
+    tool.liveGesture(history, run, 13);
+    assert(history.closeRunVisible(run, "rotate", RunCloseMode.stepUndo) == 2);
+    const closed = history.undoEntriesVisible();
+    assert(closed.length == 2 &&
+           (closed[0].flags & HistoryFlags.ClosedStep) &&
+           (closed[1].flags & HistoryFlags.ClosedStep),
+           "stepwise close must preserve two visible completed gestures");
+    active = null;
+    assert(session.navigate(true) && tool.value == 7 && active is tool,
+           "closed step Undo must restore the last gesture and its owner");
+    assert(history.undoEntries().length == 1 &&
+           history.redoEntries().length == 1 &&
+           session.sessionStateJson()["token"].integer == 8490,
+           "closed step Undo must retain redo and the original session token");
+    assert(session.navigate(false) && tool.value == 13 && active is tool,
+           "closed step Redo must restore the last gesture");
+    assert(!session.terminalRedoRequested(),
+           "stepwise closed runs do not request a terminal Redo modal");
+}
+
+unittest { // A preset based on rotate must not inherit the bare door's law.
+    size_t grouped, defaulted;
+    foreach (p; loadToolPresets("config/tool_presets.yaml")) {
+        if (p.id == "TransformMove") {
+            assert(p.runCloseMode == RunCloseMode.groupUndo);
+            ++grouped;
+        } else {
+            assert(p.runCloseMode == RunCloseMode.consolidate,
+                   "an unmeasured preset inherited the bare rotate close law");
+            ++defaulted;
+        }
+    }
+    assert(grouped == 1 && defaulted > 0);
+}
+
 unittest {
     // Headless Transform producers enter through tool.doApply's executor
     // record instead of a drag writer, but own the same History row.
@@ -305,11 +356,13 @@ unittest {
            "XfrmTransformTool recordTransformCommand no longer publishes its completed row");
     assert(readText("source/tool.d").indexOf("sessionRecordCompleted(cmd);") >= 0,
            "Tool.recordGestureEdit no longer publishes wrapper/Magnet rows");
-    assert(readText("source/tool_presets.d").indexOf(
-            "t.closedRunOwnerId = presetCopy.id == \"TransformMove\"") >= 0,
-           "production TransformMove preset lost its measured closed-run policy");
+    assert(readText("config/tool_presets.yaml").indexOf(
+            "historyClose: groupUndo") >= 0 &&
+           readText("source/tool_presets.d").indexOf(
+            "t.runCloseMode = presetCopy.runCloseMode;") >= 0,
+           "production TransformMove preset lost its declared closed-run policy");
     assert(readText("source/tools/transform/xfrm_transform.d").indexOf(
-            "history.closeRunVisible(history.currentRunId, closedRunOwnerId);") >= 0,
+            "history.closeRunVisible(history.currentRunId,") >= 0,
            "Xfrm drop stopped preserving the visible TransformMove groups");
     assert(readText("source/app.d").indexOf(
             "guardModalState.publishHistoryTerminal(\"Out of redos.\");") >= 0,

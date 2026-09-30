@@ -242,6 +242,7 @@ presets:
   # combined handles.
   - id: TransformMove
     base: xfrm.transform
+    historyClose: groupUndo
     attrs:
       T: "true"
       R: "false"

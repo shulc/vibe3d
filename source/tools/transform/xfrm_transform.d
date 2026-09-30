@@ -151,7 +151,7 @@ import tools.transform.xform_kernels :
     BlendMode,
     composeRunMatrix,
     runScaleAxes;
-import command_history : CommandHistory, PreparedHistoryKind;
+import command_history : CommandHistory, PreparedHistoryKind, RunCloseMode;
 import command : Command;
 import commands.mesh.vertex_edit : MeshVertexEdit;
 import change_bus : MeshEditScope;
@@ -697,9 +697,10 @@ class XfrmTransformTool : TransformTool, LiveEvalClient, SlotActivationClient,
                           PreparedToolDoorClient, PreparedToolParamDoorClient,
                           PreparedToolPoseDoorClient {
 public:
-    // Task 8261: set by the composition root for the captured TransformMove
-    // preset only. Other T-only presets have no post-close evidence yet.
+    // The composition root supplies the exact armed ID only for a measured
+    // visible-row close policy. Other presets consolidate by default.
     string closedRunOwnerId;
+    RunCloseMode runCloseMode = RunCloseMode.consolidate;
     final Mesh* preparedMeshForUpdate() const { return mesh; }
     // T/R/S flags — `T integer 0/1` etc. in the preset config.
     // Default to all enabled (the bare `Transform` preset that shows
@@ -1529,16 +1530,15 @@ public:
             commitEdit("Move");
         foreach (sub; enabledSubs()) sub.deactivate();
         foreignEditSessionClosed_ = false;
-        // Tool drop (record+consolidate): consolidate the FINAL run's in-session
-        // tail into one surviving entry. A clean multi-gesture run therefore
-        // collapses to ONE undo entry at the drop (one post-drop Ctrl+Z reverts
-        // the whole run); a session that already consolidated at a boundary
-        // leaves that surviving entry untouched (no-op gather). Done AFTER the
-        // sub-tool deactivation so the final consolidate sees the wrapper's
-        // whole tagged tail. Stop the legacy routing flag afterward.
+        // Tool drop closes the final in-session tail according to this
+        // producer's declared History policy: consolidate, retain one visible
+        // group per gesture with one grouped outside Undo, or retain individual
+        // outside steps. Done after sub-tool deactivation so the whole tail is
+        // available. Stop the legacy routing flag afterward.
         if (history !is null) {
-            if (closedRunOwnerId.length)
-                history.closeRunVisible(history.currentRunId, closedRunOwnerId);
+            if (runCloseMode != RunCloseMode.consolidate)
+                history.closeRunVisible(history.currentRunId,
+                                        closedRunOwnerId, runCloseMode);
             else
                 history.consolidate(history.currentRunId);
         }

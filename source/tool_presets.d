@@ -2,6 +2,7 @@ module tool_presets;
 
 import std.format : format;
 import std.json : JSONValue;
+import command_history : RunCloseMode;
 
 import registry         : Registry, ToolFactory, typedToolFactory;
 import tool             : Tool, ToolFlag;
@@ -33,6 +34,7 @@ struct ToolPreset {
     string[string][string]    pipeAttrs;     // stageId → (key → value)
     string[string]            toolAttrs;     // tool-level attr → value
     uint                      flags;         // OR of ToolFlag bits
+    RunCloseMode              runCloseMode;  // completed Transform run history
 }
 
 // Map YAML flag name → ToolFlag bit. Names match the enum members
@@ -80,7 +82,8 @@ ToolPreset[] loadToolPresets(string path) {
             // would leave it ambiguous which side wins, so reject it outright.
             if (node.containsKey("base") || node.containsKey("pipe")
                     || node.containsKey("attrs") || node.containsKey("flags")
-                    || node.containsKey("rearmAfterCommand"))
+                    || node.containsKey("rearmAfterCommand")
+                    || node.containsKey("historyClose"))
                 throw new Exception(format(
                     "tool_presets: preset '%s' in '%s' has 'alias' plus "
                     ~ "'base'/'pipe'/'attrs'/'flags' — an alias entry may only "
@@ -95,6 +98,20 @@ ToolPreset[] loadToolPresets(string path) {
         ToolPreset p;
         p.id   = id;
         p.base = node["base"].as!string;
+        if (node.containsKey("historyClose")) {
+            const value = node["historyClose"].as!string;
+            switch (value) {
+                case "consolidate": p.runCloseMode = RunCloseMode.consolidate; break;
+                case "groupUndo": p.runCloseMode = RunCloseMode.groupUndo; break;
+                case "stepUndo": p.runCloseMode = RunCloseMode.stepUndo; break;
+                default: throw new Exception(format(
+                    "tool_presets: unknown historyClose '%s' for '%s'", value, id));
+            }
+            if (p.base != "xfrm.transform" && p.base != "rotate" &&
+                p.base != "move" && p.base != "scale")
+                throw new Exception(format(
+                    "tool_presets: historyClose requires a Transform base: '%s'", id));
+        }
 
         if (node.containsKey("pipe")) {
             foreach (string stageId, Node attrsNode; node["pipe"]) {
@@ -175,6 +192,7 @@ private ToolPreset resolveAliasPreset(const ref ToolPreset target, string aliasI
     r.id    = aliasId;
     r.base  = target.base;
     r.flags = target.flags;
+    r.runCloseMode = target.runCloseMode;
     r.toolAttrs = target.toolAttrs.dup;
     foreach (stageId, attrs; target.pipeAttrs)
         r.pipeAttrs[stageId] = attrs.dup;
@@ -325,11 +343,13 @@ void registerToolPresets(ref Registry reg, ToolPreset[] presets) {
                 auto t = cast(T)baseFactory();
                 assert(t !is null, "typed preset base factory descriptor drift");
                 t.presetFlags = presetCopy.flags;
-                // Task 8261: only the measured TransformMove preset keeps its
-                // completed run rows; this typed factory owns the preset ID.
-                static if (is(T == XfrmTransformTool))
-                    t.closedRunOwnerId = presetCopy.id == "TransformMove"
-                        ? presetCopy.id : "";
+                // Presets declare their own close law. A preset based on
+                // `rotate` does not silently inherit the base ID's law.
+                static if (is(T == XfrmTransformTool)) {
+                    t.runCloseMode = presetCopy.runCloseMode;
+                    t.closedRunOwnerId = presetCopy.runCloseMode ==
+                        RunCloseMode.consolidate ? "" : presetCopy.id;
+                }
                 if (presetCopy.toolAttrs.length > 0)
                     applyToolAttrs(t, presetCopy.toolAttrs, presetCopy.id);
                 // Sticky user defaults are applied at the activation

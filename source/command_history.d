@@ -51,6 +51,11 @@ enum RecordMode { Record, Coalescing }
 
 enum UndoState { Invalid, Active, Suspend }
 
+/// How a transform producer exposes a completed run after its tool closes.
+/// The commands remain the single owner of finished geometry in both visible
+/// modes; ToolSession decides how many linked rows one outside Undo traverses.
+enum RunCloseMode : ubyte { consolidate, groupUndo, stepUndo }
+
 /// Per-entry status flags (Phase 7 of the history-panel design doc).
 /// Drives the history panel's per-row visual cues: badge column shows
 /// ✓ for Succeeded, ✗ for Failed, `·` for Quiet, `⋯` for SideEffect.
@@ -81,8 +86,8 @@ enum HistoryFlags : uint {
                          // panel / api; behaviour is identical to any other
                          // undoable entry once it is on the stack.
     InSession  = 1 << 7, // Entry was recorded mid tool-session as one step of
-                         // a RUN — a sequence of in-session gestures that share
-                         // a runId and consolidate into ONE surviving entry at
+                         // a RUN — a sequence of gestures that share a runId.
+                         // A producer may consolidate or retain its rows at
                          // the run boundary / tool drop. Set by
                          // recordInSession(); the matching entry carries the
                          // run's id in HistoryEntry.runId. Surfaced per-entry so
@@ -114,6 +119,8 @@ enum HistoryFlags : uint {
                              // by /api/history as the named step that it is.
     ClosedRun = 1 << 11, // A completed gesture row retained for a closed tool run.
                          // The runId groups its contiguous rows for outside navigation.
+    ClosedStep = 1 << 12, // A closed run whose outside navigation moves one
+                          // completed gesture and preserves its redo branch.
 }
 
 version (unittest) private HistoryEntry preparedTestEntry(Command cmd,
@@ -294,12 +301,10 @@ struct HistoryEntry {
                             //  history-panel design doc surfaces this in
                             //  the panel's display options.
     uint    flags;          // bitfield of HistoryFlags; Phase 7.
-    ulong   runId;          // Run identity for in-session entries. Meaningful
-                            //  only when (flags & HistoryFlags.InSession): all
-                            //  gestures of one run share the same id, and
-                            //  consolidate(runId) collapses that run's
-                            //  contiguous tail into one surviving entry. 0 for
-                            //  ordinary (non-in-session) entries.
+    ulong   runId;          // Run identity for in-session and retained closed
+                            //  entries. Gestures of one run share this id;
+                            //  consolidate(runId) can collapse the open tail.
+                            // 0 for ordinary entries.
     ulong   tweakGeneration;// Pipe-tweak GENERATION token (P-E). Stamped on every
                             //  recorded entry from CommandHistory._tweakGeneration
                             //  at record time. Load-bearing ONLY on a Refire
@@ -1621,13 +1626,14 @@ final class CommandHistory {
         // (exactly Arm 1's pre-Phase-4 "unexpected type — leave as-is" no-op).
     }
 
-    /// Task 8261: retain each completed gesture as a visible History row while
-    /// closing their shared run. The e001 TransformMove close shows two groups;
-    /// its outside Undo nevertheless returns to the run's start in one action.
-    /// Only a contiguous in-session tail is eligible, as with consolidate().
-    size_t closeRunVisible(ulong runId, string ownerId) {
+    /// Retain each completed gesture as a visible History row when closing a
+    /// run. The declared navigation policy decides whether an outside Undo
+    /// traverses the whole run or only its latest step. Only a contiguous
+    /// in-session tail is eligible, as with consolidate().
+    size_t closeRunVisible(ulong runId, string ownerId,
+                           RunCloseMode mode = RunCloseMode.groupUndo) {
         scope(exit) _runOpen = false;
-        if (ownerId.length == 0) return 0;
+        if (ownerId.length == 0 || mode == RunCloseMode.consolidate) return 0;
         size_t start = undoStack.length;
         while (start > 0 &&
                (undoStack[start - 1].flags & HistoryFlags.InSession) &&
@@ -1636,6 +1642,8 @@ final class CommandHistory {
             undoStack[i].flags &=
                 ~cast(uint)(HistoryFlags.InSession | HistoryFlags.Refire);
             undoStack[i].flags |= HistoryFlags.ClosedRun;
+            if (mode == RunCloseMode.stepUndo)
+                undoStack[i].flags |= HistoryFlags.ClosedStep;
             undoStack[i].closedOwnerId = ownerId.idup;
         }
         return undoStack.length - start;
