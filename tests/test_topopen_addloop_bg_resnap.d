@@ -83,7 +83,12 @@ private JSONValue primaryPlanes() {
 
 private double[3][] planeVerts(JSONValue p) {
     double[3][] r;
-    foreach (v; p["vertices"].array) r ~= triple(v);
+    foreach (i, v; p["vertices"].array) {
+        foreach (c; v.array)
+            assert(c.type == JSONType.float_ || c.type == JSONType.integer || c.type == JSONType.uinteger,
+                format("primary vertex %d is not finite: %s", i, v.toString));
+        r ~= triple(v);
+    }
     return r;
 }
 
