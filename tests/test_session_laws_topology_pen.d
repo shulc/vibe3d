@@ -20,7 +20,7 @@
 // hold add their cells.
 //
 // `VIBE3D_CELL=<id>` runs one cell alone (druntime stops a module at its first
-// failed assert); the last block pins the population: 8 with no filter, 1 with
+// failed assert); the last block pins the population: 9 with no filter, 1 with
 // one (an unknown name must not pass by running nothing).
 //
 // Run via: ./run_test.d test_session_laws_topology_pen
@@ -463,7 +463,7 @@ unittest {
     writeln("cells=", cellsRun);
     const only = environment.get("VIBE3D_CELL", "");
     if (only.length == 0)
-        assert(cellsRun == 8, format("topology pen session laws: %d cells ran, expected 8", cellsRun));
+        assert(cellsRun == 9, format("topology pen session laws: %d cells ran, expected 9", cellsRun));
     else
         assert(cellsRun == 1, format("topology pen session laws: VIBE3D_CELL=%s ran %d cells, expected 1 "
                                      ~ "(an unknown name runs none)", only, cellsRun));
