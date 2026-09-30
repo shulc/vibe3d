@@ -6218,6 +6218,67 @@ unittest { // applySmoothLoopPasses — interior relax + nearest-foot re-snap,
         "undo must restore every loop vertex's exact pre-relax position");
 }
 
+unittest { // applySmoothLoopPasses — the corner lock holds on EVERY pass, not
+           // only the first (task 8680 review R1). A border seed on the 2x2
+           // grid gathers the closed perimeter [0..8 minus 4]; the four
+           // corners (face valence 1) must stay byte-unchanged over three
+           // passes while the four border mids (perturbed outward) relax. A
+           // one-pass cell cannot see a lock that lapses after pass 0: from
+           // pass 1 on a corner's neighbours differ from it, so it would move.
+    import view : View;
+    import editmode : EditMode;
+    import mesh : makeGridPlane;
+    import snap : setBackgroundSnapSources;
+    import std.format : format;
+
+    setBackgroundSnapSources(null, null);   // test-isolation: relax only, no re-snap
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    t.history_               = history;
+    t.smoothLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                         "mesh.topoPen_smoothloop", "Topology Smooth Loop",
+                                                         MeshEditScope.Position);
+
+    Mesh m = makeGridPlane(2);   // 3x3 verts in XZ; corners 0,2,6,8; border mids 1,3,5,7
+    t.meshSrc_ = () => &m;
+
+    // Push each border mid outward off its side, so a relax toward its two
+    // corner neighbours is a real move.
+    m.vertices[1] = m.vertices[1] + Vec3(0.3f, 0, -0.4f);
+    m.vertices[3] = m.vertices[3] + Vec3(-0.4f, 0, 0.3f);
+    m.vertices[5] = m.vertices[5] + Vec3(0.4f, 0, -0.2f);
+    m.vertices[7] = m.vertices[7] + Vec3(-0.2f, 0, 0.4f);
+
+    uint seed = m.edgeIndex(0, 1);
+    assert(seed != uint.max);
+    auto verts = TopologyPenTool.uniqueRingVerts(&m, seed);
+    assert(verts.length == 8, format("border seed must gather the 8-vertex perimeter; got %s", verts));
+    const pc = m.vertexPolygonCounts();
+    size_t corners;
+    foreach (vi; verts) if (pc[vi] == 1) ++corners;
+    assert(corners == 4, format("population floor: the perimeter must hold 4 corners; got %d", corners));
+
+    t.smoothLoopSeed_  = cast(int)seed;
+    t.smoothLoopVerts_ = verts;
+
+    Vec3[] before = m.vertices.dup;
+    t.applySmoothLoopPasses(3);
+
+    // Positive half first: every border mid moved.
+    foreach (vi; [1u, 3u, 5u, 7u])
+        assert(m.vertices[vi] != before[vi],
+            format("border mid %d must relax over 3 passes; stayed at %s", vi, before[vi]));
+    // Then the lock: every corner is byte-unchanged after all three passes.
+    foreach (vi; [0u, 2u, 6u, 8u])
+        assert(m.vertices[vi] == before[vi],
+            format("corner %d must stay byte-unchanged across 3 passes; %s -> %s",
+                   vi, before[vi], m.vertices[vi]));
+    assert(m.vertices[4] == before[4], "the interior vertex is not on the loop and must not move");
+    assert(history.canUndo(), "the 3-pass border smooth must record one undo entry");
+}
+
 unittest { // applySmoothLoopPasses — a gesture that nets to ZERO movement
            // (the flat, un-perturbed grid: 3/4/5 are exactly colinear and
            // evenly spaced, so vertex 4's inverse-edge-length mean IS its own

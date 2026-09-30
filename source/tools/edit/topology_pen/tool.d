@@ -6065,8 +6065,9 @@ public:
         // Corner lock (task 8680, law L13 border; toolcard session_capture
         // S-smoothloop): a loop vertex on exactly ONE polygon is a patch
         // corner and is held fixed like an open-loop end, so a border loop
-        // relaxes its perimeter but not its corners. Face valence, not edge
-        // degree, is the predicate (the default `lockCorner` decode).
+        // relaxes its perimeter but not its corners. The rule we implement is
+        // face valence 1; on a manifold patch it agrees with the edge-valence-2
+        // boundary rule of `mesh.smooth`'s `lockCorner`.
         const polyCount = m.vertexPolygonCounts();
 
         // Two-layer clamp (mirrors applySmoothPasses's own): floor at 1 (a
