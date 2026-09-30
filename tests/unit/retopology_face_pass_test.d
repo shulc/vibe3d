@@ -1,0 +1,133 @@
+// The pure halves of the per-item face pass: the shared face normal, the
+// reverse polygon order index list, and the plan -> FacePass mapping.
+//
+// The pixels are pinned by the suite test `tests/test_retopology_depth_fill.d`;
+// these cells pin what the pixels cannot name: that the one face-normal home is
+// BYTE-identical to the arithmetic it replaced (so the face VBO did not move),
+// that every reverse-order range is the face it claims to be, and that the
+// mode-off plan maps to exactly `FacePass.init` (today's opaque forward pass).
+module tests.unit.retopology_face_pass_test;
+
+import std.file : readText;
+import std.format : format;
+import std.math : sqrt;
+import std.path : buildPath, dirName;
+import std.string : count;
+
+import display_state : DrawPlan, ViewportDisplay, resolveDrawPlan;
+import item_xform : ItemXform;
+import math : Vec3, faceNormalFirst3, identityMatrix;
+import mesh_gpu : FacePass, buildReverseFaceIndices;
+import ui.viewport_render : facePassFor;
+
+private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
+
+// The upload's normal as it was written inline before the extraction, kept
+// verbatim so the equality below is a statement about the bytes.
+private void legacyNormal(Vec3 v0, Vec3 v1, Vec3 v2,
+                          out float nx, out float ny, out float nz)
+{
+    float ax = v1.x - v0.x, ay = v1.y - v0.y, az = v1.z - v0.z;
+    float bx = v2.x - v0.x, by = v2.y - v0.y, bz = v2.z - v0.z;
+    float cx = ay*bz - az*by;
+    float cy = az*bx - ax*bz;
+    float cz = ax*by - ay*bx;
+    float nlen = sqrt(cx*cx + cy*cy + cz*cz);
+    if (nlen > 1e-6f) { float inv = 1.0f/nlen; nx=cx*inv; ny=cy*inv; nz=cz*inv; }
+    else              { nx=0; ny=1; nz=0; }
+}
+
+unittest // faceNormalFirst3 is the upload's normal, bit for bit
+{
+    immutable Vec3[3][] tris = [
+        [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(0, 1, 0)],                 // +Z
+        [Vec3(0.3f, -1.7f, 2.1f), Vec3(1.13f, 0.21f, -0.4f),
+         Vec3(-0.77f, 0.9f, 0.05f)],                                     // oblique
+        [Vec3(1e-2f, 2e-2f, 0), Vec3(3e-2f, 1e-2f, 5e-3f),
+         Vec3(-2e-2f, 7e-2f, 1e-2f)],                                    // small, not degenerate
+        [Vec3(0, 0, 0), Vec3(1, 1, 1), Vec3(2, 2, 2)],                   // collinear
+    ];
+    int compared = 0, degenerates = 0;
+    foreach (t; tris) {
+        bool deg;
+        immutable Vec3 n = faceNormalFirst3(t[0], t[1], t[2], deg);
+        float nx, ny, nz;
+        legacyNormal(t[0], t[1], t[2], nx, ny, nz);
+        assert(n.x is nx && n.y is ny && n.z is nz,
+            format("faceNormalFirst3 %s differs from the upload's arithmetic (%s,%s,%s)",
+                   n, nx, ny, nz));
+        ++compared;
+        if (deg) ++degenerates;
+    }
+    assert(compared == 4 && degenerates == 1,
+        format("population: compared %s (4), degenerate %s (1)", compared, degenerates));
+    bool deg;
+    assert(faceNormalFirst3(Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(0, 1, 0), deg) == Vec3(0, 0, 1)
+        && !deg, "a +Z triangle must give (0,0,1), not degenerate");
+    assert(faceNormalFirst3(Vec3(0, 0, 0), Vec3(1, 1, 1), Vec3(2, 2, 2), deg) == Vec3(0, 1, 0)
+        && deg, "a collinear triangle falls back to (0,1,0) and says so");
+}
+
+unittest // the face VBO has ONE normal home: no inline copy survives in mesh_gpu.d
+{
+    const src = readText(buildPath(repoRoot, "source", "mesh_gpu.d"));
+    immutable calls = src.count("faceNormalFirst3(");
+    assert(calls == 3, format("mesh_gpu.d: expected 3 faceNormalFirst3 calls "
+        ~ "(upload, refreshPositions, the positions-only fan refresh), got %s", calls));
+    assert(src.count("1e-6f") == 0 && src.count("nlen") == 0,
+        "mesh_gpu.d: an inline face-normal copy is back; call math.faceNormalFirst3");
+}
+
+unittest // reverse polygon order: descending faces, fans intact, ranges exact
+{
+    // Four faces; face 1 is hidden (count 0, its start aliases face 2's).
+    immutable int[] start = [0, 3, 3, 9];
+    immutable int[] cnt   = [3, 0, 6, 3];
+    uint[12] idx;
+    buildReverseFaceIndices(start, cnt, idx[]);
+    assert(idx == [9, 10, 11, 3, 4, 5, 6, 7, 8, 0, 1, 2],
+        format("reverse index list %s", idx));
+    // Each face's range [total - (s + c), total - s) holds exactly its own
+    // vertices, in its own order — the formula drawFacesHighlighted uses.
+    enum int total = 12;
+    int checked = 0;
+    foreach (fi; 0 .. start.length) {
+        immutable int first = total - (start[fi] + cnt[fi]);
+        foreach (k; 0 .. cnt[fi]) {
+            assert(idx[first + k] == start[fi] + k,
+                format("face %s corner %s at reverse slot %s reads %s", fi, k,
+                       first + k, idx[first + k]));
+            ++checked;
+        }
+    }
+    assert(checked == total, format("population: %s of %s slots checked", checked, total));
+}
+
+unittest // plan -> FacePass: mode off is FacePass.init; the mode and a mirror are read
+{
+    float[16] ident = identityMatrix;
+    ViewportDisplay d;
+    DrawPlan off = resolveDrawPlan(d, false);
+    immutable FacePass fOff = facePassFor(off, ident);
+    assert(fOff == FacePass.init,
+        format("mode off must be today's pass exactly, got %s", fOff));
+
+    d.retopology = true;
+    DrawPlan on = resolveDrawPlan(d, false);
+    immutable FacePass fOn = facePassFor(on, ident);
+    assert(fOn.cullBack && fOn.alpha == on.faceAlpha && fOn.alpha < 1.0f
+        && fOn.reverseOrder && !fOn.mirrored,
+        format("mode on: cull, alpha %s, reverse order, not mirrored; got %s",
+               on.faceAlpha, fOn));
+
+    ItemXform mirror;
+    mirror.scl.x = -1;
+    float[16] mm = mirror.composedMatrix();
+    assert(facePassFor(on, mm).mirrored, "scl.x = -1 must flip the front face");
+    ItemXform turned;
+    turned.rot.y = 40;
+    turned.scl = Vec3(2, 0.5f, 3);
+    float[16] tm = turned.composedMatrix();
+    assert(!facePassFor(on, tm).mirrored,
+        "a rotation with positive scales is not a mirror");
+}

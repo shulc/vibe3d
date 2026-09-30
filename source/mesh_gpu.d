@@ -9,7 +9,6 @@
 module mesh_gpu;
 
 import bindbc.opengl;
-import std.math : sqrt;
 import core.atomic : atomicOp;
 import math;    // Vec3
 import shader;  // LitShader
@@ -81,6 +80,73 @@ struct BaseWire {
     /// Base-line opacity, 0..1. Anything below 1.0 turns blending on for the
     /// duration of the base pass only.
     float alpha    = 1.0f;
+}
+
+// ---------------------------------------------------------------------------
+// FacePass — how one item's face pass is submitted (task 8590)
+// ---------------------------------------------------------------------------
+
+/// Plan-derived face-pass state, built by the renderer's `facePassFor` from a
+/// `DrawPlan` and the item's model matrix; `FacePass.init` is today's opaque,
+/// uncull'd, forward `glDrawArrays` pass, byte-identical. `cullBack` culls the
+/// polygons whose SCREEN winding faces away (captured: facing is per eye);
+/// `mirrored` (model 3x3 determinant < 0) flips the front-face convention so
+/// a mirrored item still culls the side facing away. `alpha < 1` blends with
+/// destination alpha left alone. `reverseOrder` submits the faces in reverse
+/// polygon index order through `faceReverseEbo` (captured: the translucent
+/// fill is one depth-writing pass in reverse polygon order). Every state the
+/// pass sets is restored on exit: the picker saves cull but not front face or
+/// blend.
+struct FacePass {
+    bool  cullBack;
+    float alpha = 1.0f;
+    bool  reverseOrder;
+    bool  mirrored;
+}
+
+/// Set the GL state `pass` asks for; `shader`'s `u_faceAlpha` is written only
+/// when the pass is translucent, so an opaque pass issues exactly today's calls.
+private void beginFacePass(const ref LitShader shader, FacePass pass) {
+    if (pass.cullBack) {
+        glEnable(GL_CULL_FACE);
+        glCullFace(GL_BACK);
+        glFrontFace(pass.mirrored ? GL_CW : GL_CCW);
+    }
+    if (pass.alpha < 1.0f) {
+        glEnable(GL_BLEND);
+        glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA,
+                            GL_ZERO, GL_ONE);
+        glUniform1f(shader.locFaceAlpha, pass.alpha);
+    }
+}
+
+/// Undo `beginFacePass` to the GL defaults the rest of the frame assumes.
+private void endFacePass(const ref LitShader shader, FacePass pass) {
+    if (pass.cullBack) {
+        glDisable(GL_CULL_FACE);
+        glCullFace(GL_BACK);
+        glFrontFace(GL_CCW);
+    }
+    if (pass.alpha < 1.0f) {
+        glUniform1f(shader.locFaceAlpha, 1.0f);
+        glDisable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    }
+}
+
+/// The reverse-order index list of a face VBO laid out by `triStart` /
+/// `triCount` (vertex units): faces in DESCENDING index order, each face's fan
+/// triangles in their own order. Face `fi` then occupies
+/// `[total - (triStart[fi] + triCount[fi]), total - triStart[fi])` of the
+/// list, so any run of consecutive faces is one contiguous range.
+void buildReverseFaceIndices(const(int)[] triStart, const(int)[] triCount,
+                             uint[] outIdx) @safe pure nothrow @nogc
+{
+    size_t w = 0;
+    foreach_reverse (fi; 0 .. triStart.length)
+        foreach (k; 0 .. triCount[fi])
+            outIdx[w++] = cast(uint)(triStart[fi] + k);
+    assert(w == outIdx.length);
 }
 
 // ---------------------------------------------------------------------------
@@ -436,6 +502,18 @@ struct GpuMesh {
     // version moved.
     ulong  uploadVersion;
 
+    // Bumps on every face-LAYOUT build (`buildUploadCpu`, cage and preview
+    // alike) — not on a positions-only refresh, which keeps the layout. The
+    // reverse-order index buffer below is valid while its stamp equals this.
+    ulong  faceLayoutGen;
+    // Reverse polygon order index list over the face VBO (`FacePass`), created
+    // and filled lazily by the first reverse-order draw. Its binding is VAO
+    // state: it is bound only with `faceVao` bound, and stays attached.
+    GLuint faceReverseEbo;
+    ulong  faceReverseEboGen;
+    bool   faceReverseEboFilled;
+    private uint[] scratchReverseIdx;
+
     // P3: scratch buffers re-used across upload() calls. Pre-sized to
     // the exact final length via a counting pre-pass, then filled by
     // index write — kills the per-face / per-corner `~=` cascades
@@ -584,6 +662,7 @@ struct GpuMesh {
             faceCornerVert.length = totalFaceCorners;
         faceTriStart.length = mesh.faces.length;
         faceTriCount.length = mesh.faces.length;
+        ++faceLayoutGen;
         faceOriginGpu    .length = 0;
         if (faceOrigin.length > 0) {
             faceOriginGpu.length = faceOrigin.length;
@@ -600,22 +679,10 @@ struct GpuMesh {
                     faceTriCount[fi] = 0;
                     continue;
                 }
-                Vec3 v0 = vpos[face[0]];
-                Vec3 v1 = vpos[face[1]];
-                Vec3 v2 = vpos[face[2]];
-                float ax = v1.x - v0.x, ay = v1.y - v0.y, az = v1.z - v0.z;
-                float bx = v2.x - v0.x, by = v2.y - v0.y, bz = v2.z - v0.z;
-                float cx = ay*bz - az*by;
-                float cy = az*bx - ax*bz;
-                float cz = ax*by - ay*bx;
-                float nlen = sqrt(cx*cx + cy*cy + cz*cz);
-                float nx, ny, nz;
-                if (nlen > 1e-6f) {
-                    float inv = 1.0f / nlen;
-                    nx = cx*inv; ny = cy*inv; nz = cz*inv;
-                } else {
-                    nx = 0; ny = 1; nz = 0;
-                }
+                bool degenerate;
+                immutable Vec3 fn = faceNormalFirst3(vpos[face[0]], vpos[face[1]],
+                                                     vpos[face[2]], degenerate);
+                immutable float nx = fn.x, ny = fn.y, nz = fn.z;
                 immutable uint i0 = face[0];
                 for (uint i = 1; i + 1 < face.length; i++) {
                     immutable uint ia = i0;
@@ -988,18 +1055,10 @@ struct GpuMesh {
                     // would overwrite that face's data.
                     if (face.length < 3 || hideSkipFace(mesh, fi)) continue;
                     immutable uint i0 = face[0];
-                    Vec3 v0 = vpos[i0];
-                    Vec3 v1 = vpos[face[1]];
-                    Vec3 v2 = vpos[face[2]];
-                    float ax = v1.x - v0.x, ay = v1.y - v0.y, az = v1.z - v0.z;
-                    float bx = v2.x - v0.x, by = v2.y - v0.y, bz = v2.z - v0.z;
-                    float cx = ay*bz - az*by;
-                    float cy = az*bx - ax*bz;
-                    float cz = ax*by - ay*bx;
-                    float nlen = sqrt(cx*cx + cy*cy + cz*cz);
-                    float nx, ny, nz;
-                    if (nlen > 1e-6f) { float inv = 1.0f/nlen; nx=cx*inv; ny=cy*inv; nz=cz*inv; }
-                    else              { nx=0; ny=1; nz=0; }
+                    bool degenerate;
+                    immutable Vec3 fn = faceNormalFirst3(vpos[i0], vpos[face[1]],
+                                                         vpos[face[2]], degenerate);
+                    immutable float nx = fn.x, ny = fn.y, nz = fn.z;
                     int k = faceTriStart[fi] * FACE_STRIDE;
                     // Fan-triangulate around face[0]; write [pos, normal]
                     // per vertex with hand-rolled inner loop — avoids the
@@ -1226,18 +1285,10 @@ struct GpuMesh {
                     // triangle, so writing here would corrupt that face (R2).
                     if (face.length < 3 || hideSkipFace(mesh, fi)) continue;
                     immutable uint i0 = face[0];
-                    Vec3 v0 = vpos[i0];
-                    Vec3 v1 = vpos[face[1]];
-                    Vec3 v2 = vpos[face[2]];
-                    float ax = v1.x - v0.x, ay = v1.y - v0.y, az = v1.z - v0.z;
-                    float bx = v2.x - v0.x, by = v2.y - v0.y, bz = v2.z - v0.z;
-                    float cx = ay*bz - az*by;
-                    float cy = az*bx - ax*bz;
-                    float cz = ax*by - ay*bx;
-                    float nlen = sqrt(cx*cx + cy*cy + cz*cz);
-                    float nx, ny, nz;
-                    if (nlen > 1e-6f) { float inv = 1.0f/nlen; nx=cx*inv; ny=cy*inv; nz=cz*inv; }
-                    else              { nx=0; ny=1; nz=0; }
+                    bool degenerate;
+                    immutable Vec3 fn = faceNormalFirst3(vpos[i0], vpos[face[1]],
+                                                         vpos[face[2]], degenerate);
+                    immutable float nx = fn.x, ny = fn.y, nz = fn.z;
                     int k = faceTriStart[fi] * FACE_STRIDE;
                     for (size_t i = 1; i + 1 < face.length; i++) {
                         Vec3 va = mesh.vertices[i0];
@@ -1345,14 +1396,53 @@ struct GpuMesh {
         g_fc.draw(p, count);
     }
 
+    // The same rule as `dcArrays`, for the one indexed draw: EVERY
+    // glDrawElements in this struct goes through here and is counted.
+    // `offset` is in INDICES (uint) into the bound element buffer. That
+    // buffer's binding is VAO state: only `faceReverseEbo` is ever bound,
+    // only with `faceVao` bound, and it is never unbound with the VAO bound
+    // (that would detach it); `glDrawArrays` ignores it.
+    private void dcElements(DrawPass p, GLenum mode, int count, size_t offset) {
+        glDrawElements(mode, count, GL_UNSIGNED_INT,
+                       cast(const(void)*)(offset * uint.sizeof));
+        g_fc.draw(p, count);
+    }
+
+    // Bind (creating on first use) and, when the face layout moved since it
+    // was filled, refill the reverse-order index buffer. `faceVao` must be
+    // bound: the binding attaches the buffer to it.
+    private void bindFaceReverseEbo() {
+        if (faceReverseEbo == 0) glGenBuffers(1, &faceReverseEbo);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, faceReverseEbo);
+        if (faceReverseEboFilled && faceReverseEboGen == faceLayoutGen) return;
+        immutable size_t n = cast(size_t)faceVertCount;
+        if (scratchReverseIdx.length < n) scratchReverseIdx.length = n;
+        buildReverseFaceIndices(faceTriStart, faceTriCount, scratchReverseIdx[0 .. n]);
+        uint zero = 0;
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+            n > 0 ? cast(GLsizeiptr)(n * uint.sizeof) : cast(GLsizeiptr)uint.sizeof,
+            n > 0 ? scratchReverseIdx.ptr : &zero, GL_DYNAMIC_DRAW);
+        faceReverseEboGen    = faceLayoutGen;
+        faceReverseEboFilled = true;
+    }
+
     // Draw faces only (writes depth buffer). Material colour comes from
     // the Materials UBO (LitShader.setSurfaces); u_overrideMix is left
     // at its useProgram default of 0 so the shader uses mat_base[matId].
-    void drawFaces(const ref LitShader shader) {
+    // `pass` adds cull / translucency / reverse order (`FacePass`); its
+    // default is the unchanged opaque forward pass.
+    void drawFaces(const ref LitShader shader, FacePass pass = FacePass.init) {
         glEnable(GL_POLYGON_OFFSET_FILL);
         glPolygonOffset(1.0f, 1.0f);
         glBindVertexArray(faceVao);
-        dcArrays(DrawPass.faces, GL_TRIANGLES, 0, faceVertCount);
+        beginFacePass(shader, pass);
+        if (pass.reverseOrder) {
+            bindFaceReverseEbo();
+            dcElements(DrawPass.faces, GL_TRIANGLES, faceVertCount, 0);
+        } else {
+            dcArrays(DrawPass.faces, GL_TRIANGLES, 0, faceVertCount);
+        }
+        endFacePass(shader, pass);
         glDisable(GL_POLYGON_OFFSET_FILL);
         glBindVertexArray(0);
     }
@@ -1364,11 +1454,14 @@ struct GpuMesh {
     // hovered face shows the legacy highlight even on multi-material LWO
     // meshes; the non-hover branches restore u_overrideMix=0 so the rest
     // of the mesh keeps its surface colours.
-    void drawFacesHighlighted(const ref LitShader shader, int hoveredFace) {
+    void drawFacesHighlighted(const ref LitShader shader, int hoveredFace,
+                              FacePass pass = FacePass.init) {
         glEnable(GL_POLYGON_OFFSET_FILL);
         glPolygonOffset(1.0f, 1.0f);
         glBindVertexArray(faceVao);
+        beginFacePass(shader, pass);
         scope(exit) {
+            endFacePass(shader, pass);
             glDisable(GL_POLYGON_OFFSET_FILL);
             glBindVertexArray(0);
             // Always leave overrideMix at the useProgram default so the
@@ -1377,6 +1470,37 @@ struct GpuMesh {
         }
 
         int vboFaceCount = cast(int)faceTriStart.length;
+
+        // Reverse polygon order: one walk over the VBO faces from
+        // the last down, emitting each run of equal hover state (hover mapped
+        // through `faceOriginGpu` under a preview, as below) as one range of
+        // the reverse index buffer — contiguous by its construction.
+        if (pass.reverseOrder) {
+            bindFaceReverseEbo();
+            if (hoveredFace < 0) {
+                dcElements(DrawPass.faces, GL_TRIANGLES, faceVertCount, 0);
+                return;
+            }
+            immutable bool rpreview = faceOriginGpu.length > 0;
+            bool hoverAt(int fi) {
+                return (rpreview ? cast(int)faceOriginGpu[fi] : fi) == hoveredFace;
+            }
+            int i = vboFaceCount - 1;
+            while (i >= 0) {
+                immutable bool h = hoverAt(i);
+                int lo = i;
+                while (lo > 0 && hoverAt(lo - 1) == h) --lo;
+                immutable int first = faceVertCount - (faceTriStart[i] + faceTriCount[i]);
+                immutable int end   = faceVertCount - faceTriStart[lo];
+                if (end > first) {
+                    glUniform1f(shader.locOverrideMix, h ? 1.0f : 0.0f);
+                    if (h) glUniform3f(shader.locColor, 0.5f, 0.71f, 0.79f);
+                    dcElements(DrawPass.faces, GL_TRIANGLES, end - first, first);
+                }
+                i = lo - 1;
+            }
+            return;
+        }
 
         if (hoveredFace < 0) {
             dcArrays(DrawPass.faces, GL_TRIANGLES, 0, faceVertCount);
@@ -2073,13 +2197,31 @@ private struct GpuMeshNames {
     GLuint edgeVao, edgeVbo;
     GLuint vertVao, vertVbo;
     GLuint faceIdVbo, matIdVbo, weightColorVbo;
+    // Created lazily by the first reverse-order face draw (`FacePass`), so 0
+    // for every mesh that never drew one; creators leave it 0. It is RELEASED
+    // with the rest (take / delete) but is not part of the IDENTITY the owners
+    // validate against: a draw may create it between an owner's prepare and
+    // its validate, and that must not refuse the transaction.
+    GLuint faceReverseEbo;
+
+    bool opEquals(const GpuMeshNames o) const nothrow @nogc @safe {
+        return faceVao == o.faceVao && faceVbo == o.faceVbo
+            && edgeVao == o.edgeVao && edgeVbo == o.edgeVbo
+            && vertVao == o.vertVao && vertVbo == o.vertVbo
+            && faceIdVbo == o.faceIdVbo && matIdVbo == o.matIdVbo
+            && weightColorVbo == o.weightColorVbo;
+    }
 }
 
 private GpuMeshNames takeGpuMeshNames(ref GpuMesh gpu) nothrow @nogc {
     GpuMeshNames names = GpuMeshNames(
         gpu.faceVao, gpu.faceVbo, gpu.edgeVao, gpu.edgeVbo,
         gpu.vertVao, gpu.vertVbo, gpu.faceIdVbo, gpu.matIdVbo,
-        gpu.weightColorVbo);
+        gpu.weightColorVbo, gpu.faceReverseEbo);
+    gpu.faceReverseEbo = 0;
+    gpu.faceLayoutGen = gpu.faceReverseEboGen = 0;
+    gpu.faceReverseEboFilled = false;
+    gpu.scratchReverseIdx = null;
     gpu.faceVao = gpu.faceVbo = 0;
     gpu.edgeVao = gpu.edgeVbo = 0;
     gpu.vertVao = gpu.vertVbo = 0;
@@ -2109,7 +2251,7 @@ private GpuMeshNames takeGpuMeshNames(ref GpuMesh gpu) nothrow @nogc {
 private GpuMeshNames peekGpuMeshNames(ref GpuMesh gpu) nothrow @nogc {
     return GpuMeshNames(gpu.faceVao, gpu.faceVbo, gpu.edgeVao, gpu.edgeVbo,
         gpu.vertVao, gpu.vertVbo, gpu.faceIdVbo, gpu.matIdVbo,
-        gpu.weightColorVbo);
+        gpu.weightColorVbo, gpu.faceReverseEbo);
 }
 
 private void deleteGpuMeshNames(ref GpuMeshNames n) nothrow @nogc {
@@ -2120,6 +2262,7 @@ private void deleteGpuMeshNames(ref GpuMeshNames n) nothrow @nogc {
     glDeleteBuffers(1, &n.faceIdVbo);
     glDeleteBuffers(1, &n.matIdVbo);
     glDeleteBuffers(1, &n.weightColorVbo);
+    if (n.faceReverseEbo != 0) glDeleteBuffers(1, &n.faceReverseEbo);
     n = GpuMeshNames.init;
 }
 
@@ -2183,10 +2326,7 @@ final class GpuResourceOwner {
     bool beginPreparedDestroy(out PreparedGpuResourceToken token) nothrow @nogc {
         if (pending || target is null) return false;
         ++generation;
-        pendingDestroy = GpuMeshNames(
-            target.faceVao, target.faceVbo, target.edgeVao, target.edgeVbo,
-            target.vertVao, target.vertVbo, target.faceIdVbo,
-            target.matIdVbo, target.weightColorVbo);
+        pendingDestroy = peekGpuMeshNames(*target);
         pending = true;
         validated = false;
         token.ownerId = ownerId;
@@ -2305,6 +2445,10 @@ private GpuMesh cloneUploadState(ref GpuMesh src) {
     dst.vertVao = src.vertVao; dst.vertVbo = src.vertVbo;
     dst.faceIdVbo = src.faceIdVbo; dst.matIdVbo = src.matIdVbo;
     dst.weightColorVbo = src.weightColorVbo;
+    dst.faceReverseEbo = src.faceReverseEbo;
+    dst.faceLayoutGen = src.faceLayoutGen;
+    dst.faceReverseEboGen = src.faceReverseEboGen;
+    dst.faceReverseEboFilled = src.faceReverseEboFilled;
     dst.faceVertCount = src.faceVertCount;
     dst.edgeVertCount = src.edgeVertCount;
     dst.vertCount = src.vertCount;
@@ -2354,6 +2498,7 @@ private bool isDefaultEmptyGpuMesh(ref GpuMesh gpu) nothrow @nogc {
 }
 
 private void installUploadState(ref GpuMesh dst, ref GpuMesh src) nothrow @nogc {
+    dst.faceLayoutGen = src.faceLayoutGen;
     dst.faceVertCount = src.faceVertCount;
     dst.edgeVertCount = src.edgeVertCount;
     dst.vertCount = src.vertCount;

@@ -568,8 +568,9 @@ private:
         // (`CLAUDE.md` §Measured laws), and until this line it was true only
         // by INHERITANCE: nothing here touched culling, so the pre-pass was
         // two-sided merely because whatever ran before it happened to leave
-        // GL_CULL_FACE off. Two modules do enable it (`handles/gl_util.d`,
-        // `tools/slice/slice_tool.d`), each restoring it themselves; one
+        // GL_CULL_FACE off. Three modules do enable it (`handles/gl_util.d`,
+        // `tools/slice/slice_tool.d`, `mesh_gpu.d`'s culled `FacePass`),
+        // each restoring it themselves; one
         // missed restore and a back-facing occluder would silently stop
         // occluding — a facing rule nobody wrote. `bvh_pick.d` already treats
         // "the face pass does not cull" as a load-bearing invariant of the

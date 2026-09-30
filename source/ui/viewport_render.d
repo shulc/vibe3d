@@ -25,7 +25,7 @@ import mesh;                 // Mesh, MeshStructKey, MeshTopoKey
 import mesh_ops.loop_slice   : loopSliceRingEdges;
 import editmode;             // EditMode
 import seltype;              // SelType, viewportPickType
-import mesh_gpu              : BaseWire, GpuMesh, OccludedPass;
+import mesh_gpu              : BaseWire, FacePass, GpuMesh, OccludedPass;
 import viewport_scheme       : schemeColor, SchemeColor;
 import handles.gl_util       : setThickLineScreenSize;
 import document              : Document, Layer, kindInfo;
@@ -64,6 +64,39 @@ version (WithAI) {
 // =============================================================================
 
 alias BuildToolSubject = void delegate(out SubjectPacket, ref VectorStack);
+
+// ---- The per-item draw bracket (task 8590, plan M-C) -----------------------
+// An item's draw is `beginItem` → faces (`facePassFor`) → edges → dots, each
+// read from the item's `DrawPlan` alone; nothing here names a display mode.
+
+/// The face pass of an item drawn under `plan` through `model`. Reverse
+/// polygon order goes with translucency: submission order is observable only
+/// when the fill blends (captured: the translucent fill is ONE depth-writing
+/// pass in reverse polygon order), so an opaque pass keeps today's forward
+/// `glDrawArrays`. `mirrored` is the sign of the model's 3x3 determinant.
+FacePass facePassFor(const ref DrawPlan plan, const ref float[16] model)
+    @safe pure nothrow @nogc
+{
+    FacePass fp;
+    fp.cullBack     = plan.cullBackFaces;
+    fp.alpha        = plan.faceAlpha;
+    fp.reverseOrder = plan.faceAlpha < 1.0f;
+    fp.mirrored     = matrixMirrorsWinding(model);
+    return fp;
+}
+
+/// Head of an item's draw: with `clearDepthFirst` the item starts on a clear
+/// depth buffer (captured: one depth clear per foreground item). The depth
+/// mask is forced on first because a depth clear honours it; no current path
+/// reaches here with it off (`endHighlightPasses` restores it), so the line is
+/// defensive.
+private void beginItem(const ref DrawPlan plan) {
+    import bindbc.opengl : glClear, glDepthMask, GL_DEPTH_BUFFER_BIT, GL_TRUE;
+    if (plan.clearDepthFirst) {
+        glDepthMask(GL_TRUE);
+        glClear(GL_DEPTH_BUFFER_BIT);
+    }
+}
 
 struct SceneInputs {
     Document* document;
@@ -670,6 +703,7 @@ public:
     // a second draw path would buy is a second place for hover tint, selection
     // highlight and per-surface colour to quietly diverge, which is the actual
     // risk this axis carries.
+    beginItem(activePlan);
     {
         auto zMesh = g_perf.scope_(Cat.drawMesh);
         if (activePlan.drawFaces) {
@@ -691,10 +725,11 @@ public:
             bool toolFaceHover = activeTool !is null
                               && activeTool.wantsHoverForType(EditMode.Polygons)
                               && hoveredFace >= 0;
+            immutable FacePass facePass = facePassFor(activePlan, meshModel);
             if (selFeedbackType == SelType.Polygon || toolFaceHover) {
-                gpu.drawFacesHighlighted(litShader, faceHovForDraw);
+                gpu.drawFacesHighlighted(litShader, faceHovForDraw, facePass);
             } else {
-                gpu.drawFaces(litShader);
+                gpu.drawFaces(litShader, facePass);
             }
             // Restore, same discipline as the backdrop pass's setDim: the
             // program is shared with every preview/gizmo draw downstream.

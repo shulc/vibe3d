@@ -355,6 +355,30 @@ unittest { // background-layer draws are attributed to the BACKDROP slots
                   passVerts(two, "faces")));
 }
 
+unittest { // the retopology face pass is ONE counted indexed submission (task 8590)
+    // Mode on submits the primary's faces in reverse polygon order through
+    // `dcElements`; that path must count exactly like the forward one: one
+    // call carrying the whole face-VBO vertex count, derived from /api/model.
+    resetApp();
+    cmd(commandBody("scene.loadMesh",
+        `{"vertices":[[-1,-1,0],[1,-1,0],[1,1,0],[-1,1,0]],"faces":[[0,1,2,3]]}`));
+    settle();
+    immutable long want = expectedFaceVerts(gj("/api/model"));
+    assert(want == 6, format("rig: one quad fans into 6 vertices, model implies %d", want));
+    auto off = lastScene();
+    assert(passCalls(off, "faces") == 1 && passVerts(off, "faces") == want,
+           format("mode off: expected 1 face call / %d verts, got %d / %d",
+                  want, passCalls(off, "faces"), passVerts(off, "faces")));
+    cmd(commandBody("viewport.retopology", `{"value":"on"}`));
+    settle();
+    auto on = lastScene();
+    cmd(commandBody("viewport.retopology", `{"value":"off"}`));
+    settle();
+    assert(passCalls(on, "faces") == 1 && passVerts(on, "faces") == want,
+           format("mode on: expected 1 face call / %d verts, got %d / %d",
+                  want, passCalls(on, "faces"), passVerts(on, "faces")));
+}
+
 unittest { // draw-CALL count tracks selection fragmentation
     // The batching oracle. The selected-face overlay coalesces contiguous runs
     // of selected faces into one submission, so N scattered faces cost N draw

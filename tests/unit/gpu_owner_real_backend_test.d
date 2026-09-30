@@ -407,7 +407,51 @@ unittest // The module contains one typed low-level GPU-name delete sequence.
     assert(vaoDeletes == 3, format(
         "GPU-name deleter census: expected 3 VAO calls in one sequence, got %s",
         vaoDeletes));
-    assert(vboDeletes == 6, format(
-        "GPU-name deleter census: expected 6 VBO calls in one sequence, got %s",
+    // Seven: the six created names plus the lazily created reverse-order
+    // index buffer, deleted in the same sequence when non-zero.
+    assert(vboDeletes == 7, format(
+        "GPU-name deleter census: expected 7 VBO calls in one sequence, got %s",
         vboDeletes));
+}
+
+unittest // The lazily created reverse-order index buffer is released on both routes.
+{
+    withGlBoundary({
+        enum cell = "faceReverseEbo release";
+        GpuMesh gpuA;
+        GpuMesh gpuB;
+        gpuA.init();
+        gpuB.init();
+        // Route 1: the prepared resource owner (take + delete). The index
+        // buffer is created AFTER the prepare — a reverse-order draw landing
+        // between prepare and validate — which must not refuse the release.
+        auto owner = new GpuResourceOwner(&gpuA, 7, 11);
+        PreparedGpuResourceToken prepared;
+        assert(owner.beginPreparedDestroy(prepared), cell ~ " prepare refused");
+        // What the first reverse-order face draw does to the name (its GL
+        // upload needs a context; the name lifecycle does not).
+        glGenBuffers(1, &gpuA.faceReverseEbo);
+        glGenBuffers(1, &gpuB.faceReverseEbo);
+        gpuA.faceLayoutGen = gpuA.faceReverseEboGen = 5;
+        gpuA.faceReverseEboFilled = true;
+        immutable GLuint eboA = gpuA.faceReverseEbo, eboB = gpuB.faceReverseEbo;
+        assert(eboA != 0 && eboB != 0 && eboA != eboB
+            && glIsBuffer(eboA) == GL_TRUE && glIsBuffer(eboB) == GL_TRUE,
+            cell ~ " population: two live index buffers before release");
+        ValidatedGpuResourceToken validated;
+        assert(owner.validatePrepared(prepared, 7, 11, validated),
+            cell ~ " validation refused");
+        owner.installPrepared(validated);
+        assert(glIsBuffer(eboA) == GL_FALSE,
+            cell ~ ": the resource owner left the index buffer live");
+        assert(gpuA.faceReverseEbo == 0 && !gpuA.faceReverseEboFilled
+            && gpuA.faceLayoutGen == 0 && gpuA.faceReverseEboGen == 0,
+            cell ~ ": the consumed header still names or trusts the index buffer");
+        assert(glIsBuffer(eboB) == GL_TRUE, cell ~ ": the sibling was released");
+
+        // Route 2: legacy destroy (peek + delete).
+        gpuB.destroy();
+        assert(glIsBuffer(eboB) == GL_FALSE,
+            cell ~ ": GpuMesh.destroy left the index buffer live");
+    });
 }

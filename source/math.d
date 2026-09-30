@@ -431,6 +431,31 @@ bool matrixMirrorsWinding(const float[16] m) @safe pure nothrow @nogc {
     return a*(e*i - f*h) - b*(d*i - f*g) + c*(d*h - e*g) < 0;
 }
 
+/// The face normal the face VBO carries: `cross(v1 - v0, v2 - v0)` of the
+/// first three corners, normalised, or `(0,1,0)` when its length is at most
+/// 1e-6 (then `degenerate` is true). ONE definition of "which way a face
+/// points" for the fill and anything that must agree with it (the retopology
+/// dot cull); the float operation order is the upload's, so the buffer bytes
+/// do not change. Not a Newell normal: for a non-planar face it is the normal
+/// of fan triangle 0 only.
+Vec3 faceNormalFirst3(Vec3 v0, Vec3 v1, Vec3 v2, out bool degenerate)
+    @safe pure nothrow @nogc
+{
+    float ax = v1.x - v0.x, ay = v1.y - v0.y, az = v1.z - v0.z;
+    float bx = v2.x - v0.x, by = v2.y - v0.y, bz = v2.z - v0.z;
+    float cx = ay*bz - az*by;
+    float cy = az*bx - ax*bz;
+    float cz = ax*by - ay*bx;
+    float nlen = sqrt(cx*cx + cy*cy + cz*cz);
+    if (nlen > 1e-6f) {
+        degenerate = false;
+        float inv = 1.0f / nlen;
+        return Vec3(cx*inv, cy*inv, cz*inv);
+    }
+    degenerate = true;
+    return Vec3(0, 1, 0);
+}
+
 // ---------------------------------------------------------------------------
 // ModelSpace — the per-layer item transform, packaged for picking (task 0617,
 // doc/picking_item_transform_plan.md).
@@ -1559,8 +1584,9 @@ bool pointInPolygon2D(float px, float py, float[] xs, float[] ys) {
 // We keep the LOCAL form, and not as a preference: a mirror moves the points
 // and leaves the index order alone, so the DRAWN surface is inside-out — every
 // polygon the user can see under a mirror, they see from its back. Our mesh
-// pass has no `GL_CULL_FACE` (`gpu_select.renderMode` disables it explicitly
-// and nothing else enables it for geometry) and no DRAW path reverses a ring
+// pass has no `GL_CULL_FACE` (`gpu_select.renderMode` disables it explicitly;
+// the one geometry pass that culls, the translucent `FacePass`, flips
+// `glFrontFace` by `det(L)`, i.e. culls in this LOCAL form) and no DRAW path reverses a ring
 // (`matrixMirrorsWinding`'s callers are the IO/export and primitive-creation
 // boundaries only). So under a mirror the winding-front polygon is the
 // OCCLUDED one, and carrying `det(L)` in here makes the lasso and the snapper

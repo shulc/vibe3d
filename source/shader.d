@@ -246,6 +246,7 @@ private immutable string litFragSrc = withShaderPreamble(q{
     uniform float u_lightGain;      // multiplier on the lit term ABOVE ambient; 1.0 = neutral
     uniform int   u_shading;        // display_state.SurfaceShading: 0 Material, 1 Fill, 2 Weight, 3 Retopology
     uniform vec3  u_fillColor;      // the unlit fill's base; NOT the material (task 0592)
+    uniform float u_faceAlpha;      // output alpha of every arm; 1.0 = opaque (FacePass)
     layout(std140) uniform Materials {
         vec4 mat_base[64];     // .rgb = baseColor, .a = opacity
         vec4 mat_params[64];   // .x = diffuse, .y = specular, .z = glossiness
@@ -311,7 +312,7 @@ private immutable string litFragSrc = withShaderPreamble(q{
             // where this style read the exact neutral (127,140,127).
             col = mix(vWeightColor, u_color, u_overrideMix);
         }
-        fragColor = vec4(col * u_dim, 1.0);
+        fragColor = vec4(col * u_dim, u_faceAlpha);
     }
 });
 
@@ -780,6 +781,7 @@ class LitShader {
     GLint locLightGain;
     GLint locShading;
     GLint locFillColor;
+    GLint locFaceAlpha;
     GLuint matsUbo;            // Material Groups (MG3) — Materials UBO
     enum  MATS_BINDING = 0;    // binding point index, matches std140 layout
 
@@ -799,11 +801,14 @@ class LitShader {
         locLightGain   = glGetUniformLocation(program, "u_lightGain");
         locShading     = glGetUniformLocation(program, "u_shading");
         locFillColor   = glGetUniformLocation(program, "u_fillColor");
+        locFaceAlpha   = glGetUniformLocation(program, "u_faceAlpha");
         // A GLSL uniform starts at 0, and a gain of 0 would leave only ambient
         // for the draws that seed uniforms by hand without `useProgram`
         // (`drawLitPreview`, the pen preview): park the neutral once here.
+        // Same for the face alpha: 0 would make those previews transparent.
         glUseProgram(program);
         glUniform1f(locLightGain, 1.0f);
+        glUniform1f(locFaceAlpha, 1.0f);
         glUseProgram(0);
 
         // Materials UBO — std140-sized for two arrays of 64 × vec4.
@@ -899,6 +904,9 @@ class LitShader {
         // Same neutrality contract as u_dim: only a plan-driven face pass sets
         // a gain (`DrawPlan.lightGain`) and restores 1.0 after its draws.
         glUniform1f(locLightGain, 1.0f);
+        // Opaque unless a translucent face pass (`FacePass.alpha`) says
+        // otherwise; that pass writes and restores it itself.
+        glUniform1f(locFaceAlpha, 1.0f);
         // Default to the MATERIAL (lit) arm, for exactly the reason u_dim
         // defaults to neutral: every caller that does not care about the
         // display style gets the behaviour that predates it. The Solid and
