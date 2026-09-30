@@ -453,10 +453,10 @@ unittest {
         "drop leaves ONE entry (the surviving scale gesture) (D); now="
         ~ undoCount().to!string);
 
-    postJson("/api/command", commandBody("history.undo"));
+    playAndWait(ctrlZ(50.0));
     settle();
     assertVertex(6, 0.5, 0.5, 0.5,
-        "one post-drop Ctrl+Z reverts the consolidated scale run to the cube");
+        "one post-drop Ctrl+Z reverts the scale group to the cube");
     cmd("tool.pipe.attr falloff type none");
     drainHistory();
 }
@@ -1428,8 +1428,8 @@ unittest {
 
 // ===========================================================================
 // (POST-DROP CONFIG-RESTORE SCALE) P-A BLOCKER on the Scale bank — same shape.
-// The merged first.revert is the SCALE gesture's accumulator+config hook
-// (scale.d commitEdit).
+// The retained Scale group keeps the gesture and config hooks; session
+// navigation restores the run-start image (task 8540).
 // ===========================================================================
 unittest {
     establishCubeBaseline();
@@ -1449,17 +1449,17 @@ unittest {
 
     cmd("tool.set TransformScale off");
     settle();
-    assert(undoCount() == floor + 1,
-        "drop consolidates the scale run to ONE entry (D); now="
+    assert(undoCount() == floor + 2,
+        "drop retains the scale gesture and config re-grade; now="
         ~ undoCount().to!string);
 
-    postJson("/api/command", commandBody("history.undo"));
+    playAndWait(ctrlZ(50.0));
     settle();
     assertVertex(6, 0.5, 0.5, 0.5,
-        "one post-drop Ctrl+Z reverts the consolidated scale run to the cube");
+        "one post-drop Ctrl+Z reverts the scale group to the cube");
     assert(queryFalloffSizeX() == 1.0,
         "P-A BLOCKER: post-drop Ctrl+Z restores the RUN-START falloff config "
-        ~ "(size 5→1) on the merged Scale run; got "
+        ~ "(size 5→1) on the retained Scale group; got "
         ~ queryFalloffSizeX().to!string);
 
     cmd("tool.pipe.attr falloff type none");

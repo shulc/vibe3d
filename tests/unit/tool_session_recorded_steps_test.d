@@ -43,7 +43,7 @@ private final class ValueEdit : Command {
 }
 
 private final class RecordedTool : Tool, RefireClient {
-    int value, resyncs, refireTarget;
+    int amount, resyncs, refireTarget;
     bool pending, ladder, firstUndoEnds;
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
         static immutable ToolSessionPolicy policy = {
@@ -57,13 +57,13 @@ private final class RecordedTool : Tool, RefireClient {
         return selected;
     }
     void gesture(CommandHistory history, int after) {
-        auto cmd = new ValueEdit(&value, value, after);
+        auto cmd = new ValueEdit(&amount, amount, after);
         assert(cmd.apply());
         history.record(cmd);
         sessionRecordCompleted(cmd);
     }
     void liveGesture(CommandHistory history, ulong runId, int after) {
-        auto cmd = new ValueEdit(&value, value, after);
+        auto cmd = new ValueEdit(&amount, amount, after);
         assert(cmd.apply());
         history.recordInSession(cmd, runId);
         sessionRecordCompleted(cmd);
@@ -73,7 +73,7 @@ private final class RecordedTool : Tool, RefireClient {
     override void cancelUncommittedEdit() { pending = false; }
     override bool wantsRefire() const { return true; }
     override Command buildRefireCommand() {
-        return new ValueEdit(&value, value, refireTarget);
+        return new ValueEdit(&amount, amount, refireTarget);
     }
     override void setRefireDriving(bool on) {}
     override void onRefireCommitted() {}
@@ -114,15 +114,15 @@ unittest {
         (ToolTransition why) { active = null; }, null, null,
         (Command cmd) { session.recordAppliedToolCommand(cmd); });
     history.blockBegin("Two transform applies");
-    assert(executor.applyOrRefire(new ValueEdit(&tool.value, 0, 9, "tool.doApply"),
+    assert(executor.applyOrRefire(new ValueEdit(&tool.amount, 0, 9, "tool.doApply"),
                                   RecordMode.Record, null));
-    assert(executor.applyOrRefire(new ValueEdit(&tool.value, 9, 17, "tool.doApply"),
+    assert(executor.applyOrRefire(new ValueEdit(&tool.amount, 9, 17, "tool.doApply"),
                                   RecordMode.Record, null));
     history.blockEnd();
     assert(session.sessionStateJson()["steps"].integer == 1,
            "the named block lost its common Transform ToolSession owner");
-    assert(session.navigate(true) && tool.value == 0);
-    assert(session.navigate(false) && tool.value == 17);
+    assert(session.navigate(true) && tool.amount == 0);
+    assert(session.navigate(false) && tool.amount == 17);
 }
 
 unittest { // 8261: open gestures, closed rows, one outside step, restored owner.
@@ -144,9 +144,9 @@ unittest { // 8261: open gestures, closed rows, one outside step, restored owner
     const run = history.nextRun();
     tool.liveGesture(history, run, 7);
     tool.liveGesture(history, run, 13);
-    assert(session.navigate(true) && tool.value == 7,
+    assert(session.navigate(true) && tool.amount == 7,
            "internal Undo must peel one gesture");
-    assert(session.navigate(false) && tool.value == 13,
+    assert(session.navigate(false) && tool.amount == 13,
            "internal Redo must restore the second gesture");
     assert(history.closeRunVisible(run, "TransformMove") == 2,
            "closed run lost a visible adjustment group");
@@ -159,7 +159,7 @@ unittest { // 8261: open gestures, closed rows, one outside step, restored owner
            !(rows[1].flags & HistoryFlags.InSession) &&
            !(rows[2].flags & HistoryFlags.InSession),
            "close must retain two completed History rows");
-    assert(session.navigate(true) && tool.value == 0 && active is tool,
+    assert(session.navigate(true) && tool.amount == 0 && active is tool,
            "one outside Undo must restore S0 and tool ownership");
     assert(session.sessionStateJson()["token"].integer == 8261,
            "restored owner must retain the activation row's session token");
@@ -170,12 +170,12 @@ unittest { // 8261: open gestures, closed rows, one outside step, restored owner
            "outside Redo must request the terminal modal");
     const branchRun = history.nextRun();
     tool.liveGesture(history, branchRun, 7);
-    assert(tool.value == 7 && !session.navigate(false) &&
+    assert(tool.amount == 7 && !session.navigate(false) &&
            !session.terminalRedoRequested(),
            "a fresh C-branch gesture must replace the terminal branch");
     assert(history.closeRunVisible(branchRun, "TransformMove") == 1);
     active = null;
-    assert(session.navigate(true) && tool.value == 0 && active is tool,
+    assert(session.navigate(true) && tool.amount == 0 && active is tool,
            "a re-armed C branch must itself close and outside-Undo to S0");
 }
 
@@ -202,7 +202,7 @@ unittest { // 8261: cap eviction keeps the oldest retained prestate recoverable.
            "setup must evict the activation row at History capacity");
     assert(history.closeRunVisible(run, "TransformMove") == 50);
     active = null;
-    assert(session.navigate(true) && tool.value == 1 && active is tool,
+    assert(session.navigate(true) && tool.amount == 1 && active is tool,
            "capped closed run must undo to oldest retained prestate and restore owner");
     assert(history.undoEntries().length == 0 && history.redoEntries().length == 0 &&
            session.sessionStateJson()["token"].integer == 8263,
@@ -233,13 +233,13 @@ unittest { // 8490: a closed run may retain independent gesture steps.
            (closed[1].flags & HistoryFlags.ClosedStep),
            "stepwise close must preserve two visible completed gestures");
     active = null;
-    assert(session.navigate(true) && tool.value == 7 && active is tool,
+    assert(session.navigate(true) && tool.amount == 7 && active is tool,
            "closed step Undo must restore the last gesture and its owner");
     assert(history.undoEntries().length == 1 &&
            history.redoEntries().length == 1 &&
            session.sessionStateJson()["token"].integer == 8490,
            "closed step Undo must retain redo and the original session token");
-    assert(session.navigate(false) && tool.value == 13 && active is tool,
+    assert(session.navigate(false) && tool.amount == 13 && active is tool,
            "closed step Redo must restore the last gesture");
     assert(!session.terminalRedoRequested(),
            "stepwise closed runs do not request a terminal Redo modal");
@@ -263,21 +263,21 @@ unittest { // 8492: a silent arm is carried by its first recorded step.
     history.consolidate(firstRun); // off-gizmo relocation crosses a run boundary
     const secondRun = history.nextRun();
     tool.liveGesture(history, secondRun, 10);
-    assert(session.navigate(true) && tool.value == 7 && active is tool,
+    assert(session.navigate(true) && tool.amount == 7 && active is tool,
         "8492 Undo latest gesture must keep the owner");
-    assert(session.navigate(true) && tool.value == 0 && active is null &&
+    assert(session.navigate(true) && tool.amount == 0 && active is null &&
            (history.redoEntries()[0].flags & HistoryFlags.ClosedStep),
         "8492 Undo first recorded gesture must end the silent arm");
-    assert(session.navigate(false) && tool.value == 7 && active is tool &&
+    assert(session.navigate(false) && tool.amount == 7 && active is tool &&
            session.sessionStateJson()["token"].integer == 8492,
         "8492 Redo first gesture must re-arm the original session");
-    assert(session.navigate(false) && tool.value == 10,
+    assert(session.navigate(false) && tool.amount == 10,
         "8492 Redo second gesture must restore the second geometry step");
     assert(history.closeRunVisible(history.currentRunId, "rotate",
                                   RunCloseMode.stepUndo) == 2,
         "8492 close must tag both runs of one recorded session");
     active = null;
-    assert(session.navigate(true) && tool.value == 7 && active is tool,
+    assert(session.navigate(true) && tool.amount == 7 && active is tool,
         "8492 outside Undo must restore one step and its owner");
 }
 
@@ -287,7 +287,7 @@ unittest { // A preset based on rotate must not inherit the bare door's law.
         if (p.id == "TransformMove") {
             assert(p.runCloseMode == RunCloseMode.groupUndo);
             ++grouped;
-        } else if (p.id == "TransformRotate") {
+        } else if (p.id == "TransformRotate" || p.id == "TransformScale") {
             assert(p.runCloseMode == RunCloseMode.groupRedo);
             ++restored;
         } else {
@@ -296,7 +296,7 @@ unittest { // A preset based on rotate must not inherit the bare door's law.
             ++defaulted;
         }
     }
-    assert(grouped == 1 && restored == 1 && defaulted > 0);
+    assert(grouped == 1 && restored == 2 && defaulted > 0);
 }
 
 unittest {
@@ -310,11 +310,11 @@ unittest {
     auto executor = new CommandExecutor(history, () => active !is null,
         (ToolTransition why) { active = null; }, null, null,
         (Command cmd) { session.recordAppliedToolCommand(cmd); });
-    assert(executor.applyOrRefire(new ValueEdit(&tool.value, 0, 9, "tool.doApply"),
+    assert(executor.applyOrRefire(new ValueEdit(&tool.amount, 0, 9, "tool.doApply"),
                                   RecordMode.Record, null));
     assert(session.sessionStateJson()["steps"].integer == 1);
-    assert(session.navigate(true) && tool.value == 0);
-    assert(session.navigate(false) && tool.value == 9);
+    assert(session.navigate(true) && tool.amount == 0);
+    assert(session.navigate(false) && tool.amount == 9);
 }
 
 unittest {
@@ -329,8 +329,8 @@ unittest {
     session.refireEnded();
     assert(session.sessionStateJson()["steps"].integer == 1,
            "refireEnd did not give its History row to ToolSession");
-    assert(session.navigate(true) && tool.value == 0);
-    assert(session.navigate(false) && tool.value == 11);
+    assert(session.navigate(true) && tool.amount == 0);
+    assert(session.navigate(false) && tool.amount == 11);
 }
 
 unittest {
@@ -348,8 +348,8 @@ unittest {
         new ValueEdit(&tool.refireTarget, 11, 17, "tool.attr"), "tool.attr"));
     session.refireEnded();
     assert(session.sessionStateJson()["steps"].integer == 2);
-    assert(session.navigate(true) && tool.value == 11);
-    assert(session.navigate(true) && tool.value == 0);
+    assert(session.navigate(true) && tool.amount == 11);
+    assert(session.navigate(true) && tool.amount == 0);
 }
 
 unittest {
@@ -366,12 +366,12 @@ unittest {
     assert(history.undoEntries()[$ - 1].cmd.sessionToken() == state["token"].integer,
            "completed command lost its ToolSession owner token");
     const undone = session.navigate(true);
-    assert(undone && tool.value == 7 && tool.resyncs == 1,
-           format("first Undo: moved=%s value=%s resyncs=%s", undone, tool.value, tool.resyncs));
+    assert(undone && tool.amount == 7 && tool.resyncs == 1,
+           format("first Undo: moved=%s value=%s resyncs=%s", undone, tool.amount, tool.resyncs));
     state = session.sessionStateJson();
     assert(state["steps"].integer == 1 && state["redo"].integer == 1,
            "Undo left a duplicate completed state in ToolSession");
-    assert(session.navigate(false) && tool.value == 13 && tool.resyncs == 2,
+    assert(session.navigate(false) && tool.amount == 13 && tool.resyncs == 2,
            "Redo did not restore the history-owned gesture");
     state = session.sessionStateJson();
     assert(state["steps"].integer == 2 && state["redo"].integer == 0);
@@ -385,9 +385,9 @@ unittest {
     session.noteArm("xfrm.pending-test", 3);
     tool.gesture(history, 7);
     tool.pending = true;
-    assert(session.navigate(true) && !tool.pending && tool.value == 7,
+    assert(session.navigate(true) && !tool.pending && tool.amount == 7,
            "Undo stepped a completed row underneath the pending preview");
-    assert(session.navigate(true) && tool.value == 0,
+    assert(session.navigate(true) && tool.amount == 0,
            "second Undo did not reach the completed History row");
     assert(!session.navigate(true),
            "history-owned producer exposed a phantom attribute-image step");
@@ -404,9 +404,9 @@ unittest {
     tool.pending = true;
     tool.liveGesture(history, runId, 7);
     tool.liveGesture(history, runId, 13);
-    assert(session.navigate(true) && tool.pending && tool.value == 7,
+    assert(session.navigate(true) && tool.pending && tool.amount == 7,
            "first Undo skipped the live recorded row or cancelled the preview");
-    assert(session.navigate(true) && tool.pending && tool.value == 0,
+    assert(session.navigate(true) && tool.pending && tool.amount == 0,
            "second Undo skipped the earlier live recorded row");
     assert(session.navigate(true) && !tool.pending && active is tool,
            "the preview was not cancelled after its recorded ladder emptied");
@@ -455,7 +455,7 @@ unittest { // 8530: group navigation and each independent ownership boundary.
             (string id) { active = tool; session.noteArm(id, 999); });
         session.noteArm("policy-selected", 8530);
         void record(ulong run, ulong token, int before, int after) {
-            auto edit = new ValueEdit(&tool.value, before, after);
+            auto edit = new ValueEdit(&tool.amount, before, after);
             edit.markSession(token);
             assert(edit.apply()); history.recordInSession(edit, run);
         }
@@ -467,10 +467,10 @@ unittest { // 8530: group navigation and each independent ownership boundary.
         assert(history.closeRunVisible(secondRun, "policy-selected", RunCloseMode.groupRedo) == 2);
         assert(history.undoEntries().length == 3);
         active = null;
-        assert(session.navigate(true) && tool.value == 7 && active is tool,
+        assert(session.navigate(true) && tool.amount == 7 && active is tool,
             format("8530 closed group crossed ownership boundary %s", boundary));
         assert(history.undoEntries().length == 1 && history.redoEntries().length == 2);
-        assert(session.navigate(false) && tool.value == 19 && active is tool,
+        assert(session.navigate(false) && tool.amount == 19 && active is tool,
             "8530 one Redo must replay both retained rows");
         assert(history.undoEntries().length == 3 && history.redoEntries().length == 0);
         assert(session.sessionStateJson()["token"].integer == 8530);
@@ -488,7 +488,7 @@ unittest { // 8530: Redo leaves a foreign tail beyond the retained group.
             (string id) { active = tool; session.noteArm(id, 999); });
         session.noteArm("policy-selected", 8530);
         void record(ulong run, ulong token, int before, int after) {
-            auto edit = new ValueEdit(&tool.value, before, after);
+            auto edit = new ValueEdit(&tool.amount, before, after);
             edit.markSession(token);
             assert(edit.apply()); history.recordInSession(edit, run);
         }
@@ -500,9 +500,9 @@ unittest { // 8530: Redo leaves a foreign tail beyond the retained group.
             boundary == 2 ? "other-owner" : "policy-selected",
             boundary == 3 ? RunCloseMode.groupUndo : RunCloseMode.groupRedo) == 1);
         foreach (_; 0 .. 3) assert(history.undo());
-        assert(tool.value == 0 && history.redoEntries().length == 3);
+        assert(tool.amount == 0 && history.redoEntries().length == 3);
         active = null;
-        assert(session.navigate(false) && tool.value == 13 && active is tool,
+        assert(session.navigate(false) && tool.amount == 13 && active is tool,
             format("8530 Redo crossed ownership boundary %s", boundary));
         assert(history.undoEntries().length == 2 && history.redoEntries().length == 1,
             "8530 Redo must leave the foreign tail untouched");

@@ -690,5 +690,68 @@
     }
   },
   "subject": "three selected asymmetric vertices and one untouched control",
-  "source": "fresh pre-lock native Top X-handle axis diagnostic 2026-09-30"
+  "source": "fresh pre-lock native Top X-handle axis diagnostic 2026-09-30",
+  "schema": 1,
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "capture-drag",
+    "captured_utc": "2026-09-30",
+    "harness": "semantic-8540-paired-capture",
+    "task": "8540",
+    "notes": "Top X-axis; four asymmetric vertices; R/C session checkpoints; bound 0.02. Private raw/e8540_accept."
+  },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "capture",
+    "cells": [
+      {
+        "cell": "axis-session-R-C",
+        "drove": [
+          {
+            "op": "axis_drag",
+            "values": {
+              "selection": [
+                0,
+                1,
+                2
+              ],
+              "native_press": [
+                766,
+                461
+              ],
+              "native_positive.1": [
+                30,
+                0
+              ],
+              "native_positive.2": [
+                19,
+                11
+              ],
+              "native_branch": [
+                19,
+                0
+              ],
+              "product_positive.1": [
+                30,
+                0
+              ],
+              "product_positive.2": [
+                19,
+                0
+              ],
+              "product_branch": [
+                19,
+                0
+              ],
+              "product_handle": 20,
+              "view": "Top"
+            }
+          }
+        ]
+      }
+    ]
+  }
 }
