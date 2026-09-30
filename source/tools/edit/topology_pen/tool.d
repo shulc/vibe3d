@@ -466,6 +466,15 @@ private:
     package int   slideNbrA_ = -1, slideNbrB_ = -1;
     package Vec3  slideAnchor_ = Vec3(0, 0, 0);
     package float slideDeltaK_ = 0.0f;
+    // The VERTEX slide (task 8700, P2): a Ctrl+LMB press that the Move
+    // classifier (`resolveGrabTarget`) resolves to a vertex slides that vertex
+    // alone, along the WORLD axis nearest the drag, then onto the background
+    // (`vertexSlideTarget`). `slideVertex_` is it (-1 = the edge slide above);
+    // `slideAxis_` (0/1/2, -1 before any motion) and `slideDeltaK_` are the
+    // live evaluation, `slideVertexTarget_` its landed point, for the preview.
+    package int   slideVertex_ = -1;
+    package int   slideAxis_   = -1;
+    package Vec3  slideVertexTarget_ = Vec3(0, 0, 0);
 
     // Slide DECLINE diagnostics (doc/tasks/work/0482-topopen-move-nonvertex.md
     // item 3 follow-up) — read-only observability, no behaviour change.
@@ -1693,7 +1702,12 @@ public:
         // it does not have).
         if (slideArmed_) {
             Viewport vp = viewportOf(vts);
-            slideDeltaK_ = slideDeltaFromDrag(e.x, e.y, vp);
+            if (slideVertex_ >= 0) {
+                if (!vertexSlideTarget(e.x, e.y, vp, slideVertexTarget_, slideAxis_, slideDeltaK_))
+                    slideAxis_ = -1;
+            } else {
+                slideDeltaK_ = slideDeltaFromDrag(e.x, e.y, vp);
+            }
             return true;
         }
 
@@ -3134,6 +3148,8 @@ public:
         addLoopSeed_    = -1;
         // P7 Slide (doc/topopen_p7_slide_plan.md)
         slideSeed_   = -1;
+        slideVertex_ = -1;
+        slideAxis_   = -1;
         slideEndA_ = slideEndB_ = -1;
         slideNbrA_ = slideNbrB_ = -1;
         slideAnchor_ = Vec3(0, 0, 0);
@@ -4590,6 +4606,10 @@ public:
         slideDeclineSeed_ = -1;
 
         Viewport vp = viewportOf(vts);
+        slideVertex_ = -1;
+        int grabbed;
+        if (resolveGrabTarget(e.x, e.y, vp, grabbed) == MoveElem.Vertex)
+            return armVertexSlide(e, grabbed);
         int seed = findRingSeedEdge(e.x, e.y, vp);
         if (seed < 0) return false;
 
@@ -4622,6 +4642,54 @@ public:
         slideNbrB_   = nB;
         slideAnchor_ = (m.vertices[eA] + m.vertices[eB]) * 0.5f;
         slideDeltaK_ = 0.0f;
+        return true;
+    }
+
+    // Vertex-slide arm (task 8700, P2; C2-SV2, verdict SV-axis, law L36: the
+    // vertex moves along the WORLD axis nearest the drag's world direction, one
+    // channel, then lands at its nearest point on the background). A vertex
+    // with no incident edge declines as `NoEdge`, as a press on it always did.
+    private bool armVertexSlide(ref const SDL_MouseButtonEvent e, int v) {
+        auto m = mesh;
+        if (m is null || m.edgeNeighbors(cast(uint)v).length == 0) return false;
+        slideDecline_ = SlideDecline.None;
+        slideVertex_  = v;
+        slideAxis_    = -1;
+        slideArmed_   = true;
+        slideStartX_  = e.x;
+        slideStartY_  = e.y;
+        slideEndA_    = v;
+        slideSeed_    = slideEndB_ = slideNbrA_ = slideNbrB_ = -1;
+        slideAnchor_  = m.vertices[v];
+        slideVertexTarget_ = m.vertices[v];
+        slideDeltaK_  = 0.0f;
+        return true;
+    }
+
+    // The vertex slide's landed point for the pointer at (mx, my), LOCAL: the
+    // free-plane drag delta at the vertex (`planeDragDelta`, the edge slide's
+    // own conversion), reduced to its dominant WORLD axis — `axis` and the
+    // signed length `k` along it (the magnitude is ours: the capture could not
+    // separate its two candidate rules) — added to the vertex in world, then
+    // the nearest foot on the background. False when the drag does not convert.
+    private bool vertexSlideTarget(int mx, int my, const ref Viewport vp,
+                                   out Vec3 target, out int axis, out float k) {
+        axis = -1;
+        k = 0.0f;
+        auto m = mesh;
+        if (m is null || slideVertex_ < 0 || slideVertex_ >= cast(int)m.vertices.length)
+            return false;
+        const ms = primaryModelSpace();
+        const Vec3 uW = ms.toWorldPoint(m.vertices[slideVertex_]);
+        bool skip;
+        Vec3 d = planeDragDelta(mx, my, slideStartX_, slideStartY_, 3,
+                                ms.toWorldPoint(slideAnchor_), vp, skip);
+        if (skip) return false;
+        axis = dominantAxisIndex(d);
+        k    = dominantAxisDelta(d);
+        const Vec3 tW = Vec3(uW.x + (axis == 0 ? k : 0.0f), uW.y + (axis == 1 ? k : 0.0f),
+                             uW.z + (axis == 2 ? k : 0.0f));
+        target = footOnBackground(ms.toLocalPoint(tW));
         return true;
     }
 
@@ -5267,11 +5335,22 @@ public:
         int  eA     = slideEndA_, eB = slideEndB_;
         int  nA     = slideNbrA_, nB = slideNbrB_;
         int  startX = slideStartX_, startY = slideStartY_;
+        const int vSlid = slideVertex_;
+        Vec3 vTarget;
+        bool vOk;
+        if (vSlid >= 0) {
+            Viewport vpv = viewportOf(vts);
+            int axis;
+            float k;
+            vOk = vertexSlideTarget(e.x, e.y, vpv, vTarget, axis, k);
+        }
 
         slideSeed_  = -1;
         slideArmed_ = false;
         slideEndA_ = slideEndB_ = -1;
         slideNbrA_ = slideNbrB_ = -1;
+        slideVertex_ = -1;
+        slideAxis_   = -1;
 
         // REV1 FIX-2 (doc/topopen_p7_slide_plan.md): a release back at (near
         // enough) the press pixel is a click without a real drag — an
@@ -5280,9 +5359,13 @@ public:
         int dx = e.x - startX, dy = e.y - startY;
         if (releaseIsClick(dx, dy)) return true;
 
+        slideDeltaK_ = 0.0f;
+        if (vSlid >= 0) {
+            if (vOk) commitSlideTargets(vSlid, vSlid, vTarget, vTarget);
+            return true;
+        }
         Viewport vp = viewportOf(vts);
         commitSlide(seed, eA, eB, nA, nB, slideDeltaFromDrag(e.x, e.y, vp));
-        slideDeltaK_ = 0.0f;
         return true;
     }
 
@@ -5633,6 +5716,20 @@ public:
         Vec3 origB = m.vertices[eB];
         Vec3 pA = (nA >= 0) ? slideEndpointPos(origA, m.vertices[nA], deltaK) : origA;
         Vec3 pB = (nB >= 0) ? slideEndpointPos(origB, m.vertices[nB], deltaK) : origB;
+        commitSlideTargets(eA, eB, pA, pB);
+    }
+
+    // The slide's commit tail, shared by the edge slide (`commitSlide`, its
+    // rail kernel above) and the vertex slide (`vertexSlideTarget`):
+    // write the two endpoint positions (the same index twice for a vertex) as
+    // ONE step under the slide's own factory, or nothing within the eps.
+    package void commitSlideTargets(int eA, int eB, Vec3 pA, Vec3 pB) {
+        auto m = mesh;
+        if (m is null) return;
+        if (eA < 0 || eA >= cast(int)m.vertices.length) return;
+        if (eB < 0 || eB >= cast(int)m.vertices.length) return;
+        Vec3 origA = m.vertices[eA];
+        Vec3 origB = m.vertices[eB];
 
         enum float kSlideEps = 1e-4f;   // mirrors applyMoveTargets's stationary-grab guard
         if ((pA - origA).length <= kSlideEps && (pB - origB).length <= kSlideEps) return;
@@ -6540,6 +6637,21 @@ public:
 
         m.syncSelection();
         if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_); }
+    }
+
+    // The nearest foot of a primary-LOCAL point on the background, local
+    // again; the point itself when no background face exists.
+    private Vec3 footOnBackground(Vec3 local) {
+        auto sources = backgroundSourcesFull();
+        if (sources.length == 0) return local;
+        const ms = primaryModelSpace();
+        Vec3  hit, hitN;
+        int   si, fi;
+        float d2;
+        enum bool dblSided = false;   // matches the Smooth re-snap's own default
+        if (!closestPointOnMeshes(ms.toWorldPoint(local), sources, dblSided, hit, hitN, si, fi, d2))
+            return local;
+        return ms.toLocalPoint(hit);
     }
 
     // Add Loop's inserted vertices re-snap onto the background, CLOSEST

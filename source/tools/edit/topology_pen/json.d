@@ -165,6 +165,10 @@ mixin template PenStateJsonOps() {
         root["slideDeltaK"] = JSONValue(cast(double)slideDeltaK_);
         root["slideNbrA"]   = JSONValue(slideNbrA_);
         root["slideNbrB"]   = JSONValue(slideNbrB_);
+        // The vertex slide's pressed vertex (-1: an edge slide or none) and the
+        // world axis its live evaluation runs along (-1 before any motion).
+        root["slideVertex"] = JSONValue(slideVertex_);
+        root["slideAxis"]   = JSONValue(slideAxis_);
 
         // Why the most recent Slide press did not arm
         // (doc/tasks/work/0482-topopen-move-nonvertex.md item 3 follow-up).

@@ -28,6 +28,7 @@
 //   two-button-fwd           L56 MMB released first: two rows, no loop
 //   two-button-cut-move          a second press cuts a held Move (§9.27 [A15-2])
 //   two-button-discard-move      a release while another button is held discards
+//   chord-slide-vertex   L4  Ctrl+LMB on a vertex slides it alone, onto the BG
 //
 // Slice S5 (task 8730) added the cells from `no-op-presses` on: since then
 // every pen press is one topology step the session records (wave plan 8646).
@@ -35,7 +36,7 @@
 // chords' outcomes (their port slices add `chord-*` cells).
 //
 // `VIBE3D_CELL=<id>` runs one cell alone (druntime stops a module at its first
-// failed assert); the last block pins the population: 30 with no filter, 1 with
+// failed assert); the last block pins the population: 31 with no filter, 1 with
 // one (an unknown name must not pass by running nothing).
 //
 // Run via: ./run_test.d test_session_laws_topology_pen
@@ -43,9 +44,12 @@
 import topology_pen_session_helpers;
 import http_client : getJson;
 import fixture_helpers : requireProvenance;
+import std.file : readText;
 import std.format : format;
 import std.json;
+import std.math : PI, cos, sin, sqrt;
 import std.path : buildPath, dirName;
+import std.string : lastIndexOf;
 import std.process : environment;
 import std.stdio : writeln;
 
@@ -1120,6 +1124,224 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
+// chord-slide-vertex — L4 outcome (task 8700, wave slice P2; law L36): Ctrl+LMB
+// on v5 slides v5 ALONE along the WORLD axis nearest the drag (one channel, not
+// along an incident edge) and lands it on the background, v5 = nearestBG(u5 +
+// s e_axis). The fit is done here against the rig file's own background
+// facets, so the residual is a property of the law, not of our kernel. On the
+// axis-aligned grid the axis is also the edge 5-6, so the discriminating
+// gesture is the TURNED one (the grid turned 30 degrees about Z): there the
+// axis is Y and no incident edge line holds v5. The magnitude is the FORM only:
+// s is floored (`sMin`); the capture's `sCaptured` is a record (its rule is
+// undecided, and our viewport is not the capture's).
+// ---------------------------------------------------------------------------
+double[3] vsub(double[3] a, double[3] b) { return [a[0] - b[0], a[1] - b[1], a[2] - b[2]]; }
+double vdot(double[3] a, double[3] b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+double[3] vmad(double[3] a, double[3] b, double s) { return [a[0] + b[0] * s, a[1] + b[1] * s, a[2] + b[2] * s]; }
+double vdist(double[3] a, double[3] b) { const d = vsub(a, b); return sqrt(vdot(d, d)); }
+
+/// Closest point on triangle (a, b, c) to p (the standard Voronoi-region walk).
+double[3] closestOnTri(double[3] p, double[3] a, double[3] b, double[3] c) {
+    const ab = vsub(b, a), ac = vsub(c, a), ap = vsub(p, a);
+    const d1 = vdot(ab, ap), d2 = vdot(ac, ap);
+    if (d1 <= 0 && d2 <= 0) return a;
+    const bp = vsub(p, b);
+    const d3 = vdot(ab, bp), d4 = vdot(ac, bp);
+    if (d3 >= 0 && d4 <= d3) return b;
+    const vc = d1 * d4 - d3 * d2;
+    if (vc <= 0 && d1 >= 0 && d3 <= 0) return vmad(a, ab, d1 / (d1 - d3));
+    const cp = vsub(p, c);
+    const d5 = vdot(ab, cp), d6 = vdot(ac, cp);
+    if (d6 >= 0 && d5 <= d6) return c;
+    const vb = d5 * d2 - d1 * d6;
+    if (vb <= 0 && d2 >= 0 && d6 <= 0) return vmad(a, ac, d2 / (d2 - d6));
+    const va = d3 * d6 - d5 * d4;
+    if (va <= 0 && (d4 - d3) >= 0 && (d5 - d6) >= 0)
+        return vmad(b, vsub(c, b), (d4 - d3) / ((d4 - d3) + (d5 - d6)));
+    const den = 1.0 / (va + vb + vc);
+    return vmad(vmad(a, ab, vb * den), ac, vc * den);
+}
+
+/// The rig's background layer as triangles (each polygon fanned), read from
+/// the rig file itself; floor: the 482 v / 512 f sphere penBackgroundLayerFloor
+/// pins on the loaded document.
+double[3][3][] rigBackgroundTris() {
+    auto rigFile = parseJSON(readText(buildPath(dirName(__FILE_FULL_PATH__), "fixtures",
+                                                "topology_pen_session_rig.v3d")));
+    auto bg = rigFile["layers"].array[1]["mesh"];
+    double[3][] v;
+    foreach (x; bg["vertices"].array)
+        v ~= [penNum(x.array[0]), penNum(x.array[1]), penNum(x.array[2])];
+    double[3][3][] tris;
+    foreach (f; bg["faces"].array)
+        foreach (k; 1 .. f.array.length - 1)
+            tris ~= [v[f.array[0].integer], v[f.array[k].integer], v[f.array[k + 1].integer]];
+    assert(v.length == 482 && bg["faces"].array.length == 512 && tris.length == 448 * 2 + 64,
+           format("chord-slide-vertex: the rig background is not the 482v/512f sphere: %d v, %d f, %d tris",
+                  v.length, bg["faces"].array.length, tris.length));
+    return tris;
+}
+
+double[3] nearestOn(const double[3][3][] tris, double[3] p) {
+    double best = double.infinity;
+    double[3] r;
+    foreach (t; tris) {
+        const q = closestOnTri(p, t[0], t[1], t[2]);
+        const d = vdist(q, p);
+        if (d < best) { best = d; r = q; }
+    }
+    return r;
+}
+
+/// Fit s of p = nearestOn(u + s e) (e a unit direction) by golden section
+/// around the projection of p; returns [s, residual].
+double[2] fitAlong(const double[3][3][] tris, double[3] u, double[3] e, double[3] p) {
+    const s0 = vdot(vsub(p, u), e);
+    double res(double s) { return vdist(nearestOn(tris, vmad(u, e, s)), p); }
+    double lo = s0 - 0.05, hi = s0 + 0.05;
+    enum double g = 0.6180339887498949;
+    foreach (_; 0 .. 80) {
+        const a = hi - g * (hi - lo), b = lo + g * (hi - lo);
+        if (res(a) < res(b)) hi = b; else lo = a;
+    }
+    const s = (lo + hi) / 2;
+    return [s, res(s)];
+}
+
+double lineDistance(double[3] p, double[3] a, double[3] b) {
+    const e = vsub(b, a);
+    return vdist(p, vmad(a, e, vdot(vsub(p, a), e) / vdot(e, e)));
+}
+
+double[3] unitAxis(long k) { double[3] e = [0, 0, 0]; e[cast(size_t)k] = 1; return e; }
+
+/// One vertex slide of v5 per a fixture gesture, the foreground turned by
+/// `rotZ` degrees about world Z (0: the rig as loaded). Asserts the law and
+/// the session half, undoes it, and returns the fitted s.
+double slideV5(JSONValue fx, JSONValue g, const double[3][3][] tris, const PenMesh a0, long hist) {
+    const id = g["id"].str;
+    const c = cos(penNum(g["fgRotZ"]) * PI / 180), sn = sin(penNum(g["fgRotZ"]) * PI / 180);
+    double[3] w(double[3] l) { return [c * l[0] - sn * l[1], sn * l[0] + c * l[1], l[2]]; }
+    const px = penRound(penProject(w(a0.pos[5])));
+    penHover(px);
+    assert(penHoverIndicator()["nearestVert"].integer == 5 && penArmed(),
+           format("chord-slide-vertex %s: pixel %s of v5 hovers vertex %d, armed %s", id, px,
+                  penHoverIndicator()["nearestVert"].integer, penArmed()));
+    const capSp = penNum(g["spacingPx"]);
+    penGesture(px, penNum(g["dragPx"].array[0]) / capSp, penNum(g["dragPx"].array[1]) / capSp, 1,
+               PEN_KMOD_LCTRL, id);
+    const m = penMesh();
+    assert(penMoved(m, a0) == idxOf(g["moved"]) && [m.nv, m.nf, m.edges] == idxOf(g["counts"])
+           && m.faces == a0.faces && penHistoryLen() == hist + 1 && penArmed(),
+           format("chord-slide-vertex %s: moved %s (expected %s), counts %s (expected %s), faces "
+                  ~ "kept %s, history %s (expected one row more than %d), armed %s", id,
+                  penIdx(penMoved(m, a0)), g["moved"], m.toString, g["counts"], m.faces == a0.faces,
+                  penHistoryLabels(), hist, penArmed()));
+    const u = w(a0.pos[5]), p = w(m.pos[5]);
+    const axis = g["axis"].integer;
+    const fit = fitAlong(tris, u, unitAxis(axis), p);
+    const sMin = penNum(fx["sMin"]), resMax = penNum(fx["fitResidualMax"]);
+    // Rivals: every OTHER world axis must miss (one channel), and v5 must
+    // have left each named edge line (the landing, and on the turned grid the
+    // edge readings).
+    double otherBest = double.infinity;
+    foreach (k; 0 .. 3)
+        if (k != axis) {
+            const r = fitAlong(tris, u, unitAxis(k), p)[1];
+            if (r < otherBest) otherBest = r;
+        }
+    double edgeMin = double.infinity;
+    foreach (n; g["offEdgeLines"].array) {
+        const d = lineDistance(p, u, w(a0.pos[cast(size_t)n.integer]));
+        if (d < edgeMin) edgeMin = d;
+    }
+    assert(fit[1] <= resMax && fit[0] > sMin && otherBest > 1e3 * resMax
+           && edgeMin >= penNum(fx["lineDistanceMin"]),
+           format("chord-slide-vertex %s: v5 %s is not nearestBG(u5 + s e%d) with s > %g: fit s %.5f "
+                  ~ "residual %.3g (max %g); best other axis residual %.3g; nearest edge line %.3g "
+                  ~ "(min %g)", id, p, axis, sMin, fit[0], fit[1], resMax, otherBest, edgeMin,
+                  penNum(fx["lineDistanceMin"])));
+    penCtrlZ("chord-slide-vertex " ~ id ~ " Ctrl+Z");
+    expectState("chord-slide-vertex", id ~ "_z", a0, g["undoArmed"].type == JSONType.true_, hist);
+    writeln(format("chord-slide-vertex %s: axis %d s %.5f (captured %.5f, not asserted) residual %.3g, "
+                   ~ "other axes %.3g, edge lines >= %.3g", id, axis, fit[0], penNum(g["sCaptured"]),
+                   fit[1], otherBest, edgeMin));
+    return fit[0];
+}
+
+unittest {
+    if (!cell("chord-slide-vertex")) return;
+    auto fx = cellFx("chord-slide-vertex");
+    const tris = rigBackgroundTris();
+    const r = rig();
+    penArmUi(r);
+    size_t n;
+    foreach (g; fx["gestures"].array) {
+        assert(penNum(g["fgRotZ"]) == 0, "chord-slide-vertex: an unturned gesture expected");
+        slideV5(fx, g, tris, r.a0, r.hp + 1);
+        ++n;
+    }
+    assert(n == fx["population"].integer && n == 2,
+           format("chord-slide-vertex: %d slides ran, the fixture lists %d (expected 2)", n,
+                  fx["population"].integer));
+
+    // Control, below the population (ours, not a captured law): a Ctrl+LMB
+    // press on an EDGE still takes the edge slide — border edge 0-1, both
+    // endpoints with a rail, so both move, v5 does not, and each stays on its
+    // rail's line (the edge slide's ported law does not land on the BG). A
+    // vertex arm left over from the gestures above would slide v5 instead.
+    penGesture(penEdgePx(0, 1, "chord-slide-vertex edge control"), 0, -20 / kSp, 1, PEN_KMOD_LCTRL,
+               "chord-slide-vertex edge control");
+    const ec = penMesh();
+    assert(penMoved(ec, r.a0) == [0L, 1L] && penHistoryLen() == r.hp + 2
+           && lineDistance(ec.pos[0], r.a0.pos[0], r.a0.pos[4]) <= 1e-6
+           && lineDistance(ec.pos[1], r.a0.pos[1], r.a0.pos[5]) <= 1e-6,
+           format("chord-slide-vertex edge control: the edge press moved %s (expected [0,1]), off "
+                  ~ "the rails by %.3g / %.3g (max 1e-6), history %s", penIdx(penMoved(ec, r.a0)),
+                  lineDistance(ec.pos[0], r.a0.pos[0], r.a0.pos[4]),
+                  lineDistance(ec.pos[1], r.a0.pos[1], r.a0.pos[5]), penHistoryLabels()));
+    penCtrlZ("chord-slide-vertex edge control Ctrl+Z");
+    expectState("chord-slide-vertex", "edge_z", r.a0, true, r.hp + 1);
+
+    // Mid-drag (ours: the preview state): with the button still held the
+    // vertex slide is armed on v5 and its live axis is world X, moving +X;
+    // the release then commits.
+    {
+        const sp = penSpacingPx();
+        const from = penVertexPx(5, "chord-slide-vertex mid-drag");
+        const x1 = cast(int)(from[0] + 20 / kSp * sp), y1 = cast(int)(from[1] - 10 / kSp * sp);
+        auto ev = penGestureEvents(from[0], from[1], x1, y1, 1, PEN_KMOD_LCTRL, 8);
+        const cut = ev.lastIndexOf("\n");
+        penPlay(ev[0 .. cut], "chord-slide-vertex mid-drag: press and hold");
+        auto st = getJson("/api/tool/state");
+        const armed = st["slideArmed"].type == JSONType.true_;
+        const sv = st["slideVertex"].integer, ax = st["slideAxis"].integer;
+        const k = penNum(st["slideDeltaK"]);
+        penPlay(ev[cut + 1 .. $], "chord-slide-vertex mid-drag: release");
+        assert(armed && sv == 5 && ax == 0 && k > 0 && penMoved(penMesh(), r.a0) == [5L]
+               && penHistoryLen() == r.hp + 2,
+               format("chord-slide-vertex mid-drag: armed %s, vertex %d (expected 5), axis %d "
+                      ~ "(expected 0), scalar %g (expected > 0); after the release moved %s, history %s",
+                      armed, sv, ax, k, penIdx(penMoved(penMesh(), r.a0)), penHistoryLabels()));
+        penCtrlZ("chord-slide-vertex mid-drag Ctrl+Z");
+        expectState("chord-slide-vertex", "mid_z", r.a0, true, r.hp + 1);
+    }
+
+    // THE DISCRIMINATING GESTURE: the grid turned 30 degrees about world Z
+    // (the foreground's item transform: the kernel runs in its local frame,
+    // the law is a world law), drag nearly up the screen: the axis is world Y.
+    {
+        auto tg = fx["turned"];
+        auto lt = penPost("/api/command", format("layer.attr 0 rot.z %s", penNum(tg["fgRotZ"])));
+        assert(lt["status"].str == "ok", "chord-slide-vertex turned: layer.attr failed: " ~ lt.toString);
+        assert(penNum(tg["fgRotZ"]) != 0 && tg["axis"].integer == 1,
+               "chord-slide-vertex turned: the fixture's turned gesture is not the Y-axis one");
+        slideV5(fx, tg, tris, penMesh(), penHistoryLen());
+    }
+    writeln("PASS chord-slide-vertex");
+}
+
+// ---------------------------------------------------------------------------
 // Population: with no VIBE3D_CELL every cell above ran (declared last, so it
 // runs last).
 // ---------------------------------------------------------------------------
@@ -1127,7 +1349,7 @@ unittest {
     writeln("cells=", cellsRun);
     const only = environment.get("VIBE3D_CELL", "");
     if (only.length == 0)
-        assert(cellsRun == 30, format("topology pen session laws: %d cells ran, expected 30", cellsRun));
+        assert(cellsRun == 31, format("topology pen session laws: %d cells ran, expected 31", cellsRun));
     else
         assert(cellsRun == 1, format("topology pen session laws: VIBE3D_CELL=%s ran %d cells, expected 1 "
                                      ~ "(an unknown name runs none)", only, cellsRun));

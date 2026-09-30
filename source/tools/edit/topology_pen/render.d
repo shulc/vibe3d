@@ -215,6 +215,22 @@ mixin template PenRenderOps() {
     // faint rail below is drawn edge-to-neighbour only and is a reference
     // line, not a bound.
     private void drawSlideGhost(ImDrawList* dl, const ref Viewport vp) {
+        // The vertex slide: the vertex to its landed point (the commit's own
+        // `vertexSlideTarget`, refreshed per motion), once an axis is live.
+        if (slideArmed_ && slideVertex_ >= 0 && slideAxis_ >= 0 && meshSrc_ !is null) {
+            auto mv = mesh;
+            if (mv !is null && slideVertex_ < cast(int)mv.vertices.length) {
+                enum uint vCol = IM_COL32(120, 200, 255, 220);
+                const AimViewport vpv = aimSpace(vp, primaryModelSpace());
+                ImVec2 a, b;
+                if (projectLocalPt(mv.vertices[slideVertex_], vpv, a)
+                 && projectLocalPt(slideVertexTarget_, vpv, b)) {
+                    dl.AddLine(a, b, IM_COL32(120, 200, 255, 90), 1.0f);
+                    dl.AddCircleFilled(b, 4.0f, vCol, 16);
+                }
+            }
+            return;
+        }
         if (slideArmed_ && meshSrc_ !is null) {
             auto m = mesh;
             if (m !is null

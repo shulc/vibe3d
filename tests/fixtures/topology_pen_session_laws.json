@@ -119,6 +119,13 @@
     "chord-remove-leaves-loose"
    ],
    "law": "A face remove also deletes the vertices and edges THIS removal leaves with no polygon (corner f0: 15/8/22; border f1: the faceless border edge goes, 16/8/23), and nothing else: a vertex that belonged to no polygon before the remove survives it (19 -> 18). One step, undo bit-exact, the tool stays armed."
+  },
+  {
+   "id": "L4-vertex-slide",
+   "cells": [
+    "chord-slide-vertex"
+   ],
+   "law": "A Ctrl+LMB press on a vertex slides that vertex alone along the world axis nearest the drag's world direction (one channel; not along any incident edge) and re-places it at its nearest point on the background: v = nearestBG(u + s e_axis); topology unchanged; one Ctrl+Z step, undo bit-exact, the tool stays armed."
   }
  ],
  "cells": {
@@ -910,6 +917,92 @@
    "value": false,
    "prior": true,
    "z1Armed": true
+  },
+  "chord-slide-vertex": {
+   "gestures": [
+    {
+     "id": "slide-along",
+     "fgRotZ": 0,
+     "dragPx": [
+      20,
+      0
+     ],
+     "spacingPx": 66.8,
+     "moved": [
+      5
+     ],
+     "counts": [
+      16,
+      9,
+      24
+     ],
+     "axis": 0,
+     "sCaptured": 0.05995,
+     "offEdgeLines": [
+      1,
+      4,
+      6,
+      9
+     ],
+     "undoArmed": true
+    },
+    {
+     "id": "slide-diagonal",
+     "fgRotZ": 0,
+     "dragPx": [
+      20,
+      -10
+     ],
+     "spacingPx": 66.8,
+     "moved": [
+      5
+     ],
+     "counts": [
+      16,
+      9,
+      24
+     ],
+     "axis": 0,
+     "sCaptured": 0.05999,
+     "offEdgeLines": [
+      1,
+      4,
+      6,
+      9
+     ],
+     "undoArmed": true
+    }
+   ],
+   "turned": {
+    "id": "slide-turned",
+    "fgRotZ": 30,
+    "dragPx": [
+     -7,
+     -39
+    ],
+    "spacingPx": 66.756,
+    "moved": [
+     5
+    ],
+    "counts": [
+     16,
+     9,
+     24
+    ],
+    "axis": 1,
+    "sCaptured": 0.11662,
+    "offEdgeLines": [
+     1,
+     4,
+     6,
+     9
+    ],
+    "undoArmed": true
+   },
+   "population": 2,
+   "fitResidualMax": 1e-06,
+   "lineDistanceMin": 0.001,
+   "sMin": 0.01
   }
  }
 }
