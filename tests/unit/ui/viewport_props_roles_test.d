@@ -11,7 +11,8 @@ import command_args : bindArgs;
 import commands.viewport.independence : ViewportIndepAxis,
     ViewportIndependence;
 import commands.viewport.master : ViewportMaster;
-import commands.viewport.display : ViewportRetopology, ViewportRetopologyPreset;
+import commands.viewport.display : ViewportBackdropStyle, ViewportPointSize,
+    ViewportRetopology, ViewportRetopologyPreset, ViewportShowVertices;
 import display_state : BackdropStyle;
 import display_state : DisplayStyle;
 import editmode : EditMode;
@@ -405,4 +406,74 @@ unittest { // 8620: the Retopology checkbox writes the mode ONLY; the preset wri
     assert(ids.length == 3 && ids[2] == "viewport.retopology"
         && payloads[2].indexOf(`"off"`) >= 0 && !vpm.views[2].display.retopology,
         "8620 checkbox must read the live mode and dispatch its inverse");
+}
+
+unittest { // 8620: the backdrop chooser, Vertices checkbox and point size slider
+    auto vpm = new ViewportManager(0, 0, 800, 600);
+    vpm.applyLayout(LayoutPreset.Quad);
+    vpm.activeId = 1;
+    auto mesh = makeCube();
+    Prefs prefs;
+    auto reset = inertReset(&prefs);
+    string[] ids;
+    void dispatch(string id, string payload) {
+        ids ~= id;
+        Command command;
+        auto cam = vpm.views[vpm.activeId].camera;
+        if (id == "viewport.backdropStyle")
+            command = new ViewportBackdropStyle(&mesh, cam, EditMode.Polygons, vpm);
+        else if (id == "viewport.showVertices")
+            command = new ViewportShowVertices(&mesh, cam, EditMode.Polygons, vpm);
+        else if (id == "viewport.pointSize")
+            command = new ViewportPointSize(&mesh, cam, EditMode.Polygons, vpm);
+        else
+            assert(false, "unexpected viewport properties dispatch: " ~ id);
+        bindArgs(command, payload);
+        assert(command.apply(), "viewport properties command fixture refused");
+    }
+    auto ui = openPanel(() {
+        drawViewportPropsPanel(ViewportPropertiesReadRole(vpm),
+                               cast(ViewportCommandDispatch)&dispatch, reset);
+    }, "Viewport retopology controls host");
+    resetViewportPropsDrawSnapshot();
+    scope (exit) ui.close();
+    ImGui.GetIO().ConfigFlags |= ImGuiConfigFlags.NavEnableKeyboard;
+    ui.frame();
+    auto snap = viewportPropsDrawSnapshot();
+    const d0 = vpm.views[0].display;
+
+    ui.pressAt(center(snap.verticesMin, snap.verticesMax));
+    ui.release();
+    assert(ids == ["viewport.showVertices"] && vpm.views[1].display.active.showVertices,
+        "8620 Vertices checkbox must dispatch viewport.showVertices on the active cell");
+
+    ui.frame();
+    snap = viewportPropsDrawSnapshot();
+    ui.pressAt(center(snap.pointSizeMin, snap.pointSizeMax));
+    ui.release();
+    const ps = vpm.views[1].display.active.pointSize;
+    assert(ids.length == 2 && ids[1] == "viewport.pointSize" && ps > 0.0f && ps <= 16.0f,
+        "8620 point size slider must dispatch viewport.pointSize on the active cell");
+
+    // The chooser opens on "Same as Active"; two steps down select "Flat".
+    ui.frame();
+    snap = viewportPropsDrawSnapshot();
+    ui.pressAt(center(snap.backdropMin, snap.backdropMax));
+    ui.release();
+    foreach (_; 0 .. 2) {
+        ui.keyDown(KEY_DOWN_ARROW);
+        ui.frame();
+        ui.keyUp(KEY_DOWN_ARROW);
+        ui.frame();
+    }
+    ui.keyDown(cast(int)ImGuiKey.Enter);
+    ui.frame();
+    ui.keyUp(cast(int)ImGuiKey.Enter);
+    ui.frame();
+    assert(ids.length == 3 && ids[2] == "viewport.backdropStyle"
+        && vpm.views[1].display.backdropStyle == BackdropStyle.Flat
+        && vpm.views[1].display.backdrop.style == DisplayStyle.Shaded,
+        "8620 backdrop chooser must dispatch viewport.backdropStyle flat");
+    assert(vpm.views[0].display == d0,
+        "8620 the retopology controls reached a cell other than the active one");
 }

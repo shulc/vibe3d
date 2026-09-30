@@ -608,6 +608,12 @@ version (unittest) {
         ImVec2 retopologyMax;
         ImVec2 presetMin;
         ImVec2 presetMax;
+        ImVec2 backdropMin;
+        ImVec2 backdropMax;
+        ImVec2 verticesMin;
+        ImVec2 verticesMax;
+        ImVec2 pointSizeMin;
+        ImVec2 pointSizeMax;
     }
 
     // Test instrumentation only: mutable process-wide state intentionally
@@ -649,6 +655,18 @@ version (unittest) {
         g_viewportPropsDrawSnapshot.presetMin = ImGui.GetItemRectMin();
         g_viewportPropsDrawSnapshot.presetMax = ImGui.GetItemRectMax();
     }
+    private void recordViewportPropsBackdrop() {
+        g_viewportPropsDrawSnapshot.backdropMin = ImGui.GetItemRectMin();
+        g_viewportPropsDrawSnapshot.backdropMax = ImGui.GetItemRectMax();
+    }
+    private void recordViewportPropsVertices() {
+        g_viewportPropsDrawSnapshot.verticesMin = ImGui.GetItemRectMin();
+        g_viewportPropsDrawSnapshot.verticesMax = ImGui.GetItemRectMax();
+    }
+    private void recordViewportPropsPointSize() {
+        g_viewportPropsDrawSnapshot.pointSizeMin = ImGui.GetItemRectMin();
+        g_viewportPropsDrawSnapshot.pointSizeMax = ImGui.GetItemRectMax();
+    }
 } else {
     private void recordViewportPropsProjection(int, int) {}
     private void recordViewportPropsCenter() {}
@@ -657,6 +675,9 @@ version (unittest) {
     private void recordViewportPropsReset() {}
     private void recordViewportPropsRetopology() {}
     private void recordViewportPropsPreset() {}
+    private void recordViewportPropsBackdrop() {}
+    private void recordViewportPropsVertices() {}
+    private void recordViewportPropsPointSize() {}
 }
 
 void drawViewportPropsPanel(ViewportPropertiesReadRole viewportRead,
@@ -839,7 +860,9 @@ void drawViewportPropsPanel(ViewportPropertiesReadRole viewportRead,
             ImGui.Text("Backdrop");
             ImGui.SameLine();
             ImGui.SetNextItemWidth(-1.0f);
-            if (ImGui.BeginCombo("##vpBackdropStyle", backLabels[bi])) {
+            const backdropOpen = ImGui.BeginCombo("##vpBackdropStyle", backLabels[bi]);
+            recordViewportPropsBackdrop();
+            if (backdropOpen) {
                 foreach (i, bl; backLabels) {
                     bool sel = (i == bi);
                     if (ImGui.Selectable(bl, sel))
@@ -851,7 +874,9 @@ void drawViewportPropsPanel(ViewportPropertiesReadRole viewportRead,
             }
 
             bool dots = v.display.active.showVertices;
-            if (ImGui.Checkbox("Vertices", &dots))
+            const dotsChanged = ImGui.Checkbox("Vertices", &dots);
+            recordViewportPropsVertices();
+            if (dotsChanged)
                 dispatch("viewport.showVertices",
                     positionalPayload([dots ? "on" : "off"]));
 
@@ -860,8 +885,10 @@ void drawViewportPropsPanel(ViewportPropertiesReadRole viewportRead,
             // leave the slider's range.
             float ps = v.display.active.pointSize;
             ImGui.SetNextItemWidth(-1.0f);
-            if (ImGui.SliderFloat("##vpPointSize", &ps, 0.0f, 16.0f,
-                                  "Point Size %.0f")) {
+            const psChanged = ImGui.SliderFloat("##vpPointSize", &ps, 0.0f,
+                                                16.0f, "Point Size %.0f");
+            recordViewportPropsPointSize();
+            if (psChanged) {
                 if (!(ps >= 0.0f)) ps = 0.0f;
                 if (ps > MAX_POINT_SIZE) ps = MAX_POINT_SIZE;
                 dispatch("viewport.pointSize",
