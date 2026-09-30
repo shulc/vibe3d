@@ -288,8 +288,8 @@ unittest { // A preset based on rotate must not inherit the bare door's law.
         if (p.id == "TransformMove") {
             assert(p.runCloseMode == RunCloseMode.groupUndo);
             ++grouped;
-        } else if (p.id == "TransformRotate" || p.id == "TransformScale" || p.id == "Transform") {
-            assert(p.runCloseMode == RunCloseMode.groupRedo);
+        } else if (p.id == "TransformRotate" || p.id == "TransformScale" || p.id == "Transform" || p.id == "xfrm.scaleUniform") {
+            assert(p.runCloseMode == RunCloseMode.groupRedo, "preset closed navigation policy: " ~ p.id);
             ++restored;
         } else {
             assert(p.runCloseMode == RunCloseMode.consolidate,
@@ -302,7 +302,7 @@ unittest { // A preset based on rotate must not inherit the bare door's law.
             RecordedRunBoundaryMode.retainSteps : RecordedRunBoundaryMode.consolidate));
         assert(p.runCloseScope == (p.id == "Transform" ? RunCloseScope.session : RunCloseScope.run));
     }
-    assert(grouped == 1 && restored == 3 && defaulted > 0);
+    assert(grouped == 1 && restored == 4 && defaulted > 0);
 }
 
 unittest {

@@ -289,6 +289,7 @@ presets:
   # base: scale (flagS=true, handleFamily=2, presentation=full).
   - id: xfrm.scaleUniform
     base: scale
+    historyClose: groupRedo
     attrs:
       uniform: "true"
 
