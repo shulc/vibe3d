@@ -10517,6 +10517,10 @@ unittest {
              eBefore, trianglesOn04(&mOff)));
     assert(offPreview == 4,
         format("the ghost preview must resolve the same target as the commit; got %d", offPreview));
+    // The split asked a PRIVATE guide: the registered one the snap service holds
+    // still carries innerSnap off, so it refuses the interior vertex.
+    assert(off.t.snapGuide_ !is null && !off.t.snapGuide_.admits(SnapType.Vertex, 4, 0),
+        "the split target must not re-point the snap service's registered guide at innerSnap on");
 
     // The press-time pick still sees that interior vertex (claim 3b).
     assert(off.t.findSourceVertex(cast(int)projectedX(&mOff, 4, off.vp),
