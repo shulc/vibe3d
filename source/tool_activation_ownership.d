@@ -157,6 +157,14 @@ enum CloseReason : ubyte { none, command, drop, switch_, discard, undoFirstGroup
 /// the UI (keys, buttons, panels, `?origin=ui`).
 enum CommandDoor : ubyte { script, ui }
 
+/// Whether the arm itself opens the postmode. Some selected tool stages wait
+/// for a viewport press; replay and reset restore an already live postmode.
+bool postmodeArmedOnArm(ToolTransition t, bool startsOnPress)
+        pure nothrow @safe @nogc {
+    return !startsOnPress ||
+        (t != ToolTransition.commandArm && t != ToolTransition.interactiveArm);
+}
+
 /// What `EditSession.closeOperation` did: whether it committed a live
 /// operation, and whether the tool stays armed across the command.
 /// `dropsTool` (slice M4): the command funnel must drop the tool before the

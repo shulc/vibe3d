@@ -928,6 +928,7 @@ struct InputRouter {
                 SDL_SetModState(cast(SDL_Keymod)(savedMods & ~KMOD_SHIFT));
                 scope(exit) SDL_SetModState(savedMods);
                 SubjectPacket subjR; VectorStack vtsR; ifs.buildToolVts(subjR, vtsR, btn.x, btn.y, true, gest);
+                app.session.notePointerDown();
                 app.activeTool.onMouseButtonDown(btn, vtsR);
                 return;
             }
@@ -949,6 +950,9 @@ struct InputRouter {
                  || app.activeTool.wantsHoverForType(EditMode.Polygons)))
                 refreshHoverPickAt(btn.x, btn.y);
             SubjectPacket subj; VectorStack vts; ifs.buildToolVts(subj, vts, btn.x, btn.y, true, gest);
+            if (btn.button == SDL_BUTTON_LEFT && ifs.viewportInputAllowed()
+                && !(SDL_GetModState() & KMOD_ALT))
+                app.session.notePointerDown();
             if (app.activeTool.onMouseButtonDown(btn, vts)) return;
         }
         // No tool, but the host's falloff gizmo may own this click (drag an

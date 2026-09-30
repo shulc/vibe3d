@@ -89,11 +89,12 @@ private struct TransformFactoryDefaults {
     bool activationHistoryRow = true;
     bool recordedFirstUndoEndsTool = false;
     OffGizmoRotateInput offGizmoRotateInput = OffGizmoRotateInput.arcball;
+    bool postmodeStartsOnPress = false;
 
     enum move      = TransformFactoryDefaults(true,  false, false, 0, "full");
     enum rotate    = TransformFactoryDefaults(false, true,  false, 1, "full",
                                                RunCloseMode.stepUndo, "rotate", false, true,
-                                               OffGizmoRotateInput.viewAxisHaul);
+                                               OffGizmoRotateInput.viewAxisHaul, true);
     enum scale     = TransformFactoryDefaults(false, false, true,  2, "full");
     // Equal to the XfrmTransformTool constructor defaults by contract, not by
     // omission: presets on this base that set no handle fields inherit it.
@@ -115,6 +116,7 @@ private XfrmTransformTool buildUnifiedTransform(LiveSessionRole owner,
     t.runCloseMode = defaults.runCloseMode;
     t.activationHistoryRow = defaults.activationHistoryRow;
     t.recordedFirstUndoEndsTool = defaults.recordedFirstUndoEndsTool;
+    t.postmodeStartsOnPress = defaults.postmodeStartsOnPress;
     t.offGizmoRotateInput = defaults.offGizmoRotateInput;
     if (defaults.runCloseMode != RunCloseMode.consolidate)
         t.closedRunOwnerId = defaults.id;

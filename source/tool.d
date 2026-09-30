@@ -339,6 +339,9 @@ struct ToolSessionPolicy {
     /// Undoing this session's first recorded geometry step ends the live tool;
     /// the step's redo re-arms it without a separate activation row.
     bool recordedFirstUndoEndsTool;
+    /// A fresh user arm selects the pipe stage, but the postmode begins on the
+    /// first viewport press. History replay restores an already armed postmode.
+    bool postmodeStartsOnPress;
     /// A live preview may itself contain in-session History rows. Undo those
     /// rows before cancelling the preview (Box's recorded parameter ladder).
     bool previewHistoryLadder;

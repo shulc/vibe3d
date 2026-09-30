@@ -650,7 +650,12 @@ final class EditSession {
     // door, `armPreparedTool`, for every arm transition). The session binds
     // the tool — installs the link it reports its gesture steps through — and
     // starts a fresh account: no operation, no steps, no redo.
-    void noteArm(string id, ulong token = 0) { tools_.noteArm(id, token); }
+    void noteArm(string id, ulong token = 0, bool postmodeArmed = true) {
+        tools_.noteArm(id, token, postmodeArmed);
+    }
+
+    /// A selected pipe stage may be waiting for its first viewport press.
+    void notePointerDown() { tools_.notePointerDown(); }
 
     // The session token (slice M4): a fresh one for every arm — the arm's
     // activation row carries it — and the bound tool's current one, which the
@@ -726,6 +731,7 @@ private struct ToolSession {
     private size_t terminalClosedRunDepth_;
     private bool terminalClosedRunArmed_;
     private bool terminalRedoRequested_;
+    private bool postmodeArmed_ = true;
     // The operation's close (slice M2). `topBefore_` is the undo top when the
     // close began; a row counts as written BY the close only if the top is a
     // different entry afterwards — identity, never the depth, which stops
@@ -1201,11 +1207,12 @@ private struct ToolSession {
         return t !is null && t is bound_ ? token_ : 0;
     }
 
-    void noteArm(string id, ulong token) {
+    void noteArm(string id, ulong token, bool postmodeArmed = true) {
         auto t = tool_();
         bound_ = t;
         armedId_ = id.idup;
         token_ = token;
+        postmodeArmed_ = postmodeArmed;
         endOperation_();
         if (t is null) return;
         import commands.tool.lifecycle : ToolActivationCommand;
@@ -1281,6 +1288,11 @@ private struct ToolSession {
             // No `stepEnds`: the image after the arm IS the pending one, so the
             // arm's own rest is never a step (the next press re-begins).
         }
+    }
+
+    void notePointerDown() {
+        if (tool_() !is null && tool_() is bound_)
+            postmodeArmed_ = true;
     }
 
     void stepBegins(Tool t, PressKind kind) {
@@ -1535,6 +1547,8 @@ private struct ToolSession {
             ? topologyHistoryDepth_(true) : t.sessionPolicy().historyRecordedSteps
             ? recordedHistoryDepth_(true) : redo_.length));
         j["dormant"] = JSONValue(topologyDormant_);
+        j["armed"] = JSONValue(postmodeArmed_);
+        j["postmodeOwner"] = JSONValue(postmodeArmed_ ? "human" : "none");
         j["token"] = JSONValue(cast(long) token_);
         return j;
     }

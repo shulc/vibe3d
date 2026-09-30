@@ -133,6 +133,8 @@ unittest {
             "8491 activation-row policy must come from the factory recipe: " ~ w.key);
         assert(t.sessionPolicy().recordedFirstUndoEndsTool == (w.key == "rotate"),
             "8492 first recorded Undo owner policy must come from the factory recipe: " ~ w.key);
+        assert(t.sessionPolicy().postmodeStartsOnPress == (w.key == "rotate"),
+            "8493 first-press postmode policy must come from the factory recipe: " ~ w.key);
         assert(t.offGizmoRotateInput == (w.key == "rotate"
                 ? OffGizmoRotateInput.viewAxisHaul : OffGizmoRotateInput.arcball),
             "8492 off-gizmo Rotate input must come from the factory recipe: " ~ w.key);

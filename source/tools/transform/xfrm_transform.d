@@ -706,6 +706,7 @@ public:
     // can retain the ordinary lifecycle row independently.
     bool activationHistoryRow = true;
     bool recordedFirstUndoEndsTool = false;
+    bool postmodeStartsOnPress = false;
     OffGizmoRotateInput offGizmoRotateInput = OffGizmoRotateInput.arcball;
     final Mesh* preparedMeshForUpdate() const { return mesh; }
     // T/R/S flags — `T integer 0/1` etc. in the preset config.
@@ -2981,6 +2982,7 @@ public:
         ToolSessionPolicy policy = defaults;
         policy.activationRow = activationHistoryRow;
         policy.recordedFirstUndoEndsTool = recordedFirstUndoEndsTool;
+        policy.postmodeStartsOnPress = postmodeStartsOnPress;
         return policy;
     }
 

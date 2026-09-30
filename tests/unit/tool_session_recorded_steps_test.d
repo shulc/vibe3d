@@ -12,6 +12,7 @@ import editmode : EditMode;
 import tool : Tool, ToolSessionPolicy;
 import tool_presets : loadToolPresets;
 import tool_activation_ownership : ToolTransition;
+import tool_activation_ownership : postmodeArmedOnArm;
 import view : View;
 import std.file : readText;
 import std.format : format;
@@ -76,6 +77,31 @@ private final class RecordedTool : Tool, RefireClient {
     }
     override void setRefireDriving(bool on) {}
     override void onRefireCommitted() {}
+}
+
+unittest { // 8493: selected stage and running postmode are distinct states.
+    auto tool = new RecordedTool;
+    Tool active = tool;
+    auto history = new CommandHistory;
+    auto session = new EditSession(() => active, history, () { active = null; });
+    assert(!postmodeArmedOnArm(ToolTransition.commandArm, true));
+    assert(!postmodeArmedOnArm(ToolTransition.interactiveArm, true));
+    assert(postmodeArmedOnArm(ToolTransition.replayArm, true));
+    assert(postmodeArmedOnArm(ToolTransition.commandArm, false));
+    session.noteArm("policy-selected", 8493, false);
+    assert(!session.sessionStateJson()["armed"].boolean &&
+           session.sessionStateJson()["postmodeOwner"].str == "none",
+           "8493 user arm must select the stage without starting postmode");
+    session.notePointerDown();
+    assert(session.sessionStateJson()["armed"].boolean &&
+           session.sessionStateJson()["postmodeOwner"].str == "human",
+           "8493 first press must start postmode without another arm");
+    session.noteArm("policy-selected", 8494, true);
+    assert(session.sessionStateJson()["armed"].boolean,
+           "8493 history replay must restore a running postmode");
+    session.noteArm("policy-selected", 8495, false);
+    assert(!session.sessionStateJson()["armed"].boolean,
+           "8493 repeated UI arm after replay must wait for the next press");
 }
 
 unittest {

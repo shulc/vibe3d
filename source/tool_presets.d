@@ -350,6 +350,7 @@ void registerToolPresets(ref Registry reg, ToolPreset[] presets) {
                     t.runCloseMode = presetCopy.runCloseMode;
                     t.activationHistoryRow = true;
                     t.recordedFirstUndoEndsTool = false;
+                    t.postmodeStartsOnPress = false;
                     t.offGizmoRotateInput = OffGizmoRotateInput.arcball;
                     t.closedRunOwnerId = presetCopy.runCloseMode ==
                         RunCloseMode.consolidate ? "" : presetCopy.id;

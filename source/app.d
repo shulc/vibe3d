@@ -56,7 +56,7 @@ version (web) {
 import http_server;
 import tool_activation_ownership : ToolTransition, ActivationDoor,
     activationDoorFor, pipeArmScopeFor, armUsesAttrCache, CloseReason,
-    CloseOutcome, CommandDoor, closeReasonFor, armDoorFor;
+    CloseOutcome, CommandDoor, closeReasonFor, armDoorFor, postmodeArmedOnArm;
 import guarded_action_controller : GuardedActionController,
     GuardedActionPorts, GuardObservationPorts;
 import ui.guard_modal_state : GuardModalState;
@@ -3868,7 +3868,9 @@ void main(string[] args) {
         if (!commitPreparedArm(activeTool, activeToolId, prepared))
             throw new Exception("prepared tool arm was already consumed");
         if (session !is null) {
-            session.noteArm(id, token);
+            session.noteArm(id, token,
+                postmodeArmedOnArm(why,
+                    activeTool.sessionPolicy().postmodeStartsOnPress));
             session.finishClose();
         }
     }
