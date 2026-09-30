@@ -527,6 +527,7 @@ unittest { // 8560: retire geometry-bank rows, keep every live step, close one s
     session.noteArm("policy-selected", 8560);
     assert(tool.ownedRecordToken() == 8560, "8560 token forwarding lost session owner");
     tool.liveGesture(history, 1, 7); tool.liveGesture(history, 1, 13);
+    (cast(HistoryEntry[])history.undoEntries())[0].flags |= HistoryFlags.Refire;
     assert(history.retireRunSteps(1, tool.ownedRecordToken()) == 2);
     assert(history.undoEntries().length == 2 && !history.runOpen());
     foreach (entry; history.undoEntries()) {
