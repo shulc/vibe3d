@@ -278,6 +278,8 @@ private long recomputes() {
 //     through the other item's fill: R3's right edge through X1,
 //     R1's left edge through X3
 //   R2 (L2): reversed, for the per-item dot cull                  cell 5
+//   R2b (L2): reversed, its left edge through X1 (L1 after L2)     cell 2
+//   G2 (L2): a small front quad inside X1o; its corner dot         cell 5b
 // L3's quads map to empty view under x -> -x (cells 6 / 6b).
 private immutable Quad kP1  = Quad("P1", [-2.2, -1.1], [0.7, 0.7], 0.0, false);
 private immutable Quad kB1  = Quad("B1", [-1.9, -0.9], [0.18, 0.18], -0.5, false);
@@ -290,12 +292,14 @@ private immutable Quad kX1  = Quad("X1", [2.4, 0.9], [0.45, 0.45], 0.0, false);
 private immutable Quad kR3  = Quad("R3", [2.0, 0.6], [0.4, 0.5], 0.0, true);
 private immutable Quad kR1  = Quad("R1", [1.2, 1.325], [0.3, 0.425], 0.0, true);
 private immutable Quad kR2  = Quad("R2", [2.6, -0.5], [0.25, 0.25], 0.0, true);
+private immutable Quad kR2b = Quad("R2b", [2.85, 1.35], [0.2, 0.35], 0.0, true);
+private immutable Quad kG2  = Quad("G2", [0.8, -1.4], [0.15, 0.15], 0.0, false);
 
 private Rig buildRigM() {
     cmdOk(commandBody("scene.reset"));
     cmdOk(`{"id":"history.clear"}`);
     cmdOk(commandBody("viewport.layout", `"Single"`));
-    immutable Quad[][4] content = [[kP1], [kB1, kX1o, kX1, kR1], [kB2, kX2, kR2],
+    immutable Quad[][4] content = [[kP1], [kB1, kX1o, kX1, kR1], [kB2, kX2, kR2, kR2b, kG2],
                                    [kB3, kX3, kR3]];
     foreach (i, qs; content) {
         if (i > 0) cmdOk(`{"id":"layer.add"}`);
@@ -354,7 +358,7 @@ unittest {
     {
         immutable double[3] x3 = [0.7, 0.7, 0.0];   // inside X3, away from R1
         int[2][] pts = [pxq(kB1), pxq(kB2), pxq(kB3),
-                        px([0.8, -1.2, 0.0]), px([-0.7, -1.2, 0.0]), px(x3)];
+                        px([0.45, -1.0, 0.0]), px([-0.7, -1.2, 0.0]), px(x3)];
         auto u = under(pts, [1, 2, 3]);
         auto o = probe(pts);
         writefln("  3 under %s", u);
@@ -380,7 +384,7 @@ unittest {
     // (1-a) 0.5) = 1.25 + 0.5 0.875 = 1.69 -> 1.75. The rival (X1o occluded by
     // X2's depth) reads X2 alone.
     {
-        int[2][] pts = [px([0.1, -1.2, 0.0]), px([0.7, -1.2, 0.0]), px([-0.6, -1.2, 0.0])];
+        int[2][] pts = [px([0.1, -1.2, 0.0]), px([0.45, -1.0, 0.0]), px([-0.6, -1.2, 0.0])];
         auto u = under(pts, [1, 2, 3]);
         auto o = probe(pts);
         immutable c1 = unblend(o[1], u[1], kFill);
@@ -397,6 +401,27 @@ unittest {
                        k, o[0].c[k], pred, single));
         }
         assert(discriminates, "1 premise: the double and single blends agree on this rig");
+        // The two fills are the same plan on the same normal: a non-primary
+        // item takes the active plan's shading, fill colour and gain (each
+        // unblended value carries 1.5).
+        foreach (k; 0 .. 3)
+            assert(abs(c1[k] - c2[k]) <= 3.0,
+                format("1: layer 1's fill unblends to %s, the primary's to %s — the item "
+                       ~ "is not drawn with the active plan", c1, c2));
+    }
+
+    // ---- 1c. the non-primary items count as backdrop work -----------------
+    // Faces of layers 0, 1 and 3 (P1 by the backdrop pass, the others by the
+    // sequence) go to `bgFaces`; `faces` holds the primary's alone. Six fan
+    // vertices per quad.
+    {
+        auto sc = getJson("/api/frames/counts")["lastScene"];
+        immutable long faces = sc["pass"]["faces"]["verts"].integer;
+        immutable long bg = sc["pass"]["bgFaces"]["verts"].integer;
+        assert(faces == 6 * 5 && bg == 6 * (1 + 4 + 3),
+            format("1c: faces %d / bgFaces %d verts, expected %d / %d — the item "
+                   ~ "sequence must stay attributed to the backdrop counters",
+                   faces, bg, 6 * 5, 6 * 8));
     }
 
     // ---- 2. veiling follows the reverse layer order: 3 before 1 ------------
@@ -447,16 +472,21 @@ unittest {
             }
             return v;
         }
-        immutable Veil v3 = read(kR3.c[0] + kR3.h[0], 0.25, 0.9, [2.65, 0.9, 0.0], true);
+        immutable Veil v3 = read(kR3.c[0] + kR3.h[0], 0.25, 0.9, [2.2, 0.8, 0.0], true);
+        // The primary sits between them: its R2b edge is veiled by layer 1 too,
+        // and only once — its base wire is not drawn again with the feedback.
+        immutable Veil v2 = read(kR2b.c[0] - kR2b.h[0], 1.55, 1.2, [2.2, 0.8, 0.0], true);
         immutable Veil v1 = read(kR1.c[0] - kR1.h[0], 1.55, 1.15, [0.65, 0.7, 0.0], false);
         writefln("  2 R3 edge in X1: got %s pred %s rival %s", v3.got.c, v3.pred, v3.rival);
         writefln("  2 R1 edge in X3: got %s pred %s rival %s", v1.got.c, v1.pred, v1.rival);
-        bool disc3 = false, disc1 = false;
+        writefln("  2 R2b edge in X1: got %s pred %s rival %s", v2.got.c, v2.pred, v2.rival);
+        bool disc3 = false, disc1 = false, disc2 = false;
         foreach (k; 0 .. 3) {
             if (abs(v3.pred[k] - v3.rival[k]) > 4.0) disc3 = true;
             if (abs(v1.pred[k] - v1.rival[k]) > 4.0) disc1 = true;
+            if (abs(v2.pred[k] - v2.rival[k]) > 4.0) disc2 = true;
         }
-        assert(disc3 && disc1, "2 premise: the veiled and unveiled predictions agree");
+        assert(disc3 && disc1 && disc2, "2 premise: the veiled and unveiled predictions agree");
         foreach (k; 0 .. 3) {
             assert(abs(v3.got.c[k] - v3.pred[k]) <= 2.0,
                 format("2: layer 3's edge inside layer 1's fill, channel %d reads %d, "
@@ -466,6 +496,11 @@ unittest {
                 format("2: layer 1's edge inside layer 3's fill, channel %d reads %d, "
                        ~ "predicted %.2f UNVEILED (layer 1 drawn last); veiled would "
                        ~ "read %.2f", k, v1.got.c[k], v1.pred[k], v1.rival[k]));
+            assert(abs(v2.got.c[k] - v2.pred[k]) <= 2.0,
+                format("2: the primary's edge inside layer 1's fill, channel %d reads %d, "
+                       ~ "predicted %.2f VEILED (the primary drawn before layer 1, its base "
+                       ~ "wire once); unveiled would read %.2f", k, v2.got.c[k], v2.pred[k],
+                       v2.rival[k]));
         }
     }
 
@@ -493,6 +528,42 @@ unittest {
         assert(f1 - f0 >= 2, format("5 floor: only %d frames passed", f1 - f0));
         assert(rc1 == rc0, format("5: %d idle frames recomputed the dot lists %d times "
             ~ "— the three items' slots evict each other", f1 - f0, rc1 - rc0));
+    }
+
+    // ---- 5b. the primary's base dots are drawn once, in its bracket --------
+    // G2's corner dot lies inside X1o (layer 1, drawn after the primary), so
+    // the dot is veiled: on - off = (1-a) 0.4 (d - Z), Z = (off - a c1)/(1-a)
+    // the pixel before X1o, d the dot colour (vertex palette x our light at
+    // +Z, gain 5/3). Error: Z 2.5 (x 0.2), d 0.5 (x 0.2), off 0.5, read 0.5:
+    // 1.6 -> 2.0. A second base pass with the feedback would draw it over X1o.
+    {
+        int[2][] win = window(px([0.95, -1.25, 0.0]), 2);
+        int[2][] pts = win ~ [px([0.45, -1.0, 0.0])];
+        auto u = under(pts, [1, 2, 3]);
+        cmd("viewport.showVertices", `{"value":"off"}`);
+        auto off = probe(pts);
+        cmd("viewport.showVertices", `{"value":"on"}`);
+        auto on = probe(pts);
+        immutable c1 = unblend(off[$ - 1], u[$ - 1], kFill);
+        size_t best = 0;
+        foreach (i; 1 .. win.length)
+            if (maxDiff(on[i], off[i]) > maxDiff(on[best], off[best])) best = i;
+        assert(maxDiff(on[best], off[best]) >= 2,
+            format("5b premise: G2's corner draws no dot (%s -> %s)", off[best].c, on[best].c));
+        immutable double[3] vpal = [0.38, 0.62, 0.92];
+        bool disc = false;
+        foreach (k; 0 .. 3) {
+            immutable double d = litZ(vpal[k], [0.0, 0.0, 0.0], r.eye, kGain);
+            immutable double Z = (off[best].c[k] - kFill * c1[k]) / (1 - kFill);
+            immutable double pred = off[best].c[k] + (1 - kFill) * kLineAlpha * (d - Z);
+            immutable double rival = kLineAlpha * d + (1 - kLineAlpha) * pred;
+            if (abs(pred - rival) > 4.0) disc = true;
+            assert(abs(on[best].c[k] - pred) <= 2.0,
+                format("5b: G2's dot channel %d reads %d, predicted %.2f veiled by layer 1 "
+                       ~ "(off %d); drawn again after it would read %.2f", k,
+                       on[best].c[k], pred, off[best].c[k], rival));
+        }
+        assert(disc, "5b premise: the veiled and re-drawn dot agree");
     }
 
     // ---- 6. a mirrored NON-primary item culls through its own matrix -------
@@ -813,6 +884,13 @@ unittest {
         }
     }
     check("Red after the primary");
+    // The backdrop pass binds each layer's own materials as well: a flat
+    // backdrop is not joined, and is lit by the same gain under the mode.
+    cmd("viewport.backdropStyle", `{"value":"flat"}`);
+    assert(!jb(getJson("/api/viewport/display")["cells"].array[0]["plan"]["backdrop"]
+               ["joinsItemSequence"]), "10 premise: a flat backdrop does not join");
+    check("Red by the backdrop pass");
+    cmd("viewport.backdropStyle", `{"value":"same"}`);
     cmdOk("layer.reorder from:0 to:1");
     settle();
     {
@@ -825,16 +903,27 @@ unittest {
 }
 
 // ---- 11. the primary's materials are bound again after the last item -----
-// The pen's filled preview reads slot 0 of the shared materials buffer. With
-// Red an `after` entry the preview must still read the primary's (Blue)
-// material: equal to a control run with Red hidden (no entry after the
-// primary), +-1 for rounding, and blue in kind.
-private int[3] penPreviewFill(bool hideRed) {
+// The pen's filled preview reads slot 0 of the shared materials buffer and
+// sets no shading or gain of its own. With Red an `after` entry — the joined
+// backdrop, then a FOREGROUND item under the mode's plan — the preview must
+// still read the primary's (Blue) material at gain 1: equal to a control run
+// with Red hidden (no entry after the primary), +-1 for rounding, and blue in
+// kind.
+private enum RedAs { hidden, joined, foreground }
+
+private int[3] penPreviewFill(RedAs red) {
     auto r = buildRigF();
     cmd("viewport.retopology", `{"value":"on"}`);
-    if (hideRed) {
+    if (red == RedAs.hidden) {
         cmd("layer.setVisible", `{"index":0,"value":false}`);
         assert(!jb(layerAt(0)["visible"]), "11 control: Red must be hidden");
+    } else if (red == RedAs.foreground) {
+        cmdOk(`{"id":"layer.select","index":0,"mode":"add"}`);
+        cmdOk("select.typeFrom polygon");
+        settle();
+        auto L = layersJson();
+        assert(L["active"].integer == 1 && jb(L["layers"].array[0]["foreground"]),
+            "11 precondition: Red a foreground item after the Blue primary: " ~ L.toString);
     }
     immutable int[2] c = toPx([-0.5, -1.2, 0.0], r.vp);
     immutable int[2][3] tri = [[c[0] - 30, c[1] + 20], [c[0] + 30, c[1] + 20],
@@ -865,17 +954,19 @@ private int[3] penPreviewFill(bool hideRed) {
         format("11 premise: no preview fill was drawn (read %s, empty %s)", px.c, emptyPx.c));
     cmdRaw(`tool.set "pen" off 0`);
     cmdRaw(commandBody("viewport.retopology", `{"value":"off"}`));
-    if (hideRed) cmdRaw(commandBody("layer.setVisible", `{"index":0,"value":true}`));
+    if (red == RedAs.hidden)
+        cmdRaw(commandBody("layer.setVisible", `{"index":0,"value":true}`));
     cmdRaw("viewport.view Perspective");
     settle();
     return px.c[0 .. 3];
 }
 
 unittest {
-    immutable int[3] control = penPreviewFill(true);
-    immutable int[3] joined  = penPreviewFill(false);
-    writefln("  11 pen preview fill: Red hidden %s, Red after the primary %s",
-             control, joined);
+    immutable int[3] control = penPreviewFill(RedAs.hidden);
+    immutable int[3] joined  = penPreviewFill(RedAs.joined);
+    immutable int[3] fgItem  = penPreviewFill(RedAs.foreground);
+    writefln("  11 pen preview fill: Red hidden %s, joined after the primary %s, "
+             ~ "a foreground item after it %s", control, joined, fgItem);
     assert(control[2] - control[0] >= 10,
         format("11 premise: the control preview %s is not in the primary's blue "
                ~ "material", control));
@@ -884,5 +975,10 @@ unittest {
             format("11: the pen preview reads %s with Red drawn after the primary and %s "
                    ~ "without it — the primary's materials were not bound again after "
                    ~ "the last item", joined, control));
+    foreach (k; 0 .. 3)
+        assert(abs(fgItem[k] - control[k]) <= 1,
+            format("11: the pen preview reads %s after a foreground item and %s without "
+                   ~ "it — the item left its shading, gain or materials on the shared "
+                   ~ "lit program", fgItem, control));
     writeln("  rig F: cell 11 passed");
 }
