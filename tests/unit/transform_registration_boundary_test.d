@@ -221,9 +221,10 @@ unittest {
     // held, which reaches the leaf `held_gesture_buttons` (+1 each).
     // Slice M5: `prefs` holds the tool attribute cache, which reaches the leaf
     // `toolpipe.attr_cache` (+1 each).
-    assert(transform.queue.length == 256 && positive.queue.length == 520,
-        format("6506 import closure census changed: transform=%d/256 "
-            ~ "registration=%d/520", transform.queue.length,
+    // Retopology slice S4: the lit uploads read the leaf `light_rig` (+1 each).
+    assert(transform.queue.length == 257 && positive.queue.length == 521,
+        format("6506 import closure census changed: transform=%d/257 "
+            ~ "registration=%d/521", transform.queue.length,
             positive.queue.length));
 }
 
