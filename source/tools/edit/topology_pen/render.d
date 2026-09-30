@@ -180,10 +180,14 @@ mixin template PenRenderOps() {
                      && projectLocalPt(m.vertices[ringE[1]], vpAim, rb))
                         dl.AddLine(ra, rb, loopCol, 2.0f);
                 }
-                // The ghost marker previews what a release WOULD commit, so
-                // it reads the same `addLoopFrac` law `addLoopUp` does — with
+                // The ghost marker previews the PRE-SNAP cut fraction: it
+                // reads the same `addLoopFrac` law `addLoopUp` does — with
                 // the "at the Middle" option on, the marker pins to 50% of
-                // the rail and stops following the cursor.
+                // the rail and stops following the cursor. Over a background
+                // the commit then re-snaps the inserted vertices onto the
+                // surface, so the marker stays on the chord while the cut
+                // lands off it; it is deliberately not snapped, because the
+                // reference's preview there is uncaptured.
                 // LOCAL: `seedRailA_`/`seedRailB_` are raw `m.vertices[]`
                 // reads (`seedRail`), and a lerp between two local points is
                 // local. Task 0619 corrected two comments in this file that
