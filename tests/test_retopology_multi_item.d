@@ -914,6 +914,52 @@ unittest {
     writeln("  rig F: cell 10 passed");
 }
 
+// ---- 12. a layer that first appears UNDER the mode is uploaded ------------
+// Every other rig uploads its layers with the mode off, so the backdrop pass
+// already holds their buffers when the sequence first runs. Here the mode is
+// on BEFORE the fixture loads: the loaded layers are new, so the Red layer's
+// only upload is the backdrop pass's upkeep in a frame that runs the
+// sequence. Same prediction as cell 10.
+unittest {
+    cmdOk(commandBody("scene.reset"));
+    cmdOk(`{"id":"history.clear"}`);
+    cmdOk(commandBody("viewport.layout", `"Single"`));
+    auto r = frontOrtho();
+    scope (exit) {
+        cmdRaw(commandBody("viewport.retopology", `{"value":"off"}`));
+        cmdRaw("viewport.view Perspective");
+    }
+    cmd("viewport.displayStyle", `{"value":"shaded"}`);
+    cmd("viewport.backdropStyle", `{"value":"same"}`);
+    cmd("viewport.retopology", `{"value":"on"}`);
+    immutable string path = buildPath(dirName(__FILE_FULL_PATH__), "fixtures", kFixture);
+    cmd("file.load", format(`{"path":%s}`, JSONValue(path).toString));
+    auto L = layersJson();
+    assert(L["layers"].array.length == 2 && L["active"].integer == 1
+        && L["layers"].array[0]["name"].str == "Red",
+        "12 precondition: Red background at 0, Blue primary at 1: " ~ L.toString);
+    auto plan = getJson("/api/viewport/display")["cells"].array[0]["plan"];
+    assert(jb(plan["active"]["clearDepthFirst"]) && jb(plan["backdrop"]["joinsItemSequence"]),
+        "12 precondition: the load must leave the mode on and the backdrop joined: "
+        ~ plan.toString);
+    auto cam = getJson("/api/camera?viewport=0");
+    assert(cam["viewPreset"].str == "Front",
+        "12 precondition: the load must keep the Front view: " ~ cam.toString);
+    parkPointer(r);
+    immutable red = baseOf(0), blue = baseOf(1);
+    immutable Px o = probe([toPx(kRedTile, r.vp)])[0];
+    writefln("  12 Red tile loaded under the mode %s", o.c);
+    foreach (k; 0 .. 3) {
+        immutable double pred = litZ(red[k], kRedTile, r.eye, kGain);
+        assert(abs(o.c[k] - pred) <= 1.0,
+            format("12: the Red layer loaded under the mode reads channel %d = %d, "
+                   ~ "predicted %.2f (the primary's base would give %.2f) — the layer "
+                   ~ "was never uploaded", k, o.c[k], pred,
+                   litZ(blue[k], kRedTile, r.eye, kGain)));
+    }
+    writeln("  rig F: cell 12 passed");
+}
+
 // ---- 11. the primary's materials are bound again after the last item -----
 // The pen's filled preview reads slot 0 of the shared materials buffer and
 // sets no shading or gain of its own. With Red an `after` entry — the joined

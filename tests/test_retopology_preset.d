@@ -10,7 +10,10 @@
 //   * the toggle alone leaves the default same-as-active backdrop, which then
 //     draws the background as the Flat backdrop does under the mode (lit,
 //     undimmed) — the mode-off control reads the dimmed value, so the probe
-//     separates the two;
+//     separates the two — and JOINS the item sequence (plan §10.3 7a): the
+//     background at the lower index draws after the primary with no depth
+//     clear, so a primary quad in front of it keeps its fill over the EMPTY
+//     view and one behind it reads the background;
 //   * the preset writes no template field: Single -> Quad still re-seeds
 //     cell 0 to the orthographic template, with the five atoms intact;
 //   * a user-visible reset (`file.new`, `scene.reset` through the UI door)
@@ -18,7 +21,7 @@
 //     clears them. The keeps run first, so the clear is the last reading.
 module test_retopology_preset;
 
-import http_client : getJson, postJson, quiesce, frameFence;
+import http_client : getJson, postJson, quiesce, frameFence, waitPlaybackProcessed;
 import http_command_helpers : commandBody;
 import drag_helpers : viewportFromCameraMatrices, projectToWindow,
                       Viewport, DHVec3 = Vec3;
@@ -116,19 +119,31 @@ private void freshSingle() {
 }
 
 // ---------------------------------------------------------------------------
-// Pixel rig: layer 0 (background) one +Z tile, layer 1 (the primary) a small
-// +Z quad away from it; front orthographic camera, shaded active style.
+// Pixel rig: layer 0 (background) one +Z tile, layer 1 (the primary) three
+// small +Z quads: D over the empty view, A in front of the tile and B behind
+// it (both clear of the tile's centre, which cell 3 probes); front
+// orthographic camera, shaded active style.
 // ---------------------------------------------------------------------------
 private immutable double[3] kBgCentre = [-1.5, 0.5, 0];
-private immutable double[3] kFgCentre = [1.5, -1.0, 0];
+private immutable double[3] kFgCentre = [1.5, -1.0, 0.5];    // D
+private immutable double[3] kACentre  = [-1.8, 0.85, 0.5];   // A, in front of the tile
+private immutable double[3] kBCentre  = [-1.2, 0.85, -0.5];  // B, behind it
+private enum double kFill = 0.5;                             // the mode's face alpha
 
-private JSONValue quad(double[3] c, double half) {
-    JSONValue[] verts;
-    foreach (k; [[-half, -half], [half, -half], [half, half], [-half, half]])
-        verts ~= JSONValue([c[0] + k[0], c[1] + k[1], c[2]]);
-    return JSONValue(["vertices": JSONValue(verts),
-                      "faces": JSONValue([JSONValue([0L, 1L, 2L, 3L])])]);
+private JSONValue quads(const(double[3])[] cs, double[] halves) {
+    JSONValue[] verts, faces;
+    foreach (i, c; cs) {
+        immutable h = halves[i];
+        long[] f;
+        foreach (k; [[-h, -h], [h, -h], [h, h], [-h, h]]) {
+            verts ~= JSONValue([c[0] + k[0], c[1] + k[1], c[2]]);
+            f ~= cast(long)(verts.length - 1);
+        }
+        faces ~= JSONValue(f);
+    }
+    return JSONValue(["vertices": JSONValue(verts), "faces": JSONValue(faces)]);
 }
+private JSONValue quad(double[3] c, double half) { return quads([c], [half]); }
 
 private int[2] toPx(double[3] w, ref Viewport vp) {
     float px, py;
@@ -137,11 +152,12 @@ private int[2] toPx(double[3] w, ref Viewport vp) {
     return [cast(int) round(px) - vp.x, cast(int) round(py) - vp.y];
 }
 
-private int[2] buildPixelRig() {
+private Viewport buildPixelRig() {
     freshSingle();
     cmdOk(commandBody("scene.loadMesh", quad(kBgCentre, 0.6).toString));
     cmdOk(`{"id":"layer.add"}`);
-    cmdOk(commandBody("scene.loadMesh", quad(kFgCentre, 0.3).toString));
+    cmdOk(commandBody("scene.loadMesh",
+        quads([kFgCentre, kACentre, kBCentre], [0.3, 0.15, 0.15]).toString));
     cmdOk("viewport.view Front");
     settle();
     auto cr = postJson("/api/camera?viewport=0",
@@ -154,7 +170,45 @@ private int[2] buildPixelRig() {
         "rig: expected a visible background layer 0 and primary layer 1: " ~ L.toString);
     auto vp = viewportFromCameraMatrices();
     assert(vp.proj[15] != 0.0f, "rig: the Front view must be orthographic");
-    return toPx(kBgCentre, vp);
+    parkPointer(vp);
+    return vp;
+}
+
+/// Move the pointer to the cell's corner, clear of every polygon, so no
+/// rollover tint is drawn.
+private void parkPointer(ref Viewport vp) {
+    string log = format(`{"t":0,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,`
+        ~ `"fovY":0.785398}`, vp.x, vp.y, vp.width, vp.height) ~ "\n";
+    foreach (i; 0 .. 3)
+        log ~= format(`{"t":%d,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,`
+            ~ `"state":0,"mod":0}`, 30 + i * 20, vp.x + vp.width - 8,
+            vp.y + vp.height - 8) ~ "\n";
+    auto pr = postJson("/api/play-events", log);
+    assert(pr["status"].str == "success", "park: /api/play-events failed: " ~ pr.toString);
+    waitPlaybackProcessed();
+    settle();
+}
+
+/// The pixels at `pts` with layers `idx` moved out of the view (pos.x 1000)
+/// and back, each move read back: the value UNDER those layers, probed.
+private int[3][] under(int[2][] pts, int[] idx) {
+    double posX(int i) {
+        return num(getJson("/api/layers")["layers"].array[i]["xform"]["pos"].array[0]);
+    }
+    foreach (i; idx) {
+        assert(posX(i) == 0.0, format("under: layer %d must start at pos.x 0", i));
+        cmdOk(format("layer.attr %d pos.x 1000", i));
+    }
+    settle();
+    foreach (i; idx)
+        assert(posX(i) == 1000.0, format("under: layer %d did not move away", i));
+    int[3][] u;
+    foreach (p; pts) u ~= probe(p);
+    foreach (i; idx) cmdOk(format("layer.attr %d pos.x 0", i));
+    settle();
+    foreach (i; idx)
+        assert(posX(i) == 0.0, format("under: layer %d did not come back", i));
+    return u;
 }
 
 private int[3] probe(int[2] p) {
@@ -217,7 +271,8 @@ unittest { // 2: per cell — the preset reaches one cell of a Quad
 }
 
 unittest { // 3: the toggle alone keeps the same-as-active backdrop, drawn as Flat
-    immutable int[2] bg = buildPixelRig();
+    auto vp = buildPixelRig();
+    immutable int[2] bg = toPx(kBgCentre, vp);
     immutable int[3] off = probe(bg);            // mode off, same: the 0.45 dim
     cmd("viewport.retopology", `{"value":"on"}`);
     auto c = cellAt(0);
@@ -227,6 +282,39 @@ unittest { // 3: the toggle alone keeps the same-as-active backdrop, drawn as Fl
         "3: the toggle's backdrop plan must join the item sequence undimmed: "
         ~ plan.toString);
     immutable int[3] same = probe(bg);
+
+    // 7a (plan §10.3) under the toggle alone: the background at the LOWER
+    // index is drawn AFTER the primary with no clear, so A (in front of the
+    // tile) keeps its fill over the EMPTY view — the tile fails the depth test
+    // there — and B (behind the tile) reads the tile. A's own fill c is
+    // unblended from D over the empty view: A = a c + (1-a) clear, error
+    // 0.5 + a 1.5 + (1-a) 0.5 = 1.5. The rival — the tile drawn first, or
+    // with a clear of its own — reads A over the tile, or the tile.
+    {
+        immutable int[2] pa = toPx(kACentre, vp), pb = toPx(kBCentre, vp),
+                         pd = toPx(kFgCentre, vp);
+        auto clearU = under([pa, pb, pd], [0, 1]);
+        auto tileU  = under([pa, pb], [1]);
+        immutable int[3] a = probe(pa), b = probe(pb), d = probe(pd);
+        writefln("  3 7a: A %s B %s | clear %s tile %s", a, b, clearU[0], tileU[0]);
+        assert(maxDiff(tileU[0], clearU[0]) >= 5,
+            format("3 7a premise: the tile %s is not separable from the empty view %s",
+                   tileU[0], clearU[0]));
+        foreach (k; 0 .. 3) {
+            immutable double fill = (d[k] - (1 - kFill) * clearU[2][k]) / kFill;
+            immutable double pred  = kFill * fill + (1 - kFill) * clearU[0][k];
+            immutable double rival = kFill * fill + (1 - kFill) * tileU[0][k];
+            assert(abs(a[k] - pred) <= 1.5,
+                format("3 7a: with the toggle alone A channel %d reads %d, predicted "
+                       ~ "%.2f = its fill over the EMPTY view (the joined tile drawn "
+                       ~ "after the primary, no clear); over the tile it would read "
+                       ~ "%.2f, the tile itself %d", k, a[k], pred, rival, tileU[0][k]));
+        }
+        assert(maxDiff(b, tileU[1]) <= 1,
+            format("3 7a: B reads %s, predicted the tile's %s (drawn after, in front)",
+                   b, tileU[1]));
+    }
+
     cmd("viewport.retopologyPreset");
     immutable int[3] flat = probe(bg);
     writefln("  3 bg tile: mode off %s, toggle only %s, preset (flat) %s", off, same, flat);

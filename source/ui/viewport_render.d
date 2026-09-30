@@ -119,7 +119,7 @@ BaseDots baseDotsFor(const ref DrawPlan plan, const ref float[16] model,
 /// it (rather than to whichever plan just drew) keeps the program in the state
 /// every non-plan caller — create-tool previews, gizmo draws — was built
 /// expecting; taken from a default-constructed plan so there is one source.
-private static immutable float[3] kDefaultFill = DrawPlan.init.fillColor;
+private immutable float[3] kDefaultFill = DrawPlan.init.fillColor;
 
 /// Head of an item's draw: with `clearDepthFirst` the item starts on a clear
 /// depth buffer (captured: one depth clear per foreground item). The depth
@@ -346,8 +346,12 @@ private:
                           string weightMapName) {
         foreach (e; entries) {
             Layer lyr = document.layers[e.layerIndex];
+            // The backdrop pass called `gpuFor` on every layer of the sequence
+            // earlier in this frame (its loop skips only the DRAW of them), so
+            // the entry exists; a null here means that upkeep moved.
             GpuMesh* g = cache.find(lyr);
-            if (g is null) continue;
+            assert(g !is null, "item sequence: the backdrop pass did not keep this "
+                               ~ "layer's upload current");
             auto zBackdrop = g_fc.backdrop();
             float[16] model = lyr.xform.composedMatrix();
             drawPlainItem(*g, lyr, model, e.foreground ? activePlan : backdropPlan,
@@ -1344,6 +1348,12 @@ public:
         auto zOv = g_perf.scope_(Cat.drawOverlays);
         BaseDots hoverBase = baseDotsFor(activePlan, meshModel, vp.eye,
                                          shader.locAlpha);
+        // The main arm's `!itemSequence` term, carried by the plan here: the
+        // plan that runs the item sequence (`clearDepthFirst`) resolves
+        // `baseDotsBySelection` false (`applyRetopology`), and its base dots
+        // were drawn in the primary's bracket.
+        assert(!itemSequence || !activePlan.baseDotsBySelection,
+               "item sequence with selection-driven base dots");
         hoverBase.draw = activePlan.baseDotsBySelection;
         gpu.drawVertices(shader.locColor, shader.locPointSize, vertHovForDraw,
                          MarkView.init, occluded, hoverBase);
