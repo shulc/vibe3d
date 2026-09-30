@@ -230,7 +230,7 @@ unittest {
     // Slice M5: `prefs` holds the tool attribute cache, which reaches the leaf
     // `toolpipe.attr_cache` (+1 each).
     // Retopology slice S4: the lit uploads read the leaf `light_rig` (+1).
-    assert(sourceFiles >= 500 && createSeen == 1 && create.queue.length == 259,
+    assert(sourceFiles >= 500 && createSeen == 1 && create.queue.length == 260,
         format("6507 import scanner population: files=%d create=%d closure=%d",
             sourceFiles, createSeen, create.queue.length));
     assert("editor_app" in positive.reached,

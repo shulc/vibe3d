@@ -458,7 +458,7 @@
         "SmoothShiftTool",
         "XfrmTransformTool"
       ],
-      "semantic_sha256": "dd852f1e7cee094d92642a7d2394662fa6633943e0e2a68637d5a157b9501db1",
+      "semantic_sha256": "21003c109ad2c66a5a5430ffcd65c5a729d9a34ea480133022234d094f7e3c82",
       "symbol": "registerTool(p.id)"
     }
   ],
@@ -1159,14 +1159,14 @@
     {
       "aggregate": "ScaleTool",
       "module": "tools.transform.scale",
-      "semantic_sha256": "0f17c0e22efeee118533495cad2291fdd7a31127ce288aab86e10af09b09213a",
+      "semantic_sha256": "e5305f0a6728b201700ae9d433d002276eb9bea97fcabf84ed364694c340affb",
       "signature": "void()",
       "symbol": "activate"
     },
     {
       "aggregate": "ScaleTool",
       "module": "tools.transform.scale",
-      "semantic_sha256": "d7de595f7f83ece3390fee4aa9e59d1fe64ee9624f058a48685f58de350167d0",
+      "semantic_sha256": "54b1c65489892f4b7cb610474857b3030eae166db1fe9a2ca539d91e299a7a23",
       "signature": "void()",
       "symbol": "deactivate"
     },
