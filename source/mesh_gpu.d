@@ -16,7 +16,7 @@ import mesh;    // Mesh, FaceList
 import change_bus : MeshEditScope;  // Position class for the preview-refresh publish
 import perf_probe : g_fc, DrawPass;  // always-on per-frame work counters
 import viewport_scheme : schemeColor, SchemeColor, pointSizePx, kBasePointSize,
-                         kOccludedSelectionAlpha;
+                         kOccludedSelectionAlpha, kFaceHoverFill;
 
 // ---------------------------------------------------------------------------
 // The HIDE skip predicate (task 0613 S3, doc/hide_geometry_plan.md)
@@ -1446,6 +1446,12 @@ struct GpuMesh {
         glBindVertexArray(0);
     }
 
+    // The hover branches' forced colour: one home for the value.
+    private static void setFaceHoverColor(const ref LitShader shader) {
+        glUniform3f(shader.locColor, kFaceHoverFill.x, kFaceHoverFill.y,
+                    kFaceHoverFill.z);
+    }
+
     // Draw faces with per-face hover highlights (Polygons mode). When the
     // subpatch preview is uploaded, `faceOriginGpu` maps each VBO face to
     // its cage face so every preview child of a hovered cage face is tinted.
@@ -1493,7 +1499,7 @@ struct GpuMesh {
                 immutable int end   = faceVertCount - faceTriStart[lo];
                 if (end > first) {
                     glUniform1f(shader.locOverrideMix, h ? 1.0f : 0.0f);
-                    if (h) glUniform3f(shader.locColor, 0.5f, 0.71f, 0.79f);
+                    if (h) setFaceHoverColor(shader);
                     dcElements(DrawPass.faces, GL_TRIANGLES, end - first, first);
                 }
                 i = lo - 1;
@@ -1526,7 +1532,7 @@ struct GpuMesh {
             // Hover face: hard override to the legacy highlight blue.
             if (hc > 0) {
                 glUniform1f(shader.locOverrideMix, 1.0f);
-                glUniform3f(shader.locColor, 0.5f, 0.71f, 0.79f);
+                setFaceHoverColor(shader);
                 dcArrays(DrawPass.faces, GL_TRIANGLES, hs, hc);
             }
             return;
@@ -1555,7 +1561,7 @@ struct GpuMesh {
         batchRun(false);
         // Hover preview triangles: legacy highlight blue.
         glUniform1f(shader.locOverrideMix, 1.0f);
-        glUniform3f(shader.locColor, 0.5f, 0.71f, 0.79f);
+        setFaceHoverColor(shader);
         batchRun(true);
     }
 
@@ -2447,10 +2453,10 @@ private GpuMesh cloneUploadState(ref GpuMesh src) {
     dst.vertVao = src.vertVao; dst.vertVbo = src.vertVbo;
     dst.faceIdVbo = src.faceIdVbo; dst.matIdVbo = src.matIdVbo;
     dst.weightColorVbo = src.weightColorVbo;
-    dst.faceReverseEbo = src.faceReverseEbo;
+    // The reverse-order index buffer stays with the live mesh (the clone is
+    // never drawn); only the layout generation travels, so installing a new
+    // layout makes the live buffer refill.
     dst.faceLayoutGen = src.faceLayoutGen;
-    dst.faceReverseEboGen = src.faceReverseEboGen;
-    dst.faceReverseEboFilled = src.faceReverseEboFilled;
     dst.faceVertCount = src.faceVertCount;
     dst.edgeVertCount = src.edgeVertCount;
     dst.vertCount = src.vertCount;

@@ -436,15 +436,18 @@ struct DrawPlan {
 
     // ---- retopology-mode fields ------------------------------------------
     // Every default below is TODAY'S behaviour; only `applyRetopology` moves
-    // them. NOT YET CONSUMED except `styleFills` (by `select_visibility`)
-    // and `lightGain` (the lit program's `u_lightGain`, set per face pass):
-    // no pass reads the rest, so no rendering may be inferred from them.
+    // them. `styleFills` is read by `select_visibility`, `lightGain` is the
+    // lit program's `u_lightGain`, and the face pass (`facePassFor`) reads
+    // `faceAlpha`, `cullBackFaces`, `reverseFaceOrder` and `clearDepthFirst`.
     // Measured values and their record: the constants block in
     // `viewport_scheme.d` and `tests/fixtures/retopology_display.json`.
     /// Face pass opacity (1 = opaque).
     float    faceAlpha = 1.0f;
     /// Cull back-facing polygons in the face pass.
     bool     cullBackFaces = false;
+    /// Submit the face pass in reverse polygon index order (captured: the
+    /// translucent fill is one depth-writing pass in reverse polygon order).
+    bool     reverseFaceOrder = false;
     /// Clear the depth buffer before this item's passes.
     bool     clearDepthFirst = false;
     /// Multiplier on the lit term above ambient (1 = today's light).
@@ -519,6 +522,7 @@ void applyRetopology(ref DrawPlan p, in ViewportDisplay d, bool isBackdrop)
     p.fillColor           = [face.x, face.y, face.z];
     p.faceAlpha           = retopologyFaceAlpha(kRetopologyFillTransparency);
     p.cullBackFaces       = true;
+    p.reverseFaceOrder    = true;
     p.clearDepthFirst     = true;
     p.drawWire            = true;
     p.wireColor           = [edge.x, edge.y, edge.z];

@@ -257,7 +257,7 @@ unittest {
     auto under = tiles(r);
     cmd("layer.setVisible", `{"index":0,"value":true}`);
 
-    // ---- E: the first mode-on endpoint cell (all twelve new plan keys) -----
+    // ---- E: the first mode-on endpoint cell (all thirteen new plan keys) ---
     // Wireframe + mode ON is the one state where `styleFills` (false: the
     // style) and `drawFaces` (true: the mode) differ, so a dump that printed
     // one for the other reddens here.
@@ -273,6 +273,7 @@ unittest {
             "E: styleFills must stay the WIREFRAME style's false: " ~ a.toString);   ++k;
         assert(num(a["faceAlpha"]) == 0.5, "E: faceAlpha " ~ a.toString);           ++k;
         assert(jb(a["cullBackFaces"]), "E: cullBackFaces");                         ++k;
+        assert(jb(a["reverseFaceOrder"]), "E: reverseFaceOrder");                   ++k;
         assert(jb(a["clearDepthFirst"]), "E: clearDepthFirst");                     ++k;
         assert(abs(num(a["lightGain"]) - kGain) < 1e-6, "E: lightGain " ~ a.toString); ++k;
         {
@@ -287,7 +288,7 @@ unittest {
         assert(jb(a["shadeLinesByItem"]), "E: shadeLinesByItem");                   ++k;
         assert(!jb(a["baseDotsBySelection"]), "E: baseDotsBySelection");            ++k;
         assert(!jb(a["joinsItemSequence"]), "E: the active plan joins nothing");    ++k;
-        assert(k == 12, format("E: asserted %s new plan keys, expected 12", k));
+        assert(k == 13, format("E: asserted %s new plan keys, expected 13", k));
 
         auto b = c["plan"]["backdrop"];
         assert(jb(b["joinsItemSequence"]),

@@ -1134,9 +1134,10 @@ final class LayerSetVisible : LayerCommandBase {
         // (hide your only layer) and keeps the suite neutral. The plan's literal
         // "(a) refuse if it is the only visible-selected layer" fallback is
         // DELIBERATELY softened to "allow" here to avoid breaking the existing
-        // single-layer setVisible tests; see the report's ambiguity flag. The
-        // edit target simply isn't drawn until shown again, and the toolpipe
-        // still binds the primary's mesh regardless of visibility.
+        // single-layer setVisible tests; see the report's ambiguity flag. A
+        // hidden primary is STILL DRAWN (measured: the scene renderer's
+        // foreground pass does not read `visible`), and the toolpipe still
+        // binds the primary's mesh regardless of visibility.
         doc.layers[target].visible = valueArg;
         if (!valueArg) doc.promoteAwayFromHiddenPrimary();  // best-effort promote
         noteUndoRecorded();   // task 2500

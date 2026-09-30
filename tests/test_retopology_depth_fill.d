@@ -381,8 +381,9 @@ unittest {
     {
         auto a = getJson("/api/viewport/display")["cells"].array[0]["plan"]["active"];
         assert(jb(a["clearDepthFirst"]) && jb(a["cullBackFaces"])
-            && abs(num(a["faceAlpha"]) - 0.5) < 1e-6,
-            "premise: the mode's plan must ask for the clear, the cull and alpha 0.5: "
+            && jb(a["reverseFaceOrder"]) && abs(num(a["faceAlpha"]) - 0.5) < 1e-6,
+            "premise: the mode's plan must ask for the clear, the cull, the reverse "
+            ~ "order and alpha 0.5: "
             ~ a.toString);
     }
 
@@ -673,6 +674,67 @@ unittest {
         settle();
         parkPointer(r);
         assert(maxDiff(probe1(at("G")), o[iG]) <= 1, "6r: the rig did not come back");
+    }
+
+    // ---- 6h-p. the reverse walk maps hover through the subpatch preview -------
+    // With every face subpatched the face buffer holds each cage face's
+    // CHILDREN, so the reverse walk must compare the hovered CAGE face with
+    // each child's origin (`faceOriginGpu`), not with the child's own index.
+    // Hover G (cage face 7): a point inside one of G's children takes the
+    // hover fill, and the child whose OWN buffer index is 7 — read out of the
+    // face buffer, not predicted — stays put. G's point sits 0.1 in from its
+    // centre on both axes, clear of the centre where its children meet.
+    {
+        void waitPreview() {
+            import core.thread : Thread;
+            import core.time : msecs;
+            foreach (_; 0 .. 1500) {
+                auto j = getJson("/api/subpatch/preview");
+                if (j["pending"].type != JSONType.true_) { settle(); return; }
+                Thread.sleep(20.msecs);
+            }
+            assert(false, "6h-p: the subpatch preview build did not settle");
+        }
+        immutable int gi = idxOf(fg, "G");
+        assert(gi == 7, format("6h-p rig: G is face %s, expected 7", gi));
+        cmdOk(`{"id":"mesh.subpatch_toggle"}`);
+        waitPreview();
+        assert(jb(getJson("/api/subpatch/preview")["active"]),
+            "6h-p premise: the subpatch preview must be active");
+        // Every child is a quad drawn as two triangles; 16 cage quads at the
+        // preview's depth give 1024 children (measured).
+        auto fv = getJson("/api/gpu/face-vbo")["positions"].array;
+        assert(fv.length == 6 * 1024,
+            format("6h-p premise: the face buffer holds %s vertices, expected 6144 "
+                   ~ "(1024 quad children)", fv.length));
+        double[3] cc = [0.0, 0.0, 0.0];
+        foreach (v; fv[6 * gi .. 6 * gi + 6])
+            foreach (k; 0 .. 3) cc[k] += num(v.array[k]) / 6.0;
+        immutable Quad gq = fg[gi];
+        assert(abs(cc[0] - gq.c[0]) > gq.half || abs(cc[1] - gq.c[1]) > gq.half,
+            format("6h-p premise: buffer child %s (centroid %s) lies inside G, so "
+                   ~ "it cannot separate a mapped index from an unmapped one", gi, cc));
+        immutable double[3] gp = [gq.c[0] + 0.1, gq.c[1] + 0.1, gq.c[2]];
+        int[2][] pts6 = [atW(gp), atW(cc)];
+        parkPointer(r);
+        auto idle = probe(pts6);
+        pointerAt(r, at("G"));
+        auto hov = probe(pts6);
+        writefln("  6h-p child %s at %s: idle %s, hover %s", gi, cc, idle, hov);
+        assert(maxDiff(hov[0], idle[0]) >= 5,
+            format("6h-p: G's child reads %s hovered and %s idle — the hovered cage "
+                   ~ "face's children must take the hover fill", hov[0].c, idle[0].c));
+        assert(maxDiff(hov[1], idle[1]) <= 1,
+            format("6h-p: buffer child %s (not G's) moved from %s to %s while G is "
+                   ~ "hovered — hover compared with the child's own index", gi,
+                   idle[1].c, hov[1].c));
+        parkPointer(r);
+        cmdOk(`{"id":"mesh.subpatch_toggle"}`);
+        waitPreview();
+        assert(!jb(getJson("/api/subpatch/preview")["active"]),
+            "6h-p: the subpatch preview did not switch off");
+        parkPointer(r);
+        assert(maxDiff(probe1(at("G")), o[iG]) <= 1, "6h-p: the rig did not come back");
     }
 
     // ---- 9. perspective: facing per eye; B = A again -------------------------

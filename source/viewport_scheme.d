@@ -231,6 +231,12 @@ enum Vec3 kViewRingGrey = Vec3(0.60f, 0.60f, 0.60f);
 /// without reading the panel.
 enum Vec3 kHandleGhostGrey = Vec3(0.30f, 0.30f, 0.30f);
 
+/// The polygon-mode rollover fill: the hovered face's colour in the face
+/// pass, forced over its material. Our own long-standing value — close to,
+/// but NOT equal to, the `preHighlight` row, and unmeasured; kept as it was so
+/// naming it changes no pixel.
+enum Vec3 kFaceHoverFill = Vec3(0.5f, 0.71f, 0.79f);
+
 /// Grey level of the unshaded (Solid) surface fill.
 ///
 /// Anchored on the SCHEME's fill entry, NOT on the surface material: the

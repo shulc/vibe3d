@@ -236,10 +236,10 @@ unittest {
 // 1c. Mode-off neutrality, against literals.
 // ---------------------------------------------------------------------------
 unittest {
-    // 20 stored fields (plus the derived `facesLit`): the endpoint dump and
+    // 21 stored fields (plus the derived `facesLit`): the endpoint dump and
     // `tests/test_viewport_display.d` B2 list exactly these, so a field added
     // without joining them fails here first.
-    static assert(DrawPlan.tupleof.length == 20,
+    static assert(DrawPlan.tupleof.length == 21,
         "DrawPlan field count changed: extend 1c, the plan dump and B2");
     ViewportDisplay d;
     assert(!d.retopology, "1c: the mode must be off by default");
@@ -250,6 +250,7 @@ unittest {
         int k = 0;
         assert(p.faceAlpha == 1.0f,       side ~ ": faceAlpha must be 1.0");        ++k;
         assert(p.cullBackFaces == false,  side ~ ": cullBackFaces must be false");  ++k;
+        assert(p.reverseFaceOrder == false, side ~ ": reverseFaceOrder must be false"); ++k;
         assert(p.clearDepthFirst == false, side ~ ": clearDepthFirst must be false"); ++k;
         assert(p.lightGain == 1.0f,       side ~ ": lightGain must be 1.0");        ++k;
         assert(p.vertAlpha == 1.0f,       side ~ ": vertAlpha must be 1.0");        ++k;
@@ -266,13 +267,13 @@ unittest {
 
     immutable DrawPlan a = resolveDrawPlan(d, false);
     immutable int ka = checkCommon(a, "1c active");
-    assert(ka == 11, format("1c: asserted %s active fields, expected 11", ka));
+    assert(ka == 12, format("1c: asserted %s active fields, expected 12", ka));
 
     immutable DrawPlan b = resolveDrawPlan(d, true);
     int kb = checkCommon(b, "1c backdrop");
     assert(b.dim == 0.45f, format("1c backdrop: dim must be 0.45, got %s", b.dim));
     ++kb;
-    assert(kb == 12, format("1c: asserted %s backdrop fields, expected 12", kb));
+    assert(kb == 13, format("1c: asserted %s backdrop fields, expected 13", kb));
 }
 
 // ---------------------------------------------------------------------------
@@ -411,6 +412,7 @@ unittest {
         format("1g: fillColor %s", p.fillColor));                                ++k;
     assert(p.faceAlpha == 0.5f, format("1g: faceAlpha %s", p.faceAlpha));        ++k;
     assert(p.cullBackFaces,                              "1g: cullBackFaces");   ++k;
+    assert(p.reverseFaceOrder,                        "1g: reverseFaceOrder"); ++k;
     assert(p.clearDepthFirst,                            "1g: clearDepthFirst"); ++k;
     assert(p.lightGain == 5.0f / 3.0f, format("1g: lightGain %s", p.lightGain)); ++k;
     assert(p.drawWire,                                   "1g: drawWire");        ++k;
@@ -428,7 +430,7 @@ unittest {
     assert(!p.facesLit,
         "1g: facesLit must stay false — the retopology arm is not the material arm"); ++k;
     assert(p.dim == 1.0f, format("1g: dim %s", p.dim));                          ++k;
-    assert(k == 19, format("1g: asserted %s fields, expected 19", k));
+    assert(k == 20, format("1g: asserted %s fields, expected 20", k));
 
     // A set point size resolves through, under the mode as outside it; a
     // non-positive or non-finite one falls back to the base size.

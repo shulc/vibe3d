@@ -151,6 +151,20 @@ unittest // plan -> FacePass: mode off is FacePass.init; the mode and a mirror a
     float[16] tm = turned.composedMatrix();
     assert(!facePassFor(on, tm).mirrored,
         "a rotation with positive scales is not a mirror");
+
+    // The order is the plan's field, never inferred from the alpha: each
+    // field moves its own FacePass member and only that one.
+    DrawPlan orderOnly;
+    orderOnly.reverseFaceOrder = true;
+    immutable FacePass fOrder = facePassFor(orderOnly, ident);
+    assert(fOrder.reverseOrder && fOrder.alpha == 1.0f,
+        format("reverseFaceOrder alone must reverse an opaque pass, got %s", fOrder));
+    DrawPlan alphaOnly;
+    alphaOnly.faceAlpha = 0.5f;
+    immutable FacePass fAlpha = facePassFor(alphaOnly, ident);
+    assert(!fAlpha.reverseOrder && fAlpha.alpha == 0.5f,
+        format("a translucent plan without reverseFaceOrder stays forward, got %s",
+               fAlpha));
 }
 
 unittest // a face-layout build moves the layout generation, on the prepared path too

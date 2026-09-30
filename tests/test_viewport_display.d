@@ -267,7 +267,7 @@ bool testFlowB() {
     int nFields = 0;
     foreach (field; ["drawFaces", "facesLit", "shading", "dim", "fillColor",
                      "drawWire", "wireAlpha", "wireColor", "drawVerts",
-                     "faceAlpha", "cullBackFaces", "clearDepthFirst",
+                     "faceAlpha", "cullBackFaces", "reverseFaceOrder", "clearDepthFirst",
                      "lightGain", "vertColor", "vertAlpha", "pointSize",
                      "cullHiddenVerts", "shadeLinesByItem",
                      "baseDotsBySelection", "joinsItemSequence", "styleFills"]) {
@@ -278,9 +278,9 @@ bool testFlowB() {
             format("plan.backdrop is missing \"%s\" — it must be the same "
                    ~ "DrawPlan shape as the active side", field));
     }
-    enforce(nFields == 21, format("B2 checked %s plan fields, expected 21", nFields));
-    enforce(pa.object.length == 21 && pb.object.length == 21,
-        format("plan dump carries %s/%s keys, the list above names 21 — a "
+    enforce(nFields == 22, format("B2 checked %s plan fields, expected 22", nFields));
+    enforce(pa.object.length == 22 && pb.object.length == 22,
+        format("plan dump carries %s/%s keys, the list above names 22 — a "
                ~ "field was added without joining this list",
                pa.object.length, pb.object.length));
     // Mode off, the retopology-mode fields dump their neutral values on both
@@ -291,7 +291,8 @@ bool testFlowB() {
                 format("plan.%s.%s must be 1.0 with the mode off", side, f));
         enforce(abs(jsonNum(pl, "pointSize") - 3.0) < 1e-6,
             format("plan.%s.pointSize must be 3.0 by default", side));
-        foreach (f; ["cullBackFaces", "clearDepthFirst", "cullHiddenVerts",
+        foreach (f; ["cullBackFaces", "reverseFaceOrder", "clearDepthFirst",
+                     "cullHiddenVerts",
                      "shadeLinesByItem", "joinsItemSequence"])
             enforce(!jsonBool(pl, f),
                 format("plan.%s.%s must be false with the mode off", side, f));

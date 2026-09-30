@@ -69,18 +69,17 @@ alias BuildToolSubject = void delegate(out SubjectPacket, ref VectorStack);
 // An item's draw is `beginItem` → faces (`facePassFor`) → edges → dots, each
 // read from the item's `DrawPlan` alone; nothing here names a display mode.
 
-/// The face pass of an item drawn under `plan` through `model`. Reverse
-/// polygon order goes with translucency: submission order is observable only
-/// when the fill blends (captured: the translucent fill is ONE depth-writing
-/// pass in reverse polygon order), so an opaque pass keeps today's forward
-/// `glDrawArrays`. `mirrored` is the sign of the model's 3x3 determinant.
+/// The face pass of an item drawn under `plan` through `model`: a copy of the
+/// plan's face-pass fields, deciding nothing itself (the order is the plan's
+/// `reverseFaceOrder`, not inferred from the alpha). `mirrored` is the sign of
+/// the model's 3x3 determinant.
 FacePass facePassFor(const ref DrawPlan plan, const ref float[16] model)
     @safe pure nothrow @nogc
 {
     FacePass fp;
     fp.cullBack     = plan.cullBackFaces;
     fp.alpha        = plan.faceAlpha;
-    fp.reverseOrder = plan.faceAlpha < 1.0f;
+    fp.reverseOrder = plan.reverseFaceOrder;
     fp.mirrored     = matrixMirrorsWinding(model);
     return fp;
 }
