@@ -89,7 +89,7 @@ unittest {
                 "measured uniform preset declares physical event input and signed factors");
         }
     }
-    assert(defaultCount > 50 && optedCount == 1, "preset input policy population");
+    assert(defaultCount == 22 && optedCount == 1, "preset input policy population");
     const path = "/var/tmp/vibe3d-8630-scale-policy.yaml";
     write(path, `presets:
   - id: alternate

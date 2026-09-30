@@ -21,7 +21,7 @@ struct ScaleInputPolicy {
 }
 
 struct ScaleCentreInputState {
-    Vec3 displacement, screenRight = Vec3(1,0,0), screenUp = Vec3(0,1,0);
+    Vec3 displacement = Vec3(0,0,0), screenRight = Vec3(1,0,0), screenUp = Vec3(0,1,0);
     double previousDistance = 0, offset = 0;
 }
 
