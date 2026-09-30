@@ -29,6 +29,13 @@ unittest {
 
 unittest {
     ScaleInputPolicy defaults;
+    assert(defaults.normalization == ScaleNormalization.gizmoProjection &&
+        defaults.accumulation == ScaleAccumulation.continuous &&
+        defaults.composition == ScaleSampleComposition.ratio &&
+        defaults.referencePixels == 120 && defaults.referenceScale == 1 && defaults.smallScale == 1 &&
+        defaults.ticksPerUnit == 100 && defaults.factorPerTick == .005,
+        "neutral scale input defaults");
+    defaults.ticksPerUnit = 7; defaults.factorPerTick = 90;
     ScaleCentreInputState continuous;
     assert(advanceScaleInput(continuous, .4, defaults) == 1.4f, "continuous default ignores ticks");
     ScaleInputPolicy policy;
