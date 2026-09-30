@@ -98,6 +98,9 @@ unittest {
     // Exact population: 11 v, 1 f, F1's 4 edges + the three wires.
     assert(m.vertices.length == 11 && m.edges.length == 7,
            format("after: %d v (expected 11), %d e (expected 7)", m.vertices.length, m.edges.length));
+    // The compaction renumbered faces and edges: the half-edge loops must be
+    // rebuilt over the result, or every adjacency query reads stale indices.
+    assert(m.loopsValid(), "the loops are stale after the remove");
 }
 
 unittest { // an empty mask removes nothing and changes nothing
