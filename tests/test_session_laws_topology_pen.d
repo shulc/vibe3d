@@ -1304,8 +1304,10 @@ unittest {
     expectState("chord-slide-vertex", "edge_z", r.a0, true, r.hp + 1);
 
     // Mid-drag (ours: the preview state): with the button still held the
-    // vertex slide is armed on v5 and its live axis is world X, moving +X;
-    // the release then commits.
+    // vertex slide is armed on v5 and its live axis is world X, moving +X.
+    // The release lands FURTHER along +X than the last motion, and the commit
+    // is the release's own evaluation (as the edge slide's is), not the last
+    // motion's: its s exceeds the held scalar.
     {
         const sp = penSpacingPx();
         const from = penVertexPx(5, "chord-slide-vertex mid-drag");
@@ -1317,12 +1319,17 @@ unittest {
         const armed = st["slideArmed"].type == JSONType.true_;
         const sv = st["slideVertex"].integer, ax = st["slideAxis"].integer;
         const k = penNum(st["slideDeltaK"]);
-        penPlay(ev[cut + 1 .. $], "chord-slide-vertex mid-drag: release");
+        const x2 = x1 + (x1 - from[0]) / 2;
+        penPlay(penButton(500, false, 1, x2, y1, PEN_KMOD_LCTRL), "chord-slide-vertex mid-drag: release further");
+        const sRel = fitAlong(tris, r.a0.pos[5], unitAxis(0), penMesh().pos[5]);
         assert(armed && sv == 5 && ax == 0 && k > 0 && penMoved(penMesh(), r.a0) == [5L]
-               && penHistoryLen() == r.hp + 2,
+               && penHistoryLen() == r.hp + 2 && sRel[1] <= penNum(fx["fitResidualMax"])
+               && sRel[0] > 1.2 * k,
                format("chord-slide-vertex mid-drag: armed %s, vertex %d (expected 5), axis %d "
-                      ~ "(expected 0), scalar %g (expected > 0); after the release moved %s, history %s",
-                      armed, sv, ax, k, penIdx(penMoved(penMesh(), r.a0)), penHistoryLabels()));
+                      ~ "(expected 0), scalar %g (expected > 0); after the release (%d px further) "
+                      ~ "moved %s, s %.5f residual %.3g (expected > 1.2 x the held scalar), history %s",
+                      armed, sv, ax, k, x2 - x1, penIdx(penMoved(penMesh(), r.a0)), sRel[0], sRel[1],
+                      penHistoryLabels()));
         penCtrlZ("chord-slide-vertex mid-drag Ctrl+Z");
         expectState("chord-slide-vertex", "mid_z", r.a0, true, r.hp + 1);
     }
