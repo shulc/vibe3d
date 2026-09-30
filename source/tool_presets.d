@@ -1,6 +1,7 @@
 module tool_presets;
 
 import std.format : format;
+import tools.transform.scale_input;
 import std.json : JSONValue;
 import command_history : RunCloseMode, RecordedRunBoundaryMode, RunCloseScope;
 
@@ -38,6 +39,7 @@ struct ToolPreset {
     RunCloseMode              runCloseMode;  // completed Transform run history
     RecordedRunBoundaryMode   runBoundaryMode;
     RunCloseScope             runCloseScope;
+    ScaleInputPolicy          scaleInput;
 }
 
 // Map YAML flag name → ToolFlag bit. Names match the enum members
@@ -86,7 +88,8 @@ ToolPreset[] loadToolPresets(string path) {
             if (node.containsKey("base") || node.containsKey("pipe")
                     || node.containsKey("attrs") || node.containsKey("flags")
                     || node.containsKey("rearmAfterCommand")
-                    || node.containsKey("historyClose"))
+                    || node.containsKey("historyClose")
+                    || node.containsKey("scaleInput"))
                 throw new Exception(format(
                     "tool_presets: preset '%s' in '%s' has 'alias' plus "
                     ~ "'base'/'pipe'/'attrs'/'flags' — an alias entry may only "
@@ -131,6 +134,45 @@ ToolPreset[] loadToolPresets(string path) {
                 p.base != "move" && p.base != "scale")
                 throw new Exception(format(
                     "tool_presets: historyClose requires a Transform base: '%s'", id));
+        }
+
+        if (node.containsKey("scaleInput")) {
+            if (p.base != "scale" && p.base != "xfrm.transform")
+                throw new Exception("tool_presets: scaleInput requires scale or xfrm.transform base");
+            foreach (string key, Node value; node["scaleInput"]) {
+                switch (key) {
+                    case "normalization":
+                        switch (value.as!string) {
+                            case "gizmoProjection": p.scaleInput.normalization = ScaleNormalization.gizmoProjection; break;
+                            case "viewportModelLength": p.scaleInput.normalization = ScaleNormalization.viewportModelLength; break;
+                            default: throw new Exception("tool_presets: unknown scale normalization");
+                        } break;
+                    case "accumulation":
+                        switch (value.as!string) {
+                            case "continuous": p.scaleInput.accumulation = ScaleAccumulation.continuous; break;
+                            case "eventTicks": p.scaleInput.accumulation = ScaleAccumulation.eventTicks; break;
+                            default: throw new Exception("tool_presets: unknown scale accumulation");
+                        } break;
+                    case "composition":
+                        switch (value.as!string) {
+                            case "ratio": p.scaleInput.composition = ScaleSampleComposition.ratio; break;
+                            case "factorOffset": p.scaleInput.composition = ScaleSampleComposition.factorOffset; break;
+                            default: throw new Exception("tool_presets: unknown scale composition");
+                        } break;
+                    case "referencePixels": p.scaleInput.referencePixels = value.as!float; break;
+                    case "referenceScale": p.scaleInput.referenceScale = value.as!float; break;
+                    case "smallScale": p.scaleInput.smallScale = value.as!float; break;
+                    case "ticksPerUnit": p.scaleInput.ticksPerUnit = value.as!double; break;
+                    case "factorPerTick": p.scaleInput.factorPerTick = value.as!double; break;
+                    default: throw new Exception("tool_presets: unknown scaleInput field " ~ key);
+                }
+            }
+            import std.math : isFinite;
+            foreach (value; [cast(double)p.scaleInput.referencePixels,
+                    p.scaleInput.referenceScale, p.scaleInput.smallScale,
+                    p.scaleInput.ticksPerUnit, p.scaleInput.factorPerTick])
+                if (!isFinite(value) || value <= 0)
+                    throw new Exception("tool_presets: scaleInput magnitudes must be finite and positive");
         }
 
         if (node.containsKey("pipe")) {
@@ -215,6 +257,7 @@ private ToolPreset resolveAliasPreset(const ref ToolPreset target, string aliasI
     r.runCloseMode = target.runCloseMode;
     r.runBoundaryMode = target.runBoundaryMode;
     r.runCloseScope = target.runCloseScope;
+    r.scaleInput = target.scaleInput;
     r.toolAttrs = target.toolAttrs.dup;
     foreach (stageId, attrs; target.pipeAttrs)
         r.pipeAttrs[stageId] = attrs.dup;
@@ -368,6 +411,8 @@ void registerToolPresets(ref Registry reg, ToolPreset[] presets) {
                 // Presets declare their own close law. A preset based on
                 // `rotate` does not silently inherit the base ID's law.
                 static if (is(T == XfrmTransformTool)) {
+                    t.scaleBank().centreInputPolicy = ScaleInputPolicy.init;
+                    t.scaleBank().centreInputPolicy = presetCopy.scaleInput;
                     t.runCloseMode = presetCopy.runCloseMode;
                     t.runBoundaryMode = presetCopy.runBoundaryMode;
                     t.runCloseScope = presetCopy.runCloseScope;

@@ -7737,7 +7737,9 @@ def transform_product_gate(owner, context, move, rotate, scale):
         "handler.setPosition(Vec3(2,3,4));" in scale and
         "installPreparedActivation(image.base);\n"
         "        pendingScaleValid = image.pendingScaleValid;\n"
-        "        pendingScale = image.pendingScale; image.clear();" in scale and
+        "        pendingScale = image.pendingScale;\n"
+        "        pendingScaleComposition = image.pendingComposition;\n"
+        "        centreInput = image.centreInput; image.clear();" in scale and
         "bool prepareTransformProductActivation(PreparedTransformProductActivationOwner owner)" in context and
         "e.transformProductActivation.validate();" in context and
         "e.transformProductActivation.install();" in context and

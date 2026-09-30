@@ -1,5 +1,6 @@
 module tools.transform.scale;
 import display_state : DrawPlan;
+import tools.transform.scale_input;
 
 import operator : VectorStack;
 import bindbc.sdl;
@@ -11,12 +12,16 @@ struct PreparedScaleActivationImage {
     PreparedTransformActivationImage base;
     Vec3 pendingScale = Vec3(1,1,1);
     bool pendingScaleValid, valid;
+    ScaleSampleComposition pendingComposition;
+    ScaleCentreInputState centreInput;
     void clear() nothrow @nogc { this = PreparedScaleActivationImage.init; }
 }
 struct PreparedScaleEmbeddedDeactivateImage {
     TransformTool.PreparedScalarDeactivateImage base;
     SDL_bool preRelative;
     bool ownsRelative, valid;
+    ScaleSampleComposition pendingComposition;
+    ScaleCentreInputState centreInput;
     void clear() nothrow @nogc { valid = ownsRelative = false; base.clear(); }
 }
 import handler;
@@ -141,12 +146,16 @@ public:
         image.base = buildPreparedScalarDeactivateImage();
         image.preRelative = preDragRelativeMouse;
         image.ownsRelative = ownsRelativeMouse;
+        image.pendingComposition = pendingScaleComposition;
+        image.centreInput = centreInput;
         image.valid = image.base.valid; return image;
     }
     final bool preparedEmbeddedDeactivateMatches(
             in PreparedScaleEmbeddedDeactivateImage image) const nothrow @nogc {
         return image.valid && image.preRelative == preDragRelativeMouse &&
             image.ownsRelative == ownsRelativeMouse &&
+            image.pendingComposition == pendingScaleComposition &&
+            image.centreInput == centreInput &&
             preparedScalarDeactivateMatches(image.base);
     }
     final void installPreparedEmbeddedDeactivate(
@@ -154,6 +163,7 @@ public:
         if (!image.valid) return;
         if (image.ownsRelative) SDL_SetRelativeMouseMode(image.preRelative);
         ownsRelativeMouse = false;
+        clearCentreInput();
         installPreparedScalarDeactivate(image.base); image.clear();
     }
     ScaleHandler handler;
@@ -204,6 +214,9 @@ public:
     // its `run.s` and runs `applyTRS`. `pendingScaleValid == false`
     // means "nothing pending" (idle / hover frames leave it untouched).
     bool pendingScaleValid = false;
+    ScaleInputPolicy centreInputPolicy;
+    ScaleSampleComposition pendingScaleComposition;
+    ScaleCentreInputState centreInput;
     Vec3 pendingScale = Vec3(1, 1, 1);   // per-axis factor, absolute since drag start
 
     // Input-projection basis, captured ONCE at drag start (in
@@ -347,6 +360,7 @@ public:
         // Reset the gesture-producer scratch on (re)activation.
         pendingScaleValid = false;
         pendingScale      = Vec3(1, 1, 1);
+        clearCentreInput();
     }
     final PreparedScaleActivationImage buildPreparedProductActivation() {
         PreparedScaleActivationImage image;
@@ -359,12 +373,17 @@ public:
         if (!image.valid) return;
         installPreparedActivation(image.base);
         pendingScaleValid = image.pendingScaleValid;
-        pendingScale = image.pendingScale; image.clear();
+        pendingScale = image.pendingScale;
+        pendingScaleComposition = image.pendingComposition;
+        centreInput = image.centreInput; image.clear();
     }
     version(unittest) void seedPreparedProductActivationForTest() {
         seedPreparedActivationForTest();
         handler.setPosition(Vec3(2,3,4));
         pendingScaleValid = true; pendingScale = Vec3(7,7,7);
+        pendingScaleComposition = ScaleSampleComposition.factorOffset;
+        centreInput.previousDistance = 2; centreInput.offset = 3;
+        centreInput.displacement = Vec3(4,5,6);
     }
     version(unittest) void mutatePreparedHandlerForTest(Vec3 center) {
         handler.setPosition(center);
@@ -372,11 +391,16 @@ public:
     version(unittest) bool preparedProductActivationForTest() const
             nothrow @nogc {
         return preparedActivationForTest() && !pendingScaleValid &&
-            pendingScale == Vec3(1,1,1);
+            pendingScale == Vec3(1,1,1) &&
+            pendingScaleComposition == ScaleSampleComposition.ratio &&
+            centreInput == ScaleCentreInputState.init;
     }
     version(unittest) bool preparedProductActivationSeedForTest() const nothrow @nogc {
         return preparedActivationSeedForTest() && handler.center == Vec3(2,3,4) &&
-            pendingScaleValid && pendingScale == Vec3(7,7,7);
+            pendingScaleValid && pendingScale == Vec3(7,7,7) &&
+            pendingScaleComposition == ScaleSampleComposition.factorOffset &&
+            centreInput.previousDistance == 2 && centreInput.offset == 3 &&
+            centreInput.displacement == Vec3(4,5,6);
     }
     final PreparedTransformProductEffect prepareActivate(
             PreparedRecordContext context) {
@@ -508,6 +532,7 @@ public:
 
     override void deactivate() {
         restoreRelativeMouseMode();
+        clearCentreInput();
         super.deactivate();
     }
 
@@ -617,6 +642,9 @@ public:
             currentBasis(inputBasisX, inputBasisY, inputBasisZ, vts);
             dragScaleAccum = Vec3(1, 1, 1);
             dragScaleScalarDelta = 0.0f;
+            clearCentreInput();
+            centreInput.screenRight = Vec3(cachedVp.view[0], cachedVp.view[4], cachedVp.view[8]);
+            centreInput.screenUp = Vec3(cachedVp.view[1], cachedVp.view[5], cachedVp.view[9]);
             version(unittest) {
                 preDragRelativeMouse = SDL_FALSE;
                 ownsRelativeMouse = false;
@@ -776,6 +804,7 @@ public:
         currentBasis(inputBasisX, inputBasisY, inputBasisZ, vts);
         dragScaleAccum       = Vec3(1, 1, 1);
         dragScaleScalarDelta = 0.0f;
+        clearCentreInput();
         version(unittest) {
             preDragRelativeMouse = SDL_FALSE;
             ownsRelativeMouse = false;
@@ -809,6 +838,7 @@ public:
         restoreRelativeMouseMode();
 
         dragAxis = -1;
+        clearCentreInput();
         // Drop the snap overlay so it doesn't linger after the drag.
         lastSnap = SnapResult.init;
         clearLastSnap();
@@ -830,12 +860,31 @@ public:
         int dyRel = motionDeltaY(e);
 
         if (dragAxis == 3) {
+            if (centreInputPolicy.normalization == ScaleNormalization.viewportModelLength) {
+                import handles.gizmo_metrics : gizmoPixelSize;
+                const pixelLength = gizmoPixelSize(center, cachedVp, 1);
+                const modelLength = gizmoPixelSize(center, cachedVp,
+                    centreInputPolicy.referencePixels * centreInputPolicy.referenceScale * centreInputPolicy.smallScale);
+                centreInput.displacement = centreInput.displacement +
+                    centreInput.screenRight * (dxRel * pixelLength) -
+                    centreInput.screenUp * (dyRel * pixelLength);
+                const q = signedScaleDistance(centreInput.displacement, centreInput.screenRight, modelLength);
+                float sample = advanceScaleInput(centreInput, q, centreInputPolicy);
+                if (centreInputPolicy.composition == ScaleSampleComposition.ratio)
+                    sample = clampScaleFactor(sample);
+                setDragAxisScale(true, true, true, sample);
+                publishScaleGesture(centreInputPolicy.composition);
+                lastMX = e.x; lastMY = e.y;
+                return true;
+            }
             float gizmoScreenPx = gizmoScreenWidth(center);
             if (gizmoScreenPx < 1.0f) { lastMX = e.x; lastMY = e.y; return true; }
             dragScaleScalarDelta += cast(float)dxRel / gizmoScreenPx;
-            float scaleFactor = clampScaleFactor(1.0f + dragScaleScalarDelta);
+            float scaleFactor = advanceScaleInput(centreInput, dragScaleScalarDelta, centreInputPolicy);
+            if (centreInputPolicy.composition == ScaleSampleComposition.ratio)
+                scaleFactor = clampScaleFactor(scaleFactor);
             setDragAxisScale(true, true, true, scaleFactor);
-            publishScaleGesture();
+            publishScaleGesture(centreInputPolicy.composition);
             lastMX = e.x; lastMY = e.y;
             return true;
         }
@@ -920,9 +969,24 @@ public:
     // rotate's view-ring — there is no interactive-only exemption: ALL
     // scale drags route through here. NO geometry mutation; the single
     // geometry-apply entry point is `XfrmTransformTool.applyTRS`.
-    private void publishScaleGesture() {
+    private void publishScaleGesture(ScaleSampleComposition composition = ScaleSampleComposition.ratio) {
+        pendingScaleComposition = composition;
         pendingScale      = dragScaleAccum;
         pendingScaleValid = true;
+    }
+
+    private void clearCentreInput() nothrow @nogc {
+        pendingScaleValid = false;
+        pendingScale = Vec3(1,1,1);
+        pendingScaleComposition = ScaleSampleComposition.ratio;
+        centreInput = ScaleCentreInputState.init;
+    }
+
+    override void resyncSession() {
+        super.resyncSession();
+        pendingScaleValid = false;
+        pendingScale = Vec3(1,1,1);
+        clearCentreInput();
     }
 
     // Task 0332 — gated on the owner-provided negative-scale option: when on, a

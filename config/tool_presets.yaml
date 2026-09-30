@@ -290,8 +290,18 @@ presets:
   - id: xfrm.scaleUniform
     base: scale
     historyClose: groupRedo
+    scaleInput:
+      normalization: viewportModelLength
+      referencePixels: 120
+      referenceScale: 1
+      smallScale: 0.6
+      accumulation: eventTicks
+      ticksPerUnit: 100
+      factorPerTick: 0.005
+      composition: factorOffset
     attrs:
       uniform: "true"
+      negScale: "true"
 
   # Thicken (task 0358) — confirmed to be the SAME tool as Smooth Shift in
   # the reference editor, activated with its `thicken` attribute forced on,

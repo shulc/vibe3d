@@ -4723,23 +4723,12 @@ public:
             if (r && scaleSub.pendingScaleValid) {
                 scaleSub.pendingScaleValid = false;
                 Vec3 f = scaleSub.pendingScale;
-                // P-F Phase 3a — run.s is RUN-ABSOLUTE: it holds the
-                // run-total factor = run-start base ⊗ this-gesture factor. The
-                // producer's `pendingScale` (f) is the WITHIN-GESTURE absolute
-                // factor only (`dragScaleAccum`, reset to 1 at this drag's start
-                // in ScaleTool's drag-begin), so the drain multiplies it per-axis by the run
-                // total captured at this gesture's mouse-down (gestureStart.s, the
-                // scale component of the per-gesture run snapshot). For a fresh run
-                // the snapshot is identity ⇒ run.s = f (byte-identical to pre-3a).
-                // For a same-bank repeat the snapshot is the held run total ⇒ the
-                // factors multiply into the run total. Per-axis factors commute ⇒
-                // no cross-axis hazard.
-                // The held T/R are NOT touched — they compose into the fold via
-                // the preset flags. composeFor (3253) reads this FULL run-absolute
-                // run.s against the FROZEN dragBaseline — no divide.
-                run.s = Vec3(gestureStart.s.x * f.x,
-                             gestureStart.s.y * f.y,
-                             gestureStart.s.z * f.z);
+                // Task 8630: the producer declares sample semantics; held start
+                // is the fixed origin for each absolute sample. Evidence:
+                // doc/transform_8630_uniform_input_amendment_2026-09-30.md.
+                import tools.transform.scale_input : evaluateScaleSample;
+                run.s = evaluateScaleSample(gestureStart.s, f,
+                    scaleSub.pendingScaleComposition, negScale);
 
                 // CPU is rebuilt from the run baseline EVERY frame so it is
                 // never stale at mouseUp. The fast-path then merely skips the
