@@ -266,6 +266,11 @@ unittest {
         on.retopology = true;
 
         DrawPlan want = resolveDrawPlan(off, true);
+        // Mode off, styleFills IS the resolved face pass on the backdrop
+        // side too — `Hidden` included, which must never read as "fills".
+        assert(want.styleFills == want.drawFaces,
+            format("1d: backdrop %s / style %s: styleFills %s but drawFaces %s",
+                   bs, s, want.styleFills, want.drawFaces));
         want.lightGain = 5.0f / 3.0f;
         immutable DrawPlan got = resolveDrawPlan(on, true);
         assert(got == want,
@@ -288,6 +293,16 @@ unittest {
         d.active.style = DisplayStyle.Wireframe;
         assert(resolveDrawPlan(d, false).drawVerts,
             "1e control: mode off, the wireframe style forces the dots");
+    }
+    {
+        // Mode off, show-vertices adds the dots to a style that has none;
+        // the backdrop side still draws no dots at all.
+        ViewportDisplay d;
+        d.active.showVertices = true;
+        assert(resolveDrawPlan(d, false).drawVerts,
+            "1e: mode off, showVertices must turn the dots on for Shaded");
+        assert(!resolveDrawPlan(d, true).drawVerts,
+            "1e: the backdrop plan draws no dots, showVertices or not");
     }
     int k = 0;
     foreach (s; kStyles) foreach (sv; [false, true]) {
