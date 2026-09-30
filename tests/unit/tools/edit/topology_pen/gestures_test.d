@@ -515,6 +515,38 @@ unittest {
     assert(!history.canUndo(), "stationary grab must record NO undo entry");
 }
 
+// The session hook equals the Move commit guard (task 8660), including its
+// wiring term: a written, net-moved drag on a tool whose Move factory is not
+// wired would record nothing, so it is no uncommitted edit either. Positive
+// half first — the same drag with the factory wired IS one — so the negative
+// half cannot pass on a hook that is simply always false.
+unittest {
+    import view : View;
+    import editmode : EditMode;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    t.history_   = new CommandHistory();
+    Mesh m;
+    t.meshSrc_ = () => &m;
+    uint a = m.addVertex(Vec3(1, 2, 3));
+
+    t.moveArmed_  = true;
+    t.moveElem_   = MoveElem.Vertex;
+    t.moveVerts_  = [a];
+    t.moveBase_   = [Vec3(1, 2, 3)];
+    t.moveDirty_  = true;
+    m.vertices[a] = Vec3(2, 2, 3);          // a net move well past the epsilon
+
+    t.moveEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                   "mesh.topoPen_move", "Topology Move",
+                                                   MeshEditScope.Position);
+    assert(t.hasUncommittedEdit(), "a wired, written, net-moved drag is an uncommitted edit");
+    t.moveEditFactory_ = null;
+    assert(!t.hasUncommittedEdit(),
+        "a drag whose Move record is not wired would commit nothing, so it is no uncommitted edit");
+}
+
 // ---------------------------------------------------------------------------
 // removeFaceAt — T1 (P5, doc/topopen_p5_remove_plan.md §Testing, DOMINO):
 // removing an INTERIOR/shared-edge face must keep the OTHER face
