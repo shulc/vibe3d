@@ -10400,9 +10400,11 @@ unittest {
 // captured chord (v5 -> v10 on the session rig) splits to an interior same-polygon
 // partner and `innerSnap` changes nothing, so since 8690 the drag SPLITS at
 // both settings through `resolveSplitTargetVert`, while the weld query
-// `resolveSnapTargetVert` keeps the border rule (asserted below). The last
-// case pins the shared-polygon admission with a decoy vertex nearer the
-// release than the partner.
+// `resolveSnapTargetVert` keeps the border rule (asserted below). The target
+// is the nearest vertex excluding only the pressed one (capture
+// split_pathA_commit_capture.md §1.4): a nearer cross-polygon decoy wins it
+// and the split is a no-op, and a pressed vertex nearer the release than its
+// partner is skipped for the partner.
 // ---------------------------------------------------------------------------
 unittest {
     import view : View;
@@ -10549,9 +10551,12 @@ unittest {
     assert(mOn.faces.length == fBefore2 + 1 && trianglesOn04(&mOn) == 2,
         "with innerSnap on, the same corner-to-center drag must split the shared quad");
 
-    // --- the shared-polygon admission: a loose decoy vertex projecting ~5px
-    // from v4 is the release pixel's nearest vertex, but it shares no polygon
-    // with v0, so the target is still v4 and the quad splits.
+    // --- the target is the NEAREST vertex, not the nearest sharing a polygon:
+    // a loose decoy projecting ~5px from v4 is nearer the release than v4 and
+    // shares no polygon with v0, so it wins the target and the release changes
+    // nothing (`commitSplit`'s shared-polygon refusal). Only "no mesh change"
+    // is pinned: whether the refused release leaves an undo row is slice S5's
+    // captured cell, not this one's.
     Mesh mDec;
     auto dec = makeRig(false, &mDec);
     immutable uint decoy = mDec.addVertex(mDec.vertices[4] + Vec3(0.0625f, 0, 0));
@@ -10562,12 +10567,49 @@ unittest {
     assert(dPartner > 2.0f && dPartner < 20.0f,
         format("setup: the decoy must sit clearly off v4 yet inside the 24px acceptance; %.2fpx",
                dPartner));
-    immutable size_t fBefore3 = mDec.faces.length;
+    auto vDec0 = mDec.vertices.dup;
+    immutable size_t fBefore3 = mDec.faces.length, eBefore3 = mDec.edges.length;
     immutable int decPreview = driveSplit(dec, 0, at);
-    assert(decPreview == 4 && mDec.faces.length == fBefore3 + 1,
-        format("the split target is the nearest vertex SHARING A POLYGON with the source, not the "
-             ~ "nearest vertex: preview %d (expected 4), faces %d (expected %d)", decPreview,
-             mDec.faces.length, fBefore3 + 1));
+    assert(decPreview == cast(int)decoy && mDec.faces.length == fBefore3
+        && mDec.edges.length == eBefore3 && mDec.vertices == vDec0,
+        format("the split target is the NEAREST vertex (a cross-polygon decoy nearer than the "
+             ~ "partner wins it) and the refused chord changes nothing: preview %d (expected "
+             ~ "%d), faces %d (expected %d), edges %d (expected %d)", decPreview, decoy,
+             mDec.faces.length, fBefore3, mDec.edges.length, eBefore3));
+
+    // --- the pressed vertex is excluded, and ONLY it: a thin rhombus off the
+    // grid (a, d, c, b wound to face the front camera), diagonal a-c 16px,
+    // b/d ~40px out. A release 3px from a is inside the acceptance of both a
+    // and c with a nearer; the target must be c, and the rhombus splits.
+    Mesh mEx;
+    auto ex = makeRig(false, &mEx);
+    uint ra = mEx.addVertex(Vec3(3.0f, 0, 0));
+    uint rd = mEx.addVertex(Vec3(3.1f, 0, -0.5f));
+    uint rc = mEx.addVertex(Vec3(3.2f, 0, 0));
+    uint rb = mEx.addVertex(Vec3(3.1f, 0, 0.5f));
+    mEx.addFace([ra, rd, rc, rb]);
+    mEx.buildLoops();
+    immutable float[2] pa_ = px(ex, ra), pc_ = px(ex, rc);
+    immutable float[2] rel = [pa_[0] + 3.0f * (pc_[0] - pa_[0]) / hypot(pc_[0] - pa_[0], pc_[1] - pa_[1]),
+                              pa_[1] + 3.0f * (pc_[1] - pa_[1]) / hypot(pc_[0] - pa_[0], pc_[1] - pa_[1])];
+    immutable float dA = hypot(rel[0] - pa_[0], rel[1] - pa_[1]);
+    immutable float dC = hypot(rel[0] - pc_[0], rel[1] - pc_[1]);
+    assert(dA < dC && dC < 20.0f,
+        format("setup: the release must be nearer a than c, both inside acceptance; %.2f / %.2f",
+               dA, dC));
+    immutable size_t fBefore4 = mEx.faces.length;
+    immutable int exPreview = driveSplit(ex, ra, rel);
+    size_t triOnAC;
+    foreach (f; mEx.faces) {
+        bool ha, hc;
+        foreach (v; f) { ha |= v == ra; hc |= v == rc; }
+        if (ha && hc && f.length == 3) ++triOnAC;
+    }
+    assert(exPreview == cast(int)rc && mEx.faces.length == fBefore4 + 1 && triOnAC == 2,
+        format("the pressed vertex is excluded from the split target, so a release nearer it "
+             ~ "than its partner picks the partner: preview %d (expected %d), faces %d "
+             ~ "(expected %d), %d triangles on a-c", exPreview, rc, mEx.faces.length,
+             fBefore4 + 1, triOnAC));
 
     // --- the gates the split target keeps. Snapping off: no target, no-op.
     Mesh mGate;
@@ -10587,12 +10629,19 @@ unittest {
     assert(backPreview == -1 && mBack.faces.length == 4 && mBackOn.faces.length == 5,
         format("backFace off must refuse a back-facing split target and on admit it: preview %d, "
              ~ "faces %d (off) / %d (on)", backPreview, mBack.faces.length, mBackOn.faces.length));
-    // A source that is no vertex resolves nothing (never indexes the mesh).
-    back.t.dragSnap_ = *penTestSnapOn();
-    assert(back.t.resolveSplitTargetVert(cast(int)px(back, 4)[0], cast(int)px(back, 4)[1], back.vp, -1) < 0
-        && back.t.resolveSplitTargetVert(cast(int)px(back, 4)[0], cast(int)px(back, 4)[1], back.vp,
-                                         cast(int)mBack.vertices.length) < 0,
-        "a source index outside the mesh must resolve no split target");
+    // A source that is no vertex excludes nothing, and the chord it would ask
+    // for is refused at `commitSplit` without touching the mesh.
+    backOn.t.dragSnap_ = *penTestSnapOn();
+    immutable int[2] outSrc = [-1, cast(int)mBackOn.vertices.length];
+    foreach (src; outSrc) {
+        immutable int tgt = backOn.t.resolveSplitTargetVert(cast(int)px(backOn, 4)[0],
+                                                            cast(int)px(backOn, 4)[1], backOn.vp, src);
+        immutable size_t fOut = mBackOn.faces.length;
+        backOn.t.commitSplit(src, tgt);
+        assert(tgt == 4 && mBackOn.faces.length == fOut,
+            format("an out-of-mesh source %d excludes nothing (target %d, expected 4) and its "
+                 ~ "chord is refused (faces %d, expected %d)", src, tgt, mBackOn.faces.length, fOut));
+    }
 }
 
 // ---------------------------------------------------------------------------

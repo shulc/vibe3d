@@ -2048,28 +2048,25 @@ public:
         return findSourceVertex(mx, my, vp, topoPenSnapAcceptPx(vp, dragSnap_), admit);
     }
 
-    /// Split's target C (task 8690): the vertex within the drag-snap acceptance
-    /// that shares a polygon with the source `a`, at every `innerSnap` — the
-    /// captured chord splits to an INTERIOR same-polygon partner and flipping
-    /// `innerSnap` changes nothing (wave plan 8640 §9.14 [A2-8]). So the border
-    /// half of `PenSnapGuide.admits` is not applied here; the master enable and
-    /// the `backFace` orientation half still are. A private guide, never the
-    /// registered one, so the service's clients keep `innerSnap`. Motion (the
-    /// ghost preview) and release (the commit) both ask this, so they agree.
+    /// Split's target C (task 8690): the NEAREST admitted vertex within the
+    /// drag-snap acceptance, excluding only the pressed source `a` — the press
+    /// marks that one vertex and nothing else, so a nearer vertex of ANOTHER
+    /// polygon wins the target and `commitSplit`'s shared-polygon refusal
+    /// (`findCommonSplitFace`) then makes the release a no-op (capture
+    /// `split_pathA_commit_capture.md` §1.1/§1.4). Admission is a PRIVATE
+    /// guide at `interiorOk = true` (the captured chord reaches an interior
+    /// partner at every `innerSnap`, plan 8640 §9.14 [A2-8]) keeping the
+    /// master enable and the `backFace` half; the registered guide keeps
+    /// `innerSnap`. Motion (ghost preview) and release (commit) both ask this.
     package int resolveSplitTargetVert(int mx, int my, const ref Viewport vp, int a) {
         if (!dragSnap_.enabled) return -1;
-        auto m = meshOrNull();
-        if (m is null) return -1;
-        uint[] partners;   // empty for an out-of-mesh source (bounds-tolerant range)
-        foreach (fi; m.facesAroundVertex(cast(uint)a)) partners ~= m.faces[fi];
         if (splitGuide_ is null) splitGuide_ = new PenSnapGuide();
         auto g = splitGuide_;
-        g.retarget(m, /*interiorOk*/true, backFace_);
+        g.retarget(meshOrNull(), /*interiorOk*/true, backFace_);
         g.aimAt(vp, mx, my);
         scope admit = delegate bool(SnapType t, int idx, int slot) nothrow {
-            bool shared_ = false;
-            foreach (v; partners) if (cast(int)v == idx) { shared_ = true; break; }
-            return shared_ && g.admits(t, idx, slot);
+            if (t == SnapType.Vertex && idx == a) return false;
+            return g.admits(t, idx, slot);
         };
         return findSourceVertex(mx, my, vp, topoPenSnapAcceptPx(vp, dragSnap_), admit);
     }
