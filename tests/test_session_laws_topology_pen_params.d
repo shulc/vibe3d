@@ -37,6 +37,7 @@
 //   discard-resets-offsets        a discarded gesture restores its context
 //   cross-tool-redo               ours (gap ee''): an open pen row at the redo
 //                                      head under a tool armed without a row
+//   offset-equal-write-row        offset capture: a write of the held value is a row
 //
 // `VIBE3D_CELL=<id>` runs one cell alone; the last block pins the population.
 //
@@ -1338,6 +1339,31 @@ unittest {
     writeln("PASS cross-tool-redo");
 }
 
+// offset-equal-write-row — the offset availability capture's undo-depth read
+// (headless `offsetX 0.0 -> 0.0`: one entry, like any accepted write): an
+// interactive Offset write of the value already held is an accepted parameter
+// row, keyed on the WRITE, not on a changed value (task 8790). Both before any
+// press (0.0 at the arm) and after g1 (its own travel written back).
+unittest {
+    if (!cell("offset-equal-write-row")) return;
+    const r = rig();
+    penArmUi(r);
+    const x0 = attrNum("offsetX");
+    w("offsetX", format("%.9g", x0));
+    at("offset-equal-write-row", "w0 (0.0 again, before a press)", r.a0, true, r.hp + 2);
+    assert(x0 == 0.0 && attrNum("offsetX") == 0.0,
+           format("offset-equal-write-row w0: offsetX %s -> %s (expected 0 -> 0)", x0, attrNum("offsetX")));
+    moveV5("offset-equal-write-row g1");
+    const g1 = penMesh();
+    const x1 = attrNum("offsetX");
+    assert(x1 != 0.0, "offset-equal-write-row g1: the Move wrote no Offset X");
+    w("offsetX", format("%.9g", x1));
+    at("offset-equal-write-row", "w1 (g1's travel again)", g1, true, r.hp + 4);
+    assert(abs(attrNum("offsetX") - x1) < 1e-6,
+           format("offset-equal-write-row w1: offsetX %s (expected %s kept)", attrNum("offsetX"), x1));
+    writeln("PASS offset-equal-write-row");
+}
+
 // ---------------------------------------------------------------------------
 // Population: with no VIBE3D_CELL every cell above ran (declared last).
 // ---------------------------------------------------------------------------
@@ -1345,7 +1371,7 @@ unittest {
     writeln("cells=", cellsRun);
     const only = environment.get("VIBE3D_CELL", "");
     if (only.length == 0)
-        assert(cellsRun == 44, format("topology pen S7a laws: %d cells ran, expected 44", cellsRun));
+        assert(cellsRun == 45, format("topology pen S7a laws: %d cells ran, expected 45", cellsRun));
     else
         assert(cellsRun == 1, format("topology pen S7a laws: VIBE3D_CELL=%s ran %d cells, expected 1 "
                                      ~ "(an unknown name runs none)", only, cellsRun));
