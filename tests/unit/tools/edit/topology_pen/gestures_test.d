@@ -71,6 +71,68 @@ import eventlog               : queryMouse;
 
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
+import edit_session : EditSession;
+
+// ---------------------------------------------------------------------------
+// The bound-session rig (plan 8646 [R2-1, R3-1]). The pen's rows are written
+// by the SESSION (`ToolSession.stepEnds`), so a pen with no session records
+// nothing. Every block that reads history binds its pen through
+// `bindPenSession`, and every direct gesture-handler or kernel call such a
+// block makes runs inside `penStep`, which calls the SAME production begin
+// and end (`openPressStep` / `closePressStep`) the mouse handlers call. Both
+// rules are a census at the end of this file, read by brace depth.
+// ---------------------------------------------------------------------------
+struct BoundPen {
+    EditSession session;
+    alias session this;
+}
+
+/// Bind `pen` to a real session over `h` as its armed tool (the shape of
+/// tests/unit/tool_session_steps_test.d's rigs): `h` becomes the pen's
+/// history, the pen the session's active tool, and `noteArm` installs the link.
+/// Every carrier the rig has not wired yet gets a generic one named after its
+/// wire id, because a press that commits nothing ends with its chord mode's
+/// DEFAULT carrier (plan 8646), which a rig wiring only its gesture's own
+/// factory would otherwise leave null — and a null carrier records nothing.
+/// A rig's own assignment, before or after this call, wins.
+BoundPen bindPenSession(TopologyPenTool pen, CommandHistory h) {
+    import view : View;
+    import editmode : EditMode;
+    auto view = new View(0, 0, 100, 100);
+    MeshSessionEdit delegate() generic(string wire) {
+        return () => new MeshSessionEdit(pen.meshSrc_(), view, EditMode.Vertices,
+                                         wire, wire, MeshEditScope.Geometry);
+    }
+    if (pen.buildEditFactory_ is null)        pen.buildEditFactory_        = generic("mesh.topoPen_build");
+    if (pen.moveEditFactory_ is null)         pen.moveEditFactory_         = generic("mesh.topoPen_move");
+    if (pen.removeEditFactory_ is null)       pen.removeEditFactory_       = generic("mesh.topoPen_remove");
+    if (pen.removeEdgeEditFactory_ is null)   pen.removeEdgeEditFactory_   = generic("mesh.topoPen_removeedge");
+    if (pen.removeVertexEditFactory_ is null) pen.removeVertexEditFactory_ = generic("mesh.topoPen_removevertex");
+    if (pen.addLoopEditFactory_ is null)      pen.addLoopEditFactory_      = generic("mesh.topoPen_addloop");
+    if (pen.slideEditFactory_ is null)        pen.slideEditFactory_        = generic("mesh.topoPen_slide");
+    if (pen.smoothEditFactory_ is null)       pen.smoothEditFactory_       = generic("mesh.topoPen_smooth");
+    if (pen.splitEditFactory_ is null)        pen.splitEditFactory_        = generic("mesh.topoPen_split");
+    if (pen.moveLoopEditFactory_ is null)     pen.moveLoopEditFactory_     = generic("mesh.topoPen_moveloop");
+    if (pen.dupLoopEditFactory_ is null)      pen.dupLoopEditFactory_      = generic("mesh.topoPen_duploop");
+    if (pen.smoothLoopEditFactory_ is null)   pen.smoothLoopEditFactory_   = generic("mesh.topoPen_smoothloop");
+    if (pen.fillEditFactory_ is null)         pen.fillEditFactory_         = generic("mesh.topoPen_fill");
+    if (pen.placeEditFactory_ is null)        pen.placeEditFactory_        = generic("mesh.topoPen_place");
+    if (pen.attrEditFactory_ is null)         pen.attrEditFactory_         = generic("mesh.topoPen_attr");
+    Tool active = pen;
+    pen.history_ = h;
+    auto s = new EditSession(() => active, h, () { active = null; });
+    s.noteArm("mesh.topoPen", s.issueToken());
+    return BoundPen(s);
+}
+
+/// One press step around a direct handler/kernel call: open, run, close.
+void penStep(TopologyPenTool pen, ubyte button, PenMode mode,
+             scope void delegate() gesture) {
+    immutable bool opened = pen.openPressStep(button, mode);
+    assert(opened, "penStep: a press step was already open (a nested bracket)");
+    gesture();
+    pen.closePressStep();
+}
 
 // ---------------------------------------------------------------------------
 // kTopoPenBindings — exhaustive resolver-grid pin. A single pure,
@@ -209,7 +271,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_          = history;
+    auto session = bindPenSession(t, history);
     t.buildEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                     "mesh.topoPen_build", "Topology Build",
                                                     MeshEditScope.Geometry | MeshEditScope.Marks);
@@ -226,8 +288,10 @@ unittest {
         m.buildLoops();
 
         auto before = MeshSnapshot.capture(m);
-        t.buildFromSource(cast(int)a, BuildCase.Tri, cast(int)n, -1, -1, -1,
-                          Vec3(2, 0, 0));   // == N's own position -> collinear
+        penStep(t, SDL_BUTTON_LEFT, PenMode.Duplicate, () {
+            t.buildFromSource(cast(int)a, BuildCase.Tri, cast(int)n, -1, -1, -1,
+                              Vec3(2, 0, 0));   // == N's own position -> collinear
+        });
         auto after = MeshSnapshot.capture(m);
 
         assert(after.vertices == before.vertices,
@@ -236,8 +300,8 @@ unittest {
             "CASE-TRI degenerate release must not add a stray edge");
         assert(after.faces == before.faces,
             "CASE-TRI degenerate release must not add a face");
-        assert(!history.canUndo(),
-            "CASE-TRI degenerate release must record NO undo entry");
+        assert(history.undoEntries().length == 1,
+            "CASE-TRI degenerate release is ONE no-op row (L5, K-noop)");
     }
 
     // --- CASE-QUAD: hub A is the apex of an existing triangle [P,A,Q];
@@ -254,8 +318,10 @@ unittest {
         assert(triFi >= 0, "setup: the source triangle must be valid");
 
         auto before = MeshSnapshot.capture(m);
-        t.buildFromSource(cast(int)a, BuildCase.Quad, -1, cast(int)p, cast(int)q, triFi,
-                          Vec3(0, 1, 0));   // == A's own position -> bowtie cancels to zero area
+        penStep(t, SDL_BUTTON_LEFT, PenMode.Duplicate, () {
+            t.buildFromSource(cast(int)a, BuildCase.Quad, -1, cast(int)p, cast(int)q, triFi,
+                              Vec3(0, 1, 0));   // == A's own position -> bowtie cancels
+        });
         auto after = MeshSnapshot.capture(m);
 
         assert(after.vertices == before.vertices,
@@ -264,8 +330,8 @@ unittest {
             "CASE-QUAD degenerate release must not leave floating edges");
         assert(after.faces == before.faces,
             "CASE-QUAD degenerate release must restore the ORIGINAL triangle, not a partial mutation");
-        assert(!history.canUndo(),
-            "CASE-QUAD degenerate release must record NO undo entry");
+        assert(history.undoEntries().length == 2,
+            "CASE-QUAD degenerate release is ONE no-op row (L5, K-noop)");
     }
 }
 
@@ -472,14 +538,12 @@ unittest {
 // applyMoveTargets — the eps no-op guard (P4, doc/topopen_p4_plan.md hard
 // requirement #4, carried onto the live-drag path by task 0484): targets
 // landing back within eps of the moving set's CURRENT positions (stationary
-// grab / all-on-surface no-move) must leave the mesh untouched, leave
-// `moveDirty_` false, and — through `recordLiveMove`'s own `moveDirty_`
-// gate — record NO undo entry. Driven directly (private, same-module
-// access) — the no-op path returns BEFORE the `refreshDisplay`/`gpu_.upload`
-// tail, so it's safe under a bare `dub test` with no GL context, mirroring
-// the buildFromSource degenerate-release unittest immediately above. (The
-// committing/"real move" path — which DOES reach `gpu_.upload` and therefore
-// needs a live GL context — is covered end-to-end by the HTTP suite instead:
+// grab / all-on-surface no-move) must leave the mesh untouched and leave
+// `moveDirty_` false. Since plan 8646 the press is still ONE row (L5, K-noop):
+// the session records the step whatever it changed. Driven inside `penStep`
+// (the production begin/end); the no-op path returns BEFORE the
+// `refreshDisplay`/`gpu_.upload` tail, so it is safe with no GL context. (The
+// committing path is covered end-to-end by the HTTP suite:
 // test_topopen_move_drag.d / test_topopen_move_undo_redo.d.)
 // ---------------------------------------------------------------------------
 unittest {
@@ -489,7 +553,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_         = history;
+    auto session = bindPenSession(t, history);
     t.moveEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                    "mesh.topoPen_move", "Topology Move",
                                                    MeshEditScope.Position);
@@ -498,53 +562,60 @@ unittest {
     t.meshSrc_ = () => &m;
     uint a = m.addVertex(Vec3(1, 2, 3));
 
-    // Stationary grab: the target IS the vertex's own position.
-    t.moveArmed_ = true;
-    t.moveElem_  = MoveElem.Vertex;
-    t.moveVerts_ = [a];
-    t.moveBase_  = [Vec3(1, 2, 3)];
-    t.moveBefore_ = MeshSnapshot.capture(m);
-
     auto before = MeshSnapshot.capture(m);
-    t.applyMoveTargets([Vec3(1, 2, 3)]);
+    penStep(t, SDL_BUTTON_LEFT, PenMode.Move, () {
+        // Stationary grab: the target IS the vertex's own position.
+        t.moveArmed_ = true;
+        t.moveElem_  = MoveElem.Vertex;
+        t.moveVerts_ = [a];
+        t.moveBase_  = [Vec3(1, 2, 3)];
+        t.applyMoveTargets([Vec3(1, 2, 3)]);
+        assert(!t.moveDirty_, "a no-op apply must leave the drag clean");
+    });
     auto after = MeshSnapshot.capture(m);
     assert(after.vertices == before.vertices, "stationary grab must not move the vertex");
-    assert(!t.moveDirty_, "a no-op apply must leave the drag clean");
-
-    t.recordLiveMove();
-    assert(!history.canUndo(), "stationary grab must record NO undo entry");
+    assert(history.undoEntries().length == 1
+           && history.undoEntries()[0].cmd.label() == "Topology Move",
+        "a stationary grab is ONE no-op row labelled Topology Move (L5, K-noop)");
 }
 
-// The session hook equals the Move commit guard (task 8660), including its
-// wiring term: a written, net-moved drag on a tool whose Move factory is not
-// wired would record nothing, so it is no uncommitted edit either. Positive
-// half first — the same drag with the factory wired IS one — so the negative
-// half cannot pass on a hook that is simply always false.
+// The session's view of the open press (plan 8646): an open step whose mesh is
+// no longer the press image is the uncommitted edit; the cancel restores that
+// image, records nothing and CLOSES the step, so the next press opens its own
+// [R4-3]. Each positive half sits above the negative half it pairs with.
 unittest {
     import view : View;
     import editmode : EditMode;
 
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
-    t.history_   = new CommandHistory();
+    auto history = new CommandHistory();
     Mesh m;
     t.meshSrc_ = () => &m;
     uint a = m.addVertex(Vec3(1, 2, 3));
-
-    t.moveArmed_  = true;
-    t.moveElem_   = MoveElem.Vertex;
-    t.moveVerts_  = [a];
-    t.moveBase_   = [Vec3(1, 2, 3)];
-    t.moveDirty_  = true;
-    m.vertices[a] = Vec3(2, 2, 3);          // a net move well past the epsilon
-
+    auto session = bindPenSession(t, history);
     t.moveEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                    "mesh.topoPen_move", "Topology Move",
                                                    MeshEditScope.Position);
-    assert(t.hasUncommittedEdit(), "a wired, written, net-moved drag is an uncommitted edit");
-    t.moveEditFactory_ = null;
+
+    assert(t.openPressStep(SDL_BUTTON_LEFT, PenMode.Move), "the press opens a step");
+    m.vertices[a] = Vec3(2, 2, 3);          // the held press wrote the mesh
+    assert(t.hasUncommittedEdit(), "an open press that wrote the mesh is an uncommitted edit");
+    m.vertices[a] = Vec3(1, 2, 3);
     assert(!t.hasUncommittedEdit(),
-        "a drag whose Move record is not wired would commit nothing, so it is no uncommitted edit");
+        "an open press whose mesh is the press image again is no uncommitted edit");
+    m.vertices[a] = Vec3(2, 2, 3);
+    t.cancelUncommittedEdit();
+    assert(m.vertices[a] == Vec3(1, 2, 3) && !t.stepOpen_ && !t.hasUncommittedEdit(),
+        "the cancel restores the press image and closes the step");
+    assert(history.undoEntries().length == 0, "a cancelled press records nothing");
+
+    // [R4-3]: the next press opens ITS OWN step and is one row.
+    assert(t.openPressStep(SDL_BUTTON_LEFT, PenMode.Move),
+        "after a cancel the next press must open its own step");
+    t.closePressStep();
+    assert(history.undoEntries().length == 1,
+        "the press after a cancel is one row");
 }
 
 // ---------------------------------------------------------------------------
@@ -562,7 +633,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_           = history;
+    auto session = bindPenSession(t, history);
     t.removeEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                      "mesh.topoPen_remove", "Topology Remove",
                                                      MeshEditScope.Geometry);
@@ -584,7 +655,7 @@ unittest {
     assert(m.vertices.length == 6 && m.edges.length == 7 && m.faces.length == 2,
         "setup: pre-state must be the hand-enumerated domino (6v/7e/2f)");
 
-    t.removeFaceAt(0);   // remove F0
+    penStep(t, SDL_BUTTON_MIDDLE, PenMode.Remove, () { t.removeFaceAt(0); });   // remove F0
 
     assert(m.faces.length == 1 && m.faces[0] == [0u, 2u, 3u, 1u],
         "F1 must survive, renumbered onto the survivors 1, 2, 4, 5");
@@ -609,7 +680,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_           = history;
+    auto session = bindPenSession(t, history);
     t.removeEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                      "mesh.topoPen_remove", "Topology Remove",
                                                      MeshEditScope.Geometry);
@@ -631,7 +702,7 @@ unittest {
     }
     const others = facePos(m, 1);
 
-    t.removeFaceAt(0);   // corner face
+    penStep(t, SDL_BUTTON_MIDDLE, PenMode.Remove, () { t.removeFaceAt(0); });   // corner face
 
     assert(m.faces.length == 3, "exactly one face must be removed");
     assert(facePos(m, 0) == others, "the other 3 faces must survive intact");
@@ -643,7 +714,7 @@ unittest {
 // ---------------------------------------------------------------------------
 // removeFaceAt — T3 (P5, doc/topopen_p5_remove_plan.md §Testing, D3): a miss
 // (-1) or an out-of-range face index must be a byte-identical no-op — no
-// mutation, no undo entry recorded.
+// mutation, the press still one row (L5).
 // ---------------------------------------------------------------------------
 unittest {
     import view : View;
@@ -652,7 +723,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_           = history;
+    auto session = bindPenSession(t, history);
     t.removeEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                      "mesh.topoPen_remove", "Topology Remove",
                                                      MeshEditScope.Geometry);
@@ -666,13 +737,13 @@ unittest {
     m.buildLoops();
 
     auto before = MeshSnapshot.capture(m);
-    t.removeFaceAt(-1);                       // miss
-    t.removeFaceAt(cast(int)m.faces.length);  // out-of-range
+    penStep(t, SDL_BUTTON_MIDDLE, PenMode.Remove, () { t.removeFaceAt(-1); });                       // miss
+    penStep(t, SDL_BUTTON_MIDDLE, PenMode.Remove, () { t.removeFaceAt(cast(int)m.faces.length); });  // out-of-range
     auto after = MeshSnapshot.capture(m);
 
     assert(after.vertices == before.vertices && after.edges == before.edges
         && after.faces == before.faces, "miss/out-of-range must not mutate the mesh");
-    assert(!history.canUndo(), "miss/out-of-range must record NO undo entry");
+    assert(history.undoEntries().length == 2, "miss/out-of-range is one no-op row per press (L5, K-noop)");
 }
 
 // ---------------------------------------------------------------------------
@@ -687,7 +758,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_           = history;
+    auto session = bindPenSession(t, history);
     t.removeEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                      "mesh.topoPen_remove", "Topology Remove",
                                                      MeshEditScope.Geometry);
@@ -706,7 +777,7 @@ unittest {
     m.buildLoops();
 
     auto before = MeshSnapshot.capture(m);
-    t.removeFaceAt(0);
+    penStep(t, SDL_BUTTON_MIDDLE, PenMode.Remove, () { t.removeFaceAt(0); });
     assert(history.canUndo(), "a real removal must be undoable");
     history.undo();
     auto after = MeshSnapshot.capture(m);
@@ -736,7 +807,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_            = history;
+    auto session = bindPenSession(t, history);
     t.addLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                       "mesh.topoPen_addloop", "Topology Add Loop",
                                                       MeshEditScope.Geometry | MeshEditScope.Marks);
@@ -749,7 +820,7 @@ unittest {
     assert(m.vertices.length == 8 && m.edges.length == 12 && m.faces.length == 6,
         "setup: pre-state must be the untouched cube");
 
-    t.commitAddLoop(seed, 0.5f);
+    penStep(t, SDL_BUTTON_MIDDLE, PenMode.AddLoop, () { t.commitAddLoop(seed, 0.5f); });
 
     assert(m.vertices.length == 12,
         format("cube belt r=0.5 must add exactly 4 vertices; got %d", m.vertices.length));
@@ -835,7 +906,7 @@ unittest {
 // ---------------------------------------------------------------------------
 // commitAddLoop — T3 (P6, doc/topopen_p6_addloop_plan.md §Testing, "clamp ->
 // no-op"): a ratio landing exactly on a vertex (r<=0 or r>=1) must be a
-// byte-identical no-op — no mutation, no undo entry — the verbatim
+// byte-identical no-op — no mutation, the press still one row (L5) — the verbatim
 // `MeshAddLoop.evaluate` open-interval guard copied into `commitAddLoop`.
 // ---------------------------------------------------------------------------
 unittest {
@@ -846,7 +917,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_            = history;
+    auto session = bindPenSession(t, history);
     t.addLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                       "mesh.topoPen_addloop", "Topology Add Loop",
                                                       MeshEditScope.Geometry | MeshEditScope.Marks);
@@ -856,14 +927,14 @@ unittest {
     uint seed = m.edgeIndex(0, 1);
 
     auto before = MeshSnapshot.capture(m);
-    t.commitAddLoop(seed, 1.0f);
-    t.commitAddLoop(seed, 0.0f);
+    penStep(t, SDL_BUTTON_MIDDLE, PenMode.AddLoop, () { t.commitAddLoop(seed, 1.0f); });
+    penStep(t, SDL_BUTTON_MIDDLE, PenMode.AddLoop, () { t.commitAddLoop(seed, 0.0f); });
     auto after = MeshSnapshot.capture(m);
 
     assert(after.vertices == before.vertices && after.edges == before.edges
         && after.faces == before.faces,
         "an exact-vertex ratio (0 or 1) must be a byte-identical no-op");
-    assert(!history.canUndo(), "clamp no-op must record NO undo entry");
+    assert(history.undoEntries().length == 2, "clamp no-op is one no-op row per press (L5, K-noop)");
 }
 
 // ---------------------------------------------------------------------------
@@ -879,7 +950,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_            = history;
+    auto session = bindPenSession(t, history);
     t.addLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                       "mesh.topoPen_addloop", "Topology Add Loop",
                                                       MeshEditScope.Geometry | MeshEditScope.Marks);
@@ -889,7 +960,7 @@ unittest {
     uint seed = m.edgeIndex(0, 1);
 
     auto before = MeshSnapshot.capture(m);
-    t.commitAddLoop(seed, 0.5f);
+    penStep(t, SDL_BUTTON_MIDDLE, PenMode.AddLoop, () { t.commitAddLoop(seed, 0.5f); });
     assert(history.canUndo(), "a real Add Loop cut must be undoable");
     history.undo();
     auto after = MeshSnapshot.capture(m);
@@ -984,7 +1055,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_            = history;
+    auto session = bindPenSession(t, history);
     t.addLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                       "mesh.topoPen_addloop", "Topology Add Loop",
                                                       MeshEditScope.Geometry | MeshEditScope.Marks);
@@ -1005,7 +1076,7 @@ unittest {
     assert(seed != uint.max);
     assert(m.vertices.length == 12 && m.edges.length == 17 && m.faces.length == 6);
 
-    t.commitAddLoop(seed, 0.498288683f);
+    penStep(t, SDL_BUTTON_MIDDLE, PenMode.AddLoop, () { t.commitAddLoop(seed, 0.498288683f); });
 
     // Open-span delta: +3 verts / +5 edges / +2 faces (N=2), NOT the closed
     // ring's +2/+4/+2.
@@ -1057,7 +1128,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 200, 200);
     auto history = new CommandHistory();
-    t.history_            = history;
+    auto session = bindPenSession(t, history);
     t.addLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                       "mesh.topoPen_addloop", "Topology Add Loop",
                                                       MeshEditScope.Geometry | MeshEditScope.Marks);
@@ -1091,7 +1162,7 @@ unittest {
     SDL_MouseButtonEvent eUp;
     eUp.button = SDL_BUTTON_MIDDLE;
     eUp.x = cast(int)rp.x; eUp.y = cast(int)rp.y;
-    assert(t.addLoopUp(eUp, vts), "addLoopUp must consume the release");
+    penStep(t, SDL_BUTTON_MIDDLE, PenMode.AddLoop, () { assert(t.addLoopUp(eUp, vts), "addLoopUp must consume the release"); });
 
     assert(m.vertices.length == 12, "the option must still cut the full belt (Δv=+4)");
     float xLo = float.max, xHi = -float.max;
@@ -1110,7 +1181,7 @@ unittest {
     t.addLoopMiddle_ = false;
     t.addLoopArmed_  = true;
     t.addLoopSeed_   = cast(int)seed;
-    assert(t.addLoopUp(eUp, vts), "addLoopUp must consume the second release");
+    penStep(t, SDL_BUTTON_MIDDLE, PenMode.AddLoop, () { assert(t.addLoopUp(eUp, vts), "addLoopUp must consume the second release"); });
     assert(m.vertices.length == 12, "the OFF path must still cut the full belt");
     float xLo2 = float.max, xHi2 = -float.max;
     foreach (i; 8 .. 12) {
@@ -1280,7 +1351,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_          = history;
+    auto session = bindPenSession(t, history);
     t.slideEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                     "mesh.topoPen_slide", "Topology Slide",
                                                     MeshEditScope.Position);
@@ -1302,7 +1373,7 @@ unittest {
 
     int nA = TopologyPenTool.continuationNeighbor(&m, v0, v1);
     int nB = TopologyPenTool.continuationNeighbor(&m, v1, v0);
-    t.commitSlide(seed, cast(int)v0, cast(int)v1, nA, nB, -0.5f);
+    penStep(t, SDL_BUTTON_LEFT, PenMode.Move, () { t.commitSlide(seed, cast(int)v0, cast(int)v1, nA, nB, -0.5f); });
 
     assert((m.vertices[v0] - p0).length > 1e-3f,
         "the valence>2 endpoint must no longer be held fixed");
@@ -1348,7 +1419,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_          = history;
+    auto session = bindPenSession(t, history);
     t.slideEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                     "mesh.topoPen_slide", "Topology Slide",
                                                     MeshEditScope.Position);
@@ -1372,7 +1443,7 @@ unittest {
     assert(TopologyPenTool.continuationNeighbor(&m, b, a) == cast(int)e);
 
     enum float kDeltaK = -0.8f;   // negative -> both endpoints move TOWARD their rail neighbour
-    t.commitSlide(seed, cast(int)a, cast(int)b, cast(int)d, cast(int)e, kDeltaK);
+    penStep(t, SDL_BUTTON_LEFT, PenMode.Move, () { t.commitSlide(seed, cast(int)a, cast(int)b, cast(int)d, cast(int)e, kDeltaK); });
 
     Vec3 railA = (d0 - a0) * (1.0f / (d0 - a0).length);
     Vec3 railB = (e0 - b0) * (1.0f / (e0 - b0).length);
@@ -1414,7 +1485,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_          = history;
+    auto session = bindPenSession(t, history);
     t.slideEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                     "mesh.topoPen_slide", "Topology Slide",
                                                     MeshEditScope.Position);
@@ -1433,7 +1504,7 @@ unittest {
     // |A->D| = sqrt(10) ~= 3.1623. Slide 5 world units toward D: comfortably
     // PAST D, which the old [0,1] clamp made unreachable.
     Vec3 rail = (d0 - a0) * (1.0f / (d0 - a0).length);
-    t.commitSlide(seed, cast(int)a, cast(int)b, cast(int)d, -1, -5.0f);
+    penStep(t, SDL_BUTTON_LEFT, PenMode.Move, () { t.commitSlide(seed, cast(int)a, cast(int)b, cast(int)d, -1, -5.0f); });
 
     assert((m.vertices[a] - (a0 + rail * 5.0f)).length < 1e-5f,
         "an overshoot must land at the exact UNBOUNDED position — there is no [0,1] clamp");
@@ -1445,7 +1516,7 @@ unittest {
     // The negative direction is equally unbounded: the vertex runs backwards
     // past its own start, away from the rail neighbour.
     history.undo();
-    t.commitSlide(seed, cast(int)a, cast(int)b, cast(int)d, -1, 2.0f);
+    penStep(t, SDL_BUTTON_LEFT, PenMode.Move, () { t.commitSlide(seed, cast(int)a, cast(int)b, cast(int)d, -1, 2.0f); });
     assert((m.vertices[a] - (a0 - rail * 2.0f)).length < 1e-5f,
         "a negative slide must run AWAY from the rail neighbour, past the start point");
 }
@@ -1496,7 +1567,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_          = history;
+    auto session = bindPenSession(t, history);
     t.slideEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                     "mesh.topoPen_slide", "Topology Slide",
                                                     MeshEditScope.Position);
@@ -1511,7 +1582,7 @@ unittest {
     uint seed = m.edgeIndex(a, b);
 
     auto before = MeshSnapshot.capture(m);
-    t.commitSlide(seed, cast(int)a, cast(int)b, cast(int)d, -1, -0.5f);
+    penStep(t, SDL_BUTTON_LEFT, PenMode.Move, () { t.commitSlide(seed, cast(int)a, cast(int)b, cast(int)d, -1, -0.5f); });
     assert(history.canUndo(), "a real slide must be undoable");
     history.undo();
     auto after = MeshSnapshot.capture(m);
@@ -1580,7 +1651,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_          = history;
+    auto session = bindPenSession(t, history);
     t.slideEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                     "mesh.topoPen_slide", "Topology Slide",
                                                     MeshEditScope.Position);
@@ -1605,7 +1676,7 @@ unittest {
         "setup: B must have 2 remaining incident edges (valence>2) and no face "
       ~ "-> no continuation rail -> deferred/held-fixed");
 
-    t.commitSlide(seed, cast(int)a, cast(int)b, cast(int)d, -1, -1.2f);
+    penStep(t, SDL_BUTTON_LEFT, PenMode.Move, () { t.commitSlide(seed, cast(int)a, cast(int)b, cast(int)d, -1, -1.2f); });
 
     // deltaK = -1.2 on the |AD| = 2 rail lands A at the same point the old
     // `tA = 0.6` fraction produced — assertion unchanged.
@@ -1631,7 +1702,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_          = history;
+    auto session = bindPenSession(t, history);
     t.slideEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                     "mesh.topoPen_slide", "Topology Slide",
                                                     MeshEditScope.Position);
@@ -1647,17 +1718,17 @@ unittest {
     assert(TopologyPenTool.continuationNeighbor(&m, b, a) == -1);
 
     auto before = MeshSnapshot.capture(m);
-    t.commitSlide(seed, cast(int)a, cast(int)b, -1, -1, -0.5f);
+    penStep(t, SDL_BUTTON_LEFT, PenMode.Move, () { t.commitSlide(seed, cast(int)a, cast(int)b, -1, -1, -0.5f); });
     auto after = MeshSnapshot.capture(m);
 
     assert(after.vertices == before.vertices, "both-fixed slide must not move any vertex");
-    assert(!history.canUndo(), "both-fixed slide must record NO undo entry");
+    assert(history.undoEntries().length == 1, "both-fixed slide is one no-op row per press (L5, K-noop)");
 }
 
 // ---------------------------------------------------------------------------
 // onMouseButtonUp — MIN-DRAG (P7 REV1 FIX-2, doc/topopen_p7_slide_plan.md):
 // a Ctrl+LMB release within `kMinDragPx` of the press pixel is a clean
-// no-op — no vertex write, no undo entry — driven through the extracted
+// no-op — no vertex write, the press still one row (L5) — driven through the extracted
 // `slideUp` release-side helper directly (arming state set up directly,
 // mirroring `onCtrlLmbDown`'s post-classification result, rather than
 // driving a full screen-space press) so the min-drag GATE ITSELF is under
@@ -1680,7 +1751,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_          = history;
+    auto session = bindPenSession(t, history);
     t.slideEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                     "mesh.topoPen_slide", "Topology Slide",
                                                     MeshEditScope.Position);
@@ -1717,13 +1788,14 @@ unittest {
     e.x = 51;
     e.y = 50;   // 1px away — well inside kMinDragPx
     VectorStack vts;
-    bool consumed = t.slideUp(e, vts);
+    bool consumed;
+    penStep(t, SDL_BUTTON_LEFT, PenMode.Move, () { consumed = t.slideUp(e, vts); });
     auto after = MeshSnapshot.capture(m);
 
     assert(consumed, "a click-without-drag release must still consume the event");
     assert(!t.slideArmed_, "release must disarm Slide regardless of the min-drag gate");
     assert(after.vertices == before.vertices, "click-without-drag must not move any vertex");
-    assert(!history.canUndo(), "click-without-drag must record NO undo entry");
+    assert(history.undoEntries().length == 1, "click-without-drag is one no-op row per press (L5, K-noop)");
 }
 
 // ---------------------------------------------------------------------------
@@ -1751,7 +1823,7 @@ unittest {
 // continuation candidates per endpoint, where the reference's selection is
 // sign-dependent and undetermined (`continuationNeighbor`'s doc comment), so
 // this tool holds those endpoints FIXED by design. For those the test asserts
-// exactly that — no movement, no undo entry — instead of asserting positions
+// exactly that — no movement, the press still one row (L5) — instead of asserting positions
 // we deliberately do not reproduce. That is the shipped contract under test,
 // not a weakened assertion; asserting `expected_vertices` there would require
 // guessing the selection rule.
@@ -2044,7 +2116,7 @@ unittest {
         auto t       = new TopologyPenTool();
         auto view    = new View(0, 0, 100, 100);
         auto history = new CommandHistory();
-        t.history_          = history;
+        auto session = bindPenSession(t, history);
         t.slideEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                         "mesh.topoPen_slide", "Topology Slide",
                                                         MeshEditScope.Position);
@@ -2081,7 +2153,7 @@ unittest {
         int nB = TopologyPenTool.continuationNeighbor(&m, c.gb, c.ga);
 
         auto before = MeshSnapshot.capture(m);
-        t.commitSlide(seed, cast(int) c.ga, cast(int) c.gb, nA, nB, deltaK);
+        penStep(t, SDL_BUTTON_LEFT, PenMode.Move, () { t.commitSlide(seed, cast(int) c.ga, cast(int) c.gb, nA, nB, deltaK); });
 
         assert(m.vertices.length == verts.length && m.edges.length == expectEdges
             && m.faces.length == faces.length,
@@ -2097,8 +2169,8 @@ unittest {
             assert(m.vertices == before.vertices,
                 format("case %s: with neither endpoint slidable the commit must not "
                      ~ "move any vertex", c.id));
-            assert(!history.canUndo(),
-                format("case %s: a both-fixed slide must record NO undo entry", c.id));
+            assert(history.undoEntries().length == 1,
+                format("case %s: a both-fixed slide is one no-op row per press (L5, K-noop)", c.id));
             continue;
         }
 
@@ -2549,7 +2621,7 @@ unittest {
 // applySmoothPasses — T7 (P8 REV1 FIX-2, doc/topopen_p8_smooth_plan.md): a
 // Smooth gesture over a fully DISCONNECTED patch (every vertex has 0
 // neighbors) with NO background source is the ROUTINE no-op case — the
-// mesh must be byte-identical and record NO undo entry, mirroring
+// mesh must be byte-identical and record only the press's one no-op row (L5), mirroring
 // `commitSlide`'s own T5c both-fixed no-op test. `gpu_` stays null and this
 // path returns before ever reaching `refreshDisplay` — safe under bare
 // `dub test`.
@@ -2569,7 +2641,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_           = history;
+    auto session = bindPenSession(t, history);
     t.smoothEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                      "mesh.topoPen_smooth", "Topology Smooth",
                                                      MeshEditScope.Position);
@@ -2581,13 +2653,13 @@ unittest {
     m.addVertex(Vec3(0, 5, 0));   // 3 isolated points -> 0 neighbors each, no background layer
 
     auto before = MeshSnapshot.capture(m);
-    t.applySmoothPasses(1);
+    penStep(t, SDL_BUTTON_LEFT, PenMode.Smooth, () { t.applySmoothPasses(1); });
     auto after = MeshSnapshot.capture(m);
 
     assert(after.vertices == before.vertices,
         "a disconnected patch with no background source must be a byte-identical no-op");
-    assert(!history.canUndo(),
-        "a disconnected/no-bg Smooth gesture must record NO undo entry");
+    assert(history.undoEntries().length == 1,
+        "a disconnected/no-bg Smooth gesture is one no-op row per press (L5, K-noop)");
 }
 
 // ---------------------------------------------------------------------------
@@ -2601,7 +2673,7 @@ unittest {
 // reference — a deliberate NON-goal, not a modeled law). The fix skips a
 // 0-neighbor vertex entirely, so it stays byte-unchanged regardless of
 // whether a background exists; since it is the ONLY vertex here, the whole
-// gesture nets to no-op and records no undo entry either. `gpu_` stays
+// gesture nets to no-op and records the press still one row (L5) either. `gpu_` stays
 // null and this path returns before ever reaching `refreshDisplay` — safe
 // under bare `dub test`.
 // ---------------------------------------------------------------------------
@@ -2621,7 +2693,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_           = history;
+    auto session = bindPenSession(t, history);
     t.smoothEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                      "mesh.topoPen_smooth", "Topology Smooth",
                                                      MeshEditScope.Position);
@@ -2631,14 +2703,14 @@ unittest {
     m.addVertex(Vec3(0, 0, 0));   // single isolated point -> 0 neighbors, background IS present
 
     auto before = MeshSnapshot.capture(m);
-    t.applySmoothPasses(1);
+    penStep(t, SDL_BUTTON_LEFT, PenMode.Smooth, () { t.applySmoothPasses(1); });
     auto after = MeshSnapshot.capture(m);
 
     assert(after.vertices == before.vertices,
         "an isolated (0-neighbor) vertex must stay byte-unchanged even WITH a background "
       ~ "present — loose points are never snapped to a surface");
-    assert(!history.canUndo(),
-        "the only vertex in the gesture is untouched -> no undo entry, even with a background");
+    assert(history.undoEntries().length == 1,
+        "the only vertex in the gesture is untouched -> one no-op row (L5), even with a background");
 }
 
 // ---------------------------------------------------------------------------
@@ -2649,7 +2721,7 @@ unittest {
 // This pins the exact combination that used to be swallowed. Smooth's
 // displacement is not drag-proportional — it scales with mesh size and with
 // `smoothStrength` — so a fixed threshold creates a silent cliff below which
-// the whole gesture is discarded: mesh restored, no undo entry, no feedback.
+// the whole gesture is discarded: mesh restored, the press still one row (L5), no feedback.
 // The rig is an irregular hexahedron with 0.07-unit edges (ordinary
 // detail-modelling scale, and the spacing of the reference capture rig) at
 // strength 0.05, which is legal and well inside the Param's own [0, 4].
@@ -2672,7 +2744,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_           = history;
+    auto session = bindPenSession(t, history);
     t.smoothEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                      "mesh.topoPen_smooth", "Topology Smooth",
                                                      MeshEditScope.Position);
@@ -2693,7 +2765,7 @@ unittest {
     t.smoothStrength_ = 0.05f;   // legal, inside the Param's declared [0, 4]
 
     auto before = MeshSnapshot.capture(m);
-    t.applySmoothPasses(1);      // one click == one iteration
+    penStep(t, SDL_BUTTON_LEFT, PenMode.Smooth, () { t.applySmoothPasses(1); });      // one click == one iteration
 
     float maxDisp = 0;
     foreach (i; 0 .. m.vertices.length) {
@@ -2805,7 +2877,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_          = history;
+    auto session = bindPenSession(t, history);
     t.splitEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                     "mesh.topoPen_split", "Topology Split",
                                                     MeshEditScope.Geometry);
@@ -2820,7 +2892,7 @@ unittest {
     m.addFace([0u, 1u, 2u, 3u]);
     m.buildLoops();
 
-    t.commitSplit(0, 2);
+    penStep(t, SDL_BUTTON_MIDDLE, PenMode.Split, () { t.commitSplit(0, 2); });
 
     assert(m.faces.length == 2, "commitSplit: expected 2 faces after a quad diagonal split");
     assert(m.edges.length == 5, "commitSplit: expected 5 edges (4 boundary + 1 chord)");
@@ -2846,7 +2918,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_          = history;
+    auto session = bindPenSession(t, history);
     t.splitEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                     "mesh.topoPen_split", "Topology Split",
                                                     MeshEditScope.Geometry);
@@ -2866,7 +2938,7 @@ unittest {
     assert(m.vertices.length == 6 && m.edges.length == 6 && m.faces.length == 1,
         "setup: pre-state must be the hand-enumerated hexagon (6v/6e/1f)");
 
-    t.commitSplit(0, 3);
+    penStep(t, SDL_BUTTON_MIDDLE, PenMode.Split, () { t.commitSplit(0, 3); });
 
     assert(m.faces.length == 2, "commitSplit: expected 2 faces after a hexagon non-adjacent split");
     assert(m.edges.length == 7, "commitSplit: expected 7 edges (6 boundary + 1 chord)");
@@ -2884,7 +2956,7 @@ unittest {
 // ---------------------------------------------------------------------------
 // commitSplit — T3 (P9, doc/topopen_p9_split_plan.md §Testing): adjacent A/C
 // (chord would duplicate an existing edge) must be a byte-identical no-op —
-// no mutation, no undo entry.
+// no mutation, the press still one row (L5).
 // ---------------------------------------------------------------------------
 unittest {
     import view : View;
@@ -2893,7 +2965,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_          = history;
+    auto session = bindPenSession(t, history);
     t.splitEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                     "mesh.topoPen_split", "Topology Split",
                                                     MeshEditScope.Geometry);
@@ -2908,13 +2980,13 @@ unittest {
     m.buildLoops();
 
     auto before = MeshSnapshot.capture(m);
-    t.commitSplit(0, 1);   // adjacent (standard, not wrap)
-    t.commitSplit(3, 0);   // adjacent (wrap-around)
+    penStep(t, SDL_BUTTON_MIDDLE, PenMode.Split, () { t.commitSplit(0, 1); });   // adjacent (standard, not wrap)
+    penStep(t, SDL_BUTTON_MIDDLE, PenMode.Split, () { t.commitSplit(3, 0); });   // adjacent (wrap-around)
     auto after = MeshSnapshot.capture(m);
 
     assert(after.vertices == before.vertices && after.edges == before.edges
         && after.faces == before.faces, "adjacent A/C must not mutate the mesh");
-    assert(!history.canUndo(), "adjacent A/C must record NO undo entry");
+    assert(history.undoEntries().length == 2, "adjacent A/C is one no-op row per press (L5, K-noop)");
 }
 
 // ---------------------------------------------------------------------------
@@ -2928,7 +3000,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_          = history;
+    auto session = bindPenSession(t, history);
     t.splitEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                     "mesh.topoPen_split", "Topology Split",
                                                     MeshEditScope.Geometry);
@@ -2943,12 +3015,12 @@ unittest {
     m.buildLoops();
 
     auto before = MeshSnapshot.capture(m);
-    t.commitSplit(0, 0);
+    penStep(t, SDL_BUTTON_MIDDLE, PenMode.Split, () { t.commitSplit(0, 0); });
     auto after = MeshSnapshot.capture(m);
 
     assert(after.vertices == before.vertices && after.edges == before.edges
         && after.faces == before.faces, "A==C must not mutate the mesh");
-    assert(!history.canUndo(), "A==C must record NO undo entry");
+    assert(history.undoEntries().length == 1, "A==C is one no-op row per press (L5, K-noop)");
 }
 
 // ---------------------------------------------------------------------------
@@ -2973,7 +3045,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_          = history;
+    auto session = bindPenSession(t, history);
     t.splitEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                     "mesh.topoPen_split", "Topology Split",
                                                     MeshEditScope.Geometry);
@@ -2992,7 +3064,7 @@ unittest {
     auto before = MeshSnapshot.capture(m);
     const size_t v0 = m.vertices.length, e0 = m.edges.length, f0 = m.faces.length;
 
-    t.commitSplit(0, 2);   // the measured cell: press v0, release v2
+    penStep(t, SDL_BUTTON_MIDDLE, PenMode.Split, () { t.commitSplit(0, 2); });   // the measured cell: press v0, release v2
 
     assert(m.vertices.length == v0, "measured law: a chord split is Δv = 0");
     assert(m.edges.length == e0 + 1, "measured law: a chord split is Δe = +1");
@@ -3191,7 +3263,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_          = history;
+    auto session = bindPenSession(t, history);
     t.splitEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                     "mesh.topoPen_split", "Topology Split",
                                                     MeshEditScope.Geometry);
@@ -3206,12 +3278,12 @@ unittest {
     m.buildLoops();
 
     auto before = MeshSnapshot.capture(m);
-    t.commitSplit(0, -1);
+    penStep(t, SDL_BUTTON_MIDDLE, PenMode.Split, () { t.commitSplit(0, -1); });
     auto after = MeshSnapshot.capture(m);
 
     assert(after.vertices == before.vertices && after.edges == before.edges
         && after.faces == before.faces, "release-not-on-vertex must not mutate the mesh");
-    assert(!history.canUndo(), "release-not-on-vertex must record NO undo entry");
+    assert(history.undoEntries().length == 1, "release-not-on-vertex is one no-op row per press (L5, K-noop)");
 }
 
 // ---------------------------------------------------------------------------
@@ -3226,7 +3298,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_          = history;
+    auto session = bindPenSession(t, history);
     t.splitEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                     "mesh.topoPen_split", "Topology Split",
                                                     MeshEditScope.Geometry);
@@ -3246,12 +3318,12 @@ unittest {
     m.buildLoops();
 
     auto before = MeshSnapshot.capture(m);
-    t.commitSplit(0, 4);   // v0 in F0, v4 in F1 -> no common face
+    penStep(t, SDL_BUTTON_MIDDLE, PenMode.Split, () { t.commitSplit(0, 4); });   // v0 in F0, v4 in F1 -> no common face
     auto after = MeshSnapshot.capture(m);
 
     assert(after.vertices == before.vertices && after.edges == before.edges
         && after.faces == before.faces, "cross-polygon A/C must not mutate the mesh");
-    assert(!history.canUndo(), "cross-polygon A/C must record NO undo entry");
+    assert(history.undoEntries().length == 1, "cross-polygon A/C is one no-op row per press (L5, K-noop)");
 }
 
 // ---------------------------------------------------------------------------
@@ -3278,7 +3350,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_          = history;
+    auto session = bindPenSession(t, history);
     t.splitEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                     "mesh.topoPen_split", "Topology Split",
                                                     MeshEditScope.Geometry);
@@ -3303,7 +3375,7 @@ unittest {
 
     auto triangleBefore = m.faces[0].dup;
 
-    t.commitSplit(0, 1);
+    penStep(t, SDL_BUTTON_MIDDLE, PenMode.Split, () { t.commitSplit(0, 1); });
 
     assert(m.faces.length == 3,
         "expected the PENTAGON to split into 2 sub-faces (triangle survives untouched) -- "
@@ -3340,7 +3412,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_          = history;
+    auto session = bindPenSession(t, history);
     t.splitEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                     "mesh.topoPen_split", "Topology Split",
                                                     MeshEditScope.Geometry);
@@ -3370,7 +3442,7 @@ unittest {
     int triangleFi = (m.faces[0].length == 3) ? 0 : 1;
     auto triangleBefore = m.faces[triangleFi].dup;
 
-    t.commitSplit(0, 1);
+    penStep(t, SDL_BUTTON_MIDDLE, PenMode.Split, () { t.commitSplit(0, 1); });
 
     assert(m.faces.length == 3,
         "expected the PENTAGON to split into 2 sub-faces (triangle survives untouched) -- "
@@ -3395,7 +3467,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_          = history;
+    auto session = bindPenSession(t, history);
     t.splitEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                     "mesh.topoPen_split", "Topology Split",
                                                     MeshEditScope.Geometry);
@@ -3410,7 +3482,7 @@ unittest {
     m.buildLoops();
 
     auto before = MeshSnapshot.capture(m);
-    t.commitSplit(0, 2);
+    penStep(t, SDL_BUTTON_MIDDLE, PenMode.Split, () { t.commitSplit(0, 2); });
     assert(history.canUndo(), "a real split must be undoable");
     history.undo();
     auto after = MeshSnapshot.capture(m);
@@ -3454,7 +3526,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_          = history;
+    auto session = bindPenSession(t, history);
     t.splitEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                     "mesh.topoPen_split", "Topology Split",
                                                     MeshEditScope.Geometry);
@@ -3513,7 +3585,12 @@ unittest {
         t.onMouseButtonDown(eCtrl, vts);
         assert(!t.splitArmed_, "Ctrl+MMB must route to Remove, never arm Split");
         // Remove is a remove-on-DOWN gesture with no armed state of its own
-        // (D2) — nothing to release.
+        // (D2), but the press is a step (plan 8646) and the Remove it ran is a
+        // real edit: release it, then undo it, so the Split below starts from
+        // the quad.
+        t.onMouseButtonUp(eCtrl, vts);
+        assert(history.undoEntries().length == 1 && history.undo() && m.faces.length == 1,
+            "setup: the Ctrl+MMB probe is one row and its undo restores the quad");
     }
     SDL_SetModState(KMOD_SHIFT);
     {
@@ -3532,6 +3609,10 @@ unittest {
         assert(!t.addLoopArmed_,
             "closing the probe's own press/release must disarm Add Loop, "
           ~ "leaving nothing stranded for the real Split press below");
+        // The probe's press is a step too, and its loop cut is real: undo it.
+        assert(history.undoEntries().length == 1 && history.undo() && m.faces.length == 1
+            && m.vertices.length == 4,
+            "setup: the Shift+MMB probe is one row and its undo restores the quad");
     }
 
     // --- The real end-to-end drive: plain-MMB DOWN on v0, plain-MMB UP on
@@ -3616,7 +3697,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_             = history;
+    auto session = bindPenSession(t, history);
     t.moveLoopEditFactory_  = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                         "mesh.topoPen_moveloop", "Topology Move Loop",
                                                         MeshEditScope.Position);
@@ -3637,7 +3718,7 @@ unittest {
 
     size_t vBefore = m.vertices.length, eBefore = m.edges.length, fBefore = m.faces.length;
     Viewport wvp;   // no camera in this unit rig: the 0555 landing needs one
-    t.commitMoveLoop(verts, targets, wvp);
+    penStep(t, SDL_BUTTON_RIGHT, PenMode.Move, () { t.commitMoveLoop(verts, targets, wvp); });
 
     foreach (i, vi; verts)
         assert((m.vertices[vi] - targets[i]).length < 1e-5f,
@@ -3694,7 +3775,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_             = history;
+    auto session = bindPenSession(t, history);
     t.moveLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                        "mesh.topoPen_moveloop", "Topology Move Loop",
                                                        MeshEditScope.Position);
@@ -3716,7 +3797,7 @@ unittest {
     // application's shared snap enable is on for this gesture.
     t.dragSnap_ = *penTestSnapOn();
 
-    t.commitMoveLoop(verts, targets, vp);
+    penStep(t, SDL_BUTTON_RIGHT, PenMode.Move, () { t.commitMoveLoop(verts, targets, vp); });
 
     assert(m.vertices.length == 6,
         format("all THREE loop vertices must be absorbed, each into its own target "
@@ -3804,10 +3885,8 @@ unittest {
 // vertex it came to rest on.
 //
 // It is a separate case from the loop one above and not a duplicate of it:
-// `finishMove` has its own undo bookkeeping (a lazily captured baseline and a
-// net-no-op test that compares the moving set against its arm-time base — a
-// test that CANNOT judge a weld, because the vertex array was compacted under
-// the indices it holds), and this is what pins that.
+// `finishMove` is its own commit path, and the row it rides is the press step
+// the session records (plan 8646) — this pins that the weld is inside it.
 //
 // `activeMeshResolver` is pointed at a DIFFERENT mesh for the duration: this
 // rig has no GL, and `applyMoveTargets` refreshes the display unconditionally
@@ -3867,7 +3946,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_         = history;
+    auto session = bindPenSession(t, history);
     t.moveEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                   "mesh.topoPen_move", "Topology Move",
                                                   MeshEditScope.Position);
@@ -4092,7 +4171,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_         = history;
+    auto session = bindPenSession(t, history);
     t.moveEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                   "mesh.topoPen_move", "Topology Move",
                                                   MeshEditScope.Position);
@@ -4168,22 +4247,16 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// A weld must never be dropped by the net-no-op test (task 0555).
+// A weld must never be dropped from its row (task 0555).
 //
-// `recordLiveMove` skips the undo entry for a drag that wandered and came home
-// — it compares the moving set against its arm-time base. After a weld that
-// comparison is not merely wrong, it is MEANINGLESS: the vertex array was
-// compacted under the very indices it holds, so it reads whatever geometry
-// slid into those slots. This rig makes it read an ANSWER rather than garbage,
-// and the answer is the wrong one.
-//
-// Two coincident-but-separate vertices at the origin, one per quad (a legal
+// Since plan 8646 there is no net-no-op test at all: every press is one step
+// the session records (L5), so the weld rides that row by construction. The
+// rig is kept because it is the shape that broke the old net test: two
+// coincident-but-separate vertices at the origin, one per quad (a legal
 // unwelded seam). The grab is vertex 0; absorbing it compacts vertex 1 down
-// into slot 0, at the identical position — so the net test compares the
-// arm-time base against a vertex that merely happens to sit where the grab
-// started, concludes "nothing happened", and throws away the only undo entry
-// the destroyed topology has. The gesture would be UNDOABLE-PROOF: a hard
-// failure of the one non-negotiable, one Ctrl+Z per gesture.
+// into slot 0, at the identical position — so any "did the moving set move"
+// comparison against the arm-time base reads "nothing happened" after a weld
+// that destroyed topology. The row must exist and undo the whole gesture.
 // ---------------------------------------------------------------------------
 unittest {
     import view : View;
@@ -4200,7 +4273,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_         = history;
+    auto session = bindPenSession(t, history);
     t.moveEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                   "mesh.topoPen_move", "Topology Move",
                                                   MeshEditScope.Position);
@@ -4239,9 +4312,7 @@ unittest {
         "setup: the compaction must slide the coincident twin into slot 0, or this case is "
       ~ "not the one it names");
 
-    // THE CLAIM: the entry exists. Without the weld flag the net test above
-    // would have compared slot 0 against the grab's arm-time position, found
-    // them equal, and dropped it.
+    // THE CLAIM: the entry exists — the press step's one row.
     assert(history.canUndo(),
         "a gesture that DESTROYED topology must record an undo entry, whatever the moving "
       ~ "set's stale indices now happen to hold");
@@ -4251,6 +4322,71 @@ unittest {
                m.vertices.length, m.faces.length));
     foreach (ref f; m.faces)
         assert(f.length == 4, "undo must restore both quads");
+}
+
+// The drag that wandered and came HOME (plan 8646 [R4-2], K-noop's
+// zero-length drag): a held Move writes the mesh live, comes back to its
+// press pixel and is released there. It is still ONE row, and the mesh equals
+// the press image bit for bit. Driven through the real SDL dispatch.
+unittest {
+    import view : View;
+    import editmode : EditMode;
+    import mesh : makeGridPlane;
+    import display_sync : activeMeshResolver;
+    import toolpipe.packets : SubjectPacket;
+
+    Mesh offscreen;
+    auto savedResolver = activeMeshResolver;
+    activeMeshResolver = () => &offscreen;
+    scope(exit) activeMeshResolver = savedResolver;
+
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    auto session = bindPenSession(t, history);
+    t.moveEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                  "mesh.topoPen_move", "Topology Move",
+                                                  MeshEditScope.Position);
+    Mesh m = makeGridPlane(2);
+    t.meshSrc_ = () => &m;
+    auto vp = makeGridPlaneFrontViewport();
+    SubjectPacket subj;
+    subj.mesh     = &m;
+    subj.viewport = vp;
+    VectorStack vts;
+    vts.put(&subj);
+
+    immutable uint grab = 4;   // the centre vertex
+    m.syncSelection();         // the live editor's invariant: marks sized to the mesh
+    const pressImage = MeshSnapshot.capture(m);
+    ImVec2 pg;
+    assert(TopologyPenTool.projectWorldPt(m.vertices[grab], vp, pg), "setup: grab projects");
+    SDL_MouseButtonEvent down;
+    down.button = SDL_BUTTON_LEFT;
+    down.x = cast(int)pg.x; down.y = cast(int)pg.y;
+    assert(t.onMouseButtonDown(down, vts) && t.moveArmed_, "the press must arm a vertex Move");
+
+    // Away: the hit the constraint stage reports for the far pixel.
+    auto hit = new ConstrainHitPacket;
+    hit.hit   = true;
+    hit.point = m.vertices[grab] + Vec3(0.1f, 0, 0.05f);
+    vts.put(hit);
+    SDL_MouseMotionEvent away;
+    away.x = down.x + 20; away.y = down.y + 10;
+    t.onMouseMotion(away, vts);
+    assert(!pressImage.matches(m) && t.hasUncommittedEdit(),
+        "setup: the held drag must have written the mesh");
+    // Home: the press pixel again, then the release there.
+    SDL_MouseMotionEvent home;
+    home.x = down.x; home.y = down.y;
+    t.onMouseMotion(home, vts);
+    SDL_MouseButtonEvent up = down;
+    assert(t.onMouseButtonUp(up, vts), "the release must be consumed");
+
+    assert(pressImage.matches(m), "a drag that came home leaves the press image bit for bit");
+    assert(history.undoEntries().length == 1
+           && history.undoEntries()[0].cmd.label() == "Topology Move",
+        "a drag that came home is ONE row labelled Topology Move (L5, K-noop zero-length drag)");
 }
 
 // A press that never moved anything cannot have been "brought to within"
@@ -4282,7 +4418,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_         = history;
+    auto session = bindPenSession(t, history);
     t.moveEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                   "mesh.topoPen_move", "Topology Move",
                                                   MeshEditScope.Position);
@@ -4325,8 +4461,8 @@ unittest {
     assert(m.vertices.length == vBefore && m.faces.length == fBefore,
         format("a stationary click must not absorb anything — V %d -> %d, F %d -> %d",
                vBefore, m.vertices.length, fBefore, m.faces.length));
-    assert(!history.canUndo(),
-        "and it must record no undo entry at all: it is not an edit");
+    assert(history.undoEntries().length == 1,
+        "and it is one no-op row per press (L5, K-noop) at all: it is not an edit");
 }
 
 // ---------------------------------------------------------------------------
@@ -4343,7 +4479,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_            = history;
+    auto session = bindPenSession(t, history);
     t.moveLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                        "mesh.topoPen_moveloop", "Topology Move Loop",
                                                        MeshEditScope.Position);
@@ -4360,7 +4496,7 @@ unittest {
 
     size_t vBefore = m.vertices.length, eBefore = m.edges.length, fBefore = m.faces.length;
     Viewport wvp;   // no camera in this unit rig: the 0555 landing needs one
-    t.commitMoveLoop(verts, targets, wvp);
+    penStep(t, SDL_BUTTON_RIGHT, PenMode.Move, () { t.commitMoveLoop(verts, targets, wvp); });
 
     foreach (i, vi; verts)
         assert((m.vertices[vi] - targets[i]).length < 1e-5f,
@@ -4376,7 +4512,7 @@ unittest {
 // ---------------------------------------------------------------------------
 // commitMoveLoop — T3 NO-OP GUARD (doc/topopen_p10_moveloop_plan.md
 // §Undo): targets identical (within eps) to the current positions must be a
-// byte-identical no-op — no mutation, no undo entry.
+// byte-identical no-op — no mutation, the press still one row (L5).
 // ---------------------------------------------------------------------------
 unittest {
     import view : View;
@@ -4386,7 +4522,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_            = history;
+    auto session = bindPenSession(t, history);
     t.moveLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                        "mesh.topoPen_moveloop", "Topology Move Loop",
                                                        MeshEditScope.Position);
@@ -4402,11 +4538,11 @@ unittest {
 
     auto before = MeshSnapshot.capture(m);
     Viewport wvp;   // no camera in this unit rig: the 0555 landing needs one
-    t.commitMoveLoop(verts, targets, wvp);
+    penStep(t, SDL_BUTTON_RIGHT, PenMode.Move, () { t.commitMoveLoop(verts, targets, wvp); });
     auto after = MeshSnapshot.capture(m);
 
     assert(after.vertices == before.vertices, "an all-stationary target set must not move any vertex");
-    assert(!history.canUndo(), "an all-stationary commit must record NO undo entry");
+    assert(history.undoEntries().length == 1, "an all-stationary commit is one no-op row per press (L5, K-noop)");
 }
 
 // ---------------------------------------------------------------------------
@@ -4429,7 +4565,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_            = history;
+    auto session = bindPenSession(t, history);
     t.moveLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                        "mesh.topoPen_moveloop", "Topology Move Loop",
                                                        MeshEditScope.Position);
@@ -4450,7 +4586,7 @@ unittest {
     Vec3[] targets = [orig[0] + Vec3(0, 1.0f, 0), orig[1], orig[2] + Vec3(0, 1.0f, 0)];
 
     Viewport wvp;   // no camera in this unit rig: the 0555 landing needs one
-    t.commitMoveLoop(verts, targets, wvp);
+    penStep(t, SDL_BUTTON_RIGHT, PenMode.Move, () { t.commitMoveLoop(verts, targets, wvp); });
 
     assert((m.vertices[3] - targets[0]).length < 1e-5f, "the HIT vertex (3) must move to its target");
     assert((m.vertices[4] - orig[1]).length < 1e-6f,
@@ -4837,7 +4973,7 @@ unittest {
 // ---------------------------------------------------------------------------
 // onMouseButtonUp — RIGHT-branch MIN-DRAG (doc/topopen_p10_moveloop_plan.md
 // Phase 3): a RMB release within `kMinDragPx` of the press pixel is a clean
-// no-op — no vertex write, no undo entry — driven through the extracted
+// no-op — no vertex write, the press still one row (L5) — driven through the extracted
 // `moveLoopUp` release-side helper directly (arming state set up directly,
 // mirroring P7 Slide's own MIN-DRAG test) so the min-drag GATE ITSELF is
 // under test, not just `commitMoveLoop`'s own (also-present) eps guard.
@@ -4856,7 +4992,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_            = history;
+    auto session = bindPenSession(t, history);
     t.moveLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                        "mesh.topoPen_moveloop", "Topology Move Loop",
                                                        MeshEditScope.Position);
@@ -4876,13 +5012,14 @@ unittest {
     e.button = SDL_BUTTON_RIGHT;
     e.x = 51; e.y = 50;   // 1px away — well inside kMinDragPx
     VectorStack vts;
-    bool consumed = t.moveLoopUp(e, vts);
+    bool consumed;
+    penStep(t, SDL_BUTTON_RIGHT, PenMode.Move, () { consumed = t.moveLoopUp(e, vts); });
     auto after = MeshSnapshot.capture(m);
 
     assert(consumed, "a click-without-drag release must still consume the event");
     assert(!t.moveLoopArmed_, "release must disarm Move Loop regardless of the min-drag gate");
     assert(after.vertices == before.vertices, "click-without-drag must not move any vertex");
-    assert(!history.canUndo(), "click-without-drag must record NO undo entry");
+    assert(history.undoEntries().length == 1, "click-without-drag is one no-op row per press (L5, K-noop)");
 }
 
 // ---------------------------------------------------------------------------
@@ -4957,7 +5094,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 200, 200);
     auto history = new CommandHistory();
-    t.history_            = history;
+    auto session = bindPenSession(t, history);
     t.moveLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                        "mesh.topoPen_moveloop", "Topology Move Loop",
                                                        MeshEditScope.Position);
@@ -5404,7 +5541,7 @@ unittest { // commitDupLoop — T1 BOUNDARY (doc/topopen_p11_duploop_plan.md
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_            = history;
+    auto session = bindPenSession(t, history);
     t.dupLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                       "mesh.topoPen_duploop", "Topology Duplicate Loop",
                                                       MeshEditScope.Geometry | MeshEditScope.Marks);
@@ -5430,7 +5567,7 @@ unittest { // commitDupLoop — T1 BOUNDARY (doc/topopen_p11_duploop_plan.md
 
     size_t vBefore = m.vertices.length, eBefore = m.edges.length, fBefore = m.faces.length;
     Viewport vp;
-    t.commitDupLoop(loop, 0, 0, vp);
+    penStep(t, SDL_BUTTON_RIGHT, PenMode.Duplicate, () { t.commitDupLoop(loop, 0, 0, vp); });
 
     assert(m.vertices.length == vBefore + M,
         format("expected +%d verts, got +%d", M, m.vertices.length - vBefore));
@@ -5484,7 +5621,7 @@ unittest { // commitDupLoop — T2 INTERIOR, FLAGGED (doc/topopen_p11_duploop_pl
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_            = history;
+    auto session = bindPenSession(t, history);
     t.dupLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                       "mesh.topoPen_duploop", "Topology Duplicate Loop",
                                                       MeshEditScope.Geometry | MeshEditScope.Marks);
@@ -5507,7 +5644,7 @@ unittest { // commitDupLoop — T2 INTERIOR, FLAGGED (doc/topopen_p11_duploop_pl
 
     size_t vBefore = m.vertices.length, eBefore = m.edges.length, fBefore = m.faces.length;
     Viewport vp;
-    t.commitDupLoop(loop, 0, 0, vp);
+    penStep(t, SDL_BUTTON_RIGHT, PenMode.Duplicate, () { t.commitDupLoop(loop, 0, 0, vp); });
 
     assert(m.vertices.length == vBefore + M,
         format("expected +%d verts, got +%d", M, m.vertices.length - vBefore));
@@ -5530,7 +5667,7 @@ unittest { // commitDupLoop — NO-OP GUARD (doc/topopen_p11_duploop_plan.md
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_            = history;
+    auto session = bindPenSession(t, history);
     t.dupLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                       "mesh.topoPen_duploop", "Topology Duplicate Loop",
                                                       MeshEditScope.Geometry | MeshEditScope.Marks);
@@ -5548,12 +5685,12 @@ unittest { // commitDupLoop — NO-OP GUARD (doc/topopen_p11_duploop_plan.md
 
     Viewport vp;
     auto before = MeshSnapshot.capture(m);
-    t.commitDupLoop(loop, 5, 5, vp);
+    penStep(t, SDL_BUTTON_RIGHT, PenMode.Duplicate, () { t.commitDupLoop(loop, 5, 5, vp); });
     auto after = MeshSnapshot.capture(m);
 
     assert(after.vertices == before.vertices && m.faces.length == 0,
         "a wire-only loop must produce NO mutation");
-    assert(!history.canUndo(), "a wire-only loop must record NO undo entry");
+    assert(history.undoEntries().length == 1, "a wire-only loop is one no-op row per press (L5, K-noop)");
 }
 
 unittest { // commitDupLoop — resyncSession-on-success (doc/topopen_p11_duploop_plan.md
@@ -5570,7 +5707,7 @@ unittest { // commitDupLoop — resyncSession-on-success (doc/topopen_p11_duploo
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_            = history;
+    auto session = bindPenSession(t, history);
     t.dupLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                       "mesh.topoPen_duploop", "Topology Duplicate Loop",
                                                       MeshEditScope.Geometry | MeshEditScope.Marks);
@@ -5589,7 +5726,7 @@ unittest { // commitDupLoop — resyncSession-on-success (doc/topopen_p11_duploo
     t.moveLoopVerts_ = [3u, 4u, 5u];
 
     Viewport vp;
-    t.commitDupLoop(loop, 0, 0, vp);   // no bg -> every new vert stays coincident; still a real commit
+    penStep(t, SDL_BUTTON_RIGHT, PenMode.Duplicate, () { t.commitDupLoop(loop, 0, 0, vp); });   // no bg -> every new vert stays coincident; still a real commit
 
     assert(history.canUndo(), "setup: the commit must have actually recorded an undo entry");
     assert(!t.moveLoopArmed_, "resyncSession() on a successful Dup Loop commit must clear a sibling arm");
@@ -5825,7 +5962,7 @@ unittest {
 // ---------------------------------------------------------------------------
 // onMouseButtonUp — RIGHT-branch MIN-DRAG (doc/topopen_p11_duploop_plan.md
 // Phase 3): a Shift+RMB release within `kMinDragPx` of the press pixel is a
-// clean no-op — no extrude, no undo entry — driven through the extracted
+// clean no-op — no extrude, the press still one row (L5) — driven through the extracted
 // `dupLoopUp` release-side helper directly (arming state set up directly,
 // mirroring P10 Move Loop's own MIN-DRAG test) so the min-drag GATE ITSELF
 // is under test. Phase-2 input-dispatch migration
@@ -5841,7 +5978,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_            = history;
+    auto session = bindPenSession(t, history);
     t.dupLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                       "mesh.topoPen_duploop", "Topology Duplicate Loop",
                                                       MeshEditScope.Geometry | MeshEditScope.Marks);
@@ -5862,14 +5999,15 @@ unittest {
     e.button = SDL_BUTTON_RIGHT;
     e.x = 51; e.y = 50;   // 1px away — well inside kMinDragPx
     VectorStack vts;
-    bool consumed = t.dupLoopUp(e, vts);
+    bool consumed;
+    penStep(t, SDL_BUTTON_RIGHT, PenMode.Duplicate, () { consumed = t.dupLoopUp(e, vts); });
     auto after = MeshSnapshot.capture(m);
 
     assert(consumed, "a click-without-drag release must still consume the event");
     assert(!t.dupLoopArmed_, "release must disarm Dup Loop regardless of the min-drag gate");
     assert(after.vertices == before.vertices && after.faces.length == before.faces.length,
         "click-without-drag must not mutate the mesh at all");
-    assert(!history.canUndo(), "click-without-drag must record NO undo entry");
+    assert(history.undoEntries().length == 1, "click-without-drag is one no-op row per press (L5, K-noop)");
 }
 
 // ---------------------------------------------------------------------------
@@ -5945,7 +6083,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 200, 200);
     auto history = new CommandHistory();
-    t.history_            = history;
+    auto session = bindPenSession(t, history);
     t.dupLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                       "mesh.topoPen_duploop", "Topology Duplicate Loop",
                                                       MeshEditScope.Geometry | MeshEditScope.Marks);
@@ -6136,7 +6274,7 @@ unittest { // applySmoothLoopPasses — interior relax + nearest-foot re-snap,
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_               = history;
+    auto session = bindPenSession(t, history);
     t.smoothLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                          "mesh.topoPen_smoothloop", "Topology Smooth Loop",
                                                          MeshEditScope.Position);
@@ -6180,7 +6318,7 @@ unittest { // applySmoothLoopPasses — interior relax + nearest-foot re-snap,
     Vec3[] beforeAll = m.vertices.dup;
     size_t vBefore = m.vertices.length, eBefore = m.edges.length, fBefore = m.faces.length;
 
-    t.applySmoothLoopPasses(1);
+    penStep(t, SDL_BUTTON_RIGHT, PenMode.Smooth, () { t.applySmoothLoopPasses(1); });
 
     // (1) Interior vertex 4 relaxed to the independently-computed
     // inverse-edge-length midpoint (X/Z) AND lies ON the background plane
@@ -6240,7 +6378,7 @@ unittest { // applySmoothLoopPasses — the corner lock holds on EVERY pass, not
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_               = history;
+    auto session = bindPenSession(t, history);
     t.smoothLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                          "mesh.topoPen_smoothloop", "Topology Smooth Loop",
                                                          MeshEditScope.Position);
@@ -6268,7 +6406,7 @@ unittest { // applySmoothLoopPasses — the corner lock holds on EVERY pass, not
     t.smoothLoopVerts_ = verts;
 
     Vec3[] before = m.vertices.dup;
-    t.applySmoothLoopPasses(3);
+    penStep(t, SDL_BUTTON_RIGHT, PenMode.Smooth, () { t.applySmoothLoopPasses(3); });
 
     // Positive half first: every border mid moved.
     foreach (vi; [1u, 3u, 5u, 7u])
@@ -6299,7 +6437,7 @@ unittest { // applySmoothLoopPasses — a gesture that nets to ZERO movement
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_               = history;
+    auto session = bindPenSession(t, history);
     t.smoothLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                          "mesh.topoPen_smoothloop", "Topology Smooth Loop",
                                                          MeshEditScope.Position);
@@ -6312,12 +6450,12 @@ unittest { // applySmoothLoopPasses — a gesture that nets to ZERO movement
     t.smoothLoopVerts_ = TopologyPenTool.uniqueRingVerts(&m, seed);
 
     auto before = MeshSnapshot.capture(m);
-    t.applySmoothLoopPasses(1);
+    penStep(t, SDL_BUTTON_RIGHT, PenMode.Smooth, () { t.applySmoothLoopPasses(1); });
     auto after = MeshSnapshot.capture(m);
 
     assert(after.vertices == before.vertices,
         "a flat/uniform grid with no background must be a byte-identical no-op");
-    assert(!history.canUndo(), "a no-op Smooth+Loop gesture must record NO undo entry");
+    assert(history.undoEntries().length == 1, "a no-op Smooth+Loop gesture is one no-op row per press (L5, K-noop)");
 }
 
 unittest { // applySmoothLoopPasses — the no-op guard is SCALE-RELATIVE, so a
@@ -6355,13 +6493,13 @@ unittest { // applySmoothLoopPasses — the no-op guard is SCALE-RELATIVE, so a
     // vertex pushed off its row by `kink`. One relax pass pulls it back by
     // exactly `kink`, which is what makes the expected displacement an EXACT
     // term rather than a tolerance.
-    static float relaxOnce(float kink, out bool recorded) {
+    static float relaxOnce(float kink, out size_t rows) {
         enum int   N    = 8;
         enum float edge = 0.07f;
         auto t       = new TopologyPenTool();
         auto view    = new View(0, 0, 100, 100);
         auto history = new CommandHistory();
-        t.history_               = history;
+        auto session = bindPenSession(t, history);
         t.smoothLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                              "mesh.topoPen_smoothloop", "Topology Smooth Loop",
                                                              MeshEditScope.Position);
@@ -6380,8 +6518,8 @@ unittest { // applySmoothLoopPasses — the no-op guard is SCALE-RELATIVE, so a
         t.smoothLoopVerts_ = TopologyPenTool.uniqueRingVerts(&m, seed);
 
         auto before = MeshSnapshot.capture(m);
-        t.applySmoothLoopPasses(1);
-        recorded = history.canUndo();
+        penStep(t, SDL_BUTTON_RIGHT, PenMode.Smooth, () { t.applySmoothLoopPasses(1); });
+        rows = history.undoEntries().length;
         float maxd = 0;
         foreach (i; 0 .. m.vertices.length) {
             const d = (m.vertices[i] - before.vertices[i]).length;
@@ -6390,29 +6528,32 @@ unittest { // applySmoothLoopPasses — the no-op guard is SCALE-RELATIVE, so a
         return maxd;
     }
 
-    // ARM 1 — a 1e-4 kink is a real relax and must be recorded.
-    bool recorded;
-    const moved = relaxOnce(1.0e-4f, recorded);
-    assert(recorded,
-        "Smooth+Loop discarded a 1e-4 relax whole — no undo entry, mesh " ~
-        "restored. That is the absolute-threshold cliff `smoothNoOpEps` was " ~
-        "written to remove for the whole-mesh Smooth; this gesture's guard has " ~
-        "gone back to a world-unit constant.");
+    // Since plan 8646 every press is ONE row whatever it changed (L5), so the
+    // guard decides what the row KEEPS, never whether there is a row.
+    // ARM 1 — a 1e-4 kink is a real relax and must be kept.
+    size_t rows;
+    const moved = relaxOnce(1.0e-4f, rows);
+    assert(rows == 1, "a Smooth+Loop press is one row (L5)");
     assert(moved > 0.9e-4f && moved < 1.1e-4f,
         format("Smooth+Loop moved %g, expected the kink itself (1e-4): one pass " ~
                "is a FULL relax to the neighbour mean, so the displacement is " ~
                "the irregularity", moved));
 
-    // ARM 2 — the guard is still a guard: a mesh with NO irregularity nets to
-    // exactly zero and must still record nothing.
-    bool recordedFlat;
-    const flat = relaxOnce(0.0f, recordedFlat);
-    assert(flat == 0.0f,
+    // ARM 2 — a mesh with NO irregularity nets to exactly zero, still one row.
+    size_t rowsFlat;
+    const flat = relaxOnce(0.0f, rowsFlat);
+    assert(flat == 0.0f && rowsFlat == 1,
         format("fixture: the un-kinked grid must be an exact fixed point of the " ~
-               "relaxation, moved %g", flat));
-    assert(!recordedFlat,
-        "the no-op guard has been made vacuous — a gesture that moved nothing " ~
-        "recorded an undo entry");
+               "relaxation (moved %g) and its press one row (%d)", flat, rowsFlat));
+
+    // ARM 3 — the guard is still a guard: a 2e-7 kink is below this rig's
+    // scale-relative eps (1e-6 of a ~0.79 diagonal), so its relax is noise and
+    // the press keeps NOTHING. A vacuous guard (eps 0, or deleted) keeps it.
+    size_t rowsNoise;
+    const noise = relaxOnce(2.0e-7f, rowsNoise);
+    assert(noise == 0.0f && rowsNoise == 1,
+        format("the no-op guard has been made vacuous — a sub-eps relax was kept "
+             ~ "(moved %g, %d rows)", noise, rowsNoise));
 }
 
 // ---------------------------------------------------------------------------
@@ -6483,7 +6624,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_               = history;
+    auto session = bindPenSession(t, history);
     t.smoothLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                          "mesh.topoPen_smoothloop", "Topology Smooth Loop",
                                                          MeshEditScope.Position);
@@ -6506,7 +6647,8 @@ unittest {
     e.button = SDL_BUTTON_RIGHT;
     e.x = 50; e.y = 50;   // release exactly at the press pixel -- a stationary click
     VectorStack vts;
-    bool consumed = t.smoothLoopUp(e, vts);
+    bool consumed;
+    penStep(t, SDL_BUTTON_RIGHT, PenMode.Smooth, () { consumed = t.smoothLoopUp(e, vts); });
     auto after = MeshSnapshot.capture(m);
 
     assert(consumed, "a stationary-click release must still consume the event");
@@ -6517,7 +6659,7 @@ unittest {
     // for a click, with no `kMinDragPx` gate suppressing it.
     assert(after.vertices == before.vertices,
         "a stationary click on a no-op rig must leave the mesh byte-identical");
-    assert(!history.canUndo(), "a no-op click must record NO undo entry");
+    assert(history.undoEntries().length == 1, "a no-op click is one no-op row per press (L5, K-noop)");
 }
 
 // ---------------------------------------------------------------------------
@@ -6601,7 +6743,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 200, 200);
     auto history = new CommandHistory();
-    t.history_               = history;
+    auto session = bindPenSession(t, history);
     t.smoothLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                          "mesh.topoPen_smoothloop", "Topology Smooth Loop",
                                                          MeshEditScope.Position);
@@ -6684,7 +6826,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_          = history;
+    auto session = bindPenSession(t, history);
     t.splitEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                     "mesh.topoPen_split", "Topology Split",
                                                     MeshEditScope.Geometry);
@@ -6698,7 +6840,7 @@ unittest {
     m.addFace([0u, 1u, 2u, 3u]);
     m.buildLoops();
 
-    t.commitSplit(0, 2);
+    penStep(t, SDL_BUTTON_MIDDLE, PenMode.Split, () { t.commitSplit(0, 2); });
 
     assert(m.vertices.length == 4, "vertex<->vertex split: Δv=0 — Split never creates a vertex");
     assert(m.faces.length    == 2, "vertex<->vertex split: still 2 faces");
@@ -6718,7 +6860,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 200, 200);
     auto history = new CommandHistory();
-    t.history_          = history;
+    auto session = bindPenSession(t, history);
     t.splitEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                     "mesh.topoPen_split", "Topology Split",
                                                     MeshEditScope.Geometry);
@@ -6751,14 +6893,15 @@ unittest {
     SDL_MouseButtonEvent eUp;
     eUp.button = SDL_BUTTON_MIDDLE;
     eUp.x = 5; eUp.y = 5;   // far corner -- nothing projects anywhere near here
-    bool consumed = t.splitUp(eUp, vts);
+    bool consumed;
+    penStep(t, SDL_BUTTON_MIDDLE, PenMode.Split, () { consumed = t.splitUp(eUp, vts); });
     assert(consumed, "splitUp must still consume the release even on a no-op");
 
     auto after = MeshSnapshot.capture(m);
     assert(after.vertices == before.vertices && after.edges == before.edges
         && after.faces == before.faces,
         "empty-space release: byte-identical no-op");
-    assert(!history.canUndo(), "empty-space release: must record no undo entry");
+    assert(history.undoEntries().length == 1, "empty-space release: is one no-op row per press (L5, K-noop)");
     assert(!t.splitArmed_, "release must disarm Split regardless of outcome");
 }
 
@@ -7473,7 +7616,7 @@ unittest {
 // plain-MMB up on the screen-space MIDPOINT of the opposite edge (2,3),
 // never a vertex — mirroring the vertex<->vertex e2e test above exactly
 // (same rig, same camera). Split is a vertex->vertex chord split, so this
-// release must leave the mesh byte-identical with NO undo entry. Inserting a
+// release must leave the mesh byte-identical (the press still one row, L5). Inserting a
 // vertex partway along a crossed edge belongs to Add Loop, whose own
 // `middle`/click-fraction law is pinned separately above and in
 // tests/test_topopen_addloop_middle.d.
@@ -7494,7 +7637,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_          = history;
+    auto session = bindPenSession(t, history);
     t.splitEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                     "mesh.topoPen_split", "Topology Split",
                                                     MeshEditScope.Geometry);
@@ -7579,7 +7722,7 @@ unittest {
     assert(m.vertices.length == 4, "Δv=0 — no vertex may be created by a Split release");
     assert(m.faces.length    == 1, "Δf=0 — the quad must stay whole");
     assert(m.edges.length    == 4, "Δe=0 — no sub-edge and no chord may be created");
-    assert(!history.canUndo(), "a no-op release must record no undo entry");
+    assert(history.undoEntries().length == 1, "a no-op release is one no-op row per press (L5, K-noop)");
 
     SDL_SetModState(cast(SDL_Keymod)0);   // leave the shared SDL modifier global clean
 }
@@ -7622,7 +7765,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_         = history;
+    auto session = bindPenSession(t, history);
     t.fillEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                    "mesh.topoPen_fill", "Topology Fill",
                                                    MeshEditScope.Geometry);
@@ -7662,7 +7805,7 @@ unittest {
     assert(fillCellSetEq(cell, cellVerts),
         "findFillRing must return exactly the gap cell's own 4 corners");
 
-    t.commitFill(cell);
+    penStep(t, SDL_BUTTON_LEFT, PenMode.Fill, () { t.commitFill(cell); });
 
     assert(m.faces.length == 9, "commitFill: the gap must be capped with exactly ONE new face");
     assert(m.vertices.length == 16, "commitFill: Δv=0 -- the cell's own corners are reused");
@@ -7724,7 +7867,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_         = history;
+    auto session = bindPenSession(t, history);
     t.fillEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                    "mesh.topoPen_fill", "Topology Fill",
                                                    MeshEditScope.Geometry);
@@ -7778,7 +7921,7 @@ unittest {
     assert(fillCellSetEq(cell, cellVerts),
         "findFillRing must return exactly the notch cell's own 4 corners");
 
-    t.commitFill(cell);
+    penStep(t, SDL_BUTTON_LEFT, PenMode.Fill, () { t.commitFill(cell); });
 
     assert(m.faces.length == 8, "commitFill: the notch must be capped with exactly ONE new face");
     assert(m.vertices.length == 15, "commitFill: Δv=0 -- the cell's own corners are reused");
@@ -7835,7 +7978,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_         = history;
+    auto session = bindPenSession(t, history);
     t.fillEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                    "mesh.topoPen_fill", "Topology Fill",
                                                    MeshEditScope.Geometry);
@@ -7874,14 +8017,14 @@ unittest {
 
     // One click fills ONE cell -- the other remains an untouched gap,
     // fillable by a SECOND click (owner decision 2: "one cell per click").
-    t.commitFill(foundA);
+    penStep(t, SDL_BUTTON_LEFT, PenMode.Fill, () { t.commitFill(foundA); });
     assert(m.faces.length == 24, "commitFill must add exactly ONE face for gap A");
 
     auto foundBAfter = t.findFillRing(cast(int)pixB.x, cast(int)pixB.y, vp);
     assert(foundBAfter.length == 4, "gap B must still be found as a gap after gap A alone was filled");
     assert(fillCellSetEq(foundBAfter, cellB));
 
-    t.commitFill(foundBAfter);
+    penStep(t, SDL_BUTTON_LEFT, PenMode.Fill, () { t.commitFill(foundBAfter); });
     assert(m.faces.length == 25, "commitFill must add exactly ONE more face for gap B");
     assert(m.vertices.length == 36, "both fills together are Δv=0 -- every corner is reused");
     assert(history.canUndo());
@@ -7913,7 +8056,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_         = history;
+    auto session = bindPenSession(t, history);
     t.fillEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                    "mesh.topoPen_fill", "Topology Fill",
                                                    MeshEditScope.Geometry);
@@ -7954,7 +8097,7 @@ unittest {
     assert(fillCellSetEq(cell, leftVerts),
         "it must be the cell the CURSOR is in, never a span of both missing cells");
 
-    t.commitFill(cell);
+    penStep(t, SDL_BUTTON_LEFT, PenMode.Fill, () { t.commitFill(cell); });
     auto after = MeshSnapshot.capture(m);
     assert(m.faces.length == 7, "exactly ONE face is added -- one cell per press");
     assert(m.vertices.length == before.vertices.length, "Dv=0 -- every corner is reused");
@@ -7981,7 +8124,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_         = history;
+    auto session = bindPenSession(t, history);
     t.fillEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                    "mesh.topoPen_fill", "Topology Fill",
                                                    MeshEditScope.Geometry);
@@ -8020,12 +8163,12 @@ unittest {
     assert(fillCellSetEq(rightCell, rightVerts),
         "must resolve ONLY the right cell's own 4 corners, never a span of both cells");
 
-    t.commitFill(leftCell);
+    penStep(t, SDL_BUTTON_LEFT, PenMode.Fill, () { t.commitFill(leftCell); });
     assert(m.faces.length == 15, "commitFill must add exactly ONE face for the left cell");
     auto rightCellAfter = t.findFillRing(cast(int)rightPix.x, cast(int)rightPix.y, vp);
     assert(rightCellAfter.length == 4 && fillCellSetEq(rightCellAfter, rightVerts),
         "the right cell must still resolve correctly after the left cell alone was filled");
-    t.commitFill(rightCellAfter);
+    penStep(t, SDL_BUTTON_LEFT, PenMode.Fill, () { t.commitFill(rightCellAfter); });
     assert(m.faces.length == 16, "commitFill must add exactly ONE more face for the right cell");
     assert(m.vertices.length == 25, "both fills together are Δv=0 -- every corner is reused");
     assert(history.canUndo());
@@ -8035,7 +8178,7 @@ unittest {
 // INTACT (no gap anywhere): a cursor at the centroid of a genuinely
 // INTERIOR face (i=1,j=1 -- every edge shared by 2 faces, none border)
 // must resolve `[]`, and a cursor far off the mesh entirely must too.
-// `commitFill([])` must be a clean no-op (no undo entry, mesh
+// `commitFill([])` must be a clean no-op (the press still one row (L5), mesh
 // byte-identical).
 unittest {
     import mesh : makeGridPlane;
@@ -8045,7 +8188,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_         = history;
+    auto session = bindPenSession(t, history);
     t.fillEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                    "mesh.topoPen_fill", "Topology Fill",
                                                    MeshEditScope.Geometry);
@@ -8073,13 +8216,13 @@ unittest {
     assert(cellOverEmpty.length == 0, "findFillRing must return [] over empty area");
 
     // (c) commitFill([]) / a miss must be a clean no-op.
-    t.commitFill(cellOverFace);
-    t.commitFill(null);
+    penStep(t, SDL_BUTTON_LEFT, PenMode.Fill, () { t.commitFill(cellOverFace); });
+    penStep(t, SDL_BUTTON_LEFT, PenMode.Fill, () { t.commitFill(null); });
     auto afterAll = MeshSnapshot.capture(m);
     assert(afterAll.vertices == beforeAll.vertices && afterAll.edges == beforeAll.edges
         && afterAll.faces == beforeAll.faces,
         "commitFill must leave the mesh byte-identical on a miss/empty cell");
-    assert(!history.canUndo(), "a miss/empty cell must record NO undo entry");
+    assert(history.undoEntries().length == 2, "a miss/empty cell is one no-op row per press (L5, K-noop)");
 }
 
 // F5/F9 — dropdown routing: plain-LMB is a NO-OP for Point's place/move path
@@ -8095,7 +8238,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_         = history;
+    auto session = bindPenSession(t, history);
     t.fillEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                    "mesh.topoPen_fill", "Topology Fill",
                                                    MeshEditScope.Geometry);
@@ -8126,7 +8269,8 @@ unittest {
     // -- NEVER Fill -- byte-identical to pre-Fill behavior.
     t.penMode_ = PenMode.Point;
     int facesBefore = cast(int)m.faces.length;
-    bool consumed = t.onPlainLmbDown(e, vts);
+    bool consumed;
+    penStep(t, SDL_BUTTON_LEFT, PenMode.Point, () { consumed = t.onPlainLmbDown(e, vts); });
     assert(consumed, "plain-LMB must always be consumed");
     assert(t.placeArmed_ || t.moveArmed_,
         "Point mode must arm place/move, exactly like pre-Fill behavior");
@@ -8135,7 +8279,7 @@ unittest {
 
     // dropdown = Fill: the SAME press must fill the cell and arm NOTHING.
     t.penMode_ = PenMode.Fill;
-    consumed = t.onPlainLmbDown(e, vts);
+    penStep(t, SDL_BUTTON_LEFT, PenMode.Fill, () { consumed = t.onPlainLmbDown(e, vts); });
     assert(consumed, "plain-LMB must always be consumed");
     assert(!t.placeArmed_ && !t.moveArmed_,
         "Fill mode must never arm place/move -- it owns plain-LMB entirely");
@@ -8396,7 +8540,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_         = history;
+    auto session = bindPenSession(t, history);
     t.fillEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                    "mesh.topoPen_fill", "Topology Fill",
                                                    MeshEditScope.Geometry);
@@ -8435,7 +8579,7 @@ unittest {
     assert(canFind(ring, barB[0]) && canFind(ring, barB[3]),
         "the two corners of the OTHER, disconnected bar must be the other two slots");
 
-    t.commitFill(ring);
+    penStep(t, SDL_BUTTON_LEFT, PenMode.Fill, () { t.commitFill(ring); });
     assert(m.faces.length == 3, "the bridge must be built as exactly one new facet");
     assert(m.vertices.length == 8, "Dv=0 — a bridge reuses existing corners");
     assert(m.edges.length == e0 + 2, "De=+2 — both closing sides are created by the build");
@@ -8515,7 +8659,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_         = history;
+    auto session = bindPenSession(t, history);
     t.fillEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                    "mesh.topoPen_fill", "Topology Fill",
                                                    MeshEditScope.Geometry);
@@ -8574,7 +8718,7 @@ unittest {
         "and the other of the two tried orders is the one it rejected");
 
     immutable size_t e0 = m.edges.length;
-    t.commitFill(ring);
+    penStep(t, SDL_BUTTON_LEFT, PenMode.Fill, () { t.commitFill(ring); });
     assert(m.faces.length == 9, "exactly one facet is built");
     assert(m.vertices.length == 18, "Dv=0 — the isolated vertices are REUSED as corners");
     assert(m.edges.length == e0 + 3,
@@ -8679,7 +8823,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_         = history;
+    auto session = bindPenSession(t, history);
     t.fillEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                    "mesh.topoPen_fill", "Topology Fill",
                                                    MeshEditScope.Geometry);
@@ -8707,7 +8851,7 @@ unittest {
     assert(tri[2] == loose, "the third corner is the one candidate in reach");
 
     immutable size_t e0 = m.edges.length;
-    t.commitFill(tri);
+    penStep(t, SDL_BUTTON_LEFT, PenMode.Fill, () { t.commitFill(tri); });
     assert(m.faces.length == 2, "a TRIANGLE is built");
     assert(m.faces[1].length == 3);
     assert(m.vertices.length == 5, "Dv=0");
@@ -8730,7 +8874,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_         = history;
+    auto session = bindPenSession(t, history);
     t.fillEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                    "mesh.topoPen_fill", "Topology Fill",
                                                    MeshEditScope.Geometry);
@@ -8759,22 +8903,32 @@ unittest {
 
     // quads-only ON: the search refuses at three, and the press falls
     // through to grabbing the pressed border edge.
-    assert(t.onPlainLmbDown(e, vts), "a Fill press is always consumed");
-    assert(t.moveArmed_, "the refusal must GRAB the pressed edge, not do nothing");
-    assert(t.moveElem_ == MoveElem.Edge, "and it grabs an EDGE, never a vertex or a face");
-    assert(t.moveVerts_.length == 2
-        && canFind(t.moveVerts_, m.edges[seed][0]) && canFind(t.moveVerts_, m.edges[seed][1]),
-        "the grabbed set is exactly the PRESSED border edge's two endpoints");
-    assert(m.faces.length == f0, "the press itself mutates nothing — the move writes on drag");
-    assert(!history.canUndo(), "and records nothing until the release");
-    assert(!t.placeArmed_, "Fill never falls through to PLACE");
+    penStep(t, SDL_BUTTON_LEFT, PenMode.Fill, () {
+        assert(t.onPlainLmbDown(e, vts), "a Fill press is always consumed");
+        assert(t.moveArmed_, "the refusal must GRAB the pressed edge, not do nothing");
+        assert(t.moveElem_ == MoveElem.Edge, "and it grabs an EDGE, never a vertex or a face");
+        assert(t.moveVerts_.length == 2
+            && canFind(t.moveVerts_, m.edges[seed][0]) && canFind(t.moveVerts_, m.edges[seed][1]),
+            "the grabbed set is exactly the PRESSED border edge's two endpoints");
+        assert(m.faces.length == f0, "the press itself mutates nothing — the move writes on drag");
+        assert(!history.canUndo(), "and records nothing until the release");
+        assert(!t.placeArmed_, "Fill never falls through to PLACE");
+    });
+    // The refusal's step ends as a MOVE whether or not anything moved: the arm
+    // chose the carrier (plan 8646 [R2-4]).
+    assert(history.undoEntries().length == 1
+           && history.undoEntries()[0].cmd.label() == "Topology Move",
+        "the Fill refusal's motionless press is ONE row labelled Topology Move");
     t.resetAllGestureArms();
 
     // quads-only OFF: the same press builds instead, and arms nothing.
     t.fillQuadOnly_ = false;
-    assert(t.onPlainLmbDown(e, vts));
+    penStep(t, SDL_BUTTON_LEFT, PenMode.Fill, () { assert(t.onPlainLmbDown(e, vts)); });
     assert(m.faces.length == f0 + 1, "a resolved ring commits on DOWN");
     assert(!t.moveArmed_, "a press that BUILT must not also grab the edge");
+    assert(history.undoEntries().length == 2
+           && history.undoEntries()[1].cmd.label() == "Topology Fill",
+        "the building press is its own row labelled Topology Fill");
 }
 
 // THE POST-BUILD CLEANUP: a fill CONSUMES the degenerate polygons it
@@ -8797,7 +8951,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_         = history;
+    auto session = bindPenSession(t, history);
     t.fillEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                    "mesh.topoPen_fill", "Topology Fill",
                                                    MeshEditScope.Geometry);
@@ -8825,7 +8979,7 @@ unittest {
     auto ring = t.findFillRing(cast(int)cur.x, cast(int)cur.y, vp);
     assert(ring.length == 4, "the bridge still resolves with degenerate polygons present");
 
-    t.commitFill(ring);
+    penStep(t, SDL_BUTTON_LEFT, PenMode.Fill, () { t.commitFill(ring); });
 
     assert(m.faces.length == 3,
         "one facet built, and BOTH degenerate polygons consumed by it — net 4 - 2 + 1");
@@ -9051,7 +9205,7 @@ unittest {
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
-    t.history_         = history;
+    auto session = bindPenSession(t, history);
     t.fillEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
                                                    "mesh.topoPen_fill", "Topology Fill",
                                                    MeshEditScope.Geometry);
@@ -9134,7 +9288,7 @@ unittest {
     // so the gate is doing real work here, not agreeing with something we
     // already had.
     assert(m.faces.length == 1);
-    t.commitFill(ring);
+    penStep(t, SDL_BUTTON_LEFT, PenMode.Fill, () { t.commitFill(ring); });
     assert(m.faces.length == 2,
         "our own guards ACCEPT this ring: the duplicate-face guard is length-gated "
         ~ "(4 vs 6) and no ring side yet carries two faces");
@@ -10875,6 +11029,7 @@ unittest { // an EDGE-latched press DISSOLVES the edge — it does not remove a 
     auto vp  = makeGridPlaneTestViewport();
     auto history = new CommandHistory();
     auto t   = makeRemoveTestTool(&m, history);
+    auto session = bindPenSession(t, history);
 
     SubjectPacket subj;
     subj.mesh = &m;
@@ -10888,7 +11043,9 @@ unittest { // an EDGE-latched press DISSOLVES the edge — it does not remove a 
     assert(t.resolveGrabTarget(e.x, e.y, vp, idx) == MoveElem.Edge && idx == cast(int)seed,
         "setup: the press must LATCH THE INTERIOR EDGE, or this measures the aim");
 
-    assert(t.onPlainLmbDown(e, vts), "a Remove press is always consumed");
+    penStep(t, SDL_BUTTON_LEFT, PenMode.Remove, () {
+        assert(t.onPlainLmbDown(e, vts), "a Remove press is always consumed");
+    });
 
     assert(m.vertices.length == 16 && m.edges.length == 23 && m.faces.length == 8,
         "an edge-latched Remove dissolves ONE edge: 16/23/8. The pre-0494 behaviour "
@@ -11104,6 +11261,7 @@ unittest { // a BORDER seed is a TOTAL no-op, in BOTH variants
         auto vp  = makeGridPlaneTestViewport();
         auto h   = new CommandHistory();
         auto t   = makeRemoveTestTool(&m, h);
+        auto session = bindPenSession(t, h);
         t.edgeLoop_ = loop;
 
         SubjectPacket subj;
@@ -11118,13 +11276,16 @@ unittest { // a BORDER seed is a TOTAL no-op, in BOTH variants
         assert(t.resolveGrabTarget(e.x, e.y, vp, idx) == MoveElem.Edge
             && idx == cast(int)m.edgeIndex(0, 1), "setup: the press must latch the border edge");
 
-        assert(t.onPlainLmbDown(e, vts), "still consumed");
+        penStep(t, SDL_BUTTON_LEFT, PenMode.Remove, () {
+            assert(t.onPlainLmbDown(e, vts), "still consumed");
+        });
 
         auto after = MeshSnapshot.capture(m);
         assert(after.vertices == before.vertices && after.edges == before.edges
             && after.faces == before.faces,
             "16/24/9 and not one vertex moved");
-        assert(!h.canUndo(), "and no undo entry is recorded");
+        assert(h.undoEntries().length == 1,
+            "and the press is ONE no-op row (L5; plan 8646 remove-edge-noop-row)");
     }
 }
 
@@ -11156,16 +11317,23 @@ unittest { // ...and the seed gate is a GATE, not the kernel's per-edge skip
 
     auto h = new CommandHistory();
     auto t = makeRemoveTestTool(&m, h);
+    auto session = bindPenSession(t, h);
     auto before = MeshSnapshot.capture(m);
     foreach (loop; [false, true]) {
         t.edgeLoop_ = loop;
-        t.removeEdgeAt(cast(int)seed, loop);
+        penStep(t, SDL_BUTTON_MIDDLE, PenMode.Remove, () { t.removeEdgeAt(cast(int)seed, loop); });
     }
     auto after = MeshSnapshot.capture(m);
     assert(after.vertices == before.vertices && after.edges == before.edges
         && after.faces == before.faces,
         "a seed with other than exactly two incident polygons is a TOTAL no-op");
-    assert(!h.canUndo(), "and records nothing");
+    // Each press is still one row, through the chord's default carrier: the
+    // edge primitive no longer restores-and-returns (L5; plan 8646
+    // remove-edge-noop-row).
+    assert(h.undoEntries().length == 2
+        && h.undoEntries()[0].cmd.label() == "Topology Remove"
+        && h.undoEntries()[1].cmd.label() == "Topology Remove",
+        "and each press is ONE no-op row with the Remove chord's default label");
 }
 
 unittest { // one undo restores counts AND positions, for all three primitives
@@ -11177,6 +11345,7 @@ unittest { // one undo restores counts AND positions, for all three primitives
         auto vp = makeGridPlaneTestViewport();
         auto h  = new CommandHistory();
         auto t  = makeRemoveTestTool(&m, h);
+        auto session = bindPenSession(t, h);
         t.edgeLoop_ = loop;
 
         SubjectPacket subj;
@@ -11187,7 +11356,7 @@ unittest { // one undo restores counts AND positions, for all three primitives
 
         auto before = MeshSnapshot.capture(m);
         auto e = vertexPress ? gridVertPixel(m, vp, v) : gridEdgeMidPixel(m, vp, a, b);
-        assert(t.onPlainLmbDown(e, vts));
+        penStep(t, SDL_BUTTON_LEFT, PenMode.Remove, () { assert(t.onPlainLmbDown(e, vts)); });
         assert(h.canUndo(), "the gesture must be undoable");
         h.undo();
         auto after = MeshSnapshot.capture(m);
@@ -11626,4 +11795,137 @@ unittest { // P6b — NON-UNIFORM SCALE. Separates candidate C from A.
         ~ "plan R10, deliberately not imported into a picking predicate); "
         ~ "admits=%s expected=%s  dA=%.5f dB=%.5f dC=%.5f",
         g.admits(SnapType.Vertex, 0, 0), expected, dA, dB, dC));
+}
+
+// ---------------------------------------------------------------------------
+// CENSUS of the bound-session rig (plan 8646 [R3-1, R4-1, R4-4]), read from
+// this file's own source by BRACE DEPTH, never by a one-line regex: (a) every
+// top-level unittest block that reads history binds its pen through
+// `bindPenSession`; (b) every direct gesture-handler or kernel call such a
+// block makes — what reaches a record site: the kernels, every `on…Down`
+// handler but `onMouseButtonDown`, every `…Up` handler but `onMouseButtonUp`,
+// on any receiver — sits inside a `penStep` bracket. Without (b) a rig could
+// call a kernel outside any step, record nothing, and still be "bound".
+// Populations are measured literals (task card 8730 quotes the commands).
+// ---------------------------------------------------------------------------
+version (unittest) private string gtBlankNonCode(string s) {
+    auto o = s.dup;
+    size_t i = 0;
+    void blank(size_t a, size_t e) {
+        foreach (k; a .. e) if (o[k] != '\n') o[k] = ' ';
+    }
+    while (i < s.length) {
+        if (i + 1 < s.length && s[i] == '/' && s[i + 1] == '/') {
+            size_t j = i;
+            while (j < s.length && s[j] != '\n') ++j;
+            blank(i, j); i = j;
+        } else if (i + 1 < s.length && s[i] == '/' && s[i + 1] == '*') {
+            size_t j = i + 2;
+            while (j + 1 < s.length && !(s[j] == '*' && s[j + 1] == '/')) ++j;
+            blank(i, j + 2); i = j + 2;
+        } else if (i + 1 < s.length && s[i] == '/' && s[i + 1] == '+') {
+            size_t j = i, depth = 0;
+            while (j + 1 < s.length) {
+                if (s[j] == '/' && s[j + 1] == '+') { ++depth; j += 2; continue; }
+                if (s[j] == '+' && s[j + 1] == '/') { --depth; j += 2; if (depth == 0) break; continue; }
+                ++j;
+            }
+            blank(i, j); i = j;
+        } else if (s[i] == '"') {
+            size_t j = i + 1;
+            while (j < s.length && s[j] != '"') { if (s[j] == '\\') ++j; ++j; }
+            blank(i + 1, j); i = j + 1;
+        } else if (s[i] == '`') {
+            size_t j = i + 1;
+            while (j < s.length && s[j] != '`') ++j;
+            blank(i + 1, j); i = j + 1;
+        } else if (s[i] == '\'') {
+            size_t j = i + 1;
+            while (j < s.length && s[j] != '\'') { if (s[j] == '\\') ++j; ++j; }
+            blank(i + 1, j); i = j + 1;
+        } else ++i;
+    }
+    return o.idup;
+}
+
+/// [start, end) of the balanced span opening at `code[open]` (`(` or `{`).
+version (unittest) private size_t gtSpanEnd(string code, size_t open) {
+    immutable char o = code[open], c = o == '(' ? ')' : '}';
+    size_t depth;
+    foreach (k; open .. code.length) {
+        if (code[k] == o) ++depth;
+        else if (code[k] == c && --depth == 0) return k + 1;
+    }
+    assert(0, "gestures census: unbalanced span");
+}
+
+unittest {
+    import std.file : readText;
+    import std.regex : regex, matchAll, matchFirst;
+    import std.algorithm : count;
+    import std.array : join;
+    import std.format : format;
+
+    const code = gtBlankNonCode(readText(__FILE_FULL_PATH__));
+    auto histRe = regex(`\bhistory\.(canUndo|canRedo|undo|redo|undoEntries|redoEntries|length)\b`
+                      ~ `|\bh\.(canUndo|canRedo|undo|redo|undoEntries|redoEntries)\b`);
+    auto callRe = regex(`\b(?:(?:t|t1|t2)\.)?(commit[A-Za-z]*|remove[A-Za-z]*At|buildFromSource`
+                      ~ `|applySmooth[A-Za-z]*|applyMoveTargets|on(?!MouseButtonDown)[A-Za-z]*Down`
+                      ~ `|(?:addLoop|build|dupLoop|split|slide|smoothLoop|moveLoop|lmbMode`
+                      ~ `|lmbPlaceOrMove|dupEdge|smooth)Up)\(`);
+    auto kernRe = regex(`^(commit[A-Za-z]*|remove[A-Za-z]*At|buildFromSource`
+                      ~ `|applySmooth[A-Za-z]*|applyMoveTargets)$`);
+    auto stepRe = regex(`\bpenStep\(`);
+    auto bindRe = regex(`\bbindPenSession\(`);
+
+    // Top-level `unittest {` blocks, by brace depth over the code view.
+    size_t[2][] blocks;
+    size_t depth;
+    for (size_t i = 0; i < code.length; ++i) {
+        if (code[i] == '{') ++depth;
+        else if (code[i] == '}') --depth;
+        else if (depth == 0 && code[i .. $].length > 8 && code[i .. i + 8] == "unittest"
+                 && (i == 0 || code[i - 1] == '\n')) {
+            size_t open = i + 8;
+            while (code[open] == ' ' || code[open] == '\t' || code[open] == '\n') ++open;
+            if (code[open] != '{') continue;
+            immutable size_t end = gtSpanEnd(code, open);
+            blocks ~= [i, end];
+            i = end - 1;
+        }
+    }
+
+    size_t histBlocks, calls, kernels;
+    string[] bad;
+    foreach (bl; blocks) {
+        const body_ = code[bl[0] .. bl[1]];
+        if (matchFirst(body_, histRe).empty) continue;
+        ++histBlocks;
+        immutable size_t line0 = code[0 .. bl[0]].count('\n') + 1;
+        if (matchFirst(body_, bindRe).empty)
+            bad ~= format("    · the block at line %d reads history but never calls "
+                        ~ "bindPenSession: a session-less pen records nothing", line0);
+        size_t[2][] spans;
+        foreach (m; matchAll(body_, stepRe)) {
+            immutable size_t at = m.pre.length;
+            spans ~= [at, gtSpanEnd(body_, at + m.hit.length - 1)];
+        }
+        foreach (m; matchAll(body_, callRe)) {
+            ++calls;
+            if (!matchFirst(m[1], kernRe).empty) ++kernels;
+            immutable size_t at = m.pre.length;
+            bool inside;
+            foreach (sp; spans) if (sp[0] <= at && at < sp[1]) inside = true;
+            if (!inside)
+                bad ~= format("    · line %d: `%s(` in a history-reading block sits outside "
+                            ~ "every penStep bracket, so it opens no step",
+                              line0 + body_[0 .. at].count('\n'), m[1]);
+        }
+    }
+    // Floors first: an empty scan would satisfy both rules vacuously.
+    assert(blocks.length == 175 && histBlocks == 78 && calls == 78 && kernels == 64,
+        format("gestures census population changed: %d top-level blocks (175), %d read "
+             ~ "history (78), %d bracketed-list calls in them (78), %d of them kernels (64)",
+               blocks.length, histBlocks, calls, kernels));
+    assert(bad.length == 0, "gestures census:\n" ~ bad.join("\n"));
 }
