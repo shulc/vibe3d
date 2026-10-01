@@ -79,6 +79,25 @@ unittest {
         ~ " middle-restart points, frozen at 6");
 }
 
+// The kernel owner (reviewer's adjudication of S1b PLAN-FINDING-1, gap row 486): EdgeExtrude
+// after `select.invert` rebuilds both faces at the reference (7), ours 9 — a first-haul
+// COUNT no law moves; the generator's `KERNEL_SEEDS` names the two seeds, and only the
+// `vcount` fields carrying a seed's (reference, ours) pair inherit it. Stationary; the
+// exact set (`freeze_fixture.py --print-lists`: `LIST kernelOwned n=6`, 2026-10-01).
+unittest {
+    const fx = parseJSON(kFixture);
+    string[] kernel;
+    foreach (c; fx["cells"].array)
+        foreach (p; c["points"].array)
+            foreach (field, f; p["fields"].object)
+                if ("ours" in f && f["owner"].str == "none: kernel (gap row 486)")
+                    kernel ~= c["id"].str ~ "/" ~ p["label"].str ~ "." ~ field;
+    assert(kernel == ["moment_eextrude/s05_drag.vcount", "moment_eextrude/s06_drag.vcount",
+        "moment_eextrude/s07_Z.vcount", "moment_eextrude_ui/s05_drag.vcount",
+        "moment_eextrude_ui/s06_drag.vcount", "moment_eextrude_ui/s07_Z.vcount"],
+        "fixture: the kernel-owned fields " ~ kernel.to!string ~ " are not gap row 486's six");
+}
+
 static foreach (id; kCells) {
     unittest { runCell(parseJSON(kFixture), id); }
 }

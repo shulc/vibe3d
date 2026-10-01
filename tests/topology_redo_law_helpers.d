@@ -43,16 +43,26 @@ struct Rig {
     string[string] attrName;   // logical fixture attribute → our attribute
     JSONValue mesh;            // rig override (null: the reference rig as frozen)
     string[][string] enumNames; // an enumerated attribute's names by ordinal (rig check)
-    double[][] extraVerts;     // appended to the reference rig (its vertices keep their indices)
-    long[][] extraFaces;
+    string[string] armPreset;  // our attribute → the reference's arm value, written before s00
+    bool placesCenter;  // a haul press that misses every handle places the tool's centre:
+                        // g1 places it at the reference's placed centre (step `center`)
+    bool frameReference;  // the camera frames the reference rig, not the override `mesh`
+    bool aimAtSelection;  // each haul: the camera focuses the selected faces' centroid (the
+                          // tool's drag anchor), so the press plane is in view
     int[4] deltaMap = [1, 0, 0, 1];  // ours = (m0 dx + m1 dy, m2 dx + m3 dy): the handle's
                                      // screen direction under our camera
     long[2] layer = [1, 1];    // vertices one layer adds: [reference, ours] (vcount scale)
     string dormantDeafDoor;    // the re-arm door after which our dormant haul takes no press
 }
 
-/// Two far vertices that close a triangle with the autoact rig's loose vertex 4.
-enum double[][] kLooseKeeper = [[2.75, -0.8, 1.65], [2.45, -0.5, 1.65]];
+/// The autoact rig without its loose vertex 4 (our topology kernels drop a loose vertex,
+/// gap row 37): an override like VertexMerge's, so a global selection (`select.invert`)
+/// selects the reference's own set. `mode`/`selected` are the variant's.
+JSONValue autoactRig(string faces, string mode, string selected) {
+    return parseJSON(`{"vertices":[[-0.35,0.25,0.05],[1.45,-0.35,-0.25],[0.45,1.4,0.45],`
+        ~ `[-1.2,-0.05,1.15]],"faces":` ~ faces ~ `,"mode":"` ~ mode ~ `","selected":`
+        ~ selected ~ `}`);
+}
 
 Rig rigOf(string variant) {
     Rig r;
@@ -82,9 +92,8 @@ Rig rigOf(string variant) {
             ~ `[0.5,-0.3,0.05],[-0.2,0.9,0.05],[0.2,0.9,0.05]],`
             ~ `"faces":[[0,3,4],[1,5,6],[2,7,8]],"mode":"vertices","selected":[0,1,2]}`);
         break;
-    // autoact family (S1b): the reference rig's vertex 4 is loose and our topology
-    // kernels drop loose vertices (gap row 37); a far triangle 4-5-6 keeps it. The part
-    // each reference haul moves — EdgeBevel width,
+    // autoact family (S1b): the reference rig less its loose vertex 4 (`autoactRig`;
+    // `vcount` is compared from the rig base). The part each reference haul moves — EdgeBevel width,
     // VertexBevel inset, VertexExtrude inset (= our width; shift stays 0); EdgeExtrude
     // moves width AND shift, which is our off-handle 2-axis drag (dx width, -dy extrude)
     case "edge_bevel":
@@ -92,17 +101,17 @@ Rig rigOf(string variant) {
         r.handle = true; r.handlePart = 0; r.pressRef = [596, 614];
         r.deltaMap = [0, -1, 1, 0];   // our width arrow points down on screen
         r.attrName = ["value": "width"];
-        r.extraVerts = kLooseKeeper; r.extraFaces = [[4L, 5, 6]];
+        r.mesh = autoactRig(`[[0,1,2],[0,2,3]]`, "edges", `[[0,2]]`); r.frameReference = true;
         break;
     case "edge_extrude":
         r.tool = "edge.extrude"; r.attrs = ["extrude", "width"]; r.pressRef = [640, 170];
-        r.extraVerts = kLooseKeeper; r.extraFaces = [[4L, 5, 6]];
+        r.mesh = autoactRig(`[[0,1,2],[0,2,3]]`, "edges", `[[0,2]]`); r.frameReference = true;
         break;
     case "vertex_bevel":
         r.tool = "mesh.vertexBevel"; r.attrs = ["inset"];
         r.handle = true; r.handlePart = 0; r.pressRef = [489, 546];
         r.deltaMap = [0, -1, 1, 0];   // our inset arrow points down on screen
-        r.extraVerts = kLooseKeeper; r.extraFaces = [[4L, 5, 6]];
+        r.mesh = autoactRig(`[[0,1,2],[0,2,3]]`, "vertices", `[0]`); r.frameReference = true;
         break;
     case "vertex_extrude":
         r.tool = "mesh.vertexExtrude"; r.attrs = ["shift", "width"];
@@ -110,7 +119,8 @@ Rig rigOf(string variant) {
         // our kernel extrudes only a vertex whose every edge has two faces: the face
         // 1-0-3 closes the fan of the selected vertex 0 (the reference extrudes it open);
         // it then builds TWO rings per layer (6 vertices) where the reference builds one (3)
-        r.extraVerts = kLooseKeeper; r.extraFaces = [[4L, 5, 6], [1L, 0, 3]];
+        r.mesh = autoactRig(`[[0,1,2],[0,2,3],[1,0,3]]`, "vertices", `[0]`);
+        r.frameReference = true;
         r.layer = [3, 6];
         break;
     // generators family (S1b): every haul presses the viewport centre (a press that
@@ -121,6 +131,8 @@ Rig rigOf(string variant) {
         r.tool = "mesh.mirrorTool"; r.attrs = ["axis", "center", "angle"]; r.pressRef = [430, 561];
         r.attrName = ["axis": "axis"];
         r.enumNames = ["axis": ["X", "Y", "Z"]];
+        r.armPreset = ["axis": "Y"];   // every mirror cell's raw s01: `axis: 1`
+        r.placesCenter = true;         // the weld at x = -0.35 (vertex 1) needs the same centre
         break;
     case "radial_array":
         r.tool = "mesh.radialArrayTool"; r.attrs = ["count", "axis", "center", "angle", "offset"];
@@ -137,10 +149,12 @@ Rig rigOf(string variant) {
         break;
     case "clone":
         r.tool = "mesh.clone"; r.attrs = ["num", "offX", "offY", "offZ"]; r.pressRef = [430, 561];
-        // the reference arms with 61 copies (its s01 attributes), ours with 1: a clone
-        // layer adds 61 × 5 vertices there, 5 here. Writing 61 to our tool instead sends
-        // the copies' centroid out of view and our haul's plane projection then refuses.
-        r.layer = [305, 5];
+        // the reference arms with 61 copies (raw s01 `num: 61`); preset before the arm, our
+        // arm builds nothing and g1 builds the 61 copies (5 + 305 vertices, as there). The
+        // dormant haul's anchor is then the 61 selected copies, far out of the rig's view:
+        // without the aim our plane projection refuses the press
+        r.armPreset = ["num": "61"];
+        r.aimAtSelection = true;
         break;
     }
     return r;
@@ -214,10 +228,7 @@ long setupCell(const JSONValue cell, const Rig rig) {
     const ctx = "cell " ~ cell["id"].str;
     cmdOk("/api/command", commandBody("scene.reset"), ctx);
     cmdOk("/api/command", "workplane.reset", ctx);
-    const JSONValue mRef = rig.mesh.type == JSONType.object ? rig.mesh : cell["rig"];
-    JSONValue m = parseJSON(mRef.toString);
-    foreach (v; rig.extraVerts) m["vertices"].array ~= JSONValue(v);
-    foreach (f; rig.extraFaces) m["faces"].array ~= JSONValue(f);
+    JSONValue m = rig.mesh.type == JSONType.object ? rig.mesh : cell["rig"];
     cmdOk("/api/command", commandBody("scene.loadMesh",
         `{"vertices":` ~ m["vertices"].toString ~ `,"faces":` ~ m["faces"].toString ~ `}`), ctx);
     // an edge is frozen as its vertex pair; our index is the pair's place in our edge list
@@ -237,23 +248,37 @@ long setupCell(const JSONValue cell, const Rig rig) {
     cmdOk("/api/command", commandBody("mesh.select",
         format(`{"mode":"%s","indices":%s}`, m["mode"].str, sel)), ctx);
     // an oblique view on the rig's centre: every handle off-axis, the whole rig in frame
+    // (`Rig.frameReference`: the reference rig's centre, though an override is loaded)
+    const framed = rig.frameReference ? cell["rig"] : m;
     double[3] c = 0;
-    foreach (v; m["vertices"].array)
-        foreach (k; 0 .. 3) c[k] += num(v[k]) / m["vertices"].array.length;
+    foreach (v; framed["vertices"].array)
+        foreach (k; 0 .. 3) c[k] += num(v[k]) / framed["vertices"].array.length;
     cmdOk("/api/camera", format(`{"azimuth":0.5,"elevation":0.4,"distance":7,`
         ~ `"focus":{"x":%.6f,"y":%.6f,"z":%.6f}}`, c[0], c[1], c[2]), ctx);
+    // the reference's arm attributes our arm lacks: written on an armed, untouched tool
+    // and dropped (our tools keep their attributes across a drop and re-arm)
+    if (rig.armPreset.length) {
+        cmdOk("/api/command", "tool.set " ~ rig.tool ~ " on", ctx);
+        foreach (a, v; rig.armPreset) {
+            cmdOk("/api/command", "tool.attr " ~ rig.tool ~ " " ~ a ~ " " ~ v, ctx);
+            const r = postJson("/api/command", "tool.attr " ~ rig.tool ~ " " ~ a ~ " ?");
+            const got = r["value"].type == JSONType.string ? r["value"].str : r["value"].toString;
+            assert(got == v, format("rig VOID %s: the arm preset %s reads %s, written %s",
+                ctx, a, r["value"].toString, v));
+        }
+        cmdOk("/api/command", "tool.set " ~ rig.tool ~ " off", ctx);
+    }
+    centerPlaced = false;
     cmdOk("/api/command", "history.clear", ctx);
     settle();
     const base = cast(long) getJson("/api/model")["vertices"].array.length;
     // `vcount` is compared from the rig base (ours − our base + its base), so s00 equals
-    // the reference by construction: on the reference's own rig the bases must agree up
-    // to the rig's own extra vertices (only an override rig — VertexMerge, gap 37 — may
-    // differ otherwise)
+    // the reference by construction: on the reference's own rig the bases must agree
+    // (only an override rig — VertexMerge, the autoact family; gap 37 — may differ)
     if (rig.mesh.type != JSONType.object) {
         const baseRef = cell["points"][0]["fields"]["vcount"]["ref"].integer;
-        assert(base == baseRef + cast(long) rig.extraVerts.length, format("rig VOID %s: our base "
-            ~ "holds %d vertices, the reference's %d (+%d rig extras)", ctx, base, baseRef,
-            rig.extraVerts.length));
+        assert(base == baseRef, format("rig VOID %s: our base holds %d vertices, the reference's %d",
+            ctx, base, baseRef));
     }
     return base;
 }
@@ -307,6 +332,45 @@ private double[4] meshScreenBox(const JSONValue cam) {
     return box;
 }
 
+/// The first haul of the cell placed the centre (`Rig.placesCenter`; reset by setupCell).
+private bool centerPlaced;
+
+/// Half the reference's 0.05 placement snap: our placed centre must round to its centre.
+enum double kCenterSnapHalf = 0.025;
+
+/// `Rig.placesCenter`, g1: look at the reference's placed centre T from a direction
+/// perpendicular to T − C0 (C0 our current centre), so the viewport centre's ray meets our
+/// press plane (screen-facing, through C0) at T itself; the press then lands on T.
+private void aimAtCenter(const Rig rig, const JSONValue step, string ctx) {
+    import std.math : atan, cos, sin;
+    assert("center" in step, "rig VOID " ~ ctx ~ "/" ~ step["label"].str
+        ~ ": the fixture freezes no reference centre for the first haul");
+    const c0 = postJson("/api/command", "tool.attr " ~ rig.tool ~ " center ?")["value"];
+    double[3] t, v;
+    foreach (k; 0 .. 3) { t[k] = num(step["center"][k]); v[k] = t[k] - num(c0[k]); }
+    enum double az = 0.5;
+    assert(abs(v[1]) > 1e-3, "rig VOID " ~ ctx ~ ": the reference centre is level with ours");
+    const el = atan(-(v[0] * sin(az) + v[2] * cos(az)) / v[1]);
+    cmdOk("/api/camera", format(`{"azimuth":%.17g,"elevation":%.17g,"distance":7,`
+        ~ `"focus":{"x":%.17g,"y":%.17g,"z":%.17g}}`, az, el, t[0], t[1], t[2]), ctx);
+    settle();
+}
+
+/// `Rig.aimAtSelection`: focus the camera (same orbit) on the selected faces' centroid.
+private void aimAtSelected(string ctx) {
+    const m = getJson("/api/model");
+    bool[long] vs;
+    foreach (f; getJson("/api/selection")["selectedFaces"].array)
+        foreach (v; m["faces"][cast(size_t) f.integer].array) vs[v.integer] = true;
+    assert(vs.length, "rig VOID " ~ ctx ~ ": no selected face to aim at");
+    double[3] c = 0;
+    foreach (v, _; vs)
+        foreach (k; 0 .. 3) c[k] += num(m["vertices"][cast(size_t) v][k]) / vs.length;
+    cmdOk("/api/camera", format(`{"azimuth":0.5,"elevation":0.4,"distance":7,`
+        ~ `"focus":{"x":%.6f,"y":%.6f,"z":%.6f}}`, c[0], c[1], c[2]), ctx);
+    settle();
+}
+
 /// Run one step of the scenario (the generator's lexicon, plan §4.7).
 void runStep(const JSONValue step, const Rig rig, string ctx) {
     const op = step["op"].str;
@@ -318,12 +382,24 @@ void runStep(const JSONValue step, const Rig rig, string ctx) {
         settle();
         return;
     case "haul": {
+        const place = rig.placesCenter && !centerPlaced;
+        if (place) aimAtCenter(rig, step, ctx);
+        if (rig.aimAtSelection) aimAtSelected(ctx);
         int x, y;
         pressPoint(rig, step, x, y);
         const rx = num(step["delta"][0]), ry = num(step["delta"][1]);
         const m = rig.deltaMap;
         const dx = m[0] * rx + m[1] * ry, dy = m[2] * rx + m[3] * ry;
         drag(x, y, cast(int) dx, cast(int) dy, step["button"].str == "middle" ? 2 : 1);
+        if (place) {
+            centerPlaced = true;
+            const c = postJson("/api/command", "tool.attr " ~ rig.tool ~ " center ?")["value"];
+            foreach (k; 0 .. 3)
+                assert(abs(num(c[k]) - num(step["center"][k])) <= kCenterSnapHalf + 1e-9,
+                    format("rig VOID %s/%s: our g1 centre %s is not the reference's %s (to its "
+                        ~ "0.05 placement snap)", ctx, step["label"].str, c.toString,
+                        step["center"].toString));
+        }
         return;
     }
     case "key":
@@ -540,11 +616,15 @@ void checkRig(const JSONValue cell, const CellRun run) {
     }
     string rearmDoor;
     foreach (s; steps) if (s["op"].str == "arm") rearmDoor = s["door"].str;
-    if (canFind(id, "_dormant") && !starts("dormant")
-        && rearmDoor != rigOf(cell["variant"].str).dormantDeafDoor) {
+    if (canFind(id, "_dormant") && !starts("dormant")) {
         const k = at(hauls[$ - 1]);
-        assert(run.obs[k].attrs != run.obs[k - 1].attrs,
-            "rig: dormant haul changed no attribute in " ~ id);
+        if (rearmDoor != rigOf(cell["variant"].str).dormantDeafDoor)
+            assert(run.obs[k].attrs != run.obs[k - 1].attrs,
+                "rig: dormant haul changed no attribute in " ~ id);
+        else    // self-expiring: the measured deaf door (gap row 487) writes nothing
+            assert(run.obs[k].attrs == run.obs[k - 1].attrs
+                && run.obs[k].undoRows == run.obs[k - 1].undoRows,
+                "rig: " ~ id ~ ": dormant haul now writes — drop dormantDeafDoor (S6)");
     }
     if (starts("dormant2_")) {
         const k = at(hauls[$ - 1]);

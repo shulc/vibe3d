@@ -42,7 +42,7 @@ unittest { // the floor: the fixture still holds the whole family
 // Two stationary owners the plan names for this family, before any cell: the UI command
 // that meets Mirror (model §6.4 C2m, `commandClose: none`) hands every divergent field
 // after it to the activation/command-close wave (plan §5 S1a п.5: «mirror_cmdclose_ui
-// после s04_UC»; generator output 2026-10-01: 22 fields, all of them), and Mirror's
+// после s04_UC»; generator output 2026-10-01: 17 fields, all of them), and Mirror's
 // law 4 on the UI door is not captured (model §6.3) — one field.
 unittest {
     const fx = parseJSON(kFixture);
@@ -65,8 +65,8 @@ unittest {
             if (c["id"].str == "mirror_cmdclose_ui" && p["label"].str == "s04_UC") after = true;
         }
     }
-    assert(c2m == 22, "fixture family generators holds " ~ c2m.to!string
-        ~ " divergent fields after the Mirror UI command, frozen at 22");
+    assert(c2m == 17, "fixture family generators holds " ~ c2m.to!string
+        ~ " divergent fields after the Mirror UI command, frozen at 17");
     assert(notCaptured == ["mirror_attrs_ui/s04_R.attrs"], "fixture: the not-captured fields "
         ~ notCaptured.to!string ~ " are not model §6.3's one");
 }
