@@ -45,7 +45,7 @@ import toolpipe.stages.snap : SnapStage;
 import toolpipe.guide       : SnapGuide, GuideDrawState, kGuidePrioritySeed;
 import constraint           : resolveHoverTarget, topoPenPressPickPx,
                               topoPenSnapAcceptPx, topoPenSnapGatherPx,
-                              kTopoPenSnapAuto, closestPointOnMeshes;
+                              kTopoPenSnapAuto, closestPointOnMeshes, BackgroundSource;
 import snap                  : backgroundSourcesFull, SnapAdmit;
 import tools.edit.smooth_relax : RelaxVec3, RelaxTopology, deriveBoundary, relaxPasses;
 import tools.edit.topology_pen.render : PenRenderOps;
@@ -6642,16 +6642,25 @@ public:
     // The nearest foot of a primary-LOCAL point on the background, local
     // again; the point itself when no background face exists.
     private Vec3 footOnBackground(Vec3 local) {
-        auto sources = backgroundSourcesFull();
-        if (sources.length == 0) return local;
-        const ms = primaryModelSpace();
+        Vec3 foot;
+        return footOn(backgroundSourcesFull(), primaryModelSpace(), local, foot) ? foot : local;
+    }
+
+    // The one nearest-foot query behind `footOnBackground` and
+    // `snapInsertedToBackground`: `local` lifted to world through `ms`, the
+    // closest point over `sources` (single-sided, the Smooth re-snap's own
+    // default), brought back to local. False when no background face exists.
+    private static bool footOn(const(BackgroundSource)[] sources, const ModelSpace ms,
+                               Vec3 local, out Vec3 foot) {
+        if (sources.length == 0) return false;
         Vec3  hit, hitN;
         int   si, fi;
         float d2;
-        enum bool dblSided = false;   // matches the Smooth re-snap's own default
+        enum bool dblSided = false;
         if (!closestPointOnMeshes(ms.toWorldPoint(local), sources, dblSided, hit, hitN, si, fi, d2))
-            return local;
-        return ms.toLocalPoint(hit);
+            return false;
+        foot = ms.toLocalPoint(hit);
+        return true;
     }
 
     // Add Loop's inserted vertices re-snap onto the background, CLOSEST
@@ -6672,15 +6681,10 @@ public:
         uint[] idx;
         Vec3[] to;
         foreach (vi; firstNew .. ed.vertices.length) {
-            Vec3  hit, hitN;
-            int   si, fi;
-            float d2;
-            enum bool dblSided = false;   // matches the Smooth re-snap's own default
-            if (!closestPointOnMeshes(ms.toWorldPoint(ed.vertices[vi]), sources,
-                                      dblSided, hit, hitN, si, fi, d2))
-                continue;
+            Vec3 foot;
+            if (!footOn(sources, ms, ed.vertices[vi], foot)) continue;
             idx ~= cast(uint) vi;
-            to  ~= ms.toLocalPoint(hit);
+            to  ~= foot;
         }
         if (idx.length) ed.setVertexPositions(idx, to);
     }
