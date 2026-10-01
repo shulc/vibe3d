@@ -4156,7 +4156,7 @@ public:
     // positions — carried, never inferred from a mesh diff (R1-7).
     private void noteStepDescriptor(PenStepKind kind, const(uint)[] verts,
                                     const(Vec3)[] orig) {
-        stepKind_  = kind == PenStepKind.None ? null : [kind];
+        stepKind_  = [kind];
         stepVerts_ = verts.dup;
         stepOrig_  = orig.dup;
     }
