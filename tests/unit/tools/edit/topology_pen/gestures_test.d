@@ -709,6 +709,28 @@ unittest {
         "a stale held bit must not discard the release: one row keeping the write");
 }
 
+// The cancel and the drop end every held pen button's role (wave plan
+// §9.26.1 point 3): a button left inert or held before them must not consume
+// a later release. Read on the pen's own masks, which only the two exits and
+// a release clear.
+unittest {
+    enum ubyte both = (1 << (SDL_BUTTON_LEFT - 1)) | (1 << (SDL_BUTTON_MIDDLE - 1));
+    auto t = new TopologyPenTool();
+    Mesh m;
+    t.meshSrc_ = () => &m;
+    m.addVertex(Vec3(1, 2, 3));
+    t.heldMask_ = both;
+    t.inertButtons_ = both;
+    t.cancelUncommittedEdit();
+    assert(t.heldMask_ == 0 && t.inertButtons_ == 0,
+        "the cancel must clear the held and inert masks");
+    t.heldMask_ = both;
+    t.inertButtons_ = both;
+    t.deactivate();
+    assert(t.heldMask_ == 0 && t.inertButtons_ == 0,
+        "the drop must clear the held and inert masks");
+}
+
 // The chord mode's DEFAULT carrier (plan 8646): a press whose handler commits
 // nothing ends as one row through the default of the mode it resolved to. Every
 // mode's row is pinned here by the generic wire ids `bindPenSession` installs.
@@ -12146,8 +12168,8 @@ unittest {
         }
     }
     // Floors first: an empty scan would satisfy both rules vacuously.
-    assert(blocks.length == 180 && histBlocks == 82 && calls == 79 && kernels == 65,
-        format("gestures census population changed: %d top-level blocks (180), %d read "
+    assert(blocks.length == 181 && histBlocks == 82 && calls == 79 && kernels == 65,
+        format("gestures census population changed: %d top-level blocks (181), %d read "
              ~ "history (82), %d bracketed-list calls in them (79), %d of them kernels (65)",
                blocks.length, histBlocks, calls, kernels));
     assert(bad.length == 0, "gestures census:\n" ~ bad.join("\n"));
