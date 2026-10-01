@@ -100,12 +100,10 @@ class ToolActivationCommand : Command, ToolArmLifecyclePolicy {
     // session's first gesture is NOT re-applied here: the session replays it
     // after this redo (ToolSession.redo, task 7137, §22), so the raw redo doors
     // re-arm bare.
+    // A drop row (S6) is never redone: its undo empties the redo stack (L32),
+    // so it has no arm to re-apply (wave plan 8640 [A6-n7]).
     protected override bool applyImpl() {
-        if (armedId_.length == 0) {
-            if (onDeactivate !is null) onDeactivate();
-        } else if (onActivate !is null) {
-            onActivate(armedId_);
-        }
+        if (armedId_.length != 0 && onActivate !is null) onActivate(armedId_);
         return true;
     }
 

@@ -166,7 +166,7 @@ private struct SiteCount { string transition; size_t count; string why; }
 private immutable SiteCount[] kSites = [
     SiteCount("commandArm",             1, "toolHost.activatePrepared"),
     SiteCount("interactiveArm",         1, "toolHost.activate"),
-    SiteCount("replayArm",              2, "the lifecycle restore delegate and closed-run owner rearm, both through armPreparedTool"),
+    SiteCount("replayArm",              3, "the lifecycle restore delegate, closed-run owner rearm and the drop row's restore (S6), all through armPreparedTool"),
     SiteCount("resetRearm",             1, "tool.reset rebuilding the same id"),
     SiteCount("explicitDrop",           3, "toolHost.deactivate, Space key and Esc ladder first rung"),
     SiteCount("sameIdToggleDrop",       1, "activateToolById's already-active toggle"),
@@ -269,19 +269,19 @@ unittest {
     // through the per-row message rather than through a bare total.
     size_t total;
     foreach (r; kSites) total += r.count;
-    assert(total == 22,
-        format("task 4053: the site ledger now sums to %s, recorded 22 (task 8261: the "
-               ~ "closed-run owner rearm arrived) — say in "
+    assert(total == 23,
+        format("task 4053: the site ledger now sums to %s, recorded 23 (wave plan 8640 "
+               ~ "S6: the drop row's replay-arm restore arrived) — say in "
                ~ "the commit which sites arrived or left", total));
 
     // And the total DECOMPOSES, which is what keeps 22 from being a number
     // with no structure:
-    //     15  dropActiveTool(ToolTransition.…) calls
-    //   +  5  armPreparedTool(ToolTransition.…) calls
+    //     15  dropActiveTool(With)(ToolTransition.…) calls
+    //   +  6  armPreparedTool(ToolTransition.…) calls
     //   +  2  shutdownDrop mentions — a comment and the door assert, the one
     //         drop with no call at all, because its scope(exit) is declared
     //         above the verb
-    //   = 22
+    //   = 23
     // This is not a restatement of the scan above: that one counts MENTIONS,
     // so a transition named only in a comment would satisfy it. These two
     // count CALLS, and the arithmetic closing is what says the 26 wired rows
@@ -304,14 +304,17 @@ unittest {
         if (f.canFind("tool_activation_ownership.d")) continue;
         auto text = maskComments(readText(f));
         dropCalls += occurrences(text, "dropActiveTool(ToolTransition.");
+        // Wave plan 8640 S6: the same drop verb carrying a DropContext.
+        dropCalls += occurrences(text, "dropActiveToolWith(ToolTransition.");
         armCalls  += occurrences(text, "armPreparedTool(ToolTransition.");
     }
     // Slice M2 folded the funnel's two pre-apply drop calls into one (16 -> 15);
     // slice M4 removed the switch-restore replay arm (5 -> 4), then task 8261
-    // added the closed-run owner replay arm (4 -> 5).
-    assert(dropCalls == 15 && armCalls == 5,
+    // added the closed-run owner replay arm (4 -> 5), and wave plan 8640 S6 the
+    // drop row's restore (5 -> 6).
+    assert(dropCalls == 15 && armCalls == 6,
         format("task 4053: wired call sites moved — %s drops and %s arms, "
-               ~ "recorded 15 and 5. With the 2 shutdownDrop mentions (no call) "
+               ~ "recorded 15 and 6. With the 2 shutdownDrop mentions (no call) "
                ~ "these must sum to the ledger's %s.",
                dropCalls, armCalls, total));
     assert(dropCalls + armCalls + 2 == total,
@@ -542,7 +545,9 @@ unittest {
     // 2026-09-05, every count and every anchor offset identical either way).
     const app = maskComments(readText(repoRoot ~ "/source/app.d"));
 
-    const dropAnchor = app.indexOf("void dropActiveTool(ToolTransition why) {");
+    // Wave plan 8640 S6: the door body is `dropActiveToolWith`; the one-line
+    // `dropActiveTool` forwards to it with an empty DropContext.
+    const dropAnchor = app.indexOf("void dropActiveToolWith(ToolTransition why, DropContext ctx) {");
     const armAnchor  = app.indexOf("void armPreparedTool(ToolTransition why, string id,");
     const shutAssert = app.indexOf("assert(activationDoorFor(ToolTransition.shutdownDrop)");
     assert(dropAnchor >= 0 && armAnchor >= 0 && shutAssert >= 0,
@@ -559,7 +564,7 @@ unittest {
              bodyAt(app, app.indexOf("{", armAnchor)), 0, 0),
         // The DROP door: exactly ONE `deactivate()`, in the `legacyDeactivate`
         // arm of the ownership `final switch`, and never an `activate()`.
-        Door("dropActiveTool",
+        Door("dropActiveToolWith",
              bodyAt(app, app.indexOf("{", dropAnchor)), 0, 1),
         // The shutdown `scope(exit)`, which cannot call the verb above.
         Door("shutdown scope(exit)",

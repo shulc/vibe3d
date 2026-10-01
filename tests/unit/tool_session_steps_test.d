@@ -32,7 +32,7 @@
 module tests.unit.tool_session_steps_test;
 
 import command_history : CommandHistory, UndoState;
-import commands.tool.lifecycle : ToolActivationCommand;
+import commands.tool.lifecycle : ToolActivationCommand, ToolTaskClearCommand;
 import edit_session : EditSession, ParameterChangeSource, ParameterChangePhase;
 import editmode : EditMode;
 import mesh : Mesh, makeCube;
@@ -1586,4 +1586,49 @@ unittest { // a re-arm releases the reused image (§9.25 N3: ~25 MB a 50k-vertex
     assert(r.h.undoEntries().length == 2, "8646 reuse: the second arm's step is a row");
     assert(rowImage(r.h, 0, "after").vertices.ptr !is rowImage(r.h, 1, "before").vertices.ptr,
         "8646 reuse: a new operation must not keep the last one's image alive");
+}
+
+// (8) Wave plan 8640 S6 (§9.6 D6'): a user drop writes a drop row for exactly
+// the three user exits, over EVERY transition (the population is the enum's
+// compile-time length, never a literal).
+unittest {
+    size_t visited;
+    ToolTransition[] writes;
+    foreach (t; EnumMembers!ToolTransition) {
+        ++visited;
+        if (dropWritesRowFor(t)) writes ~= t;
+    }
+    assert(visited == EnumMembers!ToolTransition.length,
+        format("S6 dropWritesRowFor: visited %s of %s transitions", visited,
+               EnumMembers!ToolTransition.length));
+    assert(writes == [ToolTransition.explicitDrop, ToolTransition.sameIdToggleDrop,
+                      ToolTransition.selTypeFlipDrop],
+        format("S6 dropWritesRowFor: rows for %s, expected the three user exits", writes));
+}
+
+// (9) S6 [A6-1], L32: a drop row's undo empties the redo stack through the
+// existing CommandHistory.undo rule — its stored bit wins over the
+// predecessor-topology term that keeps a switch row's redo.
+unittest {
+    Mesh m = makeCube();
+    auto v = new View(0, 0, 1, 1);
+    auto h = new CommandHistory();
+    auto keep = new ToolActivationCommand(&m, v, EditMode.Vertices, "t.other", "t.pen",
+        false, false, false, 0, 0, true, true);
+    auto drop = new ToolActivationCommand(&m, v, EditMode.Vertices, "", "t.pen",
+        false, false, false, 0, 0, true, true, false, true);
+    assert(keep.carriesRedoAfterUndo() && !keep.dropRow(),
+        "S6 control: a switch row over a topology predecessor keeps its redo");
+    assert(!drop.carriesRedoAfterUndo() && drop.dropRow() && drop.label() == "Tool Drop",
+        "S6: a drop row must not carry its redo after its undo (L32)");
+    h.recordToolLifecycle(keep);
+    assert(h.undo() && h.redoEntries().length == 1, "S6 control: the switch row's undo keeps redo");
+    h.recordToolLifecycle(drop);   // a new record clears the switch row's redo
+    assert(h.undoEntries().length == 1 && h.redoEntries().length == 0, "S6 rig: one drop row");
+    // The Esc rung's task row above it: its undo keeps redo (X-esc-r R-task).
+    h.recordToolLifecycle(new ToolTaskClearCommand(&m, v, EditMode.Vertices));
+    assert(h.undo() && h.redoEntries().length == 1, "S6: the task row's undo must keep its redo");
+    assert(h.undo() && h.redoEntries().length == 0,
+        format("S6: undoing the drop row must empty the redo stack, %s left",
+               h.redoEntries().length));
 }

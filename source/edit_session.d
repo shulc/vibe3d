@@ -1915,9 +1915,11 @@ private struct ToolSession {
     // then — on the Esc rung only — the empty task row above it (L39).
     private void recordDropRow_() {
         if (dropRowFactory_ is null) return;
-        history_.recordToolLifecycle(dropRowFactory_(pendingDrop_));
-        if (pendingDrop_.ctx.clearsTask && taskRowFactory_ !is null)
-            history_.recordToolLifecycle(taskRowFactory_());
+        Command[2] rows = [dropRowFactory_(pendingDrop_),
+            pendingDrop_.ctx.clearsTask && taskRowFactory_ !is null
+                ? taskRowFactory_() : null];
+        foreach (row; rows)
+            if (row !is null) history_.recordToolLifecycle(row);
     }
 
     // Apply-and-continue (Shift+click, task 0461) through the session: the

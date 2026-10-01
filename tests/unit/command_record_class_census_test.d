@@ -93,6 +93,9 @@ private enum LedgerRow[] kResidue = [
         "transform gesture edit — tool drop collapses the final run"),
     LedgerRow("XfrmTransformTool.consolidateRunAndAdvance|consolidate", 1,
         "transform re-grade — an explicit run boundary collapses its tail"),
+    LedgerRow("ToolSession.recordDropRow_|recordToolLifecycle", 1,
+        "lifecycle row — a user drop's drop row and the Esc rung's task row "
+      ~ "(wave plan 8640 S6), written after the drop door"),
     LedgerRow("EditSession.tryRefireDispatch|fire", 1,
         "refire-built Command — the session dispatches it inside the bracket"),
     LedgerRow("EditSession.refireBegin|refireBegin", 1,
@@ -633,8 +636,8 @@ package:
                 "executor.applyOrRefire(cmd, RecordMode.Record",
                 "LayerAdd-executor");
     }
-    assert(records.length == 28,
-        "command-record class census: expected twenty-eight allowlisted history "
+    assert(records.length == 29,
+        "command-record class census: expected twenty-nine allowlisted history "
         ~ "writer sites, found " ~ records.length.to!string);
     foreach (record; records)
         assert(record.key !=

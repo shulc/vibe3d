@@ -868,6 +868,41 @@ unittest { // (8)
 }
 
 // ---------------------------------------------------------------------------
+// (10) Wave plan 8640 S6 — a user drop writes a drop row by policy DATA
+// (`dropWritesRow`). Provenance: CAPTURED for the Topology Pen (X-esc,
+// X-space, X-q, X-sel, X-bare; the gesture loss on undo is NOT ported — gap
+// row (a), L8); false for every other tool (uncaptured: no row, by data).
+// Exactly one class declares it, and the drop door reads the policy AND the
+// transition table before the door runs.
+// ---------------------------------------------------------------------------
+
+static assert(ToolSessionPolicy.init.dropWritesRow == false);
+
+unittest { // (10)
+    string[] declared;
+    size_t scanned;
+    foreach (m; ModuleInfo) {
+        if (m is null || !m.name.startsWith("tools.")) continue;
+        foreach (c; m.localClasses) {
+            if (!derivesFromTool(c) || (c.m_flags & TypeInfo_Class.ClassFlags.isAbstract))
+                continue;
+            ++scanned;
+            if (blit(c).sessionPolicy().dropWritesRow) declared ~= c.name;
+        }
+    }
+    assert(scanned == 48, format("S6 policy classes: scanned %s, measured 48", scanned));
+    assert(declared == ["tools.edit.topology_pen.tool.TopologyPenTool"],
+           format("S6 policy classes: dropWritesRow declared by %s, expected the pen only", declared));
+    auto app = squeeze(bodyAt(blankNonCode(readText("source/app.d")),
+        "void dropActiveToolWith(ToolTransition why, DropContext ctx)"));
+    assert(app.count("constbooldropRow=activeTool!is"~"null&&activeTool.sessionPolicy().dropWritesRow&&dropWritesRowFor(why);") == 1,
+           "S6 wiring census: the drop door no longer reads the policy and the transition table");
+    inOrder(app, ["dropWritesRowFor(why);",
+                  "session.closeOperation(closeReasonFor(why),CommandDoor.ui,dropRow,ctx);",
+                  "activeTool.deactivate();"], "dropActiveToolWith");
+}
+
+// ---------------------------------------------------------------------------
 // (9) Slice M7 review — the second composition pin: the UNION of interfaces
 // (base classes walked, `InterfacesTuple`) that the concrete tool classes
 // block (8) scans implement, fixed at COMPILE time. A capability interface a
