@@ -1307,6 +1307,7 @@ private final class PressFlagTool : Tool, TopologyStepClient {
     }
     void pressBegins() { sessionStepBegins(); }
     void pressEnds() { sessionStepEnds(); }
+    MeshSnapshot openImage() { return sessionStepOpenImage(); }
 }
 
 private bool lastRowByPress(CommandHistory h) {
@@ -1370,4 +1371,26 @@ unittest { // the arm-apply entry (`opensAt: arm` + `armAttr`) is not a press
     auto j = s.sessionStateJson();
     assert(t.on && j["pendingPress"].type == JSONType.false_,
         format("8646 press flag: the arm-apply step reported pendingPress (on %s): %s", t.on, j));
+}
+
+unittest { // plan 8646 [R1-m]: the press image is the session's own, handed out shared
+    Mesh m = makeCube();
+    auto h = new CommandHistory();
+    auto t = new PressFlagTool;
+    t.m = &m; t.h = h; t.view = new View(0, 0, 1, 1);
+    t.basis = MeshSnapshot.capture(m);
+    assert(!t.openImage().filled, "8646 open image: an unbound tool has none");
+    Tool active = t;
+    auto s = new EditSession(() => active, h, () { active = null; });
+    s.noteArm("t.press", 1);
+    assert(!t.openImage().filled, "8646 open image: no step open, no image");
+    t.pressBegins();
+    auto a = t.openImage(), b = t.openImage();
+    assert(a.filled && a.matches(m) && a.vertices.ptr is b.vertices.ptr,
+        "8646 open image: the open step's image must be the mesh at the press, one shared capture");
+    m.vertices[0].y += 1.0f;
+    assert(t.openImage().vertices[0].y != m.vertices[0].y,
+        "8646 open image: the image must not alias the live mesh");
+    t.pressEnds();
+    assert(!t.openImage().filled, "8646 open image: an ended step has no image");
 }

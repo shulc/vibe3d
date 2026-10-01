@@ -610,12 +610,55 @@ unittest {
         "the cancel restores the press image and closes the step");
     assert(history.undoEntries().length == 0, "a cancelled press records nothing");
 
-    // [R4-3]: the next press opens ITS OWN step and is one row.
+    // [R4-3]: the next press opens ITS OWN step and is one row; a second
+    // button during that hold opens nothing new (one step per hold).
     assert(t.openPressStep(SDL_BUTTON_LEFT, PenMode.Move),
         "after a cancel the next press must open its own step");
+    assert(!t.openPressStep(SDL_BUTTON_MIDDLE, PenMode.Remove),
+        "a second button during a hold must not open a second step");
     t.closePressStep();
     assert(history.undoEntries().length == 1,
         "the press after a cancel is one row");
+
+    // Unbound (no session to share an image): the pen captures its own press
+    // image, so a cancel still restores it.
+    auto u = new TopologyPenTool();
+    Mesh mu;
+    u.meshSrc_ = () => &mu;
+    uint b = mu.addVertex(Vec3(1, 2, 3));
+    assert(u.openPressStep(SDL_BUTTON_LEFT, PenMode.Move), "an unbound press opens a step");
+    mu.vertices[b] = Vec3(5, 2, 3);
+    assert(u.hasUncommittedEdit(), "the unbound press's write is an uncommitted edit");
+    u.cancelUncommittedEdit();
+    assert(mu.vertices[b] == Vec3(1, 2, 3), "an unbound cancel restores its own press image");
+}
+
+// The chord mode's DEFAULT carrier (plan 8646): a press whose handler commits
+// nothing ends as one row through the default of the mode it resolved to. Every
+// mode's row is pinned here by the generic wire ids `bindPenSession` installs.
+unittest {
+    auto t       = new TopologyPenTool();
+    auto history = new CommandHistory();
+    Mesh m;
+    m.addVertex(Vec3(0, 0, 0));
+    t.meshSrc_ = () => &m;
+    auto session = bindPenSession(t, history);
+    immutable string[PenMode] want = [
+        PenMode.Move: "mesh.topoPen_move", PenMode.Duplicate: "mesh.topoPen_build",
+        PenMode.Remove: "mesh.topoPen_remove", PenMode.Split: "mesh.topoPen_split",
+        PenMode.AddLoop: "mesh.topoPen_addloop", PenMode.Point: "mesh.topoPen_place",
+        PenMode.Fill: "mesh.topoPen_fill", PenMode.Smooth: "mesh.topoPen_smooth"];
+    size_t n;
+    foreach (mode; [PenMode.Move, PenMode.Duplicate, PenMode.Remove, PenMode.Split,
+                    PenMode.AddLoop, PenMode.Point, PenMode.Fill, PenMode.Smooth]) {
+        penStep(t, SDL_BUTTON_LEFT, mode, () {});
+        const row = history.undoEntries()[$ - 1].cmd;
+        assert(history.undoEntries().length == ++n && row.name() == want[mode],
+            imported!"std.format".format("mode %s: a press that committed nothing must end "
+                ~ "through %s, got %s (%d rows)", mode, want[mode], row.name(),
+                history.undoEntries().length));
+    }
+    assert(n == 8, "every pen mode was pressed");
 }
 
 // ---------------------------------------------------------------------------
@@ -1387,6 +1430,10 @@ unittest {
     assert(m.faces.length == 2 && m.vertices.length == 5,
         "slide is position-only — topology must be untouched");
     assert(history.canUndo(), "a real slide must record one undo entry");
+    // The row is the slide's although the Ctrl+LMB chord's mode is Move: the
+    // carrier is the handler's that ran (plan 8646 [R1-3]).
+    assert(history.undoEntries()[$ - 1].cmd.name() == "mesh.topoPen_slide",
+        "a slide's row must carry the slide factory, not its chord mode's default");
     history.undo();
     assert((m.vertices[v0] - p0).length < 1e-6f, "undo must restore the pre-slide position");
 }
@@ -3726,6 +3773,8 @@ unittest {
     assert(m.vertices.length == vBefore && m.edges.length == eBefore && m.faces.length == fBefore,
         "Move Loop must never change topology (δ=0)");
     assert(history.canUndo(), "a real loop move must record one undo entry");
+    assert(history.undoEntries()[$ - 1].cmd.name() == "mesh.topoPen_moveloop",
+        "a loop move's row must carry the move-loop factory, not the Move default");
 
     history.undo();
     foreach (i, vi; verts)
@@ -11923,9 +11972,9 @@ unittest {
         }
     }
     // Floors first: an empty scan would satisfy both rules vacuously.
-    assert(blocks.length == 175 && histBlocks == 78 && calls == 78 && kernels == 64,
-        format("gestures census population changed: %d top-level blocks (175), %d read "
-             ~ "history (78), %d bracketed-list calls in them (78), %d of them kernels (64)",
+    assert(blocks.length == 176 && histBlocks == 79 && calls == 78 && kernels == 64,
+        format("gestures census population changed: %d top-level blocks (176), %d read "
+             ~ "history (79), %d bracketed-list calls in them (78), %d of them kernels (64)",
                blocks.length, histBlocks, calls, kernels));
     assert(bad.length == 0, "gestures census:\n" ~ bad.join("\n"));
 }
