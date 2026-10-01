@@ -1,9 +1,8 @@
 // Topology Pen — place_undo.
 //
-// One click -> 1 vertex; POST /api/undo -> back to 0 (the REV-1 undo
-// wiring: `MeshVertexNew.evaluate()` snapshots pre-apply, `history_.record`
-// is post-apply with no re-apply, so `revert()` == snapshot restore, one
-// non-coalescing entry per click); POST /api/redo -> 1 vertex again
+// One click -> 1 vertex; POST /api/undo -> back to 0 (the click is one press
+// step the session records, plan 8646: `MeshVertexNew` is its kernel, the row
+// a `MeshSessionEdit` image pair); POST /api/redo -> 1 vertex again
 // (bonus, per the plan's Definition of Done).
 //
 // Run via: ./run_test.d topopen_place_undo

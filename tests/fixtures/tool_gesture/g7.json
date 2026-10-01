@@ -208,10 +208,10 @@
   "cells": [
     {
       "name": "topoPen/place-on-background", "tool": "mesh.topoPen",
-      "recordSite": "source/tools/edit/topology_pen/tool.d TopologyPenTool.placeVertexAt", "mode": "Plain", "payload": "MeshVertexNew",
-      "liveEntryNames": ["mesh.addVertex"],
-      "entryNames": ["mesh.addVertex"],
-      "entryLabels": ["Add Vertex"],
+      "recordSite": "source/tools/edit/topology_pen/tool.d TopologyPenTool.placeVertexAt -> closePressStep -> ToolSession.stepEnds", "mode": "Plain", "payload": "MeshSessionEdit",
+      "liveEntryNames": ["mesh.topoPen_place"],
+      "entryNames": ["mesh.topoPen_place"],
+      "entryLabels": ["Topology Place"],
       "undoDelta": 1,
       "undoResidual": [],
       "redoResidual": [],
@@ -222,7 +222,7 @@
     },
     {
       "name": "topoPen/build-edge-from-vertex", "tool": "mesh.topoPen",
-      "recordSite": "source/tools/edit/topology_pen/tool.d TopologyPenTool.buildFromSource -> recordSnapshotUndo", "mode": "Plain", "payload": "MeshSessionEdit",
+      "recordSite": "source/tools/edit/topology_pen/tool.d TopologyPenTool.buildFromSource -> closePressStep -> ToolSession.stepEnds", "mode": "Plain", "payload": "MeshSessionEdit",
       "liveEntryNames": ["mesh.topoPen_build"],
       "entryNames": ["mesh.topoPen_build"],
       "entryLabels": ["Topology Build"],
@@ -236,7 +236,7 @@
     },
     {
       "name": "topoPen/dup-edge-shift-lmb", "tool": "mesh.topoPen",
-      "recordSite": "source/tools/edit/topology_pen/tool.d TopologyPenTool.dupEdgeUp -> commitDupEdges -> recordSnapshotUndo", "mode": "Plain", "payload": "MeshSessionEdit",
+      "recordSite": "source/tools/edit/topology_pen/tool.d TopologyPenTool.dupEdgeUp -> commitDupEdges -> closePressStep -> ToolSession.stepEnds", "mode": "Plain", "payload": "MeshSessionEdit",
       "liveEntryNames": ["mesh.topoPen_build"],
       "entryNames": ["mesh.topoPen_build"],
       "entryLabels": ["Topology Duplicate Edge"],
@@ -250,7 +250,7 @@
     },
     {
       "name": "topoPen/dup-loop-shift-rmb", "tool": "mesh.topoPen",
-      "recordSite": "source/tools/edit/topology_pen/tool.d TopologyPenTool.commitDupLoop -> commitDupEdges -> recordSnapshotUndo", "mode": "Plain", "payload": "MeshSessionEdit",
+      "recordSite": "source/tools/edit/topology_pen/tool.d TopologyPenTool.commitDupLoop -> commitDupEdges -> closePressStep -> ToolSession.stepEnds", "mode": "Plain", "payload": "MeshSessionEdit",
       "liveEntryNames": ["mesh.topoPen_duploop"],
       "entryNames": ["mesh.topoPen_duploop"],
       "entryLabels": ["Topology Duplicate Loop"],
@@ -264,7 +264,7 @@
     },
     {
       "name": "topoPen/move-vertex", "tool": "mesh.topoPen",
-      "recordSite": "source/tools/edit/topology_pen/tool.d TopologyPenTool.recordLiveMove -> recordSnapshotUndo", "mode": "Plain", "payload": "MeshSessionEdit",
+      "recordSite": "source/tools/edit/topology_pen/tool.d TopologyPenTool.finishMove -> closePressStep -> ToolSession.stepEnds", "mode": "Plain", "payload": "MeshSessionEdit",
       "liveEntryNames": ["mesh.topoPen_move"],
       "entryNames": ["mesh.topoPen_move"],
       "entryLabels": ["Topology Move"],
@@ -278,7 +278,7 @@
     },
     {
       "name": "topoPen/remove-face-ctrl-mmb", "tool": "mesh.topoPen",
-      "recordSite": "source/tools/edit/topology_pen/tool.d TopologyPenTool.removeFaceAt -> recordSnapshotUndo", "mode": "Plain", "payload": "MeshSessionEdit",
+      "recordSite": "source/tools/edit/topology_pen/tool.d TopologyPenTool.removeFaceAt -> closePressStep -> ToolSession.stepEnds", "mode": "Plain", "payload": "MeshSessionEdit",
       "liveEntryNames": ["mesh.topoPen_remove"],
       "entryNames": ["mesh.topoPen_remove"],
       "entryLabels": ["Topology Remove"],

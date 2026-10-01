@@ -1,9 +1,10 @@
 // tool_gesture_runopen_g7_test — task 1905, group G7 (the topology-pen family):
 // the BEHAVIOURAL witness the HTTP plane fixture cannot be.
 //
-// WHAT THIS FILE PINS, AND WHY IT IS THE ONLY BLOCK LEFT. Both G7 record sites
-// — the RAW one in `TopologyPenTool.placeVertexAt` and the shared tail
-// `TopologyPenTool.recordSnapshotUndo` — go through
+// WHAT THIS FILE PINS, AND WHY IT IS THE ONLY BLOCK LEFT. The G7 record site
+// — the step client's `TopologyPenTool.recordTopologyStep`, which the
+// session's `ToolSession.stepEnds` calls at every press's end (plan 8646) —
+// goes through
 // `Tool.recordGestureEdit(cmd, GestureRecordMode.Plain)`, which dispatches to
 // `CommandHistory.record`. `record` CONSOLIDATES an open run and leaves
 // `_runOpen` false; `recordInSession` OPENS one and leaves it true. The two are

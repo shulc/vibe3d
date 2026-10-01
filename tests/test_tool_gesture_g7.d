@@ -17,28 +17,29 @@
 // WHAT MAKES G7 ITS OWN FAMILY, MEASURED ON THIS TREE
 // ---------------------------------------------------------------------------
 //
-// TWO RECORD SITES, not one. `TopologyPenTool.placeVertexAt` records a
-// `MeshVertexNew` raw; every other gesture goes through the shared tail
-// `TopologyPenTool.recordSnapshotUndo`, reached from THIRTEEN call sites. As of
-// task 1905 phase D both go through `Tool.recordGestureEdit(cmd,
-// GestureRecordMode.Plain)`, and the whole package's own history call surface is
-// exactly ZERO (measured with comments stripped; the pin lives in
-// `tests/unit/tool_commit_seam_census_g7_test.d`, members 2 and 3).
+// ONE RECORD SITE (plan 8646). Every pen press is a topology step the session
+// records: the gesture that ran names its carrier, and `ToolSession.stepEnds`
+// writes ONE `MeshSessionEdit` through the step client's
+// `TopologyPenTool.recordTopologyStep` -> `Tool.recordGestureEdit(cmd,
+// GestureRecordMode.Plain)`. The placement keeps `MeshVertexNew` only as its
+// kernel. The package's own history call surface is exactly ZERO (measured with
+// comments stripped; the pin lives in
+// `tests/unit/tool_commit_seam_census_g7_test.d`, members 2, 3 and 8).
 //
-// THIRTEEN FACTORIES BOUND BY NAME. `TopologyPenTool.setPenFactories` takes
+// FIFTEEN CARRIERS BOUND BY NAME. `TopologyPenTool.setPenFactories` takes
 // one `TopoPenFactories` value, assembled by field name beside the session-edit
 // descriptors and passed whole by `source/registration.d` (task 6352). This
-// file checks four fields behaviourally (`build`, `move`, `remove`, `dupLoop`);
-// `tests/unit/tool_commit_seam_census_g7_test.d` member 7 closes the other nine
-// with a composed field -> wire-name/scope roster.
+// file checks five fields behaviourally (`place`, `build`, `move`, `remove`,
+// `dupLoop`); `tests/unit/tool_commit_seam_census_g7_test.d` member 7 closes the
+// rest with a composed field -> wire-name/scope roster.
 //
 // G7 DOES NOT SHARE THE SINGLE-WIRE-NAME PROPERTY — BUT IT HAS A HARDER ONE.
 // The G0-G1 lane found the create family recording every entry under one wire
 // name (`mesh.bevel_edit`), which is what forced plan §5.5's correction away
 // from `entryNames`; G0-G4 found nine of eleven doing the same; G0-G3 found two
-// members under two distinct names. G7 is neither. It publishes THIRTEEN
-// distinct wire names, one per factory — and then binds TWO DIFFERENT GESTURES
-// to ONE of them:
+// members under two distinct names. G7 is neither. It publishes FIFTEEN
+// distinct wire names, one per gesture factory — and then binds TWO DIFFERENT
+// GESTURES to ONE of them:
 //
 //     gesture                       factory              wire name              label
 //     ----------------------------- -------------------- ---------------------- --------------------------
@@ -46,7 +47,7 @@
 //     Shift+LMB from an EDGE        factories_.build     mesh.topoPen_build     "Topology Duplicate Edge"
 //     Shift+RMB from an EDGE        factories_.dupLoop   mesh.topoPen_duploop   "Topology Duplicate Loop"
 //
-// So for eleven of the thirteen factories a mutation CAN key on `entryNames`,
+// So for thirteen of the fifteen factories a mutation CAN key on `entryNames`,
 // and for the build/duplicate-edge pair it CANNOT. That is why this file
 // carries `entryLabels` beside `entryNames`: `/api/history` publishes `label`
 // on every entry, and the label is the ONLY wire observable separating gesture
@@ -895,11 +896,10 @@ unittest {
 //    the STRUCTURE rather than the population — see this file's header and the
 //    lane's card for the nine left out and why.
 //
-//      (a) place      — the RAW record site (`placeVertexAt` -> `history_.record`
-//                       on a `MeshVertexNew`). The only gesture in the family
-//                       whose wire name is not `mesh.topoPen_*`.
-//      (b) build      — the SHARED record site (`recordSnapshotUndo`), named
-//                       factory `TopoPenFactories.build`.
+//      (a) place      — `TopoPenFactories.place` (`mesh.topoPen_place`): its
+//                       kernel is a `MeshVertexNew`, its row the press step's
+//                       `MeshSessionEdit` (plan 8646).
+//      (b) build      — named factory `TopoPenFactories.build`.
 //      (c) dupEdge    — the shared KERNEL `commitDupEdges`, arm A, ALSO factory
 //                       `build`: same wire name as (b), different label.
 //      (d) dupLoop    — the shared KERNEL `commitDupEdges`, arm B, named factory
@@ -912,11 +912,12 @@ unittest {
 unittest {
     Cell[] cells;
 
-    // --- (a) The RAW record site. `mode point` is required: the default
-    //     `move` places nothing on empty space (the dropdown row, task 0483).
+    // --- (a) The placement. `mode point` is required: the default `move`
+    //     places nothing on empty space (the dropdown row, task 0483).
     cells ~= runCell("topoPen/place-on-background", "mesh.topoPen",
-        "source/tools/edit/topology_pen/tool.d TopologyPenTool.placeVertexAt",
-        "Plain", "MeshVertexNew",
+        "source/tools/edit/topology_pen/tool.d "
+      ~ "TopologyPenTool.placeVertexAt -> closePressStep -> ToolSession.stepEnds",
+        "Plain", "MeshSessionEdit",
         { standEmptyPrimary(); penOn("point"); cmdLine("history.clear"); },
         {
             assert(vertexCount() == 0,
@@ -933,12 +934,12 @@ unittest {
         },
         { penOff(); });
 
-    // --- (b) The SHARED record site, through the Build gesture. The stand
+    // --- (b) The Build gesture. The stand
     //     places the hub with a plain click and CLEARS HISTORY after it, so the
     //     measured gesture is the Shift+LMB drag alone.
     cells ~= runCell("topoPen/build-edge-from-vertex", "mesh.topoPen",
         "source/tools/edit/topology_pen/tool.d "
-      ~ "TopologyPenTool.buildFromSource -> recordSnapshotUndo",
+      ~ "TopologyPenTool.buildFromSource -> closePressStep -> ToolSession.stepEnds",
         "Plain", "MeshSessionEdit",
         {
             standEmptyPrimary(); penOn("point");
@@ -971,7 +972,7 @@ unittest {
     //     is not. That pair is the reason this file carries `entryLabels`.
     cells ~= runCell("topoPen/dup-edge-shift-lmb", "mesh.topoPen",
         "source/tools/edit/topology_pen/tool.d "
-      ~ "TopologyPenTool.dupEdgeUp -> commitDupEdges -> recordSnapshotUndo",
+      ~ "TopologyPenTool.dupEdgeUp -> commitDupEdges -> closePressStep -> ToolSession.stepEnds",
         "Plain", "MeshSessionEdit",
         { standQuadPrimary(); penOn("move"); cmdLine("history.clear"); },
         {
@@ -991,7 +992,7 @@ unittest {
     //     can only be told apart by the wire name and the label.
     cells ~= runCell("topoPen/dup-loop-shift-rmb", "mesh.topoPen",
         "source/tools/edit/topology_pen/tool.d "
-      ~ "TopologyPenTool.commitDupLoop -> commitDupEdges -> recordSnapshotUndo",
+      ~ "TopologyPenTool.commitDupLoop -> commitDupEdges -> closePressStep -> ToolSession.stepEnds",
         "Plain", "MeshSessionEdit",
         { standQuadPrimary(); penOn("move"); cmdLine("history.clear"); },
         {
@@ -1015,7 +1016,7 @@ unittest {
     //     `test_topopen_move_stationary_noop.d` no-op, not this gesture.
     cells ~= runCell("topoPen/move-vertex", "mesh.topoPen",
         "source/tools/edit/topology_pen/tool.d "
-      ~ "TopologyPenTool.recordLiveMove -> recordSnapshotUndo",
+      ~ "TopologyPenTool.finishMove -> closePressStep -> ToolSession.stepEnds",
         "Plain", "MeshSessionEdit",
         { standQuadPrimary(); penOn("move"); cmdLine("history.clear"); },
         {
@@ -1047,7 +1048,7 @@ unittest {
     //     press, not the release.
     cells ~= runCell("topoPen/remove-face-ctrl-mmb", "mesh.topoPen",
         "source/tools/edit/topology_pen/tool.d "
-      ~ "TopologyPenTool.removeFaceAt -> recordSnapshotUndo",
+      ~ "TopologyPenTool.removeFaceAt -> closePressStep -> ToolSession.stepEnds",
         "Plain", "MeshSessionEdit",
         { standQuadPrimary(); penOn("move"); cmdLine("history.clear"); },
         {
