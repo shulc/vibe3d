@@ -7207,6 +7207,21 @@ unittest {
         "the S7a operation context must be appended after the Backface flag, in order");
     foreach (ref p; ps[bf + 1 .. $])
         assert(p.transient_, "the S7a operation context must be transient: " ~ p.name);
+    // The descriptor is session state no write door reaches (review of S7a):
+    // all three are `podArray_`, which `injectParamsInto` refuses; and the
+    // kind's 0-or-1-element storage round-trips through the image raw.
+    foreach (ref p; ps[bf + 4 .. $])
+        assert(p.kind == Param.Kind.PodArray && p.hidden_,
+            "the S7a step descriptor must be a hidden podArray_ (not injectable): " ~ p.name);
+    {
+        import tools.edit.topology_pen.defs : PenStepKind;
+        t.stepKind_ = [PenStepKind.MoveLoop];
+        const raw = ps[bf + 4].snapshotRaw();
+        t.stepKind_ = null;
+        assert(t.stepKind() == PenStepKind.None);
+        ps[bf + 4].restoreRaw(raw);
+        assert(t.stepKind() == PenStepKind.MoveLoop, "the S7a stepKind image did not round-trip");
+    }
     assert(ps[bf - 2].name == "range" && ps[bf - 1].name == "quadOnly",
         "the two Fill attributes must keep their positions, in that order");
     assert(ps[bf - 2].hints.hasMinF && ps[bf - 2].hints.minF == 0.0f && !ps[bf - 2].hints.hasMaxF,

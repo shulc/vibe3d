@@ -1666,7 +1666,7 @@
     {
       "aggregate": "TopologyPenTool",
       "module": "tools.edit.topology_pen.tool",
-      "semantic_sha256": "e78848ca41dc4c6abef824348e19afe0bf9cc1f3b868486d87ebe27242dc6cac",
+      "semantic_sha256": "23d06c28e6d19d1c53b07a374cd5248c53e9cca35902e2f56366a463c856d6e9",
       "signature": "Param[]()",
       "symbol": "params"
     },

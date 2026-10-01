@@ -413,11 +413,18 @@ private:
     // six are the policy's haul attributes: a press resets them before its
     // open image (`pressOpensOperation`) and they are restored only into the
     // instance that recorded a row (M-H). Read by no kernel yet: the
-    // re-application by step kind is slice S7b's.
+    // re-application by step kind is slice S7b's. The descriptor is session
+    // state, never a wire route: three `podArray_` (hidden, transient, refused
+    // by every write door); the kind is a 0-or-1-element array, `stepKind()`.
     package float        offsetX_ = 0.0f, offsetY_ = 0.0f, offsetZ_ = 0.0f;
-    package int          stepKind_;
+    package PenStepKind[] stepKind_;
     package uint[]       stepVerts_;
     package Vec3[]       stepOrig_;
+
+    /// The recorded press's kind (`None` when it wrote no descriptor).
+    package PenStepKind stepKind() const {
+        return stepKind_.length ? stepKind_[0] : PenStepKind.None;
+    }
 
     // --- P6 Add Loop session state (tool.d,
     // doc/topopen_p6_addloop_plan.md). Armed on a Shift+MMB press that
@@ -1402,10 +1409,8 @@ public:
             Param.float_("offsetX", "Offset X", &offsetX_, 0.0f).transient(),
             Param.float_("offsetY", "Offset Y", &offsetY_, 0.0f).transient(),
             Param.float_("offsetZ", "Offset Z", &offsetZ_, 0.0f).transient(),
-            Param.int_("stepKind", "Step Kind", &stepKind_, PenStepKind.None)
-                 .hidden().transient(),
-            Param.intArray_("stepVerts", "Step Vertices", &stepVerts_)
-                 .hidden().transient(),
+            Param.podArray_("stepKind", "Step Kind", &stepKind_),
+            Param.podArray_("stepVerts", "Step Vertices", &stepVerts_),
             Param.podArray_("stepOrig", "Step Origins", &stepOrig_),
         ];
     }
@@ -4133,9 +4138,9 @@ public:
     private void noteLoopOffset(int dx, int dy, const ref Viewport vp) {
         auto m = mesh;
         if (m is null || moveLoopSeed_ < 0 || moveLoopSeed_ >= cast(int)m.edges.length) return;
-        const(uint)[] ends = [m.edges[moveLoopSeed_][0], m.edges[moveLoopSeed_][1]];
+        const uint[2] ends = [m.edges[moveLoopSeed_][0], m.edges[moveLoopSeed_][1]];
         if (releaseIsClick(dx, dy)) { writeOffset(Vec3(0, 0, 0)); return; }
-        auto to = perVertexTargets(ends, dx, dy, vp);
+        auto to = perVertexTargets(ends[], dx, dy, vp);
         if (to.length != 2) return;
         writeOffset((to[0] + to[1] - m.vertices[ends[0]] - m.vertices[ends[1]]) * 0.5f);
     }
@@ -4151,7 +4156,7 @@ public:
     // positions — carried, never inferred from a mesh diff (R1-7).
     private void noteStepDescriptor(PenStepKind kind, const(uint)[] verts,
                                     const(Vec3)[] orig) {
-        stepKind_  = kind;
+        stepKind_  = kind == PenStepKind.None ? null : [kind];
         stepVerts_ = verts.dup;
         stepOrig_  = orig.dup;
     }

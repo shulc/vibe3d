@@ -129,8 +129,6 @@ enum HistoryFlags : uint {
     // with the entry across undo and redo.
     JoinsBelow = 1 << 14, // Pops and redoes as ONE step with the run below it,
                           // down to the first unmarked row (the block's base).
-    StepClosed = 1 << 15, // Its open step was closed by a press or a session
-                          // close: an ordinary row, redoable in any instance.
     PreNavOpen = 1 << 16, // Written while the open block was a press or the
                           // activation; unclosed, it redoes only in the
                           // instance that wrote it (L2p, L53).
@@ -1979,13 +1977,12 @@ final class CommandHistory {
         return true;
     }
 
-    /// Set fold bits (`JoinsBelow`, `StepClosed`, `PreNavOpen` — nothing
+    /// Set fold bits (`JoinsBelow`, `PreNavOpen` — nothing
     /// else) on the undo-stack entry holding `expect`, by IDENTITY (wave plan
     /// 8640 S7a; the tool session's fold, the only caller). Returns whether it
     /// found it.
     bool markEntryFold(const Command expect, uint bits) nothrow @nogc {
-        enum uint foldBits = HistoryFlags.JoinsBelow | HistoryFlags.StepClosed |
-                             HistoryFlags.PreNavOpen;
+        enum uint foldBits = HistoryFlags.JoinsBelow | HistoryFlags.PreNavOpen;
         assert((bits & ~foldBits) == 0, "markEntryFold: not a fold bit");
         if (expect is null) return false;
         foreach_reverse (ref e; undoStack)

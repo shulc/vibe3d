@@ -1733,10 +1733,10 @@ private void foldWrite(EditSession s, FoldTool t, float value) {
 
 private uint flagsAt(CommandHistory h, size_t i) { return h.undoEntries()[i].flags; }
 
-unittest { // S7a: an IntArray and a PodArray!Vec3 image attribute round-trip raw
+unittest { // S7a: a PodArray of uint and of Vec3 (the descriptor's kinds) round-trip raw
     uint[] verts = [5, 9, 10];
     Vec3[] orig = [Vec3(1, 2, 3), Vec3(-4, 0.5f, 6)];
-    auto pv = Param.intArray_("stepVerts", "V", &verts);
+    auto pv = Param.podArray_("stepVerts", "V", &verts);
     auto po = Param.podArray_("stepOrig", "O", &orig);
     const rv = pv.snapshotRaw(), ro = po.snapshotRaw();
     verts = [1];
@@ -1747,7 +1747,7 @@ unittest { // S7a: an IntArray and a PodArray!Vec3 image attribute round-trip ra
            format("S7a raw round trip: verts %s orig %s", verts, orig));
     // The empty image restores empty (a press's reset descriptor).
     uint[] none;
-    auto pn = Param.intArray_("stepVerts", "V", &none);
+    auto pn = Param.podArray_("stepVerts", "V", &none);
     const rn = pn.snapshotRaw();
     none = [7];
     pn.restoreRaw(rn);

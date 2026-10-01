@@ -189,6 +189,15 @@ mixin template PenStateJsonOps() {
         root["slideDeclineReason"] = JSONValue(slideDeclineTag(slideDecline_));
         root["slideDeclineSeed"]   = JSONValue(slideDeclineSeed_);
 
+        // The step descriptor (wave plan 8640 S7a): session state no write
+        // door reaches, so its CONTENT is read here, not by `tool.attr ?`
+        // (which reports a `podArray_` by its length).
+        root["stepKind"] = JSONValue(cast(int)stepKind());
+        JSONValue[] sv;
+        foreach (v; stepVerts_) sv ~= JSONValue(v);
+        root["stepVerts"] = JSONValue(sv);
+        root["stepOrigCount"] = JSONValue(stepOrig_.length);
+
         // P8 (doc/topopen_p8_smooth_plan.md Phase 4): the armed Smooth
         // gesture's state, for Tier-C tests to assert click-vs-drag pass
         // counts without driving a full release. `smoothPassCount` goes

@@ -9,6 +9,7 @@
 //                                      the pressed element's anchor travel
 //   descriptor-kinds              S7a  the press end writes its kind; an undo
 //                                      shows the open image's (none)
+//   descriptor-not-writable       S7a  no write door reaches the descriptor
 //   offsets-reset-per-press       H1-move z1  a press resets the context
 //   offset-before-press           H3f, A7  pre-press writes are rows of their own
 //   offset-after-undo             N1   a write after an undone press is a row
@@ -28,6 +29,7 @@
 //   switch-closed-redo            C4-switch-closed (L53 Closed)
 //   rearm-redo-opens-nothing      ours: a re-arming redo opens no block
 //   fold-on-drop                  gap t: a drop folds by the switch rule
+//   fold-not-on-command           §9.19.3: a command close is no fold trigger
 //   discard-resets-offsets        a discarded gesture restores its context
 //
 // `VIBE3D_CELL=<id>` runs one cell alone; the last block pins the population.
@@ -38,6 +40,7 @@ import topology_pen_session_helpers;
 import http_client : getJson;
 import std.algorithm : canFind;
 import std.array : join;
+import std.conv : to;
 import std.format : format;
 import std.json;
 import std.math : abs, sqrt;
@@ -103,6 +106,11 @@ double len3(double[3] o) { return sqrt(o[0] * o[0] + o[1] * o[1] + o[2] * o[2]);
 string fmt3(double[3] o) { return format("(%.7g, %.7g, %.7g)", o[0], o[1], o[2]); }
 
 long redoLen() { return cast(long)getJson("/api/history")["redo"].array.length; }
+
+/// The step descriptor's content (`/api/tool/state`): the attributes are
+/// session state no write door reaches, so `tool.attr ?` reports their length.
+long stepKindNow() { return getJson("/api/tool/state")["stepKind"].integer; }
+string stepVertsNow() { return getJson("/api/tool/state")["stepVerts"].toString; }
 
 /// armed / mesh / undo length at one step.
 void at(string id, string step, const PenMesh want, bool armed, long hist) {
@@ -236,25 +244,25 @@ unittest {
     if (!cell("descriptor-kinds")) return;
     const r = rig();
     penArmUi(r);
-    assert(attrNum("stepKind") == 0, "descriptor-kinds a0: kind " ~ attrStr("stepKind"));
+    assert(stepKindNow() == 0, "descriptor-kinds a0: kind " ~ stepKindNow().to!string);
     moveV5("descriptor-kinds g1");
-    assert(attrNum("stepKind") == 1 && attrStr("stepVerts") == "[5]",
-           format("descriptor-kinds g1: kind %s verts %s", attrStr("stepKind"), attrStr("stepVerts")));
+    assert(stepKindNow() == 1 && stepVertsNow() == "[5]",
+           format("descriptor-kinds g1: kind %s verts %s", stepKindNow().to!string, stepVertsNow()));
     penGesture(penEdgePx(9, 10, "descriptor-kinds e9-10"), 10 / kSp, 14 / kSp, 1, 0,
                "descriptor-kinds g2");
-    assert(attrNum("stepKind") == 2 && ["[9,10]", "[10,9]"].canFind(attrStr("stepVerts")),
-           format("descriptor-kinds g2: kind %s verts %s", attrStr("stepKind"), attrStr("stepVerts")));
+    assert(stepKindNow() == 2 && ["[9,10]", "[10,9]"].canFind(stepVertsNow()),
+           format("descriptor-kinds g2: kind %s verts %s", stepKindNow().to!string, stepVertsNow()));
     z("descriptor-kinds z1");
-    assert(attrNum("stepKind") == 0 && attrStr("stepVerts") == "[]",
-           format("descriptor-kinds z1: kind %s verts %s (the open image)", attrStr("stepKind"),
-                  attrStr("stepVerts")));
+    assert(stepKindNow() == 0 && stepVertsNow() == "[]",
+           format("descriptor-kinds z1: kind %s verts %s (the open image)", stepKindNow().to!string,
+                  stepVertsNow()));
     sz("descriptor-kinds r1");
-    assert(attrNum("stepKind") == 2,
-           format("descriptor-kinds r1: kind %s (the after image)", attrStr("stepKind")));
+    assert(stepKindNow() == 2,
+           format("descriptor-kinds r1: kind %s (the after image)", stepKindNow().to!string));
     penGesture(penEdgePx(5, 6, "descriptor-kinds loop e56"), 0, -15 / kSp, 3, 0,
                "descriptor-kinds g3");
-    assert(attrNum("stepKind") == 4,
-           format("descriptor-kinds g3: kind %s (Move Loop)", attrStr("stepKind")));
+    assert(stepKindNow() == 4,
+           format("descriptor-kinds g3: kind %s (Move Loop)", stepKindNow().to!string));
     // A vertex Move released on another vertex WELDS into it: the grabbed vertex
     // is gone, so the moved set is empty (its kind stays a vertex move).
     const before = penMesh();
@@ -264,9 +272,51 @@ unittest {
     assert(penMesh().nv == before.nv - 1,
            format("descriptor-kinds weld rig: v0 dropped on v1 did not weld: %s -> %s",
                   before.toString, penMesh().toString));
-    assert(attrNum("stepKind") == 1 && attrStr("stepVerts") == "[]",
-           format("descriptor-kinds weld: kind %s verts %s", attrStr("stepKind"), attrStr("stepVerts")));
+    assert(stepKindNow() == 1 && stepVertsNow() == "[]",
+           format("descriptor-kinds weld: kind %s verts %s", stepKindNow().to!string, stepVertsNow()));
     writeln("PASS descriptor-kinds");
+}
+
+// descriptor-not-writable — the descriptor is session state, not a wire
+// route: a write of `stepKind` / `stepVerts` / `stepOrig` is refused at the
+// script door AND the interactive (panel) door, leaves the descriptor as the
+// press wrote it and writes no row. The Offset beside it stays writable (the
+// control: the same door accepts it and writes its row).
+unittest {
+    if (!cell("descriptor-not-writable")) return;
+    const r = rig();
+    penArmUi(r);
+    moveV5("descriptor-not-writable g1");
+    const g1 = penMesh();
+    assert(stepKindNow() == 1 && stepVertsNow() == "[5]",
+           format("descriptor-not-writable rig: kind %s verts %s", stepKindNow(), stepVertsNow()));
+    const hist = penHistoryLen(), redo = redoLen();
+    size_t refused;
+    void refuse(string door, string attr, string value, JSONValue resp) {
+        assert(resp["status"].str != "ok",
+               format("descriptor-not-writable: the %s door accepted %s %s: %s", door, attr, value,
+                      resp.toString));
+        assert(stepKindNow() == 1 && stepVertsNow() == "[5]" && penHistoryLen() == hist
+               && redoLen() == redo && penMesh() == g1,
+               format("descriptor-not-writable: after the %s door's %s %s: kind %s verts %s, "
+                      ~ "history %s (expected %s) %s", door, attr, value, stepKindNow(),
+                      stepVertsNow(), penHistoryLen(), hist, penHistoryLabels()));
+        ++refused;
+    }
+    foreach (av; [["stepKind", "42"], ["stepVerts", "7"], ["stepOrig", "3"]]) {
+        const line = "tool.attr " ~ kPenToolId ~ " " ~ av[0] ~ " " ~ av[1];
+        refuse("script", av[0], av[1], penPost("/api/command", line));
+        refuse("interactive", av[0], av[1], penPost("/api/script?interactive=true", line));
+    }
+    // The array spelling, which the argstring cannot carry, by the JSON body.
+    refuse("script (JSON)", "stepVerts", "[1, 2]", penPost("/api/command",
+        `{"id":"tool.attr","params":{"tool":"` ~ kPenToolId ~ `","attr":"stepVerts","value":[1,2]}}`));
+    assert(refused == 7, format("descriptor-not-writable: %s refusals checked, expected 7", refused));
+    w("offsetX", "0.1");
+    assert(is01(attrNum("offsetX")) && penHistoryLen() == hist + 1,
+           format("descriptor-not-writable control: offsetX %s, history %s (expected %s)",
+                  attrNum("offsetX"), penHistoryLen(), hist + 1));
+    writeln("PASS descriptor-not-writable");
 }
 
 // ===========================================================================
@@ -679,9 +729,9 @@ unittest {
     sz("descriptor-after-redo-rearm r1");
     sz("descriptor-after-redo-rearm r2");
     at("descriptor-after-redo-rearm", "r2", g1, true, r.hp + 2);
-    assert(attrNum("stepKind") == 0 && attrStr("stepVerts") == "[]",
+    assert(stepKindNow() == 0 && stepVertsNow() == "[]",
            format("descriptor-after-redo-rearm r2: kind %s verts %s (stripped in a foreign instance)",
-                  attrStr("stepKind"), attrStr("stepVerts")));
+                  stepKindNow().to!string, stepVertsNow()));
     w("offsetY", "0.05");
     at("descriptor-after-redo-rearm", "w2", g1, true, r.hp + 3);
     z("descriptor-after-redo-rearm zz1");
@@ -1096,6 +1146,32 @@ unittest {
     writeln("PASS fold-on-drop");
 }
 
+// fold-not-on-command — the fold triggers are a press, a switch, a re-typed
+// arm and a drop (§9.19.3 (i)/(ii), §9.22.1); nothing else closes the open
+// step. A recording command through the UI door with the pen armed reaches the
+// session's close (`CloseReason.command`) and leaves the pen armed: the row
+// written before it stays its own step, under the command's own row.
+unittest {
+    if (!cell("fold-not-on-command")) return;
+    const r = rig();
+    penArmUi(r);
+    moveV5("fold-not-on-command g1");
+    const g1 = penMesh();
+    const og1 = offs();
+    assert(len3(og1) > 1e-3, "fold-not-on-command rig: g1 reported no offset " ~ fmt3(og1));
+    w("offsetX", "0.1");
+    penLineUi("select.element vertex set 0");
+    at("fold-not-on-command", "command (the pen stays, the command is a row)", g1, true, r.hp + 4);
+    z("fold-not-on-command z1");
+    at("fold-not-on-command", "z1 (the command's row)", g1, true, r.hp + 3);
+    z("fold-not-on-command z2");
+    at("fold-not-on-command", "z2 (the parameter row alone)", g1, true, r.hp + 2);
+    offsAre("fold-not-on-command", "z2 (the row's before image: g1's)", og1);
+    z("fold-not-on-command z3");
+    at("fold-not-on-command", "z3 (g1)", r.a0, true, r.hp + 1);
+    writeln("PASS fold-not-on-command");
+}
+
 // discard-resets-offsets — a release while another pen button is held
 // discards the gesture (§9.27 [A15-1]): its mesh AND its operation context go
 // back to the press's (offsets 0, no descriptor).
@@ -1119,7 +1195,7 @@ unittest {
     penPlay(penButton(20, false, 1, v5[0] + 40, v5[1] - 16, 0), "discard-resets-offsets LMB release");
     assert(penMesh() == r.a0, "discard-resets-offsets: the discard did not restore the press image");
     offsAre("discard-resets-offsets", "discarded", [0, 0, 0]);
-    assert(attrNum("stepKind") == 0, "discard-resets-offsets: kind " ~ attrStr("stepKind"));
+    assert(stepKindNow() == 0, "discard-resets-offsets: kind " ~ stepKindNow().to!string);
     penPlay(penButton(20, false, 2, e[0], e[1], 0), "discard-resets-offsets MMB release");
     writeln("PASS discard-resets-offsets");
 }
@@ -1131,7 +1207,7 @@ unittest {
     writeln("cells=", cellsRun);
     const only = environment.get("VIBE3D_CELL", "");
     if (only.length == 0)
-        assert(cellsRun == 39, format("topology pen S7a laws: %d cells ran, expected 39", cellsRun));
+        assert(cellsRun == 41, format("topology pen S7a laws: %d cells ran, expected 41", cellsRun));
     else
         assert(cellsRun == 1, format("topology pen S7a laws: VIBE3D_CELL=%s ran %d cells, expected 1 "
                                      ~ "(an unknown name runs none)", only, cellsRun));
