@@ -56,7 +56,7 @@ tool tools.edit.poly_extrude.PolyExtrudeTool has=tools.edit.poly_extrude.PolyExt
 tool tools.edit.poly_inset_tool.PolyInsetTool has=tools.edit.poly_inset_tool.PolyInsetTool cancel=tools.edit.poly_inset_tool.PolyInsetTool resync=tools.edit.poly_inset_tool.PolyInsetTool commit=tools.edit.poly_inset_tool.PolyInsetTool snap=6 live=yes | current preview basis in tool; completed inset images in CommandHistory
 tool tools.edit.reduce.ReductionTool has=tools.edit.reduce.ReductionTool cancel=tools.edit.reduce.ReductionTool resync=tools.edit.reduce.ReductionTool commit=tools.edit.reduce.ReductionTool snap=4 live=yes | built reduction preview over a MeshSnapshot baseline until drop/apply
 tool tools.edit.tack.TackTool has=tools.edit.tack.TackTool cancel=tools.edit.tack.TackTool resync=tools.edit.tack.TackTool commit=tool.Tool snap=5 live=no | overrides hasUncommittedEdit to false: each tack commits at release; resyncSession only clears the arm
-tool tools.edit.topology_pen.tool.TopologyPenTool has=tools.edit.topology_pen.tool.TopologyPenTool cancel=tools.edit.topology_pen.tool.TopologyPenTool resync=tools.edit.topology_pen.tool.TopologyPenTool commit=tool.Tool snap=18 live=yes | Move gesture mutates the mesh mid-drag (moveBefore_ baseline, first live write) and records only at release; the hooks report the held drag and cancel restores moveBefore_ (task 8660)
+tool tools.edit.topology_pen.tool.TopologyPenTool has=tools.edit.topology_pen.tool.TopologyPenTool cancel=tools.edit.topology_pen.tool.TopologyPenTool resync=tools.edit.topology_pen.tool.TopologyPenTool commit=tool.Tool snap=5 live=yes | every press is a topology step the session records at release (plan 8646); Move writes the mesh mid-drag, the hooks report an open press whose mesh left the press image (basis_) and cancel restores it
 tool tools.edit.vert_merge_tool.VertexMergeTool has=tools.edit.vert_merge_tool.VertexMergeTool cancel=tools.edit.vert_merge_tool.VertexMergeTool resync=tools.edit.vert_merge_tool.VertexMergeTool commit=tools.edit.vert_merge_tool.VertexMergeTool snap=6 live=yes | current merge basis in tool; completed weld images in CommandHistory
 tool tools.edit.vertex_bevel_tool.VertexBevelTool has=tools.edit.vertex_bevel_tool.VertexBevelTool cancel=tools.edit.vertex_bevel_tool.VertexBevelTool resync=tools.edit.vertex_bevel_tool.VertexBevelTool commit=tools.edit.vertex_bevel_tool.VertexBevelTool snap=6 live=yes | current preview basis in tool; completed bevel images in CommandHistory
 tool tools.edit.vertex_extrude_tool.VertexExtrudeTool has=tools.edit.vertex_extrude_tool.VertexExtrudeTool cancel=tools.edit.vertex_extrude_tool.VertexExtrudeTool resync=tools.edit.vertex_extrude_tool.VertexExtrudeTool commit=tools.edit.vertex_extrude_tool.VertexExtrudeTool snap=6 live=yes | current preview basis in tool; completed extrude images in CommandHistory
@@ -111,8 +111,7 @@ write source/tools/edit/poly_extrude.d recordGestureEdit 1
 write source/tools/edit/poly_inset_tool.d recordGestureEdit 1
 write source/tools/edit/reduce.d recordGestureEdit 1
 write source/tools/edit/tack.d recordGestureEdit 1
-write source/tools/edit/topology_pen/tool.d recordGestureEdit 2
-write source/tools/edit/topology_pen/tool.d recordSnapshotUndo 14
+write source/tools/edit/topology_pen/tool.d recordGestureEdit 1
 write source/tools/edit/vert_merge_tool.d recordGestureEdit 1
 write source/tools/edit/vertex_bevel_tool.d recordGestureEdit 1
 write source/tools/edit/vertex_extrude_tool.d recordGestureEdit 1
