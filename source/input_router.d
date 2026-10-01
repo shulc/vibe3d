@@ -1,6 +1,6 @@
 module input_router;
 
-import tool_activation_ownership : ToolTransition;
+import tool_activation_ownership : ToolTransition, DropContext;
 
 // Task 0781 (campaign 0407 §V1 4.3, chain from 0678 §2C A10 / 0722): the
 // input-router cluster. 0722 measured that the seven SDL-event handlers
@@ -717,7 +717,11 @@ struct InputRouter {
                                    app.pipeHoldsTask(), hasCurrent,
                                    cur == SelType.Item, itemsSelected)) {
             case EscapeRung.dropTool:
-                app.dropActiveTool(ToolTransition.explicitDrop);
+                // S6: the Esc rung also clears the tool's task — an empty row
+                // above a drop row (L39), written only where a drop row is.
+                DropContext ctx;
+                ctx.clearsTask = true;
+                app.dropActiveToolWith(ToolTransition.explicitDrop, ctx);
                 break;
             case EscapeRung.clearPipe:
                 app.clearPipeTasks();

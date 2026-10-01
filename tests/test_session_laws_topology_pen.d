@@ -18,7 +18,8 @@
 //   no-op-chord-clicks   L5  nine motionless chord clicks are nine steps
 //   redo-rearm           L2  redo re-arms the popped pen, then each gesture
 //   switch-away-redo     L9  (r1..r3) redo walks forward through the switch
-//   drop-mid-drag            a drop during a held drag records that press
+//   drop-mid-drag            a drop during a held drag records that press,
+//                            below the drop row (S6)
 //   param-write-*        L14 an interactive attribute write is its own step
 //   split-*-row          L40 a refused split is still one step
 //   remove-edge-noop-row L5  a Remove press latched on nothing removable
@@ -36,6 +37,14 @@
 //   chord-dup-interior-edge  C-0 Shift+LMB on an interior edge moves it
 //   chord-dup-empty      Shift+LMB on empty space changes nothing
 //   chord-build-angle-orbit  L52 the build neighbour is chosen in the surface plane
+//   drop-esc             L8/L32/L39 Esc: a drop row + the empty task row (S6)
+//   drop-space           L8/L32 Space: one drop row; its undo keeps g1, empties redo
+//   drop-q               L8/L32 Q (tool.release): one drop row
+//   drop-command         L8/L32 `tool.set mesh.topoPen off` (UI door): one drop row
+//   drop-sel             L8/L32 key 3: the drop row's undo restores the type
+//   drop-bare            L32 arm, Esc: key door and raw door both refuse the redo
+//   rearm-typed              a re-typed arm while armed is a same-tool switch row
+//   non-user-drop            a layer-change drop writes no drop row
 //
 // Slice S5 (task 8730) added the cells from `no-op-presses` on: since then
 // every pen press is one topology step the session records (wave plan 8646).
@@ -43,7 +52,7 @@
 // chords' outcomes (their port slices add `chord-*` cells).
 //
 // `VIBE3D_CELL=<id>` runs one cell alone (druntime stops a module at its first
-// failed assert); the last block pins the population: 43 with no filter, 1 with
+// failed assert); the last block pins the population: 51 with no filter, 1 with
 // one (an unknown name must not pass by running nothing).
 //
 // Run via: ./run_test.d test_session_laws_topology_pen
@@ -53,6 +62,8 @@ import http_client : getJson;
 import drag_helpers : fetchCamera;
 import fixture_helpers : requireProvenance;
 import std.file : readText;
+import std.algorithm : canFind;
+import std.array : join;
 import std.format : format;
 import std.json;
 import std.math : PI, abs, cos, round, sin, sqrt;
@@ -759,9 +770,8 @@ unittest {
 // ---------------------------------------------------------------------------
 // drop-mid-drag — the salvage (wave plan 8646 §4.5): a drop through the UI
 // door while a Move drag is held records that press as ONE row with the mesh
-// as it stands; Ctrl+Z restores a0. Until slice S6 a drop writes no row of its
-// own, so the pen is NOT re-armed by that undo — asserted as it stands, for S6
-// to flip.
+// as it stands, and the drop row (S6) lands ABOVE it: Ctrl+Z re-arms the pen
+// with the moved mesh kept (L8, our divergence), the next restores a0.
 // ---------------------------------------------------------------------------
 unittest {
     if (!cell("drop-mid-drag")) return;
@@ -783,15 +793,20 @@ unittest {
                   penIdx(penMoved(held, r.a0)), penHistoryLabels()));
     penLineUi("tool.set " ~ kPenToolId ~ " off");
     penPlay(penButton(20, false, 1, x, y, 0), "drop-mid-drag: release after the drop");
-    assert(!penArmed() && penMesh() == held && penHistoryLen() == r.hp + 2
-           && topLabel() == "Topology Move",
-           format("drop-mid-drag: the drop must record the held press as one Move row: armed %s, "
-                  ~ "mesh %s the held one, history %s", penArmed(), penMesh() == held ? "==" : "!=",
-                  penHistoryLabels()));
+    const labels = penHistoryLabels();
+    assert(!penArmed() && penMesh() == held && penHistoryLen() == r.hp + 3
+           && labels[$ - 2 .. $] == ["Topology Move", "Tool Drop"],
+           format("drop-mid-drag: the drop must record the held press as one Move row below the "
+                  ~ "drop row: armed %s, mesh %s the held one, history %s", penArmed(),
+                  penMesh() == held ? "==" : "!=", labels));
     penCtrlZ("drop-mid-drag z1");
-    assert(penMesh() == r.a0 && !penArmed(),
-           format("drop-mid-drag z1: mesh %s (expected a0), armed %s (no drop row before S6)",
-                  penMesh().toString, penArmed()));
+    assert(penMesh() == held && penArmed() && penHistoryLen() == r.hp + 2,
+           format("drop-mid-drag z1: mesh %s the held one, armed %s (expected re-armed), history %s",
+                  penMesh() == held ? "==" : "!=", penArmed(), penHistoryLabels()));
+    penCtrlZ("drop-mid-drag z2");
+    assert(penMesh() == r.a0 && penArmed() && penHistoryLen() == r.hp + 1,
+           format("drop-mid-drag z2: mesh %s (expected a0), armed %s, history %s",
+                  penMesh().toString, penArmed(), penHistoryLabels()));
     writeln("PASS drop-mid-drag");
 }
 
@@ -1903,6 +1918,202 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
+// S6 (wave plan 8640 §4.6, §9.6, §9.17.4, [A6-1], [A7-4]) — a user drop of the
+// pen writes a DROP row. Undoing it re-arms the pen and KEEPS the gesture (L8:
+// the reference loses it — our deliberate divergence, gap row (a)), and
+// EMPTIES the redo stack (L32, ported). Esc also writes an empty task row
+// above it (L39), whose undo keeps redo (X-esc-r R-task).
+// ---------------------------------------------------------------------------
+enum PEN_SDLK_ESCAPE = 27;
+enum PEN_SDLK_SPACE  = 32;
+enum PEN_SDLK_q      = 113;
+enum PEN_SDLK_1      = 49;
+enum PEN_SDLK_3      = 51;
+
+long penRedoLen() { return cast(long)getJson("/api/history")["redo"].array.length; }
+string penSelType() { return getJson("/api/selection")["selType"].str; }
+
+/// armed / mesh / undo length / redo length at one step of a drop ladder.
+void dropStep(string id, string step, const PenMesh want, bool armed, long hist, long redo) {
+    const m = penMesh();
+    assert(m == want && penArmed() == armed && penHistoryLen() == hist && penRedoLen() == redo,
+           format("%s %s: mesh %s the expected one, armed %s (expected %s), history %d (expected %d), "
+                  ~ "redo %d (expected %d) %s", id, step, m == want ? "==" : "!=", penArmed(), armed,
+                  penHistoryLen(), hist, penRedoLen(), redo, penHistoryLabels()));
+}
+
+/// arm, g1, the drop door, then the ladder. `taskRow`: the door is Esc, whose
+/// task row sits above the drop row.
+void dropLadder(string id, void delegate() drop, bool taskRow) {
+    const r = rig();
+    penArmUi(r);
+    moveV5(id ~ " g1");
+    const g1 = penMesh();
+    const long h = r.hp + 2;     // the activation row + g1
+    assert(penHistoryLen() == h, format("%s rig: arm + g1 is not two rows: %s", id, penHistoryLabels()));
+    drop();
+    const long hd = h + (taskRow ? 2 : 1);
+    dropStep(id, "exit", g1, false, hd, 0);
+    const labels = penHistoryLabels();
+    assert(labels[$ - 1] == (taskRow ? "Clear Tool Task" : "Tool Drop"),
+           format("%s exit: the top rows are %s", id, labels));
+    if (taskRow) {
+        assert(labels[$ - 2] == "Tool Drop", format("%s exit: the drop row is not below the task row: %s",
+                                                    id, labels));
+        // X-esc-r (R-task): popping only the task row keeps redo; Shift+Z
+        // brings it back.
+        penCtrlZ(id ~ " zt");
+        dropStep(id, "zt (task row)", g1, false, h + 1, 1);
+        penCtrlShiftZ(id ~ " rt");
+        dropStep(id, "rt (task row redone)", g1, false, h + 2, 0);
+        penCtrlZ(id ~ " zt2");
+        dropStep(id, "zt2 (task row)", g1, false, h + 1, 1);
+    }
+    penCtrlZ(id ~ " z1");
+    dropStep(id, "z1 (drop row: re-armed, g1 kept, redo emptied)", g1, true, h, 0);
+    penCtrlShiftZ(id ~ " z1-redo");
+    dropStep(id, "z1-redo (nothing to redo)", g1, true, h, 0);
+    penCtrlZ(id ~ " z2");
+    dropStep(id, "z2", r.a0, true, h - 1, 1);
+    penCtrlZ(id ~ " z3");
+    dropStep(id, "z3", r.a0, false, h - 2, 2);
+    penCtrlShiftZ(id ~ " r1");
+    dropStep(id, "r1", r.a0, true, h - 1, 1);
+    penCtrlShiftZ(id ~ " r2");
+    dropStep(id, "r2", g1, true, h, 0);
+    penCtrlShiftZ(id ~ " r3");
+    dropStep(id, "r3 (nothing to redo)", g1, true, h, 0);
+    writeln("PASS ", id);
+}
+
+unittest {
+    if (!cell("drop-esc")) return;
+    dropLadder("drop-esc", () { penKey(PEN_SDLK_ESCAPE, 0, "drop-esc Esc"); }, true);
+}
+
+unittest {
+    if (!cell("drop-space")) return;
+    dropLadder("drop-space", () { penKey(PEN_SDLK_SPACE, 0, "drop-space Space"); }, false);
+}
+
+unittest {
+    if (!cell("drop-q")) return;
+    dropLadder("drop-q", () { penKey(PEN_SDLK_q, 0, "drop-q Q"); }, false);
+}
+
+unittest {
+    if (!cell("drop-command")) return;
+    dropLadder("drop-command", () { penLineUi("tool.set " ~ kPenToolId ~ " off"); }, false);
+}
+
+// drop-sel — key 1 before the arm, g1, key 3 (a front flip drops the pen): the
+// drop row's undo re-arms the pen AND restores Vertex through the funnel that
+// does not drop it.
+unittest {
+    if (!cell("drop-sel")) return;
+    const r = rig();
+    penKey(PEN_SDLK_1, 0, "drop-sel key 1");
+    assert(penSelType() == "vertex", "drop-sel rig: key 1 did not select vertices: " ~ penSelType());
+    penArmUi(r);
+    moveV5("drop-sel g1");
+    const g1 = penMesh();
+    const long h = r.hp + 2;
+    penKey(PEN_SDLK_3, 0, "drop-sel key 3");
+    dropStep("drop-sel", "exit", g1, false, h + 1, 0);
+    assert(penSelType() == "polygon" && penHistoryLabels()[$ - 1] == "Tool Drop",
+           format("drop-sel exit: type %s, history %s", penSelType(), penHistoryLabels()));
+    penCtrlZ("drop-sel z1");
+    dropStep("drop-sel", "z1", g1, true, h, 0);
+    assert(penSelType() == "vertex", "drop-sel z1: the selection type was not restored: " ~ penSelType());
+    penCtrlZ("drop-sel z2");
+    dropStep("drop-sel", "z2", r.a0, true, h - 1, 1);
+    penCtrlZ("drop-sel z3");
+    dropStep("drop-sel", "z3", r.a0, false, h - 2, 2);
+    penCtrlShiftZ("drop-sel r1");
+    dropStep("drop-sel", "r1", r.a0, true, h - 1, 1);
+    penCtrlShiftZ("drop-sel r2");
+    dropStep("drop-sel", "r2", g1, true, h, 0);
+    penCtrlShiftZ("drop-sel r3");
+    dropStep("drop-sel", "r3 (nothing to redo)", g1, true, h, 0);
+    assert(penSelType() == "vertex", "drop-sel r3: type " ~ penSelType());
+    writeln("PASS drop-sel");
+}
+
+// drop-bare — arm, Esc, no gesture (X-bare, X-bare-redo): the key door, then
+// the raw `history.undo` / `history.redo` doors, whose redo is REFUSED
+// (status:error — the empty redo stack) with the pen still armed.
+unittest {
+    if (!cell("drop-bare")) return;
+    const r = rig();
+    penArmUi(r);
+    const long h = r.hp + 1;
+    penKey(PEN_SDLK_ESCAPE, 0, "drop-bare Esc");
+    dropStep("drop-bare", "exit", r.a0, false, h + 2, 0);
+    penCtrlZ("drop-bare z1");
+    dropStep("drop-bare", "z1 (task row)", r.a0, false, h + 1, 1);
+    penCtrlZ("drop-bare z2");
+    dropStep("drop-bare", "z2 (drop row)", r.a0, true, h, 0);
+    penCtrlShiftZ("drop-bare r1");
+    dropStep("drop-bare", "r1 (nothing to redo)", r.a0, true, h, 0);
+    // the raw doors
+    penKey(PEN_SDLK_ESCAPE, 0, "drop-bare Esc (raw pass)");
+    dropStep("drop-bare", "raw exit", r.a0, false, h + 2, 0);
+    penCmd("history.undo");
+    dropStep("drop-bare", "raw z1 (task row)", r.a0, false, h + 1, 1);
+    penCmd("history.undo");
+    dropStep("drop-bare", "raw z2 (drop row)", r.a0, true, h, 0);
+    auto rr = penPost("/api/command", `{"id":"history.redo"}`);
+    assert(rr["status"].str == "error",
+           "drop-bare raw redo: an empty redo stack must refuse: " ~ rr.toString);
+    dropStep("drop-bare", "raw r1 (refused)", r.a0, true, h, 0);
+    writeln("PASS drop-bare");
+}
+
+// rearm-typed — X-toggle: `tool.set mesh.topoPen on` (UI door) while the pen is
+// armed is a same-tool switch row (armed == previous == the pen), not a drop.
+unittest {
+    if (!cell("rearm-typed")) return;
+    const r = rig();
+    penArmUi(r);
+    moveV5("rearm-typed g1");
+    const g1 = penMesh();
+    const long h = r.hp + 2;
+    penLineUi("tool.set " ~ kPenToolId ~ " on");
+    dropStep("rearm-typed", "exit", g1, true, h + 1, 0);
+    assert(penHistoryLabels()[$ - 1] == "Activate Tool",
+           format("rearm-typed exit: the re-arm is not an activation row: %s", penHistoryLabels()));
+    penCtrlZ("rearm-typed z1");
+    assert(penArmed() && penMesh() == g1 && penHistoryLen() == h,
+           format("rearm-typed z1: armed %s, mesh %s g1, history %s", penArmed(),
+                  penMesh() == g1 ? "==" : "!=", penHistoryLabels()));
+    penCtrlZ("rearm-typed z2");
+    assert(penArmed() && penMesh() == r.a0 && penHistoryLen() == h - 1,
+           format("rearm-typed z2: armed %s, mesh %s a0, history %s", penArmed(),
+                  penMesh() == r.a0 ? "==" : "!=", penHistoryLabels()));
+    penCtrlZ("rearm-typed z3");
+    assert(!penArmed() && penMesh() == r.a0 && penHistoryLen() == h - 2,
+           format("rearm-typed z3: armed %s, history %s", penArmed(), penHistoryLabels()));
+    writeln("PASS rearm-typed");
+}
+
+// non-user-drop — the active-layer change (`activeLayerChangedDrop`) drops the
+// pen and writes NO drop row: only the layer selection's own row lands.
+unittest {
+    if (!cell("non-user-drop")) return;
+    const r = rig();
+    penArmUi(r);
+    moveV5("non-user-drop g1");
+    const long h = r.hp + 2;
+    assert(penHistoryLen() == h, "non-user-drop rig: " ~ penHistoryLabels().join(","));
+    penCmd("layer.select", `{"index":1,"mode":"set"}`);
+    const labels = penHistoryLabels();
+    assert(!penArmed() && penHistoryLen() == h + 1 && !labels.canFind("Tool Drop"),
+           format("non-user-drop: armed %s, history %s (expected g1's rows + the layer selection, "
+                  ~ "no drop row)", penArmed(), labels));
+    writeln("PASS non-user-drop");
+}
+
+// ---------------------------------------------------------------------------
 // Population: with no VIBE3D_CELL every cell above ran (declared last, so it
 // runs last).
 // ---------------------------------------------------------------------------
@@ -1910,7 +2121,7 @@ unittest {
     writeln("cells=", cellsRun);
     const only = environment.get("VIBE3D_CELL", "");
     if (only.length == 0)
-        assert(cellsRun == 43, format("topology pen session laws: %d cells ran, expected 43", cellsRun));
+        assert(cellsRun == 51, format("topology pen session laws: %d cells ran, expected 51", cellsRun));
     else
         assert(cellsRun == 1, format("topology pen session laws: VIBE3D_CELL=%s ran %d cells, expected 1 "
                                      ~ "(an unknown name runs none)", only, cellsRun));

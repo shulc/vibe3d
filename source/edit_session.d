@@ -40,7 +40,7 @@ import held_gesture_buttons : g_heldGestureButtons;
 import std.typecons    : Rebindable;
 import params          : ParamProvider;
 import toolpipe.stage  : Stage;
-import tool_activation_ownership : CloseReason, CommandDoor, CloseOutcome;
+import tool_activation_ownership : CloseReason, CommandDoor, CloseOutcome, DropContext;
 import tools.common.session_mesh_key : SessionMeshKey;
 import snapshot : MeshSnapshot;
 import commands.mesh.session_edit : MeshSessionEdit;
@@ -611,14 +611,30 @@ final class EditSession {
     // to its door (`deactivate()` / the prepared deactivation), so the session
     // only keeps its account of it. Returns what the command funnel needs:
     // whether the tool stays armed across the command.
-    CloseOutcome closeOperation(CloseReason r, CommandDoor door = CommandDoor.ui) {
+    //
+    // `dropRow` (wave plan 8640 S6): the drop door's answer, decided before
+    // the door runs — the tool's `dropWritesRow` policy and
+    // `dropWritesRowFor(transition)`. The row is written by `finishClose`,
+    // after the door, through the factory the app installs (`installDropRows`).
+    CloseOutcome closeOperation(CloseReason r, CommandDoor door = CommandDoor.ui,
+                                bool dropRow = false,
+                                DropContext ctx = DropContext.init) {
         // No command close while a mouse button is held — the held-button rule
         // `navigate` applies (slice M1a): refused, the tool is not called, and
         // the funnel keeps its pre-M2 rules. A door's close is the door's and
         // runs regardless, so its account is kept.
         if (r == CloseReason.command && g_heldGestureButtons.any)
             return CloseOutcome(false, false);
-        return tools_.close(r, door);
+        return tools_.close(r, door, dropRow, ctx);
+    }
+
+    /// S6: the factories of a drop row (a `ToolActivationCommand` with no
+    /// armed tool) and of the Esc rung's empty task row, installed by the app
+    /// (they need its mesh, view and arm/drop verbs).
+    void installDropRows(Command delegate(const DropRowSpec) dropRow,
+                         Command delegate() taskRow) {
+        tools_.dropRowFactory_ = dropRow;
+        tools_.taskRowFactory_ = taskRow;
     }
 
     // The command funnel's one question (slice M4, the plan's "M2 follow-up"):
@@ -722,6 +738,16 @@ private class TopologyAdjustmentEdit : Command, GesturePayload {
     }
 }
 
+/// What a drop row records (wave plan 8640 S6): the dropped tool, the session
+/// token its undo hands back, whether that tool's steps are history topology
+/// steps (its attribute image is restored by the undo), and the drop context.
+struct DropRowSpec {
+    string previousId;
+    ulong previousToken;
+    bool previousHistoryTopology;
+    DropContext ctx;
+}
+
 private struct ToolSession {
     private Tool delegate() tool_;
     private CommandHistory  history_;
@@ -754,6 +780,12 @@ private struct ToolSession {
     private ulong closingToken_;
     private bool pendingResume_;
     private Tool resumeTool_;
+    // S6: a drop that writes a drop row — taken at `close`, before the door
+    // destroys the tool; written by `finishClose`, after the door.
+    private bool pendingDropRow_;
+    private DropRowSpec pendingDrop_;
+    private Command delegate(const DropRowSpec) dropRowFactory_;
+    private Command delegate() taskRowFactory_;
 
     // ----- the operation of a `sessionSteps` tool (slice M3) ----------------
     // `bound_` / `armedId_`: the tool the last arm published and its id.
@@ -1145,14 +1177,21 @@ private struct ToolSession {
     }
 
     // The one close routine (EditSession.closeOperation's body; plan R4.2).
-    CloseOutcome close(CloseReason r, CommandDoor door) {
+    CloseOutcome close(CloseReason r, CommandDoor door, bool dropRow = false,
+                       DropContext ctx = DropContext.init) {
         // A new close starts a new account, whatever an unfinished one left.
         pendingMark_ = false;
+        pendingDropRow_ = false;
         closedRow_ = null;
         auto t = tool_();
         if (t is null) { endOperation_(); return CloseOutcome(false, false); }
         topBefore_ = undoTop_();
         closingToken_ = currentToken();
+        if (dropRow && r == CloseReason.drop && t is bound_ && armedId_.length) {
+            pendingDropRow_ = true;
+            pendingDrop_ = DropRowSpec(armedId_.idup, closingToken_,
+                t.sessionPolicy().historyTopologySteps, ctx);
+        }
         topologyFirstGroupLive_ = false;
         if (topologyPending_ && reporting_(t) &&
             t.sessionPolicy().historyTopologySteps)
@@ -1196,6 +1235,7 @@ private struct ToolSession {
 
     void finishClose() {
         if (pendingMark_) { pendingMark_ = false; markClosedRow_(); }
+        if (pendingDropRow_) { pendingDropRow_ = false; recordDropRow_(); }
         if (!pendingResume_) return;
         pendingResume_ = false;
         auto t = tool_();
@@ -1869,6 +1909,15 @@ private struct ToolSession {
         if (cast(const ToolActivationCommand) row !is null) return;
         closedRow_ = row;
         history_.markEntrySession(row, closingToken_);
+    }
+
+    // S6: the drop row, above whatever the door wrote (a salvaged press),
+    // then — on the Esc rung only — the empty task row above it (L39).
+    private void recordDropRow_() {
+        if (dropRowFactory_ is null) return;
+        history_.recordToolLifecycle(dropRowFactory_(pendingDrop_));
+        if (pendingDrop_.ctx.clearsTask && taskRowFactory_ !is null)
+            history_.recordToolLifecycle(taskRowFactory_());
     }
 
     // Apply-and-continue (Shift+click, task 0461) through the session: the

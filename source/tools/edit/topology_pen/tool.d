@@ -1242,7 +1242,7 @@ public:
         static immutable ToolSessionPolicy policy = {
             activationRow: true, rollovers: Rollover.target,
             sessionSteps: true, historyTopologySteps: true,
-            rebaseTopologyAfterStep: false,
+            rebaseTopologyAfterStep: false, dropWritesRow: true,
             imageAttrs: ["middle", "mode", "loop", "slide", "smoothStrength",
                          "showVertex", "showEdge", "innerSnap", "keepVertex",
                          "range", "quadOnly", "backFace"] };

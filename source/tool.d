@@ -411,6 +411,12 @@ struct ToolSessionPolicy {
     /// its changed sticky names one by one (slice M7, formerly an id test in
     /// `prepareArm`). Loop Slice only; named arguments are still replayed.
     bool armRestoresWholeImage;
+    /// A user drop (`tool_activation_ownership.dropWritesRowFor`) writes a
+    /// DROP lifecycle row whose undo re-arms the tool (wave plan 8640 S6;
+    /// captured X-esc/X-space/X-q/X-sel for the Topology Pen). The reference
+    /// loses the gesture on that undo; we keep it (L8, a deliberate
+    /// divergence, gap row (a)). Every other tool: no row, by data.
+    bool dropWritesRow;
 }
 
 class Tool : ParamProvider {

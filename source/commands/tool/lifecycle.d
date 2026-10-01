@@ -4,6 +4,7 @@ import command;
 import mesh;
 import view;
 import editmode;
+import seltype : SelType;
 
 // ---------------------------------------------------------------------------
 // ToolActivationCommand — tool.activate
@@ -50,10 +51,20 @@ class ToolActivationCommand : Command, ToolArmLifecyclePolicy {
     private bool previousClassified_;
     private bool previousHistoryTopology_;
     private bool dormantTopology_;
+    // Wave plan 8640 S6: a DROP row (armed = none), written by a user drop of
+    // a tool whose policy says `dropWritesRow` (`ToolSession.finishClose`).
+    // Stored, never derived from `armedId == ""`: its undo empties the redo
+    // stack (L32, `carriesRedoAfterUndo`), so its redo is unreachable.
+    private bool dropRow_;
+    private bool flipsSelType_;
+    private SelType selBefore_;
 
     // Hooks wired by app.d after construction.
     void delegate(string) onActivate;
     void delegate() onDeactivate;
+    // S6: restores a selection type through the funnel that does NOT drop the
+    // tool (app.d `promoteGeometryType` / `promoteItemType`).
+    void delegate(SelType) onRestoreSelType;
 
     this(Mesh* mesh, ref View view, EditMode editMode,
          string armedId, string previousId,
@@ -61,7 +72,7 @@ class ToolActivationCommand : Command, ToolArmLifecyclePolicy {
          bool recordCarries = false, ulong sessionToken = 0,
          ulong previousToken = 0, bool previousClassified = false,
          bool previousHistoryTopology = false,
-         bool historyRecordedSteps = false) {
+         bool historyRecordedSteps = false, bool dropRow = false) {
         super(mesh, view, editMode);
         armedId_ = armedId.idup;
         previousId_ = previousId.idup;
@@ -72,6 +83,7 @@ class ToolActivationCommand : Command, ToolArmLifecyclePolicy {
         previousToken_ = previousToken;
         previousClassified_ = previousClassified;
         previousHistoryTopology_ = previousHistoryTopology;
+        dropRow_ = dropRow;
         markSession(sessionToken);
         // The whole undo image is the predecessor identity. It exists from the
         // constructor, so the flag is raised there.
@@ -79,7 +91,7 @@ class ToolActivationCommand : Command, ToolArmLifecyclePolicy {
     }
 
     override string name()  const { return "tool.activate"; }
-    override string label() const { return "Activate Tool"; }
+    override string label() const { return dropRow_ ? "Tool Drop" : "Activate Tool"; }
 
     override CmdFlags cmdFlags() const { return CmdFlags.ToolLifecycle; }
 
@@ -89,7 +101,11 @@ class ToolActivationCommand : Command, ToolArmLifecyclePolicy {
     // after this redo (ToolSession.redo, task 7137, §22), so the raw redo doors
     // re-arm bare.
     protected override bool applyImpl() {
-        if (onActivate !is null) onActivate(armedId_);
+        if (armedId_.length == 0) {
+            if (onDeactivate !is null) onDeactivate();
+        } else if (onActivate !is null) {
+            onActivate(armedId_);
+        }
         return true;
     }
 
@@ -103,13 +119,27 @@ class ToolActivationCommand : Command, ToolArmLifecyclePolicy {
         } else if (onActivate !is null) {
             onActivate(previousId_);
         }
+        // S6 (drop-sel): a drop row of a selection-type key restores the type
+        // the key left, after the tool is back (C1-X-sel).
+        if (flipsSelType_ && onRestoreSelType !is null)
+            onRestoreSelType(selBefore_);
     }
 
     string armedId() const { return armedId_; }
     string previousId() const { return previousId_; }
     bool carriesRedoAfterUndo() const {
+        // L32 (captured X-bare-redo, X-sel-redo): undoing a drop row empties
+        // the redo stack, before every other term (wave plan 8640 [A6-1]).
+        if (dropRow_) return false;
         return dormantTopology_ || previousHistoryTopology_ ||
             (sessionSteps_ && !historyRecordedSteps_ && !previousClassified_);
+    }
+    bool dropRow() const { return dropRow_; }
+    /// S6: the selection type a drop row's undo restores (a drop by a
+    /// selection-type key only).
+    void restoresSelType(SelType before) {
+        flipsSelType_ = true;
+        selBefore_ = before;
     }
     void markDormantTopology() { dormantTopology_ = true; }
     bool dormantTopology() const { return dormantTopology_; }
@@ -123,4 +153,21 @@ class ToolActivationCommand : Command, ToolArmLifecyclePolicy {
     /// The mesh the armed tool edits (the first-gesture replay checks it is
     /// the same mesh, unchanged, before re-seating the gesture).
     inout(Mesh)* armedMesh() inout { return mesh; }
+}
+
+// ---------------------------------------------------------------------------
+// ToolTaskClearCommand — the empty row the Esc rung writes above a drop row
+// (wave plan 8640 S6, L39; captured X-esc, X-esc-r R-task): it changes
+// nothing, its undo keeps the redo stack, and its redo brings it back.
+// ---------------------------------------------------------------------------
+class ToolTaskClearCommand : Command {
+    this(Mesh* mesh, ref View view, EditMode editMode) {
+        super(mesh, view, editMode);
+        noteUndoRecorded();
+    }
+    override string name()  const { return "tool.taskClear"; }
+    override string label() const { return "Clear Tool Task"; }
+    override CmdFlags cmdFlags() const { return CmdFlags.ToolLifecycle; }
+    protected override bool applyImpl() { return true; }
+    protected override void revertImpl() {}
 }

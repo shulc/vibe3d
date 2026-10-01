@@ -56,7 +56,8 @@ version (web) {
 import http_server;
 import tool_activation_ownership : ToolTransition, ActivationDoor,
     activationDoorFor, pipeArmScopeFor, armUsesAttrCache, CloseReason,
-    CloseOutcome, CommandDoor, closeReasonFor, armDoorFor, postmodeArmedOnArm;
+    CloseOutcome, CommandDoor, closeReasonFor, armDoorFor, postmodeArmedOnArm,
+    dropWritesRowFor, DropContext;
 import guarded_action_controller : GuardedActionController,
     GuardedActionPorts, GuardObservationPorts;
 import ui.guard_modal_state : GuardModalState;
@@ -2731,7 +2732,7 @@ void main(string[] args) {
     // exists only from there). Null until wired — same pattern as
     // lifecycleRecordHook above; users that can run pre-wiring guard on
     // non-null.
-    import edit_session : EditSession, commandMeetsTool;
+    import edit_session : EditSession, commandMeetsTool, DropRowSpec;
     EditSession session;
     import command_history : CommandHistory;
     import record_observer_hub : RecordObserverHub;
@@ -2766,7 +2767,13 @@ void main(string[] args) {
     // ownership table in source/tool_activation_ownership.d — decides which
     // door tears the tool down. The `final switch` below is the whole reason
     // the table can be trusted: a transition with no owner does not compile.
-    void dropActiveTool(ToolTransition why) {
+    //
+    // Wave plan 8640 S6: `dropActiveToolWith` carries what a user drop's row
+    // records (the Esc rung's task row, a selection-type key's restore);
+    // `dropActiveTool` is the same drop with none. Two verbs rather than a
+    // defaulted parameter: `&dropActiveTool` is cast to
+    // `void delegate(ToolTransition)` below and must keep that arity.
+    void dropActiveToolWith(ToolTransition why, DropContext ctx) {
         // One-shot falloff-drag cancel at the universal tool
         // activation/switch/drop chokepoint. Step 4 removed the per-frame
         // cancel guard; without this, a no-tool-origin falloff drag (LMB held
@@ -2783,7 +2790,12 @@ void main(string[] args) {
         // the undo top the door's commit will move), the commit stays in the
         // door's `deactivate()` below, and `finishClose` after the door marks
         // the row the close wrote.
-        if (session !is null) session.closeOperation(closeReasonFor(why));
+        // S6: whether this drop writes a drop row — read BEFORE the door
+        // destroys the tool (its policy, and the transition's table row).
+        const bool dropRow = activeTool !is null &&
+            activeTool.sessionPolicy().dropWritesRow && dropWritesRowFor(why);
+        if (session !is null)
+            session.closeOperation(closeReasonFor(why), CommandDoor.ui, dropRow, ctx);
         // The `final switch` is OUTSIDE `if (activeTool)` deliberately. It used
         // to sit inside it, which made the routing refusal below unreachable on
         // every drop that runs with nothing armed — and those are the majority
@@ -2815,6 +2827,9 @@ void main(string[] args) {
         // mesh-change block on the same frame (the drop runs during event
         // dispatch, before the flush). One source of truth.
     }
+    void dropActiveTool(ToolTransition why) {
+        dropActiveToolWith(why, DropContext.init);
+    }
 
     // -------------------------------------------------------------------------
     // Selection-types Stage 1: the single funnel for a GEOMETRY-type switch
@@ -2836,9 +2851,11 @@ void main(string[] args) {
     void switchGeometryType(EditMode mode) {
         import change_bus : noteCurrentType;
         const t = geometrySelType(mode);
+        const before = currentSelType(selTypeOrder);   // S6: the drop row's restore
         const flipped = sessionOwner.switchGeometryType(mode);
         if (flipped) {
-            dropActiveTool(ToolTransition.selTypeFlipDrop);  // front-flip (B2)
+            dropActiveToolWith(ToolTransition.selTypeFlipDrop,  // front-flip (B2)
+                DropContext(false, true, before, t));
             noteCurrentType(t);           // current-type changed (bus, drained at flush)
         }
     }
@@ -2912,9 +2929,11 @@ void main(string[] args) {
     //     like the other doors rather than inventing a third rule.)
     void switchItemType() {
         import change_bus : noteCurrentType;
+        const before = currentSelType(selTypeOrder);   // S6: the drop row's restore
         const flipped = sessionOwner.switchItemType();
         if (flipped) {
-            dropActiveTool(ToolTransition.selTypeFlipDrop);  // front-flip (B2)
+            dropActiveToolWith(ToolTransition.selTypeFlipDrop,  // front-flip (B2)
+                DropContext(false, true, before, SelType.Item));
             noteCurrentType(SelType.Item);
         }
     }
@@ -3779,6 +3798,7 @@ void main(string[] args) {
     app.topoPenFactories         = buildTopoPenFactories();
 
     app.dropActiveTool       = cast(void delegate(ToolTransition))&dropActiveTool;
+    app.dropActiveToolWith   = &dropActiveToolWith;
     app.promoteItemType      = cast(void delegate())&promoteItemType;
     app.switchItemType       = cast(void delegate())&switchItemType;
     app.promoteGeometryType  = cast(void delegate(EditMode))&promoteGeometryType;
@@ -3977,6 +3997,33 @@ void main(string[] args) {
             armPreparedTool(ToolTransition.replayArm, id, noNamed, true);
         });
     toolHost.session = () => session;
+    // Wave plan 8640 S6: the drop row (armed = none; undo re-arms the dropped
+    // tool through the replay arm and, for a selection-type key, restores the
+    // type through the funnel that does not drop) and the Esc rung's task row.
+    session.installDropRows(
+        (const DropRowSpec spec) {
+            import commands.tool.lifecycle : ToolActivationCommand;
+            auto row = new ToolActivationCommand(&mesh(), cameraView, editMode,
+                "", spec.previousId, false, false, false, 0, spec.previousToken,
+                true, spec.previousHistoryTopology, false, true);
+            row.onActivate = (string restoreId) {
+                JSONValue noNamed = JSONValue(cast(JSONValue[string]) null);
+                armPreparedTool(ToolTransition.replayArm, restoreId, noNamed, true);
+            };
+            row.onDeactivate = () { dropActiveTool(ToolTransition.replayDrop); };
+            if (spec.ctx.flipsSelType) {
+                row.restoresSelType(spec.ctx.selBefore);
+                row.onRestoreSelType = (SelType st) {
+                    if (st == SelType.Item) promoteItemType();
+                    else promoteGeometryType(geometryEditMode(st));
+                };
+            }
+            return cast(Command) row;
+        },
+        () {
+            import commands.tool.lifecycle : ToolTaskClearCommand;
+            return cast(Command) new ToolTaskClearCommand(&mesh(), cameraView, editMode);
+        });
     // task 0415 Phase 1: wire the ctx's toolHostView now that `toolHost` is
     // fully assembled -- Span A (registerTools, above) never touches it;
     // Span B below (registerCommands, Phase 2) does.

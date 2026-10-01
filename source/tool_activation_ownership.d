@@ -1,5 +1,7 @@
 module tool_activation_ownership;
 
+import seltype : SelType;
+
 // TASK 4053 — the single ownership table for tool-activation transitions.
 //
 // INVARIANT: every way the active tool can change is a member of
@@ -201,6 +203,46 @@ CloseReason closeReasonFor(ToolTransition t) pure nothrow @safe @nogc {
         case ToolTransition.shutdownDrop:
             return CloseReason.drop;
     }
+}
+
+/// Whether a drop by this transition writes a DROP lifecycle row for a tool
+/// whose policy says `dropWritesRow` (wave plan 8640 S6, D6'): exactly the
+/// three user exits — Esc / Space / Q / `tool.set <id> off`, the armed tool's
+/// own button, a selection-type key that flips the front type. Captured:
+/// X-esc, X-space, X-q, X-sel, X-button-same (B-drop). A replay, a reset, a
+/// layer or document change and a command's own drop write no row.
+bool dropWritesRowFor(ToolTransition t) pure nothrow @safe @nogc {
+    final switch (t) {
+        case ToolTransition.explicitDrop:
+        case ToolTransition.sameIdToggleDrop:
+        case ToolTransition.selTypeFlipDrop:
+            return true;
+        case ToolTransition.commandArm:
+        case ToolTransition.interactiveArm:
+        case ToolTransition.replayArm:
+        case ToolTransition.resetRearm:
+        case ToolTransition.replayDrop:
+        case ToolTransition.activeLayerChangedDrop:
+        case ToolTransition.documentReplaceDisarm:
+        case ToolTransition.sceneResetDrop:
+        case ToolTransition.meshRebuildDrop:
+        case ToolTransition.commandPreApplyDrop:
+        case ToolTransition.editCancelDrop:
+        case ToolTransition.panelDrop:
+        case ToolTransition.shutdownDrop:
+            return false;
+    }
+}
+
+/// What a user drop carries into its drop row (S6, pure data, no tool id):
+/// `clearsTask` — the Esc rung, which also writes the empty task row above the
+/// drop row (L39); `flipsSelType` — a selection-type key, whose row restores
+/// `selBefore` when undone (through the funnel that does not drop the tool).
+struct DropContext {
+    bool clearsTask;
+    bool flipsSelType;
+    SelType selBefore;
+    SelType selAfter;
 }
 
 /// Task 5911, "re-arm doors after a break": fresh user arms install every slot

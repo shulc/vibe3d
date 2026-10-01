@@ -21,7 +21,7 @@ import std.math : tan, sin, cos, sqrt, PI, abs;
 import std.conv;
 import std.json : JSONValue, JSONType;
 import http_server;
-import tool_activation_ownership : ToolTransition;
+import tool_activation_ownership : ToolTransition, DropContext;
 import ui.discard_guard : UiRunOutcome;
 import ui.guard_modal_state : GuardModalState;
 version (web) {
@@ -777,6 +777,9 @@ struct EditorApp {
     // setActiveTool` until the arm half became unreachable; the transition
     // argument is what `tool_activation_ownership.activationDoorFor` reads.
     void delegate(ToolTransition) dropActiveTool;
+    // Wave plan 8640 S6: the same drop carrying a `DropContext` (the Esc
+    // rung's task row).
+    void delegate(ToolTransition, DropContext) dropActiveToolWith;
     void delegate()             promoteItemType;
     // Task 0642 — the deliberate item-mode door (`select.typeFrom item`, the
     // Items status-line button, the Items key). Distinct from promoteItemType
