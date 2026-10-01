@@ -2991,9 +2991,10 @@ public:
         if (stepOpen_) {
             resetAllGestureArms();
             resetAllArmed();
-            if (stepButton_ != button) inertButtons_ |= penButtonBit(stepButton_);
+            inertButtons_ |= penButtonBit(stepButton_);
             closePressStep();
         }
+        // The pressed button is live (a same-button re-press included).
         inertButtons_ &= cast(ubyte)~penButtonBit(button);
         sessionStepBegins(PressKind.plain);
         basis_ = sessionStepOpenImage();
