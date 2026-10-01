@@ -667,6 +667,48 @@ unittest {
     assert(mu.vertices[b] == Vec3(1, 2, 3), "an unbound cancel restores its own press image");
 }
 
+// A held bit the router no longer holds cannot stick (wave plan 8646 §9.25
+// N4): a release reads the pen's held mask through the router's held set, so
+// a button whose release was lost (focus loss) does not turn every later
+// release into a discard. The rig mirrors the router: its held set is written
+// before each delivery, as `InputRouter.processEvent` does.
+unittest {
+    import held_gesture_buttons : g_heldGestureButtons;
+    import toolpipe.packets : SubjectPacket;
+    import view : View;
+    import editmode : EditMode;
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    Mesh m;
+    t.meshSrc_ = () => &m;
+    uint a = m.addVertex(Vec3(1, 2, 3));
+    auto session = bindPenSession(t, history);
+    t.moveEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                   "mesh.topoPen_move", "Topology Move",
+                                                   MeshEditScope.Position);
+    scope (exit) g_heldGestureButtons.clear();
+    loadSDL();
+    SubjectPacket subj;
+    subj.mesh = &m;
+    VectorStack vts;
+    vts.put(&subj);
+
+    g_heldGestureButtons.clear();
+    g_heldGestureButtons.press(SDL_BUTTON_LEFT);
+    assert(t.openPressStep(SDL_BUTTON_LEFT, PenMode.Move), "the press opens a step");
+    // The pen still believes MIDDLE is down: its release was never delivered.
+    t.heldMask_ = cast(ubyte)((1 << (SDL_BUTTON_LEFT - 1)) | (1 << (SDL_BUTTON_MIDDLE - 1)));
+    m.vertices[a] = Vec3(4, 2, 3);          // the held press wrote the mesh
+    g_heldGestureButtons.release(SDL_BUTTON_LEFT);
+    SDL_MouseButtonEvent up;
+    up.button = SDL_BUTTON_LEFT;
+    assert(t.onMouseButtonUp(up, vts) && !t.stepOpen_, "the release must close the step");
+    assert(history.undoEntries().length == 1 && m.vertices[a] == Vec3(4, 2, 3)
+           && t.heldMask_ == 0,
+        "a stale held bit must not discard the release: one row keeping the write");
+}
+
 // The chord mode's DEFAULT carrier (plan 8646): a press whose handler commits
 // nothing ends as one row through the default of the mode it resolved to. Every
 // mode's row is pinned here by the generic wire ids `bindPenSession` installs.
@@ -12104,9 +12146,9 @@ unittest {
         }
     }
     // Floors first: an empty scan would satisfy both rules vacuously.
-    assert(blocks.length == 179 && histBlocks == 81 && calls == 79 && kernels == 65,
-        format("gestures census population changed: %d top-level blocks (179), %d read "
-             ~ "history (81), %d bracketed-list calls in them (79), %d of them kernels (65)",
+    assert(blocks.length == 180 && histBlocks == 82 && calls == 79 && kernels == 65,
+        format("gestures census population changed: %d top-level blocks (180), %d read "
+             ~ "history (82), %d bracketed-list calls in them (79), %d of them kernels (65)",
                blocks.length, histBlocks, calls, kernels));
     assert(bad.length == 0, "gestures census:\n" ~ bad.join("\n"));
 }
