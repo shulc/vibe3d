@@ -31,18 +31,13 @@
 // the migration the six pen modules hold ZERO calls on the history surface, so
 // a census over them alone would be satisfied by a scanner that read nothing.
 //
-// HERE G7 DIFFERS (2) — TWO SEAM SITES IN ONE FILE, NOT ONE PER FILE. Every
-// earlier family had one record site per tool file. G7 has two, both in
-// `tool.d`, and they are not interchangeable:
-//
-//   * `placeVertexAt` — the RAW site. Its carrier is a `MeshVertexNew`, the
-//     only G7 gesture whose payload class is not `MeshSessionEdit`, so it is
-//     the one that occupies the base's single `gestureFactory` slot and the one
-//     that casts back and counts the null (`noteGestureCarrierMismatch`).
-//   * `recordSnapshotUndo` — the SHARED TAIL, reached from THIRTEEN call sites
-//     covering fourteen gestures. Its factory parameter is typed, so it needs
-//     no cast; what its callers can still get wrong is WHICH factory, and that
-//     is member 7's business.
+// HERE G7 DIFFERS (2) — ONE SEAM SITE, AND THE SESSION CALLS IT. Since plan
+// 8646 every pen press is a topology step the session records: the one site
+// is the step client's `recordTopologyStep`, which `ToolSession.stepEnds`
+// calls with the carrier the gesture that ran chose (`MeshSessionEdit` for
+// every step, the placement included — `MeshVertexNew` is its kernel only).
+// What a gesture can still get wrong is WHICH factory, and that is member 7's
+// business.
 //
 // HERE G7 DIFFERS (3) — THE FAMILY STILL DECLARES A METHOD THAT TAKES A
 // `CommandHistory`, ON PURPOSE, AND IT IS ROSTERED. Phase B could not delete
@@ -261,10 +256,10 @@ unittest {
 // ---------------------------------------------------------------------------
 // 3. THE SEAM'S CALL SITES, per file and PER MODE.
 //
-//    TWO sites, both in `tool.d`, both `Plain`. The count is the fact worth
-//    pinning as much as the mode is: a THIRD site in this package would be a
-//    gesture recording outside the two the frozen fixture is an oracle for, and
-//    a site that vanished would be a gesture that silently stopped recording.
+//    ONE site, in `tool.d`, `Plain` (the step client's record, plan 8646). The
+//    count is the fact worth pinning as much as the mode is: a SECOND site in
+//    this package would be a gesture recording outside the session's step, and
+//    a site that vanished would be a pen that silently stopped recording.
 //
 //    The mode zero is what makes plan §5.5's discriminating mutation M2
 //    (suppress only the `ReplaceRunTail` dispatch, expect exactly one cell to
@@ -280,10 +275,8 @@ private enum LedgerRow[] kCallRoster = [
     LedgerRow("Tool.recordGestureEdit|inSession", 1, "session dispatch"),
     LedgerRow("Tool.recordGestureEdit|replaceTail", 1, "tail dispatch"),
     LedgerRow("Tool.refuseGestureRecord|replaceTail", 1, "tail refusal belt"),
-    LedgerRow("TopologyPenTool.placeVertexAt|call", 1, "tool commit"),
-    LedgerRow("TopologyPenTool.placeVertexAt|plain", 1, "plain mode"),
-    LedgerRow("TopologyPenTool.recordSnapshotUndo|call", 1, "tool commit"),
-    LedgerRow("TopologyPenTool.recordSnapshotUndo|plain", 1, "plain mode"),
+    LedgerRow("TopologyPenTool.recordTopologyStep|call", 1, "the session's step record"),
+    LedgerRow("TopologyPenTool.recordTopologyStep|plain", 1, "plain mode"),
 ];
 
 unittest {
@@ -301,7 +294,7 @@ unittest {
     const problems = reconcile(kCallRoster, hits);
     assert(problems.length == 0,
         "G7 census: the seam's call sites changed.\n" ~ problems);
-    assert(totalCalls == 3,
+    assert(totalCalls == 2,
         "G7 census: recordGestureEdit population changed");
 }
 
@@ -814,4 +807,36 @@ unittest {
         "G7 named-binding census: " ~ bad.length.to!string
       ~ " finding(s) over source/app.d -> source/registration.d -> "
       ~ kPenDir ~ "/tool.d:\n" ~ joinLines(bad));
+}
+
+// ---------------------------------------------------------------------------
+// 8. ONE BEGIN SITE, ONE END SITE (plan 8646 [R3-1]). In the pen's `tool.d`,
+//    `sessionStepBegins(` sits only in `openPressStep` and `sessionStepEnds(`
+//    only in `closePressStep`; `openPressStep(` is called from
+//    `onMouseButtonDown` alone and `closePressStep(` from `onMouseButtonUp`
+//    and `deactivate` alone (each name's declaration is its own row). The
+//    white-box rig's `penStep` drives the same two functions, so it stays
+//    green when the production door stops calling them — this member sees it.
+// ---------------------------------------------------------------------------
+private enum LedgerRow[] kStepSiteRoster = [
+    LedgerRow("TopologyPenTool.openPressStep|begin", 1, "the one step-begin site"),
+    LedgerRow("TopologyPenTool.closePressStep|end", 1, "the one step-end site"),
+    LedgerRow("TopologyPenTool|open", 1, "openPressStep's declaration"),
+    LedgerRow("TopologyPenTool.onMouseButtonDown|open", 1, "the press door"),
+    LedgerRow("TopologyPenTool|close", 1, "closePressStep's declaration"),
+    LedgerRow("TopologyPenTool.onMouseButtonUp|close", 1, "the release door"),
+    LedgerRow("TopologyPenTool.deactivate|close", 1, "a step still open at a drop"),
+];
+
+unittest {
+    const rel = buildPath(kPenDir, "tool.d");
+    const src = stripCommentsAndStrings(readText(buildPath(repoRoot, rel)));
+    LedgerHit[] hits;
+    hits ~= symbolTokenHits(src, rel, "sessionStepBegins(", "begin");
+    hits ~= symbolTokenHits(src, rel, "sessionStepEnds(", "end");
+    hits ~= symbolTokenHits(src, rel, "openPressStep(", "open");
+    hits ~= symbolTokenHits(src, rel, "closePressStep(", "close");
+    const problems = reconcile(kStepSiteRoster, hits);
+    assert(problems.length == 0, "G7 census: the pen's step sites changed.\n" ~ problems);
+    assert(hits.length == 7, "G7 census: step-site population changed");
 }
