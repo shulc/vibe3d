@@ -98,6 +98,12 @@
 # Display-only in the strict sense — a hidden marker still grabs the same
 # element on a press.
 #
+# `offsetX` / `offsetY` / `offsetZ` — the Offset of the last Move-family press
+# (wave plan 8640 S7a): the pressed element's anchor travel since its press,
+# written live during the drag. A press resets it; a write is its own undo
+# row. Re-applying the last press on a write is slice S7b's; until then the
+# write changes no geometry.
+#
 # NOT here, on purpose: an iteration/pass-count row. The reference exposes an
 # iteration-count attribute for its Smooth gesture, but that attribute and its
 # gesture counter are the same storage, and its press handler overwrites it
@@ -130,3 +136,6 @@ forms:
       - { control: "tool.attr mesh.topoPen smoothStrength ?", label: Strength }
       - { control: "tool.attr mesh.topoPen showVertex ?",     label: "Show Vertex" }
       - { control: "tool.attr mesh.topoPen showEdge ?",       label: "Show Edge" }
+      - { control: "tool.attr mesh.topoPen offsetX ?",        label: "Offset X" }
+      - { control: "tool.attr mesh.topoPen offsetY ?",        label: "Offset Y" }
+      - { control: "tool.attr mesh.topoPen offsetZ ?",        label: "Offset Z" }
