@@ -9,9 +9,9 @@
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
 source-files 582
-task-citation-lines 5257
+task-citation-lines 5251
 citing-files 450
-long-comment-runs 270
+long-comment-runs 269
 files-with-long-runs 144
 
 # Exact per-file task-citation allowances, sorted by path.
@@ -406,7 +406,7 @@ allow source/tools/edit/topology_pen/json.d 13
 allow source/tools/edit/topology_pen/package.d 1
 allow source/tools/edit/topology_pen/render.d 10
 allow source/tools/edit/topology_pen/snap_guide.d 6
-allow source/tools/edit/topology_pen/tool.d 153
+allow source/tools/edit/topology_pen/tool.d 147
 allow source/tools/edit/vert_merge_tool.d 7
 allow source/tools/edit/vertex_bevel_tool.d 8
 allow source/tools/edit/vertex_extrude_tool.d 7
@@ -591,7 +591,7 @@ allow-runs source/tools/edit/edge_extend.d 1
 allow-runs source/tools/edit/preview_rebuild.d 1
 allow-runs source/tools/edit/smooth_relax.d 1
 allow-runs source/tools/edit/topology_pen/snap_guide.d 2
-allow-runs source/tools/edit/topology_pen/tool.d 18
+allow-runs source/tools/edit/topology_pen/tool.d 17
 allow-runs source/tools/slice/loop_slice_tool.d 1
 allow-runs source/tools/slice/slice_tool.d 1
 allow-runs source/tools/transform/morph_route.d 1
