@@ -10,7 +10,7 @@
 //   offset-reapply             L7/L17/L23 a vertex move re-placed per write, each
 //                                         component varied alone; undo/redo
 //   reapply-edge/-poly/-loop   L17  the carried set at nearestBG(anchor + offset)
-//   reapply-slide              L17  the slid endpoints
+//   reapply-slide / -vertex    L17  the slid endpoints / the slid vertex
 //   reapply-build-corner       L17  the new vertex, anchored at its SOURCE (C0-S5)
 //   reapply-point              L17  the placed point (offset 0 after the click)
 //   reapply-dup-edge           L30  the two new vertices, anchored at their sources
@@ -365,6 +365,17 @@ unittest {
     const g1 = penMesh();
     assert(penMoved(g1, r.a0) == [5L, 6L], format("reapply-slide g1: moved %s", penIdx(penMoved(g1, r.a0))));
     reapplyCarried("reapply-slide", g1, 5, [5, 6], [r.a0.pos[5], r.a0.pos[6]], r.hp + 2);
+}
+
+unittest {
+    if (!cell("reapply-slide-vertex")) return;
+    const r = rig();
+    penArmUi(r);
+    penGesture(penVertexPx(5, "reapply-slide-vertex v5"), 20 / kSp, -10 / kSp, 1, PEN_KMOD_LCTRL,
+               "reapply-slide-vertex g1");
+    const g1 = penMesh();
+    assert(penMoved(g1, r.a0) == [5L], format("reapply-slide-vertex g1: moved %s", penIdx(penMoved(g1, r.a0))));
+    reapplyCarried("reapply-slide-vertex", g1, 5, [5], [r.a0.pos[5]], r.hp + 2);
 }
 
 unittest {
@@ -1007,5 +1018,5 @@ unittest {
 // The population: every cell above ran when none was selected.
 unittest {
     if (environment.get("VIBE3D_CELL", "").length) return;
-    assert(cellsRun == 27, format("offset laws: %d cells ran, expected 27", cellsRun));
+    assert(cellsRun == 28, format("offset laws: %d cells ran, expected 28", cellsRun));
 }
