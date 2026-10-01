@@ -101,17 +101,20 @@ Rig rigOf(string variant) {
         r.handle = true; r.handlePart = 0; r.pressRef = [596, 614];
         r.deltaMap = [0, -1, 1, 0];   // our width arrow points down on screen
         r.attrName = ["value": "width"];
-        r.mesh = autoactRig(`[[0,1,2],[0,2,3]]`, "edges", `[[0,2]]`); r.frameReference = true;
+        r.mesh = autoactRig(`[[0,1,2],[0,2,3]]`, "edges", `[[0,2]]`);
         break;
     case "edge_extrude":
         r.tool = "edge.extrude"; r.attrs = ["extrude", "width"]; r.pressRef = [640, 170];
-        r.mesh = autoactRig(`[[0,1,2],[0,2,3]]`, "edges", `[[0,2]]`); r.frameReference = true;
+        r.mesh = autoactRig(`[[0,1,2],[0,2,3]]`, "edges", `[[0,2]]`);
+        // measured: framed on the override, the off-handle press of
+        // nav_undo_restart_eextrude's last haul changes nothing — frame the reference rig
+        r.frameReference = true;
         break;
     case "vertex_bevel":
         r.tool = "mesh.vertexBevel"; r.attrs = ["inset"];
         r.handle = true; r.handlePart = 0; r.pressRef = [489, 546];
         r.deltaMap = [0, -1, 1, 0];   // our inset arrow points down on screen
-        r.mesh = autoactRig(`[[0,1,2],[0,2,3]]`, "vertices", `[0]`); r.frameReference = true;
+        r.mesh = autoactRig(`[[0,1,2],[0,2,3]]`, "vertices", `[0]`);
         break;
     case "vertex_extrude":
         r.tool = "mesh.vertexExtrude"; r.attrs = ["shift", "width"];
@@ -120,7 +123,6 @@ Rig rigOf(string variant) {
         // 1-0-3 closes the fan of the selected vertex 0 (the reference extrudes it open);
         // it then builds TWO rings per layer (6 vertices) where the reference builds one (3)
         r.mesh = autoactRig(`[[0,1,2],[0,2,3],[1,0,3]]`, "vertices", `[0]`);
-        r.frameReference = true;
         r.layer = [3, 6];
         break;
     // generators family (S1b): every haul presses the viewport centre (a press that
