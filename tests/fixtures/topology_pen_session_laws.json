@@ -119,6 +119,13 @@
    "law": "A drag-build from a vertex that takes ONE existing neighbour takes the border neighbour whose screen direction makes the smallest angle with the drag (B1a: v4, B1b: v1); on the bisector it takes v4 (K-chords)."
   },
   {
+   "id": "L52-build-neighbour-in-surface-plane",
+   "cells": [
+    "chord-build-orbit"
+   ],
+   "law": "The neighbour of L34 is chosen in the SURFACE plane: the smallest angle between the world edge (n - source) and the drag's surface delta (BG hit at release - at press), both projected into the tangent plane at the source. Under an orbited camera (C4-B1o) the screen angle names v13 and the plane angle v8; the build takes v8 (triangle [12, 16, 8]). In front views the two agree."
+  },
+  {
    "id": "L37-build-closed-and-in-triangle",
    "cells": [
     "chord-build"
@@ -1007,6 +1014,41 @@
     "sourceEdge": true,
     "undoArmed": true
    }
+  },
+  "chord-build-orbit": {
+   "capture": "C4-B1o",
+   "camera": {
+    "azimuthDeg": 12.0,
+    "elevationDeg": 20.0,
+    "distance": 4.0
+   },
+   "source": 12,
+   "surfaceDelta": [
+    -0.2383,
+    0.1708,
+    -0.2094
+   ],
+   "spacingPx": 62.3,
+   "before": [
+    16,
+    9,
+    24
+   ],
+   "after": [
+    17,
+    10,
+    26
+   ],
+   "newFaces": [
+    [
+     12,
+     16,
+     8
+    ]
+   ],
+   "screenNeighbour": 13,
+   "planeNeighbour": 8,
+   "undoArmed": true
   },
   "no-op-chord-clicks": {
    "clicks": [

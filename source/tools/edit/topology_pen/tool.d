@@ -7,7 +7,7 @@ module tools.edit.topology_pen.tool;
 
 import bindbc.sdl;
 import std.json : JSONValue;
-import std.math : hypot, SQRT2;
+import std.math : hypot, sqrt, SQRT2;
 
 import tool;
 import display_state : DrawPlan;
@@ -29,7 +29,7 @@ import mesh                : Mesh, MeshCacheKey, MeshEditBatch,
                              splitFaceByVertices;
 import mesh_gpu            : GpuMesh;
 import math               : Vec3, Viewport, projectToWindowFull, closestOnSegment2D,
-                             screenPointToRay, closestPointOnSegmentToRay, dot,
+                             screenPointToRay, closestPointOnSegmentToRay, dot, cross,
                              pointInPolygon2D, rayPlaneIntersect,
                              AimViewport, aimSpace, ModelSpace,
                              screenPointToLocalRay;
@@ -45,7 +45,8 @@ import toolpipe.stages.snap : SnapStage;
 import toolpipe.guide       : SnapGuide, GuideDrawState, kGuidePrioritySeed;
 import constraint           : resolveHoverTarget, topoPenPressPickPx,
                               topoPenSnapAcceptPx, topoPenSnapGatherPx,
-                              kTopoPenSnapAuto, closestPointOnMeshes, BackgroundSource;
+                              kTopoPenSnapAuto, closestPointOnMeshes, BackgroundSource,
+                              projectAlongDirection;
 import snap                  : backgroundSourcesFull, SnapAdmit;
 import tools.edit.smooth_relax : RelaxVec3, RelaxTopology, deriveBoundary, relaxPasses;
 import tools.edit.topology_pen.render : PenRenderOps;
@@ -312,6 +313,10 @@ private:
     package GestureArm      dragArmed_;
     int       dragStartX_, dragStartY_;
     int       dragCurX_, dragCurY_;   // the live cursor, for the Tri ghost (`triNeighbourAt`)
+    Vec3      buildPressHitW_;        // Tri case: the BG ray hit at the source's pixel (WORLD)
+    bool      buildPressHitOk_;
+    Vec3      buildNormalW_;          // Tri case: the tangent-plane normal at the source (WORLD)
+    bool      buildNormalFromBG_;     // ...taken from the background (else the source's polygons)
     BuildCase classifiedCase_ = BuildCase.None;
     int       triN_           = -1;   // Tri case: the neighbour (N-angle at release)
     int[]     triCands_;              // Tri case: the border neighbours N-angle picks from
@@ -2347,41 +2352,99 @@ public:
     // takes — ONE answer for the release (`buildUp`) and the ghost preview
     // (`drawBuildGhost`, from the live cursor): both read the raw mouse delta,
     // never the snapped hit, so the ghost names the neighbour the release
-    // will build.
+    // will build. The drag's SURFACE delta is `hit(proj(a) + drag) −
+    // hit(proj(a))` (the registered convention: the source's own exact pixel,
+    // never the rounded press pixel, so a drag on the bisector stays a tie).
     package int triNeighbourAt(int x, int y, const ref Viewport vp) {
-        const AimViewport vpAim = aimSpace(vp, primaryModelSpace());
-        return nAngleNeighbour(sourceVert_, cast(float)(x - dragStartX_),
-                               cast(float)(y - dragStartY_), vpAim);
+        Vec3 h1;
+        if (!buildPressHitOk_ || !bgHitAtSourcePx(x - dragStartX_, y - dragStartY_, vp, h1))
+            return triN_;
+        return nAngleNeighbour(sourceVert_, h1 - buildPressHitW_, buildNormalW_);
     }
 
-    // N-angle (captured, law L34 of the session capture: cells B1a/B1b): the
-    // triangle takes the border neighbour whose SCREEN direction from the
-    // source makes the smallest angle with the drag `(dx, dy)`. An exact tie
-    // (a drag on the bisector) takes the neighbour whose polygon runs x -> a,
-    // i.e. the source's predecessor: all three tie observations (K-chords,
-    // B2's first build, B3) chose it. `kTieCos` only absorbs projection noise.
-    package int nAngleNeighbour(int a, float dx, float dy, const ref AimViewport vpAim) {
+    // The background ray hit (WORLD) under the armed source's projected pixel
+    // shifted by (dx, dy); false with no background hit there.
+    private bool bgHitAtSourcePx(int dx, int dy, const ref Viewport vp, out Vec3 hit) {
+        auto m = mesh;
+        if (m is null || sourceVert_ < 0 || sourceVert_ >= cast(int)m.vertices.length) return false;
+        ImVec2 q;
+        if (!projectWorldPt(primaryModelSpace().toWorldPoint(m.vertices[sourceVert_]), vp, q))
+            return false;
+        auto sources = backgroundSourcesFull();
+        if (sources.length == 0) return false;
+        Vec3 org, dir, n;
+        screenPointToRay(q.x + dx, q.y + dy, vp, org, dir);
+        return projectAlongDirection(org, dir, sources, false, hit, n);
+    }
+
+    // The tangent-plane normal at source `a` (WORLD, unit): the area-weighted
+    // normal of a's own polygons; for a source on no polygon, the background
+    // normal at nearestBG(a) (`closestPointOnMeshes`); else zero (the plain 3D
+    // angle). `fromBG` reports which one answered. Polygons FIRST, measured:
+    // on the session rig the background facet under v0 is not symmetric about
+    // the grid diagonal (its normal (-0.278, -0.289, 0.916)), which turns the
+    // captured bisector tie of K-chords (v4) into v1 (cos -0.7191 vs -0.7215);
+    // the grid's own normal keeps that tie exact (wave plan [A14-5]).
+    package Vec3 sourceTangentNormal(int a, out bool fromBG) {
+        auto m = mesh;
+        if (m is null || a < 0 || a >= cast(int)m.vertices.length) return Vec3(0, 0, 0);
+        const ms = primaryModelSpace();
+        Vec3 sum = Vec3(0, 0, 0);
+        foreach (f; m.faces) {
+            bool has;
+            foreach (v; f) if (v == cast(uint)a) { has = true; break; }
+            if (!has || f.length < 3) continue;
+            foreach (k; 0 .. f.length)   // Newell: |sum| is twice the polygon's area
+                sum = sum + cross(ms.toWorldPoint(m.vertices[f[k]]),
+                                  ms.toWorldPoint(m.vertices[f[(k + 1) % f.length]]));
+        }
+        immutable float l = sqrt(dot(sum, sum));
+        if (l > 1e-12f) return sum * (1.0f / l);
+        auto sources = backgroundSourcesFull();
+        Vec3 foot, n;
+        int si, fi;
+        float d2;
+        if (sources.length > 0 && closestPointOnMeshes(ms.toWorldPoint(m.vertices[a]), sources,
+                                                       false, foot, n, si, fi, d2)) {
+            fromBG = true;
+            return n;
+        }
+        return Vec3(0, 0, 0);
+    }
+
+    // N-plane (captured, law L52 of the session capture: cell C4-B1o, which
+    // refuted the SCREEN-angle reading of L34's B1a/B1b): the triangle takes
+    // the border neighbour n whose WORLD edge `n − a` makes the smallest
+    // angle with the drag's SURFACE delta `deltaW` (BG hit at release − at
+    // press), both projected into the tangent plane at `a` (normal `nW`; a
+    // zero normal leaves them unprojected). In a front view the screen and
+    // plane angles agree, so B1a/B1b read the same. An exact tie (a drag on
+    // the bisector) takes the neighbour whose polygon runs x -> a, i.e. the
+    // source's predecessor: all three tie observations (K-chords, B2's first
+    // build, B3) chose it. `kTieCos` only absorbs float noise.
+    package int nAngleNeighbour(int a, Vec3 deltaW, Vec3 nW) {
         enum float kTieCos = 1e-4f;
         auto m = mesh;
         if (m is null || triCands_.length == 0) return triN_;
         if (triCands_.length == 1) return triCands_[0];
-        ImVec2 pa;
-        immutable float dl = hypot(dx, dy);
-        if (dl <= 0 || !projectLocalPt(m.vertices[a], vpAim, pa)) return triN_;
+        Vec3 tangent(Vec3 v) { return v - nW * dot(v, nW); }
+        const ms = primaryModelSpace();
+        const Vec3 aw = ms.toWorldPoint(m.vertices[a]);
+        const Vec3 d = tangent(deltaW);
+        immutable float dl = sqrt(dot(d, d));
+        if (!(dl > 1e-9f)) return triN_;
         int   best    = -1;
         float bestCos = -float.infinity;
         int   bestDir = 0;
         foreach (i, x; triCands_) {
-            ImVec2 px;
-            if (!projectLocalPt(m.vertices[x], vpAim, px)) continue;
-            immutable float ex = px.x - pa.x, ey = px.y - pa.y;
-            immutable float el = hypot(ex, ey);
-            if (el <= 0) continue;
-            immutable float c = (ex * dx + ey * dy) / (el * dl);
-            immutable int d = triCandDirs_[i];
+            const Vec3 ev = tangent(ms.toWorldPoint(m.vertices[x]) - aw);
+            immutable float el = sqrt(dot(ev, ev));
+            if (!(el > 1e-12f)) continue;
+            immutable float c = dot(ev, d) / (el * dl);
+            immutable int dd = triCandDirs_[i];
             if (best < 0 || c > bestCos + kTieCos
-                || (c > bestCos - kTieCos && d == -1 && bestDir != -1)) {
-                best = x; bestCos = c; bestDir = d;
+                || (c > bestCos - kTieCos && dd == -1 && bestDir != -1)) {
+                best = x; bestCos = c; bestDir = dd;
             }
         }
         return best >= 0 ? best : triN_;
@@ -4103,6 +4166,10 @@ public:
         dragStartX_     = dragCurX_ = e.x;
         dragStartY_     = dragCurY_ = e.y;
         classifiedCase_ = c;
+        // N-plane's two press-time terms: the BG ray hit at the source's own
+        // pixel (the surface delta's origin) and the source's tangent plane.
+        buildPressHitOk_ = bgHitAtSourcePx(0, 0, vp, buildPressHitW_);
+        buildNormalW_    = sourceTangentNormal(src, buildNormalFromBG_);
         return true;   // consume; the build (if any) commits on release
     }
 
@@ -5492,8 +5559,8 @@ public:
         int       startX = dragStartX_, startY = dragStartY_;
         int       dx = e.x - startX, dy = e.y - startY;
 
-        // N-angle (`nAngleNeighbour`): with several border neighbours the triangle's
-        // is the one nearest the drag's direction, press -> release.
+        // N-plane (`nAngleNeighbour`): with several border neighbours the
+        // triangle's is the one nearest the drag's surface direction.
         int n = triN_;
         if (casee == BuildCase.Tri) {
             Viewport vp = viewportOf(vts);

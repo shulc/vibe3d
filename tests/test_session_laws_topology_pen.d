@@ -35,6 +35,7 @@
 //                        moves, a triangle corner builds the border quad
 //   chord-dup-interior-edge  C-0 Shift+LMB on an interior edge moves it
 //   chord-dup-empty      Shift+LMB on empty space changes nothing
+//   chord-build-angle-orbit  L52 the build neighbour is chosen in the surface plane
 //
 // Slice S5 (task 8730) added the cells from `no-op-presses` on: since then
 // every pen press is one topology step the session records (wave plan 8646).
@@ -42,7 +43,7 @@
 // chords' outcomes (their port slices add `chord-*` cells).
 //
 // `VIBE3D_CELL=<id>` runs one cell alone (druntime stops a module at its first
-// failed assert); the last block pins the population: 42 with no filter, 1 with
+// failed assert); the last block pins the population: 43 with no filter, 1 with
 // one (an unknown name must not pass by running nothing).
 //
 // Run via: ./run_test.d test_session_laws_topology_pen
@@ -1713,6 +1714,107 @@ unittest { if (cell("chord-build-tri-corner-in-wedge")) buildCase("tri-corner-in
 unittest { if (cell("chord-build-inside-wedge")) buildCase("inside-wedge"); }
 
 // ---------------------------------------------------------------------------
+// chord-build-angle-orbit — L52 (fixture: C4-B1o): the build neighbour is the
+// smallest angle in the SURFACE plane, not on screen. The S2 grid under the
+// captured orbit (azimuth 12, elevation 20 deg, zoomed until v5 -> v6 reads the
+// capture's spacing); Shift+LMB from corner v12 to the pixel of u12 plus the
+// captured surface delta. Rig floors: in OUR viewport the screen-angle rule
+// names v13 and the plane rule v8, and the release clears every vertex. The
+// build is the triangle {12, 16, 8}; one row; Ctrl+Z bit-exact, armed.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.math : abs, acos, cos, sin, sqrt, PI;
+    import std.algorithm : min;
+    enum id = "chord-build-angle-orbit";
+    if (!cell(id)) return;
+    auto c = cellFx("chord-build-orbit");
+    PenRig r = armedRig();
+    const az = penNum(c["camera"]["azimuthDeg"]) * PI / 180, el = penNum(c["camera"]["elevationDeg"]) * PI / 180;
+    double dist = penNum(c["camera"]["distance"]);
+    void place() {
+        penPost("/api/camera", format(`{"azimuth":%.9f,"elevation":%.9f,"distance":%.9f,`
+                                      ~ `"focus":{"x":0.0,"y":0.0,"z":0.0}}`, az, el, dist));
+    }
+    place();
+    const cam = fetchCamera();
+    const double[3] eyeWant = [dist * sin(az) * cos(el), dist * sin(el), dist * cos(az) * cos(el)];
+    assert(abs(cam.eye.x - eyeWant[0]) + abs(cam.eye.y - eyeWant[1]) + abs(cam.eye.z - eyeWant[2]) < 1e-3,
+           format("%s rig: the camera eye is %s, expected %s", id, cam.eye, eyeWant));
+    // Zoom along the view axis to the capture's grid spacing (same ratio law
+    // as `penZoomToSpacing`, distance measured from the focus).
+    const target = penNum(c["spacingPx"]);
+    foreach (i; 0 .. 6) {
+        const sp = penSpacingPx();
+        if (abs(sp - target) < 0.1) break;
+        dist = 1.0 + (dist - 1.0) * sp / target;
+        place();
+    }
+    assert(abs(penSpacingPx() - target) < 0.5,
+           format("%s rig: the spacing reads %.2f px, expected %.1f", id, penSpacingPx(), target));
+
+    const src = c["source"].integer;
+    const u = r.a0.pos[cast(size_t)src];
+    const dl = c["surfaceDelta"].array;
+    const double[3] hitRel = [u[0] + penNum(dl[0]), u[1] + penNum(dl[1]), u[2] + penNum(dl[2])];
+    const from = penVertexPx(src, id ~ " v12");
+    const int[2] to = penRound(penProject(hitRel));
+    // Rig floor 1: the release clears every vertex (population: all 16).
+    double nearest = double.infinity;
+    size_t seen;
+    foreach (p; r.a0.pos) {
+        const q = penProject(p);
+        nearest = min(nearest, sqrt((q[0] - to[0]) ^^ 2 + (q[1] - to[1]) ^^ 2));
+        ++seen;
+    }
+    assert(seen == 16 && nearest >= kWeldClearPx,
+           format("%s rig: the release %s is %.1f px from the nearest vertex (needs >= %.0f)",
+                  id, to, nearest, kWeldClearPx));
+    // Rig floor 2: the two rules disagree HERE. Screen: the drag against each
+    // border neighbour's projected edge. Plane: the world edge against the
+    // surface delta, both in the tangent plane of the unit-sphere BG at u.
+    double[3] sub3(const double[3] a, const double[3] b) { return [a[0] - b[0], a[1] - b[1], a[2] - b[2]]; }
+    double dot3(const double[3] a, const double[3] b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+    const double un = sqrt(dot3(u, u));
+    const double[3] nrm = [u[0] / un, u[1] / un, u[2] / un];
+    double[3] tan3(const double[3] v) { const k = dot3(v, nrm); return [v[0] - k * nrm[0], v[1] - k * nrm[1], v[2] - k * nrm[2]]; }
+    double angle(const double[3] a, const double[3] b) {
+        return acos(dot3(a, b) / sqrt(dot3(a, a) * dot3(b, b))) * 180 / PI;
+    }
+    const pu = penProject(u);
+    const double[3] drag2 = [to[0] - from[0], to[1] - from[1], 0];
+    const double[3] dT = tan3(sub3(hitRel, u));
+    long screenPick = -1, planePick = -1;
+    double screenBest = double.infinity, planeBest = double.infinity;
+    string angles;
+    foreach (n; [8L, 13L]) {
+        const pn = penProject(r.a0.pos[cast(size_t)n]);
+        const sa = angle([pn[0] - pu[0], pn[1] - pu[1], 0], drag2);
+        const pa = angle(tan3(sub3(r.a0.pos[cast(size_t)n], u)), dT);
+        angles ~= format(" v%d screen %.1f plane %.1f;", n, sa, pa);
+        if (sa < screenBest) { screenBest = sa; screenPick = n; }
+        if (pa < planeBest) { planeBest = pa; planePick = n; }
+    }
+    assert(screenPick == c["screenNeighbour"].integer && planePick == c["planeNeighbour"].integer,
+           format("%s rig: in our viewport the screen rule names v%d (the capture: v%d) and the plane "
+                  ~ "rule v%d (v%d) -- the rig does not discriminate:%s", id, screenPick,
+                  c["screenNeighbour"].integer, planePick, c["planeNeighbour"].integer, angles));
+
+    penPlay(penGestureEvents(from[0], from[1], to[0], to[1], 1, PEN_KMOD_LSHIFT, 8), id ~ " Shift+LMB drag");
+    const m = penMesh();
+    const labels = penHistoryLabels();
+    long[][] born;
+    foreach (f; m.faces) { bool had; foreach (g; r.a0.faces) if (g == f) had = true; if (!had) born ~= f.dup; }
+    assert([m.nv, m.nf, m.edges] == idxOf(c["after"]) && penHistoryLen() == r.hp + 1
+           && labels[$ - 1] == "Topology Build" && cyclesOf(born) == cyclesOf(facesOf(c["newFaces"])),
+           format("%s: mesh %s (expected counts %s), faces born %s (expected the cycle %s; the screen rule "
+                  ~ "builds on v%d), history %s;%s", id, m.toString, c["after"], born, c["newFaces"],
+                  screenPick, labels, angles));
+    penCtrlZ(id ~ " Ctrl+Z");
+    expectState(id, "z1", r.a0, c["undoArmed"].type == JSONType.true_, r.hp);
+    writeln("PASS ", id);
+}
+
+// ---------------------------------------------------------------------------
 // chord-dup-interior-edge — contract C-0 (task 0486; not this capture) through
 // the real Shift+LMB chord: on interior edge 5-6 the Duplicate slot moves the
 // edge's two vertices instead. One row, Ctrl+Z bit-exact, the tool stays armed.
@@ -1776,7 +1878,7 @@ unittest {
     writeln("cells=", cellsRun);
     const only = environment.get("VIBE3D_CELL", "");
     if (only.length == 0)
-        assert(cellsRun == 42, format("topology pen session laws: %d cells ran, expected 42", cellsRun));
+        assert(cellsRun == 43, format("topology pen session laws: %d cells ran, expected 43", cellsRun));
     else
         assert(cellsRun == 1, format("topology pen session laws: VIBE3D_CELL=%s ran %d cells, expected 1 "
                                      ~ "(an unknown name runs none)", only, cellsRun));
