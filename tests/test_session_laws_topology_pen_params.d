@@ -519,7 +519,9 @@ bool armedTool(string tool, string attr) {
 // absorb-restores-predecessor — [A2-3]/[A3-4]: the group's undo goes through
 // the activation path's TAIL: Smooth Shift (a topology tool with a session
 // token) is re-armed with its attribute image AND its token, so the next
-// Ctrl+Z navigates its own step: `shift` back to its pre-step 0.
+// Ctrl+Z navigates its own SECOND step: `shift` back to that step's before
+// value. (Its first step carries its activation by its own policy, so the
+// attribute witness is the second.)
 unittest {
     if (!cell("absorb-restores-predecessor")) return;
     enum ss = "mesh.smoothShiftTool";
@@ -527,34 +529,40 @@ unittest {
     penLineUi("tool.set " ~ ss ~ " on");
     assert(armedTool(ss, "shift") && num(attrOf(ss, "shift")) == 0,
            "absorb-restores-predecessor rig: Smooth Shift not armed at shift 0");
-    auto s1 = penPost("/api/script?interactive=true", "tool.attr " ~ ss ~ " shift 0.3");
-    assert(s1["status"].str == "ok" && penHistoryLen() == r.hp + 2,
-           "absorb-restores-predecessor: the Smooth Shift step " ~ s1.toString ~ " "
-           ~ penHistoryLabels().join(","));
-    const shifted = penMesh();
-    const after = num(attrOf(ss, "shift"));
-    assert(abs(after - 0.3) < 1e-6, format("absorb-restores-predecessor: shift %s after the step", after));
+    double ssStep(string v, long hist) {
+        auto s1 = penPost("/api/script?interactive=true", "tool.attr " ~ ss ~ " shift " ~ v);
+        assert(s1["status"].str == "ok" && penHistoryLen() == hist,
+               "absorb-restores-predecessor: the Smooth Shift step " ~ v ~ " " ~ s1.toString ~ " "
+               ~ penHistoryLabels().join(","));
+        return num(attrOf(ss, "shift"));
+    }
+    const before = ssStep("0.3", r.hp + 2);
+    const s1 = penMesh();
+    const after = ssStep("0.5", r.hp + 3);
+    const s2 = penMesh();
+    assert(abs(before - 0.3) < 1e-6 && abs(after - 0.5) < 1e-6,
+           format("absorb-restores-predecessor: shift %s then %s", before, after));
     penArmUi(r);
     w("loop", "true");
     moveV5("absorb-restores-predecessor g1");
-    assert(penHistoryLen() == r.hp + 5, "absorb-restores-predecessor rig: " ~ penHistoryLabels().join(","));
+    assert(penHistoryLen() == r.hp + 6, "absorb-restores-predecessor rig: " ~ penHistoryLabels().join(","));
     z("absorb-restores-predecessor z1");
-    assert(penArmed() && penMesh() == shifted && penHistoryLen() == r.hp + 4,
+    assert(penArmed() && penMesh() == s2 && penHistoryLen() == r.hp + 5,
            "absorb-restores-predecessor z1: " ~ penHistoryLabels().join(","));
     z("absorb-restores-predecessor z2");
-    assert(armedTool(ss, "shift") && penMesh() == shifted && penHistoryLen() == r.hp + 2
+    assert(armedTool(ss, "shift") && penMesh() == s2 && penHistoryLen() == r.hp + 3
            && abs(num(attrOf(ss, "shift")) - after) < 1e-6,
            format("absorb-restores-predecessor z2: Smooth Shift armed %s, shift %s, history %s",
                   armedTool(ss, "shift"), num(attrOf(ss, "shift")), penHistoryLabels()));
     z("absorb-restores-predecessor z3");
-    assert(armedTool(ss, "shift") && penMesh() == r.a0 && penHistoryLen() == r.hp + 1,
-           format("absorb-restores-predecessor z3: Smooth Shift armed %s, mesh %s a0, history %s",
-                  armedTool(ss, "shift"), penMesh() == r.a0 ? "==" : "!=", penHistoryLabels()));
+    assert(armedTool(ss, "shift") && penMesh() == s1 && penHistoryLen() == r.hp + 2,
+           format("absorb-restores-predecessor z3: Smooth Shift armed %s, mesh %s its first step, "
+                  ~ "history %s", armedTool(ss, "shift"), penMesh() == s1 ? "==" : "!=",
+                  penHistoryLabels()));
     // m12's red line ([A3-4]): the restored instance navigated its OWN step.
-    assert(num(attrOf(ss, "shift")) == 0,
-           format("absorb-restores-predecessor z3: shift %s (expected the pre-step 0), "
-                  ~ "mesh %s a0, history %s", num(attrOf(ss, "shift")),
-                  penMesh() == r.a0 ? "==" : "!=", penHistoryLabels()));
+    assert(abs(num(attrOf(ss, "shift")) - before) < 1e-6,
+           format("absorb-restores-predecessor z3: shift %s (expected the step's before %s), "
+                  ~ "history %s", num(attrOf(ss, "shift")), before, penHistoryLabels()));
     writeln("PASS absorb-restores-predecessor");
 }
 
