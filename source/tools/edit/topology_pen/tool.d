@@ -481,9 +481,6 @@ private:
     package int   slideVertex_ = -1;
     package int   slideAxis_   = -1;
     package Vec3  slideVertexTarget_ = Vec3(0, 0, 0);
-    // One surface BVH per background mesh (keyed by its address) for the
-    // vertex slide's G-delta ray (`backgroundRayHit`).
-    BvhPick[size_t] slideBgPick_;
 
     // Slide DECLINE diagnostics (doc/tasks/work/0482-topopen-move-nonvertex.md
     // item 3 follow-up) — read-only observability, no behaviour change.
@@ -2367,9 +2364,9 @@ public:
     }
 
     // The background ray hit (WORLD) under the armed source's projected pixel
-    // shifted by (dx, dy); false with no background hit there. The ray goes
-    // through the CONS stage's own query (`BackgroundRayPicker`: per-mesh BVH,
-    // nearest `t`), so a drag over a dense background is not a scan per motion.
+    // shifted by (dx, dy); false with no background hit there
+    // (`backgroundRayHit`, a BVH query, so a drag over a dense background is
+    // not a scan per motion).
     // At (0, 0) this is the delta's origin. Equivalent to the source's own
     // position wherever the source lies on the background — every corpus
     // source does, so a variant taking the source position as the origin
@@ -2380,15 +2377,7 @@ public:
         ImVec2 q;
         if (!projectWorldPt(primaryModelSpace().toWorldPoint(m.vertices[sourceVert_]), vp, q))
             return false;
-        auto sources = backgroundSourcesFull();
-        if (sources.length == 0) return false;
-        Vec3 org, dir;
-        screenPointToRay(q.x + dx, q.y + dy, vp, org, dir);
-        SurfaceHit sh;
-        size_t si;
-        if (!backgroundRays().nearest(org, dir, sources, sh, si)) return false;
-        hit = sh.point;
-        return true;
+        return backgroundRayHit(q.x + dx, q.y + dy, vp, hit);
     }
 
     // The live CONS stage's background ray query (its BVHs are the ones the
@@ -4904,28 +4893,16 @@ public:
 
     // The nearest background ray hit (WORLD) of window point (x, y), over
     // every background source in its own space; false on a miss or with no
-    // background.
+    // background. One query for the vertex slide and the build's drag delta:
+    // the CONS stage's per-mesh BVHs (`backgroundRays`).
     private bool backgroundRayHit(float x, float y, const ref Viewport vp, out Vec3 hitW) {
-        auto sources = backgroundSourcesFull();
-        bool[size_t] live;
-        foreach (bg; sources)
-            if (bg.mesh !is null) live[cast(size_t)bg.mesh] = true;
-        foreach (addr; slideBgPick_.keys)
-            if ((addr in live) is null) slideBgPick_.remove(addr);
         Vec3 org, dir;
         screenPointToRay(x, y, vp, org, dir);
-        float best = float.infinity;
-        bool found;
-        foreach (bg; sources) {
-            if (bg.mesh is null) continue;
-            auto bp = slideBgPick_.require(cast(size_t)bg.mesh, new BvhPick());
-            SurfaceHit sh;
-            if (!bp.pickSurfaceRay(org, dir, *bg.mesh, bg.space, sh) || sh.t >= best) continue;
-            best  = sh.t;
-            hitW  = sh.point;
-            found = true;
-        }
-        return found;
+        SurfaceHit sh;
+        size_t si;
+        if (!backgroundRays().nearest(org, dir, backgroundSourcesFull(), sh, si)) return false;
+        hitW = sh.point;
+        return true;
     }
 
     // The vertex slide's landed point for the pointer at (mx, my), LOCAL: the
