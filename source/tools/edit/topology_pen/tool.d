@@ -5474,7 +5474,7 @@ public:
         // can never shadow a vertex build.
         if (dupEdgeArmed_) return dupEdgeUp(e, vts);
         // Every Duplicate press that armed no build lands here: the Move
-        // fall-throughs (an interior edge, task 0486 C-0; a closed source
+        // fall-throughs (an interior edge, contract C-0; a closed source
         // vertex, R-closed) AND a press that declined outright (empty space),
         // because the base arms the button before the press can decline and
         // `runPenMode` stamps `Build` whatever the press answered. So this
