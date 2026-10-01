@@ -15,6 +15,7 @@
 // Run via: ./run_test.d test_topopen_attr_availability
 
 import topology_pen_session_helpers;
+import std.algorithm : canFind;
 import std.format : format;
 import std.json;
 import std.math : abs;
@@ -80,6 +81,10 @@ void expectRefused(string what, string door, string attr, string value) {
     assert(r["status"].str == "error",
            format("%s: the %s-door write %s %s answered %s, expected status:error", what,
                   door, attr, value, r.toString));
+    // The reason is the door's own (not some other refusal or exception).
+    const msg = door == "script" ? r["message"].str : r["results"].array[0]["message"].str;
+    assert(msg.canFind("attribute '" ~ attr ~ "'") && msg.canFind("disabled in its current state"),
+           format("%s: the %s-door refusal gives the reason %s", what, door, msg));
     assert(penHistoryLen() == h0,
            format("%s: the refused %s-door write added %d rows: %s", what, door,
                   penHistoryLen() - h0, penHistoryLabels()));

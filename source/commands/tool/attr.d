@@ -139,7 +139,6 @@ class ToolAttrCommand : Command {
                 ~ "' is disabled in its current state";
             return false;
         }
-        baseRefusal_ = "";
 
         // Build a single-key object and inject it.
         JSONValue pj = JSONValue(cast(JSONValue[string]) null);
