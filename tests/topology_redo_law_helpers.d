@@ -242,7 +242,6 @@ long setupCell(const JSONValue cell, const Rig rig) {
         foreach (k; 0 .. 3) c[k] += num(v[k]) / m["vertices"].array.length;
     cmdOk("/api/camera", format(`{"azimuth":0.5,"elevation":0.4,"distance":7,`
         ~ `"focus":{"x":%.6f,"y":%.6f,"z":%.6f}}`, c[0], c[1], c[2]), ctx);
-    haveHandle = false;
     cmdOk("/api/command", "history.clear", ctx);
     settle();
     const base = cast(long) getJson("/api/model")["vertices"].array.length;
@@ -259,30 +258,24 @@ long setupCell(const JSONValue cell, const Rig rig) {
     return base;
 }
 
-// The screen point of the rig's handle at its last press in this cell: the reference
-// presses fixed screen points, so a haul made while our tool shows no handle (the
-// navigation took the tool's gizmo away) presses where the handle last was.
-private double[2] lastHandle;
-private bool haveHandle;
-
 private void pressPoint(const Rig rig, const JSONValue step, out int x, out int y) {
     auto cam = getJson("/api/camera");
     double bx = cam["vpX"].integer + cam["width"].integer / 2;
     double by = cam["vpY"].integer + cam["height"].integer / 2;
     if (rig.handle) {
         auto h = getJson("/api/tool/handles")["handles"];
+        // no handle drawn at all (the navigation took the tool's gizmo away; reached in
+        // the autoact family): the press stays at the viewport centre — a tool without a
+        // drawn handle hits no part wherever it is pressed (measured: same relations)
+        const drawn = h.type == JSONType.object && h["parts"].array.length > 0;
         bool found;
-        if (h.type == JSONType.object)
+        if (drawn)
             foreach (p; h["parts"].array)
                 if (p["part"].integer == rig.handlePart && p["screen"].type == JSONType.array) {
                     bx = num(p["screen"][0]); by = num(p["screen"][1]); found = true;
                 }
-        if (found) { lastHandle = [bx, by]; haveHandle = true; }
-        else {
-            assert(haveHandle, format("rig: %s shows no handle part %d to haul",
-                rig.tool, rig.handlePart));
-            bx = lastHandle[0]; by = lastHandle[1];
-        }
+        assert(found || !drawn, format("rig: %s handle part %d is not on screen",
+            rig.tool, rig.handlePart));
     }
     x = cast(int)(bx + num(step["press"][0]) - rig.pressRef[0]);
     y = cast(int)(by + num(step["press"][1]) - rig.pressRef[1]);
