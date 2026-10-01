@@ -233,6 +233,9 @@ private enum LedgerRow[] kSurfaceRoster = [
     LedgerRow("Tool.recordGestureEdit|recordInSession", 1, "session recorder dispatch"),
     LedgerRow("Tool.recordGestureEdit|replaceInSessionTailWith", 1, "tail recorder dispatch"),
     LedgerRow("Tool.refuseGestureRecord|consolidate", 1, "refusal belt"),
+    // S7b (L58): a READ — the descriptor applies only while this session's row
+    // is the newest entry (a recording command writes a foreign one above it).
+    LedgerRow("TopologyPenTool.lastStepIsNewest|undoEntries", 1, "gesture link read (L58)"),
 ];
 
 unittest {
@@ -249,7 +252,7 @@ unittest {
     const problems = reconcile(kSurfaceRoster, ledgerHits);
     assert(problems.length == 0,
         "G7 census: the family's history call surface changed.\n" ~ problems);
-    assert(totalHits == 4,
+    assert(totalHits == 5,
         "G7 census: history-surface population changed");
 }
 
