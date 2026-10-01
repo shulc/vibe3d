@@ -1455,8 +1455,9 @@ public:
 
     package void reapplyLastStep(string name) {
         import std.algorithm.searching : canFind;
-        // A held press resets the descriptor at its open, so it has none yet.
-        if (stepOpen_ || cast(uint)stepKind() > PenStepKind.max) return;
+        // No `stepOpen_` term: a press resets the descriptor at its open
+        // (`pressOpensOperation`), so a held press reads `None` here anyway.
+        if (cast(uint)stepKind() > PenStepKind.max) return;
         const row = kReapply[stepKind()];
         if (!row.reads.canFind(name) || !lastStepIsNewest()) return;
         final switch (row.shape) {
