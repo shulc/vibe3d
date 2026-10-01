@@ -45,14 +45,13 @@ import toolpipe.stages.snap : SnapStage;
 import toolpipe.guide       : SnapGuide, GuideDrawState, kGuidePrioritySeed;
 import constraint           : resolveHoverTarget, topoPenPressPickPx,
                               topoPenSnapAcceptPx, topoPenSnapGatherPx,
-                              kTopoPenSnapAuto, closestPointOnMeshes, BackgroundSource,
-                              projectAlongDirection;
+                              kTopoPenSnapAuto, closestPointOnMeshes, BackgroundSource;
 import snap                  : backgroundSourcesFull, SnapAdmit;
 import tools.edit.smooth_relax : RelaxVec3, RelaxTopology, deriveBoundary, relaxPasses;
 import tools.edit.topology_pen.render : PenRenderOps;
 import tools.edit.topology_pen.snap_guide : PenSnapGuide;
 import tools.edit.topology_pen.json   : PenStateJsonOps;
-import bvh_pick              : BvhPick, SurfaceHit;
+import bvh_pick              : BvhPick, BackgroundRayPicker, SurfaceHit;
 import command_history      : CommandHistory, PreparedHistoryKind;
 import commands.mesh.vertex_new : MeshVertexNew;
 import commands.mesh.session_edit : MeshSessionEdit;
@@ -245,6 +244,7 @@ private:
     // for `pickFace` on the PRIMARY cage mesh — zero coupling to app
     // internals / the app's own hover-pick instance.
     BvhPick removePick_;
+    BackgroundRayPicker bgRayPick_;   // the drag delta's background ray (`bgHitAtSourcePx`)
 
     // TASK 1905 PHASE B — the pen's `package CommandHistory history_;` field is
     // gone; `history` now lives on `Tool` (see its declaration there for why
@@ -312,11 +312,10 @@ private:
     package int       sourceVert_     = -1;
     package GestureArm      dragArmed_;
     int       dragStartX_, dragStartY_;
-    int       dragCurX_, dragCurY_;   // the live cursor, for the Tri ghost (`triNeighbourAt`)
+    int       ghostTriN_      = -1;   // Tri case: `triNeighbourAt` at the last cursor (the ghost)
     Vec3      buildPressHitW_;        // Tri case: the BG ray hit at the source's pixel (WORLD)
     bool      buildPressHitOk_;
     Vec3      buildNormalW_;          // Tri case: the tangent-plane normal at the source (WORLD)
-    bool      buildNormalFromBG_;     // ...taken from the background (else the source's polygons)
     BuildCase classifiedCase_ = BuildCase.None;
     int       triN_           = -1;   // Tri case: the neighbour (N-angle at release)
     int[]     triCands_;              // Tri case: the border neighbours N-angle picks from
@@ -1568,7 +1567,12 @@ public:
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
         readHit(vts);
-        if (dragArmed_) { dragCurX_ = e.x; dragCurY_ = e.y; }
+        // The Tri ghost's neighbour, once per cursor move (the ghost draws
+        // every frame and only reads it); the release re-asks at its own pixel.
+        if (dragArmed_ && classifiedCase_ == BuildCase.Tri) {
+            Viewport vp = viewportOf(vts);
+            ghostTriN_ = triNeighbourAt(e.x, e.y, vp);
+        }
         // While a drag-build is armed, this keeps `lastHit_` tracking the
         // CONS-snapped cursor point for the in-progress ghost preview
         // (draw(), below) — no other state changes during the drag; the
@@ -2296,7 +2300,7 @@ public:
     // on). `quadP_` is the border neighbour whose polygon runs a -> P, so the
     // new quad [P, a, Q, b] traverses each shared side against its polygon.
     private BuildCase classifySource(int a) {
-        triN_ = quadP_ = quadQ_ = -1;
+        triN_ = quadP_ = quadQ_ = ghostTriN_ = -1;
         triCands_ = null;
         triCandDirs_ = null;
         auto m = mesh;
@@ -2363,7 +2367,13 @@ public:
     }
 
     // The background ray hit (WORLD) under the armed source's projected pixel
-    // shifted by (dx, dy); false with no background hit there.
+    // shifted by (dx, dy); false with no background hit there. The ray goes
+    // through the CONS stage's own query (`BackgroundRayPicker`: per-mesh BVH,
+    // nearest `t`), so a drag over a dense background is not a scan per motion.
+    // At (0, 0) this is the delta's origin. Equivalent to the source's own
+    // position wherever the source lies on the background — every corpus
+    // source does, so a variant taking the source position as the origin
+    // cannot be told apart on that corpus (review mutation Y8).
     private bool bgHitAtSourcePx(int dx, int dy, const ref Viewport vp, out Vec3 hit) {
         auto m = mesh;
         if (m is null || sourceVert_ < 0 || sourceVert_ >= cast(int)m.vertices.length) return false;
@@ -2372,20 +2382,24 @@ public:
             return false;
         auto sources = backgroundSourcesFull();
         if (sources.length == 0) return false;
-        Vec3 org, dir, n;
+        Vec3 org, dir;
         screenPointToRay(q.x + dx, q.y + dy, vp, org, dir);
-        return projectAlongDirection(org, dir, sources, false, hit, n);
+        SurfaceHit sh;
+        size_t si;
+        if (!bgRayPick_.nearest(org, dir, sources, sh, si)) return false;
+        hit = sh.point;
+        return true;
     }
 
     // The tangent-plane normal at source `a` (WORLD, unit): the area-weighted
     // normal of a's own polygons; for a source on no polygon, the background
     // normal at nearestBG(a) (`closestPointOnMeshes`); else zero (the plain 3D
-    // angle). `fromBG` reports which one answered. Polygons FIRST, measured:
+    // angle). Polygons FIRST, measured:
     // on the session rig the background facet under v0 is not symmetric about
     // the grid diagonal (its normal (-0.278, -0.289, 0.916)), which turns the
     // captured bisector tie of K-chords (v4) into v1 (cos -0.7191 vs -0.7215);
     // the grid's own normal keeps that tie exact (wave plan [A14-5]).
-    package Vec3 sourceTangentNormal(int a, out bool fromBG) {
+    package Vec3 sourceTangentNormal(int a) {
         auto m = mesh;
         if (m is null || a < 0 || a >= cast(int)m.vertices.length) return Vec3(0, 0, 0);
         const ms = primaryModelSpace();
@@ -2405,10 +2419,8 @@ public:
         int si, fi;
         float d2;
         if (sources.length > 0 && closestPointOnMeshes(ms.toWorldPoint(m.vertices[a]), sources,
-                                                       false, foot, n, si, fi, d2)) {
-            fromBG = true;
+                                                       false, foot, n, si, fi, d2))
             return n;
-        }
         return Vec3(0, 0, 0);
     }
 
@@ -3279,7 +3291,7 @@ public:
         // P3 build (doc/topopen_p3_plan.md)
         sourceVert_     = -1;
         classifiedCase_ = BuildCase.None;
-        triN_ = quadP_ = quadQ_ = -1;
+        triN_ = quadP_ = quadQ_ = ghostTriN_ = -1;
         triCands_ = null;
         triCandDirs_ = null;
         // P4 Move/Place (doc/topopen_p4_plan.md) + the task-0484 element grab.
@@ -4163,13 +4175,14 @@ public:
 
         sourceVert_     = src;
         dragArmed_      = true;
-        dragStartX_     = dragCurX_ = e.x;
-        dragStartY_     = dragCurY_ = e.y;
+        dragStartX_     = e.x;
+        dragStartY_     = e.y;
         classifiedCase_ = c;
         // N-plane's two press-time terms: the BG ray hit at the source's own
         // pixel (the surface delta's origin) and the source's tangent plane.
         buildPressHitOk_ = bgHitAtSourcePx(0, 0, vp, buildPressHitW_);
-        buildNormalW_    = sourceTangentNormal(src, buildNormalFromBG_);
+        buildNormalW_    = sourceTangentNormal(src);
+        ghostTriN_       = (c == BuildCase.Tri) ? triNeighbourAt(e.x, e.y, vp) : -1;
         return true;   // consume; the build (if any) commits on release
     }
 
@@ -5570,7 +5583,7 @@ public:
         sourceVert_     = -1;
         dragArmed_      = false;
         classifiedCase_ = BuildCase.None;
-        triN_ = quadP_ = quadQ_ = -1;
+        triN_ = quadP_ = quadQ_ = ghostTriN_ = -1;
         triCands_ = null;
         triCandDirs_ = null;
 

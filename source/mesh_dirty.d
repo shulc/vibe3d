@@ -160,7 +160,7 @@ ulong foldSubpatchKeyMember(T)(ulong state, auto ref const T value)
 // the `Layer` whose mesh lived at A is collected; a NEW `Layer` is allocated
 // at the same address and publishes nothing before the consumer next asks.
 // `matches(A, e)` is then true and the consumer keeps a cache built over a
-// mesh that no longer exists. Exposed today: `ConstrainStage._bgBvh[size_t]`
+// mesh that no longer exists. Exposed today: `BackgroundRayPicker._bvh[size_t]` (CONS, topology pen)
 // and `item_pick._bvh[size_t]`, both keyed by RAW ADDRESS; `BgGpuCache` is safe
 // because its map is keyed by `Layer` IDENTITY, which the GC keeps alive.
 // CLOSED AT STAGE 3, by `noteMeshBirth` below, and the closing datum lives on
@@ -529,7 +529,7 @@ void noteMeshChange(size_t subjectAddr, uint flags) nothrow @nogc {
 //
 // WHY THE EPOCH IS THE SIGNAL rather than a new term in `MeshDirtyKey`. Every
 // address-keyed consumer in the tree already compares an epoch for its
-// address — the two raw-address maps (`ConstrainStage._bgBvh`,
+// address — the two raw-address maps (`BackgroundRayPicker._bvh`,
 // `item_pick._bvh`) hold `BvhPick` objects whose own `_surfKey` is one of these
 // keys. Advancing the epoch on a changed birth therefore reaches all of them
 // through the compare they already make, with no new term to thread through

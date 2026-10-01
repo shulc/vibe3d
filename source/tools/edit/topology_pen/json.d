@@ -120,6 +120,7 @@ mixin template PenStateJsonOps() {
         root["sourceVert"] = JSONValue(sourceVert_);
         root["dragArmed"]  = JSONValue(dragArmed_);
         root["case"] = JSONValue(buildCaseTag(classifiedCase_));
+        root["triGhost"] = JSONValue(ghostTriN_);   // the Tri ghost's neighbour
 
         // P4 (doc/topopen_p4_plan.md): the armed Move/Place disambiguation
         // state, for Tier-C tests to assert WHICH gesture a plain-LMB press

@@ -478,6 +478,58 @@ private:
     }
 }
 
+/// The nearest hit of one WORLD ray across several background sources, each
+/// cast through its OWN `ModelSpace` against a per-mesh surface BVH
+/// (`BvhPick.pickSurfaceRay`), nearest by `t`. One query shared by the CONS
+/// stage's cursor raycast and the topology pen's drag-delta ray, so both read
+/// the same surface the same way. `S` is any source with `.mesh` (a
+/// `const(Mesh)*`) and `.space` (a `ModelSpace`) — `constraint.BackgroundSource`
+/// in the tree; a template so this module needs no import of it. Entries are
+/// keyed by mesh ADDRESS and pruned of every address absent from the call's
+/// `sources`, so a removed or hidden layer's BVH is freed.
+struct BackgroundRayPicker {
+    private BvhPick[size_t] _bvh;
+
+    void clear() nothrow { _bvh.clear(); }
+
+    /// False on a miss across every source (or no source); `outIdx` is the
+    /// index into `sources` of the source that answered.
+    bool nearest(S)(Vec3 org, Vec3 dir, const(S)[] sources,
+                    out SurfaceHit outHit, out size_t outIdx)
+    {
+        bool[size_t] live;
+        foreach (bg; sources)
+            if (bg.mesh !is null) live[cast(size_t)bg.mesh] = true;
+        size_t[] stale;
+        foreach (addr, bp; _bvh)
+            if ((addr in live) is null) stale ~= addr;
+        foreach (addr; stale) _bvh.remove(addr);
+
+        float bestT = float.infinity;
+        bool  found = false;
+        foreach (i, bg; sources) {
+            if (bg.mesh is null) continue;
+            immutable addr = cast(size_t)bg.mesh;
+            auto pp = addr in _bvh;
+            BvhPick bp;
+            if (pp is null) {
+                bp = new BvhPick();
+                _bvh[addr] = bp;
+            } else {
+                bp = *pp;
+            }
+            SurfaceHit sh;
+            if (!bp.pickSurfaceRay(org, dir, *bg.mesh, bg.space, sh)) continue;
+            if (sh.t >= bestT) continue;
+            bestT  = sh.t;
+            outHit = sh;
+            outIdx = i;
+            found  = true;
+        }
+        return found;
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Unit tests (run via `dub test --config=tests`)
 // ---------------------------------------------------------------------------

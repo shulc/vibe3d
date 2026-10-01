@@ -6,7 +6,8 @@ import toolpipe.packets : ConstrainPacket, ConstrainGeom, ConstrainHitPacket,
 import operator         : Operator, Task, VectorStack, PacketKind;
 import popup_state      : setStatePath, installPreparedStatePath;
 import params           : Param, IntEnumEntry, wireTagForValue;
-import bvh_pick         : BvhPick, SurfaceHit;
+import bvh_pick         : BackgroundRayPicker, SurfaceHit;
+import math             : Vec3, screenPointToRay;
 import constraint        : BackgroundSource;
 
 // Single-sourced geometry-mode token<->value table (task 0184 / audit-2 C2):
@@ -105,7 +106,7 @@ private:
     // projection in xfrm_transform.d already consumes that same snapshot).
     // Pruned each evaluate() so a removed/hidden background layer's BVH is
     // freed (mirrors `BgGpuCache.reconcile`'s prune pattern).
-    BvhPick[size_t]    _bgBvh;
+    BackgroundRayPicker _bgBvh;
     ConstrainHitPacket _hitPkt;
 
 public:
@@ -169,7 +170,7 @@ public:
     // Shared BVH raycast — cast a ray from the current cursor pixel through
     // every background layer's mesh, each folded through ITS OWN ModelSpace
     // (task 0617 Stage 4), keep the globally nearest hit (world-space).
-    // Reuses BvhPick/pickSurface (source/bvh_pick.d) — no new raycast
+    // Reuses `BackgroundRayPicker` (source/bvh_pick.d) — no new raycast
     // machinery, per the topology-pen P0 layering rule. Shared by BOTH mode
     // branches below: Screen mode (`screenRaycastBackground`) publishes
     // this hit directly as the placement; Point mode
@@ -192,38 +193,10 @@ public:
     // mode is driving the prune.
     private bool bgSurfaceRayHit(ref SubjectPacket subj, const(BackgroundSource)[] bgFull,
                                  out SurfaceHit outHit, out size_t outSrcIdx) {
-        bool[size_t] live;
-        foreach (bg; bgFull)
-            if (bg.mesh !is null) live[cast(size_t)bg.mesh] = true;
-        size_t[] stale;
-        foreach (addr, bp; _bgBvh)
-            if ((addr in live) is null) stale ~= addr;
-        foreach (addr; stale) _bgBvh.remove(addr);
-
-        float bestT = float.infinity;
-        bool  found = false;
-        foreach (i, bg; bgFull) {
-            if (bg.mesh is null) continue;
-            size_t addr = cast(size_t)bg.mesh;
-            auto pp = addr in _bgBvh;
-            BvhPick bp;
-            if (pp is null) {
-                bp = new BvhPick();
-                _bgBvh[addr] = bp;
-            } else {
-                bp = *pp;
-            }
-            SurfaceHit sh;
-            if (!bp.pickSurface(subj.cursorX, subj.cursorY, subj.viewport, *bg.mesh,
-                                bg.space, sh))
-                continue;
-            if (sh.t >= bestT) continue;
-            bestT     = sh.t;
-            outHit    = sh;
-            outSrcIdx = i;
-            found     = true;
-        }
-        return found;
+        // Pixel-centre ray, as `BvhPick.pickSurface` builds it.
+        Vec3 org, dir;
+        screenPointToRay(subj.cursorX + 0.5f, subj.cursorY + 0.5f, subj.viewport, org, dir);
+        return _bgBvh.nearest(org, dir, bgFull, outHit, outSrcIdx);
     }
 
     // Point mode — background-surface PLACEMENT. The SEED is the

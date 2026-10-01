@@ -1799,7 +1799,27 @@ unittest {
                   ~ "rule v%d (v%d) -- the rig does not discriminate:%s", id, screenPick,
                   c["screenNeighbour"].integer, planePick, c["planeNeighbour"].integer, angles));
 
-    penPlay(penGestureEvents(from[0], from[1], to[0], to[1], 1, PEN_KMOD_LSHIFT, 8), id ~ " Shift+LMB drag");
+    // The same gesture as `penGestureEvents`, played in three parts so the Tri
+    // ghost's neighbour (`triGhost`, set per cursor move) is read while held:
+    // at the press it is the zero-drag answer, after the motions it must name
+    // the neighbour the release then builds on.
+    const mod = PEN_KMOD_LSHIFT;
+    penPlay(penMotion(20, from[0], from[1], 0, mod) ~ "\n" ~ penMotion(40, from[0], from[1], 0, mod) ~ "\n"
+            ~ penButton(60, true, 1, from[0], from[1], mod), id ~ " Shift+LMB press");
+    const g0 = getJson("/api/tool/state");
+    string moves;
+    foreach (i; 1 .. 9)
+        moves ~= penMotion(60 + 40 * i, from[0] + (to[0] - from[0]) * i / 8, from[1] + (to[1] - from[1]) * i / 8,
+                           penButtonMask(1), mod) ~ "\n";
+    penPlay(moves, id ~ " held motions");
+    const g1 = getJson("/api/tool/state");
+    assert(g0["dragArmed"].type == JSONType.true_ && g0["case"].str == "tri"
+           && g1["dragArmed"].type == JSONType.true_ && g0["triGhost"].integer != planePick
+           && g1["triGhost"].integer == planePick,
+           format("%s: the ghost names v%s at the press and v%s after the motions (expected another "
+                  ~ "neighbour, then the plane rule's v%d); armed %s/%s, case %s", id, g0["triGhost"],
+                  g1["triGhost"], planePick, g0["dragArmed"], g1["dragArmed"], g0["case"]));
+    penPlay(penButton(500, false, 1, to[0], to[1], mod), id ~ " release");
     const m = penMesh();
     const labels = penHistoryLabels();
     long[][] born;
