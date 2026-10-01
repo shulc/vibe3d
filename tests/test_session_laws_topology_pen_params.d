@@ -25,6 +25,7 @@
 //   descriptor-after-redo-rearm   L2q
 //   fold-*                        L38/L41/L42/L43/L45/L55  the fold at a press,
 //                                      a switch, a re-typed arm; group redo
+//   param-redo-two-in-instance    L2s  the prune after a redo keeps this instance's row
 //   pop-one-open-rows             L54  undo pops one open row at a time
 //   switch-closed-redo            C4-switch-closed (L53 Closed)
 //   rearm-redo-opens-nothing      ours: a re-arming redo opens no block
@@ -794,6 +795,33 @@ unittest {
     writeln("PASS param-redo-open-undone");
 }
 
+// param-redo-two-in-instance — L2s, two open rows: in the recording instance
+// the redo of the first leaves the second at the redo head (written while g1
+// was the open block, `PreNavOpen`), and the prune that follows the redo keeps
+// it there: same instance. The second Shift+Z brings it back.
+unittest {
+    if (!cell("param-redo-two-in-instance")) return;
+    const r = rig();
+    penArmUi(r);
+    moveV5("param-redo-two-in-instance g1");
+    const g1 = penMesh();
+    w("offsetX", "0.1");
+    w("loop", "true");
+    z("param-redo-two-in-instance z1");
+    z("param-redo-two-in-instance z2");
+    at("param-redo-two-in-instance", "z2", g1, true, r.hp + 2);
+    sz("param-redo-two-in-instance r1");
+    at("param-redo-two-in-instance", "r1 (the first row)", g1, true, r.hp + 3);
+    assert(redoLen() == 1, format("param-redo-two-in-instance r1: redo %d (expected 1: the second "
+                                  ~ "open row is this instance's)", redoLen()));
+    sz("param-redo-two-in-instance r2");
+    at("param-redo-two-in-instance", "r2 (the second row)", g1, true, r.hp + 4);
+    assert(attrStr("loop") == "true" && is01(attrNum("offsetX")),
+           format("param-redo-two-in-instance r2: loop %s offsetX %s", attrStr("loop"),
+                  attrStr("offsetX")));
+    writeln("PASS param-redo-two-in-instance");
+}
+
 // pop-one-open-rows — L54 (Pop-one + the plan's rule): two open rows pop one
 // at a time; after the re-arm the first is refused even with the second above
 // it (R-above refuted).
@@ -1207,7 +1235,7 @@ unittest {
     writeln("cells=", cellsRun);
     const only = environment.get("VIBE3D_CELL", "");
     if (only.length == 0)
-        assert(cellsRun == 41, format("topology pen S7a laws: %d cells ran, expected 41", cellsRun));
+        assert(cellsRun == 42, format("topology pen S7a laws: %d cells ran, expected 42", cellsRun));
     else
         assert(cellsRun == 1, format("topology pen S7a laws: VIBE3D_CELL=%s ran %d cells, expected 1 "
                                      ~ "(an unknown name runs none)", only, cellsRun));
