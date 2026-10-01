@@ -98,11 +98,12 @@
 # Display-only in the strict sense — a hidden marker still grabs the same
 # element on a press.
 #
-# `offsetX` / `offsetY` / `offsetZ` — the Offset of the last Move-family press
-# (wave plan 8640 S7a): the pressed element's anchor travel since its press,
-# written live during the drag. A press resets it; a write is its own undo
-# row. Re-applying the last press on a write is slice S7b's; until then the
-# write changes no geometry.
+# `offsetX` / `offsetY` / `offsetZ` — the Offset of the last press (wave plan
+# 8640 S7a/S7b): the pressed element's offset, written live during the drag.
+# A press resets it; a write is its own undo row and re-applies the last press
+# by its kind (the carried vertices at nearestBG(origin + offset), or the
+# press image back for Add Loop and Fill); after Remove, Split, Smooth, an
+# undone press or a recording command it changes no geometry.
 #
 # NOT here, on purpose: an iteration/pass-count row. The reference exposes an
 # iteration-count attribute for its Smooth gesture, but that attribute and its
