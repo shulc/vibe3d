@@ -340,9 +340,11 @@ private bool centerPlaced;
 /// Half the reference's 0.05 placement snap: our placed centre must round to its centre.
 enum double kCenterSnapHalf = 0.025;
 
-/// `Rig.placesCenter`, g1: look at the reference's placed centre T from a direction
-/// perpendicular to T − C0 (C0 our current centre), so the viewport centre's ray meets our
-/// press plane (screen-facing, through C0) at T itself; the press then lands on T.
+/// `Rig.placesCenter`, g1: look at the reference's centre T from a direction perpendicular
+/// to T − C0 (C0 our current centre), so the viewport centre's ray meets our press plane
+/// (screen-facing, through C0) at T. T is the reference's centre AFTER its g1 drag, so our g1
+/// ends at the reference's post-haul centre by construction: these cells measure the session
+/// laws downstream of g1 and do not test the placement law itself (findings §12-§13).
 private void aimAtCenter(const Rig rig, const JSONValue step, string ctx) {
     import std.math : atan, cos, sin;
     assert("center" in step, "rig VOID " ~ ctx ~ "/" ~ step["label"].str
