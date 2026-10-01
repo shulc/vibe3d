@@ -231,6 +231,21 @@ mixin template PenRenderOps() {
             }
             return;
         }
+        // The edge slide over a background (S7b): its endpoints' landed
+        // points, refreshed per motion, once the axis has latched.
+        if (slideArmed_ && slideOverBg_) {
+            if (slideAxis_ < 0) return;
+            const AimViewport vpe = aimSpace(vp, primaryModelSpace());
+            enum uint eCol = IM_COL32(120, 200, 255, 220);
+            ImVec2 pa, pb;
+            if (projectLocalPt(slideEdgeTargetA_, vpe, pa)
+             && projectLocalPt(slideEdgeTargetB_, vpe, pb)) {
+                dl.AddLine(pa, pb, eCol, 2.5f);
+                dl.AddCircleFilled(pa, 4.0f, eCol, 16);
+                dl.AddCircleFilled(pb, 4.0f, eCol, 16);
+            }
+            return;
+        }
         if (slideArmed_ && meshSrc_ !is null) {
             auto m = mesh;
             if (m !is null

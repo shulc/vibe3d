@@ -378,6 +378,9 @@ private:
     package MoveElem     moveElem_  = MoveElem.None;
     package uint[]       moveVerts_;
     package Vec3[]       moveBase_;
+    // The edge/polygon Move's shared offset at the last evaluation (zero on a
+    // click or a miss): what the release writes to the Offset (L18).
+    package Vec3         moveOffset_ = Vec3(0, 0, 0);
     package int          moveStartX_, moveStartY_;
     package bool         moveDirty_ = false;
     bool         moveWelded_ = false;
@@ -503,6 +506,17 @@ private:
     package int   slideVertex_ = -1;
     package int   slideAxis_   = -1;
     package Vec3  slideVertexTarget_ = Vec3(0, 0, 0);
+    // The EDGE slide over a background (wave plan 8640 S7b, §9.26.3 [A14-3],
+    // §9.27 [A15-4]; laws L47/L50): the cursor path accumulates from the
+    // press; when it first reaches `kEdgeSlideLatchPx` the world axis is
+    // LATCHED (`slideAxis_`) from the surface delta at that moment and kept
+    // for the gesture; the endpoints then move by the total G-delta offset
+    // projected on it. `slideOverBg_` selects this kernel at the arm; with no
+    // background the measured rail law (`commitSlide`) stands.
+    package bool  slideOverBg_ = false;
+    package float slidePathPx_ = 0.0f;
+    package int   slidePrevX_, slidePrevY_;
+    package Vec3  slideEdgeTargetA_ = Vec3(0, 0, 0), slideEdgeTargetB_ = Vec3(0, 0, 0);
 
     // Slide DECLINE diagnostics (doc/tasks/work/0482-topopen-move-nonvertex.md
     // item 3 follow-up) — read-only observability, no behaviour change.
@@ -1429,6 +1443,80 @@ public:
         }
     }
 
+    // Re-evaluation by step kind (wave plan 8640 S7b, §9.8 / §9.17.6; laws
+    // L17-L24, L30): an INTERACTIVE write of an attribute the last press's kind
+    // reads (`kReapply`) re-applies that press inside the write's own row;
+    // every other write is attribute-only. A headless `tool.attr` re-applies
+    // nothing (captured: such a write moves no geometry).
+    override void onParamChanged(string name) {
+        super.onParamChanged(name);
+        if (interactiveParamEdit) reapplyLastStep(name);
+    }
+
+    package void reapplyLastStep(string name) {
+        import std.algorithm.searching : canFind;
+        // A held press resets the descriptor at its open, so it has none yet.
+        if (stepOpen_ || cast(uint)stepKind() > PenStepKind.max) return;
+        const row = kReapply[stepKind()];
+        if (!row.reads.canFind(name) || !lastStepIsNewest()) return;
+        final switch (row.shape) {
+            case ReapplyShape.attributeOnly:  return;
+            case ReapplyShape.carriedT:       reapplyCarried();    return;
+            case ReapplyShape.rerunFromBasis: rerunStepFromBasis(); return;
+            case ReapplyShape.basisOnly:      restoreStepBasis();  return;
+        }
+    }
+
+    // The descriptor indexes the mesh its press left, so it applies only while
+    // a row of THIS session is the newest history entry. A recording command
+    // keeps the pen armed (L57) and writes a foreign row above it, after which
+    // its indices may name other geometry: the write is then attribute-only.
+    // Whether the reference re-applies there is pending capture (card 8780).
+    // Unbound (no session token, a white-box rig): the descriptor stands.
+    private bool lastStepIsNewest() {
+        const token = sessionRecordToken();
+        if (history is null || token == 0) return true;
+        const u = history.undoEntries();
+        return u.length != 0 && u[$ - 1].cmd.sessionToken() == token;
+    }
+
+    // carriedT: each carried vertex at `nearestBG(stepOrig_i + offset)` on the
+    // CURRENT mesh — the nearest-foot query, never a camera ray — and exactly
+    // at `stepOrig_i` when all three channels are zero (L24 Z-exact).
+    private void reapplyCarried() {
+        import std.math : isFinite;
+        auto m = mesh;
+        if (m is null || stepVerts_.length == 0 || stepVerts_.length != stepOrig_.length)
+            return;
+        foreach (vi; stepVerts_) if (vi >= m.vertices.length) return;
+        const off = Vec3(offsetX_, offsetY_, offsetZ_);
+        if (!isFinite(off.x) || !isFinite(off.y) || !isFinite(off.z)) return;
+        const to = carriedTargets(stepOrig_, off);
+        foreach (i, vi; stepVerts_) m.vertices[vi] = to[i];
+        m.commitChange(MeshEditScope.Position);
+        m.syncSelection();
+        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_); }
+    }
+
+    // basisOnly: the press image comes back (Add Loop, L20; Fill, L30).
+    private bool restoreStepBasis() {
+        auto m = mesh;
+        if (m is null || !basis_.filled) return false;
+        basis_.restore(*m);
+        resyncSession();   // the restore may drop the press's faces/edges
+        m.syncSelection();
+        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_); }
+        return true;
+    }
+
+    // rerunFromBasis: the press image, then the kind's kernel at the written
+    // value. Smooth is the one kind of this shape (L21); its descriptor carries
+    // the press's pass count as its one entry.
+    private void rerunStepFromBasis() {
+        if (stepVerts_.length != 1 || !restoreStepBasis()) return;
+        applySmoothPasses(cast(int)stepVerts_[0]);
+    }
+
     override void activate() {
         lastHit_    = ConstrainHitPacket.init;
         lastTarget_ = HoverTarget.init;
@@ -1766,6 +1854,17 @@ public:
             if (slideVertex_ >= 0) {
                 // A failed evaluation leaves `slideAxis_` -1 (its `out` init).
                 vertexSlideTarget(e.x, e.y, vp, slideVertexTarget_, slideAxis_, slideDeltaK_);
+            } else if (slideOverBg_) {
+                Vec3 off;
+                if (edgeSlideStep(e.x, e.y, vp, off)) {
+                    auto m = mesh;
+                    if (m !is null && slideEndA_ < cast(int)m.vertices.length
+                        && slideEndB_ < cast(int)m.vertices.length) {
+                        const to = carriedTargets([m.vertices[slideEndA_], m.vertices[slideEndB_]], off);
+                        slideEdgeTargetA_ = to[0];
+                        slideEdgeTargetB_ = to[1];
+                    }
+                }
             } else {
                 slideDeltaK_ = slideDeltaFromDrag(e.x, e.y, vp);
             }
@@ -3361,6 +3460,8 @@ public:
         slideNbrA_ = slideNbrB_ = -1;
         slideAnchor_ = Vec3(0, 0, 0);
         slideDeltaK_ = 0.0f;
+        slideOverBg_ = false;
+        slidePathPx_ = 0.0f;
         // P8 Smooth (doc/topopen_p8_smooth_plan.md)
         smoothDragDx_ = 0;
         // P9 Split (doc/topopen_p9_split_plan.md) — cleared here so the
@@ -4028,10 +4129,12 @@ public:
     //   Vertex — P4's measured law, unchanged: the grabbed vertex goes TO the
     //            cursor's own constrained hit. A cursor that misses every
     //            background surface leaves it where it started.
-    //   Edge/Face — Move Loop's measured law: one shared SCREEN delta from
-    //            the press pixel, applied to each vertex's ARM-TIME position
-    //            and re-snapped to the background independently, a per-vertex
-    //            miss keeping that vertex's original position.
+    //   Edge/Face — the Move family's offset law (L17/L18/L28, wave plan
+    //            §9.8 D19): one shared offset, the background hit under the
+    //            anchor's pixel moved by the drag minus the anchor (G-delta;
+    //            the anchor is the pressed element's corner mean), and each
+    //            vertex at `nearestBG(base_i + offset)`. A ray that finds no
+    //            background moves nothing.
     //
     // Always computed from `moveBase_`, never from the live positions, so N
     // motion events produce the same answer as one — no compounding.
@@ -4060,9 +4163,45 @@ public:
         // surface sits under its own pixel, yanking the element onto the
         // background just for being clicked. Below the threshold the set
         // stays exactly where it is.
+        moveOffset_ = Vec3(0, 0, 0);
         if (releaseIsClick(dx, dy)) return moveBase_.dup;
 
-        return perVertexTargetsFrom(moveBase_, dx, dy, vp);
+        Vec3 off;
+        if (!gDeltaOffset(meanOf(moveBase_), dx, dy, vp, off)) return moveBase_.dup;
+        moveOffset_ = off;
+        return carriedTargets(moveBase_, off);
+    }
+
+    // The Move family's shared offset (L28 G-delta, wave plan §9.8 D19):
+    // `hit(proj(anchor) + drag) - anchor`, the hit the nearest background ray
+    // hit (WORLD) under the anchor's pixel moved by the drag. Local in, local
+    // out. False when the anchor projects behind the camera or the ray finds
+    // no background.
+    package bool gDeltaOffset(Vec3 anchorLocal, int dx, int dy, const ref Viewport vp,
+                              out Vec3 offLocal) {
+        const ms = primaryModelSpace();
+        float qx, qy, qz;
+        Vec3 hitW;
+        if (!projectToWindowFull(ms.toWorldPoint(anchorLocal), vp, qx, qy, qz)
+            || !backgroundRayHit(qx + dx, qy + dy, vp, hitW)) return false;
+        offLocal = ms.toLocalPoint(hitW) - anchorLocal;
+        return true;
+    }
+
+    // Every carried vertex at `nearestBG(base_i + offset)` (L17, the nearest
+    // foot, local); exactly `base` at a zero offset (L24 Z-exact). The drag
+    // kernels and the re-apply share it.
+    private Vec3[] carriedTargets(const(Vec3)[] base, Vec3 offLocal) {
+        const bool zero = offLocal.x == 0 && offLocal.y == 0 && offLocal.z == 0;
+        auto t = new Vec3[](base.length);
+        foreach (i, b; base) t[i] = zero ? b : footOnBackground(b + offLocal);
+        return t;
+    }
+
+    private static Vec3 meanOf(const(Vec3)[] ps) {
+        Vec3 c = Vec3(0, 0, 0);
+        foreach (p; ps) c = c + p;
+        return ps.length ? c * (1.0f / ps.length) : c;
     }
 
     // Apply `targets` to the armed moving set in place — the live half of the
@@ -4119,10 +4258,12 @@ public:
         if (moveWelded_) resyncSession();
     }
 
-    // The live Offset of a Move (S7a): the anchor's travel since the press,
-    // the anchor being the moved set's mean (a vertex, an edge's midpoint, a
-    // polygon's corner mean). Raw: no notification, no row.
+    // The live Offset of a Move (S7a): for an edge or a polygon the shared
+    // offset its kernel applied (`moveOffset_`, L18: anchor + offset is ON the
+    // background); for a vertex its travel since the press. Raw: no
+    // notification, no row.
     private void noteMoveOffset() {
+        if (moveElem_ != MoveElem.Vertex) { writeOffset(moveOffset_); return; }
         auto m = mesh;
         if (m is null || moveVerts_.length == 0 || moveBase_.length != moveVerts_.length)
             return;
@@ -4135,16 +4276,22 @@ public:
         writeOffset((now - was) * (1.0f / moveVerts_.length));
     }
 
-    // The live Offset of a Move Loop (S7a): the pressed edge's midpoint at
-    // the targets the release would commit for this screen delta.
-    private void noteLoopOffset(int dx, int dy, const ref Viewport vp) {
+    // The Move Loop's offset (L18, D19): the G-delta offset of the PRESSED
+    // edge's midpoint (not the loop's); zero on a click or a miss. Written raw
+    // as the live Offset, and the release's kernel applies it.
+    private Vec3 loopOffset(int dx, int dy, const ref Viewport vp) {
         auto m = mesh;
-        if (m is null || moveLoopSeed_ < 0 || moveLoopSeed_ >= cast(int)m.edges.length) return;
-        const uint[2] ends = [m.edges[moveLoopSeed_][0], m.edges[moveLoopSeed_][1]];
-        if (releaseIsClick(dx, dy)) { writeOffset(Vec3(0, 0, 0)); return; }
-        auto to = perVertexTargets(ends[], dx, dy, vp);
-        if (to.length != 2) return;
-        writeOffset((to[0] + to[1] - m.vertices[ends[0]] - m.vertices[ends[1]]) * 0.5f);
+        Vec3 off = Vec3(0, 0, 0);
+        if (m is null || moveLoopSeed_ < 0 || moveLoopSeed_ >= cast(int)m.edges.length
+            || releaseIsClick(dx, dy)) return off;
+        const e = m.edges[moveLoopSeed_];
+        if (!gDeltaOffset((m.vertices[e[0]] + m.vertices[e[1]]) * 0.5f, dx, dy, vp, off))
+            return Vec3(0, 0, 0);
+        return off;
+    }
+
+    private void noteLoopOffset(int dx, int dy, const ref Viewport vp) {
+        writeOffset(loopOffset(dx, dy, vp));
     }
 
     private void writeOffset(Vec3 d) {
@@ -4896,7 +5043,10 @@ public:
         int eA = cast(int)edgePair[0], eB = cast(int)edgePair[1];
         int nA = continuationNeighbor(m, cast(uint)eA, cast(uint)eB);
         int nB = continuationNeighbor(m, cast(uint)eB, cast(uint)eA);
-        if (nA < 0 && nB < 0) {
+        // Over a background the slide needs no rail (L47/L50: the endpoints
+        // land at nearestBG(u + offset)), so an interior edge slides too.
+        const bool overBg = backgroundSourcesFull().length != 0;
+        if (nA < 0 && nB < 0 && !overBg) {
             // Neither endpoint slidable -> nothing to do. NOT a pick miss: the
             // edge resolved, the hold-fixed contract simply leaves nothing to
             // move. Record both facts so a consumer can tell this apart from
@@ -4919,6 +5069,13 @@ public:
         slideNbrB_   = nB;
         slideAnchor_ = (m.vertices[eA] + m.vertices[eB]) * 0.5f;
         slideDeltaK_ = 0.0f;
+        slideAxis_   = -1;
+        slideOverBg_ = overBg;
+        slidePathPx_ = 0.0f;
+        slidePrevX_  = e.x;
+        slidePrevY_  = e.y;
+        slideEdgeTargetA_ = m.vertices[eA];
+        slideEdgeTargetB_ = m.vertices[eB];
         return true;
     }
 
@@ -5052,6 +5209,61 @@ public:
         const Vec3 tW = Vec3(uW.x + (axis == 0 ? k : 0.0f), uW.y + (axis == 1 ? k : 0.0f),
                              uW.z + (axis == 2 ? k : 0.0f));
         target = footOnBackground(ms.toLocalPoint(tW));
+        return true;
+    }
+
+    // The edge slide's latch point, in pixels of cursor path from the press:
+    // ours, inside the measured window (2.24, 5.9] px (L50; gap row (bb)).
+    enum float kEdgeSlideLatchPx = 4.5f;
+    // Two |components| tie within this RELATIVE tolerance, and a tie goes to
+    // the LATER axis (X/Y -> Y captured by L50, Y/Z ours; [A15-4], gap row (y)).
+    enum double kEdgeSlideTieEps = 1e-3;
+
+    /// The edge slide's world axis for the surface delta `d`: the largest
+    /// |component|, a later axis winning a tie within `eps` (relative to the
+    /// larger of the two); -1 for a zero or non-finite delta.
+    package static int edgeSlideAxis(Vec3 d, double eps) {
+        import std.math : abs, fmax, isFinite;
+        const double[3] a = [abs(cast(double)d.x), abs(cast(double)d.y), abs(cast(double)d.z)];
+        foreach (c; a) if (!isFinite(c)) return -1;
+        if (!(a[0] > 0 || a[1] > 0 || a[2] > 0)) return -1;
+        int best = 0;
+        foreach (k; 1 .. 3)
+            if (a[k] > a[best] || abs(a[k] - a[best]) <= eps * fmax(a[k], a[best])) best = k;
+        return best;
+    }
+
+    // One evaluation of the edge slide over a background, for the cursor at
+    // (x, y): accumulate the path, latch the axis once it reaches
+    // `kEdgeSlideLatchPx` — from the SURFACE delta `hit(proj(anchor) + drag) -
+    // hit(proj(anchor))` ([A12-1]; the `- anchor` form when the press pixel's
+    // ray misses, [A12-n6]) — and answer the offset: the L28 G-delta offset
+    // `hit(proj(anchor) + drag) - anchor` projected on the latched axis, one
+    // world channel, LOCAL. False before the latch (the edge does not move)
+    // and when the drag's ray finds no background (it writes nothing).
+    private bool edgeSlideStep(int x, int y, const ref Viewport vp, out Vec3 offLocal) {
+        slidePathPx_ += hypot(cast(float)(x - slidePrevX_), cast(float)(y - slidePrevY_));
+        slidePrevX_ = x;
+        slidePrevY_ = y;
+        const ms = primaryModelSpace();
+        const Vec3 aW = ms.toWorldPoint(slideAnchor_);
+        float qx, qy, qz;
+        Vec3 hitW;
+        if (!projectToWindowFull(aW, vp, qx, qy, qz)
+            || !backgroundRayHit(qx + (x - slideStartX_), qy + (y - slideStartY_), vp, hitW))
+            return false;
+        const Vec3 offW = hitW - aW;
+        if (slideAxis_ < 0) {
+            if (slidePathPx_ < kEdgeSlideLatchPx) return false;
+            Vec3 pressW;
+            slideAxis_ = edgeSlideAxis(backgroundRayHit(qx, qy, vp, pressW) ? hitW - pressW : offW,
+                                       kEdgeSlideTieEps);
+            if (slideAxis_ < 0) return false;
+        }
+        const float k = slideAxis_ == 0 ? offW.x : slideAxis_ == 1 ? offW.y : offW.z;
+        const Vec3 stepW = Vec3(slideAxis_ == 0 ? k : 0.0f, slideAxis_ == 1 ? k : 0.0f,
+                                slideAxis_ == 2 ? k : 0.0f);
+        offLocal = ms.toLocalPoint(aW + stepW) - slideAnchor_;
         return true;
     }
 
@@ -5620,8 +5832,11 @@ public:
             // LOCAL array. On a transformed primary the click landed the new
             // vertex at `hit` rather than at `M^-1·hit`, i.e. visibly away
             // from the cursor.
-            if (lastHit_.hit)
-                placeVertexAt(primaryModelSpace().toLocalPoint(lastHit_.point), vts);
+            if (!lastHit_.hit) return true;
+            const p = primaryModelSpace().toLocalPoint(lastHit_.point);
+            const vi = placeVertexAt(p, vts);
+            // The placed point is its own anchor (L17; its Offset reads 0).
+            if (vi >= 0) noteStepDescriptor(PenStepKind.PointPlace, [cast(uint)vi], [p]);
             return true;
         }
         if (moveArmed_) {
@@ -5711,14 +5926,29 @@ public:
         int  nA     = slideNbrA_, nB = slideNbrB_;
         int  startX = slideStartX_, startY = slideStartY_;
         const int vSlid = slideVertex_;
-        Vec3 vTarget;
-        bool vOk;
+        const bool overBg = vSlid < 0 && slideOverBg_;
+        Vec3 vTarget, off;
+        bool vOk, eOk;
         if (vSlid >= 0) {
             Viewport vpv = viewportOf(vts);
             int axis;
             float k;
             vOk = vertexSlideTarget(e.x, e.y, vpv, vTarget, axis, k);
+            // Its offset: the one world channel the vertex was pushed along.
+            auto mv = mesh;
+            if (vOk && mv !is null && vSlid < cast(int)mv.vertices.length) {
+                const ms = primaryModelSpace();
+                const Vec3 u = mv.vertices[vSlid];
+                const Vec3 uW = ms.toWorldPoint(u);
+                off = ms.toLocalPoint(Vec3(uW.x + (axis == 0 ? k : 0.0f), uW.y + (axis == 1 ? k : 0.0f),
+                                           uW.z + (axis == 2 ? k : 0.0f))) - u;
+            }
+        } else if (overBg) {
+            Viewport vpe = viewportOf(vts);
+            eOk = edgeSlideStep(e.x, e.y, vpe, off);   // the release is the last sample
         }
+        slideOverBg_ = false;
+        slidePathPx_ = 0.0f;
 
         slideSeed_  = -1;
         slideArmed_ = false;
@@ -5735,8 +5965,25 @@ public:
         if (releaseIsClick(dx, dy)) return true;
 
         slideDeltaK_ = 0.0f;
+        auto m = mesh;
         if (vSlid >= 0) {
-            if (vOk) commitSlideTargets(vSlid, vSlid, vTarget, vTarget);
+            if (!vOk || m is null) return true;
+            // The slid vertex is the step's carried set (L17; S7b).
+            writeOffset(off);
+            noteStepDescriptor(PenStepKind.Slide, [cast(uint)vSlid], [m.vertices[vSlid]]);
+            commitSlideTargets(vSlid, vSlid, vTarget, vTarget);
+            return true;
+        }
+        if (overBg) {
+            // Over a background both endpoints land at nearestBG(u_i + offset)
+            // (L29/L47/L50, the one-channel latched offset); no landing: nothing.
+            if (!eOk || m is null || eA < 0 || eB < 0 || eA >= cast(int)m.vertices.length
+                || eB >= cast(int)m.vertices.length) return true;
+            const Vec3[] u = [m.vertices[eA], m.vertices[eB]];
+            const to = carriedTargets(u, off);
+            writeOffset(off);
+            noteStepDescriptor(PenStepKind.Slide, [cast(uint)eA, cast(uint)eB], u);
+            commitSlideTargets(eA, eB, to[0], to[1]);
             return true;
         }
         Viewport vp = viewportOf(vts);
@@ -5761,7 +6008,13 @@ public:
     private bool smoothUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         if (!smoothArmed_) return false;
         smoothArmed_ = false;
-        applySmoothPasses(smoothPassesForDragDx(smoothDragDx_));
+        immutable int passes = smoothPassesForDragDx(smoothDragDx_);
+        applySmoothPasses(passes);
+        // A Strength write re-runs it from the press image (L21): the one
+        // entry is the pass count, as `applySmoothPasses` clamps it.
+        noteStepDescriptor(PenStepKind.Smooth,
+                           [cast(uint)(passes < 1 ? 1 : passes > MAX_TOPOPEN_SMOOTH_PASSES
+                                       ? MAX_TOPOPEN_SMOOTH_PASSES : passes)], null);
         return true;
     }
 
@@ -5850,20 +6103,20 @@ public:
         Vec3[] orig;
         if (m !is null)
             foreach (vi; verts) if (vi < m.vertices.length) orig ~= m.vertices[vi];
-        noteLoopOffsetAtSeed(seed, dx, dy, vp);
-        noteStepDescriptor(PenStepKind.MoveLoop, verts, orig);
-        if (releaseIsClick(dx, dy)) return true;
-
-        commitMoveLoop(verts, perVertexTargets(verts, dx, dy, vp), vp);
-        return true;
-    }
-
-    // `noteLoopOffset` for a seed the release already disarmed.
-    private void noteLoopOffsetAtSeed(int seed, int dx, int dy, const ref Viewport vp) {
         immutable keep = moveLoopSeed_;
-        moveLoopSeed_ = seed;
-        noteLoopOffset(dx, dy, vp);
+        moveLoopSeed_ = seed;   // the offset's anchor, already disarmed
+        const off = loopOffset(dx, dy, vp);
         moveLoopSeed_ = keep;
+        writeOffset(off);
+        noteStepDescriptor(PenStepKind.MoveLoop, verts, orig);
+        if (releaseIsClick(dx, dy) || orig.length != verts.length) return true;
+
+        immutable size_t nv = m.vertices.length;
+        commitMoveLoop(verts, carriedTargets(orig, off), vp);
+        // A landing weld compacted the indices: the moved set is gone (S7a's
+        // Move rule).
+        if (m.vertices.length != nv) noteStepDescriptor(PenStepKind.MoveLoop, null, null);
+        return true;
     }
 
     // P11 (doc/topopen_p11_duploop_plan.md Phase 3): commits the armed Dup
@@ -5911,7 +6164,8 @@ public:
         // `buildEditFactory_` — this IS the Shift+LMB Duplicate/build slot,
         // so the entry carries that slot's own wire name, never the loop
         // gesture's (the OBJ-3/D4 discipline every commit path here follows).
-        commitDupEdges(edges, dx, dy, vp, factories_.build, "Topology Duplicate Edge");
+        commitDupEdges(edges, dx, dy, vp, factories_.build, "Topology Duplicate Edge",
+                       PenStepKind.DupEdge);
         return true;
     }
 
@@ -6755,6 +7009,9 @@ public:
         }
 
         noteStep(factories_.build, "Topology Build");
+        // The new vertex carries its SOURCE as anchor (L17, C0-S5).
+        noteStepDescriptor(PenStepKind.CornerBuild, [b], [m.vertices[a]]);
+        writeOffset(bPosLocal - m.vertices[a]);
 
         m.syncSelection();
         if (gpu_ !is null) gpu_.upload(*m);
@@ -7020,6 +7277,7 @@ public:
         if (!ok) return;
 
         noteStep(factories_.addLoop, "Topology Add Loop");
+        noteStepDescriptor(PenStepKind.AddLoop, null, null);
 
         // REV1 KILLER-2: invalidate any OTHER armed gesture's cached
         // indices now that faces[] has been wholesale-rebuilt.
@@ -7177,6 +7435,7 @@ public:
         consumeDegenerateOnRing(m, ringVerts);
 
         noteStep(factories_.fill, "Topology Fill");
+        noteStepDescriptor(PenStepKind.Fill, null, null);
 
         // KILLER-2: invalidate any OTHER armed gesture's cached face/edge
         // indices now that faces[]/edges[] have been rebuilt.
@@ -7338,7 +7597,7 @@ public:
     package void commitDupLoop(const(int)[] loopEdges, int dx, int dy,
                                const ref Viewport vp) {
         commitDupEdges(loopEdges, dx, dy, vp, factories_.dupLoop,
-                       "Topology Duplicate Loop");
+                       "Topology Duplicate Loop", PenStepKind.None);
     }
 
     // The duplicate-edges KERNEL, shared by the Shift+RMB loop gesture above
@@ -7348,7 +7607,8 @@ public:
     // apart in the extrude, the re-snap, or the undo shape.
     private void commitDupEdges(const(int)[] loopEdges, int dx, int dy,
                                 const ref Viewport vp,
-                                MeshSessionEdit delegate() factory, string label) {
+                                MeshSessionEdit delegate() factory, string label,
+                                PenStepKind kind) {
         auto m = mesh;
         if (m is null || loopEdges.length == 0) return;
 
@@ -7378,6 +7638,20 @@ public:
         uint[] newVerts = iota(oldV, m.vertices.length).map!(i => cast(uint)i).array;
 
         auto targets = perVertexTargets(newVerts, dx, dy, vp);
+        // The SOURCE positions (the new ring is coincident with them until
+        // this write): a Duplicate edge's descriptor (L30, C1-O12) re-places
+        // the new vertices from them; its Offset is their mean travel (ours:
+        // gap row, the kernel is the per-vertex screen delta).
+        if (kind != PenStepKind.None) {
+            Vec3[] src;
+            Vec3 travel = Vec3(0, 0, 0);
+            foreach (i, vi; newVerts) {
+                src ~= m.vertices[vi];
+                travel = travel + (targets[i] - m.vertices[vi]);
+            }
+            noteStepDescriptor(kind, newVerts, src);
+            if (newVerts.length) writeOffset(travel * (1.0f / newVerts.length));
+        }
         foreach (i, vi; newVerts) m.vertices[vi] = targets[i];
         // FIX-3: Position-only follow-up write -- extendEdgesByMask already
         // committed Geometry above.

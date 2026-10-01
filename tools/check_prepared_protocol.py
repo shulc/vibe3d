@@ -376,7 +376,7 @@ param_hooks = [r for r in CURRENT_WRITERS["hooks"]
                if r["symbol"] == "onParamChanged" and r["module"] != "tool"]
 relevant_roots = [r for r in CURRENT_WRITERS["hooks"]
                   if r["symbol"] in ("activate", "update", "onParamChanged")]
-if (len(deactivations), len(param_hooks), len(relevant_roots)) != (35, 26, 71):
+if (len(deactivations), len(param_hooks), len(relevant_roots)) != (35, 27, 72):
     fail("P1.0b.0 reviewed writer cardinality changed")
 
 # P1.0b.1 exact conversion/defer ledger. The frozen writer rows remain the
@@ -521,6 +521,10 @@ B5Q_PREPARED_LEGACY = {
     ("tools.slice.loop_slice_tool", "LoopSliceTool", "onParamChanged"),
     ("tools.edit.edge_extend", "EdgeExtendTool", "onParamChanged"),
     ("tools.edit.edge_extend", "EdgeExtendTool", "deactivate"),
+    # Wave plan 8640 S7b: the pen re-applies its last press on an interactive
+    # write; its param door stays the base prepared no-op (a headless write
+    # re-applies nothing).
+    ("tools.edit.topology_pen.tool", "TopologyPenTool", "onParamChanged"),
 }
 PREPARED_LEGACY = (B3D_PREPARED_LEGACY | B4C_PREPARED_LEGACY |
     B5B_PREPARED_LEGACY | B5D_PREPARED_LEGACY | B5F_PREPARED_LEGACY |

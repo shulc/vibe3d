@@ -243,8 +243,43 @@ package enum PenMode { Move, Duplicate, Remove, Split, AddLoop, Point, Fill, Smo
 /// The kind of the press a pen step descriptor records (`stepKind`, wave plan
 /// 8640 S7a): which Move-family handler ran. Its values are the image's raw
 /// ints, so a member is never renumbered; `None` is a press that wrote no
-/// descriptor. Slice S7b keys its re-evaluation table on it.
-package enum PenStepKind : int { None = 0, VertexMove = 1, EdgeMove = 2, PolygonMove = 3, MoveLoop = 4 }
+/// descriptor. Slice S7b keys its re-evaluation table `kReapply` on it.
+package enum PenStepKind : int {
+    None = 0, VertexMove = 1, EdgeMove = 2, PolygonMove = 3, MoveLoop = 4,
+    Slide = 5, CornerBuild = 6, PointPlace = 7, AddLoop = 8, Smooth = 9,
+    Fill = 10, DupEdge = 11,
+}
+
+/// How an interactive attribute write re-evaluates the last press step
+/// (wave plan 8640 §9.8 / §9.17.6, laws L17-L24, L30): `carriedT` re-places
+/// the carried vertices at `nearestBG(stepOrig + offset)` (exactly `stepOrig`
+/// at a zero offset, L24); `rerunFromBasis` re-runs the kind's kernel on the
+/// press image at the new value; `basisOnly` restores the press image.
+package enum ReapplyShape { attributeOnly, carriedT, rerunFromBasis, basisOnly }
+
+package struct ReapplyRow { string[] reads; ReapplyShape shape; }
+
+private enum string[] kOffsets = ["offsetX", "offsetY", "offsetZ"];
+
+/// The pen's re-evaluation table, one row per `PenStepKind` (the data the
+/// whole re-apply reads; no per-kind branch outside its three shapes). A
+/// write whose name a row does not read, or any other kind (Remove, Split,
+/// the loop gestures, `None`), is attribute-only: its row changes no
+/// geometry (L19, L22, L30; gap row D17).
+package static immutable ReapplyRow[PenStepKind.max + 1] kReapply = [
+    PenStepKind.None:        ReapplyRow(null,             ReapplyShape.attributeOnly),
+    PenStepKind.VertexMove:  ReapplyRow(kOffsets,         ReapplyShape.carriedT),
+    PenStepKind.EdgeMove:    ReapplyRow(kOffsets,         ReapplyShape.carriedT),
+    PenStepKind.PolygonMove: ReapplyRow(kOffsets,         ReapplyShape.carriedT),
+    PenStepKind.MoveLoop:    ReapplyRow(kOffsets,         ReapplyShape.carriedT),
+    PenStepKind.Slide:       ReapplyRow(kOffsets,         ReapplyShape.carriedT),
+    PenStepKind.CornerBuild: ReapplyRow(kOffsets,         ReapplyShape.carriedT),
+    PenStepKind.PointPlace:  ReapplyRow(kOffsets,         ReapplyShape.carriedT),
+    PenStepKind.AddLoop:     ReapplyRow(kOffsets,         ReapplyShape.basisOnly),
+    PenStepKind.Smooth:      ReapplyRow(["smoothStrength"], ReapplyShape.rerunFromBasis),
+    PenStepKind.Fill:        ReapplyRow(kOffsets,         ReapplyShape.basisOnly),
+    PenStepKind.DupEdge:     ReapplyRow(kOffsets,         ReapplyShape.carriedT),
+];
 
 // Why a Ctrl+LMB Slide press did not arm — see `slideDecline_`'s own doc
 // comment for the full rationale. `None` also covers "the press armed
