@@ -1,7 +1,7 @@
 module topology_redo_law_helpers;
 
 // The executor and the comparison behind the topology-redo law suites (wave plan
-// S1a; fixture `tests/fixtures/topology_redo_law_cells.json`, frozen by the private
+// S1a, S1b; fixture `tests/fixtures/topology_redo_law_cells.json`, frozen by the private
 // generator `freeze_fixture.py` from the reference captures). One step vocabulary,
 // one observation, one comparison for every tool of the topology model — a tool
 // differs from another only by its rig (`rigOf`). There is NO branch on a law here.
@@ -10,7 +10,8 @@ module topology_redo_law_helpers;
 // a list of checkpoints. At each checkpoint the suite reads OUR product and reduces
 // it to the same relations the generator reduced the reference to:
 //   image   the EARLIER checkpoints with the same mesh + selection ([] = new)
-//   vcount  vertex count, in the reference rig's numbers (ours − our base + its base)
+//   vcount  vertex count, in the reference rig's numbers (ours − our base + its base;
+//           a rig whose kernel layer differs scales by Rig.layer)
 //   armed   the session's post-mode flag;  on  "tool" | "move" | ""
 //   refused a navigation key that moved no history row (Z/R checkpoints only)
 //   attrs   the EARLIER checkpoints with the same tool attributes (tool on only)
@@ -36,11 +37,22 @@ import std.process : environment;
 struct Rig {
     string tool;        // our tool id
     string[] attrs;     // the attributes `attrs` reads
-    bool handle;        // press on handle part 0 (else the viewport centre)
+    bool handle;        // press on a handle part (else the viewport centre)
+    int handlePart;     // which part `handle` presses (the part the reference haul moves)
     int[2] pressRef;    // the reference press the variant's g1 uses (offsets are relative)
     string[string] attrName;   // logical fixture attribute → our attribute
     JSONValue mesh;            // rig override (null: the reference rig as frozen)
+    string[][string] enumNames; // an enumerated attribute's names by ordinal (rig check)
+    double[][] extraVerts;     // appended to the reference rig (its vertices keep their indices)
+    long[][] extraFaces;
+    int[4] deltaMap = [1, 0, 0, 1];  // ours = (m0 dx + m1 dy, m2 dx + m3 dy): the handle's
+                                     // screen direction under our camera
+    long[2] layer = [1, 1];    // vertices one layer adds: [reference, ours] (vcount scale)
+    bool dormantHaulWrites = true;  // the dormant rig check applies (plan S1a п.4)
 }
+
+/// Two far vertices that close a triangle with the autoact rig's loose vertex 4.
+enum double[][] kLooseKeeper = [[2.75, -0.8, 1.65], [2.45, -0.5, 1.65]];
 
 Rig rigOf(string variant) {
     Rig r;
@@ -70,10 +82,67 @@ Rig rigOf(string variant) {
             ~ `[0.5,-0.3,0.05],[-0.2,0.9,0.05],[0.2,0.9,0.05]],`
             ~ `"faces":[[0,3,4],[1,5,6],[2,7,8]],"mode":"vertices","selected":[0,1,2]}`);
         break;
-    // the autoact and generator families are rigged by slice S1b
-    case "edge_bevel": case "edge_extrude": case "vertex_bevel": case "vertex_extrude":
-    case "mirror": case "mirror_wide": case "radial_array": case "array": case "clone":
-        assert(false, "rig of variant " ~ variant ~ " belongs to the S1b suites");
+    // autoact family (S1b): the reference rig's vertex 4 is loose and our topology
+    // kernels drop loose vertices (gap row 37); a far triangle 4-5-6 keeps it. The part
+    // each reference haul moves — EdgeBevel width,
+    // VertexBevel inset, VertexExtrude inset (= our width; shift stays 0); EdgeExtrude
+    // moves width AND shift, which is our off-handle 2-axis drag (dx width, -dy extrude)
+    case "edge_bevel":
+        r.tool = "edge.bevel"; r.attrs = ["width", "roundLevel"];
+        r.handle = true; r.handlePart = 0; r.pressRef = [596, 614];
+        r.deltaMap = [0, -1, 1, 0];   // our width arrow points down on screen
+        r.attrName = ["value": "width"];
+        r.extraVerts = kLooseKeeper; r.extraFaces = [[4L, 5, 6]];
+        break;
+    case "edge_extrude":
+        r.tool = "edge.extrude"; r.attrs = ["extrude", "width"]; r.pressRef = [640, 170];
+        r.extraVerts = kLooseKeeper; r.extraFaces = [[4L, 5, 6]];
+        break;
+    case "vertex_bevel":
+        r.tool = "mesh.vertexBevel"; r.attrs = ["inset"];
+        r.handle = true; r.handlePart = 0; r.pressRef = [489, 546];
+        r.deltaMap = [0, -1, 1, 0];   // our inset arrow points down on screen
+        r.extraVerts = kLooseKeeper; r.extraFaces = [[4L, 5, 6]];
+        break;
+    case "vertex_extrude":
+        r.tool = "mesh.vertexExtrude"; r.attrs = ["shift", "width"];
+        r.handle = true; r.handlePart = 1; r.pressRef = [500, 472];
+        r.deltaMap = [-1, 0, 0, 1];   // our width arrow points left on screen
+        // our kernel extrudes only a vertex whose every edge has two faces: the face
+        // 1-0-3 closes the fan of the selected vertex 0 (the reference extrudes it open);
+        // it then builds TWO rings per layer (6 vertices) where the reference builds one (3)
+        r.extraVerts = kLooseKeeper; r.extraFaces = [[4L, 5, 6], [1L, 0, 3]];
+        r.layer = [3, 6];
+        break;
+    // generators family (S1b): every haul presses the viewport centre (a press that
+    // misses the handles places the centre or drags the offset — the reference haul
+    // writes the centre or the offset the same way)
+    case "mirror":
+    case "mirror_wide":
+        r.tool = "mesh.mirrorTool"; r.attrs = ["axis", "center", "angle"]; r.pressRef = [430, 561];
+        r.attrName = ["axis": "axis"];
+        r.enumNames = ["axis": ["X", "Y", "Z"]];
+        break;
+    case "radial_array":
+        r.tool = "mesh.radialArrayTool"; r.attrs = ["count", "axis", "center", "angle", "offset"];
+        r.pressRef = [430, 561];
+        // measured: re-armed after W and the navigation, our RadialArray draws no handle
+        // and takes no press (no step, no attribute) — its dormant haul cannot write
+        // (PLAN-FINDING of S1b; the reference's own dormant haul re-wrote equal values)
+        r.dormantHaulWrites = false;
+        break;
+    case "array":
+        r.tool = "mesh.arrayTool"; r.attrs = ["numX", "numY", "numZ", "offX", "offY", "offZ"];
+        r.pressRef = [430, 561];
+        r.attrName = ["countX": "numX"];
+        break;
+    case "clone":
+        r.tool = "mesh.clone"; r.attrs = ["num", "offX", "offY", "offZ"]; r.pressRef = [430, 561];
+        // the reference arms with 61 copies (its s01 attributes), ours with 1: a clone
+        // layer adds 61 × 5 vertices there, 5 here. Writing 61 to our tool instead sends
+        // the copies' centroid out of view and our haul's plane projection then refuses.
+        r.layer = [305, 5];
+        break;
     }
     return r;
 }
@@ -146,30 +215,56 @@ long setupCell(const JSONValue cell, const Rig rig) {
     const ctx = "cell " ~ cell["id"].str;
     cmdOk("/api/command", commandBody("scene.reset"), ctx);
     cmdOk("/api/command", "workplane.reset", ctx);
-    JSONValue m = rig.mesh.type == JSONType.object ? rig.mesh : cell["rig"];
+    const JSONValue mRef = rig.mesh.type == JSONType.object ? rig.mesh : cell["rig"];
+    JSONValue m = parseJSON(mRef.toString);
+    foreach (v; rig.extraVerts) m["vertices"].array ~= JSONValue(v);
+    foreach (f; rig.extraFaces) m["faces"].array ~= JSONValue(f);
     cmdOk("/api/command", commandBody("scene.loadMesh",
         `{"vertices":` ~ m["vertices"].toString ~ `,"faces":` ~ m["faces"].toString ~ `}`), ctx);
+    // an edge is frozen as its vertex pair; our index is the pair's place in our edge list
+    string sel = m["selected"].toString;
+    if (m["mode"].str == "edges") {
+        const edges = getJson("/api/model")["edges"].array;
+        long[] idx;
+        foreach (pr; m["selected"].array) {
+            const a = pr[0].integer, b = pr[1].integer;
+            const k = edges.countUntil!(e => (e[0].integer == a && e[1].integer == b)
+                || (e[0].integer == b && e[1].integer == a));
+            assert(k >= 0, format("rig VOID %s: our mesh has no edge %d-%d", ctx, a, b));
+            idx ~= k;
+        }
+        sel = JSONValue(idx).toString;
+    }
     cmdOk("/api/command", commandBody("mesh.select",
-        format(`{"mode":"%s","indices":%s}`, m["mode"].str, m["selected"].toString)), ctx);
+        format(`{"mode":"%s","indices":%s}`, m["mode"].str, sel)), ctx);
     // an oblique view on the rig's centre: every handle off-axis, the whole rig in frame
     double[3] c = 0;
-    foreach (v; m["vertices"].array)
-        foreach (k; 0 .. 3) c[k] += num(v[k]) / m["vertices"].array.length;
+    foreach (v; mRef["vertices"].array)
+        foreach (k; 0 .. 3) c[k] += num(v[k]) / mRef["vertices"].array.length;
     cmdOk("/api/camera", format(`{"azimuth":0.5,"elevation":0.4,"distance":7,`
         ~ `"focus":{"x":%.6f,"y":%.6f,"z":%.6f}}`, c[0], c[1], c[2]), ctx);
+    haveHandle = false;
     cmdOk("/api/command", "history.clear", ctx);
     settle();
     const base = cast(long) getJson("/api/model")["vertices"].array.length;
     // `vcount` is compared from the rig base (ours − our base + its base), so s00 equals
-    // the reference by construction: on the reference's own rig the bases must agree
-    // (only an override rig — VertexMerge, gap 37 — may differ)
+    // the reference by construction: on the reference's own rig the bases must agree up
+    // to the rig's own extra vertices (only an override rig — VertexMerge, gap 37 — may
+    // differ otherwise)
     if (rig.mesh.type != JSONType.object) {
         const baseRef = cell["points"][0]["fields"]["vcount"]["ref"].integer;
-        assert(base == baseRef, format("rig VOID %s: our base holds %d vertices, the reference's %d",
-            ctx, base, baseRef));
+        assert(base == baseRef + cast(long) rig.extraVerts.length, format("rig VOID %s: our base "
+            ~ "holds %d vertices, the reference's %d (+%d rig extras)", ctx, base, baseRef,
+            rig.extraVerts.length));
     }
     return base;
 }
+
+// The screen point of the rig's handle at its last press in this cell: the reference
+// presses fixed screen points, so a haul made while our tool shows no handle (the
+// navigation took the tool's gizmo away) presses where the handle last was.
+private double[2] lastHandle;
+private bool haveHandle;
 
 private void pressPoint(const Rig rig, const JSONValue step, out int x, out int y) {
     auto cam = getJson("/api/camera");
@@ -177,13 +272,18 @@ private void pressPoint(const Rig rig, const JSONValue step, out int x, out int 
     double by = cam["vpY"].integer + cam["height"].integer / 2;
     if (rig.handle) {
         auto h = getJson("/api/tool/handles")["handles"];
-        assert(h.type == JSONType.object, "rig: " ~ rig.tool ~ " shows no handle to haul");
         bool found;
-        foreach (p; h["parts"].array)
-            if (p["part"].integer == 0 && p["screen"].type == JSONType.array) {
-                bx = num(p["screen"][0]); by = num(p["screen"][1]); found = true;
-            }
-        assert(found, "rig: " ~ rig.tool ~ " handle part 0 is not on screen");
+        if (h.type == JSONType.object)
+            foreach (p; h["parts"].array)
+                if (p["part"].integer == rig.handlePart && p["screen"].type == JSONType.array) {
+                    bx = num(p["screen"][0]); by = num(p["screen"][1]); found = true;
+                }
+        if (found) { lastHandle = [bx, by]; haveHandle = true; }
+        else {
+            assert(haveHandle, format("rig: %s shows no handle part %d to haul",
+                rig.tool, rig.handlePart));
+            bx = lastHandle[0]; by = lastHandle[1];
+        }
     }
     x = cast(int)(bx + num(step["press"][0]) - rig.pressRef[0]);
     y = cast(int)(by + num(step["press"][1]) - rig.pressRef[1]);
@@ -228,7 +328,9 @@ void runStep(const JSONValue step, const Rig rig, string ctx) {
     case "haul": {
         int x, y;
         pressPoint(rig, step, x, y);
-        const dx = num(step["delta"][0]), dy = num(step["delta"][1]);
+        const rx = num(step["delta"][0]), ry = num(step["delta"][1]);
+        const m = rig.deltaMap;
+        const dx = m[0] * rx + m[1] * ry, dy = m[2] * rx + m[3] * ry;
         drag(x, y, cast(int) dx, cast(int) dy, step["button"].str == "middle" ? 2 : 1);
         return;
     }
@@ -250,6 +352,17 @@ void runStep(const JSONValue step, const Rig rig, string ctx) {
         if (step["door"].str == "panel") cmdOk("/api/script?interactive=true", line, ctx);
         else cmdOk("/api/command", line, ctx);
         settle();
+        // rig precondition (plan S1b R5): the write changed the attribute — a closed-
+        // operation panel write leaves the image alone (Pc-own), never the attribute
+        const r = postJson("/api/command", "tool.attr " ~ rig.tool ~ " " ~ rig.attrName[name] ~ " ?");
+        assert(r["status"].str == "ok", ctx ~ ": read " ~ name ~ ": " ~ r.toString);
+        const want = num(step["value"]);
+        const v = r["value"];
+        const got = v.type == JSONType.string
+            ? rig.enumNames[rig.attrName[name]].countUntil(v.str) : num(v);
+        assert(abs(got - want) <= 1e-6 * (1 + abs(want)), format("rig VOID %s: attr:%s did not "
+            ~ "change the attribute (%s reads %s, written %.9g)", ctx, step["door"].str, name,
+            v.toString, want));
         return;
     }
     case "cmd":
@@ -267,16 +380,19 @@ void runStep(const JSONValue step, const Rig rig, string ctx) {
             "tool.set " ~ rig.tool ~ " off", ctx);
         settle();
         return;
-    case "rclick": {
-        // an empty background point of the rig: the viewport's top-left corner region,
-        // checked against the mesh's projected screen box at the moment of the tap
+    case "rclick":
+    case "mtap": {
+        // an empty background point of the rig (right tap; middle tap): the viewport's
+        // top-left corner region, checked against the mesh's projected screen box at the
+        // moment of the tap
         auto cam = getJson("/api/camera");
         const x = cast(int) cam["vpX"].integer + 24, y = cast(int) cam["vpY"].integer + 24;
         const box = meshScreenBox(cam);
+        const which = op == "rclick" ? "right" : "middle";
         assert(x < box[0] || x > box[2] || y < box[1] || y > box[3],
-            format("rig VOID %s: the right tap (%d, %d) lies inside the mesh's screen box %s",
-                ctx, x, y, box));
-        tap(x, y, 3);
+            format("rig VOID %s: the %s tap (%d, %d) lies inside the mesh's screen box %s",
+                ctx, which, x, y, box));
+        tap(x, y, op == "rclick" ? 3 : 2);
         return;
     }
     default:
@@ -316,7 +432,9 @@ Obs observe(string label, const Rig rig) {
         foreach (a; rig.attrs) {
             auto r = postJson("/api/command", "tool.attr " ~ rig.tool ~ " " ~ a ~ " ?");
             assert(r["status"].str == "ok", "read " ~ a ~ ": " ~ r.toString);
-            parts ~= format("%s=%.6g", a, num(r["value"]));
+            const v = r["value"];
+            parts ~= v.type == JSONType.string || v.type == JSONType.array
+                ? a ~ "=" ~ v.toString : format("%s=%.6g", a, num(v));
         }
         o.attrs = parts.join(";");
     }
@@ -350,10 +468,16 @@ JSONValue classOf(const Obs[] obs, size_t i, string delegate(const Obs) value) {
 /// Our relation for one field of checkpoint i; `navKind` is "Z"/"R" for a navigation
 /// checkpoint (refused is defined only there).
 JSONValue ourField(string field, const Obs[] obs, size_t i, long baseOurs, long baseRef,
-                   const Obs* before) {
+                   const Obs* before, const long[2] layer = [1, 1]) {
     switch (field) {
     case "image": return classOf(obs, i, (const Obs o) => o.image);
-    case "vcount": return JSONValue(obs[i].vcount - baseOurs + baseRef);
+    case "vcount": {
+        // in the reference's vertices per layer (Rig.layer); a count that is not a whole
+        // number of our layers stays visible as a fraction
+        const d = (obs[i].vcount - baseOurs) * layer[0];
+        if (d % layer[1]) return JSONValue(format("%d+%d/%d", baseRef, d, layer[1]));
+        return JSONValue(d / layer[1] + baseRef);
+    }
     case "armed": return JSONValue(obs[i].armed);
     case "on": return JSONValue(obs[i].on);
     case "attrs":
@@ -373,6 +497,7 @@ JSONValue ourField(string field, const Obs[] obs, size_t i, long baseOurs, long 
 struct CellRun {
     Obs[] obs;            // one per checkpoint, s00 first
     long baseOurs;
+    long[2] layer = [1, 1];
 }
 
 /// Play the whole cell and observe every checkpoint.
@@ -380,6 +505,7 @@ CellRun playCell(const JSONValue cell) {
     const rig = rigOf(cell["variant"].str);
     CellRun run;
     run.baseOurs = setupCell(cell, rig);
+    run.layer = rig.layer;
     run.obs ~= observe("s00_prearm", rig);
     foreach (step; cell["steps"].array) {
         const label = step["label"].str;
@@ -420,7 +546,7 @@ void checkRig(const JSONValue cell, const CellRun run) {
         assert(run.obs[k].attrs != run.obs[k - 1].attrs,
             "rig VOID " ~ id ~ ": g1 attributes equal the arm's");
     }
-    if (canFind(id, "_dormant") && !starts("dormant")) {
+    if (canFind(id, "_dormant") && !starts("dormant") && rigOf(cell["variant"].str).dormantHaulWrites) {
         const k = at(hauls[$ - 1]);
         assert(run.obs[k].attrs != run.obs[k - 1].attrs,
             "rig: dormant haul changed no attribute in " ~ id);
@@ -467,7 +593,7 @@ void compareCell(const JSONValue cell, const CellRun run) {
         assert(lab == run.obs[i].label, "cell " ~ id ~ ": checkpoint order " ~ lab);
         foreach (field, f; p["fields"].object) {
             const ours = ourField(field, run.obs, i, run.baseOurs, baseRef,
-                i ? &run.obs[i - 1] : null);
+                i ? &run.obs[i - 1] : null, run.layer);
             const law = "law" in f ? f["law"].str : "-";
             if (auto declared = "ours" in f) {
                 // closed first: ours now carries the reference relation (a declared value
@@ -521,6 +647,7 @@ void dumpCell(const JSONValue cell, const CellRun run, string path) {
     JSONValue j;
     j["cell"] = cell["id"].str;
     j["baseOurs"] = run.baseOurs;
+    if (run.layer != [1L, 1L]) j["layer"] = JSONValue(run.layer[]);
     JSONValue[] pts;
     foreach (o; run.obs) {
         JSONValue q;
