@@ -24,6 +24,7 @@
 //   remove-edge-noop-row L5  a Remove press latched on nothing removable
 //   fill-refusal-move        a Fill refusal's press ends as a Move row
 //   rmb-press-block          a declined RMB press never reaches the lasso
+//   two-button-reverse-release   the S5 review repro, observed only (TODO A14)
 //
 // Slice S5 (task 8730) added the cells from `no-op-presses` on: since then
 // every pen press is one topology step the session records (wave plan 8646).
@@ -31,7 +32,7 @@
 // chords' outcomes (their port slices add `chord-*` cells).
 //
 // `VIBE3D_CELL=<id>` runs one cell alone (druntime stops a module at its first
-// failed assert); the last block pins the population: 26 with no filter, 1 with
+// failed assert); the last block pins the population: 27 with no filter, 1 with
 // one (an unknown name must not pass by running nothing).
 //
 // Run via: ./run_test.d test_session_laws_topology_pen
@@ -978,6 +979,39 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
+// two-button-reverse-release — OBSERVED, NOT PINNED (S5 review repro): hold
+// LMB on e56, press Shift+MMB on the same pixel (a loop cut), release LMB,
+// then MMB; Ctrl+Z, Ctrl+Shift+Z. The reference gives two rows here (capture
+// C4-two-button); the rule for overlapping pen buttons is wave plan amendment
+// A14's. TODO(A14): pin the row count, labels and the undo/redo images.
+// ---------------------------------------------------------------------------
+unittest {
+    if (!cell("two-button-reverse-release")) return;
+    const r = rig();
+    penArmUi(r);
+    const at = penEdgePx(5, 6, "two-button-reverse-release e56");
+    string log = penMotion(20, at[0], at[1], 0, 0) ~ "\n"
+               ~ penButton(40, true, 1, at[0], at[1], 0) ~ "\n"
+               ~ penMotion(60, at[0], at[1], penButtonMask(1), PEN_KMOD_LSHIFT) ~ "\n"
+               ~ penButton(80, true, 2, at[0], at[1], PEN_KMOD_LSHIFT) ~ "\n"
+               ~ penButton(100, false, 1, at[0], at[1], PEN_KMOD_LSHIFT) ~ "\n"
+               ~ penButton(120, false, 2, at[0], at[1], PEN_KMOD_LSHIFT);
+    penPlay(log, "two-button-reverse-release gesture");
+    const g = penMesh();
+    writeln(format("two-button-reverse-release (unpinned): rows +%d %s, mesh %s a0, faces %d -> %d",
+                   penHistoryLen() - r.hp - 1, penHistoryLabels(), g == r.a0 ? "==" : "!=",
+                   r.a0.nf, g.nf));
+    penCtrlZ("two-button-reverse-release z1");
+    const z1 = penMesh();
+    penCtrlShiftZ("two-button-reverse-release r1");
+    const r1 = penMesh();
+    writeln(format("two-button-reverse-release (unpinned): z1 faces %d armed %s; r1 faces %d (== g %s)",
+                   z1.nf, penArmed(), r1.nf, r1 == g));
+    assert(penArmed(), "two-button-reverse-release: the rig must leave the pen armed");
+    writeln("PASS two-button-reverse-release (observed only, TODO A14)");
+}
+
+// ---------------------------------------------------------------------------
 // Population: with no VIBE3D_CELL every cell above ran (declared last, so it
 // runs last).
 // ---------------------------------------------------------------------------
@@ -985,7 +1019,7 @@ unittest {
     writeln("cells=", cellsRun);
     const only = environment.get("VIBE3D_CELL", "");
     if (only.length == 0)
-        assert(cellsRun == 26, format("topology pen session laws: %d cells ran, expected 26", cellsRun));
+        assert(cellsRun == 27, format("topology pen session laws: %d cells ran, expected 27", cellsRun));
     else
         assert(cellsRun == 1, format("topology pen session laws: VIBE3D_CELL=%s ran %d cells, expected 1 "
                                      ~ "(an unknown name runs none)", only, cellsRun));
