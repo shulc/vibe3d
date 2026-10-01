@@ -434,6 +434,18 @@ void compareCell(const JSONValue cell, const CellRun run) {
                 i ? &run.obs[i - 1] : null);
             const law = "law" in f ? f["law"].str : "-";
             if (auto declared = "ours" in f) {
+                // closed first: ours now carries the reference relation (a declared value
+                // that IS the reference — a class-owned point — cannot close this way)
+                if (auto r = "ref" in f)
+                    assert(declared.toString != r.toString || field == "image",
+                        format("cell %s/%s.%s: the fixture declares a divergence equal to the "
+                            ~ "reference %s (only the class rule may, plan §4.7 R8)", id, lab,
+                            field, r.toString));
+                if (auto r = "ref" in f)
+                    assert(declared.toString == r.toString || !sameRelation(ours, *r),
+                        format("divergence closed or moved: %s/%s.%s law %s — flip to parity in %s"
+                            ~ " (ours %s now equals the reference)", id, lab, field, law,
+                            f["owner"].str, ours.toString));
                 assert(ours.toString == declared.toString,
                     format("divergence closed or moved: %s/%s.%s law %s — flip to parity in %s"
                         ~ " (ours %s, declared %s, reference %s)", id, lab, field, law,
@@ -443,12 +455,23 @@ void compareCell(const JSONValue cell, const CellRun run) {
                     format("cell %s/%s.%s law %s: ours %s is not in the reference's %s",
                         id, lab, field, law, ours.toString, any.toString));
             } else {
-                assert(ours.toString == f["ref"].toString,
+                assert(sameRelation(ours, f["ref"]),
                     format("cell %s/%s.%s law %s: parity broken — ours %s, reference %s",
                         id, lab, field, law, ours.toString, f["ref"].toString));
             }
         }
     }
+}
+
+/// Two relations are the same when equal as values; a class (array of checkpoint
+/// names) compares as a SET — equal members, not one shared name (§4.7 R7 rule 1).
+bool sameRelation(const JSONValue a, const JSONValue b) {
+    if (a.type == JSONType.array && b.type == JSONType.array) {
+        auto x = a.array.map!(v => v.str).array.sort.array;
+        auto y = b.array.map!(v => v.str).array.sort.array;
+        return x == y;
+    }
+    return a.toString == b.toString;
 }
 
 private string refText(const JSONValue f) {
@@ -480,12 +503,53 @@ void runCell(const JSONValue fixture, string id) {
     JSONValue cell;
     foreach (c; fixture["cells"].array) if (c["id"].str == id) cell = c;
     assert(cell.type == JSONType.object, "fixture holds no cell " ~ id);
+    // VIBE3D_CELL=<id> runs one cell (a mutation's named witness, run in isolation)
+    const only = environment.get("VIBE3D_CELL", "");
+    if (only.length && only != id) return;
     auto run = playCell(cell);
     checkRig(cell, run);
     const dump = environment.get("VIBE3D_TOPO_REDO_DUMP", "");
     if (dump.length) { dumpCell(cell, run, dump); return; }
     compareCell(cell, run);
     cmdOk("/api/command", "tool.set " ~ rigOf(cell["variant"].str).tool ~ " off", "cell " ~ id);
+}
+
+/// The fixture's own structure (plan §4.7 R8 rule 1): a known divergence whose declared
+/// value IS the reference exists only for a point that got its owner from a classmate
+/// (`classOwned`), and `classOwned` is exactly the set of (point, source, owner) triples
+/// the fixture's `image` fields imply. Returns the triples it found (for the floor).
+string[] classOwnedTriples(const JSONValue fixture) {
+    string[] got;
+    foreach (c; fixture["cells"].array) {
+        if (!c["measured"].boolean) continue;
+        JSONValue[string] img;
+        foreach (p; c["points"].array)
+            if (auto f = "image" in p["fields"]) img[p["label"].str] = *f;
+        foreach (p; c["points"].array) {
+            foreach (field, f; p["fields"].object) {
+                if ("ours" !in f || "ref" !in f) continue;
+                const self = f["ours"].toString == f["ref"].toString;
+                const at = c["id"].str ~ "/" ~ p["label"].str;
+                if (!self || field != "image") continue;   // other fields: compareCell
+                bool any;
+                foreach (s; f["ref"].array)
+                    foreach (lab, g; img)
+                        if (lab.length > 3 && lab[0 .. 3] == s.str && "ours" in g) {
+                            got ~= at ~ " <- " ~ c["id"].str ~ "/" ~ lab ~ " (" ~ g["owner"].str ~ ")";
+                            any = true;
+                        }
+                assert(any, "fixture: " ~ at ~ ".image declares ours == reference with no "
+                    ~ "known-divergence classmate (class rule, plan §4.7 R8)");
+            }
+        }
+    }
+    string[] want;
+    foreach (t; fixture["classOwned"].array)
+        want ~= t["point"].str ~ " <- " ~ t["source"].str ~ " (" ~ t["owner"].str ~ ")";
+    got.sort(); want.sort();
+    assert(got == want, format("fixture classOwned %s differs from the triples its image fields imply %s",
+        want, got));
+    return got;
 }
 
 /// The family census line and its population floor (п.4: the message is about the

@@ -11,6 +11,7 @@
 // parity in the same commit. Order (form item 2): the family floor first, then one
 // `unittest` per cell.
 
+import std.conv : to;
 import std.json;
 import topology_redo_law_helpers;
 
@@ -52,6 +53,35 @@ enum long kCheckpointCount = 868;
 
 unittest { // the floor: the fixture still holds the whole family
     familyFloor(parseJSON(kFixture), "inset", kCells, kCellCount, kCheckpointCount);
+}
+
+// The fixture's structure, before any cell: the class rule's triples are exactly the
+// frozen `classOwned` (plan §4.7 R8 rule 1; generator output 2026-10-01: none), and
+// the "backlog: PR" fields are exactly those of the plan's table today's run already
+// gives (§4.7 R8: written by S1a; the rest are written by S2b).
+immutable string[] kBacklogPR = [
+    "param_rebegun_undo_inset_ui/s06_UC.image=[]",
+    "param_rebegun_undo_inset_ui/s10_Z.image=[\"s06\"]",
+    "param_rebegun_undo_inset_ui/s11_Z.armed=true",
+    "param_rebegun_undo_inset_ui/s11_Z.image=[\"s03\",\"s04\",\"s05\"]",
+    "param_rebegun_undo_inset_ui/s11_Z.on=\"tool\"",
+    "param_rebegun_undo_inset_ui/s13_R.image=[\"s06\",\"s10\"]",
+];
+
+unittest {
+    const fx = parseJSON(kFixture);
+    assert(classOwnedTriples(fx).length == 0,
+        "the class rule now gives owners to classmates the generator did not freeze");
+    string[] pr;
+    foreach (c; fx["cells"].array)
+        foreach (p; c["points"].array)
+            foreach (field, f; p["fields"].object)
+                if ("owner" in f && f["owner"].str == "backlog: PR")
+                    pr ~= c["id"].str ~ "/" ~ p["label"].str ~ "." ~ field ~ "=" ~ f["ours"].toString;
+    import std.algorithm : sort;
+    pr.sort();
+    assert(pr == kBacklogPR, "the fixture's backlog: PR fields are not the plan table's "
+        ~ "today-part: " ~ pr.to!string);
 }
 
 static foreach (id; kCells) {
