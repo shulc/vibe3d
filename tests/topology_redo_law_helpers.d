@@ -30,21 +30,20 @@ import std.json;
 import std.math : abs;
 import std.process : environment;
 
-/// How OUR product plays a reference rig. `map` turns a reference haul delta
-/// (dx, dy) into our screen delta: [a, b, c, d] → (a·dx + b·dy, c·dx + d·dy).
+/// How OUR product plays a reference rig: the reference haul's delta is played as is,
+/// from our press point (handle part 0, or the viewport centre) offset like the
+/// reference's press from the variant's g1 press.
 struct Rig {
     string tool;        // our tool id
     string[] attrs;     // the attributes `attrs` reads
     bool handle;        // press on handle part 0 (else the viewport centre)
     int[2] pressRef;    // the reference press the variant's g1 uses (offsets are relative)
-    double[4] map;
     string[string] attrName;   // logical fixture attribute → our attribute
     JSONValue mesh;            // rig override (null: the reference rig as frozen)
 }
 
 Rig rigOf(string variant) {
     Rig r;
-    r.map = [1, 0, 0, 1];
     final switch (variant) {
     case "inset":
         r.tool = "mesh.polyInsetTool"; r.attrs = ["inset"]; r.pressRef = [430, 561];
@@ -59,8 +58,6 @@ Rig rigOf(string variant) {
         r.tool = variant == "smooth" ? "mesh.smoothShiftTool" : "mesh.thickenTool";
         r.attrs = ["shift", "scale", "maxAngle", "thicken", "sharp"];
         r.handle = true; r.pressRef = [595, 501];
-        // our offset arrow stands on screen where the reference dragged sideways
-        r.map = [0, 0, -2.2, 0];
         r.attrName = ["shift": "shift"];
         break;
     case "vertex_merge":
@@ -197,9 +194,7 @@ void runStep(const JSONValue step, const Rig rig, string ctx) {
         int x, y;
         pressPoint(rig, step, x, y);
         const dx = num(step["delta"][0]), dy = num(step["delta"][1]);
-        drag(x, y, cast(int)(rig.map[0] * dx + rig.map[1] * dy),
-             cast(int)(rig.map[2] * dx + rig.map[3] * dy),
-             step["button"].str == "middle" ? 2 : 1);
+        drag(x, y, cast(int) dx, cast(int) dy, step["button"].str == "middle" ? 2 : 1);
         return;
     }
     case "key":
