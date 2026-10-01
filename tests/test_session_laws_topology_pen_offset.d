@@ -20,14 +20,16 @@
 //   reapply-addloop / -fill    L20/L30  the press image comes back bit-exact
 //   reapply-smooth-offset      L19  attribute-only, bit-exact
 //   reapply-smooth-strength    L21  re-run from the press image at the new strength
+//   reapply-smooth-passes      L21  ... keeping the press's pass count (a 5-pass drag)
 //   reapply-remove / -split    L30  attribute-only, bit-exact
 //   offset-zero-exact          L24  three writes: the third puts v5 back BIT-exact
 //   offset-came-home           R1-7 the carried set, not a mesh diff
-//   offset-after-command       L58  a recording command ends the gesture link
+//   offset-after-command       L58  a recording command ends the gesture link (every write)
 //   offsets-live-edge / -loop  L18  the G-delta offset of the pressed anchor
 //   drag-poly-offcentre        L28  the polygon's centroid follows the drag DELTA
 //   drag-slide-dir             L36/L47  one world channel, rotated and orbited rigs
 //   drag-slide-f / -L / -tie   L50  the axis latches at 4.5 px of path, a tie -> Y
+//   drag-slide-offsurface      [A12-1] the axis from the SURFACE delta (grid off the sphere)
 //
 // `VIBE3D_CELL=<id>` runs one cell alone; the last block pins the population.
 //
@@ -375,6 +377,13 @@ unittest {
                "reapply-slide-vertex g1");
     const g1 = penMesh();
     assert(penMoved(g1, r.a0) == [5L], format("reapply-slide-vertex g1: moved %s", penIdx(penMoved(g1, r.a0))));
+    // The offset the slide reports, pinned at g1 (not read back into the
+    // expectation): one world channel, and v5's own landing nearestBG(u5 + off).
+    const o = offs();
+    size_t nz;
+    foreach (c; o) if (c != 0) ++nz;
+    assert(nz == 1, format("reapply-slide-vertex g1: offsets %s (expected exactly one channel)", fmt3(o)));
+    carriedAt("reapply-slide-vertex g1", g1, 5, r.a0.pos[5], o);
     reapplyCarried("reapply-slide-vertex", g1, 5, [5], [r.a0.pos[5]], r.hp + 2);
 }
 
@@ -622,6 +631,49 @@ unittest {
            format("reapply-smooth-strength w2,w3: the mesh %s a fresh strength-3 smooth, history %s",
                   penMesh() == fresh3 ? "==" : "!=", penHistoryLabels()));
     writeln("PASS reapply-smooth-strength");
+}
+
+/// One Smoothing DRAG `dxPx` to the right on the rig at strength `strength`
+/// (several passes, `smoothPassesForDragDx`); returns the history length after.
+long smoothDrag(string id, string strength, int dxPx) {
+    sw("mode", "smooth");
+    sw("smoothStrength", strength);
+    const hp = penHistoryLen();
+    const f = penFacePx(4);
+    penPlay(penGestureEvents(f[0], f[1], f[0] + dxPx, f[1], 1, PEN_KMOD_LSHIFT | PEN_KMOD_LCTRL, 8),
+            id ~ " smooth drag");
+    assert(penHistoryLen() == hp + 1 && stepKindNow() == 9 && stepVertsNow() == [5L],
+           format("%s: the smooth drag wrote %s, kind %d, passes %s (expected 5)", id,
+                  penHistoryLabels(), stepKindNow(), stepVertsNow()));
+    return hp + 1;
+}
+
+// reapply-smooth-passes — L21: the re-run keeps the press's PASS COUNT. A
+// 20 px drag is 5 passes; a Strength write gives a fresh 5-pass smooth at the
+// written strength, which a 1-pass re-run cannot reach (the click cells above
+// are all 1 pass, so they cannot see the count).
+unittest {
+    if (!cell("reapply-smooth-passes")) return;
+    PenMesh fresh(string strength, bool drag) {
+        const r = rig();
+        penArmUi(r);
+        if (drag) smoothDrag("reapply-smooth-passes fresh " ~ strength, strength, 20);
+        else smoothClick("reapply-smooth-passes fresh click " ~ strength, strength);
+        return penMesh();
+    }
+    const drag2 = fresh("2", true), click2 = fresh("2", false);
+    const r = rig();
+    penArmUi(r);
+    const hist = smoothDrag("reapply-smooth-passes", "1", 20);
+    const g1 = penMesh();
+    assert(g1 != r.a0 && drag2 != g1 && drag2 != click2,
+           "reapply-smooth-passes rig: the 5-pass strength-2 smooth must differ from g1 and from one pass");
+    w("smoothStrength", "2");
+    assert(penMesh() == drag2 && penHistoryLen() == hist + 1,
+           format("reapply-smooth-passes w1: the mesh %s a fresh 5-pass strength-2 smooth (%s the 1-pass "
+                  ~ "one), history %s", penMesh() == drag2 ? "==" : "!=",
+                  penMesh() == click2 ? "==" : "!=", penHistoryLabels()));
+    writeln("PASS reapply-smooth-passes");
 }
 
 // ===========================================================================
@@ -877,7 +929,7 @@ int[2][] bresenham(int dx, int dy) {
     return pts;
 }
 
-struct SlidePrediction { int latch, wTotal, wFirst; double latchMargin; }
+struct SlidePrediction { int latch, wTotal, wFirst, latchAnchorForm; double latchMargin; }
 
 /// The axis of `d` with the kernel's rule (eps relative, a tie -> later axis).
 int axisOf(double[3] d, double eps) {
@@ -910,6 +962,9 @@ SlidePrediction predict(double[3] anchor, const int[2][] pts) {
         if (path >= 4.5) {
             const d = dAt(p);
             r.latch = axisOf(d, 1e-3);
+            // The rival delta convention ([A12-1] rejects it for the axis):
+            // hit(proj(anchor) + drag) - anchor.
+            r.latchAnchorForm = axisOf(add3(d, sub3(h0, anchor)), 1e-3);
             const a = abs(d[0]), b = abs(d[1]);
             r.latchMargin = abs(a - b) / (a > b ? a : b);
             break;
@@ -1000,8 +1055,8 @@ unittest {
 /// The front-grid slide cells at the capture's spacing (so its pixel paths
 /// replay as driven): e56's midpoint, the per-candidate predictions printed.
 void frontSlide(string id, const int[2][] pts, int expect, int mustDifferFrom, string rival,
-                int[2] overshoot = [0, 0]) {
-    const r = rig();
+                int[2] overshoot = [0, 0], string rigPath = "") {
+    const r = rigPath.length ? penRigLoad(rigPath) : rig();
     penArmUi(r);
     penZoomToSpacing(kSp, id);
     const double[3] anchor = [(r.a0.pos[5][0] + r.a0.pos[6][0]) / 2, (r.a0.pos[5][1] + r.a0.pos[6][1]) / 2,
@@ -1009,7 +1064,8 @@ void frontSlide(string id, const int[2][] pts, int expect, int mustDifferFrom, s
     const pr = predict(anchor, pts);
     writeln(format("%s: our viewport predicts latch %s (X/Y margin %.3g), W-total %s, W-first %s, E-perp Y",
                    id, "XYZ"[pr.latch], pr.latchMargin, "XYZ"[pr.wTotal], "XYZ"[pr.wFirst]));
-    const int rv = rival == "W-total" ? pr.wTotal : rival == "W-first" ? pr.wFirst : 1;
+    const int rv = rival == "W-total" ? pr.wTotal : rival == "W-first" ? pr.wFirst
+                 : rival == "anchor-form" ? pr.latchAnchorForm : 1;
     assert(pr.latch == expect && rv == mustDifferFrom,
            format("%s rig: the latch predicts %s (expected %s) and the rival %s %s (expected %s) — the "
                   ~ "cell would not discriminate", id, "XYZ"[pr.latch], "XYZ"[expect], rival, "XYZ"[rv],
@@ -1050,8 +1106,26 @@ unittest {
     if (cell("drag-slide-tie")) frontSlide("drag-slide-tie", bresenham(30, -27), 1, 0, "W-first");
 }
 
+unittest {
+    // [A12-1]: the axis comes from the SURFACE delta hit(proj(anchor) + drag) -
+    // hit(proj(anchor)), never from hit(...) - anchor. On the capture rig the
+    // grid lies ON the sphere, where the two forms agree; here the grid is
+    // lifted 0.3 off it toward the camera, so the anchor form reads the lift
+    // (Z) while the surface delta of C4-S1dir-f's drag reads X.
+    if (!cell("drag-slide-offsurface")) return;
+    import std.file : tempDir, write, remove;
+    import std.process : thisProcessID;
+    auto doc = parseJSON(readText(rigFile("topology_pen_session_rig.v3d")));
+    foreach (ref v; doc["layers"].array[0]["mesh"]["vertices"].array)
+        v.array[2] = JSONValue(penNum(v.array[2]) + 0.3);
+    const path = buildPath(tempDir, format("pen_offsurface_rig_%d.v3d", thisProcessID));
+    write(path, doc.toString);
+    scope (exit) remove(path);
+    frontSlide("drag-slide-offsurface", bresenham(30, -10), 0, 2, "anchor-form", [0, 0], path);
+}
+
 // The population: every cell above ran when none was selected.
 unittest {
     if (environment.get("VIBE3D_CELL", "").length) return;
-    assert(cellsRun == 28, format("offset laws: %d cells ran, expected 28", cellsRun));
+    assert(cellsRun == 30, format("offset laws: %d cells ran, expected 30", cellsRun));
 }

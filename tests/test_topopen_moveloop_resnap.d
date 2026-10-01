@@ -168,3 +168,71 @@ unittest {
 }
 
 Vec3 toVec3(double[3] v) { return Vec3(cast(float)v[0], cast(float)v[1], cast(float)v[2]); }
+
+// The same drag with snapping ON (the pen's own arm state), on a grid that
+// lies ON the background surface — the top cap of the sphere. On the surface
+// the shared offset carries the row along the surface by the drag, so it never
+// jumps onto the neighbouring rows' pixels (the inside-the-sphere rig above
+// does, which is why it turns snapping off): the landing law is pinned with
+// the snap path live. The drag runs along the row by about a third of a
+// spacing, well short of any non-loop vertex.
+unittest {
+    setupSphereBg(R, LON, LAT);
+
+    enum float H = 0.4f;   // grid half-extent on the cap
+    Vec3[9] gridPos;
+    foreach (i; 0 .. 3) foreach (j; 0 .. 3) {
+        const float x = -H + H * cast(float)j, z = -H + H * cast(float)i;
+        gridPos[i * 3 + j] = Vec3(x, sqrt(R * R - x * x - z * z), z);
+    }
+    string vertsJson;
+    foreach (k, p; gridPos) {
+        if (k) vertsJson ~= ",";
+        vertsJson ~= format(`[%.6f,%.6f,%.6f]`, p.x, p.y, p.z);
+    }
+    auto lr = postJson("/api/command", commandBody("scene.loadMesh", format(
+        `{"vertices":[%s],"faces":[[0,1,4,3],[1,2,5,4],[3,4,7,6],[4,5,8,7]]}`, vertsJson)));
+    assert(lr["status"].str == "ok", "load-mesh (cap grid) failed: " ~ lr.toString);
+    assert(vertexCountLayer(1) == 9 && edgeCountLayer(1) == 12 && faceCountLayer(1) == 4,
+        "setup: primary layer must be the untouched 3x3 cap grid");
+
+    postJson("/api/camera", format(
+        `{"azimuth":%.6f,"elevation":%.6f,"distance":%.6f,"focus":{"x":%.6f,"y":%.6f,"z":%.6f}}`,
+        0.3, 0.5, 8.0, 0.0, 0.0, 0.0));
+    auto c  = fetchCamera();
+    auto vp = viewportFromCamera(c);
+
+    float s3x, s3y, s4x, s4y, s5x, s5y;
+    assert(projectToWindow(gridPos[3], vp, s3x, s3y) && projectToWindow(gridPos[4], vp, s4x, s4y)
+           && projectToWindow(gridPos[5], vp, s5x, s5y), "setup: the middle row must project on-screen");
+    const int downX = cast(int)((s3x + s4x) * 0.5f), downY = cast(int)((s3y + s4y) * 0.5f);
+    // A third of a spacing along the row's own screen direction.
+    const int dx = cast(int)((s5x - s3x) / 6), dy = cast(int)((s5y - s3y) / 6);
+    assert(dx * dx + dy * dy >= 100, format("setup: the drag (%d,%d) must be at least 10 px", dx, dy));
+
+    cmd("tool.set mesh.topoPen on");
+    cmd("tool.pipe.attr snap enabled true");
+
+    auto pr = postJson("/api/play-events",
+        buildDragLog(c.vpX, c.vpY, c.width, c.height, downX, downY, downX + dx, downY + dy, 16, 0, 3));
+    assert("error" !in pr, "RMB drag (snap on) failed: " ~ pr.toString);
+    waitPlayerIdle();
+
+    assert(vertexCountLayer(1) == 9 && edgeCountLayer(1) == 12 && faceCountLayer(1) == 4,
+        "snap on: the cap-grid loop drag must not weld or change topology");
+    auto post = readVerticesLayer(1);
+    const Vec3 seedMid = (gridPos[3] + gridPos[4]) * 0.5f;
+    foreach (vi; [3, 4, 5]) {
+        Vec3 expected;
+        assert(expectedCarriedOnSphere(c, seedMid, gridPos[vi], dx, dy, R, LON, LAT, expected),
+            format("snap on setup: the seed midpoint's shifted pixel must hit the sphere (v%d)", vi));
+        assert(!approxVec(gridPos[vi], post[vi], 0.05),
+            format("snap on: loop vertex %d did not move (%s)", vi, post[vi]));
+        assert(approxVec(expected, post[vi], 0.01),
+            format("snap on: loop vertex %d %s is not nearestBG(own + offset) (%f,%f,%f)",
+                   vi, post[vi], expected.x, expected.y, expected.z));
+    }
+    foreach (vi; [0, 1, 2, 6, 7, 8])
+        assert(approxVec(gridPos[vi], post[vi], 1e-5),
+            format("snap on: non-loop vertex %d must stay exactly at its original position", vi));
+}
