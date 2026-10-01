@@ -363,7 +363,11 @@ private static immutable BuiltElsewhere[] kBuiltElsewhere = [
       ~ "the router at the gesture end"),
     BuiltElsewhere("ToolActivationCommand", "prepareArm",
         "the tool lifecycle record the prepared transition builds; never "
-      ~ "dispatched by id"),
+      ~ "dispatched by id; app.d's drop-row factory builds its drop form "
+      ~ "(wave plan 8640 S6)"),
+    BuiltElsewhere("ToolTaskClearCommand", "main",
+        "the empty row the Esc rung writes above a drop row (wave plan 8640 "
+      ~ "S6, L39), built by app.d's drop-row factory; never dispatched by id"),
 ];
 
 unittest {
@@ -476,6 +480,8 @@ unittest {
         LedgerRow("MeshMorphEdit.mergeRunTail|MeshMorphEdit", 1, "merge constructor"),
         LedgerRow("InputRouter.commitInteractiveSelEdit|MeshSelectionEdit", 1, "selection gesture"),
         LedgerRow("prepareArm|ToolActivationCommand", 1, "prepared transition"),
+        LedgerRow("main.installDropRows|ToolActivationCommand", 1, "drop row factory (S6)"),
+        LedgerRow("main|ToolTaskClearCommand", 1, "Esc task row factory (S6)"),
     ];
     Regex!char[] builderRegexes;
     builderRegexes.reserve(kBuiltElsewhere.length);
@@ -494,10 +500,10 @@ unittest {
     }
     const builderProblems = reconcile(builderLedger, builderHits);
     assert(builderProblems.length == 0, format(
-        "the closed construction ledger for the four deliberately unregistered "
+        "the closed construction ledger for the five deliberately unregistered "
       ~ "commands changed:\n%s", builderProblems));
-    assert(builderHits.length == 6, format(
-        "expected exactly 6 construction sites for the four exemptions, found %d",
+    assert(builderHits.length == 8, format(
+        "expected exactly 8 construction sites for the five exemptions, found %d",
         builderHits.length));
 
     foreach (ref row; kBuiltElsewhere) {

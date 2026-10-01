@@ -183,9 +183,9 @@ unittest { // One close routine: the session decides by policy, the tool by its 
         && source.indexOf("resumeAfterForeignEdit") < 0,
         "M2 close census: the deleted boundary capability is back in edit_session.d");
     const entry = bodyAt(source, "CloseOutcome closeOperation(CloseReason r, CommandDoor door");
-    assert(entry.count("tools_.close(r, door)") == 1,
+    assert(entry.count("tools_.close(r, door, dropRow, ctx)") == 1,
         "M2 close census: EditSession.closeOperation no longer delegates to the tool session");
-    const close = bodyAt(source, "CloseOutcome close(CloseReason r, CommandDoor door)");
+    const close = bodyAt(source, "CloseOutcome close(CloseReason r, CommandDoor door, bool dropRow");
     assert(close.count("sessionPolicy().commandClose") == 1
         && close.count("commitOperation()") == 1
         && close.count("hasUncommittedEdit()") == 1,
@@ -253,8 +253,10 @@ unittest { // The production wiring names the close and its finish, once each.
         && ctorText.indexOf("session.finishClose()") >= 0,
         "M4 wiring census: the executor's delegates no longer name closeForCommand / finishClose: "
         ~ ctorText);
-    const drop = bodyAt(app, "void dropActiveTool(ToolTransition why)");
-    const dClose = drop.indexOf("closeOperation(closeReasonFor(why))");
+    // Wave plan 8640 S6: the door body is `dropActiveToolWith`; its close
+    // carries the drop-row answer and the drop context.
+    const drop = bodyAt(app, "void dropActiveToolWith(ToolTransition why, DropContext ctx)");
+    const dClose = drop.indexOf("closeOperation(closeReasonFor(why), CommandDoor.ui, dropRow, ctx)");
     const dDoor = drop.indexOf("final switch (activationDoorFor(why))");
     const dFinish = drop.indexOf("session.finishClose()");
     assert(dClose >= 0 && dDoor > dClose && dFinish > dDoor,

@@ -280,7 +280,7 @@ unittest { // u6: the file I/O is behind prefsActive, the in-memory store is not
         "M5 u6: the in-memory store is gated on prefsActive - the cache must "
         ~ "change at every drop, only its file section is gated");
 
-    auto drop = bodyAt(app, "void dropActiveTool(");
+    auto drop = bodyAt(app, "void dropActiveToolWith(");   // the door body (S6)
     const storeAt = at(drop, "storeDroppedToolNodes();", "dropActiveTool store");
     assert(storeAt < at(drop, "activeTool.deactivate();", "dropActiveTool deactivate")
         && storeAt < at(drop, "resetTransientPipeStages();", "dropActiveTool reset"),

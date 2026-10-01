@@ -378,7 +378,18 @@ Cell runCell(string name, string tool, string recordSite, string mode,
     c.postCommit = planes();
     c.entryNames  = historyNames();
     c.entryLabels = historyLabels();
-    c.undoDelta   = undoLen() - u0;
+    // Wave plan 8640 S6: a user drop of the pen writes a DROP row above the
+    // gesture (its undo re-arms the pen). It is the teardown's row, not the
+    // gesture's: exactly one, and only for the pen; set aside before scoring.
+    immutable bool dropRow = c.entryLabels.length > 0 && c.entryLabels[$ - 1] == "Tool Drop";
+    assert(dropRow == (tool == "mesh.topoPen"),
+        name ~ ": the drop row is " ~ (dropRow ? "present" : "absent")
+      ~ " for " ~ tool ~ ": " ~ c.entryLabels.to!string);
+    if (dropRow) {
+        c.entryNames  = c.entryNames[0 .. $ - 1];
+        c.entryLabels = c.entryLabels[0 .. $ - 1];
+    }
+    c.undoDelta   = undoLen() - u0 - (dropRow ? 1 : 0);
     c.drove       = gDrove;   // task 3091: captured after stand+gesture+drop
 
     // ANTI-VACUITY, BEFORE anything is compared. A gesture that moved no plane
@@ -393,6 +404,14 @@ Cell runCell(string name, string tool, string recordSite, string mode,
       ~ "expected exactly 1. Zero means the commit never recorded; more than "
       ~ "one means a gesture that should be a single entry split");
 
+    if (dropRow) {
+        // The drop row's undo re-arms the pen and changes no plane.
+        auto rd = postJ("/api/command", commandBody("history.undo"));
+        assert(rd["status"].str == "ok", name ~ ": the drop row's undo failed: " ~ rd.toString);
+        settle();
+        assert(undoLen() == u0 + c.undoDelta && planes() == c.postCommit,
+            name ~ ": the drop row's undo did not leave exactly the gesture standing");
+    }
     auto ru = postJ("/api/command", commandBody("history.undo"));
     assert(ru["status"].str == "ok", name ~ ": /api/undo failed: " ~ ru.toString);
     settle();
