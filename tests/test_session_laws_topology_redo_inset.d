@@ -87,3 +87,11 @@ unittest {
 static foreach (id; kCells) {
     unittest { runCell(parseJSON(kFixture), id); }
 }
+
+unittest { // every cell was played and compared (a skipped cell is not a green one)
+    import std.process : environment;
+    if (environment.get("VIBE3D_CELL", "").length || environment.get("VIBE3D_TOPO_REDO_DUMP", "").length)
+        return;
+    assert(cellsCompared == kCellCount, "the suite compared " ~ cellsCompared.to!string
+        ~ " cells of the family's " ~ kCellCount.to!string);
+}

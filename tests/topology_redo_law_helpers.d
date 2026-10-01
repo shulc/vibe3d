@@ -498,6 +498,9 @@ void dumpCell(const JSONValue cell, const CellRun run, string path) {
     append(path, j.toString ~ "\n");
 }
 
+/// Cells this process played and compared (the suite's last block checks the count).
+size_t cellsCompared;
+
 /// One cell of a family suite: play, check the rig, then compare (or dump).
 void runCell(const JSONValue fixture, string id) {
     JSONValue cell;
@@ -511,6 +514,7 @@ void runCell(const JSONValue fixture, string id) {
     const dump = environment.get("VIBE3D_TOPO_REDO_DUMP", "");
     if (dump.length) { dumpCell(cell, run, dump); return; }
     compareCell(cell, run);
+    ++cellsCompared;
     cmdOk("/api/command", "tool.set " ~ rigOf(cell["variant"].str).tool ~ " off", "cell " ~ id);
 }
 
