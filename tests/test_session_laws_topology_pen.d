@@ -42,6 +42,7 @@
 //   drop-q               L8/L32 Q (tool.release): one drop row
 //   drop-command         L8/L32 `tool.set mesh.topoPen off` (UI door): one drop row
 //   drop-sel             L8/L32 key 3: the drop row's undo restores the type
+//   drop-sel-item        L8 key 5 (Items): the same, through the item door
 //   drop-bare            L32 arm, Esc: key door and raw door both refuse the redo
 //   rearm-typed              a re-typed arm while armed is a same-tool switch row
 //   non-user-drop            a layer-change drop writes no drop row
@@ -52,7 +53,7 @@
 // chords' outcomes (their port slices add `chord-*` cells).
 //
 // `VIBE3D_CELL=<id>` runs one cell alone (druntime stops a module at its first
-// failed assert); the last block pins the population: 51 with no filter, 1 with
+// failed assert); the last block pins the population: 52 with no filter, 1 with
 // one (an unknown name must not pass by running nothing).
 //
 // Run via: ./run_test.d test_session_laws_topology_pen
@@ -1932,6 +1933,16 @@ enum PEN_SDLK_3      = 51;
 
 long penRedoLen() { return cast(long)getJson("/api/history")["redo"].array.length; }
 string penSelType() { return getJson("/api/selection")["selType"].str; }
+enum PEN_SDLK_5      = 53;
+
+/// The re-armed pen's own steps (`/api/tool/state` session.steps: rows of ITS
+/// session token). After a drop row's undo the pen must continue the dropped
+/// session (`adoptPredecessorToken_`), so g1 counts as its step.
+long penSessionSteps() {
+    auto s = getJson("/api/tool/state");
+    return ("session" in s.object) && s["session"].type == JSONType.object
+        ? s["session"]["steps"].integer : -1;
+}
 
 /// armed / mesh / undo length / redo length at one step of a drop ladder.
 void dropStep(string id, string step, const PenMesh want, bool armed, long hist, long redo) {
@@ -1971,6 +1982,9 @@ void dropLadder(string id, void delegate() drop, bool taskRow) {
     }
     penCtrlZ(id ~ " z1");
     dropStep(id, "z1 (drop row: re-armed, g1 kept, redo emptied)", g1, true, h, 0);
+    assert(penSessionSteps() == 1,
+           format("%s z1: the re-armed pen owns %d steps, expected g1 (it must continue the "
+                  ~ "dropped session's token)", id, penSessionSteps()));
     penCtrlShiftZ(id ~ " z1-redo");
     dropStep(id, "z1-redo (nothing to redo)", g1, true, h, 0);
     penCtrlZ(id ~ " z2");
@@ -2025,6 +2039,7 @@ unittest {
     penCtrlZ("drop-sel z1");
     dropStep("drop-sel", "z1", g1, true, h, 0);
     assert(penSelType() == "vertex", "drop-sel z1: the selection type was not restored: " ~ penSelType());
+    assert(penSessionSteps() == 1, format("drop-sel z1: the re-armed pen owns %d steps", penSessionSteps()));
     penCtrlZ("drop-sel z2");
     dropStep("drop-sel", "z2", r.a0, true, h - 1, 1);
     penCtrlZ("drop-sel z3");
@@ -2037,6 +2052,28 @@ unittest {
     dropStep("drop-sel", "r3 (nothing to redo)", g1, true, h, 0);
     assert(penSelType() == "vertex", "drop-sel r3: type " ~ penSelType());
     writeln("PASS drop-sel");
+}
+
+// drop-sel-item — the item-mode key (5) flips the front type to Items and drops
+// the pen; the drop row's undo re-arms it and restores Vertex (the item door of
+// the same selection-type drop, `switchItemType`).
+unittest {
+    if (!cell("drop-sel-item")) return;
+    const r = rig();
+    penKey(PEN_SDLK_1, 0, "drop-sel-item key 1");
+    penArmUi(r);
+    moveV5("drop-sel-item g1");
+    const g1 = penMesh();
+    const long h = r.hp + 2;
+    penKey(PEN_SDLK_5, 0, "drop-sel-item key 5");
+    dropStep("drop-sel-item", "exit", g1, false, h + 1, 0);
+    assert(penSelType() == "item" && penHistoryLabels()[$ - 1] == "Tool Drop",
+           format("drop-sel-item exit: type %s, history %s", penSelType(), penHistoryLabels()));
+    penCtrlZ("drop-sel-item z1");
+    dropStep("drop-sel-item", "z1", g1, true, h, 0);
+    assert(penSelType() == "vertex",
+           "drop-sel-item z1: the selection type was not restored: " ~ penSelType());
+    writeln("PASS drop-sel-item");
 }
 
 // drop-bare — arm, Esc, no gesture (X-bare, X-bare-redo): the key door, then
@@ -2121,7 +2158,7 @@ unittest {
     writeln("cells=", cellsRun);
     const only = environment.get("VIBE3D_CELL", "");
     if (only.length == 0)
-        assert(cellsRun == 51, format("topology pen session laws: %d cells ran, expected 51", cellsRun));
+        assert(cellsRun == 52, format("topology pen session laws: %d cells ran, expected 52", cellsRun));
     else
         assert(cellsRun == 1, format("topology pen session laws: VIBE3D_CELL=%s ran %d cells, expected 1 "
                                      ~ "(an unknown name runs none)", only, cellsRun));
