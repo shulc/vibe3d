@@ -455,10 +455,10 @@ package PenMode modeOfOverride(ModeOv m) {
 /// own top-of-handler `resetAllGestureArms()` call, now wired through
 /// `dispatchInput`'s `onInputResetAll()` hook instead. MIDDLE/RIGHT rows stay
 /// the default `SelfButton` — each mode's own narrow self-reset is what closes
-/// a same-slot re-press hazard for those buttons, exactly as today (see
-/// `resetAllGestureArms`'s own doc comment for why MIDDLE/RIGHT deliberately
-/// do NOT get a full reset: a chord on those buttons can legitimately coexist
-/// with a held LEFT drag).
+/// a same-slot re-press hazard for those buttons; a press of one button while
+/// another is held is ended before dispatch by `openPressStep` (L56, see
+/// `resetAllGestureArms`'s own doc comment), so no cross-button arm reaches
+/// those handlers.
 ///
 /// The two rows task 0499 added (Ctrl+RMB, Shift+Ctrl+MMB) are MIDDLE/RIGHT
 /// rows and take the same default `SelfButton` — `AllButtons` there would

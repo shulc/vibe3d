@@ -24,7 +24,10 @@
 //   remove-edge-noop-row L5  a Remove press latched on nothing removable
 //   fill-refusal-move        a Fill refusal's press ends as a Move row
 //   rmb-press-block          a declined RMB press never reaches the lasso
-//   two-button-reverse-release   the S5 review repro, observed only (TODO A14)
+//   two-button-rev           L56 overlapping buttons, LMB released first: two rows
+//   two-button-fwd           L56 MMB released first: two rows, no loop
+//   two-button-cut-move          a second press cuts a held Move (§9.27 [A15-2])
+//   two-button-discard-move      a release while another button is held discards
 //
 // Slice S5 (task 8730) added the cells from `no-op-presses` on: since then
 // every pen press is one topology step the session records (wave plan 8646).
@@ -32,7 +35,7 @@
 // chords' outcomes (their port slices add `chord-*` cells).
 //
 // `VIBE3D_CELL=<id>` runs one cell alone (druntime stops a module at its first
-// failed assert); the last block pins the population: 27 with no filter, 1 with
+// failed assert); the last block pins the population: 30 with no filter, 1 with
 // one (an unknown name must not pass by running nothing).
 //
 // Run via: ./run_test.d test_session_laws_topology_pen
@@ -979,36 +982,141 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// two-button-reverse-release — OBSERVED, NOT PINNED (S5 review repro): hold
-// LMB on e56, press Shift+MMB on the same pixel (a loop cut), release LMB,
-// then MMB; Ctrl+Z, Ctrl+Shift+Z. The reference gives two rows here (capture
-// C4-two-button); the rule for overlapping pen buttons is wave plan amendment
-// A14's. TODO(A14): pin the row count, labels and the undo/redo images.
+// Overlapping pen buttons — L56 (C4-two-button / -rev; wave plan §9.26.1 and
+// §9.27 [A15-1]): a second press while the first button is held ends the
+// first gesture and opens its OWN step, so there are two rows in both release
+// orders. The LMB press on e56 arms an edge Move ("Topology Move", unchanged:
+// it never moves); the Shift+MMB press on the same pixel arms Add Loop, whose
+// row keeps the chord's label "Topology Add Loop" whether it commits (rev) or
+// is discarded (fwd). Each handler's own label, last row on top.
 // ---------------------------------------------------------------------------
+
+/// LMB press on `at`, then Shift+MMB press on the same pixel (no motion).
+string twoButtonPresses(int[2] at) {
+    return penMotion(20, at[0], at[1], 0, 0) ~ "\n"
+         ~ penButton(40, true, 1, at[0], at[1], 0) ~ "\n"
+         ~ penMotion(60, at[0], at[1], penButtonMask(1), PEN_KMOD_LSHIFT) ~ "\n"
+         ~ penButton(80, true, 2, at[0], at[1], PEN_KMOD_LSHIFT);
+}
+
+void expectTopLabels(string id, string[] want) {
+    const l = penHistoryLabels();
+    assert(l.length >= want.length && l[$ - want.length .. $] == want,
+           format("%s: the top rows are %s, expected %s", id, l, want));
+}
+
+// two-button-rev — the S5 review repro: release LMB first, then MMB. The loop
+// lands on its own row; undo/redo keep it.
 unittest {
-    if (!cell("two-button-reverse-release")) return;
+    if (!cell("two-button-rev")) return;
     const r = rig();
     penArmUi(r);
-    const at = penEdgePx(5, 6, "two-button-reverse-release e56");
-    string log = penMotion(20, at[0], at[1], 0, 0) ~ "\n"
-               ~ penButton(40, true, 1, at[0], at[1], 0) ~ "\n"
-               ~ penMotion(60, at[0], at[1], penButtonMask(1), PEN_KMOD_LSHIFT) ~ "\n"
-               ~ penButton(80, true, 2, at[0], at[1], PEN_KMOD_LSHIFT) ~ "\n"
-               ~ penButton(100, false, 1, at[0], at[1], PEN_KMOD_LSHIFT) ~ "\n"
-               ~ penButton(120, false, 2, at[0], at[1], PEN_KMOD_LSHIFT);
-    penPlay(log, "two-button-reverse-release gesture");
+    const at = penEdgePx(5, 6, "two-button-rev e56");
+    penPlay(twoButtonPresses(at) ~ "\n"
+            ~ penButton(100, false, 1, at[0], at[1], PEN_KMOD_LSHIFT) ~ "\n"
+            ~ penButton(120, false, 2, at[0], at[1], PEN_KMOD_LSHIFT), "two-button-rev gesture");
     const g = penMesh();
-    writeln(format("two-button-reverse-release (unpinned): rows +%d %s, mesh %s a0, faces %d -> %d",
-                   penHistoryLen() - r.hp - 1, penHistoryLabels(), g == r.a0 ? "==" : "!=",
-                   r.a0.nf, g.nf));
-    penCtrlZ("two-button-reverse-release z1");
-    const z1 = penMesh();
-    penCtrlShiftZ("two-button-reverse-release r1");
-    const r1 = penMesh();
-    writeln(format("two-button-reverse-release (unpinned): z1 faces %d armed %s; r1 faces %d (== g %s)",
-                   z1.nf, penArmed(), r1.nf, r1 == g));
-    assert(penArmed(), "two-button-reverse-release: the rig must leave the pen armed");
-    writeln("PASS two-button-reverse-release (observed only, TODO A14)");
+    assert(penHistoryLen() == r.hp + 3 && g.nv == 20 && g.nf == 12 && g.edges == 31 && penArmed(),
+           format("two-button-rev: history %s (expected arm + 2 rows), mesh %s (expected nv 20, "
+                  ~ "nf 12, ne 31)", penHistoryLabels(), g.toString));
+    expectTopLabels("two-button-rev", ["Topology Move", "Topology Add Loop"]);
+    penCtrlZ("two-button-rev z1");
+    expectState("two-button-rev", "z1 (the loop's row)", r.a0, true, r.hp + 2);
+    penCtrlShiftZ("two-button-rev r1");
+    expectState("two-button-rev", "r1", g, true, r.hp + 3);
+    penCtrlZ("two-button-rev z1'");
+    penCtrlZ("two-button-rev z2 (the LMB row)");
+    expectState("two-button-rev", "z2", r.a0, true, r.hp + 1);
+    penCtrlZ("two-button-rev z3 (the activation)");
+    expectState("two-button-rev", "z3", r.a0, false, r.hp);
+    writeln("PASS two-button-rev");
+}
+
+// two-button-fwd — release MMB first while LMB is still held, then LMB: the
+// MMB row is written but its loop is discarded; LMB's release is inert.
+unittest {
+    if (!cell("two-button-fwd")) return;
+    const r = rig();
+    penArmUi(r);
+    const at = penEdgePx(5, 6, "two-button-fwd e56");
+    penPlay(twoButtonPresses(at) ~ "\n"
+            ~ penButton(100, false, 2, at[0], at[1], PEN_KMOD_LSHIFT) ~ "\n"
+            ~ penButton(120, false, 1, at[0], at[1], 0), "two-button-fwd gesture");
+    expectState("two-button-fwd", "g", r.a0, true, r.hp + 3);
+    expectTopLabels("two-button-fwd", ["Topology Move", "Topology Add Loop"]);
+    penCtrlZ("two-button-fwd z1 (the MMB row)");
+    expectState("two-button-fwd", "z1", r.a0, true, r.hp + 2);
+    penCtrlZ("two-button-fwd z2 (the LMB row)");
+    expectState("two-button-fwd", "z2", r.a0, true, r.hp + 1);
+    penCtrlZ("two-button-fwd z3 (the activation)");
+    expectState("two-button-fwd", "z3", r.a0, false, r.hp);
+    writeln("PASS two-button-fwd");
+}
+
+// two-button-cut-move — wave plan §9.27 [A15-2]: a Move on v5 is CUT by a
+// Shift+MMB press on e9-10; 40 px of held motion after it must not move v5
+// (the Move is disarmed). LMB is released first (inert), so MMB's release
+// commits with nothing held and keeps whatever the motion did: v5 must still
+// be where the second press found it. Two rows.
+unittest {
+    if (!cell("two-button-cut-move")) return;
+    const r = rig();
+    penArmUi(r);
+    const v5 = penVertexPx(5, "two-button-cut-move v5");
+    const e = penEdgePx(9, 10, "two-button-cut-move e9-10");
+    penPlay(penMotion(20, v5[0], v5[1], 0, 0) ~ "\n" ~ penButton(40, true, 1, v5[0], v5[1], 0) ~ "\n"
+            ~ penButton(60, true, 2, e[0], e[1], PEN_KMOD_LSHIFT), "two-button-cut-move presses");
+    const atSecond = penMesh();
+    assert(penHistoryLen() == r.hp + 2 && atSecond == r.a0,
+           format("two-button-cut-move: the second press must close the motionless Move as one "
+                  ~ "row: history %s, mesh %s a0", penHistoryLabels(), atSecond == r.a0 ? "==" : "!="));
+    string log;
+    foreach (i; 1 .. 9)
+        log ~= penMotion(60 + 20 * i, e[0] + 5 * i, e[1], penButtonMask(1) | penButtonMask(2),
+                         PEN_KMOD_LSHIFT) ~ "\n";
+    penPlay(log[0 .. $ - 1], "two-button-cut-move 40 px held motion");
+    const ex = e[0] + 40;
+    penPlay(penButton(20, false, 1, ex, e[1], PEN_KMOD_LSHIFT) ~ "\n"
+            ~ penButton(40, false, 2, ex, e[1], PEN_KMOD_LSHIFT), "two-button-cut-move releases");
+    const m = penMesh();
+    assert(m.pos[5] == atSecond.pos[5] && penHistoryLen() == r.hp + 3 && penArmed(),
+           format("two-button-cut-move: v5 %s (at the second press %s), history %s", m.pos[5],
+                  atSecond.pos[5], penHistoryLabels()));
+    expectTopLabels("two-button-cut-move", ["Topology Move", "Topology Add Loop"]);
+    writeln("PASS two-button-cut-move");
+}
+
+// two-button-discard-move — the release-time discard (§9.27 [A15-1]): with
+// Shift+MMB held on e56, an LMB Move drag of v5 opens its own step (the MMB
+// one closes unchanged); LMB released while MMB is still held throws the drag
+// away — v5 comes back to the step's open image — and records an unchanged
+// row; MMB's release is inert.
+unittest {
+    if (!cell("two-button-discard-move")) return;
+    const r = rig();
+    penArmUi(r);
+    const e = penEdgePx(5, 6, "two-button-discard-move e56");
+    const v5 = penVertexPx(5, "two-button-discard-move v5");
+    string log = penMotion(20, e[0], e[1], 0, PEN_KMOD_LSHIFT) ~ "\n"
+               ~ penButton(40, true, 2, e[0], e[1], PEN_KMOD_LSHIFT) ~ "\n"
+               ~ penMotion(60, v5[0], v5[1], penButtonMask(2), 0) ~ "\n"
+               ~ penButton(80, true, 1, v5[0], v5[1], 0) ~ "\n";
+    foreach (i; 1 .. 9)
+        log ~= penMotion(80 + 20 * i, v5[0] + 5 * i, v5[1] - 2 * i,
+                         penButtonMask(1) | penButtonMask(2), 0) ~ "\n";
+    penPlay(log[0 .. $ - 1], "two-button-discard-move MMB hold, LMB drag");
+    const dragged = penMesh();
+    assert(penMoved(dragged, r.a0) == [5L] && penHistoryLen() == r.hp + 2,
+           format("two-button-discard-move rig: the held LMB drag must move v5 alone (moved %s), "
+                  ~ "the MMB step closed as one row: %s", penIdx(penMoved(dragged, r.a0)),
+                  penHistoryLabels()));
+    const up = [v5[0] + 40, v5[1] - 16];
+    penPlay(penButton(20, false, 1, up[0], up[1], 0), "two-button-discard-move LMB release");
+    expectState("two-button-discard-move", "LMB released (MMB held)", r.a0, true, r.hp + 3);
+    penPlay(penButton(20, false, 2, up[0], up[1], 0), "two-button-discard-move MMB release");
+    expectState("two-button-discard-move", "MMB released (inert)", r.a0, true, r.hp + 3);
+    expectTopLabels("two-button-discard-move", ["Topology Add Loop", "Topology Move"]);
+    writeln("PASS two-button-discard-move");
 }
 
 // ---------------------------------------------------------------------------
@@ -1019,7 +1127,7 @@ unittest {
     writeln("cells=", cellsRun);
     const only = environment.get("VIBE3D_CELL", "");
     if (only.length == 0)
-        assert(cellsRun == 27, format("topology pen session laws: %d cells ran, expected 27", cellsRun));
+        assert(cellsRun == 30, format("topology pen session laws: %d cells ran, expected 30", cellsRun));
     else
         assert(cellsRun == 1, format("topology pen session laws: VIBE3D_CELL=%s ran %d cells, expected 1 "
                                      ~ "(an unknown name runs none)", only, cellsRun));

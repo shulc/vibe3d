@@ -813,8 +813,11 @@ unittest {
 // 8. ONE BEGIN SITE, ONE END SITE (plan 8646 [R3-1]). In the pen's `tool.d`,
 //    `sessionStepBegins(` sits only in `openPressStep` and `sessionStepEnds(`
 //    only in `closePressStep`; `openPressStep(` is called from
-//    `onMouseButtonDown` alone and `closePressStep(` from `onMouseButtonUp`
-//    and `deactivate` alone (each name's declaration is its own row). The
+//    `onMouseButtonDown` alone and `closePressStep(` from `onMouseButtonUp`,
+//    `deactivate`, a press while a step is open (`openPressStep`) and a
+//    release discarded while another pen button is held
+//    (`releaseBeforeDispatch`) — L56, wave plan §9.27 — alone (each name's
+//    declaration is its own row). The
 //    white-box rig's `penStep` drives the same two functions, so it stays
 //    green when the production door stops calling them — this member sees it.
 // ---------------------------------------------------------------------------
@@ -826,6 +829,9 @@ private enum LedgerRow[] kStepSiteRoster = [
     LedgerRow("TopologyPenTool|close", 1, "closePressStep's declaration"),
     LedgerRow("TopologyPenTool.onMouseButtonUp|close", 1, "the release door"),
     LedgerRow("TopologyPenTool.deactivate|close", 1, "a step still open at a drop"),
+    LedgerRow("TopologyPenTool.openPressStep|close", 1, "a second press ends the open step (L56)"),
+    LedgerRow("TopologyPenTool.releaseBeforeDispatch|close", 1,
+              "a release while another pen button is held: an unchanged row (L56)"),
 ];
 
 unittest {
@@ -838,5 +844,5 @@ unittest {
     hits ~= symbolTokenHits(src, rel, "closePressStep(", "close");
     const problems = reconcile(kStepSiteRoster, hits);
     assert(problems.length == 0, "G7 census: the pen's step sites changed.\n" ~ problems);
-    assert(hits.length == 7, "G7 census: step-site population changed");
+    assert(hits.length == 9, "G7 census: step-site population changed");
 }

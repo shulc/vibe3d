@@ -65,6 +65,7 @@ import tool_input            : ToolAction, PassThrough, InputPhase, InputButton,
                                 resolveToolAction, toButton, toMods;
 import drag                  : planeDragDelta;
 import eventlog               : queryMouse;
+import held_gesture_buttons   : g_heldGestureButtons;
 import prepared_tool_effect   : PreparedSessionActivateEffect,
                                  PreparedActivateKind,
                                  PreparedTopologyPenUpdateEffect,
@@ -386,6 +387,14 @@ private:
     package MeshSnapshot basis_;
     package bool         stepOpen_;
     private ubyte        stepButton_;
+    // Overlapping buttons (L56, wave plan §9.26.1/§9.27): each press is its
+    // OWN step. `heldMask_` holds the pen's consumed buttons still down (bit
+    // b-1 for SDL button b, intersected with the router's held set on every
+    // pen button event so a lost release cannot stick); a press while a step
+    // is open ends the earlier gesture and makes its button INERT
+    // (`inertButtons_`): its release is consumed and dispatches nothing.
+    package ubyte        heldMask_;
+    package ubyte        inertButtons_;
     private MeshSessionEdit delegate() stepFactory_;
     private string       stepLabel_;
 
@@ -838,13 +847,10 @@ private:
     // operation Shift+RMB already runs, and it commits through the same
     // kernel (`commitDupEdges`) with a one-element edge list.
     //
-    // DELIBERATELY NOT the `dupLoop*` fields reused with a shorter list: a
-    // RIGHT-button press can legitimately arrive while a LEFT gesture is
-    // still held (the two-button chord this tool's MIDDLE/RIGHT handlers are
-    // careful to preserve — see `resetAllGestureArms`), and
-    // `onDupLoopShiftRmbDown`'s own narrow self-reset would then silently
-    // cancel the LEFT drag by clearing state they shared. Separate fields
-    // keep that property intact.
+    // DELIBERATELY NOT the `dupLoop*` fields reused with a shorter list: each
+    // gesture keeps its own payload so one handler's narrow self-reset can
+    // never clear another's (a cross-button press ends the held gesture
+    // through `openPressStep` instead — L56).
     package GestureArm  dupEdgeArmed_;
     package int   dupEdgeSeed_  = -1;
     package int[] dupEdgeEdges_;          // what the release will duplicate: [seed], or the trimmed border run
@@ -1521,6 +1527,7 @@ public:
         // no-op when bound; it only clears the pen's own step state. No new
         // targets are computed and nothing is welded — there is no event.
         if (stepOpen_) closePressStep();
+        heldMask_ = inertButtons_ = 0;
         resetAllGestureArms();
         lastHit_    = ConstrainHitPacket.init;
         lastTarget_ = HoverTarget.init;
@@ -2960,18 +2967,37 @@ public:
             : resolveToolAction(bindings(), btn, mods);
         if (a == PassThrough) return false;
         immutable ov = kChordOv[cast(TopoPenChord) a];
+        immutable ubyte bit = penButtonBit(e.button);
+        heldMask_ &= cast(ubyte)(g_heldGestureButtons.bits | bit);
+        inertButtons_ &= heldMask_;
         openPressStep(e.button, ov.mode == ModeOv.FromUser ? penMode_
                                                            : modeOfOverride(ov.mode));
+        heldMask_ |= bit;
         dispatchInput(btn, mods, InputPhase.Down, e, vts);
         return true;
     }
 
+    /// The pen's bit for SDL button `b` (1..8), the router's layout.
+    private static ubyte penButtonBit(ubyte b) pure nothrow @safe @nogc {
+        return (b >= 1 && b <= 8) ? cast(ubyte)(1u << (b - 1)) : 0;
+    }
+
     /// Open the press step (plan 8646 [R3-1]): the ONLY code that begins a pen
     /// step, called from `onMouseButtonDown` (and by the white-box rig's
-    /// `penStep` bracket). A second button during a hold opens nothing new —
-    /// one step per hold. The carrier starts as the chord mode's default.
+    /// `penStep` bracket). A press while a step is open ENDS the earlier
+    /// gesture first (L56, wave plan §9.27 [A15-1]): its arms are cleared, its
+    /// step closes as the mesh stands (a deferred commit never ran, so that
+    /// row is unchanged; a live Move keeps what it wrote), and its button
+    /// turns inert. The new button then opens its own step. The carrier starts
+    /// as the chord mode's default.
     package bool openPressStep(ubyte button, PenMode chordMode) {
-        if (stepOpen_) return false;
+        if (stepOpen_) {
+            resetAllGestureArms();
+            resetAllArmed();
+            if (stepButton_ != button) inertButtons_ |= penButtonBit(stepButton_);
+            closePressStep();
+        }
+        inertButtons_ &= cast(ubyte)~penButtonBit(button);
         sessionStepBegins(PressKind.plain);
         basis_ = sessionStepOpenImage();
         // Unbound, or not the instance the session tracks: our own capture.
@@ -3068,21 +3094,16 @@ public:
     // clearing all of them before re-arming exactly one changes nothing for
     // legitimate input.
     //
-    // `onCtrlMmbDown`/`onShiftMmbDown` (the MIDDLE-button handlers)
-    // deliberately do NOT call this: unlike the LEFT-button trio's hazard —
-    // which can only arise from a malformed replay, since real hardware
-    // cannot emit two DOWN events for the SAME physical button without an
-    // intervening UP — a DIFFERENT button (MIDDLE) genuinely CAN be pressed
-    // while LEFT is still legitimately held (a real two-button chord); an
-    // unconditional reset there would silently cancel an in-progress
-    // Move/Build/Slide drag the user still expects to commit on their
-    // eventual LEFT release. Their own hazards are already closed by
-    // existing, narrower mechanisms: a same-slot MIDDLE re-press is guarded
-    // by Add Loop's own top-of-handler reset (`onShiftMmbDown`, below), and
-    // a cross-arm hazard from a SUCCESSFUL Remove/Add-Loop mutation (which
-    // DOES invalidate sibling cached indices, unlike a mere re-press)
-    // already goes through `resyncSession()` via `removeFaceAt`/
-    // `commitAddLoop`'s own commit paths.
+    // A press of a DIFFERENT button while one is held ENDS the held gesture
+    // (L56, wave plan §9.27 [A15-1], reversing REV1 FIX-1's "the two land in
+    // one press step"): `openPressStep` calls this helper and drops every
+    // button's dispatch slot before the new button's handler runs, closes the
+    // earlier step as the mesh stands and makes that button inert. So the
+    // MIDDLE-button handlers (`onCtrlMmbDown`/`onShiftMmbDown`) need no reset
+    // of their own for a cross-button chord: no arm of another button
+    // survives into them. A same-slot MIDDLE re-press is still guarded by Add
+    // Loop's own top-of-handler reset, and a SUCCESSFUL Remove/Add-Loop
+    // mutation still goes through `resyncSession()` on its commit path.
     package void resetAllGestureArms() {
         // EVERY arm bit, from the compiler's own list (task 0705): each field
         // declared `GestureArm` is disarmed here, so a gesture added later is
@@ -3124,27 +3145,19 @@ public:
         // P9 Split (doc/topopen_p9_split_plan.md) — cleared here so the
         // LEFT-button trio's own reset closes a stray split arm too (e.g. an
         // external history navigation via `resyncSession`, below); the
-        // MIDDLE-button `onPlainMmbDown` does NOT call this helper (REV1
-        // FIX-1 — see that handler's own doc comment) and uses its own
-        // narrow self-reset instead.
+        // MIDDLE-button `onPlainMmbDown` uses its own narrow self-reset.
         splitSourceVert_ = -1;
         splitTargetVert_ = -1;
         // P10 Move Loop (doc/topopen_p10_moveloop_plan.md) — cleared here so
         // the LEFT-button trio's own reset (and `resyncSession`, below) close
         // a stray move-loop arm too; `onMoveLoopRmbDown` (the RIGHT-button
-        // handler) does NOT call this helper (same RMB/MMB-button discipline
-        // as `onShiftMmbDown`/`onPlainMmbDown` above — a RIGHT-button press
-        // genuinely CAN be a two-button chord while a LEFT gesture is still
-        // held) and uses its own narrow self-reset instead.
+        // handler) uses its own narrow self-reset.
         moveLoopSeed_  = -1;
         moveLoopVerts_ = null;
         // P11 Dup Loop (doc/topopen_p11_duploop_plan.md) — cleared here so
         // the LEFT-button trio's own reset (and `resyncSession()`, below)
         // close a stray dup-loop arm too; `onDupLoopShiftRmbDown` (the
-        // Shift+RMB handler) does NOT call this helper (same RMB-button
-        // discipline as `onMoveLoopRmbDown` above — a RIGHT-button press
-        // genuinely CAN be a two-button chord while a LEFT gesture is still
-        // held) and uses its own narrow self-reset instead.
+        // Shift+RMB handler) uses its own narrow self-reset.
         dupLoopSeed_  = -1;
         dupLoopEdges_ = null;
         // Duplicate EDGE (task 0485) — the Shift+LMB sibling; cleared here
@@ -3154,10 +3167,7 @@ public:
         // P12 Smooth+Loop (doc/topopen_p12_smoothloop_plan.md) — cleared
         // here so the LEFT-button trio's own reset (and `resyncSession()`,
         // below) close a stray smooth-loop arm too; `onSmoothLoopRmbDown`
-        // (the Shift+Ctrl+RMB handler) does NOT call this helper (same
-        // RMB-button discipline as `onMoveLoopRmbDown`/
-        // `onDupLoopShiftRmbDown` above) and uses its own narrow self-reset
-        // instead.
+        // (the Shift+Ctrl+RMB handler) uses its own narrow self-reset.
         smoothLoopSeed_   = -1;
         smoothLoopVerts_  = null;
         smoothLoopDragPx_ = 0.0f;
@@ -3903,20 +3913,29 @@ public:
     override bool hasUncommittedEdit() const { return stepOpen_; }
 
     override void cancelUncommittedEdit() {
+        discardOpenGesture();
+        sessionOperationEnded();
+        stepOpen_ = false;   // a later press must open its own step [R4-3]
+        heldMask_ = inertButtons_ = 0;
+    }
+
+    // Throw the open press's gesture away: the press image comes back, every
+    // arm clears and the display is re-uploaded. Shared by the cancel above and
+    // a release while another pen button is held (`onMouseButtonUp`), which
+    // then closes the step as an unchanged row.
+    private void discardOpenGesture() {
         auto m = mesh;
         if (m !is null && stepOpen_ && basis_.filled) basis_.restore(*m);
         resetAllGestureArms();
-        sessionOperationEnded();
-        stepOpen_ = false;   // a later press must open its own step [R4-3]
         if (m is null) return;
         m.syncSelection();
         if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_); }
     }
 
     // Drop the Move arm. Nothing is recorded here: the press step owns the
-    // row. A MIDDLE- or RIGHT-button gesture that commits while a LEFT Move
-    // drag is still held (a legitimate two-button chord) lands in the same
-    // press step, so the two are one row.
+    // row. A second button pressed while a LEFT Move drag is held ends the
+    // drag here (`openPressStep`): the Move's row keeps what it wrote up to
+    // that press and the second gesture is its own row (L56).
     private void clearMoveArm() {
         moveArmed_   = false;
         grabbedVert_ = -1;
@@ -4652,16 +4671,12 @@ public:
     // motion event (`onMouseMotion`) and once more, authoritatively, at
     // release (`onMouseButtonUp`'s MIDDLE branch, `commitSplit`).
     //
-    // REV1 FIX-1 (KILLER-1): this handler does ONLY its own narrow
-    // self-reset — `resetAllGestureArms()` is DELIBERATELY NOT called here,
-    // mirroring `onShiftMmbDown`/`onCtrlMmbDown` immediately above (the
-    // MIDDLE-button discipline; see `resetAllGestureArms`'s own doc comment
-    // for the full rationale): a MIDDLE press can legitimately be a
-    // two-button chord while a LEFT gesture (Build/Move/Slide/Smooth) is
-    // still held, so an unconditional full reset here would silently cancel
-    // that in-progress drag before the user's eventual LEFT release commits
-    // it. A same-slot MIDDLE re-press is guarded by this handler's own
-    // top-of-function reset, exactly like Add Loop's.
+    // This handler does ONLY its own narrow self-reset: a cross-button chord
+    // never reaches it with another button's arm alive, because
+    // `openPressStep` ends the held gesture first (L56; see
+    // `resetAllGestureArms`'s doc comment). A same-slot MIDDLE re-press is
+    // guarded by this handler's own top-of-function reset, exactly like Add
+    // Loop's.
     private bool onPlainMmbDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         splitArmed_      = false;
         splitSourceVert_ = -1;
@@ -4721,15 +4736,12 @@ public:
     // matching every other down-handler's miss convention (RMB-lasso then
     // proceeds unchanged, task-0288 "tool first crack at RMB" precedent).
     //
-    // REV1 FIX-1 discipline (RMB/MMB-button symmetry, see
-    // `resetAllGestureArms`'s own doc comment): this handler does ONLY its
-    // own narrow self-reset — `resetAllGestureArms()` is DELIBERATELY NOT
-    // called here — because a RIGHT-button press can legitimately be a
-    // two-button chord while a LEFT-button gesture (Build/Move/Slide/
-    // Smooth) is still held; an unconditional full reset here would
-    // silently cancel that in-progress drag before the user's eventual LEFT
-    // release commits it. A same-button RMB re-press is guarded by this
-    // handler's own top-of-function reset, exactly like Add Loop's/Split's.
+    // This handler does ONLY its own narrow self-reset: a cross-button chord
+    // never reaches it with another button's arm alive, because
+    // `openPressStep` ends the held gesture first (L56; see
+    // `resetAllGestureArms`'s doc comment). A same-button RMB re-press is
+    // guarded by this handler's own top-of-function reset, exactly like Add
+    // Loop's/Split's.
     package bool onMoveLoopRmbDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         moveLoopArmed_ = false;
         moveLoopSeed_  = -1;
@@ -4781,16 +4793,11 @@ public:
     // (Shift+RMB-lasso proceeds unchanged, Shift being the lasso's own
     // additive modifier).
     //
-    // RMB-button discipline (mirrors `onMoveLoopRmbDown`'s own doc
-    // comment): this handler does ONLY its own narrow self-reset (clear
-    // the three dup-loop fields at the top) — `resetAllGestureArms()` is
-    // DELIBERATELY NOT called here, because a RIGHT-button press can
-    // legitimately be a two-button chord while a LEFT-button gesture
-    // (Build/Move/Slide/Smooth) is still held; an unconditional full reset
-    // here would silently cancel that in-progress drag before the user's
-    // eventual LEFT release commits it. A same-slot Shift+RMB re-press is
-    // guarded by this handler's own top-of-function reset, exactly like
-    // Move Loop's/Add Loop's/Split's.
+    // This handler does ONLY its own narrow self-reset: a cross-button chord
+    // never reaches it with another button's arm alive, because
+    // `openPressStep` ends the held gesture first (L56). A same-slot
+    // Shift+RMB re-press is guarded by this handler's own top-of-function
+    // reset, exactly like Move Loop's/Add Loop's/Split's.
     package bool onDupLoopShiftRmbDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         dupLoopArmed_ = false;
         dupLoopSeed_  = -1;
@@ -4840,15 +4847,11 @@ public:
     // down-handler's miss convention (Shift+Ctrl+RMB-lasso then proceeds
     // unchanged).
     //
-    // RMB-button discipline (mirrors `onMoveLoopRmbDown`'s/
-    // `onDupLoopShiftRmbDown`'s own doc comment): this handler does ONLY its
-    // own narrow self-reset — `resetAllGestureArms()` is DELIBERATELY NOT
-    // called here — because a RIGHT-button press can legitimately be a
-    // two-button chord while a LEFT-button gesture (Build/Move/Slide/Smooth)
-    // is still held; an unconditional full reset here would silently cancel
-    // that in-progress drag before the user's eventual LEFT release commits
-    // it. A same-slot Shift+Ctrl+RMB re-press is guarded by this handler's
-    // own top-of-function reset, exactly like Move Loop's/Dup Loop's.
+    // This handler does ONLY its own narrow self-reset: a cross-button chord
+    // never reaches it with another button's arm alive, because
+    // `openPressStep` ends the held gesture first (L56). A same-slot
+    // Shift+Ctrl+RMB re-press is guarded by this handler's own
+    // top-of-function reset, exactly like Move Loop's/Dup Loop's.
     package bool onSmoothLoopRmbDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         smoothLoopArmed_ = false;
         smoothLoopSeed_  = -1;
@@ -5121,6 +5124,7 @@ public:
     // inline, per-button-branch, before the Phase-2 flip.
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e,
                                   ref VectorStack vts) {
+        if (releaseBeforeDispatch(e)) return true;
         // The release still runs on the press's ranges — `splitUp` re-resolves
         // its target vertex at the release pixel and must use the same
         // acceptance the whole gesture used — so the drop happens AFTER the
@@ -5138,6 +5142,28 @@ public:
             return true;
         }
         return handled;
+    }
+
+    // The two releases decided BEFORE dispatch (L56, wave plan §9.27 [A15-1]):
+    // an inert button's release is consumed and dispatches nothing; the open
+    // step's own release while another pen button is still held discards its
+    // gesture (no commit runs) and closes the step as an unchanged row.
+    private bool releaseBeforeDispatch(ref const SDL_MouseButtonEvent e) {
+        immutable ubyte bit = penButtonBit(e.button);
+        if (inertButtons_ & bit) {
+            inertButtons_ &= cast(ubyte)~bit;
+            heldMask_ &= cast(ubyte)~bit;
+            return true;
+        }
+        heldMask_ &= cast(ubyte)(~bit & g_heldGestureButtons.bits);
+        inertButtons_ &= heldMask_;
+        if (!stepOpen_ || e.button != stepButton_ || heldMask_ == 0) return false;
+        discardOpenGesture();
+        resetAllArmed();
+        dragSnap_ = SnapPacket.init;
+        unregisterSnapGuide();
+        closePressStep();
+        return true;
     }
 
     // --- Phase-2 input-dispatch migration (doc/topopen_input_dispatch_phase2_plan.md):

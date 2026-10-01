@@ -129,8 +129,9 @@ BoundPen bindPenSession(TopologyPenTool pen, CommandHistory h) {
 /// One press step around a direct handler/kernel call: open, run, close.
 void penStep(TopologyPenTool pen, ubyte button, PenMode mode,
              scope void delegate() gesture) {
+    assert(!pen.stepOpen_, "penStep: a press step was already open (a nested bracket)");
     immutable bool opened = pen.openPressStep(button, mode);
-    assert(opened, "penStep: a press step was already open (a nested bracket)");
+    assert(opened, "penStep: the press opened no step");
     gesture();
     pen.closePressStep();
 }
@@ -622,13 +623,19 @@ unittest {
             "a close after a cancel must not record the cancelled press");
     }
 
-    // [R4-3]: the next press opens ITS OWN step and is one row; a second
-    // button during that hold opens nothing new (one step per hold).
+    // [R4-3]: the next press opens ITS OWN step. A second button during that
+    // hold ENDS it (L56, wave plan §9.27 [A15-1]): the first step closes as
+    // the mesh stands — one row — and the second button opens its own step;
+    // the first button turns inert, so its release closes nothing.
     assert(t.openPressStep(SDL_BUTTON_LEFT, PenMode.Move),
         "after a cancel the next press must open its own step");
-    assert(!t.openPressStep(SDL_BUTTON_MIDDLE, PenMode.Remove),
-        "a second button during a hold must not open a second step");
-    // ...and that other button's release does not end the hold's step.
+    m.vertices[a] = Vec3(3, 2, 3);          // the held LEFT press wrote the mesh
+    assert(t.openPressStep(SDL_BUTTON_MIDDLE, PenMode.Remove) && t.stepOpen_
+           && history.undoEntries().length == 1,
+        "a second button during a hold must close the first step (one row) and open its own");
+    assert(history.undoEntries()[0].cmd.label() == "Topology Move"
+           && m.vertices[a] == Vec3(3, 2, 3),
+        "the cut LEFT step is its own Move row, the mesh as it stood at the second press");
     {
         import toolpipe.packets : SubjectPacket;
         loadSDL();   // the release reads SDL's modifier state
@@ -636,21 +643,17 @@ unittest {
         subj.mesh = &m;
         VectorStack vts;
         vts.put(&subj);
-        SDL_MouseButtonEvent other;
-        other.button = SDL_BUTTON_MIDDLE;
-        t.onMouseButtonUp(other, vts);
-        assert(t.stepOpen_ && history.undoEntries().length == 0,
-            "another button's release must leave the hold's step open");
-        m.vertices[a] = Vec3(3, 2, 3);
+        SDL_MouseButtonEvent left;
+        left.button = SDL_BUTTON_LEFT;
+        assert(t.onMouseButtonUp(left, vts) && t.stepOpen_
+               && history.undoEntries().length == 1,
+            "the inert first button's release is consumed and closes nothing");
         SDL_MouseButtonEvent own;
-        own.button = SDL_BUTTON_LEFT;
-        assert(t.onMouseButtonUp(own, vts), "the hold's own release must be consumed");
+        own.button = SDL_BUTTON_MIDDLE;
+        assert(t.onMouseButtonUp(own, vts), "the open step's own release must be consumed");
     }
-    assert(history.undoEntries().length == 1 && !t.stepOpen_,
-        "the press after a cancel is one row, ended by its own button");
-    assert(!t.hasUncommittedEdit(),
-        "a closed step is no uncommitted edit, though the mesh left its press image");
-
+    assert(history.undoEntries().length == 2 && !t.stepOpen_,
+        "two overlapping presses are two rows, the second ended by its own button");
     // Unbound (no session to share an image): the pen captures its own press
     // image, so a cancel still restores it.
     auto u = new TopologyPenTool();
