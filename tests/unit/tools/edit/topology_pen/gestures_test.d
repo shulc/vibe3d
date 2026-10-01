@@ -9464,23 +9464,26 @@ unittest {
     assert(m.wireEdgeKeys.length == 1, "F1: population unchanged by addFace");
 }
 
-// ... and beside it, the ring-consume routine removes
-// the wire key of every ring SIDE and no other key. Two keys, one a side of
-// the ring [0,1,2] and one reaching off it (vertex 3 is not on the ring), so
-// consuming every key and consuming only the ring's differ.
+// ... and beside it, the ring-consume routine removes the wire key of EVERY
+// ring side and no other key. A 4-ring [0,1,2,3] with keys on a MIDDLE side
+// (1,2), the closing side (3,0) and one reaching off the ring (2,4), so
+// consuming every key, consuming only the first/last pair, and consuming the
+// ring's sides all differ.
 unittest {
     import mesh_topo : edgeKey;
     Mesh m;
-    foreach (i; 0 .. 4) m.addVertex(Vec3(i, 0, i % 2));
-    m.addEdge(0, 2);
-    m.addEdge(2, 3);
-    m.addFace([0u, 1u, 2u]);
-    assert(m.wireEdgeKeys.length == 2, "setup: two registered keys (F1 keeps (0,2) under the face)");
-    TopologyPenTool.consumeDegenerateOnRing(&m, [0u, 1u, 2u]);
-    assert((edgeKey(2, 3) in m.wireEdgeKeys) !is null,
+    foreach (i; 0 .. 5) m.addVertex(Vec3(i, 0, i % 2));
+    m.addEdge(1, 2);
+    m.addEdge(3, 0);
+    m.addEdge(2, 4);
+    assert(m.wireEdgeKeys.length == 3, "setup: three registered keys");
+    TopologyPenTool.consumeDegenerateOnRing(&m, [0u, 1u, 2u, 3u]);
+    assert((edgeKey(2, 4) in m.wireEdgeKeys) !is null,
         "a key whose edge is not a ring side survives the consumption");
-    assert((edgeKey(0, 2) in m.wireEdgeKeys) is null,
-        "the ring side's key is consumed by the build");
+    assert((edgeKey(3, 0) in m.wireEdgeKeys) is null,
+        "the ring's closing side's key is consumed");
+    assert((edgeKey(1, 2) in m.wireEdgeKeys) is null,
+        "a middle side's key is consumed");
     assert(m.wireEdgeKeys.length == 1, "population after consumption: exactly one key");
 }
 

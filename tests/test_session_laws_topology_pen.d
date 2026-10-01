@@ -2166,19 +2166,21 @@ unittest {
 // ---------------------------------------------------------------------------
 
 /// The registered wire keys of the primary layer, read from a native save of
-/// the live document (the only place they surface). Floors: the save writes no
-/// history row and leaves the pen armed as it was.
+/// the live document (the only place they surface). Side effects: `file.save`
+/// sets the document's path to the temp file and marks the document clean;
+/// the file itself (under /var/tmp) is deleted on scope exit. Floors: the save
+/// writes no history row and leaves the pen armed as it was.
 long[2][] penWireKeys(string what) {
     import std.file : exists, remove;
     import std.process : thisProcessID;
     import std.conv : to;
     const path = "/var/tmp/vibe3d_w1_wire_keys_" ~ thisProcessID.to!string ~ ".v3d";
     if (exists(path)) remove(path);
+    scope (exit) if (exists(path)) remove(path);
     const hist = penHistoryLen();
     const wasArmed = penArmed();
     penCmd("file.save", format(`{"path":%s}`, JSONValue(path).toString));
     auto doc = parseJSON(readText(path));
-    remove(path);
     assert(penHistoryLen() == hist && penArmed() == wasArmed,
            format("%s: the native save moved the session: history %d -> %d, armed %s -> %s",
                   what, hist, penHistoryLen(), wasArmed, penArmed()));

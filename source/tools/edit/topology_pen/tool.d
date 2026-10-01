@@ -7082,10 +7082,14 @@ public:
     // degenerate polygons it swallows.
     //
     // Our line polygon IS a registered wire key (`Mesh.wireEdgeKeys`), so the
-    // key of every ring SIDE is consumed here too (task 8750; law L46, captured
-    // Consumed for the build's triangle and for Fill). An orphan vertex carries
-    // no key, so the point-polygon half stays inert on our own geometry (gap
-    // row (v)); line/point POLYGONS from an importer are consumed as before.
+    // key of every ring SIDE is consumed here too (task 8750; law L46,
+    // captured C3-R3-rev/C3-R4: Consumed for the build's triangle and for
+    // Fill). An orphan vertex carries no key, so the point-polygon arm is
+    // inert on our own geometry (gap row (v)). Line polygons from an importer
+    // are consumed by both callers; the point-polygon arm matches Fill's
+    // decode only — the reference's triangle build KEPT the point polygon at
+    // its corner A (C3-R3-rev h2), so for the Tri caller that arm diverges,
+    // unreachable today (nothing here holds a 1-corner face; gap row (v)).
     // Only the two captured callers reach this — Fill's commit and the build's
     // Tri case; every other face creator keeps covered authorship (F1,
     // doc/measured_laws.md §7). The key removal sits OUTSIDE the
