@@ -117,8 +117,13 @@ class ToolActivationCommand : Command, ToolArmLifecyclePolicy {
         } else if (onActivate !is null) {
             onActivate(previousId_);
         }
-        // S6 (drop-sel): a drop row of a selection-type key restores the type
-        // the key left, after the tool is back (C1-X-sel).
+        // S6 (drop-sel, captured C1-X-sel z1): a drop row of a selection-type
+        // key restores the type the key left. The two legs commute, so their
+        // order is not a claim: the restore goes through the promote funnel,
+        // which never drops a tool, and no `dropWritesRow` tool reads the
+        // selection type when it arms (the Topology Pen only, pinned by the
+        // policy census). A declarer whose arm reads it makes the order a
+        // law to capture, not to pick.
         if (flipsSelType_ && onRestoreSelType !is null)
             onRestoreSelType(selBefore_);
     }

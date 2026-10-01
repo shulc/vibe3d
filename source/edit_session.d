@@ -623,10 +623,18 @@ final class EditSession {
         // `navigate` applies (slice M1a): refused, the tool is not called, and
         // the funnel keeps its pre-M2 rules. A door's close is the door's and
         // runs regardless, so its account is kept.
-        if (r == CloseReason.command && g_heldGestureButtons.any)
+        // The refusal also drops a drop row an aborted drop left pending
+        // (S6), so the funnel's `finishClose` cannot write it late.
+        if (r == CloseReason.command && g_heldGestureButtons.any) {
+            tools_.pendingDropRow_ = false;
             return CloseOutcome(false, false);
+        }
         return tools_.close(r, door, dropRow, ctx);
     }
+
+    /// S6: a drop door that failed after its `closeOperation` abandons the
+    /// drop row that close took — the tool was not dropped.
+    void abandonDropRow() { tools_.pendingDropRow_ = false; }
 
     /// S6: the factories of a drop row (a `ToolActivationCommand` with no
     /// armed tool) and of the Esc rung's empty task row, installed by the app
@@ -739,12 +747,12 @@ private class TopologyAdjustmentEdit : Command, GesturePayload {
 }
 
 /// What a drop row records (wave plan 8640 S6): the dropped tool, the session
-/// token its undo hands back, whether that tool's steps are history topology
-/// steps (its attribute image is restored by the undo), and the drop context.
+/// token its undo hands back, and the drop context. No attribute-image term:
+/// the undo's replay arm restores the dropped tool's attributes from the
+/// preset attribute cache, which keeps them at the drop.
 struct DropRowSpec {
     string previousId;
     ulong previousToken;
-    bool previousHistoryTopology;
     DropContext ctx;
 }
 
@@ -1189,8 +1197,7 @@ private struct ToolSession {
         closingToken_ = currentToken();
         if (dropRow && r == CloseReason.drop && t is bound_ && armedId_.length) {
             pendingDropRow_ = true;
-            pendingDrop_ = DropRowSpec(armedId_.idup, closingToken_,
-                t.sessionPolicy().historyTopologySteps, ctx);
+            pendingDrop_ = DropRowSpec(armedId_.idup, closingToken_, ctx);
         }
         topologyFirstGroupLive_ = false;
         if (topologyPending_ && reporting_(t) &&

@@ -898,6 +898,7 @@ unittest { // (10)
     assert(app.count("constbooldropRow=activeTool!is"~"null&&activeTool.sessionPolicy().dropWritesRow&&dropWritesRowFor(why);") == 1,
            "S6 wiring census: the drop door no longer reads the policy and the transition table");
     inOrder(app, ["dropWritesRowFor(why);",
+                  "scope(failure)if(session!is"~"null)session.abandonDropRow();",
                   "session.closeOperation(closeReasonFor(why),CommandDoor.ui,dropRow,ctx);",
                   "activeTool.deactivate();"], "dropActiveToolWith");
 }

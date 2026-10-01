@@ -33,7 +33,7 @@ module tests.unit.tool_session_steps_test;
 
 import command_history : CommandHistory, UndoState;
 import commands.tool.lifecycle : ToolActivationCommand, ToolTaskClearCommand;
-import edit_session : EditSession, ParameterChangeSource, ParameterChangePhase;
+import edit_session : DropRowSpec, EditSession, ParameterChangeSource, ParameterChangePhase;
 import editmode : EditMode;
 import mesh : Mesh, makeCube;
 import math : Vec3;
@@ -1631,4 +1631,45 @@ unittest {
     assert(h.undo() && h.redoEntries().length == 0,
         format("S6: undoing the drop row must empty the redo stack, %s left",
                h.redoEntries().length));
+}
+
+// (10) S6 review: a drop row is written only by the close that took it. An
+// aborted drop (its door threw before `finishClose`) leaves it pending; a held-
+// button refusal of the command close that follows must not let the funnel's
+// `finishClose` write it late, and the door's own `abandonDropRow` drops it.
+unittest {
+    import held_gesture_buttons : g_heldGestureButtons;
+    auto r = rig();
+    size_t drops, tasks;
+    r.session.installDropRows(
+        (const DropRowSpec s) { ++drops; return cast(Command) null; },
+        () { ++tasks; return cast(Command) null; });
+    DropContext esc;
+    esc.clearsTask = true;
+    // Control: a drop that runs to `finishClose` writes its row (and the Esc
+    // rung's task row), once.
+    r.session.closeOperation(CloseReason.drop, CommandDoor.ui, true, esc);
+    r.session.finishClose();
+    assert(drops == 1 && tasks == 1,
+           format("S6 abort control: a completed drop wrote %s drop / %s task rows, expected 1 / 1",
+                  drops, tasks));
+    // An aborted drop, then a held-button command close and its funnel finish.
+    r.session.noteArm("t.step", 2);
+    r.session.closeOperation(CloseReason.drop, CommandDoor.ui, true, esc);
+    g_heldGestureButtons.press(1);
+    scope (exit) g_heldGestureButtons.clear();
+    const o = r.session.closeOperation(CloseReason.command, CommandDoor.ui);
+    g_heldGestureButtons.clear();
+    r.session.finishClose();
+    assert(!o.dropsTool && drops == 1,
+           format("S6 abort: a refused command close let the funnel write a stale drop row (%s rows)",
+                  drops));
+    // The door's own abandon, with no close between.
+    r.session.noteArm("t.step", 3);
+    r.session.closeOperation(CloseReason.drop, CommandDoor.ui, true, esc);
+    r.session.abandonDropRow();
+    r.session.finishClose();
+    assert(drops == 1 && tasks == 1,
+           format("S6 abort: an abandoned drop still wrote its row (%s drop / %s task rows)",
+                  drops, tasks));
 }

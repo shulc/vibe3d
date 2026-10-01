@@ -242,7 +242,6 @@ struct DropContext {
     bool clearsTask;
     bool flipsSelType;
     SelType selBefore;
-    SelType selAfter;
 }
 
 /// Task 5911, "re-arm doors after a break": fresh user arms install every slot

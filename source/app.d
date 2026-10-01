@@ -2794,6 +2794,8 @@ void main(string[] args) {
         // destroys the tool (its policy, and the transition's table row).
         const bool dropRow = activeTool !is null &&
             activeTool.sessionPolicy().dropWritesRow && dropWritesRowFor(why);
+        // A close or door that throws dropped no tool: no drop row from it.
+        scope(failure) if (session !is null) session.abandonDropRow();
         if (session !is null)
             session.closeOperation(closeReasonFor(why), CommandDoor.ui, dropRow, ctx);
         // The `final switch` is OUTSIDE `if (activeTool)` deliberately. It used
@@ -2855,7 +2857,7 @@ void main(string[] args) {
         const flipped = sessionOwner.switchGeometryType(mode);
         if (flipped) {
             dropActiveToolWith(ToolTransition.selTypeFlipDrop,  // front-flip (B2)
-                DropContext(false, true, before, t));
+                DropContext(false, true, before));
             noteCurrentType(t);           // current-type changed (bus, drained at flush)
         }
     }
@@ -2933,7 +2935,7 @@ void main(string[] args) {
         const flipped = sessionOwner.switchItemType();
         if (flipped) {
             dropActiveToolWith(ToolTransition.selTypeFlipDrop,  // front-flip (B2)
-                DropContext(false, true, before, SelType.Item));
+                DropContext(false, true, before));
             noteCurrentType(SelType.Item);
         }
     }
@@ -4000,12 +4002,14 @@ void main(string[] args) {
     // Wave plan 8640 S6: the drop row (armed = none; undo re-arms the dropped
     // tool through the replay arm and, for a selection-type key, restores the
     // type through the funnel that does not drop) and the Esc rung's task row.
+    // `previousHistoryTopology` is false: that replay arm already restores the
+    // dropped tool's attributes from the preset attribute cache.
     session.installDropRows(
         (const DropRowSpec spec) {
             import commands.tool.lifecycle : ToolActivationCommand;
             auto row = new ToolActivationCommand(&mesh(), cameraView, editMode,
                 "", spec.previousId, false, false, false, 0, spec.previousToken,
-                true, spec.previousHistoryTopology, false, true);
+                true, false, false, true);
             row.onActivate = (string restoreId) {
                 JSONValue noNamed = JSONValue(cast(JSONValue[string]) null);
                 armPreparedTool(ToolTransition.replayArm, restoreId, noNamed, true);
