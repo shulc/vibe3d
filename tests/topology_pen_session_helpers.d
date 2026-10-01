@@ -283,7 +283,9 @@ void penResetCamera() {
                   c.eye, c.focus, cam.toString));
 }
 
-PenRig penRigLoad(string rigPath) {
+/// `fg` is the primary grid's (nv, nf, ne) as loaded: the S2 grid by default;
+/// the corner-build cells load their capture cells' own grids (task 8720).
+PenRig penRigLoad(string rigPath, long[3] fg = [16, 9, 24]) {
     penCmd("scene.reset");
     penCmd("file.load", format(`{"path":%s}`, JSONValue(rigPath).toString));
     penResetCamera();
@@ -291,11 +293,11 @@ PenRig penRigLoad(string rigPath) {
     PenRig r;
     r.a0 = penMesh();
     r.hp = penHistoryLen();
-    assert(r.a0.nv == 16 && r.a0.nf == 9 && r.a0.edges == 24 && r.hp == 0,
-           format("pen rig: the primary is not the 16v/9f/24e grid with an empty history: %s, "
-                  ~ "history %d", r.a0.toString, r.hp));
+    assert([r.a0.nv, r.a0.nf, r.a0.edges] == fg && r.hp == 0,
+           format("pen rig: the primary is not the %s grid with an empty history: %s, "
+                  ~ "history %d", fg, r.a0.toString, r.hp));
     assert(!penArmed(), "pen rig: a tool is armed before the arm");
-    penBackgroundLayerFloor();
+    penBackgroundLayerFloor(fg[0]);
     return r;
 }
 
@@ -304,12 +306,12 @@ PenRig penRigLoad(string rigPath) {
 /// 512 polygons (448 quads + 64 pole triangles), visible and not selected, so
 /// it is a background. Without it the pen snaps to nothing and the cells still
 /// run (the counts below are the generator's, appendix A of card 8650).
-void penBackgroundLayerFloor() {
+void penBackgroundLayerFloor(long fgVerts = 16) {
     auto ls = getJson("/api/layers")["layers"].array;
     assert(ls.length == 2, format("pen rig: %d layers loaded, expected 2 (grid + background)", ls.length));
     auto fg = ls[0], bg = ls[1];
-    assert(fg["primary"].type == JSONType.true_ && fg["vertexCount"].integer == 16,
-           "pen rig: layer 0 is not the primary 16-vertex grid: " ~ fg.toString);
+    assert(fg["primary"].type == JSONType.true_ && fg["vertexCount"].integer == fgVerts,
+           format("pen rig: layer 0 is not the primary %d-vertex grid: %s", fgVerts, fg.toString));
     assert(bg["vertexCount"].integer == 482 && bg["faceCount"].integer == 512
            && bg["visible"].type == JSONType.true_ && bg["selected"].type == JSONType.false_
            && bg["background"].type == JSONType.true_,

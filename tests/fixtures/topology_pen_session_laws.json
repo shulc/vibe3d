@@ -112,6 +112,20 @@
    "law": "Smoothing + Edge Loop processes only the pressed edge's loop: on an interior edge of an open 4-vertex row the two interior vertices; on a border edge the perimeter minus its four face-valence-1 corners. Plain smoothing on the same edge moves all 16. One step each, undo bit-exact."
   },
   {
+   "id": "L34-build-neighbour-by-angle",
+   "cells": [
+    "chord-build"
+   ],
+   "law": "A drag-build from a vertex that takes ONE existing neighbour takes the border neighbour whose screen direction makes the smallest angle with the drag (B1a: v4, B1b: v1); on the bisector it takes v4 (K-chords)."
+  },
+  {
+   "id": "L37-build-closed-and-in-triangle",
+   "cells": [
+    "chord-build"
+   ],
+   "law": "No build when every incident edge of the source lies on two polygons: the press moves the vertex (triangle over the corner quad). Otherwise a triangle corner builds a quad across its two border neighbours, the triangles kept (B5a, and B5b-far with the drag inside the covered wedge); a quad corner builds the triangle with the N-angle neighbour even with the drag inside the quad's wedge (B6a-big). One step each, undo bit-exact, the tool stays armed."
+  },
+  {
    "id": "L35-remove-drops-only-its-own-orphans",
    "cells": [
     "chord-remove-corner",
@@ -789,6 +803,210 @@
    },
    "note": "capture rig: vertex 16 in no polygon, and the bare edge (17, 18) made as a two-point polygon (one face). Ours builds both with the pen: a Point-mode point (16) and a Duplicate drag from a second point (17 -> 18), a faceless wire edge, so our face counts are the capture's minus bareEdgeFaces",
    "undoArmed": true
+  },
+  "chord-build": {
+   "corner": {
+    "capture": "K-chords",
+    "rig": "grid",
+    "drag": [
+     -40,
+     40
+    ],
+    "spacingPx": 66.8,
+    "before": [
+     16,
+     9,
+     24
+    ],
+    "after": [
+     17,
+     10,
+     26
+    ],
+    "newFaces": [
+     [
+      0,
+      4,
+      16
+     ]
+    ],
+    "goneFaces": [],
+    "sourceEdge": true,
+    "undoArmed": true
+   },
+   "angle-left": {
+    "capture": "C1-B1a-build-left",
+    "rig": "grid",
+    "drag": [
+     -40,
+     10
+    ],
+    "spacingPx": 66.8,
+    "before": [
+     16,
+     9,
+     24
+    ],
+    "after": [
+     17,
+     10,
+     26
+    ],
+    "newFaces": [
+     [
+      0,
+      4,
+      16
+     ]
+    ],
+    "goneFaces": [],
+    "sourceEdge": true,
+    "undoArmed": true
+   },
+   "angle-down": {
+    "capture": "C1-B1b-build-down",
+    "rig": "grid",
+    "drag": [
+     10,
+     40
+    ],
+    "spacingPx": 66.8,
+    "before": [
+     16,
+     9,
+     24
+    ],
+    "after": [
+     17,
+     10,
+     26
+    ],
+    "newFaces": [
+     [
+      0,
+      16,
+      1
+     ]
+    ],
+    "goneFaces": [],
+    "sourceEdge": true,
+    "undoArmed": true
+   },
+   "closed": {
+    "capture": "C1-B4a-tri-diag",
+    "rig": "tri014",
+    "drag": [
+     -40,
+     40
+    ],
+    "spacingPx": 66.8,
+    "before": [
+     16,
+     10,
+     25
+    ],
+    "after": [
+     16,
+     10,
+     25
+    ],
+    "newFaces": [],
+    "goneFaces": [],
+    "sourceEdge": false,
+    "moved": [
+     0
+    ],
+    "undoArmed": true
+   },
+   "tri-corner": {
+    "capture": "C2-B5a",
+    "rig": "b5",
+    "drag": [
+     10,
+     40
+    ],
+    "spacingPx": 66.8,
+    "before": [
+     17,
+     10,
+     27
+    ],
+    "after": [
+     18,
+     11,
+     29
+    ],
+    "newFaces": [
+     [
+      16,
+      17,
+      1,
+      0
+     ]
+    ],
+    "goneFaces": [],
+    "sourceEdge": false,
+    "undoArmed": true
+   },
+   "tri-corner-in-wedge": {
+    "capture": "C2-B5b-far",
+    "rig": "b5",
+    "drag": [
+     -100,
+     25
+    ],
+    "spacingPx": 66.8,
+    "before": [
+     17,
+     10,
+     27
+    ],
+    "after": [
+     18,
+     11,
+     29
+    ],
+    "newFaces": [
+     [
+      16,
+      17,
+      1,
+      0
+     ]
+    ],
+    "goneFaces": [],
+    "sourceEdge": false,
+    "undoArmed": true
+   },
+   "inside-wedge": {
+    "capture": "C2-B6a-big",
+    "rig": "big",
+    "drag": [
+     60,
+     -40
+    ],
+    "spacingPx": 99.8,
+    "before": [
+     16,
+     9,
+     24
+    ],
+    "after": [
+     17,
+     10,
+     26
+    ],
+    "newFaces": [
+     [
+      0,
+      16,
+      1
+     ]
+    ],
+    "goneFaces": [],
+    "sourceEdge": true,
+    "undoArmed": true
+   }
   },
   "no-op-chord-clicks": {
    "clicks": [

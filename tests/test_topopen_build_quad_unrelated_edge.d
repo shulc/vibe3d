@@ -9,7 +9,9 @@
 // elsewhere on the sphere, never touched again) BEFORE running the full
 // edge->triangle->quad hub-fan sequence around a SEPARATE hub, then asserts
 // the unrelated edge — and its two vertices' positions — survive completely
-// untouched by the quad splice.
+// untouched by the quad splice. Since task 8720 the splice deletes nothing
+// (the triangle is kept, as captured), so no deletion is left for that hazard
+// to ride on; the survival asserts stay as the guard.
 //
 // Run via: ./run_test.d topopen_build_quad_unrelated_edge
 
@@ -91,7 +93,11 @@ unittest {
     assert(vertexCountLayer(1) == 6,
         format("expected 6 vertices total (3 unrelated-side + 3 H0-side); got %d",
                vertexCountLayer(1)));
-    assert(faceCountLayer(1) == 1, "only H0's quad must exist as a face");
+    // The triangle stays beside the quad (task 8720: captured C1-B4b h3 and
+    // C2-B6b-far, law L37 S-inTri; this test used to expect it replaced).
+    assert(faceCountLayer(1) == 2, "H0's quad and its kept triangle must be the only faces");
+    assert(hasExactFace(1, [0, 4, 3]), "H0's triangle [0,4,3] must be kept; got "
+        ~ readFacesLayer(1).to!string);
     assert(hasExactFace(1, [4, 0, 3, 5]), "H0's quad winding must be [P,A,Q,B]=[4,0,3,5]; got "
         ~ readFacesLayer(1).to!string);
 
@@ -104,7 +110,7 @@ unittest {
     assert(edgeCountLayer(1) == 6,
         format("expected 6 edges total (1 unrelated + 3 old H0 + 2 new H0); got %d",
                edgeCountLayer(1)));
-    assert(hasEdgeLayer(1, 3, 4), "the H0 triangle's OLD edge (3,4) must survive as the diagonal");
+    assert(hasEdgeLayer(1, 3, 4), "the H0 triangle's edge (3,4) must survive as its side");
     assert(!hasEdgeLayer(1, 0, 5), "H0-B edge (0,5) must be ABSENT (B connects to the neighbors, not the hub)");
 
     auto unrelatedAfter = readVerticesLayer(1);

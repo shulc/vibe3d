@@ -312,10 +312,11 @@ private:
     package GestureArm      dragArmed_;
     int       dragStartX_, dragStartY_;
     BuildCase classifiedCase_ = BuildCase.None;
-    int       triN_           = -1;   // Tri case: A's one existing neighbor
-    int       quadP_          = -1;   // Quad case: cyclic-next(A) in the triangle
-    int       quadQ_          = -1;   // Quad case: cyclic-prev(A) in the triangle
-    int       quadTriFi_      = -1;   // Quad case: the triangle face index to splice
+    int       triN_           = -1;   // Tri case: the neighbour (N-angle at release)
+    int[]     triCands_;              // Tri case: the border neighbours N-angle picks from
+    int[]     triCandDirs_;           // ...and each side's polygon direction (+1 a->x, -1 x->a)
+    int       quadP_          = -1;   // Quad case: border neighbour whose polygon runs a->P
+    int       quadQ_          = -1;   // Quad case: the other border neighbour
 
     // --- P4 Move/Place session state (tool.d, doc/topopen_p4_plan.md,
     // Design A). Both outcomes of a plain-LMB press are ARMED at DOWN
@@ -2270,43 +2271,105 @@ public:
         return -1;
     }
 
-    // P3 — classify source vertex `a`'s EXISTING topology (capture-verified,
-    // doc/topopen_p3_plan.md "The MEASURED mechanism" table), via the raw
-    // `edgeNeighbors` scan (KILLER-1) for the edge-count test and
-    // `facesAroundVertex` (reliable here — a vertex ON a face has `vertLoop`
-    // seeded) ONLY for the face-incidence test. Fills `triN_`/`quadP_`/
-    // `quadQ_`/`quadTriFi_` scratch on a Tri/Quad result.
+    // Classify source vertex `a` for a drag-build (task 8720, plan P1; the
+    // captured laws R-closed and S-inTri, doc/measured_laws-style evidence in
+    // the wave plan's §9.17.2/§9.19.1 and the session-capture fixtures):
+    //   no incident edge                      -> Edge
+    //   every incident edge on >= 2 polygons  -> None: the press is a vertex
+    //                                            MOVE (`onShiftLmbDown` routes it)
+    //   one incident edge                     -> Tri with that neighbour
+    //   a triangle corner, two border edges   -> Quad across the two border
+    //                                            neighbours, every polygon KEPT
+    //   otherwise                             -> Tri; the neighbour is chosen at
+    //                                            release among the border ones
+    //                                            (`nAngleNeighbour`)
+    // A "border" edge lies on fewer than two polygons. Polygon incidence is
+    // counted over directed face sides (a full scan, not the vertex fan: the
+    // fan walk is not defined on the non-manifold rigs this rule was captured
+    // on). `quadP_` is the border neighbour whose polygon runs a -> P, so the
+    // new quad [P, a, Q, b] traverses each shared side against its polygon.
     private BuildCase classifySource(int a) {
-        triN_ = quadP_ = quadQ_ = quadTriFi_ = -1;
+        triN_ = quadP_ = quadQ_ = -1;
+        triCands_ = null;
+        triCandDirs_ = null;
         auto m = mesh;
         if (m is null || a < 0 || a >= cast(int)m.vertices.length) return BuildCase.None;
 
         auto en = m.edgeNeighbors(cast(uint)a);
-        if (en.length == 0) return BuildCase.Edge;          // A truly isolated
-        if (en.length == 1) {                               // one bare edge -> auto-close
-            triN_ = cast(int)en[0];
-            return BuildCase.Tri;
-        }
+        if (en.length == 0) return BuildCase.Edge;
 
-        // en.length >= 2: only a genuine "hub of exactly one triangle" (both
-        // neighbors already mutually edge-connected via that one face)
-        // qualifies for the quad splice. A hub already embedded in a quad
-        // (nf==1 but a 4-gon) or a vertex on 0/2+ faces falls through to
-        // None — the measured one-shot ceiling / non-triangle-hub case.
-        int nf = 0, triFi = -1;
-        foreach (fi; m.facesAroundVertex(cast(uint)a)) { ++nf; triFi = cast(int)fi; }
-        if (nf == 1 && triFi >= 0 && m.faces[triFi].length == 3) {
-            auto f  = m.faces[triFi];
-            int  ai = -1;
-            foreach (k, vv; f) if (vv == cast(uint)a) { ai = cast(int)k; break; }
-            if (ai < 0) return BuildCase.None;   // defensive; shouldn't happen
-            int n = cast(int)f.length;
-            quadP_     = cast(int)f[(ai + 1) % n];
-            quadQ_     = cast(int)f[(ai + n - 1) % n];
-            quadTriFi_ = triFi;
+        int[] border, dirs;
+        foreach (x; en) {
+            int polys, dir;
+            sideIncidence(m, cast(uint)a, x, polys, dir);
+            if (polys < 2) { border ~= cast(int)x; dirs ~= dir; }
+        }
+        if (border.length == 0) return BuildCase.None;   // R-closed: a vertex move
+
+        bool triCorner = false;
+        foreach (f; m.faces) {
+            if (f.length != 3) continue;
+            foreach (vv; f) if (vv == cast(uint)a) { triCorner = true; break; }
+            if (triCorner) break;
+        }
+        if (triCorner && border.length == 2) {
+            immutable bool swap = dirs[0] != 1 && dirs[1] == 1;
+            quadP_ = swap ? border[1] : border[0];
+            quadQ_ = swap ? border[0] : border[1];
             return BuildCase.Quad;
         }
-        return BuildCase.None;
+        triCands_    = border;
+        triCandDirs_ = dirs;
+        triN_        = border[0];   // replaced at release by `nAngleNeighbour`
+        return BuildCase.Tri;
+    }
+
+    // How many polygon sides join `a` and `x`, and in which direction the
+    // last one found runs: +1 when a polygon lists a then x, -1 when x then a,
+    // 0 when no polygon has the side (a bare edge).
+    private static void sideIncidence(const Mesh* m, uint a, uint x,
+                                      out int polys, out int dir) {
+        foreach (f; m.faces) {
+            immutable n = f.length;
+            foreach (k; 0 .. n) {
+                immutable uint u = f[k], w = f[(k + 1) % n];
+                if (u == a && w == x) { ++polys; dir = 1; }
+                else if (u == x && w == a) { ++polys; dir = -1; }
+            }
+        }
+    }
+
+    // N-angle (captured, law L34 of the session capture: cells B1a/B1b): the
+    // triangle takes the border neighbour whose SCREEN direction from the
+    // source makes the smallest angle with the drag `(dx, dy)`. An exact tie
+    // (a drag on the bisector) takes the neighbour whose polygon runs x -> a,
+    // i.e. the source's predecessor: all three tie observations (K-chords,
+    // B2's first build, B3) chose it. `kTieCos` only absorbs projection noise.
+    package int nAngleNeighbour(int a, float dx, float dy, const ref AimViewport vpAim) {
+        enum float kTieCos = 1e-4f;
+        auto m = mesh;
+        if (m is null || triCands_.length == 0) return triN_;
+        if (triCands_.length == 1) return triCands_[0];
+        ImVec2 pa;
+        immutable float dl = hypot(dx, dy);
+        if (dl <= 0 || !projectLocalPt(m.vertices[a], vpAim, pa)) return triN_;
+        int   best    = -1;
+        float bestCos = -float.infinity;
+        int   bestDir = 0;
+        foreach (i, x; triCands_) {
+            ImVec2 px;
+            if (!projectLocalPt(m.vertices[x], vpAim, px)) continue;
+            immutable float ex = px.x - pa.x, ey = px.y - pa.y;
+            immutable float el = hypot(ex, ey);
+            if (el <= 0) continue;
+            immutable float c = (ex * dx + ey * dy) / (el * dl);
+            immutable int d = triCandDirs_[i];
+            if (best < 0 || c > bestCos + kTieCos
+                || (c > bestCos - kTieCos && d == -1 && bestDir != -1)) {
+                best = x; bestCos = c; bestDir = d;
+            }
+        }
+        return best >= 0 ? best : triN_;
     }
 
     // P9 (doc/topopen_p9_split_plan.md, kernel-reuse verdict): the ONLY new
@@ -3138,7 +3201,9 @@ public:
         // P3 build (doc/topopen_p3_plan.md)
         sourceVert_     = -1;
         classifiedCase_ = BuildCase.None;
-        triN_ = quadP_ = quadQ_ = quadTriFi_ = -1;
+        triN_ = quadP_ = quadQ_ = -1;
+        triCands_ = null;
+        triCandDirs_ = null;
         // P4 Move/Place (doc/topopen_p4_plan.md) + the task-0484 element grab.
         // `clearMoveArm` drops the live drag's base positions and its
         // first-write snapshot WITHOUT recording anything — correct for every
@@ -4010,11 +4075,21 @@ public:
             return armDuplicateOnEdge(e, vts, vp, ei, edgeLoop_);
         }
 
+        // R-closed (`classifySource`): a source whose every incident edge already
+        // lies on two polygons builds nothing — the reference runs the plain
+        // vertex MOVE on it (captured: the triangle-over-quad corner, and the
+        // hub-fan's fourth drag), so the press arms that gesture and its
+        // release and record are the move's own.
+        immutable BuildCase c = classifySource(src);
+        if (c == BuildCase.None)
+            return stamp(armMoveOn(MoveElem.Vertex, src, e), PenGesture.PlaceOrMove,
+                         InputButton.Left);
+
         sourceVert_     = src;
         dragArmed_      = true;
         dragStartX_     = e.x;
         dragStartY_     = e.y;
-        classifiedCase_ = classifySource(src);
+        classifiedCase_ = c;
         return true;   // consume; the build (if any) commits on release
     }
 
@@ -5385,40 +5460,52 @@ public:
         // exclusively — `onShiftLmbDown` arms exactly one of the two, so this
         // can never shadow a vertex build.
         if (dupEdgeArmed_) return dupEdgeUp(e, vts);
-        // Task 0486 (contract C-0): the Duplicate slot FALLS THROUGH to the
-        // Move family on an interior edge, so this release must be able to
-        // reach a move's commit leg too. `lmbModeUp` dispatches on the action
-        // the press recorded, and every leg it can reach is guarded by its own
-        // arm bool — so when nothing was armed this stays the same no-op it
-        // was before.
-        if (!dragArmed_) return lmbModeUp(e, vts);
+        // The Duplicate slot FALLS THROUGH to the element Move on an interior
+        // edge (task 0486, contract C-0) and on a closed source vertex
+        // (R-closed, `classifySource`), so this release goes to the Move's commit leg,
+        // guarded by its own arm bool (nothing armed: a no-op). Not via
+        // `lmbModeUp`: `runPenMode` stamps this press `Build` AFTER the
+        // fall-through stamped the move, so that route came straight back
+        // here and never returned (it hung the app). The
+        // loop fall-through is not reachable here: with Edge Loop on,
+        // `runPenMode` sends the press to the duplicate-LOOP slot instead.
+        if (!dragArmed_) return lmbPlaceOrMoveUp(e, vts);
         int       a     = sourceVert_;
         BuildCase casee  = classifiedCase_;
-        int       n      = triN_;
         int       p      = quadP_;
         int       q      = quadQ_;
-        int       triFi  = quadTriFi_;
         int       startX = dragStartX_, startY = dragStartY_;
+        int       dx = e.x - startX, dy = e.y - startY;
+
+        // N-angle (`nAngleNeighbour`): with several border neighbours the triangle's
+        // is the one nearest the drag's direction, press -> release.
+        int n = triN_;
+        if (casee == BuildCase.Tri) {
+            Viewport vp = viewportOf(vts);
+            const AimViewport vpAim = aimSpace(vp, primaryModelSpace());
+            n = nAngleNeighbour(a, cast(float)dx, cast(float)dy, vpAim);
+        }
 
         sourceVert_     = -1;
         dragArmed_      = false;
         classifiedCase_ = BuildCase.None;
-        triN_ = quadP_ = quadQ_ = quadTriFi_ = -1;
+        triN_ = quadP_ = quadQ_ = -1;
+        triCands_ = null;
+        triCandDirs_ = null;
 
         readHit(vts);   // refresh lastHit_ to THIS release event's CONS-snapped hit
 
         // A release back at (near enough) the press pixel is a stationary
         // click on the source vertex, not a drag — capture-confirmed no-op
         // (a near-zero-displacement Move), never a build.
-        int dx = e.x - startX, dy = e.y - startY;
         if (releaseIsClick(dx, dy)) return true;
 
         if (!lastHit_.hit) return true;        // no surface hit at release -> nothing to build
-        if (casee == BuildCase.None) return true;   // unsupported source state / one-shot ceiling
+        if (casee == BuildCase.None) return true;   // defensive: a closed source arms a move instead
 
         // Landing (§1.5), same conversion as Place above: the CONS hit is
         // world, `m.addVertex` inside `buildFromSource` stores local.
-        buildFromSource(a, casee, n, p, q, triFi,
+        buildFromSource(a, casee, n, p, q,
                         primaryModelSpace().toLocalPoint(lastHit_.point));
         return true;
     }
@@ -6386,7 +6473,7 @@ public:
     /// module already pass local fixture positions, which is what they always
     /// meant.
     package void buildFromSource(int a, BuildCase casee, int n, int p, int q,
-                                 int triFi, Vec3 bPosLocal) {
+                                 Vec3 bPosLocal) {
         auto m = mesh;
         if (m is null) return;
 
@@ -6409,21 +6496,25 @@ public:
                 m.addEdge(cast(uint)a, b);
                 m.buildLoops();
                 break;
-            case BuildCase.Tri:
-                // CASE-TRI: A had exactly one bare edge (to N) — auto-close
-                // the triangle in the CAPTURED index order [A, B, N] (hub,
-                // newest, older-neighbor). autoOrient:false — this winding is
-                // a fixed construction-order convention, not adjacency
-                // -derived (doc/topopen_p3_plan.md "WINDING" finding); it
-                // assumes an OUTWARD-side release. A wrong-side or exactly
-                // collinear release makes [A,B,N] self-intersecting or
-                // zero-area — `makePolygonFromVerts` rejects the zero-area
-                // case (-1, review SHOULD-FIX: rolled back below) but NOT a
-                // merely self-intersecting one, which is accepted verbatim,
-                // matching the reference (no wrong-side capture contradicts
-                // it).
-                if (m.makePolygonFromVerts([cast(uint)a, b, cast(uint)n], false,
-                                           /*autoOrient*/false) < 0) {
+            case BuildCase.Tri: {
+                // CASE-TRI: the triangle on A, the new B and the neighbour N.
+                // Over a bare A-N the CAPTURED index order is [A, B, N] (hub,
+                // newest, older-neighbor; doc/topopen_p3_plan.md "WINDING").
+                // Beside a polygon the shared side runs against it (captured
+                // [0,4,16] beside [0,1,5,4], [0,16,1] in B1b): a
+                // polygon listing N then A gives [A, N, B]. autoOrient:false —
+                // a construction-order convention; it assumes an OUTWARD-side
+                // release. A wrong-side or exactly collinear release makes the
+                // triangle self-intersecting or zero-area —
+                // `makePolygonFromVerts` rejects the zero-area case (-1, review
+                // SHOULD-FIX: rolled back below) but NOT a merely
+                // self-intersecting one, which is accepted verbatim, matching
+                // the reference (no wrong-side capture contradicts it).
+                int polys, dir;
+                sideIncidence(m, cast(uint)a, cast(uint)n, polys, dir);
+                uint[] tri = dir == -1 ? [cast(uint)a, cast(uint)n, b]
+                                       : [cast(uint)a, b, cast(uint)n];
+                if (m.makePolygonFromVerts(tri, false, /*autoOrient*/false) < 0) {
                     // Degenerate/wrong-side release (collinear A-B-N ->
                     // Newell-null): only `b` itself would be left stray.
                     // Restore `before` so the whole gesture is a clean
@@ -6432,31 +6523,22 @@ public:
                     return;
                 }
                 break;
+            }
             case BuildCase.Quad: {
-                // CASE-QUAD: A is the hub of one existing triangle (P,A,Q in
-                // the triangle's own cyclic order) — splice B into its
-                // boundary as [P, A, Q, B]. The triangle is removed WITH
-                // both `keepOrphans` (B's own new vertex aside, nothing here
-                // orphans a vertex) AND `keepFloatingEdges` (KILLER-2): the
-                // old P-Q edge borders no surviving face afterward and must
-                // survive as a non-bounding diagonal, exactly like the
-                // SESSION-3 capture — never a `rebuildEdges*` in this path.
-                // Same winding caveat as CASE-TRI above: [P,A,Q,B] assumes an
-                // outward-side release; a wrong-side B yields a bowtie
-                // (self-intersecting quad), accepted verbatim unless its
-                // signed area cancels to zero (Newell-null — rejected below).
-                auto mask = new bool[](m.faces.length);
-                mask[triFi] = true;
-                m.deleteFacesByMask(mask, /*keepOrphans*/true, /*keepFloatingEdges*/true);
+                // CASE-QUAD: A is a triangle corner with two border
+                // neighbours P and Q — the new quad [P, A, Q, B] runs each
+                // shared side against its polygon, and every existing polygon
+                // is KEPT (captured S-inTri, see `classifySource`: the hub-fan splice
+                // keeps its triangle; B2/B5a/B5b-far build the quad across the
+                // two border neighbours beside the triangles). Same winding
+                // caveat as CASE-TRI above: a wrong-side B yields a bowtie
+                // (self-intersecting quad), accepted verbatim unless its signed
+                // area cancels to zero (Newell-null — rejected below).
                 if (m.makePolygonFromVerts([cast(uint)p, cast(uint)a, cast(uint)q, b],
                                            false, /*autoOrient*/false) < 0) {
-                    // Degenerate/wrong-side release (review SHOULD-FIX): by
-                    // this point the source triangle is ALREADY deleted and
-                    // `b` already added — a bare `return` here would leave 3
-                    // floating edges + a stray vertex committed as this
-                    // gesture's step. `before` predates BOTH the
-                    // triangle delete and the vertex add, so restoring it
-                    // makes the whole gesture a clean no-op instead.
+                    // Degenerate/wrong-side release (review SHOULD-FIX): `b`
+                    // is already added — restoring `before` makes the whole
+                    // gesture a clean no-op instead of a stray vertex.
                     before.restore(*m);
                     return;
                 }
@@ -6484,7 +6566,7 @@ public:
     //
     // On SUCCESS, calls `resyncSession()` (opponent KILLER-2, Risk 1): the
     // tool never overrides `isDragging()`, so a Ctrl+MMB Remove can fire
-    // while a Shift+LMB build (`dragArmed_`/`quadTriFi_`) or an LMB Move
+    // while a Shift+LMB build (`dragArmed_`/`quadP_`) or an LMB Move
     // (`moveArmed_`/`grabbedVert_`) is armed on a DIFFERENT button; this
     // kernel call COMPACTS `faces[]`, so those cached indices would dangle
     // (silent mis-delete or a RangeError on the sibling gesture's eventual
@@ -6686,8 +6768,8 @@ public:
     // REV1 KILLER-2: `insertEdgeLoops`/`insertEdgeLoopsMulti` does
     // `faces = newFaces` — a WHOLESALE rebuild (every ring face expands
     // into 2, shifting every subsequent face index). A concurrently-armed
-    // Shift+LMB build's `quadTriFi_` is a FACE index that would dangle
-    // (silent wrong-face delete on that build's eventual release) unless
+    // Shift+LMB build's classification (`quadP_`/`triCands_`, read off the
+    // pre-cut topology) would be stale on that build's eventual release unless
     // invalidated here — `resyncSession()` is called on SUCCESS, in the
     // SAME position `removeFaceAt` above calls it (right after
     // `history.record`, before `syncSelection`/the display tail), for the

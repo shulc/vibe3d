@@ -31,6 +31,9 @@
 //   chord-slide-vertex   L4  Ctrl+LMB on a vertex slides it alone, onto the BG
 //   chord-slide-vertex-orbit           L47 the same under an orbited camera: -Z
 //   chord-slide-vertex-foreshortened   L49 world Z foreshortened: -Z, not Y
+//   chord-build-*        L34/L37 corner build: neighbour by angle, closed fan
+//                        moves, a triangle corner builds the border quad
+//   chord-dup-interior-edge  C-0 Shift+LMB on an interior edge moves it
 //
 // Slice S5 (task 8730) added the cells from `no-op-presses` on: since then
 // every pen press is one topology step the session records (wave plan 8646).
@@ -38,7 +41,7 @@
 // chords' outcomes (their port slices add `chord-*` cells).
 //
 // `VIBE3D_CELL=<id>` runs one cell alone (druntime stops a module at its first
-// failed assert); the last block pins the population: 33 with no filter, 1 with
+// failed assert); the last block pins the population: 41 with no filter, 1 with
 // one (an unknown name must not pass by running nothing).
 //
 // Run via: ./run_test.d test_session_laws_topology_pen
@@ -1505,6 +1508,232 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
+// chord-build-* — L34 (N-angle) and L37 (R-closed + S-inTri), port slice 8710
+// P1 (task 8720): a Shift+LMB drag from v0. corner (K-chords): triangle
+// [0,4,16] on the bisector; angle-left/-down (B1a/B1b): the neighbour nearest
+// the drag; closed (a triangle over the corner quad): no build, the press moves
+// v0; tri-corner (B5a) and tri-corner-in-wedge (B5b-far): a quad across the
+// two BORDER neighbours 1 and 16, the triangles kept, wherever the drag points;
+// inside-wedge (B6a-big): a quad corner dragged into its own quad's wedge still
+// builds the triangle with edge (0,16). Each: one row, the new faces as cycles
+// (winding included), the new vertex ON the background, Ctrl+Z bit-exact and
+// the tool stays armed. Every release is >= 55 px from every vertex (the
+// capture's release weld, wave plan §9.19.1): drags shorter than that are
+// lengthened along their own direction (`kLonger`).
+// ---------------------------------------------------------------------------
+
+enum double kWeldClearPx = 55;
+
+/// Drag lengthening per case: the C1/C2 cells whose capture release lay
+/// closer than kWeldClearPx (B1a/B1b/B5a: 41 px) are doubled, direction kept.
+enum double[string] kLonger = ["corner": 1, "angle-left": 2, "angle-down": 2, "closed": 1,
+                               "tri-corner": 2, "tri-corner-in-wedge": 1, "inside-wedge": 1];
+
+/// View zoom per case, over the capture's spacing: B6a-big's release sat 55.0
+/// px from v1 at the closest point of its own drag ray, so no lengthening
+/// clears it here; the grid is shown 10% larger instead (drag scaled with it,
+/// so the gesture's geometry is the capture's).
+enum double[string] kZoom = ["inside-wedge": 1.1];
+
+string rigFile(string rigName) {
+    return buildPath(dirName(__FILE_FULL_PATH__), "fixtures", rigName == "grid"
+                     ? "topology_pen_session_rig.v3d" : "topology_pen_session_rig_" ~ rigName ~ ".v3d");
+}
+
+/// A face as a cycle starting at its smallest index (winding kept).
+long[] cycleOf(const long[] f) {
+    size_t lo;
+    foreach (i, v; f) if (v < f[lo]) lo = i;
+    return f[lo .. $].dup ~ f[0 .. lo];
+}
+
+long[][] cyclesOf(const long[][] fs) {
+    import std.algorithm : sort;
+    long[][] r;
+    foreach (f; fs) r ~= cycleOf(f);
+    sort(r);
+    return r;
+}
+
+/// Distance from `p` to the background layer of `rigFile` (its faces fanned
+/// into triangles): the "on the background" read of a built vertex.
+double bgDistance(string rigPath, double[3] p) {
+    import std.file : readText;
+    import std.math : sqrt;
+    static double[3][] pos;
+    static long[][] faces;
+    static string loadedFrom;
+    if (loadedFrom != rigPath) {
+        auto bg = parseJSON(readText(rigPath))["layers"][1]["mesh"];
+        pos = null; faces = null;
+        foreach (v; bg["vertices"].array) pos ~= [penNum(v[0]), penNum(v[1]), penNum(v[2])];
+        foreach (f; bg["faces"].array) faces ~= idxOf(f);
+        loadedFrom = rigPath;
+    }
+    static double[3] sub(double[3] a, double[3] b) { return [a[0] - b[0], a[1] - b[1], a[2] - b[2]]; }
+    static double dot(double[3] a, double[3] b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+    // Closest point on triangle abc to p (Ericson, Real-Time Collision Detection 5.1.5).
+    static double triDist(double[3] p, double[3] a, double[3] b, double[3] c) {
+        const ab = sub(b, a), ac = sub(c, a), ap = sub(p, a);
+        const d1 = dot(ab, ap), d2 = dot(ac, ap);
+        double[3] q;
+        if (d1 <= 0 && d2 <= 0) q = a;
+        else {
+            const bp = sub(p, b), d3 = dot(ab, bp), d4 = dot(ac, bp);
+            const cp = sub(p, c), d5 = dot(ab, cp), d6 = dot(ac, cp);
+            const vc = d1 * d4 - d3 * d2, vb = d5 * d2 - d1 * d6, va = d3 * d6 - d5 * d4;
+            if (d3 >= 0 && d4 <= d3) q = b;
+            else if (d6 >= 0 && d5 <= d6) q = c;
+            else if (vc <= 0 && d1 >= 0 && d3 <= 0) {
+                const t = d1 / (d1 - d3);
+                q = [a[0] + t * ab[0], a[1] + t * ab[1], a[2] + t * ab[2]];
+            } else if (vb <= 0 && d2 >= 0 && d6 <= 0) {
+                const t = d2 / (d2 - d6);
+                q = [a[0] + t * ac[0], a[1] + t * ac[1], a[2] + t * ac[2]];
+            } else if (va <= 0 && (d4 - d3) >= 0 && (d5 - d6) >= 0) {
+                const t = (d4 - d3) / ((d4 - d3) + (d5 - d6));
+                q = [b[0] + t * (c[0] - b[0]), b[1] + t * (c[1] - b[1]), b[2] + t * (c[2] - b[2])];
+            } else {
+                const den = 1 / (va + vb + vc), v = vb * den, w = vc * den;
+                q = [a[0] + ab[0] * v + ac[0] * w, a[1] + ab[1] * v + ac[1] * w,
+                     a[2] + ab[2] * v + ac[2] * w];
+            }
+        }
+        const d = sub(p, q);
+        return sqrt(dot(d, d));
+    }
+    double best = double.infinity;
+    foreach (f; faces)
+        foreach (k; 1 .. f.length - 1) {
+            const d = triDist(p, pos[cast(size_t)f[0]], pos[cast(size_t)f[k]], pos[cast(size_t)f[k + 1]]);
+            if (d < best) best = d;
+        }
+    assert(faces.length == 512, format("chord-build: the background read %d faces, expected 512", faces.length));
+    return best;
+}
+
+/// Move the rig camera (eye on +Z, looking at the origin) to the distance at
+/// which the grid spacing v5 -> v6 reads `targetPx`; floor: within 0.5 px.
+void penZoomToSpacing(double targetPx, string what) {
+    import std.math : abs;
+    double dist = 4.0;
+    foreach (i; 0 .. 4) {
+        const sp = penSpacingPx();
+        if (abs(sp - targetPx) < 0.1) break;
+        const z = penMesh().pos[5][2];   // the grid's depth under the eye
+        dist = z + (dist - z) * sp / targetPx;
+        penPost("/api/camera", format(`{"azimuth":0.0,"elevation":0.0,"distance":%.9f,`
+                                      ~ `"focus":{"x":0.0,"y":0.0,"z":0.0}}`, dist));
+    }
+    assert(abs(penSpacingPx() - targetPx) < 0.5,
+           format("%s rig: the grid spacing reads %.2f px at camera distance %.4f, expected %.1f",
+                  what, penSpacingPx(), dist, targetPx));
+}
+
+void buildCase(string key) {
+    import std.math : round, sqrt;
+    const cellId = "chord-build-" ~ key;
+    auto c = cellFx("chord-build")[key];
+    const path = rigFile(c["rig"].str);
+    const b0 = idxOf(c["before"]), b1 = idxOf(c["after"]);
+    PenRig r = penRigLoad(path, [b0[0], b0[1], b0[2]]);
+    penArmUi(r);
+    assert(penHistoryLen() == r.hp + 1,
+           format("%s: the UI-door arm did not write its own row: %s", cellId, penHistoryLabels()));
+    r.hp = penHistoryLen();
+
+    // The capture's own grid spacing on screen (our viewport is smaller): the
+    // camera moves in along its axis until v5 -> v6 reads the capture's
+    // pixels, so the captured drags and their release clearances replay as
+    // measured. The residual ratio still scales the drag below.
+    penZoomToSpacing(penNum(c["spacingPx"]) * kZoom.get(key, 1.0), cellId);
+    const from = penVertexPx(0, cellId ~ " v0");
+    const s = penSpacingPx() / penNum(c["spacingPx"]) * kLonger[key];
+    const d = c["drag"].array;
+    const int[2] to = [from[0] + cast(int)round(penNum(d[0]) * s), from[1] + cast(int)round(penNum(d[1]) * s)];
+    // Rig trap floor: the release is clear of every vertex (population: all of them).
+    double nearest = double.infinity;
+    size_t seen;
+    foreach (p; r.a0.pos) {
+        const q = penProject(p);
+        const dist = sqrt((q[0] - to[0]) ^^ 2 + (q[1] - to[1]) ^^ 2);
+        if (dist < nearest) nearest = dist;
+        ++seen;
+    }
+    assert(seen == b0[0] && nearest >= kWeldClearPx,
+           format("%s rig: the release %s is %.1f px from the nearest vertex (needs >= %.0f; %d of %d "
+                  ~ "vertices projected)", cellId, to, nearest, kWeldClearPx, seen, b0[0]));
+    penPlay(penGestureEvents(from[0], from[1], to[0], to[1], 1, PEN_KMOD_LSHIFT, 8), cellId ~ " Shift+LMB drag");
+
+    const m = penMesh();
+    const labels = penHistoryLabels();
+    const bool builds = b1[0] > b0[0];
+    long[][] born, gone;
+    foreach (f; m.faces) { bool had; foreach (g; r.a0.faces) if (g == f) had = true; if (!had) born ~= f.dup; }
+    foreach (f; r.a0.faces) { bool has; foreach (g; m.faces) if (g == f) has = true; if (!has) gone ~= f.dup; }
+    assert([m.nv, m.nf, m.edges] == b1 && penHistoryLen() == r.hp + 1
+           && labels[$ - 1] == (builds ? "Topology Build" : "Topology Move")
+           && cyclesOf(born) == cyclesOf(facesOf(c["newFaces"])) && gone == facesOf(c["goneFaces"]),
+           format("%s: mesh %s (expected counts %s), faces born %s (expected the cycles %s), gone %s "
+                  ~ "(expected %s), history %s", cellId, m.toString, b1, born, c["newFaces"], gone,
+                  c["goneFaces"], labels));
+    if (builds) {
+        const long nb = b0[0];
+        assert((penEdgeId(0, nb) >= 0) == (c["sourceEdge"].type == JSONType.true_)
+               && penMoved(m, r.a0) is null,
+               format("%s: edge (0,%d) %s (the capture: %s)", cellId, nb,
+                      penEdgeId(0, nb) >= 0 ? "present" : "absent", c["sourceEdge"]));
+        // The new vertex = nearestBG(v0 + offset), offset = b - v0 (L17's
+        // anchor for a build): it is ON the background, under the release.
+        const b = m.pos[cast(size_t)nb];
+        const q = penProject(b);
+        const bgD = bgDistance(path, b);
+        const px = sqrt((q[0] - to[0]) ^^ 2 + (q[1] - to[1]) ^^ 2);
+        assert(bgD <= 1e-6 && px <= 1.0,
+               format("%s: the new vertex %s is %.3g from the background (needs <= 1e-6) and %.2f px "
+                      ~ "from the release %s", cellId, b, bgD, px, to));
+    } else {
+        assert(penMoved(m, r.a0) == idxOf(c["moved"]) && m.faces == r.a0.faces,
+               format("%s: moved %s (expected %s), faces %s", cellId, penIdx(penMoved(m, r.a0)),
+                      c["moved"], m.faces));
+    }
+    penCtrlZ(cellId ~ " Ctrl+Z");
+    expectState(cellId, "z1", r.a0, c["undoArmed"].type == JSONType.true_, r.hp);
+    writeln("PASS ", cellId);
+}
+
+unittest { if (cell("chord-build-corner")) buildCase("corner"); }
+unittest { if (cell("chord-build-angle-left")) buildCase("angle-left"); }
+unittest { if (cell("chord-build-angle-down")) buildCase("angle-down"); }
+unittest { if (cell("chord-build-closed")) buildCase("closed"); }
+unittest { if (cell("chord-build-tri-corner")) buildCase("tri-corner"); }
+unittest { if (cell("chord-build-tri-corner-in-wedge")) buildCase("tri-corner-in-wedge"); }
+unittest { if (cell("chord-build-inside-wedge")) buildCase("inside-wedge"); }
+
+// ---------------------------------------------------------------------------
+// chord-dup-interior-edge — contract C-0 (task 0486; not this capture) through
+// the real Shift+LMB chord: on interior edge 5-6 the Duplicate slot moves the
+// edge's two vertices instead. One row, Ctrl+Z bit-exact, the tool stays armed.
+// Task 8720: that release used to dispatch back into the build leg forever.
+// ---------------------------------------------------------------------------
+unittest {
+    enum id = "chord-dup-interior-edge";
+    if (!cell(id)) return;
+    PenRig r = armedRig();
+    penGesture(penEdgePx(5, 6, id), 0, 20 / kSp, 1, PEN_KMOD_LSHIFT, id);
+    const m = penMesh();
+    const labels = penHistoryLabels();
+    assert([m.nv, m.nf, m.edges] == [r.a0.nv, r.a0.nf, r.a0.edges] && m.faces == r.a0.faces
+           && penMoved(m, r.a0) == [5L, 6L] && penHistoryLen() == r.hp + 1
+           && labels[$ - 1] == "Topology Move",
+           format("%s: mesh %s, moved %s (expected [5,6]), history %s", id, m.toString,
+                  penIdx(penMoved(m, r.a0)), labels));
+    penCtrlZ(id ~ " Ctrl+Z");
+    expectState(id, "z1", r.a0, true, r.hp);
+    writeln("PASS ", id);
+}
+
+// ---------------------------------------------------------------------------
 // Population: with no VIBE3D_CELL every cell above ran (declared last, so it
 // runs last).
 // ---------------------------------------------------------------------------
@@ -1512,7 +1741,7 @@ unittest {
     writeln("cells=", cellsRun);
     const only = environment.get("VIBE3D_CELL", "");
     if (only.length == 0)
-        assert(cellsRun == 33, format("topology pen session laws: %d cells ran, expected 33", cellsRun));
+        assert(cellsRun == 41, format("topology pen session laws: %d cells ran, expected 41", cellsRun));
     else
         assert(cellsRun == 1, format("topology pen session laws: VIBE3D_CELL=%s ran %d cells, expected 1 "
                                      ~ "(an unknown name runs none)", only, cellsRun));

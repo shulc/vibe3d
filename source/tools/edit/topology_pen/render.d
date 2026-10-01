@@ -679,7 +679,10 @@ mixin template PenRenderOps() {
                         dl.AddLine(p, hitPt, ghostCol, 1.5f);
                 }
                 final switch (classifiedCase_) {
-                    case BuildCase.Tri:  ghostTo(triN_);  break;
+                    case BuildCase.Tri:  // the neighbour the release would take (N-angle)
+                        ghostTo(nAngleNeighbour(sourceVert_, hitPt.x - dragStartX_,
+                                                hitPt.y - dragStartY_, vpAim));
+                        break;
                     case BuildCase.Quad: ghostTo(quadP_); ghostTo(quadQ_); break;
                     case BuildCase.Edge:
                     case BuildCase.None: break;

@@ -291,7 +291,7 @@ unittest {
 
         auto before = MeshSnapshot.capture(m);
         penStep(t, SDL_BUTTON_LEFT, PenMode.Duplicate, () {
-            t.buildFromSource(cast(int)a, BuildCase.Tri, cast(int)n, -1, -1, -1,
+            t.buildFromSource(cast(int)a, BuildCase.Tri, cast(int)n, -1, -1,
                               Vec3(2, 0, 0));   // == N's own position -> collinear
         });
         auto after = MeshSnapshot.capture(m);
@@ -321,7 +321,7 @@ unittest {
 
         auto before = MeshSnapshot.capture(m);
         penStep(t, SDL_BUTTON_LEFT, PenMode.Duplicate, () {
-            t.buildFromSource(cast(int)a, BuildCase.Quad, -1, cast(int)p, cast(int)q, triFi,
+            t.buildFromSource(cast(int)a, BuildCase.Quad, -1, cast(int)p, cast(int)q,
                               Vec3(0, 1, 0));   // == A's own position -> bowtie cancels
         });
         auto after = MeshSnapshot.capture(m);
