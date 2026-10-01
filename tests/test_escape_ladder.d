@@ -273,7 +273,8 @@ unittest {
             foreach (key_, _; keyKinds.object)
                 assert(["tool", "mode", "actionCenter", "axis", "falloff",
                         "constrain", "stackedFalloffs", "sel.vertex", "sel.edge",
-                        "sel.polygon", "sel.items"].canFind(key_),
+                        "sel.polygon", "sel.items", "hist.toolLifecycleCount",
+                        "hist.undo"].canFind(key_),
                     id ~ ": key_kinds names a non-ladder key " ~ key_);
         }
 
