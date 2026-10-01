@@ -84,8 +84,7 @@ class MeshSessionEdit : Command, Operator, GesturePayload {
     MeshSnapshot stepBeforeBasis() const { return stepBeforeBasis_.ownedDup(); }
     MeshSnapshot stepAfterBasis() const { return stepAfterBasis_.ownedDup(); }
     void setTopologyStep(
-            AttrImage beforeAttrs, AttrImage afterAttrs, MeshSnapshot beforeBasis,
-            MeshSnapshot afterBasis, bool openedByPress) {
+            AttrImage beforeAttrs, AttrImage afterAttrs, MeshSnapshot beforeBasis, MeshSnapshot afterBasis, bool openedByPress) {
         stepOpenedByPress_ = openedByPress;
         stepBeforeAttrs_ = beforeAttrs;
         stepAfterAttrs_ = afterAttrs;
