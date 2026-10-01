@@ -77,8 +77,10 @@ private enum string[] kNamedExceptions = [
 /// `-unittest` build, so the test-only `pushEntryForTest` is one of them).
 /// A new method reddens until the axis-3 needles are reviewed. Slice M4 added
 /// `markEntrySession` (reviewed: the tool session tags the record its close
-/// wrote; no tool calls it, so it is no axis-3 write).
-private enum size_t kHistorySurface = 67;
+/// wrote; no tool calls it, so it is no axis-3 write). Wave plan 8640 S7a
+/// added `markEntryFold` (reviewed: the tool session sets the parameter-row
+/// fold bits on rows it recorded; no tool calls it, so no axis-3 write).
+private enum size_t kHistorySurface = 68;
 
 /// Tool-side history wrappers, counted as identifier tokens (every spelling:
 /// call, declaration, address-of).

@@ -1980,7 +1980,7 @@ private struct ToolSession {
             return;
         }
         if (!foldRow_(openBlock_.get, token_))
-            history_.markEntryPreNavOpen(cmd);
+            history_.markEntryFold(cmd, HistoryFlags.PreNavOpen);
     }
 
     // Close the open step: walk down from below `trigger` (from the top when
@@ -2004,10 +2004,10 @@ private struct ToolSession {
         if (lo == 0) return;   // the block is not on the stack
         const rowBase = foldRow_(base, token_);
         foreach (k; lo .. hi) {
-            history_.markEntryJoinsBelow(ue[k].cmd);
-            if (rowBase) history_.markEntryStepClosed(ue[k].cmd);
+            history_.markEntryFold(ue[k].cmd, HistoryFlags.JoinsBelow);
+            if (rowBase) history_.markEntryFold(ue[k].cmd, HistoryFlags.StepClosed);
         }
-        if (rowBase) history_.markEntryStepClosed(base);
+        if (rowBase) history_.markEntryFold(base, HistoryFlags.StepClosed);
     }
 
     // The press or activation row of this session below `row` (on the undo

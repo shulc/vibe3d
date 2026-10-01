@@ -1980,24 +1980,16 @@ final class CommandHistory {
     }
 
     /// Set fold bits (`JoinsBelow`, `StepClosed`, `PreNavOpen` — nothing
-    /// else) on the undo-stack entry holding `expect`, by IDENTITY. Returns
-    /// whether it found it.
-    bool markEntryJoinsBelow(const Command expect) nothrow @nogc {
-        return markEntryFold_(expect, HistoryFlags.JoinsBelow);
-    }
-    /// ditto
-    bool markEntryStepClosed(const Command expect) nothrow @nogc {
-        return markEntryFold_(expect, HistoryFlags.StepClosed);
-    }
-    /// ditto
-    bool markEntryPreNavOpen(const Command expect) nothrow @nogc {
-        return markEntryFold_(expect, HistoryFlags.PreNavOpen);
-    }
-
-    private bool markEntryFold_(const Command expect, uint bit) nothrow @nogc {
+    /// else) on the undo-stack entry holding `expect`, by IDENTITY (wave plan
+    /// 8640 S7a; the tool session's fold, the only caller). Returns whether it
+    /// found it.
+    bool markEntryFold(const Command expect, uint bits) nothrow @nogc {
+        enum uint foldBits = HistoryFlags.JoinsBelow | HistoryFlags.StepClosed |
+                             HistoryFlags.PreNavOpen;
+        assert((bits & ~foldBits) == 0, "markEntryFold: not a fold bit");
         if (expect is null) return false;
         foreach_reverse (ref e; undoStack)
-            if (e.cmd is expect) { e.flags |= bit; return true; }
+            if (e.cmd is expect) { e.flags |= bits; return true; }
         return false;
     }
 
