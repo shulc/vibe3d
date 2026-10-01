@@ -5,9 +5,9 @@
 // EXISTING primary-layer vertex must ARM MOVE (not Place, which would add a
 // SECOND vertex) — and since the release re-snaps to the identical pixel's
 // camera-ray hit (== the vertex's own current position), the eps no-op
-// guard (`moveVertexTo`) must trigger: no mutation, no undo entry. Mirrors
-// P3's degenerate-release convention (test_topopen_build_tri.d's undo/redo
-// discipline), applied here to Move's stationary-grab case.
+// guard must trigger: no mutation. The press is still ONE undo row (plan
+// 8646, law L5: every bound press is a step, measured on a motionless vertex
+// click — fixture tests/fixtures/topology_pen_session_laws.json).
 //
 // Run via: ./run_test.d topopen_move_stationary_noop
 
@@ -60,8 +60,11 @@ unittest {
         "a stationary grab-and-release must leave every vertex byte-identical (independent expected: "
         ~ "the vertex list equals pre-click element-wise)");
 
-    int undoDepthAfter = cast(int) getJson("/api/history")["undo"].array.length;
-    assert(undoDepthAfter == undoDepthBefore,
-        format("a stationary grab-and-release must record NO undo entry (clean no-op); "
-             ~ "undo depth went %d -> %d", undoDepthBefore, undoDepthAfter));
+    auto undo = getJson("/api/history")["undo"].array;
+    int undoDepthAfter = cast(int) undo.length;
+    assert(undoDepthAfter == undoDepthBefore + 1
+           && undo[$ - 1]["label"].str == "Topology Move",
+        format("a stationary grab-and-release is ONE no-op row labelled Topology Move "
+             ~ "(L5); undo depth went %d -> %d, top %s", undoDepthBefore, undoDepthAfter,
+             undo[$ - 1]["label"]));
 }

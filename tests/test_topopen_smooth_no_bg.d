@@ -8,8 +8,9 @@
 //
 // T7 (REV1 FIX-2): a Smooth gesture over a fully DISCONNECTED patch (every
 // vertex has 0 neighbors) with no background source is the ROUTINE no-op
-// case — the mesh must be byte-identical and record NO undo entry
-// (mirrors test_topopen_move_stationary_noop.d's own undo-depth check).
+// case — the mesh must be byte-identical. The press is still ONE undo row
+// (plan 8646, law L5: a press is a step whatever it changes; fixture
+// tests/fixtures/topology_pen_session_laws.json).
 //
 // Run via: ./run_test.d topopen_smooth_no_bg
 
@@ -111,8 +112,8 @@ unittest {
             "T7: a disconnected patch with no background source must be a BYTE-IDENTICAL no-op");
 
         int undoDepthAfter = cast(int) getJson("/api/history")["undo"].array.length;
-        assert(undoDepthAfter == undoDepthBefore,
-            format("T7: a disconnected/no-bg Smooth gesture must record NO undo entry; "
+        assert(undoDepthAfter == undoDepthBefore + 1,
+            format("T7: a disconnected/no-bg Smooth press is ONE no-op row (L5); "
                  ~ "undo depth went %d -> %d", undoDepthBefore, undoDepthAfter));
     }
 }

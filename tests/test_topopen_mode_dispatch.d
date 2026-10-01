@@ -108,24 +108,28 @@ unittest {
     cmd("tool.attr mesh.topoPen mode move");   // sticky: leave the shared app clean
 }
 
-// The DEFAULT mode is `move`, and a Move-mode click on a face is a decline:
-// no placement, no deletion, no undo entry. This is the behaviour change the
-// new default introduces, asserted head-on rather than left implicit.
+// The DEFAULT mode is `move`, and a Move-mode click on a face changes
+// nothing: no placement, no deletion. This is the behaviour change the new
+// default introduces, asserted head-on rather than left implicit. The press is
+// still ONE undo row (plan 8646, law L5; fixture
+// tests/fixtures/topology_pen_session_laws.json).
 unittest {
     auto s = setupCubeAndTool();
     cmd("tool.attr mesh.topoPen mode move");
 
     size_t undoDepthBefore = getJson("/api/history")["undo"].array.length;
+    const verts0 = readVerticesLayer(0);
 
     auto pr = postJson("/api/play-events",
                        clickLog(s.c.vpX, s.c.vpY, s.c.width, s.c.height, s.cx, s.cy));
     assert("error" !in pr, "/api/play-events failed: " ~ pr.toString);
     waitPlayerIdle();
 
-    assert(faceCountLayer(0) == 6 && vertexCountLayer(0) == 8 && edgeCountLayer(0) == 12,
+    assert(faceCountLayer(0) == 6 && vertexCountLayer(0) == 8 && edgeCountLayer(0) == 12
+           && readVerticesLayer(0) == verts0,
         "a Move-mode click on a face must be a byte-identical no-op");
-    assert(getJson("/api/history")["undo"].array.length == undoDepthBefore,
-        "a declined press must record NO new undo entry");
+    assert(getJson("/api/history")["undo"].array.length == undoDepthBefore + 1,
+        "a Move-mode click on a face is ONE no-op row (L5)");
 }
 
 // The modifier chords stay ABSOLUTE: with the dropdown parked on a mode that

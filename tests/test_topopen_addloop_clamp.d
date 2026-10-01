@@ -6,7 +6,8 @@
 // point to the segment; `ratioFromCursor` re-derives the same clamped `t`)
 // — landing exactly on a vertex — which `commitAddLoop`'s open-interval
 // guard (verbatim `MeshAddLoop.evaluate`) rejects as a no-op: zero mesh
-// mutation, no new undo entry.
+// mutation. The press is still ONE edit row (plan 8646, law L5, measured for
+// a Shift+MMB click; fixture tests/fixtures/topology_pen_session_laws.json).
 //
 // Run via: ./run_test.d topopen_addloop_clamp
 
@@ -57,12 +58,12 @@ unittest {
         "a release clamped to a vertex (r>=1) must be a byte-identical no-op");
 
     // The arm row is visible by measured surface law
-    // (`toolcards/undo_surfaces/`), but the clamped gesture must still add no
-    // edit row.  Keeping these assertions separate prevents one noisy no-op
-    // row from hiding behind the legitimate arm row.
+    // (`toolcards/undo_surfaces/`), and the clamped press is ONE edit row of
+    // its own (L5). Keeping these assertions separate keeps the two rows apart.
     auto historyAfter = historySurfaceCounts();
-    assert(historyAfter.editRows == historyBefore.editRows,
-        "a clamp no-op must add ZERO edit rows");
+    assert(historyAfter.editRows == historyBefore.editRows + 1,
+        format("a clamp no-op press must add exactly ONE edit row (L5); got %d",
+               historyAfter.editRows - historyBefore.editRows));
     assert(historyAfter.lifecycleRows == historyBefore.lifecycleRows + 1,
         format("arming Topology Pen must surface exactly ONE lifecycle row; got %d",
                historyAfter.lifecycleRows - historyBefore.lifecycleRows));

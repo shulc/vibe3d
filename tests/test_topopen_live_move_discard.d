@@ -15,6 +15,12 @@
 // recorded a "Topology Move" row (cell 2 red); cell 1 (b)/(c) were already
 // green there and are regression pins, not discriminators.
 //
+// Since plan 8646 every press is one step the session records (law L5): a
+// press that wrote nothing NET (cells 3-7) is not an uncommitted edit, so no
+// door cancels it, and wherever it ends — its release, a drop's close — it is
+// ONE row with the geometry of the press image (K-noop's zero-length drag,
+// fixture tests/fixtures/topology_pen_session_laws.json).
+//
 // Run via: ./run_test.d topopen_live_move_discard
 
 import http_command_helpers : commandBody;
@@ -220,17 +226,34 @@ unittest {
     waitPlayerIdle();
     assert(undoLen() == afterLoad && !undoLabels().canFind(kMoveLabel), format(
         "the release after a mid-drag load must record nothing: %s", undoLabels()));
+
+    // A fresh press after the cancel is one row again (plan 8646 [R4-3]); the
+    // load disarmed the pen, so it is re-armed first.
+    cmd("tool.set mesh.topoPen on");
+    const beforeFresh = undoLen();
+    postJson("/api/play-events",
+        clickLog(r.c.vpX, r.c.vpY, r.c.width, r.c.height, r.cx, r.cy));
+    waitPlayerIdle();
+    assert(undoLen() == beforeFresh + 1, format(
+        "a fresh press after a mid-drag load must record one row: %s", undoLabels()));
+}
+
+size_t moveRows() {
+    size_t n;
+    foreach (l; undoLabels()) if (l == kMoveLabel) ++n;
+    return n;
 }
 
 // Cell 3: a press held on the vertex that never moved is NOT an uncommitted
-// edit — the hook answers the commit guard (armed AND written), so the disarm
-// seam finds nothing to cancel.
+// edit (its mesh is the press image), so the disarm seam finds nothing to
+// cancel and the drop's close records the press as its one no-op row.
 unittest {
     const path = loadSeed();
     scope(exit) if (exists(path)) remove(path);
 
     holdMoveDrag(Motion.none);
     const crossings0 = getJson("/api/tool/disarm")["crossings"].integer;
+    const moves0 = moveRows();
     load(path);
 
     auto d = getJson("/api/tool/disarm");
@@ -240,24 +263,26 @@ unittest {
         ~ d.toString);
     assert(d["cancelSteps"].integer == 0,
         "a held press that wrote nothing is no uncommitted edit: " ~ d.toString);
-    assert(!undoLabels().canFind(kMoveLabel), format(
-        "a load over an unmoved press must record no Move: %s", undoLabels()));
+    assert(moveRows() == moves0 + 1, format(
+        "a load over an unmoved press records that press as one Move row: %s",
+        undoLabels()));
 }
 
-// Cells 4-7: a drag that went away and came HOME is not an uncommitted edit.
-// It wrote the mesh (`moveDirty`), but the Move commit guard drops a net
-// no-op, so the hook (which must equal that guard) answers false. Each cell
-// reaches the shared guard through a different caller: the hook (load: the
-// disarm seam asks it), the release record, and the prepared tool-switch
-// record; cell 5 is the reset door. Cell 7 has its positive half first.
+// Cells 4-7: a drag that went away and came HOME is not an uncommitted edit:
+// it wrote the mesh (`moveDirty`) but the mesh is the press image again. Each
+// cell ends the press through a different door — the load (the disarm seam
+// asks the hook), the reset, the release, the tool switch — and each but the
+// reset (which discards the in-flight press) records it as ONE no-op row.
+// Cell 7 has its moved half first.
 
-// Cell 4: load over a returned drag — nothing to cancel, nothing recorded.
+// Cell 4: load over a returned drag — nothing to cancel, one row.
 unittest {
     const path = loadSeed();
     scope(exit) if (exists(path)) remove(path);
 
     holdMoveDrag(Motion.awayAndBack);
     const crossings0 = getJson("/api/tool/disarm")["crossings"].integer;
+    const moves0 = moveRows();
     load(path);
 
     auto d = getJson("/api/tool/disarm");
@@ -267,34 +292,39 @@ unittest {
         ~ d.toString);
     assert(d["cancelSteps"].integer == 0,
         "a drag that came home is no uncommitted edit: " ~ d.toString);
-    assert(!undoLabels().canFind(kMoveLabel), format(
-        "a load over a returned drag must record no Move: %s", undoLabels()));
+    assert(moveRows() == moves0 + 1, format(
+        "a load over a returned drag records that press as one Move row: %s",
+        undoLabels()));
 }
 
-// Cell 5: tool.reset over a returned drag records nothing and re-arms.
+// Cell 5: tool.reset DISCARDS the in-flight press (wave plan 8640 §1.1):
+// over a returned drag nothing is recorded, the vertex is at its press
+// position, and the pen is re-armed.
 unittest {
     auto r = holdMoveDrag(Motion.awayAndBack);
     cmd("tool.reset");
-    assert(undoLen() == r.undoBefore, format(
+    assert(undoLen() == r.undoBefore && readVerticesLayer(1)[0] == r.pre, format(
         "tool.reset over a returned drag must record nothing: undo %s -> %s (%s)",
         r.undoBefore, undoLen(), undoLabels()));
     assert(activeToolName() == "mesh.topoPen",
         "tool.reset must leave the pen armed: " ~ toolState().toString);
 }
 
-// Cell 6: the release of a returned drag records nothing.
+// Cell 6: the release of a returned drag is one row, the vertex bit-exact
+// at its press position (K-noop's zero-length drag).
 unittest {
     auto r = holdMoveDrag(Motion.awayAndBack);
     postJson("/api/play-events", buildDragUpLog(r.c.vpX, r.c.vpY,
         r.c.width, r.c.height, r.cx, r.cy));
     waitPlayerIdle();
-    assert(undoLen() == r.undoBefore && !undoLabels().canFind(kMoveLabel), format(
-        "the release of a returned drag must record nothing: undo %s -> %s (%s)",
-        r.undoBefore, undoLen(), undoLabels()));
+    assert(undoLen() == r.undoBefore + 1 && undoLabels()[$ - 1] == kMoveLabel
+           && readVerticesLayer(1)[0] == r.pre, format(
+        "the release of a returned drag is one Move row at the press position: "
+        ~ "undo %s -> %s (%s)", r.undoBefore, undoLen(), undoLabels()));
 }
 
-// Cell 7: a tool switch mid-drag salvages a real drag as one Move row
-// (positive half), and records nothing for a returned one.
+// Cell 7: a tool switch mid-drag salvages a real drag as one Move row, and a
+// returned one as one (no-op) Move row too.
 unittest {
     {
         // The switch writes the salvaged Move and then its own activation.
@@ -307,8 +337,8 @@ unittest {
     {
         auto r = holdMoveDrag(Motion.awayAndBack);
         cmd("tool.set move on");
-        assert(undoLabels()[r.undoBefore .. $] == ["Activate Tool"], format(
-            "a tool switch over a returned drag must record only the "
-            ~ "activation: %s", undoLabels()));
+        assert(undoLabels()[r.undoBefore .. $] == [kMoveLabel, "Activate Tool"],
+            format("a tool switch over a returned drag records the press as one "
+            ~ "Move, then the activation: %s", undoLabels()));
     }
 }

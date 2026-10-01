@@ -184,7 +184,9 @@ unittest {
 }
 
 // A stationary Shift+CLICK on an edge duplicates nothing — the same
-// click-vs-drag gate every gesture in this tool carries.
+// click-vs-drag gate every gesture in this tool carries. The press is still
+// ONE undo row (plan 8646, law L5, measured for a motionless Shift+LMB;
+// fixture tests/fixtures/topology_pen_session_laws.json).
 unittest {
     setupSphereBg(R, LON, LAT);
 
@@ -215,6 +217,7 @@ unittest {
     immutable int ey = cast(int)((qy[0] + qy[1]) * 0.5f);
 
     immutable size_t undo0 = undoDepth();
+    const verts0 = readVerticesLayer(1);
 
     // A Shift+LMB down/up pair at the SAME pixel.
     string log = viewportLog(c.vpX, c.vpY, c.width, c.height) ~ "\n"
@@ -226,7 +229,9 @@ unittest {
     assert("error" !in pr, "/api/play-events failed: " ~ pr.toString);
     waitPlayerIdle();
 
-    assert(vertexCountLayer(1) == 4 && edgeCountLayer(1) == 4 && faceCountLayer(1) == 1,
+    assert(vertexCountLayer(1) == 4 && edgeCountLayer(1) == 4 && faceCountLayer(1) == 1
+           && readVerticesLayer(1) == verts0,
         "a stationary Shift+click on an edge must be a byte-identical no-op");
-    assert(undoDepth() == undo0, "and must record no undo entry");
+    assert(undoDepth() == undo0 + 1,
+        format("and is ONE no-op row (L5); depth %d -> %d", undo0, undoDepth()));
 }

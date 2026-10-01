@@ -5,7 +5,7 @@
 // The defect this pins: `onPlainLmbDown` resolved its Move target with
 // `findSourceVertex`, which searches VERTICES only. A press aimed at an EDGE
 // or a FACE therefore resolved nothing, fell through to Place, and the
-// release committed a `mesh.addVertex` at the background-snapped cursor
+// release committed a placement at the background-snapped cursor
 // point — aim at an edge, get a stray floating vertex, undoable but with no
 // signal that anything unintended happened.
 //
@@ -15,9 +15,11 @@
 // pinning the half that must survive both designs: a CLICK, i.e. a press and
 // release with no drag between them, still changes nothing at all. That holds
 // because the set law carries Move Loop's click-vs-drag gate: under 3px of
-// travel the element stays exactly where it is, so no vertex is added, no
-// vertex is moved, and no undo entry appears. Every assertion below is
-// therefore unchanged from 0482; only what makes them true has moved.
+// travel the element stays exactly where it is, so no vertex is added and no
+// vertex is moved. Since plan 8646 each such press is still ONE undo row with
+// the geometry bit-identical (law L5, fixture
+// tests/fixtures/topology_pen_session_laws.json), so the depth grows by one
+// per press while every geometry assertion is unchanged.
 //
 // The rig, and why each piece is load-bearing:
 //   * BACKGROUND (layer 0) = a dense sphere at the origin. Without a
@@ -156,6 +158,7 @@ unittest {
     cmd("tool.attr mesh.topoPen mode point");
 
     immutable size_t undo0 = undoDepth();
+    const verts0 = readVerticesLayer(1);
 
     // --- CASE 1: press at an EDGE MIDPOINT (the screen midpoint of the
     // corner-0..corner-1 edge). Lies exactly ON that projected segment, while
@@ -190,9 +193,9 @@ unittest {
         "a Move press on an EDGE must not change the primary layer's topology at all");
     assert(!hasVertexNear(1, wouldBePlacedAt, TOL),
         "no vertex may appear at the background hit the fall-through Place would have used");
-    assert(undoDepth() == undo0,
-        format("a Move press on an EDGE must leave NO undo entry; depth %d -> %d",
-               undo0, undoDepth()));
+    assert(undoDepth() == undo0 + 1 && readVerticesLayer(1) == verts0,
+        format("a Move press on an EDGE is ONE no-op row (L5), vertices unchanged; "
+               ~ "depth %d -> %d", undo0, undoDepth()));
 
     // --- CASE 2: press at the FACE CENTRE (the quad's screen centroid).
     // Asserted below to be clear of every projected edge by more than the snap
@@ -222,9 +225,9 @@ unittest {
         "a Move press on a FACE CENTRE must not change the primary layer's topology at all");
     assert(!hasVertexNear(1, wouldBePlacedAtCentre, TOL),
         "no vertex may appear at the background hit the fall-through Place would have used");
-    assert(undoDepth() == undo0,
-        format("a Move press on a FACE CENTRE must leave NO undo entry; depth %d -> %d",
-               undo0, undoDepth()));
+    assert(undoDepth() == undo0 + 2 && readVerticesLayer(1) == verts0,
+        format("a Move press on a FACE CENTRE is ONE no-op row (L5), vertices "
+               ~ "unchanged; depth %d -> %d", undo0, undoDepth()));
 
     // --- CONTROL: the SAME gesture on genuinely empty space must still place.
     // Searched rather than hardcoded, so no screen-orientation convention is
@@ -269,7 +272,7 @@ unittest {
     assert(hasVertexNear(1, expectedControl, TOL),
         "the control press's new vertex must sit at its own independently-computed "
       ~ "camera-ray hit on the background sphere");
-    assert(undoDepth() == undo0 + 1,
-        format("the control press must record exactly ONE undo entry; depth %d -> %d",
-               undo0, undoDepth()));
+    assert(undoDepth() == undo0 + 3,
+        format("the control press must record exactly ONE undo entry; depth %d -> %d "
+               ~ "(two no-op rows before it)", undo0, undoDepth()));
 }
