@@ -26,6 +26,9 @@
 //                                      a switch, a re-typed arm; group redo
 //   pop-one-open-rows             L54  undo pops one open row at a time
 //   switch-closed-redo            C4-switch-closed (L53 Closed)
+//   rearm-redo-opens-nothing      ours: a re-arming redo opens no block
+//   fold-on-drop                  gap t: a drop folds by the switch rule
+//   discard-resets-offsets        a discarded gesture restores its context
 //
 // `VIBE3D_CELL=<id>` runs one cell alone; the last block pins the population.
 //
@@ -1048,6 +1051,31 @@ unittest {
     writeln("PASS switch-closed-redo");
 }
 
+// rearm-redo-opens-nothing — ours (the plan's rule, §9.19.3 "cleared by ANY
+// navigation"; uncaptured for a re-arming redo, gap row (dd)'s family): the
+// redo that re-arms the pen opens no block, so a write right after it is the
+// base of its own step and pops alone after the next press.
+unittest {
+    if (!cell("rearm-redo-opens-nothing")) return;
+    const r = rig();
+    penArmUi(r);
+    moveV5("rearm-redo-opens-nothing g1");
+    z("rearm-redo-opens-nothing z0");
+    z("rearm-redo-opens-nothing z00");
+    at("rearm-redo-opens-nothing", "z00", r.a0, false, r.hp);
+    sz("rearm-redo-opens-nothing r1");
+    at("rearm-redo-opens-nothing", "r1", r.a0, true, r.hp + 1);
+    w("offsetX", "0.1");
+    moveV10("rearm-redo-opens-nothing g2");
+    z("rearm-redo-opens-nothing z1");
+    at("rearm-redo-opens-nothing", "z1", r.a0, true, r.hp + 2);
+    z("rearm-redo-opens-nothing z2");
+    at("rearm-redo-opens-nothing", "z2 (the row alone)", r.a0, true, r.hp + 1);
+    z("rearm-redo-opens-nothing z3");
+    at("rearm-redo-opens-nothing", "z3", r.a0, false, r.hp);
+    writeln("PASS rearm-redo-opens-nothing");
+}
+
 // fold-on-drop — a drop closes the open step by the switch rule (§9.19.3; gap
 // row (t): unobservable at the reference, whose drop undo loses the gesture):
 // Esc, then the task row, the drop row, and g1 with the row as one step.
@@ -1103,7 +1131,7 @@ unittest {
     writeln("cells=", cellsRun);
     const only = environment.get("VIBE3D_CELL", "");
     if (only.length == 0)
-        assert(cellsRun == 38, format("topology pen S7a laws: %d cells ran, expected 38", cellsRun));
+        assert(cellsRun == 39, format("topology pen S7a laws: %d cells ran, expected 39", cellsRun));
     else
         assert(cellsRun == 1, format("topology pen S7a laws: VIBE3D_CELL=%s ran %d cells, expected 1 "
                                      ~ "(an unknown name runs none)", only, cellsRun));
