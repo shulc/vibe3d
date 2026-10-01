@@ -408,15 +408,15 @@ private:
     private string       stepLabel_;
 
     // --- The OPERATION CONTEXT (wave plan 8640 S7a, §9.7): the Offset the
-    // last Move-family press wrote — `final anchor - press anchor` of the
-    // pressed element (vertex: itself; edge: its midpoint; polygon: its corner
-    // mean; loop: the pressed edge's midpoint), written raw at every motion
-    // and at the release — and the descriptor of that press (`stepKind`, the
+    // last press wrote — for the Move family the offset its kernel applied
+    // (vertex: its travel; edge / polygon / loop: the G-delta offset of the
+    // pressed anchor, S7b), written raw at every motion and at the release —
+    // and the descriptor of that press (`stepKind`, the
     // moved vertices, their press-image positions), written at its end. All
     // six are the policy's haul attributes: a press resets them before its
     // open image (`pressOpensOperation`) and they are restored only into the
-    // instance that recorded a row (M-H). Read by no kernel yet: the
-    // re-application by step kind is slice S7b's. The descriptor is session
+    // instance that recorded a row (M-H). Read by the re-application by step
+    // kind (S7b, `reapplyLastStep`, table `kReapply`). The descriptor is session
     // state, never a wire route: three `podArray_` (hidden, transient, refused
     // by every write door); the kind is a 0-or-1-element array, `stepKind()`.
     package float        offsetX_ = 0.0f, offsetY_ = 0.0f, offsetZ_ = 0.0f;

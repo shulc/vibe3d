@@ -241,7 +241,7 @@ package enum BuildCase { None, Edge, Tri, Quad }
 package enum PenMode { Move, Duplicate, Remove, Split, AddLoop, Point, Fill, Smooth }
 
 /// The kind of the press a pen step descriptor records (`stepKind`, wave plan
-/// 8640 S7a): which Move-family handler ran. Its values are the image's raw
+/// 8640 S7a/S7b): which handler ran. Its values are the image's raw
 /// ints, so a member is never renumbered; `None` is a press that wrote no
 /// descriptor. Slice S7b keys its re-evaluation table `kReapply` on it.
 package enum PenStepKind : int {
