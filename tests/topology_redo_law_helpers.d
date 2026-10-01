@@ -48,7 +48,7 @@ struct Rig {
     int[4] deltaMap = [1, 0, 0, 1];  // ours = (m0 dx + m1 dy, m2 dx + m3 dy): the handle's
                                      // screen direction under our camera
     long[2] layer = [1, 1];    // vertices one layer adds: [reference, ours] (vcount scale)
-    bool dormantHaulWrites = true;  // the dormant rig check applies (plan S1a п.4)
+    string dormantDeafDoor;    // the re-arm door after which our dormant haul takes no press
 }
 
 /// Two far vertices that close a triangle with the autoact rig's loose vertex 4.
@@ -107,7 +107,6 @@ Rig rigOf(string variant) {
     case "vertex_extrude":
         r.tool = "mesh.vertexExtrude"; r.attrs = ["shift", "width"];
         r.handle = true; r.handlePart = 1; r.pressRef = [500, 472];
-        r.deltaMap = [-1, 0, 0, 1];   // our width arrow points left on screen
         // our kernel extrudes only a vertex whose every edge has two faces: the face
         // 1-0-3 closes the fan of the selected vertex 0 (the reference extrudes it open);
         // it then builds TWO rings per layer (6 vertices) where the reference builds one (3)
@@ -126,10 +125,10 @@ Rig rigOf(string variant) {
     case "radial_array":
         r.tool = "mesh.radialArrayTool"; r.attrs = ["count", "axis", "center", "angle", "offset"];
         r.pressRef = [430, 561];
-        // measured: re-armed after W and the navigation, our RadialArray draws no handle
-        // and takes no press (no step, no attribute) — its dormant haul cannot write
-        // (PLAN-FINDING of S1b; the reference's own dormant haul re-wrote equal values)
-        r.dormantHaulWrites = false;
+        // measured: re-armed through the SCRIPT door after W and the navigation, our
+        // RadialArray draws no handle and takes no press (no step, no attribute) — its
+        // dormant haul cannot write (PLAN-FINDING of S1b; the UI door takes the press)
+        r.dormantDeafDoor = "script";
         break;
     case "array":
         r.tool = "mesh.arrayTool"; r.attrs = ["numX", "numY", "numZ", "offX", "offY", "offZ"];
@@ -239,8 +238,8 @@ long setupCell(const JSONValue cell, const Rig rig) {
         format(`{"mode":"%s","indices":%s}`, m["mode"].str, sel)), ctx);
     // an oblique view on the rig's centre: every handle off-axis, the whole rig in frame
     double[3] c = 0;
-    foreach (v; mRef["vertices"].array)
-        foreach (k; 0 .. 3) c[k] += num(v[k]) / mRef["vertices"].array.length;
+    foreach (v; m["vertices"].array)
+        foreach (k; 0 .. 3) c[k] += num(v[k]) / m["vertices"].array.length;
     cmdOk("/api/camera", format(`{"azimuth":0.5,"elevation":0.4,"distance":7,`
         ~ `"focus":{"x":%.6f,"y":%.6f,"z":%.6f}}`, c[0], c[1], c[2]), ctx);
     haveHandle = false;
@@ -546,7 +545,10 @@ void checkRig(const JSONValue cell, const CellRun run) {
         assert(run.obs[k].attrs != run.obs[k - 1].attrs,
             "rig VOID " ~ id ~ ": g1 attributes equal the arm's");
     }
-    if (canFind(id, "_dormant") && !starts("dormant") && rigOf(cell["variant"].str).dormantHaulWrites) {
+    string rearmDoor;
+    foreach (s; steps) if (s["op"].str == "arm") rearmDoor = s["door"].str;
+    if (canFind(id, "_dormant") && !starts("dormant")
+        && rearmDoor != rigOf(cell["variant"].str).dormantDeafDoor) {
         const k = at(hauls[$ - 1]);
         assert(run.obs[k].attrs != run.obs[k - 1].attrs,
             "rig: dormant haul changed no attribute in " ~ id);
