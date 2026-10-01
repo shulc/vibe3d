@@ -133,9 +133,9 @@ unittest {
 
 // Block 1: every declared field reaches the tool as that field's own factory.
 unittest {
-    assert(kFields.length == 13,
+    assert(kFields.length == 15,
         "6352 population floor: TopoPenFactories declares "
-        ~ kFields.length.to!string ~ " factories, expected 13");
+        ~ kFields.length.to!string ~ " factories, expected 15 (plan 8646 added place, attr)");
     auto r = makeRig();
     auto t = buildPen(r);
     auto held = fieldOf!TopoPenFactories(t, "factories_");

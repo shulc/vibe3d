@@ -80,7 +80,6 @@ public:
         consume();
     }
     void abort() nothrow @nogc { if (!consumed_) { image_.clear(); consume(); } }
-    bool historyPrepared() const nothrow @nogc { return image_.historyPrepared; }
 private:
     this(TopologyPenTool target) {
         target_ = target;

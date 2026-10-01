@@ -3620,6 +3620,8 @@ void main(string[] args) {
         // name is the ONLY thing keeping them apart in history, replay and macros.
         pen.removeEdge   = sessionEditFactory("mesh.topoPen_removeedge", "Topology Remove Edge", MeshEditScope.Geometry);
         pen.removeVertex = sessionEditFactory("mesh.topoPen_removevertex", "Topology Remove Vertex", MeshEditScope.Geometry);
+        pen.place        = sessionEditFactory("mesh.topoPen_place", "Topology Place", MeshEditScope.Geometry);
+        pen.attr         = sessionEditFactory("mesh.topoPen_attr", "Topology Attribute", MeshEditScope.Geometry);
         return pen;
     }
 

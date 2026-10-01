@@ -308,6 +308,7 @@ struct ToolSessionLink {
     void delegate(Tool, const(Command)) recordCompleted; // history-owned completed gesture
     void delegate(Tool, Command) tagPreparedCompleted;
     ulong delegate(Tool) recordToken;
+    MeshSnapshot delegate(Tool) stepOpenImage;   // the pending step's open image (shared)
 }
 
 struct ToolSessionPolicy {
@@ -1191,6 +1192,14 @@ public:
     /// A gesture step starts: call BEFORE the gesture changes any attribute.
     protected final void sessionStepBegins(PressKind kind = PressKind.plain) {
         if (sessionLink_.stepBegins !is null) sessionLink_.stepBegins(this, kind);
+    }
+    /// The mesh image the step this instance just opened starts from — the
+    /// session's own capture, shared rather than taken twice (plan 8646
+    /// [R1-m]). `MeshSnapshot.init` (not `filled`) when unbound or when the
+    /// session opened no step for this instance.
+    protected final MeshSnapshot sessionStepOpenImage() {
+        return sessionLink_.stepOpenImage is null ? MeshSnapshot.init
+            : sessionLink_.stepOpenImage(this);
     }
     /// The gesture step started by the last `sessionStepBegins` completed.
     /// `ifChanged`: inside an open window it is a step only if it changed the

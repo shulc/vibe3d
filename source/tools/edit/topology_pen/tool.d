@@ -55,6 +55,7 @@ import bvh_pick              : BvhPick;
 import command_history      : CommandHistory, PreparedHistoryKind;
 import commands.mesh.vertex_new : MeshVertexNew;
 import commands.mesh.session_edit : MeshSessionEdit;
+import command               : Command;
 import snapshot              : MeshSnapshot;
 import display_sync         : refreshDisplay;
 import change_bus            : MeshEditScope;
@@ -102,7 +103,7 @@ struct PreparedTopologyPenUpdateImage {
 }
 
 struct PreparedTopologyPenDeactivateImage {
-    bool valid, historyPrepared;
+    bool valid;
     ConstrainHitPacket expectedHit;
     HoverTarget expectedTarget;
     SlideDecline expectedDecline;
@@ -114,9 +115,8 @@ struct PreparedTopologyPenDeactivateImage {
     uint[] expectedMoveVerts;
     Vec3[] expectedMoveBase;
     bool expectedMoveDirty, expectedMoveWelded;
-    MeshSnapshot expectedMoveBefore;
     void clear() nothrow @nogc {
-        valid = historyPrepared = false;
+        valid = false;
         expectedHit = ConstrainHitPacket.init;
         expectedTarget = HoverTarget.init;
         expectedDecline = SlideDecline.None; expectedDeclineSeed = 0;
@@ -125,7 +125,6 @@ struct PreparedTopologyPenDeactivateImage {
         expectedMoveElem = MoveElem.None;
         expectedMoveVerts = null; expectedMoveBase = null;
         expectedMoveDirty = expectedMoveWelded = false;
-        MeshSnapshot sink; expectedMoveBefore.moveInto(sink);
     }
 }
 
@@ -188,7 +187,7 @@ package enum string[] kGestureArmFields = () {
 /// read its state, including its `private` members, exactly as they did when
 /// their bodies were typed out here.
 class TopologyPenTool : Tool, InputBindable, PreparedToolDoorClient,
-                        PreparedToolPoseDoorClient {
+                        PreparedToolPoseDoorClient, TopologyStepClient {
 
     /// Click-vs-drag gate, in pixels, shared by EVERY gesture in this tool:
     /// a release within this distance of the press pixel is a click, not a
@@ -297,6 +296,8 @@ private:
     package @property ref TopoPenDupLoopFactory      dupLoopEditFactory_()      { return factories_.dupLoop; }
     package @property ref TopoPenSmoothLoopFactory   smoothLoopEditFactory_()   { return factories_.smoothLoop; }
     package @property ref TopoPenFillFactory         fillEditFactory_()         { return factories_.fill; }
+    package @property ref TopoPenPlaceFactory        placeEditFactory_()        { return factories_.place; }
+    package @property ref TopoPenAttrFactory         attrEditFactory_()         { return factories_.attr; }
 
     // --- P3 drag-build session state (tool.d, doc/topopen_p3_plan.md).
     // Armed on a press that lands on an existing primary-layer vertex;
@@ -346,12 +347,9 @@ private:
     //
     //   2. WHEN the mesh changes. The move is applied LIVE on every motion
     //      event, not only at release — the geometry deforms under the
-    //      cursor instead of a ghost line predicting it. `moveBefore_` is
-    //      captured at the drag's FIRST live write and the whole drag records
-    //      exactly ONE undo entry at release: the `MeshSessionEdit` contract ("mutates
-    //      the mesh freely while the user drags ... records this command
-    //      holding (before, after) snapshots so the entire gesture is a
-    //      single undo step").
+    //      cursor instead of a ghost line predicting it. The whole press is
+    //      ONE step the session records at release, from the press image
+    //      (`basis_`, below).
     //
     // The FINAL positions still come from the RELEASE event's own pixel, as
     // they always did — the live writes are a preview made of real geometry,
@@ -363,28 +361,33 @@ private:
     // otherwise each motion event would compound onto the previous one and
     // the element would race away from the cursor.
     //
-    // `moveDirty_` records whether any live write actually happened, so a
-    // press-with-no-motion stays the byte-identical no-op it has always been
-    // (no snapshot pair, no undo entry, no GPU churn). Cleared — like every
-    // arm above — by `resetAllGestureArms()`; `deactivate()` finalizes a
-    // still-dirty drag first, so switching tools mid-gesture cannot leave an
-    // un-undoable mutation behind. A dirty armed drag is also the tool's
-    // uncommitted edit (`hasUncommittedEdit`), which `tool.reset` and a
-    // document replace DISCARD through `cancelUncommittedEdit`.
+    // `moveDirty_` records whether any live write actually happened (the weld
+    // gate reads it: a grab that moved nothing welds nothing). Cleared — like
+    // every arm above — by `resetAllGestureArms()`.
     //
     // `moveWelded_` records whether the release's destructive landing (task
-    // 0555) actually absorbed anything. Set between the final placement and
-    // the undo record, and read by BOTH of the things that must behave
-    // differently after a topology change: the record's net-no-op test (which
-    // cannot compare against `moveBase_` any more — the vertex array was
-    // compacted under those indices) and the post-commit `resyncSession`.
+    // 0555) actually absorbed anything; the post-commit `resyncSession` reads
+    // it (the vertex array was compacted under `moveVerts_`).
     package MoveElem     moveElem_  = MoveElem.None;
     package uint[]       moveVerts_;
     package Vec3[]       moveBase_;
     package int          moveStartX_, moveStartY_;
     package bool         moveDirty_ = false;
     bool         moveWelded_ = false;
-    package MeshSnapshot moveBefore_;
+
+    // --- The press STEP (plan 8646). Every bound chord press is one topology
+    // step of the session: `openPressStep` opens it before the mode handler
+    // runs, `closePressStep` ends it after the release's handler, and the
+    // session records ONE row whether or not the mesh changed (law L5).
+    // `basis_` is the press image — the session's own capture, shared — and
+    // is what a cancel restores. The row's carrier and label are the ones the
+    // handler that RAN chose (`noteStep`), read at the end; a press whose
+    // handler committed nothing keeps its chord mode's default.
+    package MeshSnapshot basis_;
+    package bool         stepOpen_;
+    private ubyte        stepButton_;
+    private MeshSessionEdit delegate() stepFactory_;
+    private string       stepLabel_;
 
     // --- P6 Add Loop session state (tool.d,
     // doc/topopen_p6_addloop_plan.md). Armed on a Shift+MMB press that
@@ -1208,12 +1211,20 @@ public:
     override string name() const { return "Topology Pen"; }
 
     // Its visible arm is a strict-LIFO history row (slice M1 carries the former marker).
+    // Every press is one topology step the SESSION records (plan 8646): one
+    // begin site (`openPressStep`), one end site (`closePressStep`), no
+    // per-gesture record call. The pen reports its own basis (the press image),
+    // and its attribute image is every published param (D15).
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
         // Rollovers (slice M6): the flags table sets the flag on this tool (and
         // on Drag Weld); no hover type is picked here yet, so nothing is drawn.
         static immutable ToolSessionPolicy policy = {
             activationRow: true, rollovers: Rollover.target,
-            sessionSteps: true, historyRecordedSteps: true };
+            sessionSteps: true, historyTopologySteps: true,
+            rebaseTopologyAfterStep: false,
+            imageAttrs: ["middle", "mode", "loop", "slide", "smoothStrength",
+                         "showVertex", "showEdge", "innerSnap", "keepVertex",
+                         "range", "quadOnly", "backFace"] };
         return policy;
     }
 
@@ -1450,19 +1461,8 @@ public:
         image.expectedMoveBase = moveBase_.dup;
         image.expectedMoveDirty = moveDirty_;
         image.expectedMoveWelded = moveWelded_;
-        image.expectedMoveBefore = moveBefore_.ownedDup();
-
-        if (moveArmed_ && moveWouldRecord()) {
-            if (context is null) return image;
-            auto m = meshOrNull();
-            auto cmd = factories_.move();
-            cmd.setSnapshots(moveBefore_.ownedDup(), MeshSnapshot.capture(*m),
-                "Topology Move");
-            image.historyPrepared = context.prepare(cmd,
-                PreparedHistoryKind.Plain).accepted;
-            if (!image.historyPrepared) return image;
-            sessionTagPreparedCompleted(cmd);
-        }
+        // No history here (plan 8646): the session's close records an open
+        // press step before this door runs (`ToolSession.close`).
         image.valid = true; return image;
     }
 
@@ -1480,8 +1480,7 @@ public:
             moveVerts_ == image.expectedMoveVerts &&
             moveBase_ == image.expectedMoveBase &&
             moveDirty_ == image.expectedMoveDirty &&
-            moveWelded_ == image.expectedMoveWelded &&
-            moveBefore_.matches(image.expectedMoveBefore);
+            moveWelded_ == image.expectedMoveWelded;
     }
 
     final void installPreparedDeactivate(
@@ -1493,7 +1492,7 @@ public:
         moveArmed_.armed = false; grabbedVert_ = -1;
         moveElem_ = MoveElem.None; moveVerts_ = null; moveBase_ = null;
         moveDirty_ = moveWelded_ = false;
-        MeshSnapshot sink; moveBefore_.moveInto(sink);
+        stepOpen_ = false;
         image.clear();
     }
 
@@ -1505,9 +1504,7 @@ public:
             preparedToolStateOwner, PreparedDeactivateKind.TopologyPen, false);
         scope(failure) context.discard();
         auto owner = PreparedTopologyPenDeactivateOwner.prepare(this, context);
-        bool ok = owner !is null;
-        if (ok) ok = owner.historyPrepared() ? context.markHistoryInstall()
-                                             : context.markNoHistoryInstall();
+        bool ok = owner !is null && context.markNoHistoryInstall();
         if (ok) ok = context.prepareTopologyPenDeactivate(owner);
         if (!ok) context.discard();
         return PreparedDeactivateEffect(preparedToolStateOwner,
@@ -1520,13 +1517,12 @@ public:
     }
 
     override void deactivate() {
-        // Task 0484: Move is the one gesture here that writes the mesh
-        // DURING the drag, so a tool switch mid-drag would otherwise leave
-        // those writes applied with no history entry to undo them. Record
-        // what is already on the mesh, then clear. No new targets are
-        // computed — there is no event, hence no pixel, to compute them for;
-        // the mesh's current state IS the answer.
-        commitLiveMoveIfDirty();
+        // A press still open at a drop/switch: the session's close has already
+        // recorded it as it stands (`ToolSession.close`), so this end is a
+        // no-op when bound; it only clears the pen's own step state. No new
+        // targets are computed and nothing is welded — there is no event.
+        if (stepOpen_) closePressStep();
+        resetAllGestureArms();
         lastHit_    = ConstrainHitPacket.init;
         lastTarget_ = HoverTarget.init;
         slideDecline_     = SlideDecline.None;
@@ -1541,10 +1537,7 @@ public:
         unregisterSnapGuide();
         // And hand the application-wide snap enable back to whatever had it
         // before this tool was activated — the drop half of the reference's
-        // own save/restore pair (`armStartupSnap`). AFTER
-        // `commitLiveMoveIfDirty` above, which is the salvage of an abandoned
-        // drag and deliberately does NOT weld: restoring first would leave
-        // that path reading a snap state this tool no longer owns.
+        // own save/restore pair (`armStartupSnap`), after the step's end above.
         disarmStartupSnap();
     }
 
@@ -1657,8 +1650,8 @@ public:
         // multi-vertex grab readable at all (a ghost line cannot show an edge
         // or a polygon dragging its incident faces along with it).
         //
-        // Still ONE undo entry: `moveBefore_` is captured at the first live
-        // write and `finishMove` records the pair at release. The targets are absolute
+        // Still ONE undo step: the press step the session records at release
+        // (`closePressStep`). The targets are absolute
         // (always recomputed from `moveBase_`), so an event stream of any
         // density lands in exactly the same place — and the release recomputes
         // them once more for its OWN pixel, which is what actually decides
@@ -2958,8 +2951,94 @@ public:
         // puts it too: its master-enable test sits above the guide loop, not
         // inside the guide.
         registerSnapGuide();
-        return dispatchInput(toButton(e.button), toMods(SDL_GetModState()),
-                             InputPhase.Down, e, vts);
+        // Every BOUND chord press is consumed and is one step (law L5), whatever
+        // its handler answers: the step opens here, before the handler runs, so
+        // a commit-on-Down gesture (Remove) is inside it. An unbound chord (every
+        // Alt combination) is not the pen's and passes through.
+        immutable InputButton btn = toButton(e.button);
+        immutable ubyte mods = toMods(SDL_GetModState());
+        immutable ToolAction a = btn == InputButton.None ? PassThrough
+            : resolveToolAction(bindings(), btn, mods);
+        if (a == PassThrough) return false;
+        immutable ov = kChordOv[cast(TopoPenChord) a];
+        openPressStep(e.button, ov.mode == ModeOv.FromUser ? penMode_
+                                                           : modeOfOverride(ov.mode));
+        dispatchInput(btn, mods, InputPhase.Down, e, vts);
+        return true;
+    }
+
+    /// Open the press step (plan 8646 [R3-1]): the ONLY code that begins a pen
+    /// step, called from `onMouseButtonDown` (and by the white-box rig's
+    /// `penStep` bracket). A second button during a hold opens nothing new —
+    /// one step per hold. The carrier starts as the chord mode's default.
+    package bool openPressStep(ubyte button, PenMode chordMode) {
+        if (stepOpen_) return false;
+        sessionStepBegins(PressKind.plain);
+        basis_ = sessionStepOpenImage();
+        // Unbound, or not the instance the session tracks: our own capture.
+        if (!basis_.filled) {
+            auto m = mesh;
+            basis_ = m is null ? MeshSnapshot.init : MeshSnapshot.capture(*m);
+        }
+        noteDefaultStep(chordMode);
+        stepOpen_   = true;
+        stepButton_ = button;
+        return true;
+    }
+
+    /// End the press step: the ONLY code that ends a pen step, called from
+    /// `onMouseButtonUp` (its own button, after the release's handler) and
+    /// `deactivate`. The session records the row (or, when it already ended
+    /// the step at a close, does nothing).
+    package void closePressStep() {
+        if (!stepOpen_) return;
+        sessionStepEnds();
+        stepOpen_ = false;
+    }
+
+    /// The carrier and label of the row this press will write — set where a
+    /// gesture commits (or arms, for Move), read at the step's end.
+    private void noteStep(MeshSessionEdit delegate() factory, string label) {
+        stepFactory_ = factory;
+        stepLabel_   = label;
+    }
+
+    private void noteDefaultStep(PenMode mode) {
+        final switch (mode) {
+        case PenMode.Move:      noteStep(factories_.move,    "Topology Move");     break;
+        case PenMode.Duplicate: noteStep(factories_.build,   "Topology Build");    break;
+        case PenMode.Remove:    noteStep(factories_.remove,  "Topology Remove");   break;
+        case PenMode.Split:     noteStep(factories_.split,   "Topology Split");    break;
+        case PenMode.AddLoop:   noteStep(factories_.addLoop, "Topology Add Loop"); break;
+        case PenMode.Point:     noteStep(factories_.place,   "Topology Place");    break;
+        case PenMode.Fill:      noteStep(factories_.fill,    "Topology Fill");     break;
+        case PenMode.Smooth:    noteStep(factories_.smooth,  "Topology Smooth");   break;
+        }
+    }
+
+    // ---- TopologyStepClient: the session's view of the press step ---------
+    // A parameter write on an idle pen is its own row, carried by `attr`
+    // (plan 8646 §9.5); while a press is open it joins that press.
+    override Mesh* topologyStepMesh() { return mesh; }
+    override MeshSnapshot topologyStepBasis() { return basis_; }
+    override Command topologyStepCarrier() {
+        auto f = stepOpen_ ? stepFactory_ : factories_.attr;
+        if (f is null) { noteGestureCarrierMismatch(); return null; }
+        return f();
+    }
+    override bool recordTopologyStep(Command cmd) {
+        return recordGestureEdit(cmd, GestureRecordMode.Plain);
+    }
+    override string topologyStepLabel() {
+        return stepOpen_ ? stepLabel_ : "Topology Attribute";
+    }
+    override void setTopologyDormant(bool dormant) {}
+    // Not reached: the policy leaves `rebaseTopologyAfterStep` off.
+    override void rebaseTopologyStep(MeshSnapshot basis) { basis_ = basis; }
+    override void restoreTopologyStep(in AttrImage attrs, MeshSnapshot basis) {
+        basis_ = basis;
+        restoreRecordedAttrs(attrs);
+        resyncSession();
     }
 
     /// Snapshot the live SNAP configuration for the gesture that is starting.
@@ -3317,7 +3396,7 @@ public:
             // element still declines, for the reasons the old guard spelled
             // out: with a tool active app.d gates every selection/camera
             // branch on `!anyToolActive`, so a declined press changes no
-            // selection, records no undo entry and mutates nothing, and the
+            // selection and mutates nothing (the press is still its one step), and the
             // release is safe because `lmbPlaceOrMoveUp` trusts the arm BOOLS
             // rather than the base's `armed_[]` slot (the documented
             // arm-before-decline gap).
@@ -3706,6 +3785,9 @@ public:
         moveDirty_   = false;
         moveArmed_   = true;
         grabbedVert_ = (kind == MoveElem.Vertex) ? cast(int) uniq[0] : -1;
+        // The arm decides the row (Fill's refusal ends as a Move, plan 8646
+        // [R2-4]), whether or not the drag then moves anything.
+        noteStep(factories_.move, "Topology Move");
         return true;
     }
 
@@ -3724,7 +3806,11 @@ public:
     // Always computed from `moveBase_`, never from the live positions, so N
     // motion events produce the same answer as one — no compounding.
     package Vec3[] moveTargets(int px, int py, const ref Viewport vp, ref VectorStack vts) {
+        immutable int dx = px - moveStartX_, dy = py - moveStartY_;
+        // A motionless click applies nothing, a vertex included (K-noop: the
+        // clicked vertex stays bit-identical, not re-placed on the hit).
         if (moveElem_ == MoveElem.Vertex) {
+            if (releaseIsClick(dx, dy)) return moveBase_.dup;
             Vec3[] one = [ moveBase_[0] ];
             readHit(vts);   // the CONS-snapped hit for THIS event's pixel
             // Landing (§1.5): `moveBase_` is LOCAL (arm-time `m.vertices[]`)
@@ -3744,17 +3830,15 @@ public:
         // surface sits under its own pixel, yanking the element onto the
         // background just for being clicked. Below the threshold the set
         // stays exactly where it is.
-        immutable int dx = px - moveStartX_, dy = py - moveStartY_;
         if (releaseIsClick(dx, dy)) return moveBase_.dup;
 
         return perVertexTargetsFrom(moveBase_, dx, dy, vp);
     }
 
     // Apply `targets` to the armed moving set in place — the live half of the
-    // drag (task 0484). No history: `moveBefore_` is taken lazily at the
-    // gesture's first write (below) and the single undo entry is recorded
-    // once, at release (`finishMove`). Sets `moveDirty_` so a gesture that never actually
-    // moved anything stays a true no-op.
+    // drag (task 0484). No history: the press step records once, at release.
+    // Sets `moveDirty_` so a gesture that never actually moved anything welds
+    // nothing.
     package void applyMoveTargets(const(Vec3)[] targets) {
         auto m = mesh;
         if (m is null || targets.length != moveVerts_.length) return;
@@ -3767,14 +3851,6 @@ public:
             if ((targets[i] - m.vertices[vi]).length > kMoveEps) { changed = true; break; }
         if (!changed) return;
 
-        // The undo baseline is captured LAZILY, at the first write of the
-        // gesture rather than at arm time: a press that never drags — by far
-        // the common case, every click this tool sees — then costs no
-        // whole-mesh snapshot at all. `moveDirty_` is still false here, so
-        // the mesh is untouched by this gesture and this IS the pre-gesture
-        // state.
-        if (!moveDirty_) moveBefore_ = MeshSnapshot.capture(*m);
-
         foreach (i, vi; moveVerts_) m.vertices[vi] = targets[i];
         m.commitChange(MeshEditScope.Position);
         moveDirty_ = true;
@@ -3784,36 +3860,23 @@ public:
         refreshDisplay(m, gpu_);
     }
 
-    // Close an armed Move: apply the FINAL targets, then record the whole
-    // drag as ONE undo entry (task 0484). The final positions come from the
-    // caller's event pixel — the release's own, exactly as before this
-    // gesture went live — so where a Move lands is unchanged; the live writes
-    // only decided what the user saw on the way there.
-    //
-    // Records nothing when the mesh never actually moved (`moveDirty_` false
-    // after the final apply): a stationary click, or a drag whose every
-    // vertex missed the background surface, stays the byte-identical no-op it
-    // has always been. Disarms unconditionally on the way out.
+    // Close an armed Move: apply the FINAL targets at the release's own
+    // pixel (task 0484); the press step records the result. The live writes
+    // only decided what the user saw on the way there. Disarms on the way out.
     private void finishMove(int px, int py, const ref Viewport vp, ref VectorStack vts) {
         scope(exit) clearMoveArm();
         if (!moveArmed_ || moveVerts_.length == 0) return;
         applyMoveTargets(moveTargets(px, py, vp, vts));
-        // The destructive landing (task 0555), between the final placement and
-        // the undo record so the absorption rides the SAME entry the move
-        // does. Gated on `moveDirty_`: a grab that never moved anything cannot
-        // have been "brought to within" anything, and welding on a bare click
-        // would eat any vertex that merely happened to sit inside the
-        // acceptance radius all along.
+        // The destructive landing (task 0555), inside the same step. Gated on
+        // `moveDirty_`: a grab that never moved anything cannot have been
+        // "brought to within" anything, and welding on a bare click would eat
+        // any vertex that merely happened to sit inside the acceptance radius.
         if (moveDirty_ && weldMovedVertices(moveVerts_, vp) > 0) {
             moveWelded_ = true;
             afterWeld();
         }
-        recordLiveMove();
-        // A weld changed the TOPOLOGY, so — unlike a plain Move — every index
-        // any sibling gesture cached may now name different geometry. Same
-        // discipline as this tool's other topology-changing commits, and it
-        // runs AFTER the record because `resyncSession` drops the arm state
-        // `recordLiveMove` reads.
+        // A weld changed the TOPOLOGY, so every index a sibling gesture
+        // cached may now name different geometry.
         if (moveWelded_) resyncSession();
     }
 
@@ -3832,95 +3895,32 @@ public:
         if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_); }
     }
 
-    // Record whatever the live drag has already written, WITHOUT computing
-    // new targets — the tool-switch path (`deactivate`), which has no event
-    // and therefore no pixel to compute them for. Disarms afterwards, so a
-    // reactivation starts clean.
-    //
-    // And therefore NO destructive landing either (task 0555): the landing is
-    // part of committing a RELEASE, and this path has no release — it is the
-    // salvage of a drag the user abandoned by switching tools. It records the
-    // positions as they stand. Deliberate, and the same shape as the rest of
-    // this path: it computes nothing new, it only keeps what is already there.
-    private void commitLiveMoveIfDirty() {
-        if (!moveArmed_) return;
-        scope(exit) clearMoveArm();
-        recordLiveMove();
-    }
-
-    // The session's view of the held Move drag: Move is the only
-    // gesture that writes the mesh mid-press, so a dirty armed Move IS this
-    // tool's uncommitted edit. `tool.reset` (`EditSession.discardOpenEdit`)
-    // and a document replace (the disarm seam) cancel it BEFORE their drop,
-    // so the drop's `deactivate` finds no drag left to record. The cancel
-    // restores the first-write snapshot and records nothing.
+    // The session's view of the open press (plan 8646): an open step whose
+    // mesh is no longer the press image is this tool's uncommitted edit.
+    // `tool.reset` (`EditSession.discardOpenEdit`) and a document replace (the
+    // disarm seam) cancel it before their drop: the press image comes back,
+    // the arms clear, the session's pending step ends and nothing is recorded.
     override bool hasUncommittedEdit() const {
-        return moveArmed_.armed && moveWouldRecord();
+        if (!stepOpen_ || meshSrc_ is null) return false;
+        const(Mesh)* m = meshSrc_();
+        return m !is null && !basis_.matches(*m);
     }
 
     override void cancelUncommittedEdit() {
         auto m = mesh;
-        if (m !is null && moveDirty_) moveBefore_.restore(*m);
-        clearMoveArm();
+        if (m !is null && stepOpen_ && basis_.filled) basis_.restore(*m);
+        resetAllGestureArms();
+        sessionOperationEnded();
+        stepOpen_ = false;   // a later press must open its own step [R4-3]
         if (m is null) return;
         m.syncSelection();
         if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_); }
     }
 
-    // THE Move commit guard (task 8660), shared by the release record
-    // (`recordLiveMove`), the prepared tool-switch record
-    // (`buildPreparedDeactivate`) and `hasUncommittedEdit`, which must equal
-    // it (the base contract in tool.d). True iff the drag wrote the mesh, the
-    // record is wired, and the net effect is not nothing: a drag that wandered
-    // and came home again HAS written the mesh (`moveDirty_`) but its undo
-    // entry would restore what is already there, so the moving set is compared
-    // against its arm-time base — O(set), only the moving set can have
-    // changed. A weld is never a net no-op (it removed geometry) and the loop
-    // could not judge it anyway: `moveVerts_` holds PRE-weld indices (task
-    // 0555). A stale index records rather than loses the drag.
-    private enum float kNetEps = 1e-4f;   // the same eps `applyMoveTargets` writes by
-    private bool moveWouldRecord() const {
-        if (!moveDirty_ || !commitReady(factories_.move)) return false;
-        const(Mesh)* m = meshSrc_();
-        if (m is null) return false;
-        if (moveWelded_) return true;
-        foreach (i, vi; moveVerts_) {
-            if (vi >= m.vertices.length) return true;
-            if ((m.vertices[vi] - moveBase_[i]).length > kNetEps) return true;
-        }
-        return false;
-    }
-
-    // The single undo entry for an armed Move drag: `moveBefore_` (the first
-    // live write's pre-gesture state) paired with the mesh as it stands now. A gesture that moved nothing
-    // records nothing — a stationary click, or a drag whose every vertex
-    // missed the background surface, stays the byte-identical no-op it has
-    // always been.
-    package void recordLiveMove() {
-        if (!moveWouldRecord()) return;
-        auto m = mesh;
-        recordSnapshotUndo(m, moveBefore_, factories_.move, "Topology Move");
-        // Position-only edit: no `resyncSession()` — no index this or any
-        // sibling gesture caches can have been invalidated (the same
-        // reasoning `commitMoveLoop` documents).
-    }
-
-    // Drop the arm WITHOUT recording. Every caller either has already
-    // recorded (`finishMove`, `commitLiveMoveIfDirty`), has discarded the
-    // drag (`cancelUncommittedEdit`) or genuinely has nothing to record —
-    // `resyncSession`, where an external history
-    // navigation has already replaced the mesh this drag was editing, so an
-    // (arm-time, post-navigation) snapshot pair would describe a transition
-    // that never happened.
-    //
-    // ONE narrow consequence, deliberately not machined around: a MIDDLE- or
-    // RIGHT-button gesture that commits while a LEFT Move drag is still held
-    // (a legitimate two-button chord — see `resetAllGestureArms`'s own note)
-    // routes through `resyncSession` too, so the live delta so far is not
-    // recorded as its OWN entry. It is not lost and the mesh is not
-    // corrupted: that sibling captured its `before` AFTER these writes, so
-    // the delta is simply part of its baseline and survives its undo. Only
-    // the granularity differs, and only for that chord.
+    // Drop the Move arm. Nothing is recorded here: the press step owns the
+    // row. A MIDDLE- or RIGHT-button gesture that commits while a LEFT Move
+    // drag is still held (a legitimate two-button chord) lands in the same
+    // press step, so the two are one row.
     private void clearMoveArm() {
         moveArmed_   = false;
         grabbedVert_ = -1;
@@ -3929,7 +3929,6 @@ public:
         moveBase_    = null;
         moveDirty_   = false;
         moveWelded_  = false;
-        moveBefore_  = MeshSnapshot.init;
     }
 
     // P3 (doc/topopen_p3_plan.md), on the Shift+LMB "Duplicate" overlay slot
@@ -4520,8 +4519,8 @@ public:
     // contract, not a deviation from it: the two are IDENTICAL for the geometry
     // (a moving set in which no vertex has a rail is a Slide that moves nothing,
     // whichever way you get there), and declining is strictly better on the
-    // channels the per-endpoint wording never addressed — it cannot leave a
-    // no-op undo entry behind, and it does not suppress the hover indicator for
+    // channels the per-endpoint wording never addressed — it moves nothing,
+    // and it does not suppress the hover indicator for
     // the duration of a hold that was never going to do anything. What the
     // decline used to cost was observability, and that is now published
     // explicitly (`slideDecline_` / `slideDeclineReason`) rather than left to be
@@ -5138,6 +5137,10 @@ public:
         // is dropped AFTER the dispatch, so `splitUp` still resolves its
         // target vertex against the rule the whole gesture ran on.
         unregisterSnapGuide();
+        if (stepOpen_ && e.button == stepButton_) {
+            closePressStep();
+            return true;
+        }
         return handled;
     }
 
@@ -5252,8 +5255,8 @@ public:
 
         // REV1 FIX-2 (doc/topopen_p7_slide_plan.md): a release back at (near
         // enough) the press pixel is a click without a real drag — an
-        // explicit, clean no-op (no vertex write, no undo entry), mirroring
-        // P3's own `kMinDragPx` guard.
+        // explicit, clean no-op (no vertex write; the press is still its one
+        // step), mirroring P3's own `kMinDragPx` guard.
         int dx = e.x - startX, dy = e.y - startY;
         if (releaseIsClick(dx, dy)) return true;
 
@@ -5352,7 +5355,7 @@ public:
     // P10 (doc/topopen_p10_moveloop_plan.md Phase 3): commits the armed Move
     // Loop gesture at the RELEASE event's own pixel. A release back at (near
     // enough) the press pixel is a click without a real drag — an explicit,
-    // clean no-op (no vertex write, no undo entry, no `perVertexTargets`/
+    // clean no-op (no vertex write, no `perVertexTargets`/
     // re-snap work at all), mirroring P3/P7's own `kMinDragPx` guard.
     package bool moveLoopUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         if (!moveLoopArmed_) return false;
@@ -5373,7 +5376,7 @@ public:
     // P11 (doc/topopen_p11_duploop_plan.md Phase 3): commits the armed Dup
     // Loop gesture at the RELEASE event's own screen delta. A release back
     // at (near enough) the press pixel is a click without a real drag — an
-    // explicit, clean no-op (no extrude, no undo entry), mirroring every
+    // explicit, clean no-op (no extrude), mirroring every
     // other gesture's `kMinDragPx` guard.
     package bool dupLoopUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         // Task 0486 (contract C-0): on an interior edge this chord fell through
@@ -5525,9 +5528,9 @@ public:
     // `mesh.addVertex` command (P2 REV-1, doc/topopen_p2_plan.md): fires
     // the real `MeshVertexNew` through its Operator interface
     // (`cmd.evaluate(vts)`, using the TOOL's own vts so the command's
-    // internal `SubjectPacket` guard is satisfied) and records it
-    // POST-apply through `Tool.recordGestureEdit` — no re-apply, one
-    // non-coalescing undo entry per click (mirrors the precedent at
+    // internal `SubjectPacket` guard is satisfied) as the KERNEL of the
+    // press step — the step, not the command, is the row (plan 8646; the
+    // kernel shape mirrors the precedent at
     // `tools/common/command_wrapper.d`'s `applyWithLivePipeline`, NOT
     // VertexTool's snapshot-diff path: the bound `gestureFactory` builds
     // `new MeshVertexNew(&mesh(), …)` at CALL time, so the command targets
@@ -5538,13 +5541,8 @@ public:
     // (doc/topopen_p2_plan.md §Extension); this tool itself does not use the
     // return value yet.
     //
-    // TASK 1905 PHASE D — the return value of `recordGestureEdit` is
-    // DELIBERATELY not branched on. `false` means "no history was bound", and
-    // this method's three tail statements (GPU upload, selection sync, display
-    // refresh) must run in that case exactly as they did when the pre-seam site
-    // read `if (history !is null)`. An early return here would silently change
-    // what an un-bound rig sees on screen — the same trap G4's `drag_weld` site
-    // recorded, in the other direction.
+    // The three tail statements (GPU upload, selection sync, display refresh)
+    // run bound or unbound alike.
     /// `pointLocal` is a PRIMARY-LAYER LOCAL coordinate (task 0619): the
     /// command writes it straight into `mesh.vertices[]`, so a caller
     /// holding a world hit converts BEFORE calling, not after.
@@ -5565,49 +5563,14 @@ public:
         if (cmd is null) { noteGestureCarrierMismatch(); return -1; }
         cmd.setPos(pointLocal);
         if (!cmd.evaluate(vts)) return -1;
-
-        recordGestureEdit(cmd, GestureRecordMode.Plain);   // non-coalescing -> one undo entry
+        // The command is the KERNEL only; the press step is the row.
+        noteStep(factories_.place, "Topology Place");
 
         if (gpu_ !is null) gpu_.upload(*mesh);
         mesh.syncSelection();
         refreshDisplay(mesh, gpu_);
 
         return cast(int)(mesh.vertices.length - 1);
-    }
-
-    // The pre-commit gate every snapshot-undo commit below opens with: mesh
-    // source, history, and the gesture's own dedicated factory all wired
-    // (registration.d). A partially-constructed tool (no-arg ctor + partial
-    // `setUndoBindings` — every direct-construction rig below) must bail
-    // BEFORE any mutation, so it never mutates-then-fails-to-record (which
-    // would leave an applied-but-un-undoable edit — the same hazard
-    // `placeVertexAt`'s own guard documents).
-    private bool commitReady(const MeshSessionEdit delegate() factory) const {
-        return meshSrc_ !is null && history !is null && factory !is null;
-    }
-
-    // The shared undo tail every snapshot-bracketed commit below ends with
-    // (the `pen.d:903-926` `commitPolygonWithUndo` precedent): capture the
-    // post-mutation snapshot, mint the gesture's command through its OWN
-    // dedicated factory (never a sibling's — the wire name and editScope are
-    // baked into the factory at app.d's construction site, per every
-    // factory alias's doc comment above), pair the two snapshots under the
-    // gesture's label, and record ONE non-coalescing entry.
-    //
-    // TASK 1905 PHASE D — this is the second and last of G7's record sites, and
-    // it takes NO cast. Its `factory` parameter is typed `MeshSessionEdit
-    // delegate()` all the way from `setPenFactories`, so the carrier class is
-    // the compiler's problem here and there is nothing for
-    // `noteGestureCarrierMismatch` to catch; what the thirteen call sites CAN
-    // still get wrong is WHICH of the thirteen they pass, and that is a wire
-    // name, not a class (member 7 of `tool_commit_seam_census_g7_test.d` plus
-    // the `entryNames` of `tests/fixtures/tool_gesture/g7.json`).
-    private void recordSnapshotUndo(Mesh* m, MeshSnapshot before,
-                                    MeshSessionEdit delegate() factory, string label) {
-        MeshSnapshot after = MeshSnapshot.capture(*m);
-        auto cmd = factory();
-        cmd.setSnapshots(before, after, label);
-        recordGestureEdit(cmd, GestureRecordMode.Plain);
     }
 
     // P7 (doc/topopen_p7_slide_plan.md Phase 3): commit the armed Slide
@@ -5635,7 +5598,6 @@ public:
     // DIRECTION. See `slideEndpointPos` for the per-endpoint law and for why
     // there is no `[0,1]` clamp any more.
     package void commitSlide(uint seed, int eA, int eB, int nA, int nB, double deltaK) {
-        if (!commitReady(factories_.slide)) return;
         auto m = mesh;
         if (m is null) return;
         if (eA < 0 || eA >= cast(int)m.vertices.length) return;
@@ -5655,11 +5617,10 @@ public:
         enum float kSlideEps = 1e-4f;   // mirrors applyMoveTargets's stationary-grab guard
         if ((pA - origA).length <= kSlideEps && (pB - origB).length <= kSlideEps) return;
 
-        MeshSnapshot before = MeshSnapshot.capture(*m);
         m.vertices[eA] = pA;
         m.vertices[eB] = pB;
         m.commitChange(MeshEditScope.Position);
-        recordSnapshotUndo(m, before, factories_.slide, "Topology Slide");
+        noteStep(factories_.slide, "Topology Slide");
 
         // Position-only: no resyncSession() — see this method's own doc
         // comment / plan §Risks.
@@ -5807,7 +5768,7 @@ public:
     // not drag-proportional: it scales with mesh size and with `strength`
     // (per click, roughly `0.028 · strength · medianEdgeLength`). Against a
     // fixed 1e-4 that produces a silent cliff — below it the ENTIRE gesture
-    // is discarded, mesh restored, no undo entry, no feedback of any kind.
+    // is discarded, mesh restored, no feedback of any kind.
     // Measured: strength 0.05 (legal, well inside the Param's own [0, 4])
     // on a mesh with 0.07-unit edges — ordinary detail-modelling scale, and
     // exactly the spacing of the reference capture rig — displaces 5.46e-05
@@ -5824,7 +5785,7 @@ public:
     // coincident) whose diagonal is 0, so that a background re-snap of a
     // coincident cluster is still recorded rather than divided into nothing.
     //
-    // Deliberately NOT applied to the sibling guards: `kMoveEps`, `kNetEps`,
+    // Deliberately NOT applied to the sibling guards: `kMoveEps`,
     // `kSlideEps` and `kMoveLoopEps` all judge a SCREEN-driven displacement
     // (a background re-snap of a shifted pixel, or a rail step whose length is
     // a pixel delta through the drag Jacobian), so an absolute threshold is
@@ -5936,13 +5897,12 @@ public:
     // REV1 FIX-2 (PRIORITY, not hedged/unconditional — opponent obj-2): a
     // Smooth gesture that produces NO net vertex change — 0-neighbor
     // disconnected verts, no background source, or any other combination
-    // that nets to identity — restores `before` and records NO undo entry
-    // (mirrors `applyMoveTargets`/`commitSlide`'s own eps guards). This is
+    // that nets to identity — restores the pre-gesture positions and keeps no
+    // change (the press is still its one step, L5) (mirrors `applyMoveTargets`/`commitSlide`'s own eps guards). This is
     // ROUTINE, not a rare edge case (a freshly-placed, still-disconnected
     // patch with no bg layer is exactly this), so the guard runs on EVERY
     // commit, never skipped.
     package void applySmoothPasses(int passCount) {
-        if (!commitReady(factories_.smooth)) return;
         auto m = mesh;
         if (m is null) return;
 
@@ -5957,7 +5917,8 @@ public:
 
         auto sources = backgroundSourcesFull();   // point-in-time, fetched ONCE per commit
         const ms = primaryModelSpace();           // read fresh, once per commit (§2.4)
-        MeshSnapshot before = MeshSnapshot.capture(*m);
+        // Positions only: the press step holds the mesh image.
+        const Vec3[] beforePos = m.vertices.dup;
 
         immutable size_t nV = m.vertices.length;
         if (nV == 0) return;
@@ -6016,17 +5977,17 @@ public:
         }
 
         // REV1 FIX-2: unconditional no-op check — a gesture that nets to
-        // ZERO vertex movement (within eps) restores `before` exactly and
-        // records no undo entry at all. The threshold is SCALE-RELATIVE (see
+        // ZERO vertex movement (within eps) restores the pre-gesture positions
+        // exactly. The threshold is SCALE-RELATIVE (see
         // `smoothNoOpEps`) — an absolute one silently discarded whole
         // gestures at low `smoothStrength` or on small-scale meshes.
         // Measured against the PRE-gesture positions, so the reference scale
         // cannot itself be perturbed by the edit being tested.
-        immutable float smoothEps = smoothNoOpEps(before.vertices);
+        immutable float smoothEps = smoothNoOpEps(beforePos);
         bool changed = false;
         foreach (i; 0 .. nV)
-            if ((m.vertices[i] - before.vertices[i]).length > smoothEps) { changed = true; break; }
-        if (!changed) { before.restore(*m); return; }   // no mutation worth recording — no GPU churn
+            if ((m.vertices[i] - beforePos[i]).length > smoothEps) { changed = true; break; }
+        if (!changed) { m.vertices[] = beforePos[]; return; }   // nothing worth keeping — no GPU churn
 
         // NIT-1: fire the change-bus Position commit only on the CHANGED
         // path — committing unconditionally (the old placement, above the
@@ -6034,7 +5995,7 @@ public:
         // values on the routine no-op gesture the guard above just caught.
         m.commitChange(MeshEditScope.Position);
 
-        recordSnapshotUndo(m, before, factories_.smooth, "Topology Smooth");
+        noteStep(factories_.smooth, "Topology Smooth");
 
         // Position-only: no resyncSession() — see this method's own doc
         // comment / plan §Undo.
@@ -6077,7 +6038,6 @@ public:
     // `commitMoveLoop`'s/`applySmoothPasses`'s own reasoning: a pure
     // position write can never dangle a sibling gesture's cached INDEX).
     package void applySmoothLoopPasses(int passCount) {
-        if (!commitReady(factories_.smoothLoop)) return;
         auto m = mesh;
         if (m is null) return;
         auto verts = smoothLoopVerts_;   // REV1 FIX-2: the DOWN-time cache, reused verbatim
@@ -6102,7 +6062,7 @@ public:
 
         auto sources = backgroundSourcesFull();   // point-in-time, fetched ONCE per commit
         const ms = primaryModelSpace();           // read fresh, once per commit (§2.4)
-        MeshSnapshot before = MeshSnapshot.capture(*m);
+        const Vec3[] beforePos = m.vertices.dup;  // positions only (the step holds the image)
 
         foreach (pass; 0 .. passCount) {
             Vec3[] read = m.vertices.dup;   // this pass's neighbor-read snapshot (Jacobi)
@@ -6155,7 +6115,7 @@ public:
         // INDEPENDENT of edge length (0.07-unit and 0.007-unit rigs cliff at
         // the same place). Against the old absolute constant, `kink = 2e-4`
         // recorded and `kink = 1e-4` was discarded whole — mesh restored, no
-        // undo entry, no feedback of any kind. That is not a mesh-scale corner:
+        // feedback of any kind. That is not a mesh-scale corner:
         // at a camera framed on a 0.007-extent model (`haulWorldPerPixel`
         // 1.93e-5) a 1e-4 world displacement is FIVE PIXELS of visible motion.
         //
@@ -6168,8 +6128,8 @@ public:
         // The bbox is the WHOLE mesh's, as `applySmoothPasses` passes it, so
         // two gestures on one model cannot disagree about the model's size.
         //
-        // Deliberately NOT extended to `kMoveEps` / `kNetEps` / `kSlideEps` /
-        // `kMoveLoopEps`: those four judge a SCREEN-driven displacement, and a
+        // Deliberately NOT extended to `kMoveEps` / `kSlideEps` /
+        // `kMoveLoopEps`: those three judge a SCREEN-driven displacement, and a
         // bbox-relative threshold is the wrong RELATION for them in both
         // directions — it would not remove their cliff (which is camera-zoom
         // driven: a legal 3-pixel drag falls under 1e-4 once
@@ -6179,14 +6139,14 @@ public:
         // Their correct threshold is PIXEL-relative, which three of the four
         // sites cannot spell — `commitSlide` takes no viewport at all. Left as
         // a named follow-up rather than half-done here.
-        immutable float kSmoothLoopEps = smoothNoOpEps(before.vertices);
+        immutable float kSmoothLoopEps = smoothNoOpEps(beforePos);
         bool changed = false;
         foreach (vi; verts)
-            if ((m.vertices[vi] - before.vertices[vi]).length > kSmoothLoopEps) { changed = true; break; }
-        if (!changed) { before.restore(*m); return; }   // no mutation worth recording -- no GPU churn
+            if ((m.vertices[vi] - beforePos[vi]).length > kSmoothLoopEps) { changed = true; break; }
+        if (!changed) { m.vertices[] = beforePos[]; return; }   // nothing worth keeping -- no GPU churn
 
         m.commitChange(MeshEditScope.Position);
-        recordSnapshotUndo(m, before, factories_.smoothLoop, "Topology Smooth Loop");
+        noteStep(factories_.smoothLoop, "Topology Smooth Loop");
 
         // Position-only: no resyncSession() — see this method's own doc
         // comment above.
@@ -6210,10 +6170,12 @@ public:
     /// meant.
     package void buildFromSource(int a, BuildCase casee, int n, int p, int q,
                                  int triFi, Vec3 bPosLocal) {
-        if (!commitReady(factories_.build)) return;
         auto m = mesh;
         if (m is null) return;
 
+        // The ROLLBACK image of the two degenerate arms below (never a record:
+        // the press step is the row). Restoring the press image instead would
+        // also revert another button's commit inside the same hold.
         MeshSnapshot before = MeshSnapshot.capture(*m);
 
         uint b = m.addVertex(bPosLocal);
@@ -6275,7 +6237,7 @@ public:
                     // this point the source triangle is ALREADY deleted and
                     // `b` already added — a bare `return` here would leave 3
                     // floating edges + a stray vertex committed as this
-                    // gesture's one undo entry. `before` predates BOTH the
+                    // gesture's step. `before` predates BOTH the
                     // triangle delete and the vertex add, so restoring it
                     // makes the whole gesture a clean no-op instead.
                     before.restore(*m);
@@ -6285,7 +6247,7 @@ public:
             }
         }
 
-        recordSnapshotUndo(m, before, factories_.build, "Topology Build");
+        noteStep(factories_.build, "Topology Build");
 
         m.syncSelection();
         if (gpu_ !is null) gpu_.upload(*m);
@@ -6313,17 +6275,14 @@ public:
     // again — the same idiom `resyncSession` already provides for an
     // external undo/redo navigation.
     package void removeFaceAt(int faceIdx) {
-        if (!commitReady(factories_.remove)) return;
         auto m = mesh;
         if (m is null || faceIdx < 0 || faceIdx >= cast(int)m.faces.length) return;
-
-        MeshSnapshot before = MeshSnapshot.capture(*m);
 
         auto mask = new bool[](m.faces.length);
         mask[faceIdx] = true;
         m.removeFacesWithOwnOrphans(mask);
 
-        recordSnapshotUndo(m, before, factories_.remove, "Topology Remove");
+        noteStep(factories_.remove, "Topology Remove");
 
         // Opponent KILLER-2: invalidate any OTHER armed gesture's cached
         // indices now that faces[] has been compacted out from under them.
@@ -6385,7 +6344,6 @@ public:
     /// polygons. See `Mesh.consumedFanVertexMask` for the rule and for why it
     /// is not the 2-valent one.
     package void removeEdgeAt(int edgeIdx, bool loop) {
-        if (!commitReady(factories_.removeEdge)) return;
         auto m = mesh;
         if (m is null || edgeIdx < 0 || edgeIdx >= cast(int)m.edges.length) return;
 
@@ -6402,11 +6360,10 @@ public:
             }
         mask[edgeIdx] = true;   // the seed dissolves whether or not it gathered
 
-        MeshSnapshot before = MeshSnapshot.capture(*m);
-
-        if (m.removeEdgesByMask(mask, keepVertex_) == 0) { before.restore(*m); return; }
-
-        recordSnapshotUndo(m, before, factories_.removeEdge, "Topology Remove Edge");
+        // A zero return happens before any write (its early returns), and the
+        // press is still its step's one row (L5): the chord's default carrier.
+        if (m.removeEdgesByMask(mask, keepVertex_) == 0) return;
+        noteStep(factories_.removeEdge, "Topology Remove Edge");
 
         // Same reason `removeFaceAt` calls it: the kernel COMPACTS `faces[]`
         // and `vertices[]`, so any sibling gesture armed on another button is
@@ -6445,7 +6402,6 @@ public:
     /// nothing rather than guessing — which also keeps a bare retopo chain out
     /// of a kernel that would rebuild the edge array around it.
     private void removeVertexAt(int vertIdx) {
-        if (!commitReady(factories_.removeVertex)) return;
         auto m = mesh;
         if (m is null || vertIdx < 0 || vertIdx >= cast(int)m.vertices.length) return;
 
@@ -6471,8 +6427,6 @@ public:
             ++nMerge;
         }
 
-        MeshSnapshot before = MeshSnapshot.capture(*m);
-
         // Merge the fan, KEEPING every consumed vertex — the one the press
         // named is dropped below, and only it.
         if (nMerge > 0) m.removeEdgesByMask(mask);
@@ -6488,7 +6442,7 @@ public:
             m.dissolveVerticesByMask(vmask, /*keepOrphans*/true);
         }
 
-        recordSnapshotUndo(m, before, factories_.removeVertex, "Topology Remove Vertex");
+        noteStep(factories_.removeVertex, "Topology Remove Vertex");
 
         resyncSession();
 
@@ -6526,7 +6480,6 @@ public:
     // already rebuilds the selection arrays itself; the `after` snapshot +
     // `syncSelection` cover it.
     package void commitAddLoop(uint seedEdge, float r) {
-        if (!commitReady(factories_.addLoop)) return;
         auto m = mesh;
         if (m is null) return;
 
@@ -6541,24 +6494,25 @@ public:
         bool closed;
         if ((*m).collectEdgeRing(seedEdge, closed).length == 0) return;   // Stage F1: ref const(Mesh)
 
-        MeshSnapshot before = MeshSnapshot.capture(*m);
+        immutable size_t firstNew = m.vertices.length;
 
         // Task 1903 Stage F1 — `insertEdgeLoops` is a free function over
         // `ref MeshEditBatch` now, so the batch opens HERE, at the pen's own
         // boundary (§4.1), around the ONE topology op this gesture performs.
-        // UNRECORDED: Add Loop undoes through the whole-mesh `before`/`after`
-        // pair recorded just below, so a recording batch would build an op-log
-        // nothing reads. Stage M owns the topology pen as its own family.
+        // UNRECORDED: Add Loop undoes through the press step's whole-mesh
+        // image pair, so a recording batch would build an op-log nothing
+        // reads. The re-snap stays INSIDE the batch, so it is in the step's
+        // after image. A false return is a no-op (nothing inserted).
         bool ok;
         {
             auto ed = MeshEditBatch.unrecorded(*m, kLoopSliceEditScope);
             ok = ed.insertEdgeLoops(seedEdge, [r]);
-            if (ok) snapInsertedToBackground(ed, before.vertices.length);
+            if (ok) snapInsertedToBackground(ed, firstNew);
             ed.close();
         }
-        if (!ok) { before.restore(*m); return; }
+        if (!ok) return;
 
-        recordSnapshotUndo(m, before, factories_.addLoop, "Topology Add Loop");
+        noteStep(factories_.addLoop, "Topology Add Loop");
 
         // REV1 KILLER-2: invalidate any OTHER armed gesture's cached
         // indices now that faces[] has been wholesale-rebuilt.
@@ -6604,8 +6558,8 @@ public:
     // above exactly: resolve the shared face (`findCommonSplitFace` — every
     // no-op condition, incl. C==-1 (release on an edge or empty space), C==A, and
     // cross-polygon/adjacent A-C, funnels through its -1 return with NO
-    // snapshot and NO undo entry), bracket the ONE kernel call in a single
-    // before/after `MeshSnapshot` pair, record through the DEDICATED
+    // mutation; the press is still its one row, L5), run the ONE kernel call
+    // inside the press step, and name the DEDICATED
     // `splitEditFactory_` (never `removeEditFactory_`/`addLoopEditFactory_`,
     // which would bake the wrong wire name onto a split).
     //
@@ -6622,7 +6576,6 @@ public:
     // is still the uniform, cheap-to-call safety net every sibling commit
     // uses.
     package void commitSplit(int a, int c) {
-        if (!commitReady(factories_.split)) return;
         auto m = mesh;
         if (m is null) return;
 
@@ -6630,12 +6583,10 @@ public:
         if (fi < 0) return;   // every no-op condition (C==-1, C==A, no shared
                                // face, adjacent A/C) funnels here — no mutation
 
-        MeshSnapshot before = MeshSnapshot.capture(*m);
-
         size_t n = (*m).splitFaceByVertices(cast(uint)fi, cast(uint)a, cast(uint)c);
-        if (n == 0) return;   // defensive; `before` discarded, mesh unmutated
+        if (n == 0) return;   // defensive; mesh unmutated
 
-        recordSnapshotUndo(m, before, factories_.split, "Topology Split");
+        noteStep(factories_.split, "Topology Split");
 
         // KILLER-2: invalidate any OTHER armed gesture's cached face/edge
         // indices now that faces[]/edges[] have been rebuilt.
@@ -6668,8 +6619,7 @@ public:
     // the closing side of a bridge across a gap that has no edge at all —
     // the reference has NO real-fourth-side requirement and that guard is
     // dropped in this port), and rejects dup-face/non-manifold/degenerate
-    // with a `-1` no-op — the mesh stays byte-unchanged and NO undo entry is
-    // recorded.
+    // with a `-1` no-op — the mesh stays byte-unchanged.
     //
     // THE RING GATE IS NOT HERE, AND THAT IS DELIBERATE (task 0532). The
     // reference's last gate on a formed ring — read in task 0528 — lives in
@@ -6691,19 +6641,16 @@ public:
     // tool never overrides `isDragging()`, so a Fill click CAN fire
     // mid-build/mid-move/mid-slide on a different button).
     package void commitFill(const(uint)[] ringVerts) {
-        if (!commitReady(factories_.fill)) return;
         auto m = mesh;
         if (m is null) return;
         if (ringVerts.length != 4 && ringVerts.length != 3) return;
-
-        MeshSnapshot before = MeshSnapshot.capture(*m);
 
         int fi = m.makePolygonFromVerts(ringVerts, false, true);
         if (fi < 0) return;   // dup-face / non-manifold / degenerate -> clean no-op, no mutation
 
         consumeDegeneratePolysOnRing(m, ringVerts);
 
-        recordSnapshotUndo(m, before, factories_.fill, "Topology Fill");
+        noteStep(factories_.fill, "Topology Fill");
 
         // KILLER-2: invalidate any OTHER armed gesture's cached face/edge
         // indices now that faces[]/edges[] have been rebuilt.
@@ -6776,7 +6723,7 @@ public:
     // `commitSlide`): a gesture that nets to ZERO vertex movement (every
     // target within eps of its own original position — e.g. every ray
     // missed, or a whole-loop click-without-drag that slipped past the
-    // release-side `kMinDragPx` gate) records no mutation and no undo entry.
+    // release-side `kMinDragPx` gate) records no mutation.
     //
     // `vp` is the release event's viewport, and it is a REQUIRED parameter
     // rather than a defaulted one (task 0555): the destructive landing has to
@@ -6785,7 +6732,6 @@ public:
     // welds — the one failure mode worth a compile error.
     package void commitMoveLoop(const(uint)[] verts, const(Vec3)[] targets,
                                 const ref Viewport vp) {
-        if (!commitReady(factories_.moveLoop)) return;
         auto m = mesh;
         if (m is null) return;
         if (verts.length == 0 || verts.length != targets.length) return;
@@ -6798,16 +6744,15 @@ public:
             if ((targets[i] - m.vertices[vi]).length > kMoveLoopEps) { changed = true; break; }
         if (!changed) return;   // no mutation worth recording — no GPU churn
 
-        MeshSnapshot before = MeshSnapshot.capture(*m);
         foreach (i, vi; verts) m.vertices[vi] = targets[i];
         m.commitChange(MeshEditScope.Position);
         // The destructive landing (task 0555) — the LOOP grab's copy of it,
         // and the cell whose measurement (four vertices absorbed in one
         // gesture) is what proves the absorption is per moved vertex rather
-        // than per cursor. Inside the snapshot pair, so the whole gesture is
-        // still ONE undo entry; a no-op unless the shared snap enable is on.
+        // than per cursor. Inside the press step, so the whole gesture is
+        // still ONE undo step; a no-op unless the shared snap enable is on.
         immutable bool welded = weldMovedVertices(verts, vp) > 0;
-        recordSnapshotUndo(m, before, factories_.moveLoop, "Topology Move Loop");
+        noteStep(factories_.moveLoop, "Topology Move Loop");
 
         // Position-only: no resyncSession() — see this method's own doc
         // comment / plan §Undo. UNLESS the landing welded, which rebuilds and
@@ -6858,7 +6803,6 @@ public:
     // index would dangle.
     package void commitDupLoop(const(int)[] loopEdges, int dx, int dy,
                                const ref Viewport vp) {
-        if (factories_.dupLoop is null) return;
         commitDupEdges(loopEdges, dx, dy, vp, factories_.dupLoop,
                        "Topology Duplicate Loop");
     }
@@ -6871,7 +6815,6 @@ public:
     private void commitDupEdges(const(int)[] loopEdges, int dx, int dy,
                                 const ref Viewport vp,
                                 MeshSessionEdit delegate() factory, string label) {
-        if (!commitReady(factory)) return;
         auto m = mesh;
         if (m is null || loopEdges.length == 0) return;
 
@@ -6881,12 +6824,10 @@ public:
             mask[ei] = true;
         }
 
-        MeshSnapshot before = MeshSnapshot.capture(*m);
         size_t oldV = m.vertices.length;
         // task 1903 Stage H: extendEdgesByMask takes `ref MeshEditBatch` now.
-        // This gesture undoes via the MeshSnapshot above (recordSnapshotUndo
-        // below), not the op-log, so the batch is unrecorded. A production
-        // caller this row of §5.2's table never named — task 1903 памятка 26.
+        // This gesture undoes via the press step's image pair, not the op-log,
+        // so the batch is unrecorded.
         auto ed = MeshEditBatch.unrecorded(*m, kExtrudeEditScope);
         size_t n = ed.extendEdgesByMask(mask, 0.0f, 0.0f,
                                         Vec3(0, 0, 0), Vec3(0, 0, 0), Vec3(1, 1, 1), 1);
@@ -6907,7 +6848,7 @@ public:
         // FIX-3: Position-only follow-up write -- extendEdgesByMask already
         // committed Geometry above.
         m.commitChange(MeshEditScope.Position);
-        recordSnapshotUndo(m, before, factory, label);
+        noteStep(factory, label);
 
         resyncSession();   // KILLER-2: topology grew -- clear every sibling arm
 

@@ -48,7 +48,7 @@ public:
             "create registration requires command history");
         assert(bevelEditFactory !is null,
             "create registration requires a bevel-edit factory");
-        static assert(FieldNameTuple!TopoPenFactories.length == 13);
+        static assert(FieldNameTuple!TopoPenFactories.length == 15);
         static foreach (field; FieldNameTuple!TopoPenFactories)
             assert(__traits(getMember, penFactories, field) !is null,
                 "6507 create registration requires pen factory " ~ field);
@@ -123,7 +123,7 @@ private void registerGeneratorTools(ref Registry reg, LiveSessionRole owner,
     // Topology Pen is not registered through registerHeadlessTool. TWO
     // binders, and neither is optional: `setGestureBindings` carries history
     // plus the placement gesture's per-click `MeshVertexNew`; `setPenFactories`
-    // carries the other gestures' thirteen factories as ONE named
+    // carries the pen's fifteen step carriers as ONE named
     // `TopoPenFactories` value built in app.d (task 6352), so no argument
     // position can re-pair a gesture with a sibling's wire name. Member 5 of
     // tests/unit/tool_commit_seam_census_g7_test.d requires one call of each.

@@ -784,6 +784,7 @@ private struct ToolSession {
     private MeshSnapshot topologyPendingMesh_;
     private MeshSnapshot topologyPendingBasis_;
     private AttrImage topologyPendingAttrs_;
+    private bool topologyPendingPress_;
     private struct TopologyAttrOwner {
         string id;
         ulong token;
@@ -1256,8 +1257,12 @@ private struct ToolSession {
             redoneTopologyStep_ = false;
         }
         ToolSessionLink link;
-        link.stepBegins     = &stepBegins;
+        // The tool's own door is the only PRESS (plan 8646 [R2-2]): every
+        // internal `stepBegins` passes `press: false`.
+        link.stepBegins     = (Tool t, PressKind k) =>
+            stepBegins(t, k, AttrImage.init, true);
         link.stepEnds       = &stepEnds;
+        link.stepOpenImage  = &stepOpenImage_;
         link.operationArmed = &operationArmed;
         link.operationEnded = &operationEnded;
         link.closeOwn       = &closeOwn;
@@ -1293,7 +1298,7 @@ private struct ToolSession {
         const pol = t.sessionPolicy();
         if (pol.opensAt == OpensAt.arm && pol.armAttr.length
             && history_.state() != UndoState.Suspend) {
-            stepBegins(t, PressKind.plain);
+            stepBegins(t, PressKind.plain, AttrImage.init, false);
             t.applyArmAttr();
             operationArmed(t);
             // No `stepEnds`: the image after the arm IS the pending one, so the
@@ -1306,13 +1311,14 @@ private struct ToolSession {
             postmodeArmed_ = true;
     }
 
-    void stepBegins(Tool t, PressKind kind) {
-        stepBegins(t, kind, AttrImage.init);
-    }
-
-    void stepBegins(Tool t, PressKind kind, AttrImage beforeWrite) {
+    // `press`: the step was opened by the tool's own press door (the link),
+    // never by an arm, an Action or a parameter write. Recorded on the row
+    // (`MeshSessionEdit.stepOpenedByPress`); no default, so every caller says
+    // which door it is (plan 8646 [R1-8, R2-2]).
+    void stepBegins(Tool t, PressKind kind, AttrImage beforeWrite, bool press) {
         releaseParameter();
         if (!reporting_(t)) return;
+        topologyPendingPress_ = press;
         if (t.sessionPolicy().historyTopologySteps) {
             auto client = cast(TopologyStepClient)t;
             if (topologyDormant_) {
@@ -1397,7 +1403,7 @@ private struct ToolSession {
                 t.sessionPolicy().rebaseTopologyAfterStep;
             cmd.setTopologyStep(topologyPendingAttrs_, attrs,
                 topologyPendingBasis_, rebaseAfter
-                    ? after : client.topologyStepBasis());
+                    ? after : client.topologyStepBasis(), topologyPendingPress_);
             if (client.recordTopologyStep(cmd) && undoTop_() is cmd) {
                 history_.markEntrySession(cmd, token_);
                 rememberTopologyAttrs_(attrs);
@@ -1504,7 +1510,7 @@ private struct ToolSession {
         foreach (ref p; t.params())
             if (p.name == name) {
                 if (!p.action_) return false;
-                stepBegins(t, PressKind.plain);
+                stepBegins(t, PressKind.plain, AttrImage.init, false);
                 return true;
             }
         return false;
@@ -1542,7 +1548,7 @@ private struct ToolSession {
             return false;
         // A write that lands while a gesture's step is open joins that step.
         if (topologyPending_) return false;
-        stepBegins(t, PressKind.plain, beforeWrite);
+        stepBegins(t, PressKind.plain, beforeWrite, false);
         return topologyPending_;
     }
 
@@ -1558,6 +1564,7 @@ private struct ToolSession {
             ? topologyHistoryDepth_(true) : t.sessionPolicy().historyRecordedSteps
             ? recordedHistoryDepth_(true) : redo_.length));
         j["dormant"] = JSONValue(topologyDormant_);
+        j["pendingPress"] = JSONValue(topologyPendingPress_);
         j["armed"] = JSONValue(postmodeArmed_);
         j["postmodeOwner"] = JSONValue(postmodeArmed_ ? "human" : "none");
         j["token"] = JSONValue(cast(long) token_);
@@ -1617,8 +1624,18 @@ private struct ToolSession {
         pendingSet_ = false;
         pendingIfChanged_ = false;
         topologyPending_ = false;
+        topologyPendingPress_ = false;
         topologyPendingMesh_ = MeshSnapshot.init;
         topologyPendingBasis_ = MeshSnapshot.init;
+    }
+
+    // The image the pending topology step opened from, shared with the tool
+    // that opened it (one snapshot per press, plan 8646 [R1-m]). Empty unless
+    // THIS instance is the one the session is tracking a step for.
+    private MeshSnapshot stepOpenImage_(Tool t) {
+        if (!reporting_(t) || !topologyPending_ ||
+            !t.sessionPolicy().historyTopologySteps) return MeshSnapshot.init;
+        return topologyPendingMesh_;
     }
 
     private size_t topologyHistoryDepth_(bool redo) {

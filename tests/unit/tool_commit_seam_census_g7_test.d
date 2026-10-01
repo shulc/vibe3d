@@ -614,6 +614,8 @@ private enum Bind[] kFrozenBinds = [
     Bind("fill",         "mesh.topoPen_fill",         "MeshEditScope.Geometry"),
     Bind("removeEdge",   "mesh.topoPen_removeedge",   "MeshEditScope.Geometry"),
     Bind("removeVertex", "mesh.topoPen_removevertex", "MeshEditScope.Geometry"),
+    Bind("place",        "mesh.topoPen_place",        "MeshEditScope.Geometry"),
+    Bind("attr",         "mesh.topoPen_attr",         "MeshEditScope.Geometry"),
 ];
 
 private enum string[] kStructFields = [FieldNameTuple!TopoPenFactories];

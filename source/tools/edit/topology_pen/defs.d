@@ -172,7 +172,16 @@ alias TopoPenFillFactory = MeshSessionEdit delegate();
 alias TopoPenRemoveEdgeFactory   = MeshSessionEdit delegate();
 alias TopoPenRemoveVertexFactory = MeshSessionEdit delegate();
 
-/// The 13 per-gesture undo factories, grouped (refactor): they used to be 13
+/// The PLACE step's carrier and the PARAMETER step's carrier (plan 8646,
+/// [R1-3] / §9.5). Every pen step is one `MeshSessionEdit` row written by the
+/// session (`ToolSession.stepEnds`): a Point-mode placement keeps
+/// `MeshVertexNew` only as its kernel, and an interactive attribute write on
+/// an armed pen is its own row whose carrier cannot be a gesture's.
+alias TopoPenPlaceFactory = MeshSessionEdit delegate();
+alias TopoPenAttrFactory  = MeshSessionEdit delegate();
+
+/// The pen's step carriers (15 since plan 8646 added `place` and `attr`),
+/// grouped (refactor): the first 13 used to be 13
 /// sibling `*EditFactory_` fields on the tool, each under its own P*
 /// provenance header — those headers now live on the fields below. The tool
 /// carries ONE member (`factories_`); the pre-grouping field names survive
@@ -192,6 +201,8 @@ struct TopoPenFactories {
     TopoPenDupLoopFactory      dupLoop;       // P11 (doc/topopen_p11_duploop_plan.md)
     TopoPenSmoothLoopFactory   smoothLoop;    // P12 (doc/topopen_p12_smoothloop_plan.md)
     TopoPenFillFactory         fill;          // Fill mode (task 0477 continuation, doc/topopen_fill_plan.md)
+    TopoPenPlaceFactory        place;         // plan 8646: the Point-mode placement step
+    TopoPenAttrFactory         attr;          // plan 8646 §9.5: an interactive parameter step
 }
 
 /// The four connectivity outcomes a drag-from-vertex build gesture can

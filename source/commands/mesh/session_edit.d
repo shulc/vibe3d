@@ -69,8 +69,12 @@ class MeshSessionEdit : Command, Operator, GesturePayload {
     private MeshSnapshot stepBeforeBasis_;
     private MeshSnapshot stepAfterBasis_;
     private bool topologyStep_;
+    private bool stepOpenedByPress_;
 
     bool isTopologyStep() const { return topologyStep_; }
+    /// The step was opened by the tool's own press door, not by an arm, an
+    /// Action or a parameter write (plan 8646 [R1-8]).
+    bool stepOpenedByPress() const { return stepOpenedByPress_; }
     AttrImage stepBeforeAttrs() const {
         return AttrImage(stepBeforeAttrs_.names.dup, stepBeforeAttrs_.raw.dup);
     }
@@ -80,7 +84,9 @@ class MeshSessionEdit : Command, Operator, GesturePayload {
     MeshSnapshot stepBeforeBasis() const { return stepBeforeBasis_.ownedDup(); }
     MeshSnapshot stepAfterBasis() const { return stepAfterBasis_.ownedDup(); }
     void setTopologyStep(
-            AttrImage beforeAttrs, AttrImage afterAttrs, MeshSnapshot beforeBasis, MeshSnapshot afterBasis) {
+            AttrImage beforeAttrs, AttrImage afterAttrs, MeshSnapshot beforeBasis,
+            MeshSnapshot afterBasis, bool openedByPress) {
+        stepOpenedByPress_ = openedByPress;
         stepBeforeAttrs_ = beforeAttrs;
         stepAfterAttrs_ = afterAttrs;
         stepBeforeBasis_ = beforeBasis;
