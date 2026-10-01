@@ -785,6 +785,13 @@ private struct ToolSession {
     private MeshSnapshot topologyPendingBasis_;
     private AttrImage topologyPendingAttrs_;
     private bool topologyPendingPress_;
+    // The last recorded topology row's `after`, reused as the next step's
+    // before and a no-op row's after when `matches` says the mesh still is
+    // that image, so a motionless press shares storage instead of holding two
+    // fresh copies (~25 MB a row on a 50k-vertex mesh). Sound because
+    // `MeshSnapshot.restore` copies and no code writes a snapshot in place;
+    // released with the operation. Wave plan 8646 §9.25 [A13-2].
+    private MeshSnapshot lastAfter_;
     private struct TopologyAttrOwner {
         string id;
         ulong token;
@@ -1332,7 +1339,8 @@ private struct ToolSession {
             }
             auto m = client is null ? null : client.topologyStepMesh();
             if (m is null) return;
-            topologyPendingMesh_ = MeshSnapshot.capture(*m);
+            topologyPendingMesh_ = lastAfter_.matches(*m) ? lastAfter_
+                : MeshSnapshot.capture(*m);
             topologyPendingBasis_ = client.topologyStepBasis();
             topologyPendingAttrs_ = beforeWrite.empty
                 ? t.captureAttrImage() : beforeWrite;
@@ -1390,7 +1398,8 @@ private struct ToolSession {
                 client.restoreTopologyStep(topologyPendingAttrs_, topologyPendingBasis_);
                 return;
             }
-            auto after = MeshSnapshot.capture(*m);
+            auto after = topologyPendingMesh_.matches(*m) ? topologyPendingMesh_
+                : MeshSnapshot.capture(*m);
             auto attrs = t.captureAttrImage();
             // A first topology record that carries its activation replays as
             // an applied image with the operation's default attrs and with
@@ -1407,6 +1416,7 @@ private struct ToolSession {
             if (client.recordTopologyStep(cmd) && undoTop_() is cmd) {
                 history_.markEntrySession(cmd, token_);
                 rememberTopologyAttrs_(attrs);
+                lastAfter_ = after;
                 if (t.sessionPolicy().rebaseTopologyAfterStep)
                     client.rebaseTopologyStep(after);
             } else {
@@ -1626,6 +1636,7 @@ private struct ToolSession {
         topologyPending_ = false;
         topologyPendingMesh_ = MeshSnapshot.init;
         topologyPendingBasis_ = MeshSnapshot.init;
+        lastAfter_ = MeshSnapshot.init;
     }
 
     // The image the pending topology step opened from, shared with the tool

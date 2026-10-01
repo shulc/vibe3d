@@ -599,13 +599,15 @@ unittest {
                                                    "mesh.topoPen_move", "Topology Move",
                                                    MeshEditScope.Position);
 
+    assert(!t.hasUncommittedEdit(), "an idle pen has no uncommitted edit");
     assert(t.openPressStep(SDL_BUTTON_LEFT, PenMode.Move), "the press opens a step");
+    // Under L5 a held step always commits a row, so an open step is the
+    // uncommitted edit whether or not the mesh left the press image (§9.25
+    // [A13-3]): the unmoved half is the discriminating one.
+    assert(t.hasUncommittedEdit(),
+        "an open press whose mesh is still the press image is an uncommitted edit");
     m.vertices[a] = Vec3(2, 2, 3);          // the held press wrote the mesh
     assert(t.hasUncommittedEdit(), "an open press that wrote the mesh is an uncommitted edit");
-    m.vertices[a] = Vec3(1, 2, 3);
-    assert(!t.hasUncommittedEdit(),
-        "an open press whose mesh is the press image again is no uncommitted edit");
-    m.vertices[a] = Vec3(2, 2, 3);
     t.cancelUncommittedEdit();
     assert(m.vertices[a] == Vec3(1, 2, 3) && !t.stepOpen_ && !t.hasUncommittedEdit(),
         "the cancel restores the press image and closes the step");
@@ -12033,8 +12035,11 @@ unittest {
     import std.format : format;
 
     const code = gtBlankNonCode(readText(__FILE_FULL_PATH__));
-    auto histRe = regex(`\bhistory\.(canUndo|canRedo|undo|redo|undoEntries|redoEntries|length)\b`
-                      ~ `|\bh\.(canUndo|canRedo|undo|redo|undoEntries|redoEntries)\b`);
+    // A history read: an entry list through ANY receiver, or a navigation /
+    // length read through a variable the block declares as a CommandHistory
+    // (`histVarRe`), whatever its name.
+    auto histRe = regex(`\.(undoEntries|redoEntries)\(`);
+    auto histVarRe = regex(`\bCommandHistory\s+([A-Za-z_]\w*)|\b([A-Za-z_]\w*)\s*=\s*new\s+CommandHistory\b`);
     auto callRe = regex(`\b(?:(?:t|t1|t2)\.)?(commit[A-Za-z]*|remove[A-Za-z]*At|buildFromSource`
                       ~ `|applySmooth[A-Za-z]*|applyMoveTargets|on(?!MouseButtonDown)[A-Za-z]*Down`
                       ~ `|(?:addLoop|build|dupLoop|split|slide|smoothLoop|moveLoop|lmbMode`
@@ -12065,7 +12070,14 @@ unittest {
     string[] bad;
     foreach (bl; blocks) {
         const body_ = code[bl[0] .. bl[1]];
-        if (matchFirst(body_, histRe).empty) continue;
+        bool readsHistory = !matchFirst(body_, histRe).empty;
+        foreach (v; matchAll(body_, histVarRe)) {
+            const name = v[1].length ? v[1] : v[2];
+            if (!matchFirst(body_, regex(`\b` ~ name
+                    ~ `\.(canUndo|canRedo|undo|redo|length)\b`)).empty)
+                readsHistory = true;
+        }
+        if (!readsHistory) continue;
         ++histBlocks;
         immutable size_t line0 = code[0 .. bl[0]].count('\n') + 1;
         if (matchFirst(body_, bindRe).empty)

@@ -1466,3 +1466,123 @@ unittest { // a stale instance gets no image of the tool the session now tracks
         "8646 open image: only the instance the session tracks may read its open image");
     b.pressEnds();
 }
+
+// ---- wave plan 8646 §9.25 [A13-2]: a no-op row reuses the session's images --
+//
+// `ToolSession.stepEnds` takes `after` as the pending image when the mesh
+// still `matches` it, and `stepBegins` takes the last recorded row's `after`
+// as the next pending image on the same test, so a motionless press holds no
+// fresh copy. The identity reads go through the PRODUCTION carrier's own
+// fields (`.tupleof`, which ignores protection): the images the history row
+// replays, not a stand-in's.
+
+/// The `before` (`which == "before"`) or `after` image a recorded
+/// `MeshSessionEdit` row replays.
+private const(MeshSnapshot) rowImage(CommandHistory h, size_t k, string which) {
+    import commands.mesh.session_edit : MeshSessionEdit;
+    auto row = cast(const MeshSessionEdit) h.undoEntries()[k].cmd;
+    assert(row !is null, format("8646 reuse: row %d is no MeshSessionEdit", k));
+    foreach (i, ref f; row.tupleof)
+        static if (__traits(identifier, MeshSessionEdit.tupleof[i]) == "before"
+                   || __traits(identifier, MeshSessionEdit.tupleof[i]) == "after")
+            if (__traits(identifier, MeshSessionEdit.tupleof[i]) == which) return f;
+    assert(0, "8646 reuse: MeshSessionEdit has no field " ~ which);
+}
+
+private struct ReuseRig {
+    Mesh* m;
+    CommandHistory h;
+    PressFlagTool t;
+    EditSession s;
+    void step(scope void delegate() body_ = null) {
+        t.pressBegins();
+        if (body_ !is null) body_();
+        t.pressEnds();
+    }
+}
+
+private ReuseRig reuseRig() {
+    ReuseRig r;
+    r.m = new Mesh;
+    *r.m = makeCube();
+    r.h = new CommandHistory();
+    r.t = new PressFlagTool;
+    r.t.m = r.m; r.t.h = r.h; r.t.view = new View(0, 0, 1, 1);
+    r.t.basis = MeshSnapshot.capture(*r.m);
+    Tool active = r.t;
+    r.s = new EditSession(() => active, r.h, () { active = null; });
+    r.s.noteArm("t.press", 1);
+    return r;
+}
+
+unittest { // noop-rows-share: motionless rows share storage within and across rows
+    auto r = reuseRig();
+    assert(r.h.undoEntries().length == 0, "8646 reuse: rig headroom, the history starts empty");
+    foreach (k; 0 .. 20) r.step();
+    assert(r.h.undoEntries().length == 20,
+        format("8646 reuse: 20 motionless steps recorded %d rows", r.h.undoEntries().length));
+    size_t within, across;
+    foreach (k; 0 .. 20) {
+        assert(rowImage(r.h, k, "before").vertices.ptr is rowImage(r.h, k, "after").vertices.ptr,
+            format("8646 reuse: no-op row %d holds two copies (before and after do not share)", k));
+        ++within;
+        if (k + 1 < 20) {
+            assert(rowImage(r.h, k, "after").vertices.ptr
+                   is rowImage(r.h, k + 1, "before").vertices.ptr,
+                format("8646 reuse: row %d's after does not share with row %d's before", k, k + 1));
+            ++across;
+        }
+    }
+    assert(within == 20 && across == 19, "8646 reuse: the share population is 20 + 19");
+}
+
+unittest { // moved-row-not-shared: a moved row holds its own after; undo/redo are exact
+    auto r = reuseRig();
+    auto a0 = MeshSnapshot.capture(*r.m);
+    r.step();                                   // row 0: no-op
+    r.step(() { r.m.vertices[0].y += 1.0f; });  // row 1: moved
+    auto moved = MeshSnapshot.capture(*r.m);
+    r.step();                                   // row 2: no-op on the moved image
+    assert(r.h.undoEntries().length == 3, "8646 reuse: three steps, three rows");
+    assert(rowImage(r.h, 1, "before").vertices.ptr !is rowImage(r.h, 1, "after").vertices.ptr,
+        "8646 reuse: the moved row's before and after must not share");
+    assert(rowImage(r.h, 1, "before").matches(*r.m) == false
+           && rowImage(r.h, 1, "after").matches(*r.m),
+        "8646 reuse: the moved row's after must be the moved image, its before not");
+    foreach (k; 0 .. 3) assert(r.h.undo(), format("8646 reuse: undo %d refused", k));
+    assert(a0.matches(*r.m), "8646 reuse: undo of every row must restore the arm image bit for bit");
+    assert(r.h.redo() && a0.matches(*r.m), "8646 reuse: redo of the no-op row is the arm image");
+    assert(r.h.redo() && moved.matches(*r.m),
+        "8646 reuse: redo of the moved row must restore the MOVED image");
+    // An image the history put back between two steps: the next step's before
+    // is that image, not the last recorded after it no longer matches.
+    assert(r.h.undo() && a0.matches(*r.m), "8646 reuse: undo of the moved row again");
+    r.step();                                   // a fresh no-op row on a0 (drops the redo)
+    assert(r.h.undoEntries().length == 2 && rowImage(r.h, 1, "before").matches(*r.m),
+        "8646 reuse: a step after an undo must start from the restored image");
+    assert(r.h.undo() && a0.matches(*r.m),
+        "8646 reuse: undo of the step after an undo must restore the image it started from");
+}
+
+unittest { // restore-copies: the reuse premise — `restore` never aliases the image
+    Mesh m = makeCube();
+    auto snap = MeshSnapshot.capture(m);
+    m.vertices[0].y += 1.0f;
+    snap.restore(m);
+    assert(snap.matches(m), "8646 restore: rig floor, the restore put the image back");
+    assert(m.vertices.ptr !is snap.vertices.ptr && m.edges.ptr !is snap.edges.ptr,
+        "8646 restore: the mesh must not alias the snapshot it was restored from");
+    m.vertices[0].y += 1.0f;
+    assert(!snap.matches(m), "8646 restore: a write to the mesh must not reach the snapshot");
+}
+
+unittest { // a re-arm releases the reused image (§9.25 N3: ~25 MB a 50k-vertex row)
+    auto r = reuseRig();
+    r.step();
+    assert(r.h.undoEntries().length == 1, "8646 reuse: rig floor, one row");
+    r.s.noteArm("t.press", 2);
+    r.step();
+    assert(r.h.undoEntries().length == 2, "8646 reuse: the second arm's step is a row");
+    assert(rowImage(r.h, 0, "after").vertices.ptr !is rowImage(r.h, 1, "before").vertices.ptr,
+        "8646 reuse: a new operation must not keep the last one's image alive");
+}

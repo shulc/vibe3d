@@ -3894,16 +3894,13 @@ public:
         if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_); }
     }
 
-    // The session's view of the open press (plan 8646): an open step whose
-    // mesh is no longer the press image is this tool's uncommitted edit.
-    // `tool.reset` (`EditSession.discardOpenEdit`) and a document replace (the
-    // disarm seam) cancel it before their drop: the press image comes back,
-    // the arms clear, the session's pending step ends and nothing is recorded.
-    override bool hasUncommittedEdit() const {
-        if (!stepOpen_ || meshSrc_ is null) return false;
-        const(Mesh)* m = meshSrc_();
-        return m !is null && !basis_.matches(*m);
-    }
+    // The session's view of the open press (plan 8646): an open step IS this
+    // tool's uncommitted edit — under L5 a held step always commits a row,
+    // moved or not (§9.25 [A13-3]). `tool.reset`
+    // (`EditSession.discardOpenEdit`) and a document replace (the disarm
+    // seam) cancel it before their drop: the press image comes back, the arms
+    // clear, the session's pending step ends and nothing is recorded.
+    override bool hasUncommittedEdit() const { return stepOpen_; }
 
     override void cancelUncommittedEdit() {
         auto m = mesh;

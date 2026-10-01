@@ -6,7 +6,7 @@ module tests.unit.topology_pen_move_commit_guard_test;
 // press is one step the SESSION records whatever it changed (law L5), so there
 // is no "would this drag record" question left to share. This census pins that
 // the old judgment did not survive in a corner — no net-move helper, epsilon or
-// per-drag record in tool.d, the hook reads the press image and nothing else,
+// per-drag record in tool.d, the hook is the bare open-step flag,
 // and the prepared switch prepares no history of its own. The behaviour is
 // witnessed by tests/test_topopen_live_move_discard.d and the pen's bound rigs
 // in tests/unit/tools/edit/topology_pen/gestures_test.d.
@@ -39,11 +39,17 @@ unittest {
         assert(countOccurrences(code, gone) == 0,
             "census: `" ~ gone ~ "` is back in tool.d — every pen press is the session's "
             ~ "one step (plan 8646); a per-gesture record judgment must not return");
+    // Under L5 an open press always commits a row, so the hook is the bare
+    // open-step flag (wave plan §9.25 [A13-3]) — no image compare.
     immutable hook = bodyOf(code, "bool hasUncommittedEdit() const");
-    assert(countOccurrences(hook, "basis_.matches(") == 1
-        && countOccurrences(hook, "stepOpen_") == 1
-        && countOccurrences(hook, "moveBase_[") == 0,
-        "census: the hook must be `an open press whose mesh left its press image`");
+    {
+        import std.ascii : isWhite;
+        import std.algorithm : filter;
+        import std.conv : to;
+        assert(hook.filter!(c => !isWhite(c)).to!string == "{returnstepOpen_;}",
+            "census: the hook must be the bare open-step flag, `{ return stepOpen_; }`, got "
+            ~ hook);
+    }
     immutable prepared = bodyOf(code,
         "PreparedTopologyPenDeactivateImage buildPreparedDeactivate(");
     assert(countOccurrences(prepared, "context.prepare(") == 0,
@@ -52,7 +58,7 @@ unittest {
     assert(countOccurrences(prepared, "setSnapshots(") == 0,
         "census: the prepared switch must build no Move record of its own");
     // Population: the scanned bodies are non-empty.
-    assert(hook.length > 20 && prepared.length > 20,
+    assert(hook.length > 10 && prepared.length > 20,
         "census: a scanned body is empty (" ~ hook.length.to!string ~ ", "
         ~ prepared.length.to!string ~ ")");
 }

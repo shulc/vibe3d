@@ -15,11 +15,13 @@
 // recorded a "Topology Move" row (cell 2 red); cell 1 (b)/(c) were already
 // green there and are regression pins, not discriminators.
 //
-// Since plan 8646 every press is one step the session records (law L5): a
-// press that wrote nothing NET (cells 3-7) is not an uncommitted edit, so no
-// door cancels it, and wherever it ends — its release, a drop's close — it is
-// ONE row with the geometry of the press image (K-noop's zero-length drag,
-// fixture tests/fixtures/topology_pen_session_laws.json).
+// Since plan 8646 every press is one step the session records (law L5), so
+// an OPEN press is the uncommitted edit whether or not it wrote anything net
+// (wave plan §9.25 [A13-3]): both discard doors — the load and `tool.reset` —
+// cancel an unmoved or returned press with no row (cells 3-5), while a press
+// that ends by its release or a tool switch is ONE row with the geometry of
+// the press image (cells 6-7; K-noop's zero-length drag, fixture
+// tests/fixtures/topology_pen_session_laws.json).
 //
 // Run via: ./run_test.d topopen_live_move_discard
 
@@ -244,12 +246,13 @@ size_t moveRows() {
     return n;
 }
 
-// Cell 3: a press held on the vertex that never moved is NOT an uncommitted
-// edit (its mesh is the press image), so the disarm seam finds nothing to
-// cancel and the drop's close records the press as its one no-op row.
+// Cell 3: a press held on the vertex that never moved is still an open step,
+// so the disarm seam cancels it before the replace and nothing is recorded —
+// the same answer `tool.reset` gives (cell 5).
 unittest {
     const path = loadSeed();
     scope(exit) if (exists(path)) remove(path);
+    const seedVerts = readVerticesLayer(0);
 
     holdMoveDrag(Motion.none);
     const crossings0 = getJson("/api/tool/disarm")["crossings"].integer;
@@ -261,24 +264,27 @@ unittest {
            d["hadTool"].type == JSONType.true_,
         "the load must cross the disarm seam once with the pen armed: "
         ~ d.toString);
-    assert(d["cancelSteps"].integer == 0,
-        "a held press that wrote nothing is no uncommitted edit: " ~ d.toString);
-    assert(moveRows() == moves0 + 1, format(
-        "a load over an unmoved press records that press as one Move row: %s",
+    assert(d["cancelSteps"].integer == 1,
+        "a held press is an uncommitted edit even unmoved: " ~ d.toString);
+    assert(moveRows() == moves0, format(
+        "a load over an unmoved press must record no Move row: %s",
         undoLabels()));
+    assert(getJson("/api/layers")["layers"].array.length == 1 &&
+           readVerticesLayer(0) == seedVerts,
+        "the cancel must run before the replace: the loaded document is the seed");
 }
 
-// Cells 4-7: a drag that went away and came HOME is not an uncommitted edit:
-// it wrote the mesh (`moveDirty`) but the mesh is the press image again. Each
-// cell ends the press through a different door — the load (the disarm seam
-// asks the hook), the reset, the release, the tool switch — and each but the
-// reset (which discards the in-flight press) records it as ONE no-op row.
-// Cell 7 has its moved half first.
+// Cells 4-7: a drag that went away and came HOME — it wrote the mesh
+// (`moveDirty`) and the mesh is the press image again. Each cell ends the
+// press through a different door: the load (the disarm seam asks the hook)
+// and the reset discard it with no row; the release and the tool switch
+// record it as ONE no-op row. Cell 7 has its moved half first.
 
-// Cell 4: load over a returned drag — nothing to cancel, one row.
+// Cell 4: load over a returned drag — cancelled, no row.
 unittest {
     const path = loadSeed();
     scope(exit) if (exists(path)) remove(path);
+    const seedVerts = readVerticesLayer(0);
 
     holdMoveDrag(Motion.awayAndBack);
     const crossings0 = getJson("/api/tool/disarm")["crossings"].integer;
@@ -290,11 +296,14 @@ unittest {
            d["hadTool"].type == JSONType.true_,
         "the load must cross the disarm seam once with the pen armed: "
         ~ d.toString);
-    assert(d["cancelSteps"].integer == 0,
-        "a drag that came home is no uncommitted edit: " ~ d.toString);
-    assert(moveRows() == moves0 + 1, format(
-        "a load over a returned drag records that press as one Move row: %s",
+    assert(d["cancelSteps"].integer == 1,
+        "a drag that came home is still an uncommitted edit: " ~ d.toString);
+    assert(moveRows() == moves0, format(
+        "a load over a returned drag must record no Move row: %s",
         undoLabels()));
+    assert(getJson("/api/layers")["layers"].array.length == 1 &&
+           readVerticesLayer(0) == seedVerts,
+        "the cancel must run before the replace: the loaded document is the seed");
 }
 
 // Cell 5: tool.reset DISCARDS the in-flight press (wave plan 8640 §1.1):
