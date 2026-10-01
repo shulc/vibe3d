@@ -14,6 +14,9 @@
 //   reapply-build-corner       L17  the new vertex, anchored at its SOURCE (C0-S5)
 //   reapply-point              L17  the placed point (offset 0 after the click)
 //   reapply-dup-edge           L30  the two new vertices, anchored at their sources
+//   reapply-loop-weld          S7a  a welded landing leaves no carried set
+//   reapply-dup-loop           D17  another kind: attribute-only (ours)
+//   offset-script-door         the re-apply is the interactive write's
 //   reapply-addloop / -fill    L20/L30  the press image comes back bit-exact
 //   reapply-smooth-offset      L19  attribute-only, bit-exact
 //   reapply-smooth-strength    L21  re-run from the press image at the new strength
@@ -416,6 +419,58 @@ unittest {
     reapplyCarried("reapply-dup-edge", g1, 11, [16, 17], anchors, r.hp + 2);
 }
 
+// reapply-loop-weld — a Move Loop whose landing WELDS (the loop dropped onto
+// the next row) compacts the indices, so its carried set is gone (S7a's Move
+// rule): a write after it re-places nothing.
+unittest {
+    if (!cell("reapply-loop-weld")) return;
+    const r = rig();
+    penArmUi(r);
+    // Stopped short of row 0 (0.8 spacing, inside the 24 px acceptance): a
+    // landing exactly ON its targets leaves zero-area faces whose fallback
+    // normal the orientation admission refuses (gestures_test, task 0555).
+    penGesture(penEdgePx(5, 6, "reapply-loop-weld e56"), 0, 0.8, 3, 0, "reapply-loop-weld g1");
+    const g1 = penMesh();
+    assert(g1.nv < r.a0.nv && stepKindNow() == 4 && stepVertsNow().length == 0,
+           format("reapply-loop-weld g1: %s (expected a weld), kind %d verts %s; v4 %s v0 %s", g1.toString,
+                  stepKindNow(), penIdx(stepVertsNow()), g1.pos[4], r.a0.pos[0]));
+    writeGives("reapply-loop-weld", g1, g1, r.hp + 2);
+}
+
+// reapply-dup-loop — ours (D17, uncaptured): a Duplicate LOOP is another kind,
+// so a write after it is attribute-only.
+unittest {
+    if (!cell("reapply-dup-loop")) return;
+    const r = rig();
+    penArmUi(r);
+    penGesture(penEdgePx(0, 1, "reapply-dup-loop e01"), 0, 36 / kSp, 3, PEN_KMOD_LSHIFT,
+               "reapply-dup-loop g1");
+    const g1 = penMesh();
+    assert(g1.nv > r.a0.nv && stepKindNow() == 0,
+           format("reapply-dup-loop g1: %s, kind %d", g1.toString, stepKindNow()));
+    writeGives("reapply-dup-loop", g1, g1, r.hp + 2);
+}
+
+// offset-script-door — the re-apply is the INTERACTIVE write's: a script-door
+// `tool.attr` after a gesture moves nothing (the plan's `interactiveParamEdit`
+// gate; captured only with no gesture: H3/L7).
+unittest {
+    if (!cell("offset-script-door")) return;
+    const r = rig();
+    penArmUi(r);
+    penGesture(penVertexPx(5, "offset-script-door v5"), 20 / kSp, 12 / kSp, 1, 0, "offset-script-door g1");
+    const g1 = penMesh();
+    sw("offsetX", "0.1");
+    assert(penMesh() == g1 && abs(attrNum("offsetX") - 0.1) < 1e-6,
+           format("offset-script-door: the script write moved %s (expected nothing)",
+                  penIdx(penMoved(penMesh(), g1))));
+    // Control: the interactive door re-applies.
+    w("offsetX", "0.1");
+    assert(penMoved(penMesh(), g1) == [5L], format("offset-script-door control: moved %s",
+                                                  penIdx(penMoved(penMesh(), g1))));
+    writeln("PASS offset-script-door");
+}
+
 // ===========================================================================
 // basisOnly / attribute-only / rerunFromBasis rows.
 // ===========================================================================
@@ -439,6 +494,12 @@ unittest {
     const g1 = penMesh();
     assert([g1.nv, g1.nf, g1.edges] == [20L, 12, 31] && stepKindNow() == 8,
            format("reapply-addloop g1: %s, kind %d", g1.toString, stepKindNow()));
+    // An attribute the kind does not read is attribute-only (D17): its row
+    // leaves the loop in place; Ctrl+Z pops it alone.
+    w("showEdge", "false");
+    at("reapply-addloop", "unread write", g1, true, r.hp + 3);
+    z("reapply-addloop unread z");
+    at("reapply-addloop", "unread z", g1, true, r.hp + 2);
     writeGives("reapply-addloop", g1, r.a0, r.hp + 2);
 }
 
@@ -946,5 +1007,5 @@ unittest {
 // The population: every cell above ran when none was selected.
 unittest {
     if (environment.get("VIBE3D_CELL", "").length) return;
-    assert(cellsRun == 24, format("offset laws: %d cells ran, expected 24", cellsRun));
+    assert(cellsRun == 27, format("offset laws: %d cells ran, expected 27", cellsRun));
 }
