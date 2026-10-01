@@ -1737,11 +1737,12 @@ unittest {
 
 // ---------------------------------------------------------------------------
 // chord-dup-empty — a Shift+LMB drag that starts on empty space arms nothing
-// (Duplicate always starts on an element): no mesh change, no history row, and
-// the app answers afterwards. Task 8720: the base arms the button before the
-// press declines and the press is stamped `Build` regardless, so this release
-// too used to dispatch back into the build leg forever (no HTTP answer).
-// Slice S5 makes every press a row: its "no history row" is S5's to update.
+// (Duplicate always starts on an element): no mesh change, ONE history row (L5,
+// slice S5: every press is a step, a no-op one included), Ctrl+Z pops it with
+// the pen armed, and the app answers afterwards. Task 8720: the base arms the
+// button before the press declines and the press is stamped `Build`
+// regardless, so this release too used to dispatch back into the build leg
+// forever (no HTTP answer).
 // ---------------------------------------------------------------------------
 unittest {
     enum id = "chord-dup-empty";
@@ -1761,7 +1762,9 @@ unittest {
                       id, p, c.vpX, c.vpX + c.width, hi.toString));
     }
     penPlay(penGestureEvents(from[0], from[1], to[0], to[1], 1, PEN_KMOD_LSHIFT, 8), id ~ " Shift+LMB drag");
-    expectState(id, "release", r.a0, true, r.hp);
+    expectState(id, "release", r.a0, true, r.hp + 1);
+    penCtrlZ(id ~ " Ctrl+Z");
+    expectState(id, "z1", r.a0, true, r.hp);
     writeln("PASS ", id);
 }
 
