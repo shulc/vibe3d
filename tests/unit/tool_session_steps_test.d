@@ -50,6 +50,21 @@ import std.format : format;
 import std.json : JSONType, JSONValue, parseJSON;
 import std.traits : EnumMembers;
 
+// Wave plan 8646 §9.25 [A13-2], restore-copies: the premise the session's
+// image reuse rests on (cells at the end of this module). First in the module
+// so an aliasing `restore` reddens HERE, not in a later cell's symptom.
+unittest { // restore-copies: `restore` never aliases the image
+    Mesh m = makeCube();
+    auto snap = MeshSnapshot.capture(m);
+    m.vertices[0].y += 1.0f;
+    snap.restore(m);
+    assert(snap.matches(m), "8646 restore: rig floor, the restore put the image back");
+    assert(m.vertices.ptr !is snap.vertices.ptr && m.edges.ptr !is snap.edges.ptr,
+        "8646 restore: the mesh must not alias the snapshot it was restored from");
+    m.vertices[0].y += 1.0f;
+    assert(!snap.matches(m), "8646 restore: a write to the mesh must not reach the snapshot");
+}
+
 // ---- (1) the arm door -------------------------------------------------------
 
 unittest {
@@ -1544,16 +1559,14 @@ unittest { // moved-row-not-shared: a moved row holds its own after; undo/redo a
     auto moved = MeshSnapshot.capture(*r.m);
     r.step();                                   // row 2: no-op on the moved image
     assert(r.h.undoEntries().length == 3, "8646 reuse: three steps, three rows");
-    assert(rowImage(r.h, 1, "before").vertices.ptr !is rowImage(r.h, 1, "after").vertices.ptr,
-        "8646 reuse: the moved row's before and after must not share");
-    assert(rowImage(r.h, 1, "before").matches(*r.m) == false
-           && rowImage(r.h, 1, "after").matches(*r.m),
-        "8646 reuse: the moved row's after must be the moved image, its before not");
+    // Behaviour first (the replayed images), storage after it.
     foreach (k; 0 .. 3) assert(r.h.undo(), format("8646 reuse: undo %d refused", k));
     assert(a0.matches(*r.m), "8646 reuse: undo of every row must restore the arm image bit for bit");
     assert(r.h.redo() && a0.matches(*r.m), "8646 reuse: redo of the no-op row is the arm image");
     assert(r.h.redo() && moved.matches(*r.m),
         "8646 reuse: redo of the moved row must restore the MOVED image");
+    assert(rowImage(r.h, 1, "before").vertices.ptr !is rowImage(r.h, 1, "after").vertices.ptr,
+        "8646 reuse: the moved row's before and after must not share");
     // An image the history put back between two steps: the next step's before
     // is that image, not the last recorded after it no longer matches.
     assert(r.h.undo() && a0.matches(*r.m), "8646 reuse: undo of the moved row again");
@@ -1562,18 +1575,6 @@ unittest { // moved-row-not-shared: a moved row holds its own after; undo/redo a
         "8646 reuse: a step after an undo must start from the restored image");
     assert(r.h.undo() && a0.matches(*r.m),
         "8646 reuse: undo of the step after an undo must restore the image it started from");
-}
-
-unittest { // restore-copies: the reuse premise — `restore` never aliases the image
-    Mesh m = makeCube();
-    auto snap = MeshSnapshot.capture(m);
-    m.vertices[0].y += 1.0f;
-    snap.restore(m);
-    assert(snap.matches(m), "8646 restore: rig floor, the restore put the image back");
-    assert(m.vertices.ptr !is snap.vertices.ptr && m.edges.ptr !is snap.edges.ptr,
-        "8646 restore: the mesh must not alias the snapshot it was restored from");
-    m.vertices[0].y += 1.0f;
-    assert(!snap.matches(m), "8646 restore: a write to the mesh must not reach the snapshot");
 }
 
 unittest { // a re-arm releases the reused image (§9.25 N3: ~25 MB a 50k-vertex row)
