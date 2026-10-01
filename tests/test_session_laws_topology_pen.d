@@ -1137,8 +1137,13 @@ unittest {
 // ORBITED camera (-Z; the world axis nearest the drag is Y) and the
 // FORESHORTENED one (-Z; the view-plane axis is Y). The front-view diagonal
 // drag is the one where an end-on Z would win without the skip. The
-// magnitude is the FORM only: s is floored (`sMin`), `sCaptured` a record.
+// magnitude is floored (`sMin`) and held within `kSlideMagnitudeBand` of the
+// capture's `sCaptured`: that pins "about the captured value", not the exact
+// magnitude law, which stays uncaptured (gap row (q), card 8700).
 // ---------------------------------------------------------------------------
+/// Ours: the band |s - sCaptured| <= this x |sCaptured| (measured unmutated
+/// worst 6.6%; the off-by-the-offset-length rival lands at 120% and above).
+enum double kSlideMagnitudeBand = 0.15;
 double[3] vsub(double[3] a, double[3] b) { return [a[0] - b[0], a[1] - b[1], a[2] - b[2]]; }
 double vdot(double[3] a, double[3] b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
 double[3] vmad(double[3] a, double[3] b, double s) { return [a[0] + b[0] * s, a[1] + b[1] * s, a[2] + b[2] * s]; }
@@ -1328,6 +1333,10 @@ double slideVertex(JSONValue fx, JSONValue g, const double[3][3][] tris, const P
         const d = lineDistance(p, u, w(a0.pos[cast(size_t)n.integer]));
         if (d < edgeMin) edgeMin = d;
     }
+    const sCap = penNum(g["sCaptured"]);
+    assert(abs(fit[0] - sCap) <= kSlideMagnitudeBand * abs(sCap),
+           format("chord-slide-vertex %s: fit s %.5f is %.1f%% off the captured %.5f (band %.0f%%)", id,
+                  fit[0], 100 * abs(fit[0] - sCap) / abs(sCap), sCap, 100 * kSlideMagnitudeBand));
     assert(fit[1] <= resMax && fit[0] * sgn > sMin && otherBest > 1e3 * resMax
            && edgeMin >= penNum(fx["lineDistanceMin"]),
            format("chord-slide-vertex %s: v%d %s is not nearestBG(u + s e%d) with %s s > %g: fit s %.5f "
@@ -1336,7 +1345,7 @@ double slideVertex(JSONValue fx, JSONValue g, const double[3][3][] tris, const P
                   otherBest, edgeMin, penNum(fx["lineDistanceMin"])));
     penCtrlZ("chord-slide-vertex " ~ id ~ " Ctrl+Z");
     expectState("chord-slide-vertex", id ~ "_z", a0, g["undoArmed"].type == JSONType.true_, hist);
-    writeln(format("chord-slide-vertex %s: axis %d s %.5f (captured %.5f, not asserted) residual %.3g, "
+    writeln(format("chord-slide-vertex %s: axis %d s %.5f (captured %.5f, banded) residual %.3g, "
                    ~ "other axes %.3g, edge lines >= %.3g", id, axis, fit[0], penNum(g["sCaptured"]),
                    fit[1], otherBest, edgeMin));
     return fit[0];
@@ -1414,6 +1423,46 @@ unittest {
                       penHistoryLabels()));
         penCtrlZ("chord-slide-vertex mid-drag Ctrl+Z");
         expectState("chord-slide-vertex", "mid_z", r.a0, true, r.hp + 1);
+    }
+
+    // The background ray MISSES (ours, not captured — gap note "behaviour on
+    // a ray miss", card 8700): v5 dragged screen-LEFT past the sphere's
+    // silhouette (the rig's sphere reaches the window's right edge, so only
+    // the left side has room). The magnitude then falls back to the
+    // view-plane drag delta (`planeDragDelta`), so the held state elects
+    // world X, negative, with a channel |k| larger than any background hit
+    // can give (a hit lies on the sphere, at most its own -x extent from v5),
+    // and the release at the same pixel lands v5 at nearestBG(u + k e_X) —
+    // one channel, the elected axis, non-zero.
+    {
+        double bgMinX = double.infinity;
+        foreach (t; tris)
+            foreach (q; t) if (q[0] < bgMinX) bgMinX = q[0];
+        const u = r.a0.pos[5];
+        const hitBound = u[0] - bgMinX;
+        const from = penVertexPx(5, "chord-slide-vertex ray miss");
+        const far = penRound(penProject([u[0] - hitBound - 0.25, u[1], u[2]]));
+        assert(hitBound > 0.5 && far[0] > 0,
+               format("chord-slide-vertex ray miss: rig floor: background -x extent %.3f from v5, "
+                      ~ "drag pixel %s (v5 at %s)", hitBound, far, from));
+        auto ev = penGestureEvents(from[0], from[1], far[0], from[1], 1, PEN_KMOD_LCTRL, 8);
+        penPlay(ev[0 .. ev.lastIndexOf("\n")], "chord-slide-vertex ray miss: press and hold");
+        auto st = getJson("/api/tool/state");
+        const ax = st["slideAxis"].integer;
+        const k = penNum(st["slideDeltaK"]);
+        penPlay(penButton(500, false, 1, far[0], from[1], PEN_KMOD_LCTRL), "chord-slide-vertex ray miss: release");
+        const p = penMesh().pos[5];
+        const want = nearestOn(tris, vmad(u, unitAxis(0), k));
+        assert(ax == 0 && k < -(hitBound + 0.1) && penMoved(penMesh(), r.a0) == [5L]
+               && penHistoryLen() == r.hp + 2 && vdist(p, want) <= 1e-4,
+               format("chord-slide-vertex ray miss: held axis %d (expected 0), channel %.5f (expected < "
+                      ~ "-%.3f, beyond any background hit); after the release moved %s, v5 %s vs "
+                      ~ "nearestBG(u + k e_X) %s (%.3g, max 1e-4), history %s", ax, k, hitBound + 0.1,
+                      penIdx(penMoved(penMesh(), r.a0)), p, want, vdist(p, want), penHistoryLabels()));
+        penCtrlZ("chord-slide-vertex ray miss Ctrl+Z");
+        expectState("chord-slide-vertex", "miss_z", r.a0, true, r.hp + 1);
+        writeln(format("chord-slide-vertex ray miss: drag %d px, axis %d, k %.5f (hit bound %.3f)",
+                       far[0] - from[0], ax, k, hitBound));
     }
 
     // THE DISCRIMINATING GESTURE: the grid turned 30 degrees about world Z

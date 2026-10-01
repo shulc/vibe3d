@@ -1706,8 +1706,8 @@ public:
         if (slideArmed_) {
             Viewport vp = viewportOf(vts);
             if (slideVertex_ >= 0) {
-                if (!vertexSlideTarget(e.x, e.y, vp, slideVertexTarget_, slideAxis_, slideDeltaK_))
-                    slideAxis_ = -1;
+                // A failed evaluation leaves `slideAxis_` -1 (its `out` init).
+                vertexSlideTarget(e.x, e.y, vp, slideVertexTarget_, slideAxis_, slideDeltaK_);
             } else {
                 slideDeltaK_ = slideDeltaFromDrag(e.x, e.y, vp);
             }
@@ -4651,8 +4651,9 @@ public:
     // Vertex-slide arm (task 8700, P2; law L49, the S-proj rule of
     // `vertexSlideAxis`: the vertex moves one channel along the world axis
     // whose SCREEN image is most parallel to the drag, then lands at its
-    // nearest point on the background). A vertex with no incident edge
-    // declines as `NoEdge`, as a press on it always did.
+    // nearest point on the background). A press resolved to a vertex with no
+    // incident edge declines as `NoEdge` and slides nothing (before this arm
+    // it fell through to `findRingSeedEdge`, which could seed a nearby edge).
     private bool armVertexSlide(ref const SDL_MouseButtonEvent e, int v) {
         auto m = mesh;
         if (m is null || m.edgeNeighbors(cast(uint)v).length == 0) return false;
@@ -4706,16 +4707,18 @@ public:
         import std.math : abs, sqrt;
         sign = 0;
         const dl = sqrt(dx * dx + dy * dy);
+        double[3] len;
         double maxLen = 0;
-        foreach (i; 0 .. 3) maxLen = (sqrt(J[i][0] ^^ 2 + J[i][1] ^^ 2) > maxLen)
-                                     ? sqrt(J[i][0] ^^ 2 + J[i][1] ^^ 2) : maxLen;
+        foreach (i; 0 .. 3) {
+            len[i] = sqrt(J[i][0] ^^ 2 + J[i][1] ^^ 2);
+            if (len[i] > maxLen) maxLen = len[i];
+        }
         if (dl == 0 || maxLen == 0) return -1;
         int best = -1;
         double bestCos = -1;
         foreach (i; 0 .. 3) {
-            const len = sqrt(J[i][0] ^^ 2 + J[i][1] ^^ 2);
-            if (len < tau * maxLen) continue;
-            const c = abs(J[i][0] * dx + J[i][1] * dy) / (len * dl);
+            if (len[i] < tau * maxLen) continue;
+            const c = abs(J[i][0] * dx + J[i][1] * dy) / (len[i] * dl);
             if (c > bestCos) { bestCos = c; best = i; }
         }
         sign = (J[best][0] * dx + J[best][1] * dy >= 0) ? 1 : -1;
