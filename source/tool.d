@@ -269,6 +269,19 @@ struct AttrImage {
 
     bool empty() const pure nothrow @nogc { return names.length == 0; }
 
+    /// The image minus `drop`'s names (raw bytes shared, not copied). A pure
+    /// filter: the operation context a tool instance must not inherit is cut
+    /// here, never by a per-tool branch (wave plan 8640 S7a, M-H).
+    AttrImage without(scope const(string)[] drop) const pure nothrow {
+        AttrImage r;
+        outer: foreach (i, n; names) {
+            foreach (d; drop) if (d == n) continue outer;
+            r.names ~= n;
+            r.raw ~= raw[i];
+        }
+        return r;
+    }
+
     bool opEquals(const AttrImage o) const pure nothrow @nogc {
         if (names.length != o.names.length) return false;
         foreach (i; 0 .. names.length)
@@ -423,6 +436,19 @@ struct ToolSessionPolicy {
     /// (wave plan 8640 M-I / D16, law L16: Strength only in Smoothing, Range /
     /// Quad Only only in Fill). Every other tool: greying stays panel-only.
     bool refusesDisabledParamWrites;
+    /// A PRESS opens a new operation: before the press step's open image is
+    /// taken, the session resets `haulAttrs` to their defaults (the Shift arm
+    /// of `openOperation`), and those names are restored only into the tool
+    /// INSTANCE that recorded a row (M-H). Captured for the Topology Pen
+    /// (H1-move z1, C0-N1/N2, X-w, X-toggle; wave plan 8640 S7a); every other
+    /// tool keeps false, by data.
+    bool pressOpensOperation;
+    /// Parameter rows FOLD into the open block — the activation (key/UI door
+    /// arm) or the last press — at the next press or session close, and pop
+    /// and redo with it as one step; an undo or redo re-keys the block.
+    /// Captured for the Topology Pen (L15, L38, L41-L45, L53-L55; wave plan
+    /// 8640 S7a, §9.19.3); every other tool keeps false, by data.
+    bool foldsParamRowsIntoBlock;
 }
 
 class Tool : ParamProvider {

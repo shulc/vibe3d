@@ -240,6 +240,12 @@ package enum BuildCase { None, Edge, Tri, Quad }
 /// history navigation).
 package enum PenMode { Move, Duplicate, Remove, Split, AddLoop, Point, Fill, Smooth }
 
+/// The kind of the press a pen step descriptor records (`stepKind`, wave plan
+/// 8640 S7a): which Move-family handler ran. Its values are the image's raw
+/// ints, so a member is never renumbered; `None` is a press that wrote no
+/// descriptor. Slice S7b keys its re-evaluation table on it.
+package enum PenStepKind : int { None = 0, VertexMove = 1, EdgeMove = 2, PolygonMove = 3, MoveLoop = 4 }
+
 // Why a Ctrl+LMB Slide press did not arm — see `slideDecline_`'s own doc
 // comment for the full rationale. `None` also covers "the press armed
 // normally", so a consumer reads `slideDeclineReason == "none"` as "no decline

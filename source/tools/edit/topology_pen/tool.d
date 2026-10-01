@@ -404,6 +404,21 @@ private:
     private MeshSessionEdit delegate() stepFactory_;
     private string       stepLabel_;
 
+    // --- The OPERATION CONTEXT (wave plan 8640 S7a, §9.7): the Offset the
+    // last Move-family press wrote — `final anchor - press anchor` of the
+    // pressed element (vertex: itself; edge: its midpoint; polygon: its corner
+    // mean; loop: the pressed edge's midpoint), written raw at every motion
+    // and at the release — and the descriptor of that press (`stepKind`, the
+    // moved vertices, their press-image positions), written at its end. All
+    // six are the policy's haul attributes: a press resets them before its
+    // open image (`pressOpensOperation`) and they are restored only into the
+    // instance that recorded a row (M-H). Read by no kernel yet: the
+    // re-application by step kind is slice S7b's.
+    package float        offsetX_ = 0.0f, offsetY_ = 0.0f, offsetZ_ = 0.0f;
+    package int          stepKind_;
+    package uint[]       stepVerts_;
+    package Vec3[]       stepOrig_;
+
     // --- P6 Add Loop session state (tool.d,
     // doc/topopen_p6_addloop_plan.md). Armed on a Shift+MMB press that
     // lands on a primary-layer edge whose perpendicular ring exists
@@ -1244,9 +1259,13 @@ public:
             sessionSteps: true, historyTopologySteps: true,
             rebaseTopologyAfterStep: false, dropWritesRow: true,
             refusesDisabledParamWrites: true,
+            pressOpensOperation: true, foldsParamRowsIntoBlock: true,
             imageAttrs: ["middle", "mode", "loop", "slide", "smoothStrength",
                          "showVertex", "showEdge", "innerSnap", "keepVertex",
-                         "range", "quadOnly", "backFace"] };
+                         "range", "quadOnly", "backFace", "offsetX", "offsetY",
+                         "offsetZ", "stepKind", "stepVerts", "stepOrig"],
+            haulAttrs: ["offsetX", "offsetY", "offsetZ", "stepKind", "stepVerts",
+                        "stepOrig"] };
         return policy;
     }
 
@@ -1378,6 +1397,16 @@ public:
                  .min(0.0f).enforceBounds(),
             Param.bool_("quadOnly", "Quads Only", &fillQuadOnly_, true),
             Param.bool_("backFace", "Backface", &backFace_, false),
+            // The operation context (S7a): transient, so the per-preset
+            // attribute cache never carries it into a fresh instance (M-H).
+            Param.float_("offsetX", "Offset X", &offsetX_, 0.0f).transient(),
+            Param.float_("offsetY", "Offset Y", &offsetY_, 0.0f).transient(),
+            Param.float_("offsetZ", "Offset Z", &offsetZ_, 0.0f).transient(),
+            Param.int_("stepKind", "Step Kind", &stepKind_, PenStepKind.None)
+                 .hidden().transient(),
+            Param.intArray_("stepVerts", "Step Vertices", &stepVerts_)
+                 .hidden().transient(),
+            Param.podArray_("stepOrig", "Step Origins", &stepOrig_),
         ];
     }
 
@@ -1699,6 +1728,7 @@ public:
         if (moveArmed_) {
             Viewport vp = viewportOf(vts);
             applyMoveTargets(moveTargets(e.x, e.y, vp, vts));
+            noteMoveOffset();
             return true;
         }
 
@@ -1776,6 +1806,8 @@ public:
         if (moveLoopArmed_) {
             moveLoopCurX_ = e.x;
             moveLoopCurY_ = e.y;
+            Viewport vp = viewportOf(vts);
+            noteLoopOffset(e.x - moveLoopStartX_, e.y - moveLoopStartY_, vp);
             return true;
         }
 
@@ -4058,6 +4090,7 @@ public:
         scope(exit) clearMoveArm();
         if (!moveArmed_ || moveVerts_.length == 0) return;
         applyMoveTargets(moveTargets(px, py, vp, vts));
+        noteMoveOffset();
         // The destructive landing (task 0555), inside the same step. Gated on
         // `moveDirty_`: a grab that never moved anything cannot have been
         // "brought to within" anything, and welding on a bare click would eat
@@ -4069,6 +4102,57 @@ public:
         // A weld changed the TOPOLOGY, so every index a sibling gesture
         // cached may now name different geometry.
         if (moveWelded_) resyncSession();
+        // The descriptor of this press (S7a). A weld compacted the indices
+        // and absorbed the grabbed vertex: the moved set is then empty.
+        noteStepDescriptor(moveElem_ == MoveElem.Vertex ? PenStepKind.VertexMove
+                         : moveElem_ == MoveElem.Edge   ? PenStepKind.EdgeMove
+                                                        : PenStepKind.PolygonMove,
+                           moveWelded_ ? null : moveVerts_,
+                           moveWelded_ ? null : moveBase_);
+    }
+
+    // The live Offset of a Move (S7a): the anchor's travel since the press,
+    // the anchor being the moved set's mean (a vertex, an edge's midpoint, a
+    // polygon's corner mean). Raw: no notification, no row.
+    private void noteMoveOffset() {
+        auto m = mesh;
+        if (m is null || moveVerts_.length == 0 || moveBase_.length != moveVerts_.length)
+            return;
+        Vec3 now = Vec3(0, 0, 0), was = Vec3(0, 0, 0);
+        foreach (i, vi; moveVerts_) {
+            if (vi >= m.vertices.length) return;
+            now = now + m.vertices[vi];
+            was = was + moveBase_[i];
+        }
+        writeOffset((now - was) * (1.0f / moveVerts_.length));
+    }
+
+    // The live Offset of a Move Loop (S7a): the pressed edge's midpoint at
+    // the targets the release would commit for this screen delta.
+    private void noteLoopOffset(int dx, int dy, const ref Viewport vp) {
+        auto m = mesh;
+        if (m is null || moveLoopSeed_ < 0 || moveLoopSeed_ >= cast(int)m.edges.length) return;
+        const(uint)[] ends = [m.edges[moveLoopSeed_][0], m.edges[moveLoopSeed_][1]];
+        if (releaseIsClick(dx, dy)) { writeOffset(Vec3(0, 0, 0)); return; }
+        auto to = perVertexTargets(ends, dx, dy, vp);
+        if (to.length != 2) return;
+        writeOffset((to[0] + to[1] - m.vertices[ends[0]] - m.vertices[ends[1]]) * 0.5f);
+    }
+
+    private void writeOffset(Vec3 d) {
+        offsetX_ = d.x;
+        offsetY_ = d.y;
+        offsetZ_ = d.z;
+    }
+
+    // The press's descriptor, written at its end by the Move-family handler
+    // that ran (S7a): its kind, the moved vertices and their press-image
+    // positions — carried, never inferred from a mesh diff (R1-7).
+    private void noteStepDescriptor(PenStepKind kind, const(uint)[] verts,
+                                    const(Vec3)[] orig) {
+        stepKind_  = kind;
+        stepVerts_ = verts.dup;
+        stepOrig_  = orig.dup;
     }
 
     /// Post-weld housekeeping shared by the two Move commit paths: the mesh
@@ -4108,6 +4192,10 @@ public:
     private void discardOpenGesture() {
         auto m = mesh;
         if (m !is null && stepOpen_ && basis_.filled) basis_.restore(*m);
+        // The operation context goes back to the press's too: defaults, as
+        // the press opened it (S7a).
+        writeOffset(Vec3(0, 0, 0));
+        noteStepDescriptor(PenStepKind.None, null, null);
         resetAllGestureArms();
         if (m is null) return;
         m.syncSelection();
@@ -5743,16 +5831,31 @@ public:
         if (!moveLoopArmed_) return false;
         auto verts = moveLoopVerts_;
         int  sx = moveLoopStartX_, sy = moveLoopStartY_;
+        immutable int seed = moveLoopSeed_;
         moveLoopArmed_ = false;
         moveLoopVerts_ = null;
         moveLoopSeed_  = -1;
 
         int dx = e.x - sx, dy = e.y - sy;
+        Viewport vp = viewportOf(vts);
+        auto m = mesh;
+        Vec3[] orig;
+        if (m !is null)
+            foreach (vi; verts) if (vi < m.vertices.length) orig ~= m.vertices[vi];
+        noteLoopOffsetAtSeed(seed, dx, dy, vp);
+        noteStepDescriptor(PenStepKind.MoveLoop, verts, orig);
         if (releaseIsClick(dx, dy)) return true;
 
-        Viewport vp = viewportOf(vts);
         commitMoveLoop(verts, perVertexTargets(verts, dx, dy, vp), vp);
         return true;
+    }
+
+    // `noteLoopOffset` for a seed the release already disarmed.
+    private void noteLoopOffsetAtSeed(int seed, int dx, int dy, const ref Viewport vp) {
+        immutable keep = moveLoopSeed_;
+        moveLoopSeed_ = seed;
+        noteLoopOffset(dx, dy, vp);
+        moveLoopSeed_ = keep;
     }
 
     // P11 (doc/topopen_p11_duploop_plan.md Phase 3): commits the armed Dup

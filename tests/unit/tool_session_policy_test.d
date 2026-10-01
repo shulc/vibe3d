@@ -408,21 +408,34 @@ unittest { // (3) the doors reach the tool session only through EditSession
     // Slice M4: the tool-held peel, keep-alive, live-redo and run-record
     // branches are gone; the record that carries its activation row is read
     // before the stack steps, and a restored predecessor adopts its token after.
-    inOrder(bodyAt(ts, "bool undo()"),
+    inOrder(bodyAt(ts, "private bool undoImpl_()"),
             ["navigateRecorded_(true)", "navigateTopology_(true)", "undoFirstGroup_(t)",
-             "cancelUncommittedEdit()", "recordCarriesActivation_()",
+             "cancelUncommittedEdit()", "recordCarriesActivation_()", "absorbedRunAbove_()",
              "resyncSession()", "adoptPredecessorToken_("],
-            "ToolSession.undo");
-    inOrder(bodyAt(ts, "bool redo()"),
+            "ToolSession.undoImpl_");
+    inOrder(bodyAt(ts, "private bool redoImpl_()"),
             ["navigateRecorded_(false)", "navigateTopology_(false)", "applyAttrImage(img)",
              "carriesFirstRecord()", "adoptToken_(",
              "resyncSession()", "replayFirstGroup_()"],
+            "ToolSession.redoImpl_");
+    // Wave plan 8640 S7a: the two doors are the step, then the parameter-row
+    // prune once the history is Active again — never inside the step (m18).
+    inOrder(squeeze(bodyAt(ts, "bool undo()")),
+            ["constr=undoImpl_();", "if(r){openBlock_=null;pruneRedoTop_();}", "returnr;"],
+            "ToolSession.undo");
+    inOrder(squeeze(bodyAt(ts, "bool redo()")),
+            ["openBlock_=null;", "constr=redoImpl_();", "if(r)pruneRedoTop_();", "returnr;"],
             "ToolSession.redo");
+    assert(es.count("pruneRedoTop_()") == 3,
+           format("S7a wiring census: edit_session.d names pruneRedoTop_() %s times, expected 3 "
+                  ~ "(the declaration and the two doors)", es.count("pruneRedoTop_()")));
     // Nothing else in the module steps the history.
-    assert(es.count("history_.undo()") == 10 && es.count("history_.redo()") == 6,
+    assert(es.count("history_.undo()") == 11 && es.count("history_.redo()") == 8,
            format("M1 wiring census: edit_session.d steps the history %s/%s times, "
-                  ~ "expected undo 10 (closed-run replay, live recorded ladder, topology and prior ToolSession branches) and "
-                  ~ "redo 6 (recorded first-step re-arm, recorded producer, topology and prior ToolSession branches)",
+                  ~ "expected undo 11 (closed-run replay, live recorded ladder, topology incl. its "
+                  ~ "folded run, and prior ToolSession branches) and "
+                  ~ "redo 8 (recorded first-step re-arm, recorded producer, topology incl. its folded "
+                  ~ "run, the activation's folded run, and prior ToolSession branches)",
                   es.count("history_.undo()"), es.count("history_.redo()")));
 }
 
@@ -497,10 +510,11 @@ private immutable StepRow[] kStepTable = [
     StepRow("poly.bevel", OpensAt.arm, false, ["inset", "shift", "applied", "op"], "applied"),
     StepRow("vert.merge", OpensAt.firstPress, false, ["dist"]),
     // Plan 8646 (S5): every published pen attribute is an image attribute (D15,
-    // captured R-all); S7a extends the row.
+    // captured R-all); S7a adds the operation context (offsets + descriptor).
     StepRow("mesh.topoPen", OpensAt.firstPress, false,
             ["middle", "mode", "loop", "slide", "smoothStrength", "showVertex",
-             "showEdge", "innerSnap", "keepVertex", "range", "quadOnly", "backFace"]),
+             "showEdge", "innerSnap", "keepVertex", "range", "quadOnly", "backFace",
+             "offsetX", "offsetY", "offsetZ", "stepKind", "stepVerts", "stepOrig"]),
 ];
 
 unittest { // (4)
@@ -581,6 +595,12 @@ unittest { // (4)
             if (row.id == "poly.extrude")
                 assert(pol.haulAttrs == sr.imageAttrs,
                     "M3 step table: Polygon haul image drifted from its full parameter image");
+            // Wave plan 8640 S7a: the pen's haul is its operation context, the
+            // six names a press resets and M-H keeps to the recording instance.
+            if (row.id == "mesh.topoPen")
+                assert(pol.haulAttrs == ["offsetX", "offsetY", "offsetZ", "stepKind",
+                                         "stepVerts", "stepOrig"],
+                    format("S7a step table: the pen's haul is %s", pol.haulAttrs));
         }
         assert(found, "M3 step table: " ~ row.id ~ " has sessionSteps but no step-table row");
     }
@@ -599,7 +619,7 @@ unittest { // (4)
                   ~ "in the same commit", stepsFalse, kSessionStepsFalseCeiling));
     assert(recordedSteps == 52,
            format("history-owned rows %s, expected 52", recordedSteps));
-    // Image-producing population floors: 19 ids, 131 image names, 3 Action triggers
+    // Image-producing population floors: 19 ids, 137 image names, 3 Action triggers
     // on them (chainArm; insertAt, removeCurrent), 1 arm attribute (M3b).
     sort(imageStepIds);
     assert(imageStepIds == ["edge.bevel", "edge.extend", "edge.extrude",
@@ -609,7 +629,7 @@ unittest { // (4)
                        "mesh.thickenTool", "mesh.topoPen", "mesh.vertexBevel", "mesh.vertexExtrude",
                        "poly.bevel", "poly.extrude", "vert.merge"],
            format("M3 step table: image-step ids %s", imageStepIds));
-    assert(checkedNames == 131, format("M3 step table: %s image names checked, measured 131",
+    assert(checkedNames == 137, format("M3 step table: %s image names checked, measured 137",
                                       checkedNames));
     assert(armAttrs == 1, format("M3b step table: %s arm attributes, measured 1", armAttrs));
     assert(actionNames == 3, format("M3 step table: %s Action params on the session tools, "
@@ -901,6 +921,41 @@ unittest { // (10)
                   "scope(failure)if(session!is"~"null)session.abandonDropRow();",
                   "session.closeOperation(closeReasonFor(why),CommandDoor.ui,dropRow,ctx);",
                   "activeTool.deactivate();"], "dropActiveToolWith");
+}
+
+// ---------------------------------------------------------------------------
+// (11) Wave plan 8640 S7a — the operation context and the parameter-row fold
+// are policy DATA (`pressOpensOperation`, `foldsParamRowsIntoBlock`).
+// Provenance: CAPTURED for the Topology Pen (H1-move z1, C0-N1/N2, X-w,
+// X-toggle; L15, L38, L41-L45, L53-L55); false for every other tool (no
+// capture: the session reads them as off). Exactly one class declares each —
+// two censuses, each counting its own field, over the same scan as (10).
+// ---------------------------------------------------------------------------
+
+static assert(ToolSessionPolicy.init.pressOpensOperation == false);
+static assert(ToolSessionPolicy.init.foldsParamRowsIntoBlock == false);
+
+unittest { // (11)
+    string[] opens, folds;
+    size_t scanned;
+    foreach (m; ModuleInfo) {
+        if (m is null || !m.name.startsWith("tools.")) continue;
+        foreach (c; m.localClasses) {
+            if (!derivesFromTool(c) || (c.m_flags & TypeInfo_Class.ClassFlags.isAbstract))
+                continue;
+            ++scanned;
+            const pol = blit(c).sessionPolicy();
+            if (pol.pressOpensOperation) opens ~= c.name;
+            if (pol.foldsParamRowsIntoBlock) folds ~= c.name;
+        }
+    }
+    assert(scanned == 48, format("S7a policy classes: scanned %s, measured 48", scanned));
+    assert(opens == ["tools.edit.topology_pen.tool.TopologyPenTool"],
+           format("S7a policy classes: pressOpensOperation declared by %s, expected the pen only",
+                  opens));
+    assert(folds == ["tools.edit.topology_pen.tool.TopologyPenTool"],
+           format("S7a policy classes: foldsParamRowsIntoBlock declared by %s, expected the pen only",
+                  folds));
 }
 
 // ---------------------------------------------------------------------------

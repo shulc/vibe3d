@@ -70,11 +70,15 @@ class MeshSessionEdit : Command, Operator, GesturePayload {
     private MeshSnapshot stepAfterBasis_;
     private bool topologyStep_;
     private bool stepOpenedByPress_;
+    private ulong stepInstance_;
 
     bool isTopologyStep() const { return topologyStep_; }
     /// The step was opened by the tool's own press door, not by an arm, an
     /// Action or a parameter write (plan 8646 [R1-8]).
     bool stepOpenedByPress() const { return stepOpenedByPress_; }
+    /// The tool INSTANCE that recorded the step (`Tool.preparedLifecycleOwner`):
+    /// an operation context is restored only into it (wave plan 8640 S7a, M-H).
+    ulong stepInstance() const { return stepInstance_; }
     AttrImage stepBeforeAttrs() const {
         return AttrImage(stepBeforeAttrs_.names.dup, stepBeforeAttrs_.raw.dup);
     }
@@ -84,8 +88,10 @@ class MeshSessionEdit : Command, Operator, GesturePayload {
     MeshSnapshot stepBeforeBasis() const { return stepBeforeBasis_.ownedDup(); }
     MeshSnapshot stepAfterBasis() const { return stepAfterBasis_.ownedDup(); }
     void setTopologyStep(
-            AttrImage beforeAttrs, AttrImage afterAttrs, MeshSnapshot beforeBasis, MeshSnapshot afterBasis, bool openedByPress) {
+            AttrImage beforeAttrs, AttrImage afterAttrs, MeshSnapshot beforeBasis, MeshSnapshot afterBasis, bool openedByPress,
+            ulong instance) {
         stepOpenedByPress_ = openedByPress;
+        stepInstance_ = instance;
         stepBeforeAttrs_ = beforeAttrs;
         stepAfterAttrs_ = afterAttrs;
         stepBeforeBasis_ = beforeBasis;

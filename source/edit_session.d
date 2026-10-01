@@ -860,6 +860,17 @@ private struct ToolSession {
     private AttrImage replay_;
     private Rebindable!(const Command) replayFor_;
     private SessionMeshKey replayKey_;
+    // The OPEN BLOCK of a `foldsParamRowsIntoBlock` session (wave plan 8640
+    // S7a, §9.19.3, §9.22.1, §9.26.4): the row the session's open step folds
+    // into — the activation row of a key/UI-door arm, then each press row; or,
+    // after a navigation cleared it, the first parameter row written since
+    // (the base of an open step of its own). A press row or a switch / drop
+    // closes the open step: the parameter rows written above the block are
+    // marked `JoinsBelow` (and `StepClosed` when the base is such a row). An
+    // undo clears it (L41); the redo of a press reopens that press (L42), the
+    // redo of a parameter row the press or activation below it (L55). A
+    // script-door arm opens nothing (C1-F3).
+    private Rebindable!(const Command) openBlock_;
 
     this(Tool delegate() tool, CommandHistory history,
          void delegate() dropTool,
@@ -910,7 +921,26 @@ private struct ToolSession {
     //
     // Each returns true if anything happened (edit cancelled OR stack moved).
 
+    // The two navigation doors: the step itself, then the parameter-row prune
+    // once the history is Active again (wave plan 8640 S7a, §9.17.5 [A6-n8]).
+    // Any navigation re-keys the open block: an undo closes it (L41); a redo
+    // reopens only what its own step says (`navigateTopology_`, L42/L55).
     bool undo() {
+        const r = undoImpl_();
+        if (r) { openBlock_ = null; pruneRedoTop_(); }
+        return r;
+    }
+
+    bool redo() {
+        auto block = openBlock_;
+        openBlock_ = null;
+        const r = redoImpl_();
+        if (r) pruneRedoTop_();
+        else openBlock_ = block;
+        return r;
+    }
+
+    private bool undoImpl_() {
         terminalRedoRequested_ = false;
         // Task 8261, e001/e005: two retained adjustment rows are visible
         // after close, yet one outside Undo restores the run-start image.
@@ -1028,7 +1058,13 @@ private struct ToolSession {
         // Identity, read BEFORE the step moves the stack: the record's token is
         // the active session's and the row below carries the same token.
         const bool pair = recordCarriesActivation_();
-        Rebindable!(const Command) last = undoEntryAt_(pair ? 1 : 0);
+        // M-G (wave plan 8640 S7a, [A2-3]): the parameter rows folded into the
+        // activation pop with it, through this same tail. Exclusive with the
+        // pair: the pair's record is a press row, never folded.
+        const size_t run = absorbedRunAbove_();
+        assert(!(pair && run), "session undo: a carried record and a folded run on one activation");
+        const size_t extra = pair ? 1 : run;
+        Rebindable!(const Command) last = undoEntryAt_(extra);
         // A lifecycle row may restore the topology tool that preceded it.
         // Resolve the raw image by that predecessor's identity/session, never
         // from the incoming tool currently bound to the session.
@@ -1039,7 +1075,8 @@ private struct ToolSession {
             ? topologyAttrsFor_(activation.previousId(), activation.previousToken())
             : AttrImage.init;
         bool ok = history_.undo();
-        if (ok && pair && !history_.undo()) {
+        foreach (_; 0 .. ok ? extra : 0) {
+            if (history_.undo()) continue;
             // The row refused its undo (review of slice M4): the record is
             // already reverted, so the pair is split. The step taken stands, the
             // resync below re-baselines the tool on the mesh it now sees, and
@@ -1047,6 +1084,7 @@ private struct ToolSession {
             import log : logWarn;
             logWarn("tool", "session undo: the activation row paired with the record refused its undo");
             last = null;
+            break;
         }
         if (ok) {
             if (last.get is closedTopologyRedoSource_.get)
@@ -1059,7 +1097,8 @@ private struct ToolSession {
             if (t3 !is null && activation !is null &&
                 activation.previousHistoryTopology() &&
                 !topologyRestore.empty) {
-                t3.restoreRecordedAttrs(topologyRestore);
+                // M-H: the restored predecessor is a fresh instance.
+                t3.restoreRecordedAttrs(navigableAttrs_(t3, null, topologyRestore));
                 rememberTopologyAttrs_(topologyRestore);
             }
         }
@@ -1094,7 +1133,7 @@ private struct ToolSession {
         return true;
     }
 
-    bool redo() {
+    private bool redoImpl_() {
         terminalRedoRequested_ = false;
         if (redoClosedRecordedStep_()) return true;
         if (history_.redoEntries().length == 0 &&
@@ -1145,6 +1184,16 @@ private struct ToolSession {
         bool ok = history_.redo();
         // The redo that re-armed a tool re-armed the ROW's session: its token.
         if (ok && act !is null) adoptToken_(act.armedId, act.sessionToken());
+        // M-G: the parameter rows folded into this activation come back with
+        // it, as one step; none of their attributes is restored (C1-F2
+        // F-preset: the re-armed instance keeps its arm image).
+        if (ok && act !is null && !pair) {
+            for (auto re = history_.redoEntries(); re.length &&
+                    (re[0].flags & HistoryFlags.JoinsBelow) &&
+                    re[0].cmd.sessionToken() == act.sessionToken();
+                    re = history_.redoEntries())
+                if (!history_.redo()) break;
+        }
         if (ok && act !is null && act.previousHistoryTopology()) {
             closedTopologyId_ = act.previousId().idup;
             closedTopologyToken_ = act.previousToken();
@@ -1203,6 +1252,13 @@ private struct ToolSession {
         if (topologyPending_ && reporting_(t) &&
             t.sessionPolicy().historyTopologySteps)
             stepEnds(t, false);
+        // A switch or a drop closes the open step (L38/L45; a drop by the
+        // switch rule, gap t): the fold walk, before the lifecycle row lands.
+        if ((r == CloseReason.switch_ || r == CloseReason.drop) && reporting_(t)
+            && t.sessionPolicy().foldsParamRowsIntoBlock) {
+            foldOpenRows_(null);
+            openBlock_ = null;
+        }
         if (r != CloseReason.command && r != CloseReason.enter) {
             // The door commits (or discards, or has nothing left); the
             // session only accounts for the row it may write, and the
@@ -1310,6 +1366,14 @@ private struct ToolSession {
             clearClosedTopologyRedo_();
             redoneTopologyStep_ = false;
         }
+        // A new session's open block is its own key/UI-door activation row
+        // (`joinsFirstGroup`); a script-door arm, and an arm replayed by a
+        // history step, open none (C1-F3; §9.19.3).
+        openBlock_ = null;
+        if (history_.state() != UndoState.Suspend && arm !is null &&
+            t.sessionPolicy().foldsParamRowsIntoBlock && arm.armedId() == id &&
+            arm.joinsFirstGroup() && arm.sessionToken() == token)
+            openBlock_ = arm;
         ToolSessionLink link;
         // The tool's own door is the only PRESS (plan 8646 [R2-2]): every
         // internal `stepBegins` passes `press: false`.
@@ -1374,6 +1438,10 @@ private struct ToolSession {
         if (!reporting_(t)) return;
         if (t.sessionPolicy().historyTopologySteps) {
             topologyPendingPress_ = press;
+            // M-C (a): a press of a `pressOpensOperation` tool opens a new
+            // operation — the haul resets BEFORE the open image is taken.
+            if (press && t.sessionPolicy().pressOpensOperation)
+                t.openOperation(PressKind.shift, AttrImage.init);
             auto client = cast(TopologyStepClient)t;
             if (topologyDormant_) {
                 topologyPendingAttrs_ = beforeWrite.empty
@@ -1459,9 +1527,11 @@ private struct ToolSession {
                 t.sessionPolicy().rebaseTopologyAfterStep;
             cmd.setTopologyStep(topologyPendingAttrs_, attrs,
                 topologyPendingBasis_, rebaseAfter
-                    ? after : client.topologyStepBasis(), topologyPendingPress_);
+                    ? after : client.topologyStepBasis(), topologyPendingPress_,
+                instanceOf_(t));
             if (client.recordTopologyStep(cmd) && undoTop_() is cmd) {
                 history_.markEntrySession(cmd, token_);
+                noteFoldRow_(t, cmd);
                 rememberTopologyAttrs_(attrs);
                 lastAfter_ = after;
                 if (t.sessionPolicy().rebaseTopologyAfterStep)
@@ -1771,14 +1841,33 @@ private struct ToolSession {
             auto cmd = cast(const MeshSessionEdit)undoTop_();
             if (cmd is null || !cmd.isTopologyStep() ||
                 cmd.sessionToken() != token_) return false;
+            // A folded group (§9.19.3) pops whole, down to its base, and the
+            // BASE's open image comes back. A group based on the activation is
+            // the activation path's ([A2-3]: it must run that path's tail).
+            size_t run = foldedRunAbove_();
+            if (run && cast(const ToolActivationCommand)undoEntryAt_(run) !is null)
+                return false;
+            if (run) {
+                auto base = cast(const MeshSessionEdit)undoEntryAt_(run);
+                if (base is null || !base.isTopologyStep() || base.sessionToken() != token_)
+                    run = 0;   // not a group this session can pop: the top alone
+            }
             const pair = recordCarriesActivation_();
+            assert(!(pair && run), "session undo: a carried record and a folded run on one row");
+            Rebindable!(const MeshSessionEdit) popped = cmd;
             if (!history_.undo()) return false;
+            foreach (_; 0 .. run) {
+                auto next = cast(const MeshSessionEdit)undoTop_();
+                if (!history_.undo()) break;
+                popped = next;
+            }
             if (pair) {
                 history_.undo();
             } else {
+                auto img = navigableAttrs_(t, popped.get, popped.stepBeforeAttrs());
                 (cast(TopologyStepClient)t).restoreTopologyStep(
-                    cmd.stepBeforeAttrs(), cmd.stepBeforeBasis());
-                rememberTopologyAttrs_(cmd.stepBeforeAttrs());
+                    img, popped.stepBeforeBasis());
+                rememberTopologyAttrs_(img);
             }
             return true;
         }
@@ -1788,31 +1877,177 @@ private struct ToolSession {
         const bool pair = act !is null && !act.dormantTopology() &&
             act.carriesFirstRecord() &&
             re.length > 1 && re[1].cmd.sessionToken() == act.sessionToken();
-        auto cmd = cast(const MeshSessionEdit)re[pair ? 1 : 0].cmd;
-        if (cmd is null || !cmd.isTopologyStep()) return false;
+        auto head = cast(const MeshSessionEdit)re[pair ? 1 : 0].cmd;
+        if (head is null || !head.isTopologyStep()) return false;
         if (!pair && (t is null || !reporting_(t) ||
             !t.sessionPolicy().historyTopologySteps ||
-            cmd.sessionToken() != token_)) return false;
+            head.sessionToken() != token_)) return false;
         if (pair) {
             if (!history_.redo()) return false;
             adoptToken_(act.armedId, act.sessionToken());
         }
         if (!history_.redo()) return pair;
+        // The rows folded above this base come back with it, as one step;
+        // the attributes are the LAST one's (C3-L2r2 G-after, through M-H).
+        Rebindable!(const MeshSessionEdit) cmd = head;
+        for (auto next = history_.redoEntries(); !pair && next.length &&
+                (next[0].flags & HistoryFlags.JoinsBelow) &&
+                next[0].cmd.sessionToken() == token_; next = history_.redoEntries()) {
+            auto row = cast(const MeshSessionEdit)next[0].cmd;
+            if (row is null || !history_.redo()) break;
+            cmd = row;
+        }
         redoneTopologyStep_ = true;
         auto current = tool_();
         if (current !is null && reporting_(current)) {
             const restoreBefore = pair &&
                 !current.sessionPolicy().firstTopologyRedoUsesAfterAttrs;
+            auto img = navigableAttrs_(current, cmd.get,
+                restoreBefore ? cmd.stepBeforeAttrs() : cmd.stepAfterAttrs());
             (cast(TopologyStepClient)current).restoreTopologyStep(
-                restoreBefore ? cmd.stepBeforeAttrs() : cmd.stepAfterAttrs(),
-                cmd.stepAfterBasis());
-            rememberTopologyAttrs_(restoreBefore
-                ? cmd.stepBeforeAttrs() : cmd.stepAfterAttrs());
+                img, cmd.stepAfterBasis());
+            rememberTopologyAttrs_(img);
+            // Reopen (L42): the redo of a press reopens that press's block;
+            // Reopen-base (L55): the redo of a parameter row reopens the
+            // press or activation below it.
+            if (current.sessionPolicy().foldsParamRowsIntoBlock)
+                openBlock_ = head.stepOpenedByPress() ? head : blockBelow_(head);
         }
         if (pair && current !is null && current.sessionPolicy()
                 .discardLaterTopologyRedoOnRearm)
             history_.invalidateRedo();
         return true;
+    }
+
+    // ----- the parameter-row fold (wave plan 8640 S7a, §9.19.3, §9.22.1,
+    // §9.24 [A12-3], §9.26.4) -------------------------------------------------
+
+    private static ulong instanceOf_(const Tool t) {
+        return t.preparedLifecycleOwner().value;
+    }
+
+    // M-H: a `pressOpensOperation` tool's operation context (its haul names)
+    // is restored only into the instance that recorded `row`; any other
+    // instance, or a restore that names no row, gets the image without them.
+    private static AttrImage navigableAttrs_(Tool t, const MeshSessionEdit row,
+                                             AttrImage img) {
+        const pol = t.sessionPolicy();
+        if (!pol.pressOpensOperation) return img;
+        if (row !is null && row.stepInstance() == instanceOf_(t)) return img;
+        return img.without(pol.haulAttrs);
+    }
+
+    // The contiguous `JoinsBelow` rows of this session on top of the undo
+    // stack: the run a group undo pops above its base.
+    private size_t foldedRunAbove_() {
+        const tok = currentToken();
+        const ue = history_.undoEntries();
+        size_t n;
+        while (tok != 0 && n < ue.length && (ue[$ - 1 - n].flags & HistoryFlags.JoinsBelow) &&
+               ue[$ - 1 - n].cmd.sessionToken() == tok)
+            ++n;
+        return n;
+    }
+
+    // ...when its base is this session's activation row (M-G, [A2-3]).
+    private size_t absorbedRunAbove_() {
+        import commands.tool.lifecycle : ToolActivationCommand;
+        const n = foldedRunAbove_();
+        if (n == 0) return 0;
+        auto act = cast(const ToolActivationCommand)undoEntryAt_(n);
+        return act !is null && act.sessionToken() == currentToken() ? n : 0;
+    }
+
+    private static bool foldRow_(const Command c, ulong token) {
+        auto r = cast(const MeshSessionEdit)c;
+        return r !is null && r.isTopologyStep() && !r.stepOpenedByPress()
+            && r.sessionToken() == token;
+    }
+
+    // A recorded row's place in the open block: a press closes the open step
+    // and becomes the block; a parameter row is the base of a new open step
+    // when there is none (after a navigation, or a script-door arm), else it
+    // is foldable and remembers whether the block was a press or activation.
+    private void noteFoldRow_(Tool t, MeshSessionEdit cmd) {
+        if (!t.sessionPolicy().foldsParamRowsIntoBlock) return;
+        if (cmd.stepOpenedByPress()) {
+            foldOpenRows_(cmd);
+            openBlock_ = cmd;
+            return;
+        }
+        if (openBlock_.get is null) {
+            openBlock_ = cmd;
+            return;
+        }
+        if (!foldRow_(openBlock_.get, token_))
+            history_.markEntryPreNavOpen(cmd);
+    }
+
+    // Close the open step: walk down from below `trigger` (from the top when
+    // null) over this session's contiguous parameter rows; only when the walk
+    // ENDS on the open block are they marked — `JoinsBelow`, plus `StepClosed`
+    // (and the base too) when the block is itself a parameter row.
+    private void foldOpenRows_(const Command trigger) {
+        auto base = openBlock_.get;
+        if (base is null) return;
+        const ue = history_.undoEntries();
+        size_t hi = ue.length;
+        if (trigger !is null) {
+            if (hi == 0 || ue[hi - 1].cmd !is trigger) return;
+            --hi;
+        }
+        size_t lo = hi;
+        while (lo > 0 && ue[lo - 1].cmd !is base) {
+            if (!foldRow_(ue[lo - 1].cmd, token_)) return;   // ends elsewhere
+            --lo;
+        }
+        if (lo == 0) return;   // the block is not on the stack
+        const rowBase = foldRow_(base, token_);
+        foreach (k; lo .. hi) {
+            history_.markEntryJoinsBelow(ue[k].cmd);
+            if (rowBase) history_.markEntryStepClosed(ue[k].cmd);
+        }
+        if (rowBase) history_.markEntryStepClosed(base);
+    }
+
+    // The press or activation row of this session below `row` (on the undo
+    // stack), across this session's parameter rows; null when the walk ends
+    // on anything else.
+    private const(Command) blockBelow_(const Command row) {
+        import commands.tool.lifecycle : ToolActivationCommand;
+        const ue = history_.undoEntries();
+        size_t i = ue.length;
+        while (i > 0 && ue[i - 1].cmd !is row) --i;
+        if (i == 0) return null;
+        --i;
+        while (i > 0 && foldRow_(ue[i - 1].cmd, token_)) --i;
+        if (i == 0) return null;
+        auto c = ue[i - 1].cmd;
+        auto press = cast(const MeshSessionEdit)c;
+        if (press !is null && press.isTopologyStep() && press.stepOpenedByPress()
+            && press.sessionToken() == token_) return c;
+        auto act = cast(const ToolActivationCommand)c;
+        return act !is null && act.sessionToken() == token_ ? c : null;
+    }
+
+    // L2p/L53/L54 (§9.26.4 [A14-4]): after a navigation, a redo-head
+    // parameter row of this session whose open step was never closed and that
+    // was written while the block was a press or the activation (`PreNavOpen`)
+    // redoes only in the instance that wrote it; anywhere else the redo stack
+    // is cut there — everything above it is that open step's, so the cut is
+    // exact. Runs once the history is Active again, else `invalidateRedo`
+    // refuses (m18).
+    private void pruneRedoTop_() {
+        auto t = tool_();
+        if (!reporting_(t)) return;
+        const re = history_.redoEntries();
+        if (re.length == 0 || !foldRow_(re[0].cmd, token_)) return;
+        const f = re[0].flags;
+        if (!(f & HistoryFlags.PreNavOpen) ||
+            (f & (HistoryFlags.JoinsBelow | HistoryFlags.StepClosed))) return;
+        if ((cast(const MeshSessionEdit)re[0].cmd).stepInstance() == instanceOf_(t))
+            return;
+        history_.invalidateRedo();
     }
 
     private AttrImage topologyAttrsFor_(string id, ulong token) {

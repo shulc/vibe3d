@@ -124,6 +124,16 @@ enum HistoryFlags : uint {
     ClosedGroupRedo = 1 << 13, // A closed group retains all linked rows for one Redo.
     ClosedStep = 1 << 12, // A closed run whose outside navigation moves one
                           // completed gesture and preserves its redo branch.
+    // The parameter-row fold of a `foldsParamRowsIntoBlock` session (wave plan
+    // 8640 S7a, §9.19.3/§9.22.1/§9.24): set by ToolSession only, travelling
+    // with the entry across undo and redo.
+    JoinsBelow = 1 << 14, // Pops and redoes as ONE step with the run below it,
+                          // down to the first unmarked row (the block's base).
+    StepClosed = 1 << 15, // Its open step was closed by a press or a session
+                          // close: an ordinary row, redoable in any instance.
+    PreNavOpen = 1 << 16, // Written while the open block was a press or the
+                          // activation; unclosed, it redoes only in the
+                          // instance that wrote it (L2p, L53).
 }
 
 version (unittest) private HistoryEntry preparedTestEntry(Command cmd,
@@ -1967,6 +1977,28 @@ final class CommandHistory {
         undoStack ~= entry;
 
         return true;
+    }
+
+    /// Set fold bits (`JoinsBelow`, `StepClosed`, `PreNavOpen` — nothing
+    /// else) on the undo-stack entry holding `expect`, by IDENTITY. Returns
+    /// whether it found it.
+    bool markEntryJoinsBelow(const Command expect) nothrow @nogc {
+        return markEntryFold_(expect, HistoryFlags.JoinsBelow);
+    }
+    /// ditto
+    bool markEntryStepClosed(const Command expect) nothrow @nogc {
+        return markEntryFold_(expect, HistoryFlags.StepClosed);
+    }
+    /// ditto
+    bool markEntryPreNavOpen(const Command expect) nothrow @nogc {
+        return markEntryFold_(expect, HistoryFlags.PreNavOpen);
+    }
+
+    private bool markEntryFold_(const Command expect, uint bit) nothrow @nogc {
+        if (expect is null) return false;
+        foreach_reverse (ref e; undoStack)
+            if (e.cmd is expect) { e.flags |= bit; return true; }
+        return false;
     }
 
     /// Tag a record on the undo stack with the tool session that wrote it
