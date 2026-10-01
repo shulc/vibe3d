@@ -46,10 +46,11 @@ unittest {
         "census: the hook must be `an open press whose mesh left its press image`");
     immutable prepared = bodyOf(code,
         "PreparedTopologyPenDeactivateImage buildPreparedDeactivate(");
-    assert(countOccurrences(prepared, "context.prepare(") == 0
-        && countOccurrences(prepared, "setSnapshots(") == 0,
+    assert(countOccurrences(prepared, "context.prepare(") == 0,
         "census: the prepared switch must prepare no history: the session's close "
         ~ "records an open press before the door");
+    assert(countOccurrences(prepared, "setSnapshots(") == 0,
+        "census: the prepared switch must build no Move record of its own");
     // Population: the scanned bodies are non-empty.
     assert(hook.length > 20 && prepared.length > 20,
         "census: a scanned body is empty (" ~ hook.length.to!string ~ ", "
