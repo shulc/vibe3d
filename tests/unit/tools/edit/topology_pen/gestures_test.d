@@ -731,6 +731,41 @@ unittest {
         "the drop must clear the held and inert masks");
 }
 
+// A button pressed again after it turned inert is live again: its own
+// release closes its step (a lost inert release must not swallow the next
+// gesture's release and leave the step open).
+unittest {
+    import view : View;
+    import editmode : EditMode;
+    import toolpipe.packets : SubjectPacket;
+    auto t       = new TopologyPenTool();
+    auto view    = new View(0, 0, 100, 100);
+    auto history = new CommandHistory();
+    Mesh m;
+    t.meshSrc_ = () => &m;
+    m.addVertex(Vec3(1, 2, 3));
+    auto session = bindPenSession(t, history);
+    t.moveEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                   "mesh.topoPen_move", "Topology Move",
+                                                   MeshEditScope.Position);
+    loadSDL();
+    SubjectPacket subj;
+    subj.mesh = &m;
+    VectorStack vts;
+    vts.put(&subj);
+    assert(t.openPressStep(SDL_BUTTON_LEFT, PenMode.Move)
+           && t.openPressStep(SDL_BUTTON_MIDDLE, PenMode.Remove)
+           && t.inertButtons_ == (1 << (SDL_BUTTON_LEFT - 1)),
+        "rig: the second press turns LEFT inert");
+    // LEFT's release is lost; LEFT is pressed again.
+    assert(t.openPressStep(SDL_BUTTON_LEFT, PenMode.Move) && history.undoEntries().length == 2,
+        "rig: the re-press closes the MIDDLE step and opens its own");
+    SDL_MouseButtonEvent up;
+    up.button = SDL_BUTTON_LEFT;
+    assert(t.onMouseButtonUp(up, vts) && !t.stepOpen_ && history.undoEntries().length == 3,
+        "the re-pressed button's release must close its own step");
+}
+
 // The chord mode's DEFAULT carrier (plan 8646): a press whose handler commits
 // nothing ends as one row through the default of the mode it resolved to. Every
 // mode's row is pinned here by the generic wire ids `bindPenSession` installs.
@@ -12168,9 +12203,9 @@ unittest {
         }
     }
     // Floors first: an empty scan would satisfy both rules vacuously.
-    assert(blocks.length == 181 && histBlocks == 82 && calls == 79 && kernels == 65,
-        format("gestures census population changed: %d top-level blocks (181), %d read "
-             ~ "history (82), %d bracketed-list calls in them (79), %d of them kernels (65)",
+    assert(blocks.length == 182 && histBlocks == 83 && calls == 79 && kernels == 65,
+        format("gestures census population changed: %d top-level blocks (182), %d read "
+             ~ "history (83), %d bracketed-list calls in them (79), %d of them kernels (65)",
                blocks.length, histBlocks, calls, kernels));
     assert(bad.length == 0, "gestures census:\n" ~ bad.join("\n"));
 }
