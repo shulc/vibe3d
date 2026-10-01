@@ -616,9 +616,28 @@ unittest {
         "after a cancel the next press must open its own step");
     assert(!t.openPressStep(SDL_BUTTON_MIDDLE, PenMode.Remove),
         "a second button during a hold must not open a second step");
-    t.closePressStep();
-    assert(history.undoEntries().length == 1,
-        "the press after a cancel is one row");
+    // ...and that other button's release does not end the hold's step.
+    {
+        import toolpipe.packets : SubjectPacket;
+        loadSDL();   // the release reads SDL's modifier state
+        SubjectPacket subj;
+        subj.mesh = &m;
+        VectorStack vts;
+        vts.put(&subj);
+        SDL_MouseButtonEvent other;
+        other.button = SDL_BUTTON_MIDDLE;
+        t.onMouseButtonUp(other, vts);
+        assert(t.stepOpen_ && history.undoEntries().length == 0,
+            "another button's release must leave the hold's step open");
+        m.vertices[a] = Vec3(3, 2, 3);
+        SDL_MouseButtonEvent own;
+        own.button = SDL_BUTTON_LEFT;
+        assert(t.onMouseButtonUp(own, vts), "the hold's own release must be consumed");
+    }
+    assert(history.undoEntries().length == 1 && !t.stepOpen_,
+        "the press after a cancel is one row, ended by its own button");
+    assert(!t.hasUncommittedEdit(),
+        "a closed step is no uncommitted edit, though the mesh left its press image");
 
     // Unbound (no session to share an image): the pen captures its own press
     // image, so a cancel still restores it.
@@ -4405,6 +4424,7 @@ unittest {
     VectorStack vts;
     vts.put(&subj);
 
+    loadSDL();                 // the press/release read SDL's modifier state
     immutable uint grab = 4;   // the centre vertex
     m.syncSelection();         // the live editor's invariant: marks sized to the mesh
     const pressImage = MeshSnapshot.capture(m);

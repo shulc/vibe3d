@@ -23,6 +23,7 @@
 //   split-*-row          L40 a refused split is still one step
 //   remove-edge-noop-row L5  a Remove press latched on nothing removable
 //   fill-refusal-move        a Fill refusal's press ends as a Move row
+//   rmb-press-block          a declined RMB press never reaches the lasso
 //
 // Slice S5 (task 8730) added the cells from `no-op-presses` on: since then
 // every pen press is one topology step the session records (wave plan 8646).
@@ -30,7 +31,7 @@
 // chords' outcomes (their port slices add `chord-*` cells).
 //
 // `VIBE3D_CELL=<id>` runs one cell alone (druntime stops a module at its first
-// failed assert); the last block pins the population: 25 with no filter, 1 with
+// failed assert); the last block pins the population: 26 with no filter, 1 with
 // one (an unknown name must not pass by running nothing).
 //
 // Run via: ./run_test.d test_session_laws_topology_pen
@@ -950,6 +951,30 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
+// rmb-press-block — every bound chord press is the pen's (wave plan 8646 §1.2
+// M-F): an RMB drag that starts on empty background is one no-op step and
+// never reaches the application's region selection, which it did while a
+// declined press passed through.
+// ---------------------------------------------------------------------------
+unittest {
+    if (!cell("rmb-press-block")) return;
+    const r = rig();
+    penArmUi(r);
+    const from = penEmptyBackgroundPx();
+    const far = penVertexPx(15, "rmb-press-block v15");
+    penPlay(penGestureEvents(from[0], from[1], far[0] + 20, far[1] - 20, 3, 0, 8),
+            "rmb-press-block RMB drag across the grid");
+    auto sel = getJson("/api/selection");
+    size_t picked;
+    foreach (k; ["selectedVertices", "selectedEdges", "selectedFaces"])
+        if (k in sel.object) picked += sel[k].array.length;
+    assert(picked == 0 && penMesh() == r.a0 && penHistoryLen() == r.hp + 2 && penArmed(),
+           format("rmb-press-block: %d elements selected, mesh %s a0, history %s, armed %s",
+                  picked, penMesh() == r.a0 ? "==" : "!=", penHistoryLabels(), penArmed()));
+    writeln("PASS rmb-press-block");
+}
+
+// ---------------------------------------------------------------------------
 // Population: with no VIBE3D_CELL every cell above ran (declared last, so it
 // runs last).
 // ---------------------------------------------------------------------------
@@ -957,7 +982,7 @@ unittest {
     writeln("cells=", cellsRun);
     const only = environment.get("VIBE3D_CELL", "");
     if (only.length == 0)
-        assert(cellsRun == 25, format("topology pen session laws: %d cells ran, expected 25", cellsRun));
+        assert(cellsRun == 26, format("topology pen session laws: %d cells ran, expected 26", cellsRun));
     else
         assert(cellsRun == 1, format("topology pen session laws: VIBE3D_CELL=%s ran %d cells, expected 1 "
                                      ~ "(an unknown name runs none)", only, cellsRun));
