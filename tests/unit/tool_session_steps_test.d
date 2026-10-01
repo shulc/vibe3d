@@ -1673,3 +1673,182 @@ unittest {
            format("S6 abort: an abandoned drop still wrote its row (%s drop / %s task rows)",
                   drops, tasks));
 }
+
+// ---- wave plan 8640 S7a: the operation context and the parameter-row fold ----
+//
+// A topology stand-in whose policy is either the plain one or carries the two
+// S7a data AS THE PEN DECLARES THEM (read from `TopologyPenTool.sessionPolicy()`,
+// so a pen policy that dropped either datum turns these cells into the "off"
+// arm). `v` is its haul (the operation context), `k` an ordinary attribute.
+
+private ToolSessionPolicy foldPolicy(bool on) {
+    import tools.edit.topology_pen : TopologyPenTool;
+    ToolSessionPolicy p = { activationRow: true, sessionSteps: true,
+        historyTopologySteps: true, opensAt: OpensAt.firstPress,
+        imageAttrs: ["v", "k"], haulAttrs: ["v"] };
+    if (on) {
+        const pen = (new TopologyPenTool).sessionPolicy();
+        p.pressOpensOperation = pen.pressOpensOperation;
+        p.foldsParamRowsIntoBlock = pen.foldsParamRowsIntoBlock;
+    }
+    return p;
+}
+
+private final class FoldTool : Tool, TopologyStepClient {
+    Mesh* m;
+    CommandHistory h;
+    View view;
+    float v = 0.0f, k = 0.0f;
+    ToolSessionPolicy pol;
+    this(bool on) { pol = foldPolicy(on); }
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc { return pol; }
+    override Param[] params() {
+        return [Param.float_("v", "V", &v, 0.0f), Param.float_("k", "K", &k, 0.0f)];
+    }
+    override Mesh* topologyStepMesh() { return m; }
+    override MeshSnapshot topologyStepBasis() { return MeshSnapshot.init; }
+    override Command topologyStepCarrier() {
+        import commands.mesh.session_edit : MeshSessionEdit;
+        return new MeshSessionEdit(m, view, EditMode.Polygons, "t.fold", "Fold");
+    }
+    override bool recordTopologyStep(Command cmd) { h.record(cmd); return true; }
+    override string topologyStepLabel() { return "Fold"; }
+    override void setTopologyDormant(bool) {}
+    override void rebaseTopologyStep(MeshSnapshot) {}
+    override void restoreTopologyStep(in AttrImage attrs, MeshSnapshot) {
+        restoreRecordedAttrs(attrs);
+    }
+    void press() { sessionStepBegins(); }
+    void release() { sessionStepEnds(); }
+}
+
+private void foldWrite(EditSession s, FoldTool t, float value) {
+    auto before = t.captureAttrImage();
+    t.k = value;
+    s.orchestrateParameterChange(t, "k", ParameterChangeSource.InteractiveValue,
+        ParameterChangePhase.ValueWritten, before);
+    s.orchestrateParameterChange(t, "", ParameterChangeSource.InteractiveValue,
+        ParameterChangePhase.BatchComplete);
+}
+
+private uint flagsAt(CommandHistory h, size_t i) { return h.undoEntries()[i].flags; }
+
+unittest { // S7a: an IntArray and a PodArray!Vec3 image attribute round-trip raw
+    uint[] verts = [5, 9, 10];
+    Vec3[] orig = [Vec3(1, 2, 3), Vec3(-4, 0.5f, 6)];
+    auto pv = Param.intArray_("stepVerts", "V", &verts);
+    auto po = Param.podArray_("stepOrig", "O", &orig);
+    const rv = pv.snapshotRaw(), ro = po.snapshotRaw();
+    verts = [1];
+    orig = null;
+    pv.restoreRaw(rv);
+    po.restoreRaw(ro);
+    assert(verts == [5u, 9, 10] && orig == [Vec3(1, 2, 3), Vec3(-4, 0.5f, 6)],
+           format("S7a raw round trip: verts %s orig %s", verts, orig));
+    // The empty image restores empty (a press's reset descriptor).
+    uint[] none;
+    auto pn = Param.intArray_("stepVerts", "V", &none);
+    const rn = pn.snapshotRaw();
+    none = [7];
+    pn.restoreRaw(rn);
+    assert(none.length == 0, format("S7a raw round trip: the empty image restored %s", none));
+}
+
+unittest { // S7a u1, M-C (a) + M-H: the press resets the haul; a row's haul comes back only into its instance
+    import command_history : HistoryFlags;
+    import commands.mesh.session_edit : MeshSessionEdit;
+    size_t cells;
+    foreach (on; [false, true]) foreach (same; [true, false]) {
+        Mesh m = makeCube();
+        auto h = new CommandHistory();
+        auto t1 = new FoldTool(on);
+        t1.m = &m; t1.h = h; t1.view = new View(0, 0, 1, 1);
+        t1.v = 3.0f;
+        Tool active = t1;
+        auto s = new EditSession(() => active, h, () { active = null; });
+        s.noteArm("t.fold", 1);
+        t1.press();
+        assert(t1.v == (on ? 0.0f : 3.0f),
+               format("S7a u1 (on %s): the press left the haul at %s (reader (a))", on, t1.v));
+        t1.v = 5.0f; t1.k = 7.0f;
+        m.vertices[0].y += 1.0f;
+        t1.release();
+        auto row = cast(const MeshSessionEdit)h.undoEntries()[$ - 1].cmd;
+        assert(row !is null && row.stepInstance() == t1.preparedLifecycleOwner().value,
+               "S7a u1: the row does not carry its recording instance");
+        assert(s.navigate(true));
+        assert(t1.v == (on ? 0.0f : 3.0f) && t1.k == 0.0f,
+               format("S7a u1 (on %s): undo showed v %s k %s, not the open image", on, t1.v, t1.k));
+        auto t2 = new FoldTool(on);
+        t2.m = &m; t2.h = h; t2.view = t1.view;
+        t2.v = 9.0f;
+        if (!same) { active = t2; s.noteArm("t.fold", 1); }   // a re-armed instance, same session
+        assert(s.navigate(false));
+        auto cur = same ? t1 : t2;
+        const wantV = on && !same ? 9.0f : 5.0f;
+        assert(cur.v == wantV && cur.k == 7.0f,
+               format("S7a u1 (on %s, same instance %s): redo restored v %s k %s, M-H says v %s k 7",
+                      on, same, cur.v, cur.k, wantV));
+        ++cells;
+    }
+    assert(cells == 4, format("S7a u1: %s of the four images checked", cells));
+}
+
+unittest { // S7a u2, the fold: two pre-press rows fold into the activation at the press; off: none
+    import command_history : HistoryFlags;
+    foreach (on; [true, false]) {
+        Mesh m = makeCube();
+        auto h = new CommandHistory();
+        auto t = new FoldTool(on);
+        t.m = &m; t.h = h; t.view = new View(0, 0, 1, 1);
+        Tool active = t;
+        auto s = new EditSession(() => active, h, () { active = null; });
+        auto act = tokenRow(&m, "t.fold", "", true, false, 5);
+        act.onDeactivate = () { active = null; };
+        h.recordToolLifecycle(act);
+        s.noteArm("t.fold", 5);
+        foldWrite(s, t, 1.0f);
+        foldWrite(s, t, 2.0f);
+        t.press();
+        m.vertices[0].y += 1.0f;
+        t.release();
+        assert(h.undoEntries().length == 4, format("S7a u2 rig: depth %s", h.undoEntries().length));
+        size_t marked;
+        foreach (i; 1 .. 3) if (flagsAt(h, i) & HistoryFlags.JoinsBelow) ++marked;
+        assert(marked == (on ? 2 : 0) && !(flagsAt(h, 3) & HistoryFlags.JoinsBelow),
+               format("S7a u2 (on %s): %s rows marked JoinsBelow", on, marked));
+        assert(s.navigate(true) && h.undoEntries().length == 3, "S7a u2: the press did not pop alone");
+        assert(s.navigate(true));
+        assert(h.undoEntries().length == (on ? 0 : 2) && (active is null) == on,
+               format("S7a u2 (on %s): the next undo left depth %s, tool %s", on,
+                      h.undoEntries().length, active !is null));
+    }
+}
+
+unittest { // S7a u3: a press whose walk meets a foreign-token row marks none
+    import command_history : HistoryFlags;
+    Mesh m = makeCube();
+    auto h = new CommandHistory();
+    auto t = new FoldTool(true);
+    t.m = &m; t.h = h; t.view = new View(0, 0, 1, 1);
+    Tool active = t;
+    auto s = new EditSession(() => active, h, () { active = null; });
+    h.recordToolLifecycle(tokenRow(&m, "t.fold", "", true, false, 5));
+    s.noteArm("t.fold", 5);
+    foldWrite(s, t, 1.0f);
+    // Another session's parameter row: every term of a fold row but the token.
+    import commands.mesh.session_edit : MeshSessionEdit;
+    auto foreign = new MeshSessionEdit(&m, t.view, EditMode.Polygons, "t.other", "Other");
+    auto snap = MeshSnapshot.capture(m);
+    foreign.setSnapshots(snap, snap);
+    foreign.setTopologyStep(AttrImage.init, AttrImage.init, MeshSnapshot.init, MeshSnapshot.init,
+                            false, t.preparedLifecycleOwner().value);
+    foreign.markSession(6);
+    h.record(foreign);
+    t.press();
+    t.release();
+    assert(h.undoEntries().length == 4 && h.undoEntries()[2].cmd is foreign,
+           format("S7a u3 rig: depth %s", h.undoEntries().length));
+    assert(!(flagsAt(h, 1) & HistoryFlags.JoinsBelow),
+           "S7a u3: the walk crossed a foreign row and folded the parameter row");
+}
