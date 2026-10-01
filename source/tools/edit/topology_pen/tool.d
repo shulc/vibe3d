@@ -1263,6 +1263,8 @@ public:
         // on Drag Weld); no hover type is picked here yet, so nothing is drawn.
         static immutable ToolSessionPolicy policy = {
             activationRow: true, rollovers: Rollover.target,
+            // L57 (C5): a UI-door recording command keeps the pen armed.
+            commandClose: CommandClose.uiDoor,
             sessionSteps: true, historyTopologySteps: true,
             rebaseTopologyAfterStep: false, dropWritesRow: true,
             refusesDisabledParamWrites: true,

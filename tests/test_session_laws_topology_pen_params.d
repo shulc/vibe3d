@@ -30,7 +30,9 @@
 //   switch-closed-redo            C4-switch-closed (L53 Closed)
 //   rearm-redo-opens-nothing      ours: a re-arming redo opens no block
 //   fold-on-drop                  gap t: a drop folds by the switch rule
-//   fold-not-on-command           §9.19.3: a command close is no fold trigger
+//   fold-on-command(-then-press)  L57 (C5, A17): a UI-door recording command
+//                                      folds the open step; the pen stays armed
+//   no-fold-on-unrecorded-command ours: a command writing no row folds nothing
 //   discard-resets-offsets        a discarded gesture restores its context
 //   cross-tool-redo               ours (gap ee''): an open pen row at the redo
 //                                      head under a tool armed without a row
@@ -1182,30 +1184,85 @@ unittest {
     writeln("PASS fold-on-drop");
 }
 
-// fold-not-on-command — the fold triggers are a press, a switch, a re-typed
-// arm and a drop (§9.19.3 (i)/(ii), §9.22.1); nothing else closes the open
-// step. A recording command through the UI door with the pen armed reaches the
-// session's close (`CloseReason.command`) and leaves the pen armed: the row
-// written before it stays its own step, under the command's own row.
+// fold-on-command — L57 (capture C5-sel / C5-geo; amendment A17): a recording
+// command through the UI door with the pen armed ends the post-mode session,
+// so it closes the open step by the switch rule — a selection command and a
+// model command alike — and the pen stays armed. The command is its own row:
+// z1 pops it (the pen stays, Offset X still 0.1), z2 pops g1 AND the parameter
+// row together, z3 the activation.
 unittest {
-    if (!cell("fold-not-on-command")) return;
+    if (!cell("fold-on-command")) return;
+    size_t ran;
+    foreach (cmd; ["select.invert", "mesh.flip"]) {
+        const id = "fold-on-command " ~ cmd;
+        const r = rig();
+        penArmUi(r);
+        moveV5(id ~ " g1");
+        const g1 = penMesh();
+        w("offsetX", "0.1");
+        penLineUi(cmd);
+        assert(penArmed() && penHistoryLen() == r.hp + 4,
+               format("%s: armed %s, history %s (expected the command's own row, the pen armed)",
+                      id, penArmed(), penHistoryLabels()));
+        if (cmd == "mesh.flip")
+            assert(penMesh() != g1, id ~ " rig: the flip changed nothing");
+        z(id ~ " z1");
+        at(id, "z1 (the command's row)", g1, true, r.hp + 3);
+        assert(is01(attrNum("offsetX")), format("%s z1: offsetX %s, expected 0.1", id,
+                                                attrNum("offsetX")));
+        z(id ~ " z2");
+        at(id, "z2 (g1 and the row as one)", r.a0, true, r.hp + 1);
+        z(id ~ " z3");
+        at(id, "z3", r.a0, false, r.hp);
+        ++ran;
+    }
+    assert(ran == 2, format("fold-on-command: %s commands, expected 2", ran));
+    writeln("PASS fold-on-command");
+}
+
+// fold-on-command-then-press — L57 (C5-sel-press / C5-geo-press): a press after
+// the command is its own step and the open step does not span the command:
+// z1 pops g2 alone, z2 the command, z3 g1 and the row together.
+unittest {
+    if (!cell("fold-on-command-then-press")) return;
     const r = rig();
     penArmUi(r);
-    moveV5("fold-not-on-command g1");
+    moveV5("fold-on-command-then-press g1");
+    const g1 = penMesh();
+    w("offsetX", "0.1");
+    penLineUi("select.invert");
+    const c = penMesh();
+    moveV10("fold-on-command-then-press g2");
+    assert(penHistoryLen() == r.hp + 5, "fold-on-command-then-press g2: "
+                                        ~ penHistoryLabels().join(","));
+    z("fold-on-command-then-press z1");
+    at("fold-on-command-then-press", "z1 (g2 alone)", c, true, r.hp + 4);
+    z("fold-on-command-then-press z2");
+    at("fold-on-command-then-press", "z2 (the command)", g1, true, r.hp + 3);
+    z("fold-on-command-then-press z3");
+    at("fold-on-command-then-press", "z3 (g1 and the row as one)", r.a0, true, r.hp + 1);
+    writeln("PASS fold-on-command-then-press");
+}
+
+// no-fold-on-unrecorded-command — ours (not captured; the card's gap row): a
+// command that writes no undo row (`viewport.fit`) is no fold trigger, so the
+// parameter row stays its own step (the L38 control shape).
+unittest {
+    if (!cell("no-fold-on-unrecorded-command")) return;
+    const r = rig();
+    penArmUi(r);
+    moveV5("no-fold-on-unrecorded-command g1");
     const g1 = penMesh();
     const og1 = offs();
-    assert(len3(og1) > 1e-3, "fold-not-on-command rig: g1 reported no offset " ~ fmt3(og1));
     w("offsetX", "0.1");
-    penLineUi("select.element vertex set 0");
-    at("fold-not-on-command", "command (the pen stays, the command is a row)", g1, true, r.hp + 4);
-    z("fold-not-on-command z1");
-    at("fold-not-on-command", "z1 (the command's row)", g1, true, r.hp + 3);
-    z("fold-not-on-command z2");
-    at("fold-not-on-command", "z2 (the parameter row alone)", g1, true, r.hp + 2);
-    offsAre("fold-not-on-command", "z2 (the row's before image: g1's)", og1);
-    z("fold-not-on-command z3");
-    at("fold-not-on-command", "z3 (g1)", r.a0, true, r.hp + 1);
-    writeln("PASS fold-not-on-command");
+    penLineUi("viewport.fit");
+    at("no-fold-on-unrecorded-command", "fit (no row)", g1, true, r.hp + 3);
+    z("no-fold-on-unrecorded-command z1");
+    at("no-fold-on-unrecorded-command", "z1 (the parameter row alone)", g1, true, r.hp + 2);
+    offsAre("no-fold-on-unrecorded-command", "z1 (the row's before image: g1's)", og1);
+    z("no-fold-on-unrecorded-command z2");
+    at("no-fold-on-unrecorded-command", "z2 (g1)", r.a0, true, r.hp + 1);
+    writeln("PASS no-fold-on-unrecorded-command");
 }
 
 // discard-resets-offsets — a release while another pen button is held
@@ -1279,7 +1336,7 @@ unittest {
     writeln("cells=", cellsRun);
     const only = environment.get("VIBE3D_CELL", "");
     if (only.length == 0)
-        assert(cellsRun == 43, format("topology pen S7a laws: %d cells ran, expected 43", cellsRun));
+        assert(cellsRun == 45, format("topology pen S7a laws: %d cells ran, expected 45", cellsRun));
     else
         assert(cellsRun == 1, format("topology pen S7a laws: VIBE3D_CELL=%s ran %d cells, expected 1 "
                                      ~ "(an unknown name runs none)", only, cellsRun));

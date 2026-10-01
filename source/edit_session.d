@@ -1278,6 +1278,14 @@ private struct ToolSession {
             if (cc == CommandClose.none
                 || (door == CommandDoor.script && cc != CommandClose.allDoors))
                 return CloseOutcome(false, false);
+            // L57 (capture C5; plan amendment A17): a recording command
+            // reaching this tool's close ends the post-mode session, so it
+            // closes the open step by the switch rule (L38) — selection and
+            // model commands alike — and the tool stays armed.
+            if (reporting_(t) && t.sessionPolicy().foldsParamRowsIntoBlock) {
+                foldOpenRows_(null);
+                openBlock_ = null;
+            }
             // (3) an idle covered tool stays armed and is not called (R20 law).
             if (cc == CommandClose.uiDoor && !t.hasUncommittedEdit())
                 return CloseOutcome(false, true);

@@ -98,7 +98,7 @@ private immutable Row[] kTable = [
     Row("mesh.smoothShiftTool", "SmoothShiftTool", true, Prov.inferred, CommandClose.uiDoor, CloseProv.inferred),
     Row("mesh.tack", "TackTool", false, Prov.noCounterpart, CommandClose.none, CloseProv.notCaptured),
     Row("mesh.thickenTool", "SmoothShiftTool", true, Prov.inferred, CommandClose.uiDoor, CloseProv.inferred),
-    Row("mesh.topoPen", "TopologyPenTool", true, Prov.carried, CommandClose.none, CloseProv.notCaptured),
+    Row("mesh.topoPen", "TopologyPenTool", true, Prov.carried, CommandClose.uiDoor, CloseProv.captured),
     Row("mesh.vertexBevel", "VertexBevelTool", true, Prov.inferred, CommandClose.uiDoor, CloseProv.inferred),
     Row("mesh.vertexExtrude", "VertexExtrudeTool", true, Prov.inferred, CommandClose.uiDoor, CloseProv.inferred),
     Row("move", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
@@ -281,10 +281,11 @@ unittest { // (1) id -> policy, over every registered id
     assert(replacesIds == ["poly.bevel"],
            format("M3b policy table: headlessReplacesWindow on %s, recorded [poly.bevel]",
                   replacesIds));
-    // Measured on the M2 tree (`grep -c 'CommandClose.<value>, CloseProv'` over this file).
-    assert(closeCount == [22, 24, 25],
+    // Measured on the M2 tree (`grep -c 'CommandClose.<value>, CloseProv'` over this file);
+    // S7a round 3 moved mesh.topoPen none -> uiDoor (L57, capture C5).
+    assert(closeCount == [21, 25, 25],
            format("M2 policy table: commandClose none/uiDoor/allDoors on %s ids, recorded "
-                  ~ "22/24/25", closeCount));
+                  ~ "21/25/25", closeCount));
     // The M7 ratchet, only down: ids whose arm writes no activation row yet
     // (gap 369). M3b ported poly.bevel: 42 (38) -> 41 (37); M4 ported
     // edge.extend: -> 40 (36). Growth is a new id born off the H1 law, or a
