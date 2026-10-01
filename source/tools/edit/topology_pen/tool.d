@@ -389,8 +389,8 @@ private:
     private ubyte        stepButton_;
     // Overlapping buttons (L56, wave plan §9.26.1/§9.27): each press is its
     // OWN step. `heldMask_` holds the pen's consumed buttons still down (bit
-    // b-1 for SDL button b, intersected with the router's held set on every
-    // pen button event so a lost release cannot stick); a press while a step
+    // b-1 for SDL button b, intersected with the router's held set at every
+    // pen release so a lost release cannot stick); a press while a step
     // is open ends the earlier gesture and makes its button INERT
     // (`inertButtons_`): its release is consumed and dispatches nothing.
     package ubyte        heldMask_;
@@ -2967,12 +2967,9 @@ public:
             : resolveToolAction(bindings(), btn, mods);
         if (a == PassThrough) return false;
         immutable ov = kChordOv[cast(TopoPenChord) a];
-        immutable ubyte bit = penButtonBit(e.button);
-        heldMask_ &= cast(ubyte)(g_heldGestureButtons.bits | bit);
-        inertButtons_ &= heldMask_;
         openPressStep(e.button, ov.mode == ModeOv.FromUser ? penMode_
                                                            : modeOfOverride(ov.mode));
-        heldMask_ |= bit;
+        heldMask_ |= penButtonBit(e.button);
         dispatchInput(btn, mods, InputPhase.Down, e, vts);
         return true;
     }
