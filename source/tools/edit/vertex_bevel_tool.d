@@ -117,7 +117,9 @@ class VertexBevelTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClien
             activationRow: true,
             commandClose: CommandClose.uiDoor,
             sessionSteps: true, historyTopologySteps: true,
-            opensAt: OpensAt.firstPress,
+            // The operation begins at the arm (topology-redo law 1; captured
+            // script cell + three UI cells `s01 armed=True`).
+            opensAt: OpensAt.arm,
             imageAttrs: ["inset"], haulAttrs: ["inset"]
         };
         return policy;

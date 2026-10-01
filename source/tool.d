@@ -451,6 +451,31 @@ struct ToolSessionPolicy {
     bool foldsParamRowsIntoBlock;
 }
 
+/// The captured topology-operation model (task 8920, law 1): history-owned
+/// topology steps whose parameter rows do not fold (the pen folds them — a
+/// different captured mechanism). Derived from policy data, never from an id.
+bool capturedTopologyModel(in ToolSessionPolicy p) pure nothrow @nogc {
+    return p.historyTopologySteps && !p.foldsParamRowsIntoBlock;
+}
+
+/// The operation begins at the arm (the families that apply on arming).
+bool opensAtArm(in ToolSessionPolicy p) pure nothrow @nogc {
+    return p.opensAt == OpensAt.arm;
+}
+
+/// Whether a key/UI-door activation joins the record that follows it (one undo
+/// step): inside the model, every tool whose operation begins at a press;
+/// outside it, the tool's declared `recordCarriesActivation` (Edge Extend).
+bool firstStepCarriesActivation(in ToolSessionPolicy p) pure nothrow @nogc {
+    return capturedTopologyModel(p) ? !opensAtArm(p) : p.recordCarriesActivation;
+}
+
+/// Whether a user arm leaves the post mode closed until the first press:
+/// the declared flag, or a model tool whose operation begins at a press.
+bool postmodeStartsOnPressFor(in ToolSessionPolicy p) pure nothrow @nogc {
+    return p.postmodeStartsOnPress || (capturedTopologyModel(p) && !opensAtArm(p));
+}
+
 class Tool : ParamProvider {
 private:
     immutable ulong preparedToolOwnerIdentity_;

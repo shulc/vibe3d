@@ -474,7 +474,9 @@ private immutable StepRow[] kStepTable = [
         ["num", "offX", "offY", "offZ", "sclX", "sclY", "sclZ",
          "angP", "angH", "angB", "between", "snap", "snapAngle",
          "replace", "flip", "merge", "dist", "source", "item"]),
-    StepRow("edge.bevel", OpensAt.firstPress, false,
+    // Task 8920 (law 1): Edge Bevel, Vertex Bevel and Vertex Extrude open at the
+    // arm — the captured script cell and the three UI cells `s01 armed=True`.
+    StepRow("edge.bevel", OpensAt.arm, false,
             ["width", "roundLevel", "widthMode"]),
     // Slice M4: the 11 haul attributes plus the operation-open state.
     StepRow("edge.extend", OpensAt.firstPress, false,
@@ -499,8 +501,8 @@ private immutable StepRow[] kStepTable = [
             ["shift", "scale", "maxAngle", "thicken", "sharp"]),
     StepRow("mesh.thickenTool", OpensAt.firstPress, false,
             ["shift", "scale", "maxAngle", "thicken", "sharp"]),
-    StepRow("mesh.vertexBevel", OpensAt.firstPress, false, ["inset"]),
-    StepRow("mesh.vertexExtrude", OpensAt.firstPress, false,
+    StepRow("mesh.vertexBevel", OpensAt.arm, false, ["inset"]),
+    StepRow("mesh.vertexExtrude", OpensAt.arm, false,
             ["shift", "width"]),
     // Task 8030: the first Polygon topology record carries activation; each
     // later operation remains a separate history-owned row.
