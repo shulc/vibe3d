@@ -123,9 +123,11 @@
   {
    "id": "L4-vertex-slide",
    "cells": [
-    "chord-slide-vertex"
+    "chord-slide-vertex",
+    "chord-slide-vertex-orbit",
+    "chord-slide-vertex-foreshortened"
    ],
-   "law": "A Ctrl+LMB press on a vertex slides that vertex alone along the world axis nearest the drag's world direction (one channel; not along any incident edge) and re-places it at its nearest point on the background: v = nearestBG(u + s e_axis); topology unchanged; one Ctrl+Z step, undo bit-exact, the tool stays armed."
+   "law": "A Ctrl+LMB press on a vertex slides that vertex alone, one channel, along the world axis whose screen image at the vertex is most parallel to the drag, skipping an axis seen nearly end-on (image shorter than a fraction of the longest), in the direction its image takes along the drag; not along any incident edge, nor the axis nearest the drag's world or view-plane direction. It re-places the vertex at its nearest point on the background: v = nearestBG(u + s e_axis); topology unchanged; one Ctrl+Z step, undo bit-exact, the tool stays armed."
   }
  ],
  "cells": {
@@ -944,7 +946,8 @@
       6,
       9
      ],
-     "undoArmed": true
+     "undoArmed": true,
+     "sign": 1
     },
     {
      "id": "slide-diagonal",
@@ -970,7 +973,8 @@
       6,
       9
      ],
-     "undoArmed": true
+     "undoArmed": true,
+     "sign": 1
     }
    ],
    "turned": {
@@ -997,9 +1001,108 @@
      6,
      9
     ],
-    "undoArmed": true
+    "undoArmed": true,
+    "sign": 1
    },
    "population": 2,
+   "fitResidualMax": 1e-06,
+   "lineDistanceMin": 0.001,
+   "sMin": 0.01
+  },
+  "chord-slide-vertex-orbit": {
+   "gesture": {
+    "id": "slide-orbit",
+    "vertex": 13,
+    "camera": {
+     "right": [
+      0.2004414573445789,
+      0.5011036433614473,
+      -0.8418541208472314
+     ],
+     "up": [
+      -0.9284766908852593,
+      0.37139067635410367,
+      -3.1450835271111983e-17
+     ],
+     "back": [
+      0.3126567713329426,
+      0.7816419283323567,
+      0.5397051409913891
+     ],
+     "distance": 4.0,
+     "focalPx": 1004.7545731629976
+    },
+    "dragPx": [
+     70,
+     0
+    ],
+    "moved": [
+     13
+    ],
+    "counts": [
+     16,
+     9,
+     24
+    ],
+    "axis": 2,
+    "sign": -1,
+    "sCaptured": -0.11275,
+    "offEdgeLines": [
+     9,
+     12,
+     14
+    ],
+    "undoArmed": true
+   },
+   "fitResidualMax": 1e-06,
+   "lineDistanceMin": 0.001,
+   "sMin": 0.01
+  },
+  "chord-slide-vertex-foreshortened": {
+   "gesture": {
+    "id": "slide-foreshortened",
+    "vertex": 14,
+    "camera": {
+     "right": [
+      0.9781476007338057,
+      0.0,
+      -0.20791169081775934
+     ],
+     "up": [
+      -0.07110998629257217,
+      0.9396926207859085,
+      -0.3345461825966352
+     ],
+     "back": [
+      0.1953730816365698,
+      0.34202014332566877,
+      0.9191580824489983
+     ],
+     "distance": 4.0,
+     "focalPx": 1004.7545731629976
+    },
+    "dragPx": [
+     35,
+     -61
+    ],
+    "moved": [
+     14
+    ],
+    "counts": [
+     16,
+     9,
+     24
+    ],
+    "axis": 2,
+    "sign": -1,
+    "sCaptured": -0.09621,
+    "offEdgeLines": [
+     10,
+     13,
+     15
+    ],
+    "undoArmed": true
+   },
    "fitResidualMax": 1e-06,
    "lineDistanceMin": 0.001,
    "sMin": 0.01

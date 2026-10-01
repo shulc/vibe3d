@@ -17,7 +17,7 @@ module topology_pen_session_helpers;
 // itself (the load, the camera, the hover that resolves a named element).
 
 import http_client : getJson, postRaw, waitPlaybackProcessed, waitPreviewBuilt;
-import drag_helpers : Vec3, Viewport, fetchCamera, viewportFromCamera, projectToWindow;
+import drag_helpers : Vec3, Viewport, fetchCamera, viewportFromCameraMatrices, projectToWindow;
 import std.algorithm : sort;
 import std.array : join;
 import std.conv : to;
@@ -183,7 +183,8 @@ bool penCanRedo() { return getJson("/api/undo/status")["canRedo"].type == JSONTy
 // ---------------------------------------------------------------------------
 
 float[2] penProject(double[3] p) {
-    auto vp = viewportFromCamera(fetchCamera());
+    // The matrices the cell renders with, so a banked camera projects too.
+    auto vp = viewportFromCameraMatrices();
     float x, y;
     assert(projectToWindow(Vec3(cast(float)p[0], cast(float)p[1], cast(float)p[2]), vp, x, y),
            format("pen rig: %s projects off screen", p));

@@ -51,7 +51,7 @@ import tools.edit.smooth_relax : RelaxVec3, RelaxTopology, deriveBoundary, relax
 import tools.edit.topology_pen.render : PenRenderOps;
 import tools.edit.topology_pen.snap_guide : PenSnapGuide;
 import tools.edit.topology_pen.json   : PenStateJsonOps;
-import bvh_pick              : BvhPick;
+import bvh_pick              : BvhPick, SurfaceHit;
 import command_history      : CommandHistory, PreparedHistoryKind;
 import commands.mesh.vertex_new : MeshVertexNew;
 import commands.mesh.session_edit : MeshSessionEdit;
@@ -468,13 +468,16 @@ private:
     package float slideDeltaK_ = 0.0f;
     // The VERTEX slide (task 8700, P2): a Ctrl+LMB press that the Move
     // classifier (`resolveGrabTarget`) resolves to a vertex slides that vertex
-    // alone, along the WORLD axis nearest the drag, then onto the background
-    // (`vertexSlideTarget`). `slideVertex_` is it (-1 = the edge slide above);
+    // alone, along the world axis whose screen image best follows the drag,
+    // then onto the background (`vertexSlideTarget`). `slideVertex_` is it (-1 = the edge slide above);
     // `slideAxis_` (0/1/2, -1 before any motion) and `slideDeltaK_` are the
     // live evaluation, `slideVertexTarget_` its landed point, for the preview.
     package int   slideVertex_ = -1;
     package int   slideAxis_   = -1;
     package Vec3  slideVertexTarget_ = Vec3(0, 0, 0);
+    // One surface BVH per background mesh (keyed by its address) for the
+    // vertex slide's G-delta ray (`backgroundRayHit`).
+    BvhPick[size_t] slideBgPick_;
 
     // Slide DECLINE diagnostics (doc/tasks/work/0482-topopen-move-nonvertex.md
     // item 3 follow-up) — read-only observability, no behaviour change.
@@ -4645,10 +4648,11 @@ public:
         return true;
     }
 
-    // Vertex-slide arm (task 8700, P2; C2-SV2, verdict SV-axis, law L36: the
-    // vertex moves along the WORLD axis nearest the drag's world direction, one
-    // channel, then lands at its nearest point on the background). A vertex
-    // with no incident edge declines as `NoEdge`, as a press on it always did.
+    // Vertex-slide arm (task 8700, P2; law L49, the S-proj rule of
+    // `vertexSlideAxis`: the vertex moves one channel along the world axis
+    // whose SCREEN image is most parallel to the drag, then lands at its
+    // nearest point on the background). A vertex with no incident edge
+    // declines as `NoEdge`, as a press on it always did.
     private bool armVertexSlide(ref const SDL_MouseButtonEvent e, int v) {
         auto m = mesh;
         if (m is null || m.edgeNeighbors(cast(uint)v).length == 0) return false;
@@ -4666,14 +4670,95 @@ public:
         return true;
     }
 
+    // The foreshortening floor of the vertex slide's axis election: an axis
+    // whose screen image is shorter than this fraction of the longest one is
+    // never elected. Ours, inside the interval the captures bound it to
+    // (0.047, 0.432) — gap row (jj).
+    enum double kVertexSlideTau = 0.2;
+
+    // The screen images (window pixels, y down) of a unit WORLD step along X,
+    // Y and Z at world point `p` under `vp` — the projection Jacobian's
+    // columns, analytic in double. False when `p` is behind the camera.
+    package static bool screenAxisImages(const ref Viewport vp, Vec3 p, out double[2][3] J) {
+        const ref float[16] V = vp.view, P = vp.proj;
+        double[4] v, c;
+        foreach (r; 0 .. 4)
+            v[r] = V[r] * p.x + V[r + 4] * p.y + V[r + 8] * p.z + V[r + 12];
+        foreach (r; 0 .. 4)
+            c[r] = P[r] * v[0] + P[r + 4] * v[1] + P[r + 8] * v[2] + P[r + 12] * v[3];
+        if (!(c[3] > 0)) return false;
+        foreach (i; 0 .. 3) {
+            double[4] dc;
+            foreach (r; 0 .. 4)
+                dc[r] = P[r] * V[4 * i] + P[r + 4] * V[1 + 4 * i] + P[r + 8] * V[2 + 4 * i];
+            J[i][0] =  0.5 * vp.width  * (dc[0] * c[3] - c[0] * dc[3]) / (c[3] * c[3]);
+            J[i][1] = -0.5 * vp.height * (dc[1] * c[3] - c[1] * dc[3]) / (c[3] * c[3]);
+        }
+        return true;
+    }
+
+    // The vertex slide's axis election, S-proj (L49; C1-SV1 X, C2-SV2 Y,
+    // C3-SV3 -Z, C4-SV4 Z): among the world axes whose screen image `J[i]`
+    // is at least `tau` x the longest, the one most parallel to the drag
+    // (max |cos|); `sign` = the sign of `J[axis] . drag`. -1 for a zero drag.
+    package static int vertexSlideAxis(const double[2][3] J, double dx, double dy, double tau,
+                                       out int sign) {
+        import std.math : abs, sqrt;
+        sign = 0;
+        const dl = sqrt(dx * dx + dy * dy);
+        double maxLen = 0;
+        foreach (i; 0 .. 3) maxLen = (sqrt(J[i][0] ^^ 2 + J[i][1] ^^ 2) > maxLen)
+                                     ? sqrt(J[i][0] ^^ 2 + J[i][1] ^^ 2) : maxLen;
+        if (dl == 0 || maxLen == 0) return -1;
+        int best = -1;
+        double bestCos = -1;
+        foreach (i; 0 .. 3) {
+            const len = sqrt(J[i][0] ^^ 2 + J[i][1] ^^ 2);
+            if (len < tau * maxLen) continue;
+            const c = abs(J[i][0] * dx + J[i][1] * dy) / (len * dl);
+            if (c > bestCos) { bestCos = c; best = i; }
+        }
+        sign = (J[best][0] * dx + J[best][1] * dy >= 0) ? 1 : -1;
+        return best;
+    }
+
+    // The nearest background ray hit (WORLD) of window point (x, y), over
+    // every background source in its own space; false on a miss or with no
+    // background.
+    private bool backgroundRayHit(float x, float y, const ref Viewport vp, out Vec3 hitW) {
+        auto sources = backgroundSourcesFull();
+        bool[size_t] live;
+        foreach (bg; sources)
+            if (bg.mesh !is null) live[cast(size_t)bg.mesh] = true;
+        foreach (addr; slideBgPick_.keys)
+            if ((addr in live) is null) slideBgPick_.remove(addr);
+        Vec3 org, dir;
+        screenPointToRay(x, y, vp, org, dir);
+        float best = float.infinity;
+        bool found;
+        foreach (bg; sources) {
+            if (bg.mesh is null) continue;
+            auto bp = slideBgPick_.require(cast(size_t)bg.mesh, new BvhPick());
+            SurfaceHit sh;
+            if (!bp.pickSurfaceRay(org, dir, *bg.mesh, bg.space, sh) || sh.t >= best) continue;
+            best  = sh.t;
+            hitW  = sh.point;
+            found = true;
+        }
+        return found;
+    }
+
     // The vertex slide's landed point for the pointer at (mx, my), LOCAL: the
-    // free-plane drag delta at the vertex (`planeDragDelta`, the edge slide's
-    // own conversion), reduced to its dominant WORLD axis — `axis` and the
-    // signed length `k` along it (the magnitude is ours: the capture could not
-    // separate its two candidate rules) — added to the vertex in world, then
-    // the nearest foot on the background. False when the drag does not convert.
+    // axis and its sign from `vertexSlideAxis` at the vertex's world point;
+    // the length `|k|` the component on that axis of the G-delta offset (L28,
+    // M-hit: the background hit under the vertex's pixel moved by the drag,
+    // minus the vertex — gap row (q)), or of the free-plane drag delta
+    // (`planeDragDelta`) when that ray finds no background; added to the
+    // vertex in world, then the nearest foot on the background. False when
+    // the drag does not convert.
     private bool vertexSlideTarget(int mx, int my, const ref Viewport vp,
                                    out Vec3 target, out int axis, out float k) {
+        import std.math : abs;
         axis = -1;
         k = 0.0f;
         auto m = mesh;
@@ -4681,12 +4766,24 @@ public:
             return false;
         const ms = primaryModelSpace();
         const Vec3 uW = ms.toWorldPoint(m.vertices[slideVertex_]);
-        bool skip;
-        Vec3 d = planeDragDelta(mx, my, slideStartX_, slideStartY_, 3,
-                                ms.toWorldPoint(slideAnchor_), vp, skip);
-        if (skip) return false;
-        axis = dominantAxisIndex(d);
-        k    = dominantAxisDelta(d);
+        const Vec3 aW = ms.toWorldPoint(slideAnchor_);
+        const int dx = mx - slideStartX_, dy = my - slideStartY_;
+        Vec3 off, hitW;
+        float qx, qy, qz;
+        if (projectToWindowFull(aW, vp, qx, qy, qz)
+            && backgroundRayHit(qx + dx, qy + dy, vp, hitW)) {
+            off = hitW - aW;
+        } else {
+            bool skip;
+            off = planeDragDelta(mx, my, slideStartX_, slideStartY_, 3, aW, vp, skip);
+            if (skip) return false;
+        }
+        double[2][3] J;
+        if (!screenAxisImages(vp, uW, J)) return false;
+        int sign;
+        axis = vertexSlideAxis(J, dx, dy, kVertexSlideTau, sign);
+        if (axis < 0) return false;
+        k = sign * abs(axis == 0 ? off.x : axis == 1 ? off.y : off.z);
         const Vec3 tW = Vec3(uW.x + (axis == 0 ? k : 0.0f), uW.y + (axis == 1 ? k : 0.0f),
                              uW.z + (axis == 2 ? k : 0.0f));
         target = footOnBackground(ms.toLocalPoint(tW));
