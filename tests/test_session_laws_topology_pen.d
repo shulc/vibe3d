@@ -1392,6 +1392,15 @@ unittest {
         const armed = st["slideArmed"].type == JSONType.true_;
         const sv = st["slideVertex"].integer, ax = st["slideAxis"].integer;
         const k = penNum(st["slideDeltaK"]);
+        // Held back on the press pixel: a zero drag elects no axis.
+        penPlay(penMotion(480, from[0], from[1], penButtonMask(1), PEN_KMOD_LCTRL),
+                "chord-slide-vertex mid-drag: back on the press pixel");
+        auto st0 = getJson("/api/tool/state");
+        assert(st0["slideArmed"].type == JSONType.true_ && st0["slideVertex"].integer == 5
+               && st0["slideAxis"].integer == -1,
+               format("chord-slide-vertex mid-drag: held on the press pixel, armed %s, vertex %d, axis %d "
+                      ~ "(expected -1)", st0["slideArmed"], st0["slideVertex"].integer,
+                      st0["slideAxis"].integer));
         const x2 = x1 + (x1 - from[0]) / 2;
         penPlay(penButton(500, false, 1, x2, y1, PEN_KMOD_LCTRL), "chord-slide-vertex mid-drag: release further");
         const sRel = fitAlong(tris, r.a0.pos[5], unitAxis(0), penMesh().pos[5]);

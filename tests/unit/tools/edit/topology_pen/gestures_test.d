@@ -12203,9 +12203,72 @@ unittest {
         }
     }
     // Floors first: an empty scan would satisfy both rules vacuously.
-    assert(blocks.length == 182 && histBlocks == 83 && calls == 79 && kernels == 65,
-        format("gestures census population changed: %d top-level blocks (182), %d read "
+    assert(blocks.length == 184 && histBlocks == 83 && calls == 79 && kernels == 65,
+        format("gestures census population changed: %d top-level blocks (184), %d read "
              ~ "history (83), %d bracketed-list calls in them (79), %d of them kernels (65)",
                blocks.length, histBlocks, calls, kernels));
     assert(bad.length == 0, "gestures census:\n" ~ bad.join("\n"));
+}
+
+// The vertex slide's screen-axis images (task 8700): the analytic Jacobian
+// columns `screenAxisImages` returns match a central difference of
+// `projectToWindowFull` for every axis, under the rig's front camera and a
+// banked, orbited one (the C3 orbit basis), including the perspective term
+// that is the whole image of an end-on axis.
+unittest {
+    import math : Orientation, viewMatrixFrom, perspectiveMatrix;
+    import std.format : format;
+    import std.math : PI, abs, sqrt;
+    Viewport mk(Vec3 r, Vec3 u, Vec3 b) {
+        Viewport vp;
+        vp.width = 900; vp.height = 700;
+        vp.eye = b * 4.0f;
+        vp.view = viewMatrixFrom(Orientation.fromBasis(r, u, b), vp.eye);
+        vp.proj = perspectiveMatrix(45.0f * PI / 180.0f, 900.0f / 700.0f, 0.001f, 100.0f);
+        return vp;
+    }
+    Viewport[2] vps = [mk(Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1)),
+                       mk(Vec3(0.2004415f, 0.5011036f, -0.8418541f),
+                          Vec3(-0.9284767f, 0.3713907f, 0.0f),
+                          Vec3(0.3126568f, 0.7816419f, 0.5397051f))];
+    const Vec3[2] pts = [Vec3(-0.1f, -0.1f, 0.98f), Vec3(-0.1f, 0.3f, 0.9487f)];
+    size_t n;
+    foreach (vi, vp; vps)
+        foreach (p; pts) {
+            double[2][3] J;
+            assert(TopologyPenTool.screenAxisImages(vp, p, J));
+            foreach (i; 0 .. 3) {
+                enum float h = 1e-3f;
+                Vec3 e = Vec3(i == 0 ? h : 0, i == 1 ? h : 0, i == 2 ? h : 0);
+                float ax, ay, az, bx, by, bz;
+                assert(projectToWindowFull(p + e, vp, ax, ay, az) && projectToWindowFull(p - e, vp, bx, by, bz));
+                const fx = (ax - bx) / (2 * h), fy = (ay - by) / (2 * h);
+                const tol = 1e-2 * sqrt(J[i][0] ^^ 2 + J[i][1] ^^ 2) + 0.05;
+                assert(abs(J[i][0] - fx) <= tol && abs(J[i][1] - fy) <= tol,
+                       format("screenAxisImages camera %d point %s axis %d: analytic (%g, %g), "
+                              ~ "difference (%g, %g)", vi, p, i, J[i][0], J[i][1], fx, fy));
+                ++n;
+            }
+        }
+    assert(n == 12, format("screenAxisImages: %d axis images compared (12)", n));
+}
+
+// The vertex slide's axis election (task 8700, S-proj with the end-on skip):
+// an axis whose image is under `kVertexSlideTau` of the longest is never
+// elected even when it is the most parallel to the drag (the C1-SV1 shape);
+// without the skip it would be; the sign follows the image along the drag;
+// a zero drag elects nothing.
+unittest {
+    // Front view at v5: X right, Y up (y down on screen), Z a short image
+    // pointing down-left, nearly parallel to the drag (20, -10) reversed.
+    const double[2][3] J = [[300.0, 0.0], [0.0, -300.0], [-10.0, 10.0]];
+    int sign;
+    assert(TopologyPenTool.vertexSlideAxis(J, 20, -10, TopologyPenTool.kVertexSlideTau, sign) == 0
+           && sign == 1, "vertexSlideAxis: the end-on Z was elected over X");
+    assert(TopologyPenTool.vertexSlideAxis(J, 20, -10, 1e-6, sign) == 2 && sign == -1,
+           "vertexSlideAxis: without the skip the parallel Z (negative) must win");
+    assert(TopologyPenTool.vertexSlideAxis(J, -3, -40, TopologyPenTool.kVertexSlideTau, sign) == 1
+           && sign == 1, "vertexSlideAxis: a drag up the screen is +Y");
+    assert(TopologyPenTool.vertexSlideAxis(J, 0, 0, TopologyPenTool.kVertexSlideTau, sign) == -1,
+           "vertexSlideAxis: a zero drag elected an axis");
 }
