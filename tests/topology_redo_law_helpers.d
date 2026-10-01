@@ -267,7 +267,7 @@ private void pressPoint(const Rig rig, const JSONValue step, out int x, out int 
         // no handle drawn at all (the navigation took the tool's gizmo away; reached in
         // the autoact family): the press stays at the viewport centre — a tool without a
         // drawn handle hits no part wherever it is pressed (measured: same relations)
-        const drawn = h.type == JSONType.object && h["parts"].array.length > 0;
+        const drawn = h.type == JSONType.object;
         bool found;
         if (drawn)
             foreach (p; h["parts"].array)
