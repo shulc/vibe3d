@@ -32,6 +32,8 @@
 //   fold-on-drop                  gap t: a drop folds by the switch rule
 //   fold-not-on-command           §9.19.3: a command close is no fold trigger
 //   discard-resets-offsets        a discarded gesture restores its context
+//   cross-tool-redo               ours (gap ee''): an open pen row at the redo
+//                                      head under a tool armed without a row
 //
 // `VIBE3D_CELL=<id>` runs one cell alone; the last block pins the population.
 //
@@ -112,6 +114,8 @@ long redoLen() { return cast(long)getJson("/api/history")["redo"].array.length; 
 /// session state no write door reaches, so `tool.attr ?` reports their length.
 long stepKindNow() { return getJson("/api/tool/state")["stepKind"].integer; }
 string stepVertsNow() { return getJson("/api/tool/state")["stepVerts"].toString; }
+/// The press-image origins carried beside the verts (one per moved vertex).
+long stepOrigNow() { return getJson("/api/tool/state")["stepOrigCount"].integer; }
 
 /// armed / mesh / undo length at one step.
 void at(string id, string step, const PenMesh want, bool armed, long hist) {
@@ -247,19 +251,22 @@ unittest {
     penArmUi(r);
     assert(stepKindNow() == 0, "descriptor-kinds a0: kind " ~ stepKindNow().to!string);
     moveV5("descriptor-kinds g1");
-    assert(stepKindNow() == 1 && stepVertsNow() == "[5]",
-           format("descriptor-kinds g1: kind %s verts %s", stepKindNow().to!string, stepVertsNow()));
+    assert(stepKindNow() == 1 && stepVertsNow() == "[5]" && stepOrigNow() == 1,
+           format("descriptor-kinds g1: kind %s verts %s origins %s", stepKindNow().to!string,
+                  stepVertsNow(), stepOrigNow()));
     penGesture(penEdgePx(9, 10, "descriptor-kinds e9-10"), 10 / kSp, 14 / kSp, 1, 0,
                "descriptor-kinds g2");
-    assert(stepKindNow() == 2 && ["[9,10]", "[10,9]"].canFind(stepVertsNow()),
-           format("descriptor-kinds g2: kind %s verts %s", stepKindNow().to!string, stepVertsNow()));
+    assert(stepKindNow() == 2 && ["[9,10]", "[10,9]"].canFind(stepVertsNow()) && stepOrigNow() == 2,
+           format("descriptor-kinds g2: kind %s verts %s origins %s", stepKindNow().to!string,
+                  stepVertsNow(), stepOrigNow()));
     z("descriptor-kinds z1");
-    assert(stepKindNow() == 0 && stepVertsNow() == "[]",
-           format("descriptor-kinds z1: kind %s verts %s (the open image)", stepKindNow().to!string,
-                  stepVertsNow()));
+    assert(stepKindNow() == 0 && stepVertsNow() == "[]" && stepOrigNow() == 0,
+           format("descriptor-kinds z1: kind %s verts %s origins %s (the open image)",
+                  stepKindNow().to!string, stepVertsNow(), stepOrigNow()));
     sz("descriptor-kinds r1");
-    assert(stepKindNow() == 2,
-           format("descriptor-kinds r1: kind %s (the after image)", stepKindNow().to!string));
+    assert(stepKindNow() == 2 && stepOrigNow() == 2,
+           format("descriptor-kinds r1: kind %s origins %s (the after image)", stepKindNow().to!string,
+                  stepOrigNow()));
     penGesture(penEdgePx(5, 6, "descriptor-kinds loop e56"), 0, -15 / kSp, 3, 0,
                "descriptor-kinds g3");
     assert(stepKindNow() == 4,
@@ -273,8 +280,9 @@ unittest {
     assert(penMesh().nv == before.nv - 1,
            format("descriptor-kinds weld rig: v0 dropped on v1 did not weld: %s -> %s",
                   before.toString, penMesh().toString));
-    assert(stepKindNow() == 1 && stepVertsNow() == "[]",
-           format("descriptor-kinds weld: kind %s verts %s", stepKindNow().to!string, stepVertsNow()));
+    assert(stepKindNow() == 1 && stepVertsNow() == "[]" && stepOrigNow() == 0,
+           format("descriptor-kinds weld: kind %s verts %s origins %s", stepKindNow().to!string,
+                  stepVertsNow(), stepOrigNow()));
     writeln("PASS descriptor-kinds");
 }
 
@@ -1228,6 +1236,42 @@ unittest {
     writeln("PASS discard-resets-offsets");
 }
 
+// cross-tool-redo — ours (gap row ee''): a pen parameter row left open
+// (`PreNavOpen`) at the redo head survives a switch to a session tool armed
+// WITHOUT an activation row (`rotate`), so that tool's redo door meets a head
+// that is not its session's row; it leaves it alone (no prune, no error), the
+// first redo restores g1 and the second redoes the attribute row.
+unittest {
+    if (!cell("cross-tool-redo")) return;
+    const r = rig();
+    penArmUi(r);
+    moveV5("cross-tool-redo g1");
+    const g1 = penMesh();
+    w("offsetX", "0.1");
+    z("cross-tool-redo z1");
+    z("cross-tool-redo z2");
+    at("cross-tool-redo", "z2", r.a0, true, r.hp + 1);
+    assert(redoLen() == 2, format("cross-tool-redo z2: redo %s, expected 2 (g1 + the open row)",
+                                  redoLen()));
+    penLineUi("tool.set rotate on");
+    const rot = penTool();
+    assert(rot.length && rot != kPenToolId && penHistoryLen() == r.hp + 1 && redoLen() == 2,
+           format("cross-tool-redo rotate: tool '%s', history %s, redo %s (the arm writes no row "
+                  ~ "and keeps the redo)", rot, penHistoryLabels(), redoLen()));
+    sz("cross-tool-redo r1");
+    assert(penTool() == rot && penMesh() == g1 && penHistoryLen() == r.hp + 2 && redoLen() == 1,
+           format("cross-tool-redo r1: tool '%s' (expected '%s'), g1 %s, history %s, redo %s "
+                  ~ "(expected 1: the open row kept)", penTool(), rot, penMesh() == g1,
+                  penHistoryLabels(), redoLen()));
+    sz("cross-tool-redo r2");
+    const labels = penHistoryLabels();
+    assert(penTool() == rot && penMesh() == g1 && penHistoryLen() == r.hp + 3 && redoLen() == 0
+           && labels[$ - 1] == "Topology Attribute",
+           format("cross-tool-redo r2: tool '%s', g1 %s, history %s, redo %s (expected the "
+                  ~ "attribute row redone)", penTool(), penMesh() == g1, labels, redoLen()));
+    writeln("PASS cross-tool-redo");
+}
+
 // ---------------------------------------------------------------------------
 // Population: with no VIBE3D_CELL every cell above ran (declared last).
 // ---------------------------------------------------------------------------
@@ -1235,7 +1279,7 @@ unittest {
     writeln("cells=", cellsRun);
     const only = environment.get("VIBE3D_CELL", "");
     if (only.length == 0)
-        assert(cellsRun == 42, format("topology pen S7a laws: %d cells ran, expected 42", cellsRun));
+        assert(cellsRun == 43, format("topology pen S7a laws: %d cells ran, expected 43", cellsRun));
     else
         assert(cellsRun == 1, format("topology pen S7a laws: VIBE3D_CELL=%s ran %d cells, expected 1 "
                                      ~ "(an unknown name runs none)", only, cellsRun));

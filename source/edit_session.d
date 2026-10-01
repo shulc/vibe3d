@@ -2035,17 +2035,17 @@ private struct ToolSession {
     // withdrawn): a folded row never reaches the head without its base, and
     // under the [A12-3] keying a `PreNavOpen` row is never a row-based step's.
     // Runs once the history is Active again, else `invalidateRedo` refuses.
-    // Only `noteFoldRow_` sets `PreNavOpen`, on a parameter row of the token
-    // then live; the head sits directly above the row this session just
-    // redid, and a token changes between two adjacent rows only across an
-    // activation row, so a `PreNavOpen` head is this session's (A16 E3).
+    // A `PreNavOpen` head may be ANOTHER session's: a session tool armed
+    // without an activation row (the `rotate` factory) leaves a foreign redo
+    // head in place, so the head is skipped unless it is this session's row
+    // (cell `cross-tool-redo`; gap row ee'').
     private void pruneRedoTop_() {
         auto t = tool_();
         if (!reporting_(t)) return;
         const re = history_.redoEntries();
         if (re.length == 0 || !(re[0].flags & HistoryFlags.PreNavOpen)) return;
         auto row = cast(const MeshSessionEdit)re[0].cmd;
-        assert(row !is null && foldRow_(row, token_), "pruneRedoTop_: a PreNavOpen head not this session's row");
+        if (row is null || !foldRow_(row, token_)) return;
         if (row.stepInstance() == instanceOf_(t)) return;
         history_.invalidateRedo();
     }
