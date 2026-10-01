@@ -311,6 +311,7 @@ private:
     package int       sourceVert_     = -1;
     package GestureArm      dragArmed_;
     int       dragStartX_, dragStartY_;
+    int       dragCurX_, dragCurY_;   // the live cursor, for the Tri ghost (`triNeighbourAt`)
     BuildCase classifiedCase_ = BuildCase.None;
     int       triN_           = -1;   // Tri case: the neighbour (N-angle at release)
     int[]     triCands_;              // Tri case: the border neighbours N-angle picks from
@@ -1562,6 +1563,7 @@ public:
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
         readHit(vts);
+        if (dragArmed_) { dragCurX_ = e.x; dragCurY_ = e.y; }
         // While a drag-build is armed, this keeps `lastHit_` tracking the
         // CONS-snapped cursor point for the in-progress ghost preview
         // (draw(), below) — no other state changes during the drag; the
@@ -2284,7 +2286,7 @@ public:
     //                                            release among the border ones
     //                                            (`nAngleNeighbour`)
     // A "border" edge lies on fewer than two polygons. Polygon incidence is
-    // counted over directed face sides (a full scan, not the vertex fan: the
+    // counted per polygon over its sides (a full scan, not the vertex fan: the
     // fan walk is not defined on the non-manifold rigs this rule was captured
     // on). `quadP_` is the border neighbour whose polygon runs a -> P, so the
     // new quad [P, a, Q, b] traverses each shared side against its polygon.
@@ -2324,19 +2326,32 @@ public:
         return BuildCase.Tri;
     }
 
-    // How many polygon sides join `a` and `x`, and in which direction the
-    // last one found runs: +1 when a polygon lists a then x, -1 when x then a,
-    // 0 when no polygon has the side (a bare edge).
-    private static void sideIncidence(const Mesh* m, uint a, uint x,
+    // How many POLYGONS have a side joining `a` and `x` (each polygon counted
+    // once: a 2-point polygon [a, x] lists the side both ways and is still one
+    // polygon), and in which direction the last such polygon's first side
+    // runs: +1 when it lists a then x, -1 when x then a, 0 when no polygon has
+    // the side (a bare edge). Package-visible for its unit cell.
+    package static void sideIncidence(const Mesh* m, uint a, uint x,
                                       out int polys, out int dir) {
         foreach (f; m.faces) {
             immutable n = f.length;
             foreach (k; 0 .. n) {
                 immutable uint u = f[k], w = f[(k + 1) % n];
-                if (u == a && w == x) { ++polys; dir = 1; }
-                else if (u == x && w == a) { ++polys; dir = -1; }
+                if (u == a && w == x) { ++polys; dir = 1; break; }
+                if (u == x && w == a) { ++polys; dir = -1; break; }
             }
         }
+    }
+
+    // The Tri neighbour a drag from the armed source to mouse pixel (x, y)
+    // takes — ONE answer for the release (`buildUp`) and the ghost preview
+    // (`drawBuildGhost`, from the live cursor): both read the raw mouse delta,
+    // never the snapped hit, so the ghost names the neighbour the release
+    // will build.
+    package int triNeighbourAt(int x, int y, const ref Viewport vp) {
+        const AimViewport vpAim = aimSpace(vp, primaryModelSpace());
+        return nAngleNeighbour(sourceVert_, cast(float)(x - dragStartX_),
+                               cast(float)(y - dragStartY_), vpAim);
     }
 
     // N-angle (captured, law L34 of the session capture: cells B1a/B1b): the
@@ -4081,14 +4096,12 @@ public:
         // hub-fan's fourth drag), so the press arms that gesture and its
         // release and record are the move's own.
         immutable BuildCase c = classifySource(src);
-        if (c == BuildCase.None)
-            return stamp(armMoveOn(MoveElem.Vertex, src, e), PenGesture.PlaceOrMove,
-                         InputButton.Left);
+        if (c == BuildCase.None) return armMoveOn(MoveElem.Vertex, src, e);
 
         sourceVert_     = src;
         dragArmed_      = true;
-        dragStartX_     = e.x;
-        dragStartY_     = e.y;
+        dragStartX_     = dragCurX_ = e.x;
+        dragStartY_     = dragCurY_ = e.y;
         classifiedCase_ = c;
         return true;   // consume; the build (if any) commits on release
     }
@@ -5460,13 +5473,15 @@ public:
         // exclusively — `onShiftLmbDown` arms exactly one of the two, so this
         // can never shadow a vertex build.
         if (dupEdgeArmed_) return dupEdgeUp(e, vts);
-        // The Duplicate slot FALLS THROUGH to the element Move on an interior
-        // edge (task 0486, contract C-0) and on a closed source vertex
-        // (R-closed, `classifySource`), so this release goes to the Move's commit leg,
-        // guarded by its own arm bool (nothing armed: a no-op). Not via
-        // `lmbModeUp`: `runPenMode` stamps this press `Build` AFTER the
-        // fall-through stamped the move, so that route came straight back
-        // here and never returned (it hung the app). The
+        // Every Duplicate press that armed no build lands here: the Move
+        // fall-throughs (an interior edge, task 0486 C-0; a closed source
+        // vertex, R-closed) AND a press that declined outright (empty space),
+        // because the base arms the button before the press can decline and
+        // `runPenMode` stamps `Build` whatever the press answered. So this
+        // release goes to the Move's commit leg, guarded by its own arm bools
+        // (nothing armed: a no-op) — never back through `lmbModeUp`, which
+        // reads the `Build` stamp and returns here forever (task 8720: it hung
+        // the app; cells chord-dup-interior-edge and chord-dup-empty). The
         // loop fall-through is not reachable here: with Edge Loop on,
         // `runPenMode` sends the press to the duplicate-LOOP slot instead.
         if (!dragArmed_) return lmbPlaceOrMoveUp(e, vts);
@@ -5482,8 +5497,7 @@ public:
         int n = triN_;
         if (casee == BuildCase.Tri) {
             Viewport vp = viewportOf(vts);
-            const AimViewport vpAim = aimSpace(vp, primaryModelSpace());
-            n = nAngleNeighbour(a, cast(float)dx, cast(float)dy, vpAim);
+            n = triNeighbourAt(e.x, e.y, vp);
         }
 
         sourceVert_     = -1;

@@ -12203,8 +12203,8 @@ unittest {
         }
     }
     // Floors first: an empty scan would satisfy both rules vacuously.
-    assert(blocks.length == 184 && histBlocks == 83 && calls == 79 && kernels == 65,
-        format("gestures census population changed: %d top-level blocks (184), %d read "
+    assert(blocks.length == 185 && histBlocks == 83 && calls == 79 && kernels == 65,
+        format("gestures census population changed: %d top-level blocks (185), %d read "
              ~ "history (83), %d bracketed-list calls in them (79), %d of them kernels (65)",
                blocks.length, histBlocks, calls, kernels));
     assert(bad.length == 0, "gestures census:\n" ~ bad.join("\n"));
@@ -12271,4 +12271,36 @@ unittest {
            && sign == 1, "vertexSlideAxis: a drag up the screen is +Y");
     assert(TopologyPenTool.vertexSlideAxis(J, 0, 0, TopologyPenTool.kVertexSlideTau, sign) == -1,
            "vertexSlideAxis: a zero drag elected an axis");
+}
+
+// ---------------------------------------------------------------------------
+// Task 8720: `sideIncidence` counts POLYGONS, not directed sides. A 2-point
+// polygon [a, x] lists the side both ways; counted per side it read as two
+// polygons, so a source whose only edge is a 2-gon classified as closed (a
+// vertex move) instead of a border build. A triangle on the same side is the
+// second polygon (the count still moves past one).
+// ---------------------------------------------------------------------------
+unittest {
+    import std.format : format;
+    Mesh m;
+    immutable uint a = m.addVertex(Vec3(0, 0, 0));
+    immutable uint x = m.addVertex(Vec3(1, 0, 0));
+    immutable uint y = m.addVertex(Vec3(0, 1, 0));
+    m.addFace([a, x]);
+    int polys, dir;
+    TopologyPenTool.sideIncidence(&m, a, x, polys, dir);
+    assert(polys == 1 && dir == 1,
+           format("a 2-gon [a,x] is one polygon on side a-x: polys %d dir %d", polys, dir));
+    m.addFace([x, a, y]);
+    TopologyPenTool.sideIncidence(&m, a, x, polys, dir);
+    assert(polys == 2 && dir == -1,
+           format("the 2-gon plus triangle [x,a,y] are two polygons, the last running x->a: "
+                  ~ "polys %d dir %d", polys, dir));
+    Mesh r;   // the same 2-gon listed the other way: its x->a side comes first
+    immutable uint ra = r.addVertex(Vec3(0, 0, 0));
+    immutable uint rx = r.addVertex(Vec3(1, 0, 0));
+    r.addFace([rx, ra]);
+    TopologyPenTool.sideIncidence(&r, ra, rx, polys, dir);
+    assert(polys == 1 && dir == -1,
+           format("a 2-gon [x,a] is one polygon on side a-x: polys %d dir %d", polys, dir));
 }

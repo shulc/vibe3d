@@ -34,6 +34,7 @@
 //   chord-build-*        L34/L37 corner build: neighbour by angle, closed fan
 //                        moves, a triangle corner builds the border quad
 //   chord-dup-interior-edge  C-0 Shift+LMB on an interior edge moves it
+//   chord-dup-empty      Shift+LMB on empty space changes nothing
 //
 // Slice S5 (task 8730) added the cells from `no-op-presses` on: since then
 // every pen press is one topology step the session records (wave plan 8646).
@@ -41,13 +42,14 @@
 // chords' outcomes (their port slices add `chord-*` cells).
 //
 // `VIBE3D_CELL=<id>` runs one cell alone (druntime stops a module at its first
-// failed assert); the last block pins the population: 41 with no filter, 1 with
+// failed assert); the last block pins the population: 42 with no filter, 1 with
 // one (an unknown name must not pass by running nothing).
 //
 // Run via: ./run_test.d test_session_laws_topology_pen
 
 import topology_pen_session_helpers;
 import http_client : getJson;
+import drag_helpers : fetchCamera;
 import fixture_helpers : requireProvenance;
 import std.file : readText;
 import std.format : format;
@@ -1734,6 +1736,36 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
+// chord-dup-empty — a Shift+LMB drag that starts on empty space arms nothing
+// (Duplicate always starts on an element): no mesh change, no history row, and
+// the app answers afterwards. Task 8720: the base arms the button before the
+// press declines and the press is stamped `Build` regardless, so this release
+// too used to dispatch back into the build leg forever (no HTTP answer).
+// Slice S5 makes every press a row: its "no history row" is S5's to update.
+// ---------------------------------------------------------------------------
+unittest {
+    enum id = "chord-dup-empty";
+    if (!cell(id)) return;
+    PenRig r = armedRig();
+    const v0 = penVertexPx(0, id ~ " v0");
+    const int[2] from = [v0[0] - 200, v0[1]];
+    const int[2] to   = [from[0] - 40, from[1] + 20];
+    // Rig floor: both ends are inside the viewport and hover no element.
+    auto c = fetchCamera();
+    foreach (p; [from, to]) {
+        penHover(p);
+        auto hi = penHoverIndicator();
+        assert(p[0] > c.vpX + 10 && p[0] < c.vpX + c.width - 10
+               && hi["nearestVert"].integer == -1 && hi["nearestEdge"].integer == -1,
+               format("%s rig: %s is not empty space inside the viewport (x %d..%d): hover %s",
+                      id, p, c.vpX, c.vpX + c.width, hi.toString));
+    }
+    penPlay(penGestureEvents(from[0], from[1], to[0], to[1], 1, PEN_KMOD_LSHIFT, 8), id ~ " Shift+LMB drag");
+    expectState(id, "release", r.a0, true, r.hp);
+    writeln("PASS ", id);
+}
+
+// ---------------------------------------------------------------------------
 // Population: with no VIBE3D_CELL every cell above ran (declared last, so it
 // runs last).
 // ---------------------------------------------------------------------------
@@ -1741,7 +1773,7 @@ unittest {
     writeln("cells=", cellsRun);
     const only = environment.get("VIBE3D_CELL", "");
     if (only.length == 0)
-        assert(cellsRun == 41, format("topology pen session laws: %d cells ran, expected 41", cellsRun));
+        assert(cellsRun == 42, format("topology pen session laws: %d cells ran, expected 42", cellsRun));
     else
         assert(cellsRun == 1, format("topology pen session laws: VIBE3D_CELL=%s ran %d cells, expected 1 "
                                      ~ "(an unknown name runs none)", only, cellsRun));
