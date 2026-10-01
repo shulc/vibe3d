@@ -244,7 +244,7 @@ private:
     // for `pickFace` on the PRIMARY cage mesh — zero coupling to app
     // internals / the app's own hover-pick instance.
     BvhPick removePick_;
-    BackgroundRayPicker bgRayPick_;   // the drag delta's background ray (`bgHitAtSourcePx`)
+    BackgroundRayPicker bgRayPick_;   // `backgroundRays` with no CONS stage (a pipeline-less pen)
 
     // TASK 1905 PHASE B — the pen's `package CommandHistory history_;` field is
     // gone; `history` now lives on `Tool` (see its declaration there for why
@@ -2386,9 +2386,18 @@ public:
         screenPointToRay(q.x + dx, q.y + dy, vp, org, dir);
         SurfaceHit sh;
         size_t si;
-        if (!bgRayPick_.nearest(org, dir, sources, sh, si)) return false;
+        if (!backgroundRays().nearest(org, dir, sources, sh, si)) return false;
         hit = sh.point;
         return true;
+    }
+
+    // The live CONS stage's background ray query (its BVHs are the ones the
+    // hover already built); the pen's own only without a pipeline.
+    private ref BackgroundRayPicker backgroundRays() return {
+        if (g_pipeCtx !is null)
+            if (auto cs = cast(ConstrainStage) g_pipeCtx.pipeline.findByTask(TaskCode.Cons))
+                return cs.backgroundRays();
+        return bgRayPick_;
     }
 
     // The tangent-plane normal at source `a` (WORLD, unit): the area-weighted

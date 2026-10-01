@@ -110,6 +110,11 @@ private:
     ConstrainHitPacket _hitPkt;
 
 public:
+    /// The stage's background ray query, for a main-thread caller that casts
+    /// its own ray against the same per-mesh BVHs (the topology pen's drag
+    /// delta) instead of building a second copy of each tree.
+    ref BackgroundRayPicker backgroundRays() return { return _bgBvh; }
+
     // --- Operator interface -------------------------------------------------
     Task task() const { return Task.Cons; }
     PacketKind[] requiredPackets() const { return [PacketKind.Subject]; }
