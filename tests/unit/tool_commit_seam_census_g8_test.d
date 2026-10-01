@@ -291,8 +291,8 @@ private enum Row[] kSessionRows = [
       ~ "byte because history and replay dispatch on the string"),
 ];
 
-/// The Topology Pen's thirteen rows, keyed by `TopoPenFactories` FIELD (task
-/// 6352). They are written inside `buildTopoPenFactories` as
+/// The Topology Pen's fifteen rows (thirteen until plan 8646 added `place` and
+/// `attr`), keyed by `TopoPenFactories` FIELD (task 6352). They are written inside `buildTopoPenFactories` as
 /// `<local>.<field> = sessionEditFactory(...)`, never as flat locals or
 /// `EditorApp` fields, so they have no per-row spend count in
 /// `source/registration.d`: the thirteen travel as ONE value, rostered below
@@ -313,6 +313,9 @@ private enum PenRow[] kPenRows = [
     PenRow("fill",         "mesh.topoPen_fill",         "Topology Fill",           "MeshEditScope.Geometry"),
     PenRow("removeEdge",   "mesh.topoPen_removeedge",   "Topology Remove Edge",    "MeshEditScope.Geometry"),
     PenRow("removeVertex", "mesh.topoPen_removevertex", "Topology Remove Vertex",  "MeshEditScope.Geometry"),
+    // Plan 8646: the placement step's carrier and the parameter step's.
+    PenRow("place",        "mesh.topoPen_place",        "Topology Place",          "MeshEditScope.Geometry"),
+    PenRow("attr",         "mesh.topoPen_attr",         "Topology Attribute",      "MeshEditScope.Geometry"),
 ];
 
 /// The one `EditorApp` field that carries the pen's thirteen, and its one
