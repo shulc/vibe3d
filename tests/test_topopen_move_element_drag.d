@@ -35,11 +35,15 @@
 // (`shiftedWorldPoint` + a brute-force nearest foot over the sphere's own
 // facets, both written out in topopen_place_helpers.d).
 //
-// EDGE and POLYGON grabs are the two Move outcomes this file pins, and they
-// are the ones that changed: they resolve their targets through
-// `perVertexTargetsFrom`. A VERTEX grab does NOT — it rides the cursor's own
-// CONS hit, which is still a camera ray, and its fixtures
-// (test_topopen_move_drag.d and friends) are untouched by 0503.
+// EDGE and POLYGON grabs are the two Move outcomes this file pins. Since wave
+// plan 8640 S7b (D19; laws L17/L18/L28) they share ONE offset — the
+// background hit under the pressed element's anchor pixel (the edge's
+// midpoint, the polygon's corner mean) moved by the drag, minus that anchor —
+// and each vertex lands at the nearest facet point to `base + offset`
+// (`expectedCarriedOnSphere`). On this rig the element sits INSIDE the sphere,
+// so the offset carries it out to the near surface. A VERTEX grab rides the
+// cursor's own CONS hit, and its fixtures (test_topopen_move_drag.d and
+// friends) are untouched.
 //
 // Run via: ./run_test.d topopen_move_element_drag
 
@@ -113,15 +117,18 @@ CameraState setupRig() {
     return fetchCamera();
 }
 
-/// Where vertex `base` must end up after a (kDragX, kDragY) pixel drag —
-/// this file's OWN computation of the tool's law, not a readback.
-Vec3 expectedAfterDrag(CameraState c, Viewport vp, double[] base) {
+/// Where vertex `base` must end up after a (kDragX, kDragY) pixel drag of an
+/// element anchored at `anchor` — this file's OWN computation of the tool's
+/// law, not a readback.
+Vec3 expectedAfterDrag(CameraState c, Vec3 anchor, double[] base) {
     Vec3 src = Vec3(cast(float)base[0], cast(float)base[1], cast(float)base[2]);
     Vec3 foot;
-    assert(expectedNearestOnSphere(c, src, kDragX, kDragY, R, LON, LAT, foot),
-        "setup: a moving vertex must project on-screen to have a drag-shifted point at all");
+    assert(expectedCarriedOnSphere(c, anchor, src, kDragX, kDragY, R, LON, LAT, foot),
+        "setup: the anchor's drag-shifted pixel must hit the background sphere");
     return foot;
 }
+
+Vec3 v3(double[] p) { return Vec3(cast(float)p[0], cast(float)p[1], cast(float)p[2]); }
 
 // --- EDGE grab: exactly the two endpoints move, the other two corners stay.
 unittest {
@@ -162,8 +169,9 @@ unittest {
     }
     assert(ea >= 0, "setup: the quad must carry a 0-1 edge to grab");
 
-    Vec3 wantA = expectedAfterDrag(c, vp, before[ea]);
-    Vec3 wantB = expectedAfterDrag(c, vp, before[eb]);
+    const Vec3 mid = (v3(before[ea]) + v3(before[eb])) * 0.5f;
+    Vec3 wantA = expectedAfterDrag(c, mid, before[ea]);
+    Vec3 wantB = expectedAfterDrag(c, mid, before[eb]);
 
     immutable size_t undo0 = undoDepth();
 
@@ -233,8 +241,11 @@ unittest {
                  ~ "%d-%d (else the EDGE term would resolve it); got %.1fpx", kSnapPx, i, j, d));
     }
 
+    Vec3 cen = Vec3(0, 0, 0);
+    foreach (i; 0 .. 4) cen = cen + v3(before[i]);
+    cen = cen * 0.25f;
     Vec3[4] want;
-    foreach (i; 0 .. 4) want[i] = expectedAfterDrag(c, vp, before[i]);
+    foreach (i; 0 .. 4) want[i] = expectedAfterDrag(c, cen, before[i]);
 
     immutable size_t undo0 = undoDepth();
 

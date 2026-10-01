@@ -304,6 +304,27 @@ bool expectedNearestOnSphere(CameraState c, Vec3 src, int dx, int dy,
     return closestPointOnPolySoup(q, verts, faces, expected);
 }
 
+/// Where a vertex at `src` must land after a Move-family drag whose pressed
+/// element's anchor is `anchor` (wave plan 8640 S7b, D19; laws L17/L18/L28):
+/// one shared offset, the background hit under the anchor's pixel moved by
+/// `(dx, dy)` minus the anchor, then the nearest point of the sphere's own
+/// FACETS to `src + offset`. The hit is the IDEAL sphere's (the facet sagitta
+/// sits inside every caller's tolerance). `false` when the anchor does not
+/// project or its shifted ray misses the sphere.
+bool expectedCarriedOnSphere(CameraState c, Vec3 anchor, Vec3 src, int dx, int dy,
+                             float R, int lon, int lat, out Vec3 expected) {
+    auto vp = viewportFromCamera(c);
+    float ax, ay;
+    if (!projectToWindow(anchor, vp, ax, ay)) return false;
+    Vec3 hit;
+    if (!raySphereIntersect(vp.eye, screenRay(ax + dx, ay + dy, vp), Vec3(0, 0, 0), R, hit))
+        return false;
+    Vec3[]  verts;
+    int[][] faces;
+    sphereMeshData(R, lon, lat, verts, faces);
+    return closestPointOnPolySoup(src + (hit - anchor), verts, faces, expected);
+}
+
 // ---------------------------------------------------------------------------
 // Sphere background mesh generator — parametric UV sphere at the world
 // origin.

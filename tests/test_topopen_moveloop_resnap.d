@@ -23,7 +23,8 @@
 //     matching the perpendicular foot to 5.36e-09 D against 5.75e-03 D for
 //     the ray.
 //
-// So the expectation here is `expectedNearestOnSphere` — this suite's own
+// So the expectation here is `expectedCarriedOnSphere` (S7b: one offset
+// for the loop, from the pressed edge's midpoint) — this suite's own
 // nearest-foot solve against the sphere's OWN FACETS, computed from scratch,
 // never a second call into the code under test. (The facets, not the ideal
 // sphere: see that helper's own note.) The tilted-background fixture that
@@ -98,6 +99,11 @@ unittest {
     int dx  = upX - downX, dy = upY - downY;
 
     cmd("tool.set mesh.topoPen on");
+    // The pen arms the snap enable, and since S7b (D19) the loop's shared
+    // offset carries the row to the sphere's near surface, where on this
+    // camera it lands within the weld radius of the neighbouring rows' pixels.
+    // This file pins the drag, not the landing weld: snapping off.
+    cmd("tool.pipe.attr snap enabled false");
 
     auto pr = postJson("/api/play-events",
         buildDragLog(c.vpX, c.vpY, c.width, c.height, downX, downY, upX, upY, 16, 0, 3));
@@ -112,12 +118,15 @@ unittest {
     auto post = readVerticesLayer(1);
 
     // The 3 loop vertices (3, 4, 5 — the middle row) must each land at the
-    // INDEPENDENTLY-computed NEAREST POINT on the sphere's facets, taken
-    // from THEIR OWN drag-shifted world point.
+    // INDEPENDENTLY-computed NEAREST POINT on the sphere's facets to their
+    // own position plus the loop's ONE offset: the background hit under the
+    // PRESSED edge's midpoint pixel moved by the drag, minus that midpoint
+    // (wave plan 8640 S7b, D19; laws L17/L18).
+    const Vec3 seedMid = (gridPos[3] + gridPos[4]) * 0.5f;
     foreach (vi; [3, 4, 5]) {
         Vec3 expected;
-        assert(expectedNearestOnSphere(c, gridPos[vi], dx, dy, R, LON, LAT, expected),
-            format("setup: v%d must project on-screen to have a shifted point at all", vi));
+        assert(expectedCarriedOnSphere(c, seedMid, gridPos[vi], dx, dy, R, LON, LAT, expected),
+            format("setup: the seed midpoint's shifted pixel must hit the sphere (v%d)", vi));
         assert(approxVec(expected, post[vi], TOL),
             format("loop vertex %d %s should match the independently-computed nearest point "
                  ~ "on the background facets (%f,%f,%f)",

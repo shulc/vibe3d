@@ -1393,20 +1393,24 @@ unittest {
                   fx["population"].integer));
 
     // Control, below the population (ours, not a captured law): a Ctrl+LMB
-    // press on an EDGE still takes the edge slide — border edge 0-1, both
-    // endpoints with a rail, so both move, v5 does not, and each stays on its
-    // rail's line (the edge slide's ported law does not land on the BG). A
-    // vertex arm left over from the gestures above would slide v5 instead.
+    // press on an EDGE still takes the edge slide — border edge 0-1: both
+    // endpoints move, v5 does not, and over this background each lands at
+    // nearestBG(u + offset) with ONE world channel, Y (the edge slide's law
+    // since S7b, L47/L50; its cells are test_session_laws_topology_pen_offset.d).
+    // A vertex arm left over from the gestures above would slide v5 instead.
     penGesture(penEdgePx(0, 1, "chord-slide-vertex edge control"), 0, -20 / kSp, 1, PEN_KMOD_LCTRL,
                "chord-slide-vertex edge control");
     const ec = penMesh();
+    import std.conv : to;
+    const double[3] eo = [penAttr("offsetX").to!double, penAttr("offsetY").to!double,
+                          penAttr("offsetZ").to!double];
+    const e0 = vdist(ec.pos[0], nearestOn(tris, vmad(r.a0.pos[0], eo, 1)));
+    const e1 = vdist(ec.pos[1], nearestOn(tris, vmad(r.a0.pos[1], eo, 1)));
     assert(penMoved(ec, r.a0) == [0L, 1L] && penHistoryLen() == r.hp + 2
-           && lineDistance(ec.pos[0], r.a0.pos[0], r.a0.pos[4]) <= 1e-6
-           && lineDistance(ec.pos[1], r.a0.pos[1], r.a0.pos[5]) <= 1e-6,
-           format("chord-slide-vertex edge control: the edge press moved %s (expected [0,1]), off "
-                  ~ "the rails by %.3g / %.3g (max 1e-6), history %s", penIdx(penMoved(ec, r.a0)),
-                  lineDistance(ec.pos[0], r.a0.pos[0], r.a0.pos[4]),
-                  lineDistance(ec.pos[1], r.a0.pos[1], r.a0.pos[5]), penHistoryLabels()));
+           && eo[0] == 0 && eo[2] == 0 && abs(eo[1]) > 1e-3 && e0 <= 1e-6 && e1 <= 1e-6,
+           format("chord-slide-vertex edge control: the edge press moved %s (expected [0,1]), offset "
+                  ~ "%s (one channel Y), off nearestBG(u + offset) by %.3g / %.3g (max 1e-6), history %s",
+                  penIdx(penMoved(ec, r.a0)), eo, e0, e1, penHistoryLabels()));
     penCtrlZ("chord-slide-vertex edge control Ctrl+Z");
     expectState("chord-slide-vertex", "edge_z", r.a0, true, r.hp + 1);
 

@@ -5,7 +5,7 @@
 // the laws are the capture's (session_capture fixtures c0..c4), every number
 // below is OUR run's, compared within the run.
 //
-//   offsets-live / -edge / -loop  L18  a Move-family drag writes the Offset live:
+//   offsets-live                  L18  a vertex Move drag writes the Offset live:
 //                                      the pressed element's anchor travel
 //   descriptor-kinds              S7a  the press end writes its kind; an undo
 //                                      shows the open image's (none)
@@ -190,59 +190,10 @@ unittest {
     writeln("PASS offsets-live");
 }
 
-// offsets-live-edge — an EDGE Move reports its midpoint's travel: the mean of
-// its two endpoints' deltas, which differ (each re-snaps on its own).
-unittest {
-    if (!cell("offsets-live-edge")) return;
-    const r = rig();
-    penArmUi(r);
-    penGesture(penEdgePx(5, 6, "offsets-live-edge e56"), 20 / kSp, 12 / kSp, 1, 0,
-               "offsets-live-edge drag");
-    const g1 = penMesh();
-    const d5 = delta(g1, r.a0, 5), d6 = delta(g1, r.a0, 6);
-    assert(penMoved(g1, r.a0) == [5L, 6L] && !near3(d5, d6, 1e-5),
-           format("offsets-live-edge rig: moved %s, deltas %s / %s (must differ)",
-                  penIdx(penMoved(g1, r.a0)), fmt3(d5), fmt3(d6)));
-    const o = offs();
-    assert(near3(o, mean2(d5, d6), 1e-6),
-           format("offsets-live-edge: offsets %s, the midpoint travelled %s (v5 alone %s)",
-                  fmt3(o), fmt3(mean2(d5, d6)), fmt3(d5)));
-    writeln("PASS offsets-live-edge");
-}
-
-// offsets-live-loop — a Move Loop (RMB on e56) reports the PRESSED edge's
-// midpoint travel, not a loop-wide mean: while held (the targets the release
-// would commit) and at the release's own pixel.
-unittest {
-    if (!cell("offsets-live-loop")) return;
-    const r = rig();
-    penArmUi(r);
-    const from = penEdgePx(5, 6, "offsets-live-loop e56");
-    const sp = penSpacingPx() / kSp;
-    string log = penMotion(20, from[0], from[1], 0, 0) ~ "\n"
-               ~ penButton(40, true, 3, from[0], from[1], 0) ~ "\n";
-    int x = from[0], y = from[1];
-    foreach (i; 1 .. 7) {
-        y = from[1] - cast(int)(15 * sp * i / 6);
-        log ~= penMotion(40 + 40 * i, x, y, penButtonMask(3), 0) ~ "\n";
-    }
-    penPlay(log, "offsets-live-loop: held loop drag");
-    const oHeld = offs();
-    assert(penMesh() == r.a0 && len3(oHeld) > 1e-3,
-           format("offsets-live-loop held: the deferred loop must not move yet (moved %s) and must "
-                  ~ "report its offset %s", penIdx(penMoved(penMesh(), r.a0)), fmt3(oHeld)));
-    penPlay(penButton(20, false, 3, x, y - 6, 0), "offsets-live-loop release");
-    const g1 = penMesh();
-    const moved = penMoved(g1, r.a0);
-    assert(moved.length > 2 && moved.canFind(5L) && moved.canFind(6L),
-           format("offsets-live-loop rig: the loop moved %s", penIdx(moved)));
-    const want = mean2(delta(g1, r.a0, 5), delta(g1, r.a0, 6));
-    const o = offs();
-    assert(len3(o) > 1e-3 && near3(o, want, 1e-6) && !near3(o, oHeld, 1e-6),
-           format("offsets-live-loop: offsets %s, the pressed edge's midpoint travelled %s (held %s)",
-                  fmt3(o), fmt3(want), fmt3(oHeld)));
-    writeln("PASS offsets-live-loop");
-}
+// offsets-live-edge / offsets-live-loop moved to
+// tests/test_session_laws_topology_pen_offset.d with slice S7b: the offset an
+// edge or a loop reports became its kernel's G-delta offset (L18/L28), which
+// needs that file's background oracle.
 
 // descriptor-kinds — the press end writes the descriptor: a vertex Move is
 // kind 1 over {5}, an edge Move kind 2 over {5, 6}, a Move Loop kind 4; the
@@ -694,10 +645,11 @@ unittest {
     moveV5("param-redo-in-instance g1");
     const g1 = penMesh();
     w("offsetX", "0.1");
+    const w1 = penMesh();   // S7b: the write re-applies g1 (L23)
     z("param-redo-in-instance z1");
     at("param-redo-in-instance", "z1", g1, true, r.hp + 2);
     sz("param-redo-in-instance r1");
-    at("param-redo-in-instance", "r1", g1, true, r.hp + 3);
+    at("param-redo-in-instance", "r1", w1, true, r.hp + 3);
     assert(is01(attrNum("offsetX")),
            "param-redo-in-instance r1: offsetX " ~ attrStr("offsetX"));
     writeln("PASS param-redo-in-instance");
@@ -817,16 +769,17 @@ unittest {
     moveV5("param-redo-two-in-instance g1");
     const g1 = penMesh();
     w("offsetX", "0.1");
+    const w1 = penMesh();   // S7b: the write re-applies g1 (L23)
     w("loop", "true");
     z("param-redo-two-in-instance z1");
     z("param-redo-two-in-instance z2");
     at("param-redo-two-in-instance", "z2", g1, true, r.hp + 2);
     sz("param-redo-two-in-instance r1");
-    at("param-redo-two-in-instance", "r1 (the first row)", g1, true, r.hp + 3);
+    at("param-redo-two-in-instance", "r1 (the first row)", w1, true, r.hp + 3);
     assert(redoLen() == 1, format("param-redo-two-in-instance r1: redo %d (expected 1: the second "
                                   ~ "open row is this instance's)", redoLen()));
     sz("param-redo-two-in-instance r2");
-    at("param-redo-two-in-instance", "r2 (the second row)", g1, true, r.hp + 4);
+    at("param-redo-two-in-instance", "r2 (the second row)", w1, true, r.hp + 4);
     assert(attrStr("loop") == "true" && is01(attrNum("offsetX")),
            format("param-redo-two-in-instance r2: loop %s offsetX %s", attrStr("loop"),
                   attrStr("offsetX")));
@@ -844,9 +797,10 @@ unittest {
     const g1 = penMesh();
     const o1 = offs();
     w("offsetX", "0.1");
+    const w1 = penMesh();   // S7b: the write re-applies g1 (L23)
     w("loop", "true");
     z("pop-one-open-rows z1");
-    at("pop-one-open-rows", "z1", g1, true, r.hp + 3);
+    at("pop-one-open-rows", "z1", w1, true, r.hp + 3);
     assert(attrStr("loop") == "false" && is01(attrNum("offsetX")),
            format("pop-one-open-rows z1: loop %s offsetX %s", attrStr("loop"), attrStr("offsetX")));
     z("pop-one-open-rows z2");
@@ -877,9 +831,10 @@ unittest {
     moveV5("fold-on-press g1");
     const g1 = penMesh();
     w("offsetX", "0.1");
+    const w1 = penMesh();   // S7b: the write re-applies g1 (L23)
     moveV10("fold-on-press g2");
     z("fold-on-press z1");
-    at("fold-on-press", "z1", g1, true, r.hp + 3);
+    at("fold-on-press", "z1", w1, true, r.hp + 3);
     offsAre("fold-on-press", "z1", [0, 0, 0]);
     z("fold-on-press z2");
     at("fold-on-press", "z2 (g1 and the row as one)", r.a0, true, r.hp + 1);
@@ -896,10 +851,11 @@ unittest {
     moveV5("fold-on-switch g1");
     const g1 = penMesh();
     w("offsetX", "0.1");
+    const w1 = penMesh();   // S7b: the write re-applies g1 (L23)
     penKey(PEN_SDLK_w, 0, "fold-on-switch W");
     assert(!penArmed() && penHistoryLen() == r.hp + 4, "fold-on-switch W: " ~ penHistoryLabels().join(","));
     z("fold-on-switch z1");
-    at("fold-on-switch", "z1", g1, true, r.hp + 3);
+    at("fold-on-switch", "z1", w1, true, r.hp + 3);
     offsAre("fold-on-switch", "z1", [0, 0, 0]);
     z("fold-on-switch z2");
     at("fold-on-switch", "z2 (g1 and the row as one)", r.a0, true, r.hp + 1);
@@ -917,12 +873,13 @@ unittest {
     moveV5("fold-switch-group-redo g1");
     const g1 = penMesh();
     w("offsetX", "0.1");
+    const w1 = penMesh();   // S7b: the write re-applies g1 (L23)
     penKey(PEN_SDLK_w, 0, "fold-switch-group-redo W");
     z("fold-switch-group-redo z1");
     z("fold-switch-group-redo z2");
     at("fold-switch-group-redo", "z2", r.a0, true, r.hp + 1);
     sz("fold-switch-group-redo r1");
-    at("fold-switch-group-redo", "r1 (the group)", g1, true, r.hp + 3);
+    at("fold-switch-group-redo", "r1 (the group)", w1, true, r.hp + 3);
     offsAre("fold-switch-group-redo", "r1", [0, 0, 0]);
     writeln("PASS fold-switch-group-redo");
 }
@@ -936,6 +893,7 @@ unittest {
     moveV5("fold-group-redo g1");
     const g1 = penMesh();
     w("offsetX", "0.1");
+    const w1 = penMesh();   // S7b: the write re-applies g1 (L23)
     const ow = offs();
     moveV10("fold-group-redo g2");
     const g2 = penMesh();
@@ -943,7 +901,7 @@ unittest {
     z("fold-group-redo z2");
     at("fold-group-redo", "z2", r.a0, true, r.hp + 1);
     sz("fold-group-redo r1");
-    at("fold-group-redo", "r1 (the group)", g1, true, r.hp + 3);
+    at("fold-group-redo", "r1 (the group)", w1, true, r.hp + 3);
     offsAre("fold-group-redo", "r1 (the row's after offsets)", ow);
     sz("fold-group-redo r2");
     at("fold-group-redo", "r2", g2, true, r.hp + 4);
@@ -959,6 +917,7 @@ unittest {
     moveV5("fold-group-redo-rearm g1");
     const g1 = penMesh();
     w("offsetX", "0.1");
+    const w1 = penMesh();   // S7b: the write re-applies g1 (L23)
     moveV10("fold-group-redo-rearm g2");
     const g2 = penMesh();
     foreach (s; ["z1", "z2", "z3"]) z("fold-group-redo-rearm " ~ s);
@@ -966,7 +925,7 @@ unittest {
     sz("fold-group-redo-rearm r1");
     at("fold-group-redo-rearm", "r1", r.a0, true, r.hp + 1);
     sz("fold-group-redo-rearm r2");
-    at("fold-group-redo-rearm", "r2 (the group)", g1, true, r.hp + 3);
+    at("fold-group-redo-rearm", "r2 (the group)", w1, true, r.hp + 3);
     offsAre("fold-group-redo-rearm", "r2", [0, 0, 0]);
     sz("fold-group-redo-rearm r3");
     at("fold-group-redo-rearm", "r3", g2, true, r.hp + 4);
@@ -985,9 +944,10 @@ unittest {
     sz("fold-after-redo r0");
     at("fold-after-redo", "r0", g1, true, r.hp + 2);
     w("offsetX", "0.1");
+    const w1 = penMesh();   // S7b: the write re-applies g1 (L23)
     moveV10("fold-after-redo g2");
     z("fold-after-redo z1");
-    at("fold-after-redo", "z1", g1, true, r.hp + 3);
+    at("fold-after-redo", "z1", w1, true, r.hp + 3);
     z("fold-after-redo z2");
     at("fold-after-redo", "z2 (g1 and the row as one)", r.a0, true, r.hp + 1);
     z("fold-after-redo z3");
@@ -1025,10 +985,11 @@ unittest {
     moveV5("fold-on-retype g1");
     const g1 = penMesh();
     w("offsetX", "0.1");
+    const w1 = penMesh();   // S7b: the write re-applies g1 (L23)
     penLineUi("tool.set " ~ kPenToolId ~ " on");
-    at("fold-on-retype", "exit", g1, true, r.hp + 4);
+    at("fold-on-retype", "exit", w1, true, r.hp + 4);
     z("fold-on-retype z1");
-    at("fold-on-retype", "z1", g1, true, r.hp + 3);
+    at("fold-on-retype", "z1", w1, true, r.hp + 3);
     z("fold-on-retype z2");
     at("fold-on-retype", "z2 (g1 and the row as one)", r.a0, true, r.hp + 1);
     z("fold-on-retype z3");
@@ -1045,10 +1006,11 @@ unittest {
     moveV5("fold-all-rows g1");
     const g1 = penMesh();
     w("offsetX", "0.1");
+    const w1 = penMesh();   // S7b: the write re-applies g1 (L23)
     w("loop", "true");
     moveV10("fold-all-rows g2");
     z("fold-all-rows z1");
-    at("fold-all-rows", "z1", g1, true, r.hp + 4);
+    at("fold-all-rows", "z1", w1, true, r.hp + 4);
     assert(attrStr("loop") == "true", "fold-all-rows z1: loop " ~ attrStr("loop"));
     z("fold-all-rows z2");
     at("fold-all-rows", "z2 (g1 and both rows)", r.a0, true, r.hp + 1);
@@ -1089,13 +1051,14 @@ unittest {
     moveV5("fold-after-param-redo g1");
     const g1 = penMesh();
     w("offsetX", "0.1");
+    const w1 = penMesh();   // S7b: the write re-applies g1 (L23)
     z("fold-after-param-redo z0");
     sz("fold-after-param-redo r0");
-    at("fold-after-param-redo", "r0", g1, true, r.hp + 3);
+    at("fold-after-param-redo", "r0", w1, true, r.hp + 3);
     w("loop", "true");
     moveV10("fold-after-param-redo g2");
     z("fold-after-param-redo z1");
-    at("fold-after-param-redo", "z1", g1, true, r.hp + 4);
+    at("fold-after-param-redo", "z1", w1, true, r.hp + 4);
     assert(attrStr("loop") == "true", "fold-after-param-redo z1: loop " ~ attrStr("loop"));
     z("fold-after-param-redo z2");
     at("fold-after-param-redo", "z2 (g1 and both rows)", r.a0, true, r.hp + 1);
@@ -1175,11 +1138,12 @@ unittest {
     moveV5("fold-on-drop g1");
     const g1 = penMesh();
     w("offsetX", "0.1");
+    const w1 = penMesh();   // S7b: the write re-applies g1 (L23)
     penKey(PEN_SDLK_ESCAPE, 0, "fold-on-drop Esc");
-    at("fold-on-drop", "exit", g1, false, r.hp + 5);
+    at("fold-on-drop", "exit", w1, false, r.hp + 5);
     z("fold-on-drop z1");
     z("fold-on-drop z2");
-    at("fold-on-drop", "z2 (drop row)", g1, true, r.hp + 3);
+    at("fold-on-drop", "z2 (drop row)", w1, true, r.hp + 3);
     z("fold-on-drop z3");
     at("fold-on-drop", "z3 (g1 and the row as one)", r.a0, true, r.hp + 1);
     writeln("PASS fold-on-drop");
@@ -1201,14 +1165,15 @@ unittest {
         moveV5(id ~ " g1");
         const g1 = penMesh();
         w("offsetX", "0.1");
+        const w1 = penMesh();   // S7b: the write re-applies g1 (L23)
         penLineUi(cmd);
         assert(penArmed() && penHistoryLen() == r.hp + 4,
                format("%s: armed %s, history %s (expected the command's own row, the pen armed)",
                       id, penArmed(), penHistoryLabels()));
         if (cmd == "mesh.flip")
-            assert(penMesh() != g1, id ~ " rig: the flip changed nothing");
+            assert(penMesh() != w1, id ~ " rig: the flip changed nothing");
         z(id ~ " z1");
-        at(id, "z1 (the command's row)", g1, true, r.hp + 3);
+        at(id, "z1 (the command's row)", w1, true, r.hp + 3);
         assert(is01(attrNum("offsetX")), format("%s z1: offsetX %s, expected 0.1", id,
                                                 attrNum("offsetX")));
         z(id ~ " z2");
@@ -1231,6 +1196,7 @@ unittest {
     moveV5("fold-on-command-then-press g1");
     const g1 = penMesh();
     w("offsetX", "0.1");
+    const w1 = penMesh();   // S7b: the write re-applies g1 (L23)
     penLineUi("select.invert");
     const c = penMesh();
     moveV10("fold-on-command-then-press g2");
@@ -1239,7 +1205,7 @@ unittest {
     z("fold-on-command-then-press z1");
     at("fold-on-command-then-press", "z1 (g2 alone)", c, true, r.hp + 4);
     z("fold-on-command-then-press z2");
-    at("fold-on-command-then-press", "z2 (the command)", g1, true, r.hp + 3);
+    at("fold-on-command-then-press", "z2 (the command)", w1, true, r.hp + 3);
     z("fold-on-command-then-press z3");
     at("fold-on-command-then-press", "z3 (g1 and the row as one)", r.a0, true, r.hp + 1);
     writeln("PASS fold-on-command-then-press");
@@ -1258,6 +1224,7 @@ unittest {
     moveV5("write-after-command g1");
     const g1 = penMesh();
     w("offsetX", "0.1");
+    const w1 = penMesh();   // S7b: the write re-applies g1 (L23)
     penLineUi("select.invert");
     w("offsetY", "0.1");
     const undo = getJson("/api/history")["undo"].array;
@@ -1266,7 +1233,7 @@ unittest {
                   ~ "PreNavOpen: no block is open after the command)", undo.length, r.hp + 5,
                   undo[$ - 1]["flags"].integer));
     z("write-after-command z1");
-    at("write-after-command", "z1 (the row alone)", g1, true, r.hp + 4);
+    at("write-after-command", "z1 (the row alone)", w1, true, r.hp + 4);
     writeln("PASS write-after-command");
 }
 
@@ -1281,8 +1248,9 @@ unittest {
     const g1 = penMesh();
     const og1 = offs();
     w("offsetX", "0.1");
+    const w1 = penMesh();   // S7b: the write re-applies g1 (L23)
     penLineUi("viewport.fit");
-    at("no-fold-on-unrecorded-command", "fit (no row)", g1, true, r.hp + 3);
+    at("no-fold-on-unrecorded-command", "fit (no row)", w1, true, r.hp + 3);
     z("no-fold-on-unrecorded-command z1");
     at("no-fold-on-unrecorded-command", "z1 (the parameter row alone)", g1, true, r.hp + 2);
     offsAre("no-fold-on-unrecorded-command", "z1 (the row's before image: g1's)", og1);
@@ -1331,6 +1299,7 @@ unittest {
     moveV5("cross-tool-redo g1");
     const g1 = penMesh();
     w("offsetX", "0.1");
+    const w1 = penMesh();   // S7b: the write re-applies g1 (L23)
     z("cross-tool-redo z1");
     z("cross-tool-redo z2");
     at("cross-tool-redo", "z2", r.a0, true, r.hp + 1);
@@ -1348,10 +1317,10 @@ unittest {
                   penHistoryLabels(), redoLen()));
     sz("cross-tool-redo r2");
     const labels = penHistoryLabels();
-    assert(penTool() == rot && penMesh() == g1 && penHistoryLen() == r.hp + 3 && redoLen() == 0
+    assert(penTool() == rot && penMesh() == w1 && penHistoryLen() == r.hp + 3 && redoLen() == 0
            && labels[$ - 1] == "Topology Attribute",
-           format("cross-tool-redo r2: tool '%s', g1 %s, history %s, redo %s (expected the "
-                  ~ "attribute row redone)", penTool(), penMesh() == g1, labels, redoLen()));
+           format("cross-tool-redo r2: tool '%s', w1 %s, history %s, redo %s (expected the "
+                  ~ "attribute row redone)", penTool(), penMesh() == w1, labels, redoLen()));
     writeln("PASS cross-tool-redo");
 }
 
@@ -1362,7 +1331,7 @@ unittest {
     writeln("cells=", cellsRun);
     const only = environment.get("VIBE3D_CELL", "");
     if (only.length == 0)
-        assert(cellsRun == 46, format("topology pen S7a laws: %d cells ran, expected 46", cellsRun));
+        assert(cellsRun == 44, format("topology pen S7a laws: %d cells ran, expected 44", cellsRun));
     else
         assert(cellsRun == 1, format("topology pen S7a laws: VIBE3D_CELL=%s ran %d cells, expected 1 "
                                      ~ "(an unknown name runs none)", only, cellsRun));

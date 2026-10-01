@@ -21,6 +21,7 @@
 //   offset-zero-exact          L24  three writes: the third puts v5 back BIT-exact
 //   offset-came-home           R1-7 the carried set, not a mesh diff
 //   offset-after-command       L58  a recording command ends the gesture link
+//   offsets-live-edge / -loop  L18  the G-delta offset of the pressed anchor
 //   drag-poly-offcentre        L28  the polygon's centroid follows the drag DELTA
 //   drag-slide-dir             L36/L47  one world channel, rotated and orbited rigs
 //   drag-slide-f / -L / -tie   L50  the axis latches at 4.5 px of path, a tie -> Y
@@ -686,6 +687,86 @@ unittest {
 }
 
 // ===========================================================================
+// offsets-live-edge / -loop — L18 (moved here from the S7a file): an edge or a
+// loop Move reports the G-delta offset of the PRESSED element's anchor (the
+// edge's midpoint; the pressed edge's, not the loop's): anchor + offset is ON
+// the background under proj(anchor) + drag, and every carried vertex sits at
+// nearestBG(u_i + offset). The loop writes it live while held and the release
+// re-derives it at its own pixel.
+// ===========================================================================
+
+/// anchor + o: on the background (1e-5) and under proj(anchor) + (dx, dy) (1 px).
+void gDeltaAt(string id, double[3] anchor, double[3] o, double dx, double dy, float[2] pa) {
+    const t = add3(anchor, o);
+    const pt = projectF(t);
+    const d = hypot(pt[0] - (pa[0] + dx), pt[1] - (pa[1] + dy));
+    assert(len3(o) > 1e-3 && dist3(nearestBG(t), t) <= 1e-5 && d <= 1.0,
+           format("%s: anchor + offset %s is %.3g off the background and %.2f px from proj(anchor) + drag "
+                  ~ "(max 1e-5, 1 px)", id, t, dist3(nearestBG(t), t), d));
+}
+
+unittest {
+    if (!cell("offsets-live-edge")) return;
+    const r = rig();
+    penArmUi(r);
+    const double[3] mid = [(r.a0.pos[5][0] + r.a0.pos[6][0]) / 2, (r.a0.pos[5][1] + r.a0.pos[6][1]) / 2,
+                           (r.a0.pos[5][2] + r.a0.pos[6][2]) / 2];
+    const pa = projectF(mid);
+    const e = penEdgePx(5, 6, "offsets-live-edge e56");
+    const sp = penSpacingPx() / kSp;
+    const int dx = cast(int)round(20 * sp), dy = cast(int)round(12 * sp);
+    penPlay(penGestureEvents(e[0], e[1], e[0] + dx, e[1] + dy, 1, 0, 8), "offsets-live-edge drag");
+    const g1 = penMesh();
+    const o = offs();
+    assert(penMoved(g1, r.a0) == [5L, 6L], format("offsets-live-edge: moved %s", penIdx(penMoved(g1, r.a0))));
+    gDeltaAt("offsets-live-edge", mid, o, dx, dy, pa);
+    double raw = 0;
+    foreach (v; [5L, 6]) {
+        const d = carriedAt("offsets-live-edge", g1, v, r.a0.pos[cast(size_t)v], o);
+        if (d > raw) raw = d;
+    }
+    rawFloor("offsets-live-edge", raw);
+    writeln("PASS offsets-live-edge");
+}
+
+unittest {
+    if (!cell("offsets-live-loop")) return;
+    const r = rig();
+    penArmUi(r);
+    const double[3] mid = [(r.a0.pos[5][0] + r.a0.pos[6][0]) / 2, (r.a0.pos[5][1] + r.a0.pos[6][1]) / 2,
+                           (r.a0.pos[5][2] + r.a0.pos[6][2]) / 2];
+    const pa = projectF(mid);
+    const from = penEdgePx(5, 6, "offsets-live-loop e56");
+    const sp = penSpacingPx() / kSp;
+    string log = penMotion(20, from[0], from[1], 0, 0) ~ "\n"
+               ~ penButton(40, true, 3, from[0], from[1], 0) ~ "\n";
+    int y = from[1];
+    foreach (i; 1 .. 7) {
+        y = from[1] - cast(int)(15 * sp * i / 6);
+        log ~= penMotion(40 + 40 * i, from[0], y, penButtonMask(3), 0) ~ "\n";
+    }
+    penPlay(log, "offsets-live-loop: held loop drag");
+    const oHeld = offs();
+    assert(penMesh() == r.a0, "offsets-live-loop held: the deferred loop moved before its release");
+    gDeltaAt("offsets-live-loop held", mid, oHeld, 0, y - from[1], pa);
+    penPlay(penButton(20, false, 3, from[0], y - 6, 0), "offsets-live-loop release");
+    const g1 = penMesh();
+    const o = offs();
+    const moved = penMoved(g1, r.a0);
+    assert(moved.length == 4 && moved.canFind(5L) && moved.canFind(6L) && o != oHeld,
+           format("offsets-live-loop: the loop moved %s, offsets %s (held %s)", penIdx(moved), fmt3(o),
+                  fmt3(oHeld)));
+    gDeltaAt("offsets-live-loop", mid, o, 0, y - 6 - from[1], pa);
+    double raw = 0;
+    foreach (v; moved) {
+        const d = carriedAt("offsets-live-loop", g1, v, r.a0.pos[cast(size_t)v], o);
+        if (d > raw) raw = d;
+    }
+    rawFloor("offsets-live-loop", raw);
+    writeln("PASS offsets-live-loop");
+}
+
+// ===========================================================================
 // The edge slide over a background (L47/L50, §9.26.3): one world channel,
 // latched once the cursor path reaches 4.5 px, a tie -> the later axis.
 // ===========================================================================
@@ -865,5 +946,5 @@ unittest {
 // The population: every cell above ran when none was selected.
 unittest {
     if (environment.get("VIBE3D_CELL", "").length) return;
-    assert(cellsRun == 22, format("offset laws: %d cells ran, expected 22", cellsRun));
+    assert(cellsRun == 24, format("offset laws: %d cells ran, expected 24", cellsRun));
 }

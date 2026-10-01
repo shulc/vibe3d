@@ -86,6 +86,11 @@ unittest {
     int upX = downX + 40, upY = downY - 25;
 
     cmd("tool.set mesh.topoPen on");
+    // The pen arms the snap enable, and since S7b (D19) the loop's shared
+    // offset carries the row to the sphere's near surface, where on this
+    // camera it lands within the weld radius of the neighbouring rows' pixels.
+    // This file pins the drag, not the landing weld: snapping off.
+    cmd("tool.pipe.attr snap enabled false");
 
     postJson("/api/play-events",
         buildDragLog(c.vpX, c.vpY, c.width, c.height, downX, downY, upX, upY, 16, 0, 3));
