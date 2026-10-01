@@ -33,6 +33,7 @@
 //   fold-on-command(-then-press)  L57 (C5, A17): a UI-door recording command
 //                                      folds the open step; the pen stays armed
 //   no-fold-on-unrecorded-command ours: a command writing no row folds nothing
+//   write-after-command           ours (gap ff''): a row after the command is a base
 //   discard-resets-offsets        a discarded gesture restores its context
 //   cross-tool-redo               ours (gap ee''): an open pen row at the redo
 //                                      head under a tool armed without a row
@@ -1244,6 +1245,31 @@ unittest {
     writeln("PASS fold-on-command-then-press");
 }
 
+// write-after-command — ours (not captured; gap row ff''): the command's fold
+// leaves no open block, so a parameter row written after it is the base of its
+// own step (no `PreNavOpen` mark) and pops alone. The reference restarts the
+// pen there with re-arm rows in the command's step, so its row may instead
+// join that step.
+unittest {
+    if (!cell("write-after-command")) return;
+    enum long kPreNavOpen = 1L << 16;   // HistoryFlags.PreNavOpen
+    const r = rig();
+    penArmUi(r);
+    moveV5("write-after-command g1");
+    const g1 = penMesh();
+    w("offsetX", "0.1");
+    penLineUi("select.invert");
+    w("offsetY", "0.1");
+    const undo = getJson("/api/history")["undo"].array;
+    assert(undo.length == r.hp + 5 && (undo[$ - 1]["flags"].integer & kPreNavOpen) == 0,
+           format("write-after-command w2: %s rows (expected %s), top flags %#x (expected no "
+                  ~ "PreNavOpen: no block is open after the command)", undo.length, r.hp + 5,
+                  undo[$ - 1]["flags"].integer));
+    z("write-after-command z1");
+    at("write-after-command", "z1 (the row alone)", g1, true, r.hp + 4);
+    writeln("PASS write-after-command");
+}
+
 // no-fold-on-unrecorded-command — ours (not captured; the card's gap row): a
 // command that writes no undo row (`viewport.fit`) is no fold trigger, so the
 // parameter row stays its own step (the L38 control shape).
@@ -1336,7 +1362,7 @@ unittest {
     writeln("cells=", cellsRun);
     const only = environment.get("VIBE3D_CELL", "");
     if (only.length == 0)
-        assert(cellsRun == 45, format("topology pen S7a laws: %d cells ran, expected 45", cellsRun));
+        assert(cellsRun == 46, format("topology pen S7a laws: %d cells ran, expected 46", cellsRun));
     else
         assert(cellsRun == 1, format("topology pen S7a laws: VIBE3D_CELL=%s ran %d cells, expected 1 "
                                      ~ "(an unknown name runs none)", only, cellsRun));
