@@ -116,7 +116,7 @@
    "cells": [
     "chord-build"
    ],
-   "law": "A drag-build from a vertex that takes ONE existing neighbour takes the border neighbour whose screen direction makes the smallest angle with the drag (B1a: v4, B1b: v1); on the bisector it takes v4 (K-chords)."
+   "law": "A drag-build from a vertex that takes ONE existing neighbour takes the border neighbour whose screen direction makes the smallest angle with the drag (B1a: v4, B1b: v1); on the bisector it takes v4 (K-chords). The screen-direction reading is superseded by L52 (the surface plane; front view: same answer)."
   },
   {
    "id": "L52-build-neighbour-in-surface-plane",
