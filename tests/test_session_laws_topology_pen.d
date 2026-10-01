@@ -814,6 +814,9 @@ unittest {
     moveV5("param-write-post-press g1");
     const g1 = penMesh();
     penAttrInteractive(fx["attr"].str, "true");
+    // The row is the attribute's, not the press's that came before it.
+    assert(topLabel() == "Topology Attribute",
+           "param-write-post-press w1: the row after a press is labelled " ~ topLabel());
     assert(penAttr(fx["attr"].str) == "true" && penMesh() == g1 && penHistoryLen() == r.hp + 3,
            format("param-write-post-press w1: %s = %s, mesh %s g1, history %s", fx["attr"].str,
                   penAttr(fx["attr"].str), penMesh() == g1 ? "==" : "!=", penHistoryLabels()));

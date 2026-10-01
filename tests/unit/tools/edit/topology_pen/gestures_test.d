@@ -72,6 +72,7 @@ import eventlog               : queryMouse;
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
 import edit_session : EditSession;
+import change_bus : changeBus;
 
 // ---------------------------------------------------------------------------
 // The bound-session rig (plan 8646 [R2-1, R3-1]). The pen's rows are written
@@ -609,6 +610,15 @@ unittest {
     assert(m.vertices[a] == Vec3(1, 2, 3) && !t.stepOpen_ && !t.hasUncommittedEdit(),
         "the cancel restores the press image and closes the step");
     assert(history.undoEntries().length == 0, "a cancelled press records nothing");
+    // The cancel ended the SESSION's pending step too: a close right after it
+    // (the drop that follows a document replace) has nothing left to record.
+    {
+        import tool_activation_ownership : CloseReason;
+        session.closeOperation(CloseReason.drop);
+        session.finishClose();
+        assert(history.undoEntries().length == 0,
+            "a close after a cancel must not record the cancelled press");
+    }
 
     // [R4-3]: the next press opens ITS OWN step and is one row; a second
     // button during that hold opens nothing new (one step per hold).
@@ -678,6 +688,93 @@ unittest {
                 history.undoEntries().length));
     }
     assert(n == 8, "every pen mode was pressed");
+
+    // An unwired carrier records nothing, restores the press image, and is a
+    // COUNTED refusal, never a silent one.
+    t.moveEditFactory_ = null;
+    immutable ulong mismatch0 = changeBus.gestureCarrierMismatch;
+    penStep(t, SDL_BUTTON_LEFT, PenMode.Move, () { m.vertices[0] = Vec3(1, 0, 0); });
+    assert(history.undoEntries().length == n && m.vertices[0] == Vec3(0, 0, 0)
+           && changeBus.gestureCarrierMismatch == mismatch0 + 1,
+        "an unwired carrier must record nothing, restore the press image and count the refusal");
+}
+
+// Navigating a pen step re-syncs the tool (plan 8646): a hover or gesture index
+// cached before the undo may name geometry the undo just removed.
+unittest {
+    auto t       = new TopologyPenTool();
+    auto history = new CommandHistory();
+    Mesh m;
+    foreach (p; [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 0, 1), Vec3(0, 0, 1)]) m.addVertex(p);
+    t.meshSrc_ = () => &m;
+    auto session = bindPenSession(t, history);
+    penStep(t, SDL_BUTTON_LEFT, PenMode.Move, () { m.vertices[1] = Vec3(2, 0, 0); });
+    assert(history.undoEntries().length == 1, "rig floor: the press is one row");
+    t.hoverNearestVert_ = 3;
+    t.slideDeclineSeed_ = 2;
+    assert(session.navigate(true) && m.vertices[1] == Vec3(1, 0, 0),
+        "rig floor: the navigate undo must pop the press");
+    assert(t.hoverNearestVert_ == -1 && t.slideDeclineSeed_ == -1,
+        "a navigated pen step must clear the tool's cached indices");
+}
+
+// The press image is the SESSION's capture, shared, not a second one (plan
+// 8646 [R1-m]): opening a bound press allocates about ONE mesh image. Measured
+// as a ratio against a capture of the same mesh, so the GC's block rounding
+// is the same on both sides.
+unittest {
+    import core.memory : GC;
+    import mesh : makeGridPlane;
+    auto t       = new TopologyPenTool();
+    auto history = new CommandHistory();
+    Mesh m = makeGridPlane(16);
+    m.syncSelection();
+    t.meshSrc_ = () => &m;
+    auto session = bindPenSession(t, history);
+    immutable ulong c0 = GC.allocatedInCurrentThread();
+    auto probe = MeshSnapshot.capture(m);
+    immutable ulong oneImage = GC.allocatedInCurrentThread() - c0;
+    immutable ulong o0 = GC.allocatedInCurrentThread();
+    assert(t.openPressStep(SDL_BUTTON_LEFT, PenMode.Move), "the press opens a step");
+    immutable ulong opened = GC.allocatedInCurrentThread() - o0;
+    t.closePressStep();
+    assert(probe.filled && oneImage > 0 && opened >= oneImage / 2 && opened < oneImage * 3 / 2,
+        imported!"std.format".format("opening a bound press allocated %d bytes against %d for "
+            ~ "one mesh image: the press image must be the session's, not a second capture",
+            opened, oneImage));
+}
+
+// applySmoothPasses — the no-op guard decides what a press KEEPS (since plan
+// 8646 every press is one row): a relax below the scale-relative eps (1e-6 of
+// this grid's 2.83 diagonal) is noise and the press keeps NOTHING, bit for bit.
+// The strength scales the relax: at the default a flat 4x4 grid's border moves
+// 0.018; at 3e-5 of it the move is ~5e-7 — above float's step at |x| = 1
+// (1.2e-7), so a kept change would show, and below the eps, so it must not.
+unittest {
+    import mesh : makeGridPlane;
+    import snap : setBackgroundSnapSources;
+    setBackgroundSnapSources(null, null);
+    static Vec3[] smoothOnce(float strength, out size_t rows, out Vec3[] before) {
+        auto t       = new TopologyPenTool();
+        auto history = new CommandHistory();
+        Mesh m = makeGridPlane(4);
+        m.syncSelection();
+        t.meshSrc_ = () => &m;
+        t.smoothStrength_ = strength;
+        auto session = bindPenSession(t, history);
+        before = m.vertices.dup;
+        penStep(t, SDL_BUTTON_LEFT, PenMode.Smooth, () { t.applySmoothPasses(1); });
+        rows = history.undoEntries().length;
+        return m.vertices.dup;
+    }
+    size_t rows;
+    Vec3[] before;
+    // Floor: at the default strength the rig does smooth, and keeps it.
+    assert(smoothOnce(1.0f, rows, before) != before && rows == 1,
+        "rig floor: the default-strength smooth must move the grid, one row");
+    const after = smoothOnce(3.0e-5f, rows, before);
+    assert(after == before && rows == 1,
+        "a sub-eps smooth must keep nothing (bit for bit) and still be one row");
 }
 
 // ---------------------------------------------------------------------------
@@ -11992,9 +12089,9 @@ unittest {
         }
     }
     // Floors first: an empty scan would satisfy both rules vacuously.
-    assert(blocks.length == 176 && histBlocks == 79 && calls == 78 && kernels == 64,
-        format("gestures census population changed: %d top-level blocks (176), %d read "
-             ~ "history (79), %d bracketed-list calls in them (78), %d of them kernels (64)",
+    assert(blocks.length == 179 && histBlocks == 81 && calls == 79 && kernels == 65,
+        format("gestures census population changed: %d top-level blocks (179), %d read "
+             ~ "history (81), %d bracketed-list calls in them (79), %d of them kernels (65)",
                blocks.length, histBlocks, calls, kernels));
     assert(bad.length == 0, "gestures census:\n" ~ bad.join("\n"));
 }

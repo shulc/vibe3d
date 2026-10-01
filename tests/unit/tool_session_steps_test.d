@@ -1276,6 +1276,7 @@ private final class PressFlagTool : Tool, TopologyStepClient {
     MeshSnapshot basis;
     JSONValue delegate() state;   // the session's report, read mid-step
     JSONValue seen;               // `pendingPress` as the step's write saw it
+    bool nullCarrier;             // the carrier is not wired
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
         static immutable ToolSessionPolicy policy = {
             activationRow: true, sessionSteps: true, historyTopologySteps: true,
@@ -1295,6 +1296,7 @@ private final class PressFlagTool : Tool, TopologyStepClient {
     override MeshSnapshot topologyStepBasis() { return basis; }
     override Command topologyStepCarrier() {
         import commands.mesh.session_edit : MeshSessionEdit;
+        if (nullCarrier) return null;
         return new MeshSessionEdit(m, view, EditMode.Polygons, "t.press", "Press");
     }
     override bool recordTopologyStep(Command cmd) { h.record(cmd); return true; }
@@ -1362,15 +1364,49 @@ unittest { // a press through the link is a press; a parameter write and an Acti
                t.seen, h.undoEntries().length));
 }
 
+/// A topology stand-in whose ARM applies it (`opensAt: arm` + `armAttr`): the
+/// arm-apply step is pending exactly while the arm attribute is applied, so the
+/// report is read there.
+private final class ArmTopologyTool : Tool, TopologyStepClient {
+    Mesh* m;
+    View view;
+    bool on;
+    JSONValue delegate() state;
+    JSONValue seen;
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy policy = {
+            activationRow: true, sessionSteps: true, historyTopologySteps: true,
+            opensAt: OpensAt.arm, imageAttrs: ["on"], armAttr: "on"
+        };
+        return policy;
+    }
+    override Param[] params() { return [Param.bool_("on", "On", &on, false)]; }
+    override void rebuildPreviewFromAttrs() {
+        if (state !is null) seen = state()["pendingPress"];
+    }
+    override Mesh* topologyStepMesh() { return m; }
+    override MeshSnapshot topologyStepBasis() { return MeshSnapshot.init; }
+    override Command topologyStepCarrier() { return null; }
+    override bool recordTopologyStep(Command) { return false; }
+    override string topologyStepLabel() { return "Arm"; }
+    override void setTopologyDormant(bool) {}
+    override void rebaseTopologyStep(MeshSnapshot) {}
+    override void restoreTopologyStep(in AttrImage attrs, MeshSnapshot) {
+        restoreRecordedAttrs(attrs);
+    }
+}
+
 unittest { // the arm-apply entry (`opensAt: arm` + `armAttr`) is not a press
-    auto t = new ArmTool;
+    Mesh m = makeCube();
+    auto t = new ArmTopologyTool;
+    t.m = &m; t.view = new View(0, 0, 1, 1);
     Tool active = t;
     auto h = new CommandHistory();
     auto s = new EditSession(() => active, h, () { active = null; });
-    s.noteArm("t.arm");
-    auto j = s.sessionStateJson();
-    assert(t.on && j["pendingPress"].type == JSONType.false_,
-        format("8646 press flag: the arm-apply step reported pendingPress (on %s): %s", t.on, j));
+    t.state = () => s.sessionStateJson();
+    s.noteArm("t.armtopo");
+    assert(t.on && t.seen.type == JSONType.false_,
+        format("8646 press flag: the arm-apply step reported pendingPress %s (on %s)", t.seen, t.on));
 }
 
 unittest { // plan 8646 [R1-m]: the press image is the session's own, handed out shared
@@ -1393,4 +1429,40 @@ unittest { // plan 8646 [R1-m]: the press image is the session's own, handed out
         "8646 open image: the image must not alias the live mesh");
     t.pressEnds();
     assert(!t.openImage().filled, "8646 open image: an ended step has no image");
+}
+
+unittest { // the open image is the PENDING step's: none after a step that recorded nothing
+    Mesh m = makeCube();
+    auto h = new CommandHistory();
+    auto t = new PressFlagTool;
+    t.m = &m; t.h = h; t.view = new View(0, 0, 1, 1);
+    t.basis = MeshSnapshot.capture(m);
+    t.nullCarrier = true;
+    Tool active = t;
+    auto s = new EditSession(() => active, h, () { active = null; });
+    s.noteArm("t.press", 1);
+    t.pressBegins();
+    assert(t.openImage().filled, "8646 open image: rig floor, the press opened a step");
+    t.pressEnds();
+    assert(h.undoEntries().length == 0 && !t.openImage().filled,
+        "8646 open image: a step that ended with no carrier still has no open image");
+}
+
+unittest { // a stale instance gets no image of the tool the session now tracks
+    Mesh m = makeCube();
+    auto h = new CommandHistory();
+    auto a = new PressFlagTool, b = new PressFlagTool;
+    foreach (t; [a, b]) {
+        t.m = &m; t.h = h; t.view = new View(0, 0, 1, 1);
+        t.basis = MeshSnapshot.capture(m);
+    }
+    Tool active = a;
+    auto s = new EditSession(() => active, h, () { active = null; });
+    s.noteArm("t.press", 1);
+    active = b;
+    s.noteArm("t.press", 2);
+    b.pressBegins();
+    assert(b.openImage().filled && !a.openImage().filled,
+        "8646 open image: only the instance the session tracks may read its open image");
+    b.pressEnds();
 }

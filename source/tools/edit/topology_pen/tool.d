@@ -1492,7 +1492,6 @@ public:
         moveArmed_.armed = false; grabbedVert_ = -1;
         moveElem_ = MoveElem.None; moveVerts_ = null; moveBase_ = null;
         moveDirty_ = moveWelded_ = false;
-        stepOpen_ = false;
         image.clear();
     }
 
