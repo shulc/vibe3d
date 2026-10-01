@@ -134,8 +134,14 @@ unittest {
     assert(getJson("/api/tool/state")["dragArmed"].type == JSONType.false_,
         "the release after the dropped Ctrl+Z did not disarm");
 
-    // Positive control: the same Ctrl+Z after the release reverts drag1's
-    // edge-build (back to 1 vertex, no edge).
+    // Positive control: after the release the same Ctrl+Z reaches the editor.
+    // The motionless press is itself one row (plan 8646, law L5: every press
+    // is a step), so the first Ctrl+Z pops that no-op row and the next reverts
+    // drag1's edge-build (back to 1 vertex, no edge).
+    postJson("/api/play-events", viewport ~ "\n" ~ ctrlZTap(30.0) ~ "\n");
+    waitPlayerIdle();
+    assert(vertexCountLayer(1) == 2 && edgeCountLayer(1) == 1,
+        "the first Ctrl+Z after the release must pop the motionless press's no-op row");
     postJson("/api/play-events", viewport ~ "\n" ~ ctrlZTap(30.0) ~ "\n");
     waitPlayerIdle();
     assert(vertexCountLayer(1) == 1 && edgeCountLayer(1) == 0,

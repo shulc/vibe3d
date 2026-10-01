@@ -118,8 +118,8 @@ unittest {
 
     // `/api/reset` itself is a Model-undoable entry (SceneReset), so the stack
     // is non-empty here.  Count row classes separately: the measured history
-    // surface (`toolcards/undo_surfaces/`) shows the arm, while the miss must
-    // still contribute no edit row of its own.
+    // surface (`toolcards/undo_surfaces/`) shows the arm, and the miss is ONE
+    // edit row of its own (plan 8646, law L5: every press is a step).
     auto historyBefore = historySurfaceCounts();
 
     cmd("tool.set mesh.topoPen on");
@@ -132,8 +132,9 @@ unittest {
         "a miss must be a byte-identical no-op");
 
     auto historyAfter = historySurfaceCounts();
-    assert(historyAfter.editRows == historyBefore.editRows,
-        "a miss must add ZERO edit rows");
+    assert(historyAfter.editRows == historyBefore.editRows + 1,
+        format("a miss must add exactly ONE (no-op) edit row; got %d",
+               historyAfter.editRows - historyBefore.editRows));
     assert(historyAfter.lifecycleRows == historyBefore.lifecycleRows + 1,
         format("arming Topology Pen must surface exactly ONE lifecycle row; got %d",
                historyAfter.lifecycleRows - historyBefore.lifecycleRows));

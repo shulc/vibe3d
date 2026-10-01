@@ -120,7 +120,7 @@ unittest {
 
 // C5: the topology pen retains both independent binding doors.
 unittest {
-    static assert(FieldNameTuple!TopoPenFactories.length == 13);
+    static assert(FieldNameTuple!TopoPenFactories.length == 15);   // plan 8646: + place, attr
     auto rig = new LiveRegistrationRig;
     rig.wireEditorApp();
     rig.wireEditToolDeps();

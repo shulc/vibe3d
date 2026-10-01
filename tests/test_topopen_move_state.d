@@ -138,8 +138,14 @@ unittest {
     assert(getJson("/api/tool/state")["moveArmed"].type == JSONType.false_,
         "the release after the dropped Ctrl+Z did not disarm Move");
 
-    // Positive control: the same Ctrl+Z after the release reverts the Place
-    // gesture from step 2 (back to 1 vertex).
+    // Positive control: after the release the same Ctrl+Z reaches the editor.
+    // The stationary press is itself one row (plan 8646, law L5), so the first
+    // Ctrl+Z pops that no-op row and the next reverts the Place gesture from
+    // step 2 (back to 1 vertex).
+    postJson("/api/play-events", viewport ~ "\n" ~ ctrlZTap(30.0) ~ "\n");
+    waitPlayerIdle();
+    assert(vertexCountLayer(1) == 2,
+        "the first Ctrl+Z after the release must pop the stationary press's no-op row");
     postJson("/api/play-events", viewport ~ "\n" ~ ctrlZTap(30.0) ~ "\n");
     waitPlayerIdle();
     assert(vertexCountLayer(1) == 1,
