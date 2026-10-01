@@ -311,12 +311,13 @@ private enum size_t kActivationRowFalseCeiling = 18;
 private enum size_t kNotPortedCeiling = 14;
 private enum size_t kSessionStepsFalseCeiling = 0;
 
-/// Task 8250: these 19 existing command producers now use the same completed
-/// History-row owner as Transform. The other 18 rows retain image/topology
+/// Task 8250: these existing command producers now use the same completed
+/// History-row owner as Transform (18 since plan 8646 moved the Topology Pen to
+/// the topology-step protocol). The other rows retain image/topology
 /// policies; this exact set catches a silent class-wide policy spill.
 private immutable string[] kAdditionalHistoryRows = [
     "edge.slide", "mesh.bridgeTool", "mesh.dragWeld", "mesh.radialSweepTool",
-    "mesh.reduceTool", "mesh.tack", "mesh.topoPen", "pen", "prim.arc",
+    "mesh.reduceTool", "mesh.tack", "pen", "prim.arc",
     "prim.capsule", "prim.cone", "prim.cube", "prim.cylinder",
     "prim.ellipsoid", "prim.sphere", "prim.torus", "prim.tube",
     "prim.vertex", "tool.strokeExtrude",
@@ -495,6 +496,11 @@ private immutable StepRow[] kStepTable = [
     // is the haul plus the operation's applied flag and its base index.
     StepRow("poly.bevel", OpensAt.arm, false, ["inset", "shift", "applied", "op"], "applied"),
     StepRow("vert.merge", OpensAt.firstPress, false, ["dist"]),
+    // Plan 8646 (S5): every published pen attribute is an image attribute (D15,
+    // captured R-all); S7a extends the row.
+    StepRow("mesh.topoPen", OpensAt.firstPress, false,
+            ["middle", "mode", "loop", "slide", "smoothStrength", "showVertex",
+             "showEdge", "innerSnap", "keepVertex", "range", "quadOnly", "backFace"]),
 ];
 
 unittest { // (4)
@@ -591,19 +597,19 @@ unittest { // (4)
     assert(stepsFalse == kSessionStepsFalseCeiling,
            format("M7 ratchet: sessionSteps=false fell to %s ids, ceiling %s: lower the ceiling "
                   ~ "in the same commit", stepsFalse, kSessionStepsFalseCeiling));
-    assert(recordedSteps == 53,
-           format("history-owned rows %s, expected 53", recordedSteps));
-    // Image-producing population floors: 18 ids, 119 image names, 3 Action triggers
+    assert(recordedSteps == 52,
+           format("history-owned rows %s, expected 52", recordedSteps));
+    // Image-producing population floors: 19 ids, 131 image names, 3 Action triggers
     // on them (chainArm; insertAt, removeCurrent), 1 arm attribute (M3b).
     sort(imageStepIds);
     assert(imageStepIds == ["edge.bevel", "edge.extend", "edge.extrude",
                        "mesh.arrayTool", "mesh.clone", "mesh.edgeSliceTool", "mesh.loopSliceTool",
                        "mesh.mirrorTool", "mesh.polyInsetTool", "mesh.radialArrayTool",
                        "mesh.sliceTool", "mesh.smoothShiftTool",
-                       "mesh.thickenTool", "mesh.vertexBevel", "mesh.vertexExtrude",
+                       "mesh.thickenTool", "mesh.topoPen", "mesh.vertexBevel", "mesh.vertexExtrude",
                        "poly.bevel", "poly.extrude", "vert.merge"],
            format("M3 step table: image-step ids %s", imageStepIds));
-    assert(checkedNames == 119, format("M3 step table: %s image names checked, measured 119",
+    assert(checkedNames == 131, format("M3 step table: %s image names checked, measured 131",
                                       checkedNames));
     assert(armAttrs == 1, format("M3b step table: %s arm attributes, measured 1", armAttrs));
     assert(actionNames == 3, format("M3 step table: %s Action params on the session tools, "
