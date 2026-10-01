@@ -2709,7 +2709,7 @@ public:
     //     filter one recording later.
     //   * the ≤2-corner exemption never saw a line or point polygon on that
     //     rig. Carried anyway because `commitFill` CREATES that situation on
-    //     our own substrate — `consumeDegeneratePolysOnRing` deletes exactly
+    //     our own substrate — `consumeDegenerateOnRing` deletes exactly
     //     such polygons off the new ring — so it is reachable here in a way
     //     it was not there.
     //   * a ring strictly CONTAINING a smaller face was never formed. Clause
@@ -6614,6 +6614,11 @@ public:
                     before.restore(*m);
                     return;
                 }
+                // Consumes the bare A-N's wire key (captured C3-R3/R3-rev:
+                // the line polygon goes with the build, law L46). A-N is a
+                // side of `tri` in either order. No Quad-case call: no capture
+                // gives the splice's new sides a key (gap row (w)).
+                consumeDegenerateOnRing(m, tri);
                 break;
             }
             case BuildCase.Quad: {
@@ -7058,7 +7063,7 @@ public:
         int fi = m.makePolygonFromVerts(ringVerts, false, true);
         if (fi < 0) return;   // dup-face / non-manifold / degenerate -> clean no-op, no mutation
 
-        consumeDegeneratePolysOnRing(m, ringVerts);
+        consumeDegenerateOnRing(m, ringVerts);
 
         noteStep(factories_.fill, "Topology Fill");
 
@@ -7073,22 +7078,24 @@ public:
     // The reference's own post-build cleanup contract, ported (task 0488):
     // immediately after the polygon is created it walks the NEW ring once and
     // deletes any LINE polygon (2 corners) lying along a new side, and any
-    // POINT polygon (1 corner) sitting at a new corner. A fill CONSUMES the
+    // POINT polygon (1 corner) sitting at a new corner. A build CONSUMES the
     // degenerate polygons it swallows.
     //
-    // INERT ON TODAY'S vibe3d, and that is a statement about our substrate,
-    // not about the clause: nothing in this codebase creates a polygon with
-    // fewer than three corners (`makePolygonFromVerts` rejects them outright),
-    // and we model loose retopo geometry as bare EDGES and orphan VERTICES
-    // instead — neither of which is a polygon, so neither is touched here.
-    // The clause is ported anyway because it is measured, it is cheap, and a
-    // mesh that arrives from an importer that does carry point/line polygons
-    // must behave the same as the reference on it.
+    // Our line polygon IS a registered wire key (`Mesh.wireEdgeKeys`), so the
+    // key of every ring SIDE is consumed here too (task 8750; law L46, captured
+    // Consumed for the build's triangle and for Fill). An orphan vertex carries
+    // no key, so the point-polygon half stays inert on our own geometry (gap
+    // row (v)); line/point POLYGONS from an importer are consumed as before.
+    // Only the two captured callers reach this — Fill's commit and the build's
+    // Tri case; every other face creator keeps covered authorship (F1,
+    // doc/measured_laws.md §7). The key removal sits OUTSIDE the
+    // polygon-delete guard: on our substrate that guard is normally false.
     //
     // `keepOrphans` + `keepFloatingEdges` both true: consuming the degenerate
     // polygon must not additionally eat its vertices or its edge — those are
     // corners and sides of the face we just built.
-    private static void consumeDegeneratePolysOnRing(Mesh* m, const(uint)[] ring) {
+    package static void consumeDegenerateOnRing(Mesh* m, const(uint)[] ring) {
+        import mesh_topo : edgeKey;
         if (m is null || ring.length < 3) return;
         bool[] mask;
         bool any = false;
@@ -7108,6 +7115,8 @@ public:
             any = true;
         }
         if (any) m.deleteFacesByMask(mask, /*keepOrphans*/true, /*keepFloatingEdges*/true);
+        foreach (k; 0 .. ring.length)
+            m.wireEdgeKeys.remove(edgeKey(ring[k], ring[(k + 1) % ring.length]));
     }
 
     // P10 (doc/topopen_p10_moveloop_plan.md "Commit"): commit the armed Move

@@ -46,6 +46,9 @@
 //   drop-bare            L32 arm, Esc: key door and raw door both refuse the redo
 //   rearm-typed              a re-typed arm while armed is a same-tool switch row
 //   non-user-drop            a layer-change drop writes no drop row
+//   chord-build-then-remove  L46 the build consumes the bare edge under its new side
+//   chord-build-consume-undo L46 undo of that build re-registers the bare edge
+//   fill-consume-then-remove L46 Fill consumes the bare edge along its new side
 //
 // Slice S5 (task 8730) added the cells from `no-op-presses` on: since then
 // every pen press is one topology step the session records (wave plan 8646).
@@ -53,7 +56,7 @@
 // chords' outcomes (their port slices add `chord-*` cells).
 //
 // `VIBE3D_CELL=<id>` runs one cell alone (druntime stops a module at its first
-// failed assert); the last block pins the population: 52 with no filter, 1 with
+// failed assert); the last block pins the population: 55 with no filter, 1 with
 // one (an unknown name must not pass by running nothing).
 //
 // Run via: ./run_test.d test_session_laws_topology_pen
@@ -2151,6 +2154,209 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
+// W1 — L46 (task 8750, wave plan 8770 §9.21/§9.22.3; captured C3-R3-rev, C3-R4):
+// a build that closes a triangle over a bare edge, and a Fill whose new side
+// runs along one, consume that edge's wire key (the capture's line polygon), so
+// a later remove of the new face takes the edge with it. Our A is the removed
+// triangle's own orphan and goes too; the capture keeps it through its point
+// polygon (named divergence, gap row (v)). The key is read from a native save.
+//   chord-build-then-remove   C3-R3-rev drag order: 17/9/24 -> 19/10/27 -> 16/9/24
+//   chord-build-consume-undo  Ctrl+Z after the close re-registers (A, N')
+//   fill-consume-then-remove  the r4 rig: Fill over the hole, then remove it
+// ---------------------------------------------------------------------------
+
+/// The registered wire keys of the primary layer, read from a native save of
+/// the live document (the only place they surface). Floors: the save writes no
+/// history row and leaves the pen armed as it was.
+long[2][] penWireKeys(string what) {
+    import std.file : exists, remove;
+    import std.process : thisProcessID;
+    import std.conv : to;
+    const path = "/var/tmp/vibe3d_w1_wire_keys_" ~ thisProcessID.to!string ~ ".v3d";
+    if (exists(path)) remove(path);
+    const hist = penHistoryLen();
+    const wasArmed = penArmed();
+    penCmd("file.save", format(`{"path":%s}`, JSONValue(path).toString));
+    auto doc = parseJSON(readText(path));
+    remove(path);
+    assert(penHistoryLen() == hist && penArmed() == wasArmed,
+           format("%s: the native save moved the session: history %d -> %d, armed %s -> %s",
+                  what, hist, penHistoryLen(), wasArmed, penArmed()));
+    auto mesh = doc["layers"][cast(size_t)doc["primaryLayer"].integer]["mesh"];
+    long[2][] r;
+    if (auto w = "wireEdges" in mesh.object)
+        foreach (e; w.array) r ~= [e.array[0].integer, e.array[1].integer];
+    return r;
+}
+
+bool hasKey(const long[2][] keys, long a, long b) {
+    foreach (k; keys) if ((k[0] == a && k[1] == b) || (k[0] == b && k[1] == a)) return true;
+    return false;
+}
+
+/// The C3-R3-rev rig on the armed grid: a Point-mode click places A (16) at the
+/// captured hub, a Shift+LMB drag from A draws the bare edge (16, 17) [h1], a
+/// second closes the triangle [16, 18, 17] [h2]. Floors at each stage: counts,
+/// one row per gesture, the key (16, 17) registered after h1 and gone after h2.
+/// `grid` is the armed grid before A; `h1` the mesh after the bare edge.
+PenMesh consumeBuild(string id, JSONValue c, out PenMesh grid, out PenMesh h1, out long hpH1) {
+    PenRig r = armedRig();
+    grid = r.a0;
+    {
+        auto a = penPost("/api/command", "tool.attr mesh.topoPen mode point");
+        assert(a["status"].str == "ok", id ~ " rig: mode point refused: " ~ a.toString);
+    }
+    auto ap = c["rigPoint"].array;
+    penTap(penRound(penProject([penNum(ap[0]), penNum(ap[1]), penNum(ap[2])])), 1, 0, id ~ " place A");
+    {
+        auto a = penPost("/api/command", "tool.attr mesh.topoPen mode move");
+        assert(a["status"].str == "ok", id ~ " rig: mode move refused: " ~ a.toString);
+    }
+    const m0 = penMesh();
+    assert([m0.nv, m0.nf, m0.edges] == idxOf(c["a0"]) && penWireKeys(id ~ " a0").length == 0,
+           format("%s rig: after placing A the mesh is %s (expected %s)", id, m0.toString, c["a0"]));
+    const s = penSpacingPx() / penNum(c["spacingPx"]);
+    const de = c["dragEdge"].array, dc = c["dragClose"].array;
+    const from = penVertexPx(16, id ~ " A");
+    long hp = penHistoryLen();
+    penPlay(penGestureEvents(from[0], from[1], from[0] + cast(int)round(penNum(de[0]) * s),
+                             from[1] + cast(int)round(penNum(de[1]) * s), 1, PEN_KMOD_LSHIFT, 8),
+            id ~ " h1 bare edge");
+    h1 = penMesh();
+    const k1 = penWireKeys(id ~ " h1");
+    assert([h1.nv, h1.nf, h1.edges] == idxOf(c["h1"]) && penEdgeId(16, 17) >= 0 && hasKey(k1, 16, 17)
+           && k1.length == 1 && penHistoryLen() == hp + 1,
+           format("%s h1: mesh %s (expected %s), edge (16,17) id %d, keys %s, history %s", id,
+                  h1.toString, c["h1"], penEdgeId(16, 17), k1, penHistoryLabels()));
+    hpH1 = penHistoryLen();
+    const from2 = penVertexPx(16, id ~ " A again");
+    penPlay(penGestureEvents(from2[0], from2[1], from2[0] + cast(int)round(penNum(dc[0]) * s),
+                             from2[1] + cast(int)round(penNum(dc[1]) * s), 1, PEN_KMOD_LSHIFT, 8),
+            id ~ " h2 close");
+    PenMesh h2 = penMesh();
+    const k2 = penWireKeys(id ~ " h2");
+    long[][] born;
+    foreach (f; h2.faces) { bool had; foreach (g; h1.faces) if (g == f) had = true; if (!had) born ~= f.dup; }
+    assert([h2.nv, h2.nf, h2.edges] == idxOf(c["h2"]) && cyclesOf(born) == [cycleOf(idxOf(c["newFace"]))]
+           && penHistoryLen() == hpH1 + 1 && penHistoryLabels()[$ - 1] == "Topology Build",
+           format("%s h2: mesh %s (expected %s), born %s (expected %s), history %s", id, h2.toString,
+                  c["h2"], born, c["newFace"], penHistoryLabels()));
+    assert(!hasKey(k2, 16, 17) && k2.length == 0,
+           format("%s h2: the build left the bare edge's key registered: keys %s", id, k2));
+    return h2;
+}
+
+unittest {
+    enum id = "chord-build-then-remove";
+    if (!cell(id)) return;
+    auto c = cellFx("chord-build-consume");
+    PenMesh grid, h1;
+    long hpH1;
+    const h2 = consumeBuild(id, c, grid, h1, hpH1);
+    const hp = penHistoryLen();
+    penTap(penFacePx(9), 2, PEN_KMOD_LCTRL, id ~ " Ctrl+MMB the triangle");
+    const m = penMesh();
+    assert([m.nv, m.nf, m.edges] == idxOf(c["rm"]) && m == grid && penHistoryLen() == hp + 1
+           && penHistoryLabels()[$ - 1] == "Topology Remove",
+           format("%s: after the remove the mesh is %s (expected %s, the grid %s bit-exact: %s; the "
+                  ~ "capture %s keeps A), edge (16,17) id %d, history %s", id, m.toString, c["rm"],
+                  grid.toString, m == grid, c["rmCapture"], penEdgeId(16, 17), penHistoryLabels()));
+    penCtrlZ(id ~ " Ctrl+Z");
+    expectState(id, "z1", h2, c["undoArmed"].type == JSONType.true_, hp);
+    writeln("PASS ", id);
+}
+
+unittest {
+    enum id = "chord-build-consume-undo";
+    if (!cell(id)) return;
+    auto c = cellFx("chord-build-consume");
+    PenMesh grid, h1;
+    long hpH1;
+    const h2 = consumeBuild(id, c, grid, h1, hpH1);
+    penCtrlZ(id ~ " Ctrl+Z");
+    expectState(id, "z1", h1, c["undoArmed"].type == JSONType.true_, hpH1);
+    const kz = penWireKeys(id ~ " z1");
+    assert(hasKey(kz, 16, 17) && kz.length == 1,
+           format("%s z1: the undo did not re-register the bare edge's key: keys %s", id, kz));
+    penCtrlShiftZ(id ~ " Ctrl+Shift+Z");
+    expectState(id, "r1", h2, true, hpH1 + 1);
+    const kr = penWireKeys(id ~ " r1");
+    assert(kr.length == 0, format("%s r1: the redo brought the consumed key back: keys %s", id, kr));
+    writeln("PASS ", id);
+}
+
+unittest {
+    enum id = "fill-consume-then-remove";
+    if (!cell(id)) return;
+    auto c = cellFx("fill-consume");
+    const a0c = idxOf(c["a0"]);
+    PenRig r = penRigLoad(rigFile(c["rig"].str), [a0c[0], a0c[1], a0c[2]]);
+    penArmUi(r);
+    foreach (w; [["mode", "fill"], ["range", c["range"].str]]) {
+        auto a = penPost("/api/command", "tool.attr mesh.topoPen " ~ w[0] ~ " " ~ w[1]);
+        assert(a["status"].str == "ok", format("%s rig: %s %s refused: %s", id, w[0], w[1], a.toString));
+    }
+    const be = idxOf(c["bareEdge"]);
+    const k0 = penWireKeys(id ~ " a0");
+    assert(penEdgeId(be[0], be[1]) >= 0 && hasKey(k0, be[0], be[1]) && k0.length == 1,
+           format("%s rig: edge (%d,%d) id %d, keys %s (expected exactly that key)", id, be[0], be[1],
+                  penEdgeId(be[0], be[1]), k0));
+    // The capture's press sat 5 px inside edge 5-6 toward the hole, then dragged
+    // 10 px further in; both scaled by the spacing ratio.
+    const s = penSpacingPx() / penNum(c["spacingPx"]);
+    const pe = idxOf(c["pressEdge"]);
+    const e = penEdgePx(pe[0], pe[1], id ~ " e56");
+    const off = c["pressOffsetPx"].array, d = c["drag"].array;
+    const int[2] from = [e[0] + cast(int)round(penNum(off[0]) * s), e[1] + cast(int)round(penNum(off[1]) * s)];
+    const int[2] to = [from[0] + cast(int)round(penNum(d[0]) * s), from[1] + cast(int)round(penNum(d[1]) * s)];
+    const hp = penHistoryLen();
+    const a0 = penMesh();
+    penPlay(penGestureEvents(from[0], from[1], to[0], to[1], 1, 0, 4), id ~ " Fill drag");
+    const g1 = penMesh();
+    long[][] born;
+    foreach (f; g1.faces) { bool had; foreach (g; a0.faces) if (g == f) had = true; if (!had) born ~= f.dup; }
+    bool side(const long[] f, long a, long b) {
+        foreach (i; 0 .. f.length)
+            if ((f[i] == a && f[(i + 1) % $] == b) || (f[i] == b && f[(i + 1) % $] == a)) return true;
+        return false;
+    }
+    long[] sortedNew = idxOf(c["newFace"]).dup;
+    {
+        import std.algorithm : sort;
+        sort(sortedNew);
+    }
+    long[] bornSet = born.length == 1 ? born[0].dup : null;
+    {
+        import std.algorithm : sort;
+        sort(bornSet);
+    }
+    const kg = penWireKeys(id ~ " g1");
+    assert([g1.nv, g1.nf, g1.edges] == idxOf(c["g1"]) && born.length == 1 && bornSet == sortedNew
+           && side(born[0], be[0], be[1]) && penHistoryLen() == hp + 1
+           && penHistoryLabels()[$ - 1] == "Topology Fill",
+           format("%s g1: mesh %s (expected %s), born %s (expected the corners of %s with (%d,%d) a "
+                  ~ "SIDE), history %s", id, g1.toString, c["g1"], born, c["newFace"], be[0], be[1],
+                  penHistoryLabels()));
+    writeln(id, ": the Fill built the ring ", born[0]);
+    assert(kg.length == 0, format("%s g1: the Fill left the bare edge's key registered: keys %s", id, kg));
+    {
+        auto a = penPost("/api/command", "tool.attr mesh.topoPen mode move");
+        assert(a["status"].str == "ok", id ~ ": mode move refused: " ~ a.toString);
+    }
+    const hpRm = penHistoryLen();
+    penTap(penFacePx(g1.nf - 1), 2, PEN_KMOD_LCTRL, id ~ " Ctrl+MMB the filled face");
+    const m = penMesh();
+    assert([m.nv, m.nf, m.edges] == idxOf(c["rm"]) && penEdgeId(be[0], be[1]) < 0
+           && m.faces == a0.faces && m.pos == a0.pos && penHistoryLen() == hpRm + 1,
+           format("%s rm: mesh %s (expected %s), edge (%d,%d) id %d (expected gone with the face), "
+                  ~ "faces %s, history %s", id, m.toString, c["rm"], be[0], be[1],
+                  penEdgeId(be[0], be[1]), m.faces, penHistoryLabels()));
+    penCtrlZ(id ~ " Ctrl+Z");
+    expectState(id, "z1", g1, c["undoArmed"].type == JSONType.true_, hpRm);
+    writeln("PASS ", id);
+}
+
+// ---------------------------------------------------------------------------
 // Population: with no VIBE3D_CELL every cell above ran (declared last, so it
 // runs last).
 // ---------------------------------------------------------------------------
@@ -2158,7 +2364,7 @@ unittest {
     writeln("cells=", cellsRun);
     const only = environment.get("VIBE3D_CELL", "");
     if (only.length == 0)
-        assert(cellsRun == 52, format("topology pen session laws: %d cells ran, expected 52", cellsRun));
+        assert(cellsRun == 55, format("topology pen session laws: %d cells ran, expected 55", cellsRun));
     else
         assert(cellsRun == 1, format("topology pen session laws: VIBE3D_CELL=%s ran %d cells, expected 1 "
                                      ~ "(an unknown name runs none)", only, cellsRun));

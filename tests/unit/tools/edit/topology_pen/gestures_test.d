@@ -9401,7 +9401,7 @@ unittest {
 //
 // DECODED-UNEXERCISED upstream: the recorded rig had no line or point
 // polygons. It is carried because `commitFill` CREATES that situation here —
-// `consumeDegeneratePolysOnRing` deletes exactly such polygons off the new
+// `consumeDegenerateOnRing` deletes exactly such polygons off the new
 // ring — so on this substrate it is reachable in a way it was not there.
 //
 // The two halves differ ONLY in the corner count of the polygon carrying the
@@ -9446,6 +9446,41 @@ unittest {
     tri.buildLoops();
     assert(TopologyPenTool.ringRefusedByIncidentPolygon(&tri, ring2[], vpAimId),
         "give that identical segment a third corner and the crossing clause bites");
+}
+
+// W1 (task 8750, wave plan §9.21 [A9-5]): the ring-consume routine removes
+// the wire key of every ring SIDE and no other key. Two keys, one a side of
+// the ring [0,1,2] and one reaching off it (vertex 3 is not on the ring), so
+// consuming every key and consuming only the ring's differ.
+unittest {
+    import mesh_topo : edgeKey;
+    Mesh m;
+    foreach (i; 0 .. 4) m.addVertex(Vec3(i, 0, i % 2));
+    m.addEdge(0, 2);
+    m.addEdge(2, 3);
+    m.addFace([0u, 1u, 2u]);
+    assert(m.wireEdgeKeys.length == 2, "setup: two registered keys (F1 keeps (0,2) under the face)");
+    TopologyPenTool.consumeDegenerateOnRing(&m, [0u, 1u, 2u]);
+    assert((edgeKey(2, 3) in m.wireEdgeKeys) !is null,
+        "a key whose edge is not a ring side survives the consumption");
+    assert((edgeKey(0, 2) in m.wireEdgeKeys) is null,
+        "the ring side's key is consumed by the build");
+    assert(m.wireEdgeKeys.length == 1, "population after consumption: exactly one key");
+}
+
+// ... and beside it, F1 (task 3910): a face added through `Mesh.addFace` over
+// a registered key KEEPS it — only the two captured callers of the routine
+// above consume, every other face creator leaves covered authorship alone.
+unittest {
+    import mesh_topo : edgeKey;
+    Mesh m;
+    foreach (i; 0 .. 3) m.addVertex(Vec3(i, 0, i % 2));
+    m.addEdge(0, 2);
+    assert(m.wireEdgeKeys.length == 1, "setup: the bare edge is registered");
+    m.addFace([0u, 1u, 2u]);
+    assert((edgeKey(0, 2) in m.wireEdgeKeys) !is null,
+        "F1: a face covering an authored wire keeps its key");
+    assert(m.wireEdgeKeys.length == 1, "F1: population unchanged by addFace");
 }
 
 // CLAUSE 1 (SUBSET), EXECUTED END TO END — and the point of this block is that
@@ -12203,8 +12238,8 @@ unittest {
         }
     }
     // Floors first: an empty scan would satisfy both rules vacuously.
-    assert(blocks.length == 185 && histBlocks == 83 && calls == 79 && kernels == 65,
-        format("gestures census population changed: %d top-level blocks (185), %d read "
+    assert(blocks.length == 187 && histBlocks == 83 && calls == 79 && kernels == 65,
+        format("gestures census population changed: %d top-level blocks (187), %d read "
              ~ "history (83), %d bracketed-list calls in them (79), %d of them kernels (65)",
                blocks.length, histBlocks, calls, kernels));
     assert(bad.length == 0, "gestures census:\n" ~ bad.join("\n"));

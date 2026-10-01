@@ -142,6 +142,14 @@
    "law": "A face remove also deletes the vertices and edges THIS removal leaves with no polygon (corner f0: 15/8/22; border f1: the faceless border edge goes, 16/8/23), and nothing else: a vertex that belonged to no polygon before the remove survives it (19 -> 18). One step, undo bit-exact, the tool stays armed."
   },
   {
+   "id": "L46-build-and-fill-consume-the-bare-edge-under-a-new-side",
+   "cells": [
+    "chord-build-consume",
+    "fill-consume"
+   ],
+   "law": "A build that closes a triangle over a bare edge, and a Fill whose new side runs along one, consume that bare edge's authorship: removing the new face afterwards takes the edge with it (and, in our representation, the triangle's loose apex A, which the capture keeps through its 1-point polygon: gap row (v)). Undo of the build restores the bare edge as authored."
+  },
+  {
    "id": "L4-vertex-slide",
    "cells": [
     "chord-slide-vertex",
@@ -1366,6 +1374,107 @@
    "fitResidualMax": 1e-06,
    "lineDistanceMin": 0.001,
    "sMin": 0.01
+  },
+  "chord-build-consume": {
+   "capture": "C3-R3-rev",
+   "rigPoint": [
+    0.5,
+    0.25,
+    0.829156219959259
+   ],
+   "spacingPx": 66.8,
+   "dragEdge": [
+    0,
+    -60
+   ],
+   "dragClose": [
+    60,
+    0
+   ],
+   "a0": [
+    17,
+    9,
+    24
+   ],
+   "h1": [
+    18,
+    9,
+    25
+   ],
+   "h2": [
+    19,
+    10,
+    27
+   ],
+   "newFace": [
+    16,
+    18,
+    17
+   ],
+   "bareEdge": [
+    16,
+    17
+   ],
+   "rm": [
+    16,
+    9,
+    24
+   ],
+   "rmCapture": [
+    17,
+    10,
+    24
+   ],
+   "undoArmed": true,
+   "note": "C3-R3-rev drag order (the triangle faces the camera); our A is placed with a Point-mode click and the two drags are Shift+LMB (the Duplicate chord)"
+  },
+  "fill-consume": {
+   "capture": "C3-R4",
+   "rig": "r4",
+   "holes": [
+    4,
+    7
+   ],
+   "bareEdge": [
+    9,
+    10
+   ],
+   "pressEdge": [
+    5,
+    6
+   ],
+   "pressOffsetPx": [
+    0.0,
+    -5.0
+   ],
+   "drag": [
+    0,
+    -10
+   ],
+   "range": "3",
+   "spacingPx": 66.8,
+   "a0": [
+    16,
+    7,
+    23
+   ],
+   "g1": [
+    16,
+    8,
+    23
+   ],
+   "rm": [
+    16,
+    7,
+    22
+   ],
+   "newFace": [
+    6,
+    10,
+    9,
+    5
+   ],
+   "undoArmed": true
   }
  }
 }
