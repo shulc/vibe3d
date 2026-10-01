@@ -546,10 +546,16 @@ unittest {
                 comparedLeaves, "hist", keyKinds);
             expectedLeaves += leafCount(wantedHistory);
         } else if (cell["door"].str != "switch") {
+            // A drop adds no history entry — except the drop row of a tool whose
+            // policy writes one (the pen's X2 rows, wave plan 8640 S6), which
+            // the cell states as its `historyDelta`.
             auto afterHistory = historyState();
-            compareExpected(id, kind, beforeHistory, afterHistory, mismatches,
+            auto wantedHistory = ("historyDelta" in cell.object) !is null
+                ? applyHistoryDelta(id, beforeHistory, cell["historyDelta"])
+                : beforeHistory;
+            compareExpected(id, kind, wantedHistory, afterHistory, mismatches,
                 comparedLeaves, "hist", keyKinds);
-            expectedLeaves += leafCount(beforeHistory);
+            expectedLeaves += leafCount(wantedHistory);
         }
 
         if (("rearm" in cell.object) !is null) {
