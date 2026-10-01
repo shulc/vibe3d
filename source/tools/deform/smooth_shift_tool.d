@@ -132,7 +132,7 @@ class SmoothShiftTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClien
     // Bevel and inferred for the rest of the in-place family, R20 gap g5).
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
         static immutable ToolSessionPolicy policy = {
-            activationRow: true, recordCarriesActivation: true,
+            activationRow: true,
             commandClose: CommandClose.uiDoor,
             sessionSteps: true, historyTopologySteps: true,
             firstTopologyRedoUsesAfterAttrs: true,

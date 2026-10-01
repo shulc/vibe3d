@@ -14,7 +14,7 @@ import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
 import record_observer_hub : RecordObserverHub;
 import registry : PreparedPipeAttrs, ToolFactory;
 import std.json : JSONType, JSONValue;
-import tool : Tool;
+import tool : Tool, firstStepCarriesActivation;
 import view : View;
 import editmode : EditMode;
 import tool_presets : prepareStickyToolDefaults;
@@ -199,7 +199,7 @@ PreparedArm prepareArm(ToolFactory factory, string id, Tool retainedOld,
         const pol = candidate.sessionPolicy();
         auto lifecycle = new ToolActivationCommand(mesh, view, editMode,
             id, previousId, pol.sessionSteps, door == ArmDoor.key,
-            pol.recordCarriesActivation, sessionToken, previousToken,
+            firstStepCarriesActivation(pol), sessionToken, previousToken,
             retainedOld !is null && toolArmEmitsLifecycle(retainedOld),
             retainedOld !is null && retainedOld.sessionPolicy().historyTopologySteps,
             pol.historyRecordedSteps);

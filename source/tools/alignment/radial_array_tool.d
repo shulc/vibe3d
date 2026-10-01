@@ -190,7 +190,6 @@ class RadialArrayTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClien
             activationRow: true, commandClose: CommandClose.uiDoor,
             sessionSteps: true, historyTopologySteps: true,
             discardLaterTopologyRedoOnRearm: true,
-            recordCarriesActivation: true,
             opensAt: OpensAt.firstPress,
             imageAttrs: ["count", "axis", "center", "angle", "offset", "weld"],
             haulAttrs: ["count", "axis", "center", "angle", "offset", "weld"]

@@ -113,10 +113,11 @@ struct PreparedPolyExtrudeParamImage {
 class PolyExtrudeTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient,
         TopologyStepClient {
     // Polygon opens at its first press and its first topology row carries the
-    // activation; later rows remain independent history entries.
+    // activation (derived: `firstStepCarriesActivation`); later rows remain
+    // independent history entries.
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
         static immutable ToolSessionPolicy policy = {
-            activationRow: true, recordCarriesActivation: true,
+            activationRow: true,
             commandClose: CommandClose.uiDoor,
             sessionSteps: true, historyTopologySteps: true,
             dormantAfterClosedRedo: true,

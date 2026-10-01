@@ -691,12 +691,9 @@ unittest { // (5)
     assert(keep == kKeepAliveClasses,
            format("M4 policy classes: keepAliveOnCancel declared by %s, expected %s",
                   keep, kKeepAliveClasses));
-    assert(carries == ["tools.alignment.mirror.MirrorTool",
-                       "tools.alignment.radial_array_tool.RadialArrayTool",
-                       "tools.deform.smooth_shift_tool.SmoothShiftTool",
-                       "tools.edit.edge_extend.EdgeExtendTool",
-                       "tools.edit.poly_extrude.PolyExtrudeTool",
-                       "tools.edit.poly_inset_tool.PolyInsetTool"],
+    // Task 8920: inside the topology model the carry is derived from `opensAt`
+    // (`firstStepCarriesActivation`), so only Edge Extend declares it.
+    assert(carries == ["tools.edit.edge_extend.EdgeExtendTool"],
            format("M4 policy classes: recordCarriesActivation declared by %s", carries));
 }
 
@@ -1042,6 +1039,7 @@ unittest { // Tasks 7990/8030: production topology R wiring, not a helper replic
     auto esFlat = squeeze(es);
     auto edge = blankNonCode(readText("source/tools/edit/edge_extrude.d"));
     auto poly = blankNonCode(readText("source/tools/edit/poly_extrude.d"));
+    auto tl = blankNonCode(readText("source/prepared_tool_transition.d"));
     auto carrier = blankNonCode(readText("source/commands/mesh/session_edit.d"));
     auto panelCode = blankNonCode(readText("source/property_panel.d"));
     auto panel = squeeze(panelCode);
@@ -1083,7 +1081,10 @@ unittest { // Tasks 7990/8030: production topology R wiring, not a helper replic
         && es.canFind("new TopologyAdjustmentEdit(context, tool_")
         && edge.canFind("if (topologyDormant) return;"),
         "Edge first-group or full-closed-redo production policy disconnected");
-    assert(poly.canFind("recordCarriesActivation: true")
+    // Task 8920: the carry is derived (`firstStepCarriesActivation`) — the
+    // Polygon policy no longer declares it and `prepareArm` reads the predicate.
+    assert(!poly.canFind("recordCarriesActivation")
+        && tl.canFind("firstStepCarriesActivation(pol)")
         && poly.canFind("dormantAfterClosedRedo: true")
         && poly.canFind("opensAt: OpensAt.firstPress")
         && poly.canFind("if (topologyDormant) return;"),
