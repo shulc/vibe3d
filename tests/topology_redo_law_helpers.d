@@ -159,7 +159,16 @@ long setupCell(const JSONValue cell, const Rig rig) {
         ~ `"focus":{"x":%.6f,"y":%.6f,"z":%.6f}}`, c[0], c[1], c[2]), ctx);
     cmdOk("/api/command", "history.clear", ctx);
     settle();
-    return cast(long) getJson("/api/model")["vertices"].array.length;
+    const base = cast(long) getJson("/api/model")["vertices"].array.length;
+    // `vcount` is compared from the rig base (ours − our base + its base), so s00 equals
+    // the reference by construction: on the reference's own rig the bases must agree
+    // (only an override rig — VertexMerge, gap 37 — may differ)
+    if (rig.mesh.type != JSONType.object) {
+        const baseRef = cell["points"][0]["fields"]["vcount"]["ref"].integer;
+        assert(base == baseRef, format("rig VOID %s: our base holds %d vertices, the reference's %d",
+            ctx, base, baseRef));
+    }
+    return base;
 }
 
 private void pressPoint(const Rig rig, const JSONValue step, out int x, out int y) {
@@ -178,6 +187,32 @@ private void pressPoint(const Rig rig, const JSONValue step, out int x, out int 
     }
     x = cast(int)(bx + num(step["press"][0]) - rig.pressRef[0]);
     y = cast(int)(by + num(step["press"][1]) - rig.pressRef[1]);
+}
+
+/// The window-pixel box [x0, y0, x1, y1] of the current mesh's vertices under the
+/// matrices the viewport renders with (`/api/camera`; column-major, as math.d mulMV).
+private double[4] meshScreenBox(const JSONValue cam) {
+    double[16] v, p;
+    foreach (i; 0 .. 16) { v[i] = num(cam["viewMatrix"][i]); p[i] = num(cam["projMatrix"][i]); }
+    double[4] mul(const double[16] m, const double[4] a) {
+        double[4] r;
+        foreach (k; 0 .. 4) r[k] = m[k] * a[0] + m[4 + k] * a[1] + m[8 + k] * a[2] + m[12 + k] * a[3];
+        return r;
+    }
+    double[4] box = [double.max, double.max, -double.max, -double.max];
+    const verts = getJson("/api/model")["vertices"].array;
+    assert(verts.length > 0, "rig: the mesh is empty at the right tap");
+    foreach (w; verts) {
+        const c = mul(p, mul(v, [num(w[0]), num(w[1]), num(w[2]), 1.0]));
+        assert(c[3] > 0, "rig: a vertex lies behind the camera at the right tap");
+        const sx = (c[0] / c[3] * 0.5 + 0.5) * cam["width"].integer + cam["vpX"].integer;
+        const sy = (0.5 - c[1] / c[3] * 0.5) * cam["height"].integer + cam["vpY"].integer;
+        if (sx < box[0]) box[0] = sx;
+        if (sy < box[1]) box[1] = sy;
+        if (sx > box[2]) box[2] = sx;
+        if (sy > box[3]) box[3] = sy;
+    }
+    return box;
 }
 
 /// Run one step of the scenario (the generator's lexicon, plan §4.7).
@@ -233,9 +268,15 @@ void runStep(const JSONValue step, const Rig rig, string ctx) {
         settle();
         return;
     case "rclick": {
-        // an empty background point of the rig: the viewport's top-left corner region
+        // an empty background point of the rig: the viewport's top-left corner region,
+        // checked against the mesh's projected screen box at the moment of the tap
         auto cam = getJson("/api/camera");
-        tap(cast(int) cam["vpX"].integer + 24, cast(int) cam["vpY"].integer + 24, 3);
+        const x = cast(int) cam["vpX"].integer + 24, y = cast(int) cam["vpY"].integer + 24;
+        const box = meshScreenBox(cam);
+        assert(x < box[0] || x > box[2] || y < box[1] || y > box[3],
+            format("rig VOID %s: the right tap (%d, %d) lies inside the mesh's screen box %s",
+                ctx, x, y, box));
+        tap(x, y, 3);
         return;
     }
     default:

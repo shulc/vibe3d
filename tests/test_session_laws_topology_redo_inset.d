@@ -84,6 +84,55 @@ unittest {
         ~ "today-part: " ~ pr.to!string);
 }
 
+// A table field not yet at its table value belongs to the general owner rule until its
+// «вводит» slice (§4.7 R8 п.2): no field carries `law PR` under an in-wave owner.
+unittest {
+    const fx = parseJSON(kFixture);
+    size_t pr;
+    foreach (c; fx["cells"].array)
+        foreach (p; c["points"].array)
+            foreach (field, f; p["fields"].object)
+                if ("law" in f && f["law"].str == "PR") {
+                    ++pr;
+                    assert(f["owner"].str == "backlog: PR", "fixture: " ~ c["id"].str ~ "/"
+                        ~ p["label"].str ~ "." ~ field ~ " is law PR under owner " ~ f["owner"].str
+                        ~ " (until its slice it belongs to the general owner rule)");
+                }
+    assert(pr == kBacklogPR.length, "fixture: " ~ pr.to!string ~ " law-PR fields, the table's "
+        ~ "today-part holds " ~ kBacklogPR.length.to!string);
+}
+
+// The middle-button restart (gap 462: the reference stacks two layers per press, we stack
+// one; a driver double press or a law — not captured): every known divergence from the
+// first middle haul of a cell on, except `origin` (S2b's law everywhere), is ONE status,
+// outside the model. Floor: generator output 2026-10-01 — 8 `_M` points, 107 fields.
+unittest {
+    const fx = parseJSON(kFixture);
+    size_t points, fields;
+    foreach (c; fx["cells"].array) {
+        if (c["family"].str != "inset" || !c["measured"].boolean) continue;
+        string m;
+        foreach (s; c["steps"].array)
+            if (s["op"].str == "haul" && s["button"].str == "middle") { m = s["label"].str; break; }
+        if (!m.length) continue;
+        bool tail;
+        foreach (p; c["points"].array) {
+            if (p["label"].str == m) { tail = true; ++points; }
+            if (!tail) continue;
+            foreach (field, f; p["fields"].object) {
+                if ("ours" !in f || field == "origin") continue;
+                ++fields;
+                assert(f["owner"].str == "none: outside the model", "fixture: " ~ c["id"].str
+                    ~ "/" ~ p["label"].str ~ "." ~ field ~ " after the middle restart " ~ m
+                    ~ " is owned by " ~ f["owner"].str ~ " (gap 462: outside the model)");
+            }
+        }
+    }
+    assert(points == 8 && fields == 107, "fixture family inset holds " ~ points.to!string
+        ~ " middle-restart points / " ~ fields.to!string ~ " divergent fields after them, "
+        ~ "frozen at 8 / 107");
+}
+
 static foreach (id; kCells) {
     unittest { runCell(parseJSON(kFixture), id); }
 }
