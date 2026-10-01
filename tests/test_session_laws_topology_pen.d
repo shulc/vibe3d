@@ -14,14 +14,23 @@
 //   switch-away          L9  (z1..z3) undo walks back through a tool switch
 //   chord-split-interior L4  MMB split v5 -> v10: an interior same-polygon target
 //   chord-remove-*       L35 a face remove takes exactly the orphans IT makes
+//   no-op-presses        L5  three presses that change nothing are three steps
+//   no-op-chord-clicks   L5  nine motionless chord clicks are nine steps
+//   redo-rearm           L2  redo re-arms the popped pen, then each gesture
+//   switch-away-redo     L9  (r1..r3) redo walks forward through the switch
+//   drop-mid-drag            a drop during a held drag records that press
+//   param-write-*        L14 an interactive attribute write is its own step
+//   split-*-row          L40 a refused split is still one step
+//   remove-edge-noop-row L5  a Remove press latched on nothing removable
+//   fill-refusal-move        a Fill refusal's press ends as a Move row
 //
-// The fixture also carries rows that do not hold on this rig yet (card 8650):
-// the other four chords' outcomes (their port slices add `chord-*` cells), the
-// switch-away redo walk and `no-op-presses` (L5); the slices that make them
-// hold add their cells.
+// Slice S5 (task 8730) added the cells from `no-op-presses` on: since then
+// every pen press is one topology step the session records (wave plan 8646).
+// The fixture still carries rows that do not hold on this rig yet: the other
+// chords' outcomes (their port slices add `chord-*` cells).
 //
 // `VIBE3D_CELL=<id>` runs one cell alone (druntime stops a module at its first
-// failed assert); the last block pins the population: 12 with no filter, 1 with
+// failed assert); the last block pins the population: 25 with no filter, 1 with
 // one (an unknown name must not pass by running nothing).
 //
 // Run via: ./run_test.d test_session_laws_topology_pen
@@ -569,6 +578,377 @@ unittest {
     writeln("PASS ", id);
 }
 
+// ===========================================================================
+// Slice S5 (task 8730, wave plan 8646): every pen press is one topology step.
+// ===========================================================================
+
+/// The pixel of a named rig element ("v5", "e56", ...): one digit per index.
+int[2] elementPx(string at, string what) {
+    import std.conv : to;
+    if (at[0] == 'v') return penVertexPx(at[1 .. $].to!long, what);
+    assert(at[0] == 'e' && at.length == 3, "elementPx: unknown element " ~ at);
+    return penEdgePx(at[1 .. 2].to!long, at[2 .. 3].to!long, what);
+}
+
+/// An interactive (panel-origin) attribute write on the armed pen.
+void penAttrInteractive(string attr, string value) {
+    auto r = penPost("/api/script?interactive=true",
+                     "tool.attr " ~ kPenToolId ~ " " ~ attr ~ " " ~ value);
+    assert(r["status"].str == "ok", "interactive write " ~ attr ~ " " ~ value ~ " failed: "
+                                    ~ r.toString);
+}
+
+/// The pen's current value of `attr`, as the attribute query answers it.
+string penAttr(string attr) {
+    auto r = penPost("/api/command", "tool.attr " ~ kPenToolId ~ " " ~ attr ~ " ?");
+    assert(r["status"].str == "ok", "attribute query " ~ attr ~ " failed: " ~ r.toString);
+    return r["value"].toString;
+}
+
+string topLabel() {
+    const l = penHistoryLabels();
+    return l.length ? l[$ - 1] : "";
+}
+
+// ---------------------------------------------------------------------------
+// no-op-presses — L5 (fixture: K-noop): a motionless click on v5, a click on
+// empty background and a zero-length drag on v10 each add one step with the
+// mesh bit-identical to a0; Ctrl+Z pops one and the pen stays armed. The click
+// on v5 is also the motionless-vertex-click law: it applies NOTHING.
+// ---------------------------------------------------------------------------
+unittest {
+    if (!cell("no-op-presses")) return;
+    auto fx = cellFx("no-op-presses");
+    const r = rig();
+    penArmUi(r);
+    penTap(penVertexPx(5, "no-op-presses v5"), 1, 0, "no-op-presses tap v5");
+    expectState("no-op-presses", "tap_v", r.a0, true, r.hp + 2);
+    penTap(penEmptyBackgroundPx(), 1, 0, "no-op-presses tap empty background");
+    expectState("no-op-presses", "tap_bg", r.a0, true, r.hp + 3);
+    const v10 = penVertexPx(10, "no-op-presses v10");
+    string log = penMotion(20, v10[0], v10[1], 0, 0) ~ "\n" ~ penButton(40, true, 1, v10[0], v10[1], 0) ~ "\n";
+    foreach (i; 0 .. 4) log ~= penMotion(80 + 40 * i, v10[0], v10[1], 1, 0) ~ "\n";
+    log ~= penButton(300, false, 1, v10[0], v10[1], 0);
+    penPlay(log, "no-op-presses zero-length drag on v10");
+    expectState("no-op-presses", "zero_drag", r.a0, true, r.hp + 4);
+    assert(fx["presses"].array.length == 3 && fx["rowsAdded"].integer == 3,
+           "no-op-presses: the fixture's three presses add three rows");
+    penCtrlZ("no-op-presses z1");
+    expectState("no-op-presses", "z1", r.a0, fx["undoArmed"].type == JSONType.true_, r.hp + 3);
+    writeln("PASS no-op-presses");
+}
+
+// ---------------------------------------------------------------------------
+// no-op-chord-clicks — L5 (fixture: the nine motionless chord clicks): each is
+// one step; the seven the capture shows editing nothing leave the mesh
+// bit-identical, the Shift+MMB (a loop cut) and Shift+Ctrl+RMB (a loop
+// smooth) clicks edit it.
+// ---------------------------------------------------------------------------
+unittest {
+    if (!cell("no-op-chord-clicks")) return;
+    auto fx = cellFx("no-op-chord-clicks");
+    const r = rig();
+    penArmUi(r);
+    long hist = r.hp + 1;
+    size_t n, unchanged;
+    // Every pixel is taken on a0, as the capture aimed: after the loop cut the
+    // edge (5, 6) no longer exists, and the clicks after it hit the same pixel.
+    int[2][string] px;
+    foreach (c; fx["clicks"].array)
+        if (c["at"].str !in px) px[c["at"].str] = elementPx(c["at"].str, "no-op-chord-clicks a0");
+    foreach (c; fx["clicks"].array) {
+        const id = "no-op-chord-clicks " ~ c["id"].str;
+        const before = penMesh();
+        penTap(px[c["at"].str], cast(int)c["button"].integer, modOf(c["mods"]), id);
+        const m = penMesh();
+        const same = c["meshUnchanged"].type == JSONType.true_;
+        assert(penHistoryLen() == ++hist && penArmed() && (m == before) == same,
+               format("%s: history %s (expected %d rows), armed %s, mesh %s the one before "
+                      ~ "(the capture: %s)", id, penHistoryLabels(), hist, penArmed(),
+                      m == before ? "==" : "!=", same ? "unchanged" : "changed"));
+        if (same) ++unchanged;
+        ++n;
+    }
+    assert(n == 9 && unchanged == 7 && fx["population"].integer == 9 && fx["rowsAdded"].integer == 9,
+           format("no-op-chord-clicks: %d clicks ran (9), %d unchanged (7)", n, unchanged));
+    writeln("PASS no-op-chord-clicks");
+}
+
+// ---------------------------------------------------------------------------
+// redo-rearm — L2: arm, two moves, three Ctrl+Z (the pen dropped), then three
+// Ctrl+Shift+Z: r1 re-arms the pen at a0, r2 is g1, r3 is g2, armed throughout.
+// ---------------------------------------------------------------------------
+unittest {
+    if (!cell("redo-rearm")) return;
+    auto fx = cellFx("arm-two-moves");
+    const r = rig();
+    penArmUi(r);
+    moveV5("redo-rearm g1");
+    const g1 = penMesh();
+    moveV10("redo-rearm g2");
+    const g2 = penMesh();
+    foreach (z; ["z1", "z2", "z3"]) penCtrlZ("redo-rearm " ~ z);
+    expectState("redo-rearm", "z3", r.a0, false, r.hp);
+    const PenMesh[string] at = ["a0": r.a0, "g1": g1, "g2": g2];
+    long hist = r.hp;
+    size_t n;
+    foreach (row; fx["redo"].array) {
+        penCtrlShiftZ("redo-rearm " ~ row["step"].str);
+        expectState("redo-rearm", row["step"].str, at[row["equals"].str],
+                    row["armed"].type == JSONType.true_, ++hist);
+        ++n;
+    }
+    assert(n == 3, format("redo-rearm: %d of the three redo steps ran", n));
+    writeln("PASS redo-rearm");
+}
+
+// ---------------------------------------------------------------------------
+// switch-away-redo — L9 (r1..r3): after switch-away's three Ctrl+Z, three
+// Ctrl+Shift+Z: the pen re-armed at a0, g1, then the other tool re-armed with
+// the mesh at g1 (the switch's own redo survives its undo).
+// ---------------------------------------------------------------------------
+unittest {
+    if (!cell("switch-away-redo")) return;
+    auto fx = cellFx("switch-away");
+    const r = rig();
+    penArmUi(r);
+    moveV5("switch-away-redo g1");
+    const g1 = penMesh();
+    penKey(PEN_SDLK_w, 0, "switch-away-redo W");
+    const moveTool = penTool();
+    assert(moveTool.length && moveTool != kPenToolId && penMesh() == g1,
+           format("switch-away-redo exit: W did not switch tools keeping g1: '%s'", moveTool));
+    foreach (z; ["z1", "z2", "z3"]) penCtrlZ("switch-away-redo " ~ z);
+    assert(penTool() == "" && penMesh() == r.a0,
+           format("switch-away-redo z3: tool '%s', mesh %s", penTool(), penMesh().toString));
+    const PenMesh[string] at = ["a0": r.a0, "g1": g1];
+    string[string] toolOf = ["pen": kPenToolId, "none": "", "move": moveTool];
+    size_t n;
+    foreach (row; fx["redo"].array) {
+        const step = row["step"].str;
+        penCtrlShiftZ("switch-away-redo " ~ step);
+        const want = toolOf[row["tool"].str];
+        assert(penMesh() == at[row["equals"].str] && penTool() == want,
+               format("switch-away-redo %s: mesh %s (expected %s), tool '%s' (expected '%s'), "
+                      ~ "history %s", step, penMesh().toString, row["equals"].str, penTool(),
+                      want, penHistoryLabels()));
+        ++n;
+    }
+    assert(n == 3, format("switch-away-redo: %d of the three redo steps ran", n));
+    writeln("PASS switch-away-redo");
+}
+
+// ---------------------------------------------------------------------------
+// drop-mid-drag — the salvage (wave plan 8646 §4.5): a drop through the UI
+// door while a Move drag is held records that press as ONE row with the mesh
+// as it stands; Ctrl+Z restores a0. Until slice S6 a drop writes no row of its
+// own, so the pen is NOT re-armed by that undo — asserted as it stands, for S6
+// to flip.
+// ---------------------------------------------------------------------------
+unittest {
+    if (!cell("drop-mid-drag")) return;
+    const r = rig();
+    penArmUi(r);
+    const from = penVertexPx(5, "drop-mid-drag v5");
+    const step = penSpacingPx() / kSp;
+    string log = penMotion(20, from[0], from[1], 0, 0) ~ "\n" ~ penButton(40, true, 1, from[0], from[1], 0) ~ "\n";
+    int x = from[0], y = from[1];
+    foreach (i; 1 .. 7) {
+        x = from[0] + cast(int)(20 * step * i / 6);
+        y = from[1] + cast(int)(12 * step * i / 6);
+        log ~= penMotion(40 + 40 * i, x, y, 1, 0) ~ "\n";
+    }
+    penPlay(log, "drop-mid-drag: held drag on v5");
+    const held = penMesh();
+    assert(penMoved(held, r.a0) == [5L] && penHistoryLen() == r.hp + 1,
+           format("drop-mid-drag rig: the held drag moved %s, history %s",
+                  penIdx(penMoved(held, r.a0)), penHistoryLabels()));
+    penLineUi("tool.set " ~ kPenToolId ~ " off");
+    penPlay(penButton(20, false, 1, x, y, 0), "drop-mid-drag: release after the drop");
+    assert(!penArmed() && penMesh() == held && penHistoryLen() == r.hp + 2
+           && topLabel() == "Topology Move",
+           format("drop-mid-drag: the drop must record the held press as one Move row: armed %s, "
+                  ~ "mesh %s the held one, history %s", penArmed(), penMesh() == held ? "==" : "!=",
+                  penHistoryLabels()));
+    penCtrlZ("drop-mid-drag z1");
+    assert(penMesh() == r.a0 && !penArmed(),
+           format("drop-mid-drag z1: mesh %s (expected a0), armed %s (no drop row before S6)",
+                  penMesh().toString, penArmed()));
+    writeln("PASS drop-mid-drag");
+}
+
+// ---------------------------------------------------------------------------
+// param-write-* — L14 (fixture: three attribute captures): an interactive
+// write on the armed pen is its own row, before a press or after one, and its
+// undo restores the prior value (wave plan 8646 §9.5; `attr` carrier).
+// ---------------------------------------------------------------------------
+unittest {
+    if (!cell("param-write-idle")) return;
+    auto fx = cellFx("param-write-idle");
+    const r = rig();
+    penArmUi(r);
+    penAttrInteractive(fx["attr"].str, fx["value"].str);
+    // The read-back FIRST: a write whose step closed with no carrier is
+    // reverted on the spot.
+    assert(penAttr(fx["attr"].str) == `"` ~ fx["value"].str ~ `"`,
+           "param-write-idle: the write was reverted: " ~ penAttr(fx["attr"].str));
+    assert(penHistoryLen() == r.hp + 2 && topLabel() == "Topology Attribute" && penMesh() == r.a0,
+           format("param-write-idle: the write is not one row: %s", penHistoryLabels()));
+    penCtrlZ("param-write-idle z1");
+    assert(penAttr(fx["attr"].str) == `"` ~ fx["prior"].str ~ `"`
+           && penArmed() == (fx["z1Armed"].type == JSONType.true_),
+           format("param-write-idle z1: %s = %s, armed %s", fx["attr"].str,
+                  penAttr(fx["attr"].str), penArmed()));
+    penCtrlZ("param-write-idle z2");
+    assert(penArmed() == (fx["z2Armed"].type == JSONType.true_),
+           format("param-write-idle z2: armed %s", penArmed()));
+    writeln("PASS param-write-idle");
+}
+
+unittest {
+    if (!cell("param-write-post-press")) return;
+    auto fx = cellFx("param-write-post-press");
+    const r = rig();
+    penArmUi(r);
+    moveV5("param-write-post-press g1");
+    const g1 = penMesh();
+    penAttrInteractive(fx["attr"].str, "true");
+    assert(penAttr(fx["attr"].str) == "true" && penMesh() == g1 && penHistoryLen() == r.hp + 3,
+           format("param-write-post-press w1: %s = %s, mesh %s g1, history %s", fx["attr"].str,
+                  penAttr(fx["attr"].str), penMesh() == g1 ? "==" : "!=", penHistoryLabels()));
+    penCtrlZ("param-write-post-press z1");
+    assert(penAttr(fx["attr"].str) == "false" && penMesh() == g1 && penArmed(),
+           format("param-write-post-press z1: %s = %s, mesh %s g1, armed %s", fx["attr"].str,
+                  penAttr(fx["attr"].str), penMesh() == g1 ? "==" : "!=", penArmed()));
+    penCtrlZ("param-write-post-press z2");
+    expectState("param-write-post-press", "z2", r.a0, fx["z2Armed"].type == JSONType.true_, r.hp + 1);
+    writeln("PASS param-write-post-press");
+}
+
+unittest {
+    if (!cell("param-write-show")) return;
+    auto fx = cellFx("param-write-show");
+    const r = rig();
+    penArmUi(r);
+    penAttrInteractive(fx["attr"].str, "false");
+    assert(penAttr(fx["attr"].str) == "false" && penHistoryLen() == r.hp + 2,
+           format("param-write-show w1: %s = %s, history %s", fx["attr"].str,
+                  penAttr(fx["attr"].str), penHistoryLabels()));
+    penCtrlZ("param-write-show z1");
+    assert(penAttr(fx["attr"].str) == "true" && penArmed() == (fx["z1Armed"].type == JSONType.true_),
+           format("param-write-show z1: %s = %s, armed %s", fx["attr"].str,
+                  penAttr(fx["attr"].str), penArmed()));
+    writeln("PASS param-write-show");
+}
+
+// ---------------------------------------------------------------------------
+// split-*-row — L40 (fixture: the three refused-split captures): an MMB split
+// from v5 released on a vertex sharing no polygon (v15), on an adjacent corner
+// (v6) or on empty background is ONE step with the mesh unchanged; Ctrl+Z pops
+// it (armed), the next pops the activation.
+// ---------------------------------------------------------------------------
+void splitRowCase(string id) {
+    auto fx = cellFx(id);
+    const r = rig();
+    penArmUi(r);
+    const from = elementPx(fx["from"].str, id);
+    const rel = fx["release"].str;
+    const int[2] to = rel == "empty" ? penEmptyBackgroundPx() : elementPx(rel, id);
+    if (rel == "empty") {
+        // The release must be clear of every vertex by more than the snap gather
+        // radius (40 px nominal, `SnapPacket.outerRangePx`), or this is a split
+        // with a target, not an empty release.
+        import std.math : hypot;
+        double nearest = double.max;
+        foreach (v; 0 .. 16) {
+            const p = penVertexPx(v, id ~ " floor");
+            const d = hypot(cast(double)(p[0] - to[0]), cast(double)(p[1] - to[1]));
+            if (d < nearest) nearest = d;
+        }
+        assert(nearest > 40, format("%s rig: the empty release is %.1f px from a vertex", id, nearest));
+    }
+    penPlay(penGestureEvents(from[0], from[1], to[0], to[1], 2, 0, 8), id ~ " MMB");
+    assert(fx["meshUnchanged"].type == JSONType.true_ && fx["rowsAdded"].integer == 1,
+           id ~ ": the fixture's refused split changes nothing and adds one row");
+    expectState(id, "g1", r.a0, true, r.hp + 2);
+    penCtrlZ(id ~ " z1");
+    expectState(id, "z1", r.a0, fx["z1Armed"].type == JSONType.true_, r.hp + 1);
+    penCtrlZ(id ~ " z2");
+    expectState(id, "z2", r.a0, fx["z2Armed"].type == JSONType.true_, r.hp);
+}
+
+unittest {
+    if (!cell("split-far-row")) return;
+    splitRowCase("split-far-row");
+    writeln("PASS split-far-row");
+}
+
+unittest {
+    if (!cell("split-adjacent-row")) return;
+    splitRowCase("split-adjacent-row");
+    writeln("PASS split-adjacent-row");
+}
+
+unittest {
+    if (!cell("split-empty-release")) return;
+    splitRowCase("split-empty-release");
+    writeln("PASS split-empty-release");
+}
+
+// ---------------------------------------------------------------------------
+// remove-edge-noop-row — L5 for the Remove chord: a Ctrl+MMB press latched on
+// the BORDER edge e01 (no edge to dissolve: it has one polygon) changes
+// nothing and is still one step, through the chord's default carrier (wave
+// plan 8646 §9.19.6: the edge primitive no longer restores-and-returns).
+// ---------------------------------------------------------------------------
+unittest {
+    if (!cell("remove-edge-noop-row")) return;
+    const r = rig();
+    penArmUi(r);
+    penTap(penEdgePx(0, 1, "remove-edge-noop-row e01"), 2, PEN_KMOD_LCTRL, "remove-edge-noop-row");
+    expectState("remove-edge-noop-row", "g1", r.a0, true, r.hp + 2);
+    assert(topLabel() == "Topology Remove",
+           "remove-edge-noop-row: the row's label is " ~ topLabel());
+    penCtrlZ("remove-edge-noop-row z1");
+    expectState("remove-edge-noop-row", "z1", r.a0, true, r.hp + 1);
+    writeln("PASS remove-edge-noop-row");
+}
+
+// ---------------------------------------------------------------------------
+// fill-refusal-move — the carrier is the handler's, decided at its ARM (wave
+// plan 8646 [R2-4]): in Fill mode a press on the border edge e01, where the
+// ring gate refuses, grabs that edge as a Move. A 12-step drag is one row
+// labelled Topology Move with the edge's two vertices moved; the motionless
+// twin of the same press is one row, also Topology Move, mesh unchanged.
+// ---------------------------------------------------------------------------
+unittest {
+    if (!cell("fill-refusal-move")) return;
+    const r = rig();
+    penArmUi(r);
+    {
+        auto a = penPost("/api/command", "tool.attr " ~ kPenToolId ~ " mode fill");
+        assert(a["status"].str == "ok", "fill-refusal-move rig: mode fill refused: " ~ a.toString);
+    }
+    const e01 = penEdgePx(0, 1, "fill-refusal-move e01");
+    penTap(e01, 1, 0, "fill-refusal-move motionless twin");
+    expectState("fill-refusal-move", "tap", r.a0, true, r.hp + 2);
+    assert(topLabel() == "Topology Move",
+           "fill-refusal-move: the motionless refusal's row is " ~ topLabel());
+    penGesture(e01, 0, -15 / kSp, 1, 0, "fill-refusal-move drag", 12);
+    const m = penMesh();
+    assert(penMoved(m, r.a0) == [0L, 1L] && penHistoryLen() == r.hp + 3
+           && topLabel() == "Topology Move",
+           format("fill-refusal-move: the drag moved %s (expected [0,1]), history %s",
+                  penIdx(penMoved(m, r.a0)), penHistoryLabels()));
+    penCtrlZ("fill-refusal-move z1");
+    expectState("fill-refusal-move", "z1", r.a0, true, r.hp + 2);
+    {
+        auto a = penPost("/api/command", "tool.attr " ~ kPenToolId ~ " mode move");
+        assert(a["status"].str == "ok", "fill-refusal-move: mode move refused: " ~ a.toString);
+    }
+    writeln("PASS fill-refusal-move");
+}
+
 // ---------------------------------------------------------------------------
 // Population: with no VIBE3D_CELL every cell above ran (declared last, so it
 // runs last).
@@ -577,7 +957,7 @@ unittest {
     writeln("cells=", cellsRun);
     const only = environment.get("VIBE3D_CELL", "");
     if (only.length == 0)
-        assert(cellsRun == 12, format("topology pen session laws: %d cells ran, expected 12", cellsRun));
+        assert(cellsRun == 25, format("topology pen session laws: %d cells ran, expected 25", cellsRun));
     else
         assert(cellsRun == 1, format("topology pen session laws: VIBE3D_CELL=%s ran %d cells, expected 1 "
                                      ~ "(an unknown name runs none)", only, cellsRun));

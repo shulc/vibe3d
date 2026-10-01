@@ -53,9 +53,28 @@
   {
    "id": "L5-press-is-a-step",
    "cells": [
-    "no-op-presses"
+    "no-op-presses",
+    "no-op-chord-clicks"
    ],
    "law": "Every press writes one undo step even when the mesh does not change; Ctrl+Z pops such a step and the tool stays armed."
+  },
+  {
+   "id": "L14-parameter-write-is-a-step",
+   "cells": [
+    "param-write-idle",
+    "param-write-post-press",
+    "param-write-show"
+   ],
+   "law": "An interactive attribute write on an armed pen is its own undo step, before or after a press; Ctrl+Z restores the prior value and keeps the geometry and the tool."
+  },
+  {
+   "id": "L40-refused-split-is-a-step",
+   "cells": [
+    "split-far-row",
+    "split-empty-release",
+    "split-adjacent-row"
+   ],
+   "law": "A split refused at its release (a target sharing no polygon, an adjacent corner, empty space) changes nothing and is still one undo step; the next Ctrl+Z drops the tool."
   },
   {
    "id": "L6-held-key-dropped",
@@ -761,6 +780,136 @@
    },
    "note": "capture rig: vertex 16 in no polygon, and the bare edge (17, 18) made as a two-point polygon (one face). Ours builds both with the pen: a Point-mode point (16) and a Duplicate drag from a second point (17 -> 18), a faceless wire edge, so our face counts are the capture's minus bareEdgeFaces",
    "undoArmed": true
+  },
+  "no-op-chord-clicks": {
+   "clicks": [
+    {
+     "id": "rmb",
+     "at": "e56",
+     "mods": [],
+     "button": 3,
+     "meshUnchanged": true
+    },
+    {
+     "id": "ctrl-lmb",
+     "at": "v5",
+     "mods": [
+      "ctrl"
+     ],
+     "button": 1,
+     "meshUnchanged": true
+    },
+    {
+     "id": "shift-lmb-v",
+     "at": "v0",
+     "mods": [
+      "shift"
+     ],
+     "button": 1,
+     "meshUnchanged": true
+    },
+    {
+     "id": "shift-rmb",
+     "at": "e01",
+     "mods": [
+      "shift"
+     ],
+     "button": 3,
+     "meshUnchanged": true
+    },
+    {
+     "id": "mmb",
+     "at": "v5",
+     "mods": [],
+     "button": 2,
+     "meshUnchanged": true
+    },
+    {
+     "id": "shift-mmb",
+     "at": "e56",
+     "mods": [
+      "shift"
+     ],
+     "button": 2,
+     "meshUnchanged": false
+    },
+    {
+     "id": "shift-ctrl-rmb",
+     "at": "e56",
+     "mods": [
+      "shift",
+      "ctrl"
+     ],
+     "button": 3,
+     "meshUnchanged": false
+    },
+    {
+     "id": "ctrl-rmb",
+     "at": "v5",
+     "mods": [
+      "ctrl"
+     ],
+     "button": 3,
+     "meshUnchanged": true
+    },
+    {
+     "id": "shift-ctrl-mmb",
+     "at": "v5",
+     "mods": [
+      "shift",
+      "ctrl"
+     ],
+     "button": 2,
+     "meshUnchanged": true
+    }
+   ],
+   "population": 9,
+   "rowsAdded": 9
+  },
+  "split-far-row": {
+   "from": "v5",
+   "release": "v15",
+   "meshUnchanged": true,
+   "rowsAdded": 1,
+   "z1Armed": true,
+   "z2Armed": false
+  },
+  "split-empty-release": {
+   "from": "v5",
+   "release": "empty",
+   "meshUnchanged": true,
+   "rowsAdded": 1,
+   "z1Armed": true,
+   "z2Armed": false
+  },
+  "split-adjacent-row": {
+   "from": "v5",
+   "release": "v6",
+   "meshUnchanged": true,
+   "rowsAdded": 1,
+   "z1Armed": true,
+   "z2Armed": false
+  },
+  "param-write-idle": {
+   "attr": "mode",
+   "value": "point",
+   "prior": "move",
+   "z1Armed": true,
+   "z2Armed": false
+  },
+  "param-write-post-press": {
+   "attr": "loop",
+   "value": true,
+   "prior": false,
+   "z1": "g1",
+   "z2": "a0",
+   "z2Armed": true
+  },
+  "param-write-show": {
+   "attr": "showVertex",
+   "value": false,
+   "prior": true,
+   "z1Armed": true
   }
  }
 }
