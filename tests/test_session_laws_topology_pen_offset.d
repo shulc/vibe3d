@@ -672,9 +672,10 @@ unittest {
     log ~= penMotion(240, e[0] + 1, e[1], 1, 0) ~ "\n" ~ penButton(260, false, 1, e[0] + 1, e[1], 0);
     penPlay(log, "offset-came-home drag out and back");
     const g1 = penMesh();
-    assert(g1 == r.a0 && penHistoryLen() == r.hp + 2 && stepKindNow() == 2,
-           format("offset-came-home g1: mesh %s a0 (came home), history %s, kind %d",
-                  g1 == r.a0 ? "==" : "!=", penHistoryLabels(), stepKindNow()));
+    assert(g1 == r.a0 && penHistoryLen() == r.hp + 2 && stepKindNow() == 2 && offs() == [0.0, 0.0, 0.0],
+           format("offset-came-home g1: mesh %s a0 (came home), history %s, kind %d, offsets %s (a "
+                  ~ "click reads 0)", g1 == r.a0 ? "==" : "!=", penHistoryLabels(), stepKindNow(),
+                  fmt3(offs())));
     reapplyCarried("offset-came-home", g1, 2, [5, 6], [r.a0.pos[5], r.a0.pos[6]], r.hp + 2);
 }
 
@@ -901,7 +902,8 @@ SlidePrediction predict(double[3] anchor, const int[2][] pts) {
 /// Ctrl+LMB on the edge (a, b) midpoint, one motion per cumulative point, the
 /// release at the last; returns the offset (WORLD, via the layer's rotation
 /// about Z by `rotZ` degrees) after asserting the moved endpoints.
-double[3] slideAlong(string id, const PenMesh a0, long a, long b, const int[2][] pts, double rotZ = 0) {
+double[3] slideAlong(string id, const PenMesh a0, long a, long b, const int[2][] pts, double rotZ = 0,
+                     int[2] overshoot = [0, 0]) {
     const e = penEdgePx(a, b, id ~ " edge");
     string log = penMotion(20, e[0], e[1], 0, PEN_KMOD_LCTRL) ~ "\n"
                ~ penButton(40, true, 1, e[0], e[1], PEN_KMOD_LCTRL) ~ "\n";
@@ -910,7 +912,8 @@ double[3] slideAlong(string id, const PenMesh a0, long a, long b, const int[2][]
         t += 10;
         log ~= penMotion(t, e[0] + p[0], e[1] + p[1], 1, PEN_KMOD_LCTRL) ~ "\n";
     }
-    log ~= penButton(t + 10, false, 1, e[0] + pts[$ - 1][0], e[1] + pts[$ - 1][1], PEN_KMOD_LCTRL);
+    log ~= penButton(t + 10, false, 1, e[0] + pts[$ - 1][0] + overshoot[0],
+                     e[1] + pts[$ - 1][1] + overshoot[1], PEN_KMOD_LCTRL);
     const hp = penHistoryLen();
     penPlay(log, id);
     const m = penMesh();
@@ -975,7 +978,8 @@ unittest {
 
 /// The front-grid slide cells at the capture's spacing (so its pixel paths
 /// replay as driven): e56's midpoint, the per-candidate predictions printed.
-void frontSlide(string id, const int[2][] pts, int expect, int mustDifferFrom, string rival) {
+void frontSlide(string id, const int[2][] pts, int expect, int mustDifferFrom, string rival,
+                int[2] overshoot = [0, 0]) {
     const r = rig();
     penArmUi(r);
     penZoomToSpacing(kSp, id);
@@ -989,14 +993,24 @@ void frontSlide(string id, const int[2][] pts, int expect, int mustDifferFrom, s
            format("%s rig: the latch predicts %s (expected %s) and the rival %s %s (expected %s) — the "
                   ~ "cell would not discriminate", id, "XYZ"[pr.latch], "XYZ"[expect], rival, "XYZ"[rv],
                   "XYZ"[mustDifferFrom]));
-    const ow = slideAlong(id, r.a0, 5, 6, pts);
+    const ow = slideAlong(id, r.a0, 5, 6, pts, 0, overshoot);
     oneChannel(id, ow, expect);
+    // The magnitude: the L28 offset at the RELEASE's own pixel (M-hit, gap row
+    // (q)), hit(proj(anchor) + drag) - anchor, on the latched axis.
+    const q = projectF(anchor);
+    double[3] hr;
+    assert(bgHit(q[0] + pts[$ - 1][0] + overshoot[0], q[1] + pts[$ - 1][1] + overshoot[1], hr),
+           id ~ ": the release pixel misses the background");
+    const want = hr[expect] - anchor[expect];
+    assert(abs(ow[expect] - want) <= 1e-5,
+           format("%s: the offset %s on axis %d is not the release's G-delta %.7g", id, fmt3(ow), expect, want));
     writeln("PASS ", id);
 }
 
 unittest {
     // C4-S1dir-f: a straight (30, -10): X by the latch, E-perp's Y refuted.
-    if (cell("drag-slide-f")) frontSlide("drag-slide-f", bresenham(30, -10), 0, 1, "E-perp");
+    // The release lands 6 px past the last motion: its own pixel decides.
+    if (cell("drag-slide-f")) frontSlide("drag-slide-f", bresenham(30, -10), 0, 1, "E-perp", [6, 0]);
 }
 
 unittest {
