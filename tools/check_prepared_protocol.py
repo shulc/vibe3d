@@ -8045,8 +8045,9 @@ def topopen_deact_gate(owner, context, tool_source, snap_source):
         all(x in tool_source for x in (
             "final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context)",
             "PreparedTopologyPenDeactivateOwner.prepare(this, context)",
-            "owner.historyPrepared() ? context.markHistoryInstall()",
-            ": context.markNoHistoryInstall();",
+            # Plan 8646: the session's close records an open press step before
+            # this door, so the pen's prepared deactivate installs no history.
+            "bool ok = owner !is null && context.markNoHistoryInstall();",
             "context.prepareTopologyPenDeactivate(owner)",
             "if (!ok) context.discard();")) and \
         all(x in snap_source for x in (
@@ -8055,7 +8056,10 @@ def topopen_deact_gate(owner, context, tool_source, snap_source):
             "void installPreparedGuides(ref SnapGuide[] next) nothrow @nogc",
             "_guides = next; next = null;",
             "void installPreparedPopEnabled(string owner) nothrow")) and \
-        "PreparedTopologyPenDeactivateOwner" not in hook_body
+        "PreparedTopologyPenDeactivateOwner" not in hook_body and \
+        "markHistoryInstall(" not in tool_source[
+            tool_source.find("final PreparedDeactivateEffect prepareDeactivate("):
+            tool_source.find("override bool prepareDoorDeactivate(")]
 
 snap_stage_source = prepared_source_texts[ROOT / "source/toolpipe/stages/snap.d"]
 if not topopen_deact_gate(topopen_deact_owner, record_context,
