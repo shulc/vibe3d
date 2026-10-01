@@ -924,37 +924,39 @@ unittest { // (10)
 }
 
 // ---------------------------------------------------------------------------
-// (11) Wave plan 8640 S7a — the operation context and the parameter-row fold
+// (12) Wave plan 8640 S7a — the operation context and the parameter-row fold
 // are policy DATA (`pressOpensOperation`, `foldsParamRowsIntoBlock`).
 // Provenance: CAPTURED for the Topology Pen (H1-move z1, C0-N1/N2, X-w,
 // X-toggle; L15, L38, L41-L45, L53-L55); false for every other tool (no
-// capture: the session reads them as off). Exactly one class declares each —
-// two censuses, each counting its own field, over the same scan as (10).
+// capture: the session reads them as off). Exactly one id declares each —
+// two censuses, each counting its own field, over every `kTable` row.
 // ---------------------------------------------------------------------------
 
 static assert(ToolSessionPolicy.init.pressOpensOperation == false);
 static assert(ToolSessionPolicy.init.foldsParamRowsIntoBlock == false);
 
-unittest { // (11)
+unittest { // (12)
+    auto manifest = parseJSON(readText("tools/prepared_writer_manifest.json"));
+    string[string] moduleOf;
+    foreach (p; manifest["products"].array)
+        moduleOf[p["aggregate"].str] = p["module"].str;
     string[] opens, folds;
-    size_t scanned;
-    foreach (m; ModuleInfo) {
-        if (m is null || !m.name.startsWith("tools.")) continue;
-        foreach (c; m.localClasses) {
-            if (!derivesFromTool(c) || (c.m_flags & TypeInfo_Class.ClassFlags.isAbstract))
-                continue;
-            ++scanned;
-            const pol = blit(c).sessionPolicy();
-            if (pol.pressOpensOperation) opens ~= c.name;
-            if (pol.foldsParamRowsIntoBlock) folds ~= c.name;
-        }
+    size_t visited;
+    foreach (row; kTable) {
+        auto ci = TypeInfo_Class.find(moduleOf[row.cls] ~ "." ~ row.cls);
+        assert(ci !is null, "S7a policy table: class not linked: " ~ row.cls);
+        ++visited;
+        const pol = blit(ci).sessionPolicy();
+        if (pol.pressOpensOperation) opens ~= row.id;
+        if (pol.foldsParamRowsIntoBlock) folds ~= row.id;
     }
-    assert(scanned == 48, format("S7a policy classes: scanned %s, measured 48", scanned));
-    assert(opens == ["tools.edit.topology_pen.tool.TopologyPenTool"],
-           format("S7a policy classes: pressOpensOperation declared by %s, expected the pen only",
+    assert(visited == kTable.length && kTable.length == 71,
+           format("S7a policy table: visited %s of %s rows, measured 71", visited, kTable.length));
+    assert(opens == ["mesh.topoPen"],
+           format("S7a policy table: pressOpensOperation declared by %s, expected the pen only",
                   opens));
-    assert(folds == ["tools.edit.topology_pen.tool.TopologyPenTool"],
-           format("S7a policy classes: foldsParamRowsIntoBlock declared by %s, expected the pen only",
+    assert(folds == ["mesh.topoPen"],
+           format("S7a policy table: foldsParamRowsIntoBlock declared by %s, expected the pen only",
                   folds));
 }
 
