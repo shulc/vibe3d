@@ -1815,10 +1815,22 @@ unittest {
     const g1 = getJson("/api/tool/state");
     assert(g0["dragArmed"].type == JSONType.true_ && g0["case"].str == "tri"
            && g1["dragArmed"].type == JSONType.true_ && g0["triGhost"].integer != planePick
+           && (g0["triGhost"].integer == 8 || g0["triGhost"].integer == 13)
            && g1["triGhost"].integer == planePick,
            format("%s: the ghost names v%s at the press and v%s after the motions (expected another "
                   ~ "neighbour, then the plane rule's v%d); armed %s/%s, case %s", id, g0["triGhost"],
                   g1["triGhost"], planePick, g0["dragArmed"], g1["dragArmed"], g0["case"]));
+    {
+        // The drawn ghost reads that same field (`drawBuildGhost`, Tri arm): the
+        // state read above says nothing about the line on screen otherwise.
+        import std.algorithm : count;
+        import std.file : readText;
+        const rsrc = readText(buildPath(dirName(__FILE_FULL_PATH__), "..", "source", "tools", "edit",
+                                        "topology_pen", "render.d"));
+        assert(rsrc.count("ghostTo(") == 4 && rsrc.count("ghostTo(ghostTriN_);") == 1,
+               format("%s: render.d's Tri ghost must draw `ghostTriN_` (ghostTo calls %d, of them on "
+                      ~ "ghostTriN_ %d)", id, rsrc.count("ghostTo("), rsrc.count("ghostTo(ghostTriN_);")));
+    }
     penPlay(penButton(500, false, 1, to[0], to[1], mod), id ~ " release");
     const m = penMesh();
     const labels = penHistoryLabels();
