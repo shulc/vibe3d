@@ -1088,3 +1088,43 @@ unittest { // (9) the compile-time module list IS the runtime scan
            format("M7 tool pin: runtime interfaces %s, pinned %s", ifaces.keys.sort,
                   kPinnedToolInterfaces));
 }
+
+// ---------------------------------------------------------------------------
+// (11) Wave plan 8640 slice 8690 (M-I / D16) — a `tool.attr` write to a param
+// the tool disables in its current state is refused by policy DATA
+// (`refusesDisabledParamWrites`). Provenance: CAPTURED for the Topology Pen
+// (L16; the Fill capture at its `kFillRangeDefault` comment); false for every
+// other tool (uncaptured: their greying stays panel-only). Exactly one id
+// declares it, and the write door reads the policy AND `paramEnabled` after
+// the query branch and before the value is written.
+// ---------------------------------------------------------------------------
+
+static assert(ToolSessionPolicy.init.refusesDisabledParamWrites == false);
+
+unittest { // (11)
+    auto manifest = parseJSON(readText("tools/prepared_writer_manifest.json"));
+    string[string] moduleOf;
+    foreach (p; manifest["products"].array)
+        moduleOf[p["aggregate"].str] = p["module"].str;
+    string[] declared;
+    size_t visited;
+    foreach (row; kTable) {
+        auto ci = TypeInfo_Class.find(moduleOf[row.cls] ~ "." ~ row.cls);
+        assert(ci !is null, "8690 policy table: class not linked: " ~ row.cls);
+        ++visited;
+        if (blit(ci).sessionPolicy().refusesDisabledParamWrites) declared ~= row.id;
+    }
+    assert(visited == kTable.length && kTable.length == 71,
+           format("8690 policy table: visited %s of %s rows, measured 71", visited, kTable.length));
+    assert(declared == ["mesh.topoPen"],
+           format("8690 policy table: refusesDisabledParamWrites declared by %s, expected the pen only",
+                  declared));
+    auto attr = squeeze(bodyAt(blankNonCode(readText("source/commands/tool/attr.d")),
+                               "protected override bool applyImpl()"));
+    assert(attr.count("if(t.sessionPolicy().refusesDisabledParamWrites&&!t.paramEnabled(attrName_)){") == 1,
+           "8690 wiring census: the write door no longer reads the policy and paramEnabled");
+    inOrder(attr, ["if(isQuery()){",
+                   "if(t.sessionPolicy().refusesDisabledParamWrites&&!t.paramEnabled(attrName_)){",
+                   "returnfalse;}",
+                   "injectParamsInto(t.params(),pj);"], "ToolAttrCommand.applyImpl");
+}

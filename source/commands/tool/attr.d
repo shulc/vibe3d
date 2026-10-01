@@ -128,6 +128,19 @@ class ToolAttrCommand : Command {
                 "' on tool '" ~ toolId_ ~ "'");
         }
 
+        // A write to a param the tool disables in its current state is
+        // refused for a tool whose policy opts in (wave plan 8640 M-I, L16):
+        // the reason, then `false` — the command no-op contract's refusal arm
+        // (script door `status:error`, no history row). After the query branch
+        // (a read is never refused), before anything is written or captured.
+        if (t.sessionPolicy().refusesDisabledParamWrites
+            && !t.paramEnabled(attrName_)) {
+            baseRefusal_ = "attribute '" ~ attrName_ ~ "' of tool '" ~ toolId_
+                ~ "' is disabled in its current state";
+            return false;
+        }
+        baseRefusal_ = "";
+
         // Build a single-key object and inject it.
         JSONValue pj = JSONValue(cast(JSONValue[string]) null);
         pj[attrName_] = attrValue_;

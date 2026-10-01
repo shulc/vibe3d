@@ -417,6 +417,12 @@ struct ToolSessionPolicy {
     /// loses the gesture on that undo; we keep it (L8, a deliberate
     /// divergence, gap row (a)). Every other tool: no row, by data.
     bool dropWritesRow;
+    /// A `tool.attr` WRITE to a param this tool's `paramEnabled` answers false
+    /// for is REFUSED at the write door (`ToolAttrCommand.applyImpl`: no value
+    /// change, no row; a query still answers). Captured for the Topology Pen
+    /// (wave plan 8640 M-I / D16, law L16: Strength only in Smoothing, Range /
+    /// Quad Only only in Fill). Every other tool: greying stays panel-only.
+    bool refusesDisabledParamWrites;
 }
 
 class Tool : ParamProvider {

@@ -78,11 +78,11 @@
 # traces to; they are not guessed and not "sane-looking". Affect the Fill mode
 # only; every other gesture ignores both.
 #
-# One clause of these two is deliberately NOT carried: the reference REFUSES a
-# write to either outside Fill mode (an error, not an ignore) and greys the row
-# out. This form has no value-conditional row-disable mechanism — the same gap
-# `smoothStrength` sits in today — so both rows stay always-visible and
-# always-writable until that mechanism lands.
+# Availability: the reference REFUSES a write to either outside Fill mode (an
+# error, not an ignore) and greys the row out; `smoothStrength` likewise
+# outside Smoothing. Ported: the tool's `paramEnabled` greys these rows in the
+# other modes and the `tool.attr` door refuses the write (wave plan 8640 slice
+# 8690). The rows stay visible.
 #
 # `smoothStrength` — the Smooth gesture's relaxation strength (reference
 # parity, doc/tasks/work/0478-topopen-smooth-kernel.md). Scales the per-iteration

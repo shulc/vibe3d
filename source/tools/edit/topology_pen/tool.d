@@ -771,12 +771,12 @@ private:
     // own reset seeds 1.5, and every armed cell of the live run read back
     // exactly the requested value).
     //
-    // WHAT IS NOT PORTED WITH THEM: the reference REFUSES a write to either
-    // attribute outside Fill mode (an error, not an ignore) and greys the row
-    // out in its panel. vibe3d has no value-conditional row-disable mechanism
-    // yet (it is owned by the forms-engine task that also owes it to
-    // `smoothStrength`), so these rows stay always-writable exactly like
-    // `smoothStrength` does today. Recorded, not silently diverged.
+    // AVAILABILITY: the reference REFUSES a write to either attribute outside
+    // Fill mode (an error, not an ignore) and greys the row out in its panel;
+    // likewise `smoothStrength` outside Smoothing (law L16). Ported (wave plan
+    // 8640 slice 8690): `paramEnabled` below answers the mode test, the panel
+    // greys the row, and the policy's `refusesDisabledParamWrites` makes the
+    // `tool.attr` door refuse the write.
     private enum float kFillRangeDefault = 1.5f;
     package float fillRange_    = kFillRangeDefault;
     package bool  fillQuadOnly_ = true;
@@ -1243,6 +1243,7 @@ public:
             activationRow: true, rollovers: Rollover.target,
             sessionSteps: true, historyTopologySteps: true,
             rebaseTopologyAfterStep: false, dropWritesRow: true,
+            refusesDisabledParamWrites: true,
             imageAttrs: ["middle", "mode", "loop", "slide", "smoothStrength",
                          "showVertex", "showEdge", "innerSnap", "keepVertex",
                          "range", "quadOnly", "backFace"] };
@@ -1319,9 +1320,8 @@ public:
     // multiplies the hover radius into the candidate gather radius, and
     // `quadOnly` is the 3-vs-4 count gate. Bounds are the measured ones (min
     // 0.0, no upper bound / [0,1]) — see `fillRange_`'s own doc comment for
-    // the provenance and for the one clause NOT ported with them (the
-    // reference REFUSES a write outside Fill mode; we have no row-disable
-    // mechanism yet, exactly as with `smoothStrength`).
+    // the provenance and for their availability (a write outside Fill mode is
+    // refused, as `smoothStrength` is outside Smoothing: `paramEnabled`).
     //
     // ---- WHY THIS LIST IS SHORT, AND WHAT OWNS THE REST -------------------
     //
@@ -1379,6 +1379,18 @@ public:
             Param.bool_("quadOnly", "Quads Only", &fillQuadOnly_, true),
             Param.bool_("backFace", "Backface", &backFace_, false),
         ];
+    }
+
+    // Attribute availability by mode (law L16, wave plan 8640 slice 8690):
+    // Strength only in Smoothing, Range / Quads Only only in Fill; every other
+    // row always. The panel greys a false row and, by this tool's policy
+    // (`refusesDisabledParamWrites`), the `tool.attr` door refuses its write.
+    override bool paramEnabled(string name) const {
+        switch (name) {
+            case "smoothStrength":    return penMode_ == PenMode.Smooth;
+            case "range", "quadOnly": return penMode_ == PenMode.Fill;
+            default:                  return true;
+        }
     }
 
     override void activate() {
