@@ -4099,16 +4099,17 @@ public:
             moveWelded_ = true;
             afterWeld();
         }
-        // A weld changed the TOPOLOGY, so every index a sibling gesture
-        // cached may now name different geometry.
-        if (moveWelded_) resyncSession();
-        // The descriptor of this press (S7a). A weld compacted the indices
-        // and absorbed the grabbed vertex: the moved set is then empty.
+        // The descriptor of this press (S7a), before the resync below clears
+        // the arm. A weld compacted the indices and absorbed the grabbed
+        // vertex: the moved set is then empty.
         noteStepDescriptor(moveElem_ == MoveElem.Vertex ? PenStepKind.VertexMove
                          : moveElem_ == MoveElem.Edge   ? PenStepKind.EdgeMove
                                                         : PenStepKind.PolygonMove,
                            moveWelded_ ? null : moveVerts_,
                            moveWelded_ ? null : moveBase_);
+        // A weld changed the TOPOLOGY, so every index a sibling gesture
+        // cached may now name different geometry.
+        if (moveWelded_) resyncSession();
     }
 
     // The live Offset of a Move (S7a): the anchor's travel since the press,

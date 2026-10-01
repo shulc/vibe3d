@@ -160,9 +160,11 @@ unittest {
     assert(near3(oHeld, delta(held, r.a0, 5), 1e-6),
            format("offsets-live held: offsets %s, the vertex travelled %s", fmt3(oHeld),
                   fmt3(delta(held, r.a0, 5))));
-    penPlay(penButton(20, false, 1, x, y, 0), "offsets-live release");
+    // The release lands 6 px past the last motion: its own pixel decides.
+    penPlay(penButton(20, false, 1, x + 6, y + 4, 0), "offsets-live release");
     const g1 = penMesh();
     const o = offs();
+    assert(g1 != held, "offsets-live rig: the release pixel did not move the vertex further");
     assert(penHistoryLen() == r.hp + 2 && len3(o) > 1e-3 && near3(o, delta(g1, r.a0, 5), 1e-6),
            format("offsets-live g1: offsets %s, the vertex travelled %s, history %s", fmt3(o),
                   fmt3(delta(g1, r.a0, 5)), penHistoryLabels()));
@@ -190,22 +192,36 @@ unittest {
 }
 
 // offsets-live-loop — a Move Loop (RMB on e56) reports the PRESSED edge's
-// midpoint travel, not a loop-wide mean.
+// midpoint travel, not a loop-wide mean: while held (the targets the release
+// would commit) and at the release's own pixel.
 unittest {
     if (!cell("offsets-live-loop")) return;
     const r = rig();
     penArmUi(r);
-    penGesture(penEdgePx(5, 6, "offsets-live-loop e56"), 0, -15 / kSp, 3, 0,
-               "offsets-live-loop drag");
+    const from = penEdgePx(5, 6, "offsets-live-loop e56");
+    const sp = penSpacingPx() / kSp;
+    string log = penMotion(20, from[0], from[1], 0, 0) ~ "\n"
+               ~ penButton(40, true, 3, from[0], from[1], 0) ~ "\n";
+    int x = from[0], y = from[1];
+    foreach (i; 1 .. 7) {
+        y = from[1] - cast(int)(15 * sp * i / 6);
+        log ~= penMotion(40 + 40 * i, x, y, penButtonMask(3), 0) ~ "\n";
+    }
+    penPlay(log, "offsets-live-loop: held loop drag");
+    const oHeld = offs();
+    assert(penMesh() == r.a0 && len3(oHeld) > 1e-3,
+           format("offsets-live-loop held: the deferred loop must not move yet (moved %s) and must "
+                  ~ "report its offset %s", penIdx(penMoved(penMesh(), r.a0)), fmt3(oHeld)));
+    penPlay(penButton(20, false, 3, x, y - 6, 0), "offsets-live-loop release");
     const g1 = penMesh();
     const moved = penMoved(g1, r.a0);
     assert(moved.length > 2 && moved.canFind(5L) && moved.canFind(6L),
            format("offsets-live-loop rig: the loop moved %s", penIdx(moved)));
     const want = mean2(delta(g1, r.a0, 5), delta(g1, r.a0, 6));
     const o = offs();
-    assert(len3(o) > 1e-3 && near3(o, want, 1e-6),
-           format("offsets-live-loop: offsets %s, the pressed edge's midpoint travelled %s",
-                  fmt3(o), fmt3(want)));
+    assert(len3(o) > 1e-3 && near3(o, want, 1e-6) && !near3(o, oHeld, 1e-6),
+           format("offsets-live-loop: offsets %s, the pressed edge's midpoint travelled %s (held %s)",
+                  fmt3(o), fmt3(want), fmt3(oHeld)));
     writeln("PASS offsets-live-loop");
 }
 
@@ -236,6 +252,17 @@ unittest {
                "descriptor-kinds g3");
     assert(attrNum("stepKind") == 4,
            format("descriptor-kinds g3: kind %s (Move Loop)", attrStr("stepKind")));
+    // A vertex Move released on another vertex WELDS into it: the grabbed vertex
+    // is gone, so the moved set is empty (its kind stays a vertex move).
+    const before = penMesh();
+    const from = penVertexPx(0, "descriptor-kinds weld v0");
+    const onto = penVertexPx(1, "descriptor-kinds weld v1");
+    penPlay(penGestureEvents(from[0], from[1], onto[0], onto[1], 1, 0, 8), "descriptor-kinds weld");
+    assert(penMesh().nv == before.nv - 1,
+           format("descriptor-kinds weld rig: v0 dropped on v1 did not weld: %s -> %s",
+                  before.toString, penMesh().toString));
+    assert(attrNum("stepKind") == 1 && attrStr("stepVerts") == "[]",
+           format("descriptor-kinds weld: kind %s verts %s", attrStr("stepKind"), attrStr("stepVerts")));
     writeln("PASS descriptor-kinds");
 }
 
@@ -1021,6 +1048,54 @@ unittest {
     writeln("PASS switch-closed-redo");
 }
 
+// fold-on-drop — a drop closes the open step by the switch rule (§9.19.3; gap
+// row (t): unobservable at the reference, whose drop undo loses the gesture):
+// Esc, then the task row, the drop row, and g1 with the row as one step.
+unittest {
+    if (!cell("fold-on-drop")) return;
+    const r = rig();
+    penArmUi(r);
+    moveV5("fold-on-drop g1");
+    const g1 = penMesh();
+    w("offsetX", "0.1");
+    penKey(PEN_SDLK_ESCAPE, 0, "fold-on-drop Esc");
+    at("fold-on-drop", "exit", g1, false, r.hp + 5);
+    z("fold-on-drop z1");
+    z("fold-on-drop z2");
+    at("fold-on-drop", "z2 (drop row)", g1, true, r.hp + 3);
+    z("fold-on-drop z3");
+    at("fold-on-drop", "z3 (g1 and the row as one)", r.a0, true, r.hp + 1);
+    writeln("PASS fold-on-drop");
+}
+
+// discard-resets-offsets — a release while another pen button is held
+// discards the gesture (§9.27 [A15-1]): its mesh AND its operation context go
+// back to the press's (offsets 0, no descriptor).
+unittest {
+    if (!cell("discard-resets-offsets")) return;
+    const r = rig();
+    penArmUi(r);
+    const e = penEmptyBackgroundPx();
+    const v5 = penVertexPx(5, "discard-resets-offsets v5");
+    string log = penMotion(20, e[0], e[1], 0, 0) ~ "\n"
+               ~ penButton(40, true, 2, e[0], e[1], 0) ~ "\n"
+               ~ penMotion(60, v5[0], v5[1], penButtonMask(2), 0) ~ "\n"
+               ~ penButton(80, true, 1, v5[0], v5[1], 0) ~ "\n";
+    foreach (i; 1 .. 9)
+        log ~= penMotion(80 + 20 * i, v5[0] + 5 * i, v5[1] - 2 * i,
+                         penButtonMask(1) | penButtonMask(2), 0) ~ "\n";
+    penPlay(log[0 .. $ - 1], "discard-resets-offsets MMB hold, LMB drag");
+    assert(penMoved(penMesh(), r.a0) == [5L] && len3(offs()) > 1e-3,
+           format("discard-resets-offsets rig: the held drag moved %s, offsets %s",
+                  penIdx(penMoved(penMesh(), r.a0)), fmt3(offs())));
+    penPlay(penButton(20, false, 1, v5[0] + 40, v5[1] - 16, 0), "discard-resets-offsets LMB release");
+    assert(penMesh() == r.a0, "discard-resets-offsets: the discard did not restore the press image");
+    offsAre("discard-resets-offsets", "discarded", [0, 0, 0]);
+    assert(attrNum("stepKind") == 0, "discard-resets-offsets: kind " ~ attrStr("stepKind"));
+    penPlay(penButton(20, false, 2, e[0], e[1], 0), "discard-resets-offsets MMB release");
+    writeln("PASS discard-resets-offsets");
+}
+
 // ---------------------------------------------------------------------------
 // Population: with no VIBE3D_CELL every cell above ran (declared last).
 // ---------------------------------------------------------------------------
@@ -1028,7 +1103,7 @@ unittest {
     writeln("cells=", cellsRun);
     const only = environment.get("VIBE3D_CELL", "");
     if (only.length == 0)
-        assert(cellsRun == 36, format("topology pen S7a laws: %d cells ran, expected 36", cellsRun));
+        assert(cellsRun == 38, format("topology pen S7a laws: %d cells ran, expected 38", cellsRun));
     else
         assert(cellsRun == 1, format("topology pen S7a laws: VIBE3D_CELL=%s ran %d cells, expected 1 "
                                      ~ "(an unknown name runs none)", only, cellsRun));
