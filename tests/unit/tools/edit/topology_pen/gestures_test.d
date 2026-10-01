@@ -7189,20 +7189,30 @@ unittest {
     auto t = new TopologyPenTool();
 
     auto ps = t.params();
-    assert(ps.length == 12, "mesh.topoPen must expose the Add Loop `middle` option, the Mode "
+    assert(ps.length == 18, "mesh.topoPen must expose the Add Loop `middle` option, the Mode "
                           ~ "dropdown, the Edge Loop / Edge Slide flags (task 0483), the Smooth "
                           ~ "strength, the two display toggles (task 0499), the Inner Snap "
                           ~ "flag (task 0496), the Keep Vertices flag (task 0494), the two "
-                          ~ "Fill attributes (task 0488) and the Backface flag (task 0538) — "
+                          ~ "Fill attributes (task 0488), the Backface flag (task 0538) and the "
+                          ~ "six-name operation context (wave plan 8640 S7a) — "
                           ~ "every later Param is APPENDED, never a full-replace");
-    assert(ps[$ - 1].name == "backFace",
-        "the Backface flag must be APPENDED LAST (task 0538)");
-    assert(ps[$ - 3].name == "range" && ps[$ - 2].name == "quadOnly",
+    // The S7a operation context is APPENDED after the Backface flag.
+    enum size_t bf = 11;
+    assert(ps[bf].name == "backFace",
+        "the Backface flag must stay where it was APPENDED (task 0538)");
+    import std.algorithm : map;
+    import std.array : array;
+    assert(ps[bf + 1 .. $].map!(p => p.name).array
+           == ["offsetX", "offsetY", "offsetZ", "stepKind", "stepVerts", "stepOrig"],
+        "the S7a operation context must be appended after the Backface flag, in order");
+    foreach (ref p; ps[bf + 1 .. $])
+        assert(p.transient_, "the S7a operation context must be transient: " ~ p.name);
+    assert(ps[bf - 2].name == "range" && ps[bf - 1].name == "quadOnly",
         "the two Fill attributes must keep their positions, in that order");
-    assert(ps[$ - 3].hints.hasMinF && ps[$ - 3].hints.minF == 0.0f && !ps[$ - 3].hints.hasMaxF,
+    assert(ps[bf - 2].hints.hasMinF && ps[bf - 2].hints.minF == 0.0f && !ps[bf - 2].hints.hasMaxF,
         "`range`'s bounds are the MEASURED ones: min 0.0 and NO upper bound — not a "
       ~ "sane-looking pair invented at the call site");
-    assert(ps[$ - 2].kind == Param.Kind.Bool && ps[$ - 2].default_.b == true,
+    assert(ps[bf - 1].kind == Param.Kind.Bool && ps[bf - 1].default_.b == true,
         "`quadOnly` is the measured boolean count gate, default ON");
     assert(ps[0].name == "middle");
     assert(ps[0].kind == Param.Kind.Bool);
@@ -7381,9 +7391,10 @@ unittest {
     // to be reachable by its wire name — `validateForms` enforces that at boot,
     // so a typo in either direction is a startup failure and not a silent
     // no-op. Pinned by NAME, so a rename is a deliberate edit in both places.
-    static immutable string[12] wantNames = [
+    static immutable string[18] wantNames = [
         "middle", "mode", "loop", "slide", "smoothStrength", "showVertex",
         "showEdge", "innerSnap", "keepVertex", "range", "quadOnly", "backFace",
+        "offsetX", "offsetY", "offsetZ", "stepKind", "stepVerts", "stepOrig",
     ];
     assert(ps.length == wantNames.length,
         "the published attribute list changed size — add the row to `wantNames` deliberately");

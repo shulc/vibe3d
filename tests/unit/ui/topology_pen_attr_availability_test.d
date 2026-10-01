@@ -67,7 +67,8 @@ unittest { // (1) the disabled set per mode
         size_t visited;
         const off = disabledParams(pen, visited);
         import std.array : join;
-        assert(visited == 12, format("8690 population: the pen publishes %s params, measured 12",
+        assert(visited == 18, format("8690 population: the pen publishes %s params, measured 18 "
+                                     ~ "(12 + the S7a operation context)",
                                      visited));
         assert(off.join(",") == m[1],
                format("8690 availability: mode %s disables %s, expected [%s]", m[0], off, m[1]));
