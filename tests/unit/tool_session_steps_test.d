@@ -1259,3 +1259,115 @@ unittest { // a field write that lands inside a gesture's step joins that step
         "8290: undo of the gesture did not return to its start — the write "
         ~ "inside it re-based the gesture's step mid-flight");
 }
+
+// ---- plan 8646 [R1-8, R2-2]: the press flag is decided by the DOOR ---------
+//
+// Only the tool's own link door (`Tool.sessionStepBegins`) is a press; every
+// internal `stepBegins` — the arm-apply, an Action write, a topology parameter
+// write — passes `false`. The flag is recorded on the row
+// (`MeshSessionEdit.stepOpenedByPress`) and reported as `pendingPress`.
+
+private final class PressFlagTool : Tool, TopologyStepClient {
+    Mesh* m;
+    CommandHistory h;
+    View view;
+    float v = 0.0f;
+    bool act;
+    MeshSnapshot basis;
+    JSONValue delegate() state;   // the session's report, read mid-step
+    JSONValue seen;               // `pendingPress` as the step's write saw it
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy policy = {
+            activationRow: true, sessionSteps: true, historyTopologySteps: true,
+            opensAt: OpensAt.firstPress, imageAttrs: ["v"]
+        };
+        return policy;
+    }
+    override Param[] params() {
+        return [Param.float_("v", "V", &v, 0.0f),
+                Param.bool_("act", "Act", &act, false).action()];
+    }
+    override void onParamChanged(string) {
+        if (state !is null) seen = state()["pendingPress"];
+        m.vertices[0].y += 1.0f;
+    }
+    override Mesh* topologyStepMesh() { return m; }
+    override MeshSnapshot topologyStepBasis() { return basis; }
+    override Command topologyStepCarrier() {
+        import commands.mesh.session_edit : MeshSessionEdit;
+        return new MeshSessionEdit(m, view, EditMode.Polygons, "t.press", "Press");
+    }
+    override bool recordTopologyStep(Command cmd) { h.record(cmd); return true; }
+    override string topologyStepLabel() { return "Press"; }
+    override void setTopologyDormant(bool) {}
+    override void rebaseTopologyStep(MeshSnapshot) {}
+    override void restoreTopologyStep(in AttrImage attrs, MeshSnapshot b) {
+        basis = b;
+        restoreRecordedAttrs(attrs);
+    }
+    void pressBegins() { sessionStepBegins(); }
+    void pressEnds() { sessionStepEnds(); }
+}
+
+private bool lastRowByPress(CommandHistory h) {
+    import commands.mesh.session_edit : MeshSessionEdit;
+    auto row = cast(const MeshSessionEdit) h.undoEntries()[$ - 1].cmd;
+    assert(row !is null && row.isTopologyStep(), "8646 press flag: the top row is no topology step");
+    return row.stepOpenedByPress();
+}
+
+unittest { // a press through the link is a press; a parameter write and an Action are not
+    Mesh m = makeCube();
+    auto h = new CommandHistory();
+    auto t = new PressFlagTool;
+    t.m = &m; t.h = h; t.view = new View(0, 0, 1, 1);
+    t.basis = MeshSnapshot.capture(m);
+    Tool active = t;
+    auto s = new EditSession(() => active, h, () { active = null; });
+    s.noteArm("t.press", 1);
+    t.state = () => s.sessionStateJson();
+
+    // Positive half first: the link door opens a press, reported and recorded.
+    t.pressBegins();
+    assert(s.sessionStateJson()["pendingPress"].type == JSONType.true_,
+        "8646 press flag: a step opened through the tool's link must report pendingPress");
+    m.vertices[0].y += 1.0f;
+    t.pressEnds();
+    assert(h.undoEntries().length == 1 && lastRowByPress(h),
+        "8646 press flag: the link press's row must say stepOpenedByPress");
+
+    // A topology parameter step: not a press, while pending and on its row.
+    auto before = t.captureAttrImage();
+    t.v = 0.5f;
+    s.orchestrateParameterChange(t, "v", ParameterChangeSource.InteractiveValue,
+        ParameterChangePhase.ValueWritten, before);
+    s.orchestrateParameterChange(t, "", ParameterChangeSource.InteractiveValue,
+        ParameterChangePhase.BatchComplete);
+    assert(t.seen.type == JSONType.false_,
+        format("8646 press flag: a parameter step reported pendingPress %s", t.seen));
+    assert(h.undoEntries().length == 2 && !lastRowByPress(h),
+        "8646 press flag: a parameter step's row must not say stepOpenedByPress");
+
+    // An Action write (`actionStepBegins`): not a press while its step is open.
+    t.seen = JSONValue.init;
+    t.act = true;
+    s.orchestrateParameterChange(t, "act", ParameterChangeSource.ScriptedValue,
+        ParameterChangePhase.ValueWritten);
+    s.orchestrateParameterChange(t, "", ParameterChangeSource.ScriptedValue,
+        ParameterChangePhase.BatchComplete);
+    assert(t.seen.type == JSONType.false_ && h.undoEntries().length == 3
+           && !lastRowByPress(h),
+        format("8646 press flag: an Action step reported pendingPress %s (rows %s)",
+               t.seen, h.undoEntries().length));
+}
+
+unittest { // the arm-apply entry (`opensAt: arm` + `armAttr`) is not a press
+    auto t = new ArmTool;
+    Tool active = t;
+    auto h = new CommandHistory();
+    auto s = new EditSession(() => active, h, () { active = null; });
+    s.noteArm("t.arm");
+    auto j = s.sessionStateJson();
+    assert(t.on && j["pendingPress"].type == JSONType.false_,
+        format("8646 press flag: the arm-apply step reported pendingPress (on %s): %s", t.on, j));
+}
