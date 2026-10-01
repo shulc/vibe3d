@@ -111,6 +111,7 @@ write source/tools/edit/poly_extrude.d recordGestureEdit 1
 write source/tools/edit/poly_inset_tool.d recordGestureEdit 1
 write source/tools/edit/reduce.d recordGestureEdit 1
 write source/tools/edit/tack.d recordGestureEdit 1
+write source/tools/edit/topology_pen/tool.d history.undoEntries 1
 write source/tools/edit/topology_pen/tool.d recordGestureEdit 1
 write source/tools/edit/vert_merge_tool.d recordGestureEdit 1
 write source/tools/edit/vertex_bevel_tool.d recordGestureEdit 1
