@@ -418,17 +418,17 @@ unittest { // (3) the doors reach the tool session only through EditSession
              "carriesFirstRecord()", "adoptToken_(",
              "resyncSession()", "replayFirstGroup_()"],
             "ToolSession.redoImpl_");
-    // Wave plan 8640 S7a: the two doors are the step, then the parameter-row
+    // Wave plan 8640 S7a: the redo door is the step, then the parameter-row
     // prune once the history is Active again — never inside the step (m18).
-    inOrder(squeeze(bodyAt(ts, "bool undo()")),
-            ["constr=undoImpl_();", "if(r){openBlock_=null;pruneRedoTop_();}", "returnr;"],
-            "ToolSession.undo");
+    // The undo door has no prune (amendment A16: it was inert).
+    assert(squeeze(bodyAt(ts, "bool undo()")) == "{constr=undoImpl_();if(r)openBlock_=null;returnr;}",
+           "S7a wiring census: ToolSession.undo body changed: " ~ squeeze(bodyAt(ts, "bool undo()")));
     inOrder(squeeze(bodyAt(ts, "bool redo()")),
             ["openBlock_=null;", "constr=redoImpl_();", "if(r)pruneRedoTop_();", "returnr;"],
             "ToolSession.redo");
-    assert(es.count("pruneRedoTop_()") == 3,
-           format("S7a wiring census: edit_session.d names pruneRedoTop_() %s times, expected 3 "
-                  ~ "(the declaration and the two doors)", es.count("pruneRedoTop_()")));
+    assert(es.count("pruneRedoTop_()") == 2,
+           format("S7a wiring census: edit_session.d names pruneRedoTop_() %s times, expected 2 "
+                  ~ "(the declaration and the redo door)", es.count("pruneRedoTop_()")));
     // Nothing else in the module steps the history.
     assert(es.count("history_.undo()") == 11 && es.count("history_.redo()") == 8,
            format("M1 wiring census: edit_session.d steps the history %s/%s times, "
