@@ -135,3 +135,46 @@ unittest {
     setMode("move");
     writeln("PASS range-fill / range-move");
 }
+
+// ---------------------------------------------------------------------------
+// strength-ui-door and strength-fill (task 8790; the slice-8690 review NITs)
+// ---------------------------------------------------------------------------
+// The test-only UI door (`/api/command?origin=ui`) is the guarded-action policy:
+// its refusal is a notice, not `status:error` (CLAUDE.md, the command no-op
+// contract). Measured on this rig: in Smoothing the write lands with no row;
+// in Move it answers `status:ok` and changes neither the value nor the history.
+// Then Fill — a mode that enables Range / Quads Only — still refuses Strength
+// through the script door.
+unittest {
+    const r = rig();
+    penArmUi(r);
+    setMode("smooth");
+    JSONValue ui(string value) {
+        return penPost("/api/command?origin=ui", "tool.attr " ~ kPenToolId ~ " smoothStrength " ~ value);
+    }
+    const h0 = penHistoryLen();
+    auto a = ui("2");
+    assert(a["status"].str == "ok" && attrRead("smoothStrength").toString == "2.0"
+           && penHistoryLen() == h0,
+           format("strength-ui-door smooth: %s, Strength %s, rows +%d (expected ok, 2.0, +0)",
+                  a.toString, attrRead("smoothStrength").toString, penHistoryLen() - h0));
+
+    setMode("move");
+    const h1 = penHistoryLen();
+    auto b = ui("3");
+    assert(attrRead("smoothStrength").toString == "2.0",
+           "strength-ui-door move: the UI-door write changed Strength to "
+           ~ attrRead("smoothStrength").toString ~ " (expected 2.0 kept)");
+    assert(b["status"].str == "ok",
+           "strength-ui-door move: the UI door answered " ~ b.toString
+           ~ " (expected status:ok — the policy's refusal is a notice)");
+    assert(penHistoryLen() == h1 && penArmed(),
+           format("strength-ui-door move: rows +%d, armed %s (expected +0, armed): %s",
+                  penHistoryLen() - h1, penArmed(), penHistoryLabels()));
+
+    setMode("fill");
+    expectRefused("strength-fill", "script", "smoothStrength", "3");
+    expectRefused("strength-fill", "interactive", "smoothStrength", "3");
+    setMode("move");
+    writeln("PASS strength-ui-door / strength-fill");
+}

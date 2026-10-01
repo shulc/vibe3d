@@ -77,6 +77,45 @@ import std.string : lastIndexOf;
 import std.process : environment;
 import std.stdio : writeln;
 
+/// D source with every comment (`//`, `/* */`, nesting `/+ +/`) removed and
+/// all whitespace dropped; string and character literals are kept verbatim so
+/// a comment marker inside one is not taken for a comment.
+string codeOnly(string s) {
+    import std.ascii : isWhite;
+    char[] o;
+    size_t i;
+    while (i < s.length) {
+        const c = s[i];
+        if (c == '"' || c == '\'' || c == '`') {
+            const q = c;
+            o ~= c; ++i;
+            while (i < s.length && s[i] != q) {
+                if (s[i] == '\\' && q != '`' && i + 1 < s.length) { o ~= s[i .. i + 2]; i += 2; continue; }
+                o ~= s[i++];
+            }
+            if (i < s.length) o ~= s[i++];
+        } else if (c == '/' && i + 1 < s.length && s[i + 1] == '/') {
+            while (i < s.length && s[i] != '\n') ++i;
+        } else if (c == '/' && i + 1 < s.length && s[i + 1] == '*') {
+            i += 2;
+            while (i + 1 < s.length && !(s[i] == '*' && s[i + 1] == '/')) ++i;
+            i += 2;
+        } else if (c == '/' && i + 1 < s.length && s[i + 1] == '+') {
+            int depth = 1;
+            i += 2;
+            while (i + 1 < s.length && depth > 0) {
+                if (s[i] == '/' && s[i + 1] == '+') { ++depth; i += 2; }
+                else if (s[i] == '+' && s[i + 1] == '/') { --depth; i += 2; }
+                else ++i;
+            }
+        } else {
+            if (!isWhite(c)) o ~= c;
+            ++i;
+        }
+    }
+    return o.idup;
+}
+
 void main() {}
 
 __gshared int cellsRun;
@@ -1845,14 +1884,26 @@ unittest {
                   g1["triGhost"], planePick, g0["dragArmed"], g1["dragArmed"], g0["case"]));
     {
         // The drawn ghost reads that same field (`drawBuildGhost`, Tri arm): the
-        // state read above says nothing about the line on screen otherwise.
+        // state read above says nothing about the line on screen otherwise. The
+        // arm is read from the EXECUTABLE text (comments stripped, whitespace
+        // dropped) between `case BuildCase.Tri:` and its `break;`, so a comment
+        // that keeps the old call's spelling cannot satisfy it (task 8790).
         import std.algorithm : count;
         import std.file : readText;
-        const rsrc = readText(buildPath(dirName(__FILE_FULL_PATH__), "..", "source", "tools", "edit",
-                                        "topology_pen", "render.d"));
-        assert(rsrc.count("ghostTo(") == 4 && rsrc.count("ghostTo(ghostTriN_);") == 1,
-               format("%s: render.d's Tri ghost must draw `ghostTriN_` (ghostTo calls %d, of them on "
-                      ~ "ghostTriN_ %d)", id, rsrc.count("ghostTo("), rsrc.count("ghostTo(ghostTriN_);")));
+        import std.string : indexOf;
+        const code = codeOnly(readText(buildPath(dirName(__FILE_FULL_PATH__), "..", "source", "tools",
+                                                 "edit", "topology_pen", "render.d")));
+        enum kArm = "caseBuildCase.Tri:";
+        const at0 = code.indexOf(kArm);
+        assert(at0 >= 0 && code.count(kArm) == 1,
+               format("%s: render.d has %d `case BuildCase.Tri:` arms (expected 1)", id, code.count(kArm)));
+        const tail = code[at0 + kArm.length .. $];
+        const brk = tail.indexOf("break;");
+        assert(brk >= 0, id ~ ": render.d's Tri arm has no `break;`");
+        const arm = tail[0 .. brk];
+        assert(arm.count("ghostTo(") == 1 && arm.count("ghostTo(ghostTriN_);") == 1,
+               format("%s: render.d's Tri arm must draw exactly `ghostTo(ghostTriN_)`; it reads `%s`",
+                      id, arm));
     }
     penPlay(penButton(500, false, 1, to[0], to[1], mod), id ~ " release");
     const m = penMesh();

@@ -1178,6 +1178,9 @@ unittest {
                                                 attrNum("offsetX")));
         z(id ~ " z2");
         at(id, "z2 (g1 and the row as one)", r.a0, true, r.hp + 1);
+        // C5-sel / C5-geo z2: Offset X reads 0.0 with g1 and the row popped as one.
+        assert(attrNum("offsetX") == 0.0, format("%s z2: offsetX %s, expected 0.0 (C5 z2)", id,
+                                                 attrNum("offsetX")));
         z(id ~ " z3");
         at(id, "z3", r.a0, false, r.hp);
         ++ran;
@@ -1199,15 +1202,26 @@ unittest {
     const w1 = penMesh();   // S7b: the write re-applies g1 (L23)
     penLineUi("select.invert");
     const c = penMesh();
+    assert(is01(attrNum("offsetX")), format("fold-on-command-then-press c: offsetX %s, expected 0.1",
+                                            attrNum("offsetX")));
     moveV10("fold-on-command-then-press g2");
     assert(penHistoryLen() == r.hp + 5, "fold-on-command-then-press g2: "
                                         ~ penHistoryLabels().join(","));
+    // The C5-sel-press / C5-geo-press Offset X ladder: 0.0 at z1, z2 and z3 — the
+    // press at g2 owns the operation context, so popping the command does not
+    // bring back the 0.1 the row wrote before it (contrast fold-on-command z1).
+    double[3] ladder;
     z("fold-on-command-then-press z1");
     at("fold-on-command-then-press", "z1 (g2 alone)", c, true, r.hp + 4);
+    ladder[0] = attrNum("offsetX");
     z("fold-on-command-then-press z2");
     at("fold-on-command-then-press", "z2 (the command)", w1, true, r.hp + 3);
+    ladder[1] = attrNum("offsetX");
     z("fold-on-command-then-press z3");
     at("fold-on-command-then-press", "z3 (g1 and the row as one)", r.a0, true, r.hp + 1);
+    ladder[2] = attrNum("offsetX");
+    assert(isZero(ladder), "fold-on-command-then-press: offsetX at z1/z2/z3 reads " ~ fmt3(ladder)
+                           ~ ", expected (0, 0, 0) (C5-*-press)");
     writeln("PASS fold-on-command-then-press");
 }
 
