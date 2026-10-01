@@ -681,11 +681,17 @@ unittest {
 
 // ===========================================================================
 // offset-after-command — L58 (C6): a recording command ends the pen's gesture
-// link. The Offset still reads the gesture's value; a write after the command
-// moves nothing and is one row. Our ladder differs from the reference's at z2:
-// the reference's restart writes its own activation step (z2 pops it and
-// disarms with the command applied), ours keeps the pen armed with no row
-// (L57), so our z2 pops the command — gap row (hh'').
+// link. The Offset still reads the gesture's value; EVERY write after the
+// command moves nothing and is one row — the second one too, though the first
+// wrote a row of this session above the command (the link is cleared on first
+// observation, not merely skipped). `mesh.flip` opens with a write of an
+// attribute no step kind reads, so a guard that clears only on a READ name
+// re-applies at the Offset write after it. Undoing the writes restores the
+// gesture's descriptor (the clear is the write's own row). Our ladder differs
+// from the reference's after the writes: the reference's restart writes its
+// own activation step (popping it disarms with the command applied), ours keeps
+// the pen armed with no row (L57), so our next Ctrl+Z pops the command — gap
+// row (hh'').
 // ===========================================================================
 unittest {
     if (!cell("offset-after-command")) return;
@@ -697,21 +703,36 @@ unittest {
         penGesture(penVertexPx(5, id ~ " v5"), 20 / kSp, 12 / kSp, 1, 0, id ~ " g1");
         const g1 = penMesh();
         const o1 = offs();
+        const k1 = stepKindNow();
         penLineUi(cmd);
         const c = penMesh();
-        assert(penArmed() && penHistoryLen() == r.hp + 3 && offs() == o1,
-               format("%s: armed %s, history %s, offsets %s (expected g1's %s)", id, penArmed(),
-                      penHistoryLabels(), fmt3(offs()), fmt3(o1)));
-        w("offsetX", "0.1");
-        at(id, "w (moves nothing)", c, true, r.hp + 4);
-        assert(abs(attrNum("offsetX") - 0.1) < 1e-6, id ~ ": offsetX did not read the write");
-        z(id ~ " z1");
-        at(id, "z1", c, true, r.hp + 3);
-        assert(offs() == o1, format("%s z1: offsets %s, expected g1's %s", id, fmt3(offs()), fmt3(o1)));
-        z(id ~ " z2 (ours: the command)");
-        at(id, "z2", g1, true, r.hp + 2);
-        z(id ~ " z3");
-        at(id, "z3", r.a0, true, r.hp + 1);
+        assert(penArmed() && penHistoryLen() == r.hp + 3 && offs() == o1 && k1 == 1,
+               format("%s: armed %s, history %s, offsets %s (expected g1's %s), g1 kind %d", id,
+                      penArmed(), penHistoryLabels(), fmt3(offs()), fmt3(o1), k1));
+        long h = r.hp + 3;
+        string[] writes;
+        if (cmd == "mesh.flip") writes ~= "showEdge false";
+        writes ~= ["offsetX 0.1", "offsetX 0.15"];
+        foreach (i, wr; writes) {
+            import std.string : split;
+            const kv = wr.split(" ");
+            w(kv[0], kv[1]);
+            at(id, format("w%d %s (moves nothing)", i + 1, wr), c, true, ++h);
+            assert(stepKindNow() == 0, format("%s w%d: descriptor kind %d (expected cleared)",
+                                              id, i + 1, stepKindNow()));
+        }
+        assert(abs(attrNum("offsetX") - 0.15) < 1e-6, id ~ ": offsetX did not read the writes");
+        foreach_reverse (i, wr; writes) {
+            z(format("%s z-w%d", id, i + 1));
+            at(id, format("z-w%d", i + 1), c, true, --h);
+        }
+        assert(offs() == o1 && stepKindNow() == k1,
+               format("%s writes undone: offsets %s kind %d, expected g1's %s kind %d", id,
+                      fmt3(offs()), stepKindNow(), fmt3(o1), k1));
+        z(id ~ " z-cmd (ours: the command)");
+        at(id, "z-cmd", g1, true, r.hp + 2);
+        z(id ~ " z-g1");
+        at(id, "z-g1", r.a0, true, r.hp + 1);
         ++ran;
     }
     assert(ran == 2, "offset-after-command: commands run " ~ ran.to!string);

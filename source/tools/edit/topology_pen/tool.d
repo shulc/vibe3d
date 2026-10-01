@@ -1458,8 +1458,13 @@ public:
         // No `stepOpen_` term: a press resets the descriptor at its open
         // (`pressOpensOperation`), so a held press reads `None` here anyway.
         if (cast(uint)stepKind() > PenStepKind.max) return;
+        // A foreign row above the press (a recording command) ends the gesture
+        // link on its first observation, whatever the write: the clear lands in
+        // this write's own row, so the next write (which follows this session's
+        // row) still reads `None`, and undoing the write restores the link (L58).
+        if (!lastStepIsNewest()) { noteStepDescriptor(PenStepKind.None, null, null); return; }
         const row = kReapply[stepKind()];
-        if (!row.reads.canFind(name) || !lastStepIsNewest()) return;
+        if (!row.reads.canFind(name)) return;
         final switch (row.shape) {
             case ReapplyShape.attributeOnly:  return;
             case ReapplyShape.carriedT:       reapplyCarried();    return;
@@ -1471,8 +1476,8 @@ public:
     // The descriptor indexes the mesh its press left, so it applies only while
     // a row of THIS session is the newest history entry. A recording command
     // keeps the pen armed (L57) and writes a foreign row above it, after which
-    // its indices may name other geometry: the write is then attribute-only.
-    // Whether the reference re-applies there is pending capture (card 8780).
+    // its indices may name other geometry: the write is then attribute-only
+    // and clears the descriptor (L58, capture C6: every later write moves nothing).
     // Unbound (no session token, a white-box rig): the descriptor stands.
     private bool lastStepIsNewest() {
         const token = sessionRecordToken();
