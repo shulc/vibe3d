@@ -393,7 +393,10 @@ immutable string compositeVertSrc = withShaderPreamble(q{
 // (Nright.x - Nleft.x)`, positive on a ridge, negative in a valley, through a
 // soft limiter whose controls are `0.5 / max(ridge^2, 1e-4)` and
 // `0.7 / max(valley^2, 1e-4)` (`curvatureControls`). `u_curvPx == 0` = the
-// term is off (World only). Samplers: unit 0 the copy, 1 the G-buffer, 2 the
+// term is off (World only). The background test, `on` and `u_curvPx > 0`
+// in the curvature guard are early-outs that change no pixel (background
+// texels decode to one fixed normal, `k` is gated by `on` again, zero taps
+// give d = 0). Samplers: unit 0 the copy, 1 the G-buffer, 2 the
 // world-cavity buffer. `u_testGain` scales EVERY pixel the resolve writes; it
 // is 1 except under the test-only `viewport.compositeTestGain`, whose cell
 // proves the draw covers the cell.

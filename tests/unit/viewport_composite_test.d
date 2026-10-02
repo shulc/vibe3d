@@ -186,3 +186,26 @@ unittest { // S3a (task 9230): the screen-curvature inputs the resolve receives
     }
     assert(modes == 4, format("S3a population: 4 cavity modes, checked %d", modes));
 }
+
+unittest { // S3a census: the one production run call passes the cell's tap distance
+    // `--test` renders at framebuffer scale 1, so no suite pixel can tell
+    // `curvatureTapPx(v.fbo.w, v.camera.width)` from a literal 1: the
+    // production argument is pinned as text (the function itself above).
+    import std.algorithm : count;
+    import std.file : readText;
+    import std.path : buildPath, dirName;
+    import std.regex : ctRegex, matchAll;
+    import std.string : indexOf;
+    import tests.unit.census_symbols : blankNonCode;
+    enum root = dirName(dirName(dirName(__FILE_FULL_PATH__)));
+    immutable code = blankNonCode(readText(buildPath(root, "source", "ui", "viewport_render.d")));
+    size_t runs;
+    foreach (m; matchAll(code, ctRegex!(`\bcompositor_\s*\.\s*run\b`))) ++runs;
+    assert(runs == 1, format("S3a census: %d compositor_.run sites in viewport_render.d, expected 1", runs));
+    immutable at = code.indexOf("compositor_.run(");
+    assert(at >= 0, "S3a census: the run call is not spelled `compositor_.run(`");
+    immutable end = code.indexOf(";", at);
+    immutable call = code[at .. end];
+    assert(call.count("curvatureTapPx(v.fbo.w, v.camera.width)") == 1,
+        "S3a census: compositor_.run must pass curvatureTapPx(v.fbo.w, v.camera.width), got: " ~ call);
+}
