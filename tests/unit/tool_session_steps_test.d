@@ -1140,6 +1140,37 @@ unittest { // Law 4 seed (9020 F): a REFUSED drop undo leaves the remembered ima
                restored.shift));
 }
 
+unittest { // Law 4 seed (9020 F): the drop image is keyed BEFORE the undo re-arms a predecessor.
+    Mesh m = makeCube();
+    auto h = new CommandHistory;
+    Tool active;
+    auto s = new EditSession(() => active, h, () { active = null; });
+    auto poly = new OwnedPolyAttrTool;
+    poly.shift = 17;
+    active = poly;
+    s.noteArm("t.poly", 5);
+    auto v = new View(0, 0, 1, 1);
+    auto act = new ToolActivationCommand(&m, v, EditMode.Vertices,
+        "t.edge", "t.poly", true, false, false, 9, 5, true, true);
+    OwnedEdgeAttrTool recreated;
+    act.onActivate = (string id) {
+        if (id == "t.poly") { active = new OwnedPolyAttrTool; s.noteArm(id, 50); }
+        else { recreated = new OwnedEdgeAttrTool; active = recreated; s.noteArm(id, 51); }
+    };
+    h.recordToolLifecycle(act);
+    auto edge = new OwnedEdgeAttrTool;
+    active = edge;
+    s.noteArm("t.edge", 9);
+    edge.offset = 23;               // the live value at the drop (no row of its own)
+    assert(s.navigate(true) && cast(OwnedPolyAttrTool)active !is null,
+        "seed-key rig: the successor's activation undo did not restore the predecessor");
+    assert(s.navigate(false) && recreated !is null && active is recreated,
+        "seed-key rig: the redo did not re-create the successor");
+    assert(recreated.offset == 23,
+        format("law 4 seed: the drop image was keyed after the undo re-armed the predecessor: "
+               ~ "re-created offset %s, expected 23", recreated.offset));
+}
+
 // ---- 8290: a held widget is ONE topology step --------------------------------
 
 private final class ScrubTopologyTool : Tool, TopologyStepClient {
