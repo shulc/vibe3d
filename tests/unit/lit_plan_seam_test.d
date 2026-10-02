@@ -8,6 +8,9 @@
 // Order: population floor (lit draws) -> needle counts (seam calls) -> the
 // per-draw structural check, with a local positive control for the checker.
 // Position-based per draw, so it survives a site body moving into a helper.
+// Below: the preview subset's park needle, and the fence on the four
+// plan-uniform LOCATION fields (compile probe + raw-text census of the
+// spellings that bypass `private`).
 module tests.unit.lit_plan_seam_test;
 
 import std.format : format;
@@ -146,4 +149,101 @@ unittest { // the create-tool preview re-seeds the park through the seam's previ
     assert(countOccurrences(body_, ".applyPreviewPlan(") == 1
         && body_.indexOf(".applyPreviewPlan(") < body_.indexOf(".drawFaces(litShader"),
         "census: drawLitPreview must call applyPreviewPlan once, before its face draw");
+}
+
+unittest { // the preview subset parks every plan uniform: applyPreviewPlan's body calls restorePlanDefaults
+    import std.file : readText;
+    import std.path : buildPath, dirName;
+    import std.string : indexOf;
+    import tests.unit.census_symbols : balancedSpan, blankNonCode, blankUnittestBodies, countOccurrences;
+    enum root = dirName(dirName(dirName(__FILE_FULL_PATH__)));
+    immutable code = blankUnittestBodies(blankNonCode(
+        readText(buildPath(root, "source", "shader.d"))));
+    enum head = "void applyPreviewPlan(";
+    // Floor: the area exists once and its body is found.
+    assert(countOccurrences(code, head) == 1, "census: expected applyPreviewPlan defined once in shader.d");
+    immutable ptrdiff_t at = code.indexOf(head);
+    immutable ptrdiff_t open = code.indexOf('{', at);
+    immutable body_ = open < 0 ? "" : balancedSpan(code, cast(size_t)open, '{', '}');
+    assert(body_.length > 2, "census: applyPreviewPlan has no braced body in shader.d");
+    // Needle: the park. A later slice may ADD preview-honoured setters after it
+    // (S1a's smoothNormals); the park itself stays exactly once.
+    assert(countOccurrences(body_, "restorePlanDefaults(") == 1,
+        "census: applyPreviewPlan must park the plan uniforms (call restorePlanDefaults once) — "
+        ~ "without it a preview drawn after an unlit face pass inherits that pass's shading");
+}
+
+// The fence on the plan-uniform LOCATIONS. Outside shader.d a location field
+// would let a face pass write a plan uniform by hand
+// (`glUniform1f(lit.locDim, …)`), bypassing `applyPlan`. Two layers
+// (docs evidence-form item 1): the compiler fence for member access, and a RAW
+// text census for the three spellings that bypass `private` across modules —
+// `__traits(getMember)`, string `mixin` and `.tupleof`.
+unittest { // compile fence: the four plan-uniform locations are unreachable from another module
+    import shader : LitShader;
+    // Positive control first: the same probe DOES reach a public location of
+    // the same class, so a false below means "private", not "probe broken".
+    static assert(__traits(compiles, (LitShader s) { int v = s.locFaceAlpha; }),
+        "control: the probe no longer reaches a public LitShader field — fix the probe, not the expectation");
+    static assert(!__traits(compiles, (LitShader s) { int v = s.locDim; }),
+        "fence: LitShader.locDim is reachable outside shader.d — a face pass can hand-write u_dim");
+    static assert(!__traits(compiles, (LitShader s) { int v = s.locLightGain; }),
+        "fence: LitShader.locLightGain is reachable outside shader.d — a face pass can hand-write u_lightGain");
+    static assert(!__traits(compiles, (LitShader s) { int v = s.locShading; }),
+        "fence: LitShader.locShading is reachable outside shader.d — a face pass can hand-write u_shading");
+    static assert(!__traits(compiles, (LitShader s) { int v = s.locFillColor; }),
+        "fence: LitShader.locFillColor is reachable outside shader.d — a face pass can hand-write u_fillColor");
+}
+
+unittest { // raw-text census of the spellings that bypass private: names, getMember, mixin, tupleof
+    import std.array : replace;
+    import std.file : dirEntries, readText, SpanMode;
+    import std.path : buildPath, dirName;
+    import tests.unit.census_symbols : countOccurrences;
+    enum root = dirName(dirName(dirName(__FILE_FULL_PATH__)));
+    immutable src = buildPath(root, "source");
+    auto nameRe   = ctRegex!(`\b(locDim|locLightGain|locShading|locFillColor)\b`);
+    auto mixinRe  = ctRegex!(`\bmixin\s*\(`);
+    // Local positive control for the name needle (raw text: a string literal counts).
+    assert(positions(`__traits(getMember, lit, "locDim"); x.locFillColor`, nameRe).length == 2,
+        "control: the location-name needle must find a bare and a quoted spelling");
+    size_t scanned, litFiles;
+    string[] named;          // files outside shader.d naming a plan-uniform location
+    string[string] reflect;  // LitShader-mentioning files with a bypass spelling -> counts
+    foreach (de; dirEntries(src, "*.d", SpanMode.depth)) {
+        immutable rel = de.name[src.length + 1 .. $].replace("\\", "/");
+        if (rel == "shader.d") continue;
+        ++scanned;
+        immutable raw = readText(de.name);   // RAW: strings and comments included
+        if (positions(raw, nameRe).length) named ~= rel;
+        if (countOccurrences(raw, "LitShader") == 0) continue;
+        ++litFiles;
+        immutable t = countOccurrences(raw, ".tupleof");
+        immutable g = countOccurrences(raw, "__traits(getMember");
+        immutable m = positions(raw, mixinRe).length;
+        if (t + g + m) reflect[rel] = format("tupleof=%d getMember=%d mixin=%d", t, g, m);
+    }
+    // Floors on the two domains. Measured 2026-10-02:
+    //   find source -name '*.d' | wc -l -> 582 (581 without shader.d);
+    //   grep -rl LitShader source --include=*.d | grep -v '^source/shader.d$' | wc -l -> 80.
+    assert(scanned >= 581, format("census: the source scan covers %d files outside shader.d, floor 581 — "
+        ~ "the walk lost its domain", scanned));
+    assert(litFiles >= 80, format("census: %d files outside shader.d mention LitShader, floor 80 — "
+        ~ "the reflection domain shrank; re-measure", litFiles));
+    // Needle 1 (stationary, true before and after any slice): nobody outside
+    // shader.d names a plan-uniform location, in code, string or mixin.
+    assert(named.length == 0,
+        format("census: plan-uniform location names outside shader.d: %s", named));
+    // Needle 2 (stationary ALLOWED set): the bypass spellings in LitShader files
+    // are the measured ones, none on a LitShader (registration field walks and
+    // the mesh version reads). A new row is a new reflection site next to a lit
+    // program: show it does not reach a LitShader, then add the row.
+    //   for f in $(grep -rl LitShader source --include=*.d); do grep -c ... ; done -> the 3 rows below.
+    enum string[string] allowed = [
+        "create_tool_registration.d": "tupleof=0 getMember=1 mixin=0",
+        "edit_tool_registration.d": "tupleof=0 getMember=1 mixin=0",
+        "tools/alignment/radial_sweep_tool.d": "tupleof=0 getMember=4 mixin=0",
+    ];
+    assert(reflect == allowed,
+        format("census: reflection spellings beside a LitShader changed: found %s, allowed %s", reflect, allowed));
 }

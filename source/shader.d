@@ -778,10 +778,13 @@ class LitShader {
     GLint locAmbient;
     GLint locSpecStr;
     GLint locSpecPow;
-    GLint locDim;
-    GLint locLightGain;
-    GLint locShading;
-    GLint locFillColor;
+    // The per-plan uniform locations are module-private like their setters:
+    // outside this module nothing can name them, so `applyPlan` stays their
+    // one writer (the fence is pinned by tests/unit/lit_plan_seam_test.d).
+    private GLint locDim;
+    private GLint locLightGain;
+    private GLint locShading;
+    private GLint locFillColor;
     GLint locFaceAlpha;
     GLuint matsUbo;            // Material Groups (MG3) — Materials UBO
     enum  MATS_BINDING = 0;    // binding point index, matches std140 layout
