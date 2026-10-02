@@ -1546,15 +1546,15 @@ private struct ToolSession {
         if (t.sessionPolicy().historyTopologySteps &&
             (history_.state() != UndoState.Suspend || ownedAttrs.empty || topologyDormant_))
             rememberTopologyAttrs_(t.captureAttrImage());
-        if (auto client = cast(TopologyStepClient)t)
-            client.setTopologyDormant(topologyDormant_);
         // The arm's own base is the tool's `activate`; the session only records
         // the image it was taken on (dormant: none — the dormant haul opens none).
         baseImage_ = MeshSnapshot.init;
-        if (capturedTopologyModel(t.sessionPolicy()) && !topologyDormant_)
-            if (auto client = cast(TopologyStepClient)t)
+        if (auto client = cast(TopologyStepClient)t) {
+            client.setTopologyDormant(topologyDormant_);
+            if (capturedTopologyModel(t.sessionPolicy()) && !topologyDormant_)
                 if (auto m = client.topologyStepMesh())
                     baseImage_ = MeshSnapshot.capture(*m);
+        }
         if (t.sessionPolicy().historyTopologySteps &&
             t.sessionPolicy().opensAt == OpensAt.arm && !topologyDormant_) {
             live_ = true;

@@ -262,6 +262,17 @@ unittest {
     writefln("[7115 B] centre after the press = %s", centre);
     assert(abs(centre[0] - 1.5) < 0.02 && abs(centre[1]) < 0.02,
         format("7115 B rig: the press did not reach the tool (centre %s)", centre));
+    // Asked right after the press, before the rig's scripted centre write: a
+    // scripted attribute write ends the operation and rebases Mirror on its
+    // live copy (topology-redo S2b/S3), which is no longer "the edit is live".
+    {
+        immutable size_t pressed = faceCount();
+        auto ap = cmdRaw(`{"id":"tool.doApply"}`);
+        writefln("[7115 B] tool.doApply while live -> %s", ap.toString);
+        assert(ap["status"].str == "error" && faceCount() == pressed,
+            format("7115 tool.doApply accepted while the mirror edit is live: %s, %d polygons",
+                   ap.toString, faceCount()));
+    }
     attrCenter(1.5, 0, 0);
     settle();
 
@@ -271,12 +282,6 @@ unittest {
     assert(activeTool() == TOOL, "7115 B: the tool dropped at the press");
     double[3][] copyPts = [[3.0, 0.25, 0], [3.0, -0.25, 0], [3.15, 0.2, 0]];
     auto liveLook = probe(c, copyPts);
-
-    auto ap = cmdRaw(`{"id":"tool.doApply"}`);
-    writefln("[7115 B] tool.doApply while live -> %s", ap.toString);
-    assert(ap["status"].str == "error" && faceCount() == live,
-        format("7115 tool.doApply accepted while the mirror edit is live: %s, %d polygons",
-               ap.toString, faceCount()));
 
     cmd("tool.set " ~ TOOL ~ " off");
     settle();
