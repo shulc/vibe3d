@@ -359,8 +359,11 @@ D";
 
     assert(requiredWebGlSymbols.length == 86
             && optionalDesktopGlSymbols ==
-               ["glGetBufferSubData", "glPointSize", "glTexBuffer"]
-            && webClosureGlSymbols.length == 89,
+               ["glBeginQuery", "glEndQuery", "glGenQueries",
+                "glGetBufferSubData", "glGetQueryObjectiv",
+                "glGetQueryObjectui64v", "glGetQueryiv", "glPointSize",
+                "glTexBuffer"]
+            && webClosureGlSymbols.length == 95,
         format("W16-LD GL threshold population changed: required=%d optional=%s "
              ~ "total=%d", requiredWebGlSymbols.length,
                optionalDesktopGlSymbols, webClosureGlSymbols.length));
@@ -414,7 +417,7 @@ SH";
     actual.sort;
     auto expected = webClosureGlSymbols.dup;
     expected.sort;
-    assert(importers.length == 20 && callers.length == 19
+    assert(importers.length == 21 && callers.length == 20
             && importers.canFind("editor_app")
             && !callers.canFind("editor_app"),
         format("W16-LD web GL consumer population changed: importers=%d %s; "

@@ -153,6 +153,16 @@ enum Cat {
     // PLACEMENT: still below `falloffEvalCount`, which IS `firstCounter` —
     // see the trap note on `snapVisMask` directly above.
     bvhRebuild,
+    // --- GPU-upload PATH timers (task 9140, model M7) ---
+    // One per `GpuMesh` upload path, opened right after that path's
+    // `g_fc.upload(` counter (uploads that touched a buffer, not requests).
+    // They NEST inside the frame loop's coarse `gpuUpload` (app.d) when the
+    // main loop uploads, and also see tool-side uploads `gpuUpload` does not:
+    // `gpuUpload` is the frame-loop phase, these split it per path.
+    uploadFull,
+    uploadPositions,
+    uploadSelectedVerts,
+    uploadNonFace,
     // --- counters ---
     falloffEvalCount,
     // Triangles fed to `dbvh_build` per rebuild (task 1540). A COUNTER, and
@@ -383,6 +393,11 @@ private enum Cat firstCounter = Cat.falloffEvalCount;
 // never fired. These two lines cost nothing and fail the build instead.
 static assert(Cat.snapVisMask < firstCounter,
     "Cat.snapVisMask is a TIMER and must sit before firstCounter");
+static assert(Cat.uploadFull < firstCounter
+           && Cat.uploadPositions < firstCounter
+           && Cat.uploadSelectedVerts < firstCounter
+           && Cat.uploadNonFace < firstCounter,
+    "the task-9140 upload-path categories are TIMERS and must sit before firstCounter");
 static assert(Cat.snapVisVertexProbe  >= firstCounter
            && Cat.snapVisPairsTested  >= firstCounter
            && Cat.snapVisGridBail     >= firstCounter

@@ -14,7 +14,7 @@ import math;    // Vec3
 import shader;  // LitShader
 import mesh;    // Mesh, FaceList
 import change_bus : MeshEditScope;  // Position class for the preview-refresh publish
-import perf_probe : g_fc, DrawPass;  // always-on per-frame work counters
+import perf_probe : g_fc, DrawPass, g_perf, Cat;  // always-on per-frame work counters; upload-path timers (task 9140)
 import viewport_scheme : schemeColor, SchemeColor, pointSizePx, kBasePointSize,
                          kOccludedSelectionAlpha, kFaceHoverFill;
 import vertex_normals : FaceAdjacency, SmoothNormalCache, buildFaceAdjacency,
@@ -671,6 +671,7 @@ struct GpuMesh {
         // which differs per buffer and would need four separate sums to state
         // honestly.
         g_fc.upload(cast(long)mesh.vertices.length);
+        auto zUpload = g_perf.scope_(Cat.uploadFull);   // M7 path timer, after the counter
         buildUploadCpu(mesh, vpos, edgeOrigin, vertOrigin, faceOrigin);
         submitUploadGl();
         if (edgeOrigin.length == 0 && vertOrigin.length == 0)
@@ -1166,6 +1167,7 @@ struct GpuMesh {
         // which differs per buffer and would need four separate sums to state
         // honestly.
         g_fc.upload(cast(long)mesh.vertices.length);
+        auto zUpload = g_perf.scope_(Cat.uploadPositions);   // M7 path timer, after the counter
 
         // Face VBO: the CPU mirror, patched where the drawn positions moved
         // (`refreshFaceDataCpu`), submitted whole into an orphaned buffer, or
@@ -1249,6 +1251,7 @@ struct GpuMesh {
         // VBO alone), so the counter bump is at entry rather than beside a
         // version bump like the other three.
         g_fc.upload(cast(long)mesh.vertices.length);
+        auto zUpload = g_perf.scope_(Cat.uploadNonFace);   // M7 path timer, after the counter
         // Task 1069 — the DRAWN positions (see `upload` above).
         const(Vec3)[] vpos;
         {
@@ -1351,6 +1354,7 @@ struct GpuMesh {
         // which differs per buffer and would need four separate sums to state
         // honestly.
         g_fc.upload(cast(long)mesh.vertices.length);
+        auto zUpload = g_perf.scope_(Cat.uploadSelectedVerts);   // M7 path timer, after the counter
         // Task 1069 — the DRAWN positions (see `upload` above).
         const(Vec3)[] vpos;
         {

@@ -12,6 +12,7 @@ import select_visibility : SelectVisibility, SelectVisibilityTerms,
 import image_cache   : imagePixelCache;
 // Task 1970 — DirtyKey's camera pose term (see the struct field below).
 import camera_stamp  : CameraStamp;
+import gpu_pass_timer : GpuPassTimer;
 import toolpipe.packets : WorkplanePacket;
 // ViewportFbo's GL calls and the enums its recorded `TexSpec` carries.
 import bindbc.opengl;
@@ -534,6 +535,9 @@ final class Viewport3D {
     /// cell: the witness that the base-dot cull is cached, and keyed, per
     /// cell. Reported by `/api/viewport/display`; a monotone counter.
     ulong       dotCullRecomputes;
+    /// GPU time per frame section of this cell (model M7, task 9140),
+    /// reported as `"gpuTiming"` by `/api/viewport/display`.
+    GpuPassTimer gpuTimer;
 
     /// The overlay-draw mode the N-cell loop RESOLVED for this cell on the
     /// last frame that considered it (task 1650). It remains an `int` so task

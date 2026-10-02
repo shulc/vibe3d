@@ -8,9 +8,9 @@
 # Then READ THE DIFF. Regeneration is mechanical and will absorb an
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
-source-files 583
-task-citation-lines 5256
-citing-files 451
+source-files 584
+task-citation-lines 5262
+citing-files 452
 long-comment-runs 269
 files-with-long-runs 144
 
@@ -219,6 +219,7 @@ allow source/frame_stall.d 3
 allow source/geometry_clipboard.d 4
 allow source/gizmo.d 3
 allow source/gl_thread_guard.d 5
+allow source/gpu_pass_timer.d 2
 allow source/gpu_select.d 4
 allow source/guarded_action_controller.d 2
 allow source/handler.d 1
@@ -273,7 +274,7 @@ allow source/mesh_corner_maps.d 17
 allow source/mesh_dirty.d 18
 allow source/mesh_edge_slice.d 28
 allow source/mesh_edit_delta.d 141
-allow source/mesh_gpu.d 38
+allow source/mesh_gpu.d 39
 allow source/mesh_morph.d 1
 allow source/mesh_ops/bevel_curves.d 7
 allow source/mesh_ops/bevel_fin.d 7
@@ -299,7 +300,7 @@ allow source/mesh_visibility.d 18
 allow source/morph_target.d 4
 allow source/overlay_space.d 5
 allow source/params.d 20
-allow source/perf_probe.d 53
+allow source/perf_probe.d 54
 allow source/pie_geometry.d 1
 allow source/pie_menus.d 1
 allow source/pie_state.d 1
@@ -453,14 +454,14 @@ allow source/ui/stat_record.d 1
 allow source/ui/stat_rows.d 1
 allow source/ui/tool_properties_panel.d 13
 allow source/ui/viewport_props_role.d 1
-allow source/ui/viewport_render.d 38
+allow source/ui/viewport_render.d 39
 allow source/uv_relax.d 1
 allow source/uv_unwrap.d 2
 allow source/value_drag.d 2
 allow source/vertex_normals.d 1
 allow source/view.d 11
 allow source/view_settings_registration.d 2
-allow source/viewport.d 40
+allow source/viewport.d 41
 allow source/viewport_command_registration.d 1
 allow source/viewport_overlay_mode.d 6
 allow source/viewport_scheme.d 8

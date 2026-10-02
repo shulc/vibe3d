@@ -36,6 +36,7 @@ import viewport              : Viewport3D;
 import viewport_overlay_mode : OverlayMode;
 import display_state         : DrawPlan, SurfaceShading;
 import perf_probe            : g_fc, g_perf, DrawPass, Cat;
+import gpu_pass_timer        : GpuPassTimer, GpuSeg, resolveGpuTimingArmed;
 import tool                  : Tool, rolloverDraws;
 import toolpipe.pipeline     : ToolPipeContext;
 import toolpipe.stage        : TaskCode;
@@ -268,6 +269,13 @@ private:
         return d;
     }
 
+    // ---- GPU pass timing (model M7, task 9140) ----------------------------
+    // The drawing cell's timer for the duration of `draw` (helpers below
+    // mark through it); the arm is resolved once, on the first draw.
+    GpuPassTimer* segTimer_;
+    bool gpuTimingResolved_;
+    bool gpuTimingArmed_;
+
     // ---- the item sequence (task 8610, plan §10.3 / §10.12) ----------------
     // Under a plan with `clearDepthFirst` every item is drawn through the same
     // bracket: the non-primary ones by `drawPlainItem`, in the order
@@ -295,15 +303,19 @@ private:
                               Shader shader, Viewport3D v, const ref Viewport vp) {
         shader.useProgram(model, vp);
         shader.setDim(plan.dim);
-        if (plan.drawWire)
+        if (plan.drawWire) {
+            segTimer_.mark(GpuSeg.edges);
             g.drawEdges(shader.locColor, -1, MarkView.init, [],
                         baseWireFor(plan, model, vp.view, shader.locAlpha));
-        if (plan.drawVerts)
+        }
+        if (plan.drawVerts) {
+            segTimer_.mark(GpuSeg.verts);
             g.drawVertices(shader.locColor, shader.locPointSize, -1,
                            MarkView.init, OccludedPass.init,
                            culledBaseDots(baseDotsFor(plan, model, vp.view,
                                                       shader.locAlpha),
                                           plan, g, m, model, v, vp));
+        }
         shader.setDim(1.0f);
     }
 
@@ -316,6 +328,7 @@ private:
                        Viewport3D v, const ref Viewport vp, string weightMapName) {
         beginItem(plan);
         if (plan.drawFaces) {
+            segTimer_.mark(GpuSeg.faces);
             lit.useProgram(model, vp);
             bindLayerSurfaces(g, lyr, plan, lit, weightMapName);
             lit.applyPlan(plan);
@@ -383,6 +396,7 @@ private:
     void drawBackdropFaces(ref BgDraw e, ref Document document,
                            const ref DrawPlan backdropPlan, LitShader lit,
                            const ref Viewport vp, string weightMapName) {
+        segTimer_.mark(GpuSeg.backdropFaces);
         auto zBackdrop = g_fc.backdrop();
         lit.useProgram(e.model, vp);
         bindLayerSurfaces(*e.g, document.layers[e.layer], backdropPlan, lit,
@@ -398,6 +412,7 @@ private:
     void drawBackdropWire(ref BgDraw e, const ref DrawPlan backdropPlan,
                           Shader shader, const ref Viewport vp) {
         if (!backdropPlan.drawWire) return;
+        segTimer_.mark(GpuSeg.backdropWire);
         auto zBackdrop = g_fc.backdrop();
         shader.useProgram(e.model, vp);
         shader.setDim(backdropPlan.dim);
@@ -489,6 +504,16 @@ public:
            && scene.pipeContext !is null);
     assert(view.cell !is null && view.viewport !is null);
     assert(gpuInputs.primary !is null);
+    if (!gpuTimingResolved_) {
+        import std.process : environment;
+        import command : g_testMode;
+        gpuTimingResolved_ = true;
+        gpuTimingArmed_ = resolveGpuTimingArmed(
+            g_testMode, environment.get("VIBE3D_GPU_TIMING", ""));
+    }
+    segTimer_ = &view.cell.gpuTimer;
+    view.cell.gpuTimer.beginFrame(gpuTimingArmed_);
+    scope (exit) { view.cell.gpuTimer.endFrame(); segTimer_ = null; }
     ++drawSerial_;
     ref Document document = *scene.document;
     ref Mesh mesh = *scene.mesh;
@@ -622,6 +647,7 @@ public:
         }
         if (drawables.length > 1)
             drawables.sort!((a, b) => a.depth < b.depth);
+        if (drawables.length > 0) segTimer_.mark(GpuSeg.imagePlanes);
         foreach (d; drawables) {
             immutable uint tex = imagePixelCache().lookup(d.pl.sourcePath);
             drawImagePlane(d.pl.center, d.pl.halfU, d.pl.halfV,
@@ -723,6 +749,7 @@ public:
     immutable float gridFade = viewGridFadeRadius(gridStep);
 
     // Width/height in PIXELS = FBO dims; offsets zeroed (FBO origin = corner).
+    segTimer_.mark(GpuSeg.grid);
     gridShader.useProgram(gridModel, vp,
         gridFade,
         cast(float)v.fbo.w, cast(float)v.fbo.h,
@@ -916,6 +943,7 @@ public:
     {
         auto zMesh = g_perf.scope_(Cat.drawMesh);
         if (activePlan.drawFaces) {
+            segTimer_.mark(GpuSeg.faces);
             // Task 1090: fill the per-corner weight colours before the
             // program is bound, and only when this cell asked for them.
             //
@@ -996,6 +1024,7 @@ public:
     // never a program or a VAO.
     if (selFeedbackType == SelType.Polygon) {
         if (mesh.hasAnySelectedFaces()) {
+            segTimer_.mark(GpuSeg.faces);   // the checker fill stays in `faces`
             auto zOv = g_perf.scope_(Cat.drawOverlays);
             immutable Vec3 fillCol = schemeColor(SchemeColor.selection);
             checkerShader.useProgram(meshModel, vp,
@@ -1026,6 +1055,7 @@ public:
     {
         auto zEdges = g_perf.scope_(Cat.drawEdges);
         if (selFeedbackType == SelType.Edge) {
+            segTimer_.mark(GpuSeg.edges);
             // A tool can pre-highlight the WHOLE ring it will act on: Loop
             // Slice shows the ring its cut will land on (via wantsEdgeLoop-
             // Hover + rebuildLoopHoverMask); that ring is NOT the rollover and
@@ -1051,6 +1081,7 @@ public:
             gpu.drawEdges(shader.locColor, hovForDraw, mesh.selectedEdgeView(),
                           loopMask, baseWire, occluded);
         } else if (selFeedbackType == SelType.Polygon) {
+            segTimer_.mark(GpuSeg.edges);
             // Rebuild trigger. WHAT THE CACHE IS A FUNCTION OF is the whole
             // question here, and it is THREE things, not one: the face
             // selection (`faceMarks`), the topology that turns a selected face
@@ -1191,6 +1222,7 @@ public:
         } else if (showEdgeHover && hoveredEdge >= 0
                    && (edgeHovForDraw >= 0
                        || (activeTool !is null && activeTool.wantsEdgeLoopHover()))) {
+            segTimer_.mark(GpuSeg.edges);
             const bool[] loopMask =
                 (activeTool !is null && activeTool.wantsEdgeLoopHover())
                     ? rebuildLoopHoverMask(
@@ -1205,6 +1237,7 @@ public:
             // early-out rather than a `BaseWire(false, ...)` call so that an
             // overlay of "none" with nothing selected issues no GL at all —
             // not a VAO bind and a loop over zero batches.
+            segTimer_.mark(GpuSeg.edges);
             gpu.drawEdges(shader.locColor, -1, MarkView.init, [], baseWire,
                           occluded);
         }
@@ -1248,6 +1281,7 @@ public:
         import view             : ProjKind;
 
         if (display.currentType == SelType.Item) {
+            segTimer_.mark(GpuSeg.overlays);
             auto zItem = g_perf.scope_(Cat.drawOverlays);
             foreach (li, lyr; document.layers) {
                 if (lyr is null || !lyr.visible) continue;
@@ -1348,6 +1382,7 @@ public:
     // vertex buffer is not in cage slots, where every dot is drawn.
     if (activePlan.drawVerts || selFeedbackType == SelType.Vertex
         || selFeedbackType == SelType.Edge) {
+        segTimer_.mark(GpuSeg.verts);
         auto zOv = g_perf.scope_(Cat.drawOverlays);
         immutable bool edgeArm = selFeedbackType == SelType.Edge;
         BaseDots baseDots = baseDotsFor(activePlan, meshModel, vp.view,
@@ -1360,6 +1395,7 @@ public:
                          edgeArm ? MarkView.init : mesh.selectedVertexView(),
                          occluded, baseDots);
     } else if (showVertHover && vertHovForDraw >= 0) {
+        segTimer_.mark(GpuSeg.verts);
         auto zOv = g_perf.scope_(Cat.drawOverlays);
         BaseDots hoverBase = baseDotsFor(activePlan, meshModel, vp.view,
                                          shader.locAlpha);
@@ -1402,6 +1438,7 @@ public:
     // (against the origin snapshot) before this function is called for
     // any cell this frame, so handle-hover state is current for all of
     // them.
+    if (overlayMode != OverlayMode.None) segTimer_.mark(GpuSeg.overlays);
     drawToolOverlays(overlays, overlayMode, vp, shader);
 
     // ---- AI Modeling Copilot: ghost highlight of the active finding
@@ -1429,9 +1466,11 @@ public:
         if (scene.aiState.enabled && panelShown) {
             immutable int activeIdx = scene.copilotPanel.active();
             const findings = scene.copilotPanel.findings();
-            if (activeIdx >= 0 && activeIdx < cast(int) findings.length)
+            if (activeIdx >= 0 && activeIdx < cast(int) findings.length) {
+                segTimer_.mark(GpuSeg.overlays);
                 drawCopilotFindingOverlay(mesh, findings[activeIdx], vp,
                                           shader.program);
+            }
         }
     }
 

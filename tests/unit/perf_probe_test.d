@@ -634,3 +634,136 @@ unittest { // 6511 REVIEW FIX: constructor and strict warmup guard census
     assert(source.count("if (len > WarmupFrames)") == 1,
         "6511 steady-window guard lost its strict lower-edge spelling");
 }
+
+// ---- SP3 (wave plan SP, task 9140): the four GPU-upload path timers --------
+// Ungated fence: each is a TIMER (a member after `falloffEvalCount` would be a
+// counter, and `scope_` on it would record nothing, silently).
+static assert(Cat.uploadFull < Cat.falloffEvalCount
+    && Cat.uploadPositions < Cat.falloffEvalCount
+    && Cat.uploadSelectedVerts < Cat.falloffEvalCount
+    && Cat.uploadNonFace < Cat.falloffEvalCount,
+    "SP3: the upload-path categories must be timers (before falloffEvalCount)");
+
+unittest { // SP3 census: each upload-path timer opens right after its path's g_fc.upload(
+    import std.file : readText;
+    import std.format : format;
+    import std.path : buildPath, dirName;
+    import std.string : count, indexOf, lastIndexOf, strip, startsWith;
+    import tests.unit.census_symbols : blankNonCode, isIdentChar;
+
+    enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
+    immutable code = blankNonCode(readText(buildPath(repoRoot, "source", "mesh_gpu.d")));
+    static immutable string[2][4] rows = [
+        ["uploadFull", "upload"], ["uploadPositions", "refreshPositions"],
+        ["uploadSelectedVerts", "uploadSelectedVertices"],
+        ["uploadNonFace", "refreshNonFacePositions"]];
+    size_t seen;
+    foreach (row; rows) {
+        immutable site = "g_perf.scope_(Cat." ~ row[0] ~ ")";
+        assert(code.count(site) == 1,
+            format("SP3 census: %s must open exactly once in mesh_gpu.d, got %d",
+                   site, code.count(site)));
+        immutable p = code.indexOf(site);
+        // the enclosing method: the nearest preceding `void <name>(`
+        immutable v = code[0 .. p].lastIndexOf("void ");
+        size_t e = v + 5;
+        while (e < code.length && isIdentChar(code[e])) ++e;
+        assert(code[v + 5 .. e] == row[1],
+            format("SP3 census: %s sits in %s, expected %s", site, code[v + 5 .. e], row[1]));
+        // the statement before the timer's own is the `g_fc.upload(` counter
+        immutable head = code[0 .. p].strip;
+        immutable q = head[0 .. $ - 1].lastIndexOf(';');
+        immutable q2 = head[0 .. q].lastIndexOf(';') > head[0 .. q].lastIndexOf('{')
+            ? head[0 .. q].lastIndexOf(';') : head[0 .. q].lastIndexOf('{');
+        immutable prev = head[q2 + 1 .. q + 1].strip;
+        assert(prev.startsWith("g_fc.upload("),
+            format("SP3 census: %s must follow its path's g_fc.upload( (uploads that "
+                 ~ "touched a buffer), but follows `%s`", site, prev));
+        ++seen;
+    }
+    assert(seen == 4, "SP3 census population");
+}
+
+version (PerfProbe) {
+    private long sp3Count(string cat) {
+        import std.json : parseJSON;
+        return g_perf.toJson().parseJSON()[cat]["count"].integer;
+    }
+
+    unittest { // SP3 refusal paths: GL-free, no timer sample
+        import mesh : Mesh, makeCube;
+        import mesh_gpu : GpuMesh;
+        g_perf.reset();
+        Mesh cube = makeCube();
+        GpuMesh g;                                   // never init'ed: no GL names
+        g.refreshPositions(cube);                    // layout mismatch: 0 != 6 faces
+        assert(sp3Count("uploadPositions") == 0,
+            "SP3 layout-mismatch early return must not time an upload");
+        g.suppressCageUpload = true;
+        g.upload(cube);                              // suppressed: publishes, returns
+        assert(sp3Count("uploadFull") == 0,
+            "SP3 the suppress early return of upload must not time an upload");
+        g.uploadSelectedVertices(cube, new bool[](cube.vertices.length));
+        assert(sp3Count("uploadSelectedVerts") == 0,
+            "SP3 the suppress early return of uploadSelectedVertices must not time an upload");
+    }
+
+    unittest { // SP3 positive cells on a real hidden GL 3.3 context (the frame_runner_finish_test rig)
+        import bindbc.opengl;
+        import bindbc.sdl;
+        import mesh : Mesh, makeCube;
+        import mesh_gpu : GpuMesh;
+        import std.conv : to;
+        import std.process : environment;
+
+        const hadDriver = "SDL_VIDEODRIVER" in environment;
+        const oldDriver = environment.get("SDL_VIDEODRIVER", "");
+        environment["SDL_VIDEODRIVER"] =
+            environment.get("DISPLAY", "").length != 0 ? "x11" : "offscreen";
+        scope (exit) {
+            if (hadDriver) environment["SDL_VIDEODRIVER"] = oldDriver;
+            else environment.remove("SDL_VIDEODRIVER");
+        }
+        assert(loadSDL() == sdlSupport, "SP3 rig could not load SDL");
+        assert(SDL_Init(SDL_INIT_VIDEO) == 0,
+            "SP3 rig could not initialize SDL: " ~ SDL_GetError().to!string);
+        scope (exit) SDL_Quit();
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+        auto window = SDL_CreateWindow("sp3-upload-timers",
+            SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 32, 32,
+            SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
+        assert(window !is null,
+            "SP3 rig could not create a hidden window: " ~ SDL_GetError().to!string);
+        scope (exit) SDL_DestroyWindow(window);
+        auto context = SDL_GL_CreateContext(window);
+        assert(context !is null,
+            "SP3 rig could not create a GL context: " ~ SDL_GetError().to!string);
+        scope (exit) SDL_GL_DeleteContext(context);
+        assert(loadOpenGL() >= glSupport, "SP3 rig could not load OpenGL 3.3");
+
+        g_perf.reset();
+        Mesh cube = makeCube();
+        GpuMesh g;
+        g.init();
+        scope (exit) g.destroy();
+        g.upload(cube);
+        assert(sp3Count("uploadFull") == 1 && sp3Count("uploadPositions") == 0,
+            "SP3 upload: uploadFull 1, uploadPositions 0");
+        g.refreshPositions(cube);
+        assert(sp3Count("uploadPositions") == 1 && sp3Count("uploadFull") == 1,
+            "SP3 refreshPositions: uploadPositions 1, uploadFull unchanged");
+        g.uploadSelectedVertices(cube, new bool[](cube.vertices.length));
+        assert(sp3Count("uploadSelectedVerts") == 1,
+            "SP3 uploadSelectedVertices: uploadSelectedVerts 1");
+        g.refreshNonFacePositions(cube);
+        assert(sp3Count("uploadNonFace") == 1,
+            "SP3 refreshNonFacePositions: uploadNonFace 1");
+        Mesh other;                                  // 0 faces vs the 6 uploaded
+        g.refreshPositions(other);                   // layout mismatch after a real upload
+        assert(sp3Count("uploadPositions") == 1,
+            "SP3 layout mismatch must leave uploadPositions unchanged");
+        assert(glGetError() == GL_NO_ERROR, "SP3 rig: GL error after the uploads");
+    }
+}

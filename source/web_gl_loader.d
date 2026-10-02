@@ -38,7 +38,9 @@ enum string[] requiredWebGlSymbols = [
 ];
 
 enum string[] optionalDesktopGlSymbols = [
-    "glGetBufferSubData", "glPointSize", "glTexBuffer",
+    "glBeginQuery", "glEndQuery", "glGenQueries", "glGetBufferSubData",
+    "glGetQueryObjectiv", "glGetQueryObjectui64v", "glGetQueryiv",
+    "glPointSize", "glTexBuffer",
 ];
 
 enum string[] webClosureGlSymbols =
