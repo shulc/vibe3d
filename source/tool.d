@@ -314,6 +314,9 @@ interface TopologyStepClient {
     /// `basis.matches(*mesh)`.
     void rebaseTopologyStep(MeshSnapshot basis);
     /// A navigated step: its attributes, then `rebaseTopologyStep(basis)`.
+    /// Law 4 (model doc §R9): navigation writes a row's attributes
+    /// only into the instance that recorded it; an instance re-created by a
+    /// redo gets the image remembered when it was dropped.
     void restoreTopologyStep(in AttrImage attrs, MeshSnapshot basis);
 }
 
@@ -371,10 +374,6 @@ struct ToolSessionPolicy {
     /// A live preview may itself contain in-session History rows. Undo those
     /// rows before cancelling the preview (Box's recorded parameter ladder).
     bool previewHistoryLadder;
-    /// A first topology row paired with activation restores the completed
-    /// attribute image on redo. The extrude family instead restores the arm
-    /// image; preview tools use the completed image measured at release.
-    bool firstTopologyRedoUsesAfterAttrs;
     /// The first topology row remains separate from activation. Undoing the
     /// activation discards that row's redo branch while keeping the activation.
     bool discardFirstTopologyRedoOnActivationUndo;

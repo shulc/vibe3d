@@ -1807,10 +1807,15 @@ unittest { // S7a u1, M-C (a) + M-H: the press resets the haul; a row's haul com
         if (!same) { active = t2; s.noteArm("t.fold", 1); }   // a re-armed instance, same session
         assert(s.navigate(false));
         auto cur = same ? t1 : t2;
-        const wantV = on && !same ? 9.0f : 5.0f;
-        assert(cur.v == wantV && cur.k == 7.0f,
-               format("S7a u1 (on %s, same instance %s): redo restored v %s k %s, M-H says v %s k 7",
-                      on, same, cur.v, cur.k, wantV));
+        // Test tool FoldTool(off) is in the captured model: in a re-armed instance the
+        // row is an orphan and its redo keeps the live image (law 4, model doc §R9; task
+        // 9020 — was M-H's v 5 k 7). FoldTool(on) is the pen's data: M-H, unchanged.
+        const orphan = !on && !same;
+        const wantV = orphan || (on && !same) ? 9.0f : 5.0f;
+        const wantK = orphan ? 0.0f : 7.0f;
+        assert(cur.v == wantV && cur.k == wantK,
+               format("S7a u1 (on %s, same instance %s): redo restored v %s k %s, expected v %s k %s",
+                      on, same, cur.v, cur.k, wantV, wantK));
         ++cells;
     }
     assert(cells == 4, format("S7a u1: %s of the four images checked", cells));

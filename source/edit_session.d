@@ -723,13 +723,17 @@ final class EditSession {
 /// a no-op SUCCESS when the tool is gone (a later command dropped it, e.g. a
 /// select.invert under Mirror): a refused redo would strand every row above
 /// it (topology-redo S2b fix, `mirror_cmdclose_ui` R-tail; revertImpl's rule).
+/// Written only into the instance that recorded it (`instance_`); in any other
+/// it is an orphan and writes nothing (law 4, model doc §R9).
 private class TopologyAdjustmentEdit : Command, GesturePayload {
     private Tool delegate() currentTool_;
+    private ulong instance_;
     private AttrImage before_, after_;
 
-    this(Command context, Tool delegate() currentTool,
+    this(Command context, ulong instance, Tool delegate() currentTool,
             AttrImage before, AttrImage after) {
         super(context.meshPtr(), context.viewRef(), context.editModeVal());
+        instance_ = instance;
         currentTool_ = currentTool;
         before_ = before;
         after_ = after;
@@ -739,12 +743,18 @@ private class TopologyAdjustmentEdit : Command, GesturePayload {
     override string label() const { return "Tool Adjustment"; }
     override CmdFlags cmdFlags() const { return CmdFlags.UiState; }
     override bool hasGesturePayload() const { return !before_.opEquals(after_); }
+    ulong instance() const { return instance_; }
+    AttrImage before() const { return AttrImage(before_.names.dup, before_.raw.dup); }
     protected override bool applyImpl() {
-        if (auto t = currentTool_()) t.applyAttrImage(after_);
+        if (auto t = recorder_()) t.applyAttrImage(after_);
         return true;
     }
     protected override void revertImpl() {
-        if (auto t = currentTool_()) t.applyAttrImage(before_);
+        if (auto t = recorder_()) t.applyAttrImage(before_);
+    }
+    private Tool recorder_() {
+        auto t = currentTool_();
+        return t !is null && t.preparedLifecycleOwner().value == instance_ ? t : null;
     }
 }
 
@@ -1109,10 +1119,12 @@ private struct ToolSession {
             const ue = history_.undoEntries();
             if (ue.length >= 2 &&
                 cast(const TopologyAdjustmentEdit)ue[$ - 1].cmd !is null &&
-                ue[$ - 2].cmd is dormantActivation_.get &&
-                history_.undo()) {
-                history_.undo();
-                return true;
+                ue[$ - 2].cmd is dormantActivation_.get) {
+                rememberDropImage_(1);
+                if (history_.undo()) {
+                    history_.undo();
+                    return true;
+                }
             }
         }
         // H2: the newest gesture step of the live operation, restored as the
@@ -1191,6 +1203,9 @@ private struct ToolSession {
         // from the incoming tool currently bound to the session.
         import commands.tool.lifecycle : ToolActivationCommand;
         auto activation = cast(const ToolActivationCommand)last.get;
+        // Law 4: this session's activation drops the tool with its rows.
+        if (activation !is null && activation.sessionToken() == currentToken())
+            rememberDropImage_(extra);
         auto topologyRestore = activation !is null &&
                 activation.previousHistoryTopology()
             ? topologyAttrsFor_(activation.previousId(), activation.previousToken())
@@ -1338,6 +1353,18 @@ private struct ToolSession {
             // tool is armed without the record; the resync below re-baselines it.
             import log : logWarn;
             logWarn("tool", "session redo: the record paired with its activation row refused its redo");
+        }
+        if (ok && pair) {
+            // Law 4: the re-created instance takes its session's seed; the
+            // attribute row redone above is an orphan in it.
+            auto t = tool_();
+            if (reporting_(t) && capturedTopologyModel(t.sessionPolicy())) {
+                auto seed = seedRecreated_(act.get, null);
+                if (!seed.empty) {
+                    t.restoreRecordedAttrs(seed);
+                    rememberTopologyAttrs_(seed);
+                }
+            }
         }
         if (ok && pair) {
             auto rearmed = tool_();
@@ -1675,7 +1702,7 @@ private struct ToolSession {
                     t.restoreRecordedAttrs(topologyPendingAttrs_);
                     return;
                 }
-                auto cmd = new TopologyAdjustmentEdit(context, tool_,
+                auto cmd = new TopologyAdjustmentEdit(context, instanceOf_(t), tool_,
                     topologyPendingAttrs_, after);
                 if (client.recordTopologyStep(cmd) && undoTop_() is cmd) {
                     history_.markEntrySession(cmd, token_);
@@ -2051,6 +2078,7 @@ private struct ToolSession {
             const pair = recordCarriesActivation_();
             assert(!(pair && run), "session undo: a carried record and a folded run on one row");
             Rebindable!(const MeshSessionEdit) popped = cmd;
+            if (pair) rememberDropImage_(1);
             if (!history_.undo()) return false;
             foreach (_; 0 .. run) {
                 auto next = cast(const MeshSessionEdit)undoTop_();
@@ -2059,6 +2087,10 @@ private struct ToolSession {
             }
             if (pair) {
                 history_.undo();
+            } else if (capturedTopologyModel(t.sessionPolicy()) && !boundToLive_(popped.get, t)) {
+                // Law 4 (orphan): a row another instance wrote moves the mesh only.
+                (cast(TopologyStepClient)t).restoreTopologyStep(
+                    t.captureAttrImage(), popped.stepBeforeBasis());
             } else {
                 auto img = navigableAttrs_(t, popped.get, popped.stepBeforeAttrs());
                 (cast(TopologyStepClient)t).restoreTopologyStep(
@@ -2096,13 +2128,20 @@ private struct ToolSession {
         redoneTopologyStep_ = true;
         auto current = tool_();
         if (current !is null && reporting_(current)) {
-            const restoreBefore = pair &&
-                !current.sessionPolicy().firstTopologyRedoUsesAfterAttrs;
-            auto img = navigableAttrs_(current, cmd.get,
-                restoreBefore ? cmd.stepBeforeAttrs() : cmd.stepAfterAttrs());
-            (cast(TopologyStepClient)current).restoreTopologyStep(
-                img, cmd.stepAfterBasis());
-            rememberTopologyAttrs_(img);
+            if (!pair && capturedTopologyModel(current.sessionPolicy()) &&
+                !boundToLive_(cmd.get, current)) {
+                // Law 4 (orphan): a row another instance wrote moves the mesh only.
+                (cast(TopologyStepClient)current).restoreTopologyStep(
+                    current.captureAttrImage(), cmd.stepAfterBasis());
+            } else {
+                // Law 4: the redo that re-creates the tool with its first row
+                // seeds it (`seedRecreated_`); any other, the last redone row's.
+                auto img = navigableAttrs_(current, cmd.get,
+                    pair ? seedRecreated_(act, cmd.get) : cmd.stepAfterAttrs());
+                (cast(TopologyStepClient)current).restoreTopologyStep(
+                    img, cmd.stepAfterBasis());
+                rememberTopologyAttrs_(img);
+            }
             // Reopen (L42): the redo of a press reopens that press's block;
             // Reopen-base (L55): the redo of a parameter row reopens the
             // press or activation below it.
@@ -2120,6 +2159,43 @@ private struct ToolSession {
 
     private static ulong instanceOf_(const Tool t) {
         return t.preparedLifecycleOwner().value;
+    }
+
+    // Law 4 (model doc §R9): a navigated row writes its attributes
+    // only into the instance that recorded it; any other instance is not its.
+    private bool boundToLive_(const MeshSessionEdit row, Tool t) {
+        return row.stepInstance() == instanceOf_(t);
+    }
+
+    // Law 4, the seed: an undo that drops the tool together with its top `rows`
+    // remembers, for the session, the live image with each of those rows the
+    // live instance recorded undone (top down); the redo that re-creates the
+    // tool restores it (`seedRecreated_`). Called before the first row moves.
+    private void rememberDropImage_(size_t rows) {
+        auto t = tool_();
+        if (!reporting_(t) || !capturedTopologyModel(t.sessionPolicy())) return;
+        auto img = t.captureAttrImage();
+        const ue = history_.undoEntries();
+        foreach (k; 0 .. rows < ue.length ? rows : ue.length) {
+            const c = ue[$ - 1 - k].cmd;
+            if (auto row = cast(const MeshSessionEdit) c) {
+                if (boundToLive_(row, t)) img = row.stepBeforeAttrs();
+            } else if (auto adj = cast(const TopologyAdjustmentEdit) c) {
+                if (adj.instance() == instanceOf_(t)) img = adj.before();
+            }
+        }
+        rememberTopologyAttrs_(img);
+    }
+
+    // The image a re-created instance of `act`'s session starts from: what its
+    // drop remembered; none remembered (evicted past `kMaxSessionSteps`
+    // sessions) — `fallback`'s before attributes, or nothing.
+    private AttrImage seedRecreated_(
+            const imported!"commands.tool.lifecycle".ToolActivationCommand act,
+            const MeshSessionEdit fallback) {
+        auto img = topologyAttrsFor_(act.armedId, act.sessionToken());
+        if (img.empty && fallback !is null) img = fallback.stepBeforeAttrs();
+        return img;
     }
 
     // M-H: a `pressOpensOperation` tool's operation context (its haul names)

@@ -135,7 +135,6 @@ class SmoothShiftTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClien
             activationRow: true,
             commandClose: CommandClose.uiDoor,
             sessionSteps: true, historyTopologySteps: true,
-            firstTopologyRedoUsesAfterAttrs: true,
             // Captured: every step of one live operation — a haul,
             // a field write, a scrub — re-evaluates the SAME layer from the
             // operation's base, so completed steps do not rebase it. Only a

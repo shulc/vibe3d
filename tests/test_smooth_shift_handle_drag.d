@@ -222,13 +222,13 @@ void dragCell(string tool, bool thicken) { // both IDs share SmoothShiftTool
     key(65);
     assert(vertexCount() == v1 && faceCount() == f1,
         "Smooth Shift redo must restore the completed topology");
-    // KNOWN DIVERGENCE, OURS (not the reference's value): both ids restore the recorded
-    // Shift here, while the reference's redo of the re-arming UI pair reads the arm's
-    // attributes (law 4; fixture `thicken_direct_ui/s06_R.attrs` ref [s01], ours [s02, s04];
-    // `smooth_direct_ui/s06_R.attrs` the same). Topology-redo S4 flips this expectation for
-    // BOTH ids; Thicken's former reset matched it only by its own special case (gone, 8950).
-    assert(abs(queryShift(tool) - after) < 1e-6,
-        "redo must restore the captured Shift amount for this exact ID");
+    // Captured (law 4, task 9020): the redo of the re-arming UI pair seeds the re-created
+    // tool with the image its drop remembered — the arm's attributes for both ids (fixture
+    // `smooth_direct_ui/s06_R.attrs`, `thicken_direct_ui/s06_R.attrs`: reference [s01],
+    // Shift 0), the mesh completed.
+    assert(abs(queryShift(tool)) < 1e-6,
+        "redo of the re-arming pair must restore the arm's zero Shift for " ~ tool
+        ~ " (smooth_direct_ui/s06_R), got " ~ queryShift(tool).to!string);
 
     // After a re-arm the next haul starts from zero and STACKS one layer.
     haul(cam);

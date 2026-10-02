@@ -24,33 +24,32 @@ immutable string[] kCells = [
     "close_cmd_inset_script", "close_cmd_inset_ui", "close_drop_inset_script",
     "close_drop_inset_ui", "close_enter_inset_ui", "cmdattrs_nozr_pextrude",
     "cmdattrs_zr_pextrude_free", "cmdattrs_zr_pextrude_handle", "doapply_after_sa_inset",
-    "doapply_after_sa_pextrude", "doapply_after_sa_smooth", "dormant2_inset",
-    "dormant2_inset_ui", "dormant3_cross_inset_ui", "dormant3_inset", "dormant3_inset_ui",
-    "fold_close_inset", "fold_close_inset_ui", "fold_restart_pextrude",
-    "fold_restart_pextrude_ui", "inset_direct", "inset_dormant", "inset_dormant_ui",
-    "inset_mech", "inset_mech_ui", "inset_ui_direct", "inset_ui_redo", "moment_inset",
-    "moment_inset_ui", "moment_restart_pextrude", "moment_restart_pextrude_ui",
-    "nav_redo_opens_inset", "nav_redo_opens_inset_ui", "nav_redo_refire_inset",
-    "nav_redo_refire_inset_ui", "nav_redo_restart_pextrude", "nav_redo_restart_pextrude_ui",
-    "nav_undo_refire_inset", "nav_undo_refire_inset_ui", "nav_undo_restart_pextrude",
-    "nav_undo_restart_pextrude_ui", "param_after_undo_inset_script",
+    "doapply_after_sa_pextrude", "doapply_after_sa_smooth", "dormant2_inset", "dormant2_inset_ui",
+    "dormant3_cross_inset_ui", "dormant3_inset", "dormant3_inset_ui", "fold_close_inset",
+    "fold_close_inset_ui", "fold_restart_pextrude", "fold_restart_pextrude_ui", "inset_direct",
+    "inset_dormant", "inset_dormant_ui", "inset_mech", "inset_mech_ui", "inset_ui_direct",
+    "inset_ui_redo", "moment_inset", "moment_inset_ui", "moment_restart_pextrude",
+    "moment_restart_pextrude_ui", "nav_redo_opens_inset", "nav_redo_opens_inset_ui",
+    "nav_redo_refire_inset", "nav_redo_refire_inset_ui", "nav_redo_restart_pextrude",
+    "nav_redo_restart_pextrude_ui", "nav_undo_refire_inset", "nav_undo_refire_inset_ui",
+    "nav_undo_restart_pextrude", "nav_undo_restart_pextrude_ui", "param_after_undo_inset_script",
     "param_after_undo_inset_ui", "param_between_inset_script", "param_between_inset_uc",
-    "param_between_inset_ui", "param_between_moment_inset_script",
-    "param_between_moment_inset_ui", "param_closed_after_end_inset", "param_closed_inset_ui",
-    "param_rebegun_redo_inset", "param_rebegun_undo_inset_ui", "param_twohaul_inset_script",
-    "pextrude_direct", "pextrude_direct_ui", "rclick_close_inset_script",
-    "rclick_close_inset_ui", "rebegin_redo_closed_inset", "rebegin_redo_closed_inset_ui",
-    "rebegin_undo_close_inset", "rebegin_undo_close_inset_ui", "rebegin_undo_cmd_inset_ui",
-    "reset_inset", "reset_inset_ui", "smooth_attrs_script", "smooth_attrs_ui", "smooth_direct",
-    "smooth_direct_ui", "smooth_dormant", "smooth_dormant_ui", "thicken_direct",
-    "thicken_direct_ui", "thicken_dormant", "thicken_dormant_ui", "vmerge_discrim",
-    "vmerge_discrim_ui", "vmerge_dormant", "vmerge_dormant_ui"
+    "param_between_inset_ui", "param_between_moment_inset_script", "param_between_moment_inset_ui",
+    "param_closed_after_end_inset", "param_closed_inset_ui", "param_rebegun_redo_inset",
+    "param_rebegun_undo_inset_ui", "param_twohaul_inset_script", "pextrude_direct",
+    "pextrude_direct_ui", "rclick_close_inset_script", "rclick_close_inset_ui",
+    "rebegin_redo_closed_inset", "rebegin_redo_closed_inset_ui", "rebegin_undo_close_inset",
+    "rebegin_undo_close_inset_ui", "rebegin_undo_cmd_inset_ui", "reset_inset", "reset_inset_ui",
+    "smooth_attrs_script", "smooth_attrs_ui", "smooth_direct", "smooth_direct_ui",
+    "smooth_dormant", "smooth_dormant_ui", "thicken_direct", "thicken_direct_ui",
+    "thicken_dormant", "thicken_dormant_ui", "vmerge_discrim", "vmerge_discrim_ui",
+    "vmerge_dormant", "vmerge_dormant_ui", "xinst_ctrl_inset_ui", "xinst_trunc_inset_ui"
 ];
 
-// `freeze_fixture.py --family inset` (2026-10-02, + 8960 3 cells, 8980 3 cells):
-// TOPO-REDO-CELLS family=inset cells=78 checkpoints=927 …
-enum long kCellCount = 78;
-enum long kCheckpointCount = 927;
+// `freeze_fixture.py --family inset` (2026-10-02, + 8960 3 cells, 8980 3 cells, 9030 2 cells):
+// TOPO-REDO-CELLS family=inset cells=80 checkpoints=947 …
+enum long kCellCount = 80;
+enum long kCheckpointCount = 947;
 
 unittest { // the floor: the fixture still holds the whole family
     familyFloor(parseJSON(kFixture), "inset", kCells, kCellCount, kCheckpointCount);
@@ -119,7 +118,10 @@ unittest {
 // one; a driver double press or a law — not captured): every known divergence from the
 // first middle haul of a cell on, except `origin` (S2b's law everywhere), is ONE status,
 // outside the model. Floor: generator output 2026-10-01 — 8 `_M` points, 107 fields;
-// 102 since S2a (8920): five `armed` fields after the press now match (law 1 settle).
+// 102 since S2a (8920): five `armed` fields after the press now match (law 1 settle);
+// 104 since S4 (9020): the former (b) points are judged (+5: nav_redo_restart_pextrude
+// s12/s13, its _ui s12, nav_undo_restart_pextrude s11/s12) and law 4 closes three
+// (moment_restart_pextrude_ui s12/s13, nav_undo_restart_pextrude_ui s12).
 unittest {
     const fx = parseJSON(kFixture);
     size_t points, fields;
@@ -142,9 +144,9 @@ unittest {
             }
         }
     }
-    assert(points == 8 && fields == 102, "fixture family inset holds " ~ points.to!string
+    assert(points == 8 && fields == 104, "fixture family inset holds " ~ points.to!string
         ~ " middle-restart points / " ~ fields.to!string ~ " divergent fields after them, "
-        ~ "frozen at 8 / 102");
+        ~ "frozen at 8 / 104");
 }
 
 // VertexMerge's first haul merges 3 → 2 at the reference, 3 → 1 here (gap row 486, S3 fix
@@ -295,6 +297,36 @@ unittest {
     }
     assert(cells == 4 && hauls > 0, "fixture: the late PolyExtrude cells are "
         ~ cells.to!string ~ " with " ~ hauls.to!string ~ " hauls, frozen at 4 with at least one");
+}
+
+// Task 9020 (wave S4), law 4's orphan (model doc §R9): the reference redoes each row of
+// param_between_moment_inset_script after the script activation came back (s09_R) and
+// reads `inset 0.0` on every R — the rows' instance is gone. The fixture field is V4's
+// (plan §16.5: its class holds a V4 classmate), so the VALUE is pinned here: ours s10, s11,
+// s12 read the attributes of s09. Positive control: the rows themselves changed the image.
+unittest {
+    import std.process : environment;
+    const only = environment.get("VIBE3D_CELL", "");
+    if ((only.length && only != "orphan_redo_values")
+        || environment.get("VIBE3D_TOPO_REDO_DUMP", "").length)
+        return;
+    JSONValue cell;
+    foreach (c; parseJSON(kFixture)["cells"].array)
+        if (c["id"].str == "param_between_moment_inset_script") cell = c;
+    assert(cell.type == JSONType.object, "fixture holds no param_between_moment_inset_script");
+    const run = playCell(cell);
+    const(Obs)* at(string label) {
+        foreach (ref o; run.obs) if (o.label == label) return &o;
+        assert(false, "orphan redo: no checkpoint " ~ label);
+    }
+    assert(at("s10_R").image != at("s09_R").image && at("s12_R").image != at("s10_R").image,
+        "rig VOID orphan redo: the redone rows changed no image");
+    foreach (lab; ["s10_R", "s11_R", "s12_R"])
+        assert(at(lab).attrs == at("s09_R").attrs, "law 4 (orphan): the redo " ~ lab
+            ~ " wrote the attributes of a row another instance recorded: " ~ at(lab).attrs
+            ~ ", the re-created tool read " ~ at("s09_R").attrs ~ " at s09_R");
+    import http_client : postJson;
+    postJson("/api/command", "tool.set " ~ rigOf(cell["variant"].str).tool ~ " off");
 }
 
 unittest { // every cell was played and compared (a skipped cell is not a green one)

@@ -29,13 +29,13 @@ immutable string[] kCells = [
     "mirror_discrim2", "mirror_discrim2_ui", "mirror_dormant", "mirror_dormant_ui",
     "param_between_array_script", "param_between_array_ui", "param_between_moment_array_ui",
     "param_closed_array_ui", "radial_attrs_script", "radial_attrs_ui", "radial_dormant",
-    "radial_dormant_ui"
+    "radial_dormant_ui", "xinst_trunc_array_ui"
 ];
 
-// `freeze_fixture.py --family generators` (2026-10-02, + 8960 Mirror):
-// TOPO-REDO-CELLS family=generators cells=27 checkpoints=268 …
-enum long kCellCount = 27;
-enum long kCheckpointCount = 268;
+// `freeze_fixture.py --family generators` (2026-10-02, + 8960 Mirror, 9030 C8-2):
+// TOPO-REDO-CELLS family=generators cells=28 checkpoints=278 …
+enum long kCellCount = 28;
+enum long kCheckpointCount = 278;
 
 unittest { // the floor: the fixture still holds the whole family
     familyFloor(parseJSON(kFixture), "generators", kCells, kCellCount, kCheckpointCount);
@@ -153,6 +153,36 @@ unittest { // Mirror: the attribute-only row of a panel write leaves the mesh
     assert(undoDepth() == depth + 1
         && getJson("/api/history")["undo"].array[$ - 1]["command"].str == "tool.topology_adjustment",
         "mirror gate: the panel write is not one attribute-only row");
+    cmdOkPublic("tool.set mesh.mirrorTool off");
+}
+
+// Task 9020 (wave S4), law 4's seed on the pair of a UI arm and its attribute-only row,
+// with no drop between (mirror_discrim2_ui: s01 arm, s02 a panel axis write, the pair undone
+// at s07_Z and redone at s08_R): the re-created tool starts from the image the drop
+// remembered — the write undone, the arm's axis (raw: s01 axis 1, s02 axis 0, s08 axis 1).
+// The fixture's s08_R.attrs is a class field taken by gap row 485 (the arm centre), so the
+// axis is pinned here. Positive control: the write changed the axis.
+unittest {
+    if (skipFor("mirror_discrim2_ui_axis")) return;
+    JSONValue cell;
+    foreach (c; parseJSON(kFixture)["cells"].array)
+        if (c["id"].str == "mirror_discrim2_ui") cell = c;
+    assert(cell.type == JSONType.object, "fixture holds no mirror_discrim2_ui");
+    const run = playCell(cell);
+    string axisAt(string label) {
+        foreach (o; run.obs)
+            if (o.label == label) {
+                import std.algorithm : find, startsWith;
+                import std.array : split;
+                foreach (part; o.attrs.split(";")) if (part.startsWith("axis=")) return part;
+                assert(false, "mirror axis: " ~ label ~ " reads no axis: " ~ o.attrs);
+            }
+        assert(false, "mirror axis: no checkpoint " ~ label);
+    }
+    assert(axisAt("s02_UC") != axisAt("s01_armui"),
+        "rig VOID mirror axis: the panel write left the axis " ~ axisAt("s01_armui"));
+    assert(axisAt("s08_R") == axisAt("s01_armui"), "law 4 (seed): the redo of the UI pair "
+        ~ "re-created Mirror with " ~ axisAt("s08_R") ~ ", the arm read " ~ axisAt("s01_armui"));
     cmdOkPublic("tool.set mesh.mirrorTool off");
 }
 

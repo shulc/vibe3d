@@ -638,8 +638,39 @@ CellRun playCell(const JSONValue cell) {
     return run;
 }
 
+/// Whether the rig demands that the last haul of `_dormant` cell `id` change the
+/// attributes: only where the reference's own haul did (its frozen `attrs` class
+/// there does not hold the checkpoint before it). Where the reference writes the same
+/// value the demand is a rig the reference itself would fail (task 9020, law 4).
+/// Floor over the fixture: 11 cells demand, 10 write the same value (one cell's haul
+/// freezes no attributes).
+bool dormantHaulDemand(const JSONValue fixture, string id) {
+    size_t nDemand, nRefSame;
+    bool demand;
+    foreach (c; fixture["cells"].array) {
+        const cid = c["id"].str;
+        if (!canFind(cid, "_dormant") || (cid.length >= 7 && cid[0 .. 7] == "dormant")) continue;
+        string last;
+        foreach (s; c["steps"].array) if (s["op"].str == "haul") last = s["label"].str;
+        const pts = c["points"].array;
+        size_t k;
+        while (k < pts.length && pts[k]["label"].str != last) ++k;
+        assert(k > 0 && k < pts.length, "fixture: " ~ cid ~ " has no checkpoint " ~ last);
+        auto f = "attrs" in pts[k]["fields"].object;
+        if (f is null) continue;
+        const same = classHas(*f, shortLabel(pts[k - 1]["label"].str));
+        if (same) ++nRefSame; else ++nDemand;
+        if (cid == id) demand = !same;
+    }
+    assert(nDemand == 11 && nRefSame == 10, format("fixture: the dormant hauls' rig census is "
+        ~ "%d demanding / %d writing the reference's same value, frozen at 11 / 10",
+        nDemand, nRefSame));
+    return demand;
+}
+
 /// Rig preconditions (plan §5 S1a п.4): a run that fails one is VOID, not a verdict.
-void checkRig(const JSONValue cell, const CellRun run) {
+/// `dormantDemand`: `dormantHaulDemand` of the cell.
+void checkRig(const JSONValue cell, const CellRun run, bool dormantDemand) {
     const id = cell["id"].str;
     const steps = cell["steps"].array;
     size_t at(string label) {
@@ -672,9 +703,11 @@ void checkRig(const JSONValue cell, const CellRun run) {
     foreach (s; steps) if (s["op"].str == "arm") rearmDoor = s["door"].str;
     if (canFind(id, "_dormant") && !starts("dormant")) {
         const k = at(hauls[$ - 1]);
-        if (rearmDoor != rigOf(cell["variant"].str).dormantDeafDoor)
-            assert(run.obs[k].attrs != run.obs[k - 1].attrs,
-                "rig: dormant haul changed no attribute in " ~ id);
+        if (rearmDoor != rigOf(cell["variant"].str).dormantDeafDoor) {
+            if (dormantDemand)
+                assert(run.obs[k].attrs != run.obs[k - 1].attrs,
+                    "rig: dormant haul changed no attribute in " ~ id);
+        }
         else    // self-expiring: the measured deaf door (gap row 487) writes nothing
             assert(run.obs[k].attrs == run.obs[k - 1].attrs
                 && run.obs[k].undoRows == run.obs[k - 1].undoRows,
@@ -717,12 +750,22 @@ void compareCell(const JSONValue cell, const CellRun run) {
     assert(cell["points"].array.length == run.obs.length,
         format("cell %s: %d checkpoints frozen, %d observed", id,
             cell["points"].array.length, run.obs.length));
+    // An unjudged checkpoint (`attrsUnjudged`: its attributes are not frozen) is no
+    // classmate of anyone's attributes, ours as the reference's (plan §16.6 G3 (b)).
+    bool[string] unjudged;
+    foreach (p; cell["points"].array)
+        if ("attrsUnjudged" in p) unjudged[shortLabel(p["label"].str)] = true;
     foreach (i, p; cell["points"].array) {
         const lab = p["label"].str;
         assert(lab == run.obs[i].label, "cell " ~ id ~ ": checkpoint order " ~ lab);
         foreach (field, f; p["fields"].object) {
-            const ours = ourField(field, run.obs, i, run.baseOurs, baseRef,
+            auto ours = ourField(field, run.obs, i, run.baseOurs, baseRef,
                 i ? &run.obs[i - 1] : null, run.layer);
+            if (field == "attrs" && ours.type == JSONType.array && unjudged.length) {
+                JSONValue[] kept;
+                foreach (m; ours.array) if (m.str !in unjudged) kept ~= m;
+                ours = JSONValue(kept);
+            }
             const law = "law" in f ? f["law"].str : "-";
             if (auto declared = "ours" in f) {
                 // closed first: ours now carries the reference relation (a declared value
@@ -803,7 +846,7 @@ void runCell(const JSONValue fixture, string id) {
     const only = environment.get("VIBE3D_CELL", "");
     if (only.length && only != id) return;
     auto run = playCell(cell);
-    checkRig(cell, run);
+    checkRig(cell, run, dormantHaulDemand(fixture, id));
     const dump = environment.get("VIBE3D_TOPO_REDO_DUMP", "");
     if (dump.length) { dumpCell(cell, run, dump); return; }
     compareCell(cell, run);

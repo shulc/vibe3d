@@ -664,7 +664,7 @@ private immutable string[] kModelIds = [
 
 /// Word occurrences of `ident` in a code view, keyed by the enclosing
 /// declaration (`enclosingSymbols`, line-start attribution); a declaration of
-/// the name (`void x(`, `bool x`) is keyed `<decl>`. `assignOnly`: only an
+/// the name (`void x(`, `bool x`, `AttrImage x(` — S4) is keyed `<decl>`. `assignOnly`: only an
 /// occurrence written to (`x =`, `x op=`, not `==`).
 private string[] identSites(string code, string ident, bool assignOnly) {
     import tests.unit.census_symbols : enclosingSymbols, isIdentChar, symbolAt;
@@ -683,7 +683,7 @@ private string[] identSites(string code, string ident, bool assignOnly) {
         while (b > 0 && (code[b - 1] == ' ' || code[b - 1] == '\t')) --b;
         size_t a = b;
         while (a > 0 && isIdentChar(code[a - 1])) --a;
-        const decl = ["void", "bool"].canFind(code[a .. b]);
+        const decl = ["void", "bool", "AttrImage"].canFind(code[a .. b]);
         if (assignOnly && !decl) {
             size_t e = from;
             while (e < code.length && code[e] == ' ') ++e;
@@ -1276,9 +1276,10 @@ unittest { // (4d')
                                                 files, sites));
 }
 
-// Pins: the per-tool flag is gone; the rebase entry point stays (its one caller
-// is `rebaseOnCurrent_`).
+// Pins: the per-tool flags are gone (S3 the rebase, S4 task 9020 law 4's redo
+// attributes); the rebase entry point stays (its one caller is `rebaseOnCurrent_`).
 static assert(!__traits(hasMember, imported!"tool".ToolSessionPolicy, "rebaseTopologyAfterStep"));
+static assert(!__traits(hasMember, imported!"tool".ToolSessionPolicy, "firstTopologyRedoUsesAfterAttrs"));
 static assert(__traits(hasMember, imported!"tool".TopologyStepClient, "rebaseTopologyStep"));
 
 // ---------------------------------------------------------------------------
@@ -1720,7 +1721,7 @@ unittest { // Tasks 7990/8030: production topology R wiring, not a helper replic
         && es.canFind("history_.invalidateRedo()")
         && es.canFind("topologyFirstGroupLive_")
         && es.canFind("arm.markDormantTopology()")
-        && es.canFind("new TopologyAdjustmentEdit(context, tool_")
+        && es.canFind("new TopologyAdjustmentEdit(context, instanceOf_(t), tool_")
         && edge.canFind("if (topologyDormant) return;"),
         "Edge first-group or full-closed-redo production policy disconnected");
     // Task 8920: the carry is derived (`firstStepCarriesActivation`) — the
@@ -1741,10 +1742,32 @@ unittest { // Tasks 7990/8030: production topology R wiring, not a helper replic
     // operation's base is the session's rebase on the live image.
     assert(bodyAt(es, "private void rebaseOnCurrent_(").canFind("rebaseTopologyStep("),
         "the session's rebase of a new operation lost its call into the tool");
-    assert(es.canFind("!current.sessionPolicy().firstTopologyRedoUsesAfterAttrs")
-        && es.canFind("restoreBefore ? cmd.stepBeforeAttrs() : cmd.stepAfterAttrs()")
-        && !poly.canFind("firstTopologyRedoUsesAfterAttrs: true"),
-        "generic first-topology activation replay lost Polygon attrs/basis law");
+    // Task 9020 (S4, law 4, model doc §R9): the redo attributes are the instance
+    // mechanism, no per-tool flag (compiler fence beside block (4d')). FLOOR: the three
+    // helpers have bodies. NEEDLES (stationary allowed sets, true after S4): one drop
+    // image helper called at the three drops, one seed helper at the two re-creating
+    // redos, one ownership test at the two orphan branches and the drop walk.
+    {
+        import tests.unit.census_symbols : blankUnittestBodies;
+        const esU = blankUnittestBodies(es);
+        foreach (m; ["private bool boundToLive_(", "private void rememberDropImage_(",
+                     "private AttrImage seedRecreated_("])
+            assert(squeeze(bodyAt(esU, m)).length > 2, "S4 floor: " ~ m ~ " has no body");
+        assert(identSites(esU, "rememberDropImage_", false) == ["<decl>:1",
+               "ToolSession.navigateTopology_:1", "ToolSession.undoImpl_:2"],
+               format("S4 needle: rememberDropImage_ sites %s, expected the pair undo, the "
+                      ~ "undoImpl_ tail and its dormant branch",
+                      identSites(esU, "rememberDropImage_", false)));
+        assert(identSites(esU, "seedRecreated_", false) == ["<decl>:1",
+               "ToolSession.navigateTopology_:1", "ToolSession.redoImpl_:1"],
+               format("S4 needle: seedRecreated_ sites %s, expected its declaration and the "
+                      ~ "pair redo of navigateTopology_ and redoImpl_",
+                      identSites(esU, "seedRecreated_", false)));
+        assert(identSites(esU, "boundToLive_", false) == ["<decl>:1",
+               "ToolSession.navigateTopology_:2", "ToolSession.rememberDropImage_:1"],
+               format("S4 needle: boundToLive_ sites %s, expected the undo and redo orphan "
+                      ~ "branches and the drop walk", identSites(esU, "boundToLive_", false)));
+    }
     assert(es.canFind("if (topologyPending_ && reporting_(t)")
         && es.canFind("if (topologyPending_) {")
         && edge.canFind("closeOwnOperation(false);"),

@@ -105,7 +105,6 @@ class PolyInsetTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient,
             activationRow: true,
             commandClose: CommandClose.uiDoor,
             sessionSteps: true, historyTopologySteps: true,
-            firstTopologyRedoUsesAfterAttrs: true,
             opensAt: OpensAt.firstPress,
             imageAttrs: ["inset"], haulAttrs: ["inset"]
         };
