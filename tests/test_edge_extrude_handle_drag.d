@@ -544,6 +544,7 @@ unittest { // Full closed redo leaves a fresh Edge activation dormant.
     st = getJson("/api/tool/state");
     assert(st["session"]["live"].type == JSONType.false_,
         "dormant Edge drag armed a topology operation");
+    immutable double dragWidth = st["width"].floating;
     navigate(true);
     assert(planes() == rearmed && undoLen() == fresh - 1,
         "dormant z1 must remove adjustment and fresh activation together");
@@ -554,14 +555,18 @@ unittest { // Full closed redo leaves a fresh Edge activation dormant.
     assert(planes() == rearmed && undoLen() == fresh + 1
         && getJson("/api/history")["redo"].array.length == 0,
         "dormant r1 must restore the activation and its adjustment together");
-    // Law 4, generic (task 9020 item A; not an Edge Extend capture): the redo re-creates
-    // the instance with its drop seed — the width it held at z1 with its own adjustment
-    // undone, i.e. the arm's (sticky) width, never the drag's.
+    // Law 4, generic (task 9020 item A; L4-s, CAP `ebevel/vbevel/vextrude_dormant_ui/s12_R`
+    // = the arm): the redo re-creates the instance with its drop seed — the width it held
+    // at z1 with its own adjustment undone, i.e. the arm's width, never the drag's. The
+    // VALUE of Edge Extend's dormant arm is NOT asserted: the capture covers the three
+    // arm-opening tools only, Edge Extend's is capture 9's cell C9-6. The fixture-strength
+    // guard is that the drag moved the width off the arm's value.
     st = getJson("/api/tool/state");
     assert(st["session"]["dormant"].type == JSONType.true_ &&
-        abs(st["width"].floating - armWidth) < 1e-5 && abs(armWidth) > 1e-3,
+        abs(st["width"].floating - armWidth) < 1e-5 && abs(dragWidth - armWidth) > 1e-3,
         "dormant r1 restored a live postmode or carried drag attrs: width "
-        ~ st["width"].floating.to!string ~ " (the arm's " ~ armWidth.to!string ~ ")");
+        ~ st["width"].floating.to!string ~ " (the arm's " ~ armWidth.to!string
+        ~ ", the drag's " ~ dragWidth.to!string ~ ")");
 }
 
 unittest { // Interactive Width follows the same closed-redo dormant path.
@@ -636,12 +641,12 @@ unittest { // A scripted write is the actual before-image of the next step.
     assert(getJson("/api/history")["undo"].array[$ - 1]["command"].str ==
         "tool.topology_adjustment",
         "a panel Width after the scripted write is not an attribute-only row");
-    // Expectation (task 9080, S6 door law, model doc §1.1; NOT captured on this path —
-    // the reference's scripted write keeps a row of its own (V4), ours none, so the panel
-    // row is the first after the UI arm and pairs with it; S6 report, differential): Z
-    // undoes the panel row together with the arm, R redoes both, the re-created tool
-    // holding its drop seed — the panel row's before, the scripted 0.1 (law 4).
-    // Was: Z the row alone (0.1), R the row (0.2).
+    // Known divergence under V4 (registry row 471): the reference's scripted write keeps
+    // a row of its own, so its Z takes the panel row alone (0.1) — model prediction from
+    // P3 + the door law (CAP `dormant2_inset_ui/s11_Z`, `s13_R`); this path is not
+    // captured. Flips with V4's P3 row half. Ours: no scripted row, so the panel row is the
+    // first attribute-only row after the UI arm and pairs with it: Z undoes both, R redoes
+    // both, the re-created tool holding its drop seed — the scripted 0.1 (law 4).
     navigate(true);
     assert(planes() == initial && getJson("/api/input/context")["tool"].str == "",
         "interactive Width undo did not take the UI arm with its first attribute-only row");
@@ -682,7 +687,7 @@ unittest { // Pointer-written interactive dormant parameter creates an attr row.
     assert(r["status"].str == "ok" || r["status"].str == "success");
     const image = planes();
     const depth = undoLen();
-    const armWidth = queryWidth();   // sticky from the closed run's drag
+    const armWidth = queryWidth();   // the dormant arm's value: not asserted (capture 9, C9-6)
     assert(abs(armWidth - 0.2) > 1e-3, "rig: the arm's Width equals the row's after (0.2)");
     auto p = postJson("/api/script?interactive=true",
         "tool.attr edge.extrude width 0.2\n");

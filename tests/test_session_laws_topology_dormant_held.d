@@ -1,17 +1,19 @@
 // Law 5 (topology-redo S6, model doc §3 E3): a dormant haul builds no preview. One cell
-// per tool of the captured model (`<tool>-dormant/held`; 11 of the 13, see below): the
-// closed run W, Z, Z, R, R of a captured `*_dormant` cell (PolyExtrude / EdgeExtrude: synthesized on a cell of their rig —
-// arm, first haul, W, Z, Z, R, R — no dormant capture of theirs exists), a UI re-arm, then
-// the button pressed and moved but not released: the mesh must be the re-arm's image. This
-// is OUR cell (no reference frame mid-haul); each tool's preview gate
-// (`if (previewGated()) return;`) has one cell here (SmoothShift two: smooth, thicken).
+// per tool of the captured model (`<tool>-dormant/held`; 12 of the 13, see below): the
+// closed run W, Z, Z, R, R of a captured `*_dormant` cell (PolyExtrude / EdgeExtrude /
+// VertexMerge: synthesized on a cell of their rig — arm, first haul, W, Z, Z, R, R; the
+// extrudes have no dormant capture, and VertexMerge's captured haul merges our whole
+// selection), a UI re-arm, then the button pressed and moved but not released: the mesh
+// must be the re-arm's image. This is OUR cell (no reference frame mid-haul); each tool's
+// preview gate (`if (previewGated()) return;`) has one cell here (SmoothShift two).
 //
 // Rig preconditions (a run that fails one is VOID): the re-arm is dormant, and the image has
-// at least one vertex and one selected element. No cell for VertexMerge and RadialArray: on
-// their captured rigs a held haul cannot move the mesh whatever the gate (the closed run
-// merged the whole selection; our RadialArray haul after the closed run writes no
-// attribute) — measured by striking each gate (S6 drill); their gates' red is the source
-// census. Order: the floor, the script-door pair, one `unittest` per held cell.
+// at least one vertex and one selected element; VertexMerge's closed run left its selection
+// partly merged (its synthesized first haul is a short one, so the held haul has vertices
+// left to merge). No cell for RadialArray: our RadialArray haul after the closed run writes
+// no attribute, so a held haul cannot move the mesh whatever the gate — measured by striking
+// the gate (S6 drill); its gate's red is the source census. Order: the floor, the
+// script-door pair, one `unittest` per held cell.
 
 import std.algorithm : canFind;
 import std.conv : to;
@@ -25,23 +27,27 @@ void main() {}
 enum string kFixture = import("fixtures/topology_redo_law_cells.json");
 
 /// cell name -> the fixture cell that lends its rig and its ladder (`*_dormant`: its steps
-/// before the dormant re-arm; the two extrudes: synthesized from its first arm and haul).
-immutable string[2][] kCells = [
-    ["inset-dormant/held", "inset_dormant"], ["smooth-dormant/held", "smooth_dormant"],
-    ["thicken-dormant/held", "thicken_dormant"], ["array-dormant/held", "array_dormant"],
-    ["clone-dormant/held", "clone_dormant"], ["mirror-dormant/held", "mirror_dormant"],
-    ["ebevel-dormant/held", "ebevel_dormant"], ["vbevel-dormant/held", "vbevel_dormant"],
-    ["vextrude-dormant/held", "vextrude_dormant"], ["pextrude-dormant/held", "pextrude_direct"],
-    ["eextrude-dormant/held", "eextrude_mech"],
+/// before the dormant re-arm; the others: synthesized from its first arm and haul) -> the
+/// synthesized first haul's delta in pixels ("" = the lender's own).
+immutable string[3][] kCells = [
+    ["inset-dormant/held", "inset_dormant", ""], ["smooth-dormant/held", "smooth_dormant", ""],
+    ["thicken-dormant/held", "thicken_dormant", ""], ["array-dormant/held", "array_dormant", ""],
+    ["clone-dormant/held", "clone_dormant", ""], ["mirror-dormant/held", "mirror_dormant", ""],
+    ["ebevel-dormant/held", "ebevel_dormant", ""], ["vbevel-dormant/held", "vbevel_dormant", ""],
+    ["vextrude-dormant/held", "vextrude_dormant", ""],
+    ["pextrude-dormant/held", "pextrude_direct", ""], ["eextrude-dormant/held", "eextrude_mech", ""],
+    // the three rig vertices are 0.002 and 0.0036 apart: a 4 px first haul merges the
+    // near pair only, the held 14 px haul would merge the third (measured, S6 fix)
+    ["vmerge-dormant/held", "vmerge_discrim", "[4,0]"],
 ];
 
-unittest { // the floor: 11 cells (the 13 ids less VertexMerge and RadialArray), each lender in the fixture
+unittest { // the floor: 12 cells (the 13 ids less RadialArray), each lender in the fixture
     const fx = parseJSON(kFixture);
     size_t found;
     foreach (row; kCells)
         foreach (c; fx["cells"].array) if (c["id"].str == row[1]) ++found;
-    assert(kCells.length == 11 && found == 11, format("held cells: %d rows, %d lenders found, "
-        ~ "frozen at 11 / 11", kCells.length, found));
+    assert(kCells.length == 12 && found == 12, format("held cells: %d rows, %d lenders found, "
+        ~ "frozen at 12 / 12", kCells.length, found));
 }
 
 private bool skipFor(string name) {
@@ -61,7 +67,8 @@ private string meshImage() {
 }
 
 /// The ladder before the dormant re-arm, and the haul the held press repeats.
-private void ladder(const JSONValue cell, out JSONValue[] steps, out JSONValue haul) {
+private void ladder(const JSONValue cell, out JSONValue[] steps, out JSONValue haul,
+                    string firstDelta = "") {
     const all = cell["steps"].array;
     if (canFind(cell["id"].str, "_dormant")) {
         size_t last;
@@ -75,20 +82,25 @@ private void ladder(const JSONValue cell, out JSONValue[] steps, out JSONValue h
         if (arm.type != JSONType.object && s["op"].str == "arm") arm = s;
         if (first.type != JSONType.object && s["op"].str == "haul") first = s;
     }
+    haul = first;
+    if (firstDelta.length) {
+        first = parseJSON(first.toString);
+        first["delta"] = parseJSON(firstDelta);
+    }
     steps = [arm, first];
     foreach (k; ["W", "Z", "Z", "R", "R"])
         steps ~= parseJSON(format(`{"op":"key","key":"%s","label":"x_%s"}`, k, k));
-    haul = first;
 }
 
-private void heldCell(string name, string lender) {
+private void heldCell(string name, string lender, string firstDelta) {
     if (skipFor(name)) return;
     const cell = cellOf(lender);
     const rig = rigOf(cell["variant"].str);
     setupCell(cell, rig);
+    const v0 = getJson("/api/model")["vertices"].array.length;
     JSONValue[] steps;
     JSONValue haul;
-    ladder(cell, steps, haul);
+    ladder(cell, steps, haul, firstDelta);
     foreach (s; steps) runStep(s, rig, name ~ "/" ~ s["label"].str);
     runStep(parseJSON(`{"op":"arm","door":"ui","label":"rearm"}`), rig, name ~ "/rearm");
     auto st = getJson("/api/tool/state");
@@ -100,6 +112,11 @@ private void heldCell(string name, string lender) {
         + sel["selectedFaces"].array.length;
     assert(getJson("/api/model")["vertices"].array.length >= 1 && nSel >= 1,
         "rig VOID " ~ name ~ ": the arm image holds no vertex or no selection");
+    if (rig.tool == "vert.merge") {
+        const v = getJson("/api/model")["vertices"].array.length;
+        assert(v == v0 - 1, format("rig VOID %s: the closed run did not leave the selection "
+            ~ "partly merged (%d -> %d vertices, one merge expected)", name, v0, v));
+    }
     holdHaul(haul, rig, name);
     const held = meshImage();
     releaseHeld();
@@ -146,14 +163,15 @@ unittest {
     assert(r["status"].str == "ok", name ~ ": tool off: " ~ r.toString);
 }
 
-unittest { heldCell(kCells[0][0], kCells[0][1]); }
-unittest { heldCell(kCells[1][0], kCells[1][1]); }
-unittest { heldCell(kCells[2][0], kCells[2][1]); }
-unittest { heldCell(kCells[3][0], kCells[3][1]); }
-unittest { heldCell(kCells[4][0], kCells[4][1]); }
-unittest { heldCell(kCells[5][0], kCells[5][1]); }
-unittest { heldCell(kCells[6][0], kCells[6][1]); }
-unittest { heldCell(kCells[7][0], kCells[7][1]); }
-unittest { heldCell(kCells[8][0], kCells[8][1]); }
-unittest { heldCell(kCells[9][0], kCells[9][1]); }
-unittest { heldCell(kCells[10][0], kCells[10][1]); }
+unittest { heldCell(kCells[0][0], kCells[0][1], kCells[0][2]); }
+unittest { heldCell(kCells[1][0], kCells[1][1], kCells[1][2]); }
+unittest { heldCell(kCells[2][0], kCells[2][1], kCells[2][2]); }
+unittest { heldCell(kCells[3][0], kCells[3][1], kCells[3][2]); }
+unittest { heldCell(kCells[4][0], kCells[4][1], kCells[4][2]); }
+unittest { heldCell(kCells[5][0], kCells[5][1], kCells[5][2]); }
+unittest { heldCell(kCells[6][0], kCells[6][1], kCells[6][2]); }
+unittest { heldCell(kCells[7][0], kCells[7][1], kCells[7][2]); }
+unittest { heldCell(kCells[8][0], kCells[8][1], kCells[8][2]); }
+unittest { heldCell(kCells[9][0], kCells[9][1], kCells[9][2]); }
+unittest { heldCell(kCells[10][0], kCells[10][1], kCells[10][2]); }
+unittest { heldCell(kCells[11][0], kCells[11][1], kCells[11][2]); }

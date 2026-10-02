@@ -1584,8 +1584,11 @@ private struct ToolSession {
         link.recordToken = &recordTokenFor_;
         link.previewGated = &previewGated;
         t.bindSession(link);
+        // A dormant arm of a tool that opens its operation at the arm keeps the
+        // arm's values, not the closed run's (S6 PF-1, plan §18.2; CAP
+        // ebevel/vbevel/vextrude_dormant(_ui) s09; the mechanism is capture 9's).
         auto ownedAttrs = topologyAttrsFor_(id, token);
-        if (topologyDormant_ && ownedAttrs.empty)
+        if (topologyDormant_ && ownedAttrs.empty && !opensAtArm(t.sessionPolicy()))
             ownedAttrs = closedAttrs;
         if (t.sessionPolicy().historyTopologySteps && topologyDormant_ &&
             !ownedAttrs.empty)

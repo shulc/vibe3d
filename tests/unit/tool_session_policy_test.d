@@ -1142,8 +1142,11 @@ unittest { // (4e)
     // NEEDLES (stationary allowed sets, true after S6). The dormant arm is the model's;
     // the pair is by the row's class; a dormant press does not arm the post mode.
     const arm = squeeze(bodyAt(ts, "void noteArm(string id, ulong token, bool postmodeArmed = true)"));
-    assert(arm.canFind("topologyDormant_=capturedTopologyModel(t.sessionPolicy())&&"),
-           "S6 needle: noteArm's dormant term is not the captured model's: " ~ arm);
+    assert(arm.canFind("topologyDormant_=capturedTopologyModel(t.sessionPolicy())&&")
+           && arm.canFind("if(topologyDormant_&&ownedAttrs.empty&&!opensAtArm(t.sessionPolicy()))"
+                          ~ "ownedAttrs=closedAttrs;"),
+           "S6 needle: noteArm's dormant term is not the captured model's, or a dormant arm of "
+           ~ "an arm-opening tool takes the closed run's attributes (PF-1): " ~ arm);
     assert(identSites(es, "attrRowJoinsActivation_", false)
            == ["<decl>:1", "ToolSession.undoImpl_:1"],
            format("S6 needle: the UI pair of an attribute-only row is read at %s",
