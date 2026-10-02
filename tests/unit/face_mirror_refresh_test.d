@@ -155,3 +155,24 @@ unittest { // a degenerate face's corners carry the (0,1,0) fallback in BOTH str
                 format("corner %d: %s normal %s, expected the (0,1,0) fallback", c,
                        k < 6 ? "flat" : "smooth", data[c * 9 + (k < 6 ? 3 : 6) .. c * 9 + (k < 6 ? 6 : 9)]));
 }
+
+unittest { // the fan law: (f0, fi, fi+1) per triangle, positions and the face normal in order
+    // Absolute, like the fallback cell: the differential cells cannot see a
+    // reordered fan (the oracle shares the writer). A CCW unit quad in XY.
+    Mesh m;
+    m.vertices = [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 1, 0), Vec3(0, 1, 0)];
+    m.faces ~= [0u, 1, 2, 3];
+    GpuMesh gpu;
+    fullUpload(gpu, m);
+    const data = gpu.refreshFaceDataCpu(m, m.vertices);
+    immutable uint[6] order = [0, 1, 2, 0, 2, 3];
+    assert(data.length == order.length * 9,
+        format("rig: the quad fans to %d floats, expected 6 corners of 9", data.length));
+    foreach (c, v; order) {
+        immutable Vec3 p = Vec3(data[c * 9], data[c * 9 + 1], data[c * 9 + 2]);
+        assert(p == m.vertices[v], format("fan corner %d is %s, the fan (f0, fi, fi+1) puts vertex %d (%s) there",
+                                          c, p, v, m.vertices[v]));
+        assert(data[c * 9 + 3 .. c * 9 + 6] == [0.0f, 0.0f, 1.0f],
+            format("fan corner %d: flat normal %s, a CCW quad in XY faces +Z", c, data[c * 9 + 3 .. c * 9 + 6]));
+    }
+}
