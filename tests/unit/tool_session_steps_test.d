@@ -2445,6 +2445,34 @@ unittest { // U3: the pen as the predecessor (§4.6) continues its session too
                                     pf3Token(r)));
 }
 
+// Task 9170 (S5, law 3, model doc §2.4 row N6: «по N3, если navBefore_.armed»): the undo of
+// B's UI pair re-begins A (A's own step on top, armed, ANOTHER token) and ends B's post mode,
+// so B's refire leaves the redo; B's opener and its activation stay. No captured cell has a
+// refire of B there (the Capture-7 cells haul B once): this pins the expression's N6 half.
+unittest { // S5 N6: the undo that re-begins A cuts the post mode it ends — B's refire
+    auto r = pf3Rig();
+    auto a = new PressFlagTool;
+    a.m = &r.m; a.h = r.h; a.view = new View(0, 0, 1, 1);
+    a.basis = MeshSnapshot.capture(r.m);
+    r.active = a;
+    r.s.noteArm("t.a", 5, false);
+    s2bHaul(r.s, &a.pressBegins, &a.pressEnds, &r.m);
+    pf3ArmB(r, a, "t.a");
+    r.s.notePointerDown();
+    r.b.haulStep(1.0f);
+    assert(r.h.undoEntries().length == 4 && s2bTopRow(r.h).stepOrigin() == StepOrigin.refire,
+        "S5 N6 rig: B's second haul is not a refire row on top of A's row, B's arm and opener");
+    assert(r.s.navigate(true) && r.h.redoEntries().length == 1 && r.active is r.b,
+        "S5 N6 rig: the undo of B's refire left B or did not step (N1 keeps the redo)");
+    assert(r.s.navigate(true) && r.active is a && pf3Token(r) == 5
+           && r.s.sessionStateJson()["armed"].type == JSONType.true_,
+        "S5 N6 rig: the undo of B's pair did not re-begin A in its own session");
+    assert(r.h.redoEntries().length == 2,
+        format("S5 N6: after the undo that ended B's post mode the redo holds %s rows, expected "
+               ~ "B's activation and opener (2) — B's refire must be cut (law 3)",
+               r.h.redoEntries().length));
+}
+
 unittest { // U4: an activation that refuses its undo hands no token over (the pair is split)
     static final class RefusingArm : ToolActivationCommand {
         // a predecessor of the SAME id with another token: an unguarded adopt would take it
