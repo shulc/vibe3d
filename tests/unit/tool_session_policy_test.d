@@ -1017,7 +1017,8 @@ unittest { // (4c)
     sort(gates);
     // Polarity: the allowed set, true after S6 (task 9080; S2b: Mirror's evaluate alone).
     // A gate line struck narrows the list to the other eleven; its tool's
-    // `<tool>-dormant/held` suite cell reddens too.
+    // `<tool>-dormant/held` suite cell reddens too (VertexMerge, RadialArray: this list
+    // alone — no rig of theirs moves the mesh mid-haul, S6 drill).
     assert(gates == ["ArrayTool.rebuildPreview:1", "CloneTool.rebuildPreview:1",
                      "EdgeBevelTool.rebuildPreview:1", "EdgeExtrudeTool.rebuildPreview:1",
                      "MirrorTool.evaluate:1", "PolyExtrudeTool.rebuildPreview:1",

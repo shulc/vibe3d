@@ -1,13 +1,17 @@
 // Law 5 (topology-redo S6, model doc §3 E3): a dormant haul builds no preview. One cell
-// per tool of the captured model (`<tool>-dormant/held`): the closed run W, Z, Z, R, R of a
-// captured `*_dormant` cell (PolyExtrude / EdgeExtrude: synthesized on a cell of their rig —
+// per tool of the captured model (`<tool>-dormant/held`; 11 of the 13, see below): the
+// closed run W, Z, Z, R, R of a captured `*_dormant` cell (PolyExtrude / EdgeExtrude: synthesized on a cell of their rig —
 // arm, first haul, W, Z, Z, R, R — no dormant capture of theirs exists), a UI re-arm, then
 // the button pressed and moved but not released: the mesh must be the re-arm's image. This
 // is OUR cell (no reference frame mid-haul); each tool's preview gate
-// (`if (previewGated()) return;`) has exactly one cell here (SmoothShift two: smooth, thicken).
+// (`if (previewGated()) return;`) has one cell here (SmoothShift two: smooth, thicken).
 //
 // Rig preconditions (a run that fails one is VOID): the re-arm is dormant, and the image has
-// at least one vertex and one selected element. Order: the floor, then one `unittest` per cell.
+// at least one vertex and one selected element. No cell for VertexMerge and RadialArray: on
+// their captured rigs a held haul cannot move the mesh whatever the gate (the closed run
+// merged the whole selection; our RadialArray haul after the closed run writes no
+// attribute) — measured by striking each gate (S6 drill); their gates' red is the source
+// census. Order: the floor, the script-door pair, one `unittest` per held cell.
 
 import std.algorithm : canFind;
 import std.conv : to;
@@ -24,21 +28,20 @@ enum string kFixture = import("fixtures/topology_redo_law_cells.json");
 /// before the dormant re-arm; the two extrudes: synthesized from its first arm and haul).
 immutable string[2][] kCells = [
     ["inset-dormant/held", "inset_dormant"], ["smooth-dormant/held", "smooth_dormant"],
-    ["thicken-dormant/held", "thicken_dormant"], ["vmerge-dormant/held", "vmerge_dormant"],
-    ["radial-dormant/held", "radial_dormant"], ["array-dormant/held", "array_dormant"],
+    ["thicken-dormant/held", "thicken_dormant"], ["array-dormant/held", "array_dormant"],
     ["clone-dormant/held", "clone_dormant"], ["mirror-dormant/held", "mirror_dormant"],
     ["ebevel-dormant/held", "ebevel_dormant"], ["vbevel-dormant/held", "vbevel_dormant"],
     ["vextrude-dormant/held", "vextrude_dormant"], ["pextrude-dormant/held", "pextrude_direct"],
     ["eextrude-dormant/held", "eextrude_mech"],
 ];
 
-unittest { // the floor: 13 cells, one per id of the captured model, each lender in the fixture
+unittest { // the floor: 11 cells (the 13 ids less VertexMerge and RadialArray), each lender in the fixture
     const fx = parseJSON(kFixture);
     size_t found;
     foreach (row; kCells)
         foreach (c; fx["cells"].array) if (c["id"].str == row[1]) ++found;
-    assert(kCells.length == 13 && found == 13, format("held cells: %d rows, %d lenders found, "
-        ~ "frozen at 13 / 13", kCells.length, found));
+    assert(kCells.length == 11 && found == 11, format("held cells: %d rows, %d lenders found, "
+        ~ "frozen at 11 / 11", kCells.length, found));
 }
 
 private bool skipFor(string name) {
@@ -106,6 +109,43 @@ private void heldCell(string name, string lender) {
     assert(r["status"].str == "ok", name ~ ": tool off: " ~ r.toString);
 }
 
+// The door law on the SCRIPT door (model doc §1.1; ours — no captured cell undoes a
+// script-door dormant activation): the attribute-only row of a dormant haul and its
+// activation are two steps each way. Z1 takes the row (the tool stays), Z2 the
+// activation, R1 brings the activation back ALONE (the row stays in redo).
+unittest {
+    enum name = "inset-dormant/script-door";
+    if (skipFor(name)) return;
+    const cell = cellOf("inset_dormant");
+    const rig = rigOf(cell["variant"].str);
+    setupCell(cell, rig);
+    JSONValue[] steps;
+    JSONValue haul;
+    ladder(cell, steps, haul);
+    foreach (s; steps) runStep(s, rig, name ~ "/" ~ s["label"].str);
+    runStep(parseJSON(`{"op":"arm","door":"script","label":"rearm"}`), rig, name ~ "/rearm");
+    assert(getJson("/api/tool/state")["session"]["dormant"].type == JSONType.true_,
+        "rig VOID " ~ name ~ ": the script re-arm is not dormant");
+    runStep(haul, rig, name ~ "/haul");
+    auto top() { return getJson("/api/history")["undo"].array[$ - 1]["command"].str; }
+    long redoLen() { return cast(long) getJson("/api/history")["redo"].array.length; }
+    string on() { return getJson("/api/input/context")["tool"].str; }
+    assert(top() == "tool.topology_adjustment",
+        "rig VOID " ~ name ~ ": the dormant haul wrote no attribute-only row: " ~ top());
+    runStep(parseJSON(`{"op":"key","key":"Z","label":"z1"}`), rig, name ~ "/z1");
+    assert(on() == rig.tool && redoLen() == 1,
+        format("%s: Z1 took more than the attribute-only row (tool %s, redo %d)", name, on(), redoLen()));
+    runStep(parseJSON(`{"op":"key","key":"Z","label":"z2"}`), rig, name ~ "/z2");
+    assert(on() != rig.tool && redoLen() == 2,
+        format("rig VOID %s: Z2 did not take the activation (tool %s, redo %d)", name, on(), redoLen()));
+    runStep(parseJSON(`{"op":"key","key":"R","label":"r1"}`), rig, name ~ "/r1");
+    assert(on() == rig.tool && redoLen() == 1,
+        format("%s: R1 of a script-door activation brought its attribute-only row back with it "
+               ~ "(tool %s, redo %d)", name, on(), redoLen()));
+    auto r = postJson("/api/command", "tool.set " ~ rig.tool ~ " off");
+    assert(r["status"].str == "ok", name ~ ": tool off: " ~ r.toString);
+}
+
 unittest { heldCell(kCells[0][0], kCells[0][1]); }
 unittest { heldCell(kCells[1][0], kCells[1][1]); }
 unittest { heldCell(kCells[2][0], kCells[2][1]); }
@@ -117,5 +157,3 @@ unittest { heldCell(kCells[7][0], kCells[7][1]); }
 unittest { heldCell(kCells[8][0], kCells[8][1]); }
 unittest { heldCell(kCells[9][0], kCells[9][1]); }
 unittest { heldCell(kCells[10][0], kCells[10][1]); }
-unittest { heldCell(kCells[11][0], kCells[11][1]); }
-unittest { heldCell(kCells[12][0], kCells[12][1]); }
