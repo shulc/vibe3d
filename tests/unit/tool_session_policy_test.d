@@ -664,7 +664,7 @@ private immutable string[] kModelIds = [
 /// then the presets (`registerToolPresets`). Each id is built by its
 /// PRODUCTION factory — a preset's policy is its constructed instance's, not a
 /// blitted class initializer's (the transform presets set fields at build).
-private string[2][] productionPolicies(out size_t ids) {
+private string[4][] productionPolicies(out size_t ids) {
     import ai.exploration : AiExplorationController;
     import ai.interaction_log_writer : AiInteractionLogWriter;
     import command_history : CommandHistory;
@@ -680,7 +680,8 @@ private string[2][] productionPolicies(out size_t ids) {
     import registry : Registry;
     import seltype : SelMode;
     import session_owner : Session;
-    import tool : capturedTopologyModel, opensAtArm;
+    import tool : capturedTopologyModel, firstStepCarriesActivation, opensAtArm,
+        postmodeStartsOnPressFor;
     import tool_presets : registerToolPresets;
     import tools.edit.topology_pen.defs : TopoPenFactories;
     import view : View;
@@ -726,12 +727,14 @@ private string[2][] productionPolicies(out size_t ids) {
     r.app.aiLogWriter = new AiInteractionLogWriter("");
     registerTools(r.app);
     registerToolPresets(r.registry, loadToolPresets("config/tool_presets.yaml"));
-    string[2][] rows;     // [id, "model"|"model+arm"|"topo"|""]
+    string[4][] rows;     // [id, "model"|"model+arm"|"topo"|"", carries, startsOnPress]
     foreach (id; r.registry.toolIds()) {
         ++ids;
         const pol = r.registry.toolFactory(id)().sessionPolicy();
         rows ~= [id, capturedTopologyModel(pol) ? (opensAtArm(pol) ? "model+arm" : "model")
-                     : pol.historyTopologySteps ? "topo" : ""];
+                     : pol.historyTopologySteps ? "topo" : "",
+                 firstStepCarriesActivation(pol) ? "carries" : "",
+                 postmodeStartsOnPressFor(pol) ? "onPress" : ""];
     }
     return rows;
 }
@@ -783,13 +786,15 @@ unittest { // (4b)
     // the structural list is false before S2a (three ids opened at the press).
     size_t ids;
     auto rows = productionPolicies(ids);
-    string[] model, armModel, topo;
+    string[] model, armModel, topo, carries, onPress;
     foreach (row; rows) {
         if (row[1].startsWith("model")) model ~= row[0];
         if (row[1] == "model+arm") armModel ~= row[0];
         if (row[1].length) topo ~= row[0];
+        if (row[2].length) carries ~= row[0];
+        if (row[3].length) onPress ~= row[0];
     }
-    sort(model); sort(armModel); sort(topo);
+    sort(model); sort(armModel); sort(topo); sort(carries); sort(onPress);
     assert(ids == 71 && rows.length == 71,
            format("S2a model census: the production registry built %s ids, measured 71", ids));
     assert(model == kModelIds,
@@ -853,6 +858,16 @@ unittest { // (4b)
            format("S2a structural: %s history-topology ids, measured 14", topo.length));
     assert(armModel == ["edge.bevel", "edge.extrude", "mesh.vertexBevel", "mesh.vertexExtrude"],
            format("S2a structural: opensAtArm among the model ids is %s", armModel));
+    // The two derived answers over the whole registry: the nine press-opened
+    // model ids, plus Edge Extend's declared carry / the declared on-press
+    // transform ids. Polarity: false before S2a, true after.
+    enum string[] pressModel = ["mesh.arrayTool", "mesh.clone", "mesh.mirrorTool",
+        "mesh.polyInsetTool", "mesh.radialArrayTool", "mesh.smoothShiftTool", "mesh.thickenTool",
+        "poly.extrude", "vert.merge"];
+    assert(carries == (["edge.extend"] ~ pressModel),
+           format("S2a structural: firstStepCarriesActivation answers for %s", carries));
+    assert(onPress == (pressModel[0 .. 7] ~ ["poly.extrude", "rotate", "vert.merge"]),
+           format("S2a structural: postmodeStartsOnPressFor answers for %s", onPress));
 }
 
 // ---------------------------------------------------------------------------
