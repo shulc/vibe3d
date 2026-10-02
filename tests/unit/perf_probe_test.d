@@ -648,6 +648,7 @@ unittest { // SP3 census: each upload-path timer opens right after its path's g_
     import std.file : readText;
     import std.format : format;
     import std.path : buildPath, dirName;
+    import std.algorithm : max;
     import std.string : count, indexOf, lastIndexOf, strip, startsWith;
     import tests.unit.census_symbols : blankNonCode, isIdentChar;
 
@@ -671,11 +672,12 @@ unittest { // SP3 census: each upload-path timer opens right after its path's g_
         assert(code[v + 5 .. e] == row[1],
             format("SP3 census: %s sits in %s, expected %s", site, code[v + 5 .. e], row[1]));
         // the statement before the timer's own is the `g_fc.upload(` counter
-        immutable head = code[0 .. p].strip;
-        immutable q = head[0 .. $ - 1].lastIndexOf(';');
-        immutable q2 = head[0 .. q].lastIndexOf(';') > head[0 .. q].lastIndexOf('{')
-            ? head[0 .. q].lastIndexOf(';') : head[0 .. q].lastIndexOf('{');
-        immutable prev = head[q2 + 1 .. q + 1].strip;
+        static ptrdiff_t lastDelim(string t) {
+            return max(t.lastIndexOf(';'), max(t.lastIndexOf('{'), t.lastIndexOf('}')));
+        }
+        immutable q = lastDelim(code[0 .. p]);       // end of the statement before the timer's
+        immutable q2 = lastDelim(code[0 .. q]);
+        immutable prev = code[q] == ';' ? code[q2 + 1 .. q + 1].strip : "{ (a block opening)";
         assert(prev.startsWith("g_fc.upload("),
             format("SP3 census: %s must follow its path's g_fc.upload( (uploads that "
                  ~ "touched a buffer), but follows `%s`", site, prev));
