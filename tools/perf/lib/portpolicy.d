@@ -35,9 +35,12 @@ PortRange[] gateWorkerPortRanges() {
 }
 
 /// Task-lane HTTP ports: tools/local/task-wt-new.sh hands each lane a 10-port
-/// block at 8300 + 10*((first/block) % 60). An explicit lane port is the
-/// normal way to run perf in a lane, so it is ADMITTED; only the default must
-/// stay out of it (a default run would clear some lane's instance).
+/// block at 8300 + 10*((first/block) % 60). This window COPIES that formula
+/// (60 blocks of 10 from 8300) rather than deriving it: the script lives in
+/// the private tree, which this module cannot read. Change both together. An
+/// explicit lane port is the normal way to run perf in a lane, so it is
+/// ADMITTED; only the default must stay out of it (a default run would clear
+/// some lane's instance).
 enum PortRange kLanePortBlocks = PortRange(8300, 8900, "task-lane port blocks");
 
 /// Default port: outside every gate worker window and every lane block.
@@ -48,8 +51,12 @@ enum string kAllowWorkerPortFlag = "allow-gate-worker-port";
 
 /// A port the policy has admitted. Not default-constructible and its
 /// constructor is module-private: `admitPerfPort` is the only way to get one.
+/// `value_` is immutable, so neither a tuple-of nor a get-member write can
+/// change it and a held `PerfPort` cannot be reassigned. What the type cannot
+/// refuse (its init value, void initialisation, a pointer cast, a string
+/// mix-in) is refused by the raw-text census in tests/unit/perf_port_policy_test.d.
 struct PerfPort {
-    private ushort value_;
+    private immutable ushort value_;
     @disable this();
     private this(ushort v) { value_ = v; }
     ushort value() const { return value_; }

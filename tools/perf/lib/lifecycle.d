@@ -142,6 +142,8 @@ string[] vibePidsOnPort(ushort port) {
 ///     vibe3d did not become responsive
 ///     [http] Error starting server: Unable to bind socket: Address already in use
 ///
+/// (8088 was the harness default then; it is now 8990, see lib.portpolicy.)
+///
 /// `3083949 []` — an EMPTY command line. `vibePidsOnPort` selects with
 /// `pgrep -f`, which matches command LINES, so a process whose cmdline is
 /// unreadable cannot be selected by ANY pattern; `killStaleVibe` saw an empty
