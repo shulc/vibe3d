@@ -192,32 +192,50 @@ final class ViewportCompositor {
         if (scissor)   glEnable(GL_SCISSOR_TEST);
         ++fbo.compositeRuns;
 
-        debug {
-            // Postcondition: the scene FBO bound for draw and read, draw
-            // buffers {C0}, read buffer C0, viewport = cell, and the state the
-            // stage touched as on entry.
-            GLint dr, rd, db0, db1, rb, prog, vao, act, mask;
-            GLint[4] vpNow;
-            glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &dr);
-            glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &rd);
-            glGetIntegerv(GL_DRAW_BUFFER0, &db0);
-            glGetIntegerv(GL_DRAW_BUFFER1, &db1);
-            glGetIntegerv(GL_READ_BUFFER, &rb);
-            glGetIntegerv(GL_CURRENT_PROGRAM, &prog);
-            glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &vao);
-            glGetIntegerv(GL_ACTIVE_TEXTURE, &act);
-            glGetIntegerv(GL_DEPTH_WRITEMASK, &mask);
-            glGetIntegerv(GL_VIEWPORT, vpNow.ptr);
-            assert(dr == fbo.fbo && rd == fbo.fbo, "composite: scene FBO not re-bound");
-            assert(db0 == GL_COLOR_ATTACHMENT0 && db1 == GL_NONE && rb == GL_COLOR_ATTACHMENT0,
-                   "composite: scene draw/read buffers are not {C0}");
-            assert(prog == prevProgram && vao == prevVao && act == prevActive
-                   && mask == prevDepthMask && vpNow == prevViewport,
-                   "composite: program/VAO/active unit/depth mask/viewport not restored");
-            assert((glIsEnabled(GL_DEPTH_TEST) != 0) == depthTest
-                   && (glIsEnabled(GL_BLEND) != 0) == blend,
-                   "composite: depth test / blend not restored");
+        debug fbo.compositePostcondition = postconditionError(fbo.fbo, prevProgram, prevVao,
+            prevActive, prevDepthMask, prevViewport, prevTex, depthTest, blend, cull, scissor);
+    }
+
+    /// Debug builds: the stage's postcondition, read back from GL — the scene
+    /// FBO bound for draw and read, draw buffers {C0}, read buffer C0, and the
+    /// state it touched as on entry. "ok" or the first violation, recorded per
+    /// cell (`/api/viewport/display` "compositePostcondition") so a suite cell
+    /// reads it instead of a debug assert ending the process.
+    debug private static string postconditionError(uint sceneFbo, GLint prog0, GLint vao0,
+            GLint act0, GLint mask0, const GLint[4] vp0, const GLint[3] tex0,
+            bool depthTest, bool blend, bool cull, bool scissor) {
+        GLint dr, rd, db0, db1, rb, prog, vao, act, mask;
+        GLint[4] vpNow;
+        glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &dr);
+        glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &rd);
+        glGetIntegerv(GL_DRAW_BUFFER0, &db0);
+        glGetIntegerv(GL_DRAW_BUFFER1, &db1);
+        glGetIntegerv(GL_READ_BUFFER, &rb);
+        glGetIntegerv(GL_CURRENT_PROGRAM, &prog);
+        glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &vao);
+        glGetIntegerv(GL_ACTIVE_TEXTURE, &act);
+        glGetIntegerv(GL_DEPTH_WRITEMASK, &mask);
+        glGetIntegerv(GL_VIEWPORT, vpNow.ptr);
+        if (dr != sceneFbo || rd != sceneFbo) return "scene FBO not re-bound for draw and read";
+        if (db0 != GL_COLOR_ATTACHMENT0 || db1 != GL_NONE) return "scene draw buffers are not {C0}";
+        if (rb != GL_COLOR_ATTACHMENT0) return "scene read buffer is not C0";
+        if (prog != prog0) return "program not restored";
+        if (vao != vao0) return "vertex array not restored";
+        if (act != act0) return "active texture unit not restored";
+        if (mask != mask0) return "depth mask not restored";
+        if (vpNow != vp0) return "viewport not restored";
+        if ((glIsEnabled(GL_DEPTH_TEST) != 0) != depthTest) return "depth test not restored";
+        if ((glIsEnabled(GL_BLEND) != 0) != blend) return "blend not restored";
+        if ((glIsEnabled(GL_CULL_FACE) != 0) != cull) return "cull face not restored";
+        if ((glIsEnabled(GL_SCISSOR_TEST) != 0) != scissor) return "scissor test not restored";
+        foreach (u; 0 .. 3) {
+            GLint t;
+            glActiveTexture(GL_TEXTURE0 + u);
+            glGetIntegerv(GL_TEXTURE_BINDING_2D, &t);
+            if (t != tex0[u]) { glActiveTexture(cast(GLenum)act); return "texture unit binding not restored"; }
         }
+        glActiveTexture(cast(GLenum)act);
+        return "ok";
     }
 
     /// The ONE place a pass's framebuffers are bound and its C0 attached.

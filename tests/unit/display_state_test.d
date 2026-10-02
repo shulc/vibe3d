@@ -524,6 +524,7 @@ unittest {
         ViewportDisplay d;
         d.active.style = style;
         d.cavity.mode  = mode;
+        d.cavity.samples = 33;   // off its default: an unresolved plan must not carry it
         d.retopology   = retopo;
         immutable DrawPlan a = resolveDrawPlan(d, false);
         immutable DrawPlan b = resolveDrawPlan(d, true);
@@ -532,6 +533,9 @@ unittest {
         assert(a.composite.empty == !want,
             "E2: active composite " ~ (want ? "must carry" : "must be empty") ~ " — " ~ ctx);
         if (want) assert(a.composite.cavity == mode, "E2: active composite mode — " ~ ctx);
+        // An unresolved composite is the INIT value, whatever the parameters
+        // (a hidden parameter change must not re-render the cell).
+        else assert(a.composite == CompositePlan.init, "E2: an empty composite must be CompositePlan.init — " ~ ctx);
         assert(b.composite.empty, "E2: the backdrop plan never carries a composite — " ~ ctx);
         assert(!a.clearDepthFirst || a.composite.empty, "E2: clearDepthFirst ⇒ composite.empty — " ~ ctx);
         immutable ubyte flags = (style == DisplayStyle.Shaded && !retopo) ? kEffectCavityEligible : 0;

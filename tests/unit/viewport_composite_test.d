@@ -53,6 +53,15 @@ unittest { // the table per cavity mode: count floor first, then every pass lega
     assert(modes == 4, "E4 floor: every CavityMode");
 }
 
+unittest { // effectIdsOf maps every field of the cell's FBO (distinct ids, so a swap is seen)
+    import viewport : ViewportFbo;
+    ViewportFbo f;
+    f.fbo = 1; f.effectsFbo = 2; f.colorTex = 3; f.depthTex = 4; f.gbufTex = 5;
+    f.compositeSrcTex = 6; f.aoTex = [7, 8];
+    assert(effectIdsOf(f) == EffectIds(1, 2, 3, 4, 5, 6, [7, 8]),
+        format("effectIdsOf mapped %s", effectIdsOf(f)));
+}
+
 unittest { // positive control [E5]: the predicate rejects each illegal shape
     const good = compositePassTable(planOf(CavityMode.Screen), ids());
     assert(passTableViolation(good[], ids()) is null, "control: the shipped table must be legal");

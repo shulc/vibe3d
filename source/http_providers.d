@@ -1078,9 +1078,10 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                 b.put(format(`"compositeRuns":%d,"compositeBindings":[`, f.compositeRuns));
                 foreach (i, r; f.compositeBindings)
                     b.put(format(`%s{"bound":%d,"attached":%d}`, i ? "," : "", r.bound, r.attached));
-                b.put(format(`],"fboIds":{"scene":%d,"effects":%d,"color":%d,"gbuf":%d,` ~
-                    `"compositeSrc":%d}`, f.fbo, f.effectsFbo, f.colorTex, f.gbufTex,
-                    f.compositeSrcTex));
+                b.put(format(`],"compositePostcondition":%s,` ~
+                    `"fboIds":{"scene":%d,"effects":%d,"color":%d,"gbuf":%d,` ~
+                    `"compositeSrc":%d}`, JSONValue(f.compositePostcondition).toString,
+                    f.fbo, f.effectsFbo, f.colorTex, f.gbufTex, f.compositeSrcTex));
                 return b.data;
             }
             static string stateJson(in DisplayState s) {

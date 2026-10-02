@@ -92,6 +92,8 @@ struct ViewportFbo {
     /// to its C0. `/api/viewport/display` reports both.
     uint compositeRuns;
     CompositeBinding[] compositeBindings;
+    /// Debug builds: the latest run's postcondition ("ok" or the violation).
+    string compositePostcondition = "unchecked";
 
     /// Open the surface passes of a frame under `p`: when the plan is
     /// non-empty the G-buffer is allocated, joins the draw set ({C0, C1})

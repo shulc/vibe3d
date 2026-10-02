@@ -121,8 +121,14 @@ private Viewport rig() {
     cmdOk(commandBody("viewport.layout", `"Single"`));
     cmdOk(`{"id":"layer.add"}`);
     cmdOk(commandBody("scene.loadMesh", cubeJson(2.2, 0.4)));
+    // Layer 2: a quad FACING AWAY (-Z) left of the sphere: its eye normal
+    // is (0,0,-1), the lower octahedral hemisphere.
+    cmdOk(`{"id":"layer.add"}`);
+    cmdOk(commandBody("scene.loadMesh", `{"vertices":[[-2.0,-0.3,0],[-1.2,-0.3,0],[-1.2,0.3,0],`
+        ~ `[-2.0,0.3,0]],"faces":[[0,3,2,1]]}`));
     cmdOk(format("layer.attr 0 pos.y %s", kLift));
     cmdOk(format("layer.attr 1 pos.y %s", kLift));
+    cmdOk(format("layer.attr 2 pos.y %s", kLift));
     cmdOk(`{"id":"layer.select","index":0,"mode":"set"}`);
     cmd("viewport.displayStyle", `{"style":"shaded"}`);
     cmd("viewport.backdropStyle", `{"value":"same"}`);
@@ -130,6 +136,7 @@ private Viewport rig() {
     auto L = getJson("/api/layers");
     assert(L["active"].integer == 0 && jb(L["layers"].array[1]["background"]),
         "rig: layer 0 must be the primary and layer 1 background: " ~ L.toString);
+    assert(jb(L["layers"].array[2]["background"]), "rig: layer 2 must be background: " ~ L.toString);
     auto b = cell0()["plan"]["backdrop"];
     assert(jb(b["drawFaces"]), "rig premise: the backdrop draws its faces: " ~ b.toString);
     return vp;
@@ -167,6 +174,8 @@ unittest {
             format("(i) pass %d drew into fbo %d, not the effects fbo %d", k, ji(r["bound"]), effects));
         assert(ji(r["bound"]) != scene, format("(i) pass %d drew into the scene fbo", k));
     }
+    assert(c["compositePostcondition"].str == "ok",
+        "(i) the stage's postcondition (debug build) must read ok: " ~ c["compositePostcondition"].str);
     assert(ji(rows[1]["attached"]) == color,
         format("(i) the resolve must write colorTex %d, attached %d", color, ji(rows[1]["attached"])));
     // The identity: the kernels are absent, so the frame is unchanged.
@@ -184,6 +193,10 @@ unittest {
         format("(ii) sphere front: eye normal %s, expected (0,0,1) within 0.02", g[1].n));
     assert(g[2].id == 2 && (g[2].flags & 1) == 1,
         format("(ii) backdrop cube: id %d flags %d, expected its own id 2, flag bit 0", g[2].id, g[2].flags));
+    // The back-facing quad (layer 2): its own id, eye normal (0,0,-1).
+    auto gb = gbuf([toPx(-1.6, kLift + 0.1, 0, vp)]);
+    assert(gb[0].id == 3 && abs(gb[0].n[2] + 1) < 0.02,
+        format("(ii) back-facing quad: id %d n %s, expected id 3 and n (0,0,-1)", gb[0].id, gb[0].n));
     // The rim: the last sphere pixel along the row through the front point.
     int[2][] row;
     foreach (dx; 0 .. 200) row ~= [front[0] - dx, front[1]];
