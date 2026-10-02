@@ -278,12 +278,21 @@ unittest { // (cavity-world, task 9240) the world-cavity raw and blur sections: 
     assert(w.samples["cavityRaw"] >= 8 && w.samples["cavityBlur"] >= 8,
         format("(cavity-world) World: cavityRaw %d / cavityBlur %d samples, expected >= 8 each",
                w.samples["cavityRaw"], w.samples["cavityBlur"]));
+    // Per frame (measured 2026-10-03): one raw, two blur (H, V), two
+    // composite (the copy, and the resolve re-marked after the world passes).
+    assert(w.samples["cavityRaw"] == w.harvested && w.samples["cavityBlur"] == 2 * w.harvested
+        && w.samples["composite"] == 2 * w.harvested,
+        format("(cavity-world) World per frame: raw %d blur %d composite %d over %d frames, expected 1/2/2",
+               w.samples["cavityRaw"], w.samples["cavityBlur"], w.samples["composite"], w.harvested));
     cmd("viewport.cavity", `{"value":"screen"}`);
     auto s = window()[0];
     writefln("  (cavity-world) screen: harvested=%d composite=%d cavityRaw=%d cavityBlur=%d", s.harvested,
              s.samples["composite"], s.samples["cavityRaw"], s.samples["cavityBlur"]);
     assert(s.harvested >= 8 && s.samples["composite"] >= 8,
         format("(cavity-world) positive control: harvested=%d composite=%d", s.harvested, s.samples["composite"]));
+    assert(s.samples["composite"] == s.harvested,
+        format("(cavity-world) Screen: one composite section per frame (no re-mark), got %d over %d",
+               s.samples["composite"], s.harvested));
     assert(s.samples["cavityRaw"] == 0 && s.samples["cavityBlur"] == 0,
         format("(cavity-world) Screen: the world sections must read ABSENT, got cavityRaw %d cavityBlur %d",
                s.samples["cavityRaw"], s.samples["cavityBlur"]));

@@ -16,7 +16,9 @@
 // toward the box right up to the box's silhouette (no bleed of the bright
 // box top across the depth step); (d) determinism over re-renders; (e)
 // samples 1 and 64 render, 65 is refused with no history entry; (f) the pass
-// record (5 bindings) and the debug postcondition; (g) world gains 0 = off.
+// record (5 bindings) and the debug postcondition; (g) world gains 0 = off,
+// Screen after World reads no world term; (h) distance and attenuation reach
+// the kernel, and a sub-pixel distance (every tap on the centre) = off.
 // `VIBE3D_CELL=<id>` runs one cell.
 module test_viewport_cavity_world;
 
@@ -460,10 +462,37 @@ unittest {
     cavity("both");
     immutable string both = hash();
     assert(both != world && both != screen, "(g) Both must multiply the world term with the screen term");
+    cavity("screen");
+    assert(hash() == screen, "(g) Screen after World must not read the world buffer left by the World frames");
     cmd("viewport.cavityParams", `{"worldRidge":0,"worldValley":0}`);
     assert(hash() == screen, "(g) Both at world gains 0 must equal Screen");
     cavity("world");
     assert(hash() == off, "(g) World at world gains 0 must equal off");
     cmd("viewport.cavityParams", `{"worldRidge":1,"worldValley":1}`);
     cavity("off");
+}
+
+// ===========================================================================
+// (h) the distance and attenuation parameters reach the kernel; a distance
+// whose disk is under half a pixel puts every tap on the centre pixel (zero
+// length, skipped), so World equals off exactly.
+// ===========================================================================
+unittest {
+    if (!cellOn("h")) return;
+    rig();
+    topCamera();
+    cavity("off");
+    immutable string off = hash();
+    cavity("world");
+    immutable string base = hash();
+    assert(base != off, "(h) control: the world cavity at its defaults must change the frame");
+    cmd("viewport.cavityParams", `{"distance":0.1}`);
+    assert(hash() != base, "(h) distance 0.1 must change the frame from distance 0.2");
+    cmd("viewport.cavityParams", `{"distance":0.2,"attenuation":20}`);
+    assert(hash() != base, "(h) attenuation 20 must change the frame from attenuation 1");
+    cmd("viewport.cavityParams", `{"attenuation":1}`);
+    assert(hash() == base, "(h) restoring the defaults must restore the frame");
+    cmd("viewport.cavityParams", `{"distance":0.0001}`);
+    assert(hash() == off, "(h) a sub-pixel distance must leave every pixel as cavity-off");
+    cmd("viewport.cavityParams", `{"distance":0.2}`);
 }

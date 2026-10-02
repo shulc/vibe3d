@@ -574,13 +574,15 @@ immutable string worldCavityFragSrc = withShaderPreamble(
             float alpha = (float(i) + 0.5) / float(n);
             float a = alpha * 18.84955592 + spin;
             ivec2 q = p + ivec2(round(vec2(cos(a), sin(a)) * alpha * radius));
-            if (any(lessThan(q, ivec2(0))) || any(greaterThan(q, hi))) continue;
+            // A tap on the centre pixel carries nothing; its sample would
+            // be P again up to rounding, and f * att of a rounding-length
+            // vector is an O(1) number, not 0.
+            if (q == p || any(lessThan(q, ivec2(0))) || any(greaterThan(q, hi))) continue;
             float sd  = texelFetch(u_depth, q, 0).r;
             bool  bg  = sd >= 1.0 || texelFetch(u_gbuf, q, 0).b == 0u;
             vec3  S   = bg ? vec3(P.xy, P.z - u_distance) : eyePos(q, sd);
             vec3  d   = S - P;
             float len = length(d);
-            if (len <= 0.0) continue;
             float f    = dot(d, N);
             float bias = 0.05 * len + 1e-4;
             float att  = 1.0 / (len * (1.0 + len * len * u_attenuation));
