@@ -625,6 +625,8 @@ version (unittest) {
         ImVec2[3] cavityWorldMin;
         ImVec2[3] cavityWorldMax;
         int cavityWorldDrawn;
+        ImVec2 reflectionMin;
+        ImVec2 reflectionMax;
     }
 
     // Test instrumentation only: mutable process-wide state intentionally
@@ -699,6 +701,10 @@ version (unittest) {
     private void recordViewportPropsCavityWorldHidden() {
         g_viewportPropsDrawSnapshot.cavityWorldDrawn = 0;
     }
+    private void recordViewportPropsReflection() {
+        g_viewportPropsDrawSnapshot.reflectionMin = ImGui.GetItemRectMin();
+        g_viewportPropsDrawSnapshot.reflectionMax = ImGui.GetItemRectMax();
+    }
 } else {
     private void recordViewportPropsProjection(int, int) {}
     private void recordViewportPropsCenter() {}
@@ -712,6 +718,7 @@ version (unittest) {
     private void recordViewportPropsPointSize() {}
     private void recordViewportPropsCavity() {}
     private void recordViewportPropsCavityRidge() {}
+    private void recordViewportPropsReflection() {}
     private void recordViewportPropsCavityValley() {}
     private void recordViewportPropsCavityWorld(int) {}
     private void recordViewportPropsCavityWorldHidden() {}
@@ -876,8 +883,10 @@ void drawViewportPropsPanel(ViewportPropertiesReadRole viewportRead,
                 ImGui.Text("Image");
                 ImGui.SameLine();
                 ImGui.SetNextItemWidth(-1.0f);
-                if (ImGui.BeginCombo("##vpReflectionSource",
-                        reflectionSourceLabel(v.display.reflection))) {
+                const reflOpen = ImGui.BeginCombo("##vpReflectionSource",
+                        reflectionSourceLabel(v.display.reflection));
+                recordViewportPropsReflection();
+                if (reflOpen) {
                     foreach (src; allReflectionSources()) {
                         bool sel = (src == v.display.reflection);
                         if (ImGui.Selectable(reflectionSourceLabel(src), sel))

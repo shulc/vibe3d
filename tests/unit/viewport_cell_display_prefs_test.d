@@ -49,7 +49,7 @@ private bool sameNonTemplate(in ViewportDisplay a, in ViewportDisplay b) {
         && a.active.showVertices == b.active.showVertices
         && a.active.pointSize == b.active.pointSize
         && a.active.smooth == b.active.smooth && a.backdrop.smooth == b.backdrop.smooth
-        && a.cavity == b.cavity;
+        && a.cavity == b.cavity && a.reflection == b.reflection;
 }
 
 unittest { // P1: the defaults agree, so an untouched cell round-trips as the identity
@@ -285,4 +285,41 @@ unittest { // P8 (task 9190): the cavity survives save -> load -> restore; a han
     assert(c.screenRidge == 250 && c.distance == 1e-4f && c.samples == 64,
         format("P8: out-of-table values must clamp: %s", c));
     assert(c.worldRidge == CavityState.init.worldRidge, "P8: a non-number keeps the default");
+}
+
+unittest { // P9 (task 9250): the reflection source survives save -> load -> restore, by id;
+           // an unknown id keeps the default; the automation clear resets it
+    import display_state : ReflectionKind, ReflectionSource;
+    const dir = scratch("reflection");
+    scope(exit) rmdirRecurse(dir);
+    ViewportDisplay live;
+    live.reflection = ReflectionSource(ReflectionKind.MatCap, 5);   // off the default
+    Prefs p;
+    mirrorNonTemplateDisplay(p.viewportDisplay[1], live);
+    assert(p.viewportDisplay[1].reflection == live.reflection, "P9: the mirror must copy the source");
+    savePrefs(p, dir);
+    assert(readText(buildPath(dir, "prefs.json")).indexOf(`"reflectionSource": "matcap:metal_carpaint"`) >= 0
+        || readText(buildPath(dir, "prefs.json")).indexOf(`"reflectionSource":"matcap:metal_carpaint"`) >= 0,
+        "P9: the source must be persisted by its id");
+    const q = loadPrefs(dir);
+    ViewportDisplay back;
+    restoreNonTemplateDisplay(back, q.viewportDisplay[1]);
+    assert(back.reflection == live.reflection,
+        format("P9: the source lost in the round trip: %s vs %s", back.reflection, live.reflection));
+    write(buildPath(dir, "prefs.json"),
+        `{ "version": 1, "viewportDisplay": [ {"reflectionSource":"env:nope"}, `
+        ~ `{"reflectionSource":"env:courtyard"} ] }`);
+    const t = loadPrefs(dir);
+    assert(t.viewportDisplay[0].reflection == ReflectionSource.init,
+        "P9: an unknown id must keep the default source");
+    assert(t.viewportDisplay[1].reflection == ReflectionSource(ReflectionKind.Env, 2),
+        "P9 control: a known id must read back");
+    auto vpm = new ViewportManager(0, 0, 800, 600);
+    vpm.views[0].display.reflection = live.reflection;
+    Prefs store;
+    mirrorNonTemplateDisplay(store.viewportDisplay[0], vpm.views[0].display);
+    clearViewDisplayForAutomation(vpm, store);
+    assert(vpm.views[0].display.reflection == ReflectionSource.init
+        && store.viewportDisplay[0].reflection == ReflectionSource.init,
+        "P9: the automation clear must reset the source in the cell and its mirror");
 }

@@ -699,3 +699,71 @@ unittest { // S3b: the world-cavity Distance / Attenuation / Samples sliders, Wo
     }
     assert(ids.length == 3, "S3b under Solid the world sliders must dispatch nothing");
 }
+
+unittest { // S4b (task 9250): the Reflection image combo — every option through the real parser, shown only under Reflection
+    import commands.viewport.display : ViewportReflectionSource;
+    import display_state : ReflectionSource;
+    import viewport_env : allReflectionSources;
+    auto vpm = new ViewportManager(0, 0, 800, 600);
+    vpm.applyLayout(LayoutPreset.Quad);
+    vpm.activeId = 1;
+    auto mesh = makeCube();
+    Prefs prefs;
+    auto reset = inertReset(&prefs);
+    string[] ids;
+    void dispatch(string id, string payload) {
+        ids ~= id;
+        auto cam = vpm.views[vpm.activeId].camera;
+        assert(id == "viewport.reflectionSource", "unexpected viewport properties dispatch: " ~ id);
+        Command command = new ViewportReflectionSource(&mesh, cam, EditMode.Polygons, vpm);
+        bindArgs(command, payload);
+        assert(command.apply(), "viewport properties command fixture refused: " ~ payload);
+    }
+    auto ui = openPanel(() {
+        drawViewportPropsPanel(ViewportPropertiesReadRole(vpm),
+                               cast(ViewportCommandDispatch)&dispatch, reset);
+    }, "Viewport reflection controls host");
+    scope (exit) ui.close();
+    ImGui.GetIO().ConfigFlags |= ImGuiConfigFlags.NavEnableKeyboard;
+    const d0 = vpm.views[0].display;
+
+    // Not drawn off the Reflection style (the cell starts Shaded).
+    resetViewportPropsDrawSnapshot();
+    ui.frame();
+    auto snap = viewportPropsDrawSnapshot();
+    assert(snap.reflectionMax.x == 0 && snap.reflectionMax.y == 0,
+        "S4b the image combo must not be drawn under Shaded");
+
+    vpm.views[1].display.active.style = DisplayStyle.Reflection;
+    auto all = allReflectionSources();
+    assert(all.length == 11 && vpm.views[1].display.reflection == all[0],
+        "S4b precondition: 11 sources, the cell starts on the first");
+    // One step down per pick from the focused current option: visits every
+    // source in the panel's row order, each pick a change.
+    size_t picked;
+    foreach (k; 1 .. all.length) {
+        ui.frame();
+        snap = viewportPropsDrawSnapshot();
+        assert(snap.reflectionMax.x > snap.reflectionMin.x, "S4b the image combo must be drawn under Reflection");
+        ui.pressAt(center(snap.reflectionMin, snap.reflectionMax));
+        ui.release();
+        // Settle frames: the list scrolls its focused row into view first.
+        ui.frame();
+        ui.frame();
+        ui.keyDown(KEY_DOWN_ARROW);
+        ui.frame();
+        ui.keyUp(KEY_DOWN_ARROW);
+        ui.frame();
+        ui.frame();
+        ui.keyDown(cast(int)ImGuiKey.Enter);
+        ui.frame();
+        ui.keyUp(cast(int)ImGuiKey.Enter);
+        ui.frame();
+        ++picked;
+        assert(ids.length == picked && vpm.views[1].display.reflection == all[k],
+            format("S4b image combo pick %d must dispatch viewport.reflectionSource for %s, cell holds %s",
+                   k, all[k], vpm.views[1].display.reflection));
+    }
+    assert(picked == 10, "S4b combo census: every source after the first must be picked");
+    assert(vpm.views[0].display == d0, "S4b the image combo reached a cell other than the active one");
+}

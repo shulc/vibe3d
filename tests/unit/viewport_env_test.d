@@ -79,7 +79,8 @@ unittest {
     assert(reflectionSourceId(ReflectionSource.init) == "env:studio_small_09",
         "the default source is the studio environment");
     foreach (bad; ["env:nope", "", "env:", "matcap:", "studio_small_09", "matcap:studio_small_09",
-                   "env:basic_grey", "env:studio_small_09x"]) {
+                   "env:basic_grey", "env:studio_small_09x", "vne:studio_small_09",
+                   "matcaq:basic_grey"]) {
         ReflectionSource s = ReflectionSource(ReflectionKind.MatCap, 7);
         assert(!parseReflectionSource(bad, s), "accepted the unknown source '" ~ bad ~ "'");
         assert(s == ReflectionSource(ReflectionKind.MatCap, 7), "a refused parse wrote the source");
@@ -120,7 +121,12 @@ unittest {
         assert(near(li.rgba[i], (i & 3) == 3 ? 1.0f : px[i] / 65535.0f * kShadingImageLinearScale),
             format("linear value %d is %s, expected stored/65535 × %s", i, li.rgba[i],
                    kShadingImageLinearScale));
-    // An 8-bit PNG is refused, not widened.
-    auto m = decodePng16(kMatcapAssets[0].diffuse[0 .. 8], w, h);
-    assert(m is null, "a truncated PNG must not decode");
+    // An 8-bit PNG is refused, not widened — the 16-bit guard, reached with
+    // a valid header (the dimension check passes it first).
+    immutable icon = cast(immutable(ubyte)[]) import("png/vibe3d_16.png");
+    int iw, ih;
+    import io.image_decode : ImageInfo, imageInfo;
+    ImageInfo info;
+    assert(imageInfo(icon, info) && info.width == 16, "control: the 8-bit icon header must read");
+    assert(decodePng16(icon, iw, ih) is null, "an 8-bit PNG must be refused, not widened");
 }
