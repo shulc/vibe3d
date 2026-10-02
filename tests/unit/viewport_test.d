@@ -737,6 +737,12 @@ unittest {
 // generator (distinct, non-zero) and `TexSpec` records what GL would receive.
 // ---------------------------------------------------------------------------
 unittest {
+    {   // ensureEffects before the first ensure has no size to give: a no-op.
+        ViewportFbo g;
+        g.ensureEffects();
+        assert(g.gbufTex == 0 && g.effectsFbo == 0 && g.gbufSpec.w == 0,
+               "ensureEffects before ensure must allocate nothing");
+    }
     ViewportFbo f;
     enum nearestMsg = "depth/integer texture must be NEAREST: LINEAR is incomplete on WebGL2";
     f.ensure(320, 200);

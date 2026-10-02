@@ -331,4 +331,15 @@ unittest {
     auto g = getJson("/api/viewport/probe?cell=0&points=20,20&buffer=gbuf");
     assert("error" in g && g["error"].str == "gbuf not allocated",
         "buffer=gbuf before allocation must report the error: " ~ g.toString);
+    // The integer G-buffer has no colour hash and no composed-frame twin.
+    auto gh = getJson("/api/viewport/probe?cell=0&points=20,20&buffer=gbuf&hash=1");
+    assert("error" in gh && gh["error"].str == "buffer=gbuf takes neither target=frame nor hash",
+        "buffer=gbuf with hash=1 must be refused: " ~ gh.toString);
+    // An unknown buffer is a 400 naming it (the transport may throw on 400).
+    string bogus;
+    try bogus = getJson("/api/viewport/probe?cell=0&points=20,20&buffer=depth").toString;
+    catch (Exception e) bogus = e.msg;
+    import std.string : indexOf;
+    assert(bogus.indexOf("400") >= 0 || bogus.indexOf("unknown viewport probe buffer: depth") >= 0,
+        "buffer=depth must be refused as unknown: " ~ bogus);
 }
