@@ -217,6 +217,19 @@ unittest { // the smoothing policy (S1e) travels, moves, empties and resets with
         assert(countOccurrences(b, "smoothPolicy") >= 1,
             "census: `" ~ h ~ "` no longer mentions smoothPolicy — the smoothing policy is dropped there");
     }
+    // The exact statements, per helper (each a term a mutation can drop alone).
+    immutable clone = squash(bodyAt(code, heads[0])), install = squash(bodyAt(code, heads[1])),
+              empty = squash(bodyAt(code, heads[2])), take = squash(bodyAt(code, heads[3]));
+    foreach (stmt; ["dst.smoothPolicy.faceSlot = src.smoothPolicy.faceSlot.dup",
+                    "dst.smoothPolicy.slotCos = src.smoothPolicy.slotCos"])
+        assert(clone.indexOf(stmt) >= 0, "census: cloneUploadState no longer copies `" ~ stmt ~ "`");
+    foreach (stmt; ["dst.smoothPolicy = src.smoothPolicy", "src.smoothPolicy = SmoothPolicy.init"])
+        assert(install.indexOf(stmt) >= 0, "census: installUploadState no longer moves `" ~ stmt ~ "`");
+    foreach (stmt; ["gpu.smoothPolicy.faceSlot.length == 0",
+                    "gpu.smoothPolicy.slotCos == SmoothPolicy.init.slotCos"])
+        assert(empty.indexOf(stmt) >= 0, "census: isDefaultEmptyGpuMesh no longer requires `" ~ stmt ~ "`");
+    assert(take.indexOf("gpu.smoothPolicy = SmoothPolicy.init") >= 0,
+        "census: takeGpuMeshNames no longer resets smoothPolicy");
 }
 
 unittest { // the selected-vertex path reads the DRAWN positions only (task 1069 law)

@@ -165,6 +165,14 @@ unittest { // GLSL slot sites all come from kSurfaceSlots: floor → needle → 
     assert(tokenCount(lit, "surfaceSlotOf") >= 2,
         format("litFragSrc names surfaceSlotOf %d time(s): the helper or its call is gone",
                tokenCount(lit, "surfaceSlotOf")));
+    // Structural: the helper's body is the slot rule (a tag at or past the
+    // slot count reads slot 0) — no pixel suite carries a tag >= 64.
+    {
+        import std.array : replace;
+        immutable flat = lit.replace(" ", "").replace("\n", "");
+        assert(flat.indexOf("uintsurfaceSlotOf(uintm){returnm<uint(%SLOTS%)?m:uint(0);}") >= 0,
+            "litFragSrc's surfaceSlotOf no longer maps a tag >= the slot count to slot 0");
+    }
     // The PRODUCED text.
     immutable produced = shaderSourceForValidation("litFragSrc");
     assert(produced.canFind("mat_base[" ~ kSurfaceSlots.to!string ~ "]")

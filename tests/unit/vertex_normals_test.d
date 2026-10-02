@@ -789,6 +789,25 @@ unittest { // a non-finite angle is OFF; an angle above 180 clamps to 180
         assert(!near(cornerOf(m, c, 0, 0), faceN(m, 0), 1e-3f),
             "angle 200: the 170° hinge stayed hard — the angle is not clamped to 180°");
     }
+    {
+        // A 5° hinge at angle −10: cos(−10°) = 0.985 < cos 5° would smooth it,
+        // the 0° clamp (cos 0 = 1) keeps it hard.
+        Mesh m = hinge(5.0);
+        m.surfaces = [surf(-10)];
+        FaceAdjacency adj;
+        auto c = corners(m, adj);
+        assert(ulpNear(cornerOf(m, c, 0, 0), faceN(m, 0)),
+            "angle -10: the 5° hinge smoothed — a negative angle is not clamped to 0°");
+    }
+}
+
+unittest { // a slot past the surface table reads Surface.init (on @ 40), not slot 0
+    if (!cellOn("slot-past-table")) return;
+    auto m = hingeSlots(1, 1, [surf(40, false)]);
+    FaceAdjacency adj;
+    auto c = corners(m, adj);
+    assert(!near(cornerOf(m, c, 0, 0), faceN(m, 0), 1e-3f),
+        "slot 1 past a one-entry table: the 30° hinge stayed hard — it read slot 0 (OFF), not Surface.init");
 }
 
 unittest { // the EFFECTIVE slot orders the pair: faceMaterial 70 reads slot 0
