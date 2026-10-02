@@ -75,6 +75,25 @@ private void waitFrames(long n) {
     throw new Exception(format("the main loop did not advance %d frames", n));
 }
 
+/// Past the GPU ring and past a transient: a heavy upload can put the GPU more
+/// frames behind than the ring holds, and those frames are DROPPED (counted).
+/// Wait until a 30-frame span adds no drop to any cell (bounded), so a window
+/// opens on steady state; the window's own drops are still reported.
+private void settleGpu() {
+    long drops() {
+        long d;
+        foreach (c; getJ("/api/viewport/display")["cells"].array)
+            d += c["gpuTiming"]["framesDropped"].integer;
+        return d;
+    }
+    waitFrames(getJ("/api/viewport/display")["cells"].array[0]["gpuTiming"]["ringFrames"].integer + 4);
+    foreach (i; 0 .. 40) {
+        immutable long d0 = drops();
+        waitFrames(30);
+        if (drops() == d0) return;
+    }
+}
+
 private struct Scene { string name; string[] setup; }
 
 private Scene[] scenes() {
@@ -152,26 +171,34 @@ private ViewportRow measure(Scene sc, string style, string smooth, string cavity
     ViewportRow r = ViewportRow(sc.name, style, smooth, cavity, mode);
     r.faces = faces;
     try {
-        string why = command("viewport.displayStyle", `"` ~ style ~ `"`);
-        if (why.length) throw new Exception("viewport.displayStyle refused: " ~ why);
-        if (smooth != "n/a") {
-            why = command("viewport.smooth", `{"value":"` ~ smooth ~ `"}`);
-            if (why.length) throw new Exception("viewport.smooth refused: " ~ why);
+        // Every RENDERING cell gets the row's state (a Quad row sums them).
+        foreach (k, c; getJ("/api/viewport/display")["cells"].array) {
+            if (c["renders"].type != JSONType.TRUE) continue;
+            immutable string vk = format(`,"viewport":%d`, k);
+            string why = command("viewport.displayStyle", `{"value":"` ~ style ~ `"` ~ vk ~ `}`);
+            if (why.length) throw new Exception("viewport.displayStyle refused: " ~ why);
+            if (smooth != "n/a") {
+                why = command("viewport.smooth", `{"value":"` ~ smooth ~ `"` ~ vk ~ `}`);
+                if (why.length) throw new Exception("viewport.smooth refused: " ~ why);
+            }
+            if (cavity != "n/a") {
+                why = command("viewport.cavity", `{"value":"` ~ cavity ~ `"` ~ vk ~ `}`);
+                if (why.length) throw new Exception("viewport.cavity refused: " ~ why);
+            }
         }
-        if (cavity != "n/a") {
-            why = command("viewport.cavity", `{"value":"` ~ cavity ~ `"}`);
-            if (why.length) throw new Exception("viewport.cavity refused: " ~ why);
+        settleGpu();
+        // Premise FIRST: every rendering cell's active plan is the requested style.
+        foreach (k, c; getJ("/api/viewport/display")["cells"].array) {
+            if (c["renders"].type != JSONType.TRUE) continue;
+            if (c["state"]["active"]["style"].str.toLower != style)
+                throw new Exception(format("premise: cell %d style is %s", k,
+                                           c["state"]["active"]["style"].str));
+            if ((style == "wireframe") == (c["plan"]["active"]["drawFaces"].type == JSONType.TRUE))
+                throw new Exception(format("premise: cell %d drawFaces disagrees with %s", k, style));
+            if (smooth != "n/a" && "smooth" in c["state"]["active"].object
+                && (c["state"]["active"]["smooth"].type == JSONType.TRUE) != (smooth == "on"))
+                throw new Exception(format("premise: cell %d smooth state is not %s", k, smooth));
         }
-        waitFrames(12);    // past the 8-slot GPU ring: no older frame lands in the window
-        // Premise FIRST: the active plan is the requested style.
-        auto c0 = getJ("/api/viewport/display")["cells"].array[0];
-        if (c0["state"]["active"]["style"].str.toLower != style)
-            throw new Exception("premise: active style is " ~ c0["state"]["active"]["style"].str);
-        if ((style == "wireframe") == (c0["plan"]["active"]["drawFaces"].type == JSONType.TRUE))
-            throw new Exception("premise: drawFaces disagrees with " ~ style);
-        if (smooth != "n/a" && "smooth" in c0["state"]["active"].object
-            && (c0["state"]["active"]["smooth"].type == JSONType.TRUE) != (smooth == "on"))
-            throw new Exception("premise: smooth state is not " ~ smooth);
 
         auto a = snap();
         perfReset();

@@ -21,9 +21,11 @@ enum GpuSeg : ubyte {
     verts, overlays,
 }
 
-/// Frame slots in flight per cell. Chosen by the P0 measurement (task 9140
-/// card): the observed harvest lag on both gate hosts stays well inside it.
-enum size_t kGpuTimerFrames = 8;
+/// Frame slots in flight per cell, chosen by the P0 measurement (task 9140
+/// card): steady harvest lag 1-2 frames on both gate hosts, but 15 frames in
+/// the transient after a 1 M-face scene load on an LDC perf build (an 8-slot
+/// ring dropped 162 frames there); 32 is twice the worst measured lag.
+enum size_t kGpuTimerFrames = 32;
 /// Kernel cap on queries (segments) per frame slot; no Param scales it.
 enum size_t MAX_GPU_MARKS = 64;
 /// Entries of the per-frame total ring reported as `recent`.

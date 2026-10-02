@@ -26,10 +26,13 @@ bool jb(JSONValue v) {
 
 JSONValue[] cells() { return getJson("/api/viewport/display")["cells"].array; }
 
-// Settle past the ring (8 frame slots): no frame of the previous configuration
-// can still be harvested inside the window that follows.
-enum uint kSettleFrames = 12;
+// Settle past the ring (its depth is read from the dump): no frame of the
+// previous configuration can still be harvested inside the window that follows.
 enum uint kWindowFrames = 16;
+uint settleFrames() {
+    return cast(uint) getJson("/api/viewport/display")["cells"].array[0]["gpuTiming"]
+        ["ringFrames"].integer + 4;
+}
 
 struct Delta {
     long[string] samples;
@@ -39,7 +42,7 @@ struct Delta {
 }
 
 Delta[] window() {
-    frameFence(null, kSettleFrames);
+    frameFence(null, settleFrames());
     auto a = cells();
     frameFence(null, kWindowFrames);
     auto b = cells();
@@ -71,7 +74,7 @@ void resetSingle() {
 
 unittest { // premise: the timer is armed under --test and available on this host
     resetSingle();
-    frameFence(null, kSettleFrames);
+    frameFence(null, settleFrames());
     auto g = cells()[0]["gpuTiming"];
     writefln("  P0 host: armed=%s available=%s bits=%d reason='%s' ringFrames=%d maxHarvestLag=%d",
              g["armed"], g["available"], g["bits"].integer, g["reason"].str,
