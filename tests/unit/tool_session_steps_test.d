@@ -2222,6 +2222,53 @@ unittest { // S5b: a begin row that did not land arms nothing (the top is anothe
                ~ "session's opening row (rows %s): %s", h.undoEntries().length, s.sessionStateJson()));
 }
 
+/// An arm-opening tool of the captured model whose session does not report its
+/// steps (`sessionSteps` off): its begin row goes through a non-reporting `stepEnds`.
+private final class ArmSilentTool : PressFlagTool {
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy policy = {
+            activationRow: true, sessionSteps: false, historyTopologySteps: true,
+            opensAt: OpensAt.arm, imageAttrs: ["v"]
+        };
+        return policy;
+    }
+}
+
+unittest { // S5b: the begin flag does not outlive a begin row whose stepEnds did not report
+    Mesh m = makeCube();
+    auto h = new CommandHistory();
+    auto q = new ArmSilentTool;
+    q.m = &m; q.h = h; q.view = new View(0, 0, 1, 1);
+    q.basis = MeshSnapshot.capture(m);
+    Tool active = q;
+    auto s = new EditSession(() => active, h, () { active = null; });
+    s.noteArm("t.silent", 1, false);
+    assert(h.undoEntries().length == 0, "S5b rig: a non-reporting arm wrote a row");
+    auto t = new PressFlagTool;
+    t.m = &m; t.h = h; t.view = new View(0, 0, 1, 1);
+    t.basis = MeshSnapshot.capture(m);
+    active = t;
+    s.noteArm("t.press", 2, false);   // the post mode is not armed
+    const y = m.vertices[0].y;
+    auto before = t.captureAttrImage();
+    t.v = 0.5f;
+    s.orchestrateParameterChange(t, "v", ParameterChangeSource.InteractiveValue,
+        ParameterChangePhase.ValueWritten, before);
+    s.orchestrateParameterChange(t, "", ParameterChangeSource.InteractiveValue,
+        ParameterChangePhase.BatchComplete);
+    // An unarmed write is an attribute-only row (model doc §R6.1): it keeps the mesh
+    // image; a stale begin flag makes it a mesh row that opens the operation.
+    import commands.mesh.session_edit : MeshSessionEdit;
+    assert(h.undoEntries().length == 1
+           && cast(const MeshSessionEdit) h.undoEntries()[$ - 1].cmd is null
+           && m.vertices[0].y == y,
+        format("S5b: the begin flag of a non-reporting arm survived into the next session's "
+               ~ "write (rows %s, top a mesh row %s, vertex moved %s)", h.undoEntries().length,
+               h.undoEntries().length
+                   && cast(const MeshSessionEdit) h.undoEntries()[$ - 1].cmd !is null,
+               m.vertices[0].y != y));
+}
+
 unittest { // S2b E3: a dormant arm opens no operation
     Mesh m = makeCube();
     auto h = new CommandHistory();

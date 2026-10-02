@@ -1362,9 +1362,10 @@ unittest { // (4i)
            format("S5b needle: recordBeginRow_ is called at %s, expected the arm once",
                   identSites(es, "recordBeginRow_", false)));
     assert(identSites(es, "topologyPendingBegin_", true)
-           == ["<decl>:1", "ToolSession.recordBeginRow_:1", "ToolSession.stepEnds:1"],
+           == ["<decl>:1", "ToolSession.recordBeginRow_:2", "ToolSession.stepEnds:1"],
            format("S5b needle: topologyPendingBegin_ is written at %s, expected the begin row "
-                  ~ "(raised) and stepEnds (cleared)", identSites(es, "topologyPendingBegin_", true)));
+                  ~ "(raised, cleared after stepEnds on every exit) and stepEnds (cleared)",
+                  identSites(es, "topologyPendingBegin_", true)));
     // the arm's call is guarded by the four terms: not a replay, the model, the arm opens, not dormant
     const arm = bodyAt(ts, "void noteArm(string id, ulong token, bool postmodeArmed = true)");
     const g = guardOf(arm, cast(size_t) arm.indexOf("recordBeginRow_("));

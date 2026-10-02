@@ -806,7 +806,7 @@ private struct ToolSession {
     private PressKind topologyPendingKind_;
     private bool topologyPendingAttrOnly_;
     // The step in flight is an arm-opening tool's begin row (S5b): it opens the
-    // operation, never an attribute-only row; cleared by `stepEnds`.
+    // operation, never an attribute-only row; cleared by `stepEnds` and after it.
     private bool topologyPendingBegin_;
     // The operation's close (slice M2). `topBefore_` is the undo top when the
     // close began; a row counts as written BY the close only if the top is a
@@ -1664,6 +1664,7 @@ private struct ToolSession {
         topologyPendingBegin_ = true;
         stepBegins(t, PressKind.plain, AttrImage.init, false);
         stepEnds(t, false);
+        topologyPendingBegin_ = false;   // a non-reporting `stepEnds` leaves it set
         if (auto row = cast(const MeshSessionEdit) undoTop_())
             if (row.isTopologyStep() && row.sessionToken() == token_
                     && row.stepOrigin() == StepOrigin.opens)
