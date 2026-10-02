@@ -236,10 +236,10 @@ unittest {
 // 1c. Mode-off neutrality, against literals.
 // ---------------------------------------------------------------------------
 unittest {
-    // 21 stored fields (plus the derived `facesLit`): the endpoint dump and
+    // 22 stored fields (plus the derived `facesLit`): the endpoint dump and
     // `tests/test_viewport_display.d` B2 list exactly these, so a field added
     // without joining them fails here first.
-    static assert(DrawPlan.tupleof.length == 21,
+    static assert(DrawPlan.tupleof.length == 22,
         "DrawPlan field count changed: extend 1c, the plan dump and B2");
     ViewportDisplay d;
     assert(!d.retopology, "1c: the mode must be off by default");
@@ -262,18 +262,19 @@ unittest {
         assert(p.shadeLinesByItem == false, side ~ ": shadeLinesByItem must be false"); ++k;
         assert(p.baseDotsBySelection == true, side ~ ": baseDotsBySelection must be true"); ++k;
         assert(p.joinsItemSequence == false, side ~ ": joinsItemSequence must be false"); ++k;
+        assert(p.smoothNormals == true,   side ~ ": smoothNormals must be true (smooth by default)"); ++k;
         return k;
     }
 
     immutable DrawPlan a = resolveDrawPlan(d, false);
     immutable int ka = checkCommon(a, "1c active");
-    assert(ka == 12, format("1c: asserted %s active fields, expected 12", ka));
+    assert(ka == 13, format("1c: asserted %s active fields, expected 13", ka));
 
     immutable DrawPlan b = resolveDrawPlan(d, true);
     int kb = checkCommon(b, "1c backdrop");
     assert(b.dim == 0.45f, format("1c backdrop: dim must be 0.45, got %s", b.dim));
     ++kb;
-    assert(kb == 13, format("1c: asserted %s backdrop fields, expected 13", kb));
+    assert(kb == 14, format("1c: asserted %s backdrop fields, expected 14", kb));
 }
 
 // ---------------------------------------------------------------------------
