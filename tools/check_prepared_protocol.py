@@ -1170,7 +1170,7 @@ def validate_prepared_gpu(source):
         (r"bool\s+validatePrepared", "e431625354aa80b1012f59836227d249f0d4b6fb624829e1a5e6121dfab0f043"),
         (r"void\s+installPrepared", "7d060cedf3efd7bc2daa26352d0b139ff755d2e8d21f9ddb2cdb85a1ccc570f0"),
         (r"void\s+discardPrepared", "b31cf1d319a934c57aca2deb80e889b62b34a1e46b4093330434c08ad74f5794"),
-        (r"private\s+GpuMeshNames\s+takeGpuMeshNames", "77c037326e13a4933d95464650aa03866a4b6241cfce713e646b42de38c14e54"),
+        (r"private\s+GpuMeshNames\s+takeGpuMeshNames", "212963e20c18315b5869e7b4103c41a081a11479d0fb3ea01d1d68857abde946"),
         (r"private\s+void\s+deleteGpuMeshNames", "6a0f5c894bdcffa8cc76e4e3c286377caa47982f8fdc90dab696bf8733c162ab"),
     )
     for signature, digest in exact_bodies:
