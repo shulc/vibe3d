@@ -67,7 +67,7 @@ double dist3(double[3] a, double[3] b) {
 
 // ---------------------------------------------------------------------------
 // Rig helpers: a mesh loaded from a written .v3d (exact geometry, no tool),
-// the live camera, the lit program's light function (S1a-era world rig) for
+// the live camera, the lit program's light function (the eye-space rig) for
 // predictions, and the pixel probe.
 // ---------------------------------------------------------------------------
 
@@ -168,17 +168,22 @@ int[] probeR(int cell, int[2][] pts, out bool renders) {
     return r;
 }
 
-/// The lit program's Material arm at unit world normal `n`, surface point `p`,
-/// eye `eye`, in 0..255 levels: `litTerm` with the light_rig constants and the
-/// default material base 0.8 (no gamma).
+/// The lit program's Material arm at unit world normal `n`, in 0..255 levels:
+/// the view-relative rig (task 9130, `light_rig`) — the normal taken to EYE
+/// space through the live view, `0.8·(0.15 + 0.7·max(N·key,0) +
+/// 0.3·max(N·fill,0))`, default material base 0.8, no specular (the default
+/// surface has none), no gamma. The viewer is at infinity, so the point `p`
+/// does not enter; `eye` must be the live camera's (the view read here).
 double litLevel(V3 n, V3 p, V3 eye) {
-    import std.math : pow;
-    immutable V3 l = unit(V3(0.6f, 1.0f, 0.5f));
-    immutable V3 v = unit(sub(eye, p));
-    immutable V3 h = unit(V3(l.x + v.x, l.y + v.y, l.z + v.z));
-    immutable double dif = dt(n, l) > 0 ? dt(n, l) : 0;
-    immutable double spc = pow(dt(n, h) > 0 ? dt(n, h) : 0, 32.0);
-    double c = 0.8 * (0.2 + dif * 0.8) + spc * 0.25;
+    auto vp = viewportFromCameraMatrices();
+    assert(abs(vp.eye.x - eye.x) + abs(vp.eye.y - eye.y) + abs(vp.eye.z - eye.z) < 1e-4,
+        "litLevel: the camera moved since the prediction's eye was read");
+    immutable double[3] ne = [vp.view[0]*n.x + vp.view[4]*n.y + vp.view[8]*n.z,
+                              vp.view[1]*n.x + vp.view[5]*n.y + vp.view[9]*n.z,
+                              vp.view[2]*n.x + vp.view[6]*n.y + vp.view[10]*n.z];
+    immutable double[3] key = [-0.654509, 0.587785, 0.475528];   // eye space, toward the light
+    immutable double nk = ne[0]*key[0] + ne[1]*key[1] + ne[2]*key[2], nf = ne[0];   // fill = +x
+    double c = 0.8 * (0.15 + 0.7 * (nk > 0 ? nk : 0) + 0.3 * (nf > 0 ? nf : 0));
     if (c > 1) c = 1;
     return 255.0 * c;
 }
@@ -205,8 +210,14 @@ SphereRig sphereRig(void delegate() afterLoad = null, int cell = -1) {
             cmd(format(`{"id":"viewport.wireOverlay","params":{"_positional":["none"],"viewport":%d}}`, c));
     }
     else cmd(format(`{"id":"viewport.wireOverlay","params":{"_positional":["none"],"viewport":%d}}`, cell));
-    if (cell == -2) setCamera(0, 0, 1.7, 0, 0.38, 0);   // a Quad cell is half the size: closer
-    else setCamera(0, 0, 2.6);
+    // Elevation 37.5°: the +22.5° edge's faces then sit at about −15° in eye
+    // space, where the view-relative key (task 9130) has a steep gradient
+    // and no clamp — at elevation 0 the flat step is only ~10 levels, under
+    // the discrimination floor below. The eye stays above the grid plane.
+    enum double kEl = 37.5 * 3.14159265358979 / 180;
+    // A Quad cell is half the size: closer, focused on the probed edge.
+    if (cell == -2) setCamera(0, kEl, 1.7, 0, 0.383, 0.924);
+    else setCamera(0, kEl, 2.6);
     // Rings k = 1..15 sit at latitude 90 - 11.25k, so k = 6 is +22.5°.
     immutable int k = 6, segs = 32;
     uint at(int kk, int j) { return cast(uint)(1 + (kk - 1) * segs + (j % segs)); }
@@ -234,7 +245,7 @@ SphereRig sphereRig(void delegate() afterLoad = null, int cell = -1) {
     immutable V3 nu = faceNormal(v, f[up]), nd = faceNormal(v, f[dn]);
     r.smoothLevel = litLevel(unit(V3(nu.x + nd.x, nu.y + nd.y, nu.z + nd.z)), mid, eye);
     // Floor: the smooth level is far from an ambient-only (normal-less) surface.
-    assert(abs(r.smoothLevel - 255.0 * 0.8 * 0.2) >= 10,
+    assert(abs(r.smoothLevel - 255.0 * 0.8 * 0.15) >= 10,
         format("rig: the smooth level %.2f cannot be told from ambient only", r.smoothLevel));
     // Discrimination floor: the two predictions are far apart.
     assert(r.flatStep - 2 > r.smoothStep + 2 + 6,

@@ -14,7 +14,8 @@ version (web) {
 }
 import display_state : DrawPlan, kSchemeSolidFill, SurfaceShading;
 import weightmap_view : kWeightRamp;   // task 1090: the parked neutral
-import light_rig : kLightDirection, kLightAmbient, kLightSpecStrength, kLightSpecPower;
+import light_rig : kKeyLightEye, kFillLightEye, kKeyIntensity, kFillIntensity,
+    kLightAmbient, specPowerForRoughness;
 // ---------------------------------------------------------------------------
 // Shaders
 // ---------------------------------------------------------------------------
@@ -186,7 +187,8 @@ immutable string imagePlaneFragSrc = withShaderPreamble(q{
     }
 });
 
-// Lit shaders — Blinn-Phong with flat per-face normals.
+// Lit shaders — the two-light eye-space rig of `light_rig` (diffuse + Blinn
+// from the material), on the flat or the smooth normal stream.
 //
 // Material Groups (MG3): a 64-slot std140 UBO carries per-mesh surface
 // data. Each face-VBO vertex tags its triangle with an `aMatId` (flat-
@@ -218,17 +220,15 @@ private immutable string litVertSrc = withShaderPreamble(q{
     uniform mat4 u_model;
     uniform mat4 u_view;
     uniform mat4 u_proj;
-    uniform mat3 u_normalMatrix;   // math.normalMatrix(u_model): inverse-transpose direction
+    uniform mat3 u_normalMatrix;   // math.normalMatrix(u_view * u_model): to EYE space
     uniform bool u_smoothNormals;
-    out vec3      vNormal;
-    out vec3      vWorldPos;
+    out vec3      vNormal;          // eye space: the rig's lights are eye-space constants
     flat out uint vMatId;
     // Smooth-interpolated, deliberately: that IS the measured interpolation
     // order. Do not make it `flat`.
     out vec3      vWeightColor;
     void main() {
         vec4 worldPos = u_model * vec4(aPos, 1.0);
-        vWorldPos     = worldPos.xyz;
         vNormal       = u_normalMatrix * (u_smoothNormals ? aSmoothNormal : aNormal);
         vMatId        = aMatId;
         vWeightColor  = aWeightColor;
@@ -238,16 +238,15 @@ private immutable string litVertSrc = withShaderPreamble(q{
 
 private immutable string litFragSrc = withShaderPreamble(q{
     in       vec3 vNormal;
-    in       vec3 vWorldPos;
     flat in  uint vMatId;
     in       vec3 vWeightColor;     // task 1090; see the vertex shader
     uniform vec3  u_color;          // override colour for hover/highlight paths
     uniform float u_overrideMix;    // 0 = use material UBO, 1 = use u_color
-    uniform vec3  u_lightDir;
-    uniform vec3  u_eyePos;
-    uniform float u_ambient;
-    uniform float u_specStr;
-    uniform float u_specPow;
+    uniform vec3  u_keyDir;         // light_rig: eye space, toward the light
+    uniform vec3  u_fillDir;
+    uniform float u_keyI;
+    uniform float u_fillI;
+    uniform float u_ambient;        // global ambient, times Kd
     uniform float u_dim;            // brightness multiplier; 1.0 = neutral (layers Stage 5)
     uniform float u_lightGain;      // multiplier on the lit term ABOVE ambient; 1.0 = neutral
     uniform int   u_shading;        // display_state.SurfaceShading: 0 Material, 1 Fill, 2 Weight, 3 Retopology
@@ -255,21 +254,30 @@ private immutable string litFragSrc = withShaderPreamble(q{
     uniform float u_faceAlpha;      // output alpha of every arm; 1.0 = opaque (FacePass)
     layout(std140) uniform Materials {
         vec4 mat_base[64];     // .rgb = baseColor, .a = opacity
-        vec4 mat_params[64];   // .x = diffuse, .y = specular, .z = glossiness
+        vec4 mat_params[64];   // .x = diffuse amount, .y = specular amount,
+                               // .z = glossiness, .w = its Blinn exponent
     };
     out vec4 fragColor;
-    // The ONE light function of the lit arms: ambient is left unscaled and
-    // `u_lightGain` multiplies everything above it, specular included (the
-    // measured fit is a scalar on the part above ambient; that it covers our
-    // specular term is inferred). Material and Retopology both call it, so
-    // "lit by the same function as the backdrop" is structural, not a copy.
-    vec3 litTerm(vec3 bc, vec3 N) {
-        vec3 V    = normalize(u_eyePos - vWorldPos);
-        vec3 H    = normalize(u_lightDir + V);
-        float dif = max(dot(N, u_lightDir), 0.0);
-        float spc = pow(max(dot(N, H), 0.0), u_specPow);
-        return bc * (u_ambient + u_lightGain * dif * (1.0 - u_ambient))
-             + vec3(1.0) * u_lightGain * spc * u_specStr;
+    // The ONE light function of the lit arms (`light_rig`'s header has the
+    // law and its capture): `kd` = base colour × diffuse amount; ambient
+    // `u_ambient·kd` is left unscaled and `u_lightGain` multiplies everything
+    // above it, specular included. Specular is Blinn with the viewer at
+    // infinity (eye space +Z), per light, gated by N·L > 0. Material and
+    // Retopology both call it, so "lit by the same function as the backdrop"
+    // is structural, not a copy; `retopology_line_shade.lineShade` mirrors it.
+    float blinn(vec3 N, vec3 L, float nl, float power) {
+        return nl > 0.0
+            ? pow(max(dot(N, normalize(L + vec3(0.0, 0.0, 1.0))), 0.0), power)
+            : 0.0;
+    }
+    vec3 litTerm(vec3 kd, vec3 N, float spec, float power) {
+        float nk  = dot(N, u_keyDir);
+        float nf  = dot(N, u_fillDir);
+        float dif = u_keyI * max(nk, 0.0) + u_fillI * max(nf, 0.0);
+        float spc = u_keyI * blinn(N, u_keyDir, nk, power)
+                  + u_fillI * blinn(N, u_fillDir, nf, power);
+        return kd * (u_ambient + u_lightGain * dif)
+             + vec3(u_lightGain * spec * spc);
     }
     void main() {
         // TWO BASE COLOURS, NOT ONE SCALED. The lit path's base is the
@@ -300,22 +308,25 @@ private immutable string litFragSrc = withShaderPreamble(q{
         vec3 col;
         if (u_shading == 0) {
             uint  mi  = (vMatId < uint(64)) ? vMatId : uint(0);
-            vec3  bc  = mix(mat_base[mi].rgb, u_color, u_overrideMix);
-            col = litTerm(bc, normalize(vNormal));
+            vec4  mp  = mat_params[mi];
+            vec3  kd  = mix(mat_base[mi].rgb * mp.x, u_color, u_overrideMix);
+            col = litTerm(kd, normalize(vNormal), mp.y, mp.w);
         } else if (u_shading == 1) {
             col = mix(u_fillColor, u_color, u_overrideMix);
         } else if (u_shading == 3) {
             // Retopology: the scheme's fill colour, LIT (not the material, not
             // the unlit fill); the hover override survives as in every arm.
+            // Diffuse amount 1, no specular.
             col = litTerm(mix(u_fillColor, u_color, u_overrideMix),
-                          normalize(vNormal));
+                          normalize(vNormal), 0.0, 1.0);
         } else {
             // Weight (task 1090). UNLIT in the strong sense: no light term, no
             // material lookup, no gamma — the interpolated per-vertex colour
             // IS the output. Nothing may be added here without a measurement
-            // saying so; the control frames say the shaded style read
-            // (59,59,59) and the unshaded fill (153,153,153) on the same quad
-            // where this style read the exact neutral (127,140,127).
+            // saying so; the REFERENCE's control frames read (59,59,59) in its
+            // shaded style and (153,153,153) in its unshaded fill on the same
+            // quad where its weight style read the exact neutral (127,140,127)
+            // — readings of the reference, not values our arms are tuned to.
             col = mix(vWeightColor, u_color, u_overrideMix);
         }
         fragColor = vec4(col * u_dim, u_faceAlpha);
@@ -778,11 +789,13 @@ class LitShader {
     GLint locProj;
     GLint locColor;
     GLint locOverrideMix;
-    GLint locLightDir;
-    GLint locEyePos;
-    GLint locAmbient;
-    GLint locSpecStr;
-    GLint locSpecPow;
+    // The rig's locations are module-private: `useProgram` is their one
+    // writer (census: cell 5 of tests/unit/retopology_line_shade_test.d).
+    private GLint locKeyDir;
+    private GLint locFillDir;
+    private GLint locKeyI;
+    private GLint locFillI;
+    private GLint locAmbient;
     // The per-plan uniform locations are module-private like their setters:
     // outside this module nothing can name them, so `applyPlan` stays their
     // one writer (the fence is pinned by tests/unit/lit_plan_seam_test.d).
@@ -805,11 +818,11 @@ class LitShader {
         locProj        = glGetUniformLocation(program, "u_proj");
         locColor       = glGetUniformLocation(program, "u_color");
         locOverrideMix = glGetUniformLocation(program, "u_overrideMix");
-        locLightDir    = glGetUniformLocation(program, "u_lightDir");
-        locEyePos      = glGetUniformLocation(program, "u_eyePos");
+        locKeyDir      = glGetUniformLocation(program, "u_keyDir");
+        locFillDir     = glGetUniformLocation(program, "u_fillDir");
+        locKeyI        = glGetUniformLocation(program, "u_keyI");
+        locFillI       = glGetUniformLocation(program, "u_fillI");
         locAmbient     = glGetUniformLocation(program, "u_ambient");
-        locSpecStr     = glGetUniformLocation(program, "u_specStr");
-        locSpecPow     = glGetUniformLocation(program, "u_specPow");
         locDim         = glGetUniformLocation(program, "u_dim");
         locLightGain   = glGetUniformLocation(program, "u_lightGain");
         locShading     = glGetUniformLocation(program, "u_shading");
@@ -817,18 +830,8 @@ class LitShader {
         locFaceAlpha   = glGetUniformLocation(program, "u_faceAlpha");
         locSmoothNormals = glGetUniformLocation(program, "u_smoothNormals");
         locNormalMatrix  = glGetUniformLocation(program, "u_normalMatrix");
-        // A GLSL uniform starts at 0, and a gain of 0 would leave only ambient
-        // for the draws that seed uniforms by hand without `useProgram`
-        // (`drawLitPreview`, the pen preview): park the neutral once here.
-        // Same for the face alpha: 0 would make those previews transparent.
-        glUseProgram(program);
-        glUniform1f(locLightGain, 1.0f);
-        glUniform1f(locFaceAlpha, 1.0f);
-        // Same for the normal source: a zero normal matrix would leave those
-        // draws ambient-only; smooth is the plan default.
-        uploadNormalMatrix(identityMatrix);
-        glUniform1i(locSmoothNormals, DrawPlan.init.smoothNormals ? 1 : 0);
-        glUseProgram(0);
+        // Every draw binds through `useProgram`, which seeds every uniform
+        // below; nothing is parked here.
 
         // Materials UBO — std140-sized for two arrays of 64 × vec4.
         glGenBuffers(1, &matsUbo);
@@ -887,7 +890,9 @@ class LitShader {
             params[i * 4 + 0] = s.diffuseAmount;
             params[i * 4 + 1] = s.specularAmount;
             params[i * 4 + 2] = s.glossiness;
-            params[i * 4 + 3] = 0;
+            // The exponent, derived here once per upload rather than per
+            // fragment; roughness = 1 − glossiness (`Surface.glossiness`).
+            params[i * 4 + 3] = specPowerForRoughness(1.0f - s.glossiness);
         }
         glBindBuffer(GL_UNIFORM_BUFFER, matsUbo);
         glBufferSubData(GL_UNIFORM_BUFFER, 0,
@@ -900,22 +905,24 @@ class LitShader {
         glBindBuffer(GL_UNIFORM_BUFFER, 0);
     }
 
+    /// Bind the program for `meshModel` under `vp`: the ONE upload site of
+    /// the light rig (and of the matrices and every neutral below). Every lit
+    /// draw — scene passes, `drawLitPreview`, the pen preview — binds here.
     void useProgram(const ref float[16] meshModel, const ref Viewport vp) {
-        Vec3 lightDir = normalize(kLightDirection);
         glUseProgram(program);
         glUniformMatrix4fv(locModel, 1, GL_FALSE, meshModel.ptr);
         glUniformMatrix4fv(locView,  1, GL_FALSE, vp.view.ptr);
         glUniformMatrix4fv(locProj,  1, GL_FALSE, vp.proj.ptr);
-        uploadNormalMatrix(meshModel);
-        glUniform3f(locLightDir, lightDir.x, lightDir.y, lightDir.z);
-        glUniform3f(locEyePos,   vp.eye.x, vp.eye.y, vp.eye.z);
+        uploadNormalMatrix(matMul4(vp.view, meshModel));
+        glUniform3f(locKeyDir,  kKeyLightEye.x,  kKeyLightEye.y,  kKeyLightEye.z);
+        glUniform3f(locFillDir, kFillLightEye.x, kFillLightEye.y, kFillLightEye.z);
+        glUniform1f(locKeyI,    kKeyIntensity);
+        glUniform1f(locFillI,   kFillIntensity);
+        glUniform1f(locAmbient, kLightAmbient);
         // Default to material-lookup mode. drawFacesHighlighted flips
         // this to 1.0 for hover draws that need to override the
         // surface colour with u_color.
         glUniform1f(locOverrideMix, 0.0f);
-        glUniform1f(locAmbient,  kLightAmbient);
-        glUniform1f(locSpecStr,  kLightSpecStrength);
-        glUniform1f(locSpecPow,  kLightSpecPower);
         // Default to neutral brightness. Only a plan-driven face pass writes
         // the plan's dim (`applyPlan`) and parks 1.0 after its draws
         // (`restorePlanDefaults`).
@@ -1035,15 +1042,15 @@ class LitShader {
         glUniform1i(locSmoothNormals, smooth ? 1 : 0);
     }
 
-    /// `u_normalMatrix = normalMatrix(model)` for the bound program.
-    private void uploadNormalMatrix(const ref float[16] model) {
-        immutable float[9] n = normalMatrix(model);
+    /// `u_normalMatrix = normalMatrix(modelView)` for the bound program.
+    private void uploadNormalMatrix(const float[16] modelView) {
+        immutable float[9] n = normalMatrix(modelView);
         glUniformMatrix3fv(locNormalMatrix, 1, GL_FALSE, n.ptr);
     }
 }
 
 // Shared "lit preview" draw: solid shaded faces (LitShader — identity
-// model, fixed key light, flat ambient/spec) followed by wireframe edges
+// model, the viewport's light rig through `useProgram`) followed by wireframe edges
 // (plain Shader). Used by every primitive/incremental create-tool (box,
 // bridge, capsule, cone, cylinder, mirror, radial-sweep, sphere, tack,
 // torus, tube) to render its in-progress preview mesh — lifted verbatim
@@ -1054,29 +1061,15 @@ void drawLitPreview(LitShader litShader, const ref Shader shader,
                      const ref Viewport vp, ref GpuMesh previewGpu,
                      const ref DrawPlan plan) {
     immutable float[16] identity = identityMatrix;
-    Vec3 lightDir = normalize(kLightDirection);
 
     // The preview's surface pass obeys the cell plan. Its shading remains the
     // existing material preview whenever the plan permits faces; the plan is
     // a pass gate here, not a source of preview material state (task 5260).
     if (plan.drawFaces) {
-        glUseProgram(litShader.program);
-        glUniformMatrix4fv(litShader.locModel, 1, GL_FALSE, identity.ptr);
-        glUniformMatrix4fv(litShader.locView,  1, GL_FALSE, vp.view.ptr);
-        glUniformMatrix4fv(litShader.locProj,  1, GL_FALSE, vp.proj.ptr);
-        litShader.uploadNormalMatrix(identity);
-        glUniform3f(litShader.locLightDir, lightDir.x, lightDir.y, lightDir.z);
-        glUniform3f(litShader.locEyePos,   vp.eye.x, vp.eye.y, vp.eye.z);
-        glUniform1f(litShader.locAmbient,  kLightAmbient);
-        glUniform1f(litShader.locSpecStr,  kLightSpecStrength);
-        glUniform1f(litShader.locSpecPow,  kLightSpecPower);
-        // Task 0589: this site seeds every uniform it depends on BY HAND rather
-        // than going through `LitShader.useProgram`, so the plan uniforms a
-        // scene pass may have switched off are seeded here too, through the
-        // plan seam's preview subset — otherwise a create-tool
-        // preview drawn after an unlit scene pass would inherit the flat fill.
-        // The vertex-attribute NEUTRAL PARK of `useProgram` is not repeated: it
-        // is context state, and this path never reads `vWeightColor` (1090).
+        // `useProgram` seeds the rig and every neutral; the plan seam's preview
+        // subset then re-parks the plan uniforms a scene pass may have switched
+        // off, so a preview drawn after an unlit scene pass is still lit (0589).
+        litShader.useProgram(identity, vp);
         litShader.applyPreviewPlan(plan);
         previewGpu.drawFaces(litShader);
     }

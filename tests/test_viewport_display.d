@@ -1477,10 +1477,12 @@ bool testFlowL() {
 //
 // The operation: rotate the view a quarter turn about the world up axis. The
 // stock cube is symmetric under that rotation, so its projection is CONGRUENT
-// — same silhouette, same faces at the same screen positions, same wireframe —
-// while the key light, which is fixed in world space, now falls on a different
-// face at every one of those positions. (The +Y face maps to itself, but the
-// eye moved, so its specular term moves too.)
+// — same silhouette, same faces at the same screen positions, same wireframe.
+// The light rig is view-relative (task 9130), so a congruent turn leaves a
+// UNIFORM shaded cube unchanged too; the control therefore gives each face
+// its own material (geometry untouched): after the turn every side-face
+// position shows a DIFFERENT face, hence a different shaded colour, while
+// Solid — which never consults a surface (task 0592) — must still not move.
 //
 // So over the face-fill samples:
 //   * Solid  must not change AT ALL. Not "changes little" — the fill is one
@@ -1495,6 +1497,40 @@ bool testFlowL() {
 // This is the pair the whole task turns on: the two arms are two different
 // laws measured by one operation, rather than one law described twice.
 // --------------------------------------------------------------------------
+
+/// Replace the scene's stock cube with the SAME geometry (read back from
+/// `/api/model`) carrying one surface per face, six distinct greys.
+void loadCubeWithFaceMaterials() {
+    import std.file : write, remove, exists, tempDir;
+    import std.path : buildPath;
+    import std.process : thisProcessID;
+    auto m = parseJSON(httpGet("/api/model"));
+    enforce(m["faces"].array.length == 6 && m["vertices"].array.length == 8,
+        "Flow M rig: the stock cube is not 8 vertices / 6 faces: " ~ m.toString);
+    string vs, fs, ss, ms;
+    foreach (i, v; m["vertices"].array) vs ~= (i ? "," : "") ~ v.toString;
+    foreach (i, f; m["faces"].array) fs ~= (i ? "," : "") ~ f.toString;
+    foreach (i; 0 .. 6) {
+        immutable double g = 0.25 + 0.12 * i;
+        ss ~= format(`%s{"name":"F%d","baseColor":[%.3f,%.3f,%.3f],"diffuse":1,`
+            ~ `"specular":0,"glossiness":0.4,"opacity":1}`, i ? "," : "", i, g, g, g);
+        ms ~= format("%s%d", i ? "," : "", i);
+    }
+    immutable path = buildPath(tempDir(), format("vibe3d-flowm-%d.v3d", thisProcessID()));
+    write(path, `{"formatVersion":8,"primaryLayer":0,"focusedItem":0,"layers":[{"type":"mesh",`
+        ~ `"selected":true,"channels":{"name":"Cube","visible":true},"mesh":{"vertices":[` ~ vs
+        ~ `],"faces":[` ~ fs ~ `],"surfaces":[` ~ ss ~ `],"faceMaterial":[` ~ ms ~ `]}}]}`);
+    scope(exit) if (exists(path)) remove(path);
+    JSONValue j;
+    j["id"] = "file.load";
+    j["params"] = JSONValue(["path": JSONValue(path)]);
+    auto r = parseJSON(httpPost("/api/command", j.toString));
+    enforce(r["status"].str == "ok", "Flow M rig: file.load failed: " ~ r.toString);
+    auto back = parseJSON(httpGet("/api/model"));
+    enforce(back["surfaces"].array.length == 6 && back["faces"].array.length == 6,
+        "Flow M rig: the per-face materials did not load: " ~ back.toString);
+    probeFence();
+}
 
 bool testFlowM() {
     writeln("  [M] Solid is invariant to orientation; Shaded is not...");
@@ -1511,6 +1547,7 @@ bool testFlowM() {
     // changes the silhouette and the flow stops meaning anything.
     enum double kQuarterTurn = 1.5707963267948966;
 
+    loadCubeWithFaceMaterials();
     setSolidCamera(kSolidAz);
     setStyle("shaded");    auto shadedA = probe(0, pts).points;
     setStyle("wireframe"); auto wireA   = probe(0, pts).points;
@@ -1526,6 +1563,8 @@ bool testFlowM() {
     auto shadedB = probe(0, pts).points;
 
     // --- M1: the SHADED control first, because M2 is worthless without it ---
+    // (Per-face materials: under the view-relative rig a uniform cube would
+    // read the same after the congruent turn. M2 below runs after it.)
     size_t shadedMoved = 0;
     int    shadedDelta = 0;
     foreach (i; idx) {

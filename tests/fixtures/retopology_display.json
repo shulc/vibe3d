@@ -72,7 +72,7 @@
     "specular": "INFERRED, not measured: the fit cannot separate a specular term; ours scales it with diffuse",
     "fit": "out = 18 + (5/3)*(out_off - 18), 10 tiles within 1 LSB"
   },
-  "light_rig": "camera-attached at the reference (a fixed tile's value changes with the view); ours is world-fixed, so lit laws are ported as relations",
+  "light_rig": "camera-attached at the reference (a fixed tile's value changes with the view)",
   "selection": {
     "occluded_alpha": 0.30,
     "placement": "the primary item's selection passes run AFTER the whole item sequence, depth-tested against what it left, with the occluded pass, no depth clear",

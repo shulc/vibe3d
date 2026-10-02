@@ -89,13 +89,14 @@ FacePass facePassFor(const ref DrawPlan plan, const ref float[16] model)
 
 /// The base line pass of an item drawn under `plan` through `model`: the
 /// plan's colour, shaded by the light function at the item's local +Z when
-/// the plan says so (`shadeLinesByItem`), and its opacity. `eye` is the
-/// camera's world eye point, the value the lit program's `u_eyePos` gets.
+/// the plan says so (`shadeLinesByItem`), and its opacity. `view` is the
+/// camera's view matrix, the one the lit program's normal matrix composes
+/// (the light rig is view-relative).
 BaseWire baseWireFor(const ref DrawPlan plan, const ref float[16] model,
-                     Vec3 eye, int locAlpha) @safe pure nothrow @nogc
+                     const ref float[16] view, int locAlpha) @safe pure nothrow @nogc
 {
     Vec3 c = Vec3(plan.wireColor[0], plan.wireColor[1], plan.wireColor[2]);
-    if (plan.shadeLinesByItem) c = lineShade(c, model, eye, plan.lightGain);
+    if (plan.shadeLinesByItem) c = lineShade(c, model, view, plan.lightGain);
     return BaseWire(plan.drawWire, locAlpha, plan.wireAlpha, c);
 }
 
@@ -103,11 +104,11 @@ BaseWire baseWireFor(const ref DrawPlan plan, const ref float[16] model,
 /// colour (shaded the same way), opacity and size. Whether it draws and which
 /// dots it draws are the caller's (the vertex-dot block and the cull).
 BaseDots baseDotsFor(const ref DrawPlan plan, const ref float[16] model,
-                     Vec3 eye, int locAlpha) @safe pure nothrow @nogc
+                     const ref float[16] view, int locAlpha) @safe pure nothrow @nogc
 {
     BaseDots d;
     Vec3 c = Vec3(plan.vertColor[0], plan.vertColor[1], plan.vertColor[2]);
-    if (plan.shadeLinesByItem) c = lineShade(c, model, eye, plan.lightGain);
+    if (plan.shadeLinesByItem) c = lineShade(c, model, view, plan.lightGain);
     d.color    = c;
     d.alpha    = plan.vertAlpha;
     d.size     = plan.pointSize;
@@ -296,11 +297,11 @@ private:
         shader.setDim(plan.dim);
         if (plan.drawWire)
             g.drawEdges(shader.locColor, -1, MarkView.init, [],
-                        baseWireFor(plan, model, vp.eye, shader.locAlpha));
+                        baseWireFor(plan, model, vp.view, shader.locAlpha));
         if (plan.drawVerts)
             g.drawVertices(shader.locColor, shader.locPointSize, -1,
                            MarkView.init, OccludedPass.init,
-                           culledBaseDots(baseDotsFor(plan, model, vp.eye,
+                           culledBaseDots(baseDotsFor(plan, model, vp.view,
                                                       shader.locAlpha),
                                           plan, g, m, model, v, vp));
         shader.setDim(1.0f);
@@ -401,7 +402,7 @@ private:
         shader.useProgram(e.model, vp);
         shader.setDim(backdropPlan.dim);
         (*e.g).drawEdges(shader.locColor, -1, MarkView.init, [],
-            baseWireFor(backdropPlan, e.model, vp.eye, shader.locAlpha));
+            baseWireFor(backdropPlan, e.model, vp.view, shader.locAlpha));
         shader.setDim(1.0f);
     }
 
@@ -1015,7 +1016,7 @@ public:
     // with it. Gating the chain itself, or early-returning from drawEdges,
     // would do exactly that, and is the named wrong implementation.
     BaseWire baseWire =
-        baseWireFor(activePlan, meshModel, vp.eye, shader.locAlpha);
+        baseWireFor(activePlan, meshModel, vp.view, shader.locAlpha);
     if (itemSequence) baseWire.draw = false;   // drawn in the primary's bracket
     // The occluded half of every selection / pre-highlight draw (task 1860).
     // One value for the whole frame, handed to both `drawEdges` and
@@ -1349,7 +1350,7 @@ public:
         || selFeedbackType == SelType.Edge) {
         auto zOv = g_perf.scope_(Cat.drawOverlays);
         immutable bool edgeArm = selFeedbackType == SelType.Edge;
-        BaseDots baseDots = baseDotsFor(activePlan, meshModel, vp.eye,
+        BaseDots baseDots = baseDotsFor(activePlan, meshModel, vp.view,
                                         shader.locAlpha);
         baseDots.draw = !itemSequence
             && (activePlan.drawVerts || activePlan.baseDotsBySelection);
@@ -1360,7 +1361,7 @@ public:
                          occluded, baseDots);
     } else if (showVertHover && vertHovForDraw >= 0) {
         auto zOv = g_perf.scope_(Cat.drawOverlays);
-        BaseDots hoverBase = baseDotsFor(activePlan, meshModel, vp.eye,
+        BaseDots hoverBase = baseDotsFor(activePlan, meshModel, vp.view,
                                          shader.locAlpha);
         // The main arm's `!itemSequence` term, carried by the plan here: the
         // plan that runs the item sequence (`clearDepthFirst`) resolves

@@ -1,34 +1,29 @@
 module retopology_line_shade;
 
-import math : Vec3, normalize, dot, normalMatrix;
-import light_rig : kLightDirection, kLightAmbient, kLightSpecStrength,
-    kLightSpecPower;
+import math : Vec3, normalize, dot, normalMatrix, matMul4;
+import light_rig : kKeyLightEye, kFillLightEye, kKeyIntensity, kFillIntensity,
+    kLightAmbient;
 
 // An item's base edges and dots are lit by the SAME light function as its
 // fill, evaluated at the item's LOCAL +Z axis carried through the item
 // transform (captured: task 8600, plan §10.1). This is the CPU mirror of the
-// lit program's `litTerm`: same expression, same constants (`light_rig`).
-// The normal is `normalMatrix(model)·ẑ` (its third column), exactly what the
-// lit vertex shader does to a local +Z polygon's normal, so an edge
-// and a +Z fill of the same item agree under every transform, mirrors and
-// non-uniform scales included. One `V` per item, from its origin.
+// lit program's Retopology arm of `litTerm` (diffuse amount 1, no specular):
+// same expression, same constants (`light_rig`), same EYE space. The normal is
+// `normalMatrix(view·model)·ẑ` (its third column), exactly what the lit vertex
+// shader does to a local +Z polygon's normal, so an edge and a +Z fill of the
+// same item agree under every item transform AND every camera — the rig is
+// view-relative, so turning the camera moves the shade.
 
-/// `palette` lit at the item's local +Z through `model` (column-major), seen
-/// from `eyeWorld`, with the light gain `gain` on the part above ambient.
-Vec3 lineShade(Vec3 palette, const ref float[16] model, Vec3 eyeWorld,
-               float gain) @safe pure nothrow @nogc
+/// `palette` lit at the item's local +Z through `model` and the camera `view`
+/// (both column-major), with the light gain `gain` on the part above ambient.
+Vec3 lineShade(Vec3 palette, const ref float[16] model,
+               const ref float[16] view, float gain) @safe pure nothrow @nogc
 {
-    import std.math : pow;
-    immutable float[9] nm = normalMatrix(model);
+    immutable float[9] nm = normalMatrix(matMul4(view, model));
     immutable Vec3 n = normalize(Vec3(nm[6], nm[7], nm[8]));
-    immutable Vec3 at = Vec3(model[12], model[13], model[14]);
-    immutable Vec3 l = normalize(kLightDirection);
-    immutable Vec3 v = normalize(eyeWorld - at);
-    immutable Vec3 h = normalize(l + v);
-    immutable float dif = dot(n, l) > 0.0f ? dot(n, l) : 0.0f;
-    immutable float nh  = dot(n, h) > 0.0f ? dot(n, h) : 0.0f;
-    immutable float spc = pow(nh, kLightSpecPower);
-    immutable float k = kLightAmbient + gain * dif * (1.0f - kLightAmbient);
-    immutable float s = gain * spc * kLightSpecStrength;
-    return Vec3(palette.x * k + s, palette.y * k + s, palette.z * k + s);
+    immutable float nk = dot(n, kKeyLightEye), nf = dot(n, kFillLightEye);
+    immutable float dif = kKeyIntensity * (nk > 0.0f ? nk : 0.0f)
+                        + kFillIntensity * (nf > 0.0f ? nf : 0.0f);
+    immutable float k = kLightAmbient + gain * dif;
+    return Vec3(palette.x * k, palette.y * k, palette.z * k);
 }

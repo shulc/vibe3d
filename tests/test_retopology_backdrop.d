@@ -39,14 +39,13 @@ import std.stdio : writeln, writefln;
 void main() {}
 
 // ---------------------------------------------------------------------------
-// Our own lighting constants, typed ONCE: the literals `LitShader.useProgram`
-// uploads (source/shader.d). They are OURS, not a measurement — the gain law
-// is a relation evaluated on our rig.
+// The light rig's ambient, typed ONCE (source/light_rig.d, task 9130: global
+// ambient 0.15 × Kd, not scaled by the gain). Neither lit arm this rig draws
+// carries a specular term — the Retopology arm has none and the default
+// material's specular amount is 0 — so every relation below is spec-free.
+// The gain law is a relation evaluated on our rig.
 // ---------------------------------------------------------------------------
-private enum double kAmbient  = 0.20;
-private enum double kSpecStr  = 0.25;
-private enum double kSpecPow  = 32.0;
-private immutable double[3] kLightRaw = [0.6, 1.0, 0.5];
+private enum double kAmbient  = 0.15;
 /// The measured gain (fixture `retopology_display.json` light_gain 5/3).
 private enum double kGain = 5.0 / 3.0;
 /// The retopology face colour (scheme row; fixture face.colour 0.2).
@@ -223,20 +222,6 @@ private int maxDiff(Px a, Px b) {
     int m = 0;
     foreach (k; 0 .. 3) m = max(m, abs(a.c[k] - b.c[k]));
     return m;
-}
-
-// The specular term of our light function at normal n and view V, in LSB,
-// for a gain g — the part `litTerm` adds that is NOT scaled by the base.
-private double specLsb(double[3] n, double[3] eye, double[3] at, double g) {
-    double[3] norm(double[3] v) {
-        immutable l = sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
-        return [v[0] / l, v[1] / l, v[2] / l];
-    }
-    immutable L = norm(kLightRaw);
-    immutable V = norm([eye[0] - at[0], eye[1] - at[1], eye[2] - at[2]]);
-    immutable H = norm([L[0] + V[0], L[1] + V[1], L[2] + V[2]]);
-    immutable nh = max(0.0, n[0] * H[0] + n[1] * H[1] + n[2] * H[2]);
-    return g * pow(nh, kSpecPow) * kSpecStr * 255.0;
 }
 
 // ---------------------------------------------------------------------------
@@ -455,8 +440,9 @@ unittest {
         assert(maxDiff(fg, w[0]) >= 3,
             format("A7: the primary reads the weight neutral %s", fg.c));
         // Two +Z polygons lit by the same function with the same gain:
-        // fg = face*K + S and tile = base*K + S, S the unscaled specular.
-        immutable double S = specLsb([0.0, 0.0, 1.0], r.eye, kFgCentre, kGain);
+        // fg = face*K + S and tile = base*K + S, S the unscaled specular —
+        // zero on this rig (see the constants above).
+        immutable double S = 0.0;
         immutable double ratio = kFace / r.base;
         // + 0.5 for rounding the unblended value to an integer above.
         immutable double tol = 0.5 + 0.5 * ratio + abs(S) * (1.0 - ratio)

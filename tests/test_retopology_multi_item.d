@@ -34,10 +34,11 @@ import std.stdio : writeln, writefln;
 
 void main() {}
 
-// Our light rig and the mode's constants (the relations under test are on OUR
-// lighting: `LitShader`'s uploaded values).
-private enum double kAmbient = 0.20, kSpecStr = 0.25, kSpecPow = 32.0;
-private immutable double[3] kLightRaw = [0.6, 1.0, 0.5];
+// Our light rig (source/light_rig.d, task 9130: eye-space key and fill, global
+// ambient, no specular on the default material or the Retopology arm) and the
+// mode's constants — the relations under test are on OUR lighting.
+private enum double kAmbient = 0.15, kKeyI = 0.7, kFillI = 0.3;
+private immutable double[3] kKeyEye = [-0.654509, 0.587785, 0.475528];
 private enum double kGain = 5.0 / 3.0;
 private enum double kFill = 0.5;           // the mode's face alpha
 private enum double kLineAlpha = 0.4;
@@ -76,15 +77,13 @@ private double[3] nrm(double[3] v) {
 }
 private double dot3(double[3] a, double[3] b) { return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]; }
 
-/// 255 x a +Z polygon of base colour channel `base`, lit at `at` with gain g.
-private double litZ(double base, double[3] at, double[3] eye, double g) {
-    immutable L = nrm(kLightRaw.dup[0 .. 3]);
-    immutable V = nrm([eye[0] - at[0], eye[1] - at[1], eye[2] - at[2]]);
-    immutable H = nrm([L[0] + V[0], L[1] + V[1], L[2] + V[2]]);
-    immutable double[3] N = [0.0, 0.0, 1.0];
-    immutable dif = max(0.0, dot3(N, L));
-    immutable spc = pow(max(0.0, dot3(N, H)), kSpecPow);
-    return 255.0 * (base * (kAmbient + g * dif * (1 - kAmbient)) + g * spc * kSpecStr);
+/// 255 x a +Z polygon of base colour channel `base` seen through `vp`, gain
+/// g: the world +Z normal is taken to eye space by the view (the rig turns
+/// with the camera; under the front view it is the eye's +Z).
+private double litZ(double base, const ref Viewport vp, double g) {
+    immutable N = nrm([vp.view[8], vp.view[9], vp.view[10]]);   // view · (0,0,1)
+    immutable dif = kKeyI * max(0.0, dot3(N, kKeyEye)) + kFillI * max(0.0, N[0]);
+    return 255.0 * base * (kAmbient + g * dif);
 }
 
 // ---------------------------------------------------------------------------
@@ -553,7 +552,7 @@ unittest {
         immutable double[3] vpal = [0.38, 0.62, 0.92];
         bool disc = false;
         foreach (k; 0 .. 3) {
-            immutable double d = litZ(vpal[k], [0.0, 0.0, 0.0], r.eye, kGain);
+            immutable double d = litZ(vpal[k], r.vp, kGain);
             immutable double Z = (off[best].c[k] - kFill * c1[k]) / (1 - kFill);
             immutable double pred = off[best].c[k] + (1 - kFill) * kLineAlpha * (d - Z);
             immutable double rival = kLineAlpha * d + (1 - kLineAlpha) * pred;
@@ -887,8 +886,8 @@ unittest {
         immutable Px o = probe([p])[0];
         writefln("  10 %s: Red tile %s", order, o.c);
         foreach (k; 0 .. 3) {
-            immutable double pred  = litZ(red[k], kRedTile, r.eye, kGain);
-            immutable double rival = litZ(blue[k], kRedTile, r.eye, kGain);
+            immutable double pred  = litZ(red[k], r.vp, kGain);
+            immutable double rival = litZ(blue[k], r.vp, kGain);
             assert(abs(o.c[k] - pred) <= 1.0,
                 format("10 (%s): the Red layer channel %d reads %d, predicted %.2f from "
                        ~ "its own base %s; the primary's base would give %.2f", order, k,
@@ -950,12 +949,12 @@ unittest {
     immutable Px o = probe([toPx(kRedTile, r.vp)])[0];
     writefln("  12 Red tile loaded under the mode %s", o.c);
     foreach (k; 0 .. 3) {
-        immutable double pred = litZ(red[k], kRedTile, r.eye, kGain);
+        immutable double pred = litZ(red[k], r.vp, kGain);
         assert(abs(o.c[k] - pred) <= 1.0,
             format("12: the Red layer loaded under the mode reads channel %d = %d, "
                    ~ "predicted %.2f (the primary's base would give %.2f) — the layer "
                    ~ "was never uploaded", k, o.c[k], pred,
-                   litZ(blue[k], kRedTile, r.eye, kGain)));
+                   litZ(blue[k], r.vp, kGain)));
     }
     writeln("  rig F: cell 12 passed");
 }

@@ -183,6 +183,9 @@ int rgbDist(Px a, Px b) {
 // The two thresholds, and the MEASURED readings they sit between (2026-08-25,
 // this rig, both arms): the lit flat patch reads (105, 105, 105) and the
 // background of the SAME SCREEN ROW reads (92, 102, 107) — a distance of 18.
+// Under the view-relative rig (task 9130) the patch reads (98, 98, 98) — the
+// formula predicts 0.8 x (0.15 + 0.7 x 0.4755) x 255 = 98.5 for a frontal +Z
+// face — a distance of 19.
 // Every "same" pair below measures 0, exactly, because the rendering is
 // deterministic and the background gradient is vertical: the old-place pixel
 // and the background reference share a screen row by construction, so after

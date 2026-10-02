@@ -33,12 +33,9 @@ import std.stdio : writeln, writefln;
 
 void main() {}
 
-// Our lighting constants (the literals `LitShader.useProgram` uploads) — OURS,
-// used only for the specular term, which is below 1 LSB on this rig.
-private enum double kAmbient  = 0.20;
-private enum double kSpecStr  = 0.25;
-private enum double kSpecPow  = 32.0;
-private immutable double[3] kLightRaw = [0.6, 1.0, 0.5];
+// Our light rig (source/light_rig.d, task 9130) enters only through the
+// specular term `specLsb`, which is ZERO on this rig: the Retopology arm has
+// no specular and the backdrop's default material a specular amount of 0.
 private enum double kGain = 5.0 / 3.0;   // fixture light_gain
 private enum double kFace = 0.2;         // retopology face colour (scheme row)
 /// The scheme's selection colour for edges (the occluded-pass tests' value).
@@ -328,17 +325,12 @@ private Px[] under(int[2][] pts) {
     return u;
 }
 
-// The specular term of our light at normal n, in LSB, gain g.
+// The specular term of our light at normal n, in LSB, gain g: zero on this
+// rig (task 9130 — the Retopology arm has no specular, the default material
+// none either). Kept as a named term so every relation below still says
+// where a specular difference would enter.
 private double specLsb(double[3] n, double[3] eye, double[3] at, double g) {
-    double[3] norm(double[3] v) {
-        immutable l = sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
-        return [v[0] / l, v[1] / l, v[2] / l];
-    }
-    immutable L = norm(kLightRaw);
-    immutable V = norm([eye[0] - at[0], eye[1] - at[1], eye[2] - at[2]]);
-    immutable H = norm([L[0] + V[0], L[1] + V[1], L[2] + V[2]]);
-    immutable nh = max(0.0, n[0] * H[0] + n[1] * H[1] + n[2] * H[2]);
-    return g * pow(nh, kSpecPow) * kSpecStr * 255.0;
+    return 0.0;
 }
 
 /// The row (of three around the projected edge) that changed most between
@@ -416,10 +408,9 @@ unittest {
     assert(maxDiff(o[iCh], o[iCl]) <= 1,
         format("3: C behind P1 reads %s, in front %s", o[iCh].c, o[iCl].c));
 
-    // The fill's specular term moves with V = normalize(eye - p) even in the
-    // orthographic view (our lit program's per-fragment V), so a +Z fill at
-    // two places differs by S(p) - S(q), a few LSB on this rig: every cross-
-    // position relation below carries that computed term, not a tolerance.
+    // Under the pre-9130 rig the fill's specular term moved with the
+    // per-fragment V, so every cross-position relation below carries the
+    // computed term S(p) - S(q); it is zero now (`specLsb`).
     double S(double[3] p) { return specLsb([0.0, 0.0, 1.0], r.eye, p, kGain); }
 
     // ---- 4. alpha: A over P1 and G over the empty viewport share the fill ---
@@ -791,8 +782,8 @@ unittest {
             format("9 perspective: Q faces this eye and must be filled (%s over %s)",
                    op[0].c, up[0].c));
         // B = A in perspective. The two sit at different pixels, so P1 under
-        // them and the fill's specular term move with V: bound the specular
-        // difference and add it to the two roundings.
+        // them moves; the specular difference (zero, `specLsb`) is added to
+        // the two roundings.
         immutable double dS = abs(specLsb([0.0, 0.0, 1.0], eye, fg[0].c, kGain)
                                 - specLsb([0.0, 0.0, 1.0], eye, fg[1].c, kGain));
         assert(maxDiff(op[2], op[1]) <= 1 + 2 * dS + maxDiff(up[2], up[1]),

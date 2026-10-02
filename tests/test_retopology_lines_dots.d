@@ -27,10 +27,13 @@ import std.stdio : writeln, writefln;
 
 void main() {}
 
-// Our light rig (source/light_rig.d) and the mode's constants — the relation
-// under test is "lit by OUR light function at the item's local +Z".
-private enum double kAmbient = 0.20, kSpecStr = 0.25, kSpecPow = 32.0;
-private immutable double[3] kLightRaw = [0.6, 1.0, 0.5];
+// Our light rig (source/light_rig.d, task 9130: eye-space key and fill, global
+// ambient) and the mode's constants — the relation under test is "lit by OUR
+// light function at the item's local +Z". The Retopology arm and its line
+// mirror carry no specular term.
+private enum double kAmbient = 0.15, kKeyI = 0.7, kFillI = 0.3;
+private immutable double[3] kKeyEye = [-0.654509, 0.587785, 0.475528];
+private immutable double[3] kFillEye = [1.0, 0.0, 0.0];
 private enum double kGain = 5.0 / 3.0;
 private enum double kLineAlpha = 0.4;
 private immutable double[3] kEdgePal = [0.11, 0.25, 0.41];
@@ -70,24 +73,19 @@ private double[3] nrm(double[3] v) {
 }
 private double dot3(double[3] a, double[3] b) { return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]; }
 
-/// Diffuse factor and specular term (0..1) at normal `n`, point `at`.
-private void lightAt(double[3] n, double[3] at, double[3] eye, out double k,
-                     out double s) {
-    immutable L = nrm(kLightRaw.dup[0 .. 3]);
-    immutable V = nrm([eye[0] - at[0], eye[1] - at[1], eye[2] - at[2]]);
-    immutable H = nrm([L[0] + V[0], L[1] + V[1], L[2] + V[2]]);
-    immutable N = nrm(n);
-    immutable dif = max(0.0, dot3(N, L));
-    k = kAmbient + kGain * dif * (1 - kAmbient);
-    s = kGain * pow(max(0.0, dot3(N, H)), kSpecPow) * kSpecStr;
+/// The light factor (0..) at WORLD normal `n` seen through `vp`: the normal
+/// is taken to eye space by the view's rotation (the rig turns with the camera).
+private double lightAt(double[3] n, const ref Viewport vp) {
+    immutable N = nrm([vp.view[0]*n[0] + vp.view[4]*n[1] + vp.view[8]*n[2],
+                       vp.view[1]*n[0] + vp.view[5]*n[1] + vp.view[9]*n[2],
+                       vp.view[2]*n[0] + vp.view[6]*n[1] + vp.view[10]*n[2]]);
+    immutable dif = kKeyI * max(0.0, dot3(N, kKeyEye)) + kFillI * max(0.0, dot3(N, kFillEye));
+    return kAmbient + kGain * dif;
 }
 
 /// 255 x the shaded palette colour, channel `c`.
-private double shaded(const double[3] pal, int c, double[3] n, double[3] at,
-                      double[3] eye) {
-    double k, s;
-    lightAt(n, at, eye, k, s);
-    return 255.0 * (pal[c] * k + s);
+private double shaded(const double[3] pal, int c, double[3] n, const ref Viewport vp) {
+    return 255.0 * pal[c] * lightAt(n, vp);
 }
 
 // ---------------------------------------------------------------------------
@@ -471,7 +469,7 @@ unittest {
             Px u, o;
             e0[name] = edgeColour(cq(name), r.vp, u, o);
             foreach (c; 0 .. 3) {
-                immutable double cc = shaded(kEdgePal, c, zN, origin, r.eye);
+                immutable double cc = shaded(kEdgePal, c, zN, r.vp);
                 immutable double pred = kLineAlpha * cc + (1 - kLineAlpha) * u.c[c];
                 assert(abs(o.c[c] - pred) <= 1.3,
                     format("1: %s edge channel %d reads %d over %d, predicted %.2f "
@@ -512,7 +510,7 @@ unittest {
         showVertices(true);
         immutable Px o = probe1(ip);
         foreach (c; 0 .. 3) {
-            immutable double cc = shaded(kVertPal, c, zN, origin, r.eye);
+            immutable double cc = shaded(kVertPal, c, zN, r.vp);
             immutable double pred = kLineAlpha * cc + (1 - kLineAlpha) * u.c[c];
             assert(abs(o.c[c] - pred) <= 1.3,
                 format("3: I0's dot channel %d reads %d over %d, predicted %.2f", c,
@@ -649,9 +647,8 @@ unittest {
     // ---- 2b. an ITEM rotation of +40 degrees about Y moves the edge colour --
     // Predicted from the fill of the rotated G (a +Z polygon of the same item)
     // over the empty view: f = 2 out - u (1.5 LSB), and the edge from the
-    // palette ratio: e = ratio (f - S) + S with S the specular term at G's
-    // fill (the item-origin V moves it by < 0.5 LSB, bounded below).
-    // Tolerance: 2.0 (edge) + ratio 1.5 (fill) + 0.5 (specular).
+    // palette ratio: e = ratio f (no specular term in either, task 9130).
+    // Tolerance: 2.0 (edge) + ratio 1.5 (fill).
     {
         cmdOk("layer.attr 1 rot.y 40");
         settle();
@@ -672,20 +669,11 @@ unittest {
         auto gp = px(gc);
         auto gu = under([gp])[0];
         auto go = probe1(gp);
-        immutable double[3] n40 = [s40, 0.0, c40];
-        double k, s;
-        lightAt(n40, gc, r.eye, k, s);
-        immutable double S = 255.0 * s;
-        double kE, sE;
-        lightAt(n40, origin, r.eye, kE, sE);
-        immutable double dS = abs(255.0 * sE - S);
-        assert(dS < 0.5, format("2b rig: the specular term moves %.3f LSB between "
-            ~ "G and the item origin", dS));
         foreach (c; 0 .. 3) {
             immutable double f = 2.0 * go.c[c] - gu.c[c];
             immutable double ratio = kEdgePal[c] / kFacePal;
-            immutable double pred = ratio * (f - S) + S;
-            immutable double tol = 2.0 + ratio * 1.5 + 0.5;
+            immutable double pred = ratio * f;
+            immutable double tol = 2.0 + ratio * 1.5;
             assert(abs(e[c] - pred) <= tol,
                 format("2b: the rotated item's edge channel %d unblends to %.1f, "
                        ~ "predicted %.1f from its +Z fill %.1f (tolerance %.1f)",
@@ -700,13 +688,15 @@ unittest {
         settle();
     }
 
-    // ---- 2c. rotating the CAMERA leaves our edge colour (world light) -------
-    // Our light is world-fixed; only the specular term moves with the eye,
-    // by < 0.5 LSB here (bounded below), so the unblended edge agrees within
-    // 2 x 2.0 + 0.5.
-    // A preset orthographic view keeps its axis, so the orbit (azimuth in
-    // RADIANS) is a perspective camera, which EG (reversed, unfilled) still
-    // faces away from.
+    // ---- 2c. rotating the CAMERA moves our edge colour (view-relative rig) --
+    // The rig is eye space (task 9130; the reference's is camera-attached too,
+    // fixture `light_rig`), so a 40° orbit turns the fixed item's +Z normal in
+    // eye space: the unblended edge (2.0 LSB) equals the light function at
+    // the NEW view, +-2.5. Floor first: that prediction is > 2 x 2.5 from the
+    // front-view edge on channel 2, so an unchanged colour (a world-fixed
+    // rig) fails the cell. A preset orthographic view keeps its axis, so the
+    // orbit (azimuth in RADIANS) is a perspective camera, which EG (reversed,
+    // unfilled) still faces away from.
     {
         cmdOk("viewport.view Perspective");
         settle();
@@ -720,14 +710,19 @@ unittest {
         double[3] eyeDir = nrm(r2.eye.dup[0 .. 3]);
         assert(abs(eyeDir[2] - cos(40 * PI / 180)) < 0.02,
             format("2c premise: the eye is not at 40 degrees (%s)", r2.eye));
-        immutable double dS = abs(shaded(kEdgePal, 2, zN, origin, r2.eye)
-                                - shaded(kEdgePal, 2, zN, origin, r.eye));
+        immutable double moved = abs(shaded(kEdgePal, 2, zN, r2.vp) - e0["EG"][2]);
+        assert(moved > 2 * 2.5, format("2c floor: the view-relative prediction moves "
+            ~ "channel 2 by only %.2f from the front-view edge %.1f", moved, e0["EG"][2]));
         Px u, o;
         auto e = edgeColour(cq("EG"), r2.vp, u, o);
-        foreach (c; 0 .. 3)
-            assert(abs(e[c] - e0["EG"][c]) <= 4.0 + dS + 0.5,
+        foreach (c; 0 .. 3) {
+            immutable double pred = shaded(kEdgePal, c, zN, r2.vp);
+            assert(abs(e[c] - pred) <= 2.5,
                 format("2c: after a camera rotation the edge channel %d unblends to "
-                       ~ "%.1f, %.1f before", c, e[c], e0["EG"][c]));
+                       ~ "%.1f, predicted %.2f at the new view (%.1f before) — the light "
+                       ~ "must turn with the camera", c, e[c], pred, e0["EG"][c]));
+        }
+        writefln("  2c edge after the orbit %s, front view %s", e, e0["EG"]);
         frontOrtho();
         parkPointer(r);
     }

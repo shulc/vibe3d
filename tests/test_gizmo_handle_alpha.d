@@ -501,9 +501,54 @@ int ink(Px p, int dom) {
     return ch[dom] - other;
 }
 
+/// The stock cube's geometry (read back) with its TOP face white and every
+/// other face dark (base 0.15). Flow C's contrast is the top face (behind the
+/// Y arm at the far camera) against the front face (behind it at the near
+/// one); task 9130's view-relative rig lights those two stock-grey faces only
+/// 32 levels apart (measured), under the 40 the flow needs. The materials
+/// make the contrast a property of the rig's DATA rather than of which face
+/// the light favours: predicted (light_rig formula) top 168, front 19.
+void loadContrastCube() {
+    import std.file : write, remove, exists, tempDir;
+    import std.path : buildPath;
+    import std.process : thisProcessID;
+    auto m = parseJSON(httpGet("/api/model"));
+    enforce(m["faces"].array.length == 6 && m["vertices"].array.length == 8,
+        "Flow C rig: the stock cube is not 8 vertices / 6 faces: " ~ m.toString);
+    string vs, fs, ms;
+    int tops;
+    foreach (i, v; m["vertices"].array) vs ~= (i ? "," : "") ~ v.toString;
+    foreach (i, f; m["faces"].array) {
+        fs ~= (i ? "," : "") ~ f.toString;
+        double cy = 0;
+        foreach (vi; f.array) {
+            auto y = m["vertices"].array[vi.integer].array[1];
+            cy += y.type == JSONType.float_ ? y.floating : cast(double) y.integer;
+        }
+        immutable bool top = cy / f.array.length > 0.25;
+        if (top) ++tops;
+        ms ~= format("%s%d", i ? "," : "", top ? 1 : 0);
+    }
+    enforce(tops == 1, format("Flow C rig: %d top faces found, expected 1", tops));
+    immutable path = buildPath(tempDir(), format("vibe3d-flowc-%d.v3d", thisProcessID()));
+    write(path, `{"formatVersion":8,"primaryLayer":0,"focusedItem":0,"layers":[{"type":"mesh",`
+        ~ `"selected":true,"channels":{"name":"Cube","visible":true},"mesh":{"vertices":[` ~ vs
+        ~ `],"faces":[` ~ fs ~ `],"surfaces":[{"name":"Dark","baseColor":[0.15,0.15,0.15],`
+        ~ `"diffuse":1,"specular":0,"glossiness":0.4,"opacity":1},{"name":"Top","baseColor":[1,1,1],`
+        ~ `"diffuse":1,"specular":0,"glossiness":0.4,"opacity":1}],"faceMaterial":[` ~ ms ~ `]}}]}`);
+    scope(exit) if (exists(path)) remove(path);
+    JSONValue j;
+    j["id"] = "file.load";
+    j["params"] = JSONValue(["path": JSONValue(path)]);
+    auto r = parseJSON(httpPost("/api/command", j.toString));
+    enforce(r["status"].str == "ok", "Flow C rig: file.load failed: " ~ r.toString);
+    settle();
+}
+
 bool testFlowC() {
     writeln("  [C] the arm's opacity is invariant to its background...");
     resetApp();
+    loadContrastCube();
     script("tool.set move");
     settle();
     scope(exit) { script("tool.set move off"); settle(); setCamera(3.0); }
