@@ -1991,7 +1991,7 @@ final class CommandHistory {
         return true;
     }
 
-    /// Set fold bits (`JoinsBelow`, `PreNavOpen` — nothing
+    /// Set fold bits (`JoinsBelow`, `PreNavOpen`, `FoldBase` — nothing
     /// else) on the undo-stack entry holding `expect`, by IDENTITY (wave plan
     /// 8640 S7a; the tool session's fold, the only caller). Returns whether it
     /// found it.
