@@ -2937,14 +2937,11 @@ struct OsdAccel {
     /// left the topology — hence the stencil table and every other TBO —
     /// unchanged (`SubpatchPreview.refreshMaterialData`). Returns whether the
     /// GPU copy was rewritten; false when the fan-out is not set up or the
-    /// preview's face count is not the one the TBO was sized for.
+    /// preview's face count is not the one the TBO was sized for. Main thread,
+    /// like `refreshIntoFaceVbo` (no `glThreadGuard`: the W15-A census pins the
+    /// guarded install seam alone).
     bool refreshSmoothPolicy(ref const Mesh pmesh) {
         if (faceSlotVbo == 0 || pmesh.faces.length != faceSlotCount) return false;
-        version (web) {
-        } else {
-            import gl_thread_guard : glThreadGuard;
-            glThreadGuard("OsdAccel.refreshSmoothPolicy");
-        }
         import bindbc.opengl;
         buildSmoothPolicy(pmesh.faceMaterial, pmesh.faces.length,
                           pmesh.surfaces, scratchPolicy);
