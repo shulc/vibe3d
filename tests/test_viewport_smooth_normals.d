@@ -596,8 +596,10 @@ unittest {
 
 // ---------------------------------------------------------------------------
 // (ix) the positions refresh (`GpuMesh.refreshPositions`, the subpatch
-// preview's CPU path while the GPU fan-out is parked) recomputes the smooth
-// stream: mid-drag it equals what a full rebuild writes at the same positions.
+// preview's CPU path) recomputes the smooth stream: mid-drag it equals what a
+// full rebuild writes at the same positions. A hidden face keeps the drag on
+// that path: its slot-less corners make the face VBO shorter than the GPU
+// fan-out's corner stream, so the fan-out refuses (`refreshIntoFaceVbo`).
 // ---------------------------------------------------------------------------
 unittest {
     if (!cellOn("ix")) return;
@@ -610,6 +612,10 @@ unittest {
     cmd("select.typeFrom polygon");
     cmd(`{"id":"mesh.subpatch_toggle"}`);
     waitSettled();
+    select("polygons", [cast(int)(f.length - 1)]);
+    cmd(`{"id":"mesh.hide"}`);
+    waitSettled();
+    cmd("select.typeFrom vertex");
     select("vertices", [cast(int)(1 + 3 * 16)]);
     cmd("tool.set move");
     frameFence(null, 2);
@@ -629,11 +635,13 @@ unittest {
     playAndWait(buildDragUpLog(cam.vpX, cam.vpY, cam.width, cam.height, x0 + 40, y0));
     cmd("tool.set move off");
     waitSettled();
-    // A full rebuild of the preview at the released positions.
-    select("polygons", [cast(int)(f.length - 1)]);
-    cmd(`{"id":"mesh.hide"}`);
+    // A full rebuild of the preview at the released positions, the face
+    // still hidden: subpatch off, then on again over every face.
+    cmd("select.typeFrom polygon");
+    select("polygons", []);
+    cmd(`{"id":"mesh.subpatch_toggle"}`);
     waitSettled();
-    cmd(`{"id":"mesh.unhideAll"}`);
+    cmd(`{"id":"mesh.subpatch_toggle"}`);
     waitSettled();
     frameFence(null, 2);
     immutable string fullWriter = getJson("/api/subpatch/preview")["displayWriter"].str;
