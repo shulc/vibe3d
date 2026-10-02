@@ -1223,13 +1223,18 @@ private struct ToolSession {
         // the active session's and the row below carries the same token.
         const bool pair = recordCarriesActivation_();
         // M-G (wave plan 8640 S7a, [A2-3]): the parameter rows folded into the
-        // activation pop with it, through this same tail; a pair's group (law 6)
-        // pops its folded run, its base and the activation below the base (the
-        // pair is read on the base, never on an activation: exclusive with M-G);
-        // with the tool gone (a drop, C3) a folded group of the model pops whole.
-        const size_t run = pair || (t is null && modelStep_(undoTop_()))
+        // activation pop with it, through this same tail; a folded group of the
+        // model pops whole whoever is bound (law 6 is the rows', not the tool's:
+        // a drop, C3, or another session's tool). A pair reaching the tail is a
+        // bare record on its activation: a FOLDED pair is a model group of the
+        // bound session, which `navigateTopology_` pops before the tail (the
+        // model has `historyTopologySteps`; Edge Extend, the one carrier outside
+        // it, never folds).
+        const size_t run = pair || modelStep_(undoTop_())
             ? foldedRunAbove_() : absorbedRunAbove_();
-        const size_t extra = pair ? run + 1 : run;
+        assert(!(pair && run),
+            "session undo: a folded group carrying its activation reached the tail");
+        const size_t extra = pair ? 1 : run;
         Rebindable!(const Command) last = undoEntryAt_(extra);
         // A lifecycle row may restore the topology tool that preceded it.
         // Resolve the raw image by that predecessor's identity/session, never
@@ -1240,10 +1245,7 @@ private struct ToolSession {
         auto drop = activation !is null &&
                 activation.sessionToken() == currentToken()
             ? dropImage_(extra) : DropImage.init;
-        auto topologyRestore = activation !is null &&
-                activation.previousHistoryTopology()
-            ? topologyAttrsFor_(activation.previousId(), activation.previousToken())
-            : AttrImage.init;
+        auto topologyRestore = predecessorAttrs_(activation);
         bool ok = history_.undo();
         if (ok) storeDropImage_(drop);
         foreach (_; 0 .. ok ? extra : 0) {
@@ -1269,17 +1271,8 @@ private struct ToolSession {
             const re3 = history_.redoEntries();
             if (t3 !is null && !(re3.length &&
                     cast(const TopologyAdjustmentEdit) re3[0].cmd !is null))
-                t3.resyncSession();
-            adoptPredecessorToken_(last);
-            if (t3 !is null && activation !is null &&
-                activation.previousHistoryTopology() &&
-                !topologyRestore.empty) {
-                // M-H: the restored predecessor is a fresh instance; what it
-                // was given is what the session remembers.
-                auto img = navigableAttrs_(t3, null, topologyRestore);
-                t3.restoreRecordedAttrs(img);
-                rememberTopologyAttrs_(img);
-            }
+                rebaseAfterTail_(t3);
+            restorePredecessor_(last, topologyRestore);
         }
         return ok;
     }
@@ -1352,8 +1345,9 @@ private struct ToolSession {
         Rebindable!(const ToolActivationCommand) act;
         {
             const re = history_.redoEntries();
-            // Law 6 with the tool gone: a folded group of the model is one step.
-            group = tool_() is null && re.length > 0 && modelStep_(re[0].cmd);
+            // Law 6, whoever is bound (a drop, C3, or another session's tool): a
+            // folded group of the model is one step.
+            group = re.length > 0 && modelStep_(re[0].cmd);
             replay = !replay_.empty && re.length > 0
                 && re[0].cmd is replayFor_.get;
             act = re.length ? cast(const ToolActivationCommand) re[0].cmd : null;
@@ -1415,7 +1409,7 @@ private struct ToolSession {
             auto t3 = tool_();
             if (t3 !is null && cast(const TopologyAdjustmentEdit)
                     history_.undoEntries()[$ - 1].cmd is null)
-                t3.resyncSession();
+                rebaseAfterTail_(t3);
         }
         if (ok && act !is null) {
             // Law 4: every redo that re-creates the instance (a bare activation
@@ -2142,8 +2136,11 @@ private struct ToolSession {
             if (pair) {
                 // PF-3 (plan §13, Capture-7 N6C): the restored predecessor continues its
                 // own session — the token the activation row carries — as on the tail.
+                // M-H (plan §19.3 (7)): its values too, read BEFORE the undo (the
+                // replay arm rewrites the session's memory).
                 Rebindable!(const Command) act = undoTop_();
-                if (history_.undo()) adoptPredecessorToken_(act);
+                auto img = predecessorAttrs_(act);
+                if (history_.undo()) restorePredecessor_(act, img);
             } else {
                 // Law 4 (orphan): a row another instance wrote moves the mesh only.
                 const orphan = capturedTopologyModel(t.sessionPolicy())
@@ -2603,6 +2600,42 @@ private struct ToolSession {
         auto act = cast(const ToolActivationCommand) undone;
         if (act is null || act.previousId.length == 0) return;
         adoptToken_(act.previousId, act.previousToken());
+    }
+
+    // M-nav (model §R11; plan §19.3 (6)): a navigation tail re-bases a model tool
+    // on the mesh the step left — everything derived from its base, no attribute
+    // (only a row, a seed or a restored predecessor writes those); any other tool
+    // re-syncs. Capture 8980 Z2/Z3 "kept", `param_closed_ebevel_ui` s10–s15.
+    private void rebaseAfterTail_(Tool t) {
+        auto c = cast(TopologyStepClient) t;
+        auto m = c is null ? null : c.topologyStepMesh();
+        if (capturedTopologyModel(t.sessionPolicy()) && m !is null)
+            c.rebaseTopologyStep(MeshSnapshot.capture(*m));
+        else
+            t.resyncSession();
+    }
+
+    // The values the predecessor an activation row restores held (M-H): the
+    // session's memory of its id and session; read before the row is undone.
+    private AttrImage predecessorAttrs_(const Command undone) {
+        import commands.tool.lifecycle : ToolActivationCommand;
+        auto act = cast(const ToolActivationCommand) undone;
+        return act !is null && act.previousHistoryTopology()
+            ? topologyAttrsFor_(act.previousId(), act.previousToken())
+            : AttrImage.init;
+    }
+
+    // The restored predecessor continues its session (token, slice M4) and gets
+    // the values it held (M-H: the instance is fresh; what it was given is what
+    // the session remembers) — on both paths that undo an activation: the tail
+    // and the pair branch of `navigateTopology_` (plan §19.3 (7), C7-1 s05_Z).
+    private void restorePredecessor_(const Command undone, AttrImage remembered) {
+        adoptPredecessorToken_(undone);
+        auto t = tool_();
+        if (t is null || remembered.empty) return;
+        auto img = navigableAttrs_(t, null, remembered);
+        t.restoreRecordedAttrs(img);
+        rememberTopologyAttrs_(img);
     }
 
     private void adoptToken_(string id, ulong token) {

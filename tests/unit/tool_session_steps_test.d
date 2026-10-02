@@ -1173,7 +1173,7 @@ unittest { // Law 4 seed (9020 F): the drop image is keyed BEFORE the undo re-ar
 
 // ---- 8290: a held widget is ONE topology step --------------------------------
 
-private final class ScrubTopologyTool : Tool, TopologyStepClient {
+private class ScrubTopologyTool : Tool, TopologyStepClient {
     Mesh* m;
     CommandHistory h;
     View view;
@@ -2439,7 +2439,8 @@ unittest { // U3: the pen as the predecessor (§4.6) continues its session too
     r.m.vertices[3].z += 0.25f;
     pen.release();
     pf3ArmB(r, pen, "t.fold");
-    assert(r.s.navigate(true) && r.active is pen, "PF-3 U3 rig: B's pair did not undo back to the pen");
+    assert(r.s.navigate(true) && r.active is pen,
+           "PF-3 U3 rig: B's pair did not undo back to the pen");
     assert(pf3Token(r) == 5, format("PF-3 U3: the restored pen holds token %s, not its own 5",
                                     pf3Token(r)));
 }
@@ -2447,7 +2448,9 @@ unittest { // U3: the pen as the predecessor (§4.6) continues its session too
 unittest { // U4: an activation that refuses its undo hands no token over (the pair is split)
     static final class RefusingArm : ToolActivationCommand {
         // a predecessor of the SAME id with another token: an unguarded adopt would take it
-        this(Mesh* m, View v) { super(m, v, EditMode.Vertices, "t.b", "t.b", true, true, true, 9, 5); }
+        this(Mesh* m, View v) {
+            super(m, v, EditMode.Vertices, "t.b", "t.b", true, true, true, 9, 5);
+        }
         protected override void revertImpl() { failRevert("refused (test)"); }
     }
     auto r = pf3Rig();
@@ -2462,6 +2465,70 @@ unittest { // U4: an activation that refuses its undo hands no token over (the p
                                     pf3Token(r)));
 }
 
+
+unittest { // U5 (S7 (7), plan §19.3; CAP C7-1 s05_Z): the pair's undo gives A its values back (M-H)
+    auto r = pf3Rig();
+    auto a = new PressFlagTool;
+    a.m = &r.m; a.h = r.h; a.view = new View(0, 0, 1, 1);
+    a.basis = MeshSnapshot.capture(r.m);
+    r.active = a;
+    r.s.noteArm("t.a", 5, false);
+    a.v = 0.5f;                                  // the value A's haul wrote
+    s2bHaul(r.s, &a.pressBegins, &a.pressEnds, &r.m);
+    // B's UI row over a history-topology predecessor (the M-H read is keyed on it)
+    auto bv = new View(0, 0, 1, 1);
+    auto act = new ToolActivationCommand(&r.m, bv, EditMode.Vertices,
+        "t.b", "t.a", true, true, true, 9, 5, true, true);
+    pf3ArmB(r, a, "t.a", act);
+    // the replay arm is a FRESH instance of A: its value is the arm's, not the haul's
+    act.onActivate = (string id) { a.v = 0.0f; r.active = a; r.s.noteArm(id, 10); };
+    assert(r.s.navigate(true) && r.active is a && r.h.undoEntries().length == 1,
+        "PF-3 U5 rig: the undo did not take B's pair whole back to A");
+    assert(pf3Token(r) == 5, format("PF-3 U5 rig: A holds token %s, not its own 5", pf3Token(r)));
+    assert(a.v == 0.5f, format("PF-3 U5: after the undo of B's UI pair A holds v %s, expected "
+        ~ "the 0.5 it held (M-H on the pair branch; 0 = the fresh replay arm's)", a.v));
+}
+
+// ---- Task 9120 (S7 (6), plan §19.3, model §R11 M-nav): a navigation tail re-bases a model
+// ---- tool on the live mesh and writes none of its attributes (capture 8980 Z2/Z3 "kept") --
+
+/// A scrub tool whose re-sync zeroes its attribute (a model tool's `reinitSession`) and
+/// which counts its rebases.
+private final class NavScrubTool : ScrubTopologyTool {
+    int rebaseCalls;
+    override void resyncSession() { shift = 0.0f; }
+    override void rebaseTopologyStep(MeshSnapshot) { ++rebaseCalls; }
+}
+
+unittest { // U-NA1: a foreign row over the haul, undone and redone — the haul's value stays
+    Mesh m = makeCube();
+    auto h = new CommandHistory();
+    auto t = new NavScrubTool;
+    t.m = &m; t.h = h; t.view = new View(0, 0, 1, 1);
+    t.basis = MeshSnapshot.capture(m);
+    Tool active = t;
+    auto s = new EditSession(() => active, h, () { active = null; });
+    s.noteArm("t.scrub", 1);
+    t.haulStep(0.5f);
+    auto foreign = new Stub(new View(0, 0, 1, 1));   // a row of no session (token 0)
+    assert(foreign.apply());
+    h.record(foreign);
+    assert(h.undoEntries().length == 2, "U-NA1 rig: the haul and the foreign row are not two rows");
+    const before = t.rebaseCalls;
+    assert(s.navigate(true) && h.undoEntries().length == 1, "U-NA1 rig: the undo did not step");
+    const afterUndo = t.rebaseCalls - before;
+    assert(t.shift == 0.5f, format("U-NA1: the undo tail wrote the model tool's attribute: shift "
+        ~ "%s, expected the haul's 0.5 (N1a: the tail re-synced)", t.shift));
+    assert(s.navigate(false) && h.undoEntries().length == 2, "U-NA1 rig: the redo did not step");
+    assert(t.shift == 0.5f, format("U-NA1: the redo tail wrote the model tool's attribute: shift "
+        ~ "%s, expected the haul's 0.5 (N1b: the tail re-synced)", t.shift));
+    // FLOOR (measured): the undo tail rebases once (the operation stays open: no settle
+    // rebase); the redo, its tail and the settle (the foreign row on top closes it).
+    assert(afterUndo == 1 && t.rebaseCalls - before == 3,
+        format("U-NA1: the tails rebased the tool %s (undo) / %s (both) times, expected 1 / 3 "
+               ~ "(N2: the tail neither re-synced nor rebased)", afterUndo,
+               t.rebaseCalls - before));
+}
 
 // ---- Task 9120 (S7, law 6, C3): with its tool dropped, a folded group of the model is still
 // ---- one undo step and one redo step (CAP close_drop_inset_ui s05_Z: the Z after the drop
@@ -2483,6 +2550,32 @@ unittest {
     assert(r.s.navigate(false) && r.h.undoEntries().length == 2 && r.h.redoEntries().length == 0,
         format("law 6: with the tool gone the redo of the folded group brought %s rows of 2",
                r.h.undoEntries().length));
+}
+
+// The fold is a property of the ROWS (`JoinsBelow`, written at the close), not of the tool
+// bound when they are navigated (plan §19.2 C (1); reviewer OWN-1): under a live tool of
+// another session — armed with no row of its own — the folded group is still one step.
+// Model-derived like C3's redo half (gap row of C3; Capture-10 group C).
+unittest {
+    auto r = s2bRig();
+    s2bHaul(r);
+    s2bHaul(r);
+    r.s.closeOperation(CloseReason.switch_);
+    r.s.finishClose();
+    auto other = new PressFlagTool;
+    other.m = &r.m; other.h = r.h; other.view = new View(0, 0, 1, 1);
+    other.basis = MeshSnapshot.capture(r.m);
+    r.active = other;
+    r.s.noteArm("t.other", 2, false);
+    assert(r.h.undoEntries().length == 2
+           && (r.h.undoEntries()[1].flags & HistoryFlags.JoinsBelow) != 0,
+        "law 6 live-other rig: the switch did not fold the two hauls, or the arm wrote a row");
+    assert(r.s.navigate(true) && r.h.undoEntries().length == 0 && r.h.redoEntries().length == 2,
+        format("law 6: under another session's live tool the undo of the folded group took %s "
+               ~ "rows of 2", 2 - r.h.undoEntries().length));
+    assert(r.s.navigate(false) && r.h.undoEntries().length == 2 && r.h.redoEntries().length == 0,
+        format("law 6: under another session's live tool the redo of the folded group brought "
+               ~ "%s rows of 2", r.h.undoEntries().length));
 }
 
 // ---- Task 9120 (S7, law 6 with law 4's seed): the undo that drops the tool with a FOLDED
@@ -2554,7 +2647,8 @@ unittest {
     m.vertices[3].z += 0.25f;
     t.release();
     foldWrite(s, t, 0.5f);
-    assert(h.undoEntries().length == 2, "pen L57 rig: the press and the parameter row are not two rows");
+    assert(h.undoEntries().length == 2,
+           "pen L57 rig: the press and the parameter row are not two rows");
     const o = s.closeOperation(CloseReason.command, CommandDoor.ui);
     s.finishClose();
     assert(o.staysArmed && (flagsAt(h, 1) & HistoryFlags.JoinsBelow) != 0,

@@ -46,7 +46,8 @@ immutable string[] kCells = [
     "vmerge_dormant", "vmerge_dormant_ui", "xinst_ctrl_inset_ui", "xinst_trunc_inset_ui"
 ];
 
-// `freeze_fixture.py --family inset` (2026-10-02, + 8960 3 cells, 8980 3 cells, 9030 2 cells, 8940 C7):
+// `freeze_fixture.py --family inset` (2026-10-02, + 8960 3 cells, 8980 3 cells, 9030 2 cells,
+// 8940 C7):
 // TOPO-REDO-CELLS family=inset cells=81 checkpoints=958 …
 enum long kCellCount = 81;
 enum long kCheckpointCount = 958;

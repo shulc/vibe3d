@@ -412,12 +412,12 @@ unittest { // (3) the doors reach the tool session only through EditSession
     inOrder(bodyAt(ts, "private bool undoImpl_()"),
             ["navigateRecorded_(true)", "navigateTopology_(true)", "undoFirstGroup_(t)",
              "cancelUncommittedEdit()", "recordCarriesActivation_()", "absorbedRunAbove_()",
-             "resyncSession()", "adoptPredecessorToken_("],
+             "rebaseAfterTail_(", "restorePredecessor_("],
             "ToolSession.undoImpl_");
     inOrder(bodyAt(ts, "private bool redoImpl_()"),
             ["navigateRecorded_(false)", "navigateTopology_(false)", "applyAttrImage(img)",
              "carriesFirstRecord()", "adoptToken_(",
-             "resyncSession()", "replayFirstGroup_()"],
+             "rebaseAfterTail_(", "replayFirstGroup_()"],
             "ToolSession.redoImpl_");
     // Wave plan 8640 S7a: the redo door is the step, then the parameter-row
     // prune once the history is Active again — never inside the step (m18).
@@ -961,7 +961,8 @@ unittest { // (4c)
     // (d) M-PS gates on the armed post mode (S7: its end of the operation is the
     // law-6 helper's call — probe edit, form item 10).
     assert(psw.indexOf("endPendingOperation_(") >= 0
-           && words(guardOf(psw, cast(size_t) psw.indexOf("endPendingOperation_(")), "postmodeArmed_") == 1,
+           && words(guardOf(psw, cast(size_t) psw.indexOf("endPendingOperation_(")),
+                    "postmodeArmed_") == 1,
            "S2b needle: scriptedWriteEndsOperation no longer gates on postmodeArmed_");
     // (e) close / RMB never write the operation (model §1.3); their bodies exist.
     foreach (marker; ["private void endOperation_()", "CloseOutcome close(CloseReason r",
@@ -1079,12 +1080,13 @@ unittest { // (4d)
                ~ " is empty");
     // NEEDLE, by identifier (a method address and both lambda forms count).
     // Polarity: allowed sets, true after S3 (S7 adds `close:1` to the second; S7 PF-7 the
-    // undone restart's base — probe edit, form item 10).
+    // undone restart's base and S7 (6) the navigation tail — probe edits, form item 10).
     assert(identSites(es, "rebaseTopologyStep", false)
-           == ["ToolSession.rebaseOnCurrent_:1", "ToolSession.rebaseOnUndoneOperation_:1"],
+           == ["ToolSession.rebaseAfterTail_:1", "ToolSession.rebaseOnCurrent_:1",
+               "ToolSession.rebaseOnUndoneOperation_:1"],
            format("S3 needle: edit_session.d rebases a tool at %s, expected only in "
-                  ~ "rebaseOnCurrent_ and (S7, PF-7) rebaseOnUndoneOperation_",
-                  identSites(es, "rebaseTopologyStep", false)));
+                  ~ "rebaseOnCurrent_, (S7, PF-7) rebaseOnUndoneOperation_ and (S7 (6)) "
+                  ~ "rebaseAfterTail_", identSites(es, "rebaseTopologyStep", false)));
     // S7 PF-7 (plan §14.3): the undone restart's base is set by the settle of an undo
     // alone, inside its open-operation branch. Polarity: true after S7 (the name is new).
     assert(identSites(es, "rebaseOnUndoneOperation_", false)
@@ -1093,7 +1095,8 @@ unittest { // (4d)
                   identSites(es, "rebaseOnUndoneOperation_", false)));
     assert(squeeze(bodyAt(ts, "private void settleAfterNavigation_(bool isUndo)"))
               .canFind("if(operationOpen_){operation_=isUndo?headOfRedoOperation_(aToken):"
-                       ~ "topOperation_(aToken);if(isUndo)rebaseOnUndoneOperation_(tool_(),aToken);}"),
+                       ~ "topOperation_(aToken);"
+                       ~ "if(isUndo)rebaseOnUndoneOperation_(tool_(),aToken);}"),
            "S7 needle: the settle rebases an undone restart outside its open, undo branch");
     assert(identSites(es, "rebaseOnCurrent_", false)
            == ["<decl>:1", "ToolSession.close:1", "ToolSession.notePointerDown:1",
@@ -1225,16 +1228,20 @@ unittest { // (4f)
     auto es = blankUnittestBodies(blankNonCode(readText("source/edit_session.d")));
     const ts = bodyAt(es, "private struct ToolSession");
     // FLOOR (form item 4): the producer and consumer bodies the needles read exist.
-    foreach (m; ["private void endPendingOperation_(const Command trigger, bool endsPostMode, bool model)",
+    foreach (m; ["private void endPendingOperation_(const Command trigger, bool endsPostMode, "
+                 ~ "bool model)",
                  "private void foldOperationRows_(const Command trigger)",
                  "private void foldOpenRows_(const Command trigger)",
-                 "CloseOutcome close(CloseReason r", "private void noteFoldRow_(Tool t, MeshSessionEdit cmd)",
-                 "void stepEnds(Tool t, bool ifChanged)", "void scriptedWriteEndsOperation(Tool t)"])
+                 "CloseOutcome close(CloseReason r",
+                 "private void noteFoldRow_(Tool t, MeshSessionEdit cmd)",
+                 "void stepEnds(Tool t, bool ifChanged)",
+                 "void scriptedWriteEndsOperation(Tool t)"])
         assert(squeeze(bodyAt(ts, m)).length > 2, "S7 floor: the session body " ~ m ~ " is empty");
     // NEEDLES, by identifier (a method address and both lambda forms count). Polarity:
     // stationary allowed sets, true after S7; false before (the pen's walk had three
     // callers — close twice, noteFoldRow_ — and the other two names did not exist).
-    assert(identSites(es, "foldOpenRows_", false) == ["<decl>:1", "ToolSession.endPendingOperation_:1"],
+    assert(identSites(es, "foldOpenRows_", false)
+           == ["<decl>:1", "ToolSession.endPendingOperation_:1"],
            format("S7 needle: the pen's open-step walk is called at %s, expected only by "
                   ~ "endPendingOperation_", identSites(es, "foldOpenRows_", false)));
     assert(identSites(es, "foldOperationRows_", false)
@@ -1252,7 +1259,8 @@ unittest { // (4f)
     const fold = bodyAt(ts, "private void foldOperationRows_(const Command trigger)");
     assert(words(fold, "stepOperation") == 2 && words(fold, "stepOrigin") == 0
            && words(fold, "JoinsBelow") == 1,
-           "S7 structural: foldOperationRows_ does not group by the row's operation: " ~ squeeze(fold));
+           "S7 structural: foldOperationRows_ does not group by the row's operation: "
+           ~ squeeze(fold));
     assert(squeeze(bodyAt(ts, "void stepEnds(Tool t, bool ifChanged)"))
               .canFind("if(origin==StepOrigin.restart)endPendingOperation_(cmd,false,true);")
            && squeeze(bodyAt(ts, "private void noteFoldRow_(Tool t, MeshSessionEdit cmd)"))
@@ -1264,7 +1272,8 @@ unittest { // (4f)
     // §15 (capture 8980): the command close ends the operation, THEN rebases the tool on the
     // live image, BEFORE the idle test — an idle model tool is not committed (attrs kept).
     inOrder(squeeze(bodyAt(ts, "CloseOutcome close(CloseReason r")),
-            ["constboolcommand=r==CloseReason.command;", "endPendingOperation_(null,true,model);rebaseOnCurrent_(t,false);",
+            ["constboolcommand=r==CloseReason.command;",
+             "endPendingOperation_(null,true,model);rebaseOnCurrent_(t,false);",
              "if(cc==CommandClose.uiDoor&&!t.hasUncommittedEdit())returnCloseOutcome(false,true);",
              "constcommitted=t.commitOperation();"], "S7 ToolSession.close");
 }
@@ -1277,18 +1286,58 @@ unittest { // (4g)
     auto es = blankUnittestBodies(blankNonCode(readText("source/edit_session.d")));
     const ts = bodyAt(es, "private struct ToolSession");
     foreach (m; ["private bool undoImpl_()", "private bool navigateTopology_(bool isUndo)",
-                 "private void adoptPredecessorToken_(const Command undone)"])
-        assert(squeeze(bodyAt(ts, m)).length > 2, "PF-3 floor: the session body " ~ m ~ " is empty");
-    // Polarity: false before S7 (the tail alone), true after.
+                 "private void adoptPredecessorToken_(const Command undone)",
+                 "private void restorePredecessor_(const Command undone, AttrImage remembered)"])
+        assert(squeeze(bodyAt(ts, m)).length > 2,
+               "PF-3 floor: the session body " ~ m ~ " is empty");
+    // Polarity: false before S7 (the tail alone), true after. S7 (7) (plan §19.3): the adopt
+    // moved into `restorePredecessor_` (probe edit, form item 10), which both paths call.
     assert(identSites(es, "adoptPredecessorToken_", false)
+           == ["<decl>:1", "ToolSession.restorePredecessor_:1"],
+           format("PF-3 needle: adoptPredecessorToken_ is called at %s, expected only by "
+                  ~ "restorePredecessor_", identSites(es, "adoptPredecessorToken_", false)));
+    assert(identSites(es, "restorePredecessor_", false)
            == ["<decl>:1", "ToolSession.navigateTopology_:1", "ToolSession.undoImpl_:1"],
-           format("PF-3 needle: adoptPredecessorToken_ is called at %s, expected the undo tail "
+           format("PF-3 needle: restorePredecessor_ is called at %s, expected the undo tail "
                   ~ "and the pair branch of navigateTopology_ once each",
-                  identSites(es, "adoptPredecessorToken_", false)));
+                  identSites(es, "restorePredecessor_", false)));
+    // M-H on the pair: the predecessor's image is read BEFORE the activation's undo (its
+    // replay arm rewrites the session's memory), the restore only after it succeeded.
     assert(squeeze(bodyAt(ts, "private bool navigateTopology_(bool isUndo)"))
-              .canFind("if(history_.undo())adoptPredecessorToken_(act);"),
-           "PF-3 needle: the pair branch adopts the predecessor's token before, or without, "
-           ~ "a successful undo of the activation row");
+              .canFind("autoimg=predecessorAttrs_(act);"
+                       ~ "if(history_.undo())restorePredecessor_(act,img);"),
+           "PF-3 needle: the pair branch reads the predecessor's image after the activation's "
+           ~ "undo, or restores it before, or without, a successful undo");
+}
+
+// (4h) Task 9120 (S7 (6), plan §19.3, model §R11 M-nav): a navigation tail writes no
+// attribute of a model tool — it re-bases it on the live mesh (`rebaseAfterTail_`); only
+// the tools outside the model re-sync. Order: floor -> needle. Polarity: false before
+// (the tails called `resyncSession()` themselves: `undoImpl_:1, redoImpl_:1`), true after.
+unittest { // (4h)
+    import tests.unit.census_symbols : blankUnittestBodies;
+    auto es = blankUnittestBodies(blankNonCode(readText("source/edit_session.d")));
+    const ts = bodyAt(es, "private struct ToolSession");
+    foreach (m; ["private bool undoImpl_()", "private bool redoImpl_()",
+                 "private void rebaseAfterTail_(Tool t)"])
+        assert(squeeze(bodyAt(ts, m)).length > 2,
+               "S7 (6) floor: the session body " ~ m ~ " is empty");
+    assert(identSites(es, "resyncSession", false)
+           == ["ToolSession.applyAndContinue:1", "ToolSession.navigateRecorded_:1",
+               "ToolSession.rebaseAfterTail_:1"],
+           format("S7 (6) needle: resyncSession is called at %s, expected applyAndContinue, "
+                  ~ "navigateRecorded_ and rebaseAfterTail_ once each (a tail calling it again "
+                  ~ "zeroes a model tool's attributes, N1a/N1b)",
+                  identSites(es, "resyncSession", false)));
+    assert(identSites(es, "rebaseAfterTail_", false)
+           == ["<decl>:1", "ToolSession.redoImpl_:1", "ToolSession.undoImpl_:1"],
+           format("S7 (6) needle: rebaseAfterTail_ is called at %s, expected the undo and the "
+                  ~ "redo tail once each", identSites(es, "rebaseAfterTail_", false)));
+    const helper = squeeze(bodyAt(ts, "private void rebaseAfterTail_(Tool t)"));
+    assert(helper.canFind("if(capturedTopologyModel(t.sessionPolicy())&&m!isnull)"
+                          ~ "c.rebaseTopologyStep(MeshSnapshot.capture(*m));"
+                          ~ "elset.resyncSession();"),
+           "S7 (6) needle: rebaseAfterTail_ is not `model -> rebase, else resync`: " ~ helper);
 }
 
 // Fence (form item 1): the per-tool dormant flag is gone (S6, task 9080).
