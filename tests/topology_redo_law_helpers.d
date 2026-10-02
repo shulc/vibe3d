@@ -43,6 +43,7 @@ struct Rig {
     int handlePart;     // which part `handle` presses (the part the reference haul moves)
     int[2] pressRef;    // the reference press the variant's g1 uses (offsets are relative)
     string[string] attrName;   // logical fixture attribute → our attribute
+    int[string] attrComponent; // a logical attribute that is one component of our vector one
     JSONValue mesh;            // rig override (null: the reference rig as frozen)
     string[][string] enumNames; // an enumerated attribute's names by ordinal (rig check)
     string[string] armPreset;  // our attribute → the reference's arm value, written before s00
@@ -76,6 +77,7 @@ Rig rigOf(string variant) {
     case "poly_extrude":
         r.tool = "poly.extrude"; r.attrs = ["distance", "shiftX", "shiftY", "shiftZ"];
         r.handle = true; r.pressRef = [640, 170];
+        r.attrName = ["shiftY": "shiftY"];   // 8960 `doapply_after_sa_pextrude`
         break;
     case "smooth":
     case "thicken":
@@ -135,6 +137,7 @@ Rig rigOf(string variant) {
         r.tool = "mesh.mirrorTool"; r.attrs = ["axis", "center", "angle"]; r.pressRef = [430, 561];
         r.attrName = ["axis": "axis"];
         r.enumNames = ["axis": ["X", "Y", "Z"]];
+        r.attrName["centerY"] = "center"; r.attrComponent["centerY"] = 1;   // 8960 `cenY`
         r.armPreset = ["axis": "Y"];   // every mirror cell's raw s01: `axis: 1`
         r.placesCenter = true;         // the weld at x = -0.35 (vertex 1) needs the same centre
         break;
@@ -287,11 +290,29 @@ long setupCell(const JSONValue cell, const Rig rig) {
     return base;
 }
 
+/// Where a haul presses. `aim` (generator, 8980 findings §17.1) overrides the rig's
+/// default: "handle" — the press the reference aimed at the drawn handle (no pixel frozen:
+/// exactly on our handle part); "free" — a haul the reference made with no handle drawn
+/// (the viewport centre plus the press offset, even on a handle rig).
 private void pressPoint(const Rig rig, const JSONValue step, out int x, out int y) {
     auto cam = getJson("/api/camera");
     double bx = cam["vpX"].integer + cam["width"].integer / 2;
     double by = cam["vpY"].integer + cam["height"].integer / 2;
-    if (rig.handle) {
+    const aim = "aim" in step ? step["aim"].str : "";
+    if (aim == "handle") {
+        const h = getJson("/api/tool/handles")["handles"];
+        bool found;
+        if (h.type == JSONType.object)
+            foreach (p; h["parts"].array)
+                if (p["part"].integer == rig.handlePart && p["screen"].type == JSONType.array) {
+                    x = cast(int) num(p["screen"][0]); y = cast(int) num(p["screen"][1]);
+                    found = true;
+                }
+        assert(found, format("rig VOID: %s draws no handle part %d for the aimed haul",
+            rig.tool, rig.handlePart));
+        return;
+    }
+    if (rig.handle && aim != "free") {
         auto h = getJson("/api/tool/handles")["handles"];
         // no handle drawn at all (the navigation took the tool's gizmo away; reached in
         // the autoact family): the press stays at the viewport centre — a tool without a
@@ -393,6 +414,16 @@ void runStep(const JSONValue step, const Rig rig, string ctx) {
         if (rig.aimAtSelection) aimAtSelected(ctx);
         int x, y;
         pressPoint(rig, step, x, y);
+        if ("aim" in step) {
+            // rig precondition: an aimed press hovers the handle, a free one hovers none
+            play(format(`{"t":10.000,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,`
+                ~ `"state":0,"mod":0}` ~ "\n", x, y));
+            const h = getJson("/api/tool/handles")["handles"];
+            const hot = h.type == JSONType.object ? h["hot"].integer : -1;
+            assert(step["aim"].str == "handle" ? hot == rig.handlePart : hot < 0,
+                format("rig VOID %s/%s: the %s press (%d, %d) hovers part %d", ctx,
+                    step["label"].str, step["aim"].str, x, y, hot));
+        }
         const rx = num(step["delta"][0]), ry = num(step["delta"][1]);
         const m = rig.deltaMap;
         const dx = m[0] * rx + m[1] * ry, dy = m[2] * rx + m[3] * ry;
@@ -420,11 +451,23 @@ void runStep(const JSONValue step, const Rig rig, string ctx) {
     case "attr": {
         const name = step["name"].str;
         assert(name in rig.attrName, ctx ~ ": rig has no attribute for " ~ name);
-        const line = format("tool.attr %s %s %.9g", rig.tool, rig.attrName[name], num(step["value"]));
-        // plan §4.7 R4 lexicon: the panel = an interactive script write; the script door
-        // = /api/command. `?origin=ui tool.attr` is NOT used (a scripted value, §4.7 R6).
-        if (step["door"].str == "panel") cmdOk("/api/script?interactive=true", line, ctx);
-        else cmdOk("/api/command", line, ctx);
+        const comp = name in rig.attrComponent;
+        if (comp) {
+            // one component of our vector attribute: the others keep their current value
+            assert(step["door"].str == "script", ctx ~ ": a component write on the "
+                ~ step["door"].str ~ " door has no lexicon entry");
+            auto v = postJson("/api/command", "tool.attr " ~ rig.tool ~ " " ~ rig.attrName[name]
+                ~ " ?")["value"].array.map!(e => num(e)).array;
+            v[*comp] = num(step["value"]);
+            cmdOk("/api/command", format(`{"id":"tool.attr","params":{"_positional":["%s","%s",`
+                ~ `[%.9g,%.9g,%.9g]]}}`, rig.tool, rig.attrName[name], v[0], v[1], v[2]), ctx);
+        } else {
+            const line = format("tool.attr %s %s %.9g", rig.tool, rig.attrName[name], num(step["value"]));
+            // plan §4.7 R4 lexicon: the panel = an interactive script write; the script door
+            // = /api/command. `?origin=ui tool.attr` is NOT used (a scripted value, §4.7 R6).
+            if (step["door"].str == "panel") cmdOk("/api/script?interactive=true", line, ctx);
+            else cmdOk("/api/command", line, ctx);
+        }
         settle();
         // rig precondition (plan S1b R5): the write changed the attribute — a closed-
         // operation panel write leaves the image alone (Pc-own), never the attribute
@@ -432,7 +475,7 @@ void runStep(const JSONValue step, const Rig rig, string ctx) {
         assert(r["status"].str == "ok", ctx ~ ": read " ~ name ~ ": " ~ r.toString);
         const want = num(step["value"]);
         const v = r["value"];
-        const got = v.type == JSONType.string
+        const got = comp ? num(v[*comp]) : v.type == JSONType.string
             ? rig.enumNames[rig.attrName[name]].countUntil(v.str) : num(v);
         assert(abs(got - want) <= 1e-6 * (1 + abs(want)), format("rig VOID %s: attr:%s did not "
             ~ "change the attribute (%s reads %s, written %.9g)", ctx, step["door"].str, name,

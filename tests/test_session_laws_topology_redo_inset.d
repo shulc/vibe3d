@@ -22,34 +22,35 @@ enum string kFixture = import("fixtures/topology_redo_law_cells.json");
 /// The family's cells (the generator's `--family inset` census, measured literal).
 immutable string[] kCells = [
     "close_cmd_inset_script", "close_cmd_inset_ui", "close_drop_inset_script",
-    "close_drop_inset_ui", "close_enter_inset_ui", "dormant2_inset", "dormant2_inset_ui",
-    "dormant3_cross_inset_ui", "dormant3_inset", "dormant3_inset_ui", "fold_close_inset",
-    "fold_close_inset_ui", "fold_restart_pextrude", "fold_restart_pextrude_ui",
-    "inset_direct", "inset_dormant", "inset_dormant_ui", "inset_mech", "inset_mech_ui",
-    "inset_ui_direct", "inset_ui_redo", "moment_inset", "moment_inset_ui",
-    "moment_restart_pextrude", "moment_restart_pextrude_ui", "nav_redo_opens_inset",
-    "nav_redo_opens_inset_ui", "nav_redo_refire_inset", "nav_redo_refire_inset_ui",
-    "nav_redo_restart_pextrude", "nav_redo_restart_pextrude_ui", "nav_undo_refire_inset",
-    "nav_undo_refire_inset_ui", "nav_undo_restart_pextrude",
+    "close_drop_inset_ui", "close_enter_inset_ui", "cmdattrs_nozr_pextrude",
+    "cmdattrs_zr_pextrude_free", "cmdattrs_zr_pextrude_handle", "doapply_after_sa_inset",
+    "doapply_after_sa_pextrude", "doapply_after_sa_smooth", "dormant2_inset",
+    "dormant2_inset_ui", "dormant3_cross_inset_ui", "dormant3_inset", "dormant3_inset_ui",
+    "fold_close_inset", "fold_close_inset_ui", "fold_restart_pextrude",
+    "fold_restart_pextrude_ui", "inset_direct", "inset_dormant", "inset_dormant_ui",
+    "inset_mech", "inset_mech_ui", "inset_ui_direct", "inset_ui_redo", "moment_inset",
+    "moment_inset_ui", "moment_restart_pextrude", "moment_restart_pextrude_ui",
+    "nav_redo_opens_inset", "nav_redo_opens_inset_ui", "nav_redo_refire_inset",
+    "nav_redo_refire_inset_ui", "nav_redo_restart_pextrude", "nav_redo_restart_pextrude_ui",
+    "nav_undo_refire_inset", "nav_undo_refire_inset_ui", "nav_undo_restart_pextrude",
     "nav_undo_restart_pextrude_ui", "param_after_undo_inset_script",
     "param_after_undo_inset_ui", "param_between_inset_script", "param_between_inset_uc",
     "param_between_inset_ui", "param_between_moment_inset_script",
-    "param_between_moment_inset_ui", "param_closed_after_end_inset",
-    "param_closed_inset_ui", "param_rebegun_redo_inset", "param_rebegun_undo_inset_ui",
-    "param_twohaul_inset_script", "pextrude_direct", "pextrude_direct_ui",
-    "rclick_close_inset_script", "rclick_close_inset_ui", "rebegin_redo_closed_inset",
-    "rebegin_redo_closed_inset_ui", "rebegin_undo_close_inset",
-    "rebegin_undo_close_inset_ui", "rebegin_undo_cmd_inset_ui", "reset_inset",
-    "reset_inset_ui", "smooth_attrs_script", "smooth_attrs_ui", "smooth_direct",
+    "param_between_moment_inset_ui", "param_closed_after_end_inset", "param_closed_inset_ui",
+    "param_rebegun_redo_inset", "param_rebegun_undo_inset_ui", "param_twohaul_inset_script",
+    "pextrude_direct", "pextrude_direct_ui", "rclick_close_inset_script",
+    "rclick_close_inset_ui", "rebegin_redo_closed_inset", "rebegin_redo_closed_inset_ui",
+    "rebegin_undo_close_inset", "rebegin_undo_close_inset_ui", "rebegin_undo_cmd_inset_ui",
+    "reset_inset", "reset_inset_ui", "smooth_attrs_script", "smooth_attrs_ui", "smooth_direct",
     "smooth_direct_ui", "smooth_dormant", "smooth_dormant_ui", "thicken_direct",
     "thicken_direct_ui", "thicken_dormant", "thicken_dormant_ui", "vmerge_discrim",
     "vmerge_discrim_ui", "vmerge_dormant", "vmerge_dormant_ui"
 ];
 
-// `freeze_fixture.py --family inset` (2026-10-01):
-// TOPO-REDO-CELLS family=inset cells=72 checkpoints=868 …
-enum long kCellCount = 72;
-enum long kCheckpointCount = 868;
+// `freeze_fixture.py --family inset` (2026-10-02, + 8960 3 cells, 8980 3 cells):
+// TOPO-REDO-CELLS family=inset cells=78 checkpoints=927 …
+enum long kCellCount = 78;
+enum long kCheckpointCount = 927;
 
 unittest { // the floor: the fixture still holds the whole family
     familyFloor(parseJSON(kFixture), "inset", kCells, kCellCount, kCheckpointCount);

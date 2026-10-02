@@ -24,17 +24,18 @@ enum string kFixture = import("fixtures/topology_redo_law_cells.json");
 immutable string[] kCells = [
     "array_attrs_script", "array_attrs_ui", "array_dormant", "array_dormant_ui",
     "clone_attrs_script", "clone_attrs_ui", "clone_dormant", "clone_dormant_ui",
-    "fold_close_mirror", "fold_close_mirror_ui", "mirror_attrs_script", "mirror_attrs_ui",
-    "mirror_cmdclose_ui", "mirror_discrim", "mirror_discrim2", "mirror_discrim2_ui",
-    "mirror_dormant", "mirror_dormant_ui", "param_between_array_script",
-    "param_between_array_ui", "param_between_moment_array_ui", "param_closed_array_ui",
-    "radial_attrs_script", "radial_attrs_ui", "radial_dormant", "radial_dormant_ui"
+    "doapply_after_press_sa_mirror", "fold_close_mirror", "fold_close_mirror_ui",
+    "mirror_attrs_script", "mirror_attrs_ui", "mirror_cmdclose_ui", "mirror_discrim",
+    "mirror_discrim2", "mirror_discrim2_ui", "mirror_dormant", "mirror_dormant_ui",
+    "param_between_array_script", "param_between_array_ui", "param_between_moment_array_ui",
+    "param_closed_array_ui", "radial_attrs_script", "radial_attrs_ui", "radial_dormant",
+    "radial_dormant_ui"
 ];
 
-// `freeze_fixture.py --family generators` (2026-10-01):
-// TOPO-REDO-CELLS family=generators cells=26 checkpoints=259 …
-enum long kCellCount = 26;
-enum long kCheckpointCount = 259;
+// `freeze_fixture.py --family generators` (2026-10-02, + 8960 Mirror):
+// TOPO-REDO-CELLS family=generators cells=27 checkpoints=268 …
+enum long kCellCount = 27;
+enum long kCheckpointCount = 268;
 
 unittest { // the floor: the fixture still holds the whole family
     familyFloor(parseJSON(kFixture), "generators", kCells, kCellCount, kCheckpointCount);
