@@ -189,7 +189,6 @@ class RadialArrayTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClien
         static immutable ToolSessionPolicy policy = {
             activationRow: true, commandClose: CommandClose.uiDoor,
             sessionSteps: true, historyTopologySteps: true,
-            discardLaterTopologyRedoOnRearm: true,
             opensAt: OpensAt.firstPress,
             imageAttrs: ["count", "axis", "center", "angle", "offset", "weld"],
             haulAttrs: ["count", "axis", "center", "angle", "offset", "weld"]

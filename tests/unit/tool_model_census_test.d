@@ -80,7 +80,9 @@ private enum string[] kNamedExceptions = [
 /// wrote; no tool calls it, so it is no axis-3 write). Wave plan 8640 S7a
 /// added `markEntryFold` (reviewed: the tool session sets the parameter-row
 /// fold bits on rows it recorded; no tool calls it, so no axis-3 write).
-private enum size_t kHistorySurface = 68;
+/// Topology-redo S5 (task 9170) added `truncateRedo` (reviewed: the tool
+/// session's law-3 cut; no tool calls it, so no axis-3 write).
+private enum size_t kHistorySurface = 69;
 
 /// Tool-side history wrappers, counted as identifier tokens (every spelling:
 /// call, declaration, address-of).

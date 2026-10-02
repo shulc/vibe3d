@@ -1518,9 +1518,14 @@ unittest { // (4d')
 }
 
 // Pins: the per-tool flags are gone (S3 the rebase, S4 task 9020 law 4's redo
-// attributes); the rebase entry point stays (its one caller is `rebaseOnCurrent_`).
+// attributes, S5 below); the rebase entry point stays (its one caller is `rebaseOnCurrent_`).
 static assert(!__traits(hasMember, imported!"tool".ToolSessionPolicy, "rebaseTopologyAfterStep"));
 static assert(!__traits(hasMember, imported!"tool".ToolSessionPolicy, "firstTopologyRedoUsesAfterAttrs"));
+// S5 (task 9170, law 3): the redo discards are the session's cut, no per-tool flag.
+static assert(!__traits(hasMember, imported!"tool".ToolSessionPolicy,
+                        "discardFirstTopologyRedoOnActivationUndo"));
+static assert(!__traits(hasMember, imported!"tool".ToolSessionPolicy,
+                        "discardLaterTopologyRedoOnRearm"));
 static assert(__traits(hasMember, imported!"tool".TopologyStepClient, "rebaseTopologyStep"));
 
 // ---------------------------------------------------------------------------
@@ -1958,10 +1963,10 @@ unittest { // Tasks 7990/8030: production topology R wiring, not a helper replic
         "Polygon drag/boundary, Plain owner or prepared close lost its production seam");
     // Task 9080 (S6, law 5): the dormant flag is the captured model's (fence in block
     // (4e)); both extrudes gate their preview on the session (probe edit, form item 10).
-    assert(edge.canFind("discardFirstTopologyRedoOnActivationUndo: true")
-        && edge.canFind("opensAt: OpensAt.arm")
-        && es.canFind("history_.invalidateRedo()")
-        && es.canFind("topologyFirstGroupLive_")
+    // Task 9170 (S5, law 3): the two per-tool redo discards are one session cut
+    // (fence beside block (4d'); its sites — the S5 block below).
+    assert(edge.canFind("opensAt: OpensAt.arm")
+        && es.canFind("cutRefireRedo_(")
         && es.canFind("arm.markDormantTopology()")
         && es.canFind("new TopologyAdjustmentEdit(context, instanceOf_(t), tool_")
         && edge.canFind("if (previewGated()) return;"),
@@ -2010,6 +2015,44 @@ unittest { // Tasks 7990/8030: production topology R wiring, not a helper replic
                "ToolSession.dropImage_:1", "ToolSession.navigateTopology_:2"],
                format("S4 needle: boundToLive_ sites %s, expected the undo and redo orphan "
                       ~ "branches and the drop walk", identSites(esU, "boundToLive_", false)));
+    }
+    // Task 9170 (S5, law 3, model doc §3): the redo is cut at one place, the settle
+    // after an undo that ends the post mode. FLOOR: the three bodies the sites live in
+    // exist. NEEDLES (stationary allowed sets, true after S5; false before it — the cut
+    // did not exist and `history_.invalidateRedo()` stood at five sites): the cut is
+    // called from the settle alone; the session's two remaining redo kills are the
+    // closed-run undo and the parameter-row prune; `truncateRedo` is called by the cut
+    // alone in `source` (its in-module unittest blanked).
+    {
+        import std.file : dirEntries, SpanMode;
+        import tests.unit.census_symbols : blankUnittestBodies;
+        const esU = blankUnittestBodies(es);
+        foreach (m; ["private bool undoImpl_(", "private void pruneRedoTop_(",
+                     "private void settleAfterNavigation_("])
+            assert(squeeze(bodyAt(esU, m)).length > 2, "S5 floor: " ~ m ~ " has no body");
+        assert(identSites(esU, "cutRefireRedo_", false)
+               == ["<decl>:1", "ToolSession.settleAfterNavigation_:1"],
+               format("S5 needle: cutRefireRedo_ sites %s, expected its declaration and one "
+                      ~ "call in settleAfterNavigation_", identSites(esU, "cutRefireRedo_", false)));
+        assert(identSites(esU, "invalidateRedo", false)
+               == ["ToolSession.pruneRedoTop_:1", "ToolSession.undoImpl_:1"],
+               format("S5 needle: the session kills the redo at %s, expected the closed-run "
+                      ~ "undo and the parameter-row prune alone (law 3 cuts, never kills)",
+                      identSites(esU, "invalidateRedo", false)));
+        string[] cuts;
+        size_t files;
+        foreach (f; dirEntries("source", "*.d", SpanMode.depth)) {
+            ++files;
+            foreach (site; identSites(blankUnittestBodies(blankNonCode(readText(f.name))),
+                                      "truncateRedo", false))
+                cuts ~= f.name ~ " " ~ site;
+        }
+        sort(cuts);
+        assert(files > 300, format("S5 census: read %s source files", files));
+        assert(cuts == ["source/command_history.d <decl>:1",
+                        "source/edit_session.d ToolSession.cutRefireRedo_:1"],
+               format("S5 needle: truncateRedo sites in source %s, expected its declaration "
+                      ~ "and the law-3 cut", cuts));
     }
     assert(es.canFind("if (topologyPending_ && reporting_(t)")
         && es.canFind("if (topologyPending_) {")

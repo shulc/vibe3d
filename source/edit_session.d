@@ -888,7 +888,6 @@ private struct ToolSession {
     private TopologyAttrOwner[] topologyAttrOwners_;
     private bool topologyPending_;
     private bool topologyDormant_;
-    private bool topologyFirstGroupLive_;
     private bool redoneTopologyStep_;
     private bool closedTopologyRedo_;
     private Rebindable!(const Command) closedTopologyRedoSource_;
@@ -1016,6 +1015,35 @@ private struct ToolSession {
         // A re-begin and every closed case end the operation here (N3/N5/N6):
         // the next one is based on the image the navigation left.
         if (aModel && !operationOpen_) rebaseOnCurrent_(tool_(), false);
+        // Law 3 (N3): an undo that ends the post mode armed before it — the
+        // session it was armed in, whoever is bound now — cuts that session's
+        // refire rows from the redo.
+        if (isUndo && navBefore_.armed && !(same && armedAfter))
+            cutRefireRedo_(navBefore_.token);
+    }
+
+    // Law 3 (topology-redo S5, model doc §3 «Закон 3»; CAP F P-undo, D
+    // MX-refire-only, Q5 c1): the redo keeps everything above the first row
+    // (from the head) of session `tok` that refired its operation and belongs
+    // to no folded group (law 6 marks a closed operation's rows, its base and a
+    // one-row operation too: a tool that opens at the arm bases a group on a
+    // refire); that row and all after it go. Opening and restart rows,
+    // attribute-only rows and folded groups survive. It replaces
+    // two per-tool flags: Edge Extrude's first row leaving the redo when its
+    // activation is undone (the row refired the arm's operation) and Mirror /
+    // Radial Array's later rows leaving at the paired redo (now at the undo).
+    private void cutRefireRedo_(ulong tok) {
+        const re = history_.redoEntries();
+        foreach (i, e; re) {
+            auto row = cast(const MeshSessionEdit) e.cmd;
+            const grouped = (e.flags & (HistoryFlags.JoinsBelow
+                                        | HistoryFlags.FoldBase)) != 0;
+            if (row is null || !row.isTopologyStep() || row.sessionToken() != tok
+                    || row.stepOrigin() != StepOrigin.refire || grouped)
+                continue;
+            history_.truncateRedo(i);
+            return;
+        }
     }
 
     // The base of a new operation := the live image (topology-redo S3, model doc
@@ -1169,21 +1197,6 @@ private struct ToolSession {
             return true;
         }
         auto t = tool_();
-        // The Edge first step is a separate row. Its undone branch is erased
-        // when the activation itself is undone, leaving that activation as
-        // the only redo candidate. The policy states the first-group law;
-        // history remains the sole owner of completed mesh images.
-        if (t !is null && topologyFirstGroupLive_ &&
-            t.sessionPolicy().discardFirstTopologyRedoOnActivationUndo) {
-            import commands.tool.lifecycle : ToolActivationCommand;
-            auto act = cast(const ToolActivationCommand)undoTop_();
-            const re = history_.redoEntries();
-            if (act !is null && re.length > 0 &&
-                re[0].cmd.sessionToken() == act.sessionToken() &&
-                cast(const MeshSessionEdit)re[0].cmd !is null)
-                history_.invalidateRedo();
-            if (act !is null) topologyFirstGroupLive_ = false;
-        }
         // Once a topology step has ended, its mesh image belongs
         // to history even though the tool may retain `built` parameters for
         // command-close policy. A foreign row above that image must reach the
@@ -1395,12 +1408,6 @@ private struct ToolSession {
             import log : logWarn;
             logWarn("tool", "session redo: the record paired with its activation row refused its redo");
         }
-        if (ok && pair) {
-            auto rearmed = tool_();
-            if (rearmed !is null && rearmed.sessionPolicy()
-                    .discardLaterTopologyRedoOnRearm)
-                history_.invalidateRedo();
-        }
         if (ok) {
             // Only AFTER a successful stack step: re-sync the still-live
             // tool's baseline to the now-current mesh. An attribute-only
@@ -1447,7 +1454,6 @@ private struct ToolSession {
             pendingDropRow_ = true;
             pendingDrop_ = DropRowSpec(armedId_.idup, closingToken_, ctx);
         }
-        topologyFirstGroupLive_ = false;
         if (topologyPending_ && reporting_(t) &&
             t.sessionPolicy().historyTopologySteps)
             stepEnds(t, false);
@@ -1573,9 +1579,6 @@ private struct ToolSession {
         operationOpen_ = capturedTopologyModel(t.sessionPolicy())
             && opensAtArm(t.sessionPolicy()) && !topologyDormant_;
         operation_ = operationOpen_ ? ++nextOperation_ : 0;
-        if (history_.state() != UndoState.Suspend)
-            topologyFirstGroupLive_ = t.sessionPolicy().historyTopologySteps
-                && !topologyDormant_;
         if (history_.state() != UndoState.Suspend) {
             clearClosedTopologyRedo_();
             redoneTopologyStep_ = false;
@@ -2199,9 +2202,6 @@ private struct ToolSession {
             if (current.sessionPolicy().foldsParamRowsIntoBlock)
                 openBlock_ = head.stepOpenedByPress() ? head : blockBelow_(head);
         }
-        if (pair && current !is null && current.sessionPolicy()
-                .discardLaterTopologyRedoOnRearm)
-            history_.invalidateRedo();
         return true;
     }
 
@@ -2348,7 +2348,8 @@ private struct ToolSession {
 
     // Law 6: walk down from below `trigger` (from the top when null) over this
     // session's topology steps of the operation of the first of them; all but
-    // the lowest are marked `JoinsBelow`. A row of another operation, token or
+    // the lowest are marked `JoinsBelow`, the lowest `FoldBase` (the operation
+    // is closed: law 3's cut keeps it). A row of another operation, token or
     // class (an attribute-only row, an activation) stops the walk.
     private void foldOperationRows_(const Command trigger) {
         const ue = history_.undoEntries();
@@ -2366,6 +2367,7 @@ private struct ToolSession {
             else if (row.stepOperation() != op) break;
             --lo;
         }
+        if (lo < hi) history_.markEntryFold(ue[lo].cmd, HistoryFlags.FoldBase);
         foreach (k; lo + 1 .. hi)
             history_.markEntryFold(ue[k].cmd, HistoryFlags.JoinsBelow);
     }

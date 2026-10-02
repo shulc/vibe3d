@@ -404,6 +404,8 @@ private enum LedgerRow[] kReceiverDisposition = [
         "prepared protocol — installs the validated detached transaction"),
     LedgerRow("CommandHistory.invalidateRedo", 1,
         "EXCUSE: clears redo after an external mutation but creates no entry"),
+    LedgerRow("CommandHistory.truncateRedo", 1,
+        "EXCUSE: cuts the redo stack at a kept head (the tool session's law-3 cut, topology-redo S5); creates no entry"),
     LedgerRow("CommandHistory.markEntrySession", 1,
         "EXCUSE: tags an existing record with the tool session that wrote it (slice M4); creates no entry"),
     LedgerRow("CommandHistory.markEntryFold", 1,

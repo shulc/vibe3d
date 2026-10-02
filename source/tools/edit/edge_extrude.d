@@ -111,7 +111,6 @@ class EdgeExtrudeTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClien
             activationRow: true, recordCarriesActivation: false,
             commandClose: CommandClose.uiDoor,
             sessionSteps: true, historyTopologySteps: true,
-            discardFirstTopologyRedoOnActivationUndo: true,
             opensAt: OpensAt.arm,
             imageAttrs: ["extrude", "width"],
             haulAttrs: ["extrude", "width"]

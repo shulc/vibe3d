@@ -120,11 +120,17 @@ unittest {
     assert(planes() == source, "second undo must restore the source mesh");
     navigate(true);
     assert(planes() == first, "redo must restore first clone spacing");
+    // EXPECTATION changed by law 3 (topology-redo S5, task 9170): the undo that
+    // ended the post mode cut the second drag (a refire) from the redo, so the
+    // second redo is refused. Capture: the reference's direct two-gesture Clone
+    // cell (after_r3 = the first spacing, "Out of redos"), findings §1.
     navigate(true);
-    assert(planes() == second && abs(attrOf("offX") - off2) < 1e-5,
-        "second redo must restore second clone spacing");
+    assert(planes() == first && abs(attrOf("offX") - off1) < 1e-5 && undoLen() == u0 + 1,
+        "the second redo must be refused: law 3 cut the second drag at the undo that "
+        ~ "ended the post mode (redo restored " ~ (planes() == second
+            ? "the second spacing" : "another image") ~ ")");
     cmd("tool.set " ~ TOOL ~ " off");
-    assert(undoLen() == u0 + 2, "drop must not add a history row");
+    assert(undoLen() == u0 + 1, "drop must not add a history row");
 }
 
 unittest { // captured: a 1.2 per-copy X scale grows each successive copy by 20%

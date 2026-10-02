@@ -458,7 +458,6 @@ public:
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
         static immutable ToolSessionPolicy policy = {
             activationRow: true, sessionSteps: true, historyTopologySteps: true,
-            discardLaterTopologyRedoOnRearm: true,
             opensAt: OpensAt.firstPress, keepAliveOnCancel: true,
             imageAttrs: ["axis", "center", "invertPolys", "mergeVerts",
                 "distance", "angle", "mode", "left", "up"],

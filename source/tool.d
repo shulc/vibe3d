@@ -374,13 +374,6 @@ struct ToolSessionPolicy {
     /// A live preview may itself contain in-session History rows. Undo those
     /// rows before cancelling the preview (Box's recorded parameter ladder).
     bool previewHistoryLadder;
-    /// The first topology row remains separate from activation. Undoing the
-    /// activation discards that row's redo branch while keeping the activation.
-    bool discardFirstTopologyRedoOnActivationUndo;
-    /// Redoing the first topology step together with its activation consumes
-    /// any later steps from that operation. Some tools re-arm into a new run
-    /// at this boundary rather than retaining the former redo tail.
-    bool discardLaterTopologyRedoOnRearm;
     /// H1: when the operation window opens (see `OpensAt`). Read only for
     /// `sessionSteps` tools.
     OpensAt opensAt;

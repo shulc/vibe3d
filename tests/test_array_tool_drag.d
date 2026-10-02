@@ -180,25 +180,29 @@ unittest { // a free centre haul arrays face 4 and records exactly one entry
     navigate(true);
     assert(planes() == firstImage && abs(attrOf("offX") - firstOffX) < 1e-5,
         "first redo must restore the first grid and offset");
+    // EXPECTATION changed by law 3 (topology-redo S5, task 9170): the undo that
+    // ended the post mode cut the second haul (a refire) from the redo, so the
+    // second redo is refused. Capture: the reference's direct two-gesture Array
+    // cell (after_r3 = the first grid, "Out of redos"), findings §1.
     navigate(true);
-    assert(planes() == secondImage && abs(attrOf("offX") - secondOffX) < 1e-5,
-        "two redos must restore the adjusted grid and offset");
+    assert(planes() == firstImage && abs(attrOf("offX") - firstOffX) < 1e-5
+           && undoLen() == u0 + 1,
+        "the second redo must be refused: law 3 cut the second haul at the undo "
+        ~ "that ended the post mode (redo restored " ~ (planes() == secondImage
+            ? "the adjusted grid" : "another image") ~ ")");
 
     // And the drop adds NOTHING.
     cmd("tool.set " ~ TOOL ~ " off");
     Thread.sleep(dur!"msecs"(300));
     immutable long afterDrop = undoLen() - u0;
-    assert(afterDrop == 2,
-        "dropping the tool took the first gesture's undo delta from "
-        ~ afterHaul.to!string ~ " to " ~ afterDrop.to!string
-        ~ " — two released gestures must leave exactly two entries");
+    assert(afterDrop == 1,
+        "dropping the tool took the redone gesture's undo delta to "
+        ~ afterDrop.to!string ~ " — the one redone gesture must leave exactly one entry");
 
-    // Two undos take the copies back off, which is what makes the entries above
-    // real edit records rather than bookmarks.
+    // One undo takes the copies back off, which is what makes the entry above a
+    // real edit record rather than a bookmark.
     auto u = postJson("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok", "undo failed: " ~ u.toString);
-    u = postJson("/api/command", commandBody("history.undo"));
-    assert(u["status"].str == "ok", "second undo failed: " ~ u.toString);
     Thread.sleep(dur!"msecs"(150));
     assert(vertexCount() == v0,
         "after one undo the mesh has " ~ vertexCount().to!string ~ " vertices, "

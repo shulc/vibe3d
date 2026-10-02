@@ -167,9 +167,16 @@ unittest { // a rightward haul at a framing where `dist` can actually reach a ne
     assert(vertexCount() == v0 && abs(queryDist() - before) < 1e-5,
         "second undo restores the original vertices while merge stays armed");
     navigate(true);
+    // EXPECTATION changed by law 3 (topology-redo S5, task 9170): the undo that
+    // ended the post mode cut the second haul (a refire) from the redo, so the
+    // second redo is refused. Capture: the reference's direct two-gesture
+    // VertexMerge cell (after_r3 dist = the first haul's, "Out of redos"),
+    // findings §1; fixture point vmerge_discrim/s07_R.refused.
     navigate(true);
-    assert(vertexCount() == v1,
-        "two redos restore the completed merge topology");
+    assert(vertexCount() == v1 && abs(queryDist() - after) < 1e-5 && undoLen() == u0 + 1,
+        "the first redo restores the completed merge; the second is refused (law 3 cut "
+        ~ "the second haul): distance " ~ queryDist().to!string ~ ", entries "
+        ~ (undoLen() - u0).to!string);
 
     cmd("tool.set " ~ TOOL ~ " off");
     Thread.sleep(dur!"msecs"(250));
@@ -180,7 +187,7 @@ unittest { // a rightward haul at a framing where `dist` can actually reach a ne
         "the gesture moved planes " ~ moved.to!string
         ~ " — `vertices` and `counts` are not both among them, so the mesh is "
         ~ "byte-identical to what it was before the haul");
-    assert(undoLen() - u0 == 2,
+    assert(undoLen() - u0 == 1,
         "the operation recorded " ~ (undoLen() - u0).to!string ~ " undo entr(ies), "
-        ~ "expected two released hauls and no close-time duplicate");
+        ~ "expected the one redone haul and no close-time duplicate");
 }

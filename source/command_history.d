@@ -129,6 +129,9 @@ enum HistoryFlags : uint {
     // with the entry across undo and redo.
     JoinsBelow = 1 << 14, // Pops and redoes as ONE step with the run below it,
                           // down to the first unmarked row (the block's base).
+    FoldBase   = 1 << 15, // The lowest row of a model operation the session's
+                          // fold closed (law 6) — a one-row operation too; law
+                          // 3's redo cut keeps it (topology-redo S5).
     PreNavOpen = 1 << 16, // Written while the open block was a press or the
                           // activation; unclosed, it redoes only in the
                           // instance that wrote it (L2p, L53).
@@ -1849,6 +1852,17 @@ final class CommandHistory {
         redoStack.length = 0;
     }
 
+    /// Keep only the `keep` redo entries nearest the head (the next redo
+    /// first) and drop the rest — `invalidateRedo` with a cut point, under the
+    /// same two guards. The tool session's law-3 cut (topology-redo S5): an
+    /// undo that ends the post mode drops the redo from the operation's first
+    /// refire row on. `keep` past the length changes nothing.
+    void truncateRedo(size_t keep) {
+        if (_lockout) return;
+        if (_state != UndoState.Active) return;
+        if (keep < redoStack.length) redoStack.length = keep;
+    }
+
     // Scan undoStack from the tail toward the head for the nearest undoable
     // entry. UI, Model and lifecycle records are all steps. Returns the index
     // into undoStack, or undoStack.length if no step is found.
@@ -1982,7 +1996,8 @@ final class CommandHistory {
     /// 8640 S7a; the tool session's fold, the only caller). Returns whether it
     /// found it.
     bool markEntryFold(const Command expect, uint bits) nothrow @nogc {
-        enum uint foldBits = HistoryFlags.JoinsBelow | HistoryFlags.PreNavOpen;
+        enum uint foldBits = HistoryFlags.JoinsBelow | HistoryFlags.PreNavOpen
+            | HistoryFlags.FoldBase;
         assert((bits & ~foldBits) == 0, "markEntryFold: not a fold bit");
         if (expect is null) return false;
         foreach_reverse (ref e; undoStack)
@@ -2682,6 +2697,29 @@ unittest { // invalidateRedo (task 0429): kills redo; refused under Suspend/lock
     assert(h.undoEpoch == epochBefore, "invalidateRedo must not bump the epoch");
     h.invalidateRedo();
     assert(!h.canRedo(), "idempotent on empty redo");
+
+    // truncateRedo (topology-redo S5): the same two guards, each beside a
+    // local positive control — an Active cut of a two-entry redo stack to 1
+    // keeps exactly the head; `keep` past the length changes nothing.
+    auto c = new _EpochTestCmd();
+    c.apply(); h.record(c);
+    assert(h.undo() && h.undo(), "setup: two entries back on the redo stack");
+    assert(h.redoStack.length == 2 && h.redoStack[0].cmd is a,
+           "setup: the redo head is the first entry undone last");
+    h.setState(UndoState.Suspend);
+    h.truncateRedo(1);
+    assert(h.redoStack.length == 2, "truncateRedo under Suspend must be a no-op");
+    h.setState(UndoState.Active);
+    h.setLockout(true);
+    h.truncateRedo(1);
+    assert(h.redoStack.length == 2, "truncateRedo under lockout must be a no-op");
+    h.setLockout(false);
+    h.truncateRedo(5);
+    assert(h.redoStack.length == 2, "truncateRedo past the length must change nothing");
+    h.truncateRedo(1);
+    assert(h.redoStack.length == 1 && h.redoStack[0].cmd is a,
+           "an Active truncateRedo(1) must keep the head alone");
+    assert(h.undoStack.length == 0, "truncateRedo must not touch the undo stack");
 }
 
 // ---------------------------------------------------------------------------
