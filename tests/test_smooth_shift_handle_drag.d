@@ -222,7 +222,10 @@ void dragCell(string tool, bool thicken) { // both IDs share SmoothShiftTool
     key(65);
     assert(vertexCount() == v1 && faceCount() == f1,
         "Smooth Shift redo must restore the completed topology");
-    assert(abs(queryShift(tool) - (thicken ? 0.0 : after)) < 1e-6,
+    // Both tools restore the recorded Shift: the redo of the re-arming pair takes the
+    // arm's attributes at the reference (law 4, topology-redo S4) — Thicken's reset was
+    // that law's special case, keyed on the pair's completed basis, gone in S3 (8950).
+    assert(abs(queryShift(tool) - after) < 1e-6,
         "redo must restore the captured Shift amount for this exact ID");
 
     // After a re-arm the next haul starts from zero and STACKS one layer.
@@ -320,8 +323,9 @@ unittest {
 
 // Task 8290 cell F (captured): the redo that RE-ARMS the tool makes the redone
 // mesh the operation's base, so the first field write after it stacks one
-// layer at the typed value — no haul in between — and a later haul continues
-// that layer from the typed Offset.
+// layer at the typed value — no haul in between — and a later haul starts a new
+// layer on top of it, its Offset from zero (C6-1 s07: restart, shift 0.009 on s02
+// and on s07 alike; topology-redo S3, task 8950).
 unittest {
     foreach (tool; ["mesh.smoothShiftTool", "mesh.thickenTool"]) {
         auto r = postJson("/api/command", commandBody("scene.reset"));
@@ -331,6 +335,7 @@ unittest {
         assert(r["status"].str == "ok", "select failed: " ~ r.toString);
         uiCmd("tool.set " ~ tool ~ " on");
         auto cam = fetchCamera(BASE);
+        const size_t v0 = vertexCount();
         haul(cam);
         const size_t v1 = vertexCount();
         key(64);
@@ -346,11 +351,12 @@ unittest {
             "the stacked layer did not move any vertex on " ~ tool);
         haul(cam);
         const s = queryShift(tool);
-        assert(vertexCount() == v2,
-            "a haul after the stacking field write must re-evaluate that layer; "
-            ~ tool ~ " has " ~ vertexCount().to!string ~ ", expected " ~ v2.to!string);
-        assert(s > 0.3 + 1e-3,
-            "a haul after the field write must continue from the typed 0.3; "
+        assert(vertexCount() == v2 + (v1 - v0),
+            "a haul after the field write starts a new layer on top of it; " ~ tool
+            ~ " has " ~ vertexCount().to!string ~ ", the field-write mesh " ~ v2.to!string
+            ~ " and one layer " ~ (v1 - v0).to!string);
+        assert(s < 0.3 - 1e-3,
+            "the haul that starts the new layer starts its Offset from zero, not the typed 0.3; "
             ~ tool ~ " got " ~ s.to!string);
         cmd("tool.set " ~ tool ~ " off");
     }

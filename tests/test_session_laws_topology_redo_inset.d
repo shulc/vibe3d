@@ -57,17 +57,27 @@ unittest { // the floor: the fixture still holds the whole family
 
 // The fixture's structure, before any cell: the class rule's triples are exactly the
 // frozen `classOwned` (plan §4.7 R8 rule 1; generator output 2026-10-01: none), and
-// the "backlog: PR" fields are exactly those of the plan's table our run already gives
-// (§4.7 R8: six written by S1a, `s07_drag.origin` by S2b 8930; the ten `vcount` rows
-// carry the table value + 5 of `s03_drag.vcount` until S3, plan §11).
+// the "backlog: PR" fields are exactly the plan's table (§4.7 R8: six written by S1a,
+// `s07_drag.origin` by S2b 8930, the ten `vcount` rows by S3 8950 — the +5 of
+// `s03_drag.vcount` they carried until S3, plan §11, is gone: 17 fields, the whole table).
 immutable string[] kBacklogPR = [
     "param_rebegun_undo_inset_ui/s06_UC.image=[]",
+    "param_rebegun_undo_inset_ui/s06_UC.vcount=18",
     "param_rebegun_undo_inset_ui/s07_drag.origin=\"restart\"",
+    "param_rebegun_undo_inset_ui/s07_drag.vcount=23",
+    "param_rebegun_undo_inset_ui/s08_W.vcount=23",
+    "param_rebegun_undo_inset_ui/s09_Z.vcount=23",
     "param_rebegun_undo_inset_ui/s10_Z.image=[\"s06\"]",
+    "param_rebegun_undo_inset_ui/s10_Z.vcount=18",
     "param_rebegun_undo_inset_ui/s11_Z.armed=true",
     "param_rebegun_undo_inset_ui/s11_Z.image=[\"s03\",\"s04\",\"s05\"]",
     "param_rebegun_undo_inset_ui/s11_Z.on=\"tool\"",
+    "param_rebegun_undo_inset_ui/s11_Z.vcount=13",
     "param_rebegun_undo_inset_ui/s13_R.image=[\"s06\",\"s10\"]",
+    "param_rebegun_undo_inset_ui/s13_R.vcount=18",
+    "param_rebegun_undo_inset_ui/s14_R.vcount=23",
+    "param_rebegun_undo_inset_ui/s15_R.vcount=23",
+    "param_rebegun_undo_inset_ui/s16_R.vcount=23",
 ];
 
 unittest {
@@ -83,7 +93,7 @@ unittest {
     import std.algorithm : sort;
     pr.sort();
     assert(pr == kBacklogPR, "the fixture's backlog: PR fields are not the plan table's "
-        ~ "today-part: " ~ pr.to!string);
+        ~ "17: " ~ pr.to!string);
 }
 
 // A table field not yet at its table value belongs to the general owner rule until its
@@ -100,8 +110,8 @@ unittest {
                         ~ p["label"].str ~ "." ~ field ~ " is law PR under owner " ~ f["owner"].str
                         ~ " (until its slice it belongs to the general owner rule)");
                 }
-    assert(pr == kBacklogPR.length, "fixture: " ~ pr.to!string ~ " law-PR fields, the table's "
-        ~ "today-part holds " ~ kBacklogPR.length.to!string);
+    assert(pr == kBacklogPR.length, "fixture: " ~ pr.to!string ~ " law-PR fields, the table "
+        ~ "holds " ~ kBacklogPR.length.to!string);
 }
 
 // The middle-button restart (gap 462: the reference stacks two layers per press, we stack
@@ -169,6 +179,39 @@ unittest {
         "N2: the haul after undoing M is " ~ top()["stepOrigin"].str ~ " of operation "
         ~ op["s05_drag"].to!string ~ ", expected a refire of M's " ~ op["s03_M"].to!string
         ~ " (g1's is " ~ op["s02_drag"].to!string ~ ")");
+}
+
+// Task 8950 (wave S3), law E6: the base of a new operation is the image at the press
+// that opens it — the selection included. PolyInset script-armed on face 0 (the rig's
+// pentagon), `mesh.select` of face 1 (its triangle), a haul: the inset is on the triangle
+// (+3 vertices), not the pentagon (+5). OUR check (not a fixture cell): the opening press
+// rebases a stale base (`ToolSession.notePointerDown`).
+unittest {
+    import http_client : getJson, postJson;
+    import http_command_helpers : commandBody;
+    import std.process : environment;
+    const only = environment.get("VIBE3D_CELL", "");
+    if ((only.length && only != "select_between_arm_and_haul")
+        || environment.get("VIBE3D_TOPO_REDO_DUMP", "").length)
+        return;
+    JSONValue cell;
+    foreach (c; parseJSON(kFixture)["cells"].array)
+        if (c["id"].str == "inset_direct") cell = c;
+    assert(cell.type == JSONType.object, "fixture holds no inset_direct (the E6 rig)");
+    const rig = rigOf(cell["variant"].str);
+    enum ctx = "E6 selection";
+    const base = setupCell(cell, rig);
+    assert(base == 8, "rig VOID " ~ ctx ~ ": the rig holds " ~ base.to!string ~ " vertices, not 8");
+    runStep(cell["steps"][0], rig, ctx);
+    auto r = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[1]}`));
+    assert(r["status"].str == "ok", ctx ~ ": mesh.select failed: " ~ r.toString);
+    auto st = getJson("/api/tool/state");
+    assert("session" in st, "rig VOID " ~ ctx ~ ": the selection dropped the tool");
+    runStep(cell["steps"][1], rig, ctx);
+    const n = cast(long) getJson("/api/model")["vertices"].array.length;
+    postJson("/api/command", "tool.set " ~ rig.tool ~ " off");
+    assert(n == base + 3, "E6: the first haul after a selection change insets the selection "
+        ~ "at the press (face 1, +3), got " ~ (n - base).to!string ~ " new vertices");
 }
 
 unittest { // every cell was played and compared (a skipped cell is not a green one)

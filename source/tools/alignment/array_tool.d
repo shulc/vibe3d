@@ -358,12 +358,14 @@ public:
     }
     override string topologyStepLabel() { return "Array"; }
     override void setTopologyDormant(bool dormant) {}
-    override void rebaseTopologyStep(MeshSnapshot basis) { before = basis; }
-    override void restoreTopologyStep(in AttrImage attrs, MeshSnapshot basis) {
+    override void rebaseTopologyStep(MeshSnapshot basis) {
         before = basis;
-        restoreRecordedAttrs(attrs);
         built = dragging = false;
         refreshCaches();
+    }
+    override void restoreTopologyStep(in AttrImage attrs, MeshSnapshot basis) {
+        restoreRecordedAttrs(attrs);
+        rebaseTopologyStep(basis);
     }
 
     override void onParamChanged(string pname) {

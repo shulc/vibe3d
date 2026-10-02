@@ -111,7 +111,7 @@ class VertexMergeTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClien
         static immutable ToolSessionPolicy policy = {
             activationRow: true, commandClose: CommandClose.uiDoor,
             sessionSteps: true, historyTopologySteps: true,
-            rebaseTopologyAfterStep: true, opensAt: OpensAt.firstPress,
+            opensAt: OpensAt.firstPress,
             imageAttrs: ["dist"], haulAttrs: ["dist"]
         };
         return policy;
@@ -273,14 +273,13 @@ public:
     public override void setTopologyDormant(bool dormant) {}
     public override void rebaseTopologyStep(MeshSnapshot basis) {
         before = basis;
-        built = false;
-    }
-    public override void restoreTopologyStep(in AttrImage attrs, MeshSnapshot basis) {
-        before = basis;
-        restoreRecordedAttrs(attrs);
         built = !before.matches(*mesh);
         dragging = false;
         refreshCaches();
+    }
+    public override void restoreTopologyStep(in AttrImage attrs, MeshSnapshot basis) {
+        restoreRecordedAttrs(attrs);
+        rebaseTopologyStep(basis);
     }
 
     override void onParamChanged(string pname) {

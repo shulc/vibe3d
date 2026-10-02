@@ -292,22 +292,21 @@ public:
     public override void setTopologyDormant(bool dormant) {}
     public override void rebaseTopologyStep(MeshSnapshot basis) {
         before = basis;
-        built = false;
         preview_.reset();
-        computeGizmoFrame();
-    }
-    public override void restoreTopologyStep(in AttrImage attrs, MeshSnapshot basis) {
-        before = basis;
-        preview_.reset();
-        auto visible = MeshSnapshot.capture(*mesh);
-        before.restore(*mesh);
-        computeGizmoFrame();
-        visible.restore(*mesh);
-        restoreRecordedAttrs(attrs);
+        if (!before.matches(*mesh)) {
+            auto visible = MeshSnapshot.capture(*mesh);
+            before.restore(*mesh);
+            computeGizmoFrame();
+            visible.restore(*mesh);
+        } else computeGizmoFrame();
         built = !before.matches(*mesh);
         dragPart = -1;
         toolHandles.clearHaul();
         refreshCaches();
+    }
+    public override void restoreTopologyStep(in AttrImage attrs, MeshSnapshot basis) {
+        restoreRecordedAttrs(attrs);
+        rebaseTopologyStep(basis);
     }
 
     override void onParamChanged(string pname) {

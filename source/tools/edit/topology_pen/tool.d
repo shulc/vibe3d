@@ -1280,7 +1280,7 @@ public:
             // L57 (C5): a UI-door recording command keeps the pen armed.
             commandClose: CommandClose.uiDoor,
             sessionSteps: true, historyTopologySteps: true,
-            rebaseTopologyAfterStep: false, dropWritesRow: true,
+            dropWritesRow: true,
             refusesDisabledParamWrites: true,
             pressOpensOperation: true, foldsParamRowsIntoBlock: true,
             imageAttrs: ["middle", "mode", "loop", "slide", "smoothStrength",
@@ -3380,7 +3380,7 @@ public:
         return stepOpen_ ? stepLabel_ : "Topology Attribute";
     }
     override void setTopologyDormant(bool dormant) {}
-    // Not reached: the policy leaves `rebaseTopologyAfterStep` off.
+    // Not reached: the session rebases only the captured model's tools.
     override void rebaseTopologyStep(MeshSnapshot basis) { basis_ = basis; }
     override void restoreTopologyStep(in AttrImage attrs, MeshSnapshot basis) {
         basis_ = basis;

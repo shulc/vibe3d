@@ -45,7 +45,7 @@ import tool_presets : loadToolPresets;
 import tests.unit.census_symbols : blankNonCode;
 
 import core.memory  : GC;
-import std.algorithm : canFind, count, filter, sort;
+import std.algorithm : canFind, count, endsWith, filter, sort;
 import std.array     : array, join;
 import std.file      : readText;
 import std.format    : format;
@@ -1035,6 +1035,81 @@ static assert([__traits(allMembers, imported!"tool".ToolSessionLink)]
                   "previewGated"]);
 
 // ---------------------------------------------------------------------------
+// (4d) Task 8950 (topology-redo wave S3, law 2; model doc §R6.2): a row keeps its
+// operation's base; the base of a NEW operation is set where an operation ends
+// with the tool bound (`ToolSession.rebaseOnCurrent_`: the settle after a
+// navigation, a scripted write) and rebased on the opening press only when it
+// went stale (`notePointerDown`). The per-tool flag that rebased after every
+// record is gone; a tool's restore body is its attributes, then its rebase body.
+// Order (form item 2): floor -> needle -> structural; the pins follow.
+// ---------------------------------------------------------------------------
+
+/// The 12 classes of the captured model (the pen is outside it), by file: the
+/// file declaring each `restoreTopologyStep` body the census reads.
+private enum string[] kRebaseBodyFiles = [
+    "source/tools/alignment/array_tool.d", "source/tools/alignment/clone_tool.d",
+    "source/tools/alignment/mirror.d", "source/tools/alignment/radial_array_tool.d",
+    "source/tools/deform/smooth_shift_tool.d", "source/tools/edit/edge_bevel.d",
+    "source/tools/edit/edge_extrude.d", "source/tools/edit/poly_extrude.d",
+    "source/tools/edit/poly_inset_tool.d", "source/tools/edit/vert_merge_tool.d",
+    "source/tools/edit/vertex_bevel_tool.d", "source/tools/edit/vertex_extrude_tool.d",
+];
+
+unittest { // (4d)
+    import tests.unit.census_symbols : blankUnittestBodies;
+    auto es = blankUnittestBodies(blankNonCode(readText("source/edit_session.d")));
+    const ts = bodyAt(es, "private struct ToolSession");   // EditSession forwards a notePointerDown
+    // FLOOR: the bodies the needle reads exist (form item 4).
+    foreach (marker; ["private void rebaseOnCurrent_(Tool t, bool ifStale)",
+                      "private void settleAfterNavigation_(bool isUndo)", "void notePointerDown()",
+                      "void scriptedWriteEndsOperation(Tool t)"])
+        assert(squeeze(bodyAt(ts, marker)).length > 2, "S3 floor: the session body " ~ marker
+               ~ " is empty");
+    // NEEDLE, by identifier (a method address and both lambda forms count).
+    // Polarity: allowed sets, true after S3 (S7 adds `close:1` to the second).
+    assert(identSites(es, "rebaseTopologyStep", false) == ["ToolSession.rebaseOnCurrent_:1"],
+           format("S3 needle: edit_session.d rebases a tool at %s, expected only in "
+                  ~ "rebaseOnCurrent_", identSites(es, "rebaseTopologyStep", false)));
+    assert(identSites(es, "rebaseOnCurrent_", false)
+           == ["<decl>:1", "ToolSession.notePointerDown:1",
+               "ToolSession.scriptedWriteEndsOperation:1", "ToolSession.settleAfterNavigation_:1"],
+           format("S3 needle: rebaseOnCurrent_ is called at %s, expected the settle after a "
+                  ~ "navigation, the scripted write and the opening press once each",
+                  identSites(es, "rebaseOnCurrent_", false)));
+    // the helper is gated on the captured model (§4.6: the pen's
+    // rebase body is never reached) and the press asks for the stale case only
+    const helper = squeeze(bodyAt(ts, "private void rebaseOnCurrent_(Tool t, bool ifStale)"));
+    assert(helper.canFind("if(tisnull||!reporting_(t)||!capturedTopologyModel(t.sessionPolicy()))return;")
+           && helper.canFind("if(ifStale&&baseImage_.filled&&baseImage_.matches(*m))return;"),
+           "S3 needle: rebaseOnCurrent_ lost its model gate or its stale test: " ~ helper);
+    assert(squeeze(bodyAt(ts, "void notePointerDown()")).canFind("if(!operationOpen_)rebaseOnCurrent_(tool_(),true);")
+           && squeeze(bodyAt(ts, "private void settleAfterNavigation_(bool isUndo)"))
+              .canFind("if(aModel&&!operationOpen_)rebaseOnCurrent_(tool_(),false);"),
+           "S3 needle: the press or the settle rebases inside an open operation");
+
+    // STRUCTURAL: every restore body of the model's 12 classes is its attributes,
+    // then its rebase body (SmoothShift: plus the Thicken reset, S4 removes it).
+    size_t bodies;
+    foreach (f; kRebaseBodyFiles) {
+        const b = squeeze(bodyAt(blankNonCode(readText(f)),
+                                 "void restoreTopologyStep(in AttrImage attrs, MeshSnapshot basis)"));
+        ++bodies;
+        const want = "{restoreRecordedAttrs(attrs);rebaseTopologyStep(basis);"
+            ~ (f.endsWith("smooth_shift_tool.d") ? "if(thicken_&&completedGesture)shift_=0.0f;" : "")
+            ~ "}";
+        assert(b == want, format("S3 structural: the restore body in %s is %s, expected %s",
+                                 f, b, want));
+    }
+    assert(bodies == 12, format("S3 structural: restore bodies of the model's tools: %s read, 12 expected",
+                                bodies));
+}
+
+// Pins: the per-tool flag is gone; the rebase entry point stays (its one caller
+// is `rebaseOnCurrent_`).
+static assert(!__traits(hasMember, imported!"tool".ToolSessionPolicy, "rebaseTopologyAfterStep"));
+static assert(__traits(hasMember, imported!"tool".TopologyStepClient, "rebaseTopologyStep"));
+
+// ---------------------------------------------------------------------------
 // (5) Slice M4 — the two data fields that replaced per-tool capabilities:
 // `keepAliveOnCancel` (the former KeepAliveOnCancel interface: the create
 // family, tasks 0400/0430, and Mirror) and `recordCarriesActivation` (the
@@ -1490,8 +1565,11 @@ unittest { // Tasks 7990/8030: production topology R wiring, not a helper replic
         && esFlat.canFind("sourceisnull||armisnull||closedTopologyId_!=id||arm.armedId()!=id||arm.previousId()!=source.armedId()||arm.previousToken()!=source.sessionToken()")
         && esFlat.canFind("ue.length>=2&&ue[$-1].cmdisarm&&ue[$-2].cmdissource"),
         "closed topology redo lost its source-row cursor or activation lineage");
-    assert(es.canFind("pendingTopologyCarriesActivation_()")
-        && es.canFind("!current.sessionPolicy().firstTopologyRedoUsesAfterAttrs")
+    // Task 8950 (S3): the first record no longer carries its own basis; the next
+    // operation's base is the session's rebase on the live image.
+    assert(bodyAt(es, "private void rebaseOnCurrent_(").canFind("rebaseTopologyStep("),
+        "the session's rebase of a new operation lost its call into the tool");
+    assert(es.canFind("!current.sessionPolicy().firstTopologyRedoUsesAfterAttrs")
         && es.canFind("restoreBefore ? cmd.stepBeforeAttrs() : cmd.stepAfterAttrs()")
         && !poly.canFind("firstTopologyRedoUsesAfterAttrs: true"),
         "generic first-topology activation replay lost Polygon attrs/basis law");

@@ -307,9 +307,13 @@ interface TopologyStepClient {
     bool recordTopologyStep(Command cmd);
     string topologyStepLabel();
     void setTopologyDormant(bool dormant);
-    /// Adopt a newly completed image as the next preview basis, without
-    /// replaying its attributes or applying undo/redo-specific normalization.
+    /// The base of a new operation (topology-redo S3, model doc §R6.2): called
+    /// only by `ToolSession` — where an operation ends with the tool bound, and
+    /// on an opening press whose base went stale. Everything the tool derives
+    /// from its base (gizmo, `built`), no attributes; writes no mesh when
+    /// `basis.matches(*mesh)`.
     void rebaseTopologyStep(MeshSnapshot basis);
+    /// A navigated step: its attributes, then `rebaseTopologyStep(basis)`.
     void restoreTopologyStep(in AttrImage attrs, MeshSnapshot basis);
 }
 
@@ -371,9 +375,6 @@ struct ToolSessionPolicy {
     /// attribute image on redo. The extrude family instead restores the arm
     /// image; preview tools use the completed image measured at release.
     bool firstTopologyRedoUsesAfterAttrs;
-    /// Once a completed topology row is recorded, the next preview begins on
-    /// its resulting mesh. This also covers interactive parameter writes.
-    bool rebaseTopologyAfterStep;
     /// The first topology row remains separate from activation. Undoing the
     /// activation discards that row's redo branch while keeping the activation.
     bool discardFirstTopologyRedoOnActivationUndo;

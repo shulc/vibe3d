@@ -13,6 +13,7 @@
 
 import std.conv : to;
 import std.json;
+import http_client : getJson, postJson, frameFence;
 import topology_redo_law_helpers;
 
 void main() {}
@@ -100,6 +101,123 @@ unittest {
 
 static foreach (id; kCells) {
     unittest { runCell(parseJSON(kFixture), id); }
+}
+
+// Task 8950 (wave S3): OUR checks, not fixture cells. Off under a cell filter / a dump,
+// unless the filter names the check.
+private bool skipFor(string name) {
+    import std.process : environment;
+    const only = environment.get("VIBE3D_CELL", "");
+    return (only.length && only != name) || environment.get("VIBE3D_TOPO_REDO_DUMP", "").length;
+}
+
+private JSONValue fixtureCell(string id) {
+    foreach (c; parseJSON(kFixture)["cells"].array)
+        if (c["id"].str == id) return c;
+    assert(false, "fixture holds no cell " ~ id ~ " (a rig of the S3 checks)");
+}
+
+private void cmdOkHere(string line, string ctx) {
+    auto r = postJson("/api/command", line);
+    assert(r["status"].str == "ok", ctx ~ ": " ~ line ~ ": " ~ r.toString);
+    frameFence(null, 2);
+}
+
+/// The drawn handles: every part's screen anchor, in part order (`/api/tool/handles` is
+/// refreshed by the tool's draw; read after the frame fence).
+private double[] handleScreens() {
+    double[] out_;
+    auto h = getJson("/api/tool/handles")["handles"];
+    if (h.type != JSONType.object) return out_;
+    foreach (p; h["parts"].array) {
+        out_ ~= p["part"].integer;
+        if (p["screen"].type == JSONType.array)
+            foreach (v; p["screen"].array)
+                out_ ~= v.type == JSONType.integer ? v.integer : v.floating;
+    }
+    return out_;
+}
+
+private bool sameScreens(const double[] a, const double[] b) {
+    import std.math : abs;
+    if (a.length != b.length) return false;
+    foreach (i; 0 .. a.length) if (abs(a[i] - b[i]) > 1e-5) return false;
+    return true;
+}
+
+// The base of a new operation is set when the operation ENDS (model §R6.2): a scripted
+// write after a haul (M-PS) rebases the tool on the live mesh, and on a live mesh the
+// rebase body recomputes the gizmo there (`else computeGizmoFrame()`). Control at the
+// site: a fresh script arm of the same tool on the same mesh, the same write. The six
+// tools whose rebase body carries the gizmo "dance"; rigs: their families' cells.
+// Polarity: false before S3 (every tool an offender — the gizmo stays on the old base),
+// true after.
+unittest {
+    if (skipFor("rebase_gizmo")) return;
+    immutable string[2][] rigs = [
+        ["smooth_direct", "shift"], ["pextrude_direct", "distance"],
+        ["eextrude_mech", "extrude"], ["ebevel_row", "width"],
+        ["vbevel_dormant", "inset"], ["vextrude_row", "width"]];
+    string[] offenders;
+    size_t visited;
+    foreach (r; rigs) {
+        const cell = fixtureCell(r[0]);
+        const rig = rigOf(cell["variant"].str);
+        const ctx = "rebase gizmo " ~ rig.tool;
+        setupCell(cell, rig);
+        runStep(cell["steps"][0], rig, ctx);              // script arm
+        assert(cell["steps"][0]["op"].str == "arm" && cell["steps"][0]["door"].str == "script",
+            "rig VOID " ~ ctx ~ ": the cell does not open with a script arm");
+        const armed = handleScreens();
+        runStep(cell["steps"][1], rig, ctx);              // haul: moves the image
+        const write = "tool.attr " ~ rig.tool ~ " " ~ r[1] ~ " 0.05";
+        cmdOkHere(write, ctx);                            // M-PS: ends the operation
+        const live = handleScreens();
+        string meshNow() {   // the mesh, less the read's own timestamp
+            auto m = getJson("/api/model");
+            m.object.remove("timestamp");
+            return m.toString;
+        }
+        const model = meshNow();
+        cmdOkHere("tool.set " ~ rig.tool ~ " off", ctx);
+        assert(meshNow() == model,
+            "rig VOID " ~ ctx ~ ": the drop changed the mesh (the control needs the same mesh)");
+        cmdOkHere("tool.set " ~ rig.tool ~ " on", ctx);
+        cmdOkHere(write, ctx);
+        const control = handleScreens();
+        cmdOkHere("tool.set " ~ rig.tool ~ " off", ctx);
+        assert(control.length > 0, "rig VOID " ~ ctx ~ ": the control arm draws no handle");
+        assert(!sameScreens(armed, control),
+            "rig VOID " ~ ctx ~ ": the haul did not move the gizmo");
+        ++visited;
+        if (!sameScreens(live, control)) offenders ~= rig.tool;
+    }
+    assert(visited == 6, "rebase gizmo: " ~ visited.to!string ~ " of the six dance tools visited");
+    assert(offenders.length == 0, "rebase on close recomputes the gizmo on the live mesh: "
+        ~ offenders.to!string ~ " keep the gizmo of the old base (expected none)");
+}
+
+// A scripted attribute write ends the operation (M-PS) and rebases on the live mesh —
+// the rebase body's gizmo dance is guarded by `basis.matches(*mesh)`, so no mesh write:
+// `totalPolygons` of /api/changes (moved by every `MeshSnapshot.restore`) stays put.
+// Positive control at the site: the haul b1 moves it.
+unittest {
+    if (skipFor("script_write_no_mesh_write")) return;
+    const cell = fixtureCell("ebevel_row");
+    const rig = rigOf(cell["variant"].str);
+    enum ctx = "script write is not a mesh write";
+    setupCell(cell, rig);
+    runStep(cell["steps"][0], rig, ctx);
+    long polys() { return getJson("/api/changes")["totalPolygons"].integer; }
+    const p0 = polys();
+    runStep(cell["steps"][1], rig, ctx);
+    const p1 = polys();
+    assert(p1 != p0, "rig VOID " ~ ctx ~ ": the haul b1 moved no totalPolygons");
+    cmdOkHere("tool.attr " ~ rig.tool ~ " width 0.03", ctx);
+    const p2 = polys();
+    cmdOkHere("tool.set " ~ rig.tool ~ " off", ctx);
+    assert(p2 == p1, "a script attribute write is not a mesh write: totalPolygons moved by "
+        ~ (p2 - p1).to!string);
 }
 
 unittest { // every cell was played and compared (a skipped cell is not a green one)

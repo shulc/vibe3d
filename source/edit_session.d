@@ -861,6 +861,11 @@ private struct ToolSession {
     // `MeshSnapshot.restore` copies and no code writes a snapshot in place;
     // released with the operation. Wave plan 8646 §9.25 [A13-2].
     private MeshSnapshot lastAfter_;
+    // The base of the operation a captured-model tool opens next (topology-redo
+    // S3, model doc §R6.2): set where an operation ENDS with the tool still bound
+    // (`rebaseOnCurrent_`) and seeded by the arm; an opening press rebases it
+    // only when the mesh moved since (`notePointerDown`).
+    private MeshSnapshot baseImage_;
     private struct TopologyAttrOwner {
         string id;
         ulong token;
@@ -997,6 +1002,24 @@ private struct ToolSession {
         operationOpen_ = aModel && same && armedAfter;
         if (operationOpen_)
             operation_ = isUndo ? headOfRedoOperation_(aToken) : topOperation_(aToken);
+        // A re-begin and every closed case end the operation here (N3/N5/N6):
+        // the next one is based on the image the navigation left.
+        if (aModel && !operationOpen_) rebaseOnCurrent_(tool_(), false);
+    }
+
+    // The base of a new operation := the live image (topology-redo S3, model doc
+    // §R6.2). Called where an operation ends with its tool still bound, and —
+    // `ifStale` — on the opening press, only when the mesh moved since the base
+    // was taken. The tool's rebase body writes no mesh when the base matches it.
+    private void rebaseOnCurrent_(Tool t, bool ifStale) {
+        if (t is null || !reporting_(t) || !capturedTopologyModel(t.sessionPolicy())) return;
+        auto c = cast(TopologyStepClient) t;
+        if (c is null) return;
+        auto m = c.topologyStepMesh();
+        if (m is null) return;
+        if (ifStale && baseImage_.filled && baseImage_.matches(*m)) return;
+        baseImage_ = MeshSnapshot.capture(*m);
+        c.rebaseTopologyStep(baseImage_);
     }
 
     // The operation of the row an undo just took off (the head of the redo
@@ -1525,6 +1548,13 @@ private struct ToolSession {
             rememberTopologyAttrs_(t.captureAttrImage());
         if (auto client = cast(TopologyStepClient)t)
             client.setTopologyDormant(topologyDormant_);
+        // The arm's own base is the tool's `activate`; the session only records
+        // the image it was taken on (dormant: none — the dormant haul opens none).
+        baseImage_ = MeshSnapshot.init;
+        if (capturedTopologyModel(t.sessionPolicy()) && !topologyDormant_)
+            if (auto client = cast(TopologyStepClient)t)
+                if (auto m = client.topologyStepMesh())
+                    baseImage_ = MeshSnapshot.capture(*m);
         if (t.sessionPolicy().historyTopologySteps &&
             t.sessionPolicy().opensAt == OpensAt.arm && !topologyDormant_) {
             live_ = true;
@@ -1549,6 +1579,7 @@ private struct ToolSession {
 
     void notePointerDown() {
         if (tool_() !is null && tool_() is bound_) {
+            if (!operationOpen_) rebaseOnCurrent_(tool_(), true);
             postmodeOpenAtPress_ = postmodeArmed_;
             postmodeArmed_ = true;
         }
@@ -1562,15 +1593,16 @@ private struct ToolSession {
         if (reporting_(t) && capturedTopologyModel(t.sessionPolicy()) && postmodeArmed_) {
             operationOpen_ = false;
             postmodeArmed_ = false;
+            rebaseOnCurrent_(t, false);
         }
     }
 
-    // The session holds the tool's preview: a dormant operation, or a post
-    // mode that is not armed — an attribute write there is an attribute-only
-    // row (topology-redo S2b, model doc §R7.2).
+    // The session holds the tool's preview of a dormant operation (topology-redo
+    // S2b, model doc §R7.2). An unarmed post mode needs no term: every event that
+    // disarms it rebases the tool on the live mesh first (S3).
     bool previewGated(Tool t) {
         return reporting_(t) && capturedTopologyModel(t.sessionPolicy())
-            && (topologyDormant_ || !postmodeArmed_);
+            && topologyDormant_;
     }
 
     // `press`: the step was opened by the tool's own press door (the link),
@@ -1605,7 +1637,7 @@ private struct ToolSession {
             auto m = client is null ? null : client.topologyStepMesh();
             if (m is null) return;
             topologyPendingMesh_ = lastAfter_.matches(*m) ? lastAfter_
-                : MeshSnapshot.capture(*m);
+                : baseImage_.matches(*m) ? baseImage_ : MeshSnapshot.capture(*m);
             topologyPendingBasis_ = client.topologyStepBasis();
             topologyPendingAttrs_ = beforeWrite.empty
                 ? t.captureAttrImage() : beforeWrite;
@@ -1666,15 +1698,7 @@ private struct ToolSession {
             auto after = topologyPendingMesh_.matches(*m) ? topologyPendingMesh_
                 : MeshSnapshot.capture(*m);
             auto attrs = t.captureAttrImage();
-            // A first topology record that carries its activation replays as
-            // an applied image with the operation's default attrs and with
-            // that image as the next operation's basis. Later records retain
-            // the tool-reported preview basis. Task 8030, W2 Polygon first
-            // group (12v/default attrs, then the next drag builds 16v).
-            const carriesActivation = pendingTopologyCarriesActivation_();
             cmd.setSnapshots(topologyPendingMesh_, after, client.topologyStepLabel());
-            const rebaseAfter = carriesActivation ||
-                t.sessionPolicy().rebaseTopologyAfterStep;
             // The step's origin and operation (topology-redo S2b, model doc §3 E4-E7,
             // P1, PR); outside the captured model nothing is classified.
             auto origin = StepOrigin.unclassified;
@@ -1694,9 +1718,11 @@ private struct ToolSession {
                 }
                 if (origin != StepOrigin.refire) operation_ = ++nextOperation_;
             }
+            // The row keeps its operation's base (topology-redo S3, model doc
+            // §R6.2): a redo restores it; the next operation's base is set
+            // where this one ends (`rebaseOnCurrent_`).
             cmd.setTopologyStep(topologyPendingAttrs_, attrs,
-                topologyPendingBasis_, rebaseAfter
-                    ? after : client.topologyStepBasis(), topologyPendingPress_,
+                topologyPendingBasis_, client.topologyStepBasis(), topologyPendingPress_,
                 instanceOf_(t), origin,
                 origin == StepOrigin.unclassified ? 0 : operation_);
             if (client.recordTopologyStep(cmd) && undoTop_() is cmd) {
@@ -1706,8 +1732,6 @@ private struct ToolSession {
                 noteFoldRow_(t, cmd);
                 rememberTopologyAttrs_(attrs);
                 lastAfter_ = after;
-                if (t.sessionPolicy().rebaseTopologyAfterStep)
-                    client.rebaseTopologyStep(after);
             } else {
                 topologyPendingMesh_.restore(*m);
                 client.restoreTopologyStep(topologyPendingAttrs_, topologyPendingBasis_);
@@ -2236,15 +2260,6 @@ private struct ToolSession {
         if (topologyAttrOwners_.length >= kMaxSessionSteps)
             topologyAttrOwners_ = topologyAttrOwners_[1 .. $];
         topologyAttrOwners_ ~= TopologyAttrOwner(armedId_.idup, token_, attrs);
-    }
-
-    /// The first topology row is about to be appended immediately above the
-    /// activation it carries. This is policy/adjacency data, never a tool id.
-    private bool pendingTopologyCarriesActivation_() {
-        import commands.tool.lifecycle : ToolActivationCommand;
-        auto act = cast(const ToolActivationCommand)undoTop_();
-        return act !is null && !act.dormantTopology() && act.carriesFirstRecord()
-            && act.sessionToken() != 0 && act.sessionToken() == currentToken();
     }
 
     // The undo of the window's first group (H1, 283): back to the image the

@@ -139,8 +139,8 @@ class SmoothShiftTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClien
             // Captured: every step of one live operation — a haul,
             // a field write, a scrub — re-evaluates the SAME layer from the
             // operation's base, so completed steps do not rebase it. Only a
-            // redo that re-arms the tool starts a new layer (the first
-            // record's `after` basis).
+            // redo that re-arms the tool starts a new layer (the session
+            // rebases on the redone image, ToolSession.rebaseOnCurrent_).
             opensAt: OpensAt.firstPress,
             imageAttrs: ["shift", "scale", "maxAngle", "thicken", "sharp"],
             haulAttrs: ["shift", "scale", "maxAngle", "thicken", "sharp"]
@@ -362,26 +362,17 @@ public:
     }
     public override string topologyStepLabel() { return "Smooth Shift"; }
     public override void setTopologyDormant(bool dormant) {}
-    // Not reached while the policy leaves `rebaseTopologyAfterStep` off.
     public override void rebaseTopologyStep(MeshSnapshot basis) {
         before = basis;
-        built = false;
-        completedGesture = true;
-        computeGizmoFrame();
-    }
-    public override void restoreTopologyStep(in AttrImage attrs, MeshSnapshot basis) {
-        before = basis;
-        auto visible = MeshSnapshot.capture(*mesh);
-        before.restore(*mesh);
-        computeGizmoFrame();
-        visible.restore(*mesh);
-        restoreRecordedAttrs(attrs);
+        if (!before.matches(*mesh)) {
+            auto visible = MeshSnapshot.capture(*mesh);
+            before.restore(*mesh);
+            computeGizmoFrame();
+            visible.restore(*mesh);
+        } else computeGizmoFrame();
         built = !before.matches(*mesh);
         completedGesture = before.filled && before.matches(*mesh);
-        // Measured: the Thicken redo that re-arms keeps the mesh and resets
-        // Shift; an in-session undo/redo restores its recorded Shift.
-        if (thicken_ && completedGesture) shift_ = 0.0f;
-        // A restored step belongs to an engaged operation; after a re-arm
+        // A rebased step belongs to an engaged operation; after a re-arm
         // redo the next field write stacks one layer (captured cell F). The
         // undo of a first haul that followed an unengaged field write is not
         // captured and is treated the same way.
@@ -389,6 +380,13 @@ public:
         dragPart = -1;
         toolHandles.clearHaul();
         refreshCaches();
+    }
+    public override void restoreTopologyStep(in AttrImage attrs, MeshSnapshot basis) {
+        restoreRecordedAttrs(attrs);
+        rebaseTopologyStep(basis);
+        // Measured: the Thicken redo that re-arms keeps the mesh and resets
+        // Shift; an in-session undo/redo restores its recorded Shift.
+        if (thicken_ && completedGesture) shift_ = 0.0f;
     }
 
     override void onParamChanged(string pname) {

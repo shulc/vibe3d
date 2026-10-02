@@ -500,10 +500,8 @@ public:
     }
     override string topologyStepLabel() { return "Mirror"; }
     override void setTopologyDormant(bool dormant) {}
-    override void rebaseTopologyStep(MeshSnapshot basis) { baseSnap = basis; }
-    override void restoreTopologyStep(in AttrImage attrs, MeshSnapshot basis) {
+    override void rebaseTopologyStep(MeshSnapshot basis) {
         baseSnap = basis;
-        restoreRecordedAttrs(attrs);
         Mesh source;
         basis.restore(source);
         baseMask = source.operandFaceMask();
@@ -513,6 +511,10 @@ public:
         havePreviewCache = false;
         toolHandles.clearHaul();
         refreshDisplay(mesh, gpu);
+    }
+    override void restoreTopologyStep(in AttrImage attrs, MeshSnapshot basis) {
+        restoreRecordedAttrs(attrs);
+        rebaseTopologyStep(basis);
     }
 
     // ----- Mask (fold #4: interactive commit + applyHeadless must build the
