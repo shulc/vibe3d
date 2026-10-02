@@ -1852,3 +1852,23 @@ unittest { // S7a u3: a press whose walk meets a foreign-token row marks none
     assert(!(flagsAt(h, 1) & HistoryFlags.JoinsBelow),
            "S7a u3: the walk crossed a foreign row and folded the parameter row");
 }
+
+// ---- Task 8920 (topology-redo wave S2a): the settle after a navigation -------
+
+unittest { // a navigation before any arm: no tool, nothing bound — the settle asks no tool
+    import edit_session : EditSession;
+    import view : View;
+    auto h = new CommandHistory();
+    Tool none = null;
+    auto s = new EditSession(() => none, h, () {});
+    auto row = new Stub(new View(0, 0, 1, 1));
+    assert(row.apply());
+    h.record(row);
+    assert(h.undoEntries().length == 1, "S2a settle: the rig recorded no row");
+    // The undo moves the stack (the settle runs) with no tool and an unbound
+    // session: it must step the history and touch no tool.
+    assert(s.navigate(true) && h.undoEntries().length == 0 && h.redoEntries().length == 1,
+           "S2a settle: an undo before any arm did not step the history");
+    assert(s.navigate(false) && h.undoEntries().length == 1,
+           "S2a settle: a redo before any arm did not step the history");
+}
