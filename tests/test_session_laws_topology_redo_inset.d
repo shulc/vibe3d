@@ -105,7 +105,8 @@ unittest {
 // The middle-button restart (gap 462: the reference stacks two layers per press, we stack
 // one; a driver double press or a law — not captured): every known divergence from the
 // first middle haul of a cell on, except `origin` (S2b's law everywhere), is ONE status,
-// outside the model. Floor: generator output 2026-10-01 — 8 `_M` points, 107 fields.
+// outside the model. Floor: generator output 2026-10-01 — 8 `_M` points, 107 fields;
+// 102 since S2a (8920): five `armed` fields after the press now match (law 1 settle).
 unittest {
     const fx = parseJSON(kFixture);
     size_t points, fields;
@@ -128,9 +129,9 @@ unittest {
             }
         }
     }
-    assert(points == 8 && fields == 107, "fixture family inset holds " ~ points.to!string
+    assert(points == 8 && fields == 102, "fixture family inset holds " ~ points.to!string
         ~ " middle-restart points / " ~ fields.to!string ~ " divergent fields after them, "
-        ~ "frozen at 8 / 107");
+        ~ "frozen at 8 / 102");
 }
 
 static foreach (id; kCells) {

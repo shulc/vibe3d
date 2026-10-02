@@ -3898,7 +3898,7 @@ void main(string[] args) {
         if (session !is null) {
             session.noteArm(id, token,
                 postmodeArmedOnArm(why,
-                    activeTool.sessionPolicy().postmodeStartsOnPress));
+                    postmodeStartsOnPressFor(activeTool.sessionPolicy())));
             session.finishClose();
         }
     }

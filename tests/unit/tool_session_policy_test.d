@@ -51,7 +51,7 @@ import std.file      : readText;
 import std.format    : format;
 import std.json      : JSONType, parseJSON;
 import std.regex     : matchFirst, regex;
-import std.string    : indexOf, startsWith, strip;
+import std.string    : endsWith, indexOf, startsWith, strip;
 
 private enum Prov { carried, captured, inferred, notPorted, noCounterpart, uncertain }
 
@@ -422,7 +422,11 @@ unittest { // (3) the doors reach the tool session only through EditSession
     // Wave plan 8640 S7a: the redo door is the step, then the parameter-row
     // prune once the history is Active again — never inside the step (m18).
     // The undo door has no prune (amendment A16: it was inert).
-    assert(squeeze(bodyAt(ts, "bool undo()")) == "{constr=undoImpl_();if(r)openBlock_=null;returnr;}",
+    // Task 8920 (S2a): the depth snapshot first, the settle after a MOVED stack.
+    assert(squeeze(bodyAt(ts, "bool undo()")) == "{navBefore_.depth=history_.undoEntries().length;"
+           ~ "constr=undoImpl_();if(r)openBlock_=null;"
+           ~ "if(r&&history_.undoEntries().length!=navBefore_.depth)settleAfterNavigation_(true);"
+           ~ "returnr;}",
            "S7a wiring census: ToolSession.undo body changed: " ~ squeeze(bodyAt(ts, "bool undo()")));
     inOrder(squeeze(bodyAt(ts, "bool redo()")),
             ["openBlock_=null;", "constr=redoImpl_();", "if(r)pruneRedoTop_();", "returnr;"],
@@ -637,6 +641,218 @@ unittest { // (4)
     assert(armAttrs == 1, format("M3b step table: %s arm attributes, measured 1", armAttrs));
     assert(actionNames == 3, format("M3 step table: %s Action params on the session tools, "
                                     ~ "measured 3", actionNames));
+}
+
+// ---------------------------------------------------------------------------
+// (4b) Task 8920 (topology-redo wave S2a, law 1): the captured model is derived
+// from policy DATA (`capturedTopologyModel`), the activation's carry from
+// `opensAt` (`firstStepCarriesActivation`, read by `prepareArm`), the user
+// arm's post mode from `postmodeStartsOnPressFor` (the app's arm path), and
+// `armed` after a navigation is ONE assignment in `settleAfterNavigation_`.
+// Order (form item 2): floor -> needles -> structural; the pin is block (5).
+// ---------------------------------------------------------------------------
+
+/// The model's ids, literal: the 14 history-topology ids less the pen.
+private immutable string[] kModelIds = [
+    "edge.bevel", "edge.extrude", "mesh.arrayTool", "mesh.clone", "mesh.mirrorTool",
+    "mesh.polyInsetTool", "mesh.radialArrayTool", "mesh.smoothShiftTool",
+    "mesh.thickenTool", "mesh.vertexBevel", "mesh.vertexExtrude", "poly.extrude",
+    "vert.merge",
+];
+
+/// The registry the app builds: every static registration (`registerTools`),
+/// then the presets (`registerToolPresets`). Each id is built by its
+/// PRODUCTION factory — a preset's policy is its constructed instance's, not a
+/// blitted class initializer's (the transform presets set fields at build).
+private string[2][] productionPolicies(out size_t ids) {
+    import ai.exploration : AiExplorationController;
+    import ai.interaction_log_writer : AiInteractionLogWriter;
+    import command_history : CommandHistory;
+    import commands.layer.xform_edit : LayerXformEdit;
+    import commands.mesh.morph_edit : MeshMorphEdit;
+    import commands.mesh.vertex_edit : MeshVertexEdit;
+    import document : Document, Layer;
+    import editor_app : EditorApp;
+    import mesh : Mesh, makeCube;
+    import mesh_gpu : GpuMesh;
+    import pipe_gizmo_host : PipeGizmoHost;
+    import registration : registerTools;
+    import registry : Registry;
+    import seltype : SelMode;
+    import session_owner : Session;
+    import tool : capturedTopologyModel, opensAtArm;
+    import tool_presets : registerToolPresets;
+    import tools.edit.topology_pen.defs : TopoPenFactories;
+    import view : View;
+    import std.traits : FieldNameTuple;
+    static struct Rig { Registry registry; GpuMesh gpu; Session* session; Layer layer;
+                        View view; EditorApp app; }
+    auto r = new Rig;
+    r.layer = new Layer;
+    r.layer.meshRef() = makeCube();
+    Document doc;
+    doc.layers = [r.layer];
+    doc.noteLayerListChanged();
+    doc.selectItem(r.layer, SelMode.Set);
+    r.session = Session.create(doc);
+    r.view = new View(0, 0, 800, 600);
+    auto session = r.session;
+    ref Mesh currentMesh() { return session.document.activeMeshRef(); }
+    ref View currentView() { return r.view; }
+    r.app.meshDg = cast(typeof(r.app.meshDg)) &currentMesh;
+    r.app.cameraViewDg = &currentView;
+    r.app.gpuPtr = &r.gpu;
+    r.app.sessionOwner = r.session;
+    r.app.regPtr = &r.registry;
+    r.app.history = new CommandHistory();
+    r.app.vxEditFactory = () => cast(MeshVertexEdit) null;
+    r.app.morphEditFactory = () => cast(MeshMorphEdit) null;
+    r.app.layerXformEditFactory = () => cast(LayerXformEdit) null;
+    r.app.pipeGizmoHost = new PipeGizmoHost;
+    r.app.bevelEditFactory = () => null;
+    r.app.loopSliceEditFactory = () => null;
+    r.app.reduceEditFactory = () => null;
+    r.app.cloneEditFactory = () => null;
+    r.app.arrayEditFactory = () => null;
+    r.app.edgeExtrudeEditFactory = () => null;
+    r.app.edgeExtendEditFactory = () => null;
+    r.app.polyExtrudeEditFactory = () => null;
+    r.app.radialArrayEditFactory = () => null;
+    r.app.smoothShiftEditFactory = () => null;
+    r.app.strokeExtrudeEditFactory = () => null;
+    static foreach (f; FieldNameTuple!TopoPenFactories)
+        __traits(getMember, r.app.topoPenFactories, f) = () => null;
+    r.app.aiExplore = new AiExplorationController(0, 42);
+    r.app.aiLogWriter = new AiInteractionLogWriter("");
+    registerTools(r.app);
+    registerToolPresets(r.registry, loadToolPresets("config/tool_presets.yaml"));
+    string[2][] rows;     // [id, "model"|"model+arm"|"topo"|""]
+    foreach (id; r.registry.toolIds()) {
+        ++ids;
+        const pol = r.registry.toolFactory(id)().sessionPolicy();
+        rows ~= [id, capturedTopologyModel(pol) ? (opensAtArm(pol) ? "model+arm" : "model")
+                     : pol.historyTopologySteps ? "topo" : ""];
+    }
+    return rows;
+}
+
+/// Word occurrences of `ident` in a code view, keyed by the enclosing
+/// declaration (`enclosingSymbols`, line-start attribution); a declaration of
+/// the name (`void x(`, `bool x`) is keyed `<decl>`. `assignOnly`: only an
+/// occurrence written to (`x =`, `x op=`, not `==`).
+private string[] identSites(string code, string ident, bool assignOnly) {
+    import tests.unit.census_symbols : enclosingSymbols, isIdentChar, symbolAt;
+    const syms = enclosingSymbols(code);
+    size_t[string] out_;
+    size_t line0, from;
+    for (;;) {
+        const rel = code[from .. $].indexOf(ident);
+        if (rel < 0) break;
+        const pos = from + cast(size_t) rel;
+        foreach (c; code[from .. pos]) if (c == '\n') ++line0;
+        from = pos + ident.length;
+        if ((pos > 0 && isIdentChar(code[pos - 1]))
+            || (from < code.length && isIdentChar(code[from]))) continue;
+        size_t b = pos;
+        while (b > 0 && (code[b - 1] == ' ' || code[b - 1] == '\t')) --b;
+        size_t a = b;
+        while (a > 0 && isIdentChar(code[a - 1])) --a;
+        const decl = ["void", "bool"].canFind(code[a .. b]);
+        if (assignOnly && !decl) {
+            size_t e = from;
+            while (e < code.length && code[e] == ' ') ++e;
+            const op = e < code.length && "+-*/|&^~".canFind(code[e]) ? e + 1 : e;
+            if (!(op < code.length && code[op] == '=' && !(op + 1 < code.length && code[op + 1] == '=')))
+                continue;
+        }
+        const key = decl ? "<decl>" : symbolAt(syms, line0);
+        out_[key] = out_.get(key, 0) + 1;
+    }
+    string[] r;
+    foreach (k, n; out_) r ~= format("%s:%s", k, n);
+    sort(r);
+    return r;
+}
+
+unittest { // (4b)
+    import tests.unit.census_symbols : blankUnittestBodies;
+    // FLOOR: the production registry, every id built by its factory; the model
+    // is exactly the 13 literal ids. Polarity: stationary (true from S2a on;
+    // before S2a the predicate did not exist). The site sets below are
+    // stationary ALLOWED sets, true after S2a (later slices edit their row);
+    // the structural list is false before S2a (three ids opened at the press).
+    size_t ids;
+    auto rows = productionPolicies(ids);
+    string[] model, armModel, topo;
+    foreach (row; rows) {
+        if (row[1].startsWith("model")) model ~= row[0];
+        if (row[1] == "model+arm") armModel ~= row[0];
+        if (row[1].length) topo ~= row[0];
+    }
+    sort(model); sort(armModel); sort(topo);
+    assert(ids == 71 && rows.length == 71,
+           format("S2a model census: the production registry built %s ids, measured 71", ids));
+    assert(model == kModelIds,
+           format("S2a model census: capturedTopologyModel holds %s of the registry, the model "
+                  ~ "is the 13 ids %s", model, kModelIds));
+
+    // NEEDLES, by identifier. `prepareArm` derives the carry: one call of the
+    // predicate, no read of the declared flag in any spelling (field read,
+    // address, lambda; `.tupleof` / `__traits(getMember` / string `mixin(`
+    // would reach it by a string the code view blanks, so those spellings are
+    // counted too).
+    auto ptRaw = readText("source/prepared_tool_transition.d");
+    auto pt = blankUnittestBodies(blankNonCode(ptRaw));
+    const arm = bodyAt(pt, "PreparedArm prepareArm(ToolFactory factory");
+    assert(identSites(arm, "firstStepCarriesActivation", false).length == 1
+           && identSites(arm, "firstStepCarriesActivation", false)[0].endsWith(":1")
+           && identSites(arm, "recordCarriesActivation", false).length == 0
+           && arm.count(".tupleof") == 0 && arm.count("getMember") == 0
+           && arm.count("mixin(") == 0,
+           "S2a needle: prepareArm must read firstStepCarriesActivation once and the declared "
+           ~ "recordCarriesActivation never (a revert reddens HERE, before pin (5))");
+    auto app = blankUnittestBodies(blankNonCode(readText("source/app.d")));
+    assert(identSites(app, "postmodeStartsOnPressFor", false) == ["main.armPreparedTool:1"],
+           format("S2a needle: app.d calls postmodeStartsOnPressFor at %s, expected once on the "
+                  ~ "arm path (main.armPreparedTool)", identSites(app, "postmodeStartsOnPressFor", false)));
+    auto es = blankUnittestBodies(blankNonCode(readText("source/edit_session.d")));
+    // Stationary allowed sets (true after S2a; S2b/S5b/S7 each edit their row).
+    assert(identSites(es, "settleAfterNavigation_", false)
+           == ["<decl>:1", "ToolSession.redo:1", "ToolSession.undo:1"],
+           format("S2a needle: settleAfterNavigation_ sites %s, expected the declaration and "
+                  ~ "one call in each of ToolSession.undo / ToolSession.redo",
+                  identSites(es, "settleAfterNavigation_", false)));
+    assert(identSites(es, "postmodeArmed_", true)
+           == ["<decl>:1", "ToolSession.noteArm:1", "ToolSession.notePointerDown:1",
+               "ToolSession.settleAfterNavigation_:1"],
+           format("S2a needle: postmodeArmed_ is written at %s, expected the field initializer "
+                  ~ "and noteArm, notePointerDown, settleAfterNavigation_ once each",
+                  identSites(es, "postmodeArmed_", true)));
+    assert(identSites(es, "ownOpenerOnTop_", false)
+           == ["<decl>:1", "ToolSession.settleAfterNavigation_:1"],
+           format("S2a needle: ownOpenerOnTop_ sites %s, expected one call in "
+                  ~ "settleAfterNavigation_", identSites(es, "ownOpenerOnTop_", false)));
+    // The opener is asked with the token AFTER the step (the step re-binds the
+    // tool and adopts its token): the argument is `aToken`, nothing taken before.
+    const settle = bodyAt(es, "private void settleAfterNavigation_(bool isUndo)");
+    const callAt = settle.indexOf("ownOpenerOnTop_(");
+    assert(callAt >= 0, "S2a needle: settleAfterNavigation_ no longer asks ownOpenerOnTop_");
+    const argFrom = callAt + "ownOpenerOnTop_(".length;
+    const argTo = argFrom + settle[argFrom .. $].indexOf(")");
+    assert(squeeze(settle[argFrom .. argTo]) == "aToken",
+           "S2a needle: ownOpenerOnTop_ is asked with `" ~ settle[argFrom .. argTo]
+           ~ "`, expected the post-step token aToken");
+    // No raw field access in the session module (the multisets above see only
+    // spelled names).
+    assert(es.count(".tupleof") == 0 && es.count("getMember") == 0 && es.count("mixin(") == 0,
+           "S2a needle: edit_session.d reaches a field by .tupleof / getMember / mixin");
+
+    // STRUCTURAL: among the 14 history-topology ids exactly four open at the arm
+    // (the pen is outside the model: `false`).
+    assert(topo.length == 14,
+           format("S2a structural: %s history-topology ids, measured 14", topo.length));
+    assert(armModel == ["edge.bevel", "edge.extrude", "mesh.vertexBevel", "mesh.vertexExtrude"],
+           format("S2a structural: opensAtArm among the model ids is %s", armModel));
 }
 
 // ---------------------------------------------------------------------------

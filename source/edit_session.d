@@ -31,6 +31,7 @@ module edit_session;
 // locks are needed here.
 // ---------------------------------------------------------------------------
 
+import tool            : capturedTopologyModel, opensAtArm;
 import tool            : Tool, CommandClose, AttrImage, PressKind, OpensAt,
                          ToolSessionLink, TopologyStepClient;
 import command         : Command, CmdFlags;
@@ -756,6 +757,13 @@ struct DropRowSpec {
     DropContext ctx;
 }
 
+/// What a navigation saw BEFORE it ran: the undo depth, so the settle after
+/// it keys on the stack having MOVED (a cancelled live edit answers `true`
+/// with no movement).
+private struct NavBefore {
+    size_t depth;
+}
+
 private struct ToolSession {
     private Tool delegate() tool_;
     private CommandHistory  history_;
@@ -766,6 +774,7 @@ private struct ToolSession {
     private bool terminalClosedRunArmed_;
     private bool terminalRedoRequested_;
     private bool postmodeArmed_ = true;
+    private NavBefore navBefore_;
     // The operation's close (slice M2). `topBefore_` is the undo top when the
     // close began; a row counts as written BY the close only if the top is a
     // different entry afterwards — identity, never the depth, which stops
@@ -926,19 +935,59 @@ private struct ToolSession {
     // S7a, §9.17.5 [A6-n8]; the undo door's prune was inert, amendment A16).
     // Any navigation re-keys the open block: an undo closes it (L41); a redo
     // reopens only what its own step says (`navigateTopology_`, L42/L55).
+    // `armed` after a navigation is ONE assignment (`settleAfterNavigation_`),
+    // asked of the tool bound AFTER the step — the step itself re-binds it
+    // (an activation's undo re-arms the predecessor, its redo re-arms the row's
+    // tool). Task 8920, law 1; model doc §2.4.
     bool undo() {
+        navBefore_.depth = history_.undoEntries().length;
         const r = undoImpl_();
         if (r) openBlock_ = null;
+        if (r && history_.undoEntries().length != navBefore_.depth)
+            settleAfterNavigation_(true);
         return r;
     }
 
     bool redo() {
+        navBefore_.depth = history_.undoEntries().length;
         auto block = openBlock_;
         openBlock_ = null;
         const r = redoImpl_();
         if (r) pruneRedoTop_();
         else openBlock_ = block;
+        if (r && history_.undoEntries().length != navBefore_.depth)
+            settleAfterNavigation_(false);
         return r;
+    }
+
+    // The post mode is open after a navigation exactly when the undo top is
+    // the bound model tool's own opener. A tool outside the model keeps the
+    // value its replay arm wrote.
+    private void settleAfterNavigation_(bool isUndo) {
+        const aModel = boundModel_();
+        const aToken = aModel ? token_ : 0;
+        const armedAfter = aModel && ownOpenerOnTop_(aToken);
+        if (aModel) postmodeArmed_ = armedAfter;
+    }
+
+    private bool boundModel_() {
+        auto t = tool_();
+        return t !is null && t is bound_ && capturedTopologyModel(t.sessionPolicy());
+    }
+
+    // The undo top opens session `tok`'s post mode: its topology step, or —
+    // until the begin row exists — the activation of a tool that opens at
+    // the arm.
+    private bool ownOpenerOnTop_(ulong tok) {
+        import commands.tool.lifecycle : ToolActivationCommand;
+        const top = undoTop_();
+        if (auto step = cast(const MeshSessionEdit) top)
+            return step.isTopologyStep() && step.sessionToken() == tok;
+        auto t = tool_();
+        if (t !is null && opensAtArm(t.sessionPolicy()))
+            if (auto act = cast(const ToolActivationCommand) top)
+                return act.sessionToken() == tok;
+        return false;
     }
 
     private bool undoImpl_() {
