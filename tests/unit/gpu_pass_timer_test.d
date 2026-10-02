@@ -34,6 +34,7 @@ private struct FakeLog {
     size_t rebeginsOfUnread;
     bool[uint] unavail;        // these names answer "not available"
     uint[] blockedNames;       // GL_QUERY_RESULT read while unavailable (blocks)
+    uint blockUs;              // a blocking read takes this long (models the GPU wait)
 }
 
 private struct FakeBackend {
@@ -70,6 +71,11 @@ private struct FakeBackend {
         if (log.withheld || (name in log.unavail) !is null) {
             ++log.resultCallsOnUnavailable;
             log.blockedNames ~= name;
+            if (log.blockUs) {
+                import core.thread : Thread;
+                import core.time : usecs;
+                Thread.sleep(log.blockUs.usecs);
+            }
         }
         log.unread.remove(name);
         return log.ns;
@@ -222,6 +228,7 @@ unittest {
         auto log = new FakeLog;
         auto t = newTimer(log);
         log.withheld = true;
+        log.blockUs = 500;
         foreach (_; 0 .. kGpuTimerFrames) {
             t.beginFrame(true, perf); t.mark(GpuSeg.faces); t.endFrame();
         }
@@ -245,8 +252,11 @@ unittest {
         assert(t.throttleWaits == 3 && t.framesHarvested == 3 && t.maxHarvestLag == kGpuTimerFrames,
             format("(k perf) waits=%d harvested=%d lag=%d", t.throttleWaits, t.framesHarvested,
                    t.maxHarvestLag));
+        assert(t.throttleNs >= 6 * 500_000,
+            format("(k perf) throttleNs must hold the 6 blocking reads' time (>= 3 ms), got %d ns",
+                   t.throttleNs));
         auto j = parseJSON(t.toJson());
-        assert(j["throttleWaits"].integer == 3 && j["throttleNs"].integer >= 0
+        assert(j["throttleWaits"].integer == 3 && j["throttleNs"].integer == t.throttleNs
             && j["oldestPendingAge"].integer == kGpuTimerFrames - 1,
             "(k perf) JSON throttle columns and the oldest pending age: " ~ t.toJson());
     }
