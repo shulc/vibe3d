@@ -2484,3 +2484,86 @@ unittest {
         format("law 6: with the tool gone the redo of the folded group brought %s rows of 2",
                r.h.undoEntries().length));
 }
+
+// ---- Task 9120 (S7, law 6 with law 4's seed): the undo that drops the tool with a FOLDED
+// ---- group remembers the group BASE's before-attributes, and the redo of the pair restores
+// ---- them (model §R9 Л4-с: each undone row of the live instance replaces the image with its
+// ---- before; CAP `*_direct_ui/s06_R`: the arm's value) ------------------------------------
+
+/// A PressFlagTool whose UI command closes its operation (as the 12 of the model declare).
+private final class UiClosePressTool : PressFlagTool {
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        import tool : CommandClose;
+        static immutable ToolSessionPolicy policy = {
+            activationRow: true, sessionSteps: true, historyTopologySteps: true,
+            opensAt: OpensAt.firstPress, imageAttrs: ["v"], commandClose: CommandClose.uiDoor
+        };
+        return policy;
+    }
+}
+
+unittest {
+    auto r = new S2bRig;
+    r.m = makeCube();
+    r.h = new CommandHistory();
+    r.t = new UiClosePressTool;
+    r.t.m = &r.m; r.t.h = r.h; r.t.view = new View(0, 0, 1, 1);
+    r.t.basis = MeshSnapshot.capture(r.m);
+    r.active = r.t;
+    r.s = new EditSession(() => r.active, r.h, () { r.active = null; });
+    auto act = tokenRow(&r.m, "t.press", "", true, true, 5);
+    act.onDeactivate = () { r.active = null; };
+    act.onActivate = (string id) { r.active = r.t; r.s.noteArm(id, 55, false); };
+    r.h.recordToolLifecycle(act);
+    r.s.noteArm("t.press", 5, false);
+    foreach (v; [1.0f, 2.0f]) {
+        r.s.notePointerDown();
+        r.t.pressBegins();
+        r.t.v = v;
+        r.m.vertices[1].x += 0.25f;
+        r.t.pressEnds();
+    }
+    r.s.closeOperation(CloseReason.command, CommandDoor.ui);
+    r.s.finishClose();
+    assert(r.h.undoEntries().length == 3
+           && (r.h.undoEntries()[2].flags & HistoryFlags.JoinsBelow) != 0,
+        "law 6 seed rig: the command close did not fold the two hauls over the activation");
+    assert(r.s.navigate(true) && r.active is null && r.h.undoEntries().length == 0,
+        format("law 6 seed rig: the undo did not drop the tool with its folded group (depth %s)",
+               r.h.undoEntries().length));
+    assert(r.s.navigate(false) && r.active is r.t && r.h.undoEntries().length == 3,
+        "law 6 seed rig: the redo did not bring the pair and its group back whole");
+    assert(r.t.v == 0.0f, format("law 4 seed after law 6: the redo of the pair restored v %s, "
+        ~ "expected the group base's before (the arm's 0; the top row's before is 1)", r.t.v));
+}
+
+// ---- Task 9120 (S7, law 6 for the pen, L57): after a UI command ends the pen's session, the
+// ---- next parameter row is the base of its own open step, not a row of the old block --------
+
+unittest {
+    import tool : CommandClose;
+    Mesh m = makeCube();
+    auto h = new CommandHistory();
+    auto t = new FoldTool(true);
+    t.pol.commandClose = CommandClose.uiDoor;
+    t.m = &m; t.h = h; t.view = new View(0, 0, 1, 1);
+    Tool active = t;
+    auto s = new EditSession(() => active, h, () { active = null; });
+    s.noteArm("t.fold", 1);
+    t.press();
+    m.vertices[3].z += 0.25f;
+    t.release();
+    foldWrite(s, t, 0.5f);
+    assert(h.undoEntries().length == 2, "pen L57 rig: the press and the parameter row are not two rows");
+    const o = s.closeOperation(CloseReason.command, CommandDoor.ui);
+    s.finishClose();
+    assert(o.staysArmed && (flagsAt(h, 1) & HistoryFlags.JoinsBelow) != 0,
+        "pen L57 rig: the UI command did not fold the open step and keep the pen");
+    auto cmdRow = new Stub(new View(0, 0, 1, 1));
+    assert(cmdRow.apply());
+    h.record(cmdRow);
+    foldWrite(s, t, 0.75f);
+    assert(h.undoEntries().length == 4 && (flagsAt(h, 3) & HistoryFlags.PreNavOpen) == 0,
+        "pen L57: the parameter row after the command joined the closed block (PreNavOpen) "
+        ~ "instead of opening its own step");
+}
