@@ -135,7 +135,6 @@ struct GpuPassTimerT(Backend) {
     /// Open frame `seq+1` (segment `setup`) after harvesting what is ready.
     void beginFrame(bool armed_) {
         armed = armed_;
-        inFrame_ = false;
         if (!armed_) return;
         if (!probed) {
             probed = true;

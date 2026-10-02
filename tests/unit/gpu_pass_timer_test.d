@@ -101,6 +101,9 @@ unittest {
     t.beginFrame(true);            // harvests frame 1
     t.endFrame();
     assert(t.framesHarvested == 1, format("(a) harvested %d", t.framesHarvested));
+    assert(log.calls.count("gen") == kGpuTimerFrames,
+        format("(a) query names are generated once per ring row (%d), got %d gen calls",
+               kGpuTimerFrames, log.calls.count("gen")));
     assert(t.segs[GpuSeg.setup].samples == 1 && t.segs[GpuSeg.grid].samples == 1
         && t.segs[GpuSeg.faces].samples == 1,
         "(a) tags must be [setup, grid, faces]");
@@ -137,10 +140,10 @@ unittest {
     log.withheld = true;
     foreach (_; 0 .. 3) { t.beginFrame(true); t.endFrame(); }
     t.beginFrame(true);
-    assert(t.framesHarvested == 0, "(c) nothing is available yet");
     assert(log.resultCallsOnUnavailable == 0,
         format("(c) GL_QUERY_RESULT read on an unavailable query %d times (that call blocks)",
                log.resultCallsOnUnavailable));
+    assert(t.framesHarvested == 0, "(c) nothing is available yet");
     t.endFrame();
     log.withheld = false;
     t.beginFrame(true);
@@ -148,6 +151,8 @@ unittest {
     assert(t.framesHarvested == 4,
         format("(c) the frame availability flips harvests all 4 pending, got %d", t.framesHarvested));
     assert(t.framesDropped == 0, "(c) no slot was reused while pending");
+    assert(t.maxHarvestLag == 4,
+        format("(c) frame 1 harvested at frame 5: maxHarvestLag must be 4, got %d", t.maxHarvestLag));
 }
 
 unittest {
@@ -227,6 +232,70 @@ unittest {
         "(g) absent faces = samples 0, grid = 1: " ~ t.toJson());
     assert(j["recent"].array.length == 1 && j["framesHarvested"].integer == 1,
         "(g) recent carries one [seq,ns] per harvested frame");
+}
+
+// (g2) the `recent` ring keeps the newest kGpuRecentFrames frames, in order.
+unittest {
+    auto log = new FakeLog;
+    auto t = newTimer(log);
+    foreach (_; 0 .. 300) { t.beginFrame(true); t.endFrame(); }
+    t.beginFrame(true);            // harvests frame 300
+    auto r = parseJSON(t.toJson())["recent"].array;
+    assert(r.length == kGpuRecentFrames,
+        format("(g2) recent holds %d entries, expected %d", r.length, kGpuRecentFrames));
+    assert(r[0].array[0].integer == 300 - kGpuRecentFrames + 1 && r[$ - 1].array[0].integer == 300,
+        format("(g2) recent must run seq %d..300 oldest first, got %s..%s",
+               300 - kGpuRecentFrames + 1, r[0], r[$ - 1]));
+}
+
+// (j) the GL backend's probe, GL-free: each missing entry point and a zero-bit
+// counter answer unavailable with a reason naming it (bindbc's pointers are
+// swapped for the cell and restored).
+version (web) {} else
+unittest {
+    import bindbc.opengl;
+    static extern (System) void fakeGen(GLsizei, GLuint*) nothrow @nogc {}
+    static extern (System) void fakeBegin(GLenum, GLuint) nothrow @nogc {}
+    static extern (System) void fakeEnd(GLenum) nothrow @nogc {}
+    static extern (System) void fakeObjI(GLuint, GLenum, GLint*) nothrow @nogc {}
+    static extern (System) void fakeObjU64(GLuint, GLenum, GLuint64*) nothrow @nogc {}
+    static __gshared GLint fakeBits;
+    static extern (System) void fakeQueryiv(GLenum target, GLenum pname, GLint* p) nothrow @nogc {
+        *p = (target == GL_TIME_ELAPSED && pname == GL_QUERY_COUNTER_BITS) ? fakeBits : -1;
+    }
+    auto sGen = glGenQueries, sBegin = glBeginQuery, sEnd = glEndQuery,
+         sObjI = glGetQueryObjectiv, sObjU = glGetQueryObjectui64v, sQiv = glGetQueryiv;
+    scope (exit) {
+        glGenQueries = sGen; glBeginQuery = sBegin; glEndQuery = sEnd;
+        glGetQueryObjectiv = sObjI; glGetQueryObjectui64v = sObjU; glGetQueryiv = sQiv;
+    }
+    void installAll() {
+        glGenQueries = &fakeGen; glBeginQuery = &fakeBegin; glEndQuery = &fakeEnd;
+        glGetQueryObjectiv = &fakeObjI; glGetQueryObjectui64v = &fakeObjU64;
+        glGetQueryiv = &fakeQueryiv;
+    }
+    string probeReason(out bool ok, out int bits) {
+        GlTimerBackend b;
+        string reason;
+        ok = b.probe(reason, bits);
+        return reason;
+    }
+    bool ok; int bits;
+    installAll(); fakeBits = 64;
+    assert(probeReason(ok, bits) == "" && ok && bits == 64,
+        "(j) positive control: all six entry points and 64 counter bits must probe available");
+    static foreach (name; ["glGenQueries", "glBeginQuery", "glEndQuery", "glGetQueryObjectiv",
+                           "glGetQueryObjectui64v", "glGetQueryiv"]) {{
+        installAll();
+        mixin(name ~ " = null;");
+        immutable r = probeReason(ok, bits);
+        assert(!ok && r == name ~ " is null",
+            "(j) a missing " ~ name ~ " must answer unavailable naming it, got '" ~ r ~ "'");
+    }}
+    installAll(); fakeBits = 0;
+    immutable r0 = probeReason(ok, bits);
+    assert(!ok && bits == 0 && r0.indexOf("GL_QUERY_COUNTER_BITS is 0") >= 0,
+        "(j) a zero-bit TIME_ELAPSED counter must answer unavailable, got '" ~ r0 ~ "'");
 }
 
 // (h) census: every segment but `setup` (opened by beginFrame) has a mark

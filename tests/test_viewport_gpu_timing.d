@@ -177,6 +177,19 @@ unittest { // per-item: under the retopology item sequence each item's sections 
     assert(d.samples["backdropFaces"] == 0,
         format("(item-a) the joined layer is drawn by the sequence, not the backdrop pass: %d",
                d.samples["backdropFaces"]));
+    assert(d.samples["verts"] == 1 * d.harvested,
+        format("(item-a) no item draws dots (only the vertex feedback pass, measured 1 per "
+             ~ "frame): verts=%d harvested=%d", d.samples["verts"], d.harvested));
+    cmd("viewport.showVertices", `{"value":"on"}`);
+    frameFence(null, 2);
+    enforce(jb(plan("active")["drawVerts"]) && jb(plan("backdrop")["drawVerts"]),
+        "(item-dots) premise: both plans draw dots: " ~ plan("backdrop").toString);
+    auto dv = window()[0];
+    cmd("viewport.showVertices", `{"value":"off"}`);
+    writefln("  (item-dots) harvested=%d verts=%d", dv.harvested, dv.samples["verts"]);
+    assert(dv.harvested >= 8 && dv.samples["verts"] == 3 * dv.harvested,
+        format("(item-dots) primary bracket + joined item + feedback pass = 3 dot samples "
+             ~ "per frame (measured): verts=%d harvested=%d", dv.samples["verts"], dv.harvested));
 
     // (item-b) the joined item draws no wire: its edges section is absent.
     cmd("viewport.wireOverlay", `"none"`);
