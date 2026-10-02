@@ -2132,7 +2132,10 @@ private struct ToolSession {
                 popped = next;
             }
             if (pair) {
-                history_.undo();
+                // PF-3 (plan §13, Capture-7 N6C): the restored predecessor continues its
+                // own session — the token the activation row carries — as on the tail.
+                Rebindable!(const Command) act = undoTop_();
+                if (history_.undo()) adoptPredecessorToken_(act);
             } else {
                 // Law 4 (orphan): a row another instance wrote moves the mesh only.
                 const orphan = capturedTopologyModel(t.sessionPolicy())

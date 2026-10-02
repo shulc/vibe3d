@@ -1262,6 +1262,28 @@ unittest { // (4f)
            ~ "with other arguments");
 }
 
+// (4g) Task 9120 (S7, PF-3; plan §13, Capture-7 N6C): the undo of another tool's UI pair
+// hands the restored predecessor its own session token on BOTH undo paths — the generic
+// tail and the topology pair branch. Order: floor -> needle.
+unittest { // (4g)
+    import tests.unit.census_symbols : blankUnittestBodies;
+    auto es = blankUnittestBodies(blankNonCode(readText("source/edit_session.d")));
+    const ts = bodyAt(es, "private struct ToolSession");
+    foreach (m; ["private bool undoImpl_()", "private bool navigateTopology_(bool isUndo)",
+                 "private void adoptPredecessorToken_(const Command undone)"])
+        assert(squeeze(bodyAt(ts, m)).length > 2, "PF-3 floor: the session body " ~ m ~ " is empty");
+    // Polarity: false before S7 (the tail alone), true after.
+    assert(identSites(es, "adoptPredecessorToken_", false)
+           == ["<decl>:1", "ToolSession.navigateTopology_:1", "ToolSession.undoImpl_:1"],
+           format("PF-3 needle: adoptPredecessorToken_ is called at %s, expected the undo tail "
+                  ~ "and the pair branch of navigateTopology_ once each",
+                  identSites(es, "adoptPredecessorToken_", false)));
+    assert(squeeze(bodyAt(ts, "private bool navigateTopology_(bool isUndo)"))
+              .canFind("if(history_.undo())adoptPredecessorToken_(act);"),
+           "PF-3 needle: the pair branch adopts the predecessor's token before, or without, "
+           ~ "a successful undo of the activation row");
+}
+
 // Fence (form item 1): the per-tool dormant flag is gone (S6, task 9080).
 static assert(!__traits(hasMember, imported!"tool".ToolSessionPolicy, "dormantAfterClosedRedo"));
 

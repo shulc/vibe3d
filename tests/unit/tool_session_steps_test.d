@@ -2342,3 +2342,123 @@ unittest { // U-PF7-redo: a redo keeps its row's own base (the undone-restart re
         "PF-7: after the redo of the first restart the tool's base is not that row's own "
         ~ "(the redo head's, the second restart's?)");
 }
+
+// ---- Task 9120 (topology-redo wave S7, PF-3; plan §13, Capture-7 N6C): the undo of
+// ---- another tool's UI pair hands the predecessor back its own session ----------------
+//
+// B — a ScrubTopologyTool (in the model, its first record carries the activation) — is
+// armed through the UI door over the predecessor A, which B's arm closes (a switch), and
+// hauls once; undoing B's pair re-arms A by a replay arm with a FRESH token (10).
+
+private struct Pf3Rig {
+    Mesh m;
+    CommandHistory h;
+    Tool active;
+    EditSession s;
+    ScrubTopologyTool b;
+}
+
+private Pf3Rig* pf3Rig() {
+    auto r = new Pf3Rig;
+    r.m = makeCube();
+    r.h = new CommandHistory();
+    r.s = new EditSession(() => r.active, r.h, () { r.active = null; });
+    r.b = new ScrubTopologyTool;
+    r.b.m = &r.m; r.b.h = r.h; r.b.view = new View(0, 0, 1, 1);
+    return r;
+}
+
+/// A's session is armed and has its rows; B's UI arm closes it, B hauls once.
+/// `act`: B's activation row (its revert re-arms `predId` with token 10, as a replay arm).
+private void pf3ArmB(Pf3Rig* r, Tool pred, string predId, ToolActivationCommand act = null) {
+    r.s.closeOperation(CloseReason.switch_);
+    if (act is null) act = tokenRow(&r.m, "t.b", predId, true, true, 9, 5);
+    act.onActivate = (string id) { r.active = pred; r.s.noteArm(id, 10); };
+    r.h.recordToolLifecycle(act);
+    r.active = r.b;
+    r.s.noteArm("t.b", 9);
+    r.s.finishClose();
+    r.b.basis = MeshSnapshot.capture(r.m);
+    r.b.haulStep(0.5f);
+}
+
+private long pf3Token(Pf3Rig* r) { return r.s.sessionStateJson()["token"].integer; }
+
+unittest { // U1: the undo of B's UI pair returns the model predecessor A its session (N6)
+    auto r = pf3Rig();
+    auto a = new PressFlagTool;
+    a.m = &r.m; a.h = r.h; a.view = new View(0, 0, 1, 1);
+    a.basis = MeshSnapshot.capture(r.m);
+    r.active = a;
+    r.s.noteArm("t.a", 5, false);
+    s2bHaul(r.s, &a.pressBegins, &a.pressEnds, &r.m);
+    pf3ArmB(r, a, "t.a");
+    assert(r.h.undoEntries().length == 3, "PF-3 U1 rig: B's activation and record are not rows");
+    assert(r.s.navigate(true), "PF-3 U1 rig: the undo did not step");
+    assert(r.active is a && r.h.undoEntries().length == 1,
+        "PF-3 U1 rig: the undo did not take B's pair whole back to A");
+    const st = r.s.sessionStateJson();
+    assert(st["token"].integer == 5 && st["armed"].type == JSONType.true_
+           && st["operationOpen"].type == JSONType.false_,
+        format("PF-3 U1: after the undo of B's UI pair A holds token %s, armed %s, operation open "
+               ~ "%s — expected its own session 5, armed, closed (N6)", st["token"], st["armed"],
+               st["operationOpen"]));
+    s2bHaul(r.s, &a.pressBegins, &a.pressEnds, &r.m);
+    assert(s2bTopRow(r.h).stepOrigin() == StepOrigin.restart,
+        format("PF-3 U1: A's haul after the pair's undo is %s, expected a restart (E7)",
+               s2bTopRow(r.h).stepOrigin()));
+}
+
+unittest { // U2: A's first record still pairs with its activation (the carry is read by token)
+    auto r = pf3Rig();
+    auto a = new CarryTool;
+    a.writeTo = r.h;
+    r.active = a;
+    auto actA = tokenRow(&r.m, "t.carry", "", true, true, 5);
+    actA.onDeactivate = () { r.active = null; };
+    r.h.recordToolLifecycle(actA);
+    r.s.noteArm("t.carry", 5);
+    a.arr = [Pt(1, 0, null)];
+    assert(r.s.applyAndContinue(), "PF-3 U2 rig: A's in-place commit refused");
+    pf3ArmB(r, a, "t.carry");
+    assert(r.s.navigate(true) && r.active is a, "PF-3 U2 rig: B's pair did not undo back to A");
+    assert(r.s.navigate(true), "PF-3 U2 rig: A's undo did not step");
+    assert(r.h.undoEntries().length == 0 && r.active is null,
+        format("PF-3 U2: A's first record popped without its activation (depth %s, A still on: "
+               ~ "%s) — the restored A is not in its own session", r.h.undoEntries().length,
+               r.active !is null));
+}
+
+unittest { // U3: the pen as the predecessor (§4.6) continues its session too
+    auto r = pf3Rig();
+    auto pen = new FoldTool(true);
+    pen.m = &r.m; pen.h = r.h; pen.view = new View(0, 0, 1, 1);
+    r.active = pen;
+    r.s.noteArm("t.fold", 5);
+    pen.press();
+    r.m.vertices[3].z += 0.25f;
+    pen.release();
+    pf3ArmB(r, pen, "t.fold");
+    assert(r.s.navigate(true) && r.active is pen, "PF-3 U3 rig: B's pair did not undo back to the pen");
+    assert(pf3Token(r) == 5, format("PF-3 U3: the restored pen holds token %s, not its own 5",
+                                    pf3Token(r)));
+}
+
+unittest { // U4: an activation that refuses its undo hands no token over (the pair is split)
+    static final class RefusingArm : ToolActivationCommand {
+        // a predecessor of the SAME id with another token: an unguarded adopt would take it
+        this(Mesh* m, View v) { super(m, v, EditMode.Vertices, "t.b", "t.b", true, true, true, 9, 5); }
+        protected override void revertImpl() { failRevert("refused (test)"); }
+    }
+    auto r = pf3Rig();
+    auto a = new PressFlagTool;
+    a.m = &r.m; a.h = r.h; a.view = new View(0, 0, 1, 1);
+    a.basis = MeshSnapshot.capture(r.m);
+    r.active = a;
+    r.s.noteArm("t.a", 5, false);
+    pf3ArmB(r, a, "t.a", new RefusingArm(&r.m, new View(0, 0, 1, 1)));
+    assert(r.s.navigate(true) && r.active is r.b, "PF-3 U4 rig: the split pair moved no row");
+    assert(pf3Token(r) == 9, format("PF-3 U4: a refused activation undo handed over token %s",
+                                    pf3Token(r)));
+}
+
