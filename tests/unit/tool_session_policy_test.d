@@ -683,7 +683,7 @@ private string[] identSites(string code, string ident, bool assignOnly) {
         while (b > 0 && (code[b - 1] == ' ' || code[b - 1] == '\t')) --b;
         size_t a = b;
         while (a > 0 && isIdentChar(code[a - 1])) --a;
-        const decl = ["void", "bool", "AttrImage"].canFind(code[a .. b]);
+        const decl = ["void", "bool", "AttrImage", "DropImage"].canFind(code[a .. b]);
         if (assignOnly && !decl) {
             size_t e = from;
             while (e < code.length && code[e] == ' ') ++e;
@@ -1745,26 +1745,28 @@ unittest { // Tasks 7990/8030: production topology R wiring, not a helper replic
     // Task 9020 (S4, law 4, model doc §R9): the redo attributes are the instance
     // mechanism, no per-tool flag (compiler fence beside block (4d')). FLOOR: the three
     // helpers have bodies. NEEDLES (stationary allowed sets, true after S4): one drop
-    // image helper called at the three drops, one seed helper at the two re-creating
-    // redos, one ownership test at the two orphan branches and the drop walk.
+    // image helper computed and one store helper called (after the undo, 9020 F) at the
+    // three drops, one seed helper at the two re-creating redos, one ownership test at
+    // the two orphan branches and the drop walk.
     {
         import tests.unit.census_symbols : blankUnittestBodies;
         const esU = blankUnittestBodies(es);
-        foreach (m; ["private bool boundToLive_(", "private void rememberDropImage_(",
-                     "private AttrImage seedRecreated_("])
+        foreach (m; ["private bool boundToLive_(", "private DropImage dropImage_(",
+                     "private void storeDropImage_(", "private AttrImage seedRecreated_("])
             assert(squeeze(bodyAt(esU, m)).length > 2, "S4 floor: " ~ m ~ " has no body");
-        assert(identSites(esU, "rememberDropImage_", false) == ["<decl>:1",
-               "ToolSession.navigateTopology_:1", "ToolSession.undoImpl_:2"],
-               format("S4 needle: rememberDropImage_ sites %s, expected the pair undo, the "
-                      ~ "undoImpl_ tail and its dormant branch",
-                      identSites(esU, "rememberDropImage_", false)));
+        foreach (h; ["dropImage_", "storeDropImage_"])
+            assert(identSites(esU, h, false) == ["<decl>:1",
+                   "ToolSession.navigateTopology_:1", "ToolSession.undoImpl_:2"],
+                   format("S4 needle: %s sites %s, expected the pair undo, the "
+                          ~ "undoImpl_ tail and its dormant branch", h,
+                          identSites(esU, h, false)));
         assert(identSites(esU, "seedRecreated_", false) == ["<decl>:1",
                "ToolSession.navigateTopology_:1", "ToolSession.redoImpl_:1"],
                format("S4 needle: seedRecreated_ sites %s, expected its declaration and the "
                       ~ "pair redo of navigateTopology_ and redoImpl_",
                       identSites(esU, "seedRecreated_", false)));
         assert(identSites(esU, "boundToLive_", false) == ["<decl>:1",
-               "ToolSession.navigateTopology_:2", "ToolSession.rememberDropImage_:1"],
+               "ToolSession.dropImage_:1", "ToolSession.navigateTopology_:2"],
                format("S4 needle: boundToLive_ sites %s, expected the undo and redo orphan "
                       ~ "branches and the drop walk", identSites(esU, "boundToLive_", false)));
     }

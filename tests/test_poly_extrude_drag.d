@@ -563,15 +563,19 @@ unittest { // Param image -> closed redo -> fresh dormant attr-only adjustment.
     navigate(true);
     assert(planes() == param && undoLen() == fresh - 1,
         "param-fresh dormant Undo changed the frozen basis or row pairing");
+    // Law 4, generic (task 9020 item A; not a Poly Extrude capture): the redo of the bare
+    // activation re-creates the instance with its drop seed — the shift it held with its
+    // own adjustment undone, i.e. the arm's (0.2, 0.07), never the drag's. Was: 0.
     navigate(false);
     st = getJson("/api/tool/state");
     h = getJson("/api/history");
     assert(planes() == param && undoLen() == fresh
-        && abs(queryShiftX()) < 1e-6 && abs(queryShiftY()) < 1e-6
+        && abs(queryShiftX() - freshShiftX) < 1e-6 && abs(queryShiftY() - freshShiftY) < 1e-6
         && st["session"]["dormant"].type == JSONType.true_
         && h["redo"].array.length == 1
         && h["redo"].array[$ - 1]["command"].str == "tool.topology_adjustment",
-        "param-fresh dormant Redo lost default attrs, basis, or adjustment redo");
+        format("param-fresh dormant Redo lost the seed (shift %s,%s; the arm's %s,%s), basis, "
+            ~ "or adjustment redo", queryShiftX(), queryShiftY(), freshShiftX, freshShiftY));
 }
 
 unittest { // Polygon -> Edge undo/redo never gives a fresh Edge Polygon attrs.
@@ -675,6 +679,7 @@ unittest { // Full closed redo makes a fresh Polygon arm dormant and attr-only.
     assert(r["status"].str == "ok" || r["status"].str == "success");
     const freshImage = planes();
     const fresh = undoLen();
+    const armDist = queryDistance(), armShiftX = queryShiftX(), armShiftY = queryShiftY();
     int x, y; handlePx(x, y);
     auto cam = fetchCamera(BASE);
     playAndWait(buildDragDownLog(cam.vpX, cam.vpY, cam.width, cam.height, x, y), BASE);
@@ -692,11 +697,16 @@ unittest { // Full closed redo makes a fresh Polygon arm dormant and attr-only.
     navigate(true);
     assert(planes() == freshImage && undoLen() == fresh - 1,
         "dormant Polygon z1 did not remove adjustment and activation");
+    // Law 4, generic (task 9020 item A; not a Poly Extrude capture): the bare activation's
+    // redo re-creates the instance with its drop seed — the arm's (sticky) attributes, its
+    // own adjustment undone. Was: all 0.
     navigate(false);
     st = getJson("/api/tool/state");
     assert(planes() == freshImage && undoLen() == fresh
         && st["session"]["dormant"].type == JSONType.true_
-        && abs(queryDistance()) < 1e-6 && abs(queryShiftX()) < 1e-6
-        && abs(queryShiftY()) < 1e-6,
-        "dormant Polygon r1 did not restore bare default activation");
+        && abs(queryDistance() - armDist) < 1e-6 && abs(queryShiftX() - armShiftX) < 1e-6
+        && abs(queryShiftY() - armShiftY) < 1e-6,
+        format("dormant Polygon r1 did not restore the bare activation's seed: distance %s "
+            ~ "shift (%s,%s), the arm's %s (%s,%s)", queryDistance(), queryShiftX(),
+            queryShiftY(), armDist, armShiftX, armShiftY));
 }
