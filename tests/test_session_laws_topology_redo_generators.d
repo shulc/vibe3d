@@ -41,9 +41,9 @@ unittest { // the floor: the fixture still holds the whole family
 
 // Two stationary owners the plan names for this family, before any cell: the UI command
 // that meets Mirror (model §6.4 C2m, `commandClose: none`) hands every divergent field
-// after it to the activation/command-close wave (plan §5 S1a п.5: «mirror_cmdclose_ui
-// после s04_UC»; generator output 2026-10-01: 17 fields, all of them), and Mirror's
-// law 4 on the UI door is not captured (model §6.3) — one field.
+// from its own checkpoint on to the activation/command-close wave (plan §12, as C2s:
+// «mirror_cmdclose_ui с s04_UC»; generator output 2026-10-02: 19 fields, all of them),
+// and Mirror's law 4 on the UI door is not captured (model §6.3) — one field.
 unittest {
     const fx = parseJSON(kFixture);
     size_t c2m;
@@ -53,20 +53,20 @@ unittest {
         bool after;
         foreach (p; c["points"].array) {
             const at = c["id"].str ~ "/" ~ p["label"].str;
+            if (c["id"].str == "mirror_cmdclose_ui" && p["label"].str == "s04_UC") after = true;
             foreach (field, f; p["fields"].object) {
                 if ("ours" !in f) continue;
                 if (f["owner"].str == "none: not captured (model §6.3)") notCaptured ~= at ~ "." ~ field;
                 if (!after) continue;
                 ++c2m;
                 assert(f["owner"].str == "V4: activation/command-close wave", "fixture: " ~ at
-                    ~ "." ~ field ~ " after the UI command is owned by " ~ f["owner"].str
+                    ~ "." ~ field ~ " from the UI command on is owned by " ~ f["owner"].str
                     ~ " (model §6.4 C2m)");
             }
-            if (c["id"].str == "mirror_cmdclose_ui" && p["label"].str == "s04_UC") after = true;
         }
     }
-    assert(c2m == 17, "fixture family generators holds " ~ c2m.to!string
-        ~ " divergent fields after the Mirror UI command, frozen at 17");
+    assert(c2m == 19, "fixture family generators holds " ~ c2m.to!string
+        ~ " divergent fields from the Mirror UI command on, frozen at 19");
     assert(notCaptured == ["mirror_attrs_ui/s04_R.attrs"], "fixture: the not-captured fields "
         ~ notCaptured.to!string ~ " are not model §6.3's one");
 }
