@@ -1080,7 +1080,7 @@ class HttpServer {
     // render.
     private alias ViewportProbeProvider =
         string delegate(int cell, string points, bool wantHash,
-                        bool composedFrame);
+                        bool composedFrame, string buffer);
     private ViewportProbeProvider viewportProbeProvider;
 
     // ----- /api/images provider (task 0612 Stage 1) ------------------------
@@ -1333,6 +1333,7 @@ class HttpServer {
         string points;
         bool wantHash;
         bool composedFrame;
+        string buffer = "color";   // "color" | "gbuf"
     }
     struct VpProbeResp { string result; string error; }
     private MainThreadBridge!(VpProbeReq, VpProbeResp) vpProbeBridge;
@@ -1847,7 +1848,7 @@ class HttpServer {
                     try {
                         resp.result = viewportProbeProvider(
                             req.cell, req.points, req.wantHash,
-                            req.composedFrame);
+                            req.composedFrame, req.buffer);
                         resp.error  = "";
                     } catch (Exception e) {
                         resp.error = e.msg;
@@ -4016,6 +4017,17 @@ class HttpServer {
             response.headers["Content-Type"] = "application/json";
             return;
         }
+        // `buffer=gbuf` reads the cell's G-buffer attachment
+        // (COLOR_ATTACHMENT1) instead of its colour.
+        immutable string buffer =
+            parseQueryString(request.path, "buffer", "color");
+        if (buffer != "color" && buffer != "gbuf") {
+            response.statusCode = 400;
+            response.body = `{"error":"unknown viewport probe buffer: `
+                          ~ jsonEsc(buffer) ~ `"}`;
+            response.headers["Content-Type"] = "application/json";
+            return;
+        }
         if (target == "frame" && !request.context.testMode) {
             response.statusCode = 403;
             response.body = `{"error":"target=frame is only available in --test mode"}`;
@@ -4039,6 +4051,7 @@ class HttpServer {
             vpProbeBridge.req.points   = _pts;
             vpProbeBridge.req.wantHash = parseQueryInt(request.path, "hash", 0) != 0;
             vpProbeBridge.req.composedFrame = target == "frame";
+            vpProbeBridge.req.buffer   = buffer;
             vpProbeBridge.resp.result  = "";
             vpProbeBridge.resp.error   = "";
             if (!vpProbeBridge.submitAndWait())

@@ -13,6 +13,8 @@ import image_cache   : imagePixelCache;
 // Task 1970 — DirtyKey's camera pose term (see the struct field below).
 import camera_stamp  : CameraStamp;
 import toolpipe.packets : WorkplanePacket;
+// ViewportFbo's GL calls and the enums its recorded `TexSpec` carries.
+import bindbc.opengl;
 
 // ---------------------------------------------------------------------------
 // Phase 1 — global camera / ViewCache / picking → per-viewport data model.
@@ -45,21 +47,40 @@ enum LayoutPreset { Single, SplitH, SplitV, Quad }
 // ViewportFbo — Phase 2
 // ---------------------------------------------------------------------------
 
-/// GL FBO for rendering one viewport cell's scene into (color RGBA8 + depth24).
+/// GL FBO for rendering one viewport cell's scene into (colour RGBA8 + a
+/// DEPTH_COMPONENT24 depth TEXTURE), plus the lazily allocated effect targets
+/// of the composite stage (model M4, task 9060): `gbufTex` RGBA16UI attached
+/// as `COLOR_ATTACHMENT1` of the scene FBO, `compositeSrcTex` and `aoTex[2]`
+/// RGBA8, and a second framebuffer `effectsFbo` (no depth; its C0 is
+/// re-pointed per composite pass).
 ///
-/// Ids (fbo / colorTex / depthRbo) are generated ONCE on first use and remain
-/// stable for the object's lifetime.  On a size change, EXISTING storage is
-/// re-specified in-place via glTexImage2D / glRenderbufferStorage — never
-/// delete+regen — so an ImGui.Image handle recorded before a resize still
-/// names a live texture at RenderDrawData time.  Pattern mirrors
-/// gpu_select.d:607-635 exactly.
+/// Ids are generated ONCE (scene targets on the first `ensure`, effect targets
+/// on the first `ensureEffects`) and remain stable for the object's lifetime.
+/// On a size change EVERY existing texture is re-specified in place through
+/// `specTex` — never delete+regen — so an ImGui.Image handle recorded before a
+/// resize still names a live texture at RenderDrawData time.
+///
+/// `depthTex` and `gbufTex` are NEAREST for both filters: depth and integer
+/// formats are not filterable on ES 3.0, so LINEAR leaves them incomplete on
+/// WebGL2 (`texelFetch` returns 0) while the desktop stays green. The
+/// recorded `TexSpec` of each texture is the witness (tests/unit/viewport_test.d).
 struct ViewportFbo {
     uint fbo      = 0;
     uint colorTex = 0;
-    uint depthRbo = 0;
+    uint depthTex = 0;
+    // Effect targets: zero until `ensureEffects`.
+    uint gbufTex         = 0;
+    uint compositeSrcTex = 0;
+    uint[2] aoTex;
+    uint effectsFbo      = 0;
     int  w        = 0;
     int  h        = 0;
     int  _allocGen = 0;  // bumped on first use and each resize; used by unittest
+
+    /// What `specTex` last specified for each texture — the very arguments
+    /// its GL calls receive, recorded in every build.
+    TexSpec colorSpec, depthSpec, gbufSpec, compositeSrcSpec;
+    TexSpec[2] aoSpec;
 
     /// Ensure the FBO is at least (newW × newH).  Guards w>0 && h>0.
     /// On a size change, re-specifies existing storage in place — ids are stable.
@@ -69,58 +90,118 @@ struct ViewportFbo {
         w = newW;
         h = newH;
         _allocGen++;
+        if (fbo == 0) {
+            genFramebuffer(fbo);
+            genTexture(colorTex);
+            genTexture(depthTex);
+        }
+        specTex(colorTex, colorSpec, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, GL_LINEAR);
+        specTex(depthTex, depthSpec, GL_DEPTH_COMPONENT24, GL_DEPTH_COMPONENT,
+                GL_UNSIGNED_INT, GL_NEAREST);
+        if (gbufTex != 0) specEffects();
         version(unittest) {} else {
-            import bindbc.opengl;
-            // Generate ids on first use only.
-            if (fbo == 0) {
-                glGenFramebuffers(1, &fbo);
-                glGenTextures(1, &colorTex);
-                glGenRenderbuffers(1, &depthRbo);
-            }
-            // Re-specify existing storage in place (ids stay stable).
-            glBindTexture(GL_TEXTURE_2D, colorTex);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0,
-                         GL_RGBA, GL_UNSIGNED_BYTE, null);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-            glBindTexture(GL_TEXTURE_2D, 0);
-
-            glBindRenderbuffer(GL_RENDERBUFFER, depthRbo);
-            glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, w, h);
-            glBindRenderbuffer(GL_RENDERBUFFER, 0);
-
             glBindFramebuffer(GL_FRAMEBUFFER, fbo);
             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
                                    GL_TEXTURE_2D, colorTex, 0);
-            glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
-                                      GL_RENDERBUFFER, depthRbo);
-            GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-            if (status != GL_FRAMEBUFFER_COMPLETE) {
-                import std.conv : to;
-                throw new Exception(
-                    "ViewportFbo: FBO incomplete (status=0x"
-                    ~ to!string(status, 16) ~ ")");
-            }
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                                   GL_TEXTURE_2D, depthTex, 0);
+            checkComplete("scene");
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        }
+    }
+
+    /// Allocate the effect targets at the current size, once; a no-op before
+    /// the first `ensure` and on every later call. `gbufTex` joins the scene
+    /// FBO as `COLOR_ATTACHMENT1` — harmless while the draw buffers are {C0}.
+    void ensureEffects() {
+        if (w <= 0 || h <= 0 || gbufTex != 0) return;
+        genTexture(gbufTex);
+        genTexture(compositeSrcTex);
+        genTexture(aoTex[0]);
+        genTexture(aoTex[1]);
+        genFramebuffer(effectsFbo);
+        specEffects();
+        version(unittest) {} else {
+            glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1,
+                                   GL_TEXTURE_2D, gbufTex, 0);
+            checkComplete("scene + gbuf");
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
         }
     }
 
     /// Release GL resources.  Null-safe and idempotent.
     void destroy() {
-        version(unittest) {
-            w = 0; h = 0; _allocGen = 0;
-            fbo = 0; colorTex = 0; depthRbo = 0;
-            return;
-        } else {
-            import bindbc.opengl;
-            if (fbo != 0)      { glDeleteFramebuffers(1, &fbo);       fbo      = 0; }
-            if (colorTex != 0) { glDeleteTextures(1, &colorTex);      colorTex = 0; }
-            if (depthRbo != 0) { glDeleteRenderbuffers(1, &depthRbo); depthRbo = 0; }
-            w = 0; h = 0; _allocGen = 0;
+        version(unittest) {} else {
+            if (fbo != 0)        glDeleteFramebuffers(1, &fbo);
+            if (effectsFbo != 0) glDeleteFramebuffers(1, &effectsFbo);
+            foreach (id; [colorTex, depthTex, gbufTex, compositeSrcTex,
+                          aoTex[0], aoTex[1]])
+                if (id != 0) glDeleteTextures(1, &id);
+        }
+        fbo = 0; colorTex = 0; depthTex = 0;
+        gbufTex = 0; compositeSrcTex = 0; aoTex[] = 0; effectsFbo = 0;
+        colorSpec = colorSpec.init; depthSpec = depthSpec.init;
+        gbufSpec = gbufSpec.init; compositeSrcSpec = compositeSrcSpec.init;
+        aoSpec[] = TexSpec.init;
+        w = 0; h = 0; _allocGen = 0;
+    }
+
+    private void specEffects() {
+        specTex(gbufTex, gbufSpec, GL_RGBA16UI, GL_RGBA_INTEGER,
+                GL_UNSIGNED_SHORT, GL_NEAREST);
+        specTex(compositeSrcTex, compositeSrcSpec, GL_RGBA8, GL_RGBA,
+                GL_UNSIGNED_BYTE, GL_NEAREST);
+        foreach (k; 0 .. 2)
+            specTex(aoTex[k], aoSpec[k], GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE,
+                    GL_LINEAR);
+    }
+
+    /// Re-specify texture `id` in place at (w × h) and record what was
+    /// specified. The id is never touched.
+    private void specTex(uint id, ref TexSpec rec, GLenum internalFormat,
+                         GLenum format, GLenum type, GLenum filter) {
+        rec = TexSpec(w, h, internalFormat, filter, filter);
+        version(unittest) {} else {
+            glBindTexture(GL_TEXTURE_2D, id);
+            glTexImage2D(GL_TEXTURE_2D, 0, cast(GLint)rec.internalFormat, rec.w, rec.h,
+                         0, format, type, null);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, cast(GLint)rec.minFilter);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, cast(GLint)rec.magFilter);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glBindTexture(GL_TEXTURE_2D, 0);
         }
     }
+
+    version(unittest) {} else
+    private void checkComplete(string what) {
+        GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+        if (status != GL_FRAMEBUFFER_COMPLETE) {
+            import std.conv : to;
+            throw new Exception("ViewportFbo: " ~ what ~ " FBO incomplete (status=0x"
+                                ~ to!string(status, 16) ~ ")");
+        }
+    }
+}
+
+/// One texture's specification as `ViewportFbo.specTex` passed it to GL.
+struct TexSpec {
+    int w, h;
+    GLenum internalFormat;
+    GLenum minFilter, magFilter;
+}
+
+// Id generation. Under unittest a module-private monotonic counter (from 1000)
+// stands in for GL, so "ids kept across a resize" compares distinct non-zero
+// values rather than 0 with 0.
+version(unittest) {
+    private uint fakeGlId_ = 1000;
+    private void genTexture(ref uint id)     { id = fakeGlId_++; }
+    private void genFramebuffer(ref uint id) { id = fakeGlId_++; }
+} else {
+    private void genTexture(ref uint id)     { glGenTextures(1, &id); }
+    private void genFramebuffer(ref uint id) { glGenFramebuffers(1, &id); }
 }
 
 // ---------------------------------------------------------------------------

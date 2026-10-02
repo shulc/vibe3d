@@ -104,3 +104,40 @@ void putProbePoints(ref Appender!string buf, string points, int W, int H,
     }
     buf.put("]");
 }
+
+/// Reads `w x h` RGBA16UI G-buffer texels at GL coordinates `(x, y)` into
+/// `rgba` as four `uint` per texel (`GL_RGBA_INTEGER` / `GL_UNSIGNED_INT`),
+/// tightly packed, rows bottom-up.
+alias ProbeGbufReader = void delegate(int x, int y, int w, int h, uint[] rgba);
+
+/// The G-buffer twin of `putProbePoints`: same parsing, same one
+/// rectangle read, each inside point reported as
+/// `{"gbuf":[x,y,id,flags,nx,ny]}` from the texel's channels
+/// (oct-normal x, oct-normal y, surface id, flags).
+void putProbeGbufPoints(ref Appender!string buf, string points, int W, int H,
+                        scope ProbeGbufReader read) {
+    import std.format : format;
+
+    auto pts = parseProbePoints(points, W, H);
+    const rect = probeReadRect(pts, H);
+    uint[] texels;
+    if (rect.w > 0) {
+        texels = new uint[](cast(size_t)rect.w * rect.h * 4);
+        read(rect.x, rect.y, rect.w, rect.h, texels);
+    }
+
+    buf.put(`"points":[`);
+    foreach (i, p; pts) {
+        if (i) buf.put(",");
+        if (!p.inside) {
+            buf.put(format(`{"x":%d,"y":%d,"error":"outside the cell"}`, p.x, p.y));
+            continue;
+        }
+        const col = p.x - rect.x;
+        const row = (H - 1 - p.y) - rect.y;
+        const at  = (cast(size_t)row * rect.w + col) * 4;
+        buf.put(format(`{"gbuf":[%d,%d,%d,%d,%d,%d]}`, p.x, p.y,
+                       texels[at + 2], texels[at + 3], texels[at], texels[at + 1]));
+    }
+    buf.put("]");
+}

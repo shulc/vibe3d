@@ -1267,11 +1267,18 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
         // you want. Callers that just changed something must let a frame pass.
         httpServer.setViewportProbeProvider((int cell, string points,
                                              bool wantHash,
-                                             bool composedFrame) {
+                                             bool composedFrame,
+                                             string buffer) {
             import bindbc.opengl;
             import std.array  : appender;
             import std.format : format;
-            import viewport_probe_sampling : putProbePoints;
+            import viewport_probe_sampling : putProbeGbufPoints, putProbePoints;
+
+            // `gbuf` reads the cell's G-buffer (COLOR_ATTACHMENT1,
+            // integer texels); the frame target and the colour hash have none.
+            immutable bool gbuf = buffer == "gbuf";
+            if (gbuf && (composedFrame || wantHash))
+                return `{"error":"buffer=gbuf takes neither target=frame nor hash"}`;
 
             int W, H;
             bool renders;
@@ -1305,8 +1312,10 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                     : true;
                 W = cv.fbo.w;
                 H = cv.fbo.h;
+                if (gbuf && cv.fbo.gbufTex == 0)
+                    return `{"error":"gbuf not allocated"}`;
                 readFbo = cv.fbo.fbo;
-                readBuffer = GL_COLOR_ATTACHMENT0;
+                readBuffer = gbuf ? GL_COLOR_ATTACHMENT1 : GL_COLOR_ATTACHMENT0;
                 head = format(
                     `{"cell":%d,"renders":%s,"w":%d,"h":%d`,
                     cell, renders ? "true" : "false", W, H);
@@ -1322,6 +1331,9 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
             glBindFramebuffer(GL_READ_FRAMEBUFFER, readFbo);
             glReadBuffer(readBuffer);
             scope(exit) {
+                // The read buffer is per-framebuffer state: put the scene
+                // FBO's back on C0 before leaving it (the blits read C0).
+                if (gbuf) glReadBuffer(GL_COLOR_ATTACHMENT0);
                 glBindFramebuffer(GL_READ_FRAMEBUFFER, cast(GLuint)prevRead);
                 glReadBuffer(cast(GLenum)prevReadBuffer);
             }
@@ -1332,13 +1344,20 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
             // One readback per request (card slot-resource-isolation): a
             // per-point glReadPixels is one GPU round trip each, and on a
             // shared GPU a 3000-point lattice outran the bridge's 5 s wait.
-            putProbePoints(buf, points, W, H,
-                (int rx, int ry, int rw, int rh, ubyte[] rgba) {
-                    // Default pack state (row length 0), as the hash read
-                    // below relies on; nothing in the tree changes it.
-                    glReadPixels(rx, ry, rw, rh,
-                                 GL_RGBA, GL_UNSIGNED_BYTE, rgba.ptr);
-                });
+            if (gbuf)
+                putProbeGbufPoints(buf, points, W, H,
+                    (int rx, int ry, int rw, int rh, uint[] texels) {
+                        glReadPixels(rx, ry, rw, rh,
+                                     GL_RGBA_INTEGER, GL_UNSIGNED_INT, texels.ptr);
+                    });
+            else
+                putProbePoints(buf, points, W, H,
+                    (int rx, int ry, int rw, int rh, ubyte[] rgba) {
+                        // Default pack state (row length 0), as the hash read
+                        // below relies on; nothing in the tree changes it.
+                        glReadPixels(rx, ry, rw, rh,
+                                     GL_RGBA, GL_UNSIGNED_BYTE, rgba.ptr);
+                    });
 
             if (wantHash) {
                 // FNV-1a over the whole RGBA8 buffer. Cheap, stable, and a

@@ -9,6 +9,7 @@ import math          : Viewport, Vec3, Orientation;
 import display_state : ViewportDisplay, DrawPlan, resolveDrawPlan, kBackdropDim;
 import bindbc.opengl;
 import std.conv : to;
+import std.format : format;
 import viewport;
 import image_cache   : imagePixelCache;
 
@@ -727,6 +728,67 @@ unittest {
     f.ensure(64, 64);
     assert(f.w == 64 && f.h == 64 && f._allocGen == 1,
            "ensure after destroy must work as a fresh first call");
+}
+
+// ---------------------------------------------------------------------------
+// ViewportFbo effect targets (task 9060, model M4): ids generated once and kept
+// across a resize, every texture re-specified at the new size, depth and
+// integer textures NEAREST. Under unittest the ids come from viewport.d's fake
+// generator (distinct, non-zero) and `TexSpec` records what GL would receive.
+// ---------------------------------------------------------------------------
+unittest {
+    ViewportFbo f;
+    enum nearestMsg = "depth/integer texture must be NEAREST: LINEAR is incomplete on WebGL2";
+    f.ensure(320, 200);
+    assert(f.depthTex != 0, "ensure must generate the depth texture");
+    assert(f.depthSpec.minFilter == GL_NEAREST && f.depthSpec.magFilter == GL_NEAREST,
+           "depthTex after ensure: " ~ nearestMsg);
+    assert(f.gbufTex == 0 && f.effectsFbo == 0,
+           "effect targets must stay unallocated until ensureEffects");
+    f.ensureEffects();
+    assert(f.gbufSpec.minFilter == GL_NEAREST && f.gbufSpec.magFilter == GL_NEAREST,
+           "gbufTex after ensureEffects: " ~ nearestMsg);
+    assert(f.gbufSpec.internalFormat == GL_RGBA16UI, "gbufTex must be RGBA16UI");
+
+    // Floor: the four effect textures + effectsFbo exist, non-zero and
+    // pairwise distinct, so "kept" below compares real ids.
+    const uint[5] ids = [f.gbufTex, f.compositeSrcTex, f.aoTex[0], f.aoTex[1], f.effectsFbo];
+    foreach (i, a; ids) {
+        assert(a != 0, format("effect id %d is zero after ensureEffects", i));
+        foreach (b; ids[i + 1 .. $])
+            assert(a != b, format("effect ids not distinct: %s", ids));
+    }
+    const uint depth0 = f.depthTex, color0 = f.colorTex, fbo0 = f.fbo;
+    f.ensureEffects();   // idempotent
+    assert([f.gbufTex, f.compositeSrcTex, f.aoTex[0], f.aoTex[1], f.effectsFbo] == ids,
+           "a second ensureEffects must not regenerate");
+
+    f.ensure(640, 360);
+    assert([f.gbufTex, f.compositeSrcTex, f.aoTex[0], f.aoTex[1], f.effectsFbo] == ids,
+           format("resize regenerated effect ids: %s -> %s", ids,
+                  [f.gbufTex, f.compositeSrcTex, f.aoTex[0], f.aoTex[1], f.effectsFbo]));
+    assert(f.depthTex == depth0 && f.colorTex == color0 && f.fbo == fbo0,
+           "resize regenerated a scene id");
+    // The re-spec witness, per texture.
+    void sized(string name, const TexSpec s) {
+        assert(s.w == 640 && s.h == 360,
+               format("%s not re-specified on resize: recorded %dx%d, want 640x360", name, s.w, s.h));
+    }
+    sized("colorTex", f.colorSpec);
+    sized("depthTex", f.depthSpec);
+    sized("gbufTex", f.gbufSpec);
+    sized("compositeSrcTex", f.compositeSrcSpec);
+    sized("aoTex[0]", f.aoSpec[0]);
+    sized("aoTex[1]", f.aoSpec[1]);
+    assert(f.depthSpec.minFilter == GL_NEAREST && f.depthSpec.magFilter == GL_NEAREST,
+           "depthTex after resize: " ~ nearestMsg);
+    assert(f.gbufSpec.minFilter == GL_NEAREST && f.gbufSpec.magFilter == GL_NEAREST,
+           "gbufTex after resize: " ~ nearestMsg);
+
+    f.destroy();
+    assert(f.fbo == 0 && f.colorTex == 0 && f.depthTex == 0 && f.gbufTex == 0
+           && f.compositeSrcTex == 0 && f.aoTex == [0u, 0u] && f.effectsFbo == 0,
+           "destroy must zero every id");
 }
 
 // ---------------------------------------------------------------------------

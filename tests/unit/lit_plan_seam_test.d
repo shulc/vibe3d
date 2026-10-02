@@ -247,3 +247,46 @@ unittest { // raw-text census of the spellings that bypass private: names, getMe
     assert(reflect == allowed,
         format("census: reflection spellings beside a LitShader changed: found %s, allowed %s", reflect, allowed));
 }
+
+// D4 (task 9060, model M4): the backdrop's cache upkeep is never behind a draw
+// gate. `drawItemSequence` asserts the upkeep ran for every sequence layer, so
+// its behavioural failure is a crash; this census is the witness instead.
+// Polarity: false before task 9060 (no `backdropKeepsUpload`), true after.
+unittest { // the backdrop upkeep: one gpuFor in draw, guarded by backdropKeepsUpload alone
+    import std.string : indexOf, lastIndexOf;
+    import tests.unit.census_symbols : balancedSpan, countOccurrences;
+    immutable code = rendererCode();
+    string bodyOf(string head) {
+        assert(countOccurrences(code, head) == 1,
+            format("census: expected `%s` defined once in viewport_render.d", head));
+        immutable ptrdiff_t at = code.indexOf(head);
+        immutable ptrdiff_t open = code.indexOf('{', at);
+        immutable b = open < 0 ? "" : balancedSpan(code, cast(size_t)open, '{', '}');
+        assert(b.length > 2, format("census: `%s` has no braced body", head));
+        return b;
+    }
+    immutable draw = bodyOf("void draw(SceneInputs");
+    enum gpuFor = "bgGpuCache.gpuFor(";
+    // Floor and ceiling: ONE upkeep call in the frame.
+    assert(countOccurrences(draw, gpuFor) == 1,
+        format("census: expected exactly one `%s` in ViewportSceneRenderer.draw, found %d",
+               gpuFor, countOccurrences(draw, gpuFor)));
+    // The guarding span: from the upkeep loop's `foreach (` to the call.
+    immutable ptrdiff_t call = draw.indexOf(gpuFor);
+    immutable ptrdiff_t loop = draw[0 .. call].lastIndexOf("foreach (");
+    assert(loop >= 0, "census: the upkeep gpuFor is not inside a foreach");
+    immutable guard = draw[loop .. call];
+    assert(countOccurrences(guard, "backdropKeepsUpload(") == 1,
+        "census: the upkeep's guard must be backdropKeepsUpload — found: " ~ guard);
+    foreach (flag; ["drawFaces", "drawWire", "entersItemSequence", "backdropDrawsLayer"])
+        assert(countOccurrences(guard, flag) == 0,
+            format("census: `%s` crept into the backdrop upkeep guard — the upload of a layer "
+                   ~ "that is not drawn (or drawn by the item sequence) stops being kept: %s", flag, guard));
+    // `entersItemSequence(` (call spelling) only inside backdropDrawsLayer.
+    immutable drawsLayer = bodyOf("bool backdropDrawsLayer(");
+    assert(countOccurrences(drawsLayer, "entersItemSequence(") == 1,
+        "census: backdropDrawsLayer must call entersItemSequence once");
+    assert(countOccurrences(code, "entersItemSequence(") == 1,
+        format("census: entersItemSequence( is called %d times in viewport_render.d; "
+               ~ "only backdropDrawsLayer may call it", countOccurrences(code, "entersItemSequence(")));
+}

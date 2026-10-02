@@ -15,7 +15,7 @@ import std.exception : enforce;
 
 import tests.unit.census_symbols : blankNonCode;
 import viewport_probe_sampling : ProbePoint, ProbeReadRect, parseProbePoints,
-    probeReadRect, putProbePoints;
+    probeReadRect, putProbeGbufPoints, putProbePoints;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
@@ -133,14 +133,40 @@ unittest
 
     assert(body_.count("putProbePoints(") == 1,
         "the viewport probe provider no longer samples points through putProbePoints");
-    // Exactly two reads: the one inside putProbePoints' reader and the
-    // whole-buffer hash. A third is a per-point read coming back.
+    assert(body_.count("putProbeGbufPoints(") == 1,
+        "the viewport probe provider no longer samples gbuf points through putProbeGbufPoints");
+    // Exactly three reads: the colour and gbuf point readers (task 9060) and
+    // the whole-buffer hash. A fourth is a per-point read coming back.
     const reads = body_.count("glReadPixels(");
-    assert(reads == 2, format(
-        "the viewport probe provider has %d glReadPixels calls; expected 2 "
-        ~ "(the one-rect point reader + the hash)", reads));
-    // And the reader reads the RECT it is handed, not 1x1 pixels in a loop
+    assert(reads == 3, format(
+        "the viewport probe provider has %d glReadPixels calls; expected 3 "
+        ~ "(the colour and gbuf one-rect point readers + the hash)", reads));
+    // And both readers read the RECT they are handed, not 1x1 pixels in a loop
     // (which keeps both counts above and the response bytes unchanged).
-    assert(body_.count("glReadPixels(rx, ry, rw, rh,") == 1,
-        "the probe's point reader no longer reads the whole rectangle in one call");
+    assert(body_.count("glReadPixels(rx, ry, rw, rh,") == 2,
+        "a probe point reader no longer reads the whole rectangle in one call");
+}
+
+// The gbuf twin (task 9060): one rectangle read, channels reported as
+// [x, y, id, flags, nx, ny] from texel (nx, ny, id, flags).
+unittest
+{
+    enum W = 40, H = 30;
+    int calls;
+    auto read = (int x, int y, int w, int h, uint[] t) {
+        ++calls;
+        assert(t.length == cast(size_t)w * h * 4, "gbuf reader buffer size");
+        foreach (r; 0 .. h) foreach (c; 0 .. w) {
+            const at = (r * w + c) * 4;
+            t[at] = 100 + x + c; t[at + 1] = 200 + y + r;   // nx, ny
+            t[at + 2] = 7; t[at + 3] = 1;                  // id, flags
+        }
+    };
+    auto buf = appender!string;
+    putProbeGbufPoints(buf, "3,4;50,1;5,29", W, H, read);
+    assert(calls == 1, format("gbuf reads %d, expected 1", calls));
+    // GL row of (3,4) is H-1-4 = 25; of (5,29) is 0.
+    assert(buf.data == `"points":[{"gbuf":[3,4,7,1,103,225]},`
+                     ~ `{"x":50,"y":1,"error":"outside the cell"},{"gbuf":[5,29,7,1,105,200]}]`,
+           buf.data);
 }

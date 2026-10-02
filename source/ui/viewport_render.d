@@ -347,6 +347,64 @@ private:
         }
     }
 
+    // ---- the backdrop pass (task 9060, model M4) ---------------------------
+    // One kept backdrop layer of this frame: built by the upkeep loop, read by
+    // the faces loop and the wire loop (the cache is not consulted again).
+    struct BgDraw {
+        size_t layer;
+        GpuMesh* g;
+        float[16] model;
+    }
+    BgDraw[] bgDraw_;
+
+    /// Layer `i` keeps its background upload current this frame: a visible
+    /// non-primary geometry layer. Never gated on a draw flag or the item
+    /// sequence — `drawItemSequence` reads the entries this upkeep keeps.
+    /// A non-mesh layer participates in neither upload nor draw (task 0615).
+    bool backdropKeepsUpload(ref Document document, size_t i) {
+        Layer lyr = document.layers[i];
+        return !document.isPrimary(lyr) && lyr.visible
+            && kindInfo(lyr.kind).drawsGeometry;
+    }
+
+    /// Layer `i` is DRAWN by the backdrop pass: kept, and not left to the item
+    /// sequence (which draws its own layers through `drawItemSequence`).
+    bool backdropDrawsLayer(ref Document document, size_t i, bool itemSequence,
+                            const ref DrawPlan backdropPlan) {
+        return backdropKeepsUpload(document, i)
+            && !(itemSequence && entersItemSequence(document, i,
+                                                    backdropPlan.joinsItemSequence));
+    }
+
+    /// The backdrop face pass of one kept layer, in its own materials (and,
+    /// under the weight style, its own weight colours — task 1090, D6).
+    /// Submissions are attributed to the BACKDROP perf slots.
+    void drawBackdropFaces(ref BgDraw e, ref Document document,
+                           const ref DrawPlan backdropPlan, LitShader lit,
+                           const ref Viewport vp, string weightMapName) {
+        auto zBackdrop = g_fc.backdrop();
+        lit.useProgram(e.model, vp);
+        bindLayerSurfaces(*e.g, document.layers[e.layer], backdropPlan, lit,
+                          weightMapName);
+        lit.applyPlan(backdropPlan);
+        (*e.g).drawFaces(lit);
+        lit.restorePlanDefaults();
+    }
+
+    /// The backdrop base wire of one kept layer, iff the plan draws wire —
+    /// independent of `drawFaces`. Backdrop layers carry no selection or
+    /// hover, and the pass reads the BACKDROP side of the activity axis.
+    void drawBackdropWire(ref BgDraw e, const ref DrawPlan backdropPlan,
+                          Shader shader, const ref Viewport vp) {
+        if (!backdropPlan.drawWire) return;
+        auto zBackdrop = g_fc.backdrop();
+        shader.useProgram(e.model, vp);
+        shader.setDim(backdropPlan.dim);
+        (*e.g).drawEdges(shader.locColor, -1, MarkView.init, [],
+            baseWireFor(backdropPlan, e.model, vp.eye, shader.locAlpha));
+        shader.setDim(1.0f);
+    }
+
     uint[] faceSelEdgesCache_;
     uint[] faceSelEdgesPrevSel_;
     MeshStructKey faceSelEdgesKey_;
@@ -764,6 +822,8 @@ public:
     // foreground pass skips it (it is not the primary; there is no primary) and
     // this pass never ran. The user clicks empty space and their model
     // vanishes. It must dim, not disappear.
+    bgDraw_.length = 0;
+    bgDraw_.assumeSafeAppend();
     if (document.layers.length > 1 || !document.hasEditTarget()) {
         import std.math : isNaN;
         // The dim factor moved into the display model (it is now an output of
@@ -773,53 +833,22 @@ public:
         // representation. Cache upkeep below stays UNCONDITIONAL on purpose:
         // a display change must never invalidate or skip a background GPU
         // upload, only the DRAWS are gated.
+        // Model M4: upkeep first, for every kept layer; the draws
+        // read the list it builds. Faces precede every line pass outside the
+        // item sequence (the deferred wire loop after the primary's faces);
+        // inside it each layer's wire stays right after its faces.
         foreach (i, lyr; document.layers) {
-            if (document.isPrimary(lyr) || !lyr.visible) continue;
-            // Task 0615 Stage 4 (§Tier-2 :2102): a non-mesh layer participates
-            // in neither the bg draw nor the GPU upload — skip BEFORE the
-            // cache allocation below, not after (mirrors the owner's eviction
-            // predicate).
-            if (!kindInfo(lyr.kind).drawsGeometry) continue;
-            float[16] bgModel = lyr.xform.composedMatrix();
-
+            if (!backdropKeepsUpload(document, i)) continue;
             GpuMesh* bg = bgGpuCache.gpuFor(lyr);
-            // Upkeep above, draw below: a layer of the item sequence keeps its
-            // upload current here and is drawn by the item sequence.
-            if (itemSequence && entersItemSequence(document, i,
-                                                   backdropPlan.joinsItemSequence))
-                continue;
-
-            // Perf: attribute this layer's submissions to the BACKDROP slots.
-            // The two draws below are the same GpuMesh entry points the
-            // primary uses, so without the redirect a four-layer scene's
-            // backdrop would be indistinguishable from an expensive model —
-            // and the fixes for those two are not the same fix.
-            auto zBackdrop = g_fc.backdrop();
-            if (backdropPlan.drawFaces) {
-                // Task 1090, D6: a background layer under `SameAsActive`
-                // mirrors the active style, so it gets its own weight colours
-                // resolved against ITS OWN mesh — the map is selected by name
-                // and a background layer may or may not carry that name. One
-                // that does not takes the disable path and reads the neutral,
-                // dimmed, which is the same rule the active pass follows.
-                litShader.useProgram(bgModel, vp);
-                bindLayerSurfaces(*bg, lyr, backdropPlan, litShader,
+            if (backdropDrawsLayer(document, i, itemSequence, backdropPlan))
+                bgDraw_ ~= BgDraw(i, bg, lyr.xform.composedMatrix());
+        }
+        foreach (ref e; bgDraw_) {
+            if (backdropPlan.drawFaces)
+                drawBackdropFaces(e, document, backdropPlan, litShader, vp,
                                   display.weightMapName);
-                litShader.applyPlan(backdropPlan);
-                (*bg).drawFaces(litShader);
-                litShader.restorePlanDefaults();
-            }
-
-            if (backdropPlan.drawWire) {
-                shader.useProgram(bgModel, vp);
-                shader.setDim(backdropPlan.dim);
-                // Background layers carry no selection or hover state, so the
-                // base pass is all there is here — and it reads the BACKDROP
-                // side of the activity axis, never the active side.
-                (*bg).drawEdges(shader.locColor, -1, MarkView.init, [],
-                    baseWireFor(backdropPlan, bgModel, vp.eye, shader.locAlpha));
-                shader.setDim(1.0f);
-            }
+            if (itemSequence)
+                drawBackdropWire(e, backdropPlan, shader, vp);
         }
     }
 
@@ -913,6 +942,13 @@ public:
             litShader.restorePlanDefaults();
         }
     }
+
+    // Backdrop wires after every face pass (model M4): the slot the
+    // composite stage takes is before this loop. The item sequence drew them
+    // inline above, in its captured per-layer order.
+    if (!itemSequence)
+        foreach (ref e; bgDraw_)
+            drawBackdropWire(e, backdropPlan, shader, vp);
 
     // Under the item sequence the primary's bracket ends with its base lines
     // and dots; the entries after it follow, then the primary's materials are
