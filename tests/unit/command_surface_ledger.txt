@@ -125,6 +125,7 @@ viewport.indScale | code-ui: Viewport Properties Scale checkbox dispatches direc
 viewport.layout | code-ui: Viewport Properties layout buttons dispatch directly
 viewport.master | code-ui: Viewport Properties master chooser dispatches directly
 viewport.pointSize | code-ui: Viewport Properties point size slider dispatches directly
+viewport.reflectionSource | code-ui: Viewport Properties reflection image chooser dispatches directly
 viewport.retopology | code-ui: Viewport Properties Retopology checkbox dispatches directly
 viewport.retopologyPreset | code-ui: Viewport Properties Retopology Preset button dispatches directly
 viewport.showVertices | code-ui: Viewport Properties Vertices checkbox dispatches directly

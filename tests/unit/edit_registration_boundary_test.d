@@ -262,9 +262,12 @@ unittest {
     // `vertex_normals` (+1 each).
     // Viewport shading SP (task 9140): the cell carries a GPU pass timer,
     // leaf `gpu_pass_timer`, in the registration closure only (+1).
-    assert(edit.queue.length == 259 && positive.queue.length == 525,
-        format("6670 import closure census changed: edit=%d/259 "
-            ~ "registration=%d/525", edit.queue.length,
+    // Viewport shading S4b (task 9250): the lit shader reads the Reflection
+    // images, `viewport_env` and its decoder `io.image_decode` (+2; the
+    // registration closure already held the decoder, +1).
+    assert(edit.queue.length == 261 && positive.queue.length == 526,
+        format("6670 import closure census changed: edit=%d/261 "
+            ~ "registration=%d/526", edit.queue.length,
             positive.queue.length));
 }
 

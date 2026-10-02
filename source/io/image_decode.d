@@ -189,6 +189,41 @@ bool imageDecode(const(ubyte)[] fileBytes, ref DecodedImage img) {
     return true;
 }
 
+// The 16-bit PNG entry points. The linked shim archive exports both (native
+// and wasm: `nm -g … | grep stbi_load_16_from_memory` → `T`); its D binding
+// does not declare them, so they are declared here.
+private extern (C) @nogc nothrow {
+    ushort* stbi_load_16_from_memory(const(ubyte)* buffer, int len, int* x,
+        int* y, int* channels_in_file, int desired_channels);
+    int stbi_is_16_bit_from_memory(const(ubyte)* buffer, int len);
+}
+
+/// Decodes a 16-bit-per-channel PNG as RGBA16 (row-major, top row first;
+/// alpha 65535 when the file has none) into a GC array, `w`/`h` set. Behind
+/// the same header + bound check as `imageDecode`; refuses (null) an 8-bit
+/// file instead of widening it. The viewport shading images
+/// (`viewport_env`) are its consumer.
+ushort[] decodePng16(const(ubyte)[] bytes, out int w, out int h) {
+    ImageInfo info;
+    if (!imageInfo(bytes, info)) return null;
+    if (!stbi_is_16_bit_from_memory(bytes.ptr, cast(int) bytes.length)) {
+        imgWarn("decodePng16: not a 16-bit image");
+        return null;
+    }
+    int dw, dh, comp;
+    ushort* px = stbi_load_16_from_memory(bytes.ptr, cast(int) bytes.length,
+        &dw, &dh, &comp, 4);
+    if (px is null) {
+        imgWarn("decode16 failed: " ~ failureReason());
+        return null;
+    }
+    scope (exit) stbi_image_free(px);
+    if (!dimensionsInBounds(dw, dh)) return null;
+    w = dw;
+    h = dh;
+    return px[0 .. cast(size_t) dw * dh * 4].dup;
+}
+
 private string failureReason() {
     const(char)* r = stbi_failure_reason();
     return r is null ? "(unknown)" : cast(string) fromStringz(r);

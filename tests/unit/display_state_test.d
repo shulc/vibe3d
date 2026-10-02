@@ -385,8 +385,8 @@ unittest {
             rows ~= Row(style, retopo, resolveDrawPlan(d, false).dim);
         }
     }
-    // Floor first: 5 styles x retopology off/on (task 9150 appended Gooch).
-    assert(rows.length == 10, format("expected 10 style x retopology rows, swept %d", rows.length));
+    // Floor first: 6 styles x retopology off/on (9150 appended Gooch, 9250 Reflection).
+    assert(rows.length == 12, format("expected 12 style x retopology rows, swept %d", rows.length));
     foreach (r; rows)
         assert(r.dim == 1.0f,
             format("the active plan of style %s (retopology %s) has dim %s; "
@@ -436,11 +436,11 @@ unittest {
 /// appended LAST and every consumer below is extended with it.
 unittest {
     static assert([__traits(allMembers, DisplayStyle)]
-        == ["Wireframe", "Solid", "Shaded", "Weight", "Gooch"],
+        == ["Wireframe", "Solid", "Shaded", "Weight", "Gooch", "Reflection"],
         "DisplayStyle's members changed — extend kDisplayStyleOrder, the label/id "
         ~ "switches, resolveDrawPlan, the command parse and the prefs parse, then this list");
     static assert([__traits(allMembers, SurfaceShading)]
-        == ["Material", "Fill", "Weight", "Retopology", "Gooch"],
+        == ["Material", "Fill", "Weight", "Retopology", "Gooch", "Reflection"],
         "SurfaceShading's members changed — the ordinal is the lit shader's u_shading; "
         ~ "extend litFragSrc's arms, then this list");
     static assert(cast(int) SurfaceShading.Gooch == 4 && cast(int) DisplayStyle.Gooch == 4,
@@ -462,8 +462,8 @@ unittest {
     assert(resolveDrawPlan(d, true).shading == SurfaceShading.Gooch
         && resolveDrawPlan(d, true).dim == kBackdropDim,
         "a SameAsActive backdrop mirrors the Gooch arm, dimmed");
-    assert(kDisplayStyleOrder[$ - 1] == DisplayStyle.Gooch && kDisplayStyleOrder.length == 5,
-        "Gooch is offered last, after Weight");
+    assert(kDisplayStyleOrder[$ - 2] == DisplayStyle.Gooch && kDisplayStyleOrder.length == 6,
+        "Gooch is offered after Weight (Reflection follows it, task 9250)");
     assert(displayStyleLabel(DisplayStyle.Gooch) == "Gooch"
         && displayStyleId(DisplayStyle.Gooch) == "gooch");
 }
@@ -491,7 +491,7 @@ unittest {
                    vpm.views[0].display.active.style, s));
         ++checked;
     }
-    assert(checked == 5, format("population floor: 5 offered styles, checked %d", checked));
+    assert(checked == 6, format("population floor: 6 offered styles, checked %d", checked));
 }
 
 /// [E1] The composition of the cavity state and the composite plan (task
@@ -716,4 +716,55 @@ unittest {
     assert(styleCullsBySurface(DisplayStyle.Shaded) && styleCullsBySurface(DisplayStyle.Gooch)
         && !styleCullsBySurface(DisplayStyle.Solid) && !styleCullsBySurface(DisplayStyle.Weight)
         && !styleCullsBySurface(DisplayStyle.Wireframe), "styleCullsBySurface rows moved");
+}
+
+/// [E1] Task 9250 (S4b, H2): Reflection is appended LAST to both enums
+/// (`u_shading == 5` in litFragSrc), and the reflection source's composition.
+unittest {
+    static assert(cast(int) SurfaceShading.Reflection == 5 && cast(int) DisplayStyle.Reflection == 5,
+        "Reflection is appended LAST: u_shading == 5 in litFragSrc");
+    static assert([__traits(allMembers, ReflectionKind)] == ["Env", "MatCap"],
+        "ReflectionKind's members changed — the ordinal is the lit shader's u_reflectionKind; "
+        ~ "extend litFragSrc's Reflection arm, viewport_env's tables and ids, then this list");
+    static assert([__traits(allMembers, ReflectionSource)] == ["kind", "index"],
+        "ReflectionSource's members changed — extend the prefs mirror, the endpoint and the "
+        ~ "command, then this list");
+}
+
+/// Task 9250 (S4b, H2): Reflection resolves to its own lit arm with the
+/// cell's source, offered last, labelled "Reflection" / posted as
+/// "reflection"; no cavity; the source reaches a plan only under that arm.
+unittest {
+    ViewportDisplay d;
+    d.active.style = DisplayStyle.Reflection;
+    d.reflection   = ReflectionSource(ReflectionKind.MatCap, 3);
+    d.cavity.mode  = CavityMode.Both;
+    const p = resolveDrawPlan(d, false);
+    assert(p.drawFaces && p.styleFills, "the Reflection style draws a filled surface");
+    assert(p.shading == SurfaceShading.Reflection, "the Reflection style must resolve to its own arm");
+    assert(p.facesLit, "the Reflection style is lit");
+    assert(p.reflection == d.reflection, "the active plan carries the cell's reflection source");
+    assert(p.composite.empty && p.effectFlags == 0, "Reflection takes no cavity (owner ruling)");
+    const b = resolveDrawPlan(d, true);
+    assert(b.shading == SurfaceShading.Reflection && b.reflection == d.reflection
+        && b.dim == kBackdropDim, "a SameAsActive backdrop mirrors the Reflection arm, dimmed");
+    assert(kDisplayStyleOrder[$ - 1] == DisplayStyle.Reflection,
+        "Reflection is offered last, after Gooch");
+    assert(displayStyleLabel(DisplayStyle.Reflection) == "Reflection"
+        && displayStyleId(DisplayStyle.Reflection) == "reflection");
+    // Every other style, and the retopology mode, keep the plan's source at
+    // .init: the source must not move another style's dirty key.
+    import std.traits : EnumMembers;
+    size_t others;
+    foreach (st; [EnumMembers!DisplayStyle]) foreach (retopo; [false, true]) {
+        ViewportDisplay e = d;
+        e.active.style = st;
+        e.retopology   = retopo;
+        immutable bool refl = st == DisplayStyle.Reflection && !retopo;
+        assert((resolveDrawPlan(e, false).reflection == ReflectionSource.init) == !refl,
+            format("style %s retopology %s: the plan's reflection source must be %s", st, retopo,
+                   refl ? "the cell's" : ".init"));
+        if (!refl) ++others;
+    }
+    assert(others == 11, format("population floor: 11 non-Reflection rows, swept %d", others));
 }

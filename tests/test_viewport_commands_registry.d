@@ -175,15 +175,15 @@ bool testErrorMessagesPreserved() {
     writeln("  [4] error paths — byte-identical messages...");
     resetApp();
 
-    // Task 1090 added a fourth accepted value and task 9150 a fifth, so the
-    // refusal names five. The
+    // Task 1090 added a fourth accepted value, 9150 a fifth and 9250 a
+    // sixth, so the refusal names six. The
     // point of this assertion is that the message does not drift by ACCIDENT
     // — a deliberate widening of the accepted set has to move it, and a
     // refusal that failed to list a value the command accepts would be worse
     // than one that listed too many.
     expectError(command("viewport.displayStyle", JSONValue("bogus")),
         "displayStyle bad value",
-        "expected 'wireframe', 'solid', 'shaded', 'weight' or 'gooch'");
+        "expected 'wireframe', 'solid', 'shaded', 'weight', 'gooch' or 'reflection'");
 
     {
         JSONValue p; p["style"] = "solid"; p["viewport"] = 99;

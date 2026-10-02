@@ -386,12 +386,12 @@ unittest
 // Task 6760 makes the transport-neutrality requirement executable. This is
 // half A only: a composition census cannot prove how a route ANSWERS; the
 // in-process route walk in http_server.d is the behavioural half, traversing
-// all 61 bodies through the common dispatcher and pinning exactly 30
+// all 62 bodies through the common dispatcher and pinning exactly 30
 // non-degraded responses on this revision. W14-B (task 6750) is splitting that
 // total into the default and PerfProbe populations; recheck this comment when
 // 6750 merges.
 // Two apparent duplications are sanctioned controls, not implementation copies:
-// tools/sanitizer/lane.d :: kSweepRoutes independently recounts all 61 routes,
+// tools/sanitizer/lane.d :: kSweepRoutes independently recounts all 62 routes,
 // while /api/changes, /api/cache/rebuilds and /api/gc/commands are task 1906
 // contracts that must remain Answered.httpThread.
 unittest // scanner controls: both positive directions and both lexical hazards
@@ -617,15 +617,15 @@ unittest
 
     // Independent population floors for the two narrowed domains. These are
     // measured route ROWS, not distinct paths (/api/camera has GET and POST).
-    assert(routeLiterals.length == 61,
+    assert(routeLiterals.length == 62,
         "6760 transport composition census: route-literal domain must contain "
-        ~ "all 61 kRoutes rows, found " ~ format("%d", routeLiterals.length)
+        ~ "all 62 kRoutes rows, found " ~ format("%d", routeLiterals.length)
         ~ ". The exact population check runs before the leakage diagnostics "
-        ~ "below: an added route that also leaks reports here as found 62, "
+        ~ "below: an added route that also leaks reports here as found 63, "
         ~ "not at the leakage assert");
-    assert(handlerNames.length == 61,
+    assert(handlerNames.length == 62,
         "6760 transport composition census: handler-name domain must contain "
-        ~ "all 61 kRoutes rows, found " ~ format("%d", handlerNames.length)
+        ~ "all 62 kRoutes rows, found " ~ format("%d", handlerNames.length)
         ~ ". Below this floor are the contract-disposition and handler-leak "
         ~ "checks, so neither runs over a changed handler population");
     assert(contractRouteRows == 3,

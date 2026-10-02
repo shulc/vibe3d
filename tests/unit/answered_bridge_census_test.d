@@ -4,7 +4,7 @@
 // collapses the one pair that proves the distinction.  The population and
 // both sides of the biconditional are exact: a handler without a *Bridge is
 // httpThread, and a handler with one is not.  The literal columns are 15
-// httpThread / 44 mainThread / two build-keyed rows.  Bridge
+// httpThread / 45 mainThread / two build-keyed rows.  Bridge
 // reachability follows direct local named calls to a fixed point, rather than
 // reading only the route handler's own text.  Both builds pin the same raw
 // frame-handler bytes through one shared digest.
@@ -459,8 +459,8 @@ unittest
     const routes = scanRoutes(raw);
 
     // Population first: without this, every biconditional below is vacuous.
-    assert(routes.length == 61, format(
-        "6730 kRoutes population changed: expected 61, found %d", routes.length));
+    assert(routes.length == 62, format(
+        "6730 kRoutes population changed: expected 62, found %d", routes.length));
 
     bool[string] handlers;
     bool[string] paths;
@@ -469,11 +469,11 @@ unittest
         handlers[row.handler] = true;
         paths[row.path] = true;
     }
-    assert(handlers.length == 61, format(
-        "6730 handler-key population changed: expected 61 distinct names, found %d",
+    assert(handlers.length == 62, format(
+        "6730 handler-key population changed: expected 62 distinct names, found %d",
         handlers.length));
-    assert(paths.length == 60, format(
-        "6730 path population changed: expected the measured 60, found %d",
+    assert(paths.length == 61, format(
+        "6730 path population changed: expected the measured 61, found %d",
         paths.length));
 
     string[] httpThreadWithBridge;
@@ -514,18 +514,18 @@ unittest
     // in lockstep must still fail rather than preserve a vacuous iff.
     assert(portless == 15, format(
         "6730 portless route population changed: expected 15, found %d", portless));
-    assert(bridged == 46, format(
-        "6730 bridged route population changed: expected 46, found %d", bridged));
+    assert(bridged == 47, format(
+        "6730 bridged route population changed: expected 47, found %d", bridged));
     assert(httpThread == 15, format(
         "6730 Answered.httpThread column changed: expected 15, found %d", httpThread));
-    assert(mainThread == 44, format(
-        "6730 Answered.mainThread column changed: expected 44, found %d", mainThread));
+    assert(mainThread == 45, format(
+        "6730 Answered.mainThread column changed: expected 45, found %d", mainThread));
     assert(framesAnswered == 2, format(
         "6730 kFramesAnswered column changed: expected 2, found %d", framesAnswered));
 
     // Reproduce the rejected key without depending on the two /api/camera
-    // rows' order.  OR-folding by path still collapses 61 handlers to 60 paths
-    // and yields the wrong 14/46 partition instead of 15/46 above.
+    // rows' order.  OR-folding by path still collapses 62 handlers to 61 paths
+    // and yields the wrong 14/47 partition instead of 15/47 above.
     bool[string] pathHasBridge;
     foreach (ref const row; routes) pathHasBridge[row.path] |= row.bridges.length != 0;
     size_t pathPortless;
@@ -535,9 +535,9 @@ unittest
         if (!hasBridge) ++pathPortless;
         else ++pathBridged;
     }
-    assert(pathPortless == 14 && pathBridged == 46,
+    assert(pathPortless == 14 && pathBridged == 47,
         format("6730 path-key control stopped discriminating: "
-             ~ "expected 14/46 over 60 paths, found %d/%d",
+             ~ "expected 14/47 over 61 paths, found %d/%d",
                pathPortless, pathBridged));
 }
 

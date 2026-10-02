@@ -109,6 +109,10 @@ enum DisplayStyle : ubyte {
     /// law and constants are `light_rig`'s; APPENDED LAST (ordinals are
     /// persisted by number in fixtures).
     Gooch,
+    /// The lit material colour times an image lookup (`ViewportDisplay.reflection`):
+    /// an eye-space reflection into an environment, or a MatCap from the eye
+    /// normal. APPENDED LAST.
+    Reflection,
 }
 
 /// How the face pass shades the surface — the SHADING half of `DisplayStyle`,
@@ -134,6 +138,26 @@ enum SurfaceShading : ubyte {
     /// `DisplayStyle.Gooch`: `min(mix(kcool, kwarm, |N·Lg|), 1)` from the
     /// material's diffuse colour × amount (`light_rig` header). APPENDED LAST.
     Gooch,
+    /// `DisplayStyle.Reflection`: env arm `litTerm × env(envUv(R_eye))`, MatCap
+    /// arm `diffuse(matcapUv(N_eye)) × base + specular(…)` (`viewport_env`).
+    /// APPENDED LAST (ordinal 5).
+    Reflection,
+}
+
+/// Which image family the Reflection style reads.
+enum ReflectionKind : ubyte {
+    /// An equirect environment, indexed by the eye-space reflection vector.
+    Env,
+    /// A two-layer MatCap sphere, indexed by the eye-space normal.
+    MatCap,
+}
+
+/// The Reflection style's image: a kind and an index into that kind's table
+/// (`viewport_env.kEnvAssets` / `kMatcapAssets`). The default is env 0,
+/// `studio_small_09` (pinned by a static assert in `viewport_env`).
+struct ReflectionSource {
+    ReflectionKind kind = ReflectionKind.Env;
+    ubyte index = 0;
 }
 
 /// The order the surface styles are OFFERED in, and their UI text.
@@ -165,6 +189,7 @@ immutable DisplayStyle[] kDisplayStyleOrder = [
     DisplayStyle.Wireframe,
     DisplayStyle.Weight,
     DisplayStyle.Gooch,
+    DisplayStyle.Reflection,
 ];
 
 static assert(kDisplayStyleOrder.length == __traits(allMembers, DisplayStyle).length,
@@ -179,6 +204,7 @@ string displayStyleLabel(DisplayStyle s) pure nothrow @safe @nogc {
         case DisplayStyle.Wireframe: return "Wireframe";
         case DisplayStyle.Weight:    return "Weight";
         case DisplayStyle.Gooch:     return "Gooch";
+        case DisplayStyle.Reflection: return "Reflection";
     }
 }
 
@@ -194,6 +220,7 @@ string displayStyleId(DisplayStyle s) pure nothrow @safe @nogc {
         case DisplayStyle.Wireframe: return "wireframe";
         case DisplayStyle.Weight:    return "weight";
         case DisplayStyle.Gooch:     return "gooch";
+        case DisplayStyle.Reflection: return "reflection";
     }
 }
 
@@ -435,6 +462,9 @@ struct ViewportDisplay {
     /// The cavity effect (model M4). Resolved into the ACTIVE plan's
     /// `composite` only under `Shaded` with the retopology mode off.
     CavityState cavity;
+    /// The Reflection style's image (both plans of the cell). Resolved into
+    /// `DrawPlan.reflection` only by a pass that shades `Reflection`.
+    ReflectionSource reflection;
 }
 
 /// The RESOLVED description of one scene pass: what it may draw, and how.
@@ -492,7 +522,8 @@ struct DrawPlan {
     /// Read `shading` for that.
     bool facesLit() const pure nothrow @safe @nogc {
         return shading == SurfaceShading.Material
-            || shading == SurfaceShading.Gooch;
+            || shading == SurfaceShading.Gooch
+            || shading == SurfaceShading.Reflection;
     }
     /// Brightness multiplier for this pass (1.0 = full).
     float dim       = 1.0f;
@@ -587,6 +618,10 @@ struct DrawPlan {
     /// Per-pixel effect eligibility written to the G-buffer flags channel;
     /// bit 0 = `kEffectCavityEligible`.
     ubyte    effectFlags = 0;
+    /// The image the Reflection arm reads: the cell's source when `shading ==
+    /// Reflection`, else `.init` (so the dirty key of another style never
+    /// moves with it). Bound by `LitShader.applyPlan`.
+    ReflectionSource reflection;
 }
 
 /// A cell's vertex dot size as the plan carries it: a non-positive or
@@ -774,6 +809,10 @@ DrawPlan resolveDrawPlan(in ViewportDisplay d, bool isBackdrop) pure nothrow @sa
             p.drawFaces = true;
             p.shading   = SurfaceShading.Gooch;
             break;
+        case DisplayStyle.Reflection:
+            p.drawFaces = true;
+            p.shading   = SurfaceShading.Reflection;
+            break;
     }
 
     p.cullBySurface = styleCullsBySurface(st.style);
@@ -817,6 +856,9 @@ DrawPlan resolveDrawPlan(in ViewportDisplay d, bool isBackdrop) pure nothrow @sa
     if (!isBackdrop && st.style == DisplayStyle.Shaded && !d.retopology
         && d.cavity.mode != CavityMode.Off)
         p.composite = resolveCavityParams(d.cavity);
+    // After the mode override: the retopology arm replaces Reflection.
+    if (p.shading == SurfaceShading.Reflection)
+        p.reflection = d.reflection;
     return p;
 }
 

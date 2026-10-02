@@ -28,6 +28,7 @@ required for redistribution.
 | [D-OnnxRuntime](https://github.com/shulc/D-OnnxRuntime) | ~master | MIT (wrapper) | Alexander Shagarov; bundles **ONNX Runtime** (MIT) © Microsoft Corporation — the AI candidate ranker, `WithAI` builds only |
 | [D-StbImage](https://github.com/shulc/D-StbImage) | pinned commit | MIT (wrapper) | Alexander Shagarov; bundles **stb_image** v2.30, commit `013ac3b` (MIT / public domain dual — MIT exercised here) © Sean Barrett — single-header image decoder, **statically linked**, restricted to PNG/JPEG/TGA/BMP with file I/O disabled |
 | [Inter](https://rsms.me/inter/) (UI font) | 4.x | OFL-1.1 | The Inter Project Authors; `Inter-Regular.ttf` embedded into the executable |
+| Shading images (`assets/shading/`) | — | CC0 1.0 | see `assets/shading/SOURCES.md`; Reflection-style environments and MatCaps embedded into the executable as string imports |
 
 `assimp` is built as a **minimal static library** (only the OBJ / glTF / FBX
 importers + exporters — see `bindbc-assimp6`'s `tools/build_assimp_min.sh`)

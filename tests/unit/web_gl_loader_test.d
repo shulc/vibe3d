@@ -417,7 +417,7 @@ SH";
     actual.sort;
     auto expected = webClosureGlSymbols.dup;
     expected.sort;
-    assert(importers.length == 22 && callers.length == 21
+    assert(importers.length == 23 && callers.length == 22
             && importers.canFind("editor_app")
             && !callers.canFind("editor_app"),
         format("W16-LD web GL consumer population changed: importers=%d %s; "

@@ -102,10 +102,13 @@ final class ViewportDisplayStyle : ViewportCommand {
             case "weight":    style_ = DisplayStyle.Weight;    break;
             // The cool-to-warm tone style: lit, and a pass reads it.
             case "gooch":     style_ = DisplayStyle.Gooch;     break;
+            // The image-lookup style (env / MatCap): lit, a pass reads it.
+            case "reflection": style_ = DisplayStyle.Reflection; break;
             default:
                 throw new Exception(
                     "viewport.displayStyle: expected 'wireframe', "
-                    ~ "'solid', 'shaded', 'weight' or 'gooch', got '" ~ sval ~ "'");
+                    ~ "'solid', 'shaded', 'weight', 'gooch' or 'reflection', got '"
+                    ~ sval ~ "'");
         }
         cell_ = cell;
     }
@@ -429,6 +432,44 @@ final class ViewportCavity : ViewportCommand {
                     ~ "'world' or 'both', got '" ~ valueArg_ ~ "'");
         }
         vpm.views[cell].display.cavity.mode = m;
+        markCellDisplayDirty(cell);
+        return true;
+    }
+}
+
+/// `viewport.reflectionSource value:env:<name>|matcap:<name> [viewport]` — the
+/// Reflection style's image (`ViewportDisplay.reflection`). A non-template
+/// field: it only marks the cell dirty, and resolves into the plan only under
+/// the Reflection style. An unknown name is REFUSED (status:error, no history
+/// entry), never mapped to a default.
+final class ViewportReflectionSource : ViewportCommand {
+    private string valueArg_;
+    private int    cellArg_ = -1;
+
+    this(Mesh* mesh, ref View view, EditMode editMode, ViewportManager vpm) {
+        super(mesh, view, editMode, vpm);
+    }
+
+    override string name() const { return "viewport.reflectionSource"; }
+
+    override Param[] params() {
+        return wireArgs(
+            Param.string_("value", "Source", &valueArg_, ""),
+            Param.int_("viewport", "Viewport", &cellArg_, -1)
+        );
+    }
+
+    protected override bool applyImpl() {
+        import std.string : toLower, strip;
+        import display_state : ReflectionSource;
+        import viewport_env : parseReflectionSource;
+        immutable int cell = resolveCellOrThrow(cellArg_, name());
+        ReflectionSource src;
+        if (!parseReflectionSource(valueArg_.strip.toLower, src))
+            throw new Exception("viewport.reflectionSource: expected "
+                ~ "'env:<name>' or 'matcap:<name>' naming a bundled image, got '"
+                ~ valueArg_ ~ "'");
+        vpm.views[cell].display.reflection = src;
         markCellDisplayDirty(cell);
         return true;
     }

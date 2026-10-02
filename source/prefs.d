@@ -34,6 +34,7 @@ import log            : logWarn;
 import toolpipe.attr_cache : PipelineAttrCache, NodeAttrs, kToolNode;
 import viewport       : LayoutPreset;
 import display_state  : BackdropStyle, CavityMode, CavityState, DisplayStyle,
+                        ReflectionSource,
     ViewportDisplay, WireOverlay,
                         kDisplayStyleOrder;
 import viewport_scheme : MAX_POINT_SIZE;
@@ -225,6 +226,9 @@ struct ViewportCellDisplay {
     /// The cavity effect, as the user set it (unclamped storage,
     /// read back through the same clamp table the kernel applies).
     CavityState   cavity;
+    /// The Reflection style's image, persisted as its id
+    /// (`reflectionSource`: `env:<name>` / `matcap:<name>`).
+    ReflectionSource reflection;
 }
 
 /// Copy a live cell's non-template display fields into its persisted row.
@@ -240,6 +244,7 @@ void mirrorNonTemplateDisplay(ref ViewportCellDisplay c, in ViewportDisplay d)
     c.smooth            = d.active.smooth;
     c.backdropSmooth    = d.backdrop.smooth;
     c.cavity            = d.cavity;
+    c.reflection        = d.reflection;
 }
 
 /// Apply a persisted row's non-template fields to a live cell. Leaves the
@@ -255,6 +260,7 @@ void restoreNonTemplateDisplay(ref ViewportDisplay d, in ViewportCellDisplay c)
     d.active.smooth       = c.smooth;
     d.backdrop.smooth     = c.backdropSmooth;
     d.cavity              = c.cavity;
+    d.reflection          = c.reflection;
 }
 
 /// Module-level live preferences. Loaded once at startup, mutated by the
@@ -337,6 +343,12 @@ private void readNonTemplateDisplay(ref ViewportCellDisplay c, JSONValue cellJso
                 if (to!string(m) == sp.str) c.backdropSlotStyle = m;
     if (auto cv = "cavity" in cellJson)
         if (cv.type == JSONType.object) readCavity(c.cavity, *cv);
+    // An id that names no bundled image keeps the default (never a guess).
+    if (auto rp = "reflectionSource" in cellJson)
+        if (rp.type == JSONType.string) {
+            import viewport_env : parseReflectionSource;
+            parseReflectionSource(rp.str, c.reflection);
+        }
     if (auto pp = "pointSize" in cellJson) {
         float v = float.nan;
         if (pp.type == JSONType.float_)        v = cast(float)pp.floating;
@@ -546,6 +558,8 @@ Prefs loadPrefs(string dir) {
                                 case "Weight":    p.viewportDisplay[i].style = DisplayStyle.Weight;    break;
                                 // Gooch: drawn, so persisted (same rule).
                                 case "Gooch":     p.viewportDisplay[i].style = DisplayStyle.Gooch;     break;
+                                // Reflection: drawn, so persisted (same rule).
+                                case "Reflection": p.viewportDisplay[i].style = DisplayStyle.Reflection; break;
                                 default: break;   // incl. styles no pass draws yet
                             }
                     if (auto wp = "wire" in cellJson)
@@ -722,6 +736,10 @@ void savePrefs(ref const Prefs p, string dir) {
             cav["attenuation"]  = JSONValue(c.cavity.attenuation);
             cav["samples"]      = JSONValue(c.cavity.samples);
             cj["cavity"] = cav;
+        }
+        {
+            import viewport_env : reflectionSourceId;
+            cj["reflectionSource"] = JSONValue(reflectionSourceId(c.reflection));
         }
         vd ~= cj;
     }

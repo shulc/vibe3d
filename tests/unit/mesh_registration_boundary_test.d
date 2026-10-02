@@ -249,8 +249,10 @@ unittest {
     // Viewport shading S1a (task 9070): the face-VBO writers read the leaf
     // `vertex_normals` (+1). Viewport shading S1e: the attribute command
     // `commands.mesh.surface_attr` (+1).
-    assert(meshClosure.queue.length == 180,
-        format("6509 import scanner closure=%d/180",
+    // Viewport shading S4b (task 9250): the lit shader reads the Reflection
+    // images, `viewport_env` and its decoder `io.image_decode` (+2).
+    assert(meshClosure.queue.length == 182,
+        format("6509 import scanner closure=%d/182",
             meshClosure.queue.length));
     assert("editor_app" in positive.reached,
         "6509 positive control: registration does not reach editor_app");

@@ -2597,6 +2597,7 @@ enum SweepRoute[] kSweepRoutes = [
     SweepRoute("/api/images", "GET", null),
     SweepRoute("/api/imageplane", "GET", null),
     SweepRoute("/api/viewport/probe", "GET", null),
+    SweepRoute("/api/viewport/env-sample", "GET", null),
     SweepRoute("/api/subpatch/preview",    "GET",  null),
     SweepRoute("/api/subpatch/hold",       "POST", `{}`),
     SweepRoute("/api/ui/policy",           "GET",  null),

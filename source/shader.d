@@ -12,7 +12,10 @@ version (web) {
 } else {
     import gl_thread_guard : glThreadGuard;
 }
-import display_state : DrawPlan, kSchemeSolidFill, SurfaceShading, MAX_CAVITY_SAMPLES;
+import display_state : DrawPlan, kSchemeSolidFill, SurfaceShading, MAX_CAVITY_SAMPLES,
+    ReflectionKind, ReflectionSource;
+import viewport_env : bindReflectionSource, kEnvTextureUnit,
+    kMatcapDiffuseTextureUnit, kMatcapSpecularTextureUnit;
 import weightmap_view : kWeightRamp;   // task 1090: the parked neutral
 import light_rig : kKeyLightEye, kFillLightEye, kKeyIntensity, kFillIntensity,
     kLightAmbient, specPowerForRoughness, kGoochLightEye, kGoochCool,
@@ -254,6 +257,7 @@ private immutable string litVertSrc = litStage(q{
     // (`mesh_gpu.beginFaceSide`), which drops every single-sided slot.
     uniform int  u_backSide;
     out vec3      vNormal;          // eye space: the rig's lights are eye-space constants
+    out vec3      vEyePos;          // eye-space position: the Reflection arm's view ray
     flat out uint vMatId;
     // Smooth-interpolated, deliberately: that IS the measured interpolation
     // order. Do not make it `flat`.
@@ -261,6 +265,7 @@ private immutable string litVertSrc = litStage(q{
     void main() {
         vec4 worldPos = u_model * vec4(aPos, 1.0);
         vNormal       = u_normalMatrix * (u_smoothNormals ? aSmoothNormal : aNormal);
+        vEyePos       = (u_view * worldPos).xyz;
         vMatId        = aMatId;
         vWeightColor  = aWeightColor;
         gl_Position   = u_proj * u_view * worldPos;
@@ -273,6 +278,7 @@ private immutable string litVertSrc = litStage(q{
 
 private immutable string litFragSrc = litStage(q{
     in       vec3 vNormal;
+    in       vec3 vEyePos;
     flat in  uint vMatId;
     in       vec3 vWeightColor;     // task 1090; see the vertex shader
     uniform vec3  u_color;          // override colour for hover/highlight paths
@@ -284,7 +290,7 @@ private immutable string litFragSrc = litStage(q{
     uniform float u_ambient;        // global ambient, times Kd
     uniform float u_dim;            // brightness multiplier; 1.0 = neutral (layers Stage 5)
     uniform float u_lightGain;      // multiplier on the lit term ABOVE ambient; 1.0 = neutral
-    uniform int   u_shading;        // display_state.SurfaceShading: 0 Material, 1 Fill, 2 Weight, 3 Retopology, 4 Gooch
+    uniform int   u_shading;        // display_state.SurfaceShading: 0 Material, 1 Fill, 2 Weight, 3 Retopology, 4 Gooch, 5 Reflection
     uniform vec3  u_goochDir;       // light_rig.kGoochLightEye: eye space, toward the light
     uniform vec3  u_goochCool;      // light_rig.kGoochCool: the cool tone at N·L = 0
     uniform vec3  u_goochWarm;      // light_rig.kGoochWarm: the warm tone at |N·L| = 1
@@ -294,6 +300,10 @@ private immutable string litFragSrc = litStage(q{
     uniform float u_faceAlpha;      // output alpha of every arm; 1.0 = opaque (FacePass)
     uniform int   u_surfaceId;      // G-buffer surface id: layer index + 1, 0 = none
     uniform int   u_effectFlags;    // DrawPlan.effectFlags (bit 0 = cavity-eligible)
+    uniform int   u_reflectionKind; // display_state.ReflectionKind: 0 Env, 1 MatCap
+    uniform sampler2D u_envTex;          // unit viewport_env.kEnvTextureUnit (linear RGB)
+    uniform sampler2D u_matcapDiffuse;   // unit kMatcapDiffuseTextureUnit
+    uniform sampler2D u_matcapSpecular;  // unit kMatcapSpecularTextureUnit
     // Explicit locations: GLSL ES 3.00 requires them once there are two
     // outputs. Location 1 is the integer G-buffer (model M4): written on
     // every draw, kept only while the draw buffers are {C0, C1} (the surface
@@ -339,6 +349,16 @@ private immutable string litFragSrc = litStage(q{
                   + u_fillI * blinn(N, u_fillDir, nf, power);
         return kd * (u_ambient + u_lightGain * dif)
              + vec3(u_lightGain * spec * spc);
+    }
+    // Mirrors of `viewport_env.envUv` / `matcapUv` (same expressions, the
+    // pole guard included: GLSL `atan(0, 0)` is undefined).
+    vec2 envUv(vec3 r) {
+        float u = (r.x * r.x + r.z * r.z < 1e-12)
+                ? 0.5 : 0.5 + atan(r.x, r.z) / (2.0 * 3.14159265358979);
+        return vec2(u, acos(clamp(r.y, -1.0, 1.0)) / 3.14159265358979);
+    }
+    vec2 matcapUv(vec3 n) {
+        return vec2(0.5 + 0.5 * n.x, 0.5 - 0.5 * n.y);
     }
     void main() {
         // TWO BASE COLOURS, NOT ONE SCALED. The lit path's base is the
@@ -389,6 +409,25 @@ private immutable string litFragSrc = litStage(q{
             float t  = abs(dot(shadingNormal(), u_goochDir));
             col = min(mix(u_goochCool + u_goochCoolKd * kd,
                           u_goochWarm + u_goochWarmKd * kd, t), vec3(1.0));
+        } else if (u_shading == 5) {
+            // Reflection (task 9250, `viewport_env`). Env: the Material arm's
+            // lit colour × the environment at the eye-space reflection of the
+            // view ray (view-space env, captured). MatCap: the image IS the
+            // lighting (two layers: diffuse × base colour + specular), so no
+            // light term (a declared divergence: the asset's contract).
+            uint  mi = (vMatId < uint(64)) ? vMatId : uint(0);
+            vec3  N  = normalize(vNormal);
+            if (u_reflectionKind == 0) {
+                vec4 mp = mat_params[mi];
+                vec3 kd = mix(mat_base[mi].rgb * mp.x, u_color, u_overrideMix);
+                vec3 R  = reflect(normalize(vEyePos), N);
+                col = litTerm(kd, N, mp.y, mp.w) * texture(u_envTex, envUv(R)).rgb;
+            } else {
+                vec3 base = mix(mat_base[mi].rgb, u_color, u_overrideMix);
+                vec2 uv   = matcapUv(N);
+                col = texture(u_matcapDiffuse, uv).rgb * base
+                    + texture(u_matcapSpecular, uv).rgb;
+            }
         } else {
             // Weight (task 1090). UNLIT in the strong sense: no light term, no
             // material lookup, no gamma — the interpolated per-vertex colour
@@ -1149,6 +1188,7 @@ class LitShader {
     private GLint locSmoothNormals;
     private GLint locSurfaceId;
     private GLint locEffectFlags;
+    private GLint locReflectionKind;
     // Not a plan uniform: written with `u_model` by `useProgram` and the
     // preview helper, both in this module.
     private GLint locNormalMatrix;
@@ -1188,8 +1228,17 @@ class LitShader {
         locSurfaceId     = glGetUniformLocation(program, "u_surfaceId");
         locEffectFlags   = glGetUniformLocation(program, "u_effectFlags");
         locBackSide      = glGetUniformLocation(program, "u_backSide");
+        locReflectionKind = glGetUniformLocation(program, "u_reflectionKind");
         // Every draw binds through `useProgram`, which seeds every uniform
-        // below; nothing is parked here.
+        // below; the Reflection samplers' units are program constants, set
+        // once here.
+        glUseProgram(program);
+        glUniform1i(glGetUniformLocation(program, "u_envTex"), kEnvTextureUnit);
+        glUniform1i(glGetUniformLocation(program, "u_matcapDiffuse"),
+                    kMatcapDiffuseTextureUnit);
+        glUniform1i(glGetUniformLocation(program, "u_matcapSpecular"),
+                    kMatcapSpecularTextureUnit);
+        glUseProgram(0);
 
         // Materials UBO — std140-sized for three arrays of 64 × vec4.
         glGenBuffers(1, &matsUbo);
@@ -1333,6 +1382,7 @@ class LitShader {
         setLightGain(plan.lightGain);
         setSmoothNormals(plan.smoothNormals);
         setSurfaceTag(surfaceId, plan.effectFlags);
+        setReflection(plan.shading, plan.reflection);
     }
 
     /// Park every per-plan uniform at its neutral: the values a
@@ -1347,6 +1397,7 @@ class LitShader {
         setLightGain(park.lightGain);
         setSmoothNormals(park.smoothNormals);
         setSurfaceTag(0, park.effectFlags);
+        setReflection(park.shading, park.reflection);
     }
 
     /// The subset of `plan` a create-tool preview honours: the cell's normal
@@ -1394,6 +1445,16 @@ class LitShader {
         glUseProgram(program);
         glUniform1i(locSurfaceId, cast(int)surfaceId);
         glUniform1i(locEffectFlags, cast(int)effectFlags);
+    }
+
+    /// The Reflection arm's source: `u_reflectionKind`, and — only when the
+    /// pass shades Reflection, so no other style decodes an image — its
+    /// textures on the fixed units (active unit back at `GL_TEXTURE0`).
+    private void setReflection(SurfaceShading shading, ReflectionSource src) {
+        glUseProgram(program);
+        glUniform1i(locReflectionKind, cast(int)src.kind);
+        if (shading == SurfaceShading.Reflection)
+            bindReflectionSource(src);
     }
 
     /// `u_normalMatrix = normalMatrix(modelView)` for the bound program.

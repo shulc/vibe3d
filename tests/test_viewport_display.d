@@ -273,7 +273,7 @@ bool testFlowB() {
                      "lightGain", "vertColor", "vertAlpha", "pointSize",
                      "cullHiddenVerts", "shadeLinesByItem",
                      "baseDotsBySelection", "joinsItemSequence", "styleFills",
-                     "smoothNormals", "composite", "effectFlags"]) {
+                     "smoothNormals", "composite", "effectFlags", "reflection"]) {
         ++nFields;
         enforce(field in pa,
             format("plan.active is missing \"%s\"", field));

@@ -1083,6 +1083,15 @@ class HttpServer {
                         bool composedFrame, string buffer);
     private ViewportProbeProvider viewportProbeProvider;
 
+    // ----- GET /api/viewport/env-sample — the Reflection images on the CPU --
+    // Task 9250. `source=env:<name>&dir=x,y,z` → the environment's linear RGB
+    // at `envUv(dir)`; `source=matcap:<name>&n=x,y,z` → `{diffuse, specular}`
+    // at `matcapUv(n)`. Bilinear over the SAME decoded arrays the GL upload
+    // used (`viewport_env`), so it is answered on the main thread.
+    private alias ViewportEnvSampleProvider =
+        string delegate(string source, string vec);
+    private ViewportEnvSampleProvider viewportEnvSampleProvider;
+
     // ----- /api/images provider (task 0612 Stage 1) ------------------------
     // GET /api/images — the document's image-clip rows (stored + resolved
     // path, the derived header fields, `missing`) plus the pixel cache's
@@ -1337,6 +1346,10 @@ class HttpServer {
     }
     struct VpProbeResp { string result; string error; }
     private MainThreadBridge!(VpProbeReq, VpProbeResp) vpProbeBridge;
+
+    struct VpEnvSampleReq  { string source; string vec; }
+    struct VpEnvSampleResp { string result; string error; }
+    private MainThreadBridge!(VpEnvSampleReq, VpEnvSampleResp) vpEnvSampleBridge;
 
     // Task 0612 Stage 1 — /api/images. Its OWN bridge instance (never shared,
     // the same hard rule as pathBridge / toolpipeBridge): two endpoints
@@ -1849,6 +1862,20 @@ class HttpServer {
                         resp.result = viewportProbeProvider(
                             req.cell, req.points, req.wantHash,
                             req.composedFrame, req.buffer);
+                        resp.error  = "";
+                    } catch (Exception e) {
+                        resp.error = e.msg;
+                    }
+                }
+            });
+
+        vpEnvSampleBridge = new MainThreadBridge!(VpEnvSampleReq, VpEnvSampleResp)(this,
+            (ref VpEnvSampleReq req, ref VpEnvSampleResp resp) {
+                if (viewportEnvSampleProvider is null) {
+                    resp.error = "viewport-env-sample provider not set";
+                } else {
+                    try {
+                        resp.result = viewportEnvSampleProvider(req.source, req.vec);
                         resp.error  = "";
                     } catch (Exception e) {
                         resp.error = e.msg;
@@ -2548,6 +2575,12 @@ class HttpServer {
     /// for the --test single-rendered-cell trap.
     public void setViewportProbeProvider(ViewportProbeProvider provider) {
         this.viewportProbeProvider = provider;
+    }
+
+    /// GET /api/viewport/env-sample — a Reflection image sampled on the CPU.
+    /// Runs on the main thread (the decoded arrays live there).
+    public void setViewportEnvSampleProvider(ViewportEnvSampleProvider provider) {
+        this.viewportEnvSampleProvider = provider;
     }
 
     /// GET /api/images — image-clip rows + pixel-cache residency counters
@@ -4004,6 +4037,31 @@ class HttpServer {
         response.headers["Content-Type"] = "application/json";
     }
 
+    private void route_apiViewportEnvSample(HttpRequest request, HttpResponse response) {
+        if (viewportEnvSampleProvider is null) {
+            response.statusCode = 500;
+            response.body = `{"error":"viewport-env-sample provider not set"}`;
+        } else {
+            vpEnvSampleBridge.req.source = parseQueryString(request.path, "source", "");
+            string v = parseQueryString(request.path, "dir", "");
+            if (v.length == 0) v = parseQueryString(request.path, "n", "");
+            vpEnvSampleBridge.req.vec    = v;
+            vpEnvSampleBridge.resp.result = "";
+            vpEnvSampleBridge.resp.error  = "";
+            if (!vpEnvSampleBridge.submitAndWait())
+                vpEnvSampleBridge.resp.error = "timeout waiting for main thread";
+            if (vpEnvSampleBridge.resp.error.length == 0) {
+                response.statusCode = 200;
+                response.body = vpEnvSampleBridge.resp.result;
+            } else {
+                response.statusCode = 400;
+                response.body = `{"error":"`
+                                ~ jsonEsc(vpEnvSampleBridge.resp.error) ~ `"}`;
+            }
+        }
+        response.headers["Content-Type"] = "application/json";
+    }
+
     private void route_apiViewportProbe(HttpRequest request, HttpResponse response) {
         // Task 0559 — FBO pixel readback. `points` is "x,y;x,y;..." in
         // TOP-LEFT-origin FBO pixels; `x`/`y` is sugar for a single
@@ -5120,6 +5178,7 @@ private enum RouteSpec[] kRoutes = [
     RouteSpec("/api/images",               "GET",  Match.prefix, Answered.mainThread, "route_apiImages"),
     RouteSpec("/api/imageplane",           "GET",  Match.prefix, Answered.mainThread, "route_apiImageplane"),
     RouteSpec("/api/viewport/probe",       "GET",  Match.prefix, Answered.mainThread, "route_apiViewportProbe"),
+    RouteSpec("/api/viewport/env-sample",  "GET",  Match.prefix, Answered.mainThread, "route_apiViewportEnvSample"),
     RouteSpec("/api/subpatch/preview",     "GET",  Match.exact,  Answered.mainThread, "route_apiSubpatchPreview"),
     RouteSpec("/api/subpatch/hold",        "POST", Match.exact,  Answered.mainThread, "route_apiSubpatchHold"),
     RouteSpec("/api/pick",                 "GET",  Match.prefix, Answered.mainThread, "route_apiPick"),
@@ -5391,8 +5450,8 @@ unittest {
     client.join();
     assert(replies.failure.length == 0,
         "6740 route JSON census: route walk threw: " ~ replies.failure);
-    assert(replies.traversed == 61,
-        format("6740 route JSON census: expected to traverse all 61 kRoutes "
+    assert(replies.traversed == 62,
+        format("6740 route JSON census: expected to traverse all 62 kRoutes "
              ~ "rows, traversed %d", replies.traversed));
 
     string parseProblem(string body_) {
@@ -5457,9 +5516,9 @@ unittest {
             configurationResponses++;
         }
     }
-    assert(jsonResponses == 60,
+    assert(jsonResponses == 61,
         format("6740 route JSON census: measured JSON-response population "
-             ~ "changed; expected 60 of 61, got %d", jsonResponses));
+             ~ "changed; expected 61 of 62, got %d", jsonResponses));
     // The two owner-seeded frame-count routes are their own population: the
     // default and PerfProbe builds both have to reach the real owner pump.
     assert(ownerSeededResponses == 2,

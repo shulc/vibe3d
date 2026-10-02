@@ -868,6 +868,27 @@ void drawViewportPropsPanel(ViewportPropertiesReadRole viewportRead,
                 ImGui.SetTooltip("Faces stay faceted where their surface (or the lower "
                                ~ "surface of two that meet) has smoothing off.");
 
+            // The Reflection style's image (environments, then MatCaps),
+            // shown only under that style.
+            if (v.display.active.style == DisplayStyle.Reflection) {
+                import viewport_env : allReflectionSources, reflectionSourceId,
+                                      reflectionSourceLabel;
+                ImGui.Text("Image");
+                ImGui.SameLine();
+                ImGui.SetNextItemWidth(-1.0f);
+                if (ImGui.BeginCombo("##vpReflectionSource",
+                        reflectionSourceLabel(v.display.reflection))) {
+                    foreach (src; allReflectionSources()) {
+                        bool sel = (src == v.display.reflection);
+                        if (ImGui.Selectable(reflectionSourceLabel(src), sel))
+                            dispatch("viewport.reflectionSource",
+                                positionalPayload([reflectionSourceId(src)]));
+                        if (sel) ImGui.SetItemDefaultFocus();
+                    }
+                    ImGui.EndCombo();
+                }
+            }
+
             // Cavity (model M4, wave plan S3a): greyed where it cannot apply —
             // the plan resolves it only under Shaded and never under the
             // retopology mode (owner ruling) — but it keeps its value. The

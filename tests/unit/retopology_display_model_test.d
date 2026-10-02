@@ -31,6 +31,7 @@ import std.path      : buildPath, dirName;
 import std.string    : split;
 
 import display_state : BackdropStyle, DisplayStyle, DrawPlan, SurfaceShading,
+                       ReflectionSource,
                        ViewportDisplay, WireOverlay, applyRetopology,
                        resolveDrawPlan, retopologyFaceAlpha;
 import select_visibility : SelectVisibility, resolveSelectVisibility;
@@ -264,19 +265,21 @@ unittest {
         assert(p.joinsItemSequence == false, side ~ ": joinsItemSequence must be false"); ++k;
         assert(p.smoothNormals == true,   side ~ ": smoothNormals must be true (smooth by default)"); ++k;
         assert(p.composite.empty,         side ~ ": composite must be empty (cavity off by default)"); ++k;
+        assert(p.reflection == ReflectionSource.init,
+            side ~ ": reflection must be .init (no Reflection style by default)");                    ++k;
         return k;
     }
 
     immutable DrawPlan a = resolveDrawPlan(d, false);
     immutable int ka = checkCommon(a, "1c active");
     assert(a.effectFlags == 1, "1c active: the default Shaded pass is cavity-eligible");
-    assert(ka == 14, format("1c: asserted %s active fields, expected 14", ka));
+    assert(ka == 15, format("1c: asserted %s active fields, expected 15", ka));
 
     immutable DrawPlan b = resolveDrawPlan(d, true);
     int kb = checkCommon(b, "1c backdrop");
     assert(b.dim == 0.45f, format("1c backdrop: dim must be 0.45, got %s", b.dim));
     ++kb;
-    assert(kb == 15, format("1c: asserted %s backdrop fields, expected 15", kb));
+    assert(kb == 16, format("1c: asserted %s backdrop fields, expected 16", kb));
 }
 
 // ---------------------------------------------------------------------------

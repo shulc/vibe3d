@@ -1,0 +1,160 @@
+#!/usr/bin/env python3
+"""Offline conversion of the viewport shading images (Reflection / MatCap).
+
+The editor's image decoder reads PNG, not Radiance .hdr, so the downloaded CC0
+originals are converted once, here, into 16-bit RGB PNGs that the binary embeds
+(`assets/shading/`, string-imported by `source/viewport_env.d`).
+
+    python3 tools/convert_shading_images.py --in <originals> --out assets/shading
+    python3 tools/convert_shading_images.py --in <originals> --out /var/tmp/x --check
+
+`<originals>` holds `env/<name>_1k.hdr` (equirect 1024x512),
+`matcap/<name>_{diffuse,specular}.hdr` (256x256) and `SHA256SUMS`; every input is
+verified against `SHA256SUMS` first (a mismatch refuses the whole run).
+
+Steps, identical for every run:
+  * env: INTER_AREA 1024x512 -> 512x256, then a Gaussian prefilter sigma = 2 px
+    (kernel radius 3 sigma) that WRAPS horizontally (the equirect seam is
+    continuous) and reflects vertically;
+  * every file: stored = round(clamp(linear / 16, 0, 1) * 65535) as uint16 RGB,
+    PNG compression 9. The one linear scale (16) is `kShadingImageLinearScale`
+    in `source/viewport_env.d`; the decoder multiplies it back.
+
+`MANIFEST.tsv` (written beside the outputs) ties each output to its input:
+input sha256, output file sha256, and the sha256 of the DECODED pixels (uint16
+little-endian, RGB, top row first) — file bytes can differ across zlib builds,
+pixels cannot. `--check` converts into `--out` and compares those pixel hashes
+against `--manifest` (default `assets/shading/MANIFEST.tsv`), printing
+`PIXELS MATCH n/N`; exit status 1 on any mismatch.
+"""
+import argparse
+import hashlib
+import os
+import sys
+
+import cv2
+import numpy as np
+
+LINEAR_SCALE = 16.0
+ENV_SIZE = (512, 256)
+ENV_SIGMA = 2.0
+LICENCE = "CC0-1.0"
+
+ENV_NAMES = ["studio_small_09", "kloofendal_48d_partly_cloudy_puresky", "courtyard"]
+MATCAP_NAMES = ["basic_grey", "basic_side", "clay_studio", "ceramic_lightbulb",
+                "hard_surface_grey", "metal_carpaint", "toon_light", "check_rim_light"]
+
+HEADER = ["output", "input", "input_sha256", "output_sha256", "pixels_sha256",
+          "width", "height", "linear_scale", "prefilter_sigma", "licence"]
+
+
+def sha256_file(path):
+    with open(path, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
+
+
+def jobs():
+    """(output name, input relative path, is_env) in manifest order."""
+    out = []
+    for n in ENV_NAMES:
+        out.append((f"env_{n}.png", f"env/{n}_1k.hdr", True))
+    for n in MATCAP_NAMES:
+        for layer in ("diffuse", "specular"):
+            out.append((f"matcap_{n}_{layer}.png", f"matcap/{n}_{layer}.hdr", False))
+    return out
+
+
+def read_sums(src):
+    sums = {}
+    with open(os.path.join(src, "SHA256SUMS")) as f:
+        for line in f:
+            parts = line.split()
+            if len(parts) == 2:
+                sums[parts[1]] = parts[0]
+    return sums
+
+
+def env_prefilter(img):
+    r = int(round(3 * ENV_SIGMA))
+    padded = np.concatenate([img[:, -r:], img, img[:, :r]], axis=1)
+    k = 2 * r + 1
+    blurred = cv2.GaussianBlur(padded, (k, k), ENV_SIGMA, borderType=cv2.BORDER_REFLECT)
+    return blurred[:, r:-r]
+
+
+def convert(src_path, is_env):
+    img = cv2.imread(src_path, cv2.IMREAD_ANYDEPTH | cv2.IMREAD_COLOR)   # BGR float32
+    if img is None:
+        raise SystemExit(f"cannot read {src_path}")
+    if is_env:
+        img = cv2.resize(img, ENV_SIZE, interpolation=cv2.INTER_AREA)
+        img = env_prefilter(img)
+    return np.round(np.clip(img / LINEAR_SCALE, 0.0, 1.0) * 65535.0).astype(np.uint16)
+
+
+def pixels_sha(bgr16):
+    rgb = np.ascontiguousarray(bgr16[:, :, ::-1]).astype("<u2")
+    return hashlib.sha256(rgb.tobytes()).hexdigest()
+
+
+def read_manifest(path):
+    rows = {}
+    with open(path) as f:
+        for line in f:
+            if line.startswith("#") or not line.strip():
+                continue
+            cols = line.rstrip("\n").split("\t")
+            if cols[0] == "output":
+                continue
+            rows[cols[0]] = dict(zip(HEADER, cols))
+    return rows
+
+
+def main():
+    here = os.path.dirname(os.path.abspath(__file__))
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--in", dest="src", required=True)
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--check", action="store_true")
+    ap.add_argument("--manifest", default=os.path.join(here, "..", "assets", "shading", "MANIFEST.tsv"))
+    a = ap.parse_args()
+
+    sums = read_sums(a.src)
+    bad = []
+    for _, rel, _ in jobs():
+        p = os.path.join(a.src, rel)
+        if not os.path.exists(p) or sums.get(rel) != sha256_file(p):
+            bad.append(rel)
+    if bad:
+        raise SystemExit("input sha256 mismatch against SHA256SUMS: " + ", ".join(bad))
+
+    os.makedirs(a.out, exist_ok=True)
+    rows = []
+    total = 0
+    for out_name, rel, is_env in jobs():
+        q = convert(os.path.join(a.src, rel), is_env)
+        dst = os.path.join(a.out, out_name)
+        cv2.imwrite(dst, q, [cv2.IMWRITE_PNG_COMPRESSION, 9])
+        total += os.path.getsize(dst)
+        rows.append([out_name, os.path.basename(rel), sums[rel], sha256_file(dst), pixels_sha(q),
+                     str(q.shape[1]), str(q.shape[0]), f"{LINEAR_SCALE:g}",
+                     f"{ENV_SIGMA:g}" if is_env else "0", LICENCE])
+
+    if a.check:
+        ref = read_manifest(a.manifest)
+        ok = sum(1 for r in rows if r[0] in ref and ref[r[0]]["pixels_sha256"] == r[4])
+        print(f"PIXELS MATCH {ok}/{len(rows)}")
+        return 0 if ok == len(rows) == len(ref) else 1
+
+    with open(os.path.join(a.out, "MANIFEST.tsv"), "w") as f:
+        f.write(f"# numpy {np.__version__} opencv {cv2.__version__}; "
+                "pixels_sha256 = sha256 of uint16 little-endian RGB, top row first\n")
+        f.write("\t".join(HEADER) + "\n")
+        for r in rows:
+            f.write("\t".join(r) + "\n")
+    print(f"wrote {len(rows)} files, {total} bytes")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

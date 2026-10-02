@@ -232,7 +232,9 @@ unittest {
     // Retopology slice S4: the lit uploads read the leaf `light_rig` (+1).
     // Viewport shading S1a (task 9070): the face-VBO writers read the leaf
     // `vertex_normals` (+1).
-    assert(sourceFiles >= 500 && createSeen == 1 && create.queue.length == 261,
+    // Viewport shading S4b (task 9250): the lit shader reads the Reflection
+    // images, `viewport_env` and its decoder `io.image_decode` (+2).
+    assert(sourceFiles >= 500 && createSeen == 1 && create.queue.length == 263,
         format("6507 import scanner population: files=%d create=%d closure=%d",
             sourceFiles, createSeen, create.queue.length));
     assert("editor_app" in positive.reached,

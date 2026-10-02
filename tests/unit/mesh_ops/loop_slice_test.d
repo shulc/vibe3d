@@ -1655,7 +1655,7 @@ unittest { // S4/S5 companion — ALL FOUR ring faces hidden: caps must still
 // (no `Mesh` coupling, not yet wired into any kernel — Phase 3), so these
 // drive it directly with a literal face-ring table instead of building a
 // full `Mesh`: `tests/unit/` cannot string-import `tests/fixtures/`
-// (`dub.json` `stringImportPaths` is `assets/icon`/`assets/fonts` only), so
+// (`dub.json` `stringImportPaths` holds only `assets/` directories), so
 // this embeds a compact ~8-case table lifted from the 54-case corpus
 // (`tools/local/fixture_gen/loop_slice_band/loop_slice_slice_selected_band.json`,
 // private) rather than the whole thing — the full 54 run in the HTTP lane

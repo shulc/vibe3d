@@ -1011,6 +1011,7 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                     jsonNum(c.distance, "%.6f"), jsonNum(c.attenuation, "%.6f"),
                     c.samples);
             }
+            import viewport_env : reflectionSourceId;
             static string planJson(in DrawPlan p) {
                 // `facesLit` is KEPT alongside `shading` (task 1090). It is
                 // asserted by the existing suite and it now reads off the
@@ -1028,7 +1029,7 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                     `"pointSize":%s,"cullHiddenVerts":%s,` ~
                     `"shadeLinesByItem":%s,"baseDotsBySelection":%s,` ~
                     `"joinsItemSequence":%s,"styleFills":%s,"smoothNormals":%s,` ~
-                    `"composite":%s,"effectFlags":%d}`,
+                    `"composite":%s,"effectFlags":%d,"reflection":"%s"}`,
                     p.drawFaces ? "true" : "false",
                     p.facesLit  ? "true" : "false",
                     p.shading.to!string,
@@ -1060,7 +1061,8 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                     p.styleFills          ? "true" : "false",
                     p.smoothNormals       ? "true" : "false",
                     compositeJson(p.composite),
-                    p.effectFlags);
+                    p.effectFlags,
+                    reflectionSourceId(p.reflection));
             }
             static string cavityJson(in CavityState c) {
                 return format(`{"mode":"%s","screenRidge":%s,"screenValley":%s,` ~
@@ -1268,7 +1270,7 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                     `"ortho":%s,"userSet":%s,` ~
                     `"selectVisibility":{"policy":"%s","facing":%s,"occlusion":%s},` ~
                     `"state":{"active":%s,"backdrop":%s,"backdropStyle":"%s",` ~
-                    `"retopology":%s,"cavity":%s},` ~
+                    `"retopology":%s,"cavity":%s,"reflection":"%s"},` ~
                     `"plan":{"active":%s,"backdrop":%s},"grid":%s}`,
                     k,
                     renders ? "true" : "false",
@@ -1301,12 +1303,49 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                     cv.display.backdropStyle.to!string,
                     cv.display.retopology ? "true" : "false",
                     cavityJson(cv.display.cavity),
+                    reflectionSourceId(cv.display.reflection),
                     planJson(resolveDrawPlan(cv.display, false)),
                     planJson(resolveDrawPlan(cv.display, true)),
                     gridJson(gvp)));
             }
             buf.put("]}");
             return buf.data;
+        });
+
+        // GET /api/viewport/env-sample: a Reflection image
+        // sampled on the CPU through the same lookup and decoded array the
+        // GL arm uses (`viewport_env`); the suite's pixel predictions read it.
+        httpServer.setViewportEnvSampleProvider((string source, string vec) {
+            import std.format : format;
+            import std.array  : split;
+            import std.conv   : to;
+            import display_state : ReflectionKind, ReflectionSource;
+            import viewport_env : parseReflectionSource, envSample, matcapSample,
+                envUv, matcapUv;
+            import math : Vec3, normalize;
+            ReflectionSource src;
+            if (!parseReflectionSource(source, src))
+                throw new Exception("env-sample: unknown source '" ~ source ~ "'");
+            auto parts = vec.split(",");
+            if (parts.length != 3)
+                throw new Exception("env-sample: expected dir=x,y,z or n=x,y,z");
+            immutable Vec3 d = Vec3(parts[0].to!float, parts[1].to!float,
+                                    parts[2].to!float);
+            static string v3(in float[3] c) {
+                return format(`[%s,%s,%s]`, jsonNum(c[0], "%.6f"),
+                    jsonNum(c[1], "%.6f"), jsonNum(c[2], "%.6f"));
+            }
+            if (src.kind == ReflectionKind.Env) {
+                immutable uv = envUv(normalize(d));
+                return format(`{"source":"%s","uv":[%s,%s],"rgb":%s}`, source,
+                    jsonNum(uv[0], "%.6f"), jsonNum(uv[1], "%.6f"),
+                    v3(envSample(src.index, d)));
+            }
+            immutable uv = matcapUv(normalize(d));
+            immutable float[3][2] m = matcapSample(src.index, d);
+            return format(`{"source":"%s","uv":[%s,%s],"diffuse":%s,"specular":%s}`,
+                source, jsonNum(uv[0], "%.6f"), jsonNum(uv[1], "%.6f"),
+                v3(m[0]), v3(m[1]));
         });
 
         // GET /api/viewport/probe?cell=N[&x=&y=][&points=][&hash=1] —
