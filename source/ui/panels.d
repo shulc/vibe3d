@@ -614,6 +614,12 @@ version (unittest) {
         ImVec2 verticesMax;
         ImVec2 pointSizeMin;
         ImVec2 pointSizeMax;
+        ImVec2 cavityMin;
+        ImVec2 cavityMax;
+        ImVec2 cavityRidgeMin;
+        ImVec2 cavityRidgeMax;
+        ImVec2 cavityValleyMin;
+        ImVec2 cavityValleyMax;
     }
 
     // Test instrumentation only: mutable process-wide state intentionally
@@ -667,6 +673,18 @@ version (unittest) {
         g_viewportPropsDrawSnapshot.pointSizeMin = ImGui.GetItemRectMin();
         g_viewportPropsDrawSnapshot.pointSizeMax = ImGui.GetItemRectMax();
     }
+    private void recordViewportPropsCavity() {
+        g_viewportPropsDrawSnapshot.cavityMin = ImGui.GetItemRectMin();
+        g_viewportPropsDrawSnapshot.cavityMax = ImGui.GetItemRectMax();
+    }
+    private void recordViewportPropsCavityRidge() {
+        g_viewportPropsDrawSnapshot.cavityRidgeMin = ImGui.GetItemRectMin();
+        g_viewportPropsDrawSnapshot.cavityRidgeMax = ImGui.GetItemRectMax();
+    }
+    private void recordViewportPropsCavityValley() {
+        g_viewportPropsDrawSnapshot.cavityValleyMin = ImGui.GetItemRectMin();
+        g_viewportPropsDrawSnapshot.cavityValleyMax = ImGui.GetItemRectMax();
+    }
 } else {
     private void recordViewportPropsProjection(int, int) {}
     private void recordViewportPropsCenter() {}
@@ -678,6 +696,9 @@ version (unittest) {
     private void recordViewportPropsBackdrop() {}
     private void recordViewportPropsVertices() {}
     private void recordViewportPropsPointSize() {}
+    private void recordViewportPropsCavity() {}
+    private void recordViewportPropsCavityRidge() {}
+    private void recordViewportPropsCavityValley() {}
 }
 
 void drawViewportPropsPanel(ViewportPropertiesReadRole viewportRead,
@@ -851,7 +872,9 @@ void drawViewportPropsPanel(ViewportPropertiesReadRole viewportRead,
             ImGui.Text("Cavity");
             ImGui.SameLine();
             ImGui.SetNextItemWidth(-1.0f);
-            if (ImGui.BeginCombo("##vpCavity", cavChoices[ci].label)) {
+            const cavityOpen = ImGui.BeginCombo("##vpCavity", cavChoices[ci].label);
+            recordViewportPropsCavity();
+            if (cavityOpen) {
                 foreach (i, c; cavChoices) {
                     bool sel = (i == ci);
                     if (ImGui.Selectable(c.label, sel))
@@ -865,12 +888,16 @@ void drawViewportPropsPanel(ViewportPropertiesReadRole viewportRead,
             }
             float ridge = v.display.cavity.screenRidge;
             ImGui.SetNextItemWidth(-1.0f);
-            if (ImGui.SliderFloat("##vpCavityRidge", &ridge, 0.0f, 2.0f, "Ridge %.2f"))
+            const ridgeChanged = ImGui.SliderFloat("##vpCavityRidge", &ridge, 0.0f, 2.0f, "Ridge %.2f");
+            recordViewportPropsCavityRidge();
+            if (ridgeChanged)
                 dispatch("viewport.cavityParams",
                     format(`{"screenRidge":%.6f}`, clampGain(ridge)));
             float valley = v.display.cavity.screenValley;
             ImGui.SetNextItemWidth(-1.0f);
-            if (ImGui.SliderFloat("##vpCavityValley", &valley, 0.0f, 2.0f, "Valley %.2f"))
+            const valleyChanged = ImGui.SliderFloat("##vpCavityValley", &valley, 0.0f, 2.0f, "Valley %.2f");
+            recordViewportPropsCavityValley();
+            if (valleyChanged)
                 dispatch("viewport.cavityParams",
                     format(`{"screenValley":%.6f}`, clampGain(valley)));
             if (!cavityLive) ImGui.EndDisabled();

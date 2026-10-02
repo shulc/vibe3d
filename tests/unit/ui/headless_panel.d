@@ -190,6 +190,15 @@ struct HeadlessPanel {
                "pressAt: no item took ActiveId — the point missed every widget");
     }
 
+    /// Press at a point WITHOUT asserting a hit: whether some item took
+    /// ActiveId (false over a disabled widget). Pair with `release`.
+    bool tryPressAt(ImVec2 p) {
+        hoverAt(p);
+        ImGuiIO_AddMouseButtonEvent(io, 0, true);
+        frame();
+        return anyActive;
+    }
+
     /// Release the left button.
     void release() {
         ImGuiIO_AddMouseButtonEvent(io, 0, false);

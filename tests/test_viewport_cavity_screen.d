@@ -17,7 +17,8 @@
 // one row equal to its prediction ±1 (population pinned); (d) the silhouette
 // between two layers; (e) the wire overlay over a crease is unchanged, and
 // the same pixel without the wire changes; (f) Solid + screen equals Solid;
-// (g) a face pass whose flags lack bit 0 (a Flat/Solid backdrop) is untouched.
+// (g) a face pass whose flags lack bit 0 (a Flat/Solid backdrop) is untouched;
+// (h) World alone runs no screen term, Both does.
 // `VIBE3D_CELL=<id>` runs one cell.
 module test_viewport_cavity_screen;
 
@@ -452,4 +453,26 @@ unittest {
     }
     assert(faced > 100, format("(g) population: the column must cross the backdrop box (%d face pixels)", faced));
     assert(wouldChange >= 2, format("(g) discrimination floor: ignoring the flags would change %d pixels", wouldChange));
+}
+
+// ===========================================================================
+// (h) World alone does not run the screen term: with the world kernel absent
+// (until S3b, which replaces this cell with its own prediction) a World frame
+// equals the cavity-off frame, while Both equals Screen (the Screen frame
+// differs from off: the control).
+// ===========================================================================
+unittest {
+    if (!cellOn("h")) return;
+    creaseRig();
+    cmd("viewport.cavity", `{"value":"off"}`);
+    immutable string off = hash();
+    cmd("viewport.cavity", `{"value":"screen"}`);
+    immutable string screen = hash();
+    assert(screen != off, "(h) control: the screen term must change the frame");
+    cmd("viewport.cavity", `{"value":"both"}`);
+    immutable string both = hash();
+    assert(both == screen, "(h) Both must run the screen term (equal to Screen while the world kernel is absent)");
+    cmd("viewport.cavity", `{"value":"world"}`);
+    immutable string world = hash();
+    assert(world == off, "(h) World must not run the screen term (equal to off while the world kernel is absent)");
 }

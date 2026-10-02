@@ -5,6 +5,8 @@ import std.file : exists, mkdirRecurse, readText, remove, rmdirRecurse,
     tempDir, write;
 import std.path : buildPath, buildNormalizedPath, dirName;
 import std.string : indexOf;
+import std.array : join;
+import std.format : format;
 
 import command : Command;
 import command_args : bindArgs;
@@ -12,9 +14,11 @@ import commands.viewport.independence : ViewportIndepAxis,
     ViewportIndependence;
 import commands.viewport.master : ViewportMaster;
 import commands.viewport.display : ViewportBackdropStyle, ViewportPointSize,
-    ViewportRetopology, ViewportRetopologyPreset, ViewportShowVertices;
+    ViewportRetopology, ViewportRetopologyPreset, ViewportShowVertices,
+    ViewportCavity, ViewportCavityParams;
 import display_state : BackdropStyle;
 import display_state : DisplayStyle;
+import display_state : CavityMode;
 import editmode : EditMode;
 import layout_reset_action : LayoutResetAction;
 import mesh : makeCube;
@@ -500,4 +504,123 @@ unittest { // 8620: the backdrop chooser, Vertices checkbox and point size slide
     assert(picked == 4, "8620 chooser census: all four options must be picked");
     assert(vpm.views[0].display == d0,
         "8620 the retopology controls reached a cell other than the active one");
+}
+
+unittest { // S3a: the Cavity combo and Ridge/Valley sliders; greyed off Shaded / under retopology
+    auto vpm = new ViewportManager(0, 0, 800, 600);
+    vpm.applyLayout(LayoutPreset.Quad);
+    vpm.activeId = 1;
+    auto mesh = makeCube();
+    Prefs prefs;
+    auto reset = inertReset(&prefs);
+    string[] ids;
+    string[] payloads;
+    void dispatch(string id, string payload) {
+        ids ~= id;
+        payloads ~= payload;
+        Command command;
+        auto cam = vpm.views[vpm.activeId].camera;
+        if (id == "viewport.cavity")
+            command = new ViewportCavity(&mesh, cam, EditMode.Polygons, vpm);
+        else if (id == "viewport.cavityParams")
+            command = new ViewportCavityParams(&mesh, cam, EditMode.Polygons, vpm);
+        else
+            assert(false, "unexpected viewport properties dispatch: " ~ id);
+        bindArgs(command, payload);
+        assert(command.apply(), "viewport properties command fixture refused: " ~ id ~ " " ~ payload);
+    }
+    auto ui = openPanel(() {
+        drawViewportPropsPanel(ViewportPropertiesReadRole(vpm),
+                               cast(ViewportCommandDispatch)&dispatch, reset);
+    }, "Viewport cavity controls host");
+    resetViewportPropsDrawSnapshot();
+    scope (exit) ui.close();
+    ImGui.GetIO().ConfigFlags |= ImGuiConfigFlags.NavEnableKeyboard;
+    vpm.views[1].display.active.style = DisplayStyle.Shaded;
+    assert(vpm.views[1].display.active.style == DisplayStyle.Shaded
+        && !vpm.views[1].display.retopology
+        && vpm.views[1].display.cavity.mode == CavityMode.Off,
+        "S3a precondition: the active cell starts Shaded, retopology off, cavity Off");
+    const d0 = vpm.views[0].display;
+
+    // Every combo option through the real parser (signed steps from the
+    // previous pick, as the backdrop chooser above).
+    static struct Pick { int steps; CavityMode want; string name; }
+    static immutable Pick[4] picks = [
+        Pick( 1, CavityMode.Screen, "screen"),
+        Pick( 2, CavityMode.Both,   "both"),
+        Pick(-1, CavityMode.World,  "world"),
+        Pick(-2, CavityMode.Off,    "off"),
+    ];
+    size_t picked;
+    foreach (pk; picks) {
+        ui.frame();
+        auto snap = viewportPropsDrawSnapshot();
+        ui.pressAt(center(snap.cavityMin, snap.cavityMax));
+        ui.release();
+        const key = pk.steps > 0 ? KEY_DOWN_ARROW : KEY_UP_ARROW;
+        foreach (_; 0 .. (pk.steps > 0 ? pk.steps : -pk.steps)) {
+            ui.keyDown(key);
+            ui.frame();
+            ui.keyUp(key);
+            ui.frame();
+        }
+        ui.keyDown(cast(int)ImGuiKey.Enter);
+        ui.frame();
+        ui.keyUp(cast(int)ImGuiKey.Enter);
+        ui.frame();
+        ++picked;
+        assert(ids.length == picked && ids[$ - 1] == "viewport.cavity"
+            && vpm.views[1].display.cavity.mode == pk.want,
+            "S3a cavity combo must dispatch viewport.cavity " ~ pk.name);
+    }
+    assert(picked == 4, "S3a combo census: all four options must be picked");
+
+    // The sliders: start both off the centre value so a press at the centre
+    // (about 1.0 on 0..2) is a change.
+    vpm.views[1].display.cavity.screenRidge = 0.25f;
+    vpm.views[1].display.cavity.screenValley = 0.25f;
+    ui.frame();
+    auto snap = viewportPropsDrawSnapshot();
+    ui.pressAt(center(snap.cavityRidgeMin, snap.cavityRidgeMax));
+    ui.release();
+    const r = vpm.views[1].display.cavity.screenRidge;
+    assert(ids.length == 5 && ids[4] == "viewport.cavityParams" && payloads[4].indexOf("screenRidge") >= 0
+        && r > 0.5f && r < 1.5f && vpm.views[1].display.cavity.screenValley == 0.25f,
+        "S3a ridge slider must dispatch viewport.cavityParams screenRidge only");
+    ui.frame();
+    snap = viewportPropsDrawSnapshot();
+    ui.pressAt(center(snap.cavityValleyMin, snap.cavityValleyMax));
+    ui.release();
+    const v = vpm.views[1].display.cavity.screenValley;
+    assert(ids.length == 6 && ids[5] == "viewport.cavityParams" && payloads[5].indexOf("screenValley") >= 0
+        && v > 0.5f && v < 1.5f && vpm.views[1].display.cavity.screenRidge == r,
+        "S3a valley slider must dispatch viewport.cavityParams screenValley only");
+    assert(vpm.views[0].display == d0, "S3a the cavity controls reached a cell other than the active one");
+
+    // Greyed: the same presses dispatch nothing off Shaded and under
+    // retopology (the presses above are the positive control).
+    // Each press must take NO ActiveId (a disabled widget) and dispatch
+    // nothing; the presses above are the positive control.
+    size_t pressedDisabled;
+    void pressAll(string why) {
+        ui.frame();
+        auto sn = viewportPropsDrawSnapshot();
+        foreach (k, rc; [[sn.cavityMin, sn.cavityMax], [sn.cavityRidgeMin, sn.cavityRidgeMax],
+                         [sn.cavityValleyMin, sn.cavityValleyMax]]) {
+            assert(!ui.tryPressAt(center(rc[0], rc[1])),
+                format("S3a %s: cavity control %d took the press (it must be disabled)", why, k));
+            ui.release();
+            ++pressedDisabled;
+        }
+    }
+    vpm.views[1].display.active.style = DisplayStyle.Solid;
+    pressAll("under Solid");
+    assert(ids.length == 6, "S3a under Solid the cavity controls must be disabled (dispatched " ~ ids[6 .. $].join(",") ~ ")");
+    vpm.views[1].display.active.style = DisplayStyle.Shaded;
+    vpm.views[1].display.retopology = true;
+    pressAll("under retopology");
+    assert(ids.length == 6, "S3a under retopology the cavity controls must be disabled (dispatched "
+        ~ ids[6 .. $].join(",") ~ ")");
+    assert(pressedDisabled == 6, format("S3a population: 6 disabled presses, made %d", pressedDisabled));
 }
