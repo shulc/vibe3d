@@ -535,6 +535,10 @@ unittest {
           ~ "vertColor x3, vertAlpha, pointSize)"),
         LedgerRow("wireViewportProviders.setViewportDisplayProvider.stateJson|%.6f", 2,
             "viewport display state (+pointSize)"),
+        LedgerRow("wireViewportProviders.setViewportDisplayProvider.compositeJson|%.6f", 6,
+            "the plan's composite stage parameters (cavity, model M4)"),
+        LedgerRow("wireViewportProviders.setViewportDisplayProvider.cavityJson|%.6f", 6,
+            "the cell's cavity state (model M4)"),
         LedgerRow("wireViewportProviders.setViewportDisplayProvider.gridJson|%.9g", 5,
             "viewport grid"),
         LedgerRow("wireViewportProviders.setSurfaceRaycastProvider|%.6f", 6,
@@ -573,15 +577,15 @@ unittest {
     size_t   total;
     foreach (e; kFrozen) total += e.count;
 
-    assert(total == 120, format("the frozen table must add up to the 120 "
+    assert(total == 132, format("the frozen table must add up to the 132 "
                               ~ "specifiers the conversion covered (100 from "
                               ~ "task 1550, plus meshPlanesJson's 11 from task "
                               ~ "1903 Stage B, plus the camera matrices from "
                               ~ "task 7139, plus 8 retopology-mode plan/state "
-                              ~ "floats), got %d", total));
+                              ~ "floats, plus 12 cavity/composite floats), got %d", total));
     string drift = reconcile(kFrozen, censusHits);
-    if (censusHits.length != 120)
-        drift ~= format("\n    specifier population — recorded 120, scanner "
+    if (censusHits.length != 132)
+        drift ~= format("\n    specifier population — recorded 132, scanner "
                       ~ "found %d", censusHits.length);
     assert(drift.length == 0,
         "the per-symbol specifier census moved. This is the ONLY check that can "

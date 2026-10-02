@@ -1006,9 +1006,9 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                     `"screenValley":%s,"worldRidge":%s,"worldValley":%s,` ~
                     `"distance":%s,"attenuation":%s,"samples":%d}`,
                     c.cavity.to!string, c.empty ? "true" : "false",
-                    jsonNum(c.screenRidge, "%.6g"), jsonNum(c.screenValley, "%.6g"),
-                    jsonNum(c.worldRidge, "%.6g"), jsonNum(c.worldValley, "%.6g"),
-                    jsonNum(c.distance, "%.6g"), jsonNum(c.attenuation, "%.6g"),
+                    jsonNum(c.screenRidge, "%.6f"), jsonNum(c.screenValley, "%.6f"),
+                    jsonNum(c.worldRidge, "%.6f"), jsonNum(c.worldValley, "%.6f"),
+                    jsonNum(c.distance, "%.6f"), jsonNum(c.attenuation, "%.6f"),
                     c.samples);
             }
             static string planJson(in DrawPlan p) {
@@ -1066,9 +1066,9 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                     `"worldRidge":%s,"worldValley":%s,"distance":%s,` ~
                     `"attenuation":%s,"samples":%d}`,
                     c.mode.to!string,
-                    jsonNum(c.screenRidge, "%.6g"), jsonNum(c.screenValley, "%.6g"),
-                    jsonNum(c.worldRidge, "%.6g"), jsonNum(c.worldValley, "%.6g"),
-                    jsonNum(c.distance, "%.6g"), jsonNum(c.attenuation, "%.6g"),
+                    jsonNum(c.screenRidge, "%.6f"), jsonNum(c.screenValley, "%.6f"),
+                    jsonNum(c.worldRidge, "%.6f"), jsonNum(c.worldValley, "%.6f"),
+                    jsonNum(c.distance, "%.6f"), jsonNum(c.attenuation, "%.6f"),
                     c.samples);
             }
             // The cell's composite record and the GL names it is
