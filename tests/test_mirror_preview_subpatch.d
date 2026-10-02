@@ -273,8 +273,10 @@ unittest {
     auto liveLook = probe(c, copyPts);
 
     // EXPECTATION per capture 8960 (findings §16.3): after the press and a scripted centre
-    // write, `tool.doApply` is ACCEPTED and stacks one mirrored copy of the selection (the
-    // originals; the live copy is not mirrored again) as its own undo row; Z1 takes it alone.
+    // write, `tool.doApply` is ACCEPTED, stacks as its own undo row, and Z1 takes it alone.
+    // OURS, not captured: the "+6, the live copy not mirrored again" count — the capture had
+    // one face selected; this rig starts with none and our empty-selection rule mirrors the
+    // visible originals.
     {
         auto ap = cmdRaw(`{"id":"tool.doApply"}`);
         settle();

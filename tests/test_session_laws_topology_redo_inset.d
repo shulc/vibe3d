@@ -276,6 +276,27 @@ unittest {
         ~ "at the press (face 1, +3), got " ~ (n - base).to!string ~ " new vertices");
 }
 
+// Task 8950 (re-review): every PolyExtrude haul of the late 8960/8980 cells declares its
+// `aim` (the reference has no handle before the first haul), so a dropped declaration
+// fails here and not only in the generator's `--check`.
+unittest {
+    import std.algorithm : startsWith;
+    size_t cells, hauls;
+    foreach (c; parseJSON(kFixture)["cells"].array) {
+        const id = c["id"].str;
+        if (!id.startsWith("cmdattrs_") && id != "doapply_after_sa_pextrude") continue;
+        ++cells;
+        foreach (st; c["steps"].array)
+            if (st["op"].str == "haul") {
+                ++hauls;
+                assert("aim" in st, "fixture: " ~ id ~ "/" ~ st["label"].str
+                    ~ " is a PolyExtrude haul with no `aim` declaration");
+            }
+    }
+    assert(cells == 4 && hauls > 0, "fixture: the late PolyExtrude cells are "
+        ~ cells.to!string ~ " with " ~ hauls.to!string ~ " hauls, frozen at 4 with at least one");
+}
+
 unittest { // every cell was played and compared (a skipped cell is not a green one)
     import std.process : environment;
     if (environment.get("VIBE3D_CELL", "").length || environment.get("VIBE3D_TOPO_REDO_DUMP", "").length)
