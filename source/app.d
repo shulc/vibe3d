@@ -6492,11 +6492,18 @@ void main(string[] args) {
             // scatter positions into a VBO laid out for the OLD preview.
             gpuUploadedPreviewTopVersion = ulong.max;
         }
+        // A Material-class commit refreshed the live preview's material data
+        // (S1e): the face VBO's slots and smooth normals need the full upload.
+        bool previewMaterialRefreshed = false;
         {
             import change_bus : MeshEditScope;
+            // `Material`: `mesh.surfaceAttr` / `mesh.setMaterial` (and a crease
+            // weight) — `rebuildIfStale` tells it apart through the material
+            // epoch and refreshes without a topology rebuild.
             enum uint kSubpatchTriggers = MeshEditScope.Position
                                         | MeshEditScope.Geometry
-                                        | MeshEditScope.Marks;
+                                        | MeshEditScope.Marks
+                                        | MeshEditScope.Material;
             if (meshChangedFlags & kSubpatchTriggers) {
                 import subpatch_osd : GpuFanOutTargets;
                 GpuFanOutTargets targets = {
@@ -6524,6 +6531,10 @@ void main(string[] args) {
                 subpatchPreview.rebuildIfStale(mesh, subpatchDepth, &targets);
                 if (subpatchPreview.lastRefreshFannedOut) {
                     gpu.noteFaceVboFannedOut();
+                }
+                if (subpatchPreview.lastRefreshMaterial) {
+                    previewMaterialRefreshed     = true;
+                    gpuUploadedPreviewTopVersion = ulong.max;
                 }
             }
         }
@@ -6579,7 +6590,8 @@ void main(string[] args) {
             if (staleOnScreen) {
                 // Nothing. See above.
             } else if ((wantPreview && (versionChanged || stateChanged
-                                 || previewInstalledThisFrame)) ||
+                                 || previewInstalledThisFrame
+                                 || previewMaterialRefreshed)) ||
                 (!wantPreview && stateChanged))
             {
                 if (wantPreview) {

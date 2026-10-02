@@ -13,11 +13,11 @@ module mesh_dirty;
 //          FROM THE MESH, `matches(m)` asks whether all still hold, and
 //          `agreesOn!(Sub...)` asks the same over a SUBSET of them, against a
 //          second key you sampled yourself. It can therefore only carry terms
-//          that EXIST — the six below.
+//          that EXIST — the seven below.
 //   * an ADDRESS AND ONE BUS EPOCH, and nothing else
 //       -> `MeshDirtyKey` (this module). `stamp(a, e)` / `matches(a, e)` take
 //          the pair the caller sampled, so the epoch may come from any of the
-//          four watchers — including `g_displayEpochs` and
+//          five watchers — including `g_displayEpochs` and
 //          `g_settledGeomEpochs`, which have NO `MeshKey` term at all, and a
 //          key over those two cannot be a `MeshKey` today no matter what it
 //          holds.
@@ -46,6 +46,7 @@ module mesh_dirty;
 //   mesh.MeshTermMarks      `marksVersion`    — WHICH elements are selected
 //   MeshTermGeomEpoch       g_geomEpochs      — position, through the bus
 //   MeshTermTopoEpoch       g_topoEpochs      — connectivity, position EXCLUDED
+//   MeshTermMaterialEpoch   g_materialEpochs  — the `Material` class alone
 //
 // WHICH TO DECLARE. The law is the owner's and is measured (CLAUDE.md, "the
 // two domains"): version counters own STRUCTURE, the bus's `Position` class
@@ -203,7 +204,7 @@ struct MeshDirtyEpochs {
     // paragraph for the measurement. At `kSlots` churning addresses a
     // never-changed address is never disturbed; at `kSlots + 1` it is disturbed
     // on EVERY round, each one an O(V+T) rebuild of a cache nothing dirtied.
-    // 32 slots cost 32*(8+8) = 512 bytes per watcher, three watchers, once — a
+    // 32 slots cost 32*(8+8) = 512 bytes per watcher, five watchers, once — a
     // price paid to put the cliff well past any document anyone edits, rather
     // than one layer past the documents we happen to test with.
     private enum int kSlots = 32;
@@ -346,6 +347,22 @@ struct MeshTermTopoEpoch {
     }
 }
 
+/// The MATERIAL-EPOCH term of a `mesh.MeshKey` — `g_materialEpochs`, the
+/// `Material` class alone, for the key's own mesh address. Read as a SUBSET
+/// compare (`agreesOn!MeshTermMaterialEpoch`), never as a freshness term:
+/// `mutationVersion` already carries the class; this term says WHICH class
+/// moved, so a consumer can refresh its material data without a rebuild.
+struct MeshTermMaterialEpoch {
+    enum string field = "materialEpoch";
+
+    static ulong read(M)(ref const M m) nothrow @nogc {
+        return g_materialEpochs.epochFor(cast(size_t)&m);
+    }
+    static bool same(M)(ulong v, ref const M m) nothrow @nogc {
+        return v == g_materialEpochs.epochFor(cast(size_t)&m);
+    }
+}
+
 // THE THREE WATCHER MASKS ARE NAMED, and that is not tidiness (task 1906
 // stage 2e). A consumer may legitimately DECLINE to key on any of them —
 // `render/render_mvp.d`'s IPR accumulator does, because its trigger set is
@@ -358,6 +375,7 @@ enum uint GeomEpochMask    = MeshEditScope.Position
                            | MeshEditScope.Points
                            | MeshEditScope.Polygons;
 enum uint TopoEpochMask    = MeshEditScope.Geometry;
+enum uint MaterialEpochMask = MeshEditScope.Material;
 
 /// Display-relevant classes — what makes the GPU buffers wrong
 /// (`mesh_edit_delta.DisplayRefreshMask`, single-sourced, NOT re-listed here).
@@ -471,6 +489,17 @@ __gshared MeshDirtyEpochs g_settledGeomEpochs =
 __gshared MeshDirtyEpochs g_topoEpochs =
     MeshDirtyEpochs.forClasses(TopoEpochMask);
 
+/// The `Material` class alone (`faceMaterial[]` / `surfaces[]`; also a crease
+/// weight and a `setMeshMapValue` write, which publish it too). ONE consumer:
+/// `SubpatchPreview.sourceKey`'s `MeshTermMaterialEpoch`, which re-copies the
+/// cage's material data into a live preview whose topology did not change
+/// (viewport shading S1e) — one trigger for `mesh.surfaceAttr` and
+/// `mesh.setMaterial` alike. Its own table rather than a reading of
+/// `g_displayEpochs`, which also carries `Position` and so cannot say "the
+/// material moved" on a frame where a vertex moved too.
+__gshared MeshDirtyEpochs g_materialEpochs =
+    MeshDirtyEpochs.forClasses(MaterialEpochMask);
+
 /// The single fan-in the change-bus listener calls. Registered ONCE, from
 /// `app.d`'s existing mesh-channel hub, so there is exactly one subscription
 /// to lose: if it goes, the hub's own `meshChangedFlags` goes with it and the
@@ -483,8 +512,8 @@ __gshared MeshDirtyEpochs g_topoEpochs =
 /// document-subject filter is uninstalled and is not the missing link here.
 /// COST, stated because stage 2d added a watcher. `note()` is a linear scan of
 /// `kSlots` per watcher — a hit scans to the slot, a miss scans all 32 twice
-/// (once for the address, once for a free slot) before evicting. With three
-/// watchers a delivery is therefore up to 6 x 32 = 192 word compares, and
+/// (once for the address, once for a free slot) before evicting. With five
+/// watchers a delivery is therefore up to 10 x 32 = 320 word compares, and
 /// there is ONE delivery per edit boundary since stage 3 retired the frame
 /// drain and its second feed. That is the price of not widening
 /// an existing watcher's mask: `g_geomEpochs` carries the surface BVH and
@@ -494,6 +523,7 @@ void noteMeshChange(size_t subjectAddr, uint flags) nothrow @nogc {
     g_displayEpochs.note(subjectAddr, flags);
     g_geomEpochs.note(subjectAddr, flags);
     g_topoEpochs.note(subjectAddr, flags);
+    g_materialEpochs.note(subjectAddr, flags);
     // The fourth watcher is the same classes with the live-gesture deliveries
     // withheld (task 2000). Read the publisher's claim HERE, at the one fan-in,
     // rather than giving `MeshDirtyEpochs` a second dimension: the marker is a
@@ -538,7 +568,7 @@ void noteMeshChange(size_t subjectAddr, uint flags) nothrow @nogc {
 // COST OF THE FAIL-SAFE ARM, measured (stage-3 review round 2): the unit
 // binary constructs a Layer at ~248 sites, so the full-table arm fires 1 551+
 // times per `dub test --config=tests`, each a `noteMeshChange(addr, uint.max)`
-// against all three watchers (and a bump of their `evicted_`). Deterministic
+// against every watcher (and a bump of their `evicted_`). Deterministic
 // per build and green at 278 modules — but any exact rebuild-COUNT assertion
 // (`g_acenClusterRebuilds`, `g_falloffSelWeightRebuilds`, the preview count)
 // is sensitive to how many layers earlier modules built. If a count test ever
@@ -687,8 +717,9 @@ ulong meshBirthsRecorded() nothrow @nogc { return g_births.totalObserved(); }
 /// anything that must act on all of them (the test reset seam; a future
 /// census) cannot fall behind a newly added watcher.
 MeshDirtyEpochs*[] allWatchers() nothrow @nogc {
-    static MeshDirtyEpochs*[4] tbl;
-    tbl = [&g_displayEpochs, &g_geomEpochs, &g_topoEpochs, &g_settledGeomEpochs];
+    static MeshDirtyEpochs*[5] tbl;
+    tbl = [&g_displayEpochs, &g_geomEpochs, &g_topoEpochs, &g_settledGeomEpochs,
+           &g_materialEpochs];
     return tbl[];
 }
 

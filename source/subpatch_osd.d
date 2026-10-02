@@ -1399,6 +1399,7 @@ struct OsdAccel {
     private GLint   locFaceSlot;
     private GLint   locSlotCos;
     private float[kSurfaceSlots] fanSlotCos = 0;   // the policy's per-slot cosines
+    private size_t  faceSlotCount;         // entries in faceSlotVbo (the preview's face count)
     private SmoothPolicy scratchPolicy;
     private int     faceVertCount;         // glDrawArrays count for TF
 
@@ -1573,7 +1574,7 @@ struct OsdAccel {
         if (vertFaceOffsetsTex != 0)     { glDeleteTextures(1, &vertFaceOffsetsTex); vertFaceOffsetsTex = 0; }
         if (vertFacesVbo != 0)           { glDeleteBuffers (1, &vertFacesVbo); vertFacesVbo = 0; }
         if (vertFacesTex != 0)           { glDeleteTextures(1, &vertFacesTex); vertFacesTex = 0; }
-        if (faceSlotVbo != 0)            { glDeleteBuffers (1, &faceSlotVbo); faceSlotVbo = 0; }
+        if (faceSlotVbo != 0)            { glDeleteBuffers (1, &faceSlotVbo); faceSlotVbo = 0; faceSlotCount = 0; }
         if (faceSlotTex != 0)            { glDeleteTextures(1, &faceSlotTex); faceSlotTex = 0; }
         if (limitTex != 0)               { glDeleteTextures(1, &limitTex); limitTex = 0; }
         if (tfVao != 0)                  { glDeleteVertexArrays(1, &tfVao); tfVao = 0; }
@@ -2430,6 +2431,7 @@ struct OsdAccel {
                 uploadTbo(faceSlotVbo,        faceSlotTex,
                           scratchPolicy.faceSlot[0 .. limitFaces], GL_R32UI);
                 fanSlotCos = scratchPolicy.slotCos;
+                faceSlotCount = limitFaces;
 
                 // limitGlVbo already exists (Phase 3a allocation).
                 // Wrap it in a TBO view so the shader can texelFetch.
@@ -2926,6 +2928,33 @@ struct OsdAccel {
         }
 
         readLimitIntoPreview(preview);
+    }
+
+    /// Re-derive the fan-out's smoothing policy from the preview mesh's
+    /// CURRENT `faceMaterial`/`surfaces` and re-upload it in place (the slot
+    /// TBO's storage and the per-slot cosines `refreshIntoFaceVbo` binds). The
+    /// material half of `installGl`, for a Material-class cage commit that
+    /// left the topology — hence the stencil table and every other TBO —
+    /// unchanged (`SubpatchPreview.refreshMaterialData`). Returns whether the
+    /// GPU copy was rewritten; false when the fan-out is not set up or the
+    /// preview's face count is not the one the TBO was sized for.
+    bool refreshSmoothPolicy(ref const Mesh pmesh) {
+        if (faceSlotVbo == 0 || pmesh.faces.length != faceSlotCount) return false;
+        version (web) {
+        } else {
+            import gl_thread_guard : glThreadGuard;
+            glThreadGuard("OsdAccel.refreshSmoothPolicy");
+        }
+        import bindbc.opengl;
+        buildSmoothPolicy(pmesh.faceMaterial, pmesh.faces.length,
+                          pmesh.surfaces, scratchPolicy);
+        glBindBuffer(GL_TEXTURE_BUFFER, faceSlotVbo);
+        glBufferSubData(GL_TEXTURE_BUFFER, 0,
+            cast(GLsizeiptr)(faceSlotCount * uint.sizeof),
+            scratchPolicy.faceSlot.ptr);
+        glBindBuffer(GL_TEXTURE_BUFFER, 0);
+        fanSlotCos = scratchPolicy.slotCos;
+        return true;
     }
 
     /// Phase 3b — readback limitGlVbo into preview.vertices WITHOUT

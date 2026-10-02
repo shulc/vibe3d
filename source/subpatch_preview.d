@@ -136,7 +136,14 @@ struct SubpatchPreview {
     ///
     /// Every term defaults to `ulong.max` and the address to `size_t.max`, so
     /// a fresh preview always rebuilds.
-    MeshKey!(MeshTermGeomEpoch, MeshTermMutation, MeshTermTopology) sourceKey;
+    ///  * MATERIAL EPOCH (`g_materialEpochs`, the `Material` class alone) —
+    ///    like TOPOLOGY, not a freshness term (`mutationVersion` already
+    ///    carries the class): read through `agreesOn!MeshTermMaterialEpoch` on
+    ///    the fast path to ask WHICH class moved, so a `mesh.surfaceAttr` or
+    ///    `mesh.setMaterial` commit refreshes the preview's material data
+    ///    (`refreshMaterialData`) without rebuilding its topology.
+    MeshKey!(MeshTermGeomEpoch, MeshTermMutation, MeshTermTopology,
+             MeshTermMaterialEpoch) sourceKey;
 
     /// The layout term, under the name `app.d` reads it by. Read-only: the
     /// key is the storage. Kept as a NAME rather than folded into
@@ -196,6 +203,14 @@ struct SubpatchPreview {
     /// refreshNonFacePositions entirely when this is true; no CPU
     /// position upload happens at all on the drag-frame fast path.
     bool lastRefreshSkipNonFace;
+
+    /// Set by the most recent `rebuildIfStale` when a Material-class cage
+    /// commit changed the preview's material data on the fast path
+    /// (`refreshMaterialData`). The face VBO's per-corner slot and smooth
+    /// normals are then stale, so the main loop takes the FULL preview upload
+    /// (a new face layout, hence a new CPU smoothing policy) instead of a
+    /// positions refresh.
+    bool lastRefreshMaterial;
 
     // Tab-toggle fast reactivation: when the user toggles subpatch OFF, keep the
     // last preview mesh/trace around. If the next ON sees the exact same cage
@@ -611,6 +626,9 @@ struct SubpatchPreview {
 
         mesh  = res.mesh;
         trace = res.trace;
+        // The snapshot's material data is the DISPATCH's; a Material commit
+        // during the flight is not in the stencil key that accepted it.
+        refreshMaterialData(source);
         ++mesh.mutationVersion;
         active                = true;
         depth                 = d;
@@ -733,6 +751,7 @@ struct SubpatchPreview {
                          const(GpuFanOutTargets)* targets = null) {
         lastRefreshFannedOut    = false;
         lastRefreshSkipNonFace  = false;
+        lastRefreshMaterial     = false;
         typeof(sourceKey) cur;
         cur.stamp(source);
         // The freshness early-out: address + geometry epoch + `mutationVersion`
@@ -763,6 +782,20 @@ struct SubpatchPreview {
             && depth == d
             && osdAccel.valid)
         {
+            // A Material-class commit (one trigger for `mesh.surfaceAttr` and
+            // `mesh.setMaterial`): new tags/surfaces over the same stencil
+            // table. Positions by the CPU (or readback) evaluate — the
+            // fan-out may have left `mesh.vertices` stale — because the main
+            // loop now uploads the preview whole.
+            if (!sourceKey.agreesOn!MeshTermMaterialEpoch(cur)
+                && refreshMaterialData(source))
+            {
+                osdAccel.refresh(source, mesh);
+                lastRefreshMaterial = true;
+                ++mesh.mutationVersion;
+                sourceKey = cur;
+                return;
+            }
             bool didFace  = false;
             bool didEdges = false;
             bool didVerts = false;
@@ -814,6 +847,9 @@ struct SubpatchPreview {
             && reusablePreviewKey == computeReusablePreviewKey(source, d)
             && mesh.vertices.length != 0)
         {
+            // The reuse key folds no material: a re-tag or surface edit made
+            // while the preview was off lands here.
+            refreshMaterialData(source);
             depth                 = d;
             sourceKey             = cur;
             active                = true;
@@ -864,6 +900,35 @@ struct SubpatchPreview {
             return;
         }
         dispatchBuild(source, d);
+    }
+
+    /// The material half of a build, over the preview already built: copy
+    /// the cage's `surfaces`, re-derive each preview face's tag from its cage
+    /// face (`trace.faceOrigin`, the rule every builder uses) and re-upload
+    /// the fan-out's smoothing policy (`OsdAccel.refreshSmoothPolicy`).
+    /// Value-compared, so a Material publish that changed neither array (a
+    /// map-value write) costs one O(preview faces) pass and no upload.
+    /// Returns whether anything differed.
+    private bool refreshMaterialData(ref const Mesh source) {
+        bool changed = mesh.surfaces != source.surfaces;
+        if (changed) mesh.surfaces = source.surfaces.dup;
+        immutable size_t nf = mesh.faces.length;
+        if (mesh.faceMaterial.length != nf) {
+            mesh.faceMaterial.length = nf;
+            changed = true;
+        }
+        foreach (i; 0 .. nf) {
+            immutable size_t cf = i < trace.faceOrigin.length
+                                ? trace.faceOrigin[i] : size_t.max;
+            immutable uint tag = cf < source.faceMaterial.length
+                               ? source.faceMaterial[cf] : 0u;
+            if (mesh.faceMaterial[i] != tag) {
+                mesh.faceMaterial[i] = tag;
+                changed = true;
+            }
+        }
+        if (changed) osdAccel.refreshSmoothPolicy(mesh);
+        return changed;
     }
 
     void rebuild(ref const Mesh source, int d) {

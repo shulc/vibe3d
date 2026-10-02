@@ -77,7 +77,7 @@ V3 faceNormal(V3[] v, uint[] f) { return unit(crs(sub(v[f[1]], v[f[0]]), sub(v[f
 // The rig file
 // ---------------------------------------------------------------------------
 
-struct Surf { bool on = true; double angle = 40; }
+struct Surf { bool on = true; double angle = 40; double[3] base = [0.6, 0.6, 0.6]; }
 
 private int g_rig = 0;
 
@@ -101,9 +101,9 @@ void loadRig(V3[] verts, uint[][] faces, uint[] mats = null, Surf[] surfs = null
     }
     if (surfs.length) {
         foreach (i, s; surfs)
-            ss ~= format(`%s{"name":"S%d","baseColor":[0.6,0.6,0.6],"diffuse":0.8,"specular":0.04,`
+            ss ~= format(`%s{"name":"S%d","baseColor":[%.6f,%.6f,%.6f],"diffuse":0.8,"specular":0.04,`
                        ~ `"glossiness":0.6,"opacity":1,"smoothing":%s,"smoothingAngle":%.6f}`,
-                         i ? "," : "", i, s.on ? "true" : "false", s.angle);
+                         i ? "," : "", i, s.base[0], s.base[1], s.base[2], s.on ? "true" : "false", s.angle);
         extra ~= `,"surfaces":[` ~ ss ~ `]`;
     }
     immutable dir = buildPath(environment.get("TMPDIR", "/var/tmp"), format("s1e-%d", thisProcessID()));
@@ -662,17 +662,20 @@ JSONValue dragAndCompare(string label) {
 }
 
 /// The cube cage with three slots under a live subpatch preview, vertices
-/// 0-3 selected, camera close in.
-void prepareCage() {
+/// 0-3 selected, camera close in. `extra` appends unused slots (3, ...).
+void prepareCage(Surf[] extra = null, void delegate() beforeTab = null,
+                 void delegate() afterTab = null) {
     V3[] cv = [V3(-0.5f, -0.5f, -0.5f), V3(0.5f, -0.5f, -0.5f), V3(0.5f, 0.5f, -0.5f), V3(-0.5f, 0.5f, -0.5f),
                V3(-0.5f, -0.5f, 0.5f), V3(0.5f, -0.5f, 0.5f), V3(0.5f, 0.5f, 0.5f), V3(-0.5f, 0.5f, 0.5f)];
     uint[][] cf = [[0u, 3, 2, 1], [4u, 5, 6, 7], [0u, 4, 7, 3], [1u, 2, 6, 5], [3u, 7, 6, 2], [0u, 1, 5, 4]];
-    loadRig(cv, cf, [2u, 0, 1, 0, 2, 1], [Surf(false, 40), Surf(true, 25), Surf(true, 60)]);
+    loadRig(cv, cf, [2u, 0, 1, 0, 2, 1], [Surf(false, 40), Surf(true, 25), Surf(true, 60)] ~ extra);
     cmd("tool.pipe.attr snap enabled false");
     cmd("tool.pipe.attr symmetry enabled false");
     cmd("select.typeFrom polygon");
     select("polygons", []);
+    if (beforeTab !is null) beforeTab();
     cmd(`{"id":"mesh.subpatch_toggle"}`);
+    if (afterTab !is null) afterTab();
     waitPreviewSettled();
     cmd("select.typeFrom vertex");
     select("vertices", [0, 1, 2, 3]);
@@ -687,29 +690,193 @@ unittest {
     dragAndCompare("drag 1");
 }
 
-// (vi) Material route — RED on this tree, and the witness of a PLAN-FINDING:
-// a Material-only commit (topology unchanged) takes `SubpatchPreview.
-// rebuildIfStale`'s position-only fast path (it agrees on `MeshTermTopology`),
-// which neither re-copies the cage's `surfaces`/`faceMaterial` into the preview
-// mesh nor re-runs `OsdAccel.installGl`, so the preview's smoothing policy
-// stays the one of its last full build. Opt-in (`VIBE3D_CELL=vi-material`)
-// until the architect rules on the trigger (the plan forbids adding one here).
+/// Corners whose smooth normal differs (> 1e-3) between two face-VBO reads.
+size_t smoothChanged(JSONValue a, JSONValue b) {
+    size_t n;
+    foreach (i; 0 .. kPreviewCorners)
+        if (maxAbs3(triple(a["smoothNormals"].array[i]), triple(b["smoothNormals"].array[i])) > 1e-3) ++n;
+    return n;
+}
+
+/// The live preview VBO equals a CPU rebake (Tab off/on) of the same cage, per
+/// corner; returns the rebake.
+JSONValue expectRebakeEqual(string label, JSONValue live) {
+    cmd("select.typeFrom polygon");
+    select("polygons", []);
+    cmd(`{"id":"mesh.subpatch_toggle"}`);
+    waitPreviewSettled(false);
+    cmd(`{"id":"mesh.subpatch_toggle"}`);
+    waitPreviewSettled();
+    auto cpu = getJson("/api/gpu/face-vbo?normals=1");
+    assert(cast(size_t)cpu["faceVertCount"].integer == kPreviewCorners,
+        format("%s floor: the rebake has %d corners", label, cpu["faceVertCount"].integer));
+    double d = 0, dPos = 0;
+    foreach (i; 0 .. kPreviewCorners) {
+        d = max(d, maxAbs3(triple(live["smoothNormals"].array[i]), triple(cpu["smoothNormals"].array[i])));
+        dPos = max(dPos, maxAbs3(triple(live["positions"].array[i]), triple(cpu["positions"].array[i])));
+    }
+    assert(dPos <= 1e-4, format("%s: the refreshed preview's positions differ from a rebake by %.2e "
+                              ~ "(uploaded from stale preview vertices)", label, dPos));
+    assert(d <= 1e-4, format("%s: the refreshed preview differs from a rebake of the same cage by %.2e "
+                           ~ "(its material data or policy is stale)", label, d));
+    return cpu;
+}
+
+// (vi) Material route: a Material-only commit (topology unchanged) takes
+// `SubpatchPreview.rebuildIfStale`'s fast path, which must refresh the
+// preview's material data (`refreshMaterialData`: surfaces, per-face tags, the
+// fan-out's slot TBO + cosines) and force the full preview upload. Red before
+// the fix: 0 corners changed (2026-10-02).
 unittest {
-    import std.process : environment;
-    if (environment.get("VIBE3D_CELL", "") != "vi-material") return;
+    if (!cellOn("vi-material")) return;
     prepareCage();
     auto cpu1 = dragAndCompare("drag 1");
     // The Material route: slot 1 off; the policy must reach the preview.
     cmd(attrBody(1, "smoothing", 0));
     waitPreviewSettled();
-    auto cpu1b = getJson("/api/gpu/face-vbo?normals=1");
-    size_t flipped;
-    foreach (i; 0 .. kPreviewCorners)
-        if (maxAbs3(triple(cpu1["smoothNormals"].array[i]), triple(cpu1b["smoothNormals"].array[i])) > 1e-3)
-            ++flipped;
+    auto live = getJson("/api/gpu/face-vbo?normals=1");
+    immutable size_t flipped = smoothChanged(cpu1, live);
     writefln("[vi] slot 1 off: %d corners changed", flipped);
+    assert(previewWriter() == "fullUpload",
+        "(vi) the Material commit did not take the full preview upload: writer " ~ previewWriter());
     assert(flipped >= 1, "(vi) the policy edit never reached the preview");
+    assert(flipped == 836, format("(vi) slot 1 off changed %d corners, measured 836 (2026-10-03)", flipped));
+    expectRebakeEqual("(vi) slot 1 off", live);
+    // The fan-out's policy (slot TBO + cosines) must follow too: drag 2 compares
+    // the GPU-written VBO with a rebake under the edited table.
     cmd("select.typeFrom vertex");
     select("vertices", [0, 1, 2, 3]);
     dragAndCompare("drag 2");
+}
+
+/// A held move drag of the selection, released, with NO rebake after it: the
+/// fan-out leaves the preview's CPU vertices behind the cage.
+void dragOnly(string label) {
+    cmd("tool.set move on");
+    frameFence(null, 2);
+    auto c = fetchCamera();
+    double gx, gy;
+    bool found;
+    fetchHandlePart(0, gx, gy, found);
+    assert(found, label ~ ": grab handle missing");
+    immutable int x0 = cast(int)(gx + 0.5), y0 = cast(int)(gy + 0.5), x1 = x0 + 50, y1 = y0 - 40;
+    playAndWait(buildDragDownLog(c.vpX, c.vpY, c.width, c.height, x0, y0));
+    playAndWait(buildDragMotionLog(c.vpX, c.vpY, c.width, c.height, x0, y0, x1, y1, 8));
+    frameFence(null, 2);
+    assert(previewWriter() == "gpuFanOut", format("%s: fan-out never ran (writer %s)", label, previewWriter()));
+    playAndWait(buildDragUpLog(c.vpX, c.vpY, c.width, c.height, x1, y1));
+    cmd("tool.set move off");
+    waitPreviewSettled();
+}
+
+/// The centre pixel of cell 0.
+int[3] centrePixel() {
+    auto vp = viewportFromCameraMatrices();
+    auto e = getJson(format("/api/viewport/probe?cell=0&points=%d,%d", vp.width / 2, vp.height / 2))
+        ["points"].array[0];
+    assert(("error" in e) is null, "centre probe refused: " ~ e.toString);
+    return [cast(int)e["r"].integer, cast(int)e["g"].integer, cast(int)e["b"].integer];
+}
+
+/// Corners of a face-VBO read whose smooth normal leaves the flat one (> 1e-3).
+size_t smoothedCorners(JSONValue v) {
+    size_t n;
+    foreach (i; 0 .. kPreviewCorners)
+        if (maxAbs3(triple(v["smoothNormals"].array[i]), triple(v["flatNormals"].array[i])) > 1e-3) ++n;
+    return n;
+}
+
+enum Surf kRedOff = Surf(false, 40, [0.9, 0.1, 0.1]);   // slot 3 of the re-tag cells
+
+/// Premises of the re-tag cells, on the live preview before the re-tag: it
+/// smooths (slots 1 and 2 are on) and the centre pixel is the grey default.
+void expectGreySmooth(string label) {
+    immutable size_t n = smoothedCorners(getJson("/api/gpu/face-vbo?normals=1"));
+    immutable int[3] p = centrePixel();
+    assert(n >= 100, format("%s premise: %d smoothed corners before the re-tag", label, n));
+    assert(abs(p[0] - p[1]) <= 3 && p[0] > 20, format("%s premise: the centre pixel %s is not grey", label, p));
+}
+
+/// After every face went to slot 3 (red, OFF): no corner smooths, the centre
+/// is red, and a rebake of the same cage agrees.
+void expectRedFlat(string label) {
+    auto live = getJson("/api/gpu/face-vbo?normals=1");
+    immutable size_t n = smoothedCorners(live);
+    immutable int[3] p = centrePixel();
+    writefln("[%s] smoothed corners after the re-tag %d; centre %s", label, n, p);
+    assert(n == 0, format("%s: %d of %d preview corners still smooth after re-tagging every face to an OFF "
+                        ~ "slot", label, n, kPreviewCorners));
+    assert(p[0] > p[1] + 40, format("%s: the centre pixel %s did not take the re-tagged slot's red", label, p));
+    expectRebakeEqual(label, live);
+}
+
+void retagAll(int slot) {
+    cmd("select.typeFrom polygon");
+    select("polygons", []);
+    runCmd("mesh.setMaterial", format(`{"materialId":%d}`, slot));
+}
+
+// (vi) re-tag route: `mesh.setMaterial` on the cage (all faces -> slot 3, red,
+// smoothing OFF) reaches the live preview through the same Material trigger:
+// every corner turns flat and the centre pixel turns red. A drag first, so the
+// preview's CPU vertices are behind the cage when the full upload reads them.
+unittest {
+    if (!cellOn("vi-retag")) return;
+    prepareCage([kRedOff]);
+    dragOnly("(vi-retag)");
+    expectGreySmooth("(vi-retag)");
+    retagAll(3);
+    waitPreviewSettled();
+    expectRedFlat("(vi-retag)");
+}
+
+// (vi) after the re-tag, a drag: the GPU fan-out must read the re-uploaded slot
+// TBO (`OsdAccel.refreshSmoothPolicy`), not the install-time tags.
+unittest {
+    if (!cellOn("vi-retag-drag")) return;
+    prepareCage([kRedOff]);
+    expectGreySmooth("(vi-retag-drag)");
+    retagAll(3);
+    waitPreviewSettled();
+    cmd("select.typeFrom vertex");
+    select("vertices", [0, 1, 2, 3]);
+    dragOnly("(vi-retag-drag)");
+    expectRedFlat("(vi-retag-drag)");
+}
+
+// (vi) the re-tag lands while the FIRST preview build is in flight (reception
+// held): the build's snapshot carries the dispatch-time tags, so the install
+// must re-copy the cage's.
+unittest {
+    if (!cellOn("vi-flight")) return;
+    prepareCage([kRedOff], () {
+        auto h = postJson("/api/subpatch/hold", `{"ms":-1,"ceilingMs":0}`);
+        assert(h["status"].str == "ok", "/api/subpatch/hold failed: " ~ h.toString);
+    }, () {
+        scope(exit) postJson("/api/subpatch/hold", `{"ms":0,"ceilingMs":0}`);
+        frameFence(null, 2);
+        auto p = getJson("/api/subpatch/preview");
+        assert(p["pending"].type == JSONType.true_, "(vi-flight) premise: no build in flight: " ~ p.toString);
+        retagAll(3);
+    });
+    expectRedFlat("(vi-flight)");
+}
+
+// (vi) the re-tag lands while the preview is OFF and Tab resurrects the cached
+// preview (`reusablePreviewKey`, which folds no material).
+unittest {
+    if (!cellOn("vi-reuse")) return;
+    prepareCage([kRedOff]);
+    expectGreySmooth("(vi-reuse)");
+    cmd("select.typeFrom polygon");
+    select("polygons", []);
+    immutable long builds0 = getJson("/api/subpatch/preview")["builds"].integer;
+    cmd(`{"id":"mesh.subpatch_toggle"}`);
+    waitPreviewSettled(false);
+    retagAll(3);
+    cmd(`{"id":"mesh.subpatch_toggle"}`);
+    waitPreviewSettled();
+    assert(getJson("/api/subpatch/preview")["builds"].integer == builds0,
+        "(vi-reuse) premise: Tab rebuilt the preview instead of resurrecting it");
+    expectRedFlat("(vi-reuse)");
 }
