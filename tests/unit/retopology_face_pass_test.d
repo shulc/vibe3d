@@ -93,8 +93,10 @@ unittest // the face VBO has ONE normal home: no inline copy survives in mesh_gp
 {
     const src = readText(buildPath(repoRoot, "source", "mesh_gpu.d"));
     immutable calls = src.count("faceNormalFirst3(");
-    assert(calls == 3, format("mesh_gpu.d: expected 3 faceNormalFirst3 calls "
-        ~ "(upload, refreshPositions, the positions-only fan refresh), got %s", calls));
+    // One call since the smooth stream (task 9070): `writeFaceCorners`, the
+    // one fan writer behind the upload and both position refreshes.
+    assert(calls == 1, format("mesh_gpu.d: expected 1 faceNormalFirst3 call "
+        ~ "(writeFaceCorners), got %s", calls));
     assert(src.count("1e-6f") == 0 && src.count("nlen") == 0,
         "mesh_gpu.d: an inline face-normal copy is back; call math.faceNormalFirst3");
 }
