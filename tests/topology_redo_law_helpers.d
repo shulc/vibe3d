@@ -271,19 +271,25 @@ long setupCell(const JSONValue cell, const Rig rig) {
     cmdOk("/api/camera", format(`{"azimuth":0.5,"elevation":0.4,"distance":7,`
         ~ `"focus":{"x":%.6f,"y":%.6f,"z":%.6f}}`, c[0], c[1], c[2]), ctx);
     // the reference's arm attributes our arm lacks: written on an armed, untouched tool
-    // and dropped (our tools keep their attributes across a drop and re-arm)
-    if (rig.armPreset.length) {
-        cmdOk("/api/command", "tool.set " ~ rig.tool ~ " on", ctx);
-        foreach (a, v; rig.armPreset) {
-            cmdOk("/api/command", "tool.attr " ~ rig.tool ~ " " ~ a ~ " " ~ v, ctx);
-            const r = postJson("/api/command", "tool.attr " ~ rig.tool ~ " " ~ a ~ " ?");
+    // and dropped (our tools keep their attributes across a drop and re-arm) — the cell's
+    // variant and every variant an arm step of the cell names (C7, plan §13.5)
+    const(Rig)[] preset = [rig];
+    foreach (st; cell["steps"].array)
+        if (auto v = "variant" in st) preset ~= rigOf(v.str);
+    foreach (pr; preset) {
+        if (!pr.armPreset.length) continue;
+        cmdOk("/api/command", "tool.set " ~ pr.tool ~ " on", ctx);
+        foreach (a, v; pr.armPreset) {
+            cmdOk("/api/command", "tool.attr " ~ pr.tool ~ " " ~ a ~ " " ~ v, ctx);
+            const r = postJson("/api/command", "tool.attr " ~ pr.tool ~ " " ~ a ~ " ?");
             const got = r["value"].type == JSONType.string ? r["value"].str : r["value"].toString;
             assert(got == v, format("rig VOID %s: the arm preset %s reads %s, written %s",
                 ctx, a, r["value"].toString, v));
         }
-        cmdOk("/api/command", "tool.set " ~ rig.tool ~ " off", ctx);
+        cmdOk("/api/command", "tool.set " ~ pr.tool ~ " off", ctx);
     }
     centerPlaced = false;
+    otherVariant = null;
     cmdOk("/api/command", "history.clear", ctx);
     settle();
     const base = cast(long) getJson("/api/model")["vertices"].array.length;
@@ -367,6 +373,7 @@ private double[4] meshScreenBox(const JSONValue cam) {
 
 /// The first haul of the cell placed the centre (`Rig.placesCenter`; reset by setupCell).
 private bool centerPlaced;
+private string[string] otherVariant;   // our tool id -> the variant an arm step named
 
 /// Half the reference's 0.05 placement snap: our placed centre must round to its centre.
 enum double kCenterSnapHalf = 0.025;
@@ -406,45 +413,62 @@ private void aimAtSelected(string ctx) {
     settle();
 }
 
+/// One haul step on `rig` (`runStep`).
+private void playHaul(const JSONValue step, const Rig rig, string ctx) {
+    const place = rig.placesCenter && !centerPlaced;
+    if (place) aimAtCenter(rig, step, ctx);
+    if (rig.aimAtSelection) aimAtSelected(ctx);
+    int x, y;
+    pressPoint(rig, step, x, y);
+    if ("aim" in step) {
+        // rig precondition: an aimed press hovers the handle, a free one hovers none
+        play(format(`{"t":10.000,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,`
+            ~ `"state":0,"mod":0}` ~ "\n", x, y));
+        const h = getJson("/api/tool/handles")["handles"];
+        const hot = h.type == JSONType.object ? h["hot"].integer : -1;
+        assert(step["aim"].str == "handle" ? hot == rig.handlePart : hot < 0,
+            format("rig VOID %s/%s: the %s press (%d, %d) hovers part %d", ctx,
+                step["label"].str, step["aim"].str, x, y, hot));
+    }
+    const rx = num(step["delta"][0]), ry = num(step["delta"][1]);
+    const m = rig.deltaMap;
+    const dx = m[0] * rx + m[1] * ry, dy = m[2] * rx + m[3] * ry;
+    drag(x, y, cast(int) dx, cast(int) dy, step["button"].str == "middle" ? 2 : 1);
+    if (place) {
+        centerPlaced = true;
+        const c = postJson("/api/command", "tool.attr " ~ rig.tool ~ " center ?")["value"];
+        foreach (k; 0 .. 3)
+            assert(abs(num(c[k]) - num(step["center"][k])) <= kCenterSnapHalf + 1e-9,
+                format("rig VOID %s/%s: our g1 centre %s is not the reference's %s (to its "
+                    ~ "0.05 placement snap)", ctx, step["label"].str, c.toString,
+                    step["center"].toString));
+    }
+}
+
 /// Run one step of the scenario (the generator's lexicon, plan §4.7).
 void runStep(const JSONValue step, const Rig rig, string ctx) {
     const op = step["op"].str;
     switch (op) {
     case "skip": return;               // a Z the reference's zguard did not send (PF-1)
-    case "arm":
+    case "arm": {
+        // plan §13.5 (C7): an arm step naming another variant arms THAT variant's tool
+        // over the cell's rig; `observe` reads it as `other:<variant>`
+        const v = "variant" in step;
+        const tool = v ? rigOf(v.str).tool : rig.tool;
+        if (v) otherVariant[tool] = v.str;
         cmdOk(step["door"].str == "ui" ? "/api/command?origin=ui" : "/api/command",
-            "tool.set " ~ rig.tool ~ " on", ctx);
+            "tool.set " ~ tool ~ " on", ctx);
         settle();
         return;
+    }
     case "haul": {
-        const place = rig.placesCenter && !centerPlaced;
-        if (place) aimAtCenter(rig, step, ctx);
-        if (rig.aimAtSelection) aimAtSelected(ctx);
-        int x, y;
-        pressPoint(rig, step, x, y);
-        if ("aim" in step) {
-            // rig precondition: an aimed press hovers the handle, a free one hovers none
-            play(format(`{"t":10.000,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,`
-                ~ `"state":0,"mod":0}` ~ "\n", x, y));
-            const h = getJson("/api/tool/handles")["handles"];
-            const hot = h.type == JSONType.object ? h["hot"].integer : -1;
-            assert(step["aim"].str == "handle" ? hot == rig.handlePart : hot < 0,
-                format("rig VOID %s/%s: the %s press (%d, %d) hovers part %d", ctx,
-                    step["label"].str, step["aim"].str, x, y, hot));
+        // C7 (plan §13.5): while another variant an arm step named is bound, the haul is
+        // ITS haul — played by that variant's rig
+        if (otherVariant.length) {
+            const id = getJson("/api/input/context")["tool"].str;
+            if (auto v = id in otherVariant) { playHaul(step, rigOf(*v), ctx); return; }
         }
-        const rx = num(step["delta"][0]), ry = num(step["delta"][1]);
-        const m = rig.deltaMap;
-        const dx = m[0] * rx + m[1] * ry, dy = m[2] * rx + m[3] * ry;
-        drag(x, y, cast(int) dx, cast(int) dy, step["button"].str == "middle" ? 2 : 1);
-        if (place) {
-            centerPlaced = true;
-            const c = postJson("/api/command", "tool.attr " ~ rig.tool ~ " center ?")["value"];
-            foreach (k; 0 .. 3)
-                assert(abs(num(c[k]) - num(step["center"][k])) <= kCenterSnapHalf + 1e-9,
-                    format("rig VOID %s/%s: our g1 centre %s is not the reference's %s (to its "
-                        ~ "0.05 placement snap)", ctx, step["label"].str, c.toString,
-                        step["center"].toString));
-        }
+        playHaul(step, rig, ctx);
         return;
     }
     case "key":
@@ -573,7 +597,8 @@ Obs observe(string label, const Rig rig) {
     if (auto ss = "session" in st)
         if (auto a = "armed" in *ss) o.armed = a.type == JSONType.true_;
     const id = getJson("/api/input/context")["tool"].str;
-    o.on = id == rig.tool ? "tool" : id == "move" ? "move" : id.length ? "other:" ~ id : "";
+    o.on = id == rig.tool ? "tool" : id == "move" ? "move" : id in otherVariant
+        ? "other:" ~ otherVariant[id] : id.length ? "other:" ~ id : "";
     if (o.on == "tool") {
         string[] parts;
         foreach (a; rig.attrs) {

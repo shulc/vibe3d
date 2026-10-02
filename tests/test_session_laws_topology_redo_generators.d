@@ -27,15 +27,15 @@ immutable string[] kCells = [
     "doapply_after_press_sa_mirror", "fold_close_mirror", "fold_close_mirror_ui",
     "mirror_attrs_script", "mirror_attrs_ui", "mirror_cmdclose_ui", "mirror_discrim",
     "mirror_discrim2", "mirror_discrim2_ui", "mirror_dormant", "mirror_dormant_ui",
-    "param_between_array_script", "param_between_array_ui", "param_between_moment_array_ui",
-    "param_closed_array_ui", "radial_attrs_script", "radial_attrs_ui", "radial_dormant",
-    "radial_dormant_ui", "xinst_trunc_array_ui"
+    "pairundo_pred_array_ui", "param_between_array_script", "param_between_array_ui",
+    "param_between_moment_array_ui", "param_closed_array_ui", "radial_attrs_script",
+    "radial_attrs_ui", "radial_dormant", "radial_dormant_ui", "xinst_trunc_array_ui"
 ];
 
-// `freeze_fixture.py --family generators` (2026-10-02, + 8960 Mirror, 9030 C8-2):
-// TOPO-REDO-CELLS family=generators cells=28 checkpoints=278 …
-enum long kCellCount = 28;
-enum long kCheckpointCount = 278;
+// `freeze_fixture.py --family generators` (2026-10-02, + 8960 Mirror, 9030 C8-2, 8940 C7):
+// TOPO-REDO-CELLS family=generators cells=29 checkpoints=289 …
+enum long kCellCount = 29;
+enum long kCheckpointCount = 289;
 
 unittest { // the floor: the fixture still holds the whole family
     familyFloor(parseJSON(kFixture), "generators", kCells, kCellCount, kCheckpointCount);

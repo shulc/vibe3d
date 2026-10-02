@@ -32,12 +32,12 @@ immutable string[] kCells = [
     "moment_restart_pextrude_ui", "nav_redo_opens_inset", "nav_redo_opens_inset_ui",
     "nav_redo_refire_inset", "nav_redo_refire_inset_ui", "nav_redo_restart_pextrude",
     "nav_redo_restart_pextrude_ui", "nav_undo_refire_inset", "nav_undo_refire_inset_ui",
-    "nav_undo_restart_pextrude", "nav_undo_restart_pextrude_ui", "param_after_undo_inset_script",
-    "param_after_undo_inset_ui", "param_between_inset_script", "param_between_inset_uc",
-    "param_between_inset_ui", "param_between_moment_inset_script", "param_between_moment_inset_ui",
-    "param_closed_after_end_inset", "param_closed_inset_ui", "param_rebegun_redo_inset",
-    "param_rebegun_undo_inset_ui", "param_twohaul_inset_script", "pextrude_direct",
-    "pextrude_direct_ui", "rclick_close_inset_script", "rclick_close_inset_ui",
+    "nav_undo_restart_pextrude", "nav_undo_restart_pextrude_ui", "pairundo_pred_inset_ui",
+    "param_after_undo_inset_script", "param_after_undo_inset_ui", "param_between_inset_script",
+    "param_between_inset_uc", "param_between_inset_ui", "param_between_moment_inset_script",
+    "param_between_moment_inset_ui", "param_closed_after_end_inset", "param_closed_inset_ui",
+    "param_rebegun_redo_inset", "param_rebegun_undo_inset_ui", "param_twohaul_inset_script",
+    "pextrude_direct", "pextrude_direct_ui", "rclick_close_inset_script", "rclick_close_inset_ui",
     "rebegin_redo_closed_inset", "rebegin_redo_closed_inset_ui", "rebegin_undo_close_inset",
     "rebegin_undo_close_inset_ui", "rebegin_undo_cmd_inset_ui", "reset_inset", "reset_inset_ui",
     "smooth_attrs_script", "smooth_attrs_ui", "smooth_direct", "smooth_direct_ui",
@@ -46,10 +46,10 @@ immutable string[] kCells = [
     "vmerge_dormant", "vmerge_dormant_ui", "xinst_ctrl_inset_ui", "xinst_trunc_inset_ui"
 ];
 
-// `freeze_fixture.py --family inset` (2026-10-02, + 8960 3 cells, 8980 3 cells, 9030 2 cells):
-// TOPO-REDO-CELLS family=inset cells=80 checkpoints=947 …
-enum long kCellCount = 80;
-enum long kCheckpointCount = 947;
+// `freeze_fixture.py --family inset` (2026-10-02, + 8960 3 cells, 8980 3 cells, 9030 2 cells, 8940 C7):
+// TOPO-REDO-CELLS family=inset cells=81 checkpoints=958 …
+enum long kCellCount = 81;
+enum long kCheckpointCount = 958;
 
 unittest { // the floor: the fixture still holds the whole family
     familyFloor(parseJSON(kFixture), "inset", kCells, kCellCount, kCheckpointCount);
