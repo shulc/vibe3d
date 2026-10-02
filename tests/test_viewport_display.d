@@ -244,12 +244,12 @@ bool testFlowB() {
     foreach (side; ["active", "backdrop"]) {
         auto s = c0["state"][side];
         foreach (field; ["style", "wire", "wireAlpha", "showVertices",
-                         "pointSize"])
+                         "pointSize", "smooth"])
             enforce(field in s,
                 format("state.%s is missing \"%s\" — the backdrop must be a "
                        ~ "full control set, not a dimming factor", side, field));
     }
-    writeln("    B1 PASS: state.active and state.backdrop both carry style/wire/wireAlpha/showVertices/pointSize");
+    writeln("    B1 PASS: state.active and state.backdrop both carry style/wire/wireAlpha/showVertices/pointSize/smooth");
 
     // The retopology display mode is a per-cell flag, off by default, and
     // nothing can set it yet.
@@ -269,7 +269,8 @@ bool testFlowB() {
                      "faceAlpha", "cullBackFaces", "reverseFaceOrder", "clearDepthFirst",
                      "lightGain", "vertColor", "vertAlpha", "pointSize",
                      "cullHiddenVerts", "shadeLinesByItem",
-                     "baseDotsBySelection", "joinsItemSequence", "styleFills"]) {
+                     "baseDotsBySelection", "joinsItemSequence", "styleFills",
+                     "smoothNormals"]) {
         ++nFields;
         enforce(field in pa,
             format("plan.active is missing \"%s\"", field));
@@ -277,9 +278,9 @@ bool testFlowB() {
             format("plan.backdrop is missing \"%s\" — it must be the same "
                    ~ "DrawPlan shape as the active side", field));
     }
-    enforce(nFields == 22, format("B2 checked %s plan fields, expected 22", nFields));
-    enforce(pa.object.length == 22 && pb.object.length == 22,
-        format("plan dump carries %s/%s keys, the list above names 22 — a "
+    enforce(nFields == 23, format("B2 checked %s plan fields, expected 23", nFields));
+    enforce(pa.object.length == 23 && pb.object.length == 23,
+        format("plan dump carries %s/%s keys, the list above names 23 — a "
                ~ "field was added without joining this list",
                pa.object.length, pb.object.length));
     // Mode off, the retopology-mode fields dump their neutral values on both
