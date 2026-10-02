@@ -231,6 +231,7 @@ public:
             ref PreparedPolyExtrudeActivationImage image) nothrow @nogc {
         if (!image.valid) return;
         active = true; built = false; dragPart = -1;
+        distance_ = shiftX_ = shiftY_ = shiftZ_ = 0.0f;
         resetExtentFrame();
         image.before.moveInto(before);
         gizmoValid = image.gizmoValid; anchor = image.anchor;
@@ -790,11 +791,10 @@ public:
             baseAnchor == Vec3(4,5,6) && extrudeAxis == Vec3(7,8,9) &&
             gizmoSelHash == 10;
     }
-    // The install keeps the attributes: the activation reset is the session's (S6r).
     version(unittest) final bool preparedActivationForTest(size_t count,
             Vec3 first, const Vec3* livePtr, Vec3 expectedAnchor,
             Vec3 expectedAxis, ulong expectedHash) const nothrow @nogc {
-        return active && !built && dragPart == -1 && distance_ == 7 &&
+        return active && !built && dragPart == -1 && distance_ == 0 &&
             before.filled && before.vertices.length == count && count &&
             before.vertices[0] == first && before.vertices.ptr !is livePtr &&
             gizmoValid && anchor == expectedAnchor && baseAnchor == anchor &&
@@ -804,7 +804,7 @@ public:
     }
     version(unittest) final bool preparedInvalidActivationForTest(
             ulong expectedHash) const nothrow @nogc {
-        return active && !built && dragPart == -1 && distance_ == 7 &&
+        return active && !built && dragPart == -1 && distance_ == 0 &&
             !gizmoValid && anchor == Vec3(1,2,3) &&
             baseAnchor == Vec3(4,5,6) && extrudeAxis == Vec3(7,8,9) &&
             gizmoSelHash == expectedHash;

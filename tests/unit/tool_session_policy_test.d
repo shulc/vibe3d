@@ -1520,9 +1520,10 @@ unittest { // (4j)
            format("S6r structural: %s classes reset at activation, %s none — measured 8 / 4",
                   nonEmpty, empty));
 
-    // STRUCTURAL — step 4 (a rule, form item 12): no activation body of a model class writes an
-    // attribute its policy images (`reinitSession`, `installPreparedActivation`): the copy is
-    // the cache's, the reset the session's. Fields are read off the class's own `Param` bindings.
+    // STRUCTURAL — step 4 (a rule, form item 12): no `reinitSession` of a model class writes an
+    // attribute its policy images: the copy is the cache's, the reset the session's. Fields are
+    // read off the class's own `Param` bindings. (`installPreparedActivation` keeps its pinned
+    // reset — the prepared-protocol contract; S6r plan finding.)
     size_t bodies;
     string[] writes;
     foreach (f; kRebaseBodyFiles) {
@@ -1536,7 +1537,7 @@ unittest { // (4j)
                 const fld = m[2];
                 fields ~= fld[fld.lastIndexOf('.') + 1 .. $];
             }
-        foreach (marker; ["void reinitSession()", "void installPreparedActivation("]) {
+        foreach (marker; ["void reinitSession()"]) {
             if (code.indexOf(marker) < 0) continue;
             ++bodies;
             const b = bodyAt(code, marker);
@@ -1545,13 +1546,9 @@ unittest { // (4j)
                     writes ~= format("%s %s: %s", f, marker, fld);
         }
     }
-    assert(bodies == 20, format("S6r floor: %s activation bodies found, measured 20 (9 reinitSession "
-           ~ "+ 11 installPreparedActivation)", bodies));
-    // Allowed (stationary): Mirror's install derives its plane frame from the view — no reset.
-    assert(writes == ["source/tools/alignment/mirror.d void installPreparedActivation(: left",
-                      "source/tools/alignment/mirror.d void installPreparedActivation(: up"],
-           format("S6r structural: an activation body writes an imaged attribute (step 4: the "
-                  ~ "reset is the session's; Mirror's derived frame alone is allowed): %s", writes));
+    assert(bodies == 9, format("S6r floor: %s reinitSession bodies found, measured 9", bodies));
+    assert(writes.length == 0, format("S6r structural: a reinitSession writes an imaged attribute "
+           ~ "(step 4: the reset is the session's): %s", writes));
 }
 
 // Pin (form item 1): a tool resets nothing at activation unless its policy says so.

@@ -179,7 +179,7 @@ public:
     final void installPreparedActivation(
             ref PreparedPolyInsetActivationImage image) nothrow @nogc {
         if (!image.valid) return;
-        active = true; built = false; dragging = false;
+        active = true; built = false; dragging = false; inset_ = 0.0f;
         image.before.moveInto(before); image.valid = false;
     }
     final PreparedSessionActivateEffect prepareActivate(
@@ -220,10 +220,9 @@ public:
             valueDrag_.value == 13 && valueDrag_.law.step == 14 &&
             cachedVp.view[0] == 15;
     }
-    // The install keeps the attributes: the activation reset is the session's (S6r).
     version(unittest) final bool preparedActivationForTest(size_t count,
             Vec3 first, const Vec3* livePtr) const nothrow @nogc {
-        return active && !built && !dragging && inset_ == 7 && before.filled &&
+        return active && !built && !dragging && inset_ == 0 && before.filled &&
             before.vertices.length == count && count && before.vertices[0] == first &&
             before.vertices.ptr !is livePtr && valueDrag_.pressX == 11 &&
             valueDrag_.lastX == 12 && valueDrag_.value == 13 &&

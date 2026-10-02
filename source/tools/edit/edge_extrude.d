@@ -230,6 +230,7 @@ public:
             ref PreparedEdgeExtrudeActivationImage image) nothrow @nogc {
         if (!image.valid) return;
         active = true; built = false; dragPart = -1;
+        extrude_ = 0.0f; width_ = 0.0f;
         image.before.moveInto(before);
         gizmoValid = image.gizmoValid; anchor = image.anchor;
         baseAnchor = image.baseAnchor; extrudeAxis = image.extrudeAxis;
@@ -906,12 +907,11 @@ public:
             dragStartMX == 16 && dragStartMY == 17 && dragBaseExtrude == 18 &&
             dragBaseWidth == 19 && freeLockAxis == 2 && cachedVp.view[0] == 20;
     }
-    // The install keeps the attributes: the activation reset is the session's (S6r).
     version(unittest) final bool preparedActivationForTest(size_t count,
             Vec3 first, const Vec3* livePtr, bool expectedValid,
             Vec3 expectedAnchor, Vec3 expectedBase, Vec3 expectedExtrude,
             Vec3 expectedWidth, ulong expectedHash) const nothrow @nogc {
-        return active && !built && dragPart == -1 && extrude_ == 7 && width_ == 8 &&
+        return active && !built && dragPart == -1 && extrude_ == 0 && width_ == 0 &&
             before.filled && before.vertices.length == count &&
             (count == 0 || (before.vertices[0] == first && before.vertices.ptr !is livePtr)) &&
             gizmoValid == expectedValid && anchor == expectedAnchor &&

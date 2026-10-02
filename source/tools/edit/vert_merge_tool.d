@@ -183,7 +183,7 @@ public:
     final void installPreparedActivation(
             ref PreparedVertexMergeActivationImage image) nothrow @nogc {
         if (!image.valid) return;
-        active = true; built = false; dragging = false;
+        active = true; built = false; dragging = false; dist_ = 0.001f;
         image.before.moveInto(before);
         image.valid = false;
     }
@@ -217,10 +217,9 @@ public:
             valueDrag_.pressValue == 13 && valueDrag_.law.gain == 14 &&
             cachedVp.view[0] == 15;
     }
-    // The install keeps the attributes: the activation reset is the session's (S6r).
     version(unittest) final bool preparedActivationForTest(size_t count,
             Vec3 first, const Vec3* livePtr) const nothrow @nogc {
-        return active && !built && !dragging && dist_ == 7.0f &&
+        return active && !built && !dragging && dist_ == 0.001f &&
             before.filled && before.vertices.length == count && count != 0 &&
             before.vertices[0] == first && before.vertices.ptr !is livePtr &&
             valueDrag_.pressX == 11 && valueDrag_.lastX == 12 &&

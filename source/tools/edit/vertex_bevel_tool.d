@@ -201,7 +201,7 @@ public:
     final void installPreparedActivation(
             ref PreparedVertexBevelActivationImage image) nothrow @nogc {
         if (!image.valid) return;
-        active = true; built = false; dragPart = -1;
+        active = true; built = false; dragPart = -1; inset_ = 0.0f;
         image.before.moveInto(before);
         gizmoValid = image.gizmoValid; anchor = image.anchor;
         baseAnchor = image.baseAnchor; insetAxis = image.insetAxis;
@@ -627,12 +627,11 @@ public:
             dragLastMX == 11 && dragLastMY == 12 && dragBaseInset == 13 &&
             cachedVp.view[0] == 14;
     }
-    // The install keeps the attributes: the activation reset is the session's (S6r).
     version(unittest) final bool preparedActivationForTest(size_t count,
             Vec3 first, const Vec3* livePtr, bool expectedValid,
             Vec3 expectedAnchor, Vec3 expectedBase, Vec3 expectedAxis,
             ulong expectedHash) const nothrow @nogc {
-        return active && !built && dragPart == -1 && inset_ == 7 && before.filled &&
+        return active && !built && dragPart == -1 && inset_ == 0 && before.filled &&
             before.vertices.length == count &&
             (count == 0 || (before.vertices[0] == first && before.vertices.ptr !is livePtr)) &&
             gizmoValid == expectedValid && anchor == expectedAnchor &&
