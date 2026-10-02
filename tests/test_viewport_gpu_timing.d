@@ -237,6 +237,64 @@ unittest { // (v) Quad: every rendering cell harvests
     assert(rendering == 4, format("(v) population floor: %d rendering cells, expected 4", rendering));
 }
 
+unittest { // (vi) selection-feedback and overlay sections: each present only where it draws
+    resetSingle();
+    postRaw("/api/command", "select.typeFrom vertex");
+    cmd("viewport.displayStyle", `"shaded"`);
+    auto v = window()[0];
+    writefln("  (vi-vertex) harvested=%d verts=%d overlays=%d imagePlanes=%d", v.harvested,
+             v.samples["verts"], v.samples["overlays"], v.samples["imagePlanes"]);
+    assert(v.harvested >= 8 && v.samples["verts"] >= 8,
+        format("(vi-vertex) positive control: verts=%d harvested=%d", v.samples["verts"], v.harvested));
+    assert(v.samples["overlays"] == 0 && v.samples["imagePlanes"] == 0,
+        format("(vi-vertex) no tool, no item type, no image plane: overlays=%d imagePlanes=%d "
+             ~ "must read absent", v.samples["overlays"], v.samples["imagePlanes"]));
+
+    postRaw("/api/command", "select.typeFrom polygon");
+    cmd("viewport.displayStyle", `"wireframe"`);
+    auto pn = window()[0];
+    writefln("  (vi-poly) harvested=%d faces=%d edges=%d", pn.harvested,
+             pn.samples["faces"], pn.samples["edges"]);
+    assert(pn.harvested >= 8 && pn.samples["edges"] >= 8,
+        format("(vi-poly) the polygon edge arm is a sample: edges=%d", pn.samples["edges"]));
+    assert(pn.samples["faces"] == 0,
+        format("(vi-poly) no face selected: the checker fill must read absent, got %d",
+               pn.samples["faces"]));
+    cmd("mesh.select", `{"mode":"polygons","indices":[0]}`);
+    auto ps = window()[0];
+    writefln("  (vi-poly-sel) harvested=%d faces=%d", ps.harvested, ps.samples["faces"]);
+    assert(ps.samples["faces"] >= 8,
+        format("(vi-poly-sel) the checker fill of a selected face is a faces sample, got %d",
+               ps.samples["faces"]));
+    cmd("mesh.select", `{"mode":"polygons","indices":[]}`);
+
+    postRaw("/api/command", "select.typeFrom edge");
+    auto e = window()[0];
+    writefln("  (vi-edge) harvested=%d edges=%d", e.harvested, e.samples["edges"]);
+    assert(e.harvested >= 8 && e.samples["edges"] >= 8,
+        format("(vi-edge) the edge arm is a sample: edges=%d", e.samples["edges"]));
+
+    postRaw("/api/command", "select.typeFrom vertex");
+    cmd("viewport.displayStyle", `"shaded"`);
+    postRaw("/api/command", "tool.set move on");
+    auto t = window()[0];
+    postRaw("/api/command", "tool.set move off");
+    writefln("  (vi-tool) harvested=%d overlays=%d overlayMode=%s", t.harvested,
+             t.samples["overlays"], cells()[0]["overlayMode"].str);
+    assert(t.harvested >= 8 && t.samples["overlays"] >= 8,
+        format("(vi-tool) an active tool's overlays are a sample: %d", t.samples["overlays"]));
+
+    postRaw("/api/command", "select.typeFrom item");
+    auto it = window()[0];
+    postRaw("/api/command", "select.typeFrom vertex");
+    writefln("  (vi-item) harvested=%d overlays=%d verts=%d", it.harvested,
+             it.samples["overlays"], it.samples["verts"]);
+    assert(it.harvested >= 8 && it.samples["overlays"] >= 8,
+        format("(vi-item) the item-highlight pass is a sample: %d", it.samples["overlays"]));
+    assert(it.samples["verts"] == 0,
+        format("(vi-item) under the item type no vertex feedback draws: verts=%d", it.samples["verts"]));
+}
+
 unittest { // diagnostic (no assert): the instance-lifetime harvest lag that sized the ring
     auto g = cells()[0]["gpuTiming"];
     writefln("  P0 ring: maxHarvestLag=%d framesDropped=%d framesHarvested=%d ringFrames=%d",
