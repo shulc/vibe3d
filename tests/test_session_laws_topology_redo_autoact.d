@@ -48,47 +48,29 @@ unittest { // the floor: the fixture still holds the whole family
 
 // The middle-button restart of EdgeExtrude (plan §11, verdict 8890): one layer per press
 // on both sides, so every `_M` point is parity but its `origin` (S2b), and the fields
-// after it take their owners by the general rule — except that S3 does not derive the
-// restart law (§11): a field only law 2 would explain is "none: outside the model", and
-// those are exactly `kMiddleNoLaw2` (S3 fix 8950: the haul after the restart's undo refires
-// the restart's operation from its base at the reference, 13, ours from g1's, 9). Floors:
-// generator output 2026-10-02 — 6 `_M` points (`LIST middleRestartParity n=6`),
-// `LIST middleRestartNoLaw2 n=4`.
-immutable string[] kMiddleNoLaw2 = [
-    "nav_undo_restart_eextrude/s05_drag.vcount", "nav_undo_restart_eextrude/s06_W.vcount",
-    "nav_undo_restart_eextrude_ui/s05_drag.vcount", "nav_undo_restart_eextrude_ui/s06_W.vcount",
-];
-
+// after it take their owners by the general rule. Floor: generator output 2026-10-02 —
+// 6 `_M` points (`LIST middleRestartParity n=6`). (The haul after the restart's undo is
+// law 6's PF-7 rule, `LIST undoneRestartTail`, plan §14.5.)
 unittest {
     const fx = parseJSON(kFixture);
     size_t points;
-    string[] none;
     foreach (c; fx["cells"].array) {
         if (c["family"].str != "autoact" || !c["measured"].boolean) continue;
         string m;
         foreach (s; c["steps"].array)
             if (s["op"].str == "haul" && s["button"].str == "middle") { m = s["label"].str; break; }
         if (!m.length) continue;
-        bool tail;
         foreach (p; c["points"].array) {
             const at = c["id"].str ~ "/" ~ p["label"].str;
-            if (p["label"].str == m) {
-                tail = true; ++points;
-                foreach (field, f; p["fields"].object)
-                    assert("ours" !in f || field == "origin", "fixture: " ~ at ~ "." ~ field
-                        ~ " — the middle press diverges (plan §11: one layer per press)");
-            }
-            if (!tail) continue;
+            if (p["label"].str != m) continue;
+            ++points;
             foreach (field, f; p["fields"].object)
-                if ("ours" in f && f["owner"].str == "none: outside the model")
-                    none ~= at ~ "." ~ field;
+                assert("ours" !in f || field == "origin", "fixture: " ~ at ~ "." ~ field
+                    ~ " — the middle press diverges (plan §11: one layer per press)");
         }
     }
     assert(points == 6, "fixture family autoact holds " ~ points.to!string
         ~ " middle-restart points, frozen at 6");
-    assert(none == kMiddleNoLaw2, "fixture: the fields after an EdgeExtrude middle press "
-        ~ "outside the model are " ~ none.to!string ~ ", expected the four law 2 alone "
-        ~ "explains (plan §11: the general owner rule applies to the rest)");
 }
 
 // The kernel owner (reviewer's adjudication of S1b PLAN-FINDING-1, gap row 486): EdgeExtrude
