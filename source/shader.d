@@ -258,12 +258,31 @@ private immutable string litFragSrc = withShaderPreamble(q{
     uniform float u_goochWarmKd;
     uniform vec3  u_fillColor;      // the unlit fill's base; NOT the material (task 0592)
     uniform float u_faceAlpha;      // output alpha of every arm; 1.0 = opaque (FacePass)
+    uniform int   u_surfaceId;      // G-buffer surface id: layer index + 1, 0 = none
+    uniform int   u_effectFlags;    // DrawPlan.effectFlags (bit 0 = cavity-eligible)
     layout(std140) uniform Materials {
         vec4 mat_base[64];     // .rgb = baseColor, .a = opacity
         vec4 mat_params[64];   // .x = diffuse amount, .y = specular amount,
                                // .z = glossiness, .w = its Blinn exponent
     };
-    out vec4 fragColor;
+    // Explicit locations: GLSL ES 3.00 requires them once there are two
+    // outputs. Location 1 is the integer G-buffer (model M4): written on
+    // every draw, kept only while the draw buffers are {C0, C1} (the surface
+    // passes of a cell whose composite plan is non-empty); never blended.
+    layout(location = 0) out vec4  fragColor;
+    layout(location = 1) out uvec4 gbuf;
+    // Octahedral normal encoding (Cigolle et al. 2014, "A Survey of
+    // Efficient Representations for Independent Unit Vectors"): the unit
+    // sphere folded onto the [-1,1] square, lower hemisphere mirrored over
+    // the diagonals. Returned as two unorm16 values.
+    uvec2 octEncode16(vec3 n) {
+        vec3  a = abs(n);
+        vec2  e = n.xy / max(a.x + a.y + a.z, 1e-20);
+        if (n.z < 0.0)
+            e = (vec2(1.0) - abs(e.yx))
+              * vec2(e.x >= 0.0 ? 1.0 : -1.0, e.y >= 0.0 ? 1.0 : -1.0);
+        return uvec2(round(clamp(e * 0.5 + 0.5, 0.0, 1.0) * 65535.0));
+    }
     // The ONE light function of the lit arms (`light_rig`'s header has the
     // law and its capture): `kd` = base colour × diffuse amount; ambient
     // `u_ambient·kd` is left unscaled and `u_lightGain` multiplies everything
@@ -345,6 +364,42 @@ private immutable string litFragSrc = withShaderPreamble(q{
             col = mix(vWeightColor, u_color, u_overrideMix);
         }
         fragColor = vec4(col * u_dim, u_faceAlpha);
+        float nl = length(vNormal);
+        gbuf = uvec4(octEncode16(nl > 0.0 ? vNormal / nl : vec3(0.0, 0.0, 1.0)),
+                     uint(u_surfaceId), uint(u_effectFlags));
+    }
+});
+
+// ---- The composite stage (model M4) -----------------------------
+// Fullscreen triangle with no attributes (an empty VAO is bound): vertex ids
+// 0,1,2 -> (-1,-1), (3,-1), (-1,3), counter-clockwise.
+immutable string compositeVertSrc = withShaderPreamble(q{
+    void main() {
+        vec2 p = vec2(float((gl_VertexID & 1) << 2) - 1.0,
+                      float((gl_VertexID & 2) << 1) - 1.0);
+        gl_Position = vec4(p, 0.0, 1.0);
+    }
+});
+
+// The resolve: the copied colour times the cavity factor on pixels whose
+// G-buffer flags carry bit 0, the copy itself elsewhere. With the kernels
+// absent (cav = edges = curv = 0) the factor is exactly 1 and the
+// resolve is an identity — the pixel-neutrality proof of the stage. Samplers:
+// unit 0 the copy, 1 the G-buffer, 2 the world-cavity buffer.
+immutable string compositeResolveFragSrc = withShaderPreamble(q{
+    uniform sampler2D  u_src;
+    uniform highp usampler2D u_gbuf;
+    uniform sampler2D  u_ao;
+    layout(location = 0) out vec4 fragColor;
+    void main() {
+        ivec2 p   = ivec2(gl_FragCoord.xy);
+        vec4  src = texelFetch(u_src, p, 0);
+        uvec4 g   = texelFetch(u_gbuf, p, 0);
+        float cav = 0.0, edges = 0.0, curv = 0.0;
+        float k   = ((g.a & 1u) != 0u)
+                  ? clamp((1.0 - cav) * (1.0 + edges) * (1.0 + curv), 0.0, 4.0)
+                  : 1.0;
+        fragColor = vec4(src.rgb * k, src.a);
     }
 });
 
@@ -658,6 +713,8 @@ string shaderSourceForValidation(string name) pure @safe {
     case "gridFragSrc": return gridFragSrc;
     case "thickLineVertexSrc": return thickLineVertexSrc;
     case "thickLineFragSrc": return thickLineFragSrc;
+    case "compositeVertSrc": return compositeVertSrc;
+    case "compositeResolveFragSrc": return compositeResolveFragSrc;
     default: assert(false, "unknown shader source: " ~ name);
     }
 }
@@ -824,6 +881,8 @@ class LitShader {
     private GLint locShading;
     private GLint locFillColor;
     private GLint locSmoothNormals;
+    private GLint locSurfaceId;
+    private GLint locEffectFlags;
     // Not a plan uniform: written with `u_model` by `useProgram` and the
     // preview helper, both in this module.
     private GLint locNormalMatrix;
@@ -855,6 +914,8 @@ class LitShader {
         locFaceAlpha   = glGetUniformLocation(program, "u_faceAlpha");
         locSmoothNormals = glGetUniformLocation(program, "u_smoothNormals");
         locNormalMatrix  = glGetUniformLocation(program, "u_normalMatrix");
+        locSurfaceId     = glGetUniformLocation(program, "u_surfaceId");
+        locEffectFlags   = glGetUniformLocation(program, "u_effectFlags");
         // Every draw binds through `useProgram`, which seeds every uniform
         // below; nothing is parked here.
 
@@ -1011,12 +1072,15 @@ class LitShader {
     /// `restorePlanDefaults`, never a line at a face-pass site (task 9040).
     /// Shading and fill are written together because they are one decision
     /// (task 0592): a pass cannot set the fill and forget the lighting.
-    void applyPlan(const ref DrawPlan plan) {
+    /// `surfaceId` is the pass's G-buffer surface id (layer index + 1),
+    /// written with the plan's `effectFlags`.
+    void applyPlan(const ref DrawPlan plan, uint surfaceId) {
         setDim(plan.dim);
         setShading(plan.shading);
         setFillColor(plan.fillColor);
         setLightGain(plan.lightGain);
         setSmoothNormals(plan.smoothNormals);
+        setSurfaceTag(surfaceId, plan.effectFlags);
     }
 
     /// Park every per-plan uniform at its neutral: the values a
@@ -1030,6 +1094,7 @@ class LitShader {
         setFillColor(park.fillColor);
         setLightGain(park.lightGain);
         setSmoothNormals(park.smoothNormals);
+        setSurfaceTag(0, park.effectFlags);
     }
 
     /// The subset of `plan` a create-tool preview honours: the cell's normal
@@ -1070,6 +1135,13 @@ class LitShader {
     private void setSmoothNormals(bool smooth) {
         glUseProgram(program);
         glUniform1i(locSmoothNormals, smooth ? 1 : 0);
+    }
+
+    /// The G-buffer tag of the next draws: surface id and effect flags.
+    private void setSurfaceTag(uint surfaceId, ubyte effectFlags) {
+        glUseProgram(program);
+        glUniform1i(locSurfaceId, cast(int)surfaceId);
+        glUniform1i(locEffectFlags, cast(int)effectFlags);
     }
 
     /// `u_normalMatrix = normalMatrix(modelView)` for the bound program.

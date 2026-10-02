@@ -16,7 +16,8 @@ import std.process : thisProcessID;
 import std.string : indexOf;
 import std.traits : EnumMembers;
 
-import display_state : BackdropStyle, DisplayStyle, ViewportDisplay, WireOverlay;
+import display_state : BackdropStyle, CavityMode, CavityState, DisplayStyle, ViewportDisplay,
+    WireOverlay;
 import prefs : Prefs, ViewportCellDisplay, loadPrefs, mirrorNonTemplateDisplay,
     restoreNonTemplateDisplay, savePrefs;
 import scene_reset_effects : clearViewDisplayForAutomation;
@@ -47,7 +48,8 @@ private bool sameNonTemplate(in ViewportDisplay a, in ViewportDisplay b) {
         && a.backdrop.style == b.backdrop.style
         && a.active.showVertices == b.active.showVertices
         && a.active.pointSize == b.active.pointSize
-        && a.active.smooth == b.active.smooth && a.backdrop.smooth == b.backdrop.smooth;
+        && a.active.smooth == b.active.smooth && a.backdrop.smooth == b.backdrop.smooth
+        && a.cavity == b.cavity;
 }
 
 unittest { // P1: the defaults agree, so an untouched cell round-trips as the identity
@@ -182,7 +184,18 @@ unittest { // P6: the test-automation clear reaches the live cells AND the mirro
     assert(store.viewportDisplay[3].retopology && vpm.views[3].display.retopology,
         "P6 rig: the mode must be on in both places before the clear");
     foreach (k; 0 .. 4) vpm.views[k].dirty = false;
+    // Task 9190: the cavity atom and its effect targets go with the clear.
+    vpm.views[3].display.cavity.mode = CavityMode.Screen;
+    mirrorNonTemplateDisplay(store.viewportDisplay[3], vpm.views[3].display);
+    vpm.views[3].fbo.ensure(64, 64);
+    vpm.views[3].fbo.ensureEffects();
+    assert(vpm.views[3].fbo.gbufTex != 0, "P6 rig: cell 3's effect targets must be allocated");
     clearViewDisplayForAutomation(vpm, store);
+    assert(vpm.views[3].fbo.gbufTex == 0 && vpm.views[3].fbo.effectsFbo == 0,
+        "P6: the automation clear must release the effect targets (no test inherits a G-buffer)");
+    assert(vpm.views[3].display.cavity == CavityState.init
+        && store.viewportDisplay[3].cavity == CavityState.init,
+        "P6: the automation clear must reset the cavity in the cell and its mirror");
     int cells = 0;
     foreach (k; 0 .. 4) {
         assert(sameNonTemplate(vpm.views[k].display, ViewportDisplay.init),
@@ -243,4 +256,32 @@ unittest { // P6 (task 9070): the two slots' normal source survive save -> load 
     const t = loadPrefs(dir);
     assert(t.viewportDisplay[0].smooth && t.viewportDisplay[0].backdropSmooth,
         "P6: a cell without the keys must keep smooth on");
+}
+
+unittest { // P8 (task 9190): the cavity survives save -> load -> restore; a hand-edited file is clamped
+    const dir = scratch("cavity");
+    scope(exit) rmdirRecurse(dir);
+    ViewportDisplay live;
+    live.cavity.mode = CavityMode.Both;      // every field off its default
+    live.cavity.screenRidge = 2; live.cavity.screenValley = 3;
+    live.cavity.worldRidge = 4;  live.cavity.worldValley = 5;
+    live.cavity.distance = 0.5f; live.cavity.attenuation = 6; live.cavity.samples = 32;
+    Prefs p;
+    mirrorNonTemplateDisplay(p.viewportDisplay[2], live);
+    assert(p.viewportDisplay[2].cavity == live.cavity, "P8: the mirror must copy the cavity");
+    savePrefs(p, dir);
+    const q = loadPrefs(dir);
+    ViewportDisplay back;
+    restoreNonTemplateDisplay(back, q.viewportDisplay[2]);
+    assert(back.cavity == live.cavity,
+        format("P8: the cavity lost in the round trip: %s vs %s", back.cavity, live.cavity));
+    // Out-of-table values read back at the kernel's clamp; junk keeps defaults.
+    write(buildPath(dir, "prefs.json"), `{ "version": 1, "viewportDisplay": [ {"cavity":`
+        ~ `{"mode":"World","screenRidge":1000,"distance":0,"samples":100000,"worldRidge":"x"}} ] }`);
+    const t = loadPrefs(dir);
+    const c = t.viewportDisplay[0].cavity;
+    assert(c.mode == CavityMode.World, "P8: the mode must read back by name");
+    assert(c.screenRidge == 250 && c.distance == 1e-4f && c.samples == 64,
+        format("P8: out-of-table values must clamp: %s", c));
+    assert(c.worldRidge == CavityState.init.worldRidge, "P8: a non-number keeps the default");
 }

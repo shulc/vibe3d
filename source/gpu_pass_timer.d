@@ -23,6 +23,7 @@ module gpu_pass_timer;
 enum GpuSeg : ubyte {
     setup, imagePlanes, grid, backdropFaces, faces, backdropWire, edges,
     verts, overlays,
+    composite,   // `ViewportCompositor.run`, non-empty plans only (model M4)
 }
 
 /// Frame slots in flight per cell, chosen by the P0 measurement (task 9140

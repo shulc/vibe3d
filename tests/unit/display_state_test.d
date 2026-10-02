@@ -5,6 +5,7 @@ module tests.unit.display_state_test;
 
 public import viewport_scheme : kSchemeSolidFill;
 import display_state;
+import std.format : format;
 
 /// The shipped default differs by projection on the SURFACE axis only.
 unittest {
@@ -491,4 +492,118 @@ unittest {
         ++checked;
     }
     assert(checked == 5, format("population floor: 5 offered styles, checked %d", checked));
+}
+
+/// [E1] The composition of the cavity state and the composite plan (task
+/// 9190): a new field is a decision the prefs mirror, the endpoint, the
+/// command and the clamp table must all see.
+unittest {
+    static assert([__traits(allMembers, CavityState)]
+        == ["mode", "screenRidge", "screenValley", "worldRidge", "worldValley",
+            "distance", "attenuation", "samples"],
+        "CavityState's members changed — extend the prefs mirror, the endpoint, "
+        ~ "viewport.cavityParams and resolveCavityParams, then this list");
+    static assert([__traits(allMembers, CompositePlan)]
+        == ["cavity", "screenRidge", "screenValley", "worldRidge", "worldValley",
+            "distance", "attenuation", "samples", "empty"],
+        "CompositePlan's members changed — extend the compositor's pass table, "
+        ~ "the endpoint and this list");
+}
+
+/// [E2] The composite truth table (owner ruling, task 9190): cavity reaches
+/// the ACTIVE plan only under the Shaded style with the retopology mode off;
+/// every other style and the mode resolve it Off; the backdrop never carries
+/// it; `clearDepthFirst ⇒ composite.empty`; `effectFlags` bit 0 iff the pass
+/// shades Material from Shaded.
+unittest {
+    import std.traits : EnumMembers;
+    size_t rows;
+    foreach (style; [EnumMembers!DisplayStyle])
+    foreach (mode; [EnumMembers!CavityMode])
+    foreach (retopo; [false, true]) {
+        ViewportDisplay d;
+        d.active.style = style;
+        d.cavity.mode  = mode;
+        d.retopology   = retopo;
+        immutable DrawPlan a = resolveDrawPlan(d, false);
+        immutable DrawPlan b = resolveDrawPlan(d, true);
+        immutable bool want = style == DisplayStyle.Shaded && !retopo && mode != CavityMode.Off;
+        immutable ctx = format("style %s mode %s retopology %s", style, mode, retopo);
+        assert(a.composite.empty == !want,
+            "E2: active composite " ~ (want ? "must carry" : "must be empty") ~ " — " ~ ctx);
+        if (want) assert(a.composite.cavity == mode, "E2: active composite mode — " ~ ctx);
+        assert(b.composite.empty, "E2: the backdrop plan never carries a composite — " ~ ctx);
+        assert(!a.clearDepthFirst || a.composite.empty, "E2: clearDepthFirst ⇒ composite.empty — " ~ ctx);
+        immutable ubyte flags = (style == DisplayStyle.Shaded && !retopo) ? kEffectCavityEligible : 0;
+        assert(a.effectFlags == flags,
+            format("E2: active effectFlags %d, expected %d — %s", a.effectFlags, flags, ctx));
+        // SameAsActive backdrop follows the active style (Shaded → eligible).
+        immutable ubyte bflags = (style == DisplayStyle.Shaded) ? kEffectCavityEligible : 0;
+        assert(b.effectFlags == bflags,
+            format("E2: backdrop effectFlags %d, expected %d — %s", b.effectFlags, bflags, ctx));
+        ++rows;
+    }
+    assert(rows == (DisplayStyle.max + 1) * 4 * 2,
+        format("E2 population: %d rows, expected every DisplayStyle × CavityMode × retopology", rows));
+}
+
+/// The kernel clamp of the cavity parameters at both bounds (two-layer clamp:
+/// the command refuses, this caps every other route — prefs, a future
+/// writer). Non-finite takes the field's default; the mode passes through.
+unittest {
+    import std.math : isNaN;
+    struct Cell { string field; float lo, hi; }
+    immutable Cell[6] cells = [Cell("screenRidge", 0, 250), Cell("screenValley", 0, 250),
+        Cell("worldRidge", 0, 250), Cell("worldValley", 0, 250),
+        Cell("distance", 1e-4f, 1e5f), Cell("attenuation", 0, 1e5f)];
+    size_t n;
+    static foreach (f; ["screenRidge", "screenValley", "worldRidge", "worldValley",
+                        "distance", "attenuation"]) {{
+        Cell c;
+        foreach (x; cells) if (x.field == f) c = x;
+        CavityState s;
+        mixin("s." ~ f ~ " = c.lo - 1;");
+        assert(mixin("resolveCavityParams(s)." ~ f) == c.lo, "clamp: " ~ f ~ " below its floor");
+        mixin("s." ~ f ~ " = c.hi * 2;");
+        assert(mixin("resolveCavityParams(s)." ~ f) == c.hi, "clamp: " ~ f ~ " above its ceiling");
+        mixin("s." ~ f ~ " = c.lo;");
+        assert(mixin("resolveCavityParams(s)." ~ f) == c.lo, "clamp: " ~ f ~ " at its floor must stand");
+        mixin("s." ~ f ~ " = c.hi;");
+        assert(mixin("resolveCavityParams(s)." ~ f) == c.hi, "clamp: " ~ f ~ " at its ceiling must stand");
+        mixin("s." ~ f ~ " = float.nan;");
+        assert(mixin("resolveCavityParams(s)." ~ f) == mixin("CavityState.init." ~ f),
+            "clamp: a non-finite " ~ f ~ " must take its default");
+        mixin("s." ~ f ~ " = float.infinity;");
+        assert(mixin("resolveCavityParams(s)." ~ f) == mixin("CavityState.init." ~ f),
+            "clamp: an infinite " ~ f ~ " must take its default");
+        ++n;
+    }}
+    assert(n == 6, "clamp floor: six float params");
+    CavityState s;
+    s.samples = 0;    assert(resolveCavityParams(s).samples == 1, "clamp: samples below 1");
+    s.samples = 1;    assert(resolveCavityParams(s).samples == 1, "clamp: samples at 1");
+    s.samples = MAX_CAVITY_SAMPLES; assert(resolveCavityParams(s).samples == MAX_CAVITY_SAMPLES,
+        "clamp: samples at the cap");
+    s.samples = int.max; assert(resolveCavityParams(s).samples == MAX_CAVITY_SAMPLES,
+        "clamp: samples above the kernel cap");
+    s.mode = CavityMode.World;
+    assert(resolveCavityParams(s).cavity == CavityMode.World, "clamp: the mode passes through");
+}
+
+/// The plan is compared WHOLE by the cell's dirty key: two resolutions of one
+/// state must compare equal, with and without a composite (a NaN default in
+/// `CompositePlan` would make every frame dirty).
+unittest {
+    ViewportDisplay d;
+    assert(resolveDrawPlan(d, false) == resolveDrawPlan(d, false)
+        && resolveDrawPlan(d, true) == resolveDrawPlan(d, true),
+        "plan equality: the default plan must equal itself");
+    d.cavity.mode = CavityMode.Screen;
+    assert(!resolveDrawPlan(d, false).composite.empty, "premise: cavity screen resolves");
+    assert(resolveDrawPlan(d, false) == resolveDrawPlan(d, false),
+        "plan equality: a plan with a composite must equal itself");
+    ViewportDisplay e = d;
+    e.cavity.samples = 8;
+    assert(resolveDrawPlan(d, false) != resolveDrawPlan(e, false),
+        "plan equality: a cavity parameter change must change the plan (re-render)");
 }

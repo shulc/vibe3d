@@ -16,7 +16,8 @@ import application_command_binding : CommandInvocationContext,
 import command : CmdFlags, Command, CommandOrigin;
 import commands.viewport.display : ViewportBackdropStyle, ViewportDisplayStyle,
     ViewportPointSize, ViewportRetopology, ViewportRetopologyPreset,
-    ViewportShowVertices, ViewportSmooth, ViewportWireAlpha, ViewportWireOverlay;
+    ViewportShowVertices, ViewportSmooth, ViewportWireAlpha, ViewportWireOverlay,
+    ViewportCavity, ViewportCavityParams;
 import commands.viewport.fit : Fit;
 import commands.viewport.fit_selected : FitSelected;
 import commands.viewport.grid_steps : ViewportGridSteps;
@@ -38,7 +39,7 @@ import viewport_command_registration : registerViewportCommands;
 private enum repoRoot = buildNormalizedPath(dirName(__FILE_FULL_PATH__),
                                              "..", "..", "..", "..");
 
-private immutable string[18] kIds = [
+private immutable string[20] kIds = [
     "viewport.fit", "viewport.fit_selected", "viewport.view",
     "viewport.layout", "viewport.indCenter", "viewport.indScale",
     "viewport.indRotate", "viewport.displayStyle", "viewport.wireOverlay",
@@ -46,6 +47,7 @@ private immutable string[18] kIds = [
     "viewport.backdropStyle", "viewport.retopology",
     "viewport.showVertices", "viewport.pointSize",
     "viewport.retopologyPreset", "viewport.smooth",
+    "viewport.cavity", "viewport.cavityParams",
 ];
 
 private bool isExpectedClass(string id, Command command) {
@@ -69,6 +71,8 @@ private bool isExpectedClass(string id, Command command) {
         case "viewport.retopologyPreset":
             return cast(ViewportRetopologyPreset) command !is null;
         case "viewport.smooth":       return cast(ViewportSmooth) command !is null;
+        case "viewport.cavity":       return cast(ViewportCavity) command !is null;
+        case "viewport.cavityParams": return cast(ViewportCavityParams) command !is null;
         default:                       return false;
     }
 }
@@ -143,8 +147,8 @@ unittest { // U1: every id builds its intended command class
         "6010 null-manager rejection registered a partial family");
 
     fixture.registerViewport();
-    assert(fixture.registry.commandIds().length == 18,
-        format("6010 id population: expected 18 viewport ids, got %d",
+    assert(fixture.registry.commandIds().length == 20,
+        format("6010 id population: expected 20 viewport ids, got %d",
                fixture.registry.commandIds().length));
     size_t checked;
     foreach (id; kIds) {
@@ -159,8 +163,8 @@ unittest { // U1: every id builds its intended command class
             "6010 camera-only witness: " ~ id ~ " is not a UI command");
         ++checked;
     }
-    assert(checked == 18,
-        "6010 id witness ran over fewer than 18 ids");
+    assert(checked == 20,
+        "6010 id witness ran over fewer than 20 ids");
 }
 
 unittest { // U2: primary, mode, and active cell resolve after registration
@@ -340,8 +344,8 @@ unittest { // U2: primary, mode, and active cell resolve after registration
                    id, got, want));
         ++views;
     }
-    assert(meshes == 18 && modes == 18 && views == 18,
-        "6010 live binding witness ran over fewer than 18 factories");
+    assert(meshes == 20 && modes == 20 && views == 20,
+        "6010 live binding witness ran over fewer than 20 factories");
 }
 
 unittest { // U3: production uses the narrow registrar before LAST wrapping
@@ -367,8 +371,8 @@ unittest { // U3: production uses the narrow registrar before LAST wrapping
                       "RemeshModalRefs", "with (", "with("])
         assert(registrar.count(banned) == 0,
             "6010 no-EditorApp witness: viewport registrar names " ~ banned);
-    assert(registrarRaw.count(`reg.registerCommand("viewport.`) == 18,
-        "6010 registrar population: expected 18 viewport factory rows");
+    assert(registrarRaw.count(`reg.registerCommand("viewport.`) == 20,
+        "6010 registrar population: expected 20 viewport factory rows");
 
     const registration = squash(blankNonCode(registrationRaw));
     enum productionCall = "registerViewportCommands(app.reg(), "
@@ -444,7 +448,7 @@ unittest { // U4: only a writer of a template field claims the template
     assert(fixture.vpm.cellCount == 4, "U4 rig: Quad must expose four cells");
 
     struct Row { string id; string value; bool template_; }
-    immutable Row[9] rows = [
+    immutable Row[11] rows = [
         Row("viewport.displayStyle",  `"value":"solid"`,           true),
         Row("viewport.wireOverlay",   `"value":"none"`,            true),
         Row("viewport.wireAlpha",     `"value":"0.5"`,             true),
@@ -454,6 +458,8 @@ unittest { // U4: only a writer of a template field claims the template
         Row("viewport.showVertices",  `"value":"on"`,              false),
         Row("viewport.pointSize",     `"value":6`,                 false),
         Row("viewport.retopologyPreset", ``,                       false),
+        Row("viewport.cavity",        `"value":"screen"`,          false),
+        Row("viewport.cavityParams",  `"samples":8`,               false),
     ];
     int checked = 0;
     foreach (i, row; rows) {
@@ -492,13 +498,14 @@ unittest { // U4: only a writer of a template field claims the template
                 && pr.backdropStyle == d.backdropStyle
                 && pr.backdropSlotStyle == d.backdrop.style
                 && pr.showVertices == d.active.showVertices
-                && pr.pointSize == d.active.pointSize,
+                && pr.pointSize == d.active.pointSize
+                && pr.cavity == d.cavity,
                 format("U4: %s %s must mirror the non-template fields into prefs",
                        row.id, params));
         }
         ++checked;
     }
-    assert(checked == 9, format("U4 floor: expected nine writers, ran %d", checked));
+    assert(checked == 11, format("U4 floor: expected eleven writers, ran %d", checked));
 }
 
 unittest { // U5: the dot switch and size reach the addressed cell; size is clamped
@@ -568,4 +575,68 @@ unittest { // U6: the retopology preset writes exactly its five atoms, in one ce
     assert(fixture.vpm.views[3].display.retopology
         && !fixture.vpm.views[1].display.retopology,
         "U6: the bare preset must reach the active cell only");
+}
+
+unittest { // U7: the cavity commands (task 9190) reach exactly the addressed cell; out-of-range is REFUSED, writes nothing, records no history
+    import display_state : CavityMode, CavityState, MAX_CAVITY_SAMPLES;
+    auto fixture = new Fixture;
+    fixture.registerViewport();
+    const prefsBefore = g_prefs.viewportDisplay;
+    scope(exit) g_prefs.viewportDisplay = prefsBefore;
+    auto cav(int k) { return fixture.vpm.views[k].display.cavity; }
+    immutable size_t depth0 = fixture.history.undoEntries().length;
+    assert(cav(2) == CavityState.init && cav(1) == CavityState.init, "U7 rig: fresh cells");
+    // Every mode by its spelling (population floor: four).
+    int modes;
+    foreach (m, word; [CavityMode.Screen: "screen", CavityMode.World: "world",
+                       CavityMode.Both: "both", CavityMode.Off: "off"]) {
+        assert(fixture.script("viewport.cavity", format(`{"value":"%s","viewport":2}`, word))
+            == CommandInvocationOutcome.applied, "U7: viewport.cavity " ~ word ~ " refused");
+        assert(cav(2).mode == m, format("U7: '%s' stored %s", word, cav(2).mode));
+        ++modes;
+    }
+    assert(modes == 4, "U7 floor: four modes");
+    fixture.script("viewport.cavity", `{"value":"screen","viewport":2}`);
+    assertThrown!Exception(fixture.script("viewport.cavity", `{"value":"deep","viewport":2}`),
+        "U7: an unknown cavity mode must refuse");
+    assert(cav(2).mode == CavityMode.Screen, "U7: a refused mode must not write");
+    assert(cav(1).mode == CavityMode.Off, "U7: viewport.cavity leaked into cell 1");
+    // Every param at both bounds is accepted and stored as given.
+    struct P { string key; double lo, hi; }
+    immutable P[7] ps = [P("screenRidge", 0, 250), P("screenValley", 0, 250),
+        P("worldRidge", 0, 250), P("worldValley", 0, 250), P("distance", 1e-4, 1e5),
+        P("attenuation", 0, 1e5), P("samples", 1, MAX_CAVITY_SAMPLES)];
+    int bounds;
+    foreach (p; ps) foreach (v; [p.lo, p.hi]) {
+        immutable string body_ = p.key == "samples"
+            ? format(`{"samples":%d,"viewport":2}`, cast(int)v)
+            : format(`{"%s":%.9g,"viewport":2}`, p.key, v);
+        assert(fixture.script("viewport.cavityParams", body_)
+            == CommandInvocationOutcome.applied, "U7: in-range " ~ body_ ~ " refused");
+        ++bounds;
+    }
+    assert(bounds == 14, "U7 floor: seven params at two bounds");
+    assert(cav(2).samples == MAX_CAVITY_SAMPLES && cav(2).distance == 1e5f,
+        "U7: the last accepted values must be stored");
+    // Out of range by one step past each bound: refused, nothing written.
+    const before = cav(2);
+    int refused;
+    foreach (p; ps) foreach (v; [p.lo - (p.key == "samples" ? 1 : p.lo * 0.5 + 1e-3),
+                                 p.hi + (p.key == "samples" ? 1 : 1)]) {
+        immutable string body_ = p.key == "samples"
+            ? format(`{"samples":%d,"viewport":2}`, cast(int)v)
+            : format(`{"%s":%.9g,"viewport":2}`, p.key, v);
+        assertThrown!Exception(fixture.script("viewport.cavityParams", body_),
+            "U7: out-of-range " ~ body_ ~ " must refuse");
+        assert(cav(2) == before, "U7: a refused " ~ body_ ~ " wrote the cell");
+        ++refused;
+    }
+    assert(refused == 14, "U7 floor: fourteen refusals");
+    // A refusal with a valid sibling writes neither (validate-all-then-write).
+    assertThrown!Exception(fixture.script("viewport.cavityParams",
+        `{"screenRidge":3,"samples":0,"viewport":2}`), "U7: a mixed body must refuse");
+    assert(cav(2) == before, "U7: a refused mixed body wrote its valid half");
+    assert(cav(1) == CavityState.init, "U7: viewport.cavityParams leaked into cell 1");
+    assert(fixture.history.undoEntries().length == depth0,
+        "U7: a viewport cavity command (applied or refused) must record no history");
 }

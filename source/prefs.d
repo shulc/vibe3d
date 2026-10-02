@@ -33,7 +33,8 @@ import std.format : format;
 import log            : logWarn;
 import toolpipe.attr_cache : PipelineAttrCache, NodeAttrs, kToolNode;
 import viewport       : LayoutPreset;
-import display_state  : BackdropStyle, DisplayStyle, ViewportDisplay, WireOverlay,
+import display_state  : BackdropStyle, CavityMode, CavityState, DisplayStyle,
+    ViewportDisplay, WireOverlay,
                         kDisplayStyleOrder;
 import viewport_scheme : MAX_POINT_SIZE;
 import coord_rounding : CoordinateRounding, kCoordRoundingDefault,
@@ -221,6 +222,9 @@ struct ViewportCellDisplay {
     /// The normal source of the active and backdrop slots.
     bool          smooth            = true;
     bool          backdropSmooth    = true;
+    /// The cavity effect, as the user set it (unclamped storage,
+    /// read back through the same clamp table the kernel applies).
+    CavityState   cavity;
 }
 
 /// Copy a live cell's non-template display fields into its persisted row.
@@ -235,6 +239,7 @@ void mirrorNonTemplateDisplay(ref ViewportCellDisplay c, in ViewportDisplay d)
     c.pointSize         = d.active.pointSize;
     c.smooth            = d.active.smooth;
     c.backdropSmooth    = d.backdrop.smooth;
+    c.cavity            = d.cavity;
 }
 
 /// Apply a persisted row's non-template fields to a live cell. Leaves the
@@ -249,6 +254,7 @@ void restoreNonTemplateDisplay(ref ViewportDisplay d, in ViewportCellDisplay c)
     d.active.pointSize    = c.pointSize;
     d.active.smooth       = c.smooth;
     d.backdrop.smooth     = c.backdropSmooth;
+    d.cavity              = c.cavity;
 }
 
 /// Module-level live preferences. Loaded once at startup, mutated by the
@@ -329,6 +335,8 @@ private void readNonTemplateDisplay(ref ViewportCellDisplay c, JSONValue cellJso
         if (sp.type == JSONType.string)
             foreach (m; kDisplayStyleOrder)
                 if (to!string(m) == sp.str) c.backdropSlotStyle = m;
+    if (auto cv = "cavity" in cellJson)
+        if (cv.type == JSONType.object) readCavity(c.cavity, *cv);
     if (auto pp = "pointSize" in cellJson) {
         float v = float.nan;
         if (pp.type == JSONType.float_)        v = cast(float)pp.floating;
@@ -340,6 +348,44 @@ private void readNonTemplateDisplay(ref ViewportCellDisplay c, JSONValue cellJso
             c.pointSize = v;
         }
     }
+}
+
+/// The persisted cavity object: the mode by name, each number read only when
+/// it is a finite JSON number, then clamped by the kernel's own table
+/// (`resolveCavityParams`), so a hand-edited file cannot store what no
+/// command accepts.
+private void readCavity(ref CavityState c, JSONValue j) {
+    import std.conv : to;
+    import std.math : isFinite;
+    import std.traits : EnumMembers;
+    import display_state : resolveCavityParams;
+    if (auto m = "mode" in j)
+        if (m.type == JSONType.string)
+            foreach (e; [EnumMembers!CavityMode])
+                if (to!string(e) == m.str) c.mode = e;
+    static void num(JSONValue o, string key, ref float dst) {
+        if (auto p = key in o) {
+            double v = double.nan;
+            if (p.type == JSONType.float_)        v = p.floating;
+            else if (p.type == JSONType.integer)  v = p.integer;
+            else if (p.type == JSONType.uinteger) v = p.uinteger;
+            if (isFinite(v)) dst = cast(float)v;
+        }
+    }
+    num(j, "screenRidge", c.screenRidge);
+    num(j, "screenValley", c.screenValley);
+    num(j, "worldRidge", c.worldRidge);
+    num(j, "worldValley", c.worldValley);
+    num(j, "distance", c.distance);
+    num(j, "attenuation", c.attenuation);
+    if (auto p = "samples" in j)
+        if (p.type == JSONType.integer && p.integer >= int.min && p.integer <= int.max)
+            c.samples = cast(int)p.integer;
+    immutable r = resolveCavityParams(c);
+    c.screenRidge = r.screenRidge; c.screenValley = r.screenValley;
+    c.worldRidge  = r.worldRidge;  c.worldValley  = r.worldValley;
+    c.distance    = r.distance;    c.attenuation  = r.attenuation;
+    c.samples     = r.samples;
 }
 
 /// Load preferences from `dir`/prefs.json into a Prefs struct. NEVER throws:
@@ -665,6 +711,18 @@ void savePrefs(ref const Prefs p, string dir) {
         cj["pointSize"]         = JSONValue(c.pointSize);
         cj["smooth"]            = JSONValue(c.smooth);
         cj["backdropSmooth"]    = JSONValue(c.backdropSmooth);
+        {
+            JSONValue cav;
+            cav["mode"]         = JSONValue(to!string(c.cavity.mode));
+            cav["screenRidge"]  = JSONValue(c.cavity.screenRidge);
+            cav["screenValley"] = JSONValue(c.cavity.screenValley);
+            cav["worldRidge"]   = JSONValue(c.cavity.worldRidge);
+            cav["worldValley"]  = JSONValue(c.cavity.worldValley);
+            cav["distance"]     = JSONValue(c.cavity.distance);
+            cav["attenuation"]  = JSONValue(c.cavity.attenuation);
+            cav["samples"]      = JSONValue(c.cavity.samples);
+            cj["cavity"] = cav;
+        }
         vd ~= cj;
     }
     doc["viewportDisplay"] = JSONValue(vd);

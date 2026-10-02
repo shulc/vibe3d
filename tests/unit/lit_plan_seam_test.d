@@ -342,3 +342,66 @@ unittest { // compile fence: the normal-source locations are unreachable from an
     static assert(!__traits(compiles, (LitShader s) { int v = s.locNormalMatrix; }),
         "fence: LitShader.locNormalMatrix is reachable outside shader.d");
 }
+
+// E3 (task 9190): every plan-seam call in the renderer hands the G-buffer a
+// surface id — the layer index the site draws, through `surfaceIdForLayer`.
+// Polarity: false before 9190 (one-argument calls), true after.
+unittest {
+    import std.string : indexOf;
+    import tests.unit.census_symbols : balancedSpan, countOccurrences;
+    import std.algorithm : count;
+    immutable code = rendererCode();
+    string[] calls;
+    for (ptrdiff_t p = code.indexOf(".applyPlan("); p >= 0; p = code.indexOf(".applyPlan(", p + 1))
+        calls ~= balancedSpan(code, cast(size_t)(p + ".applyPlan".length), '(', ')');
+    // Floor and ceiling: the three face sites (S1p census above).
+    assert(calls.length == 3, format("E3: expected 3 applyPlan calls in viewport_render.d, found %d", calls.length));
+    // Each site's own layer index, by name (backdrop list entry, sequence
+    // entry, the primary).
+    immutable string[3] want = ["surfaceIdForLayer(layerIndex)", "surfaceIdForLayer(e.layer)",
+                                "surfaceIdForLayer(document.activeIndex())"];
+    foreach (w; want)
+        assert(calls.count!(c => c.indexOf(w) >= 0) == 1,
+            format("E3: no applyPlan call passes `%s` — calls: %s", w, calls));
+}
+
+// E5 (task 9190): no colour clear while the integer G-buffer may be in the
+// draw set (WebGL2: INVALID_OPERATION; desktop GL permits it, so no pixel
+// reddens — the witness is text). Markers found once each FIRST.
+unittest {
+    import std.file : readText;
+    import std.path : buildPath, dirName;
+    import std.string : indexOf;
+    import tests.unit.census_symbols : balancedSpan, blankNonCode, blankUnittestBodies, countOccurrences;
+    enum root = dirName(dirName(dirName(__FILE_FULL_PATH__)));
+    immutable code = rendererCode();
+    string bodyIn(string src, string head) {
+        assert(countOccurrences(src, head) == 1, format("E5: expected `%s` defined once", head));
+        immutable ptrdiff_t at = src.indexOf(head);
+        return balancedSpan(src, cast(size_t)src.indexOf('{', at), '{', '}');
+    }
+    immutable draw = bodyIn(code, "void draw(SceneInputs");
+    assert(countOccurrences(draw, "beginSurfacePasses(") == 1
+        && countOccurrences(draw, "endSurfacePasses(") == 1,
+        "E5: the surface-pass bracket markers must occur once each in draw");
+    immutable ptrdiff_t b = draw.indexOf("beginSurfacePasses("), e = draw.indexOf("endSurfacePasses(");
+    assert(b < e, "E5: beginSurfacePasses must precede endSurfacePasses");
+    assert(countOccurrences(draw[b .. e], "glClear(") == 0,
+        "E5: a glClear( runs between beginSurfacePasses and endSurfacePasses");
+    // The module's clears: the frame clear (before the bracket) and
+    // beginItem's depth-only clear (the helpers called inside the bracket
+    // reach no other). Ceiling == floor == 2.
+    assert(countOccurrences(code, "glClear(") == 2,
+        format("E5: viewport_render.d has %d glClear( calls; expected the frame clear and beginItem's",
+               countOccurrences(code, "glClear(")));
+    assert(draw[0 .. b].indexOf("glClear(") >= 0, "E5: the frame clear must precede the bracket");
+    immutable item = bodyIn(code, "private void beginItem(");
+    assert(countOccurrences(item, "glClear(") == 1 && countOccurrences(item, "GL_COLOR_BUFFER_BIT") == 0,
+        "E5: beginItem must clear depth only (GL_COLOR_BUFFER_BIT in its body)");
+    immutable vp = blankUnittestBodies(blankNonCode(readText(buildPath(root, "source", "viewport.d"))));
+    immutable bsp = bodyIn(vp, "void beginSurfacePasses(");
+    assert(countOccurrences(bsp, "glClearBufferuiv(") == 1,
+        "E5: beginSurfacePasses must clear the G-buffer with glClearBufferuiv");
+    assert(countOccurrences(bsp, "GL_COLOR_BUFFER_BIT") == 0 && countOccurrences(bsp, "glClear(") == 0,
+        "E5: beginSurfacePasses must not colour-clear (GL_COLOR_BUFFER_BIT / glClear( in its body)");
+}

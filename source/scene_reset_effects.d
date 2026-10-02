@@ -69,6 +69,10 @@ void clearViewDisplayForAutomation(ViewportManager viewports, ref Prefs store) {
     foreach (k; 0 .. viewports.views.length) {
         restoreNonTemplateDisplay(viewports.views[k].display,
                                   ViewportCellDisplay.init);
+        // The cavity's effect targets go with it: allocation is
+        // lazy and process-lived, so without this a test would inherit the
+        // previous test's G-buffer.
+        viewports.views[k].fbo.releaseEffects();
         viewports.views[k].dirty = true;
     }
     foreach (ref c; store.viewportDisplay)

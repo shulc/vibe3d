@@ -52,6 +52,8 @@ unittest {
         ["shader.gridFragSrc", "fragment"],
         ["shader.thickLineVertexSrc", "vertex"],
         ["shader.thickLineFragSrc", "fragment"],
+        ["shader.compositeVertSrc", "vertex"],
+        ["shader.compositeResolveFragSrc", "fragment"],
         ["gpu_select.vertVertSrc", "vertex"],
         ["gpu_select.edgeVertSrc", "vertex"],
         ["gpu_select.faceVertSrc", "vertex"],
@@ -59,7 +61,7 @@ unittest {
         ["gpu_select.commonFragSrc", "fragment"],
         ["gpu_select.zeroFragSrc", "fragment"],
     ];
-    assert(expected.length == 18, "W16-B named shader population floor moved");
+    assert(expected.length == 20, "W16-B named shader population floor moved");
 
     string extractor = "module w16_b_shader_extract;\n"
         ~ "import shader; import gpu_select;\n";
@@ -111,8 +113,8 @@ SH";
             entry[0] ~ " must have the complete WebGL2 preamble at byte zero");
         cases ~= ShaderCase(entry[0], entry[1], source.idup);
     }
-    assert(cases.length == 18,
-        format("W16-B extracted %d named sources instead of 18", cases.length));
+    assert(cases.length == 20,
+        format("W16-B extracted %d named sources instead of 20", cases.length));
 
     JSONValue[] jsonCases;
     foreach (c; cases) {
@@ -171,8 +173,8 @@ JS" ~ "</script>";
                            .replace("&lt;", "<")
                            .replace("&gt;", ">");
     auto lines = resultText.splitLines;
-    assert(lines.length == 21,
-        format("W16-B browser population floor: expected 18+3, got %d:\n%s",
+    assert(lines.length == 23,
+        format("W16-B browser population floor: expected 20+3, got %d:\n%s",
                lines.length, resultText));
     size_t positives, negatives;
     foreach (line; lines) {
@@ -191,7 +193,7 @@ JS" ~ "</script>";
             assert(compiled, format("%s rejected by WebGL2:\n%s", name, log));
         }
     }
-    assert(positives == 18 && negatives == 3,
+    assert(positives == 20 && negatives == 3,
         format("W16-B floors moved: positives=%d negatives=%d",
                positives, negatives));
 

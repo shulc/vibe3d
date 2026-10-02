@@ -17,7 +17,7 @@ import tests.unit.census_symbols : balancedSpan, blankNonCode, isIdentChar;
 // together with its mark site (census below) and its suite cell.
 static assert([__traits(allMembers, GpuSeg)] == [
     "setup", "imagePlanes", "grid", "backdropFaces", "faces", "backdropWire",
-    "edges", "verts", "overlays"],
+    "edges", "verts", "overlays", "composite"],
     "GpuSeg changed: move this pin, the census floor and the SP2 cells together");
 
 private struct FakeLog {
@@ -319,7 +319,7 @@ unittest {
         assert(m in segs.object, "(g) segment key missing from JSON: " ~ m);
         ++n;
     }
-    assert(n == 9 && segs.object.length == 9, format("(g) %d keys", segs.object.length));
+    assert(n == 10 && segs.object.length == 10, format("(g) %d keys", segs.object.length));
     assert(segs["faces"]["samples"].integer == 0 && segs["grid"]["samples"].integer == 1,
         "(g) absent faces = samples 0, grid = 1: " ~ t.toJson());
     assert(j["recent"].array.length == 1 && j["framesHarvested"].integer == 1,
@@ -412,7 +412,7 @@ unittest {
     assert(files > 400, format("(h) census area: only %d source files scanned", files));
     size_t total;
     foreach (k, v; sites) total += v;
-    assert(total == 18, format("(h) measured mark-site count: %d (grep -o '.mark(GpuSeg.' = 18)", total));
+    assert(total == 19, format("(h) measured mark-site count: %d (grep -o '.mark(GpuSeg.' = 19)", total));
     static foreach (m; __traits(allMembers, GpuSeg)) {
         static if (m != "setup")
             assert((m in sites) !is null,

@@ -46,6 +46,7 @@ import toolpipe.stages.workplane : WorkplaneStage;
 import operator              : VectorStack;
 import viewgrid              : ViewGridPrefs, viewGridSizeFor, viewGridFadeRadius;
 import shader                : Shader, LitShader, CheckerShader, GridShader;
+import viewport_composite    : ViewportCompositor;
 import pipe_gizmo_host       : PipeGizmoHost;
 import tools.slice.loop_slice_tool : LoopSliceTool;
 import tools.transform.transform   : TransformTool;
@@ -123,6 +124,12 @@ BaseDots baseDotsFor(const ref DrawPlan plan, const ref float[16] model,
 /// mask is forced on first because a depth clear honours it; no current path
 /// reaches here with it off (`endHighlightPasses` restores it), so the line is
 /// defensive.
+/// The G-buffer surface id of layer `layerIndex` (model M4): index + 1, so
+/// 0 means "no surface"; an index past the RGBA16UI channel shares 65535.
+uint surfaceIdForLayer(size_t layerIndex) @safe pure nothrow @nogc {
+    return layerIndex >= 65534 ? 65535u : cast(uint)(layerIndex + 1);
+}
+
 private void beginItem(const ref DrawPlan plan) {
     import bindbc.opengl : glClear, glDepthMask, GL_DEPTH_BUFFER_BIT, GL_TRUE;
     if (plan.clearDepthFirst) {
@@ -274,6 +281,10 @@ private:
     // The drawing cell's timer for the duration of `draw` (helpers below
     // mark through it); the arm is resolved once, on the first draw.
     GpuPassTimer* segTimer_;
+
+    // The composite stage (model M4): one for every cell, built
+    // on the first frame whose active plan has a non-empty composite.
+    ViewportCompositor compositor_;
     bool gpuTimingResolved_;
     bool gpuTimingArmed_;
 
@@ -324,7 +335,8 @@ private:
     /// own materials through its own matrix, then its base lines and dots. No
     /// selection, hover or tool state reaches it; every uniform it sets is
     /// restored.
-    void drawPlainItem(ref GpuMesh g, Layer lyr, const ref float[16] model,
+    void drawPlainItem(ref GpuMesh g, Layer lyr, size_t layerIndex,
+                       const ref float[16] model,
                        const ref DrawPlan plan, Shader shader, LitShader lit,
                        Viewport3D v, const ref Viewport vp, string weightMapName) {
         beginItem(plan);
@@ -332,7 +344,7 @@ private:
             segTimer_.mark(GpuSeg.faces);
             lit.useProgram(model, vp);
             bindLayerSurfaces(g, lyr, plan, lit, weightMapName);
-            lit.applyPlan(plan);
+            lit.applyPlan(plan, surfaceIdForLayer(layerIndex));
             g.drawFaces(lit, facePassFor(plan, model));
             lit.restorePlanDefaults();
         }
@@ -357,7 +369,8 @@ private:
                                ~ "layer's upload current");
             auto zBackdrop = g_fc.backdrop();
             float[16] model = lyr.xform.composedMatrix();
-            drawPlainItem(*g, lyr, model, e.foreground ? activePlan : backdropPlan,
+            drawPlainItem(*g, lyr, e.layerIndex, model,
+                          e.foreground ? activePlan : backdropPlan,
                           shader, lit, v, vp, weightMapName);
         }
     }
@@ -402,7 +415,7 @@ private:
         lit.useProgram(e.model, vp);
         bindLayerSurfaces(*e.g, document.layers[e.layer], backdropPlan, lit,
                           weightMapName);
-        lit.applyPlan(backdropPlan);
+        lit.applyPlan(backdropPlan, surfaceIdForLayer(e.layer));
         (*e.g).drawFaces(lit);
         lit.restorePlanDefaults();
     }
@@ -831,6 +844,15 @@ public:
 
     glDisable(GL_BLEND);
 
+    // ---- Surface passes (model M4) ----
+    // Every face pass from here to `endSurfacePasses` (backdrop faces, the
+    // item sequence, the primary's faces) writes the G-buffer when the cell's
+    // composite plan is non-empty. Never under the item sequence: cavity
+    // resolves Off under retopology, so the bracket there is {C0}.
+    assert(!itemSequence || activePlan.composite.empty,
+           "the item sequence must resolve an empty composite plan");
+    v.fbo.beginSurfacePasses(activePlan.composite);
+
     // ---- Background layers ----
     //
     // TASK 0654 — the `> 1` fast path is now `> 1 || no edit target`, and that
@@ -957,7 +979,7 @@ public:
                 gpu.uploadWeightColors(mesh, display.weightMapName);
             litShader.useProgram(meshModel, vp);
             litShader.setSurfaces(mesh.surfaces);
-            litShader.applyPlan(activePlan);
+            litShader.applyPlan(activePlan, surfaceIdForLayer(document.activeIndex()));
             bool toolFaceHover = activeTool !is null
                               && activeTool.wantsHoverForType(EditMode.Polygons)
                               && hoveredFace >= 0;
@@ -973,9 +995,20 @@ public:
         }
     }
 
-    // Backdrop wires after every face pass (model M4): the slot the
-    // composite stage takes is before this loop. The item sequence drew them
-    // inline above, in its captured per-layer order.
+    // ---- Composite (model M4) ----
+    // The surface passes end here; the compositor runs on the cell's plan
+    // (an empty plan is zero GL calls). Constructed on the first non-empty
+    // plan, then called every frame so an empty plan's early return is the
+    // one gate (no second copy of it here).
+    v.fbo.endSurfacePasses();
+    if (compositor_ is null && !activePlan.composite.empty)
+        compositor_ = new ViewportCompositor;
+    if (compositor_ !is null)
+        compositor_.run(activePlan.composite, v.fbo, v.fbo.w, v.fbo.h, *segTimer_);
+
+    // Backdrop wires after every face pass and the composite (model M4).
+    // The item sequence drew them inline above, in its captured per-layer
+    // order.
     if (!itemSequence)
         foreach (ref e; bgDraw_)
             drawBackdropWire(e, backdropPlan, shader, vp);

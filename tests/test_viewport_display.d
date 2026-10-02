@@ -272,7 +272,7 @@ bool testFlowB() {
                      "lightGain", "vertColor", "vertAlpha", "pointSize",
                      "cullHiddenVerts", "shadeLinesByItem",
                      "baseDotsBySelection", "joinsItemSequence", "styleFills",
-                     "smoothNormals"]) {
+                     "smoothNormals", "composite", "effectFlags"]) {
         ++nFields;
         enforce(field in pa,
             format("plan.active is missing \"%s\"", field));
@@ -280,9 +280,9 @@ bool testFlowB() {
             format("plan.backdrop is missing \"%s\" — it must be the same "
                    ~ "DrawPlan shape as the active side", field));
     }
-    enforce(nFields == 23, format("B2 checked %s plan fields, expected 23", nFields));
-    enforce(pa.object.length == 23 && pb.object.length == 23,
-        format("plan dump carries %s/%s keys, the list above names 23 — a "
+    enforce(nFields == 25, format("B2 checked %s plan fields, expected 25", nFields));
+    enforce(pa.object.length == 25 && pb.object.length == 25,
+        format("plan dump carries %s/%s keys, the list above names 25 — a "
                ~ "field was added without joining this list",
                pa.object.length, pb.object.length));
     // Mode off, the retopology-mode fields dump their neutral values on both

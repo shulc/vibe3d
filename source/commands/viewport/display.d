@@ -6,7 +6,8 @@ import mesh;
 import editmode;
 import view;
 import viewport      : ViewportManager, Viewport3D;
-import display_state : BackdropStyle, DisplayStyle, ViewportDisplay, WireOverlay;
+import display_state : BackdropStyle, CavityMode, DisplayStyle, MAX_CAVITY_SAMPLES,
+    ViewportDisplay, WireOverlay;
 import params : Param, wireArgs;
 
 // TASK 4062 — the three commands below each declare their two arguments
@@ -384,6 +385,129 @@ final class ViewportSmooth : ViewportCommand {
         Viewport3D tv = vpm.views[cell];
         if (slotArg_ == 1) tv.display.backdrop.smooth = on;
         else               tv.display.active.smooth   = on;
+        markCellDisplayDirty(cell);
+        return true;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// viewport.cavity / viewport.cavityParams — the cell's cavity effect
+// (`ViewportDisplay.cavity`, model M4). Non-template fields: they
+// only mark the cell dirty. The effect resolves into the plan only under the
+// Shaded style with the retopology mode off (`resolveDrawPlan`), so either
+// command is accepted in any style and changes nothing visible elsewhere.
+// ---------------------------------------------------------------------------
+
+final class ViewportCavity : ViewportCommand {
+    private string valueArg_;
+    private int    cellArg_ = -1;
+
+    this(Mesh* mesh, ref View view, EditMode editMode, ViewportManager vpm) {
+        super(mesh, view, editMode, vpm);
+    }
+
+    override string name() const { return "viewport.cavity"; }
+
+    override Param[] params() {
+        return wireArgs(
+            Param.string_("value", "Cavity", &valueArg_, ""),
+            Param.int_("viewport", "Viewport", &cellArg_, -1)
+        );
+    }
+
+    protected override bool applyImpl() {
+        import std.string : toLower, strip;
+        immutable int cell = resolveCellOrThrow(cellArg_, name());
+        CavityMode m;
+        switch (valueArg_.strip.toLower) {
+            case "off":    m = CavityMode.Off;    break;
+            case "screen": m = CavityMode.Screen; break;
+            case "world":  m = CavityMode.World;  break;
+            case "both":   m = CavityMode.Both;   break;
+            default:
+                throw new Exception("viewport.cavity: expected 'off', 'screen', "
+                    ~ "'world' or 'both', got '" ~ valueArg_ ~ "'");
+        }
+        vpm.views[cell].display.cavity.mode = m;
+        markCellDisplayDirty(cell);
+        return true;
+    }
+}
+
+/// The accepted domain of each `viewport.cavityParams` value — the clamp
+/// table of `display_state.resolveCavityParams` (which is the kernel's own
+/// cap on every other route).
+enum float kCavityGainMax    = 250.0f;
+enum float kCavityDistanceMin = 1e-4f;
+enum float kCavityDistanceMax = 1e5f;
+enum float kCavityAttenuationMax = 1e5f;
+
+final class ViewportCavityParams : ViewportCommand {
+    // NaN / int.min = "not given": only the named values are written.
+    private float screenRidge_ = float.nan, screenValley_ = float.nan;
+    private float worldRidge_ = float.nan, worldValley_ = float.nan;
+    private float distance_ = float.nan, attenuation_ = float.nan;
+    private int   samples_ = int.min;
+    private int   cellArg_ = -1;
+
+    this(Mesh* mesh, ref View view, EditMode editMode, ViewportManager vpm) {
+        super(mesh, view, editMode, vpm);
+    }
+
+    override string name() const { return "viewport.cavityParams"; }
+
+    /// Reject contract: a given value outside its range is REFUSED (the whole
+    /// command writes nothing), so the Param bounds are UI hints here and the
+    /// kernel clamp (`resolveCavityParams`) is the second layer.
+    override Param[] params() {
+        return wireArgs(
+            Param.float_("screenRidge", "Screen Ridge", &screenRidge_, float.nan)
+                .min(0.0f).max(kCavityGainMax),
+            Param.float_("screenValley", "Screen Valley", &screenValley_, float.nan)
+                .min(0.0f).max(kCavityGainMax),
+            Param.float_("worldRidge", "World Ridge", &worldRidge_, float.nan)
+                .min(0.0f).max(kCavityGainMax),
+            Param.float_("worldValley", "World Valley", &worldValley_, float.nan)
+                .min(0.0f).max(kCavityGainMax),
+            Param.float_("distance", "Distance", &distance_, float.nan)
+                .min(kCavityDistanceMin).max(kCavityDistanceMax),
+            Param.float_("attenuation", "Attenuation", &attenuation_, float.nan)
+                .min(0.0f).max(kCavityAttenuationMax),
+            Param.int_("samples", "Samples", &samples_, int.min)
+                .min(1).max(MAX_CAVITY_SAMPLES),
+            Param.int_("viewport", "Viewport", &cellArg_, -1)
+        );
+    }
+
+    protected override bool applyImpl() {
+        import std.format : format;
+        import std.math : isNaN;
+        immutable int cell = resolveCellOrThrow(cellArg_, name());
+        static void check(string what, float v, float lo, float hi) {
+            if (isNaN(v)) return;                       // not given
+            if (!(v >= lo && v <= hi))                  // also refuses ±inf
+                throw new Exception(format(
+                    "viewport.cavityParams: %s must lie in [%s, %s], got %s",
+                    what, lo, hi, v));
+        }
+        check("screenRidge",  screenRidge_,  0.0f, kCavityGainMax);
+        check("screenValley", screenValley_, 0.0f, kCavityGainMax);
+        check("worldRidge",   worldRidge_,   0.0f, kCavityGainMax);
+        check("worldValley",  worldValley_,  0.0f, kCavityGainMax);
+        check("distance",     distance_, kCavityDistanceMin, kCavityDistanceMax);
+        check("attenuation",  attenuation_,  0.0f, kCavityAttenuationMax);
+        if (samples_ != int.min && (samples_ < 1 || samples_ > MAX_CAVITY_SAMPLES))
+            throw new Exception(format(
+                "viewport.cavityParams: samples must lie in [1, %d], got %d",
+                MAX_CAVITY_SAMPLES, samples_));
+        auto c = &vpm.views[cell].display.cavity;
+        if (!isNaN(screenRidge_))  c.screenRidge  = screenRidge_;
+        if (!isNaN(screenValley_)) c.screenValley = screenValley_;
+        if (!isNaN(worldRidge_))   c.worldRidge   = worldRidge_;
+        if (!isNaN(worldValley_))  c.worldValley  = worldValley_;
+        if (!isNaN(distance_))     c.distance     = distance_;
+        if (!isNaN(attenuation_))  c.attenuation  = attenuation_;
+        if (samples_ != int.min)   c.samples      = samples_;
         markCellDisplayDirty(cell);
         return true;
     }

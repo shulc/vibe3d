@@ -239,6 +239,30 @@ unittest { // (iv) a heavy face pass has a nonzero GPU time (kept by P0 on both 
     cmd("scene.reset");
 }
 
+unittest { // (composite, task 9190) the composite section: present under Shaded + cavity, absent under Solid + cavity
+    resetSingle();
+    cmd("scene.reset", `{"type":"grid","n":64}`);
+    cmd("viewport.displayStyle", `"shaded"`);
+    cmd("viewport.cavity", `{"value":"screen"}`);
+    enforce(!jb(plan("active")["composite"]["empty"]), "(composite) premise: cavity screen resolves under Shaded");
+    auto c = window()[0];
+    writefln("  (composite) shaded+screen: harvested=%d composite=%d", c.harvested, c.samples["composite"]);
+    assert(c.harvested >= 8, format("(composite) floor: %d frames harvested in the window", c.harvested));
+    assert(c.samples["composite"] >= 8,
+        format("(composite) shaded + cavity: composite samples %d < 8", c.samples["composite"]));
+    cmd("viewport.displayStyle", `"solid"`);
+    enforce(jb(plan("active")["composite"]["empty"]), "(composite) premise: Solid resolves no composite");
+    auto o = window()[0];
+    writefln("  (composite) solid+screen: harvested=%d composite=%d faces=%d", o.harvested,
+             o.samples["composite"], o.samples["faces"]);
+    assert(o.harvested >= 8 && o.samples["faces"] >= 8,
+        format("(composite) positive control: harvested=%d faces=%d", o.harvested, o.samples["faces"]));
+    assert(o.samples["composite"] == 0,
+        format("(composite) Solid + cavity: the composite section must read ABSENT, got %d", o.samples["composite"]));
+    cmd("viewport.cavity", `{"value":"off"}`);
+    cmd("viewport.displayStyle", `"shaded"`);
+}
+
 unittest { // (v) Quad: every rendering cell harvests
     resetSingle();
     cmd("viewport.layout", `"Quad"`);

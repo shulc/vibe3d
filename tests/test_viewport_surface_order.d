@@ -410,7 +410,8 @@ unittest {
     assert("error" !in def && def["points"].array.length == 2, "probe: " ~ def.toString);
     assert(def.toString == col.toString,
         format("buffer=color must equal the default probe: %s vs %s", def, col));
-    // No slice allocates the G-buffer yet: the channel reports so, not zeros.
+    // Nothing allocated the G-buffer since the reset (the automation reset
+    // releases it, task 9190): the channel reports so, not zeros.
     auto g = getJson("/api/viewport/probe?cell=0&points=20,20&buffer=gbuf");
     assert("error" in g && g["error"].str == "gbuf not allocated",
         "buffer=gbuf before allocation must report the error: " ~ g.toString);

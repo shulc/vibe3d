@@ -290,8 +290,8 @@ import viewport : LayoutPreset;
 // level / locally in main()).
 import viewgrid : g_viewGrid, viewGridSize, viewGridSubStep, viewWorldPerPixel,
     viewGridFadeRadius, kGridMaskMin, kGridMaskMax, gridRungs;
-import display_state : DisplayState, DisplayStyle, DrawPlan, WireOverlay,
-    resolveDrawPlan;
+import display_state : CavityState, CompositePlan, DisplayState, DisplayStyle,
+    DrawPlan, WireOverlay, resolveDrawPlan;
 import gpu_select : SelectMode;
 import commands.prefs.coord_rounding : CoordRoundingCommand;
 import commands.prefs.trackball     : TrackballPrefCommand;
@@ -299,7 +299,7 @@ import commands.prefs.trackball     : TrackballPrefCommand;
 // Locally-scoped in app.d's main() (not top-level there), but EditorApp is a
 // module-scope struct so these two need to be top-level here (0415).
 import document       : Document;
-import viewport        : ViewportManager, Viewport3D;
+import viewport        : ViewportFbo, ViewportManager, Viewport3D;
 import selection_projection : SelectionProjectionInput,
     SelectionProjectionReadModel;
 // Task 0617 — this module has no `Document` of its own (it operates on
@@ -1001,6 +1001,16 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
             import std.format : format;
             import std.conv   : to;
 
+            static string compositeJson(in CompositePlan c) {
+                return format(`{"cavity":"%s","empty":%s,"screenRidge":%s,` ~
+                    `"screenValley":%s,"worldRidge":%s,"worldValley":%s,` ~
+                    `"distance":%s,"attenuation":%s,"samples":%d}`,
+                    c.cavity.to!string, c.empty ? "true" : "false",
+                    jsonNum(c.screenRidge, "%.6g"), jsonNum(c.screenValley, "%.6g"),
+                    jsonNum(c.worldRidge, "%.6g"), jsonNum(c.worldValley, "%.6g"),
+                    jsonNum(c.distance, "%.6g"), jsonNum(c.attenuation, "%.6g"),
+                    c.samples);
+            }
             static string planJson(in DrawPlan p) {
                 // `facesLit` is KEPT alongside `shading` (task 1090). It is
                 // asserted by the existing suite and it now reads off the
@@ -1017,7 +1027,8 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                     `"lightGain":%s,"vertColor":[%s,%s,%s],"vertAlpha":%s,` ~
                     `"pointSize":%s,"cullHiddenVerts":%s,` ~
                     `"shadeLinesByItem":%s,"baseDotsBySelection":%s,` ~
-                    `"joinsItemSequence":%s,"styleFills":%s,"smoothNormals":%s}`,
+                    `"joinsItemSequence":%s,"styleFills":%s,"smoothNormals":%s,` ~
+                    `"composite":%s,"effectFlags":%d}`,
                     p.drawFaces ? "true" : "false",
                     p.facesLit  ? "true" : "false",
                     p.shading.to!string,
@@ -1046,7 +1057,31 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                     p.baseDotsBySelection ? "true" : "false",
                     p.joinsItemSequence   ? "true" : "false",
                     p.styleFills          ? "true" : "false",
-                    p.smoothNormals       ? "true" : "false");
+                    p.smoothNormals       ? "true" : "false",
+                    compositeJson(p.composite),
+                    p.effectFlags);
+            }
+            static string cavityJson(in CavityState c) {
+                return format(`{"mode":"%s","screenRidge":%s,"screenValley":%s,` ~
+                    `"worldRidge":%s,"worldValley":%s,"distance":%s,` ~
+                    `"attenuation":%s,"samples":%d}`,
+                    c.mode.to!string,
+                    jsonNum(c.screenRidge, "%.6g"), jsonNum(c.screenValley, "%.6g"),
+                    jsonNum(c.worldRidge, "%.6g"), jsonNum(c.worldValley, "%.6g"),
+                    jsonNum(c.distance, "%.6g"), jsonNum(c.attenuation, "%.6g"),
+                    c.samples);
+            }
+            // The cell's composite record and the GL names it is
+            // asserted against (compositor-written, per cell).
+            static string compositeRecordJson(const ref ViewportFbo f) {
+                auto b = appender!string();
+                b.put(format(`"compositeRuns":%d,"compositeBindings":[`, f.compositeRuns));
+                foreach (i, r; f.compositeBindings)
+                    b.put(format(`%s{"bound":%d,"attached":%d}`, i ? "," : "", r.bound, r.attached));
+                b.put(format(`],"fboIds":{"scene":%d,"effects":%d,"color":%d,"gbuf":%d,` ~
+                    `"compositeSrc":%d}`, f.fbo, f.effectsFbo, f.colorTex, f.gbufTex,
+                    f.compositeSrcTex));
+                return b.data;
             }
             static string stateJson(in DisplayState s) {
                 return format(`{"style":"%s","wire":"%s","wireAlpha":%s,` ~
@@ -1223,11 +1258,11 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                 immutable svTerms = vpm.visibilityFor(k);
                 buf.put(format(
                     `{"id":%d,"renders":%s,"overlayMode":"%s","selEpoch":%d,` ~
-                    `"toolPreviewKey":%d,"dotCullRecomputes":%d,"gpuTiming":%s,` ~
+                    `"toolPreviewKey":%d,"dotCullRecomputes":%d,"gpuTiming":%s,%s,` ~
                     `"ortho":%s,"userSet":%s,` ~
                     `"selectVisibility":{"policy":"%s","facing":%s,"occlusion":%s},` ~
                     `"state":{"active":%s,"backdrop":%s,"backdropStyle":"%s",` ~
-                    `"retopology":%s},` ~
+                    `"retopology":%s,"cavity":%s},` ~
                     `"plan":{"active":%s,"backdrop":%s},"grid":%s}`,
                     k,
                     renders ? "true" : "false",
@@ -1243,6 +1278,7 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                     cv.lastToolPreviewKey,
                     cv.dotCullRecomputes,
                     cv.gpuTimer.toJson(),
+                    compositeRecordJson(cv.fbo),
                     // Task 0594. `ortho` is what the shipped display default
                     // is a function of, and `userSet` is what outranks it —
                     // reporting both is what lets a test assert the DEFAULT
@@ -1258,6 +1294,7 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                     stateJson(cv.display.backdrop),
                     cv.display.backdropStyle.to!string,
                     cv.display.retopology ? "true" : "false",
+                    cavityJson(cv.display.cavity),
                     planJson(resolveDrawPlan(cv.display, false)),
                     planJson(resolveDrawPlan(cv.display, true)),
                     gridJson(gvp)));

@@ -341,6 +341,70 @@ DisplayState shippedDisplayFor(bool ortho) pure nothrow @safe @nogc {
 
 
 
+/// The cavity effect of a cell (model M4): which kernels run.
+/// `Screen` = screen-space curvature, `World` = ridge/valley cavity from a
+/// spiral ambient-occlusion kernel, `Both` = the two. Applies ONLY under the
+/// `Shaded` style and never under the retopology mode (owner ruling), which
+/// `resolveDrawPlan` decides, not the renderer.
+enum CavityMode : ubyte { Off, Screen, World, Both }
+
+/// The kernel cap on `CavityState.samples`: it scales the world kernel's
+/// per-pixel loop, so `resolveCavityParams` clamps to it whatever route wrote
+/// the value (the command's Param bounds are the UI half of the clamp).
+enum int MAX_CAVITY_SAMPLES = 64;
+
+/// One cell's cavity controls, as the user set them (unclamped storage; the
+/// plan carries the clamped copy).
+struct CavityState {
+    CavityMode mode;
+    float screenRidge  = 1, screenValley = 1;
+    float worldRidge   = 1, worldValley  = 1;
+    float distance     = 0.2f;
+    float attenuation  = 1;
+    int   samples      = 16;
+}
+
+/// The resolved composite stage of ONE pass: the compositor's whole input.
+/// `empty` ⇒ no G-buffer writes and no composite GL call this frame.
+struct CompositePlan {
+    // Zero, not the float default NaN: the plan is compared WHOLE (the
+    // cell's DirtyKey, plan equality), and NaN != NaN would never compare equal.
+    CavityMode cavity;
+    float screenRidge = 0, screenValley = 0, worldRidge = 0, worldValley = 0;
+    float distance = 0, attenuation = 0;
+    int   samples;
+    bool empty() const pure nothrow @safe @nogc { return cavity == CavityMode.Off; }
+}
+
+/// `DrawPlan.effectFlags` bit 0: this pass's pixels take the cavity term
+/// (the pass shades `Material` from the `Shaded` style). Reaches the G-buffer
+/// flags channel through `u_effectFlags`.
+enum ubyte kEffectCavityEligible = 1;
+
+/// Clamp table of the cavity parameters (model M4): ridge/valley [0, 250],
+/// distance [1e-4, 1e5], attenuation [0, 1e5], samples [1, MAX_CAVITY_SAMPLES].
+/// A non-finite float takes the `CavityState.init` value (there is no
+/// "nearest legal value" for a NaN). The mode is copied as given.
+CompositePlan resolveCavityParams(in CavityState s) pure nothrow @safe @nogc {
+    import std.math : isFinite;
+    static float clampF(float v, float lo, float hi, float dflt) {
+        if (!isFinite(v)) return dflt;
+        return v < lo ? lo : (v > hi ? hi : v);
+    }
+    immutable CavityState d = CavityState.init;
+    CompositePlan p;
+    p.cavity       = s.mode;
+    p.screenRidge  = clampF(s.screenRidge,  0, 250, d.screenRidge);
+    p.screenValley = clampF(s.screenValley, 0, 250, d.screenValley);
+    p.worldRidge   = clampF(s.worldRidge,   0, 250, d.worldRidge);
+    p.worldValley  = clampF(s.worldValley,  0, 250, d.worldValley);
+    p.distance     = clampF(s.distance,     1e-4f, 1e5f, d.distance);
+    p.attenuation  = clampF(s.attenuation,  0, 1e5f, d.attenuation);
+    p.samples      = s.samples < 1 ? 1
+                   : (s.samples > MAX_CAVITY_SAMPLES ? MAX_CAVITY_SAMPLES : s.samples);
+    return p;
+}
+
 /// The complete display state of ONE viewport cell.
 ///
 /// Carries the ACTIVITY AXIS from the outset — `active` and `backdrop` are two
@@ -367,6 +431,9 @@ struct ViewportDisplay {
     /// change the foreground's drawing at all, yet it still decides picking
     /// occlusion (`DrawPlan.styleFills`). Per cell; off by default.
     bool retopology = false;
+    /// The cavity effect (model M4). Resolved into the ACTIVE plan's
+    /// `composite` only under `Shaded` with the retopology mode off.
+    CavityState cavity;
 }
 
 /// The RESOLVED description of one scene pass: what it may draw, and how.
@@ -505,6 +572,14 @@ struct DrawPlan {
     /// `applyRetopology`: picking occlusion follows the active style whether
     /// or not the mode is on (captured; `select_visibility` reads this).
     bool     styleFills = true;
+
+    // ---- composite stage (model M4) ----------------------------
+    /// The screen effects run after this pass's surfaces: ACTIVE plan only
+    /// (the backdrop's stays `CompositePlan.init`, i.e. empty).
+    CompositePlan composite;
+    /// Per-pixel effect eligibility written to the G-buffer flags channel;
+    /// bit 0 = `kEffectCavityEligible`.
+    ubyte    effectFlags = 0;
 }
 
 /// A cell's vertex dot size as the plan carries it: a non-positive or
@@ -707,6 +782,15 @@ DrawPlan resolveDrawPlan(in ViewportDisplay d, bool isBackdrop) pure nothrow @sa
     // the style, not the mode (see `DrawPlan.styleFills`).
     p.styleFills = p.drawFaces;
     applyRetopology(p, d, isBackdrop);
+
+    // The composite stage (owner ruling: cavity applies ONLY under the
+    // Shaded style, and resolves Off under the retopology mode). After the
+    // mode override, so `shading` is final.
+    if (st.style == DisplayStyle.Shaded && p.shading == SurfaceShading.Material)
+        p.effectFlags = kEffectCavityEligible;
+    if (!isBackdrop && st.style == DisplayStyle.Shaded && !d.retopology
+        && d.cavity.mode != CavityMode.Off)
+        p.composite = resolveCavityParams(d.cavity);
     return p;
 }
 

@@ -3,7 +3,7 @@ module viewport;
 import view          : View, ProjKind, ViewPreset;
 import gpu_select    : GpuSelectBuffer;
 import math          : Viewport, Vec3, Orientation;
-import display_state : ViewportDisplay, DrawPlan, resolveDrawPlan, kBackdropDim;
+import display_state : ViewportDisplay, DrawPlan, resolveDrawPlan, kBackdropDim, CompositePlan;
 import select_visibility : SelectVisibility, SelectVisibilityTerms,
                            resolveSelectVisibility, kSelectVisibilityDefault;
 // Task 0612 Stage 1 — teardown only. `shutdown()` below is the app's single
@@ -83,6 +83,43 @@ struct ViewportFbo {
     TexSpec colorSpec, depthSpec, gbufSpec, compositeSrcSpec;
     TexSpec[2] aoSpec;
 
+    /// The scene FBO's draw-buffer count as `beginSurfacePasses` /
+    /// `endSurfacePasses` last set it: 2 = {C0, C1}, 1 = {C0}.
+    int surfaceDrawBuffers = 1;
+    /// This cell's composite record (written by `ViewportCompositor.run`,
+    /// per cell): completed non-empty runs, and per pass of the latest run
+    /// the draw FBO read back right before its draw and the texture attached
+    /// to its C0. `/api/viewport/display` reports both.
+    uint compositeRuns;
+    CompositeBinding[] compositeBindings;
+
+    /// Open the surface passes of a frame under `p`: when the plan is
+    /// non-empty the G-buffer is allocated, joins the draw set ({C0, C1})
+    /// and is cleared to 0 by `glClearBufferuiv` alone — no colour `glClear`
+    /// may run while an integer buffer is in the draw set (WebGL2 raises
+    /// INVALID_OPERATION). Otherwise {C0}. The scene FBO must be bound.
+    void beginSurfacePasses(in CompositePlan p) {
+        if (p.empty) { endSurfacePasses(); return; }
+        ensureEffects();
+        surfaceDrawBuffers = 2;
+        version(unittest) {} else {
+            static immutable GLenum[2] bufs = [GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1];
+            static immutable GLuint[4] zero = [0, 0, 0, 0];
+            glBindFramebuffer(GL_FRAMEBUFFER, fbo);   // ensureEffects unbinds
+            glDrawBuffers(2, bufs.ptr);
+            glClearBufferuiv(GL_COLOR, 1, zero.ptr);
+        }
+    }
+
+    /// Close the surface passes: the draw set is {C0} again, always.
+    void endSurfacePasses() {
+        surfaceDrawBuffers = 1;
+        version(unittest) {} else {
+            static immutable GLenum[1] c0 = [GL_COLOR_ATTACHMENT0];
+            glDrawBuffers(1, c0.ptr);
+        }
+    }
+
     /// Ensure the FBO is at least (newW × newH).  Guards w>0 && h>0.
     /// On a size change, re-specifies existing storage in place — ids are stable.
     void ensure(int newW, int newH) {
@@ -129,6 +166,28 @@ struct ViewportFbo {
             checkComplete("scene + gbuf");
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
         }
+    }
+
+    /// Free the effect targets (back to the never-allocated state; the next
+    /// non-empty composite plan re-allocates them). Detaches the G-buffer from
+    /// the scene FBO first. Called by the test-automation reset only
+    /// (`clearViewDisplayForAutomation`), so no test inherits an allocation.
+    void releaseEffects() {
+        if (gbufTex == 0) return;
+        version(unittest) {} else {
+            GLint prev;
+            glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prev);
+            glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1,
+                                   GL_TEXTURE_2D, 0, 0);
+            glBindFramebuffer(GL_FRAMEBUFFER, cast(GLuint)prev);
+            glDeleteFramebuffers(1, &effectsFbo);
+            foreach (id; [gbufTex, compositeSrcTex, aoTex[0], aoTex[1]])
+                glDeleteTextures(1, &id);
+        }
+        gbufTex = 0; compositeSrcTex = 0; aoTex[] = 0; effectsFbo = 0;
+        gbufSpec = gbufSpec.init; compositeSrcSpec = compositeSrcSpec.init;
+        aoSpec[] = TexSpec.init;
     }
 
     /// Release GL resources.  Null-safe and idempotent.
@@ -184,6 +243,14 @@ struct ViewportFbo {
                                 ~ to!string(status, 16) ~ ")");
         }
     }
+}
+
+/// One composite pass as `ViewportCompositor.run` executed it: the draw
+/// framebuffer bound right before the pass's draw (`glGetIntegerv`), and the
+/// texture its C0 attachment was pointed at.
+struct CompositeBinding {
+    uint bound;
+    uint attached;
 }
 
 /// One texture's specification as `ViewportFbo.specTex` passed it to GL.

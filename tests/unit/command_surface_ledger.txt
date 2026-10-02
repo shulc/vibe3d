@@ -113,6 +113,8 @@ undo.test.force | api-only: test-automation undoability override probe
 undo.test.suppress | api-only: test-automation undoability override probe
 uv.unwrap | no-ui-yet: user-facing UV unwrap operation has no action
 viewport.backdropStyle | code-ui: Viewport Properties backdrop chooser dispatches directly
+viewport.cavity | no-ui-yet: per-cell cavity mode; its Viewport Properties control lands with the screen-curvature kernel
+viewport.cavityParams | no-ui-yet: per-cell cavity parameters; their Viewport Properties controls land with the kernels
 viewport.displayStyle | code-ui: Viewport Properties style chooser dispatches directly
 viewport.gridSteps | code-ui: Viewport Properties grid chooser dispatches directly
 viewport.indCenter | code-ui: Viewport Properties Center checkbox dispatches directly

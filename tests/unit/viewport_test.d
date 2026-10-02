@@ -1008,3 +1008,33 @@ unittest { // C: the layout seed writes only the template's fields
     assert(u.wire == WireOverlay.None, "C: a user-chosen cell must keep its wire");
     assert(u.wireAlpha == 0.25f, "C: a user-chosen cell must keep its wireAlpha");
 }
+
+// The surface-pass bracket (task 9190, model M4): a non-empty composite plan
+// allocates the effect targets and puts C1 in the draw set; an empty plan and
+// `endSurfacePasses` leave {C0}. `releaseEffects` returns to never-allocated.
+unittest {
+    import display_state : CavityMode, CompositePlan;
+    ViewportFbo f;
+    f.ensure(64, 48);
+    CompositePlan empty;
+    f.beginSurfacePasses(empty);
+    assert(f.surfaceDrawBuffers == 1 && f.gbufTex == 0,
+        "an empty composite plan must keep {C0} and allocate nothing");
+    f.endSurfacePasses();
+    CompositePlan screen;
+    screen.cavity = CavityMode.Screen;
+    f.beginSurfacePasses(screen);
+    assert(f.surfaceDrawBuffers == 2 && f.gbufTex != 0 && f.gbufSpec.w == 64,
+        "a non-empty composite plan must allocate the G-buffer and draw {C0, C1}");
+    f.endSurfacePasses();
+    assert(f.surfaceDrawBuffers == 1, "endSurfacePasses must restore {C0}");
+    immutable uint color = f.colorTex, depth = f.depthTex;
+    f.releaseEffects();
+    assert(f.gbufTex == 0 && f.compositeSrcTex == 0 && f.aoTex == [0u, 0u] && f.effectsFbo == 0
+        && f.gbufSpec.w == 0, "releaseEffects must return every effect target to unallocated");
+    assert(f.colorTex == color && f.depthTex == depth, "releaseEffects must keep the scene targets");
+    f.ensure(80, 48);
+    assert(f.gbufTex == 0, "a resize after releaseEffects must not re-allocate the effect targets");
+    f.beginSurfacePasses(screen);
+    assert(f.gbufTex != 0 && f.gbufSpec.w == 80, "the next non-empty plan re-allocates at the current size");
+}

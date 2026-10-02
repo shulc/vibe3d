@@ -611,6 +611,7 @@ tests.unit.vertex_normals_test
 tests.unit.view_test
 tests.unit.viewgrid_test
 tests.unit.viewport_cell_display_prefs_test
+tests.unit.viewport_composite_test
 tests.unit.viewport_plane_turn_test
 tests.unit.viewport_probe_sampling_test
 tests.unit.viewport_scheme_test
