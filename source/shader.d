@@ -14,7 +14,7 @@ version (web) {
 }
 import display_state : DrawPlan, kSchemeSolidFill, SurfaceShading, MAX_CAVITY_SAMPLES,
     ReflectionKind, ReflectionSource;
-import viewport_env : bindReflectionSource, kEnvTextureUnit,
+import viewport_env : bindReflectionSource, releaseReflectionTextures, kEnvTextureUnit,
     kMatcapDiffuseTextureUnit, kMatcapSpecularTextureUnit;
 import weightmap_view : kWeightRamp;   // task 1090: the parked neutral
 import light_rig : kKeyLightEye, kFillLightEye, kKeyIntensity, kFillIntensity,
@@ -1263,6 +1263,7 @@ class LitShader {
     ~this() {
         glDeleteProgram(program);
         glDeleteBuffers(1, &matsUbo);
+        releaseReflectionTextures();
     }
 
     /// Upload a Surface[] into the Materials UBO (`packSurfaceSlots`).

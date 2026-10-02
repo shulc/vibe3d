@@ -253,6 +253,16 @@ private uint uploadImage(ref const(LinearImage) img, bool wrapU) {
     return tex;
 }
 
+/// Delete every uploaded Reflection texture and forget it (a later bind
+/// uploads again); the lit shader's teardown calls it on the GL thread.
+void releaseReflectionTextures() {
+    foreach (ref t; envTex_)
+        if (t != 0) { glDeleteTextures(1, &t); t = 0; }
+    foreach (ref pair; matcapTex_)
+        foreach (ref t; pair)
+            if (t != 0) { glDeleteTextures(1, &t); t = 0; }
+}
+
 /// Bind the textures of `s` to the Reflection units (uploading on first
 /// use); the active unit is `GL_TEXTURE0` again on return. An index past
 /// the table binds nothing.
