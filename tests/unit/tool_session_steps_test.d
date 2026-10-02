@@ -2199,6 +2199,29 @@ unittest { // S5b E2: an arm-opening tool's arm writes the begin row, which open
                h.undoEntries().length, s.sessionStateJson()));
 }
 
+unittest { // S5b: a begin row that did not land arms nothing (the top is another session's row)
+    Mesh m = makeCube();
+    auto h = new CommandHistory();
+    auto p = new PressFlagTool;
+    p.m = &m; p.h = h; p.view = new View(0, 0, 1, 1);
+    p.basis = MeshSnapshot.capture(m);
+    Tool active = p;
+    auto s = new EditSession(() => active, h, () { active = null; });
+    s.noteArm("t.press", 1, false);
+    s2bHaul(s, &p.pressBegins, &p.pressEnds, &m);
+    assert(h.undoEntries().length == 1 && s2bTopRow(h).stepOrigin() == StepOrigin.opens,
+        "S5b rig: the first session's haul did not record its opening row");
+    auto t = new ArmPressTool;
+    t.m = &m; t.h = h; t.view = new View(0, 0, 1, 1);
+    t.basis = MeshSnapshot.capture(m);
+    t.nullCarrier = true;   // the begin row cannot be recorded
+    active = t;
+    s.noteArm("t.armpress", 2, false);
+    assert(h.undoEntries().length == 1 && s.sessionStateJson()["armed"].type == JSONType.false_,
+        format("S5b: an arm whose begin row did not land armed the post mode on another "
+               ~ "session's opening row (rows %s): %s", h.undoEntries().length, s.sessionStateJson()));
+}
+
 unittest { // S2b E3: a dormant arm opens no operation
     Mesh m = makeCube();
     auto h = new CommandHistory();
