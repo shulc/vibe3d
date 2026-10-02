@@ -33,7 +33,7 @@ module edit_session;
 
 import tool            : capturedTopologyModel, opensAtArm;
 import tool            : Tool, CommandClose, AttrImage, PressKind, OpensAt,
-                         ToolSessionLink, TopologyStepClient;
+                         StepOrigin, ToolSessionLink, TopologyStepClient;
 import command         : Command, CmdFlags;
 import std.json        : JSONValue;
 import command_history : CommandHistory, UndoState, HistoryFlags;
@@ -348,6 +348,7 @@ final class EditSession {
                         auto t = cast(Tool)provider;
                         assert(t !is null,
                             "scripted parameter source requires a Tool");
+                        tools_.scriptedWriteEndsOperation(t);
                         const step = tools_.actionStepBegins(t, name);
                         t.onParamChanged(name);
                         if (step) tools_.stepEnds(t, false);
@@ -759,9 +760,13 @@ struct DropRowSpec {
 
 /// What a navigation saw BEFORE it ran: the undo depth, so the settle after
 /// it keys on the stack having MOVED (a cancelled live edit answers `true`
-/// with no movement).
+/// with no movement); the session token and whether a bound model tool's
+/// post mode was armed — the settle's "same session, armed before"
+/// (topology-redo S2b, model doc §2.4).
 private struct NavBefore {
     size_t depth;
+    ulong token;
+    bool armed;
 }
 
 private struct ToolSession {
@@ -775,6 +780,21 @@ private struct ToolSession {
     private bool terminalRedoRequested_;
     private bool postmodeArmed_ = true;
     private NavBefore navBefore_;
+    // The operation of a captured-model tool (topology-redo S2b, model doc §2.3):
+    // `operation_` the current one (0 = none), `nextOperation_` its counter,
+    // `operationOpen_` "the next write refires it". Written ONLY by noteArm,
+    // stepEnds, settleAfterNavigation_ and scriptedWriteEndsOperation — never
+    // by endOperation_ / close / closeOwn (a right tap is no close, §1.3).
+    // `postmodeOpenAtPress_`: the post mode before the press that is
+    // running; `topologyPendingKind_` its kind; `topologyPendingAttrOnly_`:
+    // the step in flight is an attribute-only row (dormant, or a write while
+    // the post mode is not armed — model doc §R6.1).
+    private ulong operation_;
+    private ulong nextOperation_;
+    private bool operationOpen_;
+    private bool postmodeOpenAtPress_;
+    private PressKind topologyPendingKind_;
+    private bool topologyPendingAttrOnly_;
     // The operation's close (slice M2). `topBefore_` is the undo top when the
     // close began; a row counts as written BY the close only if the top is a
     // different entry afterwards — identity, never the depth, which stops
@@ -940,7 +960,8 @@ private struct ToolSession {
     // (an activation's undo re-arms the predecessor, its redo re-arms the row's
     // tool). Task 8920, law 1; model doc §2.4.
     bool undo() {
-        navBefore_.depth = history_.undoEntries().length;
+        navBefore_ = NavBefore(history_.undoEntries().length, token_,
+                               boundModel_() && postmodeArmed_);
         const r = undoImpl_();
         if (r) openBlock_ = null;
         if (r && history_.undoEntries().length != navBefore_.depth)
@@ -949,7 +970,8 @@ private struct ToolSession {
     }
 
     bool redo() {
-        navBefore_.depth = history_.undoEntries().length;
+        navBefore_ = NavBefore(history_.undoEntries().length, token_,
+                               boundModel_() && postmodeArmed_);
         auto block = openBlock_;
         openBlock_ = null;
         const r = redoImpl_();
@@ -962,12 +984,38 @@ private struct ToolSession {
 
     // The post mode is open after a navigation exactly when the undo top is
     // the bound model tool's own opener. A tool outside the model keeps the
-    // value its replay arm wrote.
+    // value its replay arm wrote. The operation stays open only for the SAME
+    // session armed before (N1/N2/N4: it is the moved row's operation); a
+    // re-begin (N5/N6) and every other case leave it closed — the next press
+    // opens a new one (topology-redo S2b, model doc §2.4).
     private void settleAfterNavigation_(bool isUndo) {
         const aModel = boundModel_();
         const aToken = aModel ? token_ : 0;
         const armedAfter = aModel && ownOpenerOnTop_(aToken);
         if (aModel) postmodeArmed_ = armedAfter;
+        const same = aModel && navBefore_.armed && aToken == navBefore_.token;
+        operationOpen_ = aModel && same && armedAfter;
+        if (operationOpen_)
+            operation_ = isUndo ? headOfRedoOperation_(aToken) : topOperation_(aToken);
+    }
+
+    // The operation of the row an undo just took off (the head of the redo
+    // stack; a folded group's rows share it) / a redo just put back (the undo
+    // top) — when it is session `tok`'s topology step; else unchanged.
+    private ulong headOfRedoOperation_(ulong tok) {
+        const re = history_.redoEntries();
+        return stepOperationOf_(re.length ? re[0].cmd : null, tok);
+    }
+
+    private ulong topOperation_(ulong tok) {
+        return stepOperationOf_(undoTop_(), tok);
+    }
+
+    private ulong stepOperationOf_(const Command row, ulong tok) {
+        if (auto step = cast(const MeshSessionEdit) row)
+            if (step.isTopologyStep() && step.sessionToken() == tok)
+                return step.stepOperation();
+        return operation_;
     }
 
     private bool boundModel_() {
@@ -1141,8 +1189,14 @@ private struct ToolSession {
                 clearClosedTopologyRedo_();
             // Only AFTER a successful stack step, with no open edit remaining:
             // re-sync the still-live tool's baseline to the now-current mesh.
+            // An attribute-only row restored its exact image and has no mesh
+            // basis to re-sync — doing so would reset its parameters (the redo
+            // door's rule; topology-redo S2b: such a row now also stands outside dormant).
             auto t3 = tool_();
-            if (t3 !is null) t3.resyncSession();
+            const re3 = history_.redoEntries();
+            if (t3 !is null && !(re3.length && extra == 0 &&
+                    cast(const TopologyAdjustmentEdit) re3[0].cmd !is null))
+                t3.resyncSession();
             adoptPredecessorToken_(last);
             if (t3 !is null && activation !is null &&
                 activation.previousHistoryTopology() &&
@@ -1420,6 +1474,13 @@ private struct ToolSession {
             if (history_.state() != UndoState.Suspend) arm.markDormantTopology();
             dormantActivation_ = arm;
         }
+        // The operation belongs to the token (topology-redo S2b, model doc §2.3): every
+        // arm — a history step's replay arm too — starts its own, open at the
+        // arm only for a tool that opens there; the settle after a navigation
+        // then rewrites it.
+        operationOpen_ = capturedTopologyModel(t.sessionPolicy())
+            && opensAtArm(t.sessionPolicy()) && !topologyDormant_;
+        operation_ = operationOpen_ ? ++nextOperation_ : 0;
         if (history_.state() != UndoState.Suspend)
             topologyFirstGroupLive_ = t.sessionPolicy().historyTopologySteps
                 && !topologyDormant_;
@@ -1448,6 +1509,7 @@ private struct ToolSession {
         link.recordCompleted = &recordCompleted;
         link.tagPreparedCompleted = &tagPreparedCompleted;
         link.recordToken = &recordTokenFor_;
+        link.previewGated = &previewGated;
         t.bindSession(link);
         auto ownedAttrs = topologyAttrsFor_(id, token);
         if (topologyDormant_ && ownedAttrs.empty)
@@ -1486,8 +1548,29 @@ private struct ToolSession {
     }
 
     void notePointerDown() {
-        if (tool_() !is null && tool_() is bound_)
+        if (tool_() !is null && tool_() is bound_) {
+            postmodeOpenAtPress_ = postmodeArmed_;
             postmodeArmed_ = true;
+        }
+    }
+
+    // A SCRIPTED attribute write while the post mode is armed ENDS the
+    // operation with no row of its own (topology-redo S2b, model doc §3 PS: the
+    // closing half of the reference's script write; its row half is handed
+    // to the activation/command-close wave). The next press opens anew.
+    void scriptedWriteEndsOperation(Tool t) {
+        if (reporting_(t) && capturedTopologyModel(t.sessionPolicy()) && postmodeArmed_) {
+            operationOpen_ = false;
+            postmodeArmed_ = false;
+        }
+    }
+
+    // The session holds the tool's preview: a dormant operation, or a post
+    // mode that is not armed — an attribute write there is an attribute-only
+    // row (topology-redo S2b, model doc §R7.2).
+    bool previewGated(Tool t) {
+        return reporting_(t) && capturedTopologyModel(t.sessionPolicy())
+            && (topologyDormant_ || !postmodeArmed_);
     }
 
     // `press`: the step was opened by the tool's own press door (the link),
@@ -1499,12 +1582,18 @@ private struct ToolSession {
         if (!reporting_(t)) return;
         if (t.sessionPolicy().historyTopologySteps) {
             topologyPendingPress_ = press;
+            topologyPendingKind_ = kind;
+            // An attribute-only row (topology-redo S2b, model doc §R6.1): a dormant
+            // step, or a write — never a press — while the post mode is not
+            // armed. One path for both (the reference's apply-less write).
+            topologyPendingAttrOnly_ = topologyDormant_ ||
+                (capturedTopologyModel(t.sessionPolicy()) && !press && !postmodeArmed_);
             // M-C (a): a press of a `pressOpensOperation` tool opens a new
             // operation — the haul resets BEFORE the open image is taken.
             if (press && t.sessionPolicy().pressOpensOperation)
                 t.openOperation(PressKind.shift, AttrImage.init);
             auto client = cast(TopologyStepClient)t;
-            if (topologyDormant_) {
+            if (topologyPendingAttrOnly_) {
                 topologyPendingAttrs_ = beforeWrite.empty
                     ? t.captureAttrImage() : beforeWrite;
                 auto m = client is null ? null : client.topologyStepMesh();
@@ -1539,7 +1628,7 @@ private struct ToolSession {
 
     void stepEnds(Tool t, bool ifChanged) {
         if (reporting_(t) && t.sessionPolicy().historyTopologySteps) {
-            if (topologyDormant_) {
+            if (topologyPendingAttrOnly_) {
                 if (!topologyPending_) return;
                 topologyPending_ = false;
                 auto after = t.captureAttrImage();
@@ -1586,11 +1675,33 @@ private struct ToolSession {
             cmd.setSnapshots(topologyPendingMesh_, after, client.topologyStepLabel());
             const rebaseAfter = carriesActivation ||
                 t.sessionPolicy().rebaseTopologyAfterStep;
+            // The step's origin and operation (topology-redo S2b, model doc §3 E4-E7,
+            // P1, PR); outside the captured model nothing is classified.
+            auto origin = StepOrigin.unclassified;
+            bool prWrite;
+            if (capturedTopologyModel(t.sessionPolicy())) {
+                if (topologyPendingPress_)
+                    origin = topologyPendingKind_ != PressKind.plain ? StepOrigin.restart
+                        : operationOpen_ ? StepOrigin.refire
+                        : postmodeOpenAtPress_ ? StepOrigin.restart : StepOrigin.opens;
+                else {
+                    // A parameter row reaches here only with the post mode
+                    // armed: inside the open operation it refires it; with
+                    // none open (a re-begun post mode) it is applied as an
+                    // operation of its own that stays closed (M-PR, §R8.1).
+                    prWrite = !operationOpen_;
+                    origin = prWrite ? StepOrigin.restart : StepOrigin.refire;
+                }
+                if (origin != StepOrigin.refire) operation_ = ++nextOperation_;
+            }
             cmd.setTopologyStep(topologyPendingAttrs_, attrs,
                 topologyPendingBasis_, rebaseAfter
                     ? after : client.topologyStepBasis(), topologyPendingPress_,
-                instanceOf_(t));
+                instanceOf_(t), origin,
+                origin == StepOrigin.unclassified ? 0 : operation_);
             if (client.recordTopologyStep(cmd) && undoTop_() is cmd) {
+                if (origin != StepOrigin.unclassified && !prWrite)
+                    operationOpen_ = true;
                 history_.markEntrySession(cmd, token_);
                 noteFoldRow_(t, cmd);
                 rememberTopologyAttrs_(attrs);
@@ -1756,6 +1867,8 @@ private struct ToolSession {
         j["armed"] = JSONValue(postmodeArmed_);
         j["postmodeOwner"] = JSONValue(postmodeArmed_ ? "human" : "none");
         j["token"] = JSONValue(cast(long) token_);
+        j["operationOpen"] = JSONValue(operationOpen_);
+        j["operation"] = JSONValue(cast(long) operation_);
         return j;
     }
 

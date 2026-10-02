@@ -618,6 +618,9 @@ public:
     // params settle.
     override void evaluate() {
         if (!engaged) { updateReadouts(); return; }
+        // An attribute write the session holds (an unarmed post mode, a
+        // dormant operation) builds no preview (topology-redo S2b).
+        if (previewGated()) { updateReadouts(); return; }
         if (havePreviewCache
             && cachedAxis     == params_.axis
             && cachedCenter   == params_.center

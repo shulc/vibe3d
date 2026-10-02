@@ -611,6 +611,9 @@ unittest { // A restored dormant predecessor keeps its activation provenance.
 }
 
 unittest { // A scripted write is the actual before-image of the next step.
+    // A scripted attribute write ends the operation armed with the tool; a panel
+    // write after it is attribute-only: its row changes no mesh, and its undo/redo
+    // restore the scripted / the panel value (task 8930).
     setupEdge();
     const initial = planes();
     cmd("tool.attr edge.extrude width 0.1");
@@ -619,15 +622,17 @@ unittest { // A scripted write is the actual before-image of the next step.
     auto p = postJson("/api/script?interactive=true",
         "tool.attr edge.extrude width 0.2\n");
     assert(p["status"].str == "ok" || p["status"].str == "success");
-    const after = planes();
-    assert(after != initial && abs(queryWidth() - 0.2) < 1e-5,
-        "interactive Width fixture did not change preview and attribute");
+    assert(planes() == initial && abs(queryWidth() - 0.2) < 1e-5,
+        "a panel Width after the scripted write changed the mesh or missed the attribute");
+    assert(getJson("/api/history")["undo"].array[$ - 1]["command"].str ==
+        "tool.topology_adjustment",
+        "a panel Width after the scripted write is not an attribute-only row");
     navigate(true);
     assert(planes() == initial && abs(queryWidth() - 0.1) < 1e-5,
         "interactive Width undo lost the scripted pre-step attribute");
     navigate(false);
-    assert(planes() == after && abs(queryWidth() - 0.2) < 1e-5,
-        "interactive Width redo lost the exact post-step image");
+    assert(planes() == initial && abs(queryWidth() - 0.2) < 1e-5,
+        "interactive Width redo lost the panel value or changed the mesh");
 }
 
 unittest { // The same scripted before-image survives an ordinary handle drag.

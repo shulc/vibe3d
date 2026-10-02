@@ -45,13 +45,13 @@ import tool_presets : loadToolPresets;
 import tests.unit.census_symbols : blankNonCode;
 
 import core.memory  : GC;
-import std.algorithm : canFind, count, sort;
+import std.algorithm : canFind, count, filter, sort;
 import std.array     : array, join;
 import std.file      : readText;
 import std.format    : format;
 import std.json      : JSONType, parseJSON;
 import std.regex     : matchFirst, regex;
-import std.string    : endsWith, indexOf, startsWith, strip;
+import std.string    : endsWith, indexOf, lastIndexOf, startsWith, strip;
 
 private enum Prov { carried, captured, inferred, notPorted, noCounterpart, uncertain }
 
@@ -422,8 +422,10 @@ unittest { // (3) the doors reach the tool session only through EditSession
     // Wave plan 8640 S7a: the redo door is the step, then the parameter-row
     // prune once the history is Active again — never inside the step (m18).
     // The undo door has no prune (amendment A16: it was inert).
-    // Task 8920 (S2a): the depth snapshot first, the settle after a MOVED stack.
-    assert(squeeze(bodyAt(ts, "bool undo()")) == "{navBefore_.depth=history_.undoEntries().length;"
+    // Task 8920 (S2a): the depth snapshot first, the settle after a MOVED stack;
+    // task 8930 (S2b): the snapshot also holds the token and the armed model post mode.
+    assert(squeeze(bodyAt(ts, "bool undo()")) == "{navBefore_=NavBefore(history_.undoEntries().length,"
+           ~ "token_,boundModel_()&&postmodeArmed_);"
            ~ "constr=undoImpl_();if(r)openBlock_=null;"
            ~ "if(r&&history_.undoEntries().length!=navBefore_.depth)settleAfterNavigation_(true);"
            ~ "returnr;}",
@@ -751,9 +753,10 @@ unittest { // (4b)
                   identSites(es, "settleAfterNavigation_", false)));
     assert(identSites(es, "postmodeArmed_", true)
            == ["<decl>:1", "ToolSession.noteArm:1", "ToolSession.notePointerDown:1",
-               "ToolSession.settleAfterNavigation_:1"],
+               "ToolSession.scriptedWriteEndsOperation:1", "ToolSession.settleAfterNavigation_:1"],
            format("S2a needle: postmodeArmed_ is written at %s, expected the field initializer "
-                  ~ "and noteArm, notePointerDown, settleAfterNavigation_ once each",
+                  ~ "and noteArm, notePointerDown, settleAfterNavigation_ once each, and (S2b, "
+                  ~ "M-PS) scriptedWriteEndsOperation",
                   identSites(es, "postmodeArmed_", true)));
     assert(identSites(es, "ownOpenerOnTop_", false)
            == ["<decl>:1", "ToolSession.settleAfterNavigation_:1"],
@@ -797,6 +800,239 @@ unittest { // (4b)
     assert(onPress == (pressModel[0 .. 7] ~ ["poly.extrude", "rotate", "vert.merge"]),
            format("S2a structural: postmodeStartsOnPressFor answers for %s", onPress));
 }
+
+// ---------------------------------------------------------------------------
+// (4c) Task 8930 (topology-redo wave S2b): the step's origin and operation, the
+// operation state (`operationOpen_`), the attribute-only row ("A"), the scripted
+// write that ends the operation (M-PS), the panel write in a re-begun post mode
+// (M-PR) and the one preview gate. Order (form item 2): floor -> needle ->
+// structural; the pins are the compile-time `static assert`s after the block.
+// ---------------------------------------------------------------------------
+
+/// Whole-word occurrences of `ident` in `code`.
+private size_t words(string code, string ident) {
+    import tests.unit.census_symbols : isIdentChar;
+    size_t n, from;
+    for (;;) {
+        const rel = code[from .. $].indexOf(ident);
+        if (rel < 0) return n;
+        const pos = from + cast(size_t) rel;
+        from = pos + ident.length;
+        if ((pos > 0 && isIdentChar(code[pos - 1]))
+            || (from < code.length && isIdentChar(code[from]))) continue;
+        ++n;
+    }
+}
+
+/// RAW-text counts of the three spellings that reach a `private` member across
+/// modules (form item 1): `.tupleof`, `__traits(getMember`, a string `mixin (`.
+private size_t[3] rawBypass(string raw) {
+    import tests.unit.census_symbols : isIdentChar;
+    size_t mixins, from;
+    for (;;) {
+        const rel = raw[from .. $].indexOf("mixin");
+        if (rel < 0) break;
+        const pos = from + cast(size_t) rel;
+        from = pos + 5;
+        if (pos > 0 && isIdentChar(raw[pos - 1])) continue;
+        size_t e = from;
+        while (e < raw.length && (raw[e] == ' ' || raw[e] == '\t' || raw[e] == '\n')) ++e;
+        if (e < raw.length && raw[e] == '(') ++mixins;
+    }
+    return [raw.count(".tupleof"), raw.count("__traits(getMember"), mixins];
+}
+
+/// The `if (...)` condition that directly guards the statement at `pos` (the
+/// last `if (` before it whose closing parenthesis is followed only by blanks,
+/// or the block's opening brace, up to `pos`), or null.
+private string guardOf(string code, size_t pos) {
+    const at = code[0 .. pos].lastIndexOf("if (");
+    if (at < 0) return null;
+    size_t i = cast(size_t) at + 3, depth;
+    const open = i;
+    for (; i < pos; ++i) {
+        if (code[i] == '(') ++depth;
+        else if (code[i] == ')' && --depth == 0) break;
+    }
+    const between = code[i + 1 .. pos].strip;
+    if (i >= pos || (between.length && between != "{")) return null;
+    return code[open + 1 .. i];
+}
+
+unittest { // (4c)
+    import std.file : dirEntries, SpanMode;
+    import tests.unit.production_tool_policies : productionPolicies;
+    import tests.unit.census_symbols : blankUnittestBodies;
+    // FLOOR: the production registry's 71 ids, the model's 13; and the raw scan
+    // reaches the whole source tree (>= 582 files: other waves add files) with
+    // the session module among them. Polarity: stationary.
+    size_t ids;
+    auto rows = productionPolicies(ids);
+    string[] model;
+    foreach (row; rows) if (row[1].startsWith("model")) model ~= row[0];
+    sort(model);
+    assert(ids == 71 && model == kModelIds,
+           format("S2b floor: the production registry built %s ids, model %s", ids, model));
+    string[] raw;
+    size_t scanned;
+    bool sessionScanned;
+    foreach (e; dirEntries("source", "*.d", SpanMode.depth)) {
+        ++scanned;
+        const name = e.name;
+        if (name == "source/edit_session.d") sessionScanned = true;
+        const c = rawBypass(readText(name));
+        if (c[0] + c[1] + c[2])
+            raw ~= format("raw:%s:%s/%s/%s", name, c[0], c[1], c[2]);
+    }
+    assert(scanned >= 582 && sessionScanned,
+           format("S2b floor: the raw scan read %s files of source/ (floor 582), session module "
+                  ~ "read: %s", scanned, sessionScanned));
+
+    // NEEDLE — ONE multiset, by identifier (form items 1-3): the writes of the
+    // operation state, by body, and the raw bypass spellings, by file. Polarity:
+    // the assignment rows are an allowed set true after S2b (S5b/S7 edit their
+    // row); the raw keys are true before AND after (a bypass in any file — the
+    // session module first — reddens its own `raw:` key).
+    auto es = blankUnittestBodies(blankNonCode(readText("source/edit_session.d")));
+    string[] needle = raw.dup;
+    foreach (f; ["operationOpen_", "postmodeArmed_", "topologyPendingAttrOnly_"])
+        foreach (site; identSites(es, f, true)) needle ~= f ~ "=" ~ site;
+    sort(needle);
+    enum string[] kNeedle = [
+        "operationOpen_=<decl>:1", "operationOpen_=ToolSession.noteArm:1",
+        "operationOpen_=ToolSession.scriptedWriteEndsOperation:1",
+        "operationOpen_=ToolSession.settleAfterNavigation_:1", "operationOpen_=ToolSession.stepEnds:1",
+        "postmodeArmed_=<decl>:1", "postmodeArmed_=ToolSession.noteArm:1",
+        "postmodeArmed_=ToolSession.notePointerDown:1",
+        "postmodeArmed_=ToolSession.scriptedWriteEndsOperation:1",
+        "postmodeArmed_=ToolSession.settleAfterNavigation_:1",
+        "raw:source/create_tool_registration.d:0/1/0", "raw:source/document.d:0/1/0",
+        "raw:source/edit_tool_registration.d:0/1/0", "raw:source/http_json.d:2/0/0",
+        "raw:source/http_providers.d:1/0/0", "raw:source/http_server.d:4/1/0",
+        "raw:source/io/native.d:4/7/0", "raw:source/mesh.d:17/0/2",
+        "raw:source/mesh_edit_delta.d:1/2/0", "raw:source/mesh_planes.d:11/21/1",
+        "raw:source/perf_probe.d:0/5/0", "raw:source/prefs.d:17/0/0", "raw:source/snapshot.d:2/0/0",
+        "raw:source/toolpipe/packets.d:4/0/0", "raw:source/tools/alignment/radial_sweep_tool.d:0/4/0",
+        "raw:source/tools/edit/smooth_relax.d:0/0/1", "raw:source/tools/edit/topology_pen/tool.d:0/3/0",
+        "raw:source/tools/transform/xfrm_transform.d:0/1/0", "raw:source/web_gl_loader.d:0/2/0",
+        "topologyPendingAttrOnly_=<decl>:1", "topologyPendingAttrOnly_=ToolSession.stepBegins:1",
+    ];
+    assert(needle == kNeedle,
+           format("S2b needle: the operation-state writes / raw bypass keys moved — extra %s, missing %s",
+                  needle.filter!(n => !kNeedle.canFind(n)).array,
+                  kNeedle.filter!(n => !needle.canFind(n)).array));
+    // The rest of the needle, by identifier. Each read is of a body the floor
+    // above makes non-empty (form item 4: the complement needs its area).
+    const steB = bodyAt(es, "void stepBegins(Tool t, PressKind kind");
+    const steE = bodyAt(es, "void stepEnds(Tool t, bool ifChanged)");
+    const arm = bodyAt(es, "void noteArm(string id, ulong token, bool postmodeArmed");
+    const psw = bodyAt(es, "void scriptedWriteEndsOperation(Tool t)");
+    foreach (b; [steB, steE, arm, psw])
+        assert(squeeze(b).length > 2, "S2b needle: a ToolSession body the needle reads is empty");
+    // (a) "A" decides by the armed post mode, never by the open operation; the
+    // two branch choices read it, and `topologyDormant_` stands only on its
+    // right-hand side (the dormant pair of `undoImpl_` is S6's).
+    const aAt = steB.indexOf("topologyPendingAttrOnly_ =");
+    const aRhs = steB[aAt .. aAt + steB[aAt .. $].indexOf(";")];
+    assert(words(aRhs, "postmodeArmed_") == 1 && words(aRhs, "operationOpen_") == 0
+           && words(aRhs, "press") == 1 && words(aRhs, "capturedTopologyModel") == 1,
+           "S2b needle: the attribute-only predicate is not `dormant || (model && !press && "
+           ~ "!postmodeArmed_)`: " ~ squeeze(aRhs));
+    assert(words(steB, "topologyDormant_") == 1 && words(aRhs, "topologyDormant_") == 1
+           && words(steE, "topologyDormant_") == 0
+           && words(steB, "topologyPendingAttrOnly_") == 2 && words(steE, "topologyPendingAttrOnly_") == 1,
+           "S2b needle: stepBegins/stepEnds choose a branch by topologyDormant_ again");
+    // (b) the M-PR write keeps the operation closed: `prWrite` guards the tail
+    // assignment of stepEnds (the inserted `operationOpen_ = true` in the PR
+    // branch is mutation M-PR, a fixture cell).
+    const oAt = steE.indexOf("operationOpen_ =");
+    assert(oAt >= 0 && words(guardOf(steE, cast(size_t) oAt), "prWrite") == 1,
+           "S2b needle: the operationOpen_ assignment of stepEnds is not guarded by prWrite");
+    // (c) the token's operation is written outside any history-state condition.
+    const nAt = arm.indexOf("operationOpen_ =");
+    assert(nAt >= 0 && guardOf(arm, cast(size_t) nAt) is null,
+           "S2b needle: noteArm writes operationOpen_ under a condition");
+    {
+        size_t depth;
+        foreach (ch; arm[0 .. nAt]) { if (ch == '{') ++depth; else if (ch == '}') --depth; }
+        assert(depth == 1, format("S2b needle: noteArm's operationOpen_ write sits %s blocks deep "
+                                  ~ "(a condition on UndoState.Suspend would enclose it)", depth - 1));
+    }
+    // (d) M-PS gates on the armed post mode.
+    assert(words(guardOf(psw, cast(size_t) psw.indexOf("operationOpen_ =")), "postmodeArmed_") == 1,
+           "S2b needle: scriptedWriteEndsOperation no longer gates on postmodeArmed_");
+    // (e) close / RMB never write the operation (model §1.3); their bodies exist.
+    foreach (marker; ["private void endOperation_()", "CloseOutcome close(CloseReason r",
+                      "bool closeOwn(Tool t, bool commit)"]) {
+        const b = bodyAt(es, marker);
+        assert(squeeze(b).length > 2 && words(b, "operationOpen_") == 0,
+               "S2b needle: " ~ marker ~ " touches operationOpen_ (or is empty)");
+    }
+    // (f) the M-PR rule has no navigation-path term (R7): no `isUndo` / `navBefore_`.
+    assert(words(steE, "isUndo") == 0 && words(steE, "navBefore_") == 0,
+           "S2b needle: stepEnds reads isUndo / navBefore_ (a re-begin path term)");
+    // (g) one production call of setTopologyStep, eight arguments.
+    const callAt = steE.indexOf("cmd.setTopologyStep(");
+    assert(words(es, "setTopologyStep") == 1 && callAt >= 0, "S2b needle: setTopologyStep calls moved");
+    {
+        size_t i = cast(size_t) callAt + "cmd.setTopologyStep(".length, depth = 1, commas;
+        for (; depth; ++i) {
+            if (steE[i] == '(') ++depth;
+            else if (steE[i] == ')') --depth;
+            else if (steE[i] == ',' && depth == 1) ++commas;
+        }
+        assert(commas == 7, format("S2b needle: setTopologyStep is called with %s arguments, expected 8",
+                                   commas + 1));
+    }
+    // (h) the scripted write's one caller is the ScriptedValue arm of
+    // orchestrateParameterChange; the preview gate's link is set at the arm only;
+    // the one tool reading the gate in S2b is Mirror's evaluate (S6: 12 sites).
+    string[] mps;
+    foreach (e; dirEntries("source", "*.d", SpanMode.depth)) {
+        auto code = blankUnittestBodies(blankNonCode(readText(e.name)));
+        foreach (site; identSites(code, "scriptedWriteEndsOperation", false))
+            mps ~= e.name ~ ":" ~ site;
+    }
+    sort(mps);
+    assert(mps == ["source/edit_session.d:<decl>:1",
+                   "source/edit_session.d:EditSession.orchestrateParameterChange:1"],
+           format("S2b needle: scriptedWriteEndsOperation sites %s", mps));
+    const scripted = bodyAt(bodyAt(es, "void orchestrateParameterChange(ParamProvider provider"),
+                            "case ParameterChangeSource.ScriptedValue:");
+    assert(words(scripted, "scriptedWriteEndsOperation") == 1,
+           "S2b needle: the scripted write ends the operation outside the ScriptedValue arm");
+    // noteArm names it twice: the link field and the method's address.
+    assert(identSites(es, "previewGated", false)
+           == ["<decl>:1", "ToolSession.noteArm:2"]
+           && squeeze(es).count("link.previewGated=") == 1
+           && squeeze(arm).canFind("link.previewGated=&previewGated;"),
+           format("S2b needle: previewGated sites in edit_session.d %s",
+                  identSites(es, "previewGated", false)));
+    string[] gates;
+    foreach (e; dirEntries("source/tools", "*.d", SpanMode.depth)) {
+        auto code = blankUnittestBodies(blankNonCode(readText(e.name)));
+        foreach (site; identSites(code, "previewGated", false)) gates ~= site;
+    }
+    sort(gates);
+    assert(gates == ["MirrorTool.evaluate:1"],
+           format("S2b needle: previewGated is read in source/tools at %s, expected "
+                  ~ "MirrorTool.evaluate once (S6 adds the other eleven)", gates));
+
+    // STRUCTURAL: the origin is published only for a classified row.
+    auto hp = blankUnittestBodies(blankNonCode(readText("source/http_providers.d")));
+    const enc = squeeze(bodyAt(hp, "private JSONValue encodeHistoryRow("));
+    assert(enc.canFind("if(step.stepOrigin()!=StepOrigin.unclassified){"),
+           "S2b structural: encodeHistoryRow publishes stepOrigin for an unclassified row");
+}
+
+// Pins (form item 1; the lists are the compiled probe's, 2026-10-02).
+static assert([__traits(allMembers, imported!"tool".StepOrigin)]
+              == ["unclassified", "refire", "opens", "restart"]);
+static assert(imported!"tool".StepOrigin.init == imported!"tool".StepOrigin.unclassified);
+static assert([__traits(allMembers, imported!"tool".ToolSessionLink)]
+              == ["stepBegins", "stepEnds", "operationArmed", "operationEnded", "closeOwn",
+                  "recordCompleted", "tagPreparedCompleted", "recordToken", "stepOpenImage",
+                  "previewGated"]);
 
 // ---------------------------------------------------------------------------
 // (5) Slice M4 — the two data fields that replaced per-tool capabilities:

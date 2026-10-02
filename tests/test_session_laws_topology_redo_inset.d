@@ -57,10 +57,12 @@ unittest { // the floor: the fixture still holds the whole family
 
 // The fixture's structure, before any cell: the class rule's triples are exactly the
 // frozen `classOwned` (plan §4.7 R8 rule 1; generator output 2026-10-01: none), and
-// the "backlog: PR" fields are exactly those of the plan's table today's run already
-// gives (§4.7 R8: written by S1a; the rest are written by S2b).
+// the "backlog: PR" fields are exactly those of the plan's table our run already gives
+// (§4.7 R8: six written by S1a, `s07_drag.origin` by S2b 8930; the ten `vcount` rows
+// carry the table value + 5 of `s03_drag.vcount` until S3, plan §11).
 immutable string[] kBacklogPR = [
     "param_rebegun_undo_inset_ui/s06_UC.image=[]",
+    "param_rebegun_undo_inset_ui/s07_drag.origin=\"restart\"",
     "param_rebegun_undo_inset_ui/s10_Z.image=[\"s06\"]",
     "param_rebegun_undo_inset_ui/s11_Z.armed=true",
     "param_rebegun_undo_inset_ui/s11_Z.image=[\"s03\",\"s04\",\"s05\"]",
@@ -136,6 +138,35 @@ unittest {
 
 static foreach (id; kCells) {
     unittest { runCell(parseJSON(kFixture), id); }
+}
+
+// Task 8930 (wave S2b), M-N2: an undo inside the same session reopens the operation of
+// the row it took off — after the middle restart M is undone, the next haul refires M's
+// operation, not g1's (`stepOperation` is not a fixture field: read from /api/history
+// on the cell's own steps s01…s05).
+unittest {
+    import http_client : getJson;
+    import std.process : environment;
+    if (environment.get("VIBE3D_CELL", "").length || environment.get("VIBE3D_TOPO_REDO_DUMP", "").length)
+        return;
+    JSONValue cell;
+    foreach (c; parseJSON(kFixture)["cells"].array)
+        if (c["id"].str == "nav_undo_restart_pextrude") cell = c;
+    assert(cell.type == JSONType.object, "fixture holds no nav_undo_restart_pextrude (the N2 rig)");
+    const rig = rigOf(cell["variant"].str);
+    setupCell(cell, rig);
+    JSONValue top() { return getJson("/api/history")["undo"].array[$ - 1]; }
+    long[string] op;
+    foreach (k; 0 .. 5) {
+        const step = cell["steps"][k];
+        runStep(step, rig, "N2 " ~ step["label"].str);
+        if (step["op"].str == "haul") op[step["label"].str] = top()["stepOperation"].integer;
+    }
+    assert(op["s02_drag"] != op["s03_M"], "N2 rig: the middle restart did not open its own operation");
+    assert(top()["stepOrigin"].str == "refire" && op["s05_drag"] == op["s03_M"],
+        "N2: the haul after undoing M is " ~ top()["stepOrigin"].str ~ " of operation "
+        ~ op["s05_drag"].to!string ~ ", expected a refire of M's " ~ op["s03_M"].to!string
+        ~ " (g1's is " ~ op["s02_drag"].to!string ~ ")");
 }
 
 unittest { // every cell was played and compared (a skipped cell is not a green one)

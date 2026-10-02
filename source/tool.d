@@ -208,6 +208,12 @@ enum OpensAt : ubyte { firstPress, arm }
 /// H5: the kind of press that opens a gesture step (slice M3).
 enum PressKind : ubyte { plain, shift, middle }
 
+/// How a topology step of the captured model began (topology-redo S2b, model doc §2.2):
+/// `opens` began the post mode, `restart` opened an operation inside an open
+/// (or navigation-re-begun) post mode, `refire` stayed inside the open
+/// operation. `unclassified` (the `.init`) is every row outside the model.
+enum StepOrigin : ubyte { unclassified, refire, opens, restart }
+
 /// H7 (tool session model, slice M6): whether the viewport draws the element
 /// under the cursor while a tool is armed. It is DATA — the rollover flag of
 /// the tool's policy (`ToolSessionPolicy.rollovers`) and of the pipe stages it
@@ -322,6 +328,7 @@ struct ToolSessionLink {
     void delegate(Tool, Command) tagPreparedCompleted;
     ulong delegate(Tool) recordToken;
     MeshSnapshot delegate(Tool) stepOpenImage;   // the pending step's open image (shared)
+    bool delegate(Tool) previewGated;            // the session holds the tool's preview (topology-redo S2b)
 }
 
 struct ToolSessionPolicy {
@@ -1255,6 +1262,12 @@ public:
     /// A gesture step starts: call BEFORE the gesture changes any attribute.
     protected final void sessionStepBegins(PressKind kind = PressKind.plain) {
         if (sessionLink_.stepBegins !is null) sessionLink_.stepBegins(this, kind);
+    }
+    /// The session holds this tool's preview: an attribute write builds no
+    /// preview while its operation is dormant or its post mode is not armed
+    /// (topology-redo S2b, model doc §R7.2). Unbound: never.
+    protected final bool previewGated() {
+        return sessionLink_.previewGated !is null && sessionLink_.previewGated(this);
     }
     /// The mesh image the step this instance just opened starts from — the
     /// session's own capture, shared rather than taken twice (plan 8646

@@ -15,7 +15,9 @@ module topology_redo_law_helpers;
 //   armed   the session's post-mode flag;  on  "tool" | "move" | ""
 //   refused a navigation key that moved no history row (Z/R checkpoints only)
 //   attrs   the EARLIER checkpoints with the same tool attributes (tool on only)
-//   origin  how a haul's step began — not written by the product yet: "absent"
+//   origin  how a haul's step began: the undo top's `stepOrigin` in the fixture's words
+//           (opens -> "begin", restart -> "restart", refire -> "none"); "absent" when
+//           the top row carries none (task 8930)
 //   redoRows redo steps left (rows that do not join the row below)
 // A field is either parity (ours == reference) or a declared known divergence
 // (ours == the declared `ours`, owner = the slice that closes it). Navigation goes
@@ -481,6 +483,7 @@ struct Obs {
     bool armed;
     string on;
     string attrs;     // canonical attribute values; null when the tool is not on
+    string origin;    // the undo top's step origin, fixture words ("absent": none)
     long undoRows, redoRows, redoSteps;
 }
 
@@ -511,6 +514,10 @@ Obs observe(string label, const Rig rig) {
         o.attrs = parts.join(";");
     }
     auto h = getJson("/api/history");
+    o.origin = "absent";
+    if (h["undo"].array.length)
+        if (auto so = "stepOrigin" in h["undo"].array[$ - 1])
+            o.origin = so.str == "opens" ? "begin" : so.str == "refire" ? "none" : so.str;
     o.undoRows = cast(long) h["undo"].array.length;
     o.redoRows = cast(long) h["redo"].array.length;
     foreach (row; h["redo"].array)
@@ -558,7 +565,7 @@ JSONValue ourField(string field, const Obs[] obs, size_t i, long baseOurs, long 
     case "refused":
         assert(before !is null);
         return JSONValue(before.undoRows == obs[i].undoRows && before.redoRows == obs[i].redoRows);
-    case "origin": return JSONValue("absent");   // no step origin is written yet (S2b)
+    case "origin": return JSONValue(obs[i].origin);
     case "redoRows": return JSONValue(obs[i].redoSteps);
     default: assert(false, "unknown field " ~ field);
     }
@@ -733,6 +740,7 @@ void dumpCell(const JSONValue cell, const CellRun run, string path) {
         q["label"] = o.label; q["image"] = o.image; q["vcount"] = o.vcount;
         q["armed"] = o.armed; q["on"] = o.on;
         q["attrs"] = o.attrs is null ? JSONValue(null) : JSONValue(o.attrs);
+        q["origin"] = o.origin;
         q["undoRows"] = o.undoRows; q["redoRows"] = o.redoRows; q["redoSteps"] = o.redoSteps;
         pts ~= q;
     }

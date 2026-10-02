@@ -186,6 +186,16 @@ unittest {
                   fx["moved"]["g2"]));
     assert(penHistoryLen() == r.hp + 3,
            format("arm-two-moves: two gestures after the arm are not two rows: %s", penHistoryLabels()));
+    // Task 8930: the pen is outside the captured topology model — its rows carry no
+    // step origin / operation (published only for a classified row). Floor: the
+    // arm row and the two gesture rows are read.
+    size_t read;
+    foreach (row; getJson("/api/history")["undo"].array) {
+        assert("stepOrigin" !in row && "stepOperation" !in row,
+               format("arm-two-moves: the pen row %s carries a step origin: %s", row["label"], row));
+        ++read;
+    }
+    assert(read == r.hp + 3, format("arm-two-moves: read %s history rows, expected %s", read, r.hp + 3));
     const PenMesh[string] at = ["a0": r.a0, "g1": g1, "g2": g2];
     long hist = r.hp + 3;
     size_t n;

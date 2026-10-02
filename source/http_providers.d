@@ -2369,6 +2369,14 @@ private JSONValue encodeHistoryRow(ref const(HistoryEntry) entry) {
     // The tool session that wrote the record (slice M4; 0 = none) — the
     // token a close marks and an activation row carries.
     obj["session"]   = JSONValue(entry.cmd is null ? 0L : cast(long) entry.cmd.sessionToken());
+    // How a captured-model topology step began and its operation (topology-redo S2b);
+    // an unclassified row (the pen, any other) publishes neither key.
+    import commands.mesh.session_edit : MeshSessionEdit;
+    if (auto step = cast(const MeshSessionEdit) entry.cmd)
+        if (step.stepOrigin() != StepOrigin.unclassified) {
+            obj["stepOrigin"]    = JSONValue(step.stepOrigin().to!string);
+            obj["stepOperation"] = JSONValue(cast(long) step.stepOperation());
+        }
     return obj;
 }
 

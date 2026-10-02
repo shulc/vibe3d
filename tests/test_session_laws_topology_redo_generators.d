@@ -13,6 +13,7 @@
 
 import std.conv : to;
 import std.json;
+import http_client : getJson, postJson, frameFence;
 import topology_redo_law_helpers;
 
 void main() {}
@@ -42,8 +43,10 @@ unittest { // the floor: the fixture still holds the whole family
 // Two stationary owners the plan names for this family, before any cell: the UI command
 // that meets Mirror (model §6.4 C2m, `commandClose: none`) hands every divergent field
 // from its own checkpoint on to the activation/command-close wave (plan §12, as C2s:
-// «mirror_cmdclose_ui с s04_UC»; generator output 2026-10-02: 19 fields, all of them),
-// and Mirror's law 4 on the UI door is not captured (model §6.3) — one field.
+// «mirror_cmdclose_ui с s04_UC»; generator output 2026-10-02: 19 fields, all of them;
+// 30 since S2b 8930: the panel write s02_UC is an attribute-only row, whose redo refuses
+// once our command dropped the tool — the R tail stops), and Mirror's law 4 on the UI
+// door is not captured (model §6.3) — one field.
 unittest {
     const fx = parseJSON(kFixture);
     size_t c2m;
@@ -65,14 +68,86 @@ unittest {
             }
         }
     }
-    assert(c2m == 19, "fixture family generators holds " ~ c2m.to!string
-        ~ " divergent fields from the Mirror UI command on, frozen at 19");
+    assert(c2m == 30, "fixture family generators holds " ~ c2m.to!string
+        ~ " divergent fields from the Mirror UI command on, frozen at 30");
     assert(notCaptured == ["mirror_attrs_ui/s04_R.attrs"], "fixture: the not-captured fields "
         ~ notCaptured.to!string ~ " are not model §6.3's one");
 }
 
 static foreach (id; kCells) {
     unittest { runCell(parseJSON(kFixture), id); }
+}
+
+// Task 8930 (wave S2b): OUR invariant, not a fixture cell — a scripted write that ends
+// Mirror's operation, and a panel write while its post mode is not armed (an
+// attribute-only row), leave the mesh as it is: the session holds the preview
+// (`Tool.previewGated`, the one gate in `MirrorTool.evaluate`). The rig is the
+// family's own (`mirror_discrim`: script arm, haul); `angle` is the panel attribute
+// because it changes the mirrored geometry (`distance` welds only under `merge`).
+private JSONValue mirrorRigCell() {
+    foreach (c; parseJSON(kFixture)["cells"].array)
+        if (c["id"].str == "mirror_discrim") return c;
+    assert(false, "fixture holds no mirror_discrim cell (the Mirror gate's rig)");
+}
+
+private string mirrorPlanes() { return getJson("/api/mesh/planes").toString; }
+private size_t undoDepth() { return getJson("/api/history")["undo"].array.length; }
+
+/// Arm and haul Mirror (the rig's s01, s02), then end its operation by a scripted axis
+/// write (M-PS). Positive control at the site: the haul itself changed the planes.
+private void mirrorArmedHaulThenScript(string ctx) {
+    const cell = mirrorRigCell();
+    const rig = rigOf(cell["variant"].str);
+    setupCell(cell, rig);
+    runStep(cell["steps"][0], rig, ctx);
+    const before = mirrorPlanes();
+    runStep(cell["steps"][1], rig, ctx);
+    assert(mirrorPlanes() != before, ctx ~ ": control — the Mirror haul changed no plane");
+    auto st = getJson("/api/tool/state");
+    assert(st["session"]["armed"].type == JSONType.true_, ctx ~ ": the haul did not arm the post mode");
+    const planes = mirrorPlanes();
+    const depth = undoDepth();
+    auto r = postJson("/api/command", "tool.attr mesh.mirrorTool axis Z");
+    assert(r["status"].str == "ok", ctx ~ ": scripted axis write failed: " ~ r.toString);
+    frameFence(null, 2);
+    assert(getJson("/api/tool/state")["session"]["armed"].type == JSONType.false_,
+        ctx ~ ": the scripted write did not end the operation (armed)");
+    assert(undoDepth() == depth, ctx ~ ": the scripted write wrote a row");
+    if (ctx == "mirror gate: script")
+        assert(mirrorPlanes() == planes,
+            "mirror gate: a scripted write that ends the operation rebuilt Mirror's preview");
+}
+
+unittest { // Mirror: a scripted write that ends the operation leaves the mesh
+    import std.process : environment;
+    if (environment.get("VIBE3D_CELL", "").length || environment.get("VIBE3D_TOPO_REDO_DUMP", "").length)
+        return;
+    mirrorArmedHaulThenScript("mirror gate: script");
+    cmdOkPublic("tool.set mesh.mirrorTool off");
+}
+
+unittest { // Mirror: the attribute-only row of a panel write leaves the mesh
+    import std.process : environment;
+    if (environment.get("VIBE3D_CELL", "").length || environment.get("VIBE3D_TOPO_REDO_DUMP", "").length)
+        return;
+    mirrorArmedHaulThenScript("mirror gate: panel");
+    const planes = mirrorPlanes();
+    const depth = undoDepth();
+    auto p = postJson("/api/script?interactive=true", "tool.attr mesh.mirrorTool angle 90\n");
+    assert(p["status"].str == "ok" || p["status"].str == "success",
+        "mirror gate: panel angle write failed: " ~ p.toString);
+    frameFence(null, 2);
+    assert(mirrorPlanes() == planes,
+        "mirror gate: a panel write while the post mode is not armed rebuilt Mirror's preview");
+    assert(undoDepth() == depth + 1
+        && getJson("/api/history")["undo"].array[$ - 1]["command"].str == "tool.topology_adjustment",
+        "mirror gate: the panel write is not one attribute-only row");
+    cmdOkPublic("tool.set mesh.mirrorTool off");
+}
+
+private void cmdOkPublic(string line) {
+    auto r = postJson("/api/command", line);
+    assert(r["status"].str == "ok", line ~ ": " ~ r.toString);
 }
 
 unittest { // every cell was played and compared (a skipped cell is not a green one)

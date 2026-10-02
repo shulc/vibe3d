@@ -38,7 +38,7 @@ import editmode : EditMode;
 import mesh : Mesh, makeCube;
 import math : Vec3;
 import params;
-import tool : AttrImage, OpensAt, PressKind, Tool, ToolSessionPolicy, TopologyStepClient;
+import tool : AttrImage, OpensAt, PressKind, StepOrigin, Tool, ToolSessionPolicy, TopologyStepClient;
 import command : Command;
 import snapshot : MeshSnapshot;
 import tool_activation_ownership;
@@ -1367,16 +1367,35 @@ unittest { // a press through the link is a press; a parameter write and an Acti
         "8646 press flag: a parameter step's row must not say stepOpenedByPress");
 
     // An Action write (`actionStepBegins`): not a press while its step is open.
+    // Written through the UI door: a SCRIPTED write first ends the operation
+    // (task 8930, M-PS — the half below), and its step is then attribute-only.
     t.seen = JSONValue.init;
     t.act = true;
-    s.orchestrateParameterChange(t, "act", ParameterChangeSource.ScriptedValue,
+    s.orchestrateParameterChange(t, "act", ParameterChangeSource.InteractiveValue,
         ParameterChangePhase.ValueWritten);
-    s.orchestrateParameterChange(t, "", ParameterChangeSource.ScriptedValue,
+    s.orchestrateParameterChange(t, "", ParameterChangeSource.InteractiveValue,
         ParameterChangePhase.BatchComplete);
     assert(t.seen.type == JSONType.false_ && h.undoEntries().length == 3
            && !lastRowByPress(h),
         format("8646 press flag: an Action step reported pendingPress %s (rows %s)",
                t.seen, h.undoEntries().length));
+
+    // Task 8930, M-PS: a scripted write while armed ends the operation with no
+    // row: the post mode disarms, the operation closes, the history stays.
+    assert(s.sessionStateJson()["operationOpen"].type == JSONType.true_
+           && s.sessionStateJson()["armed"].type == JSONType.true_,
+        "S2b M-PS rig: the operation is not open and armed before the scripted write");
+    t.act = false;
+    s.orchestrateParameterChange(t, "act", ParameterChangeSource.ScriptedValue,
+        ParameterChangePhase.ValueWritten);
+    s.orchestrateParameterChange(t, "", ParameterChangeSource.ScriptedValue,
+        ParameterChangePhase.BatchComplete);
+    assert(s.sessionStateJson()["operationOpen"].type == JSONType.false_
+           && s.sessionStateJson()["armed"].type == JSONType.false_
+           && h.undoEntries().length == 3,
+        format("S2b M-PS: a scripted write left operationOpen %s armed %s (rows %s)",
+               s.sessionStateJson()["operationOpen"], s.sessionStateJson()["armed"],
+               h.undoEntries().length));
 }
 
 /// A topology stand-in whose ARM applies it (`opensAt: arm` + `armAttr`): the
@@ -1844,7 +1863,7 @@ unittest { // S7a u3: a press whose walk meets a foreign-token row marks none
     auto snap = MeshSnapshot.capture(m);
     foreign.setSnapshots(snap, snap);
     foreign.setTopologyStep(AttrImage.init, AttrImage.init, MeshSnapshot.init, MeshSnapshot.init,
-                            false, t.preparedLifecycleOwner().value);
+                            false, t.preparedLifecycleOwner().value, StepOrigin.unclassified, 0);
     foreign.markSession(6);
     h.record(foreign);
     t.press();
@@ -1901,6 +1920,10 @@ private void s2bAttr(EditSession s, Tool t, string name, void delegate() write,
 }
 
 private void s2bCheck(EditSession s, ref size_t checked, string at) {
+    const st = s.sessionStateJson();
+    assert(st.type == JSONType.object, "S2b invariant: no session report at " ~ at);
+    assert(st["operationOpen"].type != JSONType.true_ || st["armed"].type == JSONType.true_,
+        "S2b invariant: an open operation with the post mode not armed at " ~ at);
     ++checked;
 }
 
@@ -1948,4 +1971,63 @@ unittest { // S2b invariant: an open operation is always an armed post mode
     writefln("S2b invariant: checked=%s", checked);
     assert(checked == 19, format("S2b invariant: %s steps checked, the plan's sequences hold 19",
         checked));
+}
+
+private const(imported!"commands.mesh.session_edit".MeshSessionEdit) s2bTopRow(CommandHistory h) {
+    import commands.mesh.session_edit : MeshSessionEdit;
+    auto row = cast(const MeshSessionEdit) h.undoEntries()[$ - 1].cmd;
+    assert(row !is null && row.isTopologyStep(), "S2b: the undo top is no topology step");
+    return row;
+}
+
+unittest { // S2b: the operation belongs to the token — a re-arm under Suspend starts its own
+    Mesh m = makeCube();
+    auto h = new CommandHistory();
+    auto t = new PressFlagTool;
+    t.m = &m; t.h = h; t.view = new View(0, 0, 1, 1);
+    t.basis = MeshSnapshot.capture(m);
+    Tool active = t;
+    auto s = new EditSession(() => active, h, () { active = null; });
+    s.noteArm("t.press", 1, false);
+    s2bHaul(s, &t.pressBegins, &t.pressEnds, &m);
+    const first = s2bTopRow(h);
+    assert(first.stepOrigin() == StepOrigin.opens && first.stepOperation() != 0,
+        format("S2b token rig: the first haul is %s / operation %s, expected opens", first.stepOrigin(),
+               first.stepOperation()));
+    {   // a replay arm of the same id with a NEW token, inside a history step
+        auto g = h.suspended();
+        s.noteArm("t.press", 2);
+    }
+    s2bHaul(s, &t.pressBegins, &t.pressEnds, &m);
+    const second = s2bTopRow(h);
+    assert(second.stepOperation() != first.stepOperation() && second.stepOrigin() != StepOrigin.refire,
+        format("S2b: a re-arm under Suspend continued the old token's operation %s (origin %s)",
+               second.stepOperation(), second.stepOrigin()));
+}
+
+unittest { // S2b M-PR: a panel write in a re-begun post mode is its own operation and leaves it closed
+    Mesh m = makeCube();
+    auto h = new CommandHistory();
+    auto t = new PressFlagTool;
+    t.m = &m; t.h = h; t.view = new View(0, 0, 1, 1);
+    t.basis = MeshSnapshot.capture(m);
+    Tool active = t;
+    auto s = new EditSession(() => active, h, () { active = null; });
+    s.noteArm("t.press", 1, false);
+    s2bHaul(s, &t.pressBegins, &t.pressEnds, &m);
+    assert(s.navigate(true) && s.navigate(false), "S2b M-PR rig: the undo/redo did not step");
+    const st = s.sessionStateJson();
+    assert(st["armed"].type == JSONType.true_ && st["operationOpen"].type == JSONType.false_,
+        format("S2b M-PR rig: the redo did not re-begin the post mode closed (N5): %s", st));
+    s2bAttr(s, t, "v", () { t.v = 0.5f; }, ParameterChangeSource.InteractiveValue);
+    const write = s2bTopRow(h);
+    assert(write.stepOrigin() == StepOrigin.restart && !write.stepOpenedByPress(),
+        format("S2b M-PR: the write row is %s, expected restart (its own operation)", write.stepOrigin()));
+    assert(s.sessionStateJson()["operationOpen"].type == JSONType.false_,
+        "S2b M-PR: the write opened the operation (the next press must restart, not refire)");
+    s2bHaul(s, &t.pressBegins, &t.pressEnds, &m);
+    const haul = s2bTopRow(h);
+    assert(haul.stepOrigin() == StepOrigin.restart && haul.stepOperation() != write.stepOperation(),
+        format("S2b M-PR: the press after the write is %s / operation %s (write %s), expected a restart",
+               haul.stepOrigin(), haul.stepOperation(), write.stepOperation()));
 }

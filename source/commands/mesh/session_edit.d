@@ -8,7 +8,7 @@ import editmode;
 import snapshot : MeshSnapshot;
 import mesh_edit_delta : MeshEditDelta, MeshEditScope;
 import commands.mesh.gesture_payload : GesturePayload;
-import tool : AttrImage;
+import tool : AttrImage, StepOrigin;
 
 /// Generic record-flavor command for an interactive mesh-editing session
 /// (see e.g. BevelTool, EdgeExtrudeTool, ArrayTool, LoopSliceTool, ...). The
@@ -71,8 +71,14 @@ class MeshSessionEdit : Command, Operator, GesturePayload {
     private bool topologyStep_;
     private bool stepOpenedByPress_;
     private ulong stepInstance_;
+    private StepOrigin stepOrigin_;
+    private ulong stepOperation_;
 
     bool isTopologyStep() const { return topologyStep_; }
+    /// How the step began and the operation it belongs to (topology-redo S2b, model
+    /// doc §2.2); `unclassified` with operation 0 outside the captured model.
+    StepOrigin stepOrigin() const { return stepOrigin_; }
+    ulong stepOperation() const { return stepOperation_; }
     /// The step was opened by the tool's own press door, not by an arm, an
     /// Action or a parameter write (plan 8646 [R1-8]).
     bool stepOpenedByPress() const { return stepOpenedByPress_; }
@@ -89,7 +95,9 @@ class MeshSessionEdit : Command, Operator, GesturePayload {
     MeshSnapshot stepAfterBasis() const { return stepAfterBasis_.ownedDup(); }
     void setTopologyStep(
             AttrImage beforeAttrs, AttrImage afterAttrs, MeshSnapshot beforeBasis, MeshSnapshot afterBasis, bool openedByPress,
-            ulong instance) {
+            ulong instance, StepOrigin origin, ulong operation) {
+        stepOrigin_ = origin;
+        stepOperation_ = operation;
         stepOpenedByPress_ = openedByPress;
         stepInstance_ = instance;
         stepBeforeAttrs_ = beforeAttrs;
