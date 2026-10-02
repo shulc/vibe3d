@@ -8,7 +8,7 @@
 module tests.unit.perf_port_policy_test;
 
 import std.algorithm : canFind;
-import std.exception : assertThrown, collectException;
+import std.exception : collectException;
 import std.format : format;
 import std.traits : Parameters;
 
@@ -43,11 +43,15 @@ unittest {
 // override; just outside, and a lane port, are admitted.
 unittest {
     // Must stay green: admitted ports, including the override.
-    foreach (ushort p; [cast(ushort) 8079, 8296, 8520, 28079, 65448])
-        assert(admitPerfPort(p, false).value == p,
-            format("port %d is outside every worker window and must be admitted", p));
-    assert(admitPerfPort(8088, true).value == 8088,
-        "the override flag must admit a worker-window port");
+    foreach (ushort p; [cast(ushort) 8079, 8296, 8520, 28079, 65448]) {
+        auto e = collectException!PerfPortRefused(admitPerfPort(p, false));
+        assert(e is null, format(
+            "port %d is outside every worker window and must be admitted: %s", p, e.msg));
+        assert(admitPerfPort(p, false).value == p);
+    }
+    auto o = collectException!PerfPortRefused(admitPerfPort(8088, true));
+    assert(o is null, "the override flag must admit a worker-window port: " ~ o.msg);
+    assert(admitPerfPort(8088, true).value == 8088);
 
     // Must redden if the refusal is struck.
     const ushort[] refused = [8080, 8088, 8295, 28080, 65447];
