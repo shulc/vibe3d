@@ -792,6 +792,12 @@ struct SubpatchPreview {
             {
                 osdAccel.refresh(source, mesh);
                 lastRefreshMaterial = true;
+                // Not a delivery term: no consumer keys on the preview mesh's
+                // `mutationVersion` (census: grep `mutationVersion` over the
+                // readers of `subpatchPreview.mesh` / `iprSubpatch.mesh` —
+                // GpuMesh, lasso, IPR buckets read none). The re-upload rides
+                // `lastRefreshMaterial`; the bump only keeps "content changed
+                // ⇒ version moved", as at the install site (S1e review R2).
                 ++mesh.mutationVersion;
                 sourceKey = cur;
                 return;

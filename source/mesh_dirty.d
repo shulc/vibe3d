@@ -363,7 +363,7 @@ struct MeshTermMaterialEpoch {
     }
 }
 
-// THE THREE WATCHER MASKS ARE NAMED, and that is not tidiness (task 1906
+// THE FOUR WATCHER MASKS ARE NAMED, and that is not tidiness (task 1906
 // stage 2e). A consumer may legitimately DECLINE to key on any of them —
 // `render/render_mvp.d`'s IPR accumulator does, because its trigger set is
 // neither a subset nor a superset of any mask here — and such a decision is

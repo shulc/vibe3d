@@ -749,6 +749,53 @@ unittest {
     dragAndCompare("drag 2");
 }
 
+// (vi) the preview follows history: `mesh.surfaceAttr`'s revert publishes
+// `Material`, so undo takes the same fast path back to the pre-edit policy and
+// redo forward again (review R1, 2026-10-03: 0 corners after undo, 836 after
+// redo). Undo/redo run BEFORE any rebake — the Tab toggle is history too.
+unittest {
+    if (!cellOn("vi-undo")) return;
+    prepareCage();
+    auto cpu1 = dragAndCompare("drag 1");
+    cmd(attrBody(1, "smoothing", 0));
+    waitPreviewSettled();
+    assert(smoothChanged(cpu1, getJson("/api/gpu/face-vbo?normals=1")) == 836,
+        "(vi-undo) premise: slot 1 off did not change the measured 836 corners");
+    cmd(commandBody("history.undo"));
+    waitPreviewSettled();
+    immutable size_t backU = smoothChanged(cpu1, getJson("/api/gpu/face-vbo?normals=1"));
+    writefln("[vi-undo] writer %s, %d corners differ from pre-edit after undo", previewWriter(), backU);
+    assert(backU == 0, format("(vi-undo) %d corners still differ from pre-edit after history.undo "
+                            ~ "(the revert's Material publish did not reach the preview)", backU));
+    cmd(commandBody("history.redo"));
+    waitPreviewSettled();
+    immutable size_t fwdR = smoothChanged(cpu1, getJson("/api/gpu/face-vbo?normals=1"));
+    assert(fwdR == 836, format("(vi-undo) %d corners changed after history.redo, measured 836", fwdR));
+}
+
+// (vi) the same for `mesh.setMaterial`: undo of the re-tag restores the
+// pre-edit preview (normals and the grey centre), redo the red flat one.
+unittest {
+    if (!cellOn("vi-undo-retag")) return;
+    prepareCage([kRedOff]);
+    auto base = getJson("/api/gpu/face-vbo?normals=1");
+    expectGreySmooth("(vi-undo-retag)");
+    retagAll(3);
+    waitPreviewSettled();
+    assert(smoothedCorners(getJson("/api/gpu/face-vbo?normals=1")) == 0,
+        "(vi-undo-retag) premise: the re-tag left smoothed corners");
+    cmd(commandBody("history.undo"));
+    waitPreviewSettled();
+    immutable size_t backU = smoothChanged(base, getJson("/api/gpu/face-vbo?normals=1"));
+    writefln("[vi-undo-retag] %d corners differ from pre-edit after undo", backU);
+    assert(backU == 0, format("(vi-undo-retag) %d corners still differ from pre-edit after history.undo "
+                            ~ "(the revert's Material publish did not reach the preview)", backU));
+    expectGreySmooth("(vi-undo-retag) after undo");
+    cmd(commandBody("history.redo"));
+    waitPreviewSettled();
+    expectRedFlat("(vi-undo-retag) after redo");
+}
+
 /// A held move drag of the selection, released, with NO rebake after it: the
 /// fan-out leaves the preview's CPU vertices behind the cage.
 void dragOnly(string label) {

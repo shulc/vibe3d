@@ -186,3 +186,38 @@ unittest { // (e) the fan-out's unit-6 binding is restored and its TBO deleted
     assert(countOccurrences(flat, "glDeleteBuffers(1,&faceSlotVbo)") == 1,
         "clear() no longer deletes faceSlotVbo");
 }
+
+/// The `;`-terminated declaration starting with `head` (code text).
+private string declAt(string code, string head) {
+    immutable ptrdiff_t at = code.indexOf(head);
+    assert(at >= 0, "census: missing `" ~ head ~ "`");
+    immutable ptrdiff_t semi = code[at .. $].indexOf(';');
+    assert(semi >= 0, "census: unterminated `" ~ head ~ "`");
+    return code[at .. at + semi + 1];
+}
+
+unittest { // (f) app.d routes a Material commit to the live preview and its full upload
+    // No pixel reaches either term today (a Material commit under a live preview
+    // also publishes Position in the same frame — card F1/F8), so this census IS
+    // the witness. Controls [E5].
+    immutable ctl = "enum uint kSubpatchTriggers = MeshEditScope.Position | MeshEditScope.Material;";
+    assert(hasIdentSeq(ctl, ["MeshEditScope", "Material"]), "control: the trigger needle misses its term");
+    immutable app = codeText(readText(buildPath(root, "source", "app.d")));
+    // Floor: one declaration, and its region carries the pre-S1e Position term.
+    assert(identCount(app, "kSubpatchTriggers") == 2,
+        format("census floor: app.d names kSubpatchTriggers %d time(s): declaration + the flags test is 2",
+               identCount(app, "kSubpatchTriggers")));
+    immutable trig = declAt(app, "enum uint kSubpatchTriggers");
+    assert(hasIdentSeq(trig, ["MeshEditScope", "Position"]), "census floor: the trigger region lost Position");
+    // Needle 1. True after S1e; red if `Material` leaves the mask.
+    assert(hasIdentSeq(trig, ["MeshEditScope", "Material"]),
+        "kSubpatchTriggers lost MeshEditScope.Material — a Material-only commit never reaches rebuildIfStale");
+    // The upload condition: floor on its pre-S1e terms, then needle 2.
+    immutable ptrdiff_t c = app.indexOf("else if ((wantPreview && (versionChanged");
+    assert(c >= 0, "census floor: the preview upload condition `else if ((wantPreview && (versionChanged` moved");
+    immutable ptrdiff_t brace = app[c .. $].indexOf('{');
+    immutable cond = app[c .. c + brace];
+    assert(identCount(cond, "previewInstalledThisFrame") == 1, "census floor: the upload condition lost its install term");
+    assert(identCount(cond, "previewMaterialRefreshed") == 1,
+        "the preview upload condition lost previewMaterialRefreshed — the material refresh never uploads");
+}
