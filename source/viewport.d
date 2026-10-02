@@ -49,7 +49,7 @@ enum LayoutPreset { Single, SplitH, SplitV, Quad }
 
 /// GL FBO for rendering one viewport cell's scene into (colour RGBA8 + a
 /// DEPTH_COMPONENT24 depth TEXTURE), plus the lazily allocated effect targets
-/// of the composite stage (model M4, task 9060): `gbufTex` RGBA16UI attached
+/// of the composite stage (model M4): `gbufTex` RGBA16UI attached
 /// as `COLOR_ATTACHMENT1` of the scene FBO, `compositeSrcTex` and `aoTex[2]`
 /// RGBA8, and a second framebuffer `effectsFbo` (no depth; its C0 is
 /// re-pointed per composite pass).

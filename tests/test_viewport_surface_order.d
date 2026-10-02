@@ -418,11 +418,18 @@ unittest {
     auto gh = getJson("/api/viewport/probe?cell=0&points=20,20&buffer=gbuf&hash=1");
     assert("error" in gh && gh["error"].str == "buffer=gbuf takes neither target=frame nor hash",
         "buffer=gbuf with hash=1 must be refused: " ~ gh.toString);
-    // An unknown buffer is a 400 naming it (the transport may throw on 400).
+    auto gf = getJson("/api/viewport/probe?cell=0&points=20,20&buffer=gbuf&target=frame");
+    assert("error" in gf && gf["error"].str == "buffer=gbuf takes neither target=frame nor hash",
+        "buffer=gbuf with target=frame must be refused: " ~ gf.toString);
+    // An unknown buffer is a 400: the transport THROWS on it (in-process:
+    // "...failed with status 400"; socket: "...status code 400 ..."), so a
+    // 200 whose body merely contains "400" cannot pass.
+    import std.string : indexOf;
+    bool threw;
     string bogus;
     try bogus = getJson("/api/viewport/probe?cell=0&points=20,20&buffer=depth").toString;
-    catch (Exception e) bogus = e.msg;
-    import std.string : indexOf;
-    assert(bogus.indexOf("400") >= 0 || bogus.indexOf("unknown viewport probe buffer: depth") >= 0,
-        "buffer=depth must be refused as unknown: " ~ bogus);
+    catch (Exception e) { threw = true; bogus = e.msg; }
+    assert(threw && (bogus.indexOf("status 400") >= 0 || bogus.indexOf("status code 400") >= 0),
+        "buffer=depth must be refused with HTTP 400: threw=" ~ (threw ? "yes" : "no")
+        ~ " " ~ bogus);
 }

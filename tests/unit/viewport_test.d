@@ -749,6 +749,8 @@ unittest {
     assert(f.depthTex != 0, "ensure must generate the depth texture");
     assert(f.depthSpec.minFilter == GL_NEAREST && f.depthSpec.magFilter == GL_NEAREST,
            "depthTex after ensure: " ~ nearestMsg);
+    assert(f.depthSpec.internalFormat == GL_DEPTH_COMPONENT24,
+           format("depthTex must be DEPTH_COMPONENT24, recorded 0x%x", f.depthSpec.internalFormat));
     assert(f.gbufTex == 0 && f.effectsFbo == 0,
            "effect targets must stay unallocated until ensureEffects");
     f.ensureEffects();

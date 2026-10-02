@@ -347,7 +347,7 @@ private:
         }
     }
 
-    // ---- the backdrop pass (task 9060, model M4) ---------------------------
+    // ---- the backdrop pass (model M4) --------------------------------------
     // One kept backdrop layer of this frame: built by the upkeep loop, read by
     // the faces loop and the wire loop (the cache is not consulted again).
     struct BgDraw {
