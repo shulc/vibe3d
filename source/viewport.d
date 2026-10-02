@@ -92,8 +92,16 @@ struct ViewportFbo {
     /// to its C0. `/api/viewport/display` reports both.
     uint compositeRuns;
     CompositeBinding[] compositeBindings;
-    /// Debug builds: the latest run's postcondition ("ok" or the violation).
-    string compositePostcondition = "unchecked";
+    /// Debug builds: the composite's GL contract is checked on every run
+    /// (and the surface bracket's binding on every open); a violation is
+    /// COUNTED (sticky, so a one-frame fault is not overwritten by the next
+    /// good frame) with the first one's text. `releaseEffects` clears them.
+    bool   compositeChecked;
+    uint   compositeFaults;
+    string firstCompositeFault;
+    void noteCompositeFault(string what) {
+        if (compositeFaults++ == 0) firstCompositeFault = what;
+    }
 
     /// Open the surface passes of a frame under `p`: when the plan is
     /// non-empty the G-buffer is allocated, joins the draw set ({C0, C1})
@@ -110,6 +118,11 @@ struct ViewportFbo {
             glBindFramebuffer(GL_FRAMEBUFFER, fbo);   // ensureEffects unbinds
             glDrawBuffers(2, bufs.ptr);
             glClearBufferuiv(GL_COLOR, 1, zero.ptr);
+            debug {
+                GLint bound;
+                glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &bound);
+                if (bound != fbo) noteCompositeFault("surface passes opened with the scene FBO unbound");
+            }
         }
     }
 
@@ -190,6 +203,7 @@ struct ViewportFbo {
         gbufTex = 0; compositeSrcTex = 0; aoTex[] = 0; effectsFbo = 0;
         gbufSpec = gbufSpec.init; compositeSrcSpec = compositeSrcSpec.init;
         aoSpec[] = TexSpec.init;
+        compositeFaults = 0; firstCompositeFault = null;
     }
 
     /// Release GL resources.  Null-safe and idempotent.

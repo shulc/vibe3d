@@ -176,8 +176,11 @@ unittest {
             format("(i) pass %d drew into fbo %d, not the effects fbo %d", k, ji(r["bound"]), effects));
         assert(ji(r["bound"]) != scene, format("(i) pass %d drew into the scene fbo", k));
     }
-    assert(c["compositePostcondition"].str == "ok",
-        "(i) the stage's postcondition (debug build) must read ok: " ~ c["compositePostcondition"].str);
+    assert(jb(c["compositeChecked"]),
+        "(i) premise: a debug build checks the stage's GL contract (compositeChecked)");
+    assert(ji(c["compositeFaults"]) == 0,
+        format("(i) the stage's GL contract was violated %d time(s); first: %s",
+               ji(c["compositeFaults"]), c["firstCompositeFault"].toString));
     assert(ji(rows[1]["attached"]) == color,
         format("(i) the resolve must write colorTex %d, attached %d", color, ji(rows[1]["attached"])));
     // The identity: the kernels are absent, so the frame is unchanged.

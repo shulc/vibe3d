@@ -192,18 +192,25 @@ final class ViewportCompositor {
         if (scissor)   glEnable(GL_SCISSOR_TEST);
         ++fbo.compositeRuns;
 
-        debug fbo.compositePostcondition = postconditionError(fbo.fbo, prevProgram, prevVao,
-            prevActive, prevDepthMask, prevViewport, prevTex, depthTest, blend, cull, scissor);
+        debug {
+            fbo.compositeChecked = true;
+            immutable string fault = postconditionError(ids, prevProgram, prevVao,
+                prevDepthMask, prevViewport, prevTex, depthTest, blend, cull, scissor);
+            if (fault !is null) fbo.noteCompositeFault(fault);
+        }
     }
 
     /// Debug builds: the stage's postcondition, read back from GL — the scene
     /// FBO bound for draw and read, draw buffers {C0}, read buffer C0, and the
-    /// state it touched as on entry. "ok" or the first violation, recorded per
-    /// cell (`/api/viewport/display` "compositePostcondition") so a suite cell
-    /// reads it instead of a debug assert ending the process.
-    debug private static string postconditionError(uint sceneFbo, GLint prog0, GLint vao0,
-            GLint act0, GLint mask0, const GLint[4] vp0, const GLint[3] tex0,
+    /// state it touched as on entry; the active unit is GL_TEXTURE0 and no
+    /// effect texture is left bound on units 0-2 (absolute: a leak repeated
+    /// every frame would equal its own entry state). `null` or the first
+    /// violation, counted per cell (`/api/viewport/display` "compositeFaults")
+    /// so a suite cell reads it instead of a debug assert ending the process.
+    debug private static string postconditionError(in EffectIds ids, GLint prog0, GLint vao0,
+            GLint mask0, const GLint[4] vp0, const GLint[3] tex0,
             bool depthTest, bool blend, bool cull, bool scissor) {
+        immutable uint sceneFbo = ids.sceneFbo;
         GLint dr, rd, db0, db1, rb, prog, vao, act, mask;
         GLint[4] vpNow;
         glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &dr);
@@ -221,7 +228,7 @@ final class ViewportCompositor {
         if (rb != GL_COLOR_ATTACHMENT0) return "scene read buffer is not C0";
         if (prog != prog0) return "program not restored";
         if (vao != vao0) return "vertex array not restored";
-        if (act != act0) return "active texture unit not restored";
+        if (act != GL_TEXTURE0) return "active texture unit is not GL_TEXTURE0";
         if (mask != mask0) return "depth mask not restored";
         if (vpNow != vp0) return "viewport not restored";
         if ((glIsEnabled(GL_DEPTH_TEST) != 0) != depthTest) return "depth test not restored";
@@ -232,10 +239,15 @@ final class ViewportCompositor {
             GLint t;
             glActiveTexture(GL_TEXTURE0 + u);
             glGetIntegerv(GL_TEXTURE_BINDING_2D, &t);
-            if (t != tex0[u]) { glActiveTexture(cast(GLenum)act); return "texture unit binding not restored"; }
+            immutable bool ours = t != 0 && (t == ids.compositeSrcTex || t == ids.gbufTex
+                                             || t == ids.aoTex[0] || t == ids.aoTex[1]);
+            if (t != tex0[u] || ours) {
+                glActiveTexture(cast(GLenum)act);
+                return ours ? "an effect texture is left bound" : "texture unit binding not restored";
+            }
         }
         glActiveTexture(cast(GLenum)act);
-        return "ok";
+        return null;
     }
 
     /// The ONE place a pass's framebuffers are bound and its C0 attached.

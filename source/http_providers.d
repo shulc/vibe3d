@@ -1078,9 +1078,11 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                 b.put(format(`"compositeRuns":%d,"compositeBindings":[`, f.compositeRuns));
                 foreach (i, r; f.compositeBindings)
                     b.put(format(`%s{"bound":%d,"attached":%d}`, i ? "," : "", r.bound, r.attached));
-                b.put(format(`],"compositePostcondition":%s,` ~
+                b.put(format(`],"compositeChecked":%s,"compositeFaults":%d,` ~
+                    `"firstCompositeFault":%s,` ~
                     `"fboIds":{"scene":%d,"effects":%d,"color":%d,"gbuf":%d,` ~
-                    `"compositeSrc":%d}`, JSONValue(f.compositePostcondition).toString,
+                    `"compositeSrc":%d}`, f.compositeChecked ? "true" : "false",
+                    f.compositeFaults, JSONValue(f.firstCompositeFault).toString,
                     f.fbo, f.effectsFbo, f.colorTex, f.gbufTex, f.compositeSrcTex));
                 return b.data;
             }
