@@ -473,7 +473,9 @@ unittest {
     assert(o[r1] == o[r5] && o[r2] == o[r5], "(blur) premise: the flat slab reads one level with cavity off");
     assert(w[r5] <= o[r5] - 3, format("(blur) premise: the slab near the box is occluded (r5 world %d off %d)",
                                       w[r5], o[r5]));
-    assert(w[b] - o[b] >= 10 && w[b] - w[r1] >= 50,
+    // Measured +12 / 56 here; the depth-weight-one blur reads +9, so the floor
+    // sits under it and the no-bleed assert below is the one that reddens.
+    assert(w[b] - o[b] >= 6 && w[b] - w[r1] >= 40,
         format("(blur) discrimination floor: the box top across the step is a bright ridge (world %d off %d)",
                w[b], o[b]));
     // Ceiling (measured +12 over off 69): an edges store without its / 4 reads ≈ +48.
