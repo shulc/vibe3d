@@ -6499,7 +6499,11 @@ void main(string[] args) {
             import change_bus : MeshEditScope;
             // `Material`: `mesh.surfaceAttr` / `mesh.setMaterial` (and a crease
             // weight) — `rebuildIfStale` tells it apart through the material
-            // epoch and refreshes without a topology rebuild.
+            // epoch and refreshes without a topology rebuild. Declared, though
+            // no route today reaches here on `Material` alone: under a live
+            // preview the flush-site cage upload publishes `Position` in the
+            // same frame (`mesh_gpu.publishSuppressedCagePosition`), measured
+            // as deliveries 0x10 then 0x1 (S1e drill, F1/F8 green).
             enum uint kSubpatchTriggers = MeshEditScope.Position
                                         | MeshEditScope.Geometry
                                         | MeshEditScope.Marks
