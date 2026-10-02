@@ -323,12 +323,14 @@ unittest {
     immutable ptrdiff_t park = p.indexOf("restorePlanDefaults("), sm = p.indexOf("setSmoothNormals(plan.smoothNormals)");
     assert(park >= 0 && sm > park,
         "census: applyPreviewPlan must park, then honour the plan's normal source");
-    // The preview draws with an identity model, so it uploads the identity
-    // normal matrix before its face draw.
+    // The preview draws with an identity model, so it binds through
+    // `useProgram(identity, …)` — the one upload site of the normal matrix
+    // (normalMatrix(view·identity)) and the light rig (task 9130) — before
+    // its face draw.
     immutable d = body_("void drawLitPreview(");
-    immutable ptrdiff_t nm = d.indexOf(".uploadNormalMatrix(identity)"), draw = d.indexOf(".drawFaces(litShader");
+    immutable ptrdiff_t nm = d.indexOf(".useProgram(identity,"), draw = d.indexOf(".drawFaces(litShader");
     assert(nm >= 0 && draw > nm,
-        "census: drawLitPreview must upload the identity normal matrix before its face draw");
+        "census: drawLitPreview must bind through useProgram(identity, …) before its face draw");
 }
 
 unittest { // compile fence: the normal-source locations are unreachable from another module too

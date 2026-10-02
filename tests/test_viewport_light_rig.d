@@ -494,3 +494,73 @@ unittest {
     assert(abs(r[2] - predS) <= 2, format("(v) the specular quad's far point reads %d, predicted %.2f "
         ~ "— the viewer is at infinity, so a flat quad's specular is uniform", r[2], predS));
 }
+
+// ---------------------------------------------------------------------------
+// (vi) the light gain multiplies everything above ambient, SPECULAR included.
+// The retopology mode's gain (5/3, read from the plan) reaches a `flat`
+// backdrop's Material arm: a background layer holding the specular quad of
+// (v), the primary a small plain quad elsewhere. Predicted
+// Kd·(A + g·dif) + g·spec·s; the ungained-specular candidate is the floor.
+// ---------------------------------------------------------------------------
+unittest {
+    if (!cellOn("vi")) return;
+    import std.file : write, remove, exists, tempDir;
+    import std.path : buildPath;
+    import std.process : thisProcessID;
+    setCamera(0.35, 0.25, 8.0);
+    auto vp = viewportFromCameraMatrices();
+    immutable D3 h1 = nrm(add3(kKey, [0, 0, 1]));
+    immutable double t = 10 * PI / 180;
+    immutable D3 n = nrm([h1[0], h1[1] * cos(t) - h1[2] * sin(t), h1[1] * sin(t) + h1[2] * cos(t)]);
+    immutable double p = specPowerAt(0.7);
+    D3[] v0, v1; uint[][] f0, f1;
+    immutable D3 cs = add3(kC, toWorld(vp, [-1.2, 0.0, 0.0]));
+    quadAt(cs, nrm(toWorld(vp, n)), 0.6, v0, f0);
+    quadAt(add3(kC, toWorld(vp, [1.6, -1.0, 0.0])), nrm(toWorld(vp, [0.0, 0.0, 1.0])), 0.3, v1, f1);
+    string mesh(D3[] v, uint[][] f, string extra) {
+        string vs, fs;
+        foreach (i, x; v) vs ~= format("%s[%.9g,%.9g,%.9g]", i ? "," : "", x[0], x[1], x[2]);
+        foreach (i, q; f) fs ~= format("%s[%d,%d,%d,%d]", i ? "," : "", q[0], q[1], q[2], q[3]);
+        return `{"vertices":[` ~ vs ~ `],"faces":[` ~ fs ~ `]` ~ extra ~ `}`;
+    }
+    immutable path = buildPath(tempDir(), format("vibe3d-light-rig-gain-%d.v3d", thisProcessID()));
+    write(path, `{"formatVersion":8,"primaryLayer":1,"focusedItem":1,"layers":[`
+        ~ `{"type":"mesh","selected":false,"channels":{"name":"Back","visible":true},"mesh":`
+        ~ mesh(v0, f0, `,"surfaces":[{"name":"Spec","baseColor":[0.6,0.6,0.6],"diffuse":0.8,`
+            ~ `"specular":0.3,"glossiness":0.3,"opacity":1}],"faceMaterial":[0]`) ~ `},`
+        ~ `{"type":"mesh","selected":true,"channels":{"name":"Prim","visible":true},"mesh":`
+        ~ mesh(v1, f1, "") ~ `}]}`);
+    scope(exit) if (exists(path)) remove(path);
+    auto rr = postJson("/api/command", commandBody("scene.reset"));
+    assert(rr["status"].str == "ok", "scene.reset failed: " ~ rr.toString);
+    runCmd("file.load", format(`{"path":"%s"}`, path));
+    scope(exit) {
+        postJson("/api/command", commandBody("viewport.retopology", `{"value":"off"}`));
+        postJson("/api/command", commandBody("viewport.backdropStyle", `{"value":"same"}`));
+    }
+    cmd("select.typeFrom polygon");
+    cmd(commandBody("viewport.backdropStyle", `{"value":"flat"}`));
+    cmd(commandBody("viewport.retopology", `{"value":"on"}`));
+    restoreCamera(vp, 0.35, 0.25, 8.0);
+    auto L = getJson("/api/layers");
+    assert(L["layers"].array.length == 2 && L["active"].integer == 1,
+        "(vi) rig: expected two layers, layer 1 the primary: " ~ L.toString);
+    auto bp = getJson("/api/viewport/display")["cells"].array[0]["plan"]["backdrop"];
+    immutable double g = bp["lightGain"].type == JSONType.float_ ? bp["lightGain"].floating
+                                                                  : cast(double) bp["lightGain"].integer;
+    assert(abs(g - 5.0 / 3.0) < 1e-6 && bp["shading"].str == "Material",
+        "(vi) premise: the flat backdrop must be the gained Material arm: " ~ bp.toString);
+    // The prediction, split into its parts at gain 1 (level() = Kd(A+dif) + spec·s).
+    immutable double amb  = 255.0 * 0.6 * 0.8 * kAmb;
+    immutable double dif  = level(0.6, 0.8, 0.0, p, n) - amb;
+    immutable double spec = level(0.6, 0.8, 0.3, p, n) - level(0.6, 0.8, 0.0, p, n);
+    double clamp255(double x) { return x > 255 ? 255 : x; }
+    immutable double pred  = clamp255(amb + g * dif + g * spec);
+    immutable double loser = clamp255(amb + g * dif + spec);   // gain not on the specular
+    assert(pred < 250 && abs(pred - loser) >= 6,
+        format("(vi) floor: gained %.2f vs ungained specular %.2f", pred, loser));
+    const r = probeR([cellPx(vp, cs)]);
+    writefln("[light rig (vi)] gain %.4f: read %d, predicted %.2f (specular ungained %.2f)", g, r[0], pred, loser);
+    assert(abs(r[0] - pred) <= 2, format("(vi) the gained backdrop reads %d, predicted %.2f = "
+        ~ "Kd(A + g·dif) + g·spec (ungained specular would read %.2f)", r[0], pred, loser));
+}

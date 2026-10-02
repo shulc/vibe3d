@@ -723,6 +723,30 @@ unittest {
                        ~ "must turn with the camera", c, e[c], pred, e0["EG"][c]));
         }
         writefln("  2c edge after the orbit %s, front view %s", e, e0["EG"]);
+        // The base DOTS turn with it too (their own call site): I0's dot,
+        // out = 0.4 c + 0.6 u, +-1.3 as in cell 3, c at the NEW view. Floor:
+        // 0.4 x the move of c on channel 2 exceeds 2 x 1.3.
+        {
+            immutable int[2] ip = toPx(kI0Pos, r2.vp);
+            immutable double cFront = shaded(kVertPal, 2, zN, r.vp);
+            immutable double cOrbit = shaded(kVertPal, 2, zN, r2.vp);
+            assert(0.4 * abs((cOrbit > 255 ? 255 : cOrbit) - cFront) > 2 * 1.3,
+                format("2c floor: the dot prediction moves only %.2f -> %.2f", cFront, cOrbit));
+            showVertices(false);
+            immutable Px du = probe1(ip);
+            showVertices(true);
+            immutable Px dot = probe1(ip);
+            foreach (c; 0 .. 3) {
+                double cc = shaded(kVertPal, c, zN, r2.vp);
+                if (cc > 255) cc = 255;
+                immutable double pred = kLineAlpha * cc + (1 - kLineAlpha) * du.c[c];
+                assert(abs(dot.c[c] - pred) <= 1.3,
+                    format("2c: after a camera rotation I0's dot channel %d reads %d over %d, "
+                           ~ "predicted %.2f at the new view — the dots' light must turn "
+                           ~ "with the camera", c, dot.c[c], du.c[c], pred));
+            }
+            writefln("  2c dot after the orbit %s over %s", dot.c, du.c);
+        }
         frontOrtho();
         parkPointer(r);
     }
