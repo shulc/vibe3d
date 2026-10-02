@@ -115,6 +115,7 @@ string passTableViolation(const(CompositePass)[] t, in EffectIds ids) pure @safe
 final class ViewportCompositor {
     private GLuint resolveProgram_;
     private GLuint emptyVao_;
+    private GLint  locTestGain_ = -1;
 
     /// Run the composite stage of one cell. `p.empty` ⇒ returns with ZERO GL
     /// calls and records nothing. Otherwise executes `compositePassTable`,
@@ -165,6 +166,7 @@ final class ViewportCompositor {
                 case CompositePassKind.resolve:
                     glViewport(0, 0, cellW, cellH);
                     glUseProgram(resolveProgram_);
+                    glUniform1f(locTestGain_, fbo.compositeTestGain);
                     glBindVertexArray(emptyVao_);
                     foreach (u; 0 .. 3) {
                         glActiveTexture(GL_TEXTURE0 + u);
@@ -285,6 +287,7 @@ final class ViewportCompositor {
         glUniform1i(glGetUniformLocation(resolveProgram_, "u_src"), 0);
         glUniform1i(glGetUniformLocation(resolveProgram_, "u_gbuf"), 1);
         glUniform1i(glGetUniformLocation(resolveProgram_, "u_ao"), 2);
+        locTestGain_ = glGetUniformLocation(resolveProgram_, "u_testGain");
         glUseProgram(cast(GLuint)prev);
     }
 }

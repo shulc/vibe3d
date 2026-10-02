@@ -611,3 +611,40 @@ unittest {
     assert(resolveDrawPlan(d, false) != resolveDrawPlan(e, false),
         "plan equality: a cavity parameter change must change the plan (re-render)");
 }
+
+/// Task 9190: `viewport.compositeTestGain` is TEST-ONLY — refused outside
+/// --test (production never writes the resolve gain) — and refuses a gain
+/// outside [0, kCompositeTestGainMax] or non-finite, writing nothing.
+unittest {
+    import command : g_testMode;
+    import command_args : bindArgs;
+    import commands.viewport.display : ViewportCompositeTestGain, kCompositeTestGainMax;
+    import editmode : EditMode;
+    import mesh : makeCube;
+    import viewport : ViewportManager;
+    immutable bool prior = g_testMode;
+    scope (exit) g_testMode = prior;
+    auto vpm = new ViewportManager(0, 0, 800, 600);
+    auto m = makeCube();
+    bool applies(string body) {
+        auto c = new ViewportCompositeTestGain(&m, vpm.views[0].camera, EditMode.Polygons, vpm);
+        try { bindArgs(c, body); return c.apply(); } catch (Exception) return false;
+    }
+    g_testMode = true;
+    assert(applies(`{"value":0.5,"viewport":0}`) && vpm.views[0].fbo.compositeTestGain == 0.5f,
+        "control: under --test the gain is written");
+    size_t refused;
+    foreach (body; [`{"value":-0.25,"viewport":0}`, `{"value":4.5,"viewport":0}`,
+                    `{"value":"nan","viewport":0}`]) {
+        assert(!applies(body), "an out-of-domain gain must be refused: " ~ body);
+        assert(vpm.views[0].fbo.compositeTestGain == 0.5f, "a refused gain must write nothing: " ~ body);
+        ++refused;
+    }
+    assert(refused == 3, "population floor: three out-of-domain gains");
+    assert(applies(format(`{"value":%s,"viewport":0}`, kCompositeTestGainMax)),
+        "the domain's ceiling itself is accepted");
+    g_testMode = false;
+    assert(!applies(`{"value":2,"viewport":0}`), "outside --test the command must be refused");
+    assert(vpm.views[0].fbo.compositeTestGain == kCompositeTestGainMax,
+        "a refusal outside --test must write nothing");
+}

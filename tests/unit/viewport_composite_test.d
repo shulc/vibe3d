@@ -107,14 +107,15 @@ unittest { // census: every bind / attachment in viewport_composite.d goes throu
     immutable string[2] allowed = ["applyPassTarget", "restoreSceneTarget"];
     size_t[string] inside;
     string[] outside;
-    foreach (needle; ["glBindFramebuffer(", "glFramebufferTexture2D("])
-        for (ptrdiff_t p = code.indexOf(needle); p >= 0; p = code.indexOf(needle, p + 1)) {
-            immutable fn = enclosing(cast(size_t)p);
-            if (allowed[].canFind(fn)) inside[needle] += 1;
-            else outside ~= format("%s in %s", needle, fn.length ? fn : "<module>");
-        }
+    // Keyed on the IDENTIFIER, not `name(`: a spaced call `glBindFramebuffer (`,
+    // an address `&glBindFramebuffer` and every attach entry point all count.
+    foreach (m; matchAll(code, ctRegex!(`\b(glBindFramebuffer|glFramebufferTexture\w*|glFramebufferRenderbuffer)\b`))) {
+        immutable fn = enclosing(m.pre.length);
+        if (allowed[].canFind(fn)) inside[m[1]] += 1;
+        else outside ~= format("%s in %s", m[1], fn.length ? fn : "<module>");
+    }
     // Floor: each spelling is found at least once inside the allowed set.
-    assert(inside.get("glBindFramebuffer(", 0) >= 1 && inside.get("glFramebufferTexture2D(", 0) >= 1,
+    assert(inside.get("glBindFramebuffer", 0) >= 1 && inside.get("glFramebufferTexture2D", 0) >= 1,
         format("E4 census: the allowed functions %s hold no bind/attach (found %s) — the area moved",
                allowed, inside));
     assert(outside.length == 0,

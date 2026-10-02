@@ -4,6 +4,7 @@ import command : Command;
 import commands.viewport.display : ViewportBackdropStyle, ViewportDisplayStyle,
     ViewportPointSize, ViewportRetopology, ViewportRetopologyPreset,
     ViewportShowVertices, ViewportSmooth, ViewportCavity, ViewportCavityParams,
+    ViewportCompositeTestGain,
     ViewportWireAlpha, ViewportWireOverlay;
 import commands.viewport.fit : Fit;
 import commands.viewport.fit_selected : FitSelected;
@@ -65,6 +66,8 @@ void registerViewportCommands(ref Registry reg, LiveSessionRole owner,
         new ViewportCavity(&owner.activeMesh(), live.view(), live.mode, vpm));
     reg.registerCommand("viewport.cavityParams", () => cast(Command)
         new ViewportCavityParams(&owner.activeMesh(), live.view(), live.mode, vpm));
+    reg.registerCommand("viewport.compositeTestGain", () => cast(Command)
+        new ViewportCompositeTestGain(&owner.activeMesh(), live.view(), live.mode, vpm));
     reg.registerCommand("viewport.gridSteps", () => cast(Command)
         new ViewportGridSteps(&owner.activeMesh(), live.view(), live.mode, vpm));
     reg.registerCommand("viewport.master", () => cast(Command)

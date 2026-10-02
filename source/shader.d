@@ -385,11 +385,14 @@ immutable string compositeVertSrc = withShaderPreamble(q{
 // G-buffer flags carry bit 0, the copy itself elsewhere. With the kernels
 // absent (cav = edges = curv = 0) the factor is exactly 1 and the
 // resolve is an identity — the pixel-neutrality proof of the stage. Samplers:
-// unit 0 the copy, 1 the G-buffer, 2 the world-cavity buffer.
+// unit 0 the copy, 1 the G-buffer, 2 the world-cavity buffer. `u_testGain`
+// scales EVERY pixel the resolve writes; it is 1 except under the test-only
+// `viewport.compositeTestGain`, whose cell proves the draw covers the cell.
 immutable string compositeResolveFragSrc = withShaderPreamble(q{
     uniform sampler2D  u_src;
     uniform highp usampler2D u_gbuf;
     uniform sampler2D  u_ao;
+    uniform float      u_testGain;
     layout(location = 0) out vec4 fragColor;
     void main() {
         ivec2 p   = ivec2(gl_FragCoord.xy);
@@ -399,7 +402,7 @@ immutable string compositeResolveFragSrc = withShaderPreamble(q{
         float k   = ((g.a & 1u) != 0u)
                   ? clamp((1.0 - cav) * (1.0 + edges) * (1.0 + curv), 0.0, 4.0)
                   : 1.0;
-        fragColor = vec4(src.rgb * k, src.a);
+        fragColor = vec4(src.rgb * (k * u_testGain), src.a);
     }
 });
 

@@ -434,6 +434,45 @@ final class ViewportCavity : ViewportCommand {
     }
 }
 
+/// `viewport.compositeTestGain <gain> [viewport]` — TEST-ONLY (refused outside
+/// --test): the composite resolve's `u_testGain` for one cell, so a suite
+/// cell can see the resolve's draw cover the whole cell (an identity resolve
+/// leaves the colour unchanged whether or not it drew). Accepted domain
+/// [0, kCompositeTestGainMax], finite; anything else is refused.
+enum float kCompositeTestGainMax = 4.0f;
+
+final class ViewportCompositeTestGain : ViewportCommand {
+    private float gain_ = float.nan;
+    private int   cellArg_ = -1;
+
+    this(Mesh* mesh, ref View view, EditMode editMode, ViewportManager vpm) {
+        super(mesh, view, editMode, vpm);
+    }
+
+    override string name() const { return "viewport.compositeTestGain"; }
+
+    override Param[] params() {
+        return wireArgs(
+            Param.float_("value", "Gain", &gain_, float.nan),
+            Param.int_("viewport", "Viewport", &cellArg_, -1)
+        );
+    }
+
+    protected override bool applyImpl() {
+        import std.format : format;
+        import std.math   : isFinite;
+        if (!g_testMode)
+            throw new Exception("viewport.compositeTestGain: only available in --test mode");
+        if (!isFinite(gain_) || gain_ < 0 || gain_ > kCompositeTestGainMax)
+            throw new Exception(format("viewport.compositeTestGain: gain %s outside [0, %s]",
+                                       gain_, kCompositeTestGainMax));
+        immutable int cell = resolveCellOrThrow(cellArg_, name());
+        vpm.views[cell].fbo.compositeTestGain = gain_;
+        markCellDisplayDirty(cell);
+        return true;
+    }
+}
+
 /// The accepted domain of each `viewport.cavityParams` value — the clamp
 /// table of `display_state.resolveCavityParams` (which is the kernel's own
 /// cap on every other route).

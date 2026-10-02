@@ -1029,7 +1029,17 @@ unittest {
     f.endSurfacePasses();
     assert(f.surfaceDrawBuffers == 1, "endSurfacePasses must restore {C0}");
     immutable uint color = f.colorTex, depth = f.depthTex;
+    f.compositeBindings ~= CompositeBinding(f.effectsFbo, f.colorTex);
+    f.compositeChecked = true;
+    f.compositeTestGain = 0.5f;
     f.releaseEffects();
+    assert(f.compositeBindings.length == 0 && !f.compositeChecked,
+        "releaseEffects must drop the composite record (it names the deleted GL ids)");
+    assert(f.compositeTestGain == 1.0f, "releaseEffects must put the test gain back to 1");
+    f.compositeTestGain = 0.5f;
+    f.releaseEffects();   // nothing allocated: the early return
+    assert(f.compositeTestGain == 1.0f,
+        "releaseEffects must reset the test gain even with no effect target allocated");
     assert(f.gbufTex == 0 && f.compositeSrcTex == 0 && f.aoTex == [0u, 0u] && f.effectsFbo == 0
         && f.gbufSpec.w == 0, "releaseEffects must return every effect target to unallocated");
     assert(f.colorTex == color && f.depthTex == depth, "releaseEffects must keep the scene targets");

@@ -119,17 +119,17 @@ BaseDots baseDotsFor(const ref DrawPlan plan, const ref float[16] model,
     return d;
 }
 
-/// Head of an item's draw: with `clearDepthFirst` the item starts on a clear
-/// depth buffer (captured: one depth clear per foreground item). The depth
-/// mask is forced on first because a depth clear honours it; no current path
-/// reaches here with it off (`endHighlightPasses` restores it), so the line is
-/// defensive.
 /// The G-buffer surface id of layer `layerIndex` (model M4): index + 1, so
 /// 0 means "no surface"; an index past the RGBA16UI channel shares 65535.
 uint surfaceIdForLayer(size_t layerIndex) @safe pure nothrow @nogc {
     return layerIndex >= 65534 ? 65535u : cast(uint)(layerIndex + 1);
 }
 
+/// Head of an item's draw: with `clearDepthFirst` the item starts on a clear
+/// depth buffer (captured: one depth clear per foreground item). The depth
+/// mask is forced on first because a depth clear honours it; no current path
+/// reaches here with it off (`endHighlightPasses` restores it), so the line is
+/// defensive.
 private void beginItem(const ref DrawPlan plan) {
     import bindbc.opengl : glClear, glDepthMask, GL_DEPTH_BUFFER_BIT, GL_TRUE;
     if (plan.clearDepthFirst) {

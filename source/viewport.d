@@ -98,6 +98,10 @@ struct ViewportFbo {
     /// good frame) with the first one's text. `releaseEffects` clears them.
     bool   compositeChecked;
     uint   compositeFaults;
+    /// The resolve's `u_testGain` (1 = identity). Written only by the
+    /// test-only `viewport.compositeTestGain`; `releaseEffects` (the
+    /// automation reset) puts it back to 1.
+    float  compositeTestGain = 1.0f;
     string firstCompositeFault;
     void noteCompositeFault(string what) {
         if (compositeFaults++ == 0) firstCompositeFault = what;
@@ -188,6 +192,7 @@ struct ViewportFbo {
     /// the scene FBO first. Called by the test-automation reset only
     /// (`clearViewDisplayForAutomation`), so no test inherits an allocation.
     void releaseEffects() {
+        compositeTestGain = 1.0f;   // even with nothing allocated: no test inherits it
         if (gbufTex == 0) return;
         version(unittest) {} else {
             GLint prev;
@@ -204,6 +209,8 @@ struct ViewportFbo {
         gbufSpec = gbufSpec.init; compositeSrcSpec = compositeSrcSpec.init;
         aoSpec[] = TexSpec.init;
         compositeFaults = 0; firstCompositeFault = null;
+        // The record names the deleted ids: drop it with them.
+        compositeBindings = null; compositeChecked = false;
     }
 
     /// Release GL resources.  Null-safe and idempotent.

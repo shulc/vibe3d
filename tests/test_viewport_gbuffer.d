@@ -287,3 +287,69 @@ unittest {
         format("(iv) after the resize the sphere front must decode id 1, n (0,0,1): id %d n %s", g[0].id, g[0].n));
     cmd("viewport.layout", `"Single"`);
 }
+
+// ===========================================================================
+// (v) the resolve's draw covers the WHOLE cell. An identity resolve leaves the
+// colour unchanged whether it drew or not (and the bindings are recorded
+// before the draw), so the test-only gain makes the draw visible: with
+// u_testGain = 0.5 the hash must change AND the four corners and the centre
+// must each read the gained cavity-off colour. A resolve that does not draw,
+// or covers only part of the cell, leaves at least one probe point ungained.
+// ===========================================================================
+private int[4][] colours(int[2][] pts) {
+    string s;
+    foreach (k, p; pts) s ~= format("%s%d,%d", k ? ";" : "", p[0], p[1]);
+    auto j = getJson("/api/viewport/probe?cell=0&points=" ~ s);
+    assert("error" !in j, "colour probe failed: " ~ j.toString);
+    int[4][] o;
+    foreach (e; j["points"].array) {
+        assert("error" !in e, "colour probe point failed: " ~ e.toString);
+        o ~= [cast(int) ji(e["r"]), cast(int) ji(e["g"]), cast(int) ji(e["b"]), cast(int) ji(e["a"])];
+    }
+    assert(o.length == pts.length);
+    return o;
+}
+
+unittest {
+    rig();
+    enum double kGain = 0.5;
+    auto sz = getJson("/api/viewport/probe?cell=0&hash=1");
+    immutable int W = cast(int) sz["w"].integer, H = cast(int) sz["h"].integer;
+    // Corners inset by kInset: the four extremes of the fullscreen triangle's
+    // clip, away from the cell's edge seam; plus the centre.
+    enum int kInset = 3;
+    int[2][] pts = [[kInset, kInset], [W - 1 - kInset, kInset], [kInset, H - 1 - kInset],
+                    [W - 1 - kInset, H - 1 - kInset], [W / 2, H / 2]];
+    immutable string[5] names = ["top-left", "top-right", "bottom-left", "bottom-right", "centre"];
+    cmd("viewport.cavity", `{"value":"off"}`);
+    hash();
+    auto off = colours(pts);
+    cmd("viewport.cavity", `{"value":"screen"}`);
+    immutable string hOn = hash();
+    cmd("viewport.compositeTestGain", `{"value":0.5}`);
+    immutable long r0 = runs();
+    immutable string hGain = hash();
+    auto got = colours(pts);
+    immutable long r1 = runs();
+    cmd("viewport.compositeTestGain", `{"value":1}`);
+    assert(r1 > r0, format("(v) premise: the stage ran under the gain (%d -> %d)", r0, r1));
+    assert(hGain != hOn, "(v) a resolve gain of 0.5 must change the frame hash (the resolve drew nothing?)");
+    size_t checked;
+    foreach (k; 0 .. pts.length) {
+        immutable int peak = off[k][0] > off[k][1] ? (off[k][0] > off[k][2] ? off[k][0] : off[k][2])
+                                                   : (off[k][1] > off[k][2] ? off[k][1] : off[k][2]);
+        assert(peak >= 8, format("(v) premise: %s %s reads %s with cavity off — too dark for a 0.5 gain "
+                                 ~ "to be told from 1", names[k], pts[k], off[k]));
+        foreach (ch; 0 .. 3) {
+            immutable double want = off[k][ch] * kGain;
+            assert(abs(got[k][ch] - want) <= 1.0,
+                format("(v) %s %s: channel %d reads %d, predicted %.1f (cavity-off %s × %.1f) — "
+                       ~ "the resolve did not cover this pixel; read %s",
+                       names[k], pts[k], ch, got[k][ch], want, off[k], kGain, got[k]));
+        }
+        assert(got[k][3] == off[k][3], format("(v) %s: alpha %d must pass through (%d)", names[k], got[k][3], off[k][3]));
+        ++checked;
+    }
+    assert(checked == 5, format("(v) population floor: 5 probe points, checked %d", checked));
+    assert(hash() == hOn, "(v) gain back to 1 must restore the identity frame");
+}
