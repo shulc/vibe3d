@@ -77,6 +77,7 @@ import lib.baseline;
 import lib.history;
 import lib.vslast;
 import lib.flame;
+import lib.viewport_lane : runViewportSubcommand;
 
 // ---------------------------------------------------------------------------
 // Selection-index builders (the grid-index math itself — gridIdx/gridFace —
@@ -5315,6 +5316,7 @@ int main(string[] args) {
         writeln("       ./run.d frames [options] [scenario-name-substring...]");
         writeln("       ./run.d tools  [options] [tool-case-name-substring...]");
         writeln("       ./run.d flame <case-or-scenario-name> [options]");
+        writeln("       ./run.d viewport [options] [scene-name-substring...]  (frame cost table; not a gate)");
         writeln("       ./run.d --trend [--last N]");
         writeln("  bare invocation == `ops` (the per-tool matrix).");
         foreach (o; helpInfo.options)
@@ -5343,7 +5345,8 @@ int main(string[] args) {
     string subcommand = "ops";
     if (requested.length > 0 &&
         (requested[0] == "ops" || requested[0] == "frames"
-         || requested[0] == "flame" || requested[0] == "tools")) {
+         || requested[0] == "flame" || requested[0] == "tools"
+         || requested[0] == "viewport")) {
         subcommand = requested[0];
         requested = requested[1 .. $];
     }
@@ -5441,6 +5444,9 @@ int main(string[] args) {
     if (subcommand == "frames")
         return runFramesSubcommand(meshType, meshParam, viewport, port, requested,
                                    updateFramesBaseline, noAbsolute, noBuild, ciMode);
+
+    if (subcommand == "viewport")
+        return runViewportSubcommand(g_repoRoot, viewport, port, requested);
 
     if (subcommand == "tools")
         return runToolsSubcommand(meshType, meshParam, viewport, port, requested,

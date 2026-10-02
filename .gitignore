@@ -92,6 +92,7 @@ tools/perf/frames_results.json
 # committed baseline (it gates on machine-stable counts, not on a budget), so
 # there is no committed sibling file here.
 tools/perf/tools_results.json
+tools/perf/viewport_results.json
 
 # Per-host run history (task 0197 — perf tooling consolidation): one JSONL
 # per host, appended to by every `ops`/`frames` run. Machine-specific (like
