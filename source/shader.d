@@ -891,7 +891,7 @@ class LitShader {
             params[i * 4 + 1] = s.specularAmount;
             params[i * 4 + 2] = s.glossiness;
             // The exponent, derived here once per upload rather than per
-            // fragment; roughness = 1 − glossiness (`Surface.glossiness`).
+            // fragment; captured: roughness = 1 − glossiness, exact.
             params[i * 4 + 3] = specPowerForRoughness(1.0f - s.glossiness);
         }
         glBindBuffer(GL_UNIFORM_BUFFER, matsUbo);

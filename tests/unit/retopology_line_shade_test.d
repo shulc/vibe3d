@@ -4,17 +4,19 @@
 // Numbers: the rig's constants against the captured values (cell 0);
 // `lineShade` against an independent double-precision copy of the EYE-SPACE
 // light function at the item's local +Z (cells 1-3b), including the
-// view-relative law — a camera turn with the item fixed moves the shade (2c).
+// view-relative law — a camera turn with the item fixed moves the shade (2c)
+// — and the product order normalMatrix(view·model) (2d).
 // Source text: the rig is uploaded at ONE site, `LitShader.useProgram`; no
-// other function of a lit-program file reads a rig constant or writes a rig
-// uniform (cells 4-5; the rig locations are also `private`, cell 5a).
+// other function of a lit-program file reads a rig constant or spells a rig
+// location other than its declaration and lookup (cells 4-5; the rig
+// locations are also `private`, cell 5a).
 module tests.unit.retopology_line_shade_test;
 
 import std.file   : dirEntries, readText, SpanMode;
 import std.format : format;
 import std.math   : abs, cos, sin, sqrt, PI;
 import std.path   : buildPath, dirName;
-import std.regex  : ctRegex, matchAll, replaceAll;
+import std.regex  : ctRegex, matchAll, matchFirst, replaceAll;
 import std.string : indexOf;
 
 import light_rig : kKeyLightEye, kFillLightEye, kKeyIntensity, kFillIntensity,
@@ -130,9 +132,19 @@ unittest { // 0. the rig's values are the captured ones
                    specPowerForRoughness(0.625f), geo, lin));
     }
     // Outside [0, 1] and NaN: clamped to the ends (a glossiness outside [0, 1]
-    // or a NaN from a file must not index past the table).
-    assert(specPowerForRoughness(1.5f) == 16.0f && specPowerForRoughness(-0.5f) == 128.0f,
-        "0: roughness outside [0, 1] must clamp to the table's ends");
+    // or a NaN from a file must not index past the table). Above 1 the walk
+    // would run off the table's end, so the call is caught here and the red
+    // is THIS message, not a bounds Error that kills the module.
+    {
+        import std.exception : collectException;
+        float hi = 0;
+        Throwable e = collectException!Throwable(hi = specPowerForRoughness(1.5f));
+        assert(e is null && hi == 16.0f, format("0: roughness 1.5 must clamp to the "
+            ~ "table's end, 16 — read %s, threw %s: the upper clamp is gone", hi,
+            e is null ? "nothing" : typeid(e).name));
+    }
+    assert(specPowerForRoughness(-0.5f) == 128.0f,
+        "0: roughness below 0 must clamp to the table's start, 128");
     assert(specPowerForRoughness(float.nan) == 128.0f, "0: a NaN roughness must read the clamp, 128");
 }
 
@@ -172,6 +184,24 @@ unittest { // 2c. the view-relative law: a camera turn with the item fixed MOVES
     near(followed, reference(kPalD, [0, 0, 1], 1.0), "2c item follows the camera");
 }
 
+unittest { // 2d. the PRODUCT ORDER: normalMatrix(view·model), not (model·view).
+    // A translation-only item (2c) or an identity camera (2, 3b) makes the two
+    // orders agree, so the swap needs a rotated item AND a pitched camera:
+    // rotY(−40) under rotX(35). Expected from the independent double copy.
+    float[16] M = rotY(-40, [1, 0, -3]);
+    float[16] V = rotX(35, [0, 0, -2]);
+    immutable want  = reference(kPalD, eyeNormalZ(M, V), 1.0);   // view·model
+    immutable wrong = reference(kPalD, eyeNormalZ(V, M), 1.0);   // model·view
+    // Premise first: the two orders are ≥ 6 levels apart on some channel
+    // (measured 11.3 on blue).
+    double sep = 0;
+    foreach (c; 0 .. 3) if (abs(want[c] - wrong[c]) * 255 > sep) sep = abs(want[c] - wrong[c]) * 255;
+    assert(sep >= 6, format("2d: rig cannot tell view·model from model·view "
+        ~ "(%.2f levels: %s vs %s)", sep, want, wrong));
+    near(lineShade(kPal, M, V, 1.0f), want,
+         "2d: rotY(-40) item under a rotX(35) camera shades by normalMatrix(view·model)");
+}
+
 unittest { // 3. a mirrored item shades like the unmirrored one
     float[16] I = rotY(0);
     float[16] Mx = I; Mx[0] = -1;
@@ -206,7 +236,11 @@ private immutable string[] kRigLocs =
 
 private enum identRe  = ctRegex!(`\b(kKeyLightEye|kFillLightEye|kKeyIntensity|kFillIntensity|kLightAmbient|locKeyDir|locFillDir|locKeyI|locFillI|locAmbient)\b`);
 private enum importRe = ctRegex!(`\bimport\b[^;]*;`);
-private enum uniformCallRe = ctRegex!(`\bglUniform\w*\s*\(`);
+/// A location's declaration (`GLint locX`) and its one `glGetUniformLocation`
+/// assignment: the only spellings of a location allowed outside the span.
+private enum locDeclRe   = ctRegex!(`\bGLint\s+$`);
+private enum locAssignRe = ctRegex!(`^\s*=\s*glGetUniformLocation\s*\(`);
+private enum addrOfRe    = ctRegex!(`&\s*$`);
 /// Every rig location and uniform NAME, for the raw-text fence (5a).
 private enum rigNameRe = ctRegex!(`\b(locKeyDir|locFillDir|locKeyI|locFillI|locAmbient|u_keyDir|u_fillDir|u_keyI|u_fillI|u_ambient)\b`);
 
@@ -220,28 +254,31 @@ private string blankImports(string code) {
     return cast(string) o;
 }
 
-/// Offenders in `code`: a rig identifier outside [allowLo, allowHi), other
-/// than a location's declaration or its `glGetUniformLocation` assignment
-/// (a location READ outside the span is caught by the glUniform scan).
-private string[] offenders(string file, string code, size_t allowLo, size_t allowHi) {
+/// Offenders in `code`: every spelling of a rig identifier outside
+/// [allowLo, allowHi) — a constant read, a location in an upload, `&locX`, an
+/// alias — EXCEPT a location's declaration and its `glGetUniformLocation`
+/// assignment, which are counted into `allowed` (the complement's floor).
+private string[] offenders(string file, string code, size_t allowLo, size_t allowHi,
+                           ref size_t allowed) {
     string[] o;
     bool inside(size_t p) { return p >= allowLo && p < allowHi; }
     foreach (m; matchAll(code, identRe)) {
         immutable p = m.pre.length;
         if (inside(p)) continue;
         immutable string id = m.hit;
-        if (id[0] == 'l') continue;   // locations: see the glUniform scan
+        if (id.length > 3 && id[0 .. 3] == "loc") {
+            immutable before = code[(p >= 64 ? p - 64 : 0) .. p];
+            immutable after  = code[p + id.length .. $];
+            immutable head   = after[0 .. (after.length < 64 ? after.length : 64)];
+            if (!matchFirst(before, locDeclRe).empty || !matchFirst(head, locAssignRe).empty) {
+                ++allowed;
+                continue;
+            }
+            o ~= format("%s:%d %s %s", file, lineOf(code, p),
+                matchFirst(before, addrOfRe).empty ? "names" : "takes the address of", id);
+            continue;
+        }
         o ~= format("%s:%d reads %s", file, lineOf(code, p), id);
-    }
-    foreach (m; matchAll(code, uniformCallRe)) {
-        immutable p = m.pre.length;
-        if (inside(p)) continue;
-        immutable size_t open = p + m.hit.length - 1;
-        immutable args = balancedSpan(code, open, '(', ')');
-        foreach (loc; kRigLocs)
-            foreach (a; matchAll(args, ctRegex!(`\b\w+\b`)))
-                if (a.hit == loc)
-                    o ~= format("%s:%d uploads %s", file, lineOf(code, p), loc);
     }
     return o;
 }
@@ -267,16 +304,25 @@ unittest { // 4. positive control: the census sees each pre-slice upload shape
             glUniform1f(litShader.locAmbient,
                         kLightAmbient);
             float a = kFillIntensity;
+            GLint* bypass = &locFillI;
+            private GLint locKeyI;
+            locKeyI = glGetUniformLocation(program, "u_keyI");
         }
         void useProgram() { glUniform1f(locKeyI, kKeyIntensity); }
     };
     // Allowed span = the second function's body.
     immutable lo = preSlice.indexOf("void useProgram()");
-    const got = offenders("ctl", preSlice, lo, preSlice.length);
-    // 3 kKeyLightEye + kLightAmbient + kFillIntensity reads, 2 uploads = 7.
-    assert(got.length == 7, format("4 positive control: the census saw %s "
-        ~ "of the 7 offences in the pre-slice text; its needles are blind: %s",
+    size_t allowed;
+    const got = offenders("ctl", preSlice, lo, preSlice.length, allowed);
+    // 3 kKeyLightEye + kLightAmbient + kFillIntensity reads, 2 locations in
+    // uploads, 1 `&locFillI` = 8; the declaration + assignment are allowed (2).
+    assert(got.length == 8, format("4 positive control: the census saw %s "
+        ~ "of the 8 offences in the pre-slice text; its needles are blind: %s",
         got.length, got));
+    assert(got[$ - 1].indexOf("takes the address of locFillI") >= 0,
+        format("4 positive control: `&locFillI` is not reported as an address-of: %s", got));
+    assert(allowed == 2, format("4 positive control: %s of the 2 allowed location "
+        ~ "spellings (declaration, glGetUniformLocation) were allowed", allowed));
     assert(blankImports("import light_rig : kKeyLightEye;").indexOf("kKeyLightEye") < 0,
         "4 positive control: an import declaration must not count as a read");
 }
@@ -302,6 +348,7 @@ unittest { // 5. the rig is read and uploaded ONLY inside LitShader.useProgram
 
     string[] bad;
     size_t[string] insideReads;
+    size_t shaderAllowed, otherAllowed;
     foreach (rel; files) {
         immutable code = blankImports(blankUnittestBodies(blankNonCode(
             readText(buildPath(src, rel)))));
@@ -311,8 +358,15 @@ unittest { // 5. the rig is read and uploaded ONLY inside LitShader.useProgram
             lo = sp[0]; hi = sp[1];
             foreach (m; matchAll(code[lo .. hi], identRe)) insideReads[m.hit] += 1;
         }
-        bad ~= offenders(rel, code, lo, hi);
+        bad ~= offenders(rel, code, lo, hi, rel == "shader.d" ? shaderAllowed : otherAllowed);
     }
+    // Complement floor: outside useProgram, shader.d spells each location only
+    // in its declaration and its glGetUniformLocation assignment — measured
+    // 2026-10-02: grep -nE "GLint (locKeyDir|locFillDir|locKeyI|locFillI|locAmbient)|(locKeyDir|locFillDir|locKeyI|locFillI|locAmbient) *= *glGetUniformLocation"
+    // source/shader.d | wc -l -> 10. Fewer = the allowance stopped matching.
+    assert(shaderAllowed == 10 && otherAllowed == 0, format("5 floor: %s allowed "
+        ~ "location spellings in shader.d (measured 10: 5 declarations + 5 "
+        ~ "assignments), %s elsewhere (want 0)", shaderAllowed, otherAllowed));
     // Population floor: useProgram reads every rig constant and uploads every
     // rig location (each name ≥ 1 inside the allowed span).
     foreach (id; kRigIds ~ kRigLocs)
@@ -328,8 +382,19 @@ unittest { // 5. the rig is read and uploaded ONLY inside LitShader.useProgram
 
 unittest { // 5a. the fence: rig locations are private, and nobody spells around it
     import shader : LitShader;
+    // Positive control: the same probe DOES compile on a public field, so a
+    // `false` below means "private", not "the probe is malformed".
+    static assert(__traits(compiles, (LitShader s) { auto v = s.locModel; }),
+        "5a control: the probe cannot read the public LitShader.locModel — "
+        ~ "the fence below is vacuous");
     static assert(!__traits(compiles, (LitShader s) { auto v = s.locKeyDir; }),
         "5a: LitShader.locKeyDir is reachable outside shader.d");
+    static assert(!__traits(compiles, (LitShader s) { auto v = s.locFillDir; }),
+        "5a: LitShader.locFillDir is reachable outside shader.d");
+    static assert(!__traits(compiles, (LitShader s) { auto v = s.locKeyI; }),
+        "5a: LitShader.locKeyI is reachable outside shader.d");
+    static assert(!__traits(compiles, (LitShader s) { auto v = s.locFillI; }),
+        "5a: LitShader.locFillI is reachable outside shader.d");
     static assert(!__traits(compiles, (LitShader s) { auto v = s.locAmbient; }),
         "5a: LitShader.locAmbient is reachable outside shader.d");
     import std.array : replace;

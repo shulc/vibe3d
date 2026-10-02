@@ -29,9 +29,14 @@ enum float kFillIntensity = 0.3f;
 /// by the light gain.
 enum float kLightAmbient  = 0.15f;
 
-/// The Blinn exponent of a material of roughness `rough` (= 1 − glossiness):
-/// the captured table, log-linear between its samples, clamped to [0, 1]. The
-/// closed form was not identified (capture C4), so the samples ARE the law.
+/// The Blinn exponent of a material of roughness `rough`: the captured table
+/// (exponent vs the reference's own roughness), log-linear between its samples
+/// (OUR choice), clamped to [0, 1]. The closed form was not identified (capture
+/// C4), so the samples ARE the law. The 0.48 → 128 point is INFERRED, not a
+/// read: 128 is read for 0.0–0.3, and 0.45–0.48 logged nothing new (the
+/// probe's per-value quota, C4 table footnote). The caller's argument is
+/// `1 − glossiness`: captured, rough = 1 − glossiness exactly (the reference's
+/// material import reads it so and its export writes the inverse).
 float specPowerForRoughness(float rough) @safe pure nothrow @nogc {
     import std.math : exp, log, isNaN;
     static immutable float[13] r = [0.0f, 0.48f, 0.5f, 0.55f, 0.6f, 0.65f,

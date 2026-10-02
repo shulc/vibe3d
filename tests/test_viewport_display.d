@@ -34,9 +34,11 @@
 // Flow L — Solid draws a fill and does NOT shade it: uniform across faces, at
 //          the material's own colour, and distinct from BOTH neighbours on the
 //          axis (Shaded varies; Wireframe has no fill).
-// Flow M — the law behind Flow L, stated as an invariance: turn the view a
-//          quarter turn about the world up axis and a Solid render must not
-//          move a single pixel, while the same turn moves a shaded one.
+// Flow M — Solid ignores the per-face material: give each cube face its own
+//          surface, turn the view a congruent quarter turn, and a Solid render
+//          must not move a single pixel while a shaded one does. (Under the
+//          view-relative rig a lit-but-uniform fill would pass M too; the
+//          witness that Solid is UNLIT is Flow L.)
 module test_viewport_display;
 
 
@@ -1467,7 +1469,8 @@ bool testFlowL() {
 }
 
 // --------------------------------------------------------------------------
-// Flow M — orientation invariance, which is the whole point of the style.
+// Flow M — invariance under a congruent turn of a per-face-material cube:
+// Solid ignores the per-face material (Flow L is the witness for "unlit").
 //
 // "It looks flat" is not a check. The law is that a Solid render carries NO
 // information about how the surface is oriented relative to the light, and the
@@ -1483,6 +1486,10 @@ bool testFlowL() {
 // its own material (geometry untouched): after the turn every side-face
 // position shows a DIFFERENT face, hence a different shaded colour, while
 // Solid — which never consults a surface (task 0592) — must still not move.
+// What M2 measures since task 9130 is therefore "Solid ignores the per-face
+// material", NOT "Solid is unlit": a view-relative rig lights a congruent
+// turn of a one-colour fill identically. Flow L (uniform across the faces of a
+// one-surface cube) is the witness for "unlit".
 //
 // So over the face-fill samples:
 //   * Solid  must not change AT ALL. Not "changes little" — the fill is one
@@ -1584,7 +1591,7 @@ bool testFlowM() {
     writefln("    M1 PASS: the turn is real — %d/%d shaded samples changed, "
              ~ "max channel delta %d", shadedMoved, idx.length, shadedDelta);
 
-    // --- M2: THE LAW. Solid does not know which way the model faces. ---
+    // --- M2: Solid ignores the per-face material (Flow L witnesses "unlit"). ---
     size_t solidMoved = 0;
     int    solidDelta = 0;
     foreach (i; idx) {
@@ -1597,14 +1604,15 @@ bool testFlowM() {
     enforce(solidMoved == 0,
         format("%d of %d fill samples changed when the view turned a quarter "
                ~ "turn under Solid (max channel delta %d), while the shaded "
-               ~ "control moved %d of them. A fill that responds to the "
-               ~ "model's orientation is a SHADED render — this is the "
-               ~ "assertion that separates the two, and the tolerance is zero "
-               ~ "on purpose: an unshaded fill is one colour, so a congruent "
-               ~ "projection reproduces it exactly",
+               ~ "control moved %d of them. Each face carries its own "
+               ~ "material, so a Solid fill that moved is reading the "
+               ~ "per-face material — Solid must ignore it. The tolerance is "
+               ~ "zero on purpose: a material-blind fill is one colour, so a "
+               ~ "congruent projection reproduces it exactly (whether Solid is "
+               ~ "UNLIT is Flow L's assertion, not this one)",
                solidMoved, idx.length, solidDelta, shadedMoved));
     writefln("    M2 PASS: %d/%d Solid samples changed (max channel delta %d) "
-             ~ "— the fill carries no orientation", solidMoved, idx.length,
+             ~ "— the fill ignores the per-face material", solidMoved, idx.length,
              solidDelta);
 
     return true;
@@ -1974,7 +1982,7 @@ int main(string[] args) {
     run(&testFlowJ, "Flow J — a display change reaches exactly one cell");
     run(&testFlowK, "Flow K — undrawable values are refused");
     run(&testFlowL, "Flow L — Solid: an unshaded fill, uniform across faces");
-    run(&testFlowM, "Flow M — Solid is orientation-invariant, Shaded is not");
+    run(&testFlowM, "Flow M — Solid ignores the per-face material, Shaded does not");
     run(&testFlowN, "Flow N — Solid runs no backdrop face pass, layers remain");
     run(&testFlowO, "Flow O — a create-tool preview stays lit under Solid");
 
