@@ -363,6 +363,12 @@ unittest {
     foreach (w; want)
         assert(calls.count!(c => c.indexOf(w) >= 0) == 1,
             format("E3: no applyPlan call passes `%s` — calls: %s", w, calls));
+    // The item sequence hands each entry's own index to `drawPlainItem` (its
+    // only caller; under the sequence the G-buffer is never in the draw set,
+    // so no pixel can see a wrong index — this text is the witness).
+    assert(countOccurrences(code, "drawPlainItem(") == 2
+        && countOccurrences(code, "drawPlainItem(*g, lyr, e.layerIndex,") == 1,
+        "E3: drawItemSequence must pass the entry's own layer index to drawPlainItem");
 }
 
 // E5 (task 9190): no colour clear while the integer G-buffer may be in the

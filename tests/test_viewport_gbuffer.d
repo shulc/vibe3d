@@ -5,9 +5,11 @@
 // proved to have EXECUTED by the cell's own record (`compositeRuns`,
 // `compositeBindings`), not inferred from the equal hash.
 //
-// Rig: the primary is a subdivided cube (layer 0, a near-sphere), a backdrop
-// cube (layer 1) to its right; orthographic Front view so the eye normal of
-// the sphere's front point is (0,0,1); smooth normals (the default).
+// Rig: a subdivided cube (layer 0, a near-sphere, background), the PRIMARY
+// cube (layer 1) to its right, a back-facing quad (layer 2, background) to
+// its left — neither the primary nor every background layer is layer 0, so a
+// site that passed the wrong layer index is seen; orthographic Front view so
+// the eye normal of the sphere's front point is (0,0,1); smooth normals.
 module test_viewport_gbuffer;
 
 import http_client : getJson, postJson, quiesce, frameFence;
@@ -113,8 +115,8 @@ private string cubeJson(double cx, double s) {
 /// along) the centre row of anything at y = 0.
 private enum double kLift = 0.5;
 
-/// Layer 0: the near-sphere (a subdivided cube, primary). Layer 1: a backdrop
-/// cube centred at x = 2.2. Shaded, cavity as given.
+/// Layer 0: the near-sphere (background). Layer 1: the primary cube centred
+/// at x = 2.2. Layer 2: the back-facing quad (background). Shaded.
 private Viewport rig() {
     cmdOk(commandBody("scene.reset", `{"type":"subdivcube","levels":3}`));
     cmdOk(`{"id":"history.clear"}`);
@@ -129,14 +131,14 @@ private Viewport rig() {
     cmdOk(format("layer.attr 0 pos.y %s", kLift));
     cmdOk(format("layer.attr 1 pos.y %s", kLift));
     cmdOk(format("layer.attr 2 pos.y %s", kLift));
-    cmdOk(`{"id":"layer.select","index":0,"mode":"set"}`);
+    cmdOk(`{"id":"layer.select","index":1,"mode":"set"}`);
     cmd("viewport.displayStyle", `{"style":"shaded"}`);
     cmd("viewport.backdropStyle", `{"value":"same"}`);
     auto vp = frontOrtho();
     auto L = getJson("/api/layers");
-    assert(L["active"].integer == 0 && jb(L["layers"].array[1]["background"]),
-        "rig: layer 0 must be the primary and layer 1 background: " ~ L.toString);
-    assert(jb(L["layers"].array[2]["background"]), "rig: layer 2 must be background: " ~ L.toString);
+    assert(L["active"].integer == 1 && jb(L["layers"].array[0]["background"])
+        && jb(L["layers"].array[2]["background"]),
+        "rig: layer 1 must be the primary, layers 0 and 2 background: " ~ L.toString);
     auto b = cell0()["plan"]["backdrop"];
     assert(jb(b["drawFaces"]), "rig premise: the backdrop draws its faces: " ~ b.toString);
     return vp;
@@ -182,7 +184,8 @@ unittest {
     assert(hOn == hOff, format("(i) cavity on must hash equal to cavity off (identity resolve): %s vs %s",
                                hOn, hOff));
 
-    // (ii) the G-buffer: background, sphere front, sphere rim, backdrop.
+    // (ii) the G-buffer: background, sphere front (backdrop site), the primary
+    // cube (primary site), the back-facing quad (backdrop site), sphere rim.
     auto front = toPx(0, kLift, 0, vp), bd = toPx(2.2, kLift, 0, vp), bg = toPx(0.6, 1.6, 0, vp);
     auto g = gbuf([bg, front, bd]);
     assert(g[0].id == 0 && g[0].flags == 0, format("(ii) background: id %d flags %d, expected 0/0", g[0].id, g[0].flags));
@@ -192,7 +195,8 @@ unittest {
     assert(abs(g[1].n[0]) < 0.02 && abs(g[1].n[1]) < 0.02 && abs(g[1].n[2] - 1) < 0.02,
         format("(ii) sphere front: eye normal %s, expected (0,0,1) within 0.02", g[1].n));
     assert(g[2].id == 2 && (g[2].flags & 1) == 1,
-        format("(ii) backdrop cube: id %d flags %d, expected its own id 2, flag bit 0", g[2].id, g[2].flags));
+        format("(ii) primary cube: id %d flags %d, expected its own id 2 (layer 1 + 1), flag bit 0",
+               g[2].id, g[2].flags));
     // The back-facing quad (layer 2): its own id, eye normal (0,0,-1).
     auto gb = gbuf([toPx(-1.6, kLift + 0.1, 0, vp)]);
     assert(gb[0].id == 3 && abs(gb[0].n[2] + 1) < 0.02,
