@@ -1324,6 +1324,7 @@ private final class PressFlagTool : Tool, TopologyStepClient {
     }
     void pressBegins() { sessionStepBegins(); }
     void pressEnds() { sessionStepEnds(); }
+    void middleBegins() { sessionStepBegins(PressKind.middle); }
     MeshSnapshot openImage() { return sessionStepOpenImage(); }
 }
 
@@ -2049,4 +2050,119 @@ unittest { // S2b P1: a panel write inside the open operation refires it (no new
            && write.stepOperation() == haul.stepOperation(),
         format("S2b P1: the panel write is %s of operation %s, expected a refire of the haul's %s",
                write.stepOrigin(), write.stepOperation(), haul.stepOperation()));
+}
+
+/// A PressFlagTool session after a script arm (post mode not armed), for the
+/// S2b transition cells below.
+private struct S2bRig {
+    Mesh m;
+    CommandHistory h;
+    PressFlagTool t;
+    Tool active;
+    EditSession s;
+}
+
+private S2bRig* s2bRig() {
+    auto r = new S2bRig;
+    r.m = makeCube();
+    r.h = new CommandHistory();
+    r.t = new PressFlagTool;
+    r.t.m = &r.m; r.t.h = r.h; r.t.view = new View(0, 0, 1, 1);
+    r.t.basis = MeshSnapshot.capture(r.m);
+    r.active = r.t;
+    r.s = new EditSession(() => r.active, r.h, () { r.active = null; });
+    r.s.noteArm("t.press", 1, false);
+    return r;
+}
+
+private void s2bHaul(S2bRig* r) { s2bHaul(r.s, &r.t.pressBegins, &r.t.pressEnds, &r.m); }
+
+unittest { // S2b E5: a press inside the open operation refires it
+    auto r = s2bRig();
+    s2bHaul(r);
+    const g1 = s2bTopRow(r.h);
+    s2bHaul(r);
+    const g2 = s2bTopRow(r.h);
+    assert(g1.stepOrigin() == StepOrigin.opens && g2.stepOrigin() == StepOrigin.refire
+           && g2.stepOperation() == g1.stepOperation(),
+        format("S2b E5: the hauls are %s / %s of operations %s / %s, expected opens then a refire",
+               g1.stepOrigin(), g2.stepOrigin(), g1.stepOperation(), g2.stepOperation()));
+}
+
+unittest { // S2b E2/E3: an arm that opens at the arm opens an operation; a dormant arm none
+    Mesh m = makeCube();
+    auto h = new CommandHistory();
+    auto t = new DormantRefusalTool;
+    t.m = &m;
+    Tool active = t;
+    auto s = new EditSession(() => active, h, () { active = null; });
+    s.noteArm("t.dormant", 1);
+    assert(s.sessionStateJson()["operationOpen"].type == JSONType.true_
+           && s.sessionStateJson()["operation"].integer != 0,
+        format("S2b E2: an arm-opened tool's arm opened no operation: %s", s.sessionStateJson()));
+    auto arm = tokenRow(&m, "t.dormant", "", true, false, 2);
+    arm.markDormantTopology();
+    h.recordToolLifecycle(arm);
+    h.setState(UndoState.Suspend);
+    s.noteArm("t.dormant", 2);
+    h.setState(UndoState.Active);
+    assert(t.dormant, "S2b E3 rig: the arm did not enter dormant topology mode");
+    assert(s.sessionStateJson()["operationOpen"].type == JSONType.false_,
+        format("S2b E3: a dormant arm opened an operation: %s", s.sessionStateJson()));
+}
+
+unittest { // S2b: a press is never an attribute-only row (a middle press reports no pointer-down)
+    auto r = s2bRig();
+    r.t.pressBegins();
+    r.m.vertices[1].x += 0.25f;
+    r.t.pressEnds();
+    assert(r.h.undoEntries().length == 1 && s2bTopRow(r.h).stepOrigin() == StepOrigin.opens,
+        format("S2b: a press with the post mode not armed wrote %s rows (an attribute-only row?)",
+               r.h.undoEntries().length));
+}
+
+unittest { // S2b N1: an undo inside the same session keeps the operation open (the next press refires)
+    auto r = s2bRig();
+    s2bHaul(r);
+    s2bHaul(r);
+    const g2 = s2bTopRow(r.h);
+    assert(r.s.navigate(true), "S2b N1 rig: the undo did not step");
+    s2bHaul(r);
+    const g3 = s2bTopRow(r.h);
+    assert(g3.stepOrigin() == StepOrigin.refire && g3.stepOperation() == g2.stepOperation(),
+        format("S2b N1: the press after the undo is %s of operation %s, expected a refire of %s",
+               g3.stepOrigin(), g3.stepOperation(), g2.stepOperation()));
+}
+
+unittest { // S2b N4: a redo inside the same session keeps the operation open
+    auto r = s2bRig();
+    s2bHaul(r);
+    s2bHaul(r);
+    const g2 = s2bTopRow(r.h);
+    assert(r.s.navigate(true) && r.s.navigate(false), "S2b N4 rig: the undo/redo did not step");
+    s2bHaul(r);
+    const g3 = s2bTopRow(r.h);
+    assert(g3.stepOrigin() == StepOrigin.refire && g3.stepOperation() == g2.stepOperation(),
+        format("S2b N4: the press after the redo is %s of operation %s, expected a refire of %s",
+               g3.stepOrigin(), g3.stepOperation(), g2.stepOperation()));
+}
+
+unittest { // S2b N2: the reopened operation is the undone row's, not the session's last
+    auto r = s2bRig();
+    s2bHaul(r);
+    const g1 = s2bTopRow(r.h);
+    s2bHaul(r);
+    r.t.middleBegins();
+    r.m.vertices[2].x += 0.25f;
+    r.t.pressEnds();
+    const mid = s2bTopRow(r.h);
+    assert(mid.stepOrigin() == StepOrigin.restart && mid.stepOperation() != g1.stepOperation(),
+        "S2b N2 rig: the middle press did not open its own operation");
+    assert(r.s.navigate(true) && r.s.navigate(true), "S2b N2 rig: the undos did not step");
+    s2bHaul(r);
+    const g3 = s2bTopRow(r.h);
+    assert(g3.stepOrigin() == StepOrigin.refire && g3.stepOperation() == g1.stepOperation(),
+        format("S2b N2: the press after undoing the restart and g2 refires operation %s, expected "
+               ~ "g1's %s (the restart's is %s)", g3.stepOperation(), g1.stepOperation(),
+               mid.stepOperation()));
 }

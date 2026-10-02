@@ -1194,7 +1194,7 @@ private struct ToolSession {
             // door's rule; topology-redo S2b: such a row now also stands outside dormant).
             auto t3 = tool_();
             const re3 = history_.redoEntries();
-            if (t3 !is null && !(re3.length && extra == 0 &&
+            if (t3 !is null && !(re3.length &&
                     cast(const TopologyAdjustmentEdit) re3[0].cmd !is null))
                 t3.resyncSession();
             adoptPredecessorToken_(last);
