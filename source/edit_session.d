@@ -2087,15 +2087,15 @@ private struct ToolSession {
             }
             if (pair) {
                 history_.undo();
-            } else if (capturedTopologyModel(t.sessionPolicy()) && !boundToLive_(popped.get, t)) {
-                // Law 4 (orphan): a row another instance wrote moves the mesh only.
-                (cast(TopologyStepClient)t).restoreTopologyStep(
-                    t.captureAttrImage(), popped.stepBeforeBasis());
             } else {
-                auto img = navigableAttrs_(t, popped.get, popped.stepBeforeAttrs());
+                // Law 4 (orphan): a row another instance wrote moves the mesh only.
+                const orphan = capturedTopologyModel(t.sessionPolicy())
+                    && !boundToLive_(popped.get, t);
+                auto img = orphan ? t.captureAttrImage()
+                    : navigableAttrs_(t, popped.get, popped.stepBeforeAttrs());
                 (cast(TopologyStepClient)t).restoreTopologyStep(
                     img, popped.stepBeforeBasis());
-                rememberTopologyAttrs_(img);
+                if (!orphan) rememberTopologyAttrs_(img);
             }
             return true;
         }
@@ -2128,20 +2128,17 @@ private struct ToolSession {
         redoneTopologyStep_ = true;
         auto current = tool_();
         if (current !is null && reporting_(current)) {
-            if (!pair && capturedTopologyModel(current.sessionPolicy()) &&
-                !boundToLive_(cmd.get, current)) {
-                // Law 4 (orphan): a row another instance wrote moves the mesh only.
-                (cast(TopologyStepClient)current).restoreTopologyStep(
-                    current.captureAttrImage(), cmd.stepAfterBasis());
-            } else {
-                // Law 4: the redo that re-creates the tool with its first row
-                // seeds it (`seedRecreated_`); any other, the last redone row's.
-                auto img = navigableAttrs_(current, cmd.get,
+            // Law 4: the redo that re-creates the tool with its first row seeds
+            // it (`seedRecreated_`); a row another instance wrote (orphan) moves
+            // the mesh only; any other redo, the last redone row's attributes.
+            const orphan = !pair && capturedTopologyModel(current.sessionPolicy())
+                && !boundToLive_(cmd.get, current);
+            auto img = orphan ? current.captureAttrImage()
+                : navigableAttrs_(current, cmd.get,
                     pair ? seedRecreated_(act, cmd.get) : cmd.stepAfterAttrs());
-                (cast(TopologyStepClient)current).restoreTopologyStep(
-                    img, cmd.stepAfterBasis());
-                rememberTopologyAttrs_(img);
-            }
+            (cast(TopologyStepClient)current).restoreTopologyStep(
+                img, cmd.stepAfterBasis());
+            if (!orphan) rememberTopologyAttrs_(img);
             // Reopen (L42): the redo of a press reopens that press's block;
             // Reopen-base (L55): the redo of a parameter row reopens the
             // press or activation below it.

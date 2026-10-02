@@ -680,10 +680,14 @@ unittest { // Pointer-written interactive dormant parameter creates an attr row.
     navigate(false);
     assert(planes() == image && abs(queryWidth()) < 1e-5,
         "dormant interactive Width activation redo lost its before attribute");
+    // Law 4 (task 9020, model doc §R9): the activation redo re-created the tool, so the
+    // attribute-only row is an orphan in it — its redo moves nothing and Width stays the
+    // re-created tool's (captured: dormant3_cross_inset_ui/s16_R, the swap into the
+    // orphaned container). Was: the row's after (0.2).
     navigate(false);
-    assert(planes() == image && abs(queryWidth() - 0.2) < 1e-5,
-        "dormant interactive Width redo lost mesh or after attribute: width "
-        ~ queryWidth().to!string ~ ", history "
+    assert(planes() == image && abs(queryWidth()) < 1e-5,
+        "dormant interactive Width redo of an orphaned attribute row wrote Width "
+        ~ queryWidth().to!string ~ " into the re-created tool, history "
         ~ getJson("/api/history").toString);
 }
 
