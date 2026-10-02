@@ -205,8 +205,9 @@ void runCell(string label, bool crease) {
     cpu.vbo = getJson("/api/gpu/face-vbo?normals=1");
     cpu.px = probe(pts);
 
-    // Face corners: population floor first [E4], then positions (premise:
-    // the same surface), then both normal streams.
+    // Face corners: population floor first [E4], positions (premise: the
+    // same surface), then the pixels (the cross-path witness), then both
+    // normal streams per corner.
     immutable size_t n = cast(size_t)gpu.vbo["faceVertCount"].integer;
     assert(n == kPreviewCorners && cast(size_t)cpu.vbo["faceVertCount"].integer == n
         && gpu.vbo["smoothNormals"].array.length == n && cpu.vbo["smoothNormals"].array.length == n,
@@ -230,12 +231,6 @@ void runCell(string label, bool crease) {
     assert(smoothNotFlat > n / 2,
         format("%s floor: only %d of %d corners have smooth != flat — the cell cannot see the stream", label,
                smoothNotFlat, n));
-    assert(dFlat <= 1e-4, format("%s: the fan-out's flat normals differ from the CPU writer's by %.2e", label, dFlat));
-    assert(dSmooth <= 1e-4,
-        format("%s: corner %d smooth normal %s from the GPU fan-out, %s from the CPU writer (|d| %.2e)", label,
-               worst, triple(gpu.vbo["smoothNormals"].array[worst]), triple(cpu.vbo["smoothNormals"].array[worst]),
-               dSmooth));
-
     // Pixels: population floor [E4], then every probe within +-1 level.
     assert(pts.length == 12 && gpu.px.length == 12 && cpu.px.length == 12,
         format("%s floor: %d probe points", label, pts.length));
@@ -247,6 +242,14 @@ void runCell(string label, bool crease) {
             assert(abs(gpu.px[k][ch] - cpu.px[k][ch]) <= 1,
                 format("%s: pixel %s channel %d reads %d mid-drag (GPU fan-out), %d after the CPU rebake",
                        label, pts[k], ch, gpu.px[k][ch], cpu.px[k][ch]));
+
+    // Then the streams themselves, per corner (a GPU/CPU difference too small
+    // to move a probed pixel by a level still reddens here).
+    assert(dFlat <= 1e-4, format("%s: the fan-out's flat normals differ from the CPU writer's by %.2e", label, dFlat));
+    assert(dSmooth <= 1e-4,
+        format("%s: corner %d smooth normal %s from the GPU fan-out, %s from the CPU writer (|d| %.2e)", label,
+               worst, triple(gpu.vbo["smoothNormals"].array[worst]), triple(cpu.vbo["smoothNormals"].array[worst]),
+               dSmooth));
 }
 
 /// Face corners of the cube cage's preview at the shipped depth: measured.

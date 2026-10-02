@@ -500,6 +500,21 @@ unittest { // stale cache: a different face array (same gen) or a dropped face r
     assert(d2 < 0, format("after a face-array swap corner float %d is stale", d2));
 }
 
+unittest { // stale cache: a SHRUNK vertex array (same layout) recomputes all
+    // Above the grown-array cell: without the vertex-count stamp the grown
+    // case dies on a slice bound, this one fails by name.
+    auto m = hingedPatch();
+    m.vertices ~= Vec3(9, 9, 9);   // unreferenced
+    Session s;
+    s.step(m, smoothingCosine());
+    m.vertices = m.vertices[0 .. $ - 1];
+    // Nothing referenced moved: only the vertex-count stamp can see it.
+    assert(s.step(m, smoothingCosine()) && s.cache.lastFull,
+        "a vertex-count shrink must take the full pass");
+    const want = fullCorners(m, smoothingCosine());
+    assert(firstDiff(s.corner[0 .. want.length], want) < 0, "after a vertex-count shrink the corners are stale");
+}
+
 unittest { // stale cache: a grown vertex array (same layout) recomputes all
     auto m = hingedPatch();
     Session s;
@@ -511,19 +526,6 @@ unittest { // stale cache: a grown vertex array (same layout) recomputes all
         "a vertex-count change must take the full pass");
     const want = fullCorners(m, smoothingCosine());
     assert(firstDiff(s.corner[0 .. want.length], want) < 0, "after a vertex-count change the corners are stale");
-}
-
-unittest { // stale cache: a SHRUNK vertex array (same layout) recomputes all
-    auto m = hingedPatch();
-    m.vertices ~= Vec3(9, 9, 9);   // unreferenced
-    Session s;
-    s.step(m, smoothingCosine());
-    m.vertices = m.vertices[0 .. $ - 1];
-    // Nothing referenced moved: only the vertex-count stamp can see it.
-    assert(s.step(m, smoothingCosine()) && s.cache.lastFull,
-        "a vertex-count shrink must take the full pass");
-    const want = fullCorners(m, smoothingCosine());
-    assert(firstDiff(s.corner[0 .. want.length], want) < 0, "after a vertex-count shrink the corners are stale");
 }
 
 unittest { // the switch to the full pass: above a quarter of the vertices moved
