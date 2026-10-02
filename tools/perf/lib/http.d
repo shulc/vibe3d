@@ -18,7 +18,8 @@ import core.time    : msecs;
 
 import lib.stats : FrameRecJ, parseFrameRec, FrameStats;
 
-string g_baseUrl = "http://localhost:8088";
+// Set by run.d from the admitted port (lib.portpolicy) before any request.
+string g_baseUrl;
 
 void postUrl(string path, string body_ = "") {
     post(g_baseUrl ~ path, body_);

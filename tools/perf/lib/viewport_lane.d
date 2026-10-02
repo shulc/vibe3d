@@ -30,6 +30,7 @@ import core.time     : msecs;
 import lib.http;
 import lib.drag      : fetchCamera, buildOrbitLog;
 import lib.lifecycle : killStaleVibe, launchVibe;
+import lib.portpolicy : PerfPort;
 import lib.baseline  : currentHeader;
 import lib.history   : appendHistory;
 
@@ -311,11 +312,11 @@ void writeViewportJson(string path, ViewportRow[] rows) {
     std.file.write(path, a.data);
 }
 
-int runViewportSubcommand(string repoRoot, string viewport, ushort port, string[] requested) {
+int runViewportSubcommand(string repoRoot, string viewport, PerfPort port, string[] requested) {
     import std.path : buildPath;
     killStaleVibe(port);
     string logPath = "/var/tmp/vibe3d_perf_viewport.log";
-    writefln("Launching vibe3d --test --perf --http-port %d --viewport %s ...", port, viewport);
+    writefln("Launching vibe3d --test --perf --http-port %d --viewport %s ...", port.value, viewport);
     if (!launchVibe(port, viewport, logPath)) return 1;
     writeln("  vibe3d is up");
 

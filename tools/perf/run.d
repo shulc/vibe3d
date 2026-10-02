@@ -42,7 +42,8 @@
 //   ./run.d --subdivcube 7           # use subdivideCube(levels) instead of grid
 //   ./run.d --repeats 5              # R measured drags per case (default 5)
 //   ./run.d move rotate              # subset: only cases whose name contains a token
-//   ./run.d --http-port 8090         # custom port (default 8088)
+//   ./run.d --http-port 8520         # custom port (default 8990; a gate worker
+//                                    #   port is refused, see lib/portpolicy.d)
 //   ./run.d --viewport 1280x960      # fixed viewport (default 1280x960)
 
 import std.algorithm : sort, canFind, map, sum, min, max;
@@ -78,6 +79,7 @@ import lib.history;
 import lib.vslast;
 import lib.flame;
 import lib.viewport_lane : runViewportSubcommand;
+import lib.portpolicy;
 
 // ---------------------------------------------------------------------------
 // Selection-index builders (the grid-index math itself — gridIdx/gridFace —
@@ -4296,13 +4298,13 @@ FramesAbsRegression[] checkFramesAbsolute(FrameScenarioResult[] results) {
 // counter invariants (always) + absolute p99/hitch budgets (header-guarded).
 // ---------------------------------------------------------------------------
 
-int runFramesSubcommand(string meshType, int meshParam, string viewport, ushort port,
+int runFramesSubcommand(string meshType, int meshParam, string viewport, PerfPort port,
                         string[] requested, bool updateFramesBaseline, bool noAbsolute,
                         bool noBuild, bool ciMode) {
     killStaleVibe(port);
     string logPath = "/tmp/vibe3d_perf_frames.log";
     writefln("Launching vibe3d --test --perf --http-port %d --viewport %s ...",
-             port, viewport);
+             port.value, viewport);
     if (!launchVibe(port, viewport, logPath)) return 1;
     writeln("  vibe3d is up");
 
@@ -4475,7 +4477,7 @@ int runFramesSubcommand(string meshType, int meshParam, string viewport, ushort 
 
     // Second contamination sweep before the entry is written — same reason as
     // the ops lane's (task 1840).
-    warnForeignVibe(port);
+    warnForeignVibe(port.value);
 
     // History (task 0197 Phase 4) — one line per `frames` run, {scenario:
     // p99Ms}. Best-effort: a history-append failure must never fail the run.
@@ -4716,7 +4718,7 @@ void writeToolsResultsJson(string path, string meshType, int n, string viewport,
 }
 
 int runToolsSubcommand(string meshType, int meshParam, string viewport,
-                       ushort port, string[] requested, int repeats,
+                       PerfPort port, string[] requested, int repeats,
                        bool noBuild) {
     g_toolRepeats = repeats;
 
@@ -4747,7 +4749,7 @@ int runToolsSubcommand(string meshType, int meshParam, string viewport,
     killStaleVibe(port);
     string logPath = "/tmp/vibe3d_perf_tools.log";
     writefln("Launching vibe3d --test --perf --http-port %d --viewport %s ...",
-             port, viewport);
+             port.value, viewport);
     if (!launchVibe(port, viewport, logPath)) return 1;
     writeln("  vibe3d is up");
 
@@ -4773,7 +4775,7 @@ int runToolsSubcommand(string meshType, int meshParam, string viewport,
     int failures = 0;
     // Second contamination sweep before this lane's entry is written — same
     // reason as the ops lane's (task 1840).
-    warnForeignVibe(port);
+    warnForeignVibe(port.value);
 
     writeln();
     writeln("=== tool preview invariants ===");
@@ -4881,7 +4883,7 @@ int runToolsSubcommand(string meshType, int meshParam, string viewport,
 // ---------------------------------------------------------------------------
 
 int runFlameSubcommand(string target, string meshType, int meshParam,
-                       string viewport, ushort port, int freq, int captureSecs,
+                       string viewport, PerfPort port, int freq, int captureSecs,
                        bool noBuild) {
     if (target.length == 0) {
         stderr.writeln("flame: missing <case-or-scenario-name> argument "
@@ -4946,7 +4948,7 @@ int runFlameSubcommand(string target, string meshType, int meshParam,
     killStaleVibe(port);
     string logPath = "/tmp/vibe3d_perf_flame.log";
     writefln("Launching vibe3d --test --perf --http-port %d --viewport %s ...",
-             port, viewport);
+             port.value, viewport);
     if (!launchVibe(port, viewport, logPath)) return 1;
     writeln("  vibe3d is up");
 
@@ -5259,7 +5261,8 @@ int main(string[] args) {
     int  meshSizeAlias = -1;
     int  subdivLevels  = -1;
     int  repeats = 5;
-    ushort port  = 8088;
+    ushort portArg = kPerfDefaultPort;
+    bool   allowWorkerPort = false;
     string viewport = "1280x960";
     bool   updateBaseline = false;
     bool   noAbsolute     = false;   // skip absolute comparison (invariants only)
@@ -5290,7 +5293,8 @@ int main(string[] args) {
         "mesh-size", "alias for --n",                        &meshSizeAlias,
         "subdivcube","use subdivideCube(levels) instead of grid", &subdivLevels,
         "repeats",   "measured drags per case (default 5)",  &repeats,
-        "http-port", "HTTP port (default 8088)",             &port,
+        "http-port", format("HTTP port (default %d)", kPerfDefaultPort), &portArg,
+        kAllowWorkerPortFlag, "admit an --http-port inside a gate worker window (refused otherwise: this harness clears its port before launching)", &allowWorkerPort,
         "viewport",  "fixed viewport WxH (default 1280x960)", &viewport,
         "update-baseline", "write tools/perf/baseline.json from this run", &updateBaseline,
         "no-absolute",     "skip absolute baseline comparison (relative invariants only)", &noAbsolute,
@@ -5324,6 +5328,13 @@ int main(string[] args) {
         return 0;
     }
 
+    // The port policy runs before anything is built, killed or launched: a
+    // `PerfPort` is what every kill/launch seam takes (task 9220).
+    PerfPort port = () {
+        try return admitPerfPort(portArg, allowWorkerPort);
+        catch (PerfPortRefused e) { stderr.writeln("error: ", e.msg); exit(2); assert(0); }
+    }();
+
     if (meshSizeAlias >= 0) n = meshSizeAlias;
     string meshType = "grid";
     int meshParam = n;
@@ -5352,7 +5363,7 @@ int main(string[] args) {
     }
 
     g_keep = keep;
-    g_baseUrl = format("http://localhost:%d", port);
+    g_baseUrl = format("http://localhost:%d", port.value);
 
     // Keep every localhost HTTP hop (std.net.curl in lib/http.d, the curl
     // probe in lib/lifecycle.d, and any child process) off a configured
@@ -5505,7 +5516,7 @@ int main(string[] args) {
     killStaleVibe(port);
     string logPath = "/tmp/vibe3d_perf.log";
     writefln("Launching vibe3d --test --perf --http-port %d --viewport %s ...",
-             port, viewport);
+             port.value, viewport);
     if (!launchVibe(port, viewport, logPath)) return 1;
     writeln("  vibe3d is up");
 
@@ -5570,7 +5581,7 @@ int main(string[] args) {
     // first sweep raced — competed for the CPU of every case above and would
     // otherwise be recorded as clean. `warnForeignVibe` unions its findings
     // into the same list `runWasContaminated` reads.
-    warnForeignVibe(port);
+    warnForeignVibe(port.value);
 
     printTable(results, meshParam);
 

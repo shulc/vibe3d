@@ -413,6 +413,7 @@ tests.unit.path_test
 tests.unit.perf_baseline_debt_test
 tests.unit.perf_lane_health_test
 tests.unit.perf_lock_test
+tests.unit.perf_port_policy_test
 tests.unit.perf_probe_test
 tests.unit.perf_vslast_gate_test
 tests.unit.pie_key_release_law_test

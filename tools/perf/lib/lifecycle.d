@@ -20,6 +20,8 @@ import core.time   : msecs;
 import core.stdc.stdlib : exit;
 import core.sys.posix.signal : signal, SIGINT, SIGTERM, kill;
 
+import lib.portpolicy : PerfPort;
+
 // ---------------------------------------------------------------------------
 // Lifecycle state (accessed by signal handler)
 // ---------------------------------------------------------------------------
@@ -220,7 +222,11 @@ PortHolder portHolder(ushort port) {
 /// no pattern could select it, the process-vanish loop was satisfied
 /// instantly, and the run died on `Address already in use`. Bindability is
 /// the condition the launch needs, so it is the condition the guard waits on.
-void killStaleVibe(ushort port) {
+///
+/// It takes a `PerfPort`, not a number: only `lib.portpolicy.admitPerfPort`
+/// makes one, and it refuses a gate worker's port (task 9220).
+void killStaleVibe(PerfPort admitted) {
+    const ushort port = admitted.value;
     // Everything this lane may legitimately kill on its own port: the
     // instances whose command line names it, PLUS whoever the kernel says
     // holds the listening socket, when that is a vibe3d.
@@ -386,7 +392,8 @@ long processRssKb(int pid) {
     }
 }
 
-bool launchVibe(ushort port, string viewport, string logPath) {
+bool launchVibe(PerfPort admitted, string viewport, string logPath) {
+    const ushort port = admitted.value;
     auto logFile = File(logPath, "wb");
     string[] argv = [buildPath(g_repoRoot, "vibe3d"),
                      "--test", "--perf",
