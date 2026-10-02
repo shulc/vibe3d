@@ -384,8 +384,8 @@ unittest {
             rows ~= Row(style, retopo, resolveDrawPlan(d, false).dim);
         }
     }
-    // Floor first: measured 2026-10-02, 4 styles x retopology off/on.
-    assert(rows.length == 8, format("expected 8 style x retopology rows, swept %d", rows.length));
+    // Floor first: 5 styles x retopology off/on (task 9150 appended Gooch).
+    assert(rows.length == 10, format("expected 10 style x retopology rows, swept %d", rows.length));
     foreach (r; rows)
         assert(r.dim == 1.0f,
             format("the active plan of style %s (retopology %s) has dim %s; "
@@ -428,4 +428,67 @@ unittest {
         == ["style", "wire", "wireAlpha", "showVertices", "pointSize", "smooth"],
         "DisplayState's members changed — extend the prefs mirror, the display endpoint "
         ~ "and the command surface for the new control, then this list");
+}
+
+/// [E1] Task 9150 (S4a, H2): the style and shading member lists, in ORDER —
+/// ordinals reach GL (`u_shading`) and persisted fixtures, so a new member is
+/// appended LAST and every consumer below is extended with it.
+unittest {
+    static assert([__traits(allMembers, DisplayStyle)]
+        == ["Wireframe", "Solid", "Shaded", "Weight", "Gooch"],
+        "DisplayStyle's members changed — extend kDisplayStyleOrder, the label/id "
+        ~ "switches, resolveDrawPlan, the command parse and the prefs parse, then this list");
+    static assert([__traits(allMembers, SurfaceShading)]
+        == ["Material", "Fill", "Weight", "Retopology", "Gooch"],
+        "SurfaceShading's members changed — the ordinal is the lit shader's u_shading; "
+        ~ "extend litFragSrc's arms, then this list");
+    static assert(cast(int) SurfaceShading.Gooch == 4 && cast(int) DisplayStyle.Gooch == 4,
+        "Gooch is appended LAST: u_shading == 4 in litFragSrc");
+}
+
+/// Task 9150 (S4a, H2): Gooch resolves to its OWN lit arm, offered in the
+/// combos after Weight, labelled "Gooch" / posted as "gooch".
+unittest {
+    ViewportDisplay d;
+    d.active.style = DisplayStyle.Gooch;
+    const p = resolveDrawPlan(d, false);
+    assert(p.drawFaces && p.styleFills, "the Gooch style draws a filled surface");
+    assert(p.shading == SurfaceShading.Gooch,
+        "the Gooch style must resolve to its own arm, not Material's Blinn");
+    assert(p.facesLit, "the Gooch style is lit (its own eye-space light)");
+    assert(!p.drawVerts && p.drawWire && p.dim == 1.0f,
+        "the Gooch style must not disturb the overlay axis or dim the active plan");
+    assert(resolveDrawPlan(d, true).shading == SurfaceShading.Gooch
+        && resolveDrawPlan(d, true).dim == kBackdropDim,
+        "a SameAsActive backdrop mirrors the Gooch arm, dimmed");
+    assert(kDisplayStyleOrder[$ - 1] == DisplayStyle.Gooch && kDisplayStyleOrder.length == 5,
+        "Gooch is offered last, after Weight");
+    assert(displayStyleLabel(DisplayStyle.Gooch) == "Gooch"
+        && displayStyleId(DisplayStyle.Gooch) == "gooch");
+}
+
+/// Task 9150 (S4a, H2): the command's own parse switch (the third hand-kept
+/// spelling) accepts every offered id and writes that style — driven through
+/// the real command with a headless ViewportManager.
+unittest {
+    import command_args : bindArgs;
+    import commands.viewport.display : ViewportDisplayStyle;
+    import editmode : EditMode;
+    import mesh : makeCube;
+    import std.format : format;
+    import viewport : ViewportManager;
+    auto vpm = new ViewportManager(0, 0, 800, 600);
+    auto m = makeCube();
+    size_t checked;
+    foreach (s; kDisplayStyleOrder) {
+        auto c = new ViewportDisplayStyle(&m, vpm.views[0].camera, EditMode.Polygons, vpm);
+        bindArgs(c, format(`{"value":"%s","viewport":0}`, displayStyleId(s)));
+        assert(c.apply(), format("viewport.displayStyle refused the offered id '%s'", displayStyleId(s)));
+        assert(vpm.views[0].display.active.style == s,
+            format("viewport.displayStyle '%s' wrote %s, not %s — the parse switch maps "
+                   ~ "the id to the wrong style", displayStyleId(s),
+                   vpm.views[0].display.active.style, s));
+        ++checked;
+    }
+    assert(checked == 5, format("population floor: 5 offered styles, checked %d", checked));
 }

@@ -51,3 +51,22 @@ float specPowerForRoughness(float rough) @safe pure nothrow @nogc {
     immutable float t = (rough - r[i - 1]) / (r[i] - r[i - 1]);
     return exp(log(p[i - 1]) + t * (log(p[i]) - log(p[i - 1])));
 }
+
+// The Gooch style's own light and tones (S4a; read through the same
+// upload, `LitShader.useProgram`). Captured law
+// (doc/captures/viewport_modes_advanced_reflection_2026-10-02.md §4):
+// `out = min(mix(cool + coolKd·Kd, warm + warmKd·Kd, abs(N·L)), 1)`, Kd = base
+// colour × diffuse amount, L eye space, two-sided abs, no specular. The
+// reference evaluates N·L per vertex; we per fragment (declared, as row 496).
+
+/// The Gooch light, unit, eye space, toward the light: (1,1,1)/√3, upper
+/// right in front of the viewer (captured 0.57735026, 0.57735027, 0.57735027).
+enum Vec3  kGoochLightEye = Vec3(0.57735027f, 0.57735027f, 0.57735027f);
+/// The cool tone's constant part (N·L = 0).
+enum Vec3  kGoochCool     = Vec3(0.0f, 0.0f, 0.35f);
+/// The warm tone's constant part (|N·L| = 1).
+enum Vec3  kGoochWarm     = Vec3(0.44f, 0.44f, 0.0f);
+/// Kd's weight in the cool tone.
+enum float kGoochCoolKd   = 0.2f;
+/// Kd's weight in the warm tone.
+enum float kGoochWarmKd   = 0.6f;

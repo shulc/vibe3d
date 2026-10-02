@@ -104,6 +104,11 @@ enum DisplayStyle : ubyte {
     /// one exists, it is adjacent, it serves other scalar channels, and it was
     /// rejected by pixels at 51/255 and 85/255.
     Weight,
+    /// Cool-to-warm tone shading: no specular, one eye-space
+    /// light (`light_rig.kGoochLightEye`), two-sided `abs(N·L)`. The captured
+    /// law and constants are `light_rig`'s; APPENDED LAST (ordinals are
+    /// persisted by number in fixtures).
+    Gooch,
 }
 
 /// How the face pass shades the surface — the SHADING half of `DisplayStyle`,
@@ -126,6 +131,9 @@ enum SurfaceShading : ubyte {
     /// APPENDED LAST — `u_shading` is this enum's ordinal. Resolved only by
     /// `applyRetopology`, never by a `DisplayStyle`.
     Retopology,
+    /// `DisplayStyle.Gooch`: `min(mix(kcool, kwarm, |N·Lg|), 1)` from the
+    /// material's diffuse colour × amount (`light_rig` header). APPENDED LAST.
+    Gooch,
 }
 
 /// The order the surface styles are OFFERED in, and their UI text.
@@ -156,6 +164,7 @@ immutable DisplayStyle[] kDisplayStyleOrder = [
     DisplayStyle.Solid,
     DisplayStyle.Wireframe,
     DisplayStyle.Weight,
+    DisplayStyle.Gooch,
 ];
 
 static assert(kDisplayStyleOrder.length == __traits(allMembers, DisplayStyle).length,
@@ -169,6 +178,7 @@ string displayStyleLabel(DisplayStyle s) pure nothrow @safe @nogc {
         case DisplayStyle.Solid:     return "Solid";
         case DisplayStyle.Wireframe: return "Wireframe";
         case DisplayStyle.Weight:    return "Weight";
+        case DisplayStyle.Gooch:     return "Gooch";
     }
 }
 
@@ -183,6 +193,7 @@ string displayStyleId(DisplayStyle s) pure nothrow @safe @nogc {
         case DisplayStyle.Solid:     return "solid";
         case DisplayStyle.Wireframe: return "wireframe";
         case DisplayStyle.Weight:    return "weight";
+        case DisplayStyle.Gooch:     return "gooch";
     }
 }
 
@@ -395,7 +406,8 @@ struct DrawPlan {
     /// terms removed AND the material no longer consulted, so the fill carries
     /// no information about how the surface is oriented and none about what it
     /// is made of. `Weight` ⇒ the same face pass again, taking its base colour
-    /// from a per-vertex attribute instead (task 1090).
+    /// from a per-vertex attribute instead (task 1090). `Gooch` ⇒ the
+    /// material's diffuse colour through the cool-to-warm tone.
     ///
     /// This was a `bool facesLit` until task 1090 gave the axis a third value.
     /// `facesLit` survives as a derived accessor below because it is what the
@@ -407,9 +419,12 @@ struct DrawPlan {
     ///
     /// Note what this does NOT distinguish: `Fill` and `Weight` are both
     /// "not lit", so a test that only reads this cannot tell an unshaded fill
-    /// from a weight-coloured surface. Read `shading` for that.
+    /// from a weight-coloured surface, nor Material from Gooch (both lit, a
+    /// STYLE's light; the mode-only Retopology arm reports false as before).
+    /// Read `shading` for that.
     bool facesLit() const pure nothrow @safe @nogc {
-        return shading == SurfaceShading.Material;
+        return shading == SurfaceShading.Material
+            || shading == SurfaceShading.Gooch;
     }
     /// Brightness multiplier for this pass (1.0 = full).
     float dim       = 1.0f;
@@ -655,6 +670,10 @@ DrawPlan resolveDrawPlan(in ViewportDisplay d, bool isBackdrop) pure nothrow @sa
         case DisplayStyle.Weight:
             p.drawFaces = true;
             p.shading   = SurfaceShading.Weight;
+            break;
+        case DisplayStyle.Gooch:
+            p.drawFaces = true;
+            p.shading   = SurfaceShading.Gooch;
             break;
     }
 

@@ -118,8 +118,8 @@ unittest { // P3: every enum member round-trips (tables derived from the enums)
             "P3: backdropSlotStyle " ~ m.to!string ~ " did not round-trip");
         ++slots;
     }
-    assert(backdrops == 4 && slots == 4,
-        format("P3 floor: expected 4 + 4 members, ran %d + %d", backdrops, slots));
+    assert(backdrops == 4 && slots == 5,
+        format("P3 floor: expected 4 + 5 members (Gooch, task 9150), ran %d + %d", backdrops, slots));
 }
 
 unittest { // P4: tolerant reads — never throw, keep defaults, clamp the size

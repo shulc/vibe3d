@@ -229,12 +229,15 @@ unittest { // 3b. a world non-uniform scale over a rotated item: the inverse-tra
 
 // ---- the one-upload-site census ---------------------------------------------
 
+// The Gooch style's light and tones (task 9150) ride the same upload site.
 private immutable string[] kRigIds =
-    ["kKeyLightEye", "kFillLightEye", "kKeyIntensity", "kFillIntensity", "kLightAmbient"];
+    ["kKeyLightEye", "kFillLightEye", "kKeyIntensity", "kFillIntensity", "kLightAmbient",
+     "kGoochLightEye", "kGoochCool", "kGoochWarm", "kGoochCoolKd", "kGoochWarmKd"];
 private immutable string[] kRigLocs =
-    ["locKeyDir", "locFillDir", "locKeyI", "locFillI", "locAmbient"];
+    ["locKeyDir", "locFillDir", "locKeyI", "locFillI", "locAmbient",
+     "locGoochDir", "locGoochCool", "locGoochWarm", "locGoochCoolKd", "locGoochWarmKd"];
 
-private enum identRe  = ctRegex!(`\b(kKeyLightEye|kFillLightEye|kKeyIntensity|kFillIntensity|kLightAmbient|locKeyDir|locFillDir|locKeyI|locFillI|locAmbient)\b`);
+private enum identRe  = ctRegex!(`\b(kKeyLightEye|kFillLightEye|kKeyIntensity|kFillIntensity|kLightAmbient|kGoochLightEye|kGoochCool|kGoochWarm|kGoochCoolKd|kGoochWarmKd|locKeyDir|locFillDir|locKeyI|locFillI|locAmbient|locGoochDir|locGoochCool|locGoochWarm|locGoochCoolKd|locGoochWarmKd)\b`);
 private enum importRe = ctRegex!(`\bimport\b[^;]*;`);
 /// A location's declaration (`GLint locX`) and its one `glGetUniformLocation`
 /// assignment: the only spellings of a location allowed outside the span.
@@ -242,7 +245,7 @@ private enum locDeclRe   = ctRegex!(`\bGLint\s+$`);
 private enum locAssignRe = ctRegex!(`^\s*=\s*glGetUniformLocation\s*\(`);
 private enum addrOfRe    = ctRegex!(`&\s*$`);
 /// Every rig location and uniform NAME, for the raw-text fence (5a).
-private enum rigNameRe = ctRegex!(`\b(locKeyDir|locFillDir|locKeyI|locFillI|locAmbient|u_keyDir|u_fillDir|u_keyI|u_fillI|u_ambient)\b`);
+private enum rigNameRe = ctRegex!(`\b(locKeyDir|locFillDir|locKeyI|locFillI|locAmbient|locGoochDir|locGoochCool|locGoochWarm|locGoochCoolKd|locGoochWarmKd|u_keyDir|u_fillDir|u_keyI|u_fillI|u_ambient|u_goochDir|u_goochCool|u_goochWarm|u_goochCoolKd|u_goochWarmKd)\b`);
 
 /// Blank import declarations (an import NAMES a constant, it does not read it),
 /// keeping offsets.
@@ -362,10 +365,10 @@ unittest { // 5. the rig is read and uploaded ONLY inside LitShader.useProgram
     }
     // Complement floor: outside useProgram, shader.d spells each location only
     // in its declaration and its glGetUniformLocation assignment — measured
-    // 2026-10-02: grep -nE "GLint (locKeyDir|locFillDir|locKeyI|locFillI|locAmbient)|(locKeyDir|locFillDir|locKeyI|locFillI|locAmbient) *= *glGetUniformLocation"
-    // source/shader.d | wc -l -> 10. Fewer = the allowance stopped matching.
-    assert(shaderAllowed == 10 && otherAllowed == 0, format("5 floor: %s allowed "
-        ~ "location spellings in shader.d (measured 10: 5 declarations + 5 "
+    // 2026-10-02 (task 9150, +5 Gooch locations): grep -nE "GLint (locKeyDir|locFillDir|locKeyI|locFillI|locAmbient|locGooch[A-Za-z]+)\b|(locKeyDir|locFillDir|locKeyI|locFillI|locAmbient|locGooch[A-Za-z]+) *= *glGetUniformLocation"
+    // source/shader.d | wc -l -> 20. Fewer = the allowance stopped matching.
+    assert(shaderAllowed == 20 && otherAllowed == 0, format("5 floor: %s allowed "
+        ~ "location spellings in shader.d (measured 20: 10 declarations + 10 "
         ~ "assignments), %s elsewhere (want 0)", shaderAllowed, otherAllowed));
     // Population floor: useProgram reads every rig constant and uploads every
     // rig location (each name ≥ 1 inside the allowed span).
@@ -397,6 +400,16 @@ unittest { // 5a. the fence: rig locations are private, and nobody spells around
         "5a: LitShader.locFillI is reachable outside shader.d");
     static assert(!__traits(compiles, (LitShader s) { auto v = s.locAmbient; }),
         "5a: LitShader.locAmbient is reachable outside shader.d");
+    static assert(!__traits(compiles, (LitShader s) { auto v = s.locGoochDir; }),
+        "5a: LitShader.locGoochDir is reachable outside shader.d");
+    static assert(!__traits(compiles, (LitShader s) { auto v = s.locGoochCool; }),
+        "5a: LitShader.locGoochCool is reachable outside shader.d");
+    static assert(!__traits(compiles, (LitShader s) { auto v = s.locGoochWarm; }),
+        "5a: LitShader.locGoochWarm is reachable outside shader.d");
+    static assert(!__traits(compiles, (LitShader s) { auto v = s.locGoochCoolKd; }),
+        "5a: LitShader.locGoochCoolKd is reachable outside shader.d");
+    static assert(!__traits(compiles, (LitShader s) { auto v = s.locGoochWarmKd; }),
+        "5a: LitShader.locGoochWarmKd is reachable outside shader.d");
     import std.array : replace;
     immutable src = buildPath(repoRoot, "source");
     size_t scanned;

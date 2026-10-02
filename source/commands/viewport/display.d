@@ -99,10 +99,12 @@ final class ViewportDisplayStyle : ViewportCommand {
             // selected it draws the measured neutral, which is not a
             // placeholder: it is the measured "no map selected" surface.
             case "weight":    style_ = DisplayStyle.Weight;    break;
+            // The cool-to-warm tone style: lit, and a pass reads it.
+            case "gooch":     style_ = DisplayStyle.Gooch;     break;
             default:
                 throw new Exception(
                     "viewport.displayStyle: expected 'wireframe', "
-                    ~ "'solid', 'shaded' or 'weight', got '" ~ sval ~ "'");
+                    ~ "'solid', 'shaded', 'weight' or 'gooch', got '" ~ sval ~ "'");
         }
         cell_ = cell;
     }

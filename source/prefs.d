@@ -498,6 +498,8 @@ Prefs loadPrefs(string dir) {
                                 // launch. The round-trip unittest below is
                                 // what holds this.
                                 case "Weight":    p.viewportDisplay[i].style = DisplayStyle.Weight;    break;
+                                // Gooch: drawn, so persisted (same rule).
+                                case "Gooch":     p.viewportDisplay[i].style = DisplayStyle.Gooch;     break;
                                 default: break;   // incl. styles no pass draws yet
                             }
                     if (auto wp = "wire" in cellJson)

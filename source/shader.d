@@ -15,7 +15,8 @@ version (web) {
 import display_state : DrawPlan, kSchemeSolidFill, SurfaceShading;
 import weightmap_view : kWeightRamp;   // task 1090: the parked neutral
 import light_rig : kKeyLightEye, kFillLightEye, kKeyIntensity, kFillIntensity,
-    kLightAmbient, specPowerForRoughness;
+    kLightAmbient, specPowerForRoughness, kGoochLightEye, kGoochCool,
+    kGoochWarm, kGoochCoolKd, kGoochWarmKd;
 // ---------------------------------------------------------------------------
 // Shaders
 // ---------------------------------------------------------------------------
@@ -249,7 +250,12 @@ private immutable string litFragSrc = withShaderPreamble(q{
     uniform float u_ambient;        // global ambient, times Kd
     uniform float u_dim;            // brightness multiplier; 1.0 = neutral (layers Stage 5)
     uniform float u_lightGain;      // multiplier on the lit term ABOVE ambient; 1.0 = neutral
-    uniform int   u_shading;        // display_state.SurfaceShading: 0 Material, 1 Fill, 2 Weight, 3 Retopology
+    uniform int   u_shading;        // display_state.SurfaceShading: 0 Material, 1 Fill, 2 Weight, 3 Retopology, 4 Gooch
+    uniform vec3  u_goochDir;       // light_rig.kGoochLightEye: eye space, toward the light
+    uniform vec3  u_goochCool;      // light_rig.kGoochCool: the cool tone at N·L = 0
+    uniform vec3  u_goochWarm;      // light_rig.kGoochWarm: the warm tone at |N·L| = 1
+    uniform float u_goochCoolKd;    // Kd's weight in each tone
+    uniform float u_goochWarmKd;
     uniform vec3  u_fillColor;      // the unlit fill's base; NOT the material (task 0592)
     uniform float u_faceAlpha;      // output alpha of every arm; 1.0 = opaque (FacePass)
     layout(std140) uniform Materials {
@@ -319,6 +325,15 @@ private immutable string litFragSrc = withShaderPreamble(q{
             // Diffuse amount 1, no specular.
             col = litTerm(mix(u_fillColor, u_color, u_overrideMix),
                           normalize(vNormal), 0.0, 1.0);
+        } else if (u_shading == 4) {
+            // Gooch (task 9150; law in `light_rig`): Kd = base × diffuse
+            // amount (the hover override replaces it, as in Material), the
+            // two-sided cool→warm mix by |N·L|, no specular.
+            uint  mi = (vMatId < uint(64)) ? vMatId : uint(0);
+            vec3  kd = mix(mat_base[mi].rgb * mat_params[mi].x, u_color, u_overrideMix);
+            float t  = abs(dot(normalize(vNormal), u_goochDir));
+            col = min(mix(u_goochCool + u_goochCoolKd * kd,
+                          u_goochWarm + u_goochWarmKd * kd, t), vec3(1.0));
         } else {
             // Weight (task 1090). UNLIT in the strong sense: no light term, no
             // material lookup, no gamma — the interpolated per-vertex colour
@@ -796,6 +811,11 @@ class LitShader {
     private GLint locKeyI;
     private GLint locFillI;
     private GLint locAmbient;
+    private GLint locGoochDir;
+    private GLint locGoochCool;
+    private GLint locGoochWarm;
+    private GLint locGoochCoolKd;
+    private GLint locGoochWarmKd;
     // The per-plan uniform locations are module-private like their setters:
     // outside this module nothing can name them, so `applyPlan` stays their
     // one writer (the fence is pinned by tests/unit/lit_plan_seam_test.d).
@@ -823,6 +843,11 @@ class LitShader {
         locKeyI        = glGetUniformLocation(program, "u_keyI");
         locFillI       = glGetUniformLocation(program, "u_fillI");
         locAmbient     = glGetUniformLocation(program, "u_ambient");
+        locGoochDir    = glGetUniformLocation(program, "u_goochDir");
+        locGoochCool   = glGetUniformLocation(program, "u_goochCool");
+        locGoochWarm   = glGetUniformLocation(program, "u_goochWarm");
+        locGoochCoolKd = glGetUniformLocation(program, "u_goochCoolKd");
+        locGoochWarmKd = glGetUniformLocation(program, "u_goochWarmKd");
         locDim         = glGetUniformLocation(program, "u_dim");
         locLightGain   = glGetUniformLocation(program, "u_lightGain");
         locShading     = glGetUniformLocation(program, "u_shading");
@@ -919,6 +944,11 @@ class LitShader {
         glUniform1f(locKeyI,    kKeyIntensity);
         glUniform1f(locFillI,   kFillIntensity);
         glUniform1f(locAmbient, kLightAmbient);
+        glUniform3f(locGoochDir, kGoochLightEye.x, kGoochLightEye.y, kGoochLightEye.z);
+        glUniform3f(locGoochCool, kGoochCool.x, kGoochCool.y, kGoochCool.z);
+        glUniform3f(locGoochWarm, kGoochWarm.x, kGoochWarm.y, kGoochWarm.z);
+        glUniform1f(locGoochCoolKd, kGoochCoolKd);
+        glUniform1f(locGoochWarmKd, kGoochWarmKd);
         // Default to material-lookup mode. drawFacesHighlighted flips
         // this to 1.0 for hover draws that need to override the
         // surface colour with u_color.
