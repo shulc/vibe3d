@@ -148,8 +148,10 @@ unittest { // GLSL slot sites all come from kSurfaceSlots: floor → needle → 
     immutable osdSrc    = readText(buildPath(root, "source", "subpatch_osd.d"));
     immutable lit = glslRegion(shaderSrc, "private immutable string litFragSrc");
     immutable fan = glslRegion(osdSrc, "private enum string FAN_OUT_VERT_SRC");
-    // Floor [E4]: the placeholder is where the census looks.
-    assert(count(lit, "%SLOTS%") >= 3,
+    // Floor [E4]: the placeholder is where the census looks (the region is not
+    // empty). Its exact count is the STRUCTURAL row below the needle, so a
+    // literal reintroduced at one site reddens at the needle, not here [E2, E7].
+    assert(count(lit, "%SLOTS%") >= 1,
         "the slot placeholder vanished from litFragSrc — the census region is empty");
     assert(count(fan, "%SLOTS%") >= 1, "the slot placeholder vanished from FAN_OUT_VERT_SRC — the census region is empty");
     // Needle. Polarity [E14]: true AFTER S1e (allowed set ∅), false before
@@ -162,6 +164,10 @@ unittest { // GLSL slot sites all come from kSurfaceSlots: floor → needle → 
         format("a literal slot count 64 is back in %s — splice %%SLOTS%% from kSurfaceSlots", offenders));
     assert(matIdCompares(lit) == 0,
         format("litFragSrc compares vMatId directly %d time(s) — call surfaceSlotOf(vMatId)", matIdCompares(lit)));
+    // Structural: the three slot sites (two array sizes, the helper) splice it.
+    assert(count(lit, "%SLOTS%") == 3,
+        format("litFragSrc carries %%SLOTS%% %d time(s): mat_base, mat_params and surfaceSlotOf are 3",
+               count(lit, "%SLOTS%")));
     assert(tokenCount(lit, "surfaceSlotOf") >= 2,
         format("litFragSrc names surfaceSlotOf %d time(s): the helper or its call is gone",
                tokenCount(lit, "surfaceSlotOf")));

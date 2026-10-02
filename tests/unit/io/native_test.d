@@ -504,7 +504,7 @@ unittest {
     foreach (ref layer; j["layers"].array) {
         auto sj = &layer["mesh"]["surfaces"].array[0];
         sj.object.remove("smoothingAngle");
-        (*sj)["smoothing"] = JSONValue(1);   // a number is not a JSON boolean
+        (*sj)["smoothing"] = JSONValue(0);   // a number is not a JSON boolean (0: the default is true)
     }
     write(p, j.toString());
     Mesh old;

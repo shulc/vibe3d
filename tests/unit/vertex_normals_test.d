@@ -810,16 +810,19 @@ unittest { // a slot past the surface table reads Surface.init (on @ 40), not sl
         "slot 1 past a one-entry table: the 30° hinge stayed hard — it read slot 0 (OFF), not Surface.init");
 }
 
-unittest { // the EFFECTIVE slot orders the pair: faceMaterial 70 reads slot 0
+unittest { // the EFFECTIVE slot orders the pair: a tag past kSurfaceSlots reads slot 0
     if (!cellOn("slot-70")) return;
-    auto m = hingeSlots(70, 1, [surf(40, false), surf(40)]);
+    // Written against the constant (a tag 6 past the slot count, 70 today), so
+    // a literal cap that disagrees with kSurfaceSlots is seen.
+    immutable uint tag = kSurfaceSlots + 6;
+    auto m = hingeSlots(tag, 1, [surf(40, false), surf(40)]);
     const p = policyOf(m);
-    assert(p.faceSlot[0] == 0, format("slot rule: faceMaterial 70 maps to slot %d", p.faceSlot[0]));
-    assert(70 >= kSurfaceSlots, "slot premise: 70 is a valid slot");
+    assert(p.faceSlot[0] == 0, format("slot rule: faceMaterial %d (kSurfaceSlots + 6) maps to slot %d",
+                                      tag, p.faceSlot[0]));
     FaceAdjacency adj;
     auto c = corners(m, adj);
     assert(ulpNear(cornerOf(m, c, 1, 0), faceN(m, 1)),
-        "faceMaterial 70: the pair smoothed — the effective slot 0 (OFF) did not decide");
+        "faceMaterial kSurfaceSlots + 6: the pair smoothed — the effective slot 0 (OFF) did not decide");
 }
 
 /// The 3×3 quad grid (4×4 vertices) with slots 0/1/2 placed so every slot
