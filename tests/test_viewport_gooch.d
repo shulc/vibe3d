@@ -12,7 +12,9 @@
 // same eye normals rebuilt under a 90° camera roll read the same — and a light
 // fixed in the world (the base view's Lg) would not; (c) a hovered quad keeps
 // the tone with the hover colour as Kd (the override mix replaces Kd, not the
-// tone). `VIBE3D_CELL=<id>` runs one cell.
+// tone); (d) a SameAsActive backdrop of a white material (Kd = 1) toward Lg
+// reads 255·kBackdropDim·min(1.04, 1) — the clamp runs BEFORE `u_dim`, so it
+// is visible on a dimmed backdrop. `VIBE3D_CELL=<id>` runs one cell.
 
 import http_client : getJson, postJson, frameFence, quiesce;
 import http_command_helpers : commandBody;
@@ -322,4 +324,74 @@ unittest {
         assert(abs(r[0][c] - hoverWarm[c]) <= 1, format("(c) the hovered quad reads %s; the hover "
             ~ "colour as Kd predicts %s (the material's warm tone is %s)", r[0], hoverWarm, plainWarm));
     }
+}
+
+// ---------------------------------------------------------------------------
+// (d) the clamp runs BEFORE the backdrop dim. A background layer of a white
+// material (base 1, diffuse 1: Kd = 1) holds a toward-Lg quad, the primary a
+// small plain quad elsewhere; the backdrop style is SameAsActive (dim 0.45,
+// display_state.kBackdropDim) under Gooch. kwarm = (1.04, 1.04, 0.6), so the
+// quad reads 255·0.45·min(kwarm, 1); with no `min` (or a min after the dim)
+// R and G read 255·0.45·1.04. Floor: the two predictions ≥ 4 levels apart.
+// ---------------------------------------------------------------------------
+unittest {
+    if (!cellOn("d")) return;
+    import std.file : write, remove, exists, tempDir;
+    import std.path : buildPath;
+    import std.process : thisProcessID;
+    enum double az = 0.35, el = 0.25, dist = 8.0, kDim = 0.45;
+    setCamera(az, el, dist);
+    auto vp = viewportFromCameraMatrices();
+    double[3] pred, noMin;
+    foreach (c; 0 .. 3) {
+        immutable double warm = kWarm[c] + kWarmKd * 1.0;
+        pred[c]  = 255.0 * kDim * (warm > 1 ? 1 : warm);
+        noMin[c] = 255.0 * kDim * warm;
+    }
+    assert(maxGap(pred, noMin) >= 4,
+        format("(d) floor: clamped %s vs unclamped %s must be >= 4 levels apart", pred, noMin));
+    D3[] v0, v1; uint[][] f0, f1;
+    immutable D3 cs = add3(kC, toWorld(vp, [-1.2, 0.0, 0.0]));
+    quadAt(cs, nrm(toWorld(vp, kNEye[0])), 0.6, v0, f0);
+    quadAt(add3(kC, toWorld(vp, [1.6, -1.0, 0.0])), nrm(toWorld(vp, [0.0, 0.0, 1.0])), 0.3, v1, f1);
+    string mesh(D3[] v, uint[][] f, string extra) {
+        string vs, fs;
+        foreach (i, x; v) vs ~= format("%s[%.9g,%.9g,%.9g]", i ? "," : "", x[0], x[1], x[2]);
+        foreach (i, q; f) fs ~= format("%s[%d,%d,%d,%d]", i ? "," : "", q[0], q[1], q[2], q[3]);
+        return `{"vertices":[` ~ vs ~ `],"faces":[` ~ fs ~ `]` ~ extra ~ `}`;
+    }
+    immutable path = buildPath(tempDir(), format("vibe3d-gooch-dim-%d.v3d", thisProcessID()));
+    write(path, `{"formatVersion":8,"primaryLayer":1,"focusedItem":1,"layers":[`
+        ~ `{"type":"mesh","selected":false,"channels":{"name":"Back","visible":true},"mesh":`
+        ~ mesh(v0, f0, `,"surfaces":[{"name":"W","baseColor":[1,1,1],"diffuse":1,`
+            ~ `"specular":0,"glossiness":0.4,"opacity":1}],"faceMaterial":[0]`) ~ `},`
+        ~ `{"type":"mesh","selected":true,"channels":{"name":"Prim","visible":true},"mesh":`
+        ~ mesh(v1, f1, "") ~ `}]}`);
+    scope(exit) if (exists(path)) remove(path);
+    auto rr = postJson("/api/command", commandBody("scene.reset"));
+    assert(rr["status"].str == "ok", "scene.reset failed: " ~ rr.toString);
+    runCmd("file.load", format(`{"path":"%s"}`, path));
+    scope(exit) postJson("/api/command", commandBody("viewport.displayStyle", `{"value":"shaded"}`));
+    cmd("viewport.wireOverlay none");
+    cmd("select.typeFrom polygon");
+    cmd(commandBody("viewport.backdropStyle", `{"value":"same"}`));
+    cmd(commandBody("viewport.displayStyle", `{"value":"gooch"}`));
+    restoreCamera(vp, az, el, dist, 0);
+    auto L = getJson("/api/layers");
+    assert(L["layers"].array.length == 2 && L["active"].integer == 1,
+        "(d) rig: expected two layers, layer 1 the primary: " ~ L.toString);
+    auto bp = getJson("/api/viewport/display")["cells"].array[0]["plan"]["backdrop"];
+    immutable double dim = bp["dim"].type == JSONType.float_ ? bp["dim"].floating
+                                                             : cast(double) bp["dim"].integer;
+    assert(bp["shading"].str == "Gooch" && bp["drawFaces"].type == JSONType.true_
+           && abs(dim - kDim) < 1e-6,
+        "(d) premise: the SameAsActive backdrop must be the Gooch arm at dim 0.45: " ~ bp.toString);
+    const r = probeRGB([cellPx(vp, cs)]);
+    writefln("[gooch d] backdrop toward Lg: read (%d,%d,%d), predicted (%.2f,%.2f,%.2f); "
+             ~ "unclamped (%.2f,%.2f,%.2f)", r[0][0], r[0][1], r[0][2], pred[0], pred[1], pred[2],
+             noMin[0], noMin[1], noMin[2]);
+    foreach (c; 0 .. 3)
+        assert(abs(r[0][c] - pred[c]) <= 1, format("(d) the dimmed white backdrop quad reads %s, "
+            ~ "predicted 255*0.45*min(kwarm,1) = %s (the clamp skipped or after the dim reads %s)",
+            r[0], pred, noMin));
 }
