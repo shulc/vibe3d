@@ -11,7 +11,7 @@
 // `--perf` ONLY (`g_gpuTimerPerfMode`, never `--test`): a FULL ring instead
 // waits on the oldest slot's ended queries (blocking `GL_QUERY_RESULT`) so no
 // frame is dropped; each wait is counted in `throttleWaits`/`throttleNs`, the
-// time the CPU loop spent there (task 9140 ruling on the SP PLAN-FINDING).
+// time the CPU loop spent there (owner-side ruling on the SP benchmark).
 // Counters are cumulative for the process; a reader takes deltas.
 // Query names live for the process: the cells are pre-allocated and never
 // freed, and no GL call may run from a destructor (no context there).

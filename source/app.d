@@ -1016,7 +1016,7 @@ void main(string[] args) {
             command.g_testMode = true;  // gate testMode-only commands (re-eval D5)
         } else if (args[i] == "--perf") {
             perfMode = true;
-            // A full GPU timer ring waits instead of dropping (task 9140).
+            // A full GPU timer ring waits instead of dropping (gpu_pass_timer).
             import gpu_pass_timer : g_gpuTimerPerfMode;
             g_gpuTimerPerfMode = true;
         } else if (args[i] == "--perf-hud") {
