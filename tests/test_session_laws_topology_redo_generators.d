@@ -44,9 +44,9 @@ unittest { // the floor: the fixture still holds the whole family
 // that meets Mirror (model §6.4 C2m, `commandClose: none`) hands every divergent field
 // from its own checkpoint on to the activation/command-close wave (plan §12, as C2s:
 // «mirror_cmdclose_ui с s04_UC»; generator output 2026-10-02: 19 fields, all of them;
-// 30 since S2b 8930: the panel write s02_UC is an attribute-only row, whose redo refuses
-// once our command dropped the tool — the R tail stops), and Mirror's law 4 on the UI
-// door is not captured (model §6.3) — one field.
+// S2b 8930 keeps 19: the redo of the attribute-only row s02_UC is a no-op success once
+// our command dropped the tool, so the R tail stays parity), and Mirror's law 4 on the
+// UI door is not captured (model §6.3) — one field.
 unittest {
     const fx = parseJSON(kFixture);
     size_t c2m;
@@ -68,8 +68,8 @@ unittest {
             }
         }
     }
-    assert(c2m == 30, "fixture family generators holds " ~ c2m.to!string
-        ~ " divergent fields from the Mirror UI command on, frozen at 30");
+    assert(c2m == 19, "fixture family generators holds " ~ c2m.to!string
+        ~ " divergent fields from the Mirror UI command on, frozen at 19");
     assert(notCaptured == ["mirror_attrs_ui/s04_R.attrs"], "fixture: the not-captured fields "
         ~ notCaptured.to!string ~ " are not model §6.3's one");
 }

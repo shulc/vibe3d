@@ -718,9 +718,11 @@ final class EditSession {
 // stores is keyed to the tool it BOUND at the arm (`noteArm`); what the tool
 // reports goes through that link, never through a cast.
 // ---------------------------------------------------------------------------
-/// The dormant postmode records an attribute adjustment without a mesh image.
-/// The activation row guarantees the target tool exists when this row is
-/// traversed; command history owns the completed before/after image.
+/// The dormant postmode records an attribute adjustment without a mesh image;
+/// command history owns the completed before/after image. Both directions are
+/// a no-op SUCCESS when the tool is gone (a later command dropped it, e.g. a
+/// select.invert under Mirror): a refused redo would strand every row above
+/// it (topology-redo S2b fix, `mirror_cmdclose_ui` R-tail; revertImpl's rule).
 private class TopologyAdjustmentEdit : Command, GesturePayload {
     private Tool delegate() currentTool_;
     private AttrImage before_, after_;
@@ -738,9 +740,7 @@ private class TopologyAdjustmentEdit : Command, GesturePayload {
     override CmdFlags cmdFlags() const { return CmdFlags.UiState; }
     override bool hasGesturePayload() const { return !before_.opEquals(after_); }
     protected override bool applyImpl() {
-        auto t = currentTool_();
-        if (t is null) return false;
-        t.applyAttrImage(after_);
+        if (auto t = currentTool_()) t.applyAttrImage(after_);
         return true;
     }
     protected override void revertImpl() {
