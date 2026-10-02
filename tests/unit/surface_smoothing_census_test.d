@@ -133,10 +133,13 @@ unittest { // (c) ONE policy builder, referenced only by the three producers' ho
     immutable gpu = code["mesh_gpu.d"], osd = code["subpatch_osd.d"];
     immutable gIn = identCount(bodyAt(gpu, "private void rebuildFaceAdjacency("), "buildSmoothPolicy");
     immutable oIn = identCount(bodyAt(osd, "void installGl("), "buildSmoothPolicy");
+    // The fan-out's second home: its material half, re-run on a Material commit
+    // over an unchanged topology (`OsdAccel.refreshSmoothPolicy`).
+    immutable oRe = identCount(bodyAt(osd, "bool refreshSmoothPolicy("), "buildSmoothPolicy");
     assert(gIn >= 1 && refs["mesh_gpu.d"] == gIn + 1,
         "census: mesh_gpu.d builds the policy outside rebuildFaceAdjacency");
-    assert(oIn >= 1 && refs["subpatch_osd.d"] == oIn + 1,
-        "census: subpatch_osd.d builds the policy outside installGl");
+    assert(oIn >= 1 && oRe >= 1 && refs["subpatch_osd.d"] == oIn + oRe + 1,
+        "census: subpatch_osd.d builds the policy outside installGl / refreshSmoothPolicy");
 }
 
 unittest { // (d) the lower-slot pair rule in BOTH producers, keyed on identifiers
