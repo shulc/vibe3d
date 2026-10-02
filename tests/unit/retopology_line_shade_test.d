@@ -119,10 +119,21 @@ unittest { // 0. the rig's values are the captured ones
         assert(abs(specPowerForRoughness(cast(float) sp[0]) - sp[1]) < 1e-3,
             format("0: exponent at rough %s is %s, captured %s", sp[0],
                    specPowerForRoughness(cast(float) sp[0]), sp[1]));
-    // Between samples: log-linear, so the 0.65 sample is within 1 of the
-    // midpoint geometric mean of its neighbours (61.30 captured, 61.55 interp).
-    assert(abs(specPowerForRoughness(0.65f) - 61.296902) < 0.5,
-        format("0: exponent between samples drifted: %s", specPowerForRoughness(0.65f)));
+    // Between samples (the closed form is open, capture C4): OUR choice is
+    // log-linear — at 0.625 the geometric mean of the 0.6 and 0.65 samples,
+    // 68.40, where linear interpolation would give 68.81.
+    {
+        immutable double geo = sqrt(76.322327 * 61.296902), lin = (76.322327 + 61.296902) / 2;
+        assert(abs(geo - lin) >= 0.3, "0: the interpolation cell cannot tell log from linear");
+        assert(abs(specPowerForRoughness(0.625f) - geo) < 0.05,
+            format("0: exponent between samples is %s, log-linear %s (linear %s)",
+                   specPowerForRoughness(0.625f), geo, lin));
+    }
+    // Outside [0, 1] and NaN: clamped to the ends (a glossiness outside [0, 1]
+    // or a NaN from a file must not index past the table).
+    assert(specPowerForRoughness(1.5f) == 16.0f && specPowerForRoughness(-0.5f) == 128.0f,
+        "0: roughness outside [0, 1] must clamp to the table's ends");
+    assert(specPowerForRoughness(float.nan) == 128.0f, "0: a NaN roughness must read the clamp, 128");
 }
 
 unittest { // 1. identity item, identity camera: the light at eye +Z
