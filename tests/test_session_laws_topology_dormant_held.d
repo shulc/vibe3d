@@ -92,6 +92,8 @@ private void ladder(const JSONValue cell, out JSONValue[] steps, out JSONValue h
         steps ~= parseJSON(format(`{"op":"key","key":"%s","label":"x_%s"}`, k, k));
 }
 
+private size_t gHeldRan;   // held cells that ran to their verdict (the last unittest's floor)
+
 private void heldCell(string name, string lender, string firstDelta) {
     if (skipFor(name)) return;
     const cell = cellOf(lender);
@@ -120,6 +122,7 @@ private void heldCell(string name, string lender, string firstDelta) {
     holdHaul(haul, rig, name);
     const held = meshImage();
     releaseHeld();
+    ++gHeldRan;
     assert(held == armImage, "law 5: " ~ name ~ ": the dormant haul built a preview mid-haul "
         ~ "(the mesh moved from the arm's image while the button was held)");
     auto r = postJson("/api/command", "tool.set " ~ rig.tool ~ " off");
@@ -175,3 +178,9 @@ unittest { heldCell(kCells[8][0], kCells[8][1], kCells[8][2]); }
 unittest { heldCell(kCells[9][0], kCells[9][1], kCells[9][2]); }
 unittest { heldCell(kCells[10][0], kCells[10][1], kCells[10][2]); }
 unittest { heldCell(kCells[11][0], kCells[11][1], kCells[11][2]); }
+
+unittest { // every row of kCells has its unittest above (a dropped one would leave its gate unread)
+    import std.process : environment;
+    if (environment.get("VIBE3D_CELL", "").length) return;
+    assert(gHeldRan == kCells.length, format("held cells ran: %d of %d rows", gHeldRan, kCells.length));
+}
