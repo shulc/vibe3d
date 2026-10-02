@@ -2991,3 +2991,26 @@ unittest { // U-INIT2 (CAP r5 s09/s10): a dormant arm activates; its press does 
         ~ "(the instance is active; a press keyed on !operationOpen_ resets it)", p));
     assert(activations == 1, format("U-INIT2: %s activations seen, measured 1", activations));
 }
+
+unittest { // U-INIT4: every bind is a new instance — a pen press (outside the model: its switch
+           // ends no model post mode) leaves no active datum to the next tool's first press
+    auto t = new InitPressTool;
+    auto r = initRig(t);
+    auto pen = new FoldTool(true);
+    pen.m = &r.m; pen.h = r.h; pen.view = new View(0, 0, 1, 1);
+    r.active = pen;
+    r.s.noteArm("t.fold", 1);
+    pen.press();
+    r.m.vertices[3].z += 0.25f;
+    pen.release();
+    assert(r.h.undoEntries().length == 1, "U-INIT4 rig: the pen press recorded no row");
+    r.s.closeOperation(CloseReason.switch_);
+    r.active = t;
+    r.s.noteArm("t.init", 2, false);
+    r.s.finishClose();
+    t.v = 0.4f;                                   // the stored copy the arm gave the instance
+    const p = initHaul(r.s, t, &r.m, 0.5f);
+    assert(p == 0.0f, format("U-INIT4: the first press after the pen began from %s, expected the "
+        ~ "default 0 (the bind must clear instanceActive_: the pen's press raised it and its "
+        ~ "switch, outside the model, does not end a model post mode)", p));
+}
