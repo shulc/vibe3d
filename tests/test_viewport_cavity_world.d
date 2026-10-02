@@ -10,12 +10,14 @@
 // LOW (the box's top back edge against the background).
 // Cells: (a) the far pit-floor corner darker than the pit-floor centre;
 // (b) open ground away from the box unchanged ±1, the contact darkened (the
-// control); (c) the background pixel beyond a silhouette unchanged ±0, a
+// control), and (o) the same under an orthographic Top; (spin) a
+// translation-invariant column varies per pixel; (grid) a grid line in front
+// of a face is background, not an occluder; (c) the background pixel beyond a silhouette unchanged ±0, a
 // grazing surface pixel inside it NOT darkened, a camera-facing one a ridge
-// (≥ +4) — the signature of the background push; (blur) occlusion on the slab grows
+// (≥ +4, ≤ +20) — the signature of the background push; (blur) occlusion on the slab grows
 // toward the box right up to the box's silhouette (no bleed of the bright
 // box top across the depth step); (d) determinism over re-renders; (e)
-// samples 1 and 64 render, 65 is refused with no history entry; (f) the pass
+// samples 1 and 64 render, 65 is refused; (f) the pass
 // record (5 bindings) and the debug postcondition; (g) world gains 0 = off,
 // Screen after World reads no world term; (h) distance and attenuation reach
 // the kernel, and a sub-pixel distance (every tap on the centre) = off.
@@ -218,32 +220,151 @@ unittest {
 // ===========================================================================
 // (b) open ground far from the box is unchanged ±1; the contact at the box's
 // foot darkens (the control: the kernel is live on the same surface).
+// (o) the same under an orthographic Top: there the disk radius is
+// `projScale * distance` (u_homZW = (0, 1)), not divided by the depth.
 // ===========================================================================
-unittest {
-    if (!cellOn("b")) return;
-    rig();
-    auto vp = topCamera();
+private void groundAndContact(string tag, ref Viewport vp, double contactX) {
     P[] ground = [toPx(0.9, kSlabTop, 0.9, vp), toPx(-0.9, kSlabTop, 0.9, vp), toPx(0.9, kSlabTop, -0.9, vp)];
-    immutable P contact = toPx(0.55, kSlabTop, 0.55, vp);
+    // The contact: the slab 0.02 off the middle of a box wall the eye sees
+    // (a corner sees half the occluder; measured off 31 → world 25 at mid-wall,
+    // 31 → 30 at the diagonal corner (0.55, 0.55) under the default material).
+    immutable P contact = toPx(contactX, kSlabTop, 0, vp);
     auto pts = ground ~ contact;
     auto g = gbufAt(pts);
     foreach (p; pts)
         assert(g[p].id == kSlabId && (g[p].flags & 1),
-            format("(b) premise: %s lies on the flagged slab, got %s", p, g[p]));
+            format("(%s) premise: %s lies on the flagged slab, got %s", tag, p, g[p]));
+    cavity("world");
     auto w = levelAt(pts);
     cavity("off");
     auto o = levelAt(pts);
     size_t checked;
     foreach (p; ground) {
         assert(abs(w[p] - o[p]) <= 1,
-            format("(b) open ground %s must read cavity-off ±1: world %d off %d", p, w[p], o[p]));
+            format("(%s) open ground %s must read cavity-off ±1: world %d off %d", tag, p, w[p], o[p]));
         ++checked;
     }
-    assert(checked == 3, format("(b) population: 3 open-ground pixels, checked %d", checked));
-    writefln("  (b) contact %s off %d world %d", contact, o[contact], w[contact]);
-    assert(w[contact] <= o[contact] - 2,
-        format("(b) control: the contact pixel %s must darken by ≥ 2 (world %d off %d)",
-               contact, w[contact], o[contact]));
+    assert(checked == 3, format("(%s) population: 3 open-ground pixels, checked %d", tag, checked));
+    writefln("  (%s) contact %s off %d world %d", tag, contact, o[contact], w[contact]);
+    assert(w[contact] <= o[contact] - 3,
+        format("(%s) control: the contact pixel %s must darken by ≥ 3 (world %d off %d)",
+               tag, contact, w[contact], o[contact]));
+}
+
+private Viewport orthoTop() {
+    topCamera();
+    cmdOk("viewport.view Top");
+    settle();
+    auto vp = viewportFromCameraMatrices();
+    assert(vp.proj[15] == 1.0f && vp.proj[11] == 0.0f,
+        format("premise: viewport.view Top is orthographic (proj[11] %s, proj[15] %s)", vp.proj[11], vp.proj[15]));
+    return vp;
+}
+
+unittest {
+    if (!cellOn("b")) return;
+    rig();
+    auto vp = topCamera();
+    groundAndContact("b", vp, vp.eye.x > 0 ? 0.52 : -0.52);
+}
+
+unittest {
+    if (!cellOn("o")) return;
+    rig();
+    auto vp = orthoTop();
+    groundAndContact("o", vp, 0.52);
+}
+
+// ===========================================================================
+// (spin) the per-pixel spin. Under the ortho Top the slab column at x = 0.52
+// along the +x wall (z within ±0.25, every tap ≥ 0.05 short of a box corner)
+// is translation-invariant: every pixel has the same depth, normal and
+// distance to the wall, so with no spin each one runs the same taps and the
+// blurred column is one flat level. The spin rotates the spiral per pixel, so
+// the column must vary.
+// ===========================================================================
+unittest {
+    if (!cellOn("spin")) return;
+    rig();
+    // One tap per pixel: at 16 the blurred spin noise is under one 8-bit level.
+    cmd("viewport.cavityParams", `{"samples":1}`);
+    auto vp = orthoTop();
+    immutable P a = toPx(0.52, kSlabTop, -0.25, vp), b = toPx(0.52, kSlabTop, 0.25, vp);
+    assert(a[0] == b[0], format("(spin) premise: Top maps world z to a screen column (%s, %s)", a, b));
+    P[] col;
+    foreach (y; (a[1] < b[1] ? a[1] : b[1]) .. (a[1] < b[1] ? b[1] : a[1]) + 1) col ~= [a[0], y];
+    assert(col.length >= 20, format("(spin) population: the column spans %d pixels, expected ≥ 20", col.length));
+    auto g = gbufAt(col);
+    foreach (p; col)
+        assert(g[p].id == kSlabId && (g[p].flags & 1), format("(spin) premise: %s is flagged slab: %s", p, g[p]));
+    cavity("world");
+    auto w = levelAt(col);
+    cavity("off");
+    auto o = levelAt(col);
+    int lo = int.max, hi = int.min;
+    foreach (p; col) {
+        assert(o[p] == o[col[0]], format("(spin) premise: the slab column reads one level with cavity off (%s %d vs %d)",
+                                         p, o[p], o[col[0]]));
+        if (w[p] < lo) lo = w[p];
+        if (w[p] > hi) hi = w[p];
+    }
+    writefln("  (spin) column x %d, %d px: off %d, world %d .. %d", a[0], col.length, o[col[0]], lo, hi);
+    assert(hi < o[col[0]], format("(spin) premise: the whole column is occluded (world max %d, off %d)", hi, o[col[0]]));
+    assert(hi - lo >= 2,
+        format("(spin) the per-pixel spin must vary a translation-invariant column; it reads flat at %d", lo));
+}
+
+// ===========================================================================
+// (grid) a G-buffer id 0 tap that is NOT the far plane: a grid line drawn in
+// front of a face (the grid draws before the surface passes, writes depth,
+// and leaves the G-buffer at its clear, id 0). A 1×1×1 box straddles the grid
+// plane; below the seam its front face is crossed by grid lines lying in
+// front of it. Read as a surface, such a tap sits IN FRONT of the face along
+// its normal and scores a cavity; as background it is the push. The face
+// pixels next to a grid line must not be darker than cavity off.
+// ===========================================================================
+unittest {
+    if (!cellOn("grid")) return;
+    cmdOk(commandBody("scene.reset", `{"empty":true}`));
+    cmdOk("prim.cube segmentsX:1 segmentsY:1 segmentsZ:1 radius:0");
+    cmdOk("history.clear");
+    cmd("viewport.layout", `"Single"`);
+    cmd("viewport.displayStyle", `{"style":"shaded"}`);
+    cmd("viewport.smooth", `{"value":"off"}`);
+    cmd("viewport.wireOverlay", `{"value":"none"}`);
+    cmd("viewport.cavityParams",
+        `{"worldRidge":1,"worldValley":1,"distance":0.2,"attenuation":1,"samples":16}`);
+    cavity("world");
+    auto vp = camera(0.35, 0);
+    // The column at x = 0.1 down the front face (z = 0.5), from just below
+    // the seam with the grid plane to 3 px above the bottom edge.
+    immutable P seam = toPx(0.1, 0.0, 0.5, vp), bottom = toPx(0.1, -0.5, 0.5, vp);
+    P[] col;
+    foreach (y; seam[1] + 2 .. bottom[1] - 2) col ~= [seam[0], y];
+    auto g = gbufAt(col);
+    P[] next;
+    size_t lines;
+    foreach (i, p; col) {
+        if (g[p].id == 0) { ++lines; continue; }
+        assert(g[p].id == 1 && (g[p].flags & 1), format("(grid) premise: %s is the flagged box: %s", p, g[p]));
+        if ((i > 0 && g[col[i - 1]].id == 0) || (i + 1 < col.length && g[col[i + 1]].id == 0)) next ~= p;
+    }
+    // Measured on the local host: 6 grid-line pixels, 10 face pixels next to them.
+    assert(lines >= 4 && next.length >= 6,
+        format("(grid) population: %d grid-line pixels and %d face pixels next to them on the column, expected ≥ 4 / ≥ 6",
+               lines, next.length));
+    auto w = levelAt(next);
+    cavity("off");
+    auto o = levelAt(next);
+    size_t checked;
+    foreach (p; next) {
+        writefln("  (grid) %s off %d world %d", p, o[p], w[p]);
+        assert(w[p] >= o[p],
+            format("(grid) the face pixel %s next to a grid line in front of it must not be darker than off: "
+                   ~ "world %d off %d", p, w[p], o[p]));
+        ++checked;
+    }
+    assert(checked == next.length, "(grid) population: every pixel next to a grid line checked");
 }
 
 // ===========================================================================
@@ -315,6 +436,11 @@ unittest {
         assert(w[inside] >= o[inside] + 4,
             format("(c2) the background push: the slab pixel %s inside its far silhouette must read as a ridge "
                    ~ "(≥ +4): world %d off %d", inside, w[inside], o[inside]));
+        // Ceiling (measured +7 over off 31): the raw pass stores edges / 4 and
+        // the resolve reads them * 4; a store without the / 4 reads ≈ +28.
+        assert(w[inside] <= o[inside] + 20,
+            format("(c2) ridge ceiling: the slab pixel %s must read ≤ +20 over off: world %d off %d",
+                   inside, w[inside], o[inside]));
     }
 }
 
@@ -350,6 +476,10 @@ unittest {
     assert(w[b] - o[b] >= 10 && w[b] - w[r1] >= 50,
         format("(blur) discrimination floor: the box top across the step is a bright ridge (world %d off %d)",
                w[b], o[b]));
+    // Ceiling (measured +12 over off 69): an edges store without its / 4 reads ≈ +48.
+    assert(w[b] - o[b] <= 36,
+        format("(blur) ridge ceiling: the box top across the step must read ≤ +36 over off (world %d off %d)",
+               w[b], o[b]));
     assert(w[r1] <= w[r5] + 1 && w[r2] <= w[r5] + 1,
         format("(blur) no bleed across the depth step: slab r1 %d / r2 %d must be no lighter than r5 %d (±1)",
                w[r1], w[r2], w[r5]));
@@ -382,8 +512,7 @@ unittest {
 }
 
 // ===========================================================================
-// (e) samples 1 and 64 both render; 65 is refused, writes nothing and
-// records no history entry.
+// (e) samples 1 and 64 both render; 65 is refused and writes nothing.
 // ===========================================================================
 unittest {
     if (!cellOn("e")) return;
@@ -399,12 +528,13 @@ unittest {
     assert(one != off && many != off && one != many,
         "(e) samples 1 and 64 must both render a world cavity, and differently");
     assert(ji(cell0()["state"]["cavity"]["samples"]) == 64, "(e) premise: samples 64 accepted");
-    cmdOk("history.clear");
-    immutable size_t undo0 = getJson("/api/history")["undo"].array.length;
+    // No undo-depth assert: viewport.cavityParams is a ViewportCommand
+    // (CmdFlags.UI), which never records history, so the depth cannot move on
+    // an accepted value either. The refusal is witnessed by the status, the
+    // unchanged state and the unchanged frame hash.
     auto r = postJson("/api/command", commandBody("viewport.cavityParams", `{"samples":65}`));
     assert(r["status"].str == "error", "(e) samples 65 must be refused: " ~ r.toString);
     settle();
-    assert(getJson("/api/history")["undo"].array.length == undo0, "(e) the refusal must record no history entry");
     assert(ji(cell0()["state"]["cavity"]["samples"]) == 64, "(e) the refusal must write nothing");
     assert(hash() == many, "(e) the refusal must leave the frame as it was");
 }

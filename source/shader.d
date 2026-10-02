@@ -542,7 +542,13 @@ private enum string cavityCommonGlsl = q{
 // G-buffer id 0 (background, the grid, image planes) is BACKGROUND: its
 // sample is the centre itself pushed back by `distance` (`S = P - distance z`),
 // so on a camera-facing normal it adds an edge in proportion to the normal's
-// view z, never a cavity.
+// view z, never a cavity. An id-0 tap with a near depth (a grid line drawn in
+// front of a face) is background too: read as a surface it would sit in front
+// of the face and score a cavity. DECLARED DIVERGENCE from the studied kernel,
+// whose background tap sits at the centre's own depth (the tap pixel's xy):
+// that form darkens grazing faces at a silhouette (−9 levels measured), and
+// the captured reference has no push at all; this push is a product choice
+// (wave plan, S3b PLAN-FINDING ruling).
 // Pixels whose flags lack bit 0 write 0.
 immutable string worldCavityFragSrc = withShaderPreamble(
     "const int kMaxCavitySamples = " ~ cavitySamplesLiteral ~ ";\n" ~ cavityCommonGlsl ~ q{
