@@ -85,7 +85,7 @@ Rig rigOf(string variant) {
         r.tool = variant == "smooth" ? "mesh.smoothShiftTool" : "mesh.thickenTool";
         r.attrs = ["shift", "scale", "maxAngle", "thicken", "sharp"];
         r.handle = true; r.pressRef = [595, 501];
-        r.attrName = ["shift": "shift"];
+        r.attrName = ["shift": "shift", "scale": "scale"];   // C9-4 rearm_smooth_ui s02_UC
         break;
     case "vertex_merge":
         r.tool = "vert.merge"; r.attrs = ["dist"]; r.pressRef = [430, 561];
@@ -105,7 +105,7 @@ Rig rigOf(string variant) {
         r.tool = "edge.bevel"; r.attrs = ["width", "roundLevel"];
         r.handle = true; r.handlePart = 0; r.pressRef = [596, 614];
         r.deltaMap = [0, -1, 1, 0];   // our width arrow points down on screen
-        r.attrName = ["value": "width"];
+        r.attrName = ["value": "width", "level": "roundLevel"];   // C10-r5's panel write
         r.mesh = autoactRig(`[[0,1,2],[0,2,3]]`, "edges", `[[0,2]]`);
         break;
     case "edge_extrude":
@@ -712,8 +712,8 @@ CellRun playCell(const JSONValue cell) {
 /// attributes: only where the reference's own haul did (its frozen `attrs` class
 /// there does not hold the checkpoint before it). Where the reference writes the same
 /// value the demand is a rig the reference itself would fail (task 9020, law 4).
-/// Floor over the fixture: 11 cells demand, 10 write the same value (one cell's haul
-/// freezes no attributes).
+/// Floor over the fixture: 13 cells demand, 10 write the same value (one cell's haul
+/// freezes no attributes; 9270 added eextrude_dormant_ui and ebevel_dormant_level_ui).
 bool dormantHaulDemand(const JSONValue fixture, string id) {
     size_t nDemand, nRefSame;
     bool demand;
@@ -732,8 +732,8 @@ bool dormantHaulDemand(const JSONValue fixture, string id) {
         if (same) ++nRefSame; else ++nDemand;
         if (cid == id) demand = !same;
     }
-    assert(nDemand == 11 && nRefSame == 10, format("fixture: the dormant hauls' rig census is "
-        ~ "%d demanding / %d writing the reference's same value, frozen at 11 / 10",
+    assert(nDemand == 13 && nRefSame == 10, format("fixture: the dormant hauls' rig census is "
+        ~ "%d demanding / %d writing the reference's same value, frozen at 13 / 10",
         nDemand, nRefSame));
     return demand;
 }

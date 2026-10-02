@@ -522,6 +522,44 @@
     {"cell": "cmdattrs_zr_pextrude_handle", "label": "s11_Z", "fields": {"image": {"ref": ["s00", "s01", "s10"]}, "vcount": {"ref": 8}, "armed": {"ref": false}, "on": {"ref": ""}, "refused": {"ref": false}}}
    ]
   },
+  {"id": "cmdclose_press_ebevel_gdb_ui", "family": "autoact", "variant": "edge_bevel", "measured": false, "rig": {"vertices": [[-0.3499999940395355, 0.25, 0.05000000074505806], [1.4500000476837158, -0.3499999940395355, -0.25], [0.44999998807907104, 1.399999976158142, 0.44999998807907104], [-1.2000000476837158, -0.05000000074505806, 1.149999976158142], [2.450000047683716, -0.800000011920929, 1.649999976158142]], "faces": [[0, 1, 2], [0, 2, 3]], "mode": "edges", "selected": [[0, 2]]},
+   "steps": [
+    {"cell": "cmdclose_press_ebevel_gdb_ui", "label": "s01_armui", "op": "arm", "door": "ui"},
+    {"cell": "cmdclose_press_ebevel_gdb_ui", "label": "s02_drag", "op": "haul", "button": "left", "press": [596, 614], "delta": [12, 0]},
+    {"cell": "cmdclose_press_ebevel_gdb_ui", "label": "s03_UC", "op": "cmd", "door": "ui", "command": "select.invert"},
+    {"cell": "cmdclose_press_ebevel_gdb_ui", "label": "s04_drag", "op": "haul", "button": "left", "press": [596, 614], "delta": [12, 0]},
+    {"cell": "cmdclose_press_ebevel_gdb_ui", "label": "s05_Z", "op": "key", "key": "Z"},
+    {"cell": "cmdclose_press_ebevel_gdb_ui", "label": "s06_Z", "op": "key", "key": "Z"}
+   ],
+   "points": [
+    {"cell": "cmdclose_press_ebevel_gdb_ui", "label": "s00_prearm", "fields": {"image": {"ref": []}, "vcount": {"ref": 5}, "armed": {"ref": false}, "on": {"ref": ""}}},
+    {"cell": "cmdclose_press_ebevel_gdb_ui", "label": "s01_armui", "fields": {"image": {"ref": ["s00"]}, "vcount": {"ref": 5}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "cmdclose_press_ebevel_gdb_ui", "label": "s02_drag", "fields": {"image": {"ref": []}, "vcount": {"ref": 7}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "cmdclose_press_ebevel_gdb_ui", "label": "s03_UC", "fields": {"image": {"ref": []}, "vcount": {"ref": 7}, "armed": {"ref": false}, "on": {"ref": "tool"}, "attrs": {"ref": ["s02"]}}},
+    {"cell": "cmdclose_press_ebevel_gdb_ui", "label": "s04_drag", "fields": {"image": {"ref": []}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}, "origin": {"ref": "begin"}}},
+    {"cell": "cmdclose_press_ebevel_gdb_ui", "label": "s05_Z", "fields": {"image": {"ref": ["s03"]}, "vcount": {"ref": 7}, "armed": {"ref": false}, "on": {"ref": "tool"}, "attrs": {"ref": ["s01"]}, "refused": {"ref": false}}},
+    {"cell": "cmdclose_press_ebevel_gdb_ui", "label": "s06_Z", "fields": {"image": {"ref": ["s02"]}, "vcount": {"ref": 7}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s01", "s05"]}, "refused": {"ref": false}}}
+   ]
+  },
+  {"id": "cmdclose_press_vmerge_gdb", "family": "inset", "variant": "vertex_merge", "measured": false, "rig": {"vertices": [[-0.3499999940395355, 0.25, 0.05000000074505806], [-0.3479999899864197, 0.25, 0.05000000074505806], [-0.34439998865127563, 0.25, 0.05000000074505806]], "faces": [], "mode": "vertices", "selected": [0, 1, 2]},
+   "steps": [
+    {"cell": "cmdclose_press_vmerge_gdb", "label": "s01_arm", "op": "arm", "door": "script"},
+    {"cell": "cmdclose_press_vmerge_gdb", "label": "s02_drag", "op": "haul", "button": "left", "press": [430, 561], "delta": [14, 0]},
+    {"cell": "cmdclose_press_vmerge_gdb", "label": "s03_UC", "op": "cmd", "door": "ui", "command": "select.invert"},
+    {"cell": "cmdclose_press_vmerge_gdb", "label": "s04_drag", "op": "haul", "button": "left", "press": [430, 561], "delta": [14, 0]},
+    {"cell": "cmdclose_press_vmerge_gdb", "label": "s05_Z", "op": "key", "key": "Z"},
+    {"cell": "cmdclose_press_vmerge_gdb", "label": "s06_Z", "op": "key", "key": "Z"}
+   ],
+   "points": [
+    {"cell": "cmdclose_press_vmerge_gdb", "label": "s00_prearm", "fields": {"image": {"ref": []}, "vcount": {"ref": 3}, "armed": {"ref": false}, "on": {"ref": ""}}},
+    {"cell": "cmdclose_press_vmerge_gdb", "label": "s01_arm", "fields": {"image": {"ref": ["s00"]}, "vcount": {"ref": 3}, "armed": {"ref": false}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "cmdclose_press_vmerge_gdb", "label": "s02_drag", "fields": {"image": {"ref": []}, "vcount": {"ref": 2}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}, "origin": {"ref": "begin"}}},
+    {"cell": "cmdclose_press_vmerge_gdb", "label": "s03_UC", "fields": {"image": {"ref": []}, "vcount": {"ref": 2}, "armed": {"ref": false}, "on": {"ref": "tool"}, "attrs": {"ref": ["s02"]}}},
+    {"cell": "cmdclose_press_vmerge_gdb", "label": "s04_drag", "fields": {"image": {"ref": ["s03"]}, "vcount": {"ref": 2}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}, "origin": {"ref": "begin"}}},
+    {"cell": "cmdclose_press_vmerge_gdb", "label": "s05_Z", "fields": {"image": {"ref": ["s03", "s04"]}, "vcount": {"ref": 2}, "armed": {"ref": false}, "on": {"ref": "tool"}, "attrs": {"ref": ["s01"]}, "refused": {"ref": false}}},
+    {"cell": "cmdclose_press_vmerge_gdb", "label": "s06_Z", "fields": {"image": {"ref": ["s02"]}, "vcount": {"ref": 2}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s01", "s05"]}, "refused": {"ref": false}}}
+   ]
+  },
   {"id": "doapply_after_press_sa_mirror", "family": "generators", "variant": "mirror_wide", "measured": true, "rig": {"vertices": [[-1.399999976158142, -0.5, 0.0], [-0.3499999940395355, -1.0499999523162842, 0.0], [0.949999988079071, -0.699999988079071, 0.0], [1.25, 0.550000011920929, 0.0], [-0.44999998807907104, 1.149999976158142, 0.0]], "faces": [[0, 1, 2, 3, 4]], "mode": "polygons", "selected": [0]},
    "steps": [
     {"cell": "doapply_after_press_sa_mirror", "label": "s01_arm", "op": "arm", "door": "script"},
@@ -842,6 +880,37 @@
     {"cell": "ebevel_dormant", "label": "s12_R", "fields": {"image": {"ref": ["s02", "s03", "s04", "s05", "s07", "s08", "s09", "s10", "s11"]}, "vcount": {"ref": 7}, "armed": {"ref": false}, "on": {"ref": "tool"}, "attrs": {"ref": ["s10"]}, "refused": {"ref": false}}}
    ]
   },
+  {"id": "ebevel_dormant_level_ui", "family": "autoact", "variant": "edge_bevel", "measured": false, "rig": {"vertices": [[-0.3499999940395355, 0.25, 0.05000000074505806], [1.4500000476837158, -0.3499999940395355, -0.25], [0.44999998807907104, 1.399999976158142, 0.44999998807907104], [-1.2000000476837158, -0.05000000074505806, 1.149999976158142], [2.450000047683716, -0.800000011920929, 1.649999976158142]], "faces": [[0, 1, 2], [0, 2, 3]], "mode": "edges", "selected": [[0, 2]]},
+   "steps": [
+    {"cell": "ebevel_dormant_level_ui", "label": "s01_armui", "op": "arm", "door": "ui"},
+    {"cell": "ebevel_dormant_level_ui", "label": "s02_UC", "op": "attr", "door": "panel", "name": "level", "value": 2},
+    {"cell": "ebevel_dormant_level_ui", "label": "s03_drag", "op": "haul", "button": "left", "press": [596, 614], "delta": [12, 0]},
+    {"cell": "ebevel_dormant_level_ui", "label": "s04_W", "op": "key", "key": "W"},
+    {"cell": "ebevel_dormant_level_ui", "label": "s05_Z", "op": "key", "key": "Z"},
+    {"cell": "ebevel_dormant_level_ui", "label": "s06_Z", "op": "key", "key": "Z"},
+    {"cell": "ebevel_dormant_level_ui", "label": "s07_R", "op": "key", "key": "R"},
+    {"cell": "ebevel_dormant_level_ui", "label": "s08_R", "op": "key", "key": "R"},
+    {"cell": "ebevel_dormant_level_ui", "label": "s09_armui", "op": "arm", "door": "ui"},
+    {"cell": "ebevel_dormant_level_ui", "label": "s10_drag", "op": "haul", "button": "left", "press": [596, 614], "delta": [12, 0]},
+    {"cell": "ebevel_dormant_level_ui", "label": "s11_Z", "op": "key", "key": "Z"},
+    {"cell": "ebevel_dormant_level_ui", "label": "s12_R", "op": "key", "key": "R"}
+   ],
+   "points": [
+    {"cell": "ebevel_dormant_level_ui", "label": "s00_prearm", "fields": {"image": {"ref": []}, "vcount": {"ref": 5}, "armed": {"ref": false}, "on": {"ref": ""}}},
+    {"cell": "ebevel_dormant_level_ui", "label": "s01_armui", "fields": {"image": {"ref": ["s00"]}, "vcount": {"ref": 5}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "ebevel_dormant_level_ui", "label": "s02_UC", "fields": {"image": {"ref": ["s00", "s01"]}, "vcount": {"ref": 5}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "ebevel_dormant_level_ui", "label": "s03_drag", "fields": {"image": {"ref": []}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "ebevel_dormant_level_ui", "label": "s04_W", "fields": {"image": {"ref": ["s03"]}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "move"}}},
+    {"cell": "ebevel_dormant_level_ui", "label": "s05_Z", "fields": {"image": {"ref": ["s03", "s04"]}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s03"]}, "refused": {"ref": false}}},
+    {"cell": "ebevel_dormant_level_ui", "label": "s06_Z", "fields": {"image": {"ref": ["s00", "s01", "s02"]}, "vcount": {"ref": 5}, "armed": {"ref": false}, "on": {"ref": ""}, "refused": {"ref": false}}},
+    {"cell": "ebevel_dormant_level_ui", "label": "s07_R", "fields": {"image": {"ref": ["s03", "s04", "s05"]}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s03", "s05"]}, "refused": {"ref": false}}},
+    {"cell": "ebevel_dormant_level_ui", "label": "s08_R", "fields": {"image": {"ref": ["s03", "s04", "s05", "s07"]}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "move"}, "refused": {"ref": false}}},
+    {"cell": "ebevel_dormant_level_ui", "label": "s09_armui", "fields": {"image": {"ref": ["s03", "s04", "s05", "s07", "s08"]}, "vcount": {"ref": 13}, "armed": {"ref": false}, "on": {"ref": "tool"}, "attrs": {"ref": ["s02"]}}},
+    {"cell": "ebevel_dormant_level_ui", "label": "s10_drag", "fields": {"image": {"ref": ["s03", "s04", "s05", "s07", "s08", "s09"]}, "vcount": {"ref": 13}, "armed": {"ref": false}, "on": {"ref": "tool"}, "attrs": {"ref": ["s03", "s05", "s07"]}}},
+    {"cell": "ebevel_dormant_level_ui", "label": "s11_Z", "fields": {"image": {"ref": ["s03", "s04", "s05", "s07", "s08", "s09", "s10"]}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "move"}, "refused": {"ref": false}}},
+    {"cell": "ebevel_dormant_level_ui", "label": "s12_R", "fields": {"image": {"ref": ["s03", "s04", "s05", "s07", "s08", "s09", "s10", "s11"]}, "vcount": {"ref": 13}, "armed": {"ref": false}, "on": {"ref": "tool"}, "attrs": {"ref": ["s02", "s09"]}, "refused": {"ref": false}}}
+   ]
+  },
   {"id": "ebevel_dormant_ui", "family": "autoact", "variant": "edge_bevel", "measured": true, "rig": {"vertices": [[-0.3499999940395355, 0.25, 0.05000000074505806], [1.4500000476837158, -0.3499999940395355, -0.25], [0.44999998807907104, 1.399999976158142, 0.44999998807907104], [-1.2000000476837158, -0.05000000074505806, 1.149999976158142], [2.450000047683716, -0.800000011920929, 1.649999976158142]], "faces": [[0, 1, 2], [0, 2, 3]], "mode": "edges", "selected": [[0, 2]]},
    "steps": [
     {"cell": "ebevel_dormant_ui", "label": "s01_armui", "op": "arm", "door": "ui"},
@@ -921,6 +990,37 @@
     {"cell": "ebevel_row_ui", "label": "s07_R", "fields": {"image": {"ref": ["s00", "s01", "s05", "s06"]}, "vcount": {"ref": 5}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s01", "s05"]}, "refused": {"ref": false}}},
     {"cell": "ebevel_row_ui", "label": "s08_R", "fields": {"image": {"ref": ["s00", "s01", "s05", "s06", "s07"]}, "vcount": {"ref": 5}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s01", "s05", "s07"]}, "refused": {"ref": true}}},
     {"cell": "ebevel_row_ui", "label": "s09_R", "fields": {"image": {"ref": ["s00", "s01", "s05", "s06", "s07", "s08"], "unjudged": "modal"}, "vcount": {"ref": 5, "unjudged": "modal"}, "armed": {"ref": true, "unjudged": "modal"}, "on": {"ref": "tool", "unjudged": "modal"}, "attrs": {"ref": ["s01", "s05", "s07", "s08"], "unjudged": "modal"}, "refused": {"ref": false, "unjudged": "modal"}}, "unjudged": "modal"}
+   ]
+  },
+  {"id": "eextrude_dormant_ui", "family": "autoact", "variant": "edge_extrude", "measured": false, "rig": {"vertices": [[-0.3499999940395355, 0.25, 0.05000000074505806], [1.4500000476837158, -0.3499999940395355, -0.25], [0.44999998807907104, 1.399999976158142, 0.44999998807907104], [-1.2000000476837158, -0.05000000074505806, 1.149999976158142], [2.450000047683716, -0.800000011920929, 1.649999976158142]], "faces": [[0, 1, 2], [0, 2, 3]], "mode": "edges", "selected": [[0, 2]]},
+   "steps": [
+    {"cell": "eextrude_dormant_ui", "label": "s01_armui", "op": "arm", "door": "ui"},
+    {"cell": "eextrude_dormant_ui", "label": "s02_drag", "op": "haul", "button": "left", "press": [640, 170], "delta": [40, -30]},
+    {"cell": "eextrude_dormant_ui", "label": "s03_mtap", "op": "mtap", "at": [190, 220]},
+    {"cell": "eextrude_dormant_ui", "label": "s04_W", "op": "key", "key": "W"},
+    {"cell": "eextrude_dormant_ui", "label": "s05_Z", "op": "key", "key": "Z"},
+    {"cell": "eextrude_dormant_ui", "label": "s06_Z", "op": "key", "key": "Z"},
+    {"cell": "eextrude_dormant_ui", "label": "s07_R", "op": "key", "key": "R"},
+    {"cell": "eextrude_dormant_ui", "label": "s08_R", "op": "key", "key": "R"},
+    {"cell": "eextrude_dormant_ui", "label": "s09_armui", "op": "arm", "door": "ui"},
+    {"cell": "eextrude_dormant_ui", "label": "s10_drag", "op": "haul", "button": "left", "press": [640, 170], "delta": [40, -30]},
+    {"cell": "eextrude_dormant_ui", "label": "s11_Z", "op": "key", "key": "Z"},
+    {"cell": "eextrude_dormant_ui", "label": "s12_R", "op": "key", "key": "R"}
+   ],
+   "points": [
+    {"cell": "eextrude_dormant_ui", "label": "s00_prearm", "fields": {"image": {"ref": []}, "vcount": {"ref": 5}, "armed": {"ref": false}, "on": {"ref": ""}}},
+    {"cell": "eextrude_dormant_ui", "label": "s01_armui", "fields": {"image": {"ref": ["s00"]}, "vcount": {"ref": 5}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "eextrude_dormant_ui", "label": "s02_drag", "fields": {"image": {"ref": []}, "vcount": {"ref": 9}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "eextrude_dormant_ui", "label": "s03_mtap", "fields": {"image": {"ref": ["s02"]}, "vcount": {"ref": 9}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s02"]}}},
+    {"cell": "eextrude_dormant_ui", "label": "s04_W", "fields": {"image": {"ref": ["s02", "s03"]}, "vcount": {"ref": 9}, "armed": {"ref": true}, "on": {"ref": "move"}}},
+    {"cell": "eextrude_dormant_ui", "label": "s05_Z", "fields": {"image": {"ref": ["s02", "s03", "s04"]}, "vcount": {"ref": 9}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s02", "s03"]}, "refused": {"ref": false}}},
+    {"cell": "eextrude_dormant_ui", "label": "s06_Z", "fields": {"image": {"ref": ["s00", "s01"]}, "vcount": {"ref": 5}, "armed": {"ref": false}, "on": {"ref": ""}, "refused": {"ref": false}}},
+    {"cell": "eextrude_dormant_ui", "label": "s07_R", "fields": {"image": {"ref": ["s02", "s03", "s04", "s05"]}, "vcount": {"ref": 9}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s02", "s03", "s05"]}, "refused": {"ref": false}}},
+    {"cell": "eextrude_dormant_ui", "label": "s08_R", "fields": {"image": {"ref": ["s02", "s03", "s04", "s05", "s07"]}, "vcount": {"ref": 9}, "armed": {"ref": true}, "on": {"ref": "move"}, "refused": {"ref": false}}},
+    {"cell": "eextrude_dormant_ui", "label": "s09_armui", "fields": {"image": {"ref": ["s02", "s03", "s04", "s05", "s07", "s08"]}, "vcount": {"ref": 9}, "armed": {"ref": false}, "on": {"ref": "tool"}, "attrs": {"ref": ["s01"]}}},
+    {"cell": "eextrude_dormant_ui", "label": "s10_drag", "fields": {"image": {"ref": ["s02", "s03", "s04", "s05", "s07", "s08", "s09"]}, "vcount": {"ref": 9}, "armed": {"ref": false}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "eextrude_dormant_ui", "label": "s11_Z", "fields": {"image": {"ref": ["s02", "s03", "s04", "s05", "s07", "s08", "s09", "s10"]}, "vcount": {"ref": 9}, "armed": {"ref": true}, "on": {"ref": "move"}, "refused": {"ref": false}}},
+    {"cell": "eextrude_dormant_ui", "label": "s12_R", "fields": {"image": {"ref": ["s02", "s03", "s04", "s05", "s07", "s08", "s09", "s10", "s11"]}, "vcount": {"ref": 9}, "armed": {"ref": false}, "on": {"ref": "tool"}, "attrs": {"ref": ["s01", "s09"]}, "refused": {"ref": false}}}
    ]
   },
   {"id": "eextrude_mech", "family": "autoact", "variant": "edge_extrude", "measured": true, "rig": {"vertices": [[-0.3499999940395355, 0.25, 0.05000000074505806], [1.4500000476837158, -0.3499999940395355, -0.25], [0.44999998807907104, 1.399999976158142, 0.44999998807907104], [-1.2000000476837158, -0.05000000074505806, 1.149999976158142], [2.450000047683716, -0.800000011920929, 1.649999976158142]], "faces": [[0, 1, 2], [0, 2, 3]], "mode": "edges", "selected": [[0, 2]]},
@@ -3457,6 +3557,117 @@
     {"cell": "rclick_close_inset_ui", "label": "s16_R", "fields": {"image": {"ref": ["s05", "s06", "s07", "s12", "s13", "s14", "s15"], "unjudged": "modal"}, "vcount": {"ref": 13, "unjudged": "modal"}, "armed": {"ref": true, "unjudged": "modal"}, "on": {"ref": "move", "unjudged": "modal"}, "refused": {"ref": false, "unjudged": "modal"}}, "unjudged": "modal"}
    ]
   },
+  {"id": "rearm_ebevel_ui", "family": "autoact", "variant": "edge_bevel", "measured": false, "rig": {"vertices": [[-0.3499999940395355, 0.25, 0.05000000074505806], [1.4500000476837158, -0.3499999940395355, -0.25], [0.44999998807907104, 1.399999976158142, 0.44999998807907104], [-1.2000000476837158, -0.05000000074505806, 1.149999976158142], [2.450000047683716, -0.800000011920929, 1.649999976158142]], "faces": [[0, 1, 2], [0, 2, 3]], "mode": "edges", "selected": [[0, 2]]},
+   "steps": [
+    {"cell": "rearm_ebevel_ui", "label": "s01_armui", "op": "arm", "door": "ui"},
+    {"cell": "rearm_ebevel_ui", "label": "s02_UC", "op": "attr", "door": "panel", "name": "level", "value": 2},
+    {"cell": "rearm_ebevel_ui", "label": "s03_drag", "op": "haul", "button": "left", "press": [596, 614], "delta": [12, 0]},
+    {"cell": "rearm_ebevel_ui", "label": "s04_W", "op": "key", "key": "W"},
+    {"cell": "rearm_ebevel_ui", "label": "s05_armui", "op": "arm", "door": "ui"},
+    {"cell": "rearm_ebevel_ui", "label": "s06_drag", "op": "haul", "button": "left", "press": [596, 614], "delta": [12, 0]},
+    {"cell": "rearm_ebevel_ui", "label": "s07_Z", "op": "key", "key": "Z"},
+    {"cell": "rearm_ebevel_ui", "label": "s08_Z", "op": "key", "key": "Z"}
+   ],
+   "points": [
+    {"cell": "rearm_ebevel_ui", "label": "s00_prearm", "fields": {"image": {"ref": []}, "vcount": {"ref": 5}, "armed": {"ref": false}, "on": {"ref": ""}}},
+    {"cell": "rearm_ebevel_ui", "label": "s01_armui", "fields": {"image": {"ref": ["s00"]}, "vcount": {"ref": 5}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "rearm_ebevel_ui", "label": "s02_UC", "fields": {"image": {"ref": ["s00", "s01"]}, "vcount": {"ref": 5}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "rearm_ebevel_ui", "label": "s03_drag", "fields": {"image": {"ref": []}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "rearm_ebevel_ui", "label": "s04_W", "fields": {"image": {"ref": ["s03"]}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "move"}}},
+    {"cell": "rearm_ebevel_ui", "label": "s05_armui", "fields": {"image": {"ref": ["s03", "s04"]}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s02"]}}},
+    {"cell": "rearm_ebevel_ui", "label": "s06_drag", "fields": {"image": {"ref": []}, "vcount": {"ref": 29}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "rearm_ebevel_ui", "label": "s07_Z", "fields": {"image": {"ref": ["s03", "s04", "s05"]}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s02", "s05"]}, "refused": {"ref": false}}},
+    {"cell": "rearm_ebevel_ui", "label": "s08_Z", "fields": {"image": {"ref": ["s03", "s04", "s05", "s07"]}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "move"}, "refused": {"ref": false}}}
+   ]
+  },
+  {"id": "rearm_inset_ui", "family": "inset", "variant": "inset", "measured": false, "rig": {"vertices": [[-1.399999976158142, -0.5, 0.0], [-0.3499999940395355, -1.0499999523162842, 0.0], [0.949999988079071, -0.699999988079071, 0.0], [1.25, 0.550000011920929, 0.0], [-0.44999998807907104, 1.149999976158142, 0.0], [2.200000047683716, -0.44999998807907104, 0.3499999940395355], [3.049999952316284, -0.15000000596046448, 0.3499999940395355], [2.549999952316284, 0.75, 0.3499999940395355]], "faces": [[0, 1, 2, 3, 4], [5, 6, 7]], "mode": "polygons", "selected": [0]},
+   "steps": [
+    {"cell": "rearm_inset_ui", "label": "s01_armui", "op": "arm", "door": "ui"},
+    {"cell": "rearm_inset_ui", "label": "s02_drag", "op": "haul", "button": "left", "press": [430, 561], "delta": [14, 0]},
+    {"cell": "rearm_inset_ui", "label": "s03_W", "op": "key", "key": "W"},
+    {"cell": "rearm_inset_ui", "label": "s04_armui", "op": "arm", "door": "ui"},
+    {"cell": "rearm_inset_ui", "label": "s05_drag", "op": "haul", "button": "left", "press": [430, 561], "delta": [14, 0]},
+    {"cell": "rearm_inset_ui", "label": "s06_Z", "op": "key", "key": "Z"},
+    {"cell": "rearm_inset_ui", "label": "s07_Z", "op": "key", "key": "Z"}
+   ],
+   "points": [
+    {"cell": "rearm_inset_ui", "label": "s00_prearm", "fields": {"image": {"ref": []}, "vcount": {"ref": 8}, "armed": {"ref": false}, "on": {"ref": ""}}},
+    {"cell": "rearm_inset_ui", "label": "s01_armui", "fields": {"image": {"ref": ["s00"]}, "vcount": {"ref": 8}, "armed": {"ref": false}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "rearm_inset_ui", "label": "s02_drag", "fields": {"image": {"ref": []}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}, "origin": {"ref": "begin"}}},
+    {"cell": "rearm_inset_ui", "label": "s03_W", "fields": {"image": {"ref": ["s02"]}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "move"}}},
+    {"cell": "rearm_inset_ui", "label": "s04_armui", "fields": {"image": {"ref": ["s02", "s03"]}, "vcount": {"ref": 13}, "armed": {"ref": false}, "on": {"ref": "tool"}, "attrs": {"ref": ["s02"]}}},
+    {"cell": "rearm_inset_ui", "label": "s05_drag", "fields": {"image": {"ref": []}, "vcount": {"ref": 18}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}, "origin": {"ref": "begin"}}},
+    {"cell": "rearm_inset_ui", "label": "s06_Z", "fields": {"image": {"ref": ["s02", "s03", "s04"]}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "move"}, "refused": {"ref": false}}},
+    {"cell": "rearm_inset_ui", "label": "s07_Z", "fields": {"image": {"ref": ["s02", "s03", "s04", "s06"]}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s02", "s04"]}, "refused": {"ref": false}}}
+   ]
+  },
+  {"id": "rearm_smooth_ui", "family": "inset", "variant": "smooth", "measured": false, "rig": {"vertices": [[-0.699999988079071, -0.20000000298023224, 0.0], [0.0, -0.10000000149011612, 0.10000000149011612], [0.800000011920929, 0.0, -0.20000000298023224], [-0.6000000238418579, 0.699999988079071, 0.15000000596046448], [0.10000000149011612, 0.800000011920929, 0.25], [0.8999999761581421, 0.6000000238418579, -0.05000000074505806]], "faces": [[0, 1, 4, 3], [1, 2, 5, 4]], "mode": "polygons", "selected": [0]},
+   "steps": [
+    {"cell": "rearm_smooth_ui", "label": "s01_armui", "op": "arm", "door": "ui"},
+    {"cell": "rearm_smooth_ui", "label": "s02_UC", "op": "attr", "door": "panel", "name": "scale", "value": 0.5},
+    {"cell": "rearm_smooth_ui", "label": "s03_drag", "op": "haul", "button": "left", "press": [595, 501], "delta": [18, 0]},
+    {"cell": "rearm_smooth_ui", "label": "s04_W", "op": "key", "key": "W"},
+    {"cell": "rearm_smooth_ui", "label": "s05_armui", "op": "arm", "door": "ui"},
+    {"cell": "rearm_smooth_ui", "label": "s06_drag", "op": "haul", "button": "left", "press": [595, 501], "delta": [18, 0]},
+    {"cell": "rearm_smooth_ui", "label": "s07_Z", "op": "key", "key": "Z"},
+    {"cell": "rearm_smooth_ui", "label": "s08_Z", "op": "key", "key": "Z"}
+   ],
+   "points": [
+    {"cell": "rearm_smooth_ui", "label": "s00_prearm", "fields": {"image": {"ref": []}, "vcount": {"ref": 6}, "armed": {"ref": false}, "on": {"ref": ""}}},
+    {"cell": "rearm_smooth_ui", "label": "s01_armui", "fields": {"image": {"ref": ["s00"]}, "vcount": {"ref": 6}, "armed": {"ref": false}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "rearm_smooth_ui", "label": "s02_UC", "fields": {"image": {"ref": ["s00", "s01"]}, "vcount": {"ref": 6}, "armed": {"ref": false}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "rearm_smooth_ui", "label": "s03_drag", "fields": {"image": {"ref": []}, "vcount": {"ref": 10}, "armed": {"ref": true}, "on": {"ref": "tool"}, "origin": {"ref": "begin"}}, "attrsUnjudged": true},
+    {"cell": "rearm_smooth_ui", "label": "s04_W", "fields": {"image": {"ref": ["s03"]}, "vcount": {"ref": 10}, "armed": {"ref": true}, "on": {"ref": "move"}}},
+    {"cell": "rearm_smooth_ui", "label": "s05_armui", "fields": {"image": {"ref": ["s03", "s04"]}, "vcount": {"ref": 10}, "armed": {"ref": false}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "rearm_smooth_ui", "label": "s06_drag", "fields": {"image": {"ref": []}, "vcount": {"ref": 14}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}, "origin": {"ref": "begin"}}},
+    {"cell": "rearm_smooth_ui", "label": "s07_Z", "fields": {"image": {"ref": ["s03", "s04", "s05"]}, "vcount": {"ref": 10}, "armed": {"ref": true}, "on": {"ref": "move"}, "refused": {"ref": false}}},
+    {"cell": "rearm_smooth_ui", "label": "s08_Z", "fields": {"image": {"ref": ["s03", "s04", "s05", "s07"]}, "vcount": {"ref": 10}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s01"]}, "refused": {"ref": false}}}
+   ]
+  },
+  {"id": "rearm_vextrude", "family": "autoact", "variant": "vertex_extrude", "measured": false, "rig": {"vertices": [[-0.3499999940395355, 0.25, 0.05000000074505806], [1.4500000476837158, -0.3499999940395355, -0.25], [0.44999998807907104, 1.399999976158142, 0.44999998807907104], [-1.2000000476837158, -0.05000000074505806, 1.149999976158142], [2.450000047683716, -0.800000011920929, 1.649999976158142]], "faces": [[0, 1, 2], [0, 2, 3]], "mode": "vertices", "selected": [0]},
+   "steps": [
+    {"cell": "rearm_vextrude", "label": "s01_arm", "op": "arm", "door": "script"},
+    {"cell": "rearm_vextrude", "label": "s02_drag", "op": "haul", "button": "left", "press": [500, 472], "delta": [12, 0]},
+    {"cell": "rearm_vextrude", "label": "s03_mtap", "op": "mtap", "at": [190, 220]},
+    {"cell": "rearm_vextrude", "label": "s04_W", "op": "key", "key": "W"},
+    {"cell": "rearm_vextrude", "label": "s05_arm", "op": "arm", "door": "script"},
+    {"cell": "rearm_vextrude", "label": "s06_drag", "op": "haul", "button": "left", "press": [500, 472], "delta": [12, 0]},
+    {"cell": "rearm_vextrude", "label": "s07_Z", "op": "key", "key": "Z"},
+    {"cell": "rearm_vextrude", "label": "s08_Z", "op": "key", "key": "Z"}
+   ],
+   "points": [
+    {"cell": "rearm_vextrude", "label": "s00_prearm", "fields": {"image": {"ref": []}, "vcount": {"ref": 5}, "armed": {"ref": false}, "on": {"ref": ""}}},
+    {"cell": "rearm_vextrude", "label": "s01_arm", "fields": {"image": {"ref": ["s00"]}, "vcount": {"ref": 5}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "rearm_vextrude", "label": "s02_drag", "fields": {"image": {"ref": []}, "vcount": {"ref": 8}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "rearm_vextrude", "label": "s03_mtap", "fields": {"image": {"ref": ["s02"]}, "vcount": {"ref": 8}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s02"]}}},
+    {"cell": "rearm_vextrude", "label": "s04_W", "fields": {"image": {"ref": ["s02", "s03"]}, "vcount": {"ref": 8}, "armed": {"ref": true}, "on": {"ref": "move"}}},
+    {"cell": "rearm_vextrude", "label": "s05_arm", "fields": {"image": {"ref": ["s02", "s03", "s04"]}, "vcount": {"ref": 8}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s01"]}}},
+    {"cell": "rearm_vextrude", "label": "s06_drag", "fields": {"image": {"ref": []}, "vcount": {"ref": 11}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "rearm_vextrude", "label": "s07_Z", "fields": {"image": {"ref": ["s02", "s03", "s04", "s05"]}, "vcount": {"ref": 8}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s01", "s05"]}, "refused": {"ref": false}}},
+    {"cell": "rearm_vextrude", "label": "s08_Z", "fields": {"image": {"ref": ["s02", "s03", "s04", "s05", "s07"]}, "vcount": {"ref": 8}, "armed": {"ref": false}, "on": {"ref": "tool"}, "attrs": {"ref": ["s01", "s05", "s07"]}, "refused": {"ref": false}}}
+   ]
+  },
+  {"id": "rearm_vmerge", "family": "inset", "variant": "vertex_merge", "measured": false, "rig": {"vertices": [[-0.3499999940395355, 0.25, 0.05000000074505806], [-0.3479999899864197, 0.25, 0.05000000074505806], [-0.34439998865127563, 0.25, 0.05000000074505806]], "faces": [], "mode": "vertices", "selected": [0, 1, 2]},
+   "steps": [
+    {"cell": "rearm_vmerge", "label": "s01_arm", "op": "arm", "door": "script"},
+    {"cell": "rearm_vmerge", "label": "s02_drag", "op": "haul", "button": "left", "press": [430, 561], "delta": [14, 0]},
+    {"cell": "rearm_vmerge", "label": "s03_W", "op": "key", "key": "W"},
+    {"cell": "rearm_vmerge", "label": "s04_arm", "op": "arm", "door": "script"},
+    {"cell": "rearm_vmerge", "label": "s05_drag", "op": "haul", "button": "left", "press": [430, 561], "delta": [14, 0]},
+    {"cell": "rearm_vmerge", "label": "s06_Z", "op": "key", "key": "Z"},
+    {"cell": "rearm_vmerge", "label": "s07_Z", "op": "key", "key": "Z"}
+   ],
+   "points": [
+    {"cell": "rearm_vmerge", "label": "s00_prearm", "fields": {"image": {"ref": []}, "vcount": {"ref": 3}, "armed": {"ref": false}, "on": {"ref": ""}}},
+    {"cell": "rearm_vmerge", "label": "s01_arm", "fields": {"image": {"ref": ["s00"]}, "vcount": {"ref": 3}, "armed": {"ref": false}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "rearm_vmerge", "label": "s02_drag", "fields": {"image": {"ref": []}, "vcount": {"ref": 2}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}, "origin": {"ref": "begin"}}},
+    {"cell": "rearm_vmerge", "label": "s03_W", "fields": {"image": {"ref": ["s02"]}, "vcount": {"ref": 2}, "armed": {"ref": true}, "on": {"ref": "move"}}},
+    {"cell": "rearm_vmerge", "label": "s04_arm", "fields": {"image": {"ref": ["s02", "s03"]}, "vcount": {"ref": 2}, "armed": {"ref": false}, "on": {"ref": "tool"}, "attrs": {"ref": ["s02"]}}},
+    {"cell": "rearm_vmerge", "label": "s05_drag", "fields": {"image": {"ref": ["s02", "s03", "s04"]}, "vcount": {"ref": 2}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s02", "s04"]}, "origin": {"ref": "begin"}}},
+    {"cell": "rearm_vmerge", "label": "s06_Z", "fields": {"image": {"ref": ["s02", "s03", "s04", "s05"]}, "vcount": {"ref": 2}, "armed": {"ref": false}, "on": {"ref": "tool"}, "attrs": {"ref": ["s01"]}, "refused": {"ref": false}}},
+    {"cell": "rearm_vmerge", "label": "s07_Z", "fields": {"image": {"ref": ["s02", "s03", "s04", "s05", "s06"]}, "vcount": {"ref": 2}, "armed": {"ref": true}, "on": {"ref": "move"}, "refused": {"ref": false}}}
+   ]
+  },
   {"id": "rebegin_redo_act_ebevel", "family": "autoact", "variant": "edge_bevel", "measured": true, "rig": {"vertices": [[-0.3499999940395355, 0.25, 0.05000000074505806], [1.4500000476837158, -0.3499999940395355, -0.25], [0.44999998807907104, 1.399999976158142, 0.44999998807907104], [-1.2000000476837158, -0.05000000074505806, 1.149999976158142], [2.450000047683716, -0.800000011920929, 1.649999976158142]], "faces": [[0, 1, 2], [0, 2, 3]], "mode": "edges", "selected": [[0, 2]]},
    "steps": [
     {"cell": "rebegin_redo_act_ebevel", "label": "s01_arm", "op": "arm", "door": "script"},
@@ -4298,6 +4509,44 @@
     {"cell": "vmerge_dormant_ui", "label": "s09_drag", "fields": {"image": {"ref": ["s02", "s03", "s04", "s06", "s07", "s08"]}, "vcount": {"ref": 2, "ours": 1, "owner": "none: kernel (gap row 486)", "law": "-", "polarity": "stationary"}, "armed": {"ref": false}, "on": {"ref": "tool"}, "attrs": {"ref": ["s02", "s04", "s06", "s08"], "ours": [], "owner": "S6r", "law": "5", "polarity": "untilS6r"}}},
     {"cell": "vmerge_dormant_ui", "label": "s10_Z", "fields": {"image": {"ref": ["s02", "s03", "s04", "s06", "s07", "s08", "s09"]}, "vcount": {"ref": 2, "ours": 1, "owner": "none: kernel (gap row 486)", "law": "-", "polarity": "stationary"}, "armed": {"ref": true}, "on": {"ref": "move"}, "refused": {"ref": false}}},
     {"cell": "vmerge_dormant_ui", "label": "s11_R", "fields": {"image": {"ref": ["s02", "s03", "s04", "s06", "s07", "s08", "s09", "s10"]}, "vcount": {"ref": 2, "ours": 1, "owner": "none: kernel (gap row 486)", "law": "-", "polarity": "stationary"}, "armed": {"ref": false}, "on": {"ref": "tool"}, "attrs": {"ref": ["s01"], "ours": ["s02", "s04", "s06", "s08"], "owner": "S6r", "law": "5", "polarity": "untilS6r"}, "refused": {"ref": false}}}
+   ]
+  },
+  {"id": "wundo_restart_ebevel_gdb_ui", "family": "autoact", "variant": "edge_bevel", "measured": false, "rig": {"vertices": [[-0.3499999940395355, 0.25, 0.05000000074505806], [1.4500000476837158, -0.3499999940395355, -0.25], [0.44999998807907104, 1.399999976158142, 0.44999998807907104], [-1.2000000476837158, -0.05000000074505806, 1.149999976158142], [2.450000047683716, -0.800000011920929, 1.649999976158142]], "faces": [[0, 1, 2], [0, 2, 3]], "mode": "edges", "selected": [[0, 2]]},
+   "steps": [
+    {"cell": "wundo_restart_ebevel_gdb_ui", "label": "s01_armui", "op": "arm", "door": "ui"},
+    {"cell": "wundo_restart_ebevel_gdb_ui", "label": "s02_drag", "op": "haul", "button": "left", "press": [596, 614], "delta": [12, 0]},
+    {"cell": "wundo_restart_ebevel_gdb_ui", "label": "s03_W", "op": "key", "key": "W"},
+    {"cell": "wundo_restart_ebevel_gdb_ui", "label": "s04_Z", "op": "key", "key": "Z"},
+    {"cell": "wundo_restart_ebevel_gdb_ui", "label": "s05_drag", "op": "haul", "button": "left", "press": [596, 614], "delta": [12, 0]},
+    {"cell": "wundo_restart_ebevel_gdb_ui", "label": "s06_Z", "op": "key", "key": "Z"}
+   ],
+   "points": [
+    {"cell": "wundo_restart_ebevel_gdb_ui", "label": "s00_prearm", "fields": {"image": {"ref": []}, "vcount": {"ref": 5}, "armed": {"ref": false}, "on": {"ref": ""}}},
+    {"cell": "wundo_restart_ebevel_gdb_ui", "label": "s01_armui", "fields": {"image": {"ref": ["s00"]}, "vcount": {"ref": 5}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "wundo_restart_ebevel_gdb_ui", "label": "s02_drag", "fields": {"image": {"ref": []}, "vcount": {"ref": 7}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "wundo_restart_ebevel_gdb_ui", "label": "s03_W", "fields": {"image": {"ref": ["s02"]}, "vcount": {"ref": 7}, "armed": {"ref": true}, "on": {"ref": "move"}}},
+    {"cell": "wundo_restart_ebevel_gdb_ui", "label": "s04_Z", "fields": {"image": {"ref": ["s02", "s03"]}, "vcount": {"ref": 7}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s02"]}, "refused": {"ref": false}}},
+    {"cell": "wundo_restart_ebevel_gdb_ui", "label": "s05_drag", "fields": {"image": {"ref": []}, "vcount": {"ref": 11}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "wundo_restart_ebevel_gdb_ui", "label": "s06_Z", "fields": {"image": {"ref": ["s02", "s03", "s04"]}, "vcount": {"ref": 7}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s01"]}, "refused": {"ref": false}}}
+   ]
+  },
+  {"id": "wundo_restart_vmerge_gdb", "family": "inset", "variant": "vertex_merge", "measured": false, "rig": {"vertices": [[-0.3499999940395355, 0.25, 0.05000000074505806], [-0.3479999899864197, 0.25, 0.05000000074505806], [-0.34439998865127563, 0.25, 0.05000000074505806]], "faces": [], "mode": "vertices", "selected": [0, 1, 2]},
+   "steps": [
+    {"cell": "wundo_restart_vmerge_gdb", "label": "s01_arm", "op": "arm", "door": "script"},
+    {"cell": "wundo_restart_vmerge_gdb", "label": "s02_drag", "op": "haul", "button": "left", "press": [430, 561], "delta": [14, 0]},
+    {"cell": "wundo_restart_vmerge_gdb", "label": "s03_W", "op": "key", "key": "W"},
+    {"cell": "wundo_restart_vmerge_gdb", "label": "s04_Z", "op": "key", "key": "Z"},
+    {"cell": "wundo_restart_vmerge_gdb", "label": "s05_drag", "op": "haul", "button": "left", "press": [430, 561], "delta": [14, 0]},
+    {"cell": "wundo_restart_vmerge_gdb", "label": "s06_Z", "op": "key", "key": "Z"}
+   ],
+   "points": [
+    {"cell": "wundo_restart_vmerge_gdb", "label": "s00_prearm", "fields": {"image": {"ref": []}, "vcount": {"ref": 3}, "armed": {"ref": false}, "on": {"ref": ""}}},
+    {"cell": "wundo_restart_vmerge_gdb", "label": "s01_arm", "fields": {"image": {"ref": ["s00"]}, "vcount": {"ref": 3}, "armed": {"ref": false}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "wundo_restart_vmerge_gdb", "label": "s02_drag", "fields": {"image": {"ref": []}, "vcount": {"ref": 2}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}, "origin": {"ref": "begin"}}},
+    {"cell": "wundo_restart_vmerge_gdb", "label": "s03_W", "fields": {"image": {"ref": ["s02"]}, "vcount": {"ref": 2}, "armed": {"ref": true}, "on": {"ref": "move"}}},
+    {"cell": "wundo_restart_vmerge_gdb", "label": "s04_Z", "fields": {"image": {"ref": ["s02", "s03"]}, "vcount": {"ref": 2}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s02"]}, "refused": {"ref": false}}},
+    {"cell": "wundo_restart_vmerge_gdb", "label": "s05_drag", "fields": {"image": {"ref": ["s02", "s03", "s04"]}, "vcount": {"ref": 2}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "wundo_restart_vmerge_gdb", "label": "s06_Z", "fields": {"image": {"ref": ["s02", "s03", "s04", "s05"]}, "vcount": {"ref": 2}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s01"]}, "refused": {"ref": false}}}
    ]
   },
   {"id": "xinst_ctrl_inset_ui", "family": "inset", "variant": "inset", "measured": true, "rig": {"vertices": [[-1.399999976158142, -0.5, 0.0], [-0.3499999940395355, -1.0499999523162842, 0.0], [0.949999988079071, -0.699999988079071, 0.0], [1.25, 0.550000011920929, 0.0], [-0.44999998807907104, 1.149999976158142, 0.0], [2.200000047683716, -0.44999998807907104, 0.3499999940395355], [3.049999952316284, -0.15000000596046448, 0.3499999940395355], [2.549999952316284, 0.75, 0.3499999940395355]], "faces": [[0, 1, 2, 3, 4], [5, 6, 7]], "mode": "polygons", "selected": [0]},
