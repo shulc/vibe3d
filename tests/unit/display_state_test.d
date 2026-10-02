@@ -366,3 +366,28 @@ unittest {
         "an explicitly chosen flat backdrop over a Solid slot keeps its fill — "
         ~ "the suppression is scoped to SameAsActive inheritance");
 }
+
+/// The ACTIVE plan is never dimmed (task 9040). The primary face pass writes
+/// `u_dim` through the plan-uniform seam (`LitShader.applyPlan`), where it
+/// used to leave it at the park; that is pixel-neutral only while this holds,
+/// so a change to it reddens here instead of as a silent look change.
+unittest {
+    import std.format : format;
+    import std.traits : EnumMembers;
+    struct Row { DisplayStyle style; bool retopo; float dim; }
+    Row[] rows;
+    foreach (style; [EnumMembers!DisplayStyle]) {
+        foreach (retopo; [false, true]) {
+            ViewportDisplay d;
+            d.active.style = style;
+            d.retopology   = retopo;
+            rows ~= Row(style, retopo, resolveDrawPlan(d, false).dim);
+        }
+    }
+    // Floor first: measured 2026-10-02, 4 styles x retopology off/on.
+    assert(rows.length == 8, format("expected 8 style x retopology rows, swept %d", rows.length));
+    foreach (r; rows)
+        assert(r.dim == 1.0f,
+            format("the active plan of style %s (retopology %s) has dim %s; "
+                   ~ "only a backdrop plan may dim", r.style, r.retopo, r.dim));
+}

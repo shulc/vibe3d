@@ -897,10 +897,9 @@ class LitShader {
         glUniform1f(locAmbient,  kLightAmbient);
         glUniform1f(locSpecStr,  kLightSpecStrength);
         glUniform1f(locSpecPow,  kLightSpecPower);
-        // Default to neutral brightness. The active-layer / single-layer
-        // pass never touches u_dim ⇒ byte-identical to pre-Stage-5. The
-        // dimmed background pass sets it explicitly with setDim() before
-        // its draws and restores 1.0 afterwards.
+        // Default to neutral brightness. Only a plan-driven face pass writes
+        // the plan's dim (`applyPlan`) and parks 1.0 after its draws
+        // (`restorePlanDefaults`).
         glUniform1f(locDim, 1.0f);
         // Same neutrality contract as u_dim: only a plan-driven face pass sets
         // a gain (`DrawPlan.lightGain`) and restores 1.0 after its draws.
@@ -910,9 +909,9 @@ class LitShader {
         glUniform1f(locFaceAlpha, 1.0f);
         // Default to the MATERIAL (lit) arm, for exactly the reason u_dim
         // defaults to neutral: every caller that does not care about the
-        // display style gets the behaviour that predates it. The Solid and
-        // Weight passes flip this with setShading() before their draws and
-        // restore Material afterwards.
+        // display style gets the behaviour that predates it. The face passes
+        // flip this with `applyPlan` before their draws and restore Material
+        // with `restorePlanDefaults` afterwards.
         glUniform1i(locShading, cast(int)SurfaceShading.Material);
         // Seed the unlit fill to the colour-scheme value. A GLSL uniform
         // defaults to 0, so an unseeded `u_fillColor` would render the Solid
@@ -946,40 +945,61 @@ class LitShader {
                             kWeightRamp.neutral.z);
     }
 
-    /// Override the brightness multiplier for the next draws on this
-    /// program. Used only by the dimmed background-layer pass (layers
-    /// Stage 5); pass 1.0 to restore the neutral default.
-    void setDim(float dim) {
+    /// The plan-uniform seam (model M1): the ONE writer of every per-plan
+    /// uniform of this program, fed by the resolved `DrawPlan` the dirty key
+    /// already stamps. Contract: called AFTER `useProgram` (which re-seeds the
+    /// park) and before the face draw; paired with `restorePlanDefaults` after
+    /// it. A slice that adds a plan uniform adds one line here and one in
+    /// `restorePlanDefaults`, never a line at a face-pass site (task 9040).
+    /// Shading and fill are written together because they are one decision
+    /// (task 0592): a pass cannot set the fill and forget the lighting.
+    void applyPlan(const ref DrawPlan plan) {
+        setDim(plan.dim);
+        setShading(plan.shading);
+        setFillColor(plan.fillColor);
+        setLightGain(plan.lightGain);
+    }
+
+    /// Park every per-plan uniform at its neutral: the values a
+    /// default-constructed `DrawPlan` carries, so "restore" and "the default
+    /// plan" have one source and cannot drift. The program is shared with every
+    /// preview and gizmo draw downstream of a face pass.
+    void restorePlanDefaults() {
+        immutable DrawPlan park = DrawPlan.init;
+        setDim(park.dim);
+        setShading(park.shading);
+        setFillColor(park.fillColor);
+        setLightGain(park.lightGain);
+    }
+
+    /// The subset of `plan` a create-tool preview honours. Today none beyond
+    /// the park: for a preview the plan is a pass gate, not a material source
+    /// (task 5260), so a preview drawn after an unlit scene pass is still lit.
+    void applyPreviewPlan(const ref DrawPlan plan) {
+        restorePlanDefaults();
+    }
+
+    // The setters are module-private: outside this module a face pass cannot
+    // hand-set a plan uniform (the compiler is the fence, task 9040). Each
+    // binds the program because uniforms are program state.
+    private void setDim(float dim) {
         glUseProgram(program);
         glUniform1f(locDim, dim);
     }
 
-    /// Multiplier on the lit term above ambient for the next draws on this
-    /// program (`DrawPlan.lightGain`). Same restore discipline as `setDim`.
-    void setLightGain(float gain) {
+    private void setLightGain(float gain) {
         glUseProgram(program);
         glUniform1f(locLightGain, gain);
     }
 
-    /// How the next draws on this program shade the surface (task 0589's
-    /// `facesLit`, widened by task 1090 to `DrawPlan.shading`).
-    ///
-    /// Same restore discipline as `setDim`: the caller that switches it off
-    /// switches it back on, because uniforms are program state and the next
-    /// draw on this program may be someone else's.
-    void setShading(SurfaceShading s) {
+    /// How the next draws shade the surface (`DrawPlan.shading`).
+    private void setShading(SurfaceShading s) {
         glUseProgram(program);
         glUniform1i(locShading, cast(int)s);
     }
 
-    /// The unshaded fill's base colour (task 0592, `DrawPlan.fillColor`).
-    ///
-    /// Same restore discipline as `setDim`/`setShading`. Paired with
-    /// `setShading` at every call site rather than set only on the unlit path:
-    /// the pair is one decision ("draw the Solid style"), and splitting them is
-    /// how the fill would later be set by a pass that forgot to unset the
-    /// lighting.
-    void setFillColor(in float[3] c) {
+    /// The unshaded fill's base colour (`DrawPlan.fillColor`).
+    private void setFillColor(in float[3] c) {
         glUseProgram(program);
         glUniform3f(locFillColor, c[0], c[1], c[2]);
     }
@@ -993,7 +1013,7 @@ class LitShader {
 // from the `draw()` GL block every one of them repeated (task 0410, dedup
 // 0407 §A.D6). `previewGpu` is `ref` (not `const`) because
 // GpuMesh.drawFaces/drawEdges are not const-qualified.
-void drawLitPreview(const ref LitShader litShader, const ref Shader shader,
+void drawLitPreview(LitShader litShader, const ref Shader shader,
                      const ref Viewport vp, ref GpuMesh previewGpu,
                      const ref DrawPlan plan) {
     immutable float[16] identity = identityMatrix;
@@ -1013,18 +1033,13 @@ void drawLitPreview(const ref LitShader litShader, const ref Shader shader,
         glUniform1f(litShader.locSpecStr,  kLightSpecStrength);
         glUniform1f(litShader.locSpecPow,  kLightSpecPower);
         // Task 0589: this site seeds every uniform it depends on BY HAND rather
-        // than going through `LitShader.useProgram`, so a uniform that the scene
-        // pass may have switched off has to be seeded here too — otherwise a
-        // create-tool preview drawn after an unlit scene pass would inherit the
-        // flat fill. The scene pass does restore it, so this is belt-and-braces;
-        // the alternative is a cross-file invariant nobody can see from here.
-        // (`u_dim` has the same shape and the same restore discipline.)
-        //
-        // Task 1090 widened this from a bool to `SurfaceShading`. The NEUTRAL PARK
-        // that `useProgram` also performs is deliberately NOT repeated here: it is
-        // context state, not program state, so seeding the shading arm to
-        // `Material` is enough — this path never reads `vWeightColor` at all.
-        glUniform1i(litShader.locShading, cast(int)SurfaceShading.Material);
+        // than going through `LitShader.useProgram`, so the plan uniforms a
+        // scene pass may have switched off are seeded here too, through the
+        // plan seam's preview subset (task 9040) — otherwise a create-tool
+        // preview drawn after an unlit scene pass would inherit the flat fill.
+        // The vertex-attribute NEUTRAL PARK of `useProgram` is not repeated: it
+        // is context state, and this path never reads `vWeightColor` (1090).
+        litShader.applyPreviewPlan(plan);
         previewGpu.drawFaces(litShader);
     }
 

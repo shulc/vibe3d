@@ -45,7 +45,7 @@ import http_command_helpers : commandBody;
 import std.stdio     : writeln, writefln;
 import std.net.curl  : HTTP;
 import std.json      : parseJSON, JSONValue, JSONType;
-import std.exception : enforce;
+import std.exception : collectException, enforce;
 import std.conv      : to;
 import std.format    : format;
 import std.math      : abs;
@@ -1746,6 +1746,136 @@ bool testFlowN() {
 // Main
 // --------------------------------------------------------------------------
 
+// --------------------------------------------------------------------------
+// Flow O — a create-tool preview stays LIT under an unlit cell style.
+//
+// The plan is a pass GATE for a preview, never its material source (task
+// 5260): `drawLitPreview` seeds the plan uniforms through
+// `LitShader.applyPreviewPlan`, whose subset today is the park alone (task
+// 9040). So the same preview reads the SAME pixels under Shaded and Solid. A
+// restore that leaves the scene pass's shading behind (the primary under Solid
+// just drew with the unlit arm) paints the Solid preview with the flat fill —
+// the floor below proves that outcome is at least 6 levels from the lit one,
+// so this cell can tell them apart. Relational, not a shading value: it
+// survives any change of the light rig.
+// --------------------------------------------------------------------------
+
+enum int kPreviewFill = 153;  // the Solid fill, Flow L's kFillMeasured
+
+/// A command posted as one command line (the form `tool.set` takes).
+void toolLine(string line) {
+    immutable resp = httpPost("/api/command", line);
+    auto r = parseJSON(resp);
+    enforce("status" !in r || r["status"].str != "error",
+            "command `" ~ line ~ "` failed: " ~ resp);
+}
+
+/// Play the box-preview drag (no release-commit check: the tool stays live).
+void playPreviewDrag(string log) {
+    auto resp = parseJSON(httpPost("/api/play-events", log));
+    enforce(resp["status"].str == "success", "play-events failed: " ~ resp.toString);
+    foreach (_; 0 .. 200) {
+        if (parseJSON(httpGet("/api/play-events/status"))["finished"].type == JSONType.TRUE) {
+            probeFence();
+            return;
+        }
+        Thread.sleep(50.msecs);
+    }
+    throw new Exception("preview drag playback did not finish within 10 seconds");
+}
+
+/// The preview's probe points (cell pixels) and the event log that draws it:
+/// samples on the middle third of the drag diagonal, which lies inside the
+/// projected base quad (a convex quad contains its diagonal) and away from
+/// its edges.
+void previewRig(out string pts, out string log, out int nPts) {
+    auto cam = parseJSON(httpGet("/api/camera"));
+    immutable int x = cast(int)jsonNum(cam, "vpX"), y = cast(int)jsonNum(cam, "vpY");
+    immutable int w = cast(int)jsonNum(cam, "width"), h = cast(int)jsonNum(cam, "height");
+    immutable int x0 = x + 7 * w / 16, y0 = y + 5 * h / 12;
+    immutable int x1 = x + 11 * w / 16, y1 = y + 2 * h / 3;
+    log = format(
+        `{"t":0,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n" ~
+        `{"t":10,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n" ~
+        `{"t":20,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":%d,"yrel":%d,"state":1,"mod":0}` ~ "\n" ~
+        `{"t":30,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
+        x, y, w, h, x0, y0, x1, y1, x1 - x0, y1 - y0, x1, y1);
+    auto g = probe(0, "");
+    immutable double sx = cast(double)g.w / w, sy = cast(double)g.h / h;
+    enum int kN = 7;
+    nPts = kN;
+    foreach (i; 0 .. kN) {
+        immutable double t = 1.0 / 3 + (1.0 / 3) * i / (kN - 1.0);
+        immutable int px = cast(int)(((x0 - x) + t * (x1 - x0)) * sx);
+        immutable int py = cast(int)(((y0 - y) + t * (y1 - y0)) * sy);
+        if (pts.length) pts ~= ";";
+        pts ~= format("%d,%d", px, py);
+    }
+}
+
+/// Preview pixels in `style`: [0] before the drag (tool armed, nothing drawn),
+/// [1] with the live preview.
+Px[][2] previewPixels(string style) {
+    httpPost("/api/command", commandBody("scene.reset", `{"empty":true}`));
+    probeFence();
+    setStyle(style);
+    toolLine("tool.set prim.cube");
+    scope(exit) collectException(toolLine("tool.set prim.cube off"));
+    probeFence();
+    string pts, log; int n;
+    previewRig(pts, log, n);
+    Px[][2] o;
+    o[0] = probe(0, pts).points;
+    playPreviewDrag(log);
+    o[1] = probe(0, pts).points;
+    enforce(o[0].length == n && o[1].length == n, "probe returned the wrong point count");
+    return o;
+}
+
+bool testFlowO() {
+    writeln("  [O] A create-tool preview stays lit under the Solid style...");
+    resetApp();
+    scope(exit) { restoreDisplayDefaults(); resetApp(); }
+
+    auto shaded = previewPixels("shaded");
+    auto solid  = previewPixels("solid");
+    enforce(displayDump()["cells"].array[0]["state"]["active"]["style"].str == "Solid",
+        "precondition: the cell must be in the unlit style while its preview draws");
+
+    // Floor: every sample is covered by the preview in both styles.
+    foreach (k; 0 .. shaded[1].length) {
+        enforce(shaded[1][k].valid && solid[1][k].valid, "a preview probe point failed");
+        enforce(!samePixel(shaded[0][k], shaded[1][k]) && !samePixel(solid[0][k], solid[1][k]),
+            format("sample (%d,%d) is not covered by the box preview — the rig "
+                   ~ "does not put the preview where this flow samples",
+                   shaded[1][k].x, shaded[1][k].y));
+    }
+    // Discrimination floor: the lit preview is far from the flat fill, so a
+    // preview that inherited the unlit arm cannot pass the equality below.
+    int minGap = int.max;
+    foreach (p; shaded[1]) {
+        immutable int gap = abs(p.r - kPreviewFill);
+        if (gap < minGap) minGap = gap;
+    }
+    enforce(minGap >= 6,
+        format("the lit preview sits within %d levels of the unlit fill %d — "
+               ~ "this rig cannot tell a lit preview from a flat one", minGap, kPreviewFill));
+
+    // The law: the preview's pixels do not depend on the cell's surface style.
+    foreach (k; 0 .. shaded[1].length) {
+        immutable a = shaded[1][k], b = solid[1][k];
+        enforce(abs(a.r - b.r) <= 2 && abs(a.g - b.g) <= 2 && abs(a.b - b.b) <= 2,
+            format("the box preview at (%d,%d) reads (%d,%d,%d) under Solid but "
+                   ~ "(%d,%d,%d) under Shaded — the preview took the cell's "
+                   ~ "unlit shading (the plan is its pass gate, not its material; "
+                   ~ "task 5260)", b.x, b.y, b.r, b.g, b.b, a.r, a.g, a.b));
+    }
+    writefln("    O1 PASS: %d preview samples equal under Shaded and Solid "
+             ~ "(lit preview >= %d levels from the fill %d)",
+             shaded[1].length, minGap, kPreviewFill);
+    return true;
+}
+
 int main(string[] args) {
     // Resolve the port assigned to this worker by run_test.d.
     baseUrl = testBaseUrl();
@@ -1783,6 +1913,7 @@ int main(string[] args) {
     run(&testFlowL, "Flow L — Solid: an unshaded fill, uniform across faces");
     run(&testFlowM, "Flow M — Solid is orientation-invariant, Shaded is not");
     run(&testFlowN, "Flow N — Solid runs no backdrop face pass, layers remain");
+    run(&testFlowO, "Flow O — a create-tool preview stays lit under Solid");
 
     // Belt-and-suspenders: the runner shares one app across a worker's whole
     // slice and its between-tests reset does not cover viewport display state

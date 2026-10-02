@@ -115,12 +115,6 @@ BaseDots baseDotsFor(const ref DrawPlan plan, const ref float[16] model,
     return d;
 }
 
-/// The value `LitShader`'s constructor seeds `u_fillColor` to. Restoring to
-/// it (rather than to whichever plan just drew) keeps the program in the state
-/// every non-plan caller — create-tool previews, gizmo draws — was built
-/// expecting; taken from a default-constructed plan so there is one source.
-private immutable float[3] kDefaultFill = DrawPlan.init.fillColor;
-
 /// Head of an item's draw: with `clearDepthFirst` the item starts on a clear
 /// depth buffer (captured: one depth clear per foreground item). The depth
 /// mask is forced on first because a depth clear honours it; no current path
@@ -322,16 +316,10 @@ private:
         beginItem(plan);
         if (plan.drawFaces) {
             lit.useProgram(model, vp);
-            lit.setDim(plan.dim);
             bindLayerSurfaces(g, lyr, plan, lit, weightMapName);
-            lit.setShading(plan.shading);
-            lit.setFillColor(plan.fillColor);
-            lit.setLightGain(plan.lightGain);
+            lit.applyPlan(plan);
             g.drawFaces(lit, facePassFor(plan, model));
-            lit.setShading(SurfaceShading.Material);
-            lit.setFillColor(kDefaultFill);
-            lit.setLightGain(1.0f);
-            lit.setDim(1.0f);
+            lit.restorePlanDefaults();
         }
         drawItemLinesAndDots(g, lyr.meshRef(), model, plan, shader, v, vp);
     }
@@ -817,15 +805,9 @@ public:
                 litShader.useProgram(bgModel, vp);
                 bindLayerSurfaces(*bg, lyr, backdropPlan, litShader,
                                   display.weightMapName);
-                litShader.setDim(backdropPlan.dim);
-                litShader.setLightGain(backdropPlan.lightGain);
-                litShader.setShading(backdropPlan.shading);
-                litShader.setFillColor(backdropPlan.fillColor);
+                litShader.applyPlan(backdropPlan);
                 (*bg).drawFaces(litShader);
-                litShader.setShading(SurfaceShading.Material);
-                litShader.setFillColor(kDefaultFill);
-                litShader.setLightGain(1.0f);
-                litShader.setDim(1.0f);
+                litShader.restorePlanDefaults();
             }
 
             if (backdropPlan.drawWire) {
@@ -916,9 +898,7 @@ public:
                 gpu.uploadWeightColors(mesh, display.weightMapName);
             litShader.useProgram(meshModel, vp);
             litShader.setSurfaces(mesh.surfaces);
-            litShader.setShading(activePlan.shading);
-            litShader.setFillColor(activePlan.fillColor);
-            litShader.setLightGain(activePlan.lightGain);
+            litShader.applyPlan(activePlan);
             bool toolFaceHover = activeTool !is null
                               && activeTool.wantsHoverForType(EditMode.Polygons)
                               && hoveredFace >= 0;
@@ -928,11 +908,9 @@ public:
             } else {
                 gpu.drawFaces(litShader, facePass);
             }
-            // Restore, same discipline as the backdrop pass's setDim: the
-            // program is shared with every preview/gizmo draw downstream.
-            litShader.setShading(SurfaceShading.Material);
-            litShader.setFillColor(kDefaultFill);
-            litShader.setLightGain(1.0f);
+            // Restore: the program is shared with every preview/gizmo draw
+            // downstream.
+            litShader.restorePlanDefaults();
         }
     }
 

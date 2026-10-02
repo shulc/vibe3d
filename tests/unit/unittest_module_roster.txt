@@ -316,6 +316,7 @@ tests.unit.l8_command_undo_census_test
 tests.unit.l8_extrude_delta_test
 tests.unit.l9_loop_slice_delta_test
 tests.unit.layer_params_test
+tests.unit.lit_plan_seam_test
 tests.unit.live_registration_rig
 tests.unit.main_loop_unwind_census_test
 tests.unit.make_polygon_edge_chain_test

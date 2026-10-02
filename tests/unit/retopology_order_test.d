@@ -149,27 +149,32 @@ private string bodyOf(string code, string head) {
     assert(false, "census: unbalanced body of " ~ head);
 }
 
-unittest { // each program's dim follows its useProgram, in the item's own draw
+unittest { // each program's plan state follows its useProgram, in the item's own draw
     import std.string : indexOf;
     import tests.unit.census_symbols : countOccurrences;
     immutable code = rendererCode();
     immutable plain = bodyOf(code, "void drawPlainItem(");
     immutable lines = bodyOf(code, "void drawItemLinesAndDots(");
-    // Floor: exactly one plan-dim write per program, two in all.
-    assert(countOccurrences(plain, "lit.setDim(plan.dim);") == 1
+    // Identifier prefixes, not whole calls: the seam's arguments may grow.
+    enum litApply = "lit.applyPlan(", litRestore = "lit.restorePlanDefaults(";
+    // Floor: exactly one plan write per program, two in all.
+    assert(countOccurrences(plain, litApply) == 1
+        && countOccurrences(plain, litRestore) == 1
         && countOccurrences(lines, "shader.setDim(plan.dim);") == 1,
-        "census: drawPlainItem / drawItemLinesAndDots must each apply the plan's dim once");
+        "census: drawPlainItem / drawItemLinesAndDots must each apply the plan once "
+        ~ "(lit: applyPlan + restorePlanDefaults; flat: setDim)");
     assert(plain.indexOf("lit.useProgram(model, vp);") >= 0
-        && plain.indexOf("lit.useProgram(model, vp);") < plain.indexOf("lit.setDim(plan.dim);"),
-        "census: the lit program's dim must be written AFTER its useProgram, which re-seeds it");
+        && plain.indexOf("lit.useProgram(model, vp);") < plain.indexOf(litApply),
+        "census: the lit program's plan must be written AFTER its useProgram, which re-seeds it");
     assert(lines.indexOf("shader.useProgram(model, vp);") >= 0
         && lines.indexOf("shader.useProgram(model, vp);")
            < lines.indexOf("shader.setDim(plan.dim);"),
         "census: the flat program's dim must be written AFTER its useProgram, which re-seeds it");
     // Restored after the item, each program.
-    assert(plain.indexOf("lit.setDim(1.0f);") > plain.indexOf("g.drawFaces(")
+    assert(plain.indexOf(litApply) < plain.indexOf("g.drawFaces(")
+        && plain.indexOf(litRestore) > plain.indexOf("g.drawFaces(")
         && lines.indexOf("shader.setDim(1.0f);") > lines.indexOf("g.drawVertices("),
-        "census: an item's dim must be restored after its draws");
+        "census: an item's plan must be applied before and restored after its draws");
     // Its own materials: bound after its program, before its faces.
     immutable ptrdiff_t bind = plain.indexOf("bindLayerSurfaces(g, lyr, plan, lit, weightMapName);");
     assert(bind > plain.indexOf("lit.useProgram(model, vp);")
