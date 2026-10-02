@@ -53,6 +53,25 @@ immutable string[] kCells = [
 enum long kCellCount = 82;
 enum long kCheckpointCount = 966;
 
+// The helper's redo-step count (`redoStepCount`, wave plan §21-D): the pair's three terms,
+// each where the fixture's 10 redo reads cannot reach it.
+unittest {
+    JSONValue row(string cmd, long session, ulong flags = 0x11) {
+        JSONValue r;
+        r["command"] = cmd; r["session"] = session; r["flags"] = cast(long) flags;
+        return r;
+    }
+    const act = row("tool.activate", 1, 0x411), edit = row("mesh.bevel_edit", 1);
+    assert(redoStepCount([act, edit]) == 1, "the UI pair is one redo step");
+    assert(redoStepCount([act, row("mesh.bevel_edit", 2)]) == 2,
+        "an activation pairs only with its own session's row");
+    assert(redoStepCount([row("tool.activate", 0, 0x411), row("select.invert", 0)]) == 2,
+        "an activation with no session pairs with nothing");
+    assert(redoStepCount([edit, edit]) == 2, "only an activation opens a pair");
+    assert(redoStepCount([act, edit, row("mesh.bevel_edit", 1, 0x11 | kJoinsBelow)]) == 1,
+        "a row joining the pair below is the pair's step");
+}
+
 unittest { // the floor: the fixture still holds the whole family
     familyFloor(parseJSON(kFixture), "inset", kCells, kCellCount, kCheckpointCount);
 }
@@ -153,9 +172,11 @@ unittest {
     }
     // S5 (task 9170, law 3): 55 -> 49 — the six of moment_restart_pextrude(_ui) after the
     // cut are parity (Q5 c1: the restart row survives, the refire after it leaves).
-    assert(points == 8 && fields == 49, "fixture family inset holds " ~ points.to!string
+    // 49 -> 46 (plan §21-B/D): fold_restart_pextrude_ui/s12_R (refused, vcount) is a modal
+    // point, not judged; moment_restart_pextrude_ui/s10_Z.redoRows counts the UI pair once.
+    assert(points == 8 && fields == 46, "fixture family inset holds " ~ points.to!string
         ~ " middle-restart points / " ~ fields.to!string ~ " divergent fields after them, "
-        ~ "frozen at 8 / 49");
+        ~ "frozen at 8 / 46");
 }
 
 // VertexMerge's first haul merges 3 → 2 at the reference, 3 → 1 here (gap row 486, S3 fix

@@ -50,7 +50,8 @@ unittest { // the floor: the fixture still holds the whole family
 // S2b 8930 keeps 19: the redo of the attribute-only row s02_UC is a no-op success once
 // our command dropped the tool, so the R tail stays parity; S6 9080 keeps 8: the UI arm
 // and its panel row are one undo/redo step, so the R tail redoes the haul and the
-// command as there — 11 fields parity). Gap row 485 (the
+// command as there — 11 fields parity; S5 9170 keeps 7: s14_R is a modal point, plan §21-B,
+// not judged). Gap row 485 (the
 // reference's Mirror arm carries the capture session's centre and plane axes): the
 // generator's rule G5 (S4 9020) owns exactly nine `attrs` fields, among them the former
 // model §6.3 field `mirror_attrs_ui/s04_R` — no field is "not captured" any more.
@@ -76,8 +77,8 @@ unittest {
             }
         }
     }
-    assert(c2m == 8, "fixture family generators holds " ~ c2m.to!string
-        ~ " divergent fields from the Mirror UI command on, frozen at 8");
+    assert(c2m == 7, "fixture family generators holds " ~ c2m.to!string
+        ~ " divergent fields from the Mirror UI command on, frozen at 7");
     assert(notCaptured.length == 0, "fixture: not-captured fields " ~ notCaptured.to!string
         ~ " (rule G5 took model §6.3's one, S4 9020)");
     assert(gap485 == ["mirror_attrs_script/s03_Z.attrs", "mirror_attrs_ui/s04_R.attrs",

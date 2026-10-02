@@ -18,7 +18,8 @@ module topology_redo_law_helpers;
 //   origin  how a haul's step began: the undo top's `stepOrigin` in the fixture's words
 //           (opens -> "begin", restart -> "restart", refire -> "none"); "absent" when
 //           the top row carries none (task 8930)
-//   redoRows redo steps left (rows that do not join the row below)
+//   redoRows redo steps left (rows that do not join the row below; an activation and
+//           its session's first row — the UI pair — count as one step)
 // A field is either parity (ours == reference) or a declared known divergence
 // (ours == the declared `ours`, owner = the slice that closes it). Navigation goes
 // only through the keys (`/api/play-events`), never `/api/undo|redo` (plan §4.3).
@@ -617,9 +618,24 @@ Obs observe(string label, const Rig rig) {
             o.origin = so.str == "opens" ? "begin" : so.str == "refire" ? "none" : so.str;
     o.undoRows = cast(long) h["undo"].array.length;
     o.redoRows = cast(long) h["redo"].array.length;
-    foreach (row; h["redo"].array)
-        if ((cast(ulong) row["flags"].integer & kJoinsBelow) == 0) ++o.redoSteps;
+    o.redoSteps = redoStepCount(h["redo"].array);
     return o;
+}
+
+/// Redo steps of `/api/history`'s redo rows (next first): a row that does not join the
+/// row below; an activation and its session's first row (the UI pair) are ONE step, as
+/// the reference counts them (wave plan §21-D, S5 9170).
+long redoStepCount(const JSONValue[] rr) {
+    long n;
+    for (size_t k = 0; k < rr.length; ++k) {
+        if ((cast(ulong) rr[k]["flags"].integer & kJoinsBelow) != 0) continue;
+        ++n;
+        const tok = rr[k]["session"].integer;
+        if (rr[k]["command"].str == "tool.activate" && tok != 0 && k + 1 < rr.length
+                && rr[k + 1]["session"].integer == tok)
+            ++k;
+    }
+    return n;
 }
 
 // ------------------------------------------------------------------ relations
@@ -813,6 +829,9 @@ void compareCell(const JSONValue cell, const CellRun run) {
     foreach (i, p; cell["points"].array) {
         const lab = p["label"].str;
         assert(lab == run.obs[i].label, "cell " ~ id ~ ": checkpoint order " ~ lab);
+        // A key the reference never received (its «Out of redos» modal still open, no
+        // event): a capture artefact, not judged — wave plan §21-B (S5 9170).
+        if ("unjudged" in p) continue;
         foreach (field, f; p["fields"].object) {
             auto ours = ourField(field, run.obs, i, run.baseOurs, baseRef,
                 i ? &run.obs[i - 1] : null, run.layer);
@@ -1004,18 +1023,18 @@ void familyFloor(const JSONValue fixture, string family, const string[] ids,
                  long cells, long checkpoints) {
     import std.stdio : writefln;
     string[] got;
-    long pts, parity, divergence;
+    long pts, parity, divergence, unjudged;
     foreach (c; fixture["cells"].array) {
         if (c["family"].str != family) continue;
         got ~= c["id"].str;
         foreach (p; c["points"].array) {
             ++pts;
             foreach (field, f; p["fields"].object)
-                if ("ours" in f) ++divergence; else ++parity;
+                if ("unjudged" in f) ++unjudged; else if ("ours" in f) ++divergence; else ++parity;
         }
     }
-    writefln("TOPO-REDO-CELLS family=%s cells=%d checkpoints=%d parity=%d divergence=%d",
-        family, got.length, pts, parity, divergence);
+    writefln("TOPO-REDO-CELLS family=%s cells=%d checkpoints=%d parity=%d divergence=%d unjudged=%d",
+        family, got.length, pts, parity, divergence, unjudged);
     assert(got.length == cells && pts == checkpoints,
         format("fixture family %s holds %d cells / %d checkpoints, the suite was frozen at %d / %d",
             family, got.length, pts, cells, checkpoints));
