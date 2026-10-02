@@ -1096,10 +1096,11 @@ unittest { // (4d)
                        ~ "topOperation_(aToken);if(isUndo)rebaseOnUndoneOperation_(tool_(),aToken);}"),
            "S7 needle: the settle rebases an undone restart outside its open, undo branch");
     assert(identSites(es, "rebaseOnCurrent_", false)
-           == ["<decl>:1", "ToolSession.notePointerDown:1",
+           == ["<decl>:1", "ToolSession.close:1", "ToolSession.notePointerDown:1",
                "ToolSession.scriptedWriteEndsOperation:1", "ToolSession.settleAfterNavigation_:1"],
            format("S3 needle: rebaseOnCurrent_ is called at %s, expected the settle after a "
-                  ~ "navigation, the scripted write and the opening press once each",
+                  ~ "navigation, the scripted write, the opening press and (S7, C2) the command "
+                  ~ "close once each",
                   identSites(es, "rebaseOnCurrent_", false)));
     // the helper is gated on the captured model (§4.6: the pen's
     // rebase body is never reached) and the press asks for the stale case only
@@ -1260,6 +1261,12 @@ unittest { // (4f)
               .canFind("endPendingOperation_(null,true,true);"),
            "S7 structural: a restart, the pen's press or the scripted write calls the helper "
            ~ "with other arguments");
+    // §15 (capture 8980): the command close ends the operation, THEN rebases the tool on the
+    // live image, BEFORE the idle test — an idle model tool is not committed (attrs kept).
+    inOrder(squeeze(bodyAt(ts, "CloseOutcome close(CloseReason r")),
+            ["constboolcommand=r==CloseReason.command;", "endPendingOperation_(null,true,model);rebaseOnCurrent_(t,false);",
+             "if(cc==CommandClose.uiDoor&&!t.hasUncommittedEdit())returnCloseOutcome(false,true);",
+             "constcommitted=t.commitOperation();"], "S7 ToolSession.close");
 }
 
 // (4g) Task 9120 (S7, PF-3; plan §13, Capture-7 N6C): the undo of another tool's UI pair

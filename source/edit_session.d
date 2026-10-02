@@ -1475,9 +1475,12 @@ private struct ToolSession {
                 return CloseOutcome(false, false);
             // A recording command reaching this tool's close ends the operation
             // by the switch rule (law 6, C2; the pen's L57, capture C5) —
-            // selection and model commands alike — and the tool stays.
+            // selection and model commands alike — and the tool stays, based on
+            // the live image (S3's rebase where an operation ends), so a model
+            // tool is idle below: its attributes stay (capture 8980, KEEP).
             if (reporting_(t) && (model || t.sessionPolicy().foldsParamRowsIntoBlock))
                 endPendingOperation_(null, true, model);
+            rebaseOnCurrent_(t, false);
             // (3) an idle covered tool stays armed and is not called (R20 law).
             if (cc == CommandClose.uiDoor && !t.hasUncommittedEdit())
                 return CloseOutcome(false, true);
