@@ -415,7 +415,7 @@ private immutable string litFragSrc = litStage(q{
             // view ray (view-space env, captured). MatCap: the image IS the
             // lighting (two layers: diffuse × base colour + specular), so no
             // light term (a declared divergence: the asset's contract).
-            uint  mi = (vMatId < uint(64)) ? vMatId : uint(0);
+            uint  mi = surfaceSlotOf(vMatId);
             vec3  N  = normalize(vNormal);
             if (u_reflectionKind == 0) {
                 vec4 mp = mat_params[mi];
