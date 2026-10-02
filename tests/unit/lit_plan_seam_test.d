@@ -82,13 +82,15 @@ private string[] bracketViolations(string code) {
     return bad;
 }
 
-unittest { // the bracket checker itself: rejects the two broken shapes, accepts the good one
+unittest { // the bracket checker itself: rejects the three broken shapes, accepts the good one
     enum good = "void f() { lit.useProgram(m, vp); lit.applyPlan(p); g.drawFaces(lit, x);"
               ~ " lit.restorePlanDefaults(); lit.useProgram(m, vp); }";
     enum early = "void f() { lit.useProgram(m, vp); lit.applyPlan(p); lit.restorePlanDefaults();"
                ~ " g.drawFaces(lit, x); lit.useProgram(m, vp); }";
     enum none = "void f() { lit.useProgram(m, vp); g.drawFaces(lit, x);"
               ~ " lit.restorePlanDefaults(); }";
+    enum late = "void f() { lit.useProgram(m, vp); lit.applyPlan(p); g.drawFaces(lit, x);"
+              ~ " lit.useProgram(m, vp); lit.restorePlanDefaults(); }";
     assert(positions(good, litDrawRe).length == 1, "control: the draw needle must find the snippet's draw");
     assert(bracketViolations(good).length == 0,
         format("control: a well-bracketed draw was rejected: %s", bracketViolations(good)));
@@ -96,6 +98,8 @@ unittest { // the bracket checker itself: rejects the two broken shapes, accepts
         "control: a restore BEFORE the draw must be rejected");
     assert(bracketViolations(none).length == 1,
         "control: a draw with no applyPlan must be rejected");
+    assert(bracketViolations(late).length == 1,
+        "control: a restore only after the next lit useProgram must be rejected");
 }
 
 unittest { // every lit face draw in the renderer sits inside one applyPlan / restorePlanDefaults bracket

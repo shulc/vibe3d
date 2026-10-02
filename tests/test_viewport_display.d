@@ -1756,8 +1756,9 @@ bool testFlowN() {
 // restore that leaves the scene pass's shading behind (the primary under Solid
 // just drew with the unlit arm) paints the Solid preview with the flat fill —
 // the floor below proves that outcome is at least 6 levels from the lit one,
-// so this cell can tell them apart. Relational, not a shading value: it
-// survives any change of the light rig.
+// so this cell can tell them apart. The retopology mode is the second row: its
+// face passes leave a light gain of 5/3 behind unless the park restores 1.
+// Relational, not a shading value: it survives any change of the light rig.
 // --------------------------------------------------------------------------
 
 enum int kPreviewFill = 153;  // the Solid fill, Flow L's kFillMeasured
@@ -1813,12 +1814,15 @@ void previewRig(out string pts, out string log, out int nPts) {
     }
 }
 
-/// Preview pixels in `style`: [0] before the drag (tool armed, nothing drawn),
-/// [1] with the live preview.
-Px[][2] previewPixels(string style) {
+/// Preview pixels in `style` (and the retopology display mode when `retopo`):
+/// [0] before the drag (tool armed, nothing drawn), [1] with the live preview.
+Px[][2] previewPixels(string style, bool retopo = false) {
     httpPost("/api/command", commandBody("scene.reset", `{"empty":true}`));
     probeFence();
     setStyle(style);
+    if (retopo) postCommandRaw("viewport.retopology", `{"value":"on"}`);
+    scope(exit) if (retopo)
+        collectException(postCommandRaw("viewport.retopology", `{"value":"off"}`));
     toolLine("tool.set prim.cube");
     scope(exit) collectException(toolLine("tool.set prim.cube off"));
     probeFence();
@@ -1828,6 +1832,10 @@ Px[][2] previewPixels(string style) {
     o[0] = probe(0, pts).points;
     playPreviewDrag(log);
     o[1] = probe(0, pts).points;
+    // Premise of the retopology row: the face passes ran with the mode's gain.
+    if (retopo)
+        enforce(jsonNum(displayDump()["cells"].array[0], "plan", "active", "lightGain") > 1.5,
+            "precondition: the retopology mode must be on (light gain 5/3) while the preview draws");
     enforce(o[0].length == n && o[1].length == n, "probe returned the wrong point count");
     return o;
 }
@@ -1838,14 +1846,17 @@ bool testFlowO() {
     scope(exit) { restoreDisplayDefaults(); resetApp(); }
 
     auto shaded = previewPixels("shaded");
+    auto retopo = previewPixels("shaded", true);
     auto solid  = previewPixels("solid");
     enforce(displayDump()["cells"].array[0]["state"]["active"]["style"].str == "Solid",
         "precondition: the cell must be in the unlit style while its preview draws");
 
     // Floor: every sample is covered by the preview in both styles.
     foreach (k; 0 .. shaded[1].length) {
-        enforce(shaded[1][k].valid && solid[1][k].valid, "a preview probe point failed");
-        enforce(!samePixel(shaded[0][k], shaded[1][k]) && !samePixel(solid[0][k], solid[1][k]),
+        enforce(shaded[1][k].valid && solid[1][k].valid && retopo[1][k].valid,
+            "a preview probe point failed");
+        enforce(!samePixel(shaded[0][k], shaded[1][k]) && !samePixel(solid[0][k], solid[1][k])
+                && !samePixel(retopo[0][k], retopo[1][k]),
             format("sample (%d,%d) is not covered by the box preview — the rig "
                    ~ "does not put the preview where this flow samples",
                    shaded[1][k].x, shaded[1][k].y));
@@ -1873,6 +1884,18 @@ bool testFlowO() {
     writefln("    O1 PASS: %d preview samples equal under Shaded and Solid "
              ~ "(lit preview >= %d levels from the fill %d)",
              shaded[1].length, minGap, kPreviewFill);
+
+    // The retopology row: the preview ignores the mode's light gain.
+    foreach (k; 0 .. shaded[1].length) {
+        immutable a = shaded[1][k], b = retopo[1][k];
+        enforce(abs(a.r - b.r) <= 2 && abs(a.g - b.g) <= 2 && abs(a.b - b.b) <= 2,
+            format("the box preview at (%d,%d) reads (%d,%d,%d) under the "
+                   ~ "retopology mode but (%d,%d,%d) without it — the preview "
+                   ~ "took a face pass's plan state (light gain) instead of the park",
+                   b.x, b.y, b.r, b.g, b.b, a.r, a.g, a.b));
+    }
+    writefln("    O2 PASS: %d preview samples equal with and without the retopology mode",
+             shaded[1].length);
     return true;
 }
 
