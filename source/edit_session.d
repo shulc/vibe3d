@@ -1225,8 +1225,10 @@ private struct ToolSession {
         // M-G (wave plan 8640 S7a, [A2-3]): the parameter rows folded into the
         // activation pop with it, through this same tail; a pair's group (law 6)
         // pops its folded run, its base and the activation below the base (the
-        // pair is read on the base, never on an activation: exclusive with M-G).
-        const size_t run = pair ? foldedRunAbove_() : absorbedRunAbove_();
+        // pair is read on the base, never on an activation: exclusive with M-G);
+        // with the tool gone (a drop, C3) a folded group of the model pops whole.
+        const size_t run = pair || (t is null && modelStep_(undoTop_()))
+            ? foldedRunAbove_() : absorbedRunAbove_();
         const size_t extra = pair ? run + 1 : run;
         Rebindable!(const Command) last = undoEntryAt_(extra);
         // A lifecycle row may restore the topology tool that preceded it.
@@ -1345,10 +1347,13 @@ private struct ToolSession {
         bool replay;
         bool pair;
         bool attrPair;
+        bool group;
         import commands.tool.lifecycle : ToolActivationCommand;
         Rebindable!(const ToolActivationCommand) act;
         {
             const re = history_.redoEntries();
+            // Law 6 with the tool gone: a folded group of the model is one step.
+            group = tool_() is null && re.length > 0 && modelStep_(re[0].cmd);
             replay = !replay_.empty && re.length > 0
                 && re[0].cmd is replayFor_.get;
             act = re.length ? cast(const ToolActivationCommand) re[0].cmd : null;
@@ -1373,9 +1378,9 @@ private struct ToolSession {
         // M-G: the parameter rows folded into this activation come back with
         // it, as one step; none of their attributes is restored (C1-F2
         // F-preset: the re-armed instance keeps its arm image).
-        if (ok && act !is null && !pair) {
+        if (ok && ((act !is null && !pair) || group)) {
             // The run above the activation is its own fold, of its token
-            // (A16 R5), so no token term.
+            // (A16 R5), so no token term; so is a model group's (law 6).
             for (auto re = history_.redoEntries(); re.length &&
                     (re[0].flags & HistoryFlags.JoinsBelow);
                     re = history_.redoEntries())
@@ -2283,6 +2288,13 @@ private struct ToolSession {
         while (n < ue.length && (ue[$ - 1 - n].flags & HistoryFlags.JoinsBelow))
             ++n;
         return n;
+    }
+
+    // A row of the captured model (classified: it carries its operation); the
+    // pen's rows and every tool outside the model carry none.
+    private static bool modelStep_(const Command c) {
+        auto r = cast(const MeshSessionEdit) c;
+        return r !is null && r.isTopologyStep() && r.stepOperation() != 0;
     }
 
     // ...when its base is this session's activation row (M-G, [A2-3]).

@@ -31,7 +31,7 @@
 // Fast loop: tools/local/ut-standalone.sh tests/unit/tool_session_steps_test.d
 module tests.unit.tool_session_steps_test;
 
-import command_history : CommandHistory, UndoState;
+import command_history : CommandHistory, HistoryFlags, UndoState;
 import commands.tool.lifecycle : ToolActivationCommand, ToolTaskClearCommand;
 import edit_session : DropRowSpec, EditSession, ParameterChangeSource, ParameterChangePhase;
 import editmode : EditMode;
@@ -2462,3 +2462,25 @@ unittest { // U4: an activation that refuses its undo hands no token over (the p
                                     pf3Token(r)));
 }
 
+
+// ---- Task 9120 (S7, law 6, C3): with its tool dropped, a folded group of the model is still
+// ---- one undo step and one redo step (CAP close_drop_inset_ui s05_Z: the Z after the drop
+// ---- returns the image before the whole operation) --------------------------------------
+
+unittest {
+    auto r = s2bRig();
+    s2bHaul(r);
+    s2bHaul(r);
+    assert(r.h.undoEntries().length == 2, "law 6 drop rig: the two hauls are not two rows");
+    r.s.closeOperation(CloseReason.drop);
+    r.active = null;
+    r.s.finishClose();
+    assert((r.h.undoEntries()[1].flags & HistoryFlags.JoinsBelow) != 0,
+        "law 6 drop rig: the drop did not fold the operation's rows");
+    assert(r.s.navigate(true) && r.h.undoEntries().length == 0 && r.h.redoEntries().length == 2,
+        format("law 6: with the tool gone the undo of the folded group took %s rows of 2",
+               2 - r.h.undoEntries().length));
+    assert(r.s.navigate(false) && r.h.undoEntries().length == 2 && r.h.redoEntries().length == 0,
+        format("law 6: with the tool gone the redo of the folded group brought %s rows of 2",
+               r.h.undoEntries().length));
+}
