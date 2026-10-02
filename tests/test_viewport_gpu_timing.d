@@ -144,28 +144,68 @@ unittest { // (iii) backdrop faces absent under Solid, present under Shaded; SP2
     cmd("viewport.wireOverlay", `"uniform"`);
 }
 
-unittest { // per-item: under the retopology item sequence each item's faces are a sample
+unittest { // per-item: under the retopology item sequence each item's sections are samples
+    // Measured per-frame counts (2026-10-02, this rig: the primary quad + the
+    // joined same-as-active cube; the active plan under the mode draws faces
+    // and wire whatever the style, the backdrop plan follows style/overlay).
     resetSingle();
     cmd("layer.add");
     cmd("scene.loadMesh",
         `{"vertices":[[-1,-1,2],[1,-1,2],[1,1,2],[-1,1,2]],"faces":[[0,1,2,3]]}`);
     cmd("viewport.displayStyle", `"shaded"`);
     cmd("viewport.retopology", `{"value":"on"}`);
-    scope (exit) cmd("viewport.retopology", `{"value":"off"}`);
+    scope (exit) {
+        cmd("viewport.retopology", `{"value":"off"}`);
+        cmd("viewport.wireOverlay", `"uniform"`);
+        cmd("viewport.displayStyle", `"shaded"`);
+    }
     frameFence(null, 2);
-    enforce(jb(plan("active")["clearDepthFirst"]) && jb(plan("backdrop")["joinsItemSequence"]),
-        "(item) premise: the mode clears per item and the same-as-active backdrop joins: "
-        ~ plan("backdrop").toString);
+    enforce(jb(plan("active")["clearDepthFirst"]) && jb(plan("backdrop")["joinsItemSequence"])
+            && jb(plan("backdrop")["drawFaces"]) && jb(plan("backdrop")["drawWire"]),
+        "(item-a) premise: the mode clears per item; the same-as-active backdrop joins "
+        ~ "and draws faces and wire: " ~ plan("backdrop").toString);
     auto d = window()[0];
-    writefln("  (item) harvested=%d faces=%d backdropFaces=%d", d.harvested,
-             d.samples["faces"], d.samples["backdropFaces"]);
-    assert(d.harvested >= 8, format("(item) floor: %d harvested", d.harvested));
+    writefln("  (item-a) harvested=%d faces=%d edges=%d backdropFaces=%d", d.harvested,
+             d.samples["faces"], d.samples["edges"], d.samples["backdropFaces"]);
+    assert(d.harvested >= 8, format("(item-a) floor: %d harvested", d.harvested));
     assert(d.samples["faces"] == 2 * d.harvested,
-        format("(item) two items (primary + the joined cube) = two face samples per "
+        format("(item-a) two items (primary + the joined cube) = two face samples per "
              ~ "frame: faces=%d harvested=%d", d.samples["faces"], d.harvested));
+    assert(d.samples["edges"] == 2 * d.harvested,
+        format("(item-a) two item wire passes per frame: edges=%d harvested=%d",
+               d.samples["edges"], d.harvested));
     assert(d.samples["backdropFaces"] == 0,
-        format("(item) the joined layer is drawn by the sequence, not the backdrop pass: %d",
+        format("(item-a) the joined layer is drawn by the sequence, not the backdrop pass: %d",
                d.samples["backdropFaces"]));
+
+    // (item-b) the joined item draws no wire: its edges section is absent.
+    cmd("viewport.wireOverlay", `"none"`);
+    frameFence(null, 2);
+    enforce(jb(plan("backdrop")["drawFaces"]) && !jb(plan("backdrop")["drawWire"]),
+        "(item-b) premise: joined item faces on, wire off: " ~ plan("backdrop").toString);
+    auto w = window()[0];
+    writefln("  (item-b) harvested=%d faces=%d edges=%d", w.harvested,
+             w.samples["faces"], w.samples["edges"]);
+    assert(w.harvested >= 8 && w.samples["faces"] == 2 * w.harvested,
+        format("(item-b) positive control: faces=%d harvested=%d", w.samples["faces"], w.harvested));
+    assert(w.samples["edges"] == 1 * w.harvested,
+        format("(item-b) only the primary's wire is a sample (measured 1 per frame), got "
+             ~ "edges=%d harvested=%d", w.samples["edges"], w.harvested));
+
+    // (item-c) the joined item draws no faces: one face sample per frame.
+    cmd("viewport.wireOverlay", `"uniform"`);
+    cmd("viewport.displayStyle", `"wireframe"`);
+    frameFence(null, 2);
+    enforce(jb(plan("active")["clearDepthFirst"]) && !jb(plan("backdrop")["drawFaces"]),
+        "(item-c) premise: joined item draws no faces: " ~ plan("backdrop").toString);
+    auto f = window()[0];
+    writefln("  (item-c) harvested=%d faces=%d edges=%d", f.harvested,
+             f.samples["faces"], f.samples["edges"]);
+    assert(f.harvested >= 8 && f.samples["edges"] == 2 * f.harvested,
+        format("(item-c) positive control: edges=%d harvested=%d", f.samples["edges"], f.harvested));
+    assert(f.samples["faces"] == 1 * f.harvested,
+        format("(item-c) only the primary's faces are a sample (measured 1 per frame), got "
+             ~ "faces=%d harvested=%d", f.samples["faces"], f.harvested));
 }
 
 unittest { // (iv) a heavy face pass has a nonzero GPU time (kept by P0 on both gate hosts)
