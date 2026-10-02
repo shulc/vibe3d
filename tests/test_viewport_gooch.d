@@ -10,10 +10,11 @@
 // kwarm, kcool and kwarm (abs: −Lg separates abs from max(…,0)), plus a
 // camera-facing quad at |N·Lg| = 1/√3 (the mix is linear in |N·L|); (b) the
 // same eye normals rebuilt under a 90° camera roll read the same — and a light
-// fixed in the world (the base view's Lg) would not. `VIBE3D_CELL=<id>` runs
-// one cell.
+// fixed in the world (the base view's Lg) would not; (c) a hovered quad keeps
+// the tone with the hover colour as Kd (the override mix replaces Kd, not the
+// tone). `VIBE3D_CELL=<id>` runs one cell.
 
-import http_client : getJson, postJson, frameFence;
+import http_client : getJson, postJson, frameFence, quiesce;
 import http_command_helpers : commandBody;
 import drag_helpers;
 
@@ -271,4 +272,54 @@ unittest {
     writefln("[gooch b] roll 90: a world-fixed light would move a quad by %.2f levels", gap);
     scope(exit) postJson("/api/command", commandBody("viewport.displayStyle", `{"value":"shaded"}`));
     assertReads("b", buildAndProbe(vp, az, el, dist, roll), pred);
+}
+
+// ---------------------------------------------------------------------------
+// (c) hover survives the style: the hover override replaces Kd (as in the
+// Material arm), so the hovered toward-Lg quad reads the warm tone of the
+// hover colour (viewport_scheme.kFaceHoverFill = (0.5, 0.71, 0.79)), not the
+// material's. Floor: the two warm tones are ≥ 6 levels apart.
+// ---------------------------------------------------------------------------
+unittest {
+    if (!cellOn("c")) return;
+    enum double az = 0.35, el = 0.25, dist = 8.0;
+    setCamera(az, el, dist);
+    auto vp = viewportFromCameraMatrices();
+    immutable double[3] kHover = [0.5, 0.71, 0.79];
+    double[3] hoverWarm;
+    foreach (c; 0 .. 3) hoverWarm[c] = toneAt(1.0, kHover[c])[c];
+    immutable double[3] plainWarm = toneAt(1.0);
+    assert(maxGap(hoverWarm, plainWarm) >= 6,
+        format("(c) floor: hovered %s vs unhovered %s warm tones", hoverWarm, plainWarm));
+    D3[] v; uint[][] f;
+    immutable D3 c0 = add3(kC, toWorld(vp, [-1.2, 0.9, 0.0]));
+    immutable D3 c1 = add3(kC, toWorld(vp, [1.2, 0.9, 0.0]));
+    quadAt(c0, nrm(toWorld(vp, kNEye[0])), 0.45, v, f);
+    quadAt(c1, nrm(toWorld(vp, kNEye[0])), 0.45, v, f);
+    loadQuads(v, f);
+    scope(exit) postJson("/api/command", commandBody("viewport.displayStyle", `{"value":"shaded"}`));
+    restoreCamera(vp, az, el, dist, 0);
+    immutable int[2] p0 = cellPx(vp, c0), p1 = cellPx(vp, c1);
+    auto cam = getJson("/api/camera");
+    string log = format(
+        `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n",
+        cam["vpX"].integer, cam["vpY"].integer, cam["width"].integer, cam["height"].integer);
+    foreach (i; 0 .. 5)
+        log ~= format(`{"t":%.3f,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,"state":0,"mod":0}`
+            ~ "\n", 50.0 + i * 20.0, p0[0] + vp.x, p0[1] + vp.y);
+    playAndWait(log);
+    quiesce();
+    restoreCamera(vp, az, el, dist, 0);
+    immutable hf = getJson("/api/toolpipe/eval")["hover"]["face"].integer;
+    assert(hf == 0, format("(c) rig: the pointer over quad 0 must hover face 0, hovers %d", hf));
+    const r = probeRGB([p0, p1]);
+    writefln("[gooch c] hovered: read (%d,%d,%d), predicted (%.2f,%.2f,%.2f); unhovered (%d,%d,%d), "
+             ~ "predicted (%.2f,%.2f,%.2f)", r[0][0], r[0][1], r[0][2], hoverWarm[0], hoverWarm[1],
+             hoverWarm[2], r[1][0], r[1][1], r[1][2], plainWarm[0], plainWarm[1], plainWarm[2]);
+    foreach (c; 0 .. 3) {
+        assert(abs(r[1][c] - plainWarm[c]) <= 1, format("(c) the unhovered quad reads %s, predicted %s",
+                                                     r[1], plainWarm));
+        assert(abs(r[0][c] - hoverWarm[c]) <= 1, format("(c) the hovered quad reads %s; the hover "
+            ~ "colour as Kd predicts %s (the material's warm tone is %s)", r[0], hoverWarm, plainWarm));
+    }
 }
