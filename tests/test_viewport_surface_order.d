@@ -189,6 +189,7 @@ private void restoreDisplay() {
     postJson("/api/command", commandBody("viewport.backdropStyle", `{"value":"same"}`));
     postJson("/api/command", commandBody("viewport.displayStyle", `{"style":"shaded"}`));
     postJson("/api/command", commandBody("viewport.wireAlpha", `1.0`));
+    postJson("/api/command", commandBody("viewport.wireOverlay", `{"overlay":"uniform"}`));
     postJson("/api/command", "viewport.view Perspective");
 }
 
@@ -211,26 +212,30 @@ private void restoreDisplay() {
 // and the face failed the depth test there: P_in == P_out. Now the faces come
 // first: P_in == 0.5 W + 0.5 F. Tolerance 2 (8-bit quantisation of two reads
 // propagated through W).
-unittest {
-    loadLayers([[Quad(-1, -1, 1, 1, 0)], [Quad(-0.4, -1.8, 2.4, 0.33, 0.5)]]);
+/// Rig e with the backdrop quad at depth `bz` (the primary sits at z = 0).
+private Viewport rigE(double bz) {
+    loadLayers([[Quad(-1, -1, 1, 1, 0)], [Quad(-0.4, -1.8, 2.4, 0.33, bz)]]);
     cmdOk(`{"id":"layer.select","index":0,"mode":"set"}`);
-    scope (exit) restoreDisplay();
     auto vp = frontOrtho();
     cmd("viewport.backdropStyle", `{"value":"same"}`);
     cmd("viewport.displayStyle", `{"style":"solid"}`);
     cmd("viewport.wireOverlay", `{"overlay":"uniform"}`);
     cmd("viewport.wireAlpha", `0.5`);
     parkPointer(vp);
-    {
-        auto L = getJson("/api/layers");
-        assert(L["active"].integer == 0 && jb(L["layers"].array[1]["background"]),
-            "rig e: layer 0 must be the primary and layer 1 background: " ~ L.toString);
-        auto b = cellPlan()["backdrop"];
-        assert(!jb(b["drawFaces"]) && jb(b["drawWire"]) && abs(num(b["wireAlpha"]) - 0.5) < 1e-6,
-            "rig e premise: the backdrop draws no faces and a 0.5 wire: " ~ b.toString);
-    }
-    auto inner = column(toPx(0.27, 0.33, 0.5, vp));
-    auto outer = column(toPx(1.83, 0.33, 0.5, vp));
+    auto L = getJson("/api/layers");
+    assert(L["active"].integer == 0 && jb(L["layers"].array[1]["background"]),
+        "rig e: layer 0 must be the primary and layer 1 background: " ~ L.toString);
+    auto b = cellPlan()["backdrop"];
+    assert(!jb(b["drawFaces"]) && jb(b["drawWire"]) && abs(num(b["wireAlpha"]) - 0.5) < 1e-6,
+        "rig e premise: the backdrop draws no faces and a 0.5 wire: " ~ b.toString);
+    return vp;
+}
+
+unittest {
+    scope (exit) restoreDisplay();
+    auto vp = rigE(0.5);
+    auto inner = column(toPx(0.27, 0.33, 0, vp));
+    auto outer = column(toPx(1.83, 0.33, 0, vp));
     auto shown = probe(inner ~ outer);
     auto gone  = under(inner ~ outer, [1]);
     immutable size_t ri = wireRow(shown[0 .. 9], gone[0 .. 9]);
@@ -313,6 +318,84 @@ unittest {
         format("f: X reads %s, predicted %s = P_noB + (1-a)(P_noI - bg); %s would be the wire "
                ~ "rejected behind I, %s the wire drawn over I (moved out of the item sequence)",
                pShown.c, pred, pNoB.c, pNoI.c));
+}
+
+// ===========================================================================
+// (e2) the depth TEXTURE still tests depth: the same rig with the backdrop
+// quad BEHIND the primary (z = -0.5). Faces first, so the primary's face has
+// written depth and the wire fails the test there: P_in == F. With no depth
+// attachment the wire would blend over the face: 0.5 W + 0.5 F.
+// ===========================================================================
+unittest {
+    scope (exit) restoreDisplay();
+    auto vp = rigE(-0.5);
+    auto inner = column(toPx(0.27, 0.33, 0, vp));
+    auto outer = column(toPx(1.83, 0.33, 0, vp));
+    auto shown = probe(inner ~ outer);
+    auto gone  = under(inner ~ outer, [1]);
+    immutable size_t ro = 9 + wireRow(shown[9 .. 18], gone[9 .. 18]);
+    immutable size_t ri = ro - 9;   // the edge is horizontal: same row inside
+    immutable Px pIn = shown[ri], F = gone[ri], pOut = shown[ro], bg = gone[ro];
+    writefln("  e2 bg %s P_out %s F %s P_in %s (row %d)", bg.c, pOut.c, F.c, pIn.c, ri);
+    assert(maxDiff(pOut, bg) >= 10,
+        format("e2 floor: no backdrop wire over the background (P_out %s, bg %s)", pOut.c, bg.c));
+    double[3] over;
+    foreach (k; 0 .. 3) over[k] = 0.5 * (2.0 * pOut.c[k] - bg.c[k]) + 0.5 * F.c[k];
+    assert(maxDiffD(F, over) >= 6,
+        format("e2 floor: occluded (F %s) and drawn over (%s) are within 6 levels", F.c, over));
+    assert(maxDiff(pIn, F) <= 2,
+        format("e2: the wire behind the primary's face reads %s, the face is %s — the depth "
+               ~ "test let it through (%s = the wire blended over the face)", pIn.c, F.c, over));
+}
+
+// ===========================================================================
+// (g) a backdrop plan with no wire draws no wire, though the backdrop layer is
+// kept (its upload runs and it is in the draw list): rig e with the wire
+// overlay switched off. The positive control first: with the overlay on the
+// same column shows the wire.
+// ===========================================================================
+unittest {
+    scope (exit) restoreDisplay();
+    auto vp = rigE(0.5);
+    auto outer = column(toPx(1.83, 0.33, 0, vp));
+    auto gone = under(outer, [1]);
+    auto on = probe(outer);
+    immutable size_t r = wireRow(on, gone);
+    assert(maxDiff(on[r], gone[r]) >= 10,
+        format("g control: the wire is not drawn with the overlay on (%s vs %s)", on[r].c, gone[r].c));
+    cmd("viewport.wireOverlay", `{"overlay":"none"}`);
+    assert(!jb(cellPlan()["backdrop"]["drawWire"]),
+        "g premise: the overlay off must give the backdrop plan drawWire false");
+    auto off = probe(outer);
+    foreach (i; 0 .. off.length)
+        assert(maxDiff(off[i], gone[i]) <= 1,
+            format("g: row %d reads %s with the backdrop's wire off, %s with the layer gone — "
+                   ~ "a wire was drawn the plan does not ask for", i, off[i].c, gone[i].c));
+}
+
+// ===========================================================================
+// (h) a hidden backdrop layer is neither kept nor drawn: rig e with layer 1
+// hidden. Control: visible, the wire shows (g's control, same column).
+// ===========================================================================
+unittest {
+    scope (exit) restoreDisplay();
+    auto vp = rigE(0.5);
+    auto outer = column(toPx(1.83, 0.33, 0, vp));
+    auto gone = under(outer, [1]);
+    auto on = probe(outer);
+    immutable size_t r = wireRow(on, gone);
+    assert(maxDiff(on[r], gone[r]) >= 10,
+        format("h control: the visible backdrop's wire is not drawn (%s vs %s)", on[r].c, gone[r].c));
+    cmdOk("layer.setVisible index:1 value:false");
+    settle();
+    scope (exit) cmdOk("layer.setVisible index:1 value:true");
+    assert(!jb(getJson("/api/layers")["layers"].array[1]["visible"]),
+        "h premise: layer 1 must be hidden");
+    auto hidden = probe(outer);
+    foreach (i; 0 .. hidden.length)
+        assert(maxDiff(hidden[i], gone[i]) <= 1,
+            format("h: row %d reads %s with the backdrop hidden, %s with it gone — a hidden "
+                   ~ "layer was drawn", i, hidden[i].c, gone[i].c));
 }
 
 // ===========================================================================
