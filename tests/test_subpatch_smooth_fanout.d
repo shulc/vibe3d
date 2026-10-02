@@ -5,7 +5,8 @@
 // (written by `gpuFanOut`, the positive control) vs the same geometry after a
 // CPU rebake (`fullUpload`) — per face corner from `/api/gpu/face-vbo` and per
 // pixel. The creased cage puts a hard rim on a curved surface, so the
-// smoothing-angle test decides corners there.
+// smoothing-angle test decides corners there; the globe cage (valence-6
+// poles) runs the smooth loop past four incident faces.
 
 import http_client : getJson, postJson;
 import http_command_helpers : commandBody;
@@ -72,11 +73,20 @@ double maxAbs3(double[3] a, double[3] b) {
     return max(abs(a[0] - b[0]), abs(a[1] - b[1]), abs(a[2] - b[2]));
 }
 
-/// Cube cage with a subpatch preview over every face; `crease` sets weight 1
-/// on the four rim edges of the top face (3,7,6,2) — a hard rim on a
-/// curved surface. Vertex mode, the back face's four corners selected.
-void prepareScene(bool crease) {
-    cmd(commandBody("scene.reset"));
+/// The cage under the preview. `cube`: the default cube (cage valence 3-4);
+/// `globe`: a globe sphere (triangle fans at the poles, valence 6), so the
+/// smooth loop runs past four incident faces.
+enum Cage { cube, globe }
+
+/// A subpatch preview over every face of `cage`; `crease` (cube only) sets
+/// weight 1 on the four rim edges of the top face (3,7,6,2) — a hard rim on a
+/// curved surface. Vertex mode, cage vertices 0-3 selected.
+void prepareScene(bool crease, Cage cage = Cage.cube) {
+    if (cage == Cage.cube) cmd(commandBody("scene.reset"));
+    else {
+        cmd(commandBody("scene.reset", `{"empty":true}`));
+        cmd(kGlobeCage);
+    }
     cmd("tool.pipe.attr snap enabled false");
     cmd("tool.pipe.attr symmetry enabled false");
     if (crease) {
@@ -158,8 +168,8 @@ struct Capture { JSONValue vbo; int[3][] px; }
 /// and the pixels written by the fan-out; release without further motion
 /// and rebake on the CPU (subpatch off and on: a full upload of the same
 /// surface); read again.
-void runCell(string label, bool crease) {
-    prepareScene(crease);
+void runCell(string label, bool crease, Cage cage = Cage.cube, size_t corners = kPreviewCorners) {
+    prepareScene(crease, cage);
     cmd("tool.set move on");
     frameFence(null, 2);
     auto c = fetchCamera();
@@ -209,11 +219,11 @@ void runCell(string label, bool crease) {
     // same surface), then the pixels (the cross-path witness), then both
     // normal streams per corner.
     immutable size_t n = cast(size_t)gpu.vbo["faceVertCount"].integer;
-    assert(n == kPreviewCorners && cast(size_t)cpu.vbo["faceVertCount"].integer == n
+    assert(n == corners && cast(size_t)cpu.vbo["faceVertCount"].integer == n
         && gpu.vbo["smoothNormals"].array.length == n && cpu.vbo["smoothNormals"].array.length == n,
         format("%s floor: faceVertCount %d / %d, smoothNormals %d / %d (expected %d corners)", label, n,
                cpu.vbo["faceVertCount"].integer, gpu.vbo["smoothNormals"].array.length,
-               cpu.vbo["smoothNormals"].array.length, kPreviewCorners));
+               cpu.vbo["smoothNormals"].array.length, corners));
     double dPos = 0, dFlat = 0, dSmooth = 0;
     size_t worst, smoothNotFlat;
     foreach (i; 0 .. n) {
@@ -225,6 +235,15 @@ void runCell(string label, bool crease) {
         if (maxAbs3(triple(cpu.vbo["smoothNormals"].array[i]), triple(cpu.vbo["flatNormals"].array[i])) > 1e-3)
             ++smoothNotFlat;
     }
+    // Valence floor: the most preview faces meeting at one corner position,
+    // counted as distinct flat normals there (each preview face is one
+    // plane). The globe must reach past four, else the cell cannot see the
+    // smooth loop's cap; the cube stays at or below four.
+    immutable size_t valence = maxFacesAtPosition(cpu.vbo, n);
+    writefln("[%s] max preview faces at one corner position: %d", label, valence);
+    assert(cage == Cage.cube ? valence <= 4 : valence > 4,
+        format("%s floor: max %d preview faces meet at one position (the %s cage %s)", label, valence, cage,
+               cage == Cage.cube ? "should stay at 4" : "must exceed 4 to reach the smooth-loop cap"));
     writefln("[%s] %d corners: max |gpu-cpu| position %.2e, flat %.2e, smooth %.2e (corner %d); %d smooth != flat",
              label, n, dPos, dFlat, dSmooth, worst, smoothNotFlat);
     assert(dPos <= 1e-4, format("%s premise: mid-drag and rebaked surfaces differ by %.2e", label, dPos));
@@ -252,6 +271,25 @@ void runCell(string label, bool crease) {
                dSmooth));
 }
 
+/// Most distinct flat normals (|d| > 1e-4) among the corners that share one
+/// position (rounded to 1e-5).
+size_t maxFacesAtPosition(JSONValue vbo, size_t n) {
+    double[3][][string] at;
+    foreach (i; 0 .. n) {
+        auto p = triple(vbo["positions"].array[i]);
+        immutable key = format("%d,%d,%d", cast(long)round(p[0] * 1e5), cast(long)round(p[1] * 1e5),
+                               cast(long)round(p[2] * 1e5));
+        auto f = triple(vbo["flatNormals"].array[i]);
+        bool seen;
+        if (auto list = key in at)
+            foreach (g; *list) if (maxAbs3(f, g) <= 1e-4) { seen = true; break; }
+        if (!seen) at[key] ~= f;
+    }
+    size_t best;
+    foreach (list; at) best = max(best, list.length);
+    return best;
+}
+
 /// Face corners of the cube cage's preview at the shipped depth: measured.
 enum size_t kPreviewCorners = 2304;   // 6 faces x 8 x 8 quads x 6 fan corners (depth 3)
 
@@ -261,4 +299,12 @@ unittest {
 
 unittest {
     if (cellOn("crease")) runCell("crease", true);
+}
+
+/// The globe cage and its preview's face corners at the shipped depth (measured).
+enum string kGlobeCage = "prim.sphere method:globe sides:6 segments:4 sizeX:0.5 sizeY:0.5 sizeZ:0.5";
+enum size_t kGlobeCorners = 8064;   // (12 pole triangles x 3 + 12 quads x 4) x 16 x 6 fan corners
+
+unittest {
+    if (cellOn("globe")) runCell("globe", false, Cage.globe, kGlobeCorners);
 }
