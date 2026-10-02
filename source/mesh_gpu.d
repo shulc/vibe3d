@@ -701,8 +701,8 @@ struct GpuMesh {
         if (faceAdjGen != faceLayoutGen) rebuildFaceAdjacency(mesh);
         immutable bool all = updateCornerSmooth(mesh, vpos, faceAdj, smoothingCosine(),
             faceLayoutGen, scratchFaceNormal, scratchCornerSmooth, smoothCache);
+        // Sized by `buildUploadCpu` for this layout (`faceVertCount`).
         immutable size_t n = cast(size_t)faceVertCount * kFaceStride;
-        if (scratchFaceData.length < n) scratchFaceData.length = n;
         void refan(size_t fi) {
             const face = mesh.faces[fi];
             // Degenerate OR hidden: no slot (faceTriCount 0; faceTriStart
@@ -721,10 +721,11 @@ struct GpuMesh {
     }
 
     /// What the last `refreshFaceDataCpu` re-fanned: every face (`full`), or
-    /// `faces` of them. A path control for tests and the drag-cost readout.
-    struct FaceRefreshStats { bool full; size_t faces; }
+    /// `faces` of them; `cached` = the incremental cache is valid (the next
+    /// refresh may skip faces). A path control for tests and the drag-cost readout.
+    struct FaceRefreshStats { bool full; size_t faces; bool cached; }
     FaceRefreshStats lastFaceRefresh() const @safe pure nothrow @nogc {
-        return FaceRefreshStats(smoothCache.lastFull, smoothCache.writeCount);
+        return FaceRefreshStats(smoothCache.lastFull, smoothCache.writeCount, smoothCache.valid);
     }
 
     /// Allocation-only half of a full upload. `vpos` is resolved by the caller

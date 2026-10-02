@@ -451,6 +451,19 @@ unittest { // stale cache: a different face array (same gen) or a dropped face r
     assert(d2 < 0, format("after a face-array swap corner float %d is stale", d2));
 }
 
+unittest { // stale cache: a grown vertex array (same layout) recomputes all
+    auto m = hingedPatch();
+    Session s;
+    s.step(m, smoothingCosine());
+    // An unreferenced vertex appended: nothing else moved. The cache's
+    // position copy is one short, so only a full pass may read the new length.
+    m.vertices ~= Vec3(9, 9, 9);
+    assert(s.step(m, smoothingCosine()) && s.cache.lastFull,
+        "a vertex-count change must take the full pass");
+    const want = fullCorners(m, smoothingCosine());
+    assert(firstDiff(s.corner[0 .. want.length], want) < 0, "after a vertex-count change the corners are stale");
+}
+
 unittest { // the switch to the full pass: above a quarter of the vertices moved
     // 30 vertices: 7 moved (28 <= 30) stays incremental, 8 (32 > 30) goes full.
     foreach (moved; [7, 8, 30]) {

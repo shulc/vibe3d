@@ -103,6 +103,10 @@ unittest { // a GL-name reset (destroy) then re-upload: the mirror is rebuilt wh
     assert(res.validatePrepared(t, 7, 11, ready), "rig: destroy validation refused");
     res.installPrepared(ready);
     assert(gpu.faceLayoutGen == 0, "rig: the destroy did not reset the layout generation");
+    // The destroy drops the incremental cache with the mirror it describes:
+    // generation 1 comes back on re-upload, so a kept cache would pass its
+    // stamp and patch a few faces into an empty mirror.
+    assert(!gpu.lastFaceRefresh.cached, "a destroy must drop the incremental smooth cache");
     // … then the same mesh, one vertex moved, uploads again: the new layout
     // reuses generation 1, so only a reset cache keeps the mirror whole.
     move(m, [21u], Vec3(0, 0.2f, 0));
