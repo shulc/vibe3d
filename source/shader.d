@@ -980,7 +980,7 @@ class LitShader {
     }
 
     // The setters are module-private: outside this module a face pass cannot
-    // hand-set a plan uniform (the compiler is the fence, task 9040). Each
+    // hand-set a plan uniform (the compiler is the fence). Each
     // binds the program because uniforms are program state.
     private void setDim(float dim) {
         glUseProgram(program);
@@ -1035,7 +1035,7 @@ void drawLitPreview(LitShader litShader, const ref Shader shader,
         // Task 0589: this site seeds every uniform it depends on BY HAND rather
         // than going through `LitShader.useProgram`, so the plan uniforms a
         // scene pass may have switched off are seeded here too, through the
-        // plan seam's preview subset (task 9040) — otherwise a create-tool
+        // plan seam's preview subset — otherwise a create-tool
         // preview drawn after an unlit scene pass would inherit the flat fill.
         // The vertex-attribute NEUTRAL PARK of `useProgram` is not repeated: it
         // is context state, and this path never reads `vWeightColor` (1090).

@@ -9,7 +9,7 @@
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
 source-files 582
-task-citation-lines 5256
+task-citation-lines 5255
 citing-files 450
 long-comment-runs 269
 files-with-long-runs 144
@@ -332,7 +332,7 @@ allow source/selection_projection.d 5
 allow source/selftest_fault.d 3
 allow source/seltype.d 3
 allow source/session_owner.d 2
-allow source/shader.d 16
+allow source/shader.d 15
 allow source/shortcuts.d 3
 allow source/snap.d 68
 allow source/snap_election.d 10
