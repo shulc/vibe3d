@@ -2031,3 +2031,22 @@ unittest { // S2b M-PR: a panel write in a re-begun post mode is its own operati
         format("S2b M-PR: the press after the write is %s / operation %s (write %s), expected a restart",
                haul.stepOrigin(), haul.stepOperation(), write.stepOperation()));
 }
+
+unittest { // S2b P1: a panel write inside the open operation refires it (no new operation)
+    Mesh m = makeCube();
+    auto h = new CommandHistory();
+    auto t = new PressFlagTool;
+    t.m = &m; t.h = h; t.view = new View(0, 0, 1, 1);
+    t.basis = MeshSnapshot.capture(m);
+    Tool active = t;
+    auto s = new EditSession(() => active, h, () { active = null; });
+    s.noteArm("t.press", 1, false);
+    s2bHaul(s, &t.pressBegins, &t.pressEnds, &m);
+    const haul = s2bTopRow(h);
+    s2bAttr(s, t, "v", () { t.v = 0.5f; }, ParameterChangeSource.InteractiveValue);
+    const write = s2bTopRow(h);
+    assert(write !is haul && write.stepOrigin() == StepOrigin.refire
+           && write.stepOperation() == haul.stepOperation(),
+        format("S2b P1: the panel write is %s of operation %s, expected a refire of the haul's %s",
+               write.stepOrigin(), write.stepOperation(), haul.stepOperation()));
+}

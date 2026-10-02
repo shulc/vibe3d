@@ -118,18 +118,21 @@ private void mirrorArmedHaulThenScript(string ctx) {
             "mirror gate: a scripted write that ends the operation rebuilt Mirror's preview");
 }
 
-unittest { // Mirror: a scripted write that ends the operation leaves the mesh
+/// Off under a cell filter / a dump, unless the filter names this check.
+private bool skipFor(string name) {
     import std.process : environment;
-    if (environment.get("VIBE3D_CELL", "").length || environment.get("VIBE3D_TOPO_REDO_DUMP", "").length)
-        return;
+    const only = environment.get("VIBE3D_CELL", "");
+    return (only.length && only != name) || environment.get("VIBE3D_TOPO_REDO_DUMP", "").length;
+}
+
+unittest { // Mirror: a scripted write that ends the operation leaves the mesh
+    if (skipFor("mirror_gate_script")) return;
     mirrorArmedHaulThenScript("mirror gate: script");
     cmdOkPublic("tool.set mesh.mirrorTool off");
 }
 
 unittest { // Mirror: the attribute-only row of a panel write leaves the mesh
-    import std.process : environment;
-    if (environment.get("VIBE3D_CELL", "").length || environment.get("VIBE3D_TOPO_REDO_DUMP", "").length)
-        return;
+    if (skipFor("mirror_gate_panel")) return;
     mirrorArmedHaulThenScript("mirror gate: panel");
     const planes = mirrorPlanes();
     const depth = undoDepth();

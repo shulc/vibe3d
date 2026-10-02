@@ -147,7 +147,9 @@ static foreach (id; kCells) {
 unittest {
     import http_client : getJson;
     import std.process : environment;
-    if (environment.get("VIBE3D_CELL", "").length || environment.get("VIBE3D_TOPO_REDO_DUMP", "").length)
+    const only = environment.get("VIBE3D_CELL", "");
+    if ((only.length && only != "n2_restart_operation")
+        || environment.get("VIBE3D_TOPO_REDO_DUMP", "").length)
         return;
     JSONValue cell;
     foreach (c; parseJSON(kFixture)["cells"].array)
