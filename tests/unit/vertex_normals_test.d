@@ -131,25 +131,34 @@ unittest { // a pole of a shallow irregular fan: the corner is the normalized UN
 }
 
 unittest { // a degenerate face contributes nothing; its own corners take the flat fallback
-    // The hinge is turned so its faces sit near +Y: the flat fallback (0,1,0)
-    // is then INSIDE the smoothing angle, so a degenerate face that was not
-    // excluded would bend the corner.
+    // An ASYMMETRIC hinge near +Y (normals 25° and -5° from +Y, dihedral
+    // θ - 10): the flat fallback (0,1,0) of a degenerate face is inside the
+    // smoothing angle of both faces and NOT along their bisector, so a
+    // degenerate face that was counted would bend the corner.
+    immutable double pa = 25.0 * PI / 180, pb = -5.0 * PI / 180;
+    assert(abs((25.0 - -5.0) - (kSmoothingAngleDeg - 10.0)) < 1e-9, "degenerate premise: dihedral is not θ-10");
     Mesh m;
-    immutable double h = (kSmoothingAngleDeg - 10.0) / 2 * PI / 180;
+    // Face A holds the X axis and direction (0,-sin pa, cos pa); face B the
+    // opposite side, direction -(0,-sin pb, cos pb).
     m.vertices = [Vec3(-1, 0, 0), Vec3(1, 0, 0),
-                  Vec3(1, cast(float)sin(h), cast(float)-cos(h)),
-                  Vec3(-1, cast(float)sin(h), cast(float)-cos(h)),
-                  Vec3(1, cast(float)sin(h), cast(float)cos(h)),
-                  Vec3(-1, cast(float)sin(h), cast(float)cos(h))];
-    m.faces ~= [0u, 3, 2, 1];
-    m.faces ~= [1u, 4, 5, 0];
+                  Vec3(1, cast(float)-sin(pa), cast(float)cos(pa)),
+                  Vec3(-1, cast(float)-sin(pa), cast(float)cos(pa)),
+                  Vec3(1, cast(float)sin(pb), cast(float)-cos(pb)),
+                  Vec3(-1, cast(float)sin(pb), cast(float)-cos(pb))];
+    m.faces ~= [0u, 1, 2, 3];
+    m.faces ~= [1u, 0, 5, 4];
     foreach (f; 0 .. 2)
         if (faceN(m, f).y < 0) { import std.algorithm : reverse; m.faces[f].reverse(); }
     foreach (f; 0 .. 2)
         assert(faceN(m, f).y > cos(kSmoothingAngleDeg * PI / 180),
-            format("degenerate premise: face %d normal %s is not near +Y", f, faceN(m, f)));
+            format("degenerate premise: face %d normal %s is not within θ of +Y", f, faceN(m, f)));
     FaceAdjacency adj0;
     auto ref_ = corners(m, adj0);
+    // Discrimination floor: counting (0,1,0) would move the corner visibly.
+    immutable Vec3 a = faceN(m, 0), b = faceN(m, 1);
+    immutable Vec3 counted = nrm(Vec3(a.x + b.x, a.y + b.y + 1, a.z + b.z));
+    assert(!near(counted, cornerOf(m, ref_, 0, 0), 1e-3f),
+        "degenerate floor: counting the fallback normal would not move the corner");
     m.vertices ~= Vec3(-2, 0, 0);           // collinear with vertices 0 and 1
     m.faces ~= [0u, 1, 6];
     FaceAdjacency adj;

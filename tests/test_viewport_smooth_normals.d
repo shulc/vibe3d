@@ -191,7 +191,7 @@ V3 liveEye() { return viewportFromCameraMatrices().eye; }
 /// above / below the edge), the predicted FLAT step and the predicted SMOOTH
 /// step bound (the flat step scaled by 4 px over the face height in px — the
 /// smooth stream is continuous across the edge, so only its gradient remains).
-struct SphereRig { int[2][] pts; double flatStep, smoothStep; }
+struct SphereRig { int[2][] pts; double flatStep, smoothStep, smoothLevel; }
 
 SphereRig sphereRig(void delegate() afterLoad = null, int cell = -1) {
     import std.math : PI, cos, sin;
@@ -229,6 +229,13 @@ SphereRig sphereRig(void delegate() afterLoad = null, int cell = -1) {
     immutable V3 eye = liveEye();
     r.flatStep = abs(litLevel(faceNormal(v, f[up]), mid, eye) - litLevel(faceNormal(v, f[dn]), mid, eye));
     r.smoothStep = r.flatStep * 4.0 / facePx;
+    // At the band centre the interpolated smooth normal is the two faces'
+    // bisector (the edge's two vertex normals are mirror images about it).
+    immutable V3 nu = faceNormal(v, f[up]), nd = faceNormal(v, f[dn]);
+    r.smoothLevel = litLevel(unit(V3(nu.x + nd.x, nu.y + nd.y, nu.z + nd.z)), mid, eye);
+    // Floor: the smooth level is far from an ambient-only (normal-less) surface.
+    assert(abs(r.smoothLevel - 255.0 * 0.8 * 0.2) >= 10,
+        format("rig: the smooth level %.2f cannot be told from ambient only", r.smoothLevel));
     // Discrimination floor: the two predictions are far apart.
     assert(r.flatStep - 2 > r.smoothStep + 2 + 6,
         format("rig: flat step %.2f vs smooth bound %.2f cannot discriminate", r.flatStep, r.smoothStep));
@@ -246,6 +253,10 @@ unittest {
     auto on = probeR(0, rig.pts, renders);
     assert(renders, "(i) cell 0 must be rendering");
     immutable double dOn = abs(on[0] - on[1]);
+    foreach (k; 0 .. 2)
+        assert(abs(on[k] - rig.smoothLevel) <= 3,
+            format("(i) smooth ON: pixel %d reads %d, the smooth stream predicts %.2f (+-3)",
+                   k, on[k], rig.smoothLevel));
     writefln("[smooth (i)] step %.0f (pixels %s), predicted smooth bound %.2f, flat %.2f",
              dOn, on, rig.smoothStep, rig.flatStep);
     assert(dOn <= rig.smoothStep + 2,
@@ -581,4 +592,78 @@ unittest {
     assert(bad["status"].str == "error", "(viii) slot 2 must be refused: " ~ bad.toString);
     cmd(`{"id":"viewport.smooth","params":{"_positional":["on"],"slot":1}}`);
     cmd(`{"id":"viewport.backdropStyle","params":{"_positional":["same"]}}`);
+}
+
+// ---------------------------------------------------------------------------
+// (ix) the positions refresh (`GpuMesh.refreshPositions`, the subpatch
+// preview's CPU path while the GPU fan-out is parked) recomputes the smooth
+// stream: mid-drag it equals what a full rebuild writes at the same positions.
+// ---------------------------------------------------------------------------
+unittest {
+    if (!cellOn("ix")) return;
+    V3[] v; uint[][] f;
+    uvSphere(16, 8, v, f);
+    loadMesh(v, f);
+    cmd("tool.pipe.attr snap enabled false");
+    cmd("tool.pipe.attr symmetry enabled false");
+    setCamera(0, 0.3, 4.0);
+    cmd("select.typeFrom polygon");
+    cmd(`{"id":"mesh.subpatch_toggle"}`);
+    waitSettled();
+    select("vertices", [cast(int)(1 + 3 * 16)]);
+    cmd("tool.set move");
+    frameFence(null, 2);
+    double hx, hy;
+    bool found;
+    fetchHandlePart(0, hx, hy, found);
+    assert(found, "(ix) gizmo part 0 missing");
+    auto cam = fetchCamera();
+    immutable int x0 = cast(int)(hx + 0.5), y0 = cast(int)(hy + 0.5);
+    playAndWait(buildDragDownLog(cam.vpX, cam.vpY, cam.width, cam.height, x0, y0));
+    playAndWait(buildDragMotionLog(cam.vpX, cam.vpY, cam.width, cam.height, x0, y0, x0 + 40, y0, 6));
+    // Path control: the positions refresh wrote this payload.
+    immutable string writer = getJson("/api/subpatch/preview")["displayWriter"].str;
+    assert(writer == "positionRefresh",
+        "(ix) path control: the mid-drag writer is " ~ writer ~ ", not the positions refresh");
+    auto mid = getJson("/api/gpu/face-vbo?normals=1");
+    playAndWait(buildDragUpLog(cam.vpX, cam.vpY, cam.width, cam.height, x0 + 40, y0));
+    cmd("tool.set move off");
+    waitSettled();
+    // A full rebuild of the preview at the released positions.
+    select("polygons", [cast(int)(f.length - 1)]);
+    cmd(`{"id":"mesh.hide"}`);
+    waitSettled();
+    cmd(`{"id":"mesh.unhideAll"}`);
+    waitSettled();
+    frameFence(null, 2);
+    immutable string fullWriter = getJson("/api/subpatch/preview")["displayWriter"].str;
+    assert(fullWriter == "fullUpload", "(ix) the rebuild was not a full upload: " ~ fullWriter);
+    auto full = getJson("/api/gpu/face-vbo?normals=1");
+    immutable size_t n = cast(size_t)mid["faceVertCount"].integer;
+    assert(n > 0 && cast(size_t)full["faceVertCount"].integer == n
+        && mid["smoothNormals"].array.length == n && full["smoothNormals"].array.length == n,
+        format("(ix) floor: faceVertCount %d mid-drag, %d rebuilt", n, full["faceVertCount"].integer));
+    size_t moved;
+    foreach (i; 0 .. n) {
+        immutable double[3] pm = triple(mid["positions"].array[i]), pf = triple(full["positions"].array[i]);
+        assert(near3(pm, pf, 1e-4), format("(ix) premise: corner %d position %s mid-drag vs %s rebuilt", i, pm, pf));
+    }
+    foreach (i; 0 .. n) {
+        immutable double[3] sm = triple(mid["smoothNormals"].array[i]), sf = triple(full["smoothNormals"].array[i]);
+        assert(near3(sm, sf, 1e-4),
+            format("(ix) corner %d: smooth normal %s written by the positions refresh, %s by a full "
+                 ~ "rebuild", i, sm, sf));
+        if (!near3(sm, triple(mid["flatNormals"].array[i]), 1e-4)) ++moved;
+    }
+    assert(moved > n / 2, format("(ix) floor: only %d of %d corners are smooth != flat", moved, n));
+    writefln("[smooth (ix)] %d preview corners agree refresh vs rebuilt (%d smooth != flat)", n, moved);
+}
+
+void waitSettled() {
+    foreach (_; 0 .. 1500) {
+        auto p = getJson("/api/subpatch/preview");
+        if (p["pending"].type != JSONType.true_) { frameFence(null, 2); return; }
+        Thread.sleep(20.msecs);
+    }
+    assert(false, "subpatch preview did not settle");
 }
