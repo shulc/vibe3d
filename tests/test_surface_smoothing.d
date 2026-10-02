@@ -828,6 +828,19 @@ unittest {
     retagAll(3);
     waitPreviewSettled();
     expectRedFlat("(vi-retag)");
+    // A SUBSET re-tag (cage faces 0 and 3 -> slot 1, on @25): each preview face
+    // takes its OWN cage face's tag (`trace.faceOrigin`), per the rebake.
+    cmd("select.typeFrom polygon");
+    select("polygons", [0, 3]);
+    runCmd("mesh.setMaterial", `{"materialId":1}`);
+    waitPreviewSettled();
+    auto live = getJson("/api/gpu/face-vbo?normals=1");
+    immutable size_t n = smoothedCorners(live);
+    writefln("[(vi-retag) subset] smoothed corners %d", n);
+    assert(n >= 100 && n < kPreviewCorners / 2,
+        format("(vi-retag) subset: %d smoothed corners — two of six faces on a smoothing slot", n));
+    expectRebakeEqual("(vi-retag) subset", live);
+    assert(n == 910, format("(vi-retag) subset: %d smoothed corners, measured 910 (2026-10-03)", n));
 }
 
 // (vi) after the re-tag, a drag: the GPU fan-out must read the re-uploaded slot
