@@ -2217,21 +2217,29 @@ unittest { // S2b N4: a redo inside the same session keeps the operation open
 }
 
 unittest { // S2b N2: the reopened operation is the undone row's, not the session's last
+    // Two restarts, so the undone row's operation (M1's) is neither the session's last (M2's)
+    // nor the top row's (g1's). S7 (law 6): a restart folds the operation below it, so the
+    // former rig (g1, g2, M; undo twice) took g1 and g2 as one group (probe edit, form item 10).
     auto r = s2bRig();
     s2bHaul(r);
     const g1 = s2bTopRow(r.h);
-    s2bHaul(r);
-    r.t.middleBegins();
-    r.m.vertices[2].x += 0.25f;
-    r.t.pressEnds();
-    const mid = s2bTopRow(r.h);
-    assert(mid.stepOrigin() == StepOrigin.restart && mid.stepOperation() != g1.stepOperation(),
-        "S2b N2 rig: the middle press did not open its own operation");
+    foreach (k; 0 .. 2) {
+        r.t.middleBegins();
+        r.m.vertices[2].x += 0.25f;
+        r.t.pressEnds();
+    }
+    const m2 = s2bTopRow(r.h);
+    assert(r.h.undoEntries().length == 3, "S2b N2 rig: the two restarts are not rows of their own");
+    const m1 = cast(const imported!"commands.mesh.session_edit".MeshSessionEdit)
+        r.h.undoEntries()[1].cmd;
+    assert(m1.stepOrigin() == StepOrigin.restart && m2.stepOrigin() == StepOrigin.restart
+           && m1.stepOperation() != g1.stepOperation() && m2.stepOperation() != m1.stepOperation(),
+        "S2b N2 rig: the middle presses did not open operations of their own");
     assert(r.s.navigate(true) && r.s.navigate(true), "S2b N2 rig: the undos did not step");
     s2bHaul(r);
     const g3 = s2bTopRow(r.h);
-    assert(g3.stepOrigin() == StepOrigin.refire && g3.stepOperation() == g1.stepOperation(),
-        format("S2b N2: the press after undoing the restart and g2 refires operation %s, expected "
-               ~ "g1's %s (the restart's is %s)", g3.stepOperation(), g1.stepOperation(),
-               mid.stepOperation()));
+    assert(g3.stepOrigin() == StepOrigin.refire && g3.stepOperation() == m1.stepOperation(),
+        format("S2b N2: the press after undoing both restarts refires operation %s, expected the "
+               ~ "undone M1's %s (the session's last is %s, the top row's %s)", g3.stepOperation(),
+               m1.stepOperation(), m2.stepOperation(), g1.stepOperation()));
 }

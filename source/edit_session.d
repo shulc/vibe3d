@@ -1202,11 +1202,11 @@ private struct ToolSession {
         // the active session's and the row below carries the same token.
         const bool pair = recordCarriesActivation_();
         // M-G (wave plan 8640 S7a, [A2-3]): the parameter rows folded into the
-        // activation pop with it, through this same tail. Exclusive with the
-        // pair: the pair's record is a press row, never folded.
-        const size_t run = absorbedRunAbove_();
-        assert(!(pair && run), "session undo: a carried record and a folded run on one activation");
-        const size_t extra = pair ? 1 : run;
+        // activation pop with it, through this same tail; a pair's group (law 6)
+        // pops its folded run, its base and the activation below the base (the
+        // pair is read on the base, never on an activation: exclusive with M-G).
+        const size_t run = pair ? foldedRunAbove_() : absorbedRunAbove_();
+        const size_t extra = pair ? run + 1 : run;
         Rebindable!(const Command) last = undoEntryAt_(extra);
         // A lifecycle row may restore the topology tool that preceded it.
         // Resolve the raw image by that predecessor's identity/session, never
@@ -1431,13 +1431,12 @@ private struct ToolSession {
         if (topologyPending_ && reporting_(t) &&
             t.sessionPolicy().historyTopologySteps)
             stepEnds(t, false);
-        // A switch or a drop closes the open step (L38/L45; a drop by the
-        // switch rule, gap t): the fold walk, before the lifecycle row lands.
+        // A switch or a drop ends the operation (law 6, C1/C3; the pen's open
+        // step, L38/L45, gap t): the fold, before the lifecycle row lands.
+        const model = reporting_(t) && capturedTopologyModel(t.sessionPolicy());
         if ((r == CloseReason.switch_ || r == CloseReason.drop) && reporting_(t)
-            && t.sessionPolicy().foldsParamRowsIntoBlock) {
-            foldOpenRows_(null);
-            openBlock_ = null;
-        }
+            && (model || t.sessionPolicy().foldsParamRowsIntoBlock))
+            endPendingOperation_(null, true, model);
         if (r != CloseReason.command && r != CloseReason.enter) {
             // The door commits (or discards, or has nothing left); the
             // session only accounts for the row it may write, and the
@@ -1453,14 +1452,11 @@ private struct ToolSession {
             if (cc == CommandClose.none
                 || (door == CommandDoor.script && cc != CommandClose.allDoors))
                 return CloseOutcome(false, false);
-            // L57 (capture C5; plan amendment A17): a recording command
-            // reaching this tool's close ends the post-mode session, so it
-            // closes the open step by the switch rule (L38) — selection and
-            // model commands alike — and the tool stays armed.
-            if (reporting_(t) && t.sessionPolicy().foldsParamRowsIntoBlock) {
-                foldOpenRows_(null);
-                openBlock_ = null;
-            }
+            // A recording command reaching this tool's close ends the operation
+            // by the switch rule (law 6, C2; the pen's L57, capture C5) —
+            // selection and model commands alike — and the tool stays.
+            if (reporting_(t) && (model || t.sessionPolicy().foldsParamRowsIntoBlock))
+                endPendingOperation_(null, true, model);
             // (3) an idle covered tool stays armed and is not called (R20 law).
             if (cc == CommandClose.uiDoor && !t.hasUncommittedEdit())
                 return CloseOutcome(false, true);
@@ -1646,8 +1642,7 @@ private struct ToolSession {
     // to the activation/command-close wave). The next press opens anew.
     void scriptedWriteEndsOperation(Tool t) {
         if (reporting_(t) && capturedTopologyModel(t.sessionPolicy()) && postmodeArmed_) {
-            operationOpen_ = false;
-            postmodeArmed_ = false;
+            endPendingOperation_(null, true, true);
             rebaseOnCurrent_(t, false);
         }
     }
@@ -1784,6 +1779,8 @@ private struct ToolSession {
                 if (origin != StepOrigin.unclassified && !prWrite)
                     operationOpen_ = true;
                 history_.markEntrySession(cmd, token_);
+                // E4/C4: a restart ends the operation below it (law 6)
+                if (origin == StepOrigin.restart) endPendingOperation_(cmd, false, true);
                 noteFoldRow_(t, cmd);
                 rememberTopologyAttrs_(attrs);
                 lastAfter_ = after;
@@ -2102,10 +2099,10 @@ private struct ToolSession {
             const size_t run = foldedRunAbove_();
             if (run && cast(const ToolActivationCommand)undoEntryAt_(run) !is null)
                 return false;
+            // M-U1: a group whose base carries the activation pops it too.
             const pair = recordCarriesActivation_();
-            assert(!(pair && run), "session undo: a carried record and a folded run on one row");
             Rebindable!(const MeshSessionEdit) popped = cmd;
-            auto drop = pair ? dropImage_(1) : DropImage.init;
+            auto drop = pair ? dropImage_(run + 1) : DropImage.init;
             if (!history_.undo()) return false;
             storeDropImage_(drop);
             foreach (_; 0 .. run) {
@@ -2146,7 +2143,7 @@ private struct ToolSession {
         // The rows folded above this base come back with it, as one step;
         // the attributes are the LAST one's (C3-L2r2 G-after, through M-H).
         Rebindable!(const MeshSessionEdit) cmd = head;
-        for (auto next = history_.redoEntries(); !pair && next.length &&
+        for (auto next = history_.redoEntries(); next.length &&
                 (next[0].flags & HistoryFlags.JoinsBelow) &&
                 next[0].cmd.sessionToken() == token_; next = history_.redoEntries()) {
             auto row = cast(const MeshSessionEdit)next[0].cmd;
@@ -2163,7 +2160,7 @@ private struct ToolSession {
                 && !boundToLive_(cmd.get, current);
             auto img = orphan ? current.captureAttrImage()
                 : navigableAttrs_(current, cmd.get,
-                    pair ? seedRecreated_(act, cmd.get) : cmd.stepAfterAttrs());
+                    pair ? seedRecreated_(act, head) : cmd.stepAfterAttrs());
             (cast(TopologyStepClient)current).restoreTopologyStep(
                 img, cmd.stepAfterBasis());
             if (!orphan) rememberTopologyAttrs_(img);
@@ -2283,7 +2280,7 @@ private struct ToolSession {
     private void noteFoldRow_(Tool t, MeshSessionEdit cmd) {
         if (!t.sessionPolicy().foldsParamRowsIntoBlock) return;
         if (cmd.stepOpenedByPress()) {
-            foldOpenRows_(cmd);
+            endPendingOperation_(cmd, false, false);
             openBlock_ = cmd;
             return;
         }
@@ -2293,6 +2290,48 @@ private struct ToolSession {
         }
         if (!foldRow_(openBlock_.get, token_))
             history_.markEntryFold(cmd, HistoryFlags.PreNavOpen);
+    }
+
+    // The end of an operation (law 6, model doc §3 «Закрытие»): a switch, a
+    // drop, a recording command, a restart, a scripted write (M-PS). `model`:
+    // the rows of the operation of this session's top step fold into one undo
+    // step; else the pen's open step (§6.1, its own captured walk). Ends the
+    // post mode when the close does (`endsPostMode`: not a restart, E4).
+    private void endPendingOperation_(const Command trigger, bool endsPostMode, bool model) {
+        if (!model) {
+            foldOpenRows_(trigger);
+            openBlock_ = null;
+            return;
+        }
+        foldOperationRows_(trigger);
+        if (endsPostMode) {
+            postmodeArmed_ = false;
+            operationOpen_ = false;
+        }
+    }
+
+    // Law 6: walk down from below `trigger` (from the top when null) over this
+    // session's topology steps of the operation of the first of them; all but
+    // the lowest are marked `JoinsBelow`. A row of another operation, token or
+    // class (an attribute-only row, an activation) stops the walk.
+    private void foldOperationRows_(const Command trigger) {
+        const ue = history_.undoEntries();
+        size_t hi = ue.length;
+        if (trigger !is null) {
+            if (hi == 0 || ue[hi - 1].cmd !is trigger) return;
+            --hi;
+        }
+        ulong op;
+        size_t lo = hi;
+        while (lo > 0) {
+            auto row = cast(const MeshSessionEdit) ue[lo - 1].cmd;
+            if (row is null || !row.isTopologyStep() || row.sessionToken() != token_) break;
+            if (lo == hi) op = row.stepOperation();
+            else if (row.stepOperation() != op) break;
+            --lo;
+        }
+        foreach (k; lo + 1 .. hi)
+            history_.markEntryFold(ue[k].cmd, HistoryFlags.JoinsBelow);
     }
 
     // Close the open step: walk down from below `trigger` (from the top when
@@ -2492,17 +2531,20 @@ private struct ToolSession {
         return true;
     }
 
-    // Whether the undo top is the record that closed the ACTIVE session's
-    // first operation, sitting on the activation row it carries (gap 218).
+    // Whether the undo top's group — its folded run (law 6) and the base below
+    // it — is the record that closed the ACTIVE session's first operation,
+    // sitting on the activation row it carries (gap 218; M-U1: the pair is read
+    // on the group's BASE).
     private bool recordCarriesActivation_() {
         import commands.tool.lifecycle : ToolActivationCommand;
         const ue = history_.undoEntries();
-        if (ue.length < 2) return false;
-        const top = ue[$ - 1].cmd;
+        const n = foldedRunAbove_();
+        if (ue.length < n + 2) return false;
+        const top = ue[$ - 1 - n].cmd;
         const tok = top.sessionToken();
         if (tok == 0 || tok != currentToken()) return false;
         if (cast(const ToolActivationCommand) top !is null) return false;
-        auto act = cast(const ToolActivationCommand) ue[$ - 2].cmd;
+        auto act = cast(const ToolActivationCommand) ue[$ - 2 - n].cmd;
         return act !is null && !act.dormantTopology() &&
             act.carriesFirstRecord() && act.sessionToken() == tok;
     }

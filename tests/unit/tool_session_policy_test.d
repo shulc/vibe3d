@@ -753,11 +753,11 @@ unittest { // (4b)
                   ~ "one call in each of ToolSession.undo / ToolSession.redo",
                   identSites(es, "settleAfterNavigation_", false)));
     assert(identSites(es, "postmodeArmed_", true)
-           == ["<decl>:1", "ToolSession.noteArm:1", "ToolSession.notePointerDown:1",
-               "ToolSession.scriptedWriteEndsOperation:1", "ToolSession.settleAfterNavigation_:1"],
+           == ["<decl>:1", "ToolSession.endPendingOperation_:1", "ToolSession.noteArm:1",
+               "ToolSession.notePointerDown:1", "ToolSession.settleAfterNavigation_:1"],
            format("S2a needle: postmodeArmed_ is written at %s, expected the field initializer "
-                  ~ "and noteArm, notePointerDown, settleAfterNavigation_ once each, and (S2b, "
-                  ~ "M-PS) scriptedWriteEndsOperation",
+                  ~ "and noteArm, notePointerDown, settleAfterNavigation_ once each, and (S7, "
+                  ~ "law 6; M-PS calls it) endPendingOperation_",
                   identSites(es, "postmodeArmed_", true)));
     assert(identSites(es, "ownOpenerOnTop_", false)
            == ["<decl>:1", "ToolSession.settleAfterNavigation_:1"],
@@ -900,12 +900,11 @@ unittest { // (4c)
         foreach (site; identSites(es, f, true)) needle ~= f ~ "=" ~ site;
     sort(needle);
     enum string[] kNeedle = [
-        "operationOpen_=<decl>:1", "operationOpen_=ToolSession.noteArm:1",
-        "operationOpen_=ToolSession.scriptedWriteEndsOperation:1",
+        "operationOpen_=<decl>:1", "operationOpen_=ToolSession.endPendingOperation_:1",
+        "operationOpen_=ToolSession.noteArm:1",
         "operationOpen_=ToolSession.settleAfterNavigation_:1", "operationOpen_=ToolSession.stepEnds:1",
-        "postmodeArmed_=<decl>:1", "postmodeArmed_=ToolSession.noteArm:1",
-        "postmodeArmed_=ToolSession.notePointerDown:1",
-        "postmodeArmed_=ToolSession.scriptedWriteEndsOperation:1",
+        "postmodeArmed_=<decl>:1", "postmodeArmed_=ToolSession.endPendingOperation_:1",
+        "postmodeArmed_=ToolSession.noteArm:1", "postmodeArmed_=ToolSession.notePointerDown:1",
         "postmodeArmed_=ToolSession.settleAfterNavigation_:1",
         "raw:source/create_tool_registration.d:0/1/0", "raw:source/document.d:0/1/0",
         "raw:source/edit_tool_registration.d:0/1/0", "raw:source/http_json.d:2/0/0",
@@ -959,8 +958,10 @@ unittest { // (4c)
         assert(depth == 1, format("S2b needle: noteArm's operationOpen_ write sits %s blocks deep "
                                   ~ "(a condition on UndoState.Suspend would enclose it)", depth - 1));
     }
-    // (d) M-PS gates on the armed post mode.
-    assert(words(guardOf(psw, cast(size_t) psw.indexOf("operationOpen_ =")), "postmodeArmed_") == 1,
+    // (d) M-PS gates on the armed post mode (S7: its end of the operation is the
+    // law-6 helper's call — probe edit, form item 10).
+    assert(psw.indexOf("endPendingOperation_(") >= 0
+           && words(guardOf(psw, cast(size_t) psw.indexOf("endPendingOperation_(")), "postmodeArmed_") == 1,
            "S2b needle: scriptedWriteEndsOperation no longer gates on postmodeArmed_");
     // (e) close / RMB never write the operation (model §1.3); their bodies exist.
     foreach (marker; ["private void endOperation_()", "CloseOutcome close(CloseReason r",
@@ -1192,6 +1193,59 @@ unittest { // (4e)
            format("S6 structural: the extrudes name the tool's dormant field %s / %s times, "
                   ~ "measured 3 (declaration, setter, press extent) / 0",
                   words(poly, "topologyDormant"), words(edge, "topologyDormant")));
+}
+
+// ---------------------------------------------------------------------------
+// (4f) Task 9120 (topology-redo wave S7, law 6; model doc §3 «Закрытие»): the end of an
+// operation — a switch, a drop, a recording command, a restart, a scripted write — is ONE
+// helper, `endPendingOperation_`, folding the rows of the operation of the session's top
+// step into one undo step (`foldOperationRows_`, keyed on the row's operation), or — for
+// the pen, outside the model — its own open-step walk (`foldOpenRows_`). Absorbs the
+// StepOwner wave's S2 (`finishOpenBlock_`) and closes 8793 (one call site of the pen's
+// walk). Order (form item 2): floor -> needle -> structural. The raw bypass spellings are
+// the (4c) needle's keys (held, not re-introduced).
+// ---------------------------------------------------------------------------
+unittest { // (4f)
+    import tests.unit.census_symbols : blankUnittestBodies;
+    auto es = blankUnittestBodies(blankNonCode(readText("source/edit_session.d")));
+    const ts = bodyAt(es, "private struct ToolSession");
+    // FLOOR (form item 4): the producer and consumer bodies the needles read exist.
+    foreach (m; ["private void endPendingOperation_(const Command trigger, bool endsPostMode, bool model)",
+                 "private void foldOperationRows_(const Command trigger)",
+                 "private void foldOpenRows_(const Command trigger)",
+                 "CloseOutcome close(CloseReason r", "private void noteFoldRow_(Tool t, MeshSessionEdit cmd)",
+                 "void stepEnds(Tool t, bool ifChanged)", "void scriptedWriteEndsOperation(Tool t)"])
+        assert(squeeze(bodyAt(ts, m)).length > 2, "S7 floor: the session body " ~ m ~ " is empty");
+    // NEEDLES, by identifier (a method address and both lambda forms count). Polarity:
+    // stationary allowed sets, true after S7; false before (the pen's walk had three
+    // callers — close twice, noteFoldRow_ — and the other two names did not exist).
+    assert(identSites(es, "foldOpenRows_", false) == ["<decl>:1", "ToolSession.endPendingOperation_:1"],
+           format("S7 needle: the pen's open-step walk is called at %s, expected only by "
+                  ~ "endPendingOperation_", identSites(es, "foldOpenRows_", false)));
+    assert(identSites(es, "foldOperationRows_", false)
+           == ["<decl>:1", "ToolSession.endPendingOperation_:1"],
+           format("S7 needle: the operation fold is called at %s, expected only by "
+                  ~ "endPendingOperation_", identSites(es, "foldOperationRows_", false)));
+    assert(identSites(es, "endPendingOperation_", false)
+           == ["<decl>:1", "ToolSession.close:2", "ToolSession.noteFoldRow_:1",
+               "ToolSession.scriptedWriteEndsOperation:1", "ToolSession.stepEnds:1"],
+           format("S7 needle: the end of an operation is called at %s, expected close (switch/"
+                  ~ "drop and command), the pen's press, a restart and a scripted write",
+                  identSites(es, "endPendingOperation_", false)));
+    // STRUCTURAL: the fold is keyed on the row's operation, never its origin; a restart
+    // folds below its own row and keeps the post mode; the pen's press keeps its walk.
+    const fold = bodyAt(ts, "private void foldOperationRows_(const Command trigger)");
+    assert(words(fold, "stepOperation") == 2 && words(fold, "stepOrigin") == 0
+           && words(fold, "JoinsBelow") == 1,
+           "S7 structural: foldOperationRows_ does not group by the row's operation: " ~ squeeze(fold));
+    assert(squeeze(bodyAt(ts, "void stepEnds(Tool t, bool ifChanged)"))
+              .canFind("if(origin==StepOrigin.restart)endPendingOperation_(cmd,false,true);")
+           && squeeze(bodyAt(ts, "private void noteFoldRow_(Tool t, MeshSessionEdit cmd)"))
+              .canFind("endPendingOperation_(cmd,false,false);openBlock_=cmd;")
+           && squeeze(bodyAt(ts, "void scriptedWriteEndsOperation(Tool t)"))
+              .canFind("endPendingOperation_(null,true,true);"),
+           "S7 structural: a restart, the pen's press or the scripted write calls the helper "
+           ~ "with other arguments");
 }
 
 // Fence (form item 1): the per-tool dormant flag is gone (S6, task 9080).

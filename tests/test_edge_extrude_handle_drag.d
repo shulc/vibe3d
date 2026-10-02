@@ -282,12 +282,12 @@ unittest { // width, then a horizontal haul on the extrude arrow, and the tool b
     navigate(true);
     assert(planes() == paramImage && undoLen() == u0 + 4,
         "outside z1 did not remove the Move activation alone");
-    navigate(true);
-    assert(planes() == middleImage && undoLen() == u0 + 3,
-        "outside z2 did not remove the independent Width row");
+    // Law 6 (task 9120; CAP fold_restart_eextrude s06_Z, P-in param_between_ebevel_ui
+    // s06_Z): the switch folded the Middle operation with the Width row that refired it,
+    // so one Ctrl+Z takes both (this expected the two rows apart before S7).
     navigate(true);
     assert(planes() == secondImage && undoLen() == u0 + 2,
-        "outside z3 did not remove the independent Middle row");
+        "outside z2 did not remove the Middle operation together with its Width row");
 
     // ...and half two: a PLANE actually moved, and the drop recorded it.
     auto moved = planeDiff(planesBefore, planes());
@@ -300,7 +300,7 @@ unittest { // width, then a horizontal haul on the extrude arrow, and the tool b
     assert(v1 > v0,
         "the extrude added no vertex (still " ~ v0.to!string ~ ")");
     assert(undoLen() - u0 == 2,
-        "outside z3 must leave the two distinct handle rows");
+        "outside z2 must leave the two handle rows");
 }
 
 unittest { // A foreign UiState row must beat completed-step cancel handling.

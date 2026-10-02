@@ -124,7 +124,9 @@ unittest {
 // (moment_restart_pextrude_ui s12/s13, nav_undo_restart_pextrude_ui s12); 96 since the S4
 // review (9020): the law-4 seed on a bare activation redo closes nav_undo_restart_pextrude
 // s11–s13 and an unjudged tool-off classmate (PF-B) closes nav_redo_restart_pextrude s12–s14
-// and its _ui s12/s13 (each `attrs`, ours had the extra classmate).
+// and its _ui s12/s13 (each `attrs`, ours had the extra classmate); 55 since S7 (9120): law 6
+// folds the operation a restart ends, so the undo ladders of fold_restart_pextrude(_ui) and
+// nav_redo_restart_pextrude(_ui) after the press match (41 fields).
 unittest {
     const fx = parseJSON(kFixture);
     size_t points, fields;
@@ -147,9 +149,9 @@ unittest {
             }
         }
     }
-    assert(points == 8 && fields == 96, "fixture family inset holds " ~ points.to!string
+    assert(points == 8 && fields == 55, "fixture family inset holds " ~ points.to!string
         ~ " middle-restart points / " ~ fields.to!string ~ " divergent fields after them, "
-        ~ "frozen at 8 / 96");
+        ~ "frozen at 8 / 55");
 }
 
 // VertexMerge's first haul merges 3 → 2 at the reference, 3 → 1 here (gap row 486, S3 fix
@@ -188,7 +190,8 @@ unittest {
 // row here, the P3 row of activation/command-close wave V4). Capture 8980 (§17): a typed UI
 // command KEEPS PolyExtrude's attributes and leaves the tool not armed; ours keeps them on
 // the free Z/R route (parity) and zeroes them where the operation is still open at the
-// command (no Z/R, the handle route) — declared, owner S7, as is `armed` at the command.
+// command (no Z/R, the handle route) — declared, owner S7; `armed` at the command matches
+// since law 6 (S7: the command close ends the post mode).
 unittest {
     const fx = parseJSON(kFixture);
     foreach (cell; ["doapply_after_sa_smooth", "doapply_after_sa_pextrude", "doapply_after_sa_inset"])
@@ -203,8 +206,9 @@ unittest {
             ? "s04" : "s05";
         assert(classHas(a, prev), ctx ~ ": the fixture's command does not keep the attributes: "
             ~ a["ref"].toString);
-        assert(armed["ref"].type == JSONType.false_ && armed["owner"].str == "S7",
-            ctx ~ ": `armed` at the command is not the reference's false under owner S7: "
+        // law 6, C2 (S7, 9120): the command ends the operation and the post mode
+        assert(armed["ref"].type == JSONType.false_ && ("ours" in armed) is null,
+            ctx ~ ": `armed` at the command is not the reference's false, matched (law 6, C2): "
             ~ armed.toString);
         assert(("ours" in a) is null || a["owner"].str == "S7", ctx ~ ": the attributes at the "
             ~ "command diverge under " ~ a["owner"].str ~ ", not S7");
