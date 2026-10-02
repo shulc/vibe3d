@@ -15,7 +15,7 @@ axis2-violators 0
 # interfaces of the session modules, casts to them in source/, and casts
 # to a concrete tool class outside source/tools/.
 session-capabilities 5
-session-branches 14
+session-branches 15
 special-tool-casts 27
 
 tool tools.alignment.array_tool.ArrayTool has=tools.alignment.array_tool.ArrayTool cancel=tools.alignment.array_tool.ArrayTool resync=tools.alignment.array_tool.ArrayTool commit=tools.alignment.array_tool.ArrayTool snap=7 live=yes | preview rebuilds from source cage; completed grid steps belong to ToolSession history
