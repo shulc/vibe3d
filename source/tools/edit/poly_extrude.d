@@ -120,7 +120,6 @@ class PolyExtrudeTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClien
             activationRow: true,
             commandClose: CommandClose.uiDoor,
             sessionSteps: true, historyTopologySteps: true,
-            dormantAfterClosedRedo: true,
             opensAt: OpensAt.firstPress,
             imageAttrs: ["distance", "shiftX", "shiftY", "shiftZ"],
             haulAttrs: ["distance", "shiftX", "shiftY", "shiftZ"]
@@ -593,7 +592,7 @@ private:
 
     void rebuildPreview(bool allowCoincidentTopology = false) {
         if (!active) return;
-        if (topologyDormant) return;
+        if (previewGated()) return;
         // Perf (task 1370) — AFTER the guard(s) above, never on the first
         // line: an early-out must record no sample, or `count` tallies
         // refusals as work. See Cat.toolPreview for the decomposition.

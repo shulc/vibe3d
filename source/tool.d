@@ -381,9 +381,6 @@ struct ToolSessionPolicy {
     /// any later steps from that operation. Some tools re-arm into a new run
     /// at this boundary rather than retaining the former redo tail.
     bool discardLaterTopologyRedoOnRearm;
-    /// A fresh activation after a fully redone closed run is an attribute-only
-    /// dormant tool until another operation explicitly arms its postmode.
-    bool dormantAfterClosedRedo;
     /// H1: when the operation window opens (see `OpensAt`). Read only for
     /// `sessionSteps` tools.
     OpensAt opensAt;

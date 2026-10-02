@@ -887,7 +887,6 @@ private struct ToolSession {
     // incoming tool's foreign parameter names through Tool.writeRaw.
     private TopologyAttrOwner[] topologyAttrOwners_;
     private bool topologyPending_;
-    private Rebindable!(const Command) dormantActivation_;
     private bool topologyDormant_;
     private bool topologyFirstGroupLive_;
     private bool redoneTopologyStep_;
@@ -1071,6 +1070,20 @@ private struct ToolSession {
         return false;
     }
 
+    // The door law (model doc §1.1, topology-redo S6): an attribute-only row
+    // directly above its own session's UI-door activation is one undo step
+    // with it. Such a row is written only inside the captured model.
+    private bool attrRowJoinsActivation_() {
+        import commands.tool.lifecycle : ToolActivationCommand;
+        const ue = history_.undoEntries();
+        if (ue.length < 2 || token_ == 0) return false;
+        auto act = cast(const ToolActivationCommand) ue[$ - 2].cmd;
+        return cast(const TopologyAdjustmentEdit) ue[$ - 1].cmd !is null
+            && ue[$ - 1].cmd.sessionToken() == token_
+            && act !is null && act.joinsFirstGroup()
+            && act.sessionToken() == token_;
+    }
+
     private bool undoImpl_() {
         terminalRedoRequested_ = false;
         // Task 8261, e001/e005: two retained adjustment rows are visible
@@ -1115,17 +1128,13 @@ private struct ToolSession {
         replayFor_ = null;
         if (navigateRecorded_(true)) return true;
         if (navigateTopology_(true)) return true;
-        if (topologyDormant_) {
-            const ue = history_.undoEntries();
-            if (ue.length >= 2 &&
-                cast(const TopologyAdjustmentEdit)ue[$ - 1].cmd !is null &&
-                ue[$ - 2].cmd is dormantActivation_.get) {
-                auto drop = dropImage_(1);
-                if (history_.undo()) {
-                    storeDropImage_(drop);
-                    history_.undo();
-                    return true;
-                }
+        // The door law, by the row's class, dormant or not (S6).
+        if (attrRowJoinsActivation_()) {
+            auto drop = dropImage_(1);
+            if (history_.undo()) {
+                storeDropImage_(drop);
+                history_.undo();
+                return true;
             }
         }
         // H2: the newest gesture step of the live operation, restored as the
@@ -1314,6 +1323,7 @@ private struct ToolSession {
         // popped (identity, read before the redo moves it; see undoFirstGroup_).
         bool replay;
         bool pair;
+        bool attrPair;
         import commands.tool.lifecycle : ToolActivationCommand;
         Rebindable!(const ToolActivationCommand) act;
         {
@@ -1321,14 +1331,22 @@ private struct ToolSession {
             replay = !replay_.empty && re.length > 0
                 && re[0].cmd is replayFor_.get;
             act = re.length ? cast(const ToolActivationCommand) re[0].cmd : null;
+            // The inverse of `attrRowJoinsActivation_`: by the class of the
+            // row above the activation (S6), never by the arm's dormancy. Its
+            // attributes are the law-4 seed below (the instance is new).
+            attrPair = act !is null && act.joinsFirstGroup() && re.length > 1
+                && act.sessionToken() != 0
+                && cast(const TopologyAdjustmentEdit) re[1].cmd !is null
+                && re[1].cmd.sessionToken() == act.sessionToken();
             // The inverse of the undo pair: the row, then the record that
             // carries it (same token), in one redo step (slice M4).
-            pair = act !is null && !act.dormantTopology() &&
+            pair = !attrPair && act !is null && !act.dormantTopology() &&
                 act.carriesFirstRecord() && re.length > 1
                 && act.sessionToken() != 0
                 && re[1].cmd.sessionToken() == act.sessionToken();
         }
         bool ok = history_.redo();
+        if (ok && attrPair) history_.redo();
         // The redo that re-armed a tool re-armed the ROW's session: its token.
         if (ok && act !is null) adoptToken_(act.armedId, act.sessionToken());
         // M-G: the parameter rows folded into this activation come back with
@@ -1520,14 +1538,15 @@ private struct ToolSession {
         if (history_.state() != UndoState.Suspend &&
             validClosedTopologyRedo_(arm, id))
             closedAttrs = topologyAttrsFor_(id, closedTopologyToken_);
-        topologyDormant_ = t.sessionPolicy().dormantAfterClosedRedo &&
+        // Law 5 (topology-redo S6, model doc §3 E3): an arm after a fully
+        // redone closed run is dormant for every tool of the captured model.
+        topologyDormant_ = capturedTopologyModel(t.sessionPolicy()) &&
             (history_.state() == UndoState.Suspend
                 ? arm !is null && arm.armedId() == id && arm.dormantTopology()
                 : !closedAttrs.empty);
-        if (topologyDormant_ && arm !is null) {
-            if (history_.state() != UndoState.Suspend) arm.markDormantTopology();
-            dormantActivation_ = arm;
-        }
+        if (topologyDormant_ && arm !is null &&
+            history_.state() != UndoState.Suspend)
+            arm.markDormantTopology();
         // The operation belongs to the token (topology-redo S2b, model doc §2.3): every
         // arm — a history step's replay arm too — starts its own, open at the
         // arm only for a tool that opens there; the settle after a navigation
@@ -1613,7 +1632,8 @@ private struct ToolSession {
         if (tool_() !is null && tool_() is bound_) {
             if (!operationOpen_) rebaseOnCurrent_(tool_(), true);
             postmodeOpenAtPress_ = postmodeArmed_;
-            postmodeArmed_ = true;
+            // A dormant haul does not begin the post mode (law 5, E3).
+            if (!topologyDormant_) postmodeArmed_ = true;
         }
     }
 

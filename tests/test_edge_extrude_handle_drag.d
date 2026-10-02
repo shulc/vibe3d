@@ -547,12 +547,16 @@ unittest { // Full closed redo leaves a fresh Edge activation dormant.
     navigate(true);
     assert(planes() == rearmed && undoLen() == fresh - 1,
         "dormant z1 must remove adjustment and fresh activation together");
+    // Expectation (task 9080, S6; the door law, CAP `dormant2_inset_ui/s13_R`,
+    // `inset_dormant_ui/s11_R`): r1 brings the UI activation back WITH its adjustment, one
+    // step (was: the bare activation, the adjustment left in redo).
     navigate(false);
-    assert(planes() == rearmed && undoLen() == fresh,
-        "dormant r1 restores the bare activation, leaving adjustment in redo");
-    // Law 4, generic (task 9020 item A; not an Edge Extend capture): the redo of the bare
-    // activation re-creates the instance with its drop seed — the width it held at z1
-    // with its own adjustment undone, i.e. the arm's (sticky) width, never the drag's.
+    assert(planes() == rearmed && undoLen() == fresh + 1
+        && getJson("/api/history")["redo"].array.length == 0,
+        "dormant r1 must restore the activation and its adjustment together");
+    // Law 4, generic (task 9020 item A; not an Edge Extend capture): the redo re-creates
+    // the instance with its drop seed — the width it held at z1 with its own adjustment
+    // undone, i.e. the arm's (sticky) width, never the drag's.
     st = getJson("/api/tool/state");
     assert(st["session"]["dormant"].type == JSONType.true_ &&
         abs(st["width"].floating - armWidth) < 1e-5 && abs(armWidth) > 1e-3,
@@ -632,12 +636,19 @@ unittest { // A scripted write is the actual before-image of the next step.
     assert(getJson("/api/history")["undo"].array[$ - 1]["command"].str ==
         "tool.topology_adjustment",
         "a panel Width after the scripted write is not an attribute-only row");
+    // Expectation (task 9080, S6 door law, model doc §1.1; NOT captured on this path —
+    // the reference's scripted write keeps a row of its own (V4), ours none, so the panel
+    // row is the first after the UI arm and pairs with it; S6 report, differential): Z
+    // undoes the panel row together with the arm, R redoes both, the re-created tool
+    // holding its drop seed — the panel row's before, the scripted 0.1 (law 4).
+    // Was: Z the row alone (0.1), R the row (0.2).
     navigate(true);
-    assert(planes() == initial && abs(queryWidth() - 0.1) < 1e-5,
-        "interactive Width undo lost the scripted pre-step attribute");
+    assert(planes() == initial && getJson("/api/input/context")["tool"].str == "",
+        "interactive Width undo did not take the UI arm with its first attribute-only row");
     navigate(false);
-    assert(planes() == initial && abs(queryWidth() - 0.2) < 1e-5,
-        "interactive Width redo lost the panel value or changed the mesh");
+    assert(planes() == initial && abs(queryWidth() - 0.1) < 1e-5
+        && getJson("/api/history")["undo"].array[$ - 1]["command"].str == "tool.topology_adjustment",
+        "interactive Width redo lost the seed (the scripted 0.1) or the row, or changed the mesh");
 }
 
 unittest { // The same scripted before-image survives an ordinary handle drag.

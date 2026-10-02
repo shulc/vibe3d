@@ -112,7 +112,6 @@ class EdgeExtrudeTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClien
             commandClose: CommandClose.uiDoor,
             sessionSteps: true, historyTopologySteps: true,
             discardFirstTopologyRedoOnActivationUndo: true,
-            dormantAfterClosedRedo: true,
             opensAt: OpensAt.arm,
             imageAttrs: ["extrude", "width"],
             haulAttrs: ["extrude", "width"]
@@ -138,7 +137,6 @@ private:
     // Interactive session state.
     bool          active;          // between activate() and deactivate()
     bool          built;           // true once a nonzero extrude/width built topology
-    bool          topologyDormant;
     /// Current operation's preview basis (geometry and selection). The
     /// completed step pairs and their bases belong to CommandHistory.
     MeshSnapshot  before;
@@ -327,9 +325,7 @@ public:
         return recordGestureEdit(cmd, GestureRecordMode.Plain);
     }
     public override string topologyStepLabel() { return "Edge Extrude"; }
-    public override void setTopologyDormant(bool dormant) {
-        topologyDormant = dormant;
-    }
+    public override void setTopologyDormant(bool dormant) {}
     public override void rebaseTopologyStep(MeshSnapshot basis) {
         before = basis;
         if (!before.matches(*mesh)) {
@@ -710,7 +706,7 @@ private:
     // current extrude/width. Identity params leave the mesh restored (no-op).
     void rebuildPreview() {
         if (!active) return;
-        if (topologyDormant) return;
+        if (previewGated()) return;
         // Perf (task 1370) — AFTER the guard(s) above, never on the first
         // line: an early-out must record no sample, or `count` tallies
         // refusals as work. See Cat.toolPreview for the decomposition.

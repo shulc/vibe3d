@@ -444,6 +444,7 @@ private:
     // never incrementally mutate the already-welded mesh.
     void rebuildPreview() {
         if (!active) return;
+        if (previewGated()) return;
         // Perf (task 1370) — AFTER the guard(s) above, never on the first
         // line: an early-out must record no sample, or `count` tallies
         // refusals as work. See Cat.toolPreview for the decomposition.

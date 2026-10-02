@@ -437,12 +437,13 @@ unittest { // (3) the doors reach the tool session only through EditSession
            format("S7a wiring census: edit_session.d names pruneRedoTop_() %s times, expected 2 "
                   ~ "(the declaration and the redo door)", es.count("pruneRedoTop_()")));
     // Nothing else in the module steps the history.
-    assert(es.count("history_.undo()") == 11 && es.count("history_.redo()") == 8,
+    assert(es.count("history_.undo()") == 11 && es.count("history_.redo()") == 9,
            format("M1 wiring census: edit_session.d steps the history %s/%s times, "
                   ~ "expected undo 11 (closed-run replay, live recorded ladder, topology incl. its "
                   ~ "folded run, and prior ToolSession branches) and "
-                  ~ "redo 8 (recorded first-step re-arm, recorded producer, topology incl. its folded "
-                  ~ "run, the activation's folded run, and prior ToolSession branches)",
+                  ~ "redo 9 (recorded first-step re-arm, recorded producer, topology incl. its folded "
+                  ~ "run, the activation's folded run, the attribute-only row with its UI activation "
+                  ~ "(S6), and prior ToolSession branches)",
                   es.count("history_.undo()"), es.count("history_.redo()")));
 }
 
@@ -1014,9 +1015,17 @@ unittest { // (4c)
         foreach (site; identSites(code, "previewGated", false)) gates ~= site;
     }
     sort(gates);
-    assert(gates == ["MirrorTool.evaluate:1"],
-           format("S2b needle: previewGated is read in source/tools at %s, expected "
-                  ~ "MirrorTool.evaluate once (S6 adds the other eleven)", gates));
+    // Polarity: the allowed set, true after S6 (task 9080; S2b: Mirror's evaluate alone).
+    // A gate line struck narrows the list to the other eleven; its tool's
+    // `<tool>-dormant/held` suite cell reddens too.
+    assert(gates == ["ArrayTool.rebuildPreview:1", "CloneTool.rebuildPreview:1",
+                     "EdgeBevelTool.rebuildPreview:1", "EdgeExtrudeTool.rebuildPreview:1",
+                     "MirrorTool.evaluate:1", "PolyExtrudeTool.rebuildPreview:1",
+                     "PolyInsetTool.rebuildPreview:1", "RadialArrayTool.rebuildPreview:1",
+                     "SmoothShiftTool.rebuildPreview:1", "VertexBevelTool.rebuildPreview:1",
+                     "VertexExtrudeTool.rebuildPreview:1", "VertexMergeTool.rebuildPreview:1"],
+           format("S6 needle: previewGated is read in source/tools at %s, expected the eleven "
+                  ~ "rebuildPreview bodies and MirrorTool.evaluate once each", gates));
 
     // STRUCTURAL: the origin is published only for a classified row.
     auto hp = blankUnittestBodies(blankNonCode(readText("source/http_providers.d")));
@@ -1101,6 +1110,88 @@ unittest { // (4d)
     assert(bodies == 12, format("S3 structural: restore bodies of the model's tools: %s read, 12 expected",
                                 bodies));
 }
+
+// ---------------------------------------------------------------------------
+// (4e) Task 9080 (topology-redo wave S6, law 5; model doc §3 E3, §1.1): every tool of
+// the captured model goes dormant after a fully redone closed run (no per-tool flag);
+// its preview gate is the session's (`previewGated()`, the second statement of each
+// `rebuildPreview` after the `!active` guard; Mirror's in `evaluate`, S2b); the pair of
+// a UI arm and its attribute-only row is one undo/redo step by the ROW's class, not by
+// dormancy. Order (form item 2): floor -> needle -> structural; the fence follows.
+// ---------------------------------------------------------------------------
+unittest { // (4e)
+    import std.file : dirEntries, readText, SpanMode;
+    import tests.unit.census_symbols : blankUnittestBodies;
+    // FLOOR (form item 4): the model's classes, found by the rule «a class in source
+    // with a restoreTopologyStep override, not the pen» — 12, the table's files.
+    string[] model;
+    foreach (e; dirEntries("source", "*.d", SpanMode.depth))
+        if (!e.name.canFind("topology_pen")
+            && blankNonCode(readText(e.name)).canFind("override void restoreTopologyStep"))
+            model ~= e.name;
+    sort(model);
+    assert(model == kRebaseBodyFiles.dup.sort.array, format("S6 floor: the captured model's "
+           ~ "files are %s, the table %s", model, kRebaseBodyFiles));
+    auto es = blankUnittestBodies(blankNonCode(readText("source/edit_session.d")));
+    const ts = bodyAt(es, "private struct ToolSession");
+    foreach (m; ["private bool undoImpl_()", "private bool redoImpl_()",
+                 "private bool attrRowJoinsActivation_()", "void notePointerDown()"])
+        assert(squeeze(bodyAt(ts, m)).length > 2, "S6 floor: the session body " ~ m ~ " is empty");
+
+    // NEEDLES (stationary allowed sets, true after S6). The dormant arm is the model's;
+    // the pair is by the row's class; a dormant press does not arm the post mode.
+    const arm = squeeze(bodyAt(ts, "void noteArm(string id, ulong token, bool postmodeArmed = true)"));
+    assert(arm.canFind("topologyDormant_=capturedTopologyModel(t.sessionPolicy())&&"),
+           "S6 needle: noteArm's dormant term is not the captured model's: " ~ arm);
+    assert(identSites(es, "attrRowJoinsActivation_", false)
+           == ["<decl>:1", "ToolSession.undoImpl_:1"],
+           format("S6 needle: the UI pair of an attribute-only row is read at %s",
+                  identSites(es, "attrRowJoinsActivation_", false)));
+    const und = bodyAt(ts, "private bool undoImpl_()");
+    const join_ = squeeze(bodyAt(ts, "private bool attrRowJoinsActivation_()"));
+    assert(words(und, "topologyDormant_") == 0 && join_.canFind("act.joinsFirstGroup()")
+           && join_.canFind("cast(constTopologyAdjustmentEdit)ue[$-1].cmd!isnull")
+           && words(join_, "topologyDormant_") == 0,
+           "S6 needle: the undo pair of a UI arm and its attribute-only row is keyed on "
+           ~ "dormancy, or lost the row's class or the door: " ~ join_);
+    const red = squeeze(bodyAt(ts, "private bool redoImpl_()"));
+    const ap = red.indexOf("attrPair=act!isnull");
+    assert(ap >= 0 && red[ap .. ap + red[ap .. $].indexOf(";")].canFind("act.joinsFirstGroup()")
+           && red[ap .. ap + red[ap .. $].indexOf(";")].canFind("cast(constTopologyAdjustmentEdit)re[1].cmd!isnull")
+           && !red[ap .. ap + red[ap .. $].indexOf(";")].canFind("dormantTopology()")
+           && red.canFind("if(ok&&attrPair)history_.redo();")
+           && red.canFind("pair=!attrPair&&"),
+           "S6 needle: the redo pair of a UI arm and its attribute-only row is keyed on "
+           ~ "dormancy, lost the row's class, or the arm pair takes it");
+    assert(squeeze(bodyAt(ts, "void notePointerDown()")).canFind("if(!topologyDormant_)postmodeArmed_=true;"),
+           "S6 needle: a dormant press arms the post mode (law 5, E3)");
+    assert(identSites(es, "dormantActivation_", false).length == 0,
+           "S6 needle: the dormant activation cursor is back (the pair reads the row's class)");
+
+    // STRUCTURAL: in the eleven `rebuildPreview` bodies the gate is the statement right
+    // after the leading `!active` guard; the extrudes' former field gate is gone.
+    size_t bodies;
+    foreach (f; kRebaseBodyFiles) {
+        if (f.endsWith("mirror.d")) continue;
+        const b = squeeze(bodyAt(blankNonCode(readText(f)), "void rebuildPreview("));
+        const g = b.indexOf(";");
+        assert(b.length > 2 && g > 0 && b[0 .. 4] == "{if(" && words(b[0 .. g], "active") == 1
+               && b[g + 1 .. $].startsWith("if(previewGated())return;"),
+               format("S6 structural: %s's rebuildPreview does not open with the !active guard "
+                      ~ "and then the preview gate: %s", f, b[0 .. b.length < 80 ? b.length : 80]));
+        ++bodies;
+    }
+    assert(bodies == 11, format("S6 structural: %s rebuildPreview bodies read, 11 expected", bodies));
+    const poly = blankNonCode(readText("source/tools/edit/poly_extrude.d"));
+    const edge = blankNonCode(readText("source/tools/edit/edge_extrude.d"));
+    assert(words(poly, "topologyDormant") == 3 && words(edge, "topologyDormant") == 0,
+           format("S6 structural: the extrudes name the tool's dormant field %s / %s times, "
+                  ~ "measured 3 (declaration, setter, press extent) / 0",
+                  words(poly, "topologyDormant"), words(edge, "topologyDormant")));
+}
+
+// Fence (form item 1): the per-tool dormant flag is gone (S6, task 9080).
+static assert(!__traits(hasMember, imported!"tool".ToolSessionPolicy, "dormantAfterClosedRedo"));
 
 // (4d') The `built` census of the model's 12 classes (S3 review, 8950): the rebase
 // body sets `built = !before.matches(*mesh)`, and since S3 a close rebases onto the
@@ -1715,22 +1806,22 @@ unittest { // Tasks 7990/8030: production topology R wiring, not a helper replic
         && !polyPreparedClose.canFind("markHistoryInstall(")
         && !poly.canFind("GestureRecordMode.ReplaceRunTail"),
         "Polygon drag/boundary, Plain owner or prepared close lost its production seam");
+    // Task 9080 (S6, law 5): the dormant flag is the captured model's (fence in block
+    // (4e)); both extrudes gate their preview on the session (probe edit, form item 10).
     assert(edge.canFind("discardFirstTopologyRedoOnActivationUndo: true")
-        && edge.canFind("dormantAfterClosedRedo: true")
         && edge.canFind("opensAt: OpensAt.arm")
         && es.canFind("history_.invalidateRedo()")
         && es.canFind("topologyFirstGroupLive_")
         && es.canFind("arm.markDormantTopology()")
         && es.canFind("new TopologyAdjustmentEdit(context, instanceOf_(t), tool_")
-        && edge.canFind("if (topologyDormant) return;"),
+        && edge.canFind("if (previewGated()) return;"),
         "Edge first-group or full-closed-redo production policy disconnected");
     // Task 8920: the carry is derived (`firstStepCarriesActivation`) — the
     // Polygon policy no longer declares it and `prepareArm` reads the predicate.
     assert(!poly.canFind("recordCarriesActivation")
         && tl.canFind("firstStepCarriesActivation(pol)")
-        && poly.canFind("dormantAfterClosedRedo: true")
         && poly.canFind("opensAt: OpensAt.firstPress")
-        && poly.canFind("if (topologyDormant) return;"),
+        && poly.canFind("if (previewGated()) return;"),
         "Polygon first-group or full-closed-redo production policy disconnected");
     assert(es.canFind("closedTopologyRedoSource_ = act;")
         && es.canFind("last.get is closedTopologyRedoSource_.get")

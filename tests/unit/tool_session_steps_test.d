@@ -955,7 +955,7 @@ private final class DormantRefusalTool : Tool, TopologyStepClient {
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
         static immutable ToolSessionPolicy policy = {
             activationRow: true, sessionSteps: true,
-            historyTopologySteps: true, dormantAfterClosedRedo: true,
+            historyTopologySteps: true,
             opensAt: OpensAt.arm, imageAttrs: ["v"]
         };
         return policy;

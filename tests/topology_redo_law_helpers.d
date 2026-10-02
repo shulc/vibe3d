@@ -198,11 +198,21 @@ private void key(int sym, int mod) {
 }
 
 private void drag(int x0, int y0, int dx, int dy, int btn) {
-    enum steps = 12;
+    int lx, ly;
+    play(pressAndMove(x0, y0, dx, dy, btn, lx, ly)
+        ~ format(`{"t":%.3f,"type":"SDL_MOUSEBUTTONUP","btn":%d,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
+            50.0 + 50.0 * (kDragSteps + 1), btn, lx, ly));
+}
+
+private enum kDragSteps = 12;
+
+/// The press and the motion of a drag, no release; (lx, ly) is where it ends.
+private string pressAndMove(int x0, int y0, int dx, int dy, int btn, out int lx, out int ly) {
+    enum steps = kDragSteps;
     string s = format(`{"t":30.000,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,"state":0,"mod":0}` ~ "\n"
         ~ `{"t":50.000,"type":"SDL_MOUSEBUTTONDOWN","btn":%d,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
         x0, y0, btn, x0, y0);
-    int lx = x0, ly = y0;
+    lx = x0; ly = y0;
     foreach (i; 1 .. steps + 1) {
         const x = x0 + cast(int)(cast(double) dx * i / steps);
         const y = y0 + cast(int)(cast(double) dy * i / steps);
@@ -210,9 +220,7 @@ private void drag(int x0, int y0, int dx, int dy, int btn) {
             50.0 + 50.0 * i, x, y, x - lx, y - ly, 1 << (btn - 1));
         lx = x; ly = y;
     }
-    s ~= format(`{"t":%.3f,"type":"SDL_MOUSEBUTTONUP","btn":%d,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
-        50.0 + 50.0 * (steps + 1), btn, lx, ly);
-    play(s);
+    return s;
 }
 
 private void tap(int x, int y, int btn) {
@@ -516,6 +524,27 @@ void runStep(const JSONValue step, const Rig rig, string ctx) {
         assert(false, ctx ~ ": the executor has no step " ~ op);
     }
 }
+
+/// A haul step's press and motion with the button still held (S6 `*-dormant/held`:
+/// what the viewport shows mid-haul); `releaseHeld` ends it where it stopped.
+void holdHaul(const JSONValue step, const Rig rig, string ctx) {
+    assert(step["op"].str == "haul" && step["button"].str == "left", ctx ~ ": not a left haul");
+    if (rig.aimAtSelection) aimAtSelected(ctx);
+    int x, y;
+    pressPoint(rig, step, x, y);
+    const rx = num(step["delta"][0]), ry = num(step["delta"][1]);
+    const m = rig.deltaMap;
+    play(pressAndMove(x, y, cast(int)(m[0] * rx + m[1] * ry), cast(int)(m[2] * rx + m[3] * ry),
+        1, heldX, heldY));
+}
+
+/// The release of `holdHaul`'s button.
+void releaseHeld() {
+    play(format(`{"t":10.000,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
+        heldX, heldY));
+}
+
+private int heldX, heldY;
 
 // ------------------------------------------------------------------ observation
 

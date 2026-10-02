@@ -250,6 +250,7 @@ private:
     }
     void rebuildPreview() {
         if (!active || !before.filled) return;
+        if (previewGated()) return;
         before.restore(*mesh);
         auto mask = mesh.operandFaceMask();
         size_t n = build(mask);
