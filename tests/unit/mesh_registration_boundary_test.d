@@ -280,16 +280,16 @@ unittest {
         "void registerMeshCommands(ref Registry reg, LiveSessionRole owner,");
     assert(body.length > 16_000,
         format("6509 registrar-body floor: body read as %d bytes", body.length));
-    assert(identifierCount(body, "owner") == 107,
-        "6509 receiver reconciliation: owner must serve exactly 107 reads");
-    assert(identifierCount(body, "live") == 215,
-        "6509 receiver reconciliation: live must serve exactly 215 reads");
+    assert(identifierCount(body, "owner") == 108,
+        "6509 receiver reconciliation: owner must serve exactly 108 reads (S1e: +mesh.surfaceAttr)");
+    assert(identifierCount(body, "live") == 217,
+        "6509 receiver reconciliation: live must serve exactly 217 reads (S1e: +mesh.surfaceAttr)");
     assert(identifierCount(body, "deps") == 14,
         "6509 receiver reconciliation: deps must serve exactly 14 reads");
     struct Row { string receiver, member; size_t count; }
     immutable rows = [
-        Row("owner", "activeMesh", 107),
-        Row("live", "view", 107), Row("live", "mode", 107),
+        Row("owner", "activeMesh", 108),
+        Row("live", "view", 108), Row("live", "mode", 108),
         Row("live", "modeCell", 1),
         Row("deps", "meshRebuildDrop", 7),
         Row("deps", "originSnapshot", 3), Row("deps", "remeshJob", 2),
