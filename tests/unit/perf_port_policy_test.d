@@ -94,6 +94,15 @@ unittest {
     assert(run.canFind("catch (PerfPortRefused e) { stderr.writeln( , e.msg); exit(2);"),
         "run.d must EXIT on a refusal, not continue to a kill");
 
+    // rdmd's only import root for run.d is tools/perf: lib.portpolicy reaches
+    // tools.harness.runslots through this tracked symlink, or run.d stops compiling.
+    {
+        import std.file : exists, isSymlink, readLink;
+        const link = buildPath(root, "tools", "perf", "tools", "harness", "runslots.d");
+        assert(exists(link) && isSymlink(link) && readLink(link) == "../../../harness/runslots.d",
+            "tools/perf/tools/harness/runslots.d must be the symlink to tools/harness/runslots.d");
+    }
+
     // No caller mints a PerfPort through its .init (port 0) behind the policy.
     int files;
     foreach (e; dirEntries(buildPath(root, "tools", "perf"), "*.d", SpanMode.depth)) {
