@@ -849,6 +849,57 @@ string[] classOwnedTriples(const JSONValue fixture) {
     return got;
 }
 
+/// The frozen field `field` of `cell`/`label` — asserted present (a field the generator
+/// dropped is a field no run judges).
+JSONValue frozenField(const JSONValue fixture, string cell, string label, string field) {
+    foreach (c; fixture["cells"].array) {
+        if (c["id"].str != cell) continue;
+        foreach (p; c["points"].array)
+            if (p["label"].str == label) {
+                auto f = field in p["fields"].object;
+                assert(f !is null, format("fixture: %s/%s freezes no %s (not judged)", cell,
+                    label, field));
+                return *f;
+            }
+        assert(false, format("fixture: %s has no checkpoint %s", cell, label));
+    }
+    assert(false, "fixture holds no cell " ~ cell);
+}
+
+/// A reference class relation (an array of checkpoint names) holds `name`.
+bool classHas(const JSONValue f, string name) {
+    return f["ref"].array.canFind!(v => v.str == name);
+}
+
+/// The ladder of a headless apply after a scripted write (capture 8960, findings §16.3),
+/// as the fixture freezes it for `cell` (s03 the write, s04 the apply, s05 Z1, s06 Z2):
+/// the apply stacks a new image; Z1 takes the apply ALONE (the write's image, the write's
+/// attributes, tool active, not armed); Z2 reopens post mode with the haul's attributes.
+/// Every field named here is judged (present), whatever its status.
+void pinApplyLadder(const JSONValue fx, string cell) {
+    const ctx = "8960 " ~ cell;
+    assert(frozenField(fx, cell, "s04_cmd", "image")["ref"].array.length == 0,
+        ctx ~ ": the apply's image is not new in the fixture");
+    assert(frozenField(fx, cell, "s04_cmd", "armed")["ref"].type == JSONType.false_,
+        ctx ~ ": the fixture's apply leaves the tool armed");
+    auto z1 = frozenField(fx, cell, "s05_Z", "image");
+    assert(classHas(z1, "s03") && !classHas(z1, "s04"), ctx ~ ": Z1 is not the write's image "
+        ~ "in the fixture: " ~ z1["ref"].toString);
+    assert(frozenField(fx, cell, "s05_Z", "armed")["ref"].type == JSONType.false_
+        && frozenField(fx, cell, "s05_Z", "on")["ref"].str == "tool",
+        ctx ~ ": Z1 is not 'tool active, not armed' in the fixture");
+    assert(classHas(frozenField(fx, cell, "s05_Z", "attrs"), "s03"),
+        ctx ~ ": Z1's attributes are not the write's in the fixture");
+    assert(frozenField(fx, cell, "s06_Z", "armed")["ref"].type == JSONType.true_,
+        ctx ~ ": Z2 does not reopen post mode in the fixture");
+    auto a2 = frozenField(fx, cell, "s06_Z", "attrs");
+    assert(classHas(a2, "s02") && !classHas(a2, "s03"), ctx ~ ": Z2's attributes are not the "
+        ~ "haul's in the fixture: " ~ a2["ref"].toString);
+    foreach (lab; ["s04_cmd", "s05_Z", "s06_Z"])
+        foreach (fl; ["image", "vcount", "armed", "on", "attrs"])
+            frozenField(fx, cell, lab, fl);
+}
+
 /// The family census line and its population floor (п.4: the message is about the
 /// AREA — what the fixture holds for the family — not about what was looked for).
 void familyFloor(const JSONValue fixture, string family, const string[] ids,

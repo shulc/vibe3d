@@ -176,6 +176,38 @@ unittest {
         ~ "inset family " ~ kernel.to!string ~ " are not VertexMerge's 24");
 }
 
+// The later cells' ladders, before any cell (task 8950, S3 fix 2), so a regenerated fixture
+// cannot drop the judged checkpoints. Capture 8960 (findings §16): a headless apply after a
+// scripted write stacks, Z1 takes the apply alone, Z2 reopens post mode — the fields of
+// s04…s06 are judged (`pinApplyLadder`); ours reopens post mode at Z1 (the write records no
+// row here, the P3 row of activation/command-close wave V4). Capture 8980 (§17): a typed UI
+// command KEEPS PolyExtrude's attributes and leaves the tool not armed; ours keeps them on
+// the free Z/R route (parity) and zeroes them where the operation is still open at the
+// command (no Z/R, the handle route) — declared, owner S7, as is `armed` at the command.
+unittest {
+    const fx = parseJSON(kFixture);
+    foreach (cell; ["doapply_after_sa_smooth", "doapply_after_sa_pextrude", "doapply_after_sa_inset"])
+        pinApplyLadder(fx, cell);
+    foreach (cell, uc; ["cmdattrs_nozr_pextrude": "s03_UC", "cmdattrs_zr_pextrude_free": "s05_UC",
+                        "cmdattrs_zr_pextrude_handle": "s06_UC"]) {
+        const ctx = "8980 " ~ cell ~ "/" ~ uc;
+        auto a = frozenField(fx, cell, uc, "attrs");
+        auto armed = frozenField(fx, cell, uc, "armed");
+        // KEEP: the command's attributes equal the checkpoint before it (the redone haul)
+        const prev = cell == "cmdattrs_nozr_pextrude" ? "s02" : cell == "cmdattrs_zr_pextrude_free"
+            ? "s04" : "s05";
+        assert(classHas(a, prev), ctx ~ ": the fixture's command does not keep the attributes: "
+            ~ a["ref"].toString);
+        assert(armed["ref"].type == JSONType.false_ && armed["owner"].str == "S7",
+            ctx ~ ": `armed` at the command is not the reference's false under owner S7: "
+            ~ armed.toString);
+        assert(("ours" in a) is null || a["owner"].str == "S7", ctx ~ ": the attributes at the "
+            ~ "command diverge under " ~ a["owner"].str ~ ", not S7");
+    }
+    assert(("ours" in frozenField(fx, "cmdattrs_zr_pextrude_free", "s05_UC", "attrs")) is null,
+        "8980: the free Z/R route's attributes at the command are no longer parity");
+}
+
 static foreach (id; kCells) {
     unittest { runCell(parseJSON(kFixture), id); }
 }

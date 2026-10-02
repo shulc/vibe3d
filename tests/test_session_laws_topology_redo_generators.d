@@ -75,6 +75,13 @@ unittest {
         ~ notCaptured.to!string ~ " are not model §6.3's one");
 }
 
+// Capture 8960 (findings §16), Mirror: a headless apply after a press and a scripted centre
+// write stacks one mirrored copy of the selection (the inset suite pins the other three
+// tools; task 8950, S3 fix 2).
+unittest {
+    pinApplyLadder(parseJSON(kFixture), "doapply_after_press_sa_mirror");
+}
+
 static foreach (id; kCells) {
     unittest { runCell(parseJSON(kFixture), id); }
 }
