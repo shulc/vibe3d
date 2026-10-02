@@ -461,16 +461,19 @@ bool opensAtArm(in ToolSessionPolicy p) pure nothrow @nogc {
 }
 
 /// Whether a key/UI-door activation joins the record that follows it (one undo
-/// step): inside the model, every tool whose operation begins at a press;
-/// outside it, the tool's declared `recordCarriesActivation` (Edge Extend).
+/// step): inside the model, every tool — the record after the activation is its
+/// operation's beginning (the begin row of an arm-opening tool, else the first
+/// press; topology-redo S5b, model doc §1.1); outside it, the tool's declared
+/// `recordCarriesActivation` (Edge Extend).
 bool firstStepCarriesActivation(in ToolSessionPolicy p) pure nothrow @nogc {
-    return capturedTopologyModel(p) ? !opensAtArm(p) : p.recordCarriesActivation;
+    return capturedTopologyModel(p) || p.recordCarriesActivation;
 }
 
-/// Whether a user arm leaves the post mode closed until the first press:
-/// the declared flag, or a model tool whose operation begins at a press.
+/// Whether a user arm leaves the post mode closed until the first press: the
+/// declared flag, or any model tool — the activation does not arm it; the
+/// operation's beginning does (an arm-opening tool's begin row, S5b).
 bool postmodeStartsOnPressFor(in ToolSessionPolicy p) pure nothrow @nogc {
-    return p.postmodeStartsOnPress || (capturedTopologyModel(p) && !opensAtArm(p));
+    return p.postmodeStartsOnPress || capturedTopologyModel(p);
 }
 
 class Tool : ParamProvider {

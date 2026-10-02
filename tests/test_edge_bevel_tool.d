@@ -164,7 +164,9 @@ unittest {
     assert(getJson("/api/tool/state")["dragPart"].integer == -1, "mouse-up kept Width captured");
 
     cmd("tool.set edge.bevel off");
-    assert(modelDepth() == depthBefore + 1, "one drag must commit exactly one undo entry");
+    // The arm writes the operation's begin row (task 9210, S5b; CAP ebevel_row s06_Z: a
+    // script-door Z takes the begin and leaves the tool); the close folds it with the drag.
+    assert(modelDepth() == depthBefore + 2, "one drag must commit exactly one row above the begin row");
     auto undo = parseJSON(cast(string)post(BASE ~ "/api/command", commandBody("history.undo")));
     assert(undo["status"].str == "ok", "undo failed");
     assert(model()["vertexCount"].integer == 8 && model()["faceCount"].integer == 6,
@@ -204,7 +206,7 @@ unittest {
     immutable long firstCount = first["vertexCount"].integer;
     immutable double firstWidth = getJson("/api/tool/state")["width"].floating;
     assert(firstCount > 8 && firstWidth > 1e-5 &&
-           modelDepth() == depthBefore + 1,
+           modelDepth() == depthBefore + 2,   // + the arm's begin row (S5b)
         "first released Edge Bevel gesture must own one topology row");
 
     double sx, sy; bool found;
@@ -218,7 +220,7 @@ unittest {
     immutable double secondWidth = getJson("/api/tool/state")["width"].floating;
     assert(second["vertexCount"].integer == firstCount &&
            secondVertices != firstVertices && secondWidth > firstWidth &&
-           modelDepth() == depthBefore + 2,
+           modelDepth() == depthBefore + 3,
         "second Edge Bevel gesture must adjust the existing bevel");
 
     navigate(false);
@@ -238,7 +240,7 @@ unittest {
            fabs(getJson("/api/tool/state")["width"].floating - secondWidth) < 1e-6,
         "two redos restore both Edge Bevel images");
     cmd("tool.set edge.bevel off");
-    assert(modelDepth() == depthBefore + 2,
+    assert(modelDepth() == depthBefore + 3,
         "close must not add a cumulative Edge Bevel snapshot");
 }
 
@@ -304,7 +306,7 @@ unittest {
         "returning to Round Level 0 did not reproduce the original flat preview");
 
     cmd("tool.set edge.bevel off");
-    assert(modelDepth() == depthBefore + 4,
+    assert(modelDepth() == depthBefore + 5,   // + the arm's begin row (S5b)
         format("four interactive parameter writes need four session rows: before %d, after %d",
                depthBefore, modelDepth()));
     foreach (_; 0 .. 4) cmd("history.undo");

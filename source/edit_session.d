@@ -805,6 +805,9 @@ private struct ToolSession {
     private bool postmodeOpenAtPress_;
     private PressKind topologyPendingKind_;
     private bool topologyPendingAttrOnly_;
+    // The step in flight is an arm-opening tool's begin row (S5b): it opens the
+    // operation, never an attribute-only row; cleared by `stepEnds`.
+    private bool topologyPendingBegin_;
     // The operation's close (slice M2). `topBefore_` is the undo top when the
     // close began; a row counts as written BY the close only if the top is a
     // different entry afterwards — identity, never the depth, which stops
@@ -1104,18 +1107,12 @@ private struct ToolSession {
         return t !is null && t is bound_ && capturedTopologyModel(t.sessionPolicy());
     }
 
-    // The undo top opens session `tok`'s post mode: its topology step, or —
-    // until the begin row exists — the activation of a tool that opens at
-    // the arm.
+    // The undo top opens session `tok`'s post mode: its topology step — for a
+    // tool that opens at the arm, its begin row at the least (S5b); an
+    // activation never does.
     private bool ownOpenerOnTop_(ulong tok) {
-        import commands.tool.lifecycle : ToolActivationCommand;
-        const top = undoTop_();
-        if (auto step = cast(const MeshSessionEdit) top)
+        if (auto step = cast(const MeshSessionEdit) undoTop_())
             return step.isTopologyStep() && step.sessionToken() == tok;
-        auto t = tool_();
-        if (t !is null && opensAtArm(t.sessionPolicy()))
-            if (auto act = cast(const ToolActivationCommand) top)
-                return act.sessionToken() == tok;
         return false;
     }
 
@@ -1572,13 +1569,12 @@ private struct ToolSession {
         if (topologyDormant_ && arm !is null &&
             history_.state() != UndoState.Suspend)
             arm.markDormantTopology();
-        // The operation belongs to the token (topology-redo S2b, model doc §2.3): every
-        // arm — a history step's replay arm too — starts its own, open at the
-        // arm only for a tool that opens there; the settle after a navigation
-        // then rewrites it.
-        operationOpen_ = capturedTopologyModel(t.sessionPolicy())
-            && opensAtArm(t.sessionPolicy()) && !topologyDormant_;
-        operation_ = operationOpen_ ? ++nextOperation_ : 0;
+        // The operation belongs to the token (topology-redo S2b, model doc §2.3): no
+        // arm opens one (M-E1) — a history step's replay arm neither; the begin
+        // row below opens an arm-opening tool's (S5b) and the settle after a
+        // navigation rewrites it.
+        operationOpen_ = false;
+        operation_ = 0;
         if (history_.state() != UndoState.Suspend) {
             clearClosedTopologyRedo_();
             redoneTopologyStep_ = false;
@@ -1651,6 +1647,27 @@ private struct ToolSession {
             // No `stepEnds`: the image after the arm IS the pending one, so the
             // arm's own rest is never a step (the next press re-begins).
         }
+        // The operation of a tool that opens at the arm begins with a row of its
+        // own (S5b, model doc §1.1); a replayed arm finds it in the history, a
+        // dormant arm has none (law 5).
+        if (history_.state() != UndoState.Suspend && capturedTopologyModel(pol)
+                && opensAtArm(pol) && !topologyDormant_)
+            recordBeginRow_(t);
+    }
+
+    // The begin row (topology-redo S5b, model doc §1.1, М-E2): the tool pick and
+    // the operation start are two layers. The row records the arm image; the
+    // door decides whether the activation pairs with it (`joinsFirstGroup`: the
+    // UI door one undo step, the script door two). The post mode is armed only
+    // when the row landed on top.
+    private void recordBeginRow_(Tool t) {
+        topologyPendingBegin_ = true;
+        stepBegins(t, PressKind.plain, AttrImage.init, false);
+        stepEnds(t, false);
+        if (auto row = cast(const MeshSessionEdit) undoTop_())
+            if (row.isTopologyStep() && row.sessionToken() == token_
+                    && row.stepOrigin() == StepOrigin.opens)
+                postmodeArmed_ = true;
     }
 
     void notePointerDown() {
@@ -1695,7 +1712,8 @@ private struct ToolSession {
             // step, or a write — never a press — while the post mode is not
             // armed. One path for both (the reference's apply-less write).
             topologyPendingAttrOnly_ = topologyDormant_ ||
-                (capturedTopologyModel(t.sessionPolicy()) && !press && !postmodeArmed_);
+                (capturedTopologyModel(t.sessionPolicy()) && !press && !postmodeArmed_
+                 && !topologyPendingBegin_);
             // M-C (a): a press of a `pressOpensOperation` tool opens a new
             // operation — the haul resets BEFORE the open image is taken.
             if (press && t.sessionPolicy().pressOpensOperation)
@@ -1736,6 +1754,8 @@ private struct ToolSession {
 
     void stepEnds(Tool t, bool ifChanged) {
         if (reporting_(t) && t.sessionPolicy().historyTopologySteps) {
+            const begins = topologyPendingBegin_;
+            topologyPendingBegin_ = false;
             if (topologyPendingAttrOnly_) {
                 if (!topologyPending_) return;
                 topologyPending_ = false;
@@ -1780,7 +1800,10 @@ private struct ToolSession {
             auto origin = StepOrigin.unclassified;
             bool prWrite;
             if (capturedTopologyModel(t.sessionPolicy())) {
-                if (topologyPendingPress_)
+                // The begin row opens its operation (S5b): no press, yet no
+                // parameter row either.
+                if (begins) origin = StepOrigin.opens;
+                else if (topologyPendingPress_)
                     origin = topologyPendingKind_ != PressKind.plain ? StepOrigin.restart
                         : operationOpen_ ? StepOrigin.refire
                         : postmodeOpenAtPress_ ? StepOrigin.restart : StepOrigin.opens;
@@ -1797,8 +1820,11 @@ private struct ToolSession {
             // The row keeps its operation's base (topology-redo S3, model doc
             // §R6.2): a redo restores it; the next operation's base is set
             // where this one ends (`rebaseOnCurrent_`).
+            // A begin row's basis is the arm image both ways: the tool's own
+            // basis may not be taken yet at the arm (plan §2.19).
             cmd.setTopologyStep(topologyPendingAttrs_, attrs,
-                topologyPendingBasis_, client.topologyStepBasis(), topologyPendingPress_,
+                begins ? topologyPendingMesh_ : topologyPendingBasis_,
+                begins ? topologyPendingMesh_ : client.topologyStepBasis(), topologyPendingPress_,
                 instanceOf_(t), origin,
                 origin == StepOrigin.unclassified ? 0 : operation_);
             if (client.recordTopologyStep(cmd) && undoTop_() is cmd) {

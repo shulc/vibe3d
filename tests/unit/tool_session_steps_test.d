@@ -2158,17 +2158,54 @@ unittest { // S2b E5: a press inside the open operation refires it
                g1.stepOrigin(), g2.stepOrigin(), g1.stepOperation(), g2.stepOperation()));
 }
 
-unittest { // S2b E2/E3: an arm that opens at the arm opens an operation; a dormant arm none
+/// PressFlagTool opening at the arm: its begin row records (S5b).
+private final class ArmPressTool : PressFlagTool {
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy policy = {
+            activationRow: true, sessionSteps: true, historyTopologySteps: true,
+            opensAt: OpensAt.arm, imageAttrs: ["v"]
+        };
+        return policy;
+    }
+}
+
+unittest { // S5b E2: an arm-opening tool's arm writes the begin row, which opens the operation
+    Mesh m = makeCube();
+    auto h = new CommandHistory();
+    auto t = new ArmPressTool;
+    t.m = &m; t.h = h; t.view = new View(0, 0, 1, 1);
+    t.basis = MeshSnapshot.capture(m);
+    Tool active = t;
+    auto s = new EditSession(() => active, h, () { active = null; });
+    // The user arm: the activation leaves the post mode unarmed (`postmodeStartsOnPressFor`).
+    s.noteArm("t.armpress", 1, false);
+    assert(h.undoEntries().length == 1 && s2bTopRow(h).stepOrigin() == StepOrigin.opens
+           && s2bTopRow(h).stepOperation() == s.sessionStateJson()["operation"].integer
+           && s.sessionStateJson()["operationOpen"].type == JSONType.true_
+           && s.sessionStateJson()["armed"].type == JSONType.true_,
+        format("S5b E2: the arm wrote %s rows, state %s — expected one begin row (opens) that "
+               ~ "opens the operation and arms the post mode", h.undoEntries().length,
+               s.sessionStateJson()));
+    s2bHaul(s, &t.pressBegins, &t.pressEnds, &m);
+    assert(h.undoEntries().length == 2 && s2bTopRow(h).stepOrigin() == StepOrigin.refire,
+        format("S5b E2: the first haul after the begin row is %s, expected a refire",
+               s2bTopRow(h).stepOrigin()));
+    // A replayed arm (Suspend) finds its begin row in the history: none is written.
+    h.setState(UndoState.Suspend);
+    s.noteArm("t.armpress", 2);
+    h.setState(UndoState.Active);
+    assert(h.undoEntries().length == 2 && s.sessionStateJson()["operationOpen"].type == JSONType.false_,
+        format("S5b E2: a replayed arm wrote a begin row (rows %s) or opened an operation: %s",
+               h.undoEntries().length, s.sessionStateJson()));
+}
+
+unittest { // S2b E3: a dormant arm opens no operation
     Mesh m = makeCube();
     auto h = new CommandHistory();
     auto t = new DormantRefusalTool;
     t.m = &m;
     Tool active = t;
     auto s = new EditSession(() => active, h, () { active = null; });
-    s.noteArm("t.dormant", 1);
-    assert(s.sessionStateJson()["operationOpen"].type == JSONType.true_
-           && s.sessionStateJson()["operation"].integer != 0,
-        format("S2b E2: an arm-opened tool's arm opened no operation: %s", s.sessionStateJson()));
     auto arm = tokenRow(&m, "t.dormant", "", true, false, 2);
     arm.markDormantTopology();
     h.recordToolLifecycle(arm);

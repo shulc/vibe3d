@@ -239,30 +239,43 @@ unittest {
     long extrudedVerts = vertCount();
     assert(extrudedVerts != baseVerts, "extrude should change vertex count");
 
-    // SCRIPT-origin activation is deliberately its own row (C-H1-door).
+    // SCRIPT-origin activation is deliberately its own row (C-H1-door); so is the
+    // operation's begin row above it (task 9210, S5b; CAP eextrude_mech s06_Z: the
+    // script-door Z takes the begin row and leaves the tool armed).
     auto act = postJson("/api/command", "tool.set edge.extrude");
     assert(act["status"].str == "ok" || act["status"].str == "success",
         "tool.set edge.extrude failed: " ~ act.toString);
     immutable size_t armedDepth = undoLen();
     auto rows = getJson("/api/history")["undo"].array;
-    assert(armedDepth == undoAfterEdit + 1 && rows[$ - 1]["command"].str == "tool.activate",
-        "Edge Extrude script arm did not append its activation row: " ~ rows.to!string);
+    assert(armedDepth == undoAfterEdit + 2 && rows[$ - 2]["command"].str == "tool.activate"
+           && rows[$ - 1]["stepOrigin"].str == "opens",
+        "Edge Extrude script arm did not append its activation row and its begin row: "
+        ~ rows.to!string);
 
-    // The activation is the top entry; the older topology edit must stay put.
+    // The begin row is the top entry: Ctrl+Z takes it alone and the tool stays.
+    playKey(SDLK_z, KMOD_LCTRL);
+    assert(undoLen() == undoAfterEdit + 1 && vertCount() == extrudedVerts,
+        "Ctrl+Z did not pop the Edge Extrude begin row alone");
+    auto state = getJson("/api/tool/state");
+    assert(state.type == JSONType.object && "tool" in state.object
+           && state["tool"].str == "edgeExtrude",
+        "undo of the Edge Extrude begin row dropped the tool: " ~ state.toString);
+
+    // The activation is the top entry now; the older topology edit must stay put.
     playKey(SDLK_z, KMOD_LCTRL);
     assert(undoLen() == undoAfterEdit,
         "Ctrl+Z did not pop the Edge Extrude activation row");
     assert(redoLen() >= 1, "Ctrl+Z under an active tool did not push redo");
     assert(vertCount() == extrudedVerts,
         "Ctrl+Z tunneled through the activation row and changed older geometry");
-    auto state = getJson("/api/tool/state");
+    state = getJson("/api/tool/state");
     assert(state.type != JSONType.object || !("tool" in state.object),
         "undo of the Edge Extrude activation left the tool armed: " ~ state.toString);
 
     // Redo restores only the activation and keeps the older edit unchanged.
     playKey(SDLK_z, KMOD_LCTRL | KMOD_LSHIFT);
-    assert(undoLen() == armedDepth,
-        "redo did not restore the Edge Extrude activation row");
+    assert(undoLen() == armedDepth - 1,
+        "redo did not restore the Edge Extrude activation row alone");
     assert(vertCount() == extrudedVerts,
         "activation redo changed the older edit geometry");
     state = getJson("/api/tool/state");

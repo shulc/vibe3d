@@ -283,9 +283,10 @@ Cell runCell(string name, string tool, string recordSite, string mode,
     stand();
     immutable long u0 = undoLen();
     auto baselineEntries = historyNames();
-    immutable string[] expectedBaseline = tool == "edge.extrude" ||
-            tool == "xfrm.pointAttract"
-        ? ["tool.activate"] : [];
+    // Edge Extrude's arm also writes its operation's begin row (task 9210, S5b).
+    immutable string[] expectedBaseline = tool == "edge.extrude"
+        ? ["tool.activate", "mesh.edge_extrude_edit"]
+        : tool == "xfrm.pointAttract" ? ["tool.activate"] : [];
     assert(baselineEntries == expectedBaseline,
         name ~ ": the stand's history baseline is " ~ baselineEntries.to!string
       ~ ", expected " ~ expectedBaseline.to!string ~ ". Selection setup must "

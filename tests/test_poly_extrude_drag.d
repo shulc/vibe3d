@@ -596,8 +596,10 @@ unittest { // Polygon -> Edge undo/redo never gives a fresh Edge Polygon attrs.
     auto edge = postJson("/api/command?origin=ui", "tool.set edge.extrude on");
     assert(edge["status"].str == "ok" || edge["status"].str == "success",
         "mixed topology-tool rig could not activate Edge Extrude");
-    assert(undoLen() == polygonDepth + 1,
-        "Edge activation did not stand as the one lifecycle row above Polygon");
+    // The UI arm writes the activation and Edge Extrude's begin row, one undo step
+    // (task 9210, S5b; model §1.1, CAP ebevel_row_ui s06_Z).
+    assert(undoLen() == polygonDepth + 2,
+        "Edge activation and its begin row did not stand as one UI step above Polygon");
 
     navigate(true);
     assert(planes() == polygonImage && undoLen() == polygonDepth,
@@ -607,7 +609,7 @@ unittest { // Polygon -> Edge undo/redo never gives a fresh Edge Polygon attrs.
         "undoing Edge activation did not restore Polygon's session-owned attrs");
 
     navigate(false);
-    assert(planes() == polygonImage && undoLen() == polygonDepth + 1,
+    assert(planes() == polygonImage && undoLen() == polygonDepth + 2,
         "redoing Edge activation changed Polygon's history-owned mesh image");
     edge = postJson("/api/command?origin=ui", "tool.set edge.extrude on");
     assert(edge["status"].str == "ok" || edge["status"].str == "success",

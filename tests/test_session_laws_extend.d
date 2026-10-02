@@ -79,19 +79,22 @@ void tokenTwin(string door) {
                undoRows()[$ - 1].toString));
     exitThrough(door);
     // The row the exit door wrote carries run 1's session (R4.2, R4.7).  A
-    // switch to Edge Extrude also writes the incoming activation above it.
+    // switch to Edge Extrude also writes the incoming activation above it, and
+    // its operation's begin row above that (task 9210, S5b; model §1.1: on the UI
+    // door one undo step with the activation, two history rows).
     auto rows = undoRows();
-    assert(rows.length >= (door == "switch" ? 2 : 1),
+    assert(rows.length >= (door == "switch" ? 3 : 1),
         format("(%s) the exit door left too few rows: %s", door, rows.to!string));
-    immutable size_t closeAt = door == "switch" ? rows.length - 2 : rows.length - 1;
+    immutable size_t closeAt = door == "switch" ? rows.length - 3 : rows.length - 1;
     assert(rows[closeAt]["label"].str == "Edge Extend" && sessionOf(rows[closeAt]) == act1,
         format("(%s) the record the exit door wrote does not carry the first session's token %s: %s",
                door, act1, rows.to!string));
     if (door == "switch")
-        assert(rows[$ - 1]["label"].str == "Activate Tool" &&
-               sessionOf(rows[$ - 1]) != 0 && sessionOf(rows[$ - 1]) != act1,
-            "(switch) the incoming Edge Extrude activation is not a distinct row above the Extend close: "
-            ~ rows.to!string);
+        assert(rows[$ - 2]["label"].str == "Activate Tool" &&
+               sessionOf(rows[$ - 2]) != 0 && sessionOf(rows[$ - 2]) != act1 &&
+               rows[$ - 1]["stepOrigin"].str == "opens" && sessionOf(rows[$ - 1]) == sessionOf(rows[$ - 2]),
+            "(switch) the incoming Edge Extrude activation and its begin row are not distinct rows "
+            ~ "above the Extend close: " ~ rows.to!string);
     keyArm();
     immutable long h1 = undoLen();
     immutable long act2 = sessionOf(undoRows()[$ - 1]);

@@ -754,10 +754,11 @@ unittest { // (4b)
                   identSites(es, "settleAfterNavigation_", false)));
     assert(identSites(es, "postmodeArmed_", true)
            == ["<decl>:1", "ToolSession.endPendingOperation_:1", "ToolSession.noteArm:1",
-               "ToolSession.notePointerDown:1", "ToolSession.settleAfterNavigation_:1"],
+               "ToolSession.notePointerDown:1", "ToolSession.recordBeginRow_:1",
+               "ToolSession.settleAfterNavigation_:1"],
            format("S2a needle: postmodeArmed_ is written at %s, expected the field initializer "
-                  ~ "and noteArm, notePointerDown, settleAfterNavigation_ once each, and (S7, "
-                  ~ "law 6; M-PS calls it) endPendingOperation_",
+                  ~ "and noteArm, notePointerDown, settleAfterNavigation_ once each, (S7, "
+                  ~ "law 6; M-PS calls it) endPendingOperation_ and (S5b) the begin row",
                   identSites(es, "postmodeArmed_", true)));
     assert(identSites(es, "ownOpenerOnTop_", false)
            == ["<decl>:1", "ToolSession.settleAfterNavigation_:1"],
@@ -790,16 +791,16 @@ unittest { // (4b)
            format("S2a structural: %s history-topology ids, measured 14", topo.length));
     assert(armModel == ["edge.bevel", "edge.extrude", "mesh.vertexBevel", "mesh.vertexExtrude"],
            format("S2a structural: opensAtArm among the model ids is %s", armModel));
-    // The two derived answers over the whole registry: the nine press-opened
-    // model ids, plus Edge Extend's declared carry / the declared on-press
-    // transform ids. Polarity: false before S2a, true after.
-    enum string[] pressModel = ["mesh.arrayTool", "mesh.clone", "mesh.mirrorTool",
-        "mesh.polyInsetTool", "mesh.radialArrayTool", "mesh.smoothShiftTool", "mesh.thickenTool",
-        "poly.extrude", "vert.merge"];
-    assert(carries == (["edge.extend"] ~ pressModel),
-           format("S2a structural: firstStepCarriesActivation answers for %s", carries));
-    assert(onPress == (pressModel[0 .. 7] ~ ["poly.extrude", "rotate", "vert.merge"]),
-           format("S2a structural: postmodeStartsOnPressFor answers for %s", onPress));
+    // The two derived answers over the whole registry: the 13 model ids (S5b: the
+    // four arm-opening ones carry their begin row and are armed by it, not by the
+    // activation), plus Edge Extend's declared carry / the declared on-press
+    // transform id. Polarity: false before S5b (the four answered no), true after.
+    string[] withExtend = ["edge.extend"] ~ kModelIds.dup, withRotate = kModelIds ~ ["rotate"];
+    sort(withExtend); sort(withRotate);
+    assert(carries == withExtend,
+           format("S5b structural: firstStepCarriesActivation answers for %s", carries));
+    assert(onPress == withRotate,
+           format("S5b structural: postmodeStartsOnPressFor answers for %s", onPress));
 }
 
 // ---------------------------------------------------------------------------
@@ -905,6 +906,7 @@ unittest { // (4c)
         "operationOpen_=ToolSession.settleAfterNavigation_:1", "operationOpen_=ToolSession.stepEnds:1",
         "postmodeArmed_=<decl>:1", "postmodeArmed_=ToolSession.endPendingOperation_:1",
         "postmodeArmed_=ToolSession.noteArm:1", "postmodeArmed_=ToolSession.notePointerDown:1",
+        "postmodeArmed_=ToolSession.recordBeginRow_:1",
         "postmodeArmed_=ToolSession.settleAfterNavigation_:1",
         "raw:source/commands/mesh/surface_attr.d:0/4/0",
         "raw:source/create_tool_registration.d:0/1/0", "raw:source/document.d:0/1/0",
@@ -1339,6 +1341,51 @@ unittest { // (4h)
                           ~ "c.rebaseTopologyStep(MeshSnapshot.capture(*m));"
                           ~ "elset.resyncSession();"),
            "S7 (6) needle: rebaseAfterTail_ is not `model -> rebase, else resync`: " ~ helper);
+}
+
+// (4i) Task 9210 (topology-redo wave S5b, owner decision В1; model doc §1.1): the tool
+// pick and the operation start are two layers. An arm-opening tool's operation begins
+// with a begin row of its own (`recordBeginRow_`, called by the arm alone — never under
+// Suspend, never dormant), classified `opens` before the parameter-row branch and never
+// an attribute-only row; the activation alone opens no post mode. Order (form item 2):
+// floor -> needle. Polarity: false before S5b (none of the names existed; the opener test
+// accepted the activation of an arm-opening tool), true after.
+unittest { // (4i)
+    import tests.unit.census_symbols : blankUnittestBodies;
+    auto es = blankUnittestBodies(blankNonCode(readText("source/edit_session.d")));
+    const ts = bodyAt(es, "private struct ToolSession");
+    foreach (m; ["void noteArm(string id, ulong token, bool postmodeArmed = true)",
+                 "private void recordBeginRow_(Tool t)", "void stepBegins(Tool t, PressKind kind",
+                 "void stepEnds(Tool t, bool ifChanged)", "private bool ownOpenerOnTop_(ulong tok)"])
+        assert(squeeze(bodyAt(ts, m)).length > 2, "S5b floor: the session body " ~ m ~ " is empty");
+    assert(identSites(es, "recordBeginRow_", false) == ["<decl>:1", "ToolSession.noteArm:1"],
+           format("S5b needle: recordBeginRow_ is called at %s, expected the arm once",
+                  identSites(es, "recordBeginRow_", false)));
+    assert(identSites(es, "topologyPendingBegin_", true)
+           == ["<decl>:1", "ToolSession.recordBeginRow_:1", "ToolSession.stepEnds:1"],
+           format("S5b needle: topologyPendingBegin_ is written at %s, expected the begin row "
+                  ~ "(raised) and stepEnds (cleared)", identSites(es, "topologyPendingBegin_", true)));
+    // the arm's call is guarded by the four terms: not a replay, the model, the arm opens, not dormant
+    const arm = bodyAt(ts, "void noteArm(string id, ulong token, bool postmodeArmed = true)");
+    const g = guardOf(arm, cast(size_t) arm.indexOf("recordBeginRow_("));
+    assert(g !is null && words(g, "Suspend") == 1 && words(g, "capturedTopologyModel") == 1
+           && words(g, "opensAtArm") == 1 && words(g, "topologyDormant_") == 1,
+           "S5b needle: the begin row's guard in noteArm is `" ~ squeeze(g) ~ "`");
+    // the attribute-only predicate excludes the begin row; stepEnds classifies it first
+    const steB = bodyAt(ts, "void stepBegins(Tool t, PressKind kind");
+    const aAt = steB.indexOf("topologyPendingAttrOnly_ =");
+    assert(aAt >= 0 && words(steB[aAt .. aAt + steB[aAt .. $].indexOf(";")],
+                             "topologyPendingBegin_") == 1,
+           "S5b needle: the attribute-only predicate does not exclude the begin row");
+    const steE = squeeze(bodyAt(ts, "void stepEnds(Tool t, bool ifChanged)"));
+    const opensAt = steE.indexOf("if(begins)origin=StepOrigin.opens;elseif(topologyPendingPress_)");
+    assert(opensAt >= 0 && opensAt < steE.indexOf("prWrite=!operationOpen_;"),
+           "S5b needle: stepEnds does not classify the begin row `opens` before the press / "
+           ~ "parameter-row branches");
+    // the opener on top is a topology step of the session — never an activation
+    const opener = bodyAt(ts, "private bool ownOpenerOnTop_(ulong tok)");
+    assert(words(opener, "ToolActivationCommand") == 0 && words(opener, "opensAtArm") == 0,
+           "S5b needle: ownOpenerOnTop_ accepts an activation again (the transitional term)");
 }
 
 // Fence (form item 1): the per-tool dormant flag is gone (S6, task 9080).

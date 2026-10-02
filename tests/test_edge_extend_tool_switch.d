@@ -183,11 +183,18 @@ unittest { // (X) incoming Edge Extrude activation stands above the Extend close
     engage();
     cmd("tool.set edge.extrude on");
     settle(250);
+    // Above the activation stands Edge Extrude's begin row (task 9210, S5b; CAP
+    // eextrude_mech s06_Z: a script-door Z takes it alone and the tool stays).
     auto rows = getJson("/api/history")["undo"].array;
-    assert(rows.length >= 2 && rows[$ - 2]["label"].str == "Edge Extend" &&
-           rows[$ - 1]["label"].str == "Activate Tool",
-        "rig: the switch did not order Extend close then Edge Extrude activation: " ~ rows.to!string);
+    assert(rows.length >= 3 && rows[$ - 3]["label"].str == "Edge Extend" &&
+           rows[$ - 2]["label"].str == "Activate Tool" && rows[$ - 1]["stepOrigin"].str == "opens",
+        "rig: the switch did not order Extend close, Edge Extrude activation, its begin row: "
+        ~ rows.to!string);
     immutable size_t committed = vertexCount();
+    ctrlZ();
+    assert(vertexCount() == committed && toolId() == "edgeExtrude",
+        format("undo of the Edge Extrude begin row changed the mesh or the tool: %d v (expected %d), "
+             ~ "tool %s", vertexCount(), committed, toolId()));
     ctrlZ();
     assert(vertexCount() == committed && toolId() == "edgeExtend",
         format("undo of the incoming Edge Extrude activation changed the committed Extend run: "

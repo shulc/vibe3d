@@ -28,7 +28,7 @@
     "source": "simulated",
     "reference": "vibe3d-selfgen",
     "method": "self-drive",
-    "captured_utc": "2026-09-28T09:27:12Z",
+    "captured_utc": "2026-10-02T20:49:48Z",
     "harness": "tests/test_tool_gesture_g4.d, driven over /api/play-events against vibe3d's own running instance -- no reference editor involved (recipe: stand -> gesture (/api/play-events) -> drop -> undo -> redo)",
     "task": "1905",
     "notes": "emitted by this producer at capture time (task 3370), from its own `kWrittenBy`/`kRecipe`; `captured_utc` is the wall clock of the capture run itself. Before 3370 the block was a hand insert (task 3140) that any re-capture would have dropped, and `captured_utc` was the commit date of the `producedBy` SHA."
@@ -76,8 +76,8 @@
     {
       "name": "edge.bevel/width-drag", "tool": "edge.bevel",
       "recordSite": "source/tools/edit/edge_bevel.d EdgeBevelTool.recordTopologyStep", "mode": "Plain", "payload": "MeshSessionEdit",
-      "liveEntryNames": ["tool.activate","mesh.bevel_edit"],
-      "entryNames": ["tool.activate","mesh.bevel_edit"],
+      "liveEntryNames": ["tool.activate","mesh.bevel_edit","mesh.bevel_edit"],
+      "entryNames": ["tool.activate","mesh.bevel_edit","mesh.bevel_edit"],
       "undoDelta": 1,
       "undoResidual": [],
       "redoResidual": [],
@@ -89,8 +89,8 @@
     {
       "name": "vertex.bevel/inset-drag", "tool": "mesh.vertexBevel",
       "recordSite": "source/tools/edit/vertex_bevel_tool.d VertexBevelTool.recordTopologyStep", "mode": "Plain", "payload": "MeshSessionEdit",
-      "liveEntryNames": ["tool.activate","mesh.bevel_edit"],
-      "entryNames": ["tool.activate","mesh.bevel_edit"],
+      "liveEntryNames": ["tool.activate","mesh.bevel_edit","mesh.bevel_edit"],
+      "entryNames": ["tool.activate","mesh.bevel_edit","mesh.bevel_edit"],
       "undoDelta": 1,
       "undoResidual": [],
       "redoResidual": [],
@@ -102,8 +102,8 @@
     {
       "name": "vertex.extrude/width-then-shift", "tool": "mesh.vertexExtrude",
       "recordSite": "source/tools/edit/vertex_extrude_tool.d VertexExtrudeTool.recordTopologyStep", "mode": "Plain", "payload": "MeshSessionEdit",
-      "liveEntryNames": ["tool.activate","mesh.bevel_edit","mesh.bevel_edit"],
-      "entryNames": ["tool.activate","mesh.bevel_edit","mesh.bevel_edit"],
+      "liveEntryNames": ["tool.activate","mesh.bevel_edit","mesh.bevel_edit","mesh.bevel_edit"],
+      "entryNames": ["tool.activate","mesh.bevel_edit","mesh.bevel_edit","mesh.bevel_edit"],
       "undoDelta": 2,
       "undoResidual": [],
       "redoResidual": [],

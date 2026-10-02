@@ -391,9 +391,11 @@ unittest { // Edge first group: two Undos remove g1 and then its activation.
         "Edge z1 must remove g1 while retaining its armed activation: u0 " ~ u0.to!string
         ~ ", now " ~ undoLen().to!string ~ ", plane delta "
         ~ planeDiff(initial, planes()).to!string);
+    // The UI-door activation and the operation's begin row above it are one undo step
+    // (task 9210, S5b; model §1.1, CAP ebevel_row_ui s06_Z): two history rows go.
     navigate(true);
-    assert(planes() == initial && undoLen() == u0 - 1,
-        "Edge z2 must remove the activation after g1 undo");
+    assert(planes() == initial && undoLen() == u0 - 2,
+        "Edge z2 must remove the activation with its begin row after g1 undo");
     navigate(false);
     assert(planes() == initial && undoLen() == u0,
         "Edge r1 re-arms bare; the old g1 redo row must be gone");
@@ -641,19 +643,20 @@ unittest { // A scripted write is the actual before-image of the next step.
     assert(getJson("/api/history")["undo"].array[$ - 1]["command"].str ==
         "tool.topology_adjustment",
         "a panel Width after the scripted write is not an attribute-only row");
-    // Known divergence under V4 (registry row 471): the reference's scripted write keeps
-    // a row of its own, so its Z takes the panel row alone (0.1) — model prediction from
-    // P3 + the door law (CAP `dormant2_inset_ui/s11_Z`, `s13_R`); this path is not
-    // captured. Flips with V4's P3 row half. Ours: no scripted row, so the panel row is the
-    // first attribute-only row after the UI arm and pairs with it: Z undoes both, R redoes
-    // both, the re-created tool holding its drop seed — the scripted 0.1 (law 4).
+    // Registry row 471 (V4): the reference's scripted write keeps a row of its own, so its
+    // Z takes the panel row alone (0.1) — model prediction from P3 + the door law (CAP
+    // `dormant2_inset_ui/s11_Z`, `s13_R`); this path is not captured. Ours (task 9210, S5b)
+    // agrees with that prediction through the begin row: the UI arm pairs with its begin
+    // row (model §1.1), so the panel row is no longer the row above the activation and
+    // pairs with nothing — Z takes it alone, R puts it back.
     navigate(true);
-    assert(planes() == initial && getJson("/api/input/context")["tool"].str == "",
-        "interactive Width undo did not take the UI arm with its first attribute-only row");
+    assert(planes() == initial && getJson("/api/input/context")["tool"].str == TOOL
+        && abs(queryWidth() - 0.1) < 1e-5,
+        "interactive Width undo did not take the attribute-only row alone (back to the scripted 0.1)");
     navigate(false);
-    assert(planes() == initial && abs(queryWidth() - 0.1) < 1e-5
+    assert(planes() == initial && abs(queryWidth() - 0.2) < 1e-5
         && getJson("/api/history")["undo"].array[$ - 1]["command"].str == "tool.topology_adjustment",
-        "interactive Width redo lost the seed (the scripted 0.1) or the row, or changed the mesh");
+        "interactive Width redo lost the panel value (0.2) or the row, or changed the mesh");
 }
 
 unittest { // The same scripted before-image survives an ordinary handle drag.
@@ -733,6 +736,8 @@ unittest { // Explicit drop while held must preserve its single pending row.
     playAndWait(buildDragUpLog(cam.vpX, cam.vpY, cam.width, cam.height,
         x - 40, y), BASE);
     navigate(true);
-    assert(planes() == initial && undoLen() == u0,
-        "explicit-drop pending row did not undo its full mesh");
+    // The drop folded the begin row (task 9210, S5b) and the held row into one group:
+    // the undo takes both, the activation stays (as before S5b, when it took the row).
+    assert(planes() == initial && undoLen() == u0 - 1,
+        "explicit-drop pending row did not undo its full mesh with its begin row");
 }
