@@ -22,7 +22,8 @@ enum string kFixture = import("fixtures/topology_redo_law_cells.json");
 /// The family's cells (the generator's `--family inset` census, measured literal).
 immutable string[] kCells = [
     "close_cmd_inset_script", "close_cmd_inset_ui", "close_drop_inset_script",
-    "close_drop_inset_ui", "close_enter_inset_ui", "cmdattrs_nozr_pextrude",
+    "close_drop_inset_ui", "close_drop_redo_inset_ui", "close_enter_inset_ui",
+    "cmdattrs_nozr_pextrude",
     "cmdattrs_zr_pextrude_free", "cmdattrs_zr_pextrude_handle", "doapply_after_sa_inset",
     "doapply_after_sa_pextrude", "doapply_after_sa_smooth", "dormant2_inset", "dormant2_inset_ui",
     "dormant3_cross_inset_ui", "dormant3_inset", "dormant3_inset_ui", "fold_close_inset",
@@ -47,10 +48,10 @@ immutable string[] kCells = [
 ];
 
 // `freeze_fixture.py --family inset` (2026-10-02, + 8960 3 cells, 8980 3 cells, 9030 2 cells,
-// 8940 C7):
-// TOPO-REDO-CELLS family=inset cells=81 checkpoints=958 …
-enum long kCellCount = 81;
-enum long kCheckpointCount = 958;
+// 8940 C7, 9160 C10-c1):
+// TOPO-REDO-CELLS family=inset cells=82 checkpoints=966 …
+enum long kCellCount = 82;
+enum long kCheckpointCount = 966;
 
 unittest { // the floor: the fixture still holds the whole family
     familyFloor(parseJSON(kFixture), "inset", kCells, kCellCount, kCheckpointCount);
