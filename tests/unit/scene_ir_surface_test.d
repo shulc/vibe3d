@@ -52,3 +52,29 @@ unittest {
     }
     assert(checked == 9, format("mapped %d members, expected 9", checked));
 }
+
+unittest { // every surface dump carries the flag's VALUE (a constant would pass the frozen all-false planes)
+    import std.algorithm : canFind;
+    import http_json : meshPlanesJson, meshToJsonDetailed;
+    import tests.unit.fixtures : dumpMeshPlanes;
+    Mesh m;
+    m.addVertex(Vec3(0, 0, 0));
+    m.addVertex(Vec3(1, 0, 0));
+    m.addVertex(Vec3(0, 1, 0));
+    m.addFace([0u, 1, 2]);
+    m.buildLoops();
+    Surface a, b;
+    b.twoSided = true;
+    m.surfaces = [a, b];
+    immutable planes = meshPlanesJson(m);
+    assert(planes.canFind(`"twoSided": false}`) && planes.canFind(`"twoSided": true}`),
+        "meshPlanesJson does not emit each surface's twoSided value");
+    immutable model = meshToJsonDetailed(m);
+    assert(model.canFind(`"twoSided":false}`) && model.canFind(`"twoSided":true}`),
+        "the /api/model dump does not emit each surface's twoSided value");
+    auto t = dumpMeshPlanes(m);
+    Mesh n = m;
+    n.surfaces = [a, a];
+    assert(dumpMeshPlanes(n)["surfaces"] != t["surfaces"],
+        "the fixtures dump cannot tell a two-sided surface from a single-sided one");
+}

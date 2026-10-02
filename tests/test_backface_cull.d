@@ -607,3 +607,27 @@ unittest {
         format("P4: Ft's corner behind Bo was picked (%s): the vertex pre-pass must stay two-sided "
                ~ "(C7i: the reference picks it — a picking change is backlog 9041)", sel("selectedVertices")));
 }
+
+// ---------------------------------------------------------------------------
+// The hover walk runs once per side: the back side of a two-sided slot starts
+// from the material colour, not from the hover tint the front side ended on.
+// ---------------------------------------------------------------------------
+unittest {
+    if (!cellOn("hover")) return;
+    auto vp = loadRig();
+    immutable r0 = readAll(vp, "hover-before");
+    immutable w = winPx(vp, kQuads[iF0].c);
+    string log = vpLine();
+    foreach (i; 0 .. 5)
+        log ~= format(`{"t":%.1f,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,"state":0,"mod":0}` ~ "\n",
+                      50.0 + i * 20.0, w[0], w[1]);
+    playAndWait(log);
+    settle();
+    auto r = readAll(vp, "hover-F0");
+    // Positive control: F0 is hover-tinted.
+    assert(gap(r.q[iF0], r0.q[iF0]) >= 6, format("hover control: F0 %s did not take the hover tint (was %s)",
+                                                 r.q[iF0], r0.q[iF0]));
+    assert(gap(r.q[iB1], r0.q[iB1]) <= 1 && gap(r.q[iF1], r0.q[iF1]) <= 1,
+        format("hovering F0 tinted F1 %s / B1 %s (were %s / %s): the back side must start from the material colour",
+               r.q[iF1], r.q[iB1], r0.q[iF1], r0.q[iB1]));
+}

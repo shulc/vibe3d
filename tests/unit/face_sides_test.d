@@ -41,3 +41,21 @@ unittest { // the other members do not choose the sides
     assert(s.count == 2 && s.side[0] == FaceSide.Front && s.side[1] == FaceSide.BackOfTwoSided,
         format("mirror / order / alpha moved the sides: %s", s.side[0 .. s.count]));
 }
+
+unittest { // previewFacePass: a create-tool preview takes the plan's sidedness and nothing else
+    import display_state : DrawPlan, ViewportDisplay, resolveDrawPlan;
+    import shader : previewFacePass;
+    DrawPlan bare;
+    assert(previewFacePass(bare) == FacePass.init, "DrawPlan.init must give the uncull'd preview pass");
+    ViewportDisplay d;
+    FacePass want;
+    want.bySurface = true;
+    DrawPlan shaded = resolveDrawPlan(d, false);
+    assert(previewFacePass(shaded) == want,
+        format("the default Shaded plan's preview pass is %s, expected the surface cull only",
+               previewFacePass(shaded)));
+    d.retopology = true;
+    DrawPlan retopo = resolveDrawPlan(d, false);
+    assert(previewFacePass(retopo) == FacePass.init,
+        "under the retopology mode the preview takes none of the mode's face-pass fields");
+}
