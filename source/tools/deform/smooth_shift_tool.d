@@ -384,9 +384,6 @@ public:
     public override void restoreTopologyStep(in AttrImage attrs, MeshSnapshot basis) {
         restoreRecordedAttrs(attrs);
         rebaseTopologyStep(basis);
-        // Measured: the Thicken redo that re-arms keeps the mesh and resets
-        // Shift; an in-session undo/redo restores its recorded Shift.
-        if (thicken_ && completedGesture) shift_ = 0.0f;
     }
 
     override void onParamChanged(string pname) {

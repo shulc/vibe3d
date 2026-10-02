@@ -222,9 +222,11 @@ void dragCell(string tool, bool thicken) { // both IDs share SmoothShiftTool
     key(65);
     assert(vertexCount() == v1 && faceCount() == f1,
         "Smooth Shift redo must restore the completed topology");
-    // Both tools restore the recorded Shift: the redo of the re-arming pair takes the
-    // arm's attributes at the reference (law 4, topology-redo S4) — Thicken's reset was
-    // that law's special case, keyed on the pair's completed basis, gone in S3 (8950).
+    // KNOWN DIVERGENCE, OURS (not the reference's value): both ids restore the recorded
+    // Shift here, while the reference's redo of the re-arming UI pair reads the arm's
+    // attributes (law 4; fixture `thicken_direct_ui/s06_R.attrs` ref [s01], ours [s02, s04];
+    // `smooth_direct_ui/s06_R.attrs` the same). Topology-redo S4 flips this expectation for
+    // BOTH ids; Thicken's former reset matched it only by its own special case (gone, 8950).
     assert(abs(queryShift(tool) - after) < 1e-6,
         "redo must restore the captured Shift amount for this exact ID");
 

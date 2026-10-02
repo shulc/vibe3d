@@ -146,6 +146,35 @@ unittest {
         ~ "frozen at 8 / 102");
 }
 
+// VertexMerge's first haul merges 3 → 2 at the reference, 3 → 1 here (gap row 486, S3 fix
+// 8950): the generator's four `KERNEL_SEEDS` (each `s02_drag`, every other field parity) and
+// the later `vcount` fields carrying the seed's (2, 1) pair. Stationary; the exact set of
+// this family (`freeze_fixture.py --print-lists`: `LIST kernelOwned n=30`, 2026-10-02: these
+// 24 + EdgeExtrude's 6, pinned by the autoact suite).
+unittest {
+    const fx = parseJSON(kFixture);
+    string[] kernel;
+    foreach (c; fx["cells"].array)
+        if (c["family"].str == "inset")
+        foreach (p; c["points"].array)
+            foreach (field, f; p["fields"].object)
+                if ("ours" in f && f["owner"].str == "none: kernel (gap row 486)")
+                    kernel ~= c["id"].str ~ "/" ~ p["label"].str ~ "." ~ field;
+    string[] want;
+    foreach (cell; ["vmerge_discrim", "vmerge_discrim_ui"])
+        foreach (lab; ["s02_drag", "s04_Z", "s06_R"])
+            want ~= cell ~ "/" ~ lab ~ ".vcount";
+    foreach (cell, arm; ["vmerge_dormant": "s08_arm", "vmerge_dormant_ui": "s08_armui"])
+        foreach (lab; ["s02_drag", "s03_W", "s04_Z", "s06_R", "s07_R", arm, "s09_drag", "s10_Z",
+                       "s11_R"])
+            want ~= cell ~ "/" ~ lab ~ ".vcount";
+    import std.algorithm : sort;
+    kernel.sort();
+    want.sort();
+    assert(want.length == 24 && kernel == want, "fixture: the kernel-owned fields of the "
+        ~ "inset family " ~ kernel.to!string ~ " are not VertexMerge's 24");
+}
+
 static foreach (id; kCells) {
     unittest { runCell(parseJSON(kFixture), id); }
 }

@@ -48,12 +48,21 @@ unittest { // the floor: the fixture still holds the whole family
 
 // The middle-button restart of EdgeExtrude (plan §11, verdict 8890): one layer per press
 // on both sides, so every `_M` point is parity but its `origin` (S2b), and the fields
-// after it take their owners by the general rule — none is "none: outside the model"
-// (that status belongs to the PolyExtrude tail, inset family). Floor: generator output
-// 2026-10-01 — 6 `_M` points (`LIST middleRestartParity n=6`).
+// after it take their owners by the general rule — except that S3 does not derive the
+// restart law (§11): a field only law 2 would explain is "none: outside the model", and
+// those are exactly `kMiddleNoLaw2` (S3 fix 8950: the haul after the restart's undo refires
+// the restart's operation from its base at the reference, 13, ours from g1's, 9). Floors:
+// generator output 2026-10-02 — 6 `_M` points (`LIST middleRestartParity n=6`),
+// `LIST middleRestartNoLaw2 n=4`.
+immutable string[] kMiddleNoLaw2 = [
+    "nav_undo_restart_eextrude/s05_drag.vcount", "nav_undo_restart_eextrude/s06_W.vcount",
+    "nav_undo_restart_eextrude_ui/s05_drag.vcount", "nav_undo_restart_eextrude_ui/s06_W.vcount",
+];
+
 unittest {
     const fx = parseJSON(kFixture);
     size_t points;
+    string[] none;
     foreach (c; fx["cells"].array) {
         if (c["family"].str != "autoact" || !c["measured"].boolean) continue;
         string m;
@@ -71,24 +80,28 @@ unittest {
             }
             if (!tail) continue;
             foreach (field, f; p["fields"].object)
-                assert("ours" !in f || f["owner"].str != "none: outside the model", "fixture: "
-                    ~ at ~ "." ~ field ~ " after the middle press " ~ m ~ " is outside the "
-                    ~ "model (plan §11: the general owner rule applies)");
+                if ("ours" in f && f["owner"].str == "none: outside the model")
+                    none ~= at ~ "." ~ field;
         }
     }
     assert(points == 6, "fixture family autoact holds " ~ points.to!string
         ~ " middle-restart points, frozen at 6");
+    assert(none == kMiddleNoLaw2, "fixture: the fields after an EdgeExtrude middle press "
+        ~ "outside the model are " ~ none.to!string ~ ", expected the four law 2 alone "
+        ~ "explains (plan §11: the general owner rule applies to the rest)");
 }
 
 // The kernel owner (reviewer's adjudication of S1b PLAN-FINDING-1, gap row 486): EdgeExtrude
 // after `select.invert` rebuilds both faces at the reference (7), ours 9 — a first-haul
 // COUNT no law moves; the generator's `KERNEL_SEEDS` names the two seeds, and only the
 // `vcount` fields carrying a seed's (reference, ours) pair inherit it. Stationary; the
-// exact set (`freeze_fixture.py --print-lists`: `LIST kernelOwned n=6`, 2026-10-01).
+// exact set of this family (`freeze_fixture.py --print-lists`: `LIST kernelOwned n=30`,
+// 2026-10-02: these 6 + VertexMerge's 24, pinned by the inset suite).
 unittest {
     const fx = parseJSON(kFixture);
     string[] kernel;
     foreach (c; fx["cells"].array)
+        if (c["family"].str == "autoact")
         foreach (p; c["points"].array)
             foreach (field, f; p["fields"].object)
                 if ("ours" in f && f["owner"].str == "none: kernel (gap row 486)")

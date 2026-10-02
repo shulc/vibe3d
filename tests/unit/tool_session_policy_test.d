@@ -1088,20 +1088,192 @@ unittest { // (4d)
            "S3 needle: the press or the settle rebases inside an open operation");
 
     // STRUCTURAL: every restore body of the model's 12 classes is its attributes,
-    // then its rebase body (SmoothShift: plus the Thicken reset, S4 removes it).
+    // then its rebase body — nothing else (the former Thicken reset was dead after S3).
     size_t bodies;
     foreach (f; kRebaseBodyFiles) {
         const b = squeeze(bodyAt(blankNonCode(readText(f)),
                                  "void restoreTopologyStep(in AttrImage attrs, MeshSnapshot basis)"));
         ++bodies;
-        const want = "{restoreRecordedAttrs(attrs);rebaseTopologyStep(basis);"
-            ~ (f.endsWith("smooth_shift_tool.d") ? "if(thicken_&&completedGesture)shift_=0.0f;" : "")
-            ~ "}";
+        enum want = "{restoreRecordedAttrs(attrs);rebaseTopologyStep(basis);}";
         assert(b == want, format("S3 structural: the restore body in %s is %s, expected %s",
                                  f, b, want));
     }
     assert(bodies == 12, format("S3 structural: restore bodies of the model's tools: %s read, 12 expected",
                                 bodies));
+}
+
+// (4d') The `built` census of the model's 12 classes (S3 review, 8950): the rebase
+// body sets `built = !before.matches(*mesh)`, and since S3 a close rebases onto the
+// live mesh, so `built` is false after every close with the tool bound. Each reader
+// (`hasUncommittedEdit` — `active && built && …` — and through it `phase`, Shift+LMB,
+// the command close's idle branch, `discardOpenEdit`) sees that state; a new reader or
+// writer must be named here. Identifier-keyed (every spelling: `built`, `this.built`,
+// `tool.built`), by enclosing symbol, unittest bodies blanked; measured 2026-10-02.
+private enum string[][string] kBuiltSites = [
+    "source/tools/alignment/array_tool.d": [
+        "<decl>:1", "ArrayTool.activate:1", "ArrayTool.applyHeadless:2",
+        "ArrayTool.buildPreparedParamUpdate:2", "ArrayTool.cancelLiveEdit:2",
+        "ArrayTool.commitOperation:1", "ArrayTool.deactivate:1", "ArrayTool.hasUncommittedEdit:1",
+        "ArrayTool.installPreparedActivation:1", "ArrayTool.installPreparedParamUpdate:1",
+        "ArrayTool.onMouseButtonUp:1", "ArrayTool.preparedActivationInstalledForTest:1",
+        "ArrayTool.preparedParamUpdateMatches:1", "ArrayTool.rebaseTopologyStep:1",
+        "ArrayTool.rebuildPreview:1", "ArrayTool.resyncSession:2",
+        "ArrayTool.seedPreparedActivationForTest:1", "ArrayTool.seedPreparedParamForTest:1",
+        "ArrayTool:1",
+    ],
+    "source/tools/alignment/clone_tool.d": [
+        "CloneTool.activate:1", "CloneTool.applyHeadless:1", "CloneTool.cancelLiveEdit:2",
+        "CloneTool.commitOperation:1", "CloneTool.installPreparedActivation:1",
+        "CloneTool.onMouseButtonUp:1", "CloneTool.preparedActivationInstalledForTest:1",
+        "CloneTool.rebaseTopologyStep:1", "CloneTool.rebuildPreview:1", "CloneTool.resyncSession:2",
+        "CloneTool.seedPreparedActivationForTest:1", "CloneTool:3",
+    ],
+    "source/tools/alignment/mirror.d": [],
+    "source/tools/alignment/radial_array_tool.d": [
+        "<decl>:1", "RadialArrayTool.applyHeadless:2",
+        "RadialArrayTool.buildPreparedActivationImage:1",
+        "RadialArrayTool.buildPreparedDeactivateImage:1",
+        "RadialArrayTool.buildPreparedParamImage:5", "RadialArrayTool.cancelLiveEdit:1",
+        "RadialArrayTool.commitOperation:1", "RadialArrayTool.deactivate:1",
+        "RadialArrayTool.hasUncommittedEdit:1", "RadialArrayTool.installPreparedTransition:2",
+        "RadialArrayTool.onMouseButtonUp:1", "RadialArrayTool.preparedBuiltSeedUnchangedForTest:1",
+        "RadialArrayTool.preparedParamMatches:1", "RadialArrayTool.preparedTransitionForTest:1",
+        "RadialArrayTool.rebaseTopologyStep:1", "RadialArrayTool.rebuildPreview:2",
+        "RadialArrayTool.reinitSession:1", "RadialArrayTool.seedPreparedBuiltTransitionForTest:1",
+        "RadialArrayTool.seedPreparedParamForTest:1",
+        "RadialArrayTool.seedPreparedTransitionForTest:1", "RadialArrayTool:1",
+        "RadialArrayTransitionImage:1",
+    ],
+    "source/tools/deform/smooth_shift_tool.d": [
+        "<decl>:1", "SmoothShiftParamProjection.opEquals:2", "SmoothShiftParamProjection:1",
+        "SmoothShiftTool.applyHeadless:2", "SmoothShiftTool.buildPreparedParamUpdate:1",
+        "SmoothShiftTool.cancelLiveEdit:2", "SmoothShiftTool.deactivate:1",
+        "SmoothShiftTool.draw:1", "SmoothShiftTool.hasUncommittedEdit:1",
+        "SmoothShiftTool.installPreparedActivation:1",
+        "SmoothShiftTool.installPreparedParamUpdate:1", "SmoothShiftTool.paramProjection:1",
+        "SmoothShiftTool.preparedActivationDirtyForTest:1",
+        "SmoothShiftTool.preparedActivationForTest:1",
+        "SmoothShiftTool.preparedParamBuiltForTest:1", "SmoothShiftTool.rebaseTopologyStep:1",
+        "SmoothShiftTool.rebuildPreview:1", "SmoothShiftTool.reinitSession:1",
+        "SmoothShiftTool.seedPreparedActivationForTest:1",
+        "SmoothShiftTool.seedPreparedParamForTest:1",
+    ],
+    "source/tools/edit/edge_bevel.d": [
+        "<decl>:2", "EdgeBevelParamProjection.opEquals:2", "EdgeBevelParamProjection:1",
+        "EdgeBevelTool.applyHeadless:2", "EdgeBevelTool.buildPreparedParamUpdate:1",
+        "EdgeBevelTool.cancelLiveEdit:2", "EdgeBevelTool.deactivate:1", "EdgeBevelTool.draw:1",
+        "EdgeBevelTool.drawReplica:1", "EdgeBevelTool.hasUncommittedEdit:1",
+        "EdgeBevelTool.installPreparedActivation:1", "EdgeBevelTool.installPreparedParamUpdate:1",
+        "EdgeBevelTool.interactionStateBytesForTest:1", "EdgeBevelTool.paramProjection:1",
+        "EdgeBevelTool.preparedActivationDirtyForTest:1",
+        "EdgeBevelTool.preparedActivationForTest:1",
+        "EdgeBevelTool.preparedParamInstalledForTest:1", "EdgeBevelTool.readInteractionForTest:1",
+        "EdgeBevelTool.rebaseTopologyStep:1", "EdgeBevelTool.rebuildPreview:1",
+        "EdgeBevelTool.reinitSession:1", "EdgeBevelTool.seedPreparedActivationForTest:1",
+        "EdgeBevelTool.seedPreparedParamForTest:1", "EdgeBevelTool.toolStateJson:1",
+    ],
+    "source/tools/edit/edge_extrude.d": [
+        "<decl>:1", "EdgeExtrudeParamProjection.opEquals:2", "EdgeExtrudeParamProjection:1",
+        "EdgeExtrudeTool.applyHeadless:2", "EdgeExtrudeTool.buildPreparedParamUpdate:1",
+        "EdgeExtrudeTool.cancelLiveEdit:1", "EdgeExtrudeTool.deactivate:1",
+        "EdgeExtrudeTool.draw:1", "EdgeExtrudeTool.hasUncommittedEdit:1",
+        "EdgeExtrudeTool.installPreparedActivation:1",
+        "EdgeExtrudeTool.installPreparedParamUpdate:1", "EdgeExtrudeTool.paramProjection:1",
+        "EdgeExtrudeTool.preparedActivationDirtyForTest:1",
+        "EdgeExtrudeTool.preparedActivationForTest:1",
+        "EdgeExtrudeTool.preparedParamBuiltForTest:1", "EdgeExtrudeTool.rebaseTopologyStep:1",
+        "EdgeExtrudeTool.rebuildPreview:2", "EdgeExtrudeTool.reinitSession:1",
+        "EdgeExtrudeTool.seedPreparedActivationForTest:1",
+        "EdgeExtrudeTool.seedPreparedParamForTest:1", "EdgeExtrudeTool.toolStateJson:1",
+    ],
+    "source/tools/edit/poly_extrude.d": [
+        "<decl>:1", "PolyExtrudeParamProjection.opEquals:2", "PolyExtrudeParamProjection:1",
+        "PolyExtrudeTool.applyHeadless:2", "PolyExtrudeTool.buildPreparedParamUpdate:1",
+        "PolyExtrudeTool.cancelLiveEdit:1", "PolyExtrudeTool.deactivate:1",
+        "PolyExtrudeTool.draw:1", "PolyExtrudeTool.hasUncommittedEdit:1",
+        "PolyExtrudeTool.installPreparedActivation:1",
+        "PolyExtrudeTool.installPreparedParamUpdate:1", "PolyExtrudeTool.paramProjection:1",
+        "PolyExtrudeTool.preparedActivationDirtyForTest:1",
+        "PolyExtrudeTool.preparedActivationForTest:1",
+        "PolyExtrudeTool.preparedInvalidActivationForTest:1",
+        "PolyExtrudeTool.preparedParamBuiltForTest:1", "PolyExtrudeTool.rebaseTopologyStep:1",
+        "PolyExtrudeTool.rebuildPreview:2", "PolyExtrudeTool.reinitSession:1",
+        "PolyExtrudeTool.seedPreparedActivationForTest:1",
+        "PolyExtrudeTool.seedPreparedParamForTest:1",
+    ],
+    "source/tools/edit/poly_inset_tool.d": [
+        "<decl>:1", "PolyInsetParamProjection.opEquals:2", "PolyInsetParamProjection:1",
+        "PolyInsetTool.applyHeadless:2", "PolyInsetTool.buildPreparedParamUpdate:1",
+        "PolyInsetTool.cancelLiveEdit:2", "PolyInsetTool.deactivate:1",
+        "PolyInsetTool.hasUncommittedEdit:1", "PolyInsetTool.installPreparedActivation:1",
+        "PolyInsetTool.installPreparedParamUpdate:1", "PolyInsetTool.paramProjection:1",
+        "PolyInsetTool.preparedActivationDirtyForTest:1",
+        "PolyInsetTool.preparedActivationForTest:1", "PolyInsetTool.preparedParamBuiltForTest:1",
+        "PolyInsetTool.rebaseTopologyStep:1", "PolyInsetTool.rebuildPreview:1",
+        "PolyInsetTool.reinitSession:1", "PolyInsetTool.seedPreparedActivationForTest:1",
+        "PolyInsetTool.seedPreparedParamForTest:1",
+    ],
+    "source/tools/edit/vert_merge_tool.d": [
+        "<decl>:1", "VertexMergeParamProjection.opEquals:2", "VertexMergeParamProjection:1",
+        "VertexMergeTool.applyHeadless:2", "VertexMergeTool.buildPreparedParamUpdate:1",
+        "VertexMergeTool.cancelLiveEdit:2", "VertexMergeTool.deactivate:1",
+        "VertexMergeTool.hasUncommittedEdit:1", "VertexMergeTool.installPreparedActivation:1",
+        "VertexMergeTool.installPreparedParamUpdate:1", "VertexMergeTool.paramProjection:1",
+        "VertexMergeTool.preparedActivationDirtyForTest:1",
+        "VertexMergeTool.preparedActivationForTest:1",
+        "VertexMergeTool.preparedParamBuiltForTest:1", "VertexMergeTool.rebaseTopologyStep:1",
+        "VertexMergeTool.rebuildPreview:2", "VertexMergeTool.reinitSession:1",
+        "VertexMergeTool.seedPreparedActivationForTest:1",
+        "VertexMergeTool.seedPreparedParamForTest:1",
+    ],
+    "source/tools/edit/vertex_bevel_tool.d": [
+        "<decl>:1", "VertexBevelParamProjection.opEquals:2", "VertexBevelParamProjection:1",
+        "VertexBevelTool.applyHeadless:2", "VertexBevelTool.buildPreparedParamUpdate:1",
+        "VertexBevelTool.cancelLiveEdit:2", "VertexBevelTool.deactivate:1",
+        "VertexBevelTool.draw:1", "VertexBevelTool.hasUncommittedEdit:1",
+        "VertexBevelTool.installPreparedActivation:1",
+        "VertexBevelTool.installPreparedParamUpdate:1", "VertexBevelTool.paramProjection:1",
+        "VertexBevelTool.preparedActivationDirtyForTest:1",
+        "VertexBevelTool.preparedActivationForTest:1",
+        "VertexBevelTool.preparedParamBuiltForTest:1", "VertexBevelTool.rebaseTopologyStep:1",
+        "VertexBevelTool.rebuildPreview:2", "VertexBevelTool.reinitSession:1",
+        "VertexBevelTool.seedPreparedActivationForTest:1",
+        "VertexBevelTool.seedPreparedParamForTest:1",
+    ],
+    "source/tools/edit/vertex_extrude_tool.d": [
+        "<decl>:1", "VertexExtrudeParamProjection.opEquals:2", "VertexExtrudeParamProjection:1",
+        "VertexExtrudeTool.applyHeadless:2", "VertexExtrudeTool.buildPreparedParamUpdate:1",
+        "VertexExtrudeTool.cancelLiveEdit:2", "VertexExtrudeTool.deactivate:1",
+        "VertexExtrudeTool.draw:1", "VertexExtrudeTool.hasUncommittedEdit:1",
+        "VertexExtrudeTool.installPreparedActivation:1",
+        "VertexExtrudeTool.installPreparedParamUpdate:1", "VertexExtrudeTool.paramProjection:1",
+        "VertexExtrudeTool.preparedActivationDirtyForTest:1",
+        "VertexExtrudeTool.preparedActivationForTest:1",
+        "VertexExtrudeTool.preparedParamBuiltForTest:1", "VertexExtrudeTool.rebaseTopologyStep:1",
+        "VertexExtrudeTool.rebuildPreview:2", "VertexExtrudeTool.reinitSession:1",
+        "VertexExtrudeTool.seedPreparedActivationForTest:1",
+        "VertexExtrudeTool.seedPreparedParamForTest:1",
+    ],
+];
+
+unittest { // (4d')
+    import tests.unit.census_symbols : blankUnittestBodies;
+    // FLOOR (form item 4): the census reads the 12 files and finds `built` in 11 of
+    // them (Mirror keys its preview on `engaged`), 217 enclosing-symbol sites in all.
+    assert(kBuiltSites.length == 12, "S3 built census: the table names "
+           ~ format("%s", kBuiltSites.length) ~ " files, the model has 12");
+    size_t files, sites;
+    foreach (f; kRebaseBodyFiles) {
+        const s = identSites(blankUnittestBodies(blankNonCode(readText(f))), "built", false);
+        assert(f in kBuiltSites, "S3 built census: no row for " ~ f);
+        assert(s == kBuiltSites[f], format("S3 built census: %s reads/writes `built` at %s, "
+               ~ "the table says %s — name the new site (and what it sees after a close)",
+               f, s, kBuiltSites[f]));
+        if (s.length) ++files;
+        sites += s.length;
+    }
+    assert(files == 11 && sites == 217, format("S3 built census: %s files, %s sites; measured 11, 217",
+                                                files, sites));
 }
 
 // Pins: the per-tool flag is gone; the rebase entry point stays (its one caller

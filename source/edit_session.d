@@ -1547,7 +1547,8 @@ private struct ToolSession {
             (history_.state() != UndoState.Suspend || ownedAttrs.empty || topologyDormant_))
             rememberTopologyAttrs_(t.captureAttrImage());
         // The arm's own base is the tool's `activate`; the session only records
-        // the image it was taken on (dormant: none — the dormant haul opens none).
+        // the image it was taken on. Dormant: left empty, so the first press of
+        // the dormant arm still rebases (`notePointerDown`: an unfilled base is stale).
         baseImage_ = MeshSnapshot.init;
         if (auto client = cast(TopologyStepClient)t) {
             client.setTopologyDormant(topologyDormant_);
