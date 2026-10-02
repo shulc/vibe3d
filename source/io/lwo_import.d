@@ -770,7 +770,7 @@ ImportedSurface lwoSurfaceDefaults() @safe pure nothrow @nogc {
 
 /// Parse a SURF sub-chunk stream into an ImportedSurface. Recognised
 /// sub-chunks: COLR (RGB), DIFF, SPEC, GLOS, TRAN (inverted into opacity),
-/// SMAN (max smoothing angle, radians). Each value-bearing sub-chunk may have a
+/// SMAN (max smoothing angle, radians), SIDE (sidedness). Each value-bearing sub-chunk may have a
 /// trailing VX envelope reference we ignore.
 void parseSurfBody(const ubyte[] body, ref ImportedSurface surf) {
     size_t p = 0;
@@ -802,6 +802,10 @@ void parseSurfBody(const ubyte[] body, ref ImportedSurface surf) {
             immutable float a = readF32(body, p);
             surf.smoothing = a > 0;
             surf.smoothingAngleDeg = cast(float)(a * 180.0 / PI);
+        } else if (tag == "SIDE" && end - p >= 2) {
+            // SIDE (U2): 3 = front and back ⇒ double-sided; 1 (front only)
+            // and an absent SIDE ⇒ single-sided (captured C7k).
+            surf.twoSided = readU16(body, p) == 3;
         }
         p = end;
         if (p & 1) p++;

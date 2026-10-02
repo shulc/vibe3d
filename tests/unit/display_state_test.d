@@ -662,3 +662,58 @@ unittest {
     assert(vpm.views[0].fbo.compositeTestGain == kCompositeTestGainMax,
         "a refusal outside --test must write nothing");
 }
+
+// ---- S1d (model M6): cullBySurface over the whole display space -----------
+// The captured cull table (C5, C7a/b/e/g/l), copied here as the oracle: a lit
+// style culls by surface, the unlit fills and Wireframe never do; the
+// retopology mode clears it on the ACTIVE side only; the backdrop reads the
+// style it resolved (slot or active) also under the mode; Hidden draws nothing.
+unittest {
+    import std.traits : EnumMembers;
+    static bool litStyleCulls(DisplayStyle s) {
+        switch (s) {
+            case DisplayStyle.Shaded, DisplayStyle.Gooch: return true;
+            default: return false;
+        }
+    }
+    assert(DrawPlan.init.cullBySurface == false, "DrawPlan.init must not cull by surface");
+    size_t rows, culled;
+    foreach (act; [EnumMembers!DisplayStyle])
+    foreach (slot; [EnumMembers!DisplayStyle])
+    foreach (bs; [EnumMembers!BackdropStyle])
+    foreach (retopo; [false, true])
+    foreach (isBackdrop; [false, true]) {
+        ViewportDisplay d;
+        d.active.style   = act;
+        d.backdrop.style = slot;
+        d.backdropStyle  = bs;
+        d.retopology     = retopo;
+        immutable DrawPlan p = resolveDrawPlan(d, isBackdrop);
+        bool want;
+        if (!isBackdrop)
+            want = !retopo && litStyleCulls(act);
+        else final switch (bs) {
+            case BackdropStyle.SameAsActive: want = litStyleCulls(act); break;
+            case BackdropStyle.Wireframe:
+            case BackdropStyle.Flat:         want = litStyleCulls(slot); break;
+            case BackdropStyle.Hidden:       want = false; break;
+        }
+        assert(p.cullBySurface == want,
+            format("cullBySurface: active %s slot %s backdrop %s retopology %s %s: got %s, expected %s",
+                   act, slot, bs, retopo, isBackdrop ? "backdrop" : "active", p.cullBySurface, want));
+        // Invariant: the two-submission path never meets blending, the hard
+        // cull or the reverse polygon order.
+        assert(!p.cullBySurface || (!p.cullBackFaces && p.faceAlpha == 1.0f && !p.reverseFaceOrder),
+            format("invariant: cullBySurface with cull %s alpha %s reverse %s (active %s, %s)",
+                   p.cullBackFaces, p.faceAlpha, p.reverseFaceOrder, act, isBackdrop ? "backdrop" : "active"));
+        ++rows;
+        if (p.cullBySurface) ++culled;
+    }
+    // Floors: the space is 5 × 5 × 4 × 2 × 2, and it holds both values.
+    assert(rows == 400, format("cullBySurface table: %d rows, expected 400", rows));
+    assert(culled > 0 && culled < rows, format("cullBySurface table: %d of %d rows cull", culled, rows));
+    // The per-style row, through the final switch.
+    assert(styleCullsBySurface(DisplayStyle.Shaded) && styleCullsBySurface(DisplayStyle.Gooch)
+        && !styleCullsBySurface(DisplayStyle.Solid) && !styleCullsBySurface(DisplayStyle.Weight)
+        && !styleCullsBySurface(DisplayStyle.Wireframe), "styleCullsBySurface rows moved");
+}

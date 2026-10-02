@@ -254,12 +254,12 @@ string meshToJsonDetailed(ref const(Mesh) m) {
         json ~= format(
             "{\"name\":\"%s\",\"baseColor\":[%s,%s,%s],\"diffuseAmount\":%s," ~
             "\"specularAmount\":%s,\"glossiness\":%s,\"opacity\":%s," ~
-            "\"smoothing\":%s,\"smoothingAngle\":%s}",
+            "\"smoothing\":%s,\"smoothingAngle\":%s,\"twoSided\":%s}",
             jsonEsc(name),
             jsonNum(sv[0], "%f"), jsonNum(sv[1], "%f"), jsonNum(sv[2], "%f"),
             jsonNum(sv[3], "%f"), jsonNum(sv[4], "%f"), jsonNum(sv[5], "%f"),
             jsonNum(sv[6], "%f"), s.smoothing ? "true" : "false",
-            jsonNum(sv[7], "%f"));
+            jsonNum(sv[7], "%f"), s.twoSided ? "true" : "false");
     }
     json ~= "], ";
     // PADDING RULE (was the caller's `matCopy`): one entry per FACE, 0 where
@@ -531,7 +531,7 @@ string meshPlanesJson(ref const(Mesh) m, in PlaneDumpMeta meta = PlaneDumpMeta.i
     json ~= "\"faceMaterial\": " ~ uintArray(m.faceMaterial) ~ ", ";
     json ~= "\"facePart\": "     ~ uintArray(m.facePart)     ~ ", ";
     json ~= "\"surfaces\": [";
-    static assert(Surface.tupleof.length == 9,
+    static assert(Surface.tupleof.length == 10,
         "a new Surface field must be emitted by meshPlanesJson too, not only "
         ~ "charged for in MeshSnapshot.byteSize()");
     foreach (i, ref s; m.surfaces) {
@@ -540,7 +540,8 @@ string meshPlanesJson(ref const(Mesh) m, in PlaneDumpMeta meta = PlaneDumpMeta.i
         json ~= format("{\"name\": \"%s\", \"baseColor\": [%s, %s, %s], "
                      ~ "\"diffuseAmount\": %s, \"specularAmount\": %s, "
                      ~ "\"glossiness\": %s, \"opacity\": %s, "
-                     ~ "\"smoothing\": %s, \"smoothingAngle\": %s}",
+                     ~ "\"smoothing\": %s, \"smoothingAngle\": %s, "
+                     ~ "\"twoSided\": %s}",
                        jsonEsc(name),
                        jsonNum(cast(double)s.baseColor.x, "%.9g"),
                        jsonNum(cast(double)s.baseColor.y, "%.9g"),
@@ -550,7 +551,8 @@ string meshPlanesJson(ref const(Mesh) m, in PlaneDumpMeta meta = PlaneDumpMeta.i
                        jsonNum(cast(double)s.glossiness,     "%.9g"),
                        jsonNum(cast(double)s.opacity,        "%.9g"),
                        s.smoothing ? "true" : "false",
-                       jsonNum(cast(double)s.smoothingAngleDeg, "%.9g"));
+                       jsonNum(cast(double)s.smoothingAngleDeg, "%.9g"),
+                       s.twoSided ? "true" : "false");
     }
     json ~= "], ";
 

@@ -6,8 +6,10 @@
 // `light_rig`'s Gooch constants), with eye-space normals placed through the
 // LIVE view matrix.
 //
-// Cells: (a) three flat quads whose eye normals are Lg, ⟂Lg and −Lg read
-// kwarm, kcool and kwarm (abs: −Lg separates abs from max(…,0)), plus a
+// Cells: (a) three flat quads whose eye normals are Lg, ⟂Lg and a front-facing
+// normal with N·Lg ≈ −0.60 read kwarm, kcool and their abs mix (abs vs
+// max(…,0) separates there; a −Lg quad would be a back face, culled since
+// S1d — Gooch is a lit style, M6), plus a
 // camera-facing quad at |N·Lg| = 1/√3 (the mix is linear in |N·L|); (b) the
 // same eye normals rebuilt under a 90° camera roll read the same — and a light
 // fixed in the world (the base view's Lg) would not; (c) a hovered quad keeps
@@ -185,14 +187,15 @@ void quadAt(D3 c, D3 n, double h, ref D3[] v, ref uint[][] f) {
 }
 
 // The four eye-space normals: toward Lg, perpendicular to it (front-facing),
-// away from it (we see the quad's back), and toward the camera.
+// away from it (front-facing, N·Lg < 0: a back face would be culled, S1d),
+// and toward the camera.
 immutable D3[] kNEye = [
     [0.57735026919, 0.57735026919, 0.57735026919],
     [-0.40824829046, -0.40824829046, 0.81649658093],
-    [-0.57735026919, -0.57735026919, -0.57735026919],
+    [-0.67412478, -0.67412478, 0.30184692],
     [0.0, 0.0, 1.0],
 ];
-immutable string[] kNames = ["toward Lg", "perpendicular", "away from Lg (-Lg)", "camera-facing"];
+immutable string[] kNames = ["toward Lg", "perpendicular", "away from Lg (front-facing)", "camera-facing"];
 immutable D3[] kCentresEye = [[-1.2, 0.9, 0], [1.2, 0.9, 0], [-1.2, -0.9, 0], [1.2, -0.9, 0]];
 
 /// Build the four quads against `vp`, load them, put the camera back, probe.
@@ -222,7 +225,7 @@ void assertReads(string cell, int[3][] got, double[3][] pred) {
 }
 
 // ---------------------------------------------------------------------------
-// (a) warm / cool / warm (abs) / the linear mid-point, at a non-trivial view.
+// (a) warm / cool / the abs mix away from Lg / the linear mid-point.
 // ---------------------------------------------------------------------------
 unittest {
     if (!cellOn("a")) return;
@@ -234,15 +237,17 @@ unittest {
     foreach (n; kNEye) pred ~= gooch(n);
     assert(abs(dot3(kNEye[1], kLg)) < 1e-9 && kNEye[3][2] > 0 && kNEye[1][2] > 0,
         "(a) premise: the perpendicular normal is ⟂Lg and front-facing");
+    assert(kNEye[2][2] > 0.25 && dot3(kNEye[2], kLg) < -0.5,
+        "(a) premise: the away-from-Lg quad is front-facing (S1d culls a single-sided back face)");
     assert(maxGap(pred[0], pred[1]) >= 6 && maxGap(pred[3], pred[0]) >= 6
            && maxGap(pred[3], pred[1]) >= 6,
         format("(a) floor: warm %s, cool %s and the mid-point %s must be ≥ 6 levels apart",
                pred[0], pred[1], pred[3]));
-    // abs vs max(…,0): the −Lg quad separates them (warm vs cool).
+    // abs vs max(…,0): the away-from-Lg quad separates them.
     assert(maxGap(gooch(kNEye[2]), goochMax(kNEye[2])) >= 6,
-        "(a) floor: the −Lg quad cannot tell abs from max(N·L,0)");
+        "(a) floor: the away-from-Lg quad cannot tell abs from max(N·L,0)");
     // Cool vs warm swapped would read the mirrored mix: the floor is the warm/cool gap above.
-    writefln("[gooch a] kwarm (%.2f,%.2f,%.2f) kcool (%.2f,%.2f,%.2f); max(N·L,0) at −Lg: (%.2f,%.2f,%.2f)",
+    writefln("[gooch a] kwarm (%.2f,%.2f,%.2f) kcool (%.2f,%.2f,%.2f); max(N·L,0) away from Lg: (%.2f,%.2f,%.2f)",
              pred[0][0], pred[0][1], pred[0][2], pred[1][0], pred[1][1], pred[1][2],
              goochMax(kNEye[2])[0], goochMax(kNEye[2])[1], goochMax(kNEye[2])[2]);
     scope(exit) postJson("/api/command", commandBody("viewport.displayStyle", `{"value":"shaded"}`));

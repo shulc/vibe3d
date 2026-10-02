@@ -111,8 +111,9 @@ private Quad flat(string n, double x, double y, double z, double half = kH,
 }
 
 // The background: one big +Z quad over the left half of the view, and P0, a
-// REVERSED quad over the empty view: the backdrop does not cull, so P0 is
-// filled — and stays filled only while the foreground's cull is restored.
+// REVERSED quad over the empty view on a DOUBLE-SIDED surface: the backdrop
+// culls by surface (S1d, C7l), so P0 is filled — and stays filled only while
+// the foreground's hard cull does not reach the backdrop.
 private immutable Quad kP1 = Quad("P1", [-1.5, 0.9, 0.0], 1.7, [0, 0, 0, 0], false);
 private immutable Quad kP0 = Quad("P0", [2.5, -0.5, 0.0], 0.3, [0, 0, 0, 0], true);
 
@@ -205,8 +206,11 @@ private void loadWithMaterial(JSONValue mesh) {
     import std.file : write, remove, exists, mkdirRecurse;
     import std.path : buildPath;
     import std.process : thisProcessID, environment;
+    // DOUBLE-SIDED (S1d): the backdrop culls a single-sided back face by
+    // surface, also under the retopology mode (captured C7l), so the reversed
+    // P0 stays filled only on a double-sided surface — cell 7a.
     mesh["surfaces"] = parseJSON(`[{"name":"P","baseColor":[0.8,0.8,0.8],"diffuse":1,`
-        ~ `"specular":0,"glossiness":0.4,"opacity":1}]`);
+        ~ `"specular":0,"glossiness":0.4,"opacity":1,"twoSided":true}]`);
     immutable dir = buildPath(environment.get("TMPDIR", "/var/tmp"), format("depthfill-%d", thisProcessID()));
     mkdirRecurse(dir);
     immutable path = buildPath(dir, "p1.v3d");
@@ -527,9 +531,9 @@ unittest {
                        x.c, o[iV1].c));
     }
 
-    // ---- 7a. the cull is the FOREGROUND item's: the backdrop's reversed P0 is
-    // still filled, frame after frame (a cull left enabled by the item's face
-    // pass would reach the next frame's backdrop draw first).
+    // ---- 7a. the hard cull is the FOREGROUND item's: the backdrop's reversed,
+    // double-sided P0 is still filled, frame after frame (C7l: the retopology
+    // override does not reach the backdrop's cull-by-surface).
     {
         immutable Px p0 = probe1(atW(kP0.c));
         assert(maxDiff(p0, u[iQ]) >= 5,

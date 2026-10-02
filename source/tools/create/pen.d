@@ -13,7 +13,7 @@ import params : Param;
 import handler : BoxHandler, gizmoSize, ToolHandles;
 import viewport_scheme : schemeColor, SchemeColor;
 import eventlog : queryMouse;
-import shader : Shader, LitShader;
+import shader : Shader, LitShader, previewFacePass;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
@@ -1080,7 +1080,7 @@ public:
         if (plan.drawFaces && vertices_.length >= minCommitVerts()) {
             litShader.useProgram(identity, vp);
             litShader.applyPreviewPlan(plan);
-            previewGpu.drawFaces(litShader);
+            previewGpu.drawFaces(litShader, previewFacePass(plan));
         }
 
         glUseProgram(shader.program);

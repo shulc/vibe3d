@@ -207,10 +207,13 @@ unittest {
     assert(g[2].id == 2 && (g[2].flags & 1) == 1,
         format("(ii) primary cube: id %d flags %d, expected its own id 2 (layer 1 + 1), flag bit 0",
                g[2].id, g[2].flags));
-    // The back-facing quad (layer 2): its own id, eye normal (0,0,-1).
+    // The back-facing quad (layer 2, single-sided): a Shaded backdrop culls
+    // it by surface (S1d, captured C7e), so its pixel is background — id 0,
+    // flags 0. (A double-sided back face's flipped normal: test_backface_cull (xi).)
     auto gb = gbuf([toPx(-1.6, kLift + 0.1, 0, vp)]);
-    assert(gb[0].id == 3 && abs(gb[0].n[2] + 1) < 0.02,
-        format("(ii) back-facing quad: id %d n %s, expected id 3 and n (0,0,-1)", gb[0].id, gb[0].n));
+    assert(gb[0].id == 0 && gb[0].flags == 0,
+        format("(ii) back-facing single-sided quad: id %d flags %d n %s, expected the background "
+               ~ "(id 0, flags 0): the backdrop culls it by surface", gb[0].id, gb[0].flags, gb[0].n));
     // The rim: the last sphere pixel along the row through the front point.
     int[2][] row;
     foreach (dx; 0 .. 200) row ~= [front[0] - dx, front[1]];

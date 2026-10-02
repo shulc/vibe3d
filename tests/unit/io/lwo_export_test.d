@@ -159,3 +159,51 @@ unittest { // smoothing off exports SMAN 0 (always written)
     assert("SMAN" in s, "export: smoothing off wrote no SMAN — the export law writes SMAN 0");
     assert(s["SMAN"] == 0, format("export: smoothing off wrote SMAN %s, expected 0", s["SMAN"]));
 }
+
+// S1d: SIDE is written iff the surface is double-sided (value 3, size 2); a
+// single-sided surface writes none (absent reads as one-sided, captured C7k),
+// so a default surface's bytes do not move.
+private ptrdiff_t sideValue(const(ubyte)[] b)
+{
+    static uint be32(const(ubyte)[] s) { return (s[0] << 24) | (s[1] << 16) | (s[2] << 8) | s[3]; }
+    size_t p = 12;
+    while (p + 8 <= b.length) {
+        const string id = cast(string) b[p .. p + 4].idup;
+        const uint sz = be32(b[p + 4 .. p + 8]);
+        if (id == "SURF") {
+            const(ubyte)[] d = b[p + 8 .. p + 8 + sz];
+            size_t q;
+            foreach (_; 0 .. 2) { while (d[q] != 0) ++q; ++q; if (q & 1) ++q; }
+            while (q + 6 <= d.length) {
+                const string sid = cast(string) d[q .. q + 4].idup;
+                const uint ssz = (d[q + 4] << 8) | d[q + 5];
+                if (sid == "SIDE") {
+                    assert(ssz == 2, format("export: SIDE of size %s, expected 2", ssz));
+                    return (d[q + 6] << 8) | d[q + 7];
+                }
+                q += 6 + ssz + (ssz & 1);
+            }
+            return -1;
+        }
+        p += 8 + sz + (sz & 1);
+    }
+    assert(false, "no SURF chunk");
+}
+
+unittest { // SIDE iff double-sided
+    import mesh : Surface;
+    Mesh m = kindTris([false], [0]);
+    Surface one, two;
+    two.twoSided = true;
+    m.surfaces = [one];
+    const p1 = scratchPath("s1d_single");
+    scope (exit) if (exists(p1)) remove(p1);
+    exportLwo(m, p1);
+    assert(sideValue(cast(const(ubyte)[]) read(p1)) == -1, "export: a single-sided surface wrote SIDE");
+    m.surfaces = [two];
+    const p2 = scratchPath("s1d_double");
+    scope (exit) if (exists(p2)) remove(p2);
+    exportLwo(m, p2);
+    immutable v = sideValue(cast(const(ubyte)[]) read(p2));
+    assert(v == 3, format("export: a double-sided surface wrote SIDE %s, expected 3", v));
+}

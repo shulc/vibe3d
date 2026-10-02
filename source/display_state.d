@@ -534,13 +534,19 @@ struct DrawPlan {
     // Every default below is TODAY'S behaviour; only `applyRetopology` moves
     // them. `styleFills` is read by `select_visibility`, `lightGain` is the
     // lit program's `u_lightGain`, and the face pass (`facePassFor`) reads
-    // `faceAlpha`, `cullBackFaces`, `reverseFaceOrder` and `clearDepthFirst`.
+    // `faceAlpha`, `cullBackFaces`, `reverseFaceOrder` and `clearDepthFirst`
+    // (and `cullBySurface`, the style's sidedness policy, below).
     // Measured values and their record: the constants block in
     // `viewport_scheme.d` and `tests/fixtures/retopology_display.json`.
     /// Face pass opacity (1 = opaque).
     float    faceAlpha = 1.0f;
     /// Cull back-facing polygons in the face pass.
     bool     cullBackFaces = false;
+    /// Cull the back faces of single-sided surfaces only (model M6): a
+    /// double-sided surface's back side is drawn, lit with the flipped
+    /// normal. Set from the style (`styleCullsBySurface`); the retopology
+    /// override clears it (its hard cull wins). Display only.
+    bool     cullBySurface = false;
     /// Submit the face pass in reverse polygon index order (captured: the
     /// translucent fill is one depth-writing pass in reverse polygon order).
     bool     reverseFaceOrder = false;
@@ -639,6 +645,7 @@ void applyRetopology(ref DrawPlan p, in ViewportDisplay d, bool isBackdrop)
     p.fillColor           = [face.x, face.y, face.z];
     p.faceAlpha           = retopologyFaceAlpha(kRetopologyFillTransparency);
     p.cullBackFaces       = true;
+    p.cullBySurface       = false;   // the hard cull wins (captured C7g)
     p.reverseFaceOrder    = true;
     p.clearDepthFirst     = true;
     p.drawWire            = true;
@@ -650,6 +657,22 @@ void applyRetopology(ref DrawPlan p, in ViewportDisplay d, bool isBackdrop)
     p.cullHiddenVerts     = kRetopologyVertexCulling;
     p.shadeLinesByItem    = true;
     p.baseDotsBySelection = false;
+}
+
+/// Does a face pass under style `s` cull back faces by SURFACE (model M6)?
+/// Captured C7: every lit style culls (Shaded C5; Gooch and later lit styles
+/// are ours, consistent with it), the unlit fills never do (Solid C7a, Weight
+/// C7b), Wireframe draws no faces (moot). The backdrop reads the same table
+/// (C7e), also under the retopology mode (C7l). A `final switch`: a new style
+/// does not compile until it decides.
+bool styleCullsBySurface(DisplayStyle s) pure nothrow @safe @nogc {
+    final switch (s) {
+        case DisplayStyle.Wireframe: return false;
+        case DisplayStyle.Solid:     return false;
+        case DisplayStyle.Shaded:    return true;
+        case DisplayStyle.Weight:    return false;
+        case DisplayStyle.Gooch:     return true;
+    }
 }
 
 /// Resolve `d` into the plan for one pass: the active mesh, or the backdrop.
@@ -752,6 +775,8 @@ DrawPlan resolveDrawPlan(in ViewportDisplay d, bool isBackdrop) pure nothrow @sa
             p.shading   = SurfaceShading.Gooch;
             break;
     }
+
+    p.cullBySurface = styleCullsBySurface(st.style);
 
     // The normal source: from the slot the style came from (`d.active` for the
     // active plan and a `SameAsActive` backdrop, `d.backdrop` otherwise).

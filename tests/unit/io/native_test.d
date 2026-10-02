@@ -514,3 +514,34 @@ unittest {
         format("s1e: absent angle / numeric bool read %s, expected Surface.init's smoothing on @ 40",
                old.surfaces));
 }
+
+// S1d: `twoSided` round-trips per surface; an absent key reads false; a
+// number is not a JSON boolean (read as the default, false).
+unittest {
+    import std.random : uniform;
+    import mesh : makeCube;
+    auto p = buildPath(tempDir(), format("vibe3d_s1d_v3d_%d.v3d", uniform(0, int.max)));
+    scope(exit) if (exists(p)) remove(p);
+    Mesh m = makeCube();
+    Surface a, b;
+    a.name = "A";
+    b.name = "B";
+    b.twoSided = true;
+    m.surfaces = [a, b];
+    writeV3d(m, p);
+    Mesh back;
+    assert(readV3d(p, back), "s1d: reload failed");
+    assert(back.surfaces.length == 2 && !back.surfaces[0].twoSided && back.surfaces[1].twoSided,
+        format("s1d: twoSided false/true came back as %s", back.surfaces));
+
+    auto j = parseJSON(readText(p));
+    foreach (ref layer; j["layers"].array) {
+        layer["mesh"]["surfaces"].array[0].object.remove("twoSided");
+        layer["mesh"]["surfaces"].array[1]["twoSided"] = JSONValue(1);
+    }
+    write(p, j.toString());
+    Mesh old;
+    assert(readV3d(p, old), "s1d: the edited file did not load");
+    assert(old.surfaces.length == 2 && !old.surfaces[0].twoSided && !old.surfaces[1].twoSided,
+        format("s1d: an absent key / the number 1 read %s, expected false / false", old.surfaces));
+}

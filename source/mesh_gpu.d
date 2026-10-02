@@ -161,22 +161,60 @@ struct BaseDots {
 /// polygon index order through `faceReverseEbo` (captured: the translucent
 /// fill is one depth-writing pass in reverse polygon order). Every state the
 /// pass sets is restored on exit: the picker saves cull but not front face or
-/// blend.
+/// blend. `bySurface` (model M6) culls the back faces of single-sided surfaces
+/// only: `faceSidesFor` turns the pass into the GL sides to submit.
 struct FacePass {
     bool  cullBack;
     float alpha = 1.0f;
     bool  reverseOrder;
     bool  mirrored;
+    bool  bySurface;
+}
+
+/// One GL submission of a face pass (model M6): `All` = no cull; `Front` =
+/// GL cull BACK; `BackOfTwoSided` = GL cull FRONT with the lit program's
+/// `u_backSide` raised, whose vertex stage drops every triangle of a
+/// single-sided slot.
+enum FaceSide : ubyte { All, Front, BackOfTwoSided }
+
+/// The sides a face pass submits, in order (`count` is 1 or 2).
+struct FaceSides {
+    FaceSide[2] side;
+    ubyte       count;
+}
+
+/// The GL sides of `p` when the bound materials hold a double-sided slot iff
+/// `anyTwoSided`: a hard cull or a surface cull with no double-sided slot
+/// is the front side alone; a surface cull with one adds the back side of the
+/// double-sided slots; no cull is one uncull'd submission. Pure.
+FaceSides faceSidesFor(FacePass p, bool anyTwoSided) @safe pure nothrow @nogc {
+    FaceSides s;
+    if (p.cullBack || (p.bySurface && !anyTwoSided)) {
+        s.side[0] = FaceSide.Front;
+        s.count   = 1;
+    } else if (p.bySurface) {
+        s.side[0] = FaceSide.Front;
+        s.side[1] = FaceSide.BackOfTwoSided;
+        s.count   = 2;
+    } else {
+        s.side[0] = FaceSide.All;
+        s.count   = 1;
+    }
+    return s;
+}
+
+/// Does `p` change the front-face convention? Whenever it culls (the cull
+/// must keep the outward side of the DRAWN surface, captured C7f) or is
+/// mirrored (so `gl_FrontFacing`, which the lit arms read, means the same).
+private bool faceWindingSet(FacePass p) @safe pure nothrow @nogc {
+    return p.cullBack || p.bySurface || p.mirrored;
 }
 
 /// Set the GL state `pass` asks for; `shader`'s `u_faceAlpha` is written only
 /// when the pass is translucent, so an opaque pass issues exactly today's calls.
 private void beginFacePass(const ref LitShader shader, FacePass pass) {
-    if (pass.cullBack) {
-        glEnable(GL_CULL_FACE);
-        glCullFace(GL_BACK);
+    if (faceWindingSet(pass))
         glFrontFace(pass.mirrored ? GL_CW : GL_CCW);
-    }
     if (pass.alpha < 1.0f) {
         glEnable(GL_BLEND);
         glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA,
@@ -187,15 +225,39 @@ private void beginFacePass(const ref LitShader shader, FacePass pass) {
 
 /// Undo `beginFacePass` to the GL defaults the rest of the frame assumes.
 private void endFacePass(const ref LitShader shader, FacePass pass) {
-    if (pass.cullBack) {
-        glDisable(GL_CULL_FACE);   // the cull face stays GL_BACK, as set
+    if (faceWindingSet(pass))
         glFrontFace(GL_CCW);
-    }
     if (pass.alpha < 1.0f) {
         glUniform1f(shader.locFaceAlpha, 1.0f);
         glDisable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     }
+}
+
+/// Set the GL cull state of one side (`FaceSide`).
+private void beginFaceSide(const ref LitShader shader, FaceSide side) {
+    final switch (side) {
+        case FaceSide.All:
+            break;
+        case FaceSide.Front:
+            glEnable(GL_CULL_FACE);
+            glCullFace(GL_BACK);
+            break;
+        case FaceSide.BackOfTwoSided:
+            glEnable(GL_CULL_FACE);
+            glCullFace(GL_FRONT);
+            glUniform1i(shader.locBackSide, 1);
+            break;
+    }
+}
+
+/// Undo `beginFaceSide`: cull off, the cull face back to GL_BACK and the
+/// vertex drop parked, after every culling side.
+private void endFaceSide(const ref LitShader shader, FaceSide side) {
+    if (side == FaceSide.All) return;
+    glDisable(GL_CULL_FACE);
+    glCullFace(GL_BACK);
+    glUniform1i(shader.locBackSide, 0);
 }
 
 /// The reverse-order index list of a face VBO laid out by `triStart` /
@@ -1516,18 +1578,24 @@ struct GpuMesh {
     // Draw faces only (writes depth buffer). Material colour comes from
     // the Materials UBO (LitShader.setSurfaces); u_overrideMix is left
     // at its useProgram default of 0 so the shader uses mat_base[matId].
-    // `pass` adds cull / translucency / reverse order (`FacePass`); its
-    // default is the unchanged opaque forward pass.
-    void drawFaces(const ref LitShader shader, FacePass pass = FacePass.init) {
+    // `pass` adds cull / translucency / reverse order / sidedness
+    // (`FacePass`); every caller names it (`FacePass.init` = the uncull'd
+    // opaque forward pass). One submission per side (`faceSidesFor`).
+    void drawFaces(const ref LitShader shader, FacePass pass) {
         glEnable(GL_POLYGON_OFFSET_FILL);
         glPolygonOffset(1.0f, 1.0f);
         glBindVertexArray(faceVao);
         beginFacePass(shader, pass);
-        if (pass.reverseOrder) {
-            bindFaceReverseEbo();
-            dcElements(DrawPass.faces, GL_TRIANGLES, faceVertCount, 0);
-        } else {
-            dcArrays(DrawPass.faces, GL_TRIANGLES, 0, faceVertCount);
+        immutable FaceSides sides = faceSidesFor(pass, shader.anyTwoSided);
+        foreach (k; 0 .. sides.count) {
+            beginFaceSide(shader, sides.side[k]);
+            if (pass.reverseOrder) {
+                bindFaceReverseEbo();
+                dcElements(DrawPass.faces, GL_TRIANGLES, faceVertCount, 0);
+            } else {
+                dcArrays(DrawPass.faces, GL_TRIANGLES, 0, faceVertCount);
+            }
+            endFaceSide(shader, sides.side[k]);
         }
         endFacePass(shader, pass);
         glDisable(GL_POLYGON_OFFSET_FILL);
@@ -1548,7 +1616,7 @@ struct GpuMesh {
     // meshes; the non-hover branches restore u_overrideMix=0 so the rest
     // of the mesh keeps its surface colours.
     void drawFacesHighlighted(const ref LitShader shader, int hoveredFace,
-                              FacePass pass = FacePass.init) {
+                              FacePass pass) {
         glEnable(GL_POLYGON_OFFSET_FILL);
         glPolygonOffset(1.0f, 1.0f);
         glBindVertexArray(faceVao);
@@ -1561,7 +1629,21 @@ struct GpuMesh {
             // next caller doesn't inherit a hover-tint state.
             glUniform1f(shader.locOverrideMix, 0.0f);
         }
+        // One walk per side (`faceSidesFor`); the walk's early returns end
+        // its side, not the loop. Each walk starts from the material colour
+        // (the previous side may have ended on the hover tint).
+        immutable FaceSides sides = faceSidesFor(pass, shader.anyTwoSided);
+        foreach (k; 0 .. sides.count) {
+            glUniform1f(shader.locOverrideMix, 0.0f);
+            beginFaceSide(shader, sides.side[k]);
+            drawHighlightedSide(shader, hoveredFace, pass);
+            endFaceSide(shader, sides.side[k]);
+        }
+    }
 
+    // One side of `drawFacesHighlighted`: the hover walk, unchanged.
+    private void drawHighlightedSide(const ref LitShader shader, int hoveredFace,
+                                     FacePass pass) {
         int vboFaceCount = cast(int)faceTriStart.length;
 
         // Reverse polygon order: one walk over the VBO faces from

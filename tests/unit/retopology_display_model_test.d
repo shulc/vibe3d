@@ -236,10 +236,10 @@ unittest {
 // 1c. Mode-off neutrality, against literals.
 // ---------------------------------------------------------------------------
 unittest {
-    // 24 stored fields (plus the derived `facesLit`): the endpoint dump and
+    // 25 stored fields (plus the derived `facesLit`): the endpoint dump and
     // `tests/test_viewport_display.d` B2 list exactly these, so a field added
     // without joining them fails here first.
-    static assert(DrawPlan.tupleof.length == 24,
+    static assert(DrawPlan.tupleof.length == 25,
         "DrawPlan field count changed: extend 1c, the plan dump and B2");
     ViewportDisplay d;
     assert(!d.retopology, "1c: the mode must be off by default");

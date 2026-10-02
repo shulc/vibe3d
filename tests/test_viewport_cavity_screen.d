@@ -262,12 +262,14 @@ unittest {
     foreach (x; 2 .. W - 2) row ~= [x, corner[1]];
     auto c = scan(column, "column");
     auto r = scan(row, "row");
-    // Population floors (measured, 2026-10-02): the column crosses three
-    // creases (pit mouth, pit floor, top-front edge), two pixels each; the row
-    // crosses the vertical corner (two pixels) and one silhouette pixel
-    // against a back face drawn behind the right face's rim.
+    // Population floors (measured, 2026-10-02; re-derived for S1d): the column
+    // crosses three creases (pit mouth, pit floor, top-front edge), two pixels
+    // each; the row crosses the vertical corner (two pixels). The silhouette
+    // pixel S3a measured against a back face behind the right face's rim is
+    // gone: the box's single-sided back faces are culled (S1d), so that
+    // neighbour is background, which the term skips.
     assert(c.creased == 6, format("(abc) population: the column must hold 6 creased pixels, got %d", c.creased));
-    assert(r.creased == 3, format("(abc) population: the row must hold 3 creased pixels, got %d", r.creased));
+    assert(r.creased == 2, format("(abc) population: the row must hold 2 creased pixels, got %d", r.creased));
 
     // The named cells, located from the G-buffer along the column: the LAST
     // normal change (top -> front face) is the convex edge, the one before it
@@ -277,9 +279,10 @@ unittest {
         immutable G a = c.g[column[i - 1]], b = c.g[column[i]];
         if (a.id != 0 && b.id != 0 && abs(a.n[0] - b.n[0]) + abs(a.n[1] - b.n[1]) > 0.2) changes ~= i;
     }
-    // Measured: 4 changes — the three creases, then the front face meeting a
-    // back face drawn at the lower silhouette.
-    assert(changes.length == 4, format("(abc) rig: the column must cross 4 normal changes, crossed %d at %s",
+    // The three creases. (S3a measured a fourth, the front face meeting a back
+    // face drawn at the lower silhouette; S1d culls that single-sided back
+    // face, and a background neighbour is not a change.)
+    assert(changes.length == 3, format("(abc) rig: the column must cross 3 normal changes, crossed %d at %s",
                                        changes.length, changes));
     immutable P convex = column[changes[2]];       // first front-face pixel under the top edge
     immutable P concave = column[changes[1] - 1];  // last far-wall pixel above the floor

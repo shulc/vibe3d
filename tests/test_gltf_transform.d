@@ -158,3 +158,28 @@ unittest {  // B2: node translation [100,0,0] is baked into every imported verte
 
     remove(gltfPath());
 }
+
+// S1d: the glTF 2.0 material's double-sided flag reaches `Surface.twoSided` through
+// assimp's AI_MATKEY_TWOSIDED on the native import path; a material without
+// it imports single-sided. (OBJ / FBX: assimp never sets the key — single.)
+unittest {
+    import std.algorithm : canFind;
+    import std.array : replace;
+    immutable string gltf = quadGltf
+        .replace(`{ "primitives": [ { "attributes": { "POSITION": 0 }, "indices": 1, "mode": 4 } ] }`,
+                 `{ "primitives": [ { "attributes": { "POSITION": 0 }, "indices": 1, "mode": 4, "material": 0 },`
+               ~ ` { "attributes": { "POSITION": 0 }, "indices": 1, "mode": 4, "material": 1 } ] }`)
+        .replace(`"accessors": [`,
+                 `"materials": [ { "name": "Two", "doubleSided": true }, { "name": "One" } ],` ~ "\n  " ~ `"accessors": [`);
+    assert(gltf.canFind(`"doubleSided": true`) && gltf.canFind(`"material": 1`), "rig: the glTF edit did not apply");
+    immutable string path = "/var/tmp/vibe3d_test_gltf_s1d_sided.gltf";
+    write(path, gltf);
+    scope(exit) remove(path);
+    resetApp();
+    loadOk(path);
+    bool[string] sided;
+    foreach (s; model()["surfaces"].array) sided[s["name"].str] = s["twoSided"].type == JSONType.true_;
+    assert("Two" in sided && "One" in sided, "glTF materials did not import: " ~ model()["surfaces"].toString);
+    assert(sided["Two"], "a double-sided glTF material imported single-sided");
+    assert(!sided["One"], "a glTF material without the double-sided flag imported double-sided");
+}

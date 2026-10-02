@@ -268,7 +268,8 @@ bool testFlowB() {
     int nFields = 0;
     foreach (field; ["drawFaces", "facesLit", "shading", "dim", "fillColor",
                      "drawWire", "wireAlpha", "wireColor", "drawVerts",
-                     "faceAlpha", "cullBackFaces", "reverseFaceOrder", "clearDepthFirst",
+                     "faceAlpha", "cullBackFaces", "cullBySurface", "reverseFaceOrder",
+                     "clearDepthFirst",
                      "lightGain", "vertColor", "vertAlpha", "pointSize",
                      "cullHiddenVerts", "shadeLinesByItem",
                      "baseDotsBySelection", "joinsItemSequence", "styleFills",
@@ -280,9 +281,9 @@ bool testFlowB() {
             format("plan.backdrop is missing \"%s\" — it must be the same "
                    ~ "DrawPlan shape as the active side", field));
     }
-    enforce(nFields == 25, format("B2 checked %s plan fields, expected 25", nFields));
-    enforce(pa.object.length == 25 && pb.object.length == 25,
-        format("plan dump carries %s/%s keys, the list above names 25 — a "
+    enforce(nFields == 26, format("B2 checked %s plan fields, expected 26", nFields));
+    enforce(pa.object.length == 26 && pb.object.length == 26,
+        format("plan dump carries %s/%s keys, the list above names 26 — a "
                ~ "field was added without joining this list",
                pa.object.length, pb.object.length));
     // Mode off, the retopology-mode fields dump their neutral values on both
@@ -300,6 +301,10 @@ bool testFlowB() {
                 format("plan.%s.%s must be false with the mode off", side, f));
         enforce(jsonBool(pl, "baseDotsBySelection"),
             format("plan.%s.baseDotsBySelection must be true with the mode off", side));
+        // The default style (Shaded) culls back faces by surface on both
+        // sides (captured C5 / C7e; model M6).
+        enforce(jsonBool(pl, "cullBySurface"),
+            format("plan.%s.cullBySurface must be true under the default Shaded style", side));
     }
     enforce(jsonBool(pa, "styleFills"), "the default active style fills faces");
     writeln("    B2 PASS: plan.backdrop is a full DrawPlan, same shape as active");

@@ -121,3 +121,16 @@ unittest { // absent COLR / GLOS / SPEC / DIFF read the default material; a tag 
     assert(fresh == ImportedSurface("S"),
         format("a TAGS name with no SURF: %s, expected a fresh ImportedSurface (on @ 40°, C8b (iii))", fresh));
 }
+
+unittest { // SIDE rows (S1d, captured C7k): 3 → double-sided; 1 / absent / size 0 → single
+    import tests.unit.io.lwo_ptag_fixture : lwoImage, LwoSurf, LwoSub, lwoF4;
+    ubyte[] u2(ushort v) { return [cast(ubyte)(v >> 8), cast(ubyte)(v & 0xff)]; }
+    auto three = importFirstSurface(lwoImage(["S"], [LwoSurf("S", [LwoSub("SIDE", u2(3))])]), "side3");
+    assert(three.twoSided, "SIDE 3 (front and back) did not import double-sided");
+    auto one = importFirstSurface(lwoImage(["S"], [LwoSurf("S", [LwoSub("SIDE", u2(1))])]), "side1");
+    assert(!one.twoSided, "SIDE 1 (front only) imported double-sided");
+    auto absent = importFirstSurface(lwoImage(["S"], [LwoSurf("S", [LwoSub("DIFF", lwoF4(0.5f))])]), "sideabsent");
+    assert(!absent.twoSided, "no SIDE imported double-sided (absent = one-sided)");
+    auto empty = importFirstSurface(lwoImage(["S"], [LwoSurf("S", [LwoSub("SIDE", [])])]), "side0");
+    assert(!empty.twoSided, "a SIDE of size 0 imported double-sided (the read needs 2 bytes)");
+}

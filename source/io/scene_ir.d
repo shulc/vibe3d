@@ -30,6 +30,7 @@ struct ImportedSurface {
     float  opacity           = Surface.init.opacity;
     bool   smoothing         = Surface.init.smoothing;
     float  smoothingAngleDeg = Surface.init.smoothingAngleDeg;   // degrees
+    bool   twoSided       = Surface.init.twoSided;
 }
 
 /// Roughness from a Phong shininess `ns` (OBJ/MTL `Ns`, assimp
@@ -119,6 +120,7 @@ private Surface toSurface(const ref ImportedSurface s) {
     o.opacity        = s.opacity;
     o.smoothing         = s.smoothing;
     o.smoothingAngleDeg = s.smoothingAngleDeg;
+    o.twoSided       = s.twoSided;
     return o;
 }
 

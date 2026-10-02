@@ -1605,10 +1605,11 @@ bool pointInPolygon2D(float px, float py, float[] xs, float[] ys) {
 //
 // We keep the LOCAL form, and not as a preference: a mirror moves the points
 // and leaves the index order alone, so the DRAWN surface is inside-out — every
-// polygon the user can see under a mirror, they see from its back. Our mesh
-// pass has no `GL_CULL_FACE` (`gpu_select.renderMode` disables it explicitly;
-// the one geometry pass that culls, the translucent `FacePass`, flips
-// `glFrontFace` by `det(L)`, i.e. culls in this LOCAL form) and no DRAW path reverses a ring
+// polygon the user can see under a mirror, they see from its back. The picker's
+// pass has no `GL_CULL_FACE` (`gpu_select.renderMode` disables it explicitly);
+// every display face pass that culls — a lit style's surface cull (model M6)
+// and the retopology `FacePass` — flips `glFrontFace` by `det(L)`, i.e. culls
+// in this LOCAL form (captured C7f), and no DRAW path reverses a ring
 // (`matrixMirrorsWinding`'s callers are the IO/export and primitive-creation
 // boundaries only). So under a mirror the winding-front polygon is the
 // OCCLUDED one, and carrying `det(L)` in here makes the lasso and the snapper

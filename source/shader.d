@@ -7,7 +7,7 @@ import std.string : toStringz;
 import view;
 import math;
 import mesh : Surface, MarkView, kSurfaceSlots;
-import mesh_gpu : GpuMesh;
+import mesh_gpu : GpuMesh, FacePass;
 version (web) {
 } else {
     import gl_thread_guard : glThreadGuard;
@@ -201,7 +201,33 @@ immutable string imagePlaneFragSrc = withShaderPreamble(q{
 // slot (`packSurfaceSlots`). Every slot-count site of `litFragSrc` is the
 // `%SLOTS%` placeholder, spliced from `mesh.kSurfaceSlots`.
 enum LIT_MAX_MATS = kSurfaceSlots;
-private immutable string litVertSrc = withShaderPreamble(q{
+
+// The Materials block and the GLSL slot rule, ONE text both lit stages carry
+// (std140; the vertex stage reads `mat_flags` for the sidedness drop, model
+// M6). `mat_params[].w` holds the Blinn exponent, so the double-sided bit has
+// its own array. Spliced by `litStage`.
+private enum string materialsBlockGlsl = q{
+    layout(std140) uniform Materials {
+        vec4 mat_base[%SLOTS%];     // .rgb = baseColor, .a = opacity
+        vec4 mat_params[%SLOTS%];   // .x = diffuse amount, .y = specular amount,
+                                    // .z = glossiness, .w = its Blinn exponent
+        vec4 mat_flags[%SLOTS%];    // .x = double-sided (1 / 0)
+    };
+    // The one slot rule (mirrored on the CPU by `mesh.effectiveSurfaceSlot`):
+    // a tag at or past the slot count reads slot 0.
+    uint surfaceSlotOf(uint m) { return m < uint(%SLOTS%) ? m : uint(0); }
+};
+
+/// A lit stage's text: the shared Materials block ahead of `body`, every
+/// `%SLOTS%` spliced from `kSurfaceSlots`.
+private string litStage(string body) pure @safe {
+    import std.array : replace;
+    import std.conv : to;
+    return withShaderPreamble(materialsBlockGlsl ~ body)
+        .replace("%SLOTS%", kSurfaceSlots.to!string);
+}
+
+private immutable string litVertSrc = litStage(q{
     layout(location = 0) in vec3 aPos;
     layout(location = 1) in vec3 aNormal;
     layout(location = 2) in uint aMatId;
@@ -224,6 +250,9 @@ private immutable string litVertSrc = withShaderPreamble(q{
     uniform mat4 u_proj;
     uniform mat3 u_normalMatrix;   // math.normalMatrix(u_view * u_model): to EYE space
     uniform bool u_smoothNormals;
+    // Model M6: 1 only in the back-side submission of a surface-culled pass
+    // (`mesh_gpu.beginFaceSide`), which drops every single-sided slot.
+    uniform int  u_backSide;
     out vec3      vNormal;          // eye space: the rig's lights are eye-space constants
     flat out uint vMatId;
     // Smooth-interpolated, deliberately: that IS the measured interpolation
@@ -235,13 +264,14 @@ private immutable string litVertSrc = withShaderPreamble(q{
         vMatId        = aMatId;
         vWeightColor  = aWeightColor;
         gl_Position   = u_proj * u_view * worldPos;
+        // All three corners of a triangle carry the face's tag, so the whole
+        // triangle leaves the clip volume (z > w): no fragment, no discard.
+        if (u_backSide != 0 && mat_flags[surfaceSlotOf(aMatId)].x < 0.5)
+            gl_Position = vec4(0.0, 0.0, 2.0, 1.0);
     }
 });
 
-private immutable string litFragSrc = () {
-    import std.array : replace;
-    import std.conv : to;
-    return withShaderPreamble(q{
+private immutable string litFragSrc = litStage(q{
     in       vec3 vNormal;
     flat in  uint vMatId;
     in       vec3 vWeightColor;     // task 1090; see the vertex shader
@@ -264,11 +294,6 @@ private immutable string litFragSrc = () {
     uniform float u_faceAlpha;      // output alpha of every arm; 1.0 = opaque (FacePass)
     uniform int   u_surfaceId;      // G-buffer surface id: layer index + 1, 0 = none
     uniform int   u_effectFlags;    // DrawPlan.effectFlags (bit 0 = cavity-eligible)
-    layout(std140) uniform Materials {
-        vec4 mat_base[%SLOTS%];     // .rgb = baseColor, .a = opacity
-        vec4 mat_params[%SLOTS%];   // .x = diffuse amount, .y = specular amount,
-                                    // .z = glossiness, .w = its Blinn exponent
-    };
     // Explicit locations: GLSL ES 3.00 requires them once there are two
     // outputs. Location 1 is the integer G-buffer (model M4): written on
     // every draw, kept only while the draw buffers are {C0, C1} (the surface
@@ -287,9 +312,13 @@ private immutable string litFragSrc = () {
               * vec2(e.x >= 0.0 ? 1.0 : -1.0, e.y >= 0.0 ? 1.0 : -1.0);
         return uvec2(round(clamp(e * 0.5 + 0.5, 0.0, 1.0) * 65535.0));
     }
-    // The one slot rule (mirrored on the CPU by `mesh.effectiveSurfaceSlot`):
-    // a tag at or past the slot count reads slot 0.
-    uint surfaceSlotOf(uint m) { return m < uint(%SLOTS%) ? m : uint(0); }
+    // The lit normal (model M6): the interpolated normal, flipped on a back
+    // fragment — two-sided lighting for a double-sided surface's back side.
+    // Every lit arm and the G-buffer read it.
+    vec3 shadingNormal() {
+        vec3 n = normalize(vNormal);
+        return gl_FrontFacing ? n : -n;
+    }
     // The ONE light function of the lit arms (`light_rig`'s header has the
     // law and its capture): `kd` = base colour × diffuse amount; ambient
     // `u_ambient·kd` is left unscaled and `u_lightGain` multiplies everything
@@ -342,7 +371,7 @@ private immutable string litFragSrc = () {
             uint  mi  = surfaceSlotOf(vMatId);
             vec4  mp  = mat_params[mi];
             vec3  kd  = mix(mat_base[mi].rgb * mp.x, u_color, u_overrideMix);
-            col = litTerm(kd, normalize(vNormal), mp.y, mp.w);
+            col = litTerm(kd, shadingNormal(), mp.y, mp.w);
         } else if (u_shading == 1) {
             col = mix(u_fillColor, u_color, u_overrideMix);
         } else if (u_shading == 3) {
@@ -350,14 +379,14 @@ private immutable string litFragSrc = () {
             // the unlit fill); the hover override survives as in every arm.
             // Diffuse amount 1, no specular.
             col = litTerm(mix(u_fillColor, u_color, u_overrideMix),
-                          normalize(vNormal), 0.0, 1.0);
+                          shadingNormal(), 0.0, 1.0);
         } else if (u_shading == 4) {
             // Gooch (task 9150; law in `light_rig`): Kd = base × diffuse
             // amount (the hover override replaces it, as in Material), the
             // two-sided cool→warm mix by |N·L|, no specular.
             uint  mi = surfaceSlotOf(vMatId);
             vec3  kd = mix(mat_base[mi].rgb * mat_params[mi].x, u_color, u_overrideMix);
-            float t  = abs(dot(normalize(vNormal), u_goochDir));
+            float t  = abs(dot(shadingNormal(), u_goochDir));
             col = min(mix(u_goochCool + u_goochCoolKd * kd,
                           u_goochWarm + u_goochWarmKd * kd, t), vec3(1.0));
         } else {
@@ -372,11 +401,10 @@ private immutable string litFragSrc = () {
         }
         fragColor = vec4(col * u_dim, u_faceAlpha);
         float nl = length(vNormal);
-        gbuf = uvec4(octEncode16(nl > 0.0 ? vNormal / nl : vec3(0.0, 0.0, 1.0)),
+        gbuf = uvec4(octEncode16(nl > 0.0 ? shadingNormal() : vec3(0.0, 0.0, 1.0)),
                      uint(u_surfaceId), uint(u_effectFlags));
     }
-}).replace("%SLOTS%", kSurfaceSlots.to!string);
-}();
+});
 
 // ---- The composite stage (model M4) -----------------------------
 // Fullscreen triangle with no attributes (an empty VAO is bound): vertex ids
@@ -910,9 +938,13 @@ class CheckerShader {
 
 /// Pack `s` into the Materials UBO image: slot i = `s[i]`, every slot past
 /// the table = `Surface.init` (the default material — an implicit slot, a
-/// stale tag and an empty table all read it). GL-free.
-void packSurfaceSlots(in Surface[] s, ref float[4 * LIT_MAX_MATS] base,
-                      ref float[4 * LIT_MAX_MATS] params) @safe pure nothrow @nogc {
+/// stale tag and an empty table all read it). GL-free. Returns whether any
+/// UPLOADED slot is double-sided (`flags[i*4]` = 1): a table entry at or past
+/// `LIT_MAX_MATS` is never uploaded, so it cannot raise it.
+bool packSurfaceSlots(in Surface[] s, ref float[4 * LIT_MAX_MATS] base,
+                      ref float[4 * LIT_MAX_MATS] params,
+                      ref float[4 * LIT_MAX_MATS] flags) @safe pure nothrow @nogc {
+    bool anyDouble = false;
     foreach (i; 0 .. LIT_MAX_MATS) {
         const Surface u = i < s.length ? s[i] : Surface.init;
         base[i * 4 + 0] = u.baseColor.x;
@@ -925,7 +957,13 @@ void packSurfaceSlots(in Surface[] s, ref float[4 * LIT_MAX_MATS] base,
         // The exponent, derived here once per upload rather than per
         // fragment; captured: roughness = 1 − glossiness, exact.
         params[i * 4 + 3] = specPowerForRoughness(1.0f - u.glossiness);
+        flags[i * 4 + 0] = u.twoSided ? 1.0f : 0.0f;
+        flags[i * 4 + 1] = 0.0f;
+        flags[i * 4 + 2] = 0.0f;
+        flags[i * 4 + 3] = 0.0f;
+        anyDouble = anyDouble || u.twoSided;
     }
+    return anyDouble;
 }
 
 class LitShader {
@@ -961,6 +999,11 @@ class LitShader {
     // preview helper, both in this module.
     private GLint locNormalMatrix;
     GLint locFaceAlpha;
+    // Model M6: written only by `mesh_gpu.beginFaceSide` / `endFaceSide`
+    // (raised for the back-side submission, parked at 0 after it; the
+    // linker's default is 0). Not a plan uniform.
+    GLint locBackSide;
+    private bool anyTwoSided_;
     GLuint matsUbo;            // Material Groups (MG3) — Materials UBO
     enum  MATS_BINDING = 0;    // binding point index, matches std140 layout
 
@@ -990,14 +1033,15 @@ class LitShader {
         locNormalMatrix  = glGetUniformLocation(program, "u_normalMatrix");
         locSurfaceId     = glGetUniformLocation(program, "u_surfaceId");
         locEffectFlags   = glGetUniformLocation(program, "u_effectFlags");
+        locBackSide      = glGetUniformLocation(program, "u_backSide");
         // Every draw binds through `useProgram`, which seeds every uniform
         // below; nothing is parked here.
 
-        // Materials UBO — std140-sized for two arrays of 64 × vec4.
+        // Materials UBO — std140-sized for three arrays of 64 × vec4.
         glGenBuffers(1, &matsUbo);
         glBindBuffer(GL_UNIFORM_BUFFER, matsUbo);
         glBufferData(GL_UNIFORM_BUFFER,
-            cast(GLsizeiptr)(2 * LIT_MAX_MATS * 4 * float.sizeof),
+            cast(GLsizeiptr)(3 * LIT_MAX_MATS * 4 * float.sizeof),
             null, GL_DYNAMIC_DRAW);
         glBindBuffer(GL_UNIFORM_BUFFER, 0);
         glBindBufferBase(GL_UNIFORM_BUFFER, MATS_BINDING, matsUbo);
@@ -1020,11 +1064,13 @@ class LitShader {
 
     /// Upload a Surface[] into the Materials UBO (`packSurfaceSlots`).
     /// Caller invokes this whenever `mesh.surfaces` changes (cheap — only a
-    /// 2 × 1 KB transfer at `LIT_MAX_MATS` = 64).
+    /// 3 × 1 KB transfer at `LIT_MAX_MATS` = 64). `anyTwoSided` comes from
+    /// the same call as the UBO content.
     void setSurfaces(in Surface[] surfaces) {
         float[4 * LIT_MAX_MATS] base   = 0;
         float[4 * LIT_MAX_MATS] params = 0;
-        packSurfaceSlots(surfaces, base, params);
+        float[4 * LIT_MAX_MATS] flags  = 0;
+        anyTwoSided_ = packSurfaceSlots(surfaces, base, params, flags);
         glBindBuffer(GL_UNIFORM_BUFFER, matsUbo);
         glBufferSubData(GL_UNIFORM_BUFFER, 0,
             cast(GLsizeiptr)(LIT_MAX_MATS * 4 * float.sizeof),
@@ -1033,8 +1079,15 @@ class LitShader {
             cast(GLintptr)(LIT_MAX_MATS * 4 * float.sizeof),
             cast(GLsizeiptr)(LIT_MAX_MATS * 4 * float.sizeof),
             params.ptr);
+        glBufferSubData(GL_UNIFORM_BUFFER,
+            cast(GLintptr)(2 * LIT_MAX_MATS * 4 * float.sizeof),
+            cast(GLsizeiptr)(LIT_MAX_MATS * 4 * float.sizeof),
+            flags.ptr);
         glBindBuffer(GL_UNIFORM_BUFFER, 0);
     }
+
+    /// Does the bound material table hold a double-sided slot (model M6)?
+    bool anyTwoSided() const @safe pure nothrow @nogc { return anyTwoSided_; }
 
     /// Bind the program for `meshModel` under `vp`: the ONE upload site of
     /// the light rig (and of the matrices and every neutral below). Every lit
@@ -1196,6 +1249,14 @@ class LitShader {
     }
 }
 
+/// The face pass of a create-tool preview under `plan`: the plan's sidedness
+/// only (model M6) — previews never took the retopology fields.
+FacePass previewFacePass(const ref DrawPlan plan) @safe pure nothrow @nogc {
+    FacePass fp;
+    fp.bySurface = plan.cullBySurface;
+    return fp;
+}
+
 // Shared "lit preview" draw: solid shaded faces (LitShader — identity
 // model, the viewport's light rig through `useProgram`) followed by wireframe edges
 // (plain Shader). Used by every primitive/incremental create-tool (box,
@@ -1218,7 +1279,7 @@ void drawLitPreview(LitShader litShader, const ref Shader shader,
         // off, so a preview drawn after an unlit scene pass is still lit (0589).
         litShader.useProgram(identity, vp);
         litShader.applyPreviewPlan(plan);
-        previewGpu.drawFaces(litShader);
+        previewGpu.drawFaces(litShader, previewFacePass(plan));
     }
 
     // Wireframe edges.

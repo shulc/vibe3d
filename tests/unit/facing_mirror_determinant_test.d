@@ -24,10 +24,11 @@
 //
 // WHICH ONE IS "WHAT THE USER SEES", and this is the whole finding. A mirror
 // moves the points and leaves the index order alone, so the DRAWN surface is
-// inside-out: every polygon the user can see, they see from its back. Our mesh
-// pass runs with no `GL_CULL_FACE` (`gpu_select.renderMode` disables it
-// explicitly and nothing else enables it for geometry) and the draw path never
-// reverses a ring — `matrixMirrorsWinding`'s callers are the IO/export and
+// inside-out: every polygon the user can see, they see from its back. The
+// picker's pass runs with no `GL_CULL_FACE` (`gpu_select.renderMode` disables
+// it explicitly); the display face passes that cull (model M6, the retopology
+// mode) flip `glFrontFace` by the determinant, i.e. cull in the LOCAL form,
+// and the draw path never reverses a ring — `matrixMirrorsWinding`'s callers are the IO/export and
 // primitive-creation boundaries only. Therefore under a mirror:
 //
 //   * the LOCAL rule keeps the polygon whose drawn surface is NEAREST the eye
@@ -104,7 +105,7 @@ private double facingDot(const Vec3[] vs, const uint[] ring, Vec3 eye) {
 
 /// Nearest-hit parameter of a ray against one quad, or +inf. Two triangles,
 /// Moeller-Trumbore, in double, with NO facing term — a back-facing hit counts,
-/// which is the whole point: the mesh pass has no `GL_CULL_FACE` either.
+/// which is the whole point: the picker's pass has no `GL_CULL_FACE` either.
 private double rayQuad(Vec3 org, Vec3 dir, const Vec3[4] q) {
     static double tri(Vec3 o, Vec3 d, Vec3 a, Vec3 b, Vec3 c) {
         const double e1x = cast(double)b.x - a.x, e1y = cast(double)b.y - a.y,

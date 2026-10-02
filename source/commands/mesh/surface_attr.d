@@ -28,6 +28,7 @@ struct SurfaceAttrRow {
 immutable SurfaceAttrRow[] kSurfaceAttrs = [
     SurfaceAttrRow("smoothing",      SurfaceAttrKind.Bool,     "smoothing",         "Smooth"),
     SurfaceAttrRow("smoothingAngle", SurfaceAttrKind.AngleDeg, "smoothingAngleDeg", "Angle"),
+    SurfaceAttrRow("twoSided",    SurfaceAttrKind.Bool,     "twoSided",       "Double Sided"),
 ];
 
 /// The Mesh Info "Surfaces" widget of a kind (a `final switch`: a new kind

@@ -159,6 +159,7 @@ ImportedScene sceneFromAssimp(const(aiScene)* s) {
         immutable bool hasKs = materialSpecular(m, ks);
         immutable bool hasNs = materialShininess(m, ns);
         applyAssimpMaterialKeys(surf, hasKs, ks, hasNs, ns);
+        surf.twoSided = materialTwoSided(m);
         surfaces ~= surf;
     }
     // A scene with no materials still wants one default surface so every part's
@@ -446,6 +447,16 @@ private bool materialSpecular(const(aiMaterial)* m, out Vec3 ks) {
         return false;
     ks = Vec3(c.r, c.g, c.b);
     return true;
+}
+
+/// The two-sided key (`AI_MATKEY_TWOSIDED`): true iff present and non-zero.
+/// Of our assimp importers only glTF 2.0 sets it (from the material's
+/// `twoSided`); OBJ and FBX never do, so they import single-sided.
+private bool materialTwoSided(const(aiMaterial)* m) {
+    int v = 0;
+    return aiGetMaterialInteger(m, AI_MATKEY_TWOSIDED.key, AI_MATKEY_TWOSIDED.semantic,
+                                AI_MATKEY_TWOSIDED.index, &v) == aiReturn.SUCCESS
+        && v != 0;
 }
 
 /// The shininess key; false when assimp reports it absent.

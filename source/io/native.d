@@ -366,6 +366,8 @@ private enum SurfaceField[] kSurfaceFields = [
     // The angle is in DEGREES, as the struct stores it.
     SurfaceField("smoothing",      "smoothing"),
     SurfaceField("smoothingAngle", "smoothingAngleDeg"),
+    // Sidedness (additive optional key, a JSON boolean; absent → false).
+    SurfaceField("twoSided",    "twoSided"),
     // Not carried by the format — decided, not deferred (task 0762).
     // `compiledFromTreeId` is a forward-compat hook for the shader tree (see
     // mesh.d): it is only meaningful paired with the ShaderTree graph it

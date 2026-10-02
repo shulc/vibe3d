@@ -9,8 +9,8 @@
 //     POLS  FACE  6 quad faces
 //     PTAG  SURF  faces 0-1 → tag 0, 2-3 → tag 1, 4-5 → tag 2
 //     SURF  "Red"   { COLR 0.85 0.10 0.10 }
-//     SURF  "Green" { COLR 0.15 0.75 0.20  DIFF 0.9  GLOS 0.6 }
-//     SURF  "Blue"  { COLR 0.10 0.20 0.85  TRAN 0.25 }       // → opacity 0.75
+//     SURF  "Green" { COLR 0.15 0.75 0.20  DIFF 0.9  GLOS 0.6  SIDE 1 }
+//     SURF  "Blue"  { COLR 0.10 0.20 0.85  TRAN 0.25  SIDE 3 } // → opacity 0.75, double-sided
 
 import http_client : testBaseUrl;
 import std.net.curl;
@@ -104,7 +104,8 @@ ubyte[] buildSurfChunk(string name, float r, float g, float b,
                        float diff = float.nan,
                        float spec = float.nan,
                        float glos = float.nan,
-                       float tran = float.nan) {
+                       float tran = float.nan,
+                       ushort side = 0) {
     ubyte[] surf;
     writeName(surf, name);            // surface name
     writeName(surf, "");              // source (empty)
@@ -113,6 +114,11 @@ ubyte[] buildSurfChunk(string name, float r, float g, float b,
     if (spec == spec) appendSubChunk2(surf, "SPEC", f32WithEnv(spec));
     if (glos == glos) appendSubChunk2(surf, "GLOS", f32WithEnv(glos));
     if (tran == tran) appendSubChunk2(surf, "TRAN", f32WithEnv(tran));
+    if (side) {
+        ubyte[] sb;
+        writeU16BE(sb, side);
+        appendSubChunk2(surf, "SIDE", sb);
+    }
     return surf;
 }
 
@@ -161,10 +167,11 @@ ubyte[] buildTestLwo() {
     // SURF chunks.
     ubyte[] surfRed   = buildSurfChunk("Red",   0.85f, 0.10f, 0.10f);
     ubyte[] surfGreen = buildSurfChunk("Green", 0.15f, 0.75f, 0.20f,
-                                        /*diff*/ 0.9f, float.nan, /*glos*/ 0.6f);
+                                        /*diff*/ 0.9f, float.nan, /*glos*/ 0.6f,
+                                        float.nan, /*side*/ 1);
     ubyte[] surfBlue  = buildSurfChunk("Blue",  0.10f, 0.20f, 0.85f,
                                         float.nan, float.nan, float.nan,
-                                        /*tran*/ 0.25f);
+                                        /*tran*/ 0.25f, /*side*/ 3);
 
     // Body assembly.
     ubyte[] body;
@@ -388,4 +395,14 @@ unittest {
     auto zero = cycle().array;
     assert(zero[1]["smoothing"].type == JSONType.false_,
         "S1e: ON @ 0 did not re-import OFF (SMAN 0 is off): " ~ zero[1].toString);
+}
+
+unittest {  // SIDE (S1d, captured C7k): Blue SIDE 3 → double-sided; Green SIDE 1 and Red (none) → single
+    writeFixture();
+    loadFixture();
+    auto s = model()["surfaces"].array;
+    assert(s.length == 3, "expected 3 surfaces");
+    assert(s[0]["twoSided"].type == JSONType.false_, "red (no SIDE) imported double-sided: " ~ s[0].toString);
+    assert(s[1]["twoSided"].type == JSONType.false_, "green (SIDE 1) imported double-sided: " ~ s[1].toString);
+    assert(s[2]["twoSided"].type == JSONType.true_, "blue (SIDE 3) did not import double-sided: " ~ s[2].toString);
 }

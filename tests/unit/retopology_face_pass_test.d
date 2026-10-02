@@ -5,7 +5,8 @@
 // these cells pin what the pixels cannot name: that the one face-normal home is
 // BYTE-identical to the arithmetic it replaced (so the face VBO did not move),
 // that every reverse-order range is the face it claims to be, and that the
-// mode-off plan maps to exactly `FacePass.init` (today's opaque forward pass).
+// mode-off Shaded plan maps to the surface-culled pass (S1d, model M6) while
+// `DrawPlan.init` still maps to exactly `FacePass.init`.
 module tests.unit.retopology_face_pass_test;
 
 import std.file : readText;
@@ -130,20 +131,34 @@ unittest // reverse polygon order: descending faces, fans intact, ranges exact
     assert(checked == total, format("population: %s of %s slots checked", checked, total));
 }
 
-unittest // plan -> FacePass: mode off is FacePass.init; the mode and a mirror are read
+unittest // FacePass's members, pinned (a new member is a decision at every reader)
+{
+    static assert([__traits(allMembers, FacePass)]
+                  == ["cullBack", "alpha", "reverseOrder", "mirrored", "bySurface"],
+        "FacePass members changed: facePassFor, previewFacePass, faceSidesFor and "
+        ~ "begin/endFacePass must each decide the new one");
+}
+
+unittest // plan -> FacePass: mode off culls by surface; the mode and a mirror are read
 {
     float[16] ident = identityMatrix;
+    // `DrawPlan.init` (every non-scene user) is today's uncull'd pass exactly.
+    DrawPlan bare;
+    assert(facePassFor(bare, ident) == FacePass.init,
+        format("DrawPlan.init must map to FacePass.init, got %s", facePassFor(bare, ident)));
     ViewportDisplay d;
     DrawPlan off = resolveDrawPlan(d, false);
     immutable FacePass fOff = facePassFor(off, ident);
-    assert(fOff == FacePass.init,
-        format("mode off must be today's pass exactly, got %s", fOff));
+    FacePass wantOff;
+    wantOff.bySurface = true;
+    assert(fOff == wantOff,
+        format("mode off (Shaded) must be the surface-culled opaque forward pass, got %s", fOff));
 
     d.retopology = true;
     DrawPlan on = resolveDrawPlan(d, false);
     immutable FacePass fOn = facePassFor(on, ident);
     assert(fOn.cullBack && fOn.alpha == on.faceAlpha && fOn.alpha < 1.0f
-        && fOn.reverseOrder && !fOn.mirrored,
+        && fOn.reverseOrder && !fOn.mirrored && !fOn.bySurface,
         format("mode on: cull, alpha %s, reverse order, not mirrored; got %s",
                on.faceAlpha, fOn));
 
@@ -225,11 +240,16 @@ unittest // the face pass restores every GL state it sets (source census)
     const src = readText(buildPath(repoRoot, "source", "mesh_gpu.d"));
     immutable at = src.indexOf("private void endFacePass(");
     assert(at >= 0, "mesh_gpu.d: endFacePass not found");
-    immutable close = src[at .. $].indexOf("\n}\n");
-    assert(close > 0, "mesh_gpu.d: endFacePass has no closing brace");
-    const body = src[at .. at + close];
-    immutable string[5] restores = [
-        "glDisable(GL_CULL_FACE);", "glFrontFace(GL_CCW);",
+    string bodyOf(string head) {
+        immutable a = src.indexOf(head);
+        assert(a >= 0, "mesh_gpu.d: " ~ head ~ " not found");
+        immutable close = src[a .. $].indexOf("\n}\n");
+        assert(close > 0, "mesh_gpu.d: " ~ head ~ " has no closing brace");
+        return src[a .. a + close];
+    }
+    const body = bodyOf("private void endFacePass(");
+    immutable string[4] restores = [
+        "glFrontFace(GL_CCW);",
         "glUniform1f(shader.locFaceAlpha, 1.0f);", "glDisable(GL_BLEND);",
         "glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);"];
     int found = 0;
@@ -237,9 +257,28 @@ unittest // the face pass restores every GL state it sets (source census)
         assert(body.canFind(r), "endFacePass no longer restores: " ~ r);
         ++found;
     }
-    assert(found == 5);
-    // Both face entry points go through the pair.
+    assert(found == 4);
+    // The front face is restored under the SAME condition it was set
+    // (opponent S1d addendum 6): one predicate guards both.
+    assert(bodyOf("private void beginFacePass(").canFind("if (faceWindingSet(pass))")
+        && body.canFind("if (faceWindingSet(pass))"),
+        "begin/endFacePass must set and restore the front face under faceWindingSet(pass)");
+    // The per-side cull state (model M6) is restored after every culling side.
+    const sideEnd = bodyOf("private void endFaceSide(");
+    immutable string[3] sideRestores = [
+        "glDisable(GL_CULL_FACE);", "glCullFace(GL_BACK);",
+        "glUniform1i(shader.locBackSide, 0);"];
+    int sideFound = 0;
+    foreach (r; sideRestores) {
+        assert(sideEnd.canFind(r), "endFaceSide no longer restores: " ~ r);
+        ++sideFound;
+    }
+    assert(sideFound == 3);
+    // Both face entry points go through both pairs.
     assert(src.count("beginFacePass(shader, pass);") == 2
         && src.count("endFacePass(shader, pass);") == 2,
         "drawFaces and drawFacesHighlighted must each bracket their pass");
+    assert(src.count("beginFaceSide(shader, sides.side[k]);") == 2
+        && src.count("endFaceSide(shader, sides.side[k]);") == 2,
+        "drawFaces and drawFacesHighlighted must each bracket every side");
 }

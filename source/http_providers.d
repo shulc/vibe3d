@@ -1022,7 +1022,7 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                     `"fillColor":[%s,%s,%s],` ~
                     `"drawWire":%s,"wireAlpha":%s,` ~
                     `"wireColor":[%s,%s,%s],"drawVerts":%s,` ~
-                    `"faceAlpha":%s,"cullBackFaces":%s,"reverseFaceOrder":%s,` ~
+                    `"faceAlpha":%s,"cullBackFaces":%s,"cullBySurface":%s,"reverseFaceOrder":%s,` ~
                     `"clearDepthFirst":%s,` ~
                     `"lightGain":%s,"vertColor":[%s,%s,%s],"vertAlpha":%s,` ~
                     `"pointSize":%s,"cullHiddenVerts":%s,` ~
@@ -1044,6 +1044,7 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                     p.drawVerts ? "true" : "false",
                     jsonNum(p.faceAlpha, "%.6f"),
                     p.cullBackFaces   ? "true" : "false",
+                    p.cullBySurface   ? "true" : "false",
                     p.reverseFaceOrder ? "true" : "false",
                     p.clearDepthFirst ? "true" : "false",
                     jsonNum(p.lightGain, "%.6f"),

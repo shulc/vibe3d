@@ -87,6 +87,7 @@ FacePass facePassFor(const ref DrawPlan plan, const ref float[16] model)
     fp.alpha        = plan.faceAlpha;
     fp.reverseOrder = plan.reverseFaceOrder;
     fp.mirrored     = matrixMirrorsWinding(model);
+    fp.bySurface    = plan.cullBySurface;
     return fp;
 }
 
@@ -416,7 +417,7 @@ private:
         bindLayerSurfaces(*e.g, document.layers[e.layer], backdropPlan, lit,
                           weightMapName);
         lit.applyPlan(backdropPlan, surfaceIdForLayer(e.layer));
-        (*e.g).drawFaces(lit);
+        (*e.g).drawFaces(lit, facePassFor(backdropPlan, e.model));
         lit.restorePlanDefaults();
     }
 

@@ -638,7 +638,8 @@ unittest {
 
 
 // R5 (nanort must not back-face-cull, matching gpu_select's two-sided,
-// no-GL_CULL_FACE face pass) is already covered WITHOUT a mirror: the
+// no-GL_CULL_FACE pick pass — the DISPLAY pass culls since S1d, the picker
+// does not) is already covered WITHOUT a mirror: the
 // pre-existing Phase-1 unittest above (`src.faces = [0,1,2,3]`, camera
 // straight down at eye=(0,5,0)) casts through a `-Y`-facing fan with a ray
 // travelling `-Y` -- a back-face hit by construction (`dot(rayDir, normal)

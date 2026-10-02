@@ -241,6 +241,10 @@ struct Surface {
     // LWO: SMAN > 0 ⇒ on with angle = SMAN (rad); SMAN absent ⇒ off.
     bool   smoothing         = true;
     float  smoothingAngleDeg = kDefaultSmoothingAngleDeg;   // degrees
+    // Sidedness (model M6): a lit face pass culls the back faces of a surface
+    // unless it is double-sided, whose back side is lit with the flipped
+    // normal. Display only — picking never reads it. LWO: SIDE 3 ⇔ true.
+    bool   twoSided       = false;
 }
 
 /// The default smoothing angle of a surface (captured material default).

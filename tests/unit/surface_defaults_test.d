@@ -38,13 +38,14 @@ unittest { // Surface.init == the captured default material (Q2)
 
 unittest { // ImportedSurface: member pin, then every default mirrors Surface.init
     static assert([__traits(allMembers, ImportedSurface)] == ["name", "baseColor", "diffuse",
-        "specular", "glossiness", "opacity", "smoothing", "smoothingAngleDeg"],
+        "specular", "glossiness", "opacity", "smoothing", "smoothingAngleDeg", "twoSided"],
         "ImportedSurface gained or lost a member: map it onto Surface below");
     // IR member → Surface member of the same meaning.
     enum string[2][] map = [["name", "name"], ["baseColor", "baseColor"],
         ["diffuse", "diffuseAmount"], ["specular", "specularAmount"],
         ["glossiness", "glossiness"], ["opacity", "opacity"],
-        ["smoothing", "smoothing"], ["smoothingAngleDeg", "smoothingAngleDeg"]];
+        ["smoothing", "smoothing"], ["smoothingAngleDeg", "smoothingAngleDeg"],
+        ["twoSided", "twoSided"]];
     size_t checked;
     string[] drift;
     immutable ImportedSurface ir = ImportedSurface.init;
@@ -54,13 +55,13 @@ unittest { // ImportedSurface: member pin, then every default mirrors Surface.in
         if (__traits(getMember, ir, pair[0]) != __traits(getMember, su, pair[1]))
             drift ~= pair[0];
     }
-    assert(checked == 8, format("mirror floor: %d members checked, expected 8", checked));
+    assert(checked == 9, format("mirror floor: %d members checked, expected 9", checked));
     assert(drift.length == 0, format("ImportedSurface defaults drifted from Surface.init: %s", drift));
 }
 
 unittest { // packSurfaceSlots: an empty table reads Surface.init in EVERY slot
-    float[4 * LIT_MAX_MATS] base = -1, params = -1;
-    packSurfaceSlots([], base, params);
+    float[4 * LIT_MAX_MATS] base = -1, params = -1, flags = -1;
+    packSurfaceSlots([], base, params, flags);
     static assert(LIT_MAX_MATS == kSurfaceSlots, "the UBO slot count is not kSurfaceSlots");
     immutable Surface d = Surface.init;
     size_t slots;
@@ -75,7 +76,7 @@ unittest { // packSurfaceSlots: an empty table reads Surface.init in EVERY slot
     assert(slots == kSurfaceSlots, format("padding floor: %d slots", slots));
     // An authored slot is read verbatim.
     Surface red = Surface("R", Vec3(1, 0, 0));
-    packSurfaceSlots([red], base, params);
+    packSurfaceSlots([red], base, params, flags);
     assert(base[0 .. 3] == [1f, 0, 0] && base[4 .. 7] == [d.baseColor.x, d.baseColor.y, d.baseColor.z],
         "an authored slot 0 was not read, or slot 1 is not the default");
 }
@@ -146,13 +147,17 @@ unittest { // GLSL slot sites all come from kSurfaceSlots: floor → needle → 
         "control: the needles miss the pre-S1e literal slot line");
     immutable shaderSrc = readText(buildPath(root, "source", "shader.d"));
     immutable osdSrc    = readText(buildPath(root, "source", "subpatch_osd.d"));
-    immutable lit = glslRegion(shaderSrc, "private immutable string litFragSrc");
+    // The lit program's text is three regions: the shared Materials block
+    // (array sizes + the slot helper, S1d) and the two stages.
+    immutable lit = glslRegion(shaderSrc, "private enum string materialsBlockGlsl")
+                  ~ glslRegion(shaderSrc, "private immutable string litVertSrc")
+                  ~ glslRegion(shaderSrc, "private immutable string litFragSrc");
     immutable fan = glslRegion(osdSrc, "private enum string FAN_OUT_VERT_SRC");
     // Floor [E4]: the placeholder is where the census looks (the region is not
     // empty). Its exact count is the STRUCTURAL row below the needle, so a
     // literal reintroduced at one site reddens at the needle, not here [E2, E7].
     assert(count(lit, "%SLOTS%") >= 1,
-        "the slot placeholder vanished from litFragSrc — the census region is empty");
+        "the slot placeholder vanished from the lit program — the census region is empty");
     assert(count(fan, "%SLOTS%") >= 1, "the slot placeholder vanished from FAN_OUT_VERT_SRC — the census region is empty");
     // Needle. Polarity [E14]: true AFTER S1e (allowed set ∅), false before
     // (3 sites on f14631fe, 4 with the Gooch arm). A literal `64` reintroduced
@@ -163,13 +168,13 @@ unittest { // GLSL slot sites all come from kSurfaceSlots: floor → needle → 
     assert(offenders.length == 0,
         format("a literal slot count 64 is back in %s — splice %%SLOTS%% from kSurfaceSlots", offenders));
     assert(matIdCompares(lit) == 0,
-        format("litFragSrc compares vMatId directly %d time(s) — call surfaceSlotOf(vMatId)", matIdCompares(lit)));
-    // Structural: the three slot sites (two array sizes, the helper) splice it.
-    assert(count(lit, "%SLOTS%") == 3,
-        format("litFragSrc carries %%SLOTS%% %d time(s): mat_base, mat_params and surfaceSlotOf are 3",
-               count(lit, "%SLOTS%")));
+        format("the lit program compares vMatId directly %d time(s) — call surfaceSlotOf(vMatId)", matIdCompares(lit)));
+    // Structural: the four slot sites (three array sizes, the helper) splice it.
+    assert(count(lit, "%SLOTS%") == 4,
+        format("the lit program carries %%SLOTS%% %d time(s): mat_base, mat_params, mat_flags and "
+               ~ "surfaceSlotOf are 4", count(lit, "%SLOTS%")));
     assert(tokenCount(lit, "surfaceSlotOf") >= 2,
-        format("litFragSrc names surfaceSlotOf %d time(s): the helper or its call is gone",
+        format("the lit program names surfaceSlotOf %d time(s): the helper or its call is gone",
                tokenCount(lit, "surfaceSlotOf")));
     // Structural: the helper's body is the slot rule (a tag at or past the
     // slot count reads slot 0) — no pixel suite carries a tag >= 64.
@@ -177,13 +182,17 @@ unittest { // GLSL slot sites all come from kSurfaceSlots: floor → needle → 
         import std.array : replace;
         immutable flat = lit.replace(" ", "").replace("\n", "");
         assert(flat.indexOf("uintsurfaceSlotOf(uintm){returnm<uint(%SLOTS%)?m:uint(0);}") >= 0,
-            "litFragSrc's surfaceSlotOf no longer maps a tag >= the slot count to slot 0");
+            "the lit program's surfaceSlotOf no longer maps a tag >= the slot count to slot 0");
     }
     // The PRODUCED text.
     immutable produced = shaderSourceForValidation("litFragSrc");
     assert(produced.canFind("mat_base[" ~ kSurfaceSlots.to!string ~ "]")
         && produced.indexOf("%SLOTS%") < 0,
         "the produced litFragSrc does not carry the spliced slot count");
+    immutable producedVert = shaderSourceForValidation("litVertSrc");
+    assert(producedVert.canFind("mat_flags[" ~ kSurfaceSlots.to!string ~ "]")
+        && producedVert.indexOf("%SLOTS%") < 0,
+        "the produced litVertSrc does not carry the shared Materials block with the spliced slot count");
 }
 
 // ---- assimp-family material law (C8f; pure, no assimp) ----------------------

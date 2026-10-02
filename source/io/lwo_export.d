@@ -227,6 +227,9 @@ private Lwo2Surface toLwoSurface(ref const Surface s)
     // smoothing is on, 0 when off (which a reader imports as off).
     import std.math : PI;
     ls.smoothingAngle = s.smoothing ? cast(float)(s.smoothingAngleDeg * PI / 180.0) : 0.0f;
+    // SIDE 3 iff double-sided; a single-sided surface writes no SIDE (the
+    // reader's absent == SIDE 1, so default surfaces stay byte-identical).
+    ls.doubleSided = s.twoSided;
     return ls;
 }
 

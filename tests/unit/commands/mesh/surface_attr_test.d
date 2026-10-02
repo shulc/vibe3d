@@ -44,9 +44,12 @@ private void refuses(Mesh* m, int surface, string attr, float value, string why)
     assert(m.mutationVersion == v0, format("%s: the refusal moved mutationVersion", why));
 }
 
-unittest { // the attribute table names exactly the two S1e rows
-    assert(kSurfaceAttrs.length == 2 && kSurfaceAttrs[0].name == "smoothing"
+unittest { // the attribute table names exactly the two S1e rows and S1d's sidedness row
+    import commands.mesh.surface_attr : SurfaceAttrKind;
+    assert(kSurfaceAttrs.length == 3 && kSurfaceAttrs[0].name == "smoothing"
         && kSurfaceAttrs[1].name == "smoothingAngle", "kSurfaceAttrs rows moved");
+    assert(kSurfaceAttrs[2].name == "twoSided" && kSurfaceAttrs[2].kind == SurfaceAttrKind.Bool
+        && kSurfaceAttrs[2].field == "twoSided", "the twoSided row (S1d) is not a Bool row on Surface.twoSided");
 }
 
 unittest { // every kSurfaceAttrs row has a Surfaces widget, and the panel draws the table
@@ -65,7 +68,7 @@ unittest { // every kSurfaceAttrs row has a Surfaces widget, and the panel draws
         assert(r.label.length > 0, format("row %s: no widget label", r.name));
         ++rows;
     }
-    assert(rows == 2, format("population: %d rows walked, the table has two", rows));
+    assert(rows == 3, format("population: %d rows walked, the table has three", rows));
     // Production wiring: the section iterates the table and picks the widget
     // by kind — no per-attribute widget code.
     immutable root = __FILE_FULL_PATH__.dirName.dirName.dirName.dirName.dirName;
@@ -127,6 +130,40 @@ unittest { // apply / revert: the table restored exactly, incl. the materialised
     immutable Surface[] before = n.surfaces.idup;
     auto d = cmd(n, 1, "smoothingAngle", 25.5f);
     assert(d.apply() && n.surfaces[1].smoothingAngleDeg == 25.5f, "angle 25.5 on slot 1 not applied");
+    d.revert();
+    assert(n.surfaces == before, "revert did not restore the table exactly");
+}
+
+unittest { // twoSided (S1d, model M6): every refusal, one assert each [E14]
+    auto m = plate([0, 1]);
+    m.surfaces = [Surface("A"), Surface("B")];
+    refuses(m, 2, "twoSided", 1, "twoSided: surface >= n");
+    refuses(m, -1, "twoSided", 1, "twoSided: negative surface");
+    refuses(m, 0, "twoSided", 2, "twoSided: value 2");
+    refuses(m, 0, "twoSided", 0, "twoSided: the same value (already single-sided)");
+    auto big = plate([0, 5000]);
+    refuses(big, 64, "twoSided", 1, "twoSided: surface 64 with a faceMaterial of 5000 (n capped at 64)");
+}
+
+unittest { // twoSided apply / revert, incl. the materialised implicit slot
+    auto m = plate([]);
+    auto c = cmd(m, 0, "twoSided", 1);
+    immutable ulong v0 = m.mutationVersion;
+    assert(c.apply(), "twoSided on the implicit slot was refused");
+    Surface want = Surface.init;
+    want.twoSided = true;
+    assert(m.surfaces.length == 1 && m.surfaces[0] == want,
+        format("apply: table %s, expected one materialised Surface.init slot with twoSided", m.surfaces));
+    assert(m.mutationVersion != v0, "apply did not move mutationVersion");
+    c.revert();
+    assert(m.surfaces.length == 0, format("revert: table length %d, expected 0", m.surfaces.length));
+
+    auto n = plate([0, 1]);
+    n.surfaces = [Surface("A"), Surface("B")];
+    immutable Surface[] before = n.surfaces.idup;
+    auto d = cmd(n, 1, "twoSided", 1);
+    assert(d.apply() && n.surfaces[1].twoSided && !n.surfaces[0].twoSided,
+        "twoSided on slot 1 not applied (or applied to slot 0)");
     d.revert();
     assert(n.surfaces == before, "revert did not restore the table exactly");
 }

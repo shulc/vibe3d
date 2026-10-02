@@ -166,3 +166,27 @@ unittest { // export → import round-trip preserves geometry, subpatch and surf
 
     if (exists(path)) remove(path);
 }
+
+unittest { // S1d: the per-surface twoSided flag survives save → load (.lwo)
+    import std.process : thisProcessID;
+    immutable string path = "/var/tmp/vibe3d-test-s1d-sided-" ~ thisProcessID().to!string ~ ".lwo";
+    scope(exit) if (exists(path)) remove(path);
+    resetCube();
+    // Two slots: 0 single-sided, 1 double-sided (slot 1 materialises 0 too).
+    runCmd("mesh.surfaceAttr", `{"surface":0,"attr":"smoothing","value":0}`);
+    auto m0 = model();
+    assert(m0["surfaces"].array.length == 1, "rig: slot 0 was not materialised");
+    runCmd("file.save", `{"path":"` ~ path ~ `"}`);
+    resetCube();
+    runCmd("file.load", `{"path":"` ~ path ~ `"}`);
+    assert(model()["surfaces"].array[0]["twoSided"].type == JSONType.false_,
+        "a single-sided surface came back double-sided: " ~ model()["surfaces"].toString);
+    runCmd("mesh.surfaceAttr", `{"surface":0,"attr":"twoSided","value":1}`);
+    runCmd("file.save", `{"path":"` ~ path ~ `"}`);
+    resetCube();
+    assert(model()["surfaces"].array.length == 0, "rig: the reset cube carries a surface");
+    runCmd("file.load", `{"path":"` ~ path ~ `"}`);
+    auto s = model()["surfaces"].array;
+    assert(s.length == 1 && s[0]["twoSided"].type == JSONType.true_,
+        "the double-sided flag did not survive save → load: " ~ model()["surfaces"].toString);
+}

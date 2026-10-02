@@ -1406,11 +1406,11 @@ string[string] dumpMeshPlanes(ref Mesh m)
     // than after something starts moving them.
     string sfs;
     foreach (i, ref sf; m.surfaces)
-        sfs ~= format(" s%d(%s|%a,%a,%a|%a,%a,%a,%a|%s|%s,%a)", i, sf.name,
+        sfs ~= format(" s%d(%s|%a,%a,%a|%a,%a,%a,%a|%s|%s,%a|%s)", i, sf.name,
                       sf.baseColor.x, sf.baseColor.y, sf.baseColor.z,
                       sf.diffuseAmount, sf.specularAmount, sf.glossiness,
                       sf.opacity, sf.compiledFromTreeId,
-                      sf.smoothing, sf.smoothingAngleDeg);
+                      sf.smoothing, sf.smoothingAngleDeg, sf.twoSided);
     t["surfaces"] = format("len=%d:%s", m.surfaces.length, sfs);
 
     t["vertexSetNames"]  = m.vertexSetNames.to!string;

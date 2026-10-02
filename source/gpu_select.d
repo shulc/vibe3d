@@ -569,8 +569,9 @@ private:
         // by INHERITANCE: nothing here touched culling, so the pre-pass was
         // two-sided merely because whatever ran before it happened to leave
         // GL_CULL_FACE off. Three modules do enable it (`handles/gl_util.d`,
-        // `tools/slice/slice_tool.d`, `mesh_gpu.d`'s culled `FacePass`),
-        // each restoring it themselves; one
+        // `tools/slice/slice_tool.d`, `mesh_gpu.d`'s face-side bracket — the
+        // DISPLAY pass culls back faces by surface, model M6; this pick pass
+        // must not), each restoring it themselves; one
         // missed restore and a back-facing occluder would silently stop
         // occluding — a facing rule nobody wrote. `bvh_pick.d` already treats
         // "the face pass does not cull" as a load-bearing invariant of the
