@@ -429,6 +429,7 @@ tests.unit.primary_memo_order_test
 tests.unit.primary_memo_restore_test
 tests.unit.primary_memo_select_test
 tests.unit.primary_memo_undo_test
+tests.unit.production_tool_policies
 tests.unit.provenance_offline_lane_test
 tests.unit.quad_overlay_eligibility_test
 tests.unit.quit_window_close_guard_test

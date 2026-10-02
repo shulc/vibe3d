@@ -280,6 +280,7 @@ unittest {
         "tests/unit/ui/channels_panel_roles_test.d": 2,
         "tests/unit/headless_tool_pairing_test.d": 1,
         "tests/unit/live_registration_rig.d": 1,
+        "tests/unit/production_tool_policies.d": 1,
     ];
     size_t[string] foundTuple;
     size_t[string] foundMember;
