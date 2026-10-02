@@ -759,6 +759,12 @@ unittest { // (4b)
            == ["<decl>:1", "ToolSession.settleAfterNavigation_:1"],
            format("S2a needle: ownOpenerOnTop_ sites %s, expected one call in "
                   ~ "settleAfterNavigation_", identSites(es, "ownOpenerOnTop_", false)));
+    // The settle is gated on the captured model: the pen (outside it) keeps
+    // its replay value. No pen suite reads the session's `armed` after a
+    // navigation, so this needle is the gate's witness (mutation P1, card 8920).
+    assert(identSites(bodyAt(es, "private bool boundModel_()"), "capturedTopologyModel", false)
+           == ["(module scope):1"],
+           "S2a needle: boundModel_ no longer gates on capturedTopologyModel");
     // The opener is asked with the token AFTER the step (the step re-binds the
     // tool and adopts its token): the argument is `aToken`, nothing taken before.
     const settle = bodyAt(es, "private void settleAfterNavigation_(bool isUndo)");
