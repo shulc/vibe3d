@@ -1,6 +1,6 @@
 // test_viewport_gbuffer.d — the G-buffer writes and the composite stage
-// (wave plan S2b, task 9190, model M4). The cavity kernels are absent, so the
-// resolve is an IDENTITY: a frame with cavity on hashes equal to the frame
+// (wave plan S2b, task 9190, model M4). The world kernel is absent and the
+// rig runs the screen term at factors 0 (S3a), so the resolve is an IDENTITY: a frame with cavity on hashes equal to the frame
 // with it off, which is the no-op proof of the whole stage — and the path is
 // proved to have EXECUTED by the cell's own record (`compositeRuns`,
 // `compositeBindings`), not inferred from the equal hash.
@@ -134,6 +134,12 @@ private Viewport rig() {
     cmdOk(`{"id":"layer.select","index":1,"mode":"set"}`);
     cmd("viewport.displayStyle", `{"style":"shaded"}`);
     cmd("viewport.backdropStyle", `{"value":"same"}`);
+    // S3a (task 9230) gave the resolve its screen-curvature term; at ridge =
+    // valley = 0 the term is at most 2·0.25/(0.5/1e-4) = 1e-4 — a factor of
+    // 1 ± 1e-4, below half an 8-bit level for every value — so the frame stays
+    // an exact identity while the kernel still RUNS (the term itself:
+    // tests/test_viewport_cavity_screen.d).
+    cmd("viewport.cavityParams", `{"screenRidge":0,"screenValley":0}`);
     auto vp = frontOrtho();
     auto L = getJson("/api/layers");
     assert(L["active"].integer == 1 && jb(L["layers"].array[0]["background"])
@@ -183,7 +189,8 @@ unittest {
                ji(c["compositeFaults"]), c["firstCompositeFault"].toString));
     assert(ji(rows[1]["attached"]) == color,
         format("(i) the resolve must write colorTex %d, attached %d", color, ji(rows[1]["attached"])));
-    // The identity: the kernels are absent, so the frame is unchanged.
+    // The identity: the world kernel is absent and the screen term runs at
+    // factors 0 (rig), so the frame is unchanged.
     assert(hOn == hOff, format("(i) cavity on must hash equal to cavity off (identity resolve): %s vs %s",
                                hOn, hOff));
 

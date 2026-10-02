@@ -70,8 +70,8 @@ struct CompositePassTable {
 }
 
 /// The pass table of `p` over `ids`. Empty plan: no rows. Every cavity mode
-/// today: copy + resolve (the kernels are absent; S3b inserts world raw /
-/// blur H / blur V between them for `World` and `Both`).
+/// today: copy + resolve (the screen-curvature term lives in the resolve; S3b
+/// inserts world raw / blur H / blur V between them for `World` and `Both`).
 CompositePassTable compositePassTable(in CompositePlan p, in EffectIds ids)
     pure nothrow @safe @nogc
 {
@@ -112,17 +112,43 @@ string passTableViolation(const(CompositePass)[] t, in EffectIds ids) pure @safe
     return null;
 }
 
+/// The screen-curvature tap distance in framebuffer pixels: one LOGICAL
+/// pixel, i.e. `max(1, round(framebuffer / logical width))` (wave plan S3a).
+/// A non-positive width reads as scale 1.
+int curvatureTapPx(int framebufferW, int logicalW) pure nothrow @safe @nogc {
+    import std.math : round;
+    if (framebufferW <= 0 || logicalW <= 0) return 1;
+    immutable int px = cast(int) round(cast(double) framebufferW / logicalW);
+    return px < 1 ? 1 : px;
+}
+
+/// The soft-limiter controls of the screen-curvature term for `p`:
+/// `[0.5 / max(ridge^2, 1e-4), 0.7 / max(valley^2, 1e-4)]` (wave plan S3a).
+/// The two numerators set the ceilings `2 * 0.25 / ctl`: +1.0 on a ridge,
+/// -0.714 in a valley at the factors 1.
+float[2] curvatureControls(in CompositePlan p) pure nothrow @safe @nogc {
+    static float sq(float f) { immutable float q = f * f; return q > 1e-4f ? q : 1e-4f; }
+    return [0.5f / sq(p.screenRidge), 0.7f / sq(p.screenValley)];
+}
+
+/// Whether `p` runs the screen-curvature term.
+bool screenCurvatureOn(in CompositePlan p) pure nothrow @safe @nogc {
+    return p.cavity == CavityMode.Screen || p.cavity == CavityMode.Both;
+}
+
 final class ViewportCompositor {
     private GLuint resolveProgram_;
     private GLuint emptyVao_;
     private GLint  locTestGain_ = -1;
+    private GLint  locCurvPx_ = -1, locRidgeCtl_ = -1, locValleyCtl_ = -1;
 
     /// Run the composite stage of one cell. `p.empty` ⇒ returns with ZERO GL
     /// calls and records nothing. Otherwise executes `compositePassTable`,
     /// leaves the scene FBO bound (draw + read) with every other state it
-    /// touched as on entry, and records the run in `fbo`.
+    /// touched as on entry, and records the run in `fbo`. `tapPx` is the
+    /// screen-curvature tap distance (`curvatureTapPx`).
     void run(in CompositePlan p, ref ViewportFbo fbo, int cellW, int cellH,
-             ref GpuPassTimer timer) {
+             int tapPx, ref GpuPassTimer timer) {
         if (p.empty) return;
         timer.mark(GpuSeg.composite);
         ensureProgram();
@@ -167,6 +193,10 @@ final class ViewportCompositor {
                     glViewport(0, 0, cellW, cellH);
                     glUseProgram(resolveProgram_);
                     glUniform1f(locTestGain_, fbo.compositeTestGain);
+                    immutable float[2] ctl = curvatureControls(p);
+                    glUniform1i(locCurvPx_, screenCurvatureOn(p) ? tapPx : 0);
+                    glUniform1f(locRidgeCtl_, ctl[0]);
+                    glUniform1f(locValleyCtl_, ctl[1]);
                     glBindVertexArray(emptyVao_);
                     foreach (u; 0 .. 3) {
                         glActiveTexture(GL_TEXTURE0 + u);
@@ -288,6 +318,9 @@ final class ViewportCompositor {
         glUniform1i(glGetUniformLocation(resolveProgram_, "u_gbuf"), 1);
         glUniform1i(glGetUniformLocation(resolveProgram_, "u_ao"), 2);
         locTestGain_ = glGetUniformLocation(resolveProgram_, "u_testGain");
+        locCurvPx_     = glGetUniformLocation(resolveProgram_, "u_curvPx");
+        locRidgeCtl_   = glGetUniformLocation(resolveProgram_, "u_ridgeCtl");
+        locValleyCtl_  = glGetUniformLocation(resolveProgram_, "u_valleyCtl");
         glUseProgram(cast(GLuint)prev);
     }
 }

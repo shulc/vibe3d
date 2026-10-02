@@ -46,7 +46,7 @@ import toolpipe.stages.workplane : WorkplaneStage;
 import operator              : VectorStack;
 import viewgrid              : ViewGridPrefs, viewGridSizeFor, viewGridFadeRadius;
 import shader                : Shader, LitShader, CheckerShader, GridShader;
-import viewport_composite    : ViewportCompositor;
+import viewport_composite    : ViewportCompositor, curvatureTapPx;
 import pipe_gizmo_host       : PipeGizmoHost;
 import tools.slice.loop_slice_tool : LoopSliceTool;
 import tools.transform.transform   : TransformTool;
@@ -1004,7 +1004,8 @@ public:
     if (compositor_ is null && !activePlan.composite.empty)
         compositor_ = new ViewportCompositor;
     if (compositor_ !is null)
-        compositor_.run(activePlan.composite, v.fbo, v.fbo.w, v.fbo.h, *segTimer_);
+        compositor_.run(activePlan.composite, v.fbo, v.fbo.w, v.fbo.h,
+                        curvatureTapPx(v.fbo.w, v.camera.width), *segTimer_);
 
     // Backdrop wires after every face pass and the composite (model M4).
     // The item sequence drew them inline above, in its captured per-layer

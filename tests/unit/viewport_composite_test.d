@@ -149,3 +149,40 @@ private ptrdiff_t lastIndexOfStr(string s, string needle) {
     import std.string : lastIndexOf;
     return s.lastIndexOf(needle);
 }
+
+unittest { // S3a (task 9230): the screen-curvature inputs the resolve receives
+    // Tap distance: one logical pixel in framebuffer pixels, floored at 1.
+    static immutable int[3][] taps = [
+        [650, 650, 1], [1300, 650, 2], [975, 650, 2], [1625, 650, 3],
+        [600, 650, 1], [100, 650, 1], [0, 650, 1], [650, 0, 1], [-5, 650, 1]];
+    foreach (t; taps)
+        assert(curvatureTapPx(t[0], t[1]) == t[2],
+            format("S3a curvatureTapPx(%d, %d) = %d, expected %d",
+                   t[0], t[1], curvatureTapPx(t[0], t[1]), t[2]));
+    // Controls: 0.5/max(ridge², 1e-4) and 0.7/max(valley², 1e-4).
+    static float[2] ctl(float r, float v) {
+        CavityState s;
+        s.mode = CavityMode.Screen;
+        s.screenRidge = r;
+        s.screenValley = v;
+        return curvatureControls(resolveCavityParams(s));
+    }
+    static bool near(float a, float b) { return a > b * 0.9999f && a < b * 1.0001f; }
+    static immutable float[4][] rows = [
+        [1, 1, 0.5f, 0.7f], [2, 0.5f, 0.125f, 2.8f], [0, 0, 5000, 7000], [0.5f, 2, 2, 0.175f]];
+    foreach (r; rows) {
+        immutable float[2] c = ctl(r[0], r[1]);
+        assert(near(c[0], r[2]) && near(c[1], r[3]),
+            format("S3a curvatureControls(ridge %s, valley %s) = %s, expected [%s, %s]",
+                   r[0], r[1], c, r[2], r[3]));
+    }
+    // The term runs for Screen and Both only.
+    size_t modes;
+    foreach (m; [EnumMembers!CavityMode]) {
+        immutable bool want = m == CavityMode.Screen || m == CavityMode.Both;
+        assert(screenCurvatureOn(planOf(m)) == want,
+            format("S3a screenCurvatureOn(%s) must be %s", m, want));
+        ++modes;
+    }
+    assert(modes == 4, format("S3a population: 4 cavity modes, checked %d", modes));
+}

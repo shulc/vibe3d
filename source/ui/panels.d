@@ -827,6 +827,53 @@ void drawViewportPropsPanel(ViewportPropertiesReadRole viewportRead,
             if (ImGui.Checkbox("Smooth Shade", &smooth))
                 dispatch("viewport.smooth",
                     positionalPayload([smooth ? "on" : "off"]));
+
+            // Cavity (model M4, wave plan S3a): greyed where it cannot apply —
+            // the plan resolves it only under Shaded and never under the
+            // retopology mode (owner ruling) — but it keeps its value. The
+            // sliders offer the default range 0..2; ctrl-click entry may type
+            // up to the command's own bound, which the clamp below mirrors.
+            import display_state : CavityMode;
+            import commands.viewport.display : kCavityGainMax;
+            static struct CavityChoice { string label; string id; CavityMode value; }
+            static immutable CavityChoice[4] cavChoices = [
+                CavityChoice("Off",    "off",    CavityMode.Off),
+                CavityChoice("Screen", "screen", CavityMode.Screen),
+                CavityChoice("World",  "world",  CavityMode.World),
+                CavityChoice("Both",   "both",   CavityMode.Both),
+            ];
+            immutable bool cavityLive = v.display.active.style == DisplayStyle.Shaded
+                                     && !v.display.retopology;
+            if (!cavityLive) ImGui.BeginDisabled();
+            int ci = 0;
+            foreach (i, c; cavChoices)
+                if (c.value == v.display.cavity.mode) ci = cast(int)i;
+            ImGui.Text("Cavity");
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(-1.0f);
+            if (ImGui.BeginCombo("##vpCavity", cavChoices[ci].label)) {
+                foreach (i, c; cavChoices) {
+                    bool sel = (i == ci);
+                    if (ImGui.Selectable(c.label, sel))
+                        dispatch("viewport.cavity", positionalPayload([c.id]));
+                    if (sel) ImGui.SetItemDefaultFocus();
+                }
+                ImGui.EndCombo();
+            }
+            static float clampGain(float g) {   // NaN -> 0
+                return g >= 0.0f ? (g > kCavityGainMax ? kCavityGainMax : g) : 0.0f;
+            }
+            float ridge = v.display.cavity.screenRidge;
+            ImGui.SetNextItemWidth(-1.0f);
+            if (ImGui.SliderFloat("##vpCavityRidge", &ridge, 0.0f, 2.0f, "Ridge %.2f"))
+                dispatch("viewport.cavityParams",
+                    format(`{"screenRidge":%.6f}`, clampGain(ridge)));
+            float valley = v.display.cavity.screenValley;
+            ImGui.SetNextItemWidth(-1.0f);
+            if (ImGui.SliderFloat("##vpCavityValley", &valley, 0.0f, 2.0f, "Valley %.2f"))
+                dispatch("viewport.cavityParams",
+                    format(`{"screenValley":%.6f}`, clampGain(valley)));
+            if (!cavityLive) ImGui.EndDisabled();
         }
 
         // Retopology working view, for the ACTIVE cell. Each control

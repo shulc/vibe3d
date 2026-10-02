@@ -382,26 +382,66 @@ immutable string compositeVertSrc = withShaderPreamble(q{
 });
 
 // The resolve: the copied colour times the cavity factor on pixels whose
-// G-buffer flags carry bit 0, the copy itself elsewhere. With the kernels
-// absent (cav = edges = curv = 0) the factor is exactly 1 and the
-// resolve is an identity — the pixel-neutrality proof of the stage. Samplers:
-// unit 0 the copy, 1 the G-buffer, 2 the world-cavity buffer. `u_testGain`
-// scales EVERY pixel the resolve writes; it is 1 except under the test-only
-// `viewport.compositeTestGain`, whose cell proves the draw covers the cell.
+// G-buffer flags carry bit 0, the copy itself elsewhere (overlays are drawn
+// after the stage, so they are never scaled). Factor
+// `clamp((1 - cav) * (1 + edges) * (1 + curv), 0, 4)`; `cav`/`edges` are the
+// world kernel (absent until S3b), `curv` the SCREEN CURVATURE (wave plan
+// S3a): four G-buffer taps `u_curvPx` pixels up/down/right/left of
+// the pixel; none where the up/down or right/left ids differ (a silhouette
+// between two surfaces or against the background) or where the taps are
+// background; else the divergence of the eye normal `(Nup.y - Ndown.y) +
+// (Nright.x - Nleft.x)`, positive on a ridge, negative in a valley, through a
+// soft limiter whose controls are `0.5 / max(ridge^2, 1e-4)` and
+// `0.7 / max(valley^2, 1e-4)` (`curvatureControls`). `u_curvPx == 0` = the
+// term is off (World only). Samplers: unit 0 the copy, 1 the G-buffer, 2 the
+// world-cavity buffer. `u_testGain` scales EVERY pixel the resolve writes; it
+// is 1 except under the test-only `viewport.compositeTestGain`, whose cell
+// proves the draw covers the cell.
 immutable string compositeResolveFragSrc = withShaderPreamble(q{
     uniform sampler2D  u_src;
     uniform highp usampler2D u_gbuf;
     uniform sampler2D  u_ao;
     uniform float      u_testGain;
+    uniform int        u_curvPx;
+    uniform float      u_ridgeCtl;
+    uniform float      u_valleyCtl;
     layout(location = 0) out vec4 fragColor;
+    // Inverse of the lit pass octahedral encoding (two unorm16 values).
+    vec3 octDecode16(uvec2 q) {
+        vec2  e = vec2(q) / 65535.0 * 2.0 - 1.0;
+        vec3  n = vec3(e, 1.0 - abs(e.x) - abs(e.y));
+        if (n.z < 0.0)
+            n.xy = (vec2(1.0) - abs(e.yx))
+                 * vec2(e.x >= 0.0 ? 1.0 : -1.0, e.y >= 0.0 ? 1.0 : -1.0);
+        return normalize(n);
+    }
+    // Rises as x, flattens to 0.25 / ctl at x = 0.5 / ctl and stays there.
+    float softLimit(float x, float ctl) {
+        return x < 0.5 / ctl ? x * (1.0 - x * ctl) : 0.25 / ctl;
+    }
+    float screenCurvature(ivec2 p) {
+        ivec2 hi = textureSize(u_gbuf, 0) - ivec2(1);
+        ivec2 dx = ivec2(u_curvPx, 0), dy = ivec2(0, u_curvPx);
+        uvec4 tU = texelFetch(u_gbuf, min(p + dy, hi), 0);
+        uvec4 tD = texelFetch(u_gbuf, max(p - dy, ivec2(0)), 0);
+        uvec4 tR = texelFetch(u_gbuf, min(p + dx, hi), 0);
+        uvec4 tL = texelFetch(u_gbuf, max(p - dx, ivec2(0)), 0);
+        if (tU.b != tD.b || tR.b != tL.b) return 0.0;
+        if (tU.b == 0u && tR.b == 0u) return 0.0;
+        float d = (octDecode16(tU.rg).y - octDecode16(tD.rg).y)
+                + (octDecode16(tR.rg).x - octDecode16(tL.rg).x);
+        return d < 0.0 ? -2.0 * softLimit(-d, u_valleyCtl)
+                       :  2.0 * softLimit( d, u_ridgeCtl);
+    }
     void main() {
         ivec2 p   = ivec2(gl_FragCoord.xy);
         vec4  src = texelFetch(u_src, p, 0);
         uvec4 g   = texelFetch(u_gbuf, p, 0);
-        float cav = 0.0, edges = 0.0, curv = 0.0;
-        float k   = ((g.a & 1u) != 0u)
-                  ? clamp((1.0 - cav) * (1.0 + edges) * (1.0 + curv), 0.0, 4.0)
-                  : 1.0;
+        bool  on  = (g.a & 1u) != 0u;
+        float cav = 0.0, edges = 0.0;
+        float curv = (on && u_curvPx > 0) ? screenCurvature(p) : 0.0;
+        float k   = on ? clamp((1.0 - cav) * (1.0 + edges) * (1.0 + curv), 0.0, 4.0)
+                       : 1.0;
         fragColor = vec4(src.rgb * (k * u_testGain), src.a);
     }
 });
