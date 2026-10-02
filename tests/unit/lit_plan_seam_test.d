@@ -124,3 +124,26 @@ unittest { // every lit face draw in the renderer sits inside one applyPlan / re
     assert(bad.length == 0,
         format("census: lit face draws outside the plan-uniform bracket: %s", bad));
 }
+
+unittest { // the create-tool preview re-seeds the park through the seam's preview subset before its draw
+    import std.file : readText;
+    import std.path : buildPath, dirName;
+    import std.string : indexOf;
+    import tests.unit.census_symbols : blankNonCode, blankUnittestBodies, countOccurrences;
+    enum root = dirName(dirName(dirName(__FILE_FULL_PATH__)));
+    immutable code = blankUnittestBodies(blankNonCode(
+        readText(buildPath(root, "source", "shader.d"))));
+    enum head = "void drawLitPreview(";
+    assert(countOccurrences(code, head) == 1, "census: expected drawLitPreview defined once in shader.d");
+    immutable ptrdiff_t at = code.indexOf(head);
+    immutable ptrdiff_t end = code.indexOf("\n}", at);
+    immutable body_ = code[at .. end];
+    // Floor: the preview's one lit face draw.
+    assert(countOccurrences(body_, ".drawFaces(litShader") == 1,
+        "census: expected one lit face draw in drawLitPreview");
+    // The re-seed (redundant with every scene site's restore while those hold;
+    // it is what keeps a preview lit when one does not).
+    assert(countOccurrences(body_, ".applyPreviewPlan(") == 1
+        && body_.indexOf(".applyPreviewPlan(") < body_.indexOf(".drawFaces(litShader"),
+        "census: drawLitPreview must call applyPreviewPlan once, before its face draw");
+}
