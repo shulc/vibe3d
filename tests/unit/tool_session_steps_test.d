@@ -1346,7 +1346,7 @@ unittest { // a field write that lands inside a gesture's step joins that step
 // write — passes `false`. The flag is recorded on the row
 // (`MeshSessionEdit.stepOpenedByPress`) and reported as `pendingPress`.
 
-private final class PressFlagTool : Tool, TopologyStepClient {
+private class PressFlagTool : Tool, TopologyStepClient {
     Mesh* m;
     CommandHistory h;
     View view;
@@ -2242,4 +2242,103 @@ unittest { // S2b N2: the reopened operation is the undone row's, not the sessio
         format("S2b N2: the press after undoing both restarts refires operation %s, expected the "
                ~ "undone M1's %s (the session's last is %s, the top row's %s)", g3.stepOperation(),
                m1.stepOperation(), m2.stepOperation(), g1.stepOperation()));
+}
+
+// ---- Task 9120 (topology-redo wave S7, PF-7; plan §14): the undone restart's base -------
+//
+// A stand-in whose rebase body writes its basis and counts (the production shape: the
+// restore body is its attributes, then its rebase body); the middle press is the tool's
+// path — the press door first, then the basis taken on the live image.
+
+private final class RebasePressTool : PressFlagTool {
+    int rebases;
+    override void rebaseTopologyStep(MeshSnapshot b) { basis = b; ++rebases; }
+    override void restoreTopologyStep(in AttrImage attrs, MeshSnapshot b) {
+        restoreRecordedAttrs(attrs);
+        rebaseTopologyStep(b);
+    }
+    void middlePress(float dx) {
+        middleBegins();
+        basis = MeshSnapshot.capture(*m);
+        m.vertices[2].x += dx;
+        pressEnds();
+    }
+}
+
+private struct Pf7Rig {
+    Mesh m;
+    CommandHistory h;
+    RebasePressTool t;
+    Tool active;
+    EditSession s;
+    MeshSnapshot rigBase;
+}
+
+private Pf7Rig* pf7Rig() {
+    auto r = new Pf7Rig;
+    r.m = makeCube();
+    r.h = new CommandHistory();
+    r.t = new RebasePressTool;
+    r.t.m = &r.m; r.t.h = r.h; r.t.view = new View(0, 0, 1, 1);
+    r.t.basis = MeshSnapshot.capture(r.m);
+    r.rigBase = MeshSnapshot.capture(r.m);
+    r.active = r.t;
+    r.s = new EditSession(() => r.active, r.h, () { r.active = null; });
+    r.s.noteArm("t.press", 1, false);
+    return r;
+}
+
+private void pf7Haul(Pf7Rig* r) { s2bHaul(r.s, &r.t.pressBegins, &r.t.pressEnds, &r.m); }
+
+private bool sameImage(in MeshSnapshot a, in MeshSnapshot b) { return a.matches(b); }
+
+unittest { // U-PF7-refire: an undo inside one operation rebases once — the restore alone
+    auto r = pf7Rig();
+    pf7Haul(r);
+    pf7Haul(r);
+    assert(s2bTopRow(r.h).stepOrigin() == StepOrigin.refire, "PF-7 rig: g2 is no refire");
+    const before = r.t.rebases;
+    assert(r.s.navigate(true), "PF-7 rig: the undo did not step");
+    assert(r.t.rebases - before == 1, format("PF-7: undoing a refire rebased the tool %s times, "
+        ~ "expected once (the restore; the undone row's operation is the top's)",
+        r.t.rebases - before));
+}
+
+unittest { // U-PF7-a: undoing a restart leaves its operation open on ITS base, not g1's
+    auto r = pf7Rig();
+    pf7Haul(r);
+    r.t.middlePress(0.25f);
+    const mid = s2bTopRow(r.h);
+    assert(mid.stepOrigin() == StepOrigin.restart, "PF-7 rig: the middle press is no restart");
+    assert(!sameImage(mid.stepAfterBasis(), r.rigBase),
+        "PF-7 rig: the restart's base is the rig's (g1 moved nothing)");
+    assert(r.s.navigate(true), "PF-7 rig: the undo did not step");
+    assert(r.s.sessionStateJson()["operationOpen"].type == JSONType.true_,
+        "PF-7 rig: the undo of the restart left its operation closed (N1/N2)");
+    assert(sameImage(r.t.basis, mid.stepAfterBasis()) && !sameImage(r.t.basis, r.rigBase),
+        "PF-7: after the restart's undo the tool's base is g1's (the operation below), not the "
+        ~ "restart's own");
+    pf7Haul(r);
+    const g3 = s2bTopRow(r.h);
+    assert(g3.stepOrigin() == StepOrigin.refire && g3.stepOperation() == mid.stepOperation()
+           && sameImage(g3.stepBeforeBasis(), mid.stepAfterBasis()),
+        format("PF-7: the haul after the restart's undo is %s of operation %s (restart %s), its "
+               ~ "base the restart's: %s", g3.stepOrigin(), g3.stepOperation(), mid.stepOperation(),
+               sameImage(g3.stepBeforeBasis(), mid.stepAfterBasis())));
+}
+
+unittest { // U-PF7-redo: a redo keeps its row's own base (the undone-restart rebase is the undo's)
+    auto r = pf7Rig();
+    pf7Haul(r);
+    r.t.middlePress(0.25f);
+    const m1 = s2bTopRow(r.h);
+    r.t.middlePress(0.25f);
+    const n1 = s2bTopRow(r.h);
+    assert(!sameImage(m1.stepAfterBasis(), n1.stepAfterBasis()),
+        "PF-7 rig: the two restarts share a base");
+    assert(r.s.navigate(true) && r.s.navigate(true) && r.s.navigate(false),
+        "PF-7 rig: the undo, undo, redo did not step");
+    assert(sameImage(r.t.basis, m1.stepAfterBasis()),
+        "PF-7: after the redo of the first restart the tool's base is not that row's own "
+        ~ "(the redo head's, the second restart's?)");
 }

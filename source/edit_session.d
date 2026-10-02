@@ -1009,8 +1009,10 @@ private struct ToolSession {
         if (aModel) postmodeArmed_ = armedAfter;
         const same = aModel && navBefore_.armed && aToken == navBefore_.token;
         operationOpen_ = aModel && same && armedAfter;
-        if (operationOpen_)
+        if (operationOpen_) {
             operation_ = isUndo ? headOfRedoOperation_(aToken) : topOperation_(aToken);
+            if (isUndo) rebaseOnUndoneOperation_(tool_(), aToken);
+        }
         // A re-begin and every closed case end the operation here (N3/N5/N6):
         // the next one is based on the image the navigation left.
         if (aModel && !operationOpen_) rebaseOnCurrent_(tool_(), false);
@@ -1029,6 +1031,25 @@ private struct ToolSession {
         if (ifStale && baseImage_.filled && baseImage_.matches(*m)) return;
         baseImage_ = MeshSnapshot.capture(*m);
         c.rebaseTopologyStep(baseImage_);
+    }
+
+    // N1/N2 × law 2 (topology-redo S7, PF-7; plan §14): an undo that crossed an
+    // operation's boundary and left it open (the undone row opened it: a restart)
+    // restored the base of the operation BELOW; the next refire is the undone
+    // row's operation, from that row's own base (`stepAfterBasis`). `baseImage_`
+    // is the NEXT operation's and stays. The rebase writes no mesh: the live mesh
+    // is the undone row's before-image, its base (`rebaseTopologyStep`).
+    private void rebaseOnUndoneOperation_(Tool t, ulong tok) {
+        const re = history_.redoEntries();
+        auto row = re.length ? cast(const MeshSessionEdit) re[0].cmd : null;
+        if (row is null || !row.isTopologyStep() || row.sessionToken() != tok) return;
+        if (auto top = cast(const MeshSessionEdit) undoTop_())
+            if (top.isTopologyStep() && top.sessionToken() == tok
+                    && top.stepOperation() == row.stepOperation())
+                return;   // inside one operation: the restore set its base already
+        auto c = cast(TopologyStepClient) t;
+        if (c is null) return;
+        c.rebaseTopologyStep(row.stepAfterBasis());
     }
 
     // The operation of the row an undo just took off (the head of the redo

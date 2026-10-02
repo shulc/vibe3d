@@ -1073,14 +1073,28 @@ unittest { // (4d)
     // FLOOR: the bodies the needle reads exist (form item 4).
     foreach (marker; ["private void rebaseOnCurrent_(Tool t, bool ifStale)",
                       "private void settleAfterNavigation_(bool isUndo)", "void notePointerDown()",
-                      "void scriptedWriteEndsOperation(Tool t)"])
+                      "void scriptedWriteEndsOperation(Tool t)",
+                      "private void rebaseOnUndoneOperation_(Tool t, ulong tok)"])
         assert(squeeze(bodyAt(ts, marker)).length > 2, "S3 floor: the session body " ~ marker
                ~ " is empty");
     // NEEDLE, by identifier (a method address and both lambda forms count).
-    // Polarity: allowed sets, true after S3 (S7 adds `close:1` to the second).
-    assert(identSites(es, "rebaseTopologyStep", false) == ["ToolSession.rebaseOnCurrent_:1"],
+    // Polarity: allowed sets, true after S3 (S7 adds `close:1` to the second; S7 PF-7 the
+    // undone restart's base — probe edit, form item 10).
+    assert(identSites(es, "rebaseTopologyStep", false)
+           == ["ToolSession.rebaseOnCurrent_:1", "ToolSession.rebaseOnUndoneOperation_:1"],
            format("S3 needle: edit_session.d rebases a tool at %s, expected only in "
-                  ~ "rebaseOnCurrent_", identSites(es, "rebaseTopologyStep", false)));
+                  ~ "rebaseOnCurrent_ and (S7, PF-7) rebaseOnUndoneOperation_",
+                  identSites(es, "rebaseTopologyStep", false)));
+    // S7 PF-7 (plan §14.3): the undone restart's base is set by the settle of an undo
+    // alone, inside its open-operation branch. Polarity: true after S7 (the name is new).
+    assert(identSites(es, "rebaseOnUndoneOperation_", false)
+           == ["<decl>:1", "ToolSession.settleAfterNavigation_:1"],
+           format("S7 needle: rebaseOnUndoneOperation_ is called at %s, expected the settle once",
+                  identSites(es, "rebaseOnUndoneOperation_", false)));
+    assert(squeeze(bodyAt(ts, "private void settleAfterNavigation_(bool isUndo)"))
+              .canFind("if(operationOpen_){operation_=isUndo?headOfRedoOperation_(aToken):"
+                       ~ "topOperation_(aToken);if(isUndo)rebaseOnUndoneOperation_(tool_(),aToken);}"),
+           "S7 needle: the settle rebases an undone restart outside its open, undo branch");
     assert(identSites(es, "rebaseOnCurrent_", false)
            == ["<decl>:1", "ToolSession.notePointerDown:1",
                "ToolSession.scriptedWriteEndsOperation:1", "ToolSession.settleAfterNavigation_:1"],
