@@ -631,8 +631,10 @@ unittest {
         try { bindArgs(c, body); return c.apply(); } catch (Exception) return false;
     }
     g_testMode = true;
+    vpm.views[0].dirty = false;
     assert(applies(`{"value":0.5,"viewport":0}`) && vpm.views[0].fbo.compositeTestGain == 0.5f,
         "control: under --test the gain is written");
+    assert(vpm.views[0].dirty, "a written gain must mark the cell dirty (re-render)");
     size_t refused;
     foreach (body; [`{"value":-0.25,"viewport":0}`, `{"value":4.5,"viewport":0}`,
                     `{"value":"nan","viewport":0}`]) {
@@ -641,6 +643,18 @@ unittest {
         ++refused;
     }
     assert(refused == 3, "population floor: three out-of-domain gains");
+    // NaN cannot arrive over JSON (the parse refuses it first), so the finite
+    // term is reached by writing the bound field directly.
+    {
+        auto c = new ViewportCompositeTestGain(&m, vpm.views[0].camera, EditMode.Polygons, vpm);
+        auto ps = c.params();
+        assert(ps.length == 2 && ps[0].name == "value", "the gain is the command's first param");
+        *ps[0].fptr = float.nan;
+        bool ok;
+        try ok = c.apply(); catch (Exception) ok = false;
+        assert(!ok && vpm.views[0].fbo.compositeTestGain == 0.5f,
+            "a non-finite gain must be refused, writing nothing");
+    }
     assert(applies(format(`{"value":%s,"viewport":0}`, kCompositeTestGainMax)),
         "the domain's ceiling itself is accepted");
     g_testMode = false;

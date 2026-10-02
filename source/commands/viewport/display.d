@@ -468,7 +468,7 @@ final class ViewportCompositeTestGain : ViewportCommand {
                                        gain_, kCompositeTestGainMax));
         immutable int cell = resolveCellOrThrow(cellArg_, name());
         vpm.views[cell].fbo.compositeTestGain = gain_;
-        markCellDisplayDirty(cell);
+        vpm.views[cell].dirty = true;   // re-render; not display state, so no prefs mirror
         return true;
     }
 }
