@@ -2,8 +2,14 @@
 // idle/orbit (model M7, wave plan SP). NOT A GATE and makes NO time comparison
 // of any kind: budgets (fps, ms per style) are an owner decision these numbers
 // only inform. The exit code is lane health only — a refused command, a failed
-// premise, fewer than 8 harvested GPU frames in a window, or the timer
-// unavailable on a desktop host.
+// premise, fewer than 8 harvested GPU frames in a window, ANY dropped GPU frame
+// in a window, or the timer unavailable on a desktop host.
+//
+// `--perf` makes a full GPU timer ring WAIT on its oldest slot instead of
+// dropping it (task 9140 ruling): where the GPU is slower than the unthrottled
+// loop, that wait is CPU time inside the frame. It is reported per row
+// (`thr` = waits / ms in the window) and a row whose CPU columns include it is
+// flagged `*` — its CPU numbers are then GPU-bound, not the CPU cost.
 //
 // "idle" here is `--test`'s steady re-render of an unchanged scene (every cell
 // renders every frame), i.e. the per-frame cost of the style — NOT production
@@ -45,6 +51,7 @@ struct ViewportRow {
     long drawCalls, drawVerts;
     double[4] uploadMs = [0, 0, 0, 0];
     long harvested, dropped, cells;
+    long throttleWaits, throttleNs;   // perf-mode ring waits inside the window
 }
 
 private JSONValue getJ(string path) {
@@ -75,13 +82,10 @@ private void waitFrames(long n) {
     throw new Exception(format("the main loop did not advance %d frames", n));
 }
 
-/// Past the GPU ring and past a transient: a heavy upload can put the GPU more
-/// frames behind than the ring holds, and those frames are DROPPED (counted).
-/// Wait (up to kSettleSeconds of wall clock) until a 30-frame span adds no drop
-/// to any cell, so a window opens on steady state. `--perf` runs the loop with
-/// vsync off and nothing else throttles it, so where the GPU is slower than the
-/// CPU loop the lag grows without bound and no span is drop-free: the row is
-/// then an ERROR naming that, not a number.
+/// Past the GPU ring and past a transient, then up to kSettleSeconds of wall
+/// clock until a 30-frame span adds no drop to any cell. Under `--perf` the
+/// ring waits instead of dropping, so a drop here means the binary predates
+/// that rule (or the flag did not reach the timer): the row is an ERROR.
 enum int kSettleSeconds = 10;
 
 private bool settleGpu() {
@@ -146,6 +150,8 @@ private void gpuColumns(ref ViewportRow r, Snap a, Snap b) {
             throw new Exception("GPU timer unavailable: " ~ gb["reason"].str);
         immutable long h = gb["framesHarvested"].integer - ga["framesHarvested"].integer;
         r.dropped += gb["framesDropped"].integer - ga["framesDropped"].integer;
+        r.throttleWaits += gb["throttleWaits"].integer - ga["throttleWaits"].integer;
+        r.throttleNs += gb["throttleNs"].integer - ga["throttleNs"].integer;
         r.harvested = r.cells == 1 ? h : min(r.harvested, h);
         long lastSeq = 0;
         foreach (e; ga["recent"].array) lastSeq = max(lastSeq, e.array[0].integer);
@@ -196,7 +202,7 @@ private ViewportRow measure(Scene sc, string style, string smooth, string cavity
         }
         if (!settleGpu())
             throw new Exception(format("GPU never settled: frames still dropped after %ds — "
-                ~ "the unthrottled --perf loop outruns the GPU by more than the ring", kSettleSeconds));
+                ~ "a --perf ring must wait, not drop", kSettleSeconds));
         // Premise FIRST: every rendering cell's active plan is the requested style.
         foreach (k, c; getJ("/api/viewport/display")["cells"].array) {
             if (c["renders"].type != JSONType.TRUE) continue;
@@ -236,6 +242,9 @@ private ViewportRow measure(Scene sc, string style, string smooth, string cavity
         foreach (i, cat; kUploadCats)
             r.uploadMs[i] = (cat in perf ? perf[cat]["sum_ns"].integer : 0) / 1e6;
         gpuColumns(r, a, b);
+        if (r.dropped > 0)
+            throw new Exception(format("%d GPU frames dropped in the window (the ring must wait "
+                ~ "under --perf; a drop means the window lost frames)", r.dropped));
         if (r.harvested < kMinHarvested)
             throw new Exception(format("only %d GPU frames harvested in the window", r.harvested));
         r.ok = true;
@@ -255,10 +264,11 @@ void printViewportTable(ViewportRow[] rows) {
     writeln("viewport frame cost — NOT a gate; no time comparison (owner budgets).");
     writeln("idle = --test steady re-render of an unchanged scene (every frame renders), not production idle.");
     writeln("GPU = GL_TIME_ELAPSED per frame summed over rendered cells; CPU = /api/frames total; draw = drawNs p95.");
-    writefln("%-9s %-9s %-4s %-6s %-5s %8s %8s %8s %9s %9s  %-34s %7s %9s %8s %8s",
+    writeln("thr = GPU-ring waits / ms in the window; * = the CPU columns include that wait (GPU-bound row).");
+    writefln("%-9s %-9s %-4s %-6s %-5s %9s %8s %8s %9s %9s  %-34s %7s %9s %8s %8s %12s",
              "scene", "style", "smth", "cavity", "mode", "cpu p50", "cpu p95", "draw p95",
              "gpu mean", "gpu p95", "top segments (mean us)", "calls", "verts",
-             "upl ms", "harv/dr");
+             "upl ms", "harv/dr", "thr");
     foreach (r; rows) {
         if (!r.ok) {
             writefln("%-9s %-9s %-4s %-6s %-5s  ERROR: %s", r.scene, r.style, r.smooth,
@@ -270,11 +280,11 @@ void printViewportTable(ViewportRow[] rows) {
             top ~= format("%s%s %.0f", k ? ", " : "", r.topSeg[k], r.topNs[k] / 1e3);
         double upl = 0;
         foreach (u; r.uploadMs) upl += u;
-        writefln("%-9s %-9s %-4s %-6s %-5s %6.2fms %6.2fms %6.2fms %7.3fms %7.3fms  %-34s %7d %9d %8.2f %4d/%d",
-                 r.scene, r.style, r.smooth, r.cavity, r.mode,
+        writefln("%-9s %-9s %-4s %-6s %-5s %s%6.2fms %6.2fms %6.2fms %7.3fms %7.3fms  %-34s %7d %9d %8.2f %4d/%d %5d/%.1fms",
+                 r.scene, r.style, r.smooth, r.cavity, r.mode, r.throttleWaits > 0 ? "*" : " ",
                  r.cpuP50 / 1e6, r.cpuP95 / 1e6, r.drawP95 / 1e6,
                  r.gpuMean / 1e6, r.gpuP95 / 1e6, top, r.drawCalls, r.drawVerts,
-                 upl, r.harvested, r.dropped);
+                 upl, r.harvested, r.dropped, r.throttleWaits, r.throttleNs / 1e6);
     }
 }
 
@@ -291,9 +301,11 @@ void writeViewportJson(string path, ViewportRow[] rows) {
         foreach (k; 0 .. 3)
             a.put(format(`%s["%s",%.0f]`, k ? "," : "", r.topSeg[k], r.topNs[k]));
         a.put(format(`],"drawCalls":%d,"drawVerts":%d,"uploadMs":[%.3f,%.3f,%.3f,%.3f],`
-            ~ `"harvested":%d,"dropped":%d,"cells":%d}`, r.drawCalls, r.drawVerts,
+            ~ `"harvested":%d,"dropped":%d,"cells":%d,"throttleWaits":%d,"throttleNs":%d,`
+            ~ `"cpuIncludesThrottle":%s}`, r.drawCalls, r.drawVerts,
             r.uploadMs[0], r.uploadMs[1], r.uploadMs[2], r.uploadMs[3],
-            r.harvested, r.dropped, r.cells));
+            r.harvested, r.dropped, r.cells, r.throttleWaits, r.throttleNs,
+            r.throttleWaits > 0));
     }
     a.put("]}\n");
     std.file.write(path, a.data);

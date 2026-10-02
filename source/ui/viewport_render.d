@@ -36,7 +36,8 @@ import viewport              : Viewport3D;
 import viewport_overlay_mode : OverlayMode;
 import display_state         : DrawPlan, SurfaceShading;
 import perf_probe            : g_fc, g_perf, DrawPass, Cat;
-import gpu_pass_timer        : GpuPassTimer, GpuSeg, resolveGpuTimingArmed;
+import gpu_pass_timer        : GpuPassTimer, GpuSeg, resolveGpuTimingArmed,
+                                g_gpuTimerPerfMode;
 import tool                  : Tool, rolloverDraws;
 import toolpipe.pipeline     : ToolPipeContext;
 import toolpipe.stage        : TaskCode;
@@ -512,7 +513,7 @@ public:
             g_testMode, environment.get("VIBE3D_GPU_TIMING", ""));
     }
     segTimer_ = &view.cell.gpuTimer;
-    view.cell.gpuTimer.beginFrame(gpuTimingArmed_);
+    view.cell.gpuTimer.beginFrame(gpuTimingArmed_, g_gpuTimerPerfMode);
     scope (exit) { view.cell.gpuTimer.endFrame(); segTimer_ = null; }
     ++drawSerial_;
     ref Document document = *scene.document;

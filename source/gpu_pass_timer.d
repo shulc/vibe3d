@@ -8,6 +8,10 @@
 // Results are harvested NON-BLOCKINGLY: `GL_QUERY_RESULT` is read only after
 // every query of a frame slot answers `GL_QUERY_RESULT_AVAILABLE`; a slot that
 // is about to be reused while still unavailable is dropped and counted.
+// `--perf` ONLY (`g_gpuTimerPerfMode`, never `--test`): a FULL ring instead
+// waits on the oldest slot's ended queries (blocking `GL_QUERY_RESULT`) so no
+// frame is dropped; each wait is counted in `throttleWaits`/`throttleNs`, the
+// time the CPU loop spent there (task 9140 ruling on the SP PLAN-FINDING).
 // Counters are cumulative for the process; a reader takes deltas.
 // Query names live for the process: the cells are pre-allocated and never
 // freed, and no GL call may run from a destructor (no context there).
@@ -30,6 +34,9 @@ enum size_t kGpuTimerFrames = 32;
 enum size_t MAX_GPU_MARKS = 64;
 /// Entries of the per-frame total ring reported as `recent`.
 enum size_t kGpuRecentFrames = 256;
+
+/// Set once by app.d's `--perf` arm: a full ring waits instead of dropping.
+__gshared bool g_gpuTimerPerfMode;
 
 /// Arm rule: env "1" arms, "0" disarms, anything else follows `--test`.
 bool resolveGpuTimingArmed(bool testMode, string env) pure nothrow @safe @nogc {
@@ -116,6 +123,9 @@ struct GpuPassTimerT(Backend) {
     /// Largest observed distance, in this cell's frames, between a slot's
     /// frame and the frame that harvested it (the ring-depth witness).
     ulong maxHarvestLag;
+    /// Perf-mode waits on a full ring's oldest slot, and their CPU time.
+    ulong throttleWaits;
+    ulong throttleNs;
     GpuSegStat[GpuSeg.max + 1] segs;
 
     private {
@@ -135,7 +145,8 @@ struct GpuPassTimerT(Backend) {
     }
 
     /// Open frame `seq+1` (segment `setup`) after harvesting what is ready.
-    void beginFrame(bool armed_) {
+    /// `waitWhenFull` (perf mode only) blocks on the oldest slot of a full ring.
+    void beginFrame(bool armed_, bool waitWhenFull = false) {
         armed = armed_;
         if (!armed_) return;
         if (!probed) {
@@ -149,10 +160,19 @@ struct GpuPassTimerT(Backend) {
         }
         ++seq_;
         harvest();
-        // The slot about to be reused: still unavailable ⇒ dropped, never read.
+        // The slot about to be reused is still unavailable: perf mode waits
+        // for it (it is the oldest pending), otherwise it is dropped, never read.
         if (pending_[next_]) {
-            pending_[next_] = false;
-            ++framesDropped;
+            if (waitWhenFull) {
+                import core.time : MonoTime;
+                immutable t0 = MonoTime.currTime;
+                harvestSlot(next_);
+                throttleNs += (MonoTime.currTime - t0).total!"nsecs";
+                ++throttleWaits;
+            } else {
+                pending_[next_] = false;
+                ++framesDropped;
+            }
         }
         cur_ = next_;
         used_[cur_] = 0;
@@ -192,23 +212,37 @@ struct GpuPassTimerT(Backend) {
             if (!pending_[s]) continue;
             foreach (i; 0 .. used_[s])
                 if (!backend.available(names_[s][i])) return;   // oldest first
-            ulong total = 0;
-            foreach (i; 0 .. used_[s]) {
-                immutable ulong ns = backend.result(names_[s][i]);
-                auto st = &segs[tags_[s][i]];
-                ++st.samples;
-                st.sumNs += ns;
-                st.lastNs = ns;
-                total += ns;
-            }
-            pending_[s] = false;
-            ++framesHarvested;
-            immutable ulong lag = seq_ - slotSeq_[s];
-            if (lag > maxHarvestLag) maxHarvestLag = lag;
-            recent_[recentHead_] = [slotSeq_[s], total];
-            recentHead_ = (recentHead_ + 1) % kGpuRecentFrames;
-            if (recentLen_ < kGpuRecentFrames) ++recentLen_;
+            harvestSlot(s);
         }
+    }
+
+    /// Read slot `s` (GL_QUERY_RESULT blocks until each query answers).
+    private void harvestSlot(size_t s) {
+        ulong total = 0;
+        foreach (i; 0 .. used_[s]) {
+            immutable ulong ns = backend.result(names_[s][i]);
+            auto st = &segs[tags_[s][i]];
+            ++st.samples;
+            st.sumNs += ns;
+            st.lastNs = ns;
+            total += ns;
+        }
+        pending_[s] = false;
+        ++framesHarvested;
+        immutable ulong lag = seq_ - slotSeq_[s];
+        if (lag > maxHarvestLag) maxHarvestLag = lag;
+        recent_[recentHead_] = [slotSeq_[s], total];
+        recentHead_ = (recentHead_ + 1) % kGpuRecentFrames;
+        if (recentLen_ < kGpuRecentFrames) ++recentLen_;
+    }
+
+    /// Frames since the oldest still-pending slot was opened (0: none
+    /// pending) — the lag `maxHarvestLag` cannot see until it is harvested.
+    ulong oldestPendingAge() const {
+        ulong age = 0;
+        foreach (s; 0 .. kGpuTimerFrames)
+            if (pending_[s] && seq_ - slotSeq_[s] > age) age = seq_ - slotSeq_[s];
+        return age;
     }
 
     /// The per-cell dump of `/api/viewport/display` (`"gpuTiming"`): every
@@ -220,9 +254,11 @@ struct GpuPassTimerT(Backend) {
         auto w = appender!string();
         w.formattedWrite(`{"armed":%s,"available":%s,"reason":"%s","bits":%d,`
             ~ `"framesHarvested":%d,"framesDropped":%d,"overflowMarks":%d,`
-            ~ `"maxHarvestLag":%d,"ringFrames":%d,"segments":{`,
+            ~ `"maxHarvestLag":%d,"oldestPendingAge":%d,"throttleWaits":%d,`
+            ~ `"throttleNs":%d,"ringFrames":%d,"segments":{`,
             armed, available, reason, bits, framesHarvested, framesDropped,
-            overflowMarks, maxHarvestLag, kGpuTimerFrames);
+            overflowMarks, maxHarvestLag, oldestPendingAge(), throttleWaits,
+            throttleNs, kGpuTimerFrames);
         foreach (i, st; segs) {
             if (i) w.put(',');
             w.formattedWrite(`"%s":{"samples":%d,"sumNs":%d,"lastNs":%d}`,

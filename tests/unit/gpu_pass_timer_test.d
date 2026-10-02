@@ -32,6 +32,8 @@ private struct FakeLog {
     bool[uint] unread;         // ended, never read back
     size_t resultCallsOnUnavailable;
     size_t rebeginsOfUnread;
+    bool[uint] unavail;        // these names answer "not available"
+    uint[] blockedNames;       // GL_QUERY_RESULT read while unavailable (blocks)
 }
 
 private struct FakeBackend {
@@ -61,11 +63,14 @@ private struct FakeBackend {
     }
     bool available(uint name) {
         log.calls ~= "avail";
-        return !log.withheld;
+        return !log.withheld && (name in log.unavail) is null;
     }
     ulong result(uint name) {
         log.calls ~= "result";
-        if (log.withheld) ++log.resultCallsOnUnavailable;
+        if (log.withheld || (name in log.unavail) !is null) {
+            ++log.resultCallsOnUnavailable;
+            log.blockedNames ~= name;
+        }
         log.unread.remove(name);
         return log.ns;
     }
@@ -168,6 +173,83 @@ unittest {
         format("(c) the reused unavailable slot must be dropped, framesDropped=%d", t.framesDropped));
     assert(log.rebeginsOfUnread == 1,
         format("(c) exactly the dropped slot's one name is re-begun, got %d", log.rebeginsOfUnread));
+}
+
+// (c2) the oldest slot answers on the very frame it is reused: harvest runs
+// BEFORE the reuse check, so it is read, not dropped.
+unittest {
+    auto log = new FakeLog;
+    auto t = newTimer(log);
+    log.withheld = true;
+    foreach (_; 0 .. kGpuTimerFrames) { t.beginFrame(true); t.endFrame(); }
+    assert(t.framesHarvested == 0 && t.framesDropped == 0, "(c2) ring full, nothing read yet");
+    log.withheld = false;
+    t.beginFrame(true);            // reuses slot 0, which is now available
+    t.endFrame();
+    assert(t.framesDropped == 0,
+        format("(c2) a slot available on its reuse frame must be harvested, not dropped: "
+             ~ "framesDropped=%d", t.framesDropped));
+    assert(t.framesHarvested == kGpuTimerFrames,
+        format("(c2) all %d slots harvested, got %d", kGpuTimerFrames, t.framesHarvested));
+}
+
+// (c3) oldest first: slot k unavailable, slot k+1 available ⇒ k+1 waits.
+unittest {
+    auto log = new FakeLog;
+    auto t = newTimer(log);
+    t.beginFrame(true); t.endFrame();          // frame 1: one query
+    t.beginFrame(true); t.endFrame();          // frame 2 (harvests frame 1)
+    assert(t.framesHarvested == 1 && log.begun.length == 2, "(c3) premise: frame 1 harvested");
+    log.unavail[log.begun[1]] = true;          // frame 2 not answered
+    t.beginFrame(true); t.endFrame();          // frame 3 ends, available
+    t.beginFrame(true);                        // frame 2 pending+unavailable, frame 3 ready
+    assert(t.framesHarvested == 1,
+        format("(c3) frame 3 must not be harvested past the unavailable frame 2: "
+             ~ "framesHarvested=%d", t.framesHarvested));
+    t.endFrame();
+    log.unavail.remove(log.begun[1]);
+    t.beginFrame(true);
+    auto r = parseJSON(t.toJson())["recent"].array;
+    assert(t.framesHarvested == 4 && r.length == 4 && r[1].array[0].integer == 2
+        && r[2].array[0].integer == 3,
+        format("(c3) control: once frame 2 answers, frames 2,3,4 follow in order: %s", r));
+}
+
+// (k) perf mode (`waitWhenFull`): a FULL ring blocks on the oldest slot's
+// queries only — no drop, no re-begin of an unread name; gate mode never blocks.
+unittest {
+    foreach (perf; [false, true]) {
+        auto log = new FakeLog;
+        auto t = newTimer(log);
+        log.withheld = true;
+        foreach (_; 0 .. kGpuTimerFrames) {
+            t.beginFrame(true, perf); t.mark(GpuSeg.faces); t.endFrame();
+        }
+        assert(log.resultCallsOnUnavailable == 0 && t.throttleWaits == 0,
+            format("(k perf=%s) a ring that is not full never blocks", perf));
+        assert(log.begun.length == 2 * kGpuTimerFrames, "(k) population floor: 2 queries per frame");
+        foreach (_; 0 .. 3) { t.beginFrame(true, perf); t.mark(GpuSeg.faces); t.endFrame(); }
+        if (!perf) {
+            assert(log.resultCallsOnUnavailable == 0 && t.throttleWaits == 0 && t.throttleNs == 0,
+                format("(k gate) gate mode must never block: %d blocking reads, %d waits",
+                       log.resultCallsOnUnavailable, t.throttleWaits));
+            assert(t.framesDropped == 3, format("(k gate) 3 reused slots dropped, got %d", t.framesDropped));
+            continue;
+        }
+        assert(t.framesDropped == 0 && log.rebeginsOfUnread == 0,
+            format("(k perf) a full ring must wait, not drop: dropped=%d rebegins=%d",
+                   t.framesDropped, log.rebeginsOfUnread));
+        assert(log.blockedNames == log.begun[0 .. 6],
+            format("(k perf) the blocking reads must be exactly frames 1..3's queries (the "
+                 ~ "oldest slot each time), got %s", log.blockedNames));
+        assert(t.throttleWaits == 3 && t.framesHarvested == 3 && t.maxHarvestLag == kGpuTimerFrames,
+            format("(k perf) waits=%d harvested=%d lag=%d", t.throttleWaits, t.framesHarvested,
+                   t.maxHarvestLag));
+        auto j = parseJSON(t.toJson());
+        assert(j["throttleWaits"].integer == 3 && j["throttleNs"].integer >= 0
+            && j["oldestPendingAge"].integer == kGpuTimerFrames - 1,
+            "(k perf) JSON throttle columns and the oldest pending age: " ~ t.toJson());
+    }
 }
 
 // (d) the kernel cap on queries per frame.
@@ -320,7 +402,7 @@ unittest {
     assert(files > 400, format("(h) census area: only %d source files scanned", files));
     size_t total;
     foreach (k, v; sites) total += v;
-    assert(total >= 8, format("(h) population floor: %d mark sites", total));
+    assert(total == 18, format("(h) measured mark-site count: %d (grep -o '.mark(GpuSeg.' = 18)", total));
     static foreach (m; __traits(allMembers, GpuSeg)) {
         static if (m != "setup")
             assert((m in sites) !is null,
@@ -336,11 +418,24 @@ unittest {
     assert(body_.length > 1000, "(h) draw body not captured");
     assert(body_.count("beginFrame(") == 1,
         format("(h) beginFrame( must occur once in draw, got %d", body_.count("beginFrame(")));
+    // The wait flag is the perf flag: draw passes it, and the one write of it
+    // in source/ sits in app.d's `--perf` argument arm (never `--test`).
+    assert(body_.count("beginFrame(gpuTimingArmed_, g_gpuTimerPerfMode)") == 1,
+        "(h) draw must pass g_gpuTimerPerfMode as beginFrame's waitWhenFull");
+    size_t writes;
+    foreach (entry; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth))
+        writes += blankNonCode(readText(entry.name)).count("g_gpuTimerPerfMode = ");
+    const app = readText(buildPath(repoRoot, "source", "app.d"));   // raw: the arm key is a string literal
+    const perfArm = app.indexOf(`args[i] == "--perf")`);
+    assert(perfArm >= 0, "(h) app.d --perf argument arm not found");
+    const armEnd = app.indexOf("} else if", perfArm);
+    assert(writes == 1 && app[perfArm .. armEnd].count("g_gpuTimerPerfMode = true") == 1,
+        format("(h) g_gpuTimerPerfMode must be written once, in the --perf arm (writes=%d)", writes));
     const b = body_.indexOf("beginFrame(");
     const semi = body_.indexOf(';', b);
     const next = body_[semi + 1 .. $].strip;
     assert(next.length > 14 && next[0 .. 12] == "scope (exit)",
-        "(h) the statement after beginFrame must be scope (exit): " ~ next[0 .. 40]);
+        "(h) the statement after beginFrame must be scope (exit): " ~ next[0 .. $ < 40 ? $ : 40]);
     const stmtEnd = balancedSpan(next, next.indexOf('{'), '{', '}');
     assert(stmtEnd.indexOf("endFrame(") >= 0,
         "(h) the scope (exit) after beginFrame must call endFrame(: every return path closes the last query");

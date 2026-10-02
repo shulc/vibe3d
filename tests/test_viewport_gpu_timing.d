@@ -11,6 +11,9 @@ import std.exception : enforce;
 import std.format : format;
 import std.stdio : writefln;
 
+import drag_helpers : fetchCamera, viewportFromCamera, projectToWindow, playAndWait,
+                     CameraState, Vec3;
+
 void main() {}
 
 void cmd(string id, string params = null) {
@@ -309,6 +312,62 @@ unittest { // (vi) selection-feedback and overlay sections: each present only wh
         format("(vi-item) the item-highlight pass is a sample: %d", it.samples["overlays"]));
     assert(it.samples["verts"] == 0,
         format("(vi-item) under the item type no vertex feedback draws: verts=%d", it.samples["verts"]));
+}
+
+// 5 stationary motion events (no button) at window pixel (x, y): a cursor HOVER.
+void hoverAt(CameraState cam, int x, int y) {
+    string log = format(`{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,`
+        ~ `"fovY":0.785398}` ~ "\n", cam.vpX, cam.vpY, cam.width, cam.height);
+    foreach (i; 0 .. 5)
+        log ~= format(`{"t":%.3f,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,`
+            ~ `"state":0,"mod":0}` ~ "\n", 50.0 + i * 20.0, x, y);
+    playAndWait(log);
+}
+
+unittest { // (vii) the hover-only edge and vertex arms: a sample only while an element is hovered
+    resetSingle();
+    cmd("viewport.displayStyle", `"shaded"`);
+    cmd("viewport.wireOverlay", `"none"`);      // no base wire: the edge section is the hover alone
+    scope (exit) { postRaw("/api/command", "tool.set mesh.loopSliceTool off");
+                   postRaw("/api/command", "tool.set xfrm.elementMove off"); }
+    auto cam = fetchCamera();
+    auto vp = viewportFromCamera(cam);
+    float sx, sy;
+
+    // Edge hover under the vertex type: Loop Slice hovers edges in any type.
+    postRaw("/api/command", "select.typeFrom vertex");
+    postRaw("/api/command", "tool.set mesh.loopSliceTool on");
+    hoverAt(cam, cam.vpX + 4, cam.vpY + 4);     // empty corner: nothing hovered
+    auto e0 = window()[0];
+    assert(projectToWindow(Vec3(0.5f, 0.0f, 0.5f), vp, sx, sy), "(vii) edge midpoint on camera");
+    hoverAt(cam, cast(int) sx, cast(int) sy);
+    auto e1 = window()[0];
+    writefln("  (vii-edge) off: harvested=%d edges=%d; on: harvested=%d edges=%d",
+             e0.harvested, e0.samples["edges"], e1.harvested, e1.samples["edges"]);
+    assert(e0.harvested >= 8 && e0.samples["edges"] == 0,
+        format("(vii-edge) with no wire and nothing hovered, edges must read absent: %d",
+               e0.samples["edges"]));
+    assert(e1.harvested >= 8 && e1.samples["edges"] >= 8,
+        format("(vii-edge) a hovered edge is an edges sample: %d", e1.samples["edges"]));
+    postRaw("/api/command", "tool.set mesh.loopSliceTool off");
+
+    // Vertex hover under the polygon type: an element-falloff move hovers vertices.
+    postRaw("/api/command", "select.typeFrom polygon");
+    postRaw("/api/script", "tool.set xfrm.elementMove on");
+    postRaw("/api/command", "tool.pipe.attr falloff mode vertex");
+    hoverAt(cam, cam.vpX + 4, cam.vpY + 4);
+    auto v0 = window()[0];
+    assert(projectToWindow(Vec3(0.5f, 0.5f, 0.5f), vp, sx, sy), "(vii) cube corner on camera");
+    hoverAt(cam, cast(int) sx, cast(int) sy);
+    auto v1 = window()[0];
+    writefln("  (vii-vert) off: harvested=%d verts=%d; on: harvested=%d verts=%d",
+             v0.harvested, v0.samples["verts"], v1.harvested, v1.samples["verts"]);
+    assert(v0.harvested >= 8 && v0.samples["verts"] == 0,
+        format("(vii-vert) under the polygon type with nothing hovered, verts must read absent: %d",
+               v0.samples["verts"]));
+    assert(v1.harvested >= 8 && v1.samples["verts"] >= 8,
+        format("(vii-vert) a hovered vertex is a verts sample: %d", v1.samples["verts"]));
+    hoverAt(cam, cam.vpX + 4, cam.vpY + 4);
 }
 
 unittest { // diagnostic (no assert): the instance-lifetime harvest lag that sized the ring
