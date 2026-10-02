@@ -101,7 +101,9 @@ class EdgeBevelTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient,
             // script cell + three UI cells `s01 armed=True`).
             opensAt: OpensAt.arm,
             imageAttrs: ["width", "roundLevel", "widthMode"],
-            haulAttrs: ["width", "roundLevel", "widthMode"]
+            haulAttrs: ["width", "roundLevel", "widthMode"],
+            // captured: the tool's activation resets these (topology-redo S6r)
+            activationResetAttrs: ["width"]
         };
         return policy;
     }
@@ -218,7 +220,7 @@ public:
     final void installPreparedActivation(
             ref PreparedEdgeBevelActivationImage image) nothrow @nogc {
         if (!image.valid) return;
-        active = true; built = false; dragPart = -1; width_ = 0.0f;
+        active = true; built = false; dragPart = -1;
         preview_.reset(); image.before.moveInto(before);
         gizmoValid = image.gizmoValid; anchor = image.anchor;
         baseAnchor = image.baseAnchor; widthAxis = image.widthAxis;
@@ -242,7 +244,6 @@ public:
     private void reinitSession() {
         built    = false;
         dragPart = -1;
-        width_   = 0.0f;
         preview_.reset();          // a new clean cage ⇒ a new topology key
         before   = MeshSnapshot.capture(*mesh);
         computeGizmoFrame();
@@ -885,11 +886,12 @@ public:
             widthAxis == Vec3(7,8,9) && gizmoSelHash == 10 &&
             preview_.dirtyForTest();
     }
+    // The install keeps the attributes: the activation reset is the session's (S6r).
     version(unittest) final bool preparedActivationForTest(size_t count,
             Vec3 first, const Vec3* livePtr, bool expectedValid,
             Vec3 expectedAnchor, Vec3 expectedBase, Vec3 expectedAxis,
             ulong expectedHash) const nothrow @nogc {
-        return active && !built && dragPart == -1 && width_ == 0 &&
+        return active && !built && dragPart == -1 && width_ == 7 &&
             roundLevel_ == 3 && widthMode_ && before.filled &&
             before.vertices.length == count &&
             (count == 0 || (before.vertices[0] == first &&

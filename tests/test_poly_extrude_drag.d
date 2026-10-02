@@ -567,17 +567,19 @@ unittest { // Param image -> closed redo -> fresh dormant attr-only adjustment.
     // `inset_dormant_ui/s11_R`): the redo of the UI arm brings its attribute-only row back
     // in the same step (was: the bare activation, the row left in redo). Law 4, generic
     // (task 9020 item A; not a Poly Extrude capture): the re-created instance takes its
-    // drop seed — the shift it held with its own adjustment undone, i.e. the arm's
-    // (0.2, 0.07), never the drag's.
+    // drop seed — the shift it held with its own adjustment undone, never the drag's.
+    // Task 9270 (S6r, model §R12 M-init): the dormant press ACTIVATED the instance, so the
+    // adjustment's before-image is the activation reset (shifts 0), not the arm's
+    // (0.2, 0.07) — CAP `vmerge_dormant_ui/s11_R` (the seed is the reset image, 0.001).
     navigate(false);
     st = getJson("/api/tool/state");
     h = getJson("/api/history");
     assert(planes() == param && undoLen() == fresh + 1
-        && abs(queryShiftX() - freshShiftX) < 1e-6 && abs(queryShiftY() - freshShiftY) < 1e-6
+        && abs(queryShiftX()) < 1e-6 && abs(queryShiftY()) < 1e-6
         && st["session"]["dormant"].type == JSONType.true_
         && h["redo"].array.length == 0
         && h["undo"].array[$ - 1]["command"].str == "tool.topology_adjustment",
-        format("param-fresh dormant Redo lost the seed (shift %s,%s; the arm's %s,%s), basis, "
+        format("param-fresh dormant Redo lost the seed (shift %s,%s; the reset 0,0, not the arm's %s,%s), basis, "
             ~ "or did not bring its adjustment back with the arm (undo %s, redo %s)",
             queryShiftX(), queryShiftY(), freshShiftX, freshShiftY, undoLen(),
             h["redo"].array.length));
@@ -707,14 +709,17 @@ unittest { // Full closed redo makes a fresh Polygon arm dormant and attr-only.
     // Expectation (task 9080, S6; the door law, CAP `dormant2_inset_ui/s13_R`): the UI
     // activation's redo brings its adjustment back in the same step (was: bare). Law 4,
     // generic (task 9020 item A; not a Poly Extrude capture): the re-created instance takes
-    // its drop seed — the arm's (sticky) attributes, its own adjustment undone.
+    // its drop seed — its own adjustment undone. Task 9270 (S6r, model §R12 M-init): the
+    // dormant press activated the instance, so that before-image is the activation reset
+    // (distance and shifts 0), not the arm's sticky values — CAP `vmerge_dormant_ui/s11_R`
+    // (the seed is the reset image, 0.001).
     navigate(false);
     st = getJson("/api/tool/state");
     assert(planes() == freshImage && undoLen() == fresh + 1
         && st["session"]["dormant"].type == JSONType.true_
-        && abs(queryDistance() - armDist) < 1e-6 && abs(queryShiftX() - armShiftX) < 1e-6
-        && abs(queryShiftY() - armShiftY) < 1e-6,
+        && abs(queryDistance()) < 1e-6 && abs(queryShiftX()) < 1e-6
+        && abs(queryShiftY()) < 1e-6,
         format("dormant Polygon r1 did not restore the activation, its adjustment and its seed: distance %s "
-            ~ "shift (%s,%s), the arm's %s (%s,%s)", queryDistance(), queryShiftX(),
+            ~ "shift (%s,%s), the reset 0 (0,0) — the arm's %s (%s,%s)", queryDistance(), queryShiftX(),
             queryShiftY(), armDist, armShiftX, armShiftY));
 }

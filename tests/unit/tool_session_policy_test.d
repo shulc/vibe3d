@@ -50,7 +50,7 @@ import std.array     : array, join;
 import std.file      : readText;
 import std.format    : format;
 import std.json      : JSONType, parseJSON;
-import std.regex     : matchFirst, regex;
+import std.regex     : matchAll, matchFirst, regex;
 import std.string    : endsWith, indexOf, lastIndexOf, startsWith, strip;
 
 private enum Prov { carried, captured, inferred, notPorted, noCounterpart, uncertain }
@@ -1164,11 +1164,12 @@ unittest { // (4e)
     // NEEDLES (stationary allowed sets, true after S6). The dormant arm is the model's;
     // the pair is by the row's class; a dormant press does not arm the post mode.
     const arm = squeeze(bodyAt(ts, "void noteArm(string id, ulong token, bool postmodeArmed = true)"));
+    // S6r (9270, probe edit, form item 10): every dormant arm takes the closed run's copy;
+    // an arm-opening tool's activation then writes its reset over it (the §18.2 term is gone).
     assert(arm.canFind("topologyDormant_=capturedTopologyModel(t.sessionPolicy())&&")
-           && arm.canFind("if(topologyDormant_&&ownedAttrs.empty&&!opensAtArm(t.sessionPolicy()))"
-                          ~ "ownedAttrs=closedAttrs;"),
-           "S6 needle: noteArm's dormant term is not the captured model's, or a dormant arm of "
-           ~ "an arm-opening tool takes the closed run's attributes (PF-1): " ~ arm);
+           && arm.canFind("if(topologyDormant_&&ownedAttrs.empty)ownedAttrs=closedAttrs;"),
+           "S6 needle: noteArm's dormant term is not the captured model's, or a dormant arm "
+           ~ "does not take the closed run's copy (S6r: the §18.2 term returned?): " ~ arm);
     assert(identSites(es, "attrRowJoinsActivation_", false)
            == ["<decl>:1", "ToolSession.undoImpl_:1"],
            format("S6 needle: the UI pair of an attribute-only row is read at %s",
@@ -1388,6 +1389,173 @@ unittest { // (4i)
     assert(words(opener, "ToolActivationCommand") == 0 && words(opener, "opensAtArm") == 0,
            "S5b needle: ownOpenerOnTop_ accepts an activation again (the transitional term)");
 }
+
+// ---------------------------------------------------------------------------
+// (4j) Task 9270 (topology-redo wave S6r, model doc §R12 M-init): an instance's activation is
+// ONE datum (`instanceActive_`), ONE writer of `true` (`activate_`) called at two sites — the
+// live arm of an arm-opening tool (`noteArm`, never a replay) and a press of the tool's own
+// door that finds the instance inactive (`stepBegins`) — cleared at every bind and at a
+// post-mode end (`endPendingOperation_`); what it writes is the class's DATA
+// (`activationResetAttrs`). Order (form item 2): floor -> needle -> structural -> pin.
+// Polarity: the needles are false before S6r (neither name existed), true after.
+// ---------------------------------------------------------------------------
+
+/// Captured: the attributes each model class's activation resets, with their defaults
+/// (plan §20.2 table; findings §19-§20). An empty row: the class resets none.
+private immutable string[2][string] kActivationReset;
+shared static this() {
+    kActivationReset = [
+        "EdgeBevelTool":     ["width", "0"],
+        "VertexBevelTool":   ["inset", "0"],
+        "VertexExtrudeTool": ["shift,width", "0,0"],
+        "EdgeExtrudeTool":   ["extrude,width", "0,0"],
+        "SmoothShiftTool":   ["shift,scale", "0,1"],
+        "VertexMergeTool":   ["dist", "0.001"],
+        "MirrorTool":        ["center", "(0,0,0)"],
+        "PolyExtrudeTool":   ["shiftX,shiftY,shiftZ,distance", "0,0,0,0"],
+        "PolyInsetTool":     ["", ""], "ArrayTool": ["", ""],
+        "CloneTool":         ["", ""], "RadialArrayTool": ["", ""],
+    ];
+}
+
+unittest { // (4j)
+    import tests.unit.census_symbols : blankUnittestBodies;
+    import tests.unit.production_tool_policies : productionPolicies;
+    import params : Param;
+    import tool : capturedTopologyModel;
+    auto es = blankUnittestBodies(blankNonCode(readText("source/edit_session.d")));
+    const ts = bodyAt(es, "private struct ToolSession");
+    // FLOOR (form item 4): the bodies the needles read.
+    foreach (m; ["void noteArm(string id, ulong token, bool postmodeArmed = true)",
+                 "void stepBegins(Tool t, PressKind kind", "private void activate_(Tool t)",
+                 "private void endPendingOperation_(const Command trigger, bool endsPostMode, "
+                 ~ "bool model)"])
+        assert(squeeze(bodyAt(ts, m)).length > 2, "S6r floor: the session body " ~ m ~ " is empty");
+    // NEEDLES, by identifier (every spelling, a method address included).
+    assert(identSites(es, "activate_", false)
+           == ["<decl>:1", "ToolSession.noteArm:1", "ToolSession.stepBegins:1"],
+           format("S6r needle: activate_ is called at %s, expected the live arm and the press "
+                  ~ "once each", identSites(es, "activate_", false)));
+    assert(identSites(es, "instanceActive_", true)
+           == ["<decl>:1", "ToolSession.activate_:1", "ToolSession.endPendingOperation_:1",
+               "ToolSession.noteArm:1"],
+           format("S6r needle: instanceActive_ is written at %s, expected activate_ (true), the "
+                  ~ "bind and the post-mode end (false) — a navigation clearing it is not "
+                  ~ "captured (findings §21.4)", identSites(es, "instanceActive_", true)));
+    assert(identSites(es, "instanceActive_", false)
+           == ["<decl>:1", "ToolSession.activate_:1", "ToolSession.endPendingOperation_:1",
+               "ToolSession.noteArm:1", "ToolSession.stepBegins:1"],
+           format("S6r needle: instanceActive_ is read at %s, expected only by the press",
+                  identSites(es, "instanceActive_", false)));
+    const tl = blankNonCode(readText("source/tool.d"));
+    assert(identSites(tl, "resetParamToDefault", false)
+           == ["<decl>:1", "Tool.resetAttrsToDefaults:1"],
+           format("S6r needle: resetParamToDefault is called at %s, expected only by "
+                  ~ "resetAttrsToDefaults", identSites(tl, "resetParamToDefault", false)));
+    assert(identSites(es, "resetAttrsToDefaults", false) == ["ToolSession.activate_:1"],
+           format("S6r needle: the session resets attributes at %s, expected only activate_",
+                  identSites(es, "resetAttrsToDefaults", false)));
+    // STRUCTURAL: the bind clears first; the live arm activates after the copy and before the
+    // image is remembered and the begin row is taken; the press activates before the step's
+    // `before`; the post-mode end clears.
+    const arm = bodyAt(ts, "void noteArm(string id, ulong token, bool postmodeArmed = true)");
+    inOrder(squeeze(arm), ["bound_=t;instanceActive_=false;", "if(tisnull)return;",
+                           "t.restoreRecordedAttrs(ownedAttrs);", "activate_(t);",
+                           "rememberTopologyAttrs_(t.captureAttrImage());", "recordBeginRow_(t);"],
+            "S6r ToolSession.noteArm");
+    const g = guardOf(arm, cast(size_t) arm.indexOf("activate_("));
+    assert(g !is null && squeeze(g) == "history_.state()!=UndoState.Suspend&&opensAtArm(t.sessionPolicy())",
+           "S6r needle: the live arm's activation is guarded by `" ~ squeeze(g) ~ "`, expected "
+           ~ "not-a-replay and the arm-opening policy alone (dormant or not)");
+    assert(squeeze(bodyAt(ts, "void stepBegins(Tool t, PressKind kind")).canFind(
+               "if(t.sessionPolicy().historyTopologySteps){if(press&&!instanceActive_)activate_(t);"
+               ~ "topologyPendingPress_=press;"),
+           "S6r needle: the press's activation is not the first statement of the topology "
+           ~ "branch, or it is keyed on more than `press && !instanceActive_`");
+    assert(squeeze(bodyAt(ts, "private void endPendingOperation_(const Command trigger, "
+               ~ "bool endsPostMode, bool model)")).canFind(
+               "if(endsPostMode){postmodeArmed_=false;operationOpen_=false;instanceActive_=false;}"),
+           "S6r needle: the end of the post mode does not deactivate the instance");
+    assert(squeeze(bodyAt(ts, "private void activate_(Tool t)"))
+           == "{instanceActive_=true;if(capturedTopologyModel(t.sessionPolicy()))"
+              ~ "t.resetAttrsToDefaults(t.sessionPolicy().activationResetAttrs);}",
+           "S6r needle: activate_ is not `raise the datum; a model tool resets its data`");
+
+    // STRUCTURAL — the table, read off the PRODUCTION instances: each model class declares
+    // the captured list, every name is one of its params, every default the captured one.
+    size_t ids, modelIds;
+    string[] seen, bad;
+    size_t nonEmpty, empty;
+    productionPolicies(ids, (string id, Tool t) {
+        const pol = t.sessionPolicy();
+        if (!capturedTopologyModel(pol)) return;
+        ++modelIds;
+        auto cls = typeid(t).name;
+        cls = cls[cls.lastIndexOf('.') + 1 .. $];
+        if (seen.canFind(cls)) return;
+        seen ~= cls;
+        auto want = cls in kActivationReset;
+        if (want is null) { bad ~= cls ~ ": no captured row"; return; }
+        string[] defs;
+        foreach (n; pol.activationResetAttrs) {
+            bool found;
+            foreach (ref p; t.params()) {
+                if (p.name != n) continue;
+                found = true;
+                defs ~= p.kind == Param.Kind.Vec3_
+                    ? format("(%g,%g,%g)", p.default_.v3.x, p.default_.v3.y, p.default_.v3.z)
+                    : format("%g", p.default_.f);
+            }
+            if (!found) bad ~= cls ~ ": '" ~ n ~ "' is no param";
+        }
+        if (pol.activationResetAttrs.join(",") != (*want)[0] || defs.join(",") != (*want)[1])
+            bad ~= format("%s: [%s] defaults [%s], captured [%s] [%s]", cls,
+                          pol.activationResetAttrs.join(","), defs.join(","), (*want)[0], (*want)[1]);
+        if (pol.activationResetAttrs.length) ++nonEmpty; else ++empty;
+    });
+    assert(modelIds == 13 && seen.length == 12,
+           format("S6r floor: %s model ids / %s classes built, measured 13 / 12", modelIds, seen.length));
+    assert(bad.length == 0, format("S6r structural: the activation-reset table differs: %s", bad));
+    assert(nonEmpty == 8 && empty == 4,
+           format("S6r structural: %s classes reset at activation, %s none — measured 8 / 4",
+                  nonEmpty, empty));
+
+    // STRUCTURAL — step 4 (a rule, form item 12): no activation body of a model class writes an
+    // attribute its policy images (`reinitSession`, `installPreparedActivation`): the copy is
+    // the cache's, the reset the session's. Fields are read off the class's own `Param` bindings.
+    size_t bodies;
+    string[] writes;
+    foreach (f; kRebaseBodyFiles) {
+        const code = blankNonCode(readText(f));
+        const raw = readText(f);
+        auto im = matchFirst(raw, regex(`imageAttrs:\s*\[([^\]]*)\]`));
+        assert(!im.empty, "S6r floor: no imageAttrs literal in " ~ f);
+        string[] fields;
+        foreach (m; matchAll(raw, regex(`Param\.\w+\("(\w+)",\s*"[^"]*",\s*&([\w.]+)`)))
+            if (im[1].canFind(`"` ~ m[1] ~ `"`)) {
+                const fld = m[2];
+                fields ~= fld[fld.lastIndexOf('.') + 1 .. $];
+            }
+        foreach (marker; ["void reinitSession()", "void installPreparedActivation("]) {
+            if (code.indexOf(marker) < 0) continue;
+            ++bodies;
+            const b = bodyAt(code, marker);
+            foreach (fld; fields)
+                if (identSites(b, fld, true).length)
+                    writes ~= format("%s %s: %s", f, marker, fld);
+        }
+    }
+    assert(bodies == 20, format("S6r floor: %s activation bodies found, measured 20 (9 reinitSession "
+           ~ "+ 11 installPreparedActivation)", bodies));
+    // Allowed (stationary): Mirror's install derives its plane frame from the view — no reset.
+    assert(writes == ["source/tools/alignment/mirror.d void installPreparedActivation(: left",
+                      "source/tools/alignment/mirror.d void installPreparedActivation(: up"],
+           format("S6r structural: an activation body writes an imaged attribute (step 4: the "
+                  ~ "reset is the session's; Mirror's derived frame alone is allowed): %s", writes));
+}
+
+// Pin (form item 1): a tool resets nothing at activation unless its policy says so.
+static assert(ToolSessionPolicy.init.activationResetAttrs.length == 0);
 
 // Fence (form item 1): the per-tool dormant flag is gone (S6, task 9080).
 static assert(!__traits(hasMember, imported!"tool".ToolSessionPolicy, "dormantAfterClosedRedo"));

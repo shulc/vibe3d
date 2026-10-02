@@ -9,7 +9,9 @@ module tests.unit.production_tool_policies;
 /// then the presets (`registerToolPresets`). Each id is built by its
 /// PRODUCTION factory — a preset's policy is its constructed instance's, not a
 /// blitted class initializer's (the transform presets set fields at build).
-package(tests.unit) string[4][] productionPolicies(out size_t ids) {
+/// `each` (S6r, 9270): called with every id's production-built instance.
+package(tests.unit) string[4][] productionPolicies(out size_t ids,
+        void delegate(string, imported!"tool".Tool) each = null) {
     import ai.exploration : AiExplorationController;
     import ai.interaction_log_writer : AiInteractionLogWriter;
     import command_history : CommandHistory;
@@ -75,7 +77,9 @@ package(tests.unit) string[4][] productionPolicies(out size_t ids) {
     string[4][] rows;     // [id, "model"|"model+arm"|"topo"|"", carries, startsOnPress]
     foreach (id; r.registry.toolIds()) {
         ++ids;
-        const pol = r.registry.toolFactory(id)().sessionPolicy();
+        auto inst = r.registry.toolFactory(id)();
+        if (each !is null) each(id, inst);
+        const pol = inst.sessionPolicy();
         rows ~= [id, capturedTopologyModel(pol) ? (opensAtArm(pol) ? "model+arm" : "model")
                      : pol.historyTopologySteps ? "topo" : "",
                  firstStepCarriesActivation(pol) ? "carries" : "",

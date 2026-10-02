@@ -2836,3 +2836,158 @@ unittest {
         "pen L57: the parameter row after the command joined the closed block (PreNavOpen) "
         ~ "instead of opening its own step");
 }
+
+// ---- Task 9270 (topology-redo wave S6r, model doc §R12 M-init): the instance's activation
+// ---- writes the tool's `activationResetAttrs` image over the stored copy — at a live arm of
+// ---- an arm-opening tool, and at a press that finds the instance inactive (CAP Capture-10
+// ---- group R, findings §20.3). Order inside each cell: must-stay-green above must-redden.
+
+/// A first-press model tool whose activation resets `v` (its data).
+private class InitPressTool : PressFlagTool {
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        import tool : CommandClose;
+        static immutable ToolSessionPolicy policy = {
+            activationRow: true, commandClose: CommandClose.uiDoor, sessionSteps: true,
+            historyTopologySteps: true, opensAt: OpensAt.firstPress, imageAttrs: ["v"],
+            activationResetAttrs: ["v"]
+        };
+        return policy;
+    }
+}
+
+/// The same tool opening its operation at the arm.
+private final class InitArmTool : InitPressTool {
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        import tool : CommandClose;
+        static immutable ToolSessionPolicy policy = {
+            activationRow: true, commandClose: CommandClose.uiDoor, sessionSteps: true,
+            historyTopologySteps: true, opensAt: OpensAt.arm, imageAttrs: ["v"],
+            activationResetAttrs: ["v"]
+        };
+        return policy;
+    }
+}
+
+/// One haul through the tool's own door; returns the attribute the step began from.
+private float initHaul(EditSession s, PressFlagTool t, Mesh* m, float to) {
+    s.notePointerDown();
+    t.pressBegins();
+    const atPress = t.v;
+    t.v = to;
+    m.vertices[1].x += 0.25f;
+    t.pressEnds();
+    return atPress;
+}
+
+/// The attribute image of `t` with `v` at `value` (the row's `before` is compared to it).
+private AttrImage vImage(PressFlagTool t, float value) {
+    const keep = t.v;
+    t.v = value;
+    auto img = t.captureAttrImage();
+    t.v = keep;
+    return img;
+}
+
+private struct InitRig {
+    Mesh m;
+    CommandHistory h;
+    Tool active;
+    EditSession s;
+}
+
+private InitRig* initRig(PressFlagTool t) {
+    auto r = new InitRig;
+    r.m = makeCube();
+    r.h = new CommandHistory();
+    t.m = &r.m; t.h = r.h; t.view = new View(0, 0, 1, 1);
+    t.basis = MeshSnapshot.capture(r.m);
+    r.active = t;
+    r.s = new EditSession(() => r.active, r.h, () { r.active = null; });
+    return r;
+}
+
+unittest { // U-INIT1 (CAP r1/r2): a command close deactivates the instance; the next press activates
+    auto t = new InitPressTool;
+    auto r = initRig(t);
+    r.s.noteArm("t.init", 1, false);
+    size_t activations;
+    t.v = 0.4f;                                   // the stored copy the arm gave the instance
+    const p1 = initHaul(r.s, t, &r.m, 0.5f);
+    if (p1 == 0.0f) ++activations;
+    assert(p1 == 0.0f, format("U-INIT1: the first press began from %s, expected the default 0 "
+        ~ "(the press of an inactive first-press instance activates it)", p1));
+    r.s.closeOperation(CloseReason.command, CommandDoor.ui);
+    r.s.finishClose();
+    s2bAttr(r.s, t, "v", () { t.v = 0.3f; }, ParameterChangeSource.InteractiveValue);
+    assert(t.v == 0.3f, "U-INIT1 rig: the write after the close did not land");
+    const p2 = initHaul(r.s, t, &r.m, 0.6f);
+    if (p2 == 0.0f) ++activations;
+    const row = s2bTopRow(r.h);
+    assert(p2 == 0.0f && row !is null && row.stepBeforeAttrs().opEquals(vImage(t, 0.0f)),
+        format("U-INIT1: the press after a command close began from %s, expected the default 0 "
+               ~ "in the attribute and the row's before (the close must deactivate: "
+               ~ "endPendingOperation_'s instanceActive_ = false)", p2));
+    assert(activations == 2, format("U-INIT1: %s activations seen, measured 2", activations));
+}
+
+unittest { // U-INIT3 (CAP C9-8c): a live refire of the active instance does not activate it
+    auto t = new InitPressTool;
+    auto r = initRig(t);
+    r.s.noteArm("t.init", 1, false);
+    t.v = 0.4f;
+    const p1 = initHaul(r.s, t, &r.m, 0.5f);
+    assert(p1 == 0.0f, format("U-INIT3 rig: the first press began from %s, not the default", p1));
+    const p2 = initHaul(r.s, t, &r.m, 0.7f);
+    assert(p2 == 0.5f && s2bTopRow(r.h).stepBeforeAttrs().opEquals(vImage(t, 0.5f)),
+        format("U-INIT3: the refire began from %s, expected the first haul's 0.5 (the activation "
+               ~ "must raise instanceActive_, or every press resets)", p2));
+}
+
+unittest { // U-INIT2 (CAP r5 s09/s10): a dormant arm activates; its press does not — keyed on the
+           // instance, not on the operation (a dormant arm opens none)
+    auto a = new InitArmTool;
+    auto r = initRig(a);
+    auto b = new ScrubTopologyTool;
+    b.m = &r.m; b.h = r.h; b.view = new View(0, 0, 1, 1);
+    b.basis = MeshSnapshot.capture(r.m);
+    r.s.noteArm("t.a", 5);
+    initHaul(r.s, a, &r.m, 0.5f);                 // the run W closes: A's session 5 at 0.5
+    // W: B's script-door activation over A (its undo re-arms A by a replay arm)
+    r.s.closeOperation(CloseReason.switch_);
+    auto wv = new View(0, 0, 1, 1);
+    auto w = new ToolActivationCommand(&r.m, wv, EditMode.Vertices,
+        "t.b", "t.a", true, false, false, 9, 5, true, true);
+    w.onActivate = (string id) {
+        r.active = id == "t.a" ? cast(Tool) a : cast(Tool) b;
+        r.s.noteArm(id, id == "t.a" ? 5 : 9);
+    };
+    r.h.recordToolLifecycle(w);
+    r.active = b;
+    r.s.noteArm("t.b", 9);
+    r.s.finishClose();
+    assert(r.s.navigate(true) && r.active is a, "U-INIT2 rig: the undo of W did not re-arm A");
+    assert(r.s.navigate(false) && r.active is b, "U-INIT2 rig: the redo of W did not re-arm B");
+    // A's live arm after the fully redone closed run: dormant (law 5), the closed run's copy
+    r.s.closeOperation(CloseReason.switch_);
+    auto av = new View(0, 0, 1, 1);
+    auto arm = new ToolActivationCommand(&r.m, av, EditMode.Vertices,
+        "t.a", "t.b", true, false, false, 11, 9);
+    r.h.recordToolLifecycle(arm);
+    r.active = a;
+    r.s.noteArm("t.a", 11);
+    r.s.finishClose();
+    const st = r.s.sessionStateJson();
+    assert(st["dormant"].type == JSONType.true_ && st["operationOpen"].type == JSONType.false_,
+        format("U-INIT2 rig: A's arm is not dormant with no operation open: %s", st));
+    size_t activations;
+    if (a.v == 0.0f) ++activations;
+    assert(a.v == 0.0f, format("U-INIT2: the dormant arm left v %s, expected the default 0 (a "
+        ~ "live arm of an arm-opening tool activates, dormant or not)", a.v));
+    s2bAttr(r.s, a, "v", () { a.v = 0.3f; }, ParameterChangeSource.InteractiveValue);
+    assert(a.v == 0.3f, "U-INIT2 rig: the write after the dormant arm did not land");
+    const p = initHaul(r.s, a, &r.m, 0.6f);
+    if (p == 0.0f) ++activations;
+    assert(p == 0.3f, format("U-INIT2: the dormant press began from %s, expected the written 0.3 "
+        ~ "(the instance is active; a press keyed on !operationOpen_ resets it)", p));
+    assert(activations == 1, format("U-INIT2: %s activations seen, measured 1", activations));
+}

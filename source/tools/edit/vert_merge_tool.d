@@ -112,7 +112,9 @@ class VertexMergeTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClien
             activationRow: true, commandClose: CommandClose.uiDoor,
             sessionSteps: true, historyTopologySteps: true,
             opensAt: OpensAt.firstPress,
-            imageAttrs: ["dist"], haulAttrs: ["dist"]
+            imageAttrs: ["dist"], haulAttrs: ["dist"],
+            // captured: the tool's activation resets these (topology-redo S6r)
+            activationResetAttrs: ["dist"]
         };
         return policy;
     }
@@ -181,7 +183,7 @@ public:
     final void installPreparedActivation(
             ref PreparedVertexMergeActivationImage image) nothrow @nogc {
         if (!image.valid) return;
-        active = true; built = false; dragging = false; dist_ = 0.001f;
+        active = true; built = false; dragging = false;
         image.before.moveInto(before);
         image.valid = false;
     }
@@ -215,9 +217,10 @@ public:
             valueDrag_.pressValue == 13 && valueDrag_.law.gain == 14 &&
             cachedVp.view[0] == 15;
     }
+    // The install keeps the attributes: the activation reset is the session's (S6r).
     version(unittest) final bool preparedActivationForTest(size_t count,
             Vec3 first, const Vec3* livePtr) const nothrow @nogc {
-        return active && !built && !dragging && dist_ == 0.001f &&
+        return active && !built && !dragging && dist_ == 7.0f &&
             before.filled && before.vertices.length == count && count != 0 &&
             before.vertices[0] == first && before.vertices.ptr !is livePtr &&
             valueDrag_.pressX == 11 && valueDrag_.lastX == 12 &&
@@ -228,7 +231,6 @@ public:
     private void reinitSession() {
         built    = false;
         dragging = false;
-        dist_    = 0.001f;
         before   = MeshSnapshot.capture(*mesh);
     }
 

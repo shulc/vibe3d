@@ -142,7 +142,9 @@ class SmoothShiftTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClien
             // rebases on the redone image, ToolSession.rebaseOnCurrent_).
             opensAt: OpensAt.firstPress,
             imageAttrs: ["shift", "scale", "maxAngle", "thicken", "sharp"],
-            haulAttrs: ["shift", "scale", "maxAngle", "thicken", "sharp"]
+            haulAttrs: ["shift", "scale", "maxAngle", "thicken", "sharp"],
+            // captured: the tool's activation resets these (topology-redo S6r)
+            activationResetAttrs: ["shift", "scale"]
         };
         return policy;
     }

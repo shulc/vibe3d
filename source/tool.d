@@ -387,6 +387,10 @@ struct ToolSessionPolicy {
     /// H5: what a Middle press clones from the previous operation's end and a
     /// Shift press resets to the declared defaults.
     immutable(string)[] haulAttrs;
+    /// The attributes the tool's activation returns to their declared defaults
+    /// (topology-redo S6r, model doc §R12 M-init: written over the stored copy
+    /// when the session activates the instance); empty: none.
+    immutable(string)[] activationResetAttrs;
     /// H1, `OpensAt.arm` (slice M3b, C-H1-bev): the bool image attribute that
     /// says the tool's operation is APPLIED. The session raises it at a live
     /// arm (`Tool.applyArmAttr`), so the arm's own apply is the window's first
@@ -1167,14 +1171,22 @@ public:
                 return;
             case PressKind.shift: {
                 if (pol.haulAttrs.length == 0) return;
-                auto ps = params();
-                foreach (n; pol.haulAttrs)
-                    foreach (ref p; ps)
-                        if (p.name == n) { resetParamToDefault(p); break; }
+                resetAttrsToDefaults(pol.haulAttrs);
                 rebuildPreviewFromAttrs();
                 return;
             }
         }
+    }
+
+    /// RAW resets of the named attributes to their declared defaults: no
+    /// `onParamChanged`, no history, no rebuild (the caller rebuilds if it must).
+    /// A name that is no param is skipped (the policy table pins every name).
+    final void resetAttrsToDefaults(in string[] names) {
+        if (names.length == 0) return;
+        auto ps = params();
+        foreach (n; names)
+            foreach (ref p; ps)
+                if (p.name == n) { resetParamToDefault(p); break; }
     }
 
     /// Re-derive everything the tool computes FROM its attributes (preview,

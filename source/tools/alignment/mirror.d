@@ -462,7 +462,9 @@ public:
             imageAttrs: ["axis", "center", "invertPolys", "mergeVerts",
                 "distance", "angle", "mode", "left", "up"],
             haulAttrs: ["axis", "center", "invertPolys", "mergeVerts",
-                "distance", "angle", "mode", "left", "up"]
+                "distance", "angle", "mode", "left", "up"],
+            // captured: the tool's activation resets these (topology-redo S6r)
+            activationResetAttrs: ["center"]
         };
         return policy;
     }

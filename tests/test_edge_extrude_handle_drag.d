@@ -659,24 +659,33 @@ unittest { // A scripted write is the actual before-image of the next step.
         "interactive Width redo lost the panel value (0.2) or the row, or changed the mesh");
 }
 
-unittest { // The same scripted before-image survives an ordinary handle drag.
+unittest { // A handle drag after a scripted write begins from the activation reset.
+    // Task 9270 (S6r, model §R12 M-init; expectation edit): the scripted write ends the post
+    // mode and deactivates the instance, so the press re-activates it — Width and Extrude
+    // return to their defaults BEFORE the step's before-image is taken (CAP
+    // `param_after_arm_ebevel_script` s02 write 0.03 -> s03 haul from 0, plan §20.1; the undo
+    // of the activating press returns the reset image, CAP `cmdclose_press_ebevel_gdb_ui`
+    // s05_Z inset 0). Was: the scripted 0.1 survived the press.
     setupEdge();
     const initial = planes();
     cmd("tool.attr edge.extrude width 0.1");
+    const depth = undoLen();
     int x, y; handlePx(0, x, y);
     drag(x, y, x + 70, y);
     const after = planes();
     const extrude = queryExtrude();
-    assert(after != initial && extrude > 1e-3,
+    assert(undoLen() == depth + 1 && extrude > 1e-3
+        && getJson("/api/history")["undo"].array[$ - 1]["command"].str == "mesh.edge_extrude_edit",
         "scripted Width and handle haul did not build a topology step");
+    assert(abs(queryWidth()) < 1e-5,
+        format("the press after a scripted write kept Width %s, expected the reset 0", queryWidth()));
     navigate(true);
-    assert(planes() == initial && abs(queryWidth() - 0.1) < 1e-5
-        && abs(queryExtrude()) < 1e-5,
-        "handle undo lost the scripted pre-step attributes or mesh");
+    assert(planes() == initial && abs(queryWidth()) < 1e-5 && abs(queryExtrude()) < 1e-5,
+        "handle undo did not return the reset before-image or the mesh");
     navigate(false);
-    assert(planes() == after && abs(queryWidth() - 0.1) < 1e-5
+    assert(planes() == after && abs(queryWidth()) < 1e-5
         && abs(queryExtrude() - extrude) < 1e-5,
-        "handle redo lost the exact scripted plus gesture after-image");
+        "handle redo lost the exact reset plus gesture after-image");
 }
 
 unittest { // Pointer-written interactive dormant parameter creates an attr row.

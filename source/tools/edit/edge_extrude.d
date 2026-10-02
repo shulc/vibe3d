@@ -113,7 +113,9 @@ class EdgeExtrudeTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClien
             sessionSteps: true, historyTopologySteps: true,
             opensAt: OpensAt.arm,
             imageAttrs: ["extrude", "width"],
-            haulAttrs: ["extrude", "width"]
+            haulAttrs: ["extrude", "width"],
+            // captured: the tool's activation resets these (topology-redo S6r)
+            activationResetAttrs: ["extrude", "width"]
         };
         return policy;
     }
@@ -228,7 +230,6 @@ public:
             ref PreparedEdgeExtrudeActivationImage image) nothrow @nogc {
         if (!image.valid) return;
         active = true; built = false; dragPart = -1;
-        extrude_ = 0.0f; width_ = 0.0f;
         image.before.moveInto(before);
         gizmoValid = image.gizmoValid; anchor = image.anchor;
         baseAnchor = image.baseAnchor; extrudeAxis = image.extrudeAxis;
@@ -252,15 +253,14 @@ public:
     // activate() and resyncSession() (undo/redo migration P1) so the two can't
     // drift. Deliberately does NOT set `active` (resyncSession keeps the tool
     // active; activate() owns the flag): re-snapshots the cage + selection,
-    // clears any built preview + params, and re-derives the gizmo/edge-selection
+    // clears any built preview (the attributes are the session's: the activation
+    // reset, topology-redo S6r), and re-derives the gizmo/edge-selection
     // frame. Re-capturing `before` here is the selection-index liveness fix —
     // after a topology-changing undo the stored edge selection is re-derived
     // live from the now-current mesh (Objection 5).
     private void reinitSession() {
         built    = false;
         dragPart = -1;
-        extrude_ = 0.0f;
-        width_   = 0.0f;
         // Snapshot the cage + selection at the start of the session. The
         // per-drag revert+reapply restores from here; the commit pairs it
         // with the final `after`.
@@ -906,11 +906,12 @@ public:
             dragStartMX == 16 && dragStartMY == 17 && dragBaseExtrude == 18 &&
             dragBaseWidth == 19 && freeLockAxis == 2 && cachedVp.view[0] == 20;
     }
+    // The install keeps the attributes: the activation reset is the session's (S6r).
     version(unittest) final bool preparedActivationForTest(size_t count,
             Vec3 first, const Vec3* livePtr, bool expectedValid,
             Vec3 expectedAnchor, Vec3 expectedBase, Vec3 expectedExtrude,
             Vec3 expectedWidth, ulong expectedHash) const nothrow @nogc {
-        return active && !built && dragPart == -1 && extrude_ == 0 && width_ == 0 &&
+        return active && !built && dragPart == -1 && extrude_ == 7 && width_ == 8 &&
             before.filled && before.vertices.length == count &&
             (count == 0 || (before.vertices[0] == first && before.vertices.ptr !is livePtr)) &&
             gizmoValid == expectedValid && anchor == expectedAnchor &&

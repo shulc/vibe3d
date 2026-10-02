@@ -802,6 +802,11 @@ private struct ToolSession {
     private ulong operation_;
     private ulong nextOperation_;
     private bool operationOpen_;
+    // The bound instance was activated and no post mode ended since (model doc
+    // §R12 M-init; topology-redo S6r). Written true only by `activate_`, false at
+    // every bind (`noteArm`) and at a post-mode end (`endPendingOperation_`);
+    // never derived from `operationOpen_` (a refire after the undo of W activates).
+    private bool instanceActive_;
     private bool postmodeOpenAtPress_;
     private PressKind topologyPendingKind_;
     private bool topologyPendingAttrOnly_;
@@ -1540,6 +1545,7 @@ private struct ToolSession {
     void noteArm(string id, ulong token, bool postmodeArmed = true) {
         auto t = tool_();
         bound_ = t;
+        instanceActive_ = false;   // every bind is a new instance (M-init)
         armedId_ = id.idup;
         token_ = token;
         postmodeArmed_ = postmodeArmed;
@@ -1602,15 +1608,18 @@ private struct ToolSession {
         link.recordToken = &recordTokenFor_;
         link.previewGated = &previewGated;
         t.bindSession(link);
-        // A dormant arm of a tool that opens its operation at the arm keeps the
-        // arm's values, not the closed run's (S6 PF-1, plan §18.2; CAP
-        // ebevel/vbevel/vextrude_dormant(_ui) s09; the mechanism is capture 9's).
+        // A dormant arm takes the closed run's values (the stored copy), then an
+        // arm-opening tool's live arm activates the instance over it — dormant or
+        // not, never a replayed arm (model doc §R12 M-init; topology-redo S6r, CAP
+        // Capture-9 C9-1/2/6/7b, Capture-10 r5 `ebevel_dormant_level_ui` s09).
         auto ownedAttrs = topologyAttrsFor_(id, token);
-        if (topologyDormant_ && ownedAttrs.empty && !opensAtArm(t.sessionPolicy()))
+        if (topologyDormant_ && ownedAttrs.empty)
             ownedAttrs = closedAttrs;
         if (t.sessionPolicy().historyTopologySteps && topologyDormant_ &&
             !ownedAttrs.empty)
             t.restoreRecordedAttrs(ownedAttrs);
+        if (history_.state() != UndoState.Suspend && opensAtArm(t.sessionPolicy()))
+            activate_(t);
         // A lifecycle replay binds a fresh instance before navigate() can
         // finish the stack step. Preserve any image already owned by this
         // exact session; a new arm (or an unremembered replay) seeds one.
@@ -1653,6 +1662,17 @@ private struct ToolSession {
         if (history_.state() != UndoState.Suspend && capturedTopologyModel(pol)
                 && opensAtArm(pol) && !topologyDormant_)
             recordBeginRow_(t);
+    }
+
+    // M-init (model doc §R12; topology-redo S6r): the instance becomes active, and
+    // a model tool's attributes its policy names return to their defaults over the
+    // stored copy (`activationResetAttrs`, the tool's data). The one writer of
+    // `instanceActive_ = true`; called by a live arm (`noteArm`) and a press that
+    // finds the instance inactive (`stepBegins`).
+    private void activate_(Tool t) {
+        instanceActive_ = true;
+        if (capturedTopologyModel(t.sessionPolicy()))
+            t.resetAttrsToDefaults(t.sessionPolicy().activationResetAttrs);
     }
 
     // The begin row (topology-redo S5b, model doc §1.1, М-E2): the tool pick and
@@ -1707,6 +1727,10 @@ private struct ToolSession {
         releaseParameter();
         if (!reporting_(t)) return;
         if (t.sessionPolicy().historyTopologySteps) {
+            // M-init: a press of the tool's own door that finds the instance
+            // inactive activates it — before the row's `before` is taken (CAP
+            // Capture-10 r1-r4 `*_Initialize flags=0x3` on the press chain).
+            if (press && !instanceActive_) activate_(t);
             topologyPendingPress_ = press;
             topologyPendingKind_ = kind;
             // An attribute-only row (topology-redo S2b, model doc §R6.1): a dormant
@@ -2370,6 +2394,7 @@ private struct ToolSession {
         if (endsPostMode) {
             postmodeArmed_ = false;
             operationOpen_ = false;
+            instanceActive_ = false;   // M-init: the next press activates (CAP r1/r2)
         }
     }
 
