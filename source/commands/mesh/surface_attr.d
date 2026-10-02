@@ -19,15 +19,28 @@ struct SurfaceAttrRow {
     string          name;
     SurfaceAttrKind kind;
     string          field;   // member of `Surface`
+    string          label;   // the Mesh Info "Surfaces" widget's label
 }
 
 /// THE list of surface attributes `mesh.surfaceAttr` edits — the command, the
 /// Mesh Info "Surfaces" section and the census read it; a new attribute is a
 /// ROW here, not a second command.
 immutable SurfaceAttrRow[] kSurfaceAttrs = [
-    SurfaceAttrRow("smoothing",      SurfaceAttrKind.Bool,     "smoothing"),
-    SurfaceAttrRow("smoothingAngle", SurfaceAttrKind.AngleDeg, "smoothingAngleDeg"),
+    SurfaceAttrRow("smoothing",      SurfaceAttrKind.Bool,     "smoothing",         "Smooth"),
+    SurfaceAttrRow("smoothingAngle", SurfaceAttrKind.AngleDeg, "smoothingAngleDeg", "Angle"),
 ];
+
+/// The Mesh Info "Surfaces" widget of a kind (a `final switch`: a new kind
+/// does not compile until it has one), so a new ROW of `kSurfaceAttrs` gets
+/// its widget with no panel code.
+enum SurfaceAttrWidget { Checkbox, DragFloat }
+
+SurfaceAttrWidget surfaceAttrWidget(SurfaceAttrKind k) @safe pure nothrow @nogc {
+    final switch (k) {
+        case SurfaceAttrKind.Bool:     return SurfaceAttrWidget.Checkbox;
+        case SurfaceAttrKind.AngleDeg: return SurfaceAttrWidget.DragFloat;
+    }
+}
 
 /// The surface slots a mesh offers for editing: every slot a face renders
 /// with or the table holds, at least one (the implicit slot 0), never more

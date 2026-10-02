@@ -49,6 +49,40 @@ unittest { // the attribute table names exactly the two S1e rows
         && kSurfaceAttrs[1].name == "smoothingAngle", "kSurfaceAttrs rows moved");
 }
 
+unittest { // every kSurfaceAttrs row has a Surfaces widget, and the panel draws the table
+    import std.file : readText;
+    import std.path : buildPath, dirName;
+    import std.algorithm : canFind;
+    import std.string : indexOf;
+    import commands.mesh.surface_attr : surfaceAttrWidget, SurfaceAttrWidget;
+    size_t rows;
+    foreach (r; kSurfaceAttrs) {
+        // The final switch in `surfaceAttrWidget` is the compile-time half; this
+        // is the row half: a known widget and a non-empty label per row.
+        immutable w = surfaceAttrWidget(r.kind);
+        assert(w == SurfaceAttrWidget.Checkbox || w == SurfaceAttrWidget.DragFloat,
+            format("row %s: no Surfaces widget", r.name));
+        assert(r.label.length > 0, format("row %s: no widget label", r.name));
+        ++rows;
+    }
+    assert(rows == 2, format("population: %d rows walked, the table has two", rows));
+    // Production wiring: the section iterates the table and picks the widget
+    // by kind — no per-attribute widget code.
+    immutable root = __FILE_FULL_PATH__.dirName.dirName.dirName.dirName.dirName;
+    immutable src = readText(buildPath(root, "source", "ui", "panels.d"));
+    immutable long b = src.indexOf("private void drawSurfacesSection(");
+    assert(b >= 0, "panels.d: drawSurfacesSection not found");
+    immutable long e = src.indexOf("\nvoid drawStatusBar(", b);
+    assert(e > b, "panels.d: the end of drawSurfacesSection not found");
+    immutable body_ = src[b .. e];
+    assert(body_.canFind("foreach (ri, r; kSurfaceAttrsUi)")
+        && body_.canFind("final switch (surfaceAttrWidget(r.kind))"),
+        "drawSurfacesSection no longer draws kSurfaceAttrs by widget kind");
+    foreach (r; kSurfaceAttrs)
+        assert(!body_.canFind(`"` ~ r.name ~ `"`),
+            format("drawSurfacesSection names the attribute %s literally — a per-row widget", r.name));
+}
+
 unittest { // surfaceSlotCount: the table, the face tags, at least 1, at most kSurfaceSlots
     assert(surfaceSlotCount(*plate([])) == 1, "an untagged mesh offers the implicit slot only");
     assert(surfaceSlotCount(*plate([0, 3])) == 4, "a tag 3 does not offer slots 0..3");

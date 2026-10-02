@@ -357,12 +357,12 @@ D";
            abiPatchRaw.canFind("text.count(NEW) != 0"),
         "W16-L ImFont ABI patch must reject preimage drift and repatching");
 
-    assert(requiredWebGlSymbols.length == 87
+    assert(requiredWebGlSymbols.length == 88
             && optionalDesktopGlSymbols ==
                ["glBeginQuery", "glEndQuery", "glGenQueries",
                 "glGetBufferSubData", "glGetQueryObjectiv",
                 "glGetQueryObjectui64v", "glGetQueryiv", "glPointSize",
-                "glTexBuffer", "glUniform1fv"]
+                "glTexBuffer"]
             && webClosureGlSymbols.length == 97,
         format("W16-LD GL threshold population changed: required=%d optional=%s "
              ~ "total=%d", requiredWebGlSymbols.length,

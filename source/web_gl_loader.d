@@ -32,7 +32,7 @@ enum string[] requiredWebGlSymbols = [
     "glPixelStorei", "glPolygonOffset", "glReadBuffer", "glReadPixels",
     "glRenderbufferStorage", "glShaderSource", "glTexImage2D",
     "glTexParameteri", "glTransformFeedbackVaryings", "glUniform1f",
-    "glUniform1i", "glUniform2f", "glUniform3f", "glUniformBlockBinding",
+    "glUniform1fv", "glUniform1i", "glUniform2f", "glUniform3f", "glUniformBlockBinding",
     "glUniformMatrix3fv", "glUniformMatrix4fv", "glUnmapBuffer", "glUseProgram",
     "glVertexAttrib3f", "glVertexAttribDivisor", "glVertexAttribIPointer",
     "glVertexAttribPointer", "glViewport",
@@ -41,7 +41,7 @@ enum string[] requiredWebGlSymbols = [
 enum string[] optionalDesktopGlSymbols = [
     "glBeginQuery", "glEndQuery", "glGenQueries", "glGetBufferSubData",
     "glGetQueryObjectiv", "glGetQueryObjectui64v", "glGetQueryiv",
-    "glPointSize", "glTexBuffer", "glUniform1fv",
+    "glPointSize", "glTexBuffer",
 ];
 
 enum string[] webClosureGlSymbols =

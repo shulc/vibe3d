@@ -1362,20 +1362,25 @@ void drawSidePanel(EditorApp app, ActionMenuRoles menu) {
     }
 }
 
-// The angle a Surfaces row is being dragged to (panel-local: the command is
-// dispatched once, on release — one command, one undo entry per edit).
-private float[kSurfaceSlotsUi] g_surfAngleEdit;
-private int g_surfAngleActive = -1;
+// The value a DragFloat row of the Surfaces section is being dragged to,
+// per (slot, row) (panel-local: the command is dispatched once, on release —
+// one command, one undo entry per edit).
 private import mesh : kSurfaceSlotsUi = kSurfaceSlots;
+private import commands.mesh.surface_attr : kSurfaceAttrsUi = kSurfaceAttrs;
+private float[kSurfaceSlotsUi * kSurfaceAttrsUi.length] g_surfDragEdit;
+private int g_surfDragActive = -1;
 
 /// Mesh Info "Surfaces": one row per editable slot (`surfaceSlotCount`), each
-/// attribute of `kSurfaceAttrs` as a widget; every edit dispatches
-/// `mesh.surfaceAttr` through the action door.
+/// attribute of `kSurfaceAttrs` as the widget of its kind
+/// (`surfaceAttrWidget`); every edit dispatches `mesh.surfaceAttr` through the
+/// action door, and only when the value differs from the slot's (the command
+/// refuses a same-value edit).
 private void drawSurfacesSection(ref const Mesh mesh, ActionMenuActions actions) {
     import std.format : format;
     import buttonset : Action, ActionKind;
 
-    import commands.mesh.surface_attr : surfaceSlotCount, surfaceAttrValue;
+    import commands.mesh.surface_attr : surfaceSlotCount, surfaceAttrValue,
+        SurfaceAttrWidget, surfaceAttrWidget;
     import mesh : surfaceOfSlot;
     void send(size_t slot, string attr, string value) {
         Action a;
@@ -1391,20 +1396,35 @@ private void drawSurfacesSection(ref const Mesh mesh, ActionMenuActions actions)
         ImGui.PushID(cast(int)i);
         scope(exit) ImGui.PopID();
         ImGui.TextUnformatted(i < mesh.surfaces.length ? s.name : "Default");
-        bool on = surfaceAttrValue(s, "smoothing") != 0;
-        if (ImGui.Checkbox("Smooth", &on)) send(i, "smoothing", on ? "1" : "0");
-        if (g_surfAngleActive != cast(int)i)
-            g_surfAngleEdit[i] = surfaceAttrValue(s, "smoothingAngle");
-        ImGui.DragFloat("Angle", &g_surfAngleEdit[i], 0.5f, 0.0f, 180.0f, "%.1f°");
-        if (ImGui.IsItemActive()) g_surfAngleActive = cast(int)i;
-        if (ImGui.IsItemDeactivatedAfterEdit()) {
-            g_surfAngleActive = -1;
-            float v = g_surfAngleEdit[i];
-            if (v < 0.0f) v = 0.0f;
-            if (v > 180.0f) v = 180.0f;
-            send(i, "smoothingAngle", format("%.6f", v));
-        } else if (!ImGui.IsItemActive() && g_surfAngleActive == cast(int)i)
-            g_surfAngleActive = -1;
+        foreach (ri, r; kSurfaceAttrsUi) {
+            immutable float cur = surfaceAttrValue(s, r.name);
+            final switch (surfaceAttrWidget(r.kind)) {
+            case SurfaceAttrWidget.Checkbox: {
+                bool on = cur != 0;
+                if (ImGui.Checkbox(r.label, &on)) send(i, r.name, on ? "1" : "0");
+                break;
+            }
+            case SurfaceAttrWidget.DragFloat: {
+                immutable int key = cast(int)(i * kSurfaceAttrsUi.length + ri);
+                if (g_surfDragActive != key) g_surfDragEdit[key] = cur;
+                ImGui.DragFloat(r.label, &g_surfDragEdit[key], 0.5f, 0.0f, 180.0f, "%.1f°");
+                if (ImGui.IsItemActive()) g_surfDragActive = key;
+                if (ImGui.IsItemDeactivatedAfterEdit()) {
+                    g_surfDragActive = -1;
+                    float v = g_surfDragEdit[key];
+                    if (v < 0.0f) v = 0.0f;
+                    if (v > 180.0f) v = 180.0f;
+                    // Compared as SENT: a drag released where it began
+                    // (to the printed precision) sends nothing.
+                    import std.conv : to;
+                    immutable string txt = format("%.6f", v);
+                    if (txt.to!float != cur) send(i, r.name, txt);
+                } else if (!ImGui.IsItemActive() && g_surfDragActive == key)
+                    g_surfDragActive = -1;
+                break;
+            }
+            }
+        }
     }
 }
 
