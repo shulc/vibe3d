@@ -133,10 +133,11 @@ unittest { // (c) the double-sided bit is read by the vertex stage only
         "litFragSrc reads the sidedness bit: the drop is a vertex-stage clip, never a discard");
     assert(tokens(frag, "discard") == 0, "litFragSrc discards: early depth is lost for every lit draw");
     // Every lit arm and the G-buffer read the flipped normal.
-    assert(tokens(frag, "shadingNormal") == 5,
-        format("litFragSrc names shadingNormal %d time(s): the helper, Material, Retopology, Gooch "
-               ~ "and the G-buffer are 5 (textual pin; the Gooch flip is equivalent under abs(), the "
-               ~ "retopology arm hard-culls)", tokens(frag, "shadingNormal")));
+    assert(tokens(frag, "shadingNormal") == 6,
+        format("litFragSrc names shadingNormal %d time(s): the helper, Material, Retopology, Gooch, "
+               ~ "Reflection (S4b, both its arms read one N) and the G-buffer are 6 (textual pin; the "
+               ~ "Gooch flip is equivalent under abs(), the retopology arm hard-culls)",
+               tokens(frag, "shadingNormal")));
 }
 
 unittest { // (d) GL cull state in mesh_gpu.d is the side bracket's
