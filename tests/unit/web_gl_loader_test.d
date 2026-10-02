@@ -362,8 +362,8 @@ D";
                ["glBeginQuery", "glEndQuery", "glGenQueries",
                 "glGetBufferSubData", "glGetQueryObjectiv",
                 "glGetQueryObjectui64v", "glGetQueryiv", "glPointSize",
-                "glTexBuffer"]
-            && webClosureGlSymbols.length == 96,
+                "glTexBuffer", "glUniform1fv"]
+            && webClosureGlSymbols.length == 97,
         format("W16-LD GL threshold population changed: required=%d optional=%s "
              ~ "total=%d", requiredWebGlSymbols.length,
                optionalDesktopGlSymbols, webClosureGlSymbols.length));

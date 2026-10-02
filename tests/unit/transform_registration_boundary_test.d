@@ -226,9 +226,9 @@ unittest {
     // `vertex_normals` (+1 each).
     // Viewport shading SP (task 9140): the cell carries a GPU pass timer,
     // leaf `gpu_pass_timer`, in the registration closure only (+1).
-    assert(transform.queue.length == 259 && positive.queue.length == 524,
+    assert(transform.queue.length == 259 && positive.queue.length == 525,
         format("6506 import closure census changed: transform=%d/259 "
-            ~ "registration=%d/524", transform.queue.length,
+            ~ "registration=%d/525", transform.queue.length,
             positive.queue.length));
 }
 

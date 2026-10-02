@@ -506,9 +506,10 @@ unittest {
     // compare equal to the plane that carried; `%.9g` round-trips a `float`.
     // Task 7139 raised it to 112: GET /api/camera's view/proj matrices.
     // Task 8570 raised it to 120: the retopology-mode plan/state floats.
+    // S1e raised it to 122: one surface smoothing angle in each mesh dump.
     static immutable LedgerRow[] kFrozen = [
-        LedgerRow("meshToJsonDetailed|%f", 10, "detailed mesh JSON"),
-        LedgerRow("meshPlanesJson|%.9g", 11, "lossless mesh-plane JSON"),
+        LedgerRow("meshToJsonDetailed|%f", 11, "detailed mesh JSON (+1 S1e surface smoothingAngle)"),
+        LedgerRow("meshPlanesJson|%.9g", 12, "lossless mesh-plane JSON (+1 S1e surface smoothingAngle)"),
         LedgerRow("orientationToJson|%.9g", 9, "orientation matrix"),
         LedgerRow("View.toJsonWith|%f", 10, "view state"),
         LedgerRow("wireModelProviders.setLayersDataProvider|%.6f", 13,
@@ -577,15 +578,17 @@ unittest {
     size_t   total;
     foreach (e; kFrozen) total += e.count;
 
-    assert(total == 132, format("the frozen table must add up to the 132 "
+    assert(total == 134, format("the frozen table must add up to the 134 "
                               ~ "specifiers the conversion covered (100 from "
                               ~ "task 1550, plus meshPlanesJson's 11 from task "
                               ~ "1903 Stage B, plus the camera matrices from "
                               ~ "task 7139, plus 8 retopology-mode plan/state "
-                              ~ "floats, plus 12 cavity/composite floats), got %d", total));
+                              ~ "floats, plus 12 cavity/composite floats, plus "
+                              ~ "the two S1e surface smoothing "
+                              ~ "angles), got %d", total));
     string drift = reconcile(kFrozen, censusHits);
-    if (censusHits.length != 132)
-        drift ~= format("\n    specifier population — recorded 132, scanner "
+    if (censusHits.length != 134)
+        drift ~= format("\n    specifier population — recorded 134, scanner "
                       ~ "found %d", censusHits.length);
     assert(drift.length == 0,
         "the per-symbol specifier census moved. This is the ONLY check that can "

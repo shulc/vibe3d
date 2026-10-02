@@ -197,9 +197,9 @@ unittest {
     const code = blankNonCode(raw);
     assert(raw.length > 20_000,
         "6509 boundary population: mesh registrar source is unexpectedly small");
-    assert(countOccurrences(code, "reg.registerCommand(") == 107
+    assert(countOccurrences(code, "reg.registerCommand(") == 108
             && countOccurrences(code, "reg.aliasCommand(") == 2,
-        "6509 boundary population: code projection must contain exactly 111 "
+        "6509 boundary population: code projection must contain exactly 110 "
       ~ "mesh command registrations");
     immutable moved = ["EditorApp", "with (", "vpm", "remeshModalState"];
     immutable before = [1, 2, 3, 1];
