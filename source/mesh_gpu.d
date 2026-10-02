@@ -17,8 +17,8 @@ import change_bus : MeshEditScope;  // Position class for the preview-refresh pu
 import perf_probe : g_fc, DrawPass, g_perf, Cat;  // always-on per-frame work counters; upload-path timers (task 9140)
 import viewport_scheme : schemeColor, SchemeColor, pointSizePx, kBasePointSize,
                          kOccludedSelectionAlpha, kFaceHoverFill;
-import vertex_normals : FaceAdjacency, SmoothNormalCache, buildFaceAdjacency,
-                        smoothingCosine, updateCornerSmooth;
+import vertex_normals : FaceAdjacency, SmoothNormalCache, SmoothPolicy, buildFaceAdjacency,
+                        buildSmoothPolicy, updateCornerSmooth;
 
 /// The face VBO's layout, per fan corner: `[pos3 | flatN3 | smoothN3]` (model
 /// M3, task 9070). Every reader of the face VBO's data reads this constant —
@@ -593,10 +593,12 @@ struct GpuMesh {
     // faces that moved and the refresh paths submit it whole. It is valid
     // together with `smoothCache` (both are written only there).
     private float[] scratchFaceData;
-    // The smooth stream's inputs: vertex→face adjacency, valid while
+    // The smooth stream's inputs: vertex→face adjacency and the per-surface
+    // smoothing policy (one record, rebuilt together), valid while
     // `faceAdjGen == faceLayoutGen`; the per-face and per-corner normals,
     // persistent between frames under `smoothCache`'s validity stamp.
     FaceAdjacency   faceAdj;
+    SmoothPolicy    smoothPolicy;
     ulong           faceAdjGen;
     private float[] scratchCornerSmooth;
     private Vec3[]  scratchFaceNormal;
@@ -682,10 +684,13 @@ struct GpuMesh {
                                        DisplayPayloadBasis.previewIndexed);
     }
 
-    /// Rebuild the vertex→face adjacency from `mesh` and stamp it to the
-    /// current face layout (`faceAdjGen = faceLayoutGen`).
+    /// Rebuild the vertex→face adjacency and the smoothing policy from `mesh`
+    /// and stamp them to the current face layout (`faceAdjGen = faceLayoutGen`).
+    /// A surface edit reaches the policy here: its Material commit moves the
+    /// display epoch → a full upload → a new layout → this rebuild.
     private void rebuildFaceAdjacency(ref const Mesh mesh) {
         buildFaceAdjacency(mesh, faceAdj);
+        buildSmoothPolicy(mesh, smoothPolicy);
         faceAdjGen = faceLayoutGen;
     }
 
@@ -694,13 +699,13 @@ struct GpuMesh {
     /// the drawn positions `vpos` and returns the `faceVertCount` corners to
     /// submit. Incremental (`vertex_normals.updateCornerSmooth`): only the
     /// faces around vertices whose drawn position changed since the last
-    /// write are re-fanned; a new face layout (`faceLayoutGen`) or smoothing
-    /// angle rewrites every face. GL-free; reads the layout `buildUploadCpu`
+    /// write are re-fanned; a new face layout (`faceLayoutGen`, which also
+    /// carries a new smoothing policy) rewrites every face. GL-free; reads the layout `buildUploadCpu`
     /// left (`faceTriStart`/`faceTriCount`/`faceVertCount`).
     const(float)[] refreshFaceDataCpu(ref const Mesh mesh, const(Vec3)[] vpos) {
         // Self-heal: never write with an adjacency from another layout.
         if (faceAdjGen != faceLayoutGen) rebuildFaceAdjacency(mesh);
-        immutable bool all = updateCornerSmooth(mesh, vpos, faceAdj, smoothingCosine(),
+        immutable bool all = updateCornerSmooth(mesh, vpos, faceAdj, smoothPolicy,
             faceLayoutGen, scratchFaceNormal, scratchCornerSmooth, smoothCache);
         // Sized by `buildUploadCpu` for this layout (`faceVertCount`).
         immutable size_t n = cast(size_t)faceVertCount * kFaceStride;
@@ -2358,6 +2363,7 @@ private GpuMeshNames takeGpuMeshNames(ref GpuMesh gpu) nothrow @nogc {
     gpu.uploadVersion = 0;
     gpu.scratchFaceData = null;
     gpu.faceAdj = FaceAdjacency.init;
+    gpu.smoothPolicy = SmoothPolicy.init;
     gpu.scratchCornerSmooth = null;
     gpu.scratchFaceNormal = null;
     gpu.smoothCache = SmoothNormalCache.init;
@@ -2593,6 +2599,8 @@ private GpuMesh cloneUploadState(ref GpuMesh src) {
     // The smooth stream's inputs travel with the layout they describe.
     dst.faceAdj.offsets = src.faceAdj.offsets.dup;
     dst.faceAdj.faces = src.faceAdj.faces.dup;
+    dst.smoothPolicy.faceSlot = src.smoothPolicy.faceSlot.dup;
+    dst.smoothPolicy.slotCos = src.smoothPolicy.slotCos;
     dst.faceAdjGen = src.faceAdjGen;
     dst.scratchCornerSmooth = src.scratchCornerSmooth.dup;
     dst.scratchFaceNormal = src.scratchFaceNormal.dup;
@@ -2626,6 +2634,8 @@ private bool isDefaultEmptyGpuMesh(ref GpuMesh gpu) nothrow @nogc {
         gpu.weightStampName.length == 0 && !gpu.weightStampValid &&
         sameGpuUploadVersion(&gpu, 0) && gpu.scratchFaceData.length == 0 &&
         gpu.faceAdj.offsets.length == 0 && gpu.faceAdj.faces.length == 0 &&
+        gpu.smoothPolicy.faceSlot.length == 0 &&
+        gpu.smoothPolicy.slotCos == SmoothPolicy.init.slotCos &&
         gpu.faceAdjGen == 0 && gpu.scratchCornerSmooth.length == 0 &&
         gpu.scratchFaceNormal.length == 0 && gpu.smoothCache.isEmpty &&
         gpu.scratchFaceIdData.length == 0 && gpu.scratchMatIdData.length == 0 &&
@@ -2650,6 +2660,7 @@ private void installUploadState(ref GpuMesh dst, ref GpuMesh src) nothrow @nogc 
     dst.uploadVersion = src.uploadVersion;
     dst.scratchFaceData = src.scratchFaceData;
     dst.faceAdj = src.faceAdj;
+    dst.smoothPolicy = src.smoothPolicy;
     dst.faceAdjGen = src.faceAdjGen;
     dst.scratchCornerSmooth = src.scratchCornerSmooth;
     dst.scratchFaceNormal = src.scratchFaceNormal;
@@ -2664,7 +2675,8 @@ private void installUploadState(ref GpuMesh dst, ref GpuMesh src) nothrow @nogc 
     src.vertOriginGpu = null; src.faceCornerVert = null;
     src.weightStampMesh = null; src.weightStampName = null;
     src.scratchFaceData = null; src.scratchFaceIdData = null;
-    src.faceAdj = FaceAdjacency.init; src.scratchCornerSmooth = null;
+    src.faceAdj = FaceAdjacency.init; src.smoothPolicy = SmoothPolicy.init;
+    src.scratchCornerSmooth = null;
     src.scratchFaceNormal = null; src.smoothCache = SmoothNormalCache.init;
     src.scratchMatIdData = null; src.scratchWeightColor = null;
     src.scratchEdgeData = null; src.scratchVertData = null;

@@ -194,6 +194,7 @@ tests.unit.commands.mesh.position_delta_test
 tests.unit.commands.mesh.remove_test
 tests.unit.commands.mesh.smooth_result_builder_test
 tests.unit.commands.mesh.split_edge_provenance_test
+tests.unit.commands.mesh.surface_attr_test
 tests.unit.commands.mesh.symmetrize_test
 tests.unit.commands.mesh.symmetry_delta_test
 tests.unit.commands.pipe_command_registration_test
@@ -479,6 +480,8 @@ tests.unit.subpatch_hash_seed_census_test
 tests.unit.subpatch_key_fold_test
 tests.unit.subpatch_level_policy_test
 tests.unit.subpatch_osd_test
+tests.unit.surface_defaults_test
+tests.unit.surface_smoothing_census_test
 tests.unit.symmetry_test
 tests.unit.test_mode_request_census_test
 tests.unit.test_mode_request_gate_test

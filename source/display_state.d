@@ -306,8 +306,9 @@ struct DisplayState {
     /// means the scheme's `kBasePointSize`.
     float        pointSize = 0.0f;
     /// Smooth shading (the face VBO's smooth normal stream) vs flat. Default
-    /// ON (the captured default; angle split per
-    /// `vertex_normals.kSmoothingAngleDeg`).
+    /// ON (the captured default). ANDs with each surface's own smoothing
+    /// (captured C8e): the smooth stream itself is per-surface
+    /// (`vertex_normals.SmoothPolicy`).
     bool         smooth = true;
 }
 

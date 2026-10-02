@@ -1,17 +1,44 @@
 // The smooth normal stream's kernel (`vertex_normals`, task 9070) and the one
 // normal matrix (`math.normalMatrix`). Law (captured, viewport shading S0 C3/C6):
-// angle split at `kSmoothingAngleDeg` between face normals, uniform weighting,
-// hidden faces contribute, degenerate faces do not. The hinge cells sit at
-// θ ± 10 as EXPRESSIONS of the constant, so a re-captured θ moves them along.
+// angle split at the surface's smoothing angle (default `kDefaultSmoothingAngleDeg`)
+// between face normals, uniform weighting, hidden faces contribute, degenerate
+// faces do not; per-surface policy, the LOWER slot of a pair deciding for both
+// faces (owner ruling, S1e). The hinge cells sit at θ ± 10 as EXPRESSIONS of
+// the constant, so a re-captured θ moves them along.
 module tests.unit.vertex_normals_test;
 
 import std.format : format;
 import std.math   : abs, cos, sin, sqrt, isFinite, PI;
 
 import math : Vec3, normalMatrix;
-import mesh : Mesh;
+import mesh : Mesh, Surface, kDefaultSmoothingAngleDeg, kSurfaceSlots;
 import vertex_normals : FaceAdjacency, buildFaceAdjacency, cornerSmoothNormals,
-    faceCornerTotal, smoothingCosine, kSmoothingAngleDeg, MAX_SMOOTH_VALENCE;
+    faceCornerTotal, smoothingCosine, MAX_SMOOTH_VALENCE, SmoothPolicy,
+    buildSmoothPolicy, kSmoothOff;
+
+/// The policy `m` itself carries (its surfaces, its face tags).
+private SmoothPolicy policyOf(const ref Mesh m) {
+    SmoothPolicy p;
+    buildSmoothPolicy(m, p);
+    return p;
+}
+
+/// A policy giving every face of `m` one surface smoothing at `angleDeg`.
+private SmoothPolicy uniformPolicy(const ref Mesh m, float angleDeg) {
+    Surface s;
+    s.smoothingAngleDeg = angleDeg;
+    SmoothPolicy p;
+    buildSmoothPolicy(null, m.faces.length, [s], p);
+    return p;
+}
+
+/// `VIBE3D_CELL=<name>` runs only that named cell (the must-redden drill runs
+/// each witness alone); unset, every cell runs.
+private bool cellOn(string name) {
+    import std.process : environment;
+    immutable string want = environment.get("VIBE3D_CELL", "");
+    return want.length == 0 || want == name;
+}
 
 private Vec3 nrm(Vec3 v) {
     immutable double l = sqrt(cast(double)v.x * v.x + cast(double)v.y * v.y
@@ -50,7 +77,8 @@ private float[] corners(ref Mesh m, out FaceAdjacency adj) {
                adj.offsets[m.vertices.length], valence));
     Vec3[] scratch;
     auto out_ = new float[](faceCornerTotal(m) * 3);
-    cornerSmoothNormals(m, m.vertices, adj, smoothingCosine(), scratch, out_);
+    const pol = policyOf(m);
+    cornerSmoothNormals(m, m.vertices, adj, pol, scratch, out_);
     return out_;
 }
 
@@ -79,7 +107,7 @@ private Mesh hinge(double dihedralDeg) {
 }
 
 unittest { // hinge at θ − 10: both corners on the shared edge get the bisector
-    Mesh m = hinge(kSmoothingAngleDeg - 10.0);
+    Mesh m = hinge(kDefaultSmoothingAngleDeg - 10.0);
     FaceAdjacency adj;
     auto c = corners(m, adj);
     immutable Vec3 bis = nrm(Vec3(faceN(m, 0).x + faceN(m, 1).x,
@@ -95,7 +123,7 @@ unittest { // hinge at θ − 10: both corners on the shared edge get the bisect
 }
 
 unittest { // hinge at θ + 10: the edge stays hard, each corner keeps its face normal
-    Mesh m = hinge(kSmoothingAngleDeg + 10.0);
+    Mesh m = hinge(kDefaultSmoothingAngleDeg + 10.0);
     FaceAdjacency adj;
     auto c = corners(m, adj);
     foreach (uint v; [0u, 1u]) {
@@ -119,7 +147,7 @@ unittest { // a pole of a shallow irregular fan: the corner is the normalized UN
     // Premise: every pair of faces is inside the angle, so all seven count.
     foreach (a; 0 .. 7) foreach (b; 0 .. 7) {
         immutable Vec3 na = faceN(m, a), nb = faceN(m, b);
-        assert(na.x * nb.x + na.y * nb.y + na.z * nb.z >= smoothingCosine(),
+        assert(na.x * nb.x + na.y * nb.y + na.z * nb.z >= smoothingCosine(kDefaultSmoothingAngleDeg),
             format("pole premise: faces %d and %d are split", a, b));
     }
     Vec3 s = Vec3(0, 0, 0);
@@ -136,7 +164,7 @@ unittest { // a degenerate face contributes nothing; its own corners take the fl
     // smoothing angle of both faces and NOT along their bisector, so a
     // degenerate face that was counted would bend the corner.
     immutable double pa = 25.0 * PI / 180, pb = -5.0 * PI / 180;
-    assert(abs((25.0 - -5.0) - (kSmoothingAngleDeg - 10.0)) < 1e-9, "degenerate premise: dihedral is not θ-10");
+    assert(abs((25.0 - -5.0) - (kDefaultSmoothingAngleDeg - 10.0)) < 1e-9, "degenerate premise: dihedral is not θ-10");
     Mesh m;
     // Face A holds the X axis and direction (0,-sin pa, cos pa); face B the
     // opposite side, direction -(0,-sin pb, cos pb).
@@ -150,7 +178,7 @@ unittest { // a degenerate face contributes nothing; its own corners take the fl
     foreach (f; 0 .. 2)
         if (faceN(m, f).y < 0) { import std.algorithm : reverse; m.faces[f].reverse(); }
     foreach (f; 0 .. 2)
-        assert(faceN(m, f).y > cos(kSmoothingAngleDeg * PI / 180),
+        assert(faceN(m, f).y > cos(kDefaultSmoothingAngleDeg * PI / 180),
             format("degenerate premise: face %d normal %s is not within θ of +Y", f, faceN(m, f)));
     FaceAdjacency adj0;
     auto ref_ = corners(m, adj0);
@@ -172,7 +200,7 @@ unittest { // a degenerate face contributes nothing; its own corners take the fl
 }
 
 unittest { // a vertex listed twice by one face counts once; a face under 3 corners is not listed
-    Mesh m = hinge(kSmoothingAngleDeg - 10.0);
+    Mesh m = hinge(kDefaultSmoothingAngleDeg - 10.0);
     FaceAdjacency adj0;
     auto ref_ = corners(m, adj0);
     m.faces ~= [0u, 2, 0, 3];               // vertex 0 twice
@@ -187,7 +215,7 @@ unittest { // a vertex listed twice by one face counts once; a face under 3 corn
 }
 
 unittest { // hidden faces still contribute (captured C6)
-    Mesh m = hinge(kSmoothingAngleDeg - 10.0);
+    Mesh m = hinge(kDefaultSmoothingAngleDeg - 10.0);
     FaceAdjacency adj0;
     auto ref_ = corners(m, adj0);
     m.faceMarks.length = m.faces.length;
@@ -285,12 +313,12 @@ unittest { // det = 0: finite, sign taken as +1
 import vertex_normals : SmoothNormalCache, updateCornerSmooth;
 
 /// An open, non-cube patch: a 6×5 vertex grid in XZ with a gentle swell,
-/// folded by `kSmoothingAngleDeg + 10` about the line x = 2 (a hard hinge
+/// folded by `kDefaultSmoothingAngleDeg + 10` about the line x = 2 (a hard hinge
 /// across the patch), cell (0,0) split into two triangles and cells (3,1),
 /// (4,1) merged into one hexagon. Vertex (i, j) is `i * 5 + j`.
 Mesh hingedPatch() {
     import std.math : cos, sin;
-    immutable double fold = (kSmoothingAngleDeg + 10) * PI / 180.0;
+    immutable double fold = (kDefaultSmoothingAngleDeg + 10) * PI / 180.0;
     Mesh m;
     foreach (i; 0 .. 6)
         foreach (j; 0 .. 5) {
@@ -316,14 +344,20 @@ Mesh hingedPatch() {
     return m;
 }
 
-/// The full pass over `m` at `cosSmooth` (a fresh adjacency, fresh scratch).
-private float[] fullCorners(ref Mesh m, float cosSmooth) {
+/// The full pass over `m` under `pol` (a fresh adjacency, fresh scratch).
+private float[] fullCorners(ref Mesh m, const ref SmoothPolicy pol) {
     FaceAdjacency adj;
     buildFaceAdjacency(m, adj);
     Vec3[] fn;
     auto out_ = new float[](faceCornerTotal(m) * 3);
-    cornerSmoothNormals(m, m.vertices, adj, cosSmooth, fn, out_);
+    cornerSmoothNormals(m, m.vertices, adj, pol, fn, out_);
     return out_;
+}
+
+/// ditto, under the policy `m` carries.
+private float[] fullCorners(ref Mesh m) {
+    const pol = policyOf(m);
+    return fullCorners(m, pol);
 }
 
 /// First corner where `got` and `want` differ in bits, or -1.
@@ -339,9 +373,14 @@ private struct Session {
     float[] corner;
     SmoothNormalCache cache;
     ulong gen = 1;
-    bool step(ref Mesh m, float cosSmooth) {
+    bool step(ref Mesh m, const ref SmoothPolicy pol) {
         buildFaceAdjacency(m, adj);   // the GpuMesh rebuilds it per layout; cheap here
-        return updateCornerSmooth(m, m.vertices, adj, cosSmooth, gen, faceNormal, corner, cache);
+        return updateCornerSmooth(m, m.vertices, adj, pol, gen, faceNormal, corner, cache);
+    }
+    /// ditto, under the policy `m` carries.
+    bool step(ref Mesh m) {
+        const pol = policyOf(m);
+        return step(m, pol);
     }
 }
 
@@ -354,7 +393,7 @@ unittest { // the patch rig: population and a hard hinge that the angle split ke
     // The fold is a hinge: a corner on x = 2 keeps its own face's normal on
     // each side (the corners of quads (1,2) = face 7 and (2,2) = face 11 at
     // vertex (2,2) = 12 differ).
-    const c = fullCorners(m, smoothingCosine());
+    const c = fullCorners(m);
     immutable Vec3 left = cornerOf(m, c, 7, 12), right = cornerOf(m, c, 11, 12);
     assert(!near(left, right, 1e-2f),
         format("rig: the hinge at x = 2 does not split (%s vs %s) — the patch cannot witness the angle test", left, right));
@@ -395,10 +434,10 @@ private void assertWriteSet(const ref SmoothNormalCache cache, const uint[] want
 unittest { // a one-vertex drag re-fans EXACTLY the faces around the changed faces' vertices, once each
     auto m = hingedPatch();
     Session s;
-    s.step(m, smoothingCosine());
+    s.step(m);
     immutable Vec3[] prev = m.vertices.idup;
     m.vertices[0].y += 0.3f;   // the triangle corner: changed faces 0 and 1
-    assert(!s.step(m, smoothingCosine()), "one moved vertex must take the incremental path");
+    assert(!s.step(m), "one moved vertex must take the incremental path");
     const uint[] want = expectedWriteSet(m, prev);
     // Floor [E4]: the two triangles and the three quads around vertex (1,1);
     // the CSR lists 11 incident entries over those faces' vertices, so a
@@ -410,7 +449,7 @@ unittest { // a one-vertex drag re-fans EXACTLY the faces around the changed fac
 unittest { // partial drags: incremental == full, bit for bit, at every step
     auto m = hingedPatch();
     Session s;
-    assert(s.step(m, smoothingCosine()), "the first update must be full (empty cache)");
+    assert(s.step(m), "the first update must be full (empty cache)");
     // Each step moves a vertex subset: interior, the hinge line, a hexagon
     // corner, a triangle corner, then a step that UNDOES an earlier move.
     immutable uint[][] subsets = [[7u], [12u, 11u], [21u, 22u], [0u], [12u], [16u, 17u, 18u]];
@@ -428,7 +467,7 @@ unittest { // partial drags: incremental == full, bit for bit, at every step
                 m.vertices[v].z += deltas[k].z;
             }
         }
-        immutable bool full = s.step(m, smoothingCosine());
+        immutable bool full = s.step(m);
         // Path control [E10]: a small subset takes the incremental path and
         // re-fans some, not all, faces — else this cell cannot witness it.
         assert(!full && s.cache.writeCount > 0 && s.cache.writeCount < m.faces.length,
@@ -436,66 +475,69 @@ unittest { // partial drags: incremental == full, bit for bit, at every step
                    k, full, s.cache.writeCount));
         assertWriteSet(s.cache, expectedWriteSet(m, prev), format("step %d", k));
         ++partial;
-        const want = fullCorners(m, smoothingCosine());
+        const want = fullCorners(m);
         immutable d = firstDiff(s.corner[0 .. want.length], want);
         assert(d < 0, format("step %d: incremental corner float %d is %s, the full pass gives %s",
                              k, d, d < 0 ? 0 : s.corner[d], d < 0 ? 0 : want[d]));
     }
     assert(partial == subsets.length);
     // An idle refresh moves nothing and re-fans nothing.
-    assert(!s.step(m, smoothingCosine()) && s.cache.writeCount == 0,
+    assert(!s.step(m) && s.cache.writeCount == 0,
         "an idle refresh must re-fan no face");
 }
 
 unittest { // stale cache: a new face layout (same arrays, same counts) recomputes all
     auto m = hingedPatch();
     Session s;
-    s.step(m, smoothingCosine());
+    s.step(m);
     // In-place winding flip of face 5: the face array, the counts and every
     // position are unchanged; only the layout generation says so.
     import std.algorithm.mutation : reverse;
     reverse(m.faces[5]);
     ++s.gen;
-    s.step(m, smoothingCosine());
-    const want = fullCorners(m, smoothingCosine());
+    s.step(m);
+    const want = fullCorners(m);
     immutable d = firstDiff(s.corner[0 .. want.length], want);
     assert(d < 0, format("after a layout change corner float %d is stale (%s, full gives %s)",
                          d, s.corner[d < 0 ? 0 : d], want[d < 0 ? 0 : d]));
 }
 
-unittest { // stale cache: a new smoothing angle recomputes all
+unittest { // a new smoothing policy arrives WITH a new layout generation and recomputes all
+    // The invariant (`SmoothNormalCache`): the policy changes only together
+    // with `faceLayoutGen` (the GpuMesh rebuilds it with the adjacency).
     auto m = hingedPatch();
     Session s;
-    s.step(m, smoothingCosine());
+    s.step(m);
     // 60°: the 50° hinge now smooths, so the corner normals move.
-    immutable float c60 = smoothingCosine(60);
-    s.step(m, c60);
-    const want = fullCorners(m, c60);
-    const before = fullCorners(m, smoothingCosine());
+    const p60 = uniformPolicy(m, 60);
+    ++s.gen;
+    s.step(m, p60);
+    const want = fullCorners(m, p60);
+    const before = fullCorners(m);
     assert(firstDiff(before, want) >= 0, "rig: 40° and 60° give the same corners — the cell cannot witness");
     immutable d = firstDiff(s.corner[0 .. want.length], want);
-    assert(d < 0, format("after a smoothing-angle change corner float %d is stale", d));
+    assert(d < 0, format("after a smoothing-policy change corner float %d is stale", d));
 }
 
 unittest { // stale cache: a different face array (same gen) or a dropped face recomputes all
     auto m = hingedPatch();
     Session s;
-    s.step(m, smoothingCosine());
+    s.step(m);
     // A dropped LAST face keeps the array's pointer: only the face count moved.
     m.faces = m.faces[0 .. $ - 1];
-    s.step(m, smoothingCosine());
-    const want = fullCorners(m, smoothingCosine());
+    s.step(m);
+    const want = fullCorners(m);
     immutable d = firstDiff(s.corner[0 .. want.length], want);
     assert(d < 0, format("after a face-count change corner float %d is stale", d));
     // A replaced face array of the same count, a face's winding flipped.
     auto m2 = hingedPatch();
     Session s2;
-    s2.step(m2, smoothingCosine());
+    s2.step(m2);
     auto faces = m2.faces.dup;
     faces[3] = [faces[3][0], faces[3][3], faces[3][2], faces[3][1]];
     m2.faces = faces;
-    s2.step(m2, smoothingCosine());
-    const want2 = fullCorners(m2, smoothingCosine());
+    s2.step(m2);
+    const want2 = fullCorners(m2);
     immutable d2 = firstDiff(s2.corner[0 .. want2.length], want2);
     assert(d2 < 0, format("after a face-array swap corner float %d is stale", d2));
 }
@@ -506,25 +548,25 @@ unittest { // stale cache: a SHRUNK vertex array (same layout) recomputes all
     auto m = hingedPatch();
     m.vertices ~= Vec3(9, 9, 9);   // unreferenced
     Session s;
-    s.step(m, smoothingCosine());
+    s.step(m);
     m.vertices = m.vertices[0 .. $ - 1];
     // Nothing referenced moved: only the vertex-count stamp can see it.
-    assert(s.step(m, smoothingCosine()) && s.cache.lastFull,
+    assert(s.step(m) && s.cache.lastFull,
         "a vertex-count shrink must take the full pass");
-    const want = fullCorners(m, smoothingCosine());
+    const want = fullCorners(m);
     assert(firstDiff(s.corner[0 .. want.length], want) < 0, "after a vertex-count shrink the corners are stale");
 }
 
 unittest { // stale cache: a grown vertex array (same layout) recomputes all
     auto m = hingedPatch();
     Session s;
-    s.step(m, smoothingCosine());
+    s.step(m);
     // An unreferenced vertex appended: nothing else moved. The cache's
     // position copy is one short, so only a full pass may read the new length.
     m.vertices ~= Vec3(9, 9, 9);
-    assert(s.step(m, smoothingCosine()) && s.cache.lastFull,
+    assert(s.step(m) && s.cache.lastFull,
         "a vertex-count change must take the full pass");
-    const want = fullCorners(m, smoothingCosine());
+    const want = fullCorners(m);
     assert(firstDiff(s.corner[0 .. want.length], want) < 0, "after a vertex-count change the corners are stale");
 }
 
@@ -533,14 +575,273 @@ unittest { // the switch to the full pass: above a quarter of the vertices moved
     foreach (moved; [7, 8, 30]) {
         auto m = hingedPatch();
         Session s;
-        s.step(m, smoothingCosine());
+        s.step(m);
         foreach (v; 0 .. moved) m.vertices[v].y += 0.25f;
-        immutable bool full = s.step(m, smoothingCosine());
+        immutable bool full = s.step(m);
         assert(full == (moved > 7),
             format("%d of 30 vertices moved: expected %s pass, got %s", moved,
                    moved > 7 ? "the full" : "an incremental", full ? "full" : "incremental"));
-        const want = fullCorners(m, smoothingCosine());
+        const want = fullCorners(m);
         assert(firstDiff(s.corner[0 .. want.length], want) < 0,
             format("%d moved: corners differ from the full pass", moved));
     }
+}
+
+// ---------------------------------------------------------------------------
+// S1e: per-surface smoothing policy. The pair (f, g) at a vertex is decided by
+// the surface of the LOWER effective slot, for BOTH faces (owner ruling 1).
+// The cells hold in-test copies of the ruling and of five losers, and first
+// assert that every loser is separated from the ruling by some cell.
+
+private enum Rule { Ruling, HS, F, M, FI, ASYM }
+
+/// The pair threshold under `r` (in-test copies; `Ruling` is the shipped rule).
+private float pairCos(Rule r, const ref SmoothPolicy p, size_t fi, size_t g) {
+    immutable uint sf = p.faceSlot[fi], sg = p.faceSlot[g];
+    immutable uint lo = sf < sg ? sf : sg, hi = sf < sg ? sg : sf;
+    final switch (r) {
+        case Rule.Ruling: return p.slotCos[lo];
+        case Rule.HS:     return p.slotCos[hi];
+        case Rule.F:      return p.slotCos[sf];
+        case Rule.M:      return p.slotCos[sf] > p.slotCos[sg] ? p.slotCos[sf] : p.slotCos[sg];
+        case Rule.FI:     return p.slotCos[fi < g ? sf : sg];
+        case Rule.ASYM:   return p.slotCos[lo] == kSmoothOff ? p.slotCos[sf] : p.slotCos[lo];
+    }
+}
+
+/// The corner of face `fi` at vertex `v` under rule `r`, from first principles
+/// (face normals by `faceN`, every face at `v` — edge or vertex-only).
+private Vec3 predictCorner(Rule r, const ref Mesh m, const ref SmoothPolicy p, size_t fi, uint v) {
+    immutable Vec3 nf = faceN(m, fi);
+    double sx = nf.x, sy = nf.y, sz = nf.z;
+    foreach (g, f; m.faces) {
+        if (g == fi) continue;
+        bool at;
+        foreach (w; f) if (w == v) at = true;
+        if (!at) continue;
+        immutable Vec3 ng = faceN(m, g);
+        if (ng.x * nf.x + ng.y * nf.y + ng.z * nf.z < pairCos(r, p, fi, g)) continue;
+        sx += ng.x; sy += ng.y; sz += ng.z;
+    }
+    return nrm(Vec3(cast(float)sx, cast(float)sy, cast(float)sz));
+}
+
+/// A two-face 30° hinge whose faces carry slots `slotL`, `slotR` over `surfs`.
+private Mesh hingeSlots(uint slotL, uint slotR, Surface[] surfs) {
+    Mesh m = hinge(30.0);
+    m.faceMaterial = [slotL, slotR];
+    m.surfaces = surfs;
+    return m;
+}
+
+private Surface surf(float angle, bool on = true) {
+    Surface s;
+    s.smoothing = on;
+    s.smoothingAngleDeg = angle;
+    return s;
+}
+
+/// The 2×2 grid around the centre vertex 4 (faces f0..f3 in ring order; f0–f2
+/// and f1–f3 share ONLY the centre), bent so every pairwise normal angle is
+/// distinct and under 20°. `slots[k]` = face k's slot.
+private Mesh grid2x2(uint[4] slots, Surface[] surfs) {
+    Mesh m;
+    immutable float[9] z = [0.06f, 0.03f, -0.048f, -0.018f, 0.0f, 0.072f, 0.09f, -0.036f, 0.012f];
+    foreach (j; 0 .. 3) foreach (i; 0 .. 3)
+        m.vertices ~= Vec3(i - 1.0f, j - 1.0f, z[j * 3 + i]);
+    m.faces ~= [0u, 1, 4, 3];   // f0 lower-left
+    m.faces ~= [1u, 2, 5, 4];   // f1 lower-right
+    m.faces ~= [4u, 5, 8, 7];   // f2 upper-right
+    m.faces ~= [3u, 4, 7, 6];   // f3 upper-left
+    m.faceMaterial = slots[].dup;
+    m.surfaces = surfs;
+    return m;
+}
+
+private struct RulingCell {
+    string name;
+    Mesh   m;
+    size_t face;
+    uint   vert;
+    bool   rulingSmooth;   // the prediction stated in the plan (smooth vs own flat)
+}
+
+private RulingCell[] rulingCells() {
+    RulingCell[] c;
+    // Hinge cells (face 0 = L, face 1 = R; the shared edge is vertices 0, 1).
+    c ~= RulingCell("a",    hingeSlots(0, 1, [surf(40), surf(40)]), 0, 0, true);
+    c ~= RulingCell("b",    hingeSlots(0, 1, [surf(60), surf(20)]), 0, 0, true);
+    c ~= RulingCell("b-R",  hingeSlots(0, 1, [surf(60), surf(20)]), 1, 0, true);
+    c ~= RulingCell("b3",   hingeSlots(0, 1, [surf(20), surf(60)]), 0, 0, false);
+    c ~= RulingCell("b3-R", hingeSlots(0, 1, [surf(20), surf(60)]), 1, 0, false);
+    c ~= RulingCell("sw",   hingeSlots(1, 0, [surf(20), surf(60)]), 0, 0, false);
+    c ~= RulingCell("sw-R", hingeSlots(1, 0, [surf(20), surf(60)]), 1, 0, false);
+    c ~= RulingCell("c1",   hingeSlots(0, 1, [surf(40, false), surf(40)]), 0, 0, false);
+    c ~= RulingCell("c1-R", hingeSlots(0, 1, [surf(40, false), surf(40)]), 1, 0, false);
+    c ~= RulingCell("c2",   hingeSlots(0, 1, [surf(40), surf(40, false)]), 0, 0, true);
+    c ~= RulingCell("c2-R", hingeSlots(0, 1, [surf(40), surf(40, false)]), 1, 0, true);
+    c ~= RulingCell("c2sw", hingeSlots(1, 0, [surf(40), surf(40, false)]), 0, 0, true);
+    c ~= RulingCell("c2sw-R", hingeSlots(1, 0, [surf(40), surf(40, false)]), 1, 0, true);
+    // Vertex-only cells on the 2×2 grid, at the centre vertex 4.
+    c ~= RulingCell("V1-f0", grid2x2([0, 1, 1, 1], [surf(40, false), surf(40)]), 0, 4, false);
+    c ~= RulingCell("V1-f2", grid2x2([0, 1, 1, 1], [surf(40, false), surf(40)]), 2, 4, true);
+    c ~= RulingCell("V2-f0", grid2x2([1, 1, 0, 1], [surf(40), surf(40, false)]), 0, 4, true);
+    return c;
+}
+
+unittest { // the ruling cells: rig premises, then the discrimination floor, then production
+    auto cells = rulingCells();
+    assert(cells.length == 16, format("ruling cell population %d, expected 16", cells.length));
+    // Grid premise: every pairwise normal angle distinct and < 20°.
+    {
+        auto g = grid2x2([0, 0, 0, 0], [surf(40)]);
+        double[] seen;
+        foreach (a; 0 .. 4) foreach (b; a + 1 .. 4) {
+            immutable Vec3 na = faceN(g, a), nb = faceN(g, b);
+            immutable double d = na.x * nb.x + na.y * nb.y + na.z * nb.z;
+            assert(d > cos(20.0 * PI / 180), format("grid premise: faces %d, %d are %.2f° apart",
+                a, b, acosDeg(d)));
+            foreach (o; seen) assert(abs(o - d) > 1e-4, "grid premise: two pairs share an angle");
+            seen ~= d;
+        }
+    }
+    // Discrimination floor [E4]: each loser differs from the ruling in some cell.
+    foreach (r; [Rule.HS, Rule.F, Rule.M, Rule.FI, Rule.ASYM]) {
+        bool separated;
+        foreach (ref c; cells) {
+            const p = policyOf(c.m);
+            if (!near(predictCorner(r, c.m, p, c.face, c.vert),
+                      predictCorner(Rule.Ruling, c.m, p, c.face, c.vert), 1e-3f))
+                separated = true;
+        }
+        assert(separated, format("discrimination floor: no cell separates the loser %s from the ruling", r));
+    }
+    // The stated predictions agree with the in-test ruling (smooth = differs from own flat).
+    foreach (ref c; cells) {
+        const p = policyOf(c.m);
+        immutable bool smooth = !near(predictCorner(Rule.Ruling, c.m, p, c.face, c.vert),
+                                      faceN(c.m, c.face), 1e-3f);
+        assert(smooth == c.rulingSmooth, format("cell %s: the ruling predicts %s, the plan states %s",
+            c.name, smooth ? "smooth" : "flat", c.rulingSmooth ? "smooth" : "flat"));
+    }
+}
+
+private double acosDeg(double d) { import std.math : acos; return acos(d) * 180 / PI; }
+
+unittest { // production == the ruling, per cell (each cell runnable alone: VIBE3D_CELL)
+    size_t ran;
+    foreach (ref c; rulingCells()) {
+        if (!cellOn("ruling-" ~ c.name)) continue;
+        FaceAdjacency adj;
+        auto got = corners(c.m, adj);
+        const p = policyOf(c.m);
+        immutable Vec3 want = predictCorner(Rule.Ruling, c.m, p, c.face, c.vert);
+        immutable Vec3 g = cornerOf(c.m, got, c.face, c.vert);
+        assert(near(g, want), format("ruling cell %s: face %d corner at vertex %d is %s, the lower-slot "
+            ~ "rule predicts %s (%s)", c.name, c.face, c.vert, g, want, c.rulingSmooth ? "smooth" : "flat"));
+        ++ran;
+    }
+    assert(ran > 0, "VIBE3D_CELL names no ruling cell");
+}
+
+/// Within one float ulp (`smoothCorner` renormalises a lone face normal).
+private bool ulpNear(Vec3 a, Vec3 b) {
+    return abs(a.x - b.x) <= float.epsilon && abs(a.y - b.y) <= float.epsilon
+        && abs(a.z - b.z) <= float.epsilon;
+}
+
+unittest { // one surface OFF: every corner is its face's flat normal
+    if (!cellOn("off-all")) return;
+    auto m = hingedPatch();
+    m.surfaces = [surf(kDefaultSmoothingAngleDeg, false)];
+    FaceAdjacency adj;
+    auto c = corners(m, adj);
+    size_t n;
+    foreach (fi, f; m.faces) foreach (v; f) ++n;
+    assert(n == faceCornerTotal(m) && n == 80, format("off floor: %d corners", n));
+    // The rig smooths somewhere under the default (else OFF is unwitnessed).
+    auto on = hingedPatch();
+    FaceAdjacency adj2;
+    auto cOn = corners(on, adj2);
+    size_t moved;
+    foreach (fi, f; m.faces) foreach (v; f)
+        if (!near(cornerOf(on, cOn, fi, v), faceN(on, fi), 1e-3f)) ++moved;
+    assert(moved > 0, "off premise: the patch has no smoothed corner under the default");
+    foreach (fi, f; m.faces) foreach (v; f)
+        assert(ulpNear(cornerOf(m, c, fi, v), faceN(m, fi)),
+            format("off: face %d corner at %d is %s, flat is %s", fi, v, cornerOf(m, c, fi, v), faceN(m, fi)));
+}
+
+unittest { // a non-finite angle is OFF; an angle above 180 clamps to 180
+    if (!cellOn("angle-domain")) return;
+    {
+        auto m = hingeSlots(0, 0, [surf(float.nan)]);
+        FaceAdjacency adj;
+        auto c = corners(m, adj);
+        assert(ulpNear(cornerOf(m, c, 0, 0), faceN(m, 0)), "NaN angle: the 30° hinge smoothed — NaN is not OFF");
+    }
+    {
+        // A 170° hinge: cos(200°) = -0.94 would keep it hard, the 180° clamp smooths it.
+        Mesh m = hinge(170.0);
+        m.surfaces = [surf(200)];
+        FaceAdjacency adj;
+        auto c = corners(m, adj);
+        assert(!near(cornerOf(m, c, 0, 0), faceN(m, 0), 1e-3f),
+            "angle 200: the 170° hinge stayed hard — the angle is not clamped to 180°");
+    }
+}
+
+unittest { // the EFFECTIVE slot orders the pair: faceMaterial 70 reads slot 0
+    if (!cellOn("slot-70")) return;
+    auto m = hingeSlots(70, 1, [surf(40, false), surf(40)]);
+    const p = policyOf(m);
+    assert(p.faceSlot[0] == 0, format("slot rule: faceMaterial 70 maps to slot %d", p.faceSlot[0]));
+    assert(70 >= kSurfaceSlots, "slot premise: 70 is a valid slot");
+    FaceAdjacency adj;
+    auto c = corners(m, adj);
+    assert(ulpNear(cornerOf(m, c, 1, 0), faceN(m, 1)),
+        "faceMaterial 70: the pair smoothed — the effective slot 0 (OFF) did not decide");
+}
+
+/// The 3×3 quad grid (4×4 vertices) with slots 0/1/2 placed so every slot
+/// pair meets at a vertex-only diagonal; 0 OFF, 1 @40, 2 @60; a bumpy surface.
+private Mesh grid3x3Slots() {
+    Mesh m;
+    foreach (j; 0 .. 4) foreach (i; 0 .. 4)
+        m.vertices ~= Vec3(i, j, cast(float)(0.7 * sin(1.3 * i + 0.4 * j) + 0.5 * cos(1.1 * j) * i * 0.4));
+    immutable uint[9] slot = [0, 1, 2,  2, 0, 1,  1, 2, 0];
+    foreach (r; 0 .. 3) foreach (cc; 0 .. 3) {
+        immutable uint a = cast(uint)(r * 4 + cc);
+        m.faces ~= [a, a + 1, a + 5, a + 4];
+        m.faceMaterial ~= slot[r * 3 + cc];
+    }
+    m.surfaces = [surf(40, false), surf(40), surf(60)];
+    return m;
+}
+
+unittest { // full == incremental, bit-identical, on the three-slot grid
+    if (!cellOn("full-incremental-slots")) return;
+    auto m = grid3x3Slots();
+    // Floor from the rig: a vertex-only cross-slot pair for every slot pair.
+    bool[3][3] pairSeen;
+    foreach (r; 0 .. 2) foreach (cc; 0 .. 3) {
+        foreach (dc; [-1, 1]) {
+            immutable int c2 = cast(int)cc + dc;
+            if (c2 < 0 || c2 > 2) continue;
+            immutable uint sa = m.faceMaterial[r * 3 + cc], sb = m.faceMaterial[(r + 1) * 3 + c2];
+            if (sa != sb) pairSeen[sa < sb ? sa : sb][sa < sb ? sb : sa] = true;
+        }
+    }
+    assert(pairSeen[0][1] && pairSeen[0][2] && pairSeen[1][2],
+        "grid floor: some slot pair has no vertex-only diagonal");
+    Session s;
+    assert(s.step(m), "the first update must be full");
+    foreach (v; [0u, 1u, 3u]) m.vertices[v].z += 0.35f;   // one row: faces 0..5 re-fan
+    immutable bool full = s.step(m);
+    assert(!full && s.cache.writeCount > 0 && s.cache.writeCount < m.faces.length,
+        format("three-slot grid: the 3-vertex move did not take the incremental path (full=%s, faces=%d)",
+               full, s.cache.writeCount));
+    const want = fullCorners(m);
+    immutable d = firstDiff(s.corner[0 .. want.length], want);
+    assert(d < 0, format("three-slot grid: incremental corner float %d differs from the full pass", d));
 }

@@ -64,7 +64,7 @@ import shader;
 // Task 0669 — "would this action refuse if pressed", and the per-frame record
 // of what the bars actually drew. See source/ui/availability.d.
 import ui.availability : actionRefusal, buttonUnavailable, recordDrawnButton;
-import ui.action_menu : ActionMenuRoles, dispatchAction, firstCheckedLabel,
+import ui.action_menu : ActionMenuActions, ActionMenuRoles, dispatchAction, firstCheckedLabel,
     popupItemChecked, popupWidgetId, renderButtonPopups, selectButtonVariant;
 import ui.history_panel : HistoryPanelState, HistoryPanelRead,
     HistoryPanelActions, HistoryPanelController, HistoryMacroStatus;
@@ -848,6 +848,9 @@ void drawViewportPropsPanel(ViewportPropertiesReadRole viewportRead,
             if (ImGui.Checkbox("Smooth Shade", &smooth))
                 dispatch("viewport.smooth",
                     positionalPayload([smooth ? "on" : "off"]));
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Faces stay faceted where their surface (or the lower "
+                               ~ "surface of two that meet) has smoothing off.");
 
             // Cavity (model M4, wave plan S3a): greyed where it cannot apply —
             // the plan resolves it only under Shaded and never under the
@@ -1354,7 +1357,54 @@ void drawSidePanel(EditorApp app, ActionMenuRoles menu) {
                                                     mesh.countHiddenFaces());
             if (hid.length > 0) ImGui.TextUnformatted(hid);
         }
+        drawSurfacesSection(mesh, menu.actions);
     }
+    }
+}
+
+// The angle a Surfaces row is being dragged to (panel-local: the command is
+// dispatched once, on release — one command, one undo entry per edit).
+private float[kSurfaceSlotsUi] g_surfAngleEdit;
+private int g_surfAngleActive = -1;
+private import mesh : kSurfaceSlotsUi = kSurfaceSlots;
+
+/// Mesh Info "Surfaces": one row per editable slot (`surfaceSlotCount`), each
+/// attribute of `kSurfaceAttrs` as a widget; every edit dispatches
+/// `mesh.surfaceAttr` through the action door.
+private void drawSurfacesSection(ref const Mesh mesh, ActionMenuActions actions) {
+    import std.format : format;
+    import buttonset : Action, ActionKind;
+
+    import commands.mesh.surface_attr : surfaceSlotCount, surfaceAttrValue;
+    import mesh : surfaceOfSlot;
+    void send(size_t slot, string attr, string value) {
+        Action a;
+        a.kind = ActionKind.script;
+        a.scriptLines = [format("mesh.surfaceAttr surface:%d attr:%s value:%s",
+                                slot, attr, value)];
+        dispatchAction(actions, a);
+    }
+    ImGui.SeparatorText("Surfaces");
+    immutable size_t n = surfaceSlotCount(mesh);
+    foreach (i; 0 .. n) {
+        const s = surfaceOfSlot(mesh, i);
+        ImGui.PushID(cast(int)i);
+        scope(exit) ImGui.PopID();
+        ImGui.TextUnformatted(i < mesh.surfaces.length ? s.name : "Default");
+        bool on = surfaceAttrValue(s, "smoothing") != 0;
+        if (ImGui.Checkbox("Smooth", &on)) send(i, "smoothing", on ? "1" : "0");
+        if (g_surfAngleActive != cast(int)i)
+            g_surfAngleEdit[i] = surfaceAttrValue(s, "smoothingAngle");
+        ImGui.DragFloat("Angle", &g_surfAngleEdit[i], 0.5f, 0.0f, 180.0f, "%.1f°");
+        if (ImGui.IsItemActive()) g_surfAngleActive = cast(int)i;
+        if (ImGui.IsItemDeactivatedAfterEdit()) {
+            g_surfAngleActive = -1;
+            float v = g_surfAngleEdit[i];
+            if (v < 0.0f) v = 0.0f;
+            if (v > 180.0f) v = 180.0f;
+            send(i, "smoothingAngle", format("%.6f", v));
+        } else if (!ImGui.IsItemActive() && g_surfAngleActive == cast(int)i)
+            g_surfAngleActive = -1;
     }
 }
 

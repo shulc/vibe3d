@@ -152,3 +152,73 @@ LwoChunkCensus lwoChunkCensus(const(ubyte)[] b)
     }
     return c;
 }
+
+// ---------------------------------------------------------------------------
+// A minimal LWO2 image with hand-written SURF bodies (S1e): one triangle
+// tagged with TAGS entry 0, the TAGS table `tags`, and one SURF chunk per
+// `surfs` entry carrying exactly the given sub-chunks — so a test can omit or
+// set COLR / GLOS / SMAN at will, which the writer package cannot.
+// ---------------------------------------------------------------------------
+
+/// One SURF sub-chunk: id and raw body bytes.
+struct LwoSub { string id; ubyte[] data; }
+
+/// A SURF chunk: surface name and its sub-chunks.
+struct LwoSurf { string name; LwoSub[] subs; }
+
+private void putBe16(ref ubyte[] a, uint v) { a ~= cast(ubyte)(v >> 8); a ~= cast(ubyte)v; }
+private void putBe32(ref ubyte[] a, uint v) {
+    a ~= cast(ubyte)(v >> 24); a ~= cast(ubyte)(v >> 16); a ~= cast(ubyte)(v >> 8); a ~= cast(ubyte)v;
+}
+private void putS0(ref ubyte[] a, string s) {
+    a ~= cast(const(ubyte)[]) s; a ~= 0;
+    if ((s.length + 1) & 1) a ~= 0;
+}
+private void putChunk(ref ubyte[] a, string id, const(ubyte)[] body_) {
+    a ~= cast(const(ubyte)[]) id; putBe32(a, cast(uint)body_.length); a ~= body_;
+    if (body_.length & 1) a ~= 0;
+}
+
+/// The big-endian F4 bytes of `v` (a SURF scalar sub-chunk body, no envelope).
+ubyte[] lwoF4(float v) {
+    ubyte[] a;
+    putBe32(a, *cast(uint*)&v);
+    return a;
+}
+
+ubyte[] lwoImage(string[] tags, LwoSurf[] surfs) {
+    ubyte[] body_ = cast(ubyte[]) "LWO2".dup;
+    ubyte[] t;
+    foreach (s; tags) putS0(t, s);
+    putChunk(body_, "TAGS", t);
+    ubyte[] layr;
+    putBe16(layr, 0); putBe16(layr, 0);
+    foreach (_; 0 .. 3) putBe32(layr, 0);
+    putS0(layr, "L");
+    putChunk(body_, "LAYR", layr);
+    ubyte[] pnts;
+    foreach (p; [[0f, 0f, 0f], [1f, 0f, 0f], [0f, 1f, 0f]]) foreach (c; p) pnts ~= lwoF4(c);
+    putChunk(body_, "PNTS", pnts);
+    ubyte[] pols = cast(ubyte[]) "FACE".dup;
+    putBe16(pols, 3); putBe16(pols, 0); putBe16(pols, 1); putBe16(pols, 2);
+    putChunk(body_, "POLS", pols);
+    ubyte[] ptag = cast(ubyte[]) "SURF".dup;
+    putBe16(ptag, 0); putBe16(ptag, 0);
+    putChunk(body_, "PTAG", ptag);
+    foreach (s; surfs) {
+        ubyte[] sb;
+        putS0(sb, s.name);
+        putS0(sb, "");
+        foreach (sub; s.subs) {
+            sb ~= cast(const(ubyte)[]) sub.id;
+            putBe16(sb, cast(uint)sub.data.length);
+            sb ~= sub.data;
+            if (sub.data.length & 1) sb ~= 0;
+        }
+        putChunk(body_, "SURF", sb);
+    }
+    ubyte[] img = cast(ubyte[]) "FORM".dup;
+    putBe32(img, cast(uint)body_.length);
+    img ~= body_;
+    return img;
+}

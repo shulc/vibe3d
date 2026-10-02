@@ -6,26 +6,61 @@ module vertex_normals;
 // smoothing rule. Law (captured, doc/captures/viewport_shading_rig_capture_
 // 2026-10-02.md C3/C6): a corner of face f at vertex v averages the UNIT face
 // normals (uniform weighting) of every face g around v whose normal is within
-// the smoothing angle of f's (`dot(n_g, n_f) >= cos θ`, θ = 40°); hidden faces
-// contribute; degenerate faces contribute nothing; f itself always counts.
+// the smoothing angle (`dot(n_g, n_f) >= cos θ`); hidden faces contribute;
+// degenerate faces contribute nothing; f itself always counts. θ and on/off
+// are PER SURFACE (`mesh.Surface.smoothing`/`smoothingAngleDeg`): for each
+// pair (f, g) the surface of the LOWER effective slot decides for both faces
+// (`SmoothPolicy`; owner ruling, the reference's own order is an internal
+// draw order — doc/captures/viewport_shading_c8_smoothing_capture_2026-10-02.md
+// C8a). The pair rule covers every face at the vertex, edge-sharing or not.
 
 import math : Vec3, faceNormalFirst3;
-import mesh : Mesh;
-
-/// The smoothing angle between face normals above which an edge stays hard
-/// (the captured material default; one value for every face — a per-material
-/// angle is a declared divergence).
-enum float kSmoothingAngleDeg = 40.0f;
+import mesh : Mesh, Surface, kSurfaceSlots, surfaceOfSlot, effectiveSurfaceSlot;
 
 /// Kernel cap on the faces one vertex averages: a vertex of higher valence
 /// averages its first `MAX_SMOOTH_VALENCE` incident faces (plus the corner's
 /// own face). Bounds the per-corner loop; no Param scales it.
 enum uint MAX_SMOOTH_VALENCE = 1024;
 
-/// `cos(kSmoothingAngleDeg)`, the threshold `cornerSmoothNormals` takes.
-float smoothingCosine(float angleDeg = kSmoothingAngleDeg) @safe pure nothrow @nogc {
-    import std.math : cos, PI;
-    return cast(float)cos(angleDeg * PI / 180.0);
+/// The cosine no neighbour can reach (> 1): a slot with smoothing OFF.
+enum float kSmoothOff = 2.0f;
+
+/// The threshold of a smoothing angle: `cos(clamp(angleDeg, 0, 180))`; a
+/// non-finite angle (only a hand-edited file can carry one) is OFF.
+float smoothingCosine(float angleDeg) @safe pure nothrow @nogc {
+    import std.math : cos, PI, isFinite;
+    if (!isFinite(angleDeg)) return kSmoothOff;
+    immutable double a = angleDeg < 0 ? 0.0 : (angleDeg > 180 ? 180.0 : angleDeg);
+    return cast(float)cos(a * PI / 180.0);
+}
+
+/// The per-surface smoothing policy the corner rule reads (model M3): the
+/// effective surface slot of every face (`mesh.effectiveSurfaceSlot`) and the
+/// threshold cosine of every slot (`kSmoothOff` when its surface's smoothing is
+/// off). The pair (f, g) uses `slotCos[min(faceSlot[f], faceSlot[g])]`.
+struct SmoothPolicy {
+    uint[] faceSlot;
+    float[kSurfaceSlots] slotCos = 0;   // not NaN: `GpuMesh ==` compares this struct
+}
+
+/// Fill `p` for `faceCount` faces tagged `faceMaterial` (0 past the array)
+/// over `surfaces` (slots past the table read `Surface.init`). Grow-only
+/// `faceSlot`. The ONE builder: both CPU passes (via `GpuMesh`) and the GPU
+/// fan-out (`OsdAccel.installGl`) read the record it fills.
+void buildSmoothPolicy(const(uint)[] faceMaterial, size_t faceCount,
+                       const(Surface)[] surfaces, ref SmoothPolicy p) @safe pure nothrow {
+    if (p.faceSlot.length < faceCount) p.faceSlot.length = faceCount;
+    foreach (fi; 0 .. faceCount)
+        p.faceSlot[fi] = cast(uint)effectiveSurfaceSlot(faceMaterial, fi);
+    foreach (s; 0 .. kSurfaceSlots) {
+        const Surface surf = surfaceOfSlot(surfaces, s);
+        p.slotCos[s] = surf.smoothing ? smoothingCosine(surf.smoothingAngleDeg) : kSmoothOff;
+    }
+}
+
+/// ditto, for a mesh.
+void buildSmoothPolicy(const ref Mesh m, ref SmoothPolicy p) @safe pure nothrow {
+    buildSmoothPolicy(m.faceMaterial, m.faces.length, m.surfaces, p);
 }
 
 /// Vertex → incident faces, CSR: the faces around vertex `v` are
@@ -90,20 +125,25 @@ Vec3 faceUnitNormal(const(uint)[] face, const(Vec3)[] vpos) @safe pure nothrow @
 
 /// The smooth normal of face `fi`'s corner at vertex `v`, from the per-face
 /// unit normals (`faceUnitNormal`). The ONE corner rule: the full pass and
-/// the incremental pass both call it, so their results are bit-identical.
+/// the incremental pass both call it, so their results are bit-identical; the
+/// fan-out's GLSL (`subpatch_osd.FAN_OUT_VERT_SRC`) mirrors its pair line.
 private Vec3 smoothCorner(const ref FaceAdjacency adj, const(Vec3)[] faceNormal,
-                          float cosSmooth, size_t fi, uint v) @safe pure nothrow @nogc {
+                          const ref SmoothPolicy p, size_t fi, uint v) @safe pure nothrow @nogc {
     import std.math : sqrt;
+    import std.algorithm.comparison : min;
     immutable Vec3 nf_ = faceNormal[fi];
     if (nf_.x == 0 && nf_.y == 0 && nf_.z == 0) return Vec3(0, 1, 0);
     float sx = nf_.x, sy = nf_.y, sz = nf_.z;
     immutable uint lo = adj.offsets[v];
     uint hi = adj.offsets[v + 1];
     if (hi - lo > MAX_SMOOTH_VALENCE) hi = lo + MAX_SMOOTH_VALENCE;
+    immutable uint sf = p.faceSlot[fi];
     foreach (g; adj.faces[lo .. hi]) {
         if (g == fi) continue;
+        immutable uint sg = p.faceSlot[g];
+        immutable float c = p.slotCos[min(sf, sg)];   // the LOWER slot decides, for both faces
         immutable Vec3 ng = faceNormal[g];
-        if (ng.x * nf_.x + ng.y * nf_.y + ng.z * nf_.z < cosSmooth) continue;
+        if (ng.x * nf_.x + ng.y * nf_.y + ng.z * nf_.z < c) continue;
         sx += ng.x; sy += ng.y; sz += ng.z;
     }
     immutable float len = sqrt(sx * sx + sy * sy + sz * sz);
@@ -116,7 +156,7 @@ private Vec3 smoothCorner(const ref FaceAdjacency adj, const(Vec3)[] faceNormal,
 /// grow-only scratch for the per-face unit normals (`faceUnitNormal`); a
 /// degenerate face's own corners take the flat stream's fallback normal.
 void cornerSmoothNormals(const ref Mesh mesh, const(Vec3)[] vpos,
-                         const ref FaceAdjacency adj, float cosSmooth,
+                         const ref FaceAdjacency adj, const ref SmoothPolicy policy,
                          ref Vec3[] faceNormal, float[] outCorner) @safe pure nothrow {
     immutable size_t nf = mesh.faces.length;
     if (faceNormal.length < nf) faceNormal.length = nf;
@@ -124,7 +164,7 @@ void cornerSmoothNormals(const ref Mesh mesh, const(Vec3)[] vpos,
     size_t c;
     foreach (fi, face; mesh.faces)
         foreach (v; face) {
-            immutable Vec3 n = smoothCorner(adj, faceNormal, cosSmooth, fi, v);
+            immutable Vec3 n = smoothCorner(adj, faceNormal, policy, fi, v);
             outCorner[c * 3 + 0] = n.x;
             outCorner[c * 3 + 1] = n.y;
             outCorner[c * 3 + 2] = n.z;
@@ -139,12 +179,13 @@ enum size_t kIncrementalDirtyDivisor = 4;
 /// Persistent state of the incremental smooth-normal refresh
 /// (`updateCornerSmooth`): the positions the cached face/corner normals were
 /// computed from, the per-face corner-start offsets, and the validity stamp
-/// (face layout generation, smoothing cosine, face and vertex counts, the
-/// face array's identity). Any stamp mismatch recomputes everything.
+/// (face layout generation, face and vertex counts, the face array's
+/// identity). Any stamp mismatch recomputes everything. The smoothing policy
+/// changes only together with `faceLayoutGen` (`GpuMesh` rebuilds it with the
+/// adjacency), so the layout stamp covers it.
 struct SmoothNormalCache {
     bool   valid;
     ulong  layoutGen;
-    float  cosSmooth = 0;   // not NaN: `GpuMesh ==` compares this struct
     size_t faceCount, vertexCount, facesId;
     Vec3[] lastPos;       // positions the cached normals describe
     uint[] cornerStart;   // face fi's corners: [cornerStart[fi], cornerStart[fi + 1])
@@ -201,7 +242,7 @@ private uint nextEpoch(ref SmoothNormalCache c) @safe pure nothrow @nogc {
 /// rewrites every face; otherwise `cache.writeFaces[0 .. cache.writeCount]`
 /// lists the faces whose positions, flat or smooth normals changed.
 bool updateCornerSmooth(const ref Mesh mesh, const(Vec3)[] vpos,
-                        const ref FaceAdjacency adj, float cosSmooth, ulong layoutGen,
+                        const ref FaceAdjacency adj, const ref SmoothPolicy policy, ulong layoutGen,
                         ref Vec3[] faceNormal, ref float[] cornerSmooth,
                         ref SmoothNormalCache cache) @safe pure nothrow {
     immutable size_t nf = mesh.faces.length, nv = vpos.length;
@@ -209,7 +250,7 @@ bool updateCornerSmooth(const ref Mesh mesh, const(Vec3)[] vpos,
     cache.lastFull = false;
     size_t nd;
     bool full = !(cache.valid && cache.layoutGen == layoutGen &&
-                  cache.cosSmooth == cosSmooth && cache.faceCount == nf &&
+                  cache.faceCount == nf &&
                   cache.vertexCount == nv &&
                   cache.facesId == facesIdentity(mesh));
     if (!full) {
@@ -227,7 +268,7 @@ bool updateCornerSmooth(const ref Mesh mesh, const(Vec3)[] vpos,
     if (full) {
         immutable size_t total = faceCornerTotal(mesh);
         if (cornerSmooth.length < total * 3) cornerSmooth.length = total * 3;
-        cornerSmoothNormals(mesh, vpos, adj, cosSmooth, faceNormal, cornerSmooth[0 .. total * 3]);
+        cornerSmoothNormals(mesh, vpos, adj, policy, faceNormal, cornerSmooth[0 .. total * 3]);
         if (cache.cornerStart.length < nf + 1) cache.cornerStart.length = nf + 1;
         uint c;
         foreach (fi, face; mesh.faces) {
@@ -244,7 +285,6 @@ bool updateCornerSmooth(const ref Mesh mesh, const(Vec3)[] vpos,
         if (cache.writeFaces.length < nf) cache.writeFaces.length = nf;
         cache.valid = true;
         cache.layoutGen = layoutGen;
-        cache.cosSmooth = cosSmooth;
         cache.faceCount = nf;
         cache.vertexCount = nv;
         cache.facesId = facesIdentity(mesh);
@@ -273,7 +313,7 @@ bool updateCornerSmooth(const ref Mesh mesh, const(Vec3)[] vpos,
             if (v >= nv || cache.vertMark[v] == e2) continue;
             cache.vertMark[v] = e2;
             foreach (f; adj.faces[adj.offsets[v] .. adj.offsets[v + 1]]) {
-                immutable Vec3 n = smoothCorner(adj, faceNormal, cosSmooth, f, v);
+                immutable Vec3 n = smoothCorner(adj, faceNormal, policy, f, v);
                 immutable uint c0 = cache.cornerStart[f];
                 foreach (j, w; mesh.faces[f])
                     if (w == v) {

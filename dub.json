@@ -80,7 +80,7 @@
 			"repository": "git+https://github.com/shulc/D-OpenSubdiv.git"
 		},
 		"lwo2-writer": {
-			"version": "8610ff21122e6f91aeb19e76dbfc5b3e0ce82108",
+			"version": "6d35b70a2a23c16c5b6cc19ea3e2d05a99eb0061",
 			"repository": "git+https://github.com/shulc/D-Lwo2Writer.git"
 		}
 	},

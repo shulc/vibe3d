@@ -6,7 +6,7 @@ import std.string : toStringz;
 
 import view;
 import math;
-import mesh : Surface, MarkView;
+import mesh : Surface, MarkView, kSurfaceSlots;
 import mesh_gpu : GpuMesh;
 version (web) {
 } else {
@@ -197,9 +197,10 @@ immutable string imagePlaneFragSrc = withShaderPreamble(q{
 // the diffuse tint. `u_color` keeps its existing role as a per-draw
 // multiplier — set to (1,1,1) for the natural material colour, or a
 // tint (e.g. hover-blue) by drawFaces / drawFacesHighlighted. Meshes
-// with no surfaces seed slot 0 to a neutral grey so the look pre-MG3
-// is preserved.
-enum LIT_MAX_MATS = 64;
+// with no surfaces read `Surface.init` (the default material) in every
+// slot (`packSurfaceSlots`). Every slot-count site of `litFragSrc` is the
+// `%SLOTS%` placeholder, spliced from `mesh.kSurfaceSlots`.
+enum LIT_MAX_MATS = kSurfaceSlots;
 private immutable string litVertSrc = withShaderPreamble(q{
     layout(location = 0) in vec3 aPos;
     layout(location = 1) in vec3 aNormal;
@@ -237,7 +238,10 @@ private immutable string litVertSrc = withShaderPreamble(q{
     }
 });
 
-private immutable string litFragSrc = withShaderPreamble(q{
+private immutable string litFragSrc = () {
+    import std.array : replace;
+    import std.conv : to;
+    return withShaderPreamble(q{
     in       vec3 vNormal;
     flat in  uint vMatId;
     in       vec3 vWeightColor;     // task 1090; see the vertex shader
@@ -261,9 +265,9 @@ private immutable string litFragSrc = withShaderPreamble(q{
     uniform int   u_surfaceId;      // G-buffer surface id: layer index + 1, 0 = none
     uniform int   u_effectFlags;    // DrawPlan.effectFlags (bit 0 = cavity-eligible)
     layout(std140) uniform Materials {
-        vec4 mat_base[64];     // .rgb = baseColor, .a = opacity
-        vec4 mat_params[64];   // .x = diffuse amount, .y = specular amount,
-                               // .z = glossiness, .w = its Blinn exponent
+        vec4 mat_base[%SLOTS%];     // .rgb = baseColor, .a = opacity
+        vec4 mat_params[%SLOTS%];   // .x = diffuse amount, .y = specular amount,
+                                    // .z = glossiness, .w = its Blinn exponent
     };
     // Explicit locations: GLSL ES 3.00 requires them once there are two
     // outputs. Location 1 is the integer G-buffer (model M4): written on
@@ -283,6 +287,9 @@ private immutable string litFragSrc = withShaderPreamble(q{
               * vec2(e.x >= 0.0 ? 1.0 : -1.0, e.y >= 0.0 ? 1.0 : -1.0);
         return uvec2(round(clamp(e * 0.5 + 0.5, 0.0, 1.0) * 65535.0));
     }
+    // The one slot rule (mirrored on the CPU by `mesh.effectiveSurfaceSlot`):
+    // a tag at or past the slot count reads slot 0.
+    uint surfaceSlotOf(uint m) { return m < uint(%SLOTS%) ? m : uint(0); }
     // The ONE light function of the lit arms (`light_rig`'s header has the
     // law and its capture): `kd` = base colour × diffuse amount; ambient
     // `u_ambient·kd` is left unscaled and `u_lightGain` multiplies everything
@@ -332,7 +339,7 @@ private immutable string litFragSrc = withShaderPreamble(q{
         // pass dims whatever the active style resolved to.
         vec3 col;
         if (u_shading == 0) {
-            uint  mi  = (vMatId < uint(64)) ? vMatId : uint(0);
+            uint  mi  = surfaceSlotOf(vMatId);
             vec4  mp  = mat_params[mi];
             vec3  kd  = mix(mat_base[mi].rgb * mp.x, u_color, u_overrideMix);
             col = litTerm(kd, normalize(vNormal), mp.y, mp.w);
@@ -348,7 +355,7 @@ private immutable string litFragSrc = withShaderPreamble(q{
             // Gooch (task 9150; law in `light_rig`): Kd = base × diffuse
             // amount (the hover override replaces it, as in Material), the
             // two-sided cool→warm mix by |N·L|, no specular.
-            uint  mi = (vMatId < uint(64)) ? vMatId : uint(0);
+            uint  mi = surfaceSlotOf(vMatId);
             vec3  kd = mix(mat_base[mi].rgb * mat_params[mi].x, u_color, u_overrideMix);
             float t  = abs(dot(normalize(vNormal), u_goochDir));
             col = min(mix(u_goochCool + u_goochCoolKd * kd,
@@ -368,7 +375,8 @@ private immutable string litFragSrc = withShaderPreamble(q{
         gbuf = uvec4(octEncode16(nl > 0.0 ? vNormal / nl : vec3(0.0, 0.0, 1.0)),
                      uint(u_surfaceId), uint(u_effectFlags));
     }
-});
+}).replace("%SLOTS%", kSurfaceSlots.to!string);
+}();
 
 // ---- The composite stage (model M4) -----------------------------
 // Fullscreen triangle with no attributes (an empty VAO is bound): vertex ids
@@ -900,6 +908,26 @@ class CheckerShader {
     }
 }
 
+/// Pack `s` into the Materials UBO image: slot i = `s[i]`, every slot past
+/// the table = `Surface.init` (the default material — an implicit slot, a
+/// stale tag and an empty table all read it). GL-free.
+void packSurfaceSlots(in Surface[] s, ref float[4 * LIT_MAX_MATS] base,
+                      ref float[4 * LIT_MAX_MATS] params) @safe pure nothrow @nogc {
+    foreach (i; 0 .. LIT_MAX_MATS) {
+        const Surface u = i < s.length ? s[i] : Surface.init;
+        base[i * 4 + 0] = u.baseColor.x;
+        base[i * 4 + 1] = u.baseColor.y;
+        base[i * 4 + 2] = u.baseColor.z;
+        base[i * 4 + 3] = u.opacity;
+        params[i * 4 + 0] = u.diffuseAmount;
+        params[i * 4 + 1] = u.specularAmount;
+        params[i * 4 + 2] = u.glossiness;
+        // The exponent, derived here once per upload rather than per
+        // fragment; captured: roughness = 1 − glossiness, exact.
+        params[i * 4 + 3] = specPowerForRoughness(1.0f - u.glossiness);
+    }
+}
+
 class LitShader {
     GLuint program;
     GLint locModel;
@@ -981,12 +1009,8 @@ class LitShader {
         if (blockIdx != GL_INVALID_INDEX)
             glUniformBlockBinding(program, blockIdx, MATS_BINDING);
 
-        // Seed slot 0 to a neutral grey so meshes that have no
-        // surfaces — every procedural primitive — render the same
-        // 0.8-grey they did pre-MG3.
-        Surface defaultSurf;
-        defaultSurf.baseColor = Vec3(0.8f, 0.8f, 0.8f);
-        setSurfaces([defaultSurf]);
+        // Every slot starts as the default material (`Surface.init`).
+        setSurfaces([]);
     }
 
     ~this() {
@@ -994,38 +1018,13 @@ class LitShader {
         glDeleteBuffers(1, &matsUbo);
     }
 
-    /// Upload a Surface[] into the Materials UBO. Pads the unused tail
-    /// with a neutral grey so out-of-range matId reads land on
-    /// something sensible. Caller invokes this whenever
-    /// `mesh.surfaces` changes (cheap — only a 4 KB transfer at
-    /// MAX_MATS = 64).
+    /// Upload a Surface[] into the Materials UBO (`packSurfaceSlots`).
+    /// Caller invokes this whenever `mesh.surfaces` changes (cheap — only a
+    /// 2 × 1 KB transfer at `LIT_MAX_MATS` = 64).
     void setSurfaces(in Surface[] surfaces) {
         float[4 * LIT_MAX_MATS] base   = 0;
         float[4 * LIT_MAX_MATS] params = 0;
-        foreach (i; 0 .. LIT_MAX_MATS) {
-            Surface s;
-            if (i < surfaces.length) {
-                s = surfaces[i];
-            } else if (i == 0) {
-                // Slot 0 is the always-default. When the caller passes
-                // an empty array, this is the fallback for every face.
-                s.baseColor = Vec3(0.8f, 0.8f, 0.8f);
-            } else {
-                // Padding slots stay neutral so a stale matId read
-                // doesn't produce a black face.
-                s.baseColor = Vec3(0.8f, 0.8f, 0.8f);
-            }
-            base[i * 4 + 0] = s.baseColor.x;
-            base[i * 4 + 1] = s.baseColor.y;
-            base[i * 4 + 2] = s.baseColor.z;
-            base[i * 4 + 3] = s.opacity;
-            params[i * 4 + 0] = s.diffuseAmount;
-            params[i * 4 + 1] = s.specularAmount;
-            params[i * 4 + 2] = s.glossiness;
-            // The exponent, derived here once per upload rather than per
-            // fragment; captured: roughness = 1 − glossiness, exact.
-            params[i * 4 + 3] = specPowerForRoughness(1.0f - s.glossiness);
-        }
+        packSurfaceSlots(surfaces, base, params);
         glBindBuffer(GL_UNIFORM_BUFFER, matsUbo);
         glBufferSubData(GL_UNIFORM_BUFFER, 0,
             cast(GLsizeiptr)(LIT_MAX_MATS * 4 * float.sizeof),

@@ -27,7 +27,7 @@ private enum string[] kMeshIds = [
     "mesh.subdivide", "mesh.remesh.start", "mesh.remesh", "mesh.remesh.open",
     "mesh.subdivide_faceted", "mesh.triple", "mesh.quadruple", "mesh.detriangulate",
     "mesh.mergeFaces", "mesh.subpatch_toggle", "mesh.hide", "mesh.hideUnselected",
-    "mesh.hideInvert", "mesh.unhideAll", "mesh.setMaterial", "mesh.setPart",
+    "mesh.hideInvert", "mesh.unhideAll", "mesh.setMaterial", "mesh.surfaceAttr", "mesh.setPart",
     "mesh.split_edge", "mesh.addPoint", "mesh.splitFace", "mesh.edgeJoin",
     "mesh.spinEdge", "mesh.addLoop", "mesh.loopSlice", "mesh.edge_extrude",
     "mesh.vertexExtrude", "mesh.vertexBevel", "mesh.poly_inset", "mesh.spikey",
@@ -103,7 +103,7 @@ private LiveRegistrationRig registeredRig() {
 // B1: the production door owns the exact family and every factory reads the
 // live edit target when the command is constructed.
 unittest {
-    static assert(kMeshIds.length == 109);
+    static assert(kMeshIds.length == 110);
     auto rig = registeredRig();
     foreach (id; kMeshIds)
         assert(rig.registry.hasCommand(id),

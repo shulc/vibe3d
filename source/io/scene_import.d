@@ -96,6 +96,7 @@ import log : logWarn;
 
 import math;
 import io.scene_ir;
+import mesh : Surface;
 import io.assimp_runtime : isAssimpAvailable;
 
 /// Post-process flags handed to aiImportFile. See the module header for the
@@ -153,6 +154,11 @@ ImportedScene sceneFromAssimp(const(aiScene)* s) {
         ImportedSurface surf;
         surf.name      = materialName(m, i);
         surf.baseColor = materialDiffuse(m);
+        Vec3 ks;
+        float ns;
+        immutable bool hasKs = materialSpecular(m, ks);
+        immutable bool hasNs = materialShininess(m, ns);
+        applyAssimpMaterialKeys(surf, hasKs, ks, hasNs, ns);
         surfaces ~= surf;
     }
     // A scene with no materials still wants one default surface so every part's
@@ -428,7 +434,28 @@ private Vec3 materialDiffuse(const(aiMaterial)* m) {
                            AI_MATKEY_COLOR_DIFFUSE.semantic,
                            AI_MATKEY_COLOR_DIFFUSE.index, &c) == aiReturn.SUCCESS)
         return Vec3(c.r, c.g, c.b);
-    return Vec3(0.7f, 0.7f, 0.7f);
+    return Surface.init.baseColor;
+}
+
+/// The specular colour key; false when assimp reports it absent.
+private bool materialSpecular(const(aiMaterial)* m, out Vec3 ks) {
+    aiColor4D c;
+    if (aiGetMaterialColor(m, AI_MATKEY_COLOR_SPECULAR.key,
+                           AI_MATKEY_COLOR_SPECULAR.semantic,
+                           AI_MATKEY_COLOR_SPECULAR.index, &c) != aiReturn.SUCCESS)
+        return false;
+    ks = Vec3(c.r, c.g, c.b);
+    return true;
+}
+
+/// The shininess key; false when assimp reports it absent.
+private bool materialShininess(const(aiMaterial)* m, out float ns) {
+    ai_real v = 0;
+    if (aiGetMaterialFloat(m, AI_MATKEY_SHININESS.key, AI_MATKEY_SHININESS.semantic,
+                           AI_MATKEY_SHININESS.index, &v) != aiReturn.SUCCESS)
+        return false;
+    ns = cast(float)v;
+    return true;
 }
 
 private string nodeOrMeshName(const(aiNode)* node, const(aiMesh)* mesh) {

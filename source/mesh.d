@@ -213,15 +213,18 @@ struct FaceIdxRange {
 /// the LWO `SURF` chunk fields verbatim and to act as the compile target
 /// for Phase 3+ ShaderTree IR — see `doc/material_groups_plan.md`.
 ///
-/// Fields with explicit defaults render as a neutral grey if a caller
-/// reads `Surface()` (the value returned by the defensive-read pattern
-/// when `faceMaterial[fi]` points outside `surfaces`).
+/// `Surface.init` IS the reference's default material (captured:
+/// doc/captures/viewport_shading_material_defaults_capture_2026-10-02.md Q2)
+/// and the ONE value every "surface nobody authored" reads: an implicit slot
+/// (`surfaceOfSlot`), the shader's padding slots (`shader.packSurfaceSlots`),
+/// the importers' IR defaults (`ImportedSurface`) and a slot a command
+/// materialises.
 struct Surface {
     string name           = "Default";
-    Vec3   baseColor      = Vec3(0.7f, 0.7f, 0.7f);
-    float  diffuseAmount  = 1.0f;    // LWO DIFF
-    float  specularAmount = 0.0f;    // LWO SPEC
-    float  glossiness     = 0.4f;    // LWO GLOS; roughness ≈ 1 - glossiness
+    Vec3   baseColor      = Vec3(0.6f, 0.6f, 0.6f);   // LWO COLR
+    float  diffuseAmount  = 0.8f;    // LWO DIFF
+    float  specularAmount = 0.04f;   // LWO SPEC
+    float  glossiness     = 0.6f;    // LWO GLOS; roughness = 1 − glossiness (exact)
     float  opacity        = 1.0f;    // 1 - LWO TRAN
     // Forward-compat hook: when a ShaderTree compiles to this Surface,
     // points back to the source graph id so subsequent edits don't lose
@@ -232,6 +235,45 @@ struct Surface {
     // io/native.d for why, and its paired unittest for the reproduction
     // (task 0762). Nothing in the tree writes this field today.
     string compiledFromTreeId;
+    // Smoothing (model M3): a face corner averages the neighbours within
+    // `smoothingAngleDeg` of its face; the pair of faces at a vertex is decided
+    // by the surface of the LOWER effective slot (`vertex_normals.SmoothPolicy`).
+    // LWO: SMAN > 0 ⇒ on with angle = SMAN (rad); SMAN absent ⇒ off.
+    bool   smoothing         = true;
+    float  smoothingAngleDeg = kDefaultSmoothingAngleDeg;   // degrees
+}
+
+/// The default smoothing angle of a surface (captured material default).
+enum float kDefaultSmoothingAngleDeg = 40.0f;
+
+/// Surface slots the renderer addresses: a face whose `faceMaterial` is at or
+/// beyond this reads slot 0 (the shader's `surfaceSlotOf`, mirrored on the CPU
+/// by `effectiveSurfaceSlot`). Every GLSL slot site is spliced from it.
+enum uint kSurfaceSlots = 64;
+
+/// The surface slot face `fi` renders with — colour AND smoothing come from
+/// this one slot: `faceMaterial[fi]` (0 past the array), 0 when ≥ `kSurfaceSlots`.
+size_t effectiveSurfaceSlot(const(uint)[] faceMaterial, size_t fi) @safe pure nothrow @nogc {
+    immutable uint mid = fi < faceMaterial.length ? faceMaterial[fi] : 0;
+    return mid < kSurfaceSlots ? mid : 0;
+}
+
+/// ditto
+size_t effectiveSurfaceSlot(const ref Mesh m, size_t fi) @safe pure nothrow @nogc {
+    return effectiveSurfaceSlot(m.faceMaterial, fi);
+}
+
+/// The implicit surface of a slot nobody authored.
+immutable Surface kImplicitSurface = Surface.init;
+
+/// The surface slot `slot` reads: `surfaces[slot]`, or `Surface.init` past the table.
+ref const(Surface) surfaceOfSlot(const(Surface)[] surfaces, size_t slot) @safe pure nothrow @nogc {
+    return slot < surfaces.length ? surfaces[slot] : kImplicitSurface;
+}
+
+/// ditto
+ref const(Surface) surfaceOfSlot(const ref Mesh m, size_t slot) @safe pure nothrow @nogc {
+    return surfaceOfSlot(m.surfaces, slot);
 }
 
 /// Domain a `MeshMap` channel is attached to — which element array its

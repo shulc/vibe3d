@@ -223,6 +223,10 @@ private Lwo2Surface toLwoSurface(ref const Surface s)
     ls.specular   = s.specularAmount;
     ls.glossiness = s.glossiness;
     ls.opacity    = s.opacity;
+    // SMAN always written (captured export law): the angle in radians when
+    // smoothing is on, 0 when off (which a reader imports as off).
+    import std.math : PI;
+    ls.smoothingAngle = s.smoothing ? cast(float)(s.smoothingAngleDeg * PI / 180.0) : 0.0f;
     return ls;
 }
 

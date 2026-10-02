@@ -204,6 +204,21 @@ unittest { // the prepared-upload helpers carry the smooth stream's inputs
         assert(empty.indexOf(stmt) >= 0, "census: isDefaultEmptyGpuMesh no longer requires `" ~ stmt ~ "`");
 }
 
+unittest { // the smoothing policy (S1e) travels, moves, empties and resets with the adjacency
+    // No pixel can see a policy that failed to move or reset (the self-heal
+    // rebuild repaints it); this census IS the witness. One assert per helper.
+    immutable code = codeOf("mesh_gpu.d");
+    immutable string[4] heads = ["private GpuMesh cloneUploadState(",
+        "private void installUploadState(", "private bool isDefaultEmptyGpuMesh(",
+        "private GpuMeshNames takeGpuMeshNames("];
+    foreach (h; heads) {
+        immutable b = bodyAt(code, h);
+        assert(b.length > 200, "census: the helper body `" ~ h ~ "` vanished");   // floor
+        assert(countOccurrences(b, "smoothPolicy") >= 1,
+            "census: `" ~ h ~ "` no longer mentions smoothPolicy — the smoothing policy is dropped there");
+    }
+}
+
 unittest { // the selected-vertex path reads the DRAWN positions only (task 1069 law)
     // Positive control [E5]: the needle finds the pre-S1a edge walk.
     assert(hits("Vec3 a = mesh.vertices[edge[0]], b = mesh.vertices[edge[1]];", baseVertRe) == 2,

@@ -124,7 +124,7 @@ void part(const aiScene *s, const aiNode *node, const aiMesh *mesh,
     u32(mesh->mMaterialIndex < surfaces ? mesh->mMaterialIndex : 0);
   for (unsigned i = 0; i < surfaces; ++i) {
     std::string name = "Default";
-    aiColor4D color(.7f, .7f, .7f, 1);
+    aiColor4D color(.6f, .6f, .6f, 1);
     if (s->mNumMaterials) {
       aiString value;
       if (aiGetMaterialString(s->mMaterials[i], AI_MATKEY_NAME, &value) ==
@@ -137,9 +137,11 @@ void part(const aiScene *s, const aiNode *node, const aiMesh *mesh,
     f32(color.r);
     f32(color.g);
     f32(color.b);
-    f32(1);
-    f32(0);
-    f32(.4f);
+    // vibe3d's default material (`mesh.Surface.init`); the native importer's
+    // shininess/specular mapping is not ported here (declared divergence).
+    f32(.8f);
+    f32(.04f);
+    f32(.6f);
     f32(color.a);
   }
 }

@@ -549,7 +549,7 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
     {
         ImportedSurface[string] surfByName;
         foreach (sb; surfBodies) {
-            ImportedSurface s;
+            ImportedSurface s = lwoSurfaceDefaults();
             s.name = sb.name;
             parseSurfBody(sb.body, s);
             surfByName[sb.name] = s;
@@ -559,6 +559,8 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
             if (auto sptr = tname in surfByName) {
                 globalSurfaces[i] = *sptr;
             } else {
+                // A tag with no SURF chunk is a FRESH default material —
+                // smoothing on (captured C8b (iii)), unlike an empty SURF.
                 ImportedSurface s;
                 s.name = tname;
                 globalSurfaces[i] = s;
@@ -757,9 +759,19 @@ struct SurfBody {
     immutable(ubyte)[] body;
 }
 
+/// The record a SURF chunk starts from: the default material with smoothing
+/// OFF — an absent SMAN reads as no smoothing (captured, material-defaults
+/// capture Q1 import table); every other absent sub-chunk keeps its default.
+ImportedSurface lwoSurfaceDefaults() @safe pure nothrow @nogc {
+    ImportedSurface s;
+    s.smoothing = false;
+    return s;
+}
+
 /// Parse a SURF sub-chunk stream into an ImportedSurface. Recognised
-/// sub-chunks: COLR (RGB), DIFF, SPEC, GLOS, TRAN (inverted into opacity).
-/// Each value-bearing sub-chunk has a trailing VX envelope reference we ignore.
+/// sub-chunks: COLR (RGB), DIFF, SPEC, GLOS, TRAN (inverted into opacity),
+/// SMAN (max smoothing angle, radians). Each value-bearing sub-chunk may have a
+/// trailing VX envelope reference we ignore.
 void parseSurfBody(const ubyte[] body, ref ImportedSurface surf) {
     size_t p = 0;
     while (p + 6 <= body.length) {
@@ -783,6 +795,13 @@ void parseSurfBody(const ubyte[] body, ref ImportedSurface surf) {
         } else if (tag == "TRAN" && end - p >= 4) {
             // LWO2 TRAN is transparency (0 = opaque); our model stores opacity.
             surf.opacity = 1.0f - readF32(body, p);
+        } else if (tag == "SMAN" && end - p >= 4) {
+            // Captured C8b (i)/(iv): SMAN > 0 ⇒ on; the angle is stored as
+            // read ALWAYS (SMAN 0 ⇒ off @ 0°; SMAN > π stored unclamped).
+            import std.math : PI;
+            immutable float a = readF32(body, p);
+            surf.smoothing = a > 0;
+            surf.smoothingAngleDeg = cast(float)(a * 180.0 / PI);
         }
         p = end;
         if (p & 1) p++;

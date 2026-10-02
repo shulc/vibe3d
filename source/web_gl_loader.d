@@ -2,7 +2,7 @@ module web_gl_loader;
 
 import gl = bindbc.opengl;
 
-/// WebGL2 / ES 3 entry points called by the browser closure. The three
+/// WebGL2 / ES 3 entry points called by the browser closure. The
 /// desktop-only calls below are populated when a driver exposes them, but are
 /// deliberately outside the readiness threshold: later wave-16 slices remove
 /// their browser paths (point size, OSD TBO fan-out, diagnostic buffer reads).
@@ -41,7 +41,7 @@ enum string[] requiredWebGlSymbols = [
 enum string[] optionalDesktopGlSymbols = [
     "glBeginQuery", "glEndQuery", "glGenQueries", "glGetBufferSubData",
     "glGetQueryObjectiv", "glGetQueryObjectui64v", "glGetQueryiv",
-    "glPointSize", "glTexBuffer",
+    "glPointSize", "glTexBuffer", "glUniform1fv",
 ];
 
 enum string[] webClosureGlSymbols =

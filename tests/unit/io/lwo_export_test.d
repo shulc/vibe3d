@@ -93,3 +93,69 @@ unittest { // the pin: a conformant most-recent-POLS reader gets every tag right
                       k, kMixedSubpatch[k] ? "PTCH" : "FACE", want, got));
     }
 }
+
+// ---------------------------------------------------------------------------
+// S1e: the SURF sub-chunks of an exported surface, against the reference's own
+// fresh-cube export (material defaults capture Q1): COLR 0.6, DIFF 0.8,
+// SPEC 0.04, GLOS 0.6, SMAN 0.698132 — and SMAN 0 for smoothing off.
+// ---------------------------------------------------------------------------
+
+/// Sub-chunk id → first F4 of its body, for the first SURF chunk of `b`.
+private float[string] surfScalars(const(ubyte)[] b)
+{
+    static uint be32(const(ubyte)[] s) { return (s[0] << 24) | (s[1] << 16) | (s[2] << 8) | s[3]; }
+    float[string] out_;
+    size_t p = 12;
+    while (p + 8 <= b.length) {
+        const string id = cast(string) b[p .. p + 4].idup;
+        const uint sz = be32(b[p + 4 .. p + 8]);
+        if (id == "SURF") {
+            const(ubyte)[] d = b[p + 8 .. p + 8 + sz];
+            size_t q;
+            foreach (_; 0 .. 2) { while (d[q] != 0) ++q; ++q; if (q & 1) ++q; }   // name, source
+            while (q + 6 <= d.length) {
+                const string sid = cast(string) d[q .. q + 4].idup;
+                const uint ssz = (d[q + 4] << 8) | d[q + 5];
+                if (ssz >= 4) {
+                    uint u = be32(d[q + 6 .. q + 10]);
+                    out_[sid] = *cast(float*) &u;
+                }
+                q += 6 + ssz + (ssz & 1);
+            }
+            return out_;
+        }
+        p += 8 + sz + (sz & 1);
+    }
+    assert(false, "no SURF chunk");
+}
+
+unittest { // a default surface exports the reference's fresh-cube values, SMAN included
+    import std.math : abs;
+    import mesh : Surface;
+    Mesh m = kindTris([false], [0]);
+    m.surfaces = [Surface()];
+    const path = scratchPath("s1e_default");
+    scope (exit) if (exists(path)) remove(path);
+    exportLwo(m, path);
+    auto s = surfScalars(cast(const(ubyte)[]) read(path));
+    assert("SMAN" in s, "export: no SMAN sub-chunk for a smoothing surface");
+    assert(abs(s["SMAN"] - 0.6981317f) <= 1e-6, format("export: SMAN %s, expected 0.698132", s["SMAN"]));
+    assert(s["COLR"] == 0.6f && s["DIFF"] == 0.8f && s["SPEC"] == 0.04f && s["GLOS"] == 0.6f,
+        format("export: COLR %s DIFF %s SPEC %s GLOS %s, expected 0.6 / 0.8 / 0.04 / 0.6",
+               s["COLR"], s["DIFF"], s["SPEC"], s["GLOS"]));
+}
+
+unittest { // smoothing off exports SMAN 0 (always written)
+    import mesh : Surface;
+    Mesh m = kindTris([false], [0]);
+    Surface off;
+    off.smoothing = false;
+    off.smoothingAngleDeg = 25;
+    m.surfaces = [off];
+    const path = scratchPath("s1e_off");
+    scope (exit) if (exists(path)) remove(path);
+    exportLwo(m, path);
+    auto s = surfScalars(cast(const(ubyte)[]) read(path));
+    assert("SMAN" in s, "export: smoothing off wrote no SMAN — the export law writes SMAN 0");
+    assert(s["SMAN"] == 0, format("export: smoothing off wrote SMAN %s, expected 0", s["SMAN"]));
+}

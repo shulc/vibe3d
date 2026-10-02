@@ -73,3 +73,51 @@ unittest {
                "PTAG SURF must bind per kind: mixed FACE+PTCH layer tags");
     }
 }
+
+// ---------------------------------------------------------------------------
+// S1e: SURF smoothing and the absent-sub-chunk defaults (captured: material
+// defaults capture Q1 import table; C8b (i)–(iv)).
+// ---------------------------------------------------------------------------
+
+/// The first surface of the image `img`, through the public importer.
+private ImportedSurface importFirstSurface(ubyte[] img, string stem) {
+    import std.file : tempDir, write, remove, exists;
+    import std.path : buildPath;
+    import std.process : thisProcessID;
+    const string path = buildPath(tempDir, format("vibe3d_s1e_%s_%d.lwo", stem, thisProcessID));
+    scope (exit) if (exists(path)) remove(path);
+    write(path, img);
+    ImportedScene scene;
+    assert(sceneFromLwo(path, scene), "S1e: the hand-built LWO did not import: " ~ stem);
+    assert(scene.parts.length == 1 && scene.parts[0].surfaces.length >= 1, "S1e: no surface imported: " ~ stem);
+    return scene.parts[0].surfaces[0];
+}
+
+unittest { // SMAN rows: on @ angle, absent → OFF, 0 → OFF @ 0°, 3.5 stored unclamped
+    import std.math : abs;
+    import tests.unit.io.lwo_ptag_fixture : lwoImage, LwoSurf, LwoSub, lwoF4;
+    auto on = importFirstSurface(lwoImage(["S"], [LwoSurf("S", [LwoSub("SMAN", lwoF4(0.6981317f))])]), "on");
+    assert(on.smoothing && abs(on.smoothingAngleDeg - 40.0f) <= 1e-4,
+        format("SMAN 0.6981317: smoothing %s angle %s, expected on @ 40°", on.smoothing, on.smoothingAngleDeg));
+    auto absent = importFirstSurface(lwoImage(["S"], [LwoSurf("S", [LwoSub("DIFF", lwoF4(0.5f))])]), "absent");
+    assert(!absent.smoothing, "SMAN absent: smoothing is on — the absent-SMAN law imports OFF");
+    auto zero = importFirstSurface(lwoImage(["S"], [LwoSurf("S", [LwoSub("SMAN", lwoF4(0))])]), "zero");
+    assert(!zero.smoothing, "SMAN 0: smoothing is on — C8b (i) is the SMAN > 0 rule");
+    assert(zero.smoothingAngleDeg == 0, format("SMAN 0: angle %s, expected exactly 0 (C8b (i))", zero.smoothingAngleDeg));
+    auto big = importFirstSurface(lwoImage(["S"], [LwoSurf("S", [LwoSub("SMAN", lwoF4(3.5f))])]), "big");
+    assert(big.smoothing && abs(big.smoothingAngleDeg - 200.535f) <= 1e-3,
+        format("SMAN 3.5: smoothing %s angle %s, expected on @ 200.535° unclamped (C8b (iv))",
+               big.smoothing, big.smoothingAngleDeg));
+}
+
+unittest { // absent COLR / GLOS / SPEC / DIFF read the default material; a tag with no SURF is fresh
+    import tests.unit.io.lwo_ptag_fixture : lwoImage, LwoSurf, LwoSub, lwoF4;
+    auto bare = importFirstSurface(lwoImage(["S"], [LwoSurf("S", [LwoSub("TRAN", lwoF4(0))])]), "bare");
+    assert(bare.baseColor == Vec3(0.6f, 0.6f, 0.6f), format("no COLR: base %s, expected 0.6 (C8b (ii))", bare.baseColor));
+    assert(bare.glossiness == 0.6f && bare.specular == 0.04f && bare.diffuse == 0.8f,
+        format("no GLOS/SPEC/DIFF: %s / %s / %s, expected 0.6 / 0.04 / 0.8",
+               bare.glossiness, bare.specular, bare.diffuse));
+    auto fresh = importFirstSurface(lwoImage(["S"], []), "nosurf");
+    assert(fresh == ImportedSurface("S"),
+        format("a TAGS name with no SURF: %s, expected a fresh ImportedSurface (on @ 40°, C8b (iii))", fresh));
+}

@@ -18,14 +18,41 @@ import math;
 import document : Document, Layer;
 
 /// A material as recovered from an interchange file, before mapping onto the
-/// vibe3d `Surface`. Defaults mirror `mesh.Surface`'s defaults.
+/// vibe3d `Surface`. Every default IS the `Surface.init` field of the same
+/// meaning (the default material); an importer's own default for an absent
+/// key is applied by that importer (e.g. `lwo_import.lwoSurfaceDefaults`).
 struct ImportedSurface {
-    string name        = "Default";
-    Vec3   baseColor   = Vec3(0.7f, 0.7f, 0.7f);
-    float  diffuse     = 1.0f;
-    float  specular    = 0.0f;
-    float  glossiness  = 0.4f;
-    float  opacity     = 1.0f;
+    string name              = Surface.init.name;
+    Vec3   baseColor         = Surface.init.baseColor;
+    float  diffuse           = Surface.init.diffuseAmount;
+    float  specular          = Surface.init.specularAmount;
+    float  glossiness        = Surface.init.glossiness;
+    float  opacity           = Surface.init.opacity;
+    bool   smoothing         = Surface.init.smoothing;
+    float  smoothingAngleDeg = Surface.init.smoothingAngleDeg;   // degrees
+}
+
+/// Roughness from a Phong shininess `ns` (OBJ/MTL `Ns`, assimp
+/// `AI_MATKEY_SHININESS`), the captured law (C8f, exact at 5 points):
+/// `1 − (log2 ns − 2) / 10`, clamped to [0, 1]; `!(ns > 0)` → 1.0. The
+/// reference stores Ns < 4 unclamped (1.1 at Ns 2) — a declared divergence.
+float roughnessFromShininess(float ns) @safe pure nothrow @nogc {
+    import std.math : log2;
+    if (!(ns > 0)) return 1.0f;                 // Ns ≤ 0 / NaN → 1.0 (C8f: Ns 0 reads 1.0)
+    immutable float r = 1.0f - (cast(float)log2(ns) - 2.0f) / 10.0f;
+    return r < 0 ? 0.0f : (r > 1 ? 1.0f : r);   // +∞ → 0; Ns < 4 → 1.0
+}
+
+/// The assimp-family material mapping (captured C8f "K" row), pure so it is
+/// testable without assimp: diffuse amount 1.0; iff the specular colour key is
+/// present, specular = mean(Ks) (a WHITE specular colour — no colour field);
+/// iff the shininess key is present, glossiness = 1 − rough(Ns). An absent key
+/// keeps the field's `Surface.init` default.
+void applyAssimpMaterialKeys(ref ImportedSurface s, bool hasKs, Vec3 ks,
+                             bool hasNs, float ns) @safe pure nothrow @nogc {
+    s.diffuse = 1.0f;
+    if (hasKs) s.specular = (ks.x + ks.y + ks.z) / 3.0f;
+    if (hasNs) s.glossiness = 1.0f - roughnessFromShininess(ns);
 }
 
 /// One imported morph channel, SPARSE and point-domain (task 1069).
@@ -90,6 +117,8 @@ private Surface toSurface(const ref ImportedSurface s) {
     o.specularAmount = s.specular;
     o.glossiness     = s.glossiness;
     o.opacity        = s.opacity;
+    o.smoothing         = s.smoothing;
+    o.smoothingAngleDeg = s.smoothingAngleDeg;
     return o;
 }
 

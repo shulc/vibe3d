@@ -19,7 +19,9 @@ import math : Vec3;
 import mesh : Mesh, SubpatchTrace, edgeKey, makeCube, Surface;
 import mesh_dirty : foldSubpatchKeyMember;
 import mesh_gpu : kFaceStride;
-import vertex_normals : FaceAdjacency, adjacencyEntries, buildFaceAdjacency, smoothingCosine;
+import vertex_normals : FaceAdjacency, SmoothPolicy, adjacencyEntries, buildFaceAdjacency,
+    buildSmoothPolicy;
+import mesh : kSurfaceSlots;
 import osd.c;
 import perf_probe : g_perf, Cat, g_fc, DrawPass;
 
@@ -1125,10 +1127,14 @@ Mesh catmullClarkOsd(ref const Mesh cage, const bool[] faceMask = null,
 //   u_vertFaceOffsets[v..v+1]    → limit-vert → preview-face CSR
 //   u_vertFaces[k]                 (`vertex_normals.buildFaceAdjacency`)
 //   u_limitPositions[limit]      → xyz from OSD GPU eval
+//   u_faceSlot[fid]              → the face's effective surface slot
+//   u_slotCos[slot]              → that slot's smoothing threshold
+//                                  (`vertex_normals.SmoothPolicy`)
 //
 // `vSmooth` is the S1a smoothing rule (`vertex_normals.smoothCorner`, model
 // M3, viewport shading S1c) in its second producer: the own face's
-// unit normal plus every other incident face's within `u_cosSmooth`, the
+// unit normal plus every other incident face's within the threshold of the
+// LOWER surface slot of the pair (`u_slotCos[min(sf, sg)]`), the
 // first MAX_FANOUT_VALENCE (= `MAX_SMOOTH_VALENCE`) CSR entries, degenerate
 // faces adding nothing, a degenerate own face giving (0,1,0). Witness: the
 // cross-path suite `tests/test_subpatch_smooth_fanout.d` (face corners + pixels).
@@ -1148,7 +1154,8 @@ private enum string FAN_OUT_VERT_SRC = () {
     uniform  isamplerBuffer u_vertFaceOffsets;
     uniform  isamplerBuffer u_vertFaces;
     uniform  samplerBuffer  u_limitPositions; // R32F: 3 floats per vert
-    uniform  float          u_cosSmooth;
+    uniform usamplerBuffer  u_faceSlot;       // R32UI: effective slot per face
+    uniform  float          u_slotCos[%SLOTS%];
     const int MAX_FANOUT_VALENCE = %MAX_VALENCE%;
     out vec3 vPos;
     out vec3 vNorm;
@@ -1181,20 +1188,23 @@ private enum string FAN_OUT_VERT_SRC = () {
         vNorm    = deg ? vec3(0, 1, 0) : nf;
 
         vec3 sum = nf;
+        uint sf = texelFetch(u_faceSlot, fid).r;
         int lo = texelFetch(u_vertFaceOffsets, limitIdx).r;
         int hi = min(texelFetch(u_vertFaceOffsets, limitIdx + 1).r,
                      lo + MAX_FANOUT_VALENCE);
         for (int k = lo; k < hi; ++k) {
             int g = texelFetch(u_vertFaces, k).r;
             if (g == fid) continue;
+            uint sg = texelFetch(u_faceSlot, g).r;
             vec3 ng = faceUnit(g);
-            if (dot(ng, nf) < u_cosSmooth) continue;
+            if (dot(ng, nf) < u_slotCos[min(sf, sg)]) continue;
             sum += ng;
         }
         float sl = length(sum);
         vSmooth  = deg ? vec3(0, 1, 0) : (sl > 1e-6 ? sum / sl : nf);
     }
-}.replace("%MAX_VALENCE%", MAX_SMOOTH_VALENCE.to!string);
+}.replace("%MAX_VALENCE%", MAX_SMOOTH_VALENCE.to!string)
+ .replace("%SLOTS%", kSurfaceSlots.to!string);
 }();
 // Empty fragment — rasterisation is disabled via GL_RASTERIZER_DISCARD;
 // fragment shader exists only so the program links.
@@ -1376,6 +1386,8 @@ struct OsdAccel {
     private GLuint  vertFaceOffsetsTex;
     private GLuint  vertFacesVbo;          // R32I  CSR face list
     private GLuint  vertFacesTex;
+    private GLuint  faceSlotVbo;           // R32UI per-face effective surface slot
+    private GLuint  faceSlotTex;
     private GLuint  limitTex;              // R32F TBO over limitGlVbo (3 floats/vert)
     private GLuint  fanOutProgram;
     private GLint   locCornerToLimit;
@@ -1384,7 +1396,10 @@ struct OsdAccel {
     private GLint   locLimitPositions;
     private GLint   locVertFaceOffsets;
     private GLint   locVertFaces;
-    private GLint   locCosSmooth;
+    private GLint   locFaceSlot;
+    private GLint   locSlotCos;
+    private float[kSurfaceSlots] fanSlotCos = 0;   // the policy's per-slot cosines
+    private SmoothPolicy scratchPolicy;
     private int     faceVertCount;         // glDrawArrays count for TF
 
     // Phase 3c — edge VBO + vert VBO fan-out (single-vec3 capture).
@@ -1558,6 +1573,8 @@ struct OsdAccel {
         if (vertFaceOffsetsTex != 0)     { glDeleteTextures(1, &vertFaceOffsetsTex); vertFaceOffsetsTex = 0; }
         if (vertFacesVbo != 0)           { glDeleteBuffers (1, &vertFacesVbo); vertFacesVbo = 0; }
         if (vertFacesTex != 0)           { glDeleteTextures(1, &vertFacesTex); vertFacesTex = 0; }
+        if (faceSlotVbo != 0)            { glDeleteBuffers (1, &faceSlotVbo); faceSlotVbo = 0; }
+        if (faceSlotTex != 0)            { glDeleteTextures(1, &faceSlotTex); faceSlotTex = 0; }
         if (limitTex != 0)               { glDeleteTextures(1, &limitTex); limitTex = 0; }
         if (tfVao != 0)                  { glDeleteVertexArrays(1, &tfVao); tfVao = 0; }
         if (fanOutProgram != 0)          { glDeleteProgram (fanOutProgram); fanOutProgram = 0; }
@@ -1727,7 +1744,8 @@ struct OsdAccel {
         return fanOutProgram != 0 && limitGlVbo != 0
             && cornerToLimitVbo != 0 && cornerToFaceIdVbo != 0
             && faceFirstVertsVbo != 0 && limitTex != 0
-            && vertFaceOffsetsVbo != 0 && vertFacesVbo != 0;
+            && vertFaceOffsetsVbo != 0 && vertFacesVbo != 0
+            && faceSlotVbo != 0;
     }
 
     /// Phase 3c: GPU fan-out for the edge / vert VBOs is available.
@@ -2405,6 +2423,13 @@ struct OsdAccel {
                 uploadTbo(vertFacesVbo,       vertFacesTex,
                           scratchLimitAdj.faces[0 .. adjacencyEntries(
                               scratchLimitAdj, nAdjVerts)], GL_R32I);
+                // The smoothing policy: the SAME builder the CPU passes use,
+                // over the preview mesh's faces and surfaces.
+                buildSmoothPolicy(pmesh.faceMaterial, pmesh.faces.length,
+                                  pmesh.surfaces, scratchPolicy);
+                uploadTbo(faceSlotVbo,        faceSlotTex,
+                          scratchPolicy.faceSlot[0 .. limitFaces], GL_R32UI);
+                fanSlotCos = scratchPolicy.slotCos;
 
                 // limitGlVbo already exists (Phase 3a allocation).
                 // Wrap it in a TBO view so the shader can texelFetch.
@@ -2440,8 +2465,10 @@ struct OsdAccel {
                         fanOutProgram, "u_vertFaceOffsets");
                     locVertFaces       = glGetUniformLocation(
                         fanOutProgram, "u_vertFaces");
-                    locCosSmooth       = glGetUniformLocation(
-                        fanOutProgram, "u_cosSmooth");
+                    locFaceSlot        = glGetUniformLocation(
+                        fanOutProgram, "u_faceSlot");
+                    locSlotCos         = glGetUniformLocation(
+                        fanOutProgram, "u_slotCos");
                 }
             }
 
@@ -2686,7 +2713,7 @@ struct OsdAccel {
         // opengl's GL_33 surface anyway.
         GLint prevProgram, prevVao, prevArrayBuf;
         GLint prevActiveTex;
-        GLint prevTex0, prevTex1, prevTex2, prevTex3, prevTex4, prevTex5;
+        GLint prevTex0, prevTex1, prevTex2, prevTex3, prevTex4, prevTex5, prevTex6;
         glGetIntegerv(GL_CURRENT_PROGRAM,             &prevProgram);
         glGetIntegerv(GL_VERTEX_ARRAY_BINDING,        &prevVao);
         glGetIntegerv(GL_ARRAY_BUFFER_BINDING,        &prevArrayBuf);
@@ -2694,7 +2721,7 @@ struct OsdAccel {
 
         glUseProgram(fanOutProgram);
 
-        // Bind the six TBO views to texture units 0..5 and set the
+        // Bind the seven TBO views to texture units 0..6 and set the
         // sampler uniforms.
         glActiveTexture(GL_TEXTURE0);
         glGetIntegerv(GL_TEXTURE_BINDING_BUFFER, &prevTex0);
@@ -2725,7 +2752,12 @@ struct OsdAccel {
         glGetIntegerv(GL_TEXTURE_BINDING_BUFFER, &prevTex5);
         glBindTexture(GL_TEXTURE_BUFFER, vertFacesTex);
         glUniform1i(locVertFaces, 5);
-        glUniform1f(locCosSmooth, smoothingCosine());
+
+        glActiveTexture(GL_TEXTURE6);
+        glGetIntegerv(GL_TEXTURE_BINDING_BUFFER, &prevTex6);
+        glBindTexture(GL_TEXTURE_BUFFER, faceSlotTex);
+        glUniform1i(locFaceSlot, 6);
+        glUniform1fv(locSlotCos, kSurfaceSlots, fanSlotCos.ptr);
 
         // No vertex attributes are read — TF dispatch is driven by
         // gl_VertexID. Bind a dedicated empty VAO: the caller's VAO
@@ -2747,7 +2779,9 @@ struct OsdAccel {
         glDisable(GL_RASTERIZER_DISCARD);
         glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER, 0, 0);
 
-        // Restore GL state.
+        // Restore GL state (reverse order).
+        glActiveTexture(GL_TEXTURE6);
+        glBindTexture(GL_TEXTURE_BUFFER, cast(GLuint)prevTex6);
         glActiveTexture(GL_TEXTURE5);
         glBindTexture(GL_TEXTURE_BUFFER, cast(GLuint)prevTex5);
         glActiveTexture(GL_TEXTURE4);

@@ -362,6 +362,10 @@ private enum SurfaceField[] kSurfaceFields = [
     SurfaceField("specular",   "specularAmount"),
     SurfaceField("glossiness", "glossiness"),
     SurfaceField("opacity",    "opacity"),
+    // Smoothing (additive optional keys; an absent key reads `Surface.init`).
+    // The angle is in DEGREES, as the struct stores it.
+    SurfaceField("smoothing",      "smoothing"),
+    SurfaceField("smoothingAngle", "smoothingAngleDeg"),
     // Not carried by the format — decided, not deferred (task 0762).
     // `compiledFromTreeId` is a forward-compat hook for the shader tree (see
     // mesh.d): it is only meaningful paired with the ShaderTree graph it
@@ -559,7 +563,7 @@ JSONValue meshToJson(ref const Mesh mesh)
         static foreach (k; kSurfaceFields) {{
             static if (k.json.length) {
                 alias F = typeof(__traits(getMember, Surface, k.field));
-                static if (is(F == string) || is(F == float))
+                static if (is(F == string) || is(F == float) || is(F == bool))
                     sj[k.json] = JSONValue(__traits(getMember, s, k.field));
                 else static if (is(F == Vec3)) {
                     const c = __traits(getMember, s, k.field);
@@ -1842,6 +1846,12 @@ private bool meshFromJson(JSONValue m, ref Mesh mesh)
                                              jsonFloat(kp.array[2]));
                             } else static if (is(F == float)) {
                                 __traits(getMember, s, k.field) = jsonFloat(*kp);
+                            } else static if (is(F == bool)) {
+                                // JSON booleans only; any other type keeps the default.
+                                if (kp.type == JSONType.true_)
+                                    __traits(getMember, s, k.field) = true;
+                                else if (kp.type == JSONType.false_)
+                                    __traits(getMember, s, k.field) = false;
                             } else
                                 static assert(false, "no .v3d surface codec for "
                                                    ~ F.stringof);

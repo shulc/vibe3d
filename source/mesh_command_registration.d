@@ -15,6 +15,7 @@ import commands.mesh.merge         : MeshMergeFaces;
 import commands.mesh.subpatch_toggle;
 import commands.mesh.hide;
 import commands.mesh.set_material;
+import commands.mesh.surface_attr : MeshSurfaceAttr;
 import commands.mesh.set_part;
 import commands.tool.headless : ToolHeadlessCommand;
 import commands.mesh.split_edge;
@@ -191,6 +192,8 @@ void registerMeshCommands(ref Registry reg, LiveSessionRole owner,
         new MeshUnhideAll(&owner.activeMesh(), live.view(), live.mode()));
     reg.registerCommand("mesh.setMaterial", () => cast(Command)
         new MeshSetMaterial(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.surfaceAttr", () => cast(Command)
+        new MeshSurfaceAttr(&owner.activeMesh(), live.view(), live.mode()));
     reg.registerCommand("mesh.setPart", () => cast(Command)
         new MeshSetPart(&owner.activeMesh(), live.view(), live.mode()));
     reg.registerCommand("mesh.split_edge", () => cast(Command)

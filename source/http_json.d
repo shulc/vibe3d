@@ -245,19 +245,21 @@ string meshToJsonDetailed(ref const(Mesh) m) {
         string name = s.name;
         // Component numbering, fixed so the `"nonFinite"` report is stable:
         // 0/1/2 = baseColor x/y/z, 3 = diffuseAmount, 4 = specularAmount,
-        // 5 = glossiness, 6 = opacity.
-        immutable double[7] sv = [s.baseColor.x, s.baseColor.y, s.baseColor.z,
+        // 5 = glossiness, 6 = opacity, 7 = smoothingAngleDeg.
+        immutable double[8] sv = [s.baseColor.x, s.baseColor.y, s.baseColor.z,
                                   s.diffuseAmount, s.specularAmount,
-                                  s.glossiness, s.opacity];
+                                  s.glossiness, s.opacity, s.smoothingAngleDeg];
         foreach (ci, sc; sv)
             if (!isFinite(sc)) noteNonFinite("surfaces", i, ci, sc);
         json ~= format(
             "{\"name\":\"%s\",\"baseColor\":[%s,%s,%s],\"diffuseAmount\":%s," ~
-            "\"specularAmount\":%s,\"glossiness\":%s,\"opacity\":%s}",
+            "\"specularAmount\":%s,\"glossiness\":%s,\"opacity\":%s," ~
+            "\"smoothing\":%s,\"smoothingAngle\":%s}",
             jsonEsc(name),
             jsonNum(sv[0], "%f"), jsonNum(sv[1], "%f"), jsonNum(sv[2], "%f"),
             jsonNum(sv[3], "%f"), jsonNum(sv[4], "%f"), jsonNum(sv[5], "%f"),
-            jsonNum(sv[6], "%f"));
+            jsonNum(sv[6], "%f"), s.smoothing ? "true" : "false",
+            jsonNum(sv[7], "%f"));
     }
     json ~= "], ";
     // PADDING RULE (was the caller's `matCopy`): one entry per FACE, 0 where
@@ -529,7 +531,7 @@ string meshPlanesJson(ref const(Mesh) m, in PlaneDumpMeta meta = PlaneDumpMeta.i
     json ~= "\"faceMaterial\": " ~ uintArray(m.faceMaterial) ~ ", ";
     json ~= "\"facePart\": "     ~ uintArray(m.facePart)     ~ ", ";
     json ~= "\"surfaces\": [";
-    static assert(Surface.tupleof.length == 7,
+    static assert(Surface.tupleof.length == 9,
         "a new Surface field must be emitted by meshPlanesJson too, not only "
         ~ "charged for in MeshSnapshot.byteSize()");
     foreach (i, ref s; m.surfaces) {
@@ -537,7 +539,8 @@ string meshPlanesJson(ref const(Mesh) m, in PlaneDumpMeta meta = PlaneDumpMeta.i
         string name = s.name;
         json ~= format("{\"name\": \"%s\", \"baseColor\": [%s, %s, %s], "
                      ~ "\"diffuseAmount\": %s, \"specularAmount\": %s, "
-                     ~ "\"glossiness\": %s, \"opacity\": %s}",
+                     ~ "\"glossiness\": %s, \"opacity\": %s, "
+                     ~ "\"smoothing\": %s, \"smoothingAngle\": %s}",
                        jsonEsc(name),
                        jsonNum(cast(double)s.baseColor.x, "%.9g"),
                        jsonNum(cast(double)s.baseColor.y, "%.9g"),
@@ -545,7 +548,9 @@ string meshPlanesJson(ref const(Mesh) m, in PlaneDumpMeta meta = PlaneDumpMeta.i
                        jsonNum(cast(double)s.diffuseAmount,  "%.9g"),
                        jsonNum(cast(double)s.specularAmount, "%.9g"),
                        jsonNum(cast(double)s.glossiness,     "%.9g"),
-                       jsonNum(cast(double)s.opacity,        "%.9g"));
+                       jsonNum(cast(double)s.opacity,        "%.9g"),
+                       s.smoothing ? "true" : "false",
+                       jsonNum(cast(double)s.smoothingAngleDeg, "%.9g"));
     }
     json ~= "], ";
 

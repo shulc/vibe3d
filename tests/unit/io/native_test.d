@@ -478,3 +478,39 @@ unittest { // a POINTS-ONLY mesh opens at all
     assert(lm.vertices[0].x == 1.0f && lm.vertices[0].z == 0.5f,
         "…at the join point it was left at");
 }
+
+// S1e: the two smoothing keys round-trip; absent keys read Surface.init (an
+// old file keeps today's global smoothing); the bool key takes JSON booleans
+// only.
+unittest {
+    import std.random : uniform;
+    import mesh : makeCube;
+    auto p = buildPath(tempDir(), format("vibe3d_s1e_v3d_%d.v3d", uniform(0, int.max)));
+    scope(exit) if (exists(p)) remove(p);
+    Mesh m = makeCube();
+    Surface s;
+    s.smoothing = false;
+    s.smoothingAngleDeg = 25.5f;
+    m.surfaces = [s];
+    writeV3d(m, p);
+    Mesh back;
+    assert(readV3d(p, back), "s1e: reload failed");
+    assert(back.surfaces.length == 1 && !back.surfaces[0].smoothing
+        && back.surfaces[0].smoothingAngleDeg == 25.5f,
+        format("s1e: smoothing false @ 25.5 came back as %s", back.surfaces));
+
+    // Keys absent (an old file) and a NUMBER for the bool key.
+    auto j = parseJSON(readText(p));
+    foreach (ref layer; j["layers"].array) {
+        auto sj = &layer["mesh"]["surfaces"].array[0];
+        sj.object.remove("smoothingAngle");
+        (*sj)["smoothing"] = JSONValue(1);   // a number is not a JSON boolean
+    }
+    write(p, j.toString());
+    Mesh old;
+    assert(readV3d(p, old), "s1e: the edited file did not load");
+    assert(old.surfaces.length == 1 && old.surfaces[0].smoothing == Surface.init.smoothing
+        && old.surfaces[0].smoothingAngleDeg == Surface.init.smoothingAngleDeg,
+        format("s1e: absent angle / numeric bool read %s, expected Surface.init's smoothing on @ 40",
+               old.surfaces));
+}

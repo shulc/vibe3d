@@ -67,6 +67,7 @@ mesh.select | api-only: index-addressed selection door used by automation and fi
 mesh.smooth | api-only: headless counterpart of the configured xfrm.smooth tool
 mesh.smooth_shift | api-only: headless counterpart of the configured mesh.smoothShiftTool
 mesh.strokeExtrude | api-only: headless counterpart of the configured tool.strokeExtrude
+mesh.surfaceAttr | code-ui: Mesh Info Surfaces section dispatches directly
 mesh.symmetrize | no-ui-yet: user-facing symmetry operation has no action
 mesh.tack | no-ui-yet: tack tool and headless command are both absent from configured UI
 mesh.thicken | api-only: headless counterpart of the configured mesh.thickenTool

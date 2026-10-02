@@ -246,7 +246,7 @@ struct MeshSnapshot {
         // Surface[] carries two strings per entry; the array term is the
         // struct bytes, the names are their own heap.
         n += planeBytes(surfaces);
-        static assert(Surface.tupleof.length == 7,
+        static assert(Surface.tupleof.length == 9,
             "Surface gained a field — if it is heap-backed, add it to the loop "
           ~ "below before bumping this count. The FieldNameTuple enumeration in "
           ~ "tests/unit/byte_size_test.d sees `surfaces` as ONE populated field "
