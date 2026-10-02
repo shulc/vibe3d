@@ -1331,6 +1331,12 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                 throw new Exception("env-sample: expected dir=x,y,z or n=x,y,z");
             immutable Vec3 d = Vec3(parts[0].to!float, parts[1].to!float,
                                     parts[2].to!float);
+            {
+                import std.math : isFinite;
+                if (!(isFinite(d.x) && isFinite(d.y) && isFinite(d.z))
+                    || d.x * d.x + d.y * d.y + d.z * d.z < 1e-12f)
+                    throw new Exception("env-sample: the vector must be finite and non-zero");
+            }
             static string v3(in float[3] c) {
                 return format(`[%s,%s,%s]`, jsonNum(c[0], "%.6f"),
                     jsonNum(c[1], "%.6f"), jsonNum(c[2], "%.6f"));

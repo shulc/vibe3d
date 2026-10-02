@@ -672,7 +672,7 @@ unittest {
     import std.traits : EnumMembers;
     static bool litStyleCulls(DisplayStyle s) {
         switch (s) {
-            case DisplayStyle.Shaded, DisplayStyle.Gooch: return true;
+            case DisplayStyle.Shaded, DisplayStyle.Gooch, DisplayStyle.Reflection: return true;
             default: return false;
         }
     }
@@ -709,11 +709,12 @@ unittest {
         ++rows;
         if (p.cullBySurface) ++culled;
     }
-    // Floors: the space is 5 × 5 × 4 × 2 × 2, and it holds both values.
-    assert(rows == 400, format("cullBySurface table: %d rows, expected 400", rows));
+    // Floors: the space is 6 × 6 × 4 × 2 × 2 (S4b appended Reflection), and it holds both values.
+    assert(rows == 576, format("cullBySurface table: %d rows, expected 576", rows));
     assert(culled > 0 && culled < rows, format("cullBySurface table: %d of %d rows cull", culled, rows));
     // The per-style row, through the final switch.
     assert(styleCullsBySurface(DisplayStyle.Shaded) && styleCullsBySurface(DisplayStyle.Gooch)
+        && styleCullsBySurface(DisplayStyle.Reflection)
         && !styleCullsBySurface(DisplayStyle.Solid) && !styleCullsBySurface(DisplayStyle.Weight)
         && !styleCullsBySurface(DisplayStyle.Wireframe), "styleCullsBySurface rows moved");
 }

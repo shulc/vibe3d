@@ -281,9 +281,9 @@ bool testFlowB() {
             format("plan.backdrop is missing \"%s\" — it must be the same "
                    ~ "DrawPlan shape as the active side", field));
     }
-    enforce(nFields == 26, format("B2 checked %s plan fields, expected 26", nFields));
-    enforce(pa.object.length == 26 && pb.object.length == 26,
-        format("plan dump carries %s/%s keys, the list above names 26 — a "
+    enforce(nFields == 27, format("B2 checked %s plan fields, expected 27", nFields));
+    enforce(pa.object.length == 27 && pb.object.length == 27,
+        format("plan dump carries %s/%s keys, the list above names 27 — a "
                ~ "field was added without joining this list",
                pa.object.length, pb.object.length));
     // Mode off, the retopology-mode fields dump their neutral values on both

@@ -416,7 +416,7 @@ private immutable string litFragSrc = litStage(q{
             // lighting (two layers: diffuse × base colour + specular), so no
             // light term (a declared divergence: the asset's contract).
             uint  mi = surfaceSlotOf(vMatId);
-            vec3  N  = normalize(vNormal);
+            vec3  N  = shadingNormal();   // a two-sided back side reflects flipped
             if (u_reflectionKind == 0) {
                 vec4 mp = mat_params[mi];
                 vec3 kd = mix(mat_base[mi].rgb * mp.x, u_color, u_overrideMix);
