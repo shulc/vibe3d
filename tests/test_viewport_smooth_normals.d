@@ -170,11 +170,15 @@ int[] probeR(int cell, int[2][] pts, out bool renders) {
 
 /// The lit program's Material arm at unit world normal `n`, in 0..255 levels:
 /// the view-relative rig (task 9130, `light_rig`) — the normal taken to EYE
-/// space through the live view, `0.8·(0.15 + 0.7·max(N·key,0) +
-/// 0.3·max(N·fill,0))`, default material base 0.8, no specular (the default
-/// surface has none), no gamma. The viewer is at infinity, so the point `p`
-/// does not enter; `eye` must be the live camera's (the view read here).
+/// space through the live view, `Kd·(0.15 + 0.7·max(N·key,0) +
+/// 0.3·max(N·fill,0)) + 0.04·(0.7·blinn_key + 0.3·blinn_fill)` with the
+/// default material (`Surface.init`, S1e: Kd = 0.6 × 0.8, specular 0.04,
+/// glossiness 0.6 → Blinn exponent 128, H = normalize(L + (0,0,1)), gated by
+/// N·L > 0), no gamma. The viewer is at infinity, so the point `p` does not
+/// enter; `eye` must be the live camera's (the view read here).
+enum double kKd = 0.6 * 0.8;
 double litLevel(V3 n, V3 p, V3 eye) {
+    import std.math : pow;
     auto vp = viewportFromCameraMatrices();
     assert(abs(vp.eye.x - eye.x) + abs(vp.eye.y - eye.y) + abs(vp.eye.z - eye.z) < 1e-4,
         "litLevel: the camera moved since the prediction's eye was read");
@@ -183,7 +187,14 @@ double litLevel(V3 n, V3 p, V3 eye) {
                               vp.view[2]*n.x + vp.view[6]*n.y + vp.view[10]*n.z];
     immutable double[3] key = [-0.654509, 0.587785, 0.475528];   // eye space, toward the light
     immutable double nk = ne[0]*key[0] + ne[1]*key[1] + ne[2]*key[2], nf = ne[0];   // fill = +x
-    double c = 0.8 * (0.15 + 0.7 * (nk > 0 ? nk : 0) + 0.3 * (nf > 0 ? nf : 0));
+    double blinn(double[3] L, double nl) {
+        if (nl <= 0) return 0;
+        immutable double hl = sqrt(L[0]*L[0] + L[1]*L[1] + (L[2] + 1)*(L[2] + 1));
+        immutable double d = (ne[0]*L[0] + ne[1]*L[1] + ne[2]*(L[2] + 1)) / hl;
+        return pow(d > 0 ? d : 0, 128.0);
+    }
+    double c = kKd * (0.15 + 0.7 * (nk > 0 ? nk : 0) + 0.3 * (nf > 0 ? nf : 0))
+             + 0.04 * (0.7 * blinn(key, nk) + 0.3 * blinn([1.0, 0, 0], nf));
     if (c > 1) c = 1;
     return 255.0 * c;
 }
@@ -245,7 +256,7 @@ SphereRig sphereRig(void delegate() afterLoad = null, int cell = -1) {
     immutable V3 nu = faceNormal(v, f[up]), nd = faceNormal(v, f[dn]);
     r.smoothLevel = litLevel(unit(V3(nu.x + nd.x, nu.y + nd.y, nu.z + nd.z)), mid, eye);
     // Floor: the smooth level is far from an ambient-only (normal-less) surface.
-    assert(abs(r.smoothLevel - 255.0 * 0.8 * 0.15) >= 10,
+    assert(abs(r.smoothLevel - 255.0 * kKd * 0.15) >= 10,
         format("rig: the smooth level %.2f cannot be told from ambient only", r.smoothLevel));
     // Discrimination floor: the two predictions are far apart.
     assert(r.flatStep - 2 > r.smoothStep + 2 + 6,

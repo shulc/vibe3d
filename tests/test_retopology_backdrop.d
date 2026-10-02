@@ -40,9 +40,10 @@ void main() {}
 
 // ---------------------------------------------------------------------------
 // The light rig's ambient, typed ONCE (source/light_rig.d, task 9130: global
-// ambient 0.15 × Kd, not scaled by the gain). Neither lit arm this rig draws
-// carries a specular term — the Retopology arm has none and the default
-// material's specular amount is 0 — so every relation below is spec-free.
+// ambient 0.15 × Kd, not scaled by the gain). The Retopology arm carries no
+// specular term; the default material's (0.04, exponent 128) is under 1e-8 of
+// a level on this rig's +Z polygons (N·H_key = 0.859, N·fill = 0 gates the
+// fill), so every relation below is spec-free.
 // The gain law is a relation evaluated on our rig.
 // ---------------------------------------------------------------------------
 private enum double kAmbient  = 0.15;
@@ -131,7 +132,7 @@ private JSONValue quadMesh(double[3][] centres, int[] kinds, double half) {
 private struct Rig {
     int[2][3] tilePx;
     int[2]    fgPx;
-    double    base;          // layer 0's material base (grey)
+    double    base;          // layer 0's material Kd = base colour (grey) × diffuse amount
     double[3] eye;
     Viewport  vp;            // the cell's render viewport (window offsets)
 }
@@ -169,15 +170,16 @@ private Rig buildRig() {
         "rig: layer 0 must be a visible background layer: " ~ L.toString);
 
     Rig r;
-    // The base the backdrop's face pass reads: slot 0 of the layer's surfaces,
-    // or the lit program's own 0.8 fallback for an empty list.
+    // The Kd the backdrop's face pass reads: slot 0 of the layer's surfaces,
+    // or the implicit slot (`Surface.init`, the default material: base 0.6 ×
+    // diffuse amount 0.8) for an empty list.
     auto s0 = getJson("/api/model?layer=0")["surfaces"].array;
-    if (s0.length == 0) r.base = 0.8;
+    if (s0.length == 0) r.base = 0.6 * 0.8;
     else {
         auto bc = s0[0]["baseColor"].array;
         assert(num(bc[0]) == num(bc[1]) && num(bc[1]) == num(bc[2]),
             "rig: expected a grey base colour, got " ~ s0[0].toString);
-        r.base = num(bc[0]);
+        r.base = num(bc[0]) * num(s0[0]["diffuseAmount"]);
     }
 
     auto cam = getJson("/api/camera?viewport=0");
@@ -608,7 +610,7 @@ unittest {
 // ---------------------------------------------------------------------------
 private int[3] penPreviewFill(bool modeOn, out double ambientLsb) {
     auto r = buildRig();
-    ambientLsb = kAmbient * 0.8 * 255.0;   // the preview mesh has no surfaces
+    ambientLsb = kAmbient * 0.6 * 0.8 * 255.0;   // the preview mesh has no surfaces: Surface.init's Kd
     if (modeOn) cmd("viewport.retopology", `{"value":"on"}`);
     // A triangle in the empty lower-left region, clear of both layers,
     // counter-clockwise on screen; the probe is its centroid.

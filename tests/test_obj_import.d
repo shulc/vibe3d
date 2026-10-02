@@ -219,3 +219,62 @@ unittest {  // missing .obj => clean error, prior mesh intact
     assert(after["faceCount"].integer == beforeF,
         "prior mesh faceCount changed after a failed load");
 }
+
+// ---------------------------------------------------------------------------
+// S1e — the assimp-family material mapping (captured C8f, "K"): diffuse amount
+// 1.0, base colour = Kd, specular = mean(Ks) (a white specular colour — no
+// colour field; coloured Ks is gap G4), glossiness = 1 − rough(Ns) with
+// rough = 1 − (log2 Ns − 2)/10. assimp fills Ks 0 / Ns 0 for an OBJ without
+// MTL or an MTL without them (its `ObjFile::Material` defaults), so those
+// read specular 0 / glossiness 0 — our pinned output, the reference's look
+// uncaptured (gap G6).
+// ---------------------------------------------------------------------------
+
+/// The first surface after loading `obj` (+ `mtl` when given) from TMPDIR.
+JSONValue firstSurface(string stem, string obj, string mtl) {
+    import std.process : environment, thisProcessID;
+    import std.path : buildPath;
+    immutable dir = environment.get("TMPDIR", "/var/tmp");
+    immutable o = buildPath(dir, format("s1e_%s_%d.obj", stem, thisProcessID()));
+    immutable m = buildPath(dir, format("s1e_%s_%d.mtl", stem, thisProcessID()));
+    scope(exit) { if (exists(o)) remove(o); if (exists(m)) remove(m); }
+    import std.path : baseName;
+    write(o, (mtl.length ? "mtllib " ~ baseName(m) ~ "\nusemtl M\n" : "")
+             ~ "v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nf 1 2 3 4\n");
+    if (mtl.length) write(m, mtl);
+    resetApp();
+    loadOk(o);
+    auto s = model()["surfaces"].array;
+    assert(s.length >= 1, stem ~ ": no surface imported");
+    foreach (x; s) if (x["name"].str == "M") return x;
+    return s[0];
+}
+
+double numOf(JSONValue v) { return v.type == JSONType.integer ? cast(double)v.integer : v.floating; }
+
+unittest {  // (1) a complete MTL: the K row
+    auto s = firstSurface("k", "", "newmtl M\nKd 0.2 0.4 0.8\nKs 0.2 0.5 0.8\nNs 50\nd 1\n");
+    auto bc = s["baseColor"].array;
+    assert(approxEqual(numOf(bc[0]), 0.2) && approxEqual(numOf(bc[1]), 0.4) && approxEqual(numOf(bc[2]), 0.8),
+        "S1e (1): base colour is not Kd: " ~ s.toString);
+    assert(approxEqual(numOf(s["diffuseAmount"]), 1.0), "S1e (1): diffuse amount is not 1.0: " ~ s.toString);
+    assert(approxEqual(numOf(s["specularAmount"]), 0.5),
+        "S1e (1): specular is not mean(Ks) 0.5 (a channel read gives 0.2 or 0.8): " ~ s.toString);
+    assert(approxEqual(numOf(s["glossiness"]), 0.3643856, 1e-5),
+        "S1e (1): glossiness is not 1 - rough(Ns 50) = 0.3643856: " ~ s.toString);
+}
+
+unittest {  // (2) no mtllib: assimp's filled DefaultMaterial (gap G6)
+    auto s = firstSurface("nomtl", "", "");
+    auto bc = s["baseColor"].array;
+    assert(approxEqual(numOf(bc[0]), 0.6) && approxEqual(numOf(s["diffuseAmount"]), 1.0)
+        && approxEqual(numOf(s["specularAmount"]), 0) && approxEqual(numOf(s["glossiness"]), 0),
+        "S1e (2): OBJ without MTL — expected base 0.6, diffuse 1, specular 0, glossiness 0 "
+        ~ "(assimp fills Ks 0 / Ns 0; gap G6): " ~ s.toString);
+}
+
+unittest {  // (3) an MTL with Kd only (gap G6)
+    auto s = firstSurface("kdonly", "", "newmtl M\nKd 0.3 0.3 0.3\n");
+    assert(approxEqual(numOf(s["specularAmount"]), 0) && approxEqual(numOf(s["glossiness"]), 0),
+        "S1e (3): Kd-only MTL — expected specular 0, glossiness 0 (gap G6): " ~ s.toString);
+}

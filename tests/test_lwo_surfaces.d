@@ -339,3 +339,53 @@ unittest {  // LWO writer emits TAGS + SURF + PTAG that the loader reads back
                    i, v.integer, postFaceMat[i].integer));
     }
 }
+
+// ---------------------------------------------------------------------------
+// S1e — SMAN (captured import/export laws, material defaults capture Q1, C8b):
+// a SURF without SMAN imports smoothing OFF; export always writes SMAN (the
+// angle in radians when on, 0 when off). Declared round-trip losses (gap
+// G9): OFF @ x° re-imports OFF @ 0°; ON @ 0° re-imports OFF (same look: at 0°
+// only exactly parallel neighbours pass).
+// ---------------------------------------------------------------------------
+
+unittest {
+    import std.math : abs;
+    import std.process : environment, thisProcessID;
+    import std.path : buildPath;
+    writeFixture();
+    loadFixture();
+    auto s = model()["surfaces"].array;
+    assert(s.length == 3, "S1e: fixture surfaces");
+    foreach (i, x; s)
+        assert(x["smoothing"].type == JSONType.false_,
+            format("S1e: fixture surface %d (no SMAN) imported smoothing ON — absent SMAN is OFF", i));
+    immutable string path = buildPath(environment.get("TMPDIR", "/var/tmp"),
+                                      format("vibe3d_s1e_sman_%d.lwo", thisProcessID()));
+    JSONValue cycle() {
+        auto r = parseJSON(post(testBaseUrl() ~ "/api/command", "file.save path:\"" ~ path ~ "\""));
+        assert(r["status"].str == "ok", "S1e: file.save failed: " ~ r.toString);
+        r = parseJSON(post(testBaseUrl() ~ "/api/command", "file.load path:\"" ~ path ~ "\""));
+        assert(r["status"].str == "ok", "S1e: file.load failed: " ~ r.toString);
+        return model()["surfaces"];
+    }
+    void attr(int surf, string a, double v) {
+        auto r = parseJSON(post(testBaseUrl() ~ "/api/command",
+            format(`{"id":"mesh.surfaceAttr","params":{"surface":%d,"attr":"%s","value":%.6f}}`, surf, a, v)));
+        assert(r["status"].str == "ok", "S1e: mesh.surfaceAttr failed: " ~ r.toString);
+    }
+    // OFF @ 40 (the import default angle) → SMAN 0 → OFF @ 0 (G9).
+    auto off = cycle().array;
+    assert(off[1]["smoothing"].type == JSONType.false_ && off[1]["smoothingAngle"].floating == 0,
+        "S1e: OFF @ 40 did not re-import as OFF @ 0: " ~ off[1].toString);
+    // ON @ 25 survives (25° → SMAN 0.436332 rad → 25°).
+    attr(1, "smoothing", 1);
+    attr(1, "smoothingAngle", 25);
+    auto on = cycle().array;
+    assert(on[1]["smoothing"].type == JSONType.true_ && abs(on[1]["smoothingAngle"].floating - 25) <= 1e-4,
+        "S1e: ON @ 25 did not survive the LWO round trip: " ~ on[1].toString);
+    // ON @ 0 → SMAN 0 → OFF (G9: equivalent look).
+    attr(1, "smoothingAngle", 0);
+    auto zero = cycle().array;
+    assert(zero[1]["smoothing"].type == JSONType.false_,
+        "S1e: ON @ 0 did not re-import OFF (SMAN 0 is off): " ~ zero[1].toString);
+}

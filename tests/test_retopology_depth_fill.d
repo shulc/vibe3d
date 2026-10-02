@@ -197,12 +197,31 @@ private void frontOrtho() {
     settle();
 }
 
+/// Layer 0's material is EXPLICIT (base 0.8, diffuse 1, no specular — the
+/// look this rig was written against): the contrast premises below (cell 4's
+/// |P1 - clear| >= 40) must not depend on the default material (S1e moved it
+/// to Kd 0.48, which put P1 within 21 levels of the clear colour).
+private void loadWithMaterial(JSONValue mesh) {
+    import std.file : write, remove, exists, mkdirRecurse;
+    import std.path : buildPath;
+    import std.process : thisProcessID, environment;
+    mesh["surfaces"] = parseJSON(`[{"name":"P","baseColor":[0.8,0.8,0.8],"diffuse":1,`
+        ~ `"specular":0,"glossiness":0.4,"opacity":1}]`);
+    immutable dir = buildPath(environment.get("TMPDIR", "/var/tmp"), format("depthfill-%d", thisProcessID()));
+    mkdirRecurse(dir);
+    immutable path = buildPath(dir, "p1.v3d");
+    scope(exit) if (exists(path)) remove(path);
+    write(path, `{"formatVersion":8,"primaryLayer":0,"focusedItem":0,"layers":[{"type":"mesh",`
+        ~ `"selected":true,"channels":{"name":"P1","visible":true},"mesh":` ~ mesh.toString ~ `}]}`);
+    cmdOk(format(`{"id":"file.load","params":{"path":%s}}`, JSONValue(path).toString));
+}
+
 private Rig buildRig() {
     cmdOk(commandBody("scene.reset"));
     cmdOk(`{"id":"history.clear"}`);
     cmdOk(commandBody("viewport.layout", `"Single"`));
     Quad[] p1 = [cast(Quad) kP1, cast(Quad) kP0];
-    cmdOk(commandBody("scene.loadMesh", meshJson(p1).toString));
+    loadWithMaterial(meshJson(p1));
     cmdOk(`{"id":"layer.add"}`);
     auto fg = fgQuads();
     cmdOk(commandBody("scene.loadMesh", meshJsonFg(fg).toString));
@@ -224,12 +243,12 @@ private Rig buildRig() {
     Rig r;
     r.fg = fg;
     auto s0 = getJson("/api/model?layer=0")["surfaces"].array;
-    if (s0.length == 0) r.base = 0.8;
-    else {
+    assert(s0.length == 1, "rig: layer 0 must carry its explicit surface: " ~ getJson("/api/model?layer=0").toString);
+    {
         auto bc = s0[0]["baseColor"].array;
         assert(num(bc[0]) == num(bc[1]) && num(bc[1]) == num(bc[2]),
             "rig: expected a grey base colour, got " ~ s0[0].toString);
-        r.base = num(bc[0]);
+        r.base = num(bc[0]) * num(s0[0]["diffuseAmount"]);   // Kd
     }
     auto cam = getJson("/api/camera?viewport=0");
     assert(cam["projKind"].str != "Perspective" && cam["viewPreset"].str == "Front",

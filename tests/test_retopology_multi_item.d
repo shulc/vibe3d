@@ -797,9 +797,11 @@ unittest {
         && jb(L["layers"].array[0]["visible"]),
         "8 precondition: one visible layer and no edit target: " ~ L.toString);
     parkPointer(r);
-    double base = 0.8;   // an empty surface list binds 0.8 grey
+    // Kd: an empty surface list binds the implicit slot, `Surface.init`
+    // (base 0.6 × diffuse amount 0.8); otherwise slot 0's base × diffuse.
+    double base = 0.6 * 0.8;
     auto s0 = getJson("/api/model?layer=0")["surfaces"].array;
-    if (s0.length > 0) base = num(s0[0]["baseColor"].array[0]);
+    if (s0.length > 0) base = num(s0[0]["baseColor"].array[0]) * num(s0[0]["diffuseAmount"]);
     int[2] p = toPx(centre(t), r.vp);
     cmd("viewport.backdropStyle", `{"value":"flat"}`);
     immutable Px off = probe([p])[0];

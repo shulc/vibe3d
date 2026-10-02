@@ -329,9 +329,15 @@ unittest {
         auto vp = viewportFromCameraMatrices();
         immutable int[2] c = cellPx(vp, kC);
         immutable double rPx = 1.0 / 4.0 * vp.proj[5] * vp.height / 2;
+        // Only grid points ON the disc (within 0.8 of its pixel radius, as in
+        // (i)): with the default material (S1e, Kd 0.48) the sphere's brightest
+        // no longer outshines the background grid line the corner probes hit.
         int[2][] pts;
-        foreach (iy; -4 .. 5) foreach (ix; -4 .. 5)
+        foreach (iy; -4 .. 5) foreach (ix; -4 .. 5) {
+            if ((ix * ix + iy * iy) * 0.22 * 0.22 > 0.8 * 0.8) continue;
             pts ~= [c[0] + cast(int)(ix * 0.22 * rPx), c[1] + cast(int)(iy * 0.22 * rPx)];
+        }
+        assert(pts.length == 45, format("(ii) floor: %d on-disc probe points, expected 45", pts.length));
         const r = probeR(pts);
         size_t best;
         foreach (k; 0 .. r.length) if (r[k] > r[best]) best = k;
