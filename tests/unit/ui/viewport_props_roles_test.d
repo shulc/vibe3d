@@ -624,3 +624,78 @@ unittest { // S3a: the Cavity combo and Ridge/Valley sliders; greyed off Shaded 
         ~ ids[6 .. $].join(",") ~ ")");
     assert(pressedDisabled == 6, format("S3a population: 6 disabled presses, made %d", pressedDisabled));
 }
+
+unittest { // S3b: the world-cavity Distance / Attenuation / Samples sliders, World and Both only
+    auto vpm = new ViewportManager(0, 0, 800, 600);
+    vpm.applyLayout(LayoutPreset.Quad);
+    vpm.activeId = 1;
+    auto mesh = makeCube();
+    Prefs prefs;
+    auto reset = inertReset(&prefs);
+    string[] ids;
+    string[] payloads;
+    void dispatch(string id, string payload) {
+        ids ~= id;
+        payloads ~= payload;
+        assert(id == "viewport.cavityParams", "unexpected viewport properties dispatch: " ~ id);
+        Command command = new ViewportCavityParams(&mesh, vpm.views[vpm.activeId].camera,
+                                                   EditMode.Polygons, vpm);
+        bindArgs(command, payload);
+        assert(command.apply(), "viewport properties command fixture refused: " ~ id ~ " " ~ payload);
+    }
+    auto ui = openPanel(() {
+        drawViewportPropsPanel(ViewportPropertiesReadRole(vpm),
+                               cast(ViewportCommandDispatch)&dispatch, reset);
+    }, "Viewport world cavity controls host");
+    resetViewportPropsDrawSnapshot();
+    scope (exit) ui.close();
+    vpm.views[1].display.active.style = DisplayStyle.Shaded;
+    const d0 = vpm.views[0].display;
+
+    // Hidden for Off and Screen; three sliders for World and Both.
+    size_t modes;
+    foreach (m; [CavityMode.Off, CavityMode.Screen, CavityMode.World, CavityMode.Both]) {
+        vpm.views[1].display.cavity.mode = m;
+        ui.frame();
+        immutable int want = (m == CavityMode.World || m == CavityMode.Both) ? 3 : 0;
+        assert(viewportPropsDrawSnapshot().cavityWorldDrawn == want,
+            format("S3b %s: %d world sliders drawn, expected %d", m,
+                   viewportPropsDrawSnapshot().cavityWorldDrawn, want));
+        ++modes;
+    }
+    assert(modes == 4 && ids.length == 0, "S3b population: 4 modes drawn, nothing dispatched");
+
+    // A press at each slider's centre writes only its own value (start values
+    // far from the centre, so the press is a change).
+    vpm.views[1].display.cavity.mode = CavityMode.World;
+    vpm.views[1].display.cavity.distance = 0.02f;
+    vpm.views[1].display.cavity.attenuation = 0.1f;
+    vpm.views[1].display.cavity.samples = 2;
+    static immutable string[3] keys = ["distance", "attenuation", "samples"];
+    foreach (k; 0 .. 3) {
+        ui.frame();
+        auto snap = viewportPropsDrawSnapshot();
+        ui.pressAt(center(snap.cavityWorldMin[k], snap.cavityWorldMax[k]));
+        ui.release();
+        assert(ids.length == k + 1 && payloads[k].indexOf(keys[k]) >= 0
+            && payloads[k].indexOf(",") < 0,
+            format("S3b slider %d must dispatch viewport.cavityParams %s alone, got %s", k, keys[k], payloads));
+    }
+    const c = vpm.views[1].display.cavity;
+    assert(c.distance > 0.4f && c.distance < 0.6f, format("S3b distance after a centre press: %s", c.distance));
+    assert(c.attenuation > 4.0f && c.attenuation < 6.0f, format("S3b attenuation after a centre press: %s", c.attenuation));
+    assert(c.samples >= 28 && c.samples <= 37, format("S3b samples after a centre press: %s", c.samples));
+    assert(vpm.views[0].display == d0, "S3b the world cavity sliders reached a cell other than the active one");
+
+    // Greyed under Solid (drawn, disabled): presses take nothing.
+    vpm.views[1].display.active.style = DisplayStyle.Solid;
+    ui.frame();
+    auto sn = viewportPropsDrawSnapshot();
+    assert(sn.cavityWorldDrawn == 3, "S3b under Solid the world sliders stay drawn (greyed)");
+    foreach (k; 0 .. 3) {
+        assert(!ui.tryPressAt(center(sn.cavityWorldMin[k], sn.cavityWorldMax[k])),
+            format("S3b under Solid world slider %d took the press", k));
+        ui.release();
+    }
+    assert(ids.length == 3, "S3b under Solid the world sliders must dispatch nothing");
+}

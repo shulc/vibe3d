@@ -23,9 +23,8 @@ private CompositePlan planOf(CavityMode m) {
 
 unittest { // the table per cavity mode: count floor first, then every pass legal
     immutable size_t[CavityMode] wantCount = [CavityMode.Off: 0, CavityMode.Screen: 2,
-        // World / Both: copy + resolve until the world kernel (S3b) inserts
-        // raw + blur H + blur V (then 5).
-        CavityMode.World: 2, CavityMode.Both: 2];
+        // World / Both: copy + world raw + blur H + blur V + resolve (S3b).
+        CavityMode.World: 5, CavityMode.Both: 5];
     size_t modes;
     foreach (m; [EnumMembers!CavityMode]) {
         const t = compositePassTable(planOf(m), ids());
@@ -49,6 +48,23 @@ unittest { // the table per cavity mode: count floor first, then every pass lega
             format("E4 %s: the last pass must resolve into colorTex", m));
         assert(passTableViolation(t[], ids()) is null,
             format("E4 %s: %s", m, passTableViolation(t[], ids())));
+        if (t.length == 5) {
+            // S3b: raw -> aoTex[0] from depth + G-buffer; H -> aoTex[1] from
+            // aoTex[0]; V -> aoTex[0] from aoTex[1]; the resolve reads aoTex[0].
+            immutable i = ids();
+            alias K = CompositePassKind;
+            assert(t[][1].kind == K.cavityRaw && t[][1].target == i.aoTex[0]
+                && t[][1].samples == [i.depthTex, i.gbufTex, 0, 0],
+                format("S3b %s: pass 1 must be the raw pass into aoTex[0] from depth + gbuf: %s", m, t[][1]));
+            assert(t[][2].kind == K.blurH && t[][2].target == i.aoTex[1]
+                && t[][2].samples == [i.aoTex[0], i.depthTex, i.gbufTex, 0],
+                format("S3b %s: pass 2 must blur aoTex[0] along x into aoTex[1]: %s", m, t[][2]));
+            assert(t[][3].kind == K.blurV && t[][3].target == i.aoTex[0]
+                && t[][3].samples == [i.aoTex[1], i.depthTex, i.gbufTex, 0],
+                format("S3b %s: pass 3 must blur aoTex[1] along y into aoTex[0]: %s", m, t[][3]));
+            assert(t[][4].samples[2] == i.aoTex[0],
+                format("S3b %s: the resolve must read the blurred aoTex[0] on unit 2: %s", m, t[][4]));
+        }
     }
     assert(modes == 4, "E4 floor: every CavityMode");
 }
@@ -208,4 +224,35 @@ unittest { // S3a census: the one production run call passes the cell's tap dist
     immutable call = code[at .. end];
     assert(call.count("curvatureTapPx(v.fbo.w, v.camera.width)") == 1,
         "S3a census: compositor_.run must pass curvatureTapPx(v.fbo.w, v.camera.width), got: " ~ call);
+}
+
+unittest { // S3b: worldCavityOn per mode, and invert4 over the two projection shapes
+    import math : perspectiveMatrix, orthographicMatrix;
+    size_t modes;
+    foreach (m; [EnumMembers!CavityMode]) {
+        immutable bool want = m == CavityMode.World || m == CavityMode.Both;
+        assert(worldCavityOn(planOf(m)) == want, format("S3b worldCavityOn(%s) must be %s", m, want));
+        ++modes;
+    }
+    assert(modes == 4, format("S3b population: 4 cavity modes, checked %d", modes));
+    // invert4(M) * M == I (column-major), for a perspective and an ortho
+    // projection; and a NDC point maps back to the eye point it came from.
+    size_t mats;
+    foreach (M; [perspectiveMatrix(0.8f, 1.3f, 0.05f, 500.0f), orthographicMatrix(2.0f, 0.7f, -100.0f, 100.0f)]) {
+        immutable float[16] I = invert4(M);
+        foreach (c; 0 .. 4)
+            foreach (r; 0 .. 4) {
+                float v = 0;
+                foreach (k; 0 .. 4) v += I[k * 4 + r] * M[c * 4 + k];
+                immutable float want = r == c ? 1 : 0;
+                assert(v > want - 1e-4f && v < want + 1e-4f,
+                    format("S3b invert4: (inv * M)[%d][%d] = %s, expected %s", r, c, v, want));
+            }
+        ++mats;
+    }
+    assert(mats == 2, "S3b invert4 population: two projections");
+    float[16] singular = 0;
+    immutable float[16] id = invert4(singular);
+    assert(id[0] == 1 && id[5] == 1 && id[10] == 1 && id[15] == 1 && id[1] == 0,
+        "S3b invert4: a singular matrix answers the identity");
 }

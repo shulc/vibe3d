@@ -620,6 +620,11 @@ version (unittest) {
         ImVec2 cavityRidgeMax;
         ImVec2 cavityValleyMin;
         ImVec2 cavityValleyMax;
+        // World cavity sliders (S3b): distance, attenuation, samples; drawn
+        // only for World/Both (`cavityWorldDrawn` counts them per frame).
+        ImVec2[3] cavityWorldMin;
+        ImVec2[3] cavityWorldMax;
+        int cavityWorldDrawn;
     }
 
     // Test instrumentation only: mutable process-wide state intentionally
@@ -685,6 +690,15 @@ version (unittest) {
         g_viewportPropsDrawSnapshot.cavityValleyMin = ImGui.GetItemRectMin();
         g_viewportPropsDrawSnapshot.cavityValleyMax = ImGui.GetItemRectMax();
     }
+    private void recordViewportPropsCavityWorld(int index) {
+        if (index == 0) g_viewportPropsDrawSnapshot.cavityWorldDrawn = 0;
+        g_viewportPropsDrawSnapshot.cavityWorldMin[index] = ImGui.GetItemRectMin();
+        g_viewportPropsDrawSnapshot.cavityWorldMax[index] = ImGui.GetItemRectMax();
+        ++g_viewportPropsDrawSnapshot.cavityWorldDrawn;
+    }
+    private void recordViewportPropsCavityWorldHidden() {
+        g_viewportPropsDrawSnapshot.cavityWorldDrawn = 0;
+    }
 } else {
     private void recordViewportPropsProjection(int, int) {}
     private void recordViewportPropsCenter() {}
@@ -699,6 +713,8 @@ version (unittest) {
     private void recordViewportPropsCavity() {}
     private void recordViewportPropsCavityRidge() {}
     private void recordViewportPropsCavityValley() {}
+    private void recordViewportPropsCavityWorld(int) {}
+    private void recordViewportPropsCavityWorldHidden() {}
 }
 
 void drawViewportPropsPanel(ViewportPropertiesReadRole viewportRead,
@@ -903,6 +919,44 @@ void drawViewportPropsPanel(ViewportPropertiesReadRole viewportRead,
             if (valleyChanged)
                 dispatch("viewport.cavityParams",
                     format(`{"screenValley":%.6f}`, clampGain(valley)));
+            // The world kernel's distance / attenuation / samples (wave plan
+            // S3b), shown for World and Both only. Ranges are the default
+            // slider spans; ctrl-click entry is clamped to the command bounds.
+            immutable CavityMode cm = v.display.cavity.mode;
+            if (cm == CavityMode.World || cm == CavityMode.Both) {
+                import commands.viewport.display : kCavityDistanceMin, kCavityDistanceMax,
+                    kCavityAttenuationMax;
+                import display_state : MAX_CAVITY_SAMPLES;
+                static float clampTo(float x, float lo, float hi) {   // NaN -> lo
+                    return x >= lo ? (x > hi ? hi : x) : lo;
+                }
+                float dist = v.display.cavity.distance;
+                ImGui.SetNextItemWidth(-1.0f);
+                const distChanged = ImGui.SliderFloat("##vpCavityDistance", &dist, 0.01f, 1.0f,
+                                                      "Distance %.3f");
+                recordViewportPropsCavityWorld(0);
+                if (distChanged)
+                    dispatch("viewport.cavityParams", format(`{"distance":%.6f}`,
+                        clampTo(dist, kCavityDistanceMin, kCavityDistanceMax)));
+                float att = v.display.cavity.attenuation;
+                ImGui.SetNextItemWidth(-1.0f);
+                const attChanged = ImGui.SliderFloat("##vpCavityAttenuation", &att, 0.0f, 10.0f,
+                                                     "Attenuation %.2f");
+                recordViewportPropsCavityWorld(1);
+                if (attChanged)
+                    dispatch("viewport.cavityParams", format(`{"attenuation":%.6f}`,
+                        clampTo(att, 0.0f, kCavityAttenuationMax)));
+                int samples = v.display.cavity.samples;
+                ImGui.SetNextItemWidth(-1.0f);
+                const samplesChanged = ImGui.SliderInt("##vpCavitySamples", &samples, 1,
+                                                       MAX_CAVITY_SAMPLES, "Samples %d");
+                recordViewportPropsCavityWorld(2);
+                if (samplesChanged)
+                    dispatch("viewport.cavityParams", format(`{"samples":%d}`,
+                        samples < 1 ? 1 : (samples > MAX_CAVITY_SAMPLES ? MAX_CAVITY_SAMPLES : samples)));
+            } else {
+                recordViewportPropsCavityWorldHidden();
+            }
             if (!cavityLive) ImGui.EndDisabled();
         }
 

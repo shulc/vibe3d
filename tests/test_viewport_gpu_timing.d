@@ -263,6 +263,32 @@ unittest { // (composite, task 9190) the composite section: present under Shaded
     cmd("viewport.displayStyle", `"shaded"`);
 }
 
+unittest { // (cavity-world, task 9240) the world-cavity raw and blur sections: present under World, absent under Screen
+    resetSingle();
+    cmd("scene.reset", `{"type":"grid","n":64}`);
+    cmd("viewport.displayStyle", `"shaded"`);
+    scope (exit) cmd("viewport.cavity", `{"value":"off"}`);
+    cmd("viewport.cavity", `{"value":"world"}`);
+    enforce(!jb(plan("active")["composite"]["empty"]), "(cavity-world) premise: cavity world resolves under Shaded");
+    auto w = window()[0];
+    writefln("  (cavity-world) world: harvested=%d composite=%d cavityRaw=%d cavityBlur=%d", w.harvested,
+             w.samples["composite"], w.samples["cavityRaw"], w.samples["cavityBlur"]);
+    assert(w.harvested >= 8 && w.samples["composite"] >= 8,
+        format("(cavity-world) floor: harvested=%d composite=%d", w.harvested, w.samples["composite"]));
+    assert(w.samples["cavityRaw"] >= 8 && w.samples["cavityBlur"] >= 8,
+        format("(cavity-world) World: cavityRaw %d / cavityBlur %d samples, expected >= 8 each",
+               w.samples["cavityRaw"], w.samples["cavityBlur"]));
+    cmd("viewport.cavity", `{"value":"screen"}`);
+    auto s = window()[0];
+    writefln("  (cavity-world) screen: harvested=%d composite=%d cavityRaw=%d cavityBlur=%d", s.harvested,
+             s.samples["composite"], s.samples["cavityRaw"], s.samples["cavityBlur"]);
+    assert(s.harvested >= 8 && s.samples["composite"] >= 8,
+        format("(cavity-world) positive control: harvested=%d composite=%d", s.harvested, s.samples["composite"]));
+    assert(s.samples["cavityRaw"] == 0 && s.samples["cavityBlur"] == 0,
+        format("(cavity-world) Screen: the world sections must read ABSENT, got cavityRaw %d cavityBlur %d",
+               s.samples["cavityRaw"], s.samples["cavityBlur"]));
+}
+
 unittest { // (v) Quad: every rendering cell harvests
     resetSingle();
     cmd("viewport.layout", `"Quad"`);

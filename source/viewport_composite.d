@@ -3,8 +3,9 @@
 // After a cell's surface passes (which wrote the G-buffer when the cell's
 // `CompositePlan` is non-empty) and before its line/overlay passes, `run`
 // executes a PASS TABLE built as data by `compositePassTable`: copy the colour
-// into `compositeSrcTex`, (later: world cavity raw, blur H, blur V), then ONE
-// resolve that writes `colorTex`. Every pass draws into the cell's
+// into `compositeSrcTex`, for World/Both the world-cavity raw pass into
+// `aoTex[0]` and its depth-aware blur H (into `aoTex[1]`) and V (back into
+// `aoTex[0]`) (wave plan S3b), then ONE resolve that writes `colorTex`. Every pass draws into the cell's
 // `effectsFbo` with its C0 re-pointed per pass, so no pass samples a texture
 // attached to the framebuffer it draws into (the table predicate
 // `passTableViolation` is the check; tests/unit/viewport_composite_test.d).
@@ -28,6 +29,11 @@ enum CompositePassKind : ubyte {
     copy,
     /// The resolve program over a fullscreen triangle.
     resolve,
+    /// The raw world-cavity program (S3b): samples depth + G-buffer.
+    cavityRaw,
+    /// The world-cavity blur along x, then along y (one program, `u_axis`).
+    blurH,
+    blurV,
 }
 
 /// The GL names one cell's composite reads and writes.
@@ -69,9 +75,9 @@ struct CompositePassTable {
     }
 }
 
-/// The pass table of `p` over `ids`. Empty plan: no rows. Every cavity mode
-/// today: copy + resolve (the screen-curvature term lives in the resolve; S3b
-/// inserts world raw / blur H / blur V between them for `World` and `Both`).
+/// The pass table of `p` over `ids`. Empty plan: no rows. Screen: copy +
+/// resolve (the screen-curvature term lives in the resolve). World and Both:
+/// copy + world raw + blur H + blur V + resolve (S3b).
 CompositePassTable compositePassTable(in CompositePlan p, in EffectIds ids)
     pure nothrow @safe @nogc
 {
@@ -79,6 +85,14 @@ CompositePassTable compositePassTable(in CompositePlan p, in EffectIds ids)
     if (p.empty) return t;
     t.put(CompositePass(CompositePassKind.copy, ids.sceneFbo, ids.effectsFbo,
                         ids.compositeSrcTex, [0, 0, 0, 0]));
+    if (worldCavityOn(p)) {
+        t.put(CompositePass(CompositePassKind.cavityRaw, 0, ids.effectsFbo, ids.aoTex[0],
+                            [ids.depthTex, ids.gbufTex, 0, 0]));
+        t.put(CompositePass(CompositePassKind.blurH, 0, ids.effectsFbo, ids.aoTex[1],
+                            [ids.aoTex[0], ids.depthTex, ids.gbufTex, 0]));
+        t.put(CompositePass(CompositePassKind.blurV, 0, ids.effectsFbo, ids.aoTex[0],
+                            [ids.aoTex[1], ids.depthTex, ids.gbufTex, 0]));
+    }
     t.put(CompositePass(CompositePassKind.resolve, 0, ids.effectsFbo, ids.colorTex,
                         [ids.compositeSrcTex, ids.gbufTex, ids.aoTex[0], 0]));
     return t;
@@ -131,6 +145,41 @@ float[2] curvatureControls(in CompositePlan p) pure nothrow @safe @nogc {
     return [0.5f / sq(p.screenRidge), 0.7f / sq(p.screenValley)];
 }
 
+/// Whether `p` runs the world-cavity passes (S3b).
+bool worldCavityOn(in CompositePlan p) pure nothrow @safe @nogc {
+    return p.cavity == CavityMode.World || p.cavity == CavityMode.Both;
+}
+
+/// The inverse of a column-major 4x4 `m` (cofactor expansion); the identity
+/// when `m` is singular (a projection never is).
+float[16] invert4(const float[16] m) pure nothrow @safe @nogc {
+    float[16] r;
+    r[0]  =  m[5]*m[10]*m[15] - m[5]*m[11]*m[14] - m[9]*m[6]*m[15] + m[9]*m[7]*m[14] + m[13]*m[6]*m[11] - m[13]*m[7]*m[10];
+    r[4]  = -m[4]*m[10]*m[15] + m[4]*m[11]*m[14] + m[8]*m[6]*m[15] - m[8]*m[7]*m[14] - m[12]*m[6]*m[11] + m[12]*m[7]*m[10];
+    r[8]  =  m[4]*m[9]*m[15]  - m[4]*m[11]*m[13] - m[8]*m[5]*m[15] + m[8]*m[7]*m[13] + m[12]*m[5]*m[11] - m[12]*m[7]*m[9];
+    r[12] = -m[4]*m[9]*m[14]  + m[4]*m[10]*m[13] + m[8]*m[5]*m[14] - m[8]*m[6]*m[13] - m[12]*m[5]*m[10] + m[12]*m[6]*m[9];
+    r[1]  = -m[1]*m[10]*m[15] + m[1]*m[11]*m[14] + m[9]*m[2]*m[15] - m[9]*m[3]*m[14] - m[13]*m[2]*m[11] + m[13]*m[3]*m[10];
+    r[5]  =  m[0]*m[10]*m[15] - m[0]*m[11]*m[14] - m[8]*m[2]*m[15] + m[8]*m[3]*m[14] + m[12]*m[2]*m[11] - m[12]*m[3]*m[10];
+    r[9]  = -m[0]*m[9]*m[15]  + m[0]*m[11]*m[13] + m[8]*m[1]*m[15] - m[8]*m[3]*m[13] - m[12]*m[1]*m[11] + m[12]*m[3]*m[9];
+    r[13] =  m[0]*m[9]*m[14]  - m[0]*m[10]*m[13] - m[8]*m[1]*m[14] + m[8]*m[2]*m[13] + m[12]*m[1]*m[10] - m[12]*m[2]*m[9];
+    r[2]  =  m[1]*m[6]*m[15]  - m[1]*m[7]*m[14]  - m[5]*m[2]*m[15] + m[5]*m[3]*m[14] + m[13]*m[2]*m[7]  - m[13]*m[3]*m[6];
+    r[6]  = -m[0]*m[6]*m[15]  + m[0]*m[7]*m[14]  + m[4]*m[2]*m[15] - m[4]*m[3]*m[14] - m[12]*m[2]*m[7]  + m[12]*m[3]*m[6];
+    r[10] =  m[0]*m[5]*m[15]  - m[0]*m[7]*m[13]  - m[4]*m[1]*m[15] + m[4]*m[3]*m[13] + m[12]*m[1]*m[7]  - m[12]*m[3]*m[5];
+    r[14] = -m[0]*m[5]*m[14]  + m[0]*m[6]*m[13]  + m[4]*m[1]*m[14] - m[4]*m[2]*m[13] - m[12]*m[1]*m[6]  + m[12]*m[2]*m[5];
+    r[3]  = -m[1]*m[6]*m[11]  + m[1]*m[7]*m[10]  + m[5]*m[2]*m[11] - m[5]*m[3]*m[10] - m[9]*m[2]*m[7]   + m[9]*m[3]*m[6];
+    r[7]  =  m[0]*m[6]*m[11]  - m[0]*m[7]*m[10]  - m[4]*m[2]*m[11] + m[4]*m[3]*m[10] + m[8]*m[2]*m[7]   - m[8]*m[3]*m[6];
+    r[11] = -m[0]*m[5]*m[11]  + m[0]*m[7]*m[9]   + m[4]*m[1]*m[11] - m[4]*m[3]*m[9]  - m[8]*m[1]*m[7]   + m[8]*m[3]*m[5];
+    r[15] =  m[0]*m[5]*m[10]  - m[0]*m[6]*m[9]   - m[4]*m[1]*m[10] + m[4]*m[2]*m[9]  + m[8]*m[1]*m[6]   - m[8]*m[2]*m[5];
+    immutable float det = m[0]*r[0] + m[1]*r[4] + m[2]*r[8] + m[3]*r[12];
+    if (det == 0 || det != det) {
+        float[16] id = 0;
+        id[0] = id[5] = id[10] = id[15] = 1;
+        return id;
+    }
+    foreach (ref x; r) x /= det;
+    return r;
+}
+
 /// Whether `p` runs the screen-curvature term.
 bool screenCurvatureOn(in CompositePlan p) pure nothrow @safe @nogc {
     return p.cavity == CavityMode.Screen || p.cavity == CavityMode.Both;
@@ -141,14 +190,20 @@ final class ViewportCompositor {
     private GLuint emptyVao_;
     private GLint  locTestGain_ = -1;
     private GLint  locCurvPx_ = -1, locRidgeCtl_ = -1, locValleyCtl_ = -1;
+    private GLint  locWorldOn_ = -1;
+    private GLuint rawProgram_, blurProgram_;
+    private GLint  rawInvProj_ = -1, rawProjScale_ = -1, rawHomZW_ = -1, rawDistance_ = -1,
+                   rawAttenuation_ = -1, rawRidge_ = -1, rawValley_ = -1, rawSamples_ = -1;
+    private GLint  blurInvProj_ = -1, blurAxis_ = -1;
 
     /// Run the composite stage of one cell. `p.empty` ⇒ returns with ZERO GL
     /// calls and records nothing. Otherwise executes `compositePassTable`,
     /// leaves the scene FBO bound (draw + read) with every other state it
     /// touched as on entry, and records the run in `fbo`. `tapPx` is the
-    /// screen-curvature tap distance (`curvatureTapPx`).
+    /// screen-curvature tap distance (`curvatureTapPx`); `proj` the cell's
+    /// projection (column-major), read by the world-cavity passes.
     void run(in CompositePlan p, ref ViewportFbo fbo, int cellW, int cellH,
-             int tapPx, ref GpuPassTimer timer) {
+             int tapPx, const ref float[16] proj, ref GpuPassTimer timer) {
         if (p.empty) return;
         timer.mark(GpuSeg.composite);
         ensureProgram();
@@ -181,31 +236,61 @@ final class ViewportCompositor {
 
         fbo.compositeBindings.length = 0;
         fbo.compositeBindings.assumeSafeAppend();
+        immutable bool worldOn = worldCavityOn(p);
+        immutable float[16] invProj = invert4(proj);
         foreach (ref pass; table[]) {
             applyPassTarget(pass);
+            if (pass.kind == CompositePassKind.copy) {
+                recordBinding(fbo, pass);
+                glBlitFramebuffer(0, 0, cellW, cellH, 0, 0, cellW, cellH,
+                                  GL_COLOR_BUFFER_BIT, GL_NEAREST);
+                continue;
+            }
+            // A fullscreen-triangle pass: its program and uniforms, then the
+            // one draw below. Unit k samples `pass.samples[k]`.
             final switch (pass.kind) {
                 case CompositePassKind.copy:
-                    recordBinding(fbo, pass);
-                    glBlitFramebuffer(0, 0, cellW, cellH, 0, 0, cellW, cellH,
-                                      GL_COLOR_BUFFER_BIT, GL_NEAREST);
+                    assert(false, "the copy is drawn above");
+                case CompositePassKind.cavityRaw:
+                    timer.mark(GpuSeg.cavityRaw);
+                    glUseProgram(rawProgram_);
+                    glUniformMatrix4fv(rawInvProj_, 1, GL_FALSE, invProj.ptr);
+                    glUniform2f(rawProjScale_, proj[0] * cellW * 0.5f, proj[5] * cellH * 0.5f);
+                    glUniform2f(rawHomZW_, proj[11], proj[15]);
+                    glUniform1f(rawDistance_, p.distance);
+                    glUniform1f(rawAttenuation_, p.attenuation);
+                    glUniform1f(rawRidge_, p.worldRidge);
+                    glUniform1f(rawValley_, p.worldValley);
+                    glUniform1i(rawSamples_, p.samples);
+                    break;
+                case CompositePassKind.blurH:
+                case CompositePassKind.blurV:
+                    timer.mark(GpuSeg.cavityBlur);
+                    glUseProgram(blurProgram_);
+                    glUniformMatrix4fv(blurInvProj_, 1, GL_FALSE, invProj.ptr);
+                    // vec2 (glUniform2i is not in the web GL roster)
+                    if (pass.kind == CompositePassKind.blurH) glUniform2f(blurAxis_, 1, 0);
+                    else                                      glUniform2f(blurAxis_, 0, 1);
                     break;
                 case CompositePassKind.resolve:
-                    glViewport(0, 0, cellW, cellH);
+                    if (worldOn) timer.mark(GpuSeg.composite);   // the resolve, after the world passes
                     glUseProgram(resolveProgram_);
                     glUniform1f(locTestGain_, fbo.compositeTestGain);
                     immutable float[2] ctl = curvatureControls(p);
                     glUniform1i(locCurvPx_, screenCurvatureOn(p) ? tapPx : 0);
                     glUniform1f(locRidgeCtl_, ctl[0]);
                     glUniform1f(locValleyCtl_, ctl[1]);
-                    glBindVertexArray(emptyVao_);
-                    foreach (u; 0 .. 3) {
-                        glActiveTexture(GL_TEXTURE0 + u);
-                        glBindTexture(GL_TEXTURE_2D, pass.samples[u]);
-                    }
-                    recordBinding(fbo, pass);
-                    glDrawArrays(GL_TRIANGLES, 0, 3);
+                    glUniform1i(locWorldOn_, worldOn ? 1 : 0);
                     break;
             }
+            glViewport(0, 0, cellW, cellH);
+            glBindVertexArray(emptyVao_);
+            foreach (u; 0 .. 3) {
+                glActiveTexture(GL_TEXTURE0 + u);
+                glBindTexture(GL_TEXTURE_2D, pass.samples[u]);
+            }
+            recordBinding(fbo, pass);
+            glDrawArrays(GL_TRIANGLES, 0, 3);
         }
         restoreSceneTarget(fbo.fbo);
 
@@ -272,6 +357,7 @@ final class ViewportCompositor {
             glActiveTexture(GL_TEXTURE0 + u);
             glGetIntegerv(GL_TEXTURE_BINDING_2D, &t);
             immutable bool ours = t != 0 && (t == ids.compositeSrcTex || t == ids.gbufTex
+                                             || t == ids.depthTex
                                              || t == ids.aoTex[0] || t == ids.aoTex[1]);
             if (t != tex0[u] || ours) {
                 glActiveTexture(cast(GLenum)act);
@@ -321,6 +407,29 @@ final class ViewportCompositor {
         locCurvPx_     = glGetUniformLocation(resolveProgram_, "u_curvPx");
         locRidgeCtl_   = glGetUniformLocation(resolveProgram_, "u_ridgeCtl");
         locValleyCtl_  = glGetUniformLocation(resolveProgram_, "u_valleyCtl");
+        locWorldOn_    = glGetUniformLocation(resolveProgram_, "u_worldOn");
+
+        import shader : worldCavityFragSrc, cavityBlurFragSrc;
+        rawProgram_ = createProgram(compositeVertSrc, worldCavityFragSrc);
+        glUseProgram(rawProgram_);
+        glUniform1i(glGetUniformLocation(rawProgram_, "u_depth"), 0);
+        glUniform1i(glGetUniformLocation(rawProgram_, "u_gbuf"), 1);
+        rawInvProj_     = glGetUniformLocation(rawProgram_, "u_invProj");
+        rawProjScale_   = glGetUniformLocation(rawProgram_, "u_projScale");
+        rawHomZW_       = glGetUniformLocation(rawProgram_, "u_homZW");
+        rawDistance_    = glGetUniformLocation(rawProgram_, "u_distance");
+        rawAttenuation_ = glGetUniformLocation(rawProgram_, "u_attenuation");
+        rawRidge_       = glGetUniformLocation(rawProgram_, "u_ridge");
+        rawValley_      = glGetUniformLocation(rawProgram_, "u_valley");
+        rawSamples_     = glGetUniformLocation(rawProgram_, "u_samples");
+
+        blurProgram_ = createProgram(compositeVertSrc, cavityBlurFragSrc);
+        glUseProgram(blurProgram_);
+        glUniform1i(glGetUniformLocation(blurProgram_, "u_ao"), 0);
+        glUniform1i(glGetUniformLocation(blurProgram_, "u_depth"), 1);
+        glUniform1i(glGetUniformLocation(blurProgram_, "u_gbuf"), 2);
+        blurInvProj_ = glGetUniformLocation(blurProgram_, "u_invProj");
+        blurAxis_    = glGetUniformLocation(blurProgram_, "u_axis");
         glUseProgram(cast(GLuint)prev);
     }
 }

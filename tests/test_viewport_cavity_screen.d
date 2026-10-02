@@ -459,14 +459,17 @@ unittest {
 }
 
 // ===========================================================================
-// (h) World alone does not run the screen term: with the world kernel absent
-// (until S3b, which replaces this cell with its own prediction) a World frame
-// equals the cavity-off frame, while Both equals Screen (the Screen frame
-// differs from off: the control).
+// (h) World alone does not run the screen term: with the world kernel's gains
+// at 0 (its raw pass then writes 0 — S3b, test_viewport_cavity_world (g) is
+// the control that the gains matter) a World frame equals the cavity-off
+// frame, while Both equals Screen (the Screen frame differs from off: the
+// control).
 // ===========================================================================
 unittest {
     if (!cellOn("h")) return;
     creaseRig();
+    cmd("viewport.cavityParams", `{"worldRidge":0,"worldValley":0}`);
+    scope (exit) cmd("viewport.cavityParams", `{"worldRidge":1,"worldValley":1}`);
     cmd("viewport.cavity", `{"value":"off"}`);
     immutable string off = hash();
     cmd("viewport.cavity", `{"value":"screen"}`);
@@ -474,8 +477,8 @@ unittest {
     assert(screen != off, "(h) control: the screen term must change the frame");
     cmd("viewport.cavity", `{"value":"both"}`);
     immutable string both = hash();
-    assert(both == screen, "(h) Both must run the screen term (equal to Screen while the world kernel is absent)");
+    assert(both == screen, "(h) Both must run the screen term (equal to Screen at world gains 0)");
     cmd("viewport.cavity", `{"value":"world"}`);
     immutable string world = hash();
-    assert(world == off, "(h) World must not run the screen term (equal to off while the world kernel is absent)");
+    assert(world == off, "(h) World must not run the screen term (equal to off at world gains 0)");
 }

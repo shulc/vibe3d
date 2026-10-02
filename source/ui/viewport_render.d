@@ -1006,7 +1006,7 @@ public:
         compositor_ = new ViewportCompositor;
     if (compositor_ !is null)
         compositor_.run(activePlan.composite, v.fbo, v.fbo.w, v.fbo.h,
-                        curvatureTapPx(v.fbo.w, v.camera.width), *segTimer_);
+                        curvatureTapPx(v.fbo.w, v.camera.width), vp.proj, *segTimer_);
 
     // Backdrop wires after every face pass and the composite (model M4).
     // The item sequence drew them inline above, in its captured per-layer

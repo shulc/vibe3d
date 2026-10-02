@@ -24,6 +24,8 @@ enum GpuSeg : ubyte {
     setup, imagePlanes, grid, backdropFaces, faces, backdropWire, edges,
     verts, overlays,
     composite,   // `ViewportCompositor.run`, non-empty plans only (model M4)
+    cavityRaw,   // the world-cavity raw pass (World/Both; wave plan S3b)
+    cavityBlur,  // its blur H and V passes
 }
 
 /// Frame slots in flight per cell, chosen by the P0 measurement (task 9140

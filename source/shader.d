@@ -12,7 +12,7 @@ version (web) {
 } else {
     import gl_thread_guard : glThreadGuard;
 }
-import display_state : DrawPlan, kSchemeSolidFill, SurfaceShading;
+import display_state : DrawPlan, kSchemeSolidFill, SurfaceShading, MAX_CAVITY_SAMPLES;
 import weightmap_view : kWeightRamp;   // task 1090: the parked neutral
 import light_rig : kKeyLightEye, kFillLightEye, kKeyIntensity, kFillIntensity,
     kLightAmbient, specPowerForRoughness, kGoochLightEye, kGoochCool,
@@ -421,7 +421,8 @@ immutable string compositeVertSrc = withShaderPreamble(q{
 // G-buffer flags carry bit 0, the copy itself elsewhere (overlays are drawn
 // after the stage, so they are never scaled). Factor
 // `clamp((1 - cav) * (1 + edges) * (1 + curv), 0, 4)`; `cav`/`edges` are the
-// world kernel (absent until S3b), `curv` the SCREEN CURVATURE (wave plan
+// blurred world kernel (`aoTex[0]`: R, G * 4; read only while `u_worldOn`,
+// World and Both — wave plan S3b), `curv` the SCREEN CURVATURE (wave plan
 // S3a): four G-buffer taps `u_curvPx` pixels up/down/right/left of
 // the pixel; none where the up/down or right/left ids differ (a silhouette
 // between two surfaces or against the background) or where the taps are
@@ -444,6 +445,7 @@ immutable string compositeResolveFragSrc = withShaderPreamble(q{
     uniform int        u_curvPx;
     uniform float      u_ridgeCtl;
     uniform float      u_valleyCtl;
+    uniform int        u_worldOn;
     layout(location = 0) out vec4 fragColor;
     // Inverse of the lit pass octahedral encoding (two unorm16 values).
     vec3 octDecode16(uvec2 q) {
@@ -478,10 +480,152 @@ immutable string compositeResolveFragSrc = withShaderPreamble(q{
         uvec4 g   = texelFetch(u_gbuf, p, 0);
         bool  on  = (g.a & 1u) != 0u;
         float cav = 0.0, edges = 0.0;
+        if (on && u_worldOn != 0) {
+            vec2 ao = texelFetch(u_ao, p, 0).rg;
+            cav   = ao.r;
+            edges = ao.g * 4.0;
+        }
         float curv = (on && u_curvPx > 0) ? screenCurvature(p) : 0.0;
         float k   = on ? clamp((1.0 - cav) * (1.0 + edges) * (1.0 + curv), 0.0, 4.0)
                        : 1.0;
         fragColor = vec4(src.rgb * (k * u_testGain), src.a);
+    }
+});
+
+// ---- World cavity (wave plan S3b, model M4) -----------------------
+// The kernel cap spliced into the raw pass loop (`i < u_samples && i <
+// kMaxCavitySamples`), from the one D constant.
+private enum string cavitySamplesLiteral = () {
+    string r;
+    for (int v = MAX_CAVITY_SAMPLES; v > 0; v /= 10) r = cast(char)('0' + v % 10) ~ r;
+    return r;
+}();
+static assert(cavitySamplesLiteral == "64", "MAX_CAVITY_SAMPLES moved: the shader cap follows it");
+/// The blur's relative depth tolerance `kBlurDepthRel` (a vibe3d product
+/// value, owner may tune; wave plan S3b).
+enum string blurDepthRelLiteral = "0.05";
+// Shared by the raw and blur passes: the octahedral decode of the G-buffer
+// normal and the eye-space position of a pixel from the depth texture through
+// the inverse projection (`u_invProj`; `u_depth` is NEAREST, read by
+// texelFetch only).
+private enum string cavityCommonGlsl = q{
+    uniform highp sampler2D  u_depth;
+    uniform highp usampler2D u_gbuf;
+    uniform mat4 u_invProj;
+    vec3 octDecode16(uvec2 q) {
+        vec2  e = vec2(q) / 65535.0 * 2.0 - 1.0;
+        vec3  n = vec3(e, 1.0 - abs(e.x) - abs(e.y));
+        if (n.z < 0.0)
+            n.xy = (vec2(1.0) - abs(e.yx))
+                 * vec2(e.x >= 0.0 ? 1.0 : -1.0, e.y >= 0.0 ? 1.0 : -1.0);
+        return normalize(n);
+    }
+    vec3 eyePos(ivec2 p, float depth) {
+        vec2 size = vec2(textureSize(u_depth, 0));
+        vec4 v = u_invProj * vec4((vec2(p) + 0.5) / size * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+        return v.xyz / v.w;
+    }
+};
+
+// The raw world-cavity pass into `aoTex[0]`: R = cavities, G = edges / 4.
+// Taps on a three-turn spiral (Scalable Ambient Obscurance, McGuire & Mara
+// 2012): tap i at `alpha = (i + 0.5) / N` of the disk radius, angle
+// `alpha * 3 turns + spin`, spin the fixed per-pixel hash
+// `(3 * (x ^ y) + x * y) * 10` (reduced to [0, 2pi) through its low 16 bits;
+// static, so a frame is deterministic). The disk radius is `distance`
+// projected at the pixel's depth (`u_projScale / (proj[2][3] z + proj[3][3])`,
+// = `projScale * distance / -z` under perspective). Per tap the ridge/valley
+// split: `f = (S - P) . N` accumulates as a cavity when `f > -bias`, its
+// negation as an edge when `-f > bias`, `bias = 0.05 |d| + 1e-4`, weighted
+// `1 / (|d| (1 + |d|^2 attenuation))`; the sums are averaged over N, cavities
+// `clamp(* valley, 0, 1)`, edges `* ridge`. A tap on the far plane OR on a
+// G-buffer id 0 (background, the grid, image planes) is BACKGROUND: its
+// sample is the centre itself pushed back by `distance` (`S = P - distance z`),
+// so on a camera-facing normal it adds an edge in proportion to the normal's
+// view z, never a cavity.
+// Pixels whose flags lack bit 0 write 0.
+immutable string worldCavityFragSrc = withShaderPreamble(
+    "const int kMaxCavitySamples = " ~ cavitySamplesLiteral ~ ";\n" ~ cavityCommonGlsl ~ q{
+    uniform vec2  u_projScale;   // (proj[0][0] * W / 2, proj[1][1] * H / 2)
+    uniform vec2  u_homZW;       // (proj[2][3], proj[3][3])
+    uniform float u_distance;
+    uniform float u_attenuation;
+    uniform float u_ridge;
+    uniform float u_valley;
+    uniform int   u_samples;
+    layout(location = 0) out vec4 fragColor;
+    void main() {
+        ivec2 p = ivec2(gl_FragCoord.xy);
+        uvec4 g = texelFetch(u_gbuf, p, 0);
+        float depth = texelFetch(u_depth, p, 0).r;
+        if ((g.a & 1u) == 0u || g.b == 0u || depth >= 1.0) {
+            fragColor = vec4(0.0);
+            return;
+        }
+        vec3  P = eyePos(p, depth);
+        vec3  N = octDecode16(g.rg);
+        vec2  radius = u_projScale * u_distance / (u_homZW.x * P.z + u_homZW.y);
+        int   h = 3 * (p.x ^ p.y) + p.x * p.y;
+        float spin = 6.28318531 * fract(float(h & 0xFFFF) * 1.59154943);
+        ivec2 hi = textureSize(u_depth, 0) - ivec2(1);
+        int   n = min(u_samples, kMaxCavitySamples);
+        float cav = 0.0, edges = 0.0;
+        for (int i = 0; i < u_samples && i < kMaxCavitySamples; ++i) {
+            float alpha = (float(i) + 0.5) / float(n);
+            float a = alpha * 18.84955592 + spin;
+            ivec2 q = p + ivec2(round(vec2(cos(a), sin(a)) * alpha * radius));
+            if (any(lessThan(q, ivec2(0))) || any(greaterThan(q, hi))) continue;
+            float sd  = texelFetch(u_depth, q, 0).r;
+            bool  bg  = sd >= 1.0 || texelFetch(u_gbuf, q, 0).b == 0u;
+            vec3  S   = bg ? vec3(P.xy, P.z - u_distance) : eyePos(q, sd);
+            vec3  d   = S - P;
+            float len = length(d);
+            if (len <= 0.0) continue;
+            float f    = dot(d, N);
+            float bias = 0.05 * len + 1e-4;
+            float att  = 1.0 / (len * (1.0 + len * len * u_attenuation));
+            if (f > -bias) cav   += f * att;
+            if (-f > bias) edges -= f * att;
+        }
+        cav   = clamp(cav / float(n) * u_valley, 0.0, 1.0);
+        edges = edges / float(n) * u_ridge;
+        fragColor = vec4(cav, edges * 0.25, 0.0, 1.0);
+    }
+});
+
+// One axis of the separable blur of the raw world-cavity buffer (`u_axis` =
+// (1,0) or (0,1), a vec2: no glUniform2i on the web roster): Gaussian sigma 2 over 5 taps, each tap's weight times the
+// depth weight `max(0, 1 - |z_tap - z_c| / (kBlurDepthRel |z_c|))` on eye z,
+// so nothing bleeds across a depth discontinuity. Only flagged pixels (flags
+// bit 0) receive or contribute; an unflagged pixel passes its (zero) value.
+immutable string cavityBlurFragSrc = withShaderPreamble(
+    "const float kBlurDepthRel = " ~ blurDepthRelLiteral ~ ";\n" ~ cavityCommonGlsl ~ q{
+    uniform sampler2D u_ao;
+    uniform vec2      u_axis;
+    layout(location = 0) out vec4 fragColor;
+    void main() {
+        ivec2 p = ivec2(gl_FragCoord.xy);
+        vec4  c = texelFetch(u_ao, p, 0);
+        if ((texelFetch(u_gbuf, p, 0).a & 1u) == 0u) {
+            fragColor = c;
+            return;
+        }
+        float zc = eyePos(p, texelFetch(u_depth, p, 0).r).z;
+        float wsum = 1.0;
+        vec2  sum  = c.rg;
+        ivec2 hi = textureSize(u_depth, 0) - ivec2(1);
+        for (int k = -2; k <= 2; ++k) {
+            if (k == 0) continue;
+            ivec2 q = p + k * ivec2(u_axis);
+            if (any(lessThan(q, ivec2(0))) || any(greaterThan(q, hi))) continue;
+            if ((texelFetch(u_gbuf, q, 0).a & 1u) == 0u) continue;
+            float zq = eyePos(q, texelFetch(u_depth, q, 0).r).z;
+            float wd = max(0.0, 1.0 - abs(zq - zc) / (kBlurDepthRel * abs(zc)));
+            float w  = exp(-float(k * k) / 8.0) * wd;
+            sum  += texelFetch(u_ao, q, 0).rg * w;
+            wsum += w;
+        }
+        fragColor = vec4(sum / wsum, 0.0, 1.0);
     }
 });
 
@@ -797,6 +941,8 @@ string shaderSourceForValidation(string name) pure @safe {
     case "thickLineFragSrc": return thickLineFragSrc;
     case "compositeVertSrc": return compositeVertSrc;
     case "compositeResolveFragSrc": return compositeResolveFragSrc;
+    case "worldCavityFragSrc": return worldCavityFragSrc;
+    case "cavityBlurFragSrc": return cavityBlurFragSrc;
     default: assert(false, "unknown shader source: " ~ name);
     }
 }

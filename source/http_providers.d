@@ -1082,9 +1082,11 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                 b.put(format(`],"compositeChecked":%s,"compositeFaults":%d,` ~
                     `"firstCompositeFault":%s,` ~
                     `"fboIds":{"scene":%d,"effects":%d,"color":%d,"gbuf":%d,` ~
-                    `"compositeSrc":%d}`, f.compositeChecked ? "true" : "false",
+                    `"compositeSrc":%d,"depth":%d,"ao0":%d,"ao1":%d}`,
+                    f.compositeChecked ? "true" : "false",
                     f.compositeFaults, JSONValue(f.firstCompositeFault).toString,
-                    f.fbo, f.effectsFbo, f.colorTex, f.gbufTex, f.compositeSrcTex));
+                    f.fbo, f.effectsFbo, f.colorTex, f.gbufTex, f.compositeSrcTex,
+                    f.depthTex, f.aoTex[0], f.aoTex[1]));
                 return b.data;
             }
             static string stateJson(in DisplayState s) {
