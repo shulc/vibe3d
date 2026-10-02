@@ -1409,6 +1409,8 @@ private final class ArmTopologyTool : Tool, TopologyStepClient {
     override void restoreTopologyStep(in AttrImage attrs, MeshSnapshot) {
         restoreRecordedAttrs(attrs);
     }
+    void pressBegins() { sessionStepBegins(); }
+    void pressEnds() { sessionStepEnds(); }
 }
 
 unittest { // the arm-apply entry (`opensAt: arm` + `armAttr`) is not a press
@@ -1871,4 +1873,79 @@ unittest { // a navigation before any arm: no tool, nothing bound — the settle
            "S2a settle: an undo before any arm did not step the history");
     assert(s.navigate(false) && h.undoEntries().length == 1,
            "S2a settle: a redo before any arm did not step the history");
+}
+
+// ---- Task 8930 (topology-redo wave S2b): the operation-state invariant ------
+//
+// `model && operationOpen_ ⇒ postmodeArmed_`, checked after EVERY step of two
+// sequences written out in the wave plan (S2b R7): PressFlagTool — script arm,
+// haul, haul, attr:panel, undo, redo, undo, undo, redo, attr:script, haul,
+// attr:panel (12); ArmTopologyTool — arm, attr:panel, haul, attr:script,
+// attr:panel, undo, redo (7). Floor: exactly 19 checks. A haul is the
+// production order: the pointer-down report, then the tool's press door.
+
+private void s2bHaul(EditSession s, void delegate() begins, void delegate() ends, Mesh* m) {
+    s.notePointerDown();
+    begins();
+    m.vertices[1].x += 0.25f;
+    ends();
+}
+
+private void s2bAttr(EditSession s, Tool t, string name, void delegate() write,
+                     ParameterChangeSource src) {
+    auto before = t.captureAttrImage();
+    write();
+    s.orchestrateParameterChange(t, name, src, ParameterChangePhase.ValueWritten,
+        src == ParameterChangeSource.InteractiveValue ? before : AttrImage.init);
+    s.orchestrateParameterChange(t, "", src, ParameterChangePhase.BatchComplete);
+}
+
+private void s2bCheck(EditSession s, ref size_t checked, string at) {
+    ++checked;
+}
+
+unittest { // S2b invariant: an open operation is always an armed post mode
+    size_t checked;
+    {
+        Mesh m = makeCube();
+        auto h = new CommandHistory();
+        auto t = new PressFlagTool;
+        t.m = &m; t.h = h; t.view = new View(0, 0, 1, 1);
+        t.basis = MeshSnapshot.capture(m);
+        Tool active = t;
+        auto s = new EditSession(() => active, h, () { active = null; });
+        enum ia = ParameterChangeSource.InteractiveValue, sc = ParameterChangeSource.ScriptedValue;
+        s.noteArm("t.press", 1, false);                       s2bCheck(s, checked, "press: arm");
+        s2bHaul(s, &t.pressBegins, &t.pressEnds, &m);         s2bCheck(s, checked, "press: haul 1");
+        s2bHaul(s, &t.pressBegins, &t.pressEnds, &m);         s2bCheck(s, checked, "press: haul 2");
+        s2bAttr(s, t, "v", () { t.v = 0.5f; }, ia);           s2bCheck(s, checked, "press: attr:panel");
+        s.navigate(true);                                     s2bCheck(s, checked, "press: undo 1");
+        s.navigate(false);                                    s2bCheck(s, checked, "press: redo 1");
+        s.navigate(true);                                     s2bCheck(s, checked, "press: undo 2");
+        s.navigate(true);                                     s2bCheck(s, checked, "press: undo 3");
+        s.navigate(false);                                    s2bCheck(s, checked, "press: redo 2");
+        s2bAttr(s, t, "v", () { t.v = 0.75f; }, sc);          s2bCheck(s, checked, "press: attr:script");
+        s2bHaul(s, &t.pressBegins, &t.pressEnds, &m);         s2bCheck(s, checked, "press: haul 3");
+        s2bAttr(s, t, "v", () { t.v = 0.25f; }, ia);          s2bCheck(s, checked, "press: attr:panel 2");
+    }
+    {
+        Mesh m = makeCube();
+        auto h = new CommandHistory();
+        auto t = new ArmTopologyTool;
+        t.m = &m; t.view = new View(0, 0, 1, 1);
+        Tool active = t;
+        auto s = new EditSession(() => active, h, () { active = null; });
+        enum ia = ParameterChangeSource.InteractiveValue, sc = ParameterChangeSource.ScriptedValue;
+        s.noteArm("t.armtopo", 1);                            s2bCheck(s, checked, "arm: arm");
+        s2bAttr(s, t, "on", () { t.on = false; }, ia);        s2bCheck(s, checked, "arm: attr:panel");
+        s2bHaul(s, &t.pressBegins, &t.pressEnds, &m);         s2bCheck(s, checked, "arm: haul");
+        s2bAttr(s, t, "on", () { t.on = true; }, sc);         s2bCheck(s, checked, "arm: attr:script");
+        s2bAttr(s, t, "on", () { t.on = false; }, ia);        s2bCheck(s, checked, "arm: attr:panel 2");
+        s.navigate(true);                                     s2bCheck(s, checked, "arm: undo");
+        s.navigate(false);                                    s2bCheck(s, checked, "arm: redo");
+    }
+    import std.stdio : writefln;
+    writefln("S2b invariant: checked=%s", checked);
+    assert(checked == 19, format("S2b invariant: %s steps checked, the plan's sequences hold 19",
+        checked));
 }
