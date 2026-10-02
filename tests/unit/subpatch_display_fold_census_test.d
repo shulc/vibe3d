@@ -122,11 +122,18 @@ unittest // publication, dirty key, writers, and reuse close the state census
 
     const fanOut = bodyAt(mainBody,
         "if (subpatchPreview.lastRefreshFannedOut)");
-    assert(mainBody.count(
-        "displayPayload.recordWrite(\n                        DisplayPayloadWriter.gpuFanOut,") == 1
-        && fanOut.indexOf("DisplayPayloadWriter.gpuFanOut") >= 0
-        && fanOut.indexOf("DisplayPayloadBasis.previewIndexed") >= 0,
+    // The fan-out's one write site goes through `GpuMesh.noteFaceVboFannedOut`
+    // (records the write AND drops the face mirror's smooth cache, S1c).
+    const meshGpuSrc = blankNonCode(readText(
+        buildPath(repoRoot, "source", "mesh_gpu.d")));
+    const note = bodyAt(meshGpuSrc, "void noteFaceVboFannedOut()");
+    assert(mainBody.count("noteFaceVboFannedOut()") == 1
+        && fanOut.indexOf("gpu.noteFaceVboFannedOut();") >= 0
+        && note.indexOf("DisplayPayloadWriter.gpuFanOut") >= 0
+        && note.indexOf("DisplayPayloadBasis.previewIndexed") >= 0,
         "6520 provenance: GPU fan-out must record one preview-indexed write");
+    assert(note.indexOf("smoothCache.valid = false;") >= 0,
+        "S1c: a fan-out write bypasses the face mirror and must drop its smooth cache");
 
     const dirtyKeyLine = lineAt(mainBody, "_newKey.toolMat =");
     assert(dirtyKeyLine.indexOf("tt.gpuMatrix") >= 0

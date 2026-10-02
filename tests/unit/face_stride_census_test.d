@@ -189,7 +189,7 @@ unittest { // the prepared-upload helpers carry the smooth stream's inputs
                     "dst.faceAdjGen = src.faceAdjGen",
                     "dst.scratchCornerSmooth = src.scratchCornerSmooth.dup",
                     "dst.scratchFaceNormal = src.scratchFaceNormal.dup",
-                    "dst.smoothCache = src.smoothCache.dup"])
+                    "dst.smoothCache = SmoothNormalCache.init"])
         assert(clone.indexOf(stmt) >= 0, "census: cloneUploadState no longer copies `" ~ stmt ~ "`");
     foreach (stmt; ["dst.faceAdj = src.faceAdj", "dst.faceAdjGen = src.faceAdjGen",
                     "dst.scratchCornerSmooth = src.scratchCornerSmooth",

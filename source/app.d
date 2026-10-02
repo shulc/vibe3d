@@ -6520,9 +6520,7 @@ void main(string[] args) {
                 // this row and reddens `tests/test_bus_position_pixel.d` ARM A.
                 subpatchPreview.rebuildIfStale(mesh, subpatchDepth, &targets);
                 if (subpatchPreview.lastRefreshFannedOut) {
-                    gpu.displayPayload.recordWrite(
-                        DisplayPayloadWriter.gpuFanOut,
-                        DisplayPayloadBasis.previewIndexed);
+                    gpu.noteFaceVboFannedOut();
                 }
             }
         }

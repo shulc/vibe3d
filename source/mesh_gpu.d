@@ -720,6 +720,42 @@ struct GpuMesh {
         return scratchFaceData[0 .. n];
     }
 
+    /// Whether the face mirror must reach the VBO after `refreshFaceDataCpu`:
+    /// false only when that refresh re-fanned no face — the VBO then already
+    /// holds the mirror, because every face-VBO write either submits the
+    /// mirror whole (`submitUploadGl`, `submitFaceMirror`) or drops the cache
+    /// (`noteFaceVboFannedOut`, a failed map) so the next refresh is full.
+    bool faceMirrorSubmitNeeded() const @safe pure nothrow @nogc {
+        return smoothCache.lastFull || smoothCache.writeCount > 0;
+    }
+
+    /// The GPU subpatch fan-out (`OsdAccel.refreshIntoFaceVbo`) wrote the face
+    /// VBO behind the CPU mirror: record the write and drop the incremental
+    /// cache, so the next CPU refresh re-fans and submits every face. Every
+    /// face-VBO writer that bypasses `refreshFaceDataCpu` goes through here.
+    void noteFaceVboFannedOut() nothrow @nogc {
+        smoothCache.valid = false;
+        displayPayload.recordWrite(DisplayPayloadWriter.gpuFanOut,
+                                   DisplayPayloadBasis.previewIndexed);
+    }
+
+    /// The face half of both positions refreshes: the mirror `data` (just
+    /// returned by `refreshFaceDataCpu`) into an orphaned buffer, whole — or
+    /// nothing on an idle refresh (`faceMirrorSubmitNeeded`). A failed map
+    /// drops the cache: the VBO no longer holds the mirror.
+    private void submitFaceMirror(const(float)[] data) {
+        if (!faceMirrorSubmitNeeded()) return;
+        glBindBuffer(GL_ARRAY_BUFFER, faceVbo);
+        float* fp = cast(float*)glMapBufferRange(
+            GL_ARRAY_BUFFER, 0,
+            cast(GLsizeiptr)(faceVertCount * kFaceStride * float.sizeof),
+            GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
+        if (fp) {
+            fp[0 .. data.length] = data[];
+            glUnmapBuffer(GL_ARRAY_BUFFER);
+        } else smoothCache.valid = false;
+    }
+
     /// What the last `refreshFaceDataCpu` re-fanned: every face (`full`), or
     /// `faces` of them; `cached` = the incremental cache is valid (the next
     /// refresh may skip faces). A path control for tests and the drag-cost readout.
@@ -1132,21 +1168,11 @@ struct GpuMesh {
         g_fc.upload(cast(long)mesh.vertices.length);
 
         // Face VBO: the CPU mirror, patched where the drawn positions moved
-        // (`refreshFaceDataCpu`), submitted whole. Map with
-        // INVALIDATE_BUFFER_BIT — explicit driver-side orphan, so every byte
-        // is rewritten; hidden/degenerate faces own no bytes (faceTriCount 0).
-        if (faceVertCount > 0) {
-            const(float)[] data = refreshFaceDataCpu(mesh, vpos);
-            glBindBuffer(GL_ARRAY_BUFFER, faceVbo);
-            float* fp = cast(float*)glMapBufferRange(
-                GL_ARRAY_BUFFER, 0,
-                cast(GLsizeiptr)(faceVertCount * kFaceStride * float.sizeof),
-                GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
-            if (fp) {
-                fp[0 .. data.length] = data[];
-                glUnmapBuffer(GL_ARRAY_BUFFER);
-            }
-        }
+        // (`refreshFaceDataCpu`), submitted whole into an orphaned buffer, or
+        // not at all when nothing moved (`submitFaceMirror`);
+        // hidden/degenerate faces own no bytes (faceTriCount 0).
+        if (faceVertCount > 0)
+            submitFaceMirror(refreshFaceDataCpu(mesh, vpos));
 
         // Edge VBO: subpatch mode filters out edges whose
         // edgeOrigin[ei] == uint.max (derived edges that aren't shown).
@@ -1338,18 +1364,8 @@ struct GpuMesh {
         // from the drawn positions (the morph law above; positions read off
         // `mesh.vertices` un-morphed a displayed morph mid-drag), submitted
         // whole into an orphaned buffer.
-        if (faceVertCount > 0 && faceTriStart.length == mesh.faces.length) {
-            const(float)[] data = refreshFaceDataCpu(mesh, vpos);
-            glBindBuffer(GL_ARRAY_BUFFER, faceVbo);
-            float* fp = cast(float*)glMapBufferRange(
-                GL_ARRAY_BUFFER, 0,
-                cast(GLsizeiptr)(faceVertCount * kFaceStride * float.sizeof),
-                GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
-            if (fp) {
-                fp[0 .. data.length] = data[];
-                glUnmapBuffer(GL_ARRAY_BUFFER);
-            }
-        }
+        if (faceVertCount > 0 && faceTriStart.length == mesh.faces.length)
+            submitFaceMirror(refreshFaceDataCpu(mesh, vpos));
 
         // Edge VBO — this path is CAGE-ONLY: a preview upload would have gone
         // through the suppressCageUpload early-return above, so `edgeOrigin`
@@ -2576,7 +2592,8 @@ private GpuMesh cloneUploadState(ref GpuMesh src) {
     dst.faceAdjGen = src.faceAdjGen;
     dst.scratchCornerSmooth = src.scratchCornerSmooth.dup;
     dst.scratchFaceNormal = src.scratchFaceNormal.dup;
-    dst.smoothCache = src.smoothCache.dup;
+    // Empty: the clone's `buildUploadCpu` bumps `faceLayoutGen`, a full pass anyway.
+    dst.smoothCache = SmoothNormalCache.init;
     dst.scratchFaceIdData = src.scratchFaceIdData.dup;
     dst.scratchMatIdData = src.scratchMatIdData.dup;
     dst.scratchWeightColor = src.scratchWeightColor.dup;

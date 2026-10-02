@@ -96,7 +96,6 @@ private Vec3 smoothCorner(const ref FaceAdjacency adj, const(Vec3)[] faceNormal,
     import std.math : sqrt;
     immutable Vec3 nf_ = faceNormal[fi];
     if (nf_.x == 0 && nf_.y == 0 && nf_.z == 0) return Vec3(0, 1, 0);
-    if (v + 1 >= adj.offsets.length) return nf_;
     float sx = nf_.x, sy = nf_.y, sz = nf_.z;
     immutable uint lo = adj.offsets[v];
     uint hi = adj.offsets[v + 1];
@@ -155,20 +154,6 @@ struct SmoothNormalCache {
     uint[] writeFaces;    // faces whose VBO corners changed in the last update
     size_t writeCount;
     bool   lastFull;      // the last update recomputed every corner
-
-    /// An independent copy (the prepared-upload clone must not alias the
-    /// live mesh's cache: both write it in place).
-    SmoothNormalCache dup() const @safe pure nothrow {
-        SmoothNormalCache c;
-        c.valid = valid; c.layoutGen = layoutGen; c.cosSmooth = cosSmooth;
-        c.faceCount = faceCount; c.vertexCount = vertexCount;
-        c.facesId = facesId; c.epoch = epoch;
-        c.lastPos = lastPos.dup; c.cornerStart = cornerStart.dup;
-        c.faceMark = faceMark.dup; c.vertMark = vertMark.dup;
-        c.dirtyVerts = dirtyVerts.dup; c.changedFaces = changedFaces.dup;
-        c.writeFaces = writeFaces.dup; c.writeCount = writeCount; c.lastFull = lastFull;
-        return c;
-    }
 
     /// True when nothing is held (the empty-`GpuMesh` predicate reads it).
     bool isEmpty() const @safe pure nothrow @nogc {

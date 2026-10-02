@@ -176,3 +176,30 @@ unittest { // the fan law: (f0, fi, fi+1) per triangle, positions and the face n
             format("fan corner %d: flat normal %s, a CCW quad in XY faces +Z", c, data[c * 9 + 3 .. c * 9 + 6]));
     }
 }
+
+unittest { // the submit decision: an idle refresh submits nothing; a fan-out write forces a whole submit
+    import mesh_gpu : DisplayPayloadWriter;
+    auto m = rig();
+    GpuMesh gpu;
+    fullUpload(gpu, m);
+    // Idle after a full upload: the VBO already holds the mirror.
+    cast(void)gpu.refreshFaceDataCpu(m, m.vertices);
+    assert(!gpu.faceMirrorSubmitNeeded(), "an idle refresh must submit no face data");
+    // A moved vertex: the patched mirror must reach the VBO.
+    move(m, [7u], Vec3(0, 0.2f, 0));
+    cast(void)gpu.refreshFaceDataCpu(m, m.vertices);
+    assert(gpu.faceMirrorSubmitNeeded(), "a refresh that re-fanned faces must submit the mirror");
+    cast(void)gpu.refreshFaceDataCpu(m, m.vertices);
+    assert(!gpu.faceMirrorSubmitNeeded(), "the idle refresh after a drag frame must submit nothing");
+    // The GPU fan-out wrote the VBO behind the mirror: the next CPU refresh,
+    // idle as it is, re-fans and submits every face.
+    gpu.noteFaceVboFannedOut();
+    assert(gpu.displayPayload.writer == DisplayPayloadWriter.gpuFanOut,
+        "the fan-out write must be recorded as the payload's writer");
+    cast(void)gpu.refreshFaceDataCpu(m, m.vertices);
+    assert(gpu.lastFaceRefresh.full && gpu.faceMirrorSubmitNeeded(),
+        "after a fan-out write an idle CPU refresh must re-fan and submit every face "
+        ~ "(the VBO no longer holds the mirror)");
+    assert(firstDiff(gpu.refreshFaceDataCpu(m, m.vertices), oracleData(m)) < 0,
+        "after a fan-out write the mirror must equal a fresh full upload");
+}

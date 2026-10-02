@@ -360,6 +360,53 @@ unittest { // the patch rig: population and a hard hinge that the angle split ke
         format("rig: the hinge at x = 2 does not split (%s vs %s) — the patch cannot witness the angle test", left, right));
 }
 
+/// The faces an incremental update must re-fan, derived from the mesh
+/// alone (not from the CSR the kernel reads): the faces incident to any
+/// vertex of a face that has a moved vertex. `prev` = the positions of the
+/// previous update; a vertex moved iff its bits differ. Sorted, distinct.
+private uint[] expectedWriteSet(const ref Mesh m, const(Vec3)[] prev) {
+    bool[] moved = new bool[](m.vertices.length), touched = new bool[](m.vertices.length);
+    foreach (v; 0 .. m.vertices.length) moved[v] = m.vertices[v] !is prev[v];
+    foreach (f; m.faces) {
+        bool hit;
+        foreach (v; f) if (moved[v]) hit = true;
+        if (hit) foreach (v; f) touched[v] = true;
+    }
+    uint[] want;
+    foreach (fi, f; m.faces) {
+        bool hit;
+        foreach (v; f) if (touched[v]) hit = true;
+        if (hit) want ~= cast(uint)fi;
+    }
+    return want;
+}
+
+/// `cache.writeFaces[0 .. writeCount]` equals `want` as a set, with no repeats.
+private void assertWriteSet(const ref SmoothNormalCache cache, const uint[] want, string what) {
+    import std.algorithm.sorting : sort;
+    assert(cache.writeCount == want.length,
+        format("%s: the update re-fanned %d face entries, the faces around the changed faces' vertices are %d %s",
+               what, cache.writeCount, want.length, want));
+    auto got = cache.writeFaces[0 .. cache.writeCount].dup;
+    sort(got);
+    assert(got == want, format("%s: re-fanned faces %s, expected %s", what, got, want));
+}
+
+unittest { // a one-vertex drag re-fans EXACTLY the faces around the changed faces' vertices, once each
+    auto m = hingedPatch();
+    Session s;
+    s.step(m, smoothingCosine());
+    immutable Vec3[] prev = m.vertices.idup;
+    m.vertices[0].y += 0.3f;   // the triangle corner: changed faces 0 and 1
+    assert(!s.step(m, smoothingCosine()), "one moved vertex must take the incremental path");
+    const uint[] want = expectedWriteSet(m, prev);
+    // Floor [E4]: the two triangles and the three quads around vertex (1,1);
+    // the CSR lists 11 incident entries over those faces' vertices, so a
+    // write list without its dedupe holds 11.
+    assert(want == [0u, 1, 2, 5, 6], format("rig: the expected re-fan set is %s", want));
+    assertWriteSet(s.cache, want, "one-vertex drag");
+}
+
 unittest { // partial drags: incremental == full, bit for bit, at every step
     auto m = hingedPatch();
     Session s;
@@ -372,6 +419,7 @@ unittest { // partial drags: incremental == full, bit for bit, at every step
     immutable Vec3[] before = m.vertices.idup;
     size_t partial;
     foreach (k, sub; subsets) {
+        immutable Vec3[] prev = m.vertices.idup;
         foreach (v; sub) {
             if (k == 4) m.vertices[v] = before[v];   // undo the hinge move of step 1
             else {
@@ -386,6 +434,7 @@ unittest { // partial drags: incremental == full, bit for bit, at every step
         assert(!full && s.cache.writeCount > 0 && s.cache.writeCount < m.faces.length,
             format("step %d: expected an incremental update over a face subset, got full=%s faces=%d",
                    k, full, s.cache.writeCount));
+        assertWriteSet(s.cache, expectedWriteSet(m, prev), format("step %d", k));
         ++partial;
         const want = fullCorners(m, smoothingCosine());
         immutable d = firstDiff(s.corner[0 .. want.length], want);
@@ -462,6 +511,19 @@ unittest { // stale cache: a grown vertex array (same layout) recomputes all
         "a vertex-count change must take the full pass");
     const want = fullCorners(m, smoothingCosine());
     assert(firstDiff(s.corner[0 .. want.length], want) < 0, "after a vertex-count change the corners are stale");
+}
+
+unittest { // stale cache: a SHRUNK vertex array (same layout) recomputes all
+    auto m = hingedPatch();
+    m.vertices ~= Vec3(9, 9, 9);   // unreferenced
+    Session s;
+    s.step(m, smoothingCosine());
+    m.vertices = m.vertices[0 .. $ - 1];
+    // Nothing referenced moved: only the vertex-count stamp can see it.
+    assert(s.step(m, smoothingCosine()) && s.cache.lastFull,
+        "a vertex-count shrink must take the full pass");
+    const want = fullCorners(m, smoothingCosine());
+    assert(firstDiff(s.corner[0 .. want.length], want) < 0, "after a vertex-count shrink the corners are stale");
 }
 
 unittest { // the switch to the full pass: above a quarter of the vertices moved
