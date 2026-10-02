@@ -161,8 +161,8 @@ SH";
         "W15-A source census found zero D files");
     assert(edgesScanned > 0,
         "W15-A parsed zero dmd -deps edges; an empty graph makes every closure clean");
-    assert(subjects.length == 6,
-        format("W15-A gl_thread_guard subject population changed: expected 6 consuming modules, got %d (%s)",
+    assert(subjects.length == 7,
+        format("W15-A gl_thread_guard subject population changed: expected 7 consuming modules, got %d (%s)",
                subjects.length, subjects));
 
     const carrier = blankNonCode(readText(
@@ -194,21 +194,21 @@ SH";
 
     const string[] expectedSubjects = [
         "app", "handles.gl_util", "image_cache", "shader",
-        "subpatch_osd", "ui.image_rows",
+        "subpatch_osd", "ui.image_rows", "viewport_env",
     ];
     assert(subjects == expectedSubjects,
         format("W15-A gl_thread_guard consumers changed: expected %s, got %s",
                expectedSubjects, subjects));
-    assert(importModules == 8,
-        format("W15-A must gate all 8 gl_thread_guard import statements; found %d",
+    assert(importModules == 9,
+        format("W15-A must gate all 9 gl_thread_guard import statements; found %d",
                importModules));
-    assert(glThreadGuardUses == 14 && markMainThreadUses == 2,
-        format("W15-A identifier needle changed: expected glThreadGuard=14 and markMainThread=2, got %d and %d",
+    assert(glThreadGuardUses == 16 && markMainThreadUses == 2,
+        format("W15-A identifier needle changed: expected glThreadGuard=16 and markMainThread=2, got %d and %d",
                glThreadGuardUses, markMainThreadUses));
-    assert(glThreadGuardUses + markMainThreadUses - importModules == 8,
-        "W15-A expected 8 imported guard names after subtracting 8 module names");
-    assert(guardedCalls == 8,
-        format("W15-A must gate all 8 guard calls; found %d", guardedCalls));
+    assert(glThreadGuardUses + markMainThreadUses - importModules == 9,
+        "W15-A expected 9 imported guard names after subtracting 9 module names");
+    assert(guardedCalls == 9,
+        format("W15-A must gate all 9 guard calls; found %d", guardedCalls));
 
     string[] leaks;
     foreach (subject; subjects)
@@ -220,6 +220,6 @@ SH";
         }
     }
     assert(leaks.length == 0,
-        format("W15-A web closure still reaches gl_thread_guard; removing version (web) from one of the six consuming modules must report leaks [\"gl_thread_guard\"]; got %s",
+        format("W15-A web closure still reaches gl_thread_guard; removing version (web) from one of the seven consuming modules must report leaks [\"gl_thread_guard\"]; got %s",
                leaks));
 }

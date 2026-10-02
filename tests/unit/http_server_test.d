@@ -317,9 +317,11 @@ unittest {
     assert(source.count("commandBridge.submitAndWait(kCommandBridgeMaxIters)") == 2,
         "6750 native spin pin: both command submit sites must retain the long override");
 
+    import std.format : format;
     auto fresh = new HttpServer();
-    assert(fresh.unwiredEndpoints().length == 48,
-        "6750 readiness pin: expected all 48 provider/handler/action slots on a fresh server");
+    assert(fresh.unwiredEndpoints().length == 49,
+        format("6750 readiness pin: expected all 49 provider/handler/action slots on a fresh server, got %d",
+               fresh.unwiredEndpoints().length));
 }
 
 unittest { // submitAndWait is identity in an in-process single-thread channel
