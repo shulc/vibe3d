@@ -74,7 +74,7 @@ JSONValue model() {
     return parseJSON(cast(string)get(baseUrl ~ "/api/model"));
 }
 
-// The face VBO holds fan-triangulated faces at stride 6: every face with
+// The face VBO holds fan-triangulated faces (`kFaceStride` floats a corner): every face with
 // n >= 3 corners contributes (n - 2) * 3 vertices. Deriving the expectation
 // from /api/model (instead of hardcoding 36/144 for the cube) keeps the
 // assert valid if the default scene ever changes.

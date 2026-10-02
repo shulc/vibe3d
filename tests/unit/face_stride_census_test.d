@@ -144,25 +144,36 @@ unittest { // the layout census: four files, one stride constant, no other spell
         "census: the GPU fan-out's park (`kFanOutStride != kFaceStride`) is gone from subpatch_osd.d");
 }
 
-unittest { // exactly ONE fan writer, called by exactly the three face-VBO writers [E3, E14]
+unittest { // ONE fan writer behind ONE CPU refresh, called by exactly the three face-VBO writers [E3, E14]
     immutable code = codeOf("mesh_gpu.d");
     assert(hits(code, ctRegex!(`\bsize_t\s+writeFaceCorners\s*\(`)) == 1,
         "census: writeFaceCorners must be defined exactly once in mesh_gpu.d");
+    // The fan writer has one caller: the incremental CPU refresh.
+    immutable refresh = bodyAt(code, "const(float)[] refreshFaceDataCpu(");
+    assert(refresh.length > 300, "census: refreshFaceDataCpu's body vanished");
+    assert(countOccurrences(refresh, "writeFaceCorners(") == 1 &&
+           countOccurrences(code, "writeFaceCorners(") == 2,
+        format("census: writeFaceCorners is called %d time(s) in mesh_gpu.d, %d in refreshFaceDataCpu; "
+             ~ "expected exactly one call, there", countOccurrences(code, "writeFaceCorners(") - 1,
+               countOccurrences(refresh, "writeFaceCorners(")));
+    // The refresh reads the incremental smooth kernel (the derived dirty set).
+    assert(countOccurrences(refresh, "updateCornerSmooth(") == 1,
+        "census: refreshFaceDataCpu no longer goes through updateCornerSmooth");
     immutable string[3] writers = ["buildUploadCpu", "refreshPositions", "uploadSelectedVertices"];
     string[] callers;
     size_t calls;
     foreach (w; writers) {
-        immutable n = countOccurrences(bodyAt(code, "void " ~ w ~ "("), "writeFaceCorners(");
+        immutable n = countOccurrences(bodyAt(code, "void " ~ w ~ "("), "refreshFaceDataCpu(");
         calls += n;
         if (n == 1) callers ~= w;
     }
-    // Polarity: true after S1a only (before it there was no writeFaceCorners).
-    // A writer that inlines its own fan loop again drops out of this list.
+    // Polarity: true after the incremental refresh only. A writer that
+    // inlines its own fan loop (or full recompute) again drops out of this list.
     assert(callers == writers[],
-        format("census: the face-VBO writers calling writeFaceCorners once each are %s, expected %s",
+        format("census: the face-VBO writers calling refreshFaceDataCpu once each are %s, expected %s",
                callers, writers));
-    assert(countOccurrences(code, "writeFaceCorners(") == calls + 1,
-        "census: writeFaceCorners is called outside the three writers");
+    assert(countOccurrences(code, "refreshFaceDataCpu(") == calls + 1,
+        "census: refreshFaceDataCpu is called outside the three writers");
 }
 
 unittest { // the prepared-upload helpers carry the smooth stream's inputs
@@ -177,16 +188,19 @@ unittest { // the prepared-upload helpers carry the smooth stream's inputs
                     "dst.faceAdj.faces = src.faceAdj.faces.dup",
                     "dst.faceAdjGen = src.faceAdjGen",
                     "dst.scratchCornerSmooth = src.scratchCornerSmooth.dup",
-                    "dst.scratchFaceNormal = src.scratchFaceNormal.dup"])
+                    "dst.scratchFaceNormal = src.scratchFaceNormal.dup",
+                    "dst.smoothCache = src.smoothCache.dup"])
         assert(clone.indexOf(stmt) >= 0, "census: cloneUploadState no longer copies `" ~ stmt ~ "`");
     foreach (stmt; ["dst.faceAdj = src.faceAdj", "dst.faceAdjGen = src.faceAdjGen",
                     "dst.scratchCornerSmooth = src.scratchCornerSmooth",
                     "dst.scratchFaceNormal = src.scratchFaceNormal",
-                    "src.faceAdj = FaceAdjacency.init"])
+                    "dst.smoothCache = src.smoothCache",
+                    "src.faceAdj = FaceAdjacency.init",
+                    "src.smoothCache = SmoothNormalCache.init"])
         assert(install.indexOf(stmt) >= 0, "census: installUploadState no longer moves `" ~ stmt ~ "`");
     foreach (stmt; ["gpu.faceAdj.offsets.length == 0", "gpu.faceAdj.faces.length == 0",
                     "gpu.faceAdjGen == 0", "gpu.scratchCornerSmooth.length == 0",
-                    "gpu.scratchFaceNormal.length == 0"])
+                    "gpu.scratchFaceNormal.length == 0", "gpu.smoothCache.isEmpty"])
         assert(empty.indexOf(stmt) >= 0, "census: isDefaultEmptyGpuMesh no longer requires `" ~ stmt ~ "`");
 }
 

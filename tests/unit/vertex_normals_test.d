@@ -275,3 +275,195 @@ unittest { // det = 0: finite, sign taken as +1
     foreach (k; 0 .. 9) assert(isFinite(n[k]), format("det=0: non-finite entry %d in %s", k, n));
     assert(n == [0f, 0, 0, 0, 0, 0, 0, 0, 1], format("det=0: normalMatrix(diag(1,1,0)) = %s", n));
 }
+
+// ---------------------------------------------------------------------------
+// The incremental refresh (`updateCornerSmooth`): the drag frame recomputes
+// only the faces around moved vertices and the corners at those faces'
+// vertices. Oracle: the full pass over the same positions — the same corner
+// rule, so the incremental result must be BIT-identical, not merely close.
+
+import vertex_normals : SmoothNormalCache, updateCornerSmooth;
+
+/// An open, non-cube patch: a 6×5 vertex grid in XZ with a gentle swell,
+/// folded by `kSmoothingAngleDeg + 10` about the line x = 2 (a hard hinge
+/// across the patch), cell (0,0) split into two triangles and cells (3,1),
+/// (4,1) merged into one hexagon. Vertex (i, j) is `i * 5 + j`.
+Mesh hingedPatch() {
+    import std.math : cos, sin;
+    immutable double fold = (kSmoothingAngleDeg + 10) * PI / 180.0;
+    Mesh m;
+    foreach (i; 0 .. 6)
+        foreach (j; 0 .. 5) {
+            immutable double swell = 0.08 * sin(j * 0.9);
+            double x = i, y = swell;
+            if (i > 2) {   // rotate (x - 2, y) by `fold` about the hinge line
+                immutable double dx = i - 2;
+                x = 2 + dx * cos(fold);
+                y = swell + dx * sin(fold);
+            }
+            m.vertices ~= Vec3(cast(float)x, cast(float)y, cast(float)j);
+        }
+    uint at(int i, int j) { return cast(uint)(i * 5 + j); }
+    m.faces ~= [at(0, 0), at(0, 1), at(1, 1)];
+    m.faces ~= [at(0, 0), at(1, 1), at(1, 0)];
+    foreach (i; 0 .. 5)
+        foreach (j; 0 .. 4) {
+            if (i == 0 && j == 0) continue;
+            if (j == 1 && (i == 3 || i == 4)) continue;
+            m.faces ~= [at(i, j), at(i, j + 1), at(i + 1, j + 1), at(i + 1, j)];
+        }
+    m.faces ~= [at(4, 1), at(3, 1), at(3, 2), at(4, 2), at(5, 2), at(5, 1)];
+    return m;
+}
+
+/// The full pass over `m` at `cosSmooth` (a fresh adjacency, fresh scratch).
+private float[] fullCorners(ref Mesh m, float cosSmooth) {
+    FaceAdjacency adj;
+    buildFaceAdjacency(m, adj);
+    Vec3[] fn;
+    auto out_ = new float[](faceCornerTotal(m) * 3);
+    cornerSmoothNormals(m, m.vertices, adj, cosSmooth, fn, out_);
+    return out_;
+}
+
+/// First corner where `got` and `want` differ in bits, or -1.
+private ptrdiff_t firstDiff(const float[] got, const float[] want) {
+    foreach (i; 0 .. want.length) if (got[i] !is want[i]) return cast(ptrdiff_t)i;
+    return -1;
+}
+
+/// One incremental session over `m`: adjacency + caches that persist.
+private struct Session {
+    FaceAdjacency adj;
+    Vec3[] faceNormal;
+    float[] corner;
+    SmoothNormalCache cache;
+    ulong gen = 1;
+    bool step(ref Mesh m, float cosSmooth) {
+        buildFaceAdjacency(m, adj);   // the GpuMesh rebuilds it per layout; cheap here
+        return updateCornerSmooth(m, m.vertices, adj, cosSmooth, gen, faceNormal, corner, cache);
+    }
+}
+
+unittest { // the patch rig: population and a hard hinge that the angle split keeps
+    auto m = hingedPatch();
+    // Floor [E4]: 30 vertices; 2 triangles + 17 quads + 1 hexagon = 20 faces, 80 corners.
+    assert(m.vertices.length == 30 && m.faces.length == 20 && faceCornerTotal(m) == 80,
+        format("rig: %d vertices, %d faces, %d corners (expected 30, 20, 80)",
+               m.vertices.length, m.faces.length, faceCornerTotal(m)));
+    // The fold is a hinge: a corner on x = 2 keeps its own face's normal on
+    // each side (the corners of quads (1,2) = face 7 and (2,2) = face 11 at
+    // vertex (2,2) = 12 differ).
+    const c = fullCorners(m, smoothingCosine());
+    immutable Vec3 left = cornerOf(m, c, 7, 12), right = cornerOf(m, c, 11, 12);
+    assert(!near(left, right, 1e-2f),
+        format("rig: the hinge at x = 2 does not split (%s vs %s) — the patch cannot witness the angle test", left, right));
+}
+
+unittest { // partial drags: incremental == full, bit for bit, at every step
+    auto m = hingedPatch();
+    Session s;
+    assert(s.step(m, smoothingCosine()), "the first update must be full (empty cache)");
+    // Each step moves a vertex subset: interior, the hinge line, a hexagon
+    // corner, a triangle corner, then a step that UNDOES an earlier move.
+    immutable uint[][] subsets = [[7u], [12u, 11u], [21u, 22u], [0u], [12u], [16u, 17u, 18u]];
+    immutable Vec3[] deltas = [Vec3(0, 0.3f, 0), Vec3(0.05f, -0.2f, 0.1f), Vec3(0, 0.25f, -0.1f),
+                               Vec3(0, 0.4f, 0), Vec3(-0.05f, 0.2f, -0.1f), Vec3(0.1f, 0.1f, 0)];
+    immutable Vec3[] before = m.vertices.idup;
+    size_t partial;
+    foreach (k, sub; subsets) {
+        foreach (v; sub) {
+            if (k == 4) m.vertices[v] = before[v];   // undo the hinge move of step 1
+            else {
+                m.vertices[v].x += deltas[k].x;
+                m.vertices[v].y += deltas[k].y;
+                m.vertices[v].z += deltas[k].z;
+            }
+        }
+        immutable bool full = s.step(m, smoothingCosine());
+        // Path control [E10]: a small subset takes the incremental path and
+        // re-fans some, not all, faces — else this cell cannot witness it.
+        assert(!full && s.cache.writeCount > 0 && s.cache.writeCount < m.faces.length,
+            format("step %d: expected an incremental update over a face subset, got full=%s faces=%d",
+                   k, full, s.cache.writeCount));
+        ++partial;
+        const want = fullCorners(m, smoothingCosine());
+        immutable d = firstDiff(s.corner[0 .. want.length], want);
+        assert(d < 0, format("step %d: incremental corner float %d is %s, the full pass gives %s",
+                             k, d, d < 0 ? 0 : s.corner[d], d < 0 ? 0 : want[d]));
+    }
+    assert(partial == subsets.length);
+    // An idle refresh moves nothing and re-fans nothing.
+    assert(!s.step(m, smoothingCosine()) && s.cache.writeCount == 0,
+        "an idle refresh must re-fan no face");
+}
+
+unittest { // stale cache: a new face layout (same arrays, same counts) recomputes all
+    auto m = hingedPatch();
+    Session s;
+    s.step(m, smoothingCosine());
+    // In-place winding flip of face 5: the face array, the counts and every
+    // position are unchanged; only the layout generation says so.
+    import std.algorithm.mutation : reverse;
+    reverse(m.faces[5]);
+    ++s.gen;
+    s.step(m, smoothingCosine());
+    const want = fullCorners(m, smoothingCosine());
+    immutable d = firstDiff(s.corner[0 .. want.length], want);
+    assert(d < 0, format("after a layout change corner float %d is stale (%s, full gives %s)",
+                         d, s.corner[d < 0 ? 0 : d], want[d < 0 ? 0 : d]));
+}
+
+unittest { // stale cache: a new smoothing angle recomputes all
+    auto m = hingedPatch();
+    Session s;
+    s.step(m, smoothingCosine());
+    // 60°: the 50° hinge now smooths, so the corner normals move.
+    immutable float c60 = smoothingCosine(60);
+    s.step(m, c60);
+    const want = fullCorners(m, c60);
+    const before = fullCorners(m, smoothingCosine());
+    assert(firstDiff(before, want) >= 0, "rig: 40° and 60° give the same corners — the cell cannot witness");
+    immutable d = firstDiff(s.corner[0 .. want.length], want);
+    assert(d < 0, format("after a smoothing-angle change corner float %d is stale", d));
+}
+
+unittest { // stale cache: a different face array (same gen) or a dropped face recomputes all
+    auto m = hingedPatch();
+    Session s;
+    s.step(m, smoothingCosine());
+    // A dropped LAST face keeps the array's pointer: only the face count moved.
+    m.faces = m.faces[0 .. $ - 1];
+    s.step(m, smoothingCosine());
+    const want = fullCorners(m, smoothingCosine());
+    immutable d = firstDiff(s.corner[0 .. want.length], want);
+    assert(d < 0, format("after a face-count change corner float %d is stale", d));
+    // A replaced face array of the same count, a face's winding flipped.
+    auto m2 = hingedPatch();
+    Session s2;
+    s2.step(m2, smoothingCosine());
+    auto faces = m2.faces.dup;
+    faces[3] = [faces[3][0], faces[3][3], faces[3][2], faces[3][1]];
+    m2.faces = faces;
+    s2.step(m2, smoothingCosine());
+    const want2 = fullCorners(m2, smoothingCosine());
+    immutable d2 = firstDiff(s2.corner[0 .. want2.length], want2);
+    assert(d2 < 0, format("after a face-array swap corner float %d is stale", d2));
+}
+
+unittest { // the switch to the full pass: above a quarter of the vertices moved
+    // 30 vertices: 7 moved (28 <= 30) stays incremental, 8 (32 > 30) goes full.
+    foreach (moved; [7, 8, 30]) {
+        auto m = hingedPatch();
+        Session s;
+        s.step(m, smoothingCosine());
+        foreach (v; 0 .. moved) m.vertices[v].y += 0.25f;
+        immutable bool full = s.step(m, smoothingCosine());
+        assert(full == (moved > 7),
+            format("%d of 30 vertices moved: expected %s pass, got %s", moved,
+                   moved > 7 ? "the full" : "an incremental", full ? "full" : "incremental"));
+        const want = fullCorners(m, smoothingCosine());
+        assert(firstDiff(s.corner[0 .. want.length], want) < 0,
+            format("%d moved: corners differ from the full pass", moved));
+    }
+}

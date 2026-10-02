@@ -97,6 +97,22 @@ unittest { // 3. a mirrored item shades like the unmirrored one
         "3: the mirrored item's lines must shade like the unmirrored item's");
 }
 
+unittest { // 3b. a world non-uniform scale over a rotated item: the inverse-transpose
+    // model = diag(3,1,1) · rotY(−30): the surface's world normal is
+    // S⁻¹·R·z ∝ (sin θ/3, 0, cos θ), while the model's third column is
+    // S·R·z ∝ (3·sin θ, 0, cos θ). Only the normal matrix gives the first.
+    float[16] M = rotY(-30, [2, 0, 0]);
+    foreach (col; 0 .. 3) M[col * 4 + 0] *= 3;   // row 0 (world x) scaled by 3
+    immutable Vec3 eye = Vec3(0, 0, 10);
+    immutable double s = sin(-30 * PI / 180), c = cos(-30 * PI / 180);
+    immutable want = reference(kPalD, [s / 3, 0, c], [2, 0, 0], [0, 0, 10], 1.0);
+    immutable wrong = reference(kPalD, [3 * s, 0, c], [2, 0, 0], [0, 0, 10], 1.0);
+    // Discrimination floor first: the two candidates are ≥ 20 levels apart.
+    assert(abs(want[2] - wrong[2]) * 255 >= 20,
+        format("3b: rig cannot tell the normal matrix from the model column (%s vs %s)", want, wrong));
+    near(lineShade(kPal, M, eye, 1.0f), want, "3b: diag(3,1,1)·rotY(-30) shades by the inverse-transpose normal");
+}
+
 // ---- the light-rig census --------------------------------------------------
 
 /// Comment/string-free text with ALL whitespace removed, so a reflowed or
