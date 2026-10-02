@@ -99,13 +99,15 @@ D3[4] corners(const Quad q) {
 }
 
 /// The rig mesh JSON (vertices, faces, surfaces, faceMaterial).
-string rigMeshJson(bool s1Double) {
+/// `b0Tag`: B0's `faceMaterial` (its surface s0 when 0; a stale tag past the
+/// slot table renders slot 0).
+string rigMeshJson(bool s1Double, uint b0Tag = 0) {
     string vs, fs, ms;
     foreach (i, q; kQuads) {
         foreach (j, p; corners(q))
             vs ~= format("%s[%.9g,%.9g,%.9g]", (i || j) ? "," : "", p[0], p[1], p[2]);
         fs ~= format("%s[%d,%d,%d,%d]", i ? "," : "", 4*i, 4*i + 1, 4*i + 2, 4*i + 3);
-        ms ~= format("%s%d", i ? "," : "", q.surf);
+        ms ~= format("%s%d", i ? "," : "", i == iB0 && b0Tag ? b0Tag : q.surf);
     }
     string surf(string name, double kd, bool dbl) {
         return format(`{"name":"%s","baseColor":[%.9g,%.9g,%.9g],"diffuse":1,"specular":0,`
@@ -119,14 +121,14 @@ private int g_rig = 0;
 
 /// Load the rig. `asBackdrop`: the rig is layer 0 (a visible background
 /// layer) and the primary is layer 1, one tiny triangle far off-screen.
-Viewport loadRig(bool asBackdrop = false, bool s1Double = true) {
+Viewport loadRig(bool asBackdrop = false, bool s1Double = true, uint b0Tag = 0) {
     import std.file : write, remove, exists;
     import std.path : buildPath;
     import std.process : thisProcessID, environment;
     immutable dir = environment.get("TMPDIR", "/var/tmp");
     immutable path = buildPath(dir, format("vibe3d-s1d-rig-%d-%d.v3d", thisProcessID(), g_rig++));
     string layers = `{"type":"mesh","selected":` ~ (asBackdrop ? "false" : "true")
-        ~ `,"channels":{"name":"Rig","visible":true},"mesh":` ~ rigMeshJson(s1Double) ~ `}`;
+        ~ `,"channels":{"name":"Rig","visible":true},"mesh":` ~ rigMeshJson(s1Double, b0Tag) ~ `}`;
     if (asBackdrop)
         layers ~= `,{"type":"mesh","selected":true,"channels":{"name":"Far","visible":true},"mesh":`
             ~ `{"vertices":[[90,90,0],[90.1,90,0],[90,90.1,0]],"faces":[[0,1,2]]}}`;
@@ -263,6 +265,32 @@ unittest {
     assert(gap(r.q[iB1], r.q[iF1]) <= 2,
         format("(iii) B1 reads %s, F1 %s: a double-sided back face is lit with the flipped normal", r.q[iB1], r.q[iF1]));
     assert(gapGrey(r.q[iB1], raw1) >= 6, format("(iii) B1 %s is lit with the RAW normal (%.2f)", r.q[iB1], raw1));
+}
+
+// ---------------------------------------------------------------------------
+// D1 (iii-b): a STALE tag (≥ kSurfaceSlots = 64) reads slot 0 in the VERTEX
+// stage too — the drop indexes `mat_flags[surfaceSlotOf(aMatId)]`, as the
+// fragment stage and `mesh.effectiveSurfaceSlot` do. B0 is tagged 100; with s0
+// double-sided B0's back side is drawn, lit like F0. Red when the drop indexes
+// `mat_flags[aMatId]` (past the array: the flag reads 0 and B0 is dropped).
+// ---------------------------------------------------------------------------
+unittest {
+    if (!cellOn("stale")) return;
+    auto vp = loadRig(false, true, 100);
+    auto fm = getJson("/api/model")["faceMaterial"].array;
+    assert(fm.length == kQuads.length && fm[iB0].integer == 100 && fm[iF0].integer == 0,
+        "(iii-b) premise: B0 must load with the stale tag 100: " ~ getJson("/api/model")["faceMaterial"].toString);
+    immutable double pF0 = lit(kKd0, nF), raw0 = lit(kKd0, nB);
+    assert(abs(pF0 - raw0) >= 6, format("(iii-b) floor: flipped %.2f and raw %.2f are < 6 apart", pF0, raw0));
+    immutable r0 = readAll(vp, "stale-single");
+    isBg(r0.q[iB0], r0.bg, "(iii-b) premise: B0 (tag 100 → slot 0, single-sided) culled");
+    cmd(attrBody(0, "twoSided", 1));
+    settle();
+    auto r = readAll(vp, "stale-double");
+    isGrey(r.q[iF0], pF0, 2, "(iii-b) F0 (front control)");
+    isDrawn(r.q[iB0], r.bg, "(iii-b) B0 (tag 100, slot 0 double-sided): the vertex drop must read slot 0");
+    assert(gap(r.q[iB0], r.q[iF0]) <= 2,
+        format("(iii-b) B0 reads %s, F0 %s: the stale-tag back face is lit with slot 0's flipped normal", r.q[iB0], r.q[iF0]));
 }
 
 // ---------------------------------------------------------------------------

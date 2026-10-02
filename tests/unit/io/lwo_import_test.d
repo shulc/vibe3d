@@ -131,6 +131,20 @@ unittest { // SIDE rows (S1d, captured C7k): 3 → double-sided; 1 / absent / si
     assert(!one.twoSided, "SIDE 1 (front only) imported double-sided");
     auto absent = importFirstSurface(lwoImage(["S"], [LwoSurf("S", [LwoSub("DIFF", lwoF4(0.5f))])]), "sideabsent");
     assert(!absent.twoSided, "no SIDE imported double-sided (absent = one-sided)");
-    auto empty = importFirstSurface(lwoImage(["S"], [LwoSurf("S", [LwoSub("SIDE", [])])]), "side0");
+    // Size 0, the LAST sub-chunk: without the size guard the 2-byte read runs
+    // past the buffer — caught here so the named line, not a RangeError, reports.
+    import std.exception : collectException;
+    ImportedSurface empty;
+    Throwable thrown = collectException!Throwable(
+        empty = importFirstSurface(lwoImage(["S"], [LwoSurf("S", [LwoSub("SIDE", [])])]), "side0"));
+    assert(thrown is null, "a SIDE of size 0 (last sub-chunk) was read past the buffer — the size guard must "
+                           ~ "refuse the 2-byte read: " ~ (thrown is null ? "" : thrown.msg));
     assert(!empty.twoSided, "a SIDE of size 0 imported double-sided (the read needs 2 bytes)");
+    // Size 0 followed by a sub-chunk whose id starts 00 03: without the size
+    // guard the read decodes the NEXT sub-chunk's id as SIDE 3 (unknown ids are
+    // skipped, so with the guard the surface stays single-sided).
+    auto trap = importFirstSurface(lwoImage(["S"], [LwoSurf("S", [LwoSub("SIDE", []), LwoSub("\x00\x03ZZ", [])])]),
+                                   "side0trap");
+    assert(!trap.twoSided, "a SIDE of size 0 followed by bytes 00 03 imported double-sided: the size guard "
+                           ~ "must refuse the 2-byte read");
 }

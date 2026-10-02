@@ -124,13 +124,19 @@ unittest { // (c) the double-sided bit is read by the vertex stage only
     assert(tokens(block, "mat_flags") == 1, "the Materials block must declare mat_flags once");
     assert(tokens(vert, "mat_flags") == 1 && tokens(vert, "u_backSide") == 2,
         "litVertSrc must read mat_flags once, in the u_backSide drop");
+    // The drop indexes through the one slot rule: a stale tag ≥ %SLOTS% reads
+    // slot 0, as the fragment stage and `mesh.effectiveSurfaceSlot` do.
+    assert(tokens(vert, "surfaceSlotOf") == 1 && vert.canFind("mat_flags[surfaceSlotOf(aMatId)]"),
+        format("litVertSrc names surfaceSlotOf %d time(s), expected 1, in `mat_flags[surfaceSlotOf(aMatId)]`: "
+               ~ "an unmapped tag reads past the mat_flags array", tokens(vert, "surfaceSlotOf")));
     assert(tokens(frag, "mat_flags") == 0 && tokens(frag, "u_backSide") == 0,
         "litFragSrc reads the sidedness bit: the drop is a vertex-stage clip, never a discard");
     assert(tokens(frag, "discard") == 0, "litFragSrc discards: early depth is lost for every lit draw");
     // Every lit arm and the G-buffer read the flipped normal.
     assert(tokens(frag, "shadingNormal") == 5,
         format("litFragSrc names shadingNormal %d time(s): the helper, Material, Retopology, Gooch "
-               ~ "and the G-buffer are 5", tokens(frag, "shadingNormal")));
+               ~ "and the G-buffer are 5 (textual pin; the Gooch flip is equivalent under abs(), the "
+               ~ "retopology arm hard-culls)", tokens(frag, "shadingNormal")));
 }
 
 unittest { // (d) GL cull state in mesh_gpu.d is the side bracket's
