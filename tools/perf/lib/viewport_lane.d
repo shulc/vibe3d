@@ -77,9 +77,15 @@ private void waitFrames(long n) {
 
 /// Past the GPU ring and past a transient: a heavy upload can put the GPU more
 /// frames behind than the ring holds, and those frames are DROPPED (counted).
-/// Wait until a 30-frame span adds no drop to any cell (bounded), so a window
-/// opens on steady state; the window's own drops are still reported.
-private void settleGpu() {
+/// Wait (up to kSettleSeconds of wall clock) until a 30-frame span adds no drop
+/// to any cell, so a window opens on steady state. `--perf` runs the loop with
+/// vsync off and nothing else throttles it, so where the GPU is slower than the
+/// CPU loop the lag grows without bound and no span is drop-free: the row is
+/// then an ERROR naming that, not a number.
+enum int kSettleSeconds = 10;
+
+private bool settleGpu() {
+    import core.time : MonoTime, seconds;
     long drops() {
         long d;
         foreach (c; getJ("/api/viewport/display")["cells"].array)
@@ -87,11 +93,13 @@ private void settleGpu() {
         return d;
     }
     waitFrames(getJ("/api/viewport/display")["cells"].array[0]["gpuTiming"]["ringFrames"].integer + 4);
-    foreach (i; 0 .. 40) {
+    immutable deadline = MonoTime.currTime + kSettleSeconds.seconds;
+    while (MonoTime.currTime < deadline) {
         immutable long d0 = drops();
         waitFrames(30);
-        if (drops() == d0) return;
+        if (drops() == d0) return true;
     }
+    return false;
 }
 
 private struct Scene { string name; string[] setup; }
@@ -186,7 +194,9 @@ private ViewportRow measure(Scene sc, string style, string smooth, string cavity
                 if (why.length) throw new Exception("viewport.cavity refused: " ~ why);
             }
         }
-        settleGpu();
+        if (!settleGpu())
+            throw new Exception(format("GPU never settled: frames still dropped after %ds — "
+                ~ "the unthrottled --perf loop outruns the GPU by more than the ring", kSettleSeconds));
         // Premise FIRST: every rendering cell's active plan is the requested style.
         foreach (k, c; getJ("/api/viewport/display")["cells"].array) {
             if (c["renders"].type != JSONType.TRUE) continue;
