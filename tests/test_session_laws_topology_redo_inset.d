@@ -121,7 +121,10 @@ unittest {
 // 102 since S2a (8920): five `armed` fields after the press now match (law 1 settle);
 // 104 since S4 (9020): the former (b) points are judged (+5: nav_redo_restart_pextrude
 // s12/s13, its _ui s12, nav_undo_restart_pextrude s11/s12) and law 4 closes three
-// (moment_restart_pextrude_ui s12/s13, nav_undo_restart_pextrude_ui s12).
+// (moment_restart_pextrude_ui s12/s13, nav_undo_restart_pextrude_ui s12); 96 since the S4
+// review (9020): the law-4 seed on a bare activation redo closes nav_undo_restart_pextrude
+// s11–s13 and an unjudged tool-off classmate (PF-B) closes nav_redo_restart_pextrude s12–s14
+// and its _ui s12/s13 (each `attrs`, ours had the extra classmate).
 unittest {
     const fx = parseJSON(kFixture);
     size_t points, fields;
@@ -144,9 +147,9 @@ unittest {
             }
         }
     }
-    assert(points == 8 && fields == 104, "fixture family inset holds " ~ points.to!string
+    assert(points == 8 && fields == 96, "fixture family inset holds " ~ points.to!string
         ~ " middle-restart points / " ~ fields.to!string ~ " divergent fields after them, "
-        ~ "frozen at 8 / 104");
+        ~ "frozen at 8 / 96");
 }
 
 // VertexMerge's first haul merges 3 → 2 at the reference, 3 → 1 here (gap row 486, S3 fix

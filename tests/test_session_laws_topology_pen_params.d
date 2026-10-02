@@ -563,9 +563,9 @@ bool armedTool(string tool, string attr) {
 // absorb-restores-predecessor — [A2-3]/[A3-4]: the group's undo goes through
 // the activation path's TAIL: Smooth Shift (a topology tool with a session
 // token) is re-armed with its attribute image AND its token, so the next
-// Ctrl+Z navigates its own SECOND step: `shift` back to that step's before
-// value. (Its first step carries its activation by its own policy, so the
-// attribute witness is the second.)
+// Ctrl+Z navigates its own SECOND step (the mesh). Law 4 (9020 §17): the
+// re-armed instance did not record that step, so the row is an orphan and
+// `shift` stays at the restored image; the token is m12's witness.
 unittest {
     if (!cell("absorb-restores-predecessor")) return;
     enum ss = "mesh.smoothShiftTool";
@@ -586,6 +586,8 @@ unittest {
     const s2 = penMesh();
     assert(abs(before - 0.3) < 1e-6 && abs(after - 0.5) < 1e-6,
            format("absorb-restores-predecessor: shift %s then %s", before, after));
+    const ssToken = getJson("/api/tool/state")["session"]["token"].integer;
+    assert(ssToken != 0, "absorb-restores-predecessor rig: Smooth Shift's session has no token");
     penArmUi(r);
     w("loop", "true");
     moveV5("absorb-restores-predecessor g1");
@@ -603,10 +605,16 @@ unittest {
            format("absorb-restores-predecessor z3: Smooth Shift armed %s, mesh %s its first step, "
                   ~ "history %s", armedTool(ss, "shift"), penMesh() == s1 ? "==" : "!=",
                   penHistoryLabels()));
-    // m12's red line ([A3-4]): the restored instance navigated its OWN step.
-    assert(abs(num(attrOf(ss, "shift")) - before) < 1e-6,
-           format("absorb-restores-predecessor z3: shift %s (expected the step's before %s), "
-                  ~ "history %s", num(attrOf(ss, "shift")), before, penHistoryLabels()));
+    // Law 4 orphan: findings §18.4, capture C7-1 `pairundo_pred_inset_ui` s05/s09.
+    assert(abs(num(attrOf(ss, "shift")) - after) < 1e-6,
+           format("absorb-restores-predecessor z3: shift %s (expected the restored image %s), "
+                  ~ "history %s", num(attrOf(ss, "shift")), after, penHistoryLabels()));
+    // m12's red line ([A3-4], restated by 9020 §17): the restored instance holds
+    // its OWN session's token, so the step it navigated was its session's.
+    const tokNow = getJson("/api/tool/state")["session"]["token"].integer;
+    assert(tokNow == ssToken,
+           format("absorb-restores-predecessor z3: session token %s (expected Smooth Shift's %s)",
+                  tokNow, ssToken));
     writeln("PASS absorb-restores-predecessor");
 }
 

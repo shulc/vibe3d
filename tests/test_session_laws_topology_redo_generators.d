@@ -46,12 +46,14 @@ unittest { // the floor: the fixture still holds the whole family
 // from its own checkpoint on to the activation/command-close wave (plan §12, as C2s:
 // «mirror_cmdclose_ui с s04_UC»; generator output 2026-10-02: 19 fields, all of them;
 // S2b 8930 keeps 19: the redo of the attribute-only row s02_UC is a no-op success once
-// our command dropped the tool, so the R tail stays parity), and Mirror's law 4 on the
-// UI door is not captured (model §6.3) — one field.
+// our command dropped the tool, so the R tail stays parity). Gap row 485 (the
+// reference's Mirror arm carries the capture session's centre and plane axes): the
+// generator's rule G5 (S4 9020) owns exactly nine `attrs` fields, among them the former
+// model §6.3 field `mirror_attrs_ui/s04_R` — no field is "not captured" any more.
 unittest {
     const fx = parseJSON(kFixture);
     size_t c2m;
-    string[] notCaptured;
+    string[] notCaptured, gap485;
     foreach (c; fx["cells"].array) {
         if (c["family"].str != "generators" || !c["measured"].boolean) continue;
         bool after;
@@ -61,6 +63,7 @@ unittest {
             foreach (field, f; p["fields"].object) {
                 if ("ours" !in f) continue;
                 if (f["owner"].str == "none: not captured (model §6.3)") notCaptured ~= at ~ "." ~ field;
+                if (f["owner"].str == "none: outside the model (gap 485)") gap485 ~= at ~ "." ~ field;
                 if (!after) continue;
                 ++c2m;
                 assert(f["owner"].str == "V4: activation/command-close wave", "fixture: " ~ at
@@ -71,8 +74,14 @@ unittest {
     }
     assert(c2m == 19, "fixture family generators holds " ~ c2m.to!string
         ~ " divergent fields from the Mirror UI command on, frozen at 19");
-    assert(notCaptured == ["mirror_attrs_ui/s04_R.attrs"], "fixture: the not-captured fields "
-        ~ notCaptured.to!string ~ " are not model §6.3's one");
+    assert(notCaptured.length == 0, "fixture: not-captured fields " ~ notCaptured.to!string
+        ~ " (rule G5 took model §6.3's one, S4 9020)");
+    assert(gap485 == ["mirror_attrs_script/s03_Z.attrs", "mirror_attrs_ui/s04_R.attrs",
+            "mirror_discrim/s05_Z.attrs", "mirror_discrim2/s06_Z.attrs",
+            "mirror_discrim2/s08_R.attrs", "mirror_discrim2_ui/s06_Z.attrs",
+            "mirror_discrim2_ui/s08_R.attrs", "mirror_discrim2_ui/s09_R.attrs",
+            "mirror_discrim2_ui/s10_R.attrs"],
+        "fixture: the gap-485 fields " ~ gap485.to!string ~ " are not rule G5's nine");
 }
 
 // Capture 8960 (findings §16), Mirror: a headless apply after a press and a scripted centre

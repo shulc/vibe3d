@@ -523,6 +523,7 @@ unittest { // Full closed redo leaves a fresh Edge activation dormant.
     immutable string rearmed = planes();
     immutable long fresh = undoLen();
     assert(rearmed == first, "fresh arm after closed redo changed full mesh");
+    immutable double armWidth = getJson("/api/tool/state")["width"].floating;
     handlePx(1, x, y);
     auto cam = fetchCamera(BASE);
     playAndWait(buildDragDownLog(cam.vpX, cam.vpY, cam.width, cam.height,
@@ -549,10 +550,14 @@ unittest { // Full closed redo leaves a fresh Edge activation dormant.
     navigate(false);
     assert(planes() == rearmed && undoLen() == fresh,
         "dormant r1 restores the bare activation, leaving adjustment in redo");
+    // Law 4, generic (task 9020 item A; not an Edge Extend capture): the redo of the bare
+    // activation re-creates the instance with its drop seed — the width it held at z1
+    // with its own adjustment undone, i.e. the arm's (sticky) width, never the drag's.
     st = getJson("/api/tool/state");
     assert(st["session"]["dormant"].type == JSONType.true_ &&
-        abs(st["width"].floating) < 1e-5,
-        "dormant r1 restored a live postmode or carried drag attrs");
+        abs(st["width"].floating - armWidth) < 1e-5 && abs(armWidth) > 1e-3,
+        "dormant r1 restored a live postmode or carried drag attrs: width "
+        ~ st["width"].floating.to!string ~ " (the arm's " ~ armWidth.to!string ~ ")");
 }
 
 unittest { // Interactive Width follows the same closed-redo dormant path.
@@ -666,6 +671,8 @@ unittest { // Pointer-written interactive dormant parameter creates an attr row.
     assert(r["status"].str == "ok" || r["status"].str == "success");
     const image = planes();
     const depth = undoLen();
+    const armWidth = queryWidth();   // sticky from the closed run's drag
+    assert(abs(armWidth - 0.2) > 1e-3, "rig: the arm's Width equals the row's after (0.2)");
     auto p = postJson("/api/script?interactive=true",
         "tool.attr edge.extrude width 0.2\n");
     assert(p["status"].str == "ok" || p["status"].str == "success");
@@ -677,15 +684,16 @@ unittest { // Pointer-written interactive dormant parameter creates an attr row.
     navigate(true);
     assert(planes() == image && undoLen() == depth - 1,
         "dormant interactive Width undo lost mesh or activation pairing");
+    // Law 4, generic (task 9020, model doc §R9; not an Edge Extend capture): the
+    // activation redo re-creates the tool with its drop seed — the arm's Width (its own
+    // row undone); the attribute-only row is then an orphan in it — its redo moves nothing
+    // and Width stays the re-created tool's. Was: 0, then the row's after (0.2).
     navigate(false);
-    assert(planes() == image && abs(queryWidth()) < 1e-5,
-        "dormant interactive Width activation redo lost its before attribute");
-    // Law 4 (task 9020, model doc §R9): the activation redo re-created the tool, so the
-    // attribute-only row is an orphan in it — its redo moves nothing and Width stays the
-    // re-created tool's (captured: dormant3_cross_inset_ui/s16_R, the swap into the
-    // orphaned container). Was: the row's after (0.2).
+    assert(planes() == image && abs(queryWidth() - armWidth) < 1e-5,
+        "dormant interactive Width activation redo lost its before attribute: width "
+        ~ queryWidth().to!string ~ " (the arm's " ~ armWidth.to!string ~ ")");
     navigate(false);
-    assert(planes() == image && abs(queryWidth()) < 1e-5,
+    assert(planes() == image && abs(queryWidth() - armWidth) < 1e-5,
         "dormant interactive Width redo of an orphaned attribute row wrote Width "
         ~ queryWidth().to!string ~ " into the re-created tool, history "
         ~ getJson("/api/history").toString);

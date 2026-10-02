@@ -1107,6 +1107,39 @@ unittest { // The session half selects the predecessor run, not its newer siblin
                restored.shift));
 }
 
+unittest { // Law 4 seed (9020 F): a REFUSED drop undo leaves the remembered image as it was.
+    static final class RefusingPolyRow : ToolActivationCommand {
+        bool refuse = true;
+        this(Mesh* m, View v) {
+            super(m, v, EditMode.Vertices, "t.poly", "", true, true, false, 5);
+        }
+        protected override void revertImpl() {
+            if (refuse) failRevert("refused (test)");
+            else super.revertImpl();
+        }
+    }
+    Mesh m = makeCube();
+    auto h = new CommandHistory;
+    Tool active;
+    auto s = new EditSession(() => active, h, () { active = null; });
+    auto poly = new OwnedPolyAttrTool;
+    poly.shift = 17;
+    active = poly;
+    auto row = new RefusingPolyRow(&m, new View(0, 0, 1, 1));
+    h.recordToolLifecycle(row);
+    s.noteArm("t.poly", 5);
+    poly.shift = 41;                // the live image the refused drop would remember
+    // A refused revert drops the entry and writes no redo (CommandHistory.undo).
+    assert(!s.navigate(true) && h.undoEntries().length == 0 && h.redoEntries().length == 0
+           && active is poly && row.revertFailureReason() == "refused (test)",
+        format("seed-refusal rig: the drop undo was not refused (undo %s, redo %s, tool %s)",
+               h.undoEntries().length, h.redoEntries().length, active is poly));
+    auto restored = undoToOwnedPoly(s, h, active, m, 5);
+    assert(restored.shift == 17,
+        format("law 4 seed: a refused drop undo overwrote the remembered image: restored %s, expected 17",
+               restored.shift));
+}
+
 // ---- 8290: a held widget is ONE topology step --------------------------------
 
 private final class ScrubTopologyTool : Tool, TopologyStepClient {

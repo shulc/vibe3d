@@ -750,11 +750,12 @@ void compareCell(const JSONValue cell, const CellRun run) {
     assert(cell["points"].array.length == run.obs.length,
         format("cell %s: %d checkpoints frozen, %d observed", id,
             cell["points"].array.length, run.obs.length));
-    // An unjudged checkpoint (`attrsUnjudged`: its attributes are not frozen) is no
-    // classmate of anyone's attributes, ours as the reference's (plan §16.6 G3 (b)).
+    // An unjudged checkpoint (no frozen `attrs`: an (a) point, or the reference's tool
+    // off there — 9020 PF-B) is no classmate of anyone's attributes, ours as the
+    // reference's (plan §16.6 G3 (b)); the generator removes the same set.
     bool[string] unjudged;
     foreach (p; cell["points"].array)
-        if ("attrsUnjudged" in p) unjudged[shortLabel(p["label"].str)] = true;
+        if ("attrs" !in p["fields"]) unjudged[shortLabel(p["label"].str)] = true;
     foreach (i, p; cell["points"].array) {
         const lab = p["label"].str;
         assert(lab == run.obs[i].label, "cell " ~ id ~ ": checkpoint order " ~ lab);

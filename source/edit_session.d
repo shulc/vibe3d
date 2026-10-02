@@ -1120,8 +1120,9 @@ private struct ToolSession {
             if (ue.length >= 2 &&
                 cast(const TopologyAdjustmentEdit)ue[$ - 1].cmd !is null &&
                 ue[$ - 2].cmd is dormantActivation_.get) {
-                rememberDropImage_(1);
+                auto drop = dropImage_(1);
                 if (history_.undo()) {
+                    storeDropImage_(drop);
                     history_.undo();
                     return true;
                 }
@@ -1204,13 +1205,15 @@ private struct ToolSession {
         import commands.tool.lifecycle : ToolActivationCommand;
         auto activation = cast(const ToolActivationCommand)last.get;
         // Law 4: this session's activation drops the tool with its rows.
-        if (activation !is null && activation.sessionToken() == currentToken())
-            rememberDropImage_(extra);
+        auto drop = activation !is null &&
+                activation.sessionToken() == currentToken()
+            ? dropImage_(extra) : DropImage.init;
         auto topologyRestore = activation !is null &&
                 activation.previousHistoryTopology()
             ? topologyAttrsFor_(activation.previousId(), activation.previousToken())
             : AttrImage.init;
         bool ok = history_.undo();
+        if (ok) storeDropImage_(drop);
         foreach (_; 0 .. ok ? extra : 0) {
             if (history_.undo()) continue;
             // The row refused its undo (review of slice M4): the record is
@@ -1355,18 +1358,6 @@ private struct ToolSession {
             logWarn("tool", "session redo: the record paired with its activation row refused its redo");
         }
         if (ok && pair) {
-            // Law 4: the re-created instance takes its session's seed; the
-            // attribute row redone above is an orphan in it.
-            auto t = tool_();
-            if (reporting_(t) && capturedTopologyModel(t.sessionPolicy())) {
-                auto seed = seedRecreated_(act.get, null);
-                if (!seed.empty) {
-                    t.restoreRecordedAttrs(seed);
-                    rememberTopologyAttrs_(seed);
-                }
-            }
-        }
-        if (ok && pair) {
             auto rearmed = tool_();
             if (rearmed !is null && rearmed.sessionPolicy()
                     .discardLaterTopologyRedoOnRearm)
@@ -1381,6 +1372,19 @@ private struct ToolSession {
             if (t3 !is null && cast(const TopologyAdjustmentEdit)
                     history_.undoEntries()[$ - 1].cmd is null)
                 t3.resyncSession();
+        }
+        if (ok && act !is null) {
+            // Law 4: every redo that re-creates the instance (a bare activation
+            // as well as the pair) takes its session's seed, after the resync;
+            // an attribute row redone with it is an orphan in it (9020 PF-A).
+            auto t = tool_();
+            if (reporting_(t) && capturedTopologyModel(t.sessionPolicy())) {
+                auto seed = seedRecreated_(act.get, null);
+                if (!seed.empty) {
+                    t.restoreRecordedAttrs(seed);
+                    rememberTopologyAttrs_(seed);
+                }
+            }
         }
         // AFTER the redo: it is the redo that arms the tool (its arm binds
         // the fresh instance, `noteArm`), and the replay re-seats the group.
@@ -2078,8 +2082,9 @@ private struct ToolSession {
             const pair = recordCarriesActivation_();
             assert(!(pair && run), "session undo: a carried record and a folded run on one row");
             Rebindable!(const MeshSessionEdit) popped = cmd;
-            if (pair) rememberDropImage_(1);
+            auto drop = pair ? dropImage_(1) : DropImage.init;
             if (!history_.undo()) return false;
+            storeDropImage_(drop);
             foreach (_; 0 .. run) {
                 auto next = cast(const MeshSessionEdit)undoTop_();
                 if (!history_.undo()) break;
@@ -2167,10 +2172,24 @@ private struct ToolSession {
     // Law 4, the seed: an undo that drops the tool together with its top `rows`
     // remembers, for the session, the live image with each of those rows the
     // live instance recorded undone (top down); the redo that re-creates the
-    // tool restores it (`seedRecreated_`). Called before the first row moves.
-    private void rememberDropImage_(size_t rows) {
+    // tool restores it (`seedRecreated_`). Computed (with its session key)
+    // before the first row moves, stored only once `history_.undo()` took the
+    // step: a refused undo leaves the remembered image as it was (9020 F).
+    private struct DropImage {
+        string id;
+        ulong token;
+        AttrImage attrs;
+        bool valid;
+    }
+
+    private void storeDropImage_(DropImage d) {
+        if (d.valid) rememberTopologyAttrsFor_(d.id, d.token, d.attrs);
+    }
+
+    private DropImage dropImage_(size_t rows) {
         auto t = tool_();
-        if (!reporting_(t) || !capturedTopologyModel(t.sessionPolicy())) return;
+        if (!reporting_(t) || !capturedTopologyModel(t.sessionPolicy()))
+            return DropImage.init;
         auto img = t.captureAttrImage();
         const ue = history_.undoEntries();
         foreach (k; 0 .. rows < ue.length ? rows : ue.length) {
@@ -2181,7 +2200,7 @@ private struct ToolSession {
                 if (adj.instance() == instanceOf_(t)) img = adj.before();
             }
         }
-        rememberTopologyAttrs_(img);
+        return DropImage(armedId_.idup, token_, img, armedId_.length != 0);
     }
 
     // The image a re-created instance of `act`'s session starts from: what its
@@ -2326,14 +2345,18 @@ private struct ToolSession {
 
     private void rememberTopologyAttrs_(AttrImage attrs) {
         if (armedId_.length == 0) return;
+        rememberTopologyAttrsFor_(armedId_, token_, attrs);
+    }
+
+    private void rememberTopologyAttrsFor_(string id, ulong token, AttrImage attrs) {
         foreach_reverse (ref owner; topologyAttrOwners_)
-            if (owner.id == armedId_ && owner.token == token_) {
+            if (owner.id == id && owner.token == token) {
                 owner.attrs = attrs;
                 return;
             }
         if (topologyAttrOwners_.length >= kMaxSessionSteps)
             topologyAttrOwners_ = topologyAttrOwners_[1 .. $];
-        topologyAttrOwners_ ~= TopologyAttrOwner(armedId_.idup, token_, attrs);
+        topologyAttrOwners_ ~= TopologyAttrOwner(id.idup, token, attrs);
     }
 
     // The undo of the window's first group (H1, 283): back to the image the
