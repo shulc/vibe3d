@@ -133,3 +133,21 @@ unittest { // a new face layout mid-session (same counts, same arrays): rebuilt 
     assert(d < 0, format("after a layout change mid-session, mirror float %d is %s, a full upload writes %s",
                          d, d < 0 ? 0 : data[d], d < 0 ? 0 : want[d]));
 }
+
+unittest { // a degenerate face's corners carry the (0,1,0) fallback in BOTH streams
+    // The differential cells above compare the writer with itself, so they
+    // cannot see the fallback; this cell pins it absolutely. The quad's
+    // first three corners are collinear (`faceNormalFirst3` is degenerate).
+    Mesh m;
+    m.vertices = [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(2, 0, 0), Vec3(1, 1, 0)];
+    m.faces ~= [0u, 1, 2, 3];
+    GpuMesh gpu;
+    fullUpload(gpu, m);
+    const data = gpu.refreshFaceDataCpu(m, m.vertices);
+    assert(data.length == 6 * 9, format("rig: the quad fans to %d floats, expected 6 corners of 9", data.length));
+    foreach (c; 0 .. 6)
+        foreach (k; 3 .. 9)
+            assert(data[c * 9 + k] == (k % 3 == 1 ? 1.0f : 0.0f),
+                format("corner %d: %s normal %s, expected the (0,1,0) fallback", c,
+                       k < 6 ? "flat" : "smooth", data[c * 9 + (k < 6 ? 3 : 6) .. c * 9 + (k < 6 ? 6 : 9)]));
+}
