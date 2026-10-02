@@ -1036,6 +1036,9 @@ CmdExclusion[] excludedCommands() {
                                         ~ "(commands/mesh/remesh.d:157,177)"),
     CmdExclusion("mesh.remesh.open",      "CmdFlags.SideEffect: opens a UI panel (remesh.d:219)"),
     CmdExclusion("mesh.select",           "selection state, not geometry; the lane sets selection itself"),
+    CmdExclusion("mesh.surfaceAttr",      "O(1): writes one attribute of one surface slot "
+                 ~ "(commands/mesh/surface_attr.d); the full upload its Material commit "
+                 ~ "causes is the one setMaterial/polygons/whole already drives"),
     CmdExclusion("mesh.subpatch_toggle",  "flips a per-face flag; the real cost is the OSD preview "
                                         ~ "rebuild in the FRAME loop, which belongs to the `frames` lane"),
     // --- no-op by construction at its defaults ---------------------------
