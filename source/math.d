@@ -456,6 +456,28 @@ Vec3 faceNormalFirst3(Vec3 v0, Vec3 v1, Vec3 v2, out bool degenerate)
     return Vec3(0, 1, 0);
 }
 
+/// The normal matrix of `m` (column-major, upper 3×3): `sign(det) · cofactor`,
+/// i.e. the inverse-transpose's DIRECTION — finite at `det == 0` (sign +1) and
+/// orientation-preserving under a mirror. Column-major `float[9]`. The one
+/// normal transform: the face VBO's lit draw (`u_normalMatrix`) and the CPU
+/// line shade (`retopology_line_shade.lineShade`) both read it (model M3).
+float[9] normalMatrix(const float[16] m) @safe pure nothrow @nogc {
+    // Rows of the upper 3×3 (a(r,c) = m[c*4 + r]).
+    immutable Vec3 r0 = Vec3(m[0], m[4], m[8]);
+    immutable Vec3 r1 = Vec3(m[1], m[5], m[9]);
+    immutable Vec3 r2 = Vec3(m[2], m[6], m[10]);
+    // Cofactor rows: r1×r2, r2×r0, r0×r1.
+    immutable Vec3 c0 = cross(r1, r2), c1 = cross(r2, r0), c2 = cross(r0, r1);
+    immutable float det = r0.x * c0.x + r0.y * c0.y + r0.z * c0.z;
+    immutable float s = det < 0.0f ? -1.0f : 1.0f;
+    float[9] o;
+    // o[c*3 + r] = s · C(r, c); C row r = c_r.
+    o[0] = s * c0.x; o[3] = s * c0.y; o[6] = s * c0.z;
+    o[1] = s * c1.x; o[4] = s * c1.y; o[7] = s * c1.z;
+    o[2] = s * c2.x; o[5] = s * c2.y; o[8] = s * c2.z;
+    return o;
+}
+
 // ---------------------------------------------------------------------------
 // ModelSpace — the per-layer item transform, packaged for picking (task 0617,
 // doc/picking_item_transform_plan.md).

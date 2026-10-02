@@ -17,6 +17,47 @@ import change_bus : MeshEditScope;  // Position class for the preview-refresh pu
 import perf_probe : g_fc, DrawPass;  // always-on per-frame work counters
 import viewport_scheme : schemeColor, SchemeColor, pointSizePx, kBasePointSize,
                          kOccludedSelectionAlpha, kFaceHoverFill;
+import vertex_normals : FaceAdjacency, buildFaceAdjacency, cornerSmoothNormals,
+                        faceCornerTotal, smoothingCosine;
+
+/// The face VBO's layout, per fan corner: `[pos3 | flatN3 | smoothN3]` (model
+/// M3, task 9070). Every reader of the face VBO's data reads this constant —
+/// `gpu_select.setupFaceSelVao`, `/api/gpu/face-vbo`, and the GPU subpatch
+/// fan-out's park (`subpatch_osd.kFanOutStride`); census
+/// tests/unit/face_stride_census_test.d.
+enum uint kFaceStride = 9;
+/// Float offsets of the two normal streams inside one `kFaceStride` corner.
+enum uint kFaceFlatNormalOffset = 3, kFaceSmoothNormalOffset = 6;
+
+/// One face's fan triangles `(f0, fi, fi+1)` into `dst` (from its first
+/// float), `kFaceStride` floats per corner: the drawn position, the face's
+/// flat normal (`faceNormalFirst3`, the degenerate fallback included) and the
+/// corner's smooth normal from `cornerSmooth` (this face's corners, xyz each).
+/// The ONLY face-fan writer: `buildUploadCpu`, `refreshPositions` and
+/// `uploadSelectedVertices` all call it. Returns the corners written.
+private size_t writeFaceCorners(float[] dst, const(uint)[] face,
+                                const(Vec3)[] vpos, const(float)[] cornerSmooth)
+        @safe pure nothrow @nogc {
+    bool degenerate;
+    immutable Vec3 fn = faceNormalFirst3(vpos[face[0]], vpos[face[1]],
+                                         vpos[face[2]], degenerate);
+    size_t k;
+    void corner(size_t j) {
+        immutable Vec3 p = vpos[face[j]];
+        dst[k + 0] = p.x;  dst[k + 1] = p.y;  dst[k + 2] = p.z;
+        dst[k + 3] = fn.x; dst[k + 4] = fn.y; dst[k + 5] = fn.z;
+        dst[k + 6] = cornerSmooth[j * 3 + 0];
+        dst[k + 7] = cornerSmooth[j * 3 + 1];
+        dst[k + 8] = cornerSmooth[j * 3 + 2];
+        k += kFaceStride;
+    }
+    for (size_t i = 1; i + 1 < face.length; i++) {
+        corner(0);
+        corner(i);
+        corner(i + 1);
+    }
+    return k / kFaceStride;
+}
 
 // ---------------------------------------------------------------------------
 // The HIDE skip predicate (task 0613 S3, doc/hide_geometry_plan.md)
@@ -553,6 +594,13 @@ struct GpuMesh {
     // (was ~2.4 M float appends + 393 K uint appends on a 24 K cage
     // / depth-2 preview, dominated by literal-array allocations).
     private float[] scratchFaceData;
+    // The smooth stream's inputs: vertex→face adjacency, valid
+    // while `faceAdjGen == faceLayoutGen`; the per-corner smooth normals and
+    // per-face normals the writers rebuild on every write.
+    FaceAdjacency   faceAdj;
+    ulong           faceAdjGen;
+    private float[] scratchCornerSmooth;
+    private Vec3[]  scratchFaceNormal;
     private uint[]  scratchFaceIdData;
     private uint[]  scratchMatIdData;
     private float[] scratchWeightColor;   // task 1090, filled on demand
@@ -633,6 +681,22 @@ struct GpuMesh {
                                        DisplayPayloadBasis.previewIndexed);
     }
 
+    /// Rebuild the vertex→face adjacency from `mesh` and stamp it to the
+    /// current face layout (`faceAdjGen = faceLayoutGen`).
+    private void rebuildFaceAdjacency(ref const Mesh mesh) {
+        buildFaceAdjacency(mesh, faceAdj);
+        faceAdjGen = faceLayoutGen;
+    }
+
+    /// Every face corner's smooth normal for `mesh` at the drawn positions
+    /// `vpos`, into `scratchCornerSmooth` (face-corner order, xyz each).
+    private void computeCornerSmooth(ref const Mesh mesh, const(Vec3)[] vpos) {
+        immutable size_t need = faceCornerTotal(mesh) * 3;
+        if (scratchCornerSmooth.length < need) scratchCornerSmooth.length = need;
+        cornerSmoothNormals(mesh, vpos, faceAdj, smoothingCosine(),
+                            scratchFaceNormal, scratchCornerSmooth[0 .. need]);
+    }
+
     /// Allocation-only half of a full upload. `vpos` is resolved by the caller
     /// before entering this builder so morph display selection is not hidden in
     /// the prepared owner and fake backends see the exact bytes production uses.
@@ -640,8 +704,6 @@ struct GpuMesh {
                                 const uint[] edgeOrigin,
                                 const uint[] vertOrigin,
                                 const uint[] faceOrigin) {
-        enum FACE_STRIDE = 6;
-
         // P3 counting pre-pass: derive exact final sizes for the four
         // scratch buffers so the fill phase can index-write instead
         // of `~=`.
@@ -672,7 +734,7 @@ struct GpuMesh {
             ++totalVertKeep;
         }
 
-        // ── Faces — interleaved [pos(3)+normal(3)], flat shading. ──
+        // ── Faces — interleaved [pos | flat normal | smooth normal]. ──
         // P5: only call setLength when we need to grow on the float
         // buffers (D runtime's `_d_arraysetlength` was 7.88 % of CPU
         // after P3 — every call consults GC block metadata even when
@@ -682,7 +744,7 @@ struct GpuMesh {
         // metadata round-trip. Writers index up to the exact required
         // length via the `*VertCount` fields below; GL upload sizes
         // are derived from those counts, not from `scratch*.length`.
-        immutable size_t needFaceFloats = totalFaceCorners * FACE_STRIDE;
+        immutable size_t needFaceFloats = totalFaceCorners * kFaceStride;
         if (scratchFaceData  .length < needFaceFloats)
             scratchFaceData  .length = needFaceFloats;
         if (scratchFaceIdData.length < totalFaceCorners)
@@ -701,9 +763,16 @@ struct GpuMesh {
             faceOriginGpu.length = faceOrigin.length;
             faceOriginGpu[] = faceOrigin[];
         }
+        // The layout moved (`faceLayoutGen` above), so the adjacency is
+        // rebuilt unconditionally here; the refresh paths self-heal on the gen.
+        rebuildFaceAdjacency(mesh);
+        computeCornerSmooth(mesh, vpos);
         {
             size_t fw = 0;
+            size_t cc = 0;   // running face-corner offset into scratchCornerSmooth
             foreach (fi, face; mesh.faces) {
+                immutable size_t corner0 = cc;
+                cc += face.length;
                 faceTriStart[fi] = cast(int)fw;
                 // Degenerate OR hidden: keep the slot, contribute no
                 // triangles. Same branch, deliberately (R3) — a hidden face
@@ -712,57 +781,31 @@ struct GpuMesh {
                     faceTriCount[fi] = 0;
                     continue;
                 }
-                bool degenerate;
-                immutable Vec3 fn = faceNormalFirst3(vpos[face[0]], vpos[face[1]],
-                                                     vpos[face[2]], degenerate);
-                immutable float nx = fn.x, ny = fn.y, nz = fn.z;
+                immutable size_t written = writeFaceCorners(
+                    scratchFaceData[fw * kFaceStride .. $], face, vpos,
+                    scratchCornerSmooth[corner0 * 3 .. cc * 3]);
+                // Material Groups (MG3): one matId per VBO vertex. Defaults to
+                // 0 (Default surface) for faces not yet assigned an entry in
+                // mesh.faceMaterial.
+                const uint mid = (fi < mesh.faceMaterial.length)
+                    ? mesh.faceMaterial[fi] : 0u;
                 immutable uint i0 = face[0];
                 for (uint i = 1; i + 1 < face.length; i++) {
-                    immutable uint ia = i0;
-                    immutable uint ib = face[i];
-                    immutable uint ic = face[i + 1];
-                    Vec3 va = vpos[ia];
-                    Vec3 vb = vpos[ib];
-                    Vec3 vc = vpos[ic];
-                    size_t k = fw * FACE_STRIDE;
-                    scratchFaceData[k +  0] = va.x;
-                    scratchFaceData[k +  1] = va.y;
-                    scratchFaceData[k +  2] = va.z;
-                    scratchFaceData[k +  3] = nx;
-                    scratchFaceData[k +  4] = ny;
-                    scratchFaceData[k +  5] = nz;
-                    scratchFaceData[k +  6] = vb.x;
-                    scratchFaceData[k +  7] = vb.y;
-                    scratchFaceData[k +  8] = vb.z;
-                    scratchFaceData[k +  9] = nx;
-                    scratchFaceData[k + 10] = ny;
-                    scratchFaceData[k + 11] = nz;
-                    scratchFaceData[k + 12] = vc.x;
-                    scratchFaceData[k + 13] = vc.y;
-                    scratchFaceData[k + 14] = vc.z;
-                    scratchFaceData[k + 15] = nx;
-                    scratchFaceData[k + 16] = ny;
-                    scratchFaceData[k + 17] = nz;
                     scratchFaceIdData[fw + 0] = cast(uint)fi;
                     scratchFaceIdData[fw + 1] = cast(uint)fi;
                     scratchFaceIdData[fw + 2] = cast(uint)fi;
-                    // Material Groups (MG3): one matId per VBO vertex.
-                    // Defaults to 0 (Default surface) for faces not yet
-                    // assigned an entry in mesh.faceMaterial.
-                    const uint mid = (fi < mesh.faceMaterial.length)
-                        ? mesh.faceMaterial[fi] : 0u;
                     scratchMatIdData[fw + 0] = mid;
                     scratchMatIdData[fw + 1] = mid;
                     scratchMatIdData[fw + 2] = mid;
-                    // Task 1090: which SOURCE vertex each corner came from.
-                    // Written here, beside the position write that uses the
-                    // same three indices, so the two cannot describe
-                    // different triangulations.
-                    faceCornerVert[fw + 0] = ia;
-                    faceCornerVert[fw + 1] = ib;
-                    faceCornerVert[fw + 2] = ic;
+                    // Which SOURCE vertex each corner came from (weight
+                    // colours), in the fan order `writeFaceCorners` wrote.
+                    faceCornerVert[fw + 0] = i0;
+                    faceCornerVert[fw + 1] = face[i];
+                    faceCornerVert[fw + 2] = face[i + 1];
                     fw += 3;
                 }
+                assert(fw - faceTriStart[fi] == written,
+                    "writeFaceCorners and the id fan disagree on the corner count");
                 faceTriCount[fi] = cast(int)(fw - faceTriStart[fi]);
             }
             faceVertCount = cast(int)fw;
@@ -863,19 +906,23 @@ struct GpuMesh {
     /// GL-only half. All sizes and backing storage were fixed by
     /// `buildUploadCpu`; this method performs no allocation or callbacks.
     private void submitUploadGl() nothrow @nogc {
-        enum FACE_STRIDE = 6;
         glBindVertexArray(faceVao);
         glBindBuffer(GL_ARRAY_BUFFER, faceVbo);
         glBufferData(GL_ARRAY_BUFFER,
-            cast(GLsizeiptr)(faceVertCount * FACE_STRIDE * float.sizeof),
+            cast(GLsizeiptr)(faceVertCount * kFaceStride * float.sizeof),
             scratchFaceData.ptr, GL_DYNAMIC_DRAW);
         glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE,
-                              FACE_STRIDE * float.sizeof, cast(void*)0);
+                              kFaceStride * float.sizeof, cast(void*)0);
         glEnableVertexAttribArray(0);
         glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE,
-                              FACE_STRIDE * float.sizeof,
-                              cast(void*)(3 * float.sizeof));
+                              kFaceStride * float.sizeof,
+                              cast(void*)(kFaceFlatNormalOffset * float.sizeof));
         glEnableVertexAttribArray(1);
+        // The smooth normal stream: `litVertSrc`'s location 4.
+        glVertexAttribPointer(4, 3, GL_FLOAT, GL_FALSE,
+                              kFaceStride * float.sizeof,
+                              cast(void*)(kFaceSmoothNormalOffset * float.sizeof));
+        glEnableVertexAttribArray(4);
         glBindBuffer(GL_ARRAY_BUFFER, faceIdVbo);
         uint zero = 0;
         glBufferData(GL_ARRAY_BUFFER,
@@ -1059,10 +1106,11 @@ struct GpuMesh {
         // honestly.
         g_fc.upload(cast(long)mesh.vertices.length);
 
-        enum FACE_STRIDE = 6;
+        // Self-heal: never write with an adjacency from another layout.
+        if (faceAdjGen != faceLayoutGen) rebuildFaceAdjacency(mesh);
+        computeCornerSmooth(mesh, vpos);
 
-        // Face VBO: re-fan each face's triangles from its first three
-        // verts. Normal recomputed per face (one cross + one sqrt).
+        // Face VBO: re-fan each face's triangles through `writeFaceCorners`.
         // faceTriStart already maps fi → first vertex in the VBO.
         //
         // Map with INVALIDATE_BUFFER_BIT — explicit driver-side orphan,
@@ -1077,41 +1125,22 @@ struct GpuMesh {
             glBindBuffer(GL_ARRAY_BUFFER, faceVbo);
             float* fp = cast(float*)glMapBufferRange(
                 GL_ARRAY_BUFFER, 0,
-                cast(GLsizeiptr)(faceVertCount * FACE_STRIDE * float.sizeof),
+                cast(GLsizeiptr)(faceVertCount * kFaceStride * float.sizeof),
                 GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
             if (fp) {
+                float[] fv = fp[0 .. faceVertCount * kFaceStride];
+                size_t cc = 0;
                 foreach (fi, face; mesh.faces) {
+                    immutable size_t corner0 = cc;
+                    cc += face.length;
                     // Hidden faces are skipped for the same reason degenerate
                     // ones are, and it is not merely an optimisation: their
                     // faceTriCount is 0, so faceTriStart[fi] already points at
                     // the NEXT kept face's first triangle. Writing them here
                     // would overwrite that face's data.
                     if (face.length < 3 || hideSkipFace(mesh, fi)) continue;
-                    immutable uint i0 = face[0];
-                    bool degenerate;
-                    immutable Vec3 fn = faceNormalFirst3(vpos[i0], vpos[face[1]],
-                                                         vpos[face[2]], degenerate);
-                    immutable float nx = fn.x, ny = fn.y, nz = fn.z;
-                    int k = faceTriStart[fi] * FACE_STRIDE;
-                    // Fan-triangulate around face[0]; write [pos, normal]
-                    // per vertex with hand-rolled inner loop — avoids the
-                    // `foreach (idx; [..])` literal-array GC alloc and the
-                    // Vec3 operator-overload temporaries that dominated
-                    // an earlier profile.
-                    for (size_t i = 1; i + 1 < face.length; i++) {
-                        immutable uint ia = i0;
-                        immutable uint ib = face[i];
-                        immutable uint ic = face[i+1];
-                        Vec3 va = vpos[ia];
-                        Vec3 vb = vpos[ib];
-                        Vec3 vc = vpos[ic];
-                        fp[k++] = va.x; fp[k++] = va.y; fp[k++] = va.z;
-                        fp[k++] = nx;   fp[k++] = ny;   fp[k++] = nz;
-                        fp[k++] = vb.x; fp[k++] = vb.y; fp[k++] = vb.z;
-                        fp[k++] = nx;   fp[k++] = ny;   fp[k++] = nz;
-                        fp[k++] = vc.x; fp[k++] = vc.y; fp[k++] = vc.z;
-                        fp[k++] = nx;   fp[k++] = ny;   fp[k++] = nz;
-                    }
+                    writeFaceCorners(fv[faceTriStart[fi] * kFaceStride .. $], face, vpos,
+                                     scratchCornerSmooth[corner0 * 3 .. cc * 3]);
                 }
                 glUnmapBuffer(GL_ARRAY_BUFFER);
             }
@@ -1301,39 +1330,32 @@ struct GpuMesh {
             auto dv = displayVertices(&mesh);
             vpos = (dv.length == mesh.vertices.length) ? dv : mesh.vertices;
         }
-        enum FACE_STRIDE = 6;
 
-        // Face VBO — flat-shaded fan triangulation, one normal per face.
+        // Face VBO — the fan through `writeFaceCorners`, positions AND normals
+        // from the drawn positions (the morph law above; positions read off
+        // `mesh.vertices` un-morphed a displayed morph mid-drag).
         if (faceVertCount > 0 && faceTriStart.length == mesh.faces.length) {
+            // Self-heal: never write with an adjacency from another layout.
+            if (faceAdjGen != faceLayoutGen) rebuildFaceAdjacency(mesh);
+            computeCornerSmooth(mesh, vpos);
             glBindBuffer(GL_ARRAY_BUFFER, faceVbo);
             float* fp = cast(float*)glMapBufferRange(
                 GL_ARRAY_BUFFER, 0,
-                cast(GLsizeiptr)(faceVertCount * FACE_STRIDE * float.sizeof),
+                cast(GLsizeiptr)(faceVertCount * kFaceStride * float.sizeof),
                 GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
             if (fp) {
+                float[] fv = fp[0 .. faceVertCount * kFaceStride];
+                size_t cc = 0;
                 foreach (fi, face; mesh.faces) {
+                    immutable size_t corner0 = cc;
+                    cc += face.length;
                     // Hidden: skipped exactly as in `upload` and
                     // `refreshPositions`. faceTriCount is 0 for these and
                     // faceTriStart[fi] aliases the next kept face's first
                     // triangle, so writing here would corrupt that face (R2).
                     if (face.length < 3 || hideSkipFace(mesh, fi)) continue;
-                    immutable uint i0 = face[0];
-                    bool degenerate;
-                    immutable Vec3 fn = faceNormalFirst3(vpos[i0], vpos[face[1]],
-                                                         vpos[face[2]], degenerate);
-                    immutable float nx = fn.x, ny = fn.y, nz = fn.z;
-                    int k = faceTriStart[fi] * FACE_STRIDE;
-                    for (size_t i = 1; i + 1 < face.length; i++) {
-                        Vec3 va = mesh.vertices[i0];
-                        Vec3 vb = mesh.vertices[face[i]];
-                        Vec3 vc = mesh.vertices[face[i+1]];
-                        fp[k++] = va.x; fp[k++] = va.y; fp[k++] = va.z;
-                        fp[k++] = nx;   fp[k++] = ny;   fp[k++] = nz;
-                        fp[k++] = vb.x; fp[k++] = vb.y; fp[k++] = vb.z;
-                        fp[k++] = nx;   fp[k++] = ny;   fp[k++] = nz;
-                        fp[k++] = vc.x; fp[k++] = vc.y; fp[k++] = vc.z;
-                        fp[k++] = nx;   fp[k++] = ny;   fp[k++] = nz;
-                    }
+                    writeFaceCorners(fv[faceTriStart[fi] * kFaceStride .. $], face, vpos,
+                                     scratchCornerSmooth[corner0 * 3 .. cc * 3]);
                 }
                 glUnmapBuffer(GL_ARRAY_BUFFER);
             }
@@ -1364,7 +1386,7 @@ struct GpuMesh {
                 foreach (ei, edge; mesh.edges) {
                     if (hideSkipEdge(mesh, ei)) continue;
                     if (k + 6 > edgeVertCount * 3) break;
-                    Vec3 a = mesh.vertices[edge[0]], b = mesh.vertices[edge[1]];
+                    Vec3 a = vpos[edge[0]], b = vpos[edge[1]];
                     ep[k++] = a.x; ep[k++] = a.y; ep[k++] = a.z;
                     ep[k++] = b.x; ep[k++] = b.y; ep[k++] = b.z;
                 }
@@ -2304,7 +2326,7 @@ private GpuMeshNames takeGpuMeshNames(ref GpuMesh gpu) nothrow @nogc {
     gpu.dotIndexEbo = 0;
     gpu.dotIndexEboId = 0;
     gpu.dotIndexEboFilled = false;
-    gpu.faceLayoutGen = gpu.faceReverseEboGen = 0;
+    gpu.faceLayoutGen = gpu.faceReverseEboGen = gpu.faceAdjGen = 0;
     gpu.faceReverseEboFilled = false;
     gpu.scratchReverseIdx = null;
     gpu.faceVao = gpu.faceVbo = 0;
@@ -2325,6 +2347,9 @@ private GpuMeshNames takeGpuMeshNames(ref GpuMesh gpu) nothrow @nogc {
     gpu.displayPayload = DisplayPayloadProvenance.init;
     gpu.uploadVersion = 0;
     gpu.scratchFaceData = null;
+    gpu.faceAdj = FaceAdjacency.init;
+    gpu.scratchCornerSmooth = null;
+    gpu.scratchFaceNormal = null;
     gpu.scratchFaceIdData = null;
     gpu.scratchMatIdData = null;
     gpu.scratchWeightColor = null;
@@ -2554,6 +2579,12 @@ private GpuMesh cloneUploadState(ref GpuMesh src) {
     dst.weightStampValid = src.weightStampValid;
     dst.uploadVersion = src.uploadVersion;
     dst.scratchFaceData = src.scratchFaceData.dup;
+    // The smooth stream's inputs travel with the layout they describe.
+    dst.faceAdj.offsets = src.faceAdj.offsets.dup;
+    dst.faceAdj.faces = src.faceAdj.faces.dup;
+    dst.faceAdjGen = src.faceAdjGen;
+    dst.scratchCornerSmooth = src.scratchCornerSmooth.dup;
+    dst.scratchFaceNormal = src.scratchFaceNormal.dup;
     dst.scratchFaceIdData = src.scratchFaceIdData.dup;
     dst.scratchMatIdData = src.scratchMatIdData.dup;
     dst.scratchWeightColor = src.scratchWeightColor.dup;
@@ -2581,6 +2612,9 @@ private bool isDefaultEmptyGpuMesh(ref GpuMesh gpu) nothrow @nogc {
         gpu.faceCornerVert.length == 0 && gpu.weightStampMesh is null &&
         gpu.weightStampName.length == 0 && !gpu.weightStampValid &&
         sameGpuUploadVersion(&gpu, 0) && gpu.scratchFaceData.length == 0 &&
+        gpu.faceAdj.offsets.length == 0 && gpu.faceAdj.faces.length == 0 &&
+        gpu.faceAdjGen == 0 && gpu.scratchCornerSmooth.length == 0 &&
+        gpu.scratchFaceNormal.length == 0 &&
         gpu.scratchFaceIdData.length == 0 && gpu.scratchMatIdData.length == 0 &&
         gpu.scratchWeightColor.length == 0 && gpu.scratchEdgeData.length == 0 &&
         gpu.scratchVertData.length == 0;
@@ -2602,6 +2636,10 @@ private void installUploadState(ref GpuMesh dst, ref GpuMesh src) nothrow @nogc 
     dst.weightStampValid = src.weightStampValid;
     dst.uploadVersion = src.uploadVersion;
     dst.scratchFaceData = src.scratchFaceData;
+    dst.faceAdj = src.faceAdj;
+    dst.faceAdjGen = src.faceAdjGen;
+    dst.scratchCornerSmooth = src.scratchCornerSmooth;
+    dst.scratchFaceNormal = src.scratchFaceNormal;
     dst.scratchFaceIdData = src.scratchFaceIdData;
     dst.scratchMatIdData = src.scratchMatIdData;
     dst.scratchWeightColor = src.scratchWeightColor;
@@ -2612,6 +2650,8 @@ private void installUploadState(ref GpuMesh dst, ref GpuMesh src) nothrow @nogc 
     src.vertOriginGpu = null; src.faceCornerVert = null;
     src.weightStampMesh = null; src.weightStampName = null;
     src.scratchFaceData = null; src.scratchFaceIdData = null;
+    src.faceAdj = FaceAdjacency.init; src.scratchCornerSmooth = null;
+    src.scratchFaceNormal = null;
     src.scratchMatIdData = null; src.scratchWeightColor = null;
     src.scratchEdgeData = null; src.scratchVertData = null;
 }
@@ -2994,7 +3034,12 @@ version(unittest) unittest {
     assert(target.weightStampMesh is null && target.weightStampName.length == 0 &&
         !target.weightStampValid);
     assert(!target.suppressCageUpload);
-    assert(target.scratchFaceData.length == 216 &&
+    // The smooth stream's adjacency travels with the installed layout (task
+    // 9070): a cube's 8 vertices sit on 3 faces each.
+    assert(target.faceAdj.faces.length == 24 && target.faceAdjGen == target.faceLayoutGen &&
+        target.scratchCornerSmooth.length == 72,
+        "installUploadState must move the smooth stream's adjacency with the layout");
+    assert(target.scratchFaceData.length == 324 &&
         target.scratchFaceIdData.length == 36 && target.scratchMatIdData.length == 36 &&
         target.scratchWeightColor.length == 0 && target.scratchEdgeData.length == 72 &&
         target.scratchVertData.length == 24);

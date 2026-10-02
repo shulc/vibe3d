@@ -32,7 +32,7 @@ enum string[] requiredWebGlSymbols = [
     "glRenderbufferStorage", "glShaderSource", "glTexImage2D",
     "glTexParameteri", "glTransformFeedbackVaryings", "glUniform1f",
     "glUniform1i", "glUniform2f", "glUniform3f", "glUniformBlockBinding",
-    "glUniformMatrix4fv", "glUnmapBuffer", "glUseProgram",
+    "glUniformMatrix3fv", "glUniformMatrix4fv", "glUnmapBuffer", "glUseProgram",
     "glVertexAttrib3f", "glVertexAttribDivisor", "glVertexAttribIPointer",
     "glVertexAttribPointer", "glViewport",
 ];

@@ -218,6 +218,9 @@ struct ViewportCellDisplay {
     DisplayStyle  backdropSlotStyle = DisplayStyle.Shaded;
     bool          showVertices      = false;
     float         pointSize         = 0.0f;
+    /// The normal source of the active and backdrop slots.
+    bool          smooth            = true;
+    bool          backdropSmooth    = true;
 }
 
 /// Copy a live cell's non-template display fields into its persisted row.
@@ -230,6 +233,8 @@ void mirrorNonTemplateDisplay(ref ViewportCellDisplay c, in ViewportDisplay d)
     c.backdropSlotStyle = d.backdrop.style;
     c.showVertices      = d.active.showVertices;
     c.pointSize         = d.active.pointSize;
+    c.smooth            = d.active.smooth;
+    c.backdropSmooth    = d.backdrop.smooth;
 }
 
 /// Apply a persisted row's non-template fields to a live cell. Leaves the
@@ -242,6 +247,8 @@ void restoreNonTemplateDisplay(ref ViewportDisplay d, in ViewportCellDisplay c)
     d.backdrop.style      = c.backdropSlotStyle;
     d.active.showVertices = c.showVertices;
     d.active.pointSize    = c.pointSize;
+    d.active.smooth       = c.smooth;
+    d.backdrop.smooth     = c.backdropSmooth;
 }
 
 /// Module-level live preferences. Loaded once at startup, mutated by the
@@ -312,6 +319,8 @@ private void readNonTemplateDisplay(ref ViewportCellDisplay c, JSONValue cellJso
     }
     readBool(cellJson, "retopology", c.retopology);
     readBool(cellJson, "showVertices", c.showVertices);
+    readBool(cellJson, "smooth", c.smooth);
+    readBool(cellJson, "backdropSmooth", c.backdropSmooth);
     if (auto bp = "backdropStyle" in cellJson)
         if (bp.type == JSONType.string)
             foreach (m; [EnumMembers!BackdropStyle])
@@ -652,6 +661,8 @@ void savePrefs(ref const Prefs p, string dir) {
         cj["backdropSlotStyle"] = JSONValue(to!string(c.backdropSlotStyle));
         cj["showVertices"]      = JSONValue(c.showVertices);
         cj["pointSize"]         = JSONValue(c.pointSize);
+        cj["smooth"]            = JSONValue(c.smooth);
+        cj["backdropSmooth"]    = JSONValue(c.backdropSmooth);
         vd ~= cj;
     }
     doc["viewportDisplay"] = JSONValue(vd);

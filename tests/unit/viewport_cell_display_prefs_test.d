@@ -46,7 +46,8 @@ private bool sameNonTemplate(in ViewportDisplay a, in ViewportDisplay b) {
     return a.retopology == b.retopology && a.backdropStyle == b.backdropStyle
         && a.backdrop.style == b.backdrop.style
         && a.active.showVertices == b.active.showVertices
-        && a.active.pointSize == b.active.pointSize;
+        && a.active.pointSize == b.active.pointSize
+        && a.active.smooth == b.active.smooth && a.backdrop.smooth == b.backdrop.smooth;
 }
 
 unittest { // P1: the defaults agree, so an untouched cell round-trips as the identity
@@ -219,4 +220,27 @@ unittest { // P7: census — app.d restores the non-template fields UNCONDITIONA
         "P7: the non-template restore must run before the styleUserSet skip");
     assert(app.count("restoreNonTemplateDisplay(") == 1,
         "P7: expected exactly one non-template restore call in app.d");
+}
+
+unittest { // P6 (task 9070): the two slots' normal source survive save -> load -> restore
+    const dir = scratch("smooth");
+    scope(exit) rmdirRecurse(dir);
+    ViewportDisplay live;
+    live.active.smooth = false;     // the default is true: a dropped field reads back true
+    live.backdrop.smooth = false;
+    Prefs p;
+    mirrorNonTemplateDisplay(p.viewportDisplay[1], live);
+    assert(!p.viewportDisplay[1].smooth && !p.viewportDisplay[1].backdropSmooth,
+        "P6: the mirror must copy both slots' smooth into the row");
+    savePrefs(p, dir);
+    const q = loadPrefs(dir);
+    ViewportDisplay back;
+    restoreNonTemplateDisplay(back, q.viewportDisplay[1]);
+    assert(!back.active.smooth, "P6: the active slot's smooth lost in the round trip");
+    assert(!back.backdrop.smooth, "P6: the backdrop slot's smooth lost in the round trip");
+    // A file that predates the keys reads back smooth (the default).
+    write(buildPath(dir, "prefs.json"), `{ "version": 1, "viewportDisplay": [ {"retopology":true} ] }`);
+    const t = loadPrefs(dir);
+    assert(t.viewportDisplay[0].smooth && t.viewportDisplay[0].backdropSmooth,
+        "P6: a cell without the keys must keep smooth on");
 }

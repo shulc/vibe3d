@@ -258,9 +258,11 @@ unittest {
     // Slice M5: `prefs` holds the tool attribute cache, which reaches the leaf
     // `toolpipe.attr_cache` (+1 each).
     // Retopology slice S4: the lit uploads read the leaf `light_rig` (+1 each).
-    assert(edit.queue.length == 258 && positive.queue.length == 522,
-        format("6670 import closure census changed: edit=%d/258 "
-            ~ "registration=%d/522", edit.queue.length,
+    // Viewport shading S1a (task 9070): the face-VBO writers read the leaf
+    // `vertex_normals` (+1 each).
+    assert(edit.queue.length == 259 && positive.queue.length == 523,
+        format("6670 import closure census changed: edit=%d/259 "
+            ~ "registration=%d/523", edit.queue.length,
             positive.queue.length));
 }
 

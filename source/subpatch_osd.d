@@ -18,6 +18,7 @@ import std.math : sqrt;
 import math : Vec3;
 import mesh : Mesh, SubpatchTrace, edgeKey, makeCube, Surface;
 import mesh_dirty : foldSubpatchKeyMember;
+import mesh_gpu : kFaceStride;
 import osd.c;
 import perf_probe : g_perf, Cat, g_fc, DrawPass;
 
@@ -1122,8 +1123,9 @@ Mesh catmullClarkOsd(ref const Mesh cage, const bool[] faceMask = null,
 //                                  triangle-0 verts (drives flat normal)
 //   u_limitPositions[limit]      → xyz from OSD GPU eval
 //
-// Output captured via GL_INTERLEAVED_ATTRIBS — sequential (vPos, vNorm)
-// matches gpu.faceVbo's stride-6 layout exactly.
+// Output captured via GL_INTERLEAVED_ATTRIBS — sequential `kFanOutVaryings`,
+// which must match gpu.faceVbo's stride `kFaceStride` layout exactly (the
+// fan-out parks itself while it does not: `refreshIntoFaceVbo`).
 private immutable string FAN_OUT_VERT_SRC = q{
     #version 330 core
     uniform  isamplerBuffer u_cornerToLimit;
@@ -1250,11 +1252,19 @@ private GLuint linkTfProgram(string vertSrc, string fragSrc,
     return prog;
 }
 
-/// Face-corner fan-out program — emits (vPos, vNorm) interleaved
-/// matching gpu.faceVbo's stride-6 layout.
+/// The face-corner fan-out's captured varyings, in buffer order, and the
+/// floats per corner they write. The face VBO's layout is `kFaceStride`
+/// (`[pos | flatN | smoothN]`); while the two differ the fan-out
+/// is PARKED (`refreshIntoFaceVbo` returns false and the caller takes the CPU
+/// path) — derived from the layout, not a hand flag.
+enum string[] kFanOutVaryings = ["vPos", "vNorm"];
+enum size_t kFanOutStride = 3 * kFanOutVaryings.length;
+
+/// Face-corner fan-out program — emits `kFanOutVaryings` interleaved.
 private GLuint compileFanOutProgram() {
     import std.string : toStringz;
-    const(char)*[2] varyings = [ "vPos".toStringz, "vNorm".toStringz ];
+    const(char)*[kFanOutVaryings.length] varyings;
+    foreach (i, v; kFanOutVaryings) varyings[i] = v.toStringz;
     return linkTfProgram(FAN_OUT_VERT_SRC, FAN_OUT_FRAG_SRC,
                           varyings[], GL_INTERLEAVED_ATTRIBS);
 }
@@ -2580,6 +2590,8 @@ struct OsdAccel {
                              GLuint targetFaceVbo,
                              int expectedFaceVertCount)
     {
+        // Parked while the fan-out's corner layout is not the face VBO's.
+        if (kFanOutStride != kFaceStride) return false;
         if (!canFanOut) return false;
         if (targetFaceVbo == 0) return false;
         if (expectedFaceVertCount != faceVertCount) return false;

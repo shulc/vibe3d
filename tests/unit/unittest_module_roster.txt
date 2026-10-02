@@ -255,6 +255,7 @@ tests.unit.eventlog_parser_test
 tests.unit.eventlog_test
 tests.unit.extend_offset_mirror_test
 tests.unit.face_reindex_arming_test
+tests.unit.face_stride_census_test
 tests.unit.facing_mirror_determinant_test
 tests.unit.facing_predicate_test
 tests.unit.falloff_screen_default_test
@@ -604,6 +605,7 @@ tests.unit.version_gate_census_ai3d_remesh_test
 tests.unit.version_poll_census_test
 tests.unit.vertex_dot_arm_census_test
 tests.unit.vertex_extrude_apex_law_test
+tests.unit.vertex_normals_test
 tests.unit.view_test
 tests.unit.viewgrid_test
 tests.unit.viewport_cell_display_prefs_test

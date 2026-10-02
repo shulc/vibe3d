@@ -45,7 +45,8 @@ import imgui_impl_sdl2;
 import imgui_impl_opengl3;
 import math;
 import mesh;
-import mesh_gpu : DisplayPayloadBasis;
+import mesh_gpu : DisplayPayloadBasis, kFaceStride, kFaceFlatNormalOffset,
+    kFaceSmoothNormalOffset;
 import eventlog;
 import handler;
 import pipe_gizmo_host : PipeGizmoHost;
@@ -861,7 +862,9 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
         // updates after a /api/transform; the /api/model snapshot
         // alone can't catch a broken fan-out shader since it only
         // reflects the cage.
-        httpServer.setGpuSurfaceProvider(() {
+        // `withNormals` (`&normals=1`) adds the two normal streams
+        // of the stride-`kFaceStride` layout as "flatNormals"/"smoothNormals".
+        httpServer.setGpuSurfaceProvider((bool withNormals) {
             import std.array : appender;
             import std.format : format;
             import bindbc.opengl;
@@ -876,7 +879,7 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
             // `displayServiced_`). That indirection is the migration; there is
             // nothing left here to key.
             ensureDisplayCurrent();
-            // Faces use stride-6 (pos+normal). Read the live VBO.
+            // Faces use stride `kFaceStride` (pos | flat N | smooth N).
             int vertCount = gpu.faceVertCount;
             // Task 6450: `model` is the display-authorised TOOL matrix for
             // this VBO — the renderer folds the item matrix on top of it;
@@ -947,7 +950,7 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
             if (vertCount <= 0)
                 return `{"faceVertCount":0,"positions":[],"model":` ~ modelStr
                      ~ `,"toolMatrix":` ~ toolStr ~ tailStr ~ `}`;
-            float[] data = new float[](vertCount * 6);
+            float[] data = new float[](vertCount * kFaceStride);
             glBindBuffer(GL_ARRAY_BUFFER, gpu.faceVbo);
             glGetBufferSubData(GL_ARRAY_BUFFER, 0,
                 cast(GLsizeiptr)(data.length * float.sizeof),
@@ -957,12 +960,22 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
             buf.put(`{"faceVertCount":`);
             buf.put(format("%d", vertCount));
             buf.put(`,"positions":[`);
-            foreach (i; 0 .. vertCount) {
-                if (i > 0) buf.put(",");
-                buf.put(format("[%s,%s,%s]",
-                    jsonNum(data[i * 6 + 0], "%.6f"),
-                    jsonNum(data[i * 6 + 1], "%.6f"),
-                    jsonNum(data[i * 6 + 2], "%.6f")));
+            void putStream(size_t offset) {
+                foreach (i; 0 .. vertCount) {
+                    if (i > 0) buf.put(",");
+                    immutable size_t k = i * kFaceStride + offset;
+                    buf.put(format("[%s,%s,%s]",
+                        jsonNum(data[k + 0], "%.6f"),
+                        jsonNum(data[k + 1], "%.6f"),
+                        jsonNum(data[k + 2], "%.6f")));
+                }
+            }
+            putStream(0);
+            if (withNormals) {
+                buf.put(`],"flatNormals":[`);
+                putStream(kFaceFlatNormalOffset);
+                buf.put(`],"smoothNormals":[`);
+                putStream(kFaceSmoothNormalOffset);
             }
             buf.put(`],"model":`);
             buf.put(modelStr);
@@ -1004,7 +1017,7 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                     `"lightGain":%s,"vertColor":[%s,%s,%s],"vertAlpha":%s,` ~
                     `"pointSize":%s,"cullHiddenVerts":%s,` ~
                     `"shadeLinesByItem":%s,"baseDotsBySelection":%s,` ~
-                    `"joinsItemSequence":%s,"styleFills":%s}`,
+                    `"joinsItemSequence":%s,"styleFills":%s,"smoothNormals":%s}`,
                     p.drawFaces ? "true" : "false",
                     p.facesLit  ? "true" : "false",
                     p.shading.to!string,
@@ -1032,15 +1045,17 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                     p.shadeLinesByItem    ? "true" : "false",
                     p.baseDotsBySelection ? "true" : "false",
                     p.joinsItemSequence   ? "true" : "false",
-                    p.styleFills          ? "true" : "false");
+                    p.styleFills          ? "true" : "false",
+                    p.smoothNormals       ? "true" : "false");
             }
             static string stateJson(in DisplayState s) {
                 return format(`{"style":"%s","wire":"%s","wireAlpha":%s,` ~
-                    `"showVertices":%s,"pointSize":%s}`,
+                    `"showVertices":%s,"pointSize":%s,"smooth":%s}`,
                     s.style.to!string, s.wire.to!string,
                     jsonNum(s.wireAlpha, "%.6f"),
                     s.showVertices ? "true" : "false",
-                    jsonNum(s.pointSize, "%.6f"));
+                    jsonNum(s.pointSize, "%.6f"),
+                    s.smooth ? "true" : "false");
             }
 
             // Task 0570: the grid terms, per cell, straight from the

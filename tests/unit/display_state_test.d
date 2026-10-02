@@ -391,3 +391,41 @@ unittest {
             format("the active plan of style %s (retopology %s) has dim %s; "
                    ~ "only a backdrop plan may dim", r.style, r.retopo, r.dim));
 }
+
+/// Task 9070 (S1a A3): the normal source. Default smooth on both plans; `smooth`
+/// off resolves flat on both; a `Flat` backdrop reads the BACKDROP slot's
+/// `smooth`, a `SameAsActive` backdrop the ACTIVE slot's.
+unittest {
+    ViewportDisplay d;
+    assert(DrawPlan.init.smoothNormals, "the DrawPlan default normal source must be smooth");
+    assert(resolveDrawPlan(d, false).smoothNormals && resolveDrawPlan(d, true).smoothNormals,
+        "a default cell must resolve smooth on both plans");
+    d.active.smooth = false;
+    d.backdrop.smooth = false;
+    assert(!resolveDrawPlan(d, false).smoothNormals && !resolveDrawPlan(d, true).smoothNormals,
+        "smooth=false on both slots must resolve flat on both plans");
+
+    ViewportDisplay f;
+    f.backdropStyle = BackdropStyle.Flat;
+    f.active.smooth = true;
+    f.backdrop.smooth = false;
+    assert(!resolveDrawPlan(f, true).smoothNormals,
+        "a Flat backdrop must read the backdrop slot's smooth (false), not the active slot's");
+    assert(resolveDrawPlan(f, false).smoothNormals, "the active plan reads the active slot");
+
+    ViewportDisplay s;   // SameAsActive is the default backdrop style
+    assert(s.backdropStyle == BackdropStyle.SameAsActive, "premise: default backdrop is SameAsActive");
+    s.active.smooth = false;
+    s.backdrop.smooth = true;
+    assert(!resolveDrawPlan(s, true).smoothNormals,
+        "a SameAsActive backdrop must follow the ACTIVE slot's smooth (false)");
+}
+
+/// [E1] The composition of `DisplayState`: a new per-slot control is a
+/// decision every consumer (prefs mirror, endpoint, command) must see.
+unittest {
+    static assert([__traits(allMembers, DisplayState)]
+        == ["style", "wire", "wireAlpha", "showVertices", "pointSize", "smooth"],
+        "DisplayState's members changed — extend the prefs mirror, the display endpoint "
+        ~ "and the command surface for the new control, then this list");
+}

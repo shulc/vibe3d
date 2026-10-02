@@ -821,6 +821,12 @@ void drawViewportPropsPanel(ViewportPropertiesReadRole viewportRead,
                 dispatch("viewport.wireAlpha",
                     positionalPayload([format("%.6f", wa)]));
             }
+
+            // The cell's normal source (smooth by default).
+            bool smooth = v.display.active.smooth;
+            if (ImGui.Checkbox("Smooth Shade", &smooth))
+                dispatch("viewport.smooth",
+                    positionalPayload([smooth ? "on" : "off"]));
         }
 
         // Retopology working view, for the ACTIVE cell. Each control

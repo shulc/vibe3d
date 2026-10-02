@@ -212,9 +212,14 @@ private immutable string litVertSrc = withShaderPreamble(q{
     // attribute for location 3, whose default is (0,0,0,1) — BLACK. That is
     // why `LitShader.useProgram` parks the ramp's neutral there; see it.
     layout(location = 3) in vec3 aWeightColor;
+    // The smooth normal stream of the face VBO; `u_smoothNormals`
+    // (the plan's `smoothNormals`) picks it over the flat `aNormal`.
+    layout(location = 4) in vec3 aSmoothNormal;
     uniform mat4 u_model;
     uniform mat4 u_view;
     uniform mat4 u_proj;
+    uniform mat3 u_normalMatrix;   // math.normalMatrix(u_model): inverse-transpose direction
+    uniform bool u_smoothNormals;
     out vec3      vNormal;
     out vec3      vWorldPos;
     flat out uint vMatId;
@@ -224,7 +229,7 @@ private immutable string litVertSrc = withShaderPreamble(q{
     void main() {
         vec4 worldPos = u_model * vec4(aPos, 1.0);
         vWorldPos     = worldPos.xyz;
-        vNormal       = mat3(u_model) * aNormal;
+        vNormal       = u_normalMatrix * (u_smoothNormals ? aSmoothNormal : aNormal);
         vMatId        = aMatId;
         vWeightColor  = aWeightColor;
         gl_Position   = u_proj * u_view * worldPos;
@@ -785,6 +790,10 @@ class LitShader {
     private GLint locLightGain;
     private GLint locShading;
     private GLint locFillColor;
+    private GLint locSmoothNormals;
+    // Not a plan uniform: written with `u_model` by `useProgram` and the
+    // preview helper, both in this module.
+    private GLint locNormalMatrix;
     GLint locFaceAlpha;
     GLuint matsUbo;            // Material Groups (MG3) — Materials UBO
     enum  MATS_BINDING = 0;    // binding point index, matches std140 layout
@@ -806,6 +815,8 @@ class LitShader {
         locShading     = glGetUniformLocation(program, "u_shading");
         locFillColor   = glGetUniformLocation(program, "u_fillColor");
         locFaceAlpha   = glGetUniformLocation(program, "u_faceAlpha");
+        locSmoothNormals = glGetUniformLocation(program, "u_smoothNormals");
+        locNormalMatrix  = glGetUniformLocation(program, "u_normalMatrix");
         // A GLSL uniform starts at 0, and a gain of 0 would leave only ambient
         // for the draws that seed uniforms by hand without `useProgram`
         // (`drawLitPreview`, the pen preview): park the neutral once here.
@@ -813,6 +824,10 @@ class LitShader {
         glUseProgram(program);
         glUniform1f(locLightGain, 1.0f);
         glUniform1f(locFaceAlpha, 1.0f);
+        // Same for the normal source: a zero normal matrix would leave those
+        // draws ambient-only; smooth is the plan default.
+        uploadNormalMatrix(identityMatrix);
+        glUniform1i(locSmoothNormals, DrawPlan.init.smoothNormals ? 1 : 0);
         glUseProgram(0);
 
         // Materials UBO — std140-sized for two arrays of 64 × vec4.
@@ -891,6 +906,7 @@ class LitShader {
         glUniformMatrix4fv(locModel, 1, GL_FALSE, meshModel.ptr);
         glUniformMatrix4fv(locView,  1, GL_FALSE, vp.view.ptr);
         glUniformMatrix4fv(locProj,  1, GL_FALSE, vp.proj.ptr);
+        uploadNormalMatrix(meshModel);
         glUniform3f(locLightDir, lightDir.x, lightDir.y, lightDir.z);
         glUniform3f(locEyePos,   vp.eye.x, vp.eye.y, vp.eye.z);
         // Default to material-lookup mode. drawFacesHighlighted flips
@@ -923,6 +939,8 @@ class LitShader {
         // observable at all under the Material arm, which is the default.
         glUniform3f(locFillColor,
             kSchemeSolidFill, kSchemeSolidFill, kSchemeSolidFill);
+        // The plan default normal source (smooth), like the uniforms above.
+        glUniform1i(locSmoothNormals, DrawPlan.init.smoothNormals ? 1 : 0);
         // ---- PARK THE NEUTRAL IN GENERIC VERTEX ATTRIBUTE 3 (task 1090) ----
         //
         // THIS IS LOAD-BEARING AND IT IS THE ONE REAL GL TRAP IN THE WEIGHT
@@ -961,6 +979,7 @@ class LitShader {
         setShading(plan.shading);
         setFillColor(plan.fillColor);
         setLightGain(plan.lightGain);
+        setSmoothNormals(plan.smoothNormals);
     }
 
     /// Park every per-plan uniform at its neutral: the values a
@@ -973,13 +992,16 @@ class LitShader {
         setShading(park.shading);
         setFillColor(park.fillColor);
         setLightGain(park.lightGain);
+        setSmoothNormals(park.smoothNormals);
     }
 
-    /// The subset of `plan` a create-tool preview honours. Today none beyond
-    /// the park: for a preview the plan is a pass gate, not a material source
-    /// (task 5260), so a preview drawn after an unlit scene pass is still lit.
+    /// The subset of `plan` a create-tool preview honours: the cell's normal
+    /// source, over the park. For a preview the plan is otherwise
+    /// a pass gate, not a material source (task 5260), so a preview drawn
+    /// after an unlit scene pass is still lit.
     void applyPreviewPlan(const ref DrawPlan plan) {
         restorePlanDefaults();
+        setSmoothNormals(plan.smoothNormals);
     }
 
     // The setters are module-private: outside this module a face pass cannot
@@ -1006,6 +1028,18 @@ class LitShader {
         glUseProgram(program);
         glUniform3f(locFillColor, c[0], c[1], c[2]);
     }
+
+    /// Which face-VBO normal stream the next draws read (`DrawPlan.smoothNormals`).
+    private void setSmoothNormals(bool smooth) {
+        glUseProgram(program);
+        glUniform1i(locSmoothNormals, smooth ? 1 : 0);
+    }
+
+    /// `u_normalMatrix = normalMatrix(model)` for the bound program.
+    private void uploadNormalMatrix(const ref float[16] model) {
+        immutable float[9] n = normalMatrix(model);
+        glUniformMatrix3fv(locNormalMatrix, 1, GL_FALSE, n.ptr);
+    }
 }
 
 // Shared "lit preview" draw: solid shaded faces (LitShader — identity
@@ -1030,6 +1064,7 @@ void drawLitPreview(LitShader litShader, const ref Shader shader,
         glUniformMatrix4fv(litShader.locModel, 1, GL_FALSE, identity.ptr);
         glUniformMatrix4fv(litShader.locView,  1, GL_FALSE, vp.view.ptr);
         glUniformMatrix4fv(litShader.locProj,  1, GL_FALSE, vp.proj.ptr);
+        litShader.uploadNormalMatrix(identity);
         glUniform3f(litShader.locLightDir, lightDir.x, lightDir.y, lightDir.z);
         glUniform3f(litShader.locEyePos,   vp.eye.x, vp.eye.y, vp.eye.z);
         glUniform1f(litShader.locAmbient,  kLightAmbient);

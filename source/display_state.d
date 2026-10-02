@@ -37,9 +37,11 @@ module display_state;
 //
 // WHAT DELIBERATELY DOES NOT LIVE HERE
 // ------------------------------------
-// Selection highlight, hover feedback, smooth-vs-flat shading, cages, guides,
-// the grid, the workplane and the backdrop image are each their OWN axis. None
-// of them may ever become a `DrawPlan` field. Concretely: `drawWire == false`
+// Selection highlight, hover feedback, cages, guides, the grid, the workplane
+// and the backdrop image are each their OWN axis. None of them may ever become
+// a `DrawPlan` field. Smooth-vs-flat shading WAS on this list and is now a
+// plan field (`smoothNormals`, task 9070, model M1): it is a per-cell choice
+// the cell's dirty key must stamp, and the dirty key derives from the plans. Concretely: `drawWire == false`
 // must not suppress selected-edge or hovered-edge feedback — that is the
 // obvious wrong implementation of the overlay axis and it is a named risk.
 // ---------------------------------------------------------------------------
@@ -292,6 +294,10 @@ struct DisplayState {
     /// Vertex dot size in pixels; 0 (or any non-positive / non-finite value)
     /// means the scheme's `kBasePointSize`.
     float        pointSize = 0.0f;
+    /// Smooth shading (the face VBO's smooth normal stream) vs flat. Default
+    /// ON (the captured default; angle split per
+    /// `vertex_normals.kSmoothingAngleDeg`).
+    bool         smooth = true;
 }
 
 /// The SHIPPED display state for a freshly-established cell, as a function of
@@ -407,6 +413,9 @@ struct DrawPlan {
     }
     /// Brightness multiplier for this pass (1.0 = full).
     float dim       = 1.0f;
+    /// Which face-VBO normal stream the lit program reads: smooth (true) or
+    /// flat. Reaches GL as `u_smoothNormals` through `LitShader.applyPlan`.
+    bool  smoothNormals = true;
     /// The unshaded fill colour, read by the face pass ONLY when
     /// `facesLit == false`. Resolved always so the field is determinate; under
     /// a lit pass the shader takes its base colour from the material and this
@@ -648,6 +657,10 @@ DrawPlan resolveDrawPlan(in ViewportDisplay d, bool isBackdrop) pure nothrow @sa
             p.shading   = SurfaceShading.Weight;
             break;
     }
+
+    // The normal source: from the slot the style came from (`d.active` for the
+    // active plan and a `SameAsActive` backdrop, `d.backdrop` otherwise).
+    p.smoothNormals = st.smooth;
 
     // Applied AFTER the switch, not inside it: the style resolved a face pass
     // and this withdraws it. See the `SameAsActive` case above for what the

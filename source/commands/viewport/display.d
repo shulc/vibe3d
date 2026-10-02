@@ -337,6 +337,57 @@ final class ViewportRetopology : ViewportCommand {
 }
 
 // ---------------------------------------------------------------------------
+// viewport.smooth — the cell's normal source (`DisplayState.smooth`, task
+// 9070): `on` draws the face VBO's smooth stream, `off` the flat one. Same
+// cell selector and `slot` (0 = active, 1 = backdrop) as `viewport.displayStyle`;
+// not a template field, so it only marks the cell dirty.
+// ---------------------------------------------------------------------------
+
+final class ViewportSmooth : ViewportCommand {
+    private string valueArg_;
+    private int    cellArg_ = -1;
+    private int    slotArg_ = 0;
+
+    this(Mesh* mesh, ref View view, EditMode editMode, ViewportManager vpm) {
+        super(mesh, view, editMode, vpm);
+    }
+
+    override string name() const { return "viewport.smooth"; }
+
+    override Param[] params() {
+        return wireArgs(
+            Param.string_("value", "Smooth", &valueArg_, ""),
+            Param.int_("viewport", "Viewport", &cellArg_, -1),
+            Param.int_("slot", "Slot", &slotArg_, 0)
+        );
+    }
+
+    protected override bool applyImpl() {
+        import std.string : toLower, strip;
+        import std.format : format;
+        immutable int cell = resolveCellOrThrow(cellArg_, name());
+        if (slotArg_ != 0 && slotArg_ != 1)
+            throw new Exception(format(
+                "viewport.smooth: slot must be 0 (active) or 1 (backdrop), got %d",
+                slotArg_));
+        bool on;
+        switch (valueArg_.strip.toLower) {
+            case "on":  on = true;  break;
+            case "off": on = false; break;
+            default:
+                throw new Exception(
+                    "viewport.smooth: expected 'on' or 'off', got '"
+                    ~ valueArg_ ~ "'");
+        }
+        Viewport3D tv = vpm.views[cell];
+        if (slotArg_ == 1) tv.display.backdrop.smooth = on;
+        else               tv.display.active.smooth   = on;
+        markCellDisplayDirty(cell);
+        return true;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // viewport.showVertices / viewport.pointSize — the cell's vertex-dot switch
 // and dot size (`DisplayState.showVertices` / `pointSize`), same cell selector
 // as above. Neither is a template field, so both only mark the cell dirty

@@ -290,3 +290,53 @@ unittest { // the backdrop upkeep: one gpuFor in draw, guarded by backdropKeepsU
         format("census: entersItemSequence( is called %d times in viewport_render.d; "
                ~ "only backdropDrawsLayer may call it", countOccurrences(code, "entersItemSequence(")));
 }
+
+// The seam's two halves name the SAME setters: a plan uniform `applyPlan`
+// writes and `restorePlanDefaults` does not park would leak one face pass's
+// value into every later draw of the shared program (task 9070 added the
+// normal source; this pins the contract for every later uniform).
+unittest {
+    import std.algorithm : sort, uniq;
+    import std.array : array;
+    import std.file : readText;
+    import std.path : buildPath, dirName;
+    import std.string : indexOf;
+    import tests.unit.census_symbols : balancedSpan, blankNonCode, blankUnittestBodies;
+    enum root = dirName(dirName(dirName(__FILE_FULL_PATH__)));
+    immutable code = blankUnittestBodies(blankNonCode(readText(buildPath(root, "source", "shader.d"))));
+    string body_(string head) {
+        immutable ptrdiff_t at = code.indexOf(head);
+        assert(at >= 0, "census: " ~ head ~ " missing from shader.d");
+        return balancedSpan(code, cast(size_t)code.indexOf('{', at), '{', '}');
+    }
+    string[] setters(string b) {
+        string[] o;
+        foreach (m; matchAll(b, ctRegex!(`\b(set[A-Z]\w*)\s*\(`))) o ~= m[1];
+        o.sort();
+        return o.uniq.array;
+    }
+    auto a = setters(body_("void applyPlan(")), r = setters(body_("void restorePlanDefaults("));
+    assert(a.length >= 5, format("census: applyPlan calls %d setters, floor 5", a.length));
+    assert(a == r, format("census: applyPlan writes %s but restorePlanDefaults parks %s", a, r));
+    // The preview subset: the park, then the normal source the preview honours.
+    immutable p = body_("void applyPreviewPlan(");
+    immutable ptrdiff_t park = p.indexOf("restorePlanDefaults("), sm = p.indexOf("setSmoothNormals(plan.smoothNormals)");
+    assert(park >= 0 && sm > park,
+        "census: applyPreviewPlan must park, then honour the plan's normal source");
+    // The preview draws with an identity model, so it uploads the identity
+    // normal matrix before its face draw.
+    immutable d = body_("void drawLitPreview(");
+    immutable ptrdiff_t nm = d.indexOf(".uploadNormalMatrix(identity)"), draw = d.indexOf(".drawFaces(litShader");
+    assert(nm >= 0 && draw > nm,
+        "census: drawLitPreview must upload the identity normal matrix before its face draw");
+}
+
+unittest { // compile fence: the normal-source locations are unreachable from another module too
+    import shader : LitShader;
+    static assert(__traits(compiles, (LitShader s) { int v = s.locFaceAlpha; }),
+        "control: the probe no longer reaches a public LitShader field — fix the probe, not the expectation");
+    static assert(!__traits(compiles, (LitShader s) { int v = s.locSmoothNormals; }),
+        "fence: LitShader.locSmoothNormals is reachable outside shader.d — a face pass can hand-write u_smoothNormals");
+    static assert(!__traits(compiles, (LitShader s) { int v = s.locNormalMatrix; }),
+        "fence: LitShader.locNormalMatrix is reachable outside shader.d");
+}

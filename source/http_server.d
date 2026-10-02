@@ -932,7 +932,7 @@ class HttpServer {
     // updated after a /api/transform — necessary because the cage-side
     // mesh.vertices snapshot exposed via /api/model can stay in sync even
     // when the GPU fan-out path is silently writing garbage to gpu.faceVbo.
-    private alias GpuSurfaceProvider = string delegate();
+    private alias GpuSurfaceProvider = string delegate(bool withNormals);
     private GpuSurfaceProvider gpuSurfaceProvider;
 
     // ----- /api/model synchronous read bridge ------------------------------
@@ -1282,7 +1282,7 @@ class HttpServer {
     struct CamSetResp { string error; }
     private MainThreadBridge!(CamSetReq, CamSetResp) cameraSetBridge;
 
-    struct GpuSurfReq  { }
+    struct GpuSurfReq  { bool normals; }
     struct GpuSurfResp { string result; string error; }
     private MainThreadBridge!(GpuSurfReq, GpuSurfResp) gpuSurfaceBridge;
 
@@ -1773,7 +1773,7 @@ class HttpServer {
                     resp.error = "gpu-surface provider not set";
                 } else {
                     try {
-                        resp.result = gpuSurfaceProvider();
+                        resp.result = gpuSurfaceProvider(req.normals);
                         resp.error  = "";
                     } catch (Exception e) {
                         resp.error = e.msg;
@@ -3914,6 +3914,8 @@ class HttpServer {
             response.headers["Content-Type"] = "application/json";
         } else {
             gpuSurfaceBridge.resp.error = "";
+            gpuSurfaceBridge.req.normals =
+                parseQueryInt(request.path, "normals", 0) != 0;
             if (!gpuSurfaceBridge.submitAndWait())
                 gpuSurfaceBridge.resp.error = "timeout waiting for main thread";
             if (gpuSurfaceBridge.resp.error.length == 0) {
@@ -5113,7 +5115,7 @@ private enum RouteSpec[] kRoutes = [
     RouteSpec("/api/snap",                 "POST", Match.exact,  Answered.mainThread, "route_apiSnap"),
     RouteSpec("/api/constrain",            "POST", Match.exact,  Answered.mainThread, "route_apiConstrain"),
     RouteSpec("/api/camera",               "POST", Match.prefix, Answered.mainThread, "route_apiCameraPost"),
-    RouteSpec("/api/gpu/face-vbo",         "GET",  Match.exact,  Answered.mainThread, "route_apiGpuFaceVbo"),
+    RouteSpec("/api/gpu/face-vbo",         "GET",  Match.prefix, Answered.mainThread, "route_apiGpuFaceVbo"),
     RouteSpec("/api/viewport/display",     "GET",  Match.prefix, Answered.mainThread, "route_apiViewportDisplay"),
     RouteSpec("/api/images",               "GET",  Match.prefix, Answered.mainThread, "route_apiImages"),
     RouteSpec("/api/imageplane",           "GET",  Match.prefix, Answered.mainThread, "route_apiImageplane"),

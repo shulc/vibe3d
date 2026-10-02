@@ -524,8 +524,9 @@ unittest {
           ~ "loop into it, and the door now emits TWO matrices through the "
           ~ "same helper: the display-authorised `model` and the raw "
           ~ "`toolMatrix`)"),
-        LedgerRow("wireViewportProviders.setGpuSurfaceProvider|%.6f", 3,
-            "GPU surface scalars"),
+        LedgerRow("wireViewportProviders.setGpuSurfaceProvider.putStream|%.6f", 3,
+            "GPU surface face-VBO stream helper (task 9070 moved the position "
+          ~ "triples into it; it also emits the two normal streams)"),
         LedgerRow("wireViewportProviders.setCameraDataProvider.mat|%.9g", 1,
             "camera view/proj matrices from the resolved snapshot (task 7139): "
           ~ "a turned ortho view is only visible here, `focus` stays world"),

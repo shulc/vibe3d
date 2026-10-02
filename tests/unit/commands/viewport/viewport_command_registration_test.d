@@ -16,7 +16,7 @@ import application_command_binding : CommandInvocationContext,
 import command : CmdFlags, Command, CommandOrigin;
 import commands.viewport.display : ViewportBackdropStyle, ViewportDisplayStyle,
     ViewportPointSize, ViewportRetopology, ViewportRetopologyPreset,
-    ViewportShowVertices, ViewportWireAlpha, ViewportWireOverlay;
+    ViewportShowVertices, ViewportSmooth, ViewportWireAlpha, ViewportWireOverlay;
 import commands.viewport.fit : Fit;
 import commands.viewport.fit_selected : FitSelected;
 import commands.viewport.grid_steps : ViewportGridSteps;
@@ -38,14 +38,14 @@ import viewport_command_registration : registerViewportCommands;
 private enum repoRoot = buildNormalizedPath(dirName(__FILE_FULL_PATH__),
                                              "..", "..", "..", "..");
 
-private immutable string[17] kIds = [
+private immutable string[18] kIds = [
     "viewport.fit", "viewport.fit_selected", "viewport.view",
     "viewport.layout", "viewport.indCenter", "viewport.indScale",
     "viewport.indRotate", "viewport.displayStyle", "viewport.wireOverlay",
     "viewport.wireAlpha", "viewport.gridSteps", "viewport.master",
     "viewport.backdropStyle", "viewport.retopology",
     "viewport.showVertices", "viewport.pointSize",
-    "viewport.retopologyPreset",
+    "viewport.retopologyPreset", "viewport.smooth",
 ];
 
 private bool isExpectedClass(string id, Command command) {
@@ -68,6 +68,7 @@ private bool isExpectedClass(string id, Command command) {
         case "viewport.pointSize":    return cast(ViewportPointSize) command !is null;
         case "viewport.retopologyPreset":
             return cast(ViewportRetopologyPreset) command !is null;
+        case "viewport.smooth":       return cast(ViewportSmooth) command !is null;
         default:                       return false;
     }
 }
@@ -142,8 +143,8 @@ unittest { // U1: every id builds its intended command class
         "6010 null-manager rejection registered a partial family");
 
     fixture.registerViewport();
-    assert(fixture.registry.commandIds().length == 17,
-        format("6010 id population: expected 17 viewport ids, got %d",
+    assert(fixture.registry.commandIds().length == 18,
+        format("6010 id population: expected 18 viewport ids, got %d",
                fixture.registry.commandIds().length));
     size_t checked;
     foreach (id; kIds) {
@@ -158,8 +159,8 @@ unittest { // U1: every id builds its intended command class
             "6010 camera-only witness: " ~ id ~ " is not a UI command");
         ++checked;
     }
-    assert(checked == 17,
-        "6010 id witness ran over fewer than 17 ids");
+    assert(checked == 18,
+        "6010 id witness ran over fewer than 18 ids");
 }
 
 unittest { // U2: primary, mode, and active cell resolve after registration
@@ -339,8 +340,8 @@ unittest { // U2: primary, mode, and active cell resolve after registration
                    id, got, want));
         ++views;
     }
-    assert(meshes == 17 && modes == 17 && views == 17,
-        "6010 live binding witness ran over fewer than 17 factories");
+    assert(meshes == 18 && modes == 18 && views == 18,
+        "6010 live binding witness ran over fewer than 18 factories");
 }
 
 unittest { // U3: production uses the narrow registrar before LAST wrapping
@@ -366,8 +367,8 @@ unittest { // U3: production uses the narrow registrar before LAST wrapping
                       "RemeshModalRefs", "with (", "with("])
         assert(registrar.count(banned) == 0,
             "6010 no-EditorApp witness: viewport registrar names " ~ banned);
-    assert(registrarRaw.count(`reg.registerCommand("viewport.`) == 17,
-        "6010 registrar population: expected 17 viewport factory rows");
+    assert(registrarRaw.count(`reg.registerCommand("viewport.`) == 18,
+        "6010 registrar population: expected 18 viewport factory rows");
 
     const registration = squash(blankNonCode(registrationRaw));
     enum productionCall = "registerViewportCommands(app.reg(), "

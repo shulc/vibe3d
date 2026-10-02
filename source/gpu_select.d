@@ -5,7 +5,7 @@ import std.string : toStringz;
 
 import math   : Viewport, ModelSpace, matMul4;
 import mesh : Mesh;
-import mesh_gpu : GpuMesh;
+import mesh_gpu : GpuMesh, kFaceStride;
 import shader : compileShader;
 import perf_probe : g_perf, Cat, g_fc, DrawPass;
 import camera_stamp : CameraStamp;
@@ -668,12 +668,12 @@ private:
 
     void setupFaceSelVao(ref const GpuMesh gpu) {
         glBindVertexArray(faceSelVao);
-        // Position from interleaved faceVbo — stride 6, offset 0. The
-        // normal at offset 3 is irrelevant for selection, so attr 1
+        // Position from interleaved faceVbo — stride `kFaceStride`, offset 0.
+        // The normals behind it are irrelevant for selection, so attr 1
         // points at the parallel faceIdVbo instead.
         glBindBuffer(GL_ARRAY_BUFFER, gpu.faceVbo);
         glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE,
-                              6 * float.sizeof, cast(void*)0);
+                              kFaceStride * float.sizeof, cast(void*)0);
         glEnableVertexAttribArray(0);
         glBindBuffer(GL_ARRAY_BUFFER, gpu.faceIdVbo);
         glVertexAttribIPointer(1, 1, GL_UNSIGNED_INT,
