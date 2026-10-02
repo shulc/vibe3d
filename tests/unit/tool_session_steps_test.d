@@ -2552,6 +2552,46 @@ unittest {
                r.h.undoEntries().length));
 }
 
+/// The pen's half of U-NA1: a tool outside the model (the pen's fold policy) is re-synced by
+/// the tails, never rebased (§4.6: the pen's rebase body is not its navigation contract).
+private final class NavPenTool : ScrubTopologyTool {
+    int resyncs, rebaseCalls;
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy policy = {
+            activationRow: true, sessionSteps: true, historyTopologySteps: true,
+            opensAt: OpensAt.firstPress, imageAttrs: ["shift"],
+            pressOpensOperation: true, foldsParamRowsIntoBlock: true
+        };
+        return policy;
+    }
+    override void resyncSession() { ++resyncs; }
+    override void rebaseTopologyStep(MeshSnapshot) { ++rebaseCalls; }
+}
+
+unittest { // U-NA1 pen: the same ladder re-syncs a tool outside the model, and rebases none
+    import tool : capturedTopologyModel;
+    Mesh m = makeCube();
+    auto h = new CommandHistory();
+    auto t = new NavPenTool;
+    assert(!capturedTopologyModel(t.sessionPolicy()),
+           "U-NA1 pen rig: the pen policy is the model's");
+    t.m = &m; t.h = h; t.view = new View(0, 0, 1, 1);
+    t.basis = MeshSnapshot.capture(m);
+    Tool active = t;
+    auto s = new EditSession(() => active, h, () { active = null; });
+    s.noteArm("t.pen", 1);
+    t.haulStep(0.5f);
+    auto foreign = new Stub(new View(0, 0, 1, 1));
+    assert(foreign.apply());
+    h.record(foreign);
+    const r0 = t.resyncs;
+    assert(s.navigate(true) && s.navigate(false) && h.undoEntries().length == 2,
+        "U-NA1 pen rig: the undo and redo of the foreign row did not step");
+    assert(t.resyncs - r0 == 2 && t.rebaseCalls == 0,
+        format("U-NA1 pen: the tails re-synced the pen %s times and rebased it %s, expected 2 / 0 "
+               ~ "(N3: the helper's model predicate inverted)", t.resyncs - r0, t.rebaseCalls));
+}
+
 // The fold is a property of the ROWS (`JoinsBelow`, written at the close), not of the tool
 // bound when they are navigated (plan §19.2 C (1); reviewer OWN-1): under a live tool of
 // another session — armed with no row of its own — the folded group is still one step.
