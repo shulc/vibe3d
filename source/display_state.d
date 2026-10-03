@@ -154,7 +154,8 @@ enum ReflectionKind : ubyte {
 
 /// The Reflection style's image: a kind and an index into that kind's table
 /// (`viewport_env.kEnvAssets` / `kMatcapAssets`). The default is env 0,
-/// `studio_small_09` (pinned by a static assert in `viewport_env`).
+/// `kloofendal_48d_partly_cloudy_puresky` (pinned by a static assert in
+/// `viewport_env`).
 struct ReflectionSource {
     ReflectionKind kind = ReflectionKind.Env;
     ubyte index = 0;

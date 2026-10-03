@@ -441,7 +441,8 @@ final class ViewportCavity : ViewportCommand {
 /// Reflection style's image (`ViewportDisplay.reflection`). A non-template
 /// field: it only marks the cell dirty, and resolves into the plan only under
 /// the Reflection style. An unknown name is REFUSED (status:error, no history
-/// entry), never mapped to a default.
+/// entry), never mapped to a default. A fresh cell (and an automation
+/// `scene.reset`) holds `env:kloofendal_48d_partly_cloudy_puresky`.
 final class ViewportReflectionSource : ViewportCommand {
     private string valueArg_;
     private int    cellArg_ = -1;

@@ -50,10 +50,12 @@ private MatcapAsset matcap(string n)() {
         cast(immutable(ubyte)[]) import("matcap_" ~ n ~ "_specular.png"));
 }
 
-/// The environments, in offer order; index 0 is the default source.
+/// The environments, in offer order; index 0 is the default source — the
+/// outdoor sky, not the studio, whose dark walls turn flat faces near-black
+/// (owner decision 2026-10-03, task 9250).
 immutable EnvAsset[3] kEnvAssets = [
-    env!"studio_small_09",
     env!"kloofendal_48d_partly_cloudy_puresky",
+    env!"studio_small_09",
     env!"courtyard",
 ];
 
@@ -69,9 +71,9 @@ immutable MatcapAsset[8] kMatcapAssets = [
     matcap!"check_rim_light",
 ];
 
-static assert(kEnvAssets[ReflectionSource.init.index].name == "studio_small_09"
+static assert(kEnvAssets[ReflectionSource.init.index].name == "kloofendal_48d_partly_cloudy_puresky"
     && ReflectionSource.init.kind == ReflectionKind.Env,
-    "the default reflection source is the studio environment");
+    "the default reflection source is the outdoor sky environment");
 
 // ---- the lookups (mirrored by the GLSL arm) ---------------------------------
 

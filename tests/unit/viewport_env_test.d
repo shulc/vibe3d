@@ -76,8 +76,9 @@ unittest {
         ++n;
     }
     assert(n == 11, format("population floor: 3 environments + 8 MatCaps, swept %d", n));
-    assert(reflectionSourceId(ReflectionSource.init) == "env:studio_small_09",
-        "the default source is the studio environment");
+    assert(reflectionSourceId(ReflectionSource.init) == "env:kloofendal_48d_partly_cloudy_puresky",
+        "the default source is the outdoor sky environment (owner 2026-10-03), got "
+        ~ reflectionSourceId(ReflectionSource.init));
     foreach (bad; ["env:nope", "", "env:", "matcap:", "studio_small_09", "matcap:studio_small_09",
                    "env:basic_grey", "env:studio_small_09x", "vne:studio_small_09",
                    "matcaq:basic_grey"]) {
@@ -111,7 +112,7 @@ unittest {
     int w, h;
     auto px = decodePng16(kEnvAssets[0].png, w, h);
     assert(px !is null && w == 512 && h == 256 && px.length == 512 * 256 * 4,
-        format("env_studio_small_09.png decoded to %dx%d (%d values), expected 512x256", w, h, px.length));
+        format("env_" ~ kEnvAssets[0].name ~ ".png decoded to %dx%d (%d values), expected 512x256", w, h, px.length));
     size_t opaque;
     foreach (i; 0 .. w * h) if (px[i * 4 + 3] == 65535) ++opaque;
     assert(opaque == w * h, format("%d of %d pixels opaque, expected all", opaque, w * h));

@@ -19,7 +19,8 @@
 // from R instead of N predicts otherwise; (d) an unknown source name is
 // refused and changes nothing; (e) a two-sided surface's back side reflects
 // with the flipped normal in both arms, a single-sided one is culled; (f) the
-// hover override in both arms. `VIBE3D_CELL=<id>` runs one cell.
+// hover override in both arms; (g) the DEFAULT source after a scene reset is
+// the outdoor sky env and reaches the pixels. `VIBE3D_CELL=<id>` runs one cell.
 
 import http_client : getJson, postJson, frameFence, quiesce;
 import http_command_helpers : commandBody;
@@ -81,6 +82,10 @@ D3 toWorld(const ref Viewport vp, D3 e) {
 /// The rig sits 3 m above the grid plane, clear of the grid's lines.
 immutable D3 kC = [0.0, 3.0, 0.0];
 enum double kBase = 0.8;
+/// The default Reflection source (owner 2026-10-03: the outdoor sky, not the
+/// studio, whose dark walls turn flat faces near-black).
+enum string kDefaultEnv = "kloofendal_48d_partly_cloudy_puresky";
+enum string kDefaultSource = "env:" ~ kDefaultEnv;
 
 void setCamera(double az, double el, double dist, double roll = 0) {
     postJson("/api/camera", format(
@@ -420,7 +425,7 @@ unittest {
         return getJson("/api/viewport/display")["cells"].array[0]["state"]["reflection"].str;
     }
     cmd(commandBody("viewport.reflectionSource", `{"value":"matcap:clay_studio"}`));
-    scope(exit) cmd(commandBody("viewport.reflectionSource", `{"value":"env:studio_small_09"}`));
+    scope(exit) cmd(commandBody("viewport.reflectionSource", `{"value":"` ~ kDefaultSource ~ `"}`));
     assert(stateSource() == "matcap:clay_studio",
         "(d) control: an accepted source must land in the cell state, got " ~ stateSource());
     immutable size_t depth = getJson("/api/history")["undo"].array.length;
@@ -692,5 +697,55 @@ unittest {
             ~ "Shaded-hovered × env predicts %s (unhovered: %s)", envR[0], envHov, envUnAt0));
         assert(abs(mcR[0][c] - mcHov[c]) <= 3, format("(f) matcap: the hovered face reads %s; "
             ~ "diffuse·hover + specular predicts %s (unhovered: %s)", mcR[0], mcHov, mcUnAt0));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// (g) the DEFAULT source: after a scene reset (`loadSphere`) the cell holds
+// `env:kloofendal_48d_partly_cloudy_puresky` in its state and in its resolved
+// plan, and the Reflection style — with NO source command — reads
+// shaded × env_sky(R) at five probes (±3). Floor: the studio env (the former
+// default) predicts ≥ 10 levels apart for ≥ 3 of the 5, so a reverted default
+// reddens the pixel asserts, not only the id.
+// ---------------------------------------------------------------------------
+unittest {
+    if (!cellOn("g")) return;
+    loadSphere();
+    scope(exit) postJson("/api/command", commandBody("viewport.displayStyle", `{"value":"shaded"}`));
+    enum double dist = 4.0;
+    setCamera(0.35, 0.3, dist);
+    auto vp = viewportFromCameraMatrices();
+    auto pts = fiveProbes(vp, dist, [0.0, 90.0, 180.0, 270.0]);
+    style("shaded");
+    const shaded = probeRGB(pts);
+    style("reflection");
+    auto c0 = getJson("/api/viewport/display")["cells"].array[0];
+    assert(c0["state"]["reflection"].str == kDefaultSource,
+        "(g) a reset cell's source must be the default " ~ kDefaultSource ~ ", got "
+        ~ c0["state"]["reflection"].str);
+    assert(c0["plan"]["active"]["shading"].str == "Reflection"
+        && c0["plan"]["active"]["reflection"].str == kDefaultSource,
+        "(g) the active plan must be the Reflection arm on the default: " ~ c0["plan"]["active"].toString);
+    double[3][] pred;
+    size_t apart;
+    foreach (k, p; pts) {
+        D3 n, r;
+        assert(hit(vp, p, n, r), format("(g) rig: probe %s misses the sphere", p));
+        pred ~= envPred(shaded[k], envAt(kDefaultEnv, r));
+        immutable double[3] studio = envPred(shaded[k], envAt("studio_small_09", r));
+        if (maxGap(pred[k], studio) >= 10) ++apart;
+        writefln("[reflection (g)] probe %d %s: R (%.3f,%.3f,%.3f) shaded %s predicted sky "
+            ~ "(%.2f,%.2f,%.2f), studio (%.2f,%.2f,%.2f)", k, p, r[0], r[1], r[2], shaded[k],
+            pred[k][0], pred[k][1], pred[k][2], studio[0], studio[1], studio[2]);
+    }
+    assert(apart >= 3, format("(g) discrimination floor: the studio env is ≥ 10 levels apart "
+        ~ "at only %d of 5 probes", apart));
+    const got = probeRGB(pts);
+    foreach (k; 0 .. 5) {
+        writefln("[reflection (g)] probe %d reads %s", k, got[k]);
+        foreach (c; 0 .. 3)
+            assert(abs(got[k][c] - pred[k][c]) <= 3, format("(g) probe %d %s reads %s; shaded %s × "
+                ~ "env_sky(envUv(R)) predicts (%.2f,%.2f,%.2f) ±3 — the default source must reach "
+                ~ "the pixels", k, pts[k], got[k], shaded[k], pred[k][0], pred[k][1], pred[k][2]));
     }
 }
