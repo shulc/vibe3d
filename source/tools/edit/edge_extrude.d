@@ -108,7 +108,7 @@ class EdgeExtrudeTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClien
     // its already-recorded rows; the tool remains armed after the command.
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
         static immutable ToolSessionPolicy policy = {
-            activationRow: true, recordCarriesActivation: false,
+            activationRow: true,
             commandClose: CommandClose.uiDoor,
             sessionSteps: true, historyTopologySteps: true,
             opensAt: OpensAt.arm,

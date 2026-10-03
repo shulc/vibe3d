@@ -1875,6 +1875,13 @@ static assert(__traits(hasMember, imported!"tool".TopologyStepClient, "rebaseTop
 // `edit_session`, reached through the field `tools_` of `EditSession` (`.tupleof`, by name).
 // ---------------------------------------------------------------------------
 
+// The fence first, so a returning flag reddens by its name before the composition pin.
+static foreach (gone; ["firstTopologyRedoUsesAfterAttrs", "rebaseTopologyAfterStep",
+                       "discardFirstTopologyRedoOnActivationUndo",
+                       "discardLaterTopologyRedoOnRearm", "dormantAfterClosedRedo"])
+    static assert(!__traits(hasMember, imported!"tool".ToolSessionPolicy, gone),
+                  "S8 fence: the per-tool flag " ~ gone ~ " is back");
+
 static assert([__traits(allMembers, imported!"tool".ToolSessionPolicy)] == [
     "activationRow", "commandClose", "sessionSteps", "historyTopologySteps",
     "historyRecordedSteps", "recordedFirstUndoEndsTool", "postmodeStartsOnPress",
@@ -1884,12 +1891,6 @@ static assert([__traits(allMembers, imported!"tool".ToolSessionPolicy)] == [
     "refusesDisabledParamWrites", "pressOpensOperation", "foldsParamRowsIntoBlock",
     "redoPinsRefireImage"],
     "S8 pin: ToolSessionPolicy's members changed (measured 25 on the wave's tip)");
-
-static foreach (gone; ["firstTopologyRedoUsesAfterAttrs", "rebaseTopologyAfterStep",
-                       "discardFirstTopologyRedoOnActivationUndo",
-                       "discardLaterTopologyRedoOnRearm", "dormantAfterClosedRedo"])
-    static assert(!__traits(hasMember, imported!"tool".ToolSessionPolicy, gone),
-                  "S8 fence: the per-tool flag " ~ gone ~ " is back");
 
 /// The session type `EditSession` holds in its field `tools_`.
 private template SessionOf(ES) {
@@ -1905,7 +1906,8 @@ static foreach (kept; ["instanceActive_", "pinnedRedoImage_", "pinnedOperation_"
     static assert(__traits(hasMember, SessionT, kept), "S8 pin: the session lost " ~ kept);
 // `navBefore_` is a live member (the navigation's start, S2a); the re-begun route's ban on it
 // is the S2b needle "stepEnds reads isUndo / navBefore_".
-static foreach (gone; ["rebegun_", "uiOperation_", "reopenUiOperation_", "noApplyWrite_"])
+static foreach (gone; ["rebegun_", "uiOperation_", "reopenUiOperation_", "noApplyWrite_",
+                       "rebeginsOnRedo_", "topologyFirstGroupLive_"])
     static assert(!__traits(hasMember, SessionT, gone), "S8 fence: the session holds " ~ gone);
 static assert(!__traits(hasMember, imported!"edit_session", "RebeginRoute"));
 
