@@ -102,6 +102,13 @@ jobs:
     - name: 'Drop cached nfde dep (force preBuild)'
       run: rm -rf ~/.dub/packages/nfde ~/.dub/cache/nfde || true
 
+    - name: 'Drop workspace-local dub dependency selections'
+      # clean:false keeps the gitignored dub.selections.json, which overrides
+      # even exact commit pins in dub.json: on 2026-10-03 this lane compiled
+      # lwo2-writer 8610ff21 against a manifest pinning 6d35b70 and failed on
+      # Lwo2Surface.smoothingAngle. Same step and reasoning as sanitizer.yaml.
+      run: rm -f dub.selections.json
+
     - name: 'D toolchain on PATH'
       # The runner is a systemd user service with the user-manager's minimal
       # PATH; rdmd/dub live in the dmd2 tarball dir (run.d's perf build uses

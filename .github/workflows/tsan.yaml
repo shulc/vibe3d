@@ -165,6 +165,13 @@ jobs:
         # relation to anything this lane measures.
         clean: false
 
+    - name: 'Drop workspace-local dub dependency selections'
+      # clean:false keeps the gitignored dub.selections.json, which overrides
+      # even exact commit pins in dub.json: on 2026-10-03 this lane compiled
+      # lwo2-writer 8610ff21 against a manifest pinning 6d35b70 and failed on
+      # Lwo2Surface.smoothingAngle. Same step and reasoning as sanitizer.yaml.
+      run: rm -f dub.selections.json
+
     - name: 'D toolchain on PATH'
       run: echo "$HOME/.local/dlang/dmd2/linux/bin64" >> "$GITHUB_PATH"
 
