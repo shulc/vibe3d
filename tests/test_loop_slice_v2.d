@@ -18,8 +18,8 @@
 //        scrub is discarded the moment Mode flips back to Uniform).
 //   V7 — M4 Mode=Symmetry: positions form mirrored pairs about 0.5; a scrub
 //        of Current also moves its mirror partner.
-//   V8 — Owner objection #1 (MAJOR): Count<=1 ALWAYS honors the scrub
-//        regardless of Mode — Uniform must not freeze a Count==1 Position.
+//   V8 — the default Mode is Free (captured A0), so a fresh single slice
+//        moves; under Uniform and Symmetry it does not, at Count 1 too.
 
 import http_client : testBaseUrl;
 import http_command_helpers : commandBody;
@@ -357,10 +357,11 @@ unittest {
     postSelect("edges", [ei]);
 
     cmd("tool.set mesh.loopSliceTool on");
-    cmd("tool.attr mesh.loopSliceTool count 3");   // Mode=Uniform is the default
+    cmd("tool.attr mesh.loopSliceTool mode uniform");
+    cmd("tool.attr mesh.loopSliceTool count 3");
 
     auto st = getToolState();
-    assert(st["mode"].str == "uniform", "V6: default Mode for Count>1 must be Uniform");
+    assert(st["mode"].str == "uniform", "V6: rig: Mode must be Uniform");
     double[3] expected = [0.25, 0.5, 0.75];
     foreach (i; 0 .. 3) {
         double p = st["positions"].array[i].floating;
@@ -421,11 +422,27 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// V8 — Owner objection #1 (MAJOR): Count<=1 ALWAYS honors the scrub
-// regardless of Mode — a default Mode (Uniform) must NEVER freeze a
-// Count==1 Position at 0.5. Reproduces the pre-0239 T2 shape under the v2
-// state model, plus an explicit check that the default Mode doesn't matter.
+// V8 — the default Mode is Free (the reference's fresh default, toolcard
+// `loop_slice_position_memory` A0), so a fresh Count==1 Position moves and
+// cuts there; under Uniform and Symmetry a single slice does NOT move
+// (captured: the reference ignores the write and holds 0.5). The latter is
+// checked first on its own tool, the default case after it.
 // ---------------------------------------------------------------------------
+unittest {
+    resetCube();
+    cmd("tool.set mesh.loopSliceTool on");
+    foreach (m; ["uniform", "symmetry"]) {
+        cmd("tool.attr mesh.loopSliceTool mode " ~ m);
+        cmd("tool.attr mesh.loopSliceTool count 1");
+        cmd("tool.attr mesh.loopSliceTool position 0.3");
+        auto s = getToolState();
+        assert(abs(s["positions"].array[0].floating - 0.5) < 1e-4,
+            "V8: a single slice must not move under " ~ m ~ ", got "
+            ~ s["positions"].array[0].floating.to!string);
+    }
+    cmd("tool.set mesh.loopSliceTool off");
+}
+
 unittest {
     resetCube();
     auto before = getModel();
@@ -436,16 +453,16 @@ unittest {
 
     cmd("tool.set mesh.loopSliceTool on");
     auto st0 = getToolState();
-    assert(st0["mode"].str == "uniform", "V8: default Mode must be Uniform (the risky case)");
+    assert(st0["mode"].str == "free", "V8: default Mode must be Free (captured A0), got " ~ st0["mode"].str);
     assert(st0["count"].integer == 1, "V8: fresh tool must start at Count=1");
 
     cmd("tool.attr mesh.loopSliceTool position 0.3");
     auto st1 = getToolState();
     assert(abs(st1["position"].floating - 0.3) < 1e-4,
-        "V8: Count<=1 must ALWAYS honor the scrub even under the default Uniform Mode, got "
+        "V8: a fresh single slice must move under the default Free Mode, got "
         ~ st1["position"].floating.to!string);
     assert(st1["positions"].array.length == 1 && abs(st1["positions"].array[0].floating - 0.3) < 1e-4,
-        "V8: positions[0] must reflect the scrub at Count<=1");
+        "V8: positions[0] must reflect the write");
 
     cmd("tool.doApply");
     auto after = getModel();
@@ -464,5 +481,5 @@ unittest {
         auto v = vert(after, i);
         if (sqrt(v.x*v.x + (v.y-(-0.5))^^2 + (v.z-(-0.5))^^2) < 1e-4) atMid = true;
     }
-    assert(!atMid, "V8: unexpected t=0.5 midpoint present — Uniform must not have frozen Position");
+    assert(!atMid, "V8: unexpected t=0.5 midpoint present — the write did not place the cut");
 }

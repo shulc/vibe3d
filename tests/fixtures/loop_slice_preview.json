@@ -74,7 +74,7 @@
       ],
       "state_checks": {
         "count": 3,
-        "mode": "uniform",
+        "mode": "free",
         "positions": [
           0.25,
           0.5,

@@ -119,16 +119,16 @@ void setList(string mode, double[] want) {
 unittest {
     struct Cell { string mode; double[] write; double[] want; }
     // Symmetry: slice k and count-1-k mirror (the write of slice 0 moves
-    // slice count-1 too). Uniform ignores a scrub at Count > 1 (D3), so its
+    // slice count-1 too). Uniform and a single Symmetry slice ignore a write, so their
     // list is the even spacing — still pinned, it must not drift either.
     immutable Cell[] cells = [
         Cell("free",     [0.2],             [0.2]),
         Cell("free",     [0.15, 0.6],       [0.15, 0.6]),
         Cell("free",     [0.1, 0.3, 0.85],  [0.1, 0.3, 0.85]),
-        Cell("uniform",  [0.2],             [0.2]),
+        Cell("uniform",  [0.2],             [0.5]),   // a single slice does not move
         Cell("uniform",  [0.2, 0.9],        [1.0 / 3, 2.0 / 3]),
         Cell("uniform",  [0.1, 0.3, 0.85],  [0.25, 0.5, 0.75]),
-        Cell("symmetry", [0.2],             [0.2]),
+        Cell("symmetry", [0.2],             [0.5]),   // self-mirrored: pinned at 0.5
         Cell("symmetry", [0.2, 0.8],        [0.2, 0.8]),
         Cell("symmetry", [0.1, 0.5, 0.9],   [0.1, 0.5, 0.9]),
     ];

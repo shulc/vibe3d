@@ -308,6 +308,7 @@ unittest {
     int eiA = edgeIndex(before, va, vb);
     postSelect("edges", [eiA]);
     cmd("tool.set mesh.loopSliceTool on");
+    cmd("tool.attr mesh.loopSliceTool mode uniform");
     cmd("tool.attr mesh.loopSliceTool count 3");
     cmd("tool.attr mesh.loopSliceTool position 0.1");
     cmd("tool.doApply");
@@ -320,6 +321,7 @@ unittest {
     int eiB = edgeIndex(before2, va2, vb2);
     postSelect("edges", [eiB]);
     cmd("tool.set mesh.loopSliceTool on");
+    cmd("tool.attr mesh.loopSliceTool mode uniform");
     cmd("tool.attr mesh.loopSliceTool count 3");
     cmd("tool.attr mesh.loopSliceTool position 0.9");
     cmd("tool.doApply");

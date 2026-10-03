@@ -281,7 +281,7 @@ private:
 
     // Panel params (shared by the interactive path and `tool.attr`).
     Edit    edit_          = Edit.Move;
-    Mode    mode_          = Mode.Uniform;   // reference default for Count>1
+    Mode    mode_          = Mode.Free;      // the reference's fresh default (toolcard A0)
     int     count_         = 1;
     int     current_       = 0;             // 0-based (owner-decision D6)
     // Authoritative slice offsets, length == count_. Seeded to `[0.5f]` by the
@@ -665,7 +665,7 @@ public:
             Param.int_("count", "Count", &count_, 1).min(1).max(256).enforceBounds(),
             Param.int_("current", "Current", &current_, 0).min(0).transient(),
             Param.intEnum_("edit", "Edit", cast(int*)&edit_, editTable, cast(int)Edit.Move),
-            Param.intEnum_("mode", "Mode", cast(int*)&mode_, modeTable, cast(int)Mode.Uniform),
+            Param.intEnum_("mode", "Mode", cast(int*)&mode_, modeTable, cast(int)Mode.Free),
             Param.float_("insertAt", "Insert At", &insertAt_, 0.5f)
                  .min(0.001f).max(0.999f).transient().action(),
             Param.bool_("removeCurrent", "Remove Current", &removeTrigger_, false)
@@ -1310,13 +1310,13 @@ public:
     }
 
     // Puts the current slice at `p` under the Mode law, then re-cuts while
-    // armed. Count 1 always moves (owner objection #1, task 0239: the default
-    // Uniform must not freeze a single slice); Uniform ignores a move at
-    // Count > 1; a Symmetry slice moves its mirror, an odd middle stays 0.5.
+    // armed. Free moves it; Uniform never does, at any Count; a Symmetry
+    // slice moves its mirror, and a self-mirrored one (an odd middle, a
+    // single slice) stays at 0.5.
     private void placeCurrent(float p) {
         immutable size_t k = cast(size_t)current_;
         immutable size_t mirror = positions_.length - 1 - k;
-        if (k < positions_.length && (count_ <= 1 || mode_ == Mode.Free))
+        if (k < positions_.length && mode_ == Mode.Free)
             positions_[k] = p;
         else if (k < positions_.length && mode_ == Mode.Symmetry && mirror != k) {
             positions_[k] = p;
