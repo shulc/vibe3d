@@ -677,7 +677,7 @@ public:
         rotateBox.pos  = params_.center + curNormal * arm;
         rotateBox.size = gs * 0.03f;
 
-        // Topology-redo S6r (Capture-12 step 0 NOT-DRAWN, task 9270): an inactive
+        // Topology-redo S6r (Capture-12 step 0 NOT-DRAWN): an inactive
         // instance draws and registers no handles — 0 handle pixels until the
         // activating press. The arbiter still runs its frame (empty: hot = -1).
         const handlesShown = sessionPressActivation() != PressActivation.activates;
