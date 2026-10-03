@@ -44,18 +44,6 @@
       "note": "transform-family drift, two named candidates: 09725e21 (0061 far-pivot fold precision, window 1, +22..24%) and be20635d (1069 morph maps, window 2, +8..9%)"
     },
     {
-      "key": "move/falloff=linear",
-      "baselineUs": 26424.1,
-      "debtUs": 33545.8,
-      "ratio": 1.2695,
-      "samples": 3,
-      "spreadLoUs": 33325.2,
-      "spreadHiUs": 33547.6,
-      "owner": "xform-drift",
-      "ledgered": true,
-      "note": "transform-family drift, two named candidates: 09725e21 (0061 far-pivot fold precision, window 1, +22..24%) and be20635d (1069 morph maps, window 2, +8..9%)"
-    },
-    {
       "key": "move/falloff=radial",
       "baselineUs": 25112.8,
       "debtUs": 30347.7,
@@ -63,18 +51,6 @@
       "samples": 3,
       "spreadLoUs": 30271.9,
       "spreadHiUs": 30398.7,
-      "owner": "xform-drift",
-      "ledgered": true,
-      "note": "transform-family drift, two named candidates: 09725e21 (0061 far-pivot fold precision, window 1, +22..24%) and be20635d (1069 morph maps, window 2, +8..9%)"
-    },
-    {
-      "key": "move/falloff=selection",
-      "baselineUs": 7644.5,
-      "debtUs": 10158.1,
-      "ratio": 1.3288,
-      "samples": 3,
-      "spreadLoUs": 10152.4,
-      "spreadHiUs": 10194.7,
       "owner": "xform-drift",
       "ledgered": true,
       "note": "transform-family drift, two named candidates: 09725e21 (0061 far-pivot fold precision, window 1, +22..24%) and be20635d (1069 morph maps, window 2, +8..9%)"
@@ -116,18 +92,6 @@
       "note": "transform-family drift, two named candidates: 09725e21 (0061 far-pivot fold precision, window 1, +22..24%) and be20635d (1069 morph maps, window 2, +8..9%)"
     },
     {
-      "key": "rotate/falloff=linear",
-      "baselineUs": 26556.9,
-      "debtUs": 33780.7,
-      "ratio": 1.272,
-      "samples": 3,
-      "spreadLoUs": 33130.3,
-      "spreadHiUs": 34596.8,
-      "owner": "xform-drift",
-      "ledgered": true,
-      "note": "transform-family drift, two named candidates: 09725e21 (0061 far-pivot fold precision, window 1, +22..24%) and be20635d (1069 morph maps, window 2, +8..9%)"
-    },
-    {
       "key": "rotate/falloff=radial",
       "baselineUs": 25181.0,
       "debtUs": 30222.5,
@@ -140,18 +104,6 @@
       "note": "transform-family drift, two named candidates: 09725e21 (0061 far-pivot fold precision, window 1, +22..24%) and be20635d (1069 morph maps, window 2, +8..9%)"
     },
     {
-      "key": "rotate/falloff=selection",
-      "baselineUs": 7626.6,
-      "debtUs": 10112.0,
-      "ratio": 1.3259,
-      "samples": 3,
-      "spreadLoUs": 9968.0,
-      "spreadHiUs": 10173.7,
-      "owner": "xform-drift",
-      "ledgered": true,
-      "note": "transform-family drift, two named candidates: 09725e21 (0061 far-pivot fold precision, window 1, +22..24%) and be20635d (1069 morph maps, window 2, +8..9%)"
-    },
-    {
       "key": "scale/falloff=cylinder",
       "baselineUs": 36454.8,
       "debtUs": 47212.9,
@@ -159,18 +111,6 @@
       "samples": 3,
       "spreadLoUs": 47206.6,
       "spreadHiUs": 47266.2,
-      "owner": "xform-drift",
-      "ledgered": true,
-      "note": "transform-family drift, two named candidates: 09725e21 (0061 far-pivot fold precision, window 1, +22..24%) and be20635d (1069 morph maps, window 2, +8..9%)"
-    },
-    {
-      "key": "scale/falloff=linear",
-      "baselineUs": 26451.6,
-      "debtUs": 33371.4,
-      "ratio": 1.2616,
-      "samples": 3,
-      "spreadLoUs": 33336.0,
-      "spreadHiUs": 33372.4,
       "owner": "xform-drift",
       "ledgered": true,
       "note": "transform-family drift, two named candidates: 09725e21 (0061 far-pivot fold precision, window 1, +22..24%) and be20635d (1069 morph maps, window 2, +8..9%)"
@@ -195,18 +135,6 @@
       "samples": 3,
       "spreadLoUs": 57897.7,
       "spreadHiUs": 61443.0,
-      "owner": "xform-drift",
-      "ledgered": true,
-      "note": "transform-family drift, two named candidates: 09725e21 (0061 far-pivot fold precision, window 1, +22..24%) and be20635d (1069 morph maps, window 2, +8..9%)"
-    },
-    {
-      "key": "scale/falloff=selection",
-      "baselineUs": 7706.9,
-      "debtUs": 10164.6,
-      "ratio": 1.3189,
-      "samples": 3,
-      "spreadLoUs": 9976.7,
-      "spreadHiUs": 10469.7,
       "owner": "xform-drift",
       "ledgered": true,
       "note": "transform-family drift, two named candidates: 09725e21 (0061 far-pivot fold precision, window 1, +22..24%) and be20635d (1069 morph maps, window 2, +8..9%)"
