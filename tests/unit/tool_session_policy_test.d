@@ -1048,7 +1048,7 @@ static assert(imported!"tool".StepOrigin.init == imported!"tool".StepOrigin.uncl
 static assert([__traits(allMembers, imported!"tool".ToolSessionLink)]
               == ["stepBegins", "stepEnds", "operationArmed", "operationEnded", "closeOwn",
                   "recordCompleted", "tagPreparedCompleted", "recordToken", "stepOpenImage",
-                  "previewGated", "instanceActive"]);
+                  "previewGated", "pressActivation"]);
 static assert([__traits(allMembers, imported!"tool".PressActivation)]
               == ["unbound", "activates", "active"]);
 static assert(imported!"tool".PressActivation.init == imported!"tool".PressActivation.unbound);
@@ -1448,13 +1448,17 @@ unittest { // (4j)
                   ~ "captured (findings §21.4)", identSites(es, "instanceActive_", true)));
     assert(identSites(es, "instanceActive_", false)
            == ["<decl>:1", "ToolSession.activate_:1", "ToolSession.endPendingOperation_:1",
-               "ToolSession.noteArm:2", "ToolSession.stepBegins:1"],
+               "ToolSession.noteArm:1", "ToolSession.pressActivation_:1",
+               "ToolSession.stepBegins:1"],
            format("S6r needle: instanceActive_ is read at %s, expected only by the press and "
                   ~ "the link the bind hands the tool (plan §23.9 item 5)",
                   identSites(es, "instanceActive_", false)));
     assert(squeeze(bodyAt(ts, "void noteArm(string id, ulong token, bool postmodeArmed = true)"))
-               .canFind("link.instanceActive=()=>instanceActive_;"),
+               .canFind("link.pressActivation=&pressActivation_;"),
            "S6r needle: the bind does not hand the tool its instance's activation");
+    assert(squeeze(bodyAt(ts, "private PressActivation pressActivation_(Tool t)"))
+               .canFind("if(!reporting_(t))returnPressActivation.unbound;"),
+           "S6r needle: pressActivation_ answers a tool that is not the reporting one");
     const tl = blankNonCode(readText("source/tool.d"));
     assert(identSites(tl, "resetParamToDefault", false)
            == ["<decl>:1", "Tool.resetAttrsToDefaults:1"],

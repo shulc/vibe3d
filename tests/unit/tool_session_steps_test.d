@@ -38,7 +38,8 @@ import editmode : EditMode;
 import mesh : Mesh, makeCube;
 import math : Vec3;
 import params;
-import tool : AttrImage, OpensAt, PressKind, StepOrigin, Tool, ToolSessionPolicy, TopologyStepClient;
+import tool : AttrImage, OpensAt, PressActivation, PressKind, StepOrigin, Tool, ToolSessionPolicy,
+    TopologyStepClient;
 import command : Command;
 import snapshot : MeshSnapshot;
 import tool_activation_ownership;
@@ -1387,6 +1388,7 @@ private class PressFlagTool : Tool, TopologyStepClient {
         restoreRecordedAttrs(attrs);
     }
     void pressBegins() { sessionStepBegins(); }
+    PressActivation pa() { return sessionPressActivation(); }
     void pressEnds() { sessionStepEnds(); }
     void middleBegins() { sessionStepBegins(PressKind.middle); }
     MeshSnapshot openImage() { return sessionStepOpenImage(); }
@@ -2910,18 +2912,22 @@ unittest { // U-INIT1 (CAP r1/r2): a command close deactivates the instance; the
     auto t = new InitPressTool;
     auto r = initRig(t);
     r.s.noteArm("t.init", 1, false);
+    // `activations` counts activate_ runs by its datum (the one writer of true, needle (4j)),
+    // not by the asserted value: inactive before the press, active after it.
     size_t activations;
     t.v = 0.4f;                                   // the stored copy the arm gave the instance
+    auto pa0 = t.pa();
     const p1 = initHaul(r.s, t, &r.m, 0.5f);
-    if (p1 == 0.0f) ++activations;
+    if (pa0 == PressActivation.activates && t.pa() == PressActivation.active) ++activations;
     assert(p1 == 0.0f, format("U-INIT1: the first press began from %s, expected the default 0 "
         ~ "(the press of an inactive first-press instance activates it)", p1));
     r.s.closeOperation(CloseReason.command, CommandDoor.ui);
     r.s.finishClose();
     s2bAttr(r.s, t, "v", () { t.v = 0.3f; }, ParameterChangeSource.InteractiveValue);
     assert(t.v == 0.3f, "U-INIT1 rig: the write after the close did not land");
+    pa0 = t.pa();
     const p2 = initHaul(r.s, t, &r.m, 0.6f);
-    if (p2 == 0.0f) ++activations;
+    if (pa0 == PressActivation.activates && t.pa() == PressActivation.active) ++activations;
     const row = s2bTopRow(r.h);
     assert(p2 == 0.0f && row !is null && row.stepBeforeAttrs().opEquals(vImage(t, 0.0f)),
         format("U-INIT1: the press after a command close began from %s, expected the default 0 "
@@ -2964,6 +2970,10 @@ unittest { // U-INIT2 (CAP r5 s09/s10): a dormant arm activates; its press does 
     r.h.recordToolLifecycle(w);
     r.active = b;
     r.s.noteArm("t.b", 9);
+    // A's link outlives its bind: a press of a tool that is not the reporting one is unbound.
+    assert(a.pa() == PressActivation.unbound,
+        format("U-INIT2: A's press after B's bind answers %s, expected unbound (pressActivation_ "
+               ~ "keyed on reporting_, like the link's other answers)", a.pa()));
     r.s.finishClose();
     assert(r.s.navigate(true) && r.active is a, "U-INIT2 rig: the undo of W did not re-arm A");
     assert(r.s.navigate(false) && r.active is b, "U-INIT2 rig: the redo of W did not re-arm B");
@@ -2979,14 +2989,15 @@ unittest { // U-INIT2 (CAP r5 s09/s10): a dormant arm activates; its press does 
     const st = r.s.sessionStateJson();
     assert(st["dormant"].type == JSONType.true_ && st["operationOpen"].type == JSONType.false_,
         format("U-INIT2 rig: A's arm is not dormant with no operation open: %s", st));
-    size_t activations;
-    if (a.v == 0.0f) ++activations;
+    size_t activations;                           // activate_ runs, by the datum (the bind clears it)
+    if (a.pa() == PressActivation.active) ++activations;
     assert(a.v == 0.0f, format("U-INIT2: the dormant arm left v %s, expected the default 0 (a "
         ~ "live arm of an arm-opening tool activates, dormant or not)", a.v));
     s2bAttr(r.s, a, "v", () { a.v = 0.3f; }, ParameterChangeSource.InteractiveValue);
     assert(a.v == 0.3f, "U-INIT2 rig: the write after the dormant arm did not land");
+    const pa0 = a.pa();
     const p = initHaul(r.s, a, &r.m, 0.6f);
-    if (p == 0.0f) ++activations;
+    if (pa0 == PressActivation.activates && a.pa() == PressActivation.active) ++activations;
     assert(p == 0.3f, format("U-INIT2: the dormant press began from %s, expected the written 0.3 "
         ~ "(the instance is active; a press keyed on !operationOpen_ resets it)", p));
     assert(activations == 1, format("U-INIT2: %s activations seen, measured 1", activations));

@@ -31,7 +31,7 @@ module edit_session;
 // locks are needed here.
 // ---------------------------------------------------------------------------
 
-import tool            : capturedTopologyModel, opensAtArm;
+import tool            : capturedTopologyModel, opensAtArm, PressActivation;
 import tool            : Tool, CommandClose, AttrImage, PressKind, OpensAt,
                          StepOrigin, ToolSessionLink, TopologyStepClient;
 import command         : Command, CmdFlags;
@@ -1607,7 +1607,7 @@ private struct ToolSession {
         link.tagPreparedCompleted = &tagPreparedCompleted;
         link.recordToken = &recordTokenFor_;
         link.previewGated = &previewGated;
-        link.instanceActive = () => instanceActive_;
+        link.pressActivation = &pressActivation_;
         t.bindSession(link);
         // A dormant arm takes the closed run's values (the stored copy), then an
         // arm-opening tool's live arm activates the instance over it — dormant or
@@ -2024,6 +2024,13 @@ private struct ToolSession {
         j["operationOpen"] = JSONValue(operationOpen_);
         j["operation"] = JSONValue(cast(long) operation_);
         return j;
+    }
+
+    // What a press of `t`'s own door is (the link's `pressActivation`): unbound
+    // unless `t` is the reporting tool, like the link's other answers.
+    private PressActivation pressActivation_(Tool t) {
+        if (!reporting_(t)) return PressActivation.unbound;
+        return instanceActive_ ? PressActivation.active : PressActivation.activates;
     }
 
     private bool reporting_(Tool t) {

@@ -211,7 +211,7 @@ enum PressKind : ubyte { plain, shift, middle }
 /// What a press of the tool's own door is to its session instance (topology-redo S6r, plan
 /// 9270 §23.9 item 5; Capture-12 C12-1): `activates` — the instance is inactive and the press
 /// runs its activation (the reset) first; `active` — the instance is live; `unbound` — no
-/// session link, the tool's own press behaviour stands.
+/// session link, or the tool is not the session's reporting tool: its own press behaviour stands.
 enum PressActivation : ubyte { unbound, activates, active }
 
 /// How a topology step of the captured model began (topology-redo S2b, model doc §2.2):
@@ -342,7 +342,7 @@ struct ToolSessionLink {
     ulong delegate(Tool) recordToken;
     MeshSnapshot delegate(Tool) stepOpenImage;   // the pending step's open image (shared)
     bool delegate(Tool) previewGated;            // the session holds the tool's preview (topology-redo S2b)
-    bool delegate() instanceActive;              // the bound instance is active (topology-redo S6r)
+    PressActivation delegate(Tool) pressActivation; // a press of the tool's door (S6r); unbound when not reporting
 }
 
 struct ToolSessionPolicy {
@@ -1278,9 +1278,8 @@ public:
     /// What a press of this instance's own door is to its session (`PressActivation`);
     /// read BEFORE `sessionStepBegins`, which runs the activation.
     protected final PressActivation sessionPressActivation() {
-        if (sessionLink_.instanceActive is null) return PressActivation.unbound;
-        return sessionLink_.instanceActive() ? PressActivation.active
-                                             : PressActivation.activates;
+        return sessionLink_.pressActivation is null ? PressActivation.unbound
+                                                    : sessionLink_.pressActivation(this);
     }
     /// The session holds this tool's preview: an attribute write builds no
     /// preview while its operation is dormant or its post mode is not armed
