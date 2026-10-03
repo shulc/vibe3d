@@ -81,12 +81,11 @@ unittest {
         ~ " divergent fields from the Mirror UI command on, frozen at 7");
     assert(notCaptured.length == 0, "fixture: not-captured fields " ~ notCaptured.to!string
         ~ " (rule G5 took model §6.3's one, S4 9020)");
-    assert(gap485 == ["mirror_attrs_script/s03_Z.attrs", "mirror_attrs_ui/s04_R.attrs",
-            "mirror_discrim/s05_Z.attrs", "mirror_discrim2/s06_Z.attrs",
-            "mirror_discrim2/s08_R.attrs", "mirror_discrim2_ui/s06_Z.attrs",
-            "mirror_discrim2_ui/s08_R.attrs", "mirror_discrim2_ui/s09_R.attrs",
+    // S6r (task 9270): the rig arms Mirror at the capture's centre, so six of the nine are
+    // parity (`freeze_fixture.py --print-lists`: `LIST g5Gap485 n=3`, 2026-10-03)
+    assert(gap485 == ["mirror_discrim2_ui/s08_R.attrs", "mirror_discrim2_ui/s09_R.attrs",
             "mirror_discrim2_ui/s10_R.attrs"],
-        "fixture: the gap-485 fields " ~ gap485.to!string ~ " are not rule G5's nine");
+        "fixture: the gap-485 fields " ~ gap485.to!string ~ " are not rule G5's three");
 }
 
 // Capture 8960 (findings §16), Mirror: a headless apply after a press and a scripted centre

@@ -181,11 +181,12 @@ unittest {
 }
 
 // VertexMerge's first haul merges 3 → 2 at the reference, 3 → 1 here (gap row 486, S3 fix
-// 8950): the generator's four `KERNEL_SEEDS` (each `s02_drag`, every other field parity) and
-// the later `vcount` fields carrying the seed's (2, 1) pair. Stationary; the exact set of
-// this family (`freeze_fixture.py --print-lists`: `LIST kernelOwned n=32`, 2026-10-02: these
-// 26 + EdgeExtrude's 6, pinned by the autoact suite). S5 (task 9170, law 3): + the two
-// `s07_R` — the second redo is refused at both ends now, the (2, 1) pair stays.
+// 8950): the generator's seed of every VertexMerge cell (`KERNEL_SEED_VARIANTS`, S6r 9270:
+// each first haul `s02_drag`, every other field parity) and the later `vcount` fields carrying
+// the seed's (2, 1) pair. Stationary; the exact set of this family (`freeze_fixture.py
+// --print-lists`: `LIST kernelOwned n=48`, 2026-10-03: these 42 + EdgeExtrude's 6, pinned by
+// the autoact suite). S5 (task 9170, law 3): + the two `s07_R` — the second redo is refused at
+// both ends now, the (2, 1) pair stays. S6r (task 9270): + the 16 of the three C9/C10-r cells.
 unittest {
     const fx = parseJSON(kFixture);
     string[] kernel;
@@ -203,11 +204,19 @@ unittest {
         foreach (lab; ["s02_drag", "s03_W", "s04_Z", "s06_R", "s07_R", arm, "s09_drag", "s10_Z",
                        "s11_R"])
             want ~= cell ~ "/" ~ lab ~ ".vcount";
+    foreach (cell, labs; ["cmdclose_press_vmerge_gdb": ["s02_drag", "s03_UC", "s04_drag", "s05_Z",
+                                                        "s06_Z"],
+                          "rearm_vmerge": ["s02_drag", "s03_W", "s04_arm", "s05_drag", "s06_Z",
+                                           "s07_Z"],
+                          "wundo_restart_vmerge_gdb": ["s02_drag", "s03_W", "s04_Z", "s05_drag",
+                                                       "s06_Z"]])
+        foreach (lab; labs)
+            want ~= cell ~ "/" ~ lab ~ ".vcount";
     import std.algorithm : sort;
     kernel.sort();
     want.sort();
-    assert(want.length == 26 && kernel == want, "fixture: the kernel-owned fields of the "
-        ~ "inset family " ~ kernel.to!string ~ " are not VertexMerge's 26");
+    assert(want.length == 42 && kernel == want, "fixture: the kernel-owned fields of the "
+        ~ "inset family " ~ kernel.to!string ~ " are not VertexMerge's 42");
 }
 
 // The later cells' ladders, before any cell (task 8950, S3 fix 2), so a regenerated fixture
