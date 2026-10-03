@@ -801,7 +801,21 @@ public:
         SDL_Keymod mods = SDL_GetModState();
         if (mods & (KMOD_ALT | KMOD_SHIFT)) return false;   // reserved for camera
 
-        int hit = moverHitTest(e.x, e.y);
+        // Topology-redo S6r (Capture-12 C12-1, plan 9270 §23.9 item 5): the press that
+        // activates an inactive instance runs the reset first and the inactive instance draws
+        // no handles, so it places the centre from the pressed pixel whatever lies under it —
+        // through the plane of the centre held BEFORE the reset (`anchor`). A press of the
+        // live instance off its handles places nothing (gap row 489). Unbound: as before.
+        const pa = sessionPressActivation();
+        const anchor = params_.center;
+        int hit = pa == PressActivation.activates ? -1 : moverHitTest(e.x, e.y);
+        if (hit < 0 && pa == PressActivation.active) {
+            sessionStepBegins();
+            stepOpen = true;
+            engage();
+            evaluate();
+            return true;
+        }
         if (hit < 0) {
             // Click-to-place (task 0230 M3): a viewport click that misses
             // every handle places the plane center under the cursor,
@@ -822,7 +836,7 @@ public:
             screenPointToRay(cast(float)e.x, cast(float)e.y, cachedVp, origin, dir);
             Vec3 planeN = cameraForwardDir(cachedVp);
             Vec3 hitPt;
-            if (rayPlaneIntersect(origin, dir, params_.center, planeN, hitPt)) {
+            if (rayPlaneIntersect(origin, dir, anchor, planeN, hitPt)) {
                 sessionStepBegins();
                 stepOpen = true;
                 params_.center = hitPt;

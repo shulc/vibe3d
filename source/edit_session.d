@@ -1607,6 +1607,7 @@ private struct ToolSession {
         link.tagPreparedCompleted = &tagPreparedCompleted;
         link.recordToken = &recordTokenFor_;
         link.previewGated = &previewGated;
+        link.instanceActive = () => instanceActive_;
         t.bindSession(link);
         // A dormant arm takes the closed run's values (the stored copy), then an
         // arm-opening tool's live arm activates the instance over it — dormant or

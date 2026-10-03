@@ -210,9 +210,14 @@ unittest {
     resetForMirrorCamera();
 
     immutable string planesBefore = planes();
-    immutable long   u0           = undoLen();
     immutable size_t v0           = vertexCount();
 
+    // The inactive instance draws no handle: its activating press places the
+    // centre (Capture-12 C12-1, task 9270). A tap activates it at the box's
+    // spot (its own step); the haul then drags the live instance's box, and
+    // its record is the one counted below.
+    dragWorldHandle(Vec3(0, 0, 0), Vec3(1, 0, 0), 0.0, 1);
+    immutable long   u0           = undoLen();
     dragWorldHandle(Vec3(0, 0, 0), Vec3(1, 0, 0), 60.0);
 
     auto c = queriedCenter();

@@ -419,11 +419,17 @@ unittest {
     assert(faceCount() == 6, "7116 E rig: the tool evaluated before the press");
     // The centre box sits at the plane centre; a press and release there
     // with no motion must still start the live edit.
+    // EXPECTATION per Capture-12 C12-1 (task 9270, topology-redo S6r): the
+    // press activates the instance, whose reset runs first and whose inactive
+    // instance draws no handle, so the press PLACES the centre from the pressed
+    // pixel (the reference after a scripted centre: s05 = the pressed point,
+    // s06_Z = the reset's 0). The pixel's precision as in block B (ortho
+    // width 6). A press that dragged the reset centre's handle leaves 0.
     pressAt(c, [1.5, 0, 0]);
     auto centre = readCenter();
-    assert(abs(centre[0] - 1.5) < 1e-6,
-        format("7116 E rig: the handle press moved the centre to %s — it missed "
-             ~ "the handle", centre));
+    assert(abs(centre[0] - 1.5) < 0.02 && abs(centre[1]) < 0.02,
+        format("7116 E: the activating press on the handle placed the centre at "
+             ~ "%s, expected the pressed point x = 1.5", centre));
     assert(faceCount() == 12,
         format("7116 handle press did not start the live mirror edit: %d polygons",
                faceCount()));

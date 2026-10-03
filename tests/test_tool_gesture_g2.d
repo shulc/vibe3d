@@ -867,8 +867,13 @@ unittest {
         "source/tools/alignment/mirror.d MirrorTool.recordTopologyStep (from release)",
         "Plain", "MeshSessionEdit",
         "the DOCUMENT mesh (live edit from the first press, §24) — both channels see the drag",
+        // The inactive instance draws no handle: its activating press places
+        // the centre (Capture-12 C12-1, task 9270), so the stand taps the box's
+        // spot first (its own row) and the gesture hauls the live box.
         { resetCube(); cmd("history.clear"); setOrbitCamera();
-          cmd("tool.set mesh.mirrorTool on"); settle(250); },
+          cmd("tool.set mesh.mirrorTool on"); settle(250);
+          dragAlongProjectedAxis(Vec3(0, 0, 0), Vec3(0, 0, 0), Vec3(1, 0, 0), 0, 1);
+          settle(250); },
         {
             dragAlongProjectedAxis(Vec3(0, 0, 0), Vec3(0, 0, 0), Vec3(1, 0, 0), 60);
             auto c = postJ("/api/command", "tool.attr mesh.mirrorTool center ?");
@@ -891,7 +896,7 @@ unittest {
               ~ "This is the assertion `tests/test_mirror_tool_drag.d` never "
               ~ "made: it reads the centre ATTRIBUTE and would stay green if "
               ~ "the tool mirrored nothing at all");
-        }, 1, 1);
+        }, 1, 2);
 
     // --- (b) RadialSweepTool. Also commits from `deactivate()`. Driven exactly
     //     as `tests/test_radial_sweep_handle_drag.d` drives it — the Start
