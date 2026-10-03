@@ -31,28 +31,30 @@ immutable string[] kCells = [
     "inset_dormant_ui", "inset_mech", "inset_mech_ui", "inset_ui_direct", "inset_ui_redo",
     "moment_inset", "moment_inset_ui", "moment_restart_pextrude", "moment_restart_pextrude_ui",
     "nav_redo_opens_inset", "nav_redo_opens_inset_ui", "nav_redo_refire_inset",
-    "nav_redo_refire_inset_ui", "nav_redo_restart_pextrude", "nav_redo_restart_pextrude_ui",
-    "nav_undo_refire_inset", "nav_undo_refire_inset_ui", "nav_undo_restart_pextrude",
-    "nav_undo_restart_pextrude_ui", "pairundo_pred_inset_ui", "param_after_undo_inset_script",
-    "param_after_undo_inset_ui", "param_between_inset_script", "param_between_inset_uc",
-    "param_between_inset_ui", "param_between_moment_inset_script", "param_between_moment_inset_ui",
+    "nav_redo_refire_inset_ui", "nav_redo_refire_two_inset", "nav_redo_refire_z_inset",
+    "nav_redo_restart_pextrude", "nav_redo_restart_pextrude_ui", "nav_undo_refire_inset",
+    "nav_undo_refire_inset_ui", "nav_undo_restart_pextrude", "nav_undo_restart_pextrude_ui",
+    "pairundo_pred_inset_ui", "param_after_undo_inset_script", "param_after_undo_inset_ui",
+    "param_between_inset_script", "param_between_inset_uc", "param_between_inset_ui",
+    "param_between_moment_inset_script", "param_between_moment_inset_ui",
     "param_closed_after_end_inset", "param_closed_inset_ui", "param_rebegun_redo_inset",
     "param_rebegun_undo_inset_ui", "param_twohaul_inset_script", "pextrude_direct",
     "pextrude_direct_ui", "rclick_close_inset_script", "rclick_close_inset_ui", "rearm_inset_ui",
     "rearm_smooth_ui", "rearm_vmerge", "rebegin_redo_closed_inset", "rebegin_redo_closed_inset_ui",
     "rebegin_undo_close_inset", "rebegin_undo_close_inset_ui", "rebegin_undo_cmd_inset_ui",
-    "reset_inset", "reset_inset_ui", "smooth_attrs_script", "smooth_attrs_ui", "smooth_direct",
-    "smooth_direct_ui", "smooth_dormant", "smooth_dormant_ui", "thicken_direct",
-    "thicken_direct_ui", "thicken_dormant", "thicken_dormant_ui", "vmerge_discrim",
-    "vmerge_discrim_ui", "vmerge_dormant", "vmerge_dormant_ui", "wundo_restart_vmerge_gdb",
-    "xinst_ctrl_inset_ui", "xinst_trunc_inset_ui"
+    "refire_redo_pextrude", "refire_redo_restart_pextrude", "refire_redo_z_refire_inset",
+    "reset_inset", "reset_inset_ui", "restart_redo_refire_inset", "smooth_attrs_script",
+    "smooth_attrs_ui", "smooth_direct", "smooth_direct_ui", "smooth_dormant", "smooth_dormant_ui",
+    "thicken_direct", "thicken_direct_ui", "thicken_dormant", "thicken_dormant_ui",
+    "vmerge_discrim", "vmerge_discrim_ui", "vmerge_dormant", "vmerge_dormant_ui",
+    "wundo_restart_vmerge_gdb", "xinst_ctrl_inset_ui", "xinst_trunc_inset_ui"
 ];
 
 // `freeze_fixture.py --family inset` (2026-10-02, + 8960 3 cells, 8980 3 cells, 9030 2 cells,
-// 8940 C7, 9160 C10-c1, 9270 C9 3 cells, C10-r 2 cells):
-// TOPO-REDO-CELLS family=inset cells=87 checkpoints=1005 …
-enum long kCellCount = 87;
-enum long kCheckpointCount = 1005;
+// 8940 C7, 9160 C10-c1, 9270 C9 3 cells, C10-r 2 cells, 9300 C10-b1/b2 + C11-b4..b7):
+// TOPO-REDO-CELLS family=inset cells=93 checkpoints=1071 …
+enum long kCellCount = 93;
+enum long kCheckpointCount = 1071;
 
 // The helper's redo-step count (`redoStepCount`, wave plan §21-D): the pair's three terms,
 // each where the fixture's 10 redo reads cannot reach it.
@@ -175,9 +177,11 @@ unittest {
     // cut are parity (Q5 c1: the restart row survives, the refire after it leaves).
     // 49 -> 46 (plan §21-B/D): fold_restart_pextrude_ui/s12_R (refused, vcount) is a modal
     // point, not judged; moment_restart_pextrude_ui/s10_Z.redoRows counts the UI pair once.
-    assert(points == 8 && fields == 46, "fixture family inset holds " ~ points.to!string
+    // 8 / 46 -> 9 / 52 (S7r 9300): C11-b7 refire_redo_restart_pextrude s06_M…s09_R (vcount ×4,
+    // attrs ×2) — the PolyExtrude middle press layers 23 there, 18 here.
+    assert(points == 9 && fields == 52, "fixture family inset holds " ~ points.to!string
         ~ " middle-restart points / " ~ fields.to!string ~ " divergent fields after them, "
-        ~ "frozen at 8 / 46");
+        ~ "frozen at 9 / 52");
 }
 
 // VertexMerge's first haul merges 3 → 2 at the reference, 3 → 1 here (gap row 486, S3 fix

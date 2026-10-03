@@ -28,20 +28,20 @@ immutable string[] kCells = [
     "eextrude_dormant_ui", "eextrude_mech", "eextrude_mech_ui", "fold_close_eextrude",
     "fold_close_eextrude_ui", "fold_restart_eextrude", "fold_restart_eextrude_ui",
     "moment_eextrude", "moment_eextrude_ui", "nav_redo_refire_ebevel", "nav_redo_refire_ebevel_ui",
-    "nav_redo_restart_eextrude", "nav_redo_restart_eextrude_ui", "nav_undo_refire_ebevel",
-    "nav_undo_refire_ebevel_ui", "nav_undo_restart_eextrude", "nav_undo_restart_eextrude_ui",
-    "param_after_arm_ebevel_script", "param_between_ebevel_script", "param_between_ebevel_ui",
-    "param_between_moment_ebevel_ui", "param_closed_ebevel_ui", "rclick_close_eextrude_ui",
-    "rearm_ebevel_ui", "rearm_vextrude", "rebegin_redo_act_ebevel", "rebegin_redo_act_ebevel_ui",
-    "vbevel_actundo", "vbevel_actundo_ui", "vbevel_dormant", "vbevel_dormant_ui",
-    "vextrude_dormant", "vextrude_dormant_ui", "vextrude_row", "vextrude_row_ui",
-    "wundo_restart_ebevel_gdb_ui"
+    "nav_redo_refire_z_ebevel_ui", "nav_redo_restart_eextrude", "nav_redo_restart_eextrude_ui",
+    "nav_undo_refire_ebevel", "nav_undo_refire_ebevel_ui", "nav_undo_restart_eextrude",
+    "nav_undo_restart_eextrude_ui", "param_after_arm_ebevel_script", "param_between_ebevel_script",
+    "param_between_ebevel_ui", "param_between_moment_ebevel_ui", "param_closed_ebevel_ui",
+    "rclick_close_eextrude_ui", "rearm_ebevel_ui", "rearm_vextrude", "rebegin_redo_act_ebevel",
+    "rebegin_redo_act_ebevel_ui", "vbevel_actundo", "vbevel_actundo_ui", "vbevel_dormant",
+    "vbevel_dormant_ui", "vextrude_dormant", "vextrude_dormant_ui", "vextrude_row",
+    "vextrude_row_ui", "wundo_restart_ebevel_gdb_ui"
 ];
 
-// `freeze_fixture.py --family autoact` (2026-10-01; + 9270 C9 3 cells, C10-r 3 cells):
-// TOPO-REDO-CELLS family=autoact cells=46 checkpoints=550 …
-enum long kCellCount = 46;
-enum long kCheckpointCount = 550;
+// `freeze_fixture.py --family autoact` (2026-10-01; + 9270 C9 3, C10-r 3; 9300 C10-b3):
+// TOPO-REDO-CELLS family=autoact cells=47 checkpoints=561 …
+enum long kCellCount = 47;
+enum long kCheckpointCount = 561;
 
 unittest { // the floor: the fixture still holds the whole family
     familyFloor(parseJSON(kFixture), "autoact", kCells, kCellCount, kCheckpointCount);

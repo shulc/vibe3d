@@ -391,8 +391,8 @@
     {"cell": "close_drop_redo_array_ui", "label": "s03_drag", "fields": {"image": {"ref": []}, "vcount": {"ref": 20}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
     {"cell": "close_drop_redo_array_ui", "label": "s04_UC", "fields": {"image": {"ref": ["s03"]}, "vcount": {"ref": 20}, "armed": {"ref": false}, "on": {"ref": ""}}},
     {"cell": "close_drop_redo_array_ui", "label": "s05_Z", "fields": {"image": {"ref": ["s00", "s01"]}, "vcount": {"ref": 5}, "armed": {"ref": false}, "on": {"ref": ""}, "refused": {"ref": false}}},
-    {"cell": "close_drop_redo_array_ui", "label": "s06_R", "fields": {"image": {"ref": ["s03", "s04"]}, "vcount": {"ref": 20}, "armed": {"ref": true, "ours": false, "owner": "S7r", "law": "6", "polarity": "untilS7r"}, "on": {"ref": "tool", "ours": "", "owner": "S7r", "law": "6", "polarity": "untilS7r"}, "attrs": {"ref": ["s03"], "ours": "unreadable", "owner": "S7r", "law": "6", "polarity": "untilS7r"}, "refused": {"ref": false}}},
-    {"cell": "close_drop_redo_array_ui", "label": "s07_R", "fields": {"image": {"ref": ["s03", "s04", "s06"]}, "vcount": {"ref": 20}, "armed": {"ref": false}, "on": {"ref": ""}, "refused": {"ref": false, "ours": true, "owner": "S7r", "law": "6", "polarity": "untilS7r"}}}
+    {"cell": "close_drop_redo_array_ui", "label": "s06_R", "fields": {"image": {"ref": ["s03", "s04"]}, "vcount": {"ref": 20}, "armed": {"ref": true, "ours": false, "owner": "V4: activation/command-close wave", "law": "V4", "polarity": "stationary"}, "on": {"ref": "tool", "ours": "", "owner": "V4: activation/command-close wave", "law": "V4", "polarity": "stationary"}, "attrs": {"ref": ["s03"], "ours": "unreadable", "owner": "V4: activation/command-close wave", "law": "V4", "polarity": "stationary"}, "refused": {"ref": false}}},
+    {"cell": "close_drop_redo_array_ui", "label": "s07_R", "fields": {"image": {"ref": ["s03", "s04", "s06"]}, "vcount": {"ref": 20}, "armed": {"ref": false}, "on": {"ref": ""}, "refused": {"ref": false, "ours": true, "owner": "V4: activation/command-close wave", "law": "V4", "polarity": "stationary"}}}
    ]
   },
   {"id": "close_drop_redo_inset_ui", "family": "inset", "variant": "inset", "measured": true, "rig": {"vertices": [[-1.399999976158142, -0.5, 0.0], [-0.3499999940395355, -1.0499999523162842, 0.0], [0.949999988079071, -0.699999988079071, 0.0], [1.25, 0.550000011920929, 0.0], [-0.44999998807907104, 1.149999976158142, 0.0], [2.200000047683716, -0.44999998807907104, 0.3499999940395355], [3.049999952316284, -0.15000000596046448, 0.3499999940395355], [2.549999952316284, 0.75, 0.3499999940395355]], "faces": [[0, 1, 2, 3, 4], [5, 6, 7]], "mode": "polygons", "selected": [0]},
@@ -412,8 +412,8 @@
     {"cell": "close_drop_redo_inset_ui", "label": "s03_drag", "fields": {"image": {"ref": []}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
     {"cell": "close_drop_redo_inset_ui", "label": "s04_UC", "fields": {"image": {"ref": ["s03"]}, "vcount": {"ref": 13}, "armed": {"ref": false}, "on": {"ref": ""}}},
     {"cell": "close_drop_redo_inset_ui", "label": "s05_Z", "fields": {"image": {"ref": ["s00", "s01"]}, "vcount": {"ref": 8}, "armed": {"ref": false}, "on": {"ref": ""}, "refused": {"ref": false}}},
-    {"cell": "close_drop_redo_inset_ui", "label": "s06_R", "fields": {"image": {"ref": ["s03", "s04"]}, "vcount": {"ref": 13}, "armed": {"ref": true, "ours": false, "owner": "S7r", "law": "6", "polarity": "untilS7r"}, "on": {"ref": "tool", "ours": "", "owner": "S7r", "law": "6", "polarity": "untilS7r"}, "attrs": {"ref": ["s03"], "ours": "unreadable", "owner": "S7r", "law": "6", "polarity": "untilS7r"}, "refused": {"ref": false}}},
-    {"cell": "close_drop_redo_inset_ui", "label": "s07_R", "fields": {"image": {"ref": ["s03", "s04", "s06"]}, "vcount": {"ref": 13}, "armed": {"ref": false}, "on": {"ref": ""}, "refused": {"ref": false, "ours": true, "owner": "S7r", "law": "6", "polarity": "untilS7r"}}}
+    {"cell": "close_drop_redo_inset_ui", "label": "s06_R", "fields": {"image": {"ref": ["s03", "s04"]}, "vcount": {"ref": 13}, "armed": {"ref": true, "ours": false, "owner": "V4: activation/command-close wave", "law": "V4", "polarity": "stationary"}, "on": {"ref": "tool", "ours": "", "owner": "V4: activation/command-close wave", "law": "V4", "polarity": "stationary"}, "attrs": {"ref": ["s03"], "ours": "unreadable", "owner": "V4: activation/command-close wave", "law": "V4", "polarity": "stationary"}, "refused": {"ref": false}}},
+    {"cell": "close_drop_redo_inset_ui", "label": "s07_R", "fields": {"image": {"ref": ["s03", "s04", "s06"]}, "vcount": {"ref": 13}, "armed": {"ref": false}, "on": {"ref": ""}, "refused": {"ref": false, "ours": true, "owner": "V4: activation/command-close wave", "law": "V4", "polarity": "stationary"}}}
    ]
   },
   {"id": "close_enter_inset_ui", "family": "inset", "variant": "inset", "measured": true, "rig": {"vertices": [[-1.399999976158142, -0.5, 0.0], [-0.3499999940395355, -1.0499999523162842, 0.0], [0.949999988079071, -0.699999988079071, 0.0], [1.25, 0.550000011920929, 0.0], [-0.44999998807907104, 1.149999976158142, 0.0], [2.200000047683716, -0.44999998807907104, 0.3499999940395355], [3.049999952316284, -0.15000000596046448, 0.3499999940395355], [2.549999952316284, 0.75, 0.3499999940395355]], "faces": [[0, 1, 2, 3, 4], [5, 6, 7]], "mode": "polygons", "selected": [0]},
@@ -2120,6 +2120,93 @@
     {"cell": "nav_redo_refire_inset_ui", "label": "s13_R", "fields": {"image": {"ref": ["s03", "s05", "s12"], "ours": ["s06", "s07", "s08", "s12"], "owner": "S7r", "law": "6", "polarity": "untilS7r"}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "move"}, "refused": {"ref": false}}},
     {"cell": "nav_redo_refire_inset_ui", "label": "s14_R", "fields": {"image": {"ref": ["s03", "s05", "s12", "s13"], "ours": ["s06", "s07", "s08", "s12", "s13"], "owner": "S7r", "law": "6", "polarity": "untilS7r"}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "move"}, "refused": {"ref": false, "ours": true, "owner": "V4: activation/command-close wave", "law": "V4", "polarity": "stationary"}}},
     {"cell": "nav_redo_refire_inset_ui", "label": "s15_R", "fields": {"image": {"ref": ["s03", "s05", "s12", "s13", "s14"], "ours": ["s06", "s07", "s08", "s12", "s13", "s14"], "owner": "S7r", "law": "6", "polarity": "untilS7r"}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "move"}, "refused": {"ref": true}}}
+   ]
+  },
+  {"id": "nav_redo_refire_two_inset", "family": "inset", "variant": "inset", "measured": true, "rig": {"vertices": [[-1.399999976158142, -0.5, 0.0], [-0.3499999940395355, -1.0499999523162842, 0.0], [0.949999988079071, -0.699999988079071, 0.0], [1.25, 0.550000011920929, 0.0], [-0.44999998807907104, 1.149999976158142, 0.0], [2.200000047683716, -0.44999998807907104, 0.3499999940395355], [3.049999952316284, -0.15000000596046448, 0.3499999940395355], [2.549999952316284, 0.75, 0.3499999940395355]], "faces": [[0, 1, 2, 3, 4], [5, 6, 7]], "mode": "polygons", "selected": [0]},
+   "steps": [
+    {"cell": "nav_redo_refire_two_inset", "label": "s01_arm", "op": "arm", "door": "script"},
+    {"cell": "nav_redo_refire_two_inset", "label": "s02_drag", "op": "haul", "button": "left", "press": [430, 561], "delta": [14, 0]},
+    {"cell": "nav_redo_refire_two_inset", "label": "s03_drag", "op": "haul", "button": "left", "press": [430, 561], "delta": [14, 0]},
+    {"cell": "nav_redo_refire_two_inset", "label": "s04_Z", "op": "key", "key": "Z"},
+    {"cell": "nav_redo_refire_two_inset", "label": "s05_R", "op": "key", "key": "R"},
+    {"cell": "nav_redo_refire_two_inset", "label": "s06_drag", "op": "haul", "button": "left", "press": [430, 561], "delta": [28, 0]},
+    {"cell": "nav_redo_refire_two_inset", "label": "s07_drag", "op": "haul", "button": "left", "press": [430, 561], "delta": [14, 0]},
+    {"cell": "nav_redo_refire_two_inset", "label": "s08_W", "op": "key", "key": "W"},
+    {"cell": "nav_redo_refire_two_inset", "label": "s09_Z", "op": "key", "key": "Z"},
+    {"cell": "nav_redo_refire_two_inset", "label": "s10_Z", "op": "key", "key": "Z"},
+    {"cell": "nav_redo_refire_two_inset", "label": "s11_Z", "op": "key", "key": "Z"},
+    {"cell": "nav_redo_refire_two_inset", "label": "s12_R", "op": "key", "key": "R"},
+    {"cell": "nav_redo_refire_two_inset", "label": "s13_R", "op": "key", "key": "R"}
+   ],
+   "points": [
+    {"cell": "nav_redo_refire_two_inset", "label": "s00_prearm", "fields": {"image": {"ref": []}, "vcount": {"ref": 8}, "armed": {"ref": false}, "on": {"ref": ""}}},
+    {"cell": "nav_redo_refire_two_inset", "label": "s01_arm", "fields": {"image": {"ref": ["s00"]}, "vcount": {"ref": 8}, "armed": {"ref": false}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "nav_redo_refire_two_inset", "label": "s02_drag", "fields": {"image": {"ref": []}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}, "origin": {"ref": "begin"}}},
+    {"cell": "nav_redo_refire_two_inset", "label": "s03_drag", "fields": {"image": {"ref": []}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "nav_redo_refire_two_inset", "label": "s04_Z", "fields": {"image": {"ref": ["s02"]}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s02"]}, "refused": {"ref": false}}},
+    {"cell": "nav_redo_refire_two_inset", "label": "s05_R", "fields": {"image": {"ref": ["s03"]}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s03"]}, "refused": {"ref": false}}},
+    {"cell": "nav_redo_refire_two_inset", "label": "s06_drag", "fields": {"image": {"ref": []}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "nav_redo_refire_two_inset", "label": "s07_drag", "fields": {"image": {"ref": []}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "nav_redo_refire_two_inset", "label": "s08_W", "fields": {"image": {"ref": ["s07"]}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "move"}}},
+    {"cell": "nav_redo_refire_two_inset", "label": "s09_Z", "fields": {"image": {"ref": ["s07", "s08"]}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s07"]}, "refused": {"ref": false}}},
+    {"cell": "nav_redo_refire_two_inset", "label": "s10_Z", "fields": {"image": {"ref": ["s00", "s01"]}, "vcount": {"ref": 8}, "armed": {"ref": false}, "on": {"ref": "tool"}, "attrs": {"ref": ["s07", "s09"]}, "refused": {"ref": false}}},
+    {"cell": "nav_redo_refire_two_inset", "label": "s11_Z", "fields": {"image": {"ref": ["s00", "s01", "s10"]}, "vcount": {"ref": 8}, "armed": {"ref": false}, "on": {"ref": ""}, "refused": {"ref": false}}},
+    {"cell": "nav_redo_refire_two_inset", "label": "s12_R", "fields": {"image": {"ref": ["s00", "s01", "s10", "s11"]}, "vcount": {"ref": 8}, "armed": {"ref": false}, "on": {"ref": "tool"}, "attrs": {"ref": ["s07", "s09", "s10"]}, "refused": {"ref": false}}},
+    {"cell": "nav_redo_refire_two_inset", "label": "s13_R", "fields": {"image": {"ref": ["s03", "s05"], "ours": ["s07", "s08", "s09"], "owner": "S7r", "law": "6", "polarity": "untilS7r"}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s07", "s09", "s10", "s12"]}, "refused": {"ref": false}}}
+   ]
+  },
+  {"id": "nav_redo_refire_z_ebevel_ui", "family": "autoact", "variant": "edge_bevel", "measured": true, "rig": {"vertices": [[-0.3499999940395355, 0.25, 0.05000000074505806], [1.4500000476837158, -0.3499999940395355, -0.25], [0.44999998807907104, 1.399999976158142, 0.44999998807907104], [-1.2000000476837158, -0.05000000074505806, 1.149999976158142], [2.450000047683716, -0.800000011920929, 1.649999976158142]], "faces": [[0, 1, 2], [0, 2, 3]], "mode": "edges", "selected": [[0, 2]]},
+   "steps": [
+    {"cell": "nav_redo_refire_z_ebevel_ui", "label": "s01_armui", "op": "arm", "door": "ui"},
+    {"cell": "nav_redo_refire_z_ebevel_ui", "label": "s02_drag", "op": "haul", "button": "left", "press": [596, 614], "delta": [12, 0]},
+    {"cell": "nav_redo_refire_z_ebevel_ui", "label": "s03_drag", "op": "haul", "button": "left", "press": [596, 614], "delta": [12, 0]},
+    {"cell": "nav_redo_refire_z_ebevel_ui", "label": "s04_Z", "op": "key", "key": "Z"},
+    {"cell": "nav_redo_refire_z_ebevel_ui", "label": "s05_R", "op": "key", "key": "R"},
+    {"cell": "nav_redo_refire_z_ebevel_ui", "label": "s06_drag", "op": "haul", "button": "left", "press": [596, 614], "delta": [24, 0]},
+    {"cell": "nav_redo_refire_z_ebevel_ui", "label": "s07_Z", "op": "key", "key": "Z"},
+    {"cell": "nav_redo_refire_z_ebevel_ui", "label": "s08_R", "op": "key", "key": "R"},
+    {"cell": "nav_redo_refire_z_ebevel_ui", "label": "s09_Z", "op": "key", "key": "Z"},
+    {"cell": "nav_redo_refire_z_ebevel_ui", "label": "s10_Z", "op": "key", "key": "Z"}
+   ],
+   "points": [
+    {"cell": "nav_redo_refire_z_ebevel_ui", "label": "s00_prearm", "fields": {"image": {"ref": []}, "vcount": {"ref": 5}, "armed": {"ref": false}, "on": {"ref": ""}}},
+    {"cell": "nav_redo_refire_z_ebevel_ui", "label": "s01_armui", "fields": {"image": {"ref": ["s00"]}, "vcount": {"ref": 5}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "nav_redo_refire_z_ebevel_ui", "label": "s02_drag", "fields": {"image": {"ref": []}, "vcount": {"ref": 7}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "nav_redo_refire_z_ebevel_ui", "label": "s03_drag", "fields": {"image": {"ref": []}, "vcount": {"ref": 7}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "nav_redo_refire_z_ebevel_ui", "label": "s04_Z", "fields": {"image": {"ref": ["s02"]}, "vcount": {"ref": 7}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s02"]}, "refused": {"ref": false}}},
+    {"cell": "nav_redo_refire_z_ebevel_ui", "label": "s05_R", "fields": {"image": {"ref": ["s03"]}, "vcount": {"ref": 7}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s03"]}, "refused": {"ref": false}}},
+    {"cell": "nav_redo_refire_z_ebevel_ui", "label": "s06_drag", "fields": {"image": {"ref": []}, "vcount": {"ref": 7}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "nav_redo_refire_z_ebevel_ui", "label": "s07_Z", "fields": {"image": {"ref": ["s03", "s05"]}, "vcount": {"ref": 7}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s03", "s05"]}, "refused": {"ref": false}}},
+    {"cell": "nav_redo_refire_z_ebevel_ui", "label": "s08_R", "fields": {"image": {"ref": ["s03", "s05", "s07"], "ours": ["s06"], "owner": "S7r", "law": "6", "polarity": "untilS7r"}, "vcount": {"ref": 7}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s06"]}, "refused": {"ref": false}}},
+    {"cell": "nav_redo_refire_z_ebevel_ui", "label": "s09_Z", "fields": {"image": {"ref": ["s03", "s05", "s07", "s08"], "ours": ["s03", "s05", "s07"], "owner": "S7r", "law": "6", "polarity": "untilS7r"}, "vcount": {"ref": 7}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s03", "s05", "s07"]}, "refused": {"ref": false}}},
+    {"cell": "nav_redo_refire_z_ebevel_ui", "label": "s10_Z", "fields": {"image": {"ref": ["s02", "s04"]}, "vcount": {"ref": 7}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s02", "s04"]}, "refused": {"ref": false}}}
+   ]
+  },
+  {"id": "nav_redo_refire_z_inset", "family": "inset", "variant": "inset", "measured": true, "rig": {"vertices": [[-1.399999976158142, -0.5, 0.0], [-0.3499999940395355, -1.0499999523162842, 0.0], [0.949999988079071, -0.699999988079071, 0.0], [1.25, 0.550000011920929, 0.0], [-0.44999998807907104, 1.149999976158142, 0.0], [2.200000047683716, -0.44999998807907104, 0.3499999940395355], [3.049999952316284, -0.15000000596046448, 0.3499999940395355], [2.549999952316284, 0.75, 0.3499999940395355]], "faces": [[0, 1, 2, 3, 4], [5, 6, 7]], "mode": "polygons", "selected": [0]},
+   "steps": [
+    {"cell": "nav_redo_refire_z_inset", "label": "s01_arm", "op": "arm", "door": "script"},
+    {"cell": "nav_redo_refire_z_inset", "label": "s02_drag", "op": "haul", "button": "left", "press": [430, 561], "delta": [14, 0]},
+    {"cell": "nav_redo_refire_z_inset", "label": "s03_drag", "op": "haul", "button": "left", "press": [430, 561], "delta": [14, 0]},
+    {"cell": "nav_redo_refire_z_inset", "label": "s04_Z", "op": "key", "key": "Z"},
+    {"cell": "nav_redo_refire_z_inset", "label": "s05_R", "op": "key", "key": "R"},
+    {"cell": "nav_redo_refire_z_inset", "label": "s06_drag", "op": "haul", "button": "left", "press": [430, 561], "delta": [28, 0]},
+    {"cell": "nav_redo_refire_z_inset", "label": "s07_Z", "op": "key", "key": "Z"},
+    {"cell": "nav_redo_refire_z_inset", "label": "s08_R", "op": "key", "key": "R"},
+    {"cell": "nav_redo_refire_z_inset", "label": "s09_Z", "op": "key", "key": "Z"},
+    {"cell": "nav_redo_refire_z_inset", "label": "s10_Z", "op": "key", "key": "Z"}
+   ],
+   "points": [
+    {"cell": "nav_redo_refire_z_inset", "label": "s00_prearm", "fields": {"image": {"ref": []}, "vcount": {"ref": 8}, "armed": {"ref": false}, "on": {"ref": ""}}},
+    {"cell": "nav_redo_refire_z_inset", "label": "s01_arm", "fields": {"image": {"ref": ["s00"]}, "vcount": {"ref": 8}, "armed": {"ref": false}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "nav_redo_refire_z_inset", "label": "s02_drag", "fields": {"image": {"ref": []}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}, "origin": {"ref": "begin"}}},
+    {"cell": "nav_redo_refire_z_inset", "label": "s03_drag", "fields": {"image": {"ref": []}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "nav_redo_refire_z_inset", "label": "s04_Z", "fields": {"image": {"ref": ["s02"]}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s02"]}, "refused": {"ref": false}}},
+    {"cell": "nav_redo_refire_z_inset", "label": "s05_R", "fields": {"image": {"ref": ["s03"]}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s03"]}, "refused": {"ref": false}}},
+    {"cell": "nav_redo_refire_z_inset", "label": "s06_drag", "fields": {"image": {"ref": []}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "nav_redo_refire_z_inset", "label": "s07_Z", "fields": {"image": {"ref": ["s03", "s05"]}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s03", "s05"]}, "refused": {"ref": false}}},
+    {"cell": "nav_redo_refire_z_inset", "label": "s08_R", "fields": {"image": {"ref": ["s03", "s05", "s07"], "ours": ["s06"], "owner": "S7r", "law": "6", "polarity": "untilS7r"}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s06"]}, "refused": {"ref": false}}},
+    {"cell": "nav_redo_refire_z_inset", "label": "s09_Z", "fields": {"image": {"ref": ["s03", "s05", "s07", "s08"], "ours": ["s03", "s05", "s07"], "owner": "S7r", "law": "6", "polarity": "untilS7r"}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s03", "s05", "s07"]}, "refused": {"ref": false}}},
+    {"cell": "nav_redo_refire_z_inset", "label": "s10_Z", "fields": {"image": {"ref": ["s02", "s04"]}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s02", "s04"]}, "refused": {"ref": false}}}
    ]
   },
   {"id": "nav_redo_restart_eextrude", "family": "autoact", "variant": "edge_extrude", "measured": true, "rig": {"vertices": [[-0.3499999940395355, 0.25, 0.05000000074505806], [1.4500000476837158, -0.3499999940395355, -0.25], [0.44999998807907104, 1.399999976158142, 0.44999998807907104], [-1.2000000476837158, -0.05000000074505806, 1.149999976158142], [2.450000047683716, -0.800000011920929, 1.649999976158142]], "faces": [[0, 1, 2], [0, 2, 3]], "mode": "edges", "selected": [[0, 2]]},
@@ -3901,6 +3988,81 @@
     {"cell": "rebegin_undo_cmd_inset_ui", "label": "s10_Z", "fields": {"image": {"ref": ["s00", "s01"]}, "vcount": {"ref": 8}, "armed": {"ref": false}, "on": {"ref": ""}, "refused": {"ref": false}}}
    ]
   },
+  {"id": "refire_redo_pextrude", "family": "inset", "variant": "poly_extrude", "measured": true, "rig": {"vertices": [[-1.399999976158142, -0.5, 0.0], [-0.3499999940395355, -1.0499999523162842, 0.0], [0.949999988079071, -0.699999988079071, 0.0], [1.25, 0.550000011920929, 0.0], [-0.44999998807907104, 1.149999976158142, 0.0], [2.200000047683716, -0.44999998807907104, 0.3499999940395355], [3.049999952316284, -0.15000000596046448, 0.3499999940395355], [2.549999952316284, 0.75, 0.3499999940395355]], "faces": [[0, 1, 2, 3, 4], [5, 6, 7]], "mode": "polygons", "selected": [0]},
+   "steps": [
+    {"cell": "refire_redo_pextrude", "label": "s01_arm", "op": "arm", "door": "script"},
+    {"cell": "refire_redo_pextrude", "label": "s02_drag", "op": "haul", "button": "left", "press": [640, 170], "delta": [40, -30], "aim": "free"},
+    {"cell": "refire_redo_pextrude", "label": "s03_drag", "op": "haul", "button": "left", "press": [640, 170], "delta": [40, -30], "aim": "free"},
+    {"cell": "refire_redo_pextrude", "label": "s04_Z", "op": "key", "key": "Z"},
+    {"cell": "refire_redo_pextrude", "label": "s05_R", "op": "key", "key": "R"},
+    {"cell": "refire_redo_pextrude", "label": "s06_drag", "op": "haul", "button": "left", "press": [640, 170], "delta": [80, -60], "aim": "free"},
+    {"cell": "refire_redo_pextrude", "label": "s07_Z", "op": "key", "key": "Z"},
+    {"cell": "refire_redo_pextrude", "label": "s08_R", "op": "key", "key": "R"}
+   ],
+   "points": [
+    {"cell": "refire_redo_pextrude", "label": "s00_prearm", "fields": {"image": {"ref": []}, "vcount": {"ref": 8}, "armed": {"ref": false}, "on": {"ref": ""}}},
+    {"cell": "refire_redo_pextrude", "label": "s01_arm", "fields": {"image": {"ref": ["s00"]}, "vcount": {"ref": 8}, "armed": {"ref": false}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "refire_redo_pextrude", "label": "s02_drag", "fields": {"image": {"ref": []}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}, "origin": {"ref": "begin"}}},
+    {"cell": "refire_redo_pextrude", "label": "s03_drag", "fields": {"image": {"ref": []}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "refire_redo_pextrude", "label": "s04_Z", "fields": {"image": {"ref": ["s02"]}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s02"]}, "refused": {"ref": false}}},
+    {"cell": "refire_redo_pextrude", "label": "s05_R", "fields": {"image": {"ref": ["s03"]}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s03"]}, "refused": {"ref": false}}},
+    {"cell": "refire_redo_pextrude", "label": "s06_drag", "fields": {"image": {"ref": []}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "refire_redo_pextrude", "label": "s07_Z", "fields": {"image": {"ref": ["s03", "s05"]}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s03", "s05"]}, "refused": {"ref": false}}},
+    {"cell": "refire_redo_pextrude", "label": "s08_R", "fields": {"image": {"ref": ["s06"]}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s06"]}, "refused": {"ref": false}}}
+   ]
+  },
+  {"id": "refire_redo_restart_pextrude", "family": "inset", "variant": "poly_extrude", "measured": true, "rig": {"vertices": [[-1.399999976158142, -0.5, 0.0], [-0.3499999940395355, -1.0499999523162842, 0.0], [0.949999988079071, -0.699999988079071, 0.0], [1.25, 0.550000011920929, 0.0], [-0.44999998807907104, 1.149999976158142, 0.0], [2.200000047683716, -0.44999998807907104, 0.3499999940395355], [3.049999952316284, -0.15000000596046448, 0.3499999940395355], [2.549999952316284, 0.75, 0.3499999940395355]], "faces": [[0, 1, 2, 3, 4], [5, 6, 7]], "mode": "polygons", "selected": [0]},
+   "steps": [
+    {"cell": "refire_redo_restart_pextrude", "label": "s01_arm", "op": "arm", "door": "script"},
+    {"cell": "refire_redo_restart_pextrude", "label": "s02_drag", "op": "haul", "button": "left", "press": [640, 170], "delta": [40, -30], "aim": "free"},
+    {"cell": "refire_redo_restart_pextrude", "label": "s03_drag", "op": "haul", "button": "left", "press": [640, 170], "delta": [40, -30], "aim": "free"},
+    {"cell": "refire_redo_restart_pextrude", "label": "s04_Z", "op": "key", "key": "Z"},
+    {"cell": "refire_redo_restart_pextrude", "label": "s05_R", "op": "key", "key": "R"},
+    {"cell": "refire_redo_restart_pextrude", "label": "s06_M", "op": "haul", "button": "middle", "press": [640, 170], "delta": [40, -30], "aim": "free"},
+    {"cell": "refire_redo_restart_pextrude", "label": "s07_drag", "op": "haul", "button": "left", "press": [640, 170], "delta": [80, -60], "aim": "free"},
+    {"cell": "refire_redo_restart_pextrude", "label": "s08_Z", "op": "key", "key": "Z"},
+    {"cell": "refire_redo_restart_pextrude", "label": "s09_R", "op": "key", "key": "R"}
+   ],
+   "points": [
+    {"cell": "refire_redo_restart_pextrude", "label": "s00_prearm", "fields": {"image": {"ref": []}, "vcount": {"ref": 8}, "armed": {"ref": false}, "on": {"ref": ""}}},
+    {"cell": "refire_redo_restart_pextrude", "label": "s01_arm", "fields": {"image": {"ref": ["s00"]}, "vcount": {"ref": 8}, "armed": {"ref": false}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "refire_redo_restart_pextrude", "label": "s02_drag", "fields": {"image": {"ref": []}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}, "origin": {"ref": "begin"}}},
+    {"cell": "refire_redo_restart_pextrude", "label": "s03_drag", "fields": {"image": {"ref": []}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "refire_redo_restart_pextrude", "label": "s04_Z", "fields": {"image": {"ref": ["s02"]}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s02"]}, "refused": {"ref": false}}},
+    {"cell": "refire_redo_restart_pextrude", "label": "s05_R", "fields": {"image": {"ref": ["s03"]}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s03"]}, "refused": {"ref": false}}},
+    {"cell": "refire_redo_restart_pextrude", "label": "s06_M", "fields": {"image": {"ref": []}, "vcount": {"ref": 23, "ours": 18, "owner": "none: outside the model", "law": "-", "polarity": "stationary"}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": [], "ours": ["s02", "s04"], "owner": "none: outside the model", "law": "-", "polarity": "stationary"}, "origin": {"ref": "restart"}}},
+    {"cell": "refire_redo_restart_pextrude", "label": "s07_drag", "fields": {"image": {"ref": []}, "vcount": {"ref": 23, "ours": 18, "owner": "none: outside the model", "law": "-", "polarity": "stationary"}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "refire_redo_restart_pextrude", "label": "s08_Z", "fields": {"image": {"ref": ["s06"]}, "vcount": {"ref": 23, "ours": 18, "owner": "none: outside the model", "law": "-", "polarity": "stationary"}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s06"], "ours": ["s02", "s04", "s06"], "owner": "none: outside the model", "law": "-", "polarity": "stationary"}, "refused": {"ref": false}}},
+    {"cell": "refire_redo_restart_pextrude", "label": "s09_R", "fields": {"image": {"ref": ["s07"]}, "vcount": {"ref": 23, "ours": 18, "owner": "none: outside the model", "law": "-", "polarity": "stationary"}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s07"]}, "refused": {"ref": false}}}
+   ]
+  },
+  {"id": "refire_redo_z_refire_inset", "family": "inset", "variant": "inset", "measured": true, "rig": {"vertices": [[-1.399999976158142, -0.5, 0.0], [-0.3499999940395355, -1.0499999523162842, 0.0], [0.949999988079071, -0.699999988079071, 0.0], [1.25, 0.550000011920929, 0.0], [-0.44999998807907104, 1.149999976158142, 0.0], [2.200000047683716, -0.44999998807907104, 0.3499999940395355], [3.049999952316284, -0.15000000596046448, 0.3499999940395355], [2.549999952316284, 0.75, 0.3499999940395355]], "faces": [[0, 1, 2, 3, 4], [5, 6, 7]], "mode": "polygons", "selected": [0]},
+   "steps": [
+    {"cell": "refire_redo_z_refire_inset", "label": "s01_arm", "op": "arm", "door": "script"},
+    {"cell": "refire_redo_z_refire_inset", "label": "s02_drag", "op": "haul", "button": "left", "press": [430, 561], "delta": [14, 0]},
+    {"cell": "refire_redo_z_refire_inset", "label": "s03_drag", "op": "haul", "button": "left", "press": [430, 561], "delta": [14, 0]},
+    {"cell": "refire_redo_z_refire_inset", "label": "s04_Z", "op": "key", "key": "Z"},
+    {"cell": "refire_redo_z_refire_inset", "label": "s05_R", "op": "key", "key": "R"},
+    {"cell": "refire_redo_z_refire_inset", "label": "s06_drag", "op": "haul", "button": "left", "press": [430, 561], "delta": [28, 0]},
+    {"cell": "refire_redo_z_refire_inset", "label": "s07_Z", "op": "key", "key": "Z"},
+    {"cell": "refire_redo_z_refire_inset", "label": "s08_drag", "op": "haul", "button": "left", "press": [430, 561], "delta": [42, 0]},
+    {"cell": "refire_redo_z_refire_inset", "label": "s09_Z", "op": "key", "key": "Z"},
+    {"cell": "refire_redo_z_refire_inset", "label": "s10_R", "op": "key", "key": "R"}
+   ],
+   "points": [
+    {"cell": "refire_redo_z_refire_inset", "label": "s00_prearm", "fields": {"image": {"ref": []}, "vcount": {"ref": 8}, "armed": {"ref": false}, "on": {"ref": ""}}},
+    {"cell": "refire_redo_z_refire_inset", "label": "s01_arm", "fields": {"image": {"ref": ["s00"]}, "vcount": {"ref": 8}, "armed": {"ref": false}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "refire_redo_z_refire_inset", "label": "s02_drag", "fields": {"image": {"ref": []}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}, "origin": {"ref": "begin"}}},
+    {"cell": "refire_redo_z_refire_inset", "label": "s03_drag", "fields": {"image": {"ref": []}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "refire_redo_z_refire_inset", "label": "s04_Z", "fields": {"image": {"ref": ["s02"]}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s02"]}, "refused": {"ref": false}}},
+    {"cell": "refire_redo_z_refire_inset", "label": "s05_R", "fields": {"image": {"ref": ["s03"]}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s03"]}, "refused": {"ref": false}}},
+    {"cell": "refire_redo_z_refire_inset", "label": "s06_drag", "fields": {"image": {"ref": []}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "refire_redo_z_refire_inset", "label": "s07_Z", "fields": {"image": {"ref": ["s03", "s05"]}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s03", "s05"]}, "refused": {"ref": false}}},
+    {"cell": "refire_redo_z_refire_inset", "label": "s08_drag", "fields": {"image": {"ref": []}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "refire_redo_z_refire_inset", "label": "s09_Z", "fields": {"image": {"ref": ["s03", "s05", "s07"]}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s03", "s05", "s07"]}, "refused": {"ref": false}}},
+    {"cell": "refire_redo_z_refire_inset", "label": "s10_R", "fields": {"image": {"ref": ["s08"]}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s08"]}, "refused": {"ref": false}}}
+   ]
+  },
   {"id": "reset_inset", "family": "inset", "variant": "inset", "measured": true, "rig": {"vertices": [[-1.399999976158142, -0.5, 0.0], [-0.3499999940395355, -1.0499999523162842, 0.0], [0.949999988079071, -0.699999988079071, 0.0], [1.25, 0.550000011920929, 0.0], [-0.44999998807907104, 1.149999976158142, 0.0], [2.200000047683716, -0.44999998807907104, 0.3499999940395355], [3.049999952316284, -0.15000000596046448, 0.3499999940395355], [2.549999952316284, 0.75, 0.3499999940395355]], "faces": [[0, 1, 2, 3, 4], [5, 6, 7]], "mode": "polygons", "selected": [0]},
    "steps": [
     {"cell": "reset_inset", "label": "s01_arm", "op": "arm", "door": "script"},
@@ -3967,6 +4129,33 @@
     {"cell": "reset_inset_ui", "label": "s12_R", "fields": {"image": {"ref": ["s05", "s06", "s07", "s11"]}, "vcount": {"ref": 13, "ours": 18, "owner": "backlog: reset", "law": "reset", "polarity": "stationary"}, "armed": {"ref": true}, "on": {"ref": "move"}, "refused": {"ref": false}}},
     {"cell": "reset_inset_ui", "label": "s13_R", "fields": {"image": {"ref": ["s05", "s06", "s07", "s11", "s12"]}, "vcount": {"ref": 13, "ours": 18, "owner": "backlog: reset", "law": "reset", "polarity": "stationary"}, "armed": {"ref": true}, "on": {"ref": "move"}, "refused": {"ref": false, "ours": true, "owner": "backlog: reset", "law": "reset", "polarity": "stationary"}}},
     {"cell": "reset_inset_ui", "label": "s14_R", "fields": {"image": {"ref": ["s05", "s06", "s07", "s11", "s12", "s13"]}, "vcount": {"ref": 13, "ours": 18, "owner": "backlog: reset", "law": "reset", "polarity": "stationary"}, "armed": {"ref": true}, "on": {"ref": "move"}, "refused": {"ref": true}}}
+   ]
+  },
+  {"id": "restart_redo_refire_inset", "family": "inset", "variant": "inset", "measured": true, "rig": {"vertices": [[-1.399999976158142, -0.5, 0.0], [-0.3499999940395355, -1.0499999523162842, 0.0], [0.949999988079071, -0.699999988079071, 0.0], [1.25, 0.550000011920929, 0.0], [-0.44999998807907104, 1.149999976158142, 0.0], [2.200000047683716, -0.44999998807907104, 0.3499999940395355], [3.049999952316284, -0.15000000596046448, 0.3499999940395355], [2.549999952316284, 0.75, 0.3499999940395355]], "faces": [[0, 1, 2, 3, 4], [5, 6, 7]], "mode": "polygons", "selected": [0]},
+   "steps": [
+    {"cell": "restart_redo_refire_inset", "label": "s01_arm", "op": "arm", "door": "script"},
+    {"cell": "restart_redo_refire_inset", "label": "s02_drag", "op": "haul", "button": "left", "press": [430, 561], "delta": [14, 0]},
+    {"cell": "restart_redo_refire_inset", "label": "s03_Z", "op": "key", "key": "Z"},
+    {"cell": "restart_redo_refire_inset", "label": "s04_R", "op": "key", "key": "R"},
+    {"cell": "restart_redo_refire_inset", "label": "s05_drag", "op": "haul", "button": "left", "press": [430, 561], "delta": [14, 0]},
+    {"cell": "restart_redo_refire_inset", "label": "s06_Z", "op": "key", "key": "Z"},
+    {"cell": "restart_redo_refire_inset", "label": "s07_R", "op": "key", "key": "R"},
+    {"cell": "restart_redo_refire_inset", "label": "s08_drag", "op": "haul", "button": "left", "press": [430, 561], "delta": [28, 0]},
+    {"cell": "restart_redo_refire_inset", "label": "s09_Z", "op": "key", "key": "Z"},
+    {"cell": "restart_redo_refire_inset", "label": "s10_R", "op": "key", "key": "R"}
+   ],
+   "points": [
+    {"cell": "restart_redo_refire_inset", "label": "s00_prearm", "fields": {"image": {"ref": []}, "vcount": {"ref": 8}, "armed": {"ref": false}, "on": {"ref": ""}}},
+    {"cell": "restart_redo_refire_inset", "label": "s01_arm", "fields": {"image": {"ref": ["s00"]}, "vcount": {"ref": 8}, "armed": {"ref": false}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "restart_redo_refire_inset", "label": "s02_drag", "fields": {"image": {"ref": []}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}, "origin": {"ref": "begin"}}},
+    {"cell": "restart_redo_refire_inset", "label": "s03_Z", "fields": {"image": {"ref": ["s00", "s01"]}, "vcount": {"ref": 8}, "armed": {"ref": false}, "on": {"ref": "tool"}, "attrs": {"ref": ["s01"]}, "refused": {"ref": false}}},
+    {"cell": "restart_redo_refire_inset", "label": "s04_R", "fields": {"image": {"ref": ["s02"]}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s02"]}, "refused": {"ref": false}}},
+    {"cell": "restart_redo_refire_inset", "label": "s05_drag", "fields": {"image": {"ref": []}, "vcount": {"ref": 18}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}, "origin": {"ref": "restart"}}},
+    {"cell": "restart_redo_refire_inset", "label": "s06_Z", "fields": {"image": {"ref": ["s02", "s04"]}, "vcount": {"ref": 13}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s02", "s04"]}, "refused": {"ref": false}}},
+    {"cell": "restart_redo_refire_inset", "label": "s07_R", "fields": {"image": {"ref": ["s05"]}, "vcount": {"ref": 18}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s05"]}, "refused": {"ref": false}}},
+    {"cell": "restart_redo_refire_inset", "label": "s08_drag", "fields": {"image": {"ref": []}, "vcount": {"ref": 18}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
+    {"cell": "restart_redo_refire_inset", "label": "s09_Z", "fields": {"image": {"ref": ["s05", "s07"]}, "vcount": {"ref": 18}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s05", "s07"]}, "refused": {"ref": false}}},
+    {"cell": "restart_redo_refire_inset", "label": "s10_R", "fields": {"image": {"ref": ["s05", "s07", "s09"], "ours": ["s08"], "owner": "S7r", "law": "6", "polarity": "untilS7r"}, "vcount": {"ref": 18}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s08"]}, "refused": {"ref": false}}}
    ]
   },
   {"id": "smooth_attrs_script", "family": "inset", "variant": "smooth", "measured": true, "rig": {"vertices": [[-0.699999988079071, -0.20000000298023224, 0.0], [0.0, -0.10000000149011612, 0.10000000149011612], [0.800000011920929, 0.0, -0.20000000298023224], [-0.6000000238418579, 0.699999988079071, 0.15000000596046448], [0.10000000149011612, 0.800000011920929, 0.25], [0.8999999761581421, 0.6000000238418579, -0.05000000074505806]], "faces": [[0, 1, 4, 3], [1, 2, 5, 4]], "mode": "polygons", "selected": [0]},
