@@ -247,3 +247,24 @@ unittest {
         format("an undo resync must keep the stored Symmetry pair [0.2, 0.8], got %s", after));
     cmd("tool.set mesh.loopSliceTool off");
 }
+
+// ---------------------------------------------------------------------------
+// E. Symmetry, odd Count: the middle slice is pinned at 0.5 — a write to it
+//    moves nothing, a write to an outer slice moves its mirror (captured S2).
+// ---------------------------------------------------------------------------
+unittest {
+    resetCube();
+    cmd("tool.set mesh.loopSliceTool");
+    setList("symmetry", [0.5, 0.5, 0.5]);
+    cmd("tool.attr mesh.loopSliceTool current 0");
+    cmd("tool.attr mesh.loopSliceTool position 0.2");
+    auto outer = positions();
+    assert(same(outer, [0.2, 0.5, 0.8]),
+        format("E rig: an outer write must move its mirror: want [0.2, 0.5, 0.8], got %s", outer));
+    cmd("tool.attr mesh.loopSliceTool current 1");
+    cmd("tool.attr mesh.loopSliceTool position 0.3");
+    auto after = positions();
+    assert(same(after, [0.2, 0.5, 0.8]),
+        format("Symmetry middle slice moved: want it pinned at 0.5, got %s", after));
+    cmd("tool.set mesh.loopSliceTool off");
+}

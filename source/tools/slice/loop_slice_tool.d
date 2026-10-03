@@ -1309,11 +1309,14 @@ public:
                     positions_[current_] = p;
                 break;
             case Mode.Symmetry:
-                if (current_ >= 0 && cast(size_t)current_ < positions_.length) {
+                // Slices are mirror pairs; an odd Count's middle slice is its
+                // own mirror and stays pinned at 0.5 (captured, toolcard
+                // `loop_slice_position_memory` S2).
+                immutable size_t mirror = cast(size_t)count_ - 1 - cast(size_t)current_;
+                if (cast(size_t)current_ < positions_.length && mirror < positions_.length
+                        && mirror != cast(size_t)current_) {
                     positions_[current_] = p;
-                    size_t mirror = cast(size_t)count_ - 1 - cast(size_t)current_;
-                    if (mirror != cast(size_t)current_ && mirror < positions_.length)
-                        positions_[mirror] = 1.0f - p;
+                    positions_[mirror] = 1.0f - p;
                 }
                 break;
         }
