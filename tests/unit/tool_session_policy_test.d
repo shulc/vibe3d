@@ -1584,7 +1584,6 @@ unittest { // (4j)
 // Pin (form item 1): a tool resets nothing at activation unless its policy says so.
 static assert(ToolSessionPolicy.init.activationResetAttrs.length == 0);
 
-
 // ---------------------------------------------------------------------------
 // (4k) Task 9300 (topology-redo wave S7r, model doc §R13 M-ri): the redo image a redo pins is
 // ONE pair of session data (`pinnedRedoImage_`, `pinnedOperation_`), written at ONE settle
