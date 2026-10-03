@@ -1110,6 +1110,29 @@ unittest { // The predecessor restore takes the tool's NEWEST remembered values,
                restored.shift));
 }
 
+unittest { // "Newest" is the most recent WRITE: an update of an older session's entry wins.
+    Mesh m = makeCube();
+    auto h = new CommandHistory;
+    Tool active;
+    auto s = new EditSession(() => active, h, () { active = null; });
+    auto first = new OwnedPolyAttrTool;
+    first.shift = 17;
+    active = first;
+    s.noteArm("t.poly", 5);
+    auto newer = new OwnedPolyAttrTool;
+    newer.shift = 29;
+    active = newer;
+    s.noteArm("t.poly", 7);
+    first.shift = 41;               // session 5 writes again, after session 7
+    active = first;
+    s.noteArm("t.poly", 5);
+
+    auto restored = undoToOwnedPoly(s, h, active, m, 5);
+    assert(restored.shift == 41,
+        format("predecessor restore did not take the most recent write: restored %s, expected 41 "
+               ~ "(an updated entry moves to the end)", restored.shift));
+}
+
 unittest { // Law 4 seed (9020 F): a REFUSED drop undo leaves the remembered image as it was.
     static final class RefusingPolyRow : ToolActivationCommand {
         bool refuse = true;
