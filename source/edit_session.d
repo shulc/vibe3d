@@ -1030,8 +1030,7 @@ private struct ToolSession {
         // step pins the image it left for the operation's later refires, if the tool
         // records once per operation; any undo, and every other case, releases it.
         auto t = tool_();
-        auto client = aModel ? cast(TopologyStepClient) t : null;
-        auto mesh = client is null ? null : client.topologyStepMesh();
+        auto mesh = aModel ? liveStepMesh_(t) : null;
         const pin = aModel && !isUndo && mesh !is null
             && t.sessionPolicy().redoPinsRefireImage && ownInstanceStepOnTop_(t, aToken);
         pinnedOperation_ = pin ? operation_ : 0;
@@ -1070,15 +1069,25 @@ private struct ToolSession {
         }
     }
 
+    // The session's one door to a tool's topology steps: its client,
+    // null for a tool outside them, and that client's live mesh, null for either.
+    private static TopologyStepClient stepClient_(Tool t) {
+        return cast(TopologyStepClient) t;
+    }
+
+    private static auto liveStepMesh_(Tool t) {
+        auto c = stepClient_(t);
+        return c is null ? null : c.topologyStepMesh();
+    }
+
     // The base of a new operation := the live image (topology-redo S3, model doc
     // §R6.2). Called where an operation ends with its tool still bound, and —
     // `ifStale` — on the opening press, only when the mesh moved since the base
     // was taken. The tool's rebase body writes no mesh when the base matches it.
     private void rebaseOnCurrent_(Tool t, bool ifStale) {
         if (t is null || !reporting_(t) || !capturedTopologyModel(t.sessionPolicy())) return;
-        auto c = cast(TopologyStepClient) t;
-        if (c is null) return;
-        auto m = c.topologyStepMesh();
+        auto c = stepClient_(t);
+        auto m = liveStepMesh_(t);
         if (m is null) return;
         if (ifStale && baseImage_.filled && baseImage_.matches(*m)) return;
         baseImage_ = MeshSnapshot.capture(*m);
@@ -1099,9 +1108,7 @@ private struct ToolSession {
             if (top.isTopologyStep() && top.sessionToken() == tok
                     && top.stepOperation() == row.stepOperation())
                 return;   // inside one operation: the restore set its base already
-        auto c = cast(TopologyStepClient) t;
-        if (c is null) return;
-        c.rebaseTopologyStep(row.stepAfterBasis());
+        if (auto c = stepClient_(t)) c.rebaseTopologyStep(row.stepAfterBasis());
     }
 
     // The operation of the row an undo just took off (the head of the redo
@@ -1655,7 +1662,7 @@ private struct ToolSession {
         // the image it was taken on. Dormant: left empty, so the first press of
         // the dormant arm still rebases (`notePointerDown`: an unfilled base is stale).
         baseImage_ = MeshSnapshot.init;
-        if (auto client = cast(TopologyStepClient)t) {
+        if (auto client = stepClient_(t)) {
             client.setTopologyDormant(topologyDormant_);
             if (capturedTopologyModel(t.sessionPolicy()) && !topologyDormant_)
                 if (auto m = client.topologyStepMesh())
@@ -1768,11 +1775,11 @@ private struct ToolSession {
             // operation — the haul resets BEFORE the open image is taken.
             if (press && t.sessionPolicy().pressOpensOperation)
                 t.openOperation(PressKind.shift, AttrImage.init);
-            auto client = cast(TopologyStepClient)t;
+            auto client = stepClient_(t);
             if (topologyPendingAttrOnly_) {
                 topologyPendingAttrs_ = beforeWrite.empty
                     ? t.captureAttrImage() : beforeWrite;
-                auto m = client is null ? null : client.topologyStepMesh();
+                auto m = liveStepMesh_(t);
                 topologyPendingMesh_ = m is null ? MeshSnapshot.init
                     : MeshSnapshot.capture(*m);
                 topologyPending_ = true;
@@ -1810,8 +1817,8 @@ private struct ToolSession {
                 if (!topologyPending_) return;
                 topologyPending_ = false;
                 auto after = t.captureAttrImage();
-                auto client = cast(TopologyStepClient)t;
-                auto m = client is null ? null : client.topologyStepMesh();
+                auto client = stepClient_(t);
+                auto m = liveStepMesh_(t);
                 if (m !is null) topologyPendingMesh_.restore(*m);
                 topologyPendingMesh_ = MeshSnapshot.init;
                 if (after.opEquals(topologyPendingAttrs_)) return;
@@ -1832,8 +1839,8 @@ private struct ToolSession {
             }
             if (!topologyPending_) return;
             topologyPending_ = false;
-            auto client = cast(TopologyStepClient)t;
-            auto m = client is null ? null : client.topologyStepMesh();
+            auto client = stepClient_(t);
+            auto m = liveStepMesh_(t);
             if (m is null) return;
             auto cmd = cast(MeshSessionEdit)client.topologyStepCarrier();
             if (cmd is null) {
@@ -1964,7 +1971,7 @@ private struct ToolSession {
         if (commit) return close(CloseReason.enter, CommandDoor.ui).closed;
         if (reporting_(t) && t.sessionPolicy().historyTopologySteps) {
             if (topologyPending_) {
-                auto client = cast(TopologyStepClient)t;
+                auto client = stepClient_(t);
                 auto m = client.topologyStepMesh();
                 if (m !is null) topologyPendingMesh_.restore(*m);
                 if (topologyDormant_)
@@ -2241,7 +2248,7 @@ private struct ToolSession {
                     && !boundToLive_(popped.get, t);
                 auto img = orphan ? t.captureAttrImage()
                     : navigableAttrs_(t, popped.get, popped.stepBeforeAttrs());
-                (cast(TopologyStepClient)t).restoreTopologyStep(
+                stepClient_(t).restoreTopologyStep(
                     img, popped.stepBeforeBasis());
                 if (!orphan) rememberTopologyAttrs_(img);
             }
@@ -2284,7 +2291,7 @@ private struct ToolSession {
             auto img = orphan ? current.captureAttrImage()
                 : navigableAttrs_(current, cmd.get,
                     pair ? seedRecreated_(act, head) : cmd.stepAfterAttrs());
-            (cast(TopologyStepClient)current).restoreTopologyStep(
+            stepClient_(current).restoreTopologyStep(
                 img, cmd.stepAfterBasis());
             if (!orphan) rememberTopologyAttrs_(img);
             // Reopen (L42): the redo of a press reopens that press's block;
@@ -2713,10 +2720,9 @@ private struct ToolSession {
     // (only a row, a seed or a restored predecessor writes those); any other tool
     // re-syncs. Capture 8980 Z2/Z3 "kept", `param_closed_ebevel_ui` s10–s15.
     private void rebaseAfterTail_(Tool t) {
-        auto c = cast(TopologyStepClient) t;
-        auto m = c is null ? null : c.topologyStepMesh();
+        auto m = liveStepMesh_(t);
         if (capturedTopologyModel(t.sessionPolicy()) && m !is null)
-            c.rebaseTopologyStep(MeshSnapshot.capture(*m));
+            stepClient_(t).rebaseTopologyStep(MeshSnapshot.capture(*m));
         else
             t.resyncSession();
     }

@@ -1343,7 +1343,7 @@ unittest { // (4h)
                   ~ "redo tail once each", identSites(es, "rebaseAfterTail_", false)));
     const helper = squeeze(bodyAt(ts, "private void rebaseAfterTail_(Tool t)"));
     assert(helper.canFind("if(capturedTopologyModel(t.sessionPolicy())&&m!isnull)"
-                          ~ "c.rebaseTopologyStep(MeshSnapshot.capture(*m));"
+                          ~ "stepClient_(t).rebaseTopologyStep(MeshSnapshot.capture(*m));"
                           ~ "elset.resyncSession();"),
            "S7 (6) needle: rebaseAfterTail_ is not `model -> rebase, else resync`: " ~ helper);
 }
@@ -1584,8 +1584,6 @@ unittest { // (4j)
 // Pin (form item 1): a tool resets nothing at activation unless its policy says so.
 static assert(ToolSessionPolicy.init.activationResetAttrs.length == 0);
 
-// Fence (form item 1): the per-tool dormant flag is gone (S6, task 9080).
-static assert(!__traits(hasMember, imported!"tool".ToolSessionPolicy, "dormantAfterClosedRedo"));
 
 // ---------------------------------------------------------------------------
 // (4k) Task 9300 (topology-redo wave S7r, model doc §R13 M-ri): the redo image a redo pins is
@@ -1864,16 +1862,52 @@ unittest { // (4d')
                                                 files, sites));
 }
 
-// Pins: the per-tool flags are gone (S3 the rebase, S4 task 9020 law 4's redo
-// attributes, S5 below); the rebase entry point stays (its one caller is `rebaseOnCurrent_`).
-static assert(!__traits(hasMember, imported!"tool".ToolSessionPolicy, "rebaseTopologyAfterStep"));
-static assert(!__traits(hasMember, imported!"tool".ToolSessionPolicy, "firstTopologyRedoUsesAfterAttrs"));
-// S5 (task 9170, law 3): the redo discards are the session's cut, no per-tool flag.
-static assert(!__traits(hasMember, imported!"tool".ToolSessionPolicy,
-                        "discardFirstTopologyRedoOnActivationUndo"));
-static assert(!__traits(hasMember, imported!"tool".ToolSessionPolicy,
-                        "discardLaterTopologyRedoOnRearm"));
+// The rebase entry point stays (its one caller is `rebaseOnCurrent_`); the per-tool flags it
+// replaced are fenced in (4l).
 static assert(__traits(hasMember, imported!"tool".TopologyStepClient, "rebaseTopologyStep"));
+
+// ---------------------------------------------------------------------------
+// (4l) Task 9310 (topology-redo wave S8, closure): the policy's composition is the compiler's
+// list (form item 1), the five per-tool topology-redo flags the wave replaced by one operation
+// mechanism are fenced in one place, and so are the session's names: the removed route state
+// of the re-begun panel write (plan R7.1 "gone") beside the data the wave added
+// (`instanceActive_`, S6r; the pinned redo image, S7r). `ToolSession` is a private type of
+// `edit_session`, reached through the field `tools_` of `EditSession` (`.tupleof`, by name).
+// ---------------------------------------------------------------------------
+
+static assert([__traits(allMembers, imported!"tool".ToolSessionPolicy)] == [
+    "activationRow", "commandClose", "sessionSteps", "historyTopologySteps",
+    "historyRecordedSteps", "recordedFirstUndoEndsTool", "postmodeStartsOnPress",
+    "previewHistoryLadder", "opensAt", "noClone", "imageAttrs", "haulAttrs",
+    "activationResetAttrs", "armAttr", "headlessReplacesWindow", "recordCarriesActivation",
+    "keepAliveOnCancel", "rollovers", "handleAnchor", "armRestoresWholeImage", "dropWritesRow",
+    "refusesDisabledParamWrites", "pressOpensOperation", "foldsParamRowsIntoBlock",
+    "redoPinsRefireImage"],
+    "S8 pin: ToolSessionPolicy's members changed (measured 25 on the wave's tip)");
+
+static foreach (gone; ["firstTopologyRedoUsesAfterAttrs", "rebaseTopologyAfterStep",
+                       "discardFirstTopologyRedoOnActivationUndo",
+                       "discardLaterTopologyRedoOnRearm", "dormantAfterClosedRedo"])
+    static assert(!__traits(hasMember, imported!"tool".ToolSessionPolicy, gone),
+                  "S8 fence: the per-tool flag " ~ gone ~ " is back");
+
+/// The session type `EditSession` holds in its field `tools_`.
+private template SessionOf(ES) {
+    static foreach (i, f; ES.tupleof)
+        static if (__traits(identifier, ES.tupleof[i]) == "tools_")
+            alias SessionOf = typeof(ES.tupleof[i]);
+}
+
+private alias SessionT = SessionOf!(imported!"edit_session".EditSession);
+// Positive control: the fences below read the session's own members.
+static assert(__traits(hasMember, SessionT, "postmodeArmed_"));
+static foreach (kept; ["instanceActive_", "pinnedRedoImage_", "pinnedOperation_"])
+    static assert(__traits(hasMember, SessionT, kept), "S8 pin: the session lost " ~ kept);
+// `navBefore_` is a live member (the navigation's start, S2a); the re-begun route's ban on it
+// is the S2b needle "stepEnds reads isUndo / navBefore_".
+static foreach (gone; ["rebegun_", "uiOperation_", "reopenUiOperation_", "noApplyWrite_"])
+    static assert(!__traits(hasMember, SessionT, gone), "S8 fence: the session holds " ~ gone);
+static assert(!__traits(hasMember, imported!"edit_session", "RebeginRoute"));
 
 // ---------------------------------------------------------------------------
 // (5) Slice M4 — the two data fields that replaced per-tool capabilities:

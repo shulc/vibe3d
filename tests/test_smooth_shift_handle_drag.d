@@ -323,11 +323,13 @@ unittest {
     }
 }
 
-// Task 8290 cell F (captured): the redo that RE-ARMS the tool makes the redone
+// Task 8290 cell F (captured: the restart of the next haul; the stacking write is
+// ours on this route): the redo that RE-ARMS the tool makes the redone
 // mesh the operation's base, so the first field write after it stacks one
 // layer at the typed value — no haul in between — and a later haul starts a new
 // layer on top of it, its Offset from zero (C6-1 s07: restart, shift 0.009 on s02
-// and on s07 alike; topology-redo S3, task 8950).
+// and on s07 alike; topology-redo S3, task 8950). The captured cells are
+// SmoothShift's; the Thicken half rests on the session law in general.
 unittest {
     foreach (tool; ["mesh.smoothShiftTool", "mesh.thickenTool"]) {
         auto r = postJson("/api/command", commandBody("scene.reset"));
@@ -346,6 +348,9 @@ unittest {
         immutable string redone = planes();
         field(tool, 0.3);
         const size_t v2 = vertexCount();
+        // On this route the redo replays the activation together with the operation;
+        // the captured reference refires the redone operation on this write instead
+        // of stacking — known divergence, registry row 480.
         assert(v2 > v1,
             "the first field write after a re-arm must stack one layer; " ~ tool
             ~ " has " ~ v2.to!string ~ " vertices, the redone mesh " ~ v1.to!string);
@@ -353,6 +358,7 @@ unittest {
             "the stacked layer did not move any vertex on " ~ tool);
         haul(cam);
         const s = queryShift(tool);
+        // The next haul restarts on top of the write, as captured on this route.
         assert(vertexCount() == v2 + (v1 - v0),
             "a haul after the field write starts a new layer on top of it; " ~ tool
             ~ " has " ~ vertexCount().to!string ~ ", the field-write mesh " ~ v2.to!string
