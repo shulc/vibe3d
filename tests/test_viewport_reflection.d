@@ -1,28 +1,29 @@
 // The Reflection display style (viewport shading S4b, task 9250). Env arm:
-// `out = litTerm(Kd, N) · env(envUv(R))`, R = reflect(P/|P|, N) in EYE space
+// `out = env(envUv(R))`, UNLIT — no light term, no material colour (captured
+// 2026-10-03, task 9290) — R = reflect(P/|P|, N) in EYE space
 // (the environment is glued to the camera — captured), envUv =
 // (0.5 + atan2(R.x, R.z)/2π, acos(R.y)/π). MatCap arm: `out = diffuse(uv)·base
 // + specular(uv)`, uv = (0.5 + 0.5 N.x, 0.5 − 0.5 N.y) from the eye normal.
 //
 // Every prediction is computed here: the eye-space N and R from a ray-sphere
-// intersection through the LIVE camera matrices, the lit term as the SAME
-// pixel read in the Shaded style in the same run, the image values from
+// intersection through the LIVE camera matrices, the image values from
 // `/api/viewport/env-sample` (the CPU copy of the decoded image the GL upload
 // used, bilinear at the same uv). Rig: a smooth 64x32 sphere of radius 1 at
 // the focus, one surface (base 0.8, diffuse 1, no specular).
 //
 // Cells: (a) roll 90 / pitch 80 / heading +90 about the sphere leave the image
 // unchanged, and a WORLD-space env predicts that they would not; (b) five
-// probes read shaded × env(R) — the centre, where R = (0,0,+1) points back at
+// probes read env(R) — the centre, where R = (0,0,+1) points back at
 // the viewer, and four ≈ 45° off the view axis — and the opposite seam
 // convention predicts otherwise; (c) MatCap `basic_grey` at five probes, and uv
 // from R instead of N predicts otherwise; (d) an unknown source name is
 // refused and changes nothing; (e) a two-sided surface's back side reflects
-// with the flipped normal in both arms, a single-sided one is culled; (f) the
-// hover override in both arms; (g) the DEFAULT source after a scene reset is
-// the outdoor sky env and reaches the pixels; (h) the default scene's cube
-// reads shaded × env(R) under all three environments. `VIBE3D_CELL=<id>` runs
-// one cell.
+// with the flipped normal (MatCap; the env arm is sign-symmetric in N), a
+// single-sided one is culled; (f) the hover override in both arms; (g) the
+// DEFAULT source after a scene reset is the outdoor sky env and reaches the
+// pixels; (h) the default scene's cube reads env(R) under all three
+// environments and is not near-black; (i) the material colour (hence the lit
+// term) does not reach the env arm. `VIBE3D_CELL=<id>` runs one cell.
 
 import http_client : getJson, postJson, frameFence, quiesce;
 import http_command_helpers : commandBody;
@@ -155,8 +156,16 @@ double[3][2] matcapAt(string name, D3 n) {
     return o;
 }
 
-/// 0..255 of the env arm: the Shaded pixel (the lit term) times the env.
-double[3] envPred(int[3] shaded, double[3] env) {
+/// 0..255 of the env arm: the env texel itself (unlit), clamped as stored.
+double[3] envPred(double[3] env) {
+    double[3] o;
+    foreach (c; 0 .. 3) o[c] = 255.0 * (env[c] > 1 ? 1 : env[c]);
+    return o;
+}
+
+/// The REJECTED law (lit × env): the Shaded pixel times the env — the
+/// counterfactual the unlit cells must tell apart.
+double[3] litTimesEnv(int[3] shaded, double[3] env) {
     double[3] o;
     foreach (c; 0 .. 3) {
         double v = shaded[c] / 255.0 * env[c];
@@ -168,7 +177,7 @@ double[3] envPred(int[3] shaded, double[3] env) {
 private int g_rig = 0;
 
 /// A UV sphere of radius 1 at `kC`, poles on Y, wound outward, one surface.
-void loadSphere() {
+void loadSphere(double base = kBase) {
     enum int segs = 64, rings = 32;
     D3[] v; uint[][] f;
     v ~= add3(kC, [0.0, 1.0, 0.0]);
@@ -195,7 +204,7 @@ void loadSphere() {
         if (dot3(n, c) < 0) { import std.algorithm : reverse; face.reverse(); }
     }
     g_v = v; g_f = f;
-    loadMesh(v, f, false);
+    loadMesh(v, f, false, base);
 }
 
 /// The sphere's vertices and faces as last loaded (the hover cell's centroid).
@@ -203,7 +212,7 @@ private D3[] g_v;
 private uint[][] g_f;
 
 /// Load `v`/`f` as one layer of one surface (base `kBase`, no specular).
-void loadMesh(D3[] v, uint[][] f, bool twoSided) {
+void loadMesh(D3[] v, uint[][] f, bool twoSided, double base = kBase) {
     import std.file : write, remove, exists, tempDir;
     import std.path : buildPath;
     import std.process : thisProcessID;
@@ -216,7 +225,7 @@ void loadMesh(D3[] v, uint[][] f, bool twoSided) {
         ms ~= i ? ",0" : "0";
     }
     immutable surf = format(`{"name":"R","baseColor":[%.9g,%.9g,%.9g],"diffuse":1,`
-        ~ `"specular":0,"glossiness":0.4,"opacity":1,"twoSided":%s}`, kBase, kBase, kBase,
+        ~ `"specular":0,"glossiness":0.4,"opacity":1,"twoSided":%s}`, base, base, base,
         twoSided ? "true" : "false");
     immutable path = buildPath(tempDir(), format("vibe3d-reflection-%d-%d.v3d", thisProcessID(), g_rig++));
     write(path, `{"formatVersion":8,"primaryLayer":0,"focusedItem":0,"layers":[{"type":"mesh",`
@@ -288,8 +297,6 @@ unittest {
     // Floor on the classified-inside count [E4].
     assert(pts.length >= 40, format("(a) floor: only %d probe points inside the disc", pts.length));
     assert(rPx >= 60, format("(a) rig: the sphere is only %.0f px in radius", rPx));
-    style("shaded");
-    const shaded = probeRGB(pts);
     style("reflection");
     source("env:studio_small_09");
     const base = probeRGB(pts);
@@ -310,8 +317,8 @@ unittest {
             D3 n, r;
             if (!hit(vp, p, n, r)) continue;
             ++both;
-            immutable double[3] w0 = envPred(shaded[k], envAt("studio_small_09", toEye(vp0, rWorld0[k])));
-            immutable double[3] w1 = envPred(shaded[k], envAt("studio_small_09", toEye(vp0, toWorld(vp, r))));
+            immutable double[3] w0 = envPred(envAt("studio_small_09", toEye(vp0, rWorld0[k])));
+            immutable double[3] w1 = envPred(envAt("studio_small_09", toEye(vp0, toWorld(vp, r))));
             if (maxGap(w0, w1) > 8) ++moved;
         }
         assert(both == pts.length, format("(a) %s: %d of %d probe rays miss the sphere",
@@ -330,7 +337,7 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// (b) the mapping: five probes read shaded × env(envUv(R)) ±3. Floor: the
+// (b) the mapping: five probes read env(envUv(R)) ±3. Floor: the
 // opposite seam convention u = 0.5 + atan2(R.x, −R.z)/2π (= the env at
 // (R.x, R.y, −R.z)) predicts ≥ 10 levels apart for ≥ 3 of the 5.
 // ---------------------------------------------------------------------------
@@ -344,8 +351,6 @@ unittest {
     // Directions where the studio image is neither saturated nor flat, chosen
     // from the image (a front/back-symmetric spot cannot see the seam).
     auto pts = fiveProbes(vp, dist, [135.0, 180.0, 225.0, 270.0]);
-    style("shaded");
-    const shaded = probeRGB(pts);
     style("reflection");
     source("env:studio_small_09");
     const got = probeRGB(pts);
@@ -356,18 +361,18 @@ unittest {
         assert(hit(vp, p, n, r), format("(b) rig: probe %s misses the sphere", p));
         if (k == 0)
             assert(r[2] > 0.999, format("(b) premise: the centre's R %s must point back at the viewer", r));
-        pred ~= envPred(shaded[k], envAt("studio_small_09", r));
-        immutable double[3] flip = envPred(shaded[k], envAt("studio_small_09", [r[0], r[1], -r[2]]));
+        pred ~= envPred(envAt("studio_small_09", r));
+        immutable double[3] flip = envPred(envAt("studio_small_09", [r[0], r[1], -r[2]]));
         if (maxGap(pred[k], flip) >= 10) ++apart;
-        writefln("[reflection (b)] probe %d %s: R (%.3f,%.3f,%.3f) shaded %s read %s predicted "
-            ~ "(%.2f,%.2f,%.2f), flipped seam (%.2f,%.2f,%.2f)", k, p, r[0], r[1], r[2], shaded[k],
+        writefln("[reflection (b)] probe %d %s: R (%.3f,%.3f,%.3f) read %s predicted "
+            ~ "(%.2f,%.2f,%.2f), flipped seam (%.2f,%.2f,%.2f)", k, p, r[0], r[1], r[2],
             got[k], pred[k][0], pred[k][1], pred[k][2], flip[0], flip[1], flip[2]);
     }
     assert(apart >= 3, format("(b) discrimination floor: the opposite seam convention is ≥ 10 "
         ~ "levels apart at only %d of 5 probes", apart));
     foreach (k; 0 .. 5) foreach (c; 0 .. 3)
-        assert(abs(got[k][c] - pred[k][c]) <= 3, format("(b) probe %d %s reads %s; shaded %s × "
-            ~ "env(envUv(R)) predicts (%.2f,%.2f,%.2f) ±3", k, pts[k], got[k], shaded[k],
+        assert(abs(got[k][c] - pred[k][c]) <= 3, format("(b) probe %d %s reads %s; "
+            ~ "env(envUv(R)) predicts (%.2f,%.2f,%.2f) ±3", k, pts[k], got[k],
             pred[k][0], pred[k][1], pred[k][2]));
 }
 
@@ -454,13 +459,6 @@ unittest {
         assert(sample(q) == "400", "(d) env-sample must refuse " ~ q ~ " with 400, got " ~ sample(q));
 }
 
-/// 0..255 of the env arm for a lit term given in 0..1 (the floors' counterfactuals).
-double[3] envPredLit(double[3] lit, double[3] env) {
-    double[3] o;
-    foreach (c; 0 .. 3) { immutable v = lit[c] * env[c]; o[c] = 255.0 * (v > 1 ? 1 : v); }
-    return o;
-}
-
 /// 0..255 of the MatCap arm at base `b`: diffuse·b + specular.
 double[3] matcapPred(double[3][2] m, double[3] b) {
     double[3] o;
@@ -479,9 +477,9 @@ void restoreCamera(const ref Viewport vp, double az, double el, double dist) {
 // ---------------------------------------------------------------------------
 // (e) the BACK side. A flat quad (world normal +Z, base kBase) seen from
 // behind. Two-sided: the back side shades with the FLIPPED normal (the lit
-// arms' shadingNormal, model M6). Env: reads Shaded-back × env(R) ±3 — R is
-// sign-symmetric in N, so the lit term is what a raw normal changes; floor: the
-// lit term of the RAW normal predicts ≥ 10 levels apart at ≥ 3 of 5. MatCap:
+// arms' shadingNormal, model M6). Env: reads env(R) ±3 — R is sign-symmetric
+// in N and the arm is unlit, so the flip is invisible there; floor: the
+// rejected lit × env (Shaded-back × env) predicts ≥ 10 apart at ≥ 3 of 5. MatCap:
 // diffuse·base + specular at matcapUv(N_flipped) ±3; floor: matcapUv(N_raw)
 // predicts ≥ 10 apart. Single-sided: Reflection culls by surface like Shaded,
 // so the probes read the Shaded (culled: background) value ±2; floors: Solid,
@@ -534,26 +532,18 @@ unittest {
     const envTwo = probeRGB(pts);
     source("matcap:basic_grey");
     const mcTwo = probeRGB(pts);
-    // The raw normal's lit term: light_rig's kKeyLightEye / kFillLightEye,
-    // intensities 0.7 / 0.3, ambient 0.15 (copied; the suite cannot import it).
-    // No specular in the rig.
-    enum double kKeyIntensity = 0.7, kFillIntensity = 0.3, kLightAmbient = 0.15;
-    immutable D3 kKey = [-0.654509, 0.587785, 0.475528], kFill = [1.0, 0.0, 0.0];
-    immutable double nk = dot3(nRaw, kKey), nf = dot3(nRaw, kFill);
-    immutable double litRawS = kBase * (kLightAmbient + kKeyIntensity * (nk > 0 ? nk : 0)
-                                                      + kFillIntensity * (nf > 0 ? nf : 0));
-    immutable double[3] litRaw = [litRawS, litRawS, litRawS];
     size_t envApart;
     double[3][] envPredTwo;
     foreach (k; 0 .. 5) {
         immutable double[3] e = envAt(backEnv, rs[k]);
-        envPredTwo ~= envPred(shadedTwo[k], e);
-        if (maxGap(envPredTwo[k], envPredLit(litRaw, e)) >= 10) ++envApart;
+        envPredTwo ~= envPred(e);
+        immutable double[3] lit = litTimesEnv(shadedTwo[k], e);
+        if (maxGap(envPredTwo[k], lit) >= 10) ++envApart;
         writefln("[reflection (e)] probe %d %s: shaded-back %s env read %s predicted (%.2f,%.2f,%.2f), "
-            ~ "raw-normal lit %.3f", k, pts[k], shadedTwo[k], envTwo[k], envPredTwo[k][0],
-            envPredTwo[k][1], envPredTwo[k][2], litRawS);
+            ~ "lit × env (%.2f,%.2f,%.2f)", k, pts[k], shadedTwo[k], envTwo[k], envPredTwo[k][0],
+            envPredTwo[k][1], envPredTwo[k][2], lit[0], lit[1], lit[2]);
     }
-    assert(envApart >= 3, format("(e) env discrimination floor: the raw normal's lit term is ≥ 10 "
+    assert(envApart >= 3, format("(e) env discrimination floor: lit × env is ≥ 10 "
         ~ "levels apart at only %d of 5 probes", envApart));
     immutable double[3] kB = [kBase, kBase, kBase];
     immutable double[3] mcFlip = matcapPred(matcapAt("basic_grey", nFlip), kB);
@@ -564,8 +554,8 @@ unittest {
         ~ "uv(N_flipped) %s", mcRaw, mcFlip));
     foreach (k; 0 .. 5) foreach (c; 0 .. 3) {
         assert(abs(envTwo[k][c] - envPredTwo[k][c]) <= 3, format("(e) env back side, probe %d %s "
-            ~ "reads %s; Shaded-back %s × env(R) predicts %s ±3 (the back side must reflect with the "
-            ~ "flipped normal)", k, pts[k], envTwo[k], shadedTwo[k], envPredTwo[k]));
+            ~ "reads %s; env(R) predicts %s ±3 (unlit; Shaded-back %s)", k, pts[k], envTwo[k],
+            envPredTwo[k], shadedTwo[k]));
         assert(abs(mcTwo[k][c] - mcFlip[c]) <= 3, format("(e) matcap back side, probe %d %s reads "
             ~ "%s; matcapUv(N_flipped) predicts %s ±3 (raw normal: %s)", k, pts[k], mcTwo[k], mcFlip,
             mcRaw));
@@ -597,11 +587,13 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// (f) hover in both arms: the hover override replaces the base (u_color =
-// viewport_scheme.kFaceHoverFill = (0.5, 0.71, 0.79), mix 1). Env: the hovered
-// face reads Shaded-hovered × env(R), the unhovered one Shaded × env(R); MatCap:
-// diffuse·hover + specular vs diffuse·base + specular. Floors: at the hovered
-// pixel the hovered and unhovered predictions are ≥ 6 levels apart per arm.
+// (f) hover in both arms: the hover override (u_color =
+// viewport_scheme.kFaceHoverFill = (0.5, 0.71, 0.79), mix 1) mixes over the
+// arm's colour, as in every unlit arm. Env: the hovered face reads the hover
+// colour itself (mix 1 over env(R)), the unhovered one env(R); MatCap: the
+// override replaces the base, diffuse·hover + specular vs diffuse·base +
+// specular. Floors: at the hovered pixel the hovered and unhovered
+// predictions are ≥ 6 levels apart per arm (an env that ignored hover fails).
 // ---------------------------------------------------------------------------
 unittest {
     if (!cellOn("f")) return;
@@ -610,9 +602,9 @@ unittest {
     enum double az = 0.35, el = 0.3, dist = 4.0;
     setCamera(az, el, dist);
     auto vp = viewportFromCameraMatrices();
-    // Pick the two brightest UNSATURATED env spots (max channel ≤ 1.6, so
-    // Shaded ≈ 0.5 × env stays below 1) on three rings, ≥ 40 px apart: a dark
-    // spot cannot tell the hover colour from the base.
+    // Pick the two brightest UNSATURATED env spots (max channel ≤ 1.6) on
+    // three rings, ≥ 40 px apart: the MatCap half needs a lit spot to tell the
+    // hover colour from the base.
     immutable int[2] cc = cellPx(vp, kC);
     immutable double rPx = 1.0 / dist * vp.proj[5] * vp.height / 2;
     int[2][] cand;
@@ -656,8 +648,6 @@ unittest {
     immutable int[2] p0 = cellPx(vp, cen), p1 = five[3];
     D3 n0, r0, nn1, rr1;
     assert(hit(vp, p0, n0, r0) && hit(vp, p1, nn1, rr1), "(f) rig: a probe misses the sphere");
-    style("shaded");
-    const shadedUn = probeRGB([p0, p1]);
     auto cam = getJson("/api/camera");
     string log = format(
         `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n",
@@ -672,8 +662,6 @@ unittest {
         immutable h = getJson("/api/toolpipe/eval")["hover"]["face"].integer;
         assert(h == cast(long) hf, format("(f) rig %s: the pointer must hover face %d, hovers %d", when, hf, h));
     }
-    hovered("Shaded");
-    const shadedH = probeRGB([p0, p1]);
     style("reflection");
     source("env:studio_small_09");
     hovered("env");
@@ -682,15 +670,14 @@ unittest {
     hovered("matcap");
     const mcR = probeRGB([p0, p1]);
     immutable double[3] e0 = envAt("studio_small_09", r0), e1 = envAt("studio_small_09", rr1);
-    immutable double[3] envHov = envPred(shadedH[0], e0), envUnAt0 = envPred(shadedUn[0], e0),
-                        envUn1 = envPred(shadedUn[1], e1);
     immutable double[3] kHover = [0.5, 0.71, 0.79], kB = [kBase, kBase, kBase];
+    immutable double[3] envHov = envPred(kHover), envUnAt0 = envPred(e0), envUn1 = envPred(e1);
     immutable m0 = matcapAt("basic_grey", n0), m1 = matcapAt("basic_grey", nn1);
     immutable double[3] mcHov = matcapPred(m0, kHover), mcUnAt0 = matcapPred(m0, kB),
                         mcUn1 = matcapPred(m1, kB);
-    writefln("[reflection (f)] face %d at %s: Shaded %s -> hovered %s; env read %s pred hovered "
+    writefln("[reflection (f)] face %d at %s: env read %s pred hovered "
         ~ "(%.2f,%.2f,%.2f) unhovered (%.2f,%.2f,%.2f); matcap read %s pred hovered (%.2f,%.2f,%.2f) "
-        ~ "unhovered (%.2f,%.2f,%.2f)", hf, p0, shadedUn[0], shadedH[0], envR[0], envHov[0], envHov[1],
+        ~ "unhovered (%.2f,%.2f,%.2f)", hf, p0, envR[0], envHov[0], envHov[1],
         envHov[2], envUnAt0[0], envUnAt0[1], envUnAt0[2], mcR[0], mcHov[0], mcHov[1], mcHov[2],
         mcUnAt0[0], mcUnAt0[1], mcUnAt0[2]);
     assert(maxGap(envHov, envUnAt0) >= 6, format("(f) env floor: hovered %s vs unhovered %s", envHov, envUnAt0));
@@ -701,7 +688,7 @@ unittest {
         assert(abs(mcR[1][c] - mcUn1[c]) <= 3, format("(f) matcap: the unhovered probe %s reads %s, "
             ~ "predicted %s", p1, mcR[1], mcUn1));
         assert(abs(envR[0][c] - envHov[c]) <= 3, format("(f) env: the hovered face reads %s; "
-            ~ "Shaded-hovered × env predicts %s (unhovered: %s)", envR[0], envHov, envUnAt0));
+            ~ "the hover colour (mix 1 over env) predicts %s (unhovered: %s)", envR[0], envHov, envUnAt0));
         assert(abs(mcR[0][c] - mcHov[c]) <= 3, format("(f) matcap: the hovered face reads %s; "
             ~ "diffuse·hover + specular predicts %s (unhovered: %s)", mcR[0], mcHov, mcUnAt0));
     }
@@ -711,7 +698,7 @@ unittest {
 // (g) the DEFAULT source: after a scene reset (`loadSphere`) the cell holds
 // `env:kloofendal_48d_partly_cloudy_puresky` in its state and in its resolved
 // plan, and the Reflection style — with NO source command — reads
-// shaded × env_sky(R) at five probes (±3). Floor: the studio env (the former
+// env_sky(R) at five probes (±3). Floor: the studio env (the former
 // default) predicts ≥ 10 levels apart for ≥ 3 of the 5, so a reverted default
 // reddens the pixel asserts, not only the id.
 // ---------------------------------------------------------------------------
@@ -723,8 +710,6 @@ unittest {
     setCamera(0.35, 0.3, dist);
     auto vp = viewportFromCameraMatrices();
     auto pts = fiveProbes(vp, dist, [0.0, 90.0, 180.0, 270.0]);
-    style("shaded");
-    const shaded = probeRGB(pts);
     style("reflection");
     auto c0 = getJson("/api/viewport/display")["cells"].array[0];
     assert(c0["state"]["reflection"].str == kDefaultSource,
@@ -738,11 +723,11 @@ unittest {
     foreach (k, p; pts) {
         D3 n, r;
         assert(hit(vp, p, n, r), format("(g) rig: probe %s misses the sphere", p));
-        pred ~= envPred(shaded[k], envAt(kDefaultEnv, r));
-        immutable double[3] studio = envPred(shaded[k], envAt("studio_small_09", r));
+        pred ~= envPred(envAt(kDefaultEnv, r));
+        immutable double[3] studio = envPred(envAt("studio_small_09", r));
         if (maxGap(pred[k], studio) >= 10) ++apart;
-        writefln("[reflection (g)] probe %d %s: R (%.3f,%.3f,%.3f) shaded %s predicted sky "
-            ~ "(%.2f,%.2f,%.2f), studio (%.2f,%.2f,%.2f)", k, p, r[0], r[1], r[2], shaded[k],
+        writefln("[reflection (g)] probe %d %s: R (%.3f,%.3f,%.3f) predicted sky "
+            ~ "(%.2f,%.2f,%.2f), studio (%.2f,%.2f,%.2f)", k, p, r[0], r[1], r[2],
             pred[k][0], pred[k][1], pred[k][2], studio[0], studio[1], studio[2]);
     }
     assert(apart >= 3, format("(g) discrimination floor: the studio env is ≥ 10 levels apart "
@@ -751,9 +736,9 @@ unittest {
     foreach (k; 0 .. 5) {
         writefln("[reflection (g)] probe %d reads %s", k, got[k]);
         foreach (c; 0 .. 3)
-            assert(abs(got[k][c] - pred[k][c]) <= 3, format("(g) probe %d %s reads %s; shaded %s × "
+            assert(abs(got[k][c] - pred[k][c]) <= 3, format("(g) probe %d %s reads %s; "
                 ~ "env_sky(envUv(R)) predicts (%.2f,%.2f,%.2f) ±3 — the default source must reach "
-                ~ "the pixels", k, pts[k], got[k], shaded[k], pred[k][0], pred[k][1], pred[k][2]));
+                ~ "the pixels", k, pts[k], got[k], pred[k][0], pred[k][1], pred[k][2]));
     }
 }
 
@@ -761,11 +746,13 @@ unittest {
 // (h) task 9290: the DEFAULT scene (scene.reset: the cube, the default camera)
 // under each environment. Per visible face (floor: 3 of 6), a third of the way
 // from the face centre to a corner (off the centre marker): the pixel reads
-// Shaded × env(R) ±3. A law cell, not a level witness — the prediction reads
-// the same texels; the level is pinned in `tests/unit/shading_assets_test.d`.
-// The faces read ≈ 20–50 / 255 here because the multiplier is the Shaded lit
-// term (≈ 0.2–0.3 on this cube); no "not near-black" floor is asserted (task
-// 9290 log, PLAN-FINDING).
+// env(R) ±3 (the law), so its luma is ≥ the texel's luma − 3 (the face is as
+// bright as its environment). NOT NEAR-BLACK: the mean luma over the 9 reads is
+// ≥ half the normalised env level (kEnvTargetMeanLuma 0.5124, copied; the
+// level itself is pinned in `tests/unit/shading_assets_test.d`). The factor ½
+// is a choice bounded by measurement: the rejected lit × env law's mean on the
+// same reads must fall below the floor (asserted first), and the env's mean at
+// these R is ≈ 0.78 of the target (task 9290 log).
 // ---------------------------------------------------------------------------
 unittest {
     if (!cellOn("h")) return;
@@ -813,23 +800,88 @@ unittest {
     const shaded = probeRGB(pts);
     style("reflection");
     double luma(T)(T c) { return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]; }
+    enum double kEnvTargetMeanLuma = 0.5124;     // viewport_env's (copied)
+    immutable double floorLuma = 0.5 * kEnvTargetMeanLuma * 255;
     size_t checked;
+    double sumRead = 0, sumRejected = 0;
     foreach (env; ["kloofendal_48d_partly_cloudy_puresky", "studio_small_09", "courtyard"]) {
         source("env:" ~ env);
         const got = probeRGB(pts);
         foreach (k; 0 .. pts.length) {
             immutable double[3] e = envAt(env, rs[k]);
-            immutable double[3] pred = envPred(shaded[k], e);
+            immutable double[3] pred = envPred(e);
+            immutable double[3] rejected = litTimesEnv(shaded[k], e);
             writefln("[reflection (h)] %s face %d %s: R (%.3f,%.3f,%.3f) env (%.3f,%.3f,%.3f) "
-                ~ "luma %.3f; shaded %s predicted (%.2f,%.2f,%.2f) reads %s", env, k, pts[k],
-                rs[k][0], rs[k][1], rs[k][2], e[0], e[1], e[2], luma(e), shaded[k],
-                pred[0], pred[1], pred[2], got[k]);
+                ~ "luma %.3f; predicted (%.2f,%.2f,%.2f) reads %s (lit × env %.1f luma)", env, k,
+                pts[k], rs[k][0], rs[k][1], rs[k][2], e[0], e[1], e[2], luma(e),
+                pred[0], pred[1], pred[2], got[k], luma(rejected));
+            // One-sided level witness FIRST (a dim face reddens here), the law after it.
+            assert(luma(got[k]) >= luma(pred) - 3, format("(h) %s face %d reads luma %.1f, below "
+                ~ "its env texel's %.1f − 3 (near-black face)", env, k, luma(got[k]), luma(pred)));
             foreach (c; 0 .. 3)
-                assert(abs(got[k][c] - pred[c]) <= 3, format("(h) %s face %d %s reads %s; shaded "
-                    ~ "%s × env(R) predicts (%.2f,%.2f,%.2f) ±3", env, k, pts[k], got[k], shaded[k],
+                assert(abs(got[k][c] - pred[c]) <= 3, format("(h) %s face %d %s reads %s; "
+                    ~ "env(R) predicts (%.2f,%.2f,%.2f) ±3", env, k, pts[k], got[k],
                     pred[0], pred[1], pred[2]));
+            sumRead += luma(got[k]);
+            sumRejected += luma(rejected);
             ++checked;
         }
     }
     assert(checked == 9, format("(h) population floor: 3 envs × 3 faces, checked %d", checked));
+    writefln("[reflection (h)] mean luma: read %.1f, lit × env %.1f, floor %.1f",
+             sumRead / 9, sumRejected / 9, floorLuma);
+    assert(sumRejected / 9 < floorLuma, format("(h) discrimination floor: the rejected lit × env "
+        ~ "law's mean luma %.1f must be below the not-near-black floor %.1f", sumRejected / 9, floorLuma));
+    assert(sumRead / 9 >= floorLuma, format("(h) the default cube is near-black: mean luma %.1f over "
+        ~ "3 faces × 3 envs, floor %.1f (half the normalised env level)", sumRead / 9, floorLuma));
+}
+
+// ---------------------------------------------------------------------------
+// (i) the lighting does NOT reach the env arm: the same sphere at base 0.8 and
+// at base 0.25 (the material colour scales the lit term) reads the same
+// Reflection pixels ±2 at five probes. Floors: the Shaded pixels move ≥ 10 at
+// ≥ 3 of 5 (the lever moves the lit term), and the rejected lit × env law
+// predicts ≥ 10 apart at ≥ 3 of 5 (it would move the pixel).
+// ---------------------------------------------------------------------------
+unittest {
+    if (!cellOn("i")) return;
+    scope(exit) postJson("/api/command", commandBody("viewport.displayStyle", `{"value":"shaded"}`));
+    enum double dist = 4.0, az = 0.35, el = 0.3, kDark = 0.25;
+    loadSphere();
+    setCamera(az, el, dist);
+    auto vp = viewportFromCameraMatrices();
+    auto pts = fiveProbes(vp, dist, [135.0, 180.0, 225.0, 270.0]);
+    style("shaded");
+    const shadedHi = probeRGB(pts);
+    style("reflection");
+    source("env:studio_small_09");
+    const reflHi = probeRGB(pts);
+    loadSphere(kDark);
+    restoreCamera(vp, az, el, dist);
+    style("shaded");
+    const shadedLo = probeRGB(pts);
+    style("reflection");
+    source("env:studio_small_09");
+    const reflLo = probeRGB(pts);
+    size_t litMoved, lawApart;
+    foreach (k, p; pts) {
+        D3 n, r;
+        assert(hit(vp, p, n, r), format("(i) rig: probe %s misses the sphere", p));
+        immutable double[3] e = envAt("studio_small_09", r);
+        immutable double[3] hi = litTimesEnv(shadedHi[k], e), lo = litTimesEnv(shadedLo[k], e);
+        if (maxGap([shadedHi[k][0], shadedHi[k][1], shadedHi[k][2]],
+                   [shadedLo[k][0], shadedLo[k][1], shadedLo[k][2]]) >= 10) ++litMoved;
+        if (maxGap(hi, lo) >= 10) ++lawApart;
+        writefln("[reflection (i)] probe %d %s: shaded %s -> %s; reflection %s -> %s; lit × env "
+            ~ "(%.1f,%.1f,%.1f) -> (%.1f,%.1f,%.1f)", k, p, shadedHi[k], shadedLo[k], reflHi[k],
+            reflLo[k], hi[0], hi[1], hi[2], lo[0], lo[1], lo[2]);
+    }
+    assert(litMoved >= 3, format("(i) floor: the base colour moves the Shaded pixel ≥ 10 at only "
+        ~ "%d of 5 probes", litMoved));
+    assert(lawApart >= 3, format("(i) discrimination floor: lit × env moves ≥ 10 at only %d of 5 "
+        ~ "probes", lawApart));
+    foreach (k; 0 .. 5) foreach (c; 0 .. 3)
+        assert(abs(reflHi[k][c] - reflLo[k][c]) <= 2, format("(i) probe %d %s: Reflection reads %s "
+            ~ "at base %.2f and %s at base %.2f — the env arm must ignore the lighting and the "
+            ~ "material colour", k, pts[k], reflHi[k], kBase, reflLo[k], kDark));
 }

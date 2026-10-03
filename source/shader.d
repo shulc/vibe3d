@@ -410,19 +410,19 @@ private immutable string litFragSrc = litStage(q{
             col = min(mix(u_goochCool + u_goochCoolKd * kd,
                           u_goochWarm + u_goochWarmKd * kd, t), vec3(1.0));
         } else if (u_shading == 5) {
-            // Reflection (task 9250, `viewport_env`). Env: the Material arm's
-            // lit colour × the environment at the eye-space reflection of the
-            // view ray (view-space env, captured). MatCap: the image IS the
-            // lighting (two layers: diffuse × base colour + specular), so no
-            // light term (a declared divergence: the asset's contract).
-            uint  mi = surfaceSlotOf(vMatId);
+            // Reflection (task 9250, `viewport_env`). Env: UNLIT — the
+            // colour IS the environment at the eye-space reflection of the
+            // view ray (view-space env); no light term, no material colour
+            // (captured: the texture replaces the fragment colour, lighting
+            // reaches only alpha; task 9290). The hover override mixes over
+            // it as over every unlit arm. MatCap: the image IS the lighting
+            // (diffuse × base colour + specular; the asset's contract).
             vec3  N  = shadingNormal();   // a two-sided back side reflects flipped
             if (u_reflectionKind == 0) {
-                vec4 mp = mat_params[mi];
-                vec3 kd = mix(mat_base[mi].rgb * mp.x, u_color, u_overrideMix);
-                vec3 R  = reflect(normalize(vEyePos), N);
-                col = litTerm(kd, N, mp.y, mp.w) * texture(u_envTex, envUv(R)).rgb;
+                vec3 R = reflect(normalize(vEyePos), N);
+                col = mix(texture(u_envTex, envUv(R)).rgb, u_color, u_overrideMix);
             } else {
+                uint mi   = surfaceSlotOf(vMatId);
                 vec3 base = mix(mat_base[mi].rgb, u_color, u_overrideMix);
                 vec2 uv   = matcapUv(N);
                 col = texture(u_matcapDiffuse, uv).rgb * base

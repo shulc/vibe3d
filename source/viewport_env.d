@@ -34,8 +34,8 @@ enum float kShadingImageLinearScale = 16.0f;
 /// the area-weighted (sin θ per row) mean Rec.709 luma of the decoded image
 /// equals this, ± the 16-bit rounding (`tests/unit/shading_assets_test.d`).
 /// The number is the reference level — the area-weighted mean luma of the
-/// reference reflection cube's 8-bit texels, used as stored (it multiplies
-/// them with no decode; the Reflection arm writes lit × env with no gamma).
+/// reference reflection cube's 8-bit texels, used as stored (it writes them
+/// with no decode; the Reflection arm writes env(R) unlit, with no gamma).
 enum double kEnvTargetMeanLuma = 0.5124;
 
 /// One environment: its name (the command/prefs spelling) and PNG bytes.

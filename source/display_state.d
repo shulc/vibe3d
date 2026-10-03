@@ -138,7 +138,7 @@ enum SurfaceShading : ubyte {
     /// `DisplayStyle.Gooch`: `min(mix(kcool, kwarm, |N·Lg|), 1)` from the
     /// material's diffuse colour × amount (`light_rig` header). APPENDED LAST.
     Gooch,
-    /// `DisplayStyle.Reflection`: env arm `litTerm × env(envUv(R_eye))`, MatCap
+    /// `DisplayStyle.Reflection`: env arm `env(envUv(R_eye))` (unlit), MatCap
     /// arm `diffuse(matcapUv(N_eye)) × base + specular(…)` (`viewport_env`).
     /// APPENDED LAST (ordinal 5).
     Reflection,
