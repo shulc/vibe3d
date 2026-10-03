@@ -50,6 +50,7 @@ import std.array     : array, join;
 import std.file      : readText;
 import std.format    : format;
 import std.json      : JSONType, parseJSON;
+import std.conv      : to;
 import std.regex     : matchAll, matchFirst, regex;
 import std.string    : endsWith, indexOf, lastIndexOf, startsWith, strip;
 
@@ -1520,12 +1521,17 @@ unittest { // (4j)
            format("S6r structural: %s classes reset at activation, %s none — measured 8 / 4",
                   nonEmpty, empty));
 
-    // STRUCTURAL — step 4 (a rule, form item 12): no `reinitSession` of a model class writes an
-    // attribute its policy images: the copy is the cache's, the reset the session's. Fields are
-    // read off the class's own `Param` bindings. (`installPreparedActivation` keeps its pinned
-    // reset — the prepared-protocol contract; S6r plan finding.)
+    // STRUCTURAL — step 4 (a rule, form item 12): no `reinitSession` and no prepared installer
+    // (`installPreparedActivation`, the live arm's path — plan §23.6) of a model class writes a
+    // LITERAL into an attribute its policy images: the copy is the cache's, the reset the
+    // session's. Fields are read off the class's own `Param` bindings; a chain `a = b = 0` is
+    // literal for every link. Positive control (form item 5): Mirror's installer writes the
+    // derived plane axes `left`/`up` from the prepared image — found as imaged-field writes, not
+    // literal, not counted.
     size_t bodies;
-    string[] writes;
+    string[] writes, derived;
+    auto literal = regex(`^(-?[0-9][0-9.]*[fFL]?|true|false|null|Vec3\(\s*-?[0-9.]+f?\s*,`
+                         ~ `\s*-?[0-9.]+f?\s*,\s*-?[0-9.]+f?\s*\))$`);
     foreach (f; kRebaseBodyFiles) {
         const code = blankNonCode(readText(f));
         const raw = readText(f);
@@ -1537,18 +1543,31 @@ unittest { // (4j)
                 const fld = m[2];
                 fields ~= fld[fld.lastIndexOf('.') + 1 .. $];
             }
-        foreach (marker; ["void reinitSession()"]) {
+        foreach (marker; ["void reinitSession()", "void installPreparedActivation("]) {
             if (code.indexOf(marker) < 0) continue;
             ++bodies;
             const b = bodyAt(code, marker);
-            foreach (fld; fields)
-                if (identSites(b, fld, true).length)
-                    writes ~= format("%s %s: %s", f, marker, fld);
+            foreach (fld; fields) {
+                size_t sites;
+                foreach (n; identSites(b, fld, true)) sites += n[n.lastIndexOf(':') + 1 .. $].to!size_t;
+                size_t lit;
+                foreach (m; matchAll(b, regex(`(?:^|[^\w])` ~ fld ~ `\s*=(?!=)\s*`
+                                              ~ `(?:[A-Za-z_][\w.]*\s*=(?!=)\s*)*([^;]*);`)))
+                    if (!matchFirst(m[1].strip, literal).empty) ++lit;
+                foreach (_; 0 .. lit) writes ~= format("%s %s: %s", f, marker, fld);
+                foreach (_; lit .. sites) derived ~= format("%s %s: %s", f, marker, fld);
+            }
         }
     }
-    assert(bodies == 9, format("S6r floor: %s reinitSession bodies found, measured 9", bodies));
-    assert(writes.length == 0, format("S6r structural: a reinitSession writes an imaged attribute "
-           ~ "(step 4: the reset is the session's): %s", writes));
+    assert(bodies == 20, format("S6r floor: %s reinitSession/installPreparedActivation bodies "
+           ~ "found, measured 20 (9 + 11)", bodies));
+    assert(derived == ["source/tools/alignment/mirror.d void installPreparedActivation(: left",
+                       "source/tools/alignment/mirror.d void installPreparedActivation(: up"],
+           format("S6r control: the derived imaged-field writes are %s, expected Mirror's "
+                  ~ "installer left/up (the rule must see a write it does not count)", derived));
+    assert(writes.length == 0, format("S6r structural: the area reinitSession + "
+           ~ "installPreparedActivation writes a literal into an imaged attribute (step 4: the "
+           ~ "reset is the session's activation alone): %s", writes));
 }
 
 // Pin (form item 1): a tool resets nothing at activation unless its policy says so.

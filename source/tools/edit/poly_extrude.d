@@ -793,7 +793,7 @@ public:
     version(unittest) final bool preparedActivationForTest(size_t count,
             Vec3 first, const Vec3* livePtr, Vec3 expectedAnchor,
             Vec3 expectedAxis, ulong expectedHash) const nothrow @nogc {
-        return active && !built && dragPart == -1 && distance_ == 0 &&
+        return active && !built && dragPart == -1 && distance_ == 7 &&
             before.filled && before.vertices.length == count && count &&
             before.vertices[0] == first && before.vertices.ptr !is livePtr &&
             gizmoValid && anchor == expectedAnchor && baseAnchor == anchor &&
@@ -803,7 +803,7 @@ public:
     }
     version(unittest) final bool preparedInvalidActivationForTest(
             ulong expectedHash) const nothrow @nogc {
-        return active && !built && dragPart == -1 && distance_ == 0 &&
+        return active && !built && dragPart == -1 && distance_ == 7 &&
             !gizmoValid && anchor == Vec3(1,2,3) &&
             baseAnchor == Vec3(4,5,6) && extrudeAxis == Vec3(7,8,9) &&
             gizmoSelHash == expectedHash;

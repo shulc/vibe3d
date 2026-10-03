@@ -219,7 +219,7 @@ public:
     }
     version(unittest) final bool preparedActivationForTest(size_t count,
             Vec3 first, const Vec3* livePtr) const nothrow @nogc {
-        return active && !built && !dragging && dist_ == 0.001f &&
+        return active && !built && !dragging && dist_ == 7.0f &&
             before.filled && before.vertices.length == count && count != 0 &&
             before.vertices[0] == first && before.vertices.ptr !is livePtr &&
             valueDrag_.pressX == 11 && valueDrag_.lastX == 12 &&

@@ -890,7 +890,7 @@ public:
             Vec3 first, const Vec3* livePtr, bool expectedValid,
             Vec3 expectedAnchor, Vec3 expectedBase, Vec3 expectedAxis,
             ulong expectedHash) const nothrow @nogc {
-        return active && !built && dragPart == -1 && width_ == 0 &&
+        return active && !built && dragPart == -1 && width_ == 7 &&
             roundLevel_ == 3 && widthMode_ && before.filled &&
             before.vertices.length == count &&
             (count == 0 || (before.vertices[0] == first &&
