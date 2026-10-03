@@ -312,6 +312,9 @@ struct Param {
     }
     // PodArray only: `T.sizeof` of the erased element type (0 for every other kind).
     size_t podElemSize;
+    // PodArray only: the erased element type is `float` — the one element type
+    // `remembered()` admits to the sticky store (`stickyStringify`).
+    bool podFloats;
 
     // Additional wire spellings this parameter answers to (task 4062). Read by
     // exactly one consumer, `command_args.bindArgs`, and only for a NAMED key:
@@ -487,8 +490,20 @@ struct Param {
         p.kind        = Kind.PodArray;
         p.podPtr      = cast(void*) storage;
         p.podElemSize = T.sizeof;
+        p.podFloats   = is(T == float);
         p.flags       = ParamFlags.Hidden | ParamFlags.Transient;
         return p;
+    }
+
+    // A `float` PodArray that is a remembered SETTING as well as session
+    // state: it leaves the transient set, so the sticky store captures and
+    // recalls it (`stickyStringify` / `stickyParseInto`). It stays off the
+    // wire — `parseInto` still refuses every PodArray.
+    Param remembered() {
+        assert(kind == Kind.PodArray && podFloats,
+               "remembered(): only a float PodArray has a sticky spelling");
+        flags &= ~ParamFlags.Transient;
+        return this;
     }
 
     // -----------------------------------------------------------------------
@@ -641,7 +656,8 @@ struct Param {
 // cache (`toolpipe.attr_cache.captureNodeAttrs`, every node kind): which params
 // are eligible to be snapshotted into `g_prefs.toolAttrCache` on a tool
 // drop. Array kinds don't round-trip through the string<->param path
-// (stringifyParam/parseInto return ""/false for them); read-only params are
+// (stringifyParam/parseInto return ""/false for them) — except a float
+// PodArray marked `remembered()`, spelled by `stickyStringify`; read-only params are
 // derived display, not user settings; transient params are drawn gesture
 // geometry / momentary action-triggers (see `ParamFlags.Transient` above),
 // not remembered settings.
@@ -651,9 +667,40 @@ bool isStickyCapturable(const ref Param p)
 {
     return p.kind != Param.Kind.IntArray
         && p.kind != Param.Kind.Vec3Array
-        && p.kind != Param.Kind.PodArray
+        && (p.kind != Param.Kind.PodArray || p.podFloats)
         && !p.readonly_
         && !p.transient_;
+}
+
+/// The sticky store's spelling of a capturable Param: `stringifyParam`, except
+/// a remembered float PodArray, which is a comma list ("0.1,0.3,0.85").
+string stickyStringify(ref Param p) {
+    if (p.kind != Param.Kind.PodArray) return stringifyParam(p);
+    import std.array : join;
+    import std.algorithm : map;
+    return (*cast(float[]*) p.podPtr).map!(v => fmtFloatWire(v)).join(",");
+}
+
+/// The inverse of `stickyStringify`. A float list longer than
+/// `kStickyFloatsMax` or holding a non-finite element is refused whole, so a
+/// stale or hand-edited prefs entry never grows the owner's array.
+enum size_t kStickyFloatsMax = 256;
+bool stickyParseInto(ref Param p, string value) {
+    if (p.kind != Param.Kind.PodArray) return parseInto(p, value);
+    if (!p.podFloats) return false;
+    import std.string : split, strip;
+    import std.conv : to;
+    import std.math : isFinite;
+    float[] vals;
+    if (value.strip.length) {
+        auto parts = value.split(",");
+        if (parts.length > kStickyFloatsMax) return false;
+        try foreach (t; parts) vals ~= t.strip.to!float;
+        catch (Exception) return false;
+        foreach (v; vals) if (!isFinite(v)) return false;
+    }
+    *cast(float[]*) p.podPtr = vals;
+    return true;
 }
 
 

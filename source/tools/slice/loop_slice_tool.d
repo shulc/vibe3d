@@ -294,6 +294,10 @@ private:
     // Position of every LoopSliceTool built afterwards in the process (the
     // factory builds a fresh tool per activation, but a fresh tool is not a
     // fresh array). A runtime literal in the ctor allocates per instance.
+    // The list DOES outlive the tool — the reference keeps Count and every
+    // position across a new arm and a drop -> reactivate (task 9330, toolcard
+    // `loop_slice_position_memory` Q1-Q3) — but through the sticky store
+    // (`positions` is `.remembered()`), never through shared storage.
     float[] positions_;
     float   positionProxy_ = 0.5f;           // Param-bound mirror of positions_[current_]
     float   insertAt_      = 0.5f;           // Add-trigger value (onParamChanged fires the add)
@@ -668,8 +672,10 @@ public:
                  .transient().action(),
             // The session's image (slice M3), not panel rows: the slice
             // offsets (`count` long, capped by `count`'s bound and the
-            // kernel's MAX_LOOP_SLICE_COUNT) and the arm's seed set.
-            Param.podArray_("positions", "Positions", &positions_),
+            // kernel's MAX_LOOP_SLICE_COUNT) and the arm's seed set. The
+            // offsets are also a remembered setting (task 9330): the sticky
+            // store carries them across a drop, `position` (their proxy) not.
+            Param.podArray_("positions", "Positions", &positions_).remembered(),
             Param.podArray_("seeds", "Seeds", &seeds_),
             Param.podArray_("armedSelFaces", "Armed Selection", &armedSelFaces_),
             Param.bool_("selectNew", "Select New Polygons", &selectNew_, true),
@@ -834,6 +840,8 @@ public:
         } else if (image.positions.length > cast(size_t)image.count) {
             image.positions.length = cast(size_t)image.count;
         }
+        foreach (ref p; image.positions)
+            p = p < 0.001f ? 0.001f : p > 0.999f ? 0.999f : p;
         if (image.count > 1 && mode_ != Mode.Free)
             foreach (k; 0 .. image.count)
                 image.positions[k] = (k + 1.0f) / (image.count + 1.0f);
@@ -890,19 +898,12 @@ public:
         // ArrayTool.activate() / EdgeBevelTool.reinitSession(), which
         // likewise touch only session/gesture state.
         //
-        // current_/positions_ ARE reset — they're transient gesture proxies
-        // (see the `.transient()` "current"/"position" Params), not
-        // remembered settings — but they must stay CONSISTENT with
-        // count_/mode_, which may now be sticky-restored past the count_==1
-        // constructor default. syncPositionsToCount() re-derives positions_
-        // by padding/truncating to count_ and re-laying via the (possibly
-        // sticky) mode_ law, instead of hardcoding a length-1 `[0.5f]` that
-        // would silently truncate a sticky Count>1 back down to one slice
-        // (positions_ isn't itself a Param, so it can't self-restore — it
-        // must be re-derived from the now-correct count_/mode_ instead).
-        // For a fresh/no-sticky tool this is byte-for-byte the old hardcoded
-        // reset: count_==1 so syncPositionsToCount() is a no-op past the
-        // early-return in applyModeLaw(), leaving positions_ == [0.5f].
+        // current_ IS reset to 0 at activation; positions_ is NOT — the
+        // sticky store restored the last list (task 9330, captured: only
+        // `curr` resets). syncPositionsToCount() keeps the list CONSISTENT
+        // with the restored count_/mode_ (pad/truncate, re-lay under a
+        // non-Free law) and clamps a stale stored value into range. For a
+        // fresh/no-sticky tool positions_ stays the constructor's [0.5f].
         current_ = 0;
         syncPositionsToCount();
         // length_/sliderX_/sliderY_ deliberately NOT reset — see field comment.
@@ -1071,10 +1072,8 @@ public:
     /// (no-op). Task 0239: resets `seeds_`
     /// (formerly the scalar `seedEdge_`) — `positions_`/`current_`/`edit_`/
     /// `mode_`/`count_` are session PARAMS, not per-arm latch state, and are
-    /// intentionally left untouched here (they're reset by
-    /// `reinitSession()`, called at tool activation, and persist across a
-    /// single re-arm-after-commit within the same activation — matching
-    /// pre-0239 behaviour for `position_`/`count_`/`uniform_`).
+    /// intentionally left untouched here: a new arm cuts at the current list
+    /// (task 9330, captured Q1).
     public void dropArmedPreview() {
         sessionOperationEnded();   // the operation ends with its preview (slice M3)
         armed_     = false;
@@ -1799,6 +1798,8 @@ private:
     // invoke). New slots default to 0.5 before the Mode law re-lays them.
     void syncPositionsToCount() {
         if (count_ < 1) count_ = 1;
+        foreach (ref p; positions_)
+            p = p < 0.001f ? 0.001f : p > 0.999f ? 0.999f : p;
         if (positions_.length < cast(size_t)count_) {
             while (positions_.length < cast(size_t)count_) positions_ ~= 0.5f;
         } else if (positions_.length > cast(size_t)count_) {

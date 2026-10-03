@@ -18,8 +18,8 @@
 /// prefs document (`prefs.d`), so it reaches disk only where prefs do.
 module toolpipe.attr_cache;
 
-import params : Param, ParamProvider, isStickyCapturable, parseInto,
-    stringifyParam;
+import params : Param, ParamProvider, isStickyCapturable, stickyParseInto,
+    stickyStringify;
 import toolpipe.stage : PresetClaimable, Stage;
 
 /// One node's attributes: attribute name -> wire value.
@@ -72,14 +72,15 @@ public:
 
 /// Every capturable Param of one node, as wire values. The capture rule is the
 /// ONE `isStickyCapturable` for every node kind: array kinds do not round-trip
-/// through a wire string, read-only Params are derived display, transient ones
-/// are gesture geometry or momentary triggers.
+/// through a wire string (a `remembered()` float list has its own sticky
+/// spelling), read-only Params are derived display, transient ones are gesture
+/// geometry or momentary triggers.
 NodeAttrs captureNodeAttrs(ParamProvider node) {
     NodeAttrs attrs;
     if (node is null) return attrs;
     foreach (ref p; node.params()) {
         if (!isStickyCapturable(p)) continue;
-        attrs[p.name.idup] = stringifyParam(p).idup;
+        attrs[p.name.idup] = stickyStringify(p).idup;
     }
     return attrs;
 }
@@ -98,9 +99,9 @@ string[] recallNodeAttrs(ParamProvider node, in NodeAttrs attrs, bool notify) {
         foreach (ref p; schema) {
             if (p.name != name) continue;
             if (!isStickyCapturable(p)) break;
-            if (stringifyParam(p) == value) break;
+            if (stickyStringify(p) == value) break;
             // A String/Enum Param stores the supplied slice: own it first.
-            if (parseInto(p, value.idup)) changed ~= name.idup;
+            if (stickyParseInto(p, value.idup)) changed ~= name.idup;
             break;
         }
     }

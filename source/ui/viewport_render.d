@@ -1402,8 +1402,10 @@ public:
     // every vertex is a PLAIN dot in every style — unselected colour and
     // size — and the kept vertex selection is not shown, so edge mode hands
     // the pass an empty mark view (colour AND size follow the mark, see
-    // `drawVertices`). Polygon and item types are uncaptured and keep their
-    // marks as before (dots only where a style forces them). The edge arm
+    // `drawVertices`). POLYGON mode takes the same empty mark view where a
+    // style forces dots (task 9330, toolcard `loop_slice_position_memory` Q4:
+    // the kept vertex selection is not drawn, Wireframe and vertices-always
+    // included); the item type is uncaptured and keeps its marks. The edge arm
     // gates the hover on `showVertHover`, like the hover-only arm below: that
     // flag carries "this cell has the pointer", so in a split layout only one
     // cell lights it. Witnesses: tests/test_edge_mode_vertex_dots.d,
@@ -1421,6 +1423,7 @@ public:
         segTimer_.mark(GpuSeg.verts);
         auto zOv = g_perf.scope_(Cat.drawOverlays);
         immutable bool edgeArm = selFeedbackType == SelType.Edge;
+        immutable bool plainMarks = edgeArm || selFeedbackType == SelType.Polygon;
         BaseDots baseDots = baseDotsFor(activePlan, meshModel, vp.view,
                                         shader.locAlpha);
         baseDots.draw = !itemSequence
@@ -1428,7 +1431,7 @@ public:
         baseDots = culledBaseDots(baseDots, activePlan, gpu, mesh, meshModel, v, vp);
         gpu.drawVertices(shader.locColor, shader.locPointSize,
                          edgeArm && !showVertHover ? -1 : vertHovForDraw,
-                         edgeArm ? MarkView.init : mesh.selectedVertexView(),
+                         plainMarks ? MarkView.init : mesh.selectedVertexView(),
                          occluded, baseDots);
     } else if (showVertHover && vertHovForDraw >= 0) {
         segTimer_.mark(GpuSeg.verts);

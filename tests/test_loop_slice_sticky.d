@@ -25,10 +25,10 @@
 //
 // Coverage:
 //   1. Settings (count/caps/gap/mode) survive drop -> reactivate.
-//   2. A transient gesture proxy (`position`, backed by positionProxy_/
-//      positions_, `.transient()` in params()) does NOT persist — it reverts
-//      to its declared default, proving the fix didn't overshoot and turn
-//      session/gesture state into accidental sticky settings.
+//   2. The slice positions DO persist (task 9330, captured 2026-10-03,
+//      toolcard `loop_slice_position_memory` Q2/Q3): the whole list survives
+//      drop -> reactivate, only `current` resets to 0 — and the next cut
+//      lands at the remembered position, not at 0.5.
 
 import http_client : getJson, postJson;
 import http_command_helpers : commandBody;
@@ -217,10 +217,53 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// 2. Transient gesture proxy (`position`) does NOT persist — reverts to its
-//    declared default. Explicitly re-pins count=1 first so the write to
-//    `position` isn't swallowed by Uniform mode's count>1 re-lay no-op
-//    (scrubPosition's D3 law), keeping the transience check unambiguous.
+// 2. The positions list persists across drop -> reactivate; `current` resets.
+//    Free mode with three NON-uniform values, so "kept" is distinguishable
+//    from "reset to 0.5" and from the uniform re-lay (0.25/0.5/0.75).
+// ---------------------------------------------------------------------------
+unittest {
+    resetCube();
+
+    cmd("tool.set mesh.loopSliceTool");
+    cmd("tool.attr mesh.loopSliceTool mode free");
+    cmd("tool.attr mesh.loopSliceTool count 3");
+    immutable double[3] want = [0.1, 0.3, 0.85];
+    foreach (k, v; want) {
+        cmd("tool.attr mesh.loopSliceTool current " ~ k.to!string);
+        cmd("tool.attr mesh.loopSliceTool position " ~ v.to!string);
+    }
+    auto before = getJson("/api/tool/state")["positions"].array;
+    assert(before.length == 3 && approxEqual(before[0].floating, 0.1)
+        && approxEqual(before[1].floating, 0.3) && approxEqual(before[2].floating, 0.85),
+        "rig: the three Free positions did not land before the drop: "
+        ~ before.to!string);
+    assert(query("tool.attr mesh.loopSliceTool current ?").integer == 2,
+        "rig: current should be 2 before the drop (else its reset is vacuous)");
+
+    cmd("tool.set mesh.loopSliceTool off");
+    cmd("tool.set mesh.loopSliceTool");
+
+    auto after = getJson("/api/tool/state")["positions"].array;
+    assert(after.length == 3, "positions list length should persist as 3, got "
+        ~ after.to!string);
+    foreach (k, v; want)
+        assert(approxEqual(after[k].floating, v),
+            "positions must persist across drop->reactivate (captured: the "
+            ~ "whole list is kept), want " ~ want.to!string ~ ", got "
+            ~ after.to!string);
+    assert(query("tool.attr mesh.loopSliceTool current ?").integer == 0,
+        "current must reset to 0 at activation (captured)");
+    assert(approxEqual(query("tool.attr mesh.loopSliceTool position ?").floating, 0.1),
+        "position (the proxy of positions[current]) should read 0.1");
+
+    cmd("tool.set mesh.loopSliceTool off");
+}
+
+// ---------------------------------------------------------------------------
+// 3. A single remembered position places the next cut. Count 1 at 0.2, drop,
+//    reactivate, cut across cube edge 0-1 (x from -0.5 to 0.5): the new
+//    vertex on that edge sits at x = -0.3 or 0.3 (direction-agnostic), never
+//    at the default's x = 0.
 // ---------------------------------------------------------------------------
 unittest {
     resetCube();
@@ -228,24 +271,37 @@ unittest {
     cmd("tool.set mesh.loopSliceTool");
     cmd("tool.attr mesh.loopSliceTool count 1");
     cmd("tool.attr mesh.loopSliceTool position 0.2");
-
-    auto posBeforeDrop = query("tool.attr mesh.loopSliceTool position ?");
-    assert(approxEqual(posBeforeDrop.floating, 0.2),
-        "sanity: position write should have taken effect before drop, got "
-        ~ posBeforeDrop.toString);
-
     cmd("tool.set mesh.loopSliceTool off");
+
+    auto m0 = getJson("/api/model");
+    int seed = -1;
+    foreach (i, e; m0["edges"].array) {
+        auto a = m0["vertices"].array[e.array[0].integer].array;
+        auto b = m0["vertices"].array[e.array[1].integer].array;
+        if (fabs(a[1].floating + 0.5) < 1e-4 && fabs(b[1].floating + 0.5) < 1e-4
+            && fabs(a[2].floating + 0.5) < 1e-4 && fabs(b[2].floating + 0.5) < 1e-4)
+            seed = cast(int) i;
+    }
+    assert(seed >= 0, "rig: cube edge y=-0.5,z=-0.5 not found");
+    cmd(commandBody("mesh.select", `{"mode":"edges","indices":[` ~ seed.to!string ~ `]}`));
+
     cmd("tool.set mesh.loopSliceTool");
-
-    auto pos = query("tool.attr mesh.loopSliceTool position ?");
-    assert(approxEqual(pos.floating, 0.5),
-        "position (transient) must NOT persist -- should be back at its "
-        ~ "declared default 0.5, got " ~ pos.toString);
-
-    auto current = query("tool.attr mesh.loopSliceTool current ?");
-    assert(current.integer == 0,
-        "current (transient) must NOT persist -- should be back at its "
-        ~ "declared default 0, got " ~ current.toString);
+    cmd("tool.doApply");
+    auto m1 = getJson("/api/model");
+    assert(m1["vertexCount"].integer == 12, "rig: one loop should add 4 vertices, got "
+        ~ m1["vertexCount"].toString);
+    int onEdge = 0;
+    foreach (v; m1["vertices"].array) {
+        auto c = v.array;
+        if (fabs(c[1].floating + 0.5) > 1e-4 || fabs(c[2].floating + 0.5) > 1e-4) continue;
+        if (fabs(fabs(c[0].floating) - 0.5) < 1e-4) continue;   // the edge's own ends
+        ++onEdge;
+        assert(fabs(fabs(c[0].floating) - 0.3) < 1e-4,
+            "the cut after reactivation must land at the remembered 0.2 "
+            ~ "(x = +-0.3), got x = " ~ c[0].toString);
+    }
+    assert(onEdge == 1, "population: expected exactly one new vertex on the seed "
+        ~ "edge, got " ~ onEdge.to!string);
 
     cmd("tool.set mesh.loopSliceTool off");
 }

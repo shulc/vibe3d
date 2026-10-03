@@ -73,8 +73,13 @@ unittest {
     // ---- needle 2: only edge mode drops the marks --------------------------
     // Red when polygon/item modes lose their selected vertices, or edge mode
     // gets them back.
-    enum marksArg = "edgeArm ? MarkView.init : mesh.selectedVertexView(),";
+    enum plainMarks = "immutable bool plainMarks = edgeArm "
+                    ~ "|| selFeedbackType == SelType.Polygon;";
+    assert(countOccurrences(arm, plainMarks) == 1,
+        "vertex-dot census: `plainMarks` is no longer `edge or polygon type` "
+        ~ "(task 9330: polygon mode draws the kept vertex selection plain)");
+    enum marksArg = "plainMarks ? MarkView.init : mesh.selectedVertexView(),";
     assert(countOccurrences(arm, marksArg) == 1,
-        "vertex-dot census: the mark view is no longer `empty in edge mode, "
-        ~ "the selection otherwise`");
+        "vertex-dot census: the mark view is no longer `empty in edge and "
+        ~ "polygon mode, the selection otherwise`");
 }

@@ -334,3 +334,43 @@ unittest { // u8: the prepared switch stores the predecessor and recalls in orde
     assert(preset < recall && recall < fit,
         "M5 u8: the falloff recall is not between its preset image and the auto-fit");
 }
+
+unittest { // u9 (task 9330): a remembered float list round-trips the store
+    static final class ListNode : ParamProvider {
+        float[] list = [0.5f];
+        uint[] seeds = [3];
+        string[] changed;
+        Param[] params() { return [
+            Param.podArray_("positions", "Positions", &list).remembered(),
+            Param.podArray_("seeds", "Seeds", &seeds),   // transient: never stored
+        ]; }
+        bool paramEnabled(string name) const { return true; }
+        void onParamChanged(string name) { changed ~= name; }
+    }
+    auto src = new ListNode;
+    src.list = [0.1f, 0.3f, 0.85f];
+    auto attrs = captureNodeAttrs(src);
+    assert(attrs.length == 1 && "positions" in attrs,
+        format("9330 u9: expected only the remembered list captured, got %s", attrs));
+    assert(attrs["positions"] == "0.1,0.3,0.85",
+        format("9330 u9: list spelled %s", attrs["positions"]));
+
+    auto dst = new ListNode;
+    auto changed = recallNodeAttrs(dst, attrs, true);
+    assert(changed == ["positions"] && dst.changed == ["positions"],
+        format("9330 u9: recall changed %s / hooks %s", changed, dst.changed));
+    assert(dst.list == [0.1f, 0.3f, 0.85f],
+        format("9330 u9: recalled list %s", dst.list));
+
+    // A malformed or oversized entry is refused WHOLE: the list stays.
+    foreach (bad; ["0.1,abc", "0.1,nan", "0.1,inf"]) {
+        auto d2 = new ListNode;
+        assert(recallNodeAttrs(d2, ["positions": bad], false).length == 0
+            && d2.list == [0.5f], "9330 u9: accepted a bad entry " ~ bad);
+    }
+    string big = "0.5";
+    foreach (_; 0 .. 256) big ~= ",0.5";      // 257 elements
+    auto d3 = new ListNode;
+    assert(recallNodeAttrs(d3, ["positions": big], false).length == 0
+        && d3.list == [0.5f], "9330 u9: accepted a 257-element list");
+}

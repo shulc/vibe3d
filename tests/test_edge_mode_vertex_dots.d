@@ -30,7 +30,8 @@
 //   6. task 7128: "edge-mode dot has the selected size" — the edge-mode dot
 //      is exactly as wide as an unselected dot in vertex mode.
 // After the five conditions, one polygon-mode block under wireframe: the kept
-// vertex selection IS still drawn there (only edge mode drops the marks).
+// vertex selection is NOT drawn there either, the dots stay plain (task 9330,
+// toolcard `loop_slice_position_memory` Q4).
 // The file-level `scope(exit)` restores the projection, the style AND the
 // selection type the run started in.
 
@@ -421,12 +422,12 @@ private void runCondition(string name, string style, bool front,
                    dotSide(pb, (Px q) => near(q, unselCentre))));
 }
 
-/// Polygon mode is NOT captured and must stay as it was: under a lines-only
-/// style (`drawVerts` forces the dot pass) the kept vertex selection is still
-/// drawn in the selection colour. Only edge mode drops the marks. Same rig and
-/// probe as `runCondition`; the vertex-mode count is the positive control, and
-/// the polygon-mode count must sit in the same measured band (a probe that
-/// reads nothing, or a pass handed an empty mark view, reads 0).
+/// Polygon mode, captured 2026-10-03 (task 9330, toolcard
+/// `loop_slice_position_memory` Q4): under a lines-only style (`drawVerts`
+/// forces the dot pass) the kept vertex selection is drawn as PLAIN dots, as
+/// in edge mode. Same rig and probe as `runCondition`; the vertex-mode count
+/// is the positive control, the full 3 x 3 unselected block is the floor that
+/// keeps the zero from meaning "no dot drawn at all".
 private void runPolygonWireCondition() {
     enum name = "poly_wire";
     postJson("/api/command", commandBody("scene.reset", "{}"));
@@ -458,6 +459,10 @@ private void runPolygonWireCondition() {
             format("[%s] positive control: in VERTEX mode a selected vertex "
                    ~ "must show %d..%d selection-coloured px, got %d / %d",
                    name, kVertexModeFloor, kVertexModeCeiling, va, vb));
+    immutable int[2] pu = perspPx(DHVec3(0.5f, -0.5f, 0.5f));
+    immutable Px unselCentre = probe([pu])[0];
+    assert(unselCentre.valid && !isSel(unselCentre),
+        format("[%s] rig: the unselected vertex centre reads %s", name, unselCentre));
 
     pressKey(51, 32);   // '3'
     assert(selType() == "polygon",
@@ -471,12 +476,26 @@ private void runPolygonWireCondition() {
     immutable int qa = selCountAround(pa), qb = selCountAround(pb);
     writeln(format("[%s] vertex mode %d / %d, polygon mode %d / %d "
                    ~ "selection-coloured px", name, va, vb, qa, qb));
-    foreach (n; [qa, qb])
-        assert(n >= kVertexModeFloor && n <= kVertexModeCeiling,
-            format("[%s] polygon mode under wireframe lost the selected vertex "
-                   ~ "dots: %d / %d selection-coloured px, expected %d..%d as in "
-                   ~ "vertex mode (polygon mode is uncaptured and unchanged)",
-                   name, qa, qb, kVertexModeFloor, kVertexModeCeiling));
+    foreach (p; [pa, pb]) {
+        int[2][] pts;
+        foreach (dy; -2 .. 3) foreach (dx; -2 .. 3) pts ~= [p[0] + dx, p[1] + dy];
+        auto win = probe(pts);
+        bool found = false;
+        foreach (oy; 0 .. 3) foreach (ox; 0 .. 3) {
+            bool full = true;
+            foreach (dy; 0 .. 3) foreach (dx; 0 .. 3)
+                if (!near(win[(oy + dy) * 5 + ox + dx], unselCentre)) full = false;
+            if (full) found = true;
+        }
+        assert(found,
+            format("[%s] no unselected vertex dot drawn in polygon mode under "
+                   ~ "wireframe: no full 3 x 3 block of %s around the selected "
+                   ~ "vertex at (%d, %d)", name, unselCentre, p[0], p[1]));
+    }
+    assert(qa == 0 && qb == 0,
+        format("[%s] selected vertex dot drawn in polygon mode: %d / %d "
+               ~ "selection-coloured px around the two selected vertices, the "
+               ~ "capture draws plain dots (0)", name, qa, qb));
 }
 
 /// Our side of the positive control, see the block above.

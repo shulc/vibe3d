@@ -63,6 +63,19 @@ unittest {
 
     auto both = Param.float_("dist", "Distance", &f, 0.0f).readonly().transient();
     assert(!isStickyCapturable(both));
+
+    // A PodArray is session state (transient) unless a FLOAT one is marked
+    // remembered() — the one array the sticky store spells (task 9330).
+    float[] fl;
+    uint[] ua;
+    auto podT = Param.podArray_("pos", "Pos", &fl);
+    auto podR = Param.podArray_("pos", "Pos", &fl).remembered();
+    auto podRO = Param.podArray_("pos", "Pos", &fl).remembered().readonly();
+    auto podU = Param.podArray_("seeds", "Seeds", &ua);
+    assert(!isStickyCapturable(podT));
+    assert(isStickyCapturable(podR));
+    assert(!isStickyCapturable(podRO));
+    assert(!isStickyCapturable(podU));
 }
 
 unittest {
