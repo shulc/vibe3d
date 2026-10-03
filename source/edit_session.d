@@ -2540,10 +2540,22 @@ private struct ToolSession {
         rememberTopologyAttrsFor_(armedId_, token_, attrs);
     }
 
-    private void rememberTopologyAttrsFor_(string id, ulong token, AttrImage attrs) {
+    // The newest values remembered for tool `id`, whatever its session: the
+    // list is ordered by most recent write (`rememberTopologyAttrsFor_` moves an
+    // updated entry to the end). Capture C9-4 (findings §19), `rearm_smooth_ui`.
+    private AttrImage latestTopologyAttrsFor_(string id) {
         foreach_reverse (ref owner; topologyAttrOwners_)
+            if (owner.id == id) return owner.attrs;
+        return AttrImage.init;
+    }
+
+    private void rememberTopologyAttrsFor_(string id, ulong token, AttrImage attrs) {
+        foreach_reverse (i, ref owner; topologyAttrOwners_)
             if (owner.id == id && owner.token == token) {
-                owner.attrs = attrs;
+                auto o = owner;
+                o.attrs = attrs;
+                topologyAttrOwners_ = topologyAttrOwners_[0 .. i]
+                    ~ topologyAttrOwners_[i + 1 .. $] ~ o;
                 return;
             }
         if (topologyAttrOwners_.length >= kMaxSessionSteps)
@@ -2710,12 +2722,13 @@ private struct ToolSession {
     }
 
     // The values the predecessor an activation row restores held (M-H): the
-    // session's memory of its id and session; read before the row is undone.
+    // newest values the session remembers for that tool, whatever the session
+    // (capture C9-4, findings §19); read before the row is undone.
     private AttrImage predecessorAttrs_(const Command undone) {
         import commands.tool.lifecycle : ToolActivationCommand;
         auto act = cast(const ToolActivationCommand) undone;
         return act !is null && act.previousHistoryTopology()
-            ? topologyAttrsFor_(act.previousId(), act.previousToken())
+            ? latestTopologyAttrsFor_(act.previousId())
             : AttrImage.init;
     }
 

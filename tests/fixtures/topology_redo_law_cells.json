@@ -3708,7 +3708,7 @@
     {"cell": "rearm_smooth_ui", "label": "s05_armui", "fields": {"image": {"ref": ["s03", "s04"]}, "vcount": {"ref": 10}, "armed": {"ref": false}, "on": {"ref": "tool"}, "attrs": {"ref": []}}},
     {"cell": "rearm_smooth_ui", "label": "s06_drag", "fields": {"image": {"ref": []}, "vcount": {"ref": 14}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": []}, "origin": {"ref": "begin"}}},
     {"cell": "rearm_smooth_ui", "label": "s07_Z", "fields": {"image": {"ref": ["s03", "s04", "s05"]}, "vcount": {"ref": 10}, "armed": {"ref": true}, "on": {"ref": "move"}, "refused": {"ref": false}}},
-    {"cell": "rearm_smooth_ui", "label": "s08_Z", "fields": {"image": {"ref": ["s03", "s04", "s05", "s07"]}, "vcount": {"ref": 10}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s01"], "ours": ["s05"], "owner": "S7r", "law": "6", "polarity": "untilS7r"}, "refused": {"ref": false}}}
+    {"cell": "rearm_smooth_ui", "label": "s08_Z", "fields": {"image": {"ref": ["s03", "s04", "s05", "s07"]}, "vcount": {"ref": 10}, "armed": {"ref": true}, "on": {"ref": "tool"}, "attrs": {"ref": ["s01"]}, "refused": {"ref": false}}}
    ]
   },
   {"id": "rearm_vextrude", "family": "autoact", "variant": "vertex_extrude", "measured": true, "rig": {"vertices": [[-0.3499999940395355, 0.25, 0.05000000074505806], [1.4500000476837158, -0.3499999940395355, -0.25], [0.44999998807907104, 1.399999976158142, 0.44999998807907104], [-1.2000000476837158, -0.05000000074505806, 1.149999976158142], [2.450000047683716, -0.800000011920929, 1.649999976158142]], "faces": [[0, 1, 2], [0, 2, 3]], "mode": "vertices", "selected": [0]},

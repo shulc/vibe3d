@@ -1088,7 +1088,9 @@ unittest { // The identity half rejects a foreign image even under the same toke
                restored.shift));
 }
 
-unittest { // The session half selects the predecessor run, not its newer sibling.
+unittest { // The predecessor restore takes the tool's NEWEST remembered values, not its session's.
+    // Expectation edit backed by capture C9-4 (findings §19, `rearm_smooth_ui/s08_Z.attrs`):
+    // the reference restores the tool's stored copy, whatever run wrote it last.
     Mesh m = makeCube();
     auto h = new CommandHistory;
     Tool active;
@@ -1103,8 +1105,8 @@ unittest { // The session half selects the predecessor run, not its newer siblin
     s.noteArm("t.poly", 7);
 
     auto restored = undoToOwnedPoly(s, h, active, m, 5);
-    assert(restored.shift == 17,
-        format("topology attr ownership ignored predecessor session: restored %s, expected 17",
+    assert(restored.shift == 29,
+        format("predecessor restore did not take the tool's newest values: restored %s, expected 29 (C9-4)",
                restored.shift));
 }
 

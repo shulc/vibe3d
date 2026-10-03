@@ -1658,6 +1658,14 @@ unittest { // (4k)
     assert(opAt >= 0 && snapAt > opAt,
            format("S7r needle: stepEnds writes the row's images (at %s) before its operation "
                   ~ "(at %s)", snapAt, opAt));
+    // STRUCTURAL: the settle pins the operation AFTER it re-reads it from the history — a pin
+    // taken first would key the image on the operation armed before the navigation (O1).
+    const setl = squeeze(bodyAt(ts, "private void settleAfterNavigation_(bool isUndo)"));
+    const opSet = setl.indexOf("operation_=isUndo?headOfRedoOperation_(aToken):topOperation_(aToken);");
+    const pinSet = setl.indexOf("pinnedOperation_=pin?operation_:0;");
+    assert(opSet >= 0 && pinSet > opSet,
+           format("S7r needle: settleAfterNavigation_ pins the operation (at %s) before it "
+                  ~ "re-reads it (at %s)", pinSet, opSet));
 
     // STRUCTURAL — the datum read off the PRODUCTION instances of the model's classes.
     size_t ids;
