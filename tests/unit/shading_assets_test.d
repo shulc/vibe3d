@@ -96,7 +96,7 @@ unittest {
 /// multiplies) equals `kEnvTargetMeanLuma`. Tolerance 1.25e-4: the converter's
 /// bisection leaves only the 16-bit rounding, ≤ 0.5 · 16 / 65535 = 1.22e-4 per
 /// channel, and the luma weights sum to 1. Un-normalised (the pre-9290
-/// assets) the three read 0.69 / 0.85 / 0.77.
+/// assets, decoded) the sky / studio / courtyard read 0.3485 / 0.7462 / 0.7587.
 unittest {
     size_t n;
     foreach (a; kEnvAssets) {
