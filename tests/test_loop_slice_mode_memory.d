@@ -176,6 +176,8 @@ unittest {
     resetCube();
     cmdUi("tool.set mesh.loopSliceTool on");
     setList("symmetry", [0.5, 0.5]);
+    cmd("tool.attr mesh.loopSliceTool current 0");
+    cmd("tool.attr mesh.loopSliceTool position 0.3");
     selectTwoFaces();
     click();                                   // arm (the session's first step)
     assert(getJson("/api/tool/state")["armed"].type == JSONType.true_, "B rig: not armed");
@@ -267,4 +269,190 @@ unittest {
     assert(same(after, [0.2, 0.5, 0.8]),
         format("Symmetry middle slice moved: want it pinned at 0.5, got %s", after));
     cmd("tool.set mesh.loopSliceTool off");
+}
+
+// ---------------------------------------------------------------------------
+// The Mode and Count laws, cell by cell from the formulas read under a
+// debugger (toolcard `loop_slice_position_memory`, F1-F4). Each cell sets a
+// list headlessly (tool active, nothing armed), applies one write, reads the
+// list.
+// ---------------------------------------------------------------------------
+
+/// A Free list in INDEX order (Free writes do not reorder or re-space).
+void freeList(double[] v) {
+    cmd("tool.attr mesh.loopSliceTool mode free");
+    cmd("tool.attr mesh.loopSliceTool count " ~ v.length.to!string);
+    foreach (k, x; v) {
+        cmd("tool.attr mesh.loopSliceTool current " ~ k.to!string);
+        cmd("tool.attr mesh.loopSliceTool position " ~ x.to!string);
+    }
+    assert(same(positions(), v), format("rig: Free list %s did not land: %s", v, positions()));
+}
+
+/// A Symmetry list through its first slice.
+void symList(size_t n, double first) {
+    cmd("tool.attr mesh.loopSliceTool mode symmetry");
+    cmd("tool.attr mesh.loopSliceTool count " ~ n.to!string);
+    cmd("tool.attr mesh.loopSliceTool current 0");
+    cmd("tool.attr mesh.loopSliceTool position " ~ first.to!string);
+}
+
+unittest { // F1: a Mode write to Symmetry mirrors by index, the slice at n/2 picks the half
+    struct C { double[] from; double[] want; }
+    immutable C[] cells = [
+        C([0.9, 0.1, 0.35],      [0.9, 0.5, 0.1]),        // non-ascending: index, not value
+        C([0.3, 0.95, 0.6, 0.2], [0.8, 0.4, 0.6, 0.2]),   // pivot 0.6 > 0.5: upper half wins
+        C([0.3, 0.5],            [0.3, 0.7]),             // pivot exactly 0.5: lower wins
+        C([0.7, 0.5],            [0.7, 0.3]),
+        C([0.2, 0.5, 0.9],       [0.2, 0.5, 0.8]),
+        C([0.3],                 [0.5]),
+    ];
+    resetCube();
+    cmd("tool.set mesh.loopSliceTool");
+    foreach (c; cells) {
+        freeList(c.from.dup);
+        cmd("tool.attr mesh.loopSliceTool mode symmetry");
+        assert(same(positions(), c.want.dup),
+            format("F1 Free %s -> Symmetry: want %s, got %s", c.from, c.want, positions()));
+    }
+    cmd("tool.attr mesh.loopSliceTool mode uniform");
+    assert(same(positions(), [0.5]), "F1 -> Uniform must space evenly");
+    cmd("tool.set mesh.loopSliceTool off");
+}
+
+unittest { // F2: a Symmetry Count write inserts after `current` (appends at the last), then re-mirrors
+    struct C { size_t n; double first; int cur; int to; double[] want; }
+    immutable C[] cells = [
+        C(2, 0.3, 0, 3, [0.3, 0.5, 0.7]),
+        C(2, 0.3, 1, 3, [0.15, 0.5, 0.85]),
+        C(2, 0.3, 0, 5, [0.3, 0.4, 0.5, 0.6, 0.7]),
+        C(2, 0.3, 1, 5, [0.075, 0.15, 0.5, 0.85, 0.925]),
+        C(3, 0.2, 0, 4, [0.2, 0.35, 0.65, 0.8]),
+        C(3, 0.2, 1, 4, [0.2, 0.35, 0.65, 0.8]),
+        C(3, 0.2, 2, 4, [0.1, 0.2, 0.8, 0.9]),
+        C(3, 0.2, 0, 2, [0.2, 0.8]),
+        C(3, 0.2, 0, 1, [0.5]),
+    ];
+    resetCube();
+    cmd("tool.set mesh.loopSliceTool");
+    foreach (c; cells) {
+        cmd("tool.attr mesh.loopSliceTool mode free");
+        cmd("tool.attr mesh.loopSliceTool count 1");
+        symList(c.n, c.first);
+        cmd("tool.attr mesh.loopSliceTool current " ~ c.cur.to!string);
+        cmd("tool.attr mesh.loopSliceTool count " ~ c.to.to!string);
+        assert(same(positions(), c.want.dup),
+            format("F2 Symmetry x%d first %s, current %d, Count -> %d: want %s, got %s",
+                   c.n, c.first, c.cur, c.to, c.want, positions()));
+    }
+    cmd("tool.set mesh.loopSliceTool off");
+}
+
+unittest { // F2 shrink: 5 -> 2 truncates the append cell's list and re-mirrors
+    resetCube();
+    cmd("tool.set mesh.loopSliceTool");
+    cmd("tool.attr mesh.loopSliceTool mode free");
+    cmd("tool.attr mesh.loopSliceTool count 1");
+    symList(2, 0.3);
+    cmd("tool.attr mesh.loopSliceTool current 1");
+    cmd("tool.attr mesh.loopSliceTool count 5");
+    assert(same(positions(), [0.075, 0.15, 0.5, 0.85, 0.925]), "F2 rig: the append cell");
+    cmd("tool.attr mesh.loopSliceTool count 2");
+    assert(same(positions(), [0.075, 0.925]),
+        format("F2 Symmetry 5 -> 2: want [0.075, 0.925], got %s", positions()));
+    cmd("tool.set mesh.loopSliceTool off");
+}
+
+unittest { // F4: a Free or Uniform Count write re-spaces evenly, grow and shrink
+    resetCube();
+    cmd("tool.set mesh.loopSliceTool");
+    foreach (cur; [0, 2]) {
+        freeList([0.1, 0.3, 0.85]);
+        cmd("tool.attr mesh.loopSliceTool current " ~ cur.to!string);
+        cmd("tool.attr mesh.loopSliceTool count 5");
+        assert(same(positions(), [1/6.0, 2/6.0, 3/6.0, 4/6.0, 5/6.0]),
+            format("F4 Free 3 -> 5 (current %d) must re-space evenly, got %s", cur, positions()));
+    }
+    freeList([0.1, 0.3, 0.85]);
+    cmd("tool.attr mesh.loopSliceTool count 2");
+    assert(same(positions(), [1/3.0, 2/3.0]), format("F4 Free 3 -> 2, got %s", positions()));
+    cmd("tool.attr mesh.loopSliceTool count 1");
+    assert(same(positions(), [0.5]), format("F4 Free -> 1, got %s", positions()));
+    cmd("tool.attr mesh.loopSliceTool mode uniform");
+    cmd("tool.attr mesh.loopSliceTool count 4");
+    assert(same(positions(), [0.2, 0.4, 0.6, 0.8]), format("F4 Uniform 1 -> 4, got %s", positions()));
+    cmd("tool.set mesh.loopSliceTool off");
+}
+
+unittest { // F3 writes: a Symmetry slice stays on its side of 0.5; Uniform ignores a write
+    resetCube();
+    cmd("tool.set mesh.loopSliceTool");
+    cmd("tool.attr mesh.loopSliceTool mode free");
+    cmd("tool.attr mesh.loopSliceTool count 1");
+    symList(2, 0.3);
+    assert(same(positions(), [0.3, 0.7]), "F3 rig: [0.3, 0.7]");
+    cmd("tool.attr mesh.loopSliceTool position 0.8");     // current 0, below 0.5
+    assert(same(positions(), [0.5, 0.5]),
+        format("F3 a Symmetry write must stop at its half: want [0.5, 0.5], got %s", positions()));
+    cmd("tool.attr mesh.loopSliceTool mode uniform");
+    cmd("tool.attr mesh.loopSliceTool current 0");
+    cmd("tool.attr mesh.loopSliceTool position 0.1");
+    assert(same(positions(), [1/3.0, 2/3.0]), format("F3 Uniform must ignore a write, got %s", positions()));
+    cmd("tool.set mesh.loopSliceTool off");
+}
+
+unittest { // F3 scrub: [0.005, 0.995] and never past an index neighbour (Free {0.3, 0.6})
+    double[] reach(int cur, int dx) {
+        resetCube();
+        cmdUi("tool.set mesh.loopSliceTool on");
+        freeList([0.3, 0.6]);
+        cmd("tool.attr mesh.loopSliceTool current " ~ cur.to!string);
+        selectTwoFaces();
+        click();
+        assert(getJson("/api/tool/state")["armed"].type == JSONType.true_, "F3 scrub rig: not armed");
+        drag(dx);
+        auto r = positions();
+        cmd("tool.set mesh.loopSliceTool off");
+        return r;
+    }
+    // Slice 1 (the last): one direction is open to 0.995, the other stops at slice 0.
+    auto a = reach(1, 300), b = reach(1, -300);
+    double[] ends = [a[1], b[1]];
+    assert((fabs(ends[0] - 0.995) < 1e-4 && fabs(ends[1] - 0.3) < 1e-4)
+        || (fabs(ends[1] - 0.995) < 1e-4 && fabs(ends[0] - 0.3) < 1e-4),
+        format("F3 scrub of the last slice must end at 0.995 or at its neighbour 0.3, got %s", ends));
+    // Slice 0: 0.005 one way, its neighbour 0.6 the other.
+    auto c = reach(0, 300), d = reach(0, -300);
+    ends = [c[0], d[0]];
+    assert((fabs(ends[0] - 0.005) < 1e-4 && fabs(ends[1] - 0.6) < 1e-4)
+        || (fabs(ends[1] - 0.005) < 1e-4 && fabs(ends[0] - 0.6) < 1e-4),
+        format("F3 scrub of slice 0 must end at 0.005 or at its neighbour 0.6, got %s", ends));
+}
+
+unittest { // F3 scrub, Symmetry {0.3, 0.7}: a slice stops at 0.5 (its half), or at 0.005 / 0.995
+    double[] reach(int cur, int dx) {
+        resetCube();
+        cmdUi("tool.set mesh.loopSliceTool on");
+        cmd("tool.attr mesh.loopSliceTool mode free");
+        cmd("tool.attr mesh.loopSliceTool count 1");
+        symList(2, 0.3);
+        assert(same(positions(), [0.3, 0.7]), "F3 sym scrub rig: [0.3, 0.7]");
+        cmd("tool.attr mesh.loopSliceTool current " ~ cur.to!string);
+        selectTwoFaces();
+        click();
+        assert(getJson("/api/tool/state")["armed"].type == JSONType.true_, "F3 sym scrub rig: not armed");
+        drag(dx);
+        auto r = positions();
+        cmd("tool.set mesh.loopSliceTool off");
+        return r;
+    }
+    foreach (cur; [0, 1]) {
+        immutable double outer = cur == 0 ? 0.005 : 0.995;
+        auto a = reach(cur, 300), b = reach(cur, -300);
+        double[] ends = [a[cur], b[cur]];
+        assert((fabs(ends[0] - 0.5) < 1e-4 && fabs(ends[1] - outer) < 1e-4)
+            || (fabs(ends[1] - 0.5) < 1e-4 && fabs(ends[0] - outer) < 1e-4),
+            format("F3 a Symmetry scrub of slice %d must stop at 0.5 (its own half) or %s, got %s / %s",
+                   cur, outer, a, b));
+    }
 }

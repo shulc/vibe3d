@@ -3,7 +3,7 @@ import display_state : DrawPlan;
 
 import bindbc.sdl;
 import std.json : JSONValue;
-import std.algorithm : sort;
+import std.algorithm : clamp, max, min, sort;
 import operator : VectorStack;
 
 import tool;
@@ -1272,53 +1272,55 @@ public:
             if (removeTrigger_) { removeSlice(); removeTrigger_ = false; }
             return;
         }
-        if (pname == "position") { scrubPosition(positionProxy_); return; }
+        if (pname == "position") { writePosition(positionProxy_); return; }
 
         if (interactiveParamEdit && armed_) rebuildCut();
     }
     override void evaluate() {}
 
-    /// Single entry point for repositioning the ARMED standing preview's
-    /// CURRENT slice — the mesh-drag path (`onMouseMotion`), the HUD marker
-    /// (app.d), and a Tool-Properties panel edit of `Position`
-    /// (`onParamChanged`) all converge here so they can never diverge in
-    /// effect. Clamps to (0,1) and applies the Mode law (task 0239 D3/D4),
-    /// then, while armed, re-runs `rebuildCut()`.
+    /// A SCRUB of the current slice — the mesh drag (`onMouseMotion`) and
+    /// the HUD marker (app.d). Captured clamp (toolcard
+    /// `loop_slice_position_memory`, formulas F3): [0.005, 0.995] and never
+    /// past an index neighbour, so a scrub cannot reorder slices (a Symmetry
+    /// slice therefore stops at 0.5, where its mirror is).
     public void scrubPosition(float p) {
-        if      (p < 0.001f) p = 0.001f;
-        else if (p > 0.999f) p = 0.999f;
+        immutable size_t k = cast(size_t)current_;
+        float lo = 0.005f, hi = 0.995f;
+        if (k > 0 && k - 1 < positions_.length) lo = max(lo, positions_[k - 1]);
+        if (k + 1 < positions_.length)          hi = min(hi, positions_[k + 1]);
+        if (mode_ == Mode.Symmetry) {           // its own half: the mirror is no bound
+            if (2 * k + 1 < positions_.length) hi = min(hi, 0.5f);
+            if (2 * k + 1 > positions_.length) lo = max(lo, 0.5f);
+        }
+        placeCurrent(clamp(p, lo, hi));
+    }
 
-        if (count_ <= 1) {
-            // Owner objection #1 (MAJOR, task 0239): Count<=1 ALWAYS honors
-            // the scrub regardless of Mode — a default Mode (Uniform) must
-            // never freeze a Count==1 Position at 0.5. Preserves the pre-
-            // 0239 T2 test AND the 0232 HUD scrub, both of which are
-            // Count==1-gated.
-            if (positions_.length == 0) positions_ ~= p;
-            else                        positions_[0] = p;
-            current_ = 0;
-        } else final switch (mode_) {
-            case Mode.Uniform:
-                // D3: the even-spacing law owns every position — a scrub is
-                // a no-op (preserves the pre-0239 T6 "Count>1 drag is a
-                // deliberate geometric no-op" test, since Uniform is the
-                // default Mode for Count>1).
-                break;
-            case Mode.Free:
-                if (current_ >= 0 && cast(size_t)current_ < positions_.length)
-                    positions_[current_] = p;
-                break;
-            case Mode.Symmetry:
-                // Slices are mirror pairs; an odd Count's middle slice is its
-                // own mirror and stays pinned at 0.5 (captured, toolcard
-                // `loop_slice_position_memory` S2).
-                immutable size_t mirror = cast(size_t)count_ - 1 - cast(size_t)current_;
-                if (cast(size_t)current_ < positions_.length && mirror < positions_.length
-                        && mirror != cast(size_t)current_) {
-                    positions_[current_] = p;
-                    positions_[mirror] = 1.0f - p;
-                }
-                break;
+    /// A WRITE of the `position` attribute (the panel, `tool.attr`): a
+    /// Symmetry slice stays on its own side of 0.5 (F3; one AT 0.5 is free).
+    /// The outer bound is the kernel's open interval, not the reference's
+    /// [0, 1]: a cut at an edge end is degenerate here.
+    void writePosition(float p) {
+        immutable size_t k = cast(size_t)current_;
+        float lo = 0.001f, hi = 0.999f;
+        if (mode_ == Mode.Symmetry && k < positions_.length) {
+            if (positions_[k] < 0.5f) hi = 0.5f;
+            if (positions_[k] > 0.5f) lo = 0.5f;
+        }
+        placeCurrent(clamp(p, lo, hi));
+    }
+
+    // Puts the current slice at `p` under the Mode law, then re-cuts while
+    // armed. Count 1 always moves (owner objection #1, task 0239: the default
+    // Uniform must not freeze a single slice); Uniform ignores a move at
+    // Count > 1; a Symmetry slice moves its mirror, an odd middle stays 0.5.
+    private void placeCurrent(float p) {
+        immutable size_t k = cast(size_t)current_;
+        immutable size_t mirror = positions_.length - 1 - k;
+        if (k < positions_.length && (count_ <= 1 || mode_ == Mode.Free))
+            positions_[k] = p;
+        else if (k < positions_.length && mode_ == Mode.Symmetry && mirror != k) {
+            positions_[k] = p;
+            positions_[mirror] = 1.0f - p;
         }
         syncProxy();
         if (armed_) rebuildCut();
@@ -1755,27 +1757,32 @@ private:
         return true;
     }
 
-    // Re-lay `positions_` per the Mode law (task 0239). A no-op below
-    // Count==2 for either law (owner objection #1 — see `scrubPosition`):
-    // Count<=1 is ALWAYS just whatever `positions_[0]` currently is,
-    // regardless of Mode.
+    // The Mode law, run by a Mode write and by Add/Remove (captured under a
+    // debugger, toolcard `loop_slice_position_memory` formulas F1): Uniform
+    // spaces evenly; Free keeps the list; Symmetry mirrors by INDEX — the
+    // half holding slice n/2 wins (the upper one only when that slice is
+    // strictly above 0.5), an odd middle is 0.5. No sorting.
     void applyModeLaw() {
-        if (count_ <= 1) return;
+        immutable size_t n = positions_.length;
         final switch (mode_) {
             case Mode.Free:
-                break;   // independent positions — nothing to re-lay
+                break;
             case Mode.Uniform:
+                spaceEvenly();
+                break;
             case Mode.Symmetry:
-                // `(k+1)/(count_+1)` is ALSO the correct symmetric-pairs-
-                // about-0.5 default for Symmetry (D4): position(k) and
-                // position(count_-1-k) always sum to 1 under this formula,
-                // so a fresh (re-)layout under either law looks identical —
-                // they diverge only in how a SUBSEQUENT scrub behaves
-                // (`scrubPosition` above).
-                foreach (k; 0 .. count_)
-                    positions_[k] = (k + 1.0f) / (count_ + 1.0f);
+                immutable bool upperWins = positions_[n / 2] > 0.5f;
+                foreach (i; 0 .. n / 2) {
+                    if (upperWins) positions_[i] = 1.0f - positions_[n - 1 - i];
+                    else           positions_[n - 1 - i] = 1.0f - positions_[i];
+                }
+                if (n % 2) positions_[n / 2] = 0.5f;
                 break;
         }
+    }
+
+    void spaceEvenly() {
+        foreach (k, ref p; positions_) p = (k + 1.0f) / (positions_.length + 1.0f);
     }
 
     // THE rule for the slice list: it is stored, never derived. Only a write
@@ -1803,10 +1810,21 @@ private:
         syncProxy();
     }
 
-    // A Count write: fit, then re-lay through the Mode law.
+    // A Count write (F2, F4): Free and Uniform re-space evenly. Symmetry grows
+    // by inserting the new slices evenly after `current` (toward 1.0 when
+    // `current` is the last), shrinks by truncating, then re-mirrors.
     void syncPositionsToCount() {
+        immutable size_t len = positions_.length, n = count_ < 1 ? 1 : count_;
+        if (mode_ == Mode.Symmetry && n > len && len > 0) {
+            immutable size_t c = min(cast(size_t)max(current_, 0), len - 1);
+            immutable float lo = positions_[c], hi = c + 1 < len ? positions_[c + 1] : 1.0f;
+            float[] grown = positions_[0 .. c + 1].dup;
+            foreach (m; 1 .. n - len + 1) grown ~= lo + (hi - lo) * m / (n - len + 1.0f);
+            positions_ = grown ~ positions_[c + 1 .. $];
+        }
         fitPositionsToCount();
-        applyModeLaw();
+        if (mode_ == Mode.Symmetry) applyModeLaw();
+        else                        spaceEvenly();
         syncProxy();
     }
 
