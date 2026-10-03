@@ -156,10 +156,14 @@ double[3][2] matcapAt(string name, D3 n) {
     return o;
 }
 
-/// 0..255 of the env arm: the env texel itself (unlit), clamped as stored.
+/// 0..255 of the env arm: the env texel itself (unlit). A normalised env is
+/// tone-mapped into [0, 1) at conversion, so no clamp is reachable — asserted.
 double[3] envPred(double[3] env) {
     double[3] o;
-    foreach (c; 0 .. 3) o[c] = 255.0 * (env[c] > 1 ? 1 : env[c]);
+    foreach (c; 0 .. 3) {
+        assert(env[c] >= 0 && env[c] < 1, format("premise: an env texel is in [0, 1), got %s", env));
+        o[c] = 255.0 * env[c];
+    }
     return o;
 }
 
@@ -602,9 +606,9 @@ unittest {
     enum double az = 0.35, el = 0.3, dist = 4.0;
     setCamera(az, el, dist);
     auto vp = viewportFromCameraMatrices();
-    // Pick the two brightest UNSATURATED env spots (max channel ≤ 1.6) on
-    // three rings, ≥ 40 px apart: the MatCap half needs a lit spot to tell the
-    // hover colour from the base.
+    // Pick the two brightest env spots (by min channel) on three rings,
+    // ≥ 40 px apart: the MatCap half needs a lit spot to tell the hover colour
+    // from the base.
     immutable int[2] cc = cellPx(vp, kC);
     immutable double rPx = 1.0 / dist * vp.proj[5] * vp.height / 2;
     int[2][] cand;
@@ -615,12 +619,10 @@ unittest {
         D3 n, r;
         if (!hit(vp, p, n, r)) continue;
         immutable double[3] e = envAt("studio_small_09", r);
-        immutable double mx = e[0] > e[1] ? (e[0] > e[2] ? e[0] : e[2]) : (e[1] > e[2] ? e[1] : e[2]);
         immutable double mn = e[0] < e[1] ? (e[0] < e[2] ? e[0] : e[2]) : (e[1] < e[2] ? e[1] : e[2]);
-        if (mx > 1.6) continue;
         cand ~= p; score ~= mn;
     }
-    assert(cand.length >= 2, format("(f) rig: only %d unsaturated candidate points", cand.length));
+    assert(cand.length >= 2, format("(f) rig: only %d candidate points", cand.length));
     size_t b0 = 0;
     foreach (i; 0 .. cand.length) if (score[i] > score[b0]) b0 = i;
     size_t b1 = size_t.max;
