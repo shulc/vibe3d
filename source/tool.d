@@ -457,6 +457,13 @@ struct ToolSessionPolicy {
     /// Captured for the Topology Pen (L15, L38, L41-L45, L53-L55; wave plan
     /// 8640 S7a, §9.19.3); every other tool keeps false, by data.
     bool foldsParamRowsIntoBlock;
+    /// The tool records its applied mesh image once per operation and again
+    /// after each undo, not at every refire: a redo inside the operation pins
+    /// the redo image of the operation's later refires to the image that redo
+    /// left, until an undo or the operation's end. false: every refire's redo
+    /// shows its own result. Read only by the session, inside the captured
+    /// model (topology-redo S7r, model doc §R13).
+    bool redoPinsRefireImage;
 }
 
 /// The captured topology-operation model (task 8920, law 1): history-owned

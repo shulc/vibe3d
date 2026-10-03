@@ -879,6 +879,12 @@ private struct ToolSession {
     // `MeshSnapshot.restore` copies and no code writes a snapshot in place;
     // released with the operation. Wave plan 8646 §9.25 [A13-2].
     private MeshSnapshot lastAfter_;
+    // The redo image a redo pinned for the refires of operation
+    // `pinnedOperation_` (0: none) — tools whose policy says
+    // `redoPinsRefireImage`; model doc §R13, Capture-10 b1-b3, Capture-11 b4-b6.
+    // One image at most; released at any undo and at the operation's end.
+    private MeshSnapshot pinnedRedoImage_;
+    private ulong pinnedOperation_;
     // The base of the operation a captured-model tool opens next (topology-redo
     // S3, model doc §R6.2): set where an operation ENDS with the tool still bound
     // (`rebaseOnCurrent_`) and seeded by the arm; an opening press rebases it
@@ -1020,6 +1026,16 @@ private struct ToolSession {
             operation_ = isUndo ? headOfRedoOperation_(aToken) : topOperation_(aToken);
             if (isUndo) rebaseOnUndoneOperation_(tool_(), aToken);
         }
+        // M-ri (topology-redo S7r, model doc §R13): a redo of the bound instance's own
+        // step pins the image it left for the operation's later refires, if the tool
+        // records once per operation; any undo, and every other case, releases it.
+        auto t = tool_();
+        auto client = aModel ? cast(TopologyStepClient) t : null;
+        auto mesh = client is null ? null : client.topologyStepMesh();
+        const pin = aModel && !isUndo && mesh !is null
+            && t.sessionPolicy().redoPinsRefireImage && ownInstanceStepOnTop_(t, aToken);
+        pinnedOperation_ = pin ? operation_ : 0;
+        pinnedRedoImage_ = pin ? MeshSnapshot.capture(*mesh) : MeshSnapshot.init;
         // A re-begin and every closed case end the operation here (N3/N5/N6):
         // the next one is based on the image the navigation left.
         if (aModel && !operationOpen_) rebaseOnCurrent_(tool_(), false);
@@ -1105,6 +1121,14 @@ private struct ToolSession {
             if (step.isTopologyStep() && step.sessionToken() == tok)
                 return step.stepOperation();
         return operation_;
+    }
+
+    // The undo top is session `tok`'s topology step and the live instance wrote it
+    // (law 4: an orphan row is another instance's).
+    private bool ownInstanceStepOnTop_(Tool t, ulong tok) {
+        auto step = cast(const MeshSessionEdit) undoTop_();
+        return step !is null && step.isTopologyStep() && step.sessionToken() == tok
+            && boundToLive_(step, t);
     }
 
     private bool boundModel_() {
@@ -1820,7 +1844,6 @@ private struct ToolSession {
             auto after = topologyPendingMesh_.matches(*m) ? topologyPendingMesh_
                 : MeshSnapshot.capture(*m);
             auto attrs = t.captureAttrImage();
-            cmd.setSnapshots(topologyPendingMesh_, after, client.topologyStepLabel());
             // The step's origin and operation (topology-redo S2b, model doc §3 E4-E7,
             // P1, PR); outside the captured model nothing is classified.
             auto origin = StepOrigin.unclassified;
@@ -1843,6 +1866,12 @@ private struct ToolSession {
                 }
                 if (origin != StepOrigin.refire) operation_ = ++nextOperation_;
             }
+            // M-ri: a press refire of the pinned operation keeps the pinned redo image as
+            // its `after`; its `before`, attributes and the live mesh stay its own.
+            const pinned = origin == StepOrigin.refire && topologyPendingPress_
+                && pinnedOperation_ != 0 && pinnedOperation_ == operation_;
+            cmd.setSnapshots(topologyPendingMesh_, pinned ? pinnedRedoImage_ : after,
+                client.topologyStepLabel());
             // The row keeps its operation's base (topology-redo S3, model doc
             // §R6.2): a redo restores it; the next operation's base is set
             // where this one ends (`rebaseOnCurrent_`).
@@ -2023,6 +2052,7 @@ private struct ToolSession {
         j["token"] = JSONValue(cast(long) token_);
         j["operationOpen"] = JSONValue(operationOpen_);
         j["operation"] = JSONValue(cast(long) operation_);
+        j["redoPinned"] = JSONValue(pinnedOperation_ != 0);
         return j;
     }
 
@@ -2089,6 +2119,8 @@ private struct ToolSession {
         topologyPendingMesh_ = MeshSnapshot.init;
         topologyPendingBasis_ = MeshSnapshot.init;
         lastAfter_ = MeshSnapshot.init;
+        pinnedRedoImage_ = MeshSnapshot.init;
+        pinnedOperation_ = 0;
     }
 
     // The image the pending topology step opened from, shared with the tool

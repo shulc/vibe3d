@@ -1587,6 +1587,101 @@ static assert(ToolSessionPolicy.init.activationResetAttrs.length == 0);
 // Fence (form item 1): the per-tool dormant flag is gone (S6, task 9080).
 static assert(!__traits(hasMember, imported!"tool".ToolSessionPolicy, "dormantAfterClosedRedo"));
 
+// ---------------------------------------------------------------------------
+// (4k) Task 9300 (topology-redo wave S7r, model doc §R13 M-ri): the redo image a redo pins is
+// ONE pair of session data (`pinnedRedoImage_`, `pinnedOperation_`), written at ONE settle
+// (`settleAfterNavigation_`: pinned by a redo, released by an undo) and released at the
+// operation's end (`endOperation_`); read by ONE writer of rows (`stepEnds`), whose origin and
+// operation are set BEFORE the row's images; which tools pin is the class's DATA
+// (`redoPinsRefireImage`). Order (form item 2): floor -> needle -> structural -> pin.
+// Polarity: every needle is false before S7r (none of the names existed), true after.
+// ---------------------------------------------------------------------------
+
+unittest { // (4k)
+    import std.file : dirEntries, SpanMode;
+    import tests.unit.census_symbols : blankUnittestBodies;
+    import tests.unit.production_tool_policies : productionPolicies;
+    import tool : capturedTopologyModel;
+    auto es = blankUnittestBodies(blankNonCode(readText("source/edit_session.d")));
+    const ts = bodyAt(es, "private struct ToolSession");
+    // FLOOR (form item 4): the model's 12 class files and the four session bodies read.
+    size_t files;
+    foreach (f; kRebaseBodyFiles) if (readText(f).length) ++files;
+    assert(files == 12, format("S7r floor: %s of the 12 model class files read", files));
+    foreach (m; ["private void settleAfterNavigation_(bool isUndo)",
+                 "void stepEnds(Tool t, bool ifChanged)", "private void endOperation_()",
+                 "private bool ownInstanceStepOnTop_(Tool t, ulong tok)"])
+        assert(squeeze(bodyAt(ts, m)).length > 2, "S7r floor: the session body " ~ m ~ " is empty");
+    // NEEDLES, by identifier: writes and every spelling apart (form item 3).
+    foreach (d; ["pinnedOperation_", "pinnedRedoImage_"])
+        assert(identSites(es, d, true) == ["ToolSession.endOperation_:1",
+                                           "ToolSession.settleAfterNavigation_:1"],
+               format("S7r needle: %s is written at %s, expected the settle after a navigation "
+                      ~ "(pin / release) and the operation's end alone", d, identSites(es, d, true)));
+    assert(identSites(es, "pinnedRedoImage_", false)
+           == ["ToolSession.endOperation_:1", "ToolSession.settleAfterNavigation_:1",
+               "ToolSession.stepEnds:1", "ToolSession:1"],
+           format("S7r needle: pinnedRedoImage_ appears at %s, expected its declaration, the two "
+                  ~ "writers and one read in stepEnds (the row's after)",
+                  identSites(es, "pinnedRedoImage_", false)));
+    assert(identSites(es, "pinnedOperation_", false)
+           == ["ToolSession.endOperation_:1", "ToolSession.settleAfterNavigation_:1",
+               "ToolSession.stateJson:1", "ToolSession.stepEnds:2", "ToolSession:1"],
+           format("S7r needle: pinnedOperation_ appears at %s, expected its declaration, the two "
+                  ~ "writers, the key in stepEnds and the report", identSites(es, "pinnedOperation_", false)));
+    assert(identSites(es, "ownInstanceStepOnTop_", false)
+           == ["<decl>:1", "ToolSession.settleAfterNavigation_:1"],
+           format("S7r needle: ownInstanceStepOnTop_ sites %s, expected one call in the settle",
+                  identSites(es, "ownInstanceStepOnTop_", false)));
+    // the datum, every word occurrence in `source` (form item 12: a rule, not a list)
+    string[] datum;
+    size_t scanned;
+    foreach (f; dirEntries("source", "*.d", SpanMode.depth)) {
+        ++scanned;
+        foreach (site; identSites(blankUnittestBodies(blankNonCode(readText(f.name))),
+                                  "redoPinsRefireImage", false))
+            datum ~= f.name ~ " " ~ site;
+    }
+    sort(datum);
+    assert(scanned > 300, format("S7r census: read %s source files", scanned));
+    assert(datum == ["source/edit_session.d ToolSession.settleAfterNavigation_:1",
+                     "source/tool.d <decl>:1",
+                     "source/tools/edit/edge_bevel.d EdgeBevelTool.sessionPolicy:1",
+                     "source/tools/edit/poly_inset_tool.d PolyInsetTool.sessionPolicy:1"],
+           format("S7r needle: redoPinsRefireImage appears at %s, expected its declaration, the "
+                  ~ "two captured policy literals and one read in the settle", datum));
+    // STRUCTURAL: stepEnds sets the row's origin and operation before its images — a pin
+    // keyed on the previous row's operation would pin a restart (M13).
+    const steE = squeeze(bodyAt(ts, "void stepEnds(Tool t, bool ifChanged)"));
+    const opAt = steE.indexOf("if(origin!=StepOrigin.refire)operation_=++nextOperation_;");
+    const snapAt = steE.indexOf("cmd.setSnapshots(");
+    assert(opAt >= 0 && snapAt > opAt,
+           format("S7r needle: stepEnds writes the row's images (at %s) before its operation "
+                  ~ "(at %s)", snapAt, opAt));
+
+    // STRUCTURAL — the datum read off the PRODUCTION instances of the model's classes.
+    size_t ids;
+    string[] seen, pins;
+    size_t off;
+    productionPolicies(ids, (string id, Tool t) {
+        const pol = t.sessionPolicy();
+        if (!capturedTopologyModel(pol)) return;
+        auto cls = typeid(t).name;
+        cls = cls[cls.lastIndexOf('.') + 1 .. $];
+        if (seen.canFind(cls)) return;
+        seen ~= cls;
+        if (pol.redoPinsRefireImage) pins ~= cls; else ++off;
+    });
+    sort(pins);
+    assert(seen.length == 12, format("S7r floor: %s model classes built, measured 12", seen.length));
+    assert(pins == ["EdgeBevelTool", "PolyInsetTool"] && off == 10,
+           format("S7r structural: redoPinsRefireImage is true for %s and false for %s classes; "
+                  ~ "captured: PolyInsetTool, EdgeBevelTool (Capture-10/11) and 10 false", pins, off));
+}
+
+// Pin (form item 1): every refire's redo shows its own result unless the policy says so.
+static assert(ToolSessionPolicy.init.redoPinsRefireImage == false);
+
 // (4d') The `built` census of the model's 12 classes (S3 review, 8950): the rebase
 // body sets `built = !before.matches(*mesh)`, and since S3 a close rebases onto the
 // live mesh, so `built` is false after every close with the tool bound. Each reader
@@ -2256,9 +2351,11 @@ unittest { // Tasks 7990/8030: production topology R wiring, not a helper replic
                       ~ "pair redo of navigateTopology_ and redoImpl_",
                       identSites(esU, "seedRecreated_", false)));
         assert(identSites(esU, "boundToLive_", false) == ["<decl>:1",
-               "ToolSession.dropImage_:1", "ToolSession.navigateTopology_:2"],
+               "ToolSession.dropImage_:1", "ToolSession.navigateTopology_:2",
+               "ToolSession.ownInstanceStepOnTop_:1"],
                format("S4 needle: boundToLive_ sites %s, expected the undo and redo orphan "
-                      ~ "branches and the drop walk", identSites(esU, "boundToLive_", false)));
+                      ~ "branches, the drop walk and the redo pin's own-instance test (S7r)",
+                      identSites(esU, "boundToLive_", false)));
     }
     // Task 9170 (S5, law 3, model doc §3): the redo is cut at one place, the settle
     // after an undo that ends the post mode. FLOOR: the three bodies the sites live in

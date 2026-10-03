@@ -3065,3 +3065,187 @@ unittest { // U-INIT5 (CAP r3/r4: no Initialize in the Z window; C9-7b s07_R): a
     assert(atArm == 0.3f, format("U-INIT5: the replayed arm left v %s, expected the stored 0.3 (a "
         ~ "replay is no activation: noteArm's `state != Suspend` term)", atArm));
 }
+
+// ---- Task 9300 (S7r, plan §22, model §R13 M-ri): a redo inside the operation pins the redo
+// ---- image of its later press refires, for a tool that records its image once per operation
+
+/// A scrub tool that records its applied image once per operation (`redoPinsRefireImage`).
+private final class PinningScrubTool : ScrubTopologyTool {
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy policy = {
+            activationRow: true, sessionSteps: true, historyTopologySteps: true,
+            opensAt: OpensAt.firstPress, imageAttrs: ["shift"], redoPinsRefireImage: true
+        };
+        return policy;
+    }
+    // A middle-button press of the same tool: a restart (a new operation).
+    void middleStep(float to) {
+        sessionStepBegins(PressKind.middle);
+        shift = to;
+        onParamChanged("shift");
+        sessionStepEnds();
+    }
+}
+
+private final class PinRig {
+    Mesh m;
+    CommandHistory h;
+    Tool active;
+    EditSession s;
+    ScrubTopologyTool t;
+    float y0;
+    this(ScrubTopologyTool tool) {
+        m = makeCube();
+        h = new CommandHistory();
+        t = tool;
+        t.m = &m; t.h = h; t.view = new View(0, 0, 1, 1);
+        t.basis = MeshSnapshot.capture(m);
+        y0 = m.vertices[0].y;
+        active = t;
+        s = new EditSession(() => active, h, () { active = null; });
+        s.noteArm("t.scrub", 1);
+    }
+    /// The live image: vertex 0's offset from the arm image.
+    float y() { return m.vertices[0].y - y0; }
+    bool pinned() { return s.sessionStateJson()["redoPinned"].type == JSONType.true_; }
+    size_t topologyRows() {
+        import commands.mesh.session_edit : MeshSessionEdit;
+        size_t n;
+        foreach (e; h.undoEntries())
+            if (auto row = cast(const MeshSessionEdit) e.cmd) if (row.isTopologyStep()) ++n;
+        return n;
+    }
+    void undo(string ctx) { assert(s.navigate(true), ctx ~ ": the undo did not step"); }
+    void redo(string ctx) { assert(s.navigate(false), ctx ~ ": the redo did not step"); }
+}
+
+private bool near(float a, float b) { return a - b < 1e-5f && b - a < 1e-5f; }
+
+unittest { // U-RI1 (CAP b1 s08_R, 8810 nav_redo_refire_inset s13_R): the refire after a redo
+           // keeps its attributes; its redo shows the image the redo left
+    auto r = new PinRig(new PinningScrubTool);
+    r.t.haulStep(0.1f);
+    r.t.haulStep(0.2f);
+    r.undo("U-RI1 rig");
+    r.redo("U-RI1 rig");
+    assert(r.pinned(), "U-RI1: the redo of the operation's refire pinned nothing (redoPinned false)");
+    r.t.haulStep(0.3f);
+    // must-stay-green: recording a row does not apply it — the live image is the refire's own
+    assert(near(r.y(), 0.3f), format("U-RI1: the refire after the redo left y %s, expected its own 0.3",
+                                     r.y()));
+    assert(r.topologyRows() == 3, format("U-RI1 floor: %s topology rows, measured 3",
+                                         r.topologyRows()));
+    r.undo("U-RI1 rig");
+    assert(near(r.y(), 0.2f), format("U-RI1 rig: the undo of the refire left y %s, not 0.2", r.y()));
+    r.redo("U-RI1 rig");
+    assert(near(r.y(), 0.2f) && near(r.t.shift, 0.3f),
+        format("U-RI1: the redo of the refire after a redo shows y %s / shift %s, expected the "
+               ~ "pinned 0.2 with its own shift 0.3 (settleAfterNavigation_'s pin, stepEnds' after)",
+               r.y(), r.t.shift));
+}
+
+unittest { // U-RI2 (CAP b4 s08_R = s06): without the datum nothing is pinned
+    auto r = new PinRig(new ScrubTopologyTool);
+    r.t.haulStep(0.1f);
+    r.t.haulStep(0.2f);
+    r.undo("U-RI2 rig");
+    r.redo("U-RI2 rig");
+    assert(!r.pinned(), "U-RI2: a tool without redoPinsRefireImage pinned its redo image");
+    r.t.haulStep(0.3f);
+    r.undo("U-RI2 rig");
+    r.redo("U-RI2 rig");
+    assert(!r.pinned() && near(r.y(), 0.3f),
+        format("U-RI2: the redo of the refire shows y %s (pinned %s), expected its own 0.3",
+               r.y(), r.pinned()));
+}
+
+unittest { // U-RI3 (CAP b6 s10_R = s08): an undo inside the operation ends the pin
+    auto r = new PinRig(new PinningScrubTool);
+    r.t.haulStep(0.1f);
+    r.t.haulStep(0.2f);
+    r.undo("U-RI3 rig");
+    r.redo("U-RI3 rig");
+    r.t.haulStep(0.3f);
+    r.undo("U-RI3 rig");
+    assert(!r.pinned(), "U-RI3: the undo left the redo image pinned (redoPinned true)");
+    r.t.haulStep(0.4f);
+    r.undo("U-RI3 rig");
+    r.redo("U-RI3 rig");
+    assert(near(r.y(), 0.4f), format("U-RI3: the redo of the refire after an undo shows y %s, "
+        ~ "expected its own 0.4 (any undo releases the pin; an undo pins nothing)", r.y()));
+}
+
+unittest { // U-RI3b (plan §22.5 (1)): the pin is the operation's — a restart's refires keep their own
+    auto r = new PinRig(new PinningScrubTool);
+    auto p = cast(PinningScrubTool) r.t;
+    r.t.haulStep(0.1f);
+    r.t.haulStep(0.2f);
+    r.undo("U-RI3b rig");
+    r.redo("U-RI3b rig");
+    p.middleStep(0.5f);
+    r.t.haulStep(0.6f);
+    r.undo("U-RI3b rig");
+    r.redo("U-RI3b rig");
+    assert(near(r.y(), 0.6f), format("U-RI3b: the redo of the restart's refire shows y %s, expected "
+        ~ "its own 0.6 (the pin is keyed on the operation: pinnedOperation_ == operation_)", r.y()));
+    r.undo("U-RI3b rig");
+    r.undo("U-RI3b rig");
+    r.redo("U-RI3b rig");
+    assert(near(r.y(), 0.5f), format("U-RI3b: the redo of the restart row shows y %s, expected its "
+        ~ "own 0.5 (stepEnds keys the pin on the row's own operation, set before setSnapshots)",
+        r.y()));
+}
+
+unittest { // U-RI4 (plan §22.5 (3), uncaptured): a parameter-write refire after a redo keeps its own
+    auto r = new PinRig(new PinningScrubTool);
+    r.t.haulStep(0.1f);
+    r.t.haulStep(0.2f);
+    r.undo("U-RI4 rig");
+    r.redo("U-RI4 rig");
+    const depth = r.h.undoEntries().length;
+    auto before = r.t.captureAttrImage();
+    r.t.shift = 0.35f;
+    r.s.orchestrateParameterChange(r.t, "shift", ParameterChangeSource.InteractiveValue,
+        ParameterChangePhase.ValueWritten, before, false);
+    r.s.orchestrateParameterChange(r.t, "", ParameterChangeSource.InteractiveValue,
+        ParameterChangePhase.BatchComplete);
+    assert(r.h.undoEntries().length == depth + 1 && near(r.y(), 0.35f),
+        "U-RI4 rig: the parameter write recorded no row or did not apply");
+    r.undo("U-RI4 rig");
+    r.redo("U-RI4 rig");
+    assert(near(r.y(), 0.35f), format("U-RI4: the redo of a parameter-write refire shows y %s, "
+        ~ "expected its own 0.35 (the pin is a press refire's: stepEnds' topologyPendingPress_)",
+        r.y()));
+}
+
+unittest { // U-RI5 (plan §22.5 (4), law 4): the redo of another instance's row pins nothing
+    auto r = new PinRig(new PinningScrubTool);
+    r.t.haulStep(0.1f);
+    r.t.haulStep(0.2f);
+    auto other = new PinningScrubTool;              // a new instance under the same token
+    other.m = &r.m; other.h = r.h; other.view = new View(0, 0, 1, 1);
+    other.basis = MeshSnapshot.capture(r.m);
+    r.active = other;
+    r.s.noteArm("t.scrub", 1);
+    r.t = other;
+    r.undo("U-RI5 rig");
+    r.redo("U-RI5 rig");
+    assert(!r.pinned(), "U-RI5: the redo of another instance's row pinned its image "
+        ~ "(ownInstanceStepOnTop_'s boundToLive_)");
+    r.t.haulStep(0.3f);
+    r.undo("U-RI5 rig");
+    r.redo("U-RI5 rig");
+    assert(near(r.y(), 0.3f), format("U-RI5: the refire over a redone orphan row redoes y %s, "
+        ~ "expected its own 0.3", r.y()));
+}
+
+unittest { // U-RI6 (plan §22.4 P3): the operation's end releases the pinned image
+    auto r = new PinRig(new PinningScrubTool);
+    r.t.haulStep(0.1f);
+    r.t.haulStep(0.2f);
+    r.undo("U-RI6 rig");
+    r.redo("U-RI6 rig");
+    assert(r.pinned(), "U-RI6 rig: the redo pinned nothing");
+    r.t.discard();
+    assert(!r.pinned(), "U-RI6: the operation's end kept the pinned image (endOperation_ releases it)");
+}

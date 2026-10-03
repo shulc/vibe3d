@@ -103,7 +103,9 @@ class EdgeBevelTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient,
             imageAttrs: ["width", "roundLevel", "widthMode"],
             haulAttrs: ["width", "roundLevel", "widthMode"],
             // captured: the tool's activation resets these (topology-redo S6r)
-            activationResetAttrs: ["width"]
+            activationResetAttrs: ["width"],
+            // captured: a refire records no new mesh image (topology-redo S7r)
+            redoPinsRefireImage: true
         };
         return policy;
     }

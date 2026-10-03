@@ -106,7 +106,9 @@ class PolyInsetTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient,
             commandClose: CommandClose.uiDoor,
             sessionSteps: true, historyTopologySteps: true,
             opensAt: OpensAt.firstPress,
-            imageAttrs: ["inset"], haulAttrs: ["inset"]
+            imageAttrs: ["inset"], haulAttrs: ["inset"],
+            // captured: a refire records no new mesh image (topology-redo S7r)
+            redoPinsRefireImage: true
         };
         return policy;
     }
