@@ -1403,7 +1403,7 @@ public:
     // size — and the kept vertex selection is not shown, so edge mode hands
     // the pass an empty mark view (colour AND size follow the mark, see
     // `drawVertices`). POLYGON mode takes the same empty mark view where a
-    // style forces dots (task 9330, toolcard `loop_slice_position_memory` Q4:
+    // style forces dots (toolcard `loop_slice_position_memory` Q4:
     // the kept vertex selection is not drawn, Wireframe and vertices-always
     // included); the item type is uncaptured and keeps its marks. The edge arm
     // gates the hover on `showVertHover`, like the hover-only arm below: that

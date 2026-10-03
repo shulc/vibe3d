@@ -295,7 +295,7 @@ private:
     // factory builds a fresh tool per activation, but a fresh tool is not a
     // fresh array). A runtime literal in the ctor allocates per instance.
     // The list DOES outlive the tool — the reference keeps Count and every
-    // position across a new arm and a drop -> reactivate (task 9330, toolcard
+    // position across a new arm and a drop -> reactivate (toolcard
     // `loop_slice_position_memory` Q1-Q3) — but through the sticky store
     // (`positions` is `.remembered()`), never through shared storage.
     float[] positions_;
@@ -673,7 +673,7 @@ public:
             // The session's image (slice M3), not panel rows: the slice
             // offsets (`count` long, capped by `count`'s bound and the
             // kernel's MAX_LOOP_SLICE_COUNT) and the arm's seed set. The
-            // offsets are also a remembered setting (task 9330): the sticky
+            // offsets are also a remembered setting: the sticky
             // store carries them across a drop, `position` (their proxy) not.
             Param.podArray_("positions", "Positions", &positions_).remembered(),
             Param.podArray_("seeds", "Seeds", &seeds_),
@@ -899,7 +899,7 @@ public:
         // likewise touch only session/gesture state.
         //
         // current_ IS reset to 0 at activation; positions_ is NOT — the
-        // sticky store restored the last list (task 9330, captured: only
+        // sticky store restored the last list (captured: only
         // `curr` resets). syncPositionsToCount() keeps the list CONSISTENT
         // with the restored count_/mode_ (pad/truncate, re-lay under a
         // non-Free law) and clamps a stale stored value into range. For a
@@ -1073,7 +1073,7 @@ public:
     /// (formerly the scalar `seedEdge_`) — `positions_`/`current_`/`edit_`/
     /// `mode_`/`count_` are session PARAMS, not per-arm latch state, and are
     /// intentionally left untouched here: a new arm cuts at the current list
-    /// (task 9330, captured Q1).
+    /// (captured, toolcard `loop_slice_position_memory` Q1).
     public void dropArmedPreview() {
         sessionOperationEnded();   // the operation ends with its preview (slice M3)
         armed_     = false;

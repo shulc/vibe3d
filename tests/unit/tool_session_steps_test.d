@@ -521,9 +521,10 @@ unittest { // every consumer site of the array kinds has a PodArray arm (opponen
     assert(missing.length == 0, format("M3 PodArray: a consumer site has no PodArray arm: %s", missing));
     // Measured on the M3 tree (this loop): every code mention of the array
     // kind, the raw snapshot/restore pair included; PodArray has one more, the
-    // argstring loop's skip.
-    assert(vec3Sites == 18 && podSites == 19,
-           format("M3 PodArray: %s Vec3Array / %s PodArray code sites, measured 18 / 19",
+    // argstring loop's skip, and three of the sticky store's float list
+    // (`remembered`, `stickyStringify`, `stickyParseInto` in params.d).
+    assert(vec3Sites == 18 && podSites == 22,
+           format("M3 PodArray: %s Vec3Array / %s PodArray code sites, measured 18 / 22",
                   vec3Sites, podSites));
 }
 
