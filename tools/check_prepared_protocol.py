@@ -688,6 +688,18 @@ def without_unittests(source):
         result = result[:start] + result[end:]
     return result
 
+def installer_image_writes(pt, fields):
+    """Assignments to `fields` inside `installPreparedActivation`'s body. The
+    activation reset of a tool's declared attributes has one writer, the
+    session's `activate_` (plan 9270 §23.6); an installer that writes one of
+    them is a second writer of the reset image. A missing installer answers
+    a non-empty list, so the negative conjunct cannot hold vacuously."""
+    m = re.search(r"final void installPreparedActivation\([^)]*\)[^{]*\{", pt)
+    if not m:
+        return ["<no installPreparedActivation>"]
+    body = pt[m.end():balanced_source(pt, m.end())-1]
+    return re.findall(r"(?<![.\w])(" + "|".join(fields) + r")\s*=(?!=)", body)
+
 prepared_source_texts = {path: path.read_text()
                          for path in (ROOT / "source").rglob("*.d")}
 for path, text in prepared_source_texts.items():
@@ -4230,8 +4242,9 @@ def vertex_merge_activation_gate(owner, context, tool):
         "image_.clear(); target_ = null; source_ = null;" in owner and
         "Mesh* delegate() nothrow @nogc meshSrc_;" in tool and
         "image.before = MeshSnapshot.capture(*source);" in tool and
-        "active = true; built = false; dragging = false; dist_ = 0.001f;\n"
+        "active = true; built = false; dragging = false;\n"
         "        image.before.moveInto(before);\n        image.valid = false;" in tool and
+        not installer_image_writes(pt, ("dist_",)) and
         "PreparedVertexMergeActivationOwner.prepare(this)" in producer and
         "context.prepareVertexMergeActivation(owner)" in producer and
         "context.markNoHistoryInstall()" in producer and
@@ -4259,14 +4272,16 @@ for target, old, new, label in (
     ("owner", "target_.installPreparedActivation(image_);", "", "drop installer"),
     ("owner", "image_.clear(); target_ = null; source_ = null;", "target_ = null;", "retain payload"),
     ("tool", "image.before = MeshSnapshot.capture(*source);", "", "drop snapshot"),
-    ("tool", "active = true; built = false; dragging = false; dist_ = 0.001f;",
-     "active = true; built = false; dragging = false;", "drop distance reset"),
-    ("tool", "active = true; built = false; dragging = false; dist_ = 0.001f;",
-     "built = false; dragging = false; dist_ = 0.001f;", "drop active reset"),
-    ("tool", "active = true; built = false; dragging = false; dist_ = 0.001f;",
-     "active = true; dragging = false; dist_ = 0.001f;", "drop built reset"),
-    ("tool", "active = true; built = false; dragging = false; dist_ = 0.001f;",
-     "active = true; built = false; dist_ = 0.001f;", "drop dragging reset"),
+    ("tool", "active = true; built = false; dragging = false;",
+     "built = false; dragging = false;", "drop active reset"),
+    ("tool", "active = true; built = false; dragging = false;",
+     "active = true; dragging = false;", "drop built reset"),
+    ("tool", "active = true; built = false; dragging = false;",
+     "active = true; built = false;", "drop dragging reset"),
+    ("tool", "ref PreparedVertexMergeActivationImage image) nothrow @nogc {\n"
+     "        if (!image.valid) return;",
+     "ref PreparedVertexMergeActivationImage image) nothrow @nogc {\n"
+     "        if (!image.valid) return; dist_ = 0.001f;", "restore distance write"),
     ("tool", "image.before.moveInto(before);", "before = image.before;", "shallow snapshot copy"),
     ("tool", "scope(failure) context.discard();", "", "drop failure cleanup"),
     ("tool", "context.prepareVertexMergeActivation(owner)", "true", "drop enlist"),
@@ -4313,8 +4328,9 @@ def poly_inset_activation_gate(owner, context, tool):
         "image_.clear(); target_ = null; source_ = null;" in owner and
         "Mesh* delegate() nothrow @nogc meshSrc_;" in tool and
         "image.before = MeshSnapshot.capture(*source); image.valid = true;" in tool and
-        "active = true; built = false; dragging = false; inset_ = 0.0f;\n"
+        "active = true; built = false; dragging = false;\n"
         "        image.before.moveInto(before); image.valid = false;" in tool and
+        not installer_image_writes(pt, ("inset_",)) and
         "PreparedPolyInsetActivationOwner.prepare(this)" in producer and
         "context.preparePolyInsetActivation(owner)" in producer and
         "context.markNoHistoryInstall()" in producer and
@@ -4342,14 +4358,16 @@ for target, old, new, label in (
     ("owner", "target_.installPreparedActivation(image_);", "", "drop install"),
     ("owner", "image_.clear(); target_ = null; source_ = null;", "target_ = null;", "retain payload"),
     ("tool", "image.before = MeshSnapshot.capture(*source);", "", "drop snapshot"),
-    ("tool", "active = true; built = false; dragging = false; inset_ = 0.0f;",
-     "built = false; dragging = false; inset_ = 0.0f;", "drop active reset"),
-    ("tool", "active = true; built = false; dragging = false; inset_ = 0.0f;",
-     "active = true; dragging = false; inset_ = 0.0f;", "drop built reset"),
-    ("tool", "active = true; built = false; dragging = false; inset_ = 0.0f;",
-     "active = true; built = false; inset_ = 0.0f;", "drop dragging reset"),
-    ("tool", "active = true; built = false; dragging = false; inset_ = 0.0f;",
-     "active = true; built = false; dragging = false;", "drop inset reset"),
+    ("tool", "active = true; built = false; dragging = false;",
+     "built = false; dragging = false;", "drop active reset"),
+    ("tool", "active = true; built = false; dragging = false;",
+     "active = true; dragging = false;", "drop built reset"),
+    ("tool", "active = true; built = false; dragging = false;",
+     "active = true; built = false;", "drop dragging reset"),
+    ("tool", "ref PreparedPolyInsetActivationImage image) nothrow @nogc {\n"
+     "        if (!image.valid) return;",
+     "ref PreparedPolyInsetActivationImage image) nothrow @nogc {\n"
+     "        if (!image.valid) return; inset_ = 0.0f;", "restore inset write"),
     ("tool", "image.before.moveInto(before);", "before = image.before;", "shallow snapshot"),
     ("tool", "scope(failure) context.discard();", "", "drop failure cleanup"),
     ("tool", "context.preparePolyInsetActivation(owner)", "true", "drop enlist"),
@@ -4409,7 +4427,8 @@ def poly_extrude_activation_gate(owner, context, tool):
                    "        image.extrudeAxis = extrudeAxis;") == 2 and
         "computePreparedGizmoFrame(*source, image);" in tool and
         "active = true; built = false; dragPart = -1;\n"
-        "        distance_ = shiftX_ = shiftY_ = shiftZ_ = 0.0f;" in installer and
+        "        resetExtentFrame();" in installer and
+        not installer_image_writes(pt, ("distance_", "shiftX_", "shiftY_", "shiftZ_")) and
         "image.before.moveInto(before);" in installer and
         "gizmoValid = image.gizmoValid; anchor = image.anchor;" in installer and
         "baseAnchor = image.baseAnchor; extrudeAxis = image.extrudeAxis;" in installer and
@@ -4451,26 +4470,17 @@ for target, old, new, label in (
     ("owner", "!image_.before.matches(*source_)", "false", "drop content guard"),
     ("owner", "target_.installPreparedActivation(image_);", "", "drop install"),
     ("owner", "image_.clear(); target_ = null; source_ = null;", "target_ = null;", "retain payload"),
-    ("tool", "active = true; built = false; dragPart = -1;\n"
-     "        distance_ = shiftX_ = shiftY_ = shiftZ_ = 0.0f;",
-     "built = false; dragPart = -1;\n"
-     "        distance_ = shiftX_ = shiftY_ = shiftZ_ = 0.0f;", "drop active reset"),
-    ("tool", "active = true; built = false; dragPart = -1;\n"
-     "        distance_ = shiftX_ = shiftY_ = shiftZ_ = 0.0f;",
-     "active = true; dragPart = -1;\n"
-     "        distance_ = shiftX_ = shiftY_ = shiftZ_ = 0.0f;", "drop built reset"),
-    ("tool", "active = true; built = false; dragPart = -1;\n"
-     "        distance_ = shiftX_ = shiftY_ = shiftZ_ = 0.0f;",
-     "active = true; built = false;\n"
-     "        distance_ = shiftX_ = shiftY_ = shiftZ_ = 0.0f;", "drop drag reset"),
-    ("tool", "distance_ = shiftX_ = shiftY_ = shiftZ_ = 0.0f;",
-     "shiftX_ = shiftY_ = shiftZ_ = 0.0f;", "drop distance reset"),
-    ("tool", "distance_ = shiftX_ = shiftY_ = shiftZ_ = 0.0f;",
-     "distance_ = shiftY_ = shiftZ_ = 0.0f;", "drop shiftX reset"),
-    ("tool", "distance_ = shiftX_ = shiftY_ = shiftZ_ = 0.0f;",
-     "distance_ = shiftX_ = shiftZ_ = 0.0f;", "drop shiftY reset"),
-    ("tool", "distance_ = shiftX_ = shiftY_ = shiftZ_ = 0.0f;",
-     "distance_ = shiftX_ = shiftY_ = 0.0f;", "drop shiftZ reset"),
+    ("tool", "active = true; built = false; dragPart = -1;",
+     "built = false; dragPart = -1;", "drop active reset"),
+    ("tool", "active = true; built = false; dragPart = -1;",
+     "active = true; dragPart = -1;", "drop built reset"),
+    ("tool", "active = true; built = false; dragPart = -1;",
+     "active = true; built = false;", "drop drag reset"),
+    ("tool", "ref PreparedPolyExtrudeActivationImage image) nothrow @nogc {\n"
+     "        if (!image.valid) return;",
+     "ref PreparedPolyExtrudeActivationImage image) nothrow @nogc {\n"
+     "        if (!image.valid) return; distance_ = shiftX_ = shiftY_ = shiftZ_ = 0.0f;",
+     "restore distance/shift write"),
     ("tool", "image.before.moveInto(before);", "before = image.before;", "shallow snapshot"),
     ("tool", "image.anchor = anchor; image.baseAnchor = baseAnchor;\n"
      "        image.extrudeAxis = extrudeAxis;", "", "drop invalid-frame preservation"),
@@ -4712,7 +4722,9 @@ def edge_bevel_activation_gate(owner, context, tool, preview):
         # one seeds the shared replica memo without publishing interaction
         # state; collapsing this back to three reintroduces a per-cell derive.
         tool.count("image.gizmoSelHash = gizmoSelHash;") == 4 and
-        "active = true; built = false; dragPart = -1; width_ = 0.0f;" in installer and
+        "active = true; built = false; dragPart = -1;\n"
+        "        preview_.reset();" in installer and
+        not installer_image_writes(pt, ("width_",)) and
         "preview_.reset(); image.before.moveInto(before);" in installer and
         "gizmoValid = image.gizmoValid; anchor = image.anchor;" in installer and
         "baseAnchor = image.baseAnchor; widthAxis = image.widthAxis;" in installer and
@@ -4771,18 +4783,24 @@ for target, old, new, label in (
      "preview_.reset(); image.before = MeshSnapshot.capture(*source); image.valid = true;",
      "clear preview scratch during prepare"),
     ("tool", "image.gizmoValid = gizmoValid; image.anchor = anchor;", "", "drop frame seed"),
-    ("tool", "active = true; built = false; dragPart = -1; width_ = 0.0f;",
-     "built = false; dragPart = -1; width_ = 0.0f;", "drop active reset"),
-    ("tool", "active = true; built = false; dragPart = -1; width_ = 0.0f;",
-     "active = true; dragPart = -1; width_ = 0.0f;", "drop built reset"),
-    ("tool", "active = true; built = false; dragPart = -1; width_ = 0.0f;",
-     "active = true; built = false; width_ = 0.0f;", "drop drag reset"),
-    ("tool", "active = true; built = false; dragPart = -1; width_ = 0.0f;",
-     "active = true; built = false; dragPart = -1;", "drop width reset"),
-    ("tool", "active = true; built = false; dragPart = -1; width_ = 0.0f;",
-     "active = true; built = false; dragPart = -1; width_ = 0.0f; roundLevel_ = 0;", "reset round preset"),
-    ("tool", "active = true; built = false; dragPart = -1; width_ = 0.0f;",
-     "active = true; built = false; dragPart = -1; width_ = 0.0f; widthMode_ = false;", "reset width mode preset"),
+    ("tool", "active = true; built = false; dragPart = -1;",
+     "built = false; dragPart = -1;", "drop active reset"),
+    ("tool", "active = true; built = false; dragPart = -1;",
+     "active = true; dragPart = -1;", "drop built reset"),
+    ("tool", "active = true; built = false; dragPart = -1;",
+     "active = true; built = false;", "drop drag reset"),
+    ("tool", "ref PreparedEdgeBevelActivationImage image) nothrow @nogc {\n"
+     "        if (!image.valid) return;",
+     "ref PreparedEdgeBevelActivationImage image) nothrow @nogc {\n"
+     "        if (!image.valid) return; roundLevel_ = 0;", "reset round preset"),
+    ("tool", "ref PreparedEdgeBevelActivationImage image) nothrow @nogc {\n"
+     "        if (!image.valid) return;",
+     "ref PreparedEdgeBevelActivationImage image) nothrow @nogc {\n"
+     "        if (!image.valid) return; widthMode_ = false;", "reset width mode preset"),
+    ("tool", "ref PreparedEdgeBevelActivationImage image) nothrow @nogc {\n"
+     "        if (!image.valid) return;",
+     "ref PreparedEdgeBevelActivationImage image) nothrow @nogc {\n"
+     "        if (!image.valid) return; width_ = 0.0f;", "restore width write"),
     ("tool", "preview_.reset(); image.before.moveInto(before);",
      "image.before.moveInto(before);", "retain preview scratch"),
     ("tool", "image.before.moveInto(before);", "before = image.before;", "shallow snapshot"),
@@ -5007,7 +5025,8 @@ def vertex_bevel_activation_gate(owner, context, tool):
                       r"dragBaseInset|cachedVp)\s*=", builder) and
         tool.count("image.gizmoValid = gizmoValid; image.anchor = anchor;") == 3 and
         tool.count("image.baseAnchor = baseAnchor; image.insetAxis = insetAxis;") == 3 and
-        "active = true; built = false; dragPart = -1; inset_ = 0.0f;" in installer and
+        "active = true; built = false; dragPart = -1;" in installer and
+        not installer_image_writes(pt, ("inset_",)) and
         "image.before.moveInto(before);" in installer and
         "gizmoValid = image.gizmoValid; anchor = image.anchor;" in installer and
         "baseAnchor = image.baseAnchor; insetAxis = image.insetAxis;" in installer and
@@ -5052,14 +5071,16 @@ for target, old, new, label in (
      "dragLastMX = 0; image.before = MeshSnapshot.capture(*source); image.valid = true;",
      "write live state during prepare"),
     ("tool", "image.gizmoValid = gizmoValid; image.anchor = anchor;", "", "drop frame seed"),
-    ("tool", "active = true; built = false; dragPart = -1; inset_ = 0.0f;",
-     "built = false; dragPart = -1; inset_ = 0.0f;", "drop active reset"),
-    ("tool", "active = true; built = false; dragPart = -1; inset_ = 0.0f;",
-     "active = true; dragPart = -1; inset_ = 0.0f;", "drop built reset"),
-    ("tool", "active = true; built = false; dragPart = -1; inset_ = 0.0f;",
-     "active = true; built = false; inset_ = 0.0f;", "drop drag reset"),
-    ("tool", "active = true; built = false; dragPart = -1; inset_ = 0.0f;",
-     "active = true; built = false; dragPart = -1;", "drop inset reset"),
+    ("tool", "active = true; built = false; dragPart = -1;",
+     "built = false; dragPart = -1;", "drop active reset"),
+    ("tool", "active = true; built = false; dragPart = -1;",
+     "active = true; dragPart = -1;", "drop built reset"),
+    ("tool", "active = true; built = false; dragPart = -1;",
+     "active = true; built = false;", "drop drag reset"),
+    ("tool", "ref PreparedVertexBevelActivationImage image) nothrow @nogc {\n"
+     "        if (!image.valid) return;",
+     "ref PreparedVertexBevelActivationImage image) nothrow @nogc {\n"
+     "        if (!image.valid) return; inset_ = 0.0f;", "restore inset write"),
     ("tool", "image.before.moveInto(before);", "before = image.before;", "shallow snapshot"),
     ("tool", "gizmoValid = image.gizmoValid; anchor = image.anchor;", "anchor = image.anchor;", "drop validity"),
     ("tool", "baseAnchor = image.baseAnchor; insetAxis = image.insetAxis;", "insetAxis = image.insetAxis;", "drop base anchor"),
@@ -5131,7 +5152,7 @@ def vertex_extrude_activation_gate(owner, context, tool):
         tool.count("image.baseAnchor = baseAnchor; image.shiftAxis = shiftAxis;") == 3 and
         tool.count("image.widthAxis = widthAxis; image.gizmoSelHash = gizmoSelHash;") == 3 and
         "active = true; built = false; dragPart = -1;" in installer and
-        "shift_ = 0.0f; width_ = 0.0f;" in installer and
+        not installer_image_writes(pt, ("shift_", "width_")) and
         "image.before.moveInto(before);" in installer and
         "gizmoValid = image.gizmoValid; anchor = image.anchor;" in installer and
         "baseAnchor = image.baseAnchor; shiftAxis = image.shiftAxis;" in installer and
@@ -5183,8 +5204,10 @@ for target, old, new, label in (
     ("tool", "active = true; built = false; dragPart = -1;", "built = false; dragPart = -1;", "drop active reset"),
     ("tool", "active = true; built = false; dragPart = -1;", "active = true; dragPart = -1;", "drop built reset"),
     ("tool", "active = true; built = false; dragPart = -1;", "active = true; built = false;", "drop drag reset"),
-    ("tool", "shift_ = 0.0f; width_ = 0.0f;", "width_ = 0.0f;", "drop shift reset"),
-    ("tool", "shift_ = 0.0f; width_ = 0.0f;", "shift_ = 0.0f;", "drop width reset"),
+    ("tool", "ref PreparedVertexExtrudeActivationImage image) nothrow @nogc {\n"
+     "        if (!image.valid) return;",
+     "ref PreparedVertexExtrudeActivationImage image) nothrow @nogc {\n"
+     "        if (!image.valid) return; shift_ = 0.0f; width_ = 0.0f;", "restore shift/width write"),
     ("tool", "image.before.moveInto(before);", "before = image.before;", "shallow snapshot"),
     ("tool", "gizmoValid = image.gizmoValid; anchor = image.anchor;", "anchor = image.anchor;", "drop validity"),
     ("tool", "baseAnchor = image.baseAnchor; shiftAxis = image.shiftAxis;", "shiftAxis = image.shiftAxis;", "drop base anchor"),
@@ -5261,7 +5284,7 @@ def edge_extrude_activation_gate(owner, context, tool):
         tool.count("image.baseAnchor = baseAnchor; image.extrudeAxis = extrudeAxis;") == 3 and
         tool.count("image.widthAxis = widthAxis; image.gizmoSelHash = gizmoSelHash;") == 3 and
         "active = true; built = false; dragPart = -1;" in installer and
-        "extrude_ = 0.0f; width_ = 0.0f;" in installer and
+        not installer_image_writes(pt, ("extrude_", "width_")) and
         "image.before.moveInto(before);" in installer and
         "gizmoValid = image.gizmoValid; anchor = image.anchor;" in installer and
         "baseAnchor = image.baseAnchor; extrudeAxis = image.extrudeAxis;" in installer and
@@ -5318,8 +5341,10 @@ for target, old, new, label in (
     ("tool", "active = true; built = false; dragPart = -1;", "built = false; dragPart = -1;", "drop active reset"),
     ("tool", "active = true; built = false; dragPart = -1;", "active = true; dragPart = -1;", "drop built reset"),
     ("tool", "active = true; built = false; dragPart = -1;", "active = true; built = false;", "drop drag reset"),
-    ("tool", "extrude_ = 0.0f; width_ = 0.0f;", "width_ = 0.0f;", "drop extrude reset"),
-    ("tool", "extrude_ = 0.0f; width_ = 0.0f;", "extrude_ = 0.0f;", "drop width reset"),
+    ("tool", "ref PreparedEdgeExtrudeActivationImage image) nothrow @nogc {\n"
+     "        if (!image.valid) return;",
+     "ref PreparedEdgeExtrudeActivationImage image) nothrow @nogc {\n"
+     "        if (!image.valid) return; extrude_ = 0.0f; width_ = 0.0f;", "restore extrude/width write"),
     ("tool", "image.before.moveInto(before);", "before = image.before;", "shallow snapshot"),
     ("tool", "gizmoValid = image.gizmoValid; anchor = image.anchor;", "anchor = image.anchor;", "drop valid install"),
     ("tool", "baseAnchor = image.baseAnchor; extrudeAxis = image.extrudeAxis;", "extrudeAxis = image.extrudeAxis;", "drop base anchor"),

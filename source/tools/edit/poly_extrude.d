@@ -231,7 +231,6 @@ public:
             ref PreparedPolyExtrudeActivationImage image) nothrow @nogc {
         if (!image.valid) return;
         active = true; built = false; dragPart = -1;
-        distance_ = shiftX_ = shiftY_ = shiftZ_ = 0.0f;
         resetExtentFrame();
         image.before.moveInto(before);
         gizmoValid = image.gizmoValid; anchor = image.anchor;

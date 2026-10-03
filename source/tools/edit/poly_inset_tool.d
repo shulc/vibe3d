@@ -179,7 +179,7 @@ public:
     final void installPreparedActivation(
             ref PreparedPolyInsetActivationImage image) nothrow @nogc {
         if (!image.valid) return;
-        active = true; built = false; dragging = false; inset_ = 0.0f;
+        active = true; built = false; dragging = false;
         image.before.moveInto(before); image.valid = false;
     }
     final PreparedSessionActivateEffect prepareActivate(

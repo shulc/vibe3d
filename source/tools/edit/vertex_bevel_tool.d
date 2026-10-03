@@ -201,7 +201,7 @@ public:
     final void installPreparedActivation(
             ref PreparedVertexBevelActivationImage image) nothrow @nogc {
         if (!image.valid) return;
-        active = true; built = false; dragPart = -1; inset_ = 0.0f;
+        active = true; built = false; dragPart = -1;
         image.before.moveInto(before);
         gizmoValid = image.gizmoValid; anchor = image.anchor;
         baseAnchor = image.baseAnchor; insetAxis = image.insetAxis;

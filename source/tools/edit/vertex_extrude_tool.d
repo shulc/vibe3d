@@ -205,7 +205,6 @@ public:
             ref PreparedVertexExtrudeActivationImage image) nothrow @nogc {
         if (!image.valid) return;
         active = true; built = false; dragPart = -1;
-        shift_ = 0.0f; width_ = 0.0f;
         image.before.moveInto(before);
         gizmoValid = image.gizmoValid; anchor = image.anchor;
         baseAnchor = image.baseAnchor; shiftAxis = image.shiftAxis;

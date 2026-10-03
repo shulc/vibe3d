@@ -183,7 +183,7 @@ public:
     final void installPreparedActivation(
             ref PreparedVertexMergeActivationImage image) nothrow @nogc {
         if (!image.valid) return;
-        active = true; built = false; dragging = false; dist_ = 0.001f;
+        active = true; built = false; dragging = false;
         image.before.moveInto(before);
         image.valid = false;
     }
