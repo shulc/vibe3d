@@ -494,9 +494,10 @@ void restoreCamera(const ref Viewport vp, double az, double el, double dist) {
 unittest {
     if (!cellOn("e")) return;
     // The rig's env (task 9290 re-derived it from the normalised texels): at
-    // these R the outdoor sky reads ≈ (32,38,53), ≥ 50 from the background
-    // (92,102,107); the studio read (101,100,100) — within 10 of it, so the
-    // cull floor below could not tell a drawn face from the backdrop.
+    // these R the outdoor sky reads (70,83,117) … (102,110,134), 15–31 levels
+    // from the background (92,102,107) at every probe (measured 2026-10-03);
+    // the studio read (101,100,100) — within 10 of it, so the cull floor below
+    // could not tell a drawn face from the backdrop.
     enum string backEnv = kDefaultEnv;
     scope(exit) postJson("/api/command", commandBody("viewport.displayStyle", `{"value":"shaded"}`));
     D3[] qv = [add3(kC, [-1.5, -1.5, 0.0]), add3(kC, [1.5, -1.5, 0.0]),
