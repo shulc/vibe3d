@@ -27,12 +27,13 @@ module topology_redo_law_helpers;
 import http_client : getJson, postJson, frameFence, waitPlaybackProcessed;
 import http_command_helpers : commandBody;
 import std.algorithm : canFind, countUntil, map, sort;
-import std.array : array, join;
+import std.array : array, join, split;
 import std.conv : to;
 import std.format : format;
 import std.json;
 import std.math : abs;
 import std.process : environment;
+import std.string : strip;
 
 /// How OUR product plays a reference rig: the reference haul's delta is played as is,
 /// from our press point (handle part 0, or the viewport centre) offset like the
@@ -139,7 +140,8 @@ Rig rigOf(string variant) {
         r.attrName = ["axis": "axis"];
         r.enumNames = ["axis": ["X", "Y", "Z"]];
         r.attrName["centerY"] = "center"; r.attrComponent["centerY"] = 1;   // 8960 `cenY`
-        r.armPreset = ["axis": "Y"];   // every mirror cell's raw s01: `axis: 1`
+        // every mirror cell's raw s01: `axis: 1`, the capture's arm centre (-0.67, 1.17, 0)
+        r.armPreset = ["axis": "Y", "center": "{-0.67,1.17,0}"];
         r.placesCenter = true;         // the weld at x = -0.35 (vertex 1) needs the same centre
         break;
     case "radial_array":
@@ -283,8 +285,16 @@ long setupCell(const JSONValue cell, const Rig rig) {
         foreach (a, v; pr.armPreset) {
             cmdOk("/api/command", "tool.attr " ~ pr.tool ~ " " ~ a ~ " " ~ v, ctx);
             const r = postJson("/api/command", "tool.attr " ~ pr.tool ~ " " ~ a ~ " ?");
-            const got = r["value"].type == JSONType.string ? r["value"].str : r["value"].toString;
-            assert(got == v, format("rig VOID %s: the arm preset %s reads %s, written %s",
+            bool same;
+            if (r["value"].type == JSONType.array) {   // a vector, written `{x,y,z}`
+                const w = v[1 .. $ - 1].split(",");
+                same = w.length == r["value"].array.length;
+                foreach (k, e; r["value"].array)
+                    same = same && abs(num(e) - w[k].strip.to!double) < 1e-6;
+            } else
+                same = (r["value"].type == JSONType.string ? r["value"].str
+                                                           : r["value"].toString) == v;
+            assert(same, format("rig VOID %s: the arm preset %s reads %s, written %s",
                 ctx, a, r["value"].toString, v));
         }
         cmdOk("/api/command", "tool.set " ~ pr.tool ~ " off", ctx);
