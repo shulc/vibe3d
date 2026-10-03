@@ -1006,6 +1006,26 @@ unittest { // the mirror rig draws no plane rings, and nothing else witnesses it
         resetApp();
     }
 
+    // Task 9270 (S6r, Capture-12 step 0): the armed instance is inactive and
+    // draws no handles, only the plane (fill-less quad + normal line = 2); the
+    // rings are a property of the drawn handles, so the count below is taken
+    // after an activating tap (it places the centre where it lands).
+    immutable long inactiveHandles = passCalls(lastScene(), "handles");
+    assert(inactiveHandles == 2,
+           format("the inactive mirror instance submitted %d handle draws, "
+                  ~ "measured 2 (the plane only, no handle boxes)", inactiveHandles));
+    {
+        auto camera = gj("/api/camera");
+        immutable int x = cast(int)camera["vpX"].integer;
+        immutable int y = cast(int)camera["vpY"].integer;
+        immutable int w = cast(int)camera["width"].integer;
+        immutable int h = cast(int)camera["height"].integer;
+        playAndSettle(format(
+            `{"t":0,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n" ~
+            `{"t":10,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n" ~
+            `{"t":20,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
+            x, y, w, h, x + w / 4, y + h / 4, x + w / 4, y + h / 4));
+    }
     immutable long mirrorHandles = passCalls(lastScene(), "handles");
     assert(mirrorHandles > 0,
            "the mirror rig submitted no handle draws at all -- the tool did not "

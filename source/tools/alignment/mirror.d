@@ -677,17 +677,24 @@ public:
         rotateBox.pos  = params_.center + curNormal * arm;
         rotateBox.size = gs * 0.03f;
 
+        // Topology-redo S6r (Capture-12 step 0 NOT-DRAWN, task 9270): an inactive
+        // instance draws and registers no handles — 0 handle pixels until the
+        // activating press. The arbiter still runs its frame (empty: hot = -1).
+        const handlesShown = sessionPressActivation() != PressActivation.activates;
+
         drawPlaneViz(vp, params_.center, curNormal, gs, shader.program);
-        rotateBox.draw(shader, vp);
+        if (handlesShown) rotateBox.draw(shader, vp);
 
         if (!visualOnly) {
             toolHandles.begin();
             // Task 0233: only the center box + rotate box are registered — the
             // axis arrows are gone (mover.arrowsVisible=false). moverDragAxis is
             // now only ever 3 (centerBox) or 4 (rotateBox).
-            toolHandles.add(mover.centerBox, 13);
-            toolHandles.add(rotateBox,       14);
-            if (moverDragAxis >= 0)
+            if (handlesShown) {
+                toolHandles.add(mover.centerBox, 13);
+                toolHandles.add(rotateBox,       14);
+            }
+            if (handlesShown && moverDragAxis >= 0)
                 toolHandles.setHaul(moverDragAxis == 3 ? 13 : 14);
             else
                 toolHandles.setHaul(-1);
@@ -696,7 +703,7 @@ public:
             toolHandles.update(hmx, hmy, vp);
         }
 
-        mover.draw(shader, vp);
+        if (handlesShown) mover.draw(shader, vp);
     }
 
     /// Wire quad ⟂ `normal` at `center` + a dashed line along `normal` through

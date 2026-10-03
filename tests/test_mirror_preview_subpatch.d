@@ -16,7 +16,8 @@
 // first Ctrl+Z drops the live copy and keeps the tool); task 7116 adds E (a
 // press on a handle also starts the edit), F (a tool switch commits it), G
 // (a switch from an untouched tool records nothing); the review added H (the
-// base is taken at the first press) and I (the weld distance is a world length).
+// base is taken at the first press) and I (the weld distance is a world length);
+// task 9270 adds J (an inactive instance draws no handles).
 // Each block opens with its rig floor, so a red below it cannot be a rig that
 // never happened.
 
@@ -534,4 +535,62 @@ unittest {
         format("7116 weld distance applied in local units: %d vertices, expected "
              ~ "16 (a 0.1 world gap is wider than a 0.08 world weld)", vertexCount()));
     cmd("tool.set " ~ TOOL ~ " off");
+}
+
+// ---- J (task 9270, topology-redo S6r; Capture-12 step 0 NOT-DRAWN) ----------
+// An inactive instance draws and registers no handles: after the arm and a
+// scripted centre, with the pointer over that centre, the window around it
+// keeps the bare pixels (0 handle pixels); the first press activates the
+// instance, places the centre there and the centre box appears. The window
+// stays inside the box (half-extent 5 px x 2.4) and off the plane's two lines
+// through the centre (|offset| >= 5).
+unittest {
+    subpatchCube();
+    auto c = orthoCamera("Front", [1.5, 0, 0], 6.0);
+    int cx, cy;
+    pixelOf(c, [1.5, 0, 0], cx, cy);
+    string q;
+    size_t n;
+    foreach (dy; [-10, -8, -5, 5, 8, 10])
+        foreach (dx; [-10, -8, -5, 5, 8, 10]) {
+            if (q.length) q ~= ";";
+            q ~= format("%d,%d", cx + dx, cy + dy);
+            ++n;
+        }
+    assert(n == 36, "9270 J: the window population changed");
+    Rgb[] grab() {
+        Rgb[] o;
+        foreach (p; getJson("/api/viewport/probe?cell=0&points=" ~ q)["points"].array)
+            o ~= Rgb(p["r"].integer, p["g"].integer, p["b"].integer);
+        assert(o.length == n, "9270 J: probe population changed");
+        return o;
+    }
+    size_t differs(const Rgb[] a, const Rgb[] b) {
+        size_t k;
+        foreach (i; 0 .. a.length) if (a[i] != b[i]) ++k;
+        return k;
+    }
+    const bare = grab();
+    cmd("tool.set " ~ TOOL);
+    attrCenter(1.5, 0, 0);
+    cmd("tool.attr " ~ TOOL ~ " axis X");
+    settle();
+    playAndWait(vpLine(c) ~ format(
+        `{"t":30.000,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,"state":0,"mod":0}` ~ "\n",
+        cx + c.vpX, cy + c.vpY));
+    settle();
+    assert(faceCount() == 6, "9270 J rig: the tool evaluated before the press");
+    const inactive = differs(bare, grab());
+    assert(inactive == 0,
+        format("9270 J: the inactive instance drew %d handle pixels of %d around its centre, "
+             ~ "expected 0 (Capture-12 step 0: no handle before the activating press)",
+               inactive, n));
+    pressAt(c, [1.5, 0, 0]);
+    assert(faceCount() == 12, "9270 J rig: the press did not activate the live edit");
+    const active = differs(bare, grab());
+    assert(active == 36,
+        format("9270 J: after the activating press %d of %d window pixels show the centre "
+             ~ "box, measured 36", active, n));
+    cmd("tool.set " ~ TOOL ~ " off");
+    cmd("viewport.view Perspective");
 }
