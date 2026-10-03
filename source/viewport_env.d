@@ -52,7 +52,7 @@ private MatcapAsset matcap(string n)() {
 
 /// The environments, in offer order; index 0 is the default source — the
 /// outdoor sky, not the studio, whose dark walls turn flat faces near-black
-/// (owner decision 2026-10-03, task 9250).
+/// (owner decision 2026-10-03).
 immutable EnvAsset[3] kEnvAssets = [
     env!"kloofendal_48d_partly_cloudy_puresky",
     env!"studio_small_09",
