@@ -3014,3 +3014,37 @@ unittest { // U-INIT4: every bind is a new instance — a pen press (outside the
         ~ "default 0 (the bind must clear instanceActive_: the pen's press raised it and its "
         ~ "switch, outside the model, does not end a model post mode)", p));
 }
+
+unittest { // U-INIT5 (CAP r3/r4: no Initialize in the Z window; C9-7b s07_R): a replayed arm
+           // keeps the stored copy — only a LIVE arm of an arm-opening tool activates
+    auto a = new InitArmTool;
+    auto r = initRig(a);
+    auto b = new ScrubTopologyTool;
+    b.m = &r.m; b.h = r.h; b.view = new View(0, 0, 1, 1);
+    b.basis = MeshSnapshot.capture(r.m);
+    a.v = 0.4f;                                   // the stored copy the live arm is given
+    r.s.noteArm("t.a", 5);
+    assert(a.v == 0.0f, format("U-INIT5 rig: the live arm left v %s, not the default 0", a.v));
+    s2bAttr(r.s, a, "v", () { a.v = 0.3f; }, ParameterChangeSource.InteractiveValue);
+    assert(a.v == 0.3f, "U-INIT5 rig: the write after the arm did not land");
+    // bind B over A (its undo re-arms A by a replay arm, the instance built from the copy)
+    r.s.closeOperation(CloseReason.switch_);
+    auto wv = new View(0, 0, 1, 1);
+    auto w = new ToolActivationCommand(&r.m, wv, EditMode.Vertices,
+        "t.b", "t.a", true, false, false, 9, 5, true, true);
+    UndoState atReplay;
+    w.onActivate = (string id) {
+        if (id == "t.a") { a.v = 0.3f; atReplay = r.h.state(); }
+        r.active = id == "t.a" ? cast(Tool) a : cast(Tool) b;
+        r.s.noteArm(id, id == "t.a" ? 5 : 9);
+    };
+    r.h.recordToolLifecycle(w);
+    r.active = b;
+    r.s.noteArm("t.b", 9);
+    r.s.finishClose();
+    assert(r.s.navigate(true) && r.active is a, "U-INIT5 rig: the undo of the bind did not re-arm A");
+    assert(atReplay == UndoState.Suspend,
+        format("U-INIT5 rig: A's replay arm ran under %s, not Suspend", atReplay));
+    assert(a.v == 0.3f, format("U-INIT5: the replayed arm left v %s, expected the stored 0.3 (a "
+        ~ "replay is no activation: noteArm's `state != Suspend` term)", a.v));
+}
