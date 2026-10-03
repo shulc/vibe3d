@@ -693,12 +693,14 @@ def installer_image_writes(pt, fields):
     activation reset of a tool's declared attributes has one writer, the
     session's `activate_` (plan 9270 §23.6); an installer that writes one of
     them is a second writer of the reset image. A missing installer answers
-    a non-empty list, so the negative conjunct cannot hold vacuously."""
+    a non-empty list, so the negative conjunct cannot hold vacuously. A bare
+    field and `this.field` both count; another object's `x.field` does not."""
     m = re.search(r"final void installPreparedActivation\([^)]*\)[^{]*\{", pt)
     if not m:
         return ["<no installPreparedActivation>"]
     body = pt[m.end():balanced_source(pt, m.end())-1]
-    return re.findall(r"(?<![.\w])(" + "|".join(fields) + r")\s*=(?!=)", body)
+    return re.findall(r"(?:(?<![.\w])|(?<=\bthis\.))(" + "|".join(fields)
+                      + r")\s*=(?!=)", body)
 
 prepared_source_texts = {path: path.read_text()
                          for path in (ROOT / "source").rglob("*.d")}
