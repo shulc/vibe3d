@@ -5510,12 +5510,10 @@ def loop_slice_activation_gate(owner, context, tool):
         "target_.installPreparedActivation(image_); consume();" in owner and
         "image_.clear(); target_ = null; source_ = null;" in owner and
         "image.count = count_ < 1 ? 1 : count_;" in builder and
-        "image.positions = positions_.dup;" in builder and
-        "image.positions ~= 0.5f;" in builder and
-        "image.positions.length = cast(size_t)image.count;" in builder and
-        "image.count > 1 && mode_ != Mode.Free" in builder and
-        "image.positions[k] = (k + 1.0f) / (image.count + 1.0f);" in builder and
-        "image.positionProxy = image.positions.length ? image.positions[0] : 0.5f;" in builder and
+        "image.positions = fittedPositions(positions_, image.count);" in builder and
+        # The stored list is taken as it is: no Mode law at activation.
+        "Mode." not in builder and "applyModeLaw" not in builder and
+        "image.positionProxy = image.positions[0];" in builder and
         "image.before = MeshSnapshot.capture(*source);" in builder and
         not re.search(r"(?<!\.)\b(active|armed_|scrubbing_|built_|seeds_|armedSelFaces_|"
                       r"insertAt_|removeTrigger_|count_|current_|positions_|positionProxy_|"
@@ -5552,11 +5550,14 @@ for target, old, new, label in (
     ("owner", "target_.preparedActivationMesh() !is source_", "false", "drop identity"),
     ("owner", "!image_.before.matches(*source_)", "false", "drop content validation"),
     ("owner", "target_.installPreparedActivation(image_);", "", "drop install"),
-    ("tool", "image.positions = positions_.dup;", "positions_ = []; image.positions = positions_.dup;", "write live during prepare"),
+    ("tool", "image.positions = fittedPositions(positions_, image.count);",
+     "positions_ = []; image.positions = fittedPositions(positions_, image.count);", "write live during prepare"),
     ("tool", "image.count = count_ < 1 ? 1 : count_;", "image.count = count_;", "drop count lower bound"),
-    ("tool", "image.positions ~= 0.5f;", "", "drop grow"),
-    ("tool", "image.positions.length = cast(size_t)image.count;", "", "drop shrink"),
-    ("tool", "image.count > 1 && mode_ != Mode.Free", "image.count > 1", "drop free mode"),
+    ("tool", "image.positions = fittedPositions(positions_, image.count);",
+     "image.positions = positions_.dup;", "drop fit"),
+    ("tool", "image.positionProxy = image.positions[0];",
+     "image.positionProxy = image.positions[0]; if (mode_ != Mode.Free) applyModeLaw();",
+     "re-lay at activation"),
     ("tool", "active = true; armed_ = false; scrubbing_ = false; built_ = false;", "active = true;", "drop flags"),
     ("tool", "seeds_ = []; armedSelFaces_ = [];", "seeds_ = [];", "retain face latch"),
     ("tool", "insertAt_ = 0.5f; removeTrigger_ = false;", "", "drop triggers"),

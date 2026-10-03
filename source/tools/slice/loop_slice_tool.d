@@ -2066,7 +2066,7 @@ public:
             seeds_.length == 0 && seeds_.ptr is null && armedSelFaces_.length == 0 &&
             armedSelFaces_.ptr is null && insertAt_ == 0.5f && !removeTrigger_ &&
             mode_ == Mode.Symmetry && count_ == 3 && current_ == 0 &&
-            positions_ == [0.25f,0.5f,0.75f] && positionProxy_ == 0.25f &&
+            positions_ == [0.9f,0.5f,0.5f] && positionProxy_ == 0.9f &&
             !selectNew_ && sliceSelected_ && keepQuads_ && length_ == 321 &&
             sliderX_ == 32 && sliderY_ == 54 && seedA_ == Vec3(1,2,3) &&
             seedB_ == Vec3(4,5,6) && vpWorld_.view[0] == 9 &&
