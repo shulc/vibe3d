@@ -22,8 +22,8 @@ Steps, identical for every run:
     (sin(theta) per row) mean Rec.709 luma of the tone-mapped image equals
     ENV_TARGET_MEAN_LUMA — the reference level, measured as the area-weighted
     mean luma of the reference reflection cube's 8-bit texels used directly
-    (the reference multiplies its stored values, no decode; so does our arm,
-    which writes lit x env with no gamma). Reinhard: monotone (so the solve
+    (the reference multiplies its stored values, no decode; our arm writes
+    env unlit, with no gamma). Reinhard: monotone (so the solve
     has one root), parameter-free (nothing tuned), strictly below 1 (no
     channel clips at the 16-bit ceiling), near-identity in the darks and
     desaturating the hot spots toward white the way an LDR exposure does;
@@ -32,14 +32,17 @@ Steps, identical for every run:
     PNG compression 9. The one linear scale (16) is `kShadingImageLinearScale`
     in `source/viewport_env.d`; the decoder multiplies it back — one decode
     path for both kinds (a normalised env simply occupies [0, 1/16) of the
-    range: 4096 levels across [0, 1], far below one 8-bit display step).
+    range: 4096 levels across [0, 1], far below one 8-bit display step). An env
+    texel that rounds up to ENV_CLIP_LEVEL (4096, value 1.0) is refused: the
+    Reinhard curve never reaches 1, so a texel there was clipped, not stored.
 
 `MANIFEST.tsv` (written beside the outputs) ties each output to its input:
 input sha256, output file sha256, and the sha256 of the DECODED pixels (uint16
 little-endian, RGB, top row first) — file bytes can differ across zlib builds,
 pixels cannot. `--check` converts into `--out` and compares those pixel hashes
 against `--manifest` (default `assets/shading/MANIFEST.tsv`), printing
-`PIXELS MATCH n/N`; exit status 1 on any mismatch.
+`PIXELS MATCH n/N` and `EXPOSURE MATCH n/N` (the `exposure` column, compared as
+its 6-decimal text); exit status 1 on any mismatch.
 """
 import argparse
 import hashlib
@@ -59,6 +62,9 @@ ENV_TARGET_MEAN_LUMA = 0.5124
 # Residual after the solve: only the 16-bit rounding, at most half a step per
 # channel = 0.5 * 16 / 65535 = 1.22e-4 (the luma weights sum to 1).
 ENV_LEVEL_TOLERANCE = 1.25e-4
+# The stored level of value 1.0 (65535 / LINEAR_SCALE, rounded): no env texel
+# may reach it (the clip bound; Reinhard output is strictly below 1).
+ENV_CLIP_LEVEL = 4096
 LUMA = np.array([0.2126, 0.7152, 0.0722])   # Rec.709, applied to RGB
 LICENCE = "CC0-1.0"
 
@@ -142,6 +148,10 @@ def convert(src_path, is_env):
         img = reinhard(exposure * img)
     q = np.round(np.clip(img / LINEAR_SCALE, 0.0, 1.0) * 65535.0).astype(np.uint16)
     if is_env:
+        hot = int(q.max())
+        if hot >= ENV_CLIP_LEVEL:
+            raise SystemExit(f"{src_path}: a stored env texel reaches {hot} >= {ENV_CLIP_LEVEL} "
+                             "(value 1.0, the clip bound)")
         got = env_mean_luma(q[:, :, ::-1] / 65535.0 * LINEAR_SCALE)
         if abs(got - ENV_TARGET_MEAN_LUMA) > ENV_LEVEL_TOLERANCE:
             raise SystemExit(f"{src_path}: stored mean luma {got:.6f}, target {ENV_TARGET_MEAN_LUMA}")
@@ -199,8 +209,13 @@ def main():
     if a.check:
         ref = read_manifest(a.manifest)
         ok = sum(1 for r in rows if r[0] in ref and ref[r[0]]["pixels_sha256"] == r[4])
+        exp_ok = sum(1 for r in rows if r[0] in ref and ref[r[0]]["exposure"] == r[9])
         print(f"PIXELS MATCH {ok}/{len(rows)}")
-        return 0 if ok == len(rows) == len(ref) else 1
+        print(f"EXPOSURE MATCH {exp_ok}/{len(rows)}")
+        for r in rows:
+            if r[0] in ref and ref[r[0]]["exposure"] != r[9]:
+                print(f"  {r[0]}: exposure {r[9]}, manifest {ref[r[0]]['exposure']}")
+        return 0 if ok == exp_ok == len(rows) == len(ref) else 1
 
     with open(os.path.join(a.out, "MANIFEST.tsv"), "w") as f:
         f.write(f"# numpy {np.__version__} opencv {cv2.__version__}; "

@@ -708,7 +708,7 @@ bool styleCullsBySurface(DisplayStyle s) pure nothrow @safe @nogc {
         case DisplayStyle.Shaded:    return true;
         case DisplayStyle.Weight:    return false;
         case DisplayStyle.Gooch:     return true;
-        case DisplayStyle.Reflection: return true;   // lit: per surface (gap row 518)
+        case DisplayStyle.Reflection: return true;   // captured CULL_FACE 1 (reflection lighting, 2026-10-03)
     }
 }
 

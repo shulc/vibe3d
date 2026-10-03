@@ -56,7 +56,7 @@ private string pixelsHex(const(ushort)[] rgba) {
     return hex(b);
 }
 
-/// Floor → file sha → decode, for every manifest row.
+/// Floor → file sha → decode (→ the env clip bound), for every manifest row.
 unittest {
     auto rows = manifest();
     // [E4] Row floor FIRST: 3 environments + 8 MatCaps × 2 layers.
@@ -81,6 +81,14 @@ unittest {
             immutable e = r.exposure.to!double;
             assert(e > 0 && e != 1, r.output ~ ": an environment carries its solved exposure, got "
                 ~ r.exposure);
+            // The clip bound: value 1.0 stores as 65535 / 16 → 4096; Reinhard output is
+            // strictly below 1, so a texel there was clipped (the converter refuses it
+            // too, `ENV_CLIP_LEVEL`). Measured maxima: studio 4091, sky 4095, courtyard 4078.
+            ushort hot;
+            foreach (i; 0 .. px.length / 4)
+                foreach (c; 0 .. 3) if (px[i * 4 + c] > hot) hot = px[i * 4 + c];
+            assert(hot < 4096, format("%s: a stored texel reaches %d, the clip bound is 4096 "
+                ~ "(value 1.0)", r.output, hot));
         } else if (r.output.startsWith("matcap_")) {
             ++mc;
             assert(r.exposure == "1.000000", r.output ~ ": a MatCap is not normalised, exposure "

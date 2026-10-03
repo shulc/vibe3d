@@ -481,9 +481,10 @@ void restoreCamera(const ref Viewport vp, double az, double el, double dist) {
 // ---------------------------------------------------------------------------
 // (e) the BACK side. A flat quad (world normal +Z, base kBase) seen from
 // behind. Two-sided: the back side shades with the FLIPPED normal (the lit
-// arms' shadingNormal, model M6). Env: reads env(R) ±3 — R is sign-symmetric
-// in N and the arm is unlit, so the flip is invisible there; floor: the
-// rejected lit × env (Shaded-back × env) predicts ≥ 10 apart at ≥ 3 of 5. MatCap:
+// arms' shadingNormal, model M6). Env: NOT a back-side witness (R is
+// independent of N's sign, so the flip cannot show); it is the lit × env floor
+// on the back side: reads env(R) ±3, and the rejected lit × env (Shaded-back ×
+// env) predicts ≥ 10 apart at ≥ 3 of 5. MatCap:
 // diffuse·base + specular at matcapUv(N_flipped) ±3; floor: matcapUv(N_raw)
 // predicts ≥ 10 apart. Single-sided: Reflection culls by surface like Shaded,
 // so the probes read the Shaded (culled: background) value ±2; floors: Solid,
@@ -557,8 +558,8 @@ unittest {
     assert(maxGap(mcFlip, mcRaw) >= 10, format("(e) matcap discrimination floor: uv(N_raw) %s vs "
         ~ "uv(N_flipped) %s", mcRaw, mcFlip));
     foreach (k; 0 .. 5) foreach (c; 0 .. 3) {
-        assert(abs(envTwo[k][c] - envPredTwo[k][c]) <= 3, format("(e) env back side, probe %d %s "
-            ~ "reads %s; env(R) predicts %s ±3 (unlit; Shaded-back %s)", k, pts[k], envTwo[k],
+        assert(abs(envTwo[k][c] - envPredTwo[k][c]) <= 3, format("(e) env on the back side, probe %d "
+            ~ "%s reads %s; env(R) predicts %s ±3 — the unlit arm took the lit term (Shaded-back %s)", k, pts[k], envTwo[k],
             envPredTwo[k], shadedTwo[k]));
         assert(abs(mcTwo[k][c] - mcFlip[c]) <= 3, format("(e) matcap back side, probe %d %s reads "
             ~ "%s; matcapUv(N_flipped) predicts %s ±3 (raw normal: %s)", k, pts[k], mcTwo[k], mcFlip,
@@ -748,13 +749,11 @@ unittest {
 // (h) task 9290: the DEFAULT scene (scene.reset: the cube, the default camera)
 // under each environment. Per visible face (floor: 3 of 6), a third of the way
 // from the face centre to a corner (off the centre marker): the pixel reads
-// env(R) ±3 (the law), so its luma is ≥ the texel's luma − 3 (the face is as
-// bright as its environment). NOT NEAR-BLACK: the mean luma over the 9 reads is
-// ≥ half the normalised env level (kEnvTargetMeanLuma 0.5124, copied; the
-// level itself is pinned in `tests/unit/shading_assets_test.d`). The factor ½
-// is a choice bounded by measurement: the rejected lit × env law's mean on the
-// same reads must fall below the floor (asserted first), and the env's mean at
-// these R is ≈ 0.78 of the target (task 9290 log).
+// env(R) ±3 (the law, the real test), so its luma is ≥ the texel's luma − 3 (the
+// face is as bright as its environment). Discrimination floor, on PREDICTIONS
+// and run BEFORE any Reflection read: the mean luma of the 9 env(R) predictions
+// is ≥ 10 levels above that of the rejected lit × env law at the same R (a
+// near-black cube is what lit × env predicts). No threshold on the reads' mean.
 // ---------------------------------------------------------------------------
 unittest {
     if (!cellOn("h")) return;
@@ -800,42 +799,49 @@ unittest {
                pts.length, m["faces"].array.length));
     style("shaded");
     const shaded = probeRGB(pts);
-    style("reflection");
     double luma(T)(T c) { return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]; }
-    enum double kEnvTargetMeanLuma = 0.5124;     // viewport_env's (copied)
-    immutable double floorLuma = 0.5 * kEnvTargetMeanLuma * 255;
+    enum double kEnvTargetMeanLuma = 0.5124;     // viewport_env's (copied; printed only)
+    immutable string[3] envs = ["kloofendal_48d_partly_cloudy_puresky", "studio_small_09", "courtyard"];
+    // Predictions first: env(R) and the rejected lit × env, per env × face.
+    double[3][][3] pred, rejected;
+    double sumPred = 0, sumRejected = 0;
+    foreach (i, env; envs)
+        foreach (k; 0 .. pts.length) {
+            immutable double[3] e = envAt(env, rs[k]);
+            pred[i] ~= envPred(e);
+            rejected[i] ~= litTimesEnv(shaded[k], e);
+            sumPred += luma(pred[i][k]);
+            sumRejected += luma(rejected[i][k]);
+        }
+    writefln("[reflection (h)] mean luma of the predictions: env(R) %.1f, lit × env %.1f "
+        ~ "(info: half the normalised env level %.1f)", sumPred / 9, sumRejected / 9,
+        0.5 * kEnvTargetMeanLuma * 255);
+    assert(sumPred / 9 - sumRejected / 9 >= 10, format("(h) discrimination floor: the env(R) "
+        ~ "predictions' mean luma %.1f is not ≥ 10 levels above the rejected lit × env law's %.1f "
+        ~ "— the reads below could not tell the two laws apart", sumPred / 9, sumRejected / 9));
+    style("reflection");
     size_t checked;
-    double sumRead = 0, sumRejected = 0;
-    foreach (env; ["kloofendal_48d_partly_cloudy_puresky", "studio_small_09", "courtyard"]) {
+    foreach (i, env; envs) {
         source("env:" ~ env);
         const got = probeRGB(pts);
         foreach (k; 0 .. pts.length) {
             immutable double[3] e = envAt(env, rs[k]);
-            immutable double[3] pred = envPred(e);
-            immutable double[3] rejected = litTimesEnv(shaded[k], e);
+            immutable double[3] p = pred[i][k];
             writefln("[reflection (h)] %s face %d %s: R (%.3f,%.3f,%.3f) env (%.3f,%.3f,%.3f) "
                 ~ "luma %.3f; predicted (%.2f,%.2f,%.2f) reads %s (lit × env %.1f luma)", env, k,
                 pts[k], rs[k][0], rs[k][1], rs[k][2], e[0], e[1], e[2], luma(e),
-                pred[0], pred[1], pred[2], got[k], luma(rejected));
+                p[0], p[1], p[2], got[k], luma(rejected[i][k]));
             // One-sided level witness FIRST (a dim face reddens here), the law after it.
-            assert(luma(got[k]) >= luma(pred) - 3, format("(h) %s face %d reads luma %.1f, below "
-                ~ "its env texel's %.1f − 3 (near-black face)", env, k, luma(got[k]), luma(pred)));
+            assert(luma(got[k]) >= luma(p) - 3, format("(h) %s face %d reads luma %.1f, below "
+                ~ "its env texel's %.1f − 3 (near-black face)", env, k, luma(got[k]), luma(p)));
             foreach (c; 0 .. 3)
-                assert(abs(got[k][c] - pred[c]) <= 3, format("(h) %s face %d %s reads %s; "
+                assert(abs(got[k][c] - p[c]) <= 3, format("(h) %s face %d %s reads %s; "
                     ~ "env(R) predicts (%.2f,%.2f,%.2f) ±3", env, k, pts[k], got[k],
-                    pred[0], pred[1], pred[2]));
-            sumRead += luma(got[k]);
-            sumRejected += luma(rejected);
+                    p[0], p[1], p[2]));
             ++checked;
         }
     }
     assert(checked == 9, format("(h) population floor: 3 envs × 3 faces, checked %d", checked));
-    writefln("[reflection (h)] mean luma: read %.1f, lit × env %.1f, floor %.1f",
-             sumRead / 9, sumRejected / 9, floorLuma);
-    assert(sumRejected / 9 < floorLuma, format("(h) discrimination floor: the rejected lit × env "
-        ~ "law's mean luma %.1f must be below the not-near-black floor %.1f", sumRejected / 9, floorLuma));
-    assert(sumRead / 9 >= floorLuma, format("(h) the default cube is near-black: mean luma %.1f over "
-        ~ "3 faces × 3 envs, floor %.1f (half the normalised env level)", sumRead / 9, floorLuma));
 }
 
 // ---------------------------------------------------------------------------
