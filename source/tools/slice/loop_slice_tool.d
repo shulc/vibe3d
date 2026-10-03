@@ -833,19 +833,8 @@ public:
         source = mesh;
         if (source is null) return image;
         image.count = count_ < 1 ? 1 : count_;
-        image.positions = positions_.dup;
-        if (image.positions.length < cast(size_t)image.count) {
-            while (image.positions.length < cast(size_t)image.count)
-                image.positions ~= 0.5f;
-        } else if (image.positions.length > cast(size_t)image.count) {
-            image.positions.length = cast(size_t)image.count;
-        }
-        foreach (ref p; image.positions)
-            p = p < 0.001f ? 0.001f : p > 0.999f ? 0.999f : p;
-        if (image.count > 1 && mode_ != Mode.Free)
-            foreach (k; 0 .. image.count)
-                image.positions[k] = (k + 1.0f) / (image.count + 1.0f);
-        image.positionProxy = image.positions.length ? image.positions[0] : 0.5f;
+        image.positions = fittedPositions(positions_, image.count);
+        image.positionProxy = image.positions[0];
         image.before = MeshSnapshot.capture(*source);
         image.valid = true;
         return image;
@@ -899,13 +888,10 @@ public:
         // likewise touch only session/gesture state.
         //
         // current_ IS reset to 0 at activation; positions_ is NOT — the
-        // sticky store restored the last list (captured: only
-        // `curr` resets). syncPositionsToCount() keeps the list CONSISTENT
-        // with the restored count_/mode_ (pad/truncate, re-lay under a
-        // non-Free law) and clamps a stale stored value into range. For a
-        // fresh/no-sticky tool positions_ stays the constructor's [0.5f].
+        // sticky store restored the last list, under every Mode (captured:
+        // only `curr` resets). See `fitPositionsToCount` for the one rule.
         current_ = 0;
-        syncPositionsToCount();
+        fitPositionsToCount();
         // length_/sliderX_/sliderY_ deliberately NOT reset — see field comment.
         armedKey_.invalidate();
         before_    = MeshSnapshot.capture(*mesh);
@@ -1033,11 +1019,9 @@ public:
     // The loop from the restored image (slice M3): no seed set, no arm — the
     // preview goes; a seed set on a tool that holds none arms it (the
     // session's redo replay of the arm, RA-act); otherwise the cut follows the
-    // restored positions (the count may have moved: pad/truncate and re-lay
-    // through the Mode law, as a Count edit does).
+    // restored positions, exactly as the image holds them.
     override void rebuildPreviewFromAttrs() {
-        syncPositionsToCount();
-        syncProxy();
+        fitPositionsToCount();
         scrubbing_ = false;   // released, as onMouseButtonUp leaves it
         if (seeds_.length == 0) {
             if (armed_) cancelLiveEdit();
@@ -1791,22 +1775,34 @@ private:
         }
     }
 
-    // Grow/shrink `positions_` to match `count_` (a direct Count param
-    // write — headless-testable path for "Add grows / Remove shrinks", the
-    // count-only shape of Edit; the CURRENT-aware `addSlice`/`removeSlice`
-    // are what the HUD's Add-track-click / Remove-marker-click actually
-    // invoke). New slots default to 0.5 before the Mode law re-lays them.
-    void syncPositionsToCount() {
-        if (count_ < 1) count_ = 1;
-        foreach (ref p; positions_)
-            p = p < 0.001f ? 0.001f : p > 0.999f ? 0.999f : p;
-        if (positions_.length < cast(size_t)count_) {
-            while (positions_.length < cast(size_t)count_) positions_ ~= 0.5f;
-        } else if (positions_.length > cast(size_t)count_) {
-            positions_.length = cast(size_t)count_;
+    // THE rule for the slice list: it is stored, never derived. Only a write
+    // that changes the law's input — Count, Mode, Add, Remove — re-lays it
+    // through `applyModeLaw`; activation and a restored session image take it
+    // as it is (captured: a Symmetry or Free list survives both).
+    //
+    // `count` long, every slice inside the kernel's open interval; a missing
+    // slot (a stale stored list) is 0.5.
+    static float[] fittedPositions(const(float)[] src, int count) {
+        auto r = new float[](count < 1 ? 1 : count);
+        foreach (k, ref p; r) {
+            immutable float v = k < src.length ? src[k] : 0.5f;
+            p = v < 0.001f ? 0.001f : v > 0.999f ? 0.999f : v;
         }
+        return r;
+    }
+
+    // Fit the stored list to `count_` without the Mode law.
+    void fitPositionsToCount() {
+        if (count_ < 1) count_ = 1;
+        positions_ = fittedPositions(positions_, count_);
         if (current_ >= count_) current_ = count_ - 1;
         if (current_ < 0)       current_ = 0;
+        syncProxy();
+    }
+
+    // A Count write: fit, then re-lay through the Mode law.
+    void syncPositionsToCount() {
+        fitPositionsToCount();
         applyModeLaw();
         syncProxy();
     }
