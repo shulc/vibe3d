@@ -23,9 +23,20 @@ import math : Vec3;
 import display_state : ReflectionKind, ReflectionSource;
 import io.image_decode : decodePng16;
 
-/// The one linear scale of every shading image: stored = linear / 16
+/// The one linear scale of every shading image: stored = value / 16
 /// (`tools/convert_shading_images.py`, `MANIFEST.tsv` column `linear_scale`).
+/// One decode path for both kinds: an environment is exposure-normalised and
+/// tone-mapped into [0, 1) at conversion, so it simply uses [0, 1/16) of the
+/// stored range; a MatCap keeps its HDR values.
 enum float kShadingImageLinearScale = 16.0f;
+
+/// The level every environment is normalised to at conversion:
+/// the area-weighted (sin θ per row) mean Rec.709 luma of the decoded image
+/// equals this, ± the 16-bit rounding (`tests/unit/shading_assets_test.d`).
+/// The number is the reference level — the area-weighted mean luma of the
+/// reference reflection cube's 8-bit texels, used as stored (it multiplies
+/// them with no decode; the Reflection arm writes lit × env with no gamma).
+enum double kEnvTargetMeanLuma = 0.5124;
 
 /// One environment: its name (the command/prefs spelling) and PNG bytes.
 struct EnvAsset {

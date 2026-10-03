@@ -16,9 +16,23 @@ Steps, identical for every run:
   * env: INTER_AREA 1024x512 -> 512x256, then a Gaussian prefilter sigma = 2 px
     (kernel radius 3 sigma) that WRAPS horizontally (the equirect seam is
     continuous) and reflects vertically;
-  * every file: stored = round(clamp(linear / 16, 0, 1) * 65535) as uint16 RGB,
+  * env only, EXPOSURE NORMALISATION: value = reinhard(exposure * linear) per
+    channel, reinhard(x) = x / (1 + x), with the per-image `exposure` solved by
+    bisection (log space, 200 steps, deterministic) so that the area-weighted
+    (sin(theta) per row) mean Rec.709 luma of the tone-mapped image equals
+    ENV_TARGET_MEAN_LUMA — the reference level, measured as the area-weighted
+    mean luma of the reference reflection cube's 8-bit texels used directly
+    (the reference multiplies its stored values, no decode; so does our arm,
+    which writes lit x env with no gamma). Reinhard: monotone (so the solve
+    has one root), parameter-free (nothing tuned), strictly below 1 (no
+    channel clips at the 16-bit ceiling), near-identity in the darks and
+    desaturating the hot spots toward white the way an LDR exposure does;
+    MatCaps are not touched (their two layers ARE the lighting);
+  * every file: stored = round(clamp(value / 16, 0, 1) * 65535) as uint16 RGB,
     PNG compression 9. The one linear scale (16) is `kShadingImageLinearScale`
-    in `source/viewport_env.d`; the decoder multiplies it back.
+    in `source/viewport_env.d`; the decoder multiplies it back — one decode
+    path for both kinds (a normalised env simply occupies [0, 1/16) of the
+    range: 4096 levels across [0, 1], far below one 8-bit display step).
 
 `MANIFEST.tsv` (written beside the outputs) ties each output to its input:
 input sha256, output file sha256, and the sha256 of the DECODED pixels (uint16
@@ -38,6 +52,14 @@ import numpy as np
 LINEAR_SCALE = 16.0
 ENV_SIZE = (512, 256)
 ENV_SIGMA = 2.0
+# The reference level (see the docstring): area-weighted mean luma of the
+# reference reflection cube's stored texels, measured 2026-10-03 -> 0.5124.
+# `viewport_env.kEnvTargetMeanLuma` is the same number.
+ENV_TARGET_MEAN_LUMA = 0.5124
+# Residual after the solve: only the 16-bit rounding, at most half a step per
+# channel = 0.5 * 16 / 65535 = 1.22e-4 (the luma weights sum to 1).
+ENV_LEVEL_TOLERANCE = 1.25e-4
+LUMA = np.array([0.2126, 0.7152, 0.0722])   # Rec.709, applied to RGB
 LICENCE = "CC0-1.0"
 
 ENV_NAMES = ["studio_small_09", "kloofendal_48d_partly_cloudy_puresky", "courtyard"]
@@ -45,7 +67,7 @@ MATCAP_NAMES = ["basic_grey", "basic_side", "clay_studio", "ceramic_lightbulb",
                 "hard_surface_grey", "metal_carpaint", "toon_light", "check_rim_light"]
 
 HEADER = ["output", "input", "input_sha256", "output_sha256", "pixels_sha256",
-          "width", "height", "linear_scale", "prefilter_sigma", "licence"]
+          "width", "height", "linear_scale", "prefilter_sigma", "exposure", "licence"]
 
 
 def sha256_file(path):
@@ -82,14 +104,48 @@ def env_prefilter(img):
     return blurred[:, r:-r]
 
 
+def reinhard(x):
+    return x / (1.0 + x)
+
+
+def env_mean_luma(rgb):
+    """Area-weighted mean luma of an equirect image (rows weighted sin(theta)
+    at the row centre). `rgb` is H x W x 3 in R, G, B order."""
+    h = rgb.shape[0]
+    w = np.sin((np.arange(h) + 0.5) / h * np.pi)
+    row = (rgb.astype(np.float64) @ LUMA).mean(axis=1)
+    return float(np.sum(row * w) / np.sum(w))
+
+
+def solve_exposure(rgb):
+    """The exposure s with env_mean_luma(reinhard(s * rgb)) == the target."""
+    lo, hi = np.log(1e-4), np.log(1e4)
+    for _ in range(200):
+        mid = 0.5 * (lo + hi)
+        if env_mean_luma(reinhard(np.exp(mid) * rgb)) < ENV_TARGET_MEAN_LUMA:
+            lo = mid
+        else:
+            hi = mid
+    return float(np.exp(0.5 * (lo + hi)))
+
+
 def convert(src_path, is_env):
+    """(uint16 BGR image, exposure); exposure 1 for a MatCap layer."""
     img = cv2.imread(src_path, cv2.IMREAD_ANYDEPTH | cv2.IMREAD_COLOR)   # BGR float32
     if img is None:
         raise SystemExit(f"cannot read {src_path}")
+    exposure = 1.0
     if is_env:
         img = cv2.resize(img, ENV_SIZE, interpolation=cv2.INTER_AREA)
-        img = env_prefilter(img)
-    return np.round(np.clip(img / LINEAR_SCALE, 0.0, 1.0) * 65535.0).astype(np.uint16)
+        img = env_prefilter(img).astype(np.float64)
+        exposure = solve_exposure(img[:, :, ::-1])
+        img = reinhard(exposure * img)
+    q = np.round(np.clip(img / LINEAR_SCALE, 0.0, 1.0) * 65535.0).astype(np.uint16)
+    if is_env:
+        got = env_mean_luma(q[:, :, ::-1] / 65535.0 * LINEAR_SCALE)
+        if abs(got - ENV_TARGET_MEAN_LUMA) > ENV_LEVEL_TOLERANCE:
+            raise SystemExit(f"{src_path}: stored mean luma {got:.6f}, target {ENV_TARGET_MEAN_LUMA}")
+    return q, exposure
 
 
 def pixels_sha(bgr16):
@@ -132,13 +188,13 @@ def main():
     rows = []
     total = 0
     for out_name, rel, is_env in jobs():
-        q = convert(os.path.join(a.src, rel), is_env)
+        q, exposure = convert(os.path.join(a.src, rel), is_env)
         dst = os.path.join(a.out, out_name)
         cv2.imwrite(dst, q, [cv2.IMWRITE_PNG_COMPRESSION, 9])
         total += os.path.getsize(dst)
         rows.append([out_name, os.path.basename(rel), sums[rel], sha256_file(dst), pixels_sha(q),
                      str(q.shape[1]), str(q.shape[0]), f"{LINEAR_SCALE:g}",
-                     f"{ENV_SIGMA:g}" if is_env else "0", LICENCE])
+                     f"{ENV_SIGMA:g}" if is_env else "0", f"{exposure:.6f}", LICENCE])
 
     if a.check:
         ref = read_manifest(a.manifest)

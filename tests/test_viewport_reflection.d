@@ -20,7 +20,9 @@
 // refused and changes nothing; (e) a two-sided surface's back side reflects
 // with the flipped normal in both arms, a single-sided one is culled; (f) the
 // hover override in both arms; (g) the DEFAULT source after a scene reset is
-// the outdoor sky env and reaches the pixels. `VIBE3D_CELL=<id>` runs one cell.
+// the outdoor sky env and reaches the pixels; (h) the default scene's cube
+// reads shaded × env(R) under all three environments. `VIBE3D_CELL=<id>` runs
+// one cell.
 
 import http_client : getJson, postJson, frameFence, quiesce;
 import http_command_helpers : commandBody;
@@ -488,6 +490,11 @@ void restoreCamera(const ref Viewport vp, double az, double el, double dist) {
 // ---------------------------------------------------------------------------
 unittest {
     if (!cellOn("e")) return;
+    // The rig's env (task 9290 re-derived it from the normalised texels): at
+    // these R the outdoor sky reads ≈ (32,38,53), ≥ 50 from the background
+    // (92,102,107); the studio read (101,100,100) — within 10 of it, so the
+    // cull floor below could not tell a drawn face from the backdrop.
+    enum string backEnv = kDefaultEnv;
     scope(exit) postJson("/api/command", commandBody("viewport.displayStyle", `{"value":"shaded"}`));
     D3[] qv = [add3(kC, [-1.5, -1.5, 0.0]), add3(kC, [1.5, -1.5, 0.0]),
                add3(kC, [1.5, 1.5, 0.0]), add3(kC, [-1.5, 1.5, 0.0])];
@@ -523,7 +530,7 @@ unittest {
     style("shaded");
     const shadedTwo = probeRGB(pts);
     style("reflection");
-    source("env:studio_small_09");
+    source("env:" ~ backEnv);
     const envTwo = probeRGB(pts);
     source("matcap:basic_grey");
     const mcTwo = probeRGB(pts);
@@ -539,7 +546,7 @@ unittest {
     size_t envApart;
     double[3][] envPredTwo;
     foreach (k; 0 .. 5) {
-        immutable double[3] e = envAt("studio_small_09", rs[k]);
+        immutable double[3] e = envAt(backEnv, rs[k]);
         envPredTwo ~= envPred(shadedTwo[k], e);
         if (maxGap(envPredTwo[k], envPredLit(litRaw, e)) >= 10) ++envApart;
         writefln("[reflection (e)] probe %d %s: shaded-back %s env read %s predicted (%.2f,%.2f,%.2f), "
@@ -571,7 +578,7 @@ unittest {
     style("shaded");
     const bg = probeRGB(pts);
     style("reflection");
-    source("env:studio_small_09");
+    source("env:" ~ backEnv);
     const reflOne = probeRGB(pts);
     size_t drawnApart;
     foreach (k; 0 .. 5) {
@@ -582,7 +589,7 @@ unittest {
             ++drawnApart;
     }
     assert(drawnApart >= 3, format("(e) cull floor: a drawn back face reads ≥ 10 from the background "
-        ~ "at only %d of 5 probes", drawnApart));
+        ~ "at only %d of 5 probes (drawn %s, background %s)", drawnApart, envTwo, bg));
     foreach (k; 0 .. 5) foreach (c; 0 .. 3)
         assert(abs(reflOne[k][c] - bg[k][c]) <= 2, format("(e) single-sided back side, probe %d %s: "
             ~ "Reflection reads %s, culled Shaded %s — Reflection must cull by surface", k, pts[k],
@@ -748,4 +755,81 @@ unittest {
                 ~ "env_sky(envUv(R)) predicts (%.2f,%.2f,%.2f) ±3 — the default source must reach "
                 ~ "the pixels", k, pts[k], got[k], shaded[k], pred[k][0], pred[k][1], pred[k][2]));
     }
+}
+
+// ---------------------------------------------------------------------------
+// (h) task 9290: the DEFAULT scene (scene.reset: the cube, the default camera)
+// under each environment. Per visible face (floor: 3 of 6), a third of the way
+// from the face centre to a corner (off the centre marker): the pixel reads
+// Shaded × env(R) ±3. A law cell, not a level witness — the prediction reads
+// the same texels; the level is pinned in `tests/unit/shading_assets_test.d`.
+// The faces read ≈ 20–50 / 255 here because the multiplier is the Shaded lit
+// term (≈ 0.2–0.3 on this cube); no "not near-black" floor is asserted (task
+// 9290 log, PLAN-FINDING).
+// ---------------------------------------------------------------------------
+unittest {
+    if (!cellOn("h")) return;
+    scope(exit) postJson("/api/command", commandBody("viewport.displayStyle", `{"value":"shaded"}`));
+    auto rr = postJson("/api/command", commandBody("scene.reset"));
+    assert(rr["status"].str == "ok", "scene.reset failed: " ~ rr.toString);
+    frameFence(null, 2);
+    auto vp = viewportFromCameraMatrices();
+    auto m = getJson("/api/model");
+    D3[] v;
+    foreach (x; m["vertices"].array)
+        v ~= [jnum(x.array[0]), jnum(x.array[1]), jnum(x.array[2])];
+    D3 mid = [0, 0, 0];
+    foreach (x; v) mid = add3(mid, [x[0] / v.length, x[1] / v.length, x[2] / v.length]);
+    int[2][] pts;
+    D3[] rs;
+    foreach (fj; m["faces"].array) {
+        D3 c = [0, 0, 0];
+        auto f = fj.array;
+        foreach (x; f) c = add3(c, [v[x.integer][0] / f.length, v[x.integer][1] / f.length,
+                                    v[x.integer][2] / f.length]);
+        D3 a = v[f[0].integer], b = v[f[1].integer], d = v[f[2].integer];
+        D3 e1 = [b[0]-a[0], b[1]-a[1], b[2]-a[2]], e2 = [d[0]-a[0], d[1]-a[1], d[2]-a[2]];
+        D3 n = nrm([e1[1]*e2[2]-e1[2]*e2[1], e1[2]*e2[0]-e1[0]*e2[2], e1[0]*e2[1]-e1[1]*e2[0]]);
+        if (dot3(n, [c[0]-mid[0], c[1]-mid[1], c[2]-mid[2]]) < 0) n = [-n[0], -n[1], -n[2]];
+        immutable D3 pEye = add3(toEye(vp, c), [vp.view[12], vp.view[13], vp.view[14]]);
+        immutable D3 nEye = nrm(toEye(vp, n));
+        immutable D3 dir = nrm(pEye);
+        if (dot3(nEye, dir) > -0.05) continue;          // back-facing or grazing
+        immutable double dn = dot3(dir, nEye);
+        rs ~= nrm([dir[0] - 2*dn*nEye[0], dir[1] - 2*dn*nEye[1], dir[2] - 2*dn*nEye[2]]);
+        // A third of the way from the centre toward a corner: off the face's
+        // centre marker, clear of its edges.
+        immutable D3 at = add3(c, [(a[0] - c[0]) / 3, (a[1] - c[1]) / 3, (a[2] - c[2]) / 3]);
+        immutable D3 atEye = nrm(add3(toEye(vp, at), [vp.view[12], vp.view[13], vp.view[14]]));
+        immutable double an = dot3(atEye, nEye);
+        rs[$ - 1] = nrm([atEye[0] - 2*an*nEye[0], atEye[1] - 2*an*nEye[1], atEye[2] - 2*an*nEye[2]]);
+        pts ~= cellPx(vp, at);
+    }
+    // The default camera sees three faces of the cube (floor FIRST).
+    assert(m["faces"].array.length == 6 && pts.length == 3,
+        format("(h) rig: the default scene must show 3 of the cube's 6 faces, %d of %d",
+               pts.length, m["faces"].array.length));
+    style("shaded");
+    const shaded = probeRGB(pts);
+    style("reflection");
+    double luma(T)(T c) { return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]; }
+    size_t checked;
+    foreach (env; ["kloofendal_48d_partly_cloudy_puresky", "studio_small_09", "courtyard"]) {
+        source("env:" ~ env);
+        const got = probeRGB(pts);
+        foreach (k; 0 .. pts.length) {
+            immutable double[3] e = envAt(env, rs[k]);
+            immutable double[3] pred = envPred(shaded[k], e);
+            writefln("[reflection (h)] %s face %d %s: R (%.3f,%.3f,%.3f) env (%.3f,%.3f,%.3f) "
+                ~ "luma %.3f; shaded %s predicted (%.2f,%.2f,%.2f) reads %s", env, k, pts[k],
+                rs[k][0], rs[k][1], rs[k][2], e[0], e[1], e[2], luma(e), shaded[k],
+                pred[0], pred[1], pred[2], got[k]);
+            foreach (c; 0 .. 3)
+                assert(abs(got[k][c] - pred[c]) <= 3, format("(h) %s face %d %s reads %s; shaded "
+                    ~ "%s × env(R) predicts (%.2f,%.2f,%.2f) ±3", env, k, pts[k], got[k], shaded[k],
+                    pred[0], pred[1], pred[2]));
+            ++checked;
+        }
+    }
+    assert(checked == 9, format("(h) population floor: 3 envs × 3 faces, checked %d", checked));
 }

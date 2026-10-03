@@ -6,9 +6,11 @@ eight two-layer material-capture (MatCap) spheres. The binary embeds them as str
 (`source/viewport_env.d`).
 
 All files are 16-bit RGB PNGs converted offline from the downloaded Radiance `.hdr` originals by
-`tools/convert_shading_images.py` (stored value = `round(clamp(linear / 16, 0, 1) * 65535)`; the
-environments are also downsampled 1024x512 -> 512x256 and prefiltered with a Gaussian, sigma = 2 px,
-wrapping horizontally). `MANIFEST.tsv` ties every output to its original by sha256 (input file, output
+`tools/convert_shading_images.py` (stored value = `round(clamp(value / 16, 0, 1) * 65535)`; the
+environments are also downsampled 1024x512 -> 512x256, prefiltered with a Gaussian, sigma = 2 px,
+wrapping horizontally, and exposure-normalised: value = `x / (1 + x)` of `exposure * linear` per
+channel, the per-image exposure (`MANIFEST.tsv` column `exposure`) solved so that the area-weighted
+mean luma equals the reference level 0.5124). `MANIFEST.tsv` ties every output to its original by sha256 (input file, output
 file, decoded pixels). Conversion command:
 
     python3 tools/convert_shading_images.py --in <originals> --out assets/shading
