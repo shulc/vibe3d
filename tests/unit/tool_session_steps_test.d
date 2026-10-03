@@ -3033,10 +3033,12 @@ unittest { // U-INIT5 (CAP r3/r4: no Initialize in the Z window; C9-7b s07_R): a
     auto w = new ToolActivationCommand(&r.m, wv, EditMode.Vertices,
         "t.b", "t.a", true, false, false, 9, 5, true, true);
     UndoState atReplay;
+    float atArm = -1.0f;
     w.onActivate = (string id) {
         if (id == "t.a") { a.v = 0.3f; atReplay = r.h.state(); }
         r.active = id == "t.a" ? cast(Tool) a : cast(Tool) b;
         r.s.noteArm(id, id == "t.a" ? 5 : 9);
+        if (id == "t.a") atArm = a.v;             // the replay arm's own effect, before the tail
     };
     r.h.recordToolLifecycle(w);
     r.active = b;
@@ -3045,6 +3047,10 @@ unittest { // U-INIT5 (CAP r3/r4: no Initialize in the Z window; C9-7b s07_R): a
     assert(r.s.navigate(true) && r.active is a, "U-INIT5 rig: the undo of the bind did not re-arm A");
     assert(atReplay == UndoState.Suspend,
         format("U-INIT5 rig: A's replay arm ran under %s, not Suspend", atReplay));
-    assert(a.v == 0.3f, format("U-INIT5: the replayed arm left v %s, expected the stored 0.3 (a "
-        ~ "replay is no activation: noteArm's `state != Suspend` term)", a.v));
+    // must-stay-green first: the navigation's M-H tail writes the remembered image after the
+    // arm (S7r part D removes that write), so the end state alone cannot see the arm
+    assert(a.v == 0.3f, format("U-INIT5: after the undo A holds v %s, expected the stored 0.3",
+        a.v));
+    assert(atArm == 0.3f, format("U-INIT5: the replayed arm left v %s, expected the stored 0.3 (a "
+        ~ "replay is no activation: noteArm's `state != Suspend` term)", atArm));
 }
