@@ -71,6 +71,8 @@ private Case[] cases() {
             0, kStrip6[0 .. 4].dup, [[0u, 2, 3, 1]], []),
         Case("quads 6 Commit flip", kStrip6, kIdentity, true, true, Commit, 0,
             kStrip6.dup, [[1u, 3, 2, 0], [3u, 5, 4, 2]], []),
+        Case("quads 6 Preview flip", kStrip6, kIdentity, true, true, Preview, 0,
+            kStrip6.dup, [[1u, 3, 2, 0], [3u, 5, 4, 2]], []),
         Case("quads 5 Commit", kStrip6[0 .. 5], kIdentity, false, true, Commit,
             0, kStrip6[0 .. 5].dup, [[0u, 2, 3, 1]], []),
         Case("triangle Commit translated", kTri, kShift, false, false, Commit, 0,
@@ -84,8 +86,9 @@ unittest // every case appends exactly its literal mesh
 {
     const all = cases();
     // FLOOR: the case table. Plan §9.1 said 9; measured 15 (the plan's own
-    // list enumerates more than 9, plus a 1-point and a non-empty-dst cell).
-    assert(all.length == 15, format("case table has %s rows, pinned 15", all.length));
+    // list enumerates more than 9, plus a 1-point and a non-empty-dst cell);
+    // S4 adds the flipped quads Preview (16).
+    assert(all.length == 16, format("case table has %s rows, pinned 16", all.length));
     size_t ran;
     foreach (c; all) {
         Mesh m;
@@ -107,7 +110,7 @@ unittest // every case appends exactly its literal mesh
             c.name, wires, c.expectEdges));
         ++ran;
     }
-    assert(ran == 15, "not every case ran");
+    assert(ran == 16, "not every case ran");
 }
 
 private bool edgeIsWire(ref Mesh m, uint a, uint b) {
@@ -152,6 +155,9 @@ private RingCase[] ringCases() {
     // Corners 1 and 0 degenerate: the left rotation lands on 1, backs off to
     // 0, then to 4 (two right steps).
     auto deg2 = onY1([0f, 0f], [1f, 0f], [2f, 0f], [1f, 1f], [-1f, 0f]);
+    // Corners 1 and 2 disagree with corner 0, corner 3 (= n - 2, outside
+    // [2, n - 3]) agrees: no rotation.
+    auto lone3 = onY1([-1f, 0f], [0f, -2f], [2f, 2f], [0f, -1f], [-1f, -1f]);
     return [
         RingCase("n3 cw flip (A1-n3-cw)", n3, true, [0u, 2, 1]),
         RingCase("n3 unflipped", n3, false, [0u, 1, 2]),
@@ -170,13 +176,15 @@ private RingCase[] ringCases() {
         RingCase("degenerate first corner", deg0, false, [1u, 2, 3, 0]),
         RingCase("two degenerate corners", deg2, false, [4u, 0, 1, 2, 3]),
         RingCase("two points", n3[0 .. 2], true, [0u, 1]),
+        RingCase("n5 disagreeing, only corner 3 agrees: unrotated", lone3, false,
+            [0u, 4, 3, 2, 1]),
     ];
 }
 
 unittest // penRingOrder: every case gives its literal ring
 {
     const all = ringCases();
-    assert(all.length == 15, format("ring table has %s rows, pinned 15", all.length));
+    assert(all.length == 16, format("ring table has %s rows, pinned 16", all.length));
     size_t ran;
     foreach (c; all) {
         const got = penRingOrder(c.pts, c.reverse);
@@ -184,7 +192,7 @@ unittest // penRingOrder: every case gives its literal ring
             c.ring));
         ++ran;
     }
-    assert(ran == 15, "not every ring case ran");
+    assert(ran == 16, "not every ring case ran");
 }
 
 // Ortho view whose forward vector (-view[2,6,10]) is (0, fy, 0).

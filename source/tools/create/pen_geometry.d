@@ -77,7 +77,6 @@ uint[] penRingOrder(const(Vec3)[] v, bool reverse) {
     const n = v.length;
     uint[] ring;
     foreach (i; 0 .. n) ring ~= cast(uint)i;
-    if (n < 3) return ring;
     Vec3 corner(size_t i) {
         return cross(v[(i + 1) % n] - v[i], v[(i + n - 1) % n] - v[i]);
     }

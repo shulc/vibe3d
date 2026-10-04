@@ -241,7 +241,28 @@ unittest {
         ++ran;
     }
 
-    // FLOOR: 14 top-view fixture cases + B0/B1/B2 + the quads cell + insert.
-    assert(ran == 19, format("ran %s facing cells, expected 19", ran));
+    // Ours: the decision is taken in WORLD. A pinned plane turned 180° about X
+    // mirrors the stroke's local winding; A1-n3-cw's clicks still face away
+    // from the top view in world, so flip 1 and ring [0, 2, 1].
+    {
+        Vec3[] pts;
+        foreach (c; fx["cases"].array)
+            if (c["case"].str == "A1-n3-cw")
+                foreach (p; c["clicks_xz_on_plane_y1"].array) pts ~= onPlane(p);
+        penRigEmpty(kFocus);
+        penCommand("tool.set pen off");
+        penCommand("workplane.edit cenX:0 cenY:0.3 cenZ:0 rotX:180 rotY:0 rotZ:0");
+        penCommand("tool.set pen on");
+        clickWorld(pts);
+        expectFlag("rotated-plane", "after the stroke", 1, fails);
+        expectRing("rotated-plane", commitRing("rotated-plane", 3, fails),
+            [0L, 2, 1], fails);
+        penCommand("workplane.reset");
+        ++ran;
+    }
+
+    // FLOOR: 14 top-view fixture cases + B0/B1/B2 + the quads cell + insert
+    // + the rotated plane.
+    assert(ran == 20, format("ran %s facing cells, expected 20", ran));
     assert(fails.length == 0, "pen facing cells: " ~ fails.join(" | "));
 }
