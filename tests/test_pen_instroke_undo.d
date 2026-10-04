@@ -21,7 +21,10 @@
 //                      triangle, 2 rows;
 //   switch-rearm-no-leftover 3 clicks, arm another tool, re-arm the pen: no
 //                      point is left and the next click makes a 1-point stroke;
-//   points-not-injectable `tool.attr pen points …` is refused, no row.
+//   points-not-injectable `tool.attr pen points …` is refused, no row;
+//   rmb-then-ctrlz     3 clicks, RMB, Ctrl+Z: the cancel ended the account;
+//   backspace-then-ctrlz, pop-to-empty-new-view, undo-then-drag: what the
+//                      restored image re-derives (see the block).
 // Typed fields go through the interactive door (`/api/script?interactive=true`,
 // the panel's source); keys through /api/play-events. `VIBE3D_CELL=<id>` runs
 // one cell alone (the population floors hold for the full run only).
@@ -64,6 +67,17 @@ private void key(int sym, int mod) {
 private void ctrlZ()      { key(kSymZ, kModCtrl); }
 private void ctrlShiftZ() { key(kSymZ, kModCtrl | kModShift); }
 private void enter()      { key(kSymReturn, 0); }
+private void backspace()  { key(8, 0); }
+/// A right click on a world point (the pen's cancel).
+private void rmbAt(Vec3 w) {
+    auto cam = fetchCamera();
+    auto p = worldPixel(w);
+    playAndWait(format(`{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,`
+        ~ `"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n" ~ kPaceLine
+        ~ `{"t":50.000,"type":"SDL_MOUSEBUTTONDOWN","btn":3,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n"
+        ~ `{"t":100.000,"type":"SDL_MOUSEBUTTONUP","btn":3,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
+        cam.vpX, cam.vpY, cam.width, cam.height, p[0], p[1], p[0], p[1]));
+}
 
 /// A typed panel field: the interactive door (ParameterChangeSource.InteractiveValue).
 private void typed(string name, string value) {
@@ -310,8 +324,19 @@ unittest {
         drop();
         ++ranGreen;
     }
-    assert(only.length || ranGreen == 4,
-        format("must-stay-green cells ran %s, expected 4", ranGreen));
+    if (want("rmb-then-ctrlz")) {   // the cancel ends the session's account
+        rig();
+        clickWorld(kTri[]);
+        rmbAt(Vec3(0.3f, 1, -0.3f));
+        ctrlZ();
+        expectIdlePen("rmb-then-ctrlz", "after the undo", green);
+        drop();
+        expectModel("rmb-then-ctrlz", null, null, green);
+        expectDepth("rmb-then-ctrlz", "after the drop", 0, green);
+        ++ranGreen;
+    }
+    assert(only.length || ranGreen == 5,
+        format("must-stay-green cells ran %s, expected 5", ranGreen));
     assert(green.length == 0, "pen in-stroke undo (must stay green): " ~ green.join(" | "));
     ran += ranGreen;
 
@@ -410,6 +435,46 @@ unittest {
         drop();
         ++ran;
     }
-    assert(only.length || ran == 17, format("cells ran %s, expected 17", ran));
+    // Ours-only: what the restored image re-derives. A Backspace (interim
+    // arm) is a step of its own; an emptied stroke is Idle again (the next
+    // click re-chooses the plane from the current view); restored points are
+    // pressable again (their markers come back).
+    if (want("backspace-then-ctrlz")) {
+        rig();
+        clickWorld(kA[]);
+        backspace();
+        expectArmed("backspace-then-ctrlz", "after the Backspace", 3, fails);
+        ctrlZ();
+        expectArmed("backspace-then-ctrlz", "after the undo", 4, fails);
+        drop();
+        expectModel("backspace-then-ctrlz", kA[], [[0L, 1, 2, 3]], fails);
+        ++ran;
+    }
+    if (want("pop-to-empty-new-view")) {
+        rig();
+        clickWorld(kA[0], kA[1]);
+        ctrlZ();
+        ctrlZ();
+        penCommand("viewport.view Front");
+        clickWorld(Vec3(-0.3f, 1.2f, 0), Vec3(0.3f, 1.2f, 0), Vec3(0, 0.8f, 0));
+        drop();
+        auto m = model();
+        bool onZPlane = m.verts.length == 3;
+        foreach (v; m.verts) onZPlane = onZPlane && abs(v.z - m.verts[0].z) < 1e-4;
+        if (!onZPlane || abs(m.verts[0].y - m.verts[2].y) < 0.3)
+            fails ~= format("pop-to-empty-new-view: %s; expected 3 points on the front "
+                ~ "view's plane", m.verts);
+        ++ran;
+    }
+    if (want("undo-then-drag")) {
+        rig();
+        clickWorld(kTri[]);
+        ctrlZ();
+        dragWorld(kTri[0], 40);
+        drop();
+        expectModel("undo-then-drag", [Vec3(-0.41f, 1, 0.3f), kTri[1]], [[0L, 1]], fails);
+        ++ran;
+    }
+    assert(only.length || ran == 21, format("cells ran %s, expected 21", ran));
     assert(fails.length == 0, "pen in-stroke undo: " ~ fails.join(" | "));
 }
