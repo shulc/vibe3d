@@ -41,8 +41,9 @@ import toolpipe.packets : SnapType;
 import editmode : EditMode;
 import snap : SnapResult;
 import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
-import tools.transform.relocate_plane : vectorSnap, withAxisComp, axisComp;
-import viewgrid : g_viewGrid, viewWorldPerPixel, viewGridSize, viewGridSubStep;
+import tools.transform.relocate_plane : vectorSnap, withAxisComp, axisComp, niceOrigin;
+import viewgrid : g_viewGrid, viewWorldPerPixel, viewGridSize, viewGridSubStep,
+    relocateQuantum;
 
 import std.math : abs;
 // The one stroke builder and the pen's param schema (PenParams, PenStroke).
@@ -1136,18 +1137,35 @@ private:
         planeNormal = Vec3(axis == 0 ? 1 : 0, axis == 1 ? 1 : 0, axis == 2 ? 1 : 0);
     }
 
-    // Where a click lands (wave plan S3a, tests/fixtures/pen_placement.json):
-    // on the plane through the CURRENT point, the new point going right after
-    // it (append = the current point is the last); the first point on the
-    // plane through the camera focus. A pinned plane keeps its own origin for
-    // the first point until its law is captured.
+    // Where a click lands (wave plan S3a / S3c, tests/fixtures/pen_placement.json
+    // `cells` / `plane_rule`): on the plane through the CURRENT point, the new
+    // point going right after it (append = the current point is the last); the
+    // first point on the view's work plane through the plane-local focus, in
+    // perspective rounded as relocate's plane origin is (`niceOrigin`: every
+    // channel to the sub-step, the normal channel to ten grid steps). The
+    // anchor is vector-snapped, so a click's plane-normal channel is quantised;
+    // a drag anchors on the raw point and a typed value is never rounded.
     Vec3 clickAnchor() const {
-        if (vertices_.length == 0)
-            return frame.isAuto ? toLocalP(cachedVp.focus) : Vec3(0, 0, 0);
+        immutable float q = placementQuantum();
+        if (vertices_.length == 0) {
+            Vec3 f = toLocalP(cachedVp.focus);
+            if (!isOrtho(cachedVp))
+                f = niceOrigin(f, planeAxis(),
+                               relocateQuantum(viewWorldPerPixel(cachedVp), g_viewGrid), q);
+            return vectorSnap(f, q);
+        }
         int cur = params_.currentPoint;
-        return cur >= 0 && cur < cast(int)vertices_.length ? vertices_[cur]
-                                                          : vertices_[$ - 1];
+        return vectorSnap(cur >= 0 && cur < cast(int)vertices_.length ? vertices_[cur]
+                                                                     : vertices_[$ - 1], q);
     }
+
+    // The view's vector-snap step (the grid sub-step) and the plane normal's
+    // axis index, read by the click anchor and the resolver.
+    float placementQuantum() const {
+        immutable float px = viewWorldPerPixel(cachedVp);
+        return viewGridSubStep(px, viewGridSize(px, g_viewGrid), g_viewGrid);
+    }
+    int planeAxis() const { return planeNormal.x != 0 ? 0 : (planeNormal.y != 0 ? 1 : 2); }
 
     // The one place a pixel becomes a stroke point (click, hover, drag): the
     // locked plane through `anchor`, its two in-plane channels rounded to the
@@ -1162,10 +1180,8 @@ private:
             clearLastSnap();
             return false;
         }
-        immutable float px = viewWorldPerPixel(cachedVp);
-        immutable float q = viewGridSubStep(px, viewGridSize(px, g_viewGrid), g_viewGrid);
-        immutable int k = planeNormal.x != 0 ? 0 : (planeNormal.y != 0 ? 1 : 2);
-        local = withAxisComp(vectorSnap(local, q), k, axisComp(local, k));
+        immutable int k = planeAxis();
+        local = withAxisComp(vectorSnap(local, placementQuantum()), k, axisComp(local, k));
         lastSnap = snapLocalHit(local, frame, x, y, cachedVp,
                                 *mesh, EditMode.Vertices, [], guideBits);
         if (!(lastSnap.snapped && lastSnap.constraintType == SnapType.None))
