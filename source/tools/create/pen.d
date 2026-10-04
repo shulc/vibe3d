@@ -1276,7 +1276,6 @@ private:
 
     // Hit-test in-progress vertex markers; returns the index of the first
     // marker whose screen-space bounding cube contains (mx, my), or -1.
-
     int findHoveredVert(int mx, int my) {
         foreach (i, h; vertHandlers) {
             if (h.hitTest(mx, my, cachedVp)) return cast(int)i;

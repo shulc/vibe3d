@@ -8,9 +8,9 @@
 // The focus sits at y = 1 so every rival height (focus plane 1.0, typed value
 // read relative to the focus 1.5, first / next / previous point) differs from
 // the captured one by >= 0.2. All cells run and report together; the
-// must-stay-green cell (A0) is checked first. Two cells of OUR behaviour
-// follow: the pinned plane (unchanged by this law), the idle hover and the
-// edge-on hover.
+// must-stay-green cell (A0) is checked first. Cells of OUR behaviour
+// follow: the pinned plane (unchanged by this law), the idle and drawing
+// hovers and the edge-on hover.
 
 import drag_helpers : Vec3, fetchSnapLast;
 import pen_rig_helpers;
@@ -166,20 +166,38 @@ unittest {
             fails ~= format("pinned plane: %s, expected 3 points at y 0.3", got);
         penCommand("workplane.reset");
     }
-    // An idle hover in a FRONT view resolves on the plane the first click
-    // would lock (z through the focus): the published hover point is the
-    // cursor's point on that plane, not a cleared result.
+    // Hover uses the anchor the next click would use. Idle, in a FRONT view
+    // with the focus at z 0.4: the published hover point lies on the plane
+    // through the focus (z 0.4, not the origin's 0), not a cleared result.
     {
-        penRigEmpty(focus, "Front");
+        penRigEmpty(Vec3(0, 1, 0.4f), "Front");
         penCommand("tool.pipe.attr snap enabled true");
         penCommand("tool.pipe.attr snap types grid");
-        hoverWorld(Vec3(0.5, 1.5, 0));
+        hoverWorld(Vec3(0.5, 1.5, 0.4f));
         auto p = fetchSnapLast()["worldPos"].array;
         penCommand("tool.pipe.attr snap enabled false");
         if (!(near(num(p[0]), 0.5, kTolXZ) && near(num(p[1]), 1.5, kTolXZ) &&
-              near(num(p[2]), 0, kTolY)))
+              near(num(p[2]), 0.4, kTolY)))
             fails ~= format("idle hover, front view: hover point (%s, %s, %s), "
-                ~ "expected (0.5, 1.5, 0)", num(p[0]), num(p[1]), num(p[2]));
+                ~ "expected (0.5, 1.5, 0.4)", num(p[0]), num(p[1]), num(p[2]));
+    }
+    // Drawing: point 0 typed to y 0.5, the hover point lies on the plane
+    // through the current point (y 0.5; the focus plane is 1, the origin 0).
+    {
+        auto k = cells["A0"]["clicks_xz"].array;
+        penRigEmpty(focus);
+        penCommand("tool.pipe.attr snap enabled true");
+        penCommand("tool.pipe.attr snap types grid");
+        clickWorld(xz(k[0]));
+        penAttr("posY", 0.5);
+        hoverWorld(xz(k[1]));
+        auto p = fetchSnapLast()["worldPos"].array;
+        penCommand("tool.set pen off");
+        penCommand("tool.pipe.attr snap enabled false");
+        if (!near(num(p[1]), 0.5, kTolY))
+            fails ~= format("drawing hover: hover point (%s, %s, %s), expected "
+                ~ "y 0.5 (the current point's plane)", num(p[0]), num(p[1]),
+                num(p[2]));
     }
 
     // Once the plane is locked, a view that sees it edge-on gives no hover
