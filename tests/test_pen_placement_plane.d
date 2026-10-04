@@ -135,8 +135,13 @@ unittest {
         clickWorld(xz(k["p2"])); penAttr("posY", 0.8);
         dragWorld(xz(k["p1"]), cast(int)num(c["drag_px"]));
         fails ~= currentAfter("B2", c["expected"]);
-        fails ~= commitAndCompare("B2", c["expected"],
+        penCommand("tool.set pen off");
+        auto got = readVerts();
+        fails ~= compare("B2", got, c["expected"]["vertices"],
             cast(int)num(c["expected"]["dragged_point_index"]));
+        // Ours: the drag did happen (40 px is > 0.1 m at this zoom).
+        if (got.length == 3 && got[1].x - xz(k["p1"]).x < 0.1)
+            fails ~= format("B2: the dragged point did not move (x %.3f)", got[1].x);
     }
 
     // Ours, not captured — a pinned plane keeps today's law until its own
