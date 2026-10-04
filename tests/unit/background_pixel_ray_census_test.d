@@ -67,6 +67,48 @@ private size_t consTaskFinders(string code) {
     return n;
 }
 
+private bool isWs(char c) { return c == ' ' || c == '\n' || c == '\t' || c == '\r'; }
+
+/// True when `s` holds a `findByTask` / `findAllByTask` / `findById` token.
+private bool hasFinder(string s) {
+    return tokenAt(s, "findByTask").length || tokenAt(s, "findAllByTask").length
+        || tokenAt(s, "findById").length;
+}
+
+/// `cast(ConstrainStage)` applied to a finder result in the code view `code`:
+/// the operand (up to `;`) holds the finder call, or its leading identifier is
+/// assigned (`x = …findBy…;`, `auto x = …`) from one anywhere in the file.
+private size_t consCastFinders(string code) {
+    size_t n;
+    foreach (at; tokenAt(code, "ConstrainStage")) {
+        size_t b = at, e = at + "ConstrainStage".length;
+        while (b > 0 && isWs(code[b - 1])) --b;
+        if (b == 0 || code[b - 1] != '(') continue;
+        --b;
+        while (b > 0 && isWs(code[b - 1])) --b;
+        if (b < 4 || code[b - 4 .. b] != "cast" || (b > 4 && isIdentChar(code[b - 5]))) continue;
+        while (e < code.length && isWs(code[e])) ++e;
+        if (e >= code.length || code[e] != ')') continue;
+        size_t semi = e + 1;
+        while (semi < code.length && code[semi] != ';') ++semi;
+        immutable operand = code[e + 1 .. semi];
+        if (hasFinder(operand)) { ++n; continue; }
+        size_t i = 0, j;
+        while (i < operand.length && isWs(operand[i])) ++i;
+        for (j = i; j < operand.length && isIdentChar(operand[j]); ++j) {}
+        if (j == i) continue;
+        foreach (v; tokenAt(code, operand[i .. j])) {
+            size_t k = v + (j - i);
+            while (k < code.length && isWs(code[k])) ++k;
+            if (k + 1 >= code.length || code[k] != '=' || code[k + 1] == '=') continue;
+            size_t end = k;
+            while (end < code.length && code[end] != ';') ++end;
+            if (hasFinder(code[k .. end])) { ++n; break; }
+        }
+    }
+    return n;
+}
+
 /// `findById` calls whose RAW argument is the literal "constrain".
 private size_t consIdFinders(string code, string raw) {
     size_t n;
@@ -85,12 +127,16 @@ private string[] sourceFiles() {
     return o;
 }
 
-unittest { // positive control of the three scanners on a probe (must stay green)
+unittest { // positive control of the four scanners on a probe (must stay green)
     immutable probe = "a.nearest(o, d); b . nearest!(S)(o); auto f = &c.\n nearest;\n"
         ~ "nearest(o, d); p.nearestAtPixel(1, 2);\n"
         ~ "x.findByTask(TaskCode.Cons); y.findByTask( TaskCode . Cons ); z.findAllByTask(Cons);\n"
         ~ "w.findByTask(TaskCode.Snap); v.findByTask(TaskCode.Consume);\n"
-        ~ `u.findById("constrain"); t.findById( "constrain" ); s.findById("axis");` ~ "\n";
+        ~ `u.findById("constrain"); t.findById( "constrain" ); s.findById("axis");` ~ "\n"
+        ~ "immutable k = TaskCode.Cons; auto c1 = cast(ConstrainStage) q.findByTask(k);\n"
+        ~ "auto r = q.findByTask(k); auto c2 = cast( ConstrainStage )\n r;\n"
+        ~ "auto c3 = cast(ConstrainStage) other; auto c4 = cast(SnapStage) q.findByTask(k);\n"
+        ~ "bool b = o == q.findByTask(k); auto c5 = cast(ConstrainStage) o; foo!(ConstrainStage)(q.findByTask(k));\n";
     immutable code = blankNonCode(probe);
     assert(memberNearest(code) == 3,
         format("probe: three member `.nearest` spellings (call, template, address); got %d",
@@ -100,6 +146,9 @@ unittest { // positive control of the three scanners on a probe (must stay green
                ~ "Snap and Consume excluded); got %d", consTaskFinders(code)));
     assert(consIdFinders(code, probe) == 2,
         format("probe: two findById(\"constrain\") spellings; got %d", consIdFinders(code, probe)));
+    assert(consCastFinders(code) == 2,
+        format("probe: two cast(ConstrainStage) finder spellings (direct, via a local variable; "
+               ~ "a non-finder operand, a comparison, a template argument and a SnapStage cast excluded); got %d", consCastFinders(code)));
 }
 
 unittest { // (a) the ONE pixel ray: production callers of nearestAtPixel, and no raw `.nearest`
@@ -122,7 +171,7 @@ unittest { // (a) the ONE pixel ray: production callers of nearestAtPixel, and n
     assert(defs == 1, format("census floor: bvh_pick.d must declare nearestAtPixel once; found %d", defs));
     assert(callers == ["toolpipe/stages/constrain.d", "tools/edit/topology_pen/tool.d"],
         format("nearestAtPixel production callers must be exactly the CONS stage and the topology "
-               ~ "pen (the pen joins in S3b); got %s", callers));
+               ~ "pen (the Pen tool (`tools/create/pen.d`) joins in S3b); got %s", callers));
     assert(rawNearest.length == 0,
         format("a raw `.nearest` member call outside bvh_pick.d builds its own pixel ray; "
                ~ "route it through nearestAtPixel: %s", rawNearest));
@@ -132,28 +181,33 @@ unittest { // (b) the ONE CONS finder over g_pipeCtx: inline finders outside con
     // Polarity: TRUE after task 9357. Before it four `findByTask(TaskCode.Cons)`
     // sites stood outside constrain.d (constrain.toggle, the topology pen's
     // activation and its background ray query, the prepared activation).
-    // The prepared images read their OWN pipeline object and keep their own.
+    // The prepared images keep their own finders (the pen image over its captured `pipe_`).
     auto files = sourceFiles();
     assert(files.length > 300, format("census floor: %d source files", files.length));
-    string[] taskFinders, idFinders;
-    size_t inStage, idInStage;
+    string[] taskFinders, idFinders, castFinders;
+    size_t inStage, idInStage, castInStage;
     foreach (f; files) {
         immutable raw  = readText(buildPath(root, "source", f));
         immutable code = blankNonCode(raw);
-        immutable t = consTaskFinders(code), i = consIdFinders(code, raw);
-        if (f == "toolpipe/stages/constrain.d") { inStage = t; idInStage = i; continue; }
+        immutable t = consTaskFinders(code), i = consIdFinders(code, raw), c = consCastFinders(code);
+        if (f == "toolpipe/stages/constrain.d") { inStage = t; idInStage = i; castInStage = c; continue; }
         foreach (_; 0 .. t) taskFinders ~= f;
         foreach (_; 0 .. i) idFinders ~= f;
+        foreach (_; 0 .. c) castFinders ~= f;
     }
     // Floor: the finder itself is the one site in its home.
-    assert(inStage == 1 && idInStage == 0,
+    assert(inStage == 1 && idInStage == 0 && castInStage == 1,
         format("census floor: constrain.d must hold exactly the liveConstrainStage finder "
-               ~ "(task %d, id %d)", inStage, idInStage));
+               ~ "(task %d, id %d, cast %d)", inStage, idInStage, castInStage));
     assert(idFinders == ["prepared_pipe_activation.d"],
         format("findById(\"constrain\") sites outside constrain.d (measured: the prepared pipe "
                ~ "activation, its own pipeline): %s", idFinders));
     assert(taskFinders == ["prepared_topology_pen_activation.d"],
         format("CONS task finders outside constrain.d must be exactly the prepared topology-pen "
-               ~ "activation (its own pipeline); every g_pipeCtx reader calls liveConstrainStage(): %s",
+               ~ "activation (captured `pipe_`); every g_pipeCtx reader calls liveConstrainStage(): %s",
                taskFinders));
+    assert(castFinders == ["prepared_pipe_activation.d", "prepared_topology_pen_activation.d"],
+        format("cast(ConstrainStage) over a findBy* result outside constrain.d must be exactly the "
+               ~ "prepared pipe activation (its own pipeline) and the prepared topology-pen activation "
+               ~ "(captured `pipe_`); every g_pipeCtx reader calls liveConstrainStage(): %s", castFinders));
 }
