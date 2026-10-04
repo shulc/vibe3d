@@ -991,7 +991,7 @@
     {
       "aggregate": "TopologyPenTool",
       "module": "tools.edit.topology_pen.tool",
-      "semantic_sha256": "af582cc4c8ab279e53dc2a3cc1fd3813695f4e903ac5acc33402d35bb6a49d03",
+      "semantic_sha256": "71c71f7d791c5332244cceb85d2a79a7e7c8d0ba3941fea0bd8a453e4bf2299c",
       "signature": "void()",
       "symbol": "activate"
     },

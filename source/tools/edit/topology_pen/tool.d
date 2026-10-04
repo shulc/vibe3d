@@ -40,7 +40,7 @@ import toolpipe.packets    : ConstrainHitPacket, HoverTarget, HoverTargetKind,
                              SubjectPacket, SnapPacket, SnapType;
 import toolpipe.pipeline   : g_pipeCtx;
 import toolpipe.stage      : TaskCode;
-import toolpipe.stages.constrain : ConstrainStage;
+import toolpipe.stages.constrain : liveConstrainStage;
 import toolpipe.stages.snap : SnapStage;
 import toolpipe.guide       : SnapGuide, GuideDrawState, kGuidePrioritySeed;
 import constraint           : resolveHoverTarget, topoPenPressPickPx,
@@ -1538,8 +1538,7 @@ public:
         // after: a user-locked CONS must not decide whether snapping arms —
         // they are independent stages and the reference arms unconditionally.
         armStartupSnap();
-        if (g_pipeCtx is null) return;
-        auto cs = cast(ConstrainStage) g_pipeCtx.pipeline.findByTask(TaskCode.Cons);
+        auto cs = liveConstrainStage();
         if (cs is null) return;
         // SF-1: a pre-existing EXPLICIT user lock (constrain.toggle /
         // tool.pipe.attr constrain enabled true) must survive this tool
@@ -2539,9 +2538,8 @@ public:
     // The live CONS stage's background ray query (its BVHs are the ones the
     // hover already built); the pen's own only without a pipeline.
     private ref BackgroundRayPicker backgroundRays() return {
-        if (g_pipeCtx !is null)
-            if (auto cs = cast(ConstrainStage) g_pipeCtx.pipeline.findByTask(TaskCode.Cons))
-                return cs.backgroundRays();
+        if (auto cs = liveConstrainStage())
+            return cs.backgroundRays();
         return bgRayPick_;
     }
 
@@ -5167,11 +5165,9 @@ public:
     // background. One query for the vertex slide and the build's drag delta:
     // the CONS stage's per-mesh BVHs (`backgroundRays`).
     private bool backgroundRayHit(float x, float y, const ref Viewport vp, out Vec3 hitW) {
-        Vec3 org, dir;
-        screenPointToRay(x, y, vp, org, dir);
         SurfaceHit sh;
         size_t si;
-        if (!backgroundRays().nearest(org, dir, backgroundSourcesFull(), sh, si)) return false;
+        if (!backgroundRays().nearestAtPixel(x, y, vp, backgroundSourcesFull(), sh, si)) return false;
         hitW = sh.point;
         return true;
     }

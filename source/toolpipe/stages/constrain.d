@@ -7,7 +7,7 @@ import operator         : Operator, Task, VectorStack, PacketKind;
 import popup_state      : setStatePath, installPreparedStatePath;
 import params           : Param, IntEnumEntry, wireTagForValue;
 import bvh_pick         : BackgroundRayPicker, SurfaceHit;
-import math             : Vec3, screenPointToRay;
+import math             : Vec3;
 import constraint        : BackgroundSource;
 
 // Single-sourced geometry-mode token<->value table (task 0184 / audit-2 C2):
@@ -199,9 +199,8 @@ public:
     private bool bgSurfaceRayHit(ref SubjectPacket subj, const(BackgroundSource)[] bgFull,
                                  out SurfaceHit outHit, out size_t outSrcIdx) {
         // Pixel-centre ray, as `BvhPick.pickSurface` builds it.
-        Vec3 org, dir;
-        screenPointToRay(subj.cursorX + 0.5f, subj.cursorY + 0.5f, subj.viewport, org, dir);
-        return _bgBvh.nearest(org, dir, bgFull, outHit, outSrcIdx);
+        return _bgBvh.nearestAtPixel(subj.cursorX + 0.5f, subj.cursorY + 0.5f, subj.viewport,
+                                     bgFull, outHit, outSrcIdx);
     }
 
     // Point mode — background-surface PLACEMENT. The SEED is the
@@ -551,6 +550,14 @@ private:
     }
 }
 
+/// The live pipeline's constraint stage, or null. The ONE finder
+/// over `g_pipeCtx` (`constrain.toggle`, the topology pen's activation and its
+/// background ray query); a prepared image reading its OWN pipeline keeps its own.
+ConstrainStage liveConstrainStage() {
+    import toolpipe.pipeline : g_pipeCtx;
+    if (g_pipeCtx is null) return null;
+    return cast(ConstrainStage) g_pipeCtx.pipeline.findByTask(TaskCode.Cons);
+}
 
 
 // ---------------------------------------------------------------------------

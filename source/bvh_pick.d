@@ -528,6 +528,17 @@ struct BackgroundRayPicker {
         }
         return found;
     }
+
+    /// `nearest` for the ray through window pixel (sx, sy): the ONE pixel →
+    /// background-hit query. The pixel convention is the CALLER's
+    /// (the CONS stage passes the pixel centre, the topology pen its raw point).
+    bool nearestAtPixel(S)(float sx, float sy, const ref Viewport vp,
+                           const(S)[] sources, out SurfaceHit outHit, out size_t outIdx)
+    {
+        Vec3 org, dir;
+        screenPointToRay(sx, sy, vp, org, dir);
+        return nearest(org, dir, sources, outHit, outIdx);
+    }
 }
 
 // ---------------------------------------------------------------------------

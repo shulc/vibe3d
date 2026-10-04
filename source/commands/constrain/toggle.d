@@ -6,8 +6,7 @@ import view;
 import editmode;
 
 import toolpipe.pipeline           : g_pipeCtx;
-import toolpipe.stages.constrain   : ConstrainStage;
-import toolpipe.stage              : TaskCode;
+import toolpipe.stages.constrain   : liveConstrainStage;
 
 // ---------------------------------------------------------------------------
 // `constrain.toggle` — flip the ConstrainStage's master enable flag.
@@ -34,8 +33,7 @@ class ConstrainToggleCommand : Command {
     protected override bool applyImpl() {
         if (g_pipeCtx is null)
             throw new Exception("constrain.toggle: pipeline not initialised");
-        auto cs = cast(ConstrainStage)
-                  g_pipeCtx.pipeline.findByTask(TaskCode.Cons);
+        auto cs = liveConstrainStage();
         if (cs is null)
             throw new Exception("constrain.toggle: CONS stage not registered");
         bool next = !cs.enabled;
