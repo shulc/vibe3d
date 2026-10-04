@@ -1,0 +1,5665 @@
+{
+ "name": "pen_merge",
+ "description": "Polygon pen merge: links decided at the gesture (cells: scene merge radius and latching; cells_k_b3: radii after an edge snap; edge_press: stroke-edge and scene-edge presses).",
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "gui-gesture",
+  "notes": "fresh GUI worker per cell, NEW empty foreground mesh; scene vertex V script-placed at a measured click landing + an offset; clicks/drags/typing are real input; one readback after the last gesture.",
+  "captured_utc": "2026-10-04",
+  "harness": "private capture harness",
+  "task": "9353, 9371, 9375, 9381"
+ },
+ "rig": {
+  "view": "top orthographic unless a cell says otherwise; default zoom 440 px per metre (merge distance 3 px of world = 0.0068255 m); wheel zoom x2^(1/4) per step",
+  "focus_plane_y": 1.0,
+  "click_quantum": "a clicked position is rounded to a zoom-dependent quantum: 0.005 m at 440 px/m, 0.002 at 622, 0.01 at 110 (the earlier placement fixture's 0.01 at 440 is a coincidence of its pixels)",
+  "scene_geometry": "pre-existing vertices/triangles are created in the SAME foreground mesh before the tool activates (they stand for committed geometry); new points come only from real pointer clicks/drags and panel typing"
+ },
+ "law": "Merge is decided by the POINTER GESTURE, never by a later weld: (1) a click or drag-end whose pointer lies within R screen pixels (24 < R < 28, the same at 110 and 440 px/m, blind to depth) of a vertex of the edited mesh makes the stroke point TAKE that vertex's 3-D position and SHARE its index (the decision is latched at the gesture: zooming before the commit changes nothing); (2) a clicked point whose mirror (symmetry on) is closer than the merge distance (gap 2|x| < 3 px of view-wide world size; same value in perspective at any depth) shares one vertex with its mirror, the original's position survives; (3) a click on an existing point of the live stroke selects it and adds nothing; (4) typed positions never merge (not with scene vertices, not with mirrors, even when exactly coincident). merge off disables (1) and (2).",
+ "cells": {
+  "scene_click_exact": {
+   "script": [
+    "click (0,0.2) (0.5,0.2) (0.25,-0.3)",
+    "end stroke",
+    "new stroke: click exactly on (0,0.2), then (-0.4,0.6) (-0.6,0.1)"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.0,
+      1.0,
+      0.2
+     ],
+     [
+      0.5,
+      1.0,
+      0.2
+     ],
+     [
+      0.25,
+      1.0,
+      -0.3
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      0,
+      4,
+      3
+     ]
+    ]
+   }
+  },
+  "scene_click_exact_merge_off": {
+   "script": [
+    "as scene_click_exact with merge off for the second stroke"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.0,
+      1.0,
+      0.2
+     ],
+     [
+      0.5,
+      1.0,
+      0.2
+     ],
+     [
+      0.25,
+      1.0,
+      -0.3
+     ],
+     [
+      0.0,
+      1.0,
+      0.2
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      5,
+      4
+     ]
+    ]
+   }
+  },
+  "stroke_double_click": {
+   "script": [
+    "click (0,0.2)",
+    "click the same pixel again",
+    "click (0.5,0.2)",
+    "click (0.25,-0.3)"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.0,
+      1.0,
+      0.2
+     ],
+     [
+      0.5,
+      1.0,
+      0.2
+     ],
+     [
+      0.25,
+      1.0,
+      -0.3
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ]
+    ],
+    "current_after": 2
+   }
+  },
+  "scene_radius_440_d0.003400": {
+   "script": [
+    "scene triangle with V = (0,1,0.2)+(0.003400,0,0)",
+    "click (0,0.2) [lands exactly there]",
+    "click (-0.4,0.6)",
+    "click (-0.6,0.1)"
+   ],
+   "offset_px": 1.5,
+   "merged": true,
+   "expected": {
+    "vertices": [
+     [
+      0.0034,
+      1.0,
+      0.2
+     ],
+     [
+      0.6,
+      1.0,
+      0.7
+     ],
+     [
+      0.3,
+      1.0,
+      0.8
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      0,
+      4,
+      3
+     ]
+    ]
+   }
+  },
+  "scene_radius_440_d0.006100": {
+   "script": [
+    "scene triangle with V = (0,1,0.2)+(0.006100,0,0)",
+    "click (0,0.2) [lands exactly there]",
+    "click (-0.4,0.6)",
+    "click (-0.6,0.1)"
+   ],
+   "offset_px": 2.68,
+   "merged": true,
+   "expected": {
+    "vertices": [
+     [
+      0.0061,
+      1.0,
+      0.2
+     ],
+     [
+      0.6,
+      1.0,
+      0.7
+     ],
+     [
+      0.3,
+      1.0,
+      0.8
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      0,
+      4,
+      3
+     ]
+    ]
+   }
+  },
+  "scene_radius_440_d0.007500": {
+   "script": [
+    "scene triangle with V = (0,1,0.2)+(0.007500,0,0)",
+    "click (0,0.2) [lands exactly there]",
+    "click (-0.4,0.6)",
+    "click (-0.6,0.1)"
+   ],
+   "offset_px": 3.3,
+   "merged": true,
+   "expected": {
+    "vertices": [
+     [
+      0.0075,
+      1.0,
+      0.2
+     ],
+     [
+      0.6,
+      1.0,
+      0.7
+     ],
+     [
+      0.3,
+      1.0,
+      0.8
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      0,
+      4,
+      3
+     ]
+    ]
+   }
+  },
+  "scene_radius_440_d0.010200": {
+   "script": [
+    "scene triangle with V = (0,1,0.2)+(0.010200,0,0)",
+    "click (0,0.2) [lands exactly there]",
+    "click (-0.4,0.6)",
+    "click (-0.6,0.1)"
+   ],
+   "offset_px": 4.49,
+   "merged": true,
+   "expected": {
+    "vertices": [
+     [
+      0.0102,
+      1.0,
+      0.2
+     ],
+     [
+      0.6,
+      1.0,
+      0.7
+     ],
+     [
+      0.3,
+      1.0,
+      0.8
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      0,
+      4,
+      3
+     ]
+    ]
+   }
+  },
+  "scene_radius_440_d0.013636": {
+   "script": [
+    "scene triangle with V = (0,1,0.2)+(0.013636,0,0)",
+    "click (0,0.2) [lands exactly there]",
+    "click (-0.4,0.6)",
+    "click (-0.6,0.1)"
+   ],
+   "offset_px": 6.0,
+   "merged": true,
+   "expected": {
+    "vertices": [
+     [
+      0.013636,
+      1.0,
+      0.2
+     ],
+     [
+      0.6,
+      1.0,
+      0.7
+     ],
+     [
+      0.3,
+      1.0,
+      0.8
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      0,
+      4,
+      3
+     ]
+    ]
+   }
+  },
+  "scene_radius_440_d0.018182": {
+   "script": [
+    "scene triangle with V = (0,1,0.2)+(0.018182,0,0)",
+    "click (0,0.2) [lands exactly there]",
+    "click (-0.4,0.6)",
+    "click (-0.6,0.1)"
+   ],
+   "offset_px": 8.0,
+   "merged": true,
+   "expected": {
+    "vertices": [
+     [
+      0.018182,
+      1.0,
+      0.2
+     ],
+     [
+      0.6,
+      1.0,
+      0.7
+     ],
+     [
+      0.3,
+      1.0,
+      0.8
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      0,
+      4,
+      3
+     ]
+    ]
+   }
+  },
+  "scene_radius_440_d0.022727": {
+   "script": [
+    "scene triangle with V = (0,1,0.2)+(0.022727,0,0)",
+    "click (0,0.2) [lands exactly there]",
+    "click (-0.4,0.6)",
+    "click (-0.6,0.1)"
+   ],
+   "offset_px": 10.0,
+   "merged": true,
+   "expected": {
+    "vertices": [
+     [
+      0.022727,
+      1.0,
+      0.2
+     ],
+     [
+      0.6,
+      1.0,
+      0.7
+     ],
+     [
+      0.3,
+      1.0,
+      0.8
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      0,
+      4,
+      3
+     ]
+    ]
+   }
+  },
+  "scene_radius_440_d0.027273": {
+   "script": [
+    "scene triangle with V = (0,1,0.2)+(0.027273,0,0)",
+    "click (0,0.2) [lands exactly there]",
+    "click (-0.4,0.6)",
+    "click (-0.6,0.1)"
+   ],
+   "offset_px": 12.0,
+   "merged": true,
+   "expected": {
+    "vertices": [
+     [
+      0.027273,
+      1.0,
+      0.2
+     ],
+     [
+      0.6,
+      1.0,
+      0.7
+     ],
+     [
+      0.3,
+      1.0,
+      0.8
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      0,
+      4,
+      3
+     ]
+    ]
+   }
+  },
+  "scene_radius_440_d0.045455": {
+   "script": [
+    "scene triangle with V = (0,1,0.2)+(0.045455,0,0)",
+    "click (0,0.2) [lands exactly there]",
+    "click (-0.4,0.6)",
+    "click (-0.6,0.1)"
+   ],
+   "offset_px": 20.0,
+   "merged": true,
+   "expected": {
+    "vertices": [
+     [
+      0.045455,
+      1.0,
+      0.2
+     ],
+     [
+      0.6,
+      1.0,
+      0.7
+     ],
+     [
+      0.3,
+      1.0,
+      0.8
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      0,
+      4,
+      3
+     ]
+    ]
+   }
+  },
+  "scene_radius_440_d0.090909": {
+   "script": [
+    "scene triangle with V = (0,1,0.2)+(0.090909,0,0)",
+    "click (0,0.2) [lands exactly there]",
+    "click (-0.4,0.6)",
+    "click (-0.6,0.1)"
+   ],
+   "offset_px": 40.0,
+   "merged": false,
+   "expected": {
+    "vertices": [
+     [
+      0.090909,
+      1.0,
+      0.2
+     ],
+     [
+      0.6,
+      1.0,
+      0.7
+     ],
+     [
+      0.3,
+      1.0,
+      0.8
+     ],
+     [
+      0.0,
+      1.0,
+      0.2
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      5,
+      4
+     ]
+    ]
+   }
+  },
+  "scene_radius_440_d0.181818": {
+   "script": [
+    "scene triangle with V = (0,1,0.2)+(0.181818,0,0)",
+    "click (0,0.2) [lands exactly there]",
+    "click (-0.4,0.6)",
+    "click (-0.6,0.1)"
+   ],
+   "offset_px": 80.0,
+   "merged": false,
+   "expected": {
+    "vertices": [
+     [
+      0.181818,
+      1.0,
+      0.2
+     ],
+     [
+      0.6,
+      1.0,
+      0.7
+     ],
+     [
+      0.3,
+      1.0,
+      0.8
+     ],
+     [
+      0.0,
+      1.0,
+      0.2
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      5,
+      4
+     ]
+    ]
+   }
+  },
+  "scene_radius_440_d0.363636": {
+   "script": [
+    "scene triangle with V = (0,1,0.2)+(0.363636,0,0)",
+    "click (0,0.2) [lands exactly there]",
+    "click (-0.4,0.6)",
+    "click (-0.6,0.1)"
+   ],
+   "offset_px": 160.0,
+   "merged": false,
+   "expected": {
+    "vertices": [
+     [
+      0.363636,
+      1.0,
+      0.2
+     ],
+     [
+      0.6,
+      1.0,
+      0.7
+     ],
+     [
+      0.3,
+      1.0,
+      0.8
+     ],
+     [
+      0.0,
+      1.0,
+      0.2
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      5,
+      4
+     ]
+    ]
+   }
+  },
+  "scene_radius_440_d0.054545": {
+   "script": [
+    "scene triangle with V = (0,1,0.2)+(0.054545,0,0)",
+    "click (0,0.2) [lands exactly there]",
+    "click (-0.4,0.6)",
+    "click (-0.6,0.1)"
+   ],
+   "offset_px": 24.0,
+   "merged": true,
+   "expected": {
+    "vertices": [
+     [
+      0.054545,
+      1.0,
+      0.2
+     ],
+     [
+      0.6,
+      1.0,
+      0.7
+     ],
+     [
+      0.3,
+      1.0,
+      0.8
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      0,
+      4,
+      3
+     ]
+    ]
+   }
+  },
+  "scene_radius_440_d0.063636": {
+   "script": [
+    "scene triangle with V = (0,1,0.2)+(0.063636,0,0)",
+    "click (0,0.2) [lands exactly there]",
+    "click (-0.4,0.6)",
+    "click (-0.6,0.1)"
+   ],
+   "offset_px": 28.0,
+   "merged": false,
+   "expected": {
+    "vertices": [
+     [
+      0.063636,
+      1.0,
+      0.2
+     ],
+     [
+      0.6,
+      1.0,
+      0.7
+     ],
+     [
+      0.3,
+      1.0,
+      0.8
+     ],
+     [
+      0.0,
+      1.0,
+      0.2
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      5,
+      4
+     ]
+    ]
+   }
+  },
+  "scene_radius_440_d0.072727": {
+   "script": [
+    "scene triangle with V = (0,1,0.2)+(0.072727,0,0)",
+    "click (0,0.2) [lands exactly there]",
+    "click (-0.4,0.6)",
+    "click (-0.6,0.1)"
+   ],
+   "offset_px": 32.0,
+   "merged": false,
+   "expected": {
+    "vertices": [
+     [
+      0.072727,
+      1.0,
+      0.2
+     ],
+     [
+      0.6,
+      1.0,
+      0.7
+     ],
+     [
+      0.3,
+      1.0,
+      0.8
+     ],
+     [
+      0.0,
+      1.0,
+      0.2
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      5,
+      4
+     ]
+    ]
+   }
+  },
+  "scene_radius_440_d0.081818": {
+   "script": [
+    "scene triangle with V = (0,1,0.2)+(0.081818,0,0)",
+    "click (0,0.2) [lands exactly there]",
+    "click (-0.4,0.6)",
+    "click (-0.6,0.1)"
+   ],
+   "offset_px": 36.0,
+   "merged": false,
+   "expected": {
+    "vertices": [
+     [
+      0.081818,
+      1.0,
+      0.2
+     ],
+     [
+      0.6,
+      1.0,
+      0.7
+     ],
+     [
+      0.3,
+      1.0,
+      0.8
+     ],
+     [
+      0.0,
+      1.0,
+      0.2
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      5,
+      4
+     ]
+    ]
+   }
+  },
+  "scene_radius_110_d0.010200": {
+   "script": [
+    "zoom out to 110 px/m (4 x 2 wheel steps)",
+    "scene triangle with V = (-1.86,1,-0.09)+(0.010200,0,0)",
+    "click landing (-1.86,-0.09)",
+    "click (-2.41,-1.8)",
+    "click (1.47,1.93)"
+   ],
+   "offset_px": 1.12,
+   "merged": true,
+   "expected": {
+    "vertices": [
+     [
+      -1.8498,
+      1.0,
+      -0.09
+     ],
+     [
+      -1.0,
+      1.0,
+      1.5
+     ],
+     [
+      -0.5,
+      1.0,
+      1.6
+     ],
+     [
+      -2.41,
+      1.0,
+      -1.8
+     ],
+     [
+      1.47,
+      1.0,
+      1.93
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      0,
+      4,
+      3
+     ]
+    ]
+   }
+  },
+  "scene_radius_110_d0.024600": {
+   "script": [
+    "zoom out to 110 px/m (4 x 2 wheel steps)",
+    "scene triangle with V = (-1.86,1,-0.09)+(0.024600,0,0)",
+    "click landing (-1.86,-0.09)",
+    "click (-2.41,-1.8)",
+    "click (1.47,1.93)"
+   ],
+   "offset_px": 2.71,
+   "merged": true,
+   "expected": {
+    "vertices": [
+     [
+      -1.8354,
+      1.0,
+      -0.09
+     ],
+     [
+      -1.0,
+      1.0,
+      1.5
+     ],
+     [
+      -0.5,
+      1.0,
+      1.6
+     ],
+     [
+      -2.41,
+      1.0,
+      -1.8
+     ],
+     [
+      1.47,
+      1.0,
+      1.93
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      0,
+      4,
+      3
+     ]
+    ]
+   }
+  },
+  "scene_radius_110_d0.030000": {
+   "script": [
+    "zoom out to 110 px/m (4 x 2 wheel steps)",
+    "scene triangle with V = (-1.86,1,-0.09)+(0.030000,0,0)",
+    "click landing (-1.86,-0.09)",
+    "click (-2.41,-1.8)",
+    "click (1.47,1.93)"
+   ],
+   "offset_px": 3.3,
+   "merged": true,
+   "expected": {
+    "vertices": [
+     [
+      -1.83,
+      1.0,
+      -0.09
+     ],
+     [
+      -1.0,
+      1.0,
+      1.5
+     ],
+     [
+      -0.5,
+      1.0,
+      1.6
+     ],
+     [
+      -2.41,
+      1.0,
+      -1.8
+     ],
+     [
+      1.47,
+      1.0,
+      1.93
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      0,
+      4,
+      3
+     ]
+    ]
+   }
+  },
+  "scene_radius_110_d0.054545": {
+   "script": [
+    "zoom out to 110 px/m (4 x 2 wheel steps)",
+    "scene triangle with V = (-1.86,1,-0.09)+(0.054545,0,0)",
+    "click landing (-1.86,-0.09)",
+    "click (-2.41,-1.8)",
+    "click (1.47,1.93)"
+   ],
+   "offset_px": 6.0,
+   "merged": true,
+   "expected": {
+    "vertices": [
+     [
+      -1.805455,
+      1.0,
+      -0.09
+     ],
+     [
+      -1.0,
+      1.0,
+      1.5
+     ],
+     [
+      -0.5,
+      1.0,
+      1.6
+     ],
+     [
+      -2.41,
+      1.0,
+      -1.8
+     ],
+     [
+      1.47,
+      1.0,
+      1.93
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      0,
+      4,
+      3
+     ]
+    ]
+   }
+  },
+  "scene_radius_110_d0.072727": {
+   "script": [
+    "zoom out to 110 px/m (4 x 2 wheel steps)",
+    "scene triangle with V = (-1.86,1,-0.09)+(0.072727,0,0)",
+    "click landing (-1.86,-0.09)",
+    "click (-2.41,-1.8)",
+    "click (1.47,1.93)"
+   ],
+   "offset_px": 8.0,
+   "merged": true,
+   "expected": {
+    "vertices": [
+     [
+      -1.787273,
+      1.0,
+      -0.09
+     ],
+     [
+      -1.0,
+      1.0,
+      1.5
+     ],
+     [
+      -0.5,
+      1.0,
+      1.6
+     ],
+     [
+      -2.41,
+      1.0,
+      -1.8
+     ],
+     [
+      1.47,
+      1.0,
+      1.93
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      0,
+      4,
+      3
+     ]
+    ]
+   }
+  },
+  "scene_radius_110_d0.090909": {
+   "script": [
+    "zoom out to 110 px/m (4 x 2 wheel steps)",
+    "scene triangle with V = (-1.86,1,-0.09)+(0.090909,0,0)",
+    "click landing (-1.86,-0.09)",
+    "click (-2.41,-1.8)",
+    "click (1.47,1.93)"
+   ],
+   "offset_px": 10.0,
+   "merged": true,
+   "expected": {
+    "vertices": [
+     [
+      -1.769091,
+      1.0,
+      -0.09
+     ],
+     [
+      -1.0,
+      1.0,
+      1.5
+     ],
+     [
+      -0.5,
+      1.0,
+      1.6
+     ],
+     [
+      -2.41,
+      1.0,
+      -1.8
+     ],
+     [
+      1.47,
+      1.0,
+      1.93
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      0,
+      4,
+      3
+     ]
+    ]
+   }
+  },
+  "scene_radius_110_d0.109091": {
+   "script": [
+    "zoom out to 110 px/m (4 x 2 wheel steps)",
+    "scene triangle with V = (-1.86,1,-0.09)+(0.109091,0,0)",
+    "click landing (-1.86,-0.09)",
+    "click (-2.41,-1.8)",
+    "click (1.47,1.93)"
+   ],
+   "offset_px": 12.0,
+   "merged": true,
+   "expected": {
+    "vertices": [
+     [
+      -1.750909,
+      1.0,
+      -0.09
+     ],
+     [
+      -1.0,
+      1.0,
+      1.5
+     ],
+     [
+      -0.5,
+      1.0,
+      1.6
+     ],
+     [
+      -2.41,
+      1.0,
+      -1.8
+     ],
+     [
+      1.47,
+      1.0,
+      1.93
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      0,
+      4,
+      3
+     ]
+    ]
+   }
+  },
+  "scene_radius_110_d0.181818": {
+   "script": [
+    "zoom out to 110 px/m (4 x 2 wheel steps)",
+    "scene triangle with V = (-1.86,1,-0.09)+(0.181818,0,0)",
+    "click landing (-1.86,-0.09)",
+    "click (-2.41,-1.8)",
+    "click (1.47,1.93)"
+   ],
+   "offset_px": 20.0,
+   "merged": true,
+   "expected": {
+    "vertices": [
+     [
+      -1.678182,
+      1.0,
+      -0.09
+     ],
+     [
+      -1.0,
+      1.0,
+      1.5
+     ],
+     [
+      -0.5,
+      1.0,
+      1.6
+     ],
+     [
+      -2.41,
+      1.0,
+      -1.8
+     ],
+     [
+      1.47,
+      1.0,
+      1.93
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      0,
+      4,
+      3
+     ]
+    ]
+   }
+  },
+  "scene_radius_110_d0.363636": {
+   "script": [
+    "zoom out to 110 px/m (4 x 2 wheel steps)",
+    "scene triangle with V = (-1.86,1,-0.09)+(0.363636,0,0)",
+    "click landing (-1.86,-0.09)",
+    "click (-2.41,-1.8)",
+    "click (1.47,1.93)"
+   ],
+   "offset_px": 40.0,
+   "merged": false,
+   "expected": {
+    "vertices": [
+     [
+      -1.496364,
+      1.0,
+      -0.09
+     ],
+     [
+      -1.0,
+      1.0,
+      1.5
+     ],
+     [
+      -0.5,
+      1.0,
+      1.6
+     ],
+     [
+      -1.86,
+      1.0,
+      -0.09
+     ],
+     [
+      -2.41,
+      1.0,
+      -1.8
+     ],
+     [
+      1.47,
+      1.0,
+      1.93
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      5,
+      4
+     ]
+    ]
+   }
+  },
+  "scene_radius_110_d0.727273": {
+   "script": [
+    "zoom out to 110 px/m (4 x 2 wheel steps)",
+    "scene triangle with V = (-1.86,1,-0.09)+(0.727273,0,0)",
+    "click landing (-1.86,-0.09)",
+    "click (-2.41,-1.8)",
+    "click (1.47,1.93)"
+   ],
+   "offset_px": 80.0,
+   "merged": false,
+   "expected": {
+    "vertices": [
+     [
+      -1.132727,
+      1.0,
+      -0.09
+     ],
+     [
+      -1.0,
+      1.0,
+      1.5
+     ],
+     [
+      -0.5,
+      1.0,
+      1.6
+     ],
+     [
+      -1.86,
+      1.0,
+      -0.09
+     ],
+     [
+      -2.41,
+      1.0,
+      -1.8
+     ],
+     [
+      1.47,
+      1.0,
+      1.93
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      5,
+      4
+     ]
+    ]
+   }
+  },
+  "scene_radius_110_d1.454545": {
+   "script": [
+    "zoom out to 110 px/m (4 x 2 wheel steps)",
+    "scene triangle with V = (-1.86,1,-0.09)+(1.454545,0,0)",
+    "click landing (-1.86,-0.09)",
+    "click (-2.41,-1.8)",
+    "click (1.47,1.93)"
+   ],
+   "offset_px": 160.0,
+   "merged": false,
+   "expected": {
+    "vertices": [
+     [
+      -0.405455,
+      1.0,
+      -0.09
+     ],
+     [
+      -1.0,
+      1.0,
+      1.5
+     ],
+     [
+      -0.5,
+      1.0,
+      1.6
+     ],
+     [
+      -1.86,
+      1.0,
+      -0.09
+     ],
+     [
+      -2.41,
+      1.0,
+      -1.8
+     ],
+     [
+      1.47,
+      1.0,
+      1.93
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      5,
+      4
+     ]
+    ]
+   }
+  },
+  "scene_radius_110_d0.254545": {
+   "script": [
+    "zoom out to 110 px/m (4 x 2 wheel steps)",
+    "scene triangle with V = (-1.86,1,-0.09)+(0.254545,0,0)",
+    "click landing (-1.86,-0.09)",
+    "click (-2.41,-1.8)",
+    "click (1.47,1.93)"
+   ],
+   "offset_px": 28.0,
+   "merged": false,
+   "expected": {
+    "vertices": [
+     [
+      -1.605455,
+      1.0,
+      -0.09
+     ],
+     [
+      -1.0,
+      1.0,
+      1.5
+     ],
+     [
+      -0.5,
+      1.0,
+      1.6
+     ],
+     [
+      -1.86,
+      1.0,
+      -0.09
+     ],
+     [
+      -2.41,
+      1.0,
+      -1.8
+     ],
+     [
+      1.47,
+      1.0,
+      1.93
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      5,
+      4
+     ]
+    ]
+   }
+  },
+  "scene_radius_110_d0.290909": {
+   "script": [
+    "zoom out to 110 px/m (4 x 2 wheel steps)",
+    "scene triangle with V = (-1.86,1,-0.09)+(0.290909,0,0)",
+    "click landing (-1.86,-0.09)",
+    "click (-2.41,-1.8)",
+    "click (1.47,1.93)"
+   ],
+   "offset_px": 32.0,
+   "merged": false,
+   "expected": {
+    "vertices": [
+     [
+      -1.569091,
+      1.0,
+      -0.09
+     ],
+     [
+      -1.0,
+      1.0,
+      1.5
+     ],
+     [
+      -0.5,
+      1.0,
+      1.6
+     ],
+     [
+      -1.86,
+      1.0,
+      -0.09
+     ],
+     [
+      -2.41,
+      1.0,
+      -1.8
+     ],
+     [
+      1.47,
+      1.0,
+      1.93
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      5,
+      4
+     ]
+    ]
+   }
+  },
+  "scene_screen_not_world": {
+   "script": [
+    "scene V = (0,1.5,0.2) (0 px on screen from the landing, 0.5 m in world)",
+    "click (0,0.2)",
+    "click (-0.4,0.6)",
+    "click (-0.6,0.1)"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.0,
+      1.5,
+      0.2
+     ],
+     [
+      0.6,
+      1.0,
+      0.7
+     ],
+     [
+      0.3,
+      1.0,
+      0.8
+     ],
+     [
+      -0.4,
+      1.5,
+      0.6
+     ],
+     [
+      -0.6,
+      1.5,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      0,
+      4,
+      3
+     ]
+    ]
+   },
+   "note": "p0 takes V's height, so the next clicks land on y 1.5 (plane through the current point)"
+  },
+  "scene_merge_off_no_snap": {
+   "script": [
+    "merge off",
+    "scene V at 3.3 px",
+    "click (0,0.2) (-0.4,0.6) (-0.6,0.1)"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.0075,
+      1.0,
+      0.2
+     ],
+     [
+      0.6,
+      1.0,
+      0.7
+     ],
+     [
+      0.3,
+      1.0,
+      0.8
+     ],
+     [
+      0.0,
+      1.0,
+      0.2
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      5,
+      4
+     ]
+    ]
+   }
+  },
+  "scene_latched_zoom_in": {
+   "script": [
+    "scene V at 15 px",
+    "click p0 (merges)",
+    "zoom in x4 (V now 60 px away)",
+    "click two far points"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.034091,
+      1.0,
+      0.2
+     ],
+     [
+      0.6,
+      1.0,
+      0.7
+     ],
+     [
+      0.3,
+      1.0,
+      0.8
+     ],
+     [
+      -0.123,
+      1.0,
+      0.199
+     ],
+     [
+      0.247,
+      1.0,
+      0.199
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      0,
+      4,
+      3
+     ]
+    ]
+   }
+  },
+  "scene_latched_zoom_out": {
+   "script": [
+    "scene V at 60 px",
+    "click p0 (no merge)",
+    "zoom out x4 (V now 15 px away)",
+    "click two far points"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.136364,
+      1.0,
+      0.2
+     ],
+     [
+      0.6,
+      1.0,
+      0.7
+     ],
+     [
+      0.3,
+      1.0,
+      0.8
+     ],
+     [
+      0.0,
+      1.0,
+      0.2
+     ],
+     [
+      -2.87,
+      1.0,
+      3.33
+     ],
+     [
+      3.05,
+      1.0,
+      3.33
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      4,
+      5
+     ]
+    ]
+   }
+  },
+  "scene_later_click": {
+   "script": [
+    "scene V at 15 px from the second click",
+    "click (-0.4,0.6)",
+    "click (0,0.2)",
+    "click (-0.6,0.1)"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.034091,
+      1.0,
+      0.2
+     ],
+     [
+      0.6,
+      1.0,
+      0.7
+     ],
+     [
+      0.3,
+      1.0,
+      0.8
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      0,
+      4
+     ]
+    ]
+   }
+  },
+  "scene_drag_end": {
+   "script": [
+    "scene V = (0.03,1,0.2)",
+    "click (-0.4,0.6) (-0.6,0.1) (0.5,0.2)",
+    "drag the third point -200 px in x (ends ~7 px from V)"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.03,
+      1.0,
+      0.2
+     ],
+     [
+      0.6,
+      1.0,
+      0.7
+     ],
+     [
+      0.3,
+      1.0,
+      0.8
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      0,
+      4
+     ]
+    ]
+   },
+   "not_scored": "drag end x depends on the pointer transport; scored: the point ends exactly at V and shares its index"
+  },
+  "scene_typed_near": {
+   "script": [
+    "scene V = (0,1,0.2)",
+    "click (-0.4,0.6) (-0.6,0.1) (0.5,0.2)",
+    "type posX 0.0034 for the current (third) point"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.0,
+      1.0,
+      0.2
+     ],
+     [
+      0.6,
+      1.0,
+      0.7
+     ],
+     [
+      0.3,
+      1.0,
+      0.8
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ],
+     [
+      0.0034,
+      1.0,
+      0.2
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      5,
+      4
+     ]
+    ]
+   }
+  },
+  "scene_typed_coincident": {
+   "script": [
+    "as scene_typed_near with posX 0"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.0,
+      1.0,
+      0.2
+     ],
+     [
+      0.6,
+      1.0,
+      0.7
+     ],
+     [
+      0.3,
+      1.0,
+      0.8
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ],
+     [
+      0.0,
+      1.0,
+      0.2
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      5,
+      4
+     ]
+    ]
+   }
+  },
+  "mirror_gap_click_x0.002": {
+   "script": [
+    "zoom in 2 wheel steps (622 px/m, merge distance 0.0048264 m)",
+    "symmetry X",
+    "click landing x=0.002",
+    "click two points on +x"
+   ],
+   "gap_over_merge_distance": 0.829,
+   "merged": true,
+   "expected": {
+    "vertices": [
+     [
+      0.002,
+      1.0,
+      0.002
+     ],
+     [
+      0.588,
+      1.0,
+      -0.292
+     ],
+     [
+      0.588,
+      1.0,
+      0.352
+     ],
+     [
+      -0.588,
+      1.0,
+      -0.292
+     ],
+     [
+      -0.588,
+      1.0,
+      0.352
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      2,
+      1
+     ],
+     [
+      0,
+      3,
+      4
+     ]
+    ]
+   }
+  },
+  "mirror_gap_click_x0.004": {
+   "script": [
+    "zoom in 2 wheel steps (622 px/m, merge distance 0.0048264 m)",
+    "symmetry X",
+    "click landing x=0.004",
+    "click two points on +x"
+   ],
+   "gap_over_merge_distance": 1.658,
+   "merged": false,
+   "expected": {
+    "vertices": [
+     [
+      0.004,
+      1.0,
+      0.002
+     ],
+     [
+      0.588,
+      1.0,
+      -0.292
+     ],
+     [
+      0.588,
+      1.0,
+      0.352
+     ],
+     [
+      -0.004,
+      1.0,
+      0.002
+     ],
+     [
+      -0.588,
+      1.0,
+      -0.292
+     ],
+     [
+      -0.588,
+      1.0,
+      0.352
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      2,
+      1
+     ],
+     [
+      3,
+      4,
+      5
+     ]
+    ]
+   }
+  },
+  "mirror_gap_click_x0.006": {
+   "script": [
+    "zoom in 2 wheel steps (622 px/m, merge distance 0.0048264 m)",
+    "symmetry X",
+    "click landing x=0.006",
+    "click two points on +x"
+   ],
+   "gap_over_merge_distance": 2.486,
+   "merged": false,
+   "expected": {
+    "vertices": [
+     [
+      0.006,
+      1.0,
+      0.002
+     ],
+     [
+      0.588,
+      1.0,
+      -0.292
+     ],
+     [
+      0.588,
+      1.0,
+      0.352
+     ],
+     [
+      -0.006,
+      1.0,
+      0.002
+     ],
+     [
+      -0.588,
+      1.0,
+      -0.292
+     ],
+     [
+      -0.588,
+      1.0,
+      0.352
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      2,
+      1
+     ],
+     [
+      3,
+      4,
+      5
+     ]
+    ]
+   }
+  },
+  "mirror_gap_click_x-0.002": {
+   "script": [
+    "zoom in 2 wheel steps (622 px/m, merge distance 0.0048264 m)",
+    "symmetry X",
+    "click landing x=-0.002",
+    "click two points on +x"
+   ],
+   "gap_over_merge_distance": 0.829,
+   "merged": true,
+   "expected": {
+    "vertices": [
+     [
+      -0.002,
+      1.0,
+      0.002
+     ],
+     [
+      0.588,
+      1.0,
+      -0.292
+     ],
+     [
+      0.588,
+      1.0,
+      0.352
+     ],
+     [
+      -0.588,
+      1.0,
+      -0.292
+     ],
+     [
+      -0.588,
+      1.0,
+      0.352
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      2,
+      1
+     ],
+     [
+      0,
+      3,
+      4
+     ]
+    ]
+   }
+  },
+  "mirror_typed_half_distance": {
+   "script": [
+    "symmetry X",
+    "click (0.5,0.2) (0.5,-0.3) (0.805,-0.05)",
+    "current 0, posX 0.0017"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.0017,
+      1.0,
+      0.2
+     ],
+     [
+      0.5,
+      1.0,
+      -0.3
+     ],
+     [
+      0.805,
+      1.0,
+      -0.05
+     ],
+     [
+      -0.0017,
+      1.0,
+      0.2
+     ],
+     [
+      -0.5,
+      1.0,
+      -0.3
+     ],
+     [
+      -0.805,
+      1.0,
+      -0.05
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      2,
+      1
+     ],
+     [
+      3,
+      4,
+      5
+     ]
+    ]
+   }
+  },
+  "mirror_typed_on_plane": {
+   "script": [
+    "as mirror_typed_half_distance with posX 0"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.0,
+      1.0,
+      0.2
+     ],
+     [
+      0.5,
+      1.0,
+      -0.3
+     ],
+     [
+      0.805,
+      1.0,
+      -0.05
+     ],
+     [
+      0.0,
+      1.0,
+      0.2
+     ],
+     [
+      -0.5,
+      1.0,
+      -0.3
+     ],
+     [
+      -0.805,
+      1.0,
+      -0.05
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      2,
+      1
+     ],
+     [
+      3,
+      4,
+      5
+     ]
+    ]
+   }
+  },
+  "merge_distance_perspective": {
+   "script": [
+    "perspective (top-down), pen",
+    "near: click centre, click +300 px, +300 px down (plane y 1, depth ~2.87)",
+    "far: click centre, type posY -5, then the same two clicks (plane y -5, depth ~8.87)"
+   ],
+   "expected": {
+    "merge_distance_near": 0.006825516145530925,
+    "merge_distance_far": 0.006825516145530925,
+    "world_per_px_near": 0.002833,
+    "world_per_px_far": 0.008817
+   },
+   "law": "one view-wide value (3 px at the camera focus distance), not per click depth"
+  },
+  "undo_one_point_stroke": {
+   "script": [
+    "click (0,0.2) (0.5,0.2) (0.25,-0.3)",
+    "drop the tool",
+    "activate again",
+    "click on (0,0.2) (merges with the committed vertex)",
+    "Ctrl+Z",
+    "click (-0.4,0.6) (-0.6,0.1)",
+    "drop"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.0,
+      1.0,
+      0.2
+     ],
+     [
+      0.5,
+      1.0,
+      0.2
+     ],
+     [
+      0.25,
+      1.0,
+      -0.3
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      4
+     ]
+    ]
+   },
+   "note": "Ctrl+Z with a ONE-point live stroke removes that point and keeps the committed triangle; the next two clicks start a new stroke that commits as a 2-vertex polygon"
+  },
+  "scene_linked_click_control": {
+   "script": [
+    "scene triangle V=(0,1,0.2) (0.6,1,0.7) (0.3,1,0.8); stroke: click exactly on V, then (-0.4,0.6), (-0.6,0.1)",
+    "drop"
+   ],
+   "linked": true,
+   "expected": {
+    "vertices": [
+     [
+      0.0,
+      1.0,
+      0.2
+     ],
+     [
+      0.6,
+      1.0,
+      0.7
+     ],
+     [
+      0.3,
+      1.0,
+      0.8
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      0,
+      4,
+      3
+     ]
+    ]
+   }
+  },
+  "scene_drag_linked_away": {
+   "script": [
+    "scene triangle V=(0,1,0.2) (0.6,1,0.7) (0.3,1,0.8); stroke: click exactly on V, then (-0.4,0.6), (-0.6,0.1)",
+    "press on the first point and drag it 40 px along +x (ends at x 0.09)",
+    "drop"
+   ],
+   "linked_after": false,
+   "law": "a drag end re-decides the link from the drag-end pointer: 40 px away -> no link, a new vertex at the drag end, V unmoved",
+   "expected": {
+    "vertices": [
+     [
+      0.0,
+      1.0,
+      0.2
+     ],
+     [
+      0.6,
+      1.0,
+      0.7
+     ],
+     [
+      0.3,
+      1.0,
+      0.8
+     ],
+     [
+      0.09,
+      1.0,
+      0.2
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      5,
+      4
+     ]
+    ]
+   }
+  },
+  "scene_drag_linked_away_undo": {
+   "script": [
+    "as scene_drag_linked_away",
+    "one undo after the drop"
+   ],
+   "expected_after_drop": {
+    "vertices": [
+     [
+      0.0,
+      1.0,
+      0.2
+     ],
+     [
+      0.6,
+      1.0,
+      0.7
+     ],
+     [
+      0.3,
+      1.0,
+      0.8
+     ],
+     [
+      0.09,
+      1.0,
+      0.2
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      5,
+      4
+     ]
+    ]
+   },
+   "expected_after_undo": {
+    "vertices": [
+     [
+      0.0,
+      1.0,
+      0.2
+     ],
+     [
+      0.6,
+      1.0,
+      0.7
+     ],
+     [
+      0.3,
+      1.0,
+      0.8
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ]
+    ]
+   }
+  },
+  "scene_drag_linked_short": {
+   "script": [
+    "scene triangle V=(0,1,0.2) (0.6,1,0.7) (0.3,1,0.8); stroke: click exactly on V, then (-0.4,0.6), (-0.6,0.1)",
+    "press on the first point and drag it 10 px along +x (inside the merge radius of V)",
+    "drop"
+   ],
+   "linked_after": true,
+   "law": "the drag end re-links to V (V unmoved, the point takes V's position)",
+   "expected": {
+    "vertices": [
+     [
+      0.0,
+      1.0,
+      0.2
+     ],
+     [
+      0.6,
+      1.0,
+      0.7
+     ],
+     [
+      0.3,
+      1.0,
+      0.8
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      0,
+      4,
+      3
+     ]
+    ]
+   }
+  },
+  "scene_typed_linked": {
+   "script": [
+    "scene triangle V=(0,1,0.2) (0.6,1,0.7) (0.3,1,0.8); stroke: click exactly on V, then (-0.4,0.6), (-0.6,0.1)",
+    "Current Point 0; Position X typed 0.2",
+    "drop"
+   ],
+   "linked_after": false,
+   "law": "a typed edit of a linked point unlinks it: new vertex at the typed position, V unmoved",
+   "expected": {
+    "vertices": [
+     [
+      0.0,
+      1.0,
+      0.2
+     ],
+     [
+      0.6,
+      1.0,
+      0.7
+     ],
+     [
+      0.3,
+      1.0,
+      0.8
+     ],
+     [
+      0.2,
+      1.0,
+      0.2
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      5,
+      4
+     ]
+    ]
+   }
+  },
+  "mirror_press_drag_merge_off": {
+   "script": [
+    "symmetry X; merge off",
+    "click (0.25,-0.25) (0.75,-0.25) (0.75,0.25)",
+    "press on the mirror image of the 3rd point (-0.75,0.25) and drag 40 px along +x",
+    "drop"
+   ],
+   "law": "with merge off nothing welds: 8 vertices (the 6-vertex weld of the same gesture with merge on IS merge)",
+   "expected": {
+    "vertices": [
+     [
+      0.25,
+      1.0,
+      -0.25
+     ],
+     [
+      0.75,
+      1.0,
+      -0.25
+     ],
+     [
+      0.75,
+      1.0,
+      0.25
+     ],
+     [
+      -0.66,
+      1.0,
+      0.25
+     ],
+     [
+      -0.25,
+      1.0,
+      -0.25
+     ],
+     [
+      -0.75,
+      1.0,
+      -0.25
+     ],
+     [
+      -0.75,
+      1.0,
+      0.25
+     ],
+     [
+      0.66,
+      1.0,
+      0.25
+     ]
+    ],
+    "polygons": [
+     [
+      1,
+      0,
+      3,
+      2
+     ],
+     [
+      5,
+      6,
+      7,
+      4
+     ]
+    ]
+   }
+  },
+  "snap_grid_g6_v22": {
+   "script": [
+    "snapping ON by command; vertex snap type OFF; grid ON, edge OFF",
+    "scene: V 22 px right of the pointer; nearest grid point (0.1,0.2) 6.5 px left (V-grid 28.5 px)",
+    "click at the pointer, then (-0.4,0.6), (-0.6,0.1)",
+    "drop"
+   ],
+   "linked": false,
+   "expected": {
+    "vertices": [
+     [
+      0.164773,
+      1.0,
+      0.2
+     ],
+     [
+      0.6,
+      1.0,
+      0.7
+     ],
+     [
+      0.3,
+      1.0,
+      0.8
+     ],
+     [
+      0.1,
+      1.0,
+      0.2
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      5,
+      4
+     ]
+    ]
+   }
+  },
+  "snap_grid_g4_v3": {
+   "script": [
+    "snapping ON by command; vertex snap type OFF; grid ON, edge OFF",
+    "scene: V 3 px right of the pointer; grid point 4.5 px left (V-grid 7.5 px)",
+    "click at the pointer, then (-0.4,0.6), (-0.6,0.1)",
+    "drop"
+   ],
+   "linked": true,
+   "expected": {
+    "vertices": [
+     [
+      0.117045,
+      1.0,
+      0.2
+     ],
+     [
+      0.6,
+      1.0,
+      0.7
+     ],
+     [
+      0.3,
+      1.0,
+      0.8
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      0,
+      4,
+      3
+     ]
+    ]
+   }
+  },
+  "snap_grid_g15_v13": {
+   "script": [
+    "snapping ON by command; vertex snap type OFF; grid ON, edge OFF",
+    "scene: V 13 px right; grid point 15.5 px left (V-grid 28.5 px): the nearer V does NOT win",
+    "click at the pointer, then (-0.4,0.6), (-0.6,0.1)",
+    "drop"
+   ],
+   "linked": false,
+   "expected": {
+    "vertices": [
+     [
+      0.164773,
+      1.0,
+      0.2
+     ],
+     [
+      0.6,
+      1.0,
+      0.7
+     ],
+     [
+      0.3,
+      1.0,
+      0.8
+     ],
+     [
+      0.1,
+      1.0,
+      0.2
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      5,
+      4
+     ]
+    ]
+   }
+  },
+  "snap_grid_g0_v20": {
+   "script": [
+    "snapping ON by command; vertex snap type OFF; grid ON, edge OFF",
+    "scene: pointer 0.5 px from the grid point; V 20.5 px from it",
+    "click at the pointer, then (-0.4,0.6), (-0.6,0.1)",
+    "drop"
+   ],
+   "linked": true,
+   "expected": {
+    "vertices": [
+     [
+      0.146591,
+      1.0,
+      0.2
+     ],
+     [
+      0.6,
+      1.0,
+      0.7
+     ],
+     [
+      0.3,
+      1.0,
+      0.8
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      0,
+      4,
+      3
+     ]
+    ]
+   }
+  },
+  "snap_grid_g6_merge_off": {
+   "script": [
+    "snapping ON by command; vertex snap type OFF; grid ON, edge OFF, merge OFF",
+    "scene: as snap_grid_g6_v22",
+    "click at the pointer, then (-0.4,0.6), (-0.6,0.1)",
+    "drop"
+   ],
+   "linked": false,
+   "expected": {
+    "vertices": [
+     [
+      0.164773,
+      1.0,
+      0.2
+     ],
+     [
+      0.6,
+      1.0,
+      0.7
+     ],
+     [
+      0.3,
+      1.0,
+      0.8
+     ],
+     [
+      0.1,
+      1.0,
+      0.2
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      5,
+      4
+     ]
+    ]
+   }
+  },
+  "snap_grid_g15_merge_off": {
+   "script": [
+    "snapping ON by command; vertex snap type OFF; grid ON, edge OFF, merge OFF",
+    "scene: as snap_grid_g15_v13",
+    "click at the pointer, then (-0.4,0.6), (-0.6,0.1)",
+    "drop"
+   ],
+   "linked": false,
+   "expected": {
+    "vertices": [
+     [
+      0.164773,
+      1.0,
+      0.2
+     ],
+     [
+      0.6,
+      1.0,
+      0.7
+     ],
+     [
+      0.3,
+      1.0,
+      0.8
+     ],
+     [
+      0.1,
+      1.0,
+      0.2
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      5,
+      4
+     ]
+    ]
+   }
+  },
+  "snap_edge_e5_v20": {
+   "script": [
+    "snapping ON by command; vertex snap type OFF; edge ON, grid OFF",
+    "scene: triangle V=(0,0.2) (0.5,0.2) (0.25,-0.3); pointer 5 px below edge V-(0.5,0.2), 19.5 px along it from V (V 20.1 px)",
+    "click at the pointer, then (-0.4,0.6), (-0.6,0.1)",
+    "drop"
+   ],
+   "linked": false,
+   "expected": {
+    "vertices": [
+     [
+      0.0,
+      1.0,
+      0.2
+     ],
+     [
+      0.5,
+      1.0,
+      0.2
+     ],
+     [
+      0.25,
+      1.0,
+      -0.3
+     ],
+     [
+      0.045,
+      1.0,
+      0.2
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      5,
+      4
+     ]
+    ]
+   }
+  },
+  "snap_edge_e5_v20_merge_off": {
+   "script": [
+    "snapping ON by command; vertex snap type OFF; edge ON, grid OFF, merge OFF",
+    "scene: as snap_edge_e5_v20",
+    "click at the pointer, then (-0.4,0.6), (-0.6,0.1)",
+    "drop"
+   ],
+   "linked": false,
+   "expected": {
+    "vertices": [
+     [
+      0.0,
+      1.0,
+      0.2
+     ],
+     [
+      0.5,
+      1.0,
+      0.2
+     ],
+     [
+      0.25,
+      1.0,
+      -0.3
+     ],
+     [
+      0.045,
+      1.0,
+      0.2
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      5,
+      4
+     ]
+    ]
+   }
+  },
+  "snap_edge_e5_v6": {
+   "script": [
+    "snapping ON by command; vertex snap type OFF; edge ON, grid OFF",
+    "scene: same triangle; pointer 5 px below the edge, 3.5 px along it from V (V 6.1 px; snapped point 0.01 m = 4.4 px from V)",
+    "click at the pointer, then (-0.4,0.6), (-0.6,0.1)",
+    "drop"
+   ],
+   "linked": true,
+   "expected": {
+    "vertices": [
+     [
+      0.0,
+      1.0,
+      0.2
+     ],
+     [
+      0.5,
+      1.0,
+      0.2
+     ],
+     [
+      0.25,
+      1.0,
+      -0.3
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      0,
+      4,
+      3
+     ]
+    ]
+   }
+  },
+  "snap_edge_along3.5_merge_off": {
+   "script": [
+    "snapping ON by command; vertex snap type OFF; edge ON, grid OFF, merge OFF",
+    "scene: same triangle; pointer 5 px below the edge, 3.5 px along it from V: the point lands ON the edge (no endpoint capture)",
+    "click at the pointer, then (-0.4,0.6), (-0.6,0.1)",
+    "drop"
+   ],
+   "linked": false,
+   "expected": {
+    "vertices": [
+     [
+      0.0,
+      1.0,
+      0.2
+     ],
+     [
+      0.5,
+      1.0,
+      0.2
+     ],
+     [
+      0.25,
+      1.0,
+      -0.3
+     ],
+     [
+      0.01,
+      1.0,
+      0.2
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      5,
+      4
+     ]
+    ]
+   }
+  },
+  "snap_edge_along7.5_merge_off": {
+   "script": [
+    "snapping ON by command; vertex snap type OFF; edge ON, grid OFF, merge OFF",
+    "scene: same triangle; pointer 5 px below the edge, 7.5 px along it from V: the point lands ON the edge (no endpoint capture)",
+    "click at the pointer, then (-0.4,0.6), (-0.6,0.1)",
+    "drop"
+   ],
+   "linked": false,
+   "expected": {
+    "vertices": [
+     [
+      0.0,
+      1.0,
+      0.2
+     ],
+     [
+      0.5,
+      1.0,
+      0.2
+     ],
+     [
+      0.25,
+      1.0,
+      -0.3
+     ],
+     [
+      0.02,
+      1.0,
+      0.2
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      5,
+      4
+     ]
+    ]
+   }
+  },
+  "snap_edge_along10.5_merge_off": {
+   "script": [
+    "snapping ON by command; vertex snap type OFF; edge ON, grid OFF, merge OFF",
+    "scene: same triangle; pointer 5 px below the edge, 10.5 px along it from V: the point lands ON the edge (no endpoint capture)",
+    "click at the pointer, then (-0.4,0.6), (-0.6,0.1)",
+    "drop"
+   ],
+   "linked": false,
+   "expected": {
+    "vertices": [
+     [
+      0.0,
+      1.0,
+      0.2
+     ],
+     [
+      0.5,
+      1.0,
+      0.2
+     ],
+     [
+      0.25,
+      1.0,
+      -0.3
+     ],
+     [
+      0.025,
+      1.0,
+      0.2
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      5,
+      4
+     ]
+    ]
+   }
+  },
+  "snap_edge_along14.5_merge_off": {
+   "script": [
+    "snapping ON by command; vertex snap type OFF; edge ON, grid OFF, merge OFF",
+    "scene: same triangle; pointer 5 px below the edge, 14.5 px along it from V: the point lands ON the edge (no endpoint capture)",
+    "click at the pointer, then (-0.4,0.6), (-0.6,0.1)",
+    "drop"
+   ],
+   "linked": false,
+   "expected": {
+    "vertices": [
+     [
+      0.0,
+      1.0,
+      0.2
+     ],
+     [
+      0.5,
+      1.0,
+      0.2
+     ],
+     [
+      0.25,
+      1.0,
+      -0.3
+     ],
+     [
+      0.035,
+      1.0,
+      0.2
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      5,
+      4
+     ]
+    ]
+   }
+  },
+  "snap_edge_isolated_v4": {
+   "script": [
+    "snapping ON by command; vertex snap type OFF; edge ON, grid OFF",
+    "scene: isolated vertex V (no polygon) 4 px below the pointer; edge of a separate triangle 10 px below (6 px past V): the edge wins over the nearer V",
+    "click at the pointer, then (-0.4,0.6), (-0.6,0.1)",
+    "drop"
+   ],
+   "linked": false,
+   "expected": {
+    "vertices": [
+     [
+      0.351136,
+      1.0,
+      0.265909
+     ],
+     [
+      0.123864,
+      1.0,
+      0.279545
+     ],
+     [
+      0.578409,
+      1.0,
+      0.279545
+     ],
+     [
+      0.351136,
+      1.0,
+      0.484091
+     ],
+     [
+      0.35,
+      1.0,
+      0.279545
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      1,
+      2,
+      3
+     ],
+     [
+      4,
+      6,
+      5
+     ]
+    ]
+   }
+  },
+  "snap_edge_isolated_v4_merge_off": {
+   "script": [
+    "snapping ON by command; vertex snap type OFF; edge ON, grid OFF, merge OFF",
+    "scene: as snap_edge_isolated_v4",
+    "click at the pointer, then (-0.4,0.6), (-0.6,0.1)",
+    "drop"
+   ],
+   "linked": false,
+   "expected": {
+    "vertices": [
+     [
+      0.351136,
+      1.0,
+      0.265909
+     ],
+     [
+      0.123864,
+      1.0,
+      0.279545
+     ],
+     [
+      0.578409,
+      1.0,
+      0.279545
+     ],
+     [
+      0.351136,
+      1.0,
+      0.484091
+     ],
+     [
+      0.35,
+      1.0,
+      0.279545
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      1,
+      2,
+      3
+     ],
+     [
+      4,
+      6,
+      5
+     ]
+    ]
+   }
+  },
+  "snap_off_isolated_v10": {
+   "script": [
+    "snapping ON by command; vertex snap type OFF; snapping OFF",
+    "scene: isolated vertex V 10 px from the pointer (an isolated vertex is a merge target)",
+    "click at the pointer, then (-0.4,0.6), (-0.6,0.1)",
+    "drop"
+   ],
+   "linked": true,
+   "expected": {
+    "vertices": [
+     [
+      0.351136,
+      1.0,
+      0.265909
+     ],
+     [
+      0.123864,
+      1.0,
+      0.279545
+     ],
+     [
+      0.578409,
+      1.0,
+      0.279545
+     ],
+     [
+      0.351136,
+      1.0,
+      0.484091
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      1,
+      2,
+      3
+     ],
+     [
+      0,
+      5,
+      4
+     ]
+    ]
+   }
+  },
+  "snap_edge_isolated_on_edge": {
+   "script": [
+    "snapping ON by command; vertex snap type OFF; edge ON, grid OFF",
+    "scene: isolated vertex V lying ON the edge interior, pointer 10 px above it",
+    "click at the pointer, then (-0.4,0.6), (-0.6,0.1)",
+    "drop"
+   ],
+   "linked": true,
+   "expected": {
+    "vertices": [
+     [
+      0.351136,
+      1.0,
+      0.279545
+     ],
+     [
+      0.123864,
+      1.0,
+      0.279545
+     ],
+     [
+      0.578409,
+      1.0,
+      0.279545
+     ],
+     [
+      0.351136,
+      1.0,
+      0.484091
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      1,
+      2,
+      3
+     ],
+     [
+      0,
+      5,
+      4
+     ]
+    ]
+   }
+  },
+  "snap_edge_isolated_ev5.0": {
+   "script": [
+    "snapping ON by command; vertex snap type OFF; edge ON, grid OFF",
+    "scene: isolated V 5.0 px from the edge point (stored edge point 5.03 px)",
+    "click at the pointer, then (-0.4,0.6), (-0.6,0.1)",
+    "drop"
+   ],
+   "linked": false,
+   "expected": {
+    "vertices": [
+     [
+      0.351137,
+      1.0,
+      0.268181
+     ],
+     [
+      0.123864,
+      1.0,
+      0.279545
+     ],
+     [
+      0.578409,
+      1.0,
+      0.279545
+     ],
+     [
+      0.351136,
+      1.0,
+      0.484091
+     ],
+     [
+      0.35,
+      1.0,
+      0.279545
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      1,
+      2,
+      3
+     ],
+     [
+      4,
+      6,
+      5
+     ]
+    ]
+   }
+  },
+  "snap_edge_isolated_ev5.5": {
+   "script": [
+    "snapping ON by command; vertex snap type OFF; edge ON, grid OFF",
+    "scene: isolated V 5.5 px from the edge point",
+    "click at the pointer, then (-0.4,0.6), (-0.6,0.1)",
+    "drop"
+   ],
+   "linked": false,
+   "expected": {
+    "vertices": [
+     [
+      0.351137,
+      1.0,
+      0.267045
+     ],
+     [
+      0.123864,
+      1.0,
+      0.279545
+     ],
+     [
+      0.578409,
+      1.0,
+      0.279545
+     ],
+     [
+      0.351136,
+      1.0,
+      0.484091
+     ],
+     [
+      0.35,
+      1.0,
+      0.279545
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      1,
+      2,
+      3
+     ],
+     [
+      4,
+      6,
+      5
+     ]
+    ]
+   }
+  },
+  "snap_on_no_types_v22": {
+   "script": [
+    "snapping ON by command; vertex snap type OFF; vertex/edge/grid all OFF",
+    "scene: V 22 px from the pointer: merge still acts while snapping is on",
+    "click at the pointer, then (-0.4,0.6), (-0.6,0.1)",
+    "drop"
+   ],
+   "linked": true,
+   "expected": {
+    "vertices": [
+     [
+      0.164773,
+      1.0,
+      0.2
+     ],
+     [
+      0.6,
+      1.0,
+      0.7
+     ],
+     [
+      0.3,
+      1.0,
+      0.8
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      0,
+      4,
+      3
+     ]
+    ]
+   }
+  }
+ },
+ "law_k_c2": "Merge vs global snapping (snapping ON, vertex type off): (1) grid snapping quantises the pointer first (grid distance 100% = always); the merge then searches a vertex within the ordinary merge radius (~24 px) of the QUANTISED point (the raw pointer's distance does not decide); (2) an element snap (edge) in range places the point and beats a NEARER merge vertex; after it, only a vertex within ~4.4-5 px of the SNAPPED point links (linked at 4.4 px, not at 5.0/5.5/6.0 px; never at 19.5 px); (3) no endpoint capture by edge snapping; (4) snapping on with no type enabled leaves the merge unchanged. Linked points: a drag end re-decides the link from the drag-end pointer (40 px away -> unlinked new vertex, V unmoved; 10 px -> re-linked); a typed edit unlinks (new vertex at the typed position, V unmoved).",
+ "law_k_b3": "after an EDGE snap places the point E (merge on), the merge links: a vertex of the snapped edge itself within ~15.4-19.5 SCREEN px of E (linked at 2.2/4.4/11/15.4 px at 440, 4.4 and 12.1 px at 110 (0.04/0.11 m), 7.04 px at 880; not 19.5 px at 440 (K-C2), not 29.9 px at 880 (0.034 m)); any OTHER vertex only within ~2.2-3.5 screen px (linked 2.2 px perpendicular and 2.2 px along the edge at 440; not 3.5 px perpendicular at 110/440/880 = 0.032/0.008/0.004 m) -- both radii are screen-space (a world radius is refuted by both families). Vertex snap + merge: the snapped point links V (shares its index)",
+ "cells_k_b3": {
+  "Msmall_440_ctrl_merge0": {
+   "raw_cell": "KB3_Msmall_440_ctrl_merge0",
+   "question": "M-small control @440 px/m: merge 0 -- the edge snap places p0 at E (0.07,1,0) from 8 px",
+   "expected": {
+    "vertices": [
+     [
+      0.07,
+      1.0,
+      0.0
+     ],
+     [
+      -0.157273,
+      1.0,
+      0.0
+     ],
+     [
+      0.297273,
+      1.0,
+      0.0
+     ],
+     [
+      0.07,
+      1.0,
+      0.340909
+     ],
+     [
+      0.07,
+      1.0,
+      0.0
+     ],
+     [
+      -0.555,
+      1.0,
+      -0.54
+     ],
+     [
+      -0.555,
+      1.0,
+      0.6
+     ]
+    ],
+    "faces": [
+     [
+      1,
+      2,
+      3
+     ],
+     [
+      4,
+      5,
+      6
+     ]
+    ]
+   },
+   "law": "after an EDGE snap places the point E (merge on), the merge links: a vertex of the snapped edge itself within ~15.4-19.5 SCREEN px of E (linked at 2.2/4.4/11/15.4 px at 440, 4.4 and 12.1 px at 110 (0.04/0.11 m), 7.04 px at 880; not 19.5 px at 440 (K-C2), not 29.9 px at 880 (0.034 m)); any OTHER vertex only within ~2.2-3.5 screen px (linked 2.2 px perpendicular and 2.2 px along the edge at 440; not 3.5 px perpendicular at 110/440/880 = 0.032/0.008/0.004 m) -- both radii are screen-space (a world radius is refuted by both families). Vertex snap + merge: the snapped point links V (shares its index)",
+   "zoom_px_per_m": 440,
+   "V": [
+    0.07,
+    1.0,
+    0.0
+   ],
+   "linked": false
+  },
+  "Msmall_440_d3p5": {
+   "raw_cell": "KB3_Msmall_440_d3p5",
+   "question": "M-small @440 px/m: merge 1, snap ON edge only; isolated V 3.5 px (0.00795 m) from the edge-snapped point E (0.07,1,0) (V on the far side of edge A-B, pointer 8 px above it)",
+   "expected": {
+    "vertices": [
+     [
+      0.07,
+      1.0,
+      0.007954
+     ],
+     [
+      -0.157273,
+      1.0,
+      0.0
+     ],
+     [
+      0.297273,
+      1.0,
+      0.0
+     ],
+     [
+      0.07,
+      1.0,
+      0.340909
+     ],
+     [
+      0.07,
+      1.0,
+      0.0
+     ],
+     [
+      -0.555,
+      1.0,
+      -0.54
+     ],
+     [
+      -0.555,
+      1.0,
+      0.6
+     ]
+    ],
+    "faces": [
+     [
+      1,
+      2,
+      3
+     ],
+     [
+      4,
+      5,
+      6
+     ]
+    ]
+   },
+   "law": "after an EDGE snap places the point E (merge on), the merge links: a vertex of the snapped edge itself within ~15.4-19.5 SCREEN px of E (linked at 2.2/4.4/11/15.4 px at 440, 4.4 and 12.1 px at 110 (0.04/0.11 m), 7.04 px at 880; not 19.5 px at 440 (K-C2), not 29.9 px at 880 (0.034 m)); any OTHER vertex only within ~2.2-3.5 screen px (linked 2.2 px perpendicular and 2.2 px along the edge at 440; not 3.5 px perpendicular at 110/440/880 = 0.032/0.008/0.004 m) -- both radii are screen-space (a world radius is refuted by both families). Vertex snap + merge: the snapped point links V (shares its index)",
+   "zoom_px_per_m": 440,
+   "V": [
+    0.07,
+    1.0,
+    0.0079545
+   ],
+   "linked": false
+  },
+  "Msmall_440_d4p7": {
+   "raw_cell": "KB3_Msmall_440_d4p7",
+   "question": "M-small @440 px/m: merge 1, snap ON edge only; isolated V 4.7 px (0.01068 m) from the edge-snapped point E (0.07,1,0) (V on the far side of edge A-B, pointer 8 px above it)",
+   "expected": {
+    "vertices": [
+     [
+      0.07,
+      1.0,
+      0.010682
+     ],
+     [
+      -0.157273,
+      1.0,
+      0.0
+     ],
+     [
+      0.297273,
+      1.0,
+      0.0
+     ],
+     [
+      0.07,
+      1.0,
+      0.340909
+     ],
+     [
+      0.07,
+      1.0,
+      0.0
+     ],
+     [
+      -0.555,
+      1.0,
+      -0.54
+     ],
+     [
+      -0.555,
+      1.0,
+      0.6
+     ]
+    ],
+    "faces": [
+     [
+      1,
+      2,
+      3
+     ],
+     [
+      4,
+      5,
+      6
+     ]
+    ]
+   },
+   "law": "after an EDGE snap places the point E (merge on), the merge links: a vertex of the snapped edge itself within ~15.4-19.5 SCREEN px of E (linked at 2.2/4.4/11/15.4 px at 440, 4.4 and 12.1 px at 110 (0.04/0.11 m), 7.04 px at 880; not 19.5 px at 440 (K-C2), not 29.9 px at 880 (0.034 m)); any OTHER vertex only within ~2.2-3.5 screen px (linked 2.2 px perpendicular and 2.2 px along the edge at 440; not 3.5 px perpendicular at 110/440/880 = 0.032/0.008/0.004 m) -- both radii are screen-space (a world radius is refuted by both families). Vertex snap + merge: the snapped point links V (shares its index)",
+   "zoom_px_per_m": 440,
+   "V": [
+    0.07,
+    1.0,
+    0.0106818
+   ],
+   "linked": false
+  },
+  "Msmall_110_ctrl_merge0": {
+   "raw_cell": "KB3_Msmall_110_ctrl_merge0",
+   "question": "M-small control @110 px/m: merge 0 -- the edge snap places p0 at E (0.07,1,0) from 8 px",
+   "expected": {
+    "vertices": [
+     [
+      0.07,
+      1.0,
+      0.0
+     ],
+     [
+      -0.839091,
+      1.0,
+      0.0
+     ],
+     [
+      0.979091,
+      1.0,
+      0.0
+     ],
+     [
+      0.07,
+      1.0,
+      1.363636
+     ],
+     [
+      0.07,
+      1.0,
+      0.0
+     ],
+     [
+      -2.44,
+      1.0,
+      -2.15
+     ],
+     [
+      -2.44,
+      1.0,
+      2.39
+     ]
+    ],
+    "faces": [
+     [
+      1,
+      2,
+      3
+     ],
+     [
+      4,
+      5,
+      6
+     ]
+    ]
+   },
+   "law": "after an EDGE snap places the point E (merge on), the merge links: a vertex of the snapped edge itself within ~15.4-19.5 SCREEN px of E (linked at 2.2/4.4/11/15.4 px at 440, 4.4 and 12.1 px at 110 (0.04/0.11 m), 7.04 px at 880; not 19.5 px at 440 (K-C2), not 29.9 px at 880 (0.034 m)); any OTHER vertex only within ~2.2-3.5 screen px (linked 2.2 px perpendicular and 2.2 px along the edge at 440; not 3.5 px perpendicular at 110/440/880 = 0.032/0.008/0.004 m) -- both radii are screen-space (a world radius is refuted by both families). Vertex snap + merge: the snapped point links V (shares its index)",
+   "zoom_px_per_m": 110,
+   "V": [
+    0.07,
+    1.0,
+    0.0
+   ],
+   "linked": false
+  },
+  "Msmall_110_d3p5": {
+   "raw_cell": "KB3_Msmall_110_d3p5",
+   "question": "M-small @110 px/m: merge 1, snap ON edge only; isolated V 3.5 px (0.03182 m) from the edge-snapped point E (0.07,1,0) (V on the far side of edge A-B, pointer 8 px above it)",
+   "expected": {
+    "vertices": [
+     [
+      0.07,
+      1.0,
+      0.031818
+     ],
+     [
+      -0.839091,
+      1.0,
+      0.0
+     ],
+     [
+      0.979091,
+      1.0,
+      0.0
+     ],
+     [
+      0.07,
+      1.0,
+      1.363636
+     ],
+     [
+      0.07,
+      1.0,
+      0.0
+     ],
+     [
+      -2.44,
+      1.0,
+      -2.15
+     ],
+     [
+      -2.44,
+      1.0,
+      2.39
+     ]
+    ],
+    "faces": [
+     [
+      1,
+      2,
+      3
+     ],
+     [
+      4,
+      5,
+      6
+     ]
+    ]
+   },
+   "law": "after an EDGE snap places the point E (merge on), the merge links: a vertex of the snapped edge itself within ~15.4-19.5 SCREEN px of E (linked at 2.2/4.4/11/15.4 px at 440, 4.4 and 12.1 px at 110 (0.04/0.11 m), 7.04 px at 880; not 19.5 px at 440 (K-C2), not 29.9 px at 880 (0.034 m)); any OTHER vertex only within ~2.2-3.5 screen px (linked 2.2 px perpendicular and 2.2 px along the edge at 440; not 3.5 px perpendicular at 110/440/880 = 0.032/0.008/0.004 m) -- both radii are screen-space (a world radius is refuted by both families). Vertex snap + merge: the snapped point links V (shares its index)",
+   "zoom_px_per_m": 110,
+   "V": [
+    0.07,
+    1.0,
+    0.0318182
+   ],
+   "linked": false
+  },
+  "Msmall_110_d4p7": {
+   "raw_cell": "KB3_Msmall_110_d4p7",
+   "question": "M-small @110 px/m: merge 1, snap ON edge only; isolated V 4.7 px (0.04273 m) from the edge-snapped point E (0.07,1,0) (V on the far side of edge A-B, pointer 8 px above it)",
+   "expected": {
+    "vertices": [
+     [
+      0.07,
+      1.0,
+      0.042727
+     ],
+     [
+      -0.839091,
+      1.0,
+      0.0
+     ],
+     [
+      0.979091,
+      1.0,
+      0.0
+     ],
+     [
+      0.07,
+      1.0,
+      1.363636
+     ],
+     [
+      0.07,
+      1.0,
+      0.0
+     ],
+     [
+      -2.44,
+      1.0,
+      -2.15
+     ],
+     [
+      -2.44,
+      1.0,
+      2.39
+     ]
+    ],
+    "faces": [
+     [
+      1,
+      2,
+      3
+     ],
+     [
+      4,
+      5,
+      6
+     ]
+    ]
+   },
+   "law": "after an EDGE snap places the point E (merge on), the merge links: a vertex of the snapped edge itself within ~15.4-19.5 SCREEN px of E (linked at 2.2/4.4/11/15.4 px at 440, 4.4 and 12.1 px at 110 (0.04/0.11 m), 7.04 px at 880; not 19.5 px at 440 (K-C2), not 29.9 px at 880 (0.034 m)); any OTHER vertex only within ~2.2-3.5 screen px (linked 2.2 px perpendicular and 2.2 px along the edge at 440; not 3.5 px perpendicular at 110/440/880 = 0.032/0.008/0.004 m) -- both radii are screen-space (a world radius is refuted by both families). Vertex snap + merge: the snapped point links V (shares its index)",
+   "zoom_px_per_m": 110,
+   "V": [
+    0.07,
+    1.0,
+    0.0427273
+   ],
+   "linked": false
+  },
+  "Msmall_880_ctrl_merge0": {
+   "raw_cell": "KB3_Msmall_880_ctrl_merge0",
+   "question": "M-small control @880 px/m: merge 0 -- the edge snap places p0 at E (0.07,1,0) from 8 px",
+   "expected": {
+    "vertices": [
+     [
+      0.07,
+      1.0,
+      0.0
+     ],
+     [
+      -0.043636,
+      1.0,
+      0.0
+     ],
+     [
+      0.183636,
+      1.0,
+      0.0
+     ],
+     [
+      0.07,
+      1.0,
+      0.170455
+     ],
+     [
+      0.07,
+      1.0,
+      0.0
+     ],
+     [
+      -0.244,
+      1.0,
+      -0.27
+     ],
+     [
+      -0.244,
+      1.0,
+      0.298
+     ]
+    ],
+    "faces": [
+     [
+      1,
+      2,
+      3
+     ],
+     [
+      4,
+      5,
+      6
+     ]
+    ]
+   },
+   "law": "after an EDGE snap places the point E (merge on), the merge links: a vertex of the snapped edge itself within ~15.4-19.5 SCREEN px of E (linked at 2.2/4.4/11/15.4 px at 440, 4.4 and 12.1 px at 110 (0.04/0.11 m), 7.04 px at 880; not 19.5 px at 440 (K-C2), not 29.9 px at 880 (0.034 m)); any OTHER vertex only within ~2.2-3.5 screen px (linked 2.2 px perpendicular and 2.2 px along the edge at 440; not 3.5 px perpendicular at 110/440/880 = 0.032/0.008/0.004 m) -- both radii are screen-space (a world radius is refuted by both families). Vertex snap + merge: the snapped point links V (shares its index)",
+   "zoom_px_per_m": 880,
+   "V": [
+    0.07,
+    1.0,
+    0.0
+   ],
+   "linked": false
+  },
+  "Msmall_880_d3p5": {
+   "raw_cell": "KB3_Msmall_880_d3p5",
+   "question": "M-small @880 px/m: merge 1, snap ON edge only; isolated V 3.5 px (0.00398 m) from the edge-snapped point E (0.07,1,0) (V on the far side of edge A-B, pointer 8 px above it)",
+   "expected": {
+    "vertices": [
+     [
+      0.07,
+      1.0,
+      0.003977
+     ],
+     [
+      -0.043636,
+      1.0,
+      0.0
+     ],
+     [
+      0.183636,
+      1.0,
+      0.0
+     ],
+     [
+      0.07,
+      1.0,
+      0.170455
+     ],
+     [
+      0.07,
+      1.0,
+      0.0
+     ],
+     [
+      -0.244,
+      1.0,
+      -0.27
+     ],
+     [
+      -0.244,
+      1.0,
+      0.298
+     ]
+    ],
+    "faces": [
+     [
+      1,
+      2,
+      3
+     ],
+     [
+      4,
+      5,
+      6
+     ]
+    ]
+   },
+   "law": "after an EDGE snap places the point E (merge on), the merge links: a vertex of the snapped edge itself within ~15.4-19.5 SCREEN px of E (linked at 2.2/4.4/11/15.4 px at 440, 4.4 and 12.1 px at 110 (0.04/0.11 m), 7.04 px at 880; not 19.5 px at 440 (K-C2), not 29.9 px at 880 (0.034 m)); any OTHER vertex only within ~2.2-3.5 screen px (linked 2.2 px perpendicular and 2.2 px along the edge at 440; not 3.5 px perpendicular at 110/440/880 = 0.032/0.008/0.004 m) -- both radii are screen-space (a world radius is refuted by both families). Vertex snap + merge: the snapped point links V (shares its index)",
+   "zoom_px_per_m": 880,
+   "V": [
+    0.07,
+    1.0,
+    0.0039773
+   ],
+   "linked": false
+  },
+  "Msmall_880_d4p7": {
+   "raw_cell": "KB3_Msmall_880_d4p7",
+   "question": "M-small @880 px/m: merge 1, snap ON edge only; isolated V 4.7 px (0.00534 m) from the edge-snapped point E (0.07,1,0) (V on the far side of edge A-B, pointer 8 px above it)",
+   "expected": {
+    "vertices": [
+     [
+      0.07,
+      1.0,
+      0.005341
+     ],
+     [
+      -0.043636,
+      1.0,
+      0.0
+     ],
+     [
+      0.183636,
+      1.0,
+      0.0
+     ],
+     [
+      0.07,
+      1.0,
+      0.170455
+     ],
+     [
+      0.07,
+      1.0,
+      0.0
+     ],
+     [
+      -0.244,
+      1.0,
+      -0.27
+     ],
+     [
+      -0.244,
+      1.0,
+      0.298
+     ]
+    ],
+    "faces": [
+     [
+      1,
+      2,
+      3
+     ],
+     [
+      4,
+      5,
+      6
+     ]
+    ]
+   },
+   "law": "after an EDGE snap places the point E (merge on), the merge links: a vertex of the snapped edge itself within ~15.4-19.5 SCREEN px of E (linked at 2.2/4.4/11/15.4 px at 440, 4.4 and 12.1 px at 110 (0.04/0.11 m), 7.04 px at 880; not 19.5 px at 440 (K-C2), not 29.9 px at 880 (0.034 m)); any OTHER vertex only within ~2.2-3.5 screen px (linked 2.2 px perpendicular and 2.2 px along the edge at 440; not 3.5 px perpendicular at 110/440/880 = 0.032/0.008/0.004 m) -- both radii are screen-space (a world radius is refuted by both families). Vertex snap + merge: the snapped point links V (shares its index)",
+   "zoom_px_per_m": 880,
+   "V": [
+    0.07,
+    1.0,
+    0.0053409
+   ],
+   "linked": false
+  },
+  "MsE_440_k2": {
+   "raw_cell": "KB3_MsE_440_k2",
+   "question": "endpoint V of the snapped edge, E ~2 px along (2.2 px if E is quantised), 440 px/m",
+   "expected": {
+    "vertices": [
+     [
+      0.07,
+      1.0,
+      0.0
+     ],
+     [
+      0.524545,
+      1.0,
+      0.0
+     ],
+     [
+      0.297273,
+      1.0,
+      0.340909
+     ],
+     [
+      -0.555,
+      1.0,
+      -0.54
+     ],
+     [
+      -0.555,
+      1.0,
+      0.6
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      0,
+      3,
+      4
+     ]
+    ]
+   },
+   "law": "after an EDGE snap places the point E (merge on), the merge links: a vertex of the snapped edge itself within ~15.4-19.5 SCREEN px of E (linked at 2.2/4.4/11/15.4 px at 440, 4.4 and 12.1 px at 110 (0.04/0.11 m), 7.04 px at 880; not 19.5 px at 440 (K-C2), not 29.9 px at 880 (0.034 m)); any OTHER vertex only within ~2.2-3.5 screen px (linked 2.2 px perpendicular and 2.2 px along the edge at 440; not 3.5 px perpendicular at 110/440/880 = 0.032/0.008/0.004 m) -- both radii are screen-space (a world radius is refuted by both families). Vertex snap + merge: the snapped point links V (shares its index)",
+   "zoom_px_per_m": 440,
+   "V": null,
+   "linked": true
+  },
+  "MsE_110_k4": {
+   "raw_cell": "KB3_MsE_110_k4",
+   "question": "endpoint, E 4 px along (4.4 if quantised: 0.04 m), 110 px/m",
+   "expected": {
+    "vertices": [
+     [
+      0.07,
+      1.0,
+      0.0
+     ],
+     [
+      1.888182,
+      1.0,
+      0.0
+     ],
+     [
+      0.979091,
+      1.0,
+      1.363636
+     ],
+     [
+      -2.44,
+      1.0,
+      -2.15
+     ],
+     [
+      -2.44,
+      1.0,
+      2.39
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      0,
+      3,
+      4
+     ]
+    ]
+   },
+   "law": "after an EDGE snap places the point E (merge on), the merge links: a vertex of the snapped edge itself within ~15.4-19.5 SCREEN px of E (linked at 2.2/4.4/11/15.4 px at 440, 4.4 and 12.1 px at 110 (0.04/0.11 m), 7.04 px at 880; not 19.5 px at 440 (K-C2), not 29.9 px at 880 (0.034 m)); any OTHER vertex only within ~2.2-3.5 screen px (linked 2.2 px perpendicular and 2.2 px along the edge at 440; not 3.5 px perpendicular at 110/440/880 = 0.032/0.008/0.004 m) -- both radii are screen-space (a world radius is refuted by both families). Vertex snap + merge: the snapped point links V (shares its index)",
+   "zoom_px_per_m": 110,
+   "V": null,
+   "linked": true
+  },
+  "MsE_880_k7": {
+   "raw_cell": "KB3_MsE_880_k7",
+   "question": "endpoint, E 7 px along (7.04 if quantised: 0.008 m), 880 px/m",
+   "expected": {
+    "vertices": [
+     [
+      0.07,
+      1.0,
+      0.0
+     ],
+     [
+      0.297273,
+      1.0,
+      0.0
+     ],
+     [
+      0.183636,
+      1.0,
+      0.170455
+     ],
+     [
+      -0.244,
+      1.0,
+      -0.27
+     ],
+     [
+      -0.244,
+      1.0,
+      0.298
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      0,
+      3,
+      4
+     ]
+    ]
+   },
+   "law": "after an EDGE snap places the point E (merge on), the merge links: a vertex of the snapped edge itself within ~15.4-19.5 SCREEN px of E (linked at 2.2/4.4/11/15.4 px at 440, 4.4 and 12.1 px at 110 (0.04/0.11 m), 7.04 px at 880; not 19.5 px at 440 (K-C2), not 29.9 px at 880 (0.034 m)); any OTHER vertex only within ~2.2-3.5 screen px (linked 2.2 px perpendicular and 2.2 px along the edge at 440; not 3.5 px perpendicular at 110/440/880 = 0.032/0.008/0.004 m) -- both radii are screen-space (a world radius is refuted by both families). Vertex snap + merge: the snapped point links V (shares its index)",
+   "zoom_px_per_m": 880,
+   "V": null,
+   "linked": true
+  },
+  "MsE_440_k3": {
+   "raw_cell": "KB3_MsE_440_k3",
+   "question": "endpoint, E 3 px along (raw 0.0768 -> 0.075 = 2.2 px if quantised, 3 px exact), 440 px/m",
+   "expected": {
+    "vertices": [
+     [
+      0.07,
+      1.0,
+      0.0
+     ],
+     [
+      0.524545,
+      1.0,
+      0.0
+     ],
+     [
+      0.297273,
+      1.0,
+      0.340909
+     ],
+     [
+      -0.555,
+      1.0,
+      -0.54
+     ],
+     [
+      -0.555,
+      1.0,
+      0.6
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      0,
+      3,
+      4
+     ]
+    ]
+   },
+   "law": "after an EDGE snap places the point E (merge on), the merge links: a vertex of the snapped edge itself within ~15.4-19.5 SCREEN px of E (linked at 2.2/4.4/11/15.4 px at 440, 4.4 and 12.1 px at 110 (0.04/0.11 m), 7.04 px at 880; not 19.5 px at 440 (K-C2), not 29.9 px at 880 (0.034 m)); any OTHER vertex only within ~2.2-3.5 screen px (linked 2.2 px perpendicular and 2.2 px along the edge at 440; not 3.5 px perpendicular at 110/440/880 = 0.032/0.008/0.004 m) -- both radii are screen-space (a world radius is refuted by both families). Vertex snap + merge: the snapped point links V (shares its index)",
+   "zoom_px_per_m": 440,
+   "V": null,
+   "linked": true
+  },
+  "MsA_440_along2": {
+   "raw_cell": "KB3_MsA_440_along2",
+   "question": "ISOLATED V lying ON the snapped edge's interior, 2.2 px along from E (0.07,0) (pointer column 576: E exact on every lattice), 440 px/m",
+   "expected": {
+    "vertices": [
+     [
+      0.075,
+      1.0,
+      0.0
+     ],
+     [
+      -0.384545,
+      1.0,
+      0.0
+     ],
+     [
+      0.524545,
+      1.0,
+      0.0
+     ],
+     [
+      0.297273,
+      1.0,
+      0.340909
+     ],
+     [
+      -0.555,
+      1.0,
+      -0.54
+     ],
+     [
+      -0.555,
+      1.0,
+      0.6
+     ]
+    ],
+    "faces": [
+     [
+      1,
+      2,
+      3
+     ],
+     [
+      0,
+      4,
+      5
+     ]
+    ]
+   },
+   "law": "after an EDGE snap places the point E (merge on), the merge links: a vertex of the snapped edge itself within ~15.4-19.5 SCREEN px of E (linked at 2.2/4.4/11/15.4 px at 440, 4.4 and 12.1 px at 110 (0.04/0.11 m), 7.04 px at 880; not 19.5 px at 440 (K-C2), not 29.9 px at 880 (0.034 m)); any OTHER vertex only within ~2.2-3.5 screen px (linked 2.2 px perpendicular and 2.2 px along the edge at 440; not 3.5 px perpendicular at 110/440/880 = 0.032/0.008/0.004 m) -- both radii are screen-space (a world radius is refuted by both families). Vertex snap + merge: the snapped point links V (shares its index)",
+   "zoom_px_per_m": 440,
+   "V": null,
+   "linked": true
+  },
+  "MsP_440_perp2": {
+   "raw_cell": "KB3_MsP_440_perp2",
+   "question": "ISOLATED V 2.2 px PERPENDICULAR to the snapped edge from E (0.07,0), 440 px/m (brackets MS-tiny below run2's 3.5 px)",
+   "expected": {
+    "vertices": [
+     [
+      0.07,
+      1.0,
+      0.005
+     ],
+     [
+      -0.384545,
+      1.0,
+      0.0
+     ],
+     [
+      0.524545,
+      1.0,
+      0.0
+     ],
+     [
+      0.297273,
+      1.0,
+      0.340909
+     ],
+     [
+      -0.555,
+      1.0,
+      -0.54
+     ],
+     [
+      -0.555,
+      1.0,
+      0.6
+     ]
+    ],
+    "faces": [
+     [
+      1,
+      2,
+      3
+     ],
+     [
+      0,
+      4,
+      5
+     ]
+    ]
+   },
+   "law": "after an EDGE snap places the point E (merge on), the merge links: a vertex of the snapped edge itself within ~15.4-19.5 SCREEN px of E (linked at 2.2/4.4/11/15.4 px at 440, 4.4 and 12.1 px at 110 (0.04/0.11 m), 7.04 px at 880; not 19.5 px at 440 (K-C2), not 29.9 px at 880 (0.034 m)); any OTHER vertex only within ~2.2-3.5 screen px (linked 2.2 px perpendicular and 2.2 px along the edge at 440; not 3.5 px perpendicular at 110/440/880 = 0.032/0.008/0.004 m) -- both radii are screen-space (a world radius is refuted by both families). Vertex snap + merge: the snapped point links V (shares its index)",
+   "zoom_px_per_m": 440,
+   "V": null,
+   "linked": true
+  },
+  "MsE_440_k12": {
+   "raw_cell": "KB3_MsE_440_k12",
+   "question": "endpoint V of the snapped edge, E = 0.095 (11.00 px, 0.0250 m along) at 440 px/m",
+   "expected": {
+    "vertices": [
+     [
+      0.07,
+      1.0,
+      0.0
+     ],
+     [
+      0.524545,
+      1.0,
+      0.0
+     ],
+     [
+      0.297273,
+      1.0,
+      0.340909
+     ],
+     [
+      -0.555,
+      1.0,
+      -0.54
+     ],
+     [
+      -0.555,
+      1.0,
+      0.6
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      0,
+      3,
+      4
+     ]
+    ]
+   },
+   "law": "after an EDGE snap places the point E (merge on), the merge links: a vertex of the snapped edge itself within ~15.4-19.5 SCREEN px of E (linked at 2.2/4.4/11/15.4 px at 440, 4.4 and 12.1 px at 110 (0.04/0.11 m), 7.04 px at 880; not 19.5 px at 440 (K-C2), not 29.9 px at 880 (0.034 m)); any OTHER vertex only within ~2.2-3.5 screen px (linked 2.2 px perpendicular and 2.2 px along the edge at 440; not 3.5 px perpendicular at 110/440/880 = 0.032/0.008/0.004 m) -- both radii are screen-space (a world radius is refuted by both families). Vertex snap + merge: the snapped point links V (shares its index)",
+   "zoom_px_per_m": 440,
+   "V": null,
+   "linked": true
+  },
+  "MsE_440_k16": {
+   "raw_cell": "KB3_MsE_440_k16",
+   "question": "endpoint V of the snapped edge, E = 0.105 (15.40 px, 0.0350 m along) at 440 px/m",
+   "expected": {
+    "vertices": [
+     [
+      0.07,
+      1.0,
+      0.0
+     ],
+     [
+      0.524545,
+      1.0,
+      0.0
+     ],
+     [
+      0.297273,
+      1.0,
+      0.340909
+     ],
+     [
+      -0.555,
+      1.0,
+      -0.54
+     ],
+     [
+      -0.555,
+      1.0,
+      0.6
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      0,
+      3,
+      4
+     ]
+    ]
+   },
+   "law": "after an EDGE snap places the point E (merge on), the merge links: a vertex of the snapped edge itself within ~15.4-19.5 SCREEN px of E (linked at 2.2/4.4/11/15.4 px at 440, 4.4 and 12.1 px at 110 (0.04/0.11 m), 7.04 px at 880; not 19.5 px at 440 (K-C2), not 29.9 px at 880 (0.034 m)); any OTHER vertex only within ~2.2-3.5 screen px (linked 2.2 px perpendicular and 2.2 px along the edge at 440; not 3.5 px perpendicular at 110/440/880 = 0.032/0.008/0.004 m) -- both radii are screen-space (a world radius is refuted by both families). Vertex snap + merge: the snapped point links V (shares its index)",
+   "zoom_px_per_m": 440,
+   "V": null,
+   "linked": true
+  },
+  "MsE_110_k12": {
+   "raw_cell": "KB3_MsE_110_k12",
+   "question": "endpoint V of the snapped edge, E = 0.180 (12.10 px, 0.1100 m along) at 110 px/m",
+   "expected": {
+    "vertices": [
+     [
+      0.07,
+      1.0,
+      0.0
+     ],
+     [
+      1.888182,
+      1.0,
+      0.0
+     ],
+     [
+      0.979091,
+      1.0,
+      1.363636
+     ],
+     [
+      -2.44,
+      1.0,
+      -2.15
+     ],
+     [
+      -2.44,
+      1.0,
+      2.39
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      0,
+      3,
+      4
+     ]
+    ]
+   },
+   "law": "after an EDGE snap places the point E (merge on), the merge links: a vertex of the snapped edge itself within ~15.4-19.5 SCREEN px of E (linked at 2.2/4.4/11/15.4 px at 440, 4.4 and 12.1 px at 110 (0.04/0.11 m), 7.04 px at 880; not 19.5 px at 440 (K-C2), not 29.9 px at 880 (0.034 m)); any OTHER vertex only within ~2.2-3.5 screen px (linked 2.2 px perpendicular and 2.2 px along the edge at 440; not 3.5 px perpendicular at 110/440/880 = 0.032/0.008/0.004 m) -- both radii are screen-space (a world radius is refuted by both families). Vertex snap + merge: the snapped point links V (shares its index)",
+   "zoom_px_per_m": 110,
+   "V": null,
+   "linked": true
+  },
+  "MsE_880_k30": {
+   "raw_cell": "KB3_MsE_880_k30",
+   "question": "endpoint V of the snapped edge, E = 0.104 (29.92 px, 0.0340 m along) at 880 px/m",
+   "expected": {
+    "vertices": [
+     [
+      0.07,
+      1.0,
+      0.0
+     ],
+     [
+      0.297273,
+      1.0,
+      0.0
+     ],
+     [
+      0.183636,
+      1.0,
+      0.170455
+     ],
+     [
+      0.104,
+      1.0,
+      0.0
+     ],
+     [
+      -0.244,
+      1.0,
+      -0.27
+     ],
+     [
+      -0.244,
+      1.0,
+      0.298
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      4,
+      5
+     ]
+    ]
+   },
+   "law": "after an EDGE snap places the point E (merge on), the merge links: a vertex of the snapped edge itself within ~15.4-19.5 SCREEN px of E (linked at 2.2/4.4/11/15.4 px at 440, 4.4 and 12.1 px at 110 (0.04/0.11 m), 7.04 px at 880; not 19.5 px at 440 (K-C2), not 29.9 px at 880 (0.034 m)); any OTHER vertex only within ~2.2-3.5 screen px (linked 2.2 px perpendicular and 2.2 px along the edge at 440; not 3.5 px perpendicular at 110/440/880 = 0.032/0.008/0.004 m) -- both radii are screen-space (a world radius is refuted by both families). Vertex snap + merge: the snapped point links V (shares its index)",
+   "zoom_px_per_m": 880,
+   "V": null,
+   "linked": false
+  },
+  "Mvtx": {
+   "raw_cell": "KB3_Mvtx",
+   "question": "M-vtx: merge 1, snap ON with the VERTEX type only; committed T (script); click 10 px left of T's vertex V (0.3,1,0.3); 2 more far clicks; drop",
+   "expected": {
+    "vertices": [
+     [
+      0.3,
+      1.0,
+      0.3
+     ],
+     [
+      0.9,
+      1.0,
+      0.3
+     ],
+     [
+      0.6,
+      1.0,
+      0.8
+     ],
+     [
+      -0.56,
+      1.0,
+      -0.54
+     ],
+     [
+      -0.56,
+      1.0,
+      0.6
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      0,
+      3,
+      4
+     ]
+    ]
+   },
+   "law": "after an EDGE snap places the point E (merge on), the merge links: a vertex of the snapped edge itself within ~15.4-19.5 SCREEN px of E (linked at 2.2/4.4/11/15.4 px at 440, 4.4 and 12.1 px at 110 (0.04/0.11 m), 7.04 px at 880; not 19.5 px at 440 (K-C2), not 29.9 px at 880 (0.034 m)); any OTHER vertex only within ~2.2-3.5 screen px (linked 2.2 px perpendicular and 2.2 px along the edge at 440; not 3.5 px perpendicular at 110/440/880 = 0.032/0.008/0.004 m) -- both radii are screen-space (a world radius is refuted by both families). Vertex snap + merge: the snapped point links V (shares its index)",
+   "linked": true
+  }
+ },
+ "cells_k_b4": {
+  "Mpoly": {
+   "raw_cell": "KB4_Mpoly",
+   "question": "M-poly: snap ON with the POLYGON type only, merge 1; committed T (script, y 1); press inside T 5.83 px from vertex V (0.3,1,0.3); 2 far clicks; drop",
+   "expected": {
+    "vertices": [
+     [
+      0.3,
+      1.0,
+      0.3
+     ],
+     [
+      0.9,
+      1.0,
+      0.3
+     ],
+     [
+      0.6,
+      1.0,
+      0.8
+     ],
+     [
+      -0.56,
+      1.0,
+      -0.54
+     ],
+     [
+      -0.56,
+      1.0,
+      0.6
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      0,
+      3,
+      4
+     ]
+    ],
+    "selected_polygons": [
+     1
+    ]
+   },
+   "law": "linked to V at 5.8 px -- but NOT discriminating: the control shows the polygon snap does not act for the pen, so this is the no-snap 24 px class"
+  },
+  "Mpoly_ctrl": {
+   "raw_cell": "KB4_Mpoly_ctrl",
+   "question": "M-poly control: T raised to y 1.3; polygon snap only; press T's interior far (> 60 px) from its vertices and edges; 2 far clicks; drop",
+   "expected": {
+    "vertices": [
+     [
+      0.3,
+      1.3,
+      0.3
+     ],
+     [
+      0.9,
+      1.3,
+      0.3
+     ],
+     [
+      0.6,
+      1.3,
+      0.8
+     ],
+     [
+      0.6,
+      1.0,
+      0.45
+     ],
+     [
+      -0.56,
+      1.0,
+      -0.54
+     ],
+     [
+      -0.56,
+      1.0,
+      0.6
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      4,
+      5
+     ]
+    ],
+    "selected_polygons": [
+     1
+    ]
+   },
+   "law": "polygon snap (only type on) over a scene polygon at y 1.3: the point stays on the click plane y 1.0"
+  }
+ },
+ "edge_press": {
+  "E1_edge_press_9px": {
+   "raw_cell": "KB3_E1_edge_press_9px_clean",
+   "question": "CLEAN re-run of KB3_E1_edge_press_9px (no python between gestures; panel by shots; dump after the drop)",
+   "expected": {
+    "vertices": [
+     [
+      -0.4,
+      1.0,
+      0.0
+     ],
+     [
+      0.1,
+      1.0,
+      -0.02
+     ],
+     [
+      0.4,
+      1.0,
+      0.0
+     ],
+     [
+      0.0,
+      1.0,
+      0.5
+     ]
+    ],
+    "faces": [
+     [
+      1,
+      0,
+      3,
+      2
+     ]
+    ]
+   },
+   "law": "a press within ~24 px of an UNFINISHED stroke edge (merge on) inserts the new point into the ring between that edge's endpoints (current -> it), at the cursor's ordinary plane point (NOT moved onto the edge); merge 0 or >= 28 px -> ordinary append after the current point",
+   "press_px": [
+    589,
+    478
+   ],
+   "panel_after": {
+    "current": 1,
+    "position": [
+     0.1,
+     1.0,
+     -0.02
+    ]
+   }
+  },
+  "E2_edge_press_9px_merge0": {
+   "raw_cell": "KB3_E2_edge_press_9px_merge0_clean",
+   "question": "CLEAN re-run of KB3_E2_edge_press_9px_merge0 (no python between gestures; panel by shots; dump after the drop)",
+   "expected": {
+    "vertices": [
+     [
+      -0.4,
+      1.0,
+      0.0
+     ],
+     [
+      0.4,
+      1.0,
+      0.0
+     ],
+     [
+      0.0,
+      1.0,
+      0.5
+     ],
+     [
+      0.1,
+      1.0,
+      -0.02
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      1,
+      2,
+      3
+     ]
+    ]
+   },
+   "law": "a press within ~24 px of an UNFINISHED stroke edge (merge on) inserts the new point into the ring between that edge's endpoints (current -> it), at the cursor's ordinary plane point (NOT moved onto the edge); merge 0 or >= 28 px -> ordinary append after the current point",
+   "press_px": [
+    589,
+    478
+   ],
+   "panel_after": {
+    "current": 3,
+    "position": [
+     0.1,
+     1.0,
+     -0.02
+    ]
+   }
+  },
+  "E3_edge_press_20px": {
+   "raw_cell": "KB3_E3_edge_press_20px_clean",
+   "question": "CLEAN re-run of KB3_E3_edge_press_20px (no python between gestures; panel by shots; dump after the drop)",
+   "expected": {
+    "vertices": [
+     [
+      -0.4,
+      1.0,
+      0.0
+     ],
+     [
+      0.1,
+      1.0,
+      -0.045
+     ],
+     [
+      0.4,
+      1.0,
+      0.0
+     ],
+     [
+      0.0,
+      1.0,
+      0.5
+     ]
+    ],
+    "faces": [
+     [
+      1,
+      0,
+      3,
+      2
+     ]
+    ]
+   },
+   "law": "a press within ~24 px of an UNFINISHED stroke edge (merge on) inserts the new point into the ring between that edge's endpoints (current -> it), at the cursor's ordinary plane point (NOT moved onto the edge); merge 0 or >= 28 px -> ordinary append after the current point",
+   "press_px": [
+    589,
+    467
+   ]
+  },
+  "E3_edge_press_28px": {
+   "raw_cell": "KB3_E3_edge_press_28px_clean",
+   "question": "CLEAN re-run of KB3_E3_edge_press_28px (no python between gestures; panel by shots; dump after the drop)",
+   "expected": {
+    "vertices": [
+     [
+      -0.4,
+      1.0,
+      0.0
+     ],
+     [
+      0.4,
+      1.0,
+      0.0
+     ],
+     [
+      0.0,
+      1.0,
+      0.5
+     ],
+     [
+      0.1,
+      1.0,
+      -0.065
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      1,
+      2,
+      3
+     ]
+    ]
+   },
+   "law": "a press within ~24 px of an UNFINISHED stroke edge (merge on) inserts the new point into the ring between that edge's endpoints (current -> it), at the cursor's ordinary plane point (NOT moved onto the edge); merge 0 or >= 28 px -> ordinary append after the current point",
+   "press_px": [
+    589,
+    459
+   ]
+  },
+  "E4_scene_edge_press": {
+   "raw_cell": "KB3_E4_scene_edge_press",
+   "question": "E4: committed scene triangle T (script, in the edited mesh); new stroke p0 (-0.8,-0.6), p1 (-0.2,-0.8); press 9 px off T's edge A-B (z 0.3) at x 0.62, merge 1, snapping OFF",
+   "expected": {
+    "vertices": [
+     [
+      0.3,
+      1.0,
+      0.3
+     ],
+     [
+      0.9,
+      1.0,
+      0.3
+     ],
+     [
+      0.6,
+      1.0,
+      0.8
+     ],
+     [
+      -0.8,
+      1.0,
+      -0.6
+     ],
+     [
+      -0.2,
+      1.0,
+      -0.8
+     ],
+     [
+      0.62,
+      1.0,
+      0.3
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      5,
+      4
+     ]
+    ]
+   },
+   "law": "a press ~9 px from an edge of committed SCENE geometry (merge on, snapping off) places the point ON that edge (projection), as its own vertex; the scene edge is not split"
+  },
+  "Qedge_edge_snap": {
+   "raw_cell": "KB3_Qedge_r2",
+   "question": "CLEAN re-run of KB3_Qedge (no python between gestures; panel by shots; dump after the drop)",
+   "expected": {
+    "vertices": [
+     [
+      -0.3,
+      1.0,
+      0.2
+     ],
+     [
+      0.306218,
+      1.0,
+      0.55
+     ],
+     [
+      -0.146891,
+      1.0,
+      0.634808
+     ],
+     [
+      0.029192,
+      1.0,
+      0.390059
+     ],
+     [
+      -0.56,
+      1.0,
+      -0.54
+     ],
+     [
+      -0.56,
+      1.0,
+      0.6
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      4,
+      5
+     ]
+    ]
+   },
+   "law": "edge snap: the point = projection of the QUANTISED pointer onto the edge, not re-quantised (off the lattice)",
+   "press_px": [
+    560,
+    653
+   ],
+   "press_raw_xz": [
+    0.033597,
+    0.377679
+   ]
+  },
+  "E4r_scene_edge_20px": {
+   "raw_cell": "KB4_E4r_20px",
+   "question": "E4r: E4's rig (committed scene T (0.3,0.9,0.6 / z 0.3,0.3,0.8) in the edited mesh; stroke p0 (-0.8,-0.6), p1 (-0.2,-0.8)); press 20 px off T's edge A-B (z 0.3) at x column 818, merge 1, snapping off",
+   "expected": {
+    "vertices": [
+     [
+      0.3,
+      1.0,
+      0.3
+     ],
+     [
+      0.9,
+      1.0,
+      0.3
+     ],
+     [
+      0.6,
+      1.0,
+      0.8
+     ],
+     [
+      -0.8,
+      1.0,
+      -0.6
+     ],
+     [
+      -0.2,
+      1.0,
+      -0.8
+     ],
+     [
+      0.62,
+      1.0,
+      0.3
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      5,
+      4
+     ]
+    ],
+    "selected_polygons": []
+   },
+   "law": "a press <= ~24 px from a SCENE edge (merge 1, snap off) lands ON it (the edge point is the QUANTISED plane point's closest point on the edge to the eye ray through it (QE-pre); ortho = perpendicular foot), own vertex, appended; T unsplit",
+   "press_px": [
+    818,
+    599
+   ]
+  },
+  "E4r_scene_edge_28px": {
+   "raw_cell": "KB4_E4r_28px",
+   "question": "E4r: E4's rig (committed scene T (0.3,0.9,0.6 / z 0.3,0.3,0.8) in the edited mesh; stroke p0 (-0.8,-0.6), p1 (-0.2,-0.8)); press 28 px off T's edge A-B (z 0.3) at x column 818, merge 1, snapping off",
+   "expected": {
+    "vertices": [
+     [
+      0.3,
+      1.0,
+      0.3
+     ],
+     [
+      0.9,
+      1.0,
+      0.3
+     ],
+     [
+      0.6,
+      1.0,
+      0.8
+     ],
+     [
+      -0.8,
+      1.0,
+      -0.6
+     ],
+     [
+      -0.2,
+      1.0,
+      -0.8
+     ],
+     [
+      0.62,
+      1.0,
+      0.235
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      5,
+      4
+     ]
+    ],
+    "selected_polygons": []
+   },
+   "law": "28 px from the scene edge: ordinary quantised plane point",
+   "press_px": [
+    818,
+    591
+   ]
+  },
+  "E5_closing_edge": {
+   "raw_cell": "KB4_E5",
+   "question": "E5: E1's triangle stroke p0 (-0.4,0), p1 (0.4,0), p2 (0,0.5); Current typed 0 (panel); press 9.21 px off the midpoint of the CLOSING edge p2-p0, outside the triangle (merge 1, snapping off); drop",
+   "expected": {
+    "vertices": [
+     [
+      -0.4,
+      1.0,
+      0.0
+     ],
+     [
+      0.4,
+      1.0,
+      0.0
+     ],
+     [
+      0.0,
+      1.0,
+      0.5
+     ],
+     [
+      -0.215,
+      1.0,
+      0.265
+     ]
+    ],
+    "faces": [
+     [
+      1,
+      0,
+      3,
+      2
+     ]
+    ],
+    "selected_polygons": []
+   },
+   "law": "Current 0; a press 9 px outside the CLOSING edge p2-p0 inserts between p2 and p0 = stroke index 3 (appended after the last point), at the cursor's quantised plane point; Current -> 3",
+   "press_px": [
+    450,
+    603
+   ],
+   "panel_after": {
+    "current": 3
+   }
+  },
+  "E1_psp_unpinned": {
+   "raw_cell": "KB4_E1_psp_unpinned",
+   "question": "E1 rig (triangle p0..p2 = E1's pixels, press 9 px off the screen segment p0-p1 at (589,478), merge 1, snap off) under the UNPINNED default perspective view (click plane y 1.0 by PR)",
+   "expected": {
+    "vertices": [
+     [
+      -0.52,
+      1.0,
+      0.0
+     ],
+     [
+      0.105,
+      1.0,
+      -0.025
+     ],
+     [
+      0.48,
+      1.0,
+      0.0
+     ],
+     [
+      -0.02,
+      1.0,
+      0.625
+     ]
+    ],
+    "faces": [
+     [
+      1,
+      0,
+      3,
+      2
+     ]
+    ],
+    "selected_polygons": []
+   },
+   "law": "UNPINNED perspective: inserted at the cursor (index 1) as ortho E1"
+  }
+ },
+ "edge_press_rig": "top orthographic, focus (0.07, 1, 0), 440 px per metre (the capture: 439.52; press pixels map to world x = 0.07 + (M - 576) / 439.52, z = (N - 487) / 439.52); points land on y = 1.0; click quantum 0.005 m"
+}
