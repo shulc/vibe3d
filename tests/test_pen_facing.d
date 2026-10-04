@@ -17,6 +17,7 @@ import std.algorithm : canFind;
 import std.array : join;
 import std.format : format;
 import std.json : JSONType, JSONValue, parseJSON;
+import std.math : abs;
 
 void main() {}
 
@@ -257,6 +258,15 @@ unittest {
         expectFlag("rotated-plane", "after the stroke", 1, fails);
         expectRing("rotated-plane", commitRing("rotated-plane", 3, fails),
             [0L, 2, 1], fails);
+        // Premise: the points landed under the clicks (else the cell would
+        // test a different triangle).
+        auto got = readVerts();
+        foreach (i, p; pts)
+            if (got.length != 3 || !(abs(got[i].x - p.x) <= 0.02 &&
+                abs(got[i].z - p.z) <= 0.02 && abs(got[i].y - 0.3) <= 1e-3))
+                fails ~= format("rotated-plane: point %s at %s, clicked "
+                    ~ "(%s, 0.3, %s)", i, got.length == 3 ? got[i] : Vec3.init,
+                    p.x, p.z);
         penCommand("workplane.reset");
         ++ran;
     }
