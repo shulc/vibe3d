@@ -41,6 +41,8 @@ import toolpipe.packets : SnapType;
 import editmode : EditMode;
 import snap : SnapResult;
 import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
+import tools.transform.relocate_plane : vectorSnap, withAxisComp, axisComp;
+import viewgrid : g_viewGrid, viewWorldPerPixel, viewGridSize, viewGridSubStep;
 
 import std.math : abs;
 // The one stroke builder and the pen's param schema (PenParams, PenStroke).
@@ -1122,8 +1124,11 @@ private:
     }
 
     // The one place a pixel becomes a stroke point (click, hover, drag): the
-    // locked plane through `anchor`, then a discrete snap, then the pen
-    // guides when no discrete target won (guideBits are the pen's own).
+    // locked plane through `anchor`, its two in-plane channels rounded to the
+    // view's grid sub-step (the vector snap relocate and extrude use; wave
+    // plan S3q, fixture pen_placement.json `quantum`), then a discrete snap,
+    // then the pen guides when no discrete target won (guideBits are the
+    // pen's own).
     bool resolvePenPoint(int x, int y, Vec3 anchor, out Vec3 local) {
         if (!workplaneCursorPlaneHit(frame, cachedVp, cast(float)x,
                                      cast(float)y, anchor, planeNormal, local)) {
@@ -1131,6 +1136,10 @@ private:
             clearLastSnap();
             return false;
         }
+        immutable float px = viewWorldPerPixel(cachedVp);
+        immutable float q = viewGridSubStep(px, viewGridSize(px, g_viewGrid), g_viewGrid);
+        immutable int k = planeNormal.x != 0 ? 0 : (planeNormal.y != 0 ? 1 : 2);
+        local = withAxisComp(vectorSnap(local, q), k, axisComp(local, k));
         lastSnap = snapLocalHit(local, frame, x, y, cachedVp,
                                 *mesh, EditMode.Vertices, [], guideBits);
         if (!(lastSnap.snapped && lastSnap.constraintType == SnapType.None))
