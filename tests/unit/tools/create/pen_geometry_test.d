@@ -7,7 +7,7 @@ module tests.unit.tools.create.pen_geometry_test;
 
 import std.format : format;
 
-import math : Vec3, Viewport;
+import math : Vec3, Viewport, cross, dot, eyeVectorAt;
 import mesh : Mesh;
 import prepared_tool_effect : PreparedPenParamKind;
 import tools.create.pen_geometry;
@@ -68,13 +68,13 @@ private Case[] cases() {
         Case("1-point Preview", kTri[0 .. 1], kIdentity, false, false, Preview,
             0, kTri[0 .. 1].dup, [], []),
         Case("quads 4 Commit", kStrip6[0 .. 4], kIdentity, false, true, Commit,
-            0, kStrip6[0 .. 4].dup, [[0u, 2, 3, 1]], []),
+            0, kStrip6[0 .. 4].dup, [[1u, 3, 2, 0]], []),
         Case("quads 6 Commit flip", kStrip6, kIdentity, true, true, Commit, 0,
-            kStrip6.dup, [[1u, 3, 2, 0], [3u, 5, 4, 2]], []),
+            kStrip6.dup, [[0u, 2, 3, 1], [2u, 4, 5, 3]], []),
         Case("quads 6 Preview flip", kStrip6, kIdentity, true, true, Preview, 0,
-            kStrip6.dup, [[1u, 3, 2, 0], [3u, 5, 4, 2]], []),
+            kStrip6.dup, [[0u, 2, 3, 1], [2u, 4, 5, 3]], []),
         Case("quads 5 Commit", kStrip6[0 .. 5], kIdentity, false, true, Commit,
-            0, kStrip6[0 .. 5].dup, [[0u, 2, 3, 1]], []),
+            0, kStrip6[0 .. 5].dup, [[1u, 3, 2, 0]], []),
         Case("triangle Commit translated", kTri, kShift, false, false, Commit, 0,
             [Vec3(10,20,30), Vec3(11,20,30), Vec3(10,21,30)], [[0u, 1, 2]], []),
         Case("triangle Commit onto 2 vertices", kTri, kIdentity, true, false,
@@ -252,4 +252,40 @@ unittest // Preview and Commit emit the same ring for a flipped pentagon
         format("preview %s vs commit %s", preview.faces, commit.faces));
     assert(commit.faces == [[1u, 0, 4, 3, 2]], format("flipped pentagon ring %s",
         commit.faces));
+}
+
+unittest // Make Quads facing: under the decided flip every quad faces the eye
+{
+    // A clockwise and a counter-clockwise (seen from the top) 6-point strip
+    // on y = 1: two quads each. Both purposes must face the top view's eye
+    // (normal . eye ray < 0), as the reference's strips always do (K-C2).
+    auto top = orthoLooking(-1);
+    auto ccw = onY1([-0.5f, -0.25f], [-0.5f, 0.25f], [0f, -0.25f], [0f, 0.25f],
+                    [0.5f, -0.25f], [0.5f, 0.25f]);
+    Vec3[] cw;
+    foreach (p; ccw) cw ~= Vec3(p.x, p.y, -p.z);
+    size_t quads;
+    foreach (name, pts; ["ccw": ccw, "cw": cw]) {
+        PenParams p; p.makeQuads = true;
+        p.flip = penFacingFlip(pts[0], pts[1], pts[2], top);
+        assert(p.flip == (name == "cw"), name ~ ": premise, flip decision");
+        foreach (purpose; [PenBuildPurpose.Preview, PenBuildPurpose.Commit]) {
+            Mesh m;
+            appendPenGeometry(m, PenStroke.of(pts, kIdentity, p), purpose);
+            assert(m.faces.length == 2, format("%s %s: %s faces", name, purpose,
+                m.faces.length));
+            foreach (f; m.faces) {
+                Vec3 n = Vec3(0, 0, 0), c = Vec3(0, 0, 0);
+                foreach (i; 0 .. f.length) {
+                    n = n + cross(m.vertices[f[i]], m.vertices[f[(i + 1) % $]]);
+                    c = c + m.vertices[f[i]];
+                }
+                c = c * (1.0f / f.length);
+                assert(dot(n, eyeVectorAt(top, c)) < 0, format("%s %s: quad %s "
+                    ~ "faces away (normal %s)", name, purpose, f, n));
+                ++quads;
+            }
+        }
+    }
+    assert(quads == 8, format("checked %s quads, pinned 8", quads));
 }

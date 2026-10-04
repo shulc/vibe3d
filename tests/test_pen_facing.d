@@ -232,6 +232,42 @@ unittest {
         ++ran;
     }
 
+    // Make Quads facing (K-C2: the reference's strips face the camera in both
+    // directions): a counter-clockwise and a clockwise 4-click strip (two
+    // anchors, two extensions with parallelogram auto-corners) from the top
+    // view commit two quads each, every one with normal . forward < 0.
+    if (want("quads-facing")) {
+        foreach (sz; [1.0f, -1.0f]) {
+            Vec3[] pts = [Vec3(-0.5f, 1, -0.25f * sz), Vec3(-0.5f, 1, 0.25f * sz),
+                          Vec3(0.0f, 1, -0.25f * sz), Vec3(0.5f, 1, -0.25f * sz)];
+            penRigEmpty(kFocus);
+            penCommand("tool.attr pen makeQuads true");
+            clickWorld(pts);
+            penCommand("tool.set pen off");
+            auto m = getJson("/api/model");
+            const tag = sz > 0 ? "quads-facing ccw" : "quads-facing cw";
+            if (m["faces"].array.length != 2)
+                fails ~= format("%s: %s faces stored, expected 2", tag,
+                    m["faces"].array.length);
+            auto vs = readVerts();
+            foreach (f; m["faces"].array) {
+                auto r = ints(f);
+                double ny = 0;   // Newell normal's y; the top view looks -Y
+                foreach (i; 0 .. r.length) {
+                    auto a = vs[r[i]], b = vs[r[(i + 1) % r.length]];
+                    ny += (a.z - b.z) * (a.x + b.x);
+                }
+                if (!(ny > 0))
+                    fails ~= format("%s: quad %s faces away from the top view "
+                        ~ "(normal y %s)", tag, r, ny);
+            }
+            penCommand("tool.set pen on");      // leave the param as found
+            penCommand("tool.attr pen makeQuads false");
+            penCommand("tool.set pen off");
+        }
+        ++ran;
+    }
+
     // Ours (decode-read, not captured): a 3rd point INSERTED after point 0 is
     // decided from (p0, p1, click), not from the stroke order (p0, click, p1),
     // which winds the other way. A1-n3-cw's clicks: flip 1, stored order
@@ -288,9 +324,9 @@ unittest {
         ++ran;
     }
 
-    // FLOOR: 14 top-view fixture cases + B0/B1/B2 + the quads cell + insert
-    // + the rotated plane.
-    assert(only.length ? ran == 1 : ran == 20,
-        format("ran %s facing cells, expected %s", ran, only.length ? 1 : 20));
+    // FLOOR: 14 top-view fixture cases + B0/B1/B2 + the quads flag and
+    // facing cells + insert + the rotated plane.
+    assert(only.length ? ran == 1 : ran == 21,
+        format("ran %s facing cells, expected %s", ran, only.length ? 1 : 21));
     assert(fails.length == 0, "pen facing cells: " ~ fails.join(" | "));
 }

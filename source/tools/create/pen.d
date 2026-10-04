@@ -302,7 +302,7 @@ version(unittest) unittest {
 
     // A shape param edited mid-stroke rebuilds the preview through the one
     // builder (prepared door): kind Preview, live preview untouched until
-    // install. Strip [0,1,2,3] → quad [0,2,3,1].
+    // install. Strip [0,1,2,3] → quad [1,3,2,0] (flip off).
     auto quadPen = new PenTool(() => &mesh, &sceneGpu, LitShader.init);
     quadPen.state = PenState.Drawing;
     quadPen.frame.toWorld = [1,0,0,0, 0,1,0,0, 0,0,1,0, 10,20,30,1];
@@ -312,7 +312,7 @@ version(unittest) unittest {
     assert(quadImage.kind == PreparedPenParamKind.Preview && quadImage.upload,
         "makeQuads edit must prepare a preview rebuild");
     assert(quadImage.nextPreview.faces.length == 1 &&
-        quadImage.nextPreview.faces[0] == [0u, 2, 3, 1],
+        quadImage.nextPreview.faces[0] == [1u, 3, 2, 0],
         "makeQuads preview is not the builder's strip quad");
     assert(quadPen.buildPreparedParamImage("flip").kind ==
         PreparedPenParamKind.Preview, "flip edit must prepare a preview rebuild");
@@ -324,7 +324,7 @@ version(unittest) unittest {
         && quadPen.previewMesh.vertices.length == 0 && quadContext.validate(),
         "makeQuads preparation refused or touched the live preview");
     quadContext.install();
-    assert(quadPen.previewMesh.faces == [[0u, 2, 3, 1]] &&
+    assert(quadPen.previewMesh.faces == [[1u, 3, 2, 0]] &&
         quadPen.vertices_.length == 4 && quadContext.installTraceForTest() ==
         [7,2,8], "makeQuads install did not land the rebuilt preview");
 
@@ -338,7 +338,7 @@ version(unittest) unittest {
     assert(hookPen.previewMesh.faces == [[1u, 2, 3, 0]],
         "legacy flip hook did not rebuild the preview (penRingOrder ring)");
     hookPen.params_.makeQuads = true; hookPen.onParamChanged("makeQuads");
-    assert(hookPen.previewMesh.faces == [[0u, 2, 3, 1]],
+    assert(hookPen.previewMesh.faces == [[1u, 3, 2, 0]],
         "legacy makeQuads hook did not rebuild the preview");
     assert(hookPen.previewMesh.vertices[0] == Vec3(10,20,30),
         "legacy hook preview ignored the frame's toWorld");
@@ -371,7 +371,7 @@ version(unittest) unittest {
     }
     assert(dropFace([Vec3(0,0,0), Vec3(1,0,0), Vec3(0,1,0)], true, false,
         [Vec3(5,5,5)]) == [1u, 3, 2], "drop ignored the image's flip");
-    assert(dropFace(quadPen.vertices_.dup, false, true, null) == [0u, 2, 3, 1],
+    assert(dropFace(quadPen.vertices_.dup, false, true, null) == [1u, 3, 2, 0],
         "drop ignored the image's makeQuads");
 }
 

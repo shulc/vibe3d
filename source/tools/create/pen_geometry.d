@@ -106,8 +106,10 @@ uint[] penRingOrder(const(Vec3)[] v, bool reverse) {
 
 /// Append the stroke to `dst`; returns the index of its first new vertex.
 ///
-/// At or above the face minimum: the strip's quads `[2k, 2k+2, 2k+3, 2k+1]`
-/// (an odd last point is left unused; `flip` reverses each), or one polygon of
+/// At or above the face minimum: the strip's quads `[2k+1, 2k+3, 2k+2, 2k]`,
+/// `[2k, 2k+2, 2k+3, 2k+1]` under `flip` (that order winds against the decision
+/// triangle (p0, p1, p2), so the decided flip faces the camera either way; an
+/// odd last point is left unused; interim until S7's strip rule), or one polygon of
 /// all points in `penRingOrder`. Below it a Commit still makes one face of all
 /// points (the two-point face a tool drop keeps) while a Preview shows the
 /// open polyline as edges. Preview and Commit order every ring alike.
@@ -124,7 +126,7 @@ uint appendPenGeometry(ref Mesh dst, in PenStroke s, PenBuildPurpose purpose) {
         foreach (k; 0 .. n / 2 - 1) {
             const uint a = base + 2*k,     b = base + 2*k + 2;
             const uint c = base + 2*k + 3, d = base + 2*k + 1;
-            dst.addFace(s.flip ? [d, c, b, a] : [a, b, c, d]);
+            dst.addFace(s.flip ? [a, b, c, d] : [d, c, b, a]);
         }
     } else if (closed || purpose == PenBuildPurpose.Commit) {
         uint[] face = penRingOrder(dst.vertices[base .. $], s.flip);
