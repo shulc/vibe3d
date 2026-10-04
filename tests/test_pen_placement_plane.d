@@ -7,10 +7,11 @@
 //
 // The focus sits at y = 1 so every rival height (focus plane 1.0, typed value
 // read relative to the focus 1.5, first / next / previous point) differs from
-// the captured one by >= 0.2. All five cells run and report together; the
-// must-stay-green cell (A0) is checked first.
+// the captured one by >= 0.2. All cells run and report together; the
+// must-stay-green cell (A0) is checked first. Two cells of OUR behaviour
+// follow: the pinned plane (unchanged by this law) and the idle hover.
 
-import drag_helpers : Vec3;
+import drag_helpers : Vec3, fetchSnapLast;
 import pen_rig_helpers;
 import std.array : join;
 import std.format : format;
@@ -136,6 +137,39 @@ unittest {
         fails ~= currentAfter("B2", c["expected"]);
         fails ~= commitAndCompare("B2", c["expected"],
             cast(int)num(c["expected"]["dragged_point_index"]));
+    }
+
+    // Ours, not captured — a pinned plane keeps today's law until its own
+    // capture: every click on the plane through the pinned centre (y 0.3),
+    // not through the focus (1.0).
+    {
+        penRigEmpty(focus);
+        penCommand("tool.set pen off");
+        penCommand("workplane.edit cenX:0 cenY:0.3 cenZ:0 rotX:0 rotY:0 rotZ:0");
+        penCommand("tool.set pen on");
+        auto k = cells["A0"]["clicks_xz"].array;
+        clickWorld(xz(k[0]), xz(k[1]), xz(k[2]));
+        penCommand("tool.set pen off");
+        auto got = readVerts();
+        if (got.length != 3 || abs(got[0].y - 0.3) > kTolY ||
+            abs(got[1].y - 0.3) > kTolY || abs(got[2].y - 0.3) > kTolY)
+            fails ~= format("pinned plane: %s, expected 3 points at y 0.3", got);
+        penCommand("workplane.reset");
+    }
+    // An idle hover in a FRONT view resolves on the plane the first click
+    // would lock (z through the focus), so the snap preview reaches a target.
+    {
+        penRigEmpty(focus, "Front");
+        penCommand("tool.pipe.attr snap enabled true");
+        penCommand("tool.pipe.attr snap types grid");
+        penCommand("tool.pipe.attr snap innerRange 100");
+        hoverWorld(Vec3(0.5, 1.5, 0));
+        auto snap = fetchSnapLast();
+        penCommand("tool.pipe.attr snap enabled false");
+        if (snap["snapped"].type != JSONType.true_ ||
+            abs(num(snap["worldPos"].array[2])) > kTolY)
+            fails ~= format("idle hover, front view: snap %s, expected a "
+                ~ "snapped point at z 0", snap.toString);
     }
 
     assert(fails.length == 0, "pen placement cells:\n" ~ fails.join("\n"));

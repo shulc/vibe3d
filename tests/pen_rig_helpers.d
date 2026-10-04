@@ -19,19 +19,19 @@ void penCommand(string line) {
     assert(r["status"].str == "ok", "command `" ~ line ~ "` failed: " ~ r.toString);
 }
 
-/// Empty scene, top ortho view, camera focus `focus`, pen active.
-void penRigEmpty(Vec3 focus, double distance = 4.0) {
+/// Empty scene, an axis (ortho) view, camera focus `focus`, pen active.
+void penRigEmpty(Vec3 focus, string view = "Top", double distance = 4.0) {
     auto r = postJson("/api/command", commandBody("scene.reset", `{"empty":true}`));
     assert(r["status"].str == "ok", "empty reset failed: " ~ r.toString);
     penCommand("history.clear");
     penCommand("workplane.reset");
-    penCommand("viewport.view Top");
+    penCommand("viewport.view " ~ view);
     r = postJson("/api/camera", format(
         `{"focus":{"x":%.9f,"y":%.9f,"z":%.9f},"distance":%.9f}`,
         focus.x, focus.y, focus.z, distance));
     assert(r["status"].str == "ok", "camera setup failed: " ~ r.toString);
     assert(getJson("/api/camera")["projKind"].str == "Ortho",
-        "rig premise: the top view must be orthographic");
+        "rig premise: the axis view must be orthographic");
     penCommand("tool.set pen on");
 }
 
@@ -66,6 +66,17 @@ void clickWorld(Vec3[] points...) {
         t += 150;
     }
     playAndWait(log);
+}
+
+/// One mouse motion (no button) over a world point.
+void hoverWorld(Vec3 w) {
+    auto cam = fetchCamera();
+    auto p = worldPixel(w);
+    playAndWait(format(`{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,`
+        ~ `"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n" ~ kPaceLine
+        ~ `{"t":50.000,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,`
+        ~ `"yrel":0,"state":0,"mod":0}` ~ "\n",
+        cam.vpX, cam.vpY, cam.width, cam.height, p[0], p[1]));
 }
 
 /// Press on the world point `from` and drag `dxPx` pixels in screen x.
