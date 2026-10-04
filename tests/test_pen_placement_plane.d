@@ -186,14 +186,23 @@ unittest {
     // point: the preview is cleared, not left at the last click's point.
     {
         penRigEmpty(focus);
+        // Snap on, so the click publishes a non-empty result a stale preview
+        // would keep (with snap off every result is the cleared one).
+        penCommand("tool.pipe.attr snap enabled true");
+        penCommand("tool.pipe.attr snap types grid");
         clickWorld(xz(cells["A0"]["clicks_xz"].array[0]));
+        const clicked = fetchSnapLast()["worldPos"].array;
         penCommand("viewport.view Front");
         const live = penAttrValue("currentPoint");
         hoverWorld(Vec3(0.5, 1.5, 0));
         auto snap = fetchSnapLast();
         auto p = snap["worldPos"].array;
         penCommand("tool.set pen off");
-        if (live != 0)
+        penCommand("tool.pipe.attr snap enabled false");
+        if (!near(num(clicked[1]), 1.0, kTolY))
+            fails ~= format("edge-on rig: the click published %s, expected a "
+                ~ "point at y 1 (a cleared result cannot show staleness)", clicked);
+        else if (live != 0)
             fails ~= format("edge-on rig: the stroke did not survive the view "
                 ~ "change (currentPoint %s)", live);
         else if (snap["snapped"].type != JSONType.false_ ||
