@@ -314,10 +314,10 @@ private enum size_t kNotPortedCeiling = 14;
 private enum size_t kSessionStepsFalseCeiling = 0;
 
 /// Task 8250: these existing command producers now use the same completed
-/// History-row owner as Transform (17 since task 9369 moved the polygon pen to
-/// the attribute-image steps; 18 after plan 8646 moved the Topology Pen to the
-/// topology-step protocol). The other rows retain image/topology
-/// policies; this exact set catches a silent class-wide policy spill.
+/// History-row owner as Transform: 17 rows, since the Topology Pen (plan 8646)
+/// and the polygon pen (task 9369) left for their own step protocols. The
+/// other rows retain image/topology policies; this exact set catches a silent
+/// class-wide policy spill.
 private immutable string[] kAdditionalHistoryRows = [
     "edge.slide", "mesh.bridgeTool", "mesh.dragWeld", "mesh.radialSweepTool",
     "mesh.reduceTool", "mesh.tack", "prim.arc",

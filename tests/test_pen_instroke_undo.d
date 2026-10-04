@@ -25,6 +25,8 @@
 //   rmb-then-ctrlz     3 clicks, RMB, Ctrl+Z: the cancel ended the account;
 //   backspace-then-ctrlz, pop-to-empty-new-view, undo-then-drag: what the
 //                      restored image re-derives (see the block).
+// And quads-undo-pair, the captured QU-pair law (one step = a click and its
+// automatic corner).
 // Typed fields go through the interactive door (`/api/script?interactive=true`,
 // the panel's source); keys through /api/play-events. `VIBE3D_CELL=<id>` runs
 // one cell alone (the population floors hold for the full run only).
@@ -475,6 +477,22 @@ unittest {
         expectModel("undo-then-drag", [Vec3(-0.41f, 1, 0.3f), kTri[1]], [[0L, 1]], fails);
         ++ran;
     }
-    assert(only.length || ran == 21, format("cells ran %s, expected 21", ran));
+    // K-C2 QU-pair (toolcard findings H2, cell C2-undo): under Make Quads one
+    // Ctrl+Z pops the last click AND its automatic corner (4 -> 2 points).
+    // Count only: the strip's ring order is the strip slice's.
+    if (want("quads-undo-pair")) {
+        rig();
+        typed("makeQuads", "true");
+        clickWorld(kA[0 .. 3]);
+        expectArmed("quads-undo-pair", "after three clicks", 4, fails);
+        ctrlZ();
+        expectArmed("quads-undo-pair", "after the undo", 2, fails);
+        expectDepth("quads-undo-pair", "inside the stroke", 0, fails);
+        postJson("/api/command", `{"id":"tool.reset","params":{"_positional":["pen"]}}`);
+        typed("makeQuads", "false");
+        drop();
+        ++ran;
+    }
+    assert(only.length || ran == 22, format("cells ran %s, expected 22", ran));
     assert(fails.length == 0, "pen in-stroke undo: " ~ fails.join(" | "));
 }

@@ -336,6 +336,7 @@ version(unittest) unittest {
     hookPen.state = PenState.Drawing; hookPen.previewGpu.suppressCageUpload = true;
     hookPen.frame.toWorld = quadPen.frame.toWorld;
     hookPen.vertices_ = quadPen.vertices_.dup;
+    foreach (v; hookPen.vertices_) hookPen.vertHandlers ~= hookPen.vertMarker(v);
     hookPen.onParamChanged("flip");
     assert(hookPen.previewMesh.faces == [[1u, 2, 3, 0]],
         "legacy flip hook did not rebuild the preview (penRingOrder ring)");
@@ -346,6 +347,25 @@ version(unittest) unittest {
         "legacy hook preview ignored the frame's toWorld");
     assert(quadImage.nextPreview.vertices == hookPen.previewMesh.vertices,
         "prepared preview vertices differ from the legacy hook's (toWorld)");
+
+    // An undo / redo image re-derives the stroke from `points`: state, markers
+    // and the preview; a stale preview must not survive the restore. (Empty
+    // first: a marker's destroy needs GL, which the module gate lacks.)
+    auto imagePen = new PenTool(() => &mesh, &sceneGpu, LitShader.init);
+    imagePen.previewGpu.suppressCageUpload = true;
+    imagePen.frame.toWorld = quadPen.frame.toWorld;
+    imagePen.state = PenState.Drawing; imagePen.previewMesh.addVertex(Vec3(5,5,5));
+    imagePen.rebuildPreviewFromAttrs();
+    assert(imagePen.state == PenState.Idle && imagePen.previewMesh.vertices.length == 0,
+        "restored empty stroke: not Idle, or a stale preview survived");
+    imagePen.vertices_ = [Vec3(0,0,0), Vec3(1,0,0), Vec3(0,1,0)];
+    imagePen.rebuildPreviewFromAttrs();
+    assert(imagePen.state == PenState.Drawing && imagePen.vertHandlers.length == 3,
+        "restored stroke: not Drawing, or its markers did not come back");
+    assert(imagePen.previewMesh.vertices.length == 3 &&
+        imagePen.previewMesh.faces.length == 1 &&
+        imagePen.previewMesh.vertices[1] == Vec3(11,20,30),
+        "restored stroke: the preview was not rebuilt from the points");
 
     // A tool drop commits through the prepared candidate with the image's
     // params: flip reverses the winding, makeQuads lays out the strip quad.
@@ -814,7 +834,6 @@ public:
                 cmd.setSnapshots(pre, MeshSnapshot.capture(candidate), "Pen Polygon");
                 historyPrepared = context.prepare(cmd,
                     PreparedHistoryKind.Plain).accepted;
-                if (historyPrepared) sessionTagPreparedCompleted(cmd);
                 ok = historyPrepared;
             } else ok = context.prepareGestureCarrierMismatch();
         }
@@ -1346,6 +1365,8 @@ private:
     }
 
     void uploadPreview() {
+        assert(vertHandlers.length == vertices_.length,
+            "pen: one marker per stroke point");
         previewMesh.clear();
         appendPenGeometry(previewMesh, PenStroke.of(vertices_, frame.toWorld,
             params_), PenBuildPurpose.Preview);
