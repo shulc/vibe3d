@@ -142,6 +142,37 @@ unittest {
             fails ~= format("sweep: no channel is an odd multiple of q %s", q);
     }
 
+    // Side views (ours, same law): under Right the plane normal is local x,
+    // under Front local z; both in-plane channels of each click are on the
+    // lattice (the plane-normal channel is not scored: its law is open).
+    {
+        auto c = cells["B4a"];
+        const q = num(c["q"]);
+        static immutable int[2][2] offsets = [[-71, -43], [97, 61]];
+        int n;
+        string[] bad;
+        foreach (view; ["Right", "Front"]) {
+            penRigEmpty(Vec3(0.07f, 1, 0), view,
+                        fetchCamera().height / (num(c["px_per_m"]) * 2.0 * tan(PI / 8)));
+            auto cam = fetchCamera();
+            const cx = cam.vpX + cam.width / 2, cy = cam.vpY + cam.height / 2;
+            foreach (o; offsets) {
+                const got = clickRead([cx + o[0], cy + o[1]]);
+                const double[2] inPlane = view == "Right" ? [got[1], got[2]]
+                                                          : [got[0], got[1]];
+                foreach (v; inPlane) {
+                    ++n;
+                    if (!onLattice(v, q)) bad ~= format("%s %.6f", view, v);
+                }
+            }
+            penCommand("tool.set pen off");
+        }
+        assert(n == 8, format("side population: %d channels, expected 8", n));
+        if (bad.length)
+            fails ~= format("side views: in-plane channels off the q %s lattice: %-(%s, %)",
+                            q, bad);
+    }
+
     // Perspective (B4c): lattice membership under OUR q; the raw-to-placed
     // residual is reported in real pixels at the focus (1.25 x pixel size).
     {
