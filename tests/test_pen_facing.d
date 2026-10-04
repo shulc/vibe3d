@@ -10,7 +10,8 @@
 // Cells that need the background constraint (A3c, A3c-rev) or the in-stroke
 // undo (A4d-ctrlz) are not run here; the population floor counts the rest.
 
-import drag_helpers : Vec3, buildDragLog, fetchCamera, playAndWait;
+import drag_helpers : Vec3, buildDragLog, fetchCamera, playAndWait,
+    viewportFromCameraMatrices;
 import http_client : getJson, postJson;
 import pen_rig_helpers;
 import std.algorithm : canFind;
@@ -242,9 +243,11 @@ unittest {
         ++ran;
     }
 
-    // Ours: the decision is taken in WORLD. A pinned plane turned 180° about X
-    // mirrors the stroke's local winding; A1-n3-cw's clicks still face away
-    // from the top view in world, so flip 1 and ring [0, 2, 1].
+    // Ours: the decision is taken in WORLD against the live eye. A pinned
+    // plane turned 180° about X turns the top view with it (measured law §23),
+    // so the camera looks UP; A1-n3-cw's clicks then face the eye (flip 0,
+    // ring [0, 1, 2]), while their plane-LOCAL winding read against the world
+    // eye would flip.
     {
         Vec3[] pts;
         foreach (c; fx["cases"].array)
@@ -254,10 +257,15 @@ unittest {
         penCommand("tool.set pen off");
         penCommand("workplane.edit cenX:0 cenY:0.3 cenZ:0 rotX:180 rotY:0 rotZ:0");
         penCommand("tool.set pen on");
+        auto vp = viewportFromCameraMatrices();
+        if (!(-vp.view[6] > 0.99f))
+            fails ~= format("rotated-plane: premise — the view forward is "
+                ~ "(%s, %s, %s), expected +Y (looking up)", -vp.view[2],
+                -vp.view[6], -vp.view[10]);
         clickWorld(pts);
-        expectFlag("rotated-plane", "after the stroke", 1, fails);
+        expectFlag("rotated-plane", "after the stroke", 0, fails);
         expectRing("rotated-plane", commitRing("rotated-plane", 3, fails),
-            [0L, 2, 1], fails);
+            [0L, 1, 2], fails);
         // Premise: the points landed under the clicks (else the cell would
         // test a different triangle).
         auto got = readVerts();
