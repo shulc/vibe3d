@@ -18,6 +18,7 @@ import std.algorithm : canFind;
 import std.array : join;
 import std.format : format;
 import std.json : JSONType, JSONValue, parseJSON;
+import std.process : environment;
 import std.math : abs;
 
 void main() {}
@@ -139,35 +140,43 @@ unittest {
     auto placement = parseJSON(import("fixtures/pen_placement.json"))["cells"];
     string[] fails;
     size_t ran;
+    // `VIBE3D_CELL=<case>` runs one cell alone (a mutation drill names the
+    // cell it must redden; the must-stay-green block would otherwise stop
+    // the module first). The floors below hold for the full run only.
+    const only = environment.get("VIBE3D_CELL", "");
+    bool want(string cell) { return only.length == 0 || only == cell; }
 
     // Must stay green on the unmodified tool: a stroke whose stored ring is
     // [0..n-1] for a reason other than the decision (a collinear prefix; a
     // dart whose ring starts at 0 by the disagreement rule).
     string[] green;
     foreach (c; fx["cases"].array)
-        if (["A1x-n4-collinear", "A2-dart"].canFind(c["case"].str)) {
+        if (["A1x-n4-collinear", "A2-dart"].canFind(c["case"].str) &&
+            want(c["case"].str)) {
             green ~= runCase(c); ++ran;
         }
-    assert(ran == 2, format("must-stay-green cells ran %s, expected 2", ran));
+    assert(only.length || ran == 2,
+        format("must-stay-green cells ran %s, expected 2", ran));
     assert(green.length == 0, "pen facing (must stay green): " ~ green.join(" | "));
 
     // Every other top-view case of the fixture.
     size_t skipped;
     foreach (c; fx["cases"].array) {
         const name = c["case"].str;
-        if (["A1x-n4-collinear", "A2-dart"].canFind(name)) continue;
+        if (["A1x-n4-collinear", "A2-dart"].canFind(name) || !want(name)) continue;
         if (["A3c-persp-clicked", "A3c-rev", "A4d-ctrlz"].canFind(name)) {
             ++skipped; continue;
         }
         fails ~= runCase(c); ++ran;
     }
-    assert(skipped == 3, format("skipped %s fixture cases, expected 3", skipped));
+    assert(only.length || skipped == 3,
+        format("skipped %s fixture cases, expected 3", skipped));
 
     // Placement cells B0 / B1 / B2: the same scripts as test_pen_placement_plane,
     // scored on the stored ring. The decision is taken at click 3, before any
     // height is typed.
     auto rings = fx["placement_rings"]["cells"];
-    {
+    if (want("B0_append")) {
         auto k = placement["B0_append"]["clicks_xz"];
         penRigEmpty(kFocus);
         clickWorld(onPlane(k["p0"]), onPlane(k["p1"]), onPlane(k["p2"]));
@@ -180,7 +189,7 @@ unittest {
             ints(rings["B0_append"]), fails);
         ++ran;
     }
-    {
+    if (want("B1_insert")) {
         auto k = placement["B1_insert"]["clicks_xz"];
         penRigEmpty(kFocus);
         clickWorld(onPlane(k["p0"]), onPlane(k["p1"]), onPlane(k["p2"]));
@@ -193,7 +202,7 @@ unittest {
             ints(rings["B1_insert"]), fails);
         ++ran;
     }
-    {
+    if (want("B2_drag")) {
         auto c = placement["B2_drag"];
         auto k = c["clicks_xz"];
         penRigEmpty(kFocus);
@@ -207,7 +216,7 @@ unittest {
     }
 
     // Make Quads: the decision runs at the 3rd click in this mode too.
-    {
+    if (want("B5-quads-flag")) {
         auto q = fx["quads_decision"];
         Vec3[] pts;
         foreach (p; q["clicks_xz_on_plane_y1"].array) pts ~= onPlane(p);
@@ -227,7 +236,7 @@ unittest {
     // decided from (p0, p1, click), not from the stroke order (p0, click, p1),
     // which winds the other way. A1-n3-cw's clicks: flip 1, stored order
     // [p0, click, p1], ring [0, 2, 1].
-    {
+    if (want("insert-at-3")) {
         Vec3[] pts;
         foreach (c; fx["cases"].array)
             if (c["case"].str == "A1-n3-cw")
@@ -248,7 +257,7 @@ unittest {
     // so the camera looks UP; A1-n3-cw's clicks then face the eye (flip 0,
     // ring [0, 1, 2]), while their plane-LOCAL winding read against the world
     // eye would flip.
-    {
+    if (want("rotated-plane")) {
         Vec3[] pts;
         foreach (c; fx["cases"].array)
             if (c["case"].str == "A1-n3-cw")
@@ -281,6 +290,7 @@ unittest {
 
     // FLOOR: 14 top-view fixture cases + B0/B1/B2 + the quads cell + insert
     // + the rotated plane.
-    assert(ran == 20, format("ran %s facing cells, expected 20", ran));
+    assert(only.length ? ran == 1 : ran == 20,
+        format("ran %s facing cells, expected %s", ran, only.length ? 1 : 20));
     assert(fails.length == 0, "pen facing cells: " ~ fails.join(" | "));
 }
