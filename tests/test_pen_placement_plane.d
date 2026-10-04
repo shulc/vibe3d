@@ -30,25 +30,29 @@ private Vec3 xz(JSONValue a) {
     return Vec3(cast(float)num(a.array[0]), 0, cast(float)num(a.array[1]));
 }
 
-/// Compare the committed vertices with the cell's expected list; `skipXZ`
-/// names the point whose x/z is not scored (the dragged point).
+/// Compare the committed vertices with the cell's expected list (one line per
+/// failing cell and coordinate kind); `skipXZ` names the point whose x/z is
+/// not scored (the dragged point).
 private string[] compare(string cell, Vec3[] got, JSONValue expected,
                          int skipXZ = -1) {
     auto want = expected.array;
     if (got.length != want.length)
         return [format("%s: %d vertices committed, expected %d", cell,
                        got.length, want.length)];
-    string[] fails;
+    double[] gotY, wantY;
+    bool badY, badXZ;
     foreach (i, w; want) {
         auto e = w.array;
-        if (abs(got[i].y - num(e[1])) > kTolY)
-            fails ~= format("%s: p%d.y = %.4f, expected %.4f", cell, i,
-                            got[i].y, num(e[1]));
-        if (cast(int)i != skipXZ && (abs(got[i].x - num(e[0])) > kTolXZ ||
-                                     abs(got[i].z - num(e[2])) > kTolXZ))
-            fails ~= format("%s: p%d.xz = (%.3f, %.3f), expected (%.3f, %.3f)",
-                            cell, i, got[i].x, got[i].z, num(e[0]), num(e[2]));
+        gotY ~= got[i].y; wantY ~= num(e[1]);
+        badY |= abs(got[i].y - num(e[1])) > kTolY;
+        badXZ |= cast(int)i != skipXZ && (abs(got[i].x - num(e[0])) > kTolXZ ||
+                                          abs(got[i].z - num(e[2])) > kTolXZ);
     }
+    string[] fails;
+    if (badY)
+        fails ~= format("%s: y = %(%.4f %), expected %(%.4f %)", cell, gotY, wantY);
+    if (badXZ)
+        fails ~= format("%s: x/z off by more than %s (got %s)", cell, kTolXZ, got);
     return fails;
 }
 
