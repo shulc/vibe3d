@@ -292,7 +292,9 @@ unittest {
     // plane turned 180° about X turns the top view with it (measured law §23),
     // so the camera looks UP; A1-n3-cw's clicks then face the eye (flip 0,
     // ring [0, 1, 2]), while their plane-LOCAL winding read against the world
-    // eye would flip.
+    // eye would flip. The stroke lies on the first-click plane through the
+    // focus read back plane-local (y 1, fixture pen_placement.json
+    // `plane_rule`): world y 0.3 - 1 = -0.7 under the flipped normal.
     if (want("rotated-plane")) {
         Vec3[] pts;
         foreach (c; fx["cases"].array)
@@ -316,9 +318,9 @@ unittest {
         auto got = readVerts();
         foreach (i, p; pts)
             if (got.length != 3 || !(abs(got[i].x - p.x) <= 0.02 &&
-                abs(got[i].z - p.z) <= 0.02 && abs(got[i].y - 0.3) <= 1e-3))
+                abs(got[i].z - p.z) <= 0.02 && abs(got[i].y + 0.7) <= 1e-3))
                 fails ~= format("rotated-plane: point %s at %s, clicked "
-                    ~ "(%s, 0.3, %s)", i, got.length == 3 ? got[i] : Vec3.init,
+                    ~ "(%s, -0.7, %s)", i, got.length == 3 ? got[i] : Vec3.init,
                     p.x, p.z);
         penCommand("workplane.reset");
         ++ran;
