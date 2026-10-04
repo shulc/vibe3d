@@ -32,7 +32,7 @@ void penSceneEmpty(string view) {
 /// (viewgrid.d `viewWorldPerPixel`: ortho 1 / focalPx, perspective
 /// 0.8 * distance / focalPx; field of view pi/4); a perspective view also
 /// takes `azimuth` / `elevation`.
-void penCameraAt(Vec3 focus, double ppm, double azimuth = 0, double elevation = 1.3) {
+void penCameraAt(Vec3 focus, double ppm, double azimuth = 0, double elevation = 1.5) {
     const persp = getJson("/api/camera")["projKind"].str == "Perspective";
     const dist = fetchCamera().height / ((persp ? 1.6 : 2.0) * ppm * tan(PI / 8));
     string body = format(`{"focus":{"x":%.9f,"y":%.9f,"z":%.9f},"distance":%.9f`,

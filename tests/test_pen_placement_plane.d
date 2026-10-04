@@ -555,7 +555,7 @@ unittest {
             const f = arr3(r["focus"]);
             const k = cast(int)num(r["axis"]);
             penSceneEmpty("Perspective");
-            penCameraAt(v3(f), num(r["px_per_m"]), 0, k == 1 ? 1.3 : 0.15);
+            penCameraAt(v3(f), num(r["px_per_m"]), 0, k == 1 ? 1.5 : 0.15);
             const id = format("row %s axis %d at %s px/m", f[k], k, num(r["px_per_m"]));
             assertGrid(id, num(r["grid"]), num(r["q"]));
             assert(facingAxis(kNoPin) == k, id ~ " rig: wrong most-facing axis");
