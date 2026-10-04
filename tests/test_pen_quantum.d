@@ -55,12 +55,12 @@ private void rigOrtho(double ppm, double fx, double fz) {
                 h / (ppm * 2.0 * tan(PI / 8)));
 }
 
-/// The plane-y-1 hit of window pixel `p` under the live camera (OUR raw).
-private double[2] rawAt(int[2] p) {
+/// The plane-y `planeY` hit of window pixel `p` under the live camera (OUR raw).
+private double[2] rawAt(int[2] p, double planeY = 1.0) {
     Viewport vp = viewportFromCameraMatrices();
     Vec3 org, dir;
     pixelRay(cast(float)p[0], cast(float)p[1], vp, org, dir);
-    const t = (1.0 - org.y) / dir.y;
+    const t = (planeY - org.y) / dir.y;
     return [org.x + dir.x * t, org.z + dir.z * t];
 }
 
@@ -206,6 +206,9 @@ unittest {
 
     // Perspective (B4c): lattice membership under OUR q; the raw-to-placed
     // residual is reported in real pixels at the focus (1.25 x pixel size).
+    // The focus sits on y 0, a plane height every perspective grid step
+    // keeps (the first-click plane rounds the focus height, fixture
+    // pen_placement.json `plane_rule`).
     {
         auto c = cells["B4c"];
         auto r = postJson("/api/command", commandBody("scene.reset", `{"empty":true}`));
@@ -213,7 +216,7 @@ unittest {
         penCommand("history.clear");
         penCommand("workplane.reset");
         penCommand("viewport.view Perspective");
-        r = postJson("/api/camera", `{"focus":{"x":0.07,"y":1.0,"z":0.0},`
+        r = postJson("/api/camera", `{"focus":{"x":0.07,"y":0.0,"z":0.0},`
             ~ `"azimuth":0.3,"elevation":1.1,"distance":4.0}`);
         assert(r["status"].str == "ok", "camera setup failed: " ~ r.toString);
         assert(getJson("/api/camera")["projKind"].str == "Perspective",
@@ -226,12 +229,12 @@ unittest {
         bool bad;
         string[] report;
         foreach (i, p; c["points_xz"].array) {
-            const px = worldPixel(Vec3(cast(float)num(p.array[0]), 1,
+            const px = worldPixel(Vec3(cast(float)num(p.array[0]), 0,
                                        cast(float)num(p.array[1])));
-            const raw = rawAt(px);
+            const raw = rawAt(px, 0.0);
             const got = clickRead(px);
-            assert(abs(got[1] - 1.0) <= kTolQ, format("B4c p%d rig: the point "
-                ~ "must lie on the focus plane y 1, got y %.6f", i, got[1]));
+            assert(abs(got[1]) <= kTolQ, format("B4c p%d rig: the point "
+                ~ "must lie on the focus plane y 0, got y %.6f", i, got[1]));
             // Raw-to-lattice residual in real pixels at the focus.
             report ~= format("p%d raw (%.6f, %.6f) placed (%.6f, %.6f) residual "
                 ~ "(%.3f, %.3f) real px", i, raw[0], raw[1], got[0], got[2],
