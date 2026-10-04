@@ -221,7 +221,27 @@ unittest {
         ++ran;
     }
 
-    // FLOOR: 14 top-view fixture cases + B0/B1/B2 + the quads cell.
-    assert(ran == 18, format("ran %s facing cells, expected 18", ran));
+    // Ours (decode-read, not captured): a 3rd point INSERTED after point 0 is
+    // decided from (p0, p1, click), not from the stroke order (p0, click, p1),
+    // which winds the other way. A1-n3-cw's clicks: flip 1, stored order
+    // [p0, click, p1], ring [0, 2, 1].
+    {
+        Vec3[] pts;
+        foreach (c; fx["cases"].array)
+            if (c["case"].str == "A1-n3-cw")
+                foreach (p; c["clicks_xz_on_plane_y1"].array) pts ~= onPlane(p);
+        assert(pts.length == 3, "fixture lost A1-n3-cw");
+        penRigEmpty(kFocus);
+        clickWorld(pts[0 .. 2]);
+        penAttr("currentPoint", 0);
+        clickWorld(pts[2]);
+        expectFlag("insert-at-3", "after the inserted 3rd point", 1, fails);
+        expectRing("insert-at-3", commitRing("insert-at-3", 3, fails),
+            [0L, 2, 1], fails);
+        ++ran;
+    }
+
+    // FLOOR: 14 top-view fixture cases + B0/B1/B2 + the quads cell + insert.
+    assert(ran == 19, format("ran %s facing cells, expected 19", ran));
     assert(fails.length == 0, "pen facing cells: " ~ fails.join(" | "));
 }

@@ -7,7 +7,7 @@ module tests.unit.tools.create.pen_geometry_test;
 
 import std.format : format;
 
-import math : Vec3;
+import math : Vec3, Viewport;
 import mesh : Mesh;
 import prepared_tool_effect : PreparedPenParamKind;
 import tools.create.pen_geometry;
@@ -50,15 +50,15 @@ private Case[] cases() {
         Case("triangle Commit", kTri, kIdentity, false, false, Commit, 0,
             kTri.dup, [[0u, 1, 2]], []),
         Case("triangle Commit flip", kTri, kIdentity, true, false, Commit, 0,
-            kTri.dup, [[2u, 1, 0]], []),
+            kTri.dup, [[0u, 2, 1]], []),
         Case("pentagon Commit", kPent, kIdentity, false, false, Commit, 0,
-            kPent.dup, [[0u, 1, 2, 3, 4]], []),
+            kPent.dup, [[1u, 2, 3, 4, 0]], []),
         Case("pentagon Commit flip", kPent, kIdentity, true, false, Commit, 0,
-            kPent.dup, [[4u, 3, 2, 1, 0]], []),
+            kPent.dup, [[1u, 0, 4, 3, 2]], []),
         Case("triangle Preview flip", kTri, kIdentity, true, false, Preview, 0,
-            kTri.dup, [[0u, 1, 2]], []),
+            kTri.dup, [[0u, 2, 1]], []),
         Case("pentagon Preview flip", kPent, kIdentity, true, false, Preview, 0,
-            kPent.dup, [[0u, 1, 2, 3, 4]], []),
+            kPent.dup, [[1u, 0, 4, 3, 2]], []),
         Case("2-point Commit", kTri[0 .. 2], kIdentity, false, false, Commit, 0,
             kTri[0 .. 2].dup, [[0u, 1]], []),
         Case("2-point Preview", kTri[0 .. 2], kIdentity, false, false, Preview,
@@ -76,7 +76,7 @@ private Case[] cases() {
         Case("triangle Commit translated", kTri, kShift, false, false, Commit, 0,
             [Vec3(10,20,30), Vec3(11,20,30), Vec3(10,21,30)], [[0u, 1, 2]], []),
         Case("triangle Commit onto 2 vertices", kTri, kIdentity, true, false,
-            Commit, 2, kTri.dup, [[4u, 3, 2]], []),
+            Commit, 2, kTri.dup, [[2u, 4, 3]], []),
     ];
 }
 
@@ -116,4 +116,132 @@ private bool edgeIsWire(ref Mesh m, uint a, uint b) {
             if ((f[i] == a && f[(i + 1) % f.length] == b) ||
                 (f[i] == b && f[(i + 1) % f.length] == a)) return false;
     return true;
+}
+
+// --- Ring order and facing (wave plan S4, task 9361) -----------------------
+// Positions are the stored vertices of tests/fixtures/pen_facing.json (top
+// view, plane y = 1); expected rings are the captured ones where the cell has
+// one, else the plan's rule (§9.4) evaluated by the offline checker.
+
+private Vec3[] onY1(float[2][] xz...) {
+    Vec3[] r;
+    foreach (p; xz) r ~= Vec3(p[0], 1, p[1]);
+    return r;
+}
+
+private struct RingCase { string name; Vec3[] pts; bool reverse; uint[] ring; }
+
+private RingCase[] ringCases() {
+    auto n3  = onY1([0.74f, 0.105f], [-0.235f, 0.46f], [-0.055f, -0.565f]);
+    auto n4  = onY1([0.74f, 0.105f], [0.045f, 0.59f], [-0.44f, -0.105f],
+                    [0.255f, -0.59f]);
+    auto n5  = onY1([0.74f, 0.105f], [0.235f, 0.595f], [-0.39f, 0.265f],
+                    [-0.265f, -0.43f], [0.43f, -0.53f]);
+    auto n6  = onY1([0.74f, 0.105f], [0.355f, 0.565f], [-0.235f, 0.46f],
+                    [-0.44f, -0.105f], [-0.055f, -0.565f], [0.535f, -0.46f]);
+    auto c4  = onY1([0.74f, 0.105f], [0.255f, -0.59f], [-0.44f, -0.105f],
+                    [0.045f, 0.59f]);
+    auto c5  = onY1([0.74f, 0.105f], [0.43f, -0.53f], [-0.265f, -0.43f],
+                    [-0.39f, 0.265f], [0.235f, 0.595f]);
+    auto rfx = onY1([-0.5f, 0.4f], [0.0f, 0.1f], [0.5f, 0.4f], [0.4f, -0.4f],
+                    [-0.4f, -0.4f]);
+    auto col = onY1([-0.3f, 0.2f], [0.0f, 0.2f], [0.3f, 0.2f], [0.0f, -0.4f]);
+    auto dart = onY1([0.0f, -0.2f], [0.5f, -0.6f], [0.0f, 0.6f], [-0.5f, -0.6f]);
+    // Corner 0 itself degenerate (v3, v0, v1 collinear).
+    auto deg0 = onY1([0f, 0f], [1f, 0f], [1f, 1f], [-1f, 0f]);
+    // Corners 1 and 0 degenerate: the left rotation lands on 1, backs off to
+    // 0, then to 4 (two right steps).
+    auto deg2 = onY1([0f, 0f], [1f, 0f], [2f, 0f], [1f, 1f], [-1f, 0f]);
+    return [
+        RingCase("n3 cw flip (A1-n3-cw)", n3, true, [0u, 2, 1]),
+        RingCase("n3 unflipped", n3, false, [0u, 1, 2]),
+        RingCase("n4 cw flip (A1-n4-cw)", n4, true, [1u, 0, 3, 2]),
+        RingCase("n5 cw flip (A1-n5-cw)", n5, true, [1u, 0, 4, 3, 2]),
+        RingCase("n6 cw flip (A1-n6-cw)", n6, true, [1u, 0, 5, 4, 3, 2]),
+        RingCase("n4 ccw (A1-n4-ccw)", c4, false, [1u, 2, 3, 0]),
+        RingCase("n5 ccw (A1-n5-ccw)", c5, false, [1u, 2, 3, 4, 0]),
+        RingCase("n5 reflex at 1, flip (A1x-n5-reflex1)", rfx, true,
+            [2u, 3, 4, 0, 1]),
+        RingCase("n5 reflex at 1, unflipped", rfx, false, [2u, 1, 0, 4, 3]),
+        RingCase("concave n4 flip (A2-dart)", dart, true, [0u, 1, 2, 3]),
+        RingCase("concave n4 unflipped", dart, false, [0u, 3, 2, 1]),
+        RingCase("degenerate corner reached by the rotation (A1x-n4-collinear)",
+            col, false, [0u, 1, 2, 3]),
+        RingCase("degenerate first corner", deg0, false, [1u, 2, 3, 0]),
+        RingCase("two degenerate corners", deg2, false, [4u, 0, 1, 2, 3]),
+        RingCase("two points", n3[0 .. 2], true, [0u, 1]),
+    ];
+}
+
+unittest // penRingOrder: every case gives its literal ring
+{
+    const all = ringCases();
+    assert(all.length == 15, format("ring table has %s rows, pinned 15", all.length));
+    size_t ran;
+    foreach (c; all) {
+        const got = penRingOrder(c.pts, c.reverse);
+        assert(got == c.ring, format("%s: ring %s, expected %s", c.name, got,
+            c.ring));
+        ++ran;
+    }
+    assert(ran == 15, "not every ring case ran");
+}
+
+// Ortho view whose forward vector (-view[2,6,10]) is (0, fy, 0).
+private Viewport orthoLooking(float fy) {
+    Viewport vp;
+    vp.view = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+    vp.view[2] = 0; vp.view[6] = -fy; vp.view[10] = 0;
+    vp.proj = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];   // proj[15] != 0: ortho
+    return vp;
+}
+
+unittest // penFacingFlip: the decision's triangle, eye ray and degeneracy
+{
+    auto top = orthoLooking(-1);          // the rig's top view: forward -Y
+    // Must stay: an unflipped counter-clockwise first three (A1-n4-ccw).
+    auto c4 = onY1([0.74f, 0.105f], [0.255f, -0.59f], [-0.44f, -0.105f]);
+    assert(!penFacingFlip(c4[0], c4[1], c4[2], top), "ccw first three flipped");
+    auto n3 = onY1([0.74f, 0.105f], [-0.235f, 0.46f], [-0.055f, -0.565f]);
+    assert(penFacingFlip(n3[0], n3[1], n3[2], top), "A1-n3-cw: cw from the "
+        ~ "top view must flip");
+    auto dart = onY1([0.0f, -0.2f], [0.5f, -0.6f], [0.0f, 0.6f]);
+    assert(penFacingFlip(dart[0], dart[1], dart[2], top), "A2-dart's first "
+        ~ "three face away from the top view and must flip");
+
+    // A3c: perspective, the eye straight above the focus; the triangle's
+    // normal points along the camera forward (-Y) but TOWARD the eye ray at
+    // p2. The eye ray decides (no flip); the forward axis would flip.
+    Viewport persp = orthoLooking(-1);
+    persp.proj[15] = 0;                   // perspective
+    persp.eye = Vec3(0.07f, 3.857487f, 0);
+    const Vec3 a0 = Vec3(-0.819475f, 1.567701f, 0.0f);
+    const Vec3 a1 = Vec3(-0.844009f, 1.454287f, 0.273152f);
+    const Vec3 a2 = Vec3(-0.852154f, 1.436215f, -0.27715f);
+    assert(!penFacingFlip(a0, a1, a2, persp), "A3c: the per-point eye ray "
+        ~ "must decide (no flip), not the camera forward axis");
+    assert(penFacingFlip(a0, a2, a1, persp), "A3c-rev: the reversed triple "
+        ~ "must flip");
+
+    // Collinear first three never flip. Seen from BELOW (forward +Y) the
+    // degenerate default normal (0,1,0) would read "away", so only this view
+    // shows a dropped degeneracy guard (the top view masks it).
+    auto col = onY1([-0.3f, 0.2f], [0.0f, 0.2f], [0.3f, 0.2f]);
+    assert(!penFacingFlip(col[0], col[1], col[2], top), "collinear, top view");
+    auto up = orthoLooking(1);
+    assert(!penFacingFlip(col[0], col[1], col[2], up),
+        "collinear first three flipped in a view looking up (+Y)");
+}
+
+unittest // Preview and Commit emit the same ring for a flipped pentagon
+{
+    PenParams p; p.flip = true;
+    const s = PenStroke.of(kPent, kIdentity, p);
+    Mesh preview, commit;
+    appendPenGeometry(preview, s, PenBuildPurpose.Preview);
+    appendPenGeometry(commit, s, PenBuildPurpose.Commit);
+    assert(preview.faces.length == 1 && preview.faces == commit.faces,
+        format("preview %s vs commit %s", preview.faces, commit.faces));
+    assert(commit.faces == [[1u, 0, 4, 3, 2]], format("flipped pentagon ring %s",
+        commit.faces));
 }

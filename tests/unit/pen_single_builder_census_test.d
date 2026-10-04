@@ -159,3 +159,31 @@ unittest // every pen point comes from the one resolver (wave plan S3a, task 935
     assert(calls == 5, format("pen.d names resolvePenPoint %s times; "
         ~ "expected 5 (definition + 4 producers)", calls));
 }
+
+unittest // the facing is decided at one site; the builder orders every ring alike (S4, task 9361)
+{
+    string raw;
+    const code = codeOf("source/tools/create/pen.d", raw);
+    assert(code.length > 20_000, "pen.d code view is a stub");
+    // PIN: one call of the decision (it sits above the append / insert /
+    // Make-Quads split, so one call serves all three). State: RED before S4 (0).
+    const calls = countIdent(code, "penFacingFlip");
+    assert(calls == 1, format("pen.d names penFacingFlip %s times; expected "
+        ~ "the one 3rd-point decision", calls));
+
+    // The builder has no Preview-only winding: `purpose` is read once (the
+    // sub-minimum Commit face) besides its declaration. State: RED before S4
+    // (3: the transitional `purpose == Commit && flip` term).
+    string graw;
+    const gcode = codeOf("source/tools/create/pen_geometry.d", graw);
+    assert(countOccurrences("a PenBuildPurpose.Commit && b",
+        "PenBuildPurpose.Commit &&") == 1, "literal counter is blind");
+    assert(countOccurrences(gcode, "PenBuildPurpose.Commit &&") == 0,
+        "pen_geometry.d gates the flip on the Commit purpose again");
+    const purposeReads = countIdent(gcode, "purpose");
+    assert(purposeReads == 2, format("pen_geometry.d names `purpose` %s times; "
+        ~ "expected 2 (parameter + the sub-minimum Commit face)", purposeReads));
+    // The ring routine is the builder's: one definition, one call.
+    assert(countIdent(gcode, "penRingOrder") == 2, format("pen_geometry.d names "
+        ~ "penRingOrder %s times; expected 2", countIdent(gcode, "penRingOrder")));
+}

@@ -405,55 +405,39 @@ unittest { // drag relocates without weld
 // -------------------------------------------------------------------------
 
 // -------------------------------------------------------------------------
-// 6.9.1: tool.attr flip:true reverses the boundary winding on commit.
-// Build a triangle, set flip via tool.attr, commit; verify the face's
-// vertex index order is the reverse of the no-flip baseline.
+// The tool decides flip at the 3rd click; a user write after that sticks
+// (tests/fixtures/pen_facing.json, cell A4b-override): the 4th click does not
+// re-decide and the stored ring is the unflipped [1,2,3,0].
 // -------------------------------------------------------------------------
 
-unittest { // flip reverses face winding
-    // Baseline: 3 clicks + Enter, no flip.
-    resetEmpty();
-    activatePen();
-    string baseline = LOG_HEADER ~ "\n"
-        ~ clickAt(100, 425, 250) ~ "\n"
-        ~ clickAt(200, 525, 250) ~ "\n"
-        ~ clickAt(300, 475, 350) ~ "\n"
-        ~ keyDown(400, SDLK_RETURN);
-    playEvents(baseline);
-    waitForPlaybackFinish();
-    deactivateTool();
-    auto mb = getJson("/api/model");
-    assert(mb["faces"].array.length == 1);
-    long[] faceB;
-    foreach (e; mb["faces"].array[0].array) faceB ~= e.integer;
+unittest { // a user flip write after the decision sticks (A4b-override)
+    import drag_helpers : Vec3;
+    import pen_rig_helpers : clickWorld, penCommand, penRigEmpty;
+    auto c = parseJSON(import("fixtures/pen_facing.json"))["cases"].array;
+    JSONValue cell;
+    foreach (x; c) if (x["case"].str == "A4b-override") cell = x;
+    assert(cell.type == JSONType.object, "fixture lost cell A4b-override");
+    Vec3[] pts;
+    foreach (p; cell["clicks_xz_on_plane_y1"].array)
+        pts ~= Vec3(cast(float)p.array[0].floating, 1, cast(float)p.array[1].floating);
+    bool flipNow() {
+        auto r = postJson("/api/command", "tool.attr pen flip ?");
+        assert(r["status"].str == "ok", "flip query failed: " ~ r.toString);
+        return r["value"].type == JSONType.true_;
+    }
 
-    // Same clicks but flip set via tool.attr before Enter.
-    resetEmpty();
-    activatePen();
-    string log1 = LOG_HEADER ~ "\n"
-        ~ clickAt(100, 425, 250) ~ "\n"
-        ~ clickAt(200, 525, 250) ~ "\n"
-        ~ clickAt(300, 475, 350);
-    playEvents(log1);
-    waitForPlaybackFinish();
-    auto rf = postJson("/api/command", "tool.attr pen flip true");
-    assert(rf["status"].str == "ok", "tool.attr flip failed: " ~ rf.toString);
-    string log2 = LOG_HEADER ~ "\n" ~ keyDown(100, SDLK_RETURN);
-    playEvents(log2);
-    waitForPlaybackFinish();
-    deactivateTool();
-
-    auto mf = getJson("/api/model");
-    assert(mf["faces"].array.length == 1);
-    long[] faceF;
-    foreach (e; mf["faces"].array[0].array) faceF ~= e.integer;
-    assert(faceB.length == faceF.length, "flip: face length differs");
-
-    // Flip reverses the boundary order.
-    foreach (i; 0 .. faceB.length)
-        assert(faceB[i] == faceF[$ - 1 - i],
-            "flip: expected reversed boundary, baseline=" ~ faceB.to!string
-            ~ " flipped=" ~ faceF.to!string);
+    penRigEmpty(Vec3(0, 1, 0));
+    clickWorld(pts[0 .. 3]);
+    assert(flipNow(), "A4b: the tool did not set flip at the 3rd click");
+    penCommand("tool.attr pen flip false");
+    clickWorld(pts[3]);
+    assert(!flipNow(), "A4b: the 4th click re-decided flip over the user's write");
+    penCommand("tool.set pen off");
+    long[] ring;
+    foreach (e; getJson("/api/model")["faces"].array[0].array) ring ~= e.integer;
+    long[] want;
+    foreach (e; cell["expected"]["faces"].array[0].array) want ~= e.integer;
+    assert(ring == want, "A4b: ring " ~ ring.to!string ~ ", expected " ~ want.to!string);
 }
 
 unittest { // tool.attr posX rewrites the current vertex

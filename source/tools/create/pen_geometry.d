@@ -7,7 +7,7 @@
 // `pen.d`. Design: doc/pen_parity_wave_plan_2026-10-04.md §3.2 M-BUILD, §9.1.
 module tools.create.pen_geometry;
 
-import math : Vec3;
+import math : Vec3, Viewport, cross, dot, eyeVectorAt, faceNormalFirst3;
 import mesh : Mesh;
 import tools.create.create_common : transformPoint;
 
@@ -21,7 +21,7 @@ struct PenParams {
     // through onParamChanged.
     int   currentPoint = -1;
     float posX = 0.0f, posY = 0.0f, posZ = 0.0f;
-    bool  flip         = false;    // reverse the winding on commit
+    bool  flip         = false;    // reverse the ring (decided by the tool at point 3)
     // Make Quads: after two anchor clicks every further pair of points closes
     // one quad of a strip, laid out [top0, bot0, top1, bot1, ...].
     bool  makeQuads    = false;
@@ -55,14 +55,63 @@ struct PenStroke {
 /// first quad of a strip.
 size_t penFaceMinimum(bool quads) nothrow @nogc { return quads ? 4 : 3; }
 
+/// The tool's facing decision (wave plan §9.4): flip when the triangle
+/// (p0, p1, p2), wound in that order, faces away from the eye ray at p2 (per
+/// point in perspective, the view forward in ortho). A collinear triple — the
+/// display normal's own degeneracy bound — never flips. World positions.
+bool penFacingFlip(Vec3 p0, Vec3 p1, Vec3 p2, const ref Viewport vp) {
+    bool degenerate;
+    const n = faceNormalFirst3(p0, p1, p2, degenerate);
+    return !degenerate && dot(n, eyeVectorAt(vp, p2)) > 0;
+}
+
+/// The one ring order of a pen polygon (wave plan §9.4; fixture
+/// pen_facing.json): indices into `v`. Corner normal N(i) = (v[i+1] − v[i]) ×
+/// (v[i−1] − v[i]). Below 3 points: click order. Triangle: [0,1,2], reversed
+/// keeping the first index iff `reverse`. From 4 points, when corners 0 and 1
+/// agree the list starts at 1 (then backs off a degenerate first corner) and
+/// is reversed iff `reverse`; when they disagree it is reversed iff NOT
+/// `reverse`, and from 5 points starts at the first k in [2, n−3] agreeing
+/// with corner 0.
+uint[] penRingOrder(const(Vec3)[] v, bool reverse) {
+    const n = v.length;
+    uint[] ring;
+    foreach (i; 0 .. n) ring ~= cast(uint)i;
+    if (n < 3) return ring;
+    Vec3 corner(size_t i) {
+        return cross(v[(i + 1) % n] - v[i], v[(i + n - 1) % n] - v[i]);
+    }
+    bool rev = reverse;
+    if (n > 3) {
+        if (dot(corner(0), corner(1)) >= 0) {
+            ring = ring[1 .. $] ~ ring[0];
+            foreach (_; 0 .. n) {
+                if (corner(ring[0]).length > 1e-6f) break;
+                ring = ring[$ - 1] ~ ring[0 .. $ - 1];
+            }
+        } else {
+            rev = !reverse;
+            foreach (k; 2 .. n - 2)
+                if (dot(corner(0), corner(k)) >= 0) {
+                    ring = ring[k .. $] ~ ring[0 .. k];
+                    break;
+                }
+        }
+    }
+    if (rev)
+        foreach (i; 1 .. (n + 1) / 2) {
+            const t = ring[i]; ring[i] = ring[n - i]; ring[n - i] = t;
+        }
+    return ring;
+}
+
 /// Append the stroke to `dst`; returns the index of its first new vertex.
 ///
 /// At or above the face minimum: the strip's quads `[2k, 2k+2, 2k+3, 2k+1]`
-/// (an odd last point is left unused), or one polygon of all points. Below it
-/// a Commit still makes one face of all points (the two-point face a tool drop
-/// keeps) while a Preview shows the open polyline as edges. Flip reverses the
-/// winding on Commit only: the preview stays un-flipped so it is never
-/// back-face culled away (transitional until the tool computes flip).
+/// (an odd last point is left unused; `flip` reverses each), or one polygon of
+/// all points in `penRingOrder`. Below it a Commit still makes one face of all
+/// points (the two-point face a tool drop keeps) while a Preview shows the
+/// open polyline as edges. Preview and Commit order every ring alike.
 ///
 /// Precondition: a makeQuads Commit below 4 points yields ONE face of all
 /// points, not a quad; callers keep it out by gating on `minDropCommitVerts`.
@@ -71,17 +120,16 @@ uint appendPenGeometry(ref Mesh dst, in PenStroke s, PenBuildPurpose purpose) {
     const uint n = cast(uint)s.points.length;
     foreach (p; s.points) dst.addVertex(transformPoint(s.toWorld, p));
 
-    const bool flip = purpose == PenBuildPurpose.Commit && s.flip;
     const bool closed = n >= penFaceMinimum(s.quads);
     if (closed && s.quads) {
         foreach (k; 0 .. n / 2 - 1) {
             const uint a = base + 2*k,     b = base + 2*k + 2;
             const uint c = base + 2*k + 3, d = base + 2*k + 1;
-            dst.addFace(flip ? [d, c, b, a] : [a, b, c, d]);
+            dst.addFace(s.flip ? [d, c, b, a] : [a, b, c, d]);
         }
     } else if (closed || purpose == PenBuildPurpose.Commit) {
-        uint[] face; face.length = n;
-        foreach (i; 0 .. n) face[i] = base + (flip ? n - 1 - i : i);
+        uint[] face = penRingOrder(dst.vertices[base .. $], s.flip);
+        foreach (ref i; face) i += base;
         dst.addFace(face);
     } else {
         foreach (i; 1 .. n) dst.addEdge(base + i - 1, base + i);

@@ -364,7 +364,7 @@ version(unittest) unittest {
         return layer.meshRef().faces[0].dup;
     }
     assert(dropFace([Vec3(0,0,0), Vec3(1,0,0), Vec3(0,1,0)], true, false,
-        [Vec3(5,5,5)]) == [3u, 2, 1], "drop ignored the image's flip");
+        [Vec3(5,5,5)]) == [1u, 3, 2], "drop ignored the image's flip");
     assert(dropFace(quadPen.vertices_.dup, false, true, null) == [0u, 2, 3, 1],
         "drop ignored the image's makeQuads");
 }
@@ -392,7 +392,7 @@ version(unittest) unittest {
 // wireframe (open polyline — closing happens at commit).
 //
 // On commit, the in-progress vertex sequence is appended to the scene
-// mesh and a face is added (winding reversed when params_.flip = true).
+// mesh and a face is added in `penRingOrder` (flip decided at point 3).
 // A snapshot pair is captured around the commit for undo.
 //
 // Unlike Box / Sphere / Cylinder / etc., Pen does NOT auto-deactivate
@@ -896,6 +896,12 @@ public:
         // Click on empty plane.
         Vec3 hit;
         if (!resolvePenPoint(e.x, e.y, clickAnchor(), hit)) return true;
+
+        // The press adding the 3rd point decides the facing, once, from
+        // (p0, p1, this click) in every arm below (wave plan §9.4).
+        if (vertices_.length == 2)
+            params_.flip = penFacingFlip(toWorldP(vertices_[0]),
+                toWorldP(vertices_[1]), toWorldP(hit), cachedVp);
 
         // Make Quads strip extension: after 2 anchor verts, each click adds
         // user (cursor) + auto (parallelogram extension). Skips the insert
