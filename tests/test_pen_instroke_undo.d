@@ -271,7 +271,7 @@ unittest {
     if (want("long-stroke-replace")) {
         rig();
         Vec3[] pts;
-        foreach (i; 0 .. 70) pts ~= xz(-0.9 + 0.12 * (i % 14), -0.6 + 0.25 * (i / 14));
+        foreach (i; 0 .. 70) pts ~= xz(-0.65 + 0.1 * (i % 14), -0.4 + 0.2 * (i / 14));
         clickWorld(pts);
         expectNum("long-stroke-replace", "current before the replace (floor)",
             attrOr("currentPoint", double.nan), 69, green);
