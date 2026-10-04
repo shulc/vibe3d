@@ -9,7 +9,8 @@
 // read relative to the focus 1.5, first / next / previous point) differs from
 // the captured one by >= 0.2. All cells run and report together; the
 // must-stay-green cell (A0) is checked first. Two cells of OUR behaviour
-// follow: the pinned plane (unchanged by this law) and the idle hover.
+// follow: the pinned plane (unchanged by this law), the idle hover and the
+// edge-on hover.
 
 import drag_helpers : Vec3, fetchSnapLast;
 import pen_rig_helpers;
@@ -23,10 +24,14 @@ void main() {}
 private enum double kTolY = 1e-3;   // heights are typed or anchored exactly
 private enum double kTolXZ = 0.02;  // clicked x/z round to whole pixels
 
+// A non-number (a NaN published as null) reads as NaN; every tolerance test
+// below is written `!(|d| <= tol)` so a NaN fails it.
 private double num(JSONValue v) {
     return v.type == JSONType.integer ? cast(double)v.integer
-         : v.type == JSONType.uinteger ? cast(double)v.uinteger : v.floating;
+         : v.type == JSONType.uinteger ? cast(double)v.uinteger
+         : v.type == JSONType.float_ ? v.floating : double.nan;
 }
+private bool near(double a, double b, double tol) { return abs(a - b) <= tol; }
 private Vec3 xz(JSONValue a) {
     return Vec3(cast(float)num(a.array[0]), 0, cast(float)num(a.array[1]));
 }
@@ -45,9 +50,9 @@ private string[] compare(string cell, Vec3[] got, JSONValue expected,
     foreach (i, w; want) {
         auto e = w.array;
         gotY ~= got[i].y; wantY ~= num(e[1]);
-        badY |= abs(got[i].y - num(e[1])) > kTolY;
-        badXZ |= cast(int)i != skipXZ && (abs(got[i].x - num(e[0])) > kTolXZ ||
-                                          abs(got[i].z - num(e[2])) > kTolXZ);
+        badY |= !near(got[i].y, num(e[1]), kTolY);
+        badXZ |= cast(int)i != skipXZ && !(near(got[i].x, num(e[0]), kTolXZ) &&
+                                           near(got[i].z, num(e[2]), kTolXZ));
     }
     string[] fails;
     if (badY)
@@ -140,7 +145,7 @@ unittest {
         fails ~= compare("B2", got, c["expected"]["vertices"],
             cast(int)num(c["expected"]["dragged_point_index"]));
         // Ours: the drag did happen (40 px is > 0.1 m at this zoom).
-        if (got.length == 3 && got[1].x - xz(k["p1"]).x < 0.1)
+        if (got.length == 3 && !(got[1].x - xz(k["p1"]).x >= 0.1))
             fails ~= format("B2: the dragged point did not move (x %.3f)", got[1].x);
     }
 
@@ -156,8 +161,8 @@ unittest {
         clickWorld(xz(k[0]), xz(k[1]), xz(k[2]));
         penCommand("tool.set pen off");
         auto got = readVerts();
-        if (got.length != 3 || abs(got[0].y - 0.3) > kTolY ||
-            abs(got[1].y - 0.3) > kTolY || abs(got[2].y - 0.3) > kTolY)
+        if (got.length != 3 || !(near(got[0].y, 0.3, kTolY) &&
+            near(got[1].y, 0.3, kTolY) && near(got[2].y, 0.3, kTolY)))
             fails ~= format("pinned plane: %s, expected 3 points at y 0.3", got);
         penCommand("workplane.reset");
     }
@@ -171,10 +176,31 @@ unittest {
         hoverWorld(Vec3(0.5, 1.5, 0));
         auto p = fetchSnapLast()["worldPos"].array;
         penCommand("tool.pipe.attr snap enabled false");
-        if (abs(num(p[0]) - 0.5) > kTolXZ || abs(num(p[1]) - 1.5) > kTolXZ ||
-            abs(num(p[2])) > kTolY)
+        if (!(near(num(p[0]), 0.5, kTolXZ) && near(num(p[1]), 1.5, kTolXZ) &&
+              near(num(p[2]), 0, kTolY)))
             fails ~= format("idle hover, front view: hover point (%s, %s, %s), "
                 ~ "expected (0.5, 1.5, 0)", num(p[0]), num(p[1]), num(p[2]));
+    }
+
+    // Once the plane is locked, a view that sees it edge-on gives no hover
+    // point: the preview is cleared, not left at the last click's point.
+    {
+        penRigEmpty(focus);
+        clickWorld(xz(cells["A0"]["clicks_xz"].array[0]));
+        penCommand("viewport.view Front");
+        const live = penAttrValue("currentPoint");
+        hoverWorld(Vec3(0.5, 1.5, 0));
+        auto snap = fetchSnapLast();
+        auto p = snap["worldPos"].array;
+        penCommand("tool.set pen off");
+        if (live != 0)
+            fails ~= format("edge-on rig: the stroke did not survive the view "
+                ~ "change (currentPoint %s)", live);
+        else if (snap["snapped"].type != JSONType.false_ ||
+                 !(near(num(p[0]), 0, kTolY) && near(num(p[1]), 0, kTolY) &&
+                   near(num(p[2]), 0, kTolY)))
+            fails ~= format("edge-on hover: snap %s, expected a cleared result",
+                            snap.toString);
     }
 
     assert(fails.length == 0, "pen placement cells:\n" ~ fails.join("\n"));
