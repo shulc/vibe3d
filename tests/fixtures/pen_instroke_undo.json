@@ -1,0 +1,396 @@
+{
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "gui-gesture",
+  "notes": "fresh GUI worker per cell, NEW empty foreground mesh, no background geometry; clicks, drags, panel typing, panel checkbox clicks and Ctrl+Z / Ctrl+Shift+Z / Backspace are real input; no script call between the first click and the end of the stroke; stroke ended by the tool-drop key; mesh read once after it; history rows counted by a post-end walk of Ctrl+Z presses.",
+  "captured_utc": "2026-10-04",
+  "harness": "private capture harness (task 9370)",
+  "task": "9370"
+ },
+ "rig": {
+  "view": "top orthographic, 440 px per metre, points land on y = 1.0, click quantum 0.005 m",
+  "flip_flag": "the stroke's facing flag is decided at the 3rd point (see the facing fixture); A-points decide it ON, B-points OFF",
+  "history_rows": "rows = number of post-end Ctrl+Z presses that change the mesh; every cell below commits exactly ONE row (the first post-end undo empties the mesh, the second changes nothing)"
+ },
+ "law": "While a stroke is live, Ctrl+Z restores the stroke to its state BEFORE THE LAST STROKE EVENT, one event per press, with nothing recorded in history. An event is anything that changed the stroke's state: a click adding a point, a drag of a point (the whole drag is one event), a typed panel value (each typed field is its own event, including the current-point index), and a panel checkbox write (the facing flag). The restored state includes the facing flag exactly as it was (no re-decision). Ctrl+Shift+Z re-applies the event just undone. Popping all points leaves the tool armed; the next clicks start a new stroke. Backspace is NOT handled by the stroke: it runs the editor's global delete, which is a no-op only when nothing is selected; with a selection it ends the stroke (committing it, the new element selected by the selectNew rule) and deletes the selection.",
+ "cells": {
+  "drag_then_undo": {
+   "script": [
+    "click A(-0.5,0.3) B(0.5,0.3) C(0,-0.5)",
+    "drag point 1 by +40 px in x (to x 0.59)",
+    "Ctrl+Z",
+    "end stroke"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      -0.5,
+      1.0,
+      0.3
+     ],
+     [
+      0.5,
+      1.0,
+      0.3
+     ],
+     [
+      0.0,
+      1.0,
+      -0.5
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ]
+    ],
+    "current_after_undo": 2,
+    "rows": 1
+   },
+   "note": "the drag is undone; nothing popped"
+  },
+  "drag_then_two_undos": {
+   "script": [
+    "the three clicks above",
+    "drag point 1 +40 px",
+    "Ctrl+Z",
+    "Ctrl+Z",
+    "end stroke"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      -0.5,
+      1.0,
+      0.3
+     ],
+     [
+      0.5,
+      1.0,
+      0.3
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1
+     ]
+    ],
+    "current_after_undo": 1,
+    "rows": 1
+   }
+  },
+  "typed_then_undo": {
+   "script": [
+    "the three clicks above",
+    "type current point 1",
+    "type position X 0.7",
+    "Ctrl+Z",
+    "end stroke"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      -0.5,
+      1.0,
+      0.3
+     ],
+     [
+      0.5,
+      1.0,
+      0.3
+     ],
+     [
+      0.0,
+      1.0,
+      -0.5
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ]
+    ],
+    "panel_after_undo": {
+     "current": 1,
+     "posX": 0.5
+    },
+    "rows": 1
+   },
+   "note": "only the X edit is undone"
+  },
+  "typed_then_two_undos": {
+   "script": [
+    "the three clicks above",
+    "type current 1",
+    "type X 0.7",
+    "Ctrl+Z",
+    "Ctrl+Z",
+    "end stroke"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      -0.5,
+      1.0,
+      0.3
+     ],
+     [
+      0.5,
+      1.0,
+      0.3
+     ],
+     [
+      0.0,
+      1.0,
+      -0.5
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ]
+    ],
+    "panel_after_undo": {
+     "current": 2,
+     "posX": 0.0
+    },
+    "rows": 1
+   },
+   "note": "the current-point write is its own event"
+  },
+  "undo_then_redo": {
+   "script": [
+    "click (-0.4,0.5) (0.1,0.1) (0.6,0.5) (0.1,-0.5)",
+    "Ctrl+Z",
+    "Ctrl+Shift+Z",
+    "end stroke"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      -0.4,
+      1.0,
+      0.5
+     ],
+     [
+      0.1,
+      1.0,
+      0.1
+     ],
+     [
+      0.6,
+      1.0,
+      0.5
+     ],
+     [
+      0.1,
+      1.0,
+      -0.5
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2,
+      3
+     ]
+    ],
+    "flip_on": true,
+    "panel_after_undo": {
+     "current": 2
+    },
+    "panel_after_redo": {
+     "current": 3
+    },
+    "rows": 1
+   }
+  },
+  "pop_to_empty_then_click": {
+   "script": [
+    "click (-0.4,0.5) (0.1,0.1)",
+    "Ctrl+Z",
+    "Ctrl+Z",
+    "click (-0.5,0.3) (0.5,0.3) (0,-0.5)",
+    "end stroke"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      -0.5,
+      1.0,
+      0.3
+     ],
+     [
+      0.5,
+      1.0,
+      0.3
+     ],
+     [
+      0.0,
+      1.0,
+      -0.5
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ]
+    ],
+    "rows": 1
+   }
+  },
+  "flag_write_then_undo": {
+   "script": [
+    "click the four A points (flag decided ON at the 3rd)",
+    "set the facing flag OFF in the panel",
+    "Ctrl+Z",
+    "end stroke"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      -0.4,
+      1.0,
+      0.5
+     ],
+     [
+      0.1,
+      1.0,
+      0.1
+     ],
+     [
+      0.6,
+      1.0,
+      0.5
+     ],
+     [
+      0.1,
+      1.0,
+      -0.5
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2,
+      3
+     ]
+    ],
+    "flip_on_after_undo": true,
+    "rows": 1
+   },
+   "note": "the undo reverts the flag write; no point removed"
+  },
+  "flag_write_before_last_point_then_undo": {
+   "script": [
+    "click the first three A points (flag decided ON)",
+    "set the facing flag OFF",
+    "click the 4th A point",
+    "Ctrl+Z",
+    "end stroke"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      -0.4,
+      1.0,
+      0.5
+     ],
+     [
+      0.1,
+      1.0,
+      0.1
+     ],
+     [
+      0.6,
+      1.0,
+      0.5
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ]
+    ],
+    "flip_on_after_undo": false,
+    "rows": 1
+   },
+   "note": "discriminating: a re-decision on the remaining three points would give [0,2,1] with the flag ON"
+  }
+ },
+ "related": {
+  "backspace_without_selection": "with nothing selected (vertex mode), Backspace leaves the live stroke untouched (facing fixture's earlier cell)",
+  "one_point_stroke_undo": "see the merge fixture: Ctrl+Z on a one-point stroke removes the point and does not touch the row below",
+  "redo_of_an_older_row_inside_a_stroke": "not reachable: arming the tool by command clears the history redo row (control cells), so a live stroke never sits on a redo row in this rig"
+ },
+ "related_cells": {
+  "undo_one_point_stroke": {
+   "script": [
+    "click (0,0.2) (0.5,0.2) (0.25,-0.3)",
+    "drop the tool",
+    "activate again",
+    "click on (0,0.2) (merges with the committed vertex)",
+    "Ctrl+Z",
+    "click (-0.4,0.6) (-0.6,0.1)",
+    "drop"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.0,
+      1.0,
+      0.2
+     ],
+     [
+      0.5,
+      1.0,
+      0.2
+     ],
+     [
+      0.25,
+      1.0,
+      -0.3
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      4
+     ]
+    ]
+   },
+   "note": "Ctrl+Z with a ONE-point live stroke removes that point and keeps the committed triangle; the next two clicks start a new stroke that commits as a 2-vertex polygon",
+   "source": "the merge capture of the same wave (same rig), lifted here for the in-stroke undo witness"
+  }
+ }
+}

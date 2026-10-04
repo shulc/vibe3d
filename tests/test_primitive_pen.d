@@ -206,6 +206,34 @@ unittest { // 4 clicks + Backspace + Enter → triangle
     assert(m["faces"].array[0].array.length == 3, "expected triangle");
 }
 
+// The Ctrl+Z twin (captured A4d-ctrlz, tests/fixtures/pen_facing.json): the
+// undo restores the stroke before its last click, the tool stays, and the
+// Enter commits the remaining three points as ONE history row.
+unittest { // 4 clicks + Ctrl+Z + Enter → triangle, one row
+    resetEmpty();
+    postJson("/api/command", "history.clear");
+    activatePen();
+    string log = LOG_HEADER ~ "\n"
+        ~ clickAt(100, 425, 250) ~ "\n"
+        ~ clickAt(200, 525, 250) ~ "\n"
+        ~ clickAt(300, 475, 350) ~ "\n"
+        ~ clickAt(400, 460, 320) ~ "\n"
+        ~ `{"t":500,"type":"SDL_KEYDOWN","sym":122,"scan":0,"mod":64,"repeat":0}` ~ "\n"
+        ~ `{"t":510,"type":"SDL_KEYUP","sym":122,"scan":0,"mod":64,"repeat":0}` ~ "\n"
+        ~ keyDown(600, SDLK_RETURN);
+    playEvents(log);
+    waitForPlaybackFinish();
+    const rows = getJson("/api/history")["undo"].array.length;
+    deactivateTool();
+
+    auto m = getJson("/api/model");
+    assert(m["vertices"].array.length == 3,
+        format("after Ctrl+Z: %s verts, expected 3", m["vertices"].array.length));
+    assert(m["faces"].array.length == 1 && m["faces"].array[0].array.length == 3,
+        "after Ctrl+Z: expected one triangle");
+    assert(rows == 1, format("after Ctrl+Z + Enter: %s history rows, expected 1", rows));
+}
+
 // -------------------------------------------------------------------------
 // 5. RMB cancels — no commit.
 // -------------------------------------------------------------------------
