@@ -332,7 +332,7 @@
      {"projection": "perspective", "px_per_m": 110, "grid": 0.5, "q": 0.01, "axis": 1, "focus": [0.07, 2.4975, 0.0], "plane": 5.0, "zone": true},
      {"projection": "perspective", "px_per_m": 110, "grid": 0.5, "q": 0.01, "axis": 1, "focus": [0.07, -2.49, 0.0], "plane": 0.0, "zone": false},
      {"projection": "perspective", "px_per_m": 880, "grid": 0.05, "q": 0.002, "axis": 1, "focus": [0.07, 0.2475, 0.0], "plane": 0.0, "zone": false},
-     {"projection": "perspective", "px_per_m": 880, "grid": 0.05, "q": 0.002, "axis": 1, "focus": [0.07, 0.249, 0.0], "plane": 0.5, "zone": true},
+     {"projection": "perspective", "px_per_m": 880, "grid": 0.05, "q": 0.002, "axis": 1, "focus": [0.07, 0.249, 0.0], "plane": 0.5, "zone": true, "divergence": "gap 527"},
      {"projection": "perspective", "px_per_m": 880, "grid": 0.05, "q": 0.002, "axis": 1, "focus": [0.07, 0.2495, 0.0], "plane": 0.5, "zone": true},
      {"projection": "perspective", "px_per_m": 40, "grid": 1.0, "q": 0.05, "axis": 1, "focus": [0.07, 4.95, 0.0], "plane": 0.0, "zone": false},
      {"projection": "perspective", "px_per_m": 40, "grid": 1.0, "q": 0.05, "axis": 1, "focus": [0.07, 4.99, 0.0], "plane": 10.0, "zone": true},

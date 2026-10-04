@@ -487,6 +487,26 @@ unittest {
         fails ~= strokeCell("B3xd", worldPts(c), kNoPin, 1, num(c["plane_y"]), false, 0.002);
         penCommand("tool.set pen off");
     }
+    // B3x-d idle hover (ours: hover uses the anchor the next click would use):
+    // before the first click the published hover point lies on the rounded
+    // plane (y 0.5), not on the raw focus (0.3).
+    {
+        auto c = b3["B3xd_persp_unpinned_880"];
+        penSceneEmpty("Perspective");
+        penCameraAt(Vec3(0.07f, cast(float)num(c["focus_y"]), 0), 880);
+        assertGrid("B3xd hover", num(c["grid"]), 0.002);
+        penCommand("tool.set pen on");
+        penCommand("tool.pipe.attr snap enabled true");
+        penCommand("tool.pipe.attr snap types grid");
+        hoverWorld(v3(worldPts(c)[0]));
+        auto p = fetchSnapLast()["worldPos"].array;
+        penCommand("tool.pipe.attr snap enabled false");
+        penCommand("tool.set pen off");
+        if (!(abs(num(p[1]) - num(c["plane_y"])) <= kTolPlane))
+            fails ~= format("B3xd idle hover: hover point (%s, %s, %s), expected y %s "
+                ~ "(the first click's plane)", num(p[0]), num(p[1]), num(p[2]),
+                num(c["plane_y"]));
+    }
     // Q-depth: top ortho, focus y 1.3333. The click stores 1.335 (the plane
     // channel quantised), a typed 0.1234 stands, the next clicks (anchored on
     // that point) store 0.125.
@@ -548,12 +568,12 @@ unittest {
     // Perspective rows (sweeps and the tie bisection): one click at the view
     // centre, the first point's channel on the row's axis is the plane. The
     // 18 `zone` rows lie just below a tie: rounding the focus to q first
-    // moves them onto it. One zone row sits EXACTLY on a sub-step half (0.249
-    // = 124.5 q at 880 px/m); our camera focus is a float (0.248999998), half
-    // a float below it, so ours rounds it down: that row pins OUR value (0)
-    // as a named divergence, it is not scored against the capture.
+    // moves them onto it. A row marked `divergence` (gap 527: 0.249 = 124.5 q
+    // at 880 px/m, our float camera focus sits half a float below the tie and
+    // rounds down) must DIFFER from the capture: when it matches, the gap is
+    // fixed and its row and mark are retired.
     {
-        int n, zone, floatFocus;
+        int n, zone, divergent;
         string[] bad;
         foreach (rows; [b3["plane_offset_sweep"]["rows"], b4["PR_rounding"]["rows"]])
         foreach (r; rows.array) {
@@ -573,18 +593,20 @@ unittest {
             ++n;
             const z = r["zone"].type == JSONType.true_;
             zone += z;
-            if (f[k] == 0.249 && num(r["px_per_m"]) == 880) {
-                ++floatFocus;
-                if (!(abs(got) <= kTolPlane))
-                    bad ~= format("%s [float focus, ours 0] -> %.6f", id, got);
+            if (auto gap = "divergence" in r.object) {
+                ++divergent;
+                if (!(abs(got - num(r["plane"])) > kTolPlane))
+                    bad ~= format("%s [divergence %s] -> %.6f matches the capture %s: "
+                        ~ "retire the gap row and the mark", id, gap.str, got,
+                        num(r["plane"]));
                 continue;
             }
             if (!(abs(got - num(r["plane"])) <= kTolPlane))
                 bad ~= format("%s%s -> %.6f (expected %s)", id, z ? " [zone]" : "",
                               got, num(r["plane"]));
         }
-        assert(n == 74 && zone == 18 && floatFocus == 1, format("perspective rows: "
-            ~ "%d run (%d zone, %d float focus), expected 74 (18, 1)", n, zone, floatFocus));
+        assert(n == 74 && zone == 18 && divergent == 1, format("perspective rows: "
+            ~ "%d run (%d zone, %d divergent), expected 74 (18, 1)", n, zone, divergent));
         if (bad.length)
             fails = format("perspective rows, %d of 74 wrong: %-(%s; %)", bad.length, bad)
                     ~ fails;
