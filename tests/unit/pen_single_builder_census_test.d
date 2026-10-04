@@ -123,3 +123,39 @@ unittest // the builder module is where the adders went (control of the above)
         assert(countIdent(code, a) >= 1, "builder no longer calls " ~ a
             ~ " — the zero in pen.d would then prove nothing about routing");
 }
+
+unittest // every pen point comes from the one resolver (wave plan S3a, task 9358)
+{
+    // The click (Idle and Drawing), the hover and the drag each turned a pixel
+    // into a point with their own plane hit and snap call, through a plane
+    // anchored at the frame origin. They now share `resolvePenPoint`, whose
+    // anchor is the current point. Counts are whole identifiers in the code
+    // view and INCLUDE the import line where the name is imported.
+    string raw;
+    const code = codeOf("source/tools/create/pen.d", raw);
+    assert(code.length > 20_000, "pen.d code view is a stub");
+
+    // NEEDLE: the plane and snap primitives appear once (plus the import),
+    // inside the resolver; the focus-origin frame picker and the per-site
+    // plane helper are gone. State: RED on the pre-S3a tree (snapLocalHit 5,
+    // workplaneCursorPlaneHit 3, localCursorPlane 4, pickWorkplaneFrame 3).
+    const size_t[string] want = ["snapLocalHit": 2,
+        "workplaneCursorPlaneHit": 2, "localCursorPlane": 0,
+        "pickWorkplaneFrame": 0];
+    assert(want.length == 4, "resolver needle table lost a row");
+    // Positive control: each needle, spelled as in the table, is countable.
+    foreach (name, n; want)
+        assert(countIdent("a." ~ name ~ "(x); auto d = &" ~ name ~ ";", name)
+            == 2, "identifier counter cannot see " ~ name);
+    foreach (name, n; want) {
+        const got = countIdent(code, name);
+        assert(got == n, format("pen.d names %s %s times; expected %s — a "
+            ~ "point is produced outside resolvePenPoint", name, got, n));
+    }
+
+    // PIN: the resolver's definition plus its four producers (Idle click,
+    // Drawing click, hover, drag). State: RED on the pre-S3a tree (0).
+    const calls = countIdent(code, "resolvePenPoint");
+    assert(calls == 5, format("pen.d names resolvePenPoint %s times; "
+        ~ "expected 5 (definition + 4 producers)", calls));
+}

@@ -1,0 +1,103 @@
+module pen_rig_helpers;
+
+// Rig for the polygon pen's placement cells: an empty scene seen from the top
+// orthographic view with the camera focus placed AWAY from the origin (a focus
+// at the origin cannot tell a focus-relative frame from the identity one), and
+// gestures stated in WORLD points, turned into pixels through the matrices the
+// cell renders with.
+
+import drag_helpers : Vec3, Viewport, buildDragLog, fetchCamera, kPaceLine,
+    playAndWait, projectToWindow, viewportFromCameraMatrices;
+import http_client : getJson, postJson;
+import http_command_helpers : commandBody;
+import std.format : format;
+import std.json : JSONType, JSONValue;
+import std.math : round;
+
+void penCommand(string line) {
+    auto r = postJson("/api/command", line);
+    assert(r["status"].str == "ok", "command `" ~ line ~ "` failed: " ~ r.toString);
+}
+
+/// Empty scene, top ortho view, camera focus `focus`, pen active.
+void penRigEmpty(Vec3 focus, double distance = 4.0) {
+    auto r = postJson("/api/command", commandBody("scene.reset", `{"empty":true}`));
+    assert(r["status"].str == "ok", "empty reset failed: " ~ r.toString);
+    penCommand("history.clear");
+    penCommand("workplane.reset");
+    penCommand("viewport.view Top");
+    r = postJson("/api/camera", format(
+        `{"focus":{"x":%.9f,"y":%.9f,"z":%.9f},"distance":%.9f}`,
+        focus.x, focus.y, focus.z, distance));
+    assert(r["status"].str == "ok", "camera setup failed: " ~ r.toString);
+    assert(getJson("/api/camera")["projKind"].str == "Ortho",
+        "rig premise: the top view must be orthographic");
+    penCommand("tool.set pen on");
+}
+
+/// Window pixel of a world point under the live camera; asserts it is inside
+/// the viewport (a click outside it would test nothing).
+int[2] worldPixel(Vec3 w) {
+    Viewport vp = viewportFromCameraMatrices();
+    float px, py;
+    assert(projectToWindow(w, vp, px, py), "rig point behind the camera");
+    int[2] p = [cast(int)round(px), cast(int)round(py)];
+    assert(p[0] > vp.x && p[0] < vp.x + vp.width && p[1] > vp.y &&
+        p[1] < vp.y + vp.height, format("rig point (%s,%s,%s) projects outside "
+        ~ "the viewport at %s", w.x, w.y, w.z, p));
+    return p;
+}
+
+/// One LMB click per world point (y is irrelevant from the top view).
+void clickWorld(Vec3[] points...) {
+    auto cam = fetchCamera();
+    string log = format(`{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,`
+        ~ `"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n" ~ kPaceLine,
+        cam.vpX, cam.vpY, cam.width, cam.height);
+    double t = 50;
+    foreach (w; points) {
+        auto p = worldPixel(w);
+        log ~= format(`{"t":%.3f,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,`
+            ~ `"yrel":0,"state":0,"mod":0}` ~ "\n", t, p[0], p[1]);
+        log ~= format(`{"t":%.3f,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,`
+            ~ `"y":%d,"clicks":1,"mod":0}` ~ "\n", t + 50, p[0], p[1]);
+        log ~= format(`{"t":%.3f,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,`
+            ~ `"y":%d,"clicks":1,"mod":0}` ~ "\n", t + 100, p[0], p[1]);
+        t += 150;
+    }
+    playAndWait(log);
+}
+
+/// Press on the world point `from` and drag `dxPx` pixels in screen x.
+void dragWorld(Vec3 from, int dxPx) {
+    auto cam = fetchCamera();
+    auto p = worldPixel(from);
+    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+        p[0], p[1], p[0] + dxPx, p[1]));
+}
+
+void penAttr(string name, double value) {
+    penCommand(format("tool.attr pen %s %.9f", name, value));
+}
+
+private double num(JSONValue v) {
+    return v.type == JSONType.integer ? cast(double)v.integer
+         : v.type == JSONType.uinteger ? cast(double)v.uinteger : v.floating;
+}
+
+double penAttrValue(string name) {
+    auto r = postJson("/api/command", "tool.attr pen " ~ name ~ " ?");
+    assert(r["status"].str == "ok", "attr query " ~ name ~ " failed: " ~ r.toString);
+    return num(r["value"]);
+}
+
+/// World positions of the primary mesh's vertices.
+Vec3[] readVerts() {
+    Vec3[] vs;
+    foreach (v; getJson("/api/model")["vertices"].array) {
+        auto a = v.array;
+        vs ~= Vec3(cast(float)num(a[0]), cast(float)num(a[1]),
+                   cast(float)num(a[2]));
+    }
+    return vs;
+}
