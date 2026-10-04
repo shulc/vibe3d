@@ -231,7 +231,8 @@ unittest {
 // of moving a row to another rung). The plane channel is compared to 1e-5 (a
 // multiple of q or of 10 x grid); in-plane channels to 1e-4 in ortho and by
 // lattice membership under our q in perspective (a perspective pixel is not
-// reachable exactly). All cells report together; floors sit beside loops.
+// reachable exactly). All cells report together, the two row tables first
+// (the runner prints a failure's first lines only); floors sit beside loops.
 // ===========================================================================
 
 private enum double kTolPlane = 1e-5;
@@ -540,7 +541,7 @@ unittest {
                 bad ~= format("focus %s -> %.6f (expected %s)", f[1], got, want);
         }
         assert(n == 8, format("ortho sweep population: %d rows, expected 8", n));
-        if (bad.length) fails ~= format("ortho sweep: %-(%s; %)", bad);
+        if (bad.length) fails = format("ortho sweep: %-(%s; %)", bad) ~ fails;
     }
     // Perspective rows (sweeps and the tie bisection): one click at the view
     // centre, the first point's channel on the row's axis is the plane. The
@@ -574,7 +575,8 @@ unittest {
         assert(n == 74 && zone == 18, format("perspective rows: %d run (%d zone), "
             ~ "expected 74 (18)", n, zone));
         if (bad.length)
-            fails ~= format("perspective rows, %d of 74 wrong: %-(%s; %)", bad.length, bad);
+            fails = format("perspective rows, %d of 74 wrong: %-(%s; %)", bad.length, bad)
+                    ~ fails;
     }
 
     assert(fails.length == 0, "first-click plane rule:\n" ~ fails.join("\n"));
