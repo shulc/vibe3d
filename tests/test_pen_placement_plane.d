@@ -157,19 +157,19 @@ unittest {
         penCommand("workplane.reset");
     }
     // An idle hover in a FRONT view resolves on the plane the first click
-    // would lock (z through the focus), so the snap preview reaches a target.
+    // would lock (z through the focus): the published hover point is the
+    // cursor's point on that plane, not a cleared result.
     {
         penRigEmpty(focus, "Front");
         penCommand("tool.pipe.attr snap enabled true");
         penCommand("tool.pipe.attr snap types grid");
-        penCommand("tool.pipe.attr snap innerRange 100");
         hoverWorld(Vec3(0.5, 1.5, 0));
-        auto snap = fetchSnapLast();
+        auto p = fetchSnapLast()["worldPos"].array;
         penCommand("tool.pipe.attr snap enabled false");
-        if (snap["snapped"].type != JSONType.true_ ||
-            abs(num(snap["worldPos"].array[2])) > kTolY)
-            fails ~= format("idle hover, front view: snap %s, expected a "
-                ~ "snapped point at z 0", snap.toString);
+        if (abs(num(p[0]) - 0.5) > kTolXZ || abs(num(p[1]) - 1.5) > kTolXZ ||
+            abs(num(p[2])) > kTolY)
+            fails ~= format("idle hover, front view: hover point (%s, %s, %s), "
+                ~ "expected (0.5, 1.5, 0)", num(p[0]), num(p[1]), num(p[2]));
     }
 
     assert(fails.length == 0, "pen placement cells:\n" ~ fails.join("\n"));
