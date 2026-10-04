@@ -262,6 +262,11 @@ version(unittest) unittest {
     positionPen.params_.currentPoint = 1;
     positionPen.params_.posX = 2; positionPen.params_.posY = 3;
     positionPen.params_.posZ = 4;
+    // A Position edit never re-decides the facing (wave plan S4, cell A4c):
+    // under this front ortho view the edited triangle would decide false.
+    positionPen.params_.flip = true;
+    positionPen.cachedVp.view = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+    positionPen.cachedVp.proj = positionPen.cachedVp.view;
     auto positionContext = new PreparedRecordContext(null,
         new RecordObserverHub()); positionContext.setResourceIdentity(7, 11);
     auto positionEffect = positionPen.prepareParamChanged(positionContext,
@@ -275,6 +280,7 @@ version(unittest) unittest {
     assert(positionPen.vertices_[1] == Vec3(2,3,4) &&
         positionPen.previewMesh.vertices == positionPen.vertices_ &&
         positionContext.installTraceForTest() == [7,2,8]);
+    assert(positionPen.params_.flip, "a prepared Position edit re-decided flip");
 
     auto stalePen = new PenTool(() => &mesh, &sceneGpu, LitShader.init);
     stalePen.state = PenState.Drawing; stalePen.vertices_ = [Vec3(1,1,1)];
