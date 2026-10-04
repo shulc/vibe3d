@@ -50,13 +50,19 @@ int[2] worldPixel(Vec3 w) {
 
 /// One LMB click per world point (y is irrelevant from the top view).
 void clickWorld(Vec3[] points...) {
+    int[2][] pixels;
+    foreach (w; points) pixels ~= worldPixel(w);
+    clickPixels(pixels);
+}
+
+/// One LMB click per window pixel.
+void clickPixels(int[2][] pixels...) {
     auto cam = fetchCamera();
     string log = format(`{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,`
         ~ `"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n" ~ kPaceLine,
         cam.vpX, cam.vpY, cam.width, cam.height);
     double t = 50;
-    foreach (w; points) {
-        auto p = worldPixel(w);
+    foreach (p; pixels) {
         log ~= format(`{"t":%.3f,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,`
             ~ `"yrel":0,"state":0,"mod":0}` ~ "\n", t, p[0], p[1]);
         log ~= format(`{"t":%.3f,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,`

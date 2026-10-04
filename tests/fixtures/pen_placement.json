@@ -64,5 +64,32 @@
    "not_scored": "the dragged point's x/z depend on the pointer transport and the zoom; only its y is the law",
    "rivals": {"previous_point": 0.2, "last_or_current_before_drag": 0.8, "focus_plane": 1.0}
   }
+ },
+ "quantum": {
+  "description": "Placement quantum (cells B4a, B4b, B4c, KC_110, KC_622): every clicked point's two in-plane channels are rounded to the view's grid sub-step q = one pixel of world rounded UP on the 1/2/5 ladder; the plane-normal channel is not rounded. Supersedes rig.grid_quantum 0.01 (the earlier cells lie on 0.01 multiples by their pixels, not by the law).",
+  "provenance": {
+   "schema": 1,
+   "source": "live-capture",
+   "reference": "ref-editor@11.2v3",
+   "method": "gui-gesture",
+   "captured_utc": "2026-10-04",
+   "task": "9352 (B4a/b/c), 9353 (KC_110 = scene_radius_110_d0.363636, KC_622 = mirror_gap_click_x0.004)",
+   "notes": "GUI worker per cell (fresh boot), new empty foreground mesh, top orthographic view unless stated, focus plane y 1.0, real pointer clicks; mesh readback. px_per_m is the reference view's pixels per metre; q_lower is the ladder rung below q, so (q_lower, q] is the bracket a pixel size must sit in for q to be its sub-step."
+  },
+  "cells": {
+   "B4a": {"px_per_m": 439.53, "q": 0.005, "q_lower": 0.002,
+           "points_xz": [[0.305, 0.2], [0.365, 0.255], [0.46, 0.32]],
+           "raw_click_xz": [[0.30662, 0.20249], [0.36577, 0.25709], [0.45905, 0.3208]]},
+   "B4b": {"px_per_m": 32.0, "q": 0.05, "q_lower": 0.02,
+           "points_xz": [[0.4, 0.3], [0.9, 1.15], [1.65, 1.8]],
+           "raw_click_xz": [[0.41375, 0.28125], [0.91375, 1.125], [1.6325, 1.8125]]},
+   "KC_110": {"px_per_m": 109.88, "q": 0.01, "q_lower": 0.005,
+              "points_xz": [[-2.41, -1.8], [1.47, 1.93]]},
+   "KC_622": {"px_per_m": 621.6, "q": 0.002, "q_lower": 0.001,
+              "points_xz": [[0.588, -0.292], [0.588, 0.352]]},
+   "B4c": {"projection": "perspective", "q": 0.005,
+           "points_xz": [[0.425, 0.21], [0.765, 0.435], [-0.345, -0.305]],
+           "not_scored": "perspective: the reference's pixel size is 0.8 of a real pixel at the focus, so a fixture value is not reachable exactly; scored as lattice membership under the view's own sub-step"}
+  }
  }
 }
