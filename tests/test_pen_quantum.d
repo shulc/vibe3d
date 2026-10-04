@@ -219,5 +219,5 @@ unittest {
         assert(n == 6, format("B4c population: %d channels, expected 6", n));
     }
 
-    assert(fails.length == 0, "\n" ~ fails.join("\n"));
+    assert(fails.length == 0, fails.join("\n"));
 }
