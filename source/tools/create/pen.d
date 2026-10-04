@@ -299,7 +299,7 @@ version(unittest) unittest {
     // install. Strip [0,1,2,3] → quad [0,2,3,1].
     auto quadPen = new PenTool(() => &mesh, &sceneGpu, LitShader.init);
     quadPen.state = PenState.Drawing;
-    quadPen.frame.toWorld = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+    quadPen.frame.toWorld = [1,0,0,0, 0,1,0,0, 0,0,1,0, 10,20,30,1];
     quadPen.vertices_ = [Vec3(0,0,0), Vec3(0,1,0), Vec3(1,0,0), Vec3(1,1,0)];
     quadPen.params_.makeQuads = true;     // the panel writes before the hook
     auto quadImage = quadPen.buildPreparedParamImage("makeQuads");
@@ -334,6 +334,38 @@ version(unittest) unittest {
     hookPen.params_.makeQuads = true; hookPen.onParamChanged("makeQuads");
     assert(hookPen.previewMesh.faces == [[0u, 2, 3, 1]],
         "legacy makeQuads hook did not rebuild the preview");
+    assert(hookPen.previewMesh.vertices[0] == Vec3(10,20,30));
+    assert(quadImage.nextPreview.vertices == hookPen.previewMesh.vertices,
+        "prepared preview vertices differ from the legacy hook's (toWorld)");
+
+    // A tool drop commits through the prepared candidate with the image's
+    // params: flip reverses the winding, makeQuads lays out the strip quad.
+    uint[] dropFace(Vec3[] points, bool flip, bool quads, Vec3[] existing) {
+        auto layer = new Layer; GpuMesh gpu;
+        foreach (v; existing) layer.meshRef().addVertex(v);
+        auto pen = new PenTool(() => &layer.meshRef(), &gpu, LitShader.init);
+        pen.state = PenState.Drawing; pen.vertices_ = points;
+        pen.params_.flip = flip; pen.params_.makeQuads = quads;
+        pen.frame.toWorld = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+        auto history = new CommandHistory(); auto view = new View(0,0,1,1);
+        pen.setGestureBindings(history, () => new MeshSessionEdit(
+            &layer.meshRef(), view, EditMode.Vertices, "test.pen", "Pen Polygon"));
+        auto context = new PreparedRecordContext(history,
+            new RecordObserverHub()); context.setResourceIdentity(7,11);
+        auto effect = pen.prepareDeactivate(context, layer,
+            GpuUploadOwner.fakeForTest(&gpu), GpuUploadOwner.fakeForTest(&gpu),
+            GpuUploadOwner.fakeForTest(pen.preparedPreviewGpu()),
+            GpuResourceOwner.fakeForTest(pen.preparedPreviewGpu()),
+            new BoxHandlerBatchResourceOwner(pen.vertHandlers, 7, 11), null);
+        assert(effect.historyAccepted && context.validate(), "drop refused");
+        context.install();
+        assert(layer.meshRef().faces.length == 1, "drop did not commit one face");
+        return layer.meshRef().faces[0].dup;
+    }
+    assert(dropFace([Vec3(0,0,0), Vec3(1,0,0), Vec3(0,1,0)], true, false,
+        [Vec3(5,5,5)]) == [3u, 2, 1], "drop ignored the image's flip");
+    assert(dropFace(quadPen.vertices_.dup, false, true, null) == [0u, 2, 3, 1],
+        "drop ignored the image's makeQuads");
 }
 
 // ---------------------------------------------------------------------------
@@ -1064,11 +1096,9 @@ public:
 
         immutable float[16] identity = identityMatrix;
 
-        // Filled face preview (shaded). Visible whenever the in-progress
-        // sequence has enough vertices to form at least one face — ≥3 in
-        // default polygon mode, ≥4 for the first quad in Make Quads. Faces
-        // are rebuilt into previewMesh by uploadPreview.
-        if (plan.drawFaces && vertices_.length >= minCommitVerts()) {
+        // Filled face preview (shaded). The builder emits faces only once the
+        // stroke reaches its face minimum, so below it this pass draws nothing.
+        if (plan.drawFaces) {
             litShader.useProgram(identity, vp);
             litShader.applyPreviewPlan(plan);
             previewGpu.drawFaces(litShader, previewFacePass(plan));
@@ -1332,7 +1362,7 @@ private:
         foreach (i, ref h; vertHandlers) h.pos = toWorldP(vertices_[i]);
     }
 
-    // Minimum vertex count for Enter and for the preview. Default polygon
+    // Minimum vertex count for Enter. Default polygon
     // mode needs ≥3 (a triangle); Make Quads needs ≥4 (one full quad in the
     // strip; the first two anchor verts alone don't yet form a face). Tool
     // drop uses minDropCommitVerts() below.

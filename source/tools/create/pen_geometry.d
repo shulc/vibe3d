@@ -12,19 +12,25 @@ import mesh : Mesh;
 import tools.create.create_common : transformPoint;
 
 /// The pen tool's wire schema (panel / `tool.attr` values). Compared with
-/// `memcmp` by the prepared images, so it must stay plain data.
+/// `memcmp` by the prepared images, so it must stay plain data: 4-byte fields
+/// first, then `bool`s, so no interior padding exists (wave plan §7).
 struct PenParams {
     int   type         = 0;        // 0 = polygons (the only type so far)
-    bool  flip         = false;    // reverse the winding on commit
     // Per-gesture point-edit proxies: currentPoint = -1 means "no vertex
     // selected"; posX/Y/Z mirror vertices_[currentPoint] and are written back
     // through onParamChanged.
     int   currentPoint = -1;
     float posX = 0.0f, posY = 0.0f, posZ = 0.0f;
+    bool  flip         = false;    // reverse the winding on commit
     // Make Quads: after two anchor clicks every further pair of points closes
     // one quad of a strip, laid out [top0, bot0, top1, bot1, ...].
     bool  makeQuads    = false;
 }
+static assert(PenParams.sizeof == () {
+    size_t sum;
+    static foreach (T; typeof(PenParams.tupleof)) sum += T.sizeof;
+    return (sum + 3) / 4 * 4;
+}(), "PenParams has interior padding that sameValueBytes would compare");
 
 enum PenBuildPurpose : ubyte { Preview, Commit }
 
@@ -57,6 +63,9 @@ size_t penFaceMinimum(bool quads) nothrow @nogc { return quads ? 4 : 3; }
 /// keeps) while a Preview shows the open polyline as edges. Flip reverses the
 /// winding on Commit only: the preview stays un-flipped so it is never
 /// back-face culled away (transitional until the tool computes flip).
+///
+/// Precondition: a makeQuads Commit below 4 points yields ONE face of all
+/// points, not a quad; callers keep it out by gating on `minDropCommitVerts`.
 uint appendPenGeometry(ref Mesh dst, in PenStroke s, PenBuildPurpose purpose) {
     const uint base = cast(uint)dst.vertices.length;
     const uint n = cast(uint)s.points.length;

@@ -20,7 +20,8 @@ static assert([__traits(allMembers, PenBuildPurpose)] == ["Preview", "Commit"]);
 static assert([__traits(allMembers, PreparedPenParamKind)] ==
     ["None", "Noop", "CurrentPoint", "Position", "Preview"]);
 static assert([__traits(allMembers, PenParams)] ==
-    ["type", "flip", "currentPoint", "posX", "posY", "posZ", "makeQuads"]);
+    ["type", "currentPoint", "posX", "posY", "posZ", "flip", "makeQuads"]);
+static assert(PenParams.sizeof == 24);
 
 private enum float[16] kIdentity = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
 // Column-major translation by (10, 20, 30) — transformPoint's layout.
