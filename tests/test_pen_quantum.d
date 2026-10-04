@@ -11,14 +11,15 @@
 // below q/2, so the quantised channels must equal the captured ones to 1e-4.
 // The 110 and 622 px/m cells separate the sub-step from grid/20; the sweep at
 // 440 px/m (eight arbitrary pixels, at least one ODD multiple of q) separates
-// q from 2q. The perspective cell is lattice membership under OUR q only: a
+// q from 2q, and a point dragged to an arbitrary pixel there must land on the
+// same lattice. The perspective cell is lattice membership under OUR q only: a
 // perspective pixel size is 0.8 of a real pixel at the focus, so half a real
 // pixel may exceed q/2 there.
 //
 // The stroke is read live (`posX/posY/posZ` of the current point after every
 // click), so no commit, ring or facing rule takes part.
 
-import drag_helpers : Vec3, Viewport, fetchCamera, pixelRay,
+import drag_helpers : Vec3, Viewport, buildDragLog, fetchCamera, pixelRay, playAndWait,
     viewportFromCameraMatrices;
 import http_client : getJson, postJson;
 import http_command_helpers : commandBody;
@@ -140,6 +141,36 @@ unittest {
                             bad.length, q, bad);
         if (odd == 0)
             fails ~= format("sweep: no channel is an odd multiple of q %s", q);
+    }
+
+    // Drag at 440 px/m: a placed point dragged to an arbitrary pixel lands on
+    // the lattice too (drag resolves through the same rounding as a click);
+    // at least one channel is an ODD multiple of q (q, not 2q).
+    {
+        auto c = cells["B4a"];
+        const q = num(c["q"]);
+        rigOrtho(num(c["px_per_m"]), 0.07, 0.0);
+        auto cam = fetchCamera();
+        const int cx = cam.vpX + cam.width / 2, cy = cam.vpY + cam.height / 2;
+        clickRead([cx, cy]);
+        playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                                 cx, cy, cx + 113, cy - 77));
+        const got = [penAttrValue("posX"), penAttrValue("posY"), penAttrValue("posZ")];
+        penCommand("tool.set pen off");
+        int n, odd;
+        double[] bad;
+        foreach (v; [got[0], got[2]]) {
+            ++n;
+            if (!onLattice(v, q)) bad ~= v;
+            else if ((cast(long)round(v / q)) % 2 != 0) ++odd;
+        }
+        assert(n == 2, format("drag population: %d channels, expected 2", n));
+        if (bad.length)
+            fails ~= format("drag: dragged point (%.6f, %.6f) has %d channel(s) "
+                ~ "off the q %s lattice", got[0], got[2], bad.length, q);
+        else if (odd == 0)
+            fails ~= format("drag: dragged point (%.6f, %.6f) has no odd multiple "
+                ~ "of q %s", got[0], got[2], q);
     }
 
     // Side views (ours, same law): under Right the plane normal is local x,
