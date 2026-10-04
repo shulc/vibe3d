@@ -1,0 +1,1144 @@
+{
+ "schema": 1,
+ "name": "pen_facing",
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "self-drive",
+  "captured_utc": "2026-10-04",
+  "task": "9350 (pen parity wave, capture slice K-A)",
+  "harness": "live GUI editor on an isolated display; every case = fresh boot + new empty foreground mesh; perspective cases add a 64x32 sphere r=1 at (0,1,0) in the background layer; clicks are real pointer input, the stroke is ended by the drop-tool key, geometry is read back from the mesh after the drop",
+  "notes": "Positions are mesh READBACK, never the requested pixels. Top orthographic rig: clicks land on the plane y = 1.0 (camera focus); 440 px per metre. Face rings are vertex indices; vertices are numbered in click order."
+ },
+ "law": {
+  "facing_decision": "The tool's flip flag is computed ONCE, at the click that adds the third point, from the triangle (p0, p1, p2): flip = 1 when that triangle, wound in click order, faces away from the viewer, where 'away' is measured against the view direction FROM THE EYE TO p2 (perspective: the per-point eye ray, not the camera forward axis). It is not recomputed when a 4th+ point is added, when a point is dragged, when a position is typed, or when the last point is undone; a user write to the flag sticks. A collinear prefix leaves the flag at 0.",
+  "ring_n3": "[0,1,2]; with flip: [0,2,1] (reversal keeps the first vertex)",
+  "ring_n4plus": "Let N(i) = normalize(cross(v[i+1]-v[i], v[i-1]-v[i])). If dot(N(0),N(1)) >= 0: the list is rotated left by one ([1,2,...,n-1,0]); then, while the first corner of the rotated list is degenerate (zero normal), it is rotated right by one; then reversed-keeping-first iff flip. If dot(N(0),N(1)) < 0: the reverse decision is INVERTED (reverse iff NOT flip); for n = 4 the list is not rotated; for n >= 5 it is rotated to start at the first k in [2, n-3] with dot(N(0),N(k)) > 0 (unrotated if none).",
+  "consequences": "the stored polygon need not face the camera: A2-dart, A4a-retime, A4c-typed, A4b-override all end facing AWAY"
+ },
+ "tolerance": 1e-05,
+ "rejected_candidates": {
+  "R-rot2 ring[i]=f[(n-3-i) mod n]": "fits n=3,4 only; n=5 gave [1,0,4,3,2], n=6 [1,0,5,4,3,2]",
+  "R-keep0": "n=4 gave [1,0,3,2]",
+  "R-rev": "every n",
+  "unflipped ring [0..n-1] for n>=4": "convex n=4,5 counter-clockwise gave [1,2,3,0] / [1,2,3,4,0]",
+  "T-add-live (facing re-checked at every add)": "A4e: flag stays 1 after point 4; A4e-mirror ring [0,3,2,1] (T-add-live predicted [1,0,3,2])",
+  "T-live (drag)": "A4a ring [0,2,1]",
+  "T-live-typed": "A4c ring [0,1,2]",
+  "N-newell": "A2-dart ring [0,1,2,3]",
+  "F-forward": "A3c ring [0,1,2], A3c-rev ring [0,2,1]",
+  "U-recomputed": "A4b ring [1,2,3,0] unflipped"
+ },
+ "falsifiers": [
+  "a 5-gon whose corners 0 and 1 disagree stored as [1,...] instead of [2,3,4,0,1]",
+  "a convex quad stored starting at vertex 0",
+  "the flag changing after the 3rd click without a user write"
+ ],
+ "cases": [
+  {
+   "case": "A1-n3-cw",
+   "view": "top",
+   "clicks_xz_on_plane_y1": [
+    [
+     0.7409,
+     0.1045
+    ],
+    [
+     -0.2364,
+     0.4591
+    ],
+    [
+     -0.0545,
+     -0.5636
+    ]
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.74,
+      1.0,
+      0.105
+     ],
+     [
+      -0.235,
+      1.0,
+      0.46
+     ],
+     [
+      -0.055,
+      1.0,
+      -0.565
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      2,
+      1
+     ]
+    ],
+    "face_normals": [
+     [
+      0.0,
+      1.0,
+      0.0
+     ]
+    ]
+   },
+   "flip_attr_after_stroke": 1
+  },
+  {
+   "case": "A1-n4-cw",
+   "view": "top",
+   "clicks_xz_on_plane_y1": [
+    [
+     0.7409,
+     0.1045
+    ],
+    [
+     0.0455,
+     0.5909
+    ],
+    [
+     -0.4409,
+     -0.1045
+    ],
+    [
+     0.2545,
+     -0.5909
+    ]
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.74,
+      1.0,
+      0.105
+     ],
+     [
+      0.045,
+      1.0,
+      0.59
+     ],
+     [
+      -0.44,
+      1.0,
+      -0.105
+     ],
+     [
+      0.255,
+      1.0,
+      -0.59
+     ]
+    ],
+    "faces": [
+     [
+      1,
+      0,
+      3,
+      2
+     ]
+    ],
+    "face_normals": [
+     [
+      0.0,
+      1.0,
+      0.0
+     ]
+    ]
+   },
+   "flip_attr_after_stroke": 1
+  },
+  {
+   "case": "A1-n5-cw",
+   "view": "top",
+   "clicks_xz_on_plane_y1": [
+    [
+     0.7409,
+     0.1045
+    ],
+    [
+     0.2341,
+     0.5932
+    ],
+    [
+     -0.3886,
+     0.2636
+    ],
+    [
+     -0.2659,
+     -0.4318
+    ],
+    [
+     0.4318,
+     -0.5295
+    ]
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.74,
+      1.0,
+      0.105
+     ],
+     [
+      0.235,
+      1.0,
+      0.595
+     ],
+     [
+      -0.39,
+      1.0,
+      0.265
+     ],
+     [
+      -0.265,
+      1.0,
+      -0.43
+     ],
+     [
+      0.43,
+      1.0,
+      -0.53
+     ]
+    ],
+    "faces": [
+     [
+      1,
+      0,
+      4,
+      3,
+      2
+     ]
+    ],
+    "face_normals": [
+     [
+      0.0,
+      1.0,
+      0.0
+     ]
+    ]
+   },
+   "flip_attr_after_stroke": 1
+  },
+  {
+   "case": "A1-n6-cw",
+   "view": "top",
+   "clicks_xz_on_plane_y1": [
+    [
+     0.7409,
+     0.1045
+    ],
+    [
+     0.3545,
+     0.5636
+    ],
+    [
+     -0.2364,
+     0.4591
+    ],
+    [
+     -0.4409,
+     -0.1045
+    ],
+    [
+     -0.0545,
+     -0.5636
+    ],
+    [
+     0.5364,
+     -0.4591
+    ]
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.74,
+      1.0,
+      0.105
+     ],
+     [
+      0.355,
+      1.0,
+      0.565
+     ],
+     [
+      -0.235,
+      1.0,
+      0.46
+     ],
+     [
+      -0.44,
+      1.0,
+      -0.105
+     ],
+     [
+      -0.055,
+      1.0,
+      -0.565
+     ],
+     [
+      0.535,
+      1.0,
+      -0.46
+     ]
+    ],
+    "faces": [
+     [
+      1,
+      0,
+      5,
+      4,
+      3,
+      2
+     ]
+    ],
+    "face_normals": [
+     [
+      0.0,
+      1.0,
+      0.0
+     ]
+    ]
+   },
+   "flip_attr_after_stroke": 1
+  },
+  {
+   "case": "A1-n4-ccw",
+   "view": "top",
+   "clicks_xz_on_plane_y1": [
+    [
+     0.7409,
+     0.1045
+    ],
+    [
+     0.2545,
+     -0.5909
+    ],
+    [
+     -0.4409,
+     -0.1045
+    ],
+    [
+     0.0455,
+     0.5909
+    ]
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.74,
+      1.0,
+      0.105
+     ],
+     [
+      0.255,
+      1.0,
+      -0.59
+     ],
+     [
+      -0.44,
+      1.0,
+      -0.105
+     ],
+     [
+      0.045,
+      1.0,
+      0.59
+     ]
+    ],
+    "faces": [
+     [
+      1,
+      2,
+      3,
+      0
+     ]
+    ],
+    "face_normals": [
+     [
+      0.0,
+      1.0,
+      0.0
+     ]
+    ]
+   },
+   "flip_attr_after_stroke": 0
+  },
+  {
+   "case": "A1-n5-ccw",
+   "view": "top",
+   "clicks_xz_on_plane_y1": [
+    [
+     0.7409,
+     0.1045
+    ],
+    [
+     0.4318,
+     -0.5295
+    ],
+    [
+     -0.2659,
+     -0.4318
+    ],
+    [
+     -0.3886,
+     0.2636
+    ],
+    [
+     0.2341,
+     0.5932
+    ]
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.74,
+      1.0,
+      0.105
+     ],
+     [
+      0.43,
+      1.0,
+      -0.53
+     ],
+     [
+      -0.265,
+      1.0,
+      -0.43
+     ],
+     [
+      -0.39,
+      1.0,
+      0.265
+     ],
+     [
+      0.235,
+      1.0,
+      0.595
+     ]
+    ],
+    "faces": [
+     [
+      1,
+      2,
+      3,
+      4,
+      0
+     ]
+    ],
+    "face_normals": [
+     [
+      0.0,
+      1.0,
+      0.0
+     ]
+    ]
+   },
+   "flip_attr_after_stroke": 0
+  },
+  {
+   "case": "A1x-n5-reflex1",
+   "view": "top",
+   "clicks_xz_on_plane_y1": [
+    [
+     -0.5,
+     0.4
+    ],
+    [
+     0.0,
+     0.1
+    ],
+    [
+     0.5,
+     0.4
+    ],
+    [
+     0.4,
+     -0.4
+    ],
+    [
+     -0.4,
+     -0.4
+    ]
+   ],
+   "expected": {
+    "vertices": [
+     [
+      -0.5,
+      1.0,
+      0.4
+     ],
+     [
+      0.0,
+      1.0,
+      0.1
+     ],
+     [
+      0.5,
+      1.0,
+      0.4
+     ],
+     [
+      0.4,
+      1.0,
+      -0.4
+     ],
+     [
+      -0.4,
+      1.0,
+      -0.4
+     ]
+    ],
+    "faces": [
+     [
+      2,
+      3,
+      4,
+      0,
+      1
+     ]
+    ],
+    "face_normals": [
+     [
+      0.0,
+      1.0,
+      0.0
+     ]
+    ]
+   },
+   "flip_attr_after_stroke": 1
+  },
+  {
+   "case": "A1x-n4-collinear",
+   "view": "top",
+   "clicks_xz_on_plane_y1": [
+    [
+     -0.3,
+     0.2
+    ],
+    [
+     0.0,
+     0.2
+    ],
+    [
+     0.3,
+     0.2
+    ],
+    [
+     0.0,
+     -0.4
+    ]
+   ],
+   "expected": {
+    "vertices": [
+     [
+      -0.3,
+      1.0,
+      0.2
+     ],
+     [
+      0.0,
+      1.0,
+      0.2
+     ],
+     [
+      0.3,
+      1.0,
+      0.2
+     ],
+     [
+      0.0,
+      1.0,
+      -0.4
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      1,
+      2,
+      3
+     ]
+    ],
+    "face_normals": [
+     [
+      0.0,
+      1.0,
+      0.0
+     ]
+    ]
+   },
+   "flip_attr_after_stroke": 0
+  },
+  {
+   "case": "A4e-flip",
+   "view": "top",
+   "clicks_xz_on_plane_y1": [
+    [
+     -0.4,
+     0.5
+    ],
+    [
+     0.1,
+     0.1
+    ],
+    [
+     0.6,
+     0.5
+    ],
+    [
+     0.1,
+     -0.5
+    ]
+   ],
+   "expected": {
+    "vertices": [
+     [
+      -0.4,
+      1.0,
+      0.5
+     ],
+     [
+      0.1,
+      1.0,
+      0.1
+     ],
+     [
+      0.6,
+      1.0,
+      0.5
+     ],
+     [
+      0.1,
+      1.0,
+      -0.5
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      1,
+      2,
+      3
+     ]
+    ],
+    "face_normals": [
+     [
+      0.0,
+      1.0,
+      0.0
+     ]
+    ]
+   },
+   "flip_attr_after_point3": 1,
+   "flip_attr_after_point4": 1
+  },
+  {
+   "case": "A4e-mirror",
+   "view": "top",
+   "clicks_xz_on_plane_y1": [
+    [
+     -0.4,
+     -0.5
+    ],
+    [
+     0.1,
+     -0.1
+    ],
+    [
+     0.6,
+     -0.5
+    ],
+    [
+     0.1,
+     0.5
+    ]
+   ],
+   "expected": {
+    "vertices": [
+     [
+      -0.4,
+      1.0,
+      -0.5
+     ],
+     [
+      0.1,
+      1.0,
+      -0.1
+     ],
+     [
+      0.6,
+      1.0,
+      -0.5
+     ],
+     [
+      0.1,
+      1.0,
+      0.5
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      3,
+      2,
+      1
+     ]
+    ],
+    "face_normals": [
+     [
+      0.0,
+      1.0,
+      0.0
+     ]
+    ]
+   },
+   "flip_attr_after_point3": 0,
+   "flip_attr_after_point4": 0
+  },
+  {
+   "case": "A2-dart",
+   "view": "top",
+   "clicks_xz_on_plane_y1": [
+    [
+     0.0,
+     -0.2
+    ],
+    [
+     0.5,
+     -0.6
+    ],
+    [
+     0.0,
+     0.6
+    ],
+    [
+     -0.5,
+     -0.6
+    ]
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.0,
+      1.0,
+      -0.2
+     ],
+     [
+      0.5,
+      1.0,
+      -0.6
+     ],
+     [
+      0.0,
+      1.0,
+      0.6
+     ],
+     [
+      -0.5,
+      1.0,
+      -0.6
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      1,
+      2,
+      3
+     ]
+    ],
+    "face_normals": [
+     [
+      0.0,
+      -1.0,
+      0.0
+     ]
+    ]
+   },
+   "note": "the stored polygon faces AWAY from the camera"
+  },
+  {
+   "case": "A4a-retime",
+   "view": "top",
+   "clicks_xz_on_plane_y1": [
+    [
+     0.25,
+     -0.25
+    ],
+    [
+     0.75,
+     -0.25
+    ],
+    [
+     0.75,
+     0.25
+    ]
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.25,
+      1.0,
+      -0.25
+     ],
+     [
+      0.75,
+      1.0,
+      -0.25
+     ],
+     [
+      0.75,
+      1.0,
+      -0.75
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      2,
+      1
+     ]
+    ],
+    "face_normals": [
+     [
+      0.0,
+      -1.0,
+      0.0
+     ]
+    ]
+   },
+   "gesture": "after 3 clicks, point 2 dragged from (0.75,0.25) to (0.75,-0.75): the triangle turns to face the camera geometrically",
+   "flip_attr_before_and_after_drag": 1
+  },
+  {
+   "case": "A4c-typed",
+   "view": "top",
+   "clicks_xz_on_plane_y1": [
+    [
+     0.25,
+     0.25
+    ],
+    [
+     0.75,
+     0.25
+    ],
+    [
+     0.75,
+     -0.25
+    ]
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.25,
+      1.0,
+      0.25
+     ],
+     [
+      0.75,
+      1.0,
+      0.25
+     ],
+     [
+      0.75,
+      1.0,
+      0.75
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      1,
+      2
+     ]
+    ],
+    "face_normals": [
+     [
+      0.0,
+      -1.0,
+      0.0
+     ]
+    ]
+   },
+   "gesture": "after 3 clicks, the Position Z field of the current point (index 2) typed to 0.75",
+   "flip_attr_before_and_after_edit": 0
+  },
+  {
+   "case": "A4d-ctrlz",
+   "view": "top",
+   "clicks_xz_on_plane_y1": [
+    [
+     -0.4,
+     0.5
+    ],
+    [
+     0.1,
+     0.1
+    ],
+    [
+     0.6,
+     0.5
+    ],
+    [
+     0.1,
+     -0.5
+    ]
+   ],
+   "expected": {
+    "vertices": [
+     [
+      -0.4,
+      1.0,
+      0.5
+     ],
+     [
+      0.1,
+      1.0,
+      0.1
+     ],
+     [
+      0.6,
+      1.0,
+      0.5
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      2,
+      1
+     ]
+    ],
+    "face_normals": [
+     [
+      0.0,
+      1.0,
+      0.0
+     ]
+    ]
+   },
+   "gesture": "4 clicks, then Ctrl+Z inside the stroke removes the last point",
+   "flip_attr_after_point4": 1,
+   "flip_attr_after_undo": 1
+  },
+  {
+   "case": "A4b-override",
+   "view": "top",
+   "clicks_xz_on_plane_y1": [
+    [
+     0.25,
+     -0.25
+    ],
+    [
+     0.75,
+     -0.25
+    ],
+    [
+     0.75,
+     0.25
+    ],
+    [
+     0.25,
+     0.25
+    ]
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.25,
+      1.0,
+      -0.25
+     ],
+     [
+      0.75,
+      1.0,
+      -0.25
+     ],
+     [
+      0.75,
+      1.0,
+      0.25
+     ],
+     [
+      0.25,
+      1.0,
+      0.25
+     ]
+    ],
+    "faces": [
+     [
+      1,
+      2,
+      3,
+      0
+     ]
+    ],
+    "face_normals": [
+     [
+      0.0,
+      -1.0,
+      0.0
+     ]
+    ]
+   },
+   "gesture": "3 clicks (flip set to 1 by the tool), the Flip Polygon checkbox clicked off, 4th click",
+   "flip_attr_after_override": 0,
+   "flip_attr_after_point4": 0
+  },
+  {
+   "case": "A3c-persp-clicked",
+   "view": "perspective",
+   "expected": {
+    "vertices": [
+     [
+      -0.819475,
+      1.567701,
+      0.0
+     ],
+     [
+      -0.844009,
+      1.454287,
+      0.273152
+     ],
+     [
+      -0.852154,
+      1.436215,
+      -0.27715
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      1,
+      2
+     ]
+    ],
+    "face_normals": [
+     [
+      0.973781,
+      -0.227383,
+      -0.006946
+     ]
+    ]
+   },
+   "camera": {
+    "eye": [
+     0.07,
+     3.857487,
+     0.0
+    ],
+    "forward": [
+     0,
+     -1,
+     0
+    ],
+    "focus": [
+     0.07,
+     1.0,
+     0.0
+    ]
+   },
+   "note": "points are background-surface hits; the click-order triangle normal points AWAY from the camera forward axis but TOWARD the eye (or the reverse for A3c-rev)"
+  },
+  {
+   "case": "A3c-rev",
+   "view": "perspective",
+   "expected": {
+    "vertices": [
+     [
+      -0.819475,
+      1.567701,
+      0.0
+     ],
+     [
+      -0.844009,
+      1.454287,
+      -0.273152
+     ],
+     [
+      -0.852154,
+      1.436215,
+      0.27715
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      2,
+      1
+     ]
+    ],
+    "face_normals": [
+     [
+      0.97378,
+      -0.227384,
+      0.006946
+     ]
+    ]
+   },
+   "camera": {
+    "eye": [
+     0.07,
+     3.857487,
+     0.0
+    ],
+    "forward": [
+     0,
+     -1,
+     0
+    ],
+    "focus": [
+     0.07,
+     1.0,
+     0.0
+    ]
+   },
+   "note": "points are background-surface hits; the click-order triangle normal points AWAY from the camera forward axis but TOWARD the eye (or the reverse for A3c-rev)"
+  }
+ ],
+ "placement_rings": {
+  "note": "stored face rings of the cells B0_append / B1_insert / B2_drag of tests/fixtures/pen_placement.json (same capture batch, task 9351; scripts, clicks and vertices are there)",
+  "cells": {
+   "B0_append": [
+    1,
+    2,
+    3,
+    0
+   ],
+   "B1_insert": [
+    0,
+    3,
+    2,
+    1
+   ],
+   "B2_drag": [
+    0,
+    1,
+    2
+   ]
+  }
+ },
+ "quads_decision": {
+  "case": "B5-quads-flag",
+  "note": "Make Quads on before the first click; clicks (0.25,-0.25) (0.75,-0.25) (0.75,0.25) (0.25,0.25) (0.25,0.75); the flip attr read after the 5th click = 1. The decision is taken at the 3rd click from (p0, p1, click) and never re-taken, so this is also the flag after the 3rd click.",
+  "view": "top",
+  "clicks_xz_on_plane_y1": [
+   [
+    0.25,
+    -0.25
+   ],
+   [
+    0.75,
+    -0.25
+   ],
+   [
+    0.75,
+    0.25
+   ]
+  ],
+  "flip_attr_after_stroke": 1
+ }
+}
