@@ -13,7 +13,7 @@
 // unittest block holds the first-click plane rule (fixture key `plane_rule`).
 
 import drag_helpers : Vec3, fetchCamera, fetchSnapLast, viewportFromCameraMatrices;
-import http_client : getJson;
+import http_client : getJson, postJson;
 import pen_rig_helpers;
 import std.array : join;
 import std.format : format;
@@ -499,7 +499,9 @@ unittest {
         penCommand("tool.set pen on");
         clickWorld(v3(w[0]));
         const p0 = livePoint()[1];
-        penAttr("posY", 0.1234);
+        // Typed through the UI door (the panel's typed field).
+        auto tr = postJson("/api/command?origin=ui", "tool.attr pen posY 0.1234");
+        assert(tr["status"].str == "ok", "Qdepth: typing posY failed: " ~ tr.toString);
         const typed = livePoint()[1];
         clickWorld(v3(w[1]));
         const p1 = livePoint()[1];
