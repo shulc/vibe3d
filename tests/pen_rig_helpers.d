@@ -12,21 +12,40 @@ import http_client : getJson, postJson;
 import http_command_helpers : commandBody;
 import std.format : format;
 import std.json : JSONType, JSONValue;
-import std.math : round;
+import std.math : PI, round, tan;
 
 void penCommand(string line) {
     auto r = postJson("/api/command", line);
     assert(r["status"].str == "ok", "command `" ~ line ~ "` failed: " ~ r.toString);
 }
 
-/// Empty scene, an axis (ortho) view, camera focus `focus`, pen active.
-void penRigEmpty(Vec3 focus, string view = "Top", double distance = 4.0) {
+/// Empty scene, no history, the automatic work plane, view preset `view`.
+void penSceneEmpty(string view) {
     auto r = postJson("/api/command", commandBody("scene.reset", `{"empty":true}`));
     assert(r["status"].str == "ok", "empty reset failed: " ~ r.toString);
     penCommand("history.clear");
     penCommand("workplane.reset");
     penCommand("viewport.view " ~ view);
-    r = postJson("/api/camera", format(
+}
+
+/// Camera focus `focus` (world) at OUR view scale of `ppm` pixels per metre
+/// (viewgrid.d `viewWorldPerPixel`: ortho 1 / focalPx, perspective
+/// 0.8 * distance / focalPx; field of view pi/4); a perspective view also
+/// takes `azimuth` / `elevation`.
+void penCameraAt(Vec3 focus, double ppm, double azimuth = 0, double elevation = 1.3) {
+    const persp = getJson("/api/camera")["projKind"].str == "Perspective";
+    const dist = fetchCamera().height / ((persp ? 1.6 : 2.0) * ppm * tan(PI / 8));
+    string body = format(`{"focus":{"x":%.9f,"y":%.9f,"z":%.9f},"distance":%.9f`,
+                         focus.x, focus.y, focus.z, dist);
+    if (persp) body ~= format(`,"azimuth":%.9f,"elevation":%.9f`, azimuth, elevation);
+    auto r = postJson("/api/camera", body ~ "}");
+    assert(r["status"].str == "ok", "camera setup failed: " ~ r.toString);
+}
+
+/// Empty scene, an axis (ortho) view, camera focus `focus`, pen active.
+void penRigEmpty(Vec3 focus, string view = "Top", double distance = 4.0) {
+    penSceneEmpty(view);
+    auto r = postJson("/api/camera", format(
         `{"focus":{"x":%.9f,"y":%.9f,"z":%.9f},"distance":%.9f}`,
         focus.x, focus.y, focus.z, distance));
     assert(r["status"].str == "ok", "camera setup failed: " ~ r.toString);

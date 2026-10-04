@@ -91,5 +91,254 @@
            "points_xz": [[0.425, 0.21], [0.765, 0.435], [-0.345, -0.305]],
            "not_scored": "perspective: the reference's pixel size is 0.8 of a real pixel at the focus, so a fixture value is not reachable exactly; scored as lattice membership under the view's own sub-step"}
   }
+ },
+ "plane_rule": {
+  "description": "First-click plane offset and the plane-normal channel's quantum (cells_k_b2 / cells_k_b3 / cells_k_b4).",
+  "provenance": {
+   "schema": 1,
+   "source": "live-capture",
+   "reference": "ref-editor@11.2v3",
+   "method": "gui-gesture",
+   "captured_utc": "2026-10-05",
+   "task": "9352 (cells_k_b2), 9375 (cells_k_b3), 9381 (cells_k_b4)",
+   "notes": "GUI worker per cell (fresh boot), new empty foreground mesh, no script call while a stroke was live; mesh read after the stroke ended. Sweep rows read the view's work plane back with no clicks. px_per_m is the reference view's pixels per metre; grid / q are its grid size and sub-step at that scale; axis is the most-facing plane-local axis (0 x, 1 y, 2 z); zone marks the rows a single rounding of the focus to 10 x grid gets wrong (the sub-step rounding moves them onto a tie first)."
+  },
+  "law": "first-click plane: perpendicular to the most-facing plane-local axis k, through the view focus's plane-local coordinate on k. Ortho: exact. Perspective: every focus channel rounded to the view's sub-step q, then channel k rounded to 10 x the view's grid size; rounding half away from zero. The click's anchor is rounded to q on every channel (a typed value is not).",
+  "cells_k_b2": {
+   "B3_pinned_ortho": {
+    "setup": "pinned origin (0.5, 0.2, -0.3), rotation (30, 0, 40) deg, basis Rz*Rx*Ry; top ortho view (turns with the plane) at 440 px/m; focus written while pinned as plane-local (2, 1, 0); clicks at the expected points, then current 0 and position typed (0.1, 0.2, 0.3)",
+    "first_click_local": [2.245, 1.0, 0.21],
+    "expected": {
+     "vertices": [
+      [0.561688, 0.282055, 0.059808],
+      [2.021977, 2.291045, 0.620022],
+      [1.497237, 1.850736, 0.620022]
+     ],
+     "faces": [
+      [0, 2, 1]
+     ],
+     "current_point_after": 0,
+     "current_point_position": [0.1, 0.2, 0.3]
+    }
+   },
+   "B3p_pinned_perspective": {
+    "setup": "perspective looking down, focus world (0.4, 1, 0.1) written BEFORE pinning origin (0.5, 0.2, -0.3) rotation (60, 0, 0); most-facing local axis z; the focus's local z -0.493 rounds to 0",
+    "expected": {
+     "vertices": [
+      [0.75, 0.605, 0.401481],
+      [0.14, 0.26, -0.196077],
+      [0.436243, 0.427547, 0.094123]
+     ],
+     "faces": [
+      [0, 1, 2]
+     ],
+     "current_point_after": 2,
+     "current_point_position": [-0.063757, 0.455094, 0.0]
+    },
+    "expected_plane_local": [
+     [0.25, 0.81, 0.0],
+     [-0.36, 0.12, 0.0],
+     [-0.06376, 0.45509, 0.0]
+    ],
+    "note": "p2 was a press near the live stroke edge (another law); only its local z is scored"
+   }
+  },
+  "cells_k_b3": {
+   "B3xa_persp_focus_written_pinned": {
+    "setup": "perspective looking down at 440 px/m; pinned origin (0.5, 0.2, -0.3) rotation (60, 0, 0); THEN focus written as plane-local (0.4, 0.3, 0.5); most-facing local axis z",
+    "expected": {
+     "vertices": [
+      [1.25, -0.486025, 0.511769],
+      [0.64, -0.833525, -0.090119],
+      [1.425, -0.886025, -0.181051]
+     ],
+     "faces": [
+      [0, 2, 1]
+     ]
+    },
+    "focus_local": [0.4, 0.3, 0.5],
+    "plane_local_z": 1.0
+   },
+   "B3xb_ortho_focus_before_pin": {
+    "setup": "top ortho at 440 px/m, focus world (2, 1, 0) written BEFORE pinning origin (0.5, 0.2, -0.3) rotation (30, 0, 40); the view turns with the plane and reads the focus back as plane-local (2, 1, 0)",
+    "expected": {
+     "vertices": [
+      [1.730592, 2.226038, 0.381865],
+      [2.021977, 2.291045, 0.620022],
+      [1.497237, 1.850736, 0.620022]
+     ],
+     "faces": [
+      [0, 2, 1]
+     ]
+    },
+    "focus_local_read_back": [2.0, 1.0, 0.0],
+    "plane_local_y": 1.0
+   },
+   "B3xc_persp_axisY_focus_0p3": {
+    "setup": "perspective looking down at 440 px/m; pinned origin (0.5, 0.2, -0.3) rotation (20, 0, 0) (most-facing local axis y); focus written while pinned as local (0.4, 0.3, 0.1)",
+    "expected": {
+     "vertices": [
+      [1.255, 0.017019, 0.202736],
+      [0.68, 0.220521, -0.356382],
+      [1.34, 0.246173, -0.426859]
+     ],
+     "faces": [
+      [0, 2, 1]
+     ]
+    },
+    "focus_local": [0.4, 0.3, 0.1],
+    "plane_local_y": 0.0
+   },
+   "B3xc2_persp_axisY_focus_0p7": {
+    "setup": "as B3xc with the focus local (0.4, 0.7, 0.1)",
+    "expected": {
+     "vertices": [
+      [1.18, 1.054188, 0.276943],
+      [0.725, 1.216647, -0.169411],
+      [1.25, 1.237168, -0.225792]
+     ],
+     "faces": [
+      [0, 2, 1]
+     ]
+    },
+    "focus_local": [0.4, 0.7, 0.1],
+    "plane_local_y": 1.0
+   },
+   "B3xd_persp_unpinned_880": {
+    "setup": "unpinned perspective looking down at 880 px/m (grid 0.05, step 0.5), focus y 0.3",
+    "expected": {
+     "vertices": [
+      [0.202, 0.5, 0.114],
+      [-0.018, 0.5, -0.102],
+      [0.246, 0.5, -0.13]
+     ],
+     "faces": [
+      [0, 2, 1]
+     ]
+    },
+    "focus_y": 0.3,
+    "grid": 0.05,
+    "plane_y": 0.5
+   },
+   "Qdepth_normal_channel": {
+    "setup": "top ortho at 440 px/m, focus y 1.3333; click p0, type position y 0.1234 on current 0, click p1, p2",
+    "p0_after_click_y": 1.335,
+    "expected": {
+     "vertices": [
+      [0.305, 0.1234, 0.2],
+      [0.58, 0.125, 0.485],
+      [-0.105, 0.125, 0.485]
+     ],
+     "faces": [
+      [0, 2, 1]
+     ]
+    }
+   },
+   "plane_offset_sweep": {
+    "rows": [
+     {"projection": "ortho", "px_per_m": 440, "grid": 0.1, "q": 0.005, "axis": 1, "focus": [0.07, 0.3, 0.0], "plane": 0.3, "zone": false},
+     {"projection": "ortho", "px_per_m": 440, "grid": 0.1, "q": 0.005, "axis": 1, "focus": [0.07, 0.5, 0.0], "plane": 0.5, "zone": false},
+     {"projection": "ortho", "px_per_m": 440, "grid": 0.1, "q": 0.005, "axis": 1, "focus": [0.07, 0.7, 0.0], "plane": 0.7, "zone": false},
+     {"projection": "ortho", "px_per_m": 440, "grid": 0.1, "q": 0.005, "axis": 1, "focus": [0.07, 1.3333, 0.0], "plane": 1.3333, "zone": false},
+     {"projection": "ortho", "px_per_m": 440, "grid": 0.1, "q": 0.005, "axis": 1, "focus": [0.07, 1.6, 0.0], "plane": 1.6, "zone": false},
+     {"projection": "ortho", "px_per_m": 440, "grid": 0.1, "q": 0.005, "axis": 1, "focus": [0.07, -0.4, 0.0], "plane": -0.4, "zone": false},
+     {"projection": "ortho", "px_per_m": 440, "grid": 0.1, "q": 0.005, "axis": 1, "focus": [0.07, -0.6, 0.0], "plane": -0.6, "zone": false},
+     {"projection": "ortho", "px_per_m": 440, "grid": 0.1, "q": 0.005, "axis": 1, "focus": [0.07, 2.5, 0.0], "plane": 2.5, "zone": false},
+     {"projection": "perspective", "px_per_m": 440, "grid": 0.1, "q": 0.005, "axis": 1, "focus": [0.07, 0.3, 0.0], "plane": 0.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 440, "grid": 0.1, "q": 0.005, "axis": 1, "focus": [0.07, 0.5, 0.0], "plane": 1.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 440, "grid": 0.1, "q": 0.005, "axis": 1, "focus": [0.07, 0.7, 0.0], "plane": 1.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 440, "grid": 0.1, "q": 0.005, "axis": 1, "focus": [0.07, 1.3333, 0.0], "plane": 1.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 440, "grid": 0.1, "q": 0.005, "axis": 1, "focus": [0.07, 1.6, 0.0], "plane": 2.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 440, "grid": 0.1, "q": 0.005, "axis": 1, "focus": [0.07, -0.4, 0.0], "plane": 0.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 440, "grid": 0.1, "q": 0.005, "axis": 1, "focus": [0.07, -0.6, 0.0], "plane": -1.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 440, "grid": 0.1, "q": 0.005, "axis": 1, "focus": [0.07, 2.5, 0.0], "plane": 3.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 110, "grid": 0.5, "q": 0.01, "axis": 1, "focus": [0.07, 0.3, 0.0], "plane": 0.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 110, "grid": 0.5, "q": 0.01, "axis": 1, "focus": [0.07, 0.7, 0.0], "plane": 0.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 110, "grid": 0.5, "q": 0.01, "axis": 1, "focus": [0.07, 1.3333, 0.0], "plane": 0.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 110, "grid": 0.5, "q": 0.01, "axis": 1, "focus": [0.07, 2.5, 0.0], "plane": 5.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 110, "grid": 0.5, "q": 0.01, "axis": 1, "focus": [0.07, 4.0, 0.0], "plane": 5.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 110, "grid": 0.5, "q": 0.01, "axis": 1, "focus": [0.07, 7.4, 0.0], "plane": 5.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 110, "grid": 0.5, "q": 0.01, "axis": 1, "focus": [0.07, -3.0, 0.0], "plane": -5.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 880, "grid": 0.05, "q": 0.002, "axis": 1, "focus": [0.07, 0.3, 0.0], "plane": 0.5, "zone": false},
+     {"projection": "perspective", "px_per_m": 880, "grid": 0.05, "q": 0.002, "axis": 1, "focus": [0.07, 0.7, 0.0], "plane": 0.5, "zone": false},
+     {"projection": "perspective", "px_per_m": 880, "grid": 0.05, "q": 0.002, "axis": 1, "focus": [0.07, 1.3333, 0.0], "plane": 1.5, "zone": false},
+     {"projection": "perspective", "px_per_m": 880, "grid": 0.05, "q": 0.002, "axis": 1, "focus": [0.07, 2.5, 0.0], "plane": 2.5, "zone": false},
+     {"projection": "perspective", "px_per_m": 880, "grid": 0.05, "q": 0.002, "axis": 1, "focus": [0.07, 4.0, 0.0], "plane": 4.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 880, "grid": 0.05, "q": 0.002, "axis": 1, "focus": [0.07, 7.4, 0.0], "plane": 7.5, "zone": false},
+     {"projection": "perspective", "px_per_m": 880, "grid": 0.05, "q": 0.002, "axis": 1, "focus": [0.07, -3.0, 0.0], "plane": -3.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 40, "grid": 1.0, "q": 0.05, "axis": 1, "focus": [0.07, 0.3, 0.0], "plane": 0.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 40, "grid": 1.0, "q": 0.05, "axis": 1, "focus": [0.07, 0.7, 0.0], "plane": 0.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 40, "grid": 1.0, "q": 0.05, "axis": 1, "focus": [0.07, 1.3333, 0.0], "plane": 0.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 40, "grid": 1.0, "q": 0.05, "axis": 1, "focus": [0.07, 2.5, 0.0], "plane": 0.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 40, "grid": 1.0, "q": 0.05, "axis": 1, "focus": [0.07, 4.0, 0.0], "plane": 0.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 40, "grid": 1.0, "q": 0.05, "axis": 1, "focus": [0.07, 7.4, 0.0], "plane": 10.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 40, "grid": 1.0, "q": 0.05, "axis": 1, "focus": [0.07, -3.0, 0.0], "plane": 0.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 440, "grid": 0.1, "q": 0.005, "axis": 2, "focus": [0.4, 0.3, 0.3], "plane": 0.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 440, "grid": 0.1, "q": 0.005, "axis": 2, "focus": [0.4, 0.3, 0.7], "plane": 1.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 440, "grid": 0.1, "q": 0.005, "axis": 2, "focus": [0.4, 0.3, 1.3333], "plane": 1.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 440, "grid": 0.1, "q": 0.005, "axis": 2, "focus": [0.4, 0.3, -0.6], "plane": -1.0, "zone": false}
+    ]
+   }
+  },
+  "cells_k_b4": {
+   "Qdrag_typed_normal": {
+    "setup": "top ortho at 440 px/m, focus y 1; stroke (-0.4, 1, 0), (0.4, 1, 0), (0, 1, 0.5); current 0, position y typed 0.1234; press on p0, drag 40 px +x; drop",
+    "expected": {
+     "vertices": [
+      [-0.31, 0.1234, 0.0],
+      [0.4, 1.0, 0.0],
+      [0.0, 1.0, 0.5]
+     ],
+     "faces": [
+      [0, 2, 1]
+     ]
+    }
+   },
+   "PR_rounding": {
+    "rows": [
+     {"projection": "perspective", "px_per_m": 440, "grid": 0.1, "q": 0.005, "axis": 1, "focus": [0.07, -0.5, 0.0], "plane": -1.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 440, "grid": 0.1, "q": 0.005, "axis": 1, "focus": [0.07, 0.5, 0.0], "plane": 1.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 440, "grid": 0.1, "q": 0.005, "axis": 1, "focus": [0.07, -1.5, 0.0], "plane": -2.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 440, "grid": 0.1, "q": 0.005, "axis": 1, "focus": [0.07, 1.5, 0.0], "plane": 2.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 440, "grid": 0.1, "q": 0.005, "axis": 1, "focus": [0.07, -2.5, 0.0], "plane": -3.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 440, "grid": 0.1, "q": 0.005, "axis": 1, "focus": [0.07, -0.4999, 0.0], "plane": -1.0, "zone": true},
+     {"projection": "perspective", "px_per_m": 440, "grid": 0.1, "q": 0.005, "axis": 1, "focus": [0.07, -0.5001, 0.0], "plane": -1.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 440, "grid": 0.1, "q": 0.005, "axis": 1, "focus": [0.07, -0.3, 0.0], "plane": 0.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 440, "grid": 0.1, "q": 0.005, "axis": 1, "focus": [0.07, -0.4, 0.0], "plane": 0.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 440, "grid": 0.1, "q": 0.005, "axis": 1, "focus": [0.07, -0.45, 0.0], "plane": 0.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 440, "grid": 0.1, "q": 0.005, "axis": 1, "focus": [0.07, -0.49, 0.0], "plane": 0.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 440, "grid": 0.1, "q": 0.005, "axis": 1, "focus": [0.07, -0.499, 0.0], "plane": -1.0, "zone": true},
+     {"projection": "perspective", "px_per_m": 440, "grid": 0.1, "q": 0.005, "axis": 1, "focus": [0.07, 0.4, 0.0], "plane": 0.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 440, "grid": 0.1, "q": 0.005, "axis": 1, "focus": [0.07, 0.45, 0.0], "plane": 0.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 440, "grid": 0.1, "q": 0.005, "axis": 1, "focus": [0.07, 0.49, 0.0], "plane": 0.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 440, "grid": 0.1, "q": 0.005, "axis": 1, "focus": [0.07, 0.499, 0.0], "plane": 1.0, "zone": true},
+     {"projection": "perspective", "px_per_m": 440, "grid": 0.1, "q": 0.005, "axis": 1, "focus": [0.07, 0.4999, 0.0], "plane": 1.0, "zone": true},
+     {"projection": "perspective", "px_per_m": 880, "grid": 0.05, "q": 0.002, "axis": 1, "focus": [0.07, -0.24, 0.0], "plane": 0.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 880, "grid": 0.05, "q": 0.002, "axis": 1, "focus": [0.07, -0.2499, 0.0], "plane": -0.5, "zone": true},
+     {"projection": "perspective", "px_per_m": 880, "grid": 0.05, "q": 0.002, "axis": 1, "focus": [0.07, 0.24, 0.0], "plane": 0.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 880, "grid": 0.05, "q": 0.002, "axis": 1, "focus": [0.07, 0.2499, 0.0], "plane": 0.5, "zone": true},
+     {"projection": "perspective", "px_per_m": 110, "grid": 0.5, "q": 0.01, "axis": 1, "focus": [0.07, -2.4, 0.0], "plane": 0.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 110, "grid": 0.5, "q": 0.01, "axis": 1, "focus": [0.07, -2.499, 0.0], "plane": -5.0, "zone": true},
+     {"projection": "perspective", "px_per_m": 110, "grid": 0.5, "q": 0.01, "axis": 1, "focus": [0.07, 2.4, 0.0], "plane": 0.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 110, "grid": 0.5, "q": 0.01, "axis": 1, "focus": [0.07, 2.499, 0.0], "plane": 5.0, "zone": true},
+     {"projection": "perspective", "px_per_m": 440, "grid": 0.1, "q": 0.005, "axis": 1, "focus": [0.07, 0.495, 0.0], "plane": 0.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 440, "grid": 0.1, "q": 0.005, "axis": 1, "focus": [0.07, 0.4975, 0.0], "plane": 1.0, "zone": true},
+     {"projection": "perspective", "px_per_m": 440, "grid": 0.1, "q": 0.005, "axis": 1, "focus": [0.07, 0.498, 0.0], "plane": 1.0, "zone": true},
+     {"projection": "perspective", "px_per_m": 440, "grid": 0.1, "q": 0.005, "axis": 1, "focus": [0.07, 0.4985, 0.0], "plane": 1.0, "zone": true},
+     {"projection": "perspective", "px_per_m": 440, "grid": 0.1, "q": 0.005, "axis": 1, "focus": [0.07, -0.4975, 0.0], "plane": -1.0, "zone": true},
+     {"projection": "perspective", "px_per_m": 110, "grid": 0.5, "q": 0.01, "axis": 1, "focus": [0.07, 2.475, 0.0], "plane": 0.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 110, "grid": 0.5, "q": 0.01, "axis": 1, "focus": [0.07, 2.49, 0.0], "plane": 0.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 110, "grid": 0.5, "q": 0.01, "axis": 1, "focus": [0.07, 2.495, 0.0], "plane": 5.0, "zone": true},
+     {"projection": "perspective", "px_per_m": 110, "grid": 0.5, "q": 0.01, "axis": 1, "focus": [0.07, 2.4975, 0.0], "plane": 5.0, "zone": true},
+     {"projection": "perspective", "px_per_m": 110, "grid": 0.5, "q": 0.01, "axis": 1, "focus": [0.07, -2.49, 0.0], "plane": 0.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 880, "grid": 0.05, "q": 0.002, "axis": 1, "focus": [0.07, 0.2475, 0.0], "plane": 0.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 880, "grid": 0.05, "q": 0.002, "axis": 1, "focus": [0.07, 0.249, 0.0], "plane": 0.5, "zone": true},
+     {"projection": "perspective", "px_per_m": 880, "grid": 0.05, "q": 0.002, "axis": 1, "focus": [0.07, 0.2495, 0.0], "plane": 0.5, "zone": true},
+     {"projection": "perspective", "px_per_m": 40, "grid": 1.0, "q": 0.05, "axis": 1, "focus": [0.07, 4.95, 0.0], "plane": 0.0, "zone": false},
+     {"projection": "perspective", "px_per_m": 40, "grid": 1.0, "q": 0.05, "axis": 1, "focus": [0.07, 4.99, 0.0], "plane": 10.0, "zone": true},
+     {"projection": "perspective", "px_per_m": 40, "grid": 1.0, "q": 0.05, "axis": 1, "focus": [0.07, 4.995, 0.0], "plane": 10.0, "zone": true}
+    ]
+   }
+  }
  }
 }
