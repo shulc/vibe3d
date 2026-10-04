@@ -84,8 +84,8 @@ private alias stripCommentsAndStrings = blankNonCode;
 // ---------------------------------------------------------------------------
 private enum string[] kCreateDirFiles = [
     "arc.d", "box.d", "capsule.d", "cone.d", "create_common.d", "cylinder.d",
-    "pen.d", "primitive_create_tool.d", "sphere.d", "torus.d", "tube.d",
-    "vertex_place.d",
+    "pen.d", "pen_geometry.d", "primitive_create_tool.d", "sphere.d",
+    "torus.d", "tube.d", "vertex_place.d",
 ];
 
 private enum string[] kNamedMembers = [

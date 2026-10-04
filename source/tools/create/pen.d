@@ -43,6 +43,8 @@ import snap : SnapResult;
 import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
 
 import std.math : abs;
+// The one stroke builder and the pen's param schema (PenParams, PenStroke).
+import tools.create.pen_geometry;
 import core.stdc.string : memcmp;
 
 private bool sameValueBytes(T)(ref const T a, ref const T b) nothrow @nogc {
@@ -59,35 +61,6 @@ private bool sameSliceBytes(T)(const(T)[] a, const(T)[] b) nothrow @nogc {
 // WorldAxis-through-origin on top of the Pen-scoped prior-vertex variants.
 private enum uint guideBits =
     SnapType.WorldAxis | SnapType.StraightLine | SnapType.RightAngle;
-
-// ---------------------------------------------------------------------------
-// PenParams — vibe3d's pen tool wire schema.
-//
-// Schema follows conventional pen-tool panel option names.
-//
-// For phase 6.9.0 only `polygons` mode is implemented; later subphases
-// add `lines` / `vertices` / `subdiv`. `spline` and `polyline` modes
-// stay reserved (no vibe3d spline / curve geometry) — see doc/pen_plan.md.
-// ---------------------------------------------------------------------------
-struct PenParams {
-    int   type         = 0;        // 0=polygons (only mode in 6.9.0; later subphases extend)
-    bool  flip         = false;    // reverse vertex order on commit
-
-    // 6.9.1 numeric edit fields. currentPoint = -1 means "no vertex selected";
-    // posX/Y/Z mirror the position of vertices_[currentPoint] when valid, and
-    // are written back into the buffer through onParamChanged.
-    int   currentPoint = -1;
-    float posX = 0.0f, posY = 0.0f, posZ = 0.0f;
-
-    // 6.9.5: Make Quads. After the first two clicks anchor a starting edge,
-    // each subsequent click appends a pair of vertices forming one quad of
-    // a strip — the user-placed vertex at the cursor plus an auto-corner
-    // computed by the parallelogram rule (the most intuitive convention
-    // for ribbon-style strips, and the one
-    // the docs imply by "polygon strips"). Only meaningful in `polygons`
-    // mode.
-    bool  makeQuads    = false;
-}
 
 version(unittest) unittest {
     import record_observer_hub : RecordObserverHub;
@@ -320,6 +293,34 @@ version(unittest) unittest {
         GpuUploadOwner.fakeForTest(&wrongPreview));
     assert(!wrongEffect.accepted && !wrongContext.validate() &&
         stalePen.vertices_[0] == Vec3(1,1,1));
+
+    // A shape param edited mid-stroke rebuilds the preview through the one
+    // builder (prepared door): kind Preview, live preview untouched until
+    // install. Strip [0,1,2,3] → quad [0,2,3,1].
+    auto quadPen = new PenTool(() => &mesh, &sceneGpu, LitShader.init);
+    quadPen.state = PenState.Drawing;
+    quadPen.frame.toWorld = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+    quadPen.vertices_ = [Vec3(0,0,0), Vec3(0,1,0), Vec3(1,0,0), Vec3(1,1,0)];
+    quadPen.params_.makeQuads = true;     // the panel writes before the hook
+    auto quadImage = quadPen.buildPreparedParamImage("makeQuads");
+    assert(quadImage.kind == PreparedPenParamKind.Preview && quadImage.upload,
+        "makeQuads edit must prepare a preview rebuild");
+    assert(quadImage.nextPreview.faces.length == 1 &&
+        quadImage.nextPreview.faces[0] == [0u, 2, 3, 1],
+        "makeQuads preview is not the builder's strip quad");
+    assert(quadPen.buildPreparedParamImage("flip").kind ==
+        PreparedPenParamKind.Preview, "flip edit must prepare a preview rebuild");
+    auto quadContext = new PreparedRecordContext(null, new RecordObserverHub());
+    quadContext.setResourceIdentity(7, 11);
+    auto quadEffect = quadPen.prepareParamChanged(quadContext, "makeQuads",
+        GpuUploadOwner.fakeForTest(quadPen.preparedPreviewGpu()));
+    assert(quadEffect.accepted && quadEffect.kind == PreparedPenParamKind.Preview
+        && quadPen.previewMesh.vertices.length == 0 && quadContext.validate(),
+        "makeQuads preparation refused or touched the live preview");
+    quadContext.install();
+    assert(quadPen.previewMesh.faces == [[0u, 2, 3, 1]] &&
+        quadPen.vertices_.length == 4 && quadContext.installTraceForTest() ==
+        [7,2,8], "makeQuads install did not land the rebuilt preview");
 }
 
 // ---------------------------------------------------------------------------
@@ -518,6 +519,13 @@ public:
             uploadPreview();
             return;
         }
+        if (rebuildsPreview(name)) uploadPreview();
+    }
+
+    // Params that change the stroke's shape but not its points: an edit
+    // mid-stroke rebuilds the preview (legacy hook and prepared door alike).
+    private static bool rebuildsPreview(string name) nothrow @nogc {
+        return name == "flip" || name == "makeQuads";
     }
 
     final PreparedPenParamImage buildPreparedParamImage(string name) const {
@@ -556,32 +564,19 @@ public:
             }
             return image;
         }
-        if (name != "posX" && name != "posY" && name != "posZ")
-            return image;
-        int idx = image.nextParams.currentPoint;
-        if (idx < 0 || idx >= cast(int)image.nextVertices.length) return image;
-        image.kind = PreparedPenParamKind.Position; image.upload = true;
-        image.nextVertices[idx] = Vec3(image.nextParams.posX,
-            image.nextParams.posY, image.nextParams.posZ);
+        if (rebuildsPreview(name)) {
+            image.kind = PreparedPenParamKind.Preview; image.upload = true;
+        } else if (name == "posX" || name == "posY" || name == "posZ") {
+            int idx = image.nextParams.currentPoint;
+            if (idx < 0 || idx >= cast(int)image.nextVertices.length)
+                return image;
+            image.kind = PreparedPenParamKind.Position; image.upload = true;
+            image.nextVertices[idx] = Vec3(image.nextParams.posX,
+                image.nextParams.posY, image.nextParams.posZ);
+        } else return image;
         auto shadow = beginPreparedShadow(image.nextPreview);
-        foreach (v; image.nextVertices)
-            image.nextPreview.addVertex(transformPoint(frame.toWorld, v));
-        size_t minimum = image.nextParams.makeQuads ? 4 : 3;
-        if (image.nextVertices.length >= minimum) {
-            if (image.nextParams.makeQuads) {
-                int count = cast(int)(image.nextVertices.length / 2 * 2);
-                foreach (k; 0 .. (count - 2) / 2)
-                    image.nextPreview.addFace([cast(uint)(2*k),
-                        cast(uint)(2*k+2), cast(uint)(2*k+3), cast(uint)(2*k+1)]);
-            } else {
-                uint[] face; face.length = image.nextVertices.length;
-                foreach (i, _; image.nextVertices) face[i] = cast(uint)i;
-                image.nextPreview.addFace(face);
-            }
-        } else if (image.nextVertices.length >= 2) {
-            foreach (i; 0 .. cast(int)image.nextVertices.length - 1)
-                image.nextPreview.addEdge(cast(uint)i, cast(uint)(i + 1));
-        }
+        appendPenGeometry(image.nextPreview, PenStroke.of(image.nextVertices,
+            frame.toWorld, image.nextParams), PenBuildPurpose.Preview);
         foreach (i, v; image.nextVertices)
             if (i < image.nextHandlerPositions.length)
                 image.nextHandlerPositions[i] = transformPoint(frame.toWorld, v);
@@ -724,25 +719,8 @@ public:
         if (!image.willCommit) return true;
         pre = MeshSnapshot.capture(*mesh); pre.restore(candidate);
         auto shadow = beginPreparedShadow(candidate);
-        const uint base = cast(uint)candidate.vertices.length;
-        foreach (v; image.vertices)
-            candidate.addVertex(transformPoint(image.toWorld, v));
-        if (image.params.makeQuads) {
-            const int count = cast(int)(image.vertices.length / 2 * 2);
-            foreach (k; 0 .. (count - 2) / 2) {
-                const uint a = base + cast(uint)(2*k);
-                const uint b = base + cast(uint)(2*k+2);
-                const uint c = base + cast(uint)(2*k+3);
-                const uint d = base + cast(uint)(2*k+1);
-                candidate.addFace(image.params.flip ? [d,c,b,a] : [a,b,c,d]);
-            }
-        } else {
-            uint[] face; face.length = image.vertices.length;
-            foreach (i, _; image.vertices)
-                face[i] = base + cast(uint)(image.params.flip
-                    ? image.vertices.length - 1 - i : i);
-            candidate.addFace(face);
-        }
+        appendPenGeometry(candidate, PenStroke.of(image.vertices,
+            image.toWorld, image.params), PenBuildPurpose.Commit);
         candidate.declareCornerAppend(); candidate.buildLoops();
         candidate.syncSelection();
         drainPreparedShadowDelivery(candidate, deliveryFlags, deliveryDomains);
@@ -1333,41 +1311,8 @@ private:
 
     void uploadPreview() {
         previewMesh.clear();
-        // vertices_ are in LOCAL; transform each through frame.toWorld so
-        // the preview renders in world position.
-        foreach (v; vertices_) previewMesh.addVertex(toWorldP(v));
-
-        // Filled face preview. Mirrors commitPolygon's index pattern so the
-        // shape the user sees while drawing matches what they get on Enter.
-        // flip is intentionally NOT applied here — the preview always shows
-        // the un-flipped winding so the face stays visible from the user's
-        // viewing angle. (Backface culling on a flipped preview would hide
-        // the entire shape.)
-        if (vertices_.length >= minCommitVerts()) {
-            if (params_.makeQuads) {
-                int N = cast(int)(vertices_.length / 2 * 2);
-                int nQuads = (N - 2) / 2;
-                foreach (k; 0 .. nQuads) {
-                    uint a = cast(uint)(2 * k);
-                    uint b = cast(uint)(2 * k + 2);
-                    uint c = cast(uint)(2 * k + 3);
-                    uint d = cast(uint)(2 * k + 1);
-                    previewMesh.addFace([a, b, c, d]);
-                }
-            } else {
-                uint[] face;
-                face.length = vertices_.length;
-                foreach (i, _; vertices_) face[i] = cast(uint)i;
-                previewMesh.addFace(face);
-            }
-        } else if (vertices_.length >= 2) {
-            // Pre-face: open polyline only (no faces yet, so addFace would
-            // form none — register edges directly so the wireframe pass can
-            // render them).
-            foreach (i; 0 .. cast(int)vertices_.length - 1)
-                previewMesh.addEdge(cast(uint)i, cast(uint)(i + 1));
-        }
-
+        appendPenGeometry(previewMesh, PenStroke.of(vertices_, frame.toWorld,
+            params_), PenBuildPurpose.Preview);
         previewGpu.upload(previewMesh);
         // Keep marker positions in sync (vertices_ may have been mutated by
         // popVertex / future numeric edits). Handlers render in WORLD.
@@ -1379,7 +1324,7 @@ private:
     // strip; the first two anchor verts alone don't yet form a face). Tool
     // drop uses minDropCommitVerts() below.
     size_t minCommitVerts() const {
-        return params_.makeQuads ? 4 : 3;
+        return penFaceMinimum(params_.makeQuads);
     }
 
     // A drop keeps any sequence that already forms a polygon edge; Enter still
@@ -1523,47 +1468,10 @@ private:
     }
 
     void commitPolygon() {
-        uint base = cast(uint)mesh.vertices.length;
-        // Append committed vertices in WORLD; vertices_ are stored in
-        // LOCAL workplane coords for the duration of the in-progress
-        // session, so transform through frame.toWorld at commit.
-        foreach (v; vertices_) mesh.addVertex(toWorldP(v));
-
-        if (params_.makeQuads) {
-            // Strip: vertices laid out [v0_top, v1_bot, v2_top, v3_bot, ...].
-            // Quad k uses indices [2k, 2k+2, 2k+3, 2k+1] — top→top→bot→bot
-            // forms a CCW boundary that yields the same outward normal as
-            // the regular polygon mode would for the corresponding edge
-            // sequence. flip swaps to [2k+1, 2k+3, 2k+2, 2k]. Round the
-            // vertex count down to even since an odd buffer leaves a half-
-            // quad that can't be closed.
-            int N = cast(int)(vertices_.length / 2 * 2);
-            int nQuads = (N - 2) / 2;
-            foreach (k; 0 .. nQuads) {
-                uint a = base + cast(uint)(2 * k);
-                uint b = base + cast(uint)(2 * k + 2);
-                uint c = base + cast(uint)(2 * k + 3);
-                uint d = base + cast(uint)(2 * k + 1);
-                if (params_.flip) mesh.addFace([d, c, b, a]);
-                else              mesh.addFace([a, b, c, d]);
-            }
-        } else {
-            uint[] face;
-            face.length = vertices_.length;
-            if (params_.flip) {
-                foreach (i, _; vertices_)
-                    face[i] = base + cast(uint)(vertices_.length - 1 - i);
-            } else {
-                foreach (i, _; vertices_)
-                    face[i] = base + cast(uint)i;
-            }
-            mesh.addFace(face);
-        }
-
-        // Task 0901: both branches above only call `addFace` — a pure tail
-        // append into the live scene mesh (same convention every other
-        // create-tool commit site documents). Declared for the cross-check
-        // (task 0830's `declareCornerAppend`).
+        // A pure tail append into the live scene mesh, declared as such for
+        // the corner-append cross-check.
+        appendPenGeometry(*mesh, PenStroke.of(vertices_, frame.toWorld,
+            params_), PenBuildPurpose.Commit);
         mesh.declareCornerAppend();
         mesh.buildLoops();
         gpu.upload(*mesh);

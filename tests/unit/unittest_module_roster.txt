@@ -415,6 +415,7 @@ tests.unit.param_int_enum_width_test
 tests.unit.params_test
 tests.unit.parity_capture_key_census_test
 tests.unit.path_test
+tests.unit.pen_single_builder_census_test
 tests.unit.perf_baseline_debt_test
 tests.unit.perf_lane_health_test
 tests.unit.perf_lock_test
@@ -540,6 +541,7 @@ tests.unit.tools.alignment.mirror_test
 tests.unit.tools.create.arc_test
 tests.unit.tools.create.box_test
 tests.unit.tools.create.create_common_test
+tests.unit.tools.create.pen_geometry_test
 tests.unit.tools.create.pen_test
 tests.unit.tools.create.tube_test
 tests.unit.tools.edit.bridge_tool_test

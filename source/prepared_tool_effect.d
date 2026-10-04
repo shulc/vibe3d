@@ -61,7 +61,7 @@ enum PreparedScaleUpdateKind : ubyte {
 }
 enum PreparedXfrmUpdateKind : ubyte { None, InactiveNoop, Active }
 enum PreparedTopologyPenUpdateKind : ubyte { None, PacketAbsent, Packet }
-enum PreparedPenParamKind : ubyte { None, Noop, CurrentPoint, Position }
+enum PreparedPenParamKind : ubyte { None, Noop, CurrentPoint, Position, Preview }
 enum PreparedArrayParamKind : ubyte { None, Noop, Preview }
 enum PreparedMagnetParamKind : ubyte { None, Noop, Preview }
 enum PreparedSmoothShiftParamKind : ubyte { None, Noop, Preview }

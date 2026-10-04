@@ -2648,8 +2648,10 @@ def pen_param_gate(pen, private, effect):
                 "!image.expectedPreview.matches(previewMesh)",
                 "if (state != PenState.Drawing) return image;",
                 'if (name == "currentPoint")',
-                'if (name != "posX" && name != "posY" && name != "posZ")',
+                'if (rebuildsPreview(name)) {',
+                'else if (name == "posX" || name == "posY" || name == "posZ")',
                 "beginPreparedShadow(image.nextPreview)",
+                "appendPenGeometry(image.nextPreview, PenStroke.of(image.nextVertices,",
                 "drainPreparedShadowDelivery(image.nextPreview")) and
             "installPreparedMeshImage(previewMesh, image.nextPreview)" in pen and
             "target.classinfo !is PenTool.classinfo" in factory and
@@ -2665,7 +2667,7 @@ def pen_param_gate(pen, private, effect):
             producer.find("context.preparePrivateState(stateOwner)") <
                 producer.find("context.prepareUpload(previewUpload") <
                 producer.find("context.markNoHistoryInstall()") and
-            "enum PreparedPenParamKind : ubyte { None, Noop, CurrentPoint, Position }" in effect and
+            "enum PreparedPenParamKind : ubyte { None, Noop, CurrentPoint, Position, Preview }" in effect and
             "PreparedPenParamKind kind;" in effect)
 pen_param_sources = (pen_activation,
     prepared_module_source("prepared_private_state"),
@@ -6250,7 +6252,8 @@ def pen_deactivate_gate(tool, owner, effect, context, handlers):
         "frame.toWorld == image.toWorld" in state and
         "installPreparedMeshImage(previewMesh, image.previewClear);" in state and
         "beginPreparedShadow(candidate)" in candidate and
-        "foreach (v; image.vertices)" in candidate and
+        "appendPenGeometry(candidate, PenStroke.of(image.vertices," in candidate and
+        "PenBuildPurpose.Commit" in candidate and
         "candidate.declareCornerAppend(); candidate.buildLoops();" in candidate and
         "candidate.syncSelection();" in candidate and
         "drainPreparedShadowDelivery(candidate, deliveryFlags, deliveryDomains);" in candidate and
