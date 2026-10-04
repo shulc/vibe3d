@@ -37,15 +37,16 @@ import tools.create.create_common : pickWorkplane, BuildPlane,
                               transformPoint, transformDir, snapLocalHit,
                               currentSnapPacket,
                               workplaneCursorRay, workplaneCursorPlaneHit;
-import toolpipe.packets : SnapType;
+import toolpipe.packets : SnapType, SnapPacket;
 import editmode : EditMode;
-import snap : SnapResult;
+import snap : SnapResult, snapCursor;
+import document : primaryModelSpace;
 import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
 import tools.transform.relocate_plane : vectorSnap, withAxisComp, axisComp, niceOrigin;
 import viewgrid : g_viewGrid, viewWorldPerPixel, viewGridSize, viewGridSubStep,
     relocateQuantum;
 
-import std.math : abs;
+import std.math : abs, lround;
 // The one stroke builder and the pen's param schema (PenParams, PenStroke).
 import tools.create.pen_geometry;
 import core.stdc.string : memcmp;
@@ -64,6 +65,15 @@ private bool sameSliceBytes(T)(const(T)[] a, const(T)[] b) nothrow @nogc {
 // WorldAxis-through-origin on top of the Pen-scoped prior-vertex variants.
 private enum uint guideBits =
     SnapType.WorldAxis | SnapType.StraightLine | SnapType.RightAngle;
+
+// Merge after an ELEMENT snap (wave plan S5 A3, fixture pen_merge.json
+// `cells_k_b3`): screen radii, bracket midpoints — the snapped edge's own ends
+// link within (15.4, 19.5] px, any other vertex within (2.2, 3.5] px. Any
+// other placement merges within `SnapPacket.init.innerRangePx` (24 px).
+private enum float kMergeSnappedEdgeEndPx = 17.5f;
+private enum float kMergeAfterSnapPx = 2.85f;
+private enum uint kElementSnapBits = SnapType.Vertex | SnapType.Edge |
+    SnapType.EdgeCenter | SnapType.Polygon | SnapType.PolyCenter;
 
 version(unittest) unittest {
     import record_observer_hub : RecordObserverHub;
@@ -144,6 +154,8 @@ version(unittest) unittest {
         LitShader.init);
     commitPen.state = PenState.Drawing;
     commitPen.vertices_ = [Vec3(0,0,0), Vec3(1,0,0), Vec3(0,1,0)];
+    // p0 shares the layer's vertex 0 (merge): the commit appends 2 vertices.
+    commitLayer.meshRef().addVertex(Vec3(0,0,0)); commitPen.links_ = [0, -1, -1];
     commitPen.params_.currentPoint = 2;
     commitPen.frame.toWorld = [1,0,0,0, 0,1,0,0,
                                0,0,1,0, 0,0,0,1];
@@ -167,6 +179,8 @@ version(unittest) unittest {
     commitContext.install(); size_t modelDepth, uiDepth;
     commitHistory.undoDepthCounts(modelDepth, uiDepth);
     assert(commitLayer.meshRef().faces.length == 1 && modelDepth == 1 &&
+        commitLayer.meshRef().vertices.length == 3 &&
+        commitLayer.meshRef().faces[0] == [0u, 1, 2] &&
         uiDepth == 0 && commitPen.state == PenState.Idle &&
         commitPen.vertices_.length == 0 && commitPen.vertHandlers.length == 0 &&
         commitPen.params_.currentPoint == -1 && commitPen.meshChanged &&
@@ -262,6 +276,7 @@ version(unittest) unittest {
     positionPen.frame.toWorld = [1,0,0,0, 0,1,0,0,
                                  0,0,1,0, 0,0,0,1];
     positionPen.vertices_ = [Vec3(0,0,0), Vec3(1,0,0), Vec3(0,1,0)];
+    positionPen.links_ = [-1, 4, -1];
     positionPen.params_.currentPoint = 1;
     positionPen.params_.posX = 2; positionPen.params_.posY = 3;
     positionPen.params_.posZ = 4;
@@ -280,13 +295,14 @@ version(unittest) unittest {
         positionPen.previewMesh.vertices.length == 0 &&
         positionContext.validate());
     positionContext.install();
-    assert(positionPen.vertices_[1] == Vec3(2,3,4) &&
+    assert(positionPen.vertices_[1] == Vec3(2,3,4) && positionPen.links_ == [-1,-1,-1] &&
         positionPen.previewMesh.vertices == positionPen.vertices_ &&
         positionContext.installTraceForTest() == [7,2,8]);
     assert(positionPen.params_.flip, "a prepared Position edit re-decided flip");
 
     auto stalePen = new PenTool(() => &mesh, &sceneGpu, LitShader.init);
     stalePen.state = PenState.Drawing; stalePen.vertices_ = [Vec3(1,1,1)];
+    stalePen.links_ = [-1];
     stalePen.params_.currentPoint = 0; stalePen.params_.posX = 8;
     auto staleContext = new PreparedRecordContext(null, new RecordObserverHub());
     staleContext.setResourceIdentity(7, 11);
@@ -336,7 +352,7 @@ version(unittest) unittest {
     auto hookPen = new PenTool(() => &mesh, &sceneGpu, LitShader.init);
     hookPen.state = PenState.Drawing; hookPen.previewGpu.suppressCageUpload = true;
     hookPen.frame.toWorld = quadPen.frame.toWorld;
-    hookPen.vertices_ = quadPen.vertices_.dup;
+    hookPen.vertices_ = quadPen.vertices_.dup; hookPen.links_ = [-1,-1,-1,-1];
     foreach (v; hookPen.vertices_) hookPen.vertHandlers ~= hookPen.vertMarker(v);
     hookPen.onParamChanged("flip");
     assert(hookPen.previewMesh.faces == [[1u, 2, 3, 0]],
@@ -360,6 +376,7 @@ version(unittest) unittest {
     assert(imagePen.state == PenState.Idle && imagePen.previewMesh.vertices.length == 0,
         "restored empty stroke: not Idle, or a stale preview survived");
     imagePen.vertices_ = [Vec3(0,0,0), Vec3(1,0,0), Vec3(0,1,0)];
+    imagePen.links_ = [-1,-1,-1];
     imagePen.rebuildPreviewFromAttrs();
     assert(imagePen.state == PenState.Drawing && imagePen.vertHandlers.length == 3,
         "restored stroke: not Drawing, or its markers did not come back");
@@ -438,13 +455,14 @@ struct PreparedPenDeactivateImage {
     ubyte expectedState;
     PenParams params;
     Vec3[] vertices;
+    int[] links;
     Mesh previewClear;
     float[16] toWorld;
     size_t expectedHandlerCount;
     SnapResult expectedLastSnap;
     bool expectedMeshChanged;
     void clear() nothrow @nogc {
-        vertices = null; previewClear = Mesh.init;
+        vertices = null; links = null; previewClear = Mesh.init;
         this = PreparedPenDeactivateImage.init;
     }
 }
@@ -455,6 +473,7 @@ struct PreparedPenParamImage {
     ubyte expectedState;
     PenParams expectedParams, nextParams;
     Vec3[] expectedVertices, nextVertices;
+    int[] expectedLinks, nextLinks;
     BoxHandler[] expectedHandlers;
     Vec3[] expectedHandlerPositions, nextHandlerPositions;
     float[16] expectedToWorld;
@@ -462,6 +481,7 @@ struct PreparedPenParamImage {
     Mesh nextPreview;
     void clear() nothrow @nogc {
         expectedVertices = nextVertices = null;
+        expectedLinks = nextLinks = null;
         expectedHandlers = null;
         expectedHandlerPositions = nextHandlerPositions = null;
         expectedPreview = MeshSnapshot.init; nextPreview = Mesh.init;
@@ -482,6 +502,7 @@ private:
 
     PenState         state;
     Vec3[]           vertices_;     // LOCAL workplane positions of the in-progress sequence
+    int[]            links_;        // per point: the edited-mesh vertex it shares, or -1
     BoxHandler[]     vertHandlers;  // one cyan marker per in-progress vertex (handler.pos in WORLD)
     ToolHandles      toolHandles;   // single-source hover arbiter (Test pass)
 
@@ -561,9 +582,11 @@ public:
             Param.float_("posZ", "Position Z", &params_.posZ, 0.0f).transient(),
             Param.bool_("flip", "Flip Polygon", &params_.flip, false),
             Param.bool_("makeQuads", "Make Quads", &params_.makeQuads, false),
+            Param.bool_("merge", "Merge", &params_.merge, true),
             // The stroke itself, for the session's undo image (hidden,
             // transient, refused on every wire door).
             Param.podArray_("points", "Points", &vertices_),
+            Param.podArray_("link", "Links", &links_),
         ];
     }
 
@@ -593,6 +616,7 @@ public:
             int idx = params_.currentPoint;
             if (idx < 0 || idx >= cast(int)vertices_.length) return;
             vertices_[idx] = Vec3(params_.posX, params_.posY, params_.posZ);
+            links_[idx] = -1;    // a typed point never shares a vertex (S5)
             uploadPreview();
             return;
         }
@@ -612,6 +636,7 @@ public:
         image.expectedParams = params_; image.nextParams = params_;
         image.expectedVertices = vertices_.dup;
         image.nextVertices = vertices_.dup;
+        image.expectedLinks = links_.dup; image.nextLinks = links_.dup;
         image.expectedHandlers.length = vertHandlers.length;
         image.expectedHandlerPositions.length = vertHandlers.length;
         image.nextHandlerPositions.length = vertHandlers.length;
@@ -650,6 +675,7 @@ public:
             image.kind = PreparedPenParamKind.Position; image.upload = true;
             image.nextVertices[idx] = Vec3(image.nextParams.posX,
                 image.nextParams.posY, image.nextParams.posZ);
+            image.nextLinks[idx] = -1;
         } else return image;
         auto shadow = beginPreparedShadow(image.nextPreview);
         appendPenGeometry(image.nextPreview, PenStroke.of(image.nextVertices,
@@ -667,6 +693,7 @@ public:
         if (!image.valid || cast(ubyte)state != image.expectedState ||
             !sameValueBytes(params_, image.expectedParams) ||
             !sameSliceBytes(vertices_, image.expectedVertices) ||
+            !sameSliceBytes(links_, image.expectedLinks) ||
             !sameValueBytes(frame.toWorld, image.expectedToWorld) ||
             !image.expectedPreview.matches(previewMesh) ||
             vertHandlers.length != image.expectedHandlers.length) return false;
@@ -681,6 +708,7 @@ public:
         if (!image.valid) return;
         params_ = image.nextParams;
         vertices_ = image.nextVertices; image.nextVertices = null;
+        links_ = image.nextLinks; image.nextLinks = null;
         if (image.upload) installPreparedMeshImage(previewMesh, image.nextPreview);
         foreach (i, handler; vertHandlers)
             handler.pos = image.nextHandlerPositions[i];
@@ -688,7 +716,7 @@ public:
     }
     override void activate() {
         state = PenState.Idle;
-        vertices_.length = 0;
+        vertices_.length = 0; links_.length = 0;
         params_.currentPoint = -1;
         params_.posX = params_.posY = params_.posZ = 0.0f;
         dragArmed     = false;
@@ -741,6 +769,7 @@ public:
 
     final void installPreparedPrivateActivation() nothrow @nogc {
         state = PenState.Idle; vertices_.length = 0; params_.currentPoint = -1;
+        links_.length = 0;
         params_.posX = params_.posY = params_.posZ = 0.0f;
         dragArmed = dragInitiated = false; dragVertIdx = -1;
     }
@@ -749,7 +778,7 @@ public:
         PreparedPenDeactivateImage image;
         image.valid = true; image.expectedState = cast(ubyte)state;
         image.params = params_; image.vertices = vertices_.dup;
-        image.toWorld = frame.toWorld;
+        image.links = links_.dup; image.toWorld = frame.toWorld;
         image.expectedHandlerCount = vertHandlers.length;
         image.expectedLastSnap = lastSnap;
         image.expectedMeshChanged = meshChanged;
@@ -761,7 +790,7 @@ public:
             in PreparedPenDeactivateImage image) const nothrow @nogc {
         return image.valid && cast(ubyte)state == image.expectedState &&
             params_ == image.params && vertices_ == image.vertices &&
-            vertHandlers.length == image.expectedHandlerCount &&
+            links_ == image.links && vertHandlers.length == image.expectedHandlerCount &&
             lastSnap == image.expectedLastSnap &&
             meshChanged == image.expectedMeshChanged &&
             (!image.willCommit || frame.toWorld == image.toWorld);
@@ -769,7 +798,7 @@ public:
     final void installPreparedDeactivateState(
             ref PreparedPenDeactivateImage image) nothrow @nogc {
         state = PenState.Idle; vertHandlers = null; vertices_ = null;
-        installPreparedMeshImage(previewMesh, image.previewClear);
+        links_ = null; installPreparedMeshImage(previewMesh, image.previewClear);
         params_.currentPoint = -1;
         params_.posX = params_.posY = params_.posZ = 0.0f;
         if (image.willCommit) meshChanged = true;
@@ -797,7 +826,7 @@ public:
         pre = MeshSnapshot.capture(*mesh); pre.restore(candidate);
         auto shadow = beginPreparedShadow(candidate);
         appendPenGeometry(candidate, PenStroke.of(image.vertices,
-            image.toWorld, image.params), PenBuildPurpose.Commit);
+            image.toWorld, image.params, image.links), PenBuildPurpose.Commit);
         candidate.declareCornerAppend(); candidate.buildLoops();
         candidate.syncSelection();
         drainPreparedShadowDelivery(candidate, deliveryFlags, deliveryDomains);
@@ -903,8 +932,9 @@ public:
         if (state == PenState.Idle) {
             choosePlane(cachedVp);
             Vec3 hit;
-            if (!resolvePenPoint(e.x, e.y, clickAnchor(), hit)) return true;
-            appendVertex(hit);
+            int link;
+            if (!resolvePenPoint(e.x, e.y, clickAnchor(), hit, link)) return true;
+            appendVertex(hit, link);
             params_.currentPoint = cast(int)vertices_.length - 1;
             syncPosFromCurrent();
             state = PenState.Drawing;
@@ -927,7 +957,8 @@ public:
 
         // Click on empty plane.
         Vec3 hit;
-        if (!resolvePenPoint(e.x, e.y, clickAnchor(), hit)) return true;
+        int link;
+        if (!resolvePenPoint(e.x, e.y, clickAnchor(), hit, link)) return true;
 
         // The press adding the 3rd point decides the facing, once, from
         // (p0, p1, this click) in every arm below (wave plan §9.4).
@@ -940,7 +971,7 @@ public:
         // path and the current-point preservation since strip ordering is
         // a positional sequence rather than a polygon's free boundary.
         if (params_.makeQuads && vertices_.length >= 2) {
-            appendQuadStripPair(hit);
+            appendQuadStripPair(hit, link);
             // Current point follows the user-placed vertex (the second-to-
             // last in the buffer; the very-last is the auto-corner). Lets
             // the user's intent — placing a top-row vert at the cursor —
@@ -953,14 +984,19 @@ public:
 
         // Default polygon mode: append at end OR insert after currentPoint
         // (the doc's "to insert a vertex between two existing ones, highlight
-        // a previously created vertex and click away from it").
+        // a previously created vertex and click away from it"); with merge on,
+        // a press near a stroke edge inserts between its ends instead (the
+        // closing edge's slot is the append), at the ordinary placed point
+        // (wave plan S5 A3 block 5, pen_merge.json `edge_press`).
         int n   = cast(int)vertices_.length;
-        int cur = params_.currentPoint;
+        const edge = params_.merge
+            ? findHoveredStrokeEdge(e.x, e.y, SnapPacket.init.innerRangePx) : -1;
+        int cur = edge >= 0 ? edge : params_.currentPoint;
         if (cur >= 0 && cur < n - 1) {
-            insertVertexAfter(cur, hit);
+            insertVertexAfter(cur, hit, link);
             params_.currentPoint = cur + 1;
         } else {
-            appendVertex(hit);
+            appendVertex(hit, link);
             params_.currentPoint = cast(int)vertices_.length - 1;
         }
         syncPosFromCurrent();
@@ -981,7 +1017,8 @@ public:
             // Idle: the plane the first click would lock onto.
             if (state == PenState.Idle) choosePlane(cachedVp);
             Vec3 ignored;
-            resolvePenPoint(e.x, e.y, clickAnchor(), ignored);
+            int ignoredLink;
+            resolvePenPoint(e.x, e.y, clickAnchor(), ignored, ignoredLink);
         }
 
         if (!dragArmed) return false;
@@ -994,12 +1031,15 @@ public:
             dragInitiated = true;
         }
 
-        // Relocate the dragged vertex to the cursor's projected plane hit.
+        // Relocate the dragged vertex to the cursor's projected plane hit; the
+        // last motion decides its link (a drag away unlinks, S5 LK-break).
         if (dragVertIdx < 0 || dragVertIdx >= cast(int)vertices_.length)
             return true;
         Vec3 hit;
-        if (resolvePenPoint(e.x, e.y, dragAnchor, hit)) {
+        int link;
+        if (resolvePenPoint(e.x, e.y, dragAnchor, hit, link)) {
             vertices_[dragVertIdx] = hit;
+            links_[dragVertIdx] = link;
             if (params_.currentPoint == dragVertIdx) syncPosFromCurrent();
             uploadPreview();
         }
@@ -1170,10 +1210,13 @@ private:
     // The one place a pixel becomes a stroke point (click, hover, drag): the
     // locked plane through `anchor`, its two in-plane channels rounded to the
     // view's grid sub-step (the vector snap relocate and extrude use; wave
-    // plan S3q, fixture pen_placement.json `quantum`), then a discrete snap,
+    // plan S3q, fixture pen_placement.json `quantum`), then a discrete snap
+    // (an edge snap takes the QUANTISED point's foot on the edge, S5 Q-edge),
     // then the pen guides when no discrete target won (guideBits are the
-    // pen's own).
-    bool resolvePenPoint(int x, int y, Vec3 anchor, out Vec3 local) {
+    // pen's own), then the merge from the placed point; `link` is the
+    // edited-mesh vertex the point shares, or -1.
+    bool resolvePenPoint(int x, int y, Vec3 anchor, out Vec3 local, out int link) {
+        link = -1;
         if (!workplaneCursorPlaneHit(frame, cachedVp, cast(float)x,
                                      cast(float)y, anchor, planeNormal, local)) {
             lastSnap = SnapResult.init;
@@ -1182,12 +1225,85 @@ private:
         }
         immutable int k = planeAxis();
         local = withAxisComp(vectorSnap(local, placementQuantum()), k, axisComp(local, k));
+        immutable Vec3 quantised = local;
         lastSnap = snapLocalHit(local, frame, x, y, cachedVp,
                                 *mesh, EditMode.Vertices, [], guideBits);
-        if (!(lastSnap.snapped && lastSnap.constraintType == SnapType.None))
-            applyPenGuide(local, x, y);
+        if (elementPlaced() && lastSnap.targetType == SnapType.Edge)
+            local = toLocalP(pointOnEdgeUnder(toWorldP(quantised), lastSnap.targetIndex));
+        if (!discretePlaced()) applyPenGuide(local, x, y);
+        if (params_.merge) link = mergeTarget(local);
         publishLastSnap(lastSnap);
         return true;
+    }
+
+    // A discrete snap target (not a constraint) placed the point; the guide
+    // gate and the merge read this one spelling.
+    bool discretePlaced() const {
+        return lastSnap.snapped && lastSnap.constraintType == SnapType.None;
+    }
+    // ... and it was an element of the edited mesh: the merge's small radii.
+    bool elementPlaced() const {
+        return discretePlaced() && lastSnap.targetSource == 0 &&
+            (lastSnap.targetType & kElementSnapBits) != 0;
+    }
+
+    // The merge (wave plan S5; fixture pen_merge.json): ONE search from the
+    // PLACED point, after the snap, never part of its election. Screen radii
+    // (one value per view): 24 px over the edited mesh's vertices and edges;
+    // after an element snap the snapped edge's own ends within 17.5 px, else
+    // any vertex within 2.85 px. A vertex hit moves the point onto it and is
+    // returned (the point shares it); an edge hit moves the point onto the edge
+    // as its own vertex. `snapCursor` takes an integer pixel, so it is the
+    // broad phase (r + 1) and the float distance decides.
+    int mergeTarget(ref Vec3 local) {
+        immutable Vec3 placed = toWorldP(local);
+        float fx, fy, ndcZ;
+        if (!projectToWindowFull(placed, cachedVp, fx, fy, ndcZ)) return -1;
+        float pxFrom(Vec3 w) {
+            float x, y, z;
+            return projectToWindowFull(w, cachedVp, x, y, z)
+                ? Vec3(x - fx, y - fy, 0).length : float.infinity;
+        }
+        immutable ms = primaryModelSpace();
+        immutable bool small = elementPlaced();
+        if (small && lastSnap.targetType == SnapType.Edge) {
+            int end = -1;
+            float best = kMergeSnappedEdgeEndPx;
+            foreach (v; mesh.edges[lastSnap.targetIndex]) {
+                immutable d = pxFrom(ms.toWorldPoint(mesh.vertices[v]));
+                if (d <= best) { best = d; end = cast(int)v; }
+            }
+            if (end >= 0) {
+                local = toLocalP(ms.toWorldPoint(mesh.vertices[end]));
+                return end;
+            }
+        }
+        immutable float r = small ? kMergeAfterSnapPx : SnapPacket.init.innerRangePx;
+        SnapPacket pkt;
+        pkt.enabled = true;
+        pkt.innerRangePx = r + 1;
+        pkt.enabledTypes = small ? SnapType.Vertex : SnapType.Vertex | SnapType.Edge;
+        auto hit = snapCursor(placed, cast(int)lround(fx), cast(int)lround(fy),
+            cachedVp, *mesh, ms, pkt, null, (SnapType, int, int slot) => slot == 0);
+        if (!hit.snapped || pxFrom(hit.worldPos) > r) return -1;
+        if (hit.targetType == SnapType.Vertex) {
+            local = toLocalP(hit.worldPos);
+            return hit.targetIndex;
+        }
+        local = toLocalP(pointOnEdgeUnder(placed, hit.targetIndex));
+        return -1;
+    }
+
+    // The point of edited-mesh edge `edge` under world point `p`: the edge's
+    // closest approach to the line through `p` along the view direction.
+    Vec3 pointOnEdgeUnder(Vec3 p, int edge) const {
+        assert(edge >= 0 && edge < cast(int)mesh.edges.length, "pen: edge index");
+        immutable ms = primaryModelSpace();
+        immutable Vec3 a = ms.toWorldPoint(mesh.vertices[mesh.edges[edge][0]]);
+        immutable Vec3 b = ms.toWorldPoint(mesh.vertices[mesh.edges[edge][1]]);
+        float t;
+        closestOnSegmentToRay(p, eyeVectorAt(cachedVp, p), a, b, t);
+        return a + (b - a) * t;
     }
 
     // ---- Local ↔ world helpers (workplane refactor) ---------------------
@@ -1202,10 +1318,12 @@ private:
     Vec3 toWorldP(Vec3 p) const { return transformPoint(frame.toWorld, p); }
     Vec3 toLocalP(Vec3 p) const { return transformPoint(frame.toLocal, p); }
 
-    void appendVertex(Vec3 pos) {
+    // `link`: the edited-mesh vertex the point shares, or -1 (resolvePenPoint).
+    void appendVertex(Vec3 pos, int link) {
         // pos is in LOCAL workplane coords; the vertex handler renders in
         // world, so hit-testing needs the world image of `pos`.
         vertices_ ~= pos;
+        links_ ~= link;
         vertHandlers ~= vertMarker(pos);
     }
 
@@ -1230,31 +1348,32 @@ private:
     // Caller must have already ensured vertices_.length >= 2 (the two
     // anchor clicks); for fewer than 2 verts the regular append path is
     // used so the strip can be seeded.
-    void appendQuadStripPair(Vec3 cursorPos) {
+    void appendQuadStripPair(Vec3 cursorPos, int link) {
         Vec3 prevTop = vertices_[$ - 2];
         Vec3 prevBot = vertices_[$ - 1];
         Vec3 newTop  = cursorPos;
         Vec3 newBot  = prevBot + (newTop - prevTop);
-        appendVertex(newTop);
-        appendVertex(newBot);
+        appendVertex(newTop, link);
+        appendVertex(newBot, -1);
     }
 
     // Insert a new vertex (and matching handler) at position insertIdx in the
     // boundary list, shifting later elements right. Used by the "click-away
     // while a vertex is current" path to splice into the polygon.
-    void insertVertexAfter(int afterIdx, Vec3 pos) {
+    void insertVertexAfter(int afterIdx, Vec3 pos, int link) {
         // pos in LOCAL; handler in WORLD.
         int insertIdx = afterIdx + 1;
         if (insertIdx < 0) insertIdx = 0;
         if (insertIdx > cast(int)vertices_.length) insertIdx = cast(int)vertices_.length;
         vertices_ = vertices_[0 .. insertIdx] ~ pos ~ vertices_[insertIdx .. $];
+        links_ = links_[0 .. insertIdx] ~ link ~ links_[insertIdx .. $];
         vertHandlers = vertHandlers[0 .. insertIdx] ~ vertMarker(pos)
             ~ vertHandlers[insertIdx .. $];
     }
 
     void popVertex() {
         if (vertices_.length == 0) return;
-        vertices_.length -= 1;
+        vertices_.length -= 1; links_.length -= 1;
         if (vertHandlers.length > 0) {
             vertHandlers[$ - 1].destroy();
             vertHandlers.length -= 1;
@@ -1283,7 +1402,7 @@ private:
         static immutable ToolSessionPolicy policy = {
             rollovers: Rollover.target, sessionSteps: true, paramWriteSteps: true,
             imageAttrs: ["type", "currentPoint", "posX", "posY", "posZ", "flip",
-                         "makeQuads", "points"] };
+                         "makeQuads", "merge", "points", "link"] };
         return policy;
     }
     // In-stroke undo / redo (fixture pen_instroke_undo.json): the
@@ -1299,17 +1418,15 @@ private:
     // the preview / vert handlers, records nothing).
     public override void cancelUncommittedEdit() { cancelPolygon(); }
 
-    // resyncSession() (undo/redo P1) is intentionally a JUSTIFIED NO-OP here:
-    // PenTool caches no scene-mesh baseline. Its only session state is the
-    // in-progress `vertices_` buffer, which holds LOCAL workplane positions
-    // (world coords, not mesh vertex/edge indices). A committed undo/redo that
-    // moves geometry beneath the active tool changes neither those world points
-    // nor anything Pen would re-derive from the mesh, so the default base no-op
-    // leaves the tool coherent for the next click. No override needed.
+    // An undo / redo moved the mesh under the live stroke: its links are mesh
+    // indices that may no longer exist, so every point becomes its own vertex
+    // again (positions kept). Links come only from gestures, so this is the one
+    // stale-index guard (wave plan S5; not captured — gap row).
+    public override void resyncSession() { links_[] = -1; }
 
     void cancelPolygon() {
         clearVertHandlers();
-        vertices_.length = 0;
+        vertices_.length = 0; links_.length = 0;
         previewMesh.clear();
         // No upload needed: draw() short-circuits when state == Idle, so the
         // stale GPU buffers are simply not rendered until the next Drawing
@@ -1360,6 +1477,27 @@ private:
         return -1;
     }
 
+    // The stroke edge (i, i + 1) — from three points also the closing edge
+    // (n − 1, 0) — nearest the pointer in screen space within `r` px: its
+    // first index i, or -1.
+    int findHoveredStrokeEdge(int mx, int my, float r) {
+        immutable size_t n = vertices_.length;
+        int best = -1;
+        foreach (i; 0 .. (n >= 3 ? n : n > 0 ? n - 1 : 0)) {
+            float ax, ay, bx, by, z;
+            if (!projectToWindowFull(toWorldP(vertices_[i]), cachedVp, ax, ay, z) ||
+                !projectToWindowFull(toWorldP(vertices_[(i + 1) % n]), cachedVp, bx, by, z))
+                continue;
+            const Vec3 ab = Vec3(bx - ax, by - ay, 0), ap = Vec3(mx - ax, my - ay, 0);
+            const float len2 = dot(ab, ab);
+            float t = len2 > 0 ? dot(ap, ab) / len2 : 0;
+            t = t < 0 ? 0 : t > 1 ? 1 : t;
+            const float d = (ap - ab * t).length;
+            if (d <= r) { r = d; best = cast(int)i; }
+        }
+        return best;
+    }
+
     int findHoveredVertExcept(int mx, int my, int exclude) {
         foreach (i, h; vertHandlers) {
             if (cast(int)i == exclude) continue;
@@ -1377,12 +1515,14 @@ private:
         if (targetIdx == dragIdx) return;
         vertHandlers[dragIdx].destroy();
         vertices_    = vertices_[0 .. dragIdx]    ~ vertices_[dragIdx + 1 .. $];
+        links_       = links_[0 .. dragIdx]       ~ links_[dragIdx + 1 .. $];
         vertHandlers = vertHandlers[0 .. dragIdx] ~ vertHandlers[dragIdx + 1 .. $];
     }
 
     void uploadPreview() {
-        assert(vertHandlers.length == vertices_.length,
-            "pen: one marker per stroke point");
+        assert(vertHandlers.length == vertices_.length &&
+            links_.length == vertices_.length,
+            "pen: one marker and one link per stroke point");
         previewMesh.clear();
         appendPenGeometry(previewMesh, PenStroke.of(vertices_, frame.toWorld,
             params_), PenBuildPurpose.Preview);
@@ -1532,7 +1672,7 @@ private:
         // Drop in-progress state — tool stays active for the next polygon.
         state = PenState.Idle;
         clearVertHandlers();
-        vertices_.length = 0;
+        vertices_.length = 0; links_.length = 0;
         previewMesh.clear();
         previewGpu.upload(previewMesh);
         params_.currentPoint = -1;
@@ -1545,7 +1685,7 @@ private:
         // A pure tail append into the live scene mesh, declared as such for
         // the corner-append cross-check.
         appendPenGeometry(*mesh, PenStroke.of(vertices_, frame.toWorld,
-            params_), PenBuildPurpose.Commit);
+            params_, links_), PenBuildPurpose.Commit);
         mesh.declareCornerAppend();
         mesh.buildLoops();
         gpu.upload(*mesh);

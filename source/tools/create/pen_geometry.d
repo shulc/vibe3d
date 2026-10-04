@@ -25,11 +25,13 @@ struct PenParams {
     // Make Quads: after two anchor clicks every further pair of points closes
     // one quad of a strip, laid out [top0, bot0, top1, bot1, ...].
     bool  makeQuads    = false;
+    // A gesture-placed point near an edited-mesh vertex shares it (wave plan S5).
+    bool  merge        = true;
 }
 // Field sizes summed by hand (a field added must be added here and to the
 // member pin in pen_geometry_test), rounded to 4: no interior padding.
 static assert(PenParams.sizeof ==
-    (2 * int.sizeof + 3 * float.sizeof + 2 * bool.sizeof + 3) / 4 * 4,
+    (2 * int.sizeof + 3 * float.sizeof + 3 * bool.sizeof + 3) / 4 * 4,
     "PenParams has interior padding that sameValueBytes would compare");
 
 enum PenBuildPurpose : ubyte { Preview, Commit }
@@ -38,14 +40,18 @@ enum PenBuildPurpose : ubyte { Preview, Commit }
 /// live state or from a prepared image's copies of it.
 struct PenStroke {
     const(Vec3)[] points;   // LOCAL workplane positions, click order
+    // Per point: >= 0 = the index of the edited-mesh vertex it shares (S5
+    // merge), else its own vertex. Empty = all own (a preview: its mesh holds
+    // no scene vertex).
+    const(int)[]  links;
     float[16]     toWorld;  // workplane local → world
     bool          flip;
     bool          quads;
 
     static PenStroke of(const(Vec3)[] pts, in float[16] toWorld,
-            in PenParams p) nothrow @nogc {
+            in PenParams p, const(int)[] links = null) nothrow @nogc {
         PenStroke s;
-        s.points = pts; s.toWorld = toWorld;
+        s.points = pts; s.links = links; s.toWorld = toWorld;
         s.flip = p.flip; s.quads = p.makeQuads;
         return s;
     }
@@ -105,6 +111,7 @@ uint[] penRingOrder(const(Vec3)[] v, bool reverse) {
 }
 
 /// Append the stroke to `dst`; returns the index of its first new vertex.
+/// A linked point appends no vertex: its faces use the shared index.
 ///
 /// At or above the face minimum: the strip's quads `[2k+1, 2k+3, 2k+2, 2k]`,
 /// `[2k, 2k+2, 2k+3, 2k+1]` under `flip` (that order winds against the decision
@@ -119,21 +126,28 @@ uint[] penRingOrder(const(Vec3)[] v, bool reverse) {
 uint appendPenGeometry(ref Mesh dst, in PenStroke s, PenBuildPurpose purpose) {
     const uint base = cast(uint)dst.vertices.length;
     const uint n = cast(uint)s.points.length;
-    foreach (p; s.points) dst.addVertex(transformPoint(s.toWorld, p));
+    Vec3[] world;
+    uint[] idx;     // stroke point → mesh vertex
+    foreach (i, p; s.points) {
+        world ~= transformPoint(s.toWorld, p);
+        const bool linked = i < s.links.length && s.links[i] >= 0;
+        idx ~= linked ? cast(uint)s.links[i] : cast(uint)dst.vertices.length;
+        if (!linked) dst.addVertex(world[i]);
+    }
 
     const bool closed = n >= penFaceMinimum(s.quads);
     if (closed && s.quads) {
         foreach (k; 0 .. n / 2 - 1) {
-            const uint a = base + 2*k,     b = base + 2*k + 2;
-            const uint c = base + 2*k + 3, d = base + 2*k + 1;
+            const uint a = idx[2*k],     b = idx[2*k + 2];
+            const uint c = idx[2*k + 3], d = idx[2*k + 1];
             dst.addFace(s.flip ? [a, b, c, d] : [d, c, b, a]);
         }
     } else if (closed || purpose == PenBuildPurpose.Commit) {
-        uint[] face = penRingOrder(dst.vertices[base .. $], s.flip);
-        foreach (ref i; face) i += base;
+        uint[] face = penRingOrder(world, s.flip);
+        foreach (ref i; face) i = idx[i];
         dst.addFace(face);
     } else {
-        foreach (i; 1 .. n) dst.addEdge(base + i - 1, base + i);
+        foreach (i; 1 .. n) dst.addEdge(idx[i - 1], idx[i]);
     }
     return base;
 }

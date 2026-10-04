@@ -15,12 +15,12 @@ import tools.create.pen_geometry;
 // Composition pins: a field added to the stroke or a kind added to the
 // prepared param enum must be added here, with its cases.
 static assert([__traits(allMembers, PenStroke)] ==
-    ["points", "toWorld", "flip", "quads", "of"]);
+    ["points", "links", "toWorld", "flip", "quads", "of"]);
 static assert([__traits(allMembers, PenBuildPurpose)] == ["Preview", "Commit"]);
 static assert([__traits(allMembers, PreparedPenParamKind)] ==
     ["None", "Noop", "CurrentPoint", "Position", "Preview"]);
 static assert([__traits(allMembers, PenParams)] ==
-    ["type", "currentPoint", "posX", "posY", "posZ", "flip", "makeQuads"]);
+    ["type", "currentPoint", "posX", "posY", "posZ", "flip", "makeQuads", "merge"]);
 static assert(PenParams.sizeof == 24);
 
 private enum float[16] kIdentity = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
@@ -292,3 +292,41 @@ unittest // Preview and Commit emit the same ring for a flipped pentagon
         commit.faces));
 }
 
+
+unittest // a linked point (S5 merge) emits the shared index and appends no vertex
+{
+    PenParams p;
+    const int[] link = [-1, 1, -1];
+    Mesh m;
+    foreach (i; 0 .. 2) m.addVertex(Vec3(-5, -5, cast(float)i));
+    const first = appendPenGeometry(m, PenStroke.of(kTri, kIdentity, p, link),
+        PenBuildPurpose.Commit);
+    assert(first == 2 && m.vertices.length == 4, format("linked triangle: first %s, "
+        ~ "%s vertices; expected 2, 4 (one shared)", first, m.vertices.length));
+    assert(m.vertices[2 .. $] == [kTri[0], kTri[2]], format("linked triangle: "
+        ~ "appended %s", m.vertices[2 .. $]));
+    assert(m.faces == [[2u, 1, 3]], format("linked triangle: faces %s, expected "
+        ~ "[[2, 1, 3]]", m.faces));
+
+    // A 2-point commit with a link keeps its 2-vertex face.
+    Mesh two;
+    two.addVertex(Vec3(9, 9, 9));
+    appendPenGeometry(two, PenStroke.of(kTri[0 .. 2], kIdentity, p, [0, -1]),
+        PenBuildPurpose.Commit);
+    assert(two.vertices.length == 2 && two.faces == [[0u, 1]], format("linked "
+        ~ "2-point commit: %s vertices, faces %s", two.vertices.length, two.faces));
+
+    // A strip quad uses the shared index at its corner.
+    PenParams q; q.makeQuads = true;
+    Mesh strip;
+    strip.addVertex(Vec3(9, 9, 9));
+    appendPenGeometry(strip, PenStroke.of(kStrip6[0 .. 4], kIdentity, q,
+        [-1, -1, 0, -1]), PenBuildPurpose.Commit);
+    assert(strip.vertices.length == 4 && strip.faces == [[2u, 3, 0, 1]], format(
+        "linked strip: %s vertices, faces %s", strip.vertices.length, strip.faces));
+
+    // A stroke without links (the preview) appends every point.
+    Mesh preview;
+    appendPenGeometry(preview, PenStroke.of(kTri, kIdentity, p), PenBuildPurpose.Preview);
+    assert(preview.vertices.length == 3, "a link-free stroke shared a vertex");
+}

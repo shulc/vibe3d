@@ -669,14 +669,14 @@
     {
       "aggregate": "PenTool",
       "module": "tools.create.pen",
-      "semantic_sha256": "5eb3c018bbd30bc1a6bfde51b6002ed503a0465d0f1c42474827186f075da078",
+      "semantic_sha256": "212070574db747249e347506bff33b1ee971341e45a4071a70c1609984f9d713",
       "signature": "void(string name)",
       "symbol": "onParamChanged"
     },
     {
       "aggregate": "PenTool",
       "module": "tools.create.pen",
-      "semantic_sha256": "0ab908f5f5037fe19851bc5c5ad7fcbd8f8cea26d96bfa48fd38a58529c4fd4e",
+      "semantic_sha256": "817a5fa6381c807915a294305ac2faba57745b534582b9ef493465581ff93d58",
       "signature": "void()",
       "symbol": "activate"
     },
@@ -1533,7 +1533,7 @@
     {
       "aggregate": "PenTool",
       "module": "tools.create.pen",
-      "semantic_sha256": "eb70b86a4454766a886544e9a3885f744cff4edb429615711ba76050d73810f3",
+      "semantic_sha256": "01fcb085303699b95a2e46387409da55145ffa79759d0b95a6c1117a878718f4",
       "signature": "Param[]()",
       "symbol": "params"
     },
