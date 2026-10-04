@@ -314,12 +314,13 @@ private enum size_t kNotPortedCeiling = 14;
 private enum size_t kSessionStepsFalseCeiling = 0;
 
 /// Task 8250: these existing command producers now use the same completed
-/// History-row owner as Transform (18 since plan 8646 moved the Topology Pen to
-/// the topology-step protocol). The other rows retain image/topology
+/// History-row owner as Transform (17 since task 9369 moved the polygon pen to
+/// the attribute-image steps; 18 after plan 8646 moved the Topology Pen to the
+/// topology-step protocol). The other rows retain image/topology
 /// policies; this exact set catches a silent class-wide policy spill.
 private immutable string[] kAdditionalHistoryRows = [
     "edge.slide", "mesh.bridgeTool", "mesh.dragWeld", "mesh.radialSweepTool",
-    "mesh.reduceTool", "mesh.tack", "pen", "prim.arc",
+    "mesh.reduceTool", "mesh.tack", "prim.arc",
     "prim.capsule", "prim.cone", "prim.cube", "prim.cylinder",
     "prim.ellipsoid", "prim.sphere", "prim.torus", "prim.tube",
     "prim.vertex", "tool.strokeExtrude",
@@ -520,6 +521,11 @@ private immutable StepRow[] kStepTable = [
     // is the haul plus the operation's applied flag and its base index.
     StepRow("poly.bevel", OpensAt.arm, false, ["inset", "shift", "applied", "op"], "applied"),
     StepRow("vert.merge", OpensAt.firstPress, false, ["dist"]),
+    // Task 9369: the polygon pen's stroke is its image — every attribute plus
+    // the hidden `points` (captured in-stroke undo, fixture pen_instroke_undo).
+    StepRow("pen", OpensAt.firstPress, false,
+            ["type", "currentPoint", "posX", "posY", "posZ", "flip", "makeQuads",
+             "points"]),
     // Plan 8646 (S5): every published pen attribute is an image attribute (D15,
     // captured R-all); S7a adds the operation context (offsets + descriptor).
     StepRow("mesh.topoPen", OpensAt.firstPress, false,
@@ -547,6 +553,10 @@ unittest { // (4)
                "history producer policy drifted for " ~ row.id);
         assert(pol.previewHistoryLadder == (row.id == "prim.cube"),
                "Box live History ladder policy drifted for " ~ row.id);
+        // Task 9369: a parameter write is an attribute-image step for the
+        // polygon pen only (follow-up: K-F2 F10 decides whether it is general).
+        assert(pol.paramWriteSteps == (row.id == "pen"),
+               "parameter-write steps policy drifted for " ~ row.id);
         if (!pol.sessionSteps) {
             ++stepsFalse;
             assert(pol.imageAttrs.length == 0 && pol.haulAttrs.length == 0,
@@ -628,9 +638,9 @@ unittest { // (4)
     assert(stepsFalse == kSessionStepsFalseCeiling,
            format("M7 ratchet: sessionSteps=false fell to %s ids, ceiling %s: lower the ceiling "
                   ~ "in the same commit", stepsFalse, kSessionStepsFalseCeiling));
-    assert(recordedSteps == 52,
-           format("history-owned rows %s, expected 52", recordedSteps));
-    // Image-producing population floors: 19 ids, 137 image names, 3 Action triggers
+    assert(recordedSteps == 51,
+           format("history-owned rows %s, expected 51", recordedSteps));
+    // Image-producing population floors: 20 ids, 145 image names, 3 Action triggers
     // on them (chainArm; insertAt, removeCurrent), 1 arm attribute (M3b).
     sort(imageStepIds);
     assert(imageStepIds == ["edge.bevel", "edge.extend", "edge.extrude",
@@ -638,9 +648,9 @@ unittest { // (4)
                        "mesh.mirrorTool", "mesh.polyInsetTool", "mesh.radialArrayTool",
                        "mesh.sliceTool", "mesh.smoothShiftTool",
                        "mesh.thickenTool", "mesh.topoPen", "mesh.vertexBevel", "mesh.vertexExtrude",
-                       "poly.bevel", "poly.extrude", "vert.merge"],
+                       "pen", "poly.bevel", "poly.extrude", "vert.merge"],
            format("M3 step table: image-step ids %s", imageStepIds));
-    assert(checkedNames == 137, format("M3 step table: %s image names checked, measured 137",
+    assert(checkedNames == 145, format("M3 step table: %s image names checked, measured 145",
                                       checkedNames));
     assert(armAttrs == 1, format("M3b step table: %s arm attributes, measured 1", armAttrs));
     assert(actionNames == 3, format("M3 step table: %s Action params on the session tools, "
@@ -1888,8 +1898,8 @@ static assert([__traits(allMembers, imported!"tool".ToolSessionPolicy)] == [
     "activationResetAttrs", "armAttr", "headlessReplacesWindow", "recordCarriesActivation",
     "keepAliveOnCancel", "rollovers", "handleAnchor", "armRestoresWholeImage", "dropWritesRow",
     "refusesDisabledParamWrites", "pressOpensOperation", "foldsParamRowsIntoBlock",
-    "redoPinsRefireImage"],
-    "S8 pin: ToolSessionPolicy's members changed (measured 25 on the wave's tip)");
+    "redoPinsRefireImage", "paramWriteSteps", "stepsParamWrites"],
+    "S8 pin: ToolSessionPolicy's members changed (measured 27 since task 9369)");
 
 /// The session type `EditSession` holds in its field `tools_`.
 private template SessionOf(ES) {
@@ -2325,7 +2335,7 @@ unittest { // Tasks 7990/8030: production topology R wiring, not a helper replic
     assert(esFlat.canFind("constcompletedTopologyIsHistoryOwned=reporting_(t)&&t.sessionPolicy().historyTopologySteps&&!topologyPending_;")
         && esFlat.canFind("t.hasUncommittedEdit()&&!completedTopologyIsHistoryOwned"),
         "completed topology state regained the legacy cancel-first responder");
-    assert(es.canFind("topologyParameterStepBegins(t, beforeWrite)")
+    assert(es.canFind("parameterStepBegins(t, beforeWrite)")
         && es.canFind("cmd.setTopologyStep(topologyPendingAttrs_, attrs,"),
         "interactive parameter or history-owned step payload was disconnected");
     assert(edge.canFind("sessionStepBegins(e.button == SDL_BUTTON_MIDDLE")
@@ -2449,7 +2459,7 @@ unittest { // Tasks 7990/8030: production topology R wiring, not a helper replic
     const panelDraw = squeeze(bodyAt(panelCode,
         "void drawProvider(ParamProvider p, EditSession session)"));
     inOrder(panelDraw, [
-        "beforeWrite=tisnull||!t.sessionPolicy().historyTopologySteps?AttrImage.init:t.captureAttrImage();",
+        "beforeWrite=tisnull||!t.sessionPolicy().stepsParamWrites()?AttrImage.init:t.captureAttrImage();",
         "boolchanged=drawParamWidget(par);",
         // 8290: the held widget is read right after ITS widget, and a row
         // that let go closes its step before any new write.
@@ -2457,9 +2467,9 @@ unittest { // Tasks 7990/8030: production topology R wiring, not a helper replic
         "if(!held&&session.parameterStepHeld(p,par.name))session.releaseParameterStep();",
         "session.orchestrateParameterChange(p,par.name,source,ParameterChangePhase.ValueWritten,beforeWrite,held);",
     ], "PropertyPanel.drawProvider topology prewrite");
-    assert(panel.count("beforeWrite=tisnull||!t.sessionPolicy().historyTopologySteps?AttrImage.init:t.captureAttrImage();") == 1
+    assert(panel.count("beforeWrite=tisnull||!t.sessionPolicy().stepsParamWrites()?AttrImage.init:t.captureAttrImage();") == 1
         && panel.count("session.orchestrateParameterChange(p,par.name,source,ParameterChangePhase.ValueWritten,beforeWrite,held);") == 1
-        && attr.canFind("beforeWrite=t.sessionPolicy().historyTopologySteps?t.captureAttrImage():AttrImage.init;")
+        && attr.canFind("beforeWrite=t.sessionPolicy().stepsParamWrites()?t.captureAttrImage():AttrImage.init;")
         && attr.canFind("t,attrName_,source,ParameterChangePhase.ValueWritten,beforeWrite);"),
         "pointer-written parameter producer lost the actual prewrite image");
 }

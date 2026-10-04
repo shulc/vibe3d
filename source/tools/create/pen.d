@@ -540,6 +540,9 @@ public:
             Param.float_("posZ", "Position Z", &params_.posZ, 0.0f).transient(),
             Param.bool_("flip", "Flip Polygon", &params_.flip, false),
             Param.bool_("makeQuads", "Make Quads", &params_.makeQuads, false),
+            // The stroke itself, for the session's undo image (hidden,
+            // transient, refused on every wire door).
+            Param.podArray_("points", "Points", &vertices_),
         ];
     }
 
@@ -866,6 +869,7 @@ public:
         // subphases (Shift+click new polygon, Ctrl in Make Quads).
         if (mods & KMOD_ALT) return false;
         if (mods & (KMOD_CTRL | KMOD_SHIFT)) return false;
+        sessionStepBegins();   // every consumed press is one undo step
 
         // Double-click semantics (vibe3d convention from doc/pen_plan.md):
         // every LMB-down adds a vertex, then on the SECOND click of a
@@ -984,6 +988,7 @@ public:
 
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         if (e.button != SDL_BUTTON_LEFT) return false;
+        sessionStepEnds();     // before the return: a press arming no drag ends too
         if (!dragArmed) return false;
         scope(exit) {
             dragArmed     = false;
@@ -1026,9 +1031,11 @@ public:
 
             case SDLK_BACKSPACE:
                 if (state == PenState.Drawing && vertices_.length > 0) {
+                    sessionStepBegins();   // interim: an undoable step
                     popVertex();
                     if (vertices_.length == 0) state = PenState.Idle;
                     uploadPreview();
+                    sessionStepEnds();
                     return true;
                 }
                 return false;
@@ -1096,7 +1103,7 @@ public:
         if (state == PenState.Idle)
             ImGui.TextDisabled("Click in viewport to start a polygon.");
         else
-            ImGui.TextDisabled("Click to add vertices • Enter / dbl-click to close • Backspace to undo • RMB to cancel");
+            ImGui.TextDisabled("Click to add vertices • Enter / dbl-click to close • Ctrl+Z undoes the last action • Backspace removes the last vertex • RMB to cancel");
     }
 
 private:
@@ -1164,10 +1171,15 @@ private:
         // pos is in LOCAL workplane coords; the vertex handler renders in
         // world, so hit-testing needs the world image of `pos`.
         vertices_ ~= pos;
+        vertHandlers ~= vertMarker(pos);
+    }
+
+    // One cyan marker for a LOCAL stroke point (markers render in WORLD).
+    BoxHandler vertMarker(Vec3 pos) {
         Vec3 worldPos = toWorldP(pos);
         auto h = new BoxHandler(worldPos, schemeColor(SchemeColor.handle));
         h.size = gizmoSize(worldPos, cachedVp, 0.04f);
-        vertHandlers ~= h;
+        return h;
     }
 
     // 6.9.5: Make Quads — append the two vertices that complete the next
@@ -1201,10 +1213,8 @@ private:
         if (insertIdx < 0) insertIdx = 0;
         if (insertIdx > cast(int)vertices_.length) insertIdx = cast(int)vertices_.length;
         vertices_ = vertices_[0 .. insertIdx] ~ pos ~ vertices_[insertIdx .. $];
-        Vec3 worldPos = toWorldP(pos);
-        auto h = new BoxHandler(worldPos, schemeColor(SchemeColor.handle));
-        h.size = gizmoSize(worldPos, cachedVp, 0.04f);
-        vertHandlers = vertHandlers[0 .. insertIdx] ~ h ~ vertHandlers[insertIdx .. $];
+        vertHandlers = vertHandlers[0 .. insertIdx] ~ vertMarker(pos)
+            ~ vertHandlers[insertIdx .. $];
     }
 
     void popVertex() {
@@ -1236,9 +1246,19 @@ private:
     // picks no hover type yet (`wantsHoverForType`), so nothing is drawn.
     public override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
         static immutable ToolSessionPolicy policy = {
-            rollovers: Rollover.target, sessionSteps: true,
-            historyRecordedSteps: true };
+            rollovers: Rollover.target, sessionSteps: true, paramWriteSteps: true,
+            imageAttrs: ["type", "currentPoint", "posX", "posY", "posZ", "flip",
+                         "makeQuads", "points"] };
         return policy;
+    }
+    // In-stroke undo / redo (fixture pen_instroke_undo.json): the
+    // session restores the image before the last press, typed field or flag
+    // write; the stroke is re-derived from it — never re-decided (flip).
+    public override void rebuildPreviewFromAttrs() {
+        state = vertices_.length ? PenState.Drawing : PenState.Idle;
+        clearVertHandlers();
+        foreach (v; vertices_) vertHandlers ~= vertMarker(v);
+        uploadPreview();
     }
     // Cancel: drop the in-progress sequence (cancelPolygon resets state + clears
     // the preview / vert handlers, records nothing).
@@ -1265,6 +1285,7 @@ private:
         // Drop the snap overlay so it doesn't linger.
         lastSnap = SnapResult.init;
         clearLastSnap();
+        sessionOperationEnded();
     }
 
     // Mirror vertices_[currentPoint] into the params_.posX/Y/Z fields so the
@@ -1480,6 +1501,7 @@ private:
         params_.currentPoint = -1;
         params_.posX = params_.posY = params_.posZ = 0.0f;
         meshChanged = true;
+        sessionOperationEnded();   // the stroke's steps end with its one row
     }
 
     void commitPolygon() {

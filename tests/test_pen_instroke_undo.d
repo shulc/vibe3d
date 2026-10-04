@@ -157,6 +157,19 @@ private void expectIdlePen(string cell, string when, ref string[] fails) {
             cell, when, a == "pen" ? "armed" : "not armed", cur);
 }
 
+/// The captured rig: top ortho at 440 px/m (ortho pixel = 2 d tan(pi/8) / h),
+/// focus on the y-1 plane; our pixel size must sit in the 0.005 rung's
+/// bracket (0.002, 0.005] so the drag's quantised landing (0.59) is exact.
+private void rig() {
+    import drag_helpers : fetchCamera;
+    import std.math : PI, tan;
+    const h = fetchCamera().height;
+    penRigEmpty(kFocus, "Top", h / (440.0 * 2.0 * tan(PI / 8)));
+    const px = num(getJson("/api/viewport/display")["cells"].array[0]["grid"]["pixelSize"]);
+    assert(px > 0.002 && px <= 0.005,
+        format("rig zoom drifted: pixel size %s outside (0.002, 0.005]", px));
+}
+
 private enum Vec3[3] kTri = [Vec3(-0.5f, 1, 0.3f), Vec3(0.5f, 1, 0.3f), Vec3(0, 1, -0.5f)];
 private enum Vec3[4] kA = [Vec3(-0.4f, 1, 0.5f), Vec3(0.1f, 1, 0.1f),
                            Vec3(0.6f, 1, 0.5f), Vec3(0.1f, 1, -0.5f)];
@@ -165,7 +178,7 @@ private enum Vec3[4] kA = [Vec3(-0.4f, 1, 0.5f), Vec3(0.1f, 1, 0.1f),
 private string[] runCell(string name, JSONValue c) {
     auto exp = c["expected"];
     string[] fails;
-    penRigEmpty(kFocus);
+    rig();
     final switch (name) {
     case "drag_then_undo", "drag_then_two_undos":
         clickWorld(kTri[]);
@@ -244,7 +257,7 @@ unittest {
     string[] green;
     size_t ranGreen;
     if (want("reset-discards")) {
-        penRigEmpty(kFocus);
+        rig();
         clickWorld(kA[]);
         auto r = postJson("/api/command",
             `{"id":"tool.reset","params":{"_positional":["pen"]}}`);
@@ -256,7 +269,7 @@ unittest {
         ++ranGreen;
     }
     if (want("long-stroke-replace")) {
-        penRigEmpty(kFocus);
+        rig();
         Vec3[] pts;
         foreach (i; 0 .. 70) pts ~= xz(-0.9 + 0.12 * (i % 14), -0.6 + 0.25 * (i / 14));
         clickWorld(pts);
@@ -272,7 +285,7 @@ unittest {
         ++ranGreen;
     }
     if (want("idle-write-ctrlz")) {
-        penRigEmpty(kFocus);
+        rig();
         clickWorld(kTri[]);
         enter();
         expectDepth("idle-write-ctrlz", "after T", 1, green);
@@ -286,7 +299,7 @@ unittest {
         ++ranGreen;
     }
     if (want("commit-then-ctrlz")) {
-        penRigEmpty(kFocus);
+        rig();
         clickWorld(kTri[]);
         enter();
         expectDepth("commit-then-ctrlz", "after T", 1, green);
@@ -322,7 +335,7 @@ unittest {
         Vec3[] pts;
         foreach (p; c["clicks_xz_on_plane_y1"].array)
             pts ~= xz(num(p.array[0]), num(p.array[1]));
-        penRigEmpty(kFocus);
+        rig();
         clickWorld(pts);
         expectNum("A4d-ctrlz", "flip after point 4", attrOr("flip", double.nan),
             num(c["flip_attr_after_point4"]), fails);
@@ -345,7 +358,7 @@ unittest {
     }
     if (want("undo_one_point_stroke")) {
         auto exp = fx["related_cells"]["undo_one_point_stroke"]["expected"];
-        penRigEmpty(kFocus);
+        rig();
         clickWorld(xz(0, 0.2), xz(0.5, 0.2), xz(0.25, -0.3));
         drop();
         penCommand("tool.set pen on");
@@ -359,7 +372,7 @@ unittest {
         ++ran;
     }
     if (want("ctrlz-after-commit")) {
-        penRigEmpty(kFocus);
+        rig();
         clickWorld(xz(0, 0.2), xz(0.5, 0.2), xz(0.25, -0.3));
         enter();
         clickWorld(kA[]);
@@ -375,7 +388,7 @@ unittest {
         ++ran;
     }
     if (want("switch-rearm-no-leftover")) {
-        penRigEmpty(kFocus);
+        rig();
         clickWorld(kTri[]);
         penCommand("tool.set move on");
         penCommand("tool.set pen on");
@@ -386,10 +399,10 @@ unittest {
         ++ran;
     }
     if (want("points-not-injectable")) {
-        penRigEmpty(kFocus);
+        rig();
         clickWorld(kTri[]);
         const d0 = depth();
-        auto r = postJson("/api/command", "tool.attr pen points [[0,1,0],[1,1,0]]");
+        auto r = postJson("/api/command", "tool.attr pen points 0");
         if (r["status"].str != "error" || !r.toString.canFind("not injectable"))
             fails ~= "points-not-injectable: " ~ r.toString;
         expectDepth("points-not-injectable", "after the write", d0, fails);

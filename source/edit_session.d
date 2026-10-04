@@ -327,7 +327,7 @@ final class EditSession {
                         assert(t !is null,
                             "interactive parameter source requires a Tool");
                         // A held widget (a scrub, a typed edit in progress)
-                        // is ONE topology step: open at its first write, closed
+                        // is ONE parameter step: open at its first write, closed
                         // by `releaseParameterStep` (captured: a scrub is one row).
                         if (widgetHeld && tools_.holdsParameter(t, name)) {
                             t.notifyInteractiveParamChanged(name);
@@ -335,12 +335,12 @@ final class EditSession {
                         }
                         tools_.releaseParameter();
                         const action = tools_.actionStepBegins(t, name);
-                        const topology = !action
-                            && tools_.topologyParameterStepBegins(t, beforeWrite);
+                        const param = !action
+                            && tools_.parameterStepBegins(t, beforeWrite);
                         t.notifyInteractiveParamChanged(name);
-                        if (topology && widgetHeld)
+                        if (param && widgetHeld)
                             tools_.holdParameter(t, name);
-                        else if (action || topology)
+                        else if (action || param)
                             tools_.stepEnds(t, false);
                         return;
                     }
@@ -1795,7 +1795,7 @@ private struct ToolSession {
             topologyPending_ = true;
             return;
         }
-        auto before = t.captureAttrImage();
+        auto before = beforeWrite.empty ? t.captureAttrImage() : beforeWrite;
         // H5: an in-window press opens an operation boundary of its kind. The
         // step restores the image the new operation STARTED from — after the
         // reset / clone (H2, 283: C-H5-bev-shift z1 0.0, C-H5-bev-mmb z1 the
@@ -2005,7 +2005,7 @@ private struct ToolSession {
         return false;
     }
 
-    // A topology parameter step held open by its widget (a scrub, a typed
+    // A parameter step (either arm) held open by its widget (a scrub, a typed
     // edit in progress) — one step until the widget lets go (captured: a
     // scrub is one row). Anything else that opens or ends a step, or ends
     // the operation, closes or forgets it first, so a release can only ever
@@ -2019,7 +2019,7 @@ private struct ToolSession {
     }
 
     void holdParameter(Tool t, string name) {
-        if (!topologyPending_) return;
+        if (!topologyPending_ && !pendingSet_) return;
         heldParamTool_ = t;
         heldParamName_ = name;
     }
@@ -2032,13 +2032,20 @@ private struct ToolSession {
         stepEnds(t, false);
     }
 
-    bool topologyParameterStepBegins(Tool t, AttrImage beforeWrite) {
-        if (!reporting_(t) || !t.sessionPolicy().historyTopologySteps)
-            return false;
-        // A write that lands while a gesture's step is open joins that step.
-        if (topologyPending_) return false;
+    // An interactive parameter write as a step of its own (both arms). The
+    // attribute arm (`paramWriteSteps`) steps only inside a live
+    // window: a write never OPENS one.
+    bool parameterStepBegins(Tool t, AttrImage beforeWrite) {
+        if (!reporting_(t)) return false;
+        if (t.sessionPolicy().historyTopologySteps) {
+            // A write that lands while a gesture's step is open joins that step.
+            if (topologyPending_) return false;
+            stepBegins(t, PressKind.plain, beforeWrite, false);
+            return topologyPending_;
+        }
+        if (!t.sessionPolicy().paramWriteSteps || liveSteps_() !is t) return false;
         stepBegins(t, PressKind.plain, beforeWrite, false);
-        return topologyPending_;
+        return true;
     }
 
     JSONValue stateJson() {

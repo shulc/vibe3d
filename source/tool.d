@@ -464,6 +464,16 @@ struct ToolSessionPolicy {
     /// shows its own result. Read only by the session, inside the captured
     /// model (topology-redo S7r, model doc §R13).
     bool redoPinsRefireImage;
+    /// An attribute-image tool: an interactive parameter write inside its live
+    /// window is one gesture step with its true before-image (the polygon pen's
+    /// captured in-stroke undo, fixture pen_instroke_undo: a typed field is one event).
+    bool paramWriteSteps;
+
+    /// Both step arms' one predicate for "a parameter write is a step": the
+    /// producers capture the before-write image under it.
+    bool stepsParamWrites() const pure nothrow @nogc {
+        return historyTopologySteps || paramWriteSteps;
+    }
 }
 
 /// The captured topology-operation model (task 8920, law 1): history-owned

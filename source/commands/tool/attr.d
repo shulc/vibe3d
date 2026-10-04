@@ -143,7 +143,7 @@ class ToolAttrCommand : Command {
         // Build a single-key object and inject it.
         JSONValue pj = JSONValue(cast(JSONValue[string]) null);
         pj[attrName_] = attrValue_;
-        auto beforeWrite = t.sessionPolicy().historyTopologySteps
+        auto beforeWrite = t.sessionPolicy().stepsParamWrites()
             ? t.captureAttrImage() : AttrImage.init;
         injectParamsInto(t.params(), pj);
         if (toolHost.session is null || toolHost.session() is null)

@@ -1280,6 +1280,100 @@ unittest { // a scrub (held widget) records one row; discrete writes record one 
     }
 }
 
+// ---- task 9369: parameter writes as attribute-image steps (`paramWriteSteps`) -----
+
+/// StepTool whose interactive parameter writes are steps of their own.
+private final class ParamStepTool : StepTool {
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy p = { activationRow: true, sessionSteps: true,
+            paramWriteSteps: true, opensAt: OpensAt.firstPress, imageAttrs: ["v", "arr"] };
+        return p;
+    }
+}
+private Rig paramRig() {
+    auto r = rig();
+    r.t = new ParamStepTool;
+    r.active = r.t;
+    r.session.noteArm("t.param", 2);
+    return r;
+}
+/// One interactive write of `v`, its before-image captured by the producer.
+private void writeV(Rig r, int to, bool held) {
+    auto before = r.t.captureAttrImage();
+    r.t.v = to;
+    r.session.orchestrateParameterChange(r.t, "v", ParameterChangeSource.InteractiveValue,
+        ParameterChangePhase.ValueWritten, before, held);
+    r.session.orchestrateParameterChange(r.t, "", ParameterChangeSource.InteractiveValue,
+        ParameterChangePhase.BatchComplete);
+}
+
+unittest { // a held widget's writes are ONE step; its undo restores the value before the first
+    auto r = paramRig();
+    r.t.gesture(1);            // the window's first group
+    r.t.gesture(2);            // a press step
+    const s0 = steps(r);
+    assert(isLive(r) && s0 == 1, format("9369 held rig: live %s, %s steps", isLive(r), s0));
+    foreach (i; 0 .. 3) {
+        writeV(r, 10 + i, true);
+        assert(r.session.parameterStepHeld(r.t, "v"),
+            format("9369: held write %s did not hold the parameter step", i));
+    }
+    r.session.releaseParameterStep();
+    assert(!r.session.parameterStepHeld(r.t, "v") && steps(r) == s0 + 1,
+        format("9369: three held writes are %s steps, expected 1", steps(r) - s0));
+    assert(r.session.navigate(true) && r.t.v == 2,
+        format("9369: the held step's undo restored v %s, expected 2", r.t.v));
+}
+
+unittest { // discrete writes: one step each, restoring the producer's before-image
+    auto r = paramRig();
+    r.t.gesture(1);
+    foreach (i; 0 .. 3) writeV(r, 10 + i, false);
+    assert(steps(r) == 3, format("9369: three writes are %s steps, expected 3", steps(r)));
+    assert(r.session.navigate(true) && r.t.v == 11,
+        format("9369: the last write's undo restored v %s, expected 11", r.t.v));
+    assert(r.session.navigate(false) && r.t.v == 12, "9369: the write's redo");
+}
+
+unittest { // a write outside a live window opens nothing (an Idle write records nothing)
+    auto r = paramRig();
+    writeV(r, 5, false);
+    assert(!isLive(r) && steps(r) == 0,
+        format("9369: an idle write opened the window (live %s, %s steps)", isLive(r), steps(r)));
+    // The same write on a tool without the datum is no step, live or not.
+    auto plain = rig();
+    plain.t.gesture(1);
+    writeV(plain, 7, false);
+    assert(steps(plain) == 0, "9369: a non-Action write stepped without paramWriteSteps");
+}
+
+unittest { // §19.1 #4: the polygon pen's rows are drawn by PropertyPanel.drawProvider
+    // (which passes `held` and the stepsParamWrites() before-image): no form
+    // replaces its panel, and it does not opt out of the schema panel.
+    import std.algorithm : startsWith;
+    import std.string : split, strip;
+    string[] formTools;
+    foreach (f; dirEntries("config/forms", "*.yaml", SpanMode.shallow)) {
+        bool inList;
+        foreach (line; readText(f.name).split('\n')) {
+            const l = line.strip;
+            if (l == "whenTool:") { inList = true; continue; }
+            if (inList && l.startsWith("- ")) { formTools ~= l[2 .. $].strip; continue; }
+            inList = false;
+        }
+    }
+    assert(formTools.canFind("mesh.loopSliceTool"),
+        format("9369 census control: the form scan read no tool binding (%s)", formTools));
+    assert(!formTools.canFind("pen"), "9369: a form now replaces the polygon pen's panel");
+    const pen = readText("source/tools/create/pen.d");
+    assert(!pen.canFind("renderParamsAsPanel"),
+        "9369: the polygon pen opted out of the schema panel");
+    const panel = readText("source/property_panel.d");
+    assert(panel.canFind("!t.sessionPolicy().stepsParamWrites()")
+        && panel.canFind("ParameterChangePhase.ValueWritten,\n                    beforeWrite, held);"),
+        "9369: the panel lost the held / before-image arguments");
+}
+
 unittest { // a gesture that begins while a widget holds a step closes it first
     Mesh m = makeCube();
     auto h = new CommandHistory();

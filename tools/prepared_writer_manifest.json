@@ -1533,7 +1533,7 @@
     {
       "aggregate": "PenTool",
       "module": "tools.create.pen",
-      "semantic_sha256": "68311c684060f8c1d5f3a3fcc19920b8ff256fb545a7c23010eadc3fd6ea37b0",
+      "semantic_sha256": "eb70b86a4454766a886544e9a3885f744cff4edb429615711ba76050d73810f3",
       "signature": "Param[]()",
       "symbol": "params"
     },

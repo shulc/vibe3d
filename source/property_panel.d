@@ -193,7 +193,7 @@ public:
             if (disabled) ImGui.BeginDisabled();
             // The widget writes through Param's pointer before it returns.
             // Keep the real prewrite image for topology session rows.
-            auto beforeWrite = t is null || !t.sessionPolicy().historyTopologySteps
+            auto beforeWrite = t is null || !t.sessionPolicy().stepsParamWrites()
                 ? AttrImage.init : t.captureAttrImage();
             // One group per row, so a multi-widget row (a Vec3) reads as held
             // while ANY of its widgets is active.
