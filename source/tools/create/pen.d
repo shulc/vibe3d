@@ -329,8 +329,8 @@ version(unittest) unittest {
     hookPen.frame.toWorld = quadPen.frame.toWorld;
     hookPen.vertices_ = quadPen.vertices_.dup;
     hookPen.onParamChanged("flip");
-    assert(hookPen.previewMesh.faces == [[0u, 1, 2, 3]],
-        "legacy flip hook did not rebuild the preview");
+    assert(hookPen.previewMesh.faces == [[1u, 2, 3, 0]],
+        "legacy flip hook did not rebuild the preview (penRingOrder ring)");
     hookPen.params_.makeQuads = true; hookPen.onParamChanged("makeQuads");
     assert(hookPen.previewMesh.faces == [[0u, 2, 3, 1]],
         "legacy makeQuads hook did not rebuild the preview");
