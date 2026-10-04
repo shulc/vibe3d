@@ -33,6 +33,44 @@ private immutable Vec3[] kPent = [Vec3(0,0,0), Vec3(2,0,0), Vec3(3,1,0),
 private immutable Vec3[] kStrip6 = [Vec3(0,0,0), Vec3(0,1,0), Vec3(1,0,0),
                                     Vec3(1,1,0), Vec3(2,0,0), Vec3(2,1,0)];
 
+unittest // Make Quads facing: under the decided flip every quad faces the eye
+{
+    // FIRST block of the module: druntime stops at the first failed assert,
+    // so the facing law reddens here before the literal table below. A
+    // clockwise and a counter-clockwise (seen from the top) 6-point strip
+    // on y = 1: two quads each. Both purposes must face the top view's eye
+    // (normal . eye ray < 0), as the reference's strips always do (K-C2).
+    auto top = orthoLooking(-1);
+    auto ccw = onY1([-0.5f, -0.25f], [-0.5f, 0.25f], [0f, -0.25f], [0f, 0.25f],
+                    [0.5f, -0.25f], [0.5f, 0.25f]);
+    Vec3[] cw;
+    foreach (p; ccw) cw ~= Vec3(p.x, p.y, -p.z);
+    size_t quads;
+    foreach (name, pts; ["ccw": ccw, "cw": cw]) {
+        PenParams p; p.makeQuads = true;
+        p.flip = penFacingFlip(pts[0], pts[1], pts[2], top);
+        assert(p.flip == (name == "cw"), name ~ ": premise, flip decision");
+        foreach (purpose; [PenBuildPurpose.Preview, PenBuildPurpose.Commit]) {
+            Mesh m;
+            appendPenGeometry(m, PenStroke.of(pts, kIdentity, p), purpose);
+            assert(m.faces.length == 2, format("%s %s: %s faces", name, purpose,
+                m.faces.length));
+            foreach (f; m.faces) {
+                Vec3 n = Vec3(0, 0, 0), c = Vec3(0, 0, 0);
+                foreach (i; 0 .. f.length) {
+                    n = n + cross(m.vertices[f[i]], m.vertices[f[(i + 1) % $]]);
+                    c = c + m.vertices[f[i]];
+                }
+                c = c * (1.0f / f.length);
+                assert(dot(n, eyeVectorAt(top, c)) < 0, format("%s %s: quad %s "
+                    ~ "faces away (normal %s)", name, purpose, f, n));
+                ++quads;
+            }
+        }
+    }
+    assert(quads == 8, format("checked %s quads, pinned 8", quads));
+}
+
 private struct Case {
     string         name;
     const(Vec3)[]  points;
@@ -254,38 +292,3 @@ unittest // Preview and Commit emit the same ring for a flipped pentagon
         commit.faces));
 }
 
-unittest // Make Quads facing: under the decided flip every quad faces the eye
-{
-    // A clockwise and a counter-clockwise (seen from the top) 6-point strip
-    // on y = 1: two quads each. Both purposes must face the top view's eye
-    // (normal . eye ray < 0), as the reference's strips always do (K-C2).
-    auto top = orthoLooking(-1);
-    auto ccw = onY1([-0.5f, -0.25f], [-0.5f, 0.25f], [0f, -0.25f], [0f, 0.25f],
-                    [0.5f, -0.25f], [0.5f, 0.25f]);
-    Vec3[] cw;
-    foreach (p; ccw) cw ~= Vec3(p.x, p.y, -p.z);
-    size_t quads;
-    foreach (name, pts; ["ccw": ccw, "cw": cw]) {
-        PenParams p; p.makeQuads = true;
-        p.flip = penFacingFlip(pts[0], pts[1], pts[2], top);
-        assert(p.flip == (name == "cw"), name ~ ": premise, flip decision");
-        foreach (purpose; [PenBuildPurpose.Preview, PenBuildPurpose.Commit]) {
-            Mesh m;
-            appendPenGeometry(m, PenStroke.of(pts, kIdentity, p), purpose);
-            assert(m.faces.length == 2, format("%s %s: %s faces", name, purpose,
-                m.faces.length));
-            foreach (f; m.faces) {
-                Vec3 n = Vec3(0, 0, 0), c = Vec3(0, 0, 0);
-                foreach (i; 0 .. f.length) {
-                    n = n + cross(m.vertices[f[i]], m.vertices[f[(i + 1) % $]]);
-                    c = c + m.vertices[f[i]];
-                }
-                c = c * (1.0f / f.length);
-                assert(dot(n, eyeVectorAt(top, c)) < 0, format("%s %s: quad %s "
-                    ~ "faces away (normal %s)", name, purpose, f, n));
-                ++quads;
-            }
-        }
-    }
-    assert(quads == 8, format("checked %s quads, pinned 8", quads));
-}
