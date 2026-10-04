@@ -32,7 +32,7 @@ import snap_render : SnapOverlayOwner;
 import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
 import display_sync : refreshDisplay;
 import tools.create.create_common : pickWorkplane, BuildPlane,
-                              pickWorkplaneFrame, WorkplaneFrame,
+                              primitivePlacementFrame, WorkplaneFrame,
                               mostFacingAxis,
                               transformPoint, transformDir, snapLocalHit,
                               currentSnapPacket,
@@ -373,10 +373,11 @@ version(unittest) unittest {
 // PenTool — interactive polygon-by-vertex creation.
 //
 // Phase 6.9.0 (skeleton + polygons mode):
-//   Idle ── LMB-click ─→ Drawing (first vertex placed; construction plane
-//                                  locked from the camera-most-facing world
-//                                  plane via pickMostFacingPlane)
-//   Drawing ── LMB-click ─→ Drawing (append vertex on the locked plane)
+//   Idle ── LMB-click ─→ Drawing (first vertex placed on the camera-most-
+//                                  facing plane through the focus; plane
+//                                  axis locked for the stroke)
+//   Drawing ── LMB-click ─→ Drawing (vertex after the current point, on the
+//                                     plane through the current point)
 //   Drawing ── double-click / Enter ─→ commit a face from 3+ points; Idle
 //   Drawing ── Backspace ─→ pop last vertex; ─→ Idle if buffer empties
 //   Drawing ── tool drop (n ≥ 2) ─→ commit; back to Idle
@@ -458,13 +459,10 @@ private:
     Mesh             previewMesh;
     GpuMesh          previewGpu;
 
-    // After workplane refactor — LOCAL canonical axes; world basis is in
-    // `frame`.
+    // The stroke's plane normal, a LOCAL axis of `frame`, locked per stroke.
     Vec3 planeNormal;
-    Vec3 planeAxis1;
-    Vec3 planeAxis2;
-    /// Workplane local↔world transform captured at choosePlane(). All
-    /// in-progress vertices live in this frame's local space.
+    /// Storage frame captured at choosePlane(). All in-progress vertices live
+    /// in this frame's local space.
     WorkplaneFrame frame;
 
     Viewport cachedVp;
@@ -478,6 +476,7 @@ private:
     bool dragInitiated;
     int  dragVertIdx = -1;
     int  dragStartMX, dragStartMY;
+    Vec3 dragAnchor;    // the dragged point's pre-drag position (its plane)
 
     enum int DRAG_THRESHOLD_PX = 4;
 
@@ -872,26 +871,13 @@ public:
         if (state == PenState.Idle) {
             choosePlane(cachedVp);
             Vec3 hit;
-            if (!localCursorPlane(e.x, e.y, Vec3(0, 0, 0), planeNormal, hit))
-                return true;
-            // Snap the click position to the closest pipeline-enabled
-            // snap target (vertex / edge / face / grid). guideBits are
-            // excluded from snapLocalHit so the transform-scoped
-            // WorldAxis-through-origin never fires here. applyPenGuide
-            // is a no-op on the first click (vertices_ is empty), but
-            // the guideBits mask is still needed to prevent double-apply
-            // in future calls before the first vertex is appended.
-            lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
-                                    *mesh, EditMode.Vertices, [], guideBits);
-            if (!(lastSnap.snapped && lastSnap.constraintType == SnapType.None))
-                applyPenGuide(hit, e.x, e.y);
-            publishLastSnap(lastSnap);
+            if (!resolvePenPoint(e.x, e.y, clickAnchor(), hit)) return true;
             appendVertex(hit);
             params_.currentPoint = cast(int)vertices_.length - 1;
             syncPosFromCurrent();
             state = PenState.Drawing;
             uploadPreview();
-            armDragOnFresh(e.x, e.y);
+            armDrag(e.x, e.y);
             return true;
         }
 
@@ -903,29 +889,13 @@ public:
         if (hitIdx >= 0) {
             params_.currentPoint = hitIdx;
             syncPosFromCurrent();
-            dragArmed     = true;
-            dragInitiated = false;
-            dragVertIdx   = hitIdx;
-            dragStartMX   = e.x;
-            dragStartMY   = e.y;
+            armDrag(e.x, e.y);
             return true;
         }
 
         // Click on empty plane.
         Vec3 hit;
-        if (!localCursorPlane(e.x, e.y, Vec3(0, 0, 0), planeNormal, hit))
-            return true;
-
-        // Snap the placed vertex: discrete targets first (guideBits excluded
-        // from snapLocalHit); then Pen guide if no discrete snap won.
-        // Merge rule: discrete > guide > free. Box face-planes from snap.d
-        // survive snapLocalHit (not in guideBits) but lose to the guide when
-        // constraintType != None — a deliberate discrete>guide>free choice.
-        lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
-                                *mesh, EditMode.Vertices, [], guideBits);
-        if (!(lastSnap.snapped && lastSnap.constraintType == SnapType.None))
-            applyPenGuide(hit, e.x, e.y);
-        publishLastSnap(lastSnap);
+        if (!resolvePenPoint(e.x, e.y, clickAnchor(), hit)) return true;
 
         // Make Quads strip extension: after 2 anchor verts, each click adds
         // user (cursor) + auto (parallelogram extension). Skips the insert
@@ -957,7 +927,7 @@ public:
         }
         syncPosFromCurrent();
         uploadPreview();
-        armDragOnFresh(e.x, e.y);
+        armDrag(e.x, e.y);
         return true;
     }
 
@@ -966,37 +936,14 @@ public:
         // a vertex, so the user sees the cyan target before committing.
         // Skipped only when the user is hovering an existing in-progress
         // vertex (next click selects it, doesn't place a new one).
-        bool overExisting = state == PenState.Drawing
-                            && findHoveredVert(e.x, e.y) >= 0;
-        if (!overExisting) {
-            // Frame is captured at first click; before that we still
-            // need one to convert local↔world. pickWorkplaneFrame gives
-            // the live frame the first click would lock onto.
-            WorkplaneFrame f = state == PenState.Drawing
-                ? frame
-                : pickWorkplaneFrame(cachedVp);
-            // Local plane normal varies per state too. choosePlane() in
-            // PenTool uses the camera-most-facing axis of the LIVE frame,
-            // which collapses to (0,1,0) in identity-frame auto-mode.
-            Vec3 pn = state == PenState.Drawing ? planeNormal : Vec3(0, 1, 0);
-            Vec3 hit;
-            if (workplaneCursorPlaneHit(f, cachedVp, cast(float)e.x, cast(float)e.y,
-                                        Vec3(0, 0, 0), pn, hit)) {
-                lastSnap = snapLocalHit(hit, f, e.x, e.y, cachedVp,
-                                         *mesh, EditMode.Vertices, [], guideBits);
-                // Guide follows same discrete>guide merge rule. When Drawing,
-                // f==frame so applyPenGuide uses the same coordinate basis.
-                // Idle: applyPenGuide returns false (vertices_ empty) — no-op.
-                if (!(lastSnap.snapped && lastSnap.constraintType == SnapType.None))
-                    applyPenGuide(hit, e.x, e.y);
-                publishLastSnap(lastSnap);
-            } else {
-                lastSnap = SnapResult.init;
-                clearLastSnap();
-            }
-        } else {
+        if (state == PenState.Drawing && findHoveredVert(e.x, e.y) >= 0) {
             lastSnap = SnapResult.init;
             clearLastSnap();
+        } else {
+            // Idle: the plane the first click would lock onto.
+            if (state == PenState.Idle) choosePlane(cachedVp);
+            Vec3 ignored;
+            resolvePenPoint(e.x, e.y, clickAnchor(), ignored);
         }
 
         if (!dragArmed) return false;
@@ -1013,16 +960,7 @@ public:
         if (dragVertIdx < 0 || dragVertIdx >= cast(int)vertices_.length)
             return true;
         Vec3 hit;
-        if (localCursorPlane(e.x, e.y, Vec3(0, 0, 0), planeNormal, hit))
-        {
-            // Snap the dragged vertex's new position — same discrete>guide
-            // merge rule as the click paths. guideBits excluded from
-            // snapLocalHit; applyPenGuide applied when no discrete snap won.
-            lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
-                                    *mesh, EditMode.Vertices, [], guideBits);
-            if (!(lastSnap.snapped && lastSnap.constraintType == SnapType.None))
-                applyPenGuide(hit, e.x, e.y);
-            publishLastSnap(lastSnap);
+        if (resolvePenPoint(e.x, e.y, dragAnchor, hit)) {
             vertices_[dragVertIdx] = hit;
             if (params_.currentPoint == dragVertIdx) syncPosFromCurrent();
             uploadPreview();
@@ -1148,26 +1086,45 @@ public:
     }
 
 private:
+    // Storage frame = the create family's placement frame: the identity under
+    // the automatic plane, so stroke positions (and posX/Y/Z) are world (§10).
+    // The plane normal is the local axis the camera faces most.
     void choosePlane(const ref Viewport vp) {
-        frame = pickWorkplaneFrame(vp);
+        frame = primitivePlacementFrame();
         Vec3 camBack = Vec3(vp.view[2], vp.view[6], vp.view[10]);
-        final switch (mostFacingAxis(camBack, frame.axis1, frame.normal, frame.axis2)) {
-            case 0:
-                planeNormal = Vec3(1, 0, 0);
-                planeAxis1  = Vec3(0, 1, 0);
-                planeAxis2  = Vec3(0, 0, 1);
-                break;
-            case 1:
-                planeNormal = Vec3(0, 1, 0);
-                planeAxis1  = Vec3(1, 0, 0);
-                planeAxis2  = Vec3(0, 0, 1);
-                break;
-            case 2:
-                planeNormal = Vec3(0, 0, 1);
-                planeAxis1  = Vec3(1, 0, 0);
-                planeAxis2  = Vec3(0, 1, 0);
-                break;
+        int axis = mostFacingAxis(camBack, frame.axis1, frame.normal, frame.axis2);
+        planeNormal = Vec3(axis == 0 ? 1 : 0, axis == 1 ? 1 : 0, axis == 2 ? 1 : 0);
+    }
+
+    // Where a click lands (wave plan S3a, tests/fixtures/pen_placement.json):
+    // on the plane through the CURRENT point, the new point going right after
+    // it (append = the current point is the last); the first point on the
+    // plane through the camera focus. A pinned plane keeps its own origin for
+    // the first point until its law is captured.
+    Vec3 clickAnchor() const {
+        if (vertices_.length == 0)
+            return frame.isAuto ? toLocalP(cachedVp.focus) : Vec3(0, 0, 0);
+        int cur = params_.currentPoint;
+        return cur >= 0 && cur < cast(int)vertices_.length ? vertices_[cur]
+                                                          : vertices_[$ - 1];
+    }
+
+    // The one place a pixel becomes a stroke point (click, hover, drag): the
+    // locked plane through `anchor`, then a discrete snap, then the pen
+    // guides when no discrete target won (guideBits are the pen's own).
+    bool resolvePenPoint(int x, int y, Vec3 anchor, out Vec3 local) {
+        if (!workplaneCursorPlaneHit(frame, cachedVp, cast(float)x,
+                                     cast(float)y, anchor, planeNormal, local)) {
+            lastSnap = SnapResult.init;
+            clearLastSnap();
+            return false;
         }
+        lastSnap = snapLocalHit(local, frame, x, y, cachedVp,
+                                *mesh, EditMode.Vertices, [], guideBits);
+        if (!(lastSnap.snapped && lastSnap.constraintType == SnapType.None))
+            applyPenGuide(local, x, y);
+        publishLastSnap(lastSnap);
+        return true;
     }
 
     // ---- Local ↔ world helpers (workplane refactor) ---------------------
@@ -1178,13 +1135,6 @@ private:
     /// cell (task 0661).
     void localCursor(int x, int y, out Vec3 org, out Vec3 dir) const {
         workplaneCursorRay(frame, cachedVp, cast(float)x, cast(float)y, org, dir);
-    }
-    bool localCursorPlane(int x, int y, Vec3 planeOrigin, Vec3 planeNormal,
-                          out Vec3 hitLocal) const
-    {
-        return workplaneCursorPlaneHit(frame, cachedVp,
-                                       cast(float)x, cast(float)y,
-                                       planeOrigin, planeNormal, hitLocal);
     }
     Vec3 toWorldP(Vec3 p) const { return transformPoint(frame.toWorld, p); }
     Vec3 toLocalP(Vec3 p) const { return transformPoint(frame.toLocal, p); }
@@ -1311,20 +1261,21 @@ private:
         params_.posZ = p.z;
     }
 
-    // Hit-test in-progress vertex markers; returns the index of the first
-    // marker whose screen-space bounding cube contains (mx, my), or -1.
-    // Arm a drag on the just-appended / just-inserted vertex (currentPoint)
-    // so motion-while-LMB-held relocates it and LMB-up finalises (with
-    // optional weld). Lets the user place a vertex with a single click-
-    // and-drag motion — pure click (LMB-up without motion past
-    // DRAG_THRESHOLD_PX) leaves the vertex at the click point unchanged.
-    void armDragOnFresh(int mx, int my) {
+    // Arm a drag on the current point (just pressed, appended or inserted)
+    // so motion-while-LMB-held relocates it on the plane through its pre-drag
+    // position and LMB-up finalises (with optional weld). A pure click (LMB-up
+    // without motion past DRAG_THRESHOLD_PX) leaves the point where it is.
+    void armDrag(int mx, int my) {
         dragArmed     = true;
         dragInitiated = false;
         dragVertIdx   = params_.currentPoint;
+        dragAnchor    = vertices_[dragVertIdx];
         dragStartMX   = mx;
         dragStartMY   = my;
     }
+
+    // Hit-test in-progress vertex markers; returns the index of the first
+    // marker whose screen-space bounding cube contains (mx, my), or -1.
 
     int findHoveredVert(int mx, int my) {
         foreach (i, h; vertHandlers) {
