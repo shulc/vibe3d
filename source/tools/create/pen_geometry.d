@@ -26,11 +26,11 @@ struct PenParams {
     // one quad of a strip, laid out [top0, bot0, top1, bot1, ...].
     bool  makeQuads    = false;
 }
-static assert(PenParams.sizeof == () {
-    size_t sum;
-    static foreach (T; typeof(PenParams.tupleof)) sum += T.sizeof;
-    return (sum + 3) / 4 * 4;
-}(), "PenParams has interior padding that sameValueBytes would compare");
+// Field sizes summed by hand (a field added must be added here and to the
+// member pin in pen_geometry_test), rounded to 4: no interior padding.
+static assert(PenParams.sizeof ==
+    (2 * int.sizeof + 3 * float.sizeof + 2 * bool.sizeof + 3) / 4 * 4,
+    "PenParams has interior padding that sameValueBytes would compare");
 
 enum PenBuildPurpose : ubyte { Preview, Commit }
 

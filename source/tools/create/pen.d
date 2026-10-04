@@ -334,7 +334,8 @@ version(unittest) unittest {
     hookPen.params_.makeQuads = true; hookPen.onParamChanged("makeQuads");
     assert(hookPen.previewMesh.faces == [[0u, 2, 3, 1]],
         "legacy makeQuads hook did not rebuild the preview");
-    assert(hookPen.previewMesh.vertices[0] == Vec3(10,20,30));
+    assert(hookPen.previewMesh.vertices[0] == Vec3(10,20,30),
+        "legacy hook preview ignored the frame's toWorld");
     assert(quadImage.nextPreview.vertices == hookPen.previewMesh.vertices,
         "prepared preview vertices differ from the legacy hook's (toWorld)");
 
