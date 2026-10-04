@@ -321,6 +321,19 @@ version(unittest) unittest {
     assert(quadPen.previewMesh.faces == [[0u, 2, 3, 1]] &&
         quadPen.vertices_.length == 4 && quadContext.installTraceForTest() ==
         [7,2,8], "makeQuads install did not land the rebuilt preview");
+
+    // The legacy hook (scripted `tool.attr`) rebuilds the same preview. The
+    // suppressed cage upload stands in for GL, which the module gate lacks.
+    auto hookPen = new PenTool(() => &mesh, &sceneGpu, LitShader.init);
+    hookPen.state = PenState.Drawing; hookPen.previewGpu.suppressCageUpload = true;
+    hookPen.frame.toWorld = quadPen.frame.toWorld;
+    hookPen.vertices_ = quadPen.vertices_.dup;
+    hookPen.onParamChanged("flip");
+    assert(hookPen.previewMesh.faces == [[0u, 1, 2, 3]],
+        "legacy flip hook did not rebuild the preview");
+    hookPen.params_.makeQuads = true; hookPen.onParamChanged("makeQuads");
+    assert(hookPen.previewMesh.faces == [[0u, 2, 3, 1]],
+        "legacy makeQuads hook did not rebuild the preview");
 }
 
 // ---------------------------------------------------------------------------

@@ -265,9 +265,11 @@ unittest {
     // Viewport shading S4b (task 9250): the lit shader reads the Reflection
     // images, `viewport_env` and its decoder `io.image_decode` (+2; the
     // registration closure already held the decoder, +1).
-    assert(edit.queue.length == 261 && positive.queue.length == 526,
-        format("6670 import closure census changed: edit=%d/261 "
-            ~ "registration=%d/526", edit.queue.length,
+    // Pen S1: the pen reads its one stroke builder, `tools.create.pen_geometry`
+    // (+1 each).
+    assert(edit.queue.length == 262 && positive.queue.length == 527,
+        format("6670 import closure census changed: edit=%d/262 "
+            ~ "registration=%d/527", edit.queue.length,
             positive.queue.length));
 }
 
