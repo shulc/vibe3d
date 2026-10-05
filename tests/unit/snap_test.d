@@ -635,7 +635,8 @@ unittest {
 // point with its in-plane channels rounded; it has no pixel range; it ranks
 // below an element in range and above the constraint tier, and when it
 // places it reports ITSELF as the target. It keeps the client's admission
-// seam (a refused Grid is as if never enumerated).
+// seam and the guides' arbitration (a refused Grid is as if never
+// enumerated).
 //
 // Fixture: a slightly tilted look down -Y onto the y = 0 work plane, 800 px,
 // grid step 1. Every pixel distance the cells rely on is measured, not
@@ -691,6 +692,41 @@ unittest {
             && (off.worldPos - cur).length < 1e-5f,
             "grid-admit-refused: a Grid refused by the client's admit must be as if "
             ~ "never enumerated (pass-through)");
+    }
+
+    // grid-guide-refused: Grid alone; a registered guide that admits every
+    // other type but refuses Grid ⇒ the pass-through (the guides' arbitration
+    // runs on the grid node too); the same guide admitting Grid ⇒ the node.
+    {
+        static final class GridGate : SnapGuide {
+            bool admitGrid;
+            void limits(float innerPx, float outerPx) {}
+            bool proximity(Vec3 candWorld, SnapType type, int idx, int slot,
+                           out float distPx, ref int priority) {
+                distPx = 0;
+                return type != SnapType.Grid || admitGrid;
+            }
+            void setDrawState(GuideDrawState s) {}
+            uint flags() const { return 0; }
+        }
+        immutable Vec3 cur = Vec3(2.45f, 0, 0.45f), node = Vec3(2, 0, 0);
+        int sx, sy; pixelOf(cur, sx, sy);
+        SnapPacket c = cfg; c.enabledTypes = SnapType.Grid;
+        auto gate = new GridGate;
+        gate.admitGrid = true;
+        invalidateSnapGrids();
+        SnapResult on = snapCursor(cur, sx, sy, vp, none, ModelSpace.world(), c, null, null,
+                                   [gate]);
+        assert(on.snapped && on.targetType == SnapType.Grid && (on.worldPos - node).length < 1e-5f,
+            "grid-guide-refused control: a guide admitting Grid leaves the node placing");
+        gate.admitGrid = false;
+        invalidateSnapGrids();
+        SnapResult off = snapCursor(cur, sx, sy, vp, none, ModelSpace.world(), c, null, null,
+                                    [gate]);
+        assert(!off.snapped && off.targetType == SnapType.None
+            && (off.worldPos - cur).length < 1e-5f,
+            "grid-guide-refused: a guide refusing Grid must drop the node as if never "
+            ~ "enumerated");
     }
 
     // grid-over-constraint: Grid + WorldAxis; the world X axis 4 px from the
