@@ -195,6 +195,15 @@ unittest { // ring PHASE end to end (task 9490), weight 1, no falloff: the
     check("ra_circle", apply(cube, "[0,1,2,3]", "circle"),
         [[-0.4420957, -0.5, -0.3541404], [0.5309171, -0.5, -0.3688723],
          [0.5456491, -0.5, 0.6041404], [-0.4273637, -0.5, 0.6188723]], [0, 1, 2, 3]);
+    // the one-shot command runs the same kernel with the same outside records
+    postJson("/api/command", commandBody("scene.reset", `{"empty":true}`));
+    cmd(commandBody("scene.loadMesh", cube));
+    cmd("select.typeFrom vertex");
+    cmd(commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3]}`));
+    cmd("mesh.radial_align");
+    check("ra_circle (command)", dumpVerts(),
+        [[-0.4420957, -0.5, -0.3541404], [0.5309171, -0.5, -0.3688723],
+         [0.5456491, -0.5, 0.6041404], [-0.4273637, -0.5, 0.6188723]], [0, 1, 2, 3]);
     check("ra_nside4", apply(cube, "[0,1,2,3]", "nside"),
         [[-0.3350036, -0.5, -0.4441102], [0.6208869, -0.5, -0.2617803],
          [0.438557, -0.5, 0.6941102], [-0.5173336, -0.5, 0.5117803]], [0, 1, 2, 3]);

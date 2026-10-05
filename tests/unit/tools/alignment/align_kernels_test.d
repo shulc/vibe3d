@@ -254,3 +254,22 @@ unittest { // control that must flip: without the outside neighbours the circle
     foreach (i; 0 .. 4) assert(abs(still[i].x - nside[i].x) < 1e-6f && abs(still[i].z - nside[i].z) < 1e-6f);
     assert(abs(turned[0].x - still[0].x) > 0.05f, "the search must turn the ring");
 }
+
+unittest { // the search's records: each chain vertex's edge-neighbours OUTSIDE
+           // the operand set — on a cube with the bottom face's corners
+           // selected, exactly the one top corner above each (task 9490)
+    import mesh : makeCube;
+    Mesh m = makeCube();
+    m.syncSelection();
+    uint[] chain;
+    foreach (i, v; m.vertices) if (v.y < 0) { m.selectVertex(cast(int)i); chain ~= cast(uint)i; }
+    assert(chain.length == 4, "the cube must have four bottom corners");
+    auto outside = alignOutsideNeighbours(&m, EditMode.Vertices, chain);
+    assert(outside.length == 4);
+    foreach (k, vi; chain) {
+        assert(outside[k].length == 1, "one outside neighbour per bottom corner");
+        const Vec3 b = m.vertices[vi], t = outside[k][0];
+        assert(t.y > 0 && abs(t.x - b.x) < 1e-6f && abs(t.z - b.z) < 1e-6f,
+            "the outside neighbour is the top corner above");
+    }
+}
