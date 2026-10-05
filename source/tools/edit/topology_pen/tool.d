@@ -5829,12 +5829,15 @@ public:
     // K-P P8/P8c: a Point lands on the shared snap election's answer at the
     // release pixel — every source, background included, on the press's packet
     // — and on the surface hit when nothing snaps or snapping is off. No guides:
-    // the registered one is the weld policy and refuses the background.
+    // the registered one is the weld policy and refuses the background. The
+    // edited mesh (slot 0) is excluded: main's behaviour, pending a capture.
     private Vec3 placeSnapped(int mx, int my, ref VectorStack vts) {
         auto m = mesh;
         if (m is null) return lastHit_.point;
         Viewport vp = viewportOf(vts);
-        const sr = snapCursor(lastHit_.point, mx, my, vp, *m, primaryModelSpace(), dragSnap_);
+        scope SnapAdmit bgOnly = (SnapType t, int idx, int slot) nothrow => slot != 0;
+        const sr = snapCursor(lastHit_.point, mx, my, vp, *m, primaryModelSpace(), dragSnap_,
+                              null, bgOnly);
         return sr.snapped ? sr.worldPos : lastHit_.point;
     }
 

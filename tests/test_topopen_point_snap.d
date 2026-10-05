@@ -13,6 +13,8 @@
 // The hit-face-only answer would be A; the election's is M.
 // A third cell scales the rig by 10: M at 30 px is gathered (40) but not
 // accepted (24), so the point stays on the press hit.
+// A fourth cell: a Point 15 px from an EDITED vertex does not snap onto it
+// (main's behaviour, pending a capture; placement excludes the edited mesh).
 //
 // Run via: ./run_test.d topopen_point_snap
 
@@ -115,4 +117,32 @@ unittest { // the acceptance reach: M at 30 px (inside the 40 px gather, outside
     assert(dist(got, pressW) < 1e-4f,
         format("a vertex gathered but outside the snap acceptance must not take the point: "
              ~ "press hit %s, got %s (M %s)", pressW, got, mW));
+}
+
+unittest { // the edited mesh's own vertex: main's behaviour, pending capture.
+           // A second Point 15 px from the first (inside the 24 px acceptance,
+           // outside the 8 px press pick) lands on its own surface hit — it does
+           // not snap onto the first and leave two vertices at one position.
+    int px, py; Vec3 pressW, mW;
+    setupRig(px, py, pressW, mW, 10.0f);   // no background vertex within 24 px
+    cmd("tool.pipe.attr snap enabled true");
+    cmd("tool.pipe.attr snap types vertex");
+    immutable Vec3 first = placeAndRead(px, py);
+    assert(dist(first, pressW) < 1e-4f, format("setup: the first Point must land on its hit %s", first));
+
+    auto c  = fetchCamera();
+    auto vp = viewportFromCamera(c);
+    Vec3 dir = screenRay(px + 15 + 0.5f, py + 0.5f, vp);
+    immutable float t = -c.eye.z / dir.z;
+    immutable Vec3 secondW = Vec3(c.eye.x + dir.x * t, c.eye.y + dir.y * t, 0.0f);
+    auto pr = postJson("/api/play-events", clickLog(c.vpX, c.vpY, c.width, c.height, px + 15, py));
+    assert("error" !in pr, "/api/play-events failed: " ~ pr.toString);
+    waitPlayerIdle();
+    assert(vertexCountLayer(1) == 2,
+        format("the second click must place a second vertex; got %d", vertexCountLayer(1)));
+    auto v = readVerticesLayer(1)[1];
+    immutable Vec3 got = Vec3(cast(float)v[0], cast(float)v[1], cast(float)v[2]);
+    assert(dist(got, secondW) < 1e-4f && dist(got, first) > 1e-3f,
+        format("a Point 15 px from an edited vertex must land on its own hit %s, not on that "
+             ~ "vertex %s (main behaviour, pending capture); got %s", secondW, first, got));
 }
