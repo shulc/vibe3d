@@ -273,7 +273,7 @@ unittest
 // entries against geometry that was already put back — and no invariant
 // counter fires, because the batch still opens once and closes once.
 //
-// THE ARM IS MEASURED UNREACHABLE from this command. `pairsMustCrossBound`
+// THE ARM IS MEASURED UNREACHABLE from this command. The per-copy weld scope
 // keeps every original alive, so `faces` can never empty: a 480-cell sweep —
 // two operand scopes x fifteen weld values up to 1e6 x four planes x both
 // `flipNormals` settings — never entered it, against a positive control that

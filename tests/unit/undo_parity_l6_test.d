@@ -65,8 +65,8 @@
 // operand, three mirror planes among them — `vertexSetMask` and `edgeSetMask`
 // come out of the FORWARD byte-identical every time. The reason is structural
 // and not a property of this stand: every weld in this family merges a CLONE
-// into an ORIGINAL (`mirrorFacesPlane` enforces it outright with
-// `pairsMustCrossBound`), and `compactUnreferenced` then drops only the
+// into an ORIGINAL (`mirrorFacesPlane` enforces it outright with the
+// per-copy weld scope), and `compactUnreferenced` then drops only the
 // APPENDED slots, which carry no set membership because they were never in a
 // set. A cell asserting the loss would be a check that reddens on CORRECT
 // code. The second-family witness for those payloads is stage L7-d's vertex

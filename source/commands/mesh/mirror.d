@@ -44,8 +44,8 @@ import commands.mesh.selection_undo : DenseSelectionUndo;
 /// batch must land back on exactly the pre-op V/F/E.
 ///
 /// WHAT IS INERT ON THIS PATH: both `Kind.RemoveVerts` payloads (set masks,
-/// stage L5-b; Point-domain map values, task 2330). `mirrorFacesPlane` passes
-/// `pairsMustCrossBound = true`, so an eligible weld pair must join a CLONE to
+/// stage L5-b; Point-domain map values, task 2330). `mirrorFacesPlane` welds
+/// with its clones as copy 1 of the per-copy scope, so a pair must join a CLONE to
 /// an ORIGINAL — an original can never be welded away — and the compaction
 /// therefore drops only APPENDED slots, which carry no set membership and no
 /// Point-map value.
