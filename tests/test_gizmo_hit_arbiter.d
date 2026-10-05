@@ -4,6 +4,9 @@
 //    are not registered there (and not drawn), so a press on the XY circle's
 //    spot must not start a plane drag — the bank takes the arbiter's miss and
 //    runs no test of its own (the hit pass is the draw pass).
+//    The same holds where only the centre disc is drawn: the uniform-scale
+//    preset registers the disc alone, so a press on an axis arm's spot
+//    starts no axis scale.
 // B  Move: the overlap law reaches production (capture K-HO, press M_Xf_onZ).
 //    A hover <= 0.5 px from the Z shaft and 3.5..4.5 px from the X shaft makes
 //    Z hot, although X is registered first — the factory's `nearestOnScreen`.
@@ -87,6 +90,23 @@ unittest { // A: bare Transform, a press on the unregistered XY circle's spot
     immutable long axis = getJson("/api/tool/state")["dragAxis"].integer;
     button("SDL_MOUSEBUTTONUP", x, y);
     assert(axis < 4, format("a press on the undrawn XY circle (%d, %d) started plane drag %d", x, y, axis));
+}
+
+unittest { // A: the uniform-scale preset, a press on the undrawn X arm
+    setUp(`{"azimuth":0.785,"elevation":0.6,"distance":3.2}`);
+    cmd("tool.set xfrm.scaleUniform on");
+    scope(exit) cmd("tool.set xfrm.scaleUniform off");
+    auto vp = viewportFromCameraMatrices();
+    immutable Vec3 c = pivot();
+    auto at = screenOf(Vec3(c.x + gizmoSize(c, vp) * 0.6f, c.y, c.z), vp);
+    immutable int x = cast(int)at[0], y = cast(int)at[1];
+    hover(x, y);
+    assert(getJson("/api/tool/handles")["handles"]["hot"].integer == -1,
+        format("rig: the arm spot (%d, %d) must be off the registered disc", x, y));
+    button("SDL_MOUSEBUTTONDOWN", x, y);
+    immutable long axis = getJson("/api/tool/state")["dragAxis"].integer;
+    button("SDL_MOUSEBUTTONUP", x, y);
+    assert(axis < 0 || axis > 2, format("a press on the undrawn X arm (%d, %d) started axis scale %d", x, y, axis));
 }
 
 unittest { // B: Move, the K-HO press M_Xf_onZ makes the nearer Z shaft hot
