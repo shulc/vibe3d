@@ -12372,7 +12372,12 @@ unittest {
 
 // ---------------------------------------------------------------------------
 // Snap-target ORIENTATION is this client's admit (`backFace`), never the snap
-// service's (task 9387, wave plan §24.2 TP1–TP4; `doc/measured_laws.md` §3).
+// service's (task 9387, wave plan §26.3; `doc/measured_laws.md` §3): the weld
+// target comes from `findSourceVertex` + `PenSnapGuide.admits`, which the
+// service's seed change (V1 / V2) does not reach. REGRESSION GUARDS, not change
+// witnesses: each reddens under a mutation of the guide's own filter — V8
+// (`orientationAdmits` → true) → TP2, V9 (`backFaceOk_` early return struck)
+// → TP1, V10 (strict `> 0` → `>= 0`, rejecting a zero normal) → TP4.
 // `makeGridPlane(2)` faces -Y: the +Y camera (`makeGridPlaneTestViewport`)
 // sees its back, the -Y one (`makeGridPlaneFrontViewport`) its front. The
 // cursor sits 6 px from border vertex 0 (or from a loose vertex L).
