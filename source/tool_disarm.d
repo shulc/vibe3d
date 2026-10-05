@@ -15,7 +15,7 @@ module tool_disarm;
 //
 //     /api/reset                        -> v=8  e=12 f=6     (fresh cube)
 //     tool.set mesh.mirrorTool
-//     tool.attr mesh.mirrorTool distance 0.05     (engages the tool)
+//     tool.attr mesh.mirrorTool dist 0.05     (engages the tool)
 //     /api/reset                        -> v=8  e=12 f=12    <-- MIRRORED
 //     /api/history  undo: [... "Mirror", "Reset to cube"]    <-- and recorded
 //

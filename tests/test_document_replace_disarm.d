@@ -66,9 +66,9 @@ string[] editUndoLabels() {
 
 void armEngagedMirror() {
     cmd("tool.set", `{"_positional":["` ~ TOOL ~ `"]}`);
-    cmd("tool.attr", `{"_positional":["` ~ TOOL ~ `","mergeVerts","false"]}`);
+    cmd("tool.attr", `{"_positional":["` ~ TOOL ~ `","merge","false"]}`);
     auto probe = postJson("/api/command",
-        "tool.attr " ~ TOOL ~ " mergeVerts ?");
+        "tool.attr " ~ TOOL ~ " merge ?");
     assert(probe["status"].str == "ok",
         "the mirror fixture must have an active tool before judging disarm: "
         ~ probe.toString);
@@ -89,7 +89,7 @@ void exposeSurvivingLoadGesture() {
 
 bool mirrorIsActive() {
     auto probe = postJson("/api/command",
-        "tool.attr " ~ TOOL ~ " mergeVerts ?");
+        "tool.attr " ~ TOOL ~ " merge ?");
     return probe["status"].str == "ok";
 }
 
@@ -186,7 +186,7 @@ unittest {
         "a load that REFUSED must leave the gesture armed: crossings moved "
         ~ C0.to!string ~ " -> " ~ crossings().to!string);
     auto probe = postJson("/api/command",
-        "tool.attr " ~ TOOL ~ " mergeVerts ?");
+        "tool.attr " ~ TOOL ~ " merge ?");
     assert(probe["status"].str == "ok",
         "a refused load must leave the mirror tool active: " ~ probe.toString);
     dropMirror();

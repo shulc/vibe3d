@@ -9,7 +9,7 @@
 //
 //     /api/reset                                  -> v=8  e=12 f=6
 //     tool.set  mesh.mirrorTool
-//     tool.attr mesh.mirrorTool mergeVerts false  (engaged the tool then)
+//     tool.attr mesh.mirrorTool merge false  (engaged the tool then)
 //     /api/reset                                  -> v=16 e=24 f=12   <-- !
 //     /api/history  undo: [..., "Mirror", "Reset to cube"]            <-- !
 //
@@ -36,7 +36,7 @@
 // (8 -> 16 vertices, a "Mirror" entry). Without that block the rest of this
 // file would be green over a tool that does nothing.
 //
-// WHY `mergeVerts false`. The mirror plane defaults through the cube's own
+// WHY `merge false`. The mirror plane defaults through the cube's own
 // centre, so with welding ON the copy lands on top of the original and the
 // vertex count does not move (8 -> 8; only the face count doubles). Turning
 // welding off makes the commit UNAMBIGUOUS in the count the card reports:
@@ -114,7 +114,7 @@ void resetToCube(string why) {
 /// ends the session.
 void armEngagedMirror() {
     cmd("tool.set " ~ TOOL);
-    cmd("tool.attr " ~ TOOL ~ " mergeVerts false");
+    cmd("tool.attr " ~ TOOL ~ " merge false");
     engageByPress();
 }
 
@@ -255,7 +255,7 @@ unittest {
     // …and the tool really is gone, not merely silent: `tool.attr` names the
     // active tool in its refusal, so this reads the app's own answer rather
     // than inferring "dropped" from the absence of an edit.
-    auto r = postJson("/api/command", "tool.attr " ~ TOOL ~ " mergeVerts ?");
+    auto r = postJson("/api/command", "tool.attr " ~ TOOL ~ " merge ?");
     assert(r["status"].str == "error",
         "after a reset there must be no active tool, but `tool.attr " ~ TOOL
         ~ "` was accepted: " ~ r.toString);

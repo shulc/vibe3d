@@ -236,6 +236,24 @@ unittest { // u5: the cache is a section of the prefs document (M5b)
         "M5b u5: a legacy entry overrode the current section");
 }
 
+unittest { // u7: Mirror's mergeVerts / distance read as merge / dist, one cell per row (task 9462)
+    auto dir = buildPath(tempDir, format("vibe3d_mirror_prefs_%d", thisProcessID()));
+    mkdirRecurse(dir);
+    scope(exit) if (exists(dir)) rmdirRecurse(dir);
+    NodeAttrs loaded(string tool) {
+        write(buildPath(dir, "prefs.json"), `{"version":2,"toolAttrCache":{"mesh.mirrorTool":`
+            ~ `{"tool":` ~ tool ~ `}}}`);
+        return cast(NodeAttrs) *loadPrefs(dir).toolAttrCache.lookup("mesh.mirrorTool", kToolNode);
+    }
+    auto a = loaded(`{"mergeVerts":"false","axis":"1"}`);
+    assert(a == ["merge": "false", "axis": "1"], format("mergeVerts row: %s", a));
+    auto b = loaded(`{"distance":"0.05","axis":"1"}`);
+    assert(b == ["dist": "0.05", "axis": "1"], format("distance row: %s", b));
+    // A current name already present wins over the old one.
+    auto c = loaded(`{"distance":"0.05","dist":"0.2"}`);
+    assert(c == ["dist": "0.2"], format("dist beside distance: %s", c));
+}
+
 unittest { // u6: Radial Array's legacy single weld float reads as merge + dist (task 9462)
     auto dir = buildPath(tempDir, format("vibe3d_weld_prefs_%d", thisProcessID()));
     mkdirRecurse(dir);

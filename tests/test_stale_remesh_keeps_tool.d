@@ -164,12 +164,12 @@ unittest {
     assert(response["status"].str == "ok", response.toString);
     response = postJson("/api/command",
         `{"id":"tool.attr","params":{"_positional":["` ~ TOOL
-        ~ `","mergeVerts","false"]}}`);
+        ~ `","merge","false"]}}`);
     assert(response["status"].str == "ok",
         "the fresh-result control could not engage the mirror tool: "
         ~ response.toString);
     response = postJson("/api/command",
-        "tool.attr " ~ TOOL ~ " mergeVerts ?");
+        "tool.attr " ~ TOOL ~ " merge ?");
     assert(response["status"].str == "ok",
         "the fresh-result control must arm the mirror tool: " ~ response.toString);
     write(g_instance.releasePath, "");
@@ -210,12 +210,12 @@ unittest {
     assert(response["status"].str == "ok", response.toString);
     response = postJson("/api/command",
         `{"id":"tool.attr","params":{"_positional":["` ~ TOOL
-        ~ `","mergeVerts","false"]}}`);
+        ~ `","merge","false"]}}`);
     assert(response["status"].str == "ok",
         "the stale-result arm could not engage the mirror tool: "
         ~ response.toString);
     response = postJson("/api/command",
-        "tool.attr " ~ TOOL ~ " mergeVerts ?");
+        "tool.attr " ~ TOOL ~ " merge ?");
     assert(response["status"].str == "ok",
         "the stale-result arm must have a live mirror tool: " ~ response.toString);
     write(g_instance.secondReleasePath, "");
@@ -241,7 +241,7 @@ unittest {
 
     response = postJson("/api/command",
         `{"id":"tool.attr","params":{"_positional":["` ~ TOOL
-        ~ `","mergeVerts","false"]}}`);
+        ~ `","merge","false"]}}`);
     assert(response["status"].str == "ok",
         "stale remesh landing dropped the active tool: " ~ response.toString);
 }

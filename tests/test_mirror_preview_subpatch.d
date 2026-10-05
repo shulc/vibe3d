@@ -486,7 +486,7 @@ unittest {
     subpatchCube();
     auto c = orthoCamera("Front", [1.5, 0, 0], 6.0);
     armAtOrigin();
-    cmd("tool.attr " ~ TOOL ~ " mergeVerts false");
+    cmd("tool.attr " ~ TOOL ~ " merge false");
     attrCenter(1.5, 0, 0);
     cmd(`{"id":"tool.doApply"}`);
     settle();
@@ -525,8 +525,8 @@ unittest {
     settle();
     cmd("tool.set " ~ TOOL);
     cmd("tool.attr " ~ TOOL ~ " axis X");
-    cmd("tool.attr " ~ TOOL ~ " mergeVerts true");
-    cmd("tool.attr " ~ TOOL ~ " distance 0.08");
+    cmd("tool.attr " ~ TOOL ~ " merge true");
+    cmd("tool.attr " ~ TOOL ~ " dist 0.08");
     attrCenter(1.05, 0, 0);
     cmd(`{"id":"tool.doApply"}`);
     settle();

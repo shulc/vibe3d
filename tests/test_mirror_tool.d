@@ -33,7 +33,7 @@ void resetCube() {
 }
 
 
-// Argstring one-liner (scalar attrs: axis/mergeVerts/invertPolys/distance).
+// Argstring one-liner (scalar attrs: axis/merge/invertPolys/dist).
 void cmd(string line) {
     auto r = postJson("/api/command", line);
     assert(r["status"].str == "ok" || r["status"].str == "success",
@@ -87,7 +87,7 @@ unittest { // interactive tool with equal params matches the command exactly
     // a real rotation.
     cmd("tool.attr " ~ TOOL ~ " angle 180");
     attrVec3(TOOL, "center", 1, 0, 0);
-    cmd("tool.attr " ~ TOOL ~ " mergeVerts false");
+    cmd("tool.attr " ~ TOOL ~ " merge false");
     cmd("tool.attr " ~ TOOL ~ " invertPolys true");
     cmd(`{"id":"tool.doApply"}`);
     toolOff(TOOL);
@@ -126,7 +126,7 @@ unittest { // No selection, no attr writes beyond center ⇒ mirrors the whole
     resetCube();
     toolSet(TOOL);
     attrVec3(TOOL, "center", 1, 0, 0);
-    cmd("tool.attr " ~ TOOL ~ " mergeVerts false");
+    cmd("tool.attr " ~ TOOL ~ " merge false");
     cmd(`{"id":"tool.doApply"}`);
     toolOff(TOOL);
 
@@ -149,8 +149,8 @@ unittest {
     resetCube();
     toolSet(TOOL);
     attrVec3(TOOL, "center", 0.5, 0, 0);
-    cmd("tool.attr " ~ TOOL ~ " mergeVerts true");
-    cmd("tool.attr " ~ TOOL ~ " distance 0.001");
+    cmd("tool.attr " ~ TOOL ~ " merge true");
+    cmd("tool.attr " ~ TOOL ~ " dist 0.001");
     cmd(`{"id":"tool.doApply"}`);
     toolOff(TOOL);
 
@@ -174,7 +174,7 @@ unittest {
     toolSet(TOOL);
     cmd("tool.attr " ~ TOOL ~ " axis Z");
     attrVec3(TOOL, "center", 0, 0, 1);
-    cmd("tool.attr " ~ TOOL ~ " mergeVerts false");
+    cmd("tool.attr " ~ TOOL ~ " merge false");
     cmd("tool.attr " ~ TOOL ~ " invertPolys false");
     cmd(`{"id":"tool.doApply"}`);
     toolOff(TOOL);
@@ -202,7 +202,7 @@ unittest {
     resetCube();
     toolSet(TOOL);
     attrVec3(TOOL, "center", 1, 0, 0);
-    cmd("tool.attr " ~ TOOL ~ " mergeVerts false");
+    cmd("tool.attr " ~ TOOL ~ " merge false");
     cmd(`{"id":"tool.doApply"}`);
     toolOff(TOOL);
 
@@ -244,7 +244,7 @@ unittest { // Activate and immediately deactivate without any attr write —
 unittest {
     resetCube();
     cmd(`{"id":"` ~ TOOL ~ `","params":{
-        "axis":"X","center":[1,0,0],"mergeVerts":false
+        "axis":"X","center":[1,0,0],"merge":false
     }}`);
 
     auto m = getModel();
@@ -271,7 +271,7 @@ unittest {
 unittest {
     resetCube();
     toolSet(TOOL);
-    cmd("tool.attr " ~ TOOL ~ " mergeVerts false");
+    cmd("tool.attr " ~ TOOL ~ " merge false");
     // Five successive center edits; only the FINAL value may land in the
     // mesh, once, at the apply.
     attrVec3(TOOL, "center", 0.2, 0, 0);
@@ -317,7 +317,7 @@ unittest {
     cmd("tool.attr " ~ TOOL ~ " axis X");
     cmd("tool.attr " ~ TOOL ~ " angle 90");
     attrVec3(TOOL, "center", 0, 0.5, 0);
-    cmd("tool.attr " ~ TOOL ~ " mergeVerts false");
+    cmd("tool.attr " ~ TOOL ~ " merge false");
     cmd("tool.attr " ~ TOOL ~ " invertPolys true");
     cmd(`{"id":"tool.doApply"}`);
     toolOff(TOOL);

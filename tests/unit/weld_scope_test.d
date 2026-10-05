@@ -118,8 +118,8 @@ private Run[] runCell(JSONValue cell) {
         mp.axis = op["axis"].str[0] - 'X';
         mp.center = vec(op["center"]);
         mp.invertPolys = false;
-        mp.mergeVerts = true;
-        mp.distance = dist;
+        mp.merge = true;
+        mp.dist = dist;
         Mesh t = inputOf(cell);
         mirrorInPlace(t, faceMaskOf(cell, t.faces.length), mp, ModelSpace.world());
         runs ~= Run("mirror_tool", t, true);

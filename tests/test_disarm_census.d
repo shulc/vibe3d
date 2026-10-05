@@ -52,11 +52,11 @@ void armMirror(string context = null) {
         "census row " ~ context ~ " could not reset and arm the mirror tool: "
         ~ setResult.toString);
     const attrStatus = fireCommand("tool.attr",
-        `{"_positional":["` ~ TOOL ~ `","mergeVerts","false"]}`);
+        `{"_positional":["` ~ TOOL ~ `","merge","false"]}`);
     assert(attrStatus == "ok",
         "census row " ~ context ~ " could not engage the mirror tool: "
         ~ attrStatus);
-    auto probe = postJson("/api/command", "tool.attr " ~ TOOL ~ " mergeVerts ?");
+    auto probe = postJson("/api/command", "tool.attr " ~ TOOL ~ " merge ?");
     assert(probe["status"].str == "ok",
         "the census row " ~ context ~ " must contain a live tool gesture: "
         ~ probe.toString);
@@ -81,7 +81,7 @@ bool primaryBirthId(out ulong birthId) {
 
 bool mirrorIsActive() {
     auto probe = postJson("/api/command",
-        "tool.attr " ~ TOOL ~ " mergeVerts ?");
+        "tool.attr " ~ TOOL ~ " merge ?");
     return probe["status"].str == "ok";
 }
 

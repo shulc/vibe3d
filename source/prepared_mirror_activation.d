@@ -233,7 +233,7 @@ version(unittest) unittest {
     // does not mirror a second time (a second mirror of the 12-face live
     // mesh would leave 24).
     auto commitSource = makeCube();
-    MirrorParams plane; plane.center = Vec3(1.5f, 0, 0); plane.mergeVerts = false;
+    MirrorParams plane; plane.center = Vec3(1.5f, 0, 0); plane.merge = false;
     void writeLiveCopy(Layer l) {
         auto whole = l.meshRef().operandFaceMask();
         assert(mirrorInPlace(l.meshRef(), whole, plane, ModelSpace.world()) > 0);

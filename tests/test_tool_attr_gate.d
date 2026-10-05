@@ -219,8 +219,7 @@ unittest {
     static immutable Cell[] cells = [
         Cell("clone", "mesh.clone", "merge false", "dist", "0.25", "merge true", "0.25"),
         Cell("array", "mesh.arrayTool", "merge false", "dist", "0.25", "merge true", "0.25"),
-        Cell("mirror", "mesh.mirrorTool", "mergeVerts false", "distance", "0.25",
-             "mergeVerts true", "0.25"),
+        Cell("mirror", "mesh.mirrorTool", "merge false", "dist", "0.25", "merge true", "0.25"),
         Cell("radial", "mesh.radialArrayTool", "merge false", "dist", "0.25", "merge true", "0.25"),
         Cell("command_wrapper", "xfrm.jitter", "enableX false", "rangeX", "0.25",
              "enableX true", "0.25"),

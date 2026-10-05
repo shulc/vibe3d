@@ -72,7 +72,7 @@ unittest {
         Row("mesh.clone", "", "num", true, "0", "free"),
         Row("mesh.clone", "tool.pipe.attr snap enabled true|tool.attr mesh.clone snap true", "snapAngle", false, "0.0", "5156.620156177409"),
         Row("mesh.clone", "tool.attr mesh.clone merge true", "dist", false, "0.0", "free"),
-        Row("mesh.mirrorTool", "tool.attr mesh.mirrorTool mergeVerts true", "distance", false, "0.0", "free"),
+        Row("mesh.mirrorTool", "tool.attr mesh.mirrorTool merge true", "dist", false, "0.0", "free"),
         Row("mesh.radialArrayTool", "", "count", true, "1", "free"),
         Row("mesh.radialArrayTool", "tool.attr mesh.radialArrayTool merge true", "dist", false, "0.0", "free"),
         Row("mesh.loopSliceTool", "", "count", true, "1", "1024"),

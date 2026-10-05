@@ -43,7 +43,7 @@ unittest {
     MirrorParams params_;
     params_.axis       = 0;               // X
     params_.center     = Vec3(1, 0, 0);
-    params_.mergeVerts = false;           // weld = 0 -> no dedup
+    params_.merge = false;           // weld = 0 -> no dedup
     params_.invertPolys = true;
 
     Mesh previewMesh;
@@ -87,7 +87,7 @@ unittest {
     params_.axis        = 0;              // base X ...
     params_.angle       = 45.0f;          // ... tilted 45 degrees off-axis
     params_.center      = Vec3(1, 0, 0);
-    params_.mergeVerts  = false;          // weld = 0 -> no dedup
+    params_.merge  = false;          // weld = 0 -> no dedup
     params_.invertPolys = true;
 
     // Sanity: this really is a non-axis-aligned normal (not incidentally

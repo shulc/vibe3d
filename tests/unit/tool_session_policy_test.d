@@ -501,7 +501,7 @@ private immutable StepRow[] kStepTable = [
     StepRow("mesh.loopSliceTool", OpensAt.arm, false,
             ["positions", "current", "count", "seeds", "armedSelFaces"]),
     StepRow("mesh.mirrorTool", OpensAt.firstPress, false,
-            ["axis", "center", "invertPolys", "mergeVerts", "distance",
+            ["axis", "center", "invertPolys", "merge", "dist",
              "angle", "mode", "left", "up"]),
     StepRow("mesh.polyInsetTool", OpensAt.firstPress, false, ["inset"]),
     StepRow("mesh.radialArrayTool", OpensAt.firstPress, false,

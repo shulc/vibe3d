@@ -88,8 +88,8 @@ size_t mirrorInPlace(ref Mesh target, in bool[] mask, in MirrorParams params_,
                      in ModelSpace space)
 {
     // World length -> local length: the local image of a world unit vector.
-    const weld = CloneWeld(params_.mergeVerts,
-        params_.distance * space.toLocalDir(Vec3(1, 0, 0)).length);
+    const weld = CloneWeld(params_.merge,
+        params_.dist * space.toLocalDir(Vec3(1, 0, 0)).length);
     size_t inserted = target.mirrorFacesPlane(mask,
         space.toLocalPoint(params_.center),
         space.toLocalNormal(toolNormal(params_)), weld, params_.invertPolys);
@@ -113,15 +113,15 @@ size_t mirrorInPlace(ref Mesh target, in bool[] mask, in MirrorParams params_,
 // `evaluate()` — read-only in v2 (owner decision (d): editable Left/Up would
 // need a 3rd rotate input path, deferred).
 //
-// `distance`/`mergeVerts`/`invertPolys` are unchanged from v1.
+// `merge`/`dist` (the clone effector's pair, K-A3 PF-4) and `invertPolys` as in v1.
 // `mode` stays greyed to Axis (Free-Rotation/Three-Points deferred).
 // ---------------------------------------------------------------------------
 struct MirrorParams {
     int   axis        = 0;            // 0=X 1=Y 2=Z — base direction `angle` rotates away from
     Vec3  center       = Vec3(0, 0, 0);
     bool  invertPolys  = true;         // -> mirrorFaces flipNormals
-    bool  mergeVerts   = true;         // gates the weld pass
-    float distance     = 0.001f;       // -> mirrorFaces weld (only when mergeVerts)
+    bool  merge        = true;         // gates the weld pass
+    float dist         = 0.001f;       // -> the weld distance (only when merge)
     // --- live as of v2 (task 0230): angle drives the rotate box + toolNormal ---
     // Default 180 is the captured reference default (0227 design). Harmless
     // for the mirror OPERATION regardless of value: reflection is invariant
@@ -325,8 +325,8 @@ public:
             nothrow @nogc {
         return params_.axis == expected.axis && params_.center == expected.center &&
             params_.invertPolys == expected.invertPolys &&
-            params_.mergeVerts == expected.mergeVerts &&
-            params_.distance == expected.distance && params_.angle == expected.angle &&
+            params_.merge == expected.merge &&
+            params_.dist == expected.dist && params_.angle == expected.angle &&
             params_.mode == expected.mode && params_.left == expected.left &&
             params_.up == expected.up;
     }
@@ -451,10 +451,10 @@ public:
         static immutable ToolSessionPolicy policy = {
             activationRow: true, sessionSteps: true, historyTopologySteps: true,
             opensAt: OpensAt.firstPress, keepAliveOnCancel: true,
-            imageAttrs: ["axis", "center", "invertPolys", "mergeVerts",
-                "distance", "angle", "mode", "left", "up"],
-            haulAttrs: ["axis", "center", "invertPolys", "mergeVerts",
-                "distance", "angle", "mode", "left", "up"],
+            imageAttrs: ["axis", "center", "invertPolys", "merge",
+                "dist", "angle", "mode", "left", "up"],
+            haulAttrs: ["axis", "center", "invertPolys", "merge",
+                "dist", "angle", "mode", "left", "up"],
             // captured: the tool's activation resets these (topology-redo S6r)
             activationResetAttrs: ["center"]
         };
@@ -517,8 +517,8 @@ public:
                 0),
             Param.vec3_("center", "Center", &params_.center, Vec3(0, 0, 0)),
             Param.bool_("invertPolys", "Invert Polygons", &params_.invertPolys, true),
-            Param.bool_("mergeVerts", "Merge Vertices", &params_.mergeVerts, true),
-            Param.float_("distance", "Distance", &params_.distance, 0.001f),
+            Param.bool_("merge", "Merge Vertices", &params_.merge, true),
+            Param.float_("dist", "Distance", &params_.dist, 0.001f),
             // --- live as of v2 (task 0230): angle drives the rotate box + toolNormal ---
             Param.float_("angle", "Angle", &params_.angle, 180.0f).angle(),
             // Mode offers Axis only (Free-Rotation/Three-Points deferred); the
@@ -535,7 +535,7 @@ public:
 
     override bool paramEnabled(string name) const {
         // Distance only matters when merge is on.
-        if (name == "distance") return params_.mergeVerts;
+        if (name == "dist") return params_.merge;
         return true;
     }
 
@@ -606,8 +606,8 @@ public:
             && cachedAxis     == params_.axis
             && cachedCenter   == params_.center
             && cachedInvert   == params_.invertPolys
-            && cachedMerge    == params_.mergeVerts
-            && cachedDistance == params_.distance
+            && cachedMerge    == params_.merge
+            && cachedDistance == params_.dist
             && cachedAngle    == params_.angle)
             return;
 
@@ -619,8 +619,8 @@ public:
         cachedAxis       = params_.axis;
         cachedCenter     = params_.center;
         cachedInvert     = params_.invertPolys;
-        cachedMerge      = params_.mergeVerts;
-        cachedDistance   = params_.distance;
+        cachedMerge      = params_.merge;
+        cachedDistance   = params_.dist;
         cachedAngle      = params_.angle;
         havePreviewCache = true;
     }

@@ -62,21 +62,42 @@ private immutable RetiredAttr[] kRetiredAttrs = [
     RetiredAttr(2, "xfrm.smooth", kToolNode, "sharpAngle"),
 ];
 
-/// Radial Array's pre-9462 `weld` float (0 = off) is the clone effector's
-/// `merge` + `dist` pair now: a cached entry still holding it reads through
-/// `CloneWeld.fromLegacy`; an unreadable value is dropped.
-private void upgradeLegacyWeld(string presetId, string node, ref NodeAttrs attrs) {
+/// A cached tool attribute renamed after it was stored: an entry still holding
+/// `from` gets each name of `to` (unless already present) and loses `from`. The
+/// values are `from`'s own, or `convert`'s (one per `to`; empty = unreadable,
+/// dropped). The old name alone marks an old entry, so no schema bump is needed.
+private struct RenamedAttr {
+    string preset, node, from;
+    string[] to;
+    string[] function(string) convert;
+}
+private immutable RenamedAttr[] kRenamedAttrs = [
+    // The clone effector's merge + dist pair (K-A3 PF-4).
+    RenamedAttr("mesh.radialArrayTool", kToolNode, "weld", ["merge", "dist"], &legacyWeldAttrs),
+    RenamedAttr("mesh.mirrorTool", kToolNode, "mergeVerts", ["merge"]),
+    RenamedAttr("mesh.mirrorTool", kToolNode, "distance", ["dist"]),
+];
+
+/// The single weld float (0 = off) as `merge`, `dist` through `CloneWeld.fromLegacy`.
+private string[] legacyWeldAttrs(string value) {
     import std.conv : to;
     import mesh : CloneWeld;
     import params : fmtFloatWire;
-    auto w = "weld" in attrs;
-    if (w is null || presetId != "mesh.radialArrayTool" || node != kToolNode) return;
     try {
-        const weld = CloneWeld.fromLegacy((*w).to!float);
-        attrs["merge"] = weld.merge ? "true" : "false";
-        attrs["dist"] = fmtFloatWire(weld.distance);
-    } catch (Exception) {}
-    attrs.remove("weld");
+        const weld = CloneWeld.fromLegacy(value.to!float);
+        return [weld.merge ? "true" : "false", fmtFloatWire(weld.distance)];
+    } catch (Exception) return null;
+}
+
+private void renameAttrs(string presetId, string node, ref NodeAttrs attrs) {
+    foreach (ref r; kRenamedAttrs) {
+        auto v = r.from in attrs;
+        if (v is null || r.preset != presetId || r.node != node) continue;
+        const string[] vals = r.convert is null ? [*v] : r.convert(*v);
+        attrs.remove(r.from);
+        if (vals.length == r.to.length)
+            foreach (k, name; r.to) if (name !in attrs) attrs[name] = vals[k];
+    }
 }
 
 /// Cap on the recent-files MRU list.
@@ -494,7 +515,7 @@ Prefs loadPrefs(string dir) {
             foreach (r; kRetiredAttrs)
                 if (p.version_ < r.since && r.preset == presetId && r.node == node)
                     attrs.remove(r.attr);
-            upgradeLegacyWeld(presetId, node, attrs);
+            renameAttrs(presetId, node, attrs);
             p.toolAttrCache.store(presetId, node, attrs);
         }
         // Pre-M5 files: `toolDefaults` held the tool node only.
