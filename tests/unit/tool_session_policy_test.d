@@ -1845,7 +1845,7 @@ private enum string[][string] kBuiltSites = [
         "VertexMergeTool.preparedActivationDirtyForTest:1",
         "VertexMergeTool.preparedActivationForTest:1",
         "VertexMergeTool.preparedParamBuiltForTest:1", "VertexMergeTool.rebaseTopologyStep:1",
-        "VertexMergeTool.rebuildPreview:2", "VertexMergeTool.reinitSession:1",
+        "VertexMergeTool.rebuildPreview:1", "VertexMergeTool.reinitSession:1",
         "VertexMergeTool.seedPreparedActivationForTest:1",
         "VertexMergeTool.seedPreparedParamForTest:1",
     ],
