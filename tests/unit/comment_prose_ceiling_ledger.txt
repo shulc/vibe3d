@@ -8,8 +8,8 @@
 # Then READ THE DIFF. Regeneration is mechanical and will absorb an
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
-source-files 574
-task-citation-lines 5230
+source-files 575
+task-citation-lines 5222
 citing-files 455
 long-comment-runs 263
 files-with-long-runs 141
@@ -374,16 +374,16 @@ allow source/tools/alignment/radial_sweep_tool.d 12
 allow source/tools/common/command_wrapper.d 19
 allow source/tools/common/session_mesh_key.d 3
 allow source/tools/create/arc.d 2
-allow source/tools/create/box.d 16
-allow source/tools/create/capsule.d 3
-allow source/tools/create/cone.d 3
+allow source/tools/create/box.d 15
+allow source/tools/create/capsule.d 2
+allow source/tools/create/cone.d 2
 allow source/tools/create/create_common.d 15
-allow source/tools/create/cylinder.d 3
+allow source/tools/create/cylinder.d 2
 allow source/tools/create/pen.d 2
 allow source/tools/create/pen_geometry.d 1
 allow source/tools/create/primitive_create_tool.d 23
-allow source/tools/create/sphere.d 16
-allow source/tools/create/torus.d 5
+allow source/tools/create/sphere.d 13
+allow source/tools/create/torus.d 4
 allow source/tools/create/tube.d 3
 allow source/tools/create/vertex_place.d 3
 allow source/tools/deform/bend.d 3
