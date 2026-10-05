@@ -322,13 +322,13 @@ unittest { // sharpThreshold 60 → every edge is sharp → all verts pinned
                 ~ " after="  ~ after[i][c].to!string);
 }
 
-unittest { // sharpThreshold 115 (degrees, not radians) → no edge passes →
-           // no lock → the mesh smooths
+unittest { // sharpThreshold 115 (degrees, not radians) → only the 134° edge
+           // passes → its two ends lock, the rest of the mesh smooths
     perturbed();
     auto before = dumpVerts();
     cmd("mesh.smooth strn:1 iter:5 lockSharp:true sharpThreshold:115");
     assert(anyMovedFrom(before, dumpVerts()),
-        "lockSharp 115°: no edge passes the threshold, the mesh should move");
+        "lockSharp 115°: only one edge passes the threshold, the mesh should move");
 }
 
 unittest { // lockSharp:false ⇔ default smooth: regression — no

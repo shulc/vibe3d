@@ -9,7 +9,9 @@ import std.format : format;
 import std.json : JSONValue, JSONType, parseJSON;
 import std.math : fabs, sqrt;
 
-import commands.mesh.smooth : MeshSmooth, preserveProjectsAt;
+import commands.mesh.smooth : MeshSmooth, SurfaceLineIndex, preserveProjectsAt,
+    projectOntoSurfaceBrute;
+version (PerfProbe) import commands.mesh.smooth : surfaceHitTests;
 import commands.mesh.vertex_position_result : VertexPositionResult;
 import document : primaryModelSpaceResolver;
 import editmode : EditMode;
@@ -19,6 +21,7 @@ import mesh : Mesh;
 import operator : VectorStack;
 import params : Param;
 import toolpipe.packets : FalloffPacket, FalloffShape, FalloffType, SubjectPacket;
+import tools.edit.smooth_relax : RelaxVec3;
 import view : View;
 
 private JSONValue fixture() {
@@ -284,3 +287,81 @@ unittest { // lockCorner counts polygons of >= 3 sides: a two-corner polygon on
     assert(runLocks(m, true, false) == before,
         "lockCorner must pin every vertex used by one polygon of >= 3 sides");
 }
+
+// Preserve's hit index answers exactly what the brute pass over every triangle
+// answers: a folded, overlapping surface (several hits per line, both signs of
+// t) and lines through shared grid vertices and edges (|t| ties).
+private RelaxVec3[3][] foldedSurface() {
+    import std.math : sin;
+    RelaxVec3[3][] tris;
+    enum side = 12;
+    RelaxVec3 at(int x, int z, double lift) {
+        return RelaxVec3(x * 0.25, lift + 0.3 * sin(x * 0.9) * sin(z * 0.7), z * 0.25);
+    }
+    foreach (sheet; 0 .. 3) foreach (z; 0 .. side) foreach (x; 0 .. side) {
+        const double l = sheet * 0.4;
+        RelaxVec3[3] a = [at(x, z, l), at(x + 1, z, l), at(x + 1, z + 1, l)];
+        RelaxVec3[3] b = [at(x, z, l), at(x + 1, z + 1, l), at(x, z + 1, l)];
+        tris ~= a;
+        tris ~= b;
+    }
+    return tris;
+}
+
+unittest {
+    import std.random : Random, uniform;
+    auto tris = foldedSurface();
+    assert(tris.length == 864, "surface population");
+    const index = SurfaceLineIndex(tris);
+    auto rng = Random(9484);
+    size_t hits, misses, indexTests;
+    foreach (i; 0 .. 4000) {
+        // Half the lines start on an exact grid vertex with an axis normal.
+        const bool onGrid = i % 2 == 0;
+        RelaxVec3 p = onGrid
+            ? RelaxVec3(uniform(0, 13, rng) * 0.25, uniform(-1.0, 2.0, rng), uniform(0, 13, rng) * 0.25)
+            : RelaxVec3(uniform(-0.5, 3.5, rng), uniform(-1.0, 2.0, rng), uniform(-0.5, 3.5, rng));
+        Vec3 n = onGrid ? Vec3(0, i % 4 == 0 ? 1 : -1, 0)
+            : Vec3(uniform(-1.0f, 1.0f, rng), uniform(-1.0f, 1.0f, rng), uniform(-1.0f, 1.0f, rng));
+        if (!onGrid && n.length > 0) n = n * (1.0f / n.length);
+        RelaxVec3 viaIndex = p, viaBrute = p;
+        version (PerfProbe) const t0 = surfaceHitTests;
+        index.project(viaIndex, n);
+        version (PerfProbe) indexTests += surfaceHitTests - t0;
+        projectOntoSurfaceBrute(viaBrute, n, tris);
+        assert(viaIndex == viaBrute, format("line %d: index (%.17g %.17g %.17g) brute (%.17g %.17g %.17g)",
+            i, viaIndex.x, viaIndex.y, viaIndex.z, viaBrute.x, viaBrute.y, viaBrute.z));
+        if (viaBrute == p) ++misses; else ++hits;
+    }
+    assert(hits == 3106 && misses == 894, format("hit population %d / %d", hits, misses));
+    // The brute pass runs 4000 x 864 = 3 456 000 triangle tests.
+    version (PerfProbe) assert(indexTests <= 45_000,
+        format("index triangle tests: %d (measured 42 624)", indexTests));
+}
+
+version (PerfProbe) unittest { // preserve on a 40k-face surface tests a bounded set of triangles
+    import std.math : sin, cos;
+    enum side = 200;
+    Mesh m;
+    foreach (z; 0 .. side + 1) foreach (x; 0 .. side + 1)
+        m.vertices ~= Vec3(x * 0.1f, 0.05f * sin(x * 0.37f) * cos(z * 0.23f), z * 0.1f);
+    foreach (z; 0 .. side) foreach (x; 0 .. side) {
+        const uint a = cast(uint)(z * (side + 1) + x);
+        m.addFace([a, a + 1, a + 2 + side, a + 1 + side]);
+    }
+    m.buildLoops();
+    m.syncSelection();
+    View cv = new View(0, 0, 800, 600);
+    auto cmd = new MeshSmooth(&m, cv, EditMode.Vertices);
+    setParam(cmd, "iter", 10);
+    setParam(cmd, "preserve", 1);
+    const before = surfaceHitTests;
+    auto got = smoothed(m, EditMode.Vertices, cmd);
+    const tests = surfaceHitTests - before;
+    size_t moved;
+    foreach (i; 0 .. got.length) if (got[i] != m.vertices[i]) ++moved;
+    assert(moved == 40_328, format("population: %d vertices moved", moved));
+    // 40 401 vertices x 10 projections x 80 000 triangles = 3.2e10 for the brute pass.
+    assert(tests <= 3_000_000, format("triangle tests: %d (measured 2 932 256)", tests));
+}
+

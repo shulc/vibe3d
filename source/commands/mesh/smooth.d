@@ -224,8 +224,9 @@ class MeshSmooth : Command, Operator, IFalloffAware,
 
         const Vec3[] normal = vertexNormalsAtPositions(*subject, surfaceSource);
         const double[] cScale = lockSharp_ ? null : boundaryScale(topo, normal);
-        const RelaxVec3[3][] surface =
-            preserve_ ? surfaceTriangles(*subject, surfaceSource) : null;
+        const surface = preserve_
+            ? SurfaceLineIndex(surfaceTriangles(*subject, surfaceSource))
+            : SurfaceLineIndex.init;
 
         auto pos = new RelaxVec3[](nV);
         foreach (v; 0 .. nV) pos[v] = RelaxVec3(source[v].x, source[v].y, source[v].z);
@@ -236,7 +237,7 @@ class MeshSmooth : Command, Operator, IFalloffAware,
                 relaxStep(pos, topo, F, active, cScale, work);
                 if (preserve_ && preserveProjectsAt(i, iters))
                     foreach (v; 0 .. nV) if (active[v])
-                        projectOntoSurface(pos[v], normal[v], surface);
+                        surface.project(pos[v], normal[v]);
             }
         }
 
@@ -318,51 +319,6 @@ class MeshSmooth : Command, Operator, IFalloffAware,
         return c;
     }
 
-    /// The original surface as triangles (ear clipping per polygon).
-    private static RelaxVec3[3][] surfaceTriangles(const ref Mesh m,
-                                                   const(Vec3)[] pos) {
-        RelaxVec3[3][] tris;
-        Vec3[] ring;
-        foreach (f; m.faces) {
-            ring.length = 0;
-            foreach (vid; f) ring ~= pos[vid];
-            foreach (t; triangulatePolygonEarClip(ring)) {
-                RelaxVec3[3] tri = [d3(ring[t[0]]), d3(ring[t[1]]), d3(ring[t[2]])];
-                tris ~= tri;
-            }
-        }
-        return tris;
-    }
-
-    /// Move `p` along the line through it with direction −n to the nearest
-    /// (smallest |t|) hit on `surface`; no hit keeps `p`.
-    private static void projectOntoSurface(ref RelaxVec3 p, Vec3 n,
-                                           const(RelaxVec3[3])[] surface) {
-        const d = d3(n) * -1.0;
-        double bestT = double.infinity;
-        foreach (ref t; surface) {
-            const e1 = t[1] - t[0], e2 = t[2] - t[0];
-            const nt = crossD(e1, e2);
-            // A triangle parallel to the line gives tt = ±inf or NaN, and
-            // every comparison below then rejects it.
-            const tt = nt.dot(t[0] - p) / nt.dot(d);
-            const q = p + d * tt;
-            const tol = -1e-12 * nt.dot(nt);
-            if (nt.dot(crossD(t[1] - t[0], q - t[0])) < tol ||
-                nt.dot(crossD(t[2] - t[1], q - t[1])) < tol ||
-                nt.dot(crossD(t[0] - t[2], q - t[2])) < tol) continue;
-            if ((tt < 0 ? -tt : tt) < (bestT < 0 ? -bestT : bestT)) bestT = tt;
-        }
-        if (bestT != double.infinity) p = p + d * bestT;
-    }
-
-    private static RelaxVec3 d3(Vec3 v) { return RelaxVec3(v.x, v.y, v.z); }
-
-    private static RelaxVec3 crossD(RelaxVec3 a, RelaxVec3 b) {
-        return RelaxVec3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z,
-                         a.x * b.y - a.y * b.x);
-    }
-
     private static RelaxVec3 unitOrZero(RelaxVec3 v) {
         const len = v.length();
         return len > 0 ? v * (1.0 / len) : RelaxVec3(0, 0, 0);
@@ -409,5 +365,174 @@ class MeshSmooth : Command, Operator, IFalloffAware,
         // used to sit under this line was reachable ONLY on `!armed()`, so it is
         // gone with the predicate that reached it.
         undo_.revert(*mesh);
+    }
+}
+
+private RelaxVec3 d3(Vec3 v) { return RelaxVec3(v.x, v.y, v.z); }
+
+private RelaxVec3 crossD(RelaxVec3 a, RelaxVec3 b) {
+    return RelaxVec3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z,
+                     a.x * b.y - a.y * b.x);
+}
+
+private double axisOf(RelaxVec3 v, size_t a) { return a == 0 ? v.x : a == 1 ? v.y : v.z; }
+
+/// The original surface as triangles (ear clipping per polygon).
+RelaxVec3[3][] surfaceTriangles(const ref Mesh m, const(Vec3)[] pos) {
+    RelaxVec3[3][] tris;
+    Vec3[] ring;
+    foreach (f; m.faces) {
+        ring.length = 0;
+        ring.assumeSafeAppend();
+        foreach (vid; f) ring ~= pos[vid];
+        foreach (t; triangulatePolygonEarClip(ring)) {
+            RelaxVec3[3] tri = [d3(ring[t[0]]), d3(ring[t[1]]), d3(ring[t[2]])];
+            tris ~= tri;
+        }
+    }
+    return tris;
+}
+
+/// Triangle tests run by Preserve's line hits (PerfProbe work counter).
+version (PerfProbe) __gshared size_t surfaceHitTests;
+
+/// The line p + t·d against one triangle: `tt` and whether the hit lies in it.
+/// A triangle parallel to the line gives tt = ±inf or NaN, which every |t|
+/// comparison of the caller rejects.
+private bool hitOnTriangle(const ref RelaxVec3[3] t, RelaxVec3 p, RelaxVec3 d,
+                     out double tt) {
+    version (PerfProbe) ++surfaceHitTests;
+    const nt = crossD(t[1] - t[0], t[2] - t[0]);
+    tt = nt.dot(t[0] - p) / nt.dot(d);
+    const q = p + d * tt;
+    const tol = -1e-12 * nt.dot(nt);
+    return !(nt.dot(crossD(t[1] - t[0], q - t[0])) < tol ||
+             nt.dot(crossD(t[2] - t[1], q - t[1])) < tol ||
+             nt.dot(crossD(t[0] - t[2], q - t[2])) < tol);
+}
+
+/// Preserve's hit structure: a median-split AABB tree in double over the
+/// ORIGINAL triangles, built once per smooth call (task 9484 review; the brute
+/// pass was O(active · triangles) per projected iteration). Boxes are padded
+/// far beyond the leaf test's tolerance, nodes are pruned only when their
+/// nearest |t| EXCEEDS the best, and leaves keep the brute order's winner
+/// (smallest |t|, then lowest triangle index) — the answer is the brute
+/// force's, pinned by `smooth_kernel_parity_test`.
+struct SurfaceLineIndex {
+    private static struct Node { RelaxVec3 lo, hi; uint first, count, right; }
+    private const(RelaxVec3[3])[] tris_;
+    private uint[] order_;
+    private Node[] nodes_;
+
+    this(const(RelaxVec3[3])[] tris) {
+        tris_ = tris;
+        order_ = new uint[](tris.length);
+        foreach (i, ref o; order_) o = cast(uint)i;
+        if (tris.length) build(0, cast(uint)tris.length);
+    }
+
+    private uint build(uint first, uint count) {
+        import std.algorithm : topN;
+        const uint id = cast(uint)nodes_.length;
+        nodes_ ~= Node.init;
+        RelaxVec3 lo = tris_[order_[first]][0], hi = lo;
+        foreach (k; first .. first + count) foreach (ref v; tris_[order_[k]]) {
+            lo = RelaxVec3(v.x < lo.x ? v.x : lo.x, v.y < lo.y ? v.y : lo.y, v.z < lo.z ? v.z : lo.z);
+            hi = RelaxVec3(v.x > hi.x ? v.x : hi.x, v.y > hi.y ? v.y : hi.y, v.z > hi.z ? v.z : hi.z);
+        }
+        double scale = 1;
+        foreach (a; 0 .. 3) {
+            const l = axisOf(lo, a), h = axisOf(hi, a);
+            if (-l > scale) scale = -l;
+            if (h > scale) scale = h;
+        }
+        const pad = RelaxVec3(1e-9 * scale, 1e-9 * scale, 1e-9 * scale);
+        nodes_[id] = Node(lo - pad, hi + pad, first, count, 0);
+        if (count <= 4) return id;
+        const ext = hi - lo;
+        const size_t axis = ext.x >= ext.y && ext.x >= ext.z ? 0 : ext.y >= ext.z ? 1 : 2;
+        double key(uint i) { const t = tris_[i]; return axisOf(t[0] + t[1] + t[2], axis); }
+        const uint mid = count / 2;
+        topN!((a, b) => key(a) < key(b) || (key(a) == key(b) && a < b))(
+            order_[first .. first + count], mid);
+        build(first, mid);
+        const uint right = build(first + mid, count - mid);
+        nodes_[id].count = 0;
+        nodes_[id].right = right;
+        return id;
+    }
+
+    /// The nearest |s| of the line p + s·d inside node `b`; false = no meet.
+    private static bool gapOf(const ref Node b, RelaxVec3 p, RelaxVec3 d,
+                              out double gap) {
+        double s0 = -double.infinity, s1 = double.infinity;
+        foreach (a; 0 .. 3) {
+            const pa = axisOf(p, a), da = axisOf(d, a);
+            const lo = axisOf(b.lo, a), hi = axisOf(b.hi, a);
+            if (da == 0) {
+                if (pa < lo || pa > hi) return false;
+                continue;
+            }
+            double u = (lo - pa) / da, v = (hi - pa) / da;
+            if (u > v) { const w = u; u = v; v = w; }
+            if (u > s0) s0 = u;
+            if (v < s1) s1 = v;
+        }
+        if (s0 > s1) return false;
+        gap = s0 > 0 ? s0 : s1 < 0 ? -s1 : 0;
+        return true;
+    }
+
+    /// Move `p` along the line through it with direction −n to the nearest
+    /// (smallest |t|) hit; no hit keeps `p`.
+    void project(ref RelaxVec3 p, Vec3 n) const {
+        if (nodes_.length == 0) return;
+        const d = d3(n) * -1.0;
+        double bestT = double.infinity, bestAbs = double.infinity;
+        uint bestId = uint.max;
+        uint[64] stack;
+        size_t sp;
+        stack[sp++] = 0;
+        while (sp) {
+            const uint ni = stack[--sp];
+            const node = &nodes_[ni];
+            double gap;
+            if (!gapOf(*node, p, d, gap) || gap > bestAbs) continue;
+            if (node.count) {
+                foreach (k; node.first .. node.first + node.count) {
+                    const uint ti = order_[k];
+                    double tt;
+                    if (!hitOnTriangle(tris_[ti], p, d, tt)) continue;
+                    const at = tt < 0 ? -tt : tt;
+                    if (at < bestAbs || (at == bestAbs && at != double.infinity && ti < bestId)) {
+                        bestT = tt; bestAbs = at; bestId = ti;
+                    }
+                }
+                continue;
+            }
+            // The nearer child is popped first; the gap test repeats on pop.
+            const uint l = ni + 1, r = node.right;
+            double gl, gr;
+            const bool hl = gapOf(nodes_[l], p, d, gl), hr = gapOf(nodes_[r], p, d, gr);
+            const bool rNear = hr && (!hl || gr < gl);
+            if (hl && hr) stack[sp++] = rNear ? l : r;
+            if (hl || hr) stack[sp++] = rNear ? r : l;
+        }
+        if (bestT != double.infinity) p = p + d * bestT;
+    }
+}
+
+version (unittest) {
+    /// TEST ORACLE: the brute force `SurfaceLineIndex.project` must equal.
+    void projectOntoSurfaceBrute(ref RelaxVec3 p, Vec3 n,
+                                 const(RelaxVec3[3])[] surface) {
+        const d = d3(n) * -1.0;
+        double bestT = double.infinity;
+        foreach (ref t; surface) {
+            double tt;
+            if (!hitOnTriangle(t, p, d, tt)) continue;
+            if ((tt < 0 ? -tt : tt) < (bestT < 0 ? -bestT : bestT)) bestT = tt;
+        }
+        if (bestT != double.infinity) p = p + d * bestT;
     }
 }
