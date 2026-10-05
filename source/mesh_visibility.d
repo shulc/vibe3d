@@ -391,7 +391,10 @@ struct VisibilityProbe {
         // plane — H = eye + t·(C − eye), the dominant axis of its normal
         // dropped. Same depth clauses as above, no broad phase.
         foreach (k, fi; nearIdx_) {
+            ++tested;
             const(uint)[] face = mesh_.faces[fi];
+            // Not dead for a NON-PLANAR face: an off-plane own corner meets
+            // the plane at t != 1 and would be hidden by itself.
             bool ownsVi = false;
             foreach (v; face) if (v == vi) { ownsVi = true; break; }
             if (ownsVi) continue;

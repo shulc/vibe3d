@@ -115,3 +115,32 @@ unittest {
         "near-occluder-psp: a vertex 0.5 m behind a front face with a corner "
         ~ "behind the eye must be occluded by it");
 }
+
+// A NON-PLANAR near occluder (review of 9387): its plane is taken from three
+// corners, so the fourth corner (vertex 1, z = -0.5 where the plane has 0)
+// meets that plane at t != 1. Only the own-face skip keeps it visible.
+unittest {
+    const Viewport vp = eyeViewport();
+    Mesh m;
+    m.addVertex(Vec3(-3, -3, 0));      // 0
+    m.addVertex(Vec3(3, -3, -0.5f));   // 1: off the plane of 2,3,0
+    m.addVertex(Vec3(3, 3, 8));        // 2 behind the eye
+    m.addVertex(Vec3(-3, 3, 8));       // 3 behind the eye
+    m.addFace([2u, 3u, 0u, 1u]);       // plane from 2,3,0; corner 1 is index 3
+    m.buildLoops();
+    float sx, sy, z;
+    assert(frontFacingLocal(m.vertices, m.faces[0], vp.eye), "rig: front-facing");
+    assert(projectToWindowFull(m.vertices[1], vp, sx, sy, z), "rig: v1 projects");
+    assert(!projectToWindowFull(m.vertices[2], vp, sx, sy, z), "rig: v2 behind eye");
+    g_visCounters.reset();
+    auto p = visibilityProbe(m, vp.eye, vp, ModelSpace.world());
+    assert(g_visCounters.nearOccluders == 1, format("rig: one near occluder, got %d",
+        g_visCounters.nearOccluders));
+    assert(p.visible(0), "control: corner 0 (on the plane) visible");
+    assert(p.visible(1), "near-own-nonplanar: a non-planar near face's own off-plane "
+        ~ "corner must not be hidden by that face");
+    // One pair per (probed vertex, near occluder): 2 probes x 1 near face, and
+    // no front-list face exists to add a screen pair.
+    assert(g_visCounters.pairsTested == 2, format("near-pairs-counted: expected 2 "
+        ~ "near pairs, got %d", g_visCounters.pairsTested));
+}
