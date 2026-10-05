@@ -232,7 +232,7 @@ Viewport planeLocalViewport(const ref Viewport vp, in WorkplaneFrame frame) {
     return l;
 }
 
-/// A create tool's mover drag (M-HANDLE, task 9412): the centre at the press
+/// A create tool's mover drag (M-HANDLE): the centre at the press
 /// plus the pointer travel, in `frame`'s LOCAL space (= the Position channels).
 /// Arrows 0/1/2 travel along the drawn arrow (LAW A, own); the centre box
 /// through LAW D on the plane-local view (§14 read by §23). False = skip.

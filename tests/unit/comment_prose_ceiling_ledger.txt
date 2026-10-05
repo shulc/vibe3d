@@ -9,7 +9,7 @@
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
 source-files 574
-task-citation-lines 5233
+task-citation-lines 5229
 citing-files 454
 long-comment-runs 266
 files-with-long-runs 142
@@ -374,13 +374,13 @@ allow source/tools/alignment/radial_sweep_tool.d 12
 allow source/tools/common/command_wrapper.d 19
 allow source/tools/common/session_mesh_key.d 3
 allow source/tools/create/arc.d 2
-allow source/tools/create/box.d 18
+allow source/tools/create/box.d 17
 allow source/tools/create/capsule.d 3
 allow source/tools/create/cone.d 3
 allow source/tools/create/create_common.d 12
 allow source/tools/create/cylinder.d 3
 allow source/tools/create/pen.d 4
-allow source/tools/create/primitive_create_tool.d 23
+allow source/tools/create/primitive_create_tool.d 22
 allow source/tools/create/sphere.d 17
 allow source/tools/create/torus.d 5
 allow source/tools/create/tube.d 3
@@ -417,7 +417,7 @@ allow source/tools/slice/slice_tool.d 91
 allow source/tools/topology_step.d 1
 allow source/tools/transform/item_xform_kernels.d 3
 allow source/tools/transform/morph_route.d 3
-allow source/tools/transform/move.d 9
+allow source/tools/transform/move.d 7
 allow source/tools/transform/relocate_plane.d 2
 allow source/tools/transform/rotate.d 2
 allow source/tools/transform/scale.d 5

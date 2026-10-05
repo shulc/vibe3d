@@ -1661,7 +1661,7 @@ float haulWorldPerPixel(Vec3 anchor, const ref Viewport vp) {
 }
 
 // ===========================================================================
-// M-HANDLE — press + travel (task 9412)
+// M-HANDLE — press + travel
 // ===========================================================================
 
 // Which of the laws above turns the pointer travel into handle travel. The
