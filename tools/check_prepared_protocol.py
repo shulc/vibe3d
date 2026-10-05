@@ -6550,10 +6550,11 @@ def radial_array_param_gate(owner, tool, context):
     return (tool.count(".radialArrayFaces(") == 1 and all(x in tool for x in (
                 "PreparedRadialArrayTransitionKind : ubyte { Activate, Param, Deactivate }",
                 "image.expectedLive = MeshSnapshot.capture(live);",
+                "buildPreparedParamImage(ref const Mesh live)",
                 "sameBytes(center, other.center)",
                 "image.expectedLive.matches(live)",
                 "image.expectedBefore.matches(before)")) and
-            "candidate" not in tool[tool.find("buildPreparedParamImage(ref Mesh live)"):
+            "candidate" not in tool[tool.find("buildPreparedParamImage(ref const Mesh live)"):
                                     tool.find("final bool preparedParamMatches(")] and
             all(x in owner for x in (
                 "static PreparedRadialArrayTransitionOwner param(",
