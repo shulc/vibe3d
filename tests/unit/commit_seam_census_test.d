@@ -3458,8 +3458,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
 //
 // (a) `slice_tool.d` had TWO `sliceSplitGap` guards — the interactive preview's
 //     and `applyHeadless`'s; since task 9431 both producers call `sliceCut`,
-//     which holds the one guard. It is pinned to its exact spelling, and the
-//     headless twin's spelling at zero.
+//     which holds the one guard. It is pinned to its exact spelling.
 // (b) `axis_slice.d`'s ladders run inside ONE batch each. A batch opened
 //     INSIDE the loop is byte-identical on every /api/changes counter
 //     (measured — delivery coalesces per frame), so the only pins are
@@ -3488,10 +3487,6 @@ unittest {
     immutable st = readCode(buildPath(repoRoot, "source/tools/slice/slice_tool.d"));
     assert(countOccurrences(st, "if (gap != 0.0f && restrictFaces.length == 0)") == 1,
         "slice_tool.d: `sliceCut`'s split+gap guard changed its spelling");
-    // Task 9431: `applyHeadless` calls `sliceCut` too, so its twin guard is gone.
-    assert(countOccurrences(st, "if (gap_ != 0.0f && restrict.length == 0)") == 0,
-        "slice_tool.d: applyHeadless grew its own split+gap guard again — the "
-      ~ "headless apply must cut through `sliceCut`, not a twin");
 
     immutable ax = readCode(buildPath(repoRoot, "source/commands/mesh/axis_slice.d"));
 

@@ -38,8 +38,6 @@ JSONValue getModel() { return parseJSON(cast(string) get(BASE ~ "/api/model")); 
 size_t undoDepth() {
     return parseJSON(cast(string) get(BASE ~ "/api/history"))["undo"].array.length;
 }
-string undoList() { return parseJSON(cast(string) get(BASE ~ "/api/history"))["undo"].toString; }
-void settle() { quiesce(); }
 
 void scr(Vec3 w, const ref Viewport vp, out int px, out int py) {
     float fx, fy;
@@ -70,7 +68,7 @@ JSONValue liveModel(const Case c) {
     const d0 = undoDepth();
     const v0 = getModel()["vertices"].array.length;
     cmd("tool.set mesh.sliceTool on");
-    settle();
+    quiesce();
     auto vp = viewportFromCamera(fetchCamera(BASE));
     int ax, ay, bx, by;
     // A belt along world X through the origin: on either camera-picked plane
@@ -78,16 +76,17 @@ JSONValue liveModel(const Case c) {
     scr(Vec3(-0.6f, 0, 0), vp, ax, ay);
     scr(Vec3( 0.6f, 0, 0), vp, bx, by);
     playAndWait(buildDragLog(vp.x, vp.y, vp.width, vp.height, ax, ay, bx, by, 20, 0), BASE);
-    settle();
+    quiesce();
     assert(getModel()["vertices"].array.length > v0,
         c.name ~ ": live: the drag laid no slice — panel edits would not re-preview");
     writeAttrs(c);
-    settle();
+    quiesce();
     cmd("tool.set mesh.sliceTool off");
-    settle();
+    quiesce();
     // Measured: the activation and the dropped slice are two entries.
-    assert(undoDepth() == d0 + 2, format("%s: live: recorded %s entries, expected 2 "
-        ~ "(activate + slice): %s", c.name, undoDepth() - d0, undoList()));
+    const undo = parseJSON(cast(string) get(BASE ~ "/api/history"))["undo"];
+    assert(undo.array.length == d0 + 2, format("%s: live: recorded %s entries, expected 2 "
+        ~ "(activate + slice): %s", c.name, undo.array.length - d0, undo));
     return getModel();
 }
 
@@ -96,14 +95,15 @@ JSONValue headlessModel(const Case c) {
     runSetup(c);
     const d0 = undoDepth();
     cmd("tool.set mesh.sliceTool on");
-    settle();
+    quiesce();
     writeAttrs(c);
     cmd("tool.doApply");
     cmd("tool.set mesh.sliceTool off");
-    settle();
+    quiesce();
     // Measured: the activation and the apply are two entries on this path.
-    assert(undoDepth() == d0 + 2, format("%s: headless: recorded %s entries, expected 2 "
-        ~ "(activate + apply): %s", c.name, undoDepth() - d0, undoList()));
+    const undo = parseJSON(cast(string) get(BASE ~ "/api/history"))["undo"];
+    assert(undo.array.length == d0 + 2, format("%s: headless: recorded %s entries, expected 2 "
+        ~ "(activate + apply): %s", c.name, undo.array.length - d0, undo));
     return getModel();
 }
 
@@ -136,11 +136,13 @@ unittest {
              ["infinite 1", "split 1", "caps 1", "gap 0.415", "gapSide center",
               "startX 0", "startY 0.4", "startZ 0.61",
               "endX 0", "endY -1.14", "endZ -1.89", "axis x"], 92, 74),
-        // Gap without split on the cube: two parallel cuts. From the belt the
-        // line steps Y to 0, start Z, end Z (a diagonal), start X, end X.
-        Case("gap-nosplit cube", [],
+        // Restricted to the polygon selection (right x=+0.5 and top y=+0.5):
+        // the live belt splits the right face, the final x = 0.13 line splits
+        // only the top one. From the belt the line steps Y to 0, start Z, end
+        // Z (a diagonal), start X, end X.
+        Case("restricted right+top cube", ["select.element polygon set 3 4"],
              ["axis y", "startY 0", "endY 0", "startZ -0.9", "endZ 0.9",
-              "startX 0.13", "endX 0.13", "split 0", "gap 0.2"], 16, 14),
+              "startX 0.13", "endX 0.13"], 10, 7),
     ];
     assert(cases.length == 2);
     foreach (c; cases) {
@@ -162,13 +164,13 @@ unittest {
     resetCube();
     cmd("history.clear");
     cmd("tool.set mesh.sliceTool on");
-    settle();
+    quiesce();
     foreach (a; ["axis y", "startX 5", "startY 0", "startZ -0.9",
                  "endX 5", "endY 0", "endZ 0.9", "infinite 1"])
         cmd("tool.attr mesh.sliceTool " ~ a);
     const d0 = undoDepth();
     auto r = parseJSON(cast(string) post(BASE ~ "/api/command", "tool.doApply"));
-    settle();
+    quiesce();
     assert(r["status"].str == "error" && undoDepth() == d0
            && getModel()["vertices"].array.length == 8,
         format("a missing plane must refuse the apply: %s, depth %s -> %s, %sv",
@@ -183,13 +185,13 @@ unittest {
 unittest {
     resetCube();
     cmd("tool.set mesh.sliceTool on");
-    settle();
+    quiesce();
     foreach (a; ["snap 1", "snapAngle 45", "startX -0.9", "startY 0", "startZ 0",
                  "endX 0.2346", "endY 0", "endZ 0.3907"])
         cmd("tool.attr mesh.sliceTool " ~ a);
     cmd("tool.doApply");
     cmd("tool.set mesh.sliceTool off");
-    settle();
+    quiesce();
     double maxX = -9;
     size_t onPlane;
     foreach (v; getModel()["vertices"].array) {

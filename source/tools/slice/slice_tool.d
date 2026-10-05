@@ -226,10 +226,10 @@ size_t sliceSplitGap(ref Mesh mesh, Vec3 p, Vec3 n, bool clipped, Vec3 s, Vec3 e
 // (0 = the line missed every face). The mandatory restore is what makes the
 // live preview NON-CUMULATIVE: dragging the line through many positions never
 // stacks cut upon cut — every call reproduces exactly the single cut that the
-// final line would make from the pristine pre-gesture mesh. The interactive preview (onMouseMotion), the
-// commit (onMouseButtonUp), and the `fast`-deferred commit all funnel through
-// here, so they can never diverge in result. Pure data (no GPU / GL) so it is
-// unit-testable under `dub test`.
+// final line would make from the pristine pre-gesture mesh. The interactive
+// preview (onMouseMotion), the commit (onMouseButtonUp), and the `fast`-deferred
+// commit all funnel through here, so they can never diverge in result. Pure
+// data (no GPU / GL) so it is unit-testable under `dub test`.
 size_t sliceFromBaseline(ref Mesh mesh, const ref MeshSnapshot baseline,
                          Vec3 start, Vec3 end, Vec3 wpNormal,
                          int axisMode = SLICE_AXIS_DRAG,
