@@ -329,7 +329,8 @@ unittest { // Polygon free drag keeps the captured phase order in production.
     assert(production.canFind("e.x - dragVp.x") &&
            production.canFind("dragPressContentX, dragPressContentY"));
     assert(production.canFind("dragBaseShift + dragOverlay.toLocalDelta(d)"));
-    assert(production.count("applyCapShift(ed, extentToMesh(") == 2,
+    // Live preview and prepared image run one kernel member (wave-2 PV2).
+    assert(production.count("applyCapShift(ed, extentToMesh(") == 1,
         "live and prepared paths must share the cached-frame conversion");
     assert(!production.canFind("FREE_HAUL_") &&
            !production.canFind("snapShift(") &&
