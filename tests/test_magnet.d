@@ -222,3 +222,37 @@ unittest {
     auto v0 = vert(getModel(), 0);
     assert(abs(v0.z - (-0.5)) < 1e-5, "dist>0 out-of-sphere vert should still be unmoved");
 }
+
+// ---------------------------------------------------------------------------
+// Injected falloff REPLACES the command's own Element sphere (task 9445).
+// A linear falloff (w=1 at y=+0.5, w=0 at y=-0.5) sends every top-row vertex
+// onto the target and leaves the bottom row; the sphere (centre v6, dist 1.2)
+// would leave the far top corner (-0.5,0.5,-0.5) unmoved — that corner is the
+// cell that tells the two packets apart.
+// ---------------------------------------------------------------------------
+unittest {
+    resetCube();
+    mustOk(cmd(`{"id":"mesh.magnet","params":{"target":[0.5,0.5,1.5],`
+             ~ `"center":[0.5,0.5,0.5],"strength":1.0,"dist":1.2,"anchor":-1,`
+             ~ `"falloff":{"type":"linear","shape":"linear",`
+             ~ `"start":[0,0.5,0],"end":[0,-0.5,0]}}}`), "mesh.magnet injected falloff");
+    auto m = getModel();
+    size_t top, bottom;
+    foreach (i; 0 .. m["vertices"].array.length) {
+        auto v = vert(m, i);
+        if (abs(v.z - 1.5) < 1e-4) {
+            assert(abs(v.x - 0.5) < 1e-4 && abs(v.y - 0.5) < 1e-4,
+                   "vertex " ~ i.to!string ~ " at w=1 must land on the target");
+            ++top;
+        } else {
+            assert(abs(v.y + 0.5) < 1e-5 && abs(abs(v.z) - 0.5) < 1e-5,
+                   "vertex " ~ i.to!string ~ " is neither on the target nor an "
+                   ~ "unmoved bottom-row (w=0) vertex: (" ~ v.x.to!string ~ ", "
+                   ~ v.y.to!string ~ ", " ~ v.z.to!string ~ ")");
+            ++bottom;
+        }
+    }
+    assert(top == 4 && bottom == 4, "the injected linear falloff must move the "
+           ~ "4 top-row vertices and no other; moved " ~ top.to!string
+           ~ ", stayed " ~ bottom.to!string);
+}
