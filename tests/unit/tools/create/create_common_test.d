@@ -217,3 +217,36 @@ unittest { // backgroundPoint with no surface: the plane point snapped to q (tas
     assert(!onSurface && got == want,
            "no surface: the background point is the plane point snapped to the view quantum");
 }
+
+unittest { // box-drag-oblique: the base-drag point off the background (task 9473, K-C3 C3a / C3b)
+    // The reference's oblique perspective rig (pinhole focal 1004.7546 px on
+    // (576, 487), eye (0.07, 33.96, 19.03) on the focus (0.07, 1, 0), q 0.05):
+    // the captured corner is q(T), T = Pq + the pixel travel through the map
+    // forward-differenced at Pq; the projective plane hit is 0.117 / 1.25 off T.
+    import std.math : atan;
+    import drag : HandleDrag;
+    import math : lookAt, perspectiveMatrix;
+    import viewgrid : viewVectorQuantum;
+    auto saved = g_pipeCtx;
+    g_pipeCtx = null;               // no constraint stage: the plane branch
+    scope (exit) g_pipeCtx = saved;
+    immutable eye = Vec3(0.07f, 33.959961496f, 19.029442725f);
+    Viewport vp = Viewport(lookAt(eye, Vec3(0.07f, 1, 0), Vec3(0, 1, 0)),
+        perspectiveMatrix(cast(float)(2 * atan(487 / 1004.7545726038318)), 1152.0f / 974.0f,
+                          0.1f, 1000.0f), 1152, 974, 0, 0, eye);
+    vp.focus = Vec3(0.07f, 1, 0);
+    assert(abs(viewVectorQuantum(vp) - 0.05f) < 1e-6f, "rig: the view quantum must be the record's 0.05");
+    auto f = frameFromBasis(Vec3(0, 1, 0), Vec3(1, 0, 0), Vec3(0, 0, 1), Vec3(0, 0, 0));
+    static struct Cell { string id; Vec3 pq; int dx, dy; Vec3 corner; }
+    immutable Cell[2] cells = [Cell("C3a", Vec3(-8.15f, 0, 2.6f), 240, 24, Vec3(0.95f, 0, 3.6f)),
+                               Cell("C3b", Vec3(4.05f, 0, -0.1f), 0, 240, Vec3(3.5f, 0, 10.55f))];
+    size_t n;
+    foreach (c; cells) {
+        HandleDrag g;
+        g.press(c.pq, 500, 500);
+        immutable d = baseDragPoint(g, 500 + c.dx, 500 + c.dy, Vec3(0, 1, 0), vp, f);
+        assert((d - c.corner).length <= 1e-5f, c.id ~ ": the base-drag corner must be q(T)");
+        ++n;
+    }
+    assert(n == 2);
+}

@@ -25,7 +25,7 @@ import std.algorithm : canFind;
 import std.array : join;
 import std.format : format;
 import std.json : JSONValue, parseJSON;
-import std.math : PI, abs, cos, sin, sqrt, tan;
+import std.math : PI, abs, cos, round, sin, sqrt, tan;
 import std.process : environment;
 import std.string : split;
 
@@ -188,6 +188,89 @@ private string rayCell(string name, JSONValue c, Rig r) {
     return null;
 }
 
+/// A base drag: press on the pixel whose plane hit rounds to `q_point`,
+/// release `drag_px` (or over `release_aim_world`) later; the dragged point D
+/// read back from the armed tool's channels (box corner 2, the radial radii,
+/// the torus ring radius) against the cell's law.
+private string baseDragCell(string name, JSONValue c, Rig r) {
+    const fam = c["family"].str;
+    const tool = fam == "box" ? "prim.cube" : "prim." ~ fam;
+    rig(r, tool, num(c["offset"]));
+    if (!c["handle"].boolean) handle(false);
+    if (!c["constraint_enabled"].boolean) penCommand("tool.pipe.attr constrain enabled false");
+    auto vp = viewportFromCameraMatrices();
+    // Pq = the cell's q point, or q of our own press ray's hit on the base plane y 0.
+    double[3] planeHit(int[2] px, double y) {
+        Vec3 o, dir;
+        pixelRay(px[0], px[1], vp, o, dir);
+        const t = (y - o.y) / dir.y;
+        return [o.x + dir.x * t, y, o.z + dir.z * t];
+    }
+    const qs = num(r.view["q"]);
+    const p0 = "q_point" in c.object ? aimQ(arr3(c["q_point"]), qs) : worldPixel(v3(arr3(c["press_aim_world"])));
+    double[3] q = "q_point" in c.object ? arr3(c["q_point"]) : planeHit(p0, 0);
+    foreach (ref x; q) x = round(x / qs) * qs;
+    int[2] p1;
+    if ("drag_px" in c.object) {
+        // The cell's travel is the record's screen travel: our top view must
+        // turn +x to the right and +z down, as the record's did.
+        const ox = worldPixel(v3([q[0] + 0.2, q[1], q[2]])), oz = worldPixel(v3([q[0], q[1], q[2] + 0.2]));
+        assert(ox[0] > p0[0] && abs(ox[1] - p0[1]) <= 1 && oz[1] > p0[1] && abs(oz[0] - p0[0]) <= 1,
+            name ~ " rig: our top view does not map +x right and +z down");
+        p1 = [p0[0] + cast(int)c["drag_px"].array[0].integer, p0[1] + cast(int)c["drag_px"].array[1].integer];
+    } else p1 = worldPixel(v3(arr3(c["release_aim_world"])));
+    auto cam = fetchCamera();
+    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height, p0[0], p0[1], p1[0], p1[1], 8));
+    double attr(string a) {
+        auto x = postJson("/api/command", "tool.attr " ~ tool ~ " " ~ a ~ " ?");
+        assert(x["status"].str == "ok", name ~ ": " ~ x.toString);
+        return num(x["value"]);
+    }
+    const double[3] cen = [attr("cenX"), attr("cenY"), attr("cenZ")];
+    if (fam == "torus") {
+        const R = attr("majorRadius");
+        penCommand("tool.set " ~ tool ~ " off");
+        if (auto m = within(name, "centre (the press)", cen, q, kRay)) return m;
+        const want = num(c["expect_major_radius"]);
+        return abs(R - want) <= num(c["tol"]) ? null
+            : format("%s: ring radius %.6f, expected |D - Pq| %.6f (tol %g)", name, R, want, num(c["tol"]));
+    }
+    const double sx = attr("sizeX"), sz = attr("sizeZ");
+    penCommand("tool.set " ~ tool ~ " off");
+    if (fam != "box") {
+        if (auto m = within(name, "centre (the press)", cen, q, kRay)) return m;
+        const e = c["expect_radii_xz"].array;
+        return within(name, "radii |D - Pq|", [sx, 0, sz], [num(e[0]), 0, num(e[1])], num(c["tol"]), [0, 2]);
+    }
+    // Corner 2 lies on the release side of corner 1 = Pq.
+    const double[3] aim = "expect_xz" in c.object
+        ? [num(c["expect_xz"].array[0]), q[1], num(c["expect_xz"].array[1])] : arr3(c["release_aim_world"]);
+    const double gx = aim[0] > q[0] ? 1 : -1, gz = aim[2] > q[2] ? 1 : -1;
+    const double[3] c1 = [cen[0] - gx * sx / 2, cen[1], cen[2] - gz * sz / 2],
+                    d  = [cen[0] + gx * sx / 2, cen[1], cen[2] + gz * sz / 2];
+    if (auto m = within(name, "corner 1 (the press)", c1, q, kRay)) return m;
+    if ("expect_xz" in c.object)
+        return within(name, "corner 2", d, aim, num(c["tol"]), [0, 2]);
+    // Straight down: T = Pq + (R - P) from our own rays on the base plane;
+    // the corner's xz is the eye-ray-through-T's background hit's.
+    const P = planeHit(p0, q[1]), R = planeHit(p1, q[1]);
+    const double[3] T = [q[0] + R[0] - P[0], q[1], q[2] + R[2] - P[2]];
+    const eye = d3(cam.eye), ray = sub(T, eye);
+    // The ray's point over the corner's xz: cross-trace in xz, then that point on the background.
+    const hl = ray[0] * ray[0] + ray[2] * ray[2];
+    const s = ((d[0] - eye[0]) * ray[0] + (d[2] - eye[2]) * ray[2]) / hl;
+    const double[3] on = [eye[0] + ray[0] * s, eye[1] + ray[1] * s, eye[2] + ray[2] * s];
+    const cross = len([d[0] - on[0], 0, d[2] - on[2]]);
+    if (!(cross <= kRay))
+        return format("%s: corner 2 xz (%.6f, %.6f) is %.2e off the eye ray through T %(%.6f %)",
+                      name, d[0], d[2], cross, T[]);
+    const rad = len(sub(on, [0.0, 1.0, 0.0]));
+    return abs(rad - 1) <= 2.5e-3 ? null
+        : format("%s: the eye ray through T %(%.6f %) reaches corner 2's xz at %(%.6f %), radius %.6f: "
+                 ~ "not the background hit (the plane branch sits at radius %.3f)", name, T[], on[],
+                 rad, len(sub(T, [0.0, 1.0, 0.0])));
+}
+
 unittest {
     auto fx = parseJSON(import("fixtures/create_click_surface.json"));
     // VIBE3D_CELL=<name>[,<name>...] runs only those cells (mutation drills).
@@ -339,7 +422,17 @@ unittest {
         ++ran;
     }
 
-    const want = only is null ? 11 : cast(int)only.length;
+    // ---- the BASE DRAG (task 9473): Pq carried by the pixel travel, onto the background.
+    foreach (n; ["box-drag-surface", "box-drag-handle-off", "box-drag-miss", "box-drag-surface-offset",
+                 "box-drag-surface-top", "box-drag-off-control", "box-drag-persp-down",
+                 "sphere-drag-surface", "cylinder-drag-surface", "cone-drag-surface",
+                 "capsule-drag-surface", "torus-drag-surface", "sphere-drag-surface-offset"]) {
+        if (!wanted(n)) continue;
+        note(baseDragCell(n, cell(n), rigOf(n)));
+        ++ran;
+    }
+
+    const want = only is null ? 24 : cast(int)only.length;
     assert(ran == want, format("cell population: %d run, expected %d", ran, want));
     assert(fails.length == 0, "create click surface cells:\n" ~ fails.join("\n"));
 }

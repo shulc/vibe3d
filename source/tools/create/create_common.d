@@ -10,7 +10,7 @@ import toolpipe.packets        : SubjectPacket, WorkplanePacket, SnapPacket;
 import toolpipe.stage          : TaskCode;
 import toolpipe.stages.workplane : WorkplaneStage;
 import operator                : VectorStack;
-import drag                    : HandleDrag, DragFrame, DragKind;
+import drag                    : HandleDrag, DragFrame, DragKind, planeDragDelta;
 import handler                 : MoveHandler;
 
 import mesh : Mesh;
@@ -322,6 +322,22 @@ Vec3 backgroundPoint(Vec3 planeLocal, const ref Viewport vp, in WorkplaneFrame f
     Vec3 p = vectorSnap(planeLocal, viewVectorQuantum(vp));
     onSurface = backgroundSurfacePoint(planeLocal, vp, frame, p);
     return p;
+}
+
+/// A primitive's BASE-DRAG point (task 9473, K-C2 C2d + K-C3): the press
+/// corner `grab.point` (q of the press plane hit) carried by the pixel travel
+/// through drag.d's press-frozen plane map on the base plane (normal `n`), onto
+/// the background (`backgroundPoint`: the hit unquantised, else q); the
+/// base-plane channel stays the press's. The snap runs after it.
+Vec3 baseDragPoint(const ref HandleDrag grab, int x, int y, Vec3 n,
+                   const ref Viewport vp, in WorkplaneFrame frame)
+{
+    bool skip, onSurface;
+    Viewport lvp = planeLocalViewport(vp, frame);
+    immutable Vec3 t = grab.point + planeDragDelta(x, y, grab.pressX, grab.pressY, 3, grab.point,
+        lvp, skip, Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1), n);
+    immutable Vec3 p = backgroundPoint(t, vp, frame, onSurface);
+    return p - n * dot(p - grab.point, n);
 }
 
 /// The FREE point under the pointer: the click's q onto the background, then

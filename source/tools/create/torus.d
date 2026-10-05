@@ -12,7 +12,7 @@ import shader : LitShader;
 import tools.create.primitive_create_tool : HandledCreateTool;
 import tools.create.create_common :
                                     screenToPlacementLocal, snapLocalHit,
-                                    workplaneCursorPlaneHit;
+                                    workplaneCursorPlaneHit, baseDragPoint;
 import editmode : EditMode;
 import snap_render : publishLastSnap;
 
@@ -237,6 +237,7 @@ public:
                                          *mesh, EditMode.Vertices));
             startPoint   = hit;
             currentPoint = hit;
+            grab.press(hit, e.x, e.y);
             params_.axis = worldAxisIdxOf(planeNormal);
             params_.cenX = hit.x; params_.cenY = hit.y; params_.cenZ = hit.z;
             params_.majorRadius = 0.0f;
@@ -292,8 +293,7 @@ public:
         if (dragMover(e.x, e.y)) return true;
 
         if (state == TorusState.DrawingMajor) {
-            Vec3 hit = screenToPlacementLocal(
-                cast(float)e.x, cast(float)e.y, cachedVp, placementFrame);
+            Vec3 hit = baseDragPoint(grab, e.x, e.y, planeNormal, cachedVp, placementFrame);
             {
                 publishLastSnap(snapLocalHit(hit, placementFrame, e.x, e.y, cachedVp,
                                               *mesh, EditMode.Vertices));

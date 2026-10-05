@@ -251,10 +251,13 @@ unittest {
     assert(others == 3, "the other press APIs moved; re-read the narrowing");
     sort(sites);
     // Every handle press is a button-down path; `armAxisLeg` is also the Ctrl
-    // hand-over, the axis leg's own press (nothing moved before it).
+    // hand-over, the axis leg's own press (nothing moved before it). The base
+    // drag's corner is a handle too (task 9473): box, radial, torus presses.
     assert(sites == ["BoxTool.onMouseButtonDown", "BoxTool.onMouseButtonDown",
-                     "BoxTool.onMouseButtonDown", "HandledCreateTool.tryGrabHandles",
-                     "MoveTool.armAxisLeg", "PrimitiveCreateTool.tryGrabMover"],
+                     "BoxTool.onMouseButtonDown", "BoxTool.onMouseButtonDown",
+                     "HandledCreateTool.tryGrabHandles", "MoveTool.armAxisLeg",
+                     "PrimitiveCreateTool.tryGrabMover", "SizedRadialCreateTool.onMouseButtonDown",
+                     "TorusTool.onMouseButtonDown"],
         "a HandleDrag press outside the named press sites");
 }
 

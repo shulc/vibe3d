@@ -36,7 +36,7 @@ import tools.create.create_common : WorkplaneFrame,
                               mostFacingAxis,
                               transformPoint, transformDir, snapLocalHit,
                               frameIsLeftHanded, reverseFaceWinding,
-                              workplaneCursorPlaneHit, moverDrag, heightDragNormal;
+                              workplaneCursorPlaneHit, moverDrag, heightDragNormal, baseDragPoint;
 import editmode : EditMode;
 import snap : SnapResult;
 import snap_render : publishLastSnap, clearLastSnap;
@@ -115,9 +115,7 @@ private __gshared View gBoxLiveEditView;
 // misleading "is-a":
 //   - choosePlane() below signs planeNormal by camera side and writes
 //     params_.axis as a side effect; the base's choosePlane is unsigned
-//     and never touches params_. basePlaneOrigin (snap-relocatable, set
-//     on the first click) has no counterpart in the base, which always
-//     ray-plane-tests against a fixed local origin.
+//     and never touches params_.
 //   - the handle rig is edgeH[4] (in-plane edge midpoints, screenAxisDelta
 //     drag) + heightH[2] (top/bottom faces, ray-plane-intersect drag) with
 //     3-tier click priority and a snap query on EVERY handle type — not
@@ -177,12 +175,6 @@ private:
     //   hpOrigin / hpn : valid during DrawingHeight and heightH re-drag.
     Vec3    startPoint;
     Vec3    currentPoint;
-    // Origin of the base construction plane. Defaults to the workplane origin
-    // (0,0,0 in local frame), but when the FIRST corner snaps to a target the
-    // plane relocates to that point — so the whole base is built coplanar with
-    // the snapped vertex's face instead of straddling the origin-plane and the
-    // face (which left the base drawn at the half-offset between them).
-    Vec3    basePlaneOrigin;
     Vec3    hpn;
     Vec3    hpOrigin;        // plane origin for height ray-plane intersect (drag anchor)
     Vec3    heightDragStart; // world hit at second LMB press
@@ -607,11 +599,9 @@ public:
                                          *mesh, EditMode.Vertices));
             startPoint   = hit;
             currentPoint = hit;
-            // Relocate the base construction plane to the (possibly snapped)
-            // first corner. If snap pulled the corner onto a face vertex, the
-            // base now lies in that face's plane; with no snap this is just the
-            // workplane hit, so the unsnapped path is unchanged.
-            basePlaneOrigin = hit;
+            // The base drag carries this (possibly snapped) corner; the base
+            // lies in its plane (`baseDragPoint`).
+            grab.press(hit, e.x, e.y);
             // Ctrl at the first click jumps straight into a 3D uniform cube
             // (center = click point, drag = half-extent applied to all three
             // axes), skipping the BaseSet → DrawingHeight stage. Otherwise
@@ -794,29 +784,24 @@ public:
         // bookkeeping is needed here.
 
         if (state == BoxState.DrawingBase) {
-            Vec3 hit;
-            if (workplaneCursorPlaneHit(placementFrame, cachedVp,
-                    cast(float)e.x, cast(float)e.y,
-                    basePlaneOrigin, planeNormal, hit))
-            {
-                // Snap the dragged base-corner to the closest snap
-                // target. Falls through to raw `hit` when no snap fires.
-                Vec3 hitRaw = hit;
-                const sr = snapLocalHit(hit, placementFrame, e.x, e.y, cachedVp,
-                                        *mesh, EditMode.Vertices);
-                publishLastSnap(sr);
-                // Free-axis projection: the base corner has 2 DOF (the two
-                // in-plane axes), so adopt the snap target's in-plane coords
-                // but keep the plane-normal coord on the base plane — an edge
-                // snap must not drag the base off its plane. Matches as many
-                // of the snap point's coords as the base drag allows.
-                if (sr.snapped)
-                    hit -= planeNormal * dot(hit - hitRaw, planeNormal);
-                currentPoint = hit;
-                if (dragUniform) syncParamsFromUniformDrag();
-                else             syncParamsFromBaseDrag();
-                uploadBase();
-            }
+            Vec3 hit = baseDragPoint(grab, e.x, e.y, planeNormal, cachedVp, placementFrame);
+            // Snap the dragged base-corner to the closest snap
+            // target. Falls through to `hit` when no snap fires.
+            Vec3 hitRaw = hit;
+            const sr = snapLocalHit(hit, placementFrame, e.x, e.y, cachedVp,
+                                    *mesh, EditMode.Vertices);
+            publishLastSnap(sr);
+            // Free-axis projection: the base corner has 2 DOF (the two
+            // in-plane axes), so adopt the snap target's in-plane coords
+            // but keep the plane-normal coord on the base plane — an edge
+            // snap must not drag the base off its plane. Matches as many
+            // of the snap point's coords as the base drag allows.
+            if (sr.snapped)
+                hit -= planeNormal * dot(hit - hitRaw, planeNormal);
+            currentPoint = hit;
+            if (dragUniform) syncParamsFromUniformDrag();
+            else             syncParamsFromBaseDrag();
+            uploadBase();
             return true;
         }
 

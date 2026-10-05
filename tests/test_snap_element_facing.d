@@ -19,7 +19,7 @@
 // clients (`tests/fixtures/move_guides.json`, task 9406).
 
 import drag_helpers : Vec3, Viewport, buildDragDownLog, buildDragLog, buildDragMotionLog,
-    buildDragUpLog, fetchCamera, pixelRay, playAndWait,
+    buildDragUpLog, fetchCamera, playAndWait,
     projectToWindow, viewportFromCameraMatrices;
 import http_client : getJson, postJson;
 import http_command_helpers : commandBody;
@@ -592,9 +592,6 @@ private void guideCells() {
         snapTypes("worldAxis");
         auto cam = fetchCamera();
         const a = worldPixel(Vec3(cast(float)x0, 1, cast(float)z0));
-        Vec3 pressO, pressD;     // the raw (unsnapped) press point: a top ortho ray's origin
-        auto pvp = viewportFromCameraMatrices();
-        pixelRay(cast(float)a[0], cast(float)a[1], pvp, pressO, pressD);
         playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
                                  a[0], a[1], a[0] + dx, a[1] + dy, 30));
         double qa(string attr) {
@@ -607,25 +604,21 @@ private void guideCells() {
         // Corner 2 is the corner the pointer travelled to: +x, and ±z by the drag.
         const double c2x = cx + 0.5 * sx, c2z = dy > 0 ? cz + 0.5 * sz : cz - 0.5 * sz;
         const double c1x = cx - 0.5 * sx, c1z = dy > 0 ? cz - 0.5 * sz : cz + 0.5 * sz;
-        // interim: C2d re-pins to the captured q_world(Pq+Δ) (K-C3 planar body / K-C2 C2d control)
-        const double[2] raw = [pressO.x + dx * kPx, pressO.z + dy * kPx];
+        // The captured corner 2 = q(Pq + travel) (task 9473: K-C3 planar body, K-C2 C2d control).
         auto e = c["expect_corners_xz"];
-        captured(cell, raw, [num(e[1][0]), num(e[1][1])]);
-        check(abs(c1x - x0) <= halfQ && abs(c1z - z0) <= halfQ
-            && abs(c2x - raw[0]) <= kTol && abs(c2z - raw[1]) <= kTol,
-            format("%s: no guide — corner 1 near (%.4f, %.4f) and corner 2 at its raw press "
-                ~ "+ travel (%.6f, %.6f) expected, got (%.6f, %.6f) / (%.6f, %.6f)", cell, x0,
-                z0, raw[0], raw[1], c1x, c1z, c2x, c2z));
+        check(abs(c1x - x0) <= kTol && abs(c1z - z0) <= kTol
+            && abs(c2x - num(e[1][0])) <= kTol && abs(c2z - num(e[1][1])) <= kTol,
+            format("%s: no guide — corner 1 (%.4f, %.4f) and corner 2 q(Pq + travel) (%.4f, %.4f) "
+                ~ "expected, got (%.6f, %.6f) / (%.6f, %.6f)", cell, x0, z0, num(e[1][0]),
+                num(e[1][1]), c1x, c1z, c2x, c2z));
         ++ran;
     }
 
     moveCell("move-guide-world-axis-self", "worldAxis");
     moveCell("move-guide-straight-line-self", "straightLine");
     moveCell("move-guide-straight-line-origin", "straightLine");
-    // interim: C2d re-pins to the captured q_world(Pq+Δ) (K-C3 planar body / K-C2 C2d control)
     boxCell("box-guide-world-axis-prior");
     moveCell("move-guide-world-axis-origin", "worldAxis");
-    // interim: C2d re-pins to the captured q_world(Pq+Δ) (K-C3 planar body / K-C2 C2d control)
     boxCell("box-guide-world-axis-origin");
 }
 

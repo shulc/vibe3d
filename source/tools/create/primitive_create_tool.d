@@ -85,7 +85,7 @@ import tools.create.create_common : WorkplaneFrame,
                               primitivePlacementFrame, screenToPlacementLocal,
                               planeLocalViewport,
                               mostFacingAxis, transformPoint, transformDir, snapLocalHit,
-                              frameIsLeftHanded, reverseFaceWinding,
+                              frameIsLeftHanded, reverseFaceWinding, baseDragPoint,
                               workplaneCursorPlaneHit, moverDrag, heightDragNormal;
 import editmode : EditMode;
 import snap : SnapResult;
@@ -1015,6 +1015,7 @@ public:
                                          *mesh, EditMode.Vertices));
             startPoint   = hit;
             currentPoint = hit;
+            grab.press(hit, e.x, e.y);
             alignAxisOnFirstClick(planeNormal);
             params_.sizeX = 0; params_.sizeY = 0; params_.sizeZ = 0;
             dragUniform = ctrlAtClick;
@@ -1095,8 +1096,7 @@ public:
         if (dragMover(e.x, e.y)) return true;
 
         if (state == RadialState.DrawingBase) {
-            Vec3 hit = screenToPlacementLocal(
-                cast(float)e.x, cast(float)e.y, cachedVp, placementFrame);
+            Vec3 hit = baseDragPoint(grab, e.x, e.y, planeNormal, cachedVp, placementFrame);
             {
                 publishLastSnap(snapLocalHit(hit, placementFrame, e.x, e.y, cachedVp,
                                               *mesh, EditMode.Vertices));

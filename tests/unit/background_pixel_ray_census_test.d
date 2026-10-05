@@ -13,7 +13,7 @@ import std.format : format;
 import std.path : buildPath, dirName, relativePath;
 import std.string : replace, strip;
 
-import tests.unit.census_symbols : blankNonCode, isIdentChar;
+import tests.unit.census_symbols : blankNonCode, isIdentChar, symbolTokenHits;
 
 private enum root = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
@@ -228,11 +228,11 @@ unittest { // (b) the ONE CONS finder over g_pipeCtx: inline finders outside con
 unittest { // (c) a FREE point reads the surface, a primitive's PRESS point does not (task 9404)
     // Polarity: TRUE after task 9404 (K-C role law). The resolver lives in
     // create_common.d; its only client is the vertex tool (the pen joins in
-    // P1, the base drag in C2d). A primitive press calling it — box,
+    // P1, the base drag in C2d via `baseDragPoint`). A primitive press calling it — box,
     // sphere-family, torus or tube — appears in the roster and reddens it.
     auto files = sourceFiles();
     assert(files.length > 300, format("census floor: %d source files", files.length));
-    static immutable forms = ["placeFreePoint", "backgroundPoint", "backgroundSurfacePoint"];
+    static immutable forms = ["placeFreePoint", "baseDragPoint", "backgroundPoint", "backgroundSurfacePoint"];
     string[] clients;
     size_t[string] home;
     foreach (f; files) {
@@ -243,21 +243,38 @@ unittest { // (c) a FREE point reads the surface, a primitive's PRESS point does
             foreach (_; 0 .. n) clients ~= f ~ ":" ~ form;
         }
     }
-    // Floor: placeFreePoint = its declaration; backgroundPoint = its
-    // declaration + placeFreePoint's call; backgroundSurfacePoint = its
+    // Floor: placeFreePoint, baseDragPoint = their declarations; backgroundPoint
+    // = its declaration + the two callers' calls; backgroundSurfacePoint = its
     // declaration + backgroundPoint's call.
-    assert(home == ["placeFreePoint": size_t(1), "backgroundPoint": 2, "backgroundSurfacePoint": 2],
+    assert(home == ["placeFreePoint": size_t(1), "baseDragPoint": 1, "backgroundPoint": 3,
+                    "backgroundSurfacePoint": 2],
         format("census floor: the resolver's own tokens in create_common.d (measured); got %s", home));
     // Task 9415 (P1): the pen joins with the surface step (import + call); its
     // plane point is its own (a drag keeps the raw normal channel).
-    enum vp = "tools/create/vertex_place.d:", pen = "tools/create/pen.d:";
-    assert(clients == [pen ~ "backgroundSurfacePoint", pen ~ "backgroundSurfacePoint",
+    // Task 9473 (C2d): the box, radial and torus base drags (import + call).
+    enum vp = "tools/create/vertex_place.d:", pen = "tools/create/pen.d:", dp = ":baseDragPoint";
+    assert(clients == ["tools/create/box.d" ~ dp, "tools/create/box.d" ~ dp,
+                       pen ~ "backgroundSurfacePoint", pen ~ "backgroundSurfacePoint",
+                       "tools/create/primitive_create_tool.d" ~ dp, "tools/create/primitive_create_tool.d" ~ dp,
+                       "tools/create/torus.d" ~ dp, "tools/create/torus.d" ~ dp,
                        vp ~ "placeFreePoint", vp ~ "placeFreePoint"],
-        format("free-point clients must be exactly the pen's surface step and the vertex tool "
-               ~ "(import + call each); a primitive press must stay the plane point; got %s", clients));
+        format("free-point clients must be exactly the base drags, the pen's surface step and the vertex "
+               ~ "tool (import + call each); a primitive press must stay the plane point; got %s", clients));
     foreach (press; ["tools/create/box.d", "tools/create/primitive_create_tool.d",
                      "tools/create/torus.d", "tools/create/tube.d"])
         assert(files.canFind(press), "census floor: the primitive press file " ~ press ~ " moved");
+    // Task 9473 (C2d): the base drag reads the background through
+    // `baseDragPoint`, from each family's MOTION block, never its press; the
+    // tube has no reference base drag (gap row) and stays the plane point.
+    string[] dragSites;
+    foreach (f; ["tools/create/box.d", "tools/create/primitive_create_tool.d", "tools/create/torus.d",
+                 "tools/create/tube.d"])
+        foreach (h; symbolTokenHits(blankNonCode(readText(buildPath(root, "source", f))), f, "baseDragPoint("))
+            dragSites ~= h.key;
+    sort(dragSites);
+    assert(dragSites == ["BoxTool.onMouseMotion", "SizedRadialCreateTool.onMouseMotion",
+                         "TorusTool.onMouseMotion"],
+        format("baseDragPoint calls must be exactly the box, radial and torus motion blocks: %s", dragSites));
     immutable vertexTool = blankNonCode(readText(buildPath(root, "source", "tools/create/vertex_place.d")));
     assert(tokenAt(vertexTool, "kGuideTypes").length == 0,
         "the vertex tool passes no guide mask: after the guide-block deletion it has no candidate to strip");

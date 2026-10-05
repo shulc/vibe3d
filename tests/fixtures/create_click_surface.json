@@ -6,9 +6,9 @@
   "method": "gui-gesture",
   "captured_utc": "2026-10-05",
   "task": "9404",
-  "notes": "Numerical observations copied from the private capture records K-C (task 9396), K-C2 (task 9460) and K-C5 (task 9483); the private findings remain the source of record."
+  "notes": "Numerical observations copied from the private capture records K-C (task 9396), K-C2 (task 9460) and K-C5 (task 9483); the private findings remain the source of record. Base-drag rows (task 9473): K-C (C1a, C1a3, C1d, C1e, C1e sphere), K-C2 (C2d_top_box(_ctrl), C2e_sph / _cyl / C2e1_cone / C2e2_caps, C2f_torus, C2c_psp_box) and K-C3 (C3a / C3b corners, tests/unit)."
  },
- "_about": "A create click over a BACKGROUND surface with the surface constraint on (geometry off, double-sided off, snapping off unless stated). Background: a sphere of radius 1, 64 sides x 32 segments, centre (0,1,0), in a background layer; the foreground mesh starts empty. ROLE law: a FREE point (the vertex tool's click) reads the surface, a primitive's PRESS point (box corner, sphere centre) does not. The free point: q = the click's anchor-plane hit snapped to the view quantum (the create click law); the background hit on the VIEW ray through q (parallel in ortho, from the eye in perspective) wins, NOT re-quantised; offset * hit normal after it; no hit => q; then a snap target replaces all three channels. The surface height is a depth read at the reference (1/1024 lattice in ortho, ~1e-3 off a facet model; up to ~8e-3 along the ray in perspective; the offset normal 1-2 deg off the facet): compare the ray / in-plane channels to 1e-5 and heights to the cell's own scatter, floor 2e-3.",
+ "_about": "A create click over a BACKGROUND surface with the surface constraint on (geometry off, double-sided off, snapping off unless stated). Background: a sphere of radius 1, 64 sides x 32 segments, centre (0,1,0), in a background layer; the foreground mesh starts empty. ROLE law: a FREE point (the vertex tool's click) reads the surface, a primitive's PRESS point (box corner, sphere centre) does not. The free point: q = the click's anchor-plane hit snapped to the view quantum (the create click law); the background hit on the VIEW ray through q (parallel in ortho, from the eye in perspective) wins, NOT re-quantised; offset * hit normal after it; no hit => q; then a snap target replaces all three channels. The surface height is a depth read at the reference (1/1024 lattice in ortho, ~1e-3 off a facet model; up to ~8e-3 along the ray in perspective; the offset normal 1-2 deg off the facet): compare the ray / in-plane channels to 1e-5 and heights to the cell's own scatter, floor 2e-3. BASE DRAG (box second corner; sphere / cylinder / cone / capsule / torus radius point): the press corner Pq = q(press plane hit) is carried by the pointer's pixel travel through the plane map linearised at Pq (a forward difference of ten view pixels; exact as Pq + (R - P) in top and straight-down views) to T; the constraint taking the pointer and the eye ray through T meeting the background => that hit + offset * n, NOT quantised; otherwise q(T); the base-plane channel stays Pq's; then the snap.",
  "views": {
   "top440": {
    "projection": "ortho",
@@ -84,6 +84,18 @@
    "q": 0.05,
    "pin_rot_x_deg": 30.0,
    "note": "work plane pinned at the origin, rotated 30 deg about X; the top preset turns with it; frame-local values"
+  },
+  "top33": {
+   "projection": "ortho",
+   "preset": "Top",
+   "focus": [
+    0.07,
+    1.0,
+    0.0
+   ],
+   "px_per_m": 33.0,
+   "q": 0.05,
+   "note": "base plane y 1.0 (the focus depth snapped to q)"
   }
  },
  "cells": {
@@ -345,6 +357,298 @@
    "expect_nv": 2,
    "source": "K-C2 C2i_vtx (snapping off, C2i_vtx_ctrl lands on the surface at (0.13, 1.96875, 0.2))",
    "law": "SNAP-LAST: a foreground vertex in range replaces all three channels of the surface point; the vertex tool does not weld (nv 2)"
+  },
+  "box-drag-surface": {
+   "family": "box",
+   "view": "top440",
+   "offset": 0.0,
+   "handle": true,
+   "constraint_enabled": true,
+   "q_point": [
+    0.3,
+    1.0,
+    0.2
+   ],
+   "drag_px": [
+    44,
+    44
+   ],
+   "expect_xz": [
+    0.400108,
+    0.300108
+   ],
+   "tol": 1e-05,
+   "source": "K-C C1a (KC_C1a_box_surface, press (677,575) -> (721,619))",
+   "law": "T = Pq + (pixel travel) / px_per_m (top view: the map is exact); surface on: the vertical ray through T, unquantised"
+  },
+  "box-drag-handle-off": {
+   "family": "box",
+   "view": "top440",
+   "offset": 0.0,
+   "handle": false,
+   "constraint_enabled": true,
+   "q_point": [
+    0.3,
+    1.0,
+    0.2
+   ],
+   "drag_px": [
+    44,
+    44
+   ],
+   "expect_xz": [
+    0.4,
+    0.3
+   ],
+   "tol": 1e-05,
+   "source": "K-C C1d (KC_C1d_box_handle_off)",
+   "law": "T = Pq + (pixel travel) / px_per_m (top view: the map is exact); handle off: q(T); the old K-C law (q of the release plane point) gives the same (0.4, 0.3) here"
+  },
+  "box-drag-miss": {
+   "family": "box",
+   "view": "top440",
+   "offset": 0.0,
+   "handle": true,
+   "constraint_enabled": true,
+   "q_point": [
+    0.3,
+    1.0,
+    0.2
+   ],
+   "drag_px": [
+    423,
+    44
+   ],
+   "expect_xz": [
+    1.26,
+    0.3
+   ],
+   "tol": 1e-05,
+   "source": "K-C C1a3 (KC_C1a3_box_release_off_sphere, press (677,575) -> (1100,619))",
+   "law": "T = Pq + (pixel travel) / px_per_m (top view: the map is exact); the ray through T misses the background: q(T); the old law gives the same (1.26, 0.3) here"
+  },
+  "box-drag-surface-offset": {
+   "family": "box",
+   "view": "top440",
+   "offset": 0.1,
+   "handle": true,
+   "constraint_enabled": true,
+   "q_point": [
+    0.3,
+    1.0,
+    0.2
+   ],
+   "drag_px": [
+    44,
+    44
+   ],
+   "expect_xz": [
+    0.440238,
+    0.330641
+   ],
+   "tol": 0.002,
+   "source": "K-C C1e (KC_C1e_box_offset)",
+   "law": "T = Pq + (pixel travel) / px_per_m (top view: the map is exact); surface hit + 0.1 * hit normal, in-plane channels (the reference normal is a depth-read normal, 1-2 deg off the facet: tolerance 2e-3)"
+  },
+  "box-drag-surface-top": {
+   "family": "box",
+   "view": "top33",
+   "offset": 0.0,
+   "handle": true,
+   "constraint_enabled": true,
+   "q_point": [
+    0.2,
+    1.0,
+    0.4
+   ],
+   "drag_px": [
+    15,
+    -33
+   ],
+   "expect_xz": [
+    0.654545,
+    -0.6
+   ],
+   "tol": 1e-05,
+   "source": "K-C2 C2d_top_box (press (581,501) -> (596,468))",
+   "law": "T = Pq + (pixel travel) / px_per_m (top view: the map is exact); surface on: T unquantised (0.654545 vs the control's 0.65)"
+  },
+  "box-drag-off-control": {
+   "family": "box",
+   "view": "top33",
+   "offset": 0.0,
+   "handle": true,
+   "constraint_enabled": false,
+   "q_point": [
+    0.2,
+    1.0,
+    0.4
+   ],
+   "drag_px": [
+    15,
+    -33
+   ],
+   "expect_xz": [
+    0.65,
+    -0.6
+   ],
+   "tol": 1e-05,
+   "source": "K-C2 C2d_top_box_ctrl",
+   "law": "T = Pq + (pixel travel) / px_per_m (top view: the map is exact); constraint off: q(T) = Pq + q(R - P), not q(R) = (0.7, -0.6)"
+  },
+  "box-drag-persp-down": {
+   "family": "box",
+   "view": "psp33",
+   "offset": 0.0,
+   "handle": true,
+   "constraint_enabled": true,
+   "release_aim_world": [
+    0.575363,
+    0.0,
+    -0.777481
+   ],
+   "source": "K-C2 C2c_psp_box (straight-down perspective; the camera is ours, so the cell asserts the law on OUR camera)",
+   "law": "straight down the map is affine: Pq = q(our press ray's plane hit); T = Pq + (R - P) from our own press / release rays; the corner is the background hit on the eye ray through T, its xz written, y the base plane's: cross-trace <= 1e-5, the hit on the background within the facet sagitta",
+   "press_aim_world": [
+    -0.12437,
+    0.0,
+    0.427615
+   ]
+  },
+  "sphere-drag-surface": {
+   "family": "sphere",
+   "view": "top33",
+   "offset": 0.1,
+   "handle": true,
+   "constraint_enabled": true,
+   "source": "K-C2 C2e_sph (bbox (-0.902165, -0.656387)..(0.602165, 0.856387): centre = Pq, half extents = |D - Pq|)",
+   "law": "one drag point for the radial family: the radii are |D - Pq| per in-plane channel, D = the box's drag point",
+   "q_point": [
+    -0.15,
+    1.0,
+    0.1
+   ],
+   "drag_px": [
+    23,
+    -23
+   ],
+   "expect_radii_xz": [
+    0.752165,
+    0.756387
+   ],
+   "tol": 0.002
+  },
+  "cylinder-drag-surface": {
+   "family": "cylinder",
+   "view": "top33",
+   "offset": 0.1,
+   "handle": true,
+   "constraint_enabled": true,
+   "source": "K-C2 C2e_cyl (bbox (-0.902165, -0.656387)..(0.602165, 0.856387): centre = Pq, half extents = |D - Pq|)",
+   "law": "one drag point for the radial family: the radii are |D - Pq| per in-plane channel, D = the box's drag point",
+   "q_point": [
+    -0.15,
+    1.0,
+    0.1
+   ],
+   "drag_px": [
+    23,
+    -23
+   ],
+   "expect_radii_xz": [
+    0.752165,
+    0.756387
+   ],
+   "tol": 0.002
+  },
+  "cone-drag-surface": {
+   "family": "cone",
+   "view": "top33",
+   "offset": 0.1,
+   "handle": true,
+   "constraint_enabled": true,
+   "source": "K-C2 C2e1_cone (bbox (-0.902165, -0.656387)..(0.602165, 0.856387): centre = Pq, half extents = |D - Pq|)",
+   "law": "one drag point for the radial family: the radii are |D - Pq| per in-plane channel, D = the box's drag point",
+   "q_point": [
+    -0.15,
+    1.0,
+    0.1
+   ],
+   "drag_px": [
+    23,
+    -23
+   ],
+   "expect_radii_xz": [
+    0.752165,
+    0.756387
+   ],
+   "tol": 0.002
+  },
+  "capsule-drag-surface": {
+   "family": "capsule",
+   "view": "top33",
+   "offset": 0.1,
+   "handle": true,
+   "constraint_enabled": true,
+   "source": "K-C2 C2e2_caps (bbox (-0.902165, -0.656387)..(0.602165, 0.856387): centre = Pq, half extents = |D - Pq|)",
+   "law": "one drag point for the radial family: the radii are |D - Pq| per in-plane channel, D = the box's drag point",
+   "q_point": [
+    -0.15,
+    1.0,
+    0.1
+   ],
+   "drag_px": [
+    23,
+    -23
+   ],
+   "expect_radii_xz": [
+    0.752165,
+    0.756387
+   ],
+   "tol": 0.002
+  },
+  "torus-drag-surface": {
+   "family": "torus",
+   "view": "top33",
+   "offset": 0.1,
+   "handle": true,
+   "constraint_enabled": true,
+   "q_point": [
+    -0.15,
+    1.0,
+    0.1
+   ],
+   "drag_px": [
+    23,
+    -23
+   ],
+   "expect_major_radius": 1.066724,
+   "tol": 0.003,
+   "source": "K-C2 C2f_torus (the same bbox as the sphere: the same drag point)",
+   "law": "the torus' drag point is the radial family's D; ours' ring radius is |D - Pq| (one radius, gap row 566: the reference's in-plane extents are per channel), 1.066724 = |(0.752165, 0.756387)|"
+  },
+  "sphere-drag-surface-offset": {
+   "family": "sphere",
+   "view": "top440",
+   "offset": 0.1,
+   "handle": true,
+   "constraint_enabled": true,
+   "q_point": [
+    0.3,
+    1.0,
+    0.2
+   ],
+   "drag_px": [
+    44,
+    0
+   ],
+   "expect_radii_xz": [
+    0.139585,
+    0.019268
+   ],
+   "tol": 0.002,
+   "source": "K-C C1e sphere (KC_C1e_sphere_offset, press (677,575) -> (721,575))",
+   "law": "centre on the plane (Pq); the offset reaches only the drag point: radii |D - Pq|"
   }
  }
 }
