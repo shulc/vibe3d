@@ -520,9 +520,11 @@ void sameQuadMove(double[3][] pts, double[3] release, int dx, int dy,
                    buildDragUpLog(vp.x, vp.y, vp.width, vp.height, x0 + dx, y0 + dy)]) {
         // Held, before the release: under symmetry the partner already follows, mirrored.
         if (sym && i == 2) {
-            const v = readVerticesLayer(1), p = v[1], q = v[10];
-            assert(vertexCountLayer(1) == 16 && approxVec(Vec3(-p[0], p[1], p[2]), q, 1e-4),
-                format("held: partner v10 %s must mirror the grab %s", q, p));
+            size_t j;   // the grab's partner: v1's mirror image in `pts`
+            foreach (k, a; pts) if (a[0] == -pts[1][0] && a[1] == pts[1][1]) j = k;
+            const v = readVerticesLayer(1), p = v[1], q = v[j];
+            assert(j > 1 && approxVec(Vec3(-p[0], p[1], p[2]), q, 1e-4),
+                format("held: partner v%d %s must mirror the grab %s", j, q, p));
         }
         auto pr = postJson("/api/play-events", log);
         assert("error" !in pr, "/api/play-events failed: " ~ pr.toString);
@@ -565,5 +567,11 @@ unittest { // KW2_A symmetric move welds both sides (14); KW2_B control (15)
                vertexCountLayer(1), readFacesLayer(1)));
     assert(hasVertexNear(1, Vec3(-0.5f, 0.06f, 0), 1e-4) && !hasVertexNear(1, Vec3(-0.5f, 0, 0), 1e-3),
         "KW2_A: the mirror target keeps its position");
+    // The same gesture from the -X side (its mirror image): the grab's side drives.
+    double[3][] left = [[-0.3, 0.3, 0], [-0.3, 0, 0], [-0.1, 0, 0], [-0.1, 0.3, 0]];
+    sameQuadMove(left ~ pts[12 .. 16] ~ pts[0 .. 8], [-0.5, 0, 0], -20, 0, quads, true);
+    assert(vertexCountLayer(1) == 14 && hasVertexNear(1, Vec3(0.5f, 0.06f, 0), 1e-4)
+        && !hasVertexNear(1, Vec3(0.3f, 0, 0), 1e-3) && !hasVertexNear(1, Vec3(-0.3f, 0, 0), 1e-3),
+        format("KW2_A from -X: V=%d, expected 14", vertexCountLayer(1)));
     postJson("/api/command", commandBody("scene.reset"));
 }

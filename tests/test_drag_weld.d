@@ -315,13 +315,15 @@ unittest { // KW2_ADW: under symmetry X the mirror partner welds into the mirror
          [-0.5f, 0.36f, 0f], [-1f, 0.36f, 0f], [-1f, 0.06f, 0f], [-0.5f, 0.06f, 0f]],
         [[0u, 3, 1, 2], [3u, 4, 5, 6], [7u, 8, 13, 9], [10u, 11, 12, 13]], "KW2_ADW");
     // Ours, uncaptured: the partner is MOVED, so it is no target (as in the pen's
-    // weld pass); v0 released on its own mirror v7 welds nothing (the rest >= 50 px).
+    // weld pass): v0 released on its own mirror v7 welds into v8, 15 px away.
     Rig o = Rig([[0.1f, 0f, 0f], [0.6f, 0f, 0f], [0.6f, 0.5f, 0f], [0.1f, 0.5f, 0f],
-        [-0.1f, 0.5f, 0f], [-0.6f, 0.5f, 0f], [-0.6f, 0f, 0f], [-0.1f, 0f, 0f]],
-        [[0u, 1, 2, 3], [4u, 5, 6, 7]]);
-    assert(nv(dragWeld(o, 0, [-0.1f, 0f, 0f], true)) == 7, "own mirror, symmetry off: welds");
-    assert(nv(dragWeld(o, 0, [-0.1f, 0f, 0f], false, 0, 0, true, null, 0, true)) == 8,
-        "own mirror: the moved partner must be no target");
+        [-0.1f, 0.5f, 0f], [-0.6f, 0.5f, 0f], [-0.6f, 0f, 0f], [-0.1f, 0f, 0f],
+        [-0.1f, -0.15f, 0f], [-0.6f, -0.15f, 0f], [-0.6f, -0.5f, 0f], [-0.1f, -0.5f, 0f]],
+        [[0u, 1, 2, 3], [4u, 5, 6, 7], [8u, 9, 10, 11]]);
+    assert(nv(dragWeld(o, 0, [-0.1f, 0f, 0f], true)) == 11, "own mirror, symmetry off: welds");
+    auto m = dragWeld(o, 0, [-0.1f, 0f, 0f], true, 0, 0, true, null, 0, true);
+    assert(nv(m) == 11 && m["faces"].array[0].array[0].integer == 7,
+        "own mirror: the moved partner is no target, v8 (now 7) is: " ~ m["faces"].toString);
 }
 
 unittest { // tool undo: one gesture is one entry that restores the rig
