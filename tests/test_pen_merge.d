@@ -413,7 +413,9 @@ unittest {
     }
     // Symmetry off, a point placed ON world x = 0 (the unlatched mirror's
     // `.init` plane) and dragged 200 px to ~7 px from V links like any other
-    // drag end: the self weld reads the latch's enabled flag (task 9363).
+    // drag end. Either the self weld's enabled term or the drag's re-decision
+    // of a self weld keeps it green (red with both gone, task 9363); the term
+    // alone is pen.d's in-source cell.
     {
         rig(f0, 440, meshJson(tri(p(0.47, 0.2)), kTri));
         clickWorld(p(0, 0.2), kFar[0], kFar[1]);

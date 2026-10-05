@@ -528,6 +528,17 @@ version(unittest) unittest {
     assert(doorCount == 6 && previewSym.previewMesh.vertices.length == 6,
         format("pen S6: preview vertices %s (Position door) / %s (legacy hook); "
             ~ "expected 6, 6", doorCount, previewSym.previewMesh.vertices.length));
+    // The self weld reads the latch's enabled flag: unlatched, `mirror_` is
+    // `.init` (plane x = 0), so a point on x = 0 must stay its own. A drag
+    // re-decides a self weld, so no suite gesture sees the term alone.
+    auto offSym = symPen(staleLayer, &staleGpu);
+    offSym.cachedVp = positionPen.cachedVp; offSym.cachedVp.height = 400;
+    offSym.mirror_ = SymmetryPacket.init;
+    const offLink = offSym.selfMirrorOr(-1, Vec3(0, 0, 0), 0);
+    offSym.mirror_.enabled = true;
+    const onLink = offSym.selfMirrorOr(-1, Vec3(0, 0, 0), 0);
+    assert(offLink == -1 && onLink == -2, format("pen S6: a point on x = 0 self-welds "
+        ~ "%s with symmetry off, %s on; expected -1, -2", offLink, onLink));
 }
 
 // ---------------------------------------------------------------------------
