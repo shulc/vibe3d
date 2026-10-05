@@ -117,9 +117,8 @@ unittest { // interactive tool activation + Post-Mode apply reproduces the
 unittest { // capture K-F2 / F2b (task 9446): the align blend is
            // lerp(source, target, weight * falloff(TARGET)). Rig: one quad,
            // order 0-3, a radial linear falloff weighing vertex 3's SOURCE 0.5
-           // and its target ~0.88; the others' targets weigh 0. Our circle
-           // phase differs from the captured one (F2cal, 0.02 m — the base
-           // anchor, not this law), so the targets are OURS, read at weight 1.
+           // and its target ~0.88; the others' targets weigh 0. The targets
+           // are OURS, read at weight 1 (pinned to F2cal by the next block).
     enum pts = `[[-0.5,-0.5,0],[0.5,-0.5,0],[0.6,0.5,0],[-0.3,0.4,0]]`;
     immutable double[3] cen = [-0.383578, 0.494722, 0];
     enum double size = 0.252647;
@@ -164,6 +163,41 @@ unittest { // capture K-F2 / F2b (task 9446): the align blend is
                 ~ ", weight x falloff(target) gives " ~ want.to!string);
         }
     }
+}
+
+unittest { // ring PHASE end to end (task 9490), weight 1, no falloff: the
+           // captured KF_F2cal quad and the ra_circle / ra_nside4 cube loop
+           // (private toolcards). Positions are the captured floats.
+    void check(string cell, double[3][] got, const double[3][] want, int[] idx) {
+        foreach (k, i; idx) foreach (c; 0 .. 3)
+            assert(approxEq(got[i][c], want[k][c], 1e-5), cell ~ ": v" ~ i.to!string
+                ~ "[" ~ c.to!string ~ "] = " ~ got[i][c].to!string
+                ~ ", captured " ~ want[k][c].to!string);
+    }
+    double[3][] apply(string mesh, string sel, string mode) {
+        postJson("/api/command", commandBody("scene.reset", `{"empty":true}`));
+        cmd(commandBody("scene.loadMesh", mesh));
+        cmd("select.typeFrom vertex");
+        cmd(commandBody("mesh.select", `{"mode":"vertices","indices":` ~ sel ~ `}`));
+        cmd("tool.set xfrm.radialAlignTool on");
+        cmd("tool.attr xfrm.radialAlignTool mode " ~ mode);
+        cmd("tool.doApply");
+        cmd("tool.set xfrm.radialAlignTool off");
+        return dumpVerts();
+    }
+    check("KF_F2cal", apply(`{"vertices":[[-0.5,-0.5,0],[0.5,-0.5,0],[0.6,0.5,0],[-0.3,0.4,0]],`
+            ~ `"faces":[[0,1,2,3]]}`, "[0,1,2,3]", "circle"),
+        [[-0.429725, -0.470346, 0], [0.520346, -0.529725, 0],
+         [0.579725, 0.420346, 0], [-0.370346, 0.479725, 0]], [0, 1, 2, 3]);
+    enum cube = `{"vertices":[[-0.5,-0.5,-0.5],[0.70710678,-0.5,0],[0.5,-0.5,0.5],[-0.5,-0.5,0.5],`
+        ~ `[-0.5,0.5,-0.5],[0.5,0.5,-0.5],[0.5,0.5,0.5],[-0.5,0.5,0.5]],"faces":[[0,1,2,3],`
+        ~ `[4,5,1,0],[5,6,2,1],[6,7,3,2],[7,4,0,3],[4,7,6,5]]}`;
+    check("ra_circle", apply(cube, "[0,1,2,3]", "circle"),
+        [[-0.4420957, -0.5, -0.3541404], [0.5309171, -0.5, -0.3688723],
+         [0.5456491, -0.5, 0.6041404], [-0.4273637, -0.5, 0.6188723]], [0, 1, 2, 3]);
+    check("ra_nside4", apply(cube, "[0,1,2,3]", "nside"),
+        [[-0.3350036, -0.5, -0.4441102], [0.6208869, -0.5, -0.2617803],
+         [0.438557, -0.5, 0.6941102], [-0.5173336, -0.5, 0.5117803]], [0, 1, 2, 3]);
 }
 
 unittest { // falloff integration (WGHT stage) — a tiny radial falloff
