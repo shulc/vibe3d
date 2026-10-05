@@ -486,3 +486,41 @@ unittest { // occupied-preview refire construction is observationally pure
     assert(records == recordsBefore && !history.canUndo(),
         "Jitter refire construction changed history");
 }
+
+unittest { // evaluate(): a falloff packet already on the stack wins over the
+           // command's stored one (FalloffInput.captureFalloff, task 9445)
+    View view = new View(0, 0, 800, 600);
+
+    // Positive control: the stored (disabled ⇒ w=1) packet lets vertex 6 move.
+    Mesh freeMesh = cubeStand(6);
+    auto free = new MeshJitter(&freeMesh, view, EditMode.Vertices);
+    configureAnchor(free);
+    SubjectPacket freeSubject;
+    VectorStack freeVts;
+    putSubject(freeVts, freeSubject, &freeMesh, view);
+    assert(free.evaluate(freeVts));
+    assert(freeMesh.vertices[6] == kAnchorAfter6,
+        "control: an unweighted Jitter must move vertex 6 to the frozen anchor");
+
+    // A linear stage packet with w=0 at y=+0.5 (vertex 6) on the stack: the
+    // stored packet must not replace it, so vertex 6 stays.
+    Mesh stagedMesh = cubeStand(6);
+    auto staged = new MeshJitter(&stagedMesh, view, EditMode.Vertices);
+    configureAnchor(staged);
+    SubjectPacket stagedSubject;
+    VectorStack stagedVts;
+    putSubject(stagedVts, stagedSubject, &stagedMesh, view);
+    FalloffPacket stage;
+    stage.enabled = true;
+    stage.type = FalloffType.Linear;
+    stage.shape = FalloffShape.Linear;
+    stage.start = Vec3(0, -0.5f, 0);
+    stage.end = Vec3(0, 0.5f, 0);
+    stagedVts.put(&stage);
+    assert(staged.evaluate(stagedVts));
+    assert(stagedMesh.vertices[6] == kAnchorBaseline[6], format(
+        "the stack's falloff packet (w=0 at vertex 6) was replaced by the "
+        ~ "stored one: vertex 6 moved to (%.9g,%.9g,%.9g)",
+        stagedMesh.vertices[6].x, stagedMesh.vertices[6].y,
+        stagedMesh.vertices[6].z));
+}

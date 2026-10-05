@@ -212,3 +212,34 @@ unittest { // task 0319 — the guard must not clip ordinary (non-overshoot)
             ~ expected.to!string ~ ", got " ~ r.to!string);
     }
 }
+
+unittest { // the headless push freezes the SYMMETRY packet too (task 9445,
+           // TransformTool.beginHeadlessDeform). A linear falloff along X
+           // (w=1 at x=-0.5, 0.5 at x=+0.5) makes the two sides push by
+           // different amounts; X-symmetry copies the +X (authoring) side
+           // onto -X, so every corner ends at |c| = 0.5 + 0.3·0.5/√3. Without
+           // the packet the -X corners would sit at 0.5 + 0.3/√3.
+    postJson("/api/command", commandBody("scene.reset"));
+    cmd("select.typeFrom polygon");
+    cmd("tool.set xfrm.push on");
+    cmd("tool.pipe.attr symmetry enabled true");
+    cmd("tool.pipe.attr symmetry axis x");
+    cmd("tool.pipe.attr symmetry offset 0");
+    cmd("tool.pipe.attr falloff type linear");
+    cmd("tool.pipe.attr falloff start \"-0.5,0,0\"");
+    cmd("tool.pipe.attr falloff end \"1.5,0,0\"");
+    cmd("tool.pipe.attr falloff shape linear");
+    cmd("tool.attr xfrm.push dist 0.3");
+    cmd("tool.doApply");
+    auto verts = dumpVerts();
+    cmd("tool.pipe.attr symmetry enabled false");
+    cmd("tool.pipe.attr falloff type none");
+    const double expected = 0.5 + 0.3 * 0.5 / sqrt(3.0);
+    foreach (i, v; verts)
+        foreach (c; 0 .. 3)
+            assert(approxEq(fabs(v[c]), expected, 1e-4),
+                "vertex " ~ i.to!string ~ " axis " ~ c.to!string ~ ": |"
+                ~ v[c].to!string ~ "| != " ~ expected.to!string
+                ~ " (the -X side was not mirrored from +X)");
+    assert(verts.length == 8, "push symmetry cell needs the eight-vertex cube");
+}

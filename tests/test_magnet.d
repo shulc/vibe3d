@@ -99,6 +99,11 @@ unittest {
     // v2 = (0.5,0.5,−0.5): Z increases only (target x=v2.x, target y=v2.y).
     auto v2 = vert(m, 2);
     assert(v2.z > -0.5 + 1e-3, "v2.z must increase toward target.z=1.5");
+    // The value, not only the direction: smooth shape at t=5/6 gives
+    // w = 1-(3t²-2t³) = 2/27, so v2.z = -0.5 + 2·(2/27) (a linear shape
+    // would give w = 1/6).
+    assert(abs(v2.z - (-0.5 + 2.0 * 2.0 / 27.0)) < 1e-4,
+           "v2.z must be -0.5 + 2·(2/27) (smooth-shape weight), got " ~ v2.z.to!string);
     assert(abs(v2.x - 0.5) < 1e-4, "v2.x unchanged");
     assert(abs(v2.y - 0.5) < 1e-4, "v2.y unchanged");
 
@@ -255,4 +260,26 @@ unittest {
     assert(top == 4 && bottom == 4, "the injected linear falloff must move the "
            ~ "4 top-row vertices and no other; moved " ~ top.to!string
            ~ ", stayed " ~ bottom.to!string);
+}
+
+// ---------------------------------------------------------------------------
+// The anchor vertex moves by the ANCHOR RING, not by the sphere: centre far
+// from the mesh, tiny dist, anchor 0. Only v0 lands on the target; without
+// the ring every weight is 0 and the command refuses (task 9445). Anchor 0
+// also keeps the ring's `>= 0` guard honest at its boundary.
+// ---------------------------------------------------------------------------
+unittest {
+    resetCube();
+    mustOk(cmd(`{"id":"mesh.magnet","target":[0.5,0.5,1.5],"center":[10,10,10],` ~
+               `"strength":1.0,"dist":0.001,"anchor":0}`), "mesh.magnet anchor ring");
+    auto m = getModel();
+    auto v0 = vert(m, 0);
+    assert(abs(v0.x - 0.5) < 1e-5 && abs(v0.y - 0.5) < 1e-5 && abs(v0.z - 1.5) < 1e-5,
+           "the anchor vertex 0 must land on the target via the anchor ring");
+    foreach (i; 1 .. 8) {
+        auto v = vert(m, i);
+        assert(abs(abs(v.x) - 0.5) < 1e-5 && abs(abs(v.y) - 0.5) < 1e-5
+               && abs(abs(v.z) - 0.5) < 1e-5,
+               "vertex " ~ i.to!string ~ " is outside the far sphere and must not move");
+    }
 }

@@ -241,3 +241,43 @@ unittest {
            && afterClose["redo"].array.length == 0,
            "Point Attract close lost committed History or kept a redo tail");
 }
+
+// ---------------------------------------------------------------------------
+// Range 0: only the picked vertex moves, and it moves by the ANCHOR RING —
+// a zero-radius sphere weighs every vertex 0 (task 9445: the tool's Element
+// packet comes from falloff.d's magnetElementPacket; this is the tool-side
+// cell that sees its anchor ring).
+// ---------------------------------------------------------------------------
+unittest {
+    jpost("/api/command", commandBody("scene.reset", `{"type":"cube"}`));
+    mustOk(jpost("/api/command", "history.clear"), "clear history");
+    auto s0 = positions();
+    assert(s0.length == 8, "range-0 cell needs the eight-vertex cube");
+
+    mustOk(jpost("/api/command?origin=ui", "tool.set xfrm.pointAttract on"),
+           "UI arm Point Attract");
+    Thread.sleep(150.msecs);
+    mustOk(jpost("/api/command", "tool.attr xfrm.pointAttract dist 0"), "dist 0");
+
+    auto cam = fetchCamera(BASE);
+    auto vp  = viewportFromCamera(cam);
+    float sx, sy;
+    assert(projectToWindow(Vec3(0.5f, 0.5f, 0.5f), vp, sx, sy),
+           "v6 must be visible from default camera");
+    playAndWait(buildHoverDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                                  cast(int)sx, cast(int)sy,
+                                  cast(int)sx + 100, cast(int)sy, 20), BASE);
+    auto s1 = positions();
+    assert(dist3(s0[6], s1[6]) > 0.05, format(
+        "range 0: the picked vertex 6 must move via the anchor ring (moved %.4f)",
+        dist3(s0[6], s1[6])));
+    foreach (i; 0 .. 8)
+        if (i != 6)
+            assert(dist3(s0[i], s1[i]) < 1e-6, format(
+                "range 0: vertex %d moved %.6f; only the picked vertex may move",
+                i, dist3(s0[i], s1[i])));
+
+    mustOk(jpost("/api/command?origin=ui", "tool.set xfrm.pointAttract off"),
+           "UI close Point Attract");
+    Thread.sleep(150.msecs);
+}
