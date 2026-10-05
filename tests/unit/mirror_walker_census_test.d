@@ -165,7 +165,9 @@ unittest { // (w1) the applied plane == the published plane; the old overlay sou
     auto sy = new SymmetryStage(() => mp, &em);
     sy.enabled = true;
     sy.useWorkplane = true;
-    sy.axisIndex = 1;                    // R·e_y = the turned plane's own normal (K-S2)
+    // UNCAPTURED extrapolation: K-S/K-S2 pinned the plane; the AUTO (view-turned) plane here follows the same
+    // function by construction. Re-pin when capture K-S3a (auto plane, Right view axis X / Front view axis Y) lands.
+    sy.axisIndex = 1;                    // R·e_y = the turned plane's own normal
 
     SubjectPacket subj;
     subj.viewport.view = identityMatrix;  // camera back = +Z: a front view
