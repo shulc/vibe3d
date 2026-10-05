@@ -4092,9 +4092,10 @@ private enum string[3] kL10RetiredRawWrites = [
     "vertices[drop] = vertices[keep];",             // weldVertexPair
     "vertices[i] = Vec3(cast(float)(clusterSum",    // weldVerticesByMask, average arm
 ];
-private enum string[3] kL10Replacements = [
+// `weldVertexPair` and its snap were deleted (task 9437): the pair weld is
+// `weldVertexPairs`, which writes no position, so its row retires whole.
+private enum string[2] kL10Replacements = [
     "setVertexPositions(collapseIdx, collapseTo);",     // collapseVerticesByMask
-    "setVertexPositions([drop], [vertices[keep]]);",    // weldVertexPair
     "setVertexPositions(avgIdx, avgTo);",               // weldVerticesByMask, average arm
 ];
 
@@ -4128,7 +4129,7 @@ unittest // task 2310 — source/mesh.d, the zone the write census never scanned
         format("the retired-write roster names only %d DISTINCT literals: %s. "
              ~ "The count of ROWS is not the count of SITES.",
                retired.uniq.array.length, retired));
-    assert(repl.uniq.array.length == 3,
+    assert(repl.uniq.array.length == 2,
         format("the replacement roster names only %d DISTINCT literals: %s. A "
              ~ "duplicated literal leaves one migrated site with no pin at all.",
                repl.uniq.array.length, repl));

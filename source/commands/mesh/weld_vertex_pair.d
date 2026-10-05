@@ -10,13 +10,11 @@ import change_bus : MeshEditScope;
 import mesh_edit_delta : MeshEditDelta, acceptRecordedEdit;
 import commands.mesh.selection_undo : DenseSelectionUndo;
 
-/// Weld vertex `source` into vertex `target`: source is removed and its
-/// incident faces are rewritten to reference `target`. The surviving vertex
-/// sits at `target`'s original position (target-position rule).
-///
-/// Reuses mesh.weldVertexPair. Returns false (status:error) when the kernel
-/// returns 0: same index, OOB index, shared-face (would yield a self-touching
-/// polygon), or both-faceless (both vertices unreferenced by any face).
+/// Weld vertex `source` into vertex `target`: Drag Weld's pair weld by index,
+/// `Mesh.weldVertexPairs([[target, source]])` — the target survives at its
+/// own position and index (capture K-W2). Returns false
+/// (status:error) for the same, an out-of-range or a hidden index, or when the
+/// kernel welds nothing (both vertices on no face).
 ///
 /// Params (injected via /api/command JSON or injectParamsInto):
 ///   source  — vertex index to remove (the "drop" vertex)
@@ -64,6 +62,9 @@ class MeshWeldVertexPair : Command, Operator {
         if (source_ == target_)               return false;
         if (cast(uint)source_ >= mesh.vertices.length) return false;
         if (cast(uint)target_ >= mesh.vertices.length) return false;
+        // Hidden geometry is not edited (the §3.3 backstop the mask weld this
+        // door used to reach applied); the pair kernel has no mask to subtract.
+        if (mesh.isVertexHidden(source_) || mesh.isVertexHidden(target_)) return false;
 
         // REDO: `CommandHistory.redo` re-runs `apply()`. Re-run the kernel
         // BATCHLESS — no recording frame means every tracker hook takes its
@@ -74,7 +75,7 @@ class MeshWeldVertexPair : Command, Operator {
             {
                 auto ed = MeshEditBatch.unrecorded(*mesh,
                               MeshEditScope.Geometry | MeshEditScope.Marks);
-                rw = ed.weldVertexPair(cast(uint)target_, cast(uint)source_);
+                rw = ed.weldVertexPairs([[cast(uint)target_, cast(uint)source_]]);
                 ed.close();
             }
             return rw != 0;
@@ -96,13 +97,13 @@ class MeshWeldVertexPair : Command, Operator {
         {
             auto ed = MeshEditBatch(*mesh,
                           MeshEditScope.Geometry | MeshEditScope.Marks);
-            welded = ed.weldVertexPair(cast(uint)target_, cast(uint)source_);
+            welded = ed.weldVertexPairs([[cast(uint)target_, cast(uint)source_]]);
             delta_ = ed.close();
         }
         // THE POST-CLOSE RULING (§S-6, ruling Q-K6). `welded == 0` is the
         // honest refusal this command has always made — and it needs NO
         // rollback for the reason the deleted comment gave: a
-        // `weldVertexPair` that welds nothing has mutated nothing. The second
+        // `weldVertexPairs` that welds nothing has mutated nothing. The second
         // arm — mutated but recorded nothing — is the one `acceptRecordedEdit`
         // adds, and it ticks `changeBus.emptyDeltaOverMutation` instead of
         // passing silently.

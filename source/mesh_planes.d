@@ -599,7 +599,7 @@ template countMemberOverloads(T) {
     }();
 }
 
-static assert(__traits(allMembers, Mesh).length == 368,
+static assert(__traits(allMembers, Mesh).length == 367,
     "`struct Mesh` gained (or lost) a member NAME — a function, a nested type, "
   ~ "an `enum`, an `alias` or a field. This is the step-4 RATCHET of "
   ~ "`doc/tasks/work/2910-mesh-struct-seams.md`: the struct was 13 308 lines on "
@@ -620,7 +620,7 @@ static assert(__traits(allMembers, Mesh).length == 368,
   ~ "below to learn whether a FUNCTION landed or a TYPE. THIS TREE HAS "
   ~ ctfeDec(__traits(allMembers, Mesh).length) ~ " member names.");
 
-static assert(countMemberOverloads!Mesh == 299,
+static assert(countMemberOverloads!Mesh == 298,
     "`struct Mesh` gained (or lost) a member-function OVERLOAD. Read it with "
   ~ "the name count above: if BOTH moved, a whole new function name landed. If "
   ~ "ONLY the name count moved, what landed is a nested type, an `enum` or an "

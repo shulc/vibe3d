@@ -37,14 +37,14 @@ import document             : Layer, primaryModelSpace;
 import shader              : Shader;
 import operator            : VectorStack, viewportOf;
 import toolpipe.packets    : ConstrainHitPacket, HoverTarget, HoverTargetKind,
-                             SubjectPacket, SnapPacket, SnapType, SnapMode;
+                             SubjectPacket, SnapPacket, SnapType;
 import toolpipe.stages.constrain : liveConstrainStage, backgroundHit;
 import toolpipe.stages.snap : SnapStage, liveSnapStage;
 import toolpipe.guide       : SnapGuide, GuideDrawState, kGuidePrioritySeed;
 import constraint           : resolveHoverTarget, topoPenPressPickPx,
                               topoPenSnapAcceptPx, topoPenSnapGatherPx,
                               kTopoPenSnapAuto, closestPointOnMeshes, BackgroundSource;
-import snap                  : backgroundSourcesFull, SnapAdmit, snapPacketOf, snapCursor;
+import snap                  : backgroundSourcesFull, SnapAdmit, snapPacketOf, editedVertexAt;
 import tools.edit.smooth_relax : RelaxVec3, RelaxTopology, deriveBoundary, relaxPasses;
 import tools.edit.topology_pen.render : PenRenderOps;
 import tools.edit.topology_pen.snap_guide : PenSnapGuide;
@@ -2236,25 +2236,16 @@ public:
     }
     private PenSnapGuide splitGuide_;
 
-    /// The WELD target (task 9407, capture K-T): the snap query's vertex answer
-    /// on a copy of the press-frozen packet, so the snap's occlusion and hidden
-    /// masks apply. Background sources never win: `admit` (the guide) refuses
-    /// every slot but 0 before the election. Scope Global keeps the weld
-    /// scope-blind as before; both ranges are the accept radius. No registry
-    /// guides: `admit` IS the gesture's policy, and the registered guide would
-    /// veto the interior target Split's own guide admits.
+    /// The WELD target (task 9407, capture K-T): `snap.editedVertexAt` on the
+    /// press-frozen packet at the accept radius. No registry guides: `admit`
+    /// IS the gesture's policy, and the registered guide would veto the
+    /// interior target Split's own guide admits.
     private int weldTargetVertex(int mx, int my, const ref Viewport vp,
                                  scope SnapAdmit admit) {
         auto m = mesh;
         if (m is null) return -1;
-        SnapPacket pkt = dragSnap_;
-        pkt.enabled      = true;
-        pkt.enabledTypes = SnapType.Vertex;
-        pkt.snapScope    = SnapMode.Global;
-        pkt.innerRangePx = pkt.outerRangePx = topoPenSnapAcceptPx(vp, dragSnap_);
-        const sr = snapCursor(Vec3(0, 0, 0), mx, my, vp, *m, primaryModelSpace(), pkt,
-                              null, admit);
-        return sr.snapped ? sr.targetIndex : -1;
+        return editedVertexAt(mx, my, vp, *m, primaryModelSpace(), dragSnap_,
+                              topoPenSnapAcceptPx(vp, dragSnap_), admit);
     }
 
     // -----------------------------------------------------------------------

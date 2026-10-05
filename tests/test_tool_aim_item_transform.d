@@ -43,11 +43,12 @@ void main() {}
 
 alias BASE = testBaseUrl;
 
-// DragWeldTool's own pick radius (source/tools/edit/drag_weld.d
-// PICK_RADIUS_PX). The fixture guards below are stated in terms of it: a
-// decoy must be INSIDE it for the wrong implementation, and every real
-// vertex must be OUTSIDE it, or the case cannot separate the two laws.
-enum float PICK_RADIUS_PX = 12.0f;
+// DragWeldTool's widest reach: its target search, the snap acceptance (24 px
+// with snapping on; the press is 8, task 9437). The fixture guards below are
+// stated in terms of it: a decoy must be INSIDE it for the wrong
+// implementation, and every real vertex must be OUTSIDE it, or the case
+// cannot separate the two laws.
+enum float PICK_RADIUS_PX = 24.0f;
 
 // ---------------------------------------------------------------------------
 // HTTP plumbing
@@ -181,7 +182,7 @@ bool hasVertexNear(Vec3[] verts, Vec3 p, float tol = 1e-3f) {
 }
 
 // ---------------------------------------------------------------------------
-// A faithful re-run of DragWeldTool.pickNearestVertex_ (drag_weld.d:203) in
+// A re-run of Drag Weld's vertex finder (`snap.editedVertexAt`, unoccluded) in
 // EITHER space, so the fixture's guards are stated in the tool's own terms —
 // same `projectToWindowFull`, same "nearest wins" rule, same exclusion.
 //
@@ -349,11 +350,13 @@ unittest { // T1: Drag Weld welds the DRAWN pair, not the identity-pose pair
 
     // ---- drive the gesture ----
     cmd("select.typeFrom vertex");     // before tool.set: a type flip drops the tool
+    cmd("tool.pipe.attr snap enabled true");   // the target search runs only with snapping on
     cmd("tool.set mesh.dragWeld on");
     playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
                              cast(int) srcPx, cast(int) srcPy,
                              cast(int) tgtPx, cast(int) tgtPy, 20));
     cmd("tool.set mesh.dragWeld off");
+    cmd("tool.pipe.attr snap enabled false");
 
     Vec3[] after = fetchVerts();
 
@@ -410,11 +413,13 @@ unittest { // T1 (pair, second half): the IDENTITY-pose pixels must weld nothing
                ~ "pixel, so this half cannot distinguish anything", drawnAtIdSrc, best));
 
     cmd("select.typeFrom vertex");
+    cmd("tool.pipe.attr snap enabled true");
     cmd("tool.set mesh.dragWeld on");
     playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
                              cast(int) srcIdPx, cast(int) srcIdPy,
                              cast(int) tgtIdPx, cast(int) tgtIdPy, 20));
     cmd("tool.set mesh.dragWeld off");
+    cmd("tool.pipe.attr snap enabled false");
 
     Vec3[] after = fetchVerts();
     assert(after.length == 12,

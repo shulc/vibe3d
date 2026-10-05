@@ -1272,6 +1272,26 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
     return elected;
 }
 
+/// The topology tools' vertex finder (tasks 9407, 9437; captures K-T, K-W2):
+/// the election's vertex leg alone on a copy of `cfg` — Global scope, both
+/// ranges `rangePx` — so the occlusion and hidden masks apply, over the
+/// EDITED mesh only (slot 0; a background layer is never answered). One
+/// finder for the topology pen's weld target and Drag Weld's press and
+/// target; the radius and `admit` are the caller's. -1 when nothing is in reach.
+int editedVertexAt(int sx, int sy, const ref Viewport vp, const ref Mesh m,
+                   const ModelSpace ms, SnapPacket cfg, float rangePx,
+                   scope SnapAdmit admit = null, const(uint)[] exclude = null)
+{
+    cfg.enabled      = true;
+    cfg.enabledTypes = SnapType.Vertex;
+    cfg.snapScope    = SnapMode.Global;
+    cfg.innerRangePx = cfg.outerRangePx = rangePx;
+    scope SnapAdmit edited = (SnapType t, int idx, int slot) nothrow =>
+        slot == 0 && (admit is null || admit(t, idx, slot));
+    const sr = snapCursor(Vec3(0, 0, 0), sx, sy, vp, m, ms, cfg, exclude, edited);
+    return sr.snapped ? sr.targetIndex : -1;
+}
+
 // ---------------------------------------------------------------------------
 // THE POLYGON-SURFACE ELECTION — the reference's law, ported whole (task 0588).
 //

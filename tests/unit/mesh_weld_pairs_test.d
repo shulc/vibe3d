@@ -1,8 +1,8 @@
 // mesh_weld_pairs_test -- `weldVertexPairs` -- what one call welds, and what it refuses whole.
 //
-// The two grab arms (edge and vertex) and the three refusals: a chain is
-// refused whole rather than followed one link deep, a non-adjacent same-face
-// pair is refused exactly as `weldVertexPair` refuses it, and a vertex
+// The two grab arms (edge and vertex), the diagonal of one face welding into
+// a self-touching polygon (capture KW2_J, task 9437), and two refusals: a
+// chain is refused whole rather than followed one link deep, and a vertex
 // cannot be absorbed twice -- the FIRST pair wins, which is a property of
 // the loop and not of the pair set.
 //
@@ -127,17 +127,18 @@ unittest { // a CHAIN is refused whole, not silently followed one link deep
         ~ m.vertices.length.to!string ~ " F=" ~ m.faces.length.to!string);
 }
 
-unittest { // non-adjacent same-face pairs are refused, exactly as weldVertexPair
+unittest { // non-adjacent corners of one face weld: [a,T,b,T] (capture KW2_J)
     import std.conv : to;
     Mesh m = makeWeldPairStrip();
-    // 0 and 4 are the diagonal of F0 = [0,1,4,3] — welding them would leave a
-    // self-touching polygon.
+    // 0 and 4 are the diagonal of F0 = [0,1,4,3]: 0 dies, 4 (index 3 after the
+    // compaction) takes both of F0's diagonal corners; F1 only renumbers.
     uint[2][] pairs = [[4u, 0u]];
-    assert(m.weldVertexPairs(pairs) == 0,
-        "a non-adjacent same-face pair must be refused");
-    assert(m.vertices.length == 6 && m.faces.length == 2,
-        "non-adjacent reject: the mesh must be untouched, got V="
-        ~ m.vertices.length.to!string ~ " F=" ~ m.faces.length.to!string);
+    assert(m.weldVertexPairs(pairs) == 1, "a diagonal pair must weld");
+    assert(m.vertices.length == 5 && m.faces.length == 2,
+        "diagonal weld: expected V=5 F=2, got V=" ~ m.vertices.length.to!string
+        ~ " F=" ~ m.faces.length.to!string);
+    assert(m.faces[0] == [3u, 0u, 3u, 2u] && m.faces[1] == [0u, 1u, 4u, 3u],
+        "diagonal weld: expected [[3,0,3,2],[0,1,4,3]], got " ~ m.faces.to!string);
 }
 
 unittest { // one vertex cannot be absorbed twice; the first pair wins

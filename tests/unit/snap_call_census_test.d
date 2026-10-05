@@ -95,20 +95,19 @@ unittest // every production snapCursor call consults the guide registry
     // Floor, then the roster: seven production calls, one per file.
     assert(calls.length == 7, format("snapCursor production calls: %s %s", calls.length, fileRoster(calls)));
     assert(fileRoster(calls) == [
-        "source/http_providers.d", "source/toolpipe/stages/snap.d",
+        "source/http_providers.d", "source/snap.d", "source/toolpipe/stages/snap.d",
         "source/tools/create/create_common.d", "source/tools/create/pen.d",
-        "source/tools/edit/topology_pen/tool.d",
         "source/tools/transform/move.d", "source/tools/transform/transform.d"],
         format("snapCursor call roster: %s", fileRoster(calls)));
     assert(others.length == 0, format("snapCursor reached other than by a call: %s", fileRoster(others)));
     // The needle. pen.d's merge query is exempt: pen-owned and frozen while the
-    // pen wave runs; the interaction-layer pen slices own it. The topology pen's
-    // weld query is exempt: its admit is the gesture's own guide policy, and the
-    // registered guide would veto Split's interior target (task 9407).
+    // pen wave runs; the interaction-layer pen slices own it. The topology
+    // tools' vertex finder `snap.editedVertexAt` is exempt: its admit is the
+    // gesture's own policy, and the registered guide would veto Split's
+    // interior target (tasks 9407, 9437).
     Site[] guideless;
     foreach (c; calls) if (!consultsGuides(c.args)) guideless ~= c;
-    assert(fileRoster(guideless) == ["source/tools/create/pen.d",
-                                     "source/tools/edit/topology_pen/tool.d"],
+    assert(fileRoster(guideless) == ["source/snap.d", "source/tools/create/pen.d"],
         format("snapCursor calls that do not consult the guides: %s", fileRoster(guideless)));
 }
 
@@ -193,30 +192,48 @@ unittest // no client but the pen registers a guide: snapCursor elects no guide-
         "snap.d reaches the line helper again (the origin world-axis lines)");
 }
 
-unittest // the topology pen's weld target is one snap query (task 9407); the press pick stays
+unittest // one vertex finder for the topology tools (tasks 9407, 9437); the pen's press pick stays
 {
-    const code = blankUnittestBodies(blankNonCode(readText(
-        buildPath(repoRoot, "source/tools/edit/topology_pen/tool.d"))));
-    string body(string decl) {
-        const at = code.indexOf(decl);
-        assert(at >= 0, "declaration not found: " ~ decl);
-        return balancedSpan(code, code.indexOf('{', at), '{', '}');
+    string code(string file) {
+        return blankUnittestBodies(blankNonCode(readText(buildPath(repoRoot, file))));
     }
-    const weld = body("int weldTargetVertex(");
-    // Floor: the body is a real function, not an empty span.
-    assert(weld.length > 200, format("weldTargetVertex body: %s chars", weld.length));
-    foreach (needle; ["snapCursor(", "SnapMode.Global", "outerRangePx", "admit);"])
-        assert(countOccurrences(weld, needle) == 1,
-            format("weldTargetVertex must contain `%s` once", needle));
+    string body(string src, string decl) {
+        const at = src.indexOf(decl);
+        assert(at >= 0, "declaration not found: " ~ decl);
+        return balancedSpan(src, src.indexOf('{', at), '{', '}');
+    }
+    // The finder: the election's vertex leg, Global scope, both ranges, slot 0.
+    const finder = body(code("source/snap.d"), "int editedVertexAt(");
+    assert(finder.length > 200, format("editedVertexAt body: %s chars", finder.length));
+    foreach (needle; ["snapCursor(", "SnapMode.Global", "outerRangePx", "slot == 0"])
+        assert(countOccurrences(finder, needle) == 1,
+            format("editedVertexAt must contain `%s` once", needle));
+    // Its callers: the pen's weld target and Drag Weld's one finder, nothing else.
+    string[] callers;
+    foreach (f; productionSources())
+        foreach (_; wordsAt(blankUnittestBodies(blankNonCode(f[1])), "editedVertexAt"))
+            callers ~= f[0];
+    callers.sort();
+    assert(callers.length == 5, format("editedVertexAt mentions: %s %s", callers.length, callers));
+    assert(callers == ["source/snap.d", "source/tools/edit/drag_weld.d",
+                       "source/tools/edit/drag_weld.d", "source/tools/edit/topology_pen/tool.d",
+                       "source/tools/edit/topology_pen/tool.d"],
+        format("editedVertexAt roster (declaration + import + call per client): %s", callers));
+    const weld = code("source/tools/edit/drag_weld.d");
+    assert(wordsAt(weld, "findVertex").length == 3 && wordsAt(weld, "projectToWindowFull").length == 0,
+        "Drag Weld: the press and the release reach the one finder, and nothing projects on its own");
+    const pen = code("source/tools/edit/topology_pen/tool.d");
+    assert(countOccurrences(body(pen, "int weldTargetVertex("), "editedVertexAt(") == 1,
+        "the pen's weld target must be the shared finder");
     foreach (decl; ["int resolveSnapTargetVert(", "int resolveSplitTargetVert("]) {
-        const b = body(decl);
+        const b = body(pen, decl);
         assert(wordsAt(b, "findSourceVertex").length == 0,
             format("%s still calls the press pick", decl));
         assert(wordsAt(b, "weldTargetVertex").length == (decl.canFind("Split") ? 1 : 2),
             format("%s weldTargetVertex calls: %s", decl, wordsAt(b, "weldTargetVertex").length));
     }
     // Positive control: the press pick is still there, unchanged by this slice.
-    assert(code.indexOf("int findSourceVertex(") >= 0, "the press pick must still exist");
+    assert(pen.indexOf("int findSourceVertex(") >= 0, "the press pick must still exist");
 }
 
 unittest // the signatures the clients rely on (compiler pins)

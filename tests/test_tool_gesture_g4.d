@@ -1055,6 +1055,8 @@ unittest {
         {
             resetEmpty(); loadMesh(kTwoTriangles);
             setCamera(0.0, 0.6, 6.0, 0.0, 0.0, 1.0);
+            // The target search runs only with snapping on (task 9437).
+            cmd("tool.pipe.attr snap enabled true");
             cmd("history.clear"); cmd("tool.set mesh.dragWeld on"); settle(250);
         },
         {
@@ -1067,7 +1069,7 @@ unittest {
             dragPixels(cast(int) sx, cast(int) sy, cast(int) tx, cast(int) ty, 20);
             gDrove ~= driveDragNoOffset(20);
         },
-        { cmd("tool.set mesh.dragWeld off"); });
+        { cmd("tool.set mesh.dragWeld off"); cmd("tool.pipe.attr snap enabled false"); });
 
     // --- (j) TackTool: the record is synchronous with the mouse-DOWN, and
     //     `hasUncommittedEdit()` is hard-coded FALSE, so a seam keyed on that

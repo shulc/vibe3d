@@ -148,14 +148,16 @@ unittest { // AimViewport is the compile GATE, not a naming convention.
     static assert(!__traits(compiles, { AimViewport v; }),
         "AimViewport must not be default-constructible");
 
-    // (2) NOT assertable HERE, deliberately: `private` in D is module-scoped,
-    //     so both `AimViewport(someViewport)` and `AimViewport a = someViewport;`
-    //     (D's one-argument-constructor initialiser form) DO compile inside
-    //     math.d. The "only `aimSpace` can produce one" half of the gate binds
-    //     every OTHER module, so it is asserted from a consumer module
-    //     instead — see the `version (unittest)` gate block at the bottom of
-    //     source/tools/edit/drag_weld.d. Writing that assert here would have
-    //     been the exact vacuous-test shape this task is held to.
+    // (2) Only `aimSpace` produces one. `private` is module-scoped, so this
+    //     half binds only modules OTHER than math.d — this one is (it moved
+    //     here from drag_weld.d, task 9437, when that file stopped aiming).
+    static assert(!__traits(compiles, { Viewport w; AimViewport a = AimViewport(w); }),
+        "AimViewport's constructor must be unreachable outside math.d");
+    static assert(!__traits(compiles, { Viewport w; AimViewport a = w; }),
+        "a world Viewport must not become an AimViewport outside math.d");
+    static assert(__traits(compiles, {
+        Viewport w; ModelSpace ms; auto a = aimSpace(w, ms); cast(void)a.vp.width;
+    }), "aimSpace(vp, ms) must be the way an AimViewport is produced");
 
     // (3) A function that wants an aim space must reject a world viewport.
     static void wantsAim(const ref AimViewport a) { cast(void)a.vp.width; }

@@ -11,7 +11,7 @@
 source-files 574
 task-citation-lines 5229
 citing-files 454
-long-comment-runs 266
+long-comment-runs 265
 files-with-long-runs 142
 
 # Exact per-file task-citation allowances, sorted by path.
@@ -335,7 +335,7 @@ allow source/seltype.d 3
 allow source/session_owner.d 2
 allow source/shader.d 14
 allow source/shortcuts.d 3
-allow source/snap.d 67
+allow source/snap.d 68
 allow source/snap_election.d 11
 allow source/snap_render.d 3
 allow source/snapshot.d 12
@@ -391,7 +391,7 @@ allow source/tools/deform/push.d 3
 allow source/tools/deform/smooth_shift_tool.d 11
 allow source/tools/deform/stroke_extrude_tool.d 6
 allow source/tools/edit/bridge_tool.d 19
-allow source/tools/edit/drag_weld.d 3
+allow source/tools/edit/drag_weld.d 2
 allow source/tools/edit/edge_bevel.d 9
 allow source/tools/edit/edge_extend.d 30
 allow source/tools/edit/edge_extrude.d 10
@@ -540,7 +540,7 @@ allow-runs source/io/scene_import.d 1
 allow-runs source/item_kinds.d 1
 allow-runs source/layer_params.d 2
 allow-runs source/math.d 4
-allow-runs source/mesh.d 25
+allow-runs source/mesh.d 24
 allow-runs source/mesh_dirty.d 3
 allow-runs source/mesh_edge_slice.d 2
 allow-runs source/mesh_edit_delta.d 7

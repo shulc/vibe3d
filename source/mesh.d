@@ -3473,7 +3473,7 @@ struct Mesh {
 
     /// True once a weld/merge/reduce pass has left the mesh with no
     /// vertices or no faces. The `weldVerticesByMask` family
-    /// (`weldVertexPair`, `reduce`, and `mirrorFacesPlane`'s weld pass) can
+    /// (`reduce` and `mirrorFacesPlane`'s weld pass) can
     /// all cascade to this on an aggressive enough input/threshold and,
     /// left unchecked, would report `status: ok` over a silently-emptied
     /// document (task 0306). A pure query, not a rollback mechanism —
@@ -3756,183 +3756,45 @@ struct Mesh {
         commitChange(MeshEditScope.Geometry);
     }
 
-    /// Weld vertex `drop` into vertex `keep`. `drop`'s incident faces are
-    /// rewritten to reference `keep`; `drop` is then removed; the surviving
-    /// vertex sits at `keep`'s position (target-position rule: snap source→target).
-    /// Reuses weldVerticesByMask — snaps the two coincident, then mask-welds.
-    ///
-    /// Shared-face rule (adjacency-aware):
-    ///  - ADJACENT same-face welds (keep & drop are consecutive corners in a face,
-    ///    including the head/tail wrap) are ALLOWED: weldVerticesByMask collapses
-    ///    the repeated adjacent corner cleanly, yielding a triangle. This is the
-    ///    standard edge-collapse case and is handled correctly by the kernel.
-    ///  - NON-ADJACENT same-face welds (keep & drop both appear in a face but are
-    ///    NOT consecutive) are REJECTED: they would leave [keep,A,keep,B] — a
-    ///    self-touching polygon that the kernel cannot collapse cleanly.
-    ///  - Two FACELESS verts cannot be welded: with no incident face,
-    ///    compactUnreferenced removes both as unreferenced (net vanish). If
-    ///    NEITHER keep NOR drop is referenced by any face, returns 0 (no-op).
-    ///    (If only one is faceless the other's faces absorb the merge normally.)
-    /// Returns 1 on success, 0 on no-op (same index / OOB / non-adjacent same-face /
-    /// both-faceless).
-    size_t weldVertexPair(uint keep, uint drop) {
-        if (keep == drop) return 0;
-        if (keep >= vertices.length || drop >= vertices.length) return 0;
-        // Shared-face adjacency guard + faceless check (one pass over faces).
-        // Adjacent same-face welds (consecutive corners including head/tail wrap)
-        // are ALLOWED: weldVerticesByMask strips the repeated adjacent corner to
-        // produce a clean triangle.  Non-adjacent same-face welds would leave
-        // [keep,A,keep,B] — a self-touching polygon — and are REJECTED.
-        bool keepRef = false, dropRef = false;
-        foreach (ref face; faces) {
-            int posKeep = -1, posDrop = -1;
-            foreach (i, vid; face) {
-                if (vid == keep) { posKeep = cast(int)i; keepRef = true; }
-                if (vid == drop) { posDrop = cast(int)i; dropRef = true; }
-            }
-            if (posKeep >= 0 && posDrop >= 0) {
-                // Both vertices appear in this face — check adjacency.
-                int diff = posKeep > posDrop ? posKeep - posDrop : posDrop - posKeep;
-                bool adjacent = (diff == 1) || (diff == cast(int)face.length - 1);
-                if (!adjacent) return 0;  // non-adjacent same-face: reject
-            }
-        }
-        // Faceless guard: both unreferenced → compactUnreferenced would remove
-        // both as orphans, giving a net vanish rather than a weld.
-        if (!keepRef && !dropRef) return 0;
-        // Snap drop to keep's position so weldVerticesByMask treats them as
-        // coincident. The surviving index is min(keep,drop); the surviving
-        // position is keep's (both positions are identical at this point).
-        //
-        // TASK 2310 — through the recorded door. `drop` is removed a few lines
-        // below, so the reverse re-inserts it from the `Kind.RemoveVerts`
-        // payload at the position it had AFTER this snap, and only the
-        // `Kind.SetPos` this records carries the one it had BEFORE.
-        setVertexPositions([drop], [vertices[keep]]);
-        bool[] mask;
-        mask.length = vertices.length;
-        mask[keep] = true;
-        mask[drop] = true;
-        return weldVerticesByMask(mask, 1e-12);
-    }
-
     /// Weld SEVERAL `[keep, drop]` vertex pairs in ONE pass: every `drop` is
-    /// absorbed into its OWN `keep`, independently, and the mesh is rebuilt
-    /// once at the end. Returns the number of pairs actually welded.
+    /// absorbed into its OWN `keep`, and the mesh is rebuilt once. Returns the
+    /// number of pairs welded. The pair weld's law (captures K-W2, task 9437):
+    /// the TARGET `keep` survives at its own position and index (less the
+    /// dropped indices below it); in every polygon the drop's corner becomes
+    /// `keep` in place — adjacent corners collapse the edge, non-adjacent ones
+    /// leave the self-touching `[a,keep,b,keep]` the reference keeps.
     ///
-    /// WHY THIS EXISTS RATHER THAN A LOOP OVER `weldVertexPair`: that function
-    /// rebuilds and COMPACTS the mesh, so every index the caller is holding is
-    /// stale the moment it returns. A caller with N independent absorptions to
-    /// perform (dragging a whole edge or a whole loop onto other geometry, one
-    /// target per grabbed vertex) cannot express that as N calls without
-    /// re-deriving its indices between each one. It also collapses N geometry
-    /// rebuilds and N `commitChange` notifications into one.
-    ///
-    /// POSITION RULE, and it differs from `weldVertexPair` deliberately: the
-    /// survivor is `keep` itself and stays exactly where `keep` was — the drop
-    /// is absorbed INTO the target, the target does not move to meet it.
-    /// `weldVertexPair` reaches the same geometry by snapping drop onto keep
-    /// and letting the mask pass pick the lower index as survivor; expressing
-    /// the remap directly here means no position is written before the rewrite
-    /// and no coincidence test can pull in a bystander vertex that happens to
-    /// sit on the target.
-    ///
-    /// A pair is REFUSED (skipped, the rest still weld) when:
-    ///  - `keep == drop`, or either index is out of range;
-    ///  - `drop` appears as the drop of an earlier pair (a vertex can only be
-    ///    absorbed once) or as the keep of any pair, or `keep` appears as the
-    ///    drop of any pair — either would build a two-level remap, which
-    ///    `applyVertexRemapAndRebuild` does not chase;
-    ///  - `keep` and `drop` are NON-ADJACENT corners of one face: that leaves
-    ///    `[keep,A,keep,B]`, a self-touching polygon the rewrite cannot
-    ///    collapse cleanly. Adjacent same-face pairs (consecutive corners,
-    ///    including the head/tail wrap) are the ordinary edge-collapse case and
-    ///    ARE allowed — the quad becomes a triangle.
-    ///  - neither `keep` nor `drop` is referenced by any face: `compactUnreferenced`
-    ///    would drop both as orphans, a net vanish rather than a weld.
-    /// The first, third and fourth are `weldVertexPair`'s own rules evaluated
-    /// per pair; the second is the one only a LIST can pose.
-    ///
-    /// COST: one sweep of the mesh, whatever the pair count. The two rules that
-    /// need face data are settled for EVERY pair in that single sweep rather
-    /// than by re-scanning `faces` per pair — a whole-loop weld on a dense mesh
-    /// is hundreds of pairs against tens of thousands of faces, and the naive
-    /// shape would put a visible pause on the release that fires it.
+    /// A pair is REFUSED (skipped, the rest still weld) when `keep == drop` or
+    /// an index is out of range; when `drop` was claimed by an earlier pair or
+    /// is any pair's keep, or `keep` is any pair's drop (a two-level remap
+    /// `applyVertexRemapAndRebuild` does not chase); and when neither vertex is
+    /// on a face (`compactUnreferenced` would vanish both).
     size_t weldVertexPairs(in uint[2][] pairs) {
         if (pairs.length == 0) return 0;
         if (vertices.length < 2) return 0;
+        bool valid(in uint[2] p) { return p[0] != p[1] && p[0] < vertices.length && p[1] < vertices.length; }
 
-        // --- Pass 1: the rejects that need no face data.
-        //
-        // `isKeep`/`isDrop` are read for the CHAIN test, so they must describe
-        // every pair that was asked for, including ones later rejected: a pair
-        // whose target is another pair's casualty is refused whichever of the
-        // two is examined first, which is what makes the outcome independent of
-        // input order.
+        // The chain test reads EVERY asked pair, refused ones included, so the
+        // outcome does not depend on input order.
         bool[] isKeep = new bool[](vertices.length);
         bool[] isDrop = new bool[](vertices.length);
-        foreach (p; pairs) {
-            if (p[0] == p[1]) continue;
-            if (p[0] >= vertices.length || p[1] >= vertices.length) continue;
-            isKeep[p[0]] = true;
-            isDrop[p[1]] = true;
-        }
+        foreach (p; pairs) if (valid(p)) { isKeep[p[0]] = true; isDrop[p[1]] = true; }
 
-        // The survivors, in input order. `claimOf[drop]` is the 1-based index
-        // of the candidate that claims that drop, so the face sweep below can
-        // go from a corner straight to its candidate without searching. A drop
-        // is claimed at most once, which is what makes that map single-valued.
-        uint[2][] cand;
-        int[] claimOf = new int[](vertices.length);
-        foreach (p; pairs) {
-            immutable uint keep = p[0], drop = p[1];
-            if (keep == drop) continue;
-            if (keep >= vertices.length || drop >= vertices.length) continue;
-            if (claimOf[drop] != 0) continue;             // already claimed
-            if (isDrop[keep] || isKeep[drop]) continue;   // would chain
-            cand ~= [keep, drop];
-            claimOf[drop] = cast(int)cand.length;
-        }
-        if (cand.length == 0) return 0;
-
-        // --- Pass 2: ONE sweep of the faces settles both face-shaped rules.
-        //
-        // `cornerPos` is scratch that holds, for the face being examined, where
-        // each involved vertex sits in its winding; it is cleared over that
-        // face's own corners on the way out, so the whole pass stays O(corners)
-        // and never O(vertices) per face.
-        bool[] rejected   = new bool[](cand.length);
         bool[] referenced = new bool[](vertices.length);
-        int[]  cornerPos  = new int[](vertices.length);
-        cornerPos[] = -1;
-        foreach (ref face; faces) {
-            foreach (i, vid; face) {
-                if (vid >= vertices.length) continue;
-                referenced[vid] = true;
-                if (isKeep[vid] || isDrop[vid]) cornerPos[vid] = cast(int)i;
-            }
-            foreach (i, vid; face) {
-                if (vid >= vertices.length) continue;
-                immutable int c = claimOf[vid];
-                if (c == 0) continue;                      // not a claimed drop
-                immutable int pk = cornerPos[cand[c - 1][0]];
-                if (pk < 0) continue;                      // keep not in this face
-                immutable int pd = cast(int)i;
-                immutable int diff = pk > pd ? pk - pd : pd - pk;
-                if (!(diff == 1 || diff == cast(int)face.length - 1))
-                    rejected[c - 1] = true;                // non-adjacent same face
-            }
-            foreach (vid; face) if (vid < vertices.length) cornerPos[vid] = -1;
-        }
+        foreach (ref face; faces)
+            foreach (vid; face) if (vid < vertices.length) referenced[vid] = true;
 
         int[] remap = new int[](vertices.length);
         foreach (i; 0 .. vertices.length) remap[i] = cast(int)i;
-
+        bool[] claimed = new bool[](vertices.length);
         size_t welded = 0;
-        foreach (ci, c; cand) {
-            if (rejected[ci]) continue;
-            if (!referenced[c[0]] && !referenced[c[1]]) continue;   // both faceless
-            remap[c[1]] = cast(int)c[0];
+        foreach (p; pairs) {
+            immutable uint keep = p[0], drop = p[1];
+            if (!valid(p) || claimed[drop]) continue;               // the first claim wins
+            if (isDrop[keep] || isKeep[drop]) continue;             // would chain
+            claimed[drop] = true;
+            if (!referenced[keep] && !referenced[drop]) continue;   // both faceless
+            remap[drop] = cast(int)keep;
             ++welded;
         }
         if (welded == 0) return 0;
@@ -3940,13 +3802,6 @@ struct Mesh {
         applyVertexRemapAndRebuild(remap);
         return welded;
     }
-
-
-
-
-
-
-
 
     /// Inverse of weldVerticesByMask: unweld each masked vertex so every
     /// incident face gets its own coincident copy. The vertex is kept in
