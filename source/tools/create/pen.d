@@ -476,7 +476,8 @@ version(unittest) unittest {
     auto symLayer = new Layer; GpuMesh symGpu;
     auto symHistory = new CommandHistory();
     auto symContext = symDrop(symPen(symLayer, &symGpu), symLayer, &symGpu, symHistory);
-    assert(symContext.validate()); symContext.install();
+    assert(symContext.validate(), "pen S6: the mirror drop's prepare did not validate");
+    symContext.install();
     symHistory.undoDepthCounts(modelDepth, uiDepth);
     assert(symLayer.meshRef().faces.length == 2 && modelDepth == 1 &&
         symLayer.meshRef().vertices.length == 6, "pen S6: the drop did not commit "
@@ -1532,9 +1533,10 @@ private:
         return gap < 3 * viewWorldPerPixel(cachedVp) ? -2 - cast(int)i : -1;
     }
     // A point inserted at `at` (delta +1) or removed from it (-1) renumbers the
-    // mirror links (<= -2 name point -2 - l); a link to a removed point drops.
+    // mirror links (<= -2 name point -2 - l; any other l gives -2 - l < 0 <= at
+    // and stays); a link to a removed point drops.
     static int shiftedLink(int l, int at, int delta) nothrow @nogc {
-        if (l > -2 || -2 - l < at) return l;
+        if (-2 - l < at) return l;
         return delta < 0 && -2 - l == at ? -1 : l - delta;
     }
 

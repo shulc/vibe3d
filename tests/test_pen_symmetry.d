@@ -228,11 +228,32 @@ unittest {
     }
 
     // B1 / A5: the mirror and its ring, axes X / Y / Z and an offset plane.
-    // B3 / B4 / B4m: crosswise sharing, an on-plane point, merge off. B4 runs
-    // right after A5-symZ, so a latch read after the first click's weld test
-    // (the previous stroke's z plane) shows.
+    // B3 / B4 / B4m: crosswise sharing, an on-plane point, merge off.
     foreach (cell; ["B1", "A5-symY", "A5-symXoff", "B3", "A5-symZ", "B4", "B4m"])
         fails ~= axisCase(cell, fx[cell], ran);
+    // The latch precedes the first click's self-weld test. Each `tool.set pen
+    // on` is a fresh tool latched to the default x = 0 plane, so B4 alone
+    // cannot see the order: here one activation latches z (a point, popped),
+    // then draws B4 under x (a test against the stale z plane: 6 vertices).
+    {
+        rig("z", 0, true, p(0.375, 0));
+        clickWorld(p(0.25, 0.5));
+        key(kSymBackspace, 0);
+        symmetry("x");
+        frameFence(null, 2);
+        clickWorld(clicks(fx["B4"]));
+        drop(); ++ran;
+        fails ~= fixture("B4-after-z-latch", fx["B4"]["expected"]);
+    }
+    // A switch to another tool drops the stroke through the prepared door,
+    // which builds the mirror too (B1's mesh).
+    {
+        rig("x", 0, true, p(0.5, 0));
+        clickWorld(b1);
+        penCommand("tool.set move on"); ++ran;
+        fails ~= fixture("B1-switch-drop", fx["B1"]["expected"]);
+        penCommand("tool.set move off");
+    }
     // B6: the mirror follows a drag and typed positions.
     fails ~= axisCase("B6d", fx["B6d"], ran, () => drag(b1[2], p(0.85, 0.35)),
                       [p(0.85, 0.35)]);
@@ -346,9 +367,9 @@ unittest {
 
     fails ~= oursCells(ran);
     symmetry(null);
-    // Floor: 1 stay-green + 24 turning cells (A8 reads three moments; one
+    // Floor: 1 stay-green + 26 turning cells (A8 reads three moments; one
     // extrapolated work-plane cell) + 13 ours-only cells.
-    assert(ran == 38, format("ran %s cells, pinned 38", ran));
+    assert(ran == 40, format("ran %s cells, pinned 40", ran));
     // One line, so the first red line names every failing cell.
     assert(fails.length == 0, format("%s failure(s): %-(%s | %)", fails.length, fails));
 }

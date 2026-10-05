@@ -75,14 +75,13 @@ SymmetryPacket penMirror(in SymmetryPacket sp) nothrow @nogc {
 /// plane" `wp` (wave plan S6, fixture pen_symmetry.json A5-symWP / A5-symWP2):
 /// the axis plane mapped by the work plane's transform W TWICE — normal
 /// R·R·e_axis through W(W(offset·e_axis)). Captured (X axis, offset 0); a
-/// probable reference defect copied by owner decision. False for no axis.
-bool penWorkplaneMirrorPlane(int axis, float offset, in WorkplaneFrame wp,
+/// probable reference defect copied by owner decision. `axis` is the stage's
+/// 0 / 1 / 2 (its only writers parse x / y / z).
+void penWorkplaneMirrorPlane(int axis, float offset, in WorkplaneFrame wp,
                              out Vec3 point, out Vec3 normal) {
-    if (axis < 0 || axis > 2) return false;
     Vec3 e = Vec3(axis == 0 ? 1 : 0, axis == 1 ? 1 : 0, axis == 2 ? 1 : 0);
     normal = normalize(transformDir(wp.toWorld, transformDir(wp.toWorld, e)));
     point = transformPoint(wp.toWorld, transformPoint(wp.toWorld, e * offset));
-    return true;
 }
 
 /// Fewest points that close the stroke's face shape: a triangle, or the
