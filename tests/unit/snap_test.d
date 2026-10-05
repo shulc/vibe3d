@@ -267,7 +267,9 @@ unittest {
             assert(s == 0, "a constraint candidate has no source");
             return false;
         });
-    assert(constraintOffered >= 1, "fixture: the face planes must be offered");
+    import std.conv : to;
+    assert(constraintOffered == 4,
+        "fixture: the face planes offered (floor 4): " ~ constraintOffered.to!string);
     assert(!cNone.snapped);
     assert(cNone.constraintType == SnapType.None);
     assert(sameVec(cNone.worldPos, cursorWorld));
