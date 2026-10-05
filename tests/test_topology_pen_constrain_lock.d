@@ -51,6 +51,16 @@ bool constrainEnabled() {
     return v.type == JSONType.true_;
 }
 
+// The geometry mode read back the same way; a locked constraint is not
+// recomposed to the topology pen's `point` (the remembered constraint keeps
+// `enabled` true across the switch either way, so `enabled` alone cannot see
+// the lock).
+string constrainGeometry() {
+    auto j = postJson("/api/command", "tool.pipe.attr constrain geometry ?");
+    assert(j["status"].str == "ok", "query failed: " ~ j.toString);
+    return j["value"].str;
+}
+
 void resetScene() {
     postJson("/api/command", commandBody("scene.reset"));
 }
@@ -79,6 +89,8 @@ unittest { // SF-1: explicit lock via `tool.pipe.attr constrain enabled true`
     assert(constrainEnabled(),
         "activate(): a pre-existing EXPLICIT user lock must NOT be "
         ~ "clobbered by TopologyPenTool composing CONS transiently");
+    assert(constrainGeometry() == "off",
+        "activate(): a locked constraint was recomposed to " ~ constrainGeometry());
 
     cmd("tool.set move on");   // tool switch -> resetTransientPipeStages()
     assert(constrainEnabled(),
@@ -96,6 +108,8 @@ unittest { // SF-1: explicit lock via `constrain.toggle`
     cmd("tool.set mesh.topoPen on");
     assert(constrainEnabled(),
         "activate(): a constrain.toggle lock must NOT be clobbered either");
+    assert(constrainGeometry() == "off",
+        "activate(): a toggle-locked constraint was recomposed to " ~ constrainGeometry());
 
     cmd("tool.set move on");
     assert(constrainEnabled(),
