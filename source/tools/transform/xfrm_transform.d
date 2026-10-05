@@ -469,8 +469,6 @@ struct PreparedXfrmReplayImage {
     Vec3 nextRunFrameR, nextRunFrameU, nextRunFrameF;
     FalloffPacket expectedFalloff;
     FalloffPacket nextFalloff;
-    SnapPacket expectedSnap;
-    SnapPacket nextSnap;
     SymmetryPacket expectedSymmetry;
     SymmetryPacket nextSymmetry;
     ElementWeightCache expectedElementWeights;
@@ -616,7 +614,6 @@ struct PreparedXfrmUpdatePreProjection {
     ulong slotSignature;
     uint acenEpoch;
     FalloffPacket liveFalloff;
-    SnapPacket liveSnap;
     SymmetryPacket liveSymmetry;
     bool selectionChanged;
     bool mutationChanged;
@@ -1761,24 +1758,20 @@ public:
             && bankIsNonIdentity(regradeBank)) {
             if (editIsOpen()) {
                 // ARM 1 — panel session: old in-place coalesce, no record.
-                // P-C: the trigger now spans the whole pipe config — falloff,
-                // snap AND symmetry. A mid-session toggle of any of the three
-                // re-grades the COMPOSED op against the new pipe state.
+                // P-C: the trigger spans falloff AND symmetry; a mid-session
+                // toggle of either re-grades the COMPOSED op against the new
+                // pipe state. Snap settings are no run term (K-G4 rule 4).
                 FalloffPacket liveF = currentFalloff(vts);
-                SnapPacket     liveSn = currentSnap(vts);
                 SymmetryPacket liveSy = currentSymmetry(vts);
                 if (!falloffPacketsEqual(liveF, dragFalloff)
                  || !symmetryPacketsEqual(liveSy, dragSymmetry)) {
                     Vec3[] weightSample = mesh.vertices.dup;
-                    // Re-read ALL THREE live packets before the recompute so
+                    // Re-read both live packets before the recompute so
                     // applyTRS's symmetry pass + per-vertex falloff weight read
                     // the new config. recaptureLivePipePackets() does a FRESH
                     // pipeline evaluate so a just-enabled symmetry stage's pairOf
                     // is populated (the single update() evaluate publishes a
-                    // stale-empty pairOf on the toggle frame). Snap is a
-                    // cursor-time op, NOT in the fold, so re-reading dragSnap
-                    // changes no geometry — but keeps the run-state coherent for
-                    // the config-restore hooks downstream.
+                    // stale-empty pairOf on the toggle frame).
                     recaptureLivePipePackets();
                     useElementWeightCache(weightSample);
                     vertexCacheDirty = true;
@@ -1804,10 +1797,9 @@ public:
                 // ARM 2 — committed gizmo gesture: re-grade + record.
                 // Staleness gate (OBJ-1) checked at the SITE before the recompute
                 // mutates the mesh; the helper re-checks as defense-in-depth.
-                // P-C: the trigger spans falloff + snap + symmetry; a change in
-                // any one re-grades + records ONE tagged in-session entry.
+                // P-C: the trigger spans falloff + symmetry; a change in either
+                // re-grades + records ONE tagged in-session entry.
                 FalloffPacket liveF  = currentFalloff(vts);
-                SnapPacket     liveSn = currentSnap(vts);
                 SymmetryPacket liveSy = currentSymmetry(vts);
                 if (!falloffPacketsEqual(liveF, dragFalloff)
                  || !symmetryPacketsEqual(liveSy, dragSymmetry)) {
@@ -1818,9 +1810,8 @@ public:
                     // captured packets (the geometry the gesture sat on); POST =
                     // the live (just-tweaked) packets. Captured BEFORE the
                     // re-read below so the entry's revert/apply hooks restore the
-                    // whole config endpoints (falloff + snap + symmetry).
+                    // whole config endpoints (falloff + symmetry).
                     FalloffPacket  preF  = dragFalloff,  postF  = liveF;
-                    SnapPacket     preSn = dragSnap,     postSn = liveSn;
                     SymmetryPacket preSy = dragSymmetry, postSy = liveSy;
                     ElementWeightCache preElementWeights =
                         elementWeightCache_.ownedDup();
@@ -1856,7 +1847,7 @@ public:
                     // support can be the whole mesh, so a full-range pass is the
                     // safe superset.
                     recordPipeRefire(anchor, after, null, currentRunBank,
-                                     preF, postF, preSn, postSn, preSy, postSy,
+                                     preF, postF, preSy, postSy,
                                      preElementWeights, postElementWeights);
                     needsGpuUpdate = true;
                 }
@@ -1959,7 +1950,6 @@ public:
              regradeBank == DragBank.Scale) &&
             bankIsNonIdentity(regradeBank);
         p.liveFalloff = currentFalloff(vts).ownedDup();
-        p.liveSnap = currentSnap(vts);
         p.liveSymmetry = currentSymmetry(vts).ownedDup();
         // Snap settings are no run term: undo never writes them (findings_K-G4
         // rule 4, K-BV rule 2; task 9482), so a snap change re-grades nothing.
@@ -4119,7 +4109,6 @@ public:
         captureFalloffForDrag(vts);
         useElementWeightCache(mesh.vertices);
         captureSymmetryForDrag(vts);
-        captureSnapForDrag(vts);   // P-C: run-start snap config for the refire trigger
     }
 
     // Once-per-drag GPU-bypass predicate (moveDragFastPath / rotDragFastPath /
@@ -5356,8 +5345,8 @@ public:
     // byte-for-byte; the golden fixtures (`test_fixture_acen_local`,
     // `test_fixture_translate*`, `test_fixture_rotate*`,
     // `test_fixture_scale*`) stay green.
-    // P-C: re-capture the live falloff + symmetry + snap packets into the
-    // wrapper's dragFalloff / dragSymmetry / dragSnap via a FRESH pipeline
+    // P-C: re-capture the live falloff + symmetry packets into the
+    // wrapper's dragFalloff / dragSymmetry via a FRESH pipeline
     // evaluate. The wrapper replay arm calls this before `applyTRS` so the
     // symmetry pass reads a packet with a POPULATED pairOf table: a symmetry
     // stage just toggled on publishes a stale-EMPTY pairOf on its first
@@ -5374,7 +5363,6 @@ public:
         if (!buildLocalVts(subj, vts)) return;
         captureFalloffForDrag(vts);
         captureSymmetryForDrag(vts);
-        captureSnapForDrag(vts);
     }
 
     override bool applyHeadless() {
@@ -5386,7 +5374,6 @@ public:
         captureFalloffForDrag(vts);
         useElementWeightCache(mesh.vertices);
         captureSymmetryForDrag(vts);
-        captureSnapForDrag(vts);   // P-C: run-start snap config for the refire trigger
         vertexCacheDirty = true;
         // MATRIX-AS-TRUTH — the numeric/headless path injects RX/RY/RZ into
         // headlessRotate via the attr system (no gizmo drain ran), so RECOMPOSE the
@@ -5500,8 +5487,8 @@ public:
     // opener so Rotate/Scale panel apply can prepare shared geometry state before
     // beginEditForBank records their actual provenance.
     //
-    // Captures the live falloff / symmetry / snap packets (overwriting
-    // dragFalloff / dragSymmetry / dragSnap so a mid-edit falloff change takes
+    // Captures the live falloff / symmetry packets (overwriting
+    // dragFalloff / dragSymmetry so a mid-edit falloff change takes
     // effect immediately), then snapshots a fresh full-mesh `dragBaseline` IFF
     // the current run baseline is invalid or structurally stale. Length alone is
     // not a validity signal: transform edits preserve vertex count, so a stale
@@ -5520,7 +5507,6 @@ public:
         captureFalloffForDrag(vts);
         useElementWeightCache(mesh.vertices);
         captureSymmetryForDrag(vts);
-        captureSnapForDrag(vts);   // P-C: run-start snap config for the refire trigger
         if (!runBaselineValid || dragBaseline.length != mesh.vertices.length) {
             dragBaseline.length = mesh.vertices.length;
             foreach (i; 0 .. mesh.vertices.length)
@@ -5575,7 +5561,7 @@ public:
     /// frozen run/frame state, the run baseline, viewport and live pipe
     /// packets.  The real wrapper and live mesh are never written.
     public PreparedXfrmRefireCandidate buildPreparedRefireCandidate(
-            FalloffPacket falloff, SnapPacket snap, SymmetryPacket symmetry,
+            FalloffPacket falloff, SymmetryPacket symmetry,
             bool useItemSubjectOverride = false,
             bool itemSubjectOverride = false,
             ElementWeightCache elementWeights = ElementWeightCache.init) {
@@ -5635,7 +5621,6 @@ public:
         shadow.elementPickAnchor_ = elementWeights.pickAnchor;
         shadow.elementPickValid_ = elementWeights.pickValid;
         shadow.runSerial_ = elementWeights.runSerial;
-        shadow.dragSnap = snap;
         shadow.dragSymmetry = symmetry;
         shadow.cachedVp = cachedVp;
         shadow.frame = frame;
@@ -5692,18 +5677,16 @@ public:
         image.expectedRunFrameU = runFrameU;
         image.expectedRunFrameF = runFrameF;
         image.expectedFalloff = dragFalloff.ownedDup();
-        image.expectedSnap = dragSnap;
         image.expectedSymmetry = dragSymmetry.ownedDup();
         image.expectedElementWeights = elementWeightCache_.ownedDup();
         FalloffPacket liveFalloff = projection.liveFalloff.ownedDup();
-        SnapPacket liveSnap = projection.liveSnap;
         SymmetryPacket liveSymmetry = projection.liveSymmetry.ownedDup();
         image.nextElementWeights = elementWeightCacheForPacket(
             liveFalloff, image.expectedLive.vertices);
         if (image.nextElementWeights.hasElement)
             liveFalloff.anchorPos = image.nextElementWeights.anchorPos.dup;
         auto prepared = buildPreparedRefireCandidate(
-            liveFalloff, liveSnap, liveSymmetry, true,
+            liveFalloff, liveSymmetry, true,
             projection.subject == SelType.Item, image.nextElementWeights);
         if (!prepared.applied) return image;
         image.candidate = prepared.mesh;
@@ -5718,7 +5701,6 @@ public:
         image.nextRunFrameU = prepared.runFrameU;
         image.nextRunFrameF = prepared.runFrameF;
         image.nextFalloff = liveFalloff.ownedDup();
-        image.nextSnap = projection.liveSnap;
         image.nextSymmetry = projection.liveSymmetry.ownedDup();
         image.itemTargets = prepared.itemTargets;
         image.expectedItemXforms = prepared.expectedItemXforms;
@@ -5733,7 +5715,6 @@ public:
             image.historyRefire = buildPreparedRefireState(context,
                 image.expectedLive.vertices, image.candidate.vertices,
                 image.expectedFalloff, image.nextFalloff,
-                image.expectedSnap, image.nextSnap,
                 image.expectedSymmetry, image.nextSymmetry,
                 image.expectedElementWeights, image.nextElementWeights);
             if (!image.historyRefire.valid)
@@ -5758,7 +5739,6 @@ public:
             runFrameU != image.expectedRunFrameU ||
             runFrameF != image.expectedRunFrameF ||
             !falloffPacketsEqual(dragFalloff, image.expectedFalloff) ||
-            !snapPacketsEqual(dragSnap, image.expectedSnap) ||
             !symmetryPacketsEqual(dragSymmetry, image.expectedSymmetry) ||
             dragSymmetry.authoringSide != image.expectedSymmetry.authoringSide ||
             !elementWeightCachesEqual(elementWeightCache_,
@@ -5787,7 +5767,6 @@ public:
         runFrameU = image.nextRunFrameU;
         runFrameF = image.nextRunFrameF;
         dragFalloff = image.nextFalloff;
-        dragSnap = image.nextSnap;
         dragSymmetry = image.nextSymmetry;
         foreach (i, target; image.itemTargets)
             target.xform = image.nextItemXforms[i];
@@ -5809,12 +5788,11 @@ public:
             PreparedRecordContext context,
             const Vec3[] anchor, const Vec3[] after,
             FalloffPacket preF, FalloffPacket postF,
-            SnapPacket preSn, SnapPacket postSn,
             SymmetryPacket preSy, SymmetryPacket postSy,
             ElementWeightCache preElementWeights,
             ElementWeightCache postElementWeights) {
         auto projection = projectPreparedPipeRefire(anchor, after, null,
-            preF, postF, preSn, postSn, preSy, postSy,
+            preF, postF, preSy, postSy,
             preElementWeights, postElementWeights);
         if (!preparePipeRefireProjection(projection, context))
             return PreparedXfrmRefireStateImage.init;
@@ -5835,12 +5813,11 @@ public:
     private PipeRefireProjection projectPreparedPipeRefire(
             const Vec3[] anchor, const Vec3[] after, const size_t[] idx,
             FalloffPacket preF, FalloffPacket postF,
-            SnapPacket preSn, SnapPacket postSn,
             SymmetryPacket preSy, SymmetryPacket postSy,
             ElementWeightCache preElementWeights,
             ElementWeightCache postElementWeights) {
         return projectPipeRefire(anchor, after, idx,
-            preF, postF, preSn, postSn, preSy, postSy,
+            preF, postF, preSy, postSy,
             preElementWeights, postElementWeights);
     }
 
@@ -5849,7 +5826,6 @@ public:
         return image.valid && refireAnchor == image.expectedAnchor &&
             refirePreValid == image.expectedPreValid &&
             falloffPacketsEqual(refirePreFalloff, image.expectedPreFalloff) &&
-            snapPacketsEqual(refirePreSnap, image.expectedPreSnap) &&
             symmetryPacketsEqual(refirePreSym, image.expectedPreSymmetry) &&
             refirePreSym.authoringSide == image.expectedPreSymmetry.authoringSide &&
             lastMutationVersion == image.expectedLastMutation &&
@@ -5863,7 +5839,6 @@ public:
         refireAnchor = image.nextAnchor; image.nextAnchor = null;
         refirePreValid = image.nextPreValid;
         refirePreFalloff = image.nextPreFalloff;
-        refirePreSnap = image.nextPreSnap;
         refirePreSym = image.nextPreSymmetry;
         lastMutationVersion = image.nextLastMutation;
         lastAppliedGestureMutationVersion = image.nextGestureMutation;
@@ -7211,7 +7186,6 @@ private:
     // the SAME resets as refireAnchor.
     bool           refirePreValid;
     FalloffPacket  refirePreFalloff;
-    SnapPacket     refirePreSnap;
     SymmetryPacket refirePreSym;
     ElementWeightCache refirePreElementWeights_;
 
@@ -7288,13 +7262,12 @@ private:
     // alongside that, restoring config too.
     //
     // P-C: generalised from the P-A `recordFalloffRefire` (falloff only) to the
-    // whole transient pipe config. The three config restores are INDEPENDENT
-    // stage mutations (FalloffStage / SnapStage / SymmetryStage own disjoint
-    // fields), so one composed closure calls all three without clobber.
+    // whole transient pipe config. The two config restores are INDEPENDENT
+    // stage mutations (FalloffStage / SymmetryStage own disjoint fields), so
+    // one composed closure calls both without clobber.
     private PipeRefireProjection projectPipeRefire(
             const Vec3[] anchor, const Vec3[] after, const size_t[] idx,
             FalloffPacket preF, FalloffPacket postF,
-            SnapPacket preSn, SnapPacket postSn,
             SymmetryPacket preSy, SymmetryPacket postSy,
             ElementWeightCache preElementWeights,
             ElementWeightCache postElementWeights) {
@@ -7316,16 +7289,13 @@ private:
         image.expectedPreValid = refirePreValid;
         image.nextPreValid = true;
         image.expectedPreFalloff = refirePreFalloff.ownedDup();
-        image.expectedPreSnap = refirePreSnap;
         image.expectedPreSymmetry = refirePreSym.ownedDup();
         if (refirePreValid) {
             preF = refirePreFalloff;
-            preSn = refirePreSnap;
             preSy = refirePreSym;
             preElementWeights = refirePreElementWeights_.ownedDup();
         }
         image.nextPreFalloff = preF.ownedDup();
-        image.nextPreSnap = preSn;
         image.nextPreSymmetry = preSy.ownedDup();
         image.expectedLastMutation = lastMutationVersion;
         image.expectedGestureMutation = lastAppliedGestureMutationVersion;
@@ -7398,12 +7368,11 @@ private:
     private void recordPipeRefire(Vec3[] anchor,
                                   Vec3[] after, size_t[] idx, DragBank,
                                   FalloffPacket preF, FalloffPacket postF,
-                                  SnapPacket preSn, SnapPacket postSn,
                                   SymmetryPacket preSy, SymmetryPacket postSy,
                                   ElementWeightCache preElementWeights,
                                   ElementWeightCache postElementWeights) {
         auto projection = projectPipeRefire(anchor, after, idx,
-            preF, postF, preSn, postSn, preSy, postSy,
+            preF, postF, preSy, postSy,
             preElementWeights, postElementWeights);
         if (!projection.valid) return;
         if (projection.stale) {
@@ -7930,7 +7899,7 @@ unittest {
     refireTool.runBaselineValid = true;
     refireTool.runFrameValid = true;
     auto refired = refireTool.buildPreparedRefireCandidate(
-        FalloffPacket.init, SnapPacket.init, SymmetryPacket.init);
+        FalloffPacket.init, SymmetryPacket.init);
     assert(refired.applied && beforeRefire.matches(refireMesh) &&
            refired.mesh.vertices != refireMesh.vertices,
            "prepared Xfrm refire must mutate only the detached candidate");
@@ -8284,12 +8253,10 @@ unittest {
     const preparedAnchor = preparedRefireMesh.vertices.dup;
     auto liveRefireProjection = liveRefireTool.projectPipeRefire(
         liveAnchor, liveAnchor, null, refirePre, refirePost,
-        SnapPacket.init, SnapPacket.init,
         SymmetryPacket.init, SymmetryPacket.init,
         ElementWeightCache.init, ElementWeightCache.init);
     auto preparedRefireProjection = preparedRefireTool.projectPreparedPipeRefire(
         preparedAnchor, preparedAnchor, null, refirePre, refirePost,
-        SnapPacket.init, SnapPacket.init,
         SymmetryPacket.init, SymmetryPacket.init,
         ElementWeightCache.init, ElementWeightCache.init);
     assert(liveRefireProjection.valid && preparedRefireProjection.valid &&

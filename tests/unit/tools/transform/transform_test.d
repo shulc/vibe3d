@@ -74,29 +74,18 @@ unittest {
     assert(m.vertices[3] == pre[3], "the unselected partner of vertex 2 was written");
 }
 
-// The transform family's snap packet reads (task 9405): the refire snapshot
-// `captureSnapForDrag` and the idle read `currentSnap` go through
+// The transform family's snap packet read (task 9405) goes through
 // `snap.snapPacketOf` — the published packet verbatim, or the init packet
 // (snapping OFF) when no SNAP stage ran.
 unittest {
-    import tools.transform.scale : ScaleTool;
-    import mesh_gpu : GpuMesh;
-    static class Reads : ScaleTool {
-        this(Mesh* delegate() m, GpuMesh* g, EditMode* e) { super(m, g, e); }
-        SnapPacket captured(ref VectorStack v) { captureSnapForDrag(v); return dragSnap; }
-        SnapPacket live(ref VectorStack v) { return currentSnap(v); }
-    }
-    Mesh mesh = makeCube(); GpuMesh gpu; EditMode mode = EditMode.Polygons;
-    auto t = new Reads(() => &mesh, &gpu, &mode);
+    import snap : snapPacketOf;
     SnapPacket pub;
     pub.enabled = true;
     pub.innerRangePx = 7;
     VectorStack withPkt;
     withPkt.put(&pub);
-    assert(t.captured(withPkt) == pub && t.live(withPkt) == pub,
-        "a published SNAP packet is read verbatim by the drag snapshot and the idle read");
+    assert(snapPacketOf(withPkt) == pub, "a published SNAP packet is read verbatim");
     VectorStack none;
-    assert(!t.captured(none).enabled && t.captured(none) == SnapPacket.init
-        && t.live(none) == SnapPacket.init,
-        "no SNAP stage ran: both reads answer the init packet, snapping off");
+    assert(snapPacketOf(none) == SnapPacket.init,
+        "no SNAP stage ran: the read answers the init packet, snapping off");
 }

@@ -7926,7 +7926,6 @@ def xfrm_replay_gate(owner, context, xfrm):
             "installPreparedReplay(",
             "vertexIndicesToProcess = image.nextIndices;",
             "dragFalloff = image.nextFalloff;",
-            "dragSnap = image.nextSnap;",
             "dragSymmetry = image.nextSymmetry;",
             "target.xform = image.nextItemXforms[i];",
             "installPreparedRefireState(image.historyRefire);"))

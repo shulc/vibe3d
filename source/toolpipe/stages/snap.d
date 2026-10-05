@@ -596,16 +596,6 @@ class SnapStage : Stage, Operator {
         return ok;
     }
 
-    /// Snapshot the stage's LIVE user-facing CONFIG fields into a SnapPacket.
-    /// No undo restores it (findings_K-G4 rule 4). Mirrors
-    /// FalloffStage.snapshotConfigToPacket: captures only the STAGE-owned config
-    /// fields (the ones a round-trip restores); the workplane cache + gridStep
-    /// are re-derived by evaluate() from the upstream WORK stage.
-    SnapPacket snapshotConfigToPacket() const {
-        SnapPacket p;
-        p.config = config;
-        return p;
-    }
 
 
     override string[2][] listAttrs() const {
@@ -1242,7 +1232,7 @@ unittest {
 
     // A fresh stage's schema must not have disturbed the config it reports.
     st.reset();
-    assert(st.snapshotConfigToPacket() == SnapPacket.init,
+    assert(st.config == SnapConfig.init,
         "reading params() / folding a row must leave `reset()` restoring the "
         ~ "same defaults it always did");
 }

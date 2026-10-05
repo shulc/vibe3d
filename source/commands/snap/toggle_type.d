@@ -31,11 +31,10 @@ class SnapToggleTypeCommand : Command {
     override string name()  const { return "snap.toggleType"; }
     override string label() const { return "Toggle Snap Type"; }
 
-    // A UI type change with no button held records one entry whose undo / redo
-    // never touch the types (findings_K-G4 G4_C, rule 4; script origin: none).
+    // A UI type change records one entry whose undo / redo never touch the
+    // types (findings_K-G4 G4_C, rule 4; script origin: none).
     override CmdFlags cmdFlags() const {
-        import held_gesture_buttons : g_heldGestureButtons;
-        return origin == CommandOrigin.ui && !g_heldGestureButtons.any
+        return origin == CommandOrigin.ui
             ? CmdFlags.SideEffect | CmdFlags.UndoForce : CmdFlags.SideEffect;
     }
 

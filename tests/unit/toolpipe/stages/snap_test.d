@@ -55,17 +55,16 @@ unittest { // The snap config is ONE declaration — and `enabled` is the
     st.enabled = false;
 
     // The config round-trip, which is now a property of one struct rather than
-    // an agreement between two. Still worth asserting: `snapshotConfigToPacket`
-    // and `reset` are the undo/redo and scene-reset paths, and a future edit
-    // could reintroduce a hand-written field list in either.
+    // an agreement between two. Still worth asserting: `reset` is the scene-reset
+    // path, and a future edit could reintroduce a hand-written field list.
     st.innerRangePx = 1.0f;
     st.outerRangePx = 2.0f;
     st.enabled      = true;
-    assert(st.snapshotConfigToPacket() != SnapPacket.init,
+    assert(st.config != SnapConfig.init,
         "the rig must actually change the config, or the reset below proves "
         ~ "nothing");
     st.reset();
-    assert(st.snapshotConfigToPacket() == SnapPacket.init,
+    assert(st.config == SnapConfig.init,
         "SnapStage.reset() must restore exactly the declaration initialisers");
     assert(st.pipeEnabled,
         "and reset() must NOT switch the stage out of the pipe");
