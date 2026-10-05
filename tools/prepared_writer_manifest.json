@@ -662,7 +662,7 @@
     {
       "aggregate": "BoxTool",
       "module": "tools.create.box",
-      "semantic_sha256": "c5bfceb4bd93b64ca858d951b979b839f4764663f69f91671e0af2d372e83cbc",
+      "semantic_sha256": "11abde8d4e60c58d30a6218fe3a58d9ede0ba4830b28bcc0f9f2ab7a539d615a",
       "signature": "void(string name)",
       "symbol": "onParamChanged"
     },
