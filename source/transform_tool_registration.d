@@ -91,10 +91,8 @@ private struct TransformFactoryDefaults {
     bool recordedFirstUndoEndsTool = false;
     OffGizmoRotateInput offGizmoRotateInput = OffGizmoRotateInput.arcball;
     bool postmodeStartsOnPress = false;
-    bool undoEmptiesRedo = false;
 
-    enum move      = TransformFactoryDefaults(true,  false, false, 0, "full",
-                                               undoEmptiesRedo: true);
+    enum move      = TransformFactoryDefaults(true,  false, false, 0, "full");
     enum rotate    = TransformFactoryDefaults(false, true,  false, 1, "full",
                                                RunCloseMode.stepUndo, "rotate", false, true,
                                                OffGizmoRotateInput.viewAxisHaul, true);
@@ -120,7 +118,6 @@ private XfrmTransformTool buildUnifiedTransform(LiveSessionRole owner,
     t.activationHistoryRow = defaults.activationHistoryRow;
     t.recordedFirstUndoEndsTool = defaults.recordedFirstUndoEndsTool;
     t.postmodeStartsOnPress = defaults.postmodeStartsOnPress;
-    t.undoEmptiesRedo = defaults.undoEmptiesRedo;
     t.offGizmoRotateInput = defaults.offGizmoRotateInput;
     t.setHandleHitRule(HitRule.nearestOnScreen);
     if (defaults.runCloseMode != RunCloseMode.consolidate)

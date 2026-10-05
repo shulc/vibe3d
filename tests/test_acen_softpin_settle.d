@@ -506,7 +506,7 @@ unittest {
 // reverted-geometry centroid; redo restores the settled soft pin.
 //
 // This test MUST FAIL pre-fix (pivot stays at the settled height after undo) and
-// pass post-fix (pivot recomputes to ~pristine; an in-session redo then changes nothing).
+// pass post-fix (pivot recomputes to ~pristine, then redo restores the settle).
 unittest {
     establishCubeBaseline();
     postJson("/api/script",
@@ -554,14 +554,16 @@ unittest {
         "the soft pin must be cleared after the in-session undo of gesture-1 "
         ~ "(its gesture-START soft state was unset)");
 
-    // REDO (Ctrl+Shift+Z) does nothing: the live Move's re-run apply emptied
-    // the redo (findings_K-G4 rule 3; task 9500) — the pivot stays recomputed.
+    // REDO (Ctrl+Shift+Z) re-applies the gesture WITH its apply hook → the
+    // settled soft pin returns and the pivot climbs back to the full delta.
     playAndWait(ctrlShiftZ(50.0));
     settle();
     Vec3 pivAfterRedo = evalPivot();
-    assert(fabs(pivAfterRedo.y - pivPristine.y) < 0.05 && !evalSoftPlaced(),
-        "an in-session redo after the undo must change nothing; pivAfterRedo.y="
-        ~ pivAfterRedo.y.to!string ~ " pivPristine.y=" ~ pivPristine.y.to!string);
+    assert(fabs(pivAfterRedo.y - pivotSettled) < 0.05,
+        "redo must restore the settled soft-pin pivot; pivAfterRedo.y="
+        ~ pivAfterRedo.y.to!string ~ " pivotSettled.y=" ~ pivotSettled.to!string);
+    assert(evalSoftPlaced(),
+        "the display soft pin must be re-set after redo");
 }
 
 // ---------------------------------------------------------------------------

@@ -21,9 +21,9 @@
 //       allowed) -> the just-ended run consolidates AT the boundary, a fresh run
 //       opens; counts truthful.
 //   (C) REDO PATH         : 2 gestures -> 1 in-session Ctrl+Z (pop gesture 2) ->
-//       the redo is empty and Ctrl+Shift+Z does nothing (task 9500); then drop
-//       -> consolidation merges the surviving gesture; resulting entry count +
-//       geometry asserted.
+//       redo (Ctrl+Shift+Z) re-applies gesture 2 with its hook; then drop ->
+//       consolidation merges only the APPLIED undo tail (the undone gesture sat
+//       on the redo stack); resulting entry count + geometry asserted.
 //   (D) FALLOFF-MID-RUN   : gesture -> falloff CONFIG change via /api/command
 //       (tool.pipe.attr, SideEffect/non-undoable -> records NOTHING, does NOT
 //       split the run, does NOT mutate geometry at idle) -> second gesture in
@@ -583,17 +583,20 @@ unittest {
 // ---------------------------------------------------------------------------
 // (C) REDO PATH (Q4 + live-run undo/redo interaction).
 //
-// 2 gestures -> in-session Ctrl+Z pops gesture 2 -> the redo is EMPTY: the
-// live Move re-runs its apply after the undo, a new command (findings_K-G4
-// rule 3, cell G4_K Z1: redo 0; task 9500) -> Ctrl+Shift+Z (through navHistory)
-// does nothing -> drop. Pinned:
+// 2 gestures -> in-session Ctrl+Z pops gesture 2 (it lands on the REDO stack) ->
+// redo (Ctrl+Shift+Z through navHistory) re-applies gesture 2 with its hook ->
+// drop. This pins the redo direction works through navHistory AND the resulting
+// stack shape under the phase-3 keep-run law:
 //
 //   * The in-session Ctrl+Z rewrites geometry while the transform run stays open.
-//   * Nothing is left to redo; Ctrl+Shift+Z moves neither geometry nor history.
-//   * The drop consolidates the surviving gesture to one entry.
+//   * Redo re-pushes gesture 2 into that same live run.
+//   * The drop consolidates both restored gestures to one surviving entry.
 //
-// The full undo walk-back after the drop is monotone back to the cube; the
-// post-drop entry COUNT (1) proves that the undo did not step-close the run.
+// The load-bearing contract this case locks: in-session REDO through the
+// keyboard chokepoint re-applies the popped gesture WITH its hook (geometry is
+// exactly restored), and the full undo walk-back after the drop is monotone back
+// to the cube. The exact post-drop entry COUNT (1) proves that undo/redo did not
+// step-close the run.
 // ---------------------------------------------------------------------------
 unittest {
     establishCubeBaseline();
@@ -606,35 +609,39 @@ unittest {
     assert(undoCount() == floor + 1, "gesture 1 records one in-session entry");
     moveGestureOnHandle(floor + 2, +1.0, 50.0);
     assert(undoCount() == floor + 2, "gesture 2 records a second in-session entry");
+    auto v6BothDrags = vert(6);
 
-    // In-session Ctrl+Z pops gesture 2 -> geometry to post-gesture-1; the
-    // re-run apply leaves nothing to redo.
+    // In-session Ctrl+Z pops gesture 2 -> geometry to post-gesture-1; gesture 2
+    // now sits on the redo stack.
     playAndWait(ctrlZ(50.0));
     settle();
     assert(vertNear(vert(6), g1),
         "in-session Ctrl+Z steps gesture 2 back to post-gesture-1; got ("
         ~ vert(6)[0].to!string ~ "," ~ vert(6)[1].to!string ~ ","
         ~ vert(6)[2].to!string ~ ")");
-    assert(undoCount() == floor + 1 && redoCount() == 0,
-        "the in-session undo leaves the redo empty; undo="
+    assert(undoCount() == floor + 1 && redoCount() >= 1,
+        "the popped gesture moved to the redo stack; undo="
         ~ undoCount().to!string ~ " redo=" ~ redoCount().to!string);
 
-    // Ctrl+Shift+Z (through navHistory) finds nothing to redo.
+    // Redo (Ctrl+Shift+Z through navHistory) re-applies gesture 2 with its hook.
     playAndWait(ctrlShiftZ(60.0));
     settle();
-    assert(vertNear(vert(6), g1) && undoCount() == floor + 1,
-        "in-session redo after the undo does nothing; got ("
+    assert(vertNear(vert(6), v6BothDrags),
+        "in-session redo re-applies gesture 2 (back to the both-drags state); got ("
         ~ vert(6)[0].to!string ~ "," ~ vert(6)[1].to!string ~ ","
-        ~ vert(6)[2].to!string ~ "), undo=" ~ undoCount().to!string);
+        ~ vert(6)[2].to!string ~ ")");
+    assert(undoCount() == floor + 2,
+        "redo restores the second in-session entry; floor=" ~ floor.to!string
+        ~ " now=" ~ undoCount().to!string);
 
-    // Drop. The transform run remained live: the surviving gesture consolidates.
+    // Drop. The transform run remained live, so both gestures consolidate.
     postJson("/api/script", "tool.set move off");
     settle();
     assert(undoCount() == floor + 1,
-        "the live transform run consolidates to ONE entry at the drop; floor="
+        "redo inside a live transform run consolidates to ONE entry at the drop; floor="
         ~ floor.to!string ~ " now=" ~ undoCount().to!string);
-    assert(vertNear(vert(6), g1),
-        "the drop does not move geometry — the mesh holds the post-gesture-1 "
+    assert(vertNear(vert(6), v6BothDrags),
+        "the drop does not move geometry — the mesh holds the redo'd both-drags "
         ~ "state; got (" ~ vert(6)[0].to!string ~ "," ~ vert(6)[1].to!string
         ~ "," ~ vert(6)[2].to!string ~ ")");
 
@@ -849,7 +856,7 @@ unittest {
 // drag -> in-session Ctrl+Z (pops the gesture; geometry back to the cube) ->
 // falloff tweak -> assert NO geometry change (still the cube) and NO new entry
 // (the staleness stamp no longer matches, the re-fire site is inert) -> redo
-// brings nothing back (the in-session undo emptied it, task 9500).
+// still restores the gesture.
 // ---------------------------------------------------------------------------
 unittest {
     establishCubeBaseline();
@@ -890,14 +897,14 @@ unittest {
         "the inert tweak adds NO tagged entry; was=" ~ tagAfterPop.to!string
         ~ " now=" ~ inSessionCount().to!string);
 
-    // Redo brings nothing back: the live Move's re-run apply emptied it at the
-    // pop (findings_K-G4 rule 3, G4_K Z2: redo 0).
-    assert(redoCount() == 0, "the in-session pop leaves the redo empty; redo="
-        ~ redoCount().to!string);
+    // Redo still restores the gesture (the popped gesture survives on the redo
+    // stack — the inert tweak never cleared it).
     playAndWait(ctrlShiftZ(60.0));
     settle();
-    assertVertex(6, 0.5, 0.5, 0.5,
-        "an in-session redo after the pop resurrects nothing; v6 stays at the cube");
+    assert(vertNear(vert(6), v6Gesture),
+        "redo restores the popped gesture (it was never destroyed by the inert "
+        ~ "tweak); v6 expected (" ~ v6Gesture[0].to!string ~ ","
+        ~ v6Gesture[1].to!string ~ "," ~ v6Gesture[2].to!string ~ ")");
 
     postJson("/api/script", "tool.set move off");
     settle();

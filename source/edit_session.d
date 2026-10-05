@@ -993,21 +993,7 @@ private struct ToolSession {
         if (r) openBlock_ = null;
         if (r && history_.undoEntries().length != navBefore_.depth)
             settleAfterNavigation_(true);
-        if (r) reapplyEmptiesRedo_();
         return r;
-    }
-
-    // `undoEmptiesRedo` (findings_K-G4 rule 3): an undo that leaves such a tool
-    // armed empties the redo (K-CD4 CD4d8: an undone layer click reads redo 0),
-    // unless it popped an activation row: that undo re-arms, it does not re-apply,
-    // and the row's own carry rule decides its redo (`carriesRedoAfterUndo`).
-    private void reapplyEmptiesRedo_() {
-        import commands.tool.lifecycle : ToolActivationCommand;
-        auto t = tool_();
-        const re = history_.redoEntries();
-        if (t is null || !t.sessionPolicy().undoEmptiesRedo
-                || (re.length && cast(const ToolActivationCommand) re[0].cmd !is null)) return;
-        history_.invalidateRedo();
     }
 
     bool redo() {

@@ -464,10 +464,6 @@ struct ToolSessionPolicy {
     /// every other tool — step (3) leaves the idle tool untouched, R20 (pen
     /// wave plan S8 A4-rev, K-B4 Backspace-1, K-B5 UC1-end).
     bool commandEndsOpenGesture;
-    /// An undo the live tool survives re-runs its apply, a new command, so the
-    /// redo is empty after it (findings_K-G4 rule 3, captured for Move); false —
-    /// every other tool, uncaptured — the redo keeps what the undo took.
-    bool undoEmptiesRedo;
 
     /// Both step arms' one predicate for "a parameter write is a step": the
     /// producers capture the before-write image under it. In the attribute arm

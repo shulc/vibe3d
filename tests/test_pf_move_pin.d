@@ -304,14 +304,13 @@ unittest {
 
 // ---------------------------------------------------------------------------
 // (c) IN-SESSION Ctrl+Z steps ONE Move gesture back; the run-absolute field hook
-//     drives the GEOMETRY revert; nothing is left to redo (task 9500).
+//     drives the GEOMETRY revert; redo restores it.
 //
 // Two same-bank Move gestures -> published TX == run total. An in-session Ctrl+Z
 // (keyboard chokepoint, tool LIVE) pops gesture 2 and the GEOMETRY reverts to
 // post-gesture-1 — driven by the per-gesture headlessTranslate undo hook (the
 // revert closure sets the field to the gesture-START run-absolute, which applyTRS
-// re-applies). The live tool's re-run apply empties the redo (findings_K-G4 rule
-// 3, G4_K Z1), so Ctrl+Shift+Z leaves that geometry. This mirrors the GEOMETRY
+// re-applies). Redo restores the run-end geometry. This mirrors the GEOMETRY
 // proof of test_run_consolidation case (E) (scale accumulator stepping); the
 // published-accumulator value after the pop is NOT asserted because the in-session
 // Ctrl+Z re-baselines the tool (closes the open run -> the field publishes
@@ -344,14 +343,13 @@ unittest {
         ~ "field hook drove applyTRS); v6.x expected " ~ v6G1[0].to!string
         ~ " got " ~ vert(6)[0].to!string);
 
-    // Nothing to redo: Ctrl+Shift+Z leaves the post-gesture-1 geometry.
+    // Redo re-applies gesture 2 -> back to the both-drags geometry (the apply
+    // hook restores the gesture-END run-absolute field).
     playAndWait(ctrlShiftZ(60.0));
     settle();
-    assert(fabs(vert(6)[0] - v6G1[0]) < 1e-2 && fabs(vert(6)[0] - v6Both[0]) > 1e-2
-            && undoCount() == floor + 1,
-        "in-session redo after the undo does nothing; v6.x expected "
-        ~ v6G1[0].to!string ~ " got " ~ vert(6)[0].to!string
-        ~ ", undo " ~ undoCount().to!string);
+    assert(fabs(vert(6)[0] - v6Both[0]) < 1e-2,
+        "redo restores the run-end (both-drags) geometry; v6.x expected "
+        ~ v6Both[0].to!string ~ " got " ~ vert(6)[0].to!string);
 
     cmd("tool.set move off");
     drainHistory();
