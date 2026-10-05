@@ -252,6 +252,9 @@ unittest {
     // Every handle press is a button-down path; `armAxisLeg` is also the Ctrl
     // hand-over, the axis leg's own press (nothing moved before it). The base
     // drag's corner is a handle too (task 9473): box, radial, torus presses.
+    // The topology pen's grab (task 9510) re-presses a local value per
+    // evaluation at the ARM-TIME anchor and the press pixel's origin, which is
+    // the gesture's press restated: nothing it returns is written back.
     assert(sites == ["ArrayTool.onMouseButtonDown",
                      "BoxTool.onMouseButtonDown", "BoxTool.onMouseButtonDown",
                      "BoxTool.onMouseButtonDown", "BoxTool.onMouseButtonDown",
@@ -260,7 +263,7 @@ unittest {
                      "MoveTool.armAxisLeg",
                      "PrimitiveCreateTool.tryGrabMover", "RadialSweepTool.onMouseButtonDown",
                      "SizedRadialCreateTool.onMouseButtonDown",
-                     "TorusTool.onMouseButtonDown"],
+                     "TopologyPenTool.grabOffset", "TorusTool.onMouseButtonDown"],
         "a HandleDrag press outside the named press sites");
 }
 
