@@ -102,7 +102,7 @@ struct FaceList {
 enum double kCoincidentDistance = 1e-9;
 
 /// Candidate pairs `Mesh.computeWeldRemap` has looked at, ever: the work count
-/// the `--perf-unit` weld cell pins (task 9436), a measure that cannot vary.
+/// the `--perf-unit` weld cell pins, a measure that cannot vary.
 version (PerfProbe) __gshared size_t weldPairVisits;
 
 /// The three ways `vert.join` welds differently from every other weld, and the
@@ -3512,8 +3512,8 @@ struct Mesh {
     }
 
     /// Weld the vertices marked in `mask` (hidden ones removed) that the one
-    /// coincidence search pairs at squared distance `epsSq` (task 9436: seed
-    /// walk, inclusive compare — task 0360's captured `<=` — no chaining),
+    /// coincidence search pairs at squared distance `epsSq` (seed walk,
+    /// inclusive compare — task 0360's captured `<=` — no chaining),
     /// then rewrite faces through the rebuild tail (`applyVertexRemapAndRebuild`:
     /// collapsed corners and faces dropped, edges rebuilt, slots compacted).
     /// Returns the number of vertices welded away. Open (task 0360): a
@@ -4622,13 +4622,14 @@ struct Mesh {
         return remap;
     }
 
-    /// Weld through `computeWeldRemap(epsSq, null, copyStarts)` and apply it
+    /// Weld through `computeWeldRemap(epsSq, mask, copyStarts)` and apply it
     /// with the relocate tail (`applyVertexRemap`: welded slots stay in
     /// `vertices` for the caller to compact). Readers: cleanup, mirror and the
-    /// three arrays (task 9435). Returns the number of vertices welded away.
-    size_t weldCoincidentVertices(double epsSq = 0, in size_t[] copyStarts = null) {
+    /// three arrays. Returns the number of vertices welded away.
+    size_t weldCoincidentVertices(double epsSq = 0, in size_t[] copyStarts = null,
+                                  in bool[] mask = null) {
         if (vertices.length < 2) return 0;
-        int[] remap = computeWeldRemap(epsSq, null, copyStarts);
+        int[] remap = computeWeldRemap(epsSq, mask, copyStarts);
 
         size_t welded = 0;
         foreach (i; 0 .. vertices.length)
@@ -7412,7 +7413,7 @@ struct Mesh {
         else                  axisVec = Vec3(0, 0, 1);
 
         float stepAngle = totalAngle / cast(float)count;
-        size_t[] copyStarts;   // the weld's PER-COPY scope (task 9436)
+        size_t[] copyStarts;   // the weld's PER-COPY scope
 
         foreach (step; 1 .. count) {
             copyStarts ~= vertices.length;
@@ -7653,8 +7654,10 @@ struct Mesh {
         // verts at offset i*step and emit cloned faces referencing them.
         // vertMap is rebuilt per step so each copy gets a fresh set of
         // verts (no accidental sharing between copies).
-        // The weld's PER-COPY scope (task 9436): the detached source is copy 0.
-        size_t[] copyStarts;
+        // The weld's PER-COPY scope. A detached source is copy 1 (it re-joins
+        // its unselected neighbours, as before the scope); the slots it left
+        // are unreferenced and kept out of the search.
+        size_t[] copyStarts = detachSource ? [detachVertBase] : null;
         foreach (step; 1 .. count) {
             copyStarts ~= vertices.length;
             uint[uint] vertMap;
@@ -7739,7 +7742,8 @@ struct Mesh {
         if (weld > 0.0f) {
             double epsSq = cast(double)weld * cast(double)weld;
             const size_t cornersBeforeWeld = cornerCount();
-            if (weldCoincidentVertices(epsSq, copyStarts) > 0) {
+            if (weldCoincidentVertices(epsSq, copyStarts,
+                    detachSource ? computeReferencedVertexMask() : null) > 0) {
                 compactUnreferenced();
                 // What the weld did to the CORNERS is decided by the only
                 // thing it leaves behind — the total (task 0830).
@@ -7964,7 +7968,7 @@ struct Mesh {
 
         size_t origFaceCount = faces.length;
         size_t[] newFaceIndices;
-        size_t[] copyStarts;   // the weld's PER-COPY scope, in slot order (task 9436)
+        size_t[] copyStarts;   // the weld's PER-COPY scope, in slot order
 
         foreach (i; 0 .. numX) {
             foreach (j; 0 .. numY) {

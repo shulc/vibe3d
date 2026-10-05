@@ -252,3 +252,26 @@ unittest { // census: one coincidence search, and the mask weld holds no copy of
     assert(callers == want, format("computeWeldRemap roster in source/mesh.d: expected %s, found %s",
                                    want, callers));
 }
+
+version (PerfProbe) unittest { // the mask weld is bucketed: a 20k-vertex grid at distance 1
+    // A 142 x 142 grid of unit spacing (20 164 vertices), all selected, merged at
+    // distance 1 (each seed claims its grid neighbours). The work is the number of
+    // candidate pairs the one search looked at — the quadratic walk it replaced
+    // compared ~2e8 pairs; this pins the bucketed count.
+    enum side = 142;
+    Vec3[] vs;
+    foreach (z; 0 .. side) foreach (x; 0 .. side) vs ~= Vec3(x, 0, z);
+    uint[][] fs;
+    foreach (z; 0 .. side - 1) foreach (x; 0 .. side - 1) {
+        const uint a = cast(uint)(z * side + x);
+        fs ~= [a, a + 1, a + 1 + side, a + side];
+    }
+    Mesh m = settle(vs, fs);
+    auto all = new bool[](m.vertices.length);
+    all[] = true;
+    const before = weldPairVisits;
+    const welded = m.weldVerticesByMask(all, 1.0, true);
+    const visits = weldPairVisits - before;
+    assert(welded == 10_082, format("population: expected 10082 welds, got %d", welded));
+    assert(visits == 90_740, format("bucket visits: expected 90740, got %d", visits));
+}

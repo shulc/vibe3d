@@ -9,9 +9,9 @@
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
 source-files 578
-task-citation-lines 5254
+task-citation-lines 5250
 citing-files 454
-long-comment-runs 269
+long-comment-runs 268
 files-with-long-runs 144
 
 # Exact per-file task-citation allowances, sorted by path.
@@ -267,7 +267,7 @@ allow source/light_rig.d 1
 allow source/live_registration_roles.d 1
 allow source/log.d 1
 allow source/math.d 27
-allow source/mesh.d 491
+allow source/mesh.d 488
 allow source/mesh_analysis.d 4
 allow source/mesh_command_registration.d 3
 allow source/mesh_corner_maps.d 17
@@ -540,7 +540,7 @@ allow-runs source/io/scene_import.d 1
 allow-runs source/item_kinds.d 1
 allow-runs source/layer_params.d 2
 allow-runs source/math.d 4
-allow-runs source/mesh.d 26
+allow-runs source/mesh.d 25
 allow-runs source/mesh_dirty.d 3
 allow-runs source/mesh_edge_slice.d 2
 allow-runs source/mesh_edit_delta.d 7
