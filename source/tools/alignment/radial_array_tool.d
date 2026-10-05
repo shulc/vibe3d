@@ -746,10 +746,10 @@ private:
     }
 
     // The one operation: preview, prepared image and scripted apply. One
-    // copy (`count <= 1`) builds nothing. The mask is the L1 funnel: selected
-    // faces, else every VISIBLE face (tasks 9434, 0613).
+    // copy builds nothing: the kernel refuses `count <= 1` before reading the
+    // shift. The mask is the L1 funnel: selected faces, else every VISIBLE
+    // face (tasks 9434, 0613).
     size_t operation(ref Mesh target) {
-        if (count_ <= 1) return 0;
         const extraShift = axisUnit() * (offset_ / cast(float)(count_ - 1));
         return target.radialArrayFaces(target.operandFaceMask(), count_, axisChar(),
             center_, angle_ * PI / 180.0f, extraShift, weld_);

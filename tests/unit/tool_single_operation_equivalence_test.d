@@ -259,3 +259,73 @@ unittest {
         &hideAllUnselected);
     assert(rows == 5, format("%s rows ran, expected 5", rows));
 }
+
+// The callers' pre-steps around the one operation (task 9434 sweep): each
+// cell is the witness of one term the shared rows cannot see.
+unittest {
+    // Edge Bevel's topology key carries the zero-width crossing: dragging the
+    // width through zero and back never claims "same topology" wrongly.
+    {
+        auto r = new Rig(EditMode.Edges, &pickEdge);
+        auto t = makeTool!EdgeBevelTool(r);
+        seedSession(t, r.mesh);
+        foreach (w; [0.1f, 0.0f, 0.1f]) {
+            poke(t, "width", w); t.notifyInteractiveParamChanged("width");
+            const want = w == 0 ? 8 : 12;
+            assert(r.mesh.vertices.length == want, format("edge bevel at width "
+                ~ "%s: %s vertices, expected %s", w, r.mesh.vertices.length, want));
+        }
+        assert(t.previewRebuildCounts().keyMisses == 0, format("edge bevel: the "
+            ~ "key missed the zero crossing %s times", t.previewRebuildCounts().keyMisses));
+        assert(abs(digest(r.mesh) - -72.5054) < 1e-3, "edge bevel: back at 0.1, "
+            ~ "not the measured mesh");
+    }
+    // Polygon Bevel builds the live operation only once a press applied it,
+    // and its key carries that crossing.
+    {
+        auto r = new Rig(EditMode.Polygons, &pickFace);
+        auto t = makeTool!PolyBevelTool(r);
+        t.activate();
+        poke(t, "inset", 0.1f); poke(t, "shift", 0.2f);
+        t.notifyInteractiveParamChanged("inset");
+        assert(r.mesh.vertices.length == 8 && r.mesh.faces.length == 6, format(
+            "polygon bevel built %sv/%sf before a press", r.mesh.vertices.length,
+            r.mesh.faces.length));
+        poke(t, "applied", 1.0f); t.notifyInteractiveParamChanged("applied");
+        assert(r.mesh.vertices.length == 12 && r.mesh.faces.length == 10, format(
+            "polygon bevel applied: %sv/%sf, expected 12v/10f",
+            r.mesh.vertices.length, r.mesh.faces.length));
+        assert(t.previewRebuildCounts().keyMisses == 0, format("polygon bevel: "
+            ~ "the key missed the applied crossing %s times",
+            t.previewRebuildCounts().keyMisses));
+    }
+    // Polygon Bevel's scripted apply at 0/0 is the base itself (the arm's
+    // zero ring is not applied) and succeeds.
+    {
+        auto r = new Rig(EditMode.Polygons, &pickFace);
+        auto t = makeTool!PolyBevelTool(r);
+        t.activate();
+        poke(t, "inset", 0.0f); poke(t, "shift", 0.0f);
+        const before = r.mesh.vertices.dup;
+        assert(t.applyHeadless() && r.mesh.vertices == before &&
+            r.mesh.faces.length == 6, format("polygon bevel 0/0 scripted: %sv/%sf, "
+            ~ "expected the base 8v/6f", r.mesh.vertices.length, r.mesh.faces.length));
+    }
+    // Array 1x1x1 with Replace Source transforms the source in place and adds
+    // no face: the kernel answers 0, yet the edit is built and applies.
+    {
+        rows = 0;
+        row!ArrayTool(EditMode.Polygons, &pickFace,
+            ["numX", "numZ", "replace", "angB"], [1.0f, 1.0f, 1.0f, 30.0f], 8, 6, 30.4641,
+            (ref Mesh m, Tool t) { poke(t, "replace", 0.0f); hideAllUnselected(m, t); });
+        assert(rows == 1);
+        auto r = new Rig(EditMode.Polygons, &pickFace);
+        auto t = makeTool!ArrayTool(r);
+        seedSession(t, r.mesh);
+        foreach (n, v; ["numX": 1.0f, "numZ": 1.0f, "replace": 1.0f, "angB": 30.0f])
+            poke(t, n, v);
+        t.notifyInteractiveParamChanged("angB");
+        assert(t.preparedParamStateForTest(true), "array replace-in-place: the live "
+            ~ "edit is not built");
+    }
+}

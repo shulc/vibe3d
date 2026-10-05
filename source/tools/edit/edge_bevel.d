@@ -627,8 +627,8 @@ private:
     // cage on the placement path and the live mesh on a key change, so the
     // batch lands on the mesh the kernel actually gets. The mask is the L1
     // funnel: the selection, else every VISIBLE edge (tasks 9434, 1903, 0613).
+    // A zero width builds nothing: the kernel refuses it before any edit.
     size_t operation(ref Mesh target) {
-        if (width_ == 0.0f) return 0;
         auto ed = MeshEditBatch.unrecorded(target, kEdgeBevelEditScope);
         const n = ed.bevelEdgesByMask(target.operandEdgeMask(), width_,
             roundLevel_, widthMode_);
