@@ -290,7 +290,7 @@ final class InputFrameState {
             && app.gpuUploadedPreview;
     }
 
-    /// The ONE hover publish (task 9439), for the frame and the press-time
+    /// The ONE hover publish, for the frame and the press-time
     /// re-pick: the candidates see the raw picks; an active tool keeps one type
     /// (V > E > F, written back here); the `hover_state` globals copy the
     /// result, held ids included. A method here, not in the leaf `hover_state`
