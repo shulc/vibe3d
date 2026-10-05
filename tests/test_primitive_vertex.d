@@ -484,5 +484,35 @@ unittest { // the drag gesture: one record, at the release
     postJson("/api/command", "tool.set prim.cube off");
     deactivateTool();
 
+    // R8: a raw history.undo during the drag restores an image without the
+    // live vertex; the gesture is then over (no write, no record, no crash).
+    resetEmpty();
+    setCamera(0.0, 0.2, 3.0);
+    postJson("/api/command", commandBody("history.clear"));
+    postJson("/api/command", commandBody("mesh.addVertex", `{"pos":[0,0,0]}`));
+    activateVertex();   // after the command: a mesh command drops an armed tool
+    play(pressAndDrag()[0 .. 4]);
+    check(verts().length == 2, format("R8: the live vertex beside the added one, %s", verts()));
+    auto u = postJson("/api/command", commandBody("history.undo"));
+    check(u["status"].str == "ok", "R8: the raw undo failed: " ~ u.toString);
+    play(pressAndDrag()[4 .. $] ~ [ev("up", tUp, X + STEP * N, Y)]);
+    check(verts().length == 0 && undoDepth() == 0,
+          format("R8: after the raw undo the drag writes and records nothing: %s, depth %d",
+                 verts(), undoDepth()));
+    deactivateTool();
+
+    // R9: with no live vertex the tool leaves RMB alone: the lasso selects.
+    begin();
+    play(ev("motion", 10, X, Y, 1, 0), ev("down", 20, X, Y), ev("up", 30, X, Y),
+         ev("motion", 40, X + 60, Y, 1, 0), ev("down", 50, X + 60, Y), ev("up", 60, X + 60, Y));
+    string[] lasso = [ev("motion", 10, X - 30, Y - 30, 4, 0), ev("down", 20, X - 30, Y - 30, 3)];
+    foreach (i, p; [[X + 90, Y - 30], [X + 90, Y + 30], [X - 30, Y + 30], [X - 30, Y - 30]])
+        lasso ~= ev("motion", 30 + 10 * i, p[0], p[1], 1, 4);
+    play(lasso ~ ev("up", 80, X - 30, Y - 30, 3));
+    auto sel = getJson("/api/selection");
+    check(verts().length == 2 && sel["selectedVertices"].array.length == 2,
+          format("R9: an idle RMB lasso over the two vertices selects both: %s", sel.toString));
+    deactivateTool();
+
     assert(fails.length == 0, format("%-(%s\n%)", fails));
 }
