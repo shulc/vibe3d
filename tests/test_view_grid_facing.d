@@ -63,8 +63,9 @@ size_t lineRuns(int[3][] px) {
 /// over most of the other dimension's span and clear of the horizon. At the
 /// test cell (650x544) a facing lattice crosses 9 / 5 lines; the edge-on
 /// ground grid 0 / 0 (measured on the parent commit).
-size_t[2] scan(string view) {
+size_t[2] scan(string view, string pin = null) {
     cmd(commandBody("scene.reset", `{"empty":true}`));
+    if (pin !is null) cmd("tool.pipe.attr workplane mode " ~ pin);
     cmd("viewport.view " ~ view);
     frameFence(null, 3);
     Viewport vp = viewportFromCameraMatrices();
@@ -96,4 +97,12 @@ unittest { // Right — the same law on the third axis (the YZ plane)
     assert(r[0] >= 3 && r[1] >= 3,
         format("Right: the grid must face the view (a lattice both ways), got "
                ~ "row %d / column %d", r[0], r[1]));
+}
+
+unittest { // Front under a PINNED ground plane: the grid is the stage's (edge-on) —
+    // the renderer reads the pinned stage, not only the view.
+    auto r = scan("Front", "worldY");
+    assert(r[0] == 0 && r[1] == 0,
+        format("Front, ground plane pinned: the grid must be the pinned XZ plane "
+               ~ "(edge-on, no lattice), got row %d / column %d", r[0], r[1]));
 }
