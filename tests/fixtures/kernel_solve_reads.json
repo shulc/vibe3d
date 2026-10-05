@@ -6,7 +6,7 @@
  "radial_align_anchor": {
   "register_row": 14,
   "symbol_exists": true,
-  "law": "There is NO closed-form anchor. The alignment first lays every selected vertex on the target ring at equal `360/N` spacing from an arbitrary zero, then chooses the ring's overall rotation `theta` about the ring axis by MINIMISING the total displacement of the selection: f(theta) = sqrt( sum over the selection of |current_position - rotate(target, theta)|^2 ), where the rotation is about the ring's axis through the ring's centre. The anchor angle is argmin f.",
+  "law": "SUPERSEDED IN PART by task 9490 (see `superseded_by`). Read in task 2890: the ring's overall rotation theta about the ring axis is the stopping point of a bounded search on f(theta) = sqrt(sum |p - rotate(slot, theta)|^2). Task 9490 corrected WHAT is laid and WHAT p is: the slots start at a chosen chain vertex placed at its OWN angle, and p ranges over the chain vertices' edge-neighbours outside the selection, not over the selection.",
   "objective": "sqrt(sum of squared distances from each vertex to its own rotated target)",
   "objective_is_monotone_in_sum_of_squares": true,
   "search": {
@@ -16,19 +16,26 @@
    "full_turn": 6.283185307179586,
    "step_factor_on_reversal": 0.5,
    "max_iterations": 100,
-   "termination": "the change in the objective falling to or below a scale-relative tolerance derived from the tool's own angle setting, or the iteration cap, whichever comes first"
+   "termination": "the change in the objective falling to or below max(radius / 3,360,000, 1e-10) (task 9490: the tolerance helper is fed the RADIUS; task 2890 read it as the angle attribute), or the iteration cap, whichever comes first"
   },
   "consequences": [
    "The anchor is a CONTINUOUS function of the input geometry, so two configurations of the same vertices under different ring modes minimise different objectives and legitimately land on different angles. The register's observation -- about -135.87 degrees in one mode against about -124.20 in another on the same input, with no common closed form -- is the expected behaviour of this solve, not an unexplained discrepancy.",
    "The result is NOT bit-reproducible in general: it is the stopping point of a bounded search, so a port must match the search schedule, not just the objective, to land on the same angle."
   ],
   "refuted": {
-   "anchor_is_the_first_selected_vertex_angle": "REFUTED: no vertex's own pre-align angle is read anywhere on this path. The chain order determines which vertex gets which SLOT, and nothing else.",
+   "anchor_is_the_first_selected_vertex_angle": "REFUTED as a candidate (the first SELECTED vertex is not the anchor), but the 2890 reason 'no vertex's own angle is read' is itself refuted by task 9490: the ring builder places the START vertex (smallest |plane angle| mod 90 degrees) at its own angle before the search.",
    "anchor_is_a_fixed_basis_vector_convention": "REFUTED: the starting angle is a plain zero and is then searched away from; no basis convention survives into the answer.",
    "anchor_is_click_order": "REFUTED for the same reason as the first candidate."
   },
   "capture_that_would_have_measured_nothing": "The register prescribed varying chain start-vertex and winding across three or more configurations to find what determines the anchor. All three of its named candidates are refuted by the read, so that sweep would have been searching for a quantity that does not exist -- and because reordering a chain also reorders the slots, it would have produced differences with a different cause and invited exactly the wrong conclusion.",
-  "what_a_boot_would_still_add": "One numeric regression anchor -- a concrete chain and the angle the reference settles on -- to pin the search SCHEDULE, which the law alone does not make bit-reproducible. Named as a follow-up, not taken here."
+  "what_a_boot_would_still_add": "One numeric regression anchor -- a concrete chain and the angle the reference settles on -- to pin the search SCHEDULE, which the law alone does not make bit-reproducible. Named as a follow-up, not taken here.",
+  "superseded_by": {
+   "task": 9490,
+   "start_vertex": "the chain vertex whose direction from the centre, in the plane frame of the ring normal (dominant axis; shortest-arc rotation onto it), has the smallest |angle| mod 90 degrees; first wins a tie; it sits at its own angle",
+   "objective_points": "the edge-neighbours of each chain vertex that carry no selection mark; none -> f is constant and theta = 0",
+   "tolerance_source": "radius (2890 said the angle attribute)",
+   "evidence": "replayed to <= 3e-7 m on the three captured radial rigs plus angle-90 and weight-0.5 (private toolcards xfrm.radialAlign, shared_layer2 K-F); vibe3d port: tools.alignment.align_kernels.radialAlignTargets"
+  }
  },
  "junction_ring_radius": {
   "register_row": 23,

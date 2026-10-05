@@ -203,12 +203,13 @@ unittest { // Radial Align — `side`/effSides DoS clamp: an absurd `sides`
 // toolcards: shared_layer2 K-F `KF_F2cal`; xfrm.radialAlign `ra_circle`,
 // `ra_nside4`). Chains are in selection order, the order the reference
 // walked them in both rigs. Values are the captured float positions.
-private void assertCell(const(Vec3)[] got, const(float[3])[] want, string cell) {
+private void assertCell(const(Vec3)[] got, const(float[3])[] want, string cell,
+                        float tol = 2e-6f) {
     import std.format : format;
     assert(got.length == want.length && want.length == 4, cell ~ ": population");
     foreach (i, w; want)
-        assert(abs(got[i].x - w[0]) < 2e-6f && abs(got[i].y - w[1]) < 2e-6f
-               && abs(got[i].z - w[2]) < 2e-6f,
+        assert(abs(got[i].x - w[0]) <= tol && abs(got[i].y - w[1]) <= tol
+               && abs(got[i].z - w[2]) <= tol,
             format("%s v%s: got (%.7f, %.7f, %.7f), captured (%.7f, %.7f, %.7f)",
                    cell, i, got[i].x, got[i].y, got[i].z, w[0], w[1], w[2]));
 }
@@ -236,14 +237,28 @@ unittest { // no outside neighbour: the start vertex keeps its own angle
 
 unittest { // circle: start vertex + the turn search against the outside neighbours
     assertCell(radialAlignTargets(raRig(), false, 4, 0, 0, raOutside()),
-        [[-0.4420957f, -0.5f, -0.3541404f], [0.5309171f, -0.5f, -0.3688723f],
-         [0.5456491f, -0.5f, 0.6041404f], [-0.4273637f, -0.5f, 0.6188723f]], "ra_circle");
+        [[-0.44209566712379456f, -0.5f, -0.35414040088653564f],
+         [0.5309171080589294f, -0.5f, -0.36887234449386597f],
+         [0.5456490516662598f, -0.5f, 0.6041404008865356f],
+         [-0.42736372351646423f, -0.5f, 0.618872344493866f]], "ra_circle", 3e-7f);
+}
+
+unittest { // circle at angle 90: the same search, then the attribute turn on top
+           // (`ra_circle_angle90`) — the stopping tolerance comes from the
+           // RADIUS, not the angle attribute
+    assertCell(radialAlignTargets(raRig(), false, 4, 90, 0, raOutside()),
+        [[0.5309171676635742f, -0.5f, -0.36887234449386597f],
+         [0.5456490516662598f, -0.5f, 0.6041404008865356f],
+         [-0.4273637533187866f, -0.5f, 0.618872344493866f],
+         [-0.44209566712379456f, -0.5f, -0.35414040088653564f]], "ra_circle_angle90", 3e-7f);
 }
 
 unittest { // N-Sided: the same start vertex at its own angle, no search
     assertCell(radialAlignTargets(raRig(), true, 4, 0, 0, raOutside()),
-        [[-0.3350036f, -0.5f, -0.4441102f], [0.6208869f, -0.5f, -0.2617803f],
-         [0.438557f, -0.5f, 0.6941102f], [-0.5173336f, -0.5f, 0.5117803f]], "ra_nside4");
+        [[-0.3350035846233368f, -0.5f, -0.444110244512558f],
+         [0.6208869218826294f, -0.5f, -0.2617802619934082f],
+         [0.438556969165802f, -0.5f, 0.6941102147102356f],
+         [-0.5173335671424866f, -0.5f, 0.5117802619934082f]], "ra_nside4", 3e-7f);
 }
 
 unittest { // control that must flip: without the outside neighbours the circle

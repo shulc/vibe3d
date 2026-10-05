@@ -27,10 +27,12 @@
 // asserted -- and no amount of measuring output geometry would have shown
 // it.
 //
-// WHAT IT DOES NOT PIN. Anything in vibe3d. We ship no radial alignment
-// anchor search, and our junction ring feeds the reference's own captured
-// control points rather than deriving them. This cell exists so whoever
-// ports either one starts from the read law.
+// WHAT IT DOES NOT PIN. Anything in vibe3d. Our junction ring feeds the
+// reference's own captured control points rather than deriving them. The
+// ring-alignment row was ported and CORRECTED by task 9490 (start vertex at
+// its own angle, outside-neighbour objective, radius tolerance); the row's
+// `superseded_by` records that, and the port's cells live in
+// tests/unit/tools/alignment/align_kernels_test.d.
 //
 // MUTATIONS (each seen red, in isolation):
 //   * change `step_stride` in the fixture from 2 to 1 -> the even ring stops
@@ -237,6 +239,8 @@ unittest // the objective's minimum is the anchor, and the refuted candidates mi
 {
     auto fx  = fixture();
     auto row = fx["radial_align_anchor"];
+    assert("superseded_by" in row.object && row["superseded_by"]["task"].integer == 9490,
+        "the 2890 radial row was corrected by task 9490; its pointer must stay");
 
     foreach (k; ["anchor_is_the_first_selected_vertex_angle",
                  "anchor_is_a_fixed_basis_vector_convention",

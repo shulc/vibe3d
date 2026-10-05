@@ -196,6 +196,47 @@ D2 hullMajorAxis(const D2[] h) pure nothrow @nogc @safe {
     return dir;
 }
 
+/// The decoded plane frame of a unit normal `n`: its dominant axis `k`, the
+/// in-plane component indices (`a1`, `a2`) = (y, z) / (z, x) / (x, y), and
+/// `M`, the shortest-arc rotation taking `n` onto `e_k` (identity when `n`
+/// is `e_k`). In-plane coordinates of `v` are `(M v)[a1]`, `(M v)[a2]`.
+struct PlaneFrame {
+    int k, a1, a2;
+    double[3][3] M = [[1.0, 0, 0], [0.0, 1, 0], [0.0, 0, 1]];
+    double[2] toPlane(D3 v) const pure nothrow @nogc @safe {
+        D3 r;
+        foreach (i; 0 .. 3) r[i] = M[i][0] * v[0] + M[i][1] * v[1] + M[i][2] * v[2];
+        return [r[a1], r[a2]];
+    }
+}
+
+/// Fills `f` for unit normal `n`; false when `n` is exactly opposite its
+/// dominant axis (no shortest arc — callers decide; `f.M` stays identity).
+bool planeFrame(D3 n, out PlaneFrame f) pure nothrow @nogc @safe {
+    static immutable int[3] A1 = [1, 2, 0], A2 = [2, 0, 1];
+    const k = dominantAxis(n);
+    f.k = k; f.a1 = A1[k]; f.a2 = A2[k];
+    D3 e = 0; e[k] = 1;
+    bool same = true;
+    foreach (i; 0 .. 3) if (abs(n[i] - e[i]) > 1e-12) same = false;
+    if (same) return true;
+    D3 ax = [e[1] * n[2] - e[2] * n[1], e[2] * n[0] - e[0] * n[2], e[0] * n[1] - e[1] * n[0]];
+    const s = sqrt(ax[0] * ax[0] + ax[1] * ax[1] + ax[2] * ax[2]);
+    const cth = e[0] * n[0] + e[1] * n[1] + e[2] * n[2];
+    if (s < 1e-12) return false;
+    const ang = atan2(s, cth);
+    ax[] /= s;
+    double[3][3] K = [[0.0, -ax[2], ax[1]], [ax[2], 0.0, -ax[0]], [-ax[1], ax[0], 0.0]];
+    foreach (i; 0 .. 3)
+        foreach (j; 0 .. 3) {
+            double kk = 0;
+            foreach (t; 0 .. 3) kk += K[i][t] * K[t][j];
+            // M = R^T where R (Rodrigues about e x n) takes e_k onto n
+            f.M[j][i] = (i == j ? 1.0 : 0.0) + sin(ang) * K[i][j] + (1 - cos(ang)) * kk;
+        }
+    return true;
+}
+
 /// Orientation of the plane through two skew edges' endpoints (`pts`,
 /// exact duplicates already merged by the caller or not — they are merged
 /// here). Writes Y = normal, X = normalize(Y x d), Z = X x Y (= d).
@@ -211,31 +252,10 @@ SkewFit skewEdgePairFrame(const Vec3[] pts, out Vec3 axisX, out Vec3 normal,
     D3 n;
     const fit = planeFitNormal(p, n);
     if (fit != SkewFit.ok) return fit;
-    const k = dominantAxis(n);
-    // M: the shortest-arc rotation taking n onto e_k (M = R^T, R e_k = n).
-    double[3][3] M = [[1.0, 0, 0], [0.0, 1, 0], [0.0, 0, 1]];
-    D3 e = 0; e[k] = 1;
-    bool same = true;
-    foreach (i; 0 .. 3) if (abs(n[i] - e[i]) > 1e-12) same = false;
-    if (!same) {
-        D3 ax = [e[1] * n[2] - e[2] * n[1], e[2] * n[0] - e[0] * n[2], e[0] * n[1] - e[1] * n[0]];
-        const s = sqrt(ax[0] * ax[0] + ax[1] * ax[1] + ax[2] * ax[2]);
-        const cth = e[0] * n[0] + e[1] * n[1] + e[2] * n[2];
-        if (s < 1e-12) return SkewFit.antiparallel;
-        const ang = atan2(s, cth);
-        ax[] /= s;
-        double[3][3] K = [[0.0, -ax[2], ax[1]], [ax[2], 0.0, -ax[0]], [-ax[1], ax[0], 0.0]];
-        double[3][3] R;
-        foreach (i; 0 .. 3)
-            foreach (j; 0 .. 3) {
-                double kk = 0;
-                foreach (t; 0 .. 3) kk += K[i][t] * K[t][j];
-                R[i][j] = (i == j ? 1.0 : 0.0) + sin(ang) * K[i][j] + (1 - cos(ang)) * kk;
-            }
-        foreach (i; 0 .. 3) foreach (j; 0 .. 3) M[i][j] = R[j][i];
-    }
-    static immutable int[3] A1 = [1, 2, 0], A2 = [2, 0, 1];
-    const a1 = A1[k], a2 = A2[k];
+    PlaneFrame f;
+    if (!planeFrame(n, f)) return SkewFit.antiparallel;
+    const k = f.k, a1 = f.a1, a2 = f.a2;
+    const M = f.M;
     D2[] pts2;
     foreach (q; p) {
         D3 r;

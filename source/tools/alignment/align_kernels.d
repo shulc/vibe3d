@@ -372,36 +372,23 @@ Vec3[] radialAlignTargets(const(Vec3)[] source, bool nsideMode, int sides,
     return result;
 }
 
-/// The chain vertex the slot ring starts at: the one whose
-/// direction from `center`, read in the plane frame of `normal`, has the
-/// smallest `|angle| mod 90°`; the first such vertex wins a tie. The frame
-/// is the world plane of the normal's largest component (X → (y, z),
-/// Y → (z, x), Z → (x, y)), turned by the shortest rotation that carries
-/// the normal onto that axis; a normal exactly opposite the axis turns
-/// half a revolution about world Y instead (as read — for a −Y normal that
-/// leaves the frame upside down; the reference reaches the opposite case
-/// through fit noise, see the task card).
+/// The chain vertex the slot ring starts at: the one whose direction from
+/// `center`, read in `workplane_fit.planeFrame` of `normal`, has the
+/// smallest `|angle| mod 90°`; the first such vertex wins a tie. A normal
+/// exactly opposite its dominant axis turns half a revolution about world Y
+/// instead (as read — for a −Y normal that leaves the frame upside down;
+/// the reference may reach the other frame through fit noise, task card).
 private size_t radialAlignStart(const(D3)[] p, D3 center, D3 normal) pure nothrow @safe {
-    const ax = [abs(normal.x), abs(normal.y), abs(normal.z)];
-    const int m = (ax[0] > ax[1] && ax[0] > ax[2]) ? 0
-                : (ax[1] >= ax[0] && ax[1] > ax[2]) ? 1 : 2;
-    static immutable int[3] firstAxis = [1, 2, 0], secondAxis = [2, 0, 1];
-    D3 e = D3(0, 0, 0);
-    e[m] = 1;
-    const D3 k = normal.cross(e);
-    const double c = normal.dot(e);
-    D3 turn(D3 d) {   // Rodrigues: rotate d about k-hat by acos(c)
-        if (k.len < 1e-12)
-            return c > 0 ? d : D3(-d.x, d.y, -d.z);
-        const D3 kh = k * (1.0 / k.len);
-        const double s = k.len;
-        return d * c + kh.cross(d) * s + kh * (kh.dot(d) * (1 - c));
-    }
+    import workplane_fit : PlaneFrame, planeFrame;
+    PlaneFrame f;
+    if (!planeFrame([normal.x, normal.y, normal.z], f))
+        f.M = [[-1.0, 0, 0], [0.0, 1, 0], [0.0, 0, -1]];
     size_t best = 0;
     double bestKey = double.infinity;
     foreach (i, q; p) {
-        const D3 d = turn(q - center);
-        const double a = abs(xyAngle(d[firstAxis[m]], d[secondAxis[m]]));
+        const D3 d = q - center;
+        const uv = f.toPlane([d.x, d.y, d.z]);
+        const double a = abs(xyAngle(uv[0], uv[1]));
         const double key = a - cast(long)(a / (PI / 2)) * (PI / 2);
         if (key < bestKey) { bestKey = key; best = i; }
     }
@@ -466,10 +453,6 @@ private struct D3 {
     D3 cross(D3 o) const pure nothrow @safe @nogc
     { return D3(y * o.z - z * o.y, z * o.x - x * o.z, x * o.y - y * o.x); }
     double len() const pure nothrow @safe @nogc { return sqrt(dot(this)); }
-    ref double opIndex(size_t i) return pure nothrow @safe @nogc
-    { return i == 0 ? x : i == 1 ? y : z; }
-    double opIndex(size_t i) const pure nothrow @safe @nogc
-    { return i == 0 ? x : i == 1 ? y : z; }
 }
 
 
