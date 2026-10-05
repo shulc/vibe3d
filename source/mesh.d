@@ -3764,18 +3764,19 @@ struct Mesh {
     /// `keep` in place — adjacent corners collapse the edge, non-adjacent ones
     /// leave the self-touching `[a,keep,b,keep]` the reference keeps.
     ///
-    /// A pair is REFUSED (skipped, the rest still weld) when `keep == drop` or
-    /// an index is out of range; when `drop` was claimed by an earlier pair or
-    /// is any pair's keep, or `keep` is any pair's drop (a two-level remap
-    /// `applyVertexRemapAndRebuild` does not chase); and when neither vertex is
-    /// on a face (`compactUnreferenced` would vanish both).
+    /// A pair is REFUSED (skipped, the rest still weld) when an index is out of
+    /// range; when `drop` was claimed by an earlier pair or is any pair's keep,
+    /// or `keep` is any pair's drop (a two-level remap the rewrite does not
+    /// chase; a self pair is one, and blocks every other pair of its vertex);
+    /// and when neither vertex is on a face (`compactUnreferenced` would vanish
+    /// both).
     size_t weldVertexPairs(in uint[2][] pairs) {
         if (pairs.length == 0) return 0;
         if (vertices.length < 2) return 0;
-        bool valid(in uint[2] p) { return p[0] != p[1] && p[0] < vertices.length && p[1] < vertices.length; }
+        bool valid(in uint[2] p) { return p[0] < vertices.length && p[1] < vertices.length; }
 
         // The chain test reads EVERY asked pair, refused ones included, so the
-        // outcome does not depend on input order.
+        // outcome does not depend on input order; a self pair is its own chain.
         bool[] isKeep = new bool[](vertices.length);
         bool[] isDrop = new bool[](vertices.length);
         foreach (p; pairs) if (valid(p)) { isKeep[p[0]] = true; isDrop[p[1]] = true; }
