@@ -4210,7 +4210,8 @@ public:
         foreach (vi; moveVerts_) if (sp.vertSign[vi] != 0) { sp.baseSide = sp.vertSign[vi]; break; }
         auto operand = new bool[sp.pairOf.length], touched = new bool[sp.pairOf.length];
         foreach (vi; moveVerts_) operand[vi] = true;
-        foreach (vi; moveVerts_) if (sp.vertSign[vi] == sp.baseSide && sp.pairOf[vi] >= 0) operand[sp.pairOf[vi]] = true;
+        foreach (vi; moveVerts_)
+            if (sp.vertSign[vi] == sp.baseSide && sp.pairOf[vi] >= 0) operand[sp.pairOf[vi]] = true;
         applySymmetryMirror(mesh, sp, operand, touched);
         uint[] all = moveVerts_.dup;
         foreach (i, t; touched) if (t) all ~= cast(uint)i;   // a repeat: the first claim wins
