@@ -412,7 +412,7 @@ private bool hitOnTriangle(const ref RelaxVec3[3] t, RelaxVec3 p, RelaxVec3 d,
 }
 
 /// Preserve's hit structure: a median-split AABB tree in double over the
-/// ORIGINAL triangles, built once per smooth call (task 9484 review; the brute
+/// ORIGINAL triangles, built once per smooth call (the brute
 /// pass was O(active · triangles) per projected iteration). Boxes are padded
 /// far beyond the leaf test's tolerance, nodes are pruned only when their
 /// nearest |t| EXCEEDS the best, and leaves keep the brute order's winner

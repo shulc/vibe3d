@@ -54,7 +54,7 @@ import trackball      : kTrackballDefault, kTrackballSpeedDefault,
 enum int kPrefsVersion = 2;
 
 /// A cached tool attribute retired by a schema bump: an entry read from a file
-/// older than `since` drops it. v2 (task 9484): Smooth's `sharpThreshold`
+/// older than `since` drops it. v2: Smooth's `sharpThreshold`
 /// became DEGREES (v1 holds the radians sentinel "-1"); `sharpAngle` is gone.
 private struct RetiredAttr { int since; string preset, node, attr; }
 private immutable RetiredAttr[] kRetiredAttrs = [
