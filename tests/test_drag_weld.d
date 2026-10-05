@@ -82,7 +82,8 @@ void hideVerts(int[] idx) {
 /// One gesture: press on `src`, release at `endWorld` + (offX, offY) pixels.
 /// Returns the model after it and asserts the history grew by `welded`.
 JSONValue dragWeld(Rig r, int src, float[3] endWorld, bool welded,
-                   int offX = 0, int offY = 0, bool snap = true, int[] hide = null) {
+                   int offX = 0, int offY = 0, bool snap = true, int[] hide = null,
+                   int pressOffY = 0) {
     loadRig(r);
     if (hide.length) hideVerts(hide);
     auto vp = frontView(0.25f, 0.15f);
@@ -92,13 +93,20 @@ JSONValue dragWeld(Rig r, int src, float[3] endWorld, bool welded,
     auto cam = fetchCamera(baseUrl);
     auto a = px(vp, r.pts[src]), b = px(vp, endWorld);
     playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
-                             a[0], a[1], b[0] + offX, b[1] + offY, 10), baseUrl);
+                             a[0], a[1] + pressOffY, b[0] + offX, b[1] + offY, 10), baseUrl);
     ok("tool.set mesh.dragWeld off");
     snapState(false);
     assert(modelDepth() - before == (welded ? 1 : 0),
         format("press %s, release %s%+d%+d: history grew by %d, expected %d",
                r.pts[src], endWorld, offX, offY, modelDepth() - before, welded ? 1 : 0));
     return getModel();
+}
+
+/// `VIBE3D_CELL=<id>` runs one cell alone (druntime stops a module at its first red).
+bool cell(string id) {
+    import std.process : environment;
+    const only = environment.get("VIBE3D_CELL");
+    return only is null || only == id;
 }
 
 size_t nv(JSONValue m) { return m["vertices"].array.length; }
@@ -125,6 +133,7 @@ enum float[3] kEndC = [0.5f, 0f, 0f];
 // Command door: the same pair weld, by index.
 // ---------------------------------------------------------------------------
 unittest { // command: target 4 survives at its own index-1 slot, undo restores
+    if (!cell("cmd-W2c")) return;
     loadRig(cast(Rig)kC);
     ok(`{"id":"mesh.weldVertexPair","params":{"source":1,"target":4}}`);
     assertMesh(getModel(),
@@ -136,6 +145,7 @@ unittest { // command: target 4 survives at its own index-1 slot, undo restores
 }
 
 unittest { // command: the same index, or a hidden one, is a refusal (nothing recorded)
+    if (!cell("cmd-refuse")) return;
     foreach (hidden; [false, true]) {
         loadRig(cast(Rig)kC);
         if (hidden) hideVerts([4]);
@@ -149,6 +159,7 @@ unittest { // command: the same index, or a hidden one, is a refusal (nothing re
 }
 
 unittest { // command: diagonal corners of one quad weld into [a,T,b,T] (KW2_J)
+    if (!cell("cmd-J")) return;
     loadRig(Rig([[-0.3f, 0f, 0f], [0f, 0f, 0f], [0f, 0.36f, 0f], [-0.3f, 0.36f, 0f]], [[0u, 1, 2, 3]]));
     ok(`{"id":"mesh.weldVertexPair","params":{"source":1,"target":3}}`);
     assertMesh(getModel(), [[-0.3f, 0f, 0f], [0f, 0.36f, 0f], [-0.3f, 0.36f, 0f]],
@@ -159,6 +170,7 @@ unittest { // command: diagonal corners of one quad weld into [a,T,b,T] (KW2_J)
 // The tool: survivor (W2c), masks (W2e/f/g), reach (P6), same polygon (I/J).
 // ---------------------------------------------------------------------------
 unittest { // W2c: the dragged LOWER index dies, the target keeps its slot
+    if (!cell("W2c")) return;
     assertMesh(dragWeld(cast(Rig)kC, 1, kEndC, true),
         [[-0.5f, 0f, 0f], [0f, 0.3f, 0f], [-0.5f, 0.3f, 0f], [0.5f, 0.06f, 0f],
          [1f, 0.06f, 0f], [1f, 0.36f, 0f], [0.5f, 0.36f, 0f]],
@@ -166,6 +178,7 @@ unittest { // W2c: the dragged LOWER index dies, the target keeps its slot
 }
 
 unittest { // W2c reversed: the dragged HIGHER index onto vertex 0
+    if (!cell("W2c-r")) return;
     Rig r = Rig(cast(float[3][])kC.pts[4 .. 8] ~ cast(float[3][])kC.pts[0 .. 4],
                 [[0u, 1, 2, 3], [4u, 5, 6, 7]]);
     assertMesh(dragWeld(r, 5, kEndC, true),
@@ -185,12 +198,14 @@ Rig withBox(Rig r, float z0) {
 }
 
 unittest { // W2e: a target covered by a box in front is no target; behind, it is
+    if (!cell("W2e")) return;
     assert(nv(dragWeld(withBox(cast(Rig)kC, -0.6f), 1, kEndC, true)) == 15, "W2e-c must weld");
     assert(nv(dragWeld(withBox(cast(Rig)kC, 0.2f), 1, kEndC, false)) == 16,
         "W2e: an occluded target must not weld");
 }
 
 unittest { // W2f: a hidden target is no target; a hidden bystander changes nothing
+    if (!cell("W2f")) return;
     float[3][] far = [[1.3f, -0.5f, 0f], [1.6f, -0.5f, 0f], [1.6f, -0.2f, 0f], [1.3f, -0.2f, 0f]];
     Rig r = Rig(cast(float[3][])kC.pts ~ far, cast(uint[][])kC.faces ~ [[8u, 9, 10, 11]]);
     assert(nv(dragWeld(r, 1, kEndC, true, 0, 0, true, [8])) == 11, "W2f-c must weld");
@@ -199,6 +214,7 @@ unittest { // W2f: a hidden target is no target; a hidden bystander changes noth
 }
 
 unittest { // W2g: a press on a covered vertex drags nothing; uncovered, it welds
+    if (!cell("W2g")) return;
     Rig g(float z) {
         return Rig([[-0.7f, -0.7f, 0f], [0f, -0.7f, 0f], [0f, 0f, 0f], [-0.7f, 0f, 0f],
                     [0.5f, 0.06f, 0f], [1.2f, 0.06f, 0f], [1.2f, 0.7f, 0f], [0.5f, 0.7f, 0f],
@@ -211,16 +227,20 @@ unittest { // W2g: a press on a covered vertex drags nothing; uncovered, it weld
         "W2g: the covered vertex must be neither dragged nor welded: " ~ m["vertices"].toString);
 }
 
-unittest { // P6: the reach is the snap acceptance, and only with snapping on
+unittest { // P6: the reach is the snap acceptance, only with snapping on; the press is 8
+    if (!cell("P6")) return;
     enum float[3] t = [0.5f, 0.06f, 0f];
     assert(nv(dragWeld(cast(Rig)kC, 1, t, true, 0, 10)) == 7, "W2d: 10 px must weld");
     assert(nv(dragWeld(cast(Rig)kC, 1, t, true, 0, 18)) == 7, "W2h: 18 px must weld");
     assert(nv(dragWeld(cast(Rig)kC, 1, t, false, 0, 30)) == 8, "30 px must miss");
     assert(nv(dragWeld(cast(Rig)kC, 1, kEndC, false, 0, 0, false)) == 8,
         "snapping off: no weld at 6 px");
+    assert(nv(dragWeld(cast(Rig)kC, 1, kEndC, false, 0, 0, true, null, 12)) == 8,
+        "a press 12 px from the vertex must grab nothing (press reach 8)");
 }
 
 unittest { // same polygon: adjacent corners collapse (KW2_I), diagonal ones touch (KW2_J)
+    if (!cell("IJ")) return;
     assertMesh(dragWeld(Rig([[-0.5f, 0f, 0f], [0f, 0f, 0f], [0f, 0.36f, 0f], [-0.5f, 0.36f, 0f]],
                             [[0u, 1, 2, 3]]), 1, [0f, 0.3f, 0f], true),
         [[-0.5f, 0f, 0f], [0f, 0.36f, 0f], [-0.5f, 0.36f, 0f]], [[0u, 1, 2]], "KW2_I");
@@ -230,6 +250,7 @@ unittest { // same polygon: adjacent corners collapse (KW2_I), diagonal ones tou
 }
 
 unittest { // a background layer's vertex is never a target (edited mesh only)
+    if (!cell("BG")) return;
     loadRig(Rig([[-3f, 0f, 0f], [-2.5f, 0f, 0f], [-2.5f, 0.3f, 0f], [-3f, 0.3f, 0f]], [[0u, 1, 2, 3]]));
     ok("layer.add name:B");
     ok("prim.cube");                               // B: the unit cube at the origin
@@ -248,6 +269,7 @@ unittest { // a background layer's vertex is never a target (edited mesh only)
 }
 
 unittest { // tool undo: one gesture is one entry that restores the rig
+    if (!cell("undo")) return;
     dragWeld(cast(Rig)kC, 1, kEndC, true);
     ok(commandBody("history.undo"));
     assertMesh(getModel(), cast(float[3][])kC.pts, cast(uint[][])kC.faces, "tool undo");
