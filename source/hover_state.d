@@ -1,7 +1,5 @@
 module hover_state;
 
-import input_frame_state : InputFrameState;
-
 
 /// Cross-module hover state. `publishHover` writes the GPU-resolved
 /// hovered element indices here after each frame's pick and at a
@@ -37,7 +35,9 @@ HoverIds hoverAtPress() {
 /// The ONE hover publish, for the frame and the press-time re-pick: the
 /// candidates see the raw picks; an active tool keeps one type (V > E > F,
 /// written back into `ifs`); the globals copy `ifs`, held ids included.
-void publishHover(InputFrameState ifs, bool toolActive, int mx, int my) {
+/// A template over `InputFrameState` so this leaf module imports nothing
+/// (tools import it; the registration boundary censuses forbid the edge).
+void publishHover(Ifs)(Ifs ifs, bool toolActive, int mx, int my) {
     import ai.element_candidates : publishElementCandidates;
     publishElementCandidates(mx, my, ifs.hoveredVertex, ifs.hoveredEdge, ifs.hoveredFace);
     if (toolActive) {
