@@ -356,7 +356,7 @@ version(unittest) unittest {
 
     // A shape param edited mid-stroke rebuilds the preview through the one
     // builder (prepared door): kind Preview, live preview untouched until
-    // install. Strip [0,1,2,3] → quad [1,3,2,0] (flip off).
+    // install. Strip [0,1,2,3] → quad [0,1,2,3] (flip off; penStripQuad).
     auto quadPen = new PenTool(() => &mesh, &sceneGpu, LitShader.init);
     quadPen.state = PenState.Drawing;
     quadPen.frame.toWorld = [1,0,0,0, 0,1,0,0, 0,0,1,0, 10,20,30,1];
@@ -366,7 +366,7 @@ version(unittest) unittest {
     assert(quadImage.kind == PreparedPenParamKind.Preview && quadImage.upload,
         "makeQuads edit must prepare a preview rebuild");
     assert(quadImage.nextPreview.faces.length == 1 &&
-        quadImage.nextPreview.faces[0] == [1u, 3, 2, 0],
+        quadImage.nextPreview.faces[0] == [0u, 1, 2, 3],
         "makeQuads preview is not the builder's strip quad");
     assert(quadPen.buildPreparedParamImage("flip").kind ==
         PreparedPenParamKind.Preview, "flip edit must prepare a preview rebuild");
@@ -378,7 +378,7 @@ version(unittest) unittest {
         && quadPen.previewMesh.vertices.length == 0 && quadContext.validate(),
         "makeQuads preparation refused or touched the live preview");
     quadContext.install();
-    assert(quadPen.previewMesh.faces == [[1u, 3, 2, 0]] &&
+    assert(quadPen.previewMesh.faces == [[0u, 1, 2, 3]] &&
         quadPen.vertices_.length == 4 && quadContext.installTraceForTest() ==
         [7,2,8], "makeQuads install did not land the rebuilt preview");
 
@@ -393,7 +393,7 @@ version(unittest) unittest {
     assert(hookPen.previewMesh.faces == [[1u, 2, 3, 0]],
         "legacy flip hook did not rebuild the preview (penRingOrder ring)");
     hookPen.params_.makeQuads = true; hookPen.onParamChanged("makeQuads");
-    assert(hookPen.previewMesh.faces == [[1u, 3, 2, 0]],
+    assert(hookPen.previewMesh.faces == [[0u, 1, 2, 3]],
         "legacy makeQuads hook did not rebuild the preview");
     assert(hookPen.previewMesh.vertices[0] == Vec3(10,20,30),
         "legacy hook preview ignored the frame's toWorld");
@@ -446,7 +446,7 @@ version(unittest) unittest {
     }
     assert(dropFace([Vec3(0,0,0), Vec3(1,0,0), Vec3(0,1,0)], true, false,
         [Vec3(5,5,5)]) == [1u, 3, 2], "drop ignored the image's flip");
-    assert(dropFace(quadPen.vertices_.dup, false, true, null) == [1u, 3, 2, 0],
+    assert(dropFace(quadPen.vertices_.dup, false, true, null) == [0u, 1, 2, 3],
         "drop ignored the image's makeQuads");
 
     // S6: a prepared drop commits the stroke AND its mirror (plane x = 0) in
@@ -726,9 +726,14 @@ public:
         ];
     }
 
+    // A disabled param's write is refused at the `tool.attr` door
+    // (`refusesDisabledParamWrites`). Make Quads is locked from 3 points
+    // (wave plan S7, fixture pen_quads.json lock_3_points).
     override bool paramEnabled(string name) const {
         if (name == "currentPoint" || name == "posX" || name == "posY" || name == "posZ")
             return state == PenState.Drawing && vertices_.length > 0;
+        if (name == "makeQuads")
+            return state != PenState.Drawing || vertices_.length < 3;
         return true;
     }
 
@@ -1117,16 +1122,20 @@ public:
             params_.flip = penFacingFlip(toWorldP(vertices_[0]),
                 toWorldP(vertices_[1]), toWorldP(hit), cachedVp);
 
-        // Make Quads strip extension: after 2 anchor verts, each click adds
-        // user (cursor) + auto (parallelogram extension). Skips the insert
-        // path and the current-point preservation since strip ordering is
-        // a positional sequence rather than a polygon's free boundary.
+        // Make Quads (wave plan S7, fixture pen_quads.json): the click, then
+        // the automatic corner a = L1 + (c - L0) of the strip quad it
+        // completes; the click is current. The arm always appends (an insert
+        // is not captured). The corner on a stroke point's mirror image shares
+        // it like a placed point (B5 sym; its radius and scene merge are not
+        // captured — gap row).
         if (params_.makeQuads && vertices_.length >= 2) {
-            appendQuadStripPair(hit, link);
-            // Current point follows the user-placed vertex (the second-to-
-            // last in the buffer; the very-last is the auto-corner). Lets
-            // the user's intent — placing a top-row vert at the cursor —
-            // remain selectable for numeric edits.
+            const q = penStripQuad((vertices_.length - 2) / 2);
+            const Vec3 corner = vertices_[q[0]] + (hit - vertices_[q[1]]);
+            appendVertex(hit, link);
+            float best = float.infinity;
+            const image = params_.merge ? strokeImageNear(toWorldP(corner),
+                SnapPacket.init.innerRangePx, best) : -1;
+            appendVertex(corner, image >= 0 ? -2 - image : -1);
             params_.currentPoint = cast(int)vertices_.length - 2;
             syncPosFromCurrent();
             uploadPreview();
@@ -1475,15 +1484,9 @@ private:
             if (px <= r) { has[i] = true; d[i] = px; }
         }
         // The stroke's own mirror images are vertex candidates too, the scene
-        // winning a tie (wave plan S6, B3 / A7); a dragged point skips its own.
-        int image = -1;
-        foreach (j, v; mirror_.enabled ? vertices_ : null) {
-            if (dragInitiated && j == dragVertIdx) continue;
-            immutable px = pxFrom(mirrorPosition(mirror_, toWorldP(v)));
-            if (px <= r && px < d[kCascadeVertex]) {
-                has[kCascadeVertex] = true; d[kCascadeVertex] = px; image = cast(int)j;
-            }
-        }
+        // winning a tie (wave plan S6, B3 / A7).
+        immutable int image = strokeImageNear(placed, r, d[kCascadeVertex]);
+        if (image >= 0) has[kCascadeVertex] = true;
         immutable float tol = kVertexToleranceScale * fmin(r, kCandidateToleranceBasePx);
         if (cascadeClassWins(kCascadeVertex, has, d, tol)) {
             if (image >= 0) {
@@ -1496,6 +1499,24 @@ private:
         if (has[kCascadeEdge])
             local = toLocalP(pointOnEdgeUnder(placed, hit[kCascadeEdge].targetIndex));
         return -1;
+    }
+
+    // The stroke point whose mirror image lies within `r` px of world point
+    // `placed`, nearer than `best` (lowered to its distance); -1 if none. A
+    // dragged point skips its own image.
+    int strokeImageNear(Vec3 placed, float r, ref float best) const {
+        float fx, fy, x, y, z;
+        if (!mirror_.enabled || !projectToWindowFull(placed, cachedVp, fx, fy, z))
+            return -1;
+        int image = -1;
+        foreach (j, v; vertices_) {
+            if (dragInitiated && j == dragVertIdx) continue;
+            if (!projectToWindowFull(mirrorPosition(mirror_, toWorldP(v)), cachedVp, x, y, z))
+                continue;
+            immutable px = Vec3(x - fx, y - fy, 0).length;
+            if (px <= r && px < best) { best = px; image = cast(int)j; }
+        }
+        return image;
     }
 
     // The point of edited-mesh edge `edge` under world point `p`: the edge's
@@ -1564,28 +1585,6 @@ private:
         return h;
     }
 
-    // 6.9.5: Make Quads — append the two vertices that complete the next
-    // strip quad. The user-placed `cursorPos` becomes the new "top" vertex;
-    // the auto-corner is computed by the parallelogram rule
-    //
-    //   newBottom = prevBottom + (cursorPos − prevTop)
-    //
-    // where prevTop / prevBottom are the LAST two vertices in the buffer
-    // (the leading edge of the strip so far). After the call the buffer
-    // grows by 2 and the new pair is the next leading edge.
-    //
-    // Caller must have already ensured vertices_.length >= 2 (the two
-    // anchor clicks); for fewer than 2 verts the regular append path is
-    // used so the strip can be seeded.
-    void appendQuadStripPair(Vec3 cursorPos, int link) {
-        Vec3 prevTop = vertices_[$ - 2];
-        Vec3 prevBot = vertices_[$ - 1];
-        Vec3 newTop  = cursorPos;
-        Vec3 newBot  = prevBot + (newTop - prevTop);
-        appendVertex(newTop, link);
-        appendVertex(newBot, -1);
-    }
-
     // Insert a new vertex (and matching handler) at position insertIdx in the
     // boundary list, shifting later elements right. Used by the "click-away
     // while a vertex is current" path to splice into the polygon.
@@ -1635,6 +1634,7 @@ private:
     public override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
         static immutable ToolSessionPolicy policy = {
             rollovers: Rollover.target, sessionSteps: true, paramWriteSteps: true,
+            refusesDisabledParamWrites: true,
             imageAttrs: ["type", "currentPoint", "posX", "posY", "posZ", "flip",
                          "makeQuads", "merge", "points", "link", "linkKey"] };
         return policy;
@@ -1798,10 +1798,8 @@ private:
         foreach (i, ref h; vertHandlers) h.pos = toWorldP(vertices_[i]);
     }
 
-    // Minimum vertex count for Enter. Default polygon
-    // mode needs ≥3 (a triangle); Make Quads needs ≥4 (one full quad in the
-    // strip; the first two anchor verts alone don't yet form a face). Tool
-    // drop uses minDropCommitVerts() below.
+    // Minimum vertex count for Enter: a triangle, or the strip's first quad
+    // (3 clicks and their corner). Tool drop uses minDropCommitVerts() below.
     size_t minCommitVerts() const {
         return penFaceMinimum(params_.makeQuads);
     }

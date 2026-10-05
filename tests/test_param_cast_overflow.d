@@ -49,7 +49,14 @@
 // MUTATION: delete `.enforceBounds()` from
 // source/tools/slice/loop_slice_tool.d:615 and this test fails naming that
 // param, its interval and -2147483648.
+//
+// A REFUSED injection measures nothing (its read-back is the untouched value),
+// so every injection must answer ok. The pen refuses writes to its point
+// fields with no stroke (wave plan S7, `refusesDisabledParamWrites`), so its
+// subjects are injected after one click on the viewport centre.
+import drag_helpers : fetchCamera;
 import http_client : testBaseUrl;
+import pen_rig_helpers : clickPixels;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -101,6 +108,10 @@ unittest { // BoundedIntTooLParamsSurviveWireInfinity
         // everything stopped answering cannot read as a pass.
         postCmd(format(`{"id":"tool.set","params":{"_positional":["%s","on"]}}`,
                        s.tool));
+        if (s.tool == "pen") {
+            auto cam = fetchCamera();
+            clickPixels([cam.vpX + cam.width / 2, cam.vpY + cam.height / 2]);
+        }
 
         auto before = postCmd(format("tool.attr %s %s ?", s.tool, s.name));
         if (before["status"].str != "ok" || "value" !in before) {
@@ -111,9 +122,12 @@ unittest { // BoundedIntTooLParamsSurviveWireInfinity
 
         // JSON `_positional`, not an argstring: the argstring number grammar
         // has no exponent, so `1e39` cannot be expressed there at all.
-        postCmd(format(
+        auto injected = postCmd(format(
             `{"id":"tool.attr","params":{"_positional":["%s","%s",1e39]}}`,
             s.tool, s.name));
+        assert(injected["status"].str == "ok",
+            format("%s.%s: the injection was refused, nothing measured: %s",
+                   s.tool, s.name, injected.toString));
 
         auto after = postCmd(format("tool.attr %s %s ?", s.tool, s.name));
         assert(after["status"].str == "ok" && "value" in after,

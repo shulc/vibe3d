@@ -1,0 +1,688 @@
+{
+ "name": "pen_quads",
+ "description": "Polygon pen Make Quads: the strip law (the first two clicks seed the leading edge (L0, L1) = (c1, c0); each later click c adds c and its automatic corner a = L1 + (c - L0), quad [L1, a, c, L0] under flip 1, reversed keeping its first index under flip 0, read at build time; then (L0, L1) <- (c, a)), the lock from 3 points, the strip's in-stroke undo, and the strip under symmetry (B5).",
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "gui-gesture",
+  "notes": "fresh GUI worker per cell, NEW empty foreground mesh; top orthographic view, clicks on the plane y = 1 through the camera focus at 440 px per metre; Make Quads enabled before the first click; real clicks / typing; one readback after the drop; face rings are vertex indices, vertices numbered in click order",
+  "captured_utc": "2026-10-04",
+  "harness": "private capture harness",
+  "task": "9350, 9353, 9371"
+ },
+ "rig": {
+  "view": "top orthographic unless a cell says otherwise; default zoom 440 px per metre (merge distance 3 px of world = 0.0068255 m); wheel zoom x2^(1/4) per step",
+  "focus_plane_y": 1.0,
+  "click_quantum": "a clicked position is rounded to a zoom-dependent quantum: 0.005 m at 440 px/m, 0.002 at 622, 0.01 at 110 (the earlier placement fixture's 0.01 at 440 is a coincidence of its pixels)"
+ },
+ "cells": {
+  "strip_7_clicks": {
+   "script": [
+    "quads on",
+    "click (-0.5,-0.7) (0,-0.7) (0.1,-0.3) (-0.4,-0.2) (-0.3,0.2) (0.2,0.3) (-0.2,0.7)"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      -0.5,
+      1.0,
+      -0.7
+     ],
+     [
+      0.0,
+      1.0,
+      -0.7
+     ],
+     [
+      0.1,
+      1.0,
+      -0.3
+     ],
+     [
+      -0.4,
+      1.0,
+      -0.3
+     ],
+     [
+      -0.4,
+      1.0,
+      -0.2
+     ],
+     [
+      -0.9,
+      1.0,
+      -0.2
+     ],
+     [
+      -0.3,
+      1.0,
+      0.2
+     ],
+     [
+      -0.8,
+      1.0,
+      0.2
+     ],
+     [
+      0.2,
+      1.0,
+      0.3
+     ],
+     [
+      -0.3,
+      1.0,
+      0.3
+     ],
+     [
+      -0.2,
+      1.0,
+      0.7
+     ],
+     [
+      -0.7,
+      1.0,
+      0.7
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      3,
+      2,
+      1
+     ],
+     [
+      3,
+      5,
+      4,
+      2
+     ],
+     [
+      5,
+      7,
+      6,
+      4
+     ],
+     [
+      7,
+      9,
+      8,
+      6
+     ],
+     [
+      9,
+      11,
+      10,
+      8
+     ]
+    ]
+   },
+   "note": "no auto corner is a click position; all rings face +Y (towards the top camera)"
+  },
+  "strip_plane_anchor": {
+   "script": [
+    "quads on",
+    "click (0.25,-0.45) (0.75,-0.45) (0.75,0.05)",
+    "click (0.25,0.05) = the automatic corner (selects it, current 3)",
+    "posY 0.5",
+    "click (0.25,0.55)",
+    "click (-0.25,0.75)"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.25,
+      1.0,
+      -0.45
+     ],
+     [
+      0.75,
+      1.0,
+      -0.45
+     ],
+     [
+      0.75,
+      1.0,
+      0.05
+     ],
+     [
+      0.25,
+      0.5,
+      0.05
+     ],
+     [
+      0.25,
+      0.5,
+      0.55
+     ],
+     [
+      -0.25,
+      0.0,
+      0.55
+     ],
+     [
+      -0.25,
+      0.5,
+      0.75
+     ],
+     [
+      -0.75,
+      0.0,
+      0.75
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      3,
+      2,
+      1
+     ],
+     [
+      3,
+      5,
+      4,
+      2
+     ],
+     [
+      5,
+      7,
+      6,
+      4
+     ]
+    ]
+   },
+   "rivals": {
+    "sixth_click_y_if_last_buffer_point": 0.0,
+    "sixth_click_y_if_focus_plane": 1.0
+   }
+  },
+  "lock_0_points": {
+   "script": [
+    "quads off",
+    "click the quads checkbox"
+   ],
+   "expected": {
+    "quads_after": 1
+   }
+  },
+  "lock_2_points": {
+   "script": [
+    "quads off",
+    "2 clicks",
+    "click the quads checkbox"
+   ],
+   "expected": {
+    "quads_after": 1
+   }
+  },
+  "lock_3_points": {
+   "script": [
+    "quads off",
+    "3 clicks",
+    "click the quads checkbox"
+   ],
+   "expected": {
+    "quads_after": 0
+   }
+  },
+  "strip_7_clicks_ccw": {
+   "script": [
+    "Make Quads on",
+    "click (0.5,-0.7) (0,-0.7) (-0.1,-0.3) (0.4,-0.2) (0.3,0.2) (-0.2,0.3) (0.2,0.7) (strip_7_clicks mirrored in x: first three counter-clockwise on screen, flip decided 0)",
+    "drop"
+   ],
+   "flip_after": 0,
+   "law": "with flip 0 every quad ring is reversed keeping its first index: [L1, L0, c, a]; rings face +Y (toward the camera)",
+   "expected": {
+    "vertices": [
+     [
+      0.5,
+      1.0,
+      -0.7
+     ],
+     [
+      0.0,
+      1.0,
+      -0.7
+     ],
+     [
+      -0.1,
+      1.0,
+      -0.3
+     ],
+     [
+      0.4,
+      1.0,
+      -0.3
+     ],
+     [
+      0.4,
+      1.0,
+      -0.2
+     ],
+     [
+      0.9,
+      1.0,
+      -0.2
+     ],
+     [
+      0.3,
+      1.0,
+      0.2
+     ],
+     [
+      0.8,
+      1.0,
+      0.2
+     ],
+     [
+      -0.2,
+      1.0,
+      0.3
+     ],
+     [
+      0.3,
+      1.0,
+      0.3
+     ],
+     [
+      0.2,
+      1.0,
+      0.7
+     ],
+     [
+      0.7,
+      1.0,
+      0.7
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2,
+      3
+     ],
+     [
+      3,
+      2,
+      4,
+      5
+     ],
+     [
+      5,
+      4,
+      6,
+      7
+     ],
+     [
+      7,
+      6,
+      8,
+      9
+     ],
+     [
+      9,
+      8,
+      10,
+      11
+     ]
+    ]
+   }
+  },
+  "strip_7_clicks_flip_written_off": {
+   "script": [
+    "Make Quads on",
+    "click (-0.5,-0.7) (0,-0.7) (0.1,-0.3) (flip decided 1)",
+    "click the Flip checkbox off",
+    "click (-0.4,-0.2) (-0.3,0.2) (0.2,0.3) (-0.2,0.7)",
+    "drop"
+   ],
+   "flip_after": 0,
+   "law": "the ring reversal follows the flag at BUILD time: every ring, including the quad that existed before the write, is [L1, L0, c, a]; they face -Y",
+   "expected": {
+    "vertices": [
+     [
+      -0.5,
+      1.0,
+      -0.7
+     ],
+     [
+      0.0,
+      1.0,
+      -0.7
+     ],
+     [
+      0.1,
+      1.0,
+      -0.3
+     ],
+     [
+      -0.4,
+      1.0,
+      -0.3
+     ],
+     [
+      -0.4,
+      1.0,
+      -0.2
+     ],
+     [
+      -0.9,
+      1.0,
+      -0.2
+     ],
+     [
+      -0.3,
+      1.0,
+      0.2
+     ],
+     [
+      -0.8,
+      1.0,
+      0.2
+     ],
+     [
+      0.2,
+      1.0,
+      0.3
+     ],
+     [
+      -0.3,
+      1.0,
+      0.3
+     ],
+     [
+      -0.2,
+      1.0,
+      0.7
+     ],
+     [
+      -0.7,
+      1.0,
+      0.7
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2,
+      3
+     ],
+     [
+      3,
+      2,
+      4,
+      5
+     ],
+     [
+      5,
+      4,
+      6,
+      7
+     ],
+     [
+      7,
+      6,
+      8,
+      9
+     ],
+     [
+      9,
+      8,
+      10,
+      11
+     ]
+    ]
+   }
+  },
+  "strip_undo_last_click": {
+   "script": [
+    "Make Quads on",
+    "click (-0.5,-0.7) (0,-0.7) (0.1,-0.3) (-0.4,-0.2) (2 quads)",
+    "one Ctrl+Z",
+    "drop"
+   ],
+   "current_before_undo": 4,
+   "current_after_undo": 2,
+   "law": "one undo removes the last click AND its automatic corner; current goes to the previous click",
+   "expected": {
+    "vertices": [
+     [
+      -0.5,
+      1.0,
+      -0.7
+     ],
+     [
+      0.0,
+      1.0,
+      -0.7
+     ],
+     [
+      0.1,
+      1.0,
+      -0.3
+     ],
+     [
+      -0.4,
+      1.0,
+      -0.3
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      3,
+      2,
+      1
+     ]
+    ]
+   }
+  },
+  "strip_undo_then_click": {
+   "script": [
+    "as strip_undo_last_click without the drop",
+    "click (-0.3,0.2)",
+    "drop"
+   ],
+   "law": "the strip resumes from the remaining last pair",
+   "expected": {
+    "vertices": [
+     [
+      -0.5,
+      1.0,
+      -0.7
+     ],
+     [
+      0.0,
+      1.0,
+      -0.7
+     ],
+     [
+      0.1,
+      1.0,
+      -0.3
+     ],
+     [
+      -0.4,
+      1.0,
+      -0.3
+     ],
+     [
+      -0.3,
+      1.0,
+      0.2
+     ],
+     [
+      -0.8,
+      1.0,
+      0.2
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      3,
+      2,
+      1
+     ],
+     [
+      3,
+      5,
+      4,
+      2
+     ]
+    ]
+   }
+  },
+  "B5_nosym": {
+   "script": [
+    "Make Quads on",
+    "click (0.25,-0.25) (0.75,-0.25) (0.75,0.25)",
+    "click (0.25,0.25) = the automatic corner (selects it)",
+    "click (0.25,0.75)"
+   ],
+   "flip_after": 1,
+   "current_after": 4,
+   "expected": {
+    "vertices": [
+     [
+      0.25,
+      1.0,
+      -0.25
+     ],
+     [
+      0.75,
+      1.0,
+      -0.25
+     ],
+     [
+      0.75,
+      1.0,
+      0.25
+     ],
+     [
+      0.25,
+      1.0,
+      0.25
+     ],
+     [
+      0.25,
+      1.0,
+      0.75
+     ],
+     [
+      -0.25,
+      1.0,
+      0.75
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      3,
+      2,
+      1
+     ],
+     [
+      3,
+      5,
+      4,
+      2
+     ]
+    ]
+   }
+  },
+  "B5_sym": {
+   "script": [
+    "symmetry axis X, offset 0, merge on",
+    "Make Quads on",
+    "the B5_nosym clicks"
+   ],
+   "law": "each quad is mirrored as a polygon (the mirror ring reversed keeping its first index); the automatic corner (-0.25, 0.75) lies on the image of the 5th click (0.25, 0.75): the two share vertices crosswise (welded by merge)",
+   "expected": {
+    "vertices": [
+     [
+      0.25,
+      1.0,
+      -0.25
+     ],
+     [
+      0.75,
+      1.0,
+      -0.25
+     ],
+     [
+      0.75,
+      1.0,
+      0.25
+     ],
+     [
+      0.25,
+      1.0,
+      0.25
+     ],
+     [
+      0.25,
+      1.0,
+      0.75
+     ],
+     [
+      -0.25,
+      1.0,
+      0.75
+     ],
+     [
+      -0.25,
+      1.0,
+      -0.25
+     ],
+     [
+      -0.75,
+      1.0,
+      -0.25
+     ],
+     [
+      -0.75,
+      1.0,
+      0.25
+     ],
+     [
+      -0.25,
+      1.0,
+      0.25
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      3,
+      2,
+      1
+     ],
+     [
+      3,
+      5,
+      4,
+      2
+     ],
+     [
+      6,
+      7,
+      8,
+      9
+     ],
+     [
+      9,
+      8,
+      5,
+      4
+     ]
+    ]
+   }
+  }
+ }
+}

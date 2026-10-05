@@ -32,7 +32,9 @@ private enum float[16] kShift = [1,0,0,0, 0,1,0,0, 0,0,1,0, 10,20,30,1];
 private immutable Vec3[] kTri  = [Vec3(0,0,0), Vec3(1,0,0), Vec3(0,1,0)];
 private immutable Vec3[] kPent = [Vec3(0,0,0), Vec3(2,0,0), Vec3(3,1,0),
                                   Vec3(1,2,0), Vec3(-1,1,0)];
-private immutable Vec3[] kStrip6 = [Vec3(0,0,0), Vec3(0,1,0), Vec3(1,0,0),
+// A Make Quads strip by the strip law (penStripQuad): clicks c0, c1, c2, then
+// the corner c0 + (c2 - c1), click c3, its corner a + (c3 - c2).
+private immutable Vec3[] kStrip6 = [Vec3(0,1,0), Vec3(0,0,0), Vec3(1,0,0),
                                     Vec3(1,1,0), Vec3(2,0,0), Vec3(2,1,0)];
 
 unittest // Make Quads facing: under the decided flip every quad faces the eye
@@ -40,11 +42,12 @@ unittest // Make Quads facing: under the decided flip every quad faces the eye
     // FIRST block of the module: druntime stops at the first failed assert,
     // so the facing law reddens here before the literal table below. A
     // clockwise and a counter-clockwise (seen from the top) 6-point strip
-    // on y = 1: two quads each. Both purposes must face the top view's eye
-    // (normal . eye ray < 0), as the reference's strips always do (K-C2).
+    // on y = 1, laid out by the strip law: two quads each. Both purposes must
+    // face the top view's eye (normal . eye ray < 0), as the reference's
+    // strips always do (K-C2, pen_quads.json strip_7_clicks / _ccw).
     auto top = orthoLooking(-1);
-    auto ccw = onY1([-0.5f, -0.25f], [-0.5f, 0.25f], [0f, -0.25f], [0f, 0.25f],
-                    [0.5f, -0.25f], [0.5f, 0.25f]);
+    auto ccw = onY1([-0.5f, -0.25f], [-0.5f, 0.25f], [0f, 0.25f], [0f, -0.25f],
+                    [0.5f, 0.25f], [0.5f, -0.25f]);
     Vec3[] cw;
     foreach (p; ccw) cw ~= Vec3(p.x, p.y, -p.z);
     size_t quads;
@@ -108,13 +111,13 @@ private Case[] cases() {
         Case("1-point Preview", kTri[0 .. 1], kIdentity, false, false, Preview,
             0, kTri[0 .. 1].dup, [], []),
         Case("quads 4 Commit", kStrip6[0 .. 4], kIdentity, false, true, Commit,
-            0, kStrip6[0 .. 4].dup, [[1u, 3, 2, 0]], []),
+            0, kStrip6[0 .. 4].dup, [[0u, 1, 2, 3]], []),
         Case("quads 6 Commit flip", kStrip6, kIdentity, true, true, Commit, 0,
-            kStrip6.dup, [[0u, 2, 3, 1], [2u, 4, 5, 3]], []),
+            kStrip6.dup, [[0u, 3, 2, 1], [3u, 5, 4, 2]], []),
         Case("quads 6 Preview flip", kStrip6, kIdentity, true, true, Preview, 0,
-            kStrip6.dup, [[0u, 2, 3, 1], [2u, 4, 5, 3]], []),
+            kStrip6.dup, [[0u, 3, 2, 1], [3u, 5, 4, 2]], []),
         Case("quads 5 Commit", kStrip6[0 .. 5], kIdentity, false, true, Commit,
-            0, kStrip6[0 .. 5].dup, [[1u, 3, 2, 0]], []),
+            0, kStrip6[0 .. 5].dup, [[0u, 1, 2, 3]], []),
         Case("triangle Commit translated", kTri, kShift, false, false, Commit, 0,
             [Vec3(10,20,30), Vec3(11,20,30), Vec3(10,21,30)], [[0u, 1, 2]], []),
         Case("triangle Commit onto 2 vertices", kTri, kIdentity, true, false,
@@ -324,7 +327,7 @@ unittest // a linked point (S5 merge) emits the shared index and appends no vert
     strip.addVertex(Vec3(9, 9, 9));
     appendPenGeometry(strip, PenStroke.of(kStrip6[0 .. 4], kIdentity, q,
         [-1, -1, 0, -1]), PenBuildPurpose.Commit);
-    assert(strip.vertices.length == 4 && strip.faces == [[2u, 3, 0, 1]], format(
+    assert(strip.vertices.length == 4 && strip.faces == [[1u, 2, 0, 3]], format(
         "linked strip: %s vertices, faces %s", strip.vertices.length, strip.faces));
 
     // Every point linking one vertex leaves fewer than 2 corners after the

@@ -24,8 +24,7 @@ struct PenParams {
     int   currentPoint = -1;
     float posX = 0.0f, posY = 0.0f, posZ = 0.0f;
     bool  flip         = false;    // reverse the ring (decided by the tool at point 3)
-    // Make Quads: after two anchor clicks every further pair of points closes
-    // one quad of a strip, laid out [top0, bot0, top1, bot1, ...].
+    // Make Quads: every click after the first two adds a strip quad (penStripQuad).
     bool  makeQuads    = false;
     // A gesture-placed point near an edited-mesh vertex shares it (wave plan S5).
     bool  merge        = true;
@@ -88,6 +87,24 @@ void penWorkplaneMirrorPlane(int axis, float offset, in WorkplaneFrame wp,
 /// first quad of a strip.
 size_t penFaceMinimum(bool quads) nothrow @nogc { return quads ? 4 : 3; }
 
+/// Quad `k` of a Make Quads strip as point indices [L1, L0, c, a], click order
+/// (wave plan S7; fixture pen_quads.json strip_7_clicks): the first two clicks
+/// seed the leading edge (L0, L1) = (c1, c0); a later click c is stored with
+/// its automatic corner a = L1 + (c - L0) right after it, and (c, a) becomes
+/// the next (L0, L1).
+uint[4] penStripQuad(size_t k) nothrow @nogc {
+    const uint c = cast(uint)(2 * k + 2);
+    if (k == 0) return [0, 1, 2, 3];
+    return [c - 1, c - 2, c, c + 1];
+}
+
+/// Reverse a ring in place, keeping its first index: [a, b, c, d] → [a, d, c, b].
+void revKeepFirst(uint[] ring) nothrow @nogc {
+    foreach (i; 1 .. (ring.length + 1) / 2) {
+        const t = ring[i]; ring[i] = ring[$ - i]; ring[$ - i] = t;
+    }
+}
+
 /// The tool's facing decision (wave plan §9.4): flip when the triangle
 /// (p0, p1, p2), wound in that order, faces away from the eye ray at p2 (per
 /// point in perspective, the view forward in ortho). A collinear triple — the
@@ -130,10 +147,7 @@ uint[] penRingOrder(const(Vec3)[] v, bool reverse) {
                 }
         }
     }
-    if (rev)
-        foreach (i; 1 .. (n + 1) / 2) {
-            const t = ring[i]; ring[i] = ring[n - i]; ring[n - i] = t;
-        }
+    if (rev) revKeepFirst(ring);
     return ring;
 }
 
@@ -141,11 +155,11 @@ uint[] penRingOrder(const(Vec3)[] v, bool reverse) {
 /// (the index of the first new vertex, if any: a linked point appends no
 /// vertex, its faces use the shared index).
 ///
-/// At or above the face minimum: the strip's quads `[2k+1, 2k+3, 2k+2, 2k]`,
-/// `[2k, 2k+2, 2k+3, 2k+1]` under `flip` (that order winds against the decision
-/// triangle (p0, p1, p2), so the decided flip faces the camera either way; an
-/// odd last point is left unused; interim until S7's strip rule), or one polygon of
-/// all points in `penRingOrder`. Below it a Commit still makes one face of all
+/// At or above the face minimum: the strip's quads `penStripQuad(k)`, reversed
+/// keeping the first index under `flip` like every pen ring (fixture
+/// pen_quads.json: [L1, a, c, L0] under flip 1, the flag read here, at build
+/// time, so a later write turns every quad; an odd last point is left unused),
+/// or one polygon of all points in `penRingOrder`. Below it a Commit still makes one face of all
 /// points (the two-point face a tool drop keeps) while a Preview shows the
 /// open polyline as edges. Preview and Commit order every ring alike.
 ///
@@ -190,9 +204,10 @@ uint appendPenGeometry(ref Mesh dst, in PenStroke s, PenBuildPurpose purpose) {
     void shape(Vec3[] w, uint[] ix, bool reverse) {
         if (closed && s.quads) {
             foreach (k; 0 .. n / 2 - 1) {
-                const uint a = ix[2*k],     b = ix[2*k + 2];
-                const uint c = ix[2*k + 3], d = ix[2*k + 1];
-                dst.addFace(reverse ? [a, b, c, d] : [d, c, b, a]);
+                uint[4] q = penStripQuad(k);
+                if (reverse) revKeepFirst(q[]);
+                foreach (ref i; q) i = ix[i];
+                dst.addFace(q[]);
             }
         } else if (closed || purpose == PenBuildPurpose.Commit) {
             size_t m;

@@ -503,9 +503,11 @@ unittest { // tool.attr posX rewrites the current vertex
 // =========================================================================
 
 // -------------------------------------------------------------------------
-// 6.9.5: makeQuads strip — first 2 clicks anchor the leading edge; each
-// subsequent click extends the strip by one parallelogram quad. Five
-// clicks should commit a 3-quad strip with 8 verts.
+// 6.9.5: makeQuads strip (fixture pen_quads.json strip_7_clicks /
+// strip_7_clicks_ccw): the first 2 clicks seed the leading edge (L0, L1) =
+// (c1, c0); each later click c adds c and its corner a = L1 + (c - L0), quad
+// [L1, a, c, L0] (flip 1) or [L1, L0, c, a] (flip 0). Five clicks commit a
+// 3-quad strip with 8 verts.
 // -------------------------------------------------------------------------
 
 unittest { // makeQuads → 3-quad strip from 5 clicks
@@ -516,8 +518,8 @@ unittest { // makeQuads → 3-quad strip from 5 clicks
 
     // 5 clicks roughly traversing a strip from left to right.
     string log = LOG_HEADER ~ "\n"
-        ~ clickAt(100, 425, 250) ~ "\n"   // anchor v0 (top)
-        ~ clickAt(200, 425, 350) ~ "\n"   // anchor v1 (bot)
+        ~ clickAt(100, 425, 250) ~ "\n"   // c0
+        ~ clickAt(200, 425, 350) ~ "\n"   // c1
         ~ clickAt(300, 475, 250) ~ "\n"   // strip click 1 → +2 verts (1 quad)
         ~ clickAt(400, 525, 250) ~ "\n"   // strip click 2 → +2 verts (2 quads)
         ~ clickAt(500, 575, 250) ~ "\n"   // strip click 3 → +2 verts (3 quads)
@@ -534,14 +536,30 @@ unittest { // makeQuads → 3-quad strip from 5 clicks
     assert(m["faces"].array.length == 3,
         "makeQuads: expected 3 quads, got "
         ~ m["faces"].array.length.to!string);
-    foreach (f; m["faces"].array)
-        assert(f.array.length == 4,
-            "makeQuads: every face must be a quad");
+    long[][] faces;
+    foreach (f; m["faces"].array) {
+        long[] ring;
+        foreach (i; f.array) ring ~= i.integer;
+        faces ~= ring;
+    }
+    assert(faces == [[0, 3, 2, 1], [3, 5, 4, 2], [5, 7, 6, 4]] ||
+           faces == [[0, 1, 2, 3], [3, 2, 4, 5], [5, 4, 6, 7]],
+        "makeQuads: rings are not the strip law's: " ~ faces.to!string);
+    // Each corner a = L1 + (c - L0): v3 = v0 + v2 - v1, v(2k+3) = v(2k+1) +
+    // v(2k+2) - v(2k).
+    auto vs = m["vertices"].array;
+    double at(size_t v, size_t i) { return vs[v].array[i].floating; }
+    foreach (k; 0 .. 3) {
+        const size_t l1 = k ? 2 * k + 1 : 0, l0 = k ? 2 * k : 1;
+        foreach (i; 0 .. 3)
+            assert(fabs(at(2 * k + 3, i) - (at(l1, i) + at(2 * k + 2, i) - at(l0, i))) < 1e-4,
+                "makeQuads: corner " ~ (2 * k + 3).to!string ~ " off the strip law");
+    }
 }
 
 // -------------------------------------------------------------------------
-// 6.9.5: makeQuads + only 2 clicks + Enter = nothing committed (need ≥4 verts
-// to form one full quad).
+// 6.9.5: makeQuads + only 2 clicks + Enter = nothing committed (the first
+// quad is 3 clicks and their corner, fixture pen_quads.json strip_7_clicks).
 // -------------------------------------------------------------------------
 
 unittest { // makeQuads below minimum
@@ -563,8 +581,8 @@ unittest { // makeQuads below minimum
 }
 
 // -------------------------------------------------------------------------
-// 6.9.5: 3 clicks form exactly one quad. Auto-corner sits at
-// v3 = v1 + (v2 − v0) (parallelogram rule).
+// 6.9.5: 3 clicks form exactly one quad. The corner sits at v3 = v0 + (v2 −
+// v1) (seed (L0, L1) = (c1, c0); fixture pen_quads.json strip_7_clicks v3).
 // -------------------------------------------------------------------------
 
 unittest { // makeQuads parallelogram auto-corner
@@ -572,9 +590,9 @@ unittest { // makeQuads parallelogram auto-corner
     activatePen();
     postJson("/api/command", "tool.attr pen makeQuads true");
     string log = LOG_HEADER ~ "\n"
-        ~ clickAt(100, 425, 250) ~ "\n"   // v0 (top anchor)
-        ~ clickAt(200, 425, 350) ~ "\n"   // v1 (bot anchor)
-        ~ clickAt(300, 525, 250) ~ "\n"   // v2 (top extend), v3 = v1 + (v2 - v0)
+        ~ clickAt(100, 425, 250) ~ "\n"   // v0 = c0 = L1
+        ~ clickAt(200, 425, 350) ~ "\n"   // v1 = c1 = L0
+        ~ clickAt(300, 525, 250) ~ "\n"   // v2 = c2, v3 = v0 + (v2 - v1)
         ~ keyDown(400, SDLK_RETURN);
     playEvents(log);
     waitForPlaybackFinish();
@@ -584,16 +602,15 @@ unittest { // makeQuads parallelogram auto-corner
     assert(m["vertices"].array.length == 4, "expected 4 verts (1 quad)");
     assert(m["faces"].array.length == 1, "expected 1 quad");
 
-    // Verify parallelogram invariant: v3 - v1 == v2 - v0 (same offset on
-    // both sides of the strip).
+    // The corner law: v3 - v0 == v2 - v1.
     auto verts = m["vertices"].array;
     double[3] v0 = [verts[0].array[0].floating, verts[0].array[1].floating, verts[0].array[2].floating];
     double[3] v1 = [verts[1].array[0].floating, verts[1].array[1].floating, verts[1].array[2].floating];
     double[3] v2 = [verts[2].array[0].floating, verts[2].array[1].floating, verts[2].array[2].floating];
     double[3] v3 = [verts[3].array[0].floating, verts[3].array[1].floating, verts[3].array[2].floating];
     foreach (i; 0 .. 3) {
-        double offTop = v2[i] - v0[i];
-        double offBot = v3[i] - v1[i];
+        double offTop = v2[i] - v1[i];
+        double offBot = v3[i] - v0[i];
         assert(fabs(offTop - offBot) < 1e-3,
             "parallelogram: axis " ~ i.to!string ~ " mismatch (top "
             ~ offTop.to!string ~ " vs bot " ~ offBot.to!string ~ ")");
