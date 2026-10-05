@@ -70,21 +70,29 @@ unittest { // R1: the capability's effects and their order, one method at a time
     assert(refusals == 4, "6020 R1 every capability input must be required");
 }
 
-/// Every `.reset()` a loop over `pipeline.allMut()` makes: the loop body (a
-/// braced block, or the single statement up to its `;`) after each `allMut()`.
+/// Every `.reset()` a loop over `pipeline.allMut` makes: the loop body (a
+/// braced block, or the single statement up to its `;`) after each whole
+/// identifier `allMut`, called with or without `()`.
 private string[] fullPipeResetSites(string code, string file, ref size_t loops) {
     import std.format : format;
     import std.string : indexOf;
-    import tests.unit.census_symbols : balancedSpan, lineOf;
+    import tests.unit.census_symbols : balancedSpan, isIdentChar, lineOf;
     string[] sites;
-    enum needle = "allMut()";
+    enum needle = "allMut";
     for (ptrdiff_t at = code.indexOf(needle); at >= 0;
             at = code.indexOf(needle, at + needle.length)) {
-        ++loops;
         size_t p = at + needle.length;
-        while (p < code.length && (code[p] == ' ' || code[p] == '\n')) ++p;
+        if ((at > 0 && isIdentChar(code[at - 1]))
+                || (p < code.length && isIdentChar(code[p]))) continue;
+        ++loops;
+        void skipSpace() {
+            while (p < code.length && (code[p] == ' ' || code[p] == '\n')) ++p;
+        }
+        skipSpace();
+        if (p + 1 < code.length && code[p .. p + 2] == "()") p += 2;
+        skipSpace();
         if (p < code.length && code[p] == ')') ++p;   // the foreach header
-        while (p < code.length && (code[p] == ' ' || code[p] == '\n')) ++p;
+        skipSpace();
         string body;
         if (p < code.length && code[p] == '{') body = balancedSpan(code, p, '{', '}');
         else {
@@ -118,8 +126,9 @@ unittest { // 9465: ONE full pipe-stage reset per scene reset, and it is SceneRe
     const ctl = fullPipeResetSites(
         "void f() {\n    foreach (s; g_pipeCtx.pipeline.allMut())\n        s.reset();\n}\n"
         ~ "void g() { foreach (s; p.allMut()) { int y; if (x) s.reset(); } }\n"
-        ~ "void h() { foreach (s; p.allMut()) s.resetCounter(); }\n", "ctl", ctlLoops);
-    assert(ctlLoops == 3 && ctl == ["ctl:2", "ctl:5"],
+        ~ "void h() { foreach (s; p.allMut()) s.resetCounter(); }\n"
+        ~ "void i() { foreach (s; p.allMut) s.reset(); allMutable(); }\n", "ctl", ctlLoops);
+    assert(ctlLoops == 4 && ctl == ["ctl:2", "ctl:5", "ctl:7"],
         "9465 control: the scanner must see both loop shapes: " ~ ctl.to!string);
 
     const root = buildNormalizedPath(dirName(__FILE_FULL_PATH__), "..", "..", "..", "..");
@@ -131,12 +140,15 @@ unittest { // 9465: ONE full pipe-stage reset per scene reset, and it is SceneRe
         retiredIdent += countIdent(code, "resetAllPipeStages");
         sites ~= fullPipeResetSites(code, relativePath(de.name, root), loops);
     }
-    // Floor (measured 2026-10-05: `grep -rno "allMut()" source --include=*.d
-    // | wc -l` = 10: nine call sites plus the declaration in toolpipe/pipeline.d).
-    assert(loops >= 10,
-        "9465 floor: allMut() sites scanned " ~ loops.to!string);
+    // Floor, then the needle, then the pin (measured 2026-10-05: `grep -rnow
+    // allMut source --include=*.d | wc -l` = 10: nine uses plus the declaration
+    // in toolpipe/pipeline.d).
+    assert(loops >= 10, "9465 floor: allMut sites scanned " ~ loops.to!string);
     assert(retiredIdent == 0,
         "9465: resetAllPipeStages returned — the second stage reset per scene reset");
     assert(sites.length == 1 && sites[0].indexOf("source/commands/scene/reset.d:") == 0,
         "9465: a full pipe-stage reset loop outside SceneReset.apply: " ~ sites.to!string);
+    assert(loops == 10, "9465 pin: allMut sites changed to " ~ loops.to!string
+        ~ "; read each new site (a stage loop through a local is not seen by the"
+        ~ " needle) and update the measured count");
 }
