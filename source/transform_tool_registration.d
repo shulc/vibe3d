@@ -5,6 +5,7 @@ import commands.layer.xform_edit : LayerXformEdit;
 import commands.mesh.morph_edit : MeshMorphEdit;
 import commands.mesh.vertex_edit : MeshVertexEdit;
 import document : Layer;
+import handler : HitRule;
 import live_registration_roles : LiveSessionRole, LiveViewModeRole;
 import mesh_gpu : GpuMesh;
 import pipe_gizmo_host : PipeGizmoHost;
@@ -118,6 +119,7 @@ private XfrmTransformTool buildUnifiedTransform(LiveSessionRole owner,
     t.recordedFirstUndoEndsTool = defaults.recordedFirstUndoEndsTool;
     t.postmodeStartsOnPress = defaults.postmodeStartsOnPress;
     t.offGizmoRotateInput = defaults.offGizmoRotateInput;
+    t.setHandleHitRule(HitRule.nearestOnScreen);
     if (defaults.runCloseMode != RunCloseMode.consolidate)
         t.closedRunOwnerId = defaults.id;
     t.setUndoBindings(deps.history(), deps.vertexEditFactory(),

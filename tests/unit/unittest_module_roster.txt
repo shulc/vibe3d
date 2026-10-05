@@ -551,6 +551,7 @@ tests.unit.tools.slice.loop_slice_tool_test
 tests.unit.tools.slice.slice_tool_test
 tests.unit.tools.transform.arcball_test
 tests.unit.tools.transform.item_xform_kernels_test
+tests.unit.tools.transform.rotate_test
 tests.unit.tools.transform.transform_test
 tests.unit.tools.transform.xform_kernels_test
 tests.unit.topology_pen_factory_bundle_test

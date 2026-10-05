@@ -85,6 +85,13 @@ void setHandleExploreHook(HandleExploreHook hook) {
 // same module regardless of `protected`.
 // ---------------------------------------------------------------------------
 
+/// How the arbiter resolves an overlap. `firstRegistered` (the default): the
+/// first registered hit wins. `nearestOnScreen`: the hit with the smallest
+/// screen distance wins, registration order breaking ties — the measured law
+/// of the transform gizmo (capture K-HO, 12/12 presses), which a client opts
+/// into; clients that law was not measured on keep the default.
+enum HitRule { firstRegistered, nearestOnScreen }
+
 class ToolHandles {
     alias AiHoverPreviewPredicate = bool delegate(int part) const;
     private HandlePart[] entries; // registration order = test priority
@@ -93,6 +100,7 @@ class ToolHandles {
     int hot      = -1;           // ROLLOVER part, -1 = none
     int secondaryDefault = -1;   // deterministic default hint when AI changes hover
     int captured = -1;           // hauled part during a drag, -1 = none
+    HitRule rule;                // overlap resolution, set by the client
     private bool suppressed;     // when set, update() forces every handle Normal
     private int lastDefaultPart = -1;
     private bool aiHoverPreviewEnabled;
@@ -137,8 +145,8 @@ class ToolHandles {
         aiHoverPreviewPredicate = predicate;
     }
 
-    // Register a handle with a stable part id, in priority order (first wins
-    // on overlap).
+    // Register a handle with a stable part id, in priority order (the
+    // overlap winner under `firstRegistered`, the tie-break otherwise).
     void add(Handler h, int part) {
         entries ~= HandlePart(h, part);
     }
@@ -148,8 +156,8 @@ class ToolHandles {
         foreach (p; parts) add(p.h, base + p.part);
     }
 
-    // Hit-test pass: first registered handle (by priority) whose hitTest passes.
-    // Skips invisible handles. Returns its part id, or -1 on miss. Also records
+    // Hit-test pass: among the visible handles whose hitTest passes, the winner
+    // under `rule`. Returns its part id, or -1 on miss. Also records
     // the full ordered list of hit handle candidates for future advisory/debug
     // paths; this cache is observational and does not drive the winner.
     int test(int mx, int my, const ref Viewport vp,
@@ -171,7 +179,8 @@ class ToolHandles {
             c.priorityFromCurrentRules = cast(float)priority;
             c.hasScreenPosition = true;
             c.screenPosition = [cast(float)mx, cast(float)my];
-            if (firstPart < 0) {
+            if (firstPart < 0 || (rule == HitRule.nearestOnScreen
+                                  && c.screenDist < aiCandidates[defaultCandidate].screenDist)) {
                 firstPart = e.part;
                 defaultCandidate = aiCandidates.length;
             }

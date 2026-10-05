@@ -182,3 +182,23 @@ unittest {
         ~ "position and the highlight point are DIFFERENT points, and a "
         ~ "channel that carries only one of them cannot serve this consumer");
 }
+
+unittest {
+    // ---- D. a hover ON a handle publishes no preview ----------------------
+    // The hover's own hit test answers a part, so the would-be relocate is not
+    // previewed even with unbounded ranges (the same ranges snap off-handle, A).
+    post(BASE ~ "/api/command", commandBody("scene.reset"));
+    script("tool.set move\n"
+         ~ "tool.pipe.attr snap enabled true\n"
+         ~ "tool.pipe.attr snap types vertex\n"
+         ~ "tool.pipe.attr snap innerRange 999999\n"
+         ~ "tool.pipe.attr snap outerRange 999999\n");
+    auto cam = fetchCamera(BASE);
+    auto vp = viewportFromCamera(cam);
+    int gx, gy; double ux, uy;
+    axisGrabPx(Vec3(0, 0, 0), vp, gx, gy, ux, uy);
+    playAndWait(buildHoverLog(cam.vpX, cam.vpY, cam.width, cam.height, gx, gy), BASE);
+    auto d = fetchSnapLast(BASE);
+    assert(d["snapped"].type == JSONType.FALSE && d["highlighted"].type == JSONType.FALSE,
+        format("a hover on the X arrow (%d,%d) must not preview a relocate snap: %s", gx, gy, d.toString()));
+}

@@ -276,3 +276,18 @@ unittest { // The pick region tracks the box a companion bank pushed out
                       ~ "place.", label, probeX, probeY, hot, SCALE_BASE));
     }
 }
+
+unittest {
+    // The bare Transform preset registers the compact part set: scale heads,
+    // the rotate rings, the move centre box and arrows — no move plane rings.
+    restoreTransformPreset();
+    setUp();
+    cmd("tool.set Transform on");
+    long[] parts;
+    foreach (p; getJson("/api/tool/handles")["handles"]["parts"].array) parts ~= p["part"].integer;
+    import std.algorithm : sort;
+    parts.sort();
+    cmd("tool.set Transform off");
+    assert(parts == [0, 1, 2, 3, 10, 11, 12, 13, 20, 21, 22],
+        format("compact Transform registered parts %s", parts));
+}
