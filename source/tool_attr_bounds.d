@@ -7,10 +7,10 @@ import params : Param, ParamFlags, paramGateFloat, paramGateInt;
 // write column — the value an out-of-range write actually stores — not the
 // declared hints: several attributes clamp with nothing declared. Every row
 // has a min; an absent max is unbounded (the write is stored as given). Read
-// by the `tool.attr` door, the scripted one-shot (`prim.cube` …), the property
-// panel, the forms panel and the registry; the stored-state paths (presets,
-// the attribute cache, `tool.set` arguments, undo) never consult it, so each
-// kernel keeps its own `MAX_` cap.
+// by the `tool.attr` door, `tool.set` arguments, the scripted one-shot
+// (`prim.cube` …), the property panel, the forms panel and the registry; the
+// restore paths (presets, the attribute cache, remembered defaults, undo) never
+// consult it, so each kernel keeps its own `MAX_` cap.
 struct ToolAttrBound {
     string tool, attr;
     double lo, hi;

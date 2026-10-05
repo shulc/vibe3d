@@ -5,10 +5,12 @@
 // floats at -1e30 / 1e30 (spelled out: the wire's argstring does not read an
 // exponent). Rows are collected so one run names every divergence.
 //
-// The stored-state paths do not clamp (here `tool.set <id> on name:value`), so
-// each kernel caps the count itself: cell `kernel` builds once from a stored
-// value past the door's bound and once from the cap written through the door,
-// and the two meshes must agree.
+// `tool.set <id> on name:value` is a door too (cell `toolset`, one cell per
+// family). A row with no max stores any count, so each kernel caps it itself:
+// cell `kernel` builds once from a stored value past the kernel cap and once
+// from the cap written through the door, and the two meshes must agree.
+//
+// Cell `toolset`: the arm's named arguments clamp from the same rows.
 //
 // Cell `edgeEnd`: a loop slice stored at an edge end (0 or 1, the reference's
 // bound) reads back as written and builds the cut its nearest open-interval
@@ -18,7 +20,7 @@
 // Cell `axis`: an axis attribute takes its number and clamps it to [0, 2]
 // (K-A3 table b), read back as its tag.
 //
-// Run via: ./run_test.d test_tool_attr_bounds   (one block: VIBE3D_CELL=door|kernel|exponent|edgeEnd|axis)
+// Run via: ./run_test.d test_tool_attr_bounds   (one block: VIBE3D_CELL=door|kernel|toolset|exponent|edgeEnd|axis)
 
 import http_client : getJson, postRawAllowingErrorStatus;
 import http_command_helpers : commandBody;
@@ -155,14 +157,7 @@ unittest {
     if (!cell("kernel")) return;
     struct Cap { string tool, setup, stored, atCap; }
     static immutable Cap[] caps = [
-        Cap("prim.cone", "", " sides:5000", "tool.attr prim.cone sides 1024"),
-        Cap("prim.cylinder", "", " segments:5000", "tool.attr prim.cylinder segments 1024"),
         Cap("prim.capsule", "", " endsegments:5000", "tool.attr prim.capsule endsegments 1024"),
-        Cap("prim.sphere", "", " sides:5000", "tool.attr prim.sphere sides 1024"),
-        Cap("prim.sphere", "tool.attr prim.sphere method qball", " order:100",
-            "tool.attr prim.sphere order 32"),
-        Cap("prim.sphere", "tool.attr prim.sphere method tess", " order:100",
-            "tool.attr prim.sphere order 32"),
         Cap("prim.ellipsoid", "", " segments:5000", "tool.attr prim.ellipsoid segments 1024"),
         Cap("prim.torus", "", " minorSegments:5000", "tool.attr prim.torus minorSegments 1024"),
         Cap("prim.cube", "", " segmentsX:500", "tool.attr prim.cube segmentsX 64"),
@@ -178,16 +173,10 @@ unittest {
         if (stored != atCap)
             failed ~= format("%s%s built %s, the cap built %s", c.tool, c.stored, stored, atCap);
     }
-    // The loop slice re-fit caps its stored count before it allocates.
-    ok("scene.reset");
-    ok("tool.set mesh.loopSliceTool on count:5000");
-    const n = cmd("tool.attr mesh.loopSliceTool count ?")["value"].integer;
-    ok("tool.set mesh.loopSliceTool off");
-    if (n != 1024) failed ~= format("loop slice stored count:5000 reads %s, expected 1024", n);
-    assert(caps.length == 12, "kernel cells: measured 12");
+    assert(caps.length == 7, "kernel cells: measured 7");
     assert(failed.length == 0, format("kernel caps failed in %d cells:\n  %-(%s\n  %)",
                                       failed.length, failed));
-    writeln("PASS kernel caps, 13 cells");
+    writeln("PASS kernel caps, 7 cells");
 }
 
 // The wire reads an exponent (`5e2` used to arrive as 5 and `1e30` as 1); the
@@ -287,4 +276,36 @@ unittest {
     assert(failed.length == 0, format("edge-end slices failed in %d:\n  %-(%s\n  %)",
                                       failed.length, failed));
     writeln("PASS loop slice edge ends");
+}
+
+unittest {
+    if (!cell("toolset")) return;
+    struct W { string tool, named, attr, want; }
+    static immutable W[] writes = [
+        W("pen", " wall:inner offset:-1", "offset", "0.0"),
+        W("prim.cube", " axis:5", "axis", `"z"`),
+        W("prim.cone", " sides:5000", "sides", "1024"),
+        W("prim.sphere", " order:100", "order", "32"),
+        W("xfrm.smooth", " iter:0", "iter", "1"),
+        W("xfrm.smooth", " iter:500", "iter", "500"),
+        W("mesh.loopSliceTool", " count:5000", "count", "1024"),
+    ];
+    // `VIBE3D_TOOL=<id>` keeps one family's writes (a drill names the family).
+    const only = environment.get("VIBE3D_TOOL", "");
+    string[] failed;
+    foreach (w; writes) {
+        if (only.length && only != w.tool) continue;
+        ok("scene.reset");
+        auto r = cmd("tool.set " ~ w.tool ~ " on" ~ w.named);
+        const got = r["status"].str != "ok" ? r.toString
+            : cmd("tool.attr " ~ w.tool ~ " " ~ w.attr ~ " ?")["value"].toString;
+        cmd("tool.set " ~ w.tool ~ " off");
+        if (got != w.want)
+            failed ~= format("tool.set %s on%s reads %s %s, expected %s", w.tool, w.named,
+                             w.attr, got, w.want);
+    }
+    assert(writes.length == 7, "tool.set writes: measured 7");
+    assert(failed.length == 0, format("tool.set writes failed in %d:\n  %-(%s\n  %)",
+                                      failed.length, failed));
+    writeln("PASS tool.set writes, 7");
 }

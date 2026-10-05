@@ -337,3 +337,8 @@ unittest { // centre-mover-oblique: the centre box is the planar map anchored at
         && (got - Vec3(0, 0, -5)).length <= 1e-5f,
         format("KCM_TGb: the centre box must snap T to the grid node (0, 0, -5), got %s", got));
 }
+
+unittest { // the kernel ring cap: the doors stop at 1024, a restored count past it is capped here
+    assert(ringCount(5000, 3) == MAX_PRIM_RING && MAX_PRIM_RING == 1024);
+    assert(ringCount(-7, 3) == 3 && ringCount(24, 3) == 24);
+}

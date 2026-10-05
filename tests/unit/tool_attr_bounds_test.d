@@ -1,6 +1,7 @@
 // The captured tool attribute bounds (task 9492, K-A3): the row overrides the
 // declaration, clamps a value stored past it, and is read only at the
-// interactive doors (the census below), never on a stored-state path.
+// attribute doors (the census below, `tool.set` arguments included), never on a
+// restore path (presets, the attribute cache, remembered defaults, undo).
 module tests.unit.tool_attr_bounds_test;
 
 import params : Param, ParamFlags;
@@ -72,7 +73,7 @@ unittest { // no row: the Param is left exactly as declared (negative control)
     assert(p.hints.minI == 5 && p.hints.maxI == 8 && (p.flags & ParamFlags.EnforceBounds) == 0);
 }
 
-unittest { // the doors that read the table — and nothing else (a stored-state
+unittest { // the doors that read the table — and nothing else (a restore
            // path that read it would clamp what the reference stores as given)
     import std.file      : dirEntries, readText, SpanMode;
     import std.path      : buildPath, dirName, relativePath;
@@ -97,6 +98,7 @@ unittest { // the doors that read the table — and nothing else (a stored-state
     uses.remove("tool_attr_bounds.d");
     // Each door imports the name once and calls it once.
     size_t[string] want = ["commands/tool/attr.d": 2, "commands/tool/headless.d": 2,
-                           "forms_render.d": 2, "property_panel.d": 2, "registry.d": 2];
+                           "forms_render.d": 2, "prepared_tool_transition.d": 2,
+                           "property_panel.d": 2, "registry.d": 2];
     assert(uses == want, "applyToolAttrBound readers changed");
 }

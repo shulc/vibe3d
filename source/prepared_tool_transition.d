@@ -18,6 +18,7 @@ import tool : Tool, firstStepCarriesActivation;
 import view : View;
 import editmode : EditMode;
 import tool_presets : prepareStickyToolDefaults;
+import tool_attr_bounds : applyToolAttrBound;
 import toolpipe.attr_cache : DroppedNodes, NodeAttrs, PipelineAttrCache,
     captureDroppedNodes, kToolNode;
 import toolpipe.pipeline : Pipeline;
@@ -156,8 +157,12 @@ PreparedArm prepareArm(ToolFactory factory, string id, Tool retainedOld,
         foreach (node, attrs; result.dropped_.nodes) presetImage[node] = attrs;
     auto sticky = prepareStickyToolDefaults(candidate, kToolNode in presetImage);
     string[] namedNames;
-    if (namedArgs.type == JSONType.object && namedArgs.object.length > 0)
-        namedNames = injectPreparedParamsInto(candidate.params(), namedArgs);
+    if (namedArgs.type == JSONType.object && namedArgs.object.length > 0) {
+        // `tool.set <id> on name:value` writes through the captured bounds too.
+        auto ps = candidate.params();
+        foreach (ref p; ps) applyToolAttrBound(id, p);
+        namedNames = injectPreparedParamsInto(ps, namedArgs);
+    }
 
     result.pipe_ = new PreparedRecordContext(null, observers);
     result.pipe_.setResourceIdentity(threadIdentity, contextIdentity);

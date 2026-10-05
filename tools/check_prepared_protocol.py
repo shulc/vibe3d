@@ -1613,7 +1613,9 @@ for required in (
         # preset image, built after the predecessor's nodes are captured.
         "captureDroppedNodes(retainedOldId, retainedOld,",
         "prepareStickyToolDefaults(candidate, kToolNode in presetImage)",
-        "injectPreparedParamsInto(candidate.params(), namedArgs)",
+        # The named arguments write the candidate's params through the bounds.
+        "auto ps = candidate.params();",
+        "injectPreparedParamsInto(ps, namedArgs)",
         "preparePipeActivation(pipeline, pipeAttrs, gizmoHost, pipeScope,\n                                             presetImage)",
         "outgoingDoor.prepareDoorDeactivate",
         "incomingDoor.prepareDoorActivate",
