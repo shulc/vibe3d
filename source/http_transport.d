@@ -454,9 +454,9 @@ mixin template HttpServerTransport()
             HttpResponse response = handleRequest(httpRequest);
             // Surplus bytes would be a pipelined request this loop does not
             // parse, so such a connection is closed as before.
-            keepOpen = wantsKeepAlive(httpRequest)
+            immutable keepAlive = wantsKeepAlive(httpRequest)
                 && bodyRaw.length == contentLength;
-            if (keepOpen) response.headers["Connection"] = "keep-alive";
+            if (keepAlive) response.headers["Connection"] = "keep-alive";
 
             string responseStr = formatResponse(response);
             string sendFailure;
@@ -469,10 +469,9 @@ mixin template HttpServerTransport()
                 logWarn("http", format(
                     "peer %s took only %d of %d response bytes: %s",
                     peer, sent, responseStr.length, sendFailure));
-                keepOpen = false;
             }
+            keepOpen = keepAlive && sent == responseStr.length;
         } catch (Exception e) {
-            keepOpen = false;
             logWarn("http", "Error handling client: " ~ e.msg);
         } finally {
             // The whole point of task 0652: a connection we accepted and did
