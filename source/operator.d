@@ -153,6 +153,12 @@ Viewport viewportOf(ref VectorStack vts) {
     return Viewport.init;
 }
 
+/// The subject's pick-occlusion term (`SubjectPacket.pickOcclusion`).
+bool pickOcclusionOf(ref VectorStack vts) {
+    if (auto s = vts.get!SubjectPacket()) return s.pickOcclusion;
+    return true;
+}
+
 /// Boilerplate stubs for terminal (Actr-slot) Operators. Provides
 /// task() / requiredPackets() / reset() — the small fixed values
 /// every convolve/transform command needs. evaluate(vts) is NOT

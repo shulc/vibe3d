@@ -67,6 +67,10 @@ struct SubjectPacket {
     int  cursorX     = -1;
     int  cursorY     = -1;
     bool cursorValid = false;
+    // The pick-visibility occlusion term of the cell (`select_visibility`):
+    // false under a style that draws no faces. Stamped by the main-thread
+    // builder (`InputFrameState.buildToolVts`); read with the viewport.
+    bool pickOcclusion = true;
 
     // The MORPH ROUTING TARGET (task 1069) — which mesh map an edit is
     // authored INTO, or none. Declared on the subject rather than on the

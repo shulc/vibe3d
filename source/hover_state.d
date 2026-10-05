@@ -123,7 +123,21 @@ int electElement(PickGather g) pure nothrow @nogc @safe {
     return -1;
 }
 
-/// The pick-visibility occlusion term of the cell the last hover publish read
-/// (`InputFrameState.publishHover` writes it): under a style that draws no
-/// faces nothing occludes and no polygon is pickable by a press (K-P P10).
-__gshared bool g_hoverOcclusion = true;
+/// The gather's distances from the cursor PIXEL CENTRE (mx + 0.5, my + 0.5) —
+/// the ID buffer's and the pixel ray's convention — to a gathered vertex and
+/// edge given as window points (null = none gathered).
+PickGather pickDistances(int mx, int my, const(float[2])* v, const(float[2][2])* e,
+                         bool polygon) {
+    import math : closestOnSegment2D;
+    immutable float cx = mx + 0.5f, cy = my + 0.5f;
+    float dist(float x, float y) { return ((x - cx) ^^ 2 + (y - cy) ^^ 2) ^^ 0.5f; }
+    PickGather g;
+    if (v !is null) g.vertex = dist((*v)[0], (*v)[1]);
+    if (e !is null) {
+        float t;
+        g.edge = closestOnSegment2D(cx, cy, (*e)[0][0], (*e)[0][1], (*e)[1][0], (*e)[1][1], t);
+        g.edgeMid = dist(((*e)[0][0] + (*e)[1][0]) * 0.5f, ((*e)[0][1] + (*e)[1][1]) * 0.5f);
+    }
+    if (polygon) g.polygon = 0.0f;
+    return g;
+}

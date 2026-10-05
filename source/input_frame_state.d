@@ -191,10 +191,10 @@ final class InputFrameState {
     int hoveredVertex = -1;
     int hoveredEdge   = -1;
     int hoveredFace   = -1;
-    // `pickHover` writes these beside the ids: the comparator's distances
-    // (px from the cursor's pixel centre) and the cell's occlusion term.
-    float hoveredVertexPx = 0, hoveredEdgePx = 0, hoveredEdgeMidPx = float.infinity;
-    bool  pickOcclusion = true;
+    // `pickHover` writes the hovered vertex's / edge's window position beside
+    // its id: the comparator's input (`hover_state.pickDistances`).
+    float[2]    hoveredVertexAt = 0;
+    float[2][2] hoveredEdgeAt   = 0;
 
     // Task 0781 step 1c: the two picker-owned references, moved in with the
     // pick family below because that family is their ONLY reader -- measured
@@ -261,6 +261,7 @@ final class InputFrameState {
         src.cursorX     = curX;
         src.cursorY     = curY;
         src.cursorValid = curValid;
+        src.pickOcclusion = app.vpm.pickVisibility().occlusionTerm;
         gestureSlot = gest;
         evaluateSubject(subj, vts, src, &gestureSlot);
     }
@@ -303,15 +304,13 @@ final class InputFrameState {
     void publishHover(bool toolActive, int mx, int my) {
         import ai.element_candidates : publishElementCandidates;
         import hover_state : g_hoveredVertex, g_hoveredEdge, g_hoveredFace,
-            g_hoverIndexSpaceStale, g_hoverOcclusion, kCascadeVertex, kCascadeEdge,
-            kCascadePolygon, PickGather, electElement;
+            g_hoverIndexSpaceStale, kCascadeVertex, kCascadeEdge, kCascadePolygon,
+            electElement, pickDistances;
         publishElementCandidates(mx, my, hoveredVertex, hoveredEdge, hoveredFace);
         if (toolActive) {
-            PickGather g;
-            if (hoveredVertex >= 0) g.vertex = hoveredVertexPx;
-            if (hoveredEdge >= 0) { g.edge = hoveredEdgePx; g.edgeMid = hoveredEdgeMidPx; }
-            if (hoveredFace >= 0) g.polygon = 0.0f;
-            immutable int k = electElement(g);
+            immutable int k = electElement(pickDistances(mx, my,
+                hoveredVertex >= 0 ? &hoveredVertexAt : null,
+                hoveredEdge >= 0 ? &hoveredEdgeAt : null, hoveredFace >= 0));
             if (k != kCascadeVertex)  hoveredVertex = -1;
             if (k != kCascadeEdge)    hoveredEdge   = -1;
             if (k != kCascadePolygon) hoveredFace   = -1;
@@ -320,7 +319,6 @@ final class InputFrameState {
         g_hoveredEdge   = hoveredEdge;
         g_hoveredFace   = hoveredFace;
         g_hoverIndexSpaceStale = previewIndexSpaceStale();
-        g_hoverOcclusion = pickOcclusion;
     }
 
     /// The vertex CLICK's tie group (K-OC): besides the nearest vertex the
@@ -334,7 +332,9 @@ final class InputFrameState {
         import math : projectionSpace, projectToWindowFull;
         import mesh_visibility : VisibilityProbe, regionVisibilityProbe;
         import std.algorithm : min;
-        immutable int best = hoveredVertex;
+        // The id is this frame's only under the vertex type (a type switch
+        // inside one event batch leaves the last frame's vertex behind).
+        immutable int best = viewportPickType(app.selTypeOrder) == SelType.Vertex ? hoveredVertex : -1;
         if (best < 0 || dragMode != DragMode.Select || app.subpatchPreview.active) return;
         auto m = &app.mesh();
         const ms = primaryModelSpace();
@@ -348,16 +348,15 @@ final class InputFrameState {
         if (best >= m.vertices.length) return;
         immutable float limit = min(kElementPickRadiusPx ^^ 2,
             d2(best) + min(kElementPickRadiusPx, kVertexPointSizePx) ^^ 2);
-        size_t[] group;
-        foreach (v; 0 .. m.vertices.length)
-            if (v != best && !m.isVertexHidden(v) && d2(v) <= limit) group ~= v;
-        if (group.length == 0) return;
         immutable bool occl = app.vpm.pickVisibility().occlusionTerm;
-        VisibilityProbe vis;
-        if (occl) vis = regionVisibilityProbe(*m, vp.eye, vp, ms);
-        foreach (v; group)
+        VisibilityProbe vis;      // built on the first candidate, when occluding
+        bool probed;
+        foreach (v; 0 .. m.vertices.length) {
+            if (v == best || m.isVertexHidden(v) || d2(v) > limit) continue;
+            if (occl && !probed) { vis = regionVisibilityProbe(*m, vp.eye, vp, ms); probed = true; }
             if (!occl || vis.visible(v))
                 symmetricSelectVertex(m, vp, app.editMode, cast(int)v, /*deselect=*/false);
+        }
     }
 
     // ---- Task 0781 step 1c: the PICK FAMILY ------------------------------
@@ -412,7 +411,6 @@ final class InputFrameState {
         else
             alias hovered = hoveredEdge;
         app.ensureDisplayCurrent(); // mid-batch pull-guard: VBO reader below
-        pickOcclusion = app.vpm.pickVisibility().occlusionTerm;
         // Task 1730 — the SAME freeze, for the same reason, over a different
         // window: this picker reads the ID buffer and maps it back through
         // `gpu.vertOriginGpu` / `edgeOriginGpu`, and while a rebuild is in
@@ -464,41 +462,35 @@ final class InputFrameState {
         // none (`CLAUDE.md` §Measured laws).
         import hover_state : kElementPickRadiusPx;
         int hit = app.gpuSelect.pick(sm, mx, my, cast(int)kElementPickRadiusPx,
-                                 app.mesh, app.gpu, vp, primaryModelSpace(), pickOcclusion);
+                                 app.mesh, app.gpu, vp, primaryModelSpace(),
+                                 app.vpm.pickVisibility().occlusionTerm);
         if (hit < 0) return;
 
         hovered = hit;
-        noteHoverDistance!em(vp, mx, my);
+        noteHoverPoints!em(vp, mx, my);
         if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd)
             symSel(&app.mesh(), vp, app.editMode, hovered, /*deselect=*/false);
         else if (dragMode == DragMode.SelectRemove)
             symSel(&app.mesh(), vp, app.editMode, hovered, /*deselect=*/true);
     }
-    /// The hovered element's screen distances for the comparator. Over a live
+    /// The hovered element's window position for the comparator. Over a live
     /// subpatch preview the drawn positions are the limit's, not the cage's,
-    /// so none is measured (0: the comparator then keeps V > E > F).
-    private void noteHoverDistance(EditMode em)(ref Viewport vp, int mx, int my) {
-        import math : projectionSpace, projectToWindowFull, closestOnSegment2D;
-        static if (em == EditMode.Vertices) hoveredVertexPx = 0;
-        else { hoveredEdgePx = 0; hoveredEdgeMidPx = float.infinity; }
-        if (app.subpatchPreview.active) return;
+    /// so the cursor's own pixel centre stands in (the comparator then keeps
+    /// V > E > F); so does a point that does not project.
+    private void noteHoverPoints(EditMode em)(ref Viewport vp, int mx, int my) {
+        import math : projectionSpace, projectToWindowFull;
         const Viewport vl = projectionSpace(vp, primaryModelSpace());
-        immutable float cx = mx + 0.5f, cy = my + 0.5f;
         const m = &app.mesh();
-        bool px(uint v, out float x, out float y) {
-            float z;
-            return v < m.vertices.length && projectToWindowFull(m.vertices[v], vl, x, y, z);
+        float[2] at(uint v) {
+            float x, y, z;
+            if (app.subpatchPreview.active || v >= m.vertices.length
+                    || !projectToWindowFull(m.vertices[v], vl, x, y, z))
+                return [mx + 0.5f, my + 0.5f];
+            return [x, y];
         }
-        float x0 = cx, y0 = cy, x1 = cx, y1 = cy, t;
-        static if (em == EditMode.Vertices) {
-            px(hoveredVertex, x0, y0);
-            hoveredVertexPx = ((x0 - cx) ^^ 2 + (y0 - cy) ^^ 2) ^^ 0.5f;
-        } else {
-            if (hoveredEdge < m.edges.length)
-                px(m.edges[hoveredEdge][0], x0, y0) && px(m.edges[hoveredEdge][1], x1, y1);
-            hoveredEdgePx    = closestOnSegment2D(cx, cy, x0, y0, x1, y1, t);
-            hoveredEdgeMidPx = (((x0 + x1) * 0.5f - cx) ^^ 2 + ((y0 + y1) * 0.5f - cy) ^^ 2) ^^ 0.5f;
-        }
+        static if (em == EditMode.Vertices) hoveredVertexAt = at(hoveredVertex);
+        else if (hoveredEdge < m.edges.length)
+            hoveredEdgeAt = [at(m.edges[hoveredEdge][0]), at(m.edges[hoveredEdge][1])];
     }
 
     alias pickVertices = pickHover!(SelectMode.Vertex, EditMode.Vertices,

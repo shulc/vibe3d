@@ -35,7 +35,7 @@ import math               : Vec3, Viewport, projectToWindowFull, closestOnSegmen
                              screenPointToLocalRay;
 import document             : Layer, primaryModelSpace;
 import shader              : Shader;
-import operator            : VectorStack, viewportOf;
+import operator            : VectorStack, viewportOf, pickOcclusionOf;
 import toolpipe.packets    : ConstrainHitPacket, HoverTarget, HoverTargetKind,
                              SubjectPacket, SnapPacket, SnapType, SymmetryPacket;
 import toolpipe.stages.constrain : liveConstrainStage, backgroundHit;
@@ -1738,7 +1738,8 @@ public:
                 // `hoverOverMesh_` holds this resolves something: that gate
                 // is the OR of the very three terms `resolveGrabTarget`
                 // tries, at the same thresholds.
-                hoverGrabElem_ = resolveGrabTarget(e.x, e.y, vp, hoverGrabIndex_);
+                hoverGrabElem_ = resolveGrabTarget(e.x, e.y, vp, hoverGrabIndex_,
+                                                   pickOcclusionOf(vts));
             } else {
                 hoverNearestVert_ = hoverNearestEdge_ = hoverBoundaryFace_ = -1;
                 hoverBoundary_    = false;
@@ -3731,7 +3732,8 @@ public:
     // `pickPrimaryFace` needs `gpu_` and answers -1 without it, so under a
     // bare `dub test` (no GL) only the vertex and edge terms are live — the
     // face term is exercised by the HTTP tests, which have a real upload.
-    package MoveElem resolveGrabTarget(int mx, int my, const ref Viewport vp, out int index) {
+    package MoveElem resolveGrabTarget(int mx, int my, const ref Viewport vp, out int index,
+                                       bool occlusion) {
         index = -1;
         auto m = mesh;
         if (m is null) return MoveElem.None;
@@ -3740,32 +3742,25 @@ public:
         // nearest VISIBLE vertex and edge within the reach, the polygon under
         // the cursor only under a style that draws faces (K-P P9, P10), ranked
         // by the cascade after the edge-midpoint veto.
-        import hover_state : PickGather, electElement, g_hoverOcclusion,
-            kCascadeVertex, kCascadeEdge, kCascadePolygon;
-        immutable bool occl = g_hoverOcclusion;
-        scope bool delegate(Vec3) admit = occl ? (Vec3 p) => pressVisible(p, vp) : null;
+        import hover_state : electElement, pickDistances, kCascadeVertex,
+            kCascadeEdge, kCascadePolygon;
+        scope bool delegate(Vec3) admit = occlusion ? (Vec3 p) => pressVisible(p, vp) : null;
         immutable int vi = findSourceVertex(mx, my, vp, kTopoPenSnapAuto, admit);
         immutable int ei = findRingSeedEdge(mx, my, vp, kTopoPenSnapAuto, admit);
-        immutable int fi = occl ? pickPrimaryFace(mx, my, vp) : -1;
+        immutable int fi = occlusion ? pickPrimaryFace(mx, my, vp) : -1;
 
         const AimViewport vpAim = aimSpace(vp, primaryModelSpace());
-        float dist(Vec3 p) {
-            ImVec2 q;
-            return projectLocalPt(p, vpAim, q)
-                ? hypot(q.x - cast(float)mx, q.y - cast(float)my) : float.infinity;
+        bool at(uint v, out float[2] q) {
+            ImVec2 p;
+            if (!projectLocalPt(m.vertices[v], vpAim, p)) return false;
+            q = [p.x, p.y];
+            return true;
         }
-        PickGather g;
-        if (vi >= 0) g.vertex = dist(m.vertices[vi]);
-        if (ei >= 0) {
-            ImVec2 pa, pb;
-            float t;
-            if (projectLocalPt(m.vertices[m.edges[ei][0]], vpAim, pa)
-                    && projectLocalPt(m.vertices[m.edges[ei][1]], vpAim, pb))
-                g.edge = closestOnSegment2D(cast(float)mx, cast(float)my, pa.x, pa.y, pb.x, pb.y, t);
-            g.edgeMid = dist((m.vertices[m.edges[ei][0]] + m.vertices[m.edges[ei][1]]) * 0.5f);
-        }
-        if (fi >= 0 && fi < cast(int)m.faces.length && m.faces[fi].length >= 3) g.polygon = 0.0f;
-
+        float[2] pv;
+        float[2][2] pe;
+        const g = pickDistances(mx, my, vi >= 0 && at(vi, pv) ? &pv : null,
+            ei >= 0 && at(m.edges[ei][0], pe[0]) && at(m.edges[ei][1], pe[1]) ? &pe : null,
+            fi >= 0 && fi < cast(int)m.faces.length && m.faces[fi].length >= 3);
         switch (electElement(g)) {
             case kCascadeVertex:  index = vi; return MoveElem.Vertex;
             case kCascadeEdge:    index = ei; return MoveElem.Edge;
@@ -3976,7 +3971,7 @@ public:
         if (m is null) return false;
 
         int index;
-        immutable MoveElem kind = resolveGrabTarget(e.x, e.y, vp, index);
+        immutable MoveElem kind = resolveGrabTarget(e.x, e.y, vp, index, pickOcclusionOf(vts));
         if (kind == MoveElem.None) return false;
         return armMoveOn(kind, index, e);
     }
@@ -4322,7 +4317,7 @@ public:
         Viewport vp = viewportOf(vts);
         // The press pick (`resolveGrabTarget`); a polygon has no Duplicate gesture.
         int picked;
-        immutable MoveElem pressed = resolveGrabTarget(e.x, e.y, vp, picked);
+        immutable MoveElem pressed = resolveGrabTarget(e.x, e.y, vp, picked, pickOcclusionOf(vts));
         immutable int src = pressed == MoveElem.Vertex ? picked : -1;
         immutable int seedEi = pressed == MoveElem.Edge ? picked : -1;
         if (src < 0) {
@@ -4428,7 +4423,7 @@ public:
                             bool loop) {
         Viewport vp = viewportOf(vts);
         int idx;
-        final switch (resolveGrabTarget(e.x, e.y, vp, idx)) {
+        final switch (resolveGrabTarget(e.x, e.y, vp, idx, pickOcclusionOf(vts))) {
         case MoveElem.Vertex: removeVertexAt(idx);      break;
         case MoveElem.Edge:   removeEdgeAt(idx, loop);  break;
         case MoveElem.Face:   removeFaceAt(idx);        break;
@@ -4472,6 +4467,13 @@ public:
         const AimViewport vpAim = aimSpace(vp, primaryModelSpace());
         int   best   = -1;
         float bestD  = float.infinity;
+        // The admit sees the edge's point nearest the cursor's eye ray (local).
+        Vec3 ro, rd;
+        if (admit !is null) {
+            const ms = primaryModelSpace();
+            screenPointToRay(mx + 0.5f, my + 0.5f, vp, ro, rd);
+            if (!ms.isIdentity) { ro = ms.toLocalPoint(ro); rd = ms.toLocalDir(rd); rd = rd * (1.0f / rd.length); }
+        }
         foreach (ei, e; m.edges) {
             ImVec2 pa, pb;
             if (!projectLocalPt(m.vertices[e[0]], vpAim, pa)) continue;
@@ -4481,7 +4483,7 @@ public:
                                         pa.x, pa.y, pb.x, pb.y, t);
             if (d >= bestD) continue;
             if (admit !is null && (d > thresholdPx
-                    || !admit(m.vertices[e[0]] + (m.vertices[e[1]] - m.vertices[e[0]]) * t)))
+                    || !admit(closestPointOnSegmentToRay(m.vertices[e[0]], m.vertices[e[1]], ro, rd))))
                 continue;
             bestD = d; best = cast(int)ei;
         }
@@ -4964,7 +4966,7 @@ public:
         Viewport vp = viewportOf(vts);
         slideVertex_ = -1;
         int grabbed;
-        if (resolveGrabTarget(e.x, e.y, vp, grabbed) == MoveElem.Vertex)
+        if (resolveGrabTarget(e.x, e.y, vp, grabbed, pickOcclusionOf(vts)) == MoveElem.Vertex)
             return armVertexSlide(e, grabbed);
         int seed = findRingSeedEdge(e.x, e.y, vp);
         if (seed < 0) return false;

@@ -82,6 +82,7 @@ struct SubjectSource {
     int  cursorX            = -1;
     int  cursorY            = -1;
     bool cursorValid        = false;
+    bool pickOcclusion      = true;
     bool resolveMorphTarget = false;   // buildLocalVts only
 }
 
@@ -114,6 +115,7 @@ void fillSubject(out SubjectPacket subj, in SubjectSource src) {
     subj.cursorX     = src.cursorX;
     subj.cursorY     = src.cursorY;
     subj.cursorValid = src.cursorValid;
+    subj.pickOcclusion = src.pickOcclusion;
 
     // Task 1069's morph routing target (SubjectPacket.morphTargetKind/
     // morphTargetName) — opt-in, resolved AGAINST THIS MESH so a target

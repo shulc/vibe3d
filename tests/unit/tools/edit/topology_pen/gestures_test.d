@@ -10192,7 +10192,7 @@ unittest {
     // whatever `resolveGrabTarget` says is what the indicator paints, so the
     // annulus has to be closed on BOTH at once or the highlight lies.
     int idx = -12345;
-    assert(t.resolveGrabTarget(ax, ay, vp, idx) == MoveElem.None,
+    assert(t.resolveGrabTarget(ax, ay, vp, idx, true) == MoveElem.None,
         "the grab target 14px from a vertex must be None (no face term without gpu_) — the "
       ~ "highlight and the press must never name different elements");
     assert(idx < 0, "and it must publish no index");
@@ -10245,7 +10245,7 @@ unittest {
         "setup: v0 must still be a candidate at this pixel");
 
     int idx = -12345;
-    assert(t.resolveGrabTarget(cx, cy, vp, idx) == MoveElem.Vertex,
+    assert(t.resolveGrabTarget(cx, cy, vp, idx, true) == MoveElem.Vertex,
         "a vertex inside the press-pick reach must beat a strictly NEARER edge — 'one closest "
       ~ "candidate across types' was measured-negative and must not be ported");
     assert(idx == 0, "and the resolved element must be v0 itself");
@@ -11379,7 +11379,7 @@ unittest { // an EDGE-latched press DISSOLVES the edge — it does not remove a 
     immutable uint seed = m.edgeIndex(5, 9);
     auto e = gridEdgeMidPixel(m, vp, 5, 9);
     int idx;
-    assert(t.resolveGrabTarget(e.x, e.y, vp, idx) == MoveElem.Edge && idx == cast(int)seed,
+    assert(t.resolveGrabTarget(e.x, e.y, vp, idx, true) == MoveElem.Edge && idx == cast(int)seed,
         "setup: the press must LATCH THE INTERIOR EDGE, or this measures the aim");
 
     penStep(t, SDL_BUTTON_LEFT, PenMode.Remove, () {
@@ -11426,7 +11426,7 @@ unittest { // a VERTEX-latched press merges its whole fan and drops the vertex
     auto pre = m.vertices.dup;
     auto e   = gridVertPixel(m, vp, 5);
     int idx;
-    assert(t.resolveGrabTarget(e.x, e.y, vp, idx) == MoveElem.Vertex && idx == 5,
+    assert(t.resolveGrabTarget(e.x, e.y, vp, idx, true) == MoveElem.Vertex && idx == 5,
         "setup: the press must LATCH THE VERTEX");
 
     assert(t.onPlainLmbDown(e, vts));
@@ -11463,7 +11463,7 @@ unittest { // a CORNER vertex (one incident polygon): the merge is vacuous and
     auto pre = m.vertices.dup;
     auto e   = gridVertPixel(m, vp, 0);
     int idx;
-    assert(t.resolveGrabTarget(e.x, e.y, vp, idx) == MoveElem.Vertex && idx == 0,
+    assert(t.resolveGrabTarget(e.x, e.y, vp, idx, true) == MoveElem.Vertex && idx == 0,
         "setup: the press must LATCH THE CORNER VERTEX");
 
     assert(t.onPlainLmbDown(e, vts));
@@ -11499,7 +11499,7 @@ unittest { // Edge Loop + Keep Vertices, both ways round, on an edge-latched pre
 
         auto e = gridEdgeMidPixel(m, vp, 5, 9);
         int idx;
-        assert(t.resolveGrabTarget(e.x, e.y, vp, idx) == MoveElem.Edge
+        assert(t.resolveGrabTarget(e.x, e.y, vp, idx, true) == MoveElem.Edge
             && idx == cast(int)m.edgeIndex(5, 9), "setup: the press must latch the seed edge");
         assert(t.onPlainLmbDown(e, vts));
     }
@@ -11612,7 +11612,7 @@ unittest { // a BORDER seed is a TOTAL no-op, in BOTH variants
         auto before = MeshSnapshot.capture(m);
         auto e = gridEdgeMidPixel(m, vp, 0, 1);   // top-left BORDER edge
         int idx;
-        assert(t.resolveGrabTarget(e.x, e.y, vp, idx) == MoveElem.Edge
+        assert(t.resolveGrabTarget(e.x, e.y, vp, idx, true) == MoveElem.Edge
             && idx == cast(int)m.edgeIndex(0, 1), "setup: the press must latch the border edge");
 
         penStep(t, SDL_BUTTON_LEFT, PenMode.Remove, () {
@@ -11853,7 +11853,7 @@ unittest {
             ~ "inequality IS the veto's condition");
 
         int idx = -99;
-        immutable auto got = t.resolveGrabTarget(cx, cy, vp, idx);
+        immutable auto got = t.resolveGrabTarget(cx, cy, vp, idx, true);
         assert(got == MoveElem.Edge && idx == 0,
             "the press pick must clear the vertex slot and answer with the "
             ~ "EDGE: the cursor is nearer that edge's midpoint than it is to "
@@ -11879,7 +11879,7 @@ unittest {
             "setup: and here the vertex is the nearer of the two");
 
         int idx = -99;
-        immutable auto got = t.resolveGrabTarget(cx, cy, vp, idx);
+        immutable auto got = t.resolveGrabTarget(cx, cy, vp, idx, true);
         assert(got == MoveElem.Vertex && idx == 0,
             "the veto must NOT fire when the vertex is the nearer of the two. "
             ~ "Answering Edge here means the rule was ported without its "
