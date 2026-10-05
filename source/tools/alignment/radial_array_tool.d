@@ -289,15 +289,7 @@ public:
         if (!interactiveParamEdit || !active) return image;
         image.applies = true; image.candidate = baseline; baseline = Mesh.init;
         auto shadow = beginPreparedShadow(image.candidate);
-        if (count_ <= 1) image.built = false;
-        else {
-            auto mask = image.candidate.operandFaceMask();
-            Vec3 extraShift = axisUnit() *
-                (offset_ / cast(float)(count_ - 1));
-            size_t n = image.candidate.radialArrayFaces(mask, count_, axisChar(),
-                center_, angle_ * PI / 180.0f, extraShift, weld_);
-            image.built = n != 0;
-        }
+        image.built = operation(image.candidate) != 0;
         drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
             image.deliveryDomains);
         shadow.close(); return image;
@@ -526,11 +518,7 @@ public:
         }
         if (mesh.faces.length == 0) return false;
         if (count_ <= 1) return true;   // identity is a clean no-op
-        auto mask = currentMask();
-        Vec3 extraShift = axisUnit() * (offset_ / cast(float)(count_ - 1));
-        size_t n = mesh.radialArrayFaces(mask, count_, axisChar(), center_,
-                                         angle_ * PI / 180.0f, extraShift, weld_);
-        if (n == 0) return false;
+        if (operation(*mesh) == 0) return false;
         gpu.upload(*mesh);
         return true;
     }
@@ -757,9 +745,14 @@ private:
         return Vec3(0, 0, 1);
     }
 
-    bool[] currentMask() {
-        // L1 funnel (task 0613, S5): selected faces, else every VISIBLE face.
-        return mesh.operandFaceMask();
+    // The one operation: preview, prepared image and scripted apply. One
+    // copy (`count <= 1`) builds nothing. The mask is the L1 funnel: selected
+    // faces, else every VISIBLE face (tasks 9434, 0613).
+    size_t operation(ref Mesh target) {
+        if (count_ <= 1) return 0;
+        const extraShift = axisUnit() * (offset_ / cast(float)(count_ - 1));
+        return target.radialArrayFaces(target.operandFaceMask(), count_, axisChar(),
+            center_, angle_ * PI / 180.0f, extraShift, weld_);
     }
 
     void rebuildPreview() {
@@ -770,16 +763,7 @@ private:
         // refusals as work. See Cat.toolPreview for the decomposition.
         auto zPreview = g_perf.scope_(Cat.toolPreview);
         before.restore(*mesh);
-        if (count_ <= 1) {
-            built = false;
-            refreshCaches();
-            return;
-        }
-        auto mask = currentMask();
-        Vec3 extraShift = axisUnit() * (offset_ / cast(float)(count_ - 1));
-        size_t n = mesh.radialArrayFaces(mask, count_, axisChar(), center_,
-                                         angle_ * PI / 180.0f, extraShift, weld_);
-        built = (n != 0);
+        built = operation(*mesh) != 0;
         refreshCaches();
     }
 

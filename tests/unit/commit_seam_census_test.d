@@ -4263,16 +4263,6 @@ unittest // task 2310 — edge_join.d's zero, and the pin that makes it worth ha
 // ---------------------------------------------------------------------------
 
 private static immutable LedgerRow[] kPreviewSeam = [
-    LedgerRow("PolyBevelTool|field", 1, "PreviewRebuild owner"),
-    LedgerRow("PolyBevelTool.rebuildPreview|run", 1, "preview seam call"),
-    LedgerRow("PolyBevelTool.buildPreparedParamUpdate.runPrepared|unrecorded", 1, "prepared candidate"),
-    LedgerRow("PolyBevelTool.applyHeadless|unrecorded", 1, "headless kernel"),
-    LedgerRow("PolyBevelTool.rebuildPreview.run|unrecorded", 1, "live preview kernel"),
-    LedgerRow("EdgeBevelTool|field", 1, "PreviewRebuild owner"),
-    LedgerRow("EdgeBevelTool.rebuildPreview|run", 1, "preview seam call"),
-    LedgerRow("EdgeBevelTool.buildPreparedParamUpdate.runPrepared|unrecorded", 1, "prepared candidate"),
-    LedgerRow("EdgeBevelTool.applyHeadless|unrecorded", 1, "headless kernel"),
-    LedgerRow("EdgeBevelTool.rebuildPreview.run|unrecorded", 1, "live preview kernel"),
     LedgerRow("EdgeExtendTool|field", 1, "PreviewRebuild owner"),
     LedgerRow("EdgeExtendTool.rebuildPreview|run", 1, "preview seam call"),
     LedgerRow("EdgeExtendTool.applyHeadless|unrecorded", 1, "headless kernel"),
@@ -4281,11 +4271,12 @@ private static immutable LedgerRow[] kPreviewSeam = [
 ] ~ pv2PreviewSeamRows();
 
 // Wave-2 PV2: five more owners; their preview, prepared and (task 9433)
-// scripted runs share one `operation`.
+// scripted runs share one `operation`, as the two bevels' do (task 9434).
 private LedgerRow[] pv2PreviewSeamRows() {
     LedgerRow[] rows;
-    foreach (cls; ["EdgeExtrudeTool", "PolyExtrudeTool", "VertexBevelTool",
-                   "VertexExtrudeTool", "PolyInsetTool"])
+    foreach (cls; ["PolyBevelTool", "EdgeBevelTool", "EdgeExtrudeTool",
+                   "PolyExtrudeTool", "VertexBevelTool", "VertexExtrudeTool",
+                   "PolyInsetTool"])
         rows ~= [LedgerRow(cls ~ "|field", 1, "PreviewRebuild owner"),
                  LedgerRow(cls ~ ".rebuildPreview|run", 1, "preview seam call"),
                  LedgerRow(cls ~ ".operation|unrecorded", 1, "the one operation")];
@@ -4324,7 +4315,7 @@ unittest // Stage M - the PreviewRebuild population and batch modes are closed
     const problems = reconcile(kPreviewSeam, hits);
     assert(problems.length == 0,
         "Stage M PreviewRebuild symbol ledger changed.\n" ~ problems);
-    assert(hits.length == 30 && filesRead >= 60,
+    assert(hits.length == 26 && filesRead >= 60,
         format("PreviewRebuild census found %d sites over %d files", hits.length, filesRead));
 
     const seam = stripCommentsAndStrings(

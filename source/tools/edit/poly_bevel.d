@@ -363,17 +363,8 @@ public:
         if (!interactiveParamEdit || !active) return image;
         image.applies = true;
         auto shadow = beginPreparedShadow(image.candidate);
-        const n = PreviewRebuild.runPrepared(image.preview, image.candidate, opBase(),
-            (ref Mesh cage) => PreviewTopologyKey.make(cage.operandFaceMask(),
-                !opApplied_, segments_, group_ ? 1 : 0, square_ ? 1 : 0),
-            (ref Mesh target) {
-                if (!opApplied_) return cast(size_t)0;
-                auto ed = MeshEditBatch.unrecorded(target, kPolyBevelEditScope);
-                const result = ed.bevelFacesByMask(ed.operandFaceMask(), inset_,
-                    shift_, group_, segments_, square_);
-                ed.close(); return result;
-            });
-        image.nextBuilt = (n != 0);
+        image.nextBuilt = PreviewRebuild.runPrepared(image.preview, image.candidate,
+            opBase(), &previewKey, &previewOperation) != 0;
         drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
             image.deliveryDomains);
         shadow.close(); return image;
@@ -441,16 +432,8 @@ public:
             auto shadow = beginPreparedShadow(work);
             (window ? before : MeshSnapshot.capture(*mesh)).restore(work);
             if (work.faces.length == 0) { shadow.close(); return false; }
-            if (inset_ != 0.0f || shift_ != 0.0f) {
-                // Task 1903 Stage F2 — the batch opens at the TOOL boundary
-                // (§4.1), on the COMMIT path (`tool.doApply` / panel Apply).
-                // UNRECORDED: this tool's undo is the whole-mesh
-                // `MeshSnapshot` pair its commit records.
-                auto ed = MeshEditBatch.unrecorded(work, kPolyBevelEditScope);
-                const n = ed.bevelFacesByMask(ed.operandFaceMask(), inset_, shift_,
-                                              group_, segments_, square_);
-                ed.close();
-                if (n == 0) { shadow.close(); return false; }
+            if ((inset_ != 0.0f || shift_ != 0.0f) && operation(work) == 0) {
+                shadow.close(); return false;
             }
             uint flags, domains;
             drainPreparedShadowDelivery(work, flags, domains);
@@ -717,16 +700,6 @@ private:
         // line: an early-out must record no sample, or `count` tallies
         // refusals as work. See Cat.toolPreview for the decomposition.
         auto zPreview = g_perf.scope_(Cat.toolPreview);
-        // TOPOLOGY KEY (task 1620): the operand mask, `segments`, `group`,
-        // `square` — and THE ZERO CROSSING.
-        //
-        // `inset_ == 0 && shift_ == 0` is the kernel-side "build nothing"
-        // branch below; dragging either handle down through zero and back
-        // makes the bevel geometry disappear and reappear, so a key over the
-        // non-dragged parameters ALONE would sit still across two real
-        // topology changes. The degenerate predicate is therefore a field of
-        // the key. `group` and `square` change the emitted face set outright;
-        // `segments` is the ring count.
         // A different base (an operation boundary, or an undo across one): the
         // clean cage and the gizmo frame are that base's.
         if (previewOp_ != opIndex_) {
@@ -735,42 +708,33 @@ private:
             computeGizmoFrame();
             previewOp_ = opIndex_;
         }
-        size_t n = preview_.run(*mesh, opBase(),
-            (ref Mesh cage) => PreviewTopologyKey.make(
-                                   cage.operandFaceMask(), !opApplied_,
-                                   segments_, group_ ? 1 : 0, square_ ? 1 : 0),
-            (ref Mesh target) {
-                if (!opApplied_) return cast(size_t)0;
-                // Task 1903 Stage F2 — ONE UNRECORDED batch per DRAG FRAME
-                // (plan §9: a recording batch per frame would build and throw
-                // away a full op-log at 60 Hz).
-                //
-                // THE BATCH IS OPENED INSIDE THE LAMBDA, NOT AROUND
-                // `preview_.run`, and that is the whole point. `target` is
-                // `PreviewRebuild`'s PRIVATE CLEAN CAGE on the placement path
-                // and the LIVE mesh on the key-changed full-rebuild path, so
-                // opening it here lands the batch on whichever mesh the kernel
-                // actually runs on — which is exactly the two consequences
-                // plan §9.1 spells out, with no edit to the shared seam.
-                // §9.1's own recipe (change both delegate signatures to
-                // `ref MeshEditBatch`) would reach `preview_rebuild.d`, which
-                // serves TWO families this stage has not converted
-                // (`edge_bevel.d` at Stage G, `edge_extend`/`extrude.d` at
-                // Stage H); that edit belongs to whichever of them lands last.
-                // The live mesh's only write stays
-                // `adoptVertexPositions`'s `commitChange(Position)`
-                // (task 1620 — `topologyVersion` must not move or the subpatch
-                // preview drops `active`), and `close()` on the cage stamps a
-                // mesh nothing keys on.
-                auto ed = MeshEditBatch.unrecorded(target, kPolyBevelEditScope);
-                const size_t nb = ed.bevelFacesByMask(ed.operandFaceMask(),
-                                                      inset_, shift_, group_,
-                                                      segments_, square_);
-                ed.close();
-                return nb;
-            });
-        built = (n != 0);
+        built = preview_.run(*mesh, opBase(), &previewKey, &previewOperation) != 0;
         refreshCaches();
+    }
+
+    // The live operation is built only once a press applied it (`applied`).
+    size_t previewOperation(ref Mesh target) {
+        return opApplied_ ? operation(target) : 0;
+    }
+    // TOPOLOGY KEY (task 1620): the operand mask, `segments` (the ring
+    // count), `group` and `square` (the emitted face set) — and the
+    // not-applied crossing, where the preview builds nothing.
+    PreviewTopologyKey previewKey(ref Mesh cage) {
+        return PreviewTopologyKey.make(cage.operandFaceMask(), !opApplied_,
+            segments_, group_ ? 1 : 0, square_ ? 1 : 0);
+    }
+    // The one operation (task 9434): preview, prepared image and scripted
+    // apply. ONE UNRECORDED batch per call (task 1903 F2: a recording
+    // batch per drag frame would build and discard an op-log at 60 Hz; the
+    // undo is the whole-mesh snapshot pair the commit records). Opened on
+    // `target` — the seam's private cage on the placement path, the live mesh
+    // on a key change — so it lands on the mesh the kernel actually gets.
+    size_t operation(ref Mesh target) {
+        auto ed = MeshEditBatch.unrecorded(target, kPolyBevelEditScope);
+        const n = ed.bevelFacesByMask(ed.operandFaceMask(), inset_, shift_, group_,
+            segments_, square_);
+        ed.close();
+        return n;
     }
 
     final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext c) {

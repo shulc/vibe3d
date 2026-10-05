@@ -392,10 +392,10 @@ allow source/tools/deform/smooth_shift_tool.d 10
 allow source/tools/deform/stroke_extrude_tool.d 6
 allow source/tools/edit/bridge_tool.d 19
 allow source/tools/edit/drag_weld.d 2
-allow source/tools/edit/edge_bevel.d 9
-allow source/tools/edit/edge_extend.d 30
+allow source/tools/edit/edge_bevel.d 8
+allow source/tools/edit/edge_extend.d 29
 allow source/tools/edit/edge_extrude.d 10
-allow source/tools/edit/poly_bevel.d 15
+allow source/tools/edit/poly_bevel.d 14
 allow source/tools/edit/poly_extrude.d 8
 allow source/tools/edit/poly_inset_tool.d 10
 allow source/tools/edit/preview_rebuild.d 1

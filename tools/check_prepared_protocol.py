@@ -2782,11 +2782,11 @@ array_param_sources = {
 }
 def array_param_gate(s):
     tool, snapshot = s["tool"], s["snapshot"]
-    return (all(x in tool for x in (
+    return (tool.count("arrayFacesGrid(") == 1 and all(x in tool for x in (
                 "image.expectedLive = MeshSnapshot.capture(live);",
                 "image.expectedBefore = MeshSnapshot.capture(baseline);",
                 "auto shadow = beginPreparedShadow(image.candidate);",
-                "image.candidate.arrayFacesGrid(mask, numX_, numY_, numZ_",
+                "image.nextBuilt = operation(image.candidate) != 0 || replace_;",
                 "drainPreparedShadowDelivery(image.candidate",
                 "image.expectedLive.matches(live)",
                 "image.expectedBefore.matches(before)",
@@ -2798,6 +2798,7 @@ mutate_param_sources("Array", array_param_sources, array_param_gate, (
     ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
     ("tool", "auto shadow = beginPreparedShadow(image.candidate);", "", "drop detached shadow"),
     ("tool", "sameFloat(dist, other.dist)", "true", "drop byte-exact float"),
+    ("tool", "operation(image.candidate)", "cast(size_t)0", "drop operation"),
     ("tool", producer_mixin("ArrayTool"), "", "drop producer mixin"),
 ), lambda text, label: text.find("struct ArrayParamProjection"))
 
@@ -2885,12 +2886,14 @@ edge_bevel_param_sources = {
 }
 def edge_bevel_param_gate(s):
     tool = s["tool"]
-    return (all(x in tool for x in (
+    # The kernel stands once, in `operation`; the panel image and the
+    # preview each hand it to the seam (task 9434).
+    return (tool.count("bevelEdgesByMask(") == 1 and
+            tool.count("&previewKey, &operation)") == 2 and all(x in tool for x in (
                 "image.expectedLive = MeshSnapshot.capture(live);",
                 "image.expectedBefore = MeshSnapshot.capture(baseline);",
                 "preview_.prepareImageShadowed(image.preview);",
-                "PreviewRebuild.runPrepared(image.preview, image.candidate, before,",
-                "ed.bevelEdgesByMask(target.operandEdgeMask(),",
+                "PreviewRebuild.runPrepared(image.preview, image.candidate,",
                 "preview_.matchesImage(image.preview)",
                 "memcmp(&width, &other.width, float.sizeof) == 0",
                 producer_mixin("EdgeBevelTool"))) and
@@ -2910,6 +2913,7 @@ mutate_param_sources("Edge Bevel", edge_bevel_param_sources, edge_bevel_param_ga
     ("tool", "preview_.prepareImageShadowed(image.preview);", "", "drop preview image"),
     ("preview", "image.expectedCage.matches(cage_)", "true", "drop cage witness"),
     ("tool", "memcmp(&width, &other.width, float.sizeof) == 0", "true", "drop float identity"),
+    ("tool", "&previewKey, &operation)", "&previewKey, &previewKey)", "drop operation"),
     ("tool", producer_mixin("EdgeBevelTool"), "", "drop producer mixin"),
 ))
 
@@ -2975,12 +2979,14 @@ poly_bevel_param_sources = {
 }
 def poly_bevel_param_gate(s):
     tool = s["tool"]
-    return (all(x in tool for x in (
+    # The kernel stands once, in `operation`; the panel image and the
+    # preview each hand the applied-gated `previewOperation` to the seam.
+    return (tool.count("bevelFacesByMask(") == 1 and
+            tool.count("&previewKey, &previewOperation)") == 2 and all(x in tool for x in (
                 "image.expectedLive = MeshSnapshot.capture(live);",
                 "image.expectedBefore = MeshSnapshot.capture(baseline);",
                 "preview_.prepareImageShadowed(image.preview);",
-                "PreviewRebuild.runPrepared(image.preview, image.candidate, opBase(),",
-                "ed.bevelFacesByMask(ed.operandFaceMask(), inset_",
+                "PreviewRebuild.runPrepared(image.preview, image.candidate,",
                 "preview_.matchesImage(image.preview)",
                 "memcmp(&inset, &other.inset, float.sizeof) == 0",
                 producer_mixin("PolyBevelTool"))) and
@@ -2997,6 +3003,7 @@ mutate_param_sources("Poly Bevel", poly_bevel_param_sources, poly_bevel_param_ga
     ("tool", "preview_.prepareImageShadowed(image.preview);", "", "drop preview image"),
     ("preview", "image.expectedCage.matches(cage_)", "true", "drop cage witness"),
     ("tool", "memcmp(&inset, &other.inset, float.sizeof) == 0", "true", "drop float identity"),
+    ("tool", "&previewKey, &previewOperation)", "&previewKey, &previewKey)", "drop operation"),
     ("tool", producer_mixin("PolyBevelTool"), "", "drop producer mixin"),
 ))
 
@@ -3299,11 +3306,13 @@ def edge_extend_param_gate(s):
     start = tool.find("final PreparedEdgeExtendParamImage buildPreparedParamUpdate")
     end = tool.find("override void onParamChanged", start)
     product = tool[start:end]
-    return all(x in product for x in (
+    # The kernel stands once, in `operation` (task 9434).
+    return tool.count("extendEdgesByMask(") == 1 and all(x in product for x in (
         "image.expectedLive = MeshSnapshot.capture(live)",
         "image.expectedBefore = before", "detachedPreparedMesh(live)",
         "preview_.prepareImage(image.preview)",
-        "runPrepared(image.preview, image.candidate, before", "runPreviewKernel(target)",
+        "runPrepared(image.preview, image.candidate, before",
+        "&previewKey, &runPreviewKernel)",
         "image.expectedLive.matches(live)", "preview_.matchesImage(image.preview)",
         "xfrm.moveBank().installPreparedProductActivation(image.move)",
         producer_mixin("EdgeExtendTool"))) and all(x in preview for x in (
@@ -3320,6 +3329,8 @@ mutate_param_region("Edge Extend", edge_extend_param_sources, edge_extend_param_
      "run kernel on live"),
     ("tool", "image.expectedLive.matches(live)", "true", "drop live witness"),
     ("tool", "preview_.matchesImage(image.preview)", "true", "drop preview witness"),
+    ("tool", "&previewKey, &runPreviewKernel)", "&previewKey, &previewKey)",
+     "drop operation"),
     ("tool", "xfrm.moveBank().installPreparedProductActivation(image.move)", "",
      "drop bank activation"),
     ("tool", producer_mixin("EdgeExtendTool"), "", "drop producer mixin"),
@@ -6769,12 +6780,12 @@ def radial_array_param_gate(owner, tool, context):
     start = tool.find("final PreparedRadialArrayEffect prepareParamChanged(")
     end = tool.find("override void evaluate()", start)
     producer = tool[start:end]
-    return (all(x in tool for x in (
+    return (tool.count(".radialArrayFaces(") == 1 and all(x in tool for x in (
                 "PreparedRadialArrayTransitionKind : ubyte { Activate, Param, Deactivate }",
                 "image.expectedLive = MeshSnapshot.capture(live);",
                 "image.expectedBefore = MeshSnapshot.capture(baseline);",
                 "auto shadow = beginPreparedShadow(image.candidate);",
-                "image.candidate.radialArrayFaces(mask, count_, axisChar()",
+                "image.built = operation(image.candidate) != 0;",
                 "drainPreparedShadowDelivery(image.candidate",
                 "sameBytes(center, other.center)",
                 "image.expectedLive.matches(live)",
@@ -6805,6 +6816,7 @@ for target, old, new, label in (
     ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
     ("tool", "auto shadow = beginPreparedShadow(image.candidate);", "", "drop detached shadow"),
     ("tool", "sameBytes(center, other.center)", "true", "drop byte-exact center"),
+    ("tool", "operation(image.candidate)", "cast(size_t)0", "drop operation"),
     ("owner", "!target.ownsPreparedMesh(&layer.meshRef())", "false", "drop Layer subject"),
     ("owner", "&layer_.meshRef() !is source_", "false", "drop retained subject"),
     ("tool", "uploadOwner.owns(gpu)", "true", "drop GPU identity"),

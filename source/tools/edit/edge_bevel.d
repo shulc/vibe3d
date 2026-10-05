@@ -315,17 +315,8 @@ public:
         if (!interactiveParamEdit || !active) return image;
         image.applies = true;
         auto shadow = beginPreparedShadow(image.candidate);
-        const n = PreviewRebuild.runPrepared(image.preview, image.candidate, before,
-            (ref Mesh cage) => PreviewTopologyKey.make(cage.operandEdgeMask(),
-                width_ == 0.0f, roundLevel_, widthMode_ ? 1 : 0),
-            (ref Mesh target) {
-                if (width_ == 0.0f) return cast(size_t)0;
-                auto ed = MeshEditBatch.unrecorded(target, kEdgeBevelEditScope);
-                const result = ed.bevelEdgesByMask(target.operandEdgeMask(),
-                    width_, roundLevel_, widthMode_);
-                ed.close(); return result;
-            });
-        image.nextBuilt = (n != 0);
+        image.nextBuilt = PreviewRebuild.runPrepared(image.preview, image.candidate,
+            before, &previewKey, &operation) != 0;
         drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
             image.deliveryDomains);
         shadow.close(); return image;
@@ -374,16 +365,7 @@ public:
         preview_.reset();
         if (mesh.edges.length == 0) return false;
         if (width_ == 0.0f) return true;
-        auto mask = currentMask();
-        // The kernel batch is unrecorded; ToolSession records the completed
-        // gesture as a mesh image when the handle is released.
-        size_t n;
-        {
-            auto ed = MeshEditBatch.unrecorded(*mesh, kEdgeBevelEditScope);
-            n = ed.bevelEdgesByMask(mask, width_, roundLevel_, widthMode_);
-            ed.close();
-        }
-        if (n == 0) return false;
+        if (operation(*mesh) == 0) return false;
         gpu.upload(*mesh);
         return true;
     }
@@ -557,11 +539,6 @@ private:
         computePreparedGizmoFrame(*mesh, replicaImage_);
     }
 
-    bool[] currentMask() {
-        // L1 funnel (task 0613, S5): the selection, else every VISIBLE element.
-        return mesh.operandEdgeMask();
-    }
-
     void computeGizmoFrame() {
         PreparedEdgeBevelActivationImage image;
         image.gizmoValid = gizmoValid; image.anchor = anchor;
@@ -630,52 +607,33 @@ private:
         // line: an early-out must record no sample, or `count` tallies
         // refusals as work. See Cat.toolPreview for the decomposition.
         auto zPreview = g_perf.scope_(Cat.toolPreview);
-        // TOPOLOGY KEY (task 1620): the operand mask, `roundLevel` (which is
-        // the bevel's segment count and therefore how many rings exist),
-        // `widthMode` — and THE ZERO CROSSING.
-        //
-        // `width_ == 0` is the kernel-side "build nothing" branch below, and
-        // dragging the width down through zero and back makes the bevel
-        // geometry disappear and reappear. A key of (mask, roundLevel) alone
-        // would not move across either crossing while the topology moved
-        // twice, so the degenerate predicate is part of the key rather than a
-        // case beside it. `widthMode` only reinterprets the width (a
-        // position quantity), but it is a dropdown that changes at human
-        // speed: keying it costs an occasional extra full rebuild and buys
-        // not having to prove that no width mode can collapse a face.
-        size_t n = preview_.run(*mesh, before,
-            (ref Mesh cage) => PreviewTopologyKey.make(cage.operandEdgeMask(),
-                                                       width_ == 0.0f,
-                                                       roundLevel_,
-                                                       widthMode_ ? 1 : 0),
-            (ref Mesh target) {
-                if (width_ == 0.0f) return cast(size_t)0;
-                // Task 1903 Stage G — the PER-FRAME PREVIEW's batch, opened
-                // INSIDE this kernel lambda rather than by changing
-                // `preview_.run`'s delegate signature (plan §9.1 as corrected
-                // at Stage F2, памятка 41). `target` IS the private cage on
-                // the placement path and IS the live mesh on the key-changed
-                // full-rebuild path, so the batch lands on whichever mesh the
-                // kernel actually got — both of §9.1's consequences, with no
-                // edit to a seam that still serves `mesh_ops/extrude.d`
-                // (Stage H).
-                //
-                // UNRECORDED, and that is §9's whole point: a preview frame
-                // must record NOTHING. `changeBus.opLogEntriesRecorded` is
-                // the row that says so across every frame;
-                // `unbatchedGeometryCommits` is `g_isDocumentMesh`-FILTERED
-                // (§3.2 L2), so on a `PreviewRebuild` tool it witnesses the
-                // full-rebuild frames only — a weaker statement, and the
-                // suite cell says which it is making (памятка 40).
-                auto ed = MeshEditBatch.unrecorded(target, kEdgeBevelEditScope);
-                immutable size_t nPrev =
-                    ed.bevelEdgesByMask(target.operandEdgeMask(),
-                                        width_, roundLevel_, widthMode_);
-                ed.close();
-                return nPrev;
-            });
-        built = (n != 0);
+        built = preview_.run(*mesh, before, &previewKey, &operation) != 0;
         refreshCaches();
+    }
+
+    // TOPOLOGY KEY (task 1620): the operand mask, `roundLevel` (the ring
+    // count), `widthMode` — and the zero crossing: `width == 0` builds
+    // nothing, so dragging through zero makes geometry vanish and reappear
+    // while (mask, roundLevel) sits still. `widthMode` only reinterprets the
+    // width, but a dropdown changes at human speed: keying it costs an extra
+    // rebuild and buys not proving that no width mode collapses a face.
+    PreviewTopologyKey previewKey(ref Mesh cage) {
+        return PreviewTopologyKey.make(cage.operandEdgeMask(), width_ == 0.0f,
+            roundLevel_, widthMode_ ? 1 : 0);
+    }
+    // The one operation: preview, prepared image and scripted apply.
+    // Unrecorded — a preview frame records nothing, and the gesture's record
+    // is the session's mesh image at release. `target` is the seam's private
+    // cage on the placement path and the live mesh on a key change, so the
+    // batch lands on the mesh the kernel actually gets. The mask is the L1
+    // funnel: the selection, else every VISIBLE edge (tasks 9434, 1903, 0613).
+    size_t operation(ref Mesh target) {
+        if (width_ == 0.0f) return 0;
+        auto ed = MeshEditBatch.unrecorded(target, kEdgeBevelEditScope);
+        const n = ed.bevelEdgesByMask(target.operandEdgeMask(), width_,
+            roundLevel_, widthMode_);
+        ed.close();
+        return n;
     }
 
     final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext c) {

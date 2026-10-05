@@ -382,11 +382,7 @@ public:
         image.candidate = baseline;
         baseline = Mesh.init;
         auto shadow = beginPreparedShadow(image.candidate);
-        auto mask = image.candidate.operandFaceMask();
-        size_t n = image.candidate.arrayFacesGrid(mask, numX_, numY_, numZ_,
-            offsetVec(), jitterVec(), scaleVec(), rotateVec(), between_,
-            replace_, flip_, merge_, dist_);
-        image.nextBuilt = (n != 0) || replace_;
+        image.nextBuilt = operation(image.candidate) != 0 || replace_;
         drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
             image.deliveryDomains);
         shadow.close();
@@ -418,11 +414,7 @@ public:
             before.restore(*mesh);
             built = false;
         }
-        auto mask = currentMask();
-        size_t n = mesh.arrayFacesGrid(mask, numX_, numY_, numZ_,
-                                       offsetVec(), jitterVec(), scaleVec(), rotateVec(),
-                                       between_, replace_, flip_, merge_, dist_);
-        if (n == 0 && !replace_) return false;
+        if (operation(*mesh) == 0 && !replace_) return false;
         gpu.upload(*mesh);
         return true;
     }
@@ -502,9 +494,13 @@ private:
     // notes themselves as a HARNESS artifact, not a confirmed reference
     // finding — see task 0355's capture notes §7.2 — so it is not treated
     // as a spec requirement.)
-    bool[] currentMask() {
-        // L1 funnel (task 0613, S5): selected faces, else every VISIBLE face.
-        return mesh.operandFaceMask();
+    // The one operation: preview, prepared image and scripted apply. The
+    // mask is the L1 funnel: selected faces, else every VISIBLE face
+    // (tasks 9434, 0613).
+    size_t operation(ref Mesh target) {
+        return target.arrayFacesGrid(target.operandFaceMask(), numX_, numY_, numZ_,
+            offsetVec(), jitterVec(), scaleVec(), rotateVec(), between_, replace_,
+            flip_, merge_, dist_);
     }
 
     // Revert to the pre-array cage, then re-run the grid kernel from the
@@ -518,11 +514,7 @@ private:
         // refusals as work. See Cat.toolPreview for the decomposition.
         auto zPreview = g_perf.scope_(Cat.toolPreview);
         before.restore(*mesh);
-        auto mask = currentMask();
-        size_t n = mesh.arrayFacesGrid(mask, numX_, numY_, numZ_,
-                                       offsetVec(), jitterVec(), scaleVec(), rotateVec(),
-                                       between_, replace_, flip_, merge_, dist_);
-        built = (n != 0) || replace_;
+        built = operation(*mesh) != 0 || replace_;
         refreshCaches();
     }
 

@@ -18,7 +18,6 @@ import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
 import tools.edit.preview_rebuild : PreviewRebuild, PreviewTopologyKey,
     PreviewRebuildCounts, PreparedPreviewRebuildImage;
-import mesh_edit_delta : MeshEditDelta, MeshEditScope;
 import tools.transform.xfrm_transform : XfrmTransformTool;
 import tools.transform.xfrm_transform : PreparedXfrmEmbeddedDeactivateImage;
 import tools.transform.xfrm_handles : DragBank;
@@ -718,9 +717,7 @@ public:
             image.deliveryDomains);
         image.deliveryFlags = image.deliveryDomains = 0;
         const n = PreviewRebuild.runPrepared(image.preview, image.candidate, before,
-            (ref Mesh cage) => PreviewTopologyKey.make(cage.operandEdgeMask(),
-                                                       false, segments_),
-            (ref Mesh target) => runPreviewKernel(target));
+            &previewKey, &runPreviewKernel);
         drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
             image.deliveryDomains); shadow.close();
         image.applies = true; image.nextBuilt = n != 0;
@@ -938,7 +935,6 @@ public:
         // key it remembers no longer describes what is standing.
         preview_.reset();
         if (mesh.edges.length == 0) return false;
-        auto mask = currentMask();
         // Headless pivot policy — the world ORIGIN, and that is REFERENCE-
         // FAITHFUL rather than a convenience. The non-interactive command path
         // never initialises a pivot there either, so it rotates about the world
@@ -956,13 +952,11 @@ public:
         Vec3 pivot = dragPivotOverride_.active
                    ? dragPivotOverride_.value : Vec3(0, 0, 0);
         dragPivotOverride_.active = false;   // one-shot: never leak into a later apply
-        // task 1903 Stage H: extendEdgesByMask takes `ref MeshEditBatch` now.
-        // `ToolDoApplyCommand` wraps this whole call with a MeshSnapshot, so
-        // this batch is unrecorded.
+        // `ToolDoApplyCommand` wraps this call with a MeshSnapshot pair, so
+        // the batch is unrecorded. No symmetry mirror here (an open finding,
+        // wave plan §4).
         auto ed = MeshEditBatch.unrecorded(*mesh, kExtrudeEditScope);
-        size_t n = ed.extendEdgesByMask(mask, inset_, shift_,
-                                        offsetVec(), rotateVec(), scaleVec(),
-                                        segments_, pivot);
+        const n = operation(ed, pivot, ExtendOffsetMirror.init);
         ed.close();
         if (n == 0) return false;
         gpu.upload(*mesh);
@@ -1368,19 +1362,19 @@ private:
     }
     Vec3 accumLocal_ = Vec3(0, 0, 0);   // basis-local translate accumulated this drag
 
-    // The mask the kernel runs on: empty selection ⇒ whole mesh (matching the
-    // mesh.edge_extend / mesh.delete convention).
-    bool[] currentMask() {
-        // L1 funnel (task 0613, S5): the selection, else every VISIBLE element.
-        return mesh.operandEdgeMask();
+    // The one operation: live preview, prepared image, commit carrier and
+    // scripted apply. The caller owns the batch (unrecorded for a preview
+    // frame and the scripted apply, recording for the commit), the pivot and
+    // the symmetry mirror. The mask is the L1 funnel: the selection, else
+    // every VISIBLE edge, the mesh.edge_extend convention (tasks 9434, 0613).
+    size_t operation(ref MeshEditBatch ed, Vec3 pivot, ExtendOffsetMirror mirror) {
+        return ed.extendEdgesByMask(ed.operandEdgeMask(), inset_, shift_,
+            offsetVec(), rotateVec(), scaleVec(), segments_, pivot, mirror);
     }
-
     size_t runPreviewKernel(ref Mesh target) {
         auto ed = MeshEditBatch.unrecorded(target, kExtrudeEditScope);
-        immutable r = ed.extendEdgesByMask(target.operandEdgeMask(),
-            inset_, shift_, offsetVec(), rotateVec(), scaleVec(),
-            segments_, livePivot(), symMirror_);
-        ed.close(); return r;
+        const n = operation(ed, livePivot(), symMirror_);
+        ed.close(); return n;
     }
 
     // Revert to the pre-extend cage + selection, then re-run the kernel from the
@@ -1414,20 +1408,17 @@ private:
         // placement path and the live mesh on the key-changed path, so
         // opening `unrecorded` on `target` lands on whichever mesh the kernel
         // actually got, with no edit to preview_rebuild.d.
-        size_t n = preview_.run(*mesh, before,
-            (ref Mesh cage) => PreviewTopologyKey.make(cage.operandEdgeMask(),
-                                                       false, segments_),
-            (ref Mesh target) => runPreviewKernel(target));
-        built = (n != 0);
+        built = preview_.run(*mesh, before, &previewKey, &runPreviewKernel) != 0;
         refreshCaches();
+    }
+    PreviewTopologyKey previewKey(ref Mesh cage) {
+        return PreviewTopologyKey.make(cage.operandEdgeMask(), false, segments_);
     }
 
     private bool fillCommitCarrier(ref Mesh target, MeshSessionEdit cmd) {
         before.restore(target);
-        auto ed = MeshEditBatch(target,
-            MeshEditScope.Geometry | MeshEditScope.Marks);
-        cast(void)ed.extendEdgesByMask(target.operandEdgeMask(), inset_, shift_,
-            offsetVec(), rotateVec(), scaleVec(), segments_, livePivot(), symMirror_);
+        auto ed = MeshEditBatch(target, kExtrudeEditScope);
+        cast(void)operation(ed, livePivot(), symMirror_);
         auto delta = ed.close();
         if (!delta.isEmpty) { cmd.setDelta(delta, "Edge Extend"); return true; }
         cmd.setSnapshots(before, MeshSnapshot.capture(target), "Edge Extend");

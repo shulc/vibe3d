@@ -1,7 +1,7 @@
 // One operation per tool: a tool's preview, prepared panel edit and scripted
 // apply reach the geometry kernel through ONE function, so they cannot drift
 // apart (task 9431; wave plan PV1, the first row; task 9433, PV3a, the edit
-// family's eight; PV3b adds its own).
+// family's eight; task 9434, PV3b, the bevel / extend / array five).
 //
 // The kernel set of a row comes from a RULE over the kernel module's members,
 // not from a list of today's call sites. Counting is on WHOLE IDENTIFIERS over
@@ -177,4 +177,61 @@ unittest // Edit family: each tool's kernel lives in its one `operation`, called
             ~ "\n  found    %s\n  expected %s", r.file, callers, wantCallers));
     }
     assert(files == 8);
+}
+
+/// A bevel / extend / array row: its kernel's one owner, the producers that
+/// name `operation` (each once), and whether the kernel is imported by name.
+private struct FamilyRow { string file, cls, kernel; string[] producers; bool imported; }
+
+unittest // Bevel, extend and array family: each tool's kernel lives in its one `operation`
+{
+    const FamilyRow[] rows = [
+        FamilyRow("source/tools/edit/edge_bevel.d", "EdgeBevelTool", "bevelEdgesByMask",
+            ["rebuildPreview", "buildPreparedParamUpdate", "applyHeadless"], true),
+        // The preview and the panel image reach it through `previewOperation`
+        // (built only once a press applied the operation).
+        FamilyRow("source/tools/edit/poly_bevel.d", "PolyBevelTool", "bevelFacesByMask",
+            ["previewOperation", "applyHeadless"]),
+        // The caller owns the batch: the preview kernel (live preview and panel
+        // image), the recording commit carrier and the scripted apply.
+        FamilyRow("source/tools/edit/edge_extend.d", "EdgeExtendTool", "extendEdgesByMask",
+            ["runPreviewKernel", "fillCommitCarrier", "applyHeadless"]),
+        FamilyRow("source/tools/alignment/array_tool.d", "ArrayTool", "arrayFacesGrid",
+            ["rebuildPreview", "buildPreparedParamUpdate", "applyHeadless"]),
+        FamilyRow("source/tools/alignment/radial_array_tool.d", "RadialArrayTool",
+            "radialArrayFaces", ["rebuildPreview", "buildPreparedParamImage", "applyHeadless"]),
+    ];
+    // FLOOR (plan PV3b: five files; with the slice row and the edit family's
+    // eight the census covers 14).
+    assert(rows.length == 5, format("%s family rows, expected 5", rows.length));
+    size_t files;
+    foreach (r; rows) {
+        string raw;
+        const code = codeOf(r.file, raw);
+        assert(code.length > 10_000, format("%s code view is %s bytes; the census "
+            ~ "would read a stub", r.file, code.length));
+        ++files;
+
+        // NEEDLE + PIN: the kernel's sites by enclosing function.
+        size_t[string] want = [r.cls ~ ".operation|" ~ r.kernel: 1];
+        if (r.imported) want["(module scope)|" ~ r.kernel] = 1;
+        auto got = identOwners(code, [r.kernel]);
+        assert(got == want, format("%s calls `%s` outside its one operation:"
+            ~ "\n  found    %s\n  expected %s", r.file, r.kernel, got, want));
+
+        // STRUCTURAL: the spellings that reach a member past the blanked view.
+        assert(countOccurrences(raw, ".tupleof") == 0 &&
+            countOccurrences(raw, "getMember") == 0 &&
+            countOccurrences(raw, "mixin(") == 0 &&
+            countOccurrences(raw, "mixin (") == 0,
+            r.file ~ " gained a .tupleof / getMember / string-mixin spelling");
+
+        // PIN: the producers.
+        size_t[string] wantCallers = [r.cls ~ "|operation": 1];   // its definition
+        foreach (p; r.producers) wantCallers[r.cls ~ "." ~ p ~ "|operation"] = 1;
+        auto callers = identOwners(code, ["operation"]);
+        assert(callers == wantCallers, format("%s: `operation` callers moved:"
+            ~ "\n  found    %s\n  expected %s", r.file, callers, wantCallers));
+    }
+    assert(files == 5);
 }
