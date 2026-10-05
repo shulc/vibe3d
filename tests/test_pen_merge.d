@@ -286,9 +286,12 @@ unittest {
         rig(f0, 440);
         clickWorld(p(0, 0.2), p(0.5, 0.2), p(0.25, -0.3));
         enter();
-        clickWorld(p(0.5, -0.2), p(0.8, -0.2), p(0.65, -0.5));
+        clickWorld(p(0.4, -0.2), p(0.65, -0.2), p(0.55, -0.38));
         enter();
+        penCommand("select.typeFrom polygon");      // drops the tool: re-armed
         penCommand("select.element polygon set 1");
+        penCommand("tool.set pen on");
+        penCommand("tool.attr pen merge true");
         clickWorld(kFar[0]);
         const before = penAttrValue("points");
         auto r = postJson("/api/command", "mesh.hide");
@@ -304,7 +307,8 @@ unittest {
         if (!(m.v.length == 8 && m.f.length == 3 && m.f[2].length == 3 &&
               m.f[2].canFind(0L) && m.f[2].canFind(6L) && m.f[2].canFind(7L)))
             fails ~= format("F2-bump-then-link: %s vertices, faces %s; expected 8, the "
-                ~ "third face sharing T's vertex 0 with own vertices 6 and 7", m.v.length, m.f);
+                ~ "third face sharing T's vertex 0 with own vertices 6 and 7; vertices %s",
+                m.v.length, m.f, m.v);
     }
     // F2: the session image carries the links' mesh key. p0 linked to T; a
     // script undo removes T; a click re-keys the stroke; an in-stroke Ctrl+Z

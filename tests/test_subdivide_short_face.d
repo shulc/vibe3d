@@ -567,8 +567,9 @@ private void walkRig(string id) {
 private void pen3(string id) {
     resetCube(id);
     ok("tool.set \"pen\" on 0", id);
-    play(click(100, 425, 250) ~ "\n" ~ click(200, 525, 250) ~ "\n"
-       ~ click(300, 475, 350), id);
+    // Clear of the cube (>= 76 px), as pen2: the pen's merge cannot act.
+    play(click(100, 250, 450) ~ "\n" ~ click(200, 700, 480) ~ "\n"
+       ~ click(300, 450, 540), id);
     assert(counts(model()) == "8/12/6", id ~ ": live pen wrote before its door");
     assert(hist().length == 0, id ~ ": live pen wrote history before its door");
 }
