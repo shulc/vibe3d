@@ -7,7 +7,7 @@
 // onto a mantissa ladder. So the quantum follows the zoom.
 //
 // The rounding shipped implemented, tested and DORMANT (the port defaulted
-// `RelocatePlanePrefs.quantumStep` to 0) because the step it rounds to was
+// the quantum step to 0) because the step it rounds to was
 // unknown, and two capture rigs appeared to demand incompatible constants.
 // That turned out to be an axis-index mistake, and with the step derived from
 // zoom rather than fixed both rigs reproduce exactly. This file is the
@@ -246,37 +246,14 @@ unittest {
 }
 
 // -------------------------------------------------------------------------
-// 4. THE PLANE-POINT SNAP is wired — and, in vibe3d's relocate path, INERT.
-//    That is a finding, and this flow exists to pin it rather than let the
-//    next reader assume otherwise.
+// 4. THE ANSWER IS SNAPPED to the sub-step on EVERY channel.
 //
-// The law snaps ALL THREE components of the plane point Q to the grid's
-// sub-step (the world length of ONE screen pixel, nice-ceiled) before
-// quantising Q's out-of-plane component. We now do that. But look at what
-// consumes Q here: the ray arm reads `Q[k]` and nothing else, and the
-// axis-locked arm reads `Q[locked]` and nothing else. Q's other two
-// components are discarded before they can reach a landing — and the one
-// component that does survive is immediately overwritten by the quantum,
-// which is a whole number of sub-steps coarser. So the snap is masked in
-// BOTH directions and the landing does not move.
-//
-// (In the reference Q is also consumed as a work-plane ORIGIN, where its
-// in-plane components are visible; the rig that measured this term measured
-// Q itself, not a click landing. Nothing in vibe3d consumes Q that way yet.
-// When something does, the term is already there and already right.)
-//
-// So what CAN be asserted at product level, and is:
-//   * the sub-step exists and is positive at this zoom;
-//   * the landing's OUT-OF-PLANE component is a whole number of sub-steps
-//     (it is the quantised Q[k], and the quantum is a multiple of the
-//     sub-step) — the one component Q contributes at all;
-//   * the landing's IN-PLANE components are NOT on the sub-step lattice.
-//
-// That last one is the deliberate part. `RelocatePlanePrefs.answerSnapStep`
-// — the snap of the ANSWER, which WOULD put them on the lattice — is ported
-// but dormant, because no measurement we hold covers it and switching it on
-// moves a frozen characterization row on no evidence. This assertion is what
-// makes flipping that field a visible decision instead of a silent one.
+// The relocate is the create click law (capture K-W3, cells W3a / W3b in
+// tests/test_create_click_plane_rule.d): the hit on the anchor plane is
+// rounded to the nearest sub-step lattice point. The out-of-plane component
+// is the quantised plane (a whole number of sub-steps); the in-plane ones are
+// the snapped hit. Five independent landings, so a lattice hit by chance
+// cannot carry the row.
 // -------------------------------------------------------------------------
 unittest {
     setup(0.34f, 3.86f);
@@ -289,37 +266,19 @@ unittest {
         return abs(v - n * step) / step;
     }
 
-    int inPlaneOffLattice = 0, inPlaneTotal = 0;
-    double worstOutOfPlane = 0;
+    int checked = 0;
     foreach (dx; [-70, -20, 0, 35, 90]) {
         setup(0.34f, 3.86f);
         clickOffGizmo(dx, dx / 2);
         auto c = pivot();
-
-        // Y is the out-of-plane axis for this camera (see `setup`).
-        immutable double missY = latticeMiss(cast(double)c.y, ss);
-        if (missY > worstOutOfPlane) worstOutOfPlane = missY;
-        assert(missY < 0.02,
-            format("click offset %d: the out-of-plane component %.6f is %.1f%% "
-                   ~ "of a sub-step (%.6f) off the lattice — it is the "
-                   ~ "quantised plane point and the quantum is a whole number "
-                   ~ "of sub-steps, so it cannot be", dx, c.y, missY * 100, ss));
-
-        foreach (comp; [c.x, c.z]) {
-            ++inPlaneTotal;
-            if (latticeMiss(cast(double)comp, ss) > 0.05) ++inPlaneOffLattice;
+        foreach (i, comp; [c.x, c.y, c.z]) {
+            ++checked;
+            assert(latticeMiss(cast(double)comp, ss) < 0.02,
+                format("click offset %d: channel %d = %.6f is %.1f%% of a "
+                       ~ "sub-step (%.6f) off the lattice; the relocate snaps "
+                       ~ "every channel (K-W3)", dx, i, comp,
+                       latticeMiss(cast(double)comp, ss) * 100, ss));
         }
     }
-    assert(inPlaneTotal == 10, "five landings, two in-plane components each");
-    // A landing could sit on the lattice by chance, so this is a majority and
-    // not a universal — but a majority is impossible if the ANSWER were being
-    // snapped, which is the state this pins.
-    assert(inPlaneOffLattice >= 5,
-        format("%d of %d in-plane components are off the sub-step lattice. If "
-               ~ "this drops, the snap of the ANSWER has been switched on "
-               ~ "(RelocatePlanePrefs.answerSnapStep) — which is a real "
-               ~ "behaviour change on a term nothing here measures, and it "
-               ~ "moves tests/golden/acen_pin_characterization.json. Confront "
-               ~ "that rather than relaxing this number",
-               inPlaneOffLattice, inPlaneTotal));
+    assert(checked == 15, "five landings, three channels each");
 }

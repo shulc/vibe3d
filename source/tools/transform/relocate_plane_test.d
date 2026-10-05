@@ -213,12 +213,8 @@ unittest {
 // except when the focus sits within half a sub-step of a quantum HALF-
 // boundary, where the two roundings disagree by one quantum.
 //
-// This matters because vibe3d's relocate path consumes ONLY Q[k]: the ray arm
-// reads `axisComp(q, k)` and the locked arm reads `axisComp(q, locked)`. So
-// the snap of the other two components cannot reach a landing at all, and the
-// snap of the surviving one is masked here. The term is ported and correct;
-// in this consumer it is inert. Anyone who expects a landing to move because
-// of it should read this block first.
+// The anchor plane reads ONLY Q[k], so the snap of the surviving component is
+// masked here.
 unittest {
     import viewgrid : ViewGridPrefs, viewGridSize, viewGridSubStep,
                       relocateQuantum;
@@ -244,32 +240,6 @@ unittest {
                   ~ "quantised axis: %d of 2000 sweeps disagreed", disagree));
     assert(disagree <= 10,
            "the disagreements must be the rare half-boundary ties, not a rule");
-
-    // ...and the other two components never reach the answer at all: the ray
-    // arm reads only component k.
-    Vec3 c1, c2;
-    immutable Vec3 qA = Vec3(11.0f, 2.0f, -7.0f);
-    immutable Vec3 qB = Vec3(-99.0f, 2.0f, 42.0f);   // same k=1 component
-    assert(posToPrincipalPlane(Vec3(0, 5, 0), normalize(Vec3(0.2f, -1, 0.1f)),
-                               1, qA, false, 0.0f, c1));
-    assert(posToPrincipalPlane(Vec3(0, 5, 0), normalize(Vec3(0.2f, -1, 0.1f)),
-                               1, qB, false, 0.0f, c2));
-    assert(nearV(c1, c2, 1e-9f),
-           "the ray arm must read ONLY Q[k] — if this ever fails, the "
-           ~ "plane point's in-plane snap stops being inert and the product "
-           ~ "assertions about it have to be revisited");
-}
-
-// The default is OFF, and that is a decision, not an oversight: with it off
-// the plane point is the RAW focus, which is what every fixture in this tree
-// was captured against.
-unittest {
-    auto vp = perspVp(Vec3(2, 3, 4), Vec3(0.4f, 1.7f, 0.2f));
-    RelocatePlanePrefs p;
-    auto pp = workPlanePoint(vp, 1, p);
-    assert(near(pp.q.y, 1.7f),
-           format("with the quantum off the plane point must be the RAW focus: "
-                  ~ "y should be 1.7, got %.6f", pp.q.y));
 }
 
 // The view snap step does not change the LANDING, only the plane point's
@@ -292,39 +262,6 @@ unittest {
 }
 
 // -------------------------------------------------------------------------
-// 2. The quantum, stated as behaviour.
-// -------------------------------------------------------------------------
-
-// An OFF-LATTICE focus moves the plane, and moves it to the lattice.
-unittest {
-    auto vp = perspVp(Vec3(2, 3, 4), Vec3(0.4f, 1.7f, 0.2f));
-    RelocatePlanePrefs p;
-    p.quantumStep = 1.0f;                 // the default is OFF — see the field
-    auto pp = workPlanePoint(vp, 1, p);
-    assert(pp.k == 1);
-    assert(near(pp.q.y, 2.0f),
-           format("focus y=1.7 must quantise to 2.0, got %.6f", pp.q.y));
-    // The in-plane components are untouched with the snap step off.
-    assert(near(pp.q.x, 0.4f) && near(pp.q.z, 0.2f),
-           "in-plane components must be untouched when the view snap step is off");
-}
-
-// THE BLINDNESS, NAMED. A focus on a grid line is a fixed point of the
-// quantum, so no rig built on one can see it. Every fixture in this tree puts
-// the camera focus at the world origin, which is such a point.
-unittest {
-    auto vp = perspVp(Vec3(2, 3, 4), Vec3(0, 0, 0));
-    RelocatePlanePrefs p;
-    p.quantumStep = 1.0f;                 // LIVE, or this test asserts nothing
-    foreach (k; 0 .. 3) {
-        auto pp = workPlanePoint(vp, k, p);
-        assert(nearV(pp.q, Vec3(0, 0, 0), 1e-9f),
-               "a focus at the origin is a FIXED POINT of the quantum — a rig "
-               ~ "built on one cannot discriminate the law from its absence");
-    }
-}
-
-// -------------------------------------------------------------------------
 // 3. The axis-view recogniser (`math.lockedViewAxis`).
 // -------------------------------------------------------------------------
 
@@ -343,182 +280,6 @@ unittest { // the six axis presets are recognised, perspective is not
 }
 
 // -------------------------------------------------------------------------
-// 4. The work-plane bias.
-// -------------------------------------------------------------------------
-
-// Disabled by default: strength 0 leaves the argmax alone whatever the view.
-unittest {
-    RelocatePlanePrefs p;
-    assert(p.strength == 0.0f && p.preferredAxis == -1
-           && p.viewSnapStep == 0.0f
-           && p.quantumStep == 0.0f,
-           "every preference must default to the value that disables it");
-    foreach (k; 0 .. 3)
-        assert(biasedAxis(k, normalize(Vec3(0.1f, 0.99f, 0.05f)), p) == k,
-               "a zero strength must never move the axis");
-}
-
-// The rule, and its exact threshold.
-//
-// |D[1]| = 0.75, so the swap fires iff strength > 0.25. Both 0.75 and 0.25
-// are exact in binary floating point and so is their difference — the
-// threshold case below is a REAL tie, not a tie that rounding turned into a
-// comparison of two nearby numbers.
-unittest {
-    Vec3 d = Vec3(0.0f, 0.75f, 0.0f);
-    RelocatePlanePrefs p;
-    p.preferredAxis = 1;
-
-    p.strength = 0.5f;
-    assert(biasedAxis(0, d, p) == 1,
-           "strength 0.5 > 1-0.75 must adopt the preferred axis");
-
-    p.strength = 0.125f;
-    assert(biasedAxis(0, d, p) == 0,
-           "strength 0.125 < 1-0.75 must leave the argmax winner");
-
-    // STRICTLY greater: at exactly the threshold the argmax wins.
-    assert(1.0f - 0.75f == 0.25f, "the threshold must be exact for this test");
-    p.strength = 0.25f;
-    assert(biasedAxis(0, d, p) == 0,
-           "the comparison is STRICT — at strength == 1-|D[j]| the argmax wins");
-
-    // Face-on to a DIFFERENT axis: the preferred plane is edge-on, no swap.
-    p.strength = 0.5f;
-    assert(biasedAxis(0, Vec3(0.99f, 0.02f, 0.0f), p) == 0,
-           "the bias must not fire when the preferred plane is edge-on");
-}
-
-// The bias re-derives the plane point, because the quantum is applied to
-// whichever coordinate is out-of-plane and the bias changes which that is.
-unittest {
-    // Focus off-lattice on X and Y by different amounts so the two candidate
-    // plane points are distinguishable.
-    auto vp = perspVp(Vec3(0.2f, 8.0f, 0.1f), Vec3(0.4f, 1.7f, 0.2f));
-    RelocatePlanePrefs p;
-    p.quantumStep   = 1.0f;
-    p.preferredAxis = 1;
-    p.strength      = 0.99f;                 // fires for almost any view
-    auto pp = workPlanePoint(vp, 0, p);
-    assert(pp.k == 1, "the bias must move the principal axis to the preference");
-    assert(near(pp.q.y, 2.0f),
-           format("the plane point must be RE-QUANTISED on the new axis: "
-                  ~ "y should be 2.0, got %.6f", pp.q.y));
-    assert(near(pp.q.x, 0.4f),
-           format("and the old axis must go back to being in-plane and raw: "
-                  ~ "x should be 0.4, got %.6f", pp.q.x));
-}
-
-// -------------------------------------------------------------------------
-// 6. The final snap of the answer.
-// -------------------------------------------------------------------------
-
-unittest {
-    Vec3 c;
-    // Ray straight down from (0.37, 5, 0.61) meets y=0 at (0.37, 0, 0.61).
-    assert(posToPrincipalPlane(Vec3(0.37f, 5, 0.61f), Vec3(0, -1, 0),
-                               1, Vec3(0, 0, 0), false, 0.0f, c));
-    assert(nearV(c, Vec3(0.37f, 0, 0.61f)), "unsnapped landing");
-
-    assert(posToPrincipalPlane(Vec3(0.37f, 5, 0.61f), Vec3(0, -1, 0),
-                               1, Vec3(0, 0, 0), true, 0.25f, c));
-    assert(nearV(c, Vec3(0.25f, 0, 0.5f)),
-           format("a 0.25 snap step must round the ANSWER, got (%.4f, %.4f, %.4f)",
-                  c.x, c.y, c.z));
-
-    // A non-positive step returns immediately rather than rounding by zero.
-    assert(posToPrincipalPlane(Vec3(0.37f, 5, 0.61f), Vec3(0, -1, 0),
-                               1, Vec3(0, 0, 0), true, 0.0f, c));
-    assert(nearV(c, Vec3(0.37f, 0, 0.61f)),
-           "a zero snap step must leave the answer alone");
-}
-
-// -------------------------------------------------------------------------
-// 6b. THE PORT IS BEHAVIOUR-NEUTRAL TODAY, AND THAT IS CHECKED, NOT CLAIMED.
-//
-// The relocate call site used to intersect the ray with the plane through
-// the camera focus whose normal is the camera-facing world axis, and to swap
-// in a camera-perpendicular plane under an orthographic projection. The two
-// tests below say the law reproduces both of those exactly with every
-// optional term at its default — which is what licenses routing the auto
-// plane through it without a single landing moving.
-//
-// Anything that turns one of the dormant terms on breaks these. That is the
-// point: a term that changes a landing has to be argued for, not switched on
-// in passing.
-// -------------------------------------------------------------------------
-
-// PERSPECTIVE: the ray arm is a plane intersection against `x[k] = focus[k]`.
-unittest {
-    import math : rayPlaneIntersect;
-    static immutable Vec3[3] axisNormals = [Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1)];
-    // Focus deliberately off-lattice on every axis: were the quantum to leak
-    // in through a changed default, these would part company.
-    auto vp = perspVp(Vec3(2.3f, 3.1f, 4.7f), Vec3(0.4f, 1.7f, 0.2f));
-    RelocatePlanePrefs p;                       // defaults — nothing switched on
-    immutable Vec3[3] dirs = [normalize(Vec3(-0.4f, -0.7f, -0.9f)),
-                              normalize(Vec3(0.9f, -0.2f, -0.35f)),
-                              normalize(Vec3(-0.1f, 0.85f, -0.5f))];
-    foreach (k; 0 .. 3) {
-        foreach (d; dirs) {
-            Vec3 lawHit;
-            int used;
-            immutable bool okLaw = principalPlaneCenter(vp, vp.eye, d, k, p, lawHit, used);
-            Vec3 oldHit;
-            immutable bool okOld = rayPlaneIntersect(vp.eye, d, vp.focus,
-                                                     axisNormals[k], oldHit);
-            assert(okLaw == okOld && used == k,
-                   format("law and the plane intersection must agree on "
-                          ~ "REACHABILITY for k=%d: law %s, old %s (axis %d)",
-                          k, okLaw, okOld, used));
-            if (!okLaw) continue;
-            assert(nearV(lawHit, oldHit, 1e-4f),
-                   format("the law must reproduce the pre-port landing on k=%d: "
-                          ~ "law (%.6f, %.6f, %.6f) vs plane intersect "
-                          ~ "(%.6f, %.6f, %.6f)", k,
-                          lawHit.x, lawHit.y, lawHit.z,
-                          oldHit.x, oldHit.y, oldHit.z));
-        }
-    }
-}
-
-// OBLIQUE ORTHO: `principalPlaneCenter` is NOT the camera-perpendicular
-// plane through the focus on an orthographic camera that is not axis-aligned
-// — it takes the ray onto the principal plane, which
-// lands elsewhere along the ray. A property of the chain only: no caller
-// feeds it such a view for a relocate any more (task 7134 routes every ortho
-// relocate through `orthoRelocateThroughPrior`, gap 366).
-unittest {
-    import math : rayPlaneIntersect, lookAt, orthographicMatrix;
-    Vec3 focus = Vec3(0.4f, 1.7f, 0.2f);
-    Vec3 eye   = focus + normalize(Vec3(0.8f, 0.45f, 0.25f)) * 4.0f;
-    Viewport vp;
-    vp.eye    = eye;
-    vp.view   = lookAt(eye, focus, Vec3(0, 1, 0));
-    vp.proj   = orthographicMatrix(2.0f, 1098.0f / 832.0f, 0.001f, 100.0f);
-    vp.width  = 1098;
-    vp.height = 832;
-    vp.focus  = focus;
-
-    Vec3 camPerp = Vec3(vp.view[2], vp.view[6], vp.view[10]);
-    Vec3 fwd     = Vec3(-vp.view[2], -vp.view[6], -vp.view[10]);
-    Vec3 origin  = Vec3(1.1f, -0.4f, 0.7f) + fwd * (-4.0f);
-
-    RelocatePlanePrefs p;
-    Vec3 lawHit, orthoFixHit;
-    int used;
-    assert(principalPlaneCenter(vp, origin, fwd, 0, p, lawHit, used));
-    assert(rayPlaneIntersect(origin, fwd, vp.focus, camPerp, orthoFixHit));
-    assert(!nearV(lawHit, orthoFixHit, 1e-3f),
-           format("principalPlaneCenter must DIFFER from the camera-"
-                  ~ "perpendicular plane through the focus on an oblique "
-                  ~ "orthographic camera — they agreed: chain "
-                  ~ "(%.6f, %.6f, %.6f), focus plane (%.6f, %.6f, %.6f)",
-                  lawHit.x, lawHit.y, lawHit.z,
-                  orthoFixHit.x, orthoFixHit.y, orthoFixHit.z));
-}
-
-// -------------------------------------------------------------------------
 // 7. Pieces.
 // -------------------------------------------------------------------------
 
@@ -530,34 +291,6 @@ unittest { // Dnint rounds half AWAY FROM ZERO, not half-to-even
     assert(dnint(-2.5f) == -3.0f);
     assert(dnint(1.4f)  ==  1.0f);
     assert(dnint(-1.4f) == -1.0f);
-}
-
-unittest { // the ray arm refuses a view direction lying in the plane
-    Vec3 c;
-    assert(!posToPrincipalPlane(Vec3(5, 0, 0), Vec3(-1, 0, 0),
-                                1, Vec3(0, 0, 0), false, 0.0f, c),
-           "a ray with no component along the principal axis must refuse");
-}
-
-unittest { // the whole chain reports the axis it actually used, and lands on it
-    auto vp = perspVp(Vec3(0.2f, 8.0f, 0.1f), Vec3(0.4f, 1.7f, 0.2f));
-    RelocatePlanePrefs p;
-    p.quantumStep   = 1.0f;
-    p.preferredAxis = 0;
-    p.strength      = 0.99f;   // the view is near face-on to Y, so X needs ~0.97
-    Vec3 c;
-    int used;
-    // An oblique ray: it must have a component along X or the X plane it is
-    // about to be sent to cannot be reached.
-    assert(principalPlaneCenter(vp, Vec3(0.4f, 8.0f, 0.2f),
-                                normalize(Vec3(-1, -1, 0)), 1, p, c, used));
-    assert(used == 0,
-           format("principalPlaneCenter must report the axis the bias chose, "
-                  ~ "got %d", used));
-    // focus.x = 0.4 quantises to 0.0, so the landing sits on x = 0.
-    assert(near(c.x, 0.0f),
-           format("the landing must sit on the QUANTISED plane x=0, got %.6f",
-                  c.x));
 }
 
 } // version (unittest)

@@ -1,230 +1,23 @@
 module tools.transform.relocate_plane;
 
-// ---------------------------------------------------------------------------
-// Where a click-relocate lands in world.
-//
-// The reference implementation is four nested functions; this module is a
-// 1:1 restatement of them as pure functions, so each can be tested on its
-// own and the composition tested against the one rig that measured it.
-//
-//   principalPlaneCenter(...)          the whole chain, entry to answer
-//     +- workPlanePoint(...)           the plane point Q and the axis k
-//     |    +- niceOrigin(...)          Q = focus, snapped, then QUANTISED on k
-//     |    |    +- vectorSnap(...)     component-wise round to a step
-//     |    +- biasedAxis(...)          the preferred-work-plane bias
-//     +- posToPrincipalPlane(...)      the ray onto the principal plane
-//          +- vectorSnap(...)          the final snap of the ANSWER (dormant:
-//                                      see `RelocatePlanePrefs.answerSnapStep`)
-//
-// Two things in this file are the whole point, and both were missing:
-//
-// 1. `niceOrigin` QUANTISES the plane point's out-of-plane coordinate. The
-//    plane through the camera focus is not the plane through the focus — it
-//    is the plane through the focus ROUNDED. On a camera whose focus sits at
-//    the world origin this is the identity, which is why every fixture we own
-//    is blind to it.
-//
-// 2. The reference's axis-locked ortho no-ray arm is not ported: no vibe3d
-//    caller reaches it (every ortho click takes `orthoRelocateThroughPrior`
-//    or the create click law, `viewgrid.viewWorkPlaneAnchor`).
-//
-// WHAT IS MEASURED AND WHAT IS CHOSEN. The structure below is read out of the
-// reference instruction by instruction and is not fitted. Its INPUTS are a
-// different matter: vibe3d has no counterpart for any of them, and every one
-// is defaulted to the value at which the reference itself skips the feature.
-// TWO OF THOSE INPUTS ARE NOW FED (task 0570), and the rest are not. The grid
-// step became a derived quantity — the world length of 25 screen pixels on a
-// mantissa ladder — which gave `quantumStep` and `viewSnapStep` numbers they
-// never had, so the call site supplies both and the plane point is genuinely
-// snapped and quantised. Everything else here (the bias, the snap of the
-// ANSWER) is still ported-but-unfed, each for a reason written at its own
-// field. (The lock arm, ported but never wired, is deleted.)
-//
-// The rule this file runs on, and the reason those two are still off: a term
-// we can RESTATE is not thereby a term we can SWITCH ON. Restating is a read;
-// switching on is a claim about behaviour, and it needs a measurement of its
-// own. `answerSnapStep` exists as a separate field precisely because feeding
-// it from the evidenced one moved a frozen row on no evidence at all.
-// ---------------------------------------------------------------------------
+// The ORTHOGRAPHIC click-relocate (below). A perspective relocate is the
+// create click law (`create_common.screenToPlacementWorld`): pinned K-W W2a,
+// unpinned K-W3 (task 9476, `tests/test_create_click_plane_rule.d` W3a / W3b).
 
-import math : Vec3, Viewport, isAxisView, dot, eyeVectorAt;
+import math : Vec3, Viewport, isAxisView, dot;
 import std.math : abs;
 
 /// `public` ONLY for the pen's frozen import of these four names; TEMPORARY —
 /// make it private at P1, when the pen imports them from `viewgrid`.
 public import viewgrid : vectorSnap, axisComp, withAxisComp, niceOrigin;
 
-/// The shipped work-plane bias preferences, the view's own snap step, and the
-/// out-of-plane quantum.
-///
-/// EVERY DEFAULT HERE IS "OFF", AND THAT IS DELIBERATE. No capture in this
-/// campaign recorded any of them, so a default that changed behaviour would
-/// be inventing a measurement. Each default below is also the value at which
-/// the reference's own gate skips the feature, so "off" is a faithful port of
-/// the disabled state rather than a stub.
-struct RelocatePlanePrefs {
-    /// The bias toward `preferredAxis`. The reference gates the whole swap on
-    /// `strength > 0`, so zero disables it exactly.
-    float strength = 0.0f;
-    /// The preferred work-plane axis (0=X, 1=Y, 2=Z), or -1 for none. The
-    /// reference falls through to the argmax for any value outside {0,1,2}.
-    int   preferredAxis = -1;
-    /// The view's own vector-snap step: EVERY component of the plane point is
-    /// rounded to a multiple of it, unconditionally, before the out-of-plane
-    /// quantum below — and `principalPlaneCenter` feeds the same step to the
-    /// final snap of the answer.
-    ///
-    /// Zero or less disables it, which is the reference's disabled value and
-    /// was vibe3d's permanent state until task 0570: this comment used to say
-    /// "we have no per-view snap step to read", which was true only because
-    /// the grid had no zoom in it. The step is the grid's SUB-step — the world
-    /// length of ONE screen pixel, rounded up onto the mantissa ladder, which
-    /// is a different and much finer number than a tenth of the drawn grid
-    /// step. The call site supplies it; see
-    /// `XfrmTransformTool.computeClickRelocateHitRaw`.
-    ///
-    /// Still defaulted off HERE because this module is pure and has no view.
-    float viewSnapStep = 0.0f;
-
-    /// The step for the snap of the ANSWER — the landing, after the ray has
-    /// crossed the plane — as opposed to `viewSnapStep` above, which snaps
-    /// the plane POINT before the quantum.
-    ///
-    /// SEPARATE FIELD, AND DORMANT, BECAUSE THE EVIDENCE IS SEPARATE. In the
-    /// reference these are one stored number, and the obvious thing is to
-    /// feed both from one field. But the read that pinned the sub-step traces
-    /// the snap inside the plane-point routine only; the answer-side snap is
-    /// where the plane-law port placed its own reading of the operation, and
-    /// nothing measured here speaks to it. Feeding both from one field made
-    /// the answer snap fire, which moved a frozen characterization row by
-    /// ~0.001 — a real, unevidenced behaviour change riding along on an
-    /// evidenced one.
-    ///
-    /// So the arm stays ported and reachable and stays OFF until its own read
-    /// arrives, which is this file's standing rule for a term we can restate
-    /// but cannot yet justify switching on.
-    float answerSnapStep = 0.0f;
-    /// The out-of-plane quantum: the plane point's coordinate along the
-    /// principal axis is rounded to a multiple of this. Zero disables it.
-    ///
-    /// STILL DEFAULTED OFF HERE, but no longer because the step is unknown:
-    /// this module is pure and has no view to derive it from. The CALL SITE
-    /// supplies it (`XfrmTransformTool.computeClickRelocateHitRaw`, task
-    /// 0570) as `10 * viewgrid.viewGridSize(pixelSize)` — ten grid steps,
-    /// where the grid step is itself the world length of 25 screen pixels
-    /// rounded up onto a mantissa ladder. It is a pure function of the view's
-    /// pixel size and needs no state.
-    ///
-    /// THE "CONTRADICTION" THIS FIELD USED TO DOCUMENT WAS AN ARTEFACT, and
-    /// it is worth keeping the correction visible because the wrong version
-    /// was persuasive. Two rigs appeared to demand incompatible constants:
-    ///
-    ///   * the plane-offset sweep — a focus of 1.8255 came back as 2.0 and
-    ///     one of -0.3551 as 0.0, which admit a step of 1.0 or 2.0 and
-    ///     nothing else between 0.05 and 20;
-    ///   * the big-pan probe — a focus component of -1.0291 came back as
-    ///     -1.03, which admits only steps at or below ~0.26.
-    ///
-    /// The intersection is empty only if both rows are the QUANTISED axis. On
-    /// the second rig it is not: its out-of-plane axis is Y, not X. The
-    /// -1.0291 -> -1.03 row is the in-plane component-wise snap (see
-    /// `viewSnapStep`), and the row that IS the quantum on that rig is
-    /// 0.3437 -> 0.5, i.e. a step of 0.5. With the step derived from zoom
-    /// rather than fixed, 1.0/2.0 and 0.5 are two ordinary modelling zooms
-    /// about a factor of two apart, and both rigs reproduce exactly.
-    ///
-    /// The lesson, since it cost two rounds: an "empty intersection" argument
-    /// is only as good as the axis index under each row.
-    float quantumStep = 0.0f;
-}
-
-/// The preferred-work-plane bias: `if (strength > 1 - |D[j]|) k := j`.
-///
-/// `1 - |D[j]|` is near zero exactly when the view looks nearly straight down
-/// axis `j`, so this adopts the user's preferred plane when that plane is
-/// within `strength` of being perfectly face-on — a hysteresis in favour of
-/// the preference, biting only in the narrow band where `j` is nearly as
-/// face-on as the argmax winner.
-///
-/// The comparison is STRICT and the `k == j` early-out precedes it, so at
-/// exactly `strength == 1 - |D[j]|` the argmax wins.
-int biasedAxis(int k, Vec3 eyeDir, const ref RelocatePlanePrefs p)
-        @safe pure nothrow @nogc {
-    if (p.strength <= 0) return k;
-    int j = p.preferredAxis;
-    if (j < 0 || j > 2) return k;
-    if (k == j) return k;
-    if (p.strength > 1.0f - abs(axisComp(eyeDir, j))) return j;
-    return k;
-}
-
-/// The plane point and the principal axis together.
-///
-/// `argmaxAxis` is the camera-most-facing world axis, supplied by the caller
-/// so this module does not duplicate the argmax (and so the caller's existing
-/// tie-break stays the one authority on it).
-struct PlanePoint {
-    Vec3 q;
-    int  k;
-}
-
-PlanePoint workPlanePoint(const ref Viewport vp, int argmaxAxis,
-                          const ref RelocatePlanePrefs p)
-        @safe pure nothrow @nogc {
-    PlanePoint r;
-    r.k = argmaxAxis;
-    r.q = niceOrigin(vp.focus, r.k, p.quantumStep, p.viewSnapStep);
-    // The eye vector is computed even when the bias is dormant, and is then
-    // discarded by `biasedAxis`'s first early-out — as the reference does.
-    immutable int bk = biasedAxis(r.k, eyeVectorAt(vp, r.q), p);
-    if (bk != r.k) {
-        // The quantum is applied to the OUT-OF-PLANE coordinate, so a new
-        // axis recomputes the plane point.
-        r.k = bk;
-        r.q = niceOrigin(vp.focus, r.k, p.quantumStep, p.viewSnapStep);
-    }
-    return r;
-}
-
-/// Put the click on the principal plane: `C = P0 + [(Q[k] - P0[k]) / D[k]]*D`.
-///
-/// The click arrives as a RAY (`screenPointToRay`), so `D` is read rather
-/// than recovered as the eye vector at the unprojected point; the answer is
-/// the unique point of the line with `C[k] == Q[k]` either way. Returns false
-/// when the view direction lies in the plane.
-bool posToPrincipalPlane(Vec3 rayOrigin, Vec3 rayDir, int k, Vec3 q,
-                         bool doSnap, float snapStep, out Vec3 c)
-        @safe pure nothrow @nogc {
-    immutable float dk = axisComp(rayDir, k);
-    if (abs(dk) < 1e-9f) return false;
-    immutable float t = (axisComp(q, k) - axisComp(rayOrigin, k)) / dk;
-    c = rayOrigin + rayDir * t;
-    if (doSnap) c = vectorSnap(c, snapStep);
-    return true;
-}
-
-/// The whole chain: the click's ray in, the relocated centre out.
-///
-/// `argmaxAxis` is the caller's camera-most-facing axis. `axisOut` receives
-/// the principal axis actually used, which is NOT always `argmaxAxis` — the
-/// bias can move it.
-bool principalPlaneCenter(const ref Viewport vp, Vec3 rayOrigin, Vec3 rayDir,
-                          int argmaxAxis, const ref RelocatePlanePrefs p,
-                          out Vec3 c, out int axisOut)
-        @safe pure nothrow @nogc {
-    immutable pp = workPlanePoint(vp, argmaxAxis, p);
-    axisOut = pp.k;
-    return posToPrincipalPlane(rayOrigin, rayDir, pp.k, pp.q,
-                               true, p.answerSnapStep, c);
-}
-
 /// An ORTHOGRAPHIC click-relocate: the press drags a handle standing at the
 /// centre held BEFORE the press across the view plane, so the landing keeps
 /// that centre's depth along the view axis and takes the other two
 /// coordinates from the click (gap 364, task 7134; fixture
 /// `tests/fixtures/relocate_axis_view_depth.json`). The camera focus never
-/// enters, and neither does the principal-plane chain above — a different law
-/// from the create tools' placement click, which does land through the focus.
+/// enters — a different law from the create tools' placement click, which
+/// does land through the focus.
 ///
 /// Everything is in ONE frame, the caller's: plane-local under a pinned work
 /// plane (a turned axis view then looks along a LOCAL axis), world otherwise.

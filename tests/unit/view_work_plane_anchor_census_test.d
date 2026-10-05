@@ -1,7 +1,7 @@
 // Task 9411: ONE view work-plane anchor for every click reader. The old
 // per-reader plane (the plane's own normal through its origin) is gone from
 // the tree; the click readers call the create click law; `niceOrigin` has one
-// body; the relocate's plane chain has no locked-view arm. Raw source text
+// body; the relocate has no plane chain of its own (task 9476). Raw source text
 // with comments and strings blanked: a renamed or aliased reader shows up as a
 // changed roster, not as a silent pass.
 module tests.unit.view_work_plane_anchor_census_test;
@@ -28,18 +28,6 @@ private string[] roster(string needle) {
     return r;
 }
 
-private string bodyOf(string code, string marker) {
-    const at = code.indexOf(marker);
-    assert(at >= 0, "missing source marker `" ~ marker ~ "`");
-    size_t i = cast(size_t)at, depth;
-    while (code[i] != '{') ++i;
-    foreach (j; i .. code.length) {
-        if (code[j] == '{') ++depth;
-        else if (code[j] == '}' && --depth == 0) return code[i .. j + 1];
-    }
-    assert(false, "unterminated body after `" ~ marker ~ "`");
-}
-
 unittest {
     // Positive control first: the needle machinery finds the live readers.
     const world = roster("screenToPlacementWorld(");
@@ -60,8 +48,13 @@ unittest {
         format("niceOrigin definitions: %s", roster("Vec3 niceOrigin(")));
     const rp = blankNonCode(readText(buildPath(repoRoot, "source", "tools", "transform",
                                                "relocate_plane.d")));
-    const wpp = bodyOf(rp, "PlanePoint workPlanePoint(");
-    assert(wpp.indexOf("niceOrigin(") >= 0, "control: workPlanePoint body located");
+    assert(rp.indexOf("bool orthoRelocateThroughPrior(") >= 0, "control: relocate_plane read");
     assert(rp.indexOf("lockedViewAxis") < 0,
         "relocate_plane regained a locked-view arm (unreachable from every click)");
+    // Task 9476 (K-W3): the perspective relocate is the click law, pinned or
+    // not; the unsnapped principal-plane chain is gone, every spelling.
+    foreach (n; ["principalPlaneCenter", "posToPrincipalPlane", "workPlanePoint",
+                 "RelocatePlanePrefs", "biasedAxis"])
+        assert(roster(n) == [], format("the unsnapped relocate chain returned: %s %s",
+                                       n, roster(n)));
 }

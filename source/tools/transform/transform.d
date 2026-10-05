@@ -1876,10 +1876,8 @@ protected:
         import toolpipe.pipeline           : g_pipeCtx;
         import toolpipe.stages.actcenter   : ActionCenterStage;
         import toolpipe.stage              : TaskCode;
-        import tools.create.create_common         : primitivePlacementFrame, mostFacingAxis;
-        import tools.transform.relocate_plane     : RelocatePlanePrefs, principalPlaneCenter;
-        import viewgrid : g_viewGrid, viewWorldPerPixel, relocateQuantum,
-                          viewVectorQuantum;
+        import tools.create.create_common         : primitivePlacementFrame;
+        import viewgrid : viewVectorQuantum;
         import math : rayPlaneIntersect, screenPointToRay, isOrtho;
         Vec3 crHitOrig, dir;
         screenPointToRay(cast(float)sx, cast(float)sy, cachedVp, crHitOrig, dir);
@@ -1893,9 +1891,6 @@ protected:
         final switch (mode) {
             case ActionCenterStage.Mode.Auto:
             case ActionCenterStage.Mode.None: {
-                // Reads WorkplaneStage state directly (no pipeline.evaluate).
-                auto wf = primitivePlacementFrame();
-
                 // --- ORTHOGRAPHIC: THE PRIOR CENTRE'S DEPTH. ---
                 //
                 // Gap 364 / task 7134 (fixture relocate_axis_view_depth.json;
@@ -1908,6 +1903,7 @@ protected:
                 // never relocates here: the off-gizmo press is held back.)
                 if (isOrtho(cachedVp)) {
                     import tools.create.create_common : planeLocalViewport;
+                    auto wf = primitivePlacementFrame();
                     import tools.transform.relocate_plane : orthoRelocateThroughPrior;
                     import math : transformPoint;
                     Viewport l = planeLocalViewport(cachedVp, wf);
@@ -1927,38 +1923,15 @@ protected:
                     return true;
                 }
 
-                // --- PINNED PERSPECTIVE: THE CLICK LAW. ---
+                // --- PERSPECTIVE: THE CLICK LAW. ---
                 //
-                // The create click law, plane-local: the view work-plane
-                // anchor, the hit snapped to the view quantum (K-W W2a; the
-                // pinned plane's own origin never enters).
-                if (!wf.isAuto) {
-                    import tools.create.create_common : screenToPlacementWorld;
-                    worldHit = screenToPlacementWorld(cast(float)sx, cast(float)sy,
-                                                      cachedVp);
-                    return true;
-                }
-
-                // --- AUTO, PERSPECTIVE: the ported plane law. ---
-                //
-                // `tools.transform.relocate_plane`: the plane through the focus
-                // with its out-of-plane coordinate quantised to ten grid steps
-                // after a q pre-snap (task 0570) — the same plane as the view
-                // anchor; the ANSWER is not snapped (`answerSnapStep`, dormant:
-                // no unpinned capture reads it). This site supplies the argmax
-                // axis (`mostFacingAxis`, `pickMostFacingPlane`'s tie-break).
-                Vec3 camBack = Vec3(cachedVp.view[2],
-                                    cachedVp.view[6],
-                                    cachedVp.view[10]);
-                immutable int argmaxAxis =
-                    mostFacingAxis(camBack, Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1));
-                RelocatePlanePrefs prefs;
-                prefs.quantumStep = relocateQuantum(viewWorldPerPixel(cachedVp), g_viewGrid);
-                prefs.viewSnapStep = viewVectorQuantum(cachedVp);
-                int usedAxis;
-                return principalPlaneCenter(cachedVp, crHitOrig, dir,
-                                            argmaxAxis, prefs,
-                                            worldHit, usedAxis);
+                // The create click law, plane-local under a pin: the view
+                // work-plane anchor, the hit snapped to the view quantum on
+                // every channel, pinned (K-W W2a; the plane's own origin never
+                // enters) or not (K-W3: the nearest lattice point).
+                import tools.create.create_common : screenToPlacementWorld;
+                worldHit = screenToPlacementWorld(cast(float)sx, cast(float)sy, cachedVp);
+                return true;
             }
             case ActionCenterStage.Mode.Screen: {
                 Vec3 selCen = currentSelectionBBoxCenter();

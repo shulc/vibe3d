@@ -3,8 +3,8 @@
 // plane perpendicular to the most-facing frame axis through the view anchor
 // (perspective: the focus rounded to ten grid steps after a q pre-snap; ortho:
 // the focus), the hit snapped to q on EVERY channel, plane-local under a pin.
-// The action-centre relocate reads the same law under a pinned perspective
-// plane; an ortho view keeps the pre-press centre's depth.
+// The action-centre relocate reads the same law in perspective, pinned (W2a)
+// or not (K-W3: W3a / W3b); an ortho view keeps the pre-press centre's depth.
 //
 // Every cell sets OUR view scale to the cell's px/m and first asserts that our
 // grid size and sub-step equal the cell's (a quantum cell must sit in the
@@ -119,10 +119,15 @@ private void rig(const ref Cell c, string[] geometry = null) {
                                   c.name, best, c.axis));
 }
 
-/// The window pixel of the captured point; asserts its ray meets the captured
-/// plane within q/2 of the captured point (so a q-snapped answer is exact).
+/// The window pixel of `at` (default: the captured point); asserts its ray
+/// meets the captured plane within q/2 of the captured point (so a q-snapped
+/// answer is exact). `hit` receives that raw plane hit.
 private int[2] aim(const ref Cell c) {
-    const px = worldPixel(v3(c.measuredWorld));
+    double[3] hit;
+    return aim(c, c.measuredWorld, hit);
+}
+private int[2] aim(const ref Cell c, double[3] at, out double[3] hit) {
+    const px = worldPixel(v3(at));
     auto vp = viewportFromCameraMatrices();
     Vec3 o, d;
     pixelRay(px[0], px[1], vp, o, d);
@@ -132,6 +137,7 @@ private int[2] aim(const ref Cell c) {
     double num_ = 0, den = 0;
     foreach (i; 0 .. 3) { num_ += (po[i] - oo[i]) * nw[i]; den += dd[i] * nw[i]; }
     const t = num_ / den;
+    foreach (i; 0 .. 3) hit[i] = oo[i] + dd[i] * t;
     foreach (i; 0 .. 3)
         assert(abs(oo[i] + dd[i] * t - po[i]) < 0.45 * c.q,
             format("%s rig: pixel %s lands %.5f off the captured point on world "
@@ -266,7 +272,7 @@ private string falloffCell(const ref Cell c) {
 /// The action-centre relocate: Move armed, a click in empty space; `prior`
 /// (world centre, half size 0.15) is a selected cube giving the pre-press
 /// centre.
-private string relocateCell(const ref Cell c, double[] prior) {
+private string relocateCell(const ref Cell c, double[] prior, bool atRaw = false) {
     rig(c, [format("prim.cube cenX:%.9f cenY:%.9f cenZ:%.9f sizeX:0.3 sizeY:0.3 sizeZ:0.3",
                       prior[0], prior[1], prior[2])]);
     const n = getJson("/api/model")["vertices"].array.length;
@@ -281,7 +287,20 @@ private string relocateCell(const ref Cell c, double[] prior) {
     const double[3] pre = [pa["cenX"].to!double, pa["cenY"].to!double, pa["cenZ"].to!double];
     assert(abs(pre[0] - prior[0]) + abs(pre[1] - prior[1]) + abs(pre[2] - prior[2]) < 1e-4,
         format("%s rig: the pre-press centre %s, expected the cube's %s", c.name, pre, prior));
-    clickPixels(aim(c));
+    int[2] px = aim(c);
+    if (atRaw) {
+        // W3a / W3b: the plane channel cannot tell a q-snapped answer from an
+        // unsnapped hit on the same plane, so the click aims at the captured
+        // RAW hit, 0.4 q off the answer on both in-plane channels; only a
+        // q-snap lands on the captured lattice point.
+        double[3] hit;
+        px = aim(c, arr3(c.j["plane_hit_raw"]), hit);
+        foreach (i; [0, 2])
+            assert(abs(hit[i] - c.measuredWorld[i]) > 0.1 * c.q,
+                format("%s rig: raw channel %d %.5f lies on the answer %.5f; the "
+                       ~ "cell cannot see the snap", c.name, i, hit[i], c.measuredWorld[i]));
+    }
+    clickPixels(px);
     auto a = stageAttrs("ACEN");
     penCommand("tool.set move off");
     if (a["userPlaced"] != "true")
@@ -337,6 +356,10 @@ unittest {
     // relocates (test_item_panel_gizmo_sync R3) — an open gap, task 9411.
     run("W2a", function(ref const Cell c) => relocateCell(c, [-0.5, 0.0, 0.0]));
     run("W2c_ctrl", function(ref const Cell c) => relocateCell(c, [-0.5, -0.4, -0.3]));
+    // K-W3: the unpinned perspective relocate is the same law (W3a straight
+    // down, W3b oblique: x 0.855 is the NEAREST lattice point, not 0.86).
+    foreach (n; ["W3a", "W3b"])
+        run(n, function(ref const Cell c) => relocateCell(c, [-0.5, -0.4, -0.3], true));
     if (wanted("W2b")) {
         // W2b: the prior's world centre is the captured local prior.
         const c = cellOf(fx, "W2b");
@@ -344,7 +367,7 @@ unittest {
         if (auto m = relocateCell(c, w[].dup)) fails ~= m;
         ++ran;
     }
-    const want = only.length == 0 ? 23 : cast(int)only.length;
+    const want = only.length == 0 ? 25 : cast(int)only.length;
     assert(ran == want, format("cell population: %d run, expected %d", ran, want));
     assert(fails.length == 0, "click plane cells:\n" ~ fails.join("\n"));
 }

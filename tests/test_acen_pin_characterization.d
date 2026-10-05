@@ -395,6 +395,9 @@ unittest {
     assert(undoCount() == floor + 1, "gesture 1 must self-commit one entry");
     record("autoRelocateChain_afterGesture1");
 
+    // The relocated centre is q-snapped on every channel (capture K-W3; the
+    // four post-click `center` rows were re-recorded from the unsnapped
+    // answer, task 9476).
     offGizmoRelocateClick();
     assert(evalUserPlaced(), "off-gizmo click must set userPlaced");
     record("autoRelocateChain_afterRelocateClick");

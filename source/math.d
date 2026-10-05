@@ -1033,11 +1033,9 @@ bool isAxisView(const ref Viewport vp) @safe pure nothrow @nogc {
 /// constant.
 ///
 /// Lives here rather than in a tool module because it is plain view geometry
-/// with no tool semantics, and because two unrelated families need it: the
-/// click-relocate plane law (`tools.transform.relocate_plane`, which
-/// re-exports it for its own callers) and the gizmo's handle-facing cull
-/// (`handles.gl_util.axisFacesViewer`). Being per-point rather than a single
-/// global forward vector is the whole reason the cull is correct for a gizmo
+/// with no tool semantics. Being per-point rather than a single global
+/// forward vector is the whole reason the gizmo's handle-facing cull
+/// (`handles.gl_util.axisFacesViewer`) is correct for a gizmo
 /// that sits away from the camera focus.
 Vec3 eyeVectorAt(const ref Viewport vp, Vec3 p) @safe pure nothrow @nogc {
     if (isOrtho(vp)) return normalize(Vec3(-vp.view[2], -vp.view[6], -vp.view[10]));

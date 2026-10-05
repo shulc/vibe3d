@@ -327,14 +327,6 @@ void workplaneCursorRay(in WorkplaneFrame frame, const ref Viewport vp,
 /// Intersect the cursor ray at pixel (sx, sy) with a plane stated in `frame`'s
 /// LOCAL space. Returns false on the same parallel-ray condition
 /// `rayPlaneIntersect` refuses on.
-///
-/// In an axis-locked orthographic view against the camera-facing plane this is
-/// algebraically the ported law's no-ray arm
-/// (`tools.transform.relocate_plane.posToPrincipalPlane`): the ortho ray
-/// origin IS the unprojected click, the direction is the plane normal, so the
-/// intersection changes exactly the one coordinate along the view axis and
-/// leaves the other two at the click. The unittest below asserts that equality
-/// rather than asserting it in prose.
 bool workplaneCursorPlaneHit(in WorkplaneFrame frame, const ref Viewport vp,
                              float sx, float sy,
                              Vec3 planeOrigin, Vec3 planeNormal,

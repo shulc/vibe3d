@@ -6,9 +6,9 @@
   "method": "gui-gesture",
   "captured_utc": "2026-10-05",
   "task": "9411",
-  "notes": "Numerical observations copied from the private capture records K-W (task 9395) and K-W2 (task 9456); the private findings remain the source of record."
+  "notes": "Numerical observations copied from the private capture records K-W (task 9395) and K-W2 (task 9456) and K-W3 (task 9474); the private findings remain the source of record."
  },
- "_about": "Click placement on the view work plane, captured from the reference (captures K-W and K-W2, tasks 9395 and 9456). Frame = the construction plane's local frame (identity when none is pinned; world = origin + Rx(rot_x_deg) * frame). Families: PR = the most-facing frame axis through the focus, rounded to 10*grid in perspective after a q pre-snap (exact in ortho), the hit then snapped to q = nice_up(1/px_per_m) on EVERY channel incl. the depth; AXIS-FOCUS(PR) = PR under a pin (plane-local); NICE = PR for the action-centre relocate click; FOCUS-PLANE = the ortho anchor in item selection mode; ORTHO-PRIOR / PRIOR-* = the pre-press centre's depth (component selection mode); RAW / R13 / Q / OWN = the refuted families (unrounded focus / focus to 0.05 / focus to q / the plane's own normal through its origin).",
+ "_about": "Click placement on the view work plane, captured from the reference (captures K-W and K-W2, tasks 9395 and 9456). Frame = the construction plane's local frame (identity when none is pinned; world = origin + Rx(rot_x_deg) * frame). Families: PR = the most-facing frame axis through the focus, rounded to 10*grid in perspective after a q pre-snap (exact in ortho), the hit then snapped to q = nice_up(1/px_per_m) on EVERY channel incl. the depth; AXIS-FOCUS(PR) = PR under a pin (plane-local); NICE = PR for the action-centre relocate click (pinned: W2a; unpinned: W3a / W3b, whose in-plane channels sit 0.4 q off the raw plane hit and round to the NEAREST lattice point -- W3b x 0.855, not the far neighbour 0.86); FOCUS-PLANE = the ortho anchor in item selection mode; ORTHO-PRIOR / PRIOR-* = the pre-press centre's depth (component selection mode); RAW / R13 / Q / OWN = the refuted families (unrounded focus / focus to 0.05 / focus to q / the plane's own normal through its origin).",
  "rule": {
   "perspective": "offset = dnint(dnint(f/q)*q / (10*grid)) * 10*grid on the most-facing frame axis; hit = ray cap that plane; point = snap(hit, q)",
   "orthographic": "offset = f; point = snap(hit, q) on EVERY channel incl. the depth (W2c_item: f 0.7133 -> 0.715)",
@@ -1246,6 +1246,117 @@
    "winner": "FOCUS-PLANE",
    "next_family": "PRIOR-ORIGIN",
    "margin_to_next_family": 0.715
+  },
+  "W3a": {
+   "gesture": "automatic action-centre relocate click (move tool, empty space)",
+   "selection_mode": "vertex",
+   "scene": "cube centre (-0.5,-0.4,-0.3) half 0.15, far from the click",
+   "view": {
+    "projection": "perspective",
+    "px_per_m": 440.0,
+    "grid": 0.1,
+    "q": 0.005,
+    "focus_frame": [
+     0.07,
+     0.37,
+     0.0
+    ],
+    "camera_back_frame": [
+     0.0,
+     1.0,
+     0.0
+    ],
+    "most_facing_axis": "Y"
+   },
+   "plane": {
+    "origin": [
+     0,
+     0,
+     0
+    ],
+    "rot_x_deg": 0.0
+   },
+   "prior_centre_frame": [
+    -0.5,
+    -0.4,
+    -0.3
+   ],
+   "plane_hit_raw": [
+    0.4230074,
+    0.0,
+    0.2920334
+   ],
+   "measured_frame": [
+    0.425,
+    0.0,
+    0.29
+   ],
+   "measured_world": [
+    0.425,
+    0.0,
+    0.29
+   ],
+   "winner": "PR (no pin)",
+   "next_family": "RAW",
+   "margin_to_next_family": 0.00203
+  },
+  "W3b": {
+   "gesture": "automatic action-centre relocate click (move tool, empty space)",
+   "selection_mode": "vertex",
+   "scene": "cube centre (-0.5,-0.4,-0.3) half 0.15, far from the click",
+   "view": {
+    "projection": "perspective",
+    "px_per_m": 440.0,
+    "grid": 0.1,
+    "q": 0.005,
+    "focus_frame": [
+     0.4,
+     0.7,
+     0.2
+    ],
+    "camera_back_frame": [
+     0.2873537,
+     0.8294943,
+     0.4789228
+    ],
+    "most_facing_axis": "Y"
+   },
+   "plane": {
+    "origin": [
+     0,
+     0,
+     0
+    ],
+    "rot_x_deg": 0.0
+   },
+   "prior_centre_frame": [
+    -0.5,
+    -0.4,
+    -0.3
+   ],
+   "plane_hit_raw": [
+    0.8570443,
+    1.0,
+    0.4820968
+   ],
+   "measured_frame": [
+    0.855,
+    1.0,
+    0.48
+   ],
+   "measured_world": [
+    0.855,
+    1.0,
+    0.48
+   ],
+   "winner": "PR (no pin)",
+   "next_family": "RAW",
+   "margin_to_next_family": 0.0021,
+   "far_neighbour": [
+    0.86,
+    1.0,
+    0.48
+   ]
   }
  }
 }
