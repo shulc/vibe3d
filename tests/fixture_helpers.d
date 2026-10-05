@@ -683,7 +683,12 @@ void runStep(JSONValue step, string name, string phase, size_t i) {
         // Optional Angle Snap (S5): `"snap": true` quantizes the line's
         // work-plane angle to the nearest `"snapAngle"` (degrees, default 45)
         // multiple before the plane is built. Default OFF, so unset = the raw
-        // line (every pre-S5 golden stays green).
+        // line (every pre-S5 golden stays green). Angle Snap is a row only
+        // while global snapping is on (K-A3, task 9492), so it is turned on
+        // for the write and off again after the cut.
+        const snapping = "snap" in sl && sl["snap"].type == JSONType.true_;
+        if (snapping) cmd("tool.pipe.attr snap enabled true", ctx);
+        scope (exit) if (snapping) cmd("tool.pipe.attr snap enabled false", ctx);
         if ("snap" in sl)
             cmd(format("tool.attr mesh.sliceTool snap %d",
                        sl["snap"].type == JSONType.true_ ? 1 : 0), ctx);

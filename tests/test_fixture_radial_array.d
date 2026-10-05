@@ -199,13 +199,11 @@ unittest { // ToolCommandParity
 // ---------------------------------------------------------------------------
 // TEST 4: `count` DoS clamp (review fix). A scripted `tool.attr ... count
 // <huge>` must NOT synchronously allocate `count * selectedFaceCount`
-// verts/faces (an easy OOM/hang) — the Param's `.max(256).enforceBounds()`
-// clamps the STORED field itself (not just the derived geometry), and
-// Mesh.radialArrayFaces clamps internally too as a defense-in-depth backstop
-// for any caller that reaches the kernel a different way (e.g. the one-shot
-// mesh.radial_array command). Verifies BOTH: the read-back `?` query sees
-// the clamped stored value, and the applied geometry matches count=256
-// exactly (not a partial/degenerate result and not the raw huge request).
+// verts/faces (an easy OOM/hang). The door stores the count as given (the
+// captured bound has no max, K-A3, task 9492) and Mesh.radialArrayFaces caps
+// it. Verifies BOTH: the read-back `?` query sees the stored value, and the
+// applied geometry matches count=256 exactly (not a partial/degenerate
+// result and not the raw huge request).
 // ---------------------------------------------------------------------------
 
 unittest { // CountDosClamp
@@ -215,14 +213,13 @@ unittest { // CountDosClamp
     postCommand("tool.set mesh.radialArrayTool on");
     postCommand("tool.attr mesh.radialArrayTool count 100000000");
 
-    // Stored field is clamped by the Param itself, not just the eventual
-    // kernel output — a write-then-query round-trip proves that.
+    // The stored field keeps the written count; only the kernel caps it.
     auto q = parseJSON(post(testBaseUrl() ~ "/api/command",
         "tool.attr mesh.radialArrayTool count ?"));
     assert(q["status"].str == "ok",
         "count query failed: " ~ q.toString);
-    assert(q["value"].integer == 256,
-        "count should clamp to 256, got " ~ q["value"].toString);
+    assert(q["value"].integer == 100000000,
+        "count is stored as given, got " ~ q["value"].toString);
 
     // A full 360-degree apply at the clamped count must complete promptly
     // (the point of the fix — no hang/OOM) and produce EXACTLY the

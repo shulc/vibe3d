@@ -59,13 +59,18 @@ unittest { // the doors that read the table — and nothing else (a stored-state
     import tests.unit.census_symbols : blankNonCode, countIdent;
 
     enum root = dirName(dirName(dirName(__FILE_FULL_PATH__)));
-    size_t[string] uses;
+    size_t[string] uses, reclamps;
     size_t scanned;
     foreach (de; dirEntries(buildPath(root, "source"), "*.d", SpanMode.depth)) {
         ++scanned;
-        const n = countIdent(blankNonCode(readText(de.name)), "applyToolAttrBound");
-        if (n) uses[relativePath(de.name, buildPath(root, "source"))] = n;
+        const code = blankNonCode(readText(de.name));
+        const rel = relativePath(de.name, buildPath(root, "source"));
+        if (const n = countIdent(code, "applyToolAttrBound")) uses[rel] = n;
+        if (const n = countIdent(code, "clampStoredToBounds")) reclamps[rel] = n;
     }
+    // The widget re-clamp: only the property panel writes the field directly.
+    size_t[string] wantReclamp = ["tool_attr_bounds.d": 1, "property_panel.d": 2];
+    assert(reclamps == wantReclamp, "clampStoredToBounds readers changed");
     assert(scanned > 500, "scanned too few source files");
     // Positive control: the defining module itself (declaration only).
     assert(uses.get("tool_attr_bounds.d", 0) == 1, "definition not seen");

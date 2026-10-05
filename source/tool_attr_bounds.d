@@ -5,15 +5,15 @@ import params : Param, ParamFlags, paramGateFloat, paramGateInt;
 // The bound every interactive door clamps a tool attribute write to (task
 // 9492, capture K-A3, findings_K-A3.md table b). The rows are the EXECUTED
 // write column — the value an out-of-range write actually stores — not the
-// declared hints: several attributes clamp with nothing declared. An absent
-// side is unbounded (the write is stored as given). Read by the `tool.attr`
-// door, the scripted one-shot (`prim.cube` …), the property panel, the forms
-// panel and the registry; the
-// stored-state paths (presets, the attribute cache, undo) never consult it,
-// so each kernel keeps its own `MAX_` cap.
+// declared hints: several attributes clamp with nothing declared. Every row
+// has a min; an absent max is unbounded (the write is stored as given). Read
+// by the `tool.attr` door, the scripted one-shot (`prim.cube` …), the property
+// panel, the forms panel and the registry; the stored-state paths (presets,
+// the attribute cache, `tool.set` arguments, undo) never consult it, so each
+// kernel keeps its own `MAX_` cap.
 struct ToolAttrBound {
     string tool, attr;
-    double lo = -double.infinity, hi = double.infinity;
+    double lo, hi;
 }
 
 private enum double none = double.infinity;
@@ -45,7 +45,8 @@ static immutable ToolAttrBound[] kToolAttrBounds = [
     {"mesh.loopSliceTool", "count", 1, 1024},
     {"mesh.loopSliceTool", "gap", 0, none},
     {"mesh.sliceTool", "gap", 0, none},
-    {"mesh.edgeSliceTool", "snap", 0, 1},
+    // A percent: the reference stores the fraction [0, 1], ours the percent.
+    {"mesh.edgeSliceTool", "snap", 0, 100},
     {"edge.bevel", "width", 0, none}, {"edge.bevel", "roundLevel", 0, none},
     {"edge.extend", "segments", 1, none},
     {"edge.extrude", "width", 0, none},
@@ -65,19 +66,20 @@ static immutable ToolAttrBound[] kToolAttrBounds = [
 ];
 
 /// Replace `p`'s numeric bound hints with its captured row and arm the clamp.
-/// False (and `p` untouched) when `toolId` declares no row for `p`.
+/// False (and `p` untouched) when `toolId` has no row for `p`. Every row names
+/// an Int or Float attribute (test_tool_attr_bounds reads each back as one).
 bool applyToolAttrBound(string toolId, ref Param p) {
     import std.math : isFinite;
     foreach (ref b; kToolAttrBounds) {
         if (b.tool != toolId || b.attr != p.name) continue;
-        const hasLo = isFinite(b.lo), hasHi = isFinite(b.hi);
-        if (p.kind == Param.Kind.Int) {
-            p.hints.hasMinI = hasLo; p.hints.minI = hasLo ? cast(int) b.lo : 0;
-            p.hints.hasMaxI = hasHi; p.hints.maxI = hasHi ? cast(int) b.hi : 0;
-        } else if (p.kind == Param.Kind.Float) {
-            p.hints.hasMinF = hasLo; p.hints.minF = hasLo ? cast(float) b.lo : 0;
-            p.hints.hasMaxF = hasHi; p.hints.maxF = hasHi ? cast(float) b.hi : 0;
-        } else return false;
+        const hasHi = isFinite(b.hi);
+        with (p.hints) if (p.kind == Param.Kind.Int) {
+            hasMinI = true;  minI = cast(int) b.lo;
+            hasMaxI = hasHi; maxI = hasHi ? cast(int) b.hi : 0;
+        } else {
+            hasMinF = true;  minF = cast(float) b.lo;
+            hasMaxF = hasHi; maxF = hasHi ? cast(float) b.hi : 0;
+        }
         p.flags |= ParamFlags.EnforceBounds;
         return true;
     }

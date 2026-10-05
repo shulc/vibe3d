@@ -5,7 +5,12 @@
 // floats at -1e30 / 1e30 (spelled out: the wire's argstring does not read an
 // exponent). Rows are collected so one run names every divergence.
 //
-// Run via: ./run_test.d test_tool_attr_bounds
+// The stored-state paths do not clamp (here `tool.set <id> on name:value`), so
+// each kernel caps the count itself: cell `kernel` builds once from a stored
+// value past the door's bound and once from the cap written through the door,
+// and the two meshes must agree.
+//
+// Run via: ./run_test.d test_tool_attr_bounds   (one block: VIBE3D_CELL=door|kernel)
 
 import http_client : getJson, postRawAllowingErrorStatus;
 import std.algorithm : splitter;
@@ -13,6 +18,7 @@ import std.conv : to;
 import std.format : format;
 import std.json;
 import std.math : abs, fmax;
+import std.process : environment;
 import std.stdio : writeln;
 
 void main() {}
@@ -26,11 +32,17 @@ void ok(string line) {
     assert(r["status"].str == "ok", line ~ " -> " ~ r.toString);
 }
 
+bool cell(string id) {
+    const want = environment.get("VIBE3D_CELL", "");
+    return want.length == 0 || want == id;
+}
+
 double num(JSONValue v) {
     return v.type == JSONType.integer ? cast(double) v.integer : v.floating;
 }
 
 unittest {
+    if (!cell("door")) return;
     struct Row { string tool, setup, attr; bool isInt; string lo, hi; }
     static immutable Row[] rows = [
         Row("prim.cube", "", "segmentsX", true, "1", "free"),
@@ -66,7 +78,7 @@ unittest {
         Row("mesh.loopSliceTool", "", "count", true, "1", "1024"),
         Row("mesh.loopSliceTool", "tool.attr mesh.loopSliceTool split true", "gap", false, "0.0", "free"),
         Row("mesh.sliceTool", "", "gap", false, "0.0", "free"),
-        Row("mesh.edgeSliceTool", "", "snap", false, "0.0", "1.0"),
+        Row("mesh.edgeSliceTool", "", "snap", false, "0.0", "100.0"),
         Row("edge.bevel", "", "width", false, "0.0", "free"),
         Row("edge.bevel", "", "roundLevel", true, "0", "free"),
         Row("edge.extend", "", "segments", true, "1", "free"),
@@ -114,4 +126,49 @@ unittest {
     assert(failed.length == 0, format("bounds diverge in %d probes:\n  %-(%s\n  %)",
                                       failed.length, failed));
     writeln("PASS tool attribute bounds, 55 rows");
+}
+
+/// Vertex and face count of the mesh `tool` builds from `setup` (one line per
+/// `|`, after `tool.set <tool> on<named>`), applied headless.
+string built(string tool, string named, string setup) {
+    ok("scene.reset");
+    ok("tool.set " ~ tool ~ " on" ~ named);
+    foreach (line; setup.splitter('|')) if (line.length) ok(line);
+    ok("tool.doApply");
+    ok("tool.set " ~ tool ~ " off");
+    auto m = getJson("/api/model");
+    return format("%s/%s", m["vertexCount"].integer, m["faceCount"].integer);
+}
+
+unittest {
+    if (!cell("kernel")) return;
+    struct Cap { string tool, setup, stored, atCap; }
+    static immutable Cap[] caps = [
+        Cap("prim.cone", "", " sides:5000", "tool.attr prim.cone sides 1024"),
+        Cap("prim.cylinder", "", " segments:5000", "tool.attr prim.cylinder segments 1024"),
+        Cap("prim.capsule", "", " endsegments:5000", "tool.attr prim.capsule endsegments 1024"),
+        Cap("prim.sphere", "", " sides:5000", "tool.attr prim.sphere sides 1024"),
+        Cap("prim.sphere", "tool.attr prim.sphere method qball", " order:100",
+            "tool.attr prim.sphere order 32"),
+        Cap("prim.ellipsoid", "", " segments:5000", "tool.attr prim.ellipsoid segments 1024"),
+        Cap("prim.torus", "", " minorSegments:5000", "tool.attr prim.torus minorSegments 1024"),
+        Cap("prim.cube", "", " segmentsX:500", "tool.attr prim.cube segmentsX 64"),
+    ];
+    string[] failed;
+    foreach (c; caps) {
+        const stored = built(c.tool, c.stored, c.setup);
+        const atCap = built(c.tool, "", c.setup ~ "|" ~ c.atCap);
+        if (stored != atCap)
+            failed ~= format("%s%s built %s, the cap built %s", c.tool, c.stored, stored, atCap);
+    }
+    // The loop slice re-fit caps its stored count before it allocates.
+    ok("scene.reset");
+    ok("tool.set mesh.loopSliceTool on count:5000");
+    const n = cmd("tool.attr mesh.loopSliceTool count ?")["value"].integer;
+    ok("tool.set mesh.loopSliceTool off");
+    if (n != 1024) failed ~= format("loop slice stored count:5000 reads %s, expected 1024", n);
+    assert(caps.length == 8, "kernel cells: measured 8");
+    assert(failed.length == 0, format("kernel caps failed in %d cells:\n  %-(%s\n  %)",
+                                      failed.length, failed));
+    writeln("PASS kernel caps, 9 cells");
 }
