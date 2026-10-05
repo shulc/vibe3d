@@ -15,16 +15,6 @@ import d_imgui.imgui_h;
 
 import ai.interaction : AiIntent;
 
-// A scheme colour packed for the ImGui overlay draw lists, at an explicit
-// alpha. Rounds rather than truncates, so 1.0 lands on 255 and not 254.
-uint packImCol(Vec3 c, ubyte alpha) {
-    static int ch(float v) {
-        const int i = cast(int)(v * 255.0f + 0.5f);
-        return i < 0 ? 0 : (i > 255 ? 255 : i);
-    }
-    return IM_COL32(ch(c.x), ch(c.y), ch(c.z), cast(int)alpha);
-}
-
 // ---------------------------------------------------------------------------
 // HandleState — the ARBITRATION state (which handle won the hit test, plus the
 // advisory hints layered on top of it).

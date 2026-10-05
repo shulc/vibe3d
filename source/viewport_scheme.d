@@ -141,6 +141,16 @@ Vec3 schemeColor(SchemeColor role) @safe pure nothrow @nogc {
     return kSchemeDefaults[cast(size_t)role];
 }
 
+/// A scheme colour packed for the ImGui overlay draw lists (IM_COL32 order),
+/// at an explicit alpha. Rounds rather than truncates, so 1.0 lands on 255.
+uint packImCol(Vec3 c, ubyte alpha) @safe pure nothrow @nogc {
+    static uint ch(float v) {
+        const int i = cast(int)(v * 255.0f + 0.5f);
+        return i < 0 ? 0 : (i > 255 ? 255 : i);
+    }
+    return (uint(alpha) << 24) | (ch(c.z) << 16) | (ch(c.y) << 8) | ch(c.x);
+}
+
 // ---------------------------------------------------------------------------
 // The preference-backed METRICS — sizes and opacities, not colours
 // ---------------------------------------------------------------------------

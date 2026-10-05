@@ -6,8 +6,7 @@ import mesh : Mesh;
 import snap : SnapResult, snapSource, snapSourceSpace;
 import document : primaryModelSpace;
 import toolpipe.packets : SnapType;
-import viewport_scheme : SchemeColor, schemeColor;
-import handles.shapes : packImCol;
+import viewport_scheme : SchemeColor, schemeColor, packImCol;
 import held_gesture_buttons : g_heldGestureButtons;
 
 import ImGui = d_imgui;
@@ -228,6 +227,10 @@ bool snapHighlightPixels(const ref SnapResult result, const ref Viewport vp,
     return false;
 }
 
+// Linked from the cimgui archive; the binding wraps only the convex fill.
+private extern (C) nothrow @nogc void ImDrawList_AddConcavePolyFilled(
+    ImGui.ImDrawList* self, const(ImVec2)* points, int n, uint col);
+
 private void drawRolloverMark(ImGui.ImDrawList* dl, const ref SnapResult result,
                               const ref Viewport vp, const ref Mesh mesh, uint col)
 {
@@ -236,12 +239,10 @@ private void drawRolloverMark(ImGui.ImDrawList* dl, const ref SnapResult result,
     if (pts.length == 1)        // a vertex: the 6x6 px square (-3..+2, O1)
         dl.AddRectFilled(ImVec2(pts[0].x - 3, pts[0].y - 3),
                          ImVec2(pts[0].x + 3, pts[0].y + 3), col);
-    else if (pts.length == 2)
+    else if (pts.length == 2)   // an edge: a 2 px line (uncaptured)
         dl.AddLine(pts[0], pts[1], col, 2.0f);
-    else if (pts.length <= 4)   // a polygon is filled solid (O2's rollover)
-        dl.AddConvexPolyFilled(pts.ptr, cast(int)pts.length, col);
-    else
-        dl.AddPolyline(pts.ptr, cast(int)pts.length, col, ImDrawFlags.Closed, 2.0f);
+    else                        // a polygon is filled solid (O2's rollover)
+        ImDrawList_AddConcavePolyFilled(dl, pts.ptr, cast(int)pts.length, col);
 }
 
 // One projection per SPACE, not one projection with a parameter named after

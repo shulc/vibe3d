@@ -146,6 +146,7 @@ import item_pick            : ItemHit;
 import mesh_visibility      : VisibilityProbe, regionVisibilityProbe;
 import buttonset            : Action;
 import held_gesture_buttons : g_heldGestureButtons;
+import snap_render : clearLastSnap;
 
 /// The input-router cluster (task 0781). Constructed once in main() after
 /// EditorApp's own wiring, and threaded the same way ToolHost/vpm/etc.
@@ -2062,6 +2063,9 @@ struct InputRouter {
             case SDL_KEYUP:           handleKeyUp(ev.key);        break;
             case SDL_MOUSEBUTTONDOWN:
                 held_.press(ev.button.button);
+                // A press retires the hover's published snap; a tool that
+                // snaps on its press publishes again (orbit, lasso do not).
+                clearLastSnap();
                 handleMouseButtonDown(ev.button);
                 version (web) webConsumedInputMask |= webButtonDownBit;
                 break;

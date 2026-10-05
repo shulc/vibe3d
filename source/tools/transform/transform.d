@@ -57,7 +57,7 @@ import command_history : CommandHistory;
 import commands.mesh.vertex_edit : MeshVertexEdit;
 import commands.mesh.morph_edit  : MeshMorphEdit;
 import snap : SnapResult, snapPacketOf;
-import snap_render : publishLastSnap;
+import snap_render : publishLastSnap, clearLastSnap;
 import toolpipe.packets : FalloffPacket, FalloffType, SymmetryPacket, SnapPacket, SubjectPacket;
 import toolpipe.stages.falloff : FalloffStage;
 import toolpipe.stages.snap : liveSnapGuides;
@@ -938,6 +938,7 @@ protected:
         dragAxis = -1;
         centerManual = false;
         active = false;
+        clearLastSnap();   // a dropped tool's published snap is not drawn on
     }
 
     /// Dormant upload and suppressed-cage branches. Suppression commits a

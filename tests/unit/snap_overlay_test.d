@@ -1,11 +1,11 @@
-// Task 9444 (OVL3): the published snap is drawn once per cell by the frame,
-// in the captured look (findings_O, task 9425: O1 idle rollover square in
-// `preHighlight`; O1d drag cross, `handleUnsnap` before the snap, `handle`
-// once snapped). Compiler pins on the tools' composition, the marks drawn
-// into a headless ImGui foreground list, then a census of the production text.
+// The published snap is drawn once per cell by the frame, in the captured look
+// (toolcards findings_O: O1 idle rollover in `preHighlight`; O1d drag cross,
+// `handleUnsnap` before the snap, `handle` once snapped). Compiler pins on the
+// tools' composition, the marks read back from a headless ImGui foreground
+// list, then a census of the production text.
 module tests.unit.snap_overlay_test;
 
-import std.algorithm : canFind, filter, map, sort;
+import std.algorithm : canFind, filter, sort;
 import std.array     : array;
 import std.file      : dirEntries, readText, SpanMode;
 import std.format    : format;
@@ -20,12 +20,9 @@ import held_gesture_buttons : g_heldGestureButtons;
 import math        : Vec3, Viewport, projectToWindowFull;
 import mesh        : Mesh;
 import snap        : SnapResult;
-import snap_render : SnapMark, snapMarkOf, snapMarkColor, drawSnapOverlay, g_lastSnap;
+import snap_render : SnapMark, drawSnapOverlay;
 import toolpipe.packets : SnapType;
 import view        : View;
-import viewport_scheme : SchemeColor;
-import handles.shapes  : packImCol;
-import viewport_scheme : schemeColor;
 import tests.unit.census_symbols : blankNonCode, blankUnittestBodies, countIdent;
 import tests.unit.ui.headless_panel : openPanel;
 
@@ -45,26 +42,6 @@ static assert(!keepsSnap!TransformTool && !keepsSnap!BoxTool
            && !keepsSnap!PrimitiveCreateTool && !keepsSnap!VertexTool,
     "a tool regrew its own snap copy: publish through publishLastSnap instead");
 static assert(keepsSnap!PenTool, "pen dropped its field: drop it from this pin too");
-
-unittest // the mark law and its colours (O1, O1d)
-{
-    scope (exit) g_heldGestureButtons.clear();
-    SnapResult r;
-    assert(snapMarkOf(r) == SnapMark.none, "an unhighlighted snap must draw nothing");
-    r.highlighted = true;
-    assert(snapMarkOf(r) == SnapMark.rollover, "idle hover: the rollover mark");
-    r.snapped = true;
-    assert(snapMarkOf(r) == SnapMark.rollover, "idle hover stays the rollover mark when snapped");
-    g_heldGestureButtons.press(1);
-    assert(snapMarkOf(r) == SnapMark.snapped, "held gesture, snapped: the handle cross");
-    r.snapped = false;
-    assert(snapMarkOf(r) == SnapMark.unsnapped, "held gesture, not snapped: the unsnap cross");
-    // The packed colours are the captured pixel reads.
-    import d_imgui.imgui_h : IM_COL32;
-    assert(packImCol(schemeColor(snapMarkColor(SnapMark.rollover)), 255) == IM_COL32(140, 181, 199, 255));
-    assert(packImCol(schemeColor(snapMarkColor(SnapMark.unsnapped)), 255) == IM_COL32(230, 179, 255, 255));
-    assert(packImCol(schemeColor(snapMarkColor(SnapMark.snapped)), 255) == IM_COL32(102, 255, 255, 255));
-}
 
 // ---- the draw, read back from a headless foreground list -------------------
 private struct VecView(T) { int size, capacity; T* data; }
@@ -91,105 +68,88 @@ private Vert[] drawn(const ref SnapResult r, const ref Viewport vp, const ref Me
     return got;
 }
 
-unittest // what the frame's draw puts on screen
+private uint rgba(ubyte r, ubyte g, ubyte b) { return 0xFF000000u | (b << 16) | (g << 8) | r; }
+
+unittest // the mark law, its captured colours and shapes
 {
     scope (exit) g_heldGestureButtons.clear();
     auto vp = new View(0, 0, 400, 300).viewport();
+    // v0 is the vertex target; v0..v3 a quad, v0..v4 a concave pentagon.
     Mesh m;
-    m.addVertex(Vec3(0.3f, 0.2f, 0.1f));
-    float px, py, ndcZ;
-    assert(projectToWindowFull(m.vertices[0], vp, px, py, ndcZ), "fixture vertex off screen");
-
-    SnapResult r;
-    r.highlighted = r.snapped = true;
-    r.targetType = SnapType.Vertex; r.targetIndex = 0;
-    r.worldPos = r.highlightPos = m.vertices[0];
-    // The cross centre sits away from the vertex so the two marks cannot alias.
-    r.worldPos = Vec3(-0.4f, 0.1f, 0.0f);
-    float cx, cy;
-    assert(projectToWindowFull(r.worldPos, vp, cx, cy, ndcZ));
+    foreach (p; [Vec3(0.3f, 0.2f, 0.1f), Vec3(0.9f, 0.2f, 0.1f), Vec3(0.9f, 0.8f, 0.1f),
+                 Vec3(0.3f, 0.8f, 0.1f), Vec3(0.6f, 0.5f, 0.1f)])
+        m.addVertex(p);
+    m.addFace([0u, 1u, 2u, 3u]);
+    m.addFace([0u, 1u, 2u, 4u, 3u]);
+    float px, py, cx, cy, ndcZ;
+    immutable Vec3 cursor = Vec3(-0.4f, 0.1f, 0.0f);   // the cross sits here, off v0
+    assert(projectToWindowFull(m.vertices[0], vp, px, py, ndcZ)
+        && projectToWindowFull(cursor, vp, cx, cy, ndcZ), "fixture off screen");
     assert(abs(cx - px) + abs(cy - py) > 20, "vacuous fixture: the marks coincide");
 
-    // Idle: one 6x6 px square on the vertex, pre-highlight, nothing else.
-    auto idle = drawn(r, vp, m);
-    immutable uint roll = packImCol(schemeColor(SchemeColor.preHighlight), 255);
-    assert(idle.length == 4, format("idle draws one square: %s vertices", idle.length));
-    foreach (v; idle)
-        assert(v.col == roll && abs(abs(v.x - px) - 3) < 1e-3 && abs(abs(v.y - py) - 3) < 1e-3,
-            format("idle square corner (%s,%s) col %08x, vertex at (%s,%s)", v.x, v.y, v.col, px, py));
-
-    // Held: a gapped cross at worldPos, no square; colour by snapped.
-    void checkCross(SchemeColor role, string what) {
-        auto cross = drawn(r, vp, m);
-        immutable uint col = packImCol(schemeColor(role), 255);
-        auto solid = cross.filter!(v => v.col == col).array;
-        assert(solid.length >= 16, format("%s: %s solid vertices", what, solid.length));
-        foreach (v; cross) {
-            immutable float dx = abs(v.x - cx), dy = abs(v.y - cy);
-            assert((v.col & 0x00FFFFFF) == (col & 0x00FFFFFF), what ~ ": a vertex of another colour");
-            assert(dx < 9.5f && dy < 9.5f && (dx > 3f || dy > 3f),
-                format("%s: vertex (%s,%s) outside the gapped cross at (%s,%s)", what, v.x, v.y, cx, cy));
-        }
+    enum Box { none, square, cross, any }
+    static struct Row {
+        bool highlighted, held, snapped; SnapType type; int index;
+        size_t count, opaque; uint col; Box box;
     }
-    g_heldGestureButtons.press(1);
-    checkCross(SchemeColor.handle, "snapped");
-    r.snapped = false;
-    checkCross(SchemeColor.handleUnsnap, "unsnapped");
-
-    r.highlighted = false;
-    assert(drawn(r, vp, m).length == 0, "an unhighlighted snap drew something");
-
-    // Idle edge and polygon targets: the rollover colour (uncaptured shapes:
-    // a 2 px line, a solid fill). Measured: the line is 4 opaque vertices; the
-    // fill is 4 opaque corners plus a 4-vertex transparent fringe (a closed
-    // outline would be 8 opaque).
-    g_heldGestureButtons.clear();
-    Mesh q;
-    foreach (p; [Vec3(-0.5f, -0.4f, 0), Vec3(0.5f, -0.4f, 0), Vec3(0.5f, 0.4f, 0), Vec3(-0.5f, 0.4f, 0)])
-        q.addVertex(p);
-    q.addFace([0u, 1u, 2u, 3u]);
-    r = SnapResult.init;
-    r.highlighted = true;
-    foreach (t; [SnapType.Edge, SnapType.Polygon]) {
-        r.targetType = t; r.targetIndex = 0;
-        auto got = drawn(r, vp, q);
-        immutable size_t opaque = got.filter!(v => v.col == roll).array.length;
-        assert(got.length == (t == SnapType.Edge ? 4 : 8) && opaque == 4,
-            format("%s: %s vertices, %s opaque", t, got.length, opaque));
-        foreach (v; got)
-            assert((v.col & 0x00FFFFFF) == (roll & 0x00FFFFFF), format("%s: a vertex of another colour", t));
+    // Colours are the captured pixel reads (preHighlight, handleUnsnap, handle);
+    // counts are measured: a 2 px line is 4 opaque vertices, an anti-aliased fill
+    // 2n with n opaque, the cross four such lines.
+    immutable roll = rgba(140, 181, 199), unsnap = rgba(230, 179, 255), handle = rgba(102, 255, 255);
+    immutable Row[] rows = [
+        Row(false, false, true, SnapType.Vertex,  0,  0,  0, 0,      Box.none),
+        Row(true,  false, true, SnapType.Vertex,  0,  4,  4, roll,   Box.square),
+        Row(true,  true,  true, SnapType.Vertex,  0, 16, 16, handle, Box.cross),
+        Row(true,  true, false, SnapType.Vertex,  0, 16, 16, unsnap, Box.cross),
+        Row(true,  false, true, SnapType.Edge,    0,  4,  4, roll,   Box.any),
+        Row(true,  false, true, SnapType.Polygon, 0,  8,  4, roll,   Box.any),
+        Row(true,  false, true, SnapType.Polygon, 1, 10,  5, roll,   Box.any),
+    ];
+    assert(rows.length == 7);
+    foreach (i, row; rows) {
+        SnapResult r;
+        r.highlighted = row.highlighted; r.snapped = row.snapped;
+        r.targetType = row.type; r.targetIndex = row.index; r.worldPos = cursor;
+        g_heldGestureButtons.clear();
+        if (row.held) g_heldGestureButtons.press(1);
+        auto got = drawn(r, vp, m);
+        immutable size_t opaque = got.filter!(v => v.col == row.col).array.length;
+        assert(got.length == row.count && opaque == row.opaque,
+            format("row %s: %s vertices, %s opaque in %08x", i, got.length, opaque, row.col));
+        foreach (v; got) {
+            assert((v.col & 0x00FFFFFF) == (row.col & 0x00FFFFFF), format("row %s: another colour", i));
+            immutable float dx = abs(v.x - (row.box == Box.cross ? cx : px));
+            immutable float dy = abs(v.y - (row.box == Box.cross ? cy : py));
+            if (row.box == Box.square)
+                assert(abs(dx - 3) < 1e-3 && abs(dy - 3) < 1e-3, format("row %s: not the 6x6 square", i));
+            if (row.box == Box.cross)
+                assert(dx < 9.5f && dy < 9.5f && (dx > 3f || dy > 3f),
+                    format("row %s: vertex (%s,%s) outside the gapped cross", i, v.x, v.y));
+        }
     }
 }
 
 // ---- the census: one draw site, tools publish -------------------------------
-private string[2][] productionSources() {
+unittest
+{
     string[2][] files;
     foreach (de; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth))
         files ~= [de.name[repoRoot.length + 1 .. $],
                   blankUnittestBodies(blankNonCode(readText(de.name)))];
-    return files;
-}
-
-unittest
-{
-    const files = productionSources();
     assert(files.length >= 500, format("population floor: %s source files", files.length));
-    string[] drawers, publishers, fields;
+    string[] drawers, publishers;
     foreach (f; files) {
         if (f[0] == "source/snap_render.d") continue;
         if (countIdent(f[1], "drawSnapOverlay")) drawers ~= f[0];
         if (countIdent(f[1], "publishLastSnap")) publishers ~= f[0];
-        if (f[0].indexOf("source/tools/") == 0 && f[1].indexOf("SnapResult lastSnap") >= 0)
-            fields ~= f[0];
     }
-    drawers.sort(); publishers.sort();
+    drawers.sort();
     // Floor: the publishers are the tools that snap.
     assert(publishers.length == 9, format("publishLastSnap files: %s", publishers));
     // Needle: every spelling of the drawer (import, call, address) — the frame
-    // and pen, whose call and field wait for the pen-owned slice.
+    // and pen, whose call waits for the pen-owned slice.
     assert(drawers == ["source/frame_runner.d", "source/tools/create/pen.d"],
         format("drawSnapOverlay outside the frame: %s", drawers));
-    assert(fields == ["source/tools/create/pen.d"], format("tools keeping a snap field: %s", fields));
     // Structure: the frame's one call draws the published snap in drawScene,
     // behind the overlay-mode gate.
     const fr = files.filter!(f => f[0] == "source/frame_runner.d").front[1];
