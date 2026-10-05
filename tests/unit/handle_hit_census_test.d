@@ -137,3 +137,109 @@ unittest {
         "a sub-pixel segment must refuse");
     assert(screenAxisFraction(25, 7, Vec3(0, 0, 0), Vec3(0, 0, 0), vp, skip) == 0 && skip);
 }
+
+// The transform gizmo's overlap law (capture K-HO): of two parts within the
+// pick reach of a press, the one NEAREST ON SCREEN is grabbed, whatever their
+// registration order or depth. Each cell finds, in our own gizmo, a press
+// <= 0.5 px from part A and 3.5..4.5 px from part B (the fixture's margins),
+// registers the parts in the production order, and asks the arbiter.
+private bool findPress(Handler a, Handler b, const ref Viewport vp, out int px, out int py) {
+    foreach (y; 100 .. 700) foreach (x; 340 .. 940) {
+        if (!a.isVisible() || !b.isVisible() || !a.hitTest(x, y, vp) || !b.hitTest(x, y, vp)) continue;
+        immutable da = a.aiScreenDistance(x, y, vp), db = b.aiScreenDistance(x, y, vp);
+        if (da <= 0.5f && db >= 3.5f && db <= 4.5f) { px = x; py = y; return true; }
+    }
+    return false;
+}
+
+unittest {
+    import std.math : sqrt;
+    import mesh : Mesh, makeCube;
+    import mesh_gpu : GpuMesh;
+    import editmode : EditMode;
+    import view : View;
+    import math : Orientation, cross, dot, projectToWindowFull;
+    import handler : ToolHandles, HitRule;
+    Mesh mesh = makeCube(); GpuMesh gpu; EditMode mode = EditMode.Polygons;
+    auto mv = new MoveTool(() => &mesh, &gpu, &mode);
+    auto sc = new ScaleTool(() => &mesh, &gpu, &mode);
+    auto rt = new RotateTool(() => &mesh, &gpu, &mode);
+    Viewport camera(Vec3 back) {
+        auto v = new View(0, 0, 1280, 800);
+        Vec3 b = back * (1.0f / sqrt(dot(back, back)));
+        Vec3 r = cross(Vec3(0, 1, 0), b); r = r * (1.0f / sqrt(dot(r, r)));
+        v.setOrientation(Orientation.fromBasis(r, cross(b, r), b));
+        v.distance = 3.0f;
+        Viewport vp = v.viewport();
+        mv.setWrapperGizmoPose(Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1));
+        sc.setWrapperGizmoPose(Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1));
+        rt.setWrapperGizmoPose(Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1));
+        mv.handler.syncGeometry(vp); sc.handler.syncGeometry(vp); rt.handler.syncGeometry(vp);
+        return vp;
+    }
+    // One press: `near` must win under the production rule; `firstWins` is
+    // the part the old first-registered rule answered (the flip control).
+    int cells;
+    void press(string name, Viewport vp, Handler near, int nearPart, Handler far,
+               void delegate(ToolHandles) register, int firstWins) {
+        int x, y;
+        assert(findPress(near, far, vp, x, y), "rig: no qualifying press for " ~ name);
+        auto th = new ToolHandles;
+        th.begin(); register(th);
+        th.rule = HitRule.nearestOnScreen;
+        assert(th.test(x, y, vp) == nearPart, name ~ ": the press nearer on screen must win");
+        th.rule = HitRule.firstRegistered;
+        assert(th.test(x, y, vp) == firstWins, name ~ ": rig, first-registered control");
+        ++cells;
+    }
+    immutable Vec3 xFront = Vec3(1, 0.063f, -1), zFront = Vec3(-1, 0.063f, 1);
+    void moveBank(ToolHandles th) { mv.registerHandles(th, 0); }
+    void scaleBank(ToolHandles th) { sc.registerHandles(th, 20); }
+    void rotBank(ToolHandles th) { rt.registerHandles(th, 10); }
+    void unified(ToolHandles th) { mv.registerHandles(th, 0); rt.registerHandles(th, 10); }
+    auto vp = camera(xFront);
+    press("M_Xf_onZ", vp, mv.handler.arrowZ, 2, mv.handler.arrowX, &moveBank, 0);
+    press("M_Xf_onX", vp, mv.handler.arrowX, 0, mv.handler.arrowZ, &moveBank, 0);
+    press("S_Xf_onZ", vp, sc.handler.arrowZ, 22, sc.handler.arrowX, &scaleBank, 20);
+    press("S_Xf_onX", vp, sc.handler.arrowX, 20, sc.handler.arrowZ, &scaleBank, 20);
+    vp = camera(zFront);
+    press("M_Zf_onZ", vp, mv.handler.arrowZ, 2, mv.handler.arrowX, &moveBank, 0);
+    press("M_Zf_onX", vp, mv.handler.arrowX, 0, mv.handler.arrowZ, &moveBank, 0);
+    press("S_Zf_onZ", vp, sc.handler.arrowZ, 22, sc.handler.arrowX, &scaleBank, 20);
+    press("S_Zf_onX", vp, sc.handler.arrowX, 20, sc.handler.arrowZ, &scaleBank, 20);
+    vp = camera(Vec3(0.3f, 0.25f, 1));
+    press("R_Zp_onY", vp, rt.handler.arcY, 11, rt.handler.arcX, &rotBank, 10);
+    press("R_Zp_onX", vp, rt.handler.arcX, 10, rt.handler.arcY, &rotBank, 10);
+    vp = camera(Vec3(-0.5f, 0.15f, 0.866f));
+    press("T_XS_onRing", vp, rt.handler.arcX, 10, mv.handler.arrowX, &unified, 0);
+    press("T_XS_onShaft", vp, mv.handler.arrowX, 0, rt.handler.arcX, &unified, 0);
+    assert(cells == 12);
+
+    // An AREA part (box, disc, head) keeps its registration precedence: the
+    // law was measured on strokes only. The move centre box and a rotate ring
+    // under one press: whichever is registered first wins, as before.
+    int bx, by;
+    Handler ring;
+    bool found;
+    foreach (back; [Vec3(0.3f, 0.25f, 1), xFront, zFront, Vec3(1, 0.25f, 0.3f)]) {
+        if (found) break;
+        vp = camera(back);
+        float cx, cy, cz;
+        assert(projectToWindowFull(Vec3(0, 0, 0), vp, cx, cy, cz));
+        foreach (Handler arc; [cast(Handler)rt.handler.arcX, rt.handler.arcY, rt.handler.arcZ])
+            foreach (dy; -8 .. 9) foreach (dx; -8 .. 9) {
+                int x = cast(int)cx + dx, y = cast(int)cy + dy;
+                if (!found && arc.isVisible() && mv.handler.centerBox.hitTest(x, y, vp)
+                    && arc.hitTest(x, y, vp)) { bx = x; by = y; ring = arc; found = true; }
+            }
+    }
+    assert(found, "rig: no press on both the centre box and a rotate ring");
+    foreach (boxFirst; [true, false]) {
+        auto th = new ToolHandles;
+        th.begin();
+        th.rule = HitRule.nearestOnScreen;
+        if (boxFirst) { th.add(mv.handler.centerBox, 3); th.add(ring, 10); }
+        else          { th.add(ring, 10); th.add(mv.handler.centerBox, 3); }
+        assert(th.test(bx, by, vp) == (boxFirst ? 3 : 10), "an area part keeps its registration precedence");
+    }
+}

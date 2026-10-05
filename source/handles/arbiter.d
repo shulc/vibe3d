@@ -86,10 +86,11 @@ void setHandleExploreHook(HandleExploreHook hook) {
 // ---------------------------------------------------------------------------
 
 /// How the arbiter resolves an overlap. `firstRegistered` (the default): the
-/// first registered hit wins. `nearestOnScreen`: the hit with the smallest
-/// screen distance wins, registration order breaking ties — the measured law
-/// of the transform gizmo (capture K-HO, 12/12 presses), which a client opts
-/// into; clients that law was not measured on keep the default.
+/// first registered hit wins. `nearestOnScreen`: of two STROKE hits (shafts,
+/// rings) the nearer on screen wins, registration order breaking ties; an
+/// area part (box, disc, head) keeps its registration precedence. The measured
+/// law of the transform gizmo (capture K-HO, 12/12 presses, all stroke pairs),
+/// which a client opts into; clients it was not measured on keep the default.
 enum HitRule { firstRegistered, nearestOnScreen }
 
 class ToolHandles {
@@ -166,6 +167,7 @@ class ToolHandles {
         aiCandidateParts.length = 0;
         int firstPart = -1;
         size_t defaultCandidate = size_t.max;
+        bool winnerIsStroke;
 
         foreach (priority, ref e; entries) {
             if (!e.h.isVisible()) continue;
@@ -179,10 +181,11 @@ class ToolHandles {
             c.priorityFromCurrentRules = cast(float)priority;
             c.hasScreenPosition = true;
             c.screenPosition = [cast(float)mx, cast(float)my];
-            if (firstPart < 0 || (rule == HitRule.nearestOnScreen
+            if (firstPart < 0 || (rule == HitRule.nearestOnScreen && winnerIsStroke && e.h.isStroke()
                                   && c.screenDist < aiCandidates[defaultCandidate].screenDist)) {
                 firstPart = e.part;
                 defaultCandidate = aiCandidates.length;
+                winnerIsStroke = e.h.isStroke();
             }
             aiCandidates ~= c;
             aiCandidateParts ~= e.part;

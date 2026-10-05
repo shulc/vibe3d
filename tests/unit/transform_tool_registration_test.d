@@ -18,6 +18,7 @@ import tools.deform.bend : BendTool;
 import tools.deform.push : PushTool;
 import tools.slice.edge_slide : EdgeSlideTool;
 import tools.transform.xfrm_transform : XfrmTransformTool;
+import handler : HitRule;
 import tools.transform.transform : TransformTool;
 
 import std.algorithm : canFind;
@@ -180,6 +181,8 @@ unittest {
             && t.handleFamily == row.family
             && t.handlePresentation == row.presentation,
             "6506 moved defaults changed for " ~ row.id);
+        assert(t.handleHitRuleForTest() == HitRule.nearestOnScreen,
+            "the transform gizmo resolves overlaps by screen distance: " ~ row.id);
     }
 
     foreach (line; readText(buildPath(repoRoot, "config", "tool_presets.yaml"))

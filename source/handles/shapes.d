@@ -186,6 +186,9 @@ public:
     public AiIntent aiIntentForPart(int part) const {
         return AiIntent.handle;
     }
+    // A STROKE (shaft, ring) is hit within a pick distance of its drawn line,
+    // so its `aiScreenDistance` ranks it against another stroke (`HitRule`).
+    public bool isStroke() const { return false; }
 }
 
 /// One registered gizmo part: a handle and its part id. A bank lists its parts
@@ -276,6 +279,7 @@ public:
     {
         return aiScreenDistance(mx, my, vp) < GIZMO_PICK_AXIS_PX;
     }
+    override bool isStroke() const { return true; }
 
     override float aiScreenDistance(int mx, int my, const ref Viewport vp)
     {
@@ -709,6 +713,7 @@ public:
     {
         return aiScreenDistance(mx, my, vp) < GIZMO_PICK_RING_PX;
     }
+    override bool isStroke() const { return true; }
 
     override float aiScreenDistance(int mx, int my, const ref Viewport vp)
     {
@@ -818,6 +823,7 @@ public:
     {
         return aiScreenDistance(mx, my, vp) < GIZMO_PICK_RING_PX;
     }
+    override bool isStroke() const { return true; }
 
     override float aiScreenDistance(int mx, int my, const ref Viewport vp)
     {
