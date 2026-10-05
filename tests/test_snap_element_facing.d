@@ -31,7 +31,7 @@ private enum double kTol = 1e-4;               // exact channels
 private enum double kHalfPx = 0.5 * kPx;       // a channel read off a pixel
 
 private int ran, held;
-enum bool kGridStepFromView = false;   // part G held — see `gridCells`
+enum bool kGridStepFromView = true;    // part G — see `gridCells`
 private string[] fails;   // every cell runs; the reds are reported together
 
 private void check(bool ok, lazy string msg) { if (!ok) fails ~= msg; }

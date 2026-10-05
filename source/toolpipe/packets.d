@@ -1038,8 +1038,8 @@ struct SnapPacket {
     Vec3   workplaneNormal = Vec3(0, 1, 0);
     Vec3   workplaneAxis1  = Vec3(1, 0, 0);
     Vec3   workplaneAxis2  = Vec3(0, 0, 1);
-    // Grid step in world units. fixedGrid=true ⇒ fixedGridSize. Else
-    // matches the visible grid (vibe3d's grid is hard-coded at 1.0).
+    // Grid step in world units. fixedGrid=true ⇒ fixedGridSize. Else the
+    // stage publishes the view's grid; 1.0 outside the stage.
     float  gridStep        = 1.0f;
 }
 
