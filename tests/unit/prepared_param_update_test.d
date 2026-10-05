@@ -172,6 +172,9 @@ unittest {
     import std.array : join;
     size_t rows; string[] bad;
     void check(bool ok, string cell) { if (!ok) bad ~= cell; }
+    // A refused prepare discards its transaction: the context takes nothing
+    // more (and is never validated while still open).
+    bool closed(PreparedRecordContext c) { return !c.markNoHistoryInstall() && !c.validate(); }
     static foreach (R; kRows) {{
         enum name = R.Tool.stringof;
         // Preview install: nothing moves until the context installs, then the
@@ -219,7 +222,7 @@ unittest {
         GpuMesh foreignGpu;
         auto wrong = w.tool.prepareParamChanged(w.context, w.layer,
             GpuUploadOwner.fakeForTest(&foreignGpu));
-        check(!wrong.accepted && !w.context.validate() &&
+        check(!wrong.accepted && closed(w.context) &&
             R.count(w.layer.meshRef()) == wrongBefore, name ~ ": foreign GPU accepted");
 
         // Refusals before the slot: no context, no upload owner for a preview,
@@ -231,14 +234,14 @@ unittest {
         check(!noContext.accepted && noContext.kind == R.Kind.None,
             name ~ ": accepted without a context");
         check(!q.tool.prepareParamChanged(q.context, q.layer, null).accepted &&
-            !q.context.validate(), name ~ ": preview accepted without an upload owner");
+            closed(q.context), name ~ ": preview accepted without an upload owner");
         auto foreignLayer = new Layer; foreignLayer.meshRef() = makeCube();
         foreach (layer; [null, foreignLayer]) {
             auto f = Rig!R.make(true, true);
             f.context.setResourceIdentity(7, 11);
             auto refused = f.tool.prepareParamChanged(f.context, layer,
                 GpuUploadOwner.fakeForTest(&f.gpu));
-            check(!refused.accepted && refused.kind == R.Kind.None && !f.context.validate(),
+            check(!refused.accepted && refused.kind == R.Kind.None && closed(f.context),
                 name ~ (layer is null ? ": accepted a null layer" : ": accepted a foreign layer"));
         }
         ++rows;
