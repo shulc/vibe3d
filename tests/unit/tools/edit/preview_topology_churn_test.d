@@ -816,6 +816,10 @@ private void pv2Row(T)(EditMode mode, void function(ref Mesh) select,
         assert(coldImage.valid && !coldImage.expectedBefore.filled &&
                cold.preparedParamUpdateMatches(coldImage, rig.mesh),
             name ~ ": a cold prepared image refuses (task 4491's hole)");
+        // The rig holds a delivery batch, so an unshadowed publish would only
+        // REGISTER: the clone must leave no pending entry and no residue.
+        assert(canBeginPreparedMesh(coldImage.preview.nextCage),
+            name ~ ": preparing a cold image left the cage clone publishing");
         coldImage.clear();
 
         auto tool = make(rig, 0.10f);
