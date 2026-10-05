@@ -26,7 +26,10 @@
 // type only (wave plan S8); the pen refuses a disabled write at the door
 // (refusesDisabledParamWrites), so under the command no-op contract a close
 // write while the type is polygons is refused: status error, history depth
-// unchanged, the value read back false.
+// unchanged, the value read back false. `shift-click-keeps-stroke` — a
+// Shift+LMB over a committable stroke is not apply-and-continue for the pen
+// (the UI-command close is its `commitOperation`, not `commitUncommittedEdit`):
+// the stroke stays live and nothing is committed (today's behaviour, gap 555).
 
 import drag_helpers : Vec3, fetchCamera, kPaceLine, playAndWait;
 import http_client : getJson, postJson;
@@ -109,6 +112,17 @@ private string[] write(string cell, string name, string value) {
     auto r = postJson("/api/command", "tool.attr pen " ~ name ~ " " ~ value);
     return r["status"].str == "ok" ? null
         : [format("%s: write %s %s refused: %s", cell, name, value, r.toString)];
+}
+/// One Shift+LMB click over a world point.
+private void shiftClickWorld(Vec3 w) {
+    auto cam = fetchCamera();
+    auto q = worldPixel(w);
+    playAndWait(format(`{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,`
+        ~ `"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n" ~ kPaceLine
+        ~ `{"t":50.000,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,"state":0,"mod":1}` ~ "\n"
+        ~ `{"t":100.000,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":1}` ~ "\n"
+        ~ `{"t":150.000,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":1}` ~ "\n",
+        cam.vpX, cam.vpY, cam.width, cam.height, q[0], q[1], q[0], q[1], q[0], q[1]));
 }
 /// A key over the viewport (the pointer first hovers a point away from T).
 private void key(int sym) {
@@ -454,6 +468,18 @@ unittest {
         fails ~= selectionIs("ui-invert-one-click", exp);
     }
 
-    assert(only.length || ran == 24, format("cells ran %s, expected 24", ran));
+    // shift-click-keeps-stroke (ours-only, see the header).
+    if (want("shift-click-keeps-stroke")) {
+        rig("polygon");
+        arm();
+        clickWorld(away[]);
+        shiftClickWorld(p(0.4, 0.4));
+        const pts = attr("points"), nf = getJson("/api/model")["faces"].array.length;
+        fails ~= check("shift-click-keeps-stroke", pts == 3 && nf == 0,
+            format("stroke %s points, %s faces after Shift+LMB; expected 3, 0", pts, nf));
+        drop(); ++ran;
+    }
+
+    assert(only.length || ran == 25, format("cells ran %s, expected 25", ran));
     assert(fails.length == 0, "pen types / selectNew / UI commands: " ~ fails.join(" | "));
 }

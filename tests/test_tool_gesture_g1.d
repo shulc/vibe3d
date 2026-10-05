@@ -886,10 +886,10 @@ unittest {
         },
         { cmd(`tool.set "prim.vertex" off 0`); });
 
-    // --- (f) PenTool: three clicks and Enter. A standing edit committing from
-    //     its own keyboard handler (its commit override serves the UI-command
-    //     close, pen S8); the commit selects the new vertices and edges
-    //     (vertex mode, selectNew: pen_types.json select_new_1_vertex_mode).
+    // --- (f) PenTool: three clicks and Enter. A standing edit with NO commit
+    //     override (a T7 sibling), committing from its own keyboard handler;
+    //     the commit selects the new vertices and edges (vertex mode,
+    //     selectNew: pen_types.json select_new_1_vertex_mode).
     cells ~= runCell("pen/triangle", "pen",
         "source/tools/create/pen.d PenTool.commitPolygonWithUndo",
         "Plain", "MeshSessionEdit",

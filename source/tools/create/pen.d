@@ -1700,8 +1700,9 @@ private:
     public override void cancelUncommittedEdit() {
         if (state == PenState.Drawing) cancelPolygon();
     }
-    // The close before a UI command commits the stroke as the drop does.
-    public override bool commitUncommittedEdit() { return commitPolygonWithUndo(); }
+    // The close before a UI command commits the stroke as the drop does. Not
+    // `commitUncommittedEdit`: apply-and-continue (Shift+LMB) also reads that.
+    public override bool commitOperation() { return commitPolygonWithUndo(); }
 
     // Links are edited-mesh indices, valid only on the mesh they were made on
     // (any undo door, a reset, a Marks bump may move it under a live stroke).
