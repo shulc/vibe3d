@@ -830,7 +830,7 @@ protected:
         return true;
     }
 
-    // A captured handle's mover snaps centre + travel (task 9472, K-H / K-H2).
+    // A captured handle's mover snaps centre + travel (K-H / K-H2, as the size handle).
     override void snapMoved(ref Vec3 c, int mx, int my) {
         publishLastSnap(snapMoverCentre(c, moverDragAxis, mover, frame, mx, my, cachedVp, *mesh));
     }
