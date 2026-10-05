@@ -1666,6 +1666,7 @@ enum DragKind : ubyte {
     axisArm,        // LAW A ported: `axisArmDelta` along `axis` (unit)
     screenAxis,     // LAW A own: the segment point → point + axis, gain |axis|
     viewPlane,      // LAW B: `planeDragDelta` on `plane` (3..6) of the basis
+    handlePlane,    // LAW B on a handle's own plane, rounded as the planar mode
     principalPlane, // LAW D: `primitiveCenterDragDelta` through the press point
     planeHit,       // the pointer's hit on the plane (point, `normal`)
 }
@@ -1685,9 +1686,10 @@ struct DragFrame {
 /// (captured K-B9: Move and Box, one release law). Positions live in whatever
 /// space `vp` projects (a create tool passes its plane-local view).
 /// The travel is rounded to the view quantum q by the frame KIND, the
-/// translator's mode (K-G3 / K-H2 / K-C3): a free plane keeps the
-/// point's residual, `p + q(p + T) - q(p)`; the principal (planar) plane
-/// rounds the position, `q(p + T)`; a line rounds its travel, `p + q(t)`.
+/// translator's mode (K-G3 / K-H2 / K-C3 / K-H3): a free plane keeps the
+/// point's residual, `p + q(p + T) - q(p)`; a planar one (the principal
+/// plane, a plane handle) rounds the position, `q(p + T)`; a line rounds its
+/// travel, `p + q(t)`.
 /// The axis arm rounds `t` itself (LAW A, the coordinate-rounding step).
 struct HandleDrag {
     Vec3 point;
@@ -1705,8 +1707,9 @@ struct HandleDrag {
         immutable float q = viewVectorQuantum(vp);
         final switch (f.kind) {
         case DragKind.axisArm:        return point + t;
-        // Move's ring planes ride this form provisionally: pending K-H3 cell H3_RING.
         case DragKind.viewPlane:      return point + (vectorSnap(point + t, q) - vectorSnap(point, q));
+        // A plane handle presses at the action centre (K-H3 H3_RING).
+        case DragKind.handlePlane:
         case DragKind.principalPlane: return vectorSnap(point + t, q);
         case DragKind.screenAxis:
         case DragKind.planeHit:
@@ -1726,6 +1729,7 @@ struct HandleDrag {
             return f.axis * screenAxisFraction(px - pressX, py - pressY,
                 point, point + f.axis, vp, skip);
         case DragKind.viewPlane:
+        case DragKind.handlePlane:
             return planeDragDelta(px, py, pressX, pressY, f.plane, point, vp,
                 skip, f.basisX, f.basisY, f.basisZ);
         case DragKind.principalPlane:

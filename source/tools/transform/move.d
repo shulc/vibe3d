@@ -807,7 +807,7 @@ public:
     private DragFrame moveDragFrame(Vec3 mi0, Vec3 mi1, Vec3 mi2) const {
         DragFrame f;
         if (dragAxis > 2) {
-            f.kind = DragKind.viewPlane;
+            f.kind = dragAxis == 3 ? DragKind.viewPlane : DragKind.handlePlane;
             f.plane = dragAxis;
             f.basisX = mi0; f.basisY = mi1; f.basisZ = mi2;
             return f;

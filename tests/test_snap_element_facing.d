@@ -630,11 +630,12 @@ private void guideCells() {
 /// start + q(t) (K-G3 G3-ax, RAW 0.5182 / 0.4910). q = 0.005.
 private void quantumCells() {
     const Vec3 v = Vec3(0.3023f, 1, 0.2017f);
-    double[3] drag(int part, int[2] off, int dx, int dy, int steps) {
-        rig(`{"vertices":[[0.3023,1,0.2017]],"faces":[]}`, Vec3(0.07f, 1, 0));
+    double[3] drag(int part, int[2] off, int dx, int dy, int steps, double ppm = kPpm,
+                   string verts = "[0.3023,1,0.2017]", double[3]* second = null) {
+        rig(`{"vertices":[` ~ verts ~ `],"faces":[]}`, Vec3(0.07f, 1, 0), ppm);
         penCommand("select.typeFrom vertex");
         auto r = postJson("/api/command", commandBody("mesh.select",
-            `{"mode":"vertices","indices":[0]}`));
+            second ? `{"mode":"vertices","indices":[0,1]}` : `{"mode":"vertices","indices":[0]}`));
         assert(r["status"].str == "ok", "select failed: " ~ r.toString);
         penCommand("tool.set move");
         penCommand("tool.pipe.attr snap enabled false");
@@ -653,10 +654,12 @@ private void quantumCells() {
         playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height, a[0] + off[0],
                                  a[1] + off[1], a[0] + off[0] + dx, a[1] + off[1] + dy, steps));
         const q = vpos(0);
+        if (second) *second = vpos(1);
+        const double[3] c = second ? [(q[0] + (*second)[0]) / 2, 1, (q[2] + (*second)[2]) / 2] : q;
         auto pv = getJson("/api/tool/state")["pivot"].array;
-        assert(abs(num(pv[0]) - q[0]) <= kTol && abs(num(pv[2]) - q[2]) <= kTol,
-            format("rig: the centre must follow the vertex (no relocate), pivot (%s, %s) "
-                ~ "vertex %s", num(pv[0]), num(pv[2]), vstr(q)));
+        assert(abs(num(pv[0]) - c[0]) <= kTol && abs(num(pv[2]) - c[2]) <= kTol,
+            format("rig: the centre must follow the selection (no relocate), pivot (%s, %s) "
+                ~ "centre %s", num(pv[0]), num(pv[2]), vstr(c)));
         penCommand("tool.set move off");
         return q;
     }
@@ -671,6 +674,24 @@ private void quantumCells() {
     const x1 = drag(0, [0, 0], 95, 0, 19), x2 = drag(0, [0, 0], 83, 0, 1);
     check(at(x1, [0.5173, 1, 0.2017]) && at(x2, [0.4923, 1, 0.2017]), "move-axis-offlattice: "
         ~ "q expected x 0.5173 / 0.4923, got " ~ vstr(x1) ~ " / " ~ vstr(x2));
+    ++ran;
+    // The XZ plane ring (part 6) at the capture's own scale, so its pixels give
+    // its T (K-H3 H3_RING): planar, the ACTION CENTRE H rounded, the set
+    // shifted by q(H + T) - H. DQ ends at (0.5473, 1, 0.3717), RAW at
+    // (0.543468, 1, 0.372338).
+    enum double kRingPpm = 439.5272;
+    const qr = drag(6, [0, 0], 106, 75, 30, kRingPpm);
+    check(at(qr, [0.545, 1, 0.37]), "move-ring-absolute: q expected (0.545, 1, 0.37), got "
+        ~ vstr(qr));
+    ++ran;
+    // Two vertices, centre C (0.2062, 1, 0.1283): both shift by q(C + T) - C =
+    // (0.2388, 0, 0.1717). Rounding each moved point puts A on (0.545, 1, 0.37);
+    // the centre's DQ shifts by (0.24, 0, 0.17).
+    double[3] qb;
+    const qc = drag(6, [0, 0], 106, 75, 30, kRingPpm, "[0.3023,1,0.2017],[0.1101,1,0.0549]", &qb);
+    check(at(qc, [0.5411, 1, 0.3734]) && at(qb, [0.3489, 1, 0.2266]), "move-ring-centre: "
+        ~ "A, B expected (0.5411, 1, 0.3734) / (0.3489, 1, 0.2266), got " ~ vstr(qc) ~ " / "
+        ~ vstr(qb));
     ++ran;
 }
 
@@ -794,12 +815,12 @@ unittest {
         ++ran;
     }
 
-    assert(ran == 36, format("population: %d cells ran, expected 36", ran));
+    assert(ran == 38, format("population: %d cells ran, expected 38", ran));
     string[] names;   // the red cells by name first: the runner shows 8 lines
     foreach (f; fails) {
         const n = f[0 .. f.indexOf(':') < 0 ? f.length : f.indexOf(':')];
         if (!names.canFind(n)) names ~= n;
     }
-    assert(fails.length == 0, format("%d of 36 cells red (%-(%s, %)):\n  %-(%s\n  %)",
-                                     names.length, names, fails));
+    assert(fails.length == 0, format("%d of %d cells red (%-(%s, %)):\n  %-(%s\n  %)",
+                                     names.length, ran, names, fails));
 }
