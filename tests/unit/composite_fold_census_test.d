@@ -33,8 +33,9 @@ unittest // The composite fold has one production door and one shared frame rule
     assert(apply.count("composeFor(") == 3
         && apply.count("composeRunMatrix(") == 1,
         "6207 composed fold must keep one matrix door");
+    // 1 since task 9445 deleted the dormant per-pass chain (it held 2).
     assert(apply.count("tdX") == 0
-        && apply.count("translationMatrix(") == 3,
+        && apply.count("translationMatrix(") == 1,
         "6207 superseded translate-axis rewrite returned");
 
     const applyFlat = compact(apply);
