@@ -281,9 +281,50 @@ unittest { // handle drags under grid snap: not trapped; a released element snap
         ++ran;
     }
 
-    assert(ran == 4, format("population: %d box handle cells ran, expected 4", ran));
+    // 28 box-centre-vertex: the centre box (part 13) dragged onto a loose
+    // vertex V = (0.1, 0.1, 0.25) under vertex snap, the identity work plane
+    // PINNED, Front ortho. Premise: the box's plane normal is local Z (axis
+    // attr 2), so its mover arrows are not the local X, Y, Z order. The centre
+    // box locks the view axis Z: the snap writes V's x and y and keeps z 0.
+    {
+        penSceneEmpty("Front");
+        auto r = postJson("/api/command", commandBody("scene.loadMesh",
+                                                      `{"vertices":[[0.1,0.1,0.25]],"faces":[]}`));
+        assert(r["status"].str == "ok", "load-mesh failed: " ~ r.toString);
+        cmd("workplane.edit cenX:0 cenY:0 cenZ:0 rotX:0 rotY:0 rotZ:0");
+        cmd("viewport.view Front");
+        penCameraAt(Vec3(0, 0, 0), 440);
+        cmd("tool.set prim.cube");
+        cmd("tool.pipe.attr snap enabled false");
+        const a = worldPixel(Vec3(-0.2f, -0.2f, 0)), b = worldPixel(Vec3(0.2f, 0.2f, 0));
+        auto cam = fetchCamera(BASE);
+        playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                                 a[0], a[1], b[0], b[1], 16), BASE);
+        foreach (kv; [["cenX", "0"], ["cenY", "0"], ["cenZ", "0"], ["sizeX", "0.6"], ["sizeY", "0.6"]])
+            cmd("tool.attr prim.cube " ~ kv[0] ~ " " ~ kv[1]);
+        const ax = postJson("/api/command", "tool.attr prim.cube axis ?")["value"];
+        assert(ax.type == JSONType.string && ax.str == "z",
+            format("rig: the box plane normal must be local Z, axis %s", ax));
+        cmd("tool.pipe.attr snap enabled true");
+        cmd("tool.pipe.attr snap types vertex");
+        cmd("tool.pipe.attr snap innerRange 24");
+        cmd("tool.pipe.attr snap outerRange 40");
+        const p = partPixel(13), c = worldPixel(Vec3(0, 0, 0)), v = worldPixel(Vec3(0.1f, 0.1f, 0.25f));
+        assert(abs(p[0] - c[0]) <= 1 && abs(p[1] - c[1]) <= 1 && v[0] - p[0] > 20 && p[1] - v[1] > 20,
+            format("rig: centre part 13 at the origin %s (found %s), V up-right at %s", c, p, v));
+        dragSteps(p, 2, -2, (v[0] - p[0]) / 2);
+        const cx = qf("cenX"), cy = qf("cenY"), cz = qf("cenZ");
+        if (!(fabs(cx - 0.1) < 1e-4 && fabs(cy - 0.1) < 1e-4 && fabs(cz) < 1e-4))
+            fails ~= format("box-centre-vertex: centre expected (0.1, 0.1, 0), got (%.6f, %.6f, %.6f)",
+                            cx, cy, cz);
+        cmd("tool.set prim.cube off");
+        cmd("workplane.reset");
+        ++ran;
+    }
+
+    assert(ran == 5, format("population: %d box handle cells ran, expected 5", ran));
     string[] names;   // the red cells by name first: the runner shows 8 lines
     foreach (f; fails) names ~= f[0 .. f.indexOf(':')];
-    assert(fails.length == 0, format("%d of 4 box handle cells red (%-(%s, %)):\n  %-(%s\n  %)",
+    assert(fails.length == 0, format("%d of 5 box handle cells red (%-(%s, %)):\n  %-(%s\n  %)",
                                      fails.length, names, fails));
 }

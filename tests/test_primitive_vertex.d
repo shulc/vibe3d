@@ -324,3 +324,31 @@ unittest { // tool stays active across multiple click bursts
         "stays-active: expected 0 faces (isolation preserved), got "
         ~ m2["faces"].array.length.to!string);
 }
+
+// ---------------------------------------------------------------------------
+// vertex-guide-off: the Vertex tool strips the guide-constraint snap types
+// (`snap.kGuideTypes`) from its query, so with ONLY World Axis enabled a click
+// 30 px above the X axis is not pulled onto it. Without the strip the vertex
+// lands on the axis (y = 0) — the mutation this cell exists to see.
+// ---------------------------------------------------------------------------
+unittest { // vertex-guide-off: World Axis alone does not move a placed vertex
+    resetEmpty();
+    setCamera(0.0, 0.2, 3.0);
+    foreach (c; ["tool.pipe.attr snap enabled true", "tool.pipe.attr snap types worldAxis",
+                 "tool.pipe.attr snap innerRange 999999", "tool.pipe.attr snap outerRange 999999"]) {
+        auto r = postJson("/api/command", c);
+        assert(r["status"].str == "ok", c ~ " failed: " ~ r.toString);
+    }
+    scope (exit) postJson("/api/command", "tool.pipe.attr snap enabled false");
+    activateVertex();
+    playEvents(LOG_HEADER ~ "\n" ~ clickAt(100, 515, 270));
+    waitForPlaybackFinish();
+    deactivateTool();
+
+    auto vs = getJson("/api/model")["vertices"].array;
+    assert(vs.length == 1, "vertex-guide-off: expected 1 vertex, got " ~ vs.length.to!string);
+    const double x = vs[0].array[0].floating, y = vs[0].array[1].floating;
+    assert(fabs(x) > 0.02 && fabs(y) > 0.02,
+        format("vertex-guide-off: the vertex (%.4f, %.4f) sits on a world axis — a guide "
+             ~ "type reached the Vertex tool's snap", x, y));
+}
