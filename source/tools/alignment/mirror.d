@@ -520,7 +520,8 @@ public:
             Param.float_("distance", "Distance", &params_.distance, 0.001f).min(0.0f),
             // --- live as of v2 (task 0230): angle drives the rotate box + toolNormal ---
             Param.float_("angle", "Angle", &params_.angle, 180.0f).angle(),
-            // Mode stays greyed to Axis — Free-Rotation/Three-Points deferred.
+            // Mode offers Axis only (Free-Rotation/Three-Points deferred); the
+            // row is enabled in every state, as captured (K-A3).
             Param.intEnum_("mode", "Mode", cast(int*)&params_.mode,
                 [IntEnumEntry(0, "axis", "Axis")], 0),
             // Left/Up are DERIVED readouts (written in evaluate()) — read-only
@@ -532,8 +533,6 @@ public:
     }
 
     override bool paramEnabled(string name) const {
-        // Mode stays greyed to Axis-only (Free-Rotation/Three-Points deferred).
-        if (name == "mode") return false;
         // Distance only matters when merge is on.
         if (name == "distance") return params_.mergeVerts;
         return true;

@@ -11,16 +11,17 @@
 // Cells: K-A A1d (unknown), A1a / A1a_pos (sphere order by method), A1b2
 // (loop slice Reverse Direction with no profile, the same-value write too),
 // A1b (loop slice Inset stays ENABLED with no profile and under Keep Aspect,
-// PF-1), lsrows (loop slice quad / caps / gap behind their switches), and
-// one disabled-row cell per family that reads `paramEnabled` (shared-policy
+// PF-1), lsrows (loop slice quad / caps / gap behind their switches), ka3
+// (K-A3 rows the reference keeps enabled: the write lands), and one
+// disabled-row cell per family that reads `paramEnabled` (shared-policy
 // readers), each with its enabled-row positive control where the tool has one.
 // Families are collected and reported together so one run names every family
 // a mutation of the shared refusal reddens.
 //
-// Run via: ./run_test.d test_tool_attr_gate   (one block: VIBE3D_CELL=A1d|A1a|A1b|lsrows|families)
+// Run via: ./run_test.d test_tool_attr_gate   (one block: VIBE3D_CELL=A1d|A1a|A1b|lsrows|ka3|families)
 
 import http_client : getJson, postRawAllowingErrorStatus;
-import std.algorithm : canFind;
+import std.algorithm : canFind, splitter;
 import std.format : format;
 import std.json;
 import std.process : environment;
@@ -180,6 +181,35 @@ unittest {
     writeln("PASS loop slice quad / caps / gap rows");
 }
 
+// K-A3 rows the reference keeps ENABLED where ours used to grey them: box
+// Sharp at a non-zero radius with more than 3 radius segments, mirror Mode in
+// any state, the pen's point fields at idle. Each write lands; collected so
+// one run names every row.
+unittest {
+    if (!cell("ka3")) return;
+    struct Row { string tool, setup, attr, value, expect; }
+    static immutable Row[] rows = [
+        Row("prim.cube", "radius 0.1|segmentsR 4", "sharp", "true", "true"),
+        Row("mesh.mirrorTool", "", "mode", "axis", "\"axis\""),
+        Row("pen", "", "posX", "1", "1.0"),
+        Row("pen", "", "currentPoint", "0", "0"),
+    ];
+    string[] failed;
+    size_t visited;
+    foreach (r; rows) {
+        arm(r.tool);
+        foreach (w; r.setup.splitter('|'))
+            if (w.length) ok("tool.attr " ~ r.tool ~ " " ~ w);
+        ++visited;
+        const why = lands(r.tool, r.attr, r.value, r.expect);
+        if (why != "") failed ~= why;
+    }
+    assert(visited == 4, format("K-A3 rows visited %d, expected 4", visited));
+    assert(failed.length == 0, format("K-A3 enabled rows refused in %d rows:\n  %-(%s\n  %)",
+                                      failed.length, failed));
+    writeln("PASS K-A3 enabled rows");
+}
+
 // One disabled-row cell per family reading `paramEnabled` (the two pens have
 // their own files: test_topopen_attr_availability, test_pen_types). `enable`
 // is the write that turns the row on ("" when the row is never enabled).
@@ -189,7 +219,8 @@ unittest {
     static immutable Cell[] cells = [
         Cell("clone", "mesh.clone", "merge false", "dist", "0.25", "merge true", "0.25"),
         Cell("array", "mesh.arrayTool", "merge false", "dist", "0.25", "merge true", "0.25"),
-        Cell("mirror", "mesh.mirrorTool", "", "mode", "axis", "", ""),
+        Cell("mirror", "mesh.mirrorTool", "mergeVerts false", "distance", "0.25",
+             "mergeVerts true", "0.25"),
         Cell("command_wrapper", "xfrm.jitter", "enableX false", "rangeX", "0.25",
              "enableX true", "0.25"),
         Cell("box", "prim.cube", "radius 0", "sharp", "true", "radius 0.1", "true"),

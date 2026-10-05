@@ -960,7 +960,7 @@ public:
     /// Wire schema for prim.cube headless invocation.
     /// Phase 6.1a: 9 core attrs (position/size/segments).
     /// Phase 6.1b: 3 rounded-edge attrs (radius/segmentsR/axis).
-    /// Phase 6.1c: sharp attr (enabled only when radius > 0 and segmentsR <= 3).
+    /// Phase 6.1c: sharp attr (enabled only when radius > 0).
     override Param[] params() {
         import params : IntEnumEntry;
         if (state != BoxState.Idle) {
@@ -1064,10 +1064,11 @@ public:
         }
     }
 
-    /// Disable `sharp` when radius == 0 or segmentsR > 3 (no K-table entry).
+    /// Disable `sharp` when radius == 0 (captured K-A3: enabled at any
+    /// segmentsR once the radius is non-zero).
     override bool paramEnabled(string name) const {
         if (name == "sharp")
-            return params_.radius > 1e-9f && params_.segmentsR <= 3;
+            return params_.radius > 1e-9f;
         return true;
     }
 

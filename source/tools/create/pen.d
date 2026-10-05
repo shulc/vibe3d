@@ -802,10 +802,9 @@ public:
 
     // A disabled param's write is refused at the `tool.attr` door, for
     // every tool. Make Quads is locked from 3 points
-    // (wave plan S7, fixture pen_quads.json lock_3_points).
+    // (wave plan S7, fixture pen_quads.json lock_3_points); the point fields
+    // stay enabled at idle, as captured (K-A3).
     override bool paramEnabled(string name) const {
-        if (name == "currentPoint" || name == "posX" || name == "posY" || name == "posZ")
-            return state == PenState.Drawing && vertices_.length > 0;
         if (name == "makeQuads") return vertices_.length < 3;   // Idle holds none
         if (name == "close")
             return params_.type == PenType.lines || params_.wall != PenWall.off;

@@ -24,9 +24,10 @@
 // (the reference's script door is not observable — a script call ends its
 // stroke): `refuse-script-3-points` (the script door refuses the locked
 // write: status error, history depth unchanged, the value read back false)
-// and `refuse-idle-posX` (an Idle write to a disabled point field is refused
-// the same way). Both follow from the captured lock and the command no-op
-// contract (refusal or a real edit; a real edit would break the lock).
+// `idle-posX-lands` (the point fields stay enabled at idle, captured K-A3:
+// the write answers ok and reads back). The refusal follows from the captured
+// lock and the command no-op contract (refusal or a real edit; a real edit
+// would break the lock).
 
 import drag_helpers : Vec3, fetchCamera, kPaceLine, playAndWait;
 import http_client : frameFence, getJson, postJson;
@@ -323,13 +324,12 @@ unittest {
         drop(); ++ran;
     }
 
-    // refuse-idle-posX: no stroke, the point fields are disabled: refused.
-    if (want("refuse-idle-posX")) {
+    // idle-posX-lands: no stroke, the point fields stay enabled (K-A3).
+    if (want("idle-posX-lands")) {
         rig(p(0, 0), false);
-        const before = depth();
         auto r = postJson("/api/command", "tool.attr pen posX 1");
-        fails ~= expect("refuse-idle-posX", "status error", r["status"].str == "error", 1);
-        fails ~= expect("refuse-idle-posX", "history depth", depth(), before);
+        fails ~= expect("idle-posX-lands", "status ok", r["status"].str == "ok", 1);
+        fails ~= expect("idle-posX-lands", "posX read back", attr("posX"), 1);
         drop(); ++ran;
     }
 
