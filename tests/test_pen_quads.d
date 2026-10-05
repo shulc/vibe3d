@@ -18,7 +18,9 @@
 // runs one cell alone (the population floor holds for the full run only).
 //
 // Ours-only cells: `B5_sym_merge_off` (no shared corner with merge off — the
-// weld is merge's, as in the polygon pen's captured B4m), and two refusals
+// weld is merge's, as in the polygon pen's captured B4m), `corner-near-image-
+// P1` / `-P2` (a corner 14 / 72 px off a click's image shares nothing: the
+// weld radius is the captured mirror-weld dist, 3 px), and two refusals
 // (the reference's script door is not observable — a script call ends its
 // stroke): `refuse-script-3-points` (the script door refuses the locked
 // write: status error, history depth unchanged, the value read back false)
@@ -267,6 +269,34 @@ unittest {
         drop();
     }
 
+    // corner-near-image-P1 / -P2 (ours; the corner's weld is the captured
+    // mirror-weld dist, 3 px at the focus, C1-m4 — B5_sym is an exact
+    // coincidence): the 5th click at x 0.27 puts the corner (-0.23, 0.75)
+    // 14.4 px off the click's image (-0.27, 0.75); at 0.35, 72 px. Nothing is
+    // shared and every point commits where it was placed: 12 vertices, the
+    // merge-off rings, the click and its corner at their own x.
+    foreach (cell, x; ["corner-near-image-P1": 0.27, "corner-near-image-P2": 0.35]) {
+        if (!want(cell)) continue;
+        rig(p(0, 0.25), true, true);
+        clickWorld(b5[0 .. 4] ~ p(x, 0.75));
+        drop(); ++ran;
+        auto m = getJson("/api/model");
+        auto got = verts(m["vertices"]);
+        auto f = rings(m["faces"]);
+        if (got.length != 12 || f != [[0L, 3, 2, 1], [3L, 5, 4, 2], [6L, 7, 8, 9], [9L, 8, 10, 11]]) {
+            fails ~= format("%s: %s vertices, faces %s; expected 12, faces "
+                ~ "[[0, 3, 2, 1], [3, 5, 4, 2], [6, 7, 8, 9], [9, 8, 10, 11]]", cell, got.length, f);
+            continue;
+        }
+        foreach (w; [p(x, 0.75), p(x - 0.5, 0.75), p(-x, 0.75), p(0.5 - x, 0.75)]) {
+            bool has;
+            foreach (g; got)
+                has |= abs(g.x - w.x) <= kTol && abs(g.y - w.y) <= kTol && abs(g.z - w.z) <= kTol;
+            if (!has) fails ~= format("%s: no vertex at (%.4f, %.4f, %.4f); got %s",
+                                      cell, w.x, w.y, w.z, got);
+        }
+    }
+
     // lock_3_points: from 3 points the panel's write is refused, the value stays.
     if (want("lock_3_points")) {
         rig(p(-0.15, 0), false);
@@ -305,7 +335,7 @@ unittest {
 
     rig(p(0, 0), false);    // leave the remembered value as found
     drop();
-    assert(ran == (only.length ? 1 : 14), format("ran %s cells, pinned 14 (1 under %s)",
+    assert(ran == (only.length ? 1 : 16), format("ran %s cells, pinned 16 (1 under %s)",
                                                  ran, only));
     assert(fails.length == 0, format("%s failure(s): %-(%s | %)", fails.length, fails));
 }

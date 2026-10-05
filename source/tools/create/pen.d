@@ -1124,16 +1124,19 @@ public:
         // Make Quads (wave plan S7, fixture pen_quads.json): the click, then
         // the automatic corner a = L1 + (c - L0) of the strip quad it
         // completes; the click is current. The arm always appends (an insert
-        // is not captured). The corner on a stroke point's mirror image shares
-        // it like a placed point (B5 sym; its radius and scene merge are not
-        // captured — gap row).
+        // and an odd count left by an in-stroke pop are not captured: gap row
+        // 550; the pop is S8's). A typed edit does not recompute the corner
+        // (row 551). The corner shares a stroke point's mirror image only
+        // within the captured mirror-weld `dist`, 3 px at the focus (B5 sym is
+        // an exact coincidence; C1-m4): a wider radius would move the click at
+        // commit. Its scene merge and any wider radius: gap row 549.
         if (params_.makeQuads && vertices_.length >= 2) {
             const q = penStripQuad((vertices_.length - 2) / 2);
             const Vec3 corner = vertices_[q[0]] + (hit - vertices_[q[1]]);
             appendVertex(hit, link);
             float best = float.infinity;
             const image = params_.merge ? strokeImageNear(toWorldP(corner),
-                SnapPacket.init.innerRangePx, best) : -1;
+                3, best) : -1;
             appendVertex(corner, image >= 0 ? -2 - image : -1);
             params_.currentPoint = cast(int)vertices_.length - 2;
             syncPosFromCurrent();

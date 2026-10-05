@@ -46,9 +46,10 @@
 // stragglers). So this file has a real positive AND negative population and
 // cannot pass by covering nothing.
 //
-// MUTATION: delete `.enforceBounds()` from
-// source/tools/slice/loop_slice_tool.d:615 and this test fails naming that
-// param, its interval and -2147483648.
+// MUTATION: delete `.enforceBounds()` from the `length` Param of
+// source/tools/slice/loop_slice_tool.d and this test fails at the injection
+// status assert below, naming that param and quoting the refusal `not a
+// representable integer` (the 1e39 write is now refused before any cast).
 //
 // A REFUSED injection measures nothing (its read-back is the untouched value),
 // so every injection must answer ok. The pen refuses writes to its point

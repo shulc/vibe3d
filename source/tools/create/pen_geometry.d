@@ -166,7 +166,7 @@ uint[] penRingOrder(const(Vec3)[] v, bool reverse) {
 /// A polygon point linking the vertex its predecessor (click order) links adds
 /// no corner: [V, V, F] commits [V, F] (fixture `cells_k_b10`). The closing
 /// pair (last = first), quads strips and a ring left below 2 corners (no face)
-/// are not captured — gap rows.
+/// are not captured — gap rows 545, 549, 550.
 ///
 /// Symmetry (wave plan S6, fixture pen_symmetry.json): the reflections follow
 /// the originals in click order and take the same shape with the reverse
