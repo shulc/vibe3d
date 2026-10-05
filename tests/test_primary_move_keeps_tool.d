@@ -36,6 +36,7 @@ private void key(int sym, int scan, int mod = 0) {
 }
 private void keyW()  { key(119, 26); }      // arm move
 private void undo()  { key(122, 29, 64); }  // Ctrl+Z through the navigate chokepoint
+private void redo()  { key(122, 29, 65); }  // Ctrl+Shift+Z through the same chokepoint
 
 private string tool() { return getJson("/api/input/context")["tool"].toString; }
 private bool armed() { return tool() != "null" && tool() != `""`; }
@@ -219,4 +220,19 @@ unittest {
     undo();
     assert(primary() == 0, "Ctrl+Z undoes the click");
     assert(tool() == `"mesh.tack"`, "the undo keeps the tool armed at the undo, got " ~ tool());
+}
+
+// Redo of an undone click (9511; the 9457 review's probe P4): the click comes
+// back with the tool still armed and the type kept.
+unittest {
+    rig();
+    keyW();
+    click(1);
+    undo();
+    assert(primary() == 0 && armed(), "rig: Ctrl+Z undid the click, the tool armed");
+    redo();
+    assert(primary() == 1, "Ctrl+Shift+Z redoes the click");
+    assert(armed() && selType() == "vertex",
+        "the redone click keeps the tool and the type, got tool " ~ tool()
+        ~ " type " ~ selType());
 }

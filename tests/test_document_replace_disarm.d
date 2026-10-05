@@ -361,6 +361,29 @@ void buildLoopSlicePreview() {
     playAndSettle(log);
 }
 
+// K6u (task 9511): the undo of a primary move crosses the same seam as the
+// move, so the tool armed AT THE UNDO is dropped while its own layer is still
+// the primary and is re-armed on the restored one. Tack is armed with no row,
+// so the undo's top entry is the layer selection itself.
+unittest {
+    setupTwoCubeLayers();
+    cmd("layer.select", `{"index":1,"mode":"set"}`);
+    cmd("tool.set", `{"_positional":["mesh.tack","on"]}`);
+    assert(editUndoLabels() == ["Select Layer"],
+        "K6u requires the layer selection on top: " ~ editUndoLabels().to!string);
+    const C0 = crossings();
+    cmd("history.undo");
+    assert(getJson("/api/layers")["active"].integer == 0,
+        "K6u: the undo restores layer 0 as the primary");
+    auto d = getJson("/api/tool/disarm");
+    assert(crossings() == C0 + 1 && d["hadTool"].boolean,
+        "the undo of a primary move must drop the armed tool through the seam, "
+        ~ "before the restore, exactly once");
+    assert(getJson("/api/input/context")["tool"].str == "mesh.tack",
+        "the undo of a primary move re-arms the tool armed at the undo, got "
+        ~ getJson("/api/input/context")["tool"].toString);
+}
+
 // K6e: a built standing preview becomes a recorded, undoable edit in layer 0.
 unittest {
     setupTwoCubeLayers();
