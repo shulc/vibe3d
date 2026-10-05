@@ -39,7 +39,7 @@ import operator            : VectorStack, viewportOf;
 import toolpipe.packets    : ConstrainHitPacket, HoverTarget, HoverTargetKind,
                              SubjectPacket, SnapPacket, SnapType, SnapMode;
 import toolpipe.stages.constrain : liveConstrainStage;
-import toolpipe.stages.snap : SnapStage, liveSnapStage, liveSnapGuides;
+import toolpipe.stages.snap : SnapStage, liveSnapStage;
 import toolpipe.guide       : SnapGuide, GuideDrawState, kGuidePrioritySeed;
 import constraint           : resolveHoverTarget, topoPenPressPickPx,
                               topoPenSnapAcceptPx, topoPenSnapGatherPx,
@@ -2241,7 +2241,9 @@ public:
     /// on a copy of the press-frozen packet, so the snap's occlusion and hidden
     /// masks apply. Background sources never win: `admit` (the guide) refuses
     /// every slot but 0 before the election. Scope Global keeps the weld
-    /// scope-blind as before; both ranges are the accept radius.
+    /// scope-blind as before; both ranges are the accept radius. No registry
+    /// guides: `admit` IS the gesture's policy, and the registered guide would
+    /// veto the interior target Split's own guide admits.
     private int weldTargetVertex(int mx, int my, const ref Viewport vp,
                                  float acceptPx, scope SnapAdmit admit) {
         auto m = mesh;
@@ -2252,8 +2254,8 @@ public:
         pkt.snapScope    = SnapMode.Global;
         pkt.innerRangePx = pkt.outerRangePx = acceptPx;
         const sr = snapCursor(Vec3(0, 0, 0), mx, my, vp, *m, primaryModelSpace(), pkt,
-                              null, admit, liveSnapGuides());
-        return sr.snapped && sr.targetType == SnapType.Vertex ? sr.targetIndex : -1;
+                              null, admit);
+        return sr.snapped ? sr.targetIndex : -1;
     }
 
     // -----------------------------------------------------------------------

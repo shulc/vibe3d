@@ -1,4 +1,14 @@
 {
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "gui-gesture",
+  "notes": "fresh GUI worker per cell; top orthographic view, 0.002275 m/px, focus (0.07,1,0); move-mode drag of b released 6 px from a, every global snap type off; vertex counts and positions are mesh readback after the drop",
+  "captured_utc": "2026-10-05",
+  "harness": "private capture harness",
+  "task": "9393"
+ },
  "about": "Topology pen weld target vs the snap visibility masks: a move-mode drag of vertex b released 6 px from vertex a. Captured 2026-10-05 (batch K-T). Each scene has a control that welds and a cell that must not.",
  "rig": "top orthographic view, 0.002275 m/px, camera focus (0.07,1,0); press on b, pointer delta (271,219) px; snap enabled, every global snap type off, backFace on",
  "A_quad": [

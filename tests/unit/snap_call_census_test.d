@@ -101,11 +101,14 @@ unittest // every production snapCursor call consults the guide registry
         "source/tools/transform/move.d", "source/tools/transform/transform.d"],
         format("snapCursor call roster: %s", fileRoster(calls)));
     assert(others.length == 0, format("snapCursor reached other than by a call: %s", fileRoster(others)));
-    // The needle. pen.d's merge query is the one exempt row: pen-owned and frozen
-    // while the pen wave runs; the interaction-layer pen slices own it.
+    // The needle. pen.d's merge query is exempt: pen-owned and frozen while the
+    // pen wave runs; the interaction-layer pen slices own it. The topology pen's
+    // weld query is exempt: its admit is the gesture's own guide policy, and the
+    // registered guide would veto Split's interior target (task 9407).
     Site[] guideless;
     foreach (c; calls) if (!consultsGuides(c.args)) guideless ~= c;
-    assert(fileRoster(guideless) == ["source/tools/create/pen.d"],
+    assert(fileRoster(guideless) == ["source/tools/create/pen.d",
+                                     "source/tools/edit/topology_pen/tool.d"],
         format("snapCursor calls that do not consult the guides: %s", fileRoster(guideless)));
 }
 
@@ -200,7 +203,7 @@ unittest // the topology pen's weld target is one snap query (task 9407); the pr
     const weld = body("int weldTargetVertex(");
     // Floor: the body is a real function, not an empty span.
     assert(weld.length > 200, format("weldTargetVertex body: %s chars", weld.length));
-    foreach (needle; ["snapCursor(", "SnapMode.Global", "outerRangePx", "liveSnapGuides()"])
+    foreach (needle; ["snapCursor(", "SnapMode.Global", "outerRangePx", "admit);"])
         assert(countOccurrences(weld, needle) == 1,
             format("weldTargetVertex must contain `%s` once", needle));
     foreach (decl; ["int resolveSnapTargetVert(", "int resolveSplitTargetVert("]) {
