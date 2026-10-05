@@ -190,7 +190,7 @@ public:
 
 /// One registered gizmo part: a handle and its part id. A bank lists its parts
 /// ONCE, in hit priority; the arbiter registration and the bank's own press /
-/// hover test both read that list (task 9409).
+/// hover test both read that list.
 struct HandlePart { Handler h; int part; }
 
 /// The arbiter's winner rule (`ToolHandles.test`) without its trace pass: the

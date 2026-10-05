@@ -766,7 +766,7 @@ public:
         // The press tests rotateBox FIRST (the smaller target, which can sit
         // inside the enlarged centre box on screen) while the arbiter
         // registration (draw) puts the centre box first: this order is kept as
-        // the tool's own data until the hit-order capture decides (task 9409).
+        // the tool's own data until the hit-order capture decides.
         // The mover's arrows are hidden (arrowsVisible = false): 4 = rotate box,
         // 3 = centre box.
         int hit = pa == PressActivation.activates ? -1 : firstHitPart(e.x, e.y, cachedVp,

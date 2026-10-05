@@ -20,7 +20,7 @@ module tools.transform.xfrm_handles;
 /// silently WINS over one of the same name mixed in. Never leave a copy behind.
 
 /// The gizmo bank a drag runs on — the wrapper's run bank and the Edge Extend
-/// host's drag bank (task 9409: one declaration). None = no drag.
+/// host's drag bank — one declaration. None = no drag.
 enum DragBank { None, Move, Rotate, Scale }
 
 mixin template XfrmHandlesImpl() {

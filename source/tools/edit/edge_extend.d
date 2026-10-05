@@ -988,7 +988,7 @@ public:
     // grabs a REAL handle (dragAxis>=0) owns the drag. It differs from the
     // arbiter's T→R→S registration where the view ring overlaps a scale part
     // (the arbiter answers the ring, this probe falls through to Scale); that
-    // order waits for the hit-order capture (task 9409).
+    // order waits for the hit-order capture.
     // On a total miss, the Move bank begins a HAUL (screen-plane Offset drag).
     //   - Move   → Offset (world-axis, pivot-agnostic; haul + on-arrow share it).
     //   - Rotate → rotateDeg component (principal ring axis → X/Y/Z), about the
