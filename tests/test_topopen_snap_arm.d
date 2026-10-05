@@ -484,14 +484,16 @@ unittest { // law-neutral: the weld ignores the snap SCOPE and reaches the whole
 // every global type off; a background plane at z 0 is the landing surface.
 // ---------------------------------------------------------------------------
 
-/// Load `pts` as one quad in layer 1, move v1 by (`dx`,`dy`) px with the pen.
-void sameQuadMove(double[3][] pts, double[3] release, int dx, int dy) {
+/// Load `pts` (one quad unless `faces`) in layer 1, move v1 by (`dx`,`dy`) px
+/// with the pen; `sym` turns world symmetry X on for the gesture.
+void sameQuadMove(double[3][] pts, double[3] release, int dx, int dy,
+                  int[][] faces = [[0, 1, 2, 3]], bool sym = false) {
     auto r = postJson("/api/command", commandBody("scene.reset", `{"empty":true}`));
     assert(r["status"].str == "ok", "empty reset failed: " ~ r.toString);
     loadLayerMesh([[-2.0, -2.0, 0.0], [2.0, -2.0, 0.0], [2.0, 2.0, 0.0], [-2.0, 2.0, 0.0]],
                   [[0, 1, 2, 3]]);
     cmd("layer.add name:Edit");
-    loadLayerMesh(pts, [[0, 1, 2, 3]]);
+    loadLayerMesh(pts, faces);
     cmd("history.clear");
     cmd("workplane.reset");
     cmd("viewport.view Front");
@@ -500,6 +502,7 @@ void sameQuadMove(double[3][] pts, double[3] release, int dx, int dy) {
         `{"focus":{"x":-0.15,"y":0.18,"z":0.0},"distance":%.9f}`, dist));
     assert(cr["status"].str == "ok", "camera setup failed: " ~ cr.toString);
     cmd(`tool.pipe.attr snap types ""`);
+    if (sym) foreach (c; ["axis x", "offset 0", "enabled true"]) cmd("tool.pipe.attr symmetry " ~ c);
     cmd("tool.set mesh.topoPen on");
     cmd("tool.attr mesh.topoPen mode move");
     assert(snapEnabled(), "rig: the pen's activation arms the snap enable");
@@ -516,6 +519,7 @@ void sameQuadMove(double[3][] pts, double[3] release, int dx, int dy) {
     assert("error" !in pr, "/api/play-events failed: " ~ pr.toString);
     waitPlayerIdle();
     cmd("tool.set mesh.topoPen off");
+    cmd("tool.pipe.attr symmetry enabled false");
 }
 
 unittest { // KJP_A adjacent corners collapse; KJP_D diagonal corners weld to [0,2,1,2]
@@ -529,5 +533,27 @@ unittest { // KJP_A adjacent corners collapse; KJP_D diagonal corners weld to [0
     assert(vertexCountLayer(1) == 3 && readFacesLayer(1) == [[0, 2, 1, 2]],
         format("KJP_D: V=%d faces %s, expected 3 and [[0,2,1,2]]", vertexCountLayer(1),
                readFacesLayer(1)));
+    postJson("/api/command", commandBody("scene.reset"));
+}
+
+// §5 — SYMMETRY (captured, KW2_A / KW2_B, task 9438): under world symmetry X the
+// move drags the mirror partner too, and ONE weld pass over the moved set welds
+// both: v1 into v4 and its partner v10 into v15 (16 - 2). Without symmetry only v1.
+unittest { // KW2_A symmetric move welds both sides (14); KW2_B control (15)
+    double[3][] pts = [[0.1, 0, 0], [0.3, 0, 0], [0.3, 0.3, 0], [0.1, 0.3, 0],
+        [0.5, 0.06, 0], [1, 0.06, 0], [1, 0.36, 0], [0.5, 0.36, 0],
+        [-0.1, 0.3, 0], [-0.3, 0.3, 0], [-0.3, 0, 0], [-0.1, 0, 0],
+        [-0.5, 0.36, 0], [-1, 0.36, 0], [-1, 0.06, 0], [-0.5, 0.06, 0]];
+    int[][] quads = [[0, 1, 2, 3], [4, 5, 6, 7], [8, 9, 10, 11], [12, 13, 14, 15]];
+    sameQuadMove(pts, [0.5, 0, 0], 20, 0, quads, false);
+    assert(vertexCountLayer(1) == 15 && hasVertexNear(1, Vec3(-0.3f, 0, 0), 1e-4),
+        format("KW2_B: V=%d, expected 15 with (-0.3,0) untouched", vertexCountLayer(1)));
+    sameQuadMove(pts, [0.5, 0, 0], 20, 0, quads, true);
+    assert(vertexCountLayer(1) == 14 && readFacesLayer(1)
+        == [[0, 3, 1, 2], [3, 4, 5, 6], [7, 8, 13, 9], [10, 11, 12, 13]],
+        format("KW2_A: V=%d faces %s, expected 14 and the mirror face [7,8,13,9]",
+               vertexCountLayer(1), readFacesLayer(1)));
+    assert(hasVertexNear(1, Vec3(-0.5f, 0.06f, 0), 1e-4) && !hasVertexNear(1, Vec3(-0.5f, 0, 0), 1e-3),
+        "KW2_A: the mirror target keeps its position");
     postJson("/api/command", commandBody("scene.reset"));
 }

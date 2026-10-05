@@ -1819,7 +1819,7 @@ public:
         // below.
         if (moveArmed_) {
             Viewport vp = viewportOf(vts);
-            applyMoveTargets(moveTargets(e.x, e.y, vp, vts));
+            applyMoveTargets(moveTargets(e.x, e.y, vp, vts), vts);
             noteMoveOffset();
             return true;
         }
@@ -4176,7 +4176,7 @@ public:
     // drag (task 0484). No history: the press step records once, at release.
     // Sets `moveDirty_` so a gesture that never actually moved anything welds
     // nothing.
-    package void applyMoveTargets(const(Vec3)[] targets) {
+    package void applyMoveTargets(const(Vec3)[] targets, ref VectorStack vts) {
         auto m = mesh;
         if (m is null || targets.length != moveVerts_.length) return;
         foreach (vi; moveVerts_)
@@ -4189,6 +4189,7 @@ public:
         if (!changed) return;
 
         foreach (i, vi; moveVerts_) m.vertices[vi] = targets[i];
+        movedWithPartners(vts);
         m.commitChange(MeshEditScope.Position);
         moveDirty_ = true;
 
@@ -4197,19 +4198,39 @@ public:
         refreshDisplay(m, gpu_);
     }
 
+    // Under symmetry the move drags each grabbed vertex's mirror partner (the
+    // shared walker, the grab's side as the base) and the weld pass covers both
+    // (task 9438, KW2_A). Idempotent; returns the moved set with the partners.
+    private uint[] movedWithPartners(ref VectorStack vts) {
+        import symmetry : applySymmetryMirror;
+        import std.algorithm.searching : canFind;
+        import toolpipe.packets : SymmetryPacket;
+        SymmetryPacket* sym = vts.get!SymmetryPacket();
+        if (sym is null || !sym.enabled || sym.pairOf.length != mesh.vertices.length) return moveVerts_;
+        SymmetryPacket sp = *sym;
+        foreach (vi; moveVerts_) if (sp.vertSign[vi] != 0) { sp.baseSide = sp.vertSign[vi]; break; }
+        auto operand = new bool[sp.pairOf.length], touched = new bool[sp.pairOf.length];
+        foreach (vi; moveVerts_) operand[vi] = true;
+        foreach (vi; moveVerts_) if (sp.vertSign[vi] == sp.baseSide && sp.pairOf[vi] >= 0) operand[sp.pairOf[vi]] = true;
+        applySymmetryMirror(mesh, sp, operand, touched);
+        uint[] all = moveVerts_.dup;
+        foreach (i, t; touched) if (t && !all.canFind(i)) all ~= cast(uint)i;
+        return all;
+    }
+
     // Close an armed Move: apply the FINAL targets at the release's own
     // pixel (task 0484); the press step records the result. The live writes
     // only decided what the user saw on the way there. Disarms on the way out.
     private void finishMove(int px, int py, const ref Viewport vp, ref VectorStack vts) {
         scope(exit) clearMoveArm();
         if (!moveArmed_ || moveVerts_.length == 0) return;
-        applyMoveTargets(moveTargets(px, py, vp, vts));
+        applyMoveTargets(moveTargets(px, py, vp, vts), vts);
         noteMoveOffset();
         // The destructive landing (task 0555), inside the same step. Gated on
         // `moveDirty_`: a grab that never moved anything cannot have been
         // "brought to within" anything, and welding on a bare click would eat
         // any vertex that merely happened to sit inside the acceptance radius.
-        if (moveDirty_ && weldMovedVertices(moveVerts_, vp) > 0) {
+        if (moveDirty_ && weldMovedVertices(movedWithPartners(vts), vp) > 0) {
             moveWelded_ = true;
             afterWeld();
         }

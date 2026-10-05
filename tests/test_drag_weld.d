@@ -87,11 +87,13 @@ void hideVerts(int[] idx) {
 /// Returns the model after it and asserts the history grew by `welded`.
 JSONValue dragWeld(Rig r, int src, float[3] endWorld, bool welded,
                    int offX = 0, int offY = 0, bool snap = true, int[] hide = null,
-                   int pressOffY = 0) {
+                   int pressOffY = 0, bool sym = false) {
     loadRig(r);
     if (hide.length) hideVerts(hide);
     auto vp = frontView(0.25f, 0.15f);
     snapState(snap);
+    ok("tool.pipe.attr symmetry axis x");
+    ok("tool.pipe.attr symmetry enabled " ~ (sym ? "true" : "false"));
     ok("tool.set mesh.dragWeld on");
     immutable before = modelDepth();
     auto cam = fetchCamera(baseUrl);
@@ -297,6 +299,21 @@ unittest { // a background layer's vertex is never a target (edited mesh only)
     ok("tool.set mesh.dragWeld off");
     snapState(false);
     assert(nv(getModel()) == 4, "a background vertex must not be a weld target");
+}
+
+unittest { // KW2_ADW: under symmetry X the mirror partner welds into the mirror target too
+    if (!cell("ADW")) return;
+    Rig r = Rig([[0.1f, 0f, 0f], [0.3f, 0f, 0f], [0.3f, 0.3f, 0f], [0.1f, 0.3f, 0f],
+        [0.5f, 0.06f, 0f], [1f, 0.06f, 0f], [1f, 0.36f, 0f], [0.5f, 0.36f, 0f],
+        [-0.1f, 0.3f, 0f], [-0.3f, 0.3f, 0f], [-0.3f, 0f, 0f], [-0.1f, 0f, 0f],
+        [-0.5f, 0.36f, 0f], [-1f, 0.36f, 0f], [-1f, 0.06f, 0f], [-0.5f, 0.06f, 0f]],
+        [[0u, 1, 2, 3], [4u, 5, 6, 7], [8u, 9, 10, 11], [12u, 13, 14, 15]]);
+    assert(nv(dragWeld(r, 1, kEndC, true)) == 15, "KW2_B control: one weld without symmetry");
+    assertMesh(dragWeld(r, 1, kEndC, true, 0, 0, true, null, 0, true),
+        [[0.1f, 0f, 0f], [0.3f, 0.3f, 0f], [0.1f, 0.3f, 0f], [0.5f, 0.06f, 0f], [1f, 0.06f, 0f],
+         [1f, 0.36f, 0f], [0.5f, 0.36f, 0f], [-0.1f, 0.3f, 0f], [-0.3f, 0.3f, 0f], [-0.1f, 0f, 0f],
+         [-0.5f, 0.36f, 0f], [-1f, 0.36f, 0f], [-1f, 0.06f, 0f], [-0.5f, 0.06f, 0f]],
+        [[0u, 3, 1, 2], [3u, 4, 5, 6], [7u, 8, 13, 9], [10u, 11, 12, 13]], "KW2_ADW");
 }
 
 unittest { // tool undo: one gesture is one entry that restores the rig

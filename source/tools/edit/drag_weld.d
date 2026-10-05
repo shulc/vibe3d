@@ -16,7 +16,7 @@ import display_sync : refreshDisplay;
 import editmode : EditMode;
 import operator : VectorStack;
 import snap : editedVertexAt, snapPacketOf;
-import toolpipe.packets : SnapPacket;
+import toolpipe.packets : SnapPacket, SymmetryPacket;
 import constraint : topoPenPressPickPx, topoPenSnapAcceptPx;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
 import document : Layer;
@@ -141,7 +141,14 @@ public:
 
         Vec3 keepPos = mesh.vertices[cast(uint)target];
         MeshSnapshot pre = MeshSnapshot.capture(*mesh);
-        if (mesh.weldVertexPairs([[cast(uint)target, cast(uint)source_]]) == 0)
+        // Under symmetry the mirror partners weld too, in the same pass (task 9438, KW2_ADW).
+        uint[2][] pairs = [[cast(uint)target, cast(uint)source_]];
+        if (auto sym = vts.get!SymmetryPacket())
+            if (sym.enabled && sym.pairOf.length == mesh.vertices.length) {
+                immutable int ms = sym.pairOf[source_], mt = sym.pairOf[target];
+                if (ms >= 0 && mt >= 0 && ms != target) pairs ~= [cast(uint)mt, cast(uint)ms];
+            }
+        if (mesh.weldVertexPairs(pairs) == 0)
             return true;                   // both faceless: no-op
 
         mesh.clearVertexSelection();       // `compactUnreferenced` already resized it
