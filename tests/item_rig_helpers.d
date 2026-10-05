@@ -138,6 +138,7 @@ void buildThreeItemRig(JSONValue rig) {
         rigCmd(format("layer.attr %d pivot.z %.17g", i, v[2]));
     }
 
+    rigCmd("select.typeFrom item");  // 9511 (K-CD4): layer.select never changes the type
     foreach (stepIdx, s; rig["selection_order"].array) {
         auto parts = s.str.split(" ");
         assert(parts.length == 2,
