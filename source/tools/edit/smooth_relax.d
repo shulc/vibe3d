@@ -145,8 +145,10 @@ struct RelaxTopology {
 /// and without the gate, and a search over 200k random face soups —
 /// including non-manifold ones — produced zero instances.
 ///
-/// Recorded here so this is not reopened as an oversight. Implementing the
-/// gate would add a branch that provably cannot fire.
+/// Recorded here so this is not reopened as an oversight: for the RING the
+/// gate cannot fire. It does matter for the smooth tool's boundary scale `c`
+/// (task 9484): only a gated vertex gets c != 1, so that caller applies
+/// `deg(v) > 2` itself when it builds `cScale`.
 bool[] deriveBoundary(const(size_t)[] offset, const(bool)[] openTo) @safe pure nothrow {
     if (offset.length == 0) return null;
     auto b = new bool[](offset.length - 1);
@@ -170,58 +172,83 @@ bool[] deriveBoundary(const(size_t)[] offset, const(bool)[] openTo) @safe pure n
 void relaxPasses(RelaxVec3[] pos, const ref RelaxTopology topo, double F, int iters)
     @safe pure nothrow
 {
-    if (iters <= 0 || pos.length == 0) return;
-    if (!isFinite(F)) return;
-    if (!topo.valid(pos.length)) return;
+    if (iters <= 0 || !relaxable(pos, topo, F)) return;
+    auto work = RelaxScratch(pos.length, topo.nbrs.length);
+    foreach (_; 0 .. iters) relaxStep(pos, topo, F, null, null, work);
+}
 
-    immutable size_t nV = pos.length;
-    auto force = new RelaxVec3[](nV);
-    // Edge length per CSR SLOT, carried from the A/D loop to the force loop
-    // below. Both loops need |P_v − P_i| for the same slot, and at the
-    // 256-iteration cap the redundant `sqrt` dominates: computing it once
-    // per slot instead of twice halves the square roots from 4 to 2 per edge
-    // per iteration. Bit-exact — the two expressions differ only by negating
-    // each component, and the squares are identical.
-    auto slotLen = new double[](topo.nbrs.length);
+/// True when `relaxStep` may run on this input (finite `F`, a non-empty
+/// position array, a topology consistent with it).
+bool relaxable(const(RelaxVec3)[] pos, const ref RelaxTopology topo, double F)
+    @safe pure nothrow @nogc
+{
+    return pos.length != 0 && isFinite(F) && topo.valid(pos.length);
+}
 
-    foreach (_; 0 .. iters) {
-        force[] = RelaxVec3(0, 0, 0);
-
-        foreach (v; 0 .. nV) {
-            immutable size_t lo = topo.offset[v], hi = topo.offset[v + 1];
-            immutable bool   bnd = topo.boundary[v];
-
-            // A(v) and D(v) over the (possibly boundary-restricted) 1-ring.
-            // The second loop below re-applies the SAME `bnd && !openTo[k]`
-            // restriction rather than materialising a neighbour list per
-            // vertex per iteration — this is the hot loop of the gesture.
-            RelaxVec3 A;
-            double    D = 0;
-            foreach (k; lo .. hi) {
-                if (bnd && !topo.openTo[k]) continue;
-                auto dv = pos[topo.nbrs[k]] - pos[v];
-                A = A + dv;
-                immutable double len = dv.length();
-                slotLen[k] = len;
-                D += len;
-            }
-            if (D == 0) continue;   // no usable neighbours, or all coincident
-            A = A * F;
-
-            foreach (k; lo .. hi) {
-                if (bnd && !topo.openTo[k]) continue;
-                immutable uint   w = topo.nbrs[k];
-                immutable double d = slotLen[k];
-                if (d == 0) continue;
-                auto u  = (pos[v] - pos[w]) * (1.0 / d);
-                auto Ci = (A - u * A.dot(u)) * (d / D);
-                force[v] = force[v] + Ci;
-                force[w] = force[w] - Ci;   // the reaction term — NOT optional
-            }
-        }
-
-        foreach (v; 0 .. nV) pos[v] = pos[v] + force[v];
+/// Per-run buffers of `relaxStep`, allocated once per run.
+struct RelaxScratch {
+    RelaxVec3[] force;
+    // Edge length per CSR SLOT, carried from the A/D loop to the force loop:
+    // one `sqrt` per slot instead of two (bit-exact; the squares are equal).
+    double[]    slotLen;
+    this(size_t nVerts, size_t nSlots) @safe pure nothrow {
+        force = new RelaxVec3[](nVerts);
+        slotLen = new double[](nSlots);
     }
+}
+
+/// ONE relaxation iteration (the law in the module header). `active` (null =
+/// every vertex) selects the vertices that receive a force and move; an
+/// inactive vertex is a FIXED neighbour and its reactions are dropped (task
+/// 9484, the selection law). `cScale` (null = 1 everywhere) is the smooth
+/// tool's boundary scale `c`: `u_i = (P_v − P_i) · c / |P_v − P_i|`. The pen's
+/// relax passes neither. Precondition: `relaxable(pos, topo, F)`.
+void relaxStep(RelaxVec3[] pos, const ref RelaxTopology topo, double F,
+               const(bool)[] active, const(double)[] cScale, ref RelaxScratch work)
+    @safe pure nothrow
+{
+    immutable size_t nV = pos.length;
+    auto force = work.force;
+    auto slotLen = work.slotLen;
+    force[] = RelaxVec3(0, 0, 0);
+
+    foreach (v; 0 .. nV) {
+        if (active !is null && !active[v]) continue;
+        immutable size_t lo = topo.offset[v], hi = topo.offset[v + 1];
+        immutable bool   bnd = topo.boundary[v];
+
+        // A(v) and D(v) over the (possibly boundary-restricted) 1-ring.
+        // The second loop below re-applies the SAME `bnd && !openTo[k]`
+        // restriction rather than materialising a neighbour list per
+        // vertex per iteration — this is the hot loop of the gesture.
+        RelaxVec3 A;
+        double    D = 0;
+        foreach (k; lo .. hi) {
+            if (bnd && !topo.openTo[k]) continue;
+            auto dv = pos[topo.nbrs[k]] - pos[v];
+            A = A + dv;
+            immutable double len = dv.length();
+            slotLen[k] = len;
+            D += len;
+        }
+        if (D == 0) continue;   // no usable neighbours, or all coincident
+        A = A * F;
+        immutable double c = cScale is null ? 1.0 : cScale[v];
+
+        foreach (k; lo .. hi) {
+            if (bnd && !topo.openTo[k]) continue;
+            immutable uint   w = topo.nbrs[k];
+            immutable double d = slotLen[k];
+            if (d == 0) continue;
+            auto u  = (pos[v] - pos[w]) * (c / d);
+            auto Ci = (A - u * A.dot(u)) * (d / D);
+            force[v] = force[v] + Ci;
+            force[w] = force[w] - Ci;   // the reaction term — NOT optional
+        }
+    }
+
+    foreach (v; 0 .. nV)
+        if (active is null || active[v]) pos[v] = pos[v] + force[v];
 }
 
 // ---------------------------------------------------------------------------

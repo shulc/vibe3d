@@ -10,7 +10,7 @@
 # Layout mirrors the transform/Move panel: each parameter is a flat row with its
 # label in the fixed left column and the value field aligned in the right column
 # (forms_render.beginLabeledRow / fieldColumnX). Bool params render as native
-# checkboxes. Row order follows the reference Smooth tool; `sharpAngle` greys out
+# checkboxes. Row order follows the reference Smooth tool; `sharpThreshold` (degrees) greys out
 # (provider paramEnabled) unless `lockSharp` is on.
 
 forms:
@@ -28,4 +28,4 @@ forms:
       - { control: "tool.attr xfrm.smooth lockCorner ?", label: "Lock Corner" }
       - { control: "tool.attr xfrm.smooth preserve ?",   label: "Preserve Volume" }
       - { control: "tool.attr xfrm.smooth lockSharp ?",  label: "Lock Sharp Edges" }
-      - { control: "tool.attr xfrm.smooth sharpAngle ?", label: "Sharp Angle" }
+      - { control: "tool.attr xfrm.smooth sharpThreshold ?", label: "Sharp Threshold" }

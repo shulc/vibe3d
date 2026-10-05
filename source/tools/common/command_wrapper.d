@@ -1158,6 +1158,7 @@ unittest {
     import commands.mesh.vertex_edit : MeshVertexEdit;
 
     Mesh m = makeCube();
+    m.vertices[0].x += 0.3f;   // a regular cube is a fixed point of the relax (task 9484)
     m.buildLoops();
     View view = new View(0, 0, 800, 600);
     auto hist = new CommandHistory();

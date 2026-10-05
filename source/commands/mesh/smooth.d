@@ -4,7 +4,8 @@ import command;
 import mesh;
 import view;
 import editmode;
-import math : Vec3, Viewport, AimViewport, aimSpace, cross, dot;
+import math : Vec3, Viewport, AimViewport, aimSpace, cross, dot,
+    triangulatePolygonEarClip;
 import document : primaryModelSpace;
 import params : Param;
 import change_bus : MeshEditScope;
@@ -15,60 +16,43 @@ import toolpipe.packets : FalloffPacket, SubjectPacket;
 import falloff : evaluateFalloff, IFalloffAware, FalloffInput,
     weightedLerp;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
+import tools.edit.smooth_relax : RelaxVec3, RelaxTopology, RelaxScratch,
+    deriveBoundary, relaxable, relaxStep;
 
-/// Laplacian vertex smoothing. Each iteration: new_pos = old_pos +
-/// strength * (avg_of_edge_neighbors - old_pos). Selection-aware
-/// (same mask as MeshTransform); empty selection ⇒ whole mesh.
-///
-/// A Laplacian smooth with `strn` (strength) and `iter` (iterations)
-/// attrs, exposed as a one-shot command rather than a drag-tool.
-/// Reference: a fixed cube + strn/iter pair converges toward the
-/// centroid analytically (see tests/test_mesh_smooth.d), which is the
-/// practical check.
+/// Preserve Volume re-projects at iteration `i` of `iters` iff i < 10, it is
+/// the last iteration, or i % 100 == 0 (the 100 is fixed; captured K-F3k,
+/// cell K3_ITER in tests/fixtures/smooth_kernel.json).
+bool preserveProjectsAt(int i, int iters) pure nothrow @nogc @safe {
+    return i < 10 || i == iters - 1 || i % 100 == 0;
+}
+
+/// Smooth: the shared relax kernel (`tools/edit/smooth_relax.d`) with the
+/// boundary scale `c`, an ACTIVE mask and Preserve Volume's re-projection —
+/// the captured law in tests/fixtures/smooth_kernel.json (task 9484).
+///   * active = the operand selection's vertices (none selected = every
+///     visible vertex) minus lockBound (a border-edge vertex), lockCorner
+///     (used by exactly one polygon), lockSharp (an end of an edge whose face
+///     normals dot below cos(sharpThreshold°)) and falloff weight 0; inactive
+///     vertices are fixed neighbours; rings and border flags from the whole mesh;
+///   * c = (mean |n_v·n_i|)² over the border ring of a border vertex with > 2
+///     neighbours and >= 2 border neighbours, else 1; lockSharp forces c = 1;
+///     n = unit(Σ first-corner polygon normals) of the ORIGINAL mesh, in float;
+///   * positions stay double across iterations, written as float once;
+///   * Preserve: at `preserveProjectsAt` iterations each active point moves
+///     along −n onto the ORIGINAL surface (nearest hit on the line; no hit
+///     keeps it); the falloff lerp from the original position comes last.
 class MeshSmooth : Command, Operator, IFalloffAware,
                    VertexPositionResultBuilder {
-    private float            strn_ = 1.0f;   // `strn` (strength) attr — reference default 1.0
-    private int              iter_ = 1;      // `iter` (iterations) attr
-    private bool             lockBound_ = false;  // `lockBound` —
-    // freezes verts on boundary edges (edges adjacent to only one face,
-    // i.e. `loop.twin == uint.max` in our half-edge structure).
-    private bool             lockCorner_ = false; // `lockCorner` —
-    // freezes valence-2 boundary verts only (the actual "corners" of
-    // an open mesh loop). Strict subset of lockBound; the two can be
-    // toggled independently. A corner vertex is shared by a single
-    // polygon and lies on the boundary.
-    private bool             lockSharp_     = false; // `lockSharp`
-    private float            sharpAngleDeg_ = 60.0f; // `sharpAngle`,
-    // DEGREES (reference default 60°). Freezes verts on interior edges whose
-    // dihedral angle exceeds this threshold; converted to radians at the
-    // dihedral test below. Boundary edges aren't covered here — use
-    // lockBound / lockCorner for those. Greyed out (paramEnabled) unless
-    // lockSharp is on, matching the reference's disabled spinner.
-    private float            sharpThresholdRad_ = -1.0f; // `sharpThreshold`,
-    // RADIANS. Wire-native alias for the sharp-edge threshold used by the
-    // parity harness / scripting callers whose schema carries the angle in
-    // radians (the interactive UI exposes `sharpAngle` in DEGREES instead).
-    // Same normal-deviation convention as `sharpAngle`: an interior edge is
-    // sharp when the angle between adjacent face normals EXCEEDS the
-    // threshold. Sentinel < 0 ⇒ "not supplied", fall back to sharpAngleDeg_;
-    // a supplied value (≥ 0) OVERRIDES the degrees field. Kept out of the
-    // Tool Properties form (config/forms/smooth.yaml) so it stays a
-    // wire-only input and the visible panel is unchanged.
-    // Optional falloff packet — set via `setFalloff` from either the
-    // wrapping tool (XfrmSmoothTool reads the toolpipe's FalloffStage)
-    // or the HTTP injector (tests pass a `falloff` JSON alongside the
-    // command params). When `falloff_.enabled` is true, `apply()` lerps
-    // each touched vert toward its smoothed position by the per-vert
-    // weight. weight=1 → full smooth; weight=0 → vert stays at original.
-    // Same transform×falloff blend used elsewhere.
+    private float strn_       = 1.0f;   // `strn` — reference default 1.0
+    private int   iter_       = 1;      // `iter`
+    private bool  lockBound_  = false;  // `lockBound`
+    private bool  lockCorner_ = false;  // `lockCorner`
+    private bool  lockSharp_  = false;  // `lockSharp`
+    private float sharpThresholdDeg_ = 60.0f; // `sharpThreshold`, DEGREES (K-F3s)
+    private bool  preserve_   = false;  // `preserve` (Preserve Volume)
+    // Optional falloff, set by XfrmSmoothTool from the toolpipe or by the HTTP
+    // injector; weights are read at the ORIGINAL positions.
     mixin FalloffInput;
-    private bool             preserve_      = false; // `preserve`
-    // (Preserve Volume) — after the Laplacian iterations, project
-    // each moved vert's delta onto its pre-smooth tangent plane
-    // (perpendicular to its pre-smooth vertex normal). Cancels the
-    // normal-direction component so verts can slide along the
-    // surface but can't dive into / pop out of the original volume,
-    // constraining the smoothed points to the original surface.
     // Recorded `Kind.SetPos` undo (task 1903 L0-d3). ONE entry, from the
     // builder result's explicit `before` image.
     private PositionUndo undo_;
@@ -87,16 +71,16 @@ class MeshSmooth : Command, Operator, IFalloffAware,
         public ref const(PositionUndo) recordedUndo() const return { return undo_; }
 
         /// Build the two mutation candidates without changing production
-        /// state.  Tests vary the preserve-normal and sharp-normal coordinate
+        /// state.  Tests vary the original-surface and sharp-normal coordinate
         /// images independently, which is what makes the two baseline laws
         /// separately falsifiable rather than one branch masking the other.
         public bool buildVertexPositionResultWithNormalSourcesForTest(
                 const(Vec3)[] source,
-                const(Vec3)[] preserveNormalSource,
+                const(Vec3)[] surfaceSource,
                 const(Vec3)[] sharpNormalSource,
                 ref VectorStack vts,
                 out VertexPositionResult result) {
-            return buildVertexPositionResultImpl(source, preserveNormalSource,
+            return buildVertexPositionResultImpl(source, surfaceSource,
                                                   sharpNormalSource, vts, result);
         }
     }
@@ -120,31 +104,20 @@ class MeshSmooth : Command, Operator, IFalloffAware,
             Param.bool_ ("lockCorner", "Lock Corner",      &lockCorner_,    false),
             Param.bool_ ("preserve",   "Preserve Volume",  &preserve_,      false),
             Param.bool_ ("lockSharp",  "Lock Sharp Edges", &lockSharp_,     false),
-            Param.float_("sharpAngle", "Sharp Angle",      &sharpAngleDeg_, 60.0f).min(0.0f).max(180.0f),
-            // Radians alias — wire/scripting callers (e.g. the parity
-            // harness) may pass the sharp threshold in radians under this
-            // name; overrides `sharpAngle` when supplied (≥ 0). Not surfaced
-            // in the UI form.
-            Param.float_("sharpThreshold", "Sharp Threshold (rad)", &sharpThresholdRad_, -1.0f),
+            Param.float_("sharpThreshold", "Sharp Threshold", &sharpThresholdDeg_, 60.0f).min(0.0f).max(180.0f),
         ];
     }
 
-    // Sharp Angle is meaningful only while Lock Sharp Edges is on —
+    // The threshold is meaningful only while Lock Sharp Edges is on —
     // grey it out otherwise, matching the reference's disabled spinner.
     override bool paramEnabled(string name) const {
-        if (name == "sharpAngle") return lockSharp_;
+        if (name == "sharpThreshold") return lockSharp_;
         return true;
     }
 
     // Setters for XfrmSmoothTool's drag-modulates-attrs path.
-    void setStrn(float v)             { strn_ = v; }
-    void setIter(int   v)             { iter_ = v; }
-    void setLockBound(bool v)         { lockBound_ = v; }
-    void setLockCorner(bool v)        { lockCorner_ = v; }
-    void setLockSharp(bool v)         { lockSharp_ = v; }
-    void setSharpAngle(float v)       { sharpAngleDeg_ = v; }
-    void setSharpThreshold(float rad) { sharpThresholdRad_ = rad; }
-    void setPreserve(bool v)          { preserve_ = v; }
+    void setStrn(float v) { strn_ = v; }
+    void setIter(int   v) { iter_ = v; }
 
     // Operator interface. Common stubs from the mixin; evaluate(vts)
     // publishes the optional FalloffPacket before invoking the deterministic
@@ -170,7 +143,7 @@ class MeshSmooth : Command, Operator, IFalloffAware,
         if (result.empty) return true;  // command no-op remains success
 
         // REDO: re-run the kernel UNRECORDED and keep the first delta. The
-        // laplacian, the falloff blend and the preserve projection are pure
+        // relax, the preserve projection and the falloff blend are pure
         // functions of the params and the restored pre-op mesh.
         if (undo_.armed()) {
             auto ed = MeshEditBatch.unrecorded(*mesh, MeshEditScope.Position);
@@ -190,9 +163,13 @@ class MeshSmooth : Command, Operator, IFalloffAware,
         return buildVertexPositionResultImpl(source, source, source, vts, result);
     }
 
+    // `surfaceSource` is the ORIGINAL image the normals (c and the preserve
+    // direction) and the preserve surface come from; `sharpNormalSource` the
+    // image lockSharp classifies. Both are `source` in production; the test
+    // seam varies them to prove neither reads the live preview.
     private bool buildVertexPositionResultImpl(
             const(Vec3)[] source,
-            const(Vec3)[] preserveNormalSource,
+            const(Vec3)[] surfaceSource,
             const(Vec3)[] sharpNormalSource,
             ref VectorStack vts,
             out VertexPositionResult result) {
@@ -200,7 +177,7 @@ class MeshSmooth : Command, Operator, IFalloffAware,
         auto subj = vts.get!SubjectPacket();
         if (subj is null || subj.mesh is null || subj.mesh !is mesh ||
             source.length != subj.mesh.vertices.length ||
-            preserveNormalSource.length != source.length ||
+            surfaceSource.length != source.length ||
             sharpNormalSource.length != source.length) return false;
         Mesh* subject = subj.mesh;
         const resultFalloff = inputFalloff(vts);
@@ -210,251 +187,69 @@ class MeshSmooth : Command, Operator, IFalloffAware,
         // never refusal (task 4560).
         if (iter_ <= 0 || strn_ <= 0.0f) return true;
 
-        // Screen/Lasso are evaluated in the actual subject viewport.  The
-        // position image remains explicit even while the subject mesh holds a
-        // later live preview.
-        const auto aim = aimSpace(subj.viewport, primaryModelSpace());
-
-        // DoS backstop (task 0365 P1): `iter` scales the Laplacian pass
-        // count below; Param `.min()` hints are UI-only and do not clamp a
-        // direct/scripted `tool.attr`/command write.
+        // DoS backstop (task 0365 P1): `iter` scales the pass count; Param
+        // `.min()` hints are UI-only and do not clamp a scripted write.
         enum int MAX_SMOOTH_ITER = 256;
-        int iterCapped = iter_ > MAX_SMOOTH_ITER ? MAX_SMOOTH_ITER : iter_;
+        const int iters = iter_ > MAX_SMOOTH_ITER ? MAX_SMOOTH_ITER : iter_;
+        const size_t nV = source.length;
 
-        // Affected-vertex mask (selection-aware).
-        //
-        // Perf (task 0388): `mesh.selectedX` is a @property that rebuilds a
-        // whole `bool[]` per read — indexing it inside these loops was
-        // O(mesh²). Iterate the lock-step `*Marks.length` and test via the
-        // non-allocating `isXSelected(i)` scalar accessor instead.
-        // L1 funnel (task 0613, S5): the modal fan-in this used to open-code,
-        // with the whole-mesh fallback narrowed to the VISIBLE vertices.
-        bool[] vmask = subject.operandVertexMask(editMode);
-
-        // Pre-smooth per-face normals — only needed by `preserve` (the
-        // per-vert normal that defines each vert's tangent plane). The
-        // `lockSharp` receives its own explicit coordinate image below; the
-        // narrow helper retains `Mesh.computeEdgeSharpness`'s traversal and
-        // classification law while avoiding a read of live vertices.
-        Vec3[] faceNormal;
-        if (preserve_) {
-            faceNormal.length = subject.faces.length;
-            foreach (fi; 0 .. subject.faces.length)
-                faceNormal[fi] = faceNormalAtPositions(
-                    *subject, cast(uint)fi, preserveNormalSource);
+        // Active mask: the operand selection (L1 funnel, task 0613) minus
+        // the locks and weight 0. Topology is the whole mesh's.
+        bool[] active = subject.operandVertexMask(editMode);
+        const RelaxTopology topo = relaxTopologyOf(subject);
+        if (lockBound_)
+            foreach (v; 0 .. nV) if (topo.boundary[v]) active[v] = false;
+        if (lockCorner_) {
+            auto uses = new int[](nV);
+            foreach (f; subject.faces) if (f.length >= 3)
+                foreach (vid; f) if (vid < nV) ++uses[vid];
+            foreach (v; 0 .. nV) if (uses[v] == 1) active[v] = false;
         }
-
-        // `lockSharp`: pin verts on interior edges whose dihedral angle
-        // exceeds sharpAngleDeg_. The helper walks each interior half-edge
-        // ONCE (li < twin dedup), including the existing non-manifold rule,
-        // using the exact same 3-vertex-cross face-normal approximation.
         if (lockSharp_) {
-            // Resolve the effective threshold in DEGREES. A wire-supplied
-            // radians `sharpThreshold` (≥ 0) overrides the degrees field;
-            // otherwise use `sharpAngle`. The helper re-applies
-            // PI/180 internally, so converting radians→degrees here yields
-            // exactly cos(radians) — bit-identical to the reference's
-            // cos(sharpThreshold) sharp test.
-            import std.math : PI;
-            immutable float effSharpDeg = (sharpThresholdRad_ >= 0.0f)
-                ? sharpThresholdRad_ * cast(float)(180.0 / PI)
-                : sharpAngleDeg_;
-            auto sharpness = edgeSharpnessAtPositions(
-                *subject, effSharpDeg, sharpNormalSource);
-            foreach (ei, ref s; sharpness) {
-                if (!s.sharp) continue;
-                uint a = subject.edges[ei][0];
-                uint b = subject.edges[ei][1];
-                if (a < vmask.length) vmask[a] = false;
-                if (b < vmask.length) vmask[b] = false;
-            }
+            foreach (ei, sharp; sharpEdgesAtPositions(
+                    *subject, sharpThresholdDeg_, sharpNormalSource))
+                if (sharp) foreach (vid; subject.edges[ei])
+                    if (vid < nV) active[vid] = false;
         }
-
-        // `preserve` (Preserve Volume) — capture pre-smooth
-        // vertex normals as the average of incident face normals.
-        // The post-iter projection pass below uses these to slide
-        // each smoothed vert back onto its pre-smooth tangent plane.
-        Vec3[] vertNormal;
-        Vec3[] origPos;
-        if (preserve_) {
-            vertNormal.length = source.length;
-            foreach (i; 0 .. vertNormal.length) vertNormal[i] = Vec3(0, 0, 0);
-            foreach (fi, ref f; subject.faces) {
-                auto nf = faceNormal[fi];
-                foreach (vid; f) {
-                    if (vid >= vertNormal.length) continue;
-                    vertNormal[vid] = vertNormal[vid] + nf;
-                }
-            }
-            foreach (i; 0 .. vertNormal.length) {
-                float len = vertNormal[i].length;
-                vertNormal[i] = (len > 1e-9f)
-                    ? vertNormal[i] * (1.0f / len)
-                    : Vec3(0, 1, 0);
-            }
-            origPos = source.dup;
-        }
-
-        // `lockBound` / `lockCorner`: pin selected boundary
-        // verts before the Laplacian iteration. Both flags walk the
-        // same boundary half-edges (`loop.twin == uint.max`) — bound
-        // pins ALL endpoint verts, corner additionally filters by
-        // valence == 2 (a true open-mesh corner — sits on exactly
-        // two boundary edges + one face). Pre-compute valence once
-        // when corner is on; cheap O(edges) walk.
-        if (lockBound_ || lockCorner_) {
-            int[] valence;
-            if (lockCorner_) {
-                valence.length = source.length;
-                foreach (e; subject.edges) {
-                    if (e[0] < valence.length) ++valence[e[0]];
-                    if (e[1] < valence.length) ++valence[e[1]];
-                }
-            }
-            foreach (ref l; subject.loops) {
-                if (l.twin != uint.max) continue;
-                uint a = l.vert;
-                uint b = subject.loops[l.next].vert;
-                if (a < vmask.length
-                 && (lockBound_ || (lockCorner_ && valence[a] == 2)))
-                    vmask[a] = false;
-                if (b < vmask.length
-                 && (lockBound_ || (lockCorner_ && valence[b] == 2)))
-                    vmask[b] = false;
-            }
-        }
-
-        // Neighbour lists — CSR vert→vert adjacency (relation D, edge-based,
-        // both directions), shared with updateConnectMask.
-        // Per-vertex order is proven identical to the old inline
-        // `foreach (e; mesh.edges) { neighbors[e0]~=e1; neighbors[e1]~=e0; }`
-        // build (mesh.d Stage-0 parity unittest), which the float-sum
-        // averaging below depends on for bit-identical results.
-        const(size_t)[] adjOff;
-        const(uint)[]   adjNbrs;
-        subject.vertexAdjacencyCSR(adjOff, adjNbrs);
-
-        // Snapshot pre-apply positions of every vert we plan to touch.
-        // We touch ALL masked verts (even those without neighbors —
-        // their Laplacian contribution is zero, but we still snapshot
-        // them so revert can restore unconditionally).
-        uint[] touchedIdx;
-        Vec3[] touchedPrev;
-        touchedIdx.reserve(source.length);
-        touchedPrev.reserve(source.length);
-        foreach (i; 0 .. source.length) if (vmask[i]) {
-            touchedIdx  ~= cast(uint)i;
-            touchedPrev ~= source[i];
-        }
-
-        // Laplacian iteration. Each pass reads from a `prev` snapshot
-        // (so neighbour averaging sees the previous iteration's
-        // positions, not partially updated ones), then commits.
-        Vec3[] prev = source.dup;
-        Vec3[] cur  = source.dup;
-        foreach (_; 0 .. iterCapped) {
-            foreach (vi; 0 .. source.length) {
-                if (!vmask[vi]) continue;
-                auto nbrs = adjNbrs[adjOff[vi] .. adjOff[vi + 1]];
-                if (nbrs.length == 0) continue;
-                Vec3 sum = Vec3(0, 0, 0);
-                foreach (nb; nbrs) sum = sum + prev[nb];
-                Vec3 avg = sum * (1.0f / cast(float)nbrs.length);
-                cur[vi].x = prev[vi].x + strn_ * (avg.x - prev[vi].x);
-                cur[vi].y = prev[vi].y + strn_ * (avg.y - prev[vi].y);
-                cur[vi].z = prev[vi].z + strn_ * (avg.z - prev[vi].z);
-            }
-            // Promote `cur` → `prev` for the next iteration via swap;
-            // copying would alloc each pass at large mesh sizes.
-            auto tmp = prev; prev = cur; cur = tmp;
-        }
-        // After the loop, `prev` holds the final state (last swap).
-        //
-        // TASK 1903 L0-d3 — `mesh.vertices = prev;` USED TO BE HERE, and its
-        // retirement is what takes this file to `countRawPositionWrites == 0`.
-        // The two passes below now read and write `prev` instead of the live
-        // array, and ONE `ed.setVertexPositions` at the tail publishes the
-        // composed result. Byte-identical by construction: `prev` and `cur`
-        // both start as `source.dup` and are written only at masked
-        // indices, so at every swap their UNMASKED entries still hold the
-        // original values; `origPos` and `vertNormal` were captured before pass
-        // 1; and pass 2 reads its origin from `touchedPrev`, not from the live
-        // array. The per-index write also removes the ARRAY-IDENTITY change
-        // this line made — nothing holds a slice of `mesh.vertices` today, and
-        // the per-index form makes that irrelevant rather than merely true.
-
-        // Falloff blend: lerp each touched vert from its pre-smooth
-        // position toward the post-smooth position by per-vert weight.
-        // Same way the transform × falloff stage attenuates any
-        // deformation — weight 1.0 keeps the full smooth, weight
-        // 0.0 leaves the vert at its original. No-op when falloff is
-        // disabled. Task 0619: the empty `Viewport` that used to be declared
-        // here is gone — see jitter.d for why "cursorless" was wrong. The aim
-        // space arrives as a parameter. Falloff is applied BEFORE the
-        // preserve-volume pass so the tangent-plane projection sees the
-        // weighted result.
+        float[] weight;
         if (resultFalloff.enabled) {
-            foreach (i, vi; touchedIdx) {
-                if (vi >= prev.length) continue;
-                Vec3 sm = prev[vi];
-                Vec3 orig = touchedPrev[i];
-                // Evaluate at the ORIGINAL position — the falloff
-                // describes "which verts are affected based on input
-                // shape", not the moving target. The transform×falloff
-                // convention evaluates at the pre-smooth snapshot
-                // positions[].
-                float w = evaluateFalloff(resultFalloff, orig, cast(int)vi, aim);
-                prev[vi] = weightedLerp(orig, sm, w);
+            // Screen/Lasso are evaluated in the actual subject viewport.
+            const auto aim = aimSpace(subj.viewport, primaryModelSpace());
+            weight.length = nV;
+            foreach (v; 0 .. nV) if (active[v]) {
+                weight[v] = evaluateFalloff(resultFalloff, source[v], cast(int)v, aim);
+                if (!(weight[v] > 0.0f)) active[v] = false;
             }
         }
 
-        // `preserve` (Preserve Volume) projection pass — for
-        // every touched vert, remove the component of its motion
-        // that goes along its pre-smooth normal. The vert can slide
-        // tangentially (laterally on the surface) but can't pop in
-        // or out along the normal direction. Net effect on radially-
-        // symmetric meshes (e.g. cube smoothed toward centroid is
-        // pure normal-direction motion): preserve cancels everything
-        // → smooth no-op.
-        if (preserve_) {
-            foreach (vi; 0 .. prev.length) {
-                if (!vmask[vi]) continue;
-                Vec3 n  = vertNormal[vi];
-                Vec3 o  = origPos[vi];
-                Vec3 s  = prev[vi];
-                Vec3 d  = Vec3(s.x - o.x, s.y - o.y, s.z - o.z);
-                float dn = d.x * n.x + d.y * n.y + d.z * n.z;
-                // s' = s - (d · n) n  =  o + (d − (d · n) n)
-                prev[vi].x = s.x - dn * n.x;
-                prev[vi].y = s.y - dn * n.y;
-                prev[vi].z = s.z - dn * n.z;
+        const Vec3[] normal = vertexNormalsAtPositions(*subject, surfaceSource);
+        const double[] cScale = lockSharp_ ? null : boundaryScale(topo, normal);
+        const RelaxVec3[3][] surface =
+            preserve_ ? surfaceTriangles(*subject, surfaceSource) : null;
+
+        auto pos = new RelaxVec3[](nV);
+        foreach (v; 0 .. nV) pos[v] = RelaxVec3(source[v].x, source[v].y, source[v].z);
+        const double F = strn_ / 20.0;
+        if (relaxable(pos, topo, F)) {
+            auto work = RelaxScratch(nV, topo.nbrs.length);
+            foreach (i; 0 .. iters) {
+                relaxStep(pos, topo, F, active, cScale, work);
+                if (preserve_ && preserveProjectsAt(i, iters))
+                    foreach (v; 0 .. nV) if (active[v])
+                        projectOntoSurface(pos[v], normal[v], surface);
             }
         }
 
-        // ONE `SetPos` entry, from the PRE-OP image — task 1903 §2.1's ruling,
-        // and the argument is that it is byte-identical to the shipped revert
-        // BY CONSTRUCTION: the old revert was
-        // `vertices[touchedIdx] = touchedPrev` and this result's `before` IS
-        // `touchedPrev`. So nothing has to be
-        // argued about how the three passes compose. Per-pass recording (three
-        // entries) is also correct under LIFO, but it would write the live mesh
-        // three times and triple the log for no observable gain — the batch
-        // defers every `commitChange`, so no intermediate state is observable.
-        //
-        // `touchedIdx` is repeat-free by its own construction loop above (one
-        // append per masked index), so the single entry carries no duplicated
-        // index and its reverse is unambiguous.
-        // Reserve the maximum once, then retain only actual changes. A sparse
-        // result must not turn vertices whose final value equals baseline into
-        // an edit/history payload.
-        result.indices.reserve(touchedIdx.length);
-        result.before.reserve(touchedIdx.length);
-        result.after.reserve(touchedIdx.length);
-        foreach (k, vi; touchedIdx) {
-            if (prev[vi] == touchedPrev[k]) continue;
-            result.indices ~= vi;
-            result.before ~= touchedPrev[k];
-            result.after ~= prev[vi];
+        // ONE `SetPos` entry from the pre-op image (task 1903 §2.1); only
+        // vertices whose final value differs from the baseline are carried.
+        foreach (v; 0 .. nV) if (active[v]) {
+            Vec3 p = Vec3(cast(float)pos[v].x, cast(float)pos[v].y,
+                          cast(float)pos[v].z);
+            if (weight.length) p = weightedLerp(source[v], p, weight[v]);
+            if (p == source[v]) continue;
+            result.indices ~= cast(uint)v;
+            result.before ~= source[v];
+            result.after ~= p;
         }
         return true;
     }
@@ -465,75 +260,145 @@ class MeshSmooth : Command, Operator, IFalloffAware,
         ed.commitChange(MeshEditScope.Position);
     }
 
-    /// Narrow position-explicit derived-geometry seam for this evaluator.
-    /// Connectivity stays on the bound subject; coordinates never fall back
-    /// to the live preview in `Mesh.vertices`.
-    private static Vec3 faceNormalAtPositions(
-            const ref Mesh subject, uint fi, const(Vec3)[] positions) {
-        assert(positions.length == subject.vertices.length);
-        const uint[] f = subject.faces[fi];
-        if (f.length < 3) return Vec3(0, 1, 0);
-        const Vec3 n = cross(positions[f[1]] - positions[f[0]],
-                             positions[f[2]] - positions[f[0]]);
-        const float len = n.length;
-        return len > 1e-9f ? n * (1.0f / len) : Vec3(0, 1, 0);
+    /// The relax topology of the whole mesh: CSR edge neighbours, each slot
+    /// flagged OPEN when its edge has at most one face.
+    private static RelaxTopology relaxTopologyOf(Mesh* m) {
+        const(size_t)[] off;
+        const(uint)[]   nbrs;
+        m.vertexAdjacencyCSR(off, nbrs);
+        auto openTo = new bool[](nbrs.length);
+        foreach (v; 0 .. m.vertices.length)
+            foreach (k; off[v] .. off[v + 1]) {
+                const uint ei = m.edgeIndex(cast(uint)v, nbrs[k]);
+                if (ei == uint.max) continue;
+                size_t faces;
+                foreach (fi; m.facesAroundEdge(ei)) ++faces;
+                openTo[k] = faces <= 1;
+            }
+        return RelaxTopology(off, nbrs, openTo, deriveBoundary(off, openTo));
     }
 
-    private static EdgeSharpness[] edgeSharpnessAtPositions(
-            const ref Mesh subject, float thresholdDeg,
-            const(Vec3)[] positions) {
-        import std.math : acos, cos, PI;
-        assert(positions.length == subject.vertices.length);
+    /// Vertex normals: unit(Σ unit FIRST-CORNER polygon normals
+    /// (P1 − P0) × (P_last − P0)), computed in double, stored as float.
+    private static Vec3[] vertexNormalsAtPositions(const ref Mesh m,
+                                                   const(Vec3)[] pos) {
+        auto sum = new RelaxVec3[](pos.length);
+        foreach (f; m.faces) {
+            if (f.length < 3) continue;
+            const n = unitOrZero(crossD(d3(pos[f[1]]) - d3(pos[f[0]]),
+                                        d3(pos[f[$ - 1]]) - d3(pos[f[0]])));
+            foreach (vid; f) sum[vid] = sum[vid] + n;
+        }
+        auto normal = new Vec3[](pos.length);
+        foreach (v, s; sum) {
+            const u = unitOrZero(s);
+            normal[v] = Vec3(cast(float)u.x, cast(float)u.y, cast(float)u.z);
+        }
+        return normal;
+    }
 
-        auto result = new EdgeSharpness[](subject.edges.length);
+    /// The boundary scale c per vertex (see the class comment).
+    private static double[] boundaryScale(const ref RelaxTopology topo,
+                                          const(Vec3)[] normal) {
+        auto c = new double[](normal.length);
+        foreach (v; 0 .. normal.length) {
+            c[v] = 1.0;
+            const size_t lo = topo.offset[v], hi = topo.offset[v + 1];
+            if (!topo.boundary[v] || hi - lo <= 2) continue;
+            const nv = d3(normal[v]);
+            double sum = 0;
+            size_t n;
+            foreach (k; lo .. hi) if (topo.openTo[k]) {
+                const d = nv.dot(d3(normal[topo.nbrs[k]]));
+                sum += d < 0 ? -d : d;
+                ++n;
+            }
+            if (n >= 2) c[v] = (sum / n) * (sum / n);
+        }
+        return c;
+    }
+
+    /// The original surface as triangles (ear clipping per polygon).
+    private static RelaxVec3[3][] surfaceTriangles(const ref Mesh m,
+                                                   const(Vec3)[] pos) {
+        RelaxVec3[3][] tris;
+        Vec3[] ring;
+        foreach (f; m.faces) {
+            ring.length = 0;
+            foreach (vid; f) ring ~= pos[vid];
+            foreach (t; triangulatePolygonEarClip(ring)) {
+                RelaxVec3[3] tri = [d3(ring[t[0]]), d3(ring[t[1]]), d3(ring[t[2]])];
+                tris ~= tri;
+            }
+        }
+        return tris;
+    }
+
+    /// Move `p` along the line through it with direction −n to the nearest
+    /// (smallest |t|) hit on `surface`; no hit keeps `p`.
+    private static void projectOntoSurface(ref RelaxVec3 p, Vec3 n,
+                                           const(RelaxVec3[3])[] surface) {
+        const d = d3(n) * -1.0;
+        double bestT = double.infinity;
+        foreach (ref t; surface) {
+            const e1 = t[1] - t[0], e2 = t[2] - t[0];
+            const nt = crossD(e1, e2);
+            const den = nt.dot(d);
+            if (den == 0) continue;
+            const tt = nt.dot(t[0] - p) / den;
+            const q = p + d * tt;
+            const tol = -1e-12 * nt.dot(nt);
+            if (nt.dot(crossD(t[1] - t[0], q - t[0])) < tol ||
+                nt.dot(crossD(t[2] - t[1], q - t[1])) < tol ||
+                nt.dot(crossD(t[0] - t[2], q - t[2])) < tol) continue;
+            if ((tt < 0 ? -tt : tt) < (bestT < 0 ? -bestT : bestT)) bestT = tt;
+        }
+        if (bestT != double.infinity) p = p + d * bestT;
+    }
+
+    private static RelaxVec3 d3(Vec3 v) { return RelaxVec3(v.x, v.y, v.z); }
+
+    private static RelaxVec3 crossD(RelaxVec3 a, RelaxVec3 b) {
+        return RelaxVec3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z,
+                         a.x * b.y - a.y * b.x);
+    }
+
+    private static RelaxVec3 unitOrZero(RelaxVec3 v) {
+        const len = v.length();
+        return len > 0 ? v * (1.0 / len) : RelaxVec3(0, 0, 0);
+    }
+
+    /// lockSharp's edge classification: an interior edge whose two face
+    /// normals ((P1 − P0) × (P2 − P0)) dot below cos(threshold°), or any
+    /// non-manifold edge with two or more faces.
+    private static bool[] sharpEdgesAtPositions(const ref Mesh subject,
+            float thresholdDeg, const(Vec3)[] positions) {
+        import std.math : cos, PI;
         auto normals = new Vec3[](subject.faces.length);
-        foreach (fi; 0 .. subject.faces.length)
-            normals[fi] = faceNormalAtPositions(
-                subject, cast(uint)fi, positions);
-
+        foreach (fi, f; subject.faces) {
+            if (f.length < 3) { normals[fi] = Vec3(0, 1, 0); continue; }
+            const Vec3 n = cross(positions[f[1]] - positions[f[0]],
+                                 positions[f[2]] - positions[f[0]]);
+            const float len = n.length;
+            normals[fi] = len > 1e-9f ? n * (1.0f / len) : Vec3(0, 1, 0);
+        }
+        auto sharp = new bool[](subject.edges.length);
         const float cosThreshold = cos(thresholdDeg * (PI / 180.0f));
         foreach (li, ref loop; subject.loops) {
-            if (loop.twin == uint.max) continue;
-            if (cast(uint)li > loop.twin) continue;
-            if (li >= subject.loopEdge.length) continue;
+            if (loop.twin == uint.max || cast(uint)li > loop.twin ||
+                li >= subject.loopEdge.length) continue;
             const uint ei = subject.loopEdge[li];
-            if (ei >= result.length) continue;
-
-            const uint faceB = subject.loops[loop.twin].face;
-            float d = dot(normals[loop.face], normals[faceB]);
-            const float dc = d < -1.0f ? -1.0f : (d > 1.0f ? 1.0f : d);
-            result[ei].interior = true;
-            result[ei].angleDeg = acos(dc) * (180.0f / PI);
-            result[ei].sharp = d < cosThreshold;
-            result[ei].faceA = loop.face;
-            result[ei].faceB = faceB;
+            if (ei < sharp.length && dot(normals[loop.face],
+                    normals[subject.loops[loop.twin].face]) < cosThreshold)
+                sharp[ei] = true;
         }
-
-        foreach (ei; 0 .. result.length) {
+        foreach (ei; 0 .. sharp.length) {
             if (!subject.isEdgeNonManifold(cast(uint)ei)) continue;
-            uint[] incident;
-            foreach (fi; subject.facesAroundEdge(cast(uint)ei)) incident ~= fi;
-            if (incident.length < 2) continue;
-            float worstDot = 1.0f;
-            uint faceA = incident[0], faceB = incident[1];
-            foreach (i; 0 .. incident.length)
-                foreach (j; i + 1 .. incident.length) {
-                    const float d = dot(normals[incident[i]], normals[incident[j]]);
-                    if (d < worstDot) {
-                        worstDot = d;
-                        faceA = incident[i];
-                        faceB = incident[j];
-                    }
-                }
-            const float dc = worstDot < -1.0f ? -1.0f
-                           : (worstDot > 1.0f ? 1.0f : worstDot);
-            result[ei].interior = true;
-            result[ei].angleDeg = acos(dc) * (180.0f / PI);
-            result[ei].sharp = true;
-            result[ei].faceA = faceA;
-            result[ei].faceB = faceB;
+            size_t faces;
+            foreach (fi; subject.facesAroundEdge(cast(uint)ei)) ++faces;
+            if (faces >= 2) sharp[ei] = true;
         }
-        return result;
+        return sharp;
     }
 
     protected override void revertImpl() {

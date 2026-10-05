@@ -224,7 +224,7 @@ unittest { // lockSharp: baseline dihedral, preserve OFF, Lasso falloff
            liveAngle - baselineAngle > 20.0f, format(
         "lockSharp candidates must cross threshold first; baseline=%.9g° " ~
         "live=%.9g° threshold=%.9g°", baselineAngle, liveAngle, threshold));
-    setFloat(cmd, "sharpAngle", threshold);
+    setFloat(cmd, "sharpThreshold", threshold);
 
     SubjectPacket subj;
     VectorStack vts;
@@ -289,6 +289,7 @@ unittest { // bound subject identity and script no-op success
 
 unittest { // occupied-preview refire construction is observationally pure
     Mesh target = makeCube();
+    target.vertices[0].x += 0.3f;   // a regular cube is a fixed point of the relax (task 9484)
     target.buildLoops();
     const sessionBaseline = target.vertices.dup;
     View view = new View(0, 0, 800, 600);

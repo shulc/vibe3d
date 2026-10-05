@@ -178,6 +178,7 @@ tests.unit.commands.mesh.edge_slide_result_builder_test
 tests.unit.commands.mesh.jitter_result_builder_test
 tests.unit.commands.mesh.position_delta_test
 tests.unit.commands.mesh.remove_test
+tests.unit.commands.mesh.smooth_kernel_parity_test
 tests.unit.commands.mesh.smooth_result_builder_test
 tests.unit.commands.mesh.split_edge_provenance_test
 tests.unit.commands.mesh.surface_attr_test
