@@ -129,7 +129,8 @@ unittest // W1: the folded frames, the forwarders, the axis switch, the quantum
         // radial_array_tool.d: its own unrelated `axisUnit()` member (5); create_common.d: + the
         // centre box's locked axis in `snapMoverCentre` (task 9472)
         "axisUnit": "create_common.d:3 pen.d:4 radial_array_tool.d:5",
-        "primitivePlacementFrame": "arc.d:3 box.d:4 create_common.d:2 pen.d:2 "
+        // edge_extend.d: the work-plane symmetry plane mapped once more (task 9452)
+        "primitivePlacementFrame": "arc.d:3 box.d:4 create_common.d:2 edge_extend.d:2 pen.d:2 "
             ~ "poly_extrude.d:2 primitive_create_tool.d:4 slice_tool.d:4 sphere.d:2 transform.d:2 "
             ~ "vertex_place.d:3",
         "workplaneCursorPlaneHit": "box.d:6 create_common.d:1 pen.d:2 "
