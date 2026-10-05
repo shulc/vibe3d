@@ -139,10 +139,11 @@ unittest {
 // One resolve per motion event (task 9362 s3): a drag motion resolves only
 // the dragged point, never the hover point as well (the drag resolve would
 // overwrite it on the same event). A resolve is one `snapCursor` for the
-// user's snap (pipe snap stage enabled) plus one for the merge search when
-// `merge` is on, counted as `Cat.snapQuery` scopes: N motions 40 px apart on
-// an empty mesh (no target, no marker under the cursor) = 2N with merge on,
-// N with it off; the hover resolve restored during a drag doubles both. A
+// user's snap (pipe snap stage enabled) plus two for the merge search when
+// `merge` is on (its vertex and edge queries), counted as `Cat.snapQuery`
+// scopes: N motions 40 px apart on an empty mesh (no target, no marker under
+// the cursor) = 3N with merge on, N with it off; the hover resolve restored
+// during a drag adds N + 2N. A
 // motion under the drag threshold, still on the marker, resolves nothing.
 version (PerfProbe) unittest {
     import perf_probe : g_perf;
@@ -234,7 +235,7 @@ version (PerfProbe) unittest {
     const withMerge = dragQueries(200);
     *merge = false;
     const withoutMerge = dragQueries(120);
-    assert(withMerge == 8 && withoutMerge == 4,
+    assert(withMerge == 12 && withoutMerge == 4,
         format("pen: snap queries over 4 drag motions: %s with merge, %s without; "
-            ~ "expected 8 and 4 (one resolve per motion)", withMerge, withoutMerge));
+            ~ "expected 12 and 4 (one resolve per motion)", withMerge, withoutMerge));
 }
