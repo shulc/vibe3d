@@ -144,6 +144,29 @@ unittest // a collection that lands mid-read must not end the read
         "a GC collection during recv ended the read early: got `%s`", wire));
 }
 
+unittest // one response = headers plus exactly Content-Length body bytes
+{
+    import core.thread : Thread;
+    import core.time : msecs;
+    import std.socket : socketPair, SocketOption, SocketOptionLevel;
+
+    auto pair = socketPair();
+    scope(exit) { pair[0].close(); pair[1].close(); }
+    pair[0].setOption(SocketOptionLevel.SOCKET, SocketOption.RCVTIMEO, 5.seconds);
+    // The body arrives in a later segment than the header block.
+    pair[1].send("HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\n");
+    auto late = new Thread({
+        Thread.sleep(50.msecs);
+        pair[1].send("body");
+    });
+    late.start();
+    string wire;
+    receiveOneResponse(pair[0], wire);
+    late.join();
+    assert(wire == "HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nbody",
+        "9461 receiveOneResponse returned before the declared body: " ~ wire);
+}
+
 unittest // census: no unit-test client reads a socket except through the helper
 {
     import std.algorithm : canFind, filter;

@@ -115,16 +115,19 @@ mixin template HttpServerTransport()
         serverThread = new Thread({
             import std.format : format;
             try {
-                serverSocket = new TcpSocket();
-                serverSocket.setOption(SocketOptionLevel.SOCKET, SocketOption.REUSEADDR, 1);
-                serverSocket.bind(new InternetAddress(port));
-                serverSocket.listen(10);
+                // Only this thread closes the listener and the parked
+                // connections: stop() closing them under a running select
+                // would hand SocketSet a dead handle.
+                auto listener = new TcpSocket();
+                scope (exit) { closeIdleClients(); listener.close(); }
+                serverSocket = listener;
+                listener.setOption(SocketOptionLevel.SOCKET, SocketOption.REUSEADDR, 1);
+                listener.bind(new InternetAddress(port));
+                listener.listen(10);
 
                 logInfo("http", format("HTTP server started on port %d", port));
                 atomicStore(isRunning, true);
 
-                scope (exit) closeIdleClients();
-                auto listener = serverSocket;  // stop() nulls the field
                 auto readable = new SocketSet();
                 while (atomicLoad(isRunning)) {
                     try {
@@ -155,7 +158,7 @@ mixin template HttpServerTransport()
         foreach (bridge; bridges) bridge.notifyStopping();
         atomicStore(isRunning, false);
         if (serverSocket !is null) {
-            // Connect to ourselves to unblock the accept() call in serverThread
+            // Connect to ourselves to wake the select() in serverThread
             try {
                 Socket unblockSocket = new TcpSocket();
                 unblockSocket.connect(new InternetAddress("127.0.0.1", port));
@@ -163,14 +166,12 @@ mixin template HttpServerTransport()
             } catch (Exception e) {
                 // Ignore connection errors during shutdown
             }
-
-            serverSocket.close();
-            serverSocket = null;
         }
 
         if (serverThread !is null && serverThread.isRunning) {
             serverThread.join();
         }
+        serverSocket = null;
 
         atomicStore(tickThreadIdentity_, 0);
 
@@ -290,7 +291,6 @@ mixin template HttpServerTransport()
         readable.add(listener);
         foreach (c; idleClients_) readable.add(c);
         immutable n = Socket.select(readable, null, null, 1.seconds);
-        // stop() clears the flag before it closes the listener.
         if (!atomicLoad(isRunning)) return;
         if (n > 0) {
             foreach (c; idleClients_.dup) {
@@ -480,7 +480,7 @@ mixin template HttpServerTransport()
             // fine, their request just never came back), so it has to be
             // audible here or nowhere.
             if (abandoned.length) reportAbandoned(peer, startedAt, abandoned);
-            if (keepOpen && atomicLoad(isRunning)) parkIdleClient(client);
+            if (keepOpen) parkIdleClient(client);  // closed at loop exit
             else client.close();
         }
     }
