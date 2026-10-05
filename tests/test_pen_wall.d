@@ -26,7 +26,7 @@ import http_client : getJson, postJson;
 import pen_rig_helpers;
 import std.format : format;
 import std.json : JSONType, JSONValue, parseJSON;
-import std.math : abs;
+import std.math : abs, isFinite;
 import std.process : environment;
 
 void main() {}
@@ -87,6 +87,10 @@ private immutable Cell[] kCells = [
     Cell("D6_offset_negative", "inner", [-0.1]),
     Cell("D6b_offset_negative_after_positive", "inner", [0.1, -0.1]),
     Cell("D6c_offset_zero", "inner", [0]),
+    // D7 cannot see a flip COMPUTED for the wall instead of zeroed (its stroke
+    // decides 0 either way, as the D1 strokes do); the witnesses are the cells
+    // whose first three clicks decide 1 and must read 0: the three D2 `_cw`,
+    // D1x and D4 (measured by that mutant over the whole table).
     Cell("D7_facing_flag_set_before_stroke", "inner", [0.1], false, false, false, false, true),
     Cell("D8_open_inner_bottom_view", "inner", [0.1], false, false, false, true),
 ];
@@ -148,6 +152,32 @@ private void rig(in Cell c, Vec3[] pts) {
     penCommand("tool.attr pen flip " ~ (c.flip1 ? "true" : "false"));
 }
 private void drop() { penCommand("tool.set pen off"); }
+
+/// Ours-only (gap row 569, not captured): the last point typed onto the one
+/// before it (a zero-length segment) commits a wall whose every component is
+/// finite — a NaN is published as null and reads NaN here.
+private string[] coincident(JSONValue cells) {
+    enum id = "coincident_last_point";
+    const c = kCells[2];                        // D1_open_inner_ccw: 5 clicks
+    auto pts = clicks(cells, c);
+    rig(c, pts);
+    clickWorld(pts[0 .. 4]);
+    const x = attr("posX"), y = attr("posY"), z = attr("posZ");
+    clickWorld(pts[4]);
+    penAttr("posX", x);
+    penAttr("posY", y);
+    penAttr("posZ", z);
+    drop();
+    auto j = getJson("/api/model");
+    string[] fails;
+    if (j["vertices"].array.length != 10 || j["faces"].array.length != 4)
+        fails ~= format("%s: %s vertices, %s faces; expected 10, 4", id,
+                        j["vertices"].array.length, j["faces"].array.length);
+    foreach (i, v; verts(j["vertices"]))
+        if (!(isFinite(v.x) && isFinite(v.y) && isFinite(v.z)))
+            fails ~= format("%s: v%s (%s, %s, %s) is not finite", id, i, v.x, v.y, v.z);
+    return fails;
+}
 
 /// The mesh against the cell's `expected` (counts and rings exactly, positions
 /// to 1e-4); null when it matches.
@@ -223,13 +253,18 @@ unittest {
         ++ran;
     }
 
+    if (!only.length || only == "coincident_last_point") {
+        fails ~= coincident(cells);
+        ++ran;
+    }
+
     // Leave the remembered values as found.
     penCommand("tool.set pen on");
     penCommand("tool.attr pen wall off");
     penAttr("offset", 0);
     penCommand("tool.attr pen flip false");
     drop();
-    assert(ran == (only.length ? 1 : 22), format("ran %s cells, pinned 22 (1 under %s)",
+    assert(ran == (only.length ? 1 : 23), format("ran %s cells, pinned 23 (1 under %s)",
                                                  ran, only));
     assert(fails.length == 0, format("%s failure(s): %-(%s | %)", fails.length, fails));
 }

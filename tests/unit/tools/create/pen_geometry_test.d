@@ -567,7 +567,8 @@ unittest // walls outside the captured strokes (S9 gap rows): no NaN, no read pa
         assert(isFinite(v.x) && isFinite(v.y) && isFinite(v.z), "U-turn wall: a NaN vertex");
     assert(turn.vertices[2] == Vec3(1, 1, -0.5f), format("U-turn wall: the middle L %s, "
         ~ "expected p + w·l_in (1, 1, -0.5)", turn.vertices[2]));
-    // `close` on 2 points closes nothing (as lines: from 3 points): one quad.
+    // `close` on 2 points closes nothing (as lines: from 3 points): one quad
+    // (gap row 570, not captured).
     Mesh two;
     appendPenGeometry(two, PenStroke.of(onY1([0f, 0f], [1f, 0f]), kIdentity, p,
         wallNormal: up), PenBuildPurpose.Commit);
@@ -593,6 +594,33 @@ unittest // walls outside the captured strokes (S9 gap rows): no NaN, no read pa
         flipped, wallNormal: up), PenBuildPurpose.Commit);
     assert(a.faces.length == 2 && a.faces == b.faces && a.vertices == b.vertices,
         format("flip changed the wall: %s vs %s", a.faces, b.faces));
+    // A zero-length segment (coincident points: a typed position edit) takes
+    // the other neighbour's l, so every pair stays finite (gap row 569): the
+    // doubled point's first pair rides +x (l = -z), its second +z (l = +x).
+    Mesh dup;
+    appendPenGeometry(dup, PenStroke.of(onY1([0f, 0f], [1f, 0f], [1f, 0f], [1f, 1f]),
+        kIdentity, open, wallNormal: up), PenBuildPurpose.Commit);
+    Mesh same;
+    appendPenGeometry(same, PenStroke.of(onY1([0f, 0f], [0f, 0f]), kIdentity, open,
+        wallNormal: up), PenBuildPurpose.Commit);
+    assert(dup.vertices.length == 8 && same.vertices.length == 4, format(
+        "coincident walls: %s and %s vertices", dup.vertices.length, same.vertices.length));
+    foreach (v; dup.vertices ~ same.vertices)
+        assert(isFinite(v.x) && isFinite(v.y) && isFinite(v.z),
+            format("coincident wall: a non-finite vertex %s", v));
+    assert(dup.vertices[2] == Vec3(1, 1, -0.5f) && dup.vertices[4] == Vec3(1.5f, 1, 0),
+        format("coincident wall: the doubled point's L %s / %s, expected (1, 1, -0.5) / "
+            ~ "(1.5, 1, 0)", dup.vertices[2], dup.vertices[4]));
+    // A wall of positive offset commits from 2 points whatever the type and
+    // Make Quads: the builder's own n < 2 (a 1-point vertices wall built an
+    // empty row).
+    size_t[] wallMins;
+    foreach (t; [PenType.polygons, PenType.lines, PenType.vertices, PenType.subdiv])
+        foreach (q; [false, true]) {
+            PenParams w = p; w.type = t; w.makeQuads = q;
+            wallMins ~= penDropMinimum(w);
+        }
+    assert(wallMins == [2, 2, 2, 2, 2, 2, 2, 2], format("wall drop minima %s", wallMins));
     // An empty wall never commits; any positive offset or wall off commits from 2.
     PenParams empty = p; empty.offset = 0;
     PenParams off = empty; off.wall = PenWall.off;

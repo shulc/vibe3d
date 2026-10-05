@@ -121,11 +121,12 @@ size_t penEnterMinimum(in PenParams p) nothrow @nogc {
          : penFaceMinimum(p.makeQuads);
 }
 /// Fewest points a tool drop commits: a polygon edge (fixture row E5pen2) or
-/// the strip's first quad; lines 2, vertices 1 (S8). A wall of offset 0 builds
-/// nothing, so no stroke of it commits — no history row (S9, pen_wall.json
-/// D6c); every commit path (Enter included) passes this minimum.
+/// the strip's first quad; lines 2, vertices 1 (S8). A wall owns its minimum,
+/// the builder's `n < 2 || !(offset > 0)`: 2 points of any type, and offset 0
+/// never commits — no history row (S9, pen_wall.json D6c); every commit path
+/// (Enter included) passes this minimum.
 size_t penDropMinimum(in PenParams p) nothrow @nogc {
-    return p.wall != PenWall.off && !(p.offset > 0) ? size_t.max
+    return p.wall != PenWall.off ? (p.offset > 0 ? 2 : size_t.max)
          : p.type == PenType.vertices ? 1
          : p.makeQuads && p.type != PenType.lines ? 4 : 2;
 }
@@ -205,23 +206,26 @@ uint[] penRingOrder(const(Vec3)[] v, bool reverse) {
 /// the camera: no ring routine, no flip. Under symmetry the mirror strip is
 /// the reflection of the built pairs listed [m(R_i), m(L_i)], same template.
 /// Offset 0 or < 2 points builds nothing; links do not apply. A U-turn
-/// (1 + l_in·l_out ≈ 0, not captured) takes l_in.
+/// (1 + l_in·l_out ≈ 0, not captured) takes l_in; a zero-length segment
+/// (coincident points, not captured: gap row 569) has l = 0, so its points
+/// take the other neighbour's l.
 void appendPenWall(ref Mesh dst, in PenStroke s) {
     const n = s.points.length;
     if (n < 2 || !(s.offset > 0)) return;   // penDropMinimum agrees: no commit
     const bool closed = s.close && n >= 3;
     auto p = new Vec3[n];
     foreach (i, q; s.points) p[i] = transformPoint(s.toWorld, q);
-    Vec3 left(size_t a, size_t b) { return normalize(cross(s.wallNormal, p[b] - p[a])); }
+    Vec3 left(size_t a, size_t b) {
+        const v = cross(s.wallNormal, p[b] - p[a]);
+        return v.length > 0 ? v / v.length : Vec3(0, 0, 0);
+    }
     auto L = new Vec3[n], R = new Vec3[n];
     foreach (i; 0 .. n) {
-        const bool hasIn = i > 0 || closed, hasOut = i + 1 < n || closed;
-        Vec3 m = hasIn ? left((i + n - 1) % n, i) : left(i, i + 1);
-        if (hasIn && hasOut) {
-            const lOut = left(i, (i + 1) % n), c = 1 + dot(m, lOut);
-            if (c > 1e-6f) m = (m + lOut) / c;
-        }
-        const w = s.offset * m;
+        // An open end has no l on its missing side: the mitre is the one l.
+        const lIn = i > 0 || closed ? left((i + n - 1) % n, i) : Vec3(0, 0, 0);
+        const lOut = i + 1 < n || closed ? left(i, (i + 1) % n) : Vec3(0, 0, 0);
+        const c = 1 + dot(lIn, lOut);
+        const w = s.offset * (c > 1e-6f ? (lIn + lOut) / c : lIn);
         L[i] = s.wall == PenWall.outer ? p[i] : p[i] + w;
         R[i] = s.wall == PenWall.inner ? p[i] : p[i] - w;
     }
