@@ -94,7 +94,7 @@ private void row(T)(EditMode mode, void function(ref Mesh) pick,
     auto pt = make(prep);
     pt.seedPreparedParamForTest(prep.mesh, true);
     foreach (i, n; names) poke(pt, n, values[i]);
-    auto image = pt.buildPreparedParamUpdate(prep.mesh);
+    auto image = pt.buildPreparedParamUpdate(names[$ - 1], prep.mesh);
     scope(exit) image.clear();
     assert(image.applies, name ~ ": the prepared image did not apply");
 
