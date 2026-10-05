@@ -530,11 +530,6 @@ public:
     version(unittest) final bool preparedEmbeddedMoveInstalledForTest() {
         return xfrm.moveBank().preparedProductActivationForTest();
     }
-    version(unittest) final bool preparedBanksActivatedForTest() {
-        return xfrm.moveBank().preparedActivationForTest() &&
-            xfrm.rotateBank().preparedActivationForTest() &&
-            xfrm.scaleBank().preparedActivationForTest();
-    }
     version(unittest) final bool preparedEmbeddedInputsForTest() const nothrow @nogc {
         return xfrm.preparedBankInputsForTest();
     }
@@ -553,6 +548,11 @@ public:
     version(unittest) {
         final void mutatePreparedParamForTest(float value)
                 nothrow @nogc { shift_ = value; }
+        final bool preparedBanksActivatedForTest() {
+            return xfrm.moveBank().preparedActivationForTest() &&
+                xfrm.rotateBank().preparedActivationForTest() &&
+                xfrm.scaleBank().preparedActivationForTest();
+        }
         // A unit rig with no viewport cannot press: start the run as the
         // first press would, so a panel edit rebuilds (gap 220's guard).
         final void startRunForTest() nothrow @nogc { opOpen_ = true; }
