@@ -4960,7 +4960,7 @@ def loop_slice_activation_gate(owner, context, tool):
         "!image_.before.matches(*source_)" in owner and
         "target_.installPreparedActivation(image_); consume();" in owner and
         "image_.clear(); target_ = null; source_ = null;" in owner and
-        "image.count = count_ < 1 ? 1 : count_;" in builder and
+        "image.count = clamp(count_, 1, MAX_LOOP_SLICE_COUNT);" in builder and
         "image.positions = fittedPositions(positions_, image.count);" in builder and
         # The stored list is taken as it is: no Mode law at activation.
         "Mode." not in builder and "applyModeLaw" not in builder and
@@ -5003,7 +5003,7 @@ for target, old, new, label in (
     ("owner", "target_.installPreparedActivation(image_);", "", "drop install"),
     ("tool", "image.positions = fittedPositions(positions_, image.count);",
      "positions_ = []; image.positions = fittedPositions(positions_, image.count);", "write live during prepare"),
-    ("tool", "image.count = count_ < 1 ? 1 : count_;", "image.count = count_;", "drop count lower bound"),
+    ("tool", "image.count = clamp(count_, 1, MAX_LOOP_SLICE_COUNT);", "image.count = count_;", "drop count bounds"),
     ("tool", "image.positions = fittedPositions(positions_, image.count);",
      "image.positions = positions_.dup;", "drop fit"),
     ("tool", "image.positionProxy = image.positions[0];",
