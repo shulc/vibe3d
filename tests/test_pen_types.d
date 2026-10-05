@@ -302,6 +302,23 @@ unittest {
             fails ~= selectionIs(cell, exp);
         }
 
+    // select-new-switch-drop: the polygon-mode selectNew row ended by a tool
+    // SWITCH (the prepared drop image builds the commit, the selection mode
+    // read at its prepare) selects as the drop does.
+    if (want("select-new-switch-drop")) {
+        auto exp = types["select_new_1_polygon_mode"]["expected"];
+        auto all = verts(exp["vertices"]);
+        rig("polygon", all[0 .. 3], [[0L, 1, 2]]);
+        penCommand(`{"id":"mesh.select","params":{"mode":"polygons","indices":[0]}}`);
+        arm();
+        clickWorld(clicksOf(types["select_new_1_polygon_mode"]));
+        penCommand("tool.set move on");
+        penCommand("tool.set move off");
+        ++ran;
+        fails ~= meshIs("select-new-switch-drop", exp);
+        fails ~= selectionIs("select-new-switch-drop", exp);
+    }
+
     // ===== must turn: Backspace = the global delete (fixture `backspace`) ====
     // bs-scene-selectnew1: the stroke ends (committed, selected), the delete
     // removes it; T stays; the pen stays armed; the next click a new stroke
@@ -437,6 +454,6 @@ unittest {
         fails ~= selectionIs("ui-invert-one-click", exp);
     }
 
-    assert(only.length || ran == 23, format("cells ran %s, expected 23", ran));
+    assert(only.length || ran == 24, format("cells ran %s, expected 24", ran));
     assert(fails.length == 0, "pen types / selectNew / UI commands: " ~ fails.join(" | "));
 }
