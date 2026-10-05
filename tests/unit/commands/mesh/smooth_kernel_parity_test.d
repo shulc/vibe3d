@@ -218,3 +218,69 @@ unittest { // a non-finite strength is refused by the kernel: nothing moves
     setParam(cmd, "strn", 0.5);   // control: the same rig moves at a finite strength
     assert(smoothed(m, EditMode.Vertices, cmd) != before, "control: finite strength moves");
 }
+
+unittest { // a regular cube is a fixed point of the law: the builder result is EMPTY
+    import mesh : makeCube;
+    Mesh m = makeCube();
+    View cv = new View(0, 0, 800, 600);
+    auto cmd = new MeshSmooth(&m, cv, EditMode.Vertices);
+    setParam(cmd, "strn", 1.0);
+    setParam(cmd, "iter", 3);
+    SubjectPacket subj;
+    subj.mesh = &m;
+    subj.editMode = EditMode.Vertices;
+    subj.viewport = cv.viewport();
+    VectorStack vts;
+    vts.put(&subj);
+    VertexPositionResult r;
+    assert(cmd.buildVertexPositionResult(m.vertices, vts, r));
+    assert(r.empty, format("a cube smooth carried %d unchanged vertices", r.indices.length));
+}
+
+// Lock rules on shapes the capture did not drive, pinned as ours.
+private Mesh fan() {   // three quads on the spine (0,1): a non-manifold edge
+    Mesh m;
+    m.vertices = [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 1, 0), Vec3(0, 1, 0),
+                  Vec3(1, -1, 0), Vec3(0, -1, 0), Vec3(1, 0, 1), Vec3(0, 0, 1)];
+    m.faces = [[0u, 1u, 2u, 3u], [1u, 0u, 5u, 4u], [0u, 1u, 6u, 7u]];
+    m.rebuildEdgesFromFaces();
+    m.buildLoops();
+    m.resetSelection();
+    return m;
+}
+
+private Vec3[] runLocks(ref Mesh m, bool lockCorner, bool lockSharp) {
+    View cv = new View(0, 0, 800, 600);
+    auto cmd = new MeshSmooth(&m, cv, EditMode.Vertices);
+    setParam(cmd, "strn", 1.0);
+    setParam(cmd, "iter", 2);
+    setParam(cmd, "lockCorner", lockCorner);
+    setParam(cmd, "lockSharp", lockSharp);
+    setParam(cmd, "sharpThreshold", 180);
+    return smoothed(m, EditMode.Vertices, cmd);
+}
+
+unittest { // lockSharp: a non-manifold edge is sharp at any threshold
+    Mesh m = fan();
+    const before = m.vertices.dup;
+    auto free = runLocks(m, false, false);
+    assert(free[0] != before[0] && free[1] != before[1], "control: the spine moves unlocked");
+    auto locked = runLocks(m, false, true);
+    assert(locked[0] == before[0] && locked[1] == before[1],
+        "lockSharp must pin both ends of the three-face spine");
+    assert(locked[3] != before[3], "control: a rim vertex still moves");
+}
+
+unittest { // lockCorner counts polygons of >= 3 sides: a two-corner polygon on
+           // a quad's edge leaves its ends used by ONE polygon, so still locked
+    Mesh m;
+    m.vertices = [Vec3(0, 0, 0), Vec3(1, 0.2f, 0), Vec3(1.3f, 1, 0.1f), Vec3(0, 1, 0)];
+    m.faces = [[0u, 1u, 2u, 3u], [0u, 1u]];
+    m.rebuildEdgesFromFaces();
+    m.buildLoops();
+    m.resetSelection();
+    const before = m.vertices.dup;
+    assert(runLocks(m, false, false) != before, "control: the quad moves unlocked");
+    assert(runLocks(m, true, false) == before,
+        "lockCorner must pin every vertex used by one polygon of >= 3 sides");
+}

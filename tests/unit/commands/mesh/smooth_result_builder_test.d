@@ -134,6 +134,31 @@ private void projectedBounds(const(Vec3)[] pos, ref const AimViewport aim,
     }
 }
 
+/// The same command on a stand that holds NO preview: a live-position read
+/// anywhere in the builder (not only at the seam's parameters) makes the
+/// occupied subject's result differ from this one.
+private void assertMatchesCleanSubject(const(Vec3)[] baseline,
+        ref const VertexPositionResult actual, View view, FalloffPacket* falloff,
+        float strn, int iter, bool preserve, bool lockSharp, float threshold) {
+    Mesh clean = openAsymmetricStand();
+    assert(clean.vertices == baseline, "clean stand must hold the baseline");
+    auto cmd = new MeshSmooth(&clean, view, EditMode.Vertices);
+    setFloat(cmd, "strn", strn);
+    setInt(cmd, "iter", iter);
+    setBool(cmd, "preserve", preserve);
+    setBool(cmd, "lockSharp", lockSharp);
+    if (lockSharp) setFloat(cmd, "sharpThreshold", threshold);
+    SubjectPacket subj;
+    VectorStack vts;
+    putSubject(vts, subj, &clean, view);
+    vts.put(falloff);
+    VertexPositionResult cleanResult;
+    assert(cmd.buildVertexPositionResult(clean.vertices, vts, cleanResult));
+    assert(fullResult(baseline, actual) == fullResult(baseline, cleanResult),
+        "Smooth read the live preview: the occupied subject's result differs "
+        ~ "from a clean subject's");
+}
+
 unittest { // preserve: baseline tangent normals, lockSharp OFF, Screen falloff
     auto savedModelSpace = primaryModelSpaceResolver;
     scope(exit) primaryModelSpaceResolver = savedModelSpace;
@@ -197,6 +222,7 @@ unittest { // preserve: baseline tangent normals, lockSharp OFF, Screen falloff
     assert(fullResult(baseline, actual) == fullResult(baseline, expected), format(
         "Smooth preserve read live tangent normals; candidate delta %.9g",
         candidateDelta));
+    assertMatchesCleanSubject(baseline, actual, view, &screen, 0.73f, 4, true, false, 0.0f);
     assert(subject.vertices == live,
         "pure preserve result construction changed the occupied live preview");
 }
@@ -261,6 +287,7 @@ unittest { // lockSharp: baseline dihedral, preserve OFF, Lasso falloff
         "Smooth lockSharp read live dihedral classification; baseline=%.9g° " ~
         "live=%.9g° threshold=%.9g° candidate delta=%.9g",
         baselineAngle, liveAngle, threshold, candidateDelta));
+    assertMatchesCleanSubject(baseline, actual, view, &lasso, 0.73f, 4, false, true, threshold);
     assert(subject.vertices == live,
         "pure lockSharp result construction changed the occupied live preview");
 }

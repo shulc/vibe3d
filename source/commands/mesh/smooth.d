@@ -343,9 +343,9 @@ class MeshSmooth : Command, Operator, IFalloffAware,
         foreach (ref t; surface) {
             const e1 = t[1] - t[0], e2 = t[2] - t[0];
             const nt = crossD(e1, e2);
-            const den = nt.dot(d);
-            if (den == 0) continue;
-            const tt = nt.dot(t[0] - p) / den;
+            // A triangle parallel to the line gives tt = ±inf or NaN, and
+            // every comparison below then rejects it.
+            const tt = nt.dot(t[0] - p) / nt.dot(d);
             const q = p + d * tt;
             const tol = -1e-12 * nt.dot(nt);
             if (nt.dot(crossD(t[1] - t[0], q - t[0])) < tol ||

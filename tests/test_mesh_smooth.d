@@ -303,18 +303,20 @@ unittest { // lockBound + lockCorner together is equivalent to lockBound
 
 // lockSharp pins both ends of an interior edge whose face normals dot below
 // cos(sharpThreshold), the threshold in DEGREES (K-F3s, cell F3S_LOCKS). The
-// perturbed cube's dihedral deviations all lie between 45° and 115°.
+// perturbed cube's face-normal deviations are 43°, 73°, 90° (x8), 107°, 134°:
+// every vertex has an edge above 60°; above 115° there is one edge.
 
-unittest { // sharpThreshold 45 → every edge is sharp → all verts pinned
+unittest { // sharpThreshold 60 → every edge is sharp → all verts pinned
+           // (60 read as radians would lock nothing: cos 60 rad = -0.95)
     perturbed();
     auto before = dumpVerts();
-    cmd("mesh.smooth strn:1 iter:5 lockSharp:true sharpThreshold:45");
+    cmd("mesh.smooth strn:1 iter:5 lockSharp:true sharpThreshold:60");
     auto after = dumpVerts();
     assert(before.length == after.length);
     foreach (i; 0 .. before.length)
         foreach (c; 0 .. 3)
             assert(approxEq(before[i][c], after[i][c]),
-                "lockSharp 45°: every edge deviates more than 45°, all verts "
+                "lockSharp 60°: every vertex has an edge above 60°, all verts "
                 ~ "should be pinned (no-op); v[" ~ i.to!string ~ "][" ~ c.to!string ~ "] "
                 ~ "before=" ~ before[i][c].to!string
                 ~ " after="  ~ after[i][c].to!string);
