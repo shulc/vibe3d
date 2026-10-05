@@ -549,3 +549,40 @@ unittest
     foreach (i; 0 .. pv.vertices.length) any += pv.isVertexSelected(i);
     assert(any == 0, "a preview selected its vertices");
 }
+
+unittest // walls outside the captured strokes (S9 gap rows): no NaN, no read past the stroke
+{
+    import std.math : isFinite;
+    PenParams p; p.wall = PenWall.inner; p.offset = 0.5f; p.selectNew = false;
+    p.close = true;
+    const up = Vec3(0, 1, 0);
+    // A U-turn (1 + l_in·l_out = 0) takes l_in: the middle pair is p + w·l_in.
+    Mesh turn;
+    PenParams open = p; open.close = false;
+    appendPenGeometry(turn, PenStroke.of(onY1([0f, 0f], [1f, 0f], [0f, 0f]), kIdentity,
+        open, wallNormal: up), PenBuildPurpose.Commit);
+    assert(turn.vertices.length == 6 && turn.faces.length == 2,
+        format("U-turn wall: %s vertices, %s faces", turn.vertices.length, turn.faces.length));
+    foreach (v; turn.vertices)
+        assert(isFinite(v.x) && isFinite(v.y) && isFinite(v.z), "U-turn wall: a NaN vertex");
+    assert(turn.vertices[2] == Vec3(1, 1, -0.5f), format("U-turn wall: the middle L %s, "
+        ~ "expected p + w·l_in (1, 1, -0.5)", turn.vertices[2]));
+    // `close` on 2 points closes nothing (as lines: from 3 points): one quad.
+    Mesh two;
+    appendPenGeometry(two, PenStroke.of(onY1([0f, 0f], [1f, 0f]), kIdentity, p,
+        wallNormal: up), PenBuildPurpose.Commit);
+    assert(two.vertices.length == 4 && two.faces.length == 1 && two.faces[0] == [0u, 1, 3, 2],
+        format("2-point closed wall: %s vertices, faces %s", two.vertices.length, two.faces));
+    // One point builds nothing (the preview of the first click).
+    Mesh one;
+    appendPenGeometry(one, PenStroke.of(onY1([0f, 0f]), kIdentity, p, wallNormal: up),
+        PenBuildPurpose.Preview);
+    assert(one.vertices.length == 0 && one.faces.length == 0, "1-point wall built geometry");
+    // An empty wall never commits; any positive offset or wall off commits from 2.
+    PenParams empty = p; empty.offset = 0;
+    PenParams off = empty; off.wall = PenWall.off;
+    assert(penDropMinimum(empty) == size_t.max && penEnterMinimum(empty) == size_t.max &&
+        penDropMinimum(p) == 2 && penDropMinimum(off) == 2 && penEnterMinimum(off) == 3,
+        format("commit minima: empty %s / %s, wall %s, off %s / %s", penDropMinimum(empty),
+            penEnterMinimum(empty), penDropMinimum(p), penDropMinimum(off), penEnterMinimum(off)));
+}
