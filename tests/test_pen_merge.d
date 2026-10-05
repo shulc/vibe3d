@@ -31,8 +31,10 @@
 //  - half-pixel: the edge-snapped point projects to x.5 px; a vertex lying on
 //    the edge 2.6 px from it on the side away from the rounded pixel links
 //    (float distance 2.6 <= 2.85; from the rounded pixel it is 3.1).
-//  - resync: a history undo under a live linked stroke removes the linked
-//    vertex; the link must not outlive it (the next commit is 3 own vertices).
+//  - F2 / F2-undo-restore / F2-bump-then-link: links are edited-mesh indices,
+//    valid only on the mesh they were made on (a script history.undo removes
+//    the linked vertex; an in-stroke Ctrl+Z restores links with their key; a
+//    subpatch toggle bumps the topology counter with counts unchanged).
 //  - link-undo: an in-stroke Ctrl+Z after dragging a linked point away restores
 //    the point AND its link.
 // A background slot can never link (the merge admits slot 0 only): no captured
@@ -274,26 +276,50 @@ unittest {
         drop(); ++ran;
         fails ~= fixture("scene_typed_linked", c["scene_typed_linked"]["expected"]);
     }
-    // History undo under a live linked stroke: the link does not outlive T.
+    // F2: a link made AFTER a structure-silent topology bump (subpatch toggle:
+    // counts unchanged) is kept; the bump drops only older links.
     {
         rig(f0, 440);
         clickWorld(p(0, 0.2), p(0.5, 0.2), p(0.25, -0.3));
         enter();
-        clickWorld(p(0, 0.2));
-        auto r = postJson("/api/command", "history.undo");
-        assert(r["status"].str == "ok", "resync: history.undo failed: " ~ r.toString);
-        const live = penAttrValue("points"), left = model().v.length;
-        if (live != 1 || left != 0)
-            fails ~= format("resync: rig premise, after the undo the stroke has %s "
-                ~ "points and the mesh %s vertices; expected 1 and 0", live, left);
-        clickWorld(kFar[0], kFar[1]);
+        clickWorld(kFar[0]);
+        const before = penAttrValue("points");
+        auto r = postJson("/api/command", "mesh.subpatch_toggle");
+        assert(r["status"].str == "ok", "F2-bump-then-link: subpatch toggle failed: " ~ r.toString);
+        const after = penAttrValue("points");
+        if (before != 1 || after != 1)
+            fails ~= format("F2-bump-then-link: rig premise, the stroke has %s points "
+                ~ "before the toggle and %s after; expected 1 and 1", before, after);
+        clickNear(p(0, 0.2), 6, 0);
+        clickWorld(kFar[1]);
         enter(); ++ran;
         auto m = model();
-        bool inRange = m.f.length == 1;
-        foreach (f; m.f) foreach (i; f) inRange &= i >= 0 && i < m.v.length;
-        if (!(m.v.length == 3 && inRange))
-            fails ~= format("resync: %s vertices, faces %s; expected 3 own vertices "
-                ~ "in one face", m.v.length, m.f);
+        if (!(m.v.length == 5 && m.f.length == 2 && m.f[1].length == 3 &&
+              m.f[1].canFind(0L) && m.f[1].canFind(3L) && m.f[1].canFind(4L)))
+            fails ~= format("F2-bump-then-link: %s vertices, faces %s; expected 5, the "
+                ~ "second face sharing T's vertex 0 with own vertices 3 and 4", m.v.length, m.f);
+    }
+    // F2: the session image carries the links' mesh key. p0 linked to T; a
+    // script undo removes T; a click re-keys the stroke; an in-stroke Ctrl+Z
+    // restores the image before that click (p0's link AND its old key), so
+    // Enter makes 3 own vertices.
+    {
+        rig(f0, 440);
+        clickWorld(p(0, 0.2), p(0.5, 0.2), p(0.25, -0.3));
+        enter();
+        clickWorld(p(0, 0.2), kFar[0], kFar[1]);
+        auto r = postJson("/api/command", "history.undo");
+        assert(r["status"].str == "ok", "F2-undo-restore: history.undo failed: " ~ r.toString);
+        clickWorld(p(0.5, 0.2));
+        const four = penAttrValue("points");
+        ctrlZ();
+        const three = penAttrValue("points");
+        if (four != 4 || three != 3 || model().v.length != 0)
+            fails ~= format("F2-undo-restore: rig premise, %s points after the click, %s "
+                ~ "after Ctrl+Z, mesh %s vertices; expected 4, 3, 0", four, three,
+                model().v.length);
+        enter(); ++ran;
+        fails ~= ownTriangle("F2-undo-restore");
     }
     // Edge snap: V 3.5 / 4.7 px from the snapped point (not an end of the
     // snapped edge) at three zooms, and the merge-off controls: no link.
@@ -323,6 +349,23 @@ unittest {
     fails ~= vertexBeatsStrokeEdge(ran);
 
     // ===== must turn (no merge before this slice) ===========================
+    // F2: a script-door history undo under a live linked stroke removes T; the
+    // link does not outlive it (the next commit is 3 own vertices).
+    {
+        rig(f0, 440);
+        clickWorld(p(0, 0.2), p(0.5, 0.2), p(0.25, -0.3));
+        enter();
+        clickWorld(p(0, 0.2));
+        auto r = postJson("/api/command", "history.undo");
+        assert(r["status"].str == "ok", "F2: history.undo failed: " ~ r.toString);
+        const live = penAttrValue("points"), left = model().v.length;
+        if (live != 1 || left != 0)
+            fails ~= format("F2: rig premise, after the undo the stroke has %s "
+                ~ "points and the mesh %s vertices; expected 1 and 0", live, left);
+        clickWorld(kFar[0], kFar[1]);
+        enter(); ++ran;
+        fails ~= ownTriangle("F2");
+    }
     // A click exactly on a committed vertex shares its index.
     {
         rig(f0, 440);
@@ -447,10 +490,10 @@ unittest {
     fails ~= sceneEdge("scene-edge-20px", ep["E4r_scene_edge_20px"], p(0.62, 0.255), ran);
 
     snap(null);
-    assert(ran == 63, format("pen merge population: %s cells ran, pinned 63", ran));
+    assert(ran == 65, format("pen merge population: %s cells ran, pinned 65", ran));
 
     // Blocked cells (kBlocked) must still fail; one that passes retires its mark.
-    assert(kBlocked.length == 41, format("blocked marks: %s, pinned 41", kBlocked.length));
+    assert(kBlocked.length == 40, format("blocked marks: %s, pinned 40", kBlocked.length));
     string[] open, retired;
     foreach (f; fails)
         if (!(f[0 .. f.indexOf(':')] in kBlocked)) open ~= f;
@@ -468,8 +511,6 @@ unittest {
 //      captured scene triangles are wound away from the top view (culled by
 //      `frontFacingLocal`), and an isolated vertex in a mesh with faces is
 //      hidden ("no front face owns it");
-//   F2 a script-door history.undo does not re-sync the tool: a link outlives
-//      its vertex;
 //   F3 the global grid snap does not place the pen's point on the grid point.
 private immutable string[string] kBlocked = [
     "Msmall_440_d3p5": "F1", "Msmall_440_d4p7": "F1", "Msmall_110_d3p5": "F1",
@@ -486,10 +527,21 @@ private immutable string[string] kBlocked = [
     "scene_later_click": "F1", "scene_drag_end": "F1", "scene_drag_linked_short": "F1",
     "link_undo": "F1", "merge_grid_near": "F1", "merge_grid_from_placed": "F1",
     "merge_no_snap_type": "F1", "E4_scene_edge_press": "F1", "scene-edge-20px": "F1",
-    "resync": "F2", "merge_grid_far": "F3",
+    "merge_grid_far": "F3",
 ];
 
 // ---- cell bodies ----------------------------------------------------------
+
+/// The committed mesh is exactly one stroke of 3 own vertices: one face, every
+/// index in range.
+private string[] ownTriangle(string cell) {
+    auto m = model();
+    bool inRange = m.f.length == 1;
+    foreach (f; m.f) foreach (i; f) inRange &= i >= 0 && i < m.v.length;
+    return m.v.length == 3 && inRange ? null
+        : [format("%s: %s vertices, faces %s; expected 3 own vertices in one face",
+                  cell, m.v.length, m.f)];
+}
 
 /// T with V on the K-C rig; the stroke clicks exactly on V, then two far
 /// points (fixture `scene_linked_click_control`). Leaves the stroke live.

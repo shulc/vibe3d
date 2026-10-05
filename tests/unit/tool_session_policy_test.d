@@ -523,10 +523,10 @@ private immutable StepRow[] kStepTable = [
     StepRow("vert.merge", OpensAt.firstPress, false, ["dist"]),
     // Task 9369: the polygon pen's stroke is its image — every attribute plus
     // the hidden `points` (captured in-stroke undo, fixture pen_instroke_undo);
-    // task 9362 adds `merge` and the hidden per-point `link`.
+    // task 9362 adds `merge`, the hidden per-point `link` and its mesh key.
     StepRow("pen", OpensAt.firstPress, false,
             ["type", "currentPoint", "posX", "posY", "posZ", "flip", "makeQuads",
-             "merge", "points", "link"]),
+             "merge", "points", "link", "linkKey"]),
     // Plan 8646 (S5): every published pen attribute is an image attribute (D15,
     // captured R-all); S7a adds the operation context (offsets + descriptor).
     StepRow("mesh.topoPen", OpensAt.firstPress, false,
@@ -641,7 +641,7 @@ unittest { // (4)
                   ~ "in the same commit", stepsFalse, kSessionStepsFalseCeiling));
     assert(recordedSteps == 51,
            format("history-owned rows %s, expected 51", recordedSteps));
-    // Image-producing population floors: 20 ids, 147 image names, 3 Action triggers
+    // Image-producing population floors: 20 ids, 148 image names, 3 Action triggers
     // on them (chainArm; insertAt, removeCurrent), 1 arm attribute (M3b).
     sort(imageStepIds);
     assert(imageStepIds == ["edge.bevel", "edge.extend", "edge.extrude",
@@ -651,7 +651,7 @@ unittest { // (4)
                        "mesh.thickenTool", "mesh.topoPen", "mesh.vertexBevel", "mesh.vertexExtrude",
                        "pen", "poly.bevel", "poly.extrude", "vert.merge"],
            format("M3 step table: image-step ids %s", imageStepIds));
-    assert(checkedNames == 147, format("M3 step table: %s image names checked, measured 147",
+    assert(checkedNames == 148, format("M3 step table: %s image names checked, measured 148",
                                       checkedNames));
     assert(armAttrs == 1, format("M3b step table: %s arm attributes, measured 1", armAttrs));
     assert(actionNames == 3, format("M3 step table: %s Action params on the session tools, "

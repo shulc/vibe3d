@@ -49,6 +49,7 @@ import viewgrid : g_viewGrid, viewWorldPerPixel, viewGridSize, viewGridSubStep,
 import std.math : abs, lround;
 // The one stroke builder and the pen's param schema (PenParams, PenStroke).
 import tools.create.pen_geometry;
+import tools.common.session_mesh_key : SessionMeshKey;
 import core.stdc.string : memcmp;
 
 private bool sameValueBytes(T)(ref const T a, ref const T b) nothrow @nogc {
@@ -155,7 +156,8 @@ version(unittest) unittest {
     commitPen.state = PenState.Drawing;
     commitPen.vertices_ = [Vec3(0,0,0), Vec3(1,0,0), Vec3(0,1,0)];
     // p0 shares the layer's vertex 0 (merge): the commit appends 2 vertices.
-    commitLayer.meshRef().addVertex(Vec3(0,0,0)); commitPen.links_ = [0, -1, -1];
+    commitLayer.meshRef().addVertex(Vec3(0,0,0)); commitPen.refreshLinks();
+    commitPen.links_ = [0, -1, -1];
     commitPen.params_.currentPoint = 2;
     commitPen.frame.toWorld = [1,0,0,0, 0,1,0,0,
                                0,0,1,0, 0,0,0,1];
@@ -185,6 +187,35 @@ version(unittest) unittest {
         commitPen.vertices_.length == 0 && commitPen.vertHandlers.length == 0 &&
         commitPen.params_.currentPoint == -1 && commitPen.meshChanged &&
         commitContext.installTraceForTest() == [3,4,2,1,2,2,7,2,2]);
+
+    // F2 (task 9362): the mesh changed after p0's link was made, so the commit
+    // image shares no index — three own vertices after the two the mesh holds.
+    auto bumpLayer = new Layer; GpuMesh bumpGpu;
+    auto bumpPen = new PenTool(() => &bumpLayer.meshRef(), &bumpGpu,
+        LitShader.init); bumpPen.state = PenState.Drawing;
+    bumpPen.vertices_ = [Vec3(0,0,0), Vec3(1,0,0), Vec3(0,1,0)];
+    bumpLayer.meshRef().addVertex(Vec3(0,0,0)); bumpPen.refreshLinks();
+    bumpPen.links_ = [0, -1, -1];
+    bumpLayer.meshRef().addVertex(Vec3(5,5,5));
+    bumpPen.params_.currentPoint = 2; bumpPen.previewGpu.faceVao = 72;
+    bumpPen.frame.toWorld = commitPen.frame.toWorld;
+    auto bumpHistory = new CommandHistory();
+    bumpPen.setGestureBindings(bumpHistory, () => new MeshSessionEdit(
+        &bumpLayer.meshRef(), commitView, EditMode.Vertices,
+        "test.pen", "Pen Polygon"));
+    auto bumpContext = new PreparedRecordContext(bumpHistory,
+        new RecordObserverHub()); bumpContext.setResourceIdentity(7,11);
+    assert(bumpPen.prepareDeactivate(bumpContext, bumpLayer,
+        GpuUploadOwner.fakeForTest(&bumpGpu), GpuUploadOwner.fakeForTest(&bumpGpu),
+        GpuUploadOwner.fakeForTest(bumpPen.preparedPreviewGpu()),
+        GpuResourceOwner.fakeForTest(bumpPen.preparedPreviewGpu()),
+        new BoxHandlerBatchResourceOwner(bumpPen.vertHandlers, 7, 11), null)
+        .historyAccepted && bumpContext.validate());
+    bumpContext.install();
+    assert(bumpLayer.meshRef().vertices.length == 5 &&
+        bumpLayer.meshRef().faces.length == 1 &&
+        bumpLayer.meshRef().faces[0] == [2u, 3, 4],
+        "pen F2: a link made before the mesh changed reached the commit image");
 
     auto shortLayer = new Layer; GpuMesh shortGpu;
     auto shortPen = new PenTool(() => &shortLayer.meshRef(), &shortGpu,
@@ -456,13 +487,14 @@ struct PreparedPenDeactivateImage {
     PenParams params;
     Vec3[] vertices;
     int[] links;
+    SessionMeshKey[] linkKey;   // the mesh `links` index; read at the candidate build
     Mesh previewClear;
     float[16] toWorld;
     size_t expectedHandlerCount;
     SnapResult expectedLastSnap;
     bool expectedMeshChanged;
     void clear() nothrow @nogc {
-        vertices = null; links = null; previewClear = Mesh.init;
+        vertices = null; links = null; linkKey = null; previewClear = Mesh.init;
         this = PreparedPenDeactivateImage.init;
     }
 }
@@ -503,6 +535,10 @@ private:
     PenState         state;
     Vec3[]           vertices_;     // LOCAL workplane positions of the in-progress sequence
     int[]            links_;        // per point: the edited-mesh vertex it shares, or -1
+    // The mesh `links_` index (0 or 1 element). An image attribute beside
+    // `links_`, so a session restore brings back the key its links were made
+    // under; links are read only while it matches (`liveLinks`). Task 9362 F2.
+    SessionMeshKey[] strokeKey_;
     BoxHandler[]     vertHandlers;  // one cyan marker per in-progress vertex (handler.pos in WORLD)
     ToolHandles      toolHandles;   // single-source hover arbiter (Test pass)
 
@@ -587,6 +623,7 @@ public:
             // transient, refused on every wire door).
             Param.podArray_("points", "Points", &vertices_),
             Param.podArray_("link", "Links", &links_),
+            Param.podArray_("linkKey", "Link Key", &strokeKey_),
         ];
     }
 
@@ -778,7 +815,8 @@ public:
         PreparedPenDeactivateImage image;
         image.valid = true; image.expectedState = cast(ubyte)state;
         image.params = params_; image.vertices = vertices_.dup;
-        image.links = links_.dup; image.toWorld = frame.toWorld;
+        image.links = links_.dup; image.linkKey = strokeKey_.dup;
+        image.toWorld = frame.toWorld;
         image.expectedHandlerCount = vertHandlers.length;
         image.expectedLastSnap = lastSnap;
         image.expectedMeshChanged = meshChanged;
@@ -790,7 +828,8 @@ public:
             in PreparedPenDeactivateImage image) const nothrow @nogc {
         return image.valid && cast(ubyte)state == image.expectedState &&
             params_ == image.params && vertices_ == image.vertices &&
-            links_ == image.links && vertHandlers.length == image.expectedHandlerCount &&
+            links_ == image.links && strokeKey_ == image.linkKey &&
+            vertHandlers.length == image.expectedHandlerCount &&
             lastSnap == image.expectedLastSnap &&
             meshChanged == image.expectedMeshChanged &&
             (!image.willCommit || frame.toWorld == image.toWorld);
@@ -826,7 +865,8 @@ public:
         pre = MeshSnapshot.capture(*mesh); pre.restore(candidate);
         auto shadow = beginPreparedShadow(candidate);
         appendPenGeometry(candidate, PenStroke.of(image.vertices,
-            image.toWorld, image.params, image.links), PenBuildPurpose.Commit);
+            image.toWorld, image.params,
+            linksUnder(image.linkKey, image.links, *mesh)), PenBuildPurpose.Commit);
         candidate.declareCornerAppend(); candidate.buildLoops();
         candidate.syncSelection();
         drainPreparedShadowDelivery(candidate, deliveryFlags, deliveryDomains);
@@ -1039,6 +1079,7 @@ public:
         int link;
         if (resolvePenPoint(e.x, e.y, dragAnchor, hit, link)) {
             vertices_[dragVertIdx] = hit;
+            refreshLinks();
             links_[dragVertIdx] = link;
             if (params_.currentPoint == dragVertIdx) syncPosFromCurrent();
             uploadPreview();
@@ -1322,6 +1363,7 @@ private:
     void appendVertex(Vec3 pos, int link) {
         // pos is in LOCAL workplane coords; the vertex handler renders in
         // world, so hit-testing needs the world image of `pos`.
+        refreshLinks();
         vertices_ ~= pos;
         links_ ~= link;
         vertHandlers ~= vertMarker(pos);
@@ -1365,6 +1407,7 @@ private:
         int insertIdx = afterIdx + 1;
         if (insertIdx < 0) insertIdx = 0;
         if (insertIdx > cast(int)vertices_.length) insertIdx = cast(int)vertices_.length;
+        refreshLinks();
         vertices_ = vertices_[0 .. insertIdx] ~ pos ~ vertices_[insertIdx .. $];
         links_ = links_[0 .. insertIdx] ~ link ~ links_[insertIdx .. $];
         vertHandlers = vertHandlers[0 .. insertIdx] ~ vertMarker(pos)
@@ -1402,7 +1445,7 @@ private:
         static immutable ToolSessionPolicy policy = {
             rollovers: Rollover.target, sessionSteps: true, paramWriteSteps: true,
             imageAttrs: ["type", "currentPoint", "posX", "posY", "posZ", "flip",
-                         "makeQuads", "merge", "points", "link"] };
+                         "makeQuads", "merge", "points", "link", "linkKey"] };
         return policy;
     }
     // In-stroke undo / redo (fixture pen_instroke_undo.json): the
@@ -1418,11 +1461,24 @@ private:
     // the preview / vert handlers, records nothing).
     public override void cancelUncommittedEdit() { cancelPolygon(); }
 
-    // An undo / redo moved the mesh under the live stroke: its links are mesh
-    // indices that may no longer exist, so every point becomes its own vertex
-    // again (positions kept). Links come only from gestures, so this is the one
-    // stale-index guard (wave plan S5; not captured — gap row).
-    public override void resyncSession() { links_[] = -1; }
+    // Links are edited-mesh indices, valid only on the mesh they were made on
+    // (any undo door, a reset, a Marks bump may move it under a live stroke).
+    // Each link WRITER refreshes first: a changed mesh drops every older link
+    // (its point becomes its own vertex) and re-stamps, so the new link, just
+    // resolved on the live mesh, is valid. Readers take `liveLinks`. Task 9362
+    // F2 (wave plan A5 §24.4, §25.1 #1); not captured — gap row.
+    void refreshLinks() {
+        if (strokeKey_.length == 1 && strokeKey_[0].matches(*mesh)) return;
+        links_[] = -1;
+        SessionMeshKey k;
+        k.stamp(*mesh);
+        strokeKey_ = [k];
+    }
+    const(int)[] liveLinks() const { return linksUnder(strokeKey_, links_, *mesh); }
+    static const(int)[] linksUnder(const(SessionMeshKey)[] key, const(int)[] links,
+                                   ref const Mesh m) {
+        return key.length == 1 && key[0].matches(m) ? links : null;
+    }
 
     void cancelPolygon() {
         clearVertHandlers();
@@ -1685,7 +1741,7 @@ private:
         // A pure tail append into the live scene mesh, declared as such for
         // the corner-append cross-check.
         appendPenGeometry(*mesh, PenStroke.of(vertices_, frame.toWorld,
-            params_, links_), PenBuildPurpose.Commit);
+            params_, liveLinks()), PenBuildPurpose.Commit);
         mesh.declareCornerAppend();
         mesh.buildLoops();
         gpu.upload(*mesh);
