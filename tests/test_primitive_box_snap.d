@@ -112,8 +112,9 @@ import std.string : indexOf;
 private double qf(string attr) {
     auto r = postJson("/api/command", "tool.attr prim.cube " ~ attr ~ " ?");
     assert(r["status"].str == "ok", "query " ~ attr ~ " failed: " ~ r.toString);
-    auto v = r["value"];
-    return v.type == JSONType.integer ? cast(double)v.integer : v.floating;
+    auto v = r["value"];   // a NaN is published as null: read it as NaN
+    return v.type == JSONType.integer ? cast(double)v.integer
+         : v.type == JSONType.float_ ? v.floating : double.nan;
 }
 
 private double gridStepNow() {
@@ -200,10 +201,11 @@ unittest { // handle drags under grid snap: not trapped; a released element snap
         assert(p[0] - c[0] > 20 && abs(p[1] - c[1]) <= 1,
             format("rig: mover part 10 must be the +X arrow (centre %s, grab %s)", c, p));
         dragSteps(p, 2, 0, 20);
-        const cx = qf("cenX"), cz = qf("cenZ");
-        if (!(fabs(cx - 0.1) < 1e-4 && fabs(cz) < 1e-4))
-            fails ~= format("box-mover-grid-slow: centre expected (0.1, ·, 0), got (%.6f, ·, %.6f)",
-                            cx, cz);
+        const cx = qf("cenX"), cz = qf("cenZ"), sx = qf("sizeX"), sz = qf("sizeZ");
+        if (!(fabs(cx - 0.1) < 1e-4 && fabs(cz) < 1e-4 && fabs(sx - 0.6) < 1e-4
+              && fabs(sz - 0.6) < 1e-4))
+            fails ~= format("box-mover-grid-slow: centre expected (0.1, ·, 0) at size 0.6 x 0.6, "
+                ~ "got (%.6f, ·, %.6f) at %.6f x %.6f", cx, cz, sx, sz);
         cmd("tool.set prim.cube off");
         ++ran;
     }

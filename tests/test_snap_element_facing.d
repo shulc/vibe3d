@@ -19,7 +19,7 @@
 
 import drag_helpers : Vec3, Viewport, buildDragDownLog, buildDragLog, buildDragMotionLog,
     buildDragUpLog, fetchCamera, playAndWait,
-    projectToWindow, viewportFromCameraMatrices, vertexPos;
+    projectToWindow, viewportFromCameraMatrices;
 import http_client : getJson, postJson;
 import http_command_helpers : commandBody;
 import pen_rig_helpers : penAttr, penCameraAt, penCommand, penSceneEmpty, readVerts,
@@ -42,8 +42,17 @@ private string[] fails;   // every cell runs; the reds are reported together
 
 private void check(bool ok, lazy string msg) { if (!ok) fails ~= msg; }
 
+/// A JSON number; anything else (a NaN is published as null) reads as NaN,
+/// so a cell's tolerance test fails on it instead of the read throwing.
 private double num(JSONValue v) {
-    return v.type == JSONType.integer ? cast(double)v.integer : v.floating;
+    return v.type == JSONType.integer ? cast(double)v.integer
+         : v.type == JSONType.float_ ? v.floating : double.nan;
+}
+
+/// Vertex `i` of the primary mesh (NaN channels read as NaN).
+private double[3] vpos(int i) {
+    auto a = getJson("/api/model")["vertices"].array[i].array;
+    return [num(a[0]), num(a[1]), num(a[2])];
 }
 
 private void loadMesh(string json) {
@@ -194,7 +203,7 @@ private void gridCells() {
     {
         moveRig(1, "grid");
         moveDrag(Vec3(0.03f, 1, 0.07f), Vec3(0.1252f, 1, 0.1952f), 20);
-        const q = vertexPos(0);
+        const q = vpos(0);
         penCommand("tool.set move off");
         check(at(q, [0.1, 1, 0.2]), "move-grid-step: q expected on the (0.1, 1, 0.2) "
             ~ "node, got " ~ vstr(q));
@@ -212,7 +221,7 @@ private void gridLawCells() {
     {
         moveRig(0.4, "grid");
         moveDrag(Vec3(0.03f, 0.4f, 0.07f), Vec3(0.1252f, 0.4f, 0.1952f), 35);
-        const q = vertexPos(0);
+        const q = vpos(0);
         penCommand("tool.set move off");
         check(at(q, [0.1, 0.4, 0.2]), "move-grid-low: q expected (0.1, 0.4, 0.2), got "
             ~ vstr(q));
@@ -324,7 +333,7 @@ private void gridLawCells() {
         const c = worldPixel(Vec3(0.03f, 1, 0.07f));
         playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
                                  c[0] + 66, c[1], c[0] + 106, c[1], 20));
-        const q = vertexPos(0);
+        const q = vpos(0);
         penCommand("tool.set move off");
         check(at(q, [0.1, 1, 0.07]), "move-axis-grid: q expected (0.1, 1, 0.07), got "
             ~ vstr(q));
@@ -337,7 +346,7 @@ private void gridLawCells() {
     {
         moveRig(0.4, "vertex", ",[0.13,1,0.23]");
         moveDrag(Vec3(0.03f, 0.4f, 0.07f), Vec3(0.13f, 1, 0.23f), 35);
-        const q = vertexPos(0);
+        const q = vpos(0);
         penCommand("tool.set move off");
         check(at(q, [0.13, 1, 0.23]), "move-vertex-offplane: q expected T "
             ~ "(0.13, 1, 0.23), got " ~ vstr(q));
@@ -358,12 +367,12 @@ private void gridLawCells() {
         playAndWait(buildDragDownLog(cam.vpX, cam.vpY, cam.width, cam.height, a[0], a[1]));
         playAndWait(buildDragMotionLog(cam.vpX, cam.vpY, cam.width, cam.height,
                                        a[0], a[1], a[0] + 48, a[1], 24));
-        const mid = vertexPos(0);
+        const mid = vpos(0);
         playAndWait(buildDragMotionLog(cam.vpX, cam.vpY, cam.width, cam.height,
                                        a[0] + 48, a[1], a[0] + 104, a[1], 28));
         playAndWait(buildDragUpLog(cam.vpX, cam.vpY, cam.width, cam.height,
                                    a[0] + 104, a[1]));
-        const q = vertexPos(0);
+        const q = vpos(0);
         penCommand("tool.set move off");
         const double raw = 0.03 + 104 * kPx;
         if (!at(mid, [0.13, 1, 0.07]))
@@ -393,19 +402,19 @@ private void gridLawCells() {
                                      from[1], from[0] + dx, from[1] + dy, steps));
         }
         drag(worldPixel(Vec3(0.03f, 1, 0.07f)), 24, 0, 12);
-        const qa = vertexPos(0);
+        const qa = vpos(0);
         drag(worldPixel(Vec3(0.13f, 1, 0.07f)), 0, 40, 20);
-        const qb = vertexPos(0);
+        const qb = vpos(0);
         const b = worldPixel(Vec3(0.13f, 1, cast(float)(0.07 + 40 * kPx)));
         playAndWait(buildDragDownLog(cam.vpX, cam.vpY, cam.width, cam.height, b[0], b[1]));
         playAndWait(buildDragMotionLog(cam.vpX, cam.vpY, cam.width, cam.height,
                                        b[0], b[1], b[0], b[1] - 18, 1));
-        const qc1 = vertexPos(0);
+        const qc1 = vpos(0);
         penCommand("tool.pipe.attr snap enabled false");
         playAndWait(buildDragMotionLog(cam.vpX, cam.vpY, cam.width, cam.height,
                                        b[0], b[1] - 18, b[0], b[1] - 20, 1));
         playAndWait(buildDragUpLog(cam.vpX, cam.vpY, cam.width, cam.height, b[0], b[1] - 20));
-        const qc = vertexPos(0);
+        const qc = vpos(0);
         penCommand("tool.set move off");
         if (!at(qa, [0.13, 1, 0.07]))
             fails ~= "move-snap-held: (A) q expected on T, got " ~ vstr(qa);
