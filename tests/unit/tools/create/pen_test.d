@@ -257,7 +257,12 @@ version (PerfProbe) unittest {
     const withMerge = dragQueries(200);
     *merge = false;
     const withoutMerge = dragQueries(120);
-    assert(withMerge == 12 && withoutMerge == 4,
+    // Per motion: one resolve (`snapLocalHit`) plus, with merge on, one
+    // vertex-class merge query; a drag never asks the edge class (K-PM2,
+    // task 9503), and the points 1-2 hover check stays silent (the quantised
+    // point's pixel is not the pointer's).
+    assert(withMerge == 8 && withoutMerge == 4,
         format("pen: snap queries over 4 drag motions: %s with merge, %s without; "
-            ~ "expected 12 and 4 (one resolve per motion)", withMerge, withoutMerge));
+            ~ "expected 8 (4 x [1 resolve + 1 vertex merge]) and 4 (4 x 1 resolve)",
+            withMerge, withoutMerge));
 }
