@@ -282,14 +282,7 @@ public:
         image.nextBuilt = built; image.expectedLive = MeshSnapshot.capture(live);
         // Above the early return: the preview conjunct below is unconditional
         // (the cold-arm hole, task 4491).
-        {
-            auto cageShadow = beginPreparedShadow(image.preview.nextCage);
-            preview_.prepareImage(image.preview);
-            uint cageFlags, cageDomains;
-            drainPreparedShadowDelivery(image.preview.nextCage, cageFlags,
-                cageDomains);
-            cageShadow.close();
-        }
+        preview_.prepareImageShadowed(image.preview);
         if (!before.filled) return image;
         image.expectedBefore = before;
         if (!interactiveParamEdit || !active) return image;
@@ -299,10 +292,9 @@ public:
         drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
             image.deliveryDomains);
         image.deliveryFlags = image.deliveryDomains = 0;
-        PreviewRebuild preparedPreview; preparedPreview.loadPreparedNext(image.preview);
-        image.nextBuilt = preparedPreview.run(image.candidate, before,
+        image.nextBuilt = PreviewRebuild.runPrepared(image.preview,
+            image.candidate, before,
             &previewKey, &previewKernel) != 0;
-        preparedPreview.savePreparedNext(image.preview);
         drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
             image.deliveryDomains);
         shadow.close(); return image;

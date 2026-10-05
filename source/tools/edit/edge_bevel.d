@@ -301,14 +301,7 @@ public:
         // that skipped `prepareImage` refuses the arm outright. Single call
         // site, above the early return, for the reason spelled out at the
         // sibling site in tools/edit/poly_bevel.d.
-        {
-            auto cageShadow = beginPreparedShadow(image.preview.nextCage);
-            preview_.prepareImage(image.preview);
-            uint cageFlags, cageDomains;
-            drainPreparedShadowDelivery(image.preview.nextCage, cageFlags,
-                cageDomains);
-            cageShadow.close();
-        }
+        preview_.prepareImageShadowed(image.preview);
         if (!before.filled) return image;
         Mesh baseline;
         auto baselineShadow = beginPreparedShadow(baseline);
@@ -321,8 +314,7 @@ public:
         if (!interactiveParamEdit || !active) return image;
         image.applies = true;
         auto shadow = beginPreparedShadow(image.candidate);
-        PreviewRebuild preparedPreview; preparedPreview.loadPreparedNext(image.preview);
-        const n = preparedPreview.run(image.candidate, before,
+        const n = PreviewRebuild.runPrepared(image.preview, image.candidate, before,
             (ref Mesh cage) => PreviewTopologyKey.make(cage.operandEdgeMask(),
                 width_ == 0.0f, roundLevel_, widthMode_ ? 1 : 0),
             (ref Mesh target) {
@@ -332,7 +324,7 @@ public:
                     width_, roundLevel_, widthMode_);
                 ed.close(); return result;
             });
-        image.nextBuilt = (n != 0); preparedPreview.savePreparedNext(image.preview);
+        image.nextBuilt = (n != 0);
         drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
             image.deliveryDomains);
         shadow.close(); return image;

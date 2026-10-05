@@ -701,12 +701,10 @@ public:
         drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
             image.deliveryDomains);
         image.deliveryFlags = image.deliveryDomains = 0;
-        PreviewRebuild runner; runner.loadPreparedNext(image.preview);
-        size_t n = runner.run(image.candidate, before,
+        const n = PreviewRebuild.runPrepared(image.preview, image.candidate, before,
             (ref Mesh cage) => PreviewTopologyKey.make(cage.operandEdgeMask(),
                                                        false, segments_),
             (ref Mesh target) => runPreviewKernel(target));
-        runner.savePreparedNext(image.preview);
         drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
             image.deliveryDomains); shadow.close();
         image.appliesMesh = true; image.nextBuilt = n != 0;

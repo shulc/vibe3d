@@ -4261,12 +4261,12 @@ unittest // task 2310 — edge_join.d's zero, and the pin that makes it worth ha
 private static immutable LedgerRow[] kPreviewSeam = [
     LedgerRow("PolyBevelTool|field", 1, "PreviewRebuild owner"),
     LedgerRow("PolyBevelTool.rebuildPreview|run", 1, "preview seam call"),
-    LedgerRow("PolyBevelTool.buildPreparedParamUpdate.run|unrecorded", 1, "prepared candidate"),
+    LedgerRow("PolyBevelTool.buildPreparedParamUpdate.runPrepared|unrecorded", 1, "prepared candidate"),
     LedgerRow("PolyBevelTool.applyHeadless|unrecorded", 1, "headless kernel"),
     LedgerRow("PolyBevelTool.rebuildPreview.run|unrecorded", 1, "live preview kernel"),
     LedgerRow("EdgeBevelTool|field", 1, "PreviewRebuild owner"),
     LedgerRow("EdgeBevelTool.rebuildPreview|run", 1, "preview seam call"),
-    LedgerRow("EdgeBevelTool.buildPreparedParamUpdate.run|unrecorded", 1, "prepared candidate"),
+    LedgerRow("EdgeBevelTool.buildPreparedParamUpdate.runPrepared|unrecorded", 1, "prepared candidate"),
     LedgerRow("EdgeBevelTool.applyHeadless|unrecorded", 1, "headless kernel"),
     LedgerRow("EdgeBevelTool.rebuildPreview.run|unrecorded", 1, "live preview kernel"),
     LedgerRow("EdgeExtendTool|field", 1, "PreviewRebuild owner"),
@@ -4274,29 +4274,22 @@ private static immutable LedgerRow[] kPreviewSeam = [
     LedgerRow("EdgeExtendTool.applyHeadless|unrecorded", 1, "headless kernel"),
     LedgerRow("EdgeExtendTool.runPreviewKernel|unrecorded", 1, "preview kernel"),
     LedgerRow("EdgeExtendTool.fillCommitCarrier|recording", 1, "recording commit"),
-    // Wave-2 PV2: five more owners; their preview and prepared runs share
-    // one kernel member (tests/unit/tools/edit/preview_topology_churn_test.d).
-    LedgerRow("EdgeExtrudeTool|field", 1, "PreviewRebuild owner"),
-    LedgerRow("EdgeExtrudeTool.rebuildPreview|run", 1, "preview seam call"),
-    LedgerRow("EdgeExtrudeTool.applyHeadless|unrecorded", 1, "headless kernel"),
-    LedgerRow("EdgeExtrudeTool.previewKernel|unrecorded", 1, "preview + prepared kernel"),
-    LedgerRow("PolyExtrudeTool|field", 1, "PreviewRebuild owner"),
-    LedgerRow("PolyExtrudeTool.rebuildPreview|run", 1, "preview seam call"),
-    LedgerRow("PolyExtrudeTool.applyHeadless|unrecorded", 1, "headless kernel"),
-    LedgerRow("PolyExtrudeTool.previewKernel|unrecorded", 1, "preview + prepared kernel"),
-    LedgerRow("VertexBevelTool|field", 1, "PreviewRebuild owner"),
-    LedgerRow("VertexBevelTool.rebuildPreview|run", 1, "preview seam call"),
-    LedgerRow("VertexBevelTool.applyHeadless|unrecorded", 1, "headless kernel"),
-    LedgerRow("VertexBevelTool.previewKernel|unrecorded", 1, "preview + prepared kernel"),
-    LedgerRow("VertexExtrudeTool|field", 1, "PreviewRebuild owner"),
-    LedgerRow("VertexExtrudeTool.rebuildPreview|run", 1, "preview seam call"),
-    LedgerRow("VertexExtrudeTool.applyHeadless|unrecorded", 1, "headless kernel"),
-    LedgerRow("VertexExtrudeTool.previewKernel|unrecorded", 1, "preview + prepared kernel"),
-    LedgerRow("PolyInsetTool|field", 1, "PreviewRebuild owner"),
-    LedgerRow("PolyInsetTool.rebuildPreview|run", 1, "preview seam call"),
-    LedgerRow("PolyInsetTool.applyHeadless|unrecorded", 1, "headless kernel"),
-    LedgerRow("PolyInsetTool.previewKernel|unrecorded", 1, "preview + prepared kernel"),
-];
+] ~ pv2PreviewSeamRows();
+
+// Wave-2 PV2: five more owners, four identical rows each; their preview and
+// prepared runs share one kernel member
+// (tests/unit/tools/edit/preview_topology_churn_test.d).
+private LedgerRow[] pv2PreviewSeamRows() {
+    LedgerRow[] rows;
+    foreach (cls; ["EdgeExtrudeTool", "PolyExtrudeTool", "VertexBevelTool",
+                   "VertexExtrudeTool", "PolyInsetTool"])
+        rows ~= [LedgerRow(cls ~ "|field", 1, "PreviewRebuild owner"),
+                 LedgerRow(cls ~ ".rebuildPreview|run", 1, "preview seam call"),
+                 LedgerRow(cls ~ ".applyHeadless|unrecorded", 1, "headless kernel"),
+                 LedgerRow(cls ~ ".previewKernel|unrecorded", 1,
+                           "preview + prepared kernel")];
+    return rows;
+}
 
 unittest // Stage M - the PreviewRebuild population and batch modes are closed
 {

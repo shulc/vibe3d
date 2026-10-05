@@ -2898,10 +2898,9 @@ def edge_bevel_param_gate(s):
     return (all(x in tool for x in (
                 "image.expectedLive = MeshSnapshot.capture(live);",
                 "image.expectedBefore = MeshSnapshot.capture(baseline);",
-                "preview_.prepareImage(image.preview);",
-                "preparedPreview.run(image.candidate, before,",
+                "preview_.prepareImageShadowed(image.preview);",
+                "PreviewRebuild.runPrepared(image.preview, image.candidate, before,",
                 "ed.bevelEdgesByMask(target.operandEdgeMask(),",
-                "preparedPreview.savePreparedNext(image.preview);",
                 "preview_.matchesImage(image.preview)",
                 "memcmp(&width, &other.width, float.sizeof) == 0",
                 producer_mixin("EdgeBevelTool"))) and
@@ -2911,12 +2910,14 @@ def edge_bevel_param_gate(s):
                 "image.expectedCage.matches(cage_)",
                 "void loadPreparedNext(",
                 "void savePreparedNext(",
+                "runner.savePreparedNext(image);",
+                "beginPreparedShadow(image.nextCage);",
                 "void installImage(")))
 if not edge_bevel_param_gate(edge_bevel_param_sources):
     fail("Edge Bevel onParamChanged prepared contract drift")
 mutate_param_sources("Edge Bevel", edge_bevel_param_sources, edge_bevel_param_gate, (
     ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
-    ("tool", "preview_.prepareImage(image.preview);", "", "drop preview image"),
+    ("tool", "preview_.prepareImageShadowed(image.preview);", "", "drop preview image"),
     ("preview", "image.expectedCage.matches(cage_)", "true", "drop cage witness"),
     ("tool", "memcmp(&width, &other.width, float.sizeof) == 0", "true", "drop float identity"),
     ("tool", producer_mixin("EdgeBevelTool"), "", "drop producer mixin"),
@@ -2930,10 +2931,9 @@ def preview_rebuild_param_gate(cls, kernel, identity):
         return (tool.count(kernel) == 2 and all(x in tool for x in (
             "image.expectedLive = MeshSnapshot.capture(live);",
             "image.expectedBefore = before;",
-            "preview_.prepareImage(image.preview);",
+            "preview_.prepareImageShadowed(image.preview);",
             "auto shadow = beginPreparedShadow(image.candidate);",
-            "preparedPreview.run(image.candidate, before,",
-            "preparedPreview.savePreparedNext(image.preview);",
+            "PreviewRebuild.runPrepared(image.preview,\n            image.candidate, before,",
             "drainPreparedShadowDelivery(image.candidate",
             "built = preview_.run(*mesh, before,",
             identity,
@@ -2941,7 +2941,9 @@ def preview_rebuild_param_gate(cls, kernel, identity):
             "image.expectedBefore.matches(before)",
             "preview_.matchesImage(image.preview)",
             "preview_.installImage(image.preview)",
-            producer_mixin(cls))))
+            producer_mixin(cls))) and all(x in s["preview"] for x in (
+            "runner.savePreparedNext(image);",
+            "beginPreparedShadow(image.nextCage);")))
     return gate
 for label, path, cls, kernel, identity in (
     ("Edge Extrude", "edge_extrude.d", "EdgeExtrudeTool",
@@ -2960,14 +2962,15 @@ for label, path, cls, kernel, identity in (
      "ed.bevelVerticesByMask(mask, inset_)",
      "memcmp(&inset, &other.inset, float.sizeof) == 0"),
 ):
-    sources = {"tool": (ROOT / "source/tools/edit" / path).read_text()}
+    sources = {"tool": (ROOT / "source/tools/edit" / path).read_text(),
+               "preview": (ROOT / "source/tools/edit/preview_rebuild.d").read_text()}
     gate = preview_rebuild_param_gate(cls, kernel, identity)
     if not gate(sources):
         fail(f"{label} onParamChanged prepared contract drift")
     mutate_param_sources(label, sources, gate, (
         ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
         ("tool", "auto shadow = beginPreparedShadow(image.candidate);", "", "drop shadow"),
-        ("tool", "preview_.prepareImage(image.preview);", "", "drop preview image"),
+        ("tool", "preview_.prepareImageShadowed(image.preview);", "", "drop preview image"),
         ("tool", "preview_.matchesImage(image.preview)", "true", "drop preview witness"),
         ("tool", "preview_.installImage(image.preview)", "", "drop preview install"),
         ("tool", identity, "true", "drop float identity"),
@@ -2984,22 +2987,23 @@ def poly_bevel_param_gate(s):
     return (all(x in tool for x in (
                 "image.expectedLive = MeshSnapshot.capture(live);",
                 "image.expectedBefore = MeshSnapshot.capture(baseline);",
-                "preview_.prepareImage(image.preview);",
-                "preparedPreview.run(image.candidate, opBase(),",
+                "preview_.prepareImageShadowed(image.preview);",
+                "PreviewRebuild.runPrepared(image.preview, image.candidate, opBase(),",
                 "ed.bevelFacesByMask(ed.operandFaceMask(), inset_",
-                "preparedPreview.savePreparedNext(image.preview);",
                 "preview_.matchesImage(image.preview)",
                 "memcmp(&inset, &other.inset, float.sizeof) == 0",
                 producer_mixin("PolyBevelTool"))) and
             all(x in s["preview"] for x in (
                 "struct PreparedPreviewRebuildImage",
                 "image.expectedCage.matches(cage_)",
+                "runner.savePreparedNext(image);",
+                "beginPreparedShadow(image.nextCage);",
                 "void installImage(")))
 if not poly_bevel_param_gate(poly_bevel_param_sources):
     fail("Poly Bevel onParamChanged prepared contract drift")
 mutate_param_sources("Poly Bevel", poly_bevel_param_sources, poly_bevel_param_gate, (
     ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
-    ("tool", "preview_.prepareImage(image.preview);", "", "drop preview image"),
+    ("tool", "preview_.prepareImageShadowed(image.preview);", "", "drop preview image"),
     ("preview", "image.expectedCage.matches(cage_)", "true", "drop cage witness"),
     ("tool", "memcmp(&inset, &other.inset, float.sizeof) == 0", "true", "drop float identity"),
     ("tool", producer_mixin("PolyBevelTool"), "", "drop producer mixin"),
@@ -3356,7 +3360,7 @@ def edge_extend_param_gate(s):
         "image.expectedLive = MeshSnapshot.capture(live)",
         "image.expectedBefore = before", "detachedPreparedMesh(live)",
         "preview_.prepareImage(image.preview)",
-        "runner.run(image.candidate, before", "runPreviewKernel(target)",
+        "runPrepared(image.preview, image.candidate, before", "runPreviewKernel(target)",
         "image.expectedLive.matches(live)", "preview_.matchesImage(image.preview)",
         "uploadOwner.owns(gpu)",
         "context.prepareStampedMeshImage(layer, owner.candidate",
@@ -3377,7 +3381,8 @@ if not edge_extend_param_gate(edge_extend_param_sources):
     fail("Edge Extend parameter prepared contract drift")
 for target, old, new, label in (
     ("tool", "detachedPreparedMesh(live)", "live", "drop detached target"),
-    ("tool", "runner.run(image.candidate, before", "runner.run(live, before",
+    ("tool", "runPrepared(image.preview, image.candidate, before",
+     "runPrepared(image.preview, live, before",
      "run kernel on live"),
     ("tool", "image.expectedLive.matches(live)", "true", "drop live witness"),
     ("tool", "preview_.matchesImage(image.preview)", "true", "drop preview witness"),

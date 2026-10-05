@@ -1,6 +1,6 @@
 module tools.edit.preview_rebuild;
 
-import mesh : Mesh;
+import mesh : Mesh, beginPreparedShadow, drainPreparedShadowDelivery;
 import snapshot : MeshSnapshot;
 
 // ---------------------------------------------------------------------------
@@ -203,6 +203,27 @@ struct PreviewRebuild {
         image.expectedLastTopology = image.nextLastTopology = lastTopology_;
         image.expectedCage = MeshSnapshot.capture(cage_);
         image.expectedCage.restore(image.nextCage);
+    }
+
+    /// `prepareImage` with the cage clone's restore shadowed and drained: the
+    /// clone is private scratch and must not publish.
+    void prepareImageShadowed(ref PreparedPreviewRebuildImage image) {
+        auto shadow = beginPreparedShadow(image.nextCage);
+        prepareImage(image);
+        uint flags, domains;
+        drainPreparedShadowDelivery(image.nextCage, flags, domains);
+        shadow.close();
+    }
+
+    /// One `run` on a detached runner loaded from, then saved back to, `image`.
+    static size_t runPrepared(ref PreparedPreviewRebuildImage image,
+            ref Mesh candidate, ref const MeshSnapshot before,
+            scope PreviewTopologyKey delegate(ref Mesh cage) keyOf,
+            scope size_t delegate(ref Mesh target) kernel) {
+        PreviewRebuild runner; runner.loadPreparedNext(image);
+        const n = runner.run(candidate, before, keyOf, kernel);
+        runner.savePreparedNext(image);
+        return n;
     }
 
     bool matchesImage(in PreparedPreviewRebuildImage image) const

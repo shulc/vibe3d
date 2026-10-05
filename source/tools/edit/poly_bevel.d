@@ -349,16 +349,8 @@ public:
         // this resource — the arm then validated a conjunct that could not hold
         // and refused. Keep it a SINGLE call site: `check_prepared_protocol.py`
         // proves this conjunct's potency by deleting this statement's text, and
-        // a second copy would silently absorb that mutation. The cage clone is
-        // private scratch that must not publish, hence the shadow and drain.
-        {
-            auto cageShadow = beginPreparedShadow(image.preview.nextCage);
-            preview_.prepareImage(image.preview);
-            uint cageFlags, cageDomains;
-            drainPreparedShadowDelivery(image.preview.nextCage, cageFlags,
-                cageDomains);
-            cageShadow.close();
-        }
+        // a second copy would silently absorb that mutation.
+        preview_.prepareImageShadowed(image.preview);
         if (!opBase().filled) return image;
         Mesh baseline;
         auto baselineShadow = beginPreparedShadow(baseline);
@@ -370,8 +362,7 @@ public:
         if (!interactiveParamEdit || !active) return image;
         image.applies = true;
         auto shadow = beginPreparedShadow(image.candidate);
-        PreviewRebuild preparedPreview; preparedPreview.loadPreparedNext(image.preview);
-        const n = preparedPreview.run(image.candidate, opBase(),
+        const n = PreviewRebuild.runPrepared(image.preview, image.candidate, opBase(),
             (ref Mesh cage) => PreviewTopologyKey.make(cage.operandFaceMask(),
                 !opApplied_, segments_, group_ ? 1 : 0, square_ ? 1 : 0),
             (ref Mesh target) {
@@ -381,7 +372,7 @@ public:
                     shift_, group_, segments_, square_);
                 ed.close(); return result;
             });
-        image.nextBuilt = (n != 0); preparedPreview.savePreparedNext(image.preview);
+        image.nextBuilt = (n != 0);
         drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
             image.deliveryDomains);
         shadow.close(); return image;
