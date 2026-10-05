@@ -247,7 +247,8 @@ unittest {
 
 // pf3 — rows the reference disables and ours enabled before task 9492 (K-A3
 // PF-3): box Radius Segments at a zero radius; Slice and Clone Angle Snap while
-// global snapping is off, and their Angle unless both are on. Each row is
+// global snapping is off, and their Angle unless both are on; Pen Offset
+// outside Wall mode (task 9505). Each row is
 // refused in the disabling state and lands once the enabling line runs.
 unittest {
     if (!cell("pf3")) return;
@@ -262,6 +263,7 @@ unittest {
         Row("mesh.clone", off, "snap", "true", on, "true"),
         Row("mesh.clone", on ~ "|tool.attr mesh.clone snap true|" ~ off,
             "snapAngle", "30", on, "30.0"),
+        Row("pen", "tool.attr pen wall off", "offset", "0.5", "tool.attr pen wall inner", "0.5"),
     ];
     string[] failed;
     size_t visited;
@@ -277,7 +279,7 @@ unittest {
         if (why != "") failed ~= why;
     }
     ok(off);
-    assert(visited == 5, format("PF-3 rows visited %d, expected 5", visited));
+    assert(visited == 6, format("PF-3 rows visited %d, expected 6", visited));
     assert(failed.length == 0, format("PF-3 rows failed in %d rows:\n  %-(%s\n  %)",
                                       failed.length, failed));
     writeln("PASS K-A3 PF-3 disabled rows");

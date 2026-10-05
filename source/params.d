@@ -1521,21 +1521,16 @@ private void injectParamsImpl(Param[] params, ref JSONValue pj,
                 break;
             case Param.Kind.IntEnum:
                 if (jp.type == JSONType.integer || jp.type == JSONType.uinteger) {
-                    // Accept raw integer value (e.g. axis:1 from argstring parser).
-                    int ival = (jp.type == JSONType.uinteger)
-                        ? cast(int)jp.uinteger : cast(int)jp.integer;
-                    bool iok2 = false;
-                    foreach (ref e; p.intEnumValues) {
-                        if (e.value == ival) {
-                            *p.iePtr = e.value;
-                            iok2 = true;
-                            break;
-                        }
-                    }
-                    if (!iok2)
+                    // A raw integer value (e.g. axis:1 from the argstring
+                    // parser), clamped first where a door armed the bound.
+                    import std.algorithm : any;
+                    int ival;
+                    if (!paramGateInt(p, _jsonNum(*jp), ival)
+                        || !p.intEnumValues.any!(e => e.value == ival))
                         throw new Exception(
                             "unknown enum value " ~ jp.toString()
                             ~ " for param '" ~ p.name ~ "'");
+                    *p.iePtr = ival;
                     break;
                 }
                 if (jp.type != JSONType.string)

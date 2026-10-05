@@ -157,13 +157,8 @@ immutable string[] blockAAllowlist = [
     //     this checker against the live registry. Not enumerated in the
     //     plan doc's 4-entry list; see the file header and the
     //     implementation report. ---
-    "mesh.loopSliceTool.position",
-        // reject-sentinel twin of mesh.addLoop.position, on the
-        // interactive-tool side (tools/loop_slice_tool.d) — identical
-        // (0.001,0.999) open-interval contract, same command-side kernel
-        // (MeshAddLoop) backs both.
     "mesh.loopSliceTool.insertAt",
-        // ditto — the tool's second position-typed reject-sentinel field
+        // reject-sentinel twin of mesh.addLoop.position, on the tool side
         // (drives per-gesture "current" slice placement).
 
     // --- Unbounded above at the tool attribute doors (task 9492): the

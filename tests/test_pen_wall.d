@@ -145,8 +145,10 @@ private void rig(in Cell c, Vec3[] pts) {
     penCommand("tool.set pen on");
     penCommand("tool.attr pen type polygons");
     penCommand("tool.attr pen makeQuads false");
-    penCommand("tool.attr pen wall " ~ c.wall);
+    // Offset is refused outside Wall mode (K-A3 table a): written under a wall.
+    penCommand("tool.attr pen wall inner");
     foreach (o; c.offsets) penAttr("offset", o);
+    penCommand("tool.attr pen wall " ~ c.wall);
     if (c.wall != "off") penCommand("tool.attr pen close " ~ (c.close ? "true" : "false"));
     penCommand("tool.attr pen merge " ~ (c.mergeOff ? "false" : "true"));
     penCommand("tool.attr pen flip " ~ (c.flip1 ? "true" : "false"));
@@ -260,8 +262,9 @@ unittest {
 
     // Leave the remembered values as found.
     penCommand("tool.set pen on");
-    penCommand("tool.attr pen wall off");
+    penCommand("tool.attr pen wall inner");
     penAttr("offset", 0);
+    penCommand("tool.attr pen wall off");
     penCommand("tool.attr pen flip false");
     drop();
     assert(ran == (only.length ? 1 : 23), format("ran %s cells, pinned 23 (1 under %s)",

@@ -779,14 +779,16 @@ public:
             Param.bool_("close", "Close", &params_.close, false),
             Param.bool_("selectNew", "Select New", &params_.selectNew, true),
             Param.bool_("raycast", "Raycast", &params_.raycast, false),
-            // Wall mode (wave plan S9): a negative offset clamps to 0.
+            // Wall mode (wave plan S9). The attribute doors clamp a negative
+            // offset to 0 (tool_attr_bounds.d); the builder walls nothing at
+            // an offset <= 0.
             Param.intEnum_("wall", "Wall", &params_.wall,
                 [IntEnumEntry(PenWall.off, "off", "Off"),
                  IntEnumEntry(PenWall.inner, "inner", "Inner"),
                  IntEnumEntry(PenWall.outer, "outer", "Outer"),
                  IntEnumEntry(PenWall.both, "both", "Both")],
                 PenWall.off),
-            Param.float_("offset", "Offset", &params_.offset, 0.0f).min(0.0f).enforceBounds(),
+            Param.float_("offset", "Offset", &params_.offset, 0.0f),
             // The stroke itself, for the session's undo image (hidden,
             // transient, refused on every wire door).
             Param.podArray_("points", "Points", &vertices_),
@@ -797,10 +799,11 @@ public:
 
     // A disabled param's write is refused at the `tool.attr` door, for
     // every tool. Make Quads is locked from 3 points
-    // (wave plan S7, fixture pen_quads.json lock_3_points); the point fields
-    // stay enabled at idle, as captured (K-A3).
+    // (wave plan S7, fixture pen_quads.json lock_3_points); Offset needs a
+    // wall (K-A3 table a); the point fields stay enabled at idle (K-A3).
     override bool paramEnabled(string name) const {
         if (name == "makeQuads") return vertices_.length < 3;   // Idle holds none
+        if (name == "offset") return params_.wall != PenWall.off;
         if (name == "close")
             return params_.type == PenType.lines || params_.wall != PenWall.off;
         return true;

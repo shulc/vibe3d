@@ -653,8 +653,7 @@ public:
             // settings — excluded from sticky-tool-defaults capture via
             // .transient(). (length/sliderX/sliderY stay settings — the
             // on-screen slider geometry is deliberately remembered.)
-            Param.float_("position", "Position", &positionProxy_, 0.5f)
-                 .min(0.001f).max(0.999f).transient(),
+            Param.float_("position", "Position", &positionProxy_, 0.5f).transient(),
             // The attribute doors bound count (tool_attr_bounds.d); the
             // O(count) re-fit in onParamChanged caps it at the kernel's
             // MAX_LOOP_SLICE_COUNT before it allocates.
@@ -1250,11 +1249,11 @@ public:
 
     /// A WRITE of the `position` attribute (the panel, `tool.attr`): a
     /// Symmetry slice stays on its own side of 0.5 (F3; one AT 0.5 is free).
-    /// The outer bound is the kernel's open interval, not the reference's
-    /// [0, 1]: a cut at an edge end is degenerate here.
+    /// The stored bound is the reference's [0, 1] (K-A3); the kernel feed
+    /// moves an edge-end slice into its open interval (`kernelPositions`).
     void writePosition(float p) {
         immutable size_t k = cast(size_t)current_;
-        float lo = 0.001f, hi = 0.999f;
+        float lo = 0, hi = 1;
         if (mode_ == Mode.Symmetry && k < positions_.length) {
             if (positions_[k] < 0.5f) hi = 0.5f;
             if (positions_[k] > 0.5f) lo = 0.5f;
@@ -1743,14 +1742,11 @@ private:
     // through `applyModeLaw`; activation and a restored session image take it
     // as it is (captured: a Symmetry or Free list survives both).
     //
-    // `count` long, every slice inside the kernel's open interval; a missing
-    // slot (a stale stored list) is 0.5.
+    // `count` long, every slice inside the stored [0, 1]; a missing slot (a
+    // stale stored list) is 0.5.
     static float[] fittedPositions(const(float)[] src, int count) {
         auto r = new float[](count < 1 ? 1 : count);
-        foreach (k, ref p; r) {
-            immutable float v = k < src.length ? src[k] : 0.5f;
-            p = v < 0.001f ? 0.001f : v > 0.999f ? 0.999f : v;
-        }
+        foreach (k, ref p; r) p = k < src.length ? clamp(src[k], 0.0f, 1.0f) : 0.5f;
         return r;
     }
 
@@ -1804,6 +1800,7 @@ private:
     // monotonic-by-construction; Count<=1 is trivially sorted).
     float[] kernelPositions() const {
         auto copy = positions_.dup;
+        foreach (ref t; copy) t = clamp(t, 0.001f, 0.999f);   // the kernel's open (0, 1)
         sort(copy);
         return copy;
     }

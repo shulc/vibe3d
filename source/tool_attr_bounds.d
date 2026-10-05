@@ -35,6 +35,13 @@ static immutable ToolAttrBound[] kToolAttrBounds = [
     // Torus sides / segments / ring radius (matched by their defaults 24 / 12).
     {"prim.torus", "majorSegments", 3, 1024}, {"prim.torus", "minorSegments", 2, none},
     {"prim.torus", "majorRadius", 0, none},
+    // The axis datatype clamps a number to [0, 2] (X, Y, Z).
+    {"prim.cube", "axis", 0, 2}, {"prim.sphere", "axis", 0, 2},
+    {"prim.ellipsoid", "axis", 0, 2}, {"prim.cone", "axis", 0, 2},
+    {"prim.cylinder", "axis", 0, 2}, {"prim.capsule", "axis", 0, 2},
+    {"prim.torus", "axis", 0, 2},
+    // Declared min only: the row is refused outside Wall mode in the capture.
+    {"pen", "offset", 0, none},
     // Array, Clone, Mirror and Radial Array share one clone effector (PF-4).
     {"mesh.arrayTool", "numX", 1, none}, {"mesh.arrayTool", "numY", 1, none},
     {"mesh.arrayTool", "numZ", 1, none}, {"mesh.arrayTool", "dist", 0, none},
@@ -44,6 +51,7 @@ static immutable ToolAttrBound[] kToolAttrBounds = [
     {"mesh.radialArrayTool", "count", 1, none}, {"mesh.radialArrayTool", "dist", 0, none},
     {"mesh.loopSliceTool", "count", 1, 1024},
     {"mesh.loopSliceTool", "gap", 0, none},
+    {"mesh.loopSliceTool", "position", 0, 1},
     {"mesh.sliceTool", "gap", 0, none},
     // A percent: the reference stores the fraction [0, 1], ours the percent.
     {"mesh.edgeSliceTool", "snap", 0, 100},
@@ -67,13 +75,13 @@ static immutable ToolAttrBound[] kToolAttrBounds = [
 
 /// Replace `p`'s numeric bound hints with its captured row and arm the clamp.
 /// False (and `p` untouched) when `toolId` has no row for `p`. Every row names
-/// an Int or Float attribute (test_tool_attr_bounds reads each back as one).
+/// an Int, IntEnum (its numeric value) or Float attribute.
 bool applyToolAttrBound(string toolId, ref Param p) {
     import std.math : isFinite;
     foreach (ref b; kToolAttrBounds) {
         if (b.tool != toolId || b.attr != p.name) continue;
         const hasHi = isFinite(b.hi);
-        with (p.hints) if (p.kind == Param.Kind.Int) {
+        with (p.hints) if (p.kind == Param.Kind.Int || p.kind == Param.Kind.IntEnum) {
             hasMinI = true;  minI = cast(int) b.lo;
             hasMaxI = hasHi; maxI = hasHi ? cast(int) b.hi : 0;
         } else {

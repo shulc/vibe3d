@@ -10,7 +10,10 @@
 // value past the door's bound and once from the cap written through the door,
 // and the two meshes must agree.
 //
-// Run via: ./run_test.d test_tool_attr_bounds   (one block: VIBE3D_CELL=door|kernel|exponent)
+// Cell `axis`: an axis attribute takes its number and clamps it to [0, 2]
+// (K-A3 table b), read back as its tag.
+//
+// Run via: ./run_test.d test_tool_attr_bounds   (one block: VIBE3D_CELL=door|kernel|exponent|axis)
 
 import http_client : getJson, postRawAllowingErrorStatus;
 import std.algorithm : splitter;
@@ -77,6 +80,7 @@ unittest {
         Row("mesh.radialArrayTool", "tool.attr mesh.radialArrayTool merge true", "dist", false, "0.0", "free"),
         Row("mesh.loopSliceTool", "", "count", true, "1", "1024"),
         Row("mesh.loopSliceTool", "tool.attr mesh.loopSliceTool split true", "gap", false, "0.0", "free"),
+        Row("mesh.loopSliceTool", "", "position", false, "0.0", "1.0"),
         Row("mesh.sliceTool", "", "gap", false, "0.0", "free"),
         Row("mesh.edgeSliceTool", "", "snap", false, "0.0", "100.0"),
         Row("edge.bevel", "", "width", false, "0.0", "free"),
@@ -100,6 +104,7 @@ unittest {
         Row("xfrm.smooth", "", "strn", false, "0.0", "1.0"),
         Row("xfrm.smooth", "tool.attr xfrm.smooth lockSharp true", "sharpThreshold", false, "0.0", "180.0"),
         Row("mesh.topoPen", "tool.attr mesh.topoPen mode 7", "smoothStrength", false, "0.0", "free"),
+        Row("pen", "tool.attr pen wall inner", "offset", false, "0.0", "free"),
     ];
     string[] failed;
     size_t visited;
@@ -122,10 +127,10 @@ unittest {
         }
         ok("tool.set " ~ r.tool ~ " off");
     }
-    assert(visited == 110, format("probes visited %d, expected 110", visited));
+    assert(visited == 114, format("probes visited %d, expected 114", visited));
     assert(failed.length == 0, format("bounds diverge in %d probes:\n  %-(%s\n  %)",
                                       failed.length, failed));
-    writeln("PASS tool attribute bounds, 55 rows");
+    writeln("PASS tool attribute bounds, 57 rows");
 }
 
 /// Vertex and face count of the mesh `tool` builds from `setup` (one line per
@@ -204,4 +209,30 @@ unittest {
     assert(failed.length == 0, format("exponent writes failed in %d:\n  %-(%s\n  %)",
                                       failed.length, failed));
     writeln("PASS exponent writes, 5");
+}
+
+unittest {
+    if (!cell("axis")) return;
+    static immutable tools = ["prim.cube", "prim.sphere", "prim.ellipsoid", "prim.cone",
+                              "prim.cylinder", "prim.capsule", "prim.torus"];
+    static immutable string[2][] writes = [["-1000000", "x"], ["1", "y"], ["100000", "z"]];
+    string[] failed;
+    size_t visited;
+    foreach (t; tools) {
+        ok("scene.reset");
+        ok("tool.set " ~ t ~ " on");
+        foreach (w; writes) {
+            ++visited;
+            auto r = cmd("tool.attr " ~ t ~ " axis " ~ w[0]);
+            auto q = cmd("tool.attr " ~ t ~ " axis ?");
+            if (r["status"].str != "ok" || q["value"].str != w[1])
+                failed ~= format("%s axis %s: %s, reads %s, expected %s", t, w[0],
+                                 r.toString, q["value"].toString, w[1]);
+        }
+        ok("tool.set " ~ t ~ " off");
+    }
+    assert(visited == 21, format("axis writes visited %d, expected 21", visited));
+    assert(failed.length == 0, format("axis writes failed in %d:\n  %-(%s\n  %)",
+                                      failed.length, failed));
+    writeln("PASS axis writes, 7 tools");
 }

@@ -7,7 +7,27 @@ import params : Param, ParamFlags;
 import tool_attr_bounds : applyToolAttrBound, clampStoredToBounds, kToolAttrBounds;
 
 unittest { // population floor: the table's row count, measured
-    assert(kToolAttrBounds.length == 55, "rows: measured 55");
+    assert(kToolAttrBounds.length == 64, "rows: measured 64");
+}
+
+unittest { // an axis row takes the number and clamps it; unarmed, the number is refused
+    import params : IntEnumEntry, injectParamsInto;
+    import std.exception : assertThrown;
+    import std.json : parseJSON;
+    static immutable IntEnumEntry[] xyz = [IntEnumEntry(0, "x", "X"),
+        IntEnumEntry(1, "y", "Y"), IntEnumEntry(2, "z", "Z")];
+    int axis = 1;
+    auto p = Param.intEnum_("axis", "Axis", &axis, xyz, 1);
+    auto bare = [p];
+    auto five = parseJSON(`{"axis": 5}`), minus = parseJSON(`{"axis": -3}`);
+    assertThrown(injectParamsInto(bare, five), "no row armed: 5 names no entry");
+    assert(axis == 1);
+    assert(applyToolAttrBound("prim.cone", p));
+    auto armed = [p];
+    injectParamsInto(armed, five);
+    assert(axis == 2, "above the row's max");
+    injectParamsInto(armed, minus);
+    assert(axis == 0, "below the row's min");
 }
 
 unittest { // a two-sided int row arms the clamp; the panel re-clamp lands it
