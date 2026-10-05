@@ -16,12 +16,14 @@
 // 1e-4). Counts and rings are exact. Typed fields go through the interactive
 // door (the panel's source); Ctrl+Z through /api/play-events.
 //
-// Ours-only cells (the reference's script door is not observable — a script
-// call ends its stroke): `refuse-script-3-points` (the script door refuses the
-// locked write: status error, history depth unchanged, the value read back
-// false) and `refuse-idle-posX` (an Idle write to a disabled point field is
-// refused the same way). Both follow from the captured lock and the command
-// no-op contract (refusal or a real edit; a real edit would break the lock).
+// Ours-only cells: `B5_sym_merge_off` (no shared corner with merge off — the
+// weld is merge's, as in the polygon pen's captured B4m), and two refusals
+// (the reference's script door is not observable — a script call ends its
+// stroke): `refuse-script-3-points` (the script door refuses the locked
+// write: status error, history depth unchanged, the value read back false)
+// and `refuse-idle-posX` (an Idle write to a disabled point field is refused
+// the same way). Both follow from the captured lock and the command no-op
+// contract (refusal or a real edit; a real edit would break the lock).
 
 import drag_helpers : Vec3, fetchCamera, kPaceLine, playAndWait;
 import http_client : frameFence, getJson, postJson;
@@ -234,6 +236,24 @@ unittest {
         fails ~= compare(cell, c[cell]["expected"]);
     }
 
+    // B5_sym with merge off (ours; the weld is merge's, as in the polygon
+    // pen's B4m): no shared corner, 12 vertices, the mirror rings unwelded.
+    {
+        rig(p(0, 0.25), true, true);
+        penCommand("tool.attr pen merge false");
+        clickWorld(b5);
+        drop(); ++ran;
+        auto m = getJson("/api/model");
+        const nv = m["vertices"].array.length;
+        auto f = rings(m["faces"]);
+        if (nv != 12 || f != [[0L, 3, 2, 1], [3L, 5, 4, 2], [6L, 7, 8, 9], [9L, 8, 10, 11]])
+            fails ~= format("B5_sym_merge_off: %s vertices, faces %s; expected 12, "
+                ~ "faces [[0, 3, 2, 1], [3, 5, 4, 2], [6, 7, 8, 9], [9, 8, 10, 11]]", nv, f);
+        rig(p(0, 0), false);
+        penCommand("tool.attr pen merge true");
+        drop();
+    }
+
     // lock_3_points: from 3 points the panel's write is refused, the value stays.
     {
         rig(p(-0.15, 0), false);
@@ -272,6 +292,6 @@ unittest {
 
     rig(p(0, 0), false);    // leave the remembered value as found
     drop();
-    assert(ran == 13, format("ran %s cells, pinned 13", ran));
+    assert(ran == 14, format("ran %s cells, pinned 14", ran));
     assert(fails.length == 0, format("%s failure(s):\n  %-(%s\n  %)", fails.length, fails));
 }

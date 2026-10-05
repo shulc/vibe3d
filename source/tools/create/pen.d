@@ -732,8 +732,7 @@ public:
     override bool paramEnabled(string name) const {
         if (name == "currentPoint" || name == "posX" || name == "posY" || name == "posZ")
             return state == PenState.Drawing && vertices_.length > 0;
-        if (name == "makeQuads")
-            return state != PenState.Drawing || vertices_.length < 3;
+        if (name == "makeQuads") return vertices_.length < 3;   // Idle holds none
         return true;
     }
 
