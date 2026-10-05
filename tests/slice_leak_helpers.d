@@ -40,6 +40,13 @@ enum SL_KMOD_LCTRL = 64;
 // transport
 // ---------------------------------------------------------------------------
 
+/// `VIBE3D_CELL=<id>` runs one cell of a test file alone.
+bool cell(string id) {
+    import std.process : environment;
+    const only = environment.get("VIBE3D_CELL", "");
+    return only.length == 0 || only == id;
+}
+
 JSONValue slPost(string path, string body_) {
     return parseJSON(postRaw(path, body_));
 }

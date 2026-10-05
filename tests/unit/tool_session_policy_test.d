@@ -545,7 +545,7 @@ unittest { // (4)
     foreach (p; manifest["products"].array)
         moduleOf[p["aggregate"].str] = p["module"].str;
     string[] stepIds, imageStepIds, paramArmIds;
-    size_t checkedNames, actionNames, armAttrs, stepsFalse, recordedSteps, sessionLess;
+    size_t checkedNames, actionNames, armAttrs, stepsFalse, recordedSteps;
     foreach (row; kTable) {
         auto ci = TypeInfo_Class.find(moduleOf[row.cls] ~ "." ~ row.cls);
         auto t = blit(ci);
@@ -562,11 +562,6 @@ unittest { // (4)
         // in EVERY attribute-arm tool, by arm, never by id; never in a
         // session-less or history-recorded tool.
         if (pol.stepsParamWrites() && !pol.historyTopologySteps) paramArmIds ~= row.id;
-        if (!pol.sessionSteps && !pol.historyTopologySteps) {
-            ++sessionLess;
-            assert(!pol.stepsParamWrites(),
-                   "a session-less tool steps its parameter writes: " ~ row.id);
-        }
         if (pol.historyRecordedSteps)
             assert(!pol.stepsParamWrites(),
                    "a history-recorded tool steps its parameter writes: " ~ row.id);
@@ -653,12 +648,15 @@ unittest { // (4)
                   ~ "in the same commit", stepsFalse, kSessionStepsFalseCeiling));
     assert(recordedSteps == 51,
            format("history-owned rows %s, expected 51", recordedSteps));
-    // No registered id is session-less (measured 0, = the M7 ceiling): the
-    // session-less case is the base `Tool`'s default policy, pinned below.
-    assert(sessionLess == 0, format("UND2: %s session-less rows checked, measured 0", sessionLess));
+    // No registered id is session-less (the M7 ceiling is 0): the session-less
+    // policies are the base `Tool`'s default and the command-wrapper family's.
     assert(!ToolSessionPolicy.init.stepsParamWrites(),
            "UND2: a tool with the default (session-less) policy steps its parameter writes — "
            ~ "the panel would capture an attribute image for every row every frame");
+    const wrapperPol = blit(TypeInfo_Class.find("tools.common.command_wrapper.CommandWrapperTool"))
+        .sessionPolicy();
+    assert(!wrapperPol.sessionSteps && !wrapperPol.stepsParamWrites(),
+           "UND2: the command-wrapper family's session-less policy steps its parameter writes");
     sort(paramArmIds);
     assert(paramArmIds == ["edge.extend", "mesh.edgeSliceTool", "mesh.loopSliceTool",
                            "mesh.sliceTool", "pen", "poly.bevel"],

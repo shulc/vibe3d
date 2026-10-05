@@ -37,20 +37,15 @@
 // changed. `VIBE3D_CELL=<id>` runs one cell alone.
 
 import slice_leak_helpers : slPlay, slMotion, slKey, slLine, slLineUi, slHistoryLabels,
-    slHistoryLen, slMesh, SlMesh, slCmd, SL_SDLK_z, SL_KMOD_LCTRL, SL_KMOD_LSHIFT;
-import http_client : getJson, postJson;
+    slHistoryLen, slMesh, SlMesh, slCmd, cell, SL_SDLK_z, SL_KMOD_LCTRL, SL_KMOD_LSHIFT;
+import http_client : getJson;
+import edge_extend_gesture_helpers : typePanel;
 import drag_helpers : fetchCamera;
 import std.format : format;
 import std.json;
 import std.math : abs;
-import std.process : environment;
 
 void main() {}
-
-bool cell(string id) {
-    const only = environment.get("VIBE3D_CELL", "");
-    return only.length == 0 || only == id;
-}
 
 void ctrlZ(string what)      { slKey(SL_SDLK_z, SL_KMOD_LCTRL, what); }
 void ctrlShiftZ(string what) { slKey(SL_SDLK_z, SL_KMOD_LCTRL | SL_KMOD_LSHIFT, what); }
@@ -476,9 +471,9 @@ unittest {
     const g1 = slMesh();
     const s1 = shiftV(), i1 = insetV();
     assert(s1 > 0.01 && abs(i1) > 0.01, format("bevel floor (PW): the haul set shift %s, inset %s", s1, i1));
-    auto r = postJson("/api/script?interactive=true", "tool.attr poly.bevel inset 0.05");
-    assert(r["status"].str == "ok" && near(insetV(), 0.05) && slMesh().canon != g1.canon,
-           "bevel floor (PW): the typed inset did not land: " ~ r.toString);
+    typePanel("tool.attr poly.bevel inset 0.05");
+    assert(near(insetV(), 0.05) && slMesh().canon != g1.canon,
+           format("bevel floor (PW): the typed inset did not land: inset %s", insetV()));
     ctrlZ("PW Ctrl+Z 1");
     assert(tool() == "polyBevel" && near(shiftV(), s1) && near(insetV(), i1)
            && slMesh().canon == g1.canon,

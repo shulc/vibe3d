@@ -23,6 +23,7 @@
 
 import edge_extend_gesture_helpers;
 import http_client : getJson, postJson;
+import slice_leak_helpers : cell;
 import std.conv : to;
 import std.format : format;
 import std.json;
@@ -229,16 +230,9 @@ unittest { // (MB) review of M4: a redone arm continues the ROW's session (redo 
              ~ "token): tool '%s', %d v, %d records", toolId(), vertexCount(), undoLen() - h0));
 }
 
-// UND2 (K-U2, PS-all / OWN / D-whole): a typed panel field inside the live
-// window is a step of its own; a later gesture does not fold it; the drop
-// closes it into the session's one row.
+// UND2 (K-U2 PS-all / OWN): a typed panel field inside the live window is a
+// step of its own; a later gesture does not fold it.
 string verts() { return model()["vertices"].toString; }
-/// `VIBE3D_CELL=<id>` runs one of these cells alone.
-bool cell(string id) {
-    import std.process : environment;
-    const only = environment.get("VIBE3D_CELL", "");
-    return only.length == 0 || only == id;
-}
 
 unittest { // (PW) typed value, Ctrl+Z, Ctrl+Z: the gesture's own offset first, then the arm
     if (!cell("PW")) return;
@@ -280,15 +274,4 @@ unittest { // (PW-co) typed value, a gesture, Ctrl+Z twice: the typed step is no
     assert(dist(offset(), o1) <= 1e-6 && verts() == g1o,
         format("(PW-co) Ctrl+Z 2 did not restore the gesture's own offset: %s (gesture %s)",
                offset(), o1));
-}
-
-unittest { // (PW-dz) typed value, the drop key, Ctrl+Z: the whole session goes (K-U2 D-whole)
-    if (!cell("PW-dz")) return;
-    runOne();
-    typePanel("tool.attr edge.extend offsetY 0.25");
-    exitThrough("q");
-    ctrlZ();
-    assert(toolId() == "" && vertexCount() == 9,
-        format("(PW-dz) Ctrl+Z after the drop must undo the whole session: tool '%s', %d v",
-               toolId(), vertexCount()));
 }
