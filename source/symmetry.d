@@ -490,7 +490,8 @@ void applySymmetryMirrorDelta(Mesh* mesh, const ref SymmetryPacket sp,
 }
 
 /// The delta rule's partner: `base[mi]` plus the driver's edit `p − base[i]` reflected.
-Vec3 mirroredEdit(const ref SymmetryPacket sp, const(Vec3)[] base, size_t i, size_t mi, Vec3 p) {
+Vec3 mirroredEdit(const ref SymmetryPacket sp, const(Vec3)[] base, size_t i, size_t mi, Vec3 p)
+    pure nothrow @nogc @safe {
     return base[mi] + mirrorDirection(sp, p - base[i]);
 }
 

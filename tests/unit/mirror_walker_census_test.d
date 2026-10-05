@@ -121,7 +121,7 @@ unittest { // (c3) the overlay draws the applied plane
     assert(block.length > 200 && countOccurrences(block, "glDrawArrays(") == 1,
            "(c3) the overlay block not found");
     assert(countOccurrences(block, "sym.currentPlane(c, n);") == 1, "(c3) the overlay does not read currentPlane(");
-    assert(countOccurrences(block, "perpendicularFrame(n, a1, a2);") == 1,
+    assert(countOccurrences(block, "if (perpendicularFrame(n, a1, a2))") == 1,
            "(c3) the overlay's lattice axes are not spanned from the applied normal");
     foreach (tok; ["useWorkplane", "currentBasis(", "axisIndex", ".offset", "WorkplaneStage"])
         assert(countOccurrences(block, tok) == 0,
@@ -175,6 +175,48 @@ unittest { // (w1) the applied plane == the published plane; the old overlay sou
     assert(wp.evaluate(vts2) && sy.evaluate(vts2), "(w1) rig: second evaluation");
     const pk2 = vts2.get!SymmetryPacket();
     assert(c == pk2.planePoint && n == pk2.planeNormal, "(w1) axis: overlay plane != applied plane");
+}
+
+unittest { // (w1e) an EMPTY mesh: no pair table is built, the overlay still draws the applied plane
+    import math : Vec3, identityMatrix;
+    import mesh : Mesh;
+    import editmode : EditMode;
+    import operator : VectorStack;
+    import toolpipe.packets : SubjectPacket, SymmetryPacket;
+    import toolpipe.stages.symmetry : SymmetryStage;
+    import toolpipe.stages.workplane : WorkplaneStage;
+
+    Mesh empty;
+    Mesh* mp = &empty;
+    EditMode em = EditMode.Vertices;
+    auto wp = new WorkplaneStage();
+    wp.isAuto = false;
+    wp.rotation = Vec3(0, 0, 30);         // a tilted plane: neither world XZ nor an axis plane
+    wp.center = Vec3(0.5f, 0, 0);
+    auto sy = new SymmetryStage(() => mp, &em);
+    sy.enabled = true;
+    sy.useWorkplane = true;
+    SubjectPacket subj;
+    subj.viewport.view = identityMatrix;
+    VectorStack vts;
+    vts.put(&subj);
+    assert(wp.evaluate(vts) && sy.evaluate(vts), "(w1e) rig: the stages did not evaluate");
+    const pk = vts.get!SymmetryPacket();
+    // Positive control: the applied plane is NOT the world-XZ fallback.
+    assert(pk.pairOf.length == 0 && pk.planeNormal != Vec3(0, 1, 0) && pk.planePoint == Vec3(0.5f, 0, 0),
+           "(w1e) rig: applied " ~ v3(pk.planePoint) ~ " " ~ v3(pk.planeNormal));
+    Vec3 c, n;
+    sy.currentPlane(c, n);
+    assert(c == pk.planePoint && n == pk.planeNormal,
+           "(w1e) empty mesh: overlay plane " ~ v3(c) ~ " " ~ v3(n)
+           ~ " != applied " ~ v3(pk.planePoint) ~ " " ~ v3(pk.planeNormal));
+    // A reset is a fresh session: the record goes with it (world XZ until the next pass).
+    sy.reset();
+    sy.enabled = true;
+    sy.useWorkplane = true;
+    sy.currentPlane(c, n);
+    assert(c == Vec3(0, 0, 0) && n == Vec3(0, 1, 0),
+           "(w1e) after reset: overlay plane " ~ v3(c) ~ " " ~ v3(n) ~ ", expected world XZ");
 }
 
 unittest { // (w2) the walker's refusals: a disabled packet, a pair table or a
@@ -258,4 +300,41 @@ unittest { // (w4) a routed walk that stores announces ONE Maps change
     applySymmetryMirrorDeltaRouted(&m, sp, route.base, [true, true], touched, route);
     assert(touched[1], "(w4) rig: the routed delta walk did not write the partner");
     assert((m.undeliveredChanges_ & MeshEditScope.Maps) != 0, "(w4) a routed delta store announced no Maps change");
+}
+
+unittest { // (w5) the routed POSITION walk stores the EXACT mirror of the drawn
+    // driver, even when the partner's run position is not the driver's mirror
+    // (the delta rule would keep the partner's own morph; this walk must not).
+    import math : Vec3;
+    import mesh : Mesh, MapKind;
+    import mesh_morph : morphApply;
+    import toolpipe.packets : SymmetryPacket;
+    import symmetry : mirrorPosition;
+    import tools.transform.morph_route : MorphRoute, applySymmetryMirrorRouted;
+    Mesh m;
+    m.vertices = [Vec3(1, 0.5f, 0.25f), Vec3(-1, 0.5f, 0.25f)];
+    m.resizeVertexSelection();
+    m.addMeshMapOfKind(MapKind.morphRelative, "mm");
+    auto map = m.morphMapForWrite("mm");
+    map.setEntry(1, Vec3(0, 0.3f, 0));   // the partner carries a morph of its own
+    MorphRoute route;
+    route.kind = MapKind.morphRelative; route.name = "mm";
+    route.base = m.vertices.dup;
+    route.runPos = [m.vertices[0], m.vertices[1] + Vec3(0, 0.3f, 0)];
+    map.setEntry(0, Vec3(0, 0, 0.4f));   // the gesture moved the driver +Z 0.4
+    SymmetryPacket sp;
+    sp.enabled = true; sp.axisIndex = 0; sp.baseSide = +1;
+    sp.planePoint = Vec3(0, 0, 0); sp.planeNormal = Vec3(1, 0, 0);
+    sp.pairOf = [1, 0]; sp.onPlane = [false, false]; sp.vertSign = [1, -1];
+    // Positive control: the fixture separates the rules — the partner's run
+    // position is NOT the mirror of the driver's.
+    assert(route.runPos[1] != mirrorPosition(sp, route.runPos[0]), "(w5) rig: a symmetric run");
+    bool[] touched = new bool[](2);
+    applySymmetryMirrorRouted(&m, sp, [true, true], touched, route);
+    const Vec3 want = mirrorPosition(sp, Vec3(1, 0.5f, 0.65f));   // the drawn driver, mirrored
+    Vec3 st;
+    assert(touched[1] && m.morphValue("mm", 1, st), "(w5) rig: the partner was not written");
+    const Vec3 got = morphApply(route.base[1], st, MapKind.morphRelative, 1.0f);
+    assert(got == want, "(w5) routed position walk: partner drawn at " ~ v3(got)
+           ~ ", expected the exact mirror " ~ v3(want));
 }
