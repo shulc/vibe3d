@@ -369,7 +369,7 @@ unittest {
     symmetry(null);
     // Floor: 1 stay-green + 26 turning cells (A8 reads three moments; one
     // extrapolated work-plane cell) + 13 ours-only cells.
-    assert(ran == 40, format("ran %s cells, pinned 40", ran));
+    assert(ran == 41, format("ran %s cells, pinned 41", ran));
     // One line, so the first red line names every failing cell.
     assert(fails.length == 0, format("%s failure(s): %-(%s | %)", fails.length, fails));
 }
@@ -409,6 +409,19 @@ private string[] oursCells(ref int ran) {
         drop(); ++ran;
         fails ~= compare("drag-onto-plane", [p(0, -0.25), b1[1], b1[2],
             p(-0.75, -0.25), p(-0.75, 0.25)], [[0, 2, 1], [0, 3, 4]]);
+    }
+    // A self-welded point dragged OFF the plane re-decides its weld from the
+    // drag end like a scene link (K-C2 LK-break): B4's on-plane p0 dragged to
+    // x 0.25 is its own vertex with its own image, 6 vertices (the reference
+    // value for this gesture is inferred from LK-break, not captured).
+    {
+        auto b4 = clicks(parseJSON(import("fixtures/pen_symmetry.json"))["cases"]["B4"]);
+        rig("x");
+        clickWorld(b4);
+        drag(b4[0], p(0.25, -0.25));
+        drop(); ++ran;
+        fails ~= compare("drag-self-weld-off-plane", [p(0.25, -0.25), b4[1], b4[2],
+            p(-0.25, -0.25), p(-0.75, -0.25), p(-0.75, 0.25)], [[0, 2, 1], [3, 4, 5]]);
     }
     // A scene vertex V coinciding with a mirror image wins the tie: the click
     // shares V (scene first), the images stay own vertices (8, not 7).

@@ -39,7 +39,7 @@ import tools.create.create_common : pickWorkplane, BuildPlane,
                               workplaneCursorRay, workplaneCursorPlaneHit;
 import toolpipe.packets : SnapType, SnapPacket, SymmetryPacket;
 import toolpipe.stages.symmetry : liveSymmetryStage;
-import symmetry : mirrorPosition, symmetryPacketsEqual;
+import symmetry : mirrorPosition, symmetryMirrorsEqual, symmetryPacketsEqual;
 import editmode : EditMode;
 import snap : SnapResult, snapCursor, cascadeClassWins, kAbsentClassDist,
     kCascadeVertex, kCascadeEdge, kCandidateToleranceBasePx, kVertexToleranceScale;
@@ -822,7 +822,7 @@ public:
             !sameSliceBytes(vertices_, image.expectedVertices) ||
             !sameSliceBytes(links_, image.expectedLinks) ||
             !sameValueBytes(frame.toWorld, image.expectedToWorld) ||
-            !sameMirror(mirror_, image.expectedMirror) ||
+            !symmetryMirrorsEqual(mirror_, image.expectedMirror) ||
             !image.expectedPreview.matches(previewMesh) ||
             vertHandlers.length != image.expectedHandlers.length) return false;
         foreach (i, handler; vertHandlers)
@@ -922,7 +922,7 @@ public:
             in PreparedPenDeactivateImage image) const nothrow @nogc {
         return image.valid && cast(ubyte)state == image.expectedState &&
             params_ == image.params && vertices_ == image.vertices &&
-            links_ == image.links && sameMirror(mirror_, image.mirror) &&
+            links_ == image.links && symmetryMirrorsEqual(mirror_, image.mirror) &&
             vertHandlers.length == image.expectedHandlerCount &&
             lastSnap == image.expectedLastSnap &&
             meshChanged == image.expectedMeshChanged &&
@@ -1183,8 +1183,11 @@ public:
         if (resolvePenPoint(e.x, e.y, dragAnchor, hit, link)) {
             vertices_[dragVertIdx] = hit;
             refreshLinks();
-            // A mirror link stays with the dragged point (A7: the weld holds).
-            if (links_[dragVertIdx] > -2)
+            // A cross mirror link stays with the dragged point (A7: the weld
+            // holds); a scene link or the point's own self weld is re-decided
+            // from the final position (K-C2 LK-break).
+            immutable int l = links_[dragVertIdx];
+            if (l > -2 || l == -2 - dragVertIdx)
                 links_[dragVertIdx] = selfMirrorOr(link, hit, dragVertIdx);
             if (params_.currentPoint == dragVertIdx) syncPosFromCurrent();
             uploadPreview();
@@ -1338,10 +1341,6 @@ private:
         if (mirror_.enabled && mirror_.useWorkplane)
             penWorkplaneMirrorPlane(liveSymmetryStage().axisIndex, mirror_.offset,
                                     frame, mirror_.planePoint, mirror_.planeNormal);
-    }
-    static bool sameMirror(in SymmetryPacket a, in SymmetryPacket b) nothrow @nogc {
-        return symmetryPacketsEqual(a, b) && a.planePoint == b.planePoint &&
-            a.planeNormal == b.planeNormal;
     }
 
     // Where a click lands (wave plan S3a / S3c, tests/fixtures/pen_placement.json
@@ -1524,10 +1523,12 @@ private:
 
     // Rule 2 of the merge (wave plan S5 / S6, C1-m4): a placed point within
     // half the merge distance of the latched mirror plane, 2|d| < 3 px of world
-    // at the focus, is its own mirror (link -2 - i for stroke index `i`; read
-    // only when the latch is on). A point holds one link: the scene's first.
+    // at the focus, is its own mirror (link -2 - i for stroke index `i`). With
+    // the latch off `mirror_` is `.init` (plane x = 0), so the enabled term is
+    // live: without it a point near x = 0 self-welds and a drag cannot weld it
+    // to the scene. A point holds one link: the scene's first.
     int selfMirrorOr(int link, Vec3 local, size_t i) const {
-        if (link != -1 || !params_.merge) return link;
+        if (link != -1 || !params_.merge || !mirror_.enabled) return link;
         immutable float gap = 2 * abs(dot(toWorldP(local) - mirror_.planePoint,
                                           mirror_.planeNormal));
         return gap < 3 * viewWorldPerPixel(cachedVp) ? -2 - cast(int)i : -1;

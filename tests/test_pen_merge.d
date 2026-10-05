@@ -411,6 +411,19 @@ unittest {
         drop(); ++ran;
         fails ~= fixture("scene_drag_end", c["scene_drag_end"]["expected"]);
     }
+    // Symmetry off, a point placed ON world x = 0 (the unlatched mirror's
+    // `.init` plane) and dragged 200 px to ~7 px from V links like any other
+    // drag end: the self weld reads the latch's enabled flag (task 9363).
+    {
+        rig(f0, 440, meshJson(tri(p(0.47, 0.2)), kTri));
+        clickWorld(p(0, 0.2), kFar[0], kFar[1]);
+        dragWorld(p(0, 0.2), 200);
+        drop(); ++ran;
+        auto m = model();
+        if (!(m.v.length == 5 && m.f.length == 2 && m.f[1].canFind(0L)))
+            fails ~= format("sym_off_x0_drag_onto_v: %s vertices, faces %s; expected 5, "
+                ~ "the stroke face sharing V (vertex 0); vertices %s", m.v.length, m.f, m.v);
+    }
     // A linked point dragged 10 px stays linked.
     {
         linkedStroke();
@@ -522,7 +535,7 @@ unittest {
         fails ~= relinkCell(cell, b10[cell], ran);
 
     snap(null);
-    assert(ran == 81, format("pen merge population: %s cells ran, pinned 81", ran));
+    assert(ran == 82, format("pen merge population: %s cells ran, pinned 82", ran));
 
     assert(fails.length == 0, format("pen merge, %s failing: %-(%s\n%)", fails.length, fails));
 }

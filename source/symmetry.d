@@ -33,6 +33,16 @@ bool symmetryPacketsEqual(const ref SymmetryPacket a, const ref SymmetryPacket b
     return a.config == b.config;
 }
 
+/// Mirror equality: the config plus the resolved plane (planePoint /
+/// planeNormal). A latch that resolves its own plane (the pen's work-plane
+/// mirror) compares with this, not with the config-only test above.
+bool symmetryMirrorsEqual(const ref SymmetryPacket a, const ref SymmetryPacket b)
+    pure nothrow @nogc @safe
+{
+    return symmetryPacketsEqual(a, b) && a.planePoint == b.planePoint &&
+        a.planeNormal == b.planeNormal;
+}
+
 /// Mirror a world-space point across the plane described by `sp`.
 /// `sp.planeNormal` must be unit length (the stage normalises it).
 /// `pos_mirror = pos - 2 * dot(pos - planePoint, normal) * normal`.
