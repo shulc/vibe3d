@@ -1133,6 +1133,8 @@ public:
     }
 
     override void onParamChanged(string name) {
+        // A typed value is a new unsnapped base for a drag in progress.
+        dragRaw_ = params_;
         if (paramBeforeValid) {
             recordLiveEdit(paramBeforeParams, paramBeforeState, params_, state);
             paramBeforeValid = false;
