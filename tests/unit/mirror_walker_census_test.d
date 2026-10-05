@@ -4,7 +4,9 @@
 // the symmetry side test is `symmetrySide(` at every symmetry reader — Edge
 // Extend keeps no `dot(` sign test; (c3) the viewport's symmetry overlay reads
 // the stage's applied plane; (w1) that plane equals the published packet's
-// under an auto work plane that a front view turns away from the stage basis.
+// under an auto work plane that a front view turns away from the stage basis;
+// (w2) the walker's refusals; (w3) the pairings' epsilon side test; (w4) the
+// routed walk's one change note.
 // Order: floors first, then the needles, then the pins (druntime stops a
 // module at its first red).
 module tests.unit.mirror_walker_census_test;
@@ -173,4 +175,76 @@ unittest { // (w1) the applied plane == the published plane; the old overlay sou
     assert(wp.evaluate(vts2) && sy.evaluate(vts2), "(w1) rig: second evaluation");
     const pk2 = vts2.get!SymmetryPacket();
     assert(c == pk2.planePoint && n == pk2.planeNormal, "(w1) axis: overlay plane != applied plane");
+}
+
+unittest { // (w2) the walker's refusals: a disabled packet, a pair table or a
+    // baseline of another length write nothing (a positive control writes).
+    import math : Vec3;
+    import mesh : Mesh;
+    import toolpipe.packets : SymmetryPacket;
+    import symmetry : applySymmetryMirror, applySymmetryMirrorDelta;
+    Mesh m;
+    m.vertices = [Vec3(1, 0, 0), Vec3(-0.5f, 0, 0), Vec3(0.2f, 1, 0)];   // 0 <-> 1, 2 on the plane
+    m.resizeVertexSelection();
+    SymmetryPacket sp;
+    sp.enabled = true; sp.axisIndex = 0; sp.baseSide = +1;
+    sp.pairOf = [1, 0, -1]; sp.onPlane = [false, false, true]; sp.vertSign = [1, -1, 0];
+    const bool[] all = [true, true, true];
+    const Vec3[] base = [Vec3(1, 0, 0), Vec3(-1, 0, 0), Vec3(0, 1, 0)];
+    bool[] touched = new bool[](3);
+    const Vec3[] before = m.vertices.dup;
+    Mesh ctl = m; ctl.vertices = m.vertices.dup;
+    applySymmetryMirror(&ctl, sp, all, touched);
+    assert(ctl.vertices[1] == Vec3(-1, 0, 0) && ctl.vertices[2] == Vec3(0, 1, 0) && touched[1],
+           "(w2) control: the enabled walk did not mirror the pair and project the on-plane vertex");
+    auto off = sp; off.enabled = false;
+    applySymmetryMirror(&m, off, all, touched);
+    assert(m.vertices == before, "(w2) a disabled packet wrote");
+    auto shortTable = sp; shortTable.pairOf = [1, 0];
+    applySymmetryMirror(&m, shortTable, all, touched);
+    assert(m.vertices == before, "(w2) a pair table of another length wrote");
+    applySymmetryMirrorDelta(&m, sp, base ~ Vec3(0, 0, 0), all, touched);
+    assert(m.vertices == before, "(w2) a baseline of another length wrote");
+}
+
+unittest { // (w3) both pairings classify a vertex inside epsilonWorld as on the plane
+    import math : Vec3;
+    import mesh : Mesh;
+    import toolpipe.packets : SymmetryPacket;
+    import symmetry : rebuildPairing, rebuildPairingTopological;
+    Mesh m;
+    m.vertices = [Vec3(1, 0, 0), Vec3(-1, 0, 0), Vec3(5e-5f, 1, 0)];
+    m.addFace([0u, 1, 2]);
+    SymmetryPacket sp;
+    sp.enabled = true; sp.axisIndex = 0; sp.epsilonWorld = 1e-4f;
+    int[] pairOf, vertSign; bool[] onPlane;
+    rebuildPairing(m, sp, pairOf, onPlane, vertSign);
+    assert(vertSign == [1, -1, 0] && onPlane == [false, false, true],
+           "(w3) rebuildPairing: near-plane vertex not on the plane: " ~ vertSign.to!string);
+    rebuildPairingTopological(m, sp, pairOf, onPlane, vertSign);
+    assert(vertSign == [1, -1, 0] && onPlane == [false, false, true],
+           "(w3) rebuildPairingTopological: near-plane vertex not on the plane: " ~ vertSign.to!string);
+}
+
+unittest { // (w4) a routed walk that stores announces ONE Maps change
+    import math : Vec3;
+    import mesh : Mesh, MapKind;
+    import mesh_edit_delta : MeshEditScope;
+    import toolpipe.packets : SymmetryPacket;
+    import tools.transform.morph_route : MorphRoute, applySymmetryMirrorRouted;
+    Mesh m;
+    m.vertices = [Vec3(1, 0.5f, 0.25f), Vec3(-1, 0.5f, 0.25f)];
+    m.resizeVertexSelection();
+    m.addMeshMapOfKind(MapKind.morphRelative, "mm");
+    MorphRoute route;
+    route.kind = MapKind.morphRelative; route.name = "mm";
+    route.base = m.vertices.dup; route.runPos = m.vertices.dup;
+    SymmetryPacket sp;
+    sp.enabled = true; sp.axisIndex = 0; sp.baseSide = +1;
+    sp.pairOf = [1, 0]; sp.onPlane = [false, false]; sp.vertSign = [1, -1];
+    bool[] touched = new bool[](2);
+    m.undeliveredChanges_ = 0;
+    applySymmetryMirrorRouted(&m, sp, [true, true], touched, route);
+    assert(touched[1], "(w4) rig: the routed walk did not write the partner");
+    assert((m.undeliveredChanges_ & MeshEditScope.Maps) != 0, "(w4) a routed store announced no Maps change");
 }
