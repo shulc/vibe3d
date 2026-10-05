@@ -6912,9 +6912,9 @@ private:
     // P-C: the single SNAP / SYMM stages — config sources of truth for the
     // snap + symmetry banks. The refire entry's config-restore hooks + the
     // gesture-commit hooks restore their config through these (mirrors
-    // activeFalloffStage). Wrapper-owned virtuals; the base TransformTool keeps
-    // its own `final` snapStageForHooks()/symmetryStageForHooks() for the R/S
-    // sub-tools (the same vtable-collision avoidance as falloffStageForHooks).
+    // activeFalloffStage). Wrapper-owned virtuals; SNAP resolves through the
+    // one finder `liveSnapStage()`; SYMM keeps the base
+    // TransformTool's `final` symmetryStageForHooks() for the R/S sub-tools.
     SnapStage activeSnapStage() const {
         return liveSnapStage();
     }

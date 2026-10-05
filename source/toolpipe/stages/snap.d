@@ -149,11 +149,11 @@ class SnapStage : Stage, Operator {
     // around a drag); the interface's method set and its `priority` return are
     // header-derived and unmeasured — see `toolpipe.guide` for which is which.
     //
-    // Phase (a) lands the registry EMPTY. No tool in this tree calls
-    // `addGuide`, so `_guides.length` is 0 at every `snapCursor` this stage
-    // makes, the arbitration branch inside `snapCursor` is unreachable, and
-    // the ranking is the historical "nearest wins". Changing that is phase
-    // (b), and it is named behaviour-changing.
+    // One registered client: the topology pen registers its guide for a
+    // gesture (`registerSnapGuide`). Every production `snapCursor` call
+    // passes this registry (`liveSnapGuides()`), so a registered
+    // guide re-ranks every client's walk; with none, the ranking is the
+    // historical "nearest wins".
 
     /// Register a gesture-scoped guide, and push the current ranges into it.
     ///
@@ -182,7 +182,7 @@ class SnapStage : Stage, Operator {
     /// the arbitration settles equal priorities by.
     SnapGuide[] guides() { return _guides; }
 
-    /// How many guides are registered. 0 in phase (a), always.
+    /// How many guides are registered (0 outside a guide-owning gesture).
     size_t guideCount() const { return _guides.length; }
 
     /// Detached registry image for tool-drop preparation. The caller owns the

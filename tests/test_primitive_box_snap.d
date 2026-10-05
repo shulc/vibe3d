@@ -210,6 +210,28 @@ unittest { // handle drags under grid snap: not trapped; a released element snap
         ++ran;
     }
 
+    // 25b box-mover-arrow-vertex: the same +X arrow (part 10) dragged onto a
+    // loose vertex V = (0.3, 0, 0.07) OFF the arrow's axis under vertex snap.
+    // The arrow writes only its own axis: the centre takes V's x and keeps
+    // z 0 and its y (an arrow writing all three would land z on 0.07).
+    {
+        boxBaseRig("vertex", `{"vertices":[[0.3,0,0.07]],"faces":[]}`);
+        const p = partPixel(10), c = worldPixel(Vec3(0, 0, 0)), v = worldPixel(Vec3(0.3f, 0, 0.07f));
+        assert(p[0] - c[0] > 20 && abs(p[1] - c[1]) <= 1 && abs(v[1] - c[1]) > 20,
+            format("rig: part 10 must be the +X arrow (centre %s, grab %s), V off its axis at %s",
+                   c, p, v));
+        const cy0 = qf("cenY");
+        auto cam = fetchCamera(BASE);
+        playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height, p[0], p[1], v[0], v[1], 22),
+                    BASE);
+        const cx = qf("cenX"), cy = qf("cenY"), cz = qf("cenZ");
+        if (!(fabs(cx - 0.3) < 1e-4 && fabs(cz) < 1e-4 && fabs(cy - cy0) < 1e-6))
+            fails ~= format("box-mover-arrow-vertex: centre expected (0.3, %.6f, 0), "
+                ~ "got (%.6f, %.6f, %.6f)", cy0, cx, cy, cz);
+        cmd("tool.set prim.cube off");
+        ++ran;
+    }
+
     // 26 box-height-grid-slow: the box built (perspective, as the interactive
     // rig) with a Y height, typed y 0..0.4; then the FRONT ortho preset. The
     // premise first: the work plane turned with the view, so the height axis
@@ -325,9 +347,9 @@ unittest { // handle drags under grid snap: not trapped; a released element snap
         ++ran;
     }
 
-    assert(ran == 5, format("population: %d box handle cells ran, expected 5", ran));
+    assert(ran == 6, format("population: %d box handle cells ran, expected 6", ran));
     string[] names;   // the red cells by name first: the runner shows 8 lines
     foreach (f; fails) names ~= f[0 .. f.indexOf(':')];
-    assert(fails.length == 0, format("%d of 5 box handle cells red (%-(%s, %)):\n  %-(%s\n  %)",
+    assert(fails.length == 0, format("%d of 6 box handle cells red (%-(%s, %)):\n  %-(%s\n  %)",
                                      fails.length, names, fails));
 }

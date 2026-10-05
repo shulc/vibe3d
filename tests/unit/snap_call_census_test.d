@@ -113,7 +113,7 @@ unittest // one packet read, one finder: the deleted copies stay deleted
     const files = productionSources();
     assert(files.length >= 500, format("population floor: %s source files scanned", files.length));
     size_t[string] raw;
-    string[] finders, casts, faceCalls, liveCalls;
+    string[] finders, casts, faceCalls, liveCalls, packetReads;
     foreach (f; files) {
         foreach (id; ["captureSnapForGesture", "snapStageForGesture", "guideBits_", "snapPacketOf"])
             raw[id] = raw.get(id, 0) + wordsAt(f[1], id).length;   // RAW text: comments count too
@@ -123,6 +123,7 @@ unittest // one packet read, one finder: the deleted copies stay deleted
             if (balancedSpan(code, open, '(', ')').canFind("TaskCode.Snap")) finders ~= f[0];
         }
         foreach (_; 0 .. countOccurrences(code, "cast(SnapStage)")) casts ~= f[0];
+        foreach (_; 0 .. countOccurrences(code, "get!SnapPacket")) packetReads ~= f[0];
         Site[] fc, fo;
         scanCalls(f[0], code, "snapFace", "SnapResult", fc, fo);
         foreach (c; fc ~ fo) faceCalls ~= c.file;
@@ -141,6 +142,12 @@ unittest // one packet read, one finder: the deleted copies stay deleted
                           "source/toolpipe/stages/snap.d"];
     assert(finders == kFinderRoster, format("findByTask(TaskCode.Snap) roster: %s", finders));
     assert(casts == kFinderRoster, format("cast(SnapStage) roster: %s", casts));
+    // One packet read: `snapPacketOf` in snap.d; the pipe-state HTTP provider
+    // reads it beside its other packets. Text needle: `get!(SnapPacket)` or
+    // an alias would pass it.
+    packetReads.sort();
+    assert(packetReads == ["source/http_providers.d", "source/snap.d"],
+        format("get!SnapPacket production roster: %s", packetReads));
     liveCalls.sort();
     assert(liveCalls == ["source/commands/snap/mode.d", "source/commands/snap/toggle.d",
                          "source/commands/snap/toggle_type.d", "source/editor_app.d",
