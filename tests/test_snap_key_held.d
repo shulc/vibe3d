@@ -810,17 +810,20 @@ unittest {
     l.key(false, 9000); l.play();
     // topopen-snap-key-switch: a switch to Move mid-drag ends the pen's guide (the
     // tool transition clears the registry; a later held button in Move holds none).
-    { Log m; m.motion(b, 0); m.button(true, b); path(m, b, a, 1, 4, 8); m.play(); }
-    penCommand("tool.set move");
-    { Log m; m.button(false, a); m.play(); }
-    forgetConstraint();
-    Log k; k.motion(a, 0); k.button(true, a); k.key(true, 1000); k.play();
-    const afterSwitch = snapOn();
-    k.key(false, 1100); k.button(false, a); k.play();
-    penCommand("tool.pipe.attr snap enabled false");
-    penCommand("tool.set move off");
-    assert(!afterSwitch, "topopen-snap-key-switch: X was delivered in Move after a switch from a "
-        ~ "topology pen drag (the pen's guide outlived its tool)");
+    if (cellOn("topopen-snap-key-switch")) {
+        { Log m; m.motion(b, 0); m.button(true, b); path(m, b, a, 1, 4, 8); m.play(); }
+        penCommand("tool.set move");
+        { Log m; m.button(false, a); m.play(); }
+        forgetConstraint();
+        Log k; k.motion(a, 0); k.button(true, a); k.key(true, 1000); k.play();
+        const afterSwitch = snapOn();
+        k.key(false, 1100); k.button(false, a); k.play();
+        penCommand("tool.pipe.attr snap enabled false");
+        penCommand("tool.set move off");
+        assert(!afterSwitch, "topopen-snap-key-switch: X was delivered in Move after a switch from "
+            ~ "a topology pen drag (the pen's guide outlived its tool)");
+    }
+    penCommand("tool.set mesh.topoPen off");
     flush();
 }
 
