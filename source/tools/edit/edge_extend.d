@@ -1318,10 +1318,10 @@ private:
             symMirror_.planePoint  = sp.planePoint;
             symMirror_.planeNormal = sp.planeNormal;
             if (sp.useWorkplane) {
-                import tools.create.create_common : primitivePlacementFrame, transformDir;
-                immutable frame = primitivePlacementFrame();
-                symMirror_.planePoint  = transformPoint(frame.toWorld, sp.planePoint);
-                symMirror_.planeNormal = normalize(transformDir(frame.toWorld, sp.planeNormal));
+                import tools.create.create_common : primitivePlacementFrame;
+                import toolpipe.stages.symmetry : mapByWorkplaneOnceMore;
+                mapByWorkplaneOnceMore(primitivePlacementFrame().toWorld,
+                                       symMirror_.planePoint, symMirror_.planeNormal);
             }
         }
         symMirror_.pressSide = liveAuthoringSide();

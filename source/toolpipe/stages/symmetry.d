@@ -45,6 +45,17 @@ void workplaneSymmetryPlane(Vec3 origin, Vec3 axis1, Vec3 normal, Vec3 axis2, in
     point       = origin + planeNormal * offset;
 }
 
+/// The plane mapped by the work plane `toWorld` once more — W twice, the
+/// mirror plane of the pen (fixture pen_symmetry.json A5-symWP) and Edge Extend
+/// (capture K-D D4); Move maps it once.
+void mapByWorkplaneOnceMore(in float[16] m, ref Vec3 point, ref Vec3 normal) pure nothrow @nogc @safe {
+    import math : applyAffine, normalize;
+    point  = applyAffine(m, point);
+    normal = normalize(Vec3(m[0] * normal.x + m[4] * normal.y + m[8] * normal.z,
+                            m[1] * normal.x + m[5] * normal.y + m[9] * normal.z,
+                            m[2] * normal.x + m[6] * normal.y + m[10] * normal.z));
+}
+
 private enum Vec3[4] kWorldBasis = [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1)];
 
 // ---------------------------------------------------------------------------

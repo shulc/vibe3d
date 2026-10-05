@@ -37,7 +37,7 @@ import tools.create.create_common : primitivePlacementFrame, WorkplaneFrame,
                               transformPoint, transformDir, snapLocalHit,
                               workplaneCursorPlaneHit;
 import toolpipe.packets : SnapType, SnapPacket, SymmetryPacket;
-import toolpipe.stages.symmetry : liveSymmetryStage, workplaneSymmetryPlane;
+import toolpipe.stages.symmetry : liveSymmetryStage, workplaneSymmetryPlane, mapByWorkplaneOnceMore;
 import toolpipe.stages.snap : liveSnapStage;
 import toolpipe.stages.constrain : liveConstrainStage;
 import bvh_pick : SurfaceHit;
@@ -1425,8 +1425,7 @@ private:
         if (!(mirror_.enabled && mirror_.useWorkplane)) return;
         workplaneSymmetryPlane(frame.origin, frame.axis1, frame.normal, frame.axis2,
             liveSymmetryStage().axisIndex, mirror_.offset, mirror_.planePoint, mirror_.planeNormal);
-        mirror_.planePoint = transformPoint(frame.toWorld, mirror_.planePoint);
-        mirror_.planeNormal = normalize(transformDir(frame.toWorld, mirror_.planeNormal));
+        mapByWorkplaneOnceMore(frame.toWorld, mirror_.planePoint, mirror_.planeNormal);
     }
 
     // The one place a pixel becomes a stroke point (click, hover, drag): the
