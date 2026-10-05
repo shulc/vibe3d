@@ -761,6 +761,10 @@ void penOn(string mode) {
     // dropdown says — but the mode is pinned anyway so a cell that drives an
     // UNMODIFIED press (place, move) names the row it means.
     cmdLine("tool.attr mesh.topoPen mode " ~ mode);
+    // Global snap types off (the state stays armed, welds unchanged): a Point
+    // lands on the surface hit, as frozen, not on a sphere vertex (task 9501).
+    auto r = postJ("/api/command", `tool.pipe.attr snap types ""`);
+    assert(r["status"].str == "ok", "snap types off failed: " ~ r.toString);
     settle(200);
 }
 
