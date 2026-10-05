@@ -787,6 +787,14 @@ private void pv2Row(T)(EditMode mode, void function(ref Mesh) select,
         setFloatParam(tool, sweep, 0.12f);
         assert(tool.previewRebuildCounts().keyMisses == 0,
             name ~ ": the sample after a cancel missed the key");
+
+        // A topology-step rebase hands the seam a new basis (the same cage
+        // here, so a stale key would still PLACE): the next sample re-keys.
+        tool.rebaseTopologyStep(tool.topologyStepBasis());
+        const fullAtRebase = tool.previewRebuildCounts().fullRebuilds;
+        setFloatParam(tool, sweep, 0.13f);
+        assert(tool.previewRebuildCounts().fullRebuilds == fullAtRebase + 1,
+            name ~ ": the sample after a rebase placed on the old key");
     }
 
     // (b) crossings.
