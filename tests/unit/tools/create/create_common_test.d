@@ -193,3 +193,27 @@ unittest {
     assert(m.faces[1] == [6u, 5u, 4u, 3u],   "new face 1 should reverse in place");
     assert(m.faces[2] == [9u, 8u, 7u],       "new face 2 should reverse in place");
 }
+
+unittest { // backgroundPoint with no surface: the plane point snapped to q (task 9404)
+    import math : orthographicMatrix;
+    import viewgrid : vectorSnap, viewVectorQuantum;
+    import std.format : format;
+    auto saved = g_pipeCtx;
+    g_pipeCtx = null;               // no pipeline => no constraint stage => no surface
+    scope (exit) g_pipeCtx = saved;
+    Viewport vp;
+    vp.width = 640; vp.height = 480;
+    vp.eye  = Vec3(0, 0, 3);
+    vp.view = [1, 0, 0, 0,  0, 1, 0, 0,  0, 0, 1, 0,  0, 0, -3, 1];
+    vp.proj = orthographicMatrix(1.2f, 640.0f / 480.0f, 0.1f, 100.0f);
+    immutable q = viewVectorQuantum(vp);
+    immutable p = Vec3(3.37f * q, -2.71f * q, 0.43f * q);
+    immutable want = vectorSnap(p, q);
+    assert(q > 0 && abs(want.x - p.x) > 1e-4f && abs(want.y - p.y) > 1e-4f,
+           format("rig premise: the point must sit off the q lattice (q %s, p %s, q(p) %s)", q, p, want));
+    auto f = frameFromBasis(Vec3(0, 1, 0), Vec3(1, 0, 0), Vec3(0, 0, 1), Vec3(0, 0, 0));
+    bool onSurface = true;
+    immutable got = backgroundPoint(p, vp, f, onSurface);
+    assert(!onSurface && got == want,
+           "no surface: the background point is the plane point snapped to the view quantum");
+}
