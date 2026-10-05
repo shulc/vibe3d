@@ -110,6 +110,7 @@ unittest {
     resetCube();
     cmd("layer.attr 0 pos.x 1.0");
     cmd("layer.attr 0 pivot.z -0.5");
+    cmd("select.typeFrom item");  // 9511 (K-CD4): layer.select never changes the type
     cmd("layer.select index:0");
 
     string preVerts = verticesJson(0);
@@ -166,6 +167,7 @@ unittest {
 
 unittest {
     resetCube();
+    cmd("select.typeFrom item");  // 9511 (K-CD4): layer.select never changes the type
     cmd("layer.select index:0");
 
     Vec3 prePos = layerPos(0);

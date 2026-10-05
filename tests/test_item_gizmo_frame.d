@@ -119,6 +119,7 @@ unittest { // Item current, item rotated 45 about Y: centre unchanged, axes stil
     cmd("layer.attr 0 pos.x 1.0");
     cmd("layer.attr 0 pivot.x 0.5");
     cmd("layer.attr 0 rot.y 45.0");
+    cmd("select.typeFrom item");  // 9511 (K-CD4): layer.select never changes the type
     cmd("layer.select index:0");
 
     auto f = readPipe();
@@ -137,6 +138,7 @@ unittest { // Item current, item rotated 45 about Y: centre unchanged, axes stil
 unittest { // Mode.Pivot stays the explicit route to the item's own basis.
     resetCube();
     cmd("layer.attr 0 rot.y 45.0");
+    cmd("select.typeFrom item");  // 9511 (K-CD4): layer.select never changes the type
     cmd("layer.select index:0");
     cmd("tool.pipe.attr axis mode pivot");
 
@@ -198,6 +200,7 @@ unittest { // tool.set move + item-current: /api/tool/state pivot == pos+pivot.
     resetCube();
     cmd("layer.attr 0 pos.x 2.0");
     cmd("layer.attr 0 pivot.z -1.0");
+    cmd("select.typeFrom item");  // 9511 (K-CD4): layer.select never changes the type
     cmd("layer.select index:0");
     ok(post(BASE ~ "/api/script", "tool.set move"), "tool.set move");
 
@@ -242,6 +245,7 @@ unittest { // tool.set rotate armed, THEN item-select: gizmo pivot == applied pi
     resetCube();
     cmd("layer.attr 0 pos.x 2.0");
     cmd("layer.attr 0 pivot.x 1.0");
+    cmd("select.typeFrom item");  // 9511 (K-CD4): layer.select never changes the type
     ok(post(BASE ~ "/api/script", "tool.set rotate on"), "tool.set rotate on");
     cmd("layer.select index:0");   // item current; the armed tool is NOT dropped
 

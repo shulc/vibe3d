@@ -197,6 +197,7 @@ void checkComposedParity(string label,
     resetCube();
     cmd("actr.origin");
     auto baseVerts = fetchVerts();
+    cmd("select.typeFrom item");  // 9511 (K-CD4): layer.select never changes the type
     cmd("layer.select index:0");
     applyComposed(firstAttrs, secondAttrs);
     auto matrix = fetchLayerMatrix(0);
@@ -259,6 +260,7 @@ void checkComposedParityDrag(string label, void delegate(Viewport) gestures,
     resetCube();
     cmd("actr.origin");
     auto baseVerts = fetchVerts();
+    cmd("select.typeFrom item");  // 9511 (K-CD4): layer.select never changes the type
     cmd("layer.select index:0");
     post(BASE ~ "/api/script", "tool.set xfrm.transform");
     { auto cam = fetchCamera(); gestures(viewportFromCamera(cam)); }

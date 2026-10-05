@@ -202,7 +202,7 @@ unittest {
         && parsedIds(afterLoad, "selectedEdges").length == 0
         && parsedIds(afterLoad, "selectedFaces").length == 0,
         "next selection request after load must not retain either old layer's marks");
-    assert(parsedOrder(afterLoad) == ["item", "polygon", "edge", "vertex"],
+    assert(parsedOrder(afterLoad) == ["polygon", "edge", "vertex", "item"],
         "document load must not replace the live selection-type order");
     assert(afterLoad["selTypeOrder"].array.length == 4,
         "post-load order comparison population floor: expected four types");

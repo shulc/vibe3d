@@ -421,6 +421,7 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     resetCube();
+    cmd("select.typeFrom item");  // 9511 (K-CD4): layer.select never changes the type
     cmd(`{"id":"imagePlane.add","params":{"name":"Ref","projection":"front"}}`);
     cmd("layer.select index:0 mode:set");      // the mesh
     cmd("layer.select index:1 mode:set");      // …then the plane
@@ -528,6 +529,7 @@ unittest {
 unittest {
     resetCube();
     cmd("layer.add");                          // a second MESH
+    cmd("select.typeFrom item");  // 9511 (K-CD4): layer.select never changes the type
     assert(layers().array.length == 2 && layerAt(1)["type"].str == "mesh",
         "fixture: two MESH layers, so focus and primary can never diverge");
     cmd("layer.select index:0 mode:set");

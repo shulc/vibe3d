@@ -398,9 +398,10 @@ unittest {
         ~ "a layer switch: the undo stack carries no \"Loop Slice\" entry, "
         ~ "so the cut standing in layer 0 is unrecorded and cannot be undone; "
         ~ "got " ~ labels.to!string);
-    assert(getJson("/api/tool/state")["armed"].boolean,
-        "the layer switch keeps the loop-slice tool armed on the new primary "
-        ~ "(9511, K-CD4 rule 1: dropped on its own layer, then re-armed)");
+    const kept = getJson("/api/tool/state");
+    assert(kept["tool"].str == "loopSlice" && !kept["built"].boolean,
+        "the layer switch keeps the loop-slice tool, re-armed on the new "
+        ~ "primary with no preview (9511, K-CD4 rule 1), got " ~ kept.toString);
 
     auto u1 = postJson("/api/command", commandBody("history.undo"));
     auto u2 = postJson("/api/command", commandBody("history.undo"));
