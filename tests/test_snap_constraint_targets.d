@@ -134,7 +134,8 @@ unittest { // reset clears snapMode back to global
 // the world-axis guide is the pen's own; no other client registers one).
 // Camera from front (+Z), the screen centre ray through the origin, which
 // the world Y axis crosses. Control first: the box bit on the same pixel
-// takes the cube's face-plane constraint (4096), so the query is live there.
+// takes the cube's face-plane constraint (4096), so the query is live there
+// (the shipped ranges keep the corners out).
 // Then the world-axis bit alone: no snap, the client point passes through.
 // =========================================================================
 
@@ -144,8 +145,9 @@ unittest { // WorldAxis bit alone elects nothing; the box-face control does
         `{"azimuth":0.0,"elevation":0.0,"distance":3.0,` ~
         `"focus":{"x":0,"y":0,"z":0}}`);
     cmd("tool.pipe.attr snap enabled true");
-    cmd("tool.pipe.attr snap innerRange 999999");
-    cmd("tool.pipe.attr snap outerRange 999999");
+    // The shipped ranges: the box corners (discrete) stay out of range.
+    cmd("tool.pipe.attr snap innerRange 24");
+    cmd("tool.pipe.attr snap outerRange 40");
     auto p = viewportCenter();
     cmd("tool.pipe.attr snap types box");
     auto ctl = querySnap(0.03, 0.02, 0.01, p[0], p[1]);
