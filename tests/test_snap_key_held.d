@@ -492,17 +492,17 @@ unittest { // Slice: a new line holds a guide; a press on a live line does not.
     assert(!afterDrop, "slice-snap-key-drop: the dropped Slice's guide outlived the tool");
     // slice-snap-key-switch: switching to Move mid-drag (the prepared door, no
     // release, no drop) ends the new line's guide too (task 9416).
-    {
+    if (cellOn("slice-snap-key-switch")) {
         penCommand("tool.set mesh.sliceTool on");
         Log l; l.motion(a, 0); l.button(true, a); path(l, a, b, 1, 4, 8); l.play();
         penCommand("tool.set move");
         l.button(false, b); l.play();
         forgetConstraint();
+        const afterSwitch = deliveredDuring(
+            (ref Log m) { m.motion(v0, 0); m.button(true, v0); m.motion(lerp(v0, v1, 1, 2), 1); },
+            (ref Log m) { m.motion(v1, 1); m.button(false, v1); });
+        assert(!afterSwitch, "slice-snap-key-switch: the switched-away Slice's guide outlived the tool");
     }
-    const afterSwitch = deliveredDuring(
-        (ref Log l) { l.motion(v0, 0); l.button(true, v0); l.motion(lerp(v0, v1, 1, 2), 1); },
-        (ref Log l) { l.motion(v1, 1); l.button(false, v1); });
-    assert(!afterSwitch, "slice-snap-key-switch: the switched-away Slice's guide outlived the tool");
     penCommand("tool.set move off");
     flush();
 }
