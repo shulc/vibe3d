@@ -48,6 +48,10 @@
 //  - two-point-edge-press: a 2-point stroke has one stroke edge (0, 1); a
 //    press 9 px off it (E1's press) inserts between its ends (slot 1, current
 //    1), the same rule the 3-point E1 cell reads, at the smallest n it covers.
+//  - isolated_v10-pixel-coincident: the copied defect of a stroke's first two
+//    clicks (task 9503) — the hover holds an edge and the placed point's pixel
+//    is the pointer's: nothing merges. `snap_off_isolated_v10` itself runs one
+//    pixel along the edge, where the pixels differ (the reference linked).
 // A background slot can never link (the merge admits slot 0 only): no captured
 // rig has a background vertex inside the radius, so that is a construction
 // argument, not a cell.
@@ -460,6 +464,25 @@ unittest {
     // One pixel along the edge: the reference linked, so its placed point's
     // pixel was not the pointer's (task 9503); ours at +0 px is.
     fails ~= isolatedCell("snap_off_isolated_v10", c["snap_off_isolated_v10"], null, 6, ran, 1);
+    // Ours, the copied defect: at +0 px the hover holds the 6 px edge (V at
+    // 10 px is outside the 8 px reach) and the pixels agree — nothing merges,
+    // the point stays on the plane (an edge pull would put z at 0.2795).
+    {
+        auto w = verts(c["snap_off_isolated_v10"]["expected"]["vertices"])[0 .. 4];
+        const at = p(0.35, 0.279545 + 6 / 440.0);
+        rig(p(0, 0.35), 440, meshJson(w, [[1, 2, 3]]), null);
+        clickWorld(at);
+        clickWorld(kFar[0], kFar[1]);
+        drop(); ++ran;
+        auto f = compare("isolated_v10-pixel-coincident", w ~ at ~ kFar[], [[1L, 2, 3], [4L, 6, 5]],
+                         kTol, [4]);
+        const g = model().v[$ > 4 ? 4 : 0];
+        if (!f.length && !(abs(g.x - at.x) <= 0.0051 && abs(g.y - 1) <= kTol &&
+                           abs(g.z - at.z) <= 0.0051))
+            f ~= format("isolated_v10-pixel-coincident: p0 %s, expected the plane point near %s",
+                        g, at);
+        fails ~= f;
+    }
     // A loose V 19.8 px away loses to an edge 0.44 px away (it trails by more
     // than its 16 px tolerance); without the edge the same V links.
     fails ~= vtx20Cell("merge_vtx20_edge", b8["merge_vtx20_edge"], 3, ran);
@@ -539,7 +562,7 @@ unittest {
         fails ~= relinkCell(cell, b10[cell], ran);
 
     snap(null);
-    assert(ran == 82, format("pen merge population: %s cells ran, pinned 82", ran));
+    assert(ran == 83, format("pen merge population: %s cells ran, pinned 83", ran));
 
     assert(fails.length == 0, format("pen merge, %s failing: %-(%s\n%)", fails.length, fails));
 }
