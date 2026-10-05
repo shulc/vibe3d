@@ -861,8 +861,8 @@ final class LayerSelect : LayerCommandBase {
     /// re-arm of the tool the guard dropped. A mesh leaving the foreground
     /// loses its component selection only when a tool retargets (K-CD4 CD4back
     /// was measured with the tool armed; without one it is uncaptured, 9511).
-    /// `wasForeground` is null on revert and for `mode:clear` / `kind:`, which
-    /// the reference sends as other commands.
+    /// `wasForeground` is null on revert and for `kind:`, which the reference
+    /// sends as another command.
     private void finishSelect(Layer before, size_t beforeIndex, bool[] wasForeground) {
         if (wasForeground !is null && droppedTool.length) {
             leaving = null;
@@ -908,7 +908,7 @@ final class LayerSelect : LayerCommandBase {
         if (modeArg == "clear") {
             mutateGuardingPrimary(() { doc.clearItemSelection(); });
             noteUndoRecorded();   // task 2500
-            finishSelect(prevPrimary, prevActiveIndex, null);
+            finishSelect(prevPrimary, prevActiveIndex, wasForeground);
             return true;
         }
 
