@@ -222,11 +222,11 @@ unittest { // dragging the Start Angle handle moves `startAngle` off zero
       ~ "(task 1903 §5.8).");
 }
 
-unittest { // the axis end handle is a free handle, quantised (K-H3 H3_NT): front
-    // ortho view at 440 px/m (T = pixels / 440), q 0.005; the end point E =
-    // centre + axis = (0, 1, 0) on the lattice, the start (0, -1, 0) planted. A
-    // (70, -42) px haul from E's pixel writes E' = E + q(E + T) - q(E) =
-    // (0.16, 1.095, 0). RAW is (0.159091, 1.095455, 0).
+unittest { // the axis ends are free handles, quantised (K-H3 H3_NT): front ortho
+    // view at 440 px/m (T = pixels / 440), q 0.005, axis (0, 0.5, 0) so the ends
+    // S, E = (0, -/+0.5, 0) sit on the lattice. Hauling E by (70, -42) px writes
+    // E' = E + q(E + T) - q(E) = (0.16, 0.595, 0), S planted; then S by (-70, 42)
+    // writes S' = (-0.16, -0.595, 0), E' planted. RAW is 0.159091 / 0.595455.
     import core.thread : Thread;
     import core.time : dur;
     import std.format : format;
@@ -236,10 +236,11 @@ unittest { // the axis end handle is a free handle, quantised (K-H3 H3_NT): fron
     r = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
     assert(r["status"].str == "ok", "select failed: " ~ r.toString);
     cmd("viewport.view Front");
-    penCameraAt(Vec3(0, 0.5f, 0), 440.0);
+    penCameraAt(Vec3(0, 0, 0), 440.0);
     assert(getJson("/api/camera")["projKind"].str == "Ortho",
         "rig: the front view must be orthographic");
     cmd("tool.set " ~ TOOL ~ " on");
+    cmd("tool.attr " ~ TOOL ~ " axis {0,0.5,0}");
     Thread.sleep(dur!"msecs"(300));
     double[3] vec(string name) {
         auto q = postJson("/api/command", "tool.attr " ~ TOOL ~ " " ~ name ~ " ?");
@@ -247,19 +248,22 @@ unittest { // the axis end handle is a free handle, quantised (K-H3 H3_NT): fron
         auto a = q["value"].array;
         return [a[0].get!double, a[1].get!double, a[2].get!double];
     }
-    immutable int[2] p = worldPixel(Vec3(0, 1, 0));
-    auto cam = fetchCamera(BASE);
-    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
-        p[0], p[1], p[0] + 70, p[1] - 42, 12), BASE);
-    Thread.sleep(dur!"msecs"(200));
-    immutable double[3] c = vec("center"), a = vec("axis");
-    immutable double[3] s = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
-    immutable double[3] e = [c[0] + a[0], c[1] + a[1], c[2] + a[2]];
-    assert(abs(s[0]) <= 1e-4 && abs(s[1] + 1) <= 1e-4 && abs(s[2]) <= 1e-4,
-        format("radial-sweep-end-quantised: the start must stay at (0, -1, 0), got (%.6f, %.6f, %.6f)",
-               s[0], s[1], s[2]));
-    assert(abs(e[0] - 0.16) <= 1e-4 && abs(e[1] - 1.095) <= 1e-4 && abs(e[2]) <= 1e-4,
-        format("radial-sweep-end-quantised: the end expected (0.16, 1.095, 0), got (%.6f, %.6f, %.6f)",
-               e[0], e[1], e[2]));
+    void haul(Vec3 from, int dx, int dy, double[3] wantS, double[3] wantE, string leg) {
+        immutable int[2] p = worldPixel(from);
+        auto cam = fetchCamera(BASE);
+        playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+            p[0], p[1], p[0] + dx, p[1] + dy, 12), BASE);
+        Thread.sleep(dur!"msecs"(200));
+        immutable double[3] c = vec("center"), a = vec("axis");
+        immutable double[3] s = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+        immutable double[3] e = [c[0] + a[0], c[1] + a[1], c[2] + a[2]];
+        foreach (k; 0 .. 3)
+            assert(abs(s[k] - wantS[k]) <= 1e-4 && abs(e[k] - wantE[k]) <= 1e-4,
+                format("radial-sweep-ends-quantised (%s): start %s end %s expected, "
+                    ~ "got start (%.6f, %.6f, %.6f) end (%.6f, %.6f, %.6f)",
+                    leg, wantS, wantE, s[0], s[1], s[2], e[0], e[1], e[2]));
+    }
+    haul(Vec3(0, 0.5f, 0), 70, -42, [0, -0.5, 0], [0.16, 0.595, 0], "end");
+    haul(Vec3(0, -0.5f, 0), -70, 42, [-0.16, -0.595, 0], [0.16, 0.595, 0], "start");
     cmd("tool.set " ~ TOOL ~ " off");
 }
