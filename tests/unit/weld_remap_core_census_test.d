@@ -44,8 +44,9 @@ unittest { // scanner control: a call and an address are seen; prose is not
                ~ "    void b() {\n        auto s = \"core\";\n    }\n"
                ~ "    void c() {\n        auto p = &core;\n    }\n"
                ~ "}\n";
-    assert(declsOf(probe, "core") == ["M.a", "M.c"],
-           format("scanner control: expected [\"M.a\", \"M.c\"], found %s", declsOf(probe, "core")));
+    const seen = declsOf(probe, "core");
+    assert(seen == ["M.a", "M.c"],
+           format("scanner control: expected [\"M.a\", \"M.c\"], found %s", seen));
 }
 
 unittest { // both twins, and only they, reach the two cores
