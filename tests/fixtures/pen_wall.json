@@ -1,0 +1,1877 @@
+{
+ "name": "pen_wall",
+ "description": "Polygon pen wall mode: the stroke becomes a strip of quads in the stroke plane, one LEFT / RIGHT vertex pair per stroke point, left = normalize(cross(n_cam, d)) with n_cam the plane normal toward the camera; inner / outer / both rows, mitred interior points without a limit, perpendicular open ends, close reusing the first pair, offset clamped at 0 and offset 0 building nothing, the facing flag not decided (reads 0), and the mirror strip as the reflection of the built wall listed [m(R_i), m(L_i)].",
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "gui-gesture",
+  "notes": "fresh GUI worker per cell; new empty foreground mesh; wall/offset/close/merge/inset/segments/symmetry set before the first click; real clicks; one readback after the last click",
+  "captured_utc": "2026-10-04",
+  "harness": "private capture harness",
+  "task": "9354"
+ },
+ "rig": {
+  "view": "top orthographic unless a cell says otherwise; 440 px per metre; screen right = +X, screen down = +Z",
+  "focus_plane_y": 1.0,
+  "click_quantum": "0.005 m at 440 px/m; every clicked point here is on that grid and landed exactly"
+ },
+ "law": "Wall mode replaces the stroke polygon by a strip of quads in the stroke plane. Rows: for each stroke point i a LEFT vertex L_i and a RIGHT vertex R_i, where left/right are taken relative to the direction of travel AS SEEN FROM THE CAMERA (offset direction for 'left' = normalize(cross(n_cam, d)), n_cam = plane normal pointing at the camera). inner: L = stroke point + offset*left, R = stroke point. outer: L = stroke point, R = stroke point - offset*left. both: L = +offset*left, R = -offset*left (width 2*offset; the stroke point is not a vertex). At an interior point the offset vertex is the MITRE (intersection of the two offset lines, p + w*(n1+n2)/(1+n1.n2), no mitre limit); at an open end it is the perpendicular offset of the end segment. Vertices are emitted per stroke point as [L_i, R_i]; quad i = [L_i, R_i, R_i+1, L_i+1] (2i, 2i+1, 2i+3, 2i+2); close on adds [L_n-1, R_n-1, R_0, L_0] reusing the first pair (independent of merge). Every quad faces the camera; the facing flag is not consulted. Offset is clamped at 0 and offset 0 builds nothing. Symmetry: the mirror strip is the reflection of the original vertices, listed per point as [mirror(R_i), mirror(L_i)] with the same quad template, so it faces the camera too.",
+ "cells": {
+  "control_open_no_wall": {
+   "script": [
+    "wall off",
+    "click (0.2,0.3) (0.9,0.3) (0.9,-0.4) (0.6,-0.4) (0.6,-0.7)"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.2,
+      1.0,
+      0.3
+     ],
+     [
+      0.9,
+      1.0,
+      0.3
+     ],
+     [
+      0.9,
+      1.0,
+      -0.4
+     ],
+     [
+      0.6,
+      1.0,
+      -0.4
+     ],
+     [
+      0.6,
+      1.0,
+      -0.7
+     ]
+    ],
+    "polygons": [
+     [
+      1,
+      2,
+      3,
+      4,
+      0
+     ]
+    ]
+   },
+   "readback": {
+    "offset": 0.0,
+    "facing_flag": 0
+   },
+   "note": "control: the clicked stroke lands exactly on the listed points"
+  },
+  "D1_open_inner_ccw": {
+   "script": [
+    "wall inner, offset 0.1, close off",
+    "click (0.2,0.3) (0.9,0.3) (0.9,-0.4) (0.6,-0.4) (0.6,-0.7)"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.2,
+      1.0,
+      0.2
+     ],
+     [
+      0.2,
+      1.0,
+      0.3
+     ],
+     [
+      0.8,
+      1.0,
+      0.2
+     ],
+     [
+      0.9,
+      1.0,
+      0.3
+     ],
+     [
+      0.8,
+      1.0,
+      -0.3
+     ],
+     [
+      0.9,
+      1.0,
+      -0.4
+     ],
+     [
+      0.5,
+      1.0,
+      -0.3
+     ],
+     [
+      0.6,
+      1.0,
+      -0.4
+     ],
+     [
+      0.5,
+      1.0,
+      -0.7
+     ],
+     [
+      0.6,
+      1.0,
+      -0.7
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      3,
+      2
+     ],
+     [
+      2,
+      3,
+      5,
+      4
+     ],
+     [
+      4,
+      5,
+      7,
+      6
+     ],
+     [
+      6,
+      7,
+      9,
+      8
+     ]
+    ]
+   },
+   "readback": {
+    "offset": 0.1,
+    "facing_flag": 0
+   }
+  },
+  "D1_open_inner_cw": {
+   "script": [
+    "wall inner, offset 0.1, close off",
+    "click (0.6,-0.7) (0.6,-0.4) (0.9,-0.4) (0.9,0.3) (0.2,0.3)"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.7,
+      1.0,
+      -0.7
+     ],
+     [
+      0.6,
+      1.0,
+      -0.7
+     ],
+     [
+      0.7,
+      1.0,
+      -0.5
+     ],
+     [
+      0.6,
+      1.0,
+      -0.4
+     ],
+     [
+      1.0,
+      1.0,
+      -0.5
+     ],
+     [
+      0.9,
+      1.0,
+      -0.4
+     ],
+     [
+      1.0,
+      1.0,
+      0.4
+     ],
+     [
+      0.9,
+      1.0,
+      0.3
+     ],
+     [
+      0.2,
+      1.0,
+      0.4
+     ],
+     [
+      0.2,
+      1.0,
+      0.3
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      3,
+      2
+     ],
+     [
+      2,
+      3,
+      5,
+      4
+     ],
+     [
+      4,
+      5,
+      7,
+      6
+     ],
+     [
+      6,
+      7,
+      9,
+      8
+     ]
+    ]
+   },
+   "readback": {
+    "offset": 0.1,
+    "facing_flag": 0
+   },
+   "note": "reversed travel: the wall moves to the other world side (left of travel, not toward the interior)"
+  },
+  "D1_open_outer_ccw": {
+   "script": [
+    "wall outer, offset 0.1, close off",
+    "click (0.2,0.3) (0.9,0.3) (0.9,-0.4) (0.6,-0.4) (0.6,-0.7)"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.2,
+      1.0,
+      0.3
+     ],
+     [
+      0.2,
+      1.0,
+      0.4
+     ],
+     [
+      0.9,
+      1.0,
+      0.3
+     ],
+     [
+      1.0,
+      1.0,
+      0.4
+     ],
+     [
+      0.9,
+      1.0,
+      -0.4
+     ],
+     [
+      1.0,
+      1.0,
+      -0.5
+     ],
+     [
+      0.6,
+      1.0,
+      -0.4
+     ],
+     [
+      0.7,
+      1.0,
+      -0.5
+     ],
+     [
+      0.6,
+      1.0,
+      -0.7
+     ],
+     [
+      0.7,
+      1.0,
+      -0.7
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      3,
+      2
+     ],
+     [
+      2,
+      3,
+      5,
+      4
+     ],
+     [
+      4,
+      5,
+      7,
+      6
+     ],
+     [
+      6,
+      7,
+      9,
+      8
+     ]
+    ]
+   },
+   "readback": {
+    "offset": 0.1,
+    "facing_flag": 0
+   }
+  },
+  "D1_open_outer_cw": {
+   "script": [
+    "wall outer, offset 0.1, close off",
+    "click (0.6,-0.7) (0.6,-0.4) (0.9,-0.4) (0.9,0.3) (0.2,0.3)"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.6,
+      1.0,
+      -0.7
+     ],
+     [
+      0.5,
+      1.0,
+      -0.7
+     ],
+     [
+      0.6,
+      1.0,
+      -0.4
+     ],
+     [
+      0.5,
+      1.0,
+      -0.3
+     ],
+     [
+      0.9,
+      1.0,
+      -0.4
+     ],
+     [
+      0.8,
+      1.0,
+      -0.3
+     ],
+     [
+      0.9,
+      1.0,
+      0.3
+     ],
+     [
+      0.8,
+      1.0,
+      0.2
+     ],
+     [
+      0.2,
+      1.0,
+      0.3
+     ],
+     [
+      0.2,
+      1.0,
+      0.2
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      3,
+      2
+     ],
+     [
+      2,
+      3,
+      5,
+      4
+     ],
+     [
+      4,
+      5,
+      7,
+      6
+     ],
+     [
+      6,
+      7,
+      9,
+      8
+     ]
+    ]
+   },
+   "readback": {
+    "offset": 0.1,
+    "facing_flag": 0
+   }
+  },
+  "D1_open_both_ccw": {
+   "script": [
+    "wall both, offset 0.1, close off",
+    "click (0.2,0.3) (0.9,0.3) (0.9,-0.4) (0.6,-0.4) (0.6,-0.7)"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.2,
+      1.0,
+      0.2
+     ],
+     [
+      0.2,
+      1.0,
+      0.4
+     ],
+     [
+      0.8,
+      1.0,
+      0.2
+     ],
+     [
+      1.0,
+      1.0,
+      0.4
+     ],
+     [
+      0.8,
+      1.0,
+      -0.3
+     ],
+     [
+      1.0,
+      1.0,
+      -0.5
+     ],
+     [
+      0.5,
+      1.0,
+      -0.3
+     ],
+     [
+      0.7,
+      1.0,
+      -0.5
+     ],
+     [
+      0.5,
+      1.0,
+      -0.7
+     ],
+     [
+      0.7,
+      1.0,
+      -0.7
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      3,
+      2
+     ],
+     [
+      2,
+      3,
+      5,
+      4
+     ],
+     [
+      4,
+      5,
+      7,
+      6
+     ],
+     [
+      6,
+      7,
+      9,
+      8
+     ]
+    ]
+   },
+   "readback": {
+    "offset": 0.1,
+    "facing_flag": 0
+   },
+   "note": "both = +offset AND -offset (full width 2*offset); the stroke line itself is not a vertex row"
+  },
+  "D1_open_both_cw": {
+   "script": [
+    "wall both, offset 0.1, close off",
+    "click (0.6,-0.7) (0.6,-0.4) (0.9,-0.4) (0.9,0.3) (0.2,0.3)"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.7,
+      1.0,
+      -0.7
+     ],
+     [
+      0.5,
+      1.0,
+      -0.7
+     ],
+     [
+      0.7,
+      1.0,
+      -0.5
+     ],
+     [
+      0.5,
+      1.0,
+      -0.3
+     ],
+     [
+      1.0,
+      1.0,
+      -0.5
+     ],
+     [
+      0.8,
+      1.0,
+      -0.3
+     ],
+     [
+      1.0,
+      1.0,
+      0.4
+     ],
+     [
+      0.8,
+      1.0,
+      0.2
+     ],
+     [
+      0.2,
+      1.0,
+      0.4
+     ],
+     [
+      0.2,
+      1.0,
+      0.2
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      3,
+      2
+     ],
+     [
+      2,
+      3,
+      5,
+      4
+     ],
+     [
+      4,
+      5,
+      7,
+      6
+     ],
+     [
+      6,
+      7,
+      9,
+      8
+     ]
+    ]
+   },
+   "readback": {
+    "offset": 0.1,
+    "facing_flag": 0
+   }
+  },
+  "D1x_open_inner_first_corner_reflex": {
+   "script": [
+    "wall inner, offset 0.1, close off",
+    "click (0.9,-0.4) (0.6,-0.4) (0.6,-0.7) (0.2,0.3) (0.9,0.3)"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.9,
+      1.0,
+      -0.3
+     ],
+     [
+      0.9,
+      1.0,
+      -0.4
+     ],
+     [
+      0.5,
+      1.0,
+      -0.3
+     ],
+     [
+      0.6,
+      1.0,
+      -0.4
+     ],
+     [
+      0.5,
+      1.0,
+      -0.180742
+     ],
+     [
+      0.6,
+      1.0,
+      -0.7
+     ],
+     [
+      0.347703,
+      1.0,
+      0.2
+     ],
+     [
+      0.2,
+      1.0,
+      0.3
+     ],
+     [
+      0.9,
+      1.0,
+      0.2
+     ],
+     [
+      0.9,
+      1.0,
+      0.3
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      3,
+      2
+     ],
+     [
+      2,
+      3,
+      5,
+      4
+     ],
+     [
+      4,
+      5,
+      7,
+      6
+     ],
+     [
+      6,
+      7,
+      9,
+      8
+     ]
+    ]
+   },
+   "readback": {
+    "offset": 0.1,
+    "facing_flag": 0
+   },
+   "note": "first three points turn clockwise while the loop is counter-clockwise: the side still follows travel; the ~158 degree corner at (0.6,-0.7) mitres to (0.5,-0.1807) (no mitre limit)"
+  },
+  "D2_closed_inner_cw": {
+   "script": [
+    "wall inner, offset 0.1, close on",
+    "click (0.2,-0.2) (0.8,-0.2) (0.8,0.3) (0.2,0.3)"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.1,
+      1.0,
+      -0.3
+     ],
+     [
+      0.2,
+      1.0,
+      -0.2
+     ],
+     [
+      0.9,
+      1.0,
+      -0.3
+     ],
+     [
+      0.8,
+      1.0,
+      -0.2
+     ],
+     [
+      0.9,
+      1.0,
+      0.4
+     ],
+     [
+      0.8,
+      1.0,
+      0.3
+     ],
+     [
+      0.1,
+      1.0,
+      0.4
+     ],
+     [
+      0.2,
+      1.0,
+      0.3
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      3,
+      2
+     ],
+     [
+      2,
+      3,
+      5,
+      4
+     ],
+     [
+      4,
+      5,
+      7,
+      6
+     ],
+     [
+      6,
+      7,
+      1,
+      0
+     ]
+    ]
+   },
+   "readback": {
+    "offset": 0.1,
+    "facing_flag": 0
+   },
+   "note": "clockwise loop: 'inner' lands OUTSIDE the rectangle (left of travel)"
+  },
+  "D2_closed_inner_ccw": {
+   "script": [
+    "wall inner, offset 0.1, close on",
+    "click (0.2,-0.2) (0.2,0.3) (0.8,0.3) (0.8,-0.2)"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.3,
+      1.0,
+      -0.1
+     ],
+     [
+      0.2,
+      1.0,
+      -0.2
+     ],
+     [
+      0.3,
+      1.0,
+      0.2
+     ],
+     [
+      0.2,
+      1.0,
+      0.3
+     ],
+     [
+      0.7,
+      1.0,
+      0.2
+     ],
+     [
+      0.8,
+      1.0,
+      0.3
+     ],
+     [
+      0.7,
+      1.0,
+      -0.1
+     ],
+     [
+      0.8,
+      1.0,
+      -0.2
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      3,
+      2
+     ],
+     [
+      2,
+      3,
+      5,
+      4
+     ],
+     [
+      4,
+      5,
+      7,
+      6
+     ],
+     [
+      6,
+      7,
+      1,
+      0
+     ]
+    ]
+   },
+   "readback": {
+    "offset": 0.1,
+    "facing_flag": 0
+   }
+  },
+  "D2_closed_outer_cw": {
+   "script": [
+    "wall outer, offset 0.1, close on",
+    "click (0.2,-0.2) (0.8,-0.2) (0.8,0.3) (0.2,0.3)"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.2,
+      1.0,
+      -0.2
+     ],
+     [
+      0.3,
+      1.0,
+      -0.1
+     ],
+     [
+      0.8,
+      1.0,
+      -0.2
+     ],
+     [
+      0.7,
+      1.0,
+      -0.1
+     ],
+     [
+      0.8,
+      1.0,
+      0.3
+     ],
+     [
+      0.7,
+      1.0,
+      0.2
+     ],
+     [
+      0.2,
+      1.0,
+      0.3
+     ],
+     [
+      0.3,
+      1.0,
+      0.2
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      3,
+      2
+     ],
+     [
+      2,
+      3,
+      5,
+      4
+     ],
+     [
+      4,
+      5,
+      7,
+      6
+     ],
+     [
+      6,
+      7,
+      1,
+      0
+     ]
+    ]
+   },
+   "readback": {
+    "offset": 0.1,
+    "facing_flag": 0
+   }
+  },
+  "D2_closed_both_cw": {
+   "script": [
+    "wall both, offset 0.1, close on",
+    "click (0.2,-0.2) (0.8,-0.2) (0.8,0.3) (0.2,0.3)"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.1,
+      1.0,
+      -0.3
+     ],
+     [
+      0.3,
+      1.0,
+      -0.1
+     ],
+     [
+      0.9,
+      1.0,
+      -0.3
+     ],
+     [
+      0.7,
+      1.0,
+      -0.1
+     ],
+     [
+      0.9,
+      1.0,
+      0.4
+     ],
+     [
+      0.7,
+      1.0,
+      0.2
+     ],
+     [
+      0.1,
+      1.0,
+      0.4
+     ],
+     [
+      0.3,
+      1.0,
+      0.2
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      3,
+      2
+     ],
+     [
+      2,
+      3,
+      5,
+      4
+     ],
+     [
+      4,
+      5,
+      7,
+      6
+     ],
+     [
+      6,
+      7,
+      1,
+      0
+     ]
+    ]
+   },
+   "readback": {
+    "offset": 0.1,
+    "facing_flag": 0
+   }
+  },
+  "D3_open_inner_symmetry_x": {
+   "script": [
+    "symmetry X on",
+    "wall inner, offset 0.1, close off",
+    "click (0.2,0.3) (0.9,0.3) (0.9,-0.4) (0.6,-0.4) (0.6,-0.7)"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.2,
+      1.0,
+      0.2
+     ],
+     [
+      0.2,
+      1.0,
+      0.3
+     ],
+     [
+      0.8,
+      1.0,
+      0.2
+     ],
+     [
+      0.9,
+      1.0,
+      0.3
+     ],
+     [
+      0.8,
+      1.0,
+      -0.3
+     ],
+     [
+      0.9,
+      1.0,
+      -0.4
+     ],
+     [
+      0.5,
+      1.0,
+      -0.3
+     ],
+     [
+      0.6,
+      1.0,
+      -0.4
+     ],
+     [
+      0.5,
+      1.0,
+      -0.7
+     ],
+     [
+      0.6,
+      1.0,
+      -0.7
+     ],
+     [
+      -0.2,
+      1.0,
+      0.3
+     ],
+     [
+      -0.2,
+      1.0,
+      0.2
+     ],
+     [
+      -0.9,
+      1.0,
+      0.3
+     ],
+     [
+      -0.8,
+      1.0,
+      0.2
+     ],
+     [
+      -0.9,
+      1.0,
+      -0.4
+     ],
+     [
+      -0.8,
+      1.0,
+      -0.3
+     ],
+     [
+      -0.6,
+      1.0,
+      -0.4
+     ],
+     [
+      -0.5,
+      1.0,
+      -0.3
+     ],
+     [
+      -0.6,
+      1.0,
+      -0.7
+     ],
+     [
+      -0.5,
+      1.0,
+      -0.7
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      3,
+      2
+     ],
+     [
+      2,
+      3,
+      5,
+      4
+     ],
+     [
+      4,
+      5,
+      7,
+      6
+     ],
+     [
+      6,
+      7,
+      9,
+      8
+     ],
+     [
+      10,
+      11,
+      13,
+      12
+     ],
+     [
+      12,
+      13,
+      15,
+      14
+     ],
+     [
+      14,
+      15,
+      17,
+      16
+     ],
+     [
+      16,
+      17,
+      19,
+      18
+     ]
+    ]
+   },
+   "readback": {
+    "offset": 0.1,
+    "facing_flag": 0
+   },
+   "note": "mirror vertices = X-reflection of the original wall vertices, listed per stroke point as [mirror(R_i), mirror(L_i)]; mirror rings use the same template so they also face the camera"
+  },
+  "D4_closed_inner_merge_off": {
+   "script": [
+    "wall inner, offset 0.1, close on, merge off",
+    "click (0.2,-0.2) (0.8,-0.2) (0.8,0.3) (0.2,0.3)"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.1,
+      1.0,
+      -0.3
+     ],
+     [
+      0.2,
+      1.0,
+      -0.2
+     ],
+     [
+      0.9,
+      1.0,
+      -0.3
+     ],
+     [
+      0.8,
+      1.0,
+      -0.2
+     ],
+     [
+      0.9,
+      1.0,
+      0.4
+     ],
+     [
+      0.8,
+      1.0,
+      0.3
+     ],
+     [
+      0.1,
+      1.0,
+      0.4
+     ],
+     [
+      0.2,
+      1.0,
+      0.3
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      3,
+      2
+     ],
+     [
+      2,
+      3,
+      5,
+      4
+     ],
+     [
+      4,
+      5,
+      7,
+      6
+     ],
+     [
+      6,
+      7,
+      1,
+      0
+     ]
+    ]
+   },
+   "readback": {
+    "offset": 0.1,
+    "facing_flag": 0
+   },
+   "note": "merge off changes nothing: the closing quad reuses the first pair (no duplicated seam)"
+  },
+  "D6_offset_negative": {
+   "script": [
+    "wall inner",
+    "set offset -0.1 (reads back 0.0)",
+    "click (0.2,0.3) (0.9,0.3) (0.9,-0.4) (0.6,-0.4) (0.6,-0.7)"
+   ],
+   "expected": {
+    "vertices": [],
+    "polygons": []
+   },
+   "readback": {
+    "offset": 0.0,
+    "facing_flag": 0
+   },
+   "note": "a negative offset is clamped to 0; offset 0 builds nothing"
+  },
+  "D6b_offset_negative_after_positive": {
+   "script": [
+    "wall inner",
+    "set offset 0.1, then -0.1 (reads back 0.0)",
+    "click (0.2,0.3) (0.9,0.3) (0.9,-0.4) (0.6,-0.4) (0.6,-0.7)"
+   ],
+   "expected": {
+    "vertices": [],
+    "polygons": []
+   },
+   "readback": {
+    "offset": 0.0,
+    "facing_flag": 0
+   },
+   "note": "clamp, not a refused write (the earlier 0.1 is not kept)"
+  },
+  "D6c_offset_zero": {
+   "script": [
+    "wall inner, offset left at 0",
+    "click (0.2,0.3) (0.9,0.3) (0.9,-0.4) (0.6,-0.4) (0.6,-0.7)"
+   ],
+   "expected": {
+    "vertices": [],
+    "polygons": []
+   },
+   "readback": {
+    "offset": 0.0,
+    "facing_flag": 0
+   },
+   "note": "offset 0: no geometry at all"
+  },
+  "D7_facing_flag_set_before_stroke": {
+   "script": [
+    "wall inner, offset 0.1",
+    "set the facing flag to 1 before the first click (reads back 0 after the stroke)",
+    "click (0.2,0.3) (0.9,0.3) (0.9,-0.4) (0.6,-0.4) (0.6,-0.7)"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.2,
+      1.0,
+      0.2
+     ],
+     [
+      0.2,
+      1.0,
+      0.3
+     ],
+     [
+      0.8,
+      1.0,
+      0.2
+     ],
+     [
+      0.9,
+      1.0,
+      0.3
+     ],
+     [
+      0.8,
+      1.0,
+      -0.3
+     ],
+     [
+      0.9,
+      1.0,
+      -0.4
+     ],
+     [
+      0.5,
+      1.0,
+      -0.3
+     ],
+     [
+      0.6,
+      1.0,
+      -0.4
+     ],
+     [
+      0.5,
+      1.0,
+      -0.7
+     ],
+     [
+      0.6,
+      1.0,
+      -0.7
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      3,
+      2
+     ],
+     [
+      2,
+      3,
+      5,
+      4
+     ],
+     [
+      4,
+      5,
+      7,
+      6
+     ],
+     [
+      6,
+      7,
+      9,
+      8
+     ]
+    ]
+   },
+   "readback": {
+    "offset": 0.1,
+    "facing_flag": 0
+   },
+   "note": "wall geometry and rings identical to D1_open_inner_ccw"
+  },
+  "control_open_no_wall_bottom_view": {
+   "script": [
+    "BOTTOM orthographic view",
+    "wall off",
+    "click the same pane pixels as the top-view stroke"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      -0.06,
+      1.0,
+      0.3
+     ],
+     [
+      -0.76,
+      1.0,
+      0.3
+     ],
+     [
+      -0.76,
+      1.0,
+      -0.4
+     ],
+     [
+      -0.46,
+      1.0,
+      -0.4
+     ],
+     [
+      -0.46,
+      1.0,
+      -0.7
+     ]
+    ],
+    "polygons": [
+     [
+      1,
+      2,
+      3,
+      4,
+      0
+     ]
+    ]
+   },
+   "readback": {
+    "offset": 0.0,
+    "facing_flag": 0
+   },
+   "note": "control for D8; world x is mirrored about the focus (x' = 0.14 - x)"
+  },
+  "D8_open_inner_bottom_view": {
+   "script": [
+    "BOTTOM orthographic view",
+    "wall inner, offset 0.1",
+    "click the same pane pixels as control_open_no_wall_bottom_view"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      -0.06,
+      1.0,
+      0.2
+     ],
+     [
+      -0.06,
+      1.0,
+      0.3
+     ],
+     [
+      -0.66,
+      1.0,
+      0.2
+     ],
+     [
+      -0.76,
+      1.0,
+      0.3
+     ],
+     [
+      -0.66,
+      1.0,
+      -0.3
+     ],
+     [
+      -0.76,
+      1.0,
+      -0.4
+     ],
+     [
+      -0.36,
+      1.0,
+      -0.3
+     ],
+     [
+      -0.46,
+      1.0,
+      -0.4
+     ],
+     [
+      -0.36,
+      1.0,
+      -0.7
+     ],
+     [
+      -0.46,
+      1.0,
+      -0.7
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      3,
+      2
+     ],
+     [
+      2,
+      3,
+      5,
+      4
+     ],
+     [
+      4,
+      5,
+      7,
+      6
+     ],
+     [
+      6,
+      7,
+      9,
+      8
+     ]
+    ]
+   },
+   "readback": {
+    "offset": 0.1,
+    "facing_flag": 0
+   },
+   "note": "the side is left of travel AS SEEN FROM THE CAMERA (here: right of travel seen from +Y) and every quad faces the camera (-Y)"
+  }
+ },
+ "evidence": {
+  "D5_inset_0.05_segments_3_EVIDENCE": {
+   "script": [
+    "wall inner, offset 0.1, close on, inset 0.05, segments 3",
+    "click (0.2,-0.2) (0.8,-0.2) (0.8,0.3) (0.2,0.3)"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.1,
+      1.0,
+      -0.25
+     ],
+     [
+      0.106699,
+      1.0,
+      -0.275
+     ],
+     [
+      0.125,
+      1.0,
+      -0.293301
+     ],
+     [
+      0.15,
+      1.0,
+      -0.3
+     ],
+     [
+      0.2,
+      1.0,
+      -0.2
+     ],
+     [
+      0.85,
+      1.0,
+      -0.3
+     ],
+     [
+      0.875,
+      1.0,
+      -0.293301
+     ],
+     [
+      0.893301,
+      1.0,
+      -0.275
+     ],
+     [
+      0.9,
+      1.0,
+      -0.25
+     ],
+     [
+      0.8,
+      1.0,
+      -0.2
+     ],
+     [
+      0.9,
+      1.0,
+      0.35
+     ],
+     [
+      0.893301,
+      1.0,
+      0.375
+     ],
+     [
+      0.875,
+      1.0,
+      0.393301
+     ],
+     [
+      0.85,
+      1.0,
+      0.4
+     ],
+     [
+      0.8,
+      1.0,
+      0.3
+     ],
+     [
+      0.15,
+      1.0,
+      0.4
+     ],
+     [
+      0.125,
+      1.0,
+      0.393301
+     ],
+     [
+      0.106699,
+      1.0,
+      0.375
+     ],
+     [
+      0.1,
+      1.0,
+      0.35
+     ],
+     [
+      0.2,
+      1.0,
+      0.3
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      4,
+      1
+     ],
+     [
+      1,
+      4,
+      2
+     ],
+     [
+      2,
+      4,
+      3
+     ],
+     [
+      3,
+      4,
+      9,
+      5
+     ],
+     [
+      5,
+      9,
+      6
+     ],
+     [
+      6,
+      9,
+      7
+     ],
+     [
+      7,
+      9,
+      8
+     ],
+     [
+      8,
+      9,
+      14,
+      10
+     ],
+     [
+      10,
+      14,
+      11
+     ],
+     [
+      11,
+      14,
+      12
+     ],
+     [
+      12,
+      14,
+      13
+     ],
+     [
+      13,
+      14,
+      19,
+      15
+     ],
+     [
+      15,
+      19,
+      16
+     ],
+     [
+      16,
+      19,
+      17
+     ],
+     [
+      17,
+      19,
+      18
+     ],
+     [
+      18,
+      19,
+      4,
+      0
+     ]
+    ]
+   },
+   "readback": {
+    "offset": 0.1,
+    "facing_flag": 0
+   },
+   "note": "EVIDENCE ONLY (deferred): each offset-row corner is replaced by a fillet arc of radius = inset tangent to both offset lines, segments+1 points; the stroke-row corner stays; fan triangles from the arc to the stroke-row corner"
+  },
+  "D5_inset_0.05_segments_1_EVIDENCE": {
+   "script": [
+    "wall inner, offset 0.1, close on, inset 0.05, segments 1",
+    "click (0.2,-0.2) (0.8,-0.2) (0.8,0.3) (0.2,0.3)"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.1,
+      1.0,
+      -0.25
+     ],
+     [
+      0.15,
+      1.0,
+      -0.3
+     ],
+     [
+      0.2,
+      1.0,
+      -0.2
+     ],
+     [
+      0.85,
+      1.0,
+      -0.3
+     ],
+     [
+      0.9,
+      1.0,
+      -0.25
+     ],
+     [
+      0.8,
+      1.0,
+      -0.2
+     ],
+     [
+      0.9,
+      1.0,
+      0.35
+     ],
+     [
+      0.85,
+      1.0,
+      0.4
+     ],
+     [
+      0.8,
+      1.0,
+      0.3
+     ],
+     [
+      0.15,
+      1.0,
+      0.4
+     ],
+     [
+      0.1,
+      1.0,
+      0.35
+     ],
+     [
+      0.2,
+      1.0,
+      0.3
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      2,
+      1
+     ],
+     [
+      1,
+      2,
+      5,
+      3
+     ],
+     [
+      3,
+      5,
+      4
+     ],
+     [
+      4,
+      5,
+      8,
+      6
+     ],
+     [
+      6,
+      8,
+      7
+     ],
+     [
+      7,
+      8,
+      11,
+      9
+     ],
+     [
+      9,
+      11,
+      10
+     ],
+     [
+      10,
+      11,
+      2,
+      0
+     ]
+    ]
+   },
+   "readback": {
+    "offset": 0.1,
+    "facing_flag": 0
+   },
+   "note": "EVIDENCE ONLY (deferred): segments 1 = a chamfer (two points at inset along each offset line) + one triangle"
+  }
+ }
+}
