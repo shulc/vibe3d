@@ -800,8 +800,8 @@ public:
         ];
     }
 
-    // A disabled param's write is refused at the `tool.attr` door
-    // (`refusesDisabledParamWrites`). Make Quads is locked from 3 points
+    // A disabled param's write is refused at the `tool.attr` door, for
+    // every tool. Make Quads is locked from 3 points
     // (wave plan S7, fixture pen_quads.json lock_3_points).
     override bool paramEnabled(string name) const {
         if (name == "currentPoint" || name == "posX" || name == "posY" || name == "posZ")
@@ -1700,7 +1700,6 @@ private:
         static immutable ToolSessionPolicy policy = {
             commandClose: CommandClose.uiDoor, commandEndsOpenGesture: true,
             rollovers: Rollover.target, sessionSteps: true,
-            refusesDisabledParamWrites: true,
             imageAttrs: ["type", "currentPoint", "posX", "posY", "posZ", "flip",
                          "makeQuads", "merge", "close", "selectNew", "wall",
                          "offset", "points", "link", "linkKey"] };

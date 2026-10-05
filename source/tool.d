@@ -438,10 +438,6 @@ struct ToolSessionPolicy {
     /// loses the gesture on that undo; we keep it (L8, a deliberate
     /// divergence, gap row (a)). Every other tool: no row, by data.
     bool dropWritesRow;
-    /// UNREAD: the `tool.attr` door refuses a disabled row's
-    /// write for EVERY tool (captured K-A). Kept only while the polygon pen's
-    /// file (owned by the pen wave) still declares it; delete with that line.
-    bool refusesDisabledParamWrites;
     /// A PRESS opens a new operation: before the press step's open image is
     /// taken, the session resets `haulAttrs` to their defaults (the Shift arm
     /// of `openOperation`), and those names are restored only into the tool

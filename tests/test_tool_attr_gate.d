@@ -11,12 +11,13 @@
 // Cells: K-A A1d (unknown), A1a / A1a_pos (sphere order by method), A1b2
 // (loop slice Reverse Direction with no profile, the same-value write too),
 // A1b (loop slice Inset stays ENABLED with no profile and under Keep Aspect,
-// PF-1), and one disabled-row cell per family that reads `paramEnabled`
-// (shared-policy readers), each with its enabled-row positive control where
-// the tool has one. Families are collected and reported together so one run
-// names every family a mutation of the shared refusal reddens.
+// PF-1), lsrows (loop slice quad / caps / gap behind their switches), and
+// one disabled-row cell per family that reads `paramEnabled` (shared-policy
+// readers), each with its enabled-row positive control where the tool has one.
+// Families are collected and reported together so one run names every family
+// a mutation of the shared refusal reddens.
 //
-// Run via: ./run_test.d test_tool_attr_gate   (one block: VIBE3D_CELL=A1d|A1a|A1b|families)
+// Run via: ./run_test.d test_tool_attr_gate   (one block: VIBE3D_CELL=A1d|A1a|A1b|lsrows|families)
 
 import http_client : getJson, postRawAllowingErrorStatus;
 import std.algorithm : canFind;
@@ -148,6 +149,37 @@ unittest {
     writeln("PASS A1b2 / A1b loop slice");
 }
 
+// Loop slice rows gated by another switch (captured K-U2 ls-* refusal
+// messages; K-A F1): Keep Quads needs Slice Selected, Cap Sections and Gap
+// need Split. Each row refuses true and its current value, then lands once its
+// switch is on; all three rows are collected so one run names every term.
+unittest {
+    if (!cell("lsrows")) return;
+    struct Row { string attr, value, current, enable, expect; }
+    static immutable Row[] rows = [
+        Row("quad", "true", "false", "select true", "true"),
+        Row("caps", "false", "true", "split true", "false"),
+        Row("gap", "0.25", "0.0", "split true", "0.25"),
+    ];
+    string[] failed;
+    size_t visited;
+    foreach (r; rows) {
+        arm("mesh.loopSliceTool");
+        ++visited;
+        string why = refusedDisabled("mesh.loopSliceTool", r.attr, r.value);
+        if (why == "") why = refusedDisabled("mesh.loopSliceTool", r.attr, r.current);
+        if (why == "") {
+            ok("tool.attr mesh.loopSliceTool " ~ r.enable);
+            why = lands("mesh.loopSliceTool", r.attr, r.value, r.expect);
+        }
+        if (why != "") failed ~= r.attr ~ ": " ~ why;
+    }
+    assert(visited == 3, format("loop slice rows visited %d, expected 3", visited));
+    assert(failed.length == 0, format("loop slice gated rows failed in %d rows:\n  %-(%s\n  %)",
+                                      failed.length, failed));
+    writeln("PASS loop slice quad / caps / gap rows");
+}
+
 // One disabled-row cell per family reading `paramEnabled` (the two pens have
 // their own files: test_topopen_attr_availability, test_pen_types). `enable`
 // is the write that turns the row on ("" when the row is never enabled).
@@ -158,8 +190,8 @@ unittest {
         Cell("clone", "mesh.clone", "merge false", "dist", "0.25", "merge true", "0.25"),
         Cell("array", "mesh.arrayTool", "merge false", "dist", "0.25", "merge true", "0.25"),
         Cell("mirror", "mesh.mirrorTool", "", "mode", "axis", "", ""),
-        Cell("command_wrapper", "xfrm.smooth", "lockSharp false", "sharpAngle", "30",
-             "lockSharp true", "30.0"),
+        Cell("command_wrapper", "xfrm.jitter", "enableX false", "rangeX", "0.25",
+             "enableX true", "0.25"),
         Cell("box", "prim.cube", "radius 0", "sharp", "true", "radius 0.1", "true"),
         Cell("slice", "mesh.sliceTool", "split false", "caps", "false", "split true", "false"),
     ];

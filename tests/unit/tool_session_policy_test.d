@@ -1932,9 +1932,9 @@ static assert([__traits(allMembers, imported!"tool".ToolSessionPolicy)] == [
     "previewHistoryLadder", "opensAt", "noClone", "imageAttrs", "haulAttrs",
     "activationResetAttrs", "armAttr", "headlessReplacesWindow", "recordCarriesActivation",
     "keepAliveOnCancel", "rollovers", "handleAnchor", "armRestoresWholeImage", "dropWritesRow",
-    "refusesDisabledParamWrites", "pressOpensOperation", "foldsParamRowsIntoBlock",
+    "pressOpensOperation", "foldsParamRowsIntoBlock",
     "redoPinsRefireImage", "commandEndsOpenGesture", "stepsParamWrites"],
-    "UND2 pin: ToolSessionPolicy's members changed (measured 27 since task 9430)");
+    "UND2 pin: ToolSessionPolicy's members changed (measured 26 since task 9428)");
 
 /// The session type `EditSession` holds in its field `tools_`.
 private template SessionOf(ES) {
@@ -2538,59 +2538,12 @@ unittest { // (9) the compile-time module list IS the runtime scan
 
 // ---------------------------------------------------------------------------
 // (11) Task 9428 (captured K-A) — the `tool.attr` door refuses a write to a row
-// the tool reports disabled for EVERY tool: no per-tool datum. The former
-// datum `refusesDisabledParamWrites` is read nowhere; the polygon pen's file
-// (pen wave) still declares it, so it survives as that one unread line. The
-// door resolves the attribute (unknown -> throw, for the query too), answers
-// the query, then refuses a disabled row, before anything is written.
+// the tool reports disabled for EVERY tool (`test_tool_attr_gate`): no per-tool
+// datum.
 // ---------------------------------------------------------------------------
 
-static assert(ToolSessionPolicy.init.refusesDisabledParamWrites == false);
-
-unittest { // (11)
-    import std.file : SpanMode, dirEntries;
-    auto manifest = parseJSON(readText("tools/prepared_writer_manifest.json"));
-    string[string] moduleOf;
-    foreach (p; manifest["products"].array)
-        moduleOf[p["aggregate"].str] = p["module"].str;
-    string[] declared;
-    size_t visited;
-    foreach (row; kTable) {
-        auto ci = TypeInfo_Class.find(moduleOf[row.cls] ~ "." ~ row.cls);
-        assert(ci !is null, "9428 policy table: class not linked: " ~ row.cls);
-        ++visited;
-        if (blit(ci).sessionPolicy().refusesDisabledParamWrites) declared ~= row.id;
-    }
-    assert(visited == kTable.length && kTable.length == 71,
-           format("9428 policy table: visited %s of %s rows, measured 71", visited, kTable.length));
-    assert(declared == ["pen"],
-           format("9428 policy table: refusesDisabledParamWrites declared by %s, expected "
-                  ~ "the polygon pen's leftover line only", declared));
-    // Raw-text census: the identifier occurs in code only at its declaration
-    // and the pen's leftover initializer — no reader anywhere in source/.
-    string[] sites;
-    size_t files;
-    foreach (f; dirEntries("source", "*.d", SpanMode.depth)) {
-        ++files;
-        const n = blankNonCode(readText(f.name)).count("refusesDisabledParamWrites");
-        if (n) sites ~= format("%s:%d", f.name, n);
-    }
-    sort(sites);
-    assert(files > 400, format("9428 census: scanned %d source files (floor 400)", files));
-    assert(sites == ["source/tool.d:1", "source/tools/create/pen.d:1"],
-           format("9428 census: refusesDisabledParamWrites occurs at %s, expected the "
-                  ~ "declaration and the pen's initializer only", sites));
-    auto attr = squeeze(bodyAt(blankNonCode(readText("source/commands/tool/attr.d")),
-                               "protected override bool applyImpl()"));
-    assert(attr.count("if(!t.paramEnabled(attrName_)){") == 1,
-           "9428 wiring census: the write door no longer refuses a disabled row");
-    inOrder(attr, ["autops=t.params();",
-                   "if(i==ps.length)thrownewException(",
-                   "if(isQuery()){",
-                   "if(!t.paramEnabled(attrName_)){",
-                   "returnfalse;}",
-                   "injectParamsInto(ps,pj);"], "ToolAttrCommand.applyImpl");
-}
+static assert(!__traits(hasMember, ToolSessionPolicy, "refusesDisabledParamWrites"),
+              "9428 fence: the per-tool datum refusesDisabledParamWrites is back");
 
 // ---------------------------------------------------------------------------
 // (12) Pen wave plan S8 (A4-rev) — a UI-door command meeting a tool with

@@ -39,6 +39,7 @@
               "positions": [
                 0.5
               ],
+              "select": true,
               "quad": true
             }
           }
@@ -91,7 +92,7 @@
         } },
         { "select": { "mode": "edges", "coords": [ [[1,0,0],[1,1,0]] ] } }
       ],
-      "op": [ { "loop_slice": { "positions": [0.5], "quad": true } } ],
+      "op": [ { "loop_slice": { "positions": [0.5], "select": true, "quad": true } } ],
       "expected_before": { "verts": 7, "edges": 9, "faces": 3 },
       "expected_after":  { "verts": 10, "edges": 14, "faces": 5 },
       "expected_vertices": [

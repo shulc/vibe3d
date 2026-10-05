@@ -1084,6 +1084,10 @@ public:
         // A1b2, task 9428). Inset (depth) stays enabled (K-A PF-1).
         if (name == "reversex" || name == "reversey" || name == "aspect")
             return profile_ != LoopProfile.Flat;
+        // Keep Quads needs Slice Selected; Cap Sections and Gap need Split
+        // (captured: K-U2 ls-* refusal messages, K-A F1).
+        if (name == "quad") return sliceSelected_;
+        if (name == "caps" || name == "gap") return sliceSplit_;
         return true;
     }
 

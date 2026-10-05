@@ -176,6 +176,7 @@ unittest {
     // Non-default settings (constructor defaults: count=1, caps=true,
     // gap=0, mode=uniform — see field initializers in loop_slice_tool.d).
     cmd("tool.attr mesh.loopSliceTool count 4");
+    cmd("tool.attr mesh.loopSliceTool split true");   // enables caps / gap (task 9428)
     cmd("tool.attr mesh.loopSliceTool caps false");
     cmd("tool.attr mesh.loopSliceTool gap 0.3");
     cmd("tool.attr mesh.loopSliceTool mode symmetry");
