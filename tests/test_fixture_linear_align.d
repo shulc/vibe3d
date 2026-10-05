@@ -105,24 +105,22 @@ unittest { // interactive tool activation + Post-Mode apply reproduces the
 }
 
 unittest { // falloff integration (WGHT stage) — a tiny radial falloff
-           // centered exactly at B's source position gives B weight~1 and
-           // C (well outside the radius) weight~0, so B moves to its
-           // aligned target while C stays at its source position. This is
-           // the interactive tool's own falloff wiring — the one-shot
-           // `mesh.linear_align` command has none (see class doc comment
-           // in commands/mesh/linear_align.d).
+           // centred on B's aligned TARGET (task 9446: the blend reads the
+           // falloff at the target, capture K-F2 on Radial Align, the same
+           // function here; B's source sits 0.3 m away, weight 0) gives B
+           // weight~1 and C weight 0, so B lands on its target and C stays.
     auto idx = buildChain();
     auto source = dumpVerts();
 
     cmd("tool.set xfrm.linearAlignTool on");
     cmd("tool.pipe.attr falloff type radial");
-    cmd(`tool.pipe.attr falloff center "0.2,-0.15,-0.1"`);
+    cmd(`tool.pipe.attr falloff center "-0.0166667,-0.0166667,-0.0166667"`);
     cmd(`tool.pipe.attr falloff size "0.05,0.05,0.05"`);
     cmd("tool.doApply");
     cmd("tool.set xfrm.linearAlignTool off");
 
     auto after = dumpVerts();
-    // B (at the falloff center, weight~1) moved to (near) its aligned target.
+    // B (its target at the falloff center, weight~1) reached that target.
     enum double nb = -0.0166667;
     assert(approxEq(after[idx[1]][0], nb, 5e-3) && approxEq(after[idx[1]][1], nb, 5e-3)
         && approxEq(after[idx[1]][2], nb, 5e-3),

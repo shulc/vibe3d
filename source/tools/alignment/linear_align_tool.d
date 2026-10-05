@@ -36,8 +36,8 @@ import prepared_tool_effect : PreparedTransformActivationEffect,
 /// every interior vertex between the chain's two fixed endpoints —
 /// either by its own line projection (`uniform=false`) or by equal
 /// chain-index spacing (`uniform=true`). `weight` blends
-/// `lerp(source, aligned, weight * falloff)`, matching the rest of the
-/// deform-tool family's WGHT integration (Bend/Push).
+/// `lerp(source, aligned, weight * falloff(aligned))` — the falloff read at
+/// the TARGET, as Radial Align's (capture K-F2, task 9446).
 class LinearAlignTool : TransformTool, PreparedToolDoorClient {
 private:
     // Only `mode=line` is implemented — see align_kernels.linearAlignTargets's
@@ -127,7 +127,7 @@ public:
         // Task 0619: hoisted — see bend.d.
         const auto aim = dragAimSpace();
         foreach (i, vi; chain.verts) {
-            float w = headlessWeight * falloffWeight(cast(int)vi, aim);
+            float w = headlessWeight * falloffWeightAt(aligned[i], cast(int)vi, aim);
             if (w == 0.0f) continue;
             mesh.vertices[vi] = weightedLerp(source[i], aligned[i], w);
             toProcess[vi] = true;

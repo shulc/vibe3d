@@ -533,10 +533,14 @@ mixin template XfrmApplyImpl() {
         // PolarQuat blends slerp(I, composed-R, w) — i.e. compose-then-arc-by-weight
         // — which is NOT reference-verified; it is the chosen convention, stated here
         // so a future reader does not mistake it for a captured result.
-        BlendMode foldMode = (!hasT && !hasS && flagR
-                              && rotateBlendMode() != BlendMode.MatrixLerp)
-                           ? rotateBlendMode()
-                           : blendModeForMeasure();
+        const bool arcFold = !hasT && !hasS && flagR
+                          && rotateBlendMode() != BlendMode.MatrixLerp;
+        BlendMode foldMode = arcFold ? rotateBlendMode() : blendModeForMeasure();
+        // One rotate attr carries the turn: its own unwrapped angle, not the
+        // composed matrix's short arc (register row 83, K-F4, task 9446).
+        import tools.transform.xform_kernels : ArcRotation;
+        const arc = arcFold ? ArcRotation.ofEuler(headlessRotate, ims)
+                            : ArcRotation.init;
         // `weightVerts` is the SAME array the fold evaluates from, built once
         // above — so the fold's evaluation space and its weighting space
         // cannot drift apart. Under routing that means the falloff weight is
@@ -551,7 +555,7 @@ mixin template XfrmApplyImpl() {
                              foldMode, dragFalloff, dragAimSpace(), cp, ap,
                              clusterM, dragSymmetry, toProcess,
                              /*weightVerts=*/ weightFrom,
-                             /*route=*/ route);
+                             /*route=*/ route, arc);
 
         // MIRROR pass — the pair write rule (`symmetry.mirrorStepFor`): a
         // pair in the operand is copied from its +X member's FINAL position

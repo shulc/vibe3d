@@ -20,6 +20,7 @@ import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
+import std.format : format;
 import std.math : fabs, sqrt, isNaN;
 
 void main() {}
@@ -114,24 +115,33 @@ unittest { // interactive tool activation + Post-Mode apply reproduces the
 }
 
 unittest { // falloff integration (WGHT stage) — a tiny radial falloff
-           // centered exactly at B's source position isolates B (weight
-           // ~1) from C (weight ~0, well outside the radius): B must move
-           // substantially while C stays at its source position. The
+           // centred on B's aligned TARGET (task 9446: the blend reads the
+           // falloff at the target, capture K-F2) isolates B (weight ~1)
+           // from C (weight 0): B lands on its target, C stays put. The
            // one-shot `mesh.radial_align` command has no falloff plumbing
            // (see class doc comment in commands/mesh/radial_align.d).
     auto idx = buildLoop();
     auto source = dumpVerts();
+    cmd("tool.set xfrm.radialAlignTool on");
+    cmd("tool.doApply");
+    cmd("tool.set xfrm.radialAlignTool off");
+    auto aligned = dumpVerts();
+    auto idx2 = buildLoop();
+    assert(idx2 == idx && dist3(aligned[idx[1]], source[idx[1]]) > 0.06,
+        "B's target must lie outside the 0.05 falloff around its source");
 
     cmd("tool.set xfrm.radialAlignTool on");
     cmd("tool.pipe.attr falloff type radial");
-    cmd(`tool.pipe.attr falloff center "0.7071,-0.5,0.0"`);
+    cmd(format(`tool.pipe.attr falloff center "%.7f,%.7f,%.7f"`,
+               aligned[idx[1]][0], aligned[idx[1]][1], aligned[idx[1]][2]));
     cmd(`tool.pipe.attr falloff size "0.05,0.05,0.05"`);
     cmd("tool.doApply");
     cmd("tool.set xfrm.radialAlignTool off");
 
     auto after = dumpVerts();
-    double movedB = dist3(after[idx[1]], source[idx[1]]);
-    assert(movedB > 0.05, "falloff-weighted B should move substantially, moved " ~ movedB.to!string);
+    assert(dist3(after[idx[1]], aligned[idx[1]]) < 1e-4,
+        "B (weight 1 at its target) must land on it, off by "
+        ~ dist3(after[idx[1]], aligned[idx[1]]).to!string);
 
     double movedC = dist3(after[idx[2]], source[idx[2]]);
     assert(movedC < 1e-3, "falloff-excluded C should not move, moved " ~ movedC.to!string);
@@ -216,4 +226,56 @@ unittest { // no selection -> whole-mesh fallback must not crash.
     cmd("tool.set xfrm.radialAlignTool off");
 
     assertManifold(v0, e0, f0);
+}
+
+unittest { // capture K-F2 / F2b (task 9446): the align blend is
+           // lerp(source, target, weight * falloff(TARGET)). Rig: one quad,
+           // order 0-3, a radial linear falloff weighing vertex 3's SOURCE 0.5
+           // and its target ~0.88; the others' targets weigh 0. Our circle
+           // phase differs from the captured one (F2cal, 0.02 m — the base
+           // anchor, not this law), so the targets are OURS, read at weight 1.
+    enum pts = `[[-0.5,-0.5,0],[0.5,-0.5,0],[0.6,0.5,0],[-0.3,0.4,0]]`;
+    immutable double[3] cen = [-0.383578, 0.494722, 0];
+    enum double size = 0.252647;
+    double[3][] run(string weight, bool falloff) {
+        postJson("/api/command", commandBody("scene.reset", `{"empty":true}`));
+        cmd(commandBody("scene.loadMesh", `{"vertices":` ~ pts ~ `,"faces":[[0,1,2,3]]}`));
+        cmd("select.typeFrom vertex");
+        cmd(commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3]}`));
+        cmd("history.clear");
+        cmd("tool.set xfrm.radialAlignTool on");
+        if (falloff) {
+            cmd("tool.pipe.attr falloff type radial");
+            cmd("tool.pipe.attr falloff shape linear");
+            cmd(`tool.pipe.attr falloff center "-0.383578,0.494722,0"`);
+            cmd(`tool.pipe.attr falloff size "0.252647,0.252647,0.252647"`);
+        }
+        cmd("tool.attr xfrm.radialAlignTool weight " ~ weight);
+        cmd("tool.doApply");
+        cmd("tool.set xfrm.radialAlignTool off");
+        if (falloff) cmd("tool.pipe.attr falloff type none");
+        assert(getJson("/api/history")["undo"].array.length == 2,
+            "expected the arm + apply rows");
+        auto got = dumpVerts();
+        assert(got.length == 4, "the quad lost vertices");
+        return got;
+    }
+    double fall(double[3] p) {
+        double t = sqrt((p[0]-cen[0])^^2 + (p[1]-cen[1])^^2 + (p[2]-cen[2])^^2) / size;
+        return t >= 1 ? 0 : 1 - t;
+    }
+    immutable double[3][4] src = [[-0.5,-0.5,0],[0.5,-0.5,0],[0.6,0.5,0],[-0.3,0.4,0]];
+    auto tgt = run("1", false);
+    assert(approxEq(fall(src[3]), 0.5) && fall(tgt[3]) > 0.8 && fall(tgt[0]) == 0,
+        "the rig no longer separates the source weight from the target weight");
+    foreach (cell; [["KF_F2", "0.5"], ["KF_F2b", "1"]]) {
+        auto got = run(cell[1], true);
+        const double w = cell[1].to!double;
+        foreach (i; 0 .. 4) foreach (c; 0 .. 3) {
+            double want = src[i][c] + (tgt[i][c] - src[i][c]) * w * fall(tgt[i]);
+            assert(approxEq(got[i][c], want, 1e-5), cell[0] ~ ": v" ~ i.to!string
+                ~ "[" ~ c.to!string ~ "] = " ~ got[i][c].to!string
+                ~ ", weight x falloff(target) gives " ~ want.to!string);
+        }
+    }
 }

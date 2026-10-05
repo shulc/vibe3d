@@ -23,7 +23,7 @@ module tools.transform.xform_kernels;
 
 import math    : Vec3, Viewport, dot, cross, AimViewport, rotateAboutPivot;
 import math    : Quat, slerp, quatFromMatrix, matrixFromQuat, applyAffine,
-                 matMul4, identityMatrix;
+                 matMul4, identityMatrix, ModelSpace;
 import mesh    : Mesh, MeshMap;
 import tools.transform.morph_route : MorphRoute, storeRouted;
 import falloff : evaluateFalloff;
@@ -457,6 +457,41 @@ void lerpToIdentityInto(const ref float[16] M, float w, ref float[16] r)
 /// Blend modes for `blendToIdentity` — the plan's options a / b / c.
 enum BlendMode { Decompose, MatrixLerp, PolarQuat }
 
+/// The rotate-only arc blend's input: a turn by `angle` about ONE axis, held
+/// as its Rodrigues generators in the space the kernel writes, so a vertex of
+/// weight w turns by w·angle for ANY angle — a matrix only knows the short
+/// arc (register row 83, capture K-F4, task 9446). `angle == 0` (no single
+/// axis) leaves the kernel on `blendToIdentity`.
+struct ArcRotation {
+    float[16] k = 0, k2 = 0;
+    float angle = 0;
+
+    /// From the rotate attrs (degrees): an arc only when exactly one is set.
+    static ArcRotation ofEuler(Vec3 eulerDeg, const ref ModelSpace ims) {
+        import std.math : PI;
+        const float[3] e = [eulerDeg.x, eulerDeg.y, eulerDeg.z];
+        if ((e[0] != 0) + (e[1] != 0) + (e[2] != 0) != 1) return ArcRotation.init;
+        const size_t i = e[0] != 0 ? 0 : e[1] != 0 ? 1 : 2;
+        float[3] n = 0;
+        n[i] = 1;
+        const float[16] kw = [0, n[2], -n[1], 0,  -n[2], 0, n[0], 0,
+                              n[1], -n[0], 0, 0,  0, 0, 0, 0];
+        ArcRotation r;
+        r.k = ims.conjugate(kw);
+        r.k2 = ims.conjugate(matMul4(kw, kw));
+        r.angle = e[i] * cast(float)(PI / 180);
+        return r;
+    }
+
+    float[16] at(float w) const {
+        import std.math : sin, cos;
+        const float s = sin(w * angle), c = 1 - cos(w * angle);
+        float[16] r = identityMatrix;
+        foreach (i; 0 .. 16) r[i] += s * k[i] + c * k2[i];
+        return r;
+    }
+}
+
 /// Pure single-pass matrix apply (MS-1). Reproduces ONE pass of `applyTRS`
 /// expressed as a single pivot-relative matrix blended toward identity per
 /// vertex by the falloff weight. No symmetry mirror is run by callers via the
@@ -505,7 +540,8 @@ void applyXformMatrix(
     // O(V) loop. `.init` == no routing, so every other caller in the tree is
     // untouched. See morph_route.d for why the seam is here and not on
     // `mesh.vertices`.
-    MorphRoute route = MorphRoute.init)
+    MorphRoute route = MorphRoute.init,
+    ArcRotation arc = ArcRotation.init)
 {
     // Array-layout contract (locked by test (v), the non-identity-indices case):
     //   - `baseline` is ORDINAL-parallel to `indices`: baseline[i] is the pre-edit
@@ -655,7 +691,9 @@ void applyXformMatrix(
             // MatrixLerp inline for 0 < w < 1 (the one mode that needs no
             // decomposition), `blendToIdentity` otherwise — the same values.
             float[16] Mw = void;
-            if (mode == BlendMode.MatrixLerp && w > 0.0f && w < 1.0f)
+            if (arc.angle != 0 && mvKey < 0)
+                Mw = arc.at(w);
+            else if (mode == BlendMode.MatrixLerp && w > 0.0f && w < 1.0f)
                 lerpToIdentityInto(mvKey < 0 ? M : clusterM[mvKey], w, Mw);
             else
                 Mw = blendToIdentity(mvKey < 0 ? M : clusterM[mvKey], w, mode);

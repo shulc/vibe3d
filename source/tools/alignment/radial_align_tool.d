@@ -41,7 +41,8 @@ import prepared_tool_effect : PreparedTransformActivationEffect,
 /// (center = mean chain position, radius = mean distance from center,
 /// both auto-computed — no interactive override, see `params()`'s doc
 /// comment). `angle`/`rotate` additively rotate the slot framework;
-/// `weight` blends `lerp(source, aligned, weight * falloff)`.
+/// `weight` blends `lerp(source, aligned, weight * falloff(aligned))` — the
+/// falloff read at the TARGET (capture K-F2, task 9446).
 class RadialAlignTool : TransformTool, PreparedToolDoorClient {
 private:
     // "circle" / "nside" — see align_kernels.radialAlignTargets's doc
@@ -144,7 +145,7 @@ public:
         // Task 0619: hoisted — see bend.d.
         const auto aim = dragAimSpace();
         foreach (i, vi; chain.verts) {
-            float w = headlessWeight * falloffWeight(cast(int)vi, aim);
+            float w = headlessWeight * falloffWeightAt(aligned[i], cast(int)vi, aim);
             if (w == 0.0f) continue;
             mesh.vertices[vi] = weightedLerp(source[i], aligned[i], w);
             toProcess[vi] = true;
