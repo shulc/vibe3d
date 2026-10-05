@@ -108,11 +108,10 @@ unittest { // Front under a PINNED ground plane: the grid is the stage's (edge-o
 }
 
 /// The settled whole-frame digest of cell 0 (two equal consecutive reads).
-string frameHash(string view, string[] pin = null) {
+string frameHash(string view) {
     import core.thread : Thread;
     import core.time : msecs;
     cmd(commandBody("scene.reset", `{"empty":true}`));
-    foreach (a; pin) cmd("tool.pipe.attr workplane " ~ a);
     cmd("viewport.view " ~ view);
     frameFence(null, 3);
     string prev;
@@ -126,24 +125,94 @@ string frameHash(string view, string[] pin = null) {
     assert(false, view ~ ": the frame digest never settled");
 }
 
-unittest { // The fade is radial IN the grid's plane: on an empty scene, Front's
-    // facing lattice is Top's ground lattice turned about X — same lines, same
-    // axis colours (local X red, local Z blue), same fade — so the two frames
-    // are byte-identical. A fade read from world xz fades Front along x only
-    // (measured: digests differ; the top-row scan differs by 1 level).
+unittest { // One ortho drawer: on an empty scene Front's facing lattice is Top's
+    // turned about X — same lines, same uncoloured origin lines, no fade — so
+    // the two frames are byte-identical (capture K-GR GR_C / GR_F).
     immutable top = frameHash("Top"), front = frameHash("Front");
     writefln("frame digests: Top %s Front %s", top, front);
     assert(top == front,
-        format("Front's frame %s differs from Top's %s: the facing grid must fade "
-               ~ "radially in its own plane", front, top));
+        format("Front's frame %s differs from Top's %s: the ortho grid must not "
+               ~ "depend on which world axes it lies along", front, top));
 }
 
-unittest { // ...and from the grid's own ORIGIN: a ground plane pinned 2 below the
-    // origin draws, in Top ortho, the very frame of the auto ground grid. A fade
-    // measured from the world origin would dim it by the 2-unit offset.
-    immutable top = frameHash("Top"), low = frameHash("Top", ["mode worldY", "cenY -2"]);
-    writefln("frame digests: Top %s Top pinned at y -2 %s", top, low);
-    assert(top == low,
-        format("Top with the ground plane pinned at y -2 drew %s, the auto ground grid %s: "
-               ~ "the fade must be measured from the grid's own origin", low, top));
+// ---------------------------------------------------------------------------
+// The ortho grid's style (capture K-GR, fixture K-GR.json "ortho-style" and
+// "ortho-fade-GR_F"): every pixel of a full row and a full column — edges
+// included — is the background, a minor line, a major line or an origin line,
+// each EXACTLY its captured colour: opaque, unfaded, origin lines black.
+// ---------------------------------------------------------------------------
+immutable int[3] kBg = [92, 102, 107], kMinor = [83, 92, 97],
+                 kMajor = [65, 72, 75], kOrigin = [0, 0, 0];
+
+void stylePalette(string view) {
+    cmd(commandBody("scene.reset", `{"empty":true}`));
+    cmd("viewport.view " ~ view);
+    // Zoomed out to ~26 px cells, so the majors at +-10 steps are in view.
+    auto cr = postJson("/api/camera?viewport=0", `{"focus":{"x":0,"y":0,"z":0},"distance":5}`);
+    assert(cr["status"].str == "ok", "camera: " ~ cr.toString);
+    frameFence(null, 3);
+    Viewport vp = viewportFromCameraMatrices();
+    immutable int W = vp.width, H = vp.height;
+    int[2][] row, col;
+    foreach (x; 0 .. W) row ~= [x, H / 4];      // crosses the vertical origin line
+    foreach (y; 0 .. H) col ~= [W / 4, y];      // crosses the horizontal one
+    foreach (scanName, px; ["row": probe(row), "column": probe(col)]) {
+        size_t[4] n;
+        foreach (i, c; px) {
+            if      (c == kBg)     ++n[0];
+            else if (c == kMinor)  ++n[1];
+            else if (c == kMajor)  ++n[2];
+            else if (c == kOrigin) ++n[3];
+            else assert(false, format("%s %s: pixel %d reads %s — not the background, "
+                ~ "a minor, a major or a black origin line (faded or coloured grid)",
+                view, scanName, i, c));
+        }
+        writefln("%s %s: bg %d minor %d major %d origin %d", view, scanName, n[0], n[1], n[2], n[3]);
+        // Measured at the 650x544 test cell: row 22 minor / 2 major / 1 origin
+        // pixel, column 18 / 2 / 1 (the origin line is ONE pixel wide).
+        immutable size_t minor = scanName == "row" ? 22 : 18;
+        assert(n[1] == minor && n[2] == 2 && n[3] == 1,
+            format("%s %s: expected %d minor, 2 major and 1 origin-line pixel, got %s",
+                   view, scanName, minor, n));
+    }
+}
+
+unittest { stylePalette("Top"); }
+unittest { stylePalette("Front"); }
+unittest { stylePalette("Right"); }
+
+// ---------------------------------------------------------------------------
+// GR_D: the ortho grid is an UNDERLAY — geometry hides it whether it lies in
+// front of the grid plane or behind it. The default cube's +Z face, seen in
+// Front: at z = +0.5 (in front of the z = 0 grid plane) and moved to z = -0.5
+// (behind it). A row across the face's interior must be one flat fill.
+// ---------------------------------------------------------------------------
+size_t faceRowRuns(double posZ) {
+    cmd(commandBody("scene.reset", "{}"));
+    cmd(format("layer.attr 0 pos.z %g", posZ));
+    cmd("viewport.view Front");
+    frameFence(null, 3);
+    Viewport vp = viewportFromCameraMatrices();
+    import drag_helpers : projectToWindow, Vec3;
+    float x0, y0, x1, y1;
+    assert(projectToWindow(Vec3(-0.4f, 0.27f, 0), vp, x0, y0)
+        && projectToWindow(Vec3(0.4f, 0.27f, 0), vp, x1, y1), "rig: projection");
+    int[2][] row;
+    foreach (x; cast(int) x0 - vp.x .. cast(int) x1 - vp.x) row ~= [x, cast(int) y0 - vp.y];
+    auto px = probe(row);
+    assert(px.length >= 100 && px[0] != kBg, format("rig: the row must lie on the face, got %s", px[0]));
+    size_t runs = lineRuns(px);
+    writefln("face at z %+g: %d px, fill %s, %d grid runs", posZ + 0.5, px.length, px[0], runs);
+    return runs;
+}
+
+unittest { // GR_D — in front of the plane (the control: depth hid it before too)
+    immutable r = faceRowRuns(0.0);
+    assert(r == 0, format("GR_D: the grid must not show over a face in front of its plane, %d runs", r));
+}
+
+unittest { // GR_D — behind the plane
+    immutable r = faceRowRuns(-1.0);
+    assert(r == 0, format("GR_D: the grid must not show over a face behind its plane "
+                          ~ "(an underlay), %d runs", r));
 }

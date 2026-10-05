@@ -326,10 +326,11 @@ unittest {
     auto sz = getJson("/api/viewport/probe?cell=0&hash=1");
     immutable int W = cast(int) sz["w"].integer, H = cast(int) sz["h"].integer;
     // Corners inset by kInset: the four extremes of the fullscreen triangle's
-    // clip, away from the cell's edge seam; plus the centre.
+    // clip, away from the cell's edge seam; plus the centre, 5 px off it: the
+    // ortho grid's black origin lines cross at the centre (task 9451).
     enum int kInset = 3;
     int[2][] pts = [[kInset, kInset], [W - 1 - kInset, kInset], [kInset, H - 1 - kInset],
-                    [W - 1 - kInset, H - 1 - kInset], [W / 2, H / 2]];
+                    [W - 1 - kInset, H - 1 - kInset], [W / 2 + 5, H / 2 + 5]];
     immutable string[5] names = ["top-left", "top-right", "bottom-left", "bottom-right", "centre"];
     cmd("viewport.cavity", `{"value":"off"}`);
     hash();

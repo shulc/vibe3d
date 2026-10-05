@@ -768,26 +768,51 @@ public:
     // the grid always fades to nothing exactly where it ends.
     immutable float gridFade = viewGridFadeRadius(gridStep);
 
-    // Width/height in PIXELS = FBO dims; offsets zeroed (FBO origin = corner).
     segTimer_.mark(GpuSeg.grid);
-    gridShader.useProgram(gridModel, vp,
-        gridFade,
-        cast(float)v.fbo.w, cast(float)v.fbo.h,
-        0.0f, 0.0f);
     glBindVertexArray(gridVao);
-    // Perf: the ground grid is three fixed submissions whose vertex count
-    // tracks the lattice size, so it is a CONSTANT floor under every scene
-    // frame. Counting it separately from the mesh passes is what lets a
-    // reader say "the model costs N draws" without the grid in the number.
-    glUniform3f(gridShader.locColor, 0.5f, 0.5f, 0.5f);
-    glDrawArrays(GL_LINES, 0, gridOnlyVertCount);
-    g_fc.draw(DrawPass.grid, gridOnlyVertCount);
-    glUniform3f(gridShader.locColor, 0.5f, 0.15f, 0.15f);
-    glDrawArrays(GL_LINES, gridOnlyVertCount, 2);
-    g_fc.draw(DrawPass.grid, 2);
-    glUniform3f(gridShader.locColor, 0.15f, 0.15f, 0.5f);
-    glDrawArrays(GL_LINES, gridOnlyVertCount + 2, 2);
-    g_fc.draw(DrawPass.grid, 2);
+    // Perf: the grid is three fixed submissions whose vertex count tracks the
+    // lattice size, so it is a CONSTANT floor under every scene frame.
+    // Counting it separately from the mesh passes is what lets a reader say
+    // "the model costs N draws" without the grid in the number.
+    if (isOrtho(vp)) {
+        // The ortho grid (capture K-GR, task 9451): an UNDERLAY (no depth
+        // write, so any later geometry hides it, in front of the plane or
+        // behind), opaque and unfaded; minor lines every step, majors every 10
+        // steps (the same lattice at 10x), the two origin lines black. The
+        // fade is switched off through its uniforms: a radius past any
+        // lattice and a screen span that puts every fragment mid-screen.
+        glDepthMask(GL_FALSE);
+        scope (exit) glDepthMask(GL_TRUE);
+        gridShader.useProgram(gridModel, vp, 1e30f, 1e9f, 1e9f, -5e8f, -5e8f);
+        glUniform3f(gridShader.locColor, 83 / 255.0f, 92 / 255.0f, 97 / 255.0f);
+        glDrawArrays(GL_LINES, 0, gridOnlyVertCount);
+        g_fc.draw(DrawPass.grid, gridOnlyVertCount);
+        float[16] majorModel = gridModel;
+        majorModel[0 .. 12] *= 10.0f;
+        glUniformMatrix4fv(gridShader.locModel, 1, GL_FALSE, majorModel.ptr);
+        glUniform3f(gridShader.locColor, 65 / 255.0f, 72 / 255.0f, 75 / 255.0f);
+        glDrawArrays(GL_LINES, 0, gridOnlyVertCount);
+        g_fc.draw(DrawPass.grid, gridOnlyVertCount);
+        glUniformMatrix4fv(gridShader.locModel, 1, GL_FALSE, gridModel.ptr);
+        glUniform3f(gridShader.locColor, 0.0f, 0.0f, 0.0f);
+        glDrawArrays(GL_LINES, gridOnlyVertCount, 4);
+        g_fc.draw(DrawPass.grid, 4);
+    } else {
+        // Width/height in PIXELS = FBO dims; offsets zeroed (FBO origin = corner).
+        gridShader.useProgram(gridModel, vp,
+            gridFade,
+            cast(float)v.fbo.w, cast(float)v.fbo.h,
+            0.0f, 0.0f);
+        glUniform3f(gridShader.locColor, 0.5f, 0.5f, 0.5f);
+        glDrawArrays(GL_LINES, 0, gridOnlyVertCount);
+        g_fc.draw(DrawPass.grid, gridOnlyVertCount);
+        glUniform3f(gridShader.locColor, 0.5f, 0.15f, 0.15f);
+        glDrawArrays(GL_LINES, gridOnlyVertCount, 2);
+        g_fc.draw(DrawPass.grid, 2);
+        glUniform3f(gridShader.locColor, 0.15f, 0.15f, 0.5f);
+        glDrawArrays(GL_LINES, gridOnlyVertCount + 2, 2);
+        g_fc.draw(DrawPass.grid, 2);
+    }
     glBindVertexArray(0);
 
     glDisable(GL_BLEND);
