@@ -193,6 +193,11 @@ unittest { // (w2) the walker's refusals: a disabled packet, a pair table or a
     const Vec3[] base = [Vec3(1, 0, 0), Vec3(-1, 0, 0), Vec3(0, 1, 0)];
     bool[] touched = new bool[](3);
     const Vec3[] before = m.vertices.dup;
+    // The delta control runs first: the plain family has suite witnesses of its own.
+    Mesh dctl = m; dctl.vertices = m.vertices.dup;   // the delta walk: same projection, the edit mirrored
+    applySymmetryMirrorDelta(&dctl, sp, base, all, touched);
+    assert(dctl.vertices[1] == Vec3(-1, 0, 0) && dctl.vertices[2] == Vec3(0, 1, 0),
+           "(w2) delta control: the walk did not mirror the edit and project the on-plane vertex");
     Mesh ctl = m; ctl.vertices = m.vertices.dup;
     applySymmetryMirror(&ctl, sp, all, touched);
     assert(ctl.vertices[1] == Vec3(-1, 0, 0) && ctl.vertices[2] == Vec3(0, 1, 0) && touched[1],
@@ -231,7 +236,8 @@ unittest { // (w4) a routed walk that stores announces ONE Maps change
     import mesh : Mesh, MapKind;
     import mesh_edit_delta : MeshEditScope;
     import toolpipe.packets : SymmetryPacket;
-    import tools.transform.morph_route : MorphRoute, applySymmetryMirrorRouted;
+    import tools.transform.morph_route : MorphRoute, applySymmetryMirrorRouted,
+                                         applySymmetryMirrorDeltaRouted;
     Mesh m;
     m.vertices = [Vec3(1, 0.5f, 0.25f), Vec3(-1, 0.5f, 0.25f)];
     m.resizeVertexSelection();
@@ -247,4 +253,9 @@ unittest { // (w4) a routed walk that stores announces ONE Maps change
     applySymmetryMirrorRouted(&m, sp, [true, true], touched, route);
     assert(touched[1], "(w4) rig: the routed walk did not write the partner");
     assert((m.undeliveredChanges_ & MeshEditScope.Maps) != 0, "(w4) a routed store announced no Maps change");
+    touched[] = false;
+    m.undeliveredChanges_ = 0;
+    applySymmetryMirrorDeltaRouted(&m, sp, route.base, [true, true], touched, route);
+    assert(touched[1], "(w4) rig: the routed delta walk did not write the partner");
+    assert((m.undeliveredChanges_ & MeshEditScope.Maps) != 0, "(w4) a routed delta store announced no Maps change");
 }
