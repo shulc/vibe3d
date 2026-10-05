@@ -35,6 +35,7 @@ unittest { // hoverAtPress: the published ids, or none while they are held stale
 }
 
 unittest { // publishHover: HOLDS the ids while stale (task 1730); V > E > F under a tool
+    import ai.debug_trace : latestElementDebugTrace;
     import core.time : MonoTime;
     import input_frame_state : InputFrameState;
     import subpatch_preview : SubpatchPreview;
@@ -49,6 +50,8 @@ unittest { // publishHover: HOLDS the ids while stale (task 1730); V > E > F und
         sp.buildStarted = MonoTime.currTime;
         ifs.hoveredVertex = 4; ifs.hoveredEdge = 5; ifs.hoveredFace = 6;
         publishHover(ifs, tool, 0, 0);
+        assert(latestElementDebugTrace().candidates.length == 3,
+               "publishHover: the element candidates did not see the raw V, E, F picks");
         assert(g_hoverIndexSpaceStale == stale, "publishHover did not publish the stale flag");
         assert(HoverIds(g_hoveredVertex, g_hoveredEdge, g_hoveredFace)
                == (tool ? HoverIds(4, -1, -1) : HoverIds(4, 5, 6)),
