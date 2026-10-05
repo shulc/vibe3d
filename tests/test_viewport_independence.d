@@ -27,7 +27,7 @@ import core.time     : msecs;
 string baseUrl;
 
 string httpGet(string path) {
-    import std.net.curl : get;
+    import http_client : get = keepAliveGet;
     return cast(string)get(baseUrl ~ path);
 }
 

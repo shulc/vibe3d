@@ -10,7 +10,7 @@ import http_command_helpers : commandBody;
 import std.conv : to;
 import std.json : JSONType, JSONValue, parseJSON;
 import std.math : fabs;
-import std.net.curl : get, post;
+import http_client : get = keepAliveGet, post = keepAlivePost;
 import std.string : format;
 
 void main() {}

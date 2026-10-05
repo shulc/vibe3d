@@ -8,7 +8,7 @@ import http_command_helpers : commandBody;
 import std.conv : octal, to;
 import std.file : exists, mkdirRecurse, rmdirRecurse, setAttributes, tempDir,
     write;
-import std.net.curl : get;
+import http_client : get = keepAliveGet;
 import std.path : buildPath;
 import std.process : environment, Pid, spawnProcess, thisProcessID, wait;
 import std.socket : AddressFamily, InternetAddress, ProtocolType, Socket,

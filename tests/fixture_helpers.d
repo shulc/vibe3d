@@ -36,7 +36,7 @@ module fixture_helpers;
 
 import http_client : testBaseUrl;
 import std.json;
-import std.net.curl : get, post;
+import http_client : get = keepAliveGet, post = keepAlivePost;
 import std.conv : to;
 import std.math : fabs, PI, sqrt, acos;
 import std.format : format;

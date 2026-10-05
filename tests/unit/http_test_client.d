@@ -34,6 +34,41 @@ void receiveUntilClosed(Socket socket, ref string wire,
     }
 }
 
+/// Append ONE response from a connection the server keeps open (task 9461):
+/// the header block plus exactly Content-Length body bytes. Stops early on
+/// close, a real error, or `budget`; an interrupted receive is retried.
+void receiveOneResponse(Socket socket, ref string wire,
+                        Duration budget = 60.seconds)
+{
+    import std.algorithm : startsWith;
+    import std.conv : to;
+    import std.string : indexOf, splitLines, strip, toLower;
+    immutable deadline = MonoTime.currTime + budget;
+    ubyte[8192] buf;
+    for (;;)
+    {
+        immutable end = wire.indexOf("\r\n\r\n");
+        if (end >= 0)
+        {
+            size_t length;
+            foreach (line; wire[0 .. end].splitLines)
+                if (line.toLower.startsWith("content-length:"))
+                    length = line["content-length:".length .. $].strip.to!size_t;
+            if (wire.length >= end + 4 + length)
+                return;
+        }
+        immutable n = socket.receive(buf[]);
+        if (n > 0)
+        {
+            wire ~= cast(string) buf[0 .. n].idup;
+            continue;
+        }
+        if (n < 0 && interrupted() && MonoTime.currTime < deadline)
+            continue;
+        return;
+    }
+}
+
 private bool interrupted() nothrow @nogc
 {
     version (Posix)
@@ -136,6 +171,6 @@ unittest // census: no unit-test client reads a socket except through the helper
     assert(rawReaders.length == 0, format(
         "these unit tests read a socket with their own loop; use "
       ~ "receiveUntilClosed so a GC signal does not end the read: %s", rawReaders));
-    // Population floor, measured 2026-09-25 (eleven HTTP client files).
-    assert(users == 11, format("%d unit-test files use receiveUntilClosed, expected 11", users));
+    // Population floor, measured 2026-10-05 (twelve HTTP client files).
+    assert(users == 12, format("%d unit-test files use receiveUntilClosed, expected 12", users));
 }

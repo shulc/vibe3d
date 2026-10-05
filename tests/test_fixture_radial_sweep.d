@@ -257,7 +257,7 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     import std.json    : JSONValue, parseJSON;
-    import std.net.curl : get, post;
+    import http_client : get = keepAliveGet, post = keepAlivePost;
 
     alias BASE = testBaseUrl;
     enum string TOOL = "mesh.radialSweepTool";

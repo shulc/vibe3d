@@ -131,12 +131,41 @@ private __gshared bool g_announcedUnset;
     return "http://localhost:" ~ testPort.to!string;
 }
 
+/// One reused connection per thread (task 9461): the server keeps a
+/// connection open only for a request that asks with `Connection:
+/// keep-alive`, and a fresh handle per call opened ~250 TCP connections per
+/// test, enough to fill the host's conntrack table under two gates.
+/// Thread-local, like any `HTTP` handle must be.
+private HTTP g_keepAlive;
+private bool g_keepAliveReady;
+
+private HTTP keepAliveConnection() {
+    if (!g_keepAliveReady) {
+        g_keepAlive = HTTP();
+        g_keepAlive.addRequestHeader("Connection", "keep-alive");
+        g_keepAliveReady = true;
+    }
+    return g_keepAlive;
+}
+
+/// `std.net.curl.get` / `post` over this thread's keep-alive connection, for
+/// drivers that build their own URL: `import http_client : get =
+/// keepAliveGet, post = keepAlivePost;` replaces the std.net.curl import.
+char[] keepAliveGet(const(char)[] url) {
+    return get(url, keepAliveConnection());
+}
+
+/// ditto
+char[] keepAlivePost(PostUnit)(const(char)[] url, const(PostUnit)[] data) {
+    return post(url, data, keepAliveConnection());
+}
+
 JSONValue getJson(string path, string baseUrl = null) {
     string response;
     if (tryInProcess("GET", path, null, false, response))
         return parseJSON(response);
     const base = baseUrl.length ? baseUrl : testBaseUrl;
-    return parseJSON(cast(string)get(base ~ path));
+    return parseJSON(cast(string)get(base ~ path, keepAliveConnection()));
 }
 
 string postRaw(string path, string body_, string baseUrl = null) {
@@ -144,7 +173,7 @@ string postRaw(string path, string body_, string baseUrl = null) {
     if (tryInProcess("POST", path, body_, false, response))
         return response;
     const base = baseUrl.length ? baseUrl : testBaseUrl;
-    return cast(string)post(base ~ path, body_);
+    return cast(string)post(base ~ path, body_, keepAliveConnection());
 }
 
 JSONValue postJson(string path, string body_, string baseUrl = null) {

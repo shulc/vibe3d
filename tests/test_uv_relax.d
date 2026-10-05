@@ -33,7 +33,7 @@ import editmode   : EditMode;
 import snapshot   : MeshSnapshot;
 import uv_relax   : uvRelax;
 import commands.mesh.uv_relax : UvRelax;
-import std.net.curl : post, get;
+import http_client : post = keepAlivePost, get = keepAliveGet;
 
 void main() {}
 

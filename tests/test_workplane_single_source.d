@@ -31,7 +31,7 @@ import std.math    : PI, cos, sin, sqrt, fabs;
 import std.json;
 import std.format  : format;
 import std.conv    : to;
-import std.net.curl : get, post;
+import http_client : get = keepAliveGet, post = keepAlivePost;
 
 // Top-level (column-0) imports of these three project modules — beyond
 // pulling the symbols, this is what flags this binary as "source-backed"

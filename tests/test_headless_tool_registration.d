@@ -7,7 +7,7 @@ import http_command_helpers : commandBody;
 import std.algorithm : canFind;
 import std.format : format;
 import std.json;
-import std.net.curl : get, post;
+import http_client : get = keepAliveGet, post = keepAlivePost;
 
 alias BASE = testBaseUrl;
 

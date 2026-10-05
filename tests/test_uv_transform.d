@@ -33,7 +33,7 @@ import mesh       : Mesh, MeshMap, MapDomain, makeCube, kUvMapName;
 import view       : View;
 import editmode   : EditMode;
 import commands.mesh.uv_transform;
-import std.net.curl : post, get;
+import http_client : post = keepAlivePost, get = keepAliveGet;
 
 void main() {}
 

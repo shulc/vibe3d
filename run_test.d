@@ -2439,13 +2439,25 @@ bool prepareWorker(ref Worker w) {
 bool resetBetweenTests(ushort port, ref string failure) {
     import std.algorithm : min;
     string base = format("http://localhost:%d", port);
+    // One keep-alive connection per worker thread (task 9461): a `curl`
+    // process per call opened a TCP connection per status poll. Like the
+    // `curl -s -m 5` it replaces, a transport failure or the 5 s budget
+    // yields ""; a non-2xx status yields its status line, never "ok".
     string curl(string verb, string path, string data = "") {
-        // -s silent, -m short timeout so a wedged server never stalls the run.
-        string cmd = data.length
-            ? format("curl -s -m 5 -X %s -d '%s' '%s%s'", verb, data, base, path)
-            : format("curl -s -m 5 -X %s '%s%s'",          verb,       base, path);
-        auto r = executeShell(cmd);
-        return r.status == 0 ? r.output : "";
+        import std.net.curl : HTTP, HTTPStatusException, get, post;
+        static HTTP conn;
+        static bool ready;
+        if (!ready) {
+            conn = HTTP();
+            conn.addRequestHeader("Connection", "keep-alive");
+            conn.operationTimeout = 5.seconds;
+            ready = true;
+        }
+        try return verb == "POST"
+            ? post(base ~ path, data, conn).idup
+            : get(base ~ path, conn).idup;
+        catch (HTTPStatusException e) return e.msg;
+        catch (Exception) return "";
     }
     // Drive one REGISTERED command through the single generic endpoint and say
     // whether it applied. `/api/command` answers 200 `{"status":"ok"}` on

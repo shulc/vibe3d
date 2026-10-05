@@ -20,7 +20,7 @@ import http_client : testBaseUrl, waitPlaybackProcessed;
 import std.json;
 import std.math : sin, cos, tan, sqrt, PI;
 import std.format : format;
-import std.net.curl : get, post;
+import http_client : get = keepAliveGet, post = keepAlivePost;
 import core.thread : Thread;
 import core.time   : dur;
 

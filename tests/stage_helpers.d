@@ -44,7 +44,7 @@ module stage_helpers;
 // a second copy of the HTTP-driving plumbing.
 import http_client : testBaseUrl;
 import std.json;
-import std.net.curl : get;
+import http_client : get = keepAliveGet;
 import std.math     : fabs;
 import std.format   : format;
 

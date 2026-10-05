@@ -25,7 +25,7 @@
 import http_client : testBaseUrl;
 import http_command_helpers : commandBody;
 import std.json;
-import std.net.curl : get, post;
+import http_client : get = keepAliveGet, post = keepAlivePost;
 import std.format   : format;
 import std.math     : fabs;
 import std.algorithm : canFind;

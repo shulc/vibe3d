@@ -26,7 +26,7 @@ import std.algorithm : sort, map;
 import std.array     : array;
 import std.conv      : to;
 import std.format    : format;
-import std.net.curl  : get, post;
+import http_client  : get = keepAliveGet, post = keepAlivePost;
 import std.string    : split;
 
 import fixture_helpers : asDouble;

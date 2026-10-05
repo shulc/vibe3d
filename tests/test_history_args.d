@@ -6,7 +6,7 @@ import http_command_helpers : commandBody;
 // objects { "label": ..., "args": ..., "command": ... } instead of plain strings.
 
 import http_client : testBaseUrl;
-import std.net.curl : get, post;
+import http_client : get = keepAliveGet, post = keepAlivePost;
 import std.json;
 import std.conv : to;
 import std.algorithm : canFind;

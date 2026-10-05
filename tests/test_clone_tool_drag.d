@@ -6,7 +6,7 @@ import std.conv : to;
 import std.json;
 import std.math : abs;
 import std.format : format;
-import std.net.curl : get;
+import http_client : get = keepAliveGet;
 import drag_helpers;
 
 void main() {}

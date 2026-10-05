@@ -47,7 +47,7 @@ import std.conv : to;
 import std.format : format;
 import std.json;
 import std.math : abs;
-import std.net.curl : get, post;
+import http_client : get = keepAliveGet, post = keepAlivePost;
 
 import plane_diff_helpers;
 import drag_helpers;

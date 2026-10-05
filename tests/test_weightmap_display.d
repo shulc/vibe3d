@@ -62,7 +62,7 @@ import viewport_lattice_helpers : kFillNX, kFillNY, kFillStride,
 string baseUrl;
 
 string httpGet(string path) {
-    import std.net.curl : get;
+    import http_client : get = keepAliveGet;
     return cast(string)get(baseUrl ~ path);
 }
 

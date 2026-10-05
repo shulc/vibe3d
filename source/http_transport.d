@@ -123,10 +123,12 @@ mixin template HttpServerTransport()
                 logInfo("http", format("HTTP server started on port %d", port));
                 atomicStore(isRunning, true);
 
+                scope (exit) closeIdleClients();
+                auto listener = serverSocket;  // stop() nulls the field
+                auto readable = new SocketSet();
                 while (atomicLoad(isRunning)) {
                     try {
-                        Socket clientSocket = serverSocket.accept();
-                        handleClient(clientSocket);
+                        serveReadable(listener, readable);
                     } catch (Exception e) {
                         if (atomicLoad(isRunning)) {
                             logWarn("http", "Error accepting client: " ~ e.msg);
@@ -269,6 +271,85 @@ mixin template HttpServerTransport()
         } catch (Exception) {}
     }
 
+    // --- Opt-in keep-alive (task 9461) --------------------------------------
+    // A request carrying `Connection: keep-alive` gets its connection parked
+    // here instead of closed; every other client keeps the one-request-then-
+    // close contract its read-until-closed loop relies on. The loop selects
+    // over the listener AND the parked connections, so an idle one never
+    // blocks a new client. Requests stay one at a time, as before. The suite
+    // made ~250 connections per test without this, which filled the host's
+    // conntrack table under two gates.
+    private Socket[] idleClients_;
+    private size_t acceptedClients_;
+    private MonoTime[] idleSince_;
+    Duration clientKeepAliveIdle = 10.seconds;
+    enum size_t kMaxIdleClients = 32;
+
+    private void serveReadable(Socket listener, SocketSet readable) {
+        readable.reset();
+        readable.add(listener);
+        foreach (c; idleClients_) readable.add(c);
+        immutable n = Socket.select(readable, null, null, 1.seconds);
+        // stop() clears the flag before it closes the listener.
+        if (!atomicLoad(isRunning)) return;
+        if (n > 0) {
+            foreach (c; idleClients_.dup) {
+                if (!readable.isSet(c)) continue;
+                dropIdleClient(c);
+                handleClient(c);
+            }
+            if (readable.isSet(listener)) {
+                auto client = listener.accept();
+                ++acceptedClients_;
+                handleClient(client);
+            }
+        }
+        expireIdleClients();
+    }
+
+    private void parkIdleClient(Socket client) {
+        if (idleClients_.length >= kMaxIdleClients) {
+            idleClients_[0].close();
+            idleClients_ = idleClients_[1 .. $];
+            idleSince_ = idleSince_[1 .. $];
+        }
+        idleClients_ ~= client;
+        idleSince_ ~= MonoTime.currTime;
+    }
+
+    private void dropIdleClient(Socket client) {
+        import std.algorithm.searching : countUntil;
+        import std.algorithm.mutation : remove;
+        immutable i = idleClients_.countUntil!"a is b"(client);
+        if (i < 0) return;
+        idleClients_ = idleClients_.remove(i);
+        idleSince_ = idleSince_.remove(i);
+    }
+
+    private void expireIdleClients() {
+        import std.algorithm.mutation : remove;
+        immutable now = MonoTime.currTime;
+        foreach_reverse (i; 0 .. idleClients_.length) {
+            if (now - idleSince_[i] <= clientKeepAliveIdle) continue;
+            idleClients_[i].close();
+            idleClients_ = idleClients_.remove(i);
+            idleSince_ = idleSince_.remove(i);
+        }
+    }
+
+    private void closeIdleClients() {
+        foreach (c; idleClients_) c.close();
+        idleClients_ = null;
+        idleSince_ = null;
+    }
+
+    private static bool wantsKeepAlive(HttpRequest request) {
+        foreach (key, value; request.headers)
+            if (key.toLower == "connection")
+                return value.toLower == "keep-alive";
+        return false;
+    }
+
     /**
      * Handle a client connection
      */
@@ -280,6 +361,7 @@ mixin template HttpServerTransport()
         // Non-empty means "closing this connection WITHOUT a response", which
         // is precisely the event that must never pass unreported.
         string abandoned;
+        bool keepOpen;
 
         try {
             try { peer = client.remoteAddress().toString(); } catch (Exception) {}
@@ -329,7 +411,8 @@ mixin template HttpServerTransport()
             if (raw.length == 0) return;
 
             string headerPart = cast(string)raw[0 .. headerEnd].idup;
-            logInfo("http", "Received request: " ~ headerPart.split("\n")[0]);
+            logInfo("http", format("Received request: %s [connections accepted: %d]",
+                headerPart.split("\n")[0].strip, acceptedClients_));
 
             // Parse Content-Length from headers
             size_t contentLength = 0;
@@ -369,6 +452,11 @@ mixin template HttpServerTransport()
 
             HttpRequest httpRequest = parseRequest(headerPart, cast(string)bodyRaw.idup);
             HttpResponse response = handleRequest(httpRequest);
+            // Surplus bytes would be a pipelined request this loop does not
+            // parse, so such a connection is closed as before.
+            keepOpen = wantsKeepAlive(httpRequest)
+                && bodyRaw.length == contentLength;
+            if (keepOpen) response.headers["Connection"] = "keep-alive";
 
             string responseStr = formatResponse(response);
             string sendFailure;
@@ -381,8 +469,10 @@ mixin template HttpServerTransport()
                 logWarn("http", format(
                     "peer %s took only %d of %d response bytes: %s",
                     peer, sent, responseStr.length, sendFailure));
+                keepOpen = false;
             }
         } catch (Exception e) {
+            keepOpen = false;
             logWarn("http", "Error handling client: " ~ e.msg);
         } finally {
             // The whole point of task 0652: a connection we accepted and did
@@ -390,7 +480,8 @@ mixin template HttpServerTransport()
             // fine, their request just never came back), so it has to be
             // audible here or nowhere.
             if (abandoned.length) reportAbandoned(peer, startedAt, abandoned);
-            client.close();
+            if (keepOpen && atomicLoad(isRunning)) parkIdleClient(client);
+            else client.close();
         }
     }
 }

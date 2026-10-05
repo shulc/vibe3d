@@ -61,7 +61,7 @@ import std.algorithm : canFind, map;
 import std.array : array;
 import std.conv : to;
 import std.json;
-import std.net.curl : get, post;
+import http_client : get = keepAliveGet, post = keepAlivePost;
 
 import drag_helpers;
 import std.format : format;

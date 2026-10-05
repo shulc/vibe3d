@@ -28,7 +28,7 @@ import std.conv : to;
 import std.format : format;
 import std.json : JSONType, parseJSON;
 import std.math : abs;
-import std.net.curl : get;
+import http_client : get = keepAliveGet;
 
 void main() {}
 

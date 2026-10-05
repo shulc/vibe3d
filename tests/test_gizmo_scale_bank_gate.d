@@ -40,7 +40,7 @@ import std.conv   : to;
 import std.format : format;
 import std.json;
 import std.math   : abs, sqrt;
-import std.net.curl : get, post;
+import http_client : get = keepAliveGet, post = keepAlivePost;
 
 import drag_helpers : playAndWait, fetchCamera, viewportFromCamera,
                       projectToWindow, gizmoSize, Vec3, Viewport;

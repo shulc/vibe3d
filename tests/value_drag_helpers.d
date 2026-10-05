@@ -101,7 +101,7 @@ struct HeldDrag {
 /// `playAndWait` with a 5 ms poll instead of 50 ms: a cell here plays hundreds
 /// of one-event logs, and the poll interval was most of its wall time.
 void playFast(string log) {
-    import std.net.curl : get, post;
+    import http_client : get = keepAliveGet, post = keepAlivePost;
     import http_client : testBaseUrl;
     auto j = parseJSON(cast(string) post(testBaseUrl() ~ "/api/play-events", log));
     assert(j["status"].str == "success", "play-events failed: " ~ j.toString);

@@ -73,7 +73,7 @@
 
 import http_client : testBaseUrl;
 import http_command_helpers : commandBody;
-import std.net.curl : get, post;
+import http_client : get = keepAliveGet, post = keepAlivePost;
 import std.json     : parseJSON, JSONValue, JSONType;
 import std.conv     : to;
 import std.format   : format;

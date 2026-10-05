@@ -50,7 +50,7 @@ import std.algorithm : canFind, count;
 import std.conv : to;
 import std.json;
 import std.math : fabs;
-import std.net.curl : get, post;
+import http_client : get = keepAliveGet, post = keepAlivePost;
 
 import drag_helpers;   // Vec3, Viewport, fetchCamera, viewportFromCamera,
                        // projectToWindow, buildDragLog, playAndWait

@@ -30,7 +30,7 @@ import params : Param, ParamHints, IntEnumEntry;
 
 import std.exception : assertThrown, collectExceptionMsg;
 import std.algorithm : canFind;
-import std.net.curl  : get;
+import http_client  : get = keepAliveGet;
 import std.json      : parseJSON;
 
 void main() {}
