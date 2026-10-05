@@ -173,6 +173,51 @@ private int[2] plusXEdgeHandle() {
     return p;
 }
 
+/// Cell 26's rig: the box built (perspective) with a Y height, typed y
+/// 0..0.4, then the FRONT ortho preset at 440 px/m, grid snap; the premise
+/// (Y in-plane) and the bottom height handle (part 20) asserted. Returns it.
+private int[2] boxHeightRig() {
+    penSceneEmpty("Top");
+    auto r = postJson("/api/camera",
+        `{"azimuth":0.4,"elevation":1.1,"distance":4.0,"focus":{"x":0,"y":0,"z":0}}`);
+    assert(r["status"].str == "ok", "camera failed: " ~ r.toString);
+    cmd("tool.set prim.cube");
+    cmd("tool.pipe.attr snap enabled false");
+    {
+        auto cam = fetchCamera(BASE);
+        auto vp = viewportFromCamera(cam);
+        float ox, oy;
+        assert(projectToWindow(Vec3(0, 0, 0), vp, ox, oy), "origin behind the camera");
+        const int cx = cast(int)ox, cy = cast(int)oy;
+        playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                                 cx, cy, cx + 150, cy + 140, 16), BASE);
+        playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                                 cx, cy, cx, cy - 100, 16), BASE);
+    }
+    foreach (kv; [["cenX", "0"], ["cenY", "0.2"], ["cenZ", "0"], ["sizeX", "0.6"],
+                  ["sizeY", "0.4"], ["sizeZ", "0.6"]])
+        cmd("tool.attr prim.cube " ~ kv[0] ~ " " ~ kv[1]);
+    cmd("viewport.view Front");
+    penCameraAt(Vec3(0, 0.2f, 0), 440);
+    cmd("tool.pipe.attr snap enabled true");
+    cmd("tool.pipe.attr snap types grid");
+    cmd("tool.pipe.attr snap fixedGrid false");
+    cmd("tool.pipe.attr snap innerRange 24");
+    cmd("tool.pipe.attr snap outerRange 40");
+    const step = gridStepNow();
+    const q = worldPixel(Vec3(0.123f, 0.456f, 0.789f));
+    auto sr = postJson("/api/snap", format(
+        `{"cursor":[0.123,0.456,0.789],"sx":%d,"sy":%d,"excludeVerts":[]}`, q[0], q[1]));
+    assert(fabs(step - 0.1) < 1e-6 && sr["snapped"].type == JSONType.true_
+        && fabs(sr["worldPos"].array[1].floating - 0.5) < 1e-4,
+        format("rig: in the front view the work plane must hold Y in-plane "
+            ~ "(step %s, a grid query at y 0.456 must land on y 0.5): %s", step, sr));
+    const p = partPixel(20), want = worldPixel(Vec3(0, 0, 0));
+    assert(abs(p[0] - want[0]) <= 1 && abs(p[1] - want[1]) <= 1,
+        format("rig: height part 20 must be the bottom face at %s, found at %s", want, p));
+    return p;
+}
+
 unittest { // handle drags under grid snap: not trapped; a released element snap rejoins
     int ran;
     string[] fails;
@@ -188,6 +233,21 @@ unittest { // handle drags under grid snap: not trapped; a released element snap
         if (!(fabs(face - 0.4) < 1e-4 && fabs(opp + 0.3) < 1e-4))
             fails ~= format("box-edge-grid-slow: +X face expected 0.4 (opposite -0.3), "
                 ~ "got %.6f (%.6f)", face, opp);
+        cmd("tool.set prim.cube off");
+        ++ran;
+    }
+
+    // 24b box-edge-flip-grid (ours): the +X edge handle dragged 320 px left,
+    // through the -X face: the dragged face (raw 0.3 - 0.727 = -0.427) is the
+    // one that snaps, to -0.4; the face it crossed stays at -0.3. A drag that
+    // kept the pre-flip edge would snap the held face and leave -0.427.
+    {
+        boxBaseRig("grid");
+        dragSteps(plusXEdgeHandle(), -2, 0, 160);
+        const lo = qf("cenX") - qf("sizeX") * 0.5, hi = qf("cenX") + qf("sizeX") * 0.5;
+        if (!(fabs(lo + 0.4) < 1e-4 && fabs(hi + 0.3) < 1e-4))
+            fails ~= format("box-edge-flip-grid: faces expected -0.4 .. -0.3, got %.6f .. %.6f",
+                            lo, hi);
         cmd("tool.set prim.cube off");
         ++ran;
     }
@@ -239,49 +299,25 @@ unittest { // handle drags under grid snap: not trapped; a released element snap
     // handle (part 20; the incremental one) dragged down 40 px ⇒ the bottom
     // face at y -0.1, the top kept at 0.4.
     {
-        penSceneEmpty("Top");
-        auto r = postJson("/api/camera",
-            `{"azimuth":0.4,"elevation":1.1,"distance":4.0,"focus":{"x":0,"y":0,"z":0}}`);
-        assert(r["status"].str == "ok", "camera failed: " ~ r.toString);
-        cmd("tool.set prim.cube");
-        cmd("tool.pipe.attr snap enabled false");
-        {
-            auto cam = fetchCamera(BASE);
-            auto vp = viewportFromCamera(cam);
-            float ox, oy;
-            assert(projectToWindow(Vec3(0, 0, 0), vp, ox, oy), "origin behind the camera");
-            const int cx = cast(int)ox, cy = cast(int)oy;
-            playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
-                                     cx, cy, cx + 150, cy + 140, 16), BASE);
-            playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
-                                     cx, cy, cx, cy - 100, 16), BASE);
-        }
-        foreach (kv; [["cenX", "0"], ["cenY", "0.2"], ["cenZ", "0"], ["sizeX", "0.6"],
-                      ["sizeY", "0.4"], ["sizeZ", "0.6"]])
-            cmd("tool.attr prim.cube " ~ kv[0] ~ " " ~ kv[1]);
-        cmd("viewport.view Front");
-        penCameraAt(Vec3(0, 0.2f, 0), 440);
-        cmd("tool.pipe.attr snap enabled true");
-        cmd("tool.pipe.attr snap types grid");
-        cmd("tool.pipe.attr snap fixedGrid false");
-        cmd("tool.pipe.attr snap innerRange 24");
-        cmd("tool.pipe.attr snap outerRange 40");
-        const step = gridStepNow();
-        const q = worldPixel(Vec3(0.123f, 0.456f, 0.789f));
-        auto sr = postJson("/api/snap", format(
-            `{"cursor":[0.123,0.456,0.789],"sx":%d,"sy":%d,"excludeVerts":[]}`, q[0], q[1]));
-        assert(fabs(step - 0.1) < 1e-6 && sr["snapped"].type == JSONType.true_
-            && fabs(sr["worldPos"].array[1].floating - 0.5) < 1e-4,
-            format("rig: in the front view the work plane must hold Y in-plane "
-                ~ "(step %s, a grid query at y 0.456 must land on y 0.5): %s", step, sr));
-        const p = partPixel(20), want = worldPixel(Vec3(0, 0, 0));
-        assert(abs(p[0] - want[0]) <= 1 && abs(p[1] - want[1]) <= 1,
-            format("rig: height part 20 must be the bottom face at %s, found at %s", want, p));
+        const p = boxHeightRig();
         dragSteps(p, 0, 2, 20);
         const bot = qf("cenY") - qf("sizeY") * 0.5, top = qf("cenY") + qf("sizeY") * 0.5;
         if (!(fabs(bot + 0.1) < 1e-4 && fabs(top - 0.4) < 1e-4))
             fails ~= format("box-height-grid-slow: bottom expected -0.1 (top 0.4), "
                 ~ "got %.6f (%.6f)", bot, top);
+        cmd("tool.set prim.cube off");
+        ++ran;
+    }
+
+    // 26b box-height-flip-grid (ours): cell 26's bottom handle dragged 240 px
+    // up, through the top: the dragged face (raw 0.545) snaps to 0.5 and the
+    // crossed top stays at 0.4.
+    {
+        dragSteps(boxHeightRig(), 0, -2, 120);
+        const lo = qf("cenY") - qf("sizeY") * 0.5, hi = qf("cenY") + qf("sizeY") * 0.5;
+        if (!(fabs(lo - 0.4) < 1e-4 && fabs(hi - 0.5) < 1e-4))
+            fails ~= format("box-height-flip-grid: faces expected 0.4 .. 0.5, got %.6f .. %.6f",
+                            lo, hi);
         cmd("tool.set prim.cube off");
         ++ran;
     }
@@ -347,9 +383,9 @@ unittest { // handle drags under grid snap: not trapped; a released element snap
         ++ran;
     }
 
-    assert(ran == 6, format("population: %d box handle cells ran, expected 6", ran));
+    assert(ran == 8, format("population: %d box handle cells ran, expected 8", ran));
     string[] names;   // the red cells by name first: the runner shows 8 lines
     foreach (f; fails) names ~= f[0 .. f.indexOf(':')];
-    assert(fails.length == 0, format("%d of 6 box handle cells red (%-(%s, %)):\n  %-(%s\n  %)",
+    assert(fails.length == 0, format("%d of 8 box handle cells red (%-(%s, %)):\n  %-(%s\n  %)",
                                      fails.length, names, fails));
 }

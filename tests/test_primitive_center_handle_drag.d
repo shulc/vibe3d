@@ -160,6 +160,7 @@ bool close(V3 a, V3 b, double eps = 0.04) {
 unittest { // (+96,-64) px at 32 px/m, with world XY frozen underneath.
     foreach (tool; ["prim.tube"]) {
         V3[4] actual;
+        V3 again;   // face-on, a second drag from where the first ended
         foreach (i, cell; cells) {
             buildPinnedPrimitive(tool);
             if (cell.perspective) setObliquePerspective();
@@ -172,6 +173,10 @@ unittest { // (+96,-64) px at 32 px/m, with world XY frozen underneath.
             V3 sizeBefore = sizeTriple(tool);
             drag(cx, cy, cx + 96, cy - 64);
             actual[i] = position(tool);
+            if (i == 0) {
+                drag(cx + 96, cy - 64, cx + 192, cy - 128);
+                again = position(tool);
+            }
             V3 sizeAfter = sizeTriple(tool);
             assert(close(sizeAfter, sizeBefore, 1e-5),
                 format("%s %s: central handle changed sizes: before %s, after %s",
@@ -189,6 +194,10 @@ unittest { // (+96,-64) px at 32 px/m, with world XY frozen underneath.
         assert(close(actual[0], cells[0].expected),
             format("%s %s: expected %s, actual %s", tool, cells[0].name,
                    cells[0].expected.toString(), actual[0].toString()));
+
+        // The second drag starts at its own press centre (3, 2, 0), not the origin.
+        assert(close(again, V3(6.0, 4.0, 0.0)),
+            format("%s second face-on drag: expected (+6,+4,0), actual %s", tool, again.toString()));
 
         string edgeErrors;
         foreach (i; 1 .. 3) {

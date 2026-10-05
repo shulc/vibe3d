@@ -94,6 +94,20 @@ unittest { // Ctrl + centerBox drag locks to the closest world axis
         "Ctrl-constrain should pick exactly one world axis; got " ~
         movedAxes.to!string ~ " axes moved (maxDx=" ~ maxDx.to!string ~
         " maxDy=" ~ maxDy.to!string ~ " maxDz=" ~ maxDz.to!string ~ ")");
+
+    // The axis leg starts at the lock event (the second 4 px step, 8 px out),
+    // not at the press: its 72 px deliver what 72 px on the X arrow deliver.
+    const double ctrlDx = vertexPos(0)[0] - pre[0][0];
+    resetCubeSelectAllMove();
+    float ax, ay;
+    assert(projectToWindow(Vec3(gizmoSize(Vec3(0, 0, 0), vp) * 0.6f, 0, 0), vp, ax, ay),
+        "X arrow off-camera");
+    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                             cast(int)ax, cast(int)ay, cast(int)ax + 72, cast(int)ay, 18));
+    const double armDx = vertexPos(0)[0] - pre[0][0];
+    assert(armDx > 0.05 && fabs(ctrlDx - armDx) < 1e-4,
+        "Ctrl axis leg must start at the lock event: Ctrl dx " ~ ctrlDx.to!string
+        ~ " vs 72 px on the X arrow " ~ armDx.to!string);
 }
 
 unittest { // click outside gizmo relocates + drags in most-facing plane

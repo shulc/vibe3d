@@ -105,3 +105,35 @@ unittest { // YZ plane drag moves in Y+Z, leaves X alone
 unittest { // XZ plane drag moves in X+Z, leaves Y alone
     runMovePlaneDrag(6);
 }
+
+unittest { // the centre box's plane is chosen among the work-plane axes, not world
+    // `rotX:45` tilts the work plane's normal to (0, 0.7071, 0.7071); the
+    // work-plane axis mode turns the gizmo's input basis with it. For the default camera that tilted normal is
+    // the most-facing axis, so a screen-down drag on the centre box moves the
+    // cube in the TILTED plane: no component along it, and (the control) a
+    // component along world Z, which a world-basis plane would have stripped.
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
+    post(testBaseUrl() ~ "/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
+    auto wp = parseJSON(cast(string)post(testBaseUrl() ~ "/api/command", "workplane.edit rotX:45"));
+    assert(wp["status"].str == "ok", "workplane.edit failed: " ~ wp.toString);
+    post(testBaseUrl() ~ "/api/script", "tool.set move");
+    auto ax = parseJSON(cast(string)post(testBaseUrl() ~ "/api/command",
+                                         "tool.pipe.attr axis mode workplane"));
+    assert(ax["status"].str == "ok", "axis mode failed: " ~ ax.toString);
+    immutable double[3] pre = vertexPos(0);
+    auto cam = fetchCamera();
+    auto vp  = viewportFromCamera(cam);
+    float cx, cy;
+    assert(projectToWindow(Vec3(0, 0, 0), vp, cx, cy), "pivot projects off-camera");
+    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                             cast(int)cx, cast(int)cy, cast(int)cx, cast(int)cy + 60, 20));
+    auto p = vertexPos(0);
+    const double dx = p[0] - pre[0], dy = p[1] - pre[1], dz = p[2] - pre[2];
+    post(testBaseUrl() ~ "/api/command", "workplane.reset");
+    post(testBaseUrl() ~ "/api/command", "tool.pipe.attr axis mode auto");
+    const double len = sqrt(dx * dx + dy * dy + dz * dz);
+    assert(len > 0.05, "the centre-box drag did not move the cube");
+    assert(fabs((dy + dz) * 0.70710678) < 1e-3 * len && fabs(dz) > 0.05 * len,
+        "centre-box drag must stay in the tilted work plane: d = (" ~ dx.to!string
+        ~ ", " ~ dy.to!string ~ ", " ~ dz.to!string ~ ")");
+}
