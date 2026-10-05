@@ -2919,7 +2919,7 @@ void main(string[] args) {
     // but only as a SIDE EFFECT of selecting a layer; this is the way in that
     // does not require touching the item selection at all.
     //
-    // Same contract as switchGeometryType, with one difference that
+    // Same front-flip contract as switchGeometryType, with one difference that
     // is structural rather than a choice:
     //   * `editMode` is NOT written. `EditMode` has three values and is the
     //     geometry VIEW; under `SelType.Item` it deliberately retains the
@@ -2928,16 +2928,20 @@ void main(string[] args) {
     //     Items must therefore leave it exactly where it was — that is also
     //     what makes 1/2/3 afterwards restore the SAME geometry type rather
     //     than an arbitrary one, since the recent-ordering still remembers it.
-    //   * It drops the active tool like every selection-mode command. The
-    //     promote path above deliberately does not — a selection is
-    //     not a mode change. The item door itself is unmeasured: the reference's
-    //     input map spells it as the same command family as 1/2/3.
+    //   * A flip DOES drop the active tool: pressing a MODE key/button is an
+    //     interaction-mode change. (The promote path above deliberately does
+    //     not — a selection is not a mode change.) Re-entering Items while it
+    //     is current keeps the tool: the geometry funnel's current-type drop is
+    //     captured for the geometry types only (K-CD CD2s / CD3s).
     void switchItemType() {
         import change_bus : noteCurrentType;
         const before = currentSelType(selTypeOrder);   // S6: the drop row's restore
         const flipped = sessionOwner.switchItemType();
-        dropActiveToolWith(ToolTransition.selTypeFlipDrop, DropContext(false, true, before));
-        if (flipped) noteCurrentType(SelType.Item);
+        if (flipped) {
+            dropActiveToolWith(ToolTransition.selTypeFlipDrop,  // front-flip (B2)
+                DropContext(false, true, before));
+            noteCurrentType(SelType.Item);
+        }
     }
 
     // -------------------------------------------------------------------------
