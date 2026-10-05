@@ -241,3 +241,21 @@ unittest {
         format("document-replace disarm comment census collapsed to %d hits",
             hits.length));
 }
+
+// Task 9457: the re-arm after an item-list primary move. Uninstalled is a
+// no-op (headless); "" (nothing was dropped) never reaches the hook; an id
+// reaches it exactly once. Positive control first.
+unittest {
+    import tool_disarm : g_rearmTool, rearmToolAfterPrimaryMove;
+    string[] calls;
+    auto saved = g_rearmTool;
+    scope (exit) g_rearmTool = saved;
+    g_rearmTool = (string id) { calls ~= id; };
+    rearmToolAfterPrimaryMove("move");
+    assert(calls == ["move"], "an installed re-arm must receive the dropped id once");
+    rearmToolAfterPrimaryMove("");
+    assert(calls == ["move"], "nothing dropped must arm nothing");
+    g_rearmTool = null;
+    rearmToolAfterPrimaryMove("move");   // uninstalled: no call, no crash
+    assert(calls == ["move"], "an uninstalled re-arm must be a no-op");
+}

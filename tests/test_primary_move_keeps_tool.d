@@ -222,3 +222,17 @@ unittest {
     cmd(`{"id":"select.item"}`);
     assert(!armed(), "the Items button's command while Items is current drops the tool");
 }
+
+// A click with no tool armed arms nothing; a toggle that keeps A in the
+// foreground keeps A's selection and the type (nothing leaves).
+unittest {
+    rig();
+    listClick(1);
+    assert(primary() == 1 && !armed(), "a click with nothing armed arms nothing, got " ~ tool());
+    rig();
+    cmd(commandBody("layer.select", `{"index":1,"mode":"toggle"` ~ kListArg ~ `}`));
+    assert(primary() == 0 && selType() == "vertex",
+        "a toggle that adds B keeps A primary and the type");
+    assert(selectedVerts() == [0], "A stays in the foreground and keeps its selection, got "
+        ~ selectedVerts().to!string);
+}

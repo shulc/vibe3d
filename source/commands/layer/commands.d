@@ -864,7 +864,6 @@ final class LayerSelect : LayerCommandBase {
     private void mutateGuardingPrimary(scope void delegate() mutate) {
         auto before = doc.captureItemSelection();
         auto previousPrimary = doc.primary;
-        droppedTool = null;
         mutate();
         if (doc.primary !is previousPrimary) {
             doc.restoreItemSelection(before);
