@@ -670,11 +670,11 @@ unittest {
     cfg.gridStep = 1.0f;
     Mesh none;
 
-    // grid-admit-refused: Grid alone, its node 53 px away (beyond every range:
+    // grid-admit-refused: Grid alone, its node ~50 px away (beyond every range:
     // the grid still places — the positive control), then an admit refusing
     // Grid ⇒ the pass-through, field for field.
     {
-        immutable Vec3 cur = Vec3(2.6f, 0, 0.3f), node = Vec3(2, 0, 0);
+        immutable Vec3 cur = Vec3(2.45f, 0, 0.45f), node = Vec3(2, 0, 0);
         assert(pix(cur, node) > cfg.outerRangePx,
             "fixture: the node must lie beyond every pixel range");
         int sx, sy; pixelOf(cur, sx, sy);
@@ -718,9 +718,9 @@ unittest {
     // highlight band), the node beyond 40 px ⇒ the grid places AND is the
     // reported target (no band element's fields leak through).
     {
-        immutable Vec3 cur = Vec3(2.6f, 0, 0.3f), node = Vec3(2, 0, 0);
+        immutable Vec3 cur = Vec3(2.45f, 0, 0.45f), node = Vec3(2, 0, 0);
         Mesh band;
-        band.vertices = [ Vec3(2.6f, 0, 0.3f + 0.375f) ];
+        band.vertices = [ Vec3(2.45f, 0, 0.45f + 0.375f) ];
         immutable float dV = pix(cur, band.vertices[0]);
         assert(dV > cfg.innerRangePx && dV < cfg.outerRangePx
             && pix(cur, node) > cfg.outerRangePx,

@@ -22,7 +22,9 @@ import http_client : getJson, postJson;
 import http_command_helpers : commandBody;
 import pen_rig_helpers : penAttr, penCameraAt, penCommand, penSceneEmpty, readVerts,
     worldPixel, clickPixels;
+import std.algorithm : canFind;
 import std.format : format;
+import std.string : indexOf;
 import std.json : JSONType, JSONValue;
 import std.math : abs;
 
@@ -509,6 +511,11 @@ unittest {
     }
 
     assert(ran == 23, format("population: %d cells ran, expected 23", ran));
-    assert(fails.length == 0, format("%d of 23 cells red:\n  %-(%s\n  %)",
-                                     fails.length, fails));
+    string[] names;   // the red cells by name first: the runner shows 8 lines
+    foreach (f; fails) {
+        const n = f[0 .. f.indexOf(':') < 0 ? f.length : f.indexOf(':')];
+        if (!names.canFind(n)) names ~= n;
+    }
+    assert(fails.length == 0, format("%d of 23 cells red (%-(%s, %)):\n  %-(%s\n  %)",
+                                     names.length, names, fails));
 }
