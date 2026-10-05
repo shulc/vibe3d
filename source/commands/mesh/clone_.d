@@ -101,7 +101,7 @@ class MeshClone : Command, Operator {
             size_t ri;
             {
                 auto ed = MeshEditBatch.unrecorded(*mesh, kDuplicateEditScope);
-                ri = ed.arrayFaces(mask, 2, offset_, 0.0f);
+                ri = ed.arrayFaces(mask, 2, offset_, CloneWeld.init);
                 ed.close();
             }
             return ri != 0;
@@ -115,7 +115,7 @@ class MeshClone : Command, Operator {
         size_t inserted;
         {
             auto ed = MeshEditBatch(*mesh, kDuplicateEditScope);
-            inserted = ed.arrayFaces(mask, 2, offset_, 0.0f);
+            inserted = ed.arrayFaces(mask, 2, offset_, CloneWeld.init);
             delta_ = ed.close();
         }
         if (!acceptRecordedEdit(inserted, delta_)) {

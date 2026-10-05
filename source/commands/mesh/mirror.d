@@ -122,7 +122,7 @@ class MeshMirror : Command, Operator {
             size_t ri;
             {
                 auto ed = MeshEditBatch.unrecorded(*mesh, kDuplicateEditScope);
-                ri = ed.mirrorFaces(mask, axis_[0], center_, weld_, flipNormals_);
+                ri = ed.mirrorFaces(mask, axis_[0], center_, CloneWeld.fromLegacy(weld_), flipNormals_);
                 ed.close();
             }
             return ri != 0;
@@ -133,7 +133,7 @@ class MeshMirror : Command, Operator {
         size_t inserted;
         {
             auto ed = MeshEditBatch(*mesh, kDuplicateEditScope);
-            inserted = ed.mirrorFaces(mask, axis_[0], center_, weld_, flipNormals_);
+            inserted = ed.mirrorFaces(mask, axis_[0], center_, CloneWeld.fromLegacy(weld_), flipNormals_);
             delta_ = ed.close();
         }
         if (!acceptRecordedEdit(inserted, delta_)) {

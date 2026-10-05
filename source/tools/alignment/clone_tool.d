@@ -238,7 +238,8 @@ private:
         import std.algorithm : min;
         return mesh.arrayFacesGrid(mask, min(num_, 9999) + 1, 1, 1, offsetVec(), Vec3(0, 0, 0),
             Vec3(sclX_ / 100, sclY_ / 100, sclZ_ / 100),
-            Vec3(angP_, angH_, angB_), between_, replace_, flip_, merge_, dist_, true);
+            Vec3(angP_, angH_, angB_), between_, replace_, flip_,
+            CloneWeld(merge_, dist_), true);
     }
     void rebuildPreview() {
         if (!active || !before.filled) return;

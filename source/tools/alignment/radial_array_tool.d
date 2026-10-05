@@ -42,14 +42,16 @@ struct RadialArrayParamProjection {
     int count;
     string axis;
     Vec3 center;
-    float angle, offset, weld;
+    float angle, offset, dist;
+    bool merge;
     bool opEquals(const RadialArrayParamProjection other) const nothrow @nogc {
         bool sameBytes(T)(ref const T a, ref const T b) nothrow @nogc {
             return memcmp(&a, &b, T.sizeof) == 0;
         }
         return count == other.count && axis == other.axis &&
             sameBytes(center, other.center) && sameBytes(angle, other.angle) &&
-            sameBytes(offset, other.offset) && sameBytes(weld, other.weld);
+            sameBytes(offset, other.offset) && sameBytes(dist, other.dist) &&
+            merge == other.merge;
     }
 }
 struct RadialArrayTransitionImage {
@@ -95,9 +97,9 @@ struct RadialArrayTransitionImage {
 //   offset (float)  — 0. TOTAL span across the array (reference "Offset"
 //                     semantics, MEASURED from the frozen parity capture —
 //                     see below), not a fixed per-clone step.
-//   weld   (float)  — 0 (merge off). 0 = no weld, matching the reference's
-//                     Merge-Vertices-off default; >0 folds coincident verts
-//                     the same way the one-shot command's `weld` does.
+//   merge  (bool)   — off; dist (float) — 0. The clone effector's weld
+//                     (`CloneWeld`, shared with Array / Clone / Mirror):
+//                     merge on at dist 0 welds exact coincidences.
 //
 // Offset law (the corrected finding from the frozen capture's
 // before/after parity case):
@@ -187,8 +189,8 @@ class RadialArrayTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClien
             activationRow: true, commandClose: CommandClose.uiDoor,
             sessionSteps: true, historyTopologySteps: true,
             opensAt: OpensAt.firstPress,
-            imageAttrs: ["count", "axis", "center", "angle", "offset", "weld"],
-            haulAttrs: ["count", "axis", "center", "angle", "offset", "weld"]
+            imageAttrs: ["count", "axis", "center", "angle", "offset", "merge", "dist"],
+            haulAttrs: ["count", "axis", "center", "angle", "offset", "merge", "dist"]
         };
         return policy;
     }
@@ -208,7 +210,8 @@ private:
     Vec3   center_ = Vec3(0, 0, 0);
     float  angle_  = 0.0f;   // degrees — End Angle (Start implicitly 0)
     float  offset_ = 0.0f;   // world units — TOTAL span (reference semantics)
-    float  weld_   = 0.0f;   // 0 = merge off (captured default)
+    bool   merge_  = false;  // captured default: merge off
+    float  dist_   = 0.0f;
 
     // Interactive session state.
     bool          active;
@@ -304,7 +307,7 @@ public:
             bool interactive) {
         before = MeshSnapshot.capture(source); active = true; built = false;
         dragPart = -1; interactiveParamEdit = interactive;
-        count_ = 4; angle_ = 90; offset_ = 2; weld_ = 0;
+        count_ = 4; angle_ = 90; offset_ = 2; dist_ = 0;
     }
     version(unittest) void mutatePreparedParamForTest(float value)
             nothrow @nogc { angle_ = value; }
@@ -349,8 +352,14 @@ public:
             Param.vec3_ ("center", "Center",           &center_, Vec3(0, 0, 0)),
             Param.float_("angle",  "End Angle (deg)",  &angle_,  0.0f),
             Param.float_("offset", "Offset",           &offset_, 0.0f),
-            Param.float_("weld",   "Weld Distance",    &weld_,   0.0f),
+            Param.bool_ ("merge",  "Merge Vertices",   &merge_,  false),
+            Param.float_("dist",   "Distance",         &dist_,   0.0f),
         ];
+    }
+
+    // The clone effector's rule (K-A3 PF-4): Distance only while Merge is on.
+    override bool paramEnabled(string name) const {
+        return name != "dist" || merge_;
     }
 
     override void activate() {
@@ -359,7 +368,7 @@ public:
     }
 
     // Task 0393: only session/gesture state resets here — count_/axis_/
-    // center_/angle_/offset_/weld_ are STICKY tool-defaults, already
+    // center_/angle_/offset_/merge_/dist_ are STICKY tool-defaults, already
     // restored onto these fields by the attribute cache recall
     // (prepareStickyToolDefaults, from the prepared arm) BEFORE
     // activate() runs. Resetting them here would clobber that restore. A
@@ -689,7 +698,7 @@ public:
 private:
     RadialArrayParamProjection paramProjection() const nothrow @nogc {
         return RadialArrayParamProjection(count_, axis_, center_, angle_,
-            offset_, weld_);
+            offset_, dist_, merge_);
     }
     char axisChar() const {
         if (axis_ == "X") return 'X';
@@ -721,7 +730,7 @@ private:
         const extraShift = count_ > 1
             ? axisUnit() * (offset_ / cast(float)(count_ - 1)) : Vec3(0, 0, 0);
         return target.radialArrayFaces(target.operandFaceMask(), count_, axisChar(),
-            center_, angle_ * PI / 180.0f, extraShift, weld_);
+            center_, angle_ * PI / 180.0f, extraShift, CloneWeld(merge_, dist_));
     }
 
     void rebuildPreview() {

@@ -172,7 +172,7 @@ void resetCube() {
 
 // ---------------------------------------------------------------------------
 // 1. RadialArrayTool (mesh.radialArrayTool) — count/axis/center(Vec3)/
-//    angle/offset/weld survive drop -> reactivate.
+//    angle/offset/merge/dist survive drop -> reactivate.
 // ---------------------------------------------------------------------------
 unittest {
     resetCube();
@@ -183,7 +183,8 @@ unittest {
     cmd("tool.attr mesh.radialArrayTool center {2,3,4}");
     cmd("tool.attr mesh.radialArrayTool angle 45");
     cmd("tool.attr mesh.radialArrayTool offset 1.5");
-    cmd("tool.attr mesh.radialArrayTool weld 0.02");
+    cmd("tool.attr mesh.radialArrayTool merge true");
+    cmd("tool.attr mesh.radialArrayTool dist 0.02");
 
     cmd("tool.set mesh.radialArrayTool off");
     cmd("tool.set mesh.radialArrayTool");
@@ -208,8 +209,10 @@ unittest {
     auto offset = query("tool.attr mesh.radialArrayTool offset ?");
     assert(approxEqual(offset.floating, 1.5), "offset should persist as 1.5, got " ~ offset.toString);
 
-    auto weld = query("tool.attr mesh.radialArrayTool weld ?");
-    assert(approxEqual(weld.floating, 0.02), "weld should persist as 0.02, got " ~ weld.toString);
+    auto merge = query("tool.attr mesh.radialArrayTool merge ?");
+    assert(merge.type == JSONType.true_, "merge should persist as true, got " ~ merge.toString);
+    auto dist = query("tool.attr mesh.radialArrayTool dist ?");
+    assert(approxEqual(dist.floating, 0.02), "dist should persist as 0.02, got " ~ dist.toString);
 
     cmd("tool.set mesh.radialArrayTool off");
 }

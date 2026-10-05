@@ -101,6 +101,20 @@ struct FaceList {
 /// but not at 1.01e-9, absolute; a weld distance of 0 still joins 5e-10.
 enum double kCoincidentDistance = 1e-9;
 
+/// The clone effector's vertex weld, shared by Array, Clone, Mirror and Radial
+/// Array (K-A3 PF-4): a merge switch and a distance, apart, so merge on at
+/// distance 0 still welds at `kCoincidentDistance` (K-W1 W1f_mir).
+struct CloneWeld {
+    bool  merge;
+    float distance = 0;
+    /// The former single float, where 0 meant off: the one-shot commands'
+    /// `weld` argument and old saved tool attributes read through it.
+    static CloneWeld fromLegacy(float weld) {
+        return weld > 0 ? CloneWeld(true, weld) : CloneWeld.init;
+    }
+    double epsSq() const { return cast(double)distance * distance; }
+}
+
 /// Candidate pairs `Mesh.computeWeldRemap` has looked at, ever: the work count
 /// the `--perf-unit` weld cell pins, a measure that cannot vary.
 version (PerfProbe) __gshared size_t weldPairVisits;
@@ -7226,7 +7240,7 @@ struct Mesh {
     /// through `center` by `i * totalAngle / count` (i = 1..count-1),
     /// and optionally translated by `i * extraShift` (for helices /
     /// spirals). `count` ≤ 1 ⇒ no-op (count includes the original).
-    /// `weld > 0` folds each copy's coincident verts onto
+    /// `weld.merge` folds each copy's coincident verts onto
     /// earlier copies and drops duplicate faces — primarily useful
     /// for closed 360° rings where the first and last steps abut.
     ///
@@ -7242,7 +7256,7 @@ struct Mesh {
     ///
     /// Returns the number of new faces inserted.
     size_t radialArrayFaces(in bool[] maskIn, int count, char axis, Vec3 center,
-                            float totalAngle, Vec3 extraShift, float weld) {
+                            float totalAngle, Vec3 extraShift, CloneWeld weld) {
         import math : mulMV, pivotRotationMatrix;
         const mask = maskMinusHiddenFaces(maskIn);  // hidden faces never enter the clone operand (K-AR)
         enum int MAX_RADIAL_ARRAY_COUNT = 256;
@@ -7347,10 +7361,9 @@ struct Mesh {
         // abut), the reference editor KEEPS the doubled coincident faces
         // (opposite-wound shell). So we fold coincident verts and drop only the
         // orphaned welded-away vert slots — matching arrayFaces / mirrorFaces.
-        if (weld > 0.0f) {
-            double epsSq = cast(double)weld * cast(double)weld;
+        if (weld.merge) {
             const size_t cornersBeforeWeld = cornerCount();
-            if (weldCoincidentVertices(epsSq, copyStarts) > 0) {
+            if (weldCoincidentVertices(weld.epsSq, copyStarts) > 0) {
                 rebuildEdges();
                 clearEdgeSelectionResize();
                 compactUnreferenced();
@@ -7368,7 +7381,7 @@ struct Mesh {
     /// Linear-array the faces marked true in `mask`: insert `count-1`
     /// new copies, each shifted from the original by `i * offset`
     /// (i = 1..count-1). `count` ≤ 1 ⇒ no-op (the count includes the
-    /// original). When `weld > 0`, coincident verts
+    /// original). When `weld.merge`, coincident verts
     /// between consecutive copies are welded and identical seam faces
     /// dropped (same dedup pass as `mirrorFaces`).
     ///
@@ -7385,7 +7398,7 @@ struct Mesh {
     /// unselected neighbours to share with, so keep+`count-1` and
     /// replace-with-`count` are geometrically identical and the detach is
     /// skipped, leaving that path byte-for-byte unchanged. A welding array
-    /// (`weld > 0`) never detaches either. The flag defaults
+    /// (`weld.merge`) never detaches either. The flag defaults
     /// off so the interactive Clone tool / clone command keep their exact
     /// original (source-preserving) behaviour.
     ///
@@ -7398,7 +7411,7 @@ struct Mesh {
     /// per-step rotation pivot semantics overlap with Radial Array
     /// (which has its own pivot/axis schema) so they live in that
     /// command's surface, not here.
-    size_t arrayFaces(in bool[] mask, int count, Vec3 offset, float weld,
+    size_t arrayFaces(in bool[] mask, int count, Vec3 offset, CloneWeld weld,
                       bool detachSubsetSource = false) {
         if (mask.length != faces.length) return 0;
         if (count <= 1) return 0;
@@ -7437,7 +7450,7 @@ struct Mesh {
         // detach: the weld would delete the source's own slots (and their
         // set / map values) and keep the copies; W1k keeps the source in place.
         const bool subsetSource = detachSubsetSource && (selCount < faces.length);
-        const bool detachSource = subsetSource && !(weld > 0.0f);
+        const bool detachSource = subsetSource && !weld.merge;
         // Task 1903 Stage L6-b: the base of the DETACH round. `arrayFaces` is
         // the one member of the family with TWO append rounds, and they are
         // recorded separately for an ordering reason, not for tidiness — see
@@ -7594,10 +7607,9 @@ struct Mesh {
         // seam face survives (11f → 12f for the 2× cube). This differs from
         // mirrorFaces / arrayFacesGrid, which still dedup coincident faces;
         // this line-array path matches the reference's face count instead.
-        if (weld > 0.0f) {
-            double epsSq = cast(double)weld * cast(double)weld;
+        if (weld.merge) {
             const size_t cornersBeforeWeld = cornerCount();
-            if (weldCoincidentVertices(epsSq, copyStarts) > 0) {
+            if (weldCoincidentVertices(weld.epsSq, copyStarts) > 0) {
                 compactUnreferenced();
                 // What the weld did to the CORNERS is decided by the only
                 // thing it leaves behind — the total (task 0830).
@@ -7670,11 +7682,8 @@ struct Mesh {
     /// on — they count as "cloned geometry" in that mode). The untouched
     /// (0,0,0) original is never flipped while `replaceSource` is off.
     ///
-    /// `mergeVertices`/`mergeDistance`: the reference's boolean+threshold
-    /// pair (captured default OFF) — a real default-semantics divergence
-    /// from `arrayFaces`'s always-on `weld` epsilon (default 0.001). When
-    /// on, reuses the identical weld + face-fingerprint-dedup tail as
-    /// `arrayFaces`/`mirrorFaces`.
+    /// `weld`: the clone effector's merge switch + distance (`CloneWeld`).
+    /// When on, the weld + face-fingerprint-dedup tail.
     ///
     /// DoS guard (code review B1): `numX/numY/numZ` are each UI-clamped by
     /// `ArrayTool.params()`, but this is a public Mesh method any caller can
@@ -7698,7 +7707,7 @@ struct Mesh {
     size_t arrayFacesGrid(in bool[] maskIn, int numX, int numY, int numZ,
                           Vec3 offset, Vec3 jitter, Vec3 scale, Vec3 rotateDeg,
                           bool between, bool replaceSource, bool invertPolygons,
-                          bool mergeVertices, float mergeDistance,
+                          CloneWeld weld,
                           bool linear = false) {
         import std.random : Mt19937, uniform01;
         import std.math : pow;
@@ -7932,9 +7941,8 @@ struct Mesh {
         // Merge Vertices (boolean) + Distance (threshold) — default OFF. A
         // distance of 0 still welds at the coincidence floor (K-W1 W1f_arr).
         // Weld + face-fingerprint-dedup tail.
-        if (mergeVertices) {
-            double epsSq = cast(double)mergeDistance * cast(double)mergeDistance;
-            if (weldCoincidentVertices(epsSq, copyStarts) > 0) {
+        if (weld.merge) {
+            if (weldCoincidentVertices(weld.epsSq, copyStarts) > 0) {
                 import std.algorithm.sorting : sort;
                 import std.format : format;
                 bool[string] seenFp;
@@ -8061,7 +8069,7 @@ struct Mesh {
     /// `flipNormals` is true the winding of each cloned face is reversed so
     /// the mirrored surface has outward-facing normals — a reflection is
     /// orientation-reversing for ANY plane, so this pass is plane-independent
-    /// and identical to the axis-aligned path. When `weld > 0`, coincident
+    /// and identical to the axis-aligned path. When `weld.merge`, coincident
     /// verts (seam verts that lie on the mirror plane, plus any pre-existing
     /// coincidences) are welded via `weldCoincidentVertices` with the
     /// clones as copy 1, and orphan verts are compacted.
@@ -8069,7 +8077,7 @@ struct Mesh {
     /// Selection ends on the newly created mirrored faces (plus any
     /// originals not in the mirror mask). Returns the number of new faces
     /// actually inserted; 0 = noop (empty mask or near-zero-length normal).
-    size_t mirrorFacesPlane(in bool[] mask, Vec3 center, Vec3 normal, float weld, bool flipNormals) {
+    size_t mirrorFacesPlane(in bool[] mask, Vec3 center, Vec3 normal, CloneWeld weld, bool flipNormals) {
         if (mask.length != faces.length) return 0;
         float nlen = normal.length;
         if (nlen < 1e-9f) return 0;
@@ -8185,7 +8193,7 @@ struct Mesh {
         // those coincident VERTS (full-parity: faces are NOT deduped — the
         // doubled coincident faces are kept as an opposite-wound shell/membrane;
         // see the convention note at the weld call below).
-        if (weld > 0.0f) {
+        if (weld.merge) {
             // Empty-mesh guard (task 0306): snapshot everything this pass
             // can touch BEFORE running it, so an aggressive weld/dedup that
             // would collapse the WHOLE document can be rolled back to the
@@ -8223,7 +8231,6 @@ struct Mesh {
             rbMeshMaps.reserve(meshMaps.length);
             foreach (mm; meshMaps) rbMeshMaps ~= mm.dup;
 
-            double epsSq = cast(double)weld * cast(double)weld;
             // The clones are copy 1 of the PER-COPY scope: a clone welds to
             // an ORIGINAL only — never two originals (task 0306 bug B), never
             // two clones (task 1220, ledger row 32; K-W1 W1d).
@@ -8241,7 +8248,7 @@ struct Mesh {
             // welded-away vert slots via compactUnreferenced — the same
             // keep-doubled convention as arrayFaces / radialArrayFaces.
             const size_t cornersBeforeWeld = cornerCount();
-            if (weldCoincidentVertices(epsSq, [origVertexCount]) > 0) {
+            if (weldCoincidentVertices(weld.epsSq, [origVertexCount]) > 0) {
                 rebuildEdges();
                 clearEdgeSelectionResize();
                 compactUnreferenced();
@@ -8316,7 +8323,7 @@ struct Mesh {
     /// step that can differ by ~1 ULP for non-dyadic inputs. `weld`/`flip`/
     /// selection passes are untouched. Returns 0 for an invalid axis char
     /// (mirrors the prior guard).
-    size_t mirrorFaces(in bool[] mask, char axis, Vec3 center, float weld, bool flipNormals) {
+    size_t mirrorFaces(in bool[] mask, char axis, Vec3 center, CloneWeld weld, bool flipNormals) {
         Vec3 normal;
         if      (axis == 'X') normal = Vec3(1, 0, 0);
         else if (axis == 'Y') normal = Vec3(0, 1, 0);

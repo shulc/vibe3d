@@ -477,7 +477,7 @@ private:
     size_t operation(ref Mesh target) {
         return target.arrayFacesGrid(target.operandFaceMask(), numX_, numY_, numZ_,
             offsetVec(), jitterVec(), scaleVec(), rotateVec(), between_, replace_,
-            flip_, merge_, dist_);
+            flip_, CloneWeld(merge_, dist_));
     }
 
     // Revert to the pre-array cage, then re-run the grid kernel from the

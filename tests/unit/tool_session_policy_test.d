@@ -505,7 +505,7 @@ private immutable StepRow[] kStepTable = [
              "angle", "mode", "left", "up"]),
     StepRow("mesh.polyInsetTool", OpensAt.firstPress, false, ["inset"]),
     StepRow("mesh.radialArrayTool", OpensAt.firstPress, false,
-            ["count", "axis", "center", "angle", "offset", "weld"]),
+            ["count", "axis", "center", "angle", "offset", "merge", "dist"]),
     StepRow("mesh.sliceTool", OpensAt.firstPress, false,
             ["startX", "startY", "startZ", "endX", "endY", "endZ", "vectorX", "vectorY",
              "vectorZ", "axis", "gap", "frozenNormal", "haveFrozen", "axisLocked", "hasLine"]),
@@ -673,7 +673,7 @@ unittest { // (4)
                        "mesh.thickenTool", "mesh.topoPen", "mesh.vertexBevel", "mesh.vertexExtrude",
                        "pen", "poly.bevel", "poly.extrude", "vert.merge"],
            format("M3 step table: image-step ids %s", imageStepIds));
-    assert(checkedNames == 153, format("M3 step table: %s image names checked, measured 153",
+    assert(checkedNames == 154, format("M3 step table: %s image names checked, measured 154",
                                       checkedNames));
     assert(armAttrs == 1, format("M3b step table: %s arm attributes, measured 1", armAttrs));
     assert(actionNames == 3, format("M3 step table: %s Action params on the session tools, "

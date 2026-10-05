@@ -4284,7 +4284,7 @@ unittest { // mirrorFacesPlane: tilted 45° plane — reflected positions match
 
     size_t origVertCount = m.vertices.length;
     size_t origFaceCount = m.faces.length;
-    size_t inserted = m.mirrorFacesPlane(mask, center, normal, 0.0f, true);
+    size_t inserted = m.mirrorFacesPlane(mask, center, normal, CloneWeld.init, true);
     assert(inserted == origFaceCount, "mirrorFacesPlane: expected " ~
         origFaceCount.to!string ~ " new faces, got " ~ inserted.to!string);
     assert(m.faces.length == origFaceCount * 2,
@@ -5832,7 +5832,7 @@ unittest // mesh.clone: asymmetric five-vertex capture,
     const n = m.arrayFacesGrid(mask, 4, 1, 1,
         Vec3(0.31f, -2.05f, -0.21f), Vec3(0, 0, 0),
         Vec3(1.2f, 1, 1), Vec3(0, 0, 0),
-        false, false, false, false, 0, true);
+        false, false, false, CloneWeld.init, true);
     assert(n == 3 && m.vertices.length == 20 && m.faces.length == 4,
         "linear generator must make exactly three copies");
     foreach (i, expected; [-1.355f, -1.363f, -1.4346f]) {
@@ -5847,7 +5847,7 @@ unittest // mesh.clone: asymmetric five-vertex capture,
     scaleY.arrayFacesGrid(mask, 4, 1, 1,
         Vec3(0.31f, -2.05f, -0.21f), Vec3(0, 0, 0),
         Vec3(1, 1.2f, 1), Vec3(0, 0, 0),
-        false, false, false, false, 0, true);
+        false, false, false, CloneWeld.init, true);
     foreach (i, expected; [-2.44f, -4.358f, -6.2496f])
         assert(abs(scaleY.vertices[5 * (i + 1)].y - expected) < 1e-4f,
             "linear Y scale must use the reference editor's lower-center pivot");
@@ -5856,7 +5856,7 @@ unittest // mesh.clone: asymmetric five-vertex capture,
     rotateZ.arrayFacesGrid(mask, 4, 1, 1,
         Vec3(0.31f, -2.05f, -0.21f), Vec3(0, 0, 0),
         Vec3(1, 1, 1), Vec3(0, 0, 30),
-        false, false, false, false, 0, true);
+        false, false, false, CloneWeld.init, true);
     foreach (i, expected; [-1.1874837f, -0.593814f, 0.305f])
         assert(abs(rotateZ.vertices[5 * (i + 1)].x - expected) < 1e-4f,
             "linear Z rotation must grow 30 degrees per copy around the lower-center pivot");
@@ -5893,8 +5893,7 @@ unittest // arrayFacesGrid (site 7, the Merge-Vertices DEDUP block only):
                                 /*offset*/Vec3(1, 0, 0), /*jitter*/Vec3(0, 0, 0),
                                 /*scale*/Vec3(1, 1, 1), /*rotateDeg*/Vec3(0, 0, 0),
                                 /*between*/false, /*replaceSource*/false,
-                                /*invertPolygons*/false, /*mergeVertices*/true,
-                                /*mergeDistance*/0.01f);
+                                /*invertPolygons*/false, CloneWeld(true, 0.01f));
     assert(n == 6, format("setup: 6 selected faces cloned once, got %d", n));
     assert(m.faces.length == 11,
         format("T6's own law: 12 - 1 duplicate seam = 11 faces (got %d)",

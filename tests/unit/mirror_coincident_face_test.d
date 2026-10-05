@@ -147,7 +147,7 @@ private double jnum(JSONValue v)
 /// `Mesh.operandFaceMask()` falls back to every visible face and the command
 /// layer's empty-selection convention is pinned end-to-end by
 /// `tests/test_mesh_mirror.d` (fixture case `no_selection`).
-private void mirrorAll(ref Mesh m, Vec3 center, Vec3 normal, float weld)
+private void mirrorAll(ref Mesh m, Vec3 center, Vec3 normal, CloneWeld weld)
 {
     bool[] mask;
     mask.length = m.faces.length;
@@ -281,7 +281,7 @@ private void assertMatchesFixture(string caseName, ref Mesh m)
 unittest
 {
     auto m = rigMesh("cube");
-    mirrorAll(m, Vec3(0, 0, 0), Vec3(1, 0, 0), 0.001f);
+    mirrorAll(m, Vec3(0, 0, 0), Vec3(1, 0, 0), CloneWeld(true, 0.001f));
     assertMatchesFixture("self_coincident_merge_on", m);
 
     // Six coincidence classes, each exactly two deep: a doubled shell, not a
@@ -336,7 +336,7 @@ unittest
 unittest
 {
     auto m = rigMesh("cube");
-    mirrorAll(m, Vec3(0, 0, 0), Vec3(1, 0, 0), 0.0f);
+    mirrorAll(m, Vec3(0, 0, 0), Vec3(1, 0, 0), CloneWeld.init);
     assertMatchesFixture("self_coincident_merge_off", m);
     assert(coincidenceClasses(m).length == 0,
         "with no weld the two shells share no vertex record, so nothing "
@@ -351,7 +351,7 @@ unittest
 unittest
 {
     auto m = rigMesh("cube_shifted");
-    mirrorAll(m, Vec3(0, 0, 0), Vec3(1, 0, 0), 0.001f);
+    mirrorAll(m, Vec3(0, 0, 0), Vec3(1, 0, 0), CloneWeld(true, 0.001f));
     assertMatchesFixture("seam_plane_touches_geometry", m);
 
     auto classes = coincidenceClasses(m);
@@ -379,7 +379,7 @@ unittest
 unittest
 {
     auto m = rigMesh("plane_quad");
-    mirrorAll(m, Vec3(0, 0, 0), Vec3(0, 0, 1), 0.001f);
+    mirrorAll(m, Vec3(0, 0, 0), Vec3(0, 0, 1), CloneWeld(true, 0.001f));
     assertMatchesFixture("face_lying_in_the_mirror_plane", m);
 
     // Said again in the terms the fuzz lane speaks, because this is the exact
@@ -423,7 +423,7 @@ unittest
 unittest
 {
     auto m = rigMesh("cube");
-    mirrorAll(m, Vec3(0.25f, 0, 0), Vec3(1, 0, 0), 0.001f);
+    mirrorAll(m, Vec3(0.25f, 0, 0), Vec3(1, 0, 0), CloneWeld(true, 0.001f));
     assertMatchesFixture("plane_cuts_through_at_no_symmetry", m);
     assert(coincidenceClasses(m).length == 0,
         "nothing coincides at x = 0.25, so no face may be doubled");
@@ -439,7 +439,7 @@ unittest
 unittest
 {
     auto m = rigMesh("cube");
-    mirrorAll(m, Vec3(0, 0, 0), Vec3(1, 0, 0), 0.001f);
+    mirrorAll(m, Vec3(0, 0, 0), Vec3(1, 0, 0), CloneWeld(true, 0.001f));
     const size_t removed = unifyOnce(m);
 
     auto want = mirrorCase("self_coincident_then_explicit_collapse")["result"];

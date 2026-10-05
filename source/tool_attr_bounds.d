@@ -41,7 +41,7 @@ static immutable ToolAttrBound[] kToolAttrBounds = [
     {"mesh.clone", "num", 0, none}, {"mesh.clone", "dist", 0, none},
     {"mesh.clone", "snapAngle", 0, kCloneSnapAngleMax},
     {"mesh.mirrorTool", "distance", 0, none},
-    {"mesh.radialArrayTool", "count", 1, none}, {"mesh.radialArrayTool", "weld", 0, none},
+    {"mesh.radialArrayTool", "count", 1, none}, {"mesh.radialArrayTool", "dist", 0, none},
     {"mesh.loopSliceTool", "count", 1, 1024},
     {"mesh.loopSliceTool", "gap", 0, none},
     {"mesh.sliceTool", "gap", 0, none},

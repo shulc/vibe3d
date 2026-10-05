@@ -96,7 +96,11 @@ unittest { // HeadlessToolMatchesReferenceCapture
     postCommand("tool.attr mesh.radialArrayTool axis " ~ p["axis"].str);
     postCommand("tool.attr mesh.radialArrayTool angle " ~ p["angle_deg"].integer.to!string);
     postCommand("tool.attr mesh.radialArrayTool offset " ~ p["offset"].floating.to!string);
-    postCommand("tool.attr mesh.radialArrayTool weld " ~ p["weld"].floating.to!string);
+    // The capture's single weld float (0 = off) is the merge + dist pair.
+    if (p["weld"].floating > 0) {
+        postCommand("tool.attr mesh.radialArrayTool merge true");
+        postCommand("tool.attr mesh.radialArrayTool dist " ~ p["weld"].floating.to!string);
+    }
     postCommand("tool.doApply");
 
     auto after = getModel();

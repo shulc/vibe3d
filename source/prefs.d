@@ -62,6 +62,23 @@ private immutable RetiredAttr[] kRetiredAttrs = [
     RetiredAttr(2, "xfrm.smooth", kToolNode, "sharpAngle"),
 ];
 
+/// Radial Array's pre-9462 `weld` float (0 = off) is the clone effector's
+/// `merge` + `dist` pair now: a cached entry still holding it reads through
+/// `CloneWeld.fromLegacy`; an unreadable value is dropped.
+private void upgradeLegacyWeld(string presetId, string node, ref NodeAttrs attrs) {
+    import std.conv : to;
+    import mesh : CloneWeld;
+    import params : fmtFloatWire;
+    auto w = "weld" in attrs;
+    if (w is null || presetId != "mesh.radialArrayTool" || node != kToolNode) return;
+    try {
+        const weld = CloneWeld.fromLegacy((*w).to!float);
+        attrs["merge"] = weld.merge ? "true" : "false";
+        attrs["dist"] = fmtFloatWire(weld.distance);
+    } catch (Exception) {}
+    attrs.remove("weld");
+}
+
 /// Cap on the recent-files MRU list.
 enum size_t kRecentFilesMax = 10;
 
@@ -477,6 +494,7 @@ Prefs loadPrefs(string dir) {
             foreach (r; kRetiredAttrs)
                 if (p.version_ < r.since && r.preset == presetId && r.node == node)
                     attrs.remove(r.attr);
+            upgradeLegacyWeld(presetId, node, attrs);
             p.toolAttrCache.store(presetId, node, attrs);
         }
         // Pre-M5 files: `toolDefaults` held the tool node only.

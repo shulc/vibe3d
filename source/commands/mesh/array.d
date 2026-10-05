@@ -119,7 +119,7 @@ class MeshArray : Command, Operator {
             size_t ri;
             {
                 auto ed = MeshEditBatch.unrecorded(*mesh, kDuplicateEditScope);
-                ri = ed.arrayFaces(mask, count_, offset_, weld_, true);
+                ri = ed.arrayFaces(mask, count_, offset_, CloneWeld.fromLegacy(weld_), true);
                 ed.close();
             }
             return ri != 0;
@@ -135,7 +135,7 @@ class MeshArray : Command, Operator {
         size_t inserted;
         {
             auto ed = MeshEditBatch(*mesh, kDuplicateEditScope);
-            inserted = ed.arrayFaces(mask, count_, offset_, weld_, true);
+            inserted = ed.arrayFaces(mask, count_, offset_, CloneWeld.fromLegacy(weld_), true);
             delta_ = ed.close();
         }
         if (!acceptRecordedEdit(inserted, delta_)) {

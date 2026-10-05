@@ -221,6 +221,7 @@ unittest {
         Cell("array", "mesh.arrayTool", "merge false", "dist", "0.25", "merge true", "0.25"),
         Cell("mirror", "mesh.mirrorTool", "mergeVerts false", "distance", "0.25",
              "mergeVerts true", "0.25"),
+        Cell("radial", "mesh.radialArrayTool", "merge false", "dist", "0.25", "merge true", "0.25"),
         Cell("command_wrapper", "xfrm.jitter", "enableX false", "rangeX", "0.25",
              "enableX true", "0.25"),
         Cell("box", "prim.cube", "radius 0", "sharp", "true", "radius 0.1", "true"),
@@ -239,10 +240,10 @@ unittest {
         }
         if (why != "") failed ~= c.family ~ ": " ~ why;
     }
-    assert(visited == 6, format("families visited %d, expected 6", visited));
+    assert(visited == 7, format("families visited %d, expected 7", visited));
     assert(failed.length == 0, format("disabled-row gate failed in %d families:\n  %-(%s\n  %)",
                                       failed.length, failed));
-    writeln("PASS disabled-row refusal, 6 families");
+    writeln("PASS disabled-row refusal, 7 families");
 }
 
 // pf3 — rows the reference disables and ours enabled before task 9492 (K-A3

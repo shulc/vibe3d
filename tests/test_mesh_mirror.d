@@ -20,7 +20,7 @@ import std.json;
 import std.conv : to;
 import std.math : abs;
 
-import mesh : Mesh;
+import mesh : CloneWeld, Mesh;
 import math : Vec3;
 
 void main() {}
@@ -539,7 +539,7 @@ unittest {
     m.addFace([0, 1, 2]);
 
     bool[] mask = [true];
-    size_t n = m.mirrorFacesPlane(mask, Vec3(0, 0, 0), Vec3(0, 0, 1), 10.0f, true);
+    size_t n = m.mirrorFacesPlane(mask, Vec3(0, 0, 0), Vec3(0, 0, 1), CloneWeld(true, 10.0f), true);
     assert(n == 1, "expected the single face to be cloned");
     assert(m.vertices.length > 0 && m.faces.length > 0,
         "rollback should have restored a non-empty mesh");

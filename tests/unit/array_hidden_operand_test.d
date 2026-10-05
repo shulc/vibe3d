@@ -52,13 +52,13 @@ unittest { // linear / grid array
     auto r = hiddenBottomRig();
     const added = r.m.arrayFacesGrid(r.mask, 2, 1, 1, Vec3(2, 0, 0),
         Vec3(0, 0, 0), Vec3(1, 1, 1), Vec3(0, 0, 0),
-        false, false, false, false, 0.001f);
+        false, false, false, CloneWeld.init);
     assertOnlyTopCloned(r, added, "arrayFacesGrid");
 }
 
 unittest { // radial array, count 2 about Y
     auto r = hiddenBottomRig();
     const added = r.m.radialArrayFaces(r.mask, 2, 'Y', Vec3(0, 0, 0),
-        2 * PI, Vec3(0, 0, 0), 0);
+        2 * PI, Vec3(0, 0, 0), CloneWeld.init);
     assertOnlyTopCloned(r, added, "radialArrayFaces");
 }

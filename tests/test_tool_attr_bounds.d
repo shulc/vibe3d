@@ -74,7 +74,7 @@ unittest {
         Row("mesh.clone", "tool.attr mesh.clone merge true", "dist", false, "0.0", "free"),
         Row("mesh.mirrorTool", "tool.attr mesh.mirrorTool mergeVerts true", "distance", false, "0.0", "free"),
         Row("mesh.radialArrayTool", "", "count", true, "1", "free"),
-        Row("mesh.radialArrayTool", "", "weld", false, "0.0", "free"),
+        Row("mesh.radialArrayTool", "tool.attr mesh.radialArrayTool merge true", "dist", false, "0.0", "free"),
         Row("mesh.loopSliceTool", "", "count", true, "1", "1024"),
         Row("mesh.loopSliceTool", "tool.attr mesh.loopSliceTool split true", "gap", false, "0.0", "free"),
         Row("mesh.sliceTool", "", "gap", false, "0.0", "free"),

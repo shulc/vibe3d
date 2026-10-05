@@ -241,9 +241,14 @@ unittest {
     row!ArrayTool(EditMode.Polygons, &pickFace, ["numX", "numZ", "offZ", "offX"],
         [3.0f, 2.0f, 1.25f, 1.5f], 28, 11, 1105.5, &hideAllUnselected, true);
     row!RadialArrayTool(EditMode.Polygons, &pickFace,
-        ["count", "weld", "offset", "angle"], [4.0f, 0.0f, 0.5f, 90.0f], 20, 9, -74.3146,
+        ["count", "dist", "offset", "angle"], [4.0f, 0.0f, 0.5f, 90.0f], 20, 9, -74.3146,
         &hideAllUnselected, true);
-    assert(rows == 5, format("%s rows ran, expected 5", rows));
+    // Merge on at distance 0 welds an exact copy back onto its source: 8v, not
+    // the 12v merge off measures (task 9462, K-W1 W1f).
+    row!RadialArrayTool(EditMode.Polygons, &pickFace,
+        ["count", "merge", "dist", "offset", "angle"], [2.0f, 1.0f, 0.0f, 0.0f, 0.0f], 8, 7, 32.0,
+        &hideAllUnselected, true);
+    assert(rows == 6, format("%s rows ran, expected 6", rows));
 }
 
 // The callers' pre-steps around the one operation (task 9434 sweep): each

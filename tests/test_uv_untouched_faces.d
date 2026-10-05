@@ -23,7 +23,7 @@
 import std.conv : to;
 import std.math : fabs;
 
-import mesh : Mesh, MeshMap, MapDomain, kUvMapName,
+import mesh : CloneWeld, Mesh, MeshMap, MapDomain, kUvMapName,
               MeshEditBatch,
               // task 3240 (plan 2910 step 3): `addEdgePoint` is a free
               // function in `source/mesh_edge_slice.d` now, and a SELECTIVE
@@ -155,7 +155,7 @@ unittest { // duplicateSelectedFaces: the copy costs the other face nothing
 
 unittest { // mirror (winding-flipped clone, no weld)
     Mesh m = twoQuadsWithUv();
-    const n = m.mirrorFaces(maskFace0(m), 'X', Vec3(0, 0, 0), 0.0f, true);
+    const n = m.mirrorFaces(maskFace0(m), 'X', Vec3(0, 0, 0), CloneWeld.init, true);
     assert(n == 1, "expected 1 mirrored face, got " ~ n.to!string);
     checkLengths(m, "mirrorFaces");
     checkOriginalCornersIntact(m, "mirrorFaces");
@@ -167,7 +167,7 @@ unittest { // mirror with a weld pass (the clone folds onto the seam verts)
     // Mirror face 0 about the plane x = 0: verts 0 and 3 sit ON the plane, so
     // the weld folds the clone back onto them — the remap path, on top of the
     // append. The originals must survive both.
-    const n = m.mirrorFaces(maskFace0(m), 'X', Vec3(0, 0, 0), 0.001f, true);
+    const n = m.mirrorFaces(maskFace0(m), 'X', Vec3(0, 0, 0), CloneWeld(true, 0.001f), true);
     assert(n == 1, "expected 1 mirrored face, got " ~ n.to!string);
     checkLengths(m, "mirrorFaces+weld");
     checkOriginalCornersIntact(m, "mirrorFaces+weld");
@@ -176,7 +176,7 @@ unittest { // mirror with a weld pass (the clone folds onto the seam verts)
 
 unittest { // arrayFaces — the linear array / Clone path
     Mesh m = twoQuadsWithUv();
-    const n = m.arrayFaces(maskFace0(m), 3, Vec3(0, 5, 0), 0.0f);
+    const n = m.arrayFaces(maskFace0(m), 3, Vec3(0, 5, 0), CloneWeld.init);
     assert(n == 2, "expected 2 array copies, got " ~ n.to!string);
     checkLengths(m, "arrayFaces");
     checkOriginalCornersIntact(m, "arrayFaces");
@@ -186,7 +186,7 @@ unittest { // arrayFaces — the linear array / Clone path
 unittest { // radialArrayFaces
     Mesh m = twoQuadsWithUv();
     const n = m.radialArrayFaces(maskFace0(m), 4, 'Y', Vec3(0, 0, 0),
-                                 6.2831853f, Vec3(0, 0, 0), 0.0f);
+                                 6.2831853f, Vec3(0, 0, 0), CloneWeld.init);
     assert(n == 3, "expected 3 radial copies, got " ~ n.to!string);
     checkLengths(m, "radialArrayFaces");
     checkOriginalCornersIntact(m, "radialArrayFaces");
@@ -197,7 +197,7 @@ unittest { // arrayFacesGrid — plain (no merge)
     Mesh m = twoQuadsWithUv();
     const n = m.arrayFacesGrid(maskFace0(m), 2, 2, 1,
                                Vec3(0, 5, 5), Vec3(0, 0, 0), Vec3(1, 1, 1),
-                               Vec3(0, 0, 0), false, false, false, false, 0.0f);
+                               Vec3(0, 0, 0), false, false, false, CloneWeld.init);
     assert(n == 3, "expected 3 grid copies, got " ~ n.to!string);
     checkLengths(m, "arrayFacesGrid");
     checkOriginalCornersIntact(m, "arrayFacesGrid");
@@ -213,7 +213,7 @@ unittest { // arrayFacesGrid with Merge Vertices — the weld + face-dedup tail
     // save (it re-lays the whole corner space).
     const n = m.arrayFacesGrid(maskFace0(m), 2, 1, 1,
                                Vec3(0, 0, 0), Vec3(0, 0, 0), Vec3(1, 1, 1),
-                               Vec3(0, 0, 0), false, false, false, true, 0.001f);
+                               Vec3(0, 0, 0), false, false, false, CloneWeld(true, 0.001f));
     assert(n == 1, "expected 1 grid copy before the dedup, got " ~ n.to!string);
     assert(m.faces.length == 2,
            "the doubled face should have been deduped away, faces=" ~
@@ -384,7 +384,7 @@ unittest { // no UV map registered ⇒ every path above must stay crash-free and
     assert(m.duplicateSelectedFaces() == 1, "duplicate should have run");
     // Rebuild the mask against the GROWN face list — `mirrorFaces` refuses a
     // stale-length mask, and a refused call would exercise nothing.
-    assert(m.mirrorFaces(maskFace0(m), 'X', Vec3(0, 0, 0), 0.0f, true) == 1,
+    assert(m.mirrorFaces(maskFace0(m), 'X', Vec3(0, 0, 0), CloneWeld.init, true) == 1,
            "mirror should have run");
     const uint ei = edgeIndexOf(m, 0, 1);
     assert(m.addEdgePoint(ei, 0.5f) != uint.max, "addEdgePoint should have run");

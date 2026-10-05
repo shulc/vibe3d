@@ -88,8 +88,8 @@ size_t mirrorInPlace(ref Mesh target, in bool[] mask, in MirrorParams params_,
                      in ModelSpace space)
 {
     // World length -> local length: the local image of a world unit vector.
-    float weld = params_.mergeVerts
-        ? params_.distance * space.toLocalDir(Vec3(1, 0, 0)).length : 0.0f;
+    const weld = CloneWeld(params_.mergeVerts,
+        params_.distance * space.toLocalDir(Vec3(1, 0, 0)).length);
     size_t inserted = target.mirrorFacesPlane(mask,
         space.toLocalPoint(params_.center),
         space.toLocalNormal(toolNormal(params_)), weld, params_.invertPolys);

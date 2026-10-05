@@ -16,7 +16,8 @@ import std.math   : PI, abs;
 import std.path   : buildPath, dirName;
 
 import mesh;
-import math : Vec3;
+import math : ModelSpace, Vec3;
+import tools.alignment.mirror : MirrorParams, mirrorInPlace;
 import mesh_ops.cleanup : cleanupMesh, kCleanupEditScope;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
@@ -81,19 +82,15 @@ private Run[] runCell(JSONValue cell) {
     case "array_linear": {
         const int count = cast(int) op["count"].integer;
         const Vec3 offset = vec(op["offset"]);
-        const float dist = cast(float) op["weld_distance"].get!double;
-        // The line array's single float is its weld switch (0 = off), so its
-        // distance-0 cells are the grid array's alone.
-        if (dist > 0) {
-            Mesh a = inputOf(cell);
-            auto mask = faceMaskOf(cell, a.faces.length);
-            a.arrayFaces(mask, count, offset, dist, true);
-            runs ~= Run("line", a, true);
-        }
+        // Merge on at the cell's distance, 0 included (task 9462).
+        const weld = CloneWeld(true, cast(float) op["weld_distance"].get!double);
+        Mesh a = inputOf(cell);
+        a.arrayFaces(faceMaskOf(cell, a.faces.length), count, offset, weld, true);
+        runs ~= Run("line", a, true);
         Mesh g = inputOf(cell);
         g.arrayFacesGrid(faceMaskOf(cell, g.faces.length), count, 1, 1, offset,
                          Vec3(0, 0, 0), Vec3(1, 1, 1), Vec3(0, 0, 0),
-                         false, false, false, true, dist);
+                         false, false, false, weld);
         runs ~= Run("grid", g, true);
         break;
     }
@@ -105,18 +102,27 @@ private Run[] runCell(JSONValue cell) {
         const float total = cast(float)(op["end_deg"].get!double * count / (count - 1) * PI / 180.0);
         Mesh r = inputOf(cell);
         r.radialArrayFaces(faceMaskOf(cell, r.faces.length), count, 'Z', vec(op["center"]),
-                           total, Vec3(0, 0, 0), cast(float) op["weld_distance"].get!double);
+                           total, Vec3(0, 0, 0),
+                           CloneWeld(true, cast(float) op["weld_distance"].get!double));
         runs ~= Run("radial", r, true);
         break;
     }
     case "mirror": {
         const float dist = cast(float) op["weld_distance"].get!double;
-        if (dist > 0) {   // the mirror's float is its weld switch too
-            Mesh r = inputOf(cell);
-            r.mirrorFaces(faceMaskOf(cell, r.faces.length), op["axis"].str[0],
-                          vec(op["center"]), dist, false);
-            runs ~= Run("mirror", r, true);
-        }
+        Mesh r = inputOf(cell);
+        r.mirrorFaces(faceMaskOf(cell, r.faces.length), op["axis"].str[0], vec(op["center"]),
+                      CloneWeld(true, dist), false);
+        runs ~= Run("mirror", r, true);
+        // The Mirror tool's own entry: its Merge switch and Distance.
+        MirrorParams mp;
+        mp.axis = op["axis"].str[0] - 'X';
+        mp.center = vec(op["center"]);
+        mp.invertPolys = false;
+        mp.mergeVerts = true;
+        mp.distance = dist;
+        Mesh t = inputOf(cell);
+        mirrorInPlace(t, faceMaskOf(cell, t.faces.length), mp, ModelSpace.world());
+        runs ~= Run("mirror_tool", t, true);
         break;
     }
     case "cleanup": {
@@ -161,7 +167,7 @@ unittest { // a partial-selection weld array keeps the source vertex: index, set
     m.vertexSetNames = ["s"];
     m.vertexSetMask = new ulong[](m.vertices.length);
     m.vertexSetMask[0] = 1;
-    m.arrayFaces([true, false], 2, Vec3(1, 0, 0), 0.001f, true);
+    m.arrayFaces([true, false], 2, Vec3(1, 0, 0), CloneWeld(true, 0.001f), true);
     assert(m.vertices.length == 6 && m.faces.length == 3,
            format("population: expected 6 verts 3 faces, got %d / %d", m.vertices.length, m.faces.length));
     const v0 = m.vertices[0];
@@ -172,7 +178,7 @@ unittest { // a partial-selection weld array keeps the source vertex: index, set
     // Both instances end selected (the source is copy 0) when nothing welds;
     // a weld that joins anything drops the face selection.
     Mesh n = settle(quads.dup, [[0u, 1u, 2u, 3u], [1u, 4u, 5u, 2u]]);
-    n.arrayFaces([true, false], 2, Vec3(5, 0, 0), 0.001f, true);
+    n.arrayFaces([true, false], 2, Vec3(5, 0, 0), CloneWeld(true, 0.001f), true);
     bool[] sel;
     foreach (fi; 0 .. n.faces.length) sel ~= n.isFaceSelected(fi);
     assert(sel == [true, false, true], format("selection after the array: %s, expected [1,0,1]", sel));
@@ -201,10 +207,10 @@ unittest { // every K-W1 cell, every production entry that can express it
             }
         }
     }
-    // Floor: 19 of the 21 cells reach a kernel here — line + grid for the 5 array
-    // cells with a distance, grid alone for the 2 at distance 0, radial 1, mirror 1,
-    // cleanup 7, vertex merge 3; the distance-0 mirror and the automatic merge do not.
-    assert(ran.length == 24, format("population: expected 24 runs, got %d: %s", ran.length, ran));
+    // Floor: 20 of the 21 cells reach a kernel here — line + grid for the 7 array
+    // cells (2 at distance 0), radial 1, kernel + tool for the 2 mirror cells (1 at
+    // distance 0), cleanup 7, vertex merge 3; the automatic merge does not.
+    assert(ran.length == 29, format("population: expected 24 runs, got %d: %s", ran.length, ran));
     assert(diffs.length == 0, format("weld scope differs from the capture in %d run(s):\n  %-(%s\n  %)",
                                      diffs.length, diffs));
 }

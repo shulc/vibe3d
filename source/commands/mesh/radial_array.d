@@ -126,7 +126,7 @@ class MeshRadialArray : Command, Operator {
             {
                 auto ed = MeshEditBatch.unrecorded(*mesh, kDuplicateEditScope);
                 ri = ed.radialArrayFaces(mask, count_, axis_[0], center_,
-                                         totalAngle_, extraShift_, weld_);
+                                         totalAngle_, extraShift_, CloneWeld.fromLegacy(weld_));
                 ed.close();
             }
             return ri != 0;
@@ -138,7 +138,7 @@ class MeshRadialArray : Command, Operator {
         {
             auto ed = MeshEditBatch(*mesh, kDuplicateEditScope);
             inserted = ed.radialArrayFaces(mask, count_, axis_[0], center_,
-                                           totalAngle_, extraShift_, weld_);
+                                           totalAngle_, extraShift_, CloneWeld.fromLegacy(weld_));
             delta_ = ed.close();
         }
         if (!acceptRecordedEdit(inserted, delta_)) {

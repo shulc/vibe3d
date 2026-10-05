@@ -236,6 +236,31 @@ unittest { // u5: the cache is a section of the prefs document (M5b)
         "M5b u5: a legacy entry overrode the current section");
 }
 
+unittest { // u6: Radial Array's legacy single weld float reads as merge + dist (task 9462)
+    auto dir = buildPath(tempDir, format("vibe3d_weld_prefs_%d", thisProcessID()));
+    mkdirRecurse(dir);
+    scope(exit) if (exists(dir)) rmdirRecurse(dir);
+    write(buildPath(dir, "prefs.json"), `{"version":2,"toolAttrCache":{`
+        ~ `"mesh.radialArrayTool":{"tool":{"weld":"0.02","count":"8"},"falloff":{"weld":"0.5"}},`
+        ~ `"mesh.arrayTool":{"tool":{"weld":"0.5"}}}}`);
+    auto c = loadPrefs(dir).toolAttrCache;
+    auto t = c.lookup("mesh.radialArrayTool", kToolNode);
+    assert(t !is null && "weld" !in *t && (*t)["merge"] == "true"
+           && abs((*t)["dist"].to!float - 0.02f) < 1e-9 && (*t)["count"] == "8",
+           format("a weld above 0 reads as merge on at that distance: %s", t is null ? null : *t));
+    // Control: only the Radial Array tool node carried the single float.
+    assert((*c.lookup("mesh.radialArrayTool", "falloff"))["weld"] == "0.5"
+           && (*c.lookup("mesh.arrayTool", kToolNode))["weld"] == "0.5",
+           "another node's or tool's weld attribute is not the legacy one");
+    foreach (legacy, merge; ["0": "false", "x": null]) {
+        write(buildPath(dir, "prefs.json"), `{"version":2,"toolAttrCache":`
+            ~ `{"mesh.radialArrayTool":{"tool":{"weld":"` ~ legacy ~ `","count":"8"}}}}`);
+        auto a = *loadPrefs(dir).toolAttrCache.lookup("mesh.radialArrayTool", kToolNode);
+        assert("weld" !in a && (merge is null ? "merge" !in a : a["merge"] == merge),
+               format("weld %s: read back %s", legacy, a));
+    }
+}
+
 /// `{ ... }` body of the first declaration introduced by `marker`.
 private string bodyAt(string code, string marker) {
     const at = code.indexOf(marker);

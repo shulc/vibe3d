@@ -180,7 +180,7 @@ unittest {
         /*offset*/Vec3(2, 0, 0), /*jitter*/Vec3(0, 0, 0),
         /*scale*/Vec3(1, 1, 1), /*rotateDeg*/Vec3(0, 0, 0),
         /*between*/false, /*replaceSource*/false, /*invertPolygons*/false,
-        /*mergeVertices*/true, /*mergeDistance*/0.001f);
+        CloneWeld(true, 0.001f));
     immutable ulong bytes = GC.allocatedInCurrentThread - allocBefore;
 
     // Floors AFTER the op, all green on the broken kernel too: the quadratic

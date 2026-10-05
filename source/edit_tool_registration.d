@@ -160,7 +160,7 @@ void registerEditToolCommands(ref Registry reg, LiveSessionRole owner,
 
     // Radial Array — interactive (angle-cube haul → End Angle; axis-arrow haul
     // → Offset; off-handle click → reposition Center) + headless (tool.attr
-    // mesh.radialArrayTool count/axis/center/angle/offset/weld; tool.doApply).
+    // mesh.radialArrayTool count/axis/center/angle/offset/merge/dist; tool.doApply).
     // Reuses the shared Mesh.radialArrayFaces kernel (same-mesh clone
     // insertion, no new layers) already exercised by the one-shot
     // mesh.radial_array command. Topology-creating tool: own typed edit
