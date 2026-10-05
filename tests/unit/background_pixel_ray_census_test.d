@@ -304,3 +304,40 @@ unittest { // (c) a FREE point reads the surface, a primitive's PRESS point does
     assert(tokenAt(vertexTool, "snapLocalHit").length == 2,
         "census floor: the vertex tool's motion preview still snaps through snapLocalHit (import + call)");
 }
+
+unittest { // (d) the topology pen's ONE after-placement pass (task 9510, capture K-SC rule 4)
+    // Polarity: TRUE after task 9510. Before it the pen re-snapped through its
+    // own nearest-foot helpers (`footOnBackground` / `footOn`: Move, Move
+    // Loop, slide endpoints, Add Loop) and two inline `closestPointOnMeshes`
+    // calls (both Smooth passes), whatever the constraint's geometry; only the
+    // vertex slide ran the stage's `pass`. Restoring any of them reddens the
+    // zero list or the counts below.
+    auto files = sourceFiles();
+    string[] retired;
+    foreach (f; files) {
+        immutable code = blankNonCode(readText(buildPath(root, "source", f)));
+        foreach (tok; ["footOnBackground", "footOn", "gDeltaOffset"])
+            foreach (_; tokenAt(code, tok)) retired ~= f ~ ":" ~ tok;
+    }
+    assert(retired.length == 0, format("the pen's retired re-snap helpers must not come back: %s", retired));
+    immutable pen = blankNonCode(readText(buildPath(root, "source", "tools/edit/topology_pen/tool.d")));
+    // Floor: the home's declaration plus its five callers (the carried targets,
+    // the vertex slide, Add Loop, both Smooth passes), every spelling counted.
+    assert(tokenAt(pen, "passLocal").length == 6,
+        format("census floor: passLocal decl + 5 callers; got %d", tokenAt(pen, "passLocal").length));
+    size_t passMembers;
+    foreach (at; tokenAt(pen, "pass")) {
+        size_t j = at;
+        while (j > 0 && isWs(pen[j - 1])) --j;
+        if (j > 0 && pen[j - 1] == '.') ++passMembers;
+    }
+    assert(passMembers == 1 && tokenAt(pen, "constrainPoint").length == 2,
+        format("the stage's `.pass` is called once (inside passLocal) and `constrainPoint` only by its "
+               ~ "pipeline-less arm (import + call); got %d / %d", passMembers,
+               tokenAt(pen, "constrainPoint").length));
+    // What stays a nearest-foot query of its own: the Dup Edge direction's
+    // normal and Dup Loop's per-vertex `resnapToBackground` (import + 2 calls).
+    assert(tokenAt(pen, "closestPointOnMeshes").length == 3,
+        format("closestPointOnMeshes in the pen: import + the Dup Edge normal + resnapToBackground; got %d",
+               tokenAt(pen, "closestPointOnMeshes").length));
+}
