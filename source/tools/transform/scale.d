@@ -338,7 +338,6 @@ public:
                 HandlePart(handler.arrowZ, 2)];
     }
     void registerHandles(ToolHandles th, int base) { auto p = handleParts(); th.add(p[], base); }
-    void registerAxisHandles(ToolHandles th, int base) { auto p = handleParts(); th.add(p[4 .. $], base); }
 
     void registerAxisHeadHandles(ToolHandles th, int base) {
         th.add(headX, base + 0);

@@ -32,6 +32,8 @@ static assert(![__traits(allMembers, MoveTool)].canFind("hitTestAxes"));
 static assert(![__traits(allMembers, ScaleTool)].canFind("hitTestAxes"));
 static assert(![__traits(allMembers, RotateTool)].canFind("hitTestAxes"));
 static assert(![__traits(allMembers, RotateTool)].canFind("registerPrincipalHandles"));
+static assert(![__traits(allMembers, MoveTool)].canFind("registerAxisHandles"));
+static assert(![__traits(allMembers, ScaleTool)].canFind("registerAxisHandles"));
 static assert(![__traits(allMembers, MirrorTool)].canFind("moverHitTest"));
 static assert(![__traits(allMembers, XfrmTransformTool)].canFind("DragBank"));
 static assert(![__traits(allMembers, EdgeExtendTool)].canFind("DragBank"));
@@ -85,6 +87,10 @@ unittest {
     // Mirror: its private loop and its own pick literal are gone.
     auto mirror = code["source/tools/alignment/mirror.d"];
     assert(countWord(mirror, "moverHitTest") == 0 && countOccurrences(mirror, "8.0f") == 0);
+    // Its press order is the tool's own DATA (rotate box before the centre box,
+    // the reverse of its arbiter registration) until the hit-order capture.
+    assert(countOccurrences(mirror, "[HandlePart(rotateBox, 4), HandlePart(mover.centerBox, 3)]") == 1,
+        "Mirror press order changed without the hit-order capture");
 
     // The Ctrl wait gate: one home. `<` not preceded by `<` (so `1 << 25` is
     // not a gate) and 25 as a whole number (so `< 250` is not either).

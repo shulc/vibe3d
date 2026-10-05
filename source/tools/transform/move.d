@@ -452,7 +452,6 @@ public:
                 HandlePart(handler.arrowZ, 2)];
     }
     void registerHandles(ToolHandles th, int base) { auto p = handleParts(); th.add(p[], base); }
-    void registerAxisHandles(ToolHandles th, int base) { auto p = handleParts(); th.add(p[4 .. $], base); }
     void registerCompactHandles(ToolHandles th, int base) { auto p = handleParts(); th.add(p[3 .. $], base); }
 
     void setWrapperGizmoPose(Vec3 center, Vec3 bX, Vec3 bY, Vec3 bZ)
