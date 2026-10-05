@@ -488,6 +488,15 @@ version(unittest) unittest {
     assert(!staleDrop.validate(), "pen S6: a symmetry change after the drop's "
         ~ "prepare was not refused");
     staleDrop.discard();
+    auto okSym = symPen(staleLayer, &staleGpu);
+    okSym.params_.currentPoint = 0; okSym.params_.posX = 3;
+    auto okContext = new PreparedRecordContext(null, new RecordObserverHub());
+    okContext.setResourceIdentity(7, 11);
+    assert(okSym.prepareParamChanged(okContext, "posX",
+        GpuUploadOwner.fakeForTest(okSym.preparedPreviewGpu())).accepted &&
+        okContext.validate(), "pen S6: an unchanged mirrored Position prepare "
+        ~ "did not validate");
+    okContext.discard();
     auto paramSym = symPen(staleLayer, &staleGpu);
     paramSym.params_.currentPoint = 0; paramSym.params_.posX = 3;
     auto paramContext = new PreparedRecordContext(null, new RecordObserverHub());

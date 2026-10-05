@@ -321,12 +321,34 @@ unittest {
         fails ~= compare("A5-symWP2", verts(c["expected"]["vertices"]), null);
         penCommand("workplane.reset");
     }
+    // Ours (extrapolated from A5-symWP / WP2, not captured): axis Z at offset
+    // 0.1 in the same plane — W(W(0.1 e_z)) = (0.5598, 0.15, 0.1), normal
+    // R R e_z = e_z: the mirror is z' = 0.2 - z.
+    {
+        auto c = fx["A5-symWP2"];
+        penSceneEmpty("Top");
+        penCommand("workplane.edit cenX:0.3 cenY:0 cenZ:0 rotX:0 rotY:0 rotZ:30");
+        penCameraAt(p(0, 0), 420);
+        penCommand("tool.pipe.attr snap enabled false");
+        symmetry("z", 0.1, true);
+        penCommand("tool.set pen on");
+        clickWorld(p(-0.2, -0.6, 0), p(0.3, -0.6, 0), p(0.3, 0.6, 0));
+        foreach (i, q; clicks(c)) {
+            typed("currentPoint", i);
+            typed("posX", q.x); typed("posY", 1); typed("posZ", q.z);
+        }
+        drop(); ++ran;
+        auto want = verts(c["expected"]["vertices"])[0 .. 3];
+        foreach (i; 0 .. 3) want ~= Vec3(want[i].x, want[i].y, 0.2f - want[i].z);
+        fails ~= compare("WP-axisZ-offset", want, null);
+        penCommand("workplane.reset");
+    }
 
     fails ~= oursCells(ran);
     symmetry(null);
-    // Floor: 1 stay-green + 23 turning cells (A8 reads three moments) + 12
-    // ours-only cells.
-    assert(ran == 36, format("ran %s cells, pinned 36", ran));
+    // Floor: 1 stay-green + 24 turning cells (A8 reads three moments; one
+    // extrapolated work-plane cell) + 13 ours-only cells.
+    assert(ran == 38, format("ran %s cells, pinned 38", ran));
     // One line, so the first red line names every failing cell.
     assert(fails.length == 0, format("%s failure(s): %-(%s | %)", fails.length, fails));
 }
@@ -407,6 +429,16 @@ private string[] oursCells(ref int ran) {
         drop(); ++ran;
         fails ~= compare("insert-renumbers", [q[0], p(0.9, 0), q[1], q[2],
             p(-0.5, -0.5), p(-0.9, 0)], null);
+    }
+    // A point inserted AFTER the linked pair leaves its link alone (B3's
+    // crosswise pair, then a point between p1 and p2: 6 vertices, not 7).
+    {
+        rig("x");
+        clickWorld(b3);
+        clickWorld(b3[1], p(-0.2, -0.2));
+        drop(); ++ran;
+        fails ~= compare("insert-after-target", [b3[0], b3[1], p(-0.2, -0.2), b3[2],
+            p(0.2, -0.2), p(-0.5, -0.5)], null);
     }
     // p0 dragged onto p3's marker is welded away: p2's link moves to p1's new
     // index 0 (4 vertices; read as a self weld it would be 5).
