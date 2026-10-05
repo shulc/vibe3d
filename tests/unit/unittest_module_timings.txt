@@ -140,7 +140,6 @@ UT 0.575 tools.create.box
 UT 0.010 tools.create.create_common
 UT 0.116 tools.create.pen
 UT 0.077 tools.create.sphere
-UT 0.018 tools.create.vertex_place
 UT 0.263 tools.edit.bridge_tool
 UT 0.177 tools.edit.edge_extend
 UT 0.010 tools.edit.edge_extrude

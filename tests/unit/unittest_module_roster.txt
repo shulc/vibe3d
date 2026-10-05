@@ -669,7 +669,6 @@ tools.create.box
 tools.create.create_common
 tools.create.pen
 tools.create.sphere
-tools.create.vertex_place
 tools.edit.bridge_tool
 tools.edit.edge_extend
 tools.edit.edge_extrude
