@@ -51,15 +51,14 @@ shared static this() {
         ToolTransition.meshRebuildDrop:        CloseReason.drop,
         ToolTransition.commandPreApplyDrop:    CloseReason.drop,
         ToolTransition.editCancelDrop:         CloseReason.none,
-        ToolTransition.panelDrop:              CloseReason.drop,
         ToolTransition.shutdownDrop:           CloseReason.drop,
     ];
 }
 
 unittest {
     enum n = [EnumMembers!ToolTransition].length;
-    static assert(n == 17, "M2 close table: the transition population changed");
-    assert(kTable.length == 17, format("M2 close table: %s literal rows, expected 17", kTable.length));
+    static assert(n == 16, "M2 close table: the transition population changed");
+    assert(kTable.length == 16, format("M2 close table: %s literal rows, expected 16", kTable.length));
     size_t rows;
     foreach (t; EnumMembers!ToolTransition) {
         auto want = t in kTable;
@@ -68,7 +67,7 @@ unittest {
                format("M2 close table: %s closes as %s, expected %s", t, closeReasonFor(t), *want));
         ++rows;
     }
-    assert(rows == 17);
+    assert(rows == 16);
     // `command` is the value of NO transition: it comes only from the funnel.
     foreach (t; EnumMembers!ToolTransition)
         assert(closeReasonFor(t) != CloseReason.command,

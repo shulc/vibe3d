@@ -672,7 +672,7 @@ private string collapseWhitespace(string source) {
     return result;
 }
 
-unittest { // C11: status bar owns one role dispatch and one tool drop
+unittest { // C11: status bar owns one role dispatch and no tool drop of its own
     import tests.unit.census_symbols : blankNonCode;
 
     const panels = blankNonCode(readText(
@@ -686,9 +686,10 @@ unittest { // C11: status bar owns one role dispatch and one tool drop
     const flatBody = collapseWhitespace(body);
     assert(flatBody.count(
             "if (action.kind == ActionKind.popup) { ImGui.OpenPopup(popupId); } else { dispatchAction(menu.actions, action);") == 1,
-        "6560 status popup branch: popup actions must open instead of dispatching and dropping the tool");
-    assert(body.count("dropActiveTool(ToolTransition.panelDrop)") == 1,
-        "6560 status drop: edit-mode actions must retain one post-dispatch tool drop");
+        "6560 status popup branch: popup actions must open instead of dispatching");
+    assert(body.count("dropActiveTool") == 0,
+        "9458 status drop: a mode button drops through the selection-mode funnel "
+        ~ "its command reaches, never a second post-dispatch drop");
     assert(body.count("tryOpenArgsDialog") == 0
         && body.count("uiCommandDelegate") == 0
         && body.count("activateToolById") == 0,

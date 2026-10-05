@@ -1,7 +1,5 @@
 module ui.panels;
 
-import tool_activation_ownership : ToolTransition;
-
 // Task 0419 (campaign 0407 §V1.2, continuation of 0415): the UI-panel block
 // that used to live as 23 nested functions inside app.d's main()
 // (drawSidePanel/drawStatusBar/drawTabPanel/drawLayerListPanel/
@@ -1604,8 +1602,6 @@ void drawStatusBar(EditorApp app, ActionMenuRoles menu) {
                 // on-highlight. New status-line buttons use dedicated
                 // command ids; legacy script buttons are still supported
                 // through select.typeFrom's first argstring line.
-                // Only these command/script branches can populate editModeId,
-                // so a popup can never reach the post-dispatch panel drop.
                 string editModeId;
                 if (action.kind == ActionKind.command) {
                     if      (action.id == "select.vertex")  editModeId = "vertices";
@@ -1704,8 +1700,6 @@ void drawStatusBar(EditorApp app, ActionMenuRoles menu) {
                         ImGui.OpenPopup(popupId);
                     } else {
                         dispatchAction(menu.actions, action);
-                        if (editModeId.length > 0)
-                            dropActiveTool(ToolTransition.panelDrop);
                     }
                 }
                 if (aiGateBlocked && ImGui.IsItemHovered())

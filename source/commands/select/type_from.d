@@ -13,7 +13,7 @@ import params : Param, wireArgs;
 /// Selection-types Stage 1: when an `applyHook` is supplied (the app wires it
 /// to its geometry-type switch funnel), `apply()` routes the switch through it
 /// so the SelType recent-ordering, the lockstep editMode write, the tool-drop
-/// on a front-flip, and the `currentTypeChanged` bus note all happen in ONE
+/// (task 9458: flip or not), and the `currentTypeChanged` bus note all happen in ONE
 /// place — keyboard keys 1/2/3 and this command share that single funnel.
 /// Without a hook (e.g. a standalone/headless construction) it falls back to
 /// writing `*editModePtr` directly, preserving the original behavior.

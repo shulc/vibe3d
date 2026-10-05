@@ -263,6 +263,21 @@ unittest {
         crossDoor("seltype-key-flip", () { key("2"); });
         ++ran;
     }
+    { // seltype-key-same-type (CD2s, task 9458): the current type's key drops too
+        boot(false);
+        cmd("select.typeFrom vertex");
+        key("w");
+        crossDoor("seltype-key-same-type", () { key("1"); });
+        ++ran;
+    }
+    { // mode-button-same-type (CD3s, task 9458): the Vertices button's own
+      // command while vertex (the status bar adds no drop of its own)
+        boot(false);
+        cmd("select.typeFrom vertex");
+        key("w");
+        crossDoor("mode-button-same-type", () { cmd("select.vertex"); });
+        ++ran;
+    }
     { // primary-move-item-list (CD4): a primary move inserts nothing. Ours
       // drops the tool there (the reference keeps it armed, a separate gap)
         boot(false);
@@ -413,5 +428,5 @@ unittest {
         ++ran;
     }
 
-    assert(ran == 27, format("constraint boot cells: ran %s, expected 27", ran));
+    assert(ran == 29, format("constraint boot cells: ran %s, expected 29", ran));
 }

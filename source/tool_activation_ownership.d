@@ -45,7 +45,8 @@ enum ToolTransition : ubyte {
     sameIdToggleDrop,
     /// A lifecycle redo re-dropping a tool it had restored.
     replayDrop,
-    /// A selection-type switch that FLIPS the front type (B2 tool-drop).
+    /// A selection-mode command (key, mode button, `select.typeFrom`), to a
+    /// new type or the current one (task 9458, K-CD CD2 / CD2s / CD3s).
     selTypeFlipDrop,
     /// The active-layer / primary change hook.
     activeLayerChangedDrop,
@@ -63,9 +64,6 @@ enum ToolTransition : ubyte {
     commandPreApplyDrop,
     /// `EditSession`'s cancel-then-drop during interactive undo.
     editCancelDrop,
-    /// A UI panel dropping the tool because the action it ran changes the
-    /// edit mode.
-    panelDrop,
     /// The `scope(exit)` drop at shutdown.
     shutdownDrop,
 }
@@ -146,7 +144,6 @@ ActivationDoor activationDoorFor(ToolTransition t) pure nothrow @safe @nogc {
         case ToolTransition.meshRebuildDrop:
         case ToolTransition.commandPreApplyDrop:
         case ToolTransition.editCancelDrop:
-        case ToolTransition.panelDrop:
             return ActivationDoor.legacyDeactivate;
     }
 }
@@ -203,7 +200,6 @@ CloseReason closeReasonFor(ToolTransition t) pure nothrow @safe @nogc {
         case ToolTransition.sceneResetDrop:
         case ToolTransition.meshRebuildDrop:
         case ToolTransition.commandPreApplyDrop:
-        case ToolTransition.panelDrop:
         case ToolTransition.shutdownDrop:
             return CloseReason.drop;
     }
@@ -212,8 +208,9 @@ CloseReason closeReasonFor(ToolTransition t) pure nothrow @safe @nogc {
 /// Whether a drop by this transition writes a DROP lifecycle row for a tool
 /// whose policy says `dropWritesRow` (wave plan 8640 S6, D6'): exactly the
 /// three user exits — Esc / Space / Q / `tool.set <id> off`, the armed tool's
-/// own button, a selection-type key that flips the front type. Captured:
-/// X-esc, X-space, X-q, X-sel, X-button-same (B-drop). A replay, a reset, a
+/// own button, a selection-mode command. Captured: X-esc, X-space, X-q, X-sel
+/// (a flip), X-button-same (B-drop); the current-type row is uncaptured (task
+/// 9458 keeps one door). A replay, a reset, a
 /// layer or document change and a command's own drop write no row.
 bool dropWritesRowFor(ToolTransition t) pure nothrow @safe @nogc {
     final switch (t) {
@@ -233,7 +230,6 @@ bool dropWritesRowFor(ToolTransition t) pure nothrow @safe @nogc {
         case ToolTransition.meshRebuildDrop:
         case ToolTransition.commandPreApplyDrop:
         case ToolTransition.editCancelDrop:
-        case ToolTransition.panelDrop:
         case ToolTransition.shutdownDrop:
             return false;
     }
@@ -279,7 +275,6 @@ PipeArmScope pipeArmScopeFor(ToolTransition t, bool rearmsActiveId)
         case ToolTransition.meshRebuildDrop:
         case ToolTransition.commandPreApplyDrop:
         case ToolTransition.editCancelDrop:
-        case ToolTransition.panelDrop:
         case ToolTransition.shutdownDrop:
             assert(0, "a drop has no pipe arm scope");
     }
@@ -307,7 +302,6 @@ bool armUsesAttrCache(ToolTransition t) pure nothrow @safe @nogc {
         case ToolTransition.meshRebuildDrop:
         case ToolTransition.commandPreApplyDrop:
         case ToolTransition.editCancelDrop:
-        case ToolTransition.panelDrop:
         case ToolTransition.shutdownDrop:
             assert(0, "a drop does not arm");
     }
@@ -346,7 +340,6 @@ ArmDoor armDoorFor(ToolTransition t, bool uiOrigin) pure nothrow @safe @nogc {
         case ToolTransition.meshRebuildDrop:
         case ToolTransition.commandPreApplyDrop:
         case ToolTransition.editCancelDrop:
-        case ToolTransition.panelDrop:
         case ToolTransition.shutdownDrop:
             assert(0, "a drop has no arm door");
     }
@@ -361,8 +354,7 @@ bool dropRemembersConstraint(ToolTransition t) pure nothrow @safe @nogc {
     switch (t) {
         case ToolTransition.explicitDrop:          // first-drop-move, K-CD Q
         case ToolTransition.sameIdToggleDrop:      // K-CD CD1 same-tool-key
-        case ToolTransition.selTypeFlipDrop:       // K-CD CD2 seltype-key-flip
-        case ToolTransition.panelDrop:             // K-CD CD3 / CD3s mode-button-*
+        case ToolTransition.selTypeFlipDrop:       // K-CD CD2 / CD2s, CD3 / CD3s (the mode buttons)
         case ToolTransition.documentReplaceDisarm: // E8 newscene-armed-seeds, scene-open-with-tool-armed
             return true;
         default: return false;  // primaryMoveDrop: K-CD CD4 primary-move-item-list

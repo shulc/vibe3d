@@ -38,9 +38,9 @@ private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 // The recorded partition. Read at 2026-09-05: four arms through the prepared
 // transaction, twelve drops through the legacy `Tool.deactivate()` — with the
 // measured reason at each group's case label in the table.
-private enum size_t kTransitions = 17;
+private enum size_t kTransitions = 16;
 private enum size_t kArms        = 4;
-private enum size_t kLegacyDrops = 13;   // task 9402: + primaryMoveDrop
+private enum size_t kLegacyDrops = 12;   // task 9402: + primaryMoveDrop; task 9458: - panelDrop
 
 private string[] productionSources() {
     string[] files;
@@ -121,7 +121,6 @@ unittest { // T-4f: every arm transition has one explicit pipe scope.
             case ToolTransition.meshRebuildDrop:
             case ToolTransition.commandPreApplyDrop:
             case ToolTransition.editCancelDrop:
-            case ToolTransition.panelDrop:
             case ToolTransition.shutdownDrop:
                 assert(0, "T-4f: a drop passed the isArm filter");
         }
@@ -172,7 +171,7 @@ private immutable SiteCount[] kSites = [
     SiteCount("explicitDrop",           3, "toolHost.deactivate, Space key and Esc ladder first rung"),
     SiteCount("sameIdToggleDrop",       1, "activateToolById's already-active toggle"),
     SiteCount("replayDrop",             1, "the lifecycle re-drop delegate inside armPreparedTool"),
-    SiteCount("selTypeFlipDrop",        2, "both B2 front-flip funnels"),
+    SiteCount("selTypeFlipDrop",        2, "both selection-mode funnels (geometry, item); task 9458: flip or not"),
     SiteCount("activeLayerChangedDrop", 1, "the primary-change hook"),
     SiteCount("documentReplaceDisarm",  1, "the tool_disarm seam body, a new document"),
     SiteCount("primaryMoveDrop",        1, "the same seam body, DisarmMode.dropOnly (task 9402)"),
@@ -181,7 +180,6 @@ private immutable SiteCount[] kSites = [
     SiteCount("commandPreApplyDrop",    1, "the command funnel's one pre-apply drop, after the "
                                           ~ "close (slice M2 folded the two branches)"),
     SiteCount("editCancelDrop",         1, "EditSession's cancel-then-drop"),
-    SiteCount("panelDrop",              1, "the shared status action that changes the edit mode"),
     SiteCount("shutdownDrop",           2, "the scope(exit) comment and its door assert — the "
                                           ~ "one drop with no dropActiveTool call"),
 ];
@@ -271,19 +269,19 @@ unittest {
     // through the per-row message rather than through a bare total.
     size_t total;
     foreach (r; kSites) total += r.count;
-    assert(total == 24,
-        format("task 4053: the site ledger now sums to %s, recorded 24 (task 9402: "
-               ~ "the primary move's own drop arrived) — say in "
+    assert(total == 23,
+        format("task 4053: the site ledger now sums to %s, recorded 23 (task 9458: "
+               ~ "the status bar's panel drop left) — say in "
                ~ "the commit which sites arrived or left", total));
 
     // And the total DECOMPOSES, which is what keeps 22 from being a number
     // with no structure:
-    //     16  dropActiveTool(With)(ToolTransition.…) calls
+    //     15  dropActiveTool(With)(ToolTransition.…) calls
     //   +  6  armPreparedTool(ToolTransition.…) calls
     //   +  2  shutdownDrop mentions — a comment and the door assert, the one
     //         drop with no call at all, because its scope(exit) is declared
     //         above the verb
-    //   = 24
+    //   = 23
     // This is not a restatement of the scan above: that one counts MENTIONS,
     // so a transition named only in a comment would satisfy it. These two
     // count CALLS, and the arithmetic closing is what says the 26 wired rows
@@ -313,10 +311,11 @@ unittest {
     // Slice M2 folded the funnel's two pre-apply drop calls into one (16 -> 15);
     // slice M4 removed the switch-restore replay arm (5 -> 4), then task 8261
     // added the closed-run owner replay arm (4 -> 5), and wave plan 8640 S6 the
-    // drop row's restore (5 -> 6); task 9402 the primary move's drop (15 -> 16).
-    assert(dropCalls == 16 && armCalls == 6,
+    // drop row's restore (5 -> 6); task 9402 the primary move's drop (15 -> 16);
+    // task 9458 removed the status bar's drop, its funnel drops (16 -> 15).
+    assert(dropCalls == 15 && armCalls == 6,
         format("task 4053: wired call sites moved — %s drops and %s arms, "
-               ~ "recorded 16 and 6. With the 2 shutdownDrop mentions (no call) "
+               ~ "recorded 15 and 6. With the 2 shutdownDrop mentions (no call) "
                ~ "these must sum to the ledger's %s.",
                dropCalls, armCalls, total));
     assert(dropCalls + armCalls + 2 == total,
@@ -605,12 +604,11 @@ unittest {
 unittest { // task 9402: the remembered-constraint rows, one per captured door
     // (fixtures/constraint_boot.json: first-drop-move, E8, drop_doors CD1-CD4).
     // The LIST, not a count: a row swapped for another keeps the count.
-    // panelDrop has no driven cell (an ImGui status button), so this is its witness.
     string[] reInsert;
     foreach (t; EnumMembers!ToolTransition)
         if (dropRemembersConstraint(t)) reInsert ~= t.to!string;
     assert(reInsert == ["explicitDrop", "sameIdToggleDrop", "selTypeFlipDrop",
-                        "documentReplaceDisarm", "panelDrop"],
+                        "documentReplaceDisarm"],
         format("task 9402: the re-insert doors are %s", reInsert));
     assert(!dropRemembersConstraint(ToolTransition.primaryMoveDrop),
         "task 9402: a primary move re-inserts nothing (K-CD CD4)");

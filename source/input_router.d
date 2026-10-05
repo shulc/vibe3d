@@ -610,14 +610,13 @@ struct InputRouter {
                     auto id = &bnd.id;
                     // Route the selection-type keys through the selection-type
                     // funnel: it promotes the SelType, sets editMode in lockstep,
-                    // and drops the active tool ONLY on a front-flip (pressing the
-                    // key for the mode you are already in does NOT drop the tool —
-                    // Stage 1 B2).
+                    // and drops the active tool, the current type's key included
+                    // (task 9458).
                     //
                     // `items` (task 0642) takes the OTHER funnel — `switchItemType`
                     // — because there is no EditMode to set in lockstep: EditMode
                     // is the geometry view and must keep its remembered value under
-                    // SelType.Item. Same front-flip contract otherwise.
+                    // SelType.Item. Same drop contract otherwise.
                     switch (*id) {
                         case "vertices": switchGeometryType(EditMode.Vertices); break;
                         case "edges":    switchGeometryType(EditMode.Edges);    break;
