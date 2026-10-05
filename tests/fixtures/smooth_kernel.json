@@ -3,7 +3,7 @@
     "schema": 1,
     "source": "live-capture",
     "reference_token": "ref-editor@11.2v3",
-    "method": "command-lane apply with debugger reads at the compute sites",
+    "method": "debug-live",
     "captured_utc": "2026-10-05",
     "task": "9484",
     "notes": "Only numerical observations and the read law were copied here. The private capture cards (K-F cells F3c/F3/F3i, K-F3k, K-F3s) remain the source of record."

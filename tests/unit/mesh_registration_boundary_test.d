@@ -251,8 +251,10 @@ unittest {
     // `commands.mesh.surface_attr` (+1).
     // Viewport shading S4b (task 9250): the lit shader reads the Reflection
     // images, `viewport_env` and its decoder `io.image_decode` (+2).
-    assert(meshClosure.queue.length == 182,
-        format("6509 import scanner closure=%d/182",
+    // Smooth kernel parity (task 9484): `commands.mesh.smooth` runs the shared
+    // relax kernel, the leaf `tools.edit.smooth_relax` (+1).
+    assert(meshClosure.queue.length == 183,
+        format("6509 import scanner closure=%d/183",
             meshClosure.queue.length));
     assert("editor_app" in positive.reached,
         "6509 positive control: registration does not reach editor_app");
