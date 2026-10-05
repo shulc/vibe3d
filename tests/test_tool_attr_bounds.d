@@ -276,6 +276,12 @@ unittest {
     const again = cmd("tool.attr mesh.loopSliceTool position ?")["value"];
     ok("tool.set mesh.loopSliceTool off");
     if (num(again) != 0) failed ~= format("position 0 re-activated reads %s", again);
+    // The row is the panels' range too (the tool clamps the write itself).
+    size_t ranged;
+    foreach (q; getJson("/api/registry?params=1")["toolParams"]["mesh.loopSliceTool"].array)
+        if (q["name"].str == "position" && "min" in q && "max" in q
+            && num(q["min"]) == 0 && num(q["max"]) == 1) ++ranged;
+    if (ranged != 1) failed ~= format("position's published range [0, 1] seen %d times", ranged);
     const mid = sliceAt("0.5");    // the rig cuts at all: the vertex list moves with the slice
     if (mid[1] == sliceAt("0.001")[1]) failed ~= "rig: 0.5 and 0.001 built the same mesh";
     assert(failed.length == 0, format("edge-end slices failed in %d:\n  %-(%s\n  %)",
