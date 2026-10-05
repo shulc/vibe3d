@@ -138,6 +138,27 @@ unittest // what the frame's draw puts on screen
 
     r.highlighted = false;
     assert(drawn(r, vp, m).length == 0, "an unhighlighted snap drew something");
+
+    // Idle edge and polygon targets: the rollover colour (uncaptured shapes:
+    // a 2 px line, a solid fill). Measured: the line is 4 opaque vertices; the
+    // fill is 4 opaque corners plus a 4-vertex transparent fringe (a closed
+    // outline would be 8 opaque).
+    g_heldGestureButtons.clear();
+    Mesh q;
+    foreach (p; [Vec3(-0.5f, -0.4f, 0), Vec3(0.5f, -0.4f, 0), Vec3(0.5f, 0.4f, 0), Vec3(-0.5f, 0.4f, 0)])
+        q.addVertex(p);
+    q.addFace([0u, 1u, 2u, 3u]);
+    r = SnapResult.init;
+    r.highlighted = true;
+    foreach (t; [SnapType.Edge, SnapType.Polygon]) {
+        r.targetType = t; r.targetIndex = 0;
+        auto got = drawn(r, vp, q);
+        immutable size_t opaque = got.filter!(v => v.col == roll).array.length;
+        assert(got.length == (t == SnapType.Edge ? 4 : 8) && opaque == 4,
+            format("%s: %s vertices, %s opaque", t, got.length, opaque));
+        foreach (v; got)
+            assert((v.col & 0x00FFFFFF) == (roll & 0x00FFFFFF), format("%s: a vertex of another colour", t));
+    }
 }
 
 // ---- the census: one draw site, tools publish -------------------------------
