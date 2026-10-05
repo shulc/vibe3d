@@ -188,7 +188,7 @@ version(unittest) unittest {
         commitPen.params_.currentPoint == -1 && commitPen.meshChanged &&
         commitContext.installTraceForTest() == [3,4,2,1,2,2,7,2,2]);
 
-    // F2 (task 9362): the mesh changed after p0's link was made, so the commit
+    // F2: the mesh changed after p0's link was made, so the commit
     // image shares no index — three own vertices after the two the mesh holds.
     auto bumpLayer = new Layer; GpuMesh bumpGpu;
     auto bumpPen = new PenTool(() => &bumpLayer.meshRef(), &bumpGpu,
@@ -537,7 +537,7 @@ private:
     int[]            links_;        // per point: the edited-mesh vertex it shares, or -1
     // The mesh `links_` index (0 or 1 element). An image attribute beside
     // `links_`, so a session restore brings back the key its links were made
-    // under; links are read only while it matches (`liveLinks`). Task 9362 F2.
+    // under; links are read only while it matches (`liveLinks`, below).
     SessionMeshKey[] strokeKey_;
     BoxHandler[]     vertHandlers;  // one cyan marker per in-progress vertex (handler.pos in WORLD)
     ToolHandles      toolHandles;   // single-source hover arbiter (Test pass)
@@ -1051,7 +1051,7 @@ public:
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
         // A drag that is (or on this event becomes) initiated resolves its
         // point once, below; the hover resolve would be overwritten on the
-        // same event (one resolve per motion, task 9362 s3).
+        // same event (one resolve per motion; wave plan A5 s3).
         if (dragArmed && !dragInitiated) {
             int dx = e.x - dragStartMX;
             int dy = e.y - dragStartMY;
@@ -1471,8 +1471,8 @@ private:
     // (any undo door, a reset, a Marks bump may move it under a live stroke).
     // Each link WRITER refreshes first: a changed mesh drops every older link
     // (its point becomes its own vertex) and re-stamps, so the new link, just
-    // resolved on the live mesh, is valid. Readers take `liveLinks`. Task 9362
-    // F2 (wave plan A5 §24.4, §25.1 #1); not captured — gap row.
+    // resolved on the live mesh, is valid. Readers take `liveLinks`. Pen wave
+    // plan A5 F2 (§24.4, §25.1 #1); not captured — gap row.
     void refreshLinks() {
         if (strokeKey_.length == 1 && strokeKey_[0].matches(*mesh)) return;
         links_[] = -1;
