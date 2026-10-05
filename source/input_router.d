@@ -766,7 +766,6 @@ struct InputRouter {
                 break;
             case EscapeRung.dropItems:
                 runCommandWithArgs("layer.select", "mode:clear");
-                app.promoteGeometryType(app.editMode);
                 break;
             case EscapeRung.nothing:
                 break;

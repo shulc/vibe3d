@@ -768,9 +768,7 @@ struct EditorApp {
     TopoPenFactories topoPenFactories;
 
     // ---- (г) hook delegates: nested functions in main(), captured via
-    //      `&funcName`; called bare (verbatim) inside the spans except
-    //      promoteItemType, which is address-taken once (Edit-class 2:
-    //      &promoteItemType -> promoteItemType at the one call site) ----
+    //      `&funcName`; called bare (verbatim) inside the spans ----
     // TASK 4053 — the tool-DROP verb. It was `void delegate(Tool)
     // setActiveTool` until the arm half became unreachable; the transition
     // argument is what `tool_activation_ownership.activationDoorFor` reads.
@@ -778,10 +776,9 @@ struct EditorApp {
     // Wave plan 8640 S6: the same drop carrying a `DropContext` (the Esc
     // rung's task row).
     void delegate(ToolTransition, DropContext) dropActiveToolWith;
-    void delegate()             promoteItemType;
     // Task 0642 — the deliberate item-mode door (`select.typeFrom item`, the
-    // Items status-line button, the Items key). Distinct from promoteItemType
-    // above: this one drops the active tool on a front-flip.
+    // Items status-line button, the Items key); it drops the active tool on a
+    // front-flip.
     void delegate()             switchItemType;
     void delegate(EditMode)     promoteGeometryType;
     void delegate(EditMode)     switchGeometryType;

@@ -2869,19 +2869,15 @@ void main(string[] args) {
     }
 
     // -------------------------------------------------------------------------
-    // Selection-types Stage 2a: an ITEM (layer) selection makes `SelType.Item`
-    // the current type. Mirrors switchGeometryType's front-flip contract but
-    // for the item type. Routed through the app-installed `onItemSelect` hook
-    // the layer.select command calls AFTER mutating the selection set, so the
-    // app's authoritative `selTypeOrder` (the source `/api/selection` reads)
-    // is promoted, not just the bus counter.
+    // Makes `SelType.Item` the current type without dropping the tool. Since
+    // task 9511 its one caller is the drop row's restore of a selection type;
+    // `layer.select` never promotes (K-CD4). Mirrors switchGeometryType's
+    // front-flip contract for the item type.
     //
     // Unlike the geometry-type switch, `editMode` is left UNCHANGED — it stays
     // the most-recent GEOMETRY type so viewport picking/drawing keeps a defined
     // mode under item selection (Design §1). A front-flip notes the current-type
-    // change on the bus; tool-drop on a genuine primary change is handled by
-    // onActiveLayerChanged (fired by the command's fireSwitchIfChanged), so this
-    // hook does NOT drop the tool itself.
+    // change on the bus; this does NOT drop the tool.
     //
     // Task 0642 renamed this to `promoteItemType` (it was `switchToItemType`) so it
     // pairs with `promoteGeometryType` above: BOTH are the "a selection
@@ -3785,7 +3781,6 @@ void main(string[] args) {
 
     app.dropActiveTool       = cast(void delegate(ToolTransition))&dropActiveTool;
     app.dropActiveToolWith   = &dropActiveToolWith;
-    app.promoteItemType      = cast(void delegate())&promoteItemType;
     app.switchItemType       = cast(void delegate())&switchItemType;
     app.promoteGeometryType  = cast(void delegate(EditMode))&promoteGeometryType;
     app.switchGeometryType   = cast(void delegate(EditMode))&switchGeometryType;

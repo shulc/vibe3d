@@ -17,7 +17,7 @@ private Command commandFor(LiveRegistrationRig rig, string id,
 
 private void registerItems(LiveRegistrationRig rig) {
     registerItemCommands(rig.registry, rig.liveSession(), rig.liveViewMode(),
-        ItemLifecycleDoors((size_t previous, size_t next) {}, () {}));
+        ItemLifecycleDoors((size_t previous, size_t next) {}));
 }
 
 unittest { // C7-isolated: image.remove and imagePlane.add use the live Document

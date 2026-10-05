@@ -285,7 +285,7 @@ unittest {
         cmd("layer.duplicate");
         key("w");
         crossDoor("primary-move-item-list", () {
-            cmd(commandBody("layer.select", `{"index":0,"mode":"set","list":true}`));
+            cmd(commandBody("layer.select", `{"index":0,"mode":"set"}`));
             assert(getJson("/api/layers")["active"].integer == 0, "the primary did not move");
             assert(armed(), "the item list's click must keep the tool armed, got " ~ tool());
         });

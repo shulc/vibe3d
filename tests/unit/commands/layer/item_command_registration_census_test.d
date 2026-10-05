@@ -87,10 +87,9 @@ unittest { // C2/C4: per-factory arguments and narrow registrar contexts
                   "ai3d.generate.open"])
         assert(spanFor(aiSpans, id).count("onActiveLayerChanged") == 0,
             "6355 hook census: " ~ id ~ " span must NOT carry the hook");
-    assert(itemRaw.count("doors.promoteItemType") == 1
-        && spanFor(itemSpans, "layer.select")
-               .count("doors.promoteItemType") == 1,
-        "6355 promotion census: layer.select must own the only promotion door");
+    assert(spanFor(itemSpans, "layer.select").count("new LayerSelect(") == 1
+        && itemRaw.count("promoteItemType") == 0,
+        "9511 promotion census: layer.select is registered with no type door");
     assert(spanFor(aiSpans, "ai3d.generate.start").count("controller") == 1
         && spanFor(aiSpans, "ai3d.generate.cancel").count("controller") == 1
         && spanFor(aiSpans, "ai3d.generate.open").count("openGenerate") == 1,
@@ -135,7 +134,7 @@ unittest { // C10: production wiring, old-path absence and call order
     enum callItem = "registerItemCommands(app.reg(), "
         ~ "LiveSessionRole(app.sessionOwner), "
         ~ "LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()), "
-        ~ "ItemLifecycleDoors(app.onActiveLayerChanged, app.promoteItemType));";
+        ~ "ItemLifecycleDoors(app.onActiveLayerChanged));";
     assert(registration.count(callItem) == 1,
         "6355 production wiring: item call text or multiplicity changed");
     assert(registration.count("registerAi3dCommands(app.reg(),") == 1,

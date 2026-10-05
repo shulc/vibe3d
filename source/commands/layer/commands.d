@@ -47,27 +47,12 @@ private abstract class LayerCommandBase : Command {
     // Active-layer-switch hook (installed by app.d). Null in unit-test
     // construction; commands that move activeIndex no-op the display side then.
     protected void delegate(size_t prev, size_t next) onSwitch;
-    // Item-selection-type hook (installed by app.d via setItemSelectHook). An
-    // item select makes `SelType.Item` the current type — but the authoritative
-    // `selTypeOrder` lives in app scene state, so the command calls back through
-    // this hook after mutating the selection set. Null in unit-test / headless
-    // construction (then the current-type promotion is simply skipped).
-    protected void delegate() onItemSelect;
 
     this(Mesh* mesh, ref View view, EditMode editMode, Document* doc,
          void delegate(size_t, size_t) onSwitch) {
         super(mesh, view, editMode);
         this.doc      = doc;
         this.onSwitch = onSwitch;
-    }
-
-    /// Install the item-select-type hook (app.d's promoteItemType). Kept off
-    /// the constructor so the 7 command ctors + the registration stay stable;
-    /// app.d sets it on the LayerSelect factory only (the lone item-select
-    /// command). Returns `this` for fluent registration.
-    LayerCommandBase setItemSelectHook(void delegate() dg) {
-        this.onItemSelect = dg;
-        return this;
     }
 
     // Resolve an `index` param (default -1 → active layer), clamped into range.
@@ -786,8 +771,10 @@ final class LayerDelete : LayerCommandBase {
 // exclusive-only select (`set` == today's behaviour) and any standalone
 // deselect. Routes the selection mutation through `doc.selectItem`, which holds
 // the SET invariants. A primary move funnels through `fireSwitchIfChanged`
-// (which fires `onActiveLayerChanged` on a genuine primary-OBJECT change), and
-// the item select promotes `SelType.Item` to current via `onItemSelect`.
+// (which fires `onActiveLayerChanged` on a genuine primary-OBJECT change).
+// Task 9511 (K-CD4): the command never changes the selection type and keeps
+// the armed tool, whatever its origin — the reference logs an item-list click
+// as the same plain selection command a script sends.
 //
 // Undo is UI-class: the FULL prior selection bitset + the primary identity are
 // snapshotted at apply (add/remove can touch several layers, so a single index
@@ -802,9 +789,8 @@ final class LayerSelect : LayerCommandBase {
     // entry per click. It is an argument on THIS command rather than a
     // `layer.selectByKind` of its own for the reason the `mode:clear` note
     // below already states for itself: the prior-set snapshot, the UI-class
-    // undo entry that restores it, the switch hook and the `SelType.Item`
-    // promotion are identical, and a second command would be a second copy of
-    // all four. Default "" == today's behaviour exactly; `injectParamsInto`
+    // undo entry that restores it and the switch hook are identical, and a
+    // second command would be a second copy of all three. Default "" == today's behaviour exactly; `injectParamsInto`
     // leaves an absent key alone, so no existing caller changes.
     private string kindArg  = "";
     // TASK 0671 — one EXACT snapshot of the whole item-selection state
@@ -817,10 +803,8 @@ final class LayerSelect : LayerCommandBase {
     private Document.ItemSelectionState prevSelection;
     private Layer       prevPrimary;   // only for the switch-hook comparison
     private size_t      prevActiveIndex;
-    // Task 9457 (K-CD4): the item list's click (`list:true`) keeps the
-    // selection type and the armed tool, and clears the component selection
-    // of each mesh leaving the foreground (restored by the undo).
-    private bool                listArg;
+    // Task 9457/9511 (K-CD4): the armed tool is kept, and each mesh leaving
+    // the foreground has its component selection cleared (undo restores it).
     private string              droppedTool;
     private Layer[]             leaving;
     private SelectionSnapshot[] leavingSel;
@@ -850,8 +834,7 @@ final class LayerSelect : LayerCommandBase {
                      [["set","Set"], ["add","Add"],
                       ["remove","Remove"], ["toggle","Toggle"],
                       ["clear","Clear"], ["range","Range"]], "set"),
-                 Param.enum_("kind", "Kind", &kindArg, kindChoices, ""),
-                 Param.bool_("list", "Item List Click", &listArg, false) ];
+                 Param.enum_("kind", "Kind", &kindArg, kindChoices, "") ];
     }
 
     /// Apply one item-selection mutation speculatively. If it moves the
@@ -873,11 +856,12 @@ final class LayerSelect : LayerCommandBase {
         }
     }
 
-    /// The tail every branch shares: publication, the switch hook, then
-    /// either the `SelType.Item` promotion or — for an item-list click — the
-    /// re-arm of the tool the guard dropped. `wasForeground` is null on revert.
+    /// The tail every branch shares: publication, the switch hook, then the
+    /// re-arm of the tool the guard dropped. `wasForeground` is null on revert
+    /// and for `mode:clear` / `kind:` — the reference sends those as other
+    /// commands, whose effect on component selection is uncaptured (9511).
     private void finishSelect(Layer before, size_t beforeIndex, bool[] wasForeground) {
-        if (listArg && wasForeground !is null) {
+        if (wasForeground !is null) {
             leaving = null;
             leavingSel = null;
             foreach (i, l; doc.layers)
@@ -891,12 +875,8 @@ final class LayerSelect : LayerCommandBase {
         }
         fireSwitchIfChanged(before, beforeIndex);
         noteItemSelectionChange();
-        if (!listArg) {
-            if (onItemSelect !is null) onItemSelect();
-        } else {
-            import tool_disarm : rearmToolAfterPrimaryMove;
-            rearmToolAfterPrimaryMove(droppedTool);
-        }
+        import tool_disarm : rearmToolAfterPrimaryMove;
+        rearmToolAfterPrimaryMove(droppedTool);
     }
 
     private bool[] foregroundMeshes() {
@@ -920,13 +900,12 @@ final class LayerSelect : LayerCommandBase {
         // It is a MODE of this command rather than a `layer.selectNone` of its
         // own because everything around the mutation is identical: the same
         // prior-set snapshot, the same UI-class undo entry that restores it,
-        // the same switch hook, the same `SelType.Item` promotion. A second
-        // command would be a second copy of all four, and the first one to
-        // drift would do it silently.
+        // the same switch hook. A second command would be a second copy of
+        // all three, and the first one to drift would do it silently.
         if (modeArg == "clear") {
             mutateGuardingPrimary(() { doc.clearItemSelection(); });
             noteUndoRecorded();   // task 2500
-            finishSelect(prevPrimary, prevActiveIndex, wasForeground);
+            finishSelect(prevPrimary, prevActiveIndex, null);
             return true;
         }
 
@@ -959,7 +938,7 @@ final class LayerSelect : LayerCommandBase {
                         doc.selectItem(l, batchMode);
             });
             noteUndoRecorded();   // task 2500
-            finishSelect(prevPrimary, prevActiveIndex, wasForeground);
+            finishSelect(prevPrimary, prevActiveIndex, null);
             return true;
         }
 

@@ -19,10 +19,6 @@ import ui.item_rows : ItemRow, RowRole;
 import ui.panel_chrome : popPanelChromeStyle, publishPanelZone,
     pushPanelChromeStyle;
 
-/// A row click's extra `layer.select` argument: the item list keeps the
-/// selection type and the armed tool (K-CD4 rule 1).
-enum string kItemListClickArg = `,"list":true`;
-
 struct LayerListReadRole {
 private:
     Session* owner_;
@@ -526,7 +522,7 @@ void drawLayerListPanel(LayerListReadRole read, LayerListActions actions,
                         actions.commandDispatch()("layer.select",
                             `{"index":` ~ to!string(r.index) ~ `,"mode":`
                             ~ itemClickMode(ImGui.GetIO().KeyCtrl, shiftHeld)
-                            ~ kItemListClickArg ~ `}`);
+                            ~ `}`);
                 }
                 roleMin = ImGui.GetItemRectMin();
                 roleMax = ImGui.GetItemRectMax();
@@ -650,7 +646,7 @@ void drawLayerListPanel(LayerListReadRole read, LayerListActions actions,
                     if (ImGui.GetIO().KeyCtrl || shiftHeld || !r.isSoleSelection)
                         actions.commandDispatch()("layer.select",
                             `{"index":` ~ to!string(r.index) ~ `,"mode":`
-                            ~ mode ~ kItemListClickArg ~ `}`);
+                            ~ mode ~ `}`);
                 }
                 if (dbl) {
                     // The RAW name, never the displayed one: seeding the

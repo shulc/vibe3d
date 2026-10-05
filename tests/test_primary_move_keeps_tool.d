@@ -1,6 +1,7 @@
-// Task 9457: an item-list click that moves the primary mesh keeps the armed
-// tool and the selection type; the Items mode command drops the tool.
-// Evidence: the private capture K-CD4 (cells named per block below).
+// Task 9457/9511: a `layer.select` that moves the primary mesh keeps the armed
+// tool and the selection type, whatever its origin (the reference logs the item
+// list's click as the plain selection command a script sends); the Items mode
+// command drops the tool. Evidence: the private capture K-CD4 (cells per block).
 module test_primary_move_keeps_tool;
 
 import drag_helpers : playAndWait, buildDragLog, fetchCamera;
@@ -14,10 +15,6 @@ import std.string : indexOf;
 
 void main() {}
 
-/// The params the item list's row click adds to `layer.select`
-/// (`source/ui/layer_list_panel.d`, pinned there by the census below).
-enum string kListArg = `,"list":true`;
-
 private void cmd(string text) {
     const body_ = text[0] == '{' || text.indexOf(' ') >= 0 ? text : commandBody(text);
     auto r = postJson("/api/command", body_);
@@ -25,9 +22,9 @@ private void cmd(string text) {
     quiesce();
 }
 
-private void listClick(int index) {
-    cmd(commandBody("layer.select",
-        format(`{"index":%d,"mode":"set"%s}`, index, kListArg)));
+/// The item list's plain row click: the same command a script sends.
+private void click(int index) {
+    cmd(commandBody("layer.select", format(`{"index":%d,"mode":"set"}`, index)));
 }
 
 private void key(int sym, int scan, int mod = 0) {
@@ -104,7 +101,7 @@ unittest {
     assert(armed(), "rig: the move tool armed");
     const a0 = verts(0), b0 = verts(1);
     const depth = getJson("/api/history")["undo"].array.length;
-    listClick(1);
+    click(1);
     assert(primary() == 1, "the click moves the primary to B");
     assert(selType() == "vertex",
         "an item-list click keeps the selection type, got " ~ selType());
@@ -129,7 +126,7 @@ unittest {
     assert(selectedVerts() == [0], "rig: A keeps v0");
     keyW();
     const a0 = verts(0), b0 = verts(1);
-    listClick(1);
+    click(1);
     assert(selectedVerts() == [2], "the incoming mesh keeps its own selection");
     drag();
     assert(moved(0, a0).length == 0, "A's selected vertex must not move");
@@ -142,8 +139,8 @@ unittest {
 unittest {
     rig();
     keyW();
-    listClick(1);
-    listClick(0);
+    click(1);
+    click(0);
     assert(primary() == 0 && armed(), "back on A with the tool armed");
     assert(selectedVerts().length == 0,
         "the click cleared A's selection when A left the foreground, got "
@@ -166,7 +163,7 @@ unittest {
     drag();
     const a1 = verts(0);
     assert(moved(0, a0) == [0], "the first drag moves A's selected vertex");
-    listClick(1);
+    click(1);
     assert(moved(0, a0) == [0], "the click keeps the committed drag on A");
     drag();
     assert(moved(1, b0).length == 8, "the second drag moves B");
@@ -199,10 +196,10 @@ unittest {
 // foreground keeps A's selection and the type (nothing leaves).
 unittest {
     rig();
-    listClick(1);
+    click(1);
     assert(primary() == 1 && !armed(), "a click with nothing armed arms nothing, got " ~ tool());
     rig();
-    cmd(commandBody("layer.select", `{"index":1,"mode":"toggle"` ~ kListArg ~ `}`));
+    cmd(commandBody("layer.select", `{"index":1,"mode":"toggle"}`));
     assert(primary() == 0 && selType() == "vertex",
         "a toggle that adds B keeps A primary and the type");
     assert(selectedVerts() == [0], "A stays in the foreground and keeps its selection, got "
@@ -214,7 +211,7 @@ unittest {
 // armed across the undo that moves the primary back.
 unittest {
     rig();
-    listClick(1);
+    click(1);
     cmd("tool.set mesh.tack on");
     const depth = getJson("/api/history")["undo"].array.length;
     assert(armed() && depth == 1, "rig: tack armed with no row above the click, depth "

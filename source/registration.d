@@ -12,8 +12,7 @@ import tool_activation_ownership : ToolTransition;
 // roles and narrow dependency packages explicitly.
 // The only line-level edits versus the original app.d text are the
 // documented Edit-class 1 (`&x` -> `&x()` on the four address-taken
-// pointer-backed locals: gpu/editMode/document) and Edit-class 2
-// (`&promoteItemType` -> `promoteItemType`, the one address-taken hook).
+// pointer-backed locals: gpu/editMode/document).
 //
 // Phase 0 (this commit): skeleton only -- both functions are empty stubs,
 // not called anywhere yet. `dub build` glob-compiles source/ regardless of
@@ -238,7 +237,7 @@ void registerCommands(EditorApp app) {
         app.toolHostView);
     registerItemCommands(app.reg(), LiveSessionRole(app.sessionOwner),
         LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()),
-        ItemLifecycleDoors(app.onActiveLayerChanged, app.promoteItemType));
+        ItemLifecycleDoors(app.onActiveLayerChanged));
     version (web) {
     } else {
         registerAi3dCommands(app.reg(), LiveSessionRole(app.sessionOwner),

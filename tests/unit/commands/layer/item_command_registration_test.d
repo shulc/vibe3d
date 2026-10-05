@@ -35,20 +35,15 @@ private immutable string[5] kAi3dIds = [
 ];
 
 private void registerFamilies(LiveRegistrationRig rig,
-        void delegate(size_t, size_t) hook, void delegate() promote) {
+        void delegate(size_t, size_t) hook) {
     registerItemCommands(rig.registry, rig.liveSession(), rig.liveViewMode(),
-        ItemLifecycleDoors(hook, promote));
+        ItemLifecycleDoors(hook));
     registerAi3dCommands(rig.registry, rig.liveSession(), rig.liveViewMode(),
         hook, new Ai3dJobController, (string path) {});
 }
 
 private void registerFamilies(LiveRegistrationRig rig) {
-    registerFamilies(rig, (size_t previous, size_t next) {}, () {});
-}
-
-private void registerFamilies(LiveRegistrationRig rig,
-        void delegate(size_t, size_t) hook) {
-    registerFamilies(rig, hook, () {});
+    registerFamilies(rig, (size_t previous, size_t next) {});
 }
 
 private Command commandFor(LiveRegistrationRig rig, string id,
@@ -79,7 +74,7 @@ unittest { // C1: exact population and key-to-class identity
     assert(rig.registry.commandIds().length == 0,
         "6355 population floor: the rig registry must begin empty");
     registerItemCommands(rig.registry, rig.liveSession(), rig.liveViewMode(),
-        ItemLifecycleDoors((size_t previous, size_t next) {}, () {}));
+        ItemLifecycleDoors((size_t previous, size_t next) {}));
     static assert(kItemIds.length == 15);
     assert(rig.registry.commandIds().length == 15,
         format("6355 item population: expected 15 ids, got %d",
@@ -141,10 +136,8 @@ unittest { // C3: every factory resolves Mesh, View and EditMode at fire time
     assert(targets == 20, "6355 live input target visited fewer than 20 ids");
 }
 
-unittest { // C5: both item lifecycle doors are mandatory
-    assertThrown!AssertError(ItemLifecycleDoors(null, () {}));
-    assertThrown!AssertError(ItemLifecycleDoors(
-        (size_t previous, size_t next) {}, null));
+unittest { // C5: the item lifecycle door is mandatory
+    assertThrown!AssertError(ItemLifecycleDoors(null));
     static assert(!__traits(compiles, ItemLifecycleDoors()));
 }
 
@@ -233,16 +226,18 @@ unittest { // C7: image.remove and imagePlane.add address the live Document
         "6355 imagePlane.add appended to the stale document");
 }
 
-unittest { // C8: layer.select reaches the item-type promotion door
+unittest { // C8: layer.select never changes the selection type (9511, K-CD4)
     auto rig = new LiveRegistrationRig;
-    registerFamilies(rig, (size_t previous, size_t next) {},
-        () { rig.session.promoteItemType(); });
-    assert(currentSelType(rig.session.selTypeOrder) != SelType.Item,
-        "6355 promotion floor: Item was already the current selection type");
+    registerFamilies(rig);
+    const typeBefore = currentSelType(rig.session.selTypeOrder);
+    assert(typeBefore != SelType.Item,
+        "9511 floor: Item was already the current selection type");
     auto command = commandFor(rig, "layer.select", `{"index":1,"mode":"set"}`);
-    assert(command.apply(), "6355 layer.select promotion fixture refused");
-    assert(currentSelType(rig.session.selTypeOrder) == SelType.Item,
-        "6355 layer.select did not promote the item selection type");
+    assert(command.apply(), "9511 layer.select fixture refused");
+    assert(rig.session.document.primary is rig.session.document.layers[1],
+        "9511 control: layer.select did not move the primary");
+    assert(currentSelType(rig.session.selTypeOrder) == typeBefore,
+        "9511 layer.select changed the selection type");
 }
 
 unittest { // C9: hook reaches the commands that can move primary

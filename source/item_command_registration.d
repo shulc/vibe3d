@@ -8,30 +8,24 @@ import commands.layer.commands : LayerAdd, LayerAttr, LayerDelete, LayerDuplicat
 import live_registration_roles : LiveSessionRole, LiveViewModeRole;
 import registry : Registry;
 
-/// The two application lifecycle doors used by item commands. Both are wired
-/// before command registration; a missing delegate is a composition error.
+/// The application lifecycle door used by item commands. It is wired before
+/// command registration; a missing delegate is a composition error. Task 9511
+/// removed the item-type door: `layer.select` never changes the type (K-CD4).
 struct ItemLifecycleDoors {
 private:
     void delegate(size_t, size_t) onActiveLayerChanged_;
-    void delegate() promoteItemType_;
 
 public:
     @disable this();
 
-    this(void delegate(size_t, size_t) onActiveLayerChanged,
-         void delegate() promoteItemType) {
-        assert(onActiveLayerChanged !is null && promoteItemType !is null,
-            "item registration requires the active-layer hook and the item-type door");
+    this(void delegate(size_t, size_t) onActiveLayerChanged) {
+        assert(onActiveLayerChanged !is null,
+            "item registration requires the active-layer hook");
         onActiveLayerChanged_ = onActiveLayerChanged;
-        promoteItemType_ = promoteItemType;
     }
 
     void delegate(size_t, size_t) onActiveLayerChanged() {
         return onActiveLayerChanged_;
-    }
-
-    void delegate() promoteItemType() {
-        return promoteItemType_;
     }
 }
 
@@ -53,9 +47,8 @@ void registerItemCommands(ref Registry reg, LiveSessionRole owner,
         new LayerReorder(&owner.activeMesh(), live.view(), live.mode,
                          owner.document(), doors.onActiveLayerChanged()));
     reg.registerCommand("layer.select", () => cast(Command)
-        (new LayerSelect(&owner.activeMesh(), live.view(), live.mode,
-                         owner.document(), doors.onActiveLayerChanged()))
-            .setItemSelectHook(doors.promoteItemType()));
+        new LayerSelect(&owner.activeMesh(), live.view(), live.mode,
+                        owner.document(), doors.onActiveLayerChanged()));
     reg.registerCommand("layer.rename", () => cast(Command)
         new LayerRename(&owner.activeMesh(), live.view(), live.mode,
                         owner.document(), doors.onActiveLayerChanged()));

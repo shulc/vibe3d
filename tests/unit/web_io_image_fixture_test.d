@@ -175,7 +175,7 @@ unittest {
     Registry reg;
     registerItemCommands(reg, LiveSessionRole(session),
         LiveViewModeRole(cast(LiveView)&liveView, session.editModePtr()),
-        ItemLifecycleDoors((size_t a, size_t b) {}, () {}));
+        ItemLifecycleDoors((size_t a, size_t b) {}));
 
     // A loaded image to replace, loaded on the desktop path from a real file.
     const src = buildPath(root, "src");
