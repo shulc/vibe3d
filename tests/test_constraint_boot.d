@@ -235,6 +235,30 @@ unittest {
         expect("tool-switch-keeps-point arm pen", s[2]);
         ++ran;
     }
+    { // same-key-drop-keeps: the tool's own key drops it (not a door the guard
+      // admits); a constraint already in the pipe stays (first-drop-move rows
+      // "arm pen" / "drop pen": every later tool transition keeps it)
+        boot(true);
+        key("w");
+        key("w");
+        assert(tool() == "null" || tool() == `""`, "the move key left move armed: " ~ tool());
+        expect("same-key-drop-keeps", fixtureCase("first-drop-move")["steps"][5]);
+        ++ran;
+    }
+    { // load-no-tool-no-seed: a scene load with no tool armed drops nothing
+      // and inserts nothing (captured scene-open-no-tool)
+        auto c = fixtureCase("scene-open-no-tool");
+        boot(false);
+        auto r = postJson("/api/command", commandBody("scene.loadMesh",
+            `{"vertices":[[0,0,0],[1,0,0],[0,0,1]],"faces":[[0,1,2]]}`));
+        assert(r["status"].str == "ok", "scene.loadMesh: " ~ r.toString);
+        quiesce();
+        expect("load-no-tool-no-seed", c["after"]);
+        key("w");
+        key("q");
+        expect("load-no-tool-no-seed drop", c["after_extra_move_arm_drop"]);
+        ++ran;
+    }
     { // switch-not-a-drop: arming over an armed tool inserts nothing
         auto c = fixtureCase("switch-no-seed");
         boot(false);
@@ -303,5 +327,5 @@ unittest {
         ++ran;
     }
 
-    assert(ran == 19, format("constraint boot cells: ran %s, expected 19", ran));
+    assert(ran == 21, format("constraint boot cells: ran %s, expected 21", ran));
 }

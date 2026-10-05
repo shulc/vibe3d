@@ -85,6 +85,8 @@ struct PreparedConstrainCompositionProjection {
 
 unittest {
     auto live = new ConstrainStage();
+    assert(!live.enabled && live.geom == ConstrainGeom.Off &&
+           live.remembered == Remembered.yes, "fresh constrain stage is not the boot state");
     live.enabled = true;
     live.geom = ConstrainGeom.Screen;
     live.offset = 4.0f;

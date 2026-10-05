@@ -475,6 +475,49 @@
    "after_toggle_off": {
     "enabled": false
    }
+  },
+  {
+   "id": "scene-open-with-tool-armed",
+   "post_first_drop": false,
+   "selection": null,
+   "before": {
+    "enabled": false
+   },
+   "gesture": [
+    "arm the move tool",
+    "open a saved scene file"
+   ],
+   "after": {
+    "enabled": true,
+    "geometry": "off",
+    "offset": 0.0,
+    "handle": true,
+    "double_sided": false
+   },
+   "after_tool_armed": false,
+   "note": "the open drops the armed tool through a flush drop (journal: open, then the tool's flush drop), which re-inserts the remembered constraint - same door as a new scene with a tool armed"
+  },
+  {
+   "id": "scene-open-no-tool",
+   "post_first_drop": false,
+   "selection": null,
+   "before": {
+    "enabled": false
+   },
+   "gesture": [
+    "open a saved scene file"
+   ],
+   "after": {
+    "enabled": false
+   },
+   "after_extra_move_arm_drop": {
+    "enabled": true,
+    "geometry": "off",
+    "offset": 0.0,
+    "handle": true,
+    "double_sided": false
+   },
+   "note": "with no tool armed the open inserts nothing"
   }
  ]
 }
