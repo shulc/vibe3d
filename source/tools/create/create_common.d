@@ -217,7 +217,7 @@ Viewport planeLocalViewport(const ref Viewport vp, in WorkplaneFrame frame) {
 /// A create tool's mover drag (M-HANDLE): the centre at the press
 /// plus the pointer travel, in `frame`'s LOCAL space (= the Position channels).
 /// Arrows 0/1/2 travel along the drawn arrow (LAW A, own); the centre box by
-/// LAW B linearised at the press centre on its principal plane (task 9502,
+/// LAW B linearised at the press centre on its principal plane (capture
 /// K-CM), on the plane-local view (§14 read by §23). False = skip.
 bool moverDrag(const ref HandleDrag grab, int part, int mx, int my, MoveHandler mover,
                in WorkplaneFrame frame, const ref Viewport vp, out Vec3 centre)

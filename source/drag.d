@@ -1577,7 +1577,7 @@ Vec3 planeDragDelta(int mx,     int my,
 
 /// The normal axis of the primitive centre box's plane (`DragKind.principalPlane`):
 /// a locked orthographic view's axis, else the dominant component of the eye
-/// vector at the centre (task 9502: the perspective pick is unwitnessed, gap 585).
+/// vector at the centre (the perspective pick is unwitnessed: gap 585).
 int primitiveCenterPlaneAxis(Vec3 reference, const ref Viewport vp) {
     int axis = lockedViewAxis(vp);
     if (axis >= 0) return axis;
@@ -1620,7 +1620,7 @@ enum DragKind : ubyte {
     screenAxis,     // LAW A own: the segment point → point + axis, gain |axis|
     viewPlane,      // LAW B: `planeDragDelta` on `plane` (3..6) of the basis
     handlePlane,    // LAW B on a handle's own plane, rounded as the planar mode
-    principalPlane, // LAW B on `plane` (4..6), the planar form (task 9502, K-CM)
+    principalPlane, // LAW B on `plane` (4..6), the planar form (capture K-CM)
     planeHit,       // the pointer's hit on the plane (point, `normal`)
 }
 
