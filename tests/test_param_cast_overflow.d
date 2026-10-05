@@ -19,9 +19,8 @@
 // Everything else in the neighbourhood is unreachable and is deliberately not
 // probed: `1e999` makes std.json throw `Range error` before our code runs; a
 // bare `nan` in an argstring parses as a STRING and `_jsonFloat` silently
-// answers 0.0f; and the argstring number grammar has no exponent at all, so
-// `1e39` can only be delivered as JSON (which is what the `_positional` form
-// below does).
+// answers 0.0f. `1e39` is delivered as JSON (the `_positional` form below);
+// the argstring grammar reads exponents too since task 9492.
 //
 // WHY THIS IS A TEST AND NOT A SANITIZER RUN
 // ------------------------------------------
@@ -124,8 +123,7 @@ unittest { // BoundedIntTooLParamsSurviveWireInfinity
         }
         ++checked;
 
-        // JSON `_positional`, not an argstring: the argstring number grammar
-        // has no exponent, so `1e39` cannot be expressed there at all.
+        // JSON `_positional`: the double reaches the gate unchanged.
         auto injected = postCmd(format(
             `{"id":"tool.attr","params":{"_positional":["%s","%s",1e39]}}`,
             s.tool, s.name));

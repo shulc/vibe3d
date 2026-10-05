@@ -107,7 +107,7 @@ unittest { // EnforcedIntSurvivesEveryWireExtreme
     // question, not a clamp question, and is deliberately not probed here).
     // NaN is NOT reachable over the wire at all: bare `nan` in an argstring
     // parses as a STRING and `_jsonFloat` silently answers 0.0f, and the
-    // argstring number grammar has no exponent. inf, -inf and plain int
+    // argstring delivers an exponent the same way (task 9492). inf, -inf and plain int
     // overflow are the whole reachable extreme set.
     foreach (lit; ["1e39", "-1e39", "3000000000", "-3000000000",
                    "2147483648", "0", "-1"]) {

@@ -89,7 +89,7 @@ private void armTransformScaleOnly() {
 // Block 1 — the JSON route refuses a non-finite, and the mesh survives.
 //
 // `1e300` is the reachable input, and it is reachable precisely BECAUSE it is
-// finite: JSON has no NaN literal and the argstring grammar has no exponent,
+// finite: JSON has no NaN literal (nor does the argstring grammar),
 // so the audit's "a NaN defeats the clamp" arrives as a perfectly ordinary
 // double whose narrowing to `float` is infinite. Measured before the fix:
 // this pair of calls put a non-finite in all 24 vertex components
