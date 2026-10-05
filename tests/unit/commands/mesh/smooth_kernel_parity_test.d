@@ -334,6 +334,23 @@ unittest {
         if (viaBrute == p) ++misses; else ++hits;
     }
     assert(hits == 3106 && misses == 894, format("hit population %d / %d", hits, misses));
+    // An exact |t| tie on both sides (sheets at y = +1.5, indices 0-3, and y = -1.5,
+    // indices 4-7, split into two leaves): the lower triangle index wins.
+    RelaxVec3[3][] sheets;
+    foreach (y; [1.5, -1.5]) foreach (x; 0 .. 2) {
+        RelaxVec3[3] a = [RelaxVec3(x, y, 0), RelaxVec3(x + 1, y, 0), RelaxVec3(x + 1, y, 1)];
+        RelaxVec3[3] b = [RelaxVec3(x, y, 0), RelaxVec3(x + 1, y, 1), RelaxVec3(x, y, 1)];
+        sheets ~= a;
+        sheets ~= b;
+    }
+    foreach (pt; [RelaxVec3(0.3, 0, 0.6), RelaxVec3(1.7, 0, 0.4)]) {
+        RelaxVec3 viaIndex = pt, viaBrute = pt;
+        SurfaceLineIndex(sheets).project(viaIndex, Vec3(0, 1, 0));
+        projectOntoSurfaceBrute(viaBrute, Vec3(0, 1, 0), sheets);
+        assert(viaBrute.y == 1.5, "control: the brute pass takes the first sheet");
+        assert(viaIndex == viaBrute, format("a |t| tie took y %g, the brute pass y %g",
+            viaIndex.y, viaBrute.y));
+    }
     // A line inside a wall's padded box but off its plane: t = ±inf, no hit.
     RelaxVec3[3][] wall = [[RelaxVec3(1, 0, 0), RelaxVec3(1, 1, 0), RelaxVec3(1, 0, 1)]];
     const wallIndex = SurfaceLineIndex(wall);
@@ -383,7 +400,7 @@ unittest {
     import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
     import std.path : buildPath;
     import prefs : loadPrefs;
-    import toolpipe.attr_cache : kToolNode, recallNodeAttrs;
+    import toolpipe.attr_cache : PipelineAttrCache, kToolNode, recallNodeAttrs;
     const dir = buildPath(tempDir(), "vibe3d_smooth_prefs_9484");
     mkdirRecurse(dir);
     scope(exit) rmdirRecurse(dir);
@@ -419,17 +436,22 @@ unittest {
         ~ `"toolDefaults":{"xfrm.smooth":{"sharpThreshold":"-1","iter":"3"}},`
         ~ `"toolAttrCache":{"bevel":{"tool":{"sharpThreshold":"-1"}},`
         ~ `"xfrm.smooth":{"falloff":{"sharpAngle":"5"}}}}`);
+    static string attrOf(const ref PipelineAttrCache c, string preset, string node, string name) {
+        auto attrs = c.lookup(preset, node);
+        auto v = attrs is null ? null : name in *attrs;
+        return v is null ? "<none>" : *v;
+    }
     auto old = loadPrefs(dir).toolAttrCache;
-    const legacy = old.lookup("xfrm.smooth", kToolNode);
-    assert(legacy.length == 1 && (*legacy)["iter"] == "3",
+    assert(attrOf(old, "xfrm.smooth", kToolNode, "sharpThreshold") == "<none>"
+        && attrOf(old, "xfrm.smooth", kToolNode, "iter") == "3",
         "the legacy section drops the retired threshold");
-    assert((*old.lookup("bevel", kToolNode))["sharpThreshold"] == "-1",
+    assert(attrOf(old, "bevel", kToolNode, "sharpThreshold") == "-1",
         "another preset's attribute of the same name is kept");
-    assert((*old.lookup("xfrm.smooth", "falloff"))["sharpAngle"] == "5",
+    assert(attrOf(old, "xfrm.smooth", "falloff", "sharpAngle") == "5",
         "another node's attribute of the same name is kept");
     Prefs cur;
     cur.toolAttrCache.store("xfrm.smooth", kToolNode, ["sharpThreshold": "45"]);
     savePrefs(cur, dir);
-    assert((*loadPrefs(dir).toolAttrCache.lookup("xfrm.smooth", kToolNode))["sharpThreshold"] == "45",
+    assert(attrOf(loadPrefs(dir).toolAttrCache, "xfrm.smooth", kToolNode, "sharpThreshold") == "45",
         "a file this build saves keeps the threshold");
 }
