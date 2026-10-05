@@ -17,6 +17,7 @@ import mesh_gpu : GpuMesh;
 import params : Param;
 import tool : Tool;
 import tools.alignment.array_tool : ArrayTool;
+import tools.alignment.clone_tool : CloneTool;
 import tools.alignment.radial_array_tool : RadialArrayTool;
 import tools.deform.smooth_shift_tool : SmoothShiftTool;
 import tools.edit.edge_bevel : EdgeBevelTool;
@@ -252,6 +253,23 @@ unittest {
     row!ArrayTool(EditMode.Polygons, &pickFace, ["numX", "offX", "offY", "offZ", "merge",
         "dist"], [2.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f], 8, 6, 32.0, &hideAllUnselected, true);
     assert(rows == 7, format("%s rows ran, expected 7", rows));
+}
+
+// Clone's scripted apply at Merge on, distance 0 (task 9462): one exact copy of
+// face 0 welds back onto the cube and the doubled face drops, 8v/6f; merge off
+// keeps the copy, 12v/7f. Clone has no prepared seed, so no `row`.
+unittest {
+    foreach (merge; [true, false]) {
+        auto r = new Rig(EditMode.Polygons, &pickFace);
+        auto t = new CloneTool(() => &r.mesh, &r.gpu, &r.mode);
+        t.activate();
+        poke(t, "merge", merge ? 1 : 0);
+        assert(t.applyHeadless(), "clone: the scripted apply refused");
+        const want = merge ? [8, 6] : [12, 7];
+        assert(r.mesh.vertices.length == want[0] && r.mesh.faces.length == want[1],
+            format("clone merge %s at distance 0: %sv/%sf, expected %sv/%sf", merge,
+                r.mesh.vertices.length, r.mesh.faces.length, want[0], want[1]));
+    }
 }
 
 // The callers' pre-steps around the one operation (task 9434 sweep): each
