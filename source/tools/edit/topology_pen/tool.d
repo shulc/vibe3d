@@ -2198,8 +2198,7 @@ public:
         g.retarget(meshOrNull(), innerSnap_, backFace_);
         g.aimAt(vp, mx, my);
         if (exclude.length == 0)
-            return weldTargetVertex(mx, my, vp, topoPenSnapAcceptPx(vp, dragSnap_),
-                                    &g.admits);
+            return weldTargetVertex(mx, my, vp, &g.admits);
         // Composed, not folded into the guide: the guide states the TOOL'S
         // admission policy (border / orientation), which is a property of the
         // mesh and the attributes, while the moving set is a property of one
@@ -2210,7 +2209,7 @@ public:
                 foreach (x; exclude) if (cast(int)x == idx) return false;
             return g.admits(t, idx, slot);
         };
-        return weldTargetVertex(mx, my, vp, topoPenSnapAcceptPx(vp, dragSnap_), admit);
+        return weldTargetVertex(mx, my, vp, admit);
     }
 
     /// Split's target C (task 8690): the NEAREST admitted vertex within the
@@ -2233,7 +2232,7 @@ public:
             if (t == SnapType.Vertex && idx == a) return false;
             return g.admits(t, idx, slot);
         };
-        return weldTargetVertex(mx, my, vp, topoPenSnapAcceptPx(vp, dragSnap_), admit);
+        return weldTargetVertex(mx, my, vp, admit);
     }
     private PenSnapGuide splitGuide_;
 
@@ -2245,14 +2244,14 @@ public:
     /// guides: `admit` IS the gesture's policy, and the registered guide would
     /// veto the interior target Split's own guide admits.
     private int weldTargetVertex(int mx, int my, const ref Viewport vp,
-                                 float acceptPx, scope SnapAdmit admit) {
+                                 scope SnapAdmit admit) {
         auto m = mesh;
         if (m is null) return -1;
         SnapPacket pkt = dragSnap_;
         pkt.enabled      = true;
         pkt.enabledTypes = SnapType.Vertex;
         pkt.snapScope    = SnapMode.Global;
-        pkt.innerRangePx = pkt.outerRangePx = acceptPx;
+        pkt.innerRangePx = pkt.outerRangePx = topoPenSnapAcceptPx(vp, dragSnap_);
         const sr = snapCursor(Vec3(0, 0, 0), mx, my, vp, *m, primaryModelSpace(), pkt,
                               null, admit);
         return sr.snapped ? sr.targetIndex : -1;
@@ -2304,7 +2303,8 @@ public:
     //
     // We satisfy it by CONSTRUCTION rather than by comparing: the query's admit
     // (`PenSnapGuide.admits`) refuses every slot but 0 before the election, so
-    // a background layer can be a placement surface and never a weld target. If that admission is ever widened, an explicit owner check has to
+    // a background layer can be a placement surface and never a weld target.
+    // If that admission is ever widened, an explicit owner check has to
     // arrive with it — the reference's refusal arm (differing owners fall
     // through to a plain Move) is read off the branch and has not been
     // observed, so there is no measured behaviour to lean on there either.
@@ -2392,7 +2392,6 @@ public:
     // layer's mesh and return the nearest within `topoPenPressPickPx`, or -1.
     // O(V) per press — self-contained (no CONS, no new module), mirroring
     // `projectPt`'s own screen-space-only contract.
-    //
     // Generic Hover-Highlight (doc/topopen_hover_highlight_plan.md Phase 1
     // item 4): `thresholdPx` defaults to `kTopoPenSnapAuto`, resolved to the
     // view's own `topoPenPressPickPx(vp)` below, so every existing
@@ -2402,7 +2401,6 @@ public:
     // passes `float.infinity` for the unconditional nearest (RESOLUTION),
     // and a finite value for the over-mesh GATE decision (REV1 FIX-1) — two
     // distinct calls, never conflated.
-    //
     // The press pick admits every vertex: it is not snapping and has no
     // admission policy (the weld target is `weldTargetVertex`).
     package int findSourceVertex(int mx, int my, const ref Viewport vp,

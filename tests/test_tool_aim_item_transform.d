@@ -1497,6 +1497,89 @@ unittest { // P1: the pen's hover names the DRAWN vertex, not the identity-pose 
 }
 
 // ===========================================================================
+// P1W — the pen's WELD target, aiming kind **Pixel** (§1.1).
+//
+// THE PAIR: the weld query (`weldTargetVertex`) aims the primary layer's
+// vertices through the layer's ModelSpace (correct) or through the world
+// viewport (wrong). Layer 0 is a background plane the moved vertex lands on;
+// layer 1, the primary, holds quads A and B plus a decoy quad whose corner
+// `PW_D` sits at the LOCAL coordinate `M * a`, so its identity-pose pixel is
+// exactly a's DRAWN pixel. Dragging b to a's drawn pixel welds b into a under
+// the correct law and into the decoy under the wrong one — the same vertex
+// count either way, so the oracle is which vertex B's ring now holds.
+// ===========================================================================
+
+enum float PEN_ACCEPT_PX = 24.0f;   // topoPenSnapAcceptPx at viewPixelScale 1
+enum int PW_A = 0, PW_B = 4, PW_D = 8;
+
+unittest { // P1W: the pen welds into the DRAWN vertex, not the identity-pose decoy
+    resetScene();
+    immutable float[16] M = composed(AIM_POS, AIM_ROT, AIM_SCL);
+    Vec3[] verts = [
+        Vec3(-0.60f, 0, -0.20f), Vec3(-1.50f, 0, -0.20f), Vec3(-1.50f, 0, -1.10f), Vec3(-0.60f, 0, -1.10f),
+        Vec3( 0.50f, 0,  0.40f), Vec3( 1.40f, 0,  0.40f), Vec3( 1.40f, 0,  1.30f), Vec3( 0.50f, 0,  1.30f)];
+    Vec3 d = transformPoint(M, verts[PW_A]);
+    Vec3 off = Vec3(0.15f, -1.30f, 0.65f);
+    verts ~= [d, d + Vec3(0.30f, 0, 0) + off, d + off, d + Vec3(0, 0, 0.30f) + off];
+    int[][] faces = [[0, 1, 2, 3], [4, 5, 6, 7], [8, 9, 10, 11]];
+
+    auto r = postJson("/api/command", commandBody("scene.reset", `{"empty":true}`));
+    assert(r["status"].str == "ok", "empty reset failed: " ~ r.toString);
+    loadMesh([Vec3(-20, -3, -20), Vec3(-20, -3, 20), Vec3(20, -3, 20), Vec3(20, -3, -20)],
+             [[0, 1, 2, 3]]);                    // the background landing plane
+    cmd("layer.add name:Edit");
+    loadMesh(verts, faces);
+    setXform(1, AIM_POS, AIM_ROT, AIM_SCL);
+    setCameraAt(0.70f, 0.90f, 7.0f, transformPoint(M, Vec3(0, 0, 0.1f)));
+
+    auto cam = fetchCam();
+    auto vp  = buildViewport(cam);
+    Vec3[] local = fetchVerts(1);
+    assert(local.length == 12, format("fixture must load 12 vertices, got %d", local.length));
+
+    float ax, ay, bx, by, aix, aiy;
+    assert(projectOnScreen(transformPoint(M, local[PW_A]), vp, ax, ay), "drawn a off-screen");
+    assert(projectOnScreen(transformPoint(M, local[PW_B]), vp, bx, by), "drawn b off-screen");
+    assert(projectOnScreen(local[PW_A], vp, aix, aiy), "identity-pose a off-screen");
+    immutable int rx = cast(int) ax, ry = cast(int) ay;
+
+    // VACUITY: the correct law elects a alone at the release pixel; the wrong
+    // law elects the decoy and cannot reach a.
+    double best, runner;
+    int ok = nearestVertexPx(local, &M, vp, rx, ry, PW_B, PEN_ACCEPT_PX, best, runner);
+    assert(ok == PW_A && runner > PEN_ACCEPT_PX,
+        format("drawn-space weld query should elect v%d alone, elects %d (runner-up %.1f px)",
+               PW_A, ok, runner));
+    int bad = nearestVertexPx(local, null, vp, rx, ry, PW_B, PEN_ACCEPT_PX, best, runner);
+    assert(bad == PW_D, format("the identity-pose law must elect the decoy v%d here, elects %d",
+                               PW_D, bad));
+    assert(dist(aix, aiy, rx, ry) > PEN_ACCEPT_PX,
+        "a's identity-pose pixel is inside the accept radius — vacuous");
+
+    cmd("tool.set mesh.topoPen on");
+    cmd("tool.attr mesh.topoPen mode move");
+    cmd("tool.attr mesh.topoPen backFace true");
+    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                             cast(int) bx, cast(int) by, rx, ry, 16));
+    cmd("tool.set mesh.topoPen off");
+
+    Vec3[] after = fetchVerts(1);
+    assert(after.length == 11, format("expected one weld (11 vertices), got %d", after.length));
+    int facesHolding(Vec3 p) {
+        int idx = -1;
+        foreach (i, v; after) if ((v - p).length <= 1e-4f) idx = cast(int) i;
+        assert(idx >= 0, format("vertex %s is gone", vecStr(p)));
+        int n;
+        foreach (f; getJson("/api/model?layer=1")["faces"].array)
+            foreach (vi; f.array) if (vi.integer == idx) ++n;
+        return n;
+    }
+    immutable int onA = facesHolding(local[PW_A]), onD = facesHolding(local[PW_D]);
+    assert(onA == 2 && onD == 1, format("b must weld into the DRAWN a (a in 2 faces, decoy in 1); "
+        ~ "got a in %d, decoy in %d — the weld aimed at the identity pose", onA, onD));
+}
+
+// ===========================================================================
 // P2 — Topology Pen press-pick on an EDGE, aiming kind **Pixel** (§1.1).
 // STAGE 4a. Same pair as P1, on `findRingSeedEdge` instead of
 // `findSourceVertex`, and with the vertex clause deliberately out of reach so
