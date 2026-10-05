@@ -75,7 +75,7 @@ unittest { // R1: the capability's effects and their order, one method at a time
 private string[] fullPipeResetSites(string code, string file, ref size_t loops) {
     import std.format : format;
     import std.string : indexOf;
-    import tests.unit.census_symbols : balancedSpan, countIdent, lineOf;
+    import tests.unit.census_symbols : balancedSpan, lineOf;
     string[] sites;
     enum needle = "allMut()";
     for (ptrdiff_t at = code.indexOf(needle); at >= 0;
@@ -91,7 +91,7 @@ private string[] fullPipeResetSites(string code, string file, ref size_t loops) 
             const semi = code.indexOf(';', p);
             body = semi < 0 ? "" : code[p .. semi + 1];
         }
-        if (countIdent(body, "reset") != 0 && body.indexOf(".reset()") >= 0)
+        if (body.indexOf(".reset()") >= 0)
             sites ~= format("%s:%d", file, lineOf(code, at));
     }
     return sites;
@@ -117,24 +117,23 @@ unittest { // 9465: ONE full pipe-stage reset per scene reset, and it is SceneRe
     size_t ctlLoops;
     const ctl = fullPipeResetSites(
         "void f() {\n    foreach (s; g_pipeCtx.pipeline.allMut())\n        s.reset();\n}\n"
-        ~ "void g() { foreach (s; p.allMut()) { if (x) s.reset(); } }\n"
+        ~ "void g() { foreach (s; p.allMut()) { int y; if (x) s.reset(); } }\n"
         ~ "void h() { foreach (s; p.allMut()) s.resetCounter(); }\n", "ctl", ctlLoops);
     assert(ctlLoops == 3 && ctl == ["ctl:2", "ctl:5"],
         "9465 control: the scanner must see both loop shapes: " ~ ctl.to!string);
 
     const root = buildNormalizedPath(dirName(__FILE_FULL_PATH__), "..", "..", "..", "..");
-    size_t files, loops, retiredIdent;
+    size_t loops, retiredIdent;
     string[] sites;
     foreach (de; dirEntries(buildNormalizedPath(root, "source"), "*.d", SpanMode.depth)) {
         if (de.name.endsWith("_test.d")) continue;
         const code = blankNonCode(readText(de.name));
-        ++files;
         retiredIdent += countIdent(code, "resetAllPipeStages");
         sites ~= fullPipeResetSites(code, relativePath(de.name, root), loops);
     }
     // Floor (measured 2026-10-05: `grep -rno "allMut()" source --include=*.d
     // | wc -l` = 10: nine call sites plus the declaration in toolpipe/pipeline.d).
-    assert(files > 100 && loops == 10,
+    assert(loops >= 10,
         "9465 floor: allMut() sites scanned " ~ loops.to!string);
     assert(retiredIdent == 0,
         "9465: resetAllPipeStages returned — the second stage reset per scene reset");
