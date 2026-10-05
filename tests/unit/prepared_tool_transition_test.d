@@ -875,7 +875,8 @@ unittest { // Vertex door: a switch away enlists only the snap clear, an arm not
 
     publishLastSnap(seed);
     auto away = fresh();
-    assert(tool.prepareDoorDeactivate(away, null, 0, 0) && away.validate());
+    assert(tool.prepareDoorDeactivate(away, null, 0, 0) && away.validate(),
+        "a switch away was refused: " ~ away.validateFailureReason());
     assert(g_lastSnap == seed, "the snap cleared before install");
     away.install();
     assert(g_lastSnap == SnapResult.init, "a switch away left the snap published");
@@ -884,7 +885,8 @@ unittest { // Vertex door: a switch away enlists only the snap clear, an arm not
 
     publishLastSnap(seed);
     auto arm = fresh();
-    assert(tool.prepareDoorActivate(arm, null, 0, 0) && arm.validate());
+    assert(tool.prepareDoorActivate(arm, null, 0, 0) && arm.validate(),
+        "an arm was refused: " ~ arm.validateFailureReason());
     arm.install();
     assert(g_lastSnap == seed, "an arm touched the snap");
     arm.installedDepths(model, ui);
@@ -893,11 +895,14 @@ unittest { // Vertex door: a switch away enlists only the snap clear, an arm not
     // A context already sealed with history refuses the no-history seal; the
     // door then abandons its journal rather than leaving it to validate.
     auto sealedAway = fresh(), sealedArm = fresh();
-    assert(sealedAway.markHistoryInstall() && sealedArm.markHistoryInstall());
-    assert(!tool.prepareDoorDeactivate(sealedAway, null, 0, 0));
+    assert(sealedAway.markHistoryInstall() && sealedArm.markHistoryInstall(),
+        "control: the history seal was refused");
+    assert(!tool.prepareDoorDeactivate(sealedAway, null, 0, 0),
+        "a switch away took a no-history seal over a history seal");
     assert(!sealedAway.validate(), "a refused switch away left its journal live");
-    assert(!tool.prepareDoorActivate(sealedArm, null, 0, 0));
+    assert(!tool.prepareDoorActivate(sealedArm, null, 0, 0),
+        "an arm took a no-history seal over a history seal");
     assert(!sealedArm.validate(), "a refused arm left its journal live");
     assert(!tool.prepareDoorDeactivate(null, null, 0, 0)
-        && !tool.prepareDoorActivate(null, null, 0, 0));
+        && !tool.prepareDoorActivate(null, null, 0, 0), "a null context was accepted");
 }
