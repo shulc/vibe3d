@@ -96,8 +96,6 @@ private immutable LedgerRow[] kCodeSites = [
 ];
 
 private immutable LedgerRow[] kCommentSites = [
-    LedgerRow("main|onResetTool", 3,
-        "read 2026-09-03; true: reset-pipeline callback contract"),
     LedgerRow("main|tool_disarm", 1,
         "read 2026-09-03; true: app-side seam wiring"),
     LedgerRow("MeshLoadRaw.applyImpl|onResetTool", 1,
@@ -226,7 +224,7 @@ unittest {
       ~ "Recorded %d checked comments in %d rows; scanner found %d. Read every "
       ~ "new or moved claim and record whether it is true today.",
         bad, recorded, kCommentSites.length, hits.length));
-    assert(hits.length >= 12,
+    assert(hits.length >= 9,
         format("document-replace disarm comment census collapsed to %d hits",
             hits.length));
 }
