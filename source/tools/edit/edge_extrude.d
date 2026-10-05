@@ -146,7 +146,7 @@ private:
     /// Current operation's preview basis (geometry and selection). The
     /// completed step pairs and their bases belong to CommandHistory.
     MeshSnapshot  before;
-    PreviewRebuild preview_;       // the restore-and-rebuild seam (task 1620)
+    PreviewRebuild preview_;       // the restore-and-rebuild seam (preview_rebuild.d)
     Viewport      cachedVp;        // last frame's viewport (for the gizmo handles)
 
     // Gizmo frame, computed at activate() from the ORIGINAL (pre-extrude)
@@ -375,7 +375,7 @@ public:
         if (!image.valid) return;
         built = image.nextBuilt; preview_.installImage(image.preview); image.clear();
     }
-    /// The preview seam's counters (task 1620; tools/edit/preview_rebuild.d).
+    /// The preview seam's counters (read by the churn test).
     public PreviewRebuildCounts previewRebuildCounts() const {
         return preview_.counts();
     }
@@ -688,10 +688,11 @@ private:
         return PreviewTopologyKey.make(cage.operandEdgeMask(), width_ < 1e-6f,
             abs(extrude_) < 1e-6f);
     }
-    // Unrecorded: a preview frame records nothing (task 1903 §9).
+    // Unrecorded: a preview frame records nothing.
     size_t previewKernel(ref Mesh target) {
+        auto mask = target.operandEdgeMask();
         auto ed = MeshEditBatch.unrecorded(target, kExtrudeEditScope);
-        const n = ed.extrudeEdgesByMask(target.operandEdgeMask(), extrude_, width_);
+        const n = ed.extrudeEdgesByMask(mask, extrude_, width_);
         ed.close();
         return n;
     }

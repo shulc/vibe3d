@@ -2922,29 +2922,58 @@ mutate_param_sources("Edge Bevel", edge_bevel_param_sources, edge_bevel_param_ga
     ("tool", producer_mixin("EdgeBevelTool"), "", "drop producer mixin"),
 ))
 
-edge_extrude_param_sources = {
-    "tool": (ROOT / "source/tools/edit/edge_extrude.d").read_text(),
-}
-def edge_extrude_param_gate(s):
-    tool = s["tool"]
-    return (all(x in tool for x in (
-                "image.expectedLive = MeshSnapshot.capture(live);",
-                "image.expectedBefore = MeshSnapshot.capture(image.candidate);",
-                "auto shadow = beginPreparedShadow(image.candidate);",
-                "ed.extrudeEdgesByMask(mask, extrude_, width_)",
-                "drainPreparedShadowDelivery(image.candidate",
-                "memcmp(&extrude, &other.extrude, float.sizeof) == 0",
-                "image.expectedLive.matches(live)",
-                "image.expectedBefore.matches(before)",
-                producer_mixin("EdgeExtrudeTool"))))
-if not edge_extrude_param_gate(edge_extrude_param_sources):
-    fail("Edge Extrude onParamChanged prepared contract drift")
-mutate_param_sources("Edge Extrude", edge_extrude_param_sources, edge_extrude_param_gate, (
-    ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
-    ("tool", "auto shadow = beginPreparedShadow(image.candidate);", "", "drop shadow"),
-    ("tool", "memcmp(&extrude, &other.extrude, float.sizeof) == 0", "true", "drop float identity"),
-    ("tool", producer_mixin("EdgeExtrudeTool"), "", "drop producer mixin"),
-))
+# The five topology tools on the preview seam (wave-2 PV2): one text contract,
+# its rows run per tool. The kernel call stands twice (preview kernel, headless).
+def preview_rebuild_param_gate(cls, kernel, identity):
+    def gate(s):
+        tool = s["tool"]
+        return (tool.count(kernel) == 2 and all(x in tool for x in (
+            "image.expectedLive = MeshSnapshot.capture(live);",
+            "image.expectedBefore = before;",
+            "preview_.prepareImage(image.preview);",
+            "auto shadow = beginPreparedShadow(image.candidate);",
+            "preparedPreview.run(image.candidate, before,",
+            "preparedPreview.savePreparedNext(image.preview);",
+            "drainPreparedShadowDelivery(image.candidate",
+            "built = preview_.run(*mesh, before,",
+            identity,
+            "image.expectedLive.matches(live)",
+            "image.expectedBefore.matches(before)",
+            "preview_.matchesImage(image.preview)",
+            "preview_.installImage(image.preview)",
+            producer_mixin(cls))))
+    return gate
+for label, path, cls, kernel, identity in (
+    ("Edge Extrude", "edge_extrude.d", "EdgeExtrudeTool",
+     "ed.extrudeEdgesByMask(mask, extrude_, width_)",
+     "memcmp(&extrude, &other.extrude, float.sizeof) == 0"),
+    ("Poly Extrude", "poly_extrude.d", "PolyExtrudeTool",
+     "ed.extrudeFacesByMask(mask, distance_",
+     "memcmp(&distance, &other.distance, float.sizeof) == 0"),
+    ("Poly Inset", "poly_inset_tool.d", "PolyInsetTool",
+     "ed.insetFacesByMask(mask, inset_)",
+     "memcmp(&inset, &other.inset, float.sizeof) == 0"),
+    ("Vertex Extrude", "vertex_extrude_tool.d", "VertexExtrudeTool",
+     "ed.extrudeVerticesByMask(mask, shift_, width_)",
+     "sameFloat(width, other.width)"),
+    ("Vertex Bevel", "vertex_bevel_tool.d", "VertexBevelTool",
+     "ed.bevelVerticesByMask(mask, inset_)",
+     "memcmp(&inset, &other.inset, float.sizeof) == 0"),
+):
+    sources = {"tool": (ROOT / "source/tools/edit" / path).read_text()}
+    gate = preview_rebuild_param_gate(cls, kernel, identity)
+    if not gate(sources):
+        fail(f"{label} onParamChanged prepared contract drift")
+    mutate_param_sources(label, sources, gate, (
+        ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
+        ("tool", "auto shadow = beginPreparedShadow(image.candidate);", "", "drop shadow"),
+        ("tool", "preview_.prepareImage(image.preview);", "", "drop preview image"),
+        ("tool", "preview_.matchesImage(image.preview)", "true", "drop preview witness"),
+        ("tool", "preview_.installImage(image.preview)", "", "drop preview install"),
+        ("tool", identity, "true", "drop float identity"),
+        ("tool", kernel, "cast(size_t)0", "drop kernel"),
+        ("tool", producer_mixin(cls), "", "drop producer mixin"),
+    ))
 
 poly_bevel_param_sources = {
     "tool": (ROOT / "source/tools/edit/poly_bevel.d").read_text(),
@@ -2975,57 +3004,6 @@ mutate_param_sources("Poly Bevel", poly_bevel_param_sources, poly_bevel_param_ga
     ("tool", "memcmp(&inset, &other.inset, float.sizeof) == 0", "true", "drop float identity"),
     ("tool", producer_mixin("PolyBevelTool"), "", "drop producer mixin"),
 ))
-
-poly_extrude_param_sources = {
-    "tool": (ROOT / "source/tools/edit/poly_extrude.d").read_text(),
-}
-def poly_extrude_param_gate(s):
-    tool = s["tool"]
-    return (all(x in tool for x in (
-                "image.expectedLive = MeshSnapshot.capture(live);",
-                "image.expectedBefore = MeshSnapshot.capture(image.candidate);",
-                "auto shadow = beginPreparedShadow(image.candidate);",
-                "ed.extrudeFacesByMask(mask, distance_)",
-                "drainPreparedShadowDelivery(image.candidate",
-                "memcmp(&distance, &other.distance, float.sizeof) == 0",
-                "image.expectedLive.matches(live)",
-                "image.expectedBefore.matches(before)",
-                producer_mixin("PolyExtrudeTool"))))
-if not poly_extrude_param_gate(poly_extrude_param_sources):
-    fail("Poly Extrude onParamChanged prepared contract drift")
-mutate_param_sources("Poly Extrude", poly_extrude_param_sources, poly_extrude_param_gate, (
-    ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
-    ("tool", "auto shadow = beginPreparedShadow(image.candidate);", "", "drop shadow"),
-    ("tool", "memcmp(&distance, &other.distance, float.sizeof) == 0", "true", "drop float identity"),
-    ("tool", producer_mixin("PolyExtrudeTool"), "", "drop producer mixin"),
-))
-
-poly_inset_param_sources = {
-    "tool": (ROOT / "source/tools/edit/poly_inset_tool.d").read_text(),
-}
-def poly_inset_param_gate(s):
-    tool = s["tool"]
-    return (tool.count("ed.insetFacesByMask(mask, inset_)") == 3 and
-            all(x in tool for x in (
-                "image.expectedLive = MeshSnapshot.capture(live);",
-                "image.expectedBefore = MeshSnapshot.capture(image.candidate);",
-                "auto shadow = beginPreparedShadow(image.candidate);",
-                "ed.insetFacesByMask(mask, inset_)",
-                "drainPreparedShadowDelivery(image.candidate",
-                "memcmp(&inset, &other.inset, float.sizeof) == 0",
-                "image.expectedLive.matches(live)",
-                "image.expectedBefore.matches(before)",
-                producer_mixin("PolyInsetTool"))))
-if not poly_inset_param_gate(poly_inset_param_sources):
-    fail("Poly Inset onParamChanged prepared contract drift")
-mutate_param_sources("Poly Inset", poly_inset_param_sources, poly_inset_param_gate, (
-    ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
-    ("tool", "auto shadow = beginPreparedShadow(image.candidate);", "", "drop shadow"),
-    ("tool", "memcmp(&inset, &other.inset, float.sizeof) == 0", "true", "drop float identity"),
-    ("tool", "ed.insetFacesByMask(mask, inset_)", "cast(size_t)0", "drop zero-value kernel"),
-    ("tool", producer_mixin("PolyInsetTool"), "", "drop producer mixin"),
-), lambda text, label: text.find("final PreparedPolyInsetParamImage buildPreparedParamUpdate")
-    if label == "drop zero-value kernel" else 0)
 
 slice_deactivate_sources = {
     "tool": (ROOT / "source/tools/slice/slice_tool.d").read_text(),
@@ -3503,74 +3481,6 @@ for target, old, new, label in (
             edge_extend_deactivate_gate(mutant):
         fail(f"Edge Extend deactivate mutation did not RED: {label}")
 
-vertex_extrude_param_sources = {
-    "tool": (ROOT / "source/tools/edit/vertex_extrude_tool.d").read_text(),
-}
-def vertex_extrude_param_gate(s):
-    tool = s["tool"]
-    build_start = tool.find("final PreparedVertexExtrudeParamImage buildPreparedParamUpdate")
-    build = tool[build_start:tool.find("mixin PreparedParamUpdateProducer!(", build_start)]
-    return (tool.count("ed.extrudeVerticesByMask(mask, shift_, width_)") == 3 and
-            all(x in build for x in (
-                "image.expectedLive = MeshSnapshot.capture(live);",
-                "image.expectedBefore = MeshSnapshot.capture(baseline);",
-                "auto shadow = beginPreparedShadow(image.candidate);",
-                "if (width_ == 0.0f)",
-                "ed.extrudeVerticesByMask(mask, shift_, width_)",
-                "drainPreparedShadowDelivery(image.candidate",
-                "image.deliveryFlags = baselineFlags;")) and
-            all(x in tool for x in (
-                "sameFloat(shift, other.shift)",
-                "sameFloat(width, other.width)",
-                "memcmp(&a, &b, float.sizeof) == 0",
-                "image.expectedLive.matches(live)",
-                "image.expectedBefore.matches(before)",
-                producer_mixin("VertexExtrudeTool"))))
-if not vertex_extrude_param_gate(vertex_extrude_param_sources):
-    fail("Vertex Extrude onParamChanged prepared contract drift")
-mutate_param_sources("Vertex Extrude", vertex_extrude_param_sources, vertex_extrude_param_gate, (
-    ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
-    ("tool", "auto shadow = beginPreparedShadow(image.candidate);", "", "drop shadow"),
-    ("tool", "sameFloat(width, other.width)", "true", "drop width identity"),
-    ("tool", "if (width_ == 0.0f)", "if (false)", "drop zero-width branch"),
-    ("tool", "ed.extrudeVerticesByMask(mask, shift_, width_)", "cast(size_t)0", "drop kernel"),
-    ("tool", producer_mixin("VertexExtrudeTool"), "", "drop producer mixin"),
-), lambda text, label: 0 if label == "drop width identity" else
-    text.find("final PreparedVertexExtrudeParamImage buildPreparedParamUpdate"))
-
-vertex_bevel_param_sources = {
-    "tool": (ROOT / "source/tools/edit/vertex_bevel_tool.d").read_text(),
-}
-def vertex_bevel_param_gate(s):
-    tool = s["tool"]
-    build_start = tool.find("final PreparedVertexBevelParamImage buildPreparedParamUpdate")
-    build = tool[build_start:tool.find("mixin PreparedParamUpdateProducer!(", build_start)]
-    return (tool.count("ed.bevelVerticesByMask(mask, inset_)") == 3 and
-            all(x in build for x in (
-                "image.expectedLive = MeshSnapshot.capture(live);",
-                "image.expectedBefore = MeshSnapshot.capture(baseline);",
-                "auto shadow = beginPreparedShadow(image.candidate);",
-                "if (inset_ == 0.0f)",
-                "ed.bevelVerticesByMask(mask, inset_)",
-                "drainPreparedShadowDelivery(image.candidate",
-                "image.deliveryFlags = baselineFlags;")) and
-            all(x in tool for x in (
-                "memcmp(&inset, &other.inset, float.sizeof) == 0",
-                "image.expectedLive.matches(live)",
-                "image.expectedBefore.matches(before)",
-                producer_mixin("VertexBevelTool"))))
-if not vertex_bevel_param_gate(vertex_bevel_param_sources):
-    fail("Vertex Bevel onParamChanged prepared contract drift")
-mutate_param_sources("Vertex Bevel", vertex_bevel_param_sources, vertex_bevel_param_gate, (
-    ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
-    ("tool", "auto shadow = beginPreparedShadow(image.candidate);", "", "drop shadow"),
-    ("tool", "memcmp(&inset, &other.inset, float.sizeof) == 0", "true", "drop float identity"),
-    ("tool", "if (inset_ == 0.0f)", "if (false)", "drop zero reset branch"),
-    ("tool", "ed.bevelVerticesByMask(mask, inset_)", "cast(size_t)0", "drop kernel"),
-    ("tool", producer_mixin("VertexBevelTool"), "", "drop producer mixin"),
-), lambda text, label: 0 if label == "drop float identity" else
-    text.find("final PreparedVertexBevelParamImage buildPreparedParamUpdate"))
-
 vertex_merge_param_sources = {
     "tool": (ROOT / "source/tools/edit/vert_merge_tool.d").read_text(),
 }
@@ -3962,7 +3872,7 @@ def poly_inset_activation_gate(owner, context, tool):
         "Mesh* delegate() nothrow @nogc meshSrc_;" in tool and
         "image.before = MeshSnapshot.capture(*source); image.valid = true;" in tool and
         "active = true; built = false; dragging = false;\n"
-        "        image.before.moveInto(before); image.valid = false;" in tool and
+        "        preview_.reset(); image.before.moveInto(before); image.valid = false;" in tool and
         not installer_image_writes(pt, ("inset_",)) and
         "PreparedPolyInsetActivationOwner.prepare(this)" in producer and
         "context.preparePolyInsetActivation(owner)" in producer and
@@ -4001,6 +3911,8 @@ for target, old, new, label in (
      "        if (!image.valid) return;",
      "ref PreparedPolyInsetActivationImage image) nothrow @nogc {\n"
      "        if (!image.valid) return; inset_ = 0.0f;", "restore inset write"),
+    ("tool", "preview_.reset(); image.before.moveInto(before);",
+     "image.before.moveInto(before);", "retain preview scratch"),
     ("tool", "image.before.moveInto(before);", "before = image.before;", "shallow snapshot"),
     ("tool", "scope(failure) context.discard();", "", "drop failure cleanup"),
     ("tool", "context.preparePolyInsetActivation(owner)", "true", "drop enlist"),
@@ -4062,7 +3974,7 @@ def poly_extrude_activation_gate(owner, context, tool):
         "active = true; built = false; dragPart = -1;\n"
         "        resetExtentFrame();" in installer and
         not installer_image_writes(pt, ("distance_", "shiftX_", "shiftY_", "shiftZ_")) and
-        "image.before.moveInto(before);" in installer and
+        "preview_.reset(); image.before.moveInto(before);" in installer and
         "gizmoValid = image.gizmoValid; anchor = image.anchor;" in installer and
         "baseAnchor = image.baseAnchor; extrudeAxis = image.extrudeAxis;" in installer and
         "gizmoSelHash = image.gizmoSelHash; image.clear();" in installer and
@@ -4114,6 +4026,8 @@ for target, old, new, label in (
      "ref PreparedPolyExtrudeActivationImage image) nothrow @nogc {\n"
      "        if (!image.valid) return; distance_ = shiftX_ = shiftY_ = shiftZ_ = 0.0f;",
      "restore distance/shift write"),
+    ("tool", "preview_.reset(); image.before.moveInto(before);",
+     "image.before.moveInto(before);", "retain preview scratch"),
     ("tool", "image.before.moveInto(before);", "before = image.before;", "shallow snapshot"),
     ("tool", "image.anchor = anchor; image.baseAnchor = baseAnchor;\n"
      "        image.extrudeAxis = extrudeAxis;", "", "drop invalid-frame preservation"),
@@ -4660,7 +4574,7 @@ def vertex_bevel_activation_gate(owner, context, tool):
         tool.count("image.baseAnchor = baseAnchor; image.insetAxis = insetAxis;") == 3 and
         "active = true; built = false; dragPart = -1;" in installer and
         not installer_image_writes(pt, ("inset_",)) and
-        "image.before.moveInto(before);" in installer and
+        "preview_.reset(); image.before.moveInto(before);" in installer and
         "gizmoValid = image.gizmoValid; anchor = image.anchor;" in installer and
         "baseAnchor = image.baseAnchor; insetAxis = image.insetAxis;" in installer and
         "gizmoSelHash = image.gizmoSelHash; image.clear();" in installer and
@@ -4714,6 +4628,8 @@ for target, old, new, label in (
      "        if (!image.valid) return;",
      "ref PreparedVertexBevelActivationImage image) nothrow @nogc {\n"
      "        if (!image.valid) return; inset_ = 0.0f;", "restore inset write"),
+    ("tool", "preview_.reset(); image.before.moveInto(before);",
+     "image.before.moveInto(before);", "retain preview scratch"),
     ("tool", "image.before.moveInto(before);", "before = image.before;", "shallow snapshot"),
     ("tool", "gizmoValid = image.gizmoValid; anchor = image.anchor;", "anchor = image.anchor;", "drop validity"),
     ("tool", "baseAnchor = image.baseAnchor; insetAxis = image.insetAxis;", "insetAxis = image.insetAxis;", "drop base anchor"),
@@ -4786,7 +4702,7 @@ def vertex_extrude_activation_gate(owner, context, tool):
         tool.count("image.widthAxis = widthAxis; image.gizmoSelHash = gizmoSelHash;") == 3 and
         "active = true; built = false; dragPart = -1;" in installer and
         not installer_image_writes(pt, ("shift_", "width_")) and
-        "image.before.moveInto(before);" in installer and
+        "preview_.reset(); image.before.moveInto(before);" in installer and
         "gizmoValid = image.gizmoValid; anchor = image.anchor;" in installer and
         "baseAnchor = image.baseAnchor; shiftAxis = image.shiftAxis;" in installer and
         "widthAxis = image.widthAxis; gizmoSelHash = image.gizmoSelHash;" in installer and
@@ -4841,6 +4757,8 @@ for target, old, new, label in (
      "        if (!image.valid) return;",
      "ref PreparedVertexExtrudeActivationImage image) nothrow @nogc {\n"
      "        if (!image.valid) return; shift_ = 0.0f; width_ = 0.0f;", "restore shift/width write"),
+    ("tool", "preview_.reset(); image.before.moveInto(before);",
+     "image.before.moveInto(before);", "retain preview scratch"),
     ("tool", "image.before.moveInto(before);", "before = image.before;", "shallow snapshot"),
     ("tool", "gizmoValid = image.gizmoValid; anchor = image.anchor;", "anchor = image.anchor;", "drop validity"),
     ("tool", "baseAnchor = image.baseAnchor; shiftAxis = image.shiftAxis;", "shiftAxis = image.shiftAxis;", "drop base anchor"),
@@ -4918,7 +4836,7 @@ def edge_extrude_activation_gate(owner, context, tool):
         tool.count("image.widthAxis = widthAxis; image.gizmoSelHash = gizmoSelHash;") == 3 and
         "active = true; built = false; dragPart = -1;" in installer and
         not installer_image_writes(pt, ("extrude_", "width_")) and
-        "image.before.moveInto(before);" in installer and
+        "preview_.reset(); image.before.moveInto(before);" in installer and
         "gizmoValid = image.gizmoValid; anchor = image.anchor;" in installer and
         "baseAnchor = image.baseAnchor; extrudeAxis = image.extrudeAxis;" in installer and
         "widthAxis = image.widthAxis; gizmoSelHash = image.gizmoSelHash;" in installer and
@@ -4978,6 +4896,8 @@ for target, old, new, label in (
      "        if (!image.valid) return;",
      "ref PreparedEdgeExtrudeActivationImage image) nothrow @nogc {\n"
      "        if (!image.valid) return; extrude_ = 0.0f; width_ = 0.0f;", "restore extrude/width write"),
+    ("tool", "preview_.reset(); image.before.moveInto(before);",
+     "image.before.moveInto(before);", "retain preview scratch"),
     ("tool", "image.before.moveInto(before);", "before = image.before;", "shallow snapshot"),
     ("tool", "gizmoValid = image.gizmoValid; anchor = image.anchor;", "anchor = image.anchor;", "drop valid install"),
     ("tool", "baseAnchor = image.baseAnchor; extrudeAxis = image.extrudeAxis;", "extrudeAxis = image.extrudeAxis;", "drop base anchor"),

@@ -151,7 +151,7 @@ private:
     bool          built;
     bool          topologyDormant;
     MeshSnapshot  before;
-    PreviewRebuild preview_;       // the restore-and-rebuild seam (task 1620)
+    PreviewRebuild preview_;       // the restore-and-rebuild seam (preview_rebuild.d)
     Viewport      cachedVp;
 
     // Gizmo frame.
@@ -348,7 +348,7 @@ public:
         if (!image.valid) return;
         built = image.nextBuilt; preview_.installImage(image.preview); image.clear();
     }
-    /// The preview seam's counters (task 1620; tools/edit/preview_rebuild.d).
+    /// The preview seam's counters (read by the churn test).
     public PreviewRebuildCounts previewRebuildCounts() const {
         return preview_.counts();
     }
@@ -572,11 +572,12 @@ private:
         return PreviewTopologyKey.make(cage.operandFaceMask(), distance_ == 0.0f &&
             shiftVec() == Vec3(0, 0, 0) && !allowCoincidentTopology);
     }
-    // Unrecorded: a preview frame records nothing (task 1903 §9).
+    // Unrecorded: a preview frame records nothing.
     size_t previewKernel(ref Mesh target, bool allowCoincidentTopology) {
         const shift = shiftVec();
+        auto mask = target.operandFaceMask();
         auto ed = MeshEditBatch.unrecorded(target, kExtrudeEditScope);
-        const n = ed.extrudeFacesByMask(target.operandFaceMask(), distance_, false,
+        const n = ed.extrudeFacesByMask(mask, distance_, false,
             UvWallLaw.SweepU, allowCoincidentTopology || shift != Vec3(0, 0, 0),
             FaceExtrudeOrder.WallsThenCap);
         if (n != 0) applyCapShift(ed, extentToMesh(shift));

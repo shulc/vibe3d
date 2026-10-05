@@ -146,7 +146,7 @@ private:
     bool         active;
     bool         built;
     MeshSnapshot before;
-    PreviewRebuild preview_;     // the restore-and-rebuild seam (task 1620)
+    PreviewRebuild preview_;     // the restore-and-rebuild seam (preview_rebuild.d)
     Viewport     cachedVp;
 
     bool gizmoValid;
@@ -316,7 +316,7 @@ public:
         if (!image.valid) return;
         built = image.nextBuilt; preview_.installImage(image.preview); image.clear();
     }
-    /// The preview seam's counters (task 1620; tools/edit/preview_rebuild.d).
+    /// The preview seam's counters (read by the churn test).
     public PreviewRebuildCounts previewRebuildCounts() const {
         return preview_.counts();
     }
@@ -519,11 +519,11 @@ private:
         return PreviewTopologyKey.make(cage.operandVertexMask(EditMode.Vertices),
             !isFinite(inset_) || !(inset_ >= 1e-6f));
     }
-    // Unrecorded: a preview frame records nothing (task 1903 §9).
+    // Unrecorded: a preview frame records nothing.
     size_t previewKernel(ref Mesh target) {
+        auto mask = target.operandVertexMask(EditMode.Vertices);
         auto ed = MeshEditBatch.unrecorded(target, kBevelVertexEditScope);
-        const n = ed.bevelVerticesByMask(
-            target.operandVertexMask(EditMode.Vertices), inset_);
+        const n = ed.bevelVerticesByMask(mask, inset_);
         ed.close();
         return n;
     }

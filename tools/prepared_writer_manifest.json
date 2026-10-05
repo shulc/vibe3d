@@ -879,7 +879,7 @@
     {
       "aggregate": "EdgeExtrudeTool",
       "module": "tools.edit.edge_extrude",
-      "semantic_sha256": "d7966e12c491d27c21f4fd9e7d66f4dbcd69eeab936769580923681f0ed76233",
+      "semantic_sha256": "c25fa53baca2b3ce998ec140f54b8c538afde9d9e71399af8f5587bec7978e78",
       "signature": "void()",
       "symbol": "deactivate"
     },
@@ -921,7 +921,7 @@
     {
       "aggregate": "PolyExtrudeTool",
       "module": "tools.edit.poly_extrude",
-      "semantic_sha256": "d7966e12c491d27c21f4fd9e7d66f4dbcd69eeab936769580923681f0ed76233",
+      "semantic_sha256": "c25fa53baca2b3ce998ec140f54b8c538afde9d9e71399af8f5587bec7978e78",
       "signature": "void()",
       "symbol": "deactivate"
     },
@@ -942,7 +942,7 @@
     {
       "aggregate": "PolyInsetTool",
       "module": "tools.edit.poly_inset_tool",
-      "semantic_sha256": "5a0848e5c9ef4bf669e12128e6186d6254d2669cb09a4c099f106baf72372f95",
+      "semantic_sha256": "ca3b61bcec46a8ca7c00d3669ba28a81be24c68b51c493137b907a318a3141fe",
       "signature": "void()",
       "symbol": "deactivate"
     },
@@ -1047,7 +1047,7 @@
     {
       "aggregate": "VertexBevelTool",
       "module": "tools.edit.vertex_bevel_tool",
-      "semantic_sha256": "d7966e12c491d27c21f4fd9e7d66f4dbcd69eeab936769580923681f0ed76233",
+      "semantic_sha256": "c25fa53baca2b3ce998ec140f54b8c538afde9d9e71399af8f5587bec7978e78",
       "signature": "void()",
       "symbol": "deactivate"
     },
@@ -1068,7 +1068,7 @@
     {
       "aggregate": "VertexExtrudeTool",
       "module": "tools.edit.vertex_extrude_tool",
-      "semantic_sha256": "d7966e12c491d27c21f4fd9e7d66f4dbcd69eeab936769580923681f0ed76233",
+      "semantic_sha256": "c25fa53baca2b3ce998ec140f54b8c538afde9d9e71399af8f5587bec7978e78",
       "signature": "void()",
       "symbol": "deactivate"
     },

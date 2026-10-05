@@ -4274,6 +4274,28 @@ private static immutable LedgerRow[] kPreviewSeam = [
     LedgerRow("EdgeExtendTool.applyHeadless|unrecorded", 1, "headless kernel"),
     LedgerRow("EdgeExtendTool.runPreviewKernel|unrecorded", 1, "preview kernel"),
     LedgerRow("EdgeExtendTool.fillCommitCarrier|recording", 1, "recording commit"),
+    // Wave-2 PV2: five more owners; their preview and prepared runs share
+    // one kernel member (tests/unit/tools/edit/preview_topology_churn_test.d).
+    LedgerRow("EdgeExtrudeTool|field", 1, "PreviewRebuild owner"),
+    LedgerRow("EdgeExtrudeTool.rebuildPreview|run", 1, "preview seam call"),
+    LedgerRow("EdgeExtrudeTool.applyHeadless|unrecorded", 1, "headless kernel"),
+    LedgerRow("EdgeExtrudeTool.previewKernel|unrecorded", 1, "preview + prepared kernel"),
+    LedgerRow("PolyExtrudeTool|field", 1, "PreviewRebuild owner"),
+    LedgerRow("PolyExtrudeTool.rebuildPreview|run", 1, "preview seam call"),
+    LedgerRow("PolyExtrudeTool.applyHeadless|unrecorded", 1, "headless kernel"),
+    LedgerRow("PolyExtrudeTool.previewKernel|unrecorded", 1, "preview + prepared kernel"),
+    LedgerRow("VertexBevelTool|field", 1, "PreviewRebuild owner"),
+    LedgerRow("VertexBevelTool.rebuildPreview|run", 1, "preview seam call"),
+    LedgerRow("VertexBevelTool.applyHeadless|unrecorded", 1, "headless kernel"),
+    LedgerRow("VertexBevelTool.previewKernel|unrecorded", 1, "preview + prepared kernel"),
+    LedgerRow("VertexExtrudeTool|field", 1, "PreviewRebuild owner"),
+    LedgerRow("VertexExtrudeTool.rebuildPreview|run", 1, "preview seam call"),
+    LedgerRow("VertexExtrudeTool.applyHeadless|unrecorded", 1, "headless kernel"),
+    LedgerRow("VertexExtrudeTool.previewKernel|unrecorded", 1, "preview + prepared kernel"),
+    LedgerRow("PolyInsetTool|field", 1, "PreviewRebuild owner"),
+    LedgerRow("PolyInsetTool.rebuildPreview|run", 1, "preview seam call"),
+    LedgerRow("PolyInsetTool.applyHeadless|unrecorded", 1, "headless kernel"),
+    LedgerRow("PolyInsetTool.previewKernel|unrecorded", 1, "preview + prepared kernel"),
 ];
 
 unittest // Stage M - the PreviewRebuild population and batch modes are closed
@@ -4308,7 +4330,7 @@ unittest // Stage M - the PreviewRebuild population and batch modes are closed
     const problems = reconcile(kPreviewSeam, hits);
     assert(problems.length == 0,
         "Stage M PreviewRebuild symbol ledger changed.\n" ~ problems);
-    assert(hits.length == 15 && filesRead >= 60,
+    assert(hits.length == 35 && filesRead >= 60,
         format("PreviewRebuild census found %d sites over %d files", hits.length, filesRead));
 
     const seam = stripCommentsAndStrings(
