@@ -217,6 +217,7 @@ public:
     }
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        syncEventViewport(cachedVp, vts);
         if (e.button == SDL_BUTTON_RIGHT && state != TorusState.Idle) {
             state = TorusState.Idle;
             return true;
@@ -230,7 +231,6 @@ public:
         }
 
         if (state == TorusState.Idle) {
-            syncEventViewport(cachedVp, vts);
             choosePlane(cachedVp);
             Vec3 hit = screenToPlacementLocal(
                 cast(float)e.x, cast(float)e.y, cachedVp, placementFrame);
@@ -263,6 +263,7 @@ public:
     }
 
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        syncEventViewport(cachedVp, vts);
         if (e.button != SDL_BUTTON_LEFT) return false;
 
         if (tryReleaseHandles()) return true;
@@ -288,13 +289,15 @@ public:
     }
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
+        syncEventViewport(cachedVp, vts);
         if (state == TorusState.Idle) updateIdleSnap(e.x, e.y);
 
         if (handleSizeDrag(e.x, e.y))  return true;
         if (dragMover(e.x, e.y)) return true;
 
         if (state == TorusState.DrawingMajor) {
-            Vec3 hit = baseDragPoint(grab, e.x, e.y, planeNormal, cachedVp, placementFrame);
+            Vec3 hit = currentPoint;
+            if (!baseDragPoint(grab, e.x, e.y, planeNormal, cachedVp, placementFrame, hit)) return true;
             {
                 publishLastSnap(snapLocalHit(hit, placementFrame, e.x, e.y, cachedVp,
                                               *mesh, EditMode.Vertices));

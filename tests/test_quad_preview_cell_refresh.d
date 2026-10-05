@@ -112,3 +112,37 @@ unittest {
         assert(key == after[0],
             "toolPreviewKey must be identical across all four cells after the edit");
 }
+
+unittest { // a base drag in the bottom-right cell resolves under THAT cell (task 9473)
+    // The previous owner cell is Top: its projection puts this press far off
+    // the cell's own plane hit (behind the Perspective camera), so a tool that
+    // reads a stale viewport draws nothing. The press at the cell's centre
+    // lands on its focus, the origin.
+    foreach (t; [["prim.cube", "sizeX"], ["prim.torus", "majorRadius"]]) {
+        scope(exit) postJson("/api/command", "tool.set " ~ t[0] ~ " off");
+        scope(exit) postJson("/api/command", "viewport.layout Single");
+        auto reset = postJson("/api/command", commandBody("scene.reset", `{"empty":true}`));
+        assert(reset["status"].str == "ok", "empty reset failed: " ~ reset.toString);
+        auto full = fetchCamera();
+        command("viewport.layout Quad");
+        Thread.sleep(150.msecs);
+        command("tool.set " ~ t[0]);
+        const halfW = full.width / 2, halfH = full.height / 2;
+        const cx = full.vpX + halfW + (full.width - halfW) / 2;
+        const cy = full.vpY + halfH + (full.height - halfH) / 2;
+        playAndWait(buildDragLog(full.vpX, full.vpY, full.width, full.height,
+                                 cx, cy, cx + 70, cy + 55, 12));
+        double attr(string a) {
+            auto r = postJson("/api/command", "tool.attr " ~ t[0] ~ " " ~ a ~ " ?");
+            assert(r["status"].str == "ok", "attribute query failed: " ~ r.toString);
+            return r["value"].floating;
+        }
+        immutable size = attr(t[1]);
+        assert(size > 0.01, format("%s: the base drag in the Perspective cell drew nothing (%s %s)",
+                                   t[0], t[1], size));
+        if (t[0] == "prim.torus")
+            assert(attr("cenX") * attr("cenX") + attr("cenZ") * attr("cenZ") < 0.05 * 0.05,
+                format("prim.torus: the press must land on the cell's focus, got (%s, %s)",
+                       attr("cenX"), attr("cenZ")));
+    }
+}

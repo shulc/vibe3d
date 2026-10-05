@@ -992,6 +992,7 @@ public:
     // -----  identical text for cylinder/cone/capsule and (modulo the ------
     // -----  narrow virtual hooks below) sphere) ----------------------------
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        syncEventViewport(cachedVp, vts);
         if (e.button == SDL_BUTTON_RIGHT && state != RadialState.Idle) {
             state = RadialState.Idle;
             return true;
@@ -1007,7 +1008,6 @@ public:
         }
 
         if (state == RadialState.Idle) {
-            syncEventViewport(cachedVp, vts);
             choosePlane(cachedVp);
             Vec3 hit = screenToPlacementLocal(
                 cast(float)e.x, cast(float)e.y, cachedVp, placementFrame);
@@ -1058,6 +1058,7 @@ public:
     }
 
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        syncEventViewport(cachedVp, vts);
         if (e.button != SDL_BUTTON_LEFT) return false;
 
         if (tryReleaseHandles()) return true;
@@ -1090,6 +1091,7 @@ public:
     }
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
+        syncEventViewport(cachedVp, vts);
         // Idle-state live snap preview.
         if (state == RadialState.Idle) updateIdleSnap(e.x, e.y);
 
@@ -1097,7 +1099,8 @@ public:
         if (dragMover(e.x, e.y)) return true;
 
         if (state == RadialState.DrawingBase) {
-            Vec3 hit = baseDragPoint(grab, e.x, e.y, planeNormal, cachedVp, placementFrame);
+            Vec3 hit = currentPoint;
+            if (!baseDragPoint(grab, e.x, e.y, planeNormal, cachedVp, placementFrame, hit)) return true;
             {
                 publishLastSnap(snapLocalHit(hit, placementFrame, e.x, e.y, cachedVp,
                                               *mesh, EditMode.Vertices));

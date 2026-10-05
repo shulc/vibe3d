@@ -521,6 +521,7 @@ public:
     }
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        syncEventViewport(cachedVp, vts);
         if (e.button == SDL_BUTTON_RIGHT && state != BoxState.Idle) {
             state = BoxState.Idle;
             return true;
@@ -589,7 +590,6 @@ public:
         }
 
         if (state == BoxState.Idle) {
-            syncEventViewport(cachedVp, vts);
             choosePlane(cachedVp);
             Vec3 hit = screenToPlacementLocal(
                 cast(float)e.x, cast(float)e.y, cachedVp, placementFrame);
@@ -664,6 +664,7 @@ public:
     }
 
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        syncEventViewport(cachedVp, vts);
         if (e.button != SDL_BUTTON_LEFT) return false;
 
         // A drag is ending — drop the snap overlay so the highlight doesn't
@@ -729,6 +730,7 @@ public:
     }
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
+        syncEventViewport(cachedVp, vts);
         // Idle-state live snap preview. Before any clicks, show the
         // snap target where the first click would anchor the box.
         // The generator frame is not captured until the first click; preview
@@ -785,7 +787,8 @@ public:
         // bookkeeping is needed here.
 
         if (state == BoxState.DrawingBase) {
-            Vec3 hit = baseDragPoint(grab, e.x, e.y, planeNormal, cachedVp, placementFrame);
+            Vec3 hit = currentPoint;
+            if (!baseDragPoint(grab, e.x, e.y, planeNormal, cachedVp, placementFrame, hit)) return true;
             // Snap the dragged base-corner to the closest snap
             // target. Falls through to `hit` when no snap fires.
             Vec3 hitRaw = hit;

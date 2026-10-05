@@ -8,6 +8,7 @@
 module tests.unit.background_pixel_ray_census_test;
 
 import std.algorithm : canFind, sort;
+import std.array : array;
 import std.file : dirEntries, readText, SpanMode;
 import std.format : format;
 import std.path : buildPath, dirName, relativePath;
@@ -275,15 +276,27 @@ unittest { // (c) a FREE point reads the surface, a primitive's PRESS point does
     assert(dragSites == ["BoxTool.onMouseMotion", "SizedRadialCreateTool.onMouseMotion",
                          "TorusTool.onMouseMotion"],
         format("baseDragPoint calls must be exactly the box, radial and torus motion blocks: %s", dragSites));
-    // ...and each of those presses resolves under its own cell's viewport.
+    // ...and every mouse handler of those tools resolves under the event's own
+    // cell: `syncEventViewport` is the FIRST statement of each (task 0209's rule).
+    import std.regex : matchAll, regex;
     string[] syncSites;
-    foreach (f; ["tools/create/box.d", "tools/create/primitive_create_tool.d", "tools/create/torus.d"])
-        foreach (h; symbolTokenHits(blankNonCode(readText(buildPath(root, "source", f))), f, "syncEventViewport("))
-            syncSites ~= h.key;
+    size_t handlers;
+    foreach (f; ["tools/create/box.d", "tools/create/primitive_create_tool.d", "tools/create/torus.d"]) {
+        immutable code = blankNonCode(readText(buildPath(root, "source", f)));
+        foreach (h; symbolTokenHits(code, f, "syncEventViewport(")) syncSites ~= h.key;
+        handlers += tokenAt(code, "onMouseButtonDown").length + tokenAt(code, "onMouseButtonUp").length
+                  + tokenAt(code, "onMouseMotion").length;
+        immutable first = matchAll(code, regex(`override bool onMouse(ButtonDown|ButtonUp|Motion)`
+            ~ `\([^)]*\)\s*\{\s*syncEventViewport\(cachedVp, vts\);`)).array.length;
+        assert(first == 3, format("%s: syncEventViewport must open all three mouse handlers (%d do)", f, first));
+    }
     sort(syncSites);
-    assert(syncSites == ["BoxTool.onMouseButtonDown", "SizedRadialCreateTool.onMouseButtonDown",
-                         "TorusTool.onMouseButtonDown"],
-        format("syncEventViewport calls must be exactly the three base-drag presses: %s", syncSites));
+    assert(handlers == 9, format("census floor: 9 mouse-handler tokens in the three tools, got %d", handlers));
+    assert(syncSites == ["BoxTool.onMouseButtonDown", "BoxTool.onMouseButtonUp", "BoxTool.onMouseMotion",
+                         "SizedRadialCreateTool.onMouseButtonDown", "SizedRadialCreateTool.onMouseButtonUp",
+                         "SizedRadialCreateTool.onMouseMotion", "TorusTool.onMouseButtonDown",
+                         "TorusTool.onMouseButtonUp", "TorusTool.onMouseMotion"],
+        format("syncEventViewport calls must be exactly the three tools' mouse handlers: %s", syncSites));
     immutable vertexTool = blankNonCode(readText(buildPath(root, "source", "tools/create/vertex_place.d")));
     assert(tokenAt(vertexTool, "kGuideTypes").length == 0,
         "the vertex tool passes no guide mask: after the guide-block deletion it has no candidate to strip");

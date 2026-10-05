@@ -5,7 +5,7 @@ module tests.unit.tools.create.create_common_test;
 
 import math : Vec3, Viewport, dot, isOrtho, matrixMirrorsWinding, rayPlaneIntersect,
               screenPointToRay;
-import std.math : abs;
+import std.math : abs, cos, sin;
 import toolpipe.pipeline       : g_pipeCtx;
 import toolpipe.packets        : SubjectPacket, WorkplanePacket, SnapPacket;
 import toolpipe.stage          : TaskCode;
@@ -244,9 +244,32 @@ unittest { // box-drag-oblique: the base-drag point off the background (task 947
     foreach (c; cells) {
         HandleDrag g;
         g.press(c.pq, 500, 500);
-        immutable d = baseDragPoint(g, 500 + c.dx, 500 + c.dy, Vec3(0, 1, 0), vp, f);
-        assert((d - c.corner).length <= 1e-5f, c.id ~ ": the base-drag corner must be q(T)");
+        Vec3 d;
+        assert(baseDragPoint(g, 500 + c.dx, 500 + c.dy, Vec3(0, 1, 0), vp, f, d)
+            && (d - c.corner).length <= 1e-5f, c.id ~ ": the base-drag corner must be q(T)");
         ++n;
     }
     assert(n == 2);
+    // A press corner behind the camera has no map: refused, the corner untouched.
+    HandleDrag behind;
+    behind.press(Vec3(0.07f, 0, 200), 500, 500);
+    Vec3 kept = Vec3(7, 7, 7);
+    assert(!baseDragPoint(behind, 540, 520, Vec3(0, 1, 0), vp, f, kept) && kept == Vec3(7, 7, 7),
+        "behind the camera: baseDragPoint must refuse and leave the caller's corner");
+    // A pinned plane is the identity frame seen through the plane-local view:
+    // the drag under a frame turned 30 deg about X equals the identity-frame drag
+    // on `planeLocalViewport` (the map reads the LOCAL view; the world one is
+    // 0.1+ off here).
+    import std.math : PI;
+    immutable float a = 30 * PI / 180;
+    auto turned = frameFromBasis(Vec3(0, cos(a), sin(a)), Vec3(1, 0, 0), Vec3(0, -sin(a), cos(a)),
+                                 Vec3(0, 0, 0));
+    auto lvp = planeLocalViewport(vp, turned);
+    HandleDrag gl;
+    gl.press(Vec3(-2.05f, 0, 1.6f), 500, 500);
+    Vec3 viaFrame, viaView;
+    assert(baseDragPoint(gl, 640, 455, Vec3(0, 1, 0), vp, turned, viaFrame)
+        && baseDragPoint(gl, 640, 455, Vec3(0, 1, 0), lvp, f, viaView)
+        && (viaFrame - viaView).length <= 1e-5f && (viaFrame - gl.point).length > 0.1f,
+        "pinned plane: the base drag must read the plane-local view");
 }

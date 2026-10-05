@@ -170,6 +170,14 @@ Cam readCamera(string preset) {
 // halfH = distance * tan(fovY/2) with fovY = 45 deg, the same formula
 // view.d's viewport() uses for both projection kinds.
 void pixelOf(const ref Cam c, V3 p, out int px, out int py) {
+    double sx, sy;
+    screenOf(c, p, sx, sy);
+    px = cast(int)(sx + 0.5);
+    py = cast(int)(sy + 0.5);
+}
+
+/// The window position of `p`, unrounded.
+void screenOf(const ref Cam c, V3 p, out double sx, out double sy) {
     immutable double t = tan(PI / 8.0);
     double halfH  = c.distance * t;
     double aspect = cast(double)c.width / c.height;
@@ -183,8 +191,35 @@ void pixelOf(const ref Cam c, V3 p, out int px, out int py) {
         ndcX = dot(d, c.right) / (t * aspect * depth);
         ndcY = dot(d, c.up)    / (t * depth);
     }
-    px = cast(int)((ndcX * 0.5 + 0.5) * c.width  + c.vpX + 0.5);
-    py = cast(int)((1.0 - (ndcY * 0.5 + 0.5)) * c.height + c.vpY + 0.5);
+    sx = (ndcX * 0.5 + 0.5) * c.width + c.vpX;
+    sy = (1.0 - (ndcY * 0.5 + 0.5)) * c.height + c.vpY;
+}
+
+/// The last `createByDrag`'s press and release pixels.
+int[4] lastDragPx;
+
+/// The perspective release corner (task 9473, K-C3): the press corner `pq`
+/// carried by the pixel travel through the projection forward-differenced at
+/// `pq` (step: ten of the view's nominal pixels) on the base plane (normal
+/// axis `k`), rounded to the view quantum on the in-plane channels.
+V3 linearisedCorner(const ref Cam c, V3 pq, int k) {
+    import std.math : round;
+    immutable double step = 10 * 0.8 * c.distance * 2 * tan(PI / 8.0) / c.height;
+    immutable V3[3] ax = [V3(1, 0, 0), V3(0, 1, 0), V3(0, 0, 1)];
+    immutable V3 u = ax[(k + 2) % 3], v = ax[(k + 1) % 3];
+    double s0x, s0y, sux, suy, svx, svy;
+    screenOf(c, pq, s0x, s0y);
+    screenOf(c, pq + u * step, sux, suy);
+    screenOf(c, pq + v * step, svx, svy);
+    immutable double m00 = (sux - s0x) / step, m01 = (svx - s0x) / step;
+    immutable double m10 = (suy - s0y) / step, m11 = (svy - s0y) / step;
+    immutable double det = m00 * m11 - m01 * m10;
+    immutable double dx = lastDragPx[2] - lastDragPx[0], dy = lastDragPx[3] - lastDragPx[1];
+    V3 t = pq + u * ((m11 * dx - m01 * dy) / det) + v * ((-m10 * dx + m00 * dy) / det);
+    immutable double q = num(getJson("/api/viewport/display")["cells"].array[0]["grid"]["subStep"]);
+    double[3] a = [t.x, t.y, t.z];
+    foreach (i; 0 .. 3) if (i != k) a[i] = round(a[i] / q) * q;
+    return V3(a[0], a[1], a[2]);
 }
 
 V3[] modelVerts() {
@@ -242,6 +277,7 @@ V3[] createByDrag(string preset, double a0, double b0, double a1, double b1,
     int px0, py0, px1, py1;
     pixelOf(c, aimed[0], px0, py0);
     pixelOf(c, aimed[1], px1, py1);
+    lastDragPx = [px0, py0, px1, py1];
 
     bool[V3] before;
     foreach (v; modelVerts()) before[v] = true;
@@ -286,6 +322,20 @@ double worstCornerMiss(V3[] created, V3[2] aimed) {
 }
 
 enum double TOL = 0.01;
+
+/// The release corner of a perspective drag sits on `linearisedCorner` (1e-4).
+void linearisedRelease(string what, V3[] created, V3 aimedPress) {
+    auto c = readCamera("Perspective");
+    immutable int k = mostFacingAxis(c.back);
+    V3 pq = created[0];
+    foreach (v; created) if ((v - aimedPress).len < (pq - aimedPress).len) pq = v;
+    immutable V3 want = linearisedCorner(c, pq, k);
+    double best = double.infinity;
+    foreach (v; created) if ((v - want).len < best) best = (v - want).len;
+    writefln("%s: release corner %.2e from the linearised %s", what, best, want);
+    assert(best <= 1e-4, format("%s: no created vertex at the linearised release corner %s "
+        ~ "(nearest %.2e; press corner %s)", what, want, best, pq));
+}
 
 unittest { // Front — the preset the owner reported, and the one that was broken
     V3[2] aimed;
@@ -346,6 +396,7 @@ unittest { // the CONTROL: perspective was never broken and must stay accurate
     auto created = createByDrag("Perspective", 0.4, 0.3, -0.5, -0.2,
                                 V3(0, 0, 0), aimed);
     double miss = worstCornerMiss(created, [aimed[0], aimed[0]]);
+    linearisedRelease("Perspective (control)", created, aimed[0]);
     writefln("Perspective (control): worst corner miss %.4f", miss);
     assert(miss < TOL,
         format("Perspective: the control must stay as accurate as it was; "
@@ -372,6 +423,7 @@ unittest { // the DEPTH discriminator: the plane is anchored at the FOCUS
         // Perspective: the press corner only (the control above, task 9473).
         V3[2] corners = preset == "Perspective" ? [aimed[0], aimed[0]] : aimed;
         double miss = worstCornerMiss(created, corners);
+        if (preset == "Perspective") linearisedRelease("Perspective (focus)", created, aimed[0]);
         writefln("%s (focus %s): worst corner miss %.4f", preset, focus, miss);
         assert(miss < TOL,
             format("%s: displacing the focus must not displace the click; "

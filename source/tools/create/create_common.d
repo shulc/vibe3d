@@ -328,20 +328,25 @@ Vec3 backgroundPoint(Vec3 planeLocal, const ref Viewport vp, in WorkplaneFrame f
 /// corner `grab.point` (q of the press plane hit) carried by the pixel travel
 /// through drag.d's press-frozen plane map on the base plane (normal `n`), onto
 /// the background (`backgroundPoint`: the hit unquantised, else q); the
-/// base-plane channel stays the press's. The snap runs after it.
-Vec3 baseDragPoint(const ref HandleDrag grab, int x, int y, Vec3 n,
-                   const ref Viewport vp, in WorkplaneFrame frame)
+/// base-plane channel stays the press's. The snap runs after it. False (`p`
+/// untouched) = no map at the press corner (behind the camera): the caller
+/// keeps its last corner.
+bool baseDragPoint(const ref HandleDrag grab, int x, int y, Vec3 n,
+                   const ref Viewport vp, in WorkplaneFrame frame, ref Vec3 p)
 {
     bool skip, onSurface;
     Viewport lvp = planeLocalViewport(vp, frame);
     immutable Vec3 t = grab.point + planeDragDelta(x, y, grab.pressX, grab.pressY, 3, grab.point,
         lvp, skip, Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1), n);
-    immutable Vec3 p = backgroundPoint(t, vp, frame, onSurface);
-    return p - n * dot(p - grab.point, n);
+    if (skip) return false;
+    p = backgroundPoint(t, vp, frame, onSurface);
+    p -= n * dot(p - grab.point, n);
+    return true;
 }
 
-/// A press resolves under its own Quad cell's projection (the event's
-/// `SubjectPacket.viewport`, task 0209), not the last-drawn cell's (task 9473).
+/// A mouse handler's FIRST statement: the event resolves under its own Quad
+/// cell's projection (`SubjectPacket.viewport`; tasks 0209, 9473), not the
+/// last-drawn cell's.
 void syncEventViewport(ref Viewport cached, ref VectorStack vts) {
     if (auto sp = vts.get!SubjectPacket()) cached = sp.viewport;
 }
