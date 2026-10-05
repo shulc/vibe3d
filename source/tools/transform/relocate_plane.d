@@ -7,9 +7,7 @@ module tools.transform.relocate_plane;
 import math : Vec3, Viewport, isAxisView, dot;
 import std.math : abs;
 
-/// `public` ONLY for the pen's frozen import of these four names; TEMPORARY —
-/// make it private at P1, when the pen imports them from `viewgrid`.
-public import viewgrid : vectorSnap, axisComp, withAxisComp, niceOrigin;
+import viewgrid : vectorSnap, axisComp, withAxisComp;
 
 /// An ORTHOGRAPHIC click-relocate: the press drags a handle standing at the
 /// centre held BEFORE the press across the view plane, so the landing keeps

@@ -1,0 +1,84 @@
+{
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference_token": "ref-editor@11.2v3",
+    "method": "gui-gesture",
+    "captured_utc": "2026-10-04",
+    "task": "9415",
+    "notes": "Numerical observations copied from the private pen capture records (background constraint cells C1-C3, D; K-B2 B5-B7b) and K-C2 (C2h, C2i); the private findings remain the source of record."
+  },
+  "_about": "The polygon pen over a BACKGROUND surface with the surface constraint on (geometry off unless swept, snapping off unless stated). Background: a sphere of radius 1, 64 sides x 32 segments, centre (0,1,0) unless stated, in a background layer; the foreground mesh starts empty. Top orthographic view, 440 px per metre, focus (0.07, 1, 0): the click quantum is 0.005 and every click aims at a lattice point, so x/z are exact. A point lands on the background hit on the view ray through its quantised plane point (the first point = the create click, a later one = the plane through the current point, a drag = the plane through the dragged point); the constraint's `handle` flag gates it, its geometry mode does not; a miss keeps the plane point; the offset moves the hit along the hit normal after the quantum; a vertex snap replaces all three channels and the pen welds onto the snapped vertex; a typed position stands. Heights are the reference's depth read (1/1024 lattice, 1.1-1.6e-3 below the facets): tolerance 2e-3.",
+  "rig": {"view": "Top", "focus": [0.07, 1.0, 0.0], "px_per_m": 439.5272, "q": 0.005,
+          "sphere": {"centre": [0.0, 1.0, 0.0], "radius": 1.0, "sides": 64, "segments": 32}},
+  "height_tol": 0.002,
+  "cells": {
+    "C1": {
+      "clicks_xz": [[0.3, 0.2], [-0.4, -0.3], [0.1, -0.6]],
+      "handle_on": [[0.3, 1.930664, 0.2], [-0.4, 1.863281, -0.3], [0.1, 1.790039, -0.6]],
+      "handle_off": [[0.3, 1.0, 0.2], [-0.4, 1.0, -0.3], [0.1, 1.0, -0.6]],
+      "constraint_off": [[0.3, 1.0, 0.2], [-0.4, 1.0, -0.3], [0.1, 1.0, -0.6]],
+      "geometry_swept": ["off", "screen", "vector", "point"],
+      "law": "handle on: the surface on the vertical ray through q, identical for every geometry mode; handle off or the constraint off: the plane (y 1)"
+    },
+    "C2b": {
+      "clicks_xz": [[0.3, 0.2], [1.2, 0.0], [0.1, -0.6]],
+      "expected": [[0.3, 1.930664, 0.2], [1.2, 1.93, 0.0], [0.1, 1.790039, -0.6]],
+      "p1_height_tol": 0.0001,
+      "focus_x": 0.6,
+      "law": "a miss after a hit lands on the plane through the previous point, its normal channel quantised (1.93, not 1.930664)"
+    },
+    "C3": {
+      "clicks_xz": [[0.3, 0.2], [-0.4, -0.3], [0.1, -0.6]],
+      "drag": {"point": 2, "to_xz": [0.3, -0.6]},
+      "expected": [[0.3, 1.930664, 0.2], [-0.4, 1.863281, -0.3], [0.3, 1.738281, -0.6]],
+      "law": "the constraint applies while dragging a placed point"
+    },
+    "D": {
+      "sphere_centre": [0.4, 1.0, 0.0],
+      "symmetry_axis": "x",
+      "clicks_xz": [[0.3, 0.2], [0.6, -0.3], [0.2, -0.5]],
+      "expected": [[0.3, 1.972656, 0.2], [0.6, 1.930664, -0.3], [0.2, 1.839844, -0.5],
+                   [-0.3, 1.972656, 0.2], [-0.6, 1.930664, -0.3], [-0.2, 1.839844, -0.5]],
+      "law": "mirror points are exact reflections of the constrained originals, not re-projected (independent projections 1.686 / miss / 1.625)"
+    },
+    "B7": {
+      "clicks_xz": [[0.30434, 0.20477], [-0.39641, -0.29577], [0.10185, -0.59837]],
+      "typed": {"point": 1, "posY": 0.5},
+      "expected": [[0.305, 1.927734, 0.205], [-0.395, 0.5, -0.295], [0.1, 1.790039, -0.6]],
+      "law": "constrained click x/z are quantised like plane clicks; a typed position stands (no re-projection: 1.8691)"
+    },
+    "B7b": {
+      "offset": 0.1,
+      "clicks_xz": [[0.29979, 0.20022], [-0.40096, -0.30032], [0.09958, -0.60065], [0.80033, 0.0]],
+      "expected": [[0.331175, 2.023491, 0.220282], [-0.44013, 1.949637, -0.330533],
+                   [0.10963, 1.869568, -0.659853], [0.879633, 1.655205, -0.000977]],
+      "tol": [0.0035, 0.0035, 0.0035, 0.006],
+      "tol_note": "p3 (0.8, 0) lies on a longitude edge of the sphere (z 0): ours offsets along ONE facet's normal (2.3 deg off the radial, measured 2026-10-05: z 0.003943), the record's depth-read normal averages across the edge (z -0.000977); 4.9e-3 apart. The offset-after-quantum law is held by the length / direction asserts, not by this compare",
+      "law": "the offset moves the surface hit 0.1 along the hit normal after the quantum (the reference normal is a depth-read normal 1-2 deg off the facet: every channel carries up to offset * sin(2 deg) = 3.5e-3)"
+    },
+    "B6": {
+      "snap_types": "straightLine",
+      "height_tol": 0.003,
+      "height_tol_note": "this cell's depth reads sit lower: ours (facet hits) minus the record measured +2.7e-3 (p0) and +2.0e-3 (p2) on 2026-10-05; the guide's pull it guards against moves p3 by >= 5e-3 in z (onto z 0) or 0.18 in y",
+      "clicks_xz": [[-0.4, 0.5], [-0.6, 0.0], [-0.2, 0.0], [0.5, 0.5]],
+      "drag": {"point": 3, "to_xz": [0.19968, 0.00683]},
+      "expected": [[-0.4, 1.764648, 0.5], [-0.6, 1.796875, 0.0], [-0.2, 1.977539, 0.0], [0.2, 1.977539, 0.005]],
+      "law": "with the background constraint on, a dragged point lands on the surface under the cursor (x/z quantised); the straight-line guide (the line z 0 through p1, p2; it engages at 5.8 px without the background) does not pull it onto the 3D line (y 2.1595) nor onto the line's surface projection (z 0)"
+    },
+    "C2i": {
+      "foreground_vertex": [0.145081, 2.5, 0.200215],
+      "aim_xz": [0.13142964530977833, 0.20021514026890713],
+      "more_clicks_xz": [[1.2, 0.4], [1.2, -0.4]],
+      "more_clicks_note": "rig completion (a polygon needs three points): two clicks off the sphere, away from every vertex",
+      "expect_nv": 3,
+      "focus_x": 0.7,
+      "law": "SNAP-LAST: a foreground vertex in range replaces all three channels of the surface point; the pen's polygon reuses it (nv 3), unlike the vertex tool (nv 2)"
+    },
+    "C2h": {
+      "views": ["Top", "Perspective"],
+      "aim_world": [[0.2997923768995412, 1.0, 0.20021514026890713], [0.260365, 1.948835, 0.166987]],
+      "law": "the pen's first point equals the vertex tool's at the same pixel (1e-6, both oblique ortho rigs and the persp rig)"
+    }
+  }
+}

@@ -293,12 +293,12 @@ Vec3 screenToPlacementLocal(float sx, float sy, const ref Viewport vp,
                       viewVectorQuantum(vp));
 }
 
-/// A plane point onto the background (task 9404, K-C2 QPLANE-RAY): the
-/// constraint's surface (`surfaceOnRay`) on the view ray of the point's own
-/// screen position, offset along the hit normal, NOT quantised; no hit ⇒
-/// `planeLocal` snapped to the view quantum.
-Vec3 backgroundPoint(Vec3 planeLocal, const ref Viewport vp, in WorkplaneFrame frame,
-                     out bool onSurface)
+/// The constraint's background surface on the view ray of plane point
+/// `planeLocal`'s own screen position (task 9404, K-C2 QPLANE-RAY), offset
+/// along the hit normal, NOT quantised; false (`local` untouched) = no hit,
+/// or the constraint does not take the pointer.
+bool backgroundSurfacePoint(Vec3 planeLocal, const ref Viewport vp, in WorkplaneFrame frame,
+                            ref Vec3 local)
 {
     import toolpipe.stages.constrain : liveConstrainStage;
     import bvh_pick : SurfaceHit;
@@ -306,12 +306,22 @@ Vec3 backgroundPoint(Vec3 planeLocal, const ref Viewport vp, in WorkplaneFrame f
     float px, py, ndcZ;
     Vec3 org, dir;
     SurfaceHit sh;
-    if (cs !is null && projectToWindowFull(transformPoint(frame.toWorld, planeLocal), vp, px, py, ndcZ)) {
-        screenPointToRay(px, py, vp, org, dir);
-        onSurface = cs.surfaceOnRay(org, dir, sh);
-    }
-    return onSurface ? transformPoint(frame.toLocal, cs.offsetPoint(sh.point, sh.normal))
-                     : vectorSnap(planeLocal, viewVectorQuantum(vp));
+    if (cs is null || !projectToWindowFull(transformPoint(frame.toWorld, planeLocal), vp, px, py, ndcZ))
+        return false;
+    screenPointToRay(px, py, vp, org, dir);
+    if (!cs.surfaceOnRay(org, dir, sh)) return false;
+    local = transformPoint(frame.toLocal, cs.offsetPoint(sh.point, sh.normal));
+    return true;
+}
+
+/// A plane point onto the background: `backgroundSurfacePoint`; no hit ⇒
+/// `planeLocal` snapped to the view quantum.
+Vec3 backgroundPoint(Vec3 planeLocal, const ref Viewport vp, in WorkplaneFrame frame,
+                     out bool onSurface)
+{
+    Vec3 p = vectorSnap(planeLocal, viewVectorQuantum(vp));
+    onSurface = backgroundSurfacePoint(planeLocal, vp, frame, p);
+    return p;
 }
 
 /// The FREE point under the pointer: the click's q onto the background, then

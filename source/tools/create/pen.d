@@ -33,7 +33,8 @@ import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
 import display_sync : refreshDisplay;
 import tools.create.create_common : pickWorkplane, BuildPlane,
                               primitivePlacementFrame, WorkplaneFrame,
-                              mostFacingAxis,
+                              viewPrincipalAxis, axisUnit, screenToPlacementLocal,
+                              backgroundSurfacePoint,
                               transformPoint, transformDir, snapLocalHit,
                               currentSnapPacket,
                               workplaneCursorRay, workplaneCursorPlaneHit;
@@ -46,9 +47,7 @@ import snap : SnapResult, snapCursor, cascadeClassWins, kAbsentClassDist,
     kCascadeVertex, kCascadeEdge, kCandidateToleranceBasePx, kVertexToleranceScale;
 import document : primaryModelSpace;
 import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
-import tools.transform.relocate_plane : vectorSnap, withAxisComp, axisComp, niceOrigin;
-import viewgrid : g_viewGrid, viewWorldPerPixel, viewGridSize, viewGridSubStep,
-    relocateQuantum;
+import viewgrid : viewWorldPerPixel, viewVectorQuantum, vectorSnap, withAxisComp, axisComp;
 
 import std.math : abs, fmin, lround;
 // The one stroke builder and the pen's param schema (PenParams, PenStroke).
@@ -700,9 +699,10 @@ private:
     Mesh             previewMesh;
     GpuMesh          previewGpu;
 
-    // The stroke's plane normal, a LOCAL axis of `frame`, locked per stroke,
-    // and in WORLD signed toward the camera (wall mode's "left", S9).
-    Vec3 planeNormal, wallNormal;
+    // The stroke plane's LOCAL normal axis index, locked per stroke; its
+    // normal in WORLD signed toward the camera (wall mode's "left", S9).
+    int  planeAxis;
+    Vec3 wallNormal;
     // The stroke's symmetry, latched at its first click (`latchMirror`).
     SymmetryPacket mirror_;
     /// Storage frame captured at choosePlane(). All in-progress vertices live
@@ -1169,7 +1169,7 @@ public:
             latchMirror(vts);
             Vec3 hit;
             int link;
-            if (!resolvePenPoint(e.x, e.y, clickAnchor(), hit, link)) return true;
+            if (!resolvePenPoint(e.x, e.y, hit, link)) return true;
             appendVertex(hit, link);
             params_.currentPoint = cast(int)vertices_.length - 1;
             syncPosFromCurrent();
@@ -1194,7 +1194,7 @@ public:
         // Click on empty plane.
         Vec3 hit;
         int link;
-        if (!resolvePenPoint(e.x, e.y, clickAnchor(), hit, link)) return true;
+        if (!resolvePenPoint(e.x, e.y, hit, link)) return true;
 
         // The press adding the 3rd point decides the facing, once, from
         // (p0, p1, this click) in every arm below (wave plan §9.4); a wall
@@ -1271,7 +1271,7 @@ public:
                 if (state == PenState.Idle) choosePlane(cachedVp);
                 Vec3 ignored;
                 int ignoredLink;
-                resolvePenPoint(e.x, e.y, clickAnchor(), ignored, ignoredLink);
+                resolvePenPoint(e.x, e.y, ignored, ignoredLink);
             }
         }
 
@@ -1284,7 +1284,7 @@ public:
             return true;
         Vec3 hit;
         int link;
-        if (resolvePenPoint(e.x, e.y, dragAnchor, hit, link)) {
+        if (resolvePenPoint(e.x, e.y, hit, link, &dragAnchor)) {
             vertices_[dragVertIdx] = hit;
             refreshLinks();
             // A cross mirror link stays with the dragged point (A7: the weld
@@ -1414,10 +1414,8 @@ private:
     // The plane normal is the local axis the camera faces most.
     void choosePlane(const ref Viewport vp) {
         frame = primitivePlacementFrame();
-        Vec3 camBack = Vec3(vp.view[2], vp.view[6], vp.view[10]);
-        int axis = mostFacingAxis(camBack, frame.axis1, frame.normal, frame.axis2);
-        planeNormal = Vec3(axis == 0 ? 1 : 0, axis == 1 ? 1 : 0, axis == 2 ? 1 : 0);
-        wallNormal = normalize(transformDir(frame.toWorld, planeNormal));
+        planeAxis = viewPrincipalAxis(frame, vp);
+        wallNormal = normalize(transformDir(frame.toWorld, axisUnit(planeAxis)));
         if (dot(wallNormal, eyeVectorAt(vp, vp.focus)) > 0) wallNormal = -wallNormal;
     }
 
@@ -1438,60 +1436,37 @@ private:
                                     frame, mirror_.planePoint, mirror_.planeNormal);
     }
 
-    // Where a click lands (wave plan S3a / S3c, tests/fixtures/pen_placement.json
-    // `cells` / `plane_rule`): on the plane through the CURRENT point, the new
-    // point going right after it (append = the current point is the last); the
-    // first point on the view's work plane through the plane-local focus, in
-    // perspective rounded as relocate's plane origin is (`niceOrigin`: every
-    // channel to the sub-step, the normal channel to ten grid steps). The
-    // anchor is vector-snapped, so a click's plane-normal channel is quantised;
-    // a drag anchors on the raw point and a typed value is never rounded.
-    Vec3 clickAnchor() const {
-        immutable float q = placementQuantum();
-        if (vertices_.length == 0) {
-            Vec3 f = toLocalP(cachedVp.focus);
-            if (!isOrtho(cachedVp))
-                f = niceOrigin(f, planeAxis(),
-                               relocateQuantum(viewWorldPerPixel(cachedVp), g_viewGrid), q);
-            return vectorSnap(f, q);
-        }
-        int cur = params_.currentPoint;
-        return vectorSnap(cur >= 0 && cur < cast(int)vertices_.length ? vertices_[cur]
-                                                                     : vertices_[$ - 1], q);
-    }
-
-    // The view's vector-snap step (the grid sub-step) and the plane normal's
-    // axis index, read by the click anchor and the resolver.
-    float placementQuantum() const {
-        immutable float px = viewWorldPerPixel(cachedVp);
-        return viewGridSubStep(px, viewGridSize(px, g_viewGrid), g_viewGrid);
-    }
-    int planeAxis() const { return planeNormal.x != 0 ? 0 : (planeNormal.y != 0 ? 1 : 2); }
-
     // The one place a pixel becomes a stroke point (click, hover, drag): the
-    // locked plane through `anchor`, its two in-plane channels rounded to the
-    // view's grid sub-step (the vector snap relocate and extrude use; wave
-    // plan S3q, fixture pen_placement.json `quantum`), then a discrete snap
-    // (an edge snap takes the QUANTISED point's foot on the edge, S5 Q-edge),
-    // then the pen guides when no discrete target won (guideBits are the
-    // pen's own), then the merge from the placed point; `link` is the
-    // edited-mesh vertex the point shares, or -1.
-    bool resolvePenPoint(int x, int y, Vec3 anchor, out Vec3 local, out int link) {
+    // first point is the create click (K-C2 C2h); a later click's plane runs
+    // through the quantised CURRENT point, a drag's through the raw `drag`
+    // point (S3a / S3c / S3q, fixture pen_placement.json); then the background
+    // surface (K-B2 C1–C3, B7b), the snap (an edge snap takes the placed
+    // point's foot, S5 Q-edge), the guides when neither placed it (B6), the
+    // merge; `link` is the edited-mesh vertex the point shares, or -1.
+    bool resolvePenPoint(int x, int y, out Vec3 local, out int link, const(Vec3)* drag = null) {
         link = -1;
-        if (!workplaneCursorPlaneHit(frame, cachedVp, cast(float)x,
-                                     cast(float)y, anchor, planeNormal, local)) {
-            lastSnap = SnapResult.init;
-            clearLastSnap();
-            return false;
+        immutable float q = viewVectorQuantum(cachedVp);
+        if (drag is null && vertices_.length == 0) {
+            local = screenToPlacementLocal(x, y, cachedVp, frame);
+        } else {
+            immutable int cur = params_.currentPoint;
+            immutable Vec3 anchor = drag !is null ? *drag : vectorSnap(
+                cur >= 0 && cur < cast(int)vertices_.length ? vertices_[cur] : vertices_[$ - 1], q);
+            if (!workplaneCursorPlaneHit(frame, cachedVp, cast(float)x, cast(float)y,
+                                         anchor, axisUnit(planeAxis), local)) {
+                lastSnap = SnapResult.init;
+                clearLastSnap();
+                return false;
+            }
+            local = withAxisComp(vectorSnap(local, q), planeAxis, axisComp(local, planeAxis));
         }
-        immutable int k = planeAxis();
-        local = withAxisComp(vectorSnap(local, placementQuantum()), k, axisComp(local, k));
-        immutable Vec3 quantised = local;
+        immutable bool onSurface = backgroundSurfacePoint(local, cachedVp, frame, local);
+        immutable Vec3 placed = local;
         lastSnap = snapLocalHit(local, frame, x, y, cachedVp,
                                 *mesh, EditMode.Vertices, [], guideBits);
         if (elementPlaced() && lastSnap.targetType == SnapType.Edge)
-            local = toLocalP(pointOnEdgeUnder(toWorldP(quantised), lastSnap.targetIndex));
-        if (!discretePlaced()) applyPenGuide(local, x, y);
+            local = toLocalP(pointOnEdgeUnder(toWorldP(placed), lastSnap.targetIndex));
+        if (!discretePlaced() && !onSurface) applyPenGuide(local, x, y);
         if (params_.merge) link = mergeTarget(local);
         publishLastSnap(lastSnap);
         return true;
@@ -1606,15 +1581,7 @@ private:
         return a + (b - a) * t;
     }
 
-    // ---- Local ↔ world helpers (workplane refactor) ---------------------
-    /// The cursor ray at pixel (x, y) in LOCAL coords. Ortho-aware — see
-    /// `create_common.workplaneCursorRay`. The old `localEye()`/`localRay()`
-    /// pair this replaces was the perspective law (one apex, fanning
-    /// direction) and produced hits scaled by the camera distance in an ortho
-    /// cell (task 0661).
-    void localCursor(int x, int y, out Vec3 org, out Vec3 dir) const {
-        workplaneCursorRay(frame, cachedVp, cast(float)x, cast(float)y, org, dir);
-    }
+    // ---- Local ↔ world helpers ----------------------------------------
     Vec3 toWorldP(Vec3 p) const { return transformPoint(frame.toWorld, p); }
     Vec3 toLocalP(Vec3 p) const { return transformPoint(frame.toLocal, p); }
 
@@ -1903,7 +1870,7 @@ private:
         // ortho cell that handed them the perspective pencil put the guide
         // point at the wrong place along the line (task 0661).
         Vec3 curO, curD;
-        localCursor(sx, sy, curO, curD);
+        workplaneCursorRay(frame, cachedVp, cast(float)sx, cast(float)sy, curO, curD);
 
         // Project a LOCAL candidate point to screen; return pixel distance to
         // (sx,sy). Returns float.infinity for behind-camera points.
@@ -1948,27 +1915,24 @@ private:
         // worldAxis (Pen-scoped): X/Y/Z axes through the PRIOR vertex.
         // Requires only ≥1 prior vertex (anchorL already set).
         // The in-plane filter drops any world axis nearly parallel to the
-        // construction-plane normal (planeNormal, in LOCAL frame coords):
-        // snapping to it would move the vertex off the plane, which is never
-        // useful in Pen mode.  planeNormal is (1,0,0)/(0,1,0)/(0,0,1) in
-        // local space depending on which frame axis choosePlane found most
-        // face-on to the camera — it is NOT always local-Y.
+        // stroke plane's LOCAL normal axis (`planeAxis`, NOT always local Y):
+        // snapping to it would move the vertex off the plane.
         if (cfg.enabledTypes & SnapType.WorldAxis) {
             immutable Vec3[3] worldAxes = [Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1)];
             foreach (ax; worldAxes) {
                 Vec3 axL = transformDir(frame.toLocal, ax);
-                if (abs(dot(axL, planeNormal)) > 0.9f) continue;   // skip the plane-normal axis
+                if (abs(dot(axL, axisUnit(planeAxis))) > 0.9f) continue;   // skip the plane-normal axis
                 consider(closestPointOnLineToRay(anchorL, axL,
                                                   curO, curD));
             }
         }
 
         // rightAngle: perpendicular to the prior segment, in the construction
-        // plane. Direction = cross(planeNormal, segL) — both in LOCAL, result
+        // plane. Direction = cross(axisUnit(planeAxis), segL) — both in LOCAL, result
         // also in LOCAL. A single infinite LINE covers both ±90° senses.
         // Requires ≥2 prior vertices.
         if ((cfg.enabledTypes & SnapType.RightAngle) && segValid) {
-            Vec3 perpL = cross(planeNormal, segL);
+            Vec3 perpL = cross(axisUnit(planeAxis), segL);
             if (perpL.length > 1e-6f) {
                 perpL = normalize(perpL);
                 consider(closestPointOnLineToRay(anchorL, perpL,

@@ -232,7 +232,7 @@ unittest { // (c) a FREE point reads the surface, a primitive's PRESS point does
     // sphere-family, torus or tube — appears in the roster and reddens it.
     auto files = sourceFiles();
     assert(files.length > 300, format("census floor: %d source files", files.length));
-    static immutable forms = ["placeFreePoint", "backgroundPoint"];
+    static immutable forms = ["placeFreePoint", "backgroundPoint", "backgroundSurfacePoint"];
     string[] clients;
     size_t[string] home;
     foreach (f; files) {
@@ -244,13 +244,17 @@ unittest { // (c) a FREE point reads the surface, a primitive's PRESS point does
         }
     }
     // Floor: placeFreePoint = its declaration; backgroundPoint = its
-    // declaration + placeFreePoint's call.
-    assert(home == ["placeFreePoint": size_t(1), "backgroundPoint": 2],
+    // declaration + placeFreePoint's call; backgroundSurfacePoint = its
+    // declaration + backgroundPoint's call.
+    assert(home == ["placeFreePoint": size_t(1), "backgroundPoint": 2, "backgroundSurfacePoint": 2],
         format("census floor: the resolver's own tokens in create_common.d (measured); got %s", home));
-    enum vp = "tools/create/vertex_place.d:";
-    assert(clients == [vp ~ "placeFreePoint", vp ~ "placeFreePoint"],
-        format("free-point clients must be exactly the vertex tool (import + call); a primitive "
-               ~ "press must stay the plane point; got %s", clients));
+    // Task 9415 (P1): the pen joins with the surface step (import + call); its
+    // plane point is its own (a drag keeps the raw normal channel).
+    enum vp = "tools/create/vertex_place.d:", pen = "tools/create/pen.d:";
+    assert(clients == [pen ~ "backgroundSurfacePoint", pen ~ "backgroundSurfacePoint",
+                       vp ~ "placeFreePoint", vp ~ "placeFreePoint"],
+        format("free-point clients must be exactly the pen's surface step and the vertex tool "
+               ~ "(import + call each); a primitive press must stay the plane point; got %s", clients));
     foreach (press; ["tools/create/box.d", "tools/create/primitive_create_tool.d",
                      "tools/create/torus.d", "tools/create/tube.d"])
         assert(files.canFind(press), "census floor: the primitive press file " ~ press ~ " moved");

@@ -4,7 +4,7 @@
 // pair is folded into it), the per-tool `localCursorPlane` forwarders are gone
 // (callers call `workplaneCursorPlaneHit`), the most-facing local axis is
 // `viewPrincipalAxis` + `axisUnit`, and the view's vector quantum is
-// `viewVectorQuantum`. The pen keeps its own copies (frozen until its wave).
+// `viewVectorQuantum`; the pen reads them too since P1 (task 9415).
 //
 // Counts are WHOLE IDENTIFIERS over every production `source/**/*.d` (in-source
 // `*_test.d` modules excluded) in the code view: comments, strings and unittest
@@ -97,7 +97,7 @@ unittest // W1: the folded frames, the forwarders, the axis switch, the quantum
     }
 
     // STRUCTURAL: the index → unit-axis construction lives in `axisUnit`, in
-    // the pen (pen.d, pen_geometry.d: frozen; its wave folds them) and in
+    // pen_geometry.d (pen.d folded at P1, task 9415) and in
     // overlay_space.d (outside this lane: a follow-up, pinned so it cannot grow). Basis tables (a normal plus two
     // in-plane axes per case) are a different construction and not counted.
     // State: the switch row is RED before W1 (vertex_place.d); the ternary row
@@ -110,7 +110,7 @@ unittest // W1: the folded frames, the forwarders, the axis switch, the quantum
     }
     ternFiles.sort();
     assert(switchFiles.length == 0, format("axis-unit switch in %s", switchFiles));
-    assert(ternFiles == ["create_common.d", "overlay_space.d", "pen.d", "pen_geometry.d"],
+    assert(ternFiles == ["create_common.d", "overlay_space.d", "pen_geometry.d"],
            format("axis-unit ternary in %s", ternFiles));
 
     // PIN: the call-site rosters (definition + import + calls per file).
@@ -121,12 +121,12 @@ unittest // W1: the folded frames, the forwarders, the axis switch, the quantum
     // (task 9404: + the free point's no-surface fallback, `backgroundPoint`).
     const string[string] want = [
         // the grid sub-step is read through `viewVectorQuantum` everywhere but
-        // its home and the pen's frozen `placementQuantum` (app.d: an import)
-        "viewGridSubStep": "app.d:1 pen.d:2 viewgrid.d:2",
-        "viewVectorQuantum": "create_common.d:3 http_providers.d:2 poly_extrude.d:2 transform.d:2 viewgrid.d:2",
-        "viewPrincipalAxis": "create_common.d:2",
+        // its home (app.d: an import); task 9415: the pen joins (P1)
+        "viewGridSubStep": "app.d:1 viewgrid.d:2",
+        "viewVectorQuantum": "create_common.d:3 http_providers.d:2 pen.d:2 poly_extrude.d:2 transform.d:2 viewgrid.d:2",
+        "viewPrincipalAxis": "create_common.d:2 pen.d:2",
         // radial_array_tool.d: its own unrelated `axisUnit()` member (7)
-        "axisUnit": "create_common.d:2 radial_array_tool.d:7",
+        "axisUnit": "create_common.d:2 pen.d:5 radial_array_tool.d:7",
         "primitivePlacementFrame": "arc.d:3 box.d:4 create_common.d:2 pen.d:2 "
             ~ "poly_extrude.d:2 primitive_create_tool.d:4 slice_tool.d:4 sphere.d:2 transform.d:2 "
             ~ "vertex_place.d:3",

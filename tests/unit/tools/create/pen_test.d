@@ -169,7 +169,7 @@ unittest {
     import std.algorithm : count;
     const src = readText("source/tools/create/pen.d");
     const expr = "lastSnap.snapped && lastSnap.constraintType == SnapType.None";
-    const gate = "if (!discretePlaced()) applyPenGuide(local, x, y);";
+    const gate = "if (!discretePlaced() && !onSurface) applyPenGuide(local, x, y);";
     assert(src.count(expr) == 1 && src.count(gate) == 1,
         "pen: the discrete-placement test must be spelled once (discretePlaced) "
         ~ "and the guide gate must read it");

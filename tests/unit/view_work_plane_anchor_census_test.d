@@ -46,8 +46,21 @@ unittest {
     // One body of the anchor's rounding.
     assert(roster("Vec3 niceOrigin(") == ["viewgrid.d:1"],
         format("niceOrigin definitions: %s", roster("Vec3 niceOrigin(")));
+    // Task 9415 (P1): the pen's first point is the create click; its own
+    // anchor rounding, quantum and the temporary re-export are gone. Polarity:
+    // before P1 pen.d held niceOrigin 1 / relocateQuantum 1 / placementQuantum 3.
+    assert(roster("niceOrigin(") == ["tools/transform/relocate_plane_test.d:9", "viewgrid.d:2"],
+        format("niceOrigin( roster: %s", roster("niceOrigin(")));
+    assert(roster("relocateQuantum(") == ["tools/transform/relocate_plane_test.d:2", "viewgrid.d:2"],
+        format("relocateQuantum( roster: %s", roster("relocateQuantum(")));
+    assert(roster("placementQuantum") == [] && roster("clickAnchor") == [],
+        format("the pen's own click anchor returned: %s %s", roster("placementQuantum"),
+               roster("clickAnchor")));
+    assert(roster("screenToPlacementLocal(").count!(r => r == "tools/create/pen.d:1") == 1,
+        format("the pen's first point must be the create click: %s", roster("screenToPlacementLocal(")));
     const rp = blankNonCode(readText(buildPath(repoRoot, "source", "tools", "transform",
                                                "relocate_plane.d")));
+    assert(rp.indexOf("public import") < 0, "relocate_plane re-exports viewgrid names again");
     assert(rp.indexOf("bool orthoRelocateThroughPrior(") >= 0, "control: relocate_plane read");
     assert(rp.indexOf("lockedViewAxis") < 0,
         "relocate_plane regained a locked-view arm (unreachable from every click)");

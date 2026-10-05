@@ -30,7 +30,7 @@ version (unittest) {
 import math : Vec3, Viewport, lookAt, perspectiveMatrix, orthographicMatrix,
               normalize, lockedViewAxis;
 import tools.transform.relocate_plane;
-import viewgrid : dnint;
+import viewgrid : axisComp, dnint, niceOrigin;
 import std.math : abs, PI, tan;
 import std.format : format;
 
