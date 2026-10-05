@@ -1,18 +1,15 @@
-// Tests for mesh.smooth — Laplacian smoothing of selected vertices.
-//
-// Cube smoke-tests:
-//   * strn=0 ⇒ no-op
-//   * iter=0 ⇒ no-op
-//   * Each iteration moves every vert toward the centroid of its 3
-//     edge-adjacent corners. With strn=1 the cube collapses partway
-//     toward origin; with strn=0.5 partway less.
-//   * High iter count ⇒ all verts converge near origin (uniform
-//     averaging on a closed regular mesh is contractive).
-//   * Selection-aware: only selected verts move; unselected stay put
-//     even though they're neighbours of moving ones (the snapshot
-//     pattern reads the previous-iteration positions of unselected
-//     verts as their original ones).
-//   * Undo restores.
+// Tests for mesh.smooth through the command route. The law itself is pinned
+// cell by cell against the capture in
+// tests/unit/commands/mesh/smooth_kernel_parity_test.d
+// (tests/fixtures/smooth_kernel.json, task 9484); these cells check the wiring:
+//   * strn=0 / iter=0 ⇒ no-op;
+//   * a regular cube is a FIXED POINT of the relax law (every vertex's own
+//     force is cancelled by its neighbours' reactions);
+//   * one selected vertex moves by its own force only (the reactions onto the
+//     fixed neighbours are dropped): v0 → -0.5 + strn/30 per axis;
+//   * the locks, the sharp threshold in degrees, preserve and the falloff;
+//   * undo restores.
+// Cells that need motion use the cube with one corner moved (`perturbed()`).
 
 import http_client : testBaseUrl, getJson, postJson;
 import http_command_helpers : commandBody;
@@ -45,6 +42,19 @@ bool approxEq(double a, double b, double eps = 1e-5) {
     return fabs(a - b) < eps;
 }
 
+/// The default cube with corner 6 moved off the regular lattice.
+void perturbed() {
+    postJson("/api/command", commandBody("scene.reset"));
+    cmd("mesh.move_vertex from:{0.5,0.5,0.5} to:{1.25,0.5,0.2}");
+}
+
+bool anyMovedFrom(const double[3][] before, const double[3][] after) {
+    foreach (i; 0 .. before.length)
+        foreach (c; 0 .. 3)
+            if (!approxEq(before[i][c], after[i][c], 1e-4)) return true;
+    return false;
+}
+
 unittest { // strn=0 ⇒ no-op
     postJson("/api/command", commandBody("scene.reset"));
     cmd("mesh.smooth strn:0 iter:5");
@@ -67,95 +77,48 @@ unittest { // iter=0 ⇒ no-op
     }
 }
 
-unittest { // strn=1, iter=1 on cube — each vert averages with its 3
-           // edge-adjacent corners, all of which differ by ±1 in
-           // exactly two of XYZ. The signed component along each axis
-           // averages: (0.5 + 0.5 + 0.5 + (-0.5)) / 4 = 0.25 for the
-           // three "same-sign" corner & one diagonal opposite. Wait —
-           // actually each cube corner has 3 edge-neighbours; each
-           // neighbour differs in exactly ONE axis. So for vert
-           // (-0.5, -0.5, -0.5):
-           //   nbr1 = (+0.5, -0.5, -0.5)  // X-edge
-           //   nbr2 = (-0.5, +0.5, -0.5)  // Y-edge
-           //   nbr3 = (-0.5, -0.5, +0.5)  // Z-edge
-           // avg = (-0.5+0.5-0.5-0.5)/3, (...) ... = (-0.5/3, -0.5/3, -0.5/3)
-           //     = (-1/6, -1/6, -1/6).
-           // strn=1: new = old + 1*(avg-old) = avg.
-           // So every cube vert moves to its (avg of 3 nbrs).
-    postJson("/api/command", commandBody("scene.reset"));
-    cmd("mesh.smooth strn:1 iter:1");
-    auto verts = dumpVerts();
-    foreach (v; verts) {
-        // Each cube corner had components ±0.5; after one strn=1 smooth,
-        // each component magnitude should be 1/6 (since two of the three
-        // neighbours share that component value, the third flips).
-        foreach (c; 0 .. 3) {
-            assert(approxEq(fabs(v[c]), 1.0/6.0, 1e-4),
-                "strn=1 iter=1 cube smooth: expected |c|=1/6, got "
-                ~ v[c].to!string);
-        }
+unittest { // a regular cube is a fixed point of the relax law — one and many
+           // iterations (the old Laplacian moved every corner to |c| = 1/6)
+    foreach (line; ["mesh.smooth strn:1 iter:1", "mesh.smooth strn:1 iter:100"]) {
+        postJson("/api/command", commandBody("scene.reset"));
+        cmd(line);
+        foreach (v; dumpVerts())
+            foreach (c; 0 .. 3)
+                assert(approxEq(fabs(v[c]), 0.5),
+                    "`" ~ line ~ "`: a regular cube must stay put, got "
+                    ~ v[c].to!string);
     }
 }
 
-unittest { // strn=0.5, iter=1 on cube — half the displacement of strn=1
-    postJson("/api/command", commandBody("scene.reset"));
-    cmd("mesh.smooth strn:0.5 iter:1");
-    auto verts = dumpVerts();
-    foreach (v; verts) {
-        // new = old + 0.5*(avg-old) = (old + avg)/2
-        // old = ±0.5; avg = ±1/6; (0.5 + 1/6)/2 = 1/3 (for positive-sign
-        // axis); (-0.5 + -1/6)/2 = -1/3.
-        foreach (c; 0 .. 3) {
-            assert(approxEq(fabs(v[c]), 1.0/3.0, 1e-4),
-                "strn=0.5 iter=1 cube smooth: expected |c|=1/3, got "
-                ~ v[c].to!string);
-        }
+unittest { // selection-aware: vertex mode + 1 selected vert ⇒ only it moves, by
+           // its own force (F = strn/20; own force = (2/3)F per axis inward)
+    foreach (strn; [1.0, 0.5]) {
+        postJson("/api/command", commandBody("scene.reset"));
+        cmd("select.typeFrom vertex");
+        auto sel = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0]}`));
+        assert(sel["status"].str == "ok");
+        cmd("mesh.smooth strn:" ~ strn.to!string ~ " iter:1");
+        auto verts = dumpVerts();
+        const want = -0.5 + strn / 30.0;
+        foreach (c; 0 .. 3)
+            assert(approxEq(verts[0][c], want, 1e-6),
+                "strn " ~ strn.to!string ~ ": vert 0 should move to "
+                ~ want.to!string ~ ", got " ~ verts[0][c].to!string);
+        // Vert 1 = (+0.5, -0.5, -0.5), unselected → stays (no reaction).
+        assert(approxEq(verts[1][0],  0.5, 1e-6),
+            "vert 1 should stay at +0.5, got " ~ verts[1][0].to!string);
+        assert(approxEq(verts[1][1], -0.5, 1e-6));
+        assert(approxEq(verts[1][2], -0.5, 1e-6));
     }
-}
-
-unittest { // many iterations converge toward origin
-    postJson("/api/command", commandBody("scene.reset"));
-    cmd("mesh.smooth strn:1 iter:100");
-    auto verts = dumpVerts();
-    foreach (v; verts) {
-        double r = sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
-        assert(r < 0.05,
-            "after 100 iter strn=1 smooth, vert should be near origin, got r="
-            ~ r.to!string);
-    }
-}
-
-unittest { // selection-aware: vertex mode + 1 selected vert ⇒ only it moves
-    postJson("/api/command", commandBody("scene.reset"));
-    cmd("select.typeFrom vertex");
-    auto sel = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0]}`));
-    assert(sel["status"].str == "ok");
-    cmd("mesh.smooth strn:1 iter:1");
-    auto verts = dumpVerts();
-    // Vert 0 = (-0.5, -0.5, -0.5) → moved to (-1/6, -1/6, -1/6).
-    auto v0 = verts[0];
-    assert(approxEq(v0[0], -1.0/6.0, 1e-4),
-        "vert 0 should move to -1/6, got " ~ v0[0].to!string);
-    assert(approxEq(v0[1], -1.0/6.0, 1e-4));
-    assert(approxEq(v0[2], -1.0/6.0, 1e-4));
-    // Vert 1 = (+0.5, -0.5, -0.5), unselected → stays.
-    auto v1 = verts[1];
-    assert(approxEq(v1[0],  0.5, 1e-4),
-        "vert 1 should stay at +0.5, got " ~ v1[0].to!string);
-    assert(approxEq(v1[1], -0.5, 1e-4));
-    assert(approxEq(v1[2], -0.5, 1e-4));
 }
 
 unittest { // undo restores
-    postJson("/api/command", commandBody("scene.reset"));
+    perturbed();
+    auto before = dumpVerts();
     cmd("mesh.smooth strn:1 iter:3");
+    assert(anyMovedFrom(before, dumpVerts()), "control: the smooth must move");
     cmd("history.undo");
-    auto verts = dumpVerts();
-    foreach (v; verts) {
-        foreach (c; 0 .. 3)
-            assert(approxEq(fabs(v[c]), 0.5),
-                "undo should restore ±0.5 corners");
-    }
+    assert(!anyMovedFrom(before, dumpVerts()), "undo should restore the mesh");
 }
 
 
@@ -233,14 +196,16 @@ unittest { // lockBound:true ⇒ boundary verts STAY put under heavy smoothing
     }
 }
 
-unittest { // lockBound on a CLOSED mesh (cube with no boundary) is a no-op
+unittest { // lockBound on a CLOSED mesh (no boundary) is a no-op
            // — smoothing identical with lockBound on/off.
-    postJson("/api/command", commandBody("scene.reset"));
+    perturbed();
+    auto before = dumpVerts();
     postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[]}`));
     cmd("mesh.smooth strn:0.5 iter:2 lockBound:false");
     auto noLock = dumpVerts();
+    assert(anyMovedFrom(before, noLock), "control: the closed mesh must move");
 
-    postJson("/api/command", commandBody("scene.reset"));
+    perturbed();
     postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[]}`));
     cmd("mesh.smooth strn:0.5 iter:2 lockBound:true");
     auto withLock = dumpVerts();
@@ -253,13 +218,11 @@ unittest { // lockBound on a CLOSED mesh (cube with no boundary) is a no-op
 }
 
 
-// PR-4 of the convolve design doc — lockCorner freezes
-// ONLY valence-2 boundary verts (true open-mesh corners), not the
-// full boundary loop. Strict subset of lockBound.
+// lockCorner freezes the vertices used by exactly ONE polygon (K-F3s,
+// cell F3S_LOCKC), not the full boundary loop. A subset of lockBound.
 
-unittest { // cube-minus-top: top corners are valence-3 (2 horizontal
-           // boundary edges + 1 vertical shared edge), so lockCorner
-           // locks NOTHING and the verts must move under heavy smooth.
+unittest { // cube-minus-top: every top corner is used by two polygons,
+           // so lockCorner locks NOTHING and the verts must move.
     postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
     cmd("mesh.delete");
@@ -283,18 +246,22 @@ unittest { // cube-minus-top: top corners are valence-3 (2 horizontal
         "cube-minus-top: lockCorner alone should not pin valence-3 verts");
 }
 
-unittest { // single quad (cube minus 5 faces): all 4 remaining verts
-           // are valence-2 corners (each touches 2 boundary edges of
-           // the same single face). lockCorner pins ALL of them →
-           // smooth becomes a no-op.
+unittest { // single quad (cube minus 5 faces, one corner moved so it is
+           // not a fixed point): every vertex is used by that one
+           // polygon. lockCorner pins ALL of them → smooth is a no-op.
     postJson("/api/command", commandBody("scene.reset"));
     // Keep f0 (back face), delete f1..f5.
     postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[1,2,3,4,5]}`));
     cmd("mesh.delete");
+    cmd("mesh.move_vertex from:{0.5,0.5,-0.5} to:{0.9,0.7,-0.5}");
     auto before = dumpVerts();
     assert(before.length == 4,
         "setup: single quad should have 4 verts, got " ~ before.length.to!string);
 
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[]}`));
+    cmd("mesh.smooth strn:1 iter:10");
+    assert(anyMovedFrom(before, dumpVerts()), "control: the unlocked quad must move");
+    cmd("history.undo");
     postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[]}`));
     cmd("mesh.smooth strn:1 iter:10 lockCorner:true");
     auto after = dumpVerts();
@@ -303,7 +270,7 @@ unittest { // single quad (cube minus 5 faces): all 4 remaining verts
     foreach (i; 0 .. before.length)
         foreach (c; 0 .. 3)
             assert(approxEq(before[i][c], after[i][c]),
-                "single quad: all corners are valence-2, lockCorner "
+                "single quad: every vertex is used by one polygon, lockCorner "
                 ~ "should freeze every vert; v[" ~ i.to!string
                 ~ "][" ~ c.to!string ~ "] before=" ~ before[i][c].to!string
                 ~ " after=" ~ after[i][c].to!string);
@@ -334,104 +301,43 @@ unittest { // lockBound + lockCorner together is equivalent to lockBound
 }
 
 
-// PR-5 of the convolve design doc — lockSharp pins verts
-// on interior edges whose dihedral angle exceeds the sharp angle
-// (degrees). All cube edges are 90°.
+// lockSharp pins both ends of an interior edge whose face normals dot below
+// cos(sharpThreshold), the threshold in DEGREES (K-F3s, cell F3S_LOCKS). The
+// perturbed cube's dihedral deviations all lie between 45° and 115°.
 
-unittest { // sharpAngle = 45° < 90° → every cube edge is
-           // "sharp" → all 8 verts pinned → smooth no-op.
-    postJson("/api/command", commandBody("scene.reset"));
+unittest { // sharpThreshold 45 → every edge is sharp → all verts pinned
+    perturbed();
     auto before = dumpVerts();
-    cmd("mesh.smooth strn:1 iter:5 lockSharp:true sharpAngle:45");
+    cmd("mesh.smooth strn:1 iter:5 lockSharp:true sharpThreshold:45");
     auto after = dumpVerts();
     assert(before.length == after.length);
     foreach (i; 0 .. before.length)
         foreach (c; 0 .. 3)
             assert(approxEq(before[i][c], after[i][c]),
-                "lockSharp 45°: every cube edge is 90°, all verts "
+                "lockSharp 45°: every edge deviates more than 45°, all verts "
                 ~ "should be pinned (no-op); v[" ~ i.to!string ~ "][" ~ c.to!string ~ "] "
                 ~ "before=" ~ before[i][c].to!string
                 ~ " after="  ~ after[i][c].to!string);
 }
 
-unittest { // sharpAngle = 115° > 90° → no edge passes
-           // the threshold → no lock → cube smooths normally.
-    postJson("/api/command", commandBody("scene.reset"));
-    cmd("mesh.smooth strn:1 iter:5 lockSharp:true sharpAngle:115");
-    auto after = dumpVerts();
-    bool anyMoved = false;
-    foreach (v; after)
-        if (!approxEq(fabs(v[0]), 0.5) || !approxEq(fabs(v[1]), 0.5)
-                                       || !approxEq(fabs(v[2]), 0.5)) {
-            anyMoved = true; break;
-        }
-    assert(anyMoved,
-        "lockSharp 115°: no cube edge passes threshold, "
-        ~ "smooth should move every vert toward centroid");
-}
-
-unittest { // sharpThreshold (RADIANS wire alias) = π/4 ≈ 0.785 (45°)
-           // < 90° → every cube edge is "sharp" → all 8 verts pinned →
-           // smooth no-op. Mirrors the sharpAngle:45 case but exercises
-           // the radians wire param the parity harness sends.
-    postJson("/api/command", commandBody("scene.reset"));
+unittest { // sharpThreshold 115 (degrees, not radians) → no edge passes →
+           // no lock → the mesh smooths
+    perturbed();
     auto before = dumpVerts();
-    cmd("mesh.smooth strn:1 iter:5 lockSharp:true sharpThreshold:0.7853981633974483");
-    auto after = dumpVerts();
-    assert(before.length == after.length);
-    foreach (i; 0 .. before.length)
-        foreach (c; 0 .. 3)
-            assert(approxEq(before[i][c], after[i][c]),
-                "sharpThreshold 45°(rad): every cube edge is 90°, all verts "
-                ~ "should be pinned (no-op); v[" ~ i.to!string ~ "][" ~ c.to!string ~ "] "
-                ~ "before=" ~ before[i][c].to!string
-                ~ " after="  ~ after[i][c].to!string);
-}
-
-unittest { // sharpThreshold (RADIANS wire alias) = 2.0 (≈114.59°)
-           // > 90° → no edge passes the threshold → no lock → cube
-           // smooths toward centroid. Radians analogue of the
-           // sharpAngle:115 case; this is the parity divergence fixed
-           // in task 0473 (harness sends `sharpThreshold` in radians).
-    postJson("/api/command", commandBody("scene.reset"));
-    cmd("mesh.smooth strn:1 iter:5 lockSharp:true sharpThreshold:2.0");
-    auto after = dumpVerts();
-    bool anyMoved = false;
-    foreach (v; after)
-        if (!approxEq(fabs(v[0]), 0.5) || !approxEq(fabs(v[1]), 0.5)
-                                       || !approxEq(fabs(v[2]), 0.5)) {
-            anyMoved = true; break;
-        }
-    assert(anyMoved,
-        "sharpThreshold 2.0 rad: no cube edge passes threshold, "
-        ~ "smooth should move every vert toward centroid");
-}
-
-unittest { // sharpThreshold OVERRIDES sharpAngle when both supplied:
-           // sharpAngle:45 alone would pin the cube, but a radians
-           // sharpThreshold:2.0 (≈114.59°) supplied alongside wins →
-           // no lock → cube smooths. Locks in the override precedence.
-    postJson("/api/command", commandBody("scene.reset"));
-    cmd("mesh.smooth strn:1 iter:5 lockSharp:true sharpAngle:45 sharpThreshold:2.0");
-    auto after = dumpVerts();
-    bool anyMoved = false;
-    foreach (v; after)
-        if (!approxEq(fabs(v[0]), 0.5) || !approxEq(fabs(v[1]), 0.5)
-                                       || !approxEq(fabs(v[2]), 0.5)) {
-            anyMoved = true; break;
-        }
-    assert(anyMoved,
-        "sharpThreshold (radians) must override sharpAngle (degrees) "
-        ~ "when both are supplied");
+    cmd("mesh.smooth strn:1 iter:5 lockSharp:true sharpThreshold:115");
+    assert(anyMovedFrom(before, dumpVerts()),
+        "lockSharp 115°: no edge passes the threshold, the mesh should move");
 }
 
 unittest { // lockSharp:false ⇔ default smooth: regression — no
            // difference between explicit lockSharp:false and the
            // default omitted parameter.
-    postJson("/api/command", commandBody("scene.reset"));
+    perturbed();
+    auto before = dumpVerts();
     cmd("mesh.smooth strn:0.5 iter:2 lockSharp:false");
     auto explicit = dumpVerts();
-    postJson("/api/command", commandBody("scene.reset"));
+    assert(anyMovedFrom(before, explicit), "control: the smooth must move");
+    perturbed();
     cmd("mesh.smooth strn:0.5 iter:2");
     auto omitted = dumpVerts();
     assert(explicit.length == omitted.length);
@@ -442,35 +348,16 @@ unittest { // lockSharp:false ⇔ default smooth: regression — no
 }
 
 
-// PR-6 of the convolve design doc — preserve (Preserve
-// Volume) projects each smoothed vert back onto its pre-smooth
-// tangent plane, cancelling the normal-direction component of the
-// Laplacian motion. On a radially-symmetric closed cube every
-// vert's smoothing delta is purely along its corner normal, so
-// preserve cancels the entire motion → smooth no-op.
-
-unittest { // cube + preserve:true ⇒ no-op (all motion is along
-           // corner normals, all cancelled by projection).
-    postJson("/api/command", commandBody("scene.reset"));
-    auto before = dumpVerts();
-    cmd("mesh.smooth strn:1 iter:5 preserve:true");
-    auto after = dumpVerts();
-    assert(before.length == after.length);
-    foreach (i; 0 .. before.length)
-        foreach (c; 0 .. 3)
-            assert(approxEq(before[i][c], after[i][c]),
-                "cube + preserve: all cube smoothing is along corner "
-                ~ "normals, preserve should cancel entirely; v["
-                ~ i.to!string ~ "][" ~ c.to!string ~ "] "
-                ~ "before=" ~ before[i][c].to!string
-                ~ " after="  ~ after[i][c].to!string);
-}
+// preserve (Preserve Volume) re-projects onto the ORIGINAL surface inside the
+// iteration loop; its law is pinned by the KF_F3 / KF_F3i unit cells.
 
 unittest { // preserve:false ⇔ default smooth: regression.
-    postJson("/api/command", commandBody("scene.reset"));
+    perturbed();
+    auto before = dumpVerts();
     cmd("mesh.smooth strn:0.5 iter:2 preserve:false");
     auto explicit = dumpVerts();
-    postJson("/api/command", commandBody("scene.reset"));
+    assert(anyMovedFrom(before, explicit), "control: the smooth must move");
+    perturbed();
     cmd("mesh.smooth strn:0.5 iter:2");
     auto omitted = dumpVerts();
     foreach (i; 0 .. explicit.length)
@@ -479,12 +366,9 @@ unittest { // preserve:false ⇔ default smooth: regression.
                 "preserve:false should match default-omitted smooth");
 }
 
-unittest { // open mesh (cube minus top) + preserve: verts still
-           // move tangentially but the normal component is removed.
-           // We don't pin specific positions here — just verify that
-           // preserve produces a DIFFERENT result from non-preserved
-           // smooth (proving the projection actually fires) and that
-           // verts haven't escaped a reasonable bbox.
+unittest { // open mesh (cube minus top) + preserve: preserve produces a
+           // DIFFERENT result from non-preserved smooth (the projection
+           // fires through the command route).
     postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
     cmd("mesh.delete");
@@ -514,11 +398,10 @@ unittest { // open mesh (cube minus top) + preserve: verts still
 }
 
 unittest {
-    // Linear falloff blend — top corners get full smooth (weight=1),
-    // bottom corners stay put (weight=0). The blend lerps each touched
-    // vert between its pre-smooth original and the post-smooth result
-    // by per-vert weight, evaluated at the ORIGINAL position (not the
-    // moving target).
+    // Linear falloff — top corners weight 1, bottom corners weight 0. A
+    // weight-0 vertex is INACTIVE (a fixed neighbour, no reaction), so the top
+    // four relax against fixed bottoms; the weight lerp comes last. Values
+    // from the relax law (tests/fixtures/smooth_kernel.json) on this cube.
     postJson("/api/command", commandBody("scene.reset"));
     auto pre = dumpVerts();
 
@@ -529,16 +412,14 @@ unittest {
     assert(resp["status"].str == "ok", resp.toString());
     auto out_ = dumpVerts();
 
-    // Top corners (y=+0.5): smoothed → toward centroid. For closed
-    // cube + strn=0.5 + iter=2, top vert at (±0.5, +0.5, ±0.5) ends
-    // at (±2/9, +2/9, ±2/9) ≈ ±0.2222.
-    // Bottom corners (y=-0.5): weight=0 → stay at original ±0.5.
     foreach (i; 0 .. pre.length) {
         if (pre[i][1] > 0) {
-            assert(approxEq(fabs(out_[i][0]), 2.0 / 9.0, 1e-4),
-                "top vert X expected ±2/9, got " ~ out_[i][0].to!string);
-            assert(approxEq(out_[i][1], 2.0 / 9.0, 1e-4),
-                "top vert Y expected +2/9, got " ~ out_[i][1].to!string);
+            assert(approxEq(fabs(out_[i][0]), 0.483380914, 1e-6),
+                "top vert X expected ±0.483381, got " ~ out_[i][0].to!string);
+            assert(approxEq(out_[i][1], 0.499861896, 1e-6),
+                "top vert Y expected 0.499862, got " ~ out_[i][1].to!string);
+            assert(approxEq(fabs(out_[i][2]), 0.483380914, 1e-6),
+                "top vert Z expected ±0.483381, got " ~ out_[i][2].to!string);
         } else {
             foreach (c; 0 .. 3)
                 assert(approxEq(out_[i][c], pre[i][c]),
@@ -563,7 +444,7 @@ unittest { // no-op smooth undo must not truncate the undo stack (task 2110,
            // With the fix (revert() returns true on empty — no-op success):
            //   the no-op undo succeeds; the real smooth's entry is still
            //   underneath and its own undo succeeds next.
-    postJson("/api/command", commandBody("scene.reset"));
+    perturbed();
     auto before = dumpVerts();
     // `/api/reset` pushes scene.reset onto the SAME undo stack as an
     // UndoBoundary entry rather than clearing it — but `CommandHistory`
@@ -575,8 +456,8 @@ unittest { // no-op smooth undo must not truncate the undo stack (task 2110,
     // push cannot be asserted by count. POPPING (undo) never evicts, so a
     // pop-count delta IS reliable and is what's asserted below.
 
-    // (1) Real edit — touchedIdx non-empty (strn=1, iter=3 on the default
-    //     whole-mesh operand), Model history entry pushed.
+    // (1) Real edit — a non-empty result (strn=1, iter=3 on the perturbed
+    //     cube), Model history entry pushed.
     cmd("mesh.smooth strn:1 iter:3");
 
     // (2) No-op edit — iter:0 short-circuits before touchedIdx is built.

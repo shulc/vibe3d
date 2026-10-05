@@ -14,9 +14,12 @@ private void cmd(string line) {
         line ~ " failed: " ~ j.toString);
 }
 
+// The default cube with one corner moved: a regular cube is a fixed point of
+// the captured relax law (tests/fixtures/smooth_kernel.json, task 9484).
 private void resetScene() {
     auto j = postJson("/api/command", commandBody("scene.reset"));
     assert(j["status"].str == "ok", "scene.reset failed: " ~ j.toString);
+    cmd("mesh.move_vertex from:{0.5,0.5,0.5} to:{1.25,0.5,0.2}");
 }
 
 private double[3][] positions() {

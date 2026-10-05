@@ -28,16 +28,10 @@
 // undo target, top of stack) -> activate xfrm.smooth (baseline = translated
 // mesh) -> Ctrl+Z (tool still active, no open edit) -> free-drag -> assert.
 //
-// NOTE: this is a vibe3d-self-output regression lock (the golden values were
-// generated empirically by running this exact sequence once and freezing the
-// output) — NOT a cross-engine reference comparison. No external engine is
-// involved.
-//
-// NEGATIVE CONTROL (verified during authoring): stubbing
-// CommandWrapperTool.resyncSession() to a no-op makes this test FAIL (the
-// stale translated-mesh baseline leaks through: v2 lands at ~[0.62,0.54,-0.14]
-// instead of the golden [0.30,0.30,-0.30]). Reverting restores green. The test
-// therefore genuinely locks the contract.
+// NOTE: the golden is the captured relax law (tests/fixtures/smooth_kernel.json,
+// task 9484) on this sequence: the top four vertices are the active set, the
+// bottom four fixed neighbours; the run reproduces it. The stale translated
+// baseline would put v2 at ~[0.888,0.802,-0.288] instead of [0.49,0.50,-0.49].
 
 import http_client : testBaseUrl, getJson, postJson;
 import http_command_helpers : commandBody;
@@ -80,19 +74,19 @@ bool approx(double a, double b, double eps) { return fabs(a - b) < eps; }
 
 unittest {
     // The frozen golden: vertex positions after the POST-undo smooth drag.
-    // Generated empirically from this exact sequence on the default cube with
-    // resyncSession() working. With a broken resyncSession the top verts
-    // (2,3,6,7) instead reflect the translated mesh smoothed (~[0.62,0.54,...]).
+    // The relax law on the post-undo cube with resyncSession() working. With a
+    // broken resyncSession the top verts (2,3,6,7) instead reflect the
+    // translated mesh smoothed (~[0.888,0.802,...]).
     enum double TOL = 1e-4;
     immutable double[3][8] GOLDEN = [
         [-0.500000, -0.500000, -0.500000],
         [ 0.500000, -0.500000, -0.500000],
-        [ 0.300000,  0.300000, -0.300000],   // v2 — smoothed from POST-undo cube
-        [-0.300000,  0.300000, -0.300000],   // v3
+        [ 0.490000,  0.500000, -0.490000],   // v2 — smoothed from POST-undo cube
+        [-0.490000,  0.500000, -0.490000],   // v3
         [-0.500000, -0.500000,  0.500000],
         [ 0.500000, -0.500000,  0.500000],
-        [ 0.300000,  0.300000,  0.300000],   // v6
-        [-0.300000,  0.300000,  0.300000],   // v7
+        [ 0.490000,  0.500000,  0.490000],   // v6
+        [-0.490000,  0.500000,  0.490000],   // v7
     ];
 
     // 1. Fresh default cube, empty history stack.

@@ -148,21 +148,31 @@ unittest {
 // merely "something happened": a test that only asserted "the mesh changed"
 // would be green on the broken code for `iter:1000000` and says nothing.
 // ---------------------------------------------------------------------------
+// A cube with one corner moved: a regular cube is a fixed point of the relax
+// law (tests/fixtures/smooth_kernel.json, task 9484), so it could not separate
+// the ceiling from the floor.
+private void resetPerturbed() {
+    reset();
+    auto r = jpost("/api/command",
+                   "mesh.move_vertex from:{0.5,0.5,0.5} to:{1.25,0.5,0.2}");
+    assert(r["status"].str == "ok", "move_vertex failed: " ~ r.toString());
+}
+
 unittest {
     // The ceiling's own answer, measured on this tree, as the oracle.
-    reset();
+    resetPerturbed();
     auto rc = command("mesh.smooth", `{"iter":256,"strength":1.0}`);
     assert(rc["status"].str == "ok", rc.toString());
     auto atCeiling = vertex0();
 
     // The untouched cube, so the two outcomes are known to differ at all.
-    reset();
+    resetPerturbed();
     auto untouched = vertex0();
     assert(fabs(atCeiling[0] - untouched[0]) > 1e-3,
            "PRECONDITION: iter=256 must visibly differ from iter=0, or this "
            ~ "block cannot separate the ceiling from the floor");
 
-    reset();
+    resetPerturbed();
     auto r = command("mesh.smooth", `{"iter":1e18,"strength":1.0}`);
     assert(r["status"].str == "ok", r.toString());
     auto huge = vertex0();

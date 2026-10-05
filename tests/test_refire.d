@@ -321,6 +321,13 @@ double maxVertDelta(JSONValue a, JSONValue b) {
     return m;
 }
 
+// A cube with one corner moved: a regular cube is a fixed point of the relax
+// law (tests/fixtures/smooth_kernel.json, task 9484) and would not move.
+void drainResetPerturbed() {
+    drainAndReset();
+    cmd("mesh.move_vertex from:{0.5,0.5,0.5} to:{1.25,0.5,0.2}");
+}
+
 void activateSmooth() {
     cmd("tool.set xfrm.smooth on");
 }
@@ -329,8 +336,8 @@ void deactivateSmooth() {
 }
 
 unittest { // a refire param-edit session lands exactly ONE entry; last value wins
-    drainAndReset();
-    // No selection → smooth acts on the whole mesh (cube corners).
+    drainResetPerturbed();
+    // No selection → smooth acts on the whole mesh.
     activateSmooth();
 
     auto preModel = getModel();
@@ -349,7 +356,7 @@ unittest { // a refire param-edit session lands exactly ONE entry; last value wi
         "expected ONE entry from refire param session, got delta = "
         ~ (undoAfter - undoBefore).to!string);
 
-    // Mesh moved (strn 0.8 smoothing is meaningful on a cube).
+    // Mesh moved (strn 0.8 smoothing is meaningful on the perturbed cube).
     auto sessionModel = getModel();
     assert(maxVertDelta(preModel, sessionModel) > 1e-3,
         "smooth session should have moved geometry");
@@ -381,7 +388,7 @@ unittest { // a refire param-edit session lands exactly ONE entry; last value wi
 unittest { // last-value-wins: a multi-fire session reverts each earlier fire,
            // so the result equals a single-fire session at the same final value.
     // Reference: a fresh single-fire strn-0.3 session from a clean cube.
-    drainAndReset();
+    drainResetPerturbed();
     activateSmooth();
     auto preRef = getModel();
     refireBegin();
@@ -393,7 +400,7 @@ unittest { // last-value-wins: a multi-fire session reverts each earlier fire,
     // Ramp session from an identical clean cube: 0.8 → 0.3. The LAST value is
     // 0.3, so — because each fire reverts the previous one to the session
     // baseline (no accumulation) — the result must match the single-fire 0.3.
-    drainAndReset();
+    drainResetPerturbed();
     activateSmooth();
     auto preRamp = getModel();
     assert(maxVertDelta(preRef, preRamp) < 1e-6, "two resets must match");

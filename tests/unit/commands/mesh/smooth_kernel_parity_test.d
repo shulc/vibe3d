@@ -195,3 +195,26 @@ unittest { // preserve: projection onto the original surface inside the loop, fa
             cell["id"].str, e));
     }
 }
+
+unittest { // the sampling predicate is the one the iteration loop consults
+    import std.algorithm : count;
+    const src = readText("source/commands/mesh/smooth.d");
+    assert(src.count("preserveProjectsAt(") == 2,
+        "smooth.d: one definition and one call of preserveProjectsAt");
+    assert(src.count("if (preserve_ && preserveProjectsAt(i, iters))") == 1,
+        "the preserve projection must run only at the sampled iterations");
+}
+
+unittest { // a non-finite strength is refused by the kernel: nothing moves
+    auto cell = fixture()["kernel"].array[0];
+    Mesh m = rig(cell);
+    View cv = new View(0, 0, 800, 600);
+    auto cmd = new MeshSmooth(&m, cv, EditMode.Vertices);
+    setParam(cmd, "strn", double.nan);
+    setParam(cmd, "iter", 3);
+    const before = m.vertices.dup;
+    assert(smoothed(m, EditMode.Vertices, cmd) == before,
+        "a NaN strength must leave every vertex in place");
+    setParam(cmd, "strn", 0.5);   // control: the same rig moves at a finite strength
+    assert(smoothed(m, EditMode.Vertices, cmd) != before, "control: finite strength moves");
+}
