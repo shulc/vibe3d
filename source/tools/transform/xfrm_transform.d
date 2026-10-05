@@ -775,11 +775,9 @@ public:
     // ("linear" = MatrixLerp default, "arc" = PolarQuat angle-scaling), mapped to
     // `rotateBlendMode()` and consumed ONLY by the rotate-only guard in applyFold.
     // The reference engine's data backing "arc" is SINGLE-AXIS only (see the
-    // applyFold guard comment). Presets xfrm.softRotate / xfrm.swirl set "arc";
-    // the other two base:rotate presets (xfrm.twist / xfrm.vortex) deliberately
-    // STAY on the default "linear" — they use linear/cylinder falloff with no
-    // reference capture yet, so leaving them on MatrixLerp is intentional, not a
-    // gap to be "completed".
+    // applyFold guard comment). All four base:rotate soft presets
+    // (xfrm.softRotate / swirl / twist / vortex) set "arc"; each has an
+    // arc-preset fixture.
     string rotFalloffBlend = "linear";
 
     // Map the rotFalloffBlend Enum Param storage onto the kernel BlendMode. This
