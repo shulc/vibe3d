@@ -839,6 +839,9 @@ private void pv2Row(T)(EditMode mode, void function(ref Mesh) select,
         auto stale = tool.buildPreparedParamUpdate(rig.mesh);
         assert(tool.preparedParamUpdateMatches(stale, rig.mesh),
             name ~ ": the fresh image does not validate");
+        assert(stale.preview.nextPlacements == 2 && stale.preview.nextKeyMisses == 0,
+            name ~ ": the prepared run on a standing key was not a placement "
+          ~ "(its candidate must start as the live mesh)");
         setFloatParam(tool, sweep, 0.12f);
         assert(tool.previewRebuildCounts().placements == 2,
             name ~ ": the same-value frame was not a placement");
