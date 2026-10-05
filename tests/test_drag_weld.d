@@ -49,16 +49,17 @@ void loadRig(Rig r) {
         format(`{"vertices":%s,"faces":%s}`, r.pts.to!string, r.faces.to!string)));
 }
 
-/// Front view (eye on +Z) at 100 px per metre on the z = 0 plane, as captured.
-Viewport frontView(float fx, float fy) {
+/// Front view (eye on +Z; `back` puts it on -Z) at 100 px per metre on the
+/// z = 0 plane, as captured.
+Viewport frontView(float fx, float fy, bool back = false) {
     immutable h = fetchCamera(baseUrl).height;
     immutable double dist = h / (2.0 * tan(PI / 8.0) * 100.0);
     auto r = parseJSON(cast(string)post(baseUrl ~ "/api/camera", format(
-        `{"azimuth":0,"elevation":0,"distance":%g,"focus":{"x":%g,"y":%g,"z":0}}`,
-        dist, fx, fy)));
+        `{"azimuth":%g,"elevation":0,"distance":%g,"focus":{"x":%g,"y":%g,"z":0}}`,
+        back ? PI : 0.0, dist, fx, fy)));
     assert(r["status"].str == "ok", "camera: " ~ r.toString);
     auto cam = fetchCamera(baseUrl);
-    assert(cam.eye.z > cam.focus.z + 1.0f, "rig: the eye must look down -Z");
+    assert((cam.eye.z - cam.focus.z) * (back ? -1 : 1) > 1.0f, "rig: the eye must sit on the asked side");
     return viewportFromCamera(cam);
 }
 
@@ -100,8 +101,9 @@ JSONValue dragWeld(Rig r, int src, float[3] endWorld, bool welded,
     ok("tool.set mesh.dragWeld off");
     snapState(false);
     assert(modelDepth() - before == (welded ? 1 : 0),
-        format("press %s, release %s%+d%+d: history grew by %d, expected %d",
-               r.pts[src], endWorld, offX, offY, modelDepth() - before, welded ? 1 : 0));
+        format("press %s%+d, release %s%+d%+d, snap=%s: history grew by %d, expected %d",
+               r.pts[src], pressOffY, endWorld, offX, offY, snap, modelDepth() - before,
+               welded ? 1 : 0));
     return getModel();
 }
 
@@ -145,6 +147,11 @@ unittest { // command: target 4 survives at its own index-1 slot, undo restores
         [[0u, 3, 1, 2], [3u, 4, 5, 6]], "command W2c");
     ok(commandBody("history.undo"));
     assertMesh(getModel(), cast(float[3][])kC.pts, cast(uint[][])kC.faces, "command undo");
+    ok(commandBody("history.redo"));
+    assertMesh(getModel(),
+        [[-0.5f, 0f, 0f], [0f, 0.3f, 0f], [-0.5f, 0.3f, 0f], [0.5f, 0.06f, 0f],
+         [1f, 0.06f, 0f], [1f, 0.36f, 0f], [0.5f, 0.36f, 0f]],
+        [[0u, 3, 1, 2], [3u, 4, 5, 6]], "command redo");
 }
 
 unittest { // command: the same index, or a hidden one, is a refusal (nothing recorded)
@@ -259,11 +266,21 @@ unittest { // a background layer's vertex is never a target (edited mesh only)
     ok("prim.cube");                               // B: the unit cube at the origin
     ok("layer.select index:0");
     ok("layer.select index:1 mode:remove");        // B visible + deselected = background
-    auto vp = frontView(-1.5f, 0);
+    auto vp = frontView(-1.5f, 0, true);   // from -Z the cube's vertices 0..3 face the eye
+    // Positive control: the cube's vertex 0 IS a snap candidate from slot 1, and
+    // its index (0 < 4, not the source 1) would weld the edited quad if leaked.
+    auto b = px(vp, [-0.5f, -0.5f, -0.5f]);
+    ok("tool.pipe.attr snap enabled true");
+    ok("tool.pipe.attr snap types vertex");
+    auto sp = parseJSON(cast(string)post(baseUrl ~ "/api/snap", format(
+        `{"cursor":[0,0,0],"sx":%d,"sy":%d,"excludeVerts":[]}`, b[0] + 6, b[1])));
+    assert(sp["snapped"].type == JSONType.true_ && sp["targetSource"].integer == 1
+           && sp["targetIndex"].integer == 0,
+        "rig: the background vertex 0 must be a snap candidate: " ~ sp.toString);
     snapState(true);
     ok("tool.set mesh.dragWeld on");
     auto cam = fetchCamera(baseUrl);
-    auto a = px(vp, [-2.5f, 0f, 0f]), b = px(vp, [-0.5f, -0.5f, 0.5f]);
+    auto a = px(vp, [-2.5f, 0f, 0f]);
     playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
                              a[0], a[1], b[0] + 6, b[1], 10), baseUrl);
     ok("tool.set mesh.dragWeld off");

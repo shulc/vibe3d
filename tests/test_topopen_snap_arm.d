@@ -463,5 +463,15 @@ unittest { // law-neutral: the weld ignores the snap SCOPE and reaches the whole
     assertWeldCell("weld-occctl", bIdx, weldDrag(bIdx, -39));
     cmd("tool.set mesh.topoPen off");
     cmd("tool.pipe.attr snap innerRange 24");
+
+    // weld-beyond-accept: at the shipped 24 px a release 30 px from a refuses
+    // (the acceptance is the radius; capture K-P P6, task 9437).
+    bIdx = weldScene("occctl");
+    immutable long before = vertexCountLayer(1);
+    weldDrag(bIdx, -24);
+    assert(vertexCountLayer(1) == before, format(
+        "weld-beyond-accept: vertex count %d -> %d, a 30 px release must not weld",
+        before, vertexCountLayer(1)));
+    cmd("tool.set mesh.topoPen off");
     postJson("/api/command", commandBody("scene.reset"));
 }

@@ -118,6 +118,8 @@ unittest { // a CHAIN is refused whole, not silently followed one link deep
     // applied and the other left pointing at a dead vertex: the rewrite reads
     // the remap once per corner and does not chase, so a surviving link would
     // be silent corruption. Order-independent by construction.
+    uint[2][] self = [[2u, 2u]];
+    assert(m.weldVertexPairs(self) == 0, "a vertex paired with itself is no weld");
     uint[2][] pairs = [[4u, 1u], [1u, 0u]];
     immutable size_t welded = m.weldVertexPairs(pairs);
     assert(welded == 0,
