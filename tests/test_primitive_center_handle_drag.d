@@ -119,54 +119,25 @@ V3[3] planeBasis() {
     assert(false, "WORK stage not found");
 }
 
-// The oblique camera is built in the pinned plane's LOCAL frame and handed to
-// the endpoint through the plane basis: every view read under a pinned plane is
-// plane-local (§23, task 7139). Its distance was fitted so the retired ray/plane
-// map gave the captured delta (0, 2.5, 3.75); the reference camera was never
-// recorded, and K-CM (task 9502) refutes that map in perspective. The captured
-// part kept is the elected plane (X stays exactly 0); the magnitude is the
-// planar law form on THIS camera (`planarDelta`).
-struct ObliqueRig { V3 right, up, back; double distance, focalPx; }
-
-ObliqueRig obliqueRig(int height) {
-    immutable V3 target = V3(0.0, 2.5, 3.75);
-    V3 back = unit(V3(-4.0, 1.0, 1.0));
-    V3 p = unit(target - back * dot(target, back));
-    V3 t = cross(p, back);
-    V3 right = p * (3.0 / sqrt(13.0)) + t * (2.0 / sqrt(13.0));
-    V3 up    = p * (2.0 / sqrt(13.0)) - t * (3.0 / sqrt(13.0));
-    double k = cast(double)height / (2.0 * tan(PI / 8.0));
-    return ObliqueRig(right, up, back, dot(target, back) + k * dot(target, right) / 96.0, k);
-}
-
-/// K-CM's planar map on the rig (plane-local, centre C = 0, X-normal plane):
-/// T = M^-1 (dx, dy), M forward-differenced at C along (Y, Z) with a step of
-/// ten view pixel scales (ours: 0.8 x distance / focal px).
-V3 planarDelta(ObliqueRig r, int dx, int dy) {
-    double[2] px(V3 q) {
-        immutable double z = r.distance - dot(q, r.back);
-        return [r.focalPx * dot(q, r.right) / z, -r.focalPx * dot(q, r.up) / z];
-    }
-    immutable double k = 10 * 0.8 * r.distance / r.focalPx;
-    immutable a = px(V3(0, k, 0)), b = px(V3(0, 0, k));
-    immutable double m00 = a[0] / k, m10 = a[1] / k, m01 = b[0] / k, m11 = b[1] / k;
-    immutable double det = m00 * m11 - m01 * m10;
-    return V3(0, (m11 * dx - m01 * dy) / det, (m00 * dy - m10 * dx) / det);
-}
-
-void setObliquePerspective() {
+// The perspective cell's camera is the RECORDED one (capture gui_centre_drag,
+// records psp_oblique_*): rows right +Z, up +Y, back -X (the left-view
+// orientation in perspective, eye vector exactly +X), focus 0, pixel size
+// 0.03125 = 0.8 x distance / focal, so 0.0390625 per pixel at the focus. It is
+// built plane-local and handed over through the plane basis (§23, task 7139).
+// Face-on, the planar and ray/plane maps agree; K-CM's unit cells separate them.
+void setRecordedPerspective() {
     cmd("viewport.view Perspective");
     auto c = fetchCamera(BASE);
     immutable V3[3] B = planeBasis();
     V3 toW(V3 l) { return B[0] * l.x + B[1] * l.y + B[2] * l.z; }
-    immutable r = obliqueRig(c.height);
-    immutable V3 right = toW(r.right), up = toW(r.up), back = toW(r.back);
-    auto res = postJson("/api/camera", format(
+    immutable double focalPx = cast(double)c.height / (2.0 * tan(PI / 8.0));
+    immutable V3 right = toW(V3(0, 0, 1)), up = toW(V3(0, 1, 0)), back = toW(V3(-1, 0, 0));
+    auto r = postJson("/api/camera", format(
         `{"focus":{"x":0,"y":0,"z":0},"distance":%.9f,` ~
         `"orientation":[%.12f,%.12f,%.12f,%.12f,%.12f,%.12f,%.12f,%.12f,%.12f]}`,
-        r.distance, right.x, right.y, right.z, up.x, up.y, up.z,
+        0.0390625 * focalPx, right.x, right.y, right.z, up.x, up.y, up.z,
         back.x, back.y, back.z));
-    assert(res["status"].str == "ok", "oblique camera set failed");
+    assert(r["status"].str == "ok", "recorded perspective camera set failed");
 }
 
 struct Cell { string name, preset; V3 expected; bool perspective; }
@@ -174,7 +145,7 @@ enum Cell[] cells = [
     Cell("front (face-on)", "Front", V3(3.0, 2.0, 0.0), false),
     Cell("top (edge-on)",   "Top",   V3(3.0, 0.0,-2.0), false),
     Cell("left (edge-on)",  "Left",  V3(0.0, 2.0, 3.0), false),
-    Cell("perspective (oblique)", "Perspective", V3(0.0, 2.5, 3.75), true),
+    Cell("perspective (face-on X)", "Perspective", V3(0.0, 2.5, 3.75), true),
 ];
 
 bool close(V3 a, V3 b, double eps = 0.04) {
@@ -187,7 +158,7 @@ unittest { // (+96,-64) px at 32 px/m, with world XY frozen underneath.
         V3 again;   // face-on, a second drag from where the first ended
         foreach (i, cell; cells) {
             buildPinnedPrimitive(tool);
-            if (cell.perspective) setObliquePerspective();
+            if (cell.perspective) setRecordedPerspective();
             else                  setOrtho(cell.preset);
             settle();
 
@@ -232,13 +203,8 @@ unittest { // (+96,-64) px at 32 px/m, with world XY frozen underneath.
         }
         assert(edgeErrors.length == 0, "edge-on centre drag mismatch: " ~ edgeErrors);
 
-        // Perspective: the elected X-normal plane exactly, the travel by the
-        // planar map on this camera to half the view quantum (0.05 here) — the
-        // retired fit's (0, 2.5, 3.75) is 0.1+ away.
-        immutable V3 planar = planarDelta(obliqueRig(fetchCamera(BASE).height), 96, -64);
-        assert(!close(planar, cells[3].expected, 0.1), "rig: the planar form must separate from the retired fit");
-        assert(abs(actual[3].x) < 1e-6 && close(actual[3], planar, 0.026),
-            format("%s %s: expected the planar map %s, actual %s", tool, cells[3].name,
-                   planar.toString(), actual[3].toString()));
+        assert(close(actual[3], cells[3].expected, 1e-4),
+            format("%s %s: expected %s, actual %s", tool, cells[3].name,
+                   cells[3].expected.toString(), actual[3].toString()));
     }
 }
