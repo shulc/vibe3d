@@ -106,6 +106,10 @@ unittest {
     kept.remembered = Remembered.inPipe;
     kept.geom = ConstrainGeom.Screen;
     kept.installPreparedTransientReset();
+    import popup_state : getStatePath;
+    assert(getStatePath("constrain/enabled") == "true" &&
+           getStatePath("constrain/geometry") == "off",
+           "prepared constrain transient reset published a stale state path");
     assert(kept.enabled && kept.geom == ConstrainGeom.Off,
            "prepared constrain transient reset ignored the remembered constraint");
     const before = kept.capturePreparedCompositionProjection();

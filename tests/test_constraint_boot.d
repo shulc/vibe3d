@@ -245,6 +245,33 @@ unittest {
         expect("same-key-drop-keeps", fixtureCase("first-drop-move")["steps"][5]);
         ++ran;
     }
+    { // attr-enabled-forgets-remembers: the panel's Enabled row is the
+      // toggle's twin (toggle-off-ends rows)
+        auto c = fixtureCase("toggle-off-ends");
+        boot(true);
+        cmd("tool.pipe.attr constrain enabled false");
+        key("w");
+        expect("attr-enabled off arm", c["after_toggle_off"]);
+        key("q");
+        expect("attr-enabled off drop", c["after"]);
+        cmd("tool.pipe.attr constrain enabled true");
+        key("w");
+        key("q");
+        expect("attr-enabled on drop", c["after_retoggle"]["after_move_drop"]);
+        ++ran;
+    }
+    { // cleared-unlocks: the Escape clear also drops the settings lock, so a
+      // tool's own composition (the topology pen's point mode) applies again
+        boot(true);
+        cmd("tool.pipe.attr constrain geometry point");   // locks while enabled
+        key("escape");
+        expect("cleared-unlocks clear", parseJSON(`{"enabled":false,"geometry":"point"}`));
+        cmd("tool.set mesh.topoPen on");
+        expect("cleared-unlocks topology pen", parseJSON(`{"enabled":true,"geometry":"point"}`));
+        key("q");
+        expect("cleared-unlocks drop", fixtureCase("cleared-not-readded")["after_each"][2]);
+        ++ran;
+    }
     { // load-no-tool-no-seed: a scene load with no tool armed drops nothing
       // and inserts nothing (captured scene-open-no-tool)
         auto c = fixtureCase("scene-open-no-tool");
@@ -327,5 +354,5 @@ unittest {
         ++ran;
     }
 
-    assert(ran == 21, format("constraint boot cells: ran %s, expected 21", ran));
+    assert(ran == 23, format("constraint boot cells: ran %s, expected 23", ran));
 }
