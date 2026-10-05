@@ -153,6 +153,10 @@ unittest {
         Cap("prim.ellipsoid", "", " segments:5000", "tool.attr prim.ellipsoid segments 1024"),
         Cap("prim.torus", "", " minorSegments:5000", "tool.attr prim.torus minorSegments 1024"),
         Cap("prim.cube", "", " segmentsX:500", "tool.attr prim.cube segmentsX 64"),
+        Cap("prim.cube", "", " segmentsY:100", "tool.attr prim.cube segmentsY 64"),
+        Cap("prim.cube", "", " segmentsZ:100", "tool.attr prim.cube segmentsZ 64"),
+        Cap("prim.cube", "tool.attr prim.cube radius 0.1", " segmentsR:100",
+            "tool.attr prim.cube segmentsR 64"),
     ];
     string[] failed;
     foreach (c; caps) {
@@ -167,8 +171,8 @@ unittest {
     const n = cmd("tool.attr mesh.loopSliceTool count ?")["value"].integer;
     ok("tool.set mesh.loopSliceTool off");
     if (n != 1024) failed ~= format("loop slice stored count:5000 reads %s, expected 1024", n);
-    assert(caps.length == 8, "kernel cells: measured 8");
+    assert(caps.length == 11, "kernel cells: measured 11");
     assert(failed.length == 0, format("kernel caps failed in %d cells:\n  %-(%s\n  %)",
                                       failed.length, failed));
-    writeln("PASS kernel caps, 9 cells");
+    writeln("PASS kernel caps, 12 cells");
 }
