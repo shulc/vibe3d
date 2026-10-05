@@ -10251,6 +10251,43 @@ unittest {
     assert(idx == 0, "and the resolved element must be v0 itself");
 }
 
+// Task 9453 (capture K-D, cell D5 HIDDEN-OUT): a hidden vertex or edge is never
+// grabbed by the press pick, with or without the occlusion term. Hiding grid
+// face 0 = [0,1,4,3] hides v0 (its only polygon) and edges 0-1, 0-3 (an
+// endpoint hidden); v1 stays visible (it touches face 1).
+unittest {
+    import mesh : makeGridPlane;
+
+    auto t = new TopologyPenTool();
+    Mesh m = makeGridPlane(2);
+    t.meshSrc_ = () => &m;
+    auto vp = makeGridPlaneTestViewport();
+    ImVec2 p0, p1;
+    assert(TopologyPenTool.projectWorldPt(m.vertices[0], vp, p0)
+        && TopologyPenTool.projectWorldPt(m.vertices[1], vp, p1), "setup: v0, v1 must project");
+    immutable int vx = cast(int)p0.x, vy = cast(int)p0.y;
+    immutable int ex = cast(int)((p0.x + p1.x) * 0.5f), ey = cast(int)p0.y + 2;
+    immutable uint e01 = m.edgeIndex(0, 1);
+    int idx;
+    foreach (occ; [true, false]) {   // positive controls, before the hide
+        assert(t.resolveGrabTarget(vx, vy, vp, idx, occ) == MoveElem.Vertex && idx == 0,
+            "control: a press on visible v0 grabs it");
+        assert(t.resolveGrabTarget(ex, ey, vp, idx, occ) == MoveElem.Edge && idx == cast(int)e01,
+            "control: a press 2 px off visible edge 0-1's middle grabs it");
+    }
+    m.syncSelection();   // size the mark planes the hide writes
+    m.setFaceHidden(0, true);
+    m.refreshHiddenDerived();
+    assert(m.isVertexHidden(0) && m.isEdgeHidden(e01) && !m.isVertexHidden(1),
+        "setup: v0 and edge 0-1 must be hidden, v1 visible");
+    foreach (occ; [true, false]) {
+        assert(t.resolveGrabTarget(vx, vy, vp, idx, occ) == MoveElem.None,
+            "a press on a HIDDEN vertex must grab nothing (K-D D5 HIDDEN-OUT)");
+        assert(t.resolveGrabTarget(ex, ey, vp, idx, occ) == MoveElem.None,
+            "a press on a HIDDEN edge must grab nothing (K-D D5 HIDDEN-OUT)");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Task 0496 — the MEASURED snap-candidate set (`innerSnap`).
 //
@@ -12272,8 +12309,8 @@ unittest {
         }
     }
     // Floors first: an empty scan would satisfy both rules vacuously.
-    assert(blocks.length == 188 && histBlocks == 83 && calls == 79 && kernels == 65,
-        format("gestures census population changed: %d top-level blocks (188), %d read "
+    assert(blocks.length == 189 && histBlocks == 83 && calls == 79 && kernels == 65,
+        format("gestures census population changed: %d top-level blocks (189), %d read "
              ~ "history (83), %d bracketed-list calls in them (79), %d of them kernels (65)",
                blocks.length, histBlocks, calls, kernels));
     assert(bad.length == 0, "gestures census:\n" ~ bad.join("\n"));

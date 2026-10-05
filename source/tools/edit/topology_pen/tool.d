@@ -43,7 +43,8 @@ import toolpipe.stages.snap : SnapStage, liveSnapStage;
 import constraint           : resolveHoverTarget, topoPenPressPickPx,
                               topoPenSnapAcceptPx, topoPenSnapGatherPx,
                               kTopoPenSnapAuto, closestPointOnMeshes, BackgroundSource;
-import snap                  : backgroundSourcesFull, SnapAdmit, snapPacketOf, editedVertexAt;
+import snap                  : backgroundSourcesFull, SnapAdmit, snapPacketOf, editedVertexAt,
+                               snapCursor;
 import tools.edit.smooth_relax : RelaxVec3, RelaxTopology, deriveBoundary, relaxPasses;
 import tools.edit.topology_pen.render : PenRenderOps;
 import tools.edit.topology_pen.snap_guide : PenSnapGuide;
@@ -2385,11 +2386,11 @@ public:
     // passes `float.infinity` for the unconditional nearest (RESOLUTION),
     // and a finite value for the over-mesh GATE decision (REV1 FIX-1) — two
     // distinct calls, never conflated.
-    // The press pick admits every vertex: it is not snapping and has no
-    // admission policy (the weld target is `weldTargetVertex`).
+    // `admit(index, point)`: the press pick's visibility (`resolveGrabTarget`);
+    // the weld target is `weldTargetVertex`.
     package int findSourceVertex(int mx, int my, const ref Viewport vp,
                                  float thresholdPx = kTopoPenSnapAuto,
-                                 scope bool delegate(Vec3) admit = null) {
+                                 scope bool delegate(int, Vec3) admit = null) {
         if (meshSrc_ is null) return -1;
         auto m = mesh;
         if (m is null) return -1;
@@ -2405,7 +2406,8 @@ public:
             float d2 = dx * dx + dy * dy;
             if (d2 >= bestD2) continue;
             // `admit` (the press pick's visibility) sees only in-reach candidates.
-            if (admit !is null && (d2 > thresholdPx * thresholdPx || !admit(m.vertices[vi])))
+            if (admit !is null && (d2 > thresholdPx * thresholdPx
+                    || !admit(cast(int)vi, m.vertices[vi])))
                 continue;
             bestD2 = d2; best = cast(int)vi;
         }
@@ -3741,12 +3743,15 @@ public:
         // The element-pick law (`hover_state.electElement`): the
         // nearest VISIBLE vertex and edge within the reach, the polygon under
         // the cursor only under a style that draws faces (K-P P9, P10), ranked
-        // by the cascade after the edge-midpoint veto.
+        // by the cascade after the edge-midpoint veto. Hidden elements are
+        // never picked (K-D D5; the face BVH already skips hidden polygons).
         import hover_state : electElement, pickDistances, kCascadeVertex,
             kCascadeEdge, kCascadePolygon;
-        scope bool delegate(Vec3) admit = occlusion ? (Vec3 p) => pressVisible(p, vp) : null;
-        immutable int vi = findSourceVertex(mx, my, vp, kTopoPenSnapAuto, admit);
-        immutable int ei = findRingSeedEdge(mx, my, vp, kTopoPenSnapAuto, admit);
+        bool shown(Vec3 p) { return !occlusion || pressVisible(p, vp); }
+        scope admitV = (int i, Vec3 p) => !m.isVertexHidden(i) && shown(p);
+        scope admitE = (int i, Vec3 p) => !m.isEdgeHidden(i) && shown(p);
+        immutable int vi = findSourceVertex(mx, my, vp, kTopoPenSnapAuto, admitV);
+        immutable int ei = findRingSeedEdge(mx, my, vp, kTopoPenSnapAuto, admitE);
         immutable int fi = occlusion ? pickPrimaryFace(mx, my, vp) : -1;
 
         const AimViewport vpAim = aimSpace(vp, primaryModelSpace());
@@ -4485,7 +4490,7 @@ public:
     // vertex one now does.
     package int findRingSeedEdge(int mx, int my, const ref Viewport vp,
                                  float thresholdPx = kTopoPenSnapAuto,
-                                 scope bool delegate(Vec3) admit = null) {
+                                 scope bool delegate(int, Vec3) admit = null) {
         if (meshSrc_ is null) return -1;
         auto m = mesh;
         if (m is null) return -1;
@@ -4510,7 +4515,8 @@ public:
                                         pa.x, pa.y, pb.x, pb.y, t);
             if (d >= bestD) continue;
             if (admit !is null && (d > thresholdPx
-                    || !admit(closestPointOnSegmentToRay(m.vertices[e[0]], m.vertices[e[1]], ro, rd))))
+                    || !admit(cast(int)ei,
+                              closestPointOnSegmentToRay(m.vertices[e[0]], m.vertices[e[1]], ro, rd))))
                 continue;
             bestD = d; best = cast(int)ei;
         }
@@ -5800,7 +5806,7 @@ public:
             // vertex at `hit` rather than at `M^-1·hit`, i.e. visibly away
             // from the cursor.
             if (!lastHit_.hit) return true;
-            const p = primaryModelSpace().toLocalPoint(lastHit_.point);
+            const p = primaryModelSpace().toLocalPoint(placeSnapped(e.x, e.y, vts));
             const vi = placeVertexAt(p, vts);
             // The placed point is its own anchor (L17; its Offset reads 0).
             if (vi >= 0) noteStepDescriptor(PenStepKind.PointPlace, [cast(uint)vi], [p]);
@@ -5818,6 +5824,18 @@ public:
             return true;
         }
         return false;
+    }
+
+    // K-P P8/P8c: a Point lands on the shared snap election's answer at the
+    // release pixel — every source, background included, on the press's packet
+    // — and on the surface hit when nothing snaps or snapping is off. No guides:
+    // the registered one is the weld policy and refuses the background.
+    private Vec3 placeSnapped(int mx, int my, ref VectorStack vts) {
+        auto m = mesh;
+        if (m is null) return lastHit_.point;
+        Viewport vp = viewportOf(vts);
+        const sr = snapCursor(lastHit_.point, mx, my, vp, *m, primaryModelSpace(), dragSnap_);
+        return sr.snapped ? sr.worldPos : lastHit_.point;
     }
 
     // P3: commits the armed drag-build, if any, at the RELEASE event's own

@@ -92,11 +92,12 @@ unittest // every production snapCursor call consults the guide registry
     foreach (f; files)
         scanCalls(f[0], blankUnittestBodies(blankNonCode(f[1])), "snapCursor", "SnapResult",
                   calls, others);
-    // Floor, then the roster: seven production calls, one per file.
-    assert(calls.length == 7, format("snapCursor production calls: %s %s", calls.length, fileRoster(calls)));
+    // Floor, then the roster: eight production calls, one per file.
+    assert(calls.length == 8, format("snapCursor production calls: %s %s", calls.length, fileRoster(calls)));
     assert(fileRoster(calls) == [
         "source/http_providers.d", "source/snap.d", "source/toolpipe/stages/snap.d",
         "source/tools/create/create_common.d", "source/tools/create/pen.d",
+        "source/tools/edit/topology_pen/tool.d",
         "source/tools/transform/move.d", "source/tools/transform/transform.d"],
         format("snapCursor call roster: %s", fileRoster(calls)));
     assert(others.length == 0, format("snapCursor reached other than by a call: %s", fileRoster(others)));
@@ -104,10 +105,13 @@ unittest // every production snapCursor call consults the guide registry
     // pen wave runs; the interaction-layer pen slices own it. The topology
     // tools' vertex finder `snap.editedVertexAt` is exempt: its admit is the
     // gesture's own policy, and the registered guide would veto Split's
-    // interior target (tasks 9407, 9437).
+    // interior target (tasks 9407, 9437). The topology pen's Point placement is
+    // exempt: its registered guide is the WELD policy (edited mesh only) and
+    // would veto the background vertex the placement lands on (K-P P8).
     Site[] guideless;
     foreach (c; calls) if (!consultsGuides(c.args)) guideless ~= c;
-    assert(fileRoster(guideless) == ["source/snap.d", "source/tools/create/pen.d"],
+    assert(fileRoster(guideless) == ["source/snap.d", "source/tools/create/pen.d",
+                                     "source/tools/edit/topology_pen/tool.d"],
         format("snapCursor calls that do not consult the guides: %s", fileRoster(guideless)));
 }
 

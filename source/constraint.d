@@ -707,13 +707,11 @@ unittest { // the THREE measured numbers, and the two refutations behind them
 /// the vertex and the edge candidate, matching the reference's single printed
 /// press limit.
 ///
-/// The PRECEDENCE around it (Vertex > Edge > Face, short-circuited) is
-/// MEASURED-POSITIVE, not a placeholder. The rival law — "take the one closest
-/// candidate across all types, apply the radius afterwards" — was refuted
-/// twice on the reference: a vertex at 5.83px beat an edge at 3.00px and a
-/// polygon at 0.00px, and a vertex at 7.07px beat an edge at 7.00px. Porting
-/// "one closest across types" would be a regression, and a test pins the
-/// vertex-beats-nearer-edge case so it cannot be "fixed" back.
+/// The ranking is the shared element-pick comparator (`electElement`, K-P):
+/// a gathered vertex beats a nearer edge inside its doubled tolerance unless
+/// the edge's midpoint is nearer (one comparator, no local V>E copy). This
+/// is the hover READOUT; a Point click lands on the snap election instead
+/// (`TopologyPenTool.placeSnapped`).
 ///
 /// MEASURING POINT, recorded not fixed: this resolver measures from the
 /// projected surface HIT (`h.point`), while the pen's own primary-mesh
@@ -741,33 +739,29 @@ HoverTarget resolveHoverTarget(const ref ConstrainHitPacket h,
     float ax, ay, az;
     if (!projectToWindowFull(h.point, vp, ax, ay, az)) return r;
 
-    // Vertex candidate — priority 1.
-    if (h.nearestVert >= 0) {
-        float vx, vy, vz;
-        if (projectToWindowFull(h.nearestVertPos, vp, vx, vy, vz)) {
-            float dx = vx - ax, dy = vy - ay;
-            if (dx * dx + dy * dy <= thPx * thPx) {
-                r.kind = HoverTargetKind.Vertex;
-                r.vert = h.nearestVert;
-                return r;
-            }
+    // The hit polygon's nearest vertex and edge within `thPx`, ranked by the
+    // shared element-pick comparator (`hover_state.electElement`).
+    import hover_state : PickGather, electElement, kCascadeVertex, kCascadeEdge;
+    PickGather g;
+    float vx, vy, vz, ea0, ea1, ea2, eb0, eb1, eb2;
+    if (h.nearestVert >= 0 && projectToWindowFull(h.nearestVertPos, vp, vx, vy, vz)) {
+        immutable float d = ((vx - ax) ^^ 2 + (vy - ay) ^^ 2) ^^ 0.5f;
+        if (d <= thPx) g.vertex = d;
+    }
+    if (h.nearestEdge >= 0 && projectToWindowFull(h.nearestEdgeA, vp, ea0, ea1, ea2)
+                           && projectToWindowFull(h.nearestEdgeB, vp, eb0, eb1, eb2)) {
+        float t;
+        immutable float d = closestOnSegment2D(ax, ay, ea0, ea1, eb0, eb1, t);
+        if (d <= thPx) {
+            g.edge    = d;
+            g.edgeMid = (((ea0 + eb0) * 0.5f - ax) ^^ 2 + ((ea1 + eb1) * 0.5f - ay) ^^ 2) ^^ 0.5f;
         }
     }
-
-    // Edge candidate — priority 2.
-    if (h.nearestEdge >= 0) {
-        float ea0, ea1, ea2, eb0, eb1, eb2;
-        if (projectToWindowFull(h.nearestEdgeA, vp, ea0, ea1, ea2)
-         && projectToWindowFull(h.nearestEdgeB, vp, eb0, eb1, eb2)) {
-            float t;
-            if (closestOnSegment2D(ax, ay, ea0, ea1, eb0, eb1, t) <= thPx) {
-                r.kind = HoverTargetKind.Edge;
-                r.edge = h.nearestEdge;
-                return r;
-            }
-        }
+    switch (electElement(g)) {
+        case kCascadeVertex: r.kind = HoverTargetKind.Vertex; r.vert = h.nearestVert; break;
+        case kCascadeEdge:   r.kind = HoverTargetKind.Edge;   r.edge = h.nearestEdge; break;
+        default: break;
     }
-
     return r;                           // Face
 }
 
@@ -979,13 +973,20 @@ unittest { // resolveHoverTarget — a FARTHER vertex still beats a NEARER edge.
     h.nearestVertPos = Vec3(0.07f, 0, 0);      // 5.6px away — farther than the edge
     h.nearestEdge    = 9;
     h.nearestEdgeA   = Vec3(0,  0.1f, 0);      // the segment straddles (400,400):
-    h.nearestEdgeB   = Vec3(0, -0.1f, 0);      // distance 0px, i.e. strictly nearer
+    h.nearestEdgeB   = Vec3(0, -0.5f, 0);      // distance 0px, midpoint 16px away
 
     auto t = resolveHoverTarget(h, vp, topoPenPressPickPx(vp));
     assert(t.kind == HoverTargetKind.Vertex,
         "a vertex INSIDE the press-pick reach must win over a strictly nearer edge — the "
       ~ "'one closest candidate across types' law was measured-negative and must not be ported");
     assert(t.vert == 2, "and it must be that vertex");
+
+    // K-P P5cA: an edge whose MIDPOINT is in reach and nearer than the vertex
+    // vetoes the vertex (the readout runs the shared comparator).
+    h.nearestEdgeB = Vec3(0, -0.1f, 0);        // midpoint on the hit pixel
+    t = resolveHoverTarget(h, vp, topoPenPressPickPx(vp));
+    assert(t.kind == HoverTargetKind.Edge && t.edge == 9,
+        "a nearer in-reach edge midpoint must veto the vertex (K-P P5cA)");
 }
 
 unittest { // resolveHoverTarget — neither candidate in range -> Face

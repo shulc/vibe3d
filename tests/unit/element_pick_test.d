@@ -89,12 +89,13 @@ unittest { // production-text census
            format("element-pick census: comparator defined in %s", cmpDefs));
 
     // The comparator's call-site roster: the active-tool hover publish, the
-    // polygon pen's hover-record stand-in (its merge, task 9503) and the
-    // topology pen's press pick (Duplicate and Remove press through it too).
+    // polygon pen's hover-record stand-in (its merge, task 9503), the topology
+    // pen's press pick (Duplicate and Remove press through it too) and its
+    // background hover readout (task 9501).
     electSites.sort();
-    assert(electSites.length == 3, format("element-pick census: %d call sites", electSites.length));
+    assert(electSites.length == 4, format("element-pick census: %d call sites", electSites.length));
     assert(electSites == ["InputFrameState.publishHover", "PenTool.hoverHoldsEdge",
-                          "TopologyPenTool.resolveGrabTarget"],
+                          "TopologyPenTool.resolveGrabTarget", "resolveHoverTarget"],
            format("element-pick census: call-site roster changed: %s", electSites));
 
     // The pickers carry no reach of their own: two instantiations, no literal.

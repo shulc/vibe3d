@@ -11,7 +11,7 @@
 source-files 575
 task-citation-lines 5227
 citing-files 455
-long-comment-runs 263
+long-comment-runs 262
 files-with-long-runs 141
 
 # Exact per-file task-citation allowances, sorted by path.
@@ -517,7 +517,7 @@ allow-runs source/commands/select/by_stat.d 1
 allow-runs source/commands/select/by_tag.d 1
 allow-runs source/commands/select/fill.d 1
 allow-runs source/commands/select/sets.d 2
-allow-runs source/constraint.d 2
+allow-runs source/constraint.d 1
 allow-runs source/display_state.d 1
 allow-runs source/document.d 2
 allow-runs source/document_selection.d 4
