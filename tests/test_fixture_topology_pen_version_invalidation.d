@@ -5,11 +5,11 @@
 // than a JSON fixture.
 //
 // This test exercises the `_bgBvh` mutationVersion cache via
-// `constrain.d`'s shared `bgSurfaceRayHit` helper — SCREEN mode's own
+// `constrain.d`'s shared `rayHit` helper — SCREEN mode's own
 // values are asserted here, but the cache is shared with Point mode too
 // (both dispatch through the same helper: Point mode's placement seed is
 // now the camera-ray hit, per a live cross-engine differential against the reference editor —
-// see constrain.d's `pointNearestFootBackground`), so Point mode is
+// see constrain.d's `publishSurfaceHit`), so Point mode is
 // subject to the identical invalidation behavior, just not separately
 // re-asserted here. Uses `geometry screen` (this was always a camera-ray
 // probe, unaffected by the placement-seed fix); values unchanged.

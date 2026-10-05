@@ -149,7 +149,6 @@ tests.unit.backdrop_display_slot_law_test
 tests.unit.backdrop_size_law_test
 tests.unit.backface_cull_census_test
 tests.unit.background_pixel_ray_census_test
-tests.unit.background_pixel_ray_test
 tests.unit.base_revert_flag_test
 tests.unit.bg_gpu_cache_wiring_test
 tests.unit.binding_resolve_test
@@ -206,6 +205,7 @@ tests.unit.commit_seam_census_test
 tests.unit.composite_fold_census_test
 tests.unit.config_probe
 tests.unit.confined_publisher_census_test
+tests.unit.constraint_surface_at_test
 tests.unit.constraint_test
 tests.unit.coord_rounding_test
 tests.unit.create_registration_boundary_test

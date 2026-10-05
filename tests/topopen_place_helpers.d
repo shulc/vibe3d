@@ -10,7 +10,7 @@
 // cross-engine differential against the reference editor —
 // toolcards/topology_pen/cross_engine_differential.md — superseding the P2
 // work-plane-cursor derivation this file originally used; see
-// source/toolpipe/stages/constrain.d's `pointNearestFootBackground` for the
+// source/toolpipe/stages/constrain.d's `publishSurfaceHit` for the
 // full finding). Every
 // expected placement position in the test files that import this module is
 // computed by the functions below — an INDEPENDENT reimplementation of
@@ -110,7 +110,7 @@ Vec3 screenRay(float sx, float sy, const ref Viewport vp) {
 /// the independent reimplementation backing every sphere place-test's
 /// "expected" value: the placement seed the tool now uses (CONFIRMED by a
 /// live cross-engine differential against the reference editor,
-/// source/toolpipe/stages/constrain.d's `pointNearestFootBackground`) IS
+/// source/toolpipe/stages/constrain.d's `publishSurfaceHit`) IS
 /// this camera-ray hit.
 bool raySphereIntersect(Vec3 origin, Vec3 dir, Vec3 center, float R, out Vec3 hit) {
     Vec3 oc = origin - center;

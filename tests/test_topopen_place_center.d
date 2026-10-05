@@ -4,7 +4,7 @@
 // hit (CONFIRMED by a live cross-engine differential against the reference
 // editor, superseding P2's
 // work-plane-cursor derivation — see source/toolpipe/stages/constrain.d's
-// `pointNearestFootBackground`). `focus=(0,0,0)` puts the sphere's centre
+// `publishSurfaceHit`). `focus=(0,0,0)` puts the sphere's centre
 // exactly on the lookAt forward axis, so the viewport CENTRE pixel's ray is
 // guaranteed to pass through the sphere (the centre is always inside it) —
 // the simplest possible camera-ray hit to predict independently.

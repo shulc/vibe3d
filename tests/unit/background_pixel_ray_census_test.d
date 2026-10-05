@@ -1,9 +1,10 @@
-// Source census of the ONE background pixel ray and the ONE CONS-stage finder
-// (task 9357, Pen parity wave S2). Every production pixel -> background-hit
-// query goes through `BackgroundRayPicker.nearestAtPixel`; every reader of the
-// live pipeline's constraint stage goes through `liveConstrainStage()`. Code
-// views go through `blankNonCode` (comments and literals blanked, same
-// offsets), so a mention in prose is not a site.
+// Source census of the ONE background ray and the ONE CONS-stage finder
+// (task 9357; task 9403). Every production ray -> background-hit query goes
+// through `ConstrainStage.rayHit` (the one `.nearest` call) and its pixel /
+// gated forms; every reader of the live pipeline's constraint stage goes
+// through `liveConstrainStage()`. Code views go through `blankNonCode`
+// (comments and literals blanked, same offsets), so a mention in prose is not
+// a site.
 module tests.unit.background_pixel_ray_census_test;
 
 import std.algorithm : sort;
@@ -129,7 +130,7 @@ private string[] sourceFiles() {
 
 unittest { // positive control of the four scanners on a probe (must stay green)
     immutable probe = "a.nearest(o, d); b . nearest!(S)(o); auto f = &c.\n nearest;\n"
-        ~ "nearest(o, d); p.nearestAtPixel(1, 2);\n"
+        ~ "nearest(o, d);\n"
         ~ "x.findByTask(TaskCode.Cons); y.findByTask( TaskCode . Cons ); z.findAllByTask(Cons);\n"
         ~ "w.findByTask(TaskCode.Snap); v.findByTask(TaskCode.Consume);\n"
         ~ `u.findById("constrain"); t.findById( "constrain" ); s.findById("axis");` ~ "\n"
@@ -151,30 +152,41 @@ unittest { // positive control of the four scanners on a probe (must stay green)
                ~ "a non-finder operand, a comparison, a template argument and a SnapStage cast excluded); got %d", consCastFinders(code)));
 }
 
-unittest { // (a) the ONE pixel ray: production callers of nearestAtPixel, and no raw `.nearest`
-    // Polarity: TRUE after task 9357. Before it the caller roster is EMPTY
-    // (the CONS stage and the topology pen each built their own ray and
-    // called `.nearest`); restoring an inline ray reddens the roster or the
-    // `.nearest` offender list, naming the file.
+unittest { // (a) the ONE background query: `.nearest` in the CONS stage only; its callers
+    // Polarity: TRUE after task 9403. Before it the topology pen called the
+    // picker itself (`nearestAtPixel`) and no form existed: the floor and the
+    // client roster below were EMPTY. Restoring an inline query in a client
+    // reddens the `.nearest` home list or the roster, naming the file.
     auto files = sourceFiles();
     assert(files.length > 300, format("census floor: %d source files", files.length));
-    string[] callers, rawNearest;
-    size_t defs;
+    static immutable forms = ["backgroundHit", "rayHit", "rayHitAt", "surfaceOnRay", "surfaceAt"];
+    string[] nearestHomes, clients;
+    size_t[string] inStage;
     foreach (f; files) {
         immutable code = blankNonCode(readText(buildPath(root, "source", f)));
-        immutable n = tokenAt(code, "nearestAtPixel").length;
-        if (f == "bvh_pick.d") { defs = n; continue; }
-        if (n) callers ~= f;
-        if (memberNearest(code)) rawNearest ~= f;
+        if (f == "bvh_pick.d") continue;
+        foreach (_; 0 .. memberNearest(code)) nearestHomes ~= f;
+        foreach (form; forms) {
+            immutable n = tokenAt(code, form).length;
+            if (f == "toolpipe/stages/constrain.d") { inStage[form] = n; continue; }
+            foreach (_; 0 .. n) clients ~= f ~ ":" ~ form;
+        }
     }
-    // Floor: the definition is where the census looks for it.
-    assert(defs == 1, format("census floor: bvh_pick.d must declare nearestAtPixel once; found %d", defs));
-    assert(callers == ["toolpipe/stages/constrain.d", "tools/edit/topology_pen/tool.d"],
-        format("nearestAtPixel production callers must be exactly the CONS stage and the topology "
-               ~ "pen (the Pen tool (`tools/create/pen.d`) joins in S3b); got %s", callers));
-    assert(rawNearest.length == 0,
-        format("a raw `.nearest` member call outside bvh_pick.d builds its own pixel ray; "
-               ~ "route it through nearestAtPixel: %s", rawNearest));
+    // Floor: each form is declared in constrain.d and each reaches the next
+    // there (backgroundHit: decl + rayHit; rayHit: decl + rayHitAt +
+    // surfaceOnRay; surfaceOnRay: decl + surfaceAt; rayHitAt: decl; surfaceAt:
+    // decl + the hover publish).
+    assert(inStage == ["backgroundHit": size_t(2), "rayHit": 3, "rayHitAt": 1, "surfaceOnRay": 2,
+                       "surfaceAt": 2],
+        format("census floor: the stage's own form tokens (measured); got %s", inStage));
+    assert(nearestHomes == ["toolpipe/stages/constrain.d"],
+        format("`.nearest` outside bvh_pick.d must be exactly constrain.d's `backgroundHit`; a client "
+               ~ "calling the picker builds its own query: %s", nearestHomes));
+    enum pen = "tools/edit/topology_pen/tool.d:";
+    assert(clients == [pen ~ "backgroundHit", pen ~ "backgroundHit", pen ~ "rayHit"],
+        format("background ray clients outside constrain.d must be exactly the topology pen's `rayHit` "
+               ~ "(its drag rays through an exact projected point) and its pipeline-less `backgroundHit` "
+               ~ "(import + call); got %s", clients));
 }
 
 unittest { // (b) the ONE CONS finder over g_pipeCtx: inline finders outside constrain.d

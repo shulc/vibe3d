@@ -93,7 +93,7 @@ Vec3 closestPointOnTriangle(Vec3 p, Vec3 a, Vec3 b, Vec3 c)
 // metric search (nearest-point, ray-triangle) run against raw local
 // vertices silently drags the result onto the layer's IDENTITY pose — see
 // doc/picking_item_transform_plan.md §3 and the CONS stage's
-// `bgSurfaceRayHit` for the sibling fix. `layerIndex` is opaque to both
+// `rayHit` for the sibling fix. `layerIndex` is opaque to both
 // functions (they never read it) — it exists so a caller that also needs
 // the Document-layer index (the CONS stage's `hit.layer` fill) can take
 // ONE combined snapshot instead of a separate lock+allocation per field;

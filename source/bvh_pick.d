@@ -54,6 +54,7 @@ struct SurfaceHit {
     float[2] bary   = [0, 0];   // dbvh_hit_t (u, v) at the hit triangle
     int      tri    = -1;       // raw BVH triangle index (debugging only)
     float    t      = float.infinity;
+    int      source = -1;       // `BackgroundRayPicker.nearest`: the answering source's index
 }
 
 /// Single-mesh BVH cache. App.d holds one instance for the active mesh.
@@ -481,7 +482,7 @@ private:
 /// The nearest hit of one WORLD ray across several background sources, each
 /// cast through its OWN `ModelSpace` against a per-mesh surface BVH
 /// (`BvhPick.pickSurfaceRay`), nearest by `t`. One query shared by the CONS
-/// stage's cursor raycast and the topology pen's drag-delta ray, so both read
+/// stage's ray forms (`ConstrainStage.rayHit`), so every pointer client reads
 /// the same surface the same way. `S` is any source with `.mesh` (a
 /// `const(Mesh)*`) and `.space` (a `ModelSpace`) — `constraint.BackgroundSource`
 /// in the tree; a template so this module needs no import of it. Entries are
@@ -492,11 +493,9 @@ struct BackgroundRayPicker {
 
     void clear() nothrow { _bvh.clear(); }
 
-    /// False on a miss across every source (or no source); `outIdx` is the
-    /// index into `sources` of the source that answered.
-    bool nearest(S)(Vec3 org, Vec3 dir, const(S)[] sources,
-                    out SurfaceHit outHit, out size_t outIdx)
-    {
+    /// False on a miss across every source (or no source); `outHit.source` is
+    /// the index into `sources` of the source that answered.
+    bool nearest(S)(Vec3 org, Vec3 dir, const(S)[] sources, out SurfaceHit outHit) {
         bool[size_t] live;
         foreach (bg; sources)
             if (bg.mesh !is null) live[cast(size_t)bg.mesh] = true;
@@ -523,21 +522,10 @@ struct BackgroundRayPicker {
             if (sh.t >= bestT) continue;
             bestT  = sh.t;
             outHit = sh;
-            outIdx = i;
+            outHit.source = cast(int)i;
             found  = true;
         }
         return found;
-    }
-
-    /// `nearest` for the ray through window pixel (sx, sy): the ONE pixel →
-    /// background-hit query. The pixel convention is the CALLER's
-    /// (the CONS stage passes the pixel centre, the topology pen its raw point).
-    bool nearestAtPixel(S)(float sx, float sy, const ref Viewport vp,
-                           const(S)[] sources, out SurfaceHit outHit, out size_t outIdx)
-    {
-        Vec3 org, dir;
-        screenPointToRay(sx, sy, vp, org, dir);
-        return nearest(org, dir, sources, outHit, outIdx);
     }
 }
 

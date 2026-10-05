@@ -38,7 +38,7 @@ import shader              : Shader;
 import operator            : VectorStack, viewportOf;
 import toolpipe.packets    : ConstrainHitPacket, HoverTarget, HoverTargetKind,
                              SubjectPacket, SnapPacket, SnapType, SnapMode;
-import toolpipe.stages.constrain : liveConstrainStage;
+import toolpipe.stages.constrain : liveConstrainStage, backgroundHit;
 import toolpipe.stages.snap : SnapStage, liveSnapStage;
 import toolpipe.guide       : SnapGuide, GuideDrawState, kGuidePrioritySeed;
 import constraint           : resolveHoverTarget, topoPenPressPickPx,
@@ -242,7 +242,7 @@ private:
     // for `pickFace` on the PRIMARY cage mesh — zero coupling to app
     // internals / the app's own hover-pick instance.
     BvhPick removePick_;
-    BackgroundRayPicker bgRayPick_;   // `backgroundRays` with no CONS stage (a pipeline-less pen)
+    BackgroundRayPicker bgRayPick_;   // `backgroundRayHit`'s BVHs with no CONS stage (a pipeline-less pen)
 
     // TASK 1905 PHASE B — the pen's `package CommandHistory history_;` field is
     // gone; `history` now lives on `Tool` (see its declaration there for why
@@ -2523,14 +2523,6 @@ public:
         if (!projectWorldPt(primaryModelSpace().toWorldPoint(m.vertices[sourceVert_]), vp, q))
             return false;
         return backgroundRayHit(q.x + dx, q.y + dy, vp, hit);
-    }
-
-    // The live CONS stage's background ray query (its BVHs are the ones the
-    // hover already built); the pen's own only without a pipeline.
-    private ref BackgroundRayPicker backgroundRays() return {
-        if (auto cs = liveConstrainStage())
-            return cs.backgroundRays();
-        return bgRayPick_;
     }
 
     // The tangent-plane normal at source `a` (WORLD, unit): the area-weighted
@@ -5145,11 +5137,17 @@ public:
     // The nearest background ray hit (WORLD) of window point (x, y), over
     // every background source in its own space; false on a miss or with no
     // background. One query for the vertex slide and the build's drag delta:
-    // the CONS stage's per-mesh BVHs (`backgroundRays`).
+    // the CONS stage's ungated `rayHit` (the pen's own BVHs only without a
+    // pipeline) on the ray through the EXACT point, a projected point plus the
+    // drag, never a pixel centre (a half-pixel shift reddens three captured
+    // cells, card 9403 step 0).
     private bool backgroundRayHit(float x, float y, const ref Viewport vp, out Vec3 hitW) {
+        auto cs = liveConstrainStage();
+        Vec3 org, dir;
         SurfaceHit sh;
-        size_t si;
-        if (!backgroundRays().nearestAtPixel(x, y, vp, backgroundSourcesFull(), sh, si)) return false;
+        screenPointToRay(x, y, vp, org, dir);
+        if (!(cs !is null ? cs.rayHit(org, dir, sh) : backgroundHit(bgRayPick_, org, dir, sh)))
+            return false;
         hitW = sh.point;
         return true;
     }

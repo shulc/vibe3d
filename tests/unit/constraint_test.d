@@ -124,7 +124,7 @@ unittest { // closestPointOnMeshes / nearestFaceVertex / nearestFaceEdge —
            // now the mesh's LOCAL vertices sit 3 world units away from
            // where the review's own repro names — "a background layer at
            // position x=3" — and the query points are WORLD (as
-           // `bgSurfaceRayHit`'s seed and the CONS stage's candidate
+           // `rayHit`'s seed and the CONS stage's candidate
            // fields genuinely are).
            //
            // Without the fix (searching `m.vertices[]` raw, ignoring

@@ -51,7 +51,7 @@
 //     an enable/disable pair around the drag: `enabled=false` CLEARS
 //     `userLocked` (constrain.d's own comment says so) and the next tool
 //     switch then wipes the cache this file exists to catch reading.
-//   * `bgSurfaceRayHit` PRUNES `_bgBvh` of every address that is not currently
+//   * `rayHit` PRUNES `_bgBvh` of every address that is not currently
 //     a background source — and during the drag layer1 is the primary, i.e.
 //     exactly such an address. A single CONS evaluate with a live cursor
 //     mid-drag would therefore delete the entry and hand raycast #2 a fresh

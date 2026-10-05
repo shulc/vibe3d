@@ -1,12 +1,12 @@
 // Topology Pen — place_no_bg_miss.
 //
 // Placement seed = camera-ray∩bg-surface hit (source/toolpipe/stages/
-// constrain.d's `pointNearestFootBackground`), so a click CAN miss even
+// constrain.d's `publishSurfaceHit`), so a click CAN miss even
 // with a background surface present, if the ray doesn't land on it — this
 // file only covers the simplest, unambiguous miss: NO background source at
 // all. Hides the sphere background layer (`layer.setVisible index:0
 // value:false` -> `snap.backgroundSourcesSnapshot()` returns empty ->
-// CONS's `bgSurfaceRayHit` finds nothing to raycast against ->
+// CONS's `rayHit` finds nothing to raycast against ->
 // `hit.hit == false`) and asserts the click places nothing.
 //
 // Run via: ./run_test.d topopen_place_no_bg_miss

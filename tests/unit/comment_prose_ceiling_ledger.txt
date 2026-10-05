@@ -9,10 +9,10 @@
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
 source-files 578
-task-citation-lines 5246
+task-citation-lines 5243
 citing-files 454
-long-comment-runs 268
-files-with-long-runs 144
+long-comment-runs 267
+files-with-long-runs 143
 
 # Exact per-file task-citation allowances, sorted by path.
 allow source/ai/analysis.d 2
@@ -357,7 +357,7 @@ allow source/toolpipe/pipeline.d 9
 allow source/toolpipe/stage.d 11
 allow source/toolpipe/stages/actcenter.d 62
 allow source/toolpipe/stages/axis.d 16
-allow source/toolpipe/stages/constrain.d 8
+allow source/toolpipe/stages/constrain.d 5
 allow source/toolpipe/stages/falloff.d 34
 allow source/toolpipe/stages/path.d 1
 allow source/toolpipe/stages/snap.d 12
@@ -581,7 +581,6 @@ allow-runs source/toolpipe/obbox.d 2
 allow-runs source/toolpipe/packets.d 2
 allow-runs source/toolpipe/stages/actcenter.d 2
 allow-runs source/toolpipe/stages/axis.d 1
-allow-runs source/toolpipe/stages/constrain.d 1
 allow-runs source/toolpipe/stages/falloff.d 1
 allow-runs source/tools/alignment/align_kernels.d 1
 allow-runs source/tools/alignment/array_tool.d 1
