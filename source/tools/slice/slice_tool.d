@@ -169,9 +169,8 @@ static immutable IntEnumEntry[3] sliceGapSideTable = [
 ];
 
 // ---------------------------------------------------------------------------
-// sliceSplitGap (task 0291) — the ONE shared helper for Split + Caps + Gap,
-// called identically from BOTH split-gap call sites (`sliceFromBaseline` below
-// and `SliceTool.applyHeadless`) so they cannot drift. Routes through
+// sliceSplitGap (task 0291) — the Split + Caps + Gap arm of `sliceCut` (its
+// only production caller; task 9431). Routes through
 // `mesh_ops.cut.cutByPlaneSplitGap` — TWO REAL parallel plane cuts at
 // `center ± offset·n` with the slab between them deleted, so every seam sits
 // on a real edge∩plane intersection and each remaining shell's cap is always
@@ -221,14 +220,13 @@ size_t sliceSplitGap(ref Mesh mesh, Vec3 p, Vec3 n, bool clipped, Vec3 s, Vec3 e
 }
 
 // ---------------------------------------------------------------------------
-// sliceFromBaseline — the shared cut kernel wrapper (the single point that
-// turns a Start→End line into a plane cut). RESTORES `baseline` onto `mesh`
-// FIRST, then cuts with the plane through the line perpendicular to
-// `wpNormal`, returning the number of faces split (0 = the line missed every
-// face). The mandatory restore is what makes the live preview NON-CUMULATIVE:
-// dragging the line through many positions never stacks cut upon cut — every
-// call reproduces exactly the single cut that the final line would make from
-// the pristine pre-gesture mesh. The interactive preview (onMouseMotion), the
+// sliceFromBaseline — turns a Start→End line into a plane cut. RESTORES
+// `baseline` onto `mesh` FIRST, then cuts (`sliceCut`) with the plane through
+// the line perpendicular to `wpNormal`, returning the number of faces split
+// (0 = the line missed every face). The mandatory restore is what makes the
+// live preview NON-CUMULATIVE: dragging the line through many positions never
+// stacks cut upon cut — every call reproduces exactly the single cut that the
+// final line would make from the pristine pre-gesture mesh. The interactive preview (onMouseMotion), the
 // commit (onMouseButtonUp), and the `fast`-deferred commit all funnel through
 // here, so they can never diverge in result. Pure data (no GPU / GL) so it is
 // unit-testable under `dub test`.
@@ -247,6 +245,19 @@ size_t sliceFromBaseline(ref Mesh mesh, const ref MeshSnapshot baseline,
     Vec3 p, n;
     if (!planeForSlice(start, end, wpNormal, axisMode, vector, p, n))
         return 0;
+    return sliceCut(mesh, p, n, start, end, infinite, split, caps, restrictFaces,
+                    gap, gapSide);
+}
+
+// ---------------------------------------------------------------------------
+// sliceCut — the ONE Slice cut operation (task 9431): the live preview and
+// commit (`sliceFromBaseline`), the prepared panel edit and the scripted
+// `applyHeadless` all cut through here, so no twin can drift. Cuts `mesh` with
+// the plane (p, n); `start`/`end` bound a clipped cut. Returns the faces split.
+size_t sliceCut(ref Mesh mesh, Vec3 p, Vec3 n, Vec3 start, Vec3 end,
+                bool infinite, bool split, bool caps, const uint[] restrictFaces,
+                float gap, int gapSide)
+{
     // `infinite` (task 0270): ON extends the line indefinitely, so the plane
     // slices the WHOLE mesh (mesh_ops.cut.cutByPlane — the S0 behavior). OFF (the
     // reference factory default) CLIPS the cut to the drawn Start→End span, so
@@ -1629,68 +1640,11 @@ public:
         Vec3 p, n;
         if (!planeForSlice(sStart, sEnd, nrm, effectiveAxisMode(), vector_, p, n))
             return false;
-        // Restrict the cut to the current polygon selection (task 0279): the
-        // reference Slice cuts ONLY the selected polygons, the whole layer when
-        // nothing is selected (empty set ⇒ whole cut).
-        uint[] restrict = sliceRestrictFaces(*mesh);
-        // infinite ⇒ whole-mesh plane cut; else clip to the drawn Start→End span.
-        // split ⇒ route the same cut through cutByPlaneEx so the loop is
-        // duplicated into two disconnected boundary loops (S7); caps ⇒ seal each
-        // section with a cap polygon (S8, forwarded to splitAlongCutLoop).
-        size_t nSplit;
-        if (split_) {
-            // gap/gapSide (S9): separate the two split shells along the plane
-            // normal by gap_, offset per gapSide_ (no-op at gap_ == 0).
-            //
-            // Task 0291: an UNRESTRICTED gap routes through `sliceSplitGap`
-            // (two real parallel plane cuts + band delete) instead of the
-            // single-cut + fixed along-edge slide — MUST stay in lockstep with
-            // sliceFromBaseline's split+gap branch (see its doc comment).
-            if (gap_ != 0.0f && restrict.length == 0) {
-                nSplit = sliceSplitGap(*mesh, p, n, /*clipped*/!infinite_, sStart, sEnd,
-                                       caps_, gap_, cast(int)gapSide_, restrict);
-            } else {
-                PlaneCutLoops loops;
-                auto ed = MeshEditBatch.unrecorded(*mesh, kCutEditScope);
-                nSplit = ed.cutByPlaneEx(p, n, /*clipped*/!infinite_, sStart, sEnd,
-                                         /*split*/true, caps_, loops, 1e-5f, restrict,
-                                         gap_, cast(int)gapSide_);
-                ed.close();
-            }
-        } else {
-            // A single connected plane cut through `pp` (infinite/clipped +
-            // restrict). Nested so the Gap-without-split path fires it twice.
-            // MUST stay in lockstep with sliceFromBaseline's non-split branch.
-            // Takes the batch, does not open one — the twin of
-            // `sliceFromBaseline`'s `cutAt` (task 1903 Stage E3).
-            size_t cutAt(ref MeshEditBatch ed, Vec3 pp) {
-                if (restrict.length > 0)
-                    return infinite_ ? ed.cutByPlaneRestricted(pp, n, restrict)
-                                     : ed.cutByPlaneClipped(pp, n, sStart, sEnd, 1e-5f, restrict);
-                return infinite_ ? ed.cutByPlane(pp, n)
-                                 : ed.cutByPlaneClipped(pp, n, sStart, sEnd);
-            }
-            // Gap WITHOUT Split (task 0288): two parallel cuts `gap` apart open a
-            // CONNECTED channel — the captured reference geometry (see
-            // sliceFromBaseline; task 0288). gap_ == 0 ⇒ one cut (byte-for-byte
-            // the S0/S4 path).
-            if (gap_ != 0.0f) {
-                float loAmt, hiAmt;
-                switch (cast(int)gapSide_) {
-                    case cast(int)SliceGapSide.Positive: loAmt = gap_;        hiAmt = 0.0f;        break;
-                    case cast(int)SliceGapSide.Negative: loAmt = 0.0f;        hiAmt = gap_;        break;
-                    default:                              loAmt = gap_ * 0.5f; hiAmt = gap_ * 0.5f; break;
-                }
-                auto ed = MeshEditBatch.unrecorded(*mesh, kCutEditScope);
-                nSplit = cutAt(ed, p + n * loAmt) + cutAt(ed, p - n * hiAmt);
-                ed.close();
-            } else {
-                auto ed = MeshEditBatch.unrecorded(*mesh, kCutEditScope);
-                nSplit = cutAt(ed, p);
-                ed.close();
-            }
-        }
-        if (nSplit == 0) return false;
+        // The one cut operation (task 9431), restricted to the current polygon
+        // selection (task 0279; empty ⇒ whole mesh).
+        const size_t nCut = sliceCut(*mesh, p, n, sStart, sEnd, infinite_, split_, caps_,
+                                     sliceRestrictFaces(*mesh), gap_, cast(int)gapSide_);
+        if (nCut == 0) return false;
         gpu.upload(*mesh);
         return true;
     }

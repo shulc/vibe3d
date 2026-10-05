@@ -512,6 +512,7 @@ tests.unit.tool_presets_test
 tests.unit.tool_session_policy_test
 tests.unit.tool_session_recorded_steps_test
 tests.unit.tool_session_steps_test
+tests.unit.tool_single_operation_census_test
 tests.unit.tool_state_owned_route_test
 tests.unit.toolchain_floor_test
 tests.unit.toolpipe.attr_cache_test

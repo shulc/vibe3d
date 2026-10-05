@@ -9,7 +9,7 @@
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
 source-files 578
-task-citation-lines 5255
+task-citation-lines 5254
 citing-files 454
 long-comment-runs 269
 files-with-long-runs 144
@@ -413,7 +413,7 @@ allow source/tools/edit/vertex_bevel_tool.d 8
 allow source/tools/edit/vertex_extrude_tool.d 7
 allow source/tools/slice/edge_slice_tool.d 37
 allow source/tools/slice/loop_slice_tool.d 87
-allow source/tools/slice/slice_tool.d 92
+allow source/tools/slice/slice_tool.d 91
 allow source/tools/transform/item_xform_kernels.d 3
 allow source/tools/transform/morph_route.d 3
 allow source/tools/transform/move.d 9

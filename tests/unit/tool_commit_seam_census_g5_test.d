@@ -340,7 +340,7 @@ unittest {
 //
 //    Plan §6 hands G5 a two-sided statement it asked not to be collapsed: the
 //    slice family ships with NON-WRITING preview batches. `slice_tool.d` opens
-//    eight `MeshEditBatch.unrecorded` and `loop_slice_tool.d` two, and the
+//    five `MeshEditBatch.unrecorded` and `loop_slice_tool.d` two, and the
 //    reason it matters is `mesh_ops/cut.d`: its terminus splice writes by raw
 //    index PAST the delta tracker, and that write is harmless today ONLY
 //    because every caller of the clipped entry point sits under an unrecorded
@@ -352,14 +352,13 @@ unittest {
 // ---------------------------------------------------------------------------
 private enum LedgerRow[] kBatchRoster = [
     LedgerRow("sliceSplitGap|unrecorded", 2, "clipped split paths"),
-    LedgerRow("sliceFromBaseline|unrecorded", 3, "baseline rebuild paths"),
-    LedgerRow("SliceTool.applyHeadless|unrecorded", 3, "headless slice paths"),
+    LedgerRow("sliceCut|unrecorded", 3, "the one slice cut (preview, panel, headless)"),
     LedgerRow("LoopSliceTool.applyHeadless|unrecorded", 1, "headless loop slice"),
     LedgerRow("LoopSliceTool.rebuildCut|unrecorded", 1, "loop preview rebuild"),
 ];
 
 private bool belongsToG5(string key) {
-    foreach (owner; ["sliceSplitGap", "sliceFromBaseline", "SliceTool",
+    foreach (owner; ["sliceSplitGap", "sliceCut", "sliceFromBaseline", "SliceTool",
                      "LoopSliceTool", "EdgeSliceTool", "EdgeSlideTool"])
         if (key == owner || key.startsWith(owner ~ ".")) return true;
     return false;
@@ -384,8 +383,8 @@ unittest {
                   ~ recording.to!string;
     assert(problems.length == 0,
         "G5 census: the family's edit batches moved.\n" ~ problems);
-    assert(unrecorded.length == 10 && filesRead >= 400,
-        "G5 census: expected exactly 10 unrecorded batches over the source walk");
+    assert(unrecorded.length == 7 && filesRead >= 400,
+        "G5 census: expected exactly 7 unrecorded batches over the source walk");
 }
 
 // ---------------------------------------------------------------------------
