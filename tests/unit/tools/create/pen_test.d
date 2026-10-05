@@ -18,16 +18,9 @@ import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
-import tools.create.create_common : pickWorkplane, BuildPlane,
-                              pickWorkplaneFrame, WorkplaneFrame,
-                              mostFacingAxis,
-                              transformPoint, transformDir, snapLocalHit,
-                              currentSnapPacket,
-                              workplaneCursorRay, workplaneCursorPlaneHit;
 import toolpipe.packets : SnapType;
 import editmode : EditMode;
 import snap : SnapResult;
-import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
 import std.math : abs;
 import tools.create.pen;
 
@@ -168,7 +161,7 @@ unittest {
     import std.file : readText;
     import std.algorithm : count;
     const src = readText("source/tools/create/pen.d");
-    const expr = "lastSnap.snapped && lastSnap.constraintType == SnapType.None";
+    const expr = "s.snapped && s.constraintType == SnapType.None";
     assert(src.count(expr) == 1 && src.count("applyPenGuide") == 0,
         "pen: the discrete-placement test must be spelled once (elementPlaced) "
         ~ "and no private guide pass may return");

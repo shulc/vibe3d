@@ -34,14 +34,13 @@ import tools.create.pen : PenTool;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
-// ---- the fence: no tool keeps a snap of its own (pen waits for its slice) --
+// ---- the fence: no tool keeps a snap of its own ------------------------------
 static assert([__traits(allMembers, SnapMark)] == ["none", "rollover", "unsnapped", "snapped"]);
 private enum bool keepsSnap(T) = [__traits(allMembers, T)].canFind("lastSnap")
                               || [__traits(allMembers, T)].canFind("lastSnap_");
-static assert(!keepsSnap!TransformTool && !keepsSnap!BoxTool
-           && !keepsSnap!PrimitiveCreateTool && !keepsSnap!VertexTool,
+static assert(!keepsSnap!TransformTool && !keepsSnap!BoxTool && !keepsSnap!PrimitiveCreateTool
+           && !keepsSnap!VertexTool && !keepsSnap!PenTool,
     "a tool regrew its own snap copy: publish through publishLastSnap instead");
-static assert(keepsSnap!PenTool, "pen dropped its field: drop it from this pin too");
 
 // ---- the draw, read back from a headless foreground list -------------------
 private struct VecView(T) { int size, capacity; T* data; }
@@ -146,9 +145,8 @@ unittest
     drawers.sort();
     // Floor: the publishers are the tools that snap.
     assert(publishers.length == 9, format("publishLastSnap files: %s", publishers));
-    // Needle: every spelling of the drawer (import, call, address) — the frame
-    // and pen, whose call waits for the pen-owned slice.
-    assert(drawers == ["source/frame_runner.d", "source/tools/create/pen.d"],
+    // Needle: every spelling of the drawer (import, call, address) — the frame.
+    assert(drawers == ["source/frame_runner.d"],
         format("drawSnapOverlay outside the frame: %s", drawers));
     // Structure: the frame's one call draws the published snap in drawScene,
     // behind the overlay-mode gate.

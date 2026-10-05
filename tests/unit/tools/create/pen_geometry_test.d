@@ -12,7 +12,6 @@ import mesh : Mesh;
 import seltype : SelType;
 import prepared_tool_effect : PreparedPenParamKind;
 import toolpipe.packets : SymmetryPacket;
-import tools.create.create_common : WorkplaneFrame;
 import tools.create.pen_geometry;
 
 // Composition pins: a field added to the stroke or a kind added to the
@@ -424,48 +423,6 @@ unittest // the mirror: click order, the toggled ring, crosswise and self welds
     m = built(b1[0 .. 2], false, null, symX, PenBuildPurpose.Preview);
     assert(m.vertices.length == 4 && m.faces.length == 0 && m.edges.length == 2,
         format("2-point preview: %s vertices, %s edges", m.vertices.length, m.edges.length));
-}
-
-// Column-major frame: rotation columns then the origin (transformPoint's layout).
-private WorkplaneFrame frameOf(Vec3 x, Vec3 y, Vec3 z, Vec3 o) {
-    WorkplaneFrame f;
-    f.toWorld = [x.x, x.y, x.z, 0, y.x, y.y, y.z, 0, z.x, z.y, z.z, 0, o.x, o.y, o.z, 1];
-    return f;
-}
-private bool near(Vec3 a, Vec3 b, float tol) {
-    import std.math : abs;
-    return abs(a.x - b.x) <= tol && abs(a.y - b.y) <= tol && abs(a.z - b.z) <= tol;
-}
-
-unittest // the work-plane mirror plane: the axis plane mapped by W twice
-{
-    import std.math : cos, sin, PI;
-    // A5-symWP2: origin (0.3, 0, 0), rotZ 30.
-    const c = cos(PI / 6), s = sin(PI / 6);
-    auto wp2 = frameOf(Vec3(c, s, 0), Vec3(-s, c, 0), Vec3(0, 0, 1), Vec3(0.3f, 0, 0));
-    Vec3 pt, n;
-    penWorkplaneMirrorPlane(0, 0, wp2, pt, n);
-    assert(near(n, Vec3(0.5f, 0.866025f, 0), 1e-5f) &&
-        near(pt, Vec3(0.559808f, 0.15f, 0), 1e-5f),
-        format("A5-symWP2: plane n %s through %s; expected (0.5, 0.866, 0) through "
-            ~ "(0.5598, 0.15, 0)", n, pt));
-
-    // A5-symWP: Rz(40)·Rx(30), origin (0.5, 0.2, -0.3): the fixture's originals
-    // reflect onto its mirror points.
-    const cz = cos(40 * PI / 180), sz = sin(40 * PI / 180);
-    const cx = cos(30 * PI / 180), sx = sin(30 * PI / 180);
-    auto wp = frameOf(Vec3(cz, sz, 0), Vec3(-sz * cx, cz * cx, sx),
-                      Vec3(sz * sx, -cz * sx, cx), Vec3(0.5f, 0.2f, -0.3f));
-    penWorkplaneMirrorPlane(0, 0, wp, pt, n);
-    const Vec3[3] orig = [Vec3(0.054492f, 1.119866f, -0.016506f),
-        Vec3(0.437514f, 1.44126f, -0.016506f), Vec3(0.598211f, 1.249749f, 0.416506f)];
-    const Vec3[3] want = [Vec3(-0.093315f, 0.526813f, -0.223946f),
-        Vec3(0.11428f, 0.144336f, -0.470148f), Vec3(0.274977f, -0.047175f, -0.037135f)];
-    foreach (i; 0 .. 3) {
-        const got = orig[i] - n * (2 * dot(orig[i] - pt, n));
-        assert(near(got, want[i], 1e-5f), format("A5-symWP: m(p%s) %s, expected %s",
-            i, got, want[i]));
-    }
 }
 
 // Types and selectNew (wave plan S8, fixture pen_types.json): lines are the

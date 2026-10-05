@@ -6,7 +6,8 @@
 // the world identity (K-S3a, task 9475); (w2) the walker's refusals; (w3) the
 // pairings' epsilon side test; (w4) the routed walk's one change note. Task
 // 9414: (c4) the work-plane symmetry plane is computed only in
-// `workplaneSymmetryPlane`, called once; (w6) its value under a pinned turned
+// `workplaneSymmetryPlane`, called once by the stage and once by the pen, which
+// maps it by the work plane once more (task 9417); (w6) its value under a pinned turned
 // plane (K-S2). No symmetry overlay is drawn (K-S3b, task 9475: the suite's
 // test_frame_counts pins it).
 // Order: floors first, then the needles, then the pins (druntime stops a
@@ -119,7 +120,13 @@ unittest { // (c4) ONE work-plane symmetry plane function, ONE call
     size_t scanned;
     const hits = filesWith("workplaneSymmetryPlane(", scanned);
     assert(scanned > 300, "(c4) floor: scanned " ~ scanned.to!string ~ " source files");
-    assert(hits == ["source/toolpipe/stages/symmetry.d"], "(c4) workplaneSymmetryPlane( outside the stage: " ~ hits.to!string);
+    assert(hits == ["source/toolpipe/stages/symmetry.d", "source/tools/create/pen.d"],
+           "(c4) workplaneSymmetryPlane( outside the stage and the pen: " ~ hits.to!string);
+    const pen = codeOf("source/tools/create/pen.d");   // the pen maps the plane once more
+    assert(countOccurrences(pen, "workplaneSymmetryPlane(") == 1 &&
+           countOccurrences(pen, "transformPoint(frame.toWorld, mirror_.planePoint)") == 1 &&
+           countOccurrences(pen, "normalize(transformDir(frame.toWorld, mirror_.planeNormal))") == 1,
+           "(c4) the pen does not read the stage's plane once, mapped by W once more");
     const st = codeOf("source/toolpipe/stages/symmetry.d");
     assert(countOccurrences(st, "workplaneSymmetryPlane(") == 2, "(c4) the stage does not define it and call it once");
     const ev = bodyAfter(st, "bool evaluate(ref VectorStack vts)");

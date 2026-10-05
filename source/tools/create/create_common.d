@@ -6,7 +6,7 @@ import std.math : abs;
 import viewgrid : vectorSnap, viewVectorQuantum, viewWorkPlaneAnchor;
 
 import toolpipe.pipeline       : g_pipeCtx;
-import toolpipe.packets        : SubjectPacket, WorkplanePacket, SnapPacket;
+import toolpipe.packets        : SubjectPacket, WorkplanePacket;
 import toolpipe.stage          : TaskCode;
 import toolpipe.stages.workplane : WorkplaneStage;
 import operator                : VectorStack;
@@ -583,24 +583,6 @@ Vec3 transformDir(in float[16] m, Vec3 v) @nogc nothrow {
     );
 }
 
-/// Read the current SnapPacket from the live ToolPipeContext.
-/// Returns a default-init packet (enabled=false) when g_pipeCtx is null.
-/// Used by tools that need snap configuration (enabled bits, innerRangePx)
-/// without triggering snapping logic — e.g. the Pen guide constraint
-/// evaluator reads this to check which guide bits are active.
-SnapPacket currentSnapPacket(const ref Mesh mesh, EditMode editMode,
-                              const ref Viewport vp)
-{
-    if (g_pipeCtx is null) return SnapPacket.init;
-    // selType frozen at Vertex (plan §1.3 — one of the seven sites that
-    // never had a live SelType/SelTypeOrder to read).
-    SubjectPacket subj;
-    VectorStack   vts;
-    evaluateSubject(subj, vts,
-        SubjectSource(cast(Mesh*)&mesh, editMode, SelType.Vertex, vp));
-    return snapPacketOf(vts);
-}
-
 /// Run SNAP against a workplane-local hit. Each Create-tool computes
 /// the cursor's intersection with the construction plane in LOCAL
 /// workplane coordinates via `rayPlaneIntersect(localEye, localRay,
@@ -628,7 +610,11 @@ SnapResult snapLocalHit(ref Vec3 hitLocal,
                         EditMode editMode,
                         const(uint)[] excludeVerts = [])
 {
-    SnapPacket localPkt = currentSnapPacket(mesh, editMode, vp);
+    if (g_pipeCtx is null) return SnapResult.init;
+    SubjectPacket subj;     // selType frozen at Vertex (plan §1.3)
+    VectorStack   vts;
+    evaluateSubject(subj, vts, SubjectSource(cast(Mesh*)&mesh, editMode, SelType.Vertex, vp));
+    const localPkt = snapPacketOf(vts);
     if (!localPkt.enabled) return SnapResult.init;
 
     Vec3 hitWorld = transformPoint(frame.toWorld, hitLocal);

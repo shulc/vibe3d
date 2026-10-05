@@ -365,11 +365,27 @@ unittest {
         penCommand("workplane.reset");
     }
 
+    // Auto plane (findings K-C5 (c)): Right view, focus (0.3, 0, 0), axis X,
+    // use work plane on — the mirror is world X (x -0.3), the flag inert; the
+    // applied-twice law is a pinned plane's only.
+    {
+        penSceneEmpty("Right");
+        penCameraAt(Vec3(0.3f, 0, 0), 420);
+        penCommand("tool.pipe.attr snap enabled false");
+        symmetry("x", 0, true);
+        penCommand("tool.set pen on");
+        Vec3[3] o = [Vec3(0.3f, 0.3f, 0.15f), Vec3(0.3f, 0.3f, 0.45f), Vec3(0.3f, 0.6f, 0.45f)];
+        clickWorld(o[]);
+        drop(); ++ran;
+        fails ~= compare("auto-plane-mirror", o[] ~ [Vec3(-0.3f, 0.3f, 0.15f),
+            Vec3(-0.3f, 0.3f, 0.45f), Vec3(-0.3f, 0.6f, 0.45f)], null);
+    }
+
     fails ~= oursCells(ran);
     symmetry(null);
-    // Floor: 1 stay-green + 26 turning cells (A8 reads three moments; one
+    // Floor: 1 stay-green + 27 turning cells (A8 reads three moments; one
     // extrapolated work-plane cell) + 13 ours-only cells.
-    assert(ran == 41, format("ran %s cells, pinned 41", ran));
+    assert(ran == 42, format("ran %s cells, pinned 42", ran));
     // One line, so the first red line names every failing cell.
     assert(fails.length == 0, format("%s failure(s): %-(%s | %)", fails.length, fails));
 }

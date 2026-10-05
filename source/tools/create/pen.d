@@ -31,14 +31,13 @@ import handler : BoxHandlerBatchResourceOwner;
 import snap_render : SnapOverlayOwner;
 import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
 import display_sync : refreshDisplay;
-import tools.create.create_common : pickWorkplane, BuildPlane,
-                              primitivePlacementFrame, WorkplaneFrame,
+import tools.create.create_common : primitivePlacementFrame, WorkplaneFrame,
                               viewPrincipalAxis, axisUnit, screenToPlacementLocal,
                               backgroundSurfacePoint,
                               transformPoint, transformDir, snapLocalHit,
                               workplaneCursorPlaneHit;
 import toolpipe.packets : SnapType, SnapPacket, SymmetryPacket;
-import toolpipe.stages.symmetry : liveSymmetryStage;
+import toolpipe.stages.symmetry : liveSymmetryStage, workplaneSymmetryPlane;
 import toolpipe.stages.snap : liveSnapStage;
 import toolpipe.stages.constrain : liveConstrainStage;
 import bvh_pick : SurfaceHit;
@@ -48,7 +47,7 @@ import seltype : SelType;
 import snap : SnapResult, snapCursor, cascadeClassWins, kAbsentClassDist,
     kCascadeVertex, kCascadeEdge, kCandidateToleranceBasePx, kVertexToleranceScale;
 import document : primaryModelSpace;
-import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
+import snap_render : publishLastSnap, clearLastSnap;
 import viewgrid : viewWorldPerPixel, viewVectorQuantum, vectorSnap, withAxisComp, axisComp;
 
 import std.math : abs, fmin, lround;
@@ -76,6 +75,7 @@ private enum uint kElementSnapBits = SnapType.Vertex | SnapType.Edge |
 
 version(unittest) unittest {
     import record_observer_hub : RecordObserverHub;
+    import snap_render : g_lastSnap;
     import std.format : format;
     import view : View;
 
@@ -222,7 +222,7 @@ version(unittest) unittest {
     shortPen.vertices_ = [Vec3(0,0,0)];
     shortPen.params_.currentPoint = 0; shortPen.previewGpu.faceVao = 81;
     SnapResult shortSnap; shortSnap.snapped = true; shortSnap.targetIndex = 8;
-    shortPen.lastSnap = shortSnap; publishLastSnap(shortSnap);
+    publishLastSnap(shortSnap);
     auto shortContext = new PreparedRecordContext(new CommandHistory(),
         new RecordObserverHub()); shortContext.setResourceIdentity(7,11);
     auto shortEffect = shortPen.prepareDeactivate(shortContext, shortLayer,
@@ -234,7 +234,7 @@ version(unittest) unittest {
         shortContext.validate()); shortContext.install();
     assert(shortLayer.meshRef().faces.length == 0 &&
         shortPen.state == PenState.Idle && shortPen.vertices_.length == 0 &&
-        shortPen.lastSnap == SnapResult.init &&
+        g_lastSnap == SnapResult.init &&
         shortContext.installTraceForTest() == [8,2,7,6,2]);
 
     auto edgeLayer = new Layer; GpuMesh edgeGpu;
@@ -635,7 +635,6 @@ struct PreparedPenDeactivateImage {
     float[16] toWorld;
     Vec3 wallNormal;
     size_t expectedHandlerCount;
-    SnapResult expectedLastSnap;
     bool expectedMeshChanged;
     void clear() nothrow @nogc {
         vertices = null; links = null; linkKey = null; previewClear = Mesh.init;
@@ -719,12 +718,6 @@ private:
     LineGuide guide_;   // the drag's snap guide, registered press to release
 
     enum int DRAG_THRESHOLD_PX = 4;
-
-    // Last snap query — drives the cyan/yellow overlay. Refreshed on
-    // every motion event when the cursor is over the construction
-    // plane; consumed by clicks (which snap the placed vertex to the
-    // target's world position).
-    SnapResult lastSnap;
 
 public:
     this(Mesh* delegate() meshSrc, GpuMesh* gpu, LitShader litShader,
@@ -1004,7 +997,6 @@ public:
         image.toWorld = frame.toWorld; image.mirror = penMirror(mirror_);
         image.wallNormal = wallNormal; image.selMode = selMode();
         image.expectedHandlerCount = vertHandlers.length;
-        image.expectedLastSnap = lastSnap;
         image.expectedMeshChanged = meshChanged;
         image.willCommit = state == PenState.Drawing &&
             vertices_.length >= minDropCommitVerts();
@@ -1016,7 +1008,6 @@ public:
             params_ == image.params && vertices_ == image.vertices &&
             links_ == image.links && symmetryMirrorsEqual(mirror_, image.mirror) &&
             vertHandlers.length == image.expectedHandlerCount &&
-            lastSnap == image.expectedLastSnap &&
             meshChanged == image.expectedMeshChanged &&
             (!image.willCommit || (frame.toWorld == image.toWorld &&
                                    sameValueBytes(wallNormal, image.wallNormal) &&
@@ -1029,7 +1020,6 @@ public:
         params_.currentPoint = -1;
         params_.posX = params_.posY = params_.posZ = 0.0f;
         if (image.willCommit) meshChanged = true;
-        else lastSnap = SnapResult.init;
         image.clear();
     }
     final bool ownsPreparedMainUpload(GpuUploadOwner owner) nothrow @nogc {
@@ -1264,7 +1254,6 @@ public:
         // vertex (next click selects it, doesn't place a new one).
         if (!(dragArmed && dragInitiated)) {
             if (state == PenState.Drawing && findHoveredVert(e.x, e.y) >= 0) {
-                lastSnap = SnapResult.init;
                 clearLastSnap();
             } else {
                 // Idle: the plane the first click would lock onto.
@@ -1351,10 +1340,6 @@ public:
     override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts,
                        const ref DrawPlan plan, bool visualOnly = false) {
         cachedVp = vp;
-        // Snap overlay (cyan element + yellow cursor marker) renders
-        // even in Idle so the user sees where the FIRST vertex would
-        // land if they clicked. Populated by onMouseMotion.
-        drawSnapOverlay(lastSnap, vp, *mesh);
         if (state == PenState.Idle) return;
 
         immutable float[16] identity = identityMatrix;
@@ -1427,14 +1412,17 @@ private:
         return sp is null ? SymmetryPacket.init : penMirror(*sp);
     }
     // The stroke's mirror, latched at its first click (after `choosePlane`):
-    // under the work plane the captured double transform of the STAGE's axis
-    // (the packet's reads -1 there; a published packet implies the stage),
-    // wave plan S6.
+    // under the work plane the stage's plane of the STAGE's axis (the packet's
+    // reads -1 there; a published packet implies the stage) mapped by the work
+    // plane once more — the captured double transform (wave plan S6, fixture
+    // pen_symmetry.json A5-symWP; a probable reference defect copied).
     void latchMirror(ref VectorStack vts) {
         mirror_ = liveMirror(vts);
-        if (mirror_.enabled && mirror_.useWorkplane)
-            penWorkplaneMirrorPlane(liveSymmetryStage().axisIndex, mirror_.offset,
-                                    frame, mirror_.planePoint, mirror_.planeNormal);
+        if (!(mirror_.enabled && mirror_.useWorkplane)) return;
+        workplaneSymmetryPlane(frame.origin, frame.axis1, frame.normal, frame.axis2,
+            liveSymmetryStage().axisIndex, mirror_.offset, mirror_.planePoint, mirror_.planeNormal);
+        mirror_.planePoint = transformPoint(frame.toWorld, mirror_.planePoint);
+        mirror_.planeNormal = normalize(transformDir(frame.toWorld, mirror_.planeNormal));
     }
 
     // The one place a pixel becomes a stroke point (click, hover, drag): the
@@ -1443,8 +1431,9 @@ private:
     // point (S3a / S3c / S3q, fixture pen_placement.json); then the background
     // surface (K-B2 C1–C3, B7b), the snap (an edge snap takes the placed
     // point's foot, S5 Q-edge; a drag's guide proposes in it unless the
-    // surface placed the point, B6), the merge; `link` is the edited-mesh
-    // vertex the point shares, or -1.
+    // surface placed the point, B6), the merge — on every event, but not on a
+    // drag the vertex snap placed (pen_merge_drag.json S_V1, a copied
+    // reference defect); `link` is the edited-mesh vertex the point shares, or -1.
     bool resolvePenPoint(int x, int y, out Vec3 local, out int link, const(Vec3)* drag = null) {
         link = -1;
         immutable float q = viewVectorQuantum(cachedVp);
@@ -1456,7 +1445,6 @@ private:
                 cur >= 0 && cur < cast(int)vertices_.length ? vertices_[cur] : vertices_[$ - 1], q);
             if (!workplaneCursorPlaneHit(frame, cachedVp, cast(float)x, cast(float)y,
                                          anchor, axisUnit(planeAxis), local)) {
-                lastSnap = SnapResult.init;
                 clearLastSnap();
                 return false;
             }
@@ -1465,19 +1453,21 @@ private:
         immutable bool onSurface = backgroundSurfacePoint(local, cachedVp, frame, local);
         immutable Vec3 placed = local;
         guide_.live = !onSurface;
-        lastSnap = snapLocalHit(local, frame, x, y, cachedVp, *mesh, EditMode.Vertices);
-        if (elementPlaced() && lastSnap.targetType == SnapType.Edge)
-            local = toLocalP(pointOnEdgeUnder(toWorldP(placed), lastSnap.targetIndex));
-        if (params_.merge) link = mergeTarget(local);
-        publishLastSnap(lastSnap);
+        const s = snapLocalHit(local, frame, x, y, cachedVp, *mesh, EditMode.Vertices);
+        immutable bool element = elementPlaced(s);
+        if (element && s.targetType == SnapType.Edge)
+            local = toLocalP(pointOnEdgeUnder(toWorldP(placed), s.targetIndex));
+        if (params_.merge && !(drag !is null && element && s.targetType == SnapType.Vertex))
+            link = mergeTarget(local, s);
+        publishLastSnap(s);
         return true;
     }
 
     // An element of the edited mesh (a discrete target, not a constraint)
     // placed the point: the merge's small radii.
-    bool elementPlaced() const {
-        return lastSnap.snapped && lastSnap.constraintType == SnapType.None &&
-            lastSnap.targetSource == 0 && (lastSnap.targetType & kElementSnapBits) != 0;
+    static bool elementPlaced(in SnapResult s) {
+        return s.snapped && s.constraintType == SnapType.None &&
+            s.targetSource == 0 && (s.targetType & kElementSnapBits) != 0;
     }
 
     // The merge (wave plan S5; fixture pen_merge.json): ONE search from the
@@ -1493,7 +1483,7 @@ private:
     // `snapCursor` takes an integer pixel, so it is the broad phase (r + 1)
     // and the float distance decides.
     static immutable SnapType[2] kMergeTypes = [SnapType.Vertex, SnapType.Edge];
-    int mergeTarget(ref Vec3 local) {
+    int mergeTarget(ref Vec3 local, in SnapResult s) {
         immutable Vec3 placed = toWorldP(local);
         float fx, fy, ndcZ;
         if (!projectToWindowFull(placed, cachedVp, fx, fy, ndcZ)) return -1;
@@ -1503,11 +1493,11 @@ private:
                 ? Vec3(x - fx, y - fy, 0).length : float.infinity;
         }
         immutable ms = primaryModelSpace();
-        immutable bool small = elementPlaced();
-        if (small && lastSnap.targetType == SnapType.Edge) {
+        immutable bool small = elementPlaced(s);
+        if (small && s.targetType == SnapType.Edge) {
             int end = -1;
             float best = kMergeSnappedEdgeEndPx;
-            foreach (v; mesh.edges[lastSnap.targetIndex]) {
+            foreach (v; mesh.edges[s.targetIndex]) {
                 immutable d = pxFrom(ms.toWorldPoint(mesh.vertices[v]));
                 if (d <= best) { best = d; end = cast(int)v; }
             }
@@ -1734,9 +1724,7 @@ private:
         state = PenState.Idle;
         params_.currentPoint = -1;
         params_.posX = params_.posY = params_.posZ = 0.0f;
-        // Drop the snap overlay so it doesn't linger.
-        lastSnap = SnapResult.init;
-        clearLastSnap();
+        clearLastSnap();     // the published snap does not linger
         sessionOperationEnded();
     }
 
