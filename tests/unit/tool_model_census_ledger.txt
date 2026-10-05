@@ -97,6 +97,7 @@ write source/tools/create/box.d recordLiveDragEnd 5
 write source/tools/create/pen.d commitHistory.undoDepthCounts 1
 write source/tools/create/pen.d edgeHistory.undoDepthCounts 1
 write source/tools/create/pen.d recordGestureEdit 1
+write source/tools/create/pen.d symHistory.undoDepthCounts 1
 write source/tools/create/primitive_create_tool.d recordGestureEdit 1
 write source/tools/create/vertex_place.d recordGestureEdit 1
 write source/tools/deform/magnet.d recordGestureEdit 1

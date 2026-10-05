@@ -29,7 +29,9 @@
 
 import drag_helpers : Vec3, buildDragDownLog, buildDragLog,
     buildDragMotionLog, buildDragUpLog, fetchCamera, kPaceLine, playAndWait;
+import drag_helpers : fetchSnapLast;
 import http_client : frameFence, getJson, postJson;
+import http_command_helpers : commandBody;
 import pen_rig_helpers;
 import std.format : format;
 import std.json : JSONType, JSONValue, parseJSON;
@@ -38,7 +40,7 @@ import std.math : abs, round;
 void main() {}
 
 private enum double kTol = 1e-4;
-private enum int kSymZ = 122, kModCtrl = 64, kModShift = 1;
+private enum int kSymZ = 122, kSymBackspace = 8, kModCtrl = 64, kModShift = 1;
 
 private double num(JSONValue v) {
     return v.type == JSONType.integer ? cast(double)v.integer
@@ -71,16 +73,31 @@ private Vec3[] clicks(JSONValue c) {
 
 // ---- rig ------------------------------------------------------------------
 
-/// Empty top view, focus `focus` at `ppm`, snapping off, symmetry `axis`
-/// (null = off) at `offset`, the pen armed with `merge`.
+/// Empty top view (or `mesh` loaded as the edited mesh), focus `focus` at
+/// `ppm`, snapping off, symmetry `axis` (null = off) at `offset`, the pen armed
+/// with `merge`.
 private void rig(string axis, double offset = 0, bool merge = true,
-                 Vec3 focus = Vec3(0, 1, 0), double ppm = 420) {
+                 Vec3 focus = Vec3(0, 1, 0), double ppm = 420, string mesh = null) {
     penSceneEmpty("Top");
+    if (mesh.length) {
+        auto r = postJson("/api/command", commandBody("scene.loadMesh", mesh));
+        assert(r["status"].str == "ok", "scene load failed: " ~ r.toString);
+        penCommand("history.clear");
+        penCommand("viewport.view Top");
+    }
     penCameraAt(focus, ppm);
     penCommand("tool.pipe.attr snap enabled false");
     symmetry(axis, offset);
     penCommand("tool.set pen on");
     if (!merge) penCommand("tool.attr pen merge false");
+}
+/// One up-facing triangle (seen from the top view) with its first vertex at `v`.
+private string tri(Vec3 v) {
+    return format(`{"vertices":[[%.9g,1,%.9g],[%.9g,1,%.9g],[%.9g,1,%.9g]],"faces":[[0,1,2]]}`,
+                  v.x, v.z, v.x - 0.35, v.z + 0.05, v.x - 0.15, v.z + 0.45);
+}
+private Vec3[] triVerts(Vec3 v) {
+    return [v, p(v.x - 0.35, v.z + 0.05), p(v.x - 0.15, v.z + 0.45)];
 }
 private void symmetry(string axis, double offset = 0, bool workplane = false) {
     penCommand("tool.pipe.attr symmetry enabled " ~ (axis is null ? "false" : "true"));
@@ -211,10 +228,10 @@ unittest {
     }
 
     // B1 / A5: the mirror and its ring, axes X / Y / Z and an offset plane.
-    foreach (cell; ["B1", "A5-symY", "A5-symZ", "A5-symXoff"])
-        fails ~= axisCase(cell, fx[cell], ran);
-    // B3 / B4 / B4m: crosswise sharing, an on-plane point, merge off.
-    foreach (cell; ["B3", "B4", "B4m"])
+    // B3 / B4 / B4m: crosswise sharing, an on-plane point, merge off. B4 runs
+    // right after A5-symZ, so a latch read after the first click's weld test
+    // (the previous stroke's z plane) shows.
+    foreach (cell; ["B1", "A5-symY", "A5-symXoff", "B3", "A5-symZ", "B4", "B4m"])
         fails ~= axisCase(cell, fx[cell], ran);
     // B6: the mirror follows a drag and typed positions.
     fails ~= axisCase("B6d", fx["B6d"], ran, () => drag(b1[2], p(0.85, 0.35)),
@@ -305,8 +322,151 @@ unittest {
         penCommand("workplane.reset");
     }
 
+    fails ~= oursCells(ran);
     symmetry(null);
-    // Floor: 1 stay-green + 23 turning cells (A8 reads three moments).
-    assert(ran == 24, format("ran %s cells, pinned 24", ran));
-    assert(fails.length == 0, format("%s failure(s):\n  %-(%s\n  %)", fails.length, fails));
+    // Floor: 1 stay-green + 23 turning cells (A8 reads three moments) + 12
+    // ours-only cells.
+    assert(ran == 36, format("ran %s cells, pinned 36", ran));
+    // One line, so the first red line names every failing cell.
+    assert(fails.length == 0, format("%s failure(s): %-(%s | %)", fails.length, fails));
+}
+
+/// Ours-only cells (constructions stated per cell). Positions are lattice
+/// values (0.005 m at 420 px/m, 0.002 m at 860).
+private string[] oursCells(ref int ran) {
+    string[] fails;
+    auto b1 = clicks(parseJSON(import("fixtures/pen_symmetry.json"))["cases"]["B1"]);
+    auto b3 = [p(-0.5, 0.5), p(0.5, 0.5), p(0.5, -0.5)];
+    // A click 12.6 px from m(p0) shares it crosswise and lands ON it: point
+    // 0's vertex takes m(p1) = (-0.5, 0.5) exactly. Symmetry off: no image is
+    // a candidate, the click stays at 0.53.
+    {
+        rig("x");
+        clickWorld(b3[0], p(0.53, 0.5), b3[2]);
+        drop(); ++ran;
+        fails ~= compare("B3-near", b3 ~ p(-0.5, -0.5), [[0, 1, 2], [1, 3, 0]]);
+        rig(null);
+        clickWorld(b3[0], p(0.53, 0.5), b3[2]);
+        drop(); ++ran;
+        fails ~= compare("B3-near-nosym", [b3[0], p(0.53, 0.5), b3[2]], [[0, 1, 2]]);
+    }
+    // A drag re-decides the self weld but skips the point's own image: p0
+    // dragged to x 0.025 (its image 21 px away, the gap 7x the weld distance)
+    // stays its own; dragged onto the plane it is its own mirror (B4's mesh).
+    {
+        rig("x");
+        clickWorld(b1);
+        drag(b1[0], p(0.025, -0.25));
+        drop(); ++ran;
+        fails ~= compare("drag-near-plane", [p(0.025, -0.25), b1[1], b1[2],
+            p(-0.025, -0.25), p(-0.75, -0.25), p(-0.75, 0.25)], [[0, 2, 1], [3, 4, 5]]);
+        rig("x");
+        clickWorld(b1);
+        drag(b1[0], p(0, -0.25));
+        drop(); ++ran;
+        fails ~= compare("drag-onto-plane", [p(0, -0.25), b1[1], b1[2],
+            p(-0.75, -0.25), p(-0.75, 0.25)], [[0, 2, 1], [0, 3, 4]]);
+    }
+    // A scene vertex V coinciding with a mirror image wins the tie: the click
+    // shares V (scene first), the images stay own vertices (8, not 7).
+    {
+        auto v = p(-0.25, -0.25);
+        rig("x", 0, true, Vec3(0, 1, 0), 420, tri(v));
+        clickWorld(b1[0], v, b1[2]);
+        drop(); ++ran;
+        fails ~= compare("tie-scene-first", triVerts(v) ~ [b1[0], b1[2], v, b1[0],
+            p(-0.75, 0.25)], [[0, 1, 2], [3, 0, 4], [5, 7, 6]]);
+    }
+    // A point holds one link: on a scene vertex lying on the plane it shares
+    // the vertex; its image is a vertex of its own.
+    {
+        auto v = p(0, -0.25);
+        rig("x", 0, true, Vec3(0, 1, 0), 420, tri(v));
+        clickWorld(v, b1[1], b1[2]);
+        drop(); ++ran;
+        fails ~= compare("scene-on-plane", triVerts(v) ~ [b1[1], b1[2], v,
+            p(-0.75, -0.25), p(-0.75, 0.25)], [[0, 1, 2], [0, 4, 3], [5, 6, 7]]);
+    }
+    // The weld distance is 3 px: at 860 px/m a gap of 0.004 m is 3.44 px (the
+    // captured gap cells bracket it from below at 2.49 px): no weld.
+    {
+        rig("x", 0, true, p(0.15, 0.025), 860);
+        clickWorld(p(0.002, 0.002), p(0.3, -0.15), p(0.3, 0.2));
+        drop(); ++ran;
+        fails ~= compare("gap-3.44px", [p(0.002, 0.002), p(0.3, -0.15), p(0.3, 0.2),
+            p(-0.002, 0.002), p(-0.3, -0.15), p(-0.3, 0.2)], [[0, 2, 1], [3, 4, 5]]);
+    }
+    // Mirror links name stroke points and follow their renumbering. p2 on
+    // m(p1); then a point inserted after p0 (its index moves p1 to 2): the
+    // weld still pairs p1 / p2, so p2's vertex is m(p1) = (0.5, 0.5).
+    auto q = [p(0.5, -0.5), p(-0.5, 0.5), p(0.5, 0.5)];
+    {
+        rig("x", 0, true, p(0.2, 0));
+        clickWorld(q);
+        clickWorld(q[0], p(0.9, 0));
+        drop(); ++ran;
+        fails ~= compare("insert-renumbers", [q[0], p(0.9, 0), q[1], q[2],
+            p(-0.5, -0.5), p(-0.9, 0)], null);
+    }
+    // p0 dragged onto p3's marker is welded away: p2's link moves to p1's new
+    // index 0 (4 vertices; read as a self weld it would be 5).
+    {
+        rig("x", 0, true, p(0.2, 0));
+        clickWorld(q ~ p(0.9, 0));
+        drag(q[0], p(0.9, 0));
+        drop(); ++ran;
+        fails ~= compare("weld-renumbers", [q[1], q[2], p(0.9, 0), p(-0.9, 0)], null);
+    }
+    // A point inserted on m(p1) links p1; Backspace pops p1, dropping the link;
+    // the next point is its own (6 vertices, not the 4 of a stale link).
+    {
+        rig("x", 0, true, p(0.2, 0));
+        clickWorld(q[0], q[1]);
+        clickWorld(q[0], q[2]);
+        key(kSymBackspace, 0);
+        clickWorld(p(0.9, 0));
+        drop(); ++ran;
+        fails ~= compare("pop-drops-link", [q[0], q[2], p(0.9, 0), p(-0.5, -0.5),
+            p(-0.5, 0.5), p(-0.9, 0)], null);
+    }
+    // A topology bump (Hide, then unhide all, of an unrelated face) drops the
+    // stroke's scene links only: B3's crosswise link survives a bump between
+    // its clicks and one before the commit (4 stroke vertices).
+    {
+        auto u = p(0.7, -0.1);
+        rig("x", 0, true, Vec3(0, 1, 0), 420, tri(u));
+        penCommand("tool.set pen off");
+        penCommand("select.typeFrom polygon");
+        penCommand("select.element polygon set 0");
+        penCommand("tool.set pen on");
+        clickWorld(b3[0], b3[1]);
+        penCommand("mesh.hide");
+        clickWorld(b3[2]);
+        penCommand("mesh.unhideAll");
+        drop(); ++ran;
+        fails ~= compare("bump-keeps-mirror-links", triVerts(u) ~ b3 ~ p(-0.5, -0.5),
+            [[0, 1, 2], [3, 4, 5], [4, 6, 3]]);
+    }
+    // Idle, the latch differing from the live symmetry (the last stroke drew
+    // with it off): nothing closes, so a hover's vertex snap stays published.
+    {
+        auto v = p(-0.25, -0.25);
+        rig(null, 0, true, Vec3(0, 1, 0), 420, tri(v));
+        clickWorld(b1);
+        drop();
+        penCommand("tool.pipe.attr snap enabled true");
+        penCommand(`tool.pipe.attr snap types "vertex"`);
+        penCommand("tool.pipe.attr snap snapMode global");
+        penCommand("tool.pipe.attr snap innerRange 24");
+        symmetry("x");
+        penCommand("tool.set pen on");
+        hoverWorld(v);
+        frameFence(null, 2); ++ran;
+        if (fetchSnapLast()["snapped"].type != JSONType.true_)
+            fails ~= "idle-latch: the hover snap was cleared in Idle: "
+                ~ fetchSnapLast().toString;
+        drop();
+        penCommand("tool.pipe.attr snap enabled false");
+    }
+    return fails;
 }

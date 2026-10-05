@@ -174,7 +174,7 @@ uint appendPenGeometry(ref Mesh dst, in PenStroke s, PenBuildPurpose purpose) {
     auto pos = world.dup;
     auto sharedWith = new int[2 * n];   // slot → the original slot whose vertex it takes
     sharedWith[] = -1;
-    foreach (i; 0 .. slots == n ? 0 : n) {
+    foreach (i; 0 .. n) {
         const l = i < s.links.length ? s.links[i] : -1, j = -2 - l;
         if (l > -2 || j >= n) continue;
         sharedWith[n + j] = cast(int)i; sharedWith[n + i] = j;

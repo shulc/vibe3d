@@ -81,6 +81,7 @@ private enum uint kElementSnapBits = SnapType.Vertex | SnapType.Edge |
 
 version(unittest) unittest {
     import record_observer_hub : RecordObserverHub;
+    import std.format : format;
     import view : View;
 
     Mesh mesh; GpuMesh sceneGpu;
@@ -496,6 +497,27 @@ version(unittest) unittest {
     paramSym.mirror_.planePoint = Vec3(0.5f, 0, 0);
     assert(!paramContext.validate(), "pen S6: a symmetry change after a Position "
         ~ "prepare was not refused");
+    auto normalSym = symPen(staleLayer, &staleGpu);
+    auto normalContext = new PreparedRecordContext(null, new RecordObserverHub());
+    normalContext.setResourceIdentity(7, 11);
+    assert(normalSym.prepareParamChanged(normalContext, "flip",
+        GpuUploadOwner.fakeForTest(normalSym.preparedPreviewGpu())).accepted);
+    normalSym.mirror_.planeNormal = Vec3(0, 1, 0);
+    assert(!normalContext.validate(), "pen S6: a mirror-plane normal change after "
+        ~ "a prepare was not refused");
+    // Both preview doors build the mirror and drop scene links (a preview
+    // holds no scene vertex): 3 own points + 3 images.
+    auto previewSym = symPen(staleLayer, &staleGpu);
+    previewSym.links_ = [-1, 0, -1];
+    previewSym.params_.currentPoint = 0; previewSym.params_.posX = 3;
+    const doorCount = previewSym.buildPreparedParamImage("posX")
+        .nextPreview.vertices.length;
+    previewSym.previewGpu.suppressCageUpload = true;
+    foreach (v; previewSym.vertices_) previewSym.vertHandlers ~= previewSym.vertMarker(v);
+    previewSym.onParamChanged("flip");
+    assert(doorCount == 6 && previewSym.previewMesh.vertices.length == 6,
+        format("pen S6: preview vertices %s (Position door) / %s (legacy hook); "
+            ~ "expected 6, 6", doorCount, previewSym.previewMesh.vertices.length));
 }
 
 // ---------------------------------------------------------------------------
@@ -1299,13 +1321,13 @@ private:
     }
     // The stroke's mirror, latched at its first click (after `choosePlane`):
     // under the work plane the captured double transform of the STAGE's axis
-    // (the packet's reads -1 there), wave plan S6.
+    // (the packet's reads -1 there; a published packet implies the stage),
+    // wave plan S6.
     void latchMirror(ref VectorStack vts) {
         mirror_ = liveMirror(vts);
-        auto stage = liveSymmetryStage();
-        if (mirror_.enabled && mirror_.useWorkplane && stage !is null)
-            penWorkplaneMirrorPlane(stage.axisIndex, mirror_.offset, frame,
-                                    mirror_.planePoint, mirror_.planeNormal);
+        if (mirror_.enabled && mirror_.useWorkplane)
+            penWorkplaneMirrorPlane(liveSymmetryStage().axisIndex, mirror_.offset,
+                                    frame, mirror_.planePoint, mirror_.planeNormal);
     }
     static bool sameMirror(in SymmetryPacket a, in SymmetryPacket b) nothrow @nogc {
         return symmetryPacketsEqual(a, b) && a.planePoint == b.planePoint &&
@@ -1492,9 +1514,10 @@ private:
 
     // Rule 2 of the merge (wave plan S5 / S6, C1-m4): a placed point within
     // half the merge distance of the latched mirror plane, 2|d| < 3 px of world
-    // at the focus, is its own mirror (link -2 - i for stroke index `i`).
+    // at the focus, is its own mirror (link -2 - i for stroke index `i`; read
+    // only when the latch is on). A point holds one link: the scene's first.
     int selfMirrorOr(int link, Vec3 local, size_t i) const {
-        if (link != -1 || !params_.merge || !mirror_.enabled) return link;
+        if (link != -1 || !params_.merge) return link;
         immutable float gap = 2 * abs(dot(toWorldP(local) - mirror_.planePoint,
                                           mirror_.planeNormal));
         return gap < 3 * viewWorldPerPixel(cachedVp) ? -2 - cast(int)i : -1;

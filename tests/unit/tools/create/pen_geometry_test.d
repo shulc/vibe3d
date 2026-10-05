@@ -406,6 +406,11 @@ unittest // the mirror: click order, the toggled ring, crosswise and self welds
         m.faces == [[0u, 2, 1], [0u, 3, 4]], format("self weld: %s, faces %s",
         m.vertices, m.faces));
 
+    // A mirror link naming no stroke point is ignored: a plain mirror.
+    m = built(b1, true, [-9, -1, -1], symX);
+    assert(m.vertices.length == 6, format("out-of-range link: %s vertices",
+        m.vertices.length));
+
     // A 2-point preview mirrors its open polyline.
     m = built(b1[0 .. 2], false, null, symX, PenBuildPurpose.Preview);
     assert(m.vertices.length == 4 && m.faces.length == 0 && m.edges.length == 2,
