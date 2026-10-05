@@ -268,12 +268,11 @@ SnapResult snapMoverCentre(ref Vec3 centre, int part, MoveHandler mover, in Work
     if (part <= 2) {
         immutable Vec3 u = normalize(moverArrowLocal(mover, part, frame));
         centre += u * dot(s - centre, u);
-        return sr;
+    } else {
+        Viewport lvp = planeLocalViewport(vp, frame);
+        immutable Vec3 n = axisUnit(primitiveCenterPlaneAxis(centre, lvp));
+        centre = s - n * dot(s - centre, n);
     }
-    Viewport lvp = planeLocalViewport(vp, frame);
-    immutable int lock = primitiveCenterPlaneAxis(centre, lvp);
-    foreach (k; 0 .. 3)
-        if (k != lock) centre += axisUnit(k) * dot(s - centre, axisUnit(k));
     return sr;
 }
 
