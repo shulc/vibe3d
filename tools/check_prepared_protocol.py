@@ -2915,11 +2915,11 @@ mutate_param_sources("Edge Bevel", edge_bevel_param_sources, edge_bevel_param_ga
 
 # The five topology tools on the preview seam (wave-2 PV2): one text contract,
 # its rows run per tool. The kernel call stands once, in the one `operation`
-# (task 9433); Polygon Extrude's scripted apply keeps a second (an open finding).
-def preview_rebuild_param_gate(cls, kernel, identity, sites):
+# (task 9433).
+def preview_rebuild_param_gate(cls, kernel, identity):
     def gate(s):
         tool = s["tool"]
-        return (tool.count(kernel) == sites and all(x in tool for x in (
+        return (tool.count(kernel) == 1 and all(x in tool for x in (
             "image.expectedLive = MeshSnapshot.capture(live);",
             "image.expectedBefore = before;",
             "preview_.prepareImageShadowed(image.preview);",
@@ -2936,26 +2936,26 @@ def preview_rebuild_param_gate(cls, kernel, identity, sites):
             "runner.savePreparedNext(image);",
             "beginPreparedShadow(image.nextCage);")))
     return gate
-for label, path, cls, kernel, identity, sites in (
+for label, path, cls, kernel, identity in (
     ("Edge Extrude", "edge_extrude.d", "EdgeExtrudeTool",
      "ed.extrudeEdgesByMask(mask, extrude_, width_)",
-     "memcmp(&extrude, &other.extrude, float.sizeof) == 0", 1),
+     "memcmp(&extrude, &other.extrude, float.sizeof) == 0"),
     ("Poly Extrude", "poly_extrude.d", "PolyExtrudeTool",
      "ed.extrudeFacesByMask(mask, distance_",
-     "memcmp(&distance, &other.distance, float.sizeof) == 0", 2),
+     "memcmp(&distance, &other.distance, float.sizeof) == 0"),
     ("Poly Inset", "poly_inset_tool.d", "PolyInsetTool",
      "ed.insetFacesByMask(mask, inset_)",
-     "memcmp(&inset, &other.inset, float.sizeof) == 0", 1),
+     "memcmp(&inset, &other.inset, float.sizeof) == 0"),
     ("Vertex Extrude", "vertex_extrude_tool.d", "VertexExtrudeTool",
      "ed.extrudeVerticesByMask(mask, shift_, width_)",
-     "sameFloat(width, other.width)", 1),
+     "sameFloat(width, other.width)"),
     ("Vertex Bevel", "vertex_bevel_tool.d", "VertexBevelTool",
      "ed.bevelVerticesByMask(mask, inset_)",
-     "memcmp(&inset, &other.inset, float.sizeof) == 0", 1),
+     "memcmp(&inset, &other.inset, float.sizeof) == 0"),
 ):
     sources = {"tool": (ROOT / "source/tools/edit" / path).read_text(),
                "preview": (ROOT / "source/tools/edit/preview_rebuild.d").read_text()}
-    gate = preview_rebuild_param_gate(cls, kernel, identity, sites)
+    gate = preview_rebuild_param_gate(cls, kernel, identity)
     if not gate(sources):
         fail(f"{label} onParamChanged prepared contract drift")
     mutate_param_sources(label, sources, gate, (

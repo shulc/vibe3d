@@ -71,12 +71,9 @@ private double digest(ref const Mesh m) {
 
 private size_t rows;
 
-/// `headlessShared` false: the scripted apply has its own kernel call (the
-/// polygon extrude row, an open finding on task 9433) — its faces must then
-/// DIFFER from the live ones, so the row flips when the finding is resolved.
 private void row(T)(EditMode mode, void function(ref Mesh) pick,
         string[] names, float[] values, size_t verts, size_t faces, double dig,
-        bool headlessShared = true, void function(ref Mesh, Tool) refuse = &hideAll) {
+        void function(ref Mesh, Tool) refuse = &hideAll) {
     enum name = T.stringof;
     ++rows;
     T make(Rig r) { return new T(() => &r.mesh, &r.gpu, &r.mode, null); }
@@ -124,9 +121,7 @@ private void row(T)(EditMode mode, void function(ref Mesh) pick,
                 m.vertices, live.mesh.vertices, m.faces, live.mesh.faces));
     }
     same("prepared", image.candidate);
-    if (headlessShared) same("headless", head.mesh);
-    else assert(head.mesh.faces != live.mesh.faces, name ~ ": the scripted apply "
-        ~ "now matches the live faces — the open finding is resolved; share the row");
+    same("headless", head.mesh);
 
     // REFUSAL: an operation that builds nothing refuses the scripted apply
     // (the command no-op contract: no `ok`, no history entry).
@@ -146,7 +141,7 @@ unittest {
     row!EdgeExtrudeTool(EditMode.Edges, &pickEdge, ["width", "extrude"],
         [0.1f, 0.3f], 12, 10, -85.9279);
     row!PolyExtrudeTool(EditMode.Polygons, &pickFace, ["distance"],
-        [0.3f], 12, 10, -66.8, false);
+        [0.3f], 12, 10, -66.8);
     row!VertexBevelTool(EditMode.Vertices, &pickVertex, ["inset"],
         [0.2f], 10, 7, -38.0);
     row!VertexExtrudeTool(EditMode.Vertices, &pickVertex, ["shift", "width"],
@@ -154,14 +149,62 @@ unittest {
     row!PolyInsetTool(EditMode.Polygons, &pickFace, ["inset"],
         [0.1f], 12, 10, -29.2828);
     row!VertexMergeTool(EditMode.Vertices, &pickTwoVertices, ["dist"],
-        [1.5f], 7, 6, 31.5);
+        [1.5f], 7, 6, 31.5, (ref Mesh m, Tool) { m.clearVertexSelection(); });
     row!ReductionTool(EditMode.Polygons, &triangulateAll, ["ratio"],
-        [0.5f], 5, 6, 13.5, true, (ref Mesh, Tool t) { poke(t, "ratio", 1.0f); });
+        [0.5f], 5, 6, 13.5, (ref Mesh, Tool t) { poke(t, "ratio", 1.0f); });
     // A ratio rounding to no face keeps one (the operation's floor; on an open
     // grid without boundary preservation the kernel would otherwise take all).
     row!ReductionTool(EditMode.Polygons, &triangulatedGrid, ["preserveBoundary", "ratio"],
-        [0.0f, 0.01f], 3, 1, 3.75, true, (ref Mesh, Tool t) { poke(t, "ratio", 1.0f); });
+        [0.0f, 0.01f], 3, 1, 3.75, (ref Mesh, Tool t) { poke(t, "ratio", 1.0f); });
     row!SmoothShiftTool(EditMode.Polygons, &pickFace, ["scale", "shift"],
         [1.0f, 0.3f], 12, 10, -66.8);
     assert(rows == 9, format("%s rows ran, expected 9 (8 tools, reduce twice)", rows));
+}
+
+// The scripted polygon extrude against the reference's scripted apply (capture
+// K-PX, task 9487; fixture private): on the open box (8v/4f, polygon 0 = the
+// -Z face selected) every cell gives walls first, the cap LAST and selected,
+// the cap shift in full, and a ZERO extent still builds the coincident
+// topology. Our `distance` is the reference's extent = normal x distance (PX_B).
+unittest {
+    static immutable float[3][8] box = [[-.5, -.5, -.5], [-.5, -.5, .5],
+        [-.5, .5, -.5], [-.5, .5, .5], [.5, -.5, -.5], [.5, -.5, .5],
+        [.5, .5, -.5], [.5, .5, .5]];
+    static immutable uint[][] faceIn = [[0, 2, 6, 4], [0, 1, 3, 2], [2, 3, 7, 6],
+        [0, 4, 5, 1]];
+    static immutable uint[][] faceOut = [[0, 1, 3, 2], [2, 3, 7, 6], [0, 4, 5, 1],
+        [11, 4, 0, 8], [8, 0, 2, 9], [9, 2, 6, 10], [10, 6, 4, 11], [8, 9, 10, 11]];
+    static immutable uint[4] ring = [0, 2, 6, 4];   // new vertex 8+k from ring[k]
+    size_t cells;
+    // cell, distance, shift X, the extent every new vertex sits at
+    void cell(string id, float distance, float shiftX, float[3] extent) {
+        auto r = new Rig(EditMode.Polygons, (ref Mesh m) {});
+        r.mesh = Mesh.init;
+        foreach (p; box) r.mesh.addVertex(Vec3(p[0], p[1], p[2]));
+        foreach (f; faceIn) r.mesh.addFace(f.dup);
+        r.mesh.syncSelection(); r.mesh.selectFace(0);
+        auto t = new PolyExtrudeTool(() => &r.mesh, &r.gpu, &r.mode, null);
+        t.activate();
+        poke(t, "distance", distance); poke(t, "shiftX", shiftX);
+        assert(t.applyHeadless(), id ~ ": the scripted apply refused");
+        const m = &r.mesh;
+        assert(m.vertices.length == 12 && m.faces.length == 8, format(
+            "%s: %sv/%sf, the capture gives 12v/8f", id, m.vertices.length, m.faces.length));
+        foreach (i, f; faceOut) assert(m.faces[i] == f, format(
+            "%s: faces %s, the capture gives walls then cap %s", id, m.faces.range, faceOut));
+        size_t[] sel;
+        foreach (i; 0 .. m.faces.length) if (m.isFaceSelected(i)) sel ~= i;
+        assert(sel == [7], format("%s: selected %s, the capture selects the cap 7", id, sel));
+        foreach (k, v; ring) {
+            const want = Vec3(box[v][0] + extent[0], box[v][1] + extent[1],
+                box[v][2] + extent[2]);
+            assert((m.vertices[8 + k] - want).length < 1e-6, format("%s: vertex %s "
+                ~ "at %s, the capture %s", id, 8 + k, m.vertices[8 + k], want));
+        }
+        ++cells;
+    }
+    cell("PX_Z", 0.0f, 0.0f, [0, 0, 0]);       // zero extent: coincident, not a no-op
+    cell("PX_B", 0.3f, 0.0f, [0, 0, -0.3f]);
+    cell("PX_A", 0.3f, 0.2f, [0.2f, 0, -0.3f]);
+    assert(cells == 3);
 }

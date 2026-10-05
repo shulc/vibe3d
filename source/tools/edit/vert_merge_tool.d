@@ -405,8 +405,8 @@ private:
         refreshCaches();
     }
 
-    // The one operation: preview, prepared image and scripted apply (wave
-    // plan PV3a). average:true — the survivor sits at the per-cluster centroid,
+    // The one operation: preview, prepared image and scripted apply (task
+    // 9433). average:true — the survivor sits at the per-cluster centroid,
     // matching the vert.merge command (source/commands/mesh/vert_merge.d).
     // No selection welds nothing (an all-false mask joins no cluster).
     size_t operation(ref Mesh target) {

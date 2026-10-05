@@ -503,7 +503,7 @@ private:
         return PreviewTopologyKey.make(cage.operandVertexMask(EditMode.Vertices),
             width_ == 0.0f);
     }
-    // The one operation (wave plan PV3a): preview, prepared image and scripted
+    // The one operation (task 9433): preview, prepared image and scripted
     // apply. Unrecorded — a preview frame records nothing, and the scripted
     // apply's snapshot pair belongs to `ToolDoApplyCommand`. The mask is the
     // L1 funnel (task 0613): the selection, else every VISIBLE element.

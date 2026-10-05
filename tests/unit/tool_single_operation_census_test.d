@@ -149,12 +149,9 @@ unittest // Edit family: each tool's kernel lives in its one `operation`, called
         ++files;
 
         // NEEDLE + PIN: the kernel's sites by enclosing function — `operation`
-        // only. Polygon Extrude's scripted apply keeps its own call: its order
-        // and cap shift differ from the live preview's, uncaptured (task 9433
-        // finding), so its row names that second site until it is resolved.
+        // only.
         size_t[string] want = [r.cls ~ ".operation|" ~ r.kernel: 1];
         if (r.imported) want["(module scope)|" ~ r.kernel] = 1;
-        if (r.cls == "PolyExtrudeTool") want[r.cls ~ ".applyHeadless|" ~ r.kernel] = 1;
         auto got = identOwners(code, [r.kernel]);
         assert(got == want, format("%s calls `%s` outside its one operation:"
             ~ "\n  found    %s\n  expected %s", r.file, r.kernel, got, want));
@@ -168,14 +165,14 @@ unittest // Edit family: each tool's kernel lives in its one `operation`, called
 
         // PIN: the producers. The preview rebuild, the prepared image (the
         // five seam tools hand `&operation` to `runPrepared`) and the scripted
-        // apply each name `operation` once — Polygon Extrude's apply excepted.
+        // apply each name `operation` once.
         auto callers = identOwners(code, ["operation"]);
         size_t[string] wantCallers = [
             r.cls ~ "|operation": 1,   // its definition
             r.cls ~ ".rebuildPreview|operation": 1,
             r.cls ~ ".buildPreparedParamUpdate|operation": 1,
+            r.cls ~ ".applyHeadless|operation": 1,
         ];
-        if (r.cls != "PolyExtrudeTool") wantCallers[r.cls ~ ".applyHeadless|operation"] = 1;
         assert(callers == wantCallers, format("%s: `operation` callers moved:"
             ~ "\n  found    %s\n  expected %s", r.file, callers, wantCallers));
     }

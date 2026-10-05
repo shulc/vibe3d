@@ -357,15 +357,11 @@ public:
         }
         preview_.reset();   // the live mesh is rebuilt behind the seam's back
         if (mesh.faces.length == 0) return false;
-        if (distance_ == 0.0f) return true;   // identity is a clean no-op
-        auto mask = currentMask();
-        // task 1903 Stage H: extrudeFacesByMask takes `ref MeshEditBatch`
-        // now. `commitEdit` below undoes via a MeshSnapshot pair, not the
-        // op-log, so the batch is unrecorded.
-        auto ed = MeshEditBatch.unrecorded(*mesh, kExtrudeEditScope);
-        size_t n = ed.extrudeFacesByMask(mask, distance_);
-        ed.close();
-        if (n == 0) return false;
+        // The scripted apply is the gesture's operation: walls then the
+        // selected cap, the cap shift applied, and a zero extent still builds
+        // coincident topology — a real edit, not a no-op (task 9433; capture
+        // K-PX, cells PX_A/PX_B/PX_Z).
+        if (operation(*mesh, true) == 0) return false;
         gpu.upload(*mesh);
         return true;
     }
@@ -541,11 +537,6 @@ public:
     }
 
 private:
-    bool[] currentMask() {
-        // L1 funnel (task 0613, S5): the selection, else every VISIBLE element.
-        return mesh.operandFaceMask();
-    }
-
     void rebuildPreview(bool allowCoincidentTopology = false) {
         if (!active) return;
         if (previewGated()) return;
@@ -565,10 +556,8 @@ private:
         return PreviewTopologyKey.make(cage.operandFaceMask(), distance_ == 0.0f &&
             shiftVec() == Vec3(0, 0, 0) && !allowCoincidentTopology);
     }
-    // The one operation of the preview and the prepared image; unrecorded, a
-    // preview frame records nothing. The scripted apply does NOT reach it yet:
-    // its own call keeps cap-then-walls order and drops the cap shift — an
-    // uncaptured divergence left open (wave plan PV3a finding).
+    // The one operation of the preview, the prepared image and the scripted
+    // apply; unrecorded, a preview frame records nothing.
     size_t operation(ref Mesh target, bool allowCoincidentTopology) {
         const shift = shiftVec();
         auto mask = target.operandFaceMask();
@@ -692,7 +681,7 @@ private:
         image.gizmoSelHash = source.selectionSignature(EditMode.Polygons);
         if (source.faces.length == 0) return;
 
-        // L1 funnel (task 0613, S5). This is the SAME operand set currentMask()
+        // L1 funnel (task 0613, S5). This is the SAME operand set `operation`
         // builds — the gizmo anchor/axis must be framed on exactly the faces
         // the apply will extrude, or the handle sits somewhere the edit does
         // not happen. Routing it through operandFaceMask() keeps the two in
