@@ -14,7 +14,7 @@
     "notes": "collected live by this producer's own runCell/cmd() instrumentation (task 3091): tool.set/tool.attr values are parsed off the wire argstring cmd() actually sent; gesture magnitudes are recorded at their own driving call site"
   },
   "writtenBy": "tests/test_tool_gesture_g2.d",
-  "producedBy": "e1bddf84",
+  "producedBy": "8eac64d7",
   "stand": "per-cell; see each cell's drive in the producer",
   "recipe": "stand -> gesture (/api/play-events) -> drop -> undo -> redo",
   "provenance": {
