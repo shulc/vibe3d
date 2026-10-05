@@ -259,44 +259,21 @@ class MoveTool : TransformTool {
 
     bool     ctrlConstrain;        // Ctrl: axis TBD from initial movement (only for dragAxis==3)
     int      constrainStartMX, constrainStartMY;
-    // LAW B state. The plane conversion is a linearisation about ONE point, so
-    // the point (`planeAnchor`) and the pixel the offset is measured from
-    // (`dragStartM*`) are frozen at the press and never touched again for the
-    // gesture. `planeApplied` is the PRE-SNAP world total already handed to the
-    // wrapper, so each motion event emits only the part of the cumulative
-    // conversion it has not delivered yet. All three are (re)armed at both
-    // drag-start sites: button-down on a handle, and `beginScreenPlaneDragAt`.
-    int      dragStartMX, dragStartMY;
-    Vec3     planeAnchor;
-    Vec3     planeApplied;
-    // The snap client point (task 9387, wave plan §28.2 D-FB): the gizmo at
-    // the press plus the PRE-SNAP travel since, so a snapped position never
-    // becomes the next event's input; `snapHeld` is the offset the current
-    // snap holds the gizmo away from it, handed back on the first unsnapped
-    // event (captured `cells_k_b9` K9d: the gizmo rejoins the pointer). Both
-    // are armed once per gesture in `armPlaneDrag`; the Ctrl re-arm of the
-    // axis leg keeps them.
-    Vec3     snapClient;
+    // The gesture's handle drag (M-HANDLE, task 9412): the pivot and pixel
+    // frozen at the press, so LAW A's and LAW B's conversions are linearised
+    // about ONE point and measured from ONE pixel. `grabApplied` is the
+    // PRE-SNAP client already handed to the wrapper, so each event emits only
+    // what the cumulative travel has not delivered yet. That client is also
+    // the snap's input, so a snapped position never feeds the next event;
+    // `snapHeld` is the offset the current snap holds the gizmo away from it,
+    // handed back on the first unsnapped event (captured K-B9 K9d: the gizmo
+    // rejoins the pointer). `axisLawPorted` is decided once, at the arm: false
+    // under the `Screen` action centre, where the reference wraps the
+    // translator in a decorator adding a term nobody has read, so `Screen`
+    // is held at its pre-port incremental body (drag.d's LAW-CHANGE POINT).
+    HandleDrag grab;
+    Vec3     grabApplied;
     Vec3     snapHeld;
-    // LAW A state, the ported axis-arm body (task 0562), same shape as LAW B's
-    // above and for the same reason: the conversion is measured from the PRESS
-    // pixel against a base frozen at the press, so both are held here and
-    // `axisApplied` is the scalar total already handed to the wrapper.
-    //
-    // Its own press pixel rather than `dragStartM*`: the Ctrl-constrain path
-    // enters an axis drag PART WAY THROUGH a gesture that started on the
-    // centre box, and the axis leg's press is that hand-over, not the original
-    // button-down.
-    //
-    // `axisLawPorted` is decided once, at the arm, and frozen for the gesture.
-    // It is false under the `Screen` action centre — where the reference wraps
-    // the translator in a DECORATOR that forwards to this same conversion and
-    // then adds a term nobody has read, so `Screen` is held at its pre-port
-    // behaviour rather than shipped half-ported. See drag.d's LAW-CHANGE
-    // POINT; that is a parked divergence, not a claim about `Screen`.
-    int      axisStartMX, axisStartMY;
-    Vec3     axisAnchor;
-    float    axisApplied = 0.0f;
     bool     axisLawPorted;
     // Set true at the two Ctrl-lock entry sites (button-down Ctrl path +
     // beginScreenPlaneDragAt Ctrl path); cleared at BOTH drag-end
@@ -820,37 +797,38 @@ public:
         }
     }
 
-    // Freeze BOTH conversions' reference point for one gesture: the press
-    // pixel and the gizmo pivot as it stands at the press, plus a zeroed
-    // running total. LAW B linearises about that point; LAW A's ported body
-    // takes the screen direction of the drag axis at it. Called from BOTH
-    // drag-start sites so a relocate-then-drag and a handle-grab arm
-    // identically.
-    //
-    // `armAxisLeg` is what decides, once per gesture, whether the axis arms
-    // run the ported reference conversion. It is separate because the
-    // Ctrl-constrain hand-over re-arms the axis leg mid-gesture without
-    // disturbing anything LAW B froze.
+    // Press the gesture's handle drag at the gizmo pivot as it stands now,
+    // from BOTH drag-start sites, so a relocate-then-drag and a handle grab
+    // arm identically.
     private void armPlaneDrag(int mx, int my, ref VectorStack vts) {
-        dragStartMX  = mx;
-        dragStartMY  = my;
-        planeAnchor  = handler.center;
-        planeApplied = Vec3(0, 0, 0);
-        snapClient   = handler.center;
-        snapHeld     = Vec3(0, 0, 0);
+        snapHeld = Vec3(0, 0, 0);
         armAxisLeg(mx, my);
         axisLawPorted = !screenActionCentre(vts);
     }
 
-    // Re-freeze the ported axis conversion's press pixel, base and running
-    // total. At a plain handle grab this is the button-down; at a Ctrl
-    // constrain it is the event the axis was chosen on, which is where that
-    // leg of the gesture actually starts.
+    // At a plain handle grab this is the button-down; at a Ctrl constrain it
+    // is the event the axis was chosen on, where that leg of the gesture
+    // actually starts (nothing moved before it, so the client is unchanged).
     private void armAxisLeg(int mx, int my) {
-        axisStartMX = mx;
-        axisStartMY = my;
-        axisAnchor  = handler.center;
-        axisApplied = 0.0f;
+        grab.press(handler.center, mx, my);
+        grabApplied = handler.center;
+    }
+
+    // The frame the gesture's travel goes through, per event: the input basis
+    // is the wrapper's, pushed after the press.
+    private DragFrame moveDragFrame(Vec3 mi0, Vec3 mi1, Vec3 mi2) const {
+        DragFrame f;
+        if (dragAxis > 2) {
+            f.kind = DragKind.viewPlane;
+            f.plane = dragAxis;
+            f.basisX = mi0; f.basisY = mi1; f.basisZ = mi2;
+            return f;
+        }
+        f.axis = dragAxis == 0 ? mi0 : dragAxis == 1 ? mi1 : mi2;
+        if (axisLawPorted) return f;
+        f.kind = DragKind.screenAxis;
+        f.axis = f.axis * (handler.arrowX.end - handler.center).length;
+        return f;
     }
 
     // Is the `Screen` action centre the one in force? Under it the ported
@@ -884,7 +862,7 @@ public:
     // single-vert drag can't snap to itself. 7.3d: also stashes the
     // SnapResult on the tool + global so draw() can render the
     // overlay and HTTP /api/snap/last can read it.
-    private Vec3 applySnapToDelta(Vec3 gizmoCenter, Vec3 worldDelta,
+    private Vec3 applySnapToDelta(Vec3 gizmoCenter, Vec3 worldDelta, Vec3 client,
                                   int sx, int sy, ref VectorStack vts)
     {
         // SNAP packet is already published in vts (upstream stage ran
@@ -911,7 +889,7 @@ public:
         foreach (vi; vertexIndicesToProcess[0 .. nProc])
             if (vi >= 0) exclude ~= cast(uint)vi;
 
-        SnapResult sr = snapCursor(snapClient, sx, sy, cachedVp, *mesh, primaryModelSpace(),
+        SnapResult sr = snapCursor(client, sx, sy, cachedVp, *mesh, primaryModelSpace(),
                                    snapPkt, exclude, null, liveSnapGuides());
         lastSnap = sr;
         publishLastSnap(sr);
@@ -1011,47 +989,20 @@ public:
         // `inputBasis*` here — basis-free as before.
         debug assertWrapperInputFrameChained();
         Vec3 mi0 = inAxisX(), mi1 = inAxisY(), mi2 = inAxisZ();
-        Vec3 worldDelta;
+        // LAW A ported / LAW B: CUMULATIVE, the press pivot plus the travel
+        // since the press pixel through the frozen anchor (drag.d), so this
+        // event emits only what the total has not delivered yet. Feeding the
+        // previous pixel and the live gizmo would restore the incremental
+        // behaviour these laws replace.
         bool skip;
-        if (dragAxis <= 2 && axisLawPorted) {
-            // LAW A, PORTED (task 0562) — CUMULATIVE, against the base frozen
-            // at the press, at a flat per-pixel gain.
-            //
-            // `t = pixelScale * (Δpx · ŝ)` and the whole gesture's world
-            // offset is `axisDir * t`, so this event emits only what that
-            // total has not already delivered. Same bookkeeping as LAW B
-            // below, and for the same reason: the conversion is measured from
-            // ONE pixel against ONE base, and feeding it the previous event's
-            // pixel and the live gizmo centre would restore the incremental
-            // behaviour it replaces under a new name.
-            //
-            // `axisDir` is the drag-start-frozen input basis, which is what
-            // the reference freezes too (the constraint vector is copied once,
-            // at the press).
-            //
-            // The rounding mode is read LIVE, not frozen at the press, for
-            // the same reason the step itself is derived per event: the
-            // reference re-derives its step on every zoom, so a drag that
-            // zooms changes step mid-gesture. It is the user's own setting
-            // (`coord_rounding.d`); at `None` the conversion is unrounded.
-            Vec3 axisDir = dragAxis == 0 ? mi0 : dragAxis == 1 ? mi1 : mi2;
-            float total = axisArmDelta(e.x, e.y, axisStartMX, axisStartMY,
-                                       axisAnchor, axisDir, cachedVp, skip,
-                                       coordRounding(),
-                                       coordRoundingFixedIncrement());
-            if (!skip) {
-                worldDelta  = axisDir * (total - axisApplied);
-                axisApplied = total;
-            }
-        } else if (dragAxis <= 2) {
-            // LAW A, the editor's own body — incremental, per event, against
-            // the live gizmo. Reached under the `Screen` action centre only,
-            // which is HELD at its pre-port behaviour because the reference's
-            // `Screen` decorator forwards to the ported conversion and then
-            // adds an unread term (see `screenActionCentre`). `lastMX/lastMY` stay
-            // written below — they are the fallback for any dispatch that
-            // publishes no cooked gesture, and the other half of the debug
-            // cross-check inside `gesturePrevPixel`.
+        immutable Vec3 client = grab.client(e.x, e.y, moveDragFrame(mi0, mi1, mi2),
+                                            cachedVp, skip);
+        Vec3 worldDelta = client - grabApplied;
+        if (dragAxis <= 2 && !axisLawPorted) {
+            // LAW A, the editor's own body, incremental against the live gizmo:
+            // the `Screen` hold (see `screenActionCentre`). `lastMX/lastMY`
+            // stay written below as the fallback for a dispatch with no cooked
+            // gesture.
             import toolpipe.packets : GesturePacket;
             int prevMX, prevMY;
             gesturePrevPixel(vts.get!GesturePacket(), e.x, e.y,
@@ -1060,40 +1011,14 @@ public:
                                        dragAxis, handler,
                                        mi0, mi1, mi2,
                                        cachedVp, skip);
-        } else {
-            // LAW B — CUMULATIVE, against the anchor frozen at the press.
-            //
-            // The conversion is a linearisation of the screen map about ONE
-            // point, so it says what it says only if that point and the pixel
-            // it is measured from both stay put for the gesture. Feeding it the
-            // previous event's pixel and the LIVE gizmo centre — which the
-            // wrapper walks along with the selection — would rebuild the matrix
-            // at a new anchor on every event and quietly restore the old
-            // per-event-exact behaviour under a new name.
-            //
-            // So: one matrix at `planeAnchor`, applied to the whole offset since
-            // the press, and this event's delta is what that total has not
-            // already delivered. `planeApplied` is the pre-snap total; snapping
-            // is a separate law downstream and must not feed back into the
-            // conversion's own bookkeeping, or a snapped event would be
-            // re-issued as a correction on the next one.
-            Vec3 total = planeDragDelta(e.x, e.y, dragStartMX, dragStartMY,
-                                        dragAxis, planeAnchor, cachedVp, skip,
-                                        mi0, mi1, mi2);
-            if (!skip) {
-                worldDelta  = total - planeApplied;
-                planeApplied = total;
-            }
         }
         if (skip) { lastMX = e.x; lastMY = e.y; return true; }
+        grabApplied = client;
 
-        // Phase 7.3a: snap. Bend the would-be gizmo position towards a
-        // mesh element when SNAP is on. Adjust `worldDelta` so the
-        // gizmo lands at the snapped point — selection moves by the
-        // same delta. Snap result for the overlay was stashed in
-        // `lastSnap` inside `applySnapToDelta`.
-        snapClient = snapClient + worldDelta;
-        worldDelta = applySnapToDelta(handler.center, worldDelta, e.x, e.y, vts);
+        // Phase 7.3a: snap the client point; the gizmo lands on the snapped
+        // point and the selection moves by the same delta (the overlay's
+        // result is stashed in `lastSnap`).
+        worldDelta = applySnapToDelta(handler.center, worldDelta, client, e.x, e.y, vts);
 
         // Phase 3 — single-source refactor.
         //

@@ -4,7 +4,8 @@ import std.math : sqrt, isNaN, abs;
 import math;
 import handler : MoveHandler, gizmoSize, getGizmoPixels;
 import toolpipe.packets : GesturePacket, GestureTrack;
-import coord_rounding : CoordinateRounding, kFixedIncrementDefault;
+import coord_rounding : CoordinateRounding, kFixedIncrementDefault, coordRounding,
+                       coordRoundingFixedIncrement;
 
 // ---------------------------------------------------------------------------
 // THE DRAG CONVERSION SEAM
@@ -1657,6 +1658,69 @@ float haulWorldPerPixel(Vec3 anchor, const ref Viewport vp) {
     float px = getGizmoPixels();
     if (px < 1e-6f) px = 90.0f;
     return gizmoSize(anchor, vp, 1.0f) / px;
+}
+
+// ===========================================================================
+// M-HANDLE — press + travel (task 9412)
+// ===========================================================================
+
+// Which of the laws above turns the pointer travel into handle travel. The
+// frame is GEOMETRY the handle supplies, never a tool policy.
+enum DragKind : ubyte {
+    axisArm,        // LAW A ported: `axisArmDelta` along `axis` (unit)
+    screenAxis,     // LAW A own: the segment point → point + axis, gain |axis|
+    viewPlane,      // LAW B: `planeDragDelta` on `plane` (3..6) of the basis
+    principalPlane, // LAW D: `primitiveCenterDragDelta` through the press point
+    planeHit,       // the pointer's hit on the plane (point, `normal`), along `axis`
+}
+
+struct DragFrame {
+    DragKind kind;
+    Vec3 axis   = Vec3(1, 0, 0);
+    Vec3 normal = Vec3(0, 0, 1);
+    int  plane  = 3;
+    Vec3 basisX = Vec3(1, 0, 0), basisY = Vec3(0, 1, 0), basisZ = Vec3(0, 0, 1);
+}
+
+/// A handle drag's client point: the handle at the press plus the pointer
+/// travel since the press, through the frame the handle supplies per event.
+/// It holds no snap and is never written after the press, so a snapped
+/// answer cannot feed the next event and a released snap rejoins the pointer
+/// (captured K-B9: Move and Box, one release law). Positions live in whatever
+/// space `vp` projects (a create tool passes its plane-local view).
+struct HandleDrag {
+    Vec3 point;
+    int  pressX, pressY;
+
+    void press(Vec3 handle, int px, int py) {
+        point = handle; pressX = px; pressY = py;
+    }
+
+    Vec3 client(int px, int py, DragFrame f, const ref Viewport vp,
+                out bool skip) const
+    {
+        final switch (f.kind) {
+        case DragKind.axisArm:
+            return point + f.axis * axisArmDelta(px, py, pressX, pressY, point, f.axis,
+                vp, skip, coordRounding(), coordRoundingFixedIncrement());
+        case DragKind.screenAxis:
+            return point + f.axis * screenAxisFraction(px - pressX, py - pressY,
+                point, point + f.axis, vp, skip);
+        case DragKind.viewPlane:
+            return point + planeDragDelta(px, py, pressX, pressY, f.plane, point, vp,
+                skip, f.basisX, f.basisY, f.basisZ);
+        case DragKind.principalPlane:
+            skip = false;
+            return point + primitiveCenterDragDelta(px, py, pressX, pressY, point, vp);
+        case DragKind.planeHit:
+            Vec3 o, d, h0, h1;
+            screenPointToRay(cast(float)pressX, cast(float)pressY, vp, o, d);
+            skip = !rayPlaneIntersect(o, d, point, f.normal, h0);
+            screenPointToRay(cast(float)px, cast(float)py, vp, o, d);
+            skip = skip || !rayPlaneIntersect(o, d, point, f.normal, h1);
+            return point + f.axis * dot(h1 - h0, f.axis);
+        }
+    }
 }
 
 // ===========================================================================
