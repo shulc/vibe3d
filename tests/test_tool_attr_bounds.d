@@ -10,7 +10,7 @@
 // value past the door's bound and once from the cap written through the door,
 // and the two meshes must agree.
 //
-// Run via: ./run_test.d test_tool_attr_bounds   (one block: VIBE3D_CELL=door|kernel)
+// Run via: ./run_test.d test_tool_attr_bounds   (one block: VIBE3D_CELL=door|kernel|exponent)
 
 import http_client : getJson, postRawAllowingErrorStatus;
 import std.algorithm : splitter;
@@ -177,4 +177,31 @@ unittest {
     assert(failed.length == 0, format("kernel caps failed in %d cells:\n  %-(%s\n  %)",
                                       failed.length, failed));
     writeln("PASS kernel caps, 13 cells");
+}
+
+// The wire reads an exponent (`5e2` used to arrive as 5 and `1e30` as 1); the
+// door then clamps where the row is bounded.
+unittest {
+    if (!cell("exponent")) return;
+    struct W { string tool, attr, value; double expect; }
+    static immutable W[] writes = [
+        W("prim.cube", "radius", "5e2", 500), W("prim.cube", "radius", "1e30", 1e30),
+        W("prim.cube", "radius", "-1e30", 0), W("prim.sphere", "sides", "5e2", 500),
+        W("prim.sphere", "sides", "1e30", 1024),
+    ];
+    string[] failed;
+    foreach (w; writes) {
+        ok("scene.reset");
+        ok("tool.set " ~ w.tool ~ " on");
+        auto r = cmd("tool.attr " ~ w.tool ~ " " ~ w.attr ~ " " ~ w.value);
+        const got = num(cmd("tool.attr " ~ w.tool ~ " " ~ w.attr ~ " ?")["value"]);
+        if (r["status"].str != "ok" || abs(got - w.expect) > 1e-6 * fmax(1, abs(w.expect)))
+            failed ~= format("%s %s %s: %s, reads %s, expected %s", w.tool, w.attr, w.value,
+                             r.toString, got, w.expect);
+        ok("tool.set " ~ w.tool ~ " off");
+    }
+    assert(writes.length == 5, "exponent writes: measured 5");
+    assert(failed.length == 0, format("exponent writes failed in %d:\n  %-(%s\n  %)",
+                                      failed.length, failed));
+    writeln("PASS exponent writes, 5");
 }

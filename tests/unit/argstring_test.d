@@ -16,3 +16,14 @@ import params : fmtFloatWire, stringifyParam;
 import std.exception : assertThrown;
 import argstring;
 
+
+unittest { // a number with an exponent is one float token (task 9492: `1e30` read as 1)
+    auto pos = parseArgstring("tool.attr prim.cube radius 5e2").params[kPositionalKey].array;
+    assert(pos.length == 3 && pos[2].type == JSONType.float_ && pos[2].floating == 500,
+           "5e2 -> " ~ pos.to!string);
+    auto big = parseArgstring("a 1e30 -2.5E-3 7e+1 x:3e2").params;
+    assert(big[kPositionalKey].array[0].floating == 1e30
+        && big[kPositionalKey].array[1].floating == -2.5e-3
+        && big[kPositionalKey].array[2].floating == 70
+        && big["x"].floating == 300, "exponent forms -> " ~ big.toString);
+}

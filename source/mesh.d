@@ -7712,6 +7712,11 @@ struct Mesh {
         size_t selCount = 0;
         foreach (b; mask) if (b) ++selCount;
         if (selCount == 0) return 0;
+        enum size_t MAX_ARRAY_GRID_SLOTS = 10_000;
+        // Each axis first: the stored counts are unbounded, and three of them
+        // can wrap the size_t product back under the cap.
+        if (numX > MAX_ARRAY_GRID_SLOTS || numY > MAX_ARRAY_GRID_SLOTS
+            || numZ > MAX_ARRAY_GRID_SLOTS) return 0;
         size_t totalSlots = cast(size_t)numX * cast(size_t)numY * cast(size_t)numZ;
         // 1×1×1 with replaceSource=false is a true no-op (nothing to add,
         // nothing to replace). 1×1×1 with replaceSource=true still falls
@@ -7725,7 +7730,6 @@ struct Mesh {
         // reshape the requested grid down to something smaller — the caller
         // asked for a specific Count X/Y/Z and a partial/rescaled grid would
         // be a worse surprise than a clean no-op.
-        enum size_t MAX_ARRAY_GRID_SLOTS = 10_000;
         if (totalSlots > MAX_ARRAY_GRID_SLOTS) return 0;
 
         size_t[] sourceFaces;

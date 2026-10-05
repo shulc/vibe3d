@@ -243,3 +243,20 @@ unittest {
     assert(!live() && steps() == 0,
         "loop slice: the preview dropped on a key mismatch, but the session kept its steps");
 }
+
+// The stored count is unbounded (the attribute doors bound it; a stored-state
+// path such as `tool.set … count:N` does not), so the prepared activation caps
+// it at the kernel's MAX_LOOP_SLICE_COUNT before it allocates the offsets.
+unittest {
+    import mesh_ops.loop_slice : MAX_LOOP_SLICE_COUNT;
+    Mesh m = makeCube();
+    EditMode em = EditMode.Edges;
+    auto tool = new LoopSliceTool(() => &m, null, &em, null);
+    foreach (ref p; tool.params()) if (p.name == "count") *p.iptr = 5000;
+    Mesh* src;
+    auto image = tool.buildPreparedActivation(src);
+    assert(image.valid && image.count == MAX_LOOP_SLICE_COUNT
+           && image.positions.length == MAX_LOOP_SLICE_COUNT,
+           "a stored count past the cap reached the activation's allocation");
+    assert(MAX_LOOP_SLICE_COUNT == 1024, "the captured cap: measured 1024");
+}

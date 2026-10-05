@@ -830,7 +830,7 @@ public:
         PreparedLoopSliceActivationImage image;
         source = mesh;
         if (source is null) return image;
-        image.count = count_ < 1 ? 1 : count_;
+        image.count = clamp(count_, 1, MAX_LOOP_SLICE_COUNT);
         image.positions = fittedPositions(positions_, image.count);
         image.positionProxy = image.positions[0];
         image.before = MeshSnapshot.capture(*source);

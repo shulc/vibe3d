@@ -695,6 +695,17 @@ private struct Parser
                 throw err("expected digit after '.'");
             while (!atEnd && isDigit(cur)) advance();
         }
+        // An exponent `[eE][+-]?digits` makes the token a float; an `e` with
+        // no digits after it is left to the next token, as before.
+        if (!atEnd && (cur == 'e' || cur == 'E')) {
+            size_t q = pos + 1;
+            if (q < src.length && (src[q] == '+' || src[q] == '-')) ++q;
+            if (q < src.length && isDigit(src[q])) {
+                isFloat = true;
+                while (pos < q) advance();
+                while (!atEnd && isDigit(cur)) advance();
+            }
+        }
 
         string raw = src[start .. pos].idup;
         try {

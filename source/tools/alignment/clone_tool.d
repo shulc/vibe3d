@@ -235,7 +235,8 @@ public:
 private:
     Vec3 offsetVec() const { return Vec3(offX_, offY_, offZ_); }
     size_t build(in bool[] mask) {
-        return mesh.arrayFacesGrid(mask, num_ + 1, 1, 1, offsetVec(), Vec3(0, 0, 0),
+        import std.algorithm : min;
+        return mesh.arrayFacesGrid(mask, min(num_, 9999) + 1, 1, 1, offsetVec(), Vec3(0, 0, 0),
             Vec3(sclX_ / 100, sclY_ / 100, sclZ_ / 100),
             Vec3(angP_, angH_, angB_), between_, replace_, flip_, merge_, dist_, true);
     }
