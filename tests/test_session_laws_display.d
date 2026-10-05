@@ -16,8 +16,8 @@
 //   C-H7-xfrm-falloff-elem / -center-elem (M0e): TransformMove with ONE
 //              element node set by hand lights the vertex (36 / 36, vertex
 //              mode and edge mode on v); plain TransformMove 0 / 0.
-//   Magnet     flags table: no rollover flag (a named flip of M6 — HEAD drew
-//              its hovered vertex).
+//   Magnet     its arm installs an Element falloff (K-F F1), which lights the
+//              hovered vertex as C-H7-elem-v does (36 = no tool; task 9491).
 //   Tack       no counterpart: its hovered face stays drawn (carried).
 // Every zero cell sits beside its no-tool control in the SAME rig (the "> 0"
 // is the floor that makes the zero mean something), and every cell first
@@ -351,14 +351,14 @@ unittest { // gap 384 limit: the AXIS mode is not captured, so a no-tool axis wr
                                  ~ "the arm as '%s'; the axis stays loose until captured", got));
 }
 
-unittest { // Magnet: no rollover flag in the table — its hovered vertex is not drawn
+unittest { // Magnet: its arm installs an Element falloff (K-F F1), and an Element
+           // falloff lights the hovered vertex as much as no tool does
+           // (C-H7-elem-v, 36 px = 36 px; task 9491)
     immutable size_t noTool = noToolPx("vertex", kV, "vertex");
     assert(noTool > 0, "magnet control: no tool, vertex mode, the hovered vertex draws nothing");
-    // The magnet still PICKS the vertex (its gesture reads it): the pick need
-    // and the rollover are two data.
     immutable size_t n = cellPx("vertex", "xfrm.pointAttract", kV, "vertex");
-    assert(n == 0, format("magnet (no rollover flag, M6 flip): drew %s px of hover at the vertex",
-                          n));
+    assert(n == noTool, format("magnet (Element falloff in the slot, C-H7-elem-v): drew %s px "
+                               ~ "of hover at the vertex, no tool %s px", n, noTool));
 }
 
 unittest { // Tack: no counterpart — the face it aims at stays drawn (carried)

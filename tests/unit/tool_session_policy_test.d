@@ -2041,6 +2041,10 @@ unittest { // (6) id -> rollovers, over every registered id
     string[string][string][string] pipeOf;       // preset id -> its pipe attrs
     foreach (p; loadToolPresets("config/tool_presets.yaml"))
         pipeOf[p.id] = p.pipeAttrs;
+    {   // A registered tool's own pipe block, read from its production source.
+        import tools.deform.magnet : MagnetTool;
+        pipeOf["xfrm.pointAttract"] = MagnetTool.presetPipe();
+    }
     auto flags = parseJSON(readText("tests/fixtures/tool_rollover_flags.json"))["rows"].array;
     assert(flags.length == kTable.length,
            format("M6 rollover table: %s flag rows for %s registered ids", flags.length,
@@ -2089,7 +2093,8 @@ unittest { // (6) id -> rollovers, over every registered id
     assert(targetIds == ["mesh.dragWeld", "mesh.edgeSliceTool", "mesh.tack", "mesh.topoPen",
                          "pen", "prim.vertex"],
            format("M6 rollover table: the target flag is on %s", targetIds));
-    assert(stageIds == ["ElementMove", "move.element", "xfrm.elementMove"]
+    assert(stageIds == ["ElementMove", "move.element", "xfrm.elementMove",
+                        "xfrm.pointAttract"]
            && carried == stageIds,
            format("M6 rollover table: stage flag on %s, carried by the element falloff on %s",
                   stageIds, carried));

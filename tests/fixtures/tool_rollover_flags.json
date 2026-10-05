@@ -339,7 +339,8 @@
    "id": "xfrm.pointAttract",
    "mapping": "noCounterpart",
    "actor": false,
-   "stage": false
+   "stage": true,
+   "note": "stage: the arm installs an Element falloff (K-F F1, one falloff slot); an Element falloff lights the hovered vertex (C-H7-elem-v: 36 px = 36 px); task 9491"
   },
   {
    "id": "xfrm.push",

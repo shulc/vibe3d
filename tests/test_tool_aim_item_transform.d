@@ -830,6 +830,61 @@ unittest { // T4: Magnet pulls the vertex to the cursor on the DRAWN surface
         format("magnet landed on the M^-1-carried-normal target %s", vecStr(hitWrong2)));
 }
 
+// T4b: the magnet's Element falloff weighs in WORLD space, like every stage
+// falloff (task 0659), so its sphere is centred on the DRAWN grabbed vertex
+// (task 9491). Ranged so one other vertex is inside the drawn-centre sphere
+// and outside the one centred on the raw local anchor, or the reverse.
+unittest {
+    resetScene();
+    float[16] M = composed(AIM_POS, AIM_ROT, AIM_SCL);
+    Vec3 anchorDrawn = transformPoint(M, T4_BASE[T4_ANCHOR]);
+    setCameraAt(0.55f, 0.75f, 8.0f, anchorDrawn);
+    auto cam0 = fetchCam();
+    Vec3 d0 = transformPoint(M, T4_BASE[0]);
+    Vec3 d1 = transformPoint(M, T4_BASE[1]);
+    Vec3 d2 = transformPoint(M, T4_BASE[2]);
+    Vec3 cen = (d0 + d1 + d2) * (1.0f / 3.0f);
+    bool flip = dot(cross(d1 - d0, d2 - d0), cam0.eye - cen) < 0.0f;
+    loadMesh(T4_BASE.dup, flip ? [[0, 2, 1], [0, 3, 2]] : [[0, 1, 2], [0, 2, 3]]);
+    setXform(0, AIM_POS, AIM_ROT, AIM_SCL);
+    setCameraAt(0.55f, 0.75f, 8.0f, anchorDrawn);
+    auto vp = buildViewport(fetchCam());
+    Vec3[] local = fetchVerts();
+    assert(local.length == 4, format("fixture must load 4 vertices, got %d", local.length));
+
+    // The vertex whose two candidate distances differ most decides the range.
+    int k = -1; float best = 0, dWorld, dRaw;
+    foreach (i, v; local) {
+        if (cast(int)i == T4_ANCHOR) continue;
+        const float w = (transformPoint(M, v) - anchorDrawn).length;
+        const float r = (transformPoint(M, v) - local[T4_ANCHOR]).length;
+        if (fabs(w - r) > best) { best = fabs(w - r); k = cast(int)i; dWorld = w; dRaw = r; }
+    }
+    assert(best > 0.5f, format("vacuous: the two sphere centres separate no vertex (%.3f)", best));
+    const float range = (dWorld + dRaw) * 0.5f;
+
+    float gx, gy;
+    assert(projectOnScreen(anchorDrawn, vp, gx, gy), "drawn anchor off-screen");
+    cmd("select.typeFrom vertex");
+    cmd("tool.set xfrm.pointAttract");
+    cmd(format("tool.attr xfrm.pointAttract dist %.4f", range));
+    auto cam = fetchCam();
+    playAndWait(hoverThenDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                                 cast(int)gx, cast(int)gy, cast(int)gx + 170,
+                                 cast(int)gy - 70, 12));
+    Thread.sleep(dur!"msecs"(200));
+    cmd("tool.set xfrm.pointAttract off");
+
+    Vec3[] after = fetchVerts();
+    assert((after[T4_ANCHOR] - local[T4_ANCHOR]).length > 0.2f,
+        "the grabbed vertex did not move — the hover pick never resolved");
+    const bool moved = (after[k] - local[k]).length > 1e-4f;
+    assert(moved == (dWorld < range),
+        format("v%d %s: drawn-centre distance %.3f, raw-anchor distance %.3f, range %.3f — "
+               ~ "the sphere is centred on the %s anchor", k, moved ? "moved" : "stayed",
+               dWorld, dRaw, range, moved == (dRaw < range) ? "raw local" : "drawn"));
+}
+
 // ===========================================================================
 // T5 — Stroke Extrude, aiming kind **RayPlane** (§1.2).
 //

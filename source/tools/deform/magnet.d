@@ -105,9 +105,8 @@ private:
     // LAYER-LOCAL, both of them. `center_` is a raw `mesh.vertices[]` read
     // (this comment used to say "world position" — task 0619; it was wrong,
     // and it is the exact comment-lies-about-a-space shape that task hunts).
-    // `target_` must match it: both are handed to `applyMagnet` /
-    // `FalloffPacket.pickedCenter`, which compare and write LOCAL vertex
-    // coordinates.
+    // `target_` must match it: `applyMagnet` writes LOCAL vertex coordinates.
+    // The falloff anchor is lifted to world at use (the weight is world-space).
     Vec3         center_;          // anchor vertex position at grab time (LOCAL)
     Vec3         target_;          // cursor on the camera-facing plane (LOCAL)
     float        strength_ = 0.0f;
@@ -119,7 +118,8 @@ private:
     // The falloff stage's packet, read at the press. The arm installs this
     // tool's sphere there as its own Element falloff, so one slot holds it or
     // the falloff picked after the arm, last writer wins (capture K-F1, task
-    // 9491); an Element falloff anchors at the grabbed vertex, radius `dist`.
+    // 9491); an Element falloff anchors at the drawn grabbed vertex, radius
+    // `dist`.
     FalloffPacket falloff_;
 
     MeshSnapshot before;
@@ -153,6 +153,12 @@ public:
     }
 
     override string name() const { return "Magnet"; }
+
+    /// The pipe block the arm installs, as a preset's: this tool's sphere is
+    /// the falloff slot's own Element falloff (one slot, last writer wins).
+    static string[string][string] presetPipe() {
+        return ["falloff": ["type": "element", "shape": "smooth"]];
+    }
 
     /// Require vertex hover so `g_hoveredVertex` is updated while the tool
     /// is active (app.d: pickVertices runs when wantsHoverForType(Vertices)).
@@ -296,8 +302,8 @@ public:
         if (strength_ <= 0.0f) image.nextBuilt = false;
         else {
             int[] indices = image.candidate.selectedVertexIndicesVertices();
-            FalloffPacket fp = elementAnchoredAt(falloff_, center_, dist_, pickedVi);
             const auto aim = aimSpace(vpWorld_, primaryModelSpace());
+            FalloffPacket fp = anchoredFalloff(aim);
             image.nextBuilt = applyMagnet(&image.candidate, indices, target_,
                 strength_, fp, aim, image.nextTouchedIdx, image.nextTouchedPrev);
             if (image.nextBuilt) {
@@ -427,6 +433,11 @@ public:
     }
 
 private:
+    // The weight is world-space, so the Element anchor is the DRAWN vertex.
+    FalloffPacket anchoredFalloff(const ref AimViewport aim) {
+        return elementAnchoredAt(falloff_, aim.toWorld(center_), dist_, pickedVi);
+    }
+
     void rebuildPreview() {
         if (!active || pickedVi < 0) return;
         // Perf (task 1370) — AFTER the guard(s) above, never on the first
@@ -444,11 +455,10 @@ private:
         // Moving set: selected verts (empty → whole mesh), vertex mode.
         int[] indices = mesh.selectedVertexIndicesVertices();
 
-        FalloffPacket fp = elementAnchoredAt(falloff_, center_, dist_, pickedVi);
-
         // A picked falloff may project (Screen / Lasso), so the aim space is
         // the real one, built from this tool's own world viewport (task 0619).
         const auto aim = aimSpace(vpWorld_, primaryModelSpace());
+        FalloffPacket fp = anchoredFalloff(aim);
         bool displaced = applyMagnet(mesh, indices, target_, strength_, fp, aim,
                                      touchedIdx_, touchedPrev_);
         built = displaced;
