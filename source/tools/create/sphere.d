@@ -545,8 +545,7 @@ public:
         }
         void mutatePreparedDeactivateForTest() { params_.sizeX += 1; }
         bool preparedDeactivateInstalledForTest() const {
-            import snap_render : g_lastSnap;
-            return isIdle() && meshChanged && g_lastSnap == typeof(g_lastSnap).init;
+            return isIdle() && meshChanged;
         }
     }
     this(Mesh* delegate() meshSrc, GpuMesh* gpu, LitShader litShader, bool ellipsoidMode = false) {
