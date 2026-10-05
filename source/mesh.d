@@ -95,6 +95,16 @@ struct FaceList {
     inout(uint[][]) range() inout return { return _store; }
 }
 
+/// Closer than this, two vertices are one point: every weld distance is
+/// floored here. Capture K-W1 (task 9436, `tests/fixtures/weld_scope.json`):
+/// cleanup and the automatic vertex merge take no distance and weld at 1e-9
+/// but not at 1.01e-9, absolute; a weld distance of 0 still joins 5e-10.
+enum double kCoincidentDistance = 1e-9;
+
+/// Candidate pairs `Mesh.computeWeldRemap` has looked at, ever: the work count
+/// the `--perf-unit` weld cell pins (task 9436), a measure that cannot vary.
+version (PerfProbe) __gshared size_t weldPairVisits;
+
 /// The three ways `vert.join` welds differently from every other weld, and the
 /// ONLY caller that sets any of them (task 1210; dogfood ledger rows 11 + 21,
 /// frozen in `tests/fixtures/vert_join_survivor.json` and
@@ -3501,59 +3511,15 @@ struct Mesh {
         return newVerts.length;
     }
 
-    /// Merge coincident vertices (within `epsSq` squared distance) by
-    /// remapping each later-indexed coincident vert onto the lowest-indexed
-    /// vert at that position. Face vertex references are rewritten;
-    /// consecutive duplicates that arise post-remap are dropped (so a quad
-    /// whose two adjacent corners merged becomes a triangle); faces that
-    /// fall below 3 distinct verts are removed entirely. The edge array is
-    /// rebuilt; edge selection is cleared. Welded vertices are left in
-    /// `vertices` (call `compactUnreferenced` afterwards to compact).
-    /// Returns the number of vertex remaps performed.
-    /// Used by edge bevel after `updateEdgeBevelPositions` to fold cap
-    /// vertices that two BoundVerts (in possibly different BevVerts)
-    /// happen to slide onto the same world-space point — the natural
-    /// outcome when re-beveling on top of an already-overshot cap.
-    /// Weld vertices marked true in `mask` whose pairwise squared distance
-    /// is at most `epsSq` (inclusive boundary — see task 0360 toolcard
-    /// evidence below). Verts outside the mask are not candidates for
-    /// either side of a weld pair. Faces that collapse to fewer than 3
-    /// unique verts are dropped (degenerate). Edge list rebuilt; selection
-    /// arrays cleared. Returns the number of verts welded into another.
+    /// Weld the vertices marked in `mask` (hidden ones removed) that the one
+    /// coincidence search pairs at squared distance `epsSq` (task 9436: seed
+    /// walk, inclusive compare — task 0360's captured `<=` — no chaining),
+    /// then rewrite faces through the rebuild tail (`applyVertexRemapAndRebuild`:
+    /// collapsed corners and faces dropped, edges rebuilt, slots compacted).
+    /// Returns the number of vertices welded away. Open (task 0360): a
+    /// whole-mesh merge at the boundary clusters by a rule neither this walk
+    /// nor a transitive closure reproduces; only isolated pairs are captured.
     ///
-    /// Equivalent to `vert.merge range:fixed dist:eps keep:false` on
-    /// the selected verts. epsSq=1e-12 + all-true mask matches the
-    /// existing weldCoincidentVertices() behavior (used by edge bevel).
-    ///
-    /// Boundary law (task 0360, captured toolcard): the reference weld
-    /// threshold is CONFIRMED inclusive (`<=`, not `<`) — a discriminating
-    /// capture on a segments=2 grid cube (edge length 0.5) found NO merge
-    /// at dist=0.49 but a mass collapse at dist=0.5 (exactly the edge
-    /// length). This kernel used to compare with strict `<`, which missed
-    /// that exact-equality boundary case entirely (verified independently
-    /// this task: re-simulating the pre-fix `<` comparison against the
-    /// captured base geometry at dist=0.5 produced ZERO merges, vs the
-    /// captured reference's real collapse) — fixed to `<=` here.
-    ///
-    /// Open TODO (not resolved this task, do not assume a fix): the
-    /// reference's full-mesh, dist-at-exact-boundary case also implies a
-    /// TRANSITIVE/connected-component clustering algorithm (a chain of
-    /// vertices each within `dist` of the next all merge to one cluster,
-    /// even where the endpoints of the chain are individually farther
-    /// apart than `dist`). This kernel's algorithm is a single left-to-
-    /// right PAIRWISE pass (each vertex is only ever compared against
-    /// vertices with a LOWER, not-yet-remapped index, using each vertex's
-    /// ORIGINAL position — not a full graph-transitive-closure and not an
-    /// iterative re-centering pass). Independently re-deriving the
-    /// reference's exact clustering algorithm from the captured whole-mesh
-    /// case (task 0360) found that NEITHER this pairwise algorithm NOR a
-    /// naive full pairwise-Euclidean transitive closure reproduces the
-    /// reference's exact cluster count on that case — the reference's real
-    /// clustering/placement rule remains uncharacterized. Left as-is
-    /// (existing, well-tested pairwise behavior) rather than guessed; the
-    /// interactive Vertex Merge tool and its fixtures (task 0360) only
-    /// exercise the CONFIRMED boundary law on isolated pairs, not the
-    /// disputed whole-mesh transitive case.
     /// `average` (opt-in, default off): position each surviving vertex at
     /// the CENTROID of its own weld cluster's original member positions
     /// (per-cluster — a single call may collapse several independent
@@ -3570,20 +3536,7 @@ struct Mesh {
         const mask = maskMinusHiddenVertices(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
         if (vertices.length < 2) return 0;
         if (mask.length != vertices.length) return 0;
-        int[] remap;
-        remap.length = vertices.length;
-        foreach (i; 0 .. vertices.length) remap[i] = cast(int)i;
-        foreach (i; 0 .. vertices.length) {
-            if (!mask[i]) continue;
-            if (remap[i] != cast(int)i) continue;
-            foreach (j; i + 1 .. vertices.length) {
-                if (!mask[j]) continue;
-                if (remap[j] != cast(int)j) continue;
-                Vec3 d = vertices[i] - vertices[j];
-                if (d.x * d.x + d.y * d.y + d.z * d.z <= epsSq)
-                    remap[j] = cast(int)i;
-            }
-        }
+        int[] remap = computeWeldRemap(epsSq, mask);
         size_t welded = 0;
         foreach (i; 0 .. vertices.length)
             if (remap[i] != cast(int)i) ++welded;
@@ -4606,70 +4559,62 @@ struct Mesh {
     }
 
 
-    /// Read-only: the "lowest surviving index wins" grid-based coincidence
-    /// search `weldCoincidentVertices` uses to decide which vertices would
-    /// merge into which, WITHOUT applying it. `remap[i] == i` means vertex
-    /// `i` survives as a representative (or has no coincident partner);
-    /// `remap[i] == r` (`r != i`) means `i` would be welded into
-    /// representative `r`. By construction every representative satisfies
-    /// `remap[r] == r` and every follower's remap points directly at its
-    /// representative — no multi-hop chains form (the scan only ever claims
-    /// an unclaimed root), so grouping vertices by `remap[]` value alone is
-    /// enough to recover clusters. Shared by the mutating weld and the
-    /// read-only Cleanup detector (`mesh_analysis.coincidentVertexClusters`,
-    /// task 0402 Phase 4 risk #2) so the two can never drift apart — see
-    /// `weldCoincidentVertices`'s doc comment for the full search rationale
-    /// and `epsSq`/`protectBelow` semantics.
-    int[] computeWeldRemap(double epsSq = 1e-12, size_t protectBelow = 0,
-                           bool pairsMustCrossBound = false) const {
-        int[] remap;
-        remap.length = vertices.length;
-        foreach (i; 0 .. vertices.length) remap[i] = cast(int)i;
-        if (vertices.length < 2 || epsSq <= 0.0) return remap;
-
+    /// The ONE coincidence search (task 9436), read-only: `remap[j] == i` when
+    /// `j` welds into `i`, else `remap[j] == j`. Seed walk: in ascending `i`,
+    /// each unclaimed seed claims every later unclaimed `j` within the weld
+    /// distance — inclusive (`<=`, the one comparator), floored at
+    /// `kCoincidentDistance` — so no chain forms and every follower points
+    /// straight at its seed. `mask` (empty = all) bounds both ends of a pair.
+    /// `copyStarts` is a duplicator's PER-COPY scope: ascending vertex indices
+    /// where copy 1, 2, … begin, everything before the first being copy 0; a
+    /// pair welds only when its later vertex lies in a LATER copy, so the
+    /// earlier vertex survives in place (K-W1 W1a/W1i/W1j/W1k; mirror's single
+    /// copy is ledger row 32). Empty = every vertex its own copy. Bucketed on
+    /// a grid no finer than 1e-6, kept apart from the distance floor.
+    int[] computeWeldRemap(double epsSq = 0, in bool[] mask = null,
+                           in size_t[] copyStarts = null) const {
         import std.math : floor, isFinite;
-        immutable double cellFloor = 1e-6;
-        double cellSize = sqrt(epsSq);
-        if (!isFinite(cellSize) || cellSize < cellFloor) cellSize = cellFloor;
-        immutable double invCell = 1.0 / cellSize;
+        const size_t n = vertices.length;
+        int[] remap;
+        remap.length = n;
+        foreach (i; 0 .. n) remap[i] = cast(int)i;
+        if (n < 2) return remap;
+        assert(mask.length == 0 || mask.length == n, "computeWeldRemap: mask length");
+        bool takes(size_t v) { return mask.length == 0 || mask[v]; }
+        if (!(epsSq >= kCoincidentDistance ^^ 2)) epsSq = kCoincidentDistance ^^ 2;
 
-        long[] cx, cy, cz;
-        cx.length = vertices.length;
-        cy.length = vertices.length;
-        cz.length = vertices.length;
-        size_t[][long[3]] buckets;
-        foreach (i, ref v; vertices) {
-            cx[i] = cast(long)floor(cast(double)v.x * invCell);
-            cy[i] = cast(long)floor(cast(double)v.y * invCell);
-            cz[i] = cast(long)floor(cast(double)v.z * invCell);
-            long[3] key = [cx[i], cy[i], cz[i]];
-            buckets[key] ~= i;
+        size_t[] copyOf = new size_t[](n);
+        size_t k = 0;
+        foreach (v; 0 .. n) {
+            while (k < copyStarts.length && copyStarts[k] <= v) ++k;
+            copyOf[v] = copyStarts.length ? k : v;
         }
 
-        foreach (i; 0 .. vertices.length) {
-            if (remap[i] != cast(int)i) continue;
+        // A cell a hair wider than the distance keeps every pair the float
+        // compare accepts within one cell of each other.
+        double cellSize = sqrt(epsSq) * (1 + 1e-6);
+        if (!isFinite(cellSize) || cellSize < 1e-6) cellSize = 1e-6;
+        immutable double invCell = 1.0 / cellSize;
+        long[3] cellOf(size_t v) {
+            return [cast(long)floor(cast(double)vertices[v].x * invCell),
+                    cast(long)floor(cast(double)vertices[v].y * invCell),
+                    cast(long)floor(cast(double)vertices[v].z * invCell)];
+        }
+        size_t[][long[3]] buckets;
+        foreach (v; 0 .. n) if (takes(v)) buckets[cellOf(v)] ~= v;
+
+        foreach (i; 0 .. n) {
+            if (!takes(i) || remap[i] != cast(int)i) continue;
+            const long[3] c = cellOf(i);
             foreach (dx; -1 .. 2) foreach (dy; -1 .. 2) foreach (dz; -1 .. 2) {
-                long[3] key = [cx[i] + dx, cy[i] + dy, cz[i] + dz];
+                const long[3] key = [c[0] + dx, c[1] + dy, c[2] + dz];
                 auto bucket = key in buckets;
                 if (bucket is null) continue;
                 foreach (j; *bucket) {
-                    if (j <= i) continue;
-                    if (remap[j] != cast(int)j) continue;
-                    if (i < protectBelow && j < protectBelow) continue;
-                    // Task 1220, ledger row 32: the SCOPE of a mirror's weld.
-                    // With the bound alone a pair of freshly appended vertices
-                    // is eligible, so two IMAGES of two distinct source
-                    // vertices weld to each other — measured on a base whose
-                    // near-duplicate pair is 7.071e-4 apart against a 1e-3
-                    // threshold: the reference keeps BOTH images (10 verts),
-                    // we returned 9. Note what this is NOT: the pair is inside
-                    // the threshold under a strict AND a non-strict compare,
-                    // so no comparison at the boundary is involved. What the
-                    // cell measures is which pairs are looked at at all.
-                    if (pairsMustCrossBound &&
-                        i >= protectBelow && j >= protectBelow) continue;
+                    version (PerfProbe) ++weldPairVisits;
+                    if (j <= i || remap[j] != cast(int)j || copyOf[i] >= copyOf[j]) continue;
                     Vec3 d = vertices[i] - vertices[j];
-                    if (d.x * d.x + d.y * d.y + d.z * d.z < epsSq)
+                    if (d.x * d.x + d.y * d.y + d.z * d.z <= epsSq)
                         remap[j] = cast(int)i;
                 }
             }
@@ -4677,33 +4622,13 @@ struct Mesh {
         return remap;
     }
 
-    /// `protectBelow`: vertex-index pairs where BOTH indices are strictly
-    /// less than this bound are never merged with each other, no matter how
-    /// large `epsSq` is. Default 0 disables the guard (every existing caller
-    /// gets the original all-pairs-eligible behavior unchanged). Callers
-    /// that append new (e.g. cloned) vertices after the pre-existing ones —
-    /// `mirrorFacesPlane`'s weld pass is the first user — pass the
-    /// pre-existing vertex count here so a large weld threshold can't fold
-    /// together two unrelated, pre-existing vertices that merely happen to
-    /// be within `epsSq` of each other (task 0306 bug B: a big `weld` was
-    /// welding the whole mesh globally instead of just the mirror seam).
-    /// Vertex pairs touching at least one newly-appended vertex remain fully
-    /// eligible, which is exactly the seam-pair semantics a mirror weld
-    /// needs (a clone landing back on ITS OWN or on some OTHER pre-existing
-    /// vertex is the legitimate case; two pre-existing vertices merging
-    /// with each other is not).
-    ///
-    /// `pairsMustCrossBound` narrows that to pairs that CROSS the bound —
-    /// exactly one index below it. It closes the remaining case the bound
-    /// alone lets through: two NEWLY-APPENDED vertices welding to each other.
-    /// For a mirror those are the images of two distinct source vertices, and
-    /// the reference does not join them (task 1220, ledger row 32; frozen in
-    /// `tests/fixtures/mirror_weld_scope_divergence.json`). Default false, so
-    /// every caller that does not ask for it is byte-unchanged.
-    size_t weldCoincidentVertices(double epsSq = 1e-12, size_t protectBelow = 0,
-                                  bool pairsMustCrossBound = false) {
+    /// Weld through `computeWeldRemap(epsSq, null, copyStarts)` and apply it
+    /// with the relocate tail (`applyVertexRemap`: welded slots stay in
+    /// `vertices` for the caller to compact). Readers: cleanup, mirror and the
+    /// three arrays (task 9435). Returns the number of vertices welded away.
+    size_t weldCoincidentVertices(double epsSq = 0, in size_t[] copyStarts = null) {
         if (vertices.length < 2) return 0;
-        int[] remap = computeWeldRemap(epsSq, protectBelow, pairsMustCrossBound);
+        int[] remap = computeWeldRemap(epsSq, null, copyStarts);
 
         size_t welded = 0;
         foreach (i; 0 .. vertices.length)
@@ -7445,8 +7370,8 @@ struct Mesh {
     /// through `center` by `i * totalAngle / count` (i = 1..count-1),
     /// and optionally translated by `i * extraShift` (for helices /
     /// spirals). `count` ≤ 1 ⇒ no-op (count includes the original).
-    /// `weld > 0` folds coincident verts between
-    /// adjacent copies and drops duplicate faces — primarily useful
+    /// `weld > 0` folds each copy's coincident verts onto
+    /// earlier copies and drops duplicate faces — primarily useful
     /// for closed 360° rings where the first and last steps abut.
     ///
     /// `count` is clamped to `MAX_RADIAL_ARRAY_COUNT` internally — this is
@@ -7487,8 +7412,10 @@ struct Mesh {
         else                  axisVec = Vec3(0, 0, 1);
 
         float stepAngle = totalAngle / cast(float)count;
+        size_t[] copyStarts;   // the weld's PER-COPY scope (task 9436)
 
         foreach (step; 1 .. count) {
+            copyStarts ~= vertices.length;
             float ang = stepAngle * step;
             Vec3  shift = Vec3(extraShift.x * step,
                                extraShift.y * step,
@@ -7566,7 +7493,7 @@ struct Mesh {
         if (weld > 0.0f) {
             double epsSq = cast(double)weld * cast(double)weld;
             const size_t cornersBeforeWeld = cornerCount();
-            if (weldCoincidentVertices(epsSq) > 0) {
+            if (weldCoincidentVertices(epsSq, copyStarts) > 0) {
                 rebuildEdges();
                 clearEdgeSelectionResize();
                 compactUnreferenced();
@@ -7726,7 +7653,10 @@ struct Mesh {
         // verts at offset i*step and emit cloned faces referencing them.
         // vertMap is rebuilt per step so each copy gets a fresh set of
         // verts (no accidental sharing between copies).
+        // The weld's PER-COPY scope (task 9436): the detached source is copy 0.
+        size_t[] copyStarts;
         foreach (step; 1 .. count) {
+            copyStarts ~= vertices.length;
             uint[uint] vertMap;
             Vec3 shift = Vec3(offset.x * step, offset.y * step, offset.z * step);
             foreach (fi; sourceFaces) {
@@ -7798,8 +7728,8 @@ struct Mesh {
         // Optional vertex weld — FULL PARITY: the reference editor's linear
         // array KEEPS the doubled coincident seam FACE that a cap-to-cap
         // weld produces (e.g. a 2× cube whose copy's -X face lands exactly
-        // on the source's +X face). So we weld coincident VERTS between
-        // consecutive copies (via weldCoincidentVertices, which also
+        // on the source's +X face). So we weld coincident VERTS, each copy
+        // onto everything before it (via weldCoincidentVertices, which also
         // rebuilds edges + collapses degenerate face corners) and then drop
         // the now-unreferenced welded-away verts with compactUnreferenced —
         // but we deliberately do NOT fingerprint-dedup faces, so the doubled
@@ -7809,7 +7739,7 @@ struct Mesh {
         if (weld > 0.0f) {
             double epsSq = cast(double)weld * cast(double)weld;
             const size_t cornersBeforeWeld = cornerCount();
-            if (weldCoincidentVertices(epsSq) > 0) {
+            if (weldCoincidentVertices(epsSq, copyStarts) > 0) {
                 compactUnreferenced();
                 // What the weld did to the CORNERS is decided by the only
                 // thing it leaves behind — the total (task 0830).
@@ -8034,6 +7964,7 @@ struct Mesh {
 
         size_t origFaceCount = faces.length;
         size_t[] newFaceIndices;
+        size_t[] copyStarts;   // the weld's PER-COPY scope, in slot order (task 9436)
 
         foreach (i; 0 .. numX) {
             foreach (j; 0 .. numY) {
@@ -8075,6 +8006,7 @@ struct Mesh {
                         continue;
                     }
 
+                    copyStarts ~= vertices.length;
                     uint[uint] vertMap;
                     foreach (fi; sourceFaces) {
                         foreach (vid; origFaceVerts[fi]) {
@@ -8134,12 +8066,12 @@ struct Mesh {
         resizeEdgeSelection();
         clearEdgeSelection();
 
-        // Merge Vertices (boolean) + Distance (threshold) — default OFF,
-        // unlike arrayFaces's always-on weld epsilon. Identical weld +
-        // face-fingerprint-dedup tail as arrayFaces/mirrorFaces.
-        if (mergeVertices && mergeDistance > 0.0f) {
+        // Merge Vertices (boolean) + Distance (threshold) — default OFF. A
+        // distance of 0 still welds at the coincidence floor (K-W1 W1f_arr).
+        // Weld + face-fingerprint-dedup tail.
+        if (mergeVertices) {
             double epsSq = cast(double)mergeDistance * cast(double)mergeDistance;
-            if (weldCoincidentVertices(epsSq) > 0) {
+            if (weldCoincidentVertices(epsSq, copyStarts) > 0) {
                 import std.algorithm.sorting : sort;
                 import std.format : format;
                 bool[string] seenFp;
@@ -8268,8 +8200,8 @@ struct Mesh {
     /// orientation-reversing for ANY plane, so this pass is plane-independent
     /// and identical to the axis-aligned path. When `weld > 0`, coincident
     /// verts (seam verts that lie on the mirror plane, plus any pre-existing
-    /// coincidences) are welded via `weldCoincidentVertices(weld*weld)` and
-    /// orphan verts are compacted.
+    /// coincidences) are welded via `weldCoincidentVertices` with the
+    /// clones as copy 1, and orphan verts are compacted.
     ///
     /// Selection ends on the newly created mirrored faces (plus any
     /// originals not in the mirror mask). Returns the number of new faces
@@ -8284,8 +8216,7 @@ struct Mesh {
         if (toMirror == 0) return 0;
 
         // Vertex indices below this bound are PRE-EXISTING (captured before
-        // any clone is appended below) — see the weld pass's use of
-        // `weldCoincidentVertices`'s `protectBelow` param further down.
+        // any clone is appended below): the weld's copy 0.
         const size_t origVertexCount = vertices.length;
 
         // Clone each unique vert referenced by a masked face exactly once.
@@ -8345,7 +8276,7 @@ struct Mesh {
         // recording at the append site would have owed one. Asserted by value
         // in `undo_parity_l6_test`'s mirror cells.
         //
-        // `origVertexCount` is the same bound the weld's `protectBelow` uses,
+        // `origVertexCount` is the same bound the weld's copy 1 starts at,
         // which is what makes "everything appended by this kernel" one number.
         recordBulkAppendRound(origVertexCount, origFaceCount);
 
@@ -8430,20 +8361,9 @@ struct Mesh {
             foreach (mm; meshMaps) rbMeshMaps ~= mm.dup;
 
             double epsSq = cast(double)weld * cast(double)weld;
-            // Bug B fix: `protectBelow=origVertexCount` keeps this weld
-            // LOCAL to the seam — two PRE-EXISTING (pre-mirror) vertices
-            // never merge with each other regardless of how large `weld`
-            // is; only pairs touching at least one freshly-cloned vertex
-            // are eligible. Without this, a large `weld` folds arbitrary
-            // far-apart original vertices together across the whole mesh.
-            //
-            // Task 1220 (ledger row 32) narrows it one step further with
-            // `pairsMustCrossBound`: eligible pairs must CROSS the bound, so a
-            // clone welds to an ORIGINAL and never to another clone. Measured:
-            // a base carrying a near-duplicate pair 7.071e-4 apart, mirrored
-            // with weld 1e-3, keeps BOTH images in the reference (10 verts) and
-            // lost one here (9). The pair is inside the threshold either way,
-            // so this is a question of scope, not of the comparison.
+            // The clones are copy 1 of the PER-COPY scope: a clone welds to
+            // an ORIGINAL only — never two originals (task 0306 bug B), never
+            // two clones (task 1220, ledger row 32; K-W1 W1d).
             //
             // FULL PARITY (weld coincident-face convention): the weld merges
             // coincident VERTS only — it does NOT fingerprint-dedup faces. When
@@ -8458,8 +8378,7 @@ struct Mesh {
             // welded-away vert slots via compactUnreferenced — the same
             // keep-doubled convention as arrayFaces / radialArrayFaces.
             const size_t cornersBeforeWeld = cornerCount();
-            if (weldCoincidentVertices(epsSq, origVertexCount,
-                                       /*pairsMustCrossBound*/ true) > 0) {
+            if (weldCoincidentVertices(epsSq, [origVertexCount]) > 0) {
                 rebuildEdges();
                 clearEdgeSelectionResize();
                 compactUnreferenced();
@@ -15055,16 +14974,14 @@ struct MeshEditBatch {
 // ---------------------------------------------------------------------------
 
 /// Options for `cleanupMesh` (source/mesh_ops/cleanup.d). All boolean stages default to their most
-/// commonly useful values. `weldEpsSq` is the squared linear weld distance;
-/// the default 1e-10 corresponds to a linear threshold of 1e-5, matching the
-/// "auto" range of vert.merge.
+/// commonly useful values. The merge takes no distance: it welds at
+/// `kCoincidentDistance`, as the automatic vertex merge does (K-W1).
 struct CleanupOptions {
     bool   dropDegenerate  = true;   /// Remove degenerate / zero-area faces.
     bool   unify           = true;   /// Remove faces with a duplicate vertex set.
     bool   removeOrphans   = true;   /// Remove unreferenced (floating) vertices.
     bool   dissolve2Valent = false;  /// Dissolve 2-valent vertices (opt-in).
     bool   mergeVerts      = true;   /// Weld coincident vertices first.
-    double weldEpsSq       = 1e-10;  /// Weld threshold in squared distance.
 }
 
 /// Per-stage counts returned by `cleanupMesh` (source/mesh_ops/cleanup.d).

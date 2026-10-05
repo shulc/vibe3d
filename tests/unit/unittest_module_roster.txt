@@ -638,6 +638,7 @@ tests.unit.webgl2_picker_readback_test
 tests.unit.webgl2_shader_sources_test
 tests.unit.weightmap_color_test
 tests.unit.weld_remap_core_census_test
+tests.unit.weld_scope_test
 tests.unit.window_metrics_test
 tests.unit.workplane_fit_test
 tests.unit.workplane_frame_census_test

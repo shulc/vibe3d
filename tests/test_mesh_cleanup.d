@@ -283,29 +283,24 @@ unittest { // mergeVerts toggle: OFF leaves coincident verts unwelded
         after["faceCount"].integer.to!string);
 }
 
-unittest { // dist widening: near-but-not-coincident verts welded with larger eps
-    postReset();
-    // Two verts 0.001 apart (beyond the default 1e-5 eps, within a 0.01 eps).
-    postLoadMesh(`{
-        "vertices":[[0,0,0],[0.001,0,0],[1,0,0],[0,1,0]],
-        "faces":[[0,2,3],[1,2,3]]
-    }`);
-    // Default dist 1e-5: verts 0 and 1 are 0.001 apart → NOT welded → no-op.
-    cast(void) post(testBaseUrl() ~ "/api/command", `{"id":"mesh.cleanup"}`);
-    assert(getModel()["faceCount"].integer == 2,
-        "default dist must not weld near-but-not-coincident verts (contrast case)");
-
-    postReset();
-    postLoadMesh(`{
-        "vertices":[[0,0,0],[0.001,0,0],[1,0,0],[0,1,0]],
-        "faces":[[0,2,3],[1,2,3]]
-    }`);
-    // dist=0.01: weld threshold 0.01 > 0.001 → verts 0,1 welded → dup face removed.
-    postCommand(`{"id":"mesh.cleanup","params":{"dist":0.01}}`);
-    auto afterWide = getModel();
-    assert(afterWide["faceCount"].integer < 2,
-        "wider dist must weld near-coincident verts and remove dup face; got " ~
-        afterWide["faceCount"].integer.to!string);
+unittest { // no user distance: the merge welds at the 1e-9 floor (task 9436, K-W1)
+    // Every captured cleanup cell, through the command: 0 .. 1e-9 weld;
+    // 1.01e-9, 1e-7, 1e-5, 1e-3 and 0.5 do not (the old default welded 1e-5).
+    enum string json = import("fixtures/weld_scope.json");
+    size_t ran = 0;
+    foreach (cell; parseJSON(json)["cells"].array) {
+        if (cell["operation"]["kind"].str != "cleanup") continue;
+        postReset();
+        postLoadMesh(`{"vertices":` ~ cell["input"]["points"].toString
+                     ~ `,"faces":` ~ cell["input"]["faces"].toString ~ `}`);
+        cast(void) postCommandRaw(`{"id":"mesh.cleanup"}`);
+        const got = getModel()["vertexCount"].integer;
+        assert(got == cell["reference"]["vertex_count"].integer,
+            cell["cell"].str ~ ": cleanup left " ~ got.to!string ~ " vertices, captured "
+            ~ cell["reference"]["vertex_count"].integer.to!string);
+        ++ran;
+    }
+    assert(ran == 7, "expected the 7 captured cleanup cells, ran " ~ ran.to!string);
 }
 
 unittest { // degenerate face [0,1,1] injected and removed

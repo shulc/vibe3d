@@ -383,7 +383,7 @@ size_t cleanDegenerateFaces(ref MeshEditBatch ed) {
 /// a nominal all-off run with a pre-existing orphan does NOT mutate).
 CleanupResult cleanupMesh(ref MeshEditBatch ed, CleanupOptions o = CleanupOptions.init) {
     CleanupResult r;
-    if (o.mergeVerts)      r.welded       = ed.weldCoincidentVertices(o.weldEpsSq);
+    if (o.mergeVerts)      r.welded       = ed.weldCoincidentVertices();
     if (o.dropDegenerate)  r.degenerate   = cleanDegenerateFaces(ed);
     if (o.unify)           r.unified      = unifyFaces(ed);
     if (o.removeOrphans)   r.orphans      = ed.compactUnreferenced();

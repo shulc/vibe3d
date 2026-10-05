@@ -62,7 +62,6 @@ class MeshCleanup : Command, Operator {
     private bool  removeOrphans_   = true;
     private bool  dissolve2Valent_ = false;
     private bool  mergeVerts_      = true;
-    private float dist_            = 1e-5f;  // linear weld distance
 
     this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
@@ -81,15 +80,9 @@ class MeshCleanup : Command, Operator {
             Param.bool_("unify",           "Unify Duplicate Faces",      &unify_,           true),
             Param.bool_("removeOrphans",   "Remove Floating Vertices",   &removeOrphans_,   true),
             Param.bool_("dissolve2Valent", "Dissolve 2-Valent Vertices", &dissolve2Valent_, false),
+            // No distance: the merge welds at the coincidence floor (K-W1).
             Param.bool_("mergeVerts",      "Merge Coincident Vertices",  &mergeVerts_,      true),
-            Param.float_("dist", "Merge Distance", &dist_, 1e-5f)
-                 .min(1e-7f).max(10.0f).fmt("%.5f"),
         ];
-    }
-
-    override bool paramEnabled(string name) const {
-        if (name == "dist") return mergeVerts_;
-        return true;
     }
 
     bool evaluate(ref VectorStack vts) {
@@ -103,7 +96,6 @@ class MeshCleanup : Command, Operator {
         opts.removeOrphans   = removeOrphans_;
         opts.dissolve2Valent = dissolve2Valent_;
         opts.mergeVerts      = mergeVerts_;
-        opts.weldEpsSq       = cast(double)dist_ * cast(double)dist_;
 
         // REDO: `CommandHistory.redo` re-runs `apply()`. Re-run the kernel
         // BATCHLESS — no batch open means every tracker hook takes its

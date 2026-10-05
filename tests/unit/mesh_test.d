@@ -3244,15 +3244,19 @@ unittest { // genuine 2-vs-1 MAJORITY (reference-editor parity, task 0394): a cl
         ~ "first-checked edge's opposite-direction vote");
 }
 
-unittest { // epsSq <= 0: never welds anything (matches naive: squared distance is never < 0)
-    Mesh m;
-    m.vertices = [Vec3(0,0,0), Vec3(0,0,0), Vec3(1,1,1)];
-    m.faces = [[0u,1u,2u]];
-    m.rebuildEdgesFromFaces();
-    m.buildLoops();
-    m.resetSelection();
-    size_t welded = m.weldCoincidentVertices(0.0);
-    assert(welded == 0, "epsSq==0 must weld nothing, even for exactly-coincident verts");
+unittest { // epsSq 0 welds at the coincidence floor (task 9436, K-W1 W1f): 0 and 1e-9 apart
+    // weld, 2e-9 apart do not (W1e_bracket4)
+    foreach (gap; [0.0f, 1e-9f, 2e-9f]) {
+        Mesh m;
+        m.vertices = [Vec3(0,0,0), Vec3(0,gap,0), Vec3(1,1,1)];
+        m.faces = [[0u,1u,2u]];
+        m.rebuildEdgesFromFaces();
+        m.buildLoops();
+        m.resetSelection();
+        size_t welded = m.weldCoincidentVertices(0.0);
+        import std.conv : to;
+        assert(welded == (gap < 1.5e-9f ? 1 : 0), "epsSq==0: wrong weld at gap " ~ gap.to!string);
+    }
 }
 
 unittest { // two-quad strip: edge slides toward positive rail at t=0.5

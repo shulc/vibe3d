@@ -1,11 +1,11 @@
-// mesh_vertex_remap_test -- the spatial-hash weld remap against the naive one, and `protectBelow`.
+// mesh_vertex_remap_test -- the spatial-hash weld remap against the naive one, and the copy scope.
 //
 // The hash rewrite is correct only if it produces the SAME remap as the
 // quadratic all-pairs scan it replaced. That reference scan travelled here
 // with the blocks: it is written out independently rather than recorded as
 // an expected answer, so a bug shared by both sides cannot make them agree.
-// `protectBelow` is the arm where a pair straddling the plane welds and a
-// pair entirely below it must not.
+// The copy scope (task 9436) is the arm where a pair straddling a copy start
+// welds and a pair inside one copy must not.
 //
 // These blocks stood in the body of `struct Mesh` until task 3160 -- step 1
 // of `doc/tasks/work/2910-mesh-struct-seams.md`, which took fifty `unittest`
@@ -47,7 +47,7 @@ mixin MeshByValueGate!(__traits(parent, byValueGateAnchor));
 // computation (naive O(V²) all-pairs scan). Kept ONLY so the unittests below
 // can cross-check the spatial-hash rewrite's equivalence — this is not
 // called from any production path.
-version (unittest) private int[] naiveWeldRemap_(const Vec3[] verts, double epsSq, size_t protectBelow) {
+version (unittest) private int[] naiveWeldRemap_(const Vec3[] verts, double epsSq, size_t copyStart) {
     int[] remap;
     remap.length = verts.length;
     foreach (i; 0 .. verts.length) remap[i] = cast(int)i;
@@ -55,9 +55,9 @@ version (unittest) private int[] naiveWeldRemap_(const Vec3[] verts, double epsS
         if (remap[i] != cast(int)i) continue;
         foreach (j; i + 1 .. verts.length) {
             if (remap[j] != cast(int)j) continue;
-            if (i < protectBelow && j < protectBelow) continue;
+            if (copyStart > 0 && (i >= copyStart) == (j >= copyStart)) continue;
             Vec3 d = verts[i] - verts[j];
-            if (d.x * d.x + d.y * d.y + d.z * d.z < epsSq)
+            if (d.x * d.x + d.y * d.y + d.z * d.z <= epsSq)
                 remap[j] = cast(int)i;
         }
     }
@@ -140,12 +140,12 @@ unittest { // spatial-hash rewrite reproduces the naive remap exactly, incl.
     }
 }
 
-unittest { // protectBelow: both-below pair must NOT weld; below/above pair must
+unittest { // copy scope: a pair inside copy 0 must NOT weld; a copy-0/copy-1 pair must
     Mesh m;
     m.vertices = [
-        Vec3(0, 0, 0),   // 0: below protectBelow
-        Vec3(0, 0, 0),   // 1: below protectBelow, coincident with 0
-        Vec3(0, 0, 0),   // 2: at/above protectBelow, coincident with 0 and 1
+        Vec3(0, 0, 0),   // 0: copy 0
+        Vec3(0, 0, 0),   // 1: copy 0, coincident with 0
+        Vec3(0, 0, 0),   // 2: copy 1, coincident with 0 and 1
     ];
     m.faces = [[0u, 1u, 2u]];  // degenerate on purpose; weld doesn't care about area
     m.rebuildEdgesFromFaces();
@@ -153,19 +153,19 @@ unittest { // protectBelow: both-below pair must NOT weld; below/above pair must
     m.resetSelection();
 
     immutable double epsSq = 0.01;
-    immutable size_t protectBelow = 2;
+    immutable size_t copyStart = 2;
 
-    int[] refRemap = naiveWeldRemap_(m.vertices, epsSq, protectBelow);
-    // 0,1 both < protectBelow → skip. 0,2: 0<protectBelow but 2>=protectBelow → eligible → weld.
+    int[] refRemap = naiveWeldRemap_(m.vertices, epsSq, copyStart);
+    // 0,1 both in copy 0 → skip. 0,2 cross the copy start → eligible → weld.
     assert(refRemap == [0, 1, 0],
-        "reference: vert 1 stays independent (protected pair), vert 2 welds to 0");
+        "reference: vert 1 stays independent (same copy), vert 2 welds to 0");
 
     size_t refWelded = 0;
     foreach (i, r; refRemap) if (r != cast(int)i) ++refWelded;
 
-    size_t welded = m.weldCoincidentVertices(epsSq, protectBelow);
-    assert(welded == refWelded, "protectBelow weld count must match naive reference");
-    assert(welded == 1, "exactly one weld (2→0) expected under protectBelow=2");
+    size_t welded = m.weldCoincidentVertices(epsSq, [copyStart]);
+    assert(welded == refWelded, "copy-scope weld count must match naive reference");
+    assert(welded == 1, "exactly one weld (2→0) expected with copy 1 starting at 2");
 }
 
 // ---------------------------------------------------------------------------

@@ -103,13 +103,10 @@ class MeshVertMerge : Command, Operator {
         if (subj is null) return false;
         if (!mesh.hasAnySelectedVertices()) return false;
 
-        // range:auto ("Automatic") uses a tiny eps to weld only
-        // coincident verts (within 1e-5 in linear distance ≈ 1e-10
-        // squared). range:fixed honors the user-supplied dist parameter.
-        double eps = (range_ == "fixed")
-            ? cast(double)dist_
-            : 1e-5;
-        double epsSq = eps * eps;
+        // range:auto ("Automatic") welds at the coincidence floor, as
+        // cleanup does (K-W1 W1h_bracket); range:fixed honors `dist`.
+        const double eps = range_ == "fixed" ? dist_ : 0;
+        const double epsSq = eps * eps;
 
         // REDO: `CommandHistory.redo` re-runs `apply()`. Re-run the kernel
         // BATCHLESS — no batch open means every tracker hook takes its

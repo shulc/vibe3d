@@ -92,12 +92,9 @@ AnalyzeContext buildAnalyzeContext(const ref Mesh mesh) {
 /// grouping by `remap[]` value alone recovers exact clusters). Deterministic:
 /// ascending by representative vertex index; each cluster lists its
 /// representative first, then followers in ascending index order.
-// NOTE (review S1): the default `epsSq = 1e-12` (1e-6 linear) is deliberately
-// TIGHTER than the suggested `mesh.cleanup` op's `CleanupOptions.weldEpsSq = 1e-10`
-// (1e-5 linear) — the detector surfaces only clearly-coincident vertices, a strict
-// subset of what cleanup would weld, so a Finding is never a marginal false
-// positive. Callers wanting cleanup-parity can pass `1e-10` explicitly.
-uint[][] coincidentVertexClusters(const ref Mesh mesh, double epsSq = 1e-12) {
+// The default is cleanup's own distance (the coincidence floor, K-W1), so a
+// Finding is exactly what the suggested `mesh.cleanup` would weld.
+uint[][] coincidentVertexClusters(const ref Mesh mesh, double epsSq = 0) {
     auto remap = mesh.computeWeldRemap(epsSq);
     if (remap.length == 0) return [];
 

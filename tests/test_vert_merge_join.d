@@ -62,6 +62,24 @@ unittest { // vert.merge range:auto on coincident verts welds them
         "expected 7 verts after weld, got " ~ m["vertexCount"].integer.to!string);
 }
 
+unittest { // range:auto welds at cleanup's 1e-9 floor (task 9436, K-W1 W1h_bracket)
+    enum string json = import("fixtures/weld_scope.json");
+    JSONValue cell;
+    foreach (c; parseJSON(json)["cells"].array) if (c["cell"].str == "W1h_bracket") cell = c;
+    resetCube();
+    auto resp = post(testBaseUrl() ~ "/api/command", commandBody("scene.loadMesh",
+        `{"vertices":` ~ cell["input"]["points"].toString
+        ~ `,"faces":` ~ cell["input"]["faces"].toString ~ `}`));
+    assert(parseJSON(resp)["status"].str == "ok", "scene.loadMesh failed: " ~ resp);
+    int[] all;
+    foreach (i; 0 .. cell["input"]["points"].array.length) all ~= cast(int) i;
+    postSelect("vertices", all);
+    postCommand(`{"id":"vert.merge","params":{"range":"auto"}}`);
+    const got = getModel()["vertexCount"].integer;
+    assert(got == cell["reference"]["vertex_count"].integer, "W1h_bracket: range:auto left "
+        ~ got.to!string ~ " vertices, captured " ~ cell["reference"]["vertex_count"].integer.to!string);
+}
+
 unittest { // vert.merge range:fixed honors dist parameter
     resetCube();
     // Move v0 close to v1 (distance 0.1 in x).
