@@ -16,7 +16,7 @@ import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import shader : Shader, LitShader, drawLitPreview;
-import hover_state : g_hoveredFace;
+import hover_state : g_hoveredFace, hoverAtPress;
 import eventlog : queryMouse;
 import document : Layer, primaryModelSpace;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
@@ -552,7 +552,7 @@ public:
         // dispatching to the active tool's onMouseButtonDown, precisely so a
         // fast click after a cursor jump doesn't commit against a stale
         // target (same reasoning as XfrmTransformTool.tryPickElement).
-        hoveredTargetFace_ = g_hoveredFace;
+        hoveredTargetFace_ = hoverAtPress().face;
 
         // No source selected, or nothing valid hovered => safe no-op (no
         // mesh change, no undo entry) — mirrors Mirror's "no-interaction =>

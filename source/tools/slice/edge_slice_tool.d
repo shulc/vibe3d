@@ -15,7 +15,7 @@ import mesh_gpu : GpuMesh;
 import math;
 import editmode : EditMode;
 import params : Param, IntEnumEntry, wireTagForValue;
-import hover_state : g_hoveredEdge, g_hoverIndexSpaceStale;
+import hover_state : g_hoveredEdge, g_hoverIndexSpaceStale, hoverAtPress;
 import shader : Shader, LitShader;
 import command_history : CommandHistory, PreparedHistoryKind;
 import commands.mesh.session_edit : MeshSessionEdit;
@@ -1074,7 +1074,7 @@ public:
         // without latching; the user clicks again once the build lands (task
         // 7114, item 22 hypothesis (e), measured live in the task's evidence).
         if (g_hoverIndexSpaceStale) return true;
-        int h = g_hoveredEdge;
+        int h = hoverAtPress().edge;
         if (h < 0 || h >= cast(int)mesh.edges.length) return false;
 
         const SymmetryPacket* sym = vts.get!SymmetryPacket();

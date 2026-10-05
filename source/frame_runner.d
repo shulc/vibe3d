@@ -1,6 +1,5 @@
 module frame_runner;
 
-import ai.element_candidates : publishElementCandidates;
 import bg_gpu_cache : BgGpuCache;
 import bindbc.opengl : GL_COLOR_BUFFER_BIT, GL_DEPTH_BUFFER_BIT,
     glClear, glClearColor, glFlush, glViewport;
@@ -10,8 +9,7 @@ import edit_session : EditSession;
 import editmode : EditMode;
 import viewport_overlay_mode : OverlayMode;
 import eventlog : queryMouse;
-import hover_state : g_hoveredVertex, g_hoveredEdge, g_hoveredFace,
-    g_hoverIndexSpaceStale;
+import hover_state : publishHover;
 import input_frame_state : InputFrameState;
 import ImGui = d_imgui;
 import imgui_impl_opengl3 : ImGui_ImplOpenGL3_RenderDrawData;
@@ -248,30 +246,9 @@ final class FrameRunner {
     }
 
     HoverDrawState resolveHover(Tool activeTool, EditMode editMode) {
-        const int pickedVertex = ifs_.hoveredVertex;
-        const int pickedEdge = ifs_.hoveredEdge;
-        const int pickedFace = ifs_.hoveredFace;
-
-        // A multi-type tool publishes exactly one highlighted candidate.
-        if (activeTool !is null) {
-            if (ifs_.hoveredVertex >= 0) {
-                ifs_.hoveredEdge = -1;
-                ifs_.hoveredFace = -1;
-            } else if (ifs_.hoveredEdge >= 0) {
-                ifs_.hoveredFace = -1;
-            }
-        }
-
         int mouseX, mouseY;
         queryMouse(mouseX, mouseY);
-        publishElementCandidates(mouseX, mouseY,
-                                 pickedVertex, pickedEdge, pickedFace);
-
-        // Publish the resolved source-of-truth hover for tool consumers.
-        g_hoveredVertex = ifs_.hoveredVertex;
-        g_hoveredEdge = ifs_.hoveredEdge;
-        g_hoveredFace = ifs_.hoveredFace;
-        g_hoverIndexSpaceStale = ifs_.previewIndexSpaceStale();
+        publishHover(ifs_, activeTool !is null, mouseX, mouseY);
 
         HoverDrawState result;
         result.vertex = editMode == EditMode.Vertices

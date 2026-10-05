@@ -1825,22 +1825,8 @@ struct InputRouter {
         ifs.pickVertices(vp, false);
         ifs.pickEdges(vp, false);
         ifs.pickFaces(vp, false);
-        int pickedVertex = ifs.hoveredVertex;
-        int pickedEdge = ifs.hoveredEdge;
-        int pickedFace = ifs.hoveredFace;
-        // Tool-driven multi-type priority (vert first, then edge, then face),
-        // mirroring the render-loop resolution so the published hover matches.
-        if (app.activeTool !is null) {
-            if (ifs.hoveredVertex >= 0) { ifs.hoveredEdge = -1; ifs.hoveredFace = -1; }
-            else if (ifs.hoveredEdge >= 0) { ifs.hoveredFace = -1; }
-        }
-        publishElementCandidates(mx, my, pickedVertex, pickedEdge, pickedFace);
-        import hover_state : g_hoveredVertex, g_hoveredEdge, g_hoveredFace,
-            g_hoverIndexSpaceStale;
-        g_hoveredVertex = ifs.hoveredVertex;
-        g_hoveredEdge   = ifs.hoveredEdge;
-        g_hoveredFace   = ifs.hoveredFace;
-        g_hoverIndexSpaceStale = ifs.previewIndexSpaceStale();
+        import hover_state : publishHover;
+        publishHover(ifs, app.activeTool !is null, mx, my);
     }
 
     void pieFireSlot(string menuId, int slot) {

@@ -28,7 +28,7 @@ import tools.common.session_mesh_key : SessionMeshKey;
 import display_sync : refreshDisplay;
 import deform_magnet : applyMagnet;
 import toolpipe.packets : FalloffPacket, FalloffType, FalloffShape, ElementConnect;
-import hover_state : g_hoveredVertex;
+import hover_state : hoverAtPress;
 import change_bus : MeshEditScope;
 import document : primaryModelSpace, Layer;
 import mesh_gpu : GpuUploadOwner;
@@ -362,7 +362,7 @@ public:
         SDL_Keymod mods = SDL_GetModState();
         if (mods & KMOD_ALT) return false;
 
-        int hv = g_hoveredVertex;
+        int hv = hoverAtPress().vertex;
         if (hv < 0 || cast(size_t)hv >= mesh.vertices.length) return false;
 
         // Commit any prior in-flight gesture (edge case: two downs without up).

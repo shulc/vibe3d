@@ -173,7 +173,7 @@ import toolpipe.packets  : FalloffType, ElementMode, ElementConnect,
                           FalloffConfig, FalloffPacket, SnapPacket,
                           SymmetryPacket, SubjectPacket;
 import toolpipe.subject  : SubjectSource, evaluateSubject;
-import hover_state       : g_hoveredVertex, g_hoveredEdge, g_hoveredFace;
+import hover_state       : hoverAtPress;
 import snapshot          : MeshSnapshot;
 
 // MS-3.5 — runtime blend-mode toggle. The fold blends the composed matrix toward
@@ -6572,10 +6572,9 @@ private:
     ulong runSerial_ = 0;
     ulong resyncKeepRun_ = ulong.max;
 
-    // Element-falloff click-pick. Reads the GPU-resolved hover state
-    // (g_hoveredVertex/Edge/Face — published by app.d after each
-    // render frame) and pushes the picked element's centroid through
-    // ACEN.setUserPlaced (via notifyAcenUserPlaced). The anchor is
+    // Element-falloff click-pick. Reads the press-time hover (`hoverAtPress`:
+    // the published ids, none while stale) and pushes the picked element's
+    // centroid through ACEN.setUserPlaced (via notifyAcenUserPlaced). The anchor is
     // always the element centroid (vertex position, edge midpoint,
     // face centroid) — click-position does not affect it.
     //
@@ -6606,15 +6605,13 @@ private:
         bool wantE = autoMode || (em == ElementMode.Edge);
         bool wantF = autoMode || (em == ElementMode.Polygon);
 
-        if (wantV && g_hoveredVertex >= 0
-            && g_hoveredVertex < cast(int)mesh.vertices.length)
-            return takeVert(stage, g_hoveredVertex);
-        if (wantE && g_hoveredEdge >= 0
-            && g_hoveredEdge < cast(int)mesh.edges.length)
-            return takeEdge(stage, g_hoveredEdge);
-        if (wantF && g_hoveredFace >= 0
-            && g_hoveredFace < cast(int)mesh.faces.length)
-            return takeFace(stage, g_hoveredFace);
+        const hov = hoverAtPress();
+        if (wantV && hov.vertex >= 0 && hov.vertex < cast(int)mesh.vertices.length)
+            return takeVert(stage, hov.vertex);
+        if (wantE && hov.edge >= 0 && hov.edge < cast(int)mesh.edges.length)
+            return takeEdge(stage, hov.edge);
+        if (wantF && hov.face >= 0 && hov.face < cast(int)mesh.faces.length)
+            return takeFace(stage, hov.face);
         return false;
     }
 

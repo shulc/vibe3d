@@ -21,7 +21,7 @@ import mesh_ops.loop_slice : bandWalk, BandCell, loopSliceRingEdges,
     collectEdgeRing, insertEdgeLoopsMulti, kLoopSliceEditScope;
 import editmode : EditMode;
 import params : Param, IntEnumEntry, wireTagForValue;
-import hover_state : g_hoveredEdge;
+import hover_state : g_hoveredEdge, hoverAtPress;
 import shader : Shader, LitShader;
 import command_history : CommandHistory, PreparedHistoryKind;
 import commands.mesh.session_edit : MeshSessionEdit;
@@ -1442,7 +1442,7 @@ public:
         // selection yields nothing — the edge/hover paths stay byte-for-byte.
         uint[] candSeeds = activationSeeds();
         if (candSeeds.length == 0) {
-            int hov = g_hoveredEdge;
+            int hov = hoverAtPress().edge;
             if (hov < 0 || hov >= cast(int)mesh.edges.length) return false;
             candSeeds = [cast(uint)hov];
         }

@@ -278,6 +278,7 @@ tests.unit.headless_tool_pairing_test
 tests.unit.held_gesture_buttons_test
 tests.unit.history_http_adapter_test
 tests.unit.history_replay_boundary_test
+tests.unit.hover_at_press_test
 tests.unit.hover_stale_writer_census_test
 tests.unit.http_endpoint_census_test
 tests.unit.http_server_test
