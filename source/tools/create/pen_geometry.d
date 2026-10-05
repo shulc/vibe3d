@@ -110,8 +110,9 @@ uint[] penRingOrder(const(Vec3)[] v, bool reverse) {
     return ring;
 }
 
-/// Append the stroke to `dst`; returns the index of its first new vertex.
-/// A linked point appends no vertex: its faces use the shared index.
+/// Append the stroke to `dst`; returns `dst`'s vertex count before the call
+/// (the index of the first new vertex, if any: a linked point appends no
+/// vertex, its faces use the shared index).
 ///
 /// At or above the face minimum: the strip's quads `[2k+1, 2k+3, 2k+2, 2k]`,
 /// `[2k, 2k+2, 2k+3, 2k+1]` under `flip` (that order winds against the decision
@@ -126,12 +127,12 @@ uint[] penRingOrder(const(Vec3)[] v, bool reverse) {
 uint appendPenGeometry(ref Mesh dst, in PenStroke s, PenBuildPurpose purpose) {
     const uint base = cast(uint)dst.vertices.length;
     const uint n = cast(uint)s.points.length;
-    Vec3[] world;
-    uint[] idx;     // stroke point → mesh vertex
+    auto world = new Vec3[n];
+    auto idx = new uint[n];     // stroke point → mesh vertex
     foreach (i, p; s.points) {
-        world ~= transformPoint(s.toWorld, p);
+        world[i] = transformPoint(s.toWorld, p);
         const bool linked = i < s.links.length && s.links[i] >= 0;
-        idx ~= linked ? cast(uint)s.links[i] : cast(uint)dst.vertices.length;
+        idx[i] = linked ? cast(uint)s.links[i] : cast(uint)dst.vertices.length;
         if (!linked) dst.addVertex(world[i]);
     }
 

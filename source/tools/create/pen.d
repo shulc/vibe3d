@@ -754,7 +754,7 @@ public:
     }
     override void activate() {
         state = PenState.Idle;
-        vertices_.length = 0; links_.length = 0;
+        clearStroke();
         params_.currentPoint = -1;
         params_.posX = params_.posY = params_.posZ = 0.0f;
         dragArmed     = false;
@@ -810,8 +810,7 @@ public:
     }
 
     final void installPreparedPrivateActivation() nothrow @nogc {
-        state = PenState.Idle; vertices_.length = 0; params_.currentPoint = -1;
-        links_.length = 0;
+        state = PenState.Idle; clearStroke(); params_.currentPoint = -1;
         params_.posX = params_.posY = params_.posZ = 0.0f;
         dragArmed = dragInitiated = false; dragVertIdx = -1;
     }
@@ -840,8 +839,8 @@ public:
     }
     final void installPreparedDeactivateState(
             ref PreparedPenDeactivateImage image) nothrow @nogc {
-        state = PenState.Idle; vertHandlers = null; vertices_ = null;
-        links_ = null; installPreparedMeshImage(previewMesh, image.previewClear);
+        state = PenState.Idle; vertHandlers = null; clearStroke();
+        installPreparedMeshImage(previewMesh, image.previewClear);
         params_.currentPoint = -1;
         params_.posX = params_.posY = params_.posZ = 0.0f;
         if (image.willCommit) meshChanged = true;
@@ -1389,6 +1388,10 @@ private:
         vertHandlers ~= vertMarker(pos);
     }
 
+    // Empties every per-point stroke array together (the one reset site: an
+    // array added beside `vertices_` / `links_` is cleared here once).
+    void clearStroke() nothrow @nogc { vertices_.length = 0; links_.length = 0; }
+
     // One cyan marker for a LOCAL stroke point (markers render in WORLD).
     BoxHandler vertMarker(Vec3 pos) {
         Vec3 worldPos = toWorldP(pos);
@@ -1488,7 +1491,7 @@ private:
     // resolved on the live mesh, is valid. Readers take `liveLinks`. Pen wave
     // plan A5 F2 (§24.4, §25.1 #1); not captured — gap row.
     void refreshLinks() {
-        if (strokeKey_.length == 1 && strokeKey_[0].matches(*mesh)) return;
+        if (keyLive(strokeKey_, *mesh)) return;
         links_[] = -1;
         SessionMeshKey k;
         k.stamp(*mesh);
@@ -1497,12 +1500,15 @@ private:
     const(int)[] liveLinks() const { return linksUnder(strokeKey_, links_, *mesh); }
     static const(int)[] linksUnder(const(SessionMeshKey)[] key, const(int)[] links,
                                    ref const Mesh m) {
-        return key.length == 1 && key[0].matches(m) ? links : null;
+        return keyLive(key, m) ? links : null;
+    }
+    static bool keyLive(const(SessionMeshKey)[] key, ref const Mesh m) {
+        return key.length == 1 && key[0].matches(m);
     }
 
     void cancelPolygon() {
         clearVertHandlers();
-        vertices_.length = 0; links_.length = 0;
+        clearStroke();
         previewMesh.clear();
         // No upload needed: draw() short-circuits when state == Idle, so the
         // stale GPU buffers are simply not rendered until the next Drawing
@@ -1559,7 +1565,7 @@ private:
     int findHoveredStrokeEdge(int mx, int my, float r) {
         immutable size_t n = vertices_.length;
         int best = -1;
-        foreach (i; 0 .. (n >= 3 ? n : n > 0 ? n - 1 : 0)) {
+        foreach (i; 0 .. (n < 2 ? 0 : n == 2 ? 1 : n)) {
             float ax, ay, bx, by, z;
             if (!projectToWindowFull(toWorldP(vertices_[i]), cachedVp, ax, ay, z) ||
                 !projectToWindowFull(toWorldP(vertices_[(i + 1) % n]), cachedVp, bx, by, z))
@@ -1748,7 +1754,7 @@ private:
         // Drop in-progress state — tool stays active for the next polygon.
         state = PenState.Idle;
         clearVertHandlers();
-        vertices_.length = 0; links_.length = 0;
+        clearStroke();
         previewMesh.clear();
         previewGpu.upload(previewMesh);
         params_.currentPoint = -1;

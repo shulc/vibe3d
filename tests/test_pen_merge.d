@@ -37,6 +37,16 @@
 //    Hide bumps the topology counter with counts unchanged).
 //  - link-undo: an in-stroke Ctrl+Z after dragging a linked point away restores
 //    the point AND its link.
+//  - quads-click-links: a Make-Quads click on V shares V's index. Composed
+//    from two captured laws, not captured as one cell: every quads click is a
+//    placed stroke point (K-C / K-C2 strip law: c appends, then its auto
+//    corner) and a placed point on V links V (scene_click_exact). So 3 clicks
+//    (the third on V) make 4 points, one of them V: 3 new vertices, one quad
+//    holding index 0, V unmoved — true under our strip and S7's alike.
+// Pending cells (run, observed value pinned as a tripwire, NOT a pass; each
+// becomes a compare against its capture when that capture lands):
+//  - relink-same-vertex (PENDING-K-B10, task 9392): a click on V, then a click
+//    10 px from V; ours links both points to V (face [0, 0, 3]).
 // A background slot can never link (the merge admits slot 0 only): no captured
 // rig has a background vertex inside the radius, so that is a construction
 // argument, not a cell.
@@ -479,8 +489,32 @@ unittest {
     fails ~= sceneEdge("E4_scene_edge_press", ep["E4_scene_edge_press"], p(0.62, 0.28), ran);
     fails ~= sceneEdge("scene-edge-20px", ep["E4r_scene_edge_20px"], p(0.62, 0.255), ran);
 
+    // A Make-Quads click on V shares its index (header: quads-click-links).
+    {
+        rig(f0, 440, meshJson(tri(p(0, 0.2)), kTri));
+        penCommand("tool.attr pen makeQuads true");
+        clickWorld(kFar[0], kFar[1], p(0, 0.2));
+        const pts = penAttrValue("points");
+        drop(); ++ran;
+        auto m = model();
+        const holds = m.f.length == 2 && m.f[1].length == 4 && m.f[1].canFind(0);
+        if (pts != 4 || m.v.length != 6 || !holds || m.v[0] != p(0, 0.2))
+            fails ~= format("quads-click-links: %s stroke points, %s vertices, faces %s, "
+                ~ "V at %s; expected 4 points, 6 vertices, a quad holding index 0, V at %s",
+                pts, m.v.length, m.f, m.v.length ? m.v[0] : Vec3(0, 0, 0), p(0, 0.2));
+    }
+
     snap(null);
-    assert(ran == 69, format("pen merge population: %s cells ran, pinned 69", ran));
+    assert(ran == 70, format("pen merge population: %s cells ran, pinned 70", ran));
+
+    // ===== pending a capture (tripwires, never a pass) ======================
+    string[] pending;
+    pending ~= relinkSameVertex(fails);
+    assert(pending.length == 1, format("pen merge pending: %s cells, pinned 1", pending.length));
+    foreach (line; pending) {
+        import std.stdio : stderr;
+        stderr.writeln(line);
+    }
 
     assert(fails.length == 0, format("pen merge, %s failing: %-(%s\n%)", fails.length, fails));
 }
@@ -760,6 +794,25 @@ private string[] bgEdgeNoReproject(ref int ran) {
             ~ "the edited triangle intact, p0 on the background edge (0.62, 0.3)",
             m.v.length, m.f, m.v.length > 3 ? m.v[3] : Vec3(0, 0, 0));
     return f;
+}
+
+/// PENDING-K-B10 (task 9392): V clicked, then a click 10 px right of V, then a
+/// far point. The capture decides the expected ring; until then the observed
+/// ours (both points link V: 4 vertices, face [0, 0, 3]) is pinned so any
+/// change reds and forces this cell's conversion. Returns its pending line.
+private string relinkSameVertex(ref string[] fails) {
+    rig(p(0, 0.2), 440, meshJson(tri(p(0, 0.2)), kTri));
+    clickWorld(p(0, 0.2));
+    clickNear(p(0, 0.2), 10, 0);
+    clickWorld(kFar[0]);
+    drop();
+    auto m = model();
+    const line = format("PENDING-K-B10 relink-same-vertex: observed %s vertices, faces %s; "
+        ~ "expected: from capture K-B10 (task 9392)", m.v.length, m.f);
+    if (m.v.length != 4 || m.f != [[0L, 1, 2], [0L, 0, 3]])
+        fails ~= "relink-same-vertex: tripwire, ours changed before K-B10 landed — convert "
+            ~ "the cell to the captured value; " ~ line;
+    return line;
 }
 
 private string[] vertexBeatsStrokeEdge(ref int ran) {
