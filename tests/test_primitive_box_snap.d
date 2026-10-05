@@ -93,10 +93,12 @@ unittest { // Vertex snap fires on a cube vert during box base-corner click
 }
 
 // ---------------------------------------------------------------------------
-// Handle drags under snap (task 9387 part G, D-FB; ours — no reference value
-// is asserted, gap row (viii)). A handle drag's snap client point is the
-// handle at the press plus the pointer travel since the press; a snapped
-// value never becomes the next event's input. Rig: top ortho at 440 px/m
+// Handle drags under snap (task 9387 part G, D-FB). A handle drag's snap
+// client point is the handle at the press plus the pointer travel since the
+// press; a snapped value never becomes the next event's input. The size
+// handle is captured (`cells_k_b9` K9b: grid-snaps from press + travel; K9c:
+// after an element snap releases it rejoins the pointer); the mover and the
+// height handle follow it as ours (gap row (viii)). Rig: top ortho at 440 px/m
 // (our step 0.1); base typed centre (0, 0, 0), size 0.6 x 0.6, so the ±0.3
 // faces sit on nodes. Each drag is 2 px per event (0.0045 m, far below the
 // 0.05 m half step): its raw end is start + travel, which rounds to the next
@@ -173,7 +175,8 @@ unittest { // handle drags under grid snap: not trapped; a released element snap
     int ran;
     string[] fails;
 
-    // 24 box-edge-grid-slow: +X edge handle +40 px ⇒ the +X face at 0.4.
+    // 24 box-edge-grid-slow (K9b): +X edge handle +40 px ⇒ the +X face at
+    // 0.4, the -X face kept at -0.3.
     {
         boxBaseRig("grid");
         const step = gridStepNow();
@@ -258,11 +261,12 @@ unittest { // handle drags under grid snap: not trapped; a released element snap
         ++ran;
     }
 
-    // 27 box-edge-release: vertex bit only, the shipped 24 px range; a loose
-    // vertex V 0.05 m beyond the +X face's start. The +X handle dragged in
-    // 2 px events through V and 60 px past it ends at the raw position
-    // (start + travel, ± half a pixel of world), not raw minus the offset a
-    // retained snap would leave.
+    // 27 box-edge-release (K9c): vertex bit only, the shipped 24 px range; a
+    // loose vertex V 0.05 m beyond the +X face's start. The +X handle dragged
+    // in 2 px events through V and 60 px past it ends at the raw position
+    // (start + travel, ± half a pixel of world; the captured 0.485 carries
+    // the reference's 0.005 quantum), not raw minus the offset a retained
+    // snap would leave (≤ 0.432).
     {
         boxBaseRig("vertex", `{"vertices":[[0.35,0,0]],"faces":[]}`);
         dragSteps(plusXEdgeHandle(), 2, 0, 41);

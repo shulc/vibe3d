@@ -14,9 +14,11 @@
 // cell ids neutral): `vtx-back` = V1, `loose-vtx` = V2, `grid-second-rung` =
 // G2 (label 0.5 at 110 px/m), `move-grid-step` = G3; `edge-back` = the edge
 // leg (pen, merge off) and X2 (Move). `poly-back` / `poly-front` match P1.
-// Cells 15–22 lift `cells_k_b7` (G4, G5, G6, G6b, G8, G9, G4c, G8b2, G8b3).
+// Cells 15–22 lift `cells_k_b7` (G4, G5, G6, G6b, G8, G9, G4c, G8b2, G8b3)
+// and `cells_k_b9` (K9a, K9d).
 
-import drag_helpers : Vec3, Viewport, buildDragLog, fetchCamera, playAndWait,
+import drag_helpers : Vec3, Viewport, buildDragDownLog, buildDragLog, buildDragMotionLog,
+    buildDragUpLog, fetchCamera, playAndWait,
     projectToWindow, viewportFromCameraMatrices, vertexPos;
 import http_client : getJson, postJson;
 import http_command_helpers : commandBody;
@@ -311,12 +313,11 @@ private void gridLawCells() {
         ++ran;
     }
 
-    // 19 move-axis-grid (G9) — PENDING-K9a (task 9390 confirms a slow axis
-    // drag reaches the node of press + travel). q (0.03, 1, 0.07); press on
-    // OUR +X shaft 66 px right of the gizmo centre (the shaft spans 24..120
-    // px); +40 px in 20 events of 2 px. The node rounds q + travel (0.1209 →
-    // 0.1) and is held on the axis (z 0.07); the pointer's own node is 0.3, a
-    // fed-back client stays at 0.0.
+    // 19 move-axis-grid (G9; K9a: the same drag as 20 separate slow events,
+    // `cells_k_b9`). q (0.03, 1, 0.07); press on OUR +X shaft 66 px right of
+    // the gizmo centre (the shaft spans 24..120 px); +40 px in 20 events of
+    // 2 px. The node rounds q + travel (0.1209 → 0.1) and is held on the axis
+    // (z 0.07); the pointer's own node is 0.3, a fed-back client stays at 0.0.
     {
         moveRig(1, "grid");
         auto cam = fetchCamera();
@@ -340,6 +341,38 @@ private void gridLawCells() {
         penCommand("tool.set move off");
         check(at(q, [0.13, 1, 0.23]), "move-vertex-offplane: q expected T "
             ~ "(0.13, 1, 0.23), got " ~ vstr(q));
+        ++ran;
+    }
+
+    // 20b move-vertex-release (K9d, `cells_k_b9`): vertex bit only, the quad
+    // at y 1, loose T (0.13, 1, 0.07) 44 px right of q; q's free drag in 52
+    // events of +2 px. Mid-drag (24 events, 48 px) q sits ON T; after the
+    // pointer leaves the range it rejoins the pointer: q ends at the raw
+    // q + 104 px (± half a pixel; the captured 0.265 carries the reference's
+    // 0.005 free-drag quantum, ours has none), not raw minus a retained
+    // offset (≤ 0.212) nor on T (0.13).
+    {
+        moveRig(1, "vertex", ",[0.13,1,0.07]");
+        auto cam = fetchCamera();
+        const a = worldPixel(Vec3(0.03f, 1, 0.07f));
+        playAndWait(buildDragDownLog(cam.vpX, cam.vpY, cam.width, cam.height, a[0], a[1]));
+        playAndWait(buildDragMotionLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                                       a[0], a[1], a[0] + 48, a[1], 24));
+        const mid = vertexPos(0);
+        playAndWait(buildDragMotionLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                                       a[0] + 48, a[1], a[0] + 104, a[1], 28));
+        playAndWait(buildDragUpLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                                   a[0] + 104, a[1]));
+        const q = vertexPos(0);
+        penCommand("tool.set move off");
+        const double raw = 0.03 + 104 * kPx;
+        if (!at(mid, [0.13, 1, 0.07]))
+            fails ~= "move-vertex-release: mid-drag q expected ON T (0.13, 1, 0.07), got "
+                ~ vstr(mid);
+        else
+            check(abs(q[0] - raw) <= kHalfPx && abs(q[1] - 1) <= kTol && abs(q[2] - 0.07) <= kTol,
+                format("move-vertex-release: q expected back on the pointer (%.6f, 1, 0.07), "
+                    ~ "got %s", raw, vstr(q)));
         ++ran;
     }
 
@@ -510,12 +543,12 @@ unittest {
         ++ran;
     }
 
-    assert(ran == 23, format("population: %d cells ran, expected 23", ran));
+    assert(ran == 24, format("population: %d cells ran, expected 24", ran));
     string[] names;   // the red cells by name first: the runner shows 8 lines
     foreach (f; fails) {
         const n = f[0 .. f.indexOf(':') < 0 ? f.length : f.indexOf(':')];
         if (!names.canFind(n)) names ~= n;
     }
-    assert(fails.length == 0, format("%d of 23 cells red (%-(%s, %)):\n  %-(%s\n  %)",
+    assert(fails.length == 0, format("%d of 24 cells red (%-(%s, %)):\n  %-(%s\n  %)",
                                      names.length, names, fails));
 }

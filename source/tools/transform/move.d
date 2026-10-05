@@ -270,9 +270,13 @@ class MoveTool : TransformTool {
     Vec3     planeApplied;
     // The snap client point (task 9387, wave plan §28.2 D-FB): the gizmo at
     // the press plus the PRE-SNAP travel since, so a snapped position never
-    // becomes the next event's input. Seeded once per gesture in
-    // `armPlaneDrag`; the Ctrl re-arm of the axis leg keeps it.
+    // becomes the next event's input; `snapHeld` is the offset the current
+    // snap holds the gizmo away from it, handed back on the first unsnapped
+    // event (captured `cells_k_b9` K9d: the gizmo rejoins the pointer). Both
+    // are armed once per gesture in `armPlaneDrag`; the Ctrl re-arm of the
+    // axis leg keeps them.
     Vec3     snapClient;
+    Vec3     snapHeld;
     // LAW A state, the ported axis-arm body (task 0562), same shape as LAW B's
     // above and for the same reason: the conversion is measured from the PRESS
     // pixel against a base frozen at the press, so both are held here and
@@ -904,6 +908,7 @@ public:
         planeAnchor  = handler.center;
         planeApplied = Vec3(0, 0, 0);
         snapClient   = handler.center;
+        snapHeld     = Vec3(0, 0, 0);
         armAxisLeg(mx, my);
         axisLawPorted = !screenActionCentre(vts);
     }
@@ -960,7 +965,7 @@ public:
         if (snapPkt is null || !snapPkt.enabled) {
             lastSnap = SnapResult.init;
             clearLastSnap();
-            return worldDelta;
+            return releaseSnap(worldDelta);
         }
 
         // Exclude verts the drag is moving. Otherwise a single-vert drag
@@ -982,9 +987,20 @@ public:
                                    *mesh, primaryModelSpace(), *snapPkt, exclude);
         lastSnap = sr;
         publishLastSnap(sr);
-        if (sr.snapped)
-            return constrainSnapDelta(sr.worldPos - gizmoCenter);
-        return worldDelta;
+        if (sr.snapped) {
+            immutable Vec3 d = constrainSnapDelta(sr.worldPos - gizmoCenter);
+            snapHeld = snapHeld + (d - worldDelta);
+            return d;
+        }
+        return releaseSnap(worldDelta);
+    }
+
+    // An unsnapped event: its own delta plus the offset a snap was holding,
+    // so the gizmo is back on the client point (no retained offset).
+    private Vec3 releaseSnap(Vec3 worldDelta) {
+        immutable Vec3 d = worldDelta - snapHeld;
+        snapHeld = Vec3(0, 0, 0);
+        return d;
     }
 
     // Project a raw snap delta (snapTarget - gizmoCenter) onto the active
