@@ -6,7 +6,9 @@
 // receives the point as its own vertex, and a press near a live stroke edge
 // takes the ring slot between its ends. Radii are screen pixels: 24 px after no
 // snap or a placement snap; after an edge snap 17.5 px to the snapped edge's
-// own ends and 2.85 px to any other vertex. Typed points never link.
+// own ends and 2.85 px to any other vertex. Typed points never link. A point
+// linking the vertex its predecessor links is a stroke point, but the commit
+// drops the repeat (cells_k_b10).
 //
 // Rig: top ortho at the cell's px/m (ours 440 vs the capture's 439.52), points
 // on y = 1, scene geometry loaded as the edited mesh before the pen is armed
@@ -46,10 +48,6 @@
 //  - two-point-edge-press: a 2-point stroke has one stroke edge (0, 1); a
 //    press 9 px off it (E1's press) inserts between its ends (slot 1, current
 //    1), the same rule the 3-point E1 cell reads, at the smallest n it covers.
-// Pending cells (run, observed value pinned as a tripwire, NOT a pass; each
-// becomes a compare against its capture when that capture lands):
-//  - relink-same-vertex (PENDING-K-B10, task 9392): a click on V, then a click
-//    10 px from V; ours links both points to V (face [0, 0, 3]).
 // A background slot can never link (the merge admits slot 0 only): no captured
 // rig has a background vertex inside the radius, so that is a construction
 // argument, not a cell.
@@ -60,6 +58,7 @@ import http_client : getJson, postJson;
 import http_command_helpers : commandBody;
 import pen_rig_helpers;
 import std.algorithm : canFind;
+import std.conv : to;
 import std.format : format;
 import std.json : JSONType, JSONValue, parseJSON;
 import std.math : abs, round, sqrt;
@@ -224,7 +223,7 @@ private enum Vec3[2] kFar = [Vec3(-0.4f, 1, 0.6f), Vec3(-0.6f, 1, 0.1f)];
 unittest {
     auto fx = parseJSON(import("fixtures/pen_merge.json"));
     auto c = fx["cells"], b3 = fx["cells_k_b3"], ep = fx["edge_press"];
-    auto b8 = fx["cells_k_b8"];
+    auto b8 = fx["cells_k_b8"], b10 = fx["cells_k_b10"];
     string[] fails;
     int ran;
     const f0 = p(0, 0.2);           // the K-C rig's focus and V
@@ -517,17 +516,13 @@ unittest {
                          [[0, 1, 2]]);
     }
 
-    snap(null);
-    assert(ran == 71, format("pen merge population: %s cells ran, pinned 71", ran));
+    // A second click 6-22 px from a linked V links it again; the commit drops
+    // the repeat ([V, F]); 30 px is its own vertex. Loose V and a triangle.
+    foreach (cell; ["L06", "L10", "L16", "L22", "L30", "T06", "T10", "T16", "T22", "T30"])
+        fails ~= relinkCell(cell, b10[cell], ran);
 
-    // ===== pending a capture (tripwires, never a pass) ======================
-    string[] pending;
-    pending ~= relinkSameVertex(fails);
-    assert(pending.length == 1, format("pen merge pending: %s cells, pinned 1", pending.length));
-    foreach (line; pending) {
-        import std.stdio : stderr;
-        stderr.writeln(line);
-    }
+    snap(null);
+    assert(ran == 81, format("pen merge population: %s cells ran, pinned 81", ran));
 
     assert(fails.length == 0, format("pen merge, %s failing: %-(%s\n%)", fails.length, fails));
 }
@@ -809,23 +804,21 @@ private string[] bgEdgeNoReproject(ref int ran) {
     return f;
 }
 
-/// PENDING-K-B10 (task 9392): V clicked, then a click 10 px right of V, then a
-/// far point. The capture decides the expected ring; until then the observed
-/// ours (both points link V: 4 vertices, face [0, 0, 3]) is pinned so any
-/// change reds and forces this cell's conversion. Returns its pending line.
-private string relinkSameVertex(ref string[] fails) {
-    rig(p(0, 0.2), 440, meshJson(tri(p(0, 0.2)), kTri));
-    clickWorld(p(0, 0.2));
-    clickNear(p(0, 0.2), 10, 0);
-    clickWorld(kFar[0]);
-    drop();
-    auto m = model();
-    const line = format("PENDING-K-B10 relink-same-vertex: observed %s vertices, faces %s; "
-        ~ "expected: from capture K-B10 (task 9392)", m.v.length, m.f);
-    if (m.v.length != 4 || m.f != [[0L, 1, 2], [0L, 0, 3]])
-        fails ~= "relink-same-vertex: tripwire, ours changed before K-B10 landed — convert "
-            ~ "the cell to the captured value; " ~ line;
-    return line;
+/// K-B10 family (fixture `cells_k_b10`): V (0.24, 1, 0.24) alone (L) or in
+/// the triangle V A B (T); click V, click `dx` px left of V's pixel (the cell
+/// name's digits), click far (-0.4, 1, 0.6); the stroke holds 3 points.
+private string[] relinkCell(string cell, JSONValue c, ref int ran) {
+    auto e = c["expected"];
+    auto w = verts(e["vertices"]);
+    const v = p(0.24, 0.24);
+    rig(p(0.07, 0), 440, cell[0] == 'L' ? meshJson([v], null)
+        : meshJson([v, p(0.6, 0.1), p(0.6, 0.4)], kTri));
+    clickWorld(v);
+    clickNear(v, -to!int(cell[1 .. $]), 0);
+    clickWorld(p(-0.4, 0.6));
+    string[] f = current("relink-" ~ cell, num(e["current"]));
+    drop(); ++ran;
+    return f ~ fixture("relink-" ~ cell, e);
 }
 
 private string[] vertexBeatsStrokeEdge(ref int ran) {

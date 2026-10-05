@@ -325,6 +325,16 @@ unittest // a linked point (S5 merge) emits the shared index and appends no vert
     assert(strip.vertices.length == 4 && strip.faces == [[2u, 3, 0, 1]], format(
         "linked strip: %s vertices, faces %s", strip.vertices.length, strip.faces));
 
+    // Every point linking one vertex leaves fewer than 2 corners after the
+    // repeat collapse: no face (ours; not captured — gap row).
+    Mesh lone;
+    lone.addVertex(Vec3(9, 9, 9));
+    appendPenGeometry(lone, PenStroke.of(kTri[0 .. 2], kIdentity, p, [0, 0]),
+        PenBuildPurpose.Commit);
+    assert(lone.vertices.length == 1 && lone.faces.length == 0, format("all-repeat "
+        ~ "commit: %s vertices, faces %s; expected 1, none", lone.vertices.length,
+        lone.faces));
+
     // A stroke without links (the preview) appends every point.
     Mesh preview;
     appendPenGeometry(preview, PenStroke.of(kTri, kIdentity, p), PenBuildPurpose.Preview);

@@ -9,7 +9,7 @@
   "notes": "fresh GUI worker per cell, NEW empty foreground mesh; scene vertex V script-placed at a measured click landing + an offset; clicks/drags/typing are real input; one readback after the last gesture.",
   "captured_utc": "2026-10-04",
   "harness": "private capture harness",
-  "task": "9353, 9371, 9375, 9381"
+  "task": "9353, 9371, 9375, 9381, 9392"
  },
  "rig": {
   "view": "top orthographic unless a cell says otherwise; default zoom 440 px per metre (merge distance 3 px of world = 0.0068255 m); wheel zoom x2^(1/4) per step",
@@ -5749,6 +5749,355 @@
     ]
    },
    "law": "V links at 19.8 px (inside the 24 px merge radius)"
+  }
+ },
+ "cells_k_b10": {
+  "L06": {
+   "raw_cell": "KB10_L06",
+   "question": "snapping off, merge 1, top view 440 px/m; scene loose V only (index 0); V (0.24,1,0.24); click V exactly, click 2 6 px -x of V's pixel (placed 0.225, 6.59 px from V), far click (-0.4,1,0.6); read the current point, then drop",
+   "expected": {
+    "vertices": [
+     [
+      0.24,
+      1.0,
+      0.24
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1
+     ]
+    ],
+    "current": 2
+   },
+   "law": "a click whose merge pick is a vertex an earlier stroke point already links adds a new stroke point on it; the committed polygon drops the consecutive repeat: [V, F], no new vertex for p1"
+  },
+  "L10": {
+   "raw_cell": "KB10_L10",
+   "question": "snapping off, merge 1, top view 440 px/m; scene loose V only (index 0); V (0.24,1,0.24); click V exactly, click 2 10 px -x of V's pixel (placed 0.22, 8.79 px from V), far click (-0.4,1,0.6); read the current point, then drop",
+   "expected": {
+    "vertices": [
+     [
+      0.24,
+      1.0,
+      0.24
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1
+     ]
+    ],
+    "current": 2
+   },
+   "law": "a click whose merge pick is a vertex an earlier stroke point already links adds a new stroke point on it; the committed polygon drops the consecutive repeat: [V, F], no new vertex for p1"
+  },
+  "L16": {
+   "raw_cell": "KB10_L16",
+   "question": "snapping off, merge 1, top view 440 px/m; scene loose V only (index 0); V (0.24,1,0.24); click V exactly, click 2 16 px -x of V's pixel (placed 0.205, 15.38 px from V), far click (-0.4,1,0.6); read the current point, then drop",
+   "expected": {
+    "vertices": [
+     [
+      0.24,
+      1.0,
+      0.24
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1
+     ]
+    ],
+    "current": 2
+   },
+   "law": "a click whose merge pick is a vertex an earlier stroke point already links adds a new stroke point on it; the committed polygon drops the consecutive repeat: [V, F], no new vertex for p1"
+  },
+  "L22": {
+   "raw_cell": "KB10_L22",
+   "question": "snapping off, merge 1, top view 440 px/m; scene loose V only (index 0); V (0.24,1,0.24); click V exactly, click 2 22 px -x of V's pixel (placed 0.19, 21.98 px from V), far click (-0.4,1,0.6); read the current point, then drop",
+   "expected": {
+    "vertices": [
+     [
+      0.24,
+      1.0,
+      0.24
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1
+     ]
+    ],
+    "current": 2
+   },
+   "law": "a click whose merge pick is a vertex an earlier stroke point already links adds a new stroke point on it; the committed polygon drops the consecutive repeat: [V, F], no new vertex for p1"
+  },
+  "L30": {
+   "raw_cell": "KB10_L30",
+   "question": "snapping off, merge 1, top view 440 px/m; scene loose V only (index 0); V (0.24,1,0.24); click V exactly, click 2 30 px -x of V's pixel (placed 0.17, 30.77 px from V), far click (-0.4,1,0.6); read the current point, then drop",
+   "expected": {
+    "vertices": [
+     [
+      0.24,
+      1.0,
+      0.24
+     ],
+     [
+      0.17,
+      1.0,
+      0.24
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ]
+    ],
+    "current": 2
+   },
+   "law": "control: p1 30.8 px from V is its own vertex at the placed point"
+  },
+  "T06": {
+   "raw_cell": "KB10_T06",
+   "question": "snapping off, merge 1, top view 440 px/m; scene triangle V (0), A (0.6,1,0.1), B (0.6,1,0.4), face [0,1,2]; V (0.24,1,0.24); click V exactly, click 2 6 px -x of V's pixel (placed 0.225, 6.59 px from V), far click (-0.4,1,0.6); read the current point, then drop",
+   "expected": {
+    "vertices": [
+     [
+      0.24,
+      1.0,
+      0.24
+     ],
+     [
+      0.6,
+      1.0,
+      0.1
+     ],
+     [
+      0.6,
+      1.0,
+      0.4
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      0,
+      3
+     ]
+    ],
+    "current": 2
+   },
+   "law": "a click whose merge pick is a vertex an earlier stroke point already links adds a new stroke point on it; the committed polygon drops the consecutive repeat: [V, F], no new vertex for p1"
+  },
+  "T10": {
+   "raw_cell": "KB10_T10",
+   "question": "snapping off, merge 1, top view 440 px/m; scene triangle V (0), A (0.6,1,0.1), B (0.6,1,0.4), face [0,1,2]; V (0.24,1,0.24); click V exactly, click 2 10 px -x of V's pixel (placed 0.22, 8.79 px from V), far click (-0.4,1,0.6); read the current point, then drop",
+   "expected": {
+    "vertices": [
+     [
+      0.24,
+      1.0,
+      0.24
+     ],
+     [
+      0.6,
+      1.0,
+      0.1
+     ],
+     [
+      0.6,
+      1.0,
+      0.4
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      0,
+      3
+     ]
+    ],
+    "current": 2
+   },
+   "law": "a click whose merge pick is a vertex an earlier stroke point already links adds a new stroke point on it; the committed polygon drops the consecutive repeat: [V, F], no new vertex for p1"
+  },
+  "T16": {
+   "raw_cell": "KB10_T16",
+   "question": "snapping off, merge 1, top view 440 px/m; scene triangle V (0), A (0.6,1,0.1), B (0.6,1,0.4), face [0,1,2]; V (0.24,1,0.24); click V exactly, click 2 16 px -x of V's pixel (placed 0.205, 15.38 px from V), far click (-0.4,1,0.6); read the current point, then drop",
+   "expected": {
+    "vertices": [
+     [
+      0.24,
+      1.0,
+      0.24
+     ],
+     [
+      0.6,
+      1.0,
+      0.1
+     ],
+     [
+      0.6,
+      1.0,
+      0.4
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      0,
+      3
+     ]
+    ],
+    "current": 2
+   },
+   "law": "a click whose merge pick is a vertex an earlier stroke point already links adds a new stroke point on it; the committed polygon drops the consecutive repeat: [V, F], no new vertex for p1"
+  },
+  "T22": {
+   "raw_cell": "KB10_T22",
+   "question": "snapping off, merge 1, top view 440 px/m; scene triangle V (0), A (0.6,1,0.1), B (0.6,1,0.4), face [0,1,2]; V (0.24,1,0.24); click V exactly, click 2 22 px -x of V's pixel (placed 0.19, 21.98 px from V), far click (-0.4,1,0.6); read the current point, then drop",
+   "expected": {
+    "vertices": [
+     [
+      0.24,
+      1.0,
+      0.24
+     ],
+     [
+      0.6,
+      1.0,
+      0.1
+     ],
+     [
+      0.6,
+      1.0,
+      0.4
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      0,
+      3
+     ]
+    ],
+    "current": 2
+   },
+   "law": "a click whose merge pick is a vertex an earlier stroke point already links adds a new stroke point on it; the committed polygon drops the consecutive repeat: [V, F], no new vertex for p1"
+  },
+  "T30": {
+   "raw_cell": "KB10_T30",
+   "question": "snapping off, merge 1, top view 440 px/m; scene triangle V (0), A (0.6,1,0.1), B (0.6,1,0.4), face [0,1,2]; V (0.24,1,0.24); click V exactly, click 2 30 px -x of V's pixel (placed 0.17, 30.77 px from V), far click (-0.4,1,0.6); read the current point, then drop",
+   "expected": {
+    "vertices": [
+     [
+      0.24,
+      1.0,
+      0.24
+     ],
+     [
+      0.6,
+      1.0,
+      0.1
+     ],
+     [
+      0.6,
+      1.0,
+      0.4
+     ],
+     [
+      0.17,
+      1.0,
+      0.24
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      0,
+      3,
+      4
+     ]
+    ],
+    "current": 2
+   },
+   "law": "control: p1 30.8 px from V is its own vertex at the placed point"
   }
  }
 }

@@ -122,6 +122,11 @@ uint[] penRingOrder(const(Vec3)[] v, bool reverse) {
 /// points (the two-point face a tool drop keeps) while a Preview shows the
 /// open polyline as edges. Preview and Commit order every ring alike.
 ///
+/// A polygon point linking the vertex its predecessor (click order) links adds
+/// no corner: [V, V, F] commits [V, F] (fixture `cells_k_b10`). The closing
+/// pair (last = first), quads strips and a ring left below 2 corners (no face)
+/// are not captured — gap rows.
+///
 /// Precondition: a makeQuads Commit below 4 points yields ONE face of all
 /// points, not a quad; callers keep it out by gating on `minDropCommitVerts`.
 uint appendPenGeometry(ref Mesh dst, in PenStroke s, PenBuildPurpose purpose) {
@@ -144,7 +149,13 @@ uint appendPenGeometry(ref Mesh dst, in PenStroke s, PenBuildPurpose purpose) {
             dst.addFace(s.flip ? [a, b, c, d] : [d, c, b, a]);
         }
     } else if (closed || purpose == PenBuildPurpose.Commit) {
-        uint[] face = penRingOrder(world, s.flip);
+        size_t m;
+        foreach (i; 0 .. n)
+            if (i == 0 || idx[i] != idx[i - 1]) {
+                world[m] = world[i]; idx[m] = idx[i]; ++m;
+            }
+        if (m < 2) return base;
+        uint[] face = penRingOrder(world[0 .. m], s.flip);
         foreach (ref i; face) i = idx[i];
         dst.addFace(face);
     } else {
