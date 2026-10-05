@@ -167,14 +167,10 @@ unittest {
     // C_E1 is the copied defect (header); one pixel off the C_E1 pointer the
     // pixels differ and the click pulls, and so does the C_E1 pointer as the
     // THIRD stroke point.
-    const e = worldPixel(xz(fx["rig"]["targets_xz"]["E"]));
-    const k = fx["rig"]["clicks_xz"];
     if (wanted("C_E1-pixel-off"))
-        fails ~= edgePull("C_E1-pixel-off", [worldPixel(xz(k[0])), [e[0], e[1] - 1],
-                                              worldPixel(xz(k[2]))], 1, ran);
+        fails ~= edgePull("C_E1-pixel-off", -1, 1, ran);
     if (wanted("C_E1-third-point"))
-        fails ~= edgePull("C_E1-third-point", [worldPixel(xz(k[0])), worldPixel(xz(k[2])), e],
-                          2, ran);
+        fails ~= edgePull("C_E1-third-point", 0, 2, ran);
 
     if (wanted("SV_V1-unsnapped")) {
         rig(fx["cells"]["SV_V1"]);
@@ -186,6 +182,7 @@ unittest {
 
     if (wanted("hover-stroke-point-clears")) {
         rig(fx["cells"]["SV_V1"]);
+        const k = fx["rig"]["clicks_xz"];
         clickWorld(xz(k[0]), xz(k[1]), xz(k[2]));
         hoverWorld(xz(fx["rig"]["targets_xz"]["V"]));
         const before = fetchSnapLast()["snapped"].type == JSONType.true_;   // the control
@@ -205,11 +202,15 @@ unittest {
     assert(fails.length == 0, fails.join("\n  "));
 }
 
-/// A merge-on click stroke at `pixels` whose point `at` lands on the quad's
-/// edge v3-v2 under its quantised pointer (z 0.5, x within a quantum of E's)
-/// as its own vertex.
-private string[] edgePull(string cell, int[2][] pixels, size_t at, ref size_t ran) {
+/// A merge-on click stroke of the clicks p0 and p2 with E's pixel (`dy` px
+/// lower) as point `at`, which lands on the quad's edge v3-v2 under its
+/// quantised pointer (z 0.5, x within a quantum of E's) as its own vertex.
+private string[] edgePull(string cell, int dy, size_t at, ref size_t ran) {
     rig(fx["cells"]["C_E1"]);
+    const k = fx["rig"]["clicks_xz"];
+    const e = worldPixel(xz(fx["rig"]["targets_xz"]["E"]));
+    int[2][] pixels = [worldPixel(xz(k[0])), worldPixel(xz(k[2]))];
+    pixels = pixels[0 .. at] ~ [e[0], e[1] + dy] ~ pixels[at .. $];
     clickPixels(pixels);
     penCommand("tool.set pen off");
     ++ran;
