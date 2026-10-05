@@ -1,26 +1,13 @@
-// test_tool_overlay_line_pixels.d — the three tool overlay lines drawn into
-// the cell FBO, read back as pixels (task 9442).
-//
-// WHAT IS PINNED. Move's Ctrl-lock constraint line, Radial Sweep's axis line
-// and Mirror's plane wire quad + dashed normal are GL draws into the cell FBO
-// (not the ImGui foreground list), so `/api/viewport/probe` reads them. Each
-// cell probes a short strip of pixels ACROSS the projected line at one world
-// point and pins the measured line pixels and the background 3 px off the
-// line (byte slop 3, as the rest of the pixel suite). The stroke is
-// anti-aliased at a sub-pixel width, so a line pixel's value is the stroke's
-// coverage there: a different width, a missing segment or a dash drawn solid
-// each change a pinned value.
-//
-// MIRROR GEOMETRY (default params: axis X, angle 180 => normal -X; in-plane
-// basis tA = -Z, tB = -Y): corners c0 = (0,cy-qs,-qs), c1 = (0,cy-qs,+qs),
-// c2 = (0,cy+qs,+qs), c3 = (0,cy+qs,-qs), qs = 0.9 * arm; the CLOSING edge
-// c3 -> c0 is the one at z = -qs. The dashed normal runs t = -1.3qs .. +1.3qs
-// at world x = -t: dash 0.10qs, gap 0.07qs.
-//
-// Step 0 of task 9442: written and green on the unmodified tree, and each
-// cell proven able to redden there (the drawer's draw call struck) before the
-// drawers moved to `gl_util.drawWorldSegments`. One cell at a time:
-// VIBE3D_CELL=<name>.
+// test_tool_overlay_line_pixels.d — the tool overlay lines (Move's Ctrl-lock
+// constraint line, Radial Sweep's axis, Mirror's plane quad + dashed normal)
+// are GL draws into the cell FBO, so `/api/viewport/probe` reads them. Each
+// cell probes 7 pixels ACROSS the projected line at one world point and pins
+// the measured line pixels (anti-aliased coverage: width, a missing segment
+// or a solid dash all change them) and the background 3 px off the line.
+// Mirror at default params has normal -X, so the quad's CLOSING edge c3 -> c0
+// lies at z = -qs (qs = 0.9 arm) and the dashes (0.10qs, gap 0.07qs) run
+// t = -1.3qs .. +1.3qs at world x = -t. Task 9442 step 0: green and able to
+// redden on the tree before the drawers moved. One cell: VIBE3D_CELL=<name>.
 
 import http_client : getJson, postJson, postRaw;
 import http_command_helpers : commandBody;
