@@ -133,3 +133,42 @@ static assert(__traits(hasMember, imported!"tools.edit.edge_bevel".EdgeBevelTool
 static assert(!__traits(hasMember, imported!"tools.edit.edge_extrude".EdgeExtrudeTool,
                         "afterTopologyRebase"));
 static assert(is(imported!"tools.alignment.mirror".MirrorTool : imported!"tool".TopologyStepClient));
+
+// PIN (form item 1), by the compiler: where each client's interface members and
+// commit pair are DECLARED (`__traits(getLocation)` names the mixin's file for a
+// mixed-in member, the class's for its own). A class member hides the mixin's, so
+// this is also the proof that Mirror's and the short rebases, and Polygon Extrude's
+// dormant setter, are the ones the vtable holds.
+private bool declaredInHome(C, string m)() {
+    import std.algorithm : endsWith;
+    return __traits(getLocation, __traits(getOverloads, C, m)[0])[0].endsWith("topology_step.d");
+}
+private struct Client { string mod, cls; bool gizmo, commitPair, ownDormant; }
+private enum Client[] kComposition = [
+    Client("tools.alignment.array_tool", "ArrayTool"),
+    Client("tools.alignment.clone_tool", "CloneTool"),
+    Client("tools.alignment.mirror", "MirrorTool"),
+    Client("tools.alignment.radial_array_tool", "RadialArrayTool"),
+    Client("tools.edit.poly_inset_tool", "PolyInsetTool", false, true),
+    Client("tools.edit.vert_merge_tool", "VertexMergeTool", false, true),
+    Client("tools.deform.smooth_shift_tool", "SmoothShiftTool", true, true),
+    Client("tools.edit.edge_bevel", "EdgeBevelTool", true, true),
+    Client("tools.edit.edge_extrude", "EdgeExtrudeTool", true, true),
+    Client("tools.edit.poly_extrude", "PolyExtrudeTool", true, true, true),
+    Client("tools.edit.vertex_bevel_tool", "VertexBevelTool", true, true),
+    Client("tools.edit.vertex_extrude_tool", "VertexExtrudeTool", true, true),
+];
+static assert(kComposition.length == 12);
+unittest { static foreach (c; kComposition) {{
+    alias C = __traits(getMember, imported!(c.mod), c.cls);
+    static foreach (m; ["topologyStepMesh", "topologyStepBasis", "topologyStepCarrier",
+                        "recordTopologyStep", "topologyStepLabel", "restoreTopologyStep"])
+        static assert(declaredInHome!(C, m), c.cls ~ "." ~ m ~ " is not the client mixin's");
+    static assert(declaredInHome!(C, "setTopologyDormant") == !c.ownDormant,
+                  c.cls ~ ".setTopologyDormant: the class/mixin split moved");
+    static assert(declaredInHome!(C, "rebaseTopologyStep") == c.gizmo,
+                  c.cls ~ ".rebaseTopologyStep: the class/mixin split moved");
+    static assert(declaredInHome!(C, "commitOperation") == c.commitPair
+                  && declaredInHome!(C, "commitUncommittedEdit") == c.commitPair,
+                  c.cls ~ ": the commit pair's class/mixin split moved");
+}} }

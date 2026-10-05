@@ -842,6 +842,7 @@ public:
     version(unittest) final bool previewResetForTest() const nothrow @nogc {
         return preview_.resetForTest();
     }
+    version(unittest) final ToolHandles handlesForTest() { return toolHandles; }
     version(unittest) final bool preparedActivationForTest(size_t count,
             Vec3 first, const Vec3* livePtr, bool expectedValid,
             Vec3 expectedAnchor, Vec3 expectedBase, Vec3 expectedAxis,

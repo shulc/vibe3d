@@ -34,7 +34,17 @@ unittest { // the gizmo rebase over the live mesh: frame on it, drag state clear
     const s = tool.readInteractionForTest();
     assert(want.gizmoValid && s.anchor != want.anchor && s.dragPart != -1 && s.built
            && !tool.previewResetForTest(), "9429 rig VOID: the seed does not differ from the rebase");
-    tool.rebaseTopologyStep(MeshSnapshot.capture(mesh));
+    tool.handlesForTest().setHaul(2);
+    {
+        import mesh : beginDeliveryBatchGlobal, endDeliveryBatchGlobal;
+        beginDeliveryBatchGlobal();             // a publish registers, not delivers
+        scope(exit) endDeliveryBatchGlobal();
+        mesh.undeliveredChanges_ = 0;
+        tool.rebaseTopologyStep(MeshSnapshot.capture(mesh));
+        assert(mesh.undeliveredChanges_ != 0, "9429 gizmo rebase: the display was not refreshed");
+    }
+    assert(tool.handlesForTest().haulForPreparedTest() == -1,
+           "9429 gizmo rebase: a hauled handle survived a rebase");
     const r = tool.readInteractionForTest();
     assert(r.gizmoValid && r.anchor == want.anchor && r.baseAnchor == want.baseAnchor
            && r.widthAxis == want.widthAxis && r.gizmoSelHash == want.gizmoSelHash,
