@@ -92,6 +92,12 @@ private string[] labels() {
     return r;
 }
 private long depth() { return cast(long)labels().length; }
+private string snapTypes() {
+    foreach (st; getJson("/api/toolpipe")["stages"].array)
+        if (st["task"].str == "SNAP") return st["attrs"]["types"].str;
+    assert(0, "no SNAP stage");
+}
+private string positions() { return getJson("/api/model")["vertices"].toString; }
 private double qx() { return num(getJson("/api/model")["vertices"].array[0].array[0]); }
 private string tool() {
     auto s = getJson("/api/tool/state");
@@ -203,16 +209,25 @@ unittest {
         path(l, qPx, endPx, 8, n, n); l.button(false, endPx); l.play();
         assert(abs(qx() - snappedX) <= 1e-4,
             format("%s: the drag should snap onto T %.4f after X, got %.6f", cell, snappedX, qx()));
-        // KNOWN DIVERGENCE (backlog 9482, the undo re-push slice): ours +2 at
-        // the release (the transform re-grade's in-run entry), captured +1.
-        expectDepth(cell, "after the release", depth(), d0 + 2);
+        // The drag used the live snap state: its release records the one apply
+        // (K-G2 move_hold +1), no re-grade entry for the state it already read.
+        auto dh = fx()["undo_depth"]["move_hold"].array;
+        expectDepth(cell, "after the release", depth(), d0 + dh[1].integer);
         l.key(false, 7000); l.play();
         assert(!snapOn(), what(cell, "the key-up after the release (held 6 s) did not revert"));
-        expectDepth(cell, "after the key-up", depth(), d0 + 2);
-        // KNOWN DIVERGENCE (backlog 9482): ours puts the toggle on top,
-        // captured has the tool's apply on top. Pinned exactly so 9482 reddens it.
-        assert(labels().length >= 2 && labels()[$ - 2 .. $] == ["Transform 1 verts", "Toggle Snap"],
-            format("%s: the top two entries are %s", cell, labels()));
+        expectDepth(cell, "after the key-up", depth(), d0 + dh[2].integer);
+        // Undo never writes the snap state (findings_K-BV rule 2): the first
+        // Ctrl+Z removes the toggle record and keeps the drag; the second
+        // removes the drag. The snap state and types stay as they are.
+        const types = snapTypes();
+        l.tap(K_Z, K_Z_SCAN, KMOD_LCTRL); l.play();
+        assert(abs(qx() - snappedX) <= 1e-4 && !snapOn() && snapTypes() == types,
+            format("%s: undo 1 should remove only the toggle: x %.6f, snap %s, types '%s' (%s)",
+                cell, qx(), snapOn(), snapTypes(), labels()));
+        l.tap(K_Z, K_Z_SCAN, KMOD_LCTRL); l.play();
+        assert(abs(qx() - 0.03) <= 1e-6 && !snapOn() && snapTypes() == types,
+            format("%s: undo 2 should remove the drag: x %.6f, snap %s, types '%s' (%s)",
+                cell, qx(), snapOn(), snapTypes(), labels()));
     }
 
     // Another binding in the same delivering drag stays dropped: Ctrl+Z (a
@@ -389,23 +404,210 @@ unittest {
         expectDepth(cell, "after the redo", depth(), 1);
         assert(snapOn(), what(cell, "the redo wrote the snap state"));
     }
-    // snap-key-hold-no-button: Move with a live apply, X held 600 ms -> the
-    // record lands, the undo pops ONE entry, the state stays on.
+    // A live apply, then a recording toggle and two undos (findings_K-BV rules
+    // 1-3, K-G3 G3-s ii; task 9482): undo 1 removes the toggle and keeps the
+    // apply, undo 2 removes the apply; neither writes the snap state or types.
+    void moveApply() {
+        Log l; l.motion(qPx, 0); l.button(true, qPx); path(l, qPx, endPx, 1, 5, 5);
+        l.button(false, endPx); l.play();
+        assert(labels().length >= 1 && labels()[$ - 1] == "Transform 1 verts",
+            format("floor: the drag's apply is not on top: %s", labels()));
+    }
+    void twoUndos(string cell, void delegate() firstUndo, double applied, double raw) {
+        const types = snapTypes();
+        firstUndo();
+        assert(abs(qx() - applied) <= 1e-6 && snapOn() && snapTypes() == types,
+            format("%s: undo 1 should remove only the toggle: x %.6f, snap %s, types '%s' (%s)",
+                cell, qx(), snapOn(), snapTypes(), labels()));
+        Log l; l.tap(K_Z, K_Z_SCAN, KMOD_LCTRL); l.play();
+        assert(abs(qx() - raw) <= 1e-6 && snapOn() && snapTypes() == types,
+            format("%s: undo 2 should remove the drag: x %.6f, snap %s, types '%s' (%s)",
+                cell, qx(), snapOn(), snapTypes(), labels()));
+    }
+    // snap-key-hold-no-button: X held 600 ms with no button (K-BV, K-G2 M4).
     {
         const cell = "snap-key-hold-no-button";
         moveRig(false);
-        Log l; l.motion(qPx, 0); l.button(true, qPx); path(l, qPx, endPx, 1, 5, 5);
-        l.button(false, endPx); l.play();
+        moveApply();
+        const x1 = qx();
+        Log l; l.key(true, 1000); l.play();
+        assert(snapOn() && depth() == 2, format("%s: key-down %s, snap %s", cell, labels(), snapOn()));
+        twoUndos(cell, { Log k; k.key(false, 1600); k.play(); }, x1, 0.03);
+    }
+    // The status-bar Snap button: a command row through the UI binding, the
+    // door `?origin=ui` reaches. K-G3 G3-s: (i) no tool, +1 per click;
+    // (ii) with a live apply, +1, and the two undos as above.
+    void button() {
+        auto r = postJson("/api/command?origin=ui", "snap.toggle");
+        assert(r["status"].str == "ok", "status-button snap.toggle failed: " ~ r.toString);
+    }
+    {
+        const cell = "snap-button-no-tool";
+        noTool();
+        button();
+        expectDepth(cell, "after click 1", depth(), 1);
+        assert(snapOn(), what(cell, "click 1 did not turn snapping on"));
+        button();
+        expectDepth(cell, "after click 2", depth(), 2);
+        assert(!snapOn(), what(cell, "click 2 did not turn snapping off"));
+    }
+    {
+        const cell = "snap-button-live-apply";
+        moveRig(false);
+        moveApply();
+        const x1 = qx();
+        button();
+        assert(snapOn() && depth() == 2, format("%s: click %s, snap %s", cell, labels(), snapOn()));
+        twoUndos(cell, { Log k; k.tap(K_Z, K_Z_SCAN, KMOD_LCTRL); k.play(); }, x1, 0.03);
+    }
+    // ui-pipe-attr-live-apply: the enabled state is no run term — a UI-door
+    // enabled write over a live apply re-grades nothing (K-BV rule 2).
+    {
+        const cell = "ui-pipe-attr-live-apply";
+        moveRig(false);
+        moveApply();
         const before = labels();
-        l.key(true, 1000); l.play();
-        // KNOWN DIVERGENCE (backlog 9482, the undo re-push slice): ours records
-        // the toggle on top and the undo removes it; captured removes Transform.
-        assert(labels() == before ~ "Toggle Snap",
-            format("%s: after the key-down %s, before %s", cell, labels(), before));
-        l.key(false, 1600); l.play();
-        assert(labels() == before,
-            format("%s: the undo did not remove Toggle Snap: %s, before %s", cell, labels(), before));
-        assert(snapOn(), what(cell, "the undo restored the snap state"));
+        auto r = postJson("/api/command?origin=ui", "tool.pipe.attr snap enabled true");
+        assert(r["status"].str == "ok", what(cell, r.toString));
+        Log l; l.motion(qPx, 0); l.play();
+        assert(labels() == before, format("%s: %s, before %s", cell, labels(), before));
+    }
+    // script-types-live-apply: a snap-TYPES write over a live apply is no
+    // re-grade either, and undoing the apply leaves the types (K-G4 rule 4).
+    {
+        const cell = "script-types-live-apply";
+        moveRig(false);
+        moveApply();
+        penCommand(`tool.pipe.attr snap types "edge"`);
+        Log l; l.motion(qPx, 0); l.play();
+        assert(labels() == ["Transform 1 verts"] && snapTypes() == "edge",
+            format("%s: %s, types '%s'", cell, labels(), snapTypes()));
+        l.tap(K_Z, K_Z_SCAN, KMOD_LCTRL); l.play();
+        assert(depth() == 0 && abs(qx() - 0.03) <= 1e-6 && snapTypes() == "edge",
+            format("%s: the undo %s, x %.6f, types '%s' (expected the drag gone, 'edge')",
+                cell, labels(), qx(), snapTypes()));
+    }
+    // K-G4 (findings_K-G4, task 10050): drag 1, a snap change, drag 2, then
+    // Ctrl+Z x3 in one live Move session. One record per drag; the change's
+    // record sits between them (button, X tap, a snap-TYPE change) or is
+    // removed by its own key-up undo (X held 600 ms); no undo writes the snap
+    // state or types. Positions: v0 (x, z) — origin (0.03, 0.07), after drag 1
+    // (0.12, 0.07), after drag 2 (0.12, 0.16); the walk is the fixture's.
+    double[2] v0xz() {
+        auto v = getJson("/api/model")["vertices"].array[0].array;
+        return [num(v[0]), num(v[2])];
+    }
+    void drag(Vec3 a, Vec3 b) {
+        const int[2] pa = worldPixel(a), pb = worldPixel(b);
+        Log l; l.motion(pa, 0); l.button(true, pa); path(l, pa, pb, 1, 10, 10);
+        l.button(false, pb); l.play();
+    }
+    enum double[2] O = [0.03, 0.07], D1 = [0.12, 0.07], D12 = [0.12, 0.16];
+    foreach (kind; ["G4_A", "G4_Bt", "G4_B", "G4_C", "G4_K"]) {
+        const cell = kind;
+        moveRig(false);
+        penCommand("tool.set move off");    // an arming record of its own (the
+        penCommand("history.clear");        // fixture's E23): Z3 of B / K drops
+        penCommand("tool.set move");        // the tool
+        bool state() { return kind == "G4_C" ? snapTypes() == "vertex,edge" : snapOn(); }
+        void at(string step, double[2] p, bool st) {
+            const got = v0xz();
+            assert(abs(got[0] - p[0]) <= 1.5 * kPx && abs(got[1] - p[1]) <= 1.5 * kPx && state() == st,
+                format("%s %s: v0 (%.4f, %.4f), expected (%.4f, %.4f); snap/type %s, expected %s (%s)",
+                    cell, step, got[0], got[1], p[0], p[1], state(), st, labels()));
+        }
+        drag(Vec3(0.03f, 1, 0.07f), Vec3(0.12f, 1, 0.07f));
+        at("after drag 1", D1, false);
+        const d1 = depth();
+        Log l;
+        final switch (kind) {
+            case "G4_A": button(); break;
+            case "G4_Bt": l.key(true, 1000); l.key(false, 1150); l.play(); break;
+            case "G4_B": l.key(true, 1000); l.key(false, 1600); l.play(); break;
+            case "G4_C":
+                auto r = postJson("/api/command?origin=ui", "snap.toggleType edge");
+                assert(r["status"].str == "ok", what(cell, r.toString));
+                break;
+            case "G4_K": break;
+        }
+        const bool changed = kind != "G4_K";
+        const bool between = changed && kind != "G4_B";
+        assert(depth() == d1 + (between ? 1 : 0),
+            format("%s: the change recorded %s (expected %d entries)", cell, labels(), d1 + (between ? 1 : 0)));
+        drag(Vec3(0.12f, 1, 0.07f), Vec3(0.12f, 1, 0.16f));
+        at("after drag 2", D12, changed);
+        l.tap(K_Z, K_Z_SCAN, KMOD_LCTRL); l.play();
+        at("Z1 (removes drag 2)", D1, changed);
+        l.tap(K_Z, K_Z_SCAN, KMOD_LCTRL); l.play();
+        at(between ? "Z2 (removes the change)" : "Z2 (removes drag 1)", between ? D1 : O, changed);
+        l.tap(K_Z, K_Z_SCAN, KMOD_LCTRL); l.play();
+        at(between ? "Z3 (removes drag 1)" : "Z3 (removes the arming record)", O, changed);
+        assert(between ? tool() == "xfrm" : tool() == "",
+            format("%s Z3: tool '%s'", cell, tool()));
+        if (kind == "G4_C") penCommand(`tool.pipe.attr snap types "vertex"`);
+        penCommand("tool.set move off");
+    }
+    // Polygon Bevel with a live haul, BV_B (button) and BV_X (X held 571 ms,
+    // no button), findings_K-BV: undo 1 removes the toggle, the bevel stays;
+    // undo 2 removes the haul; snap stays on.
+    foreach (viaKey; [false, true]) {
+        const cell = viaKey ? "bevel-BV_X" : "bevel-BV_B";
+        auto r = postJson("/api/command", commandBody("scene.reset"));
+        assert(r["status"].str == "ok");
+        penCommand("tool.pipe.attr snap enabled false");
+        penCommand("select.typeFrom polygon");
+        auto sel = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0]}`));
+        assert(sel["status"].str == "ok", what(cell, sel.toString));
+        const cube = positions();
+        penCommand("tool.set poly.bevel on");
+        Log l; l.motion([5, 5], 0); l.play();
+        int[2] h; bool found;
+        foreach (p; getJson("/api/tool/handles")["handles"]["parts"].array)
+            if (p["part"].integer == 0) {
+                h = [cast(int)(num(p["screen"].array[0]) + 0.5), cast(int)(num(p["screen"].array[1]) + 0.5)];
+                found = true;
+            }
+        assert(found && tool() == "polyBevel", what(cell, "floor: no shift handle / tool not armed"));
+        const v0 = positions();
+        const int[2] h2 = [h[0] - 30, h[1] - 51];
+        l.motion(h, 0); l.button(true, h); path(l, h, h2, 1, 6, 6); l.button(false, h2); l.play();
+        const v1 = positions();
+        assert(v1 != v0, what(cell, "floor: the haul moved nothing"));
+        const types = snapTypes();
+        if (viaKey) { l.key(true, 1000); l.play(); } else button();
+        assert(snapOn(), what(cell, "the toggle did not turn snapping on"));
+        if (viaKey) l.key(false, 1571); else l.tap(K_Z, K_Z_SCAN, KMOD_LCTRL);
+        l.play();
+        assert(positions() == v1 && snapOn() && snapTypes() == types,
+            format("%s: undo 1 should remove only the toggle: bevel kept %s, snap %s, types '%s' (%s)",
+                cell, positions() == v1, snapOn(), snapTypes(), labels()));
+        l.tap(K_Z, K_Z_SCAN, KMOD_LCTRL); l.play();
+        // The haul is gone. Ours also pops the arm's zero-width ring with it
+        // (the UI command committed the window as one row: back to the cube,
+        // 8 vertices); the reference keeps that ring (BV_X: 12 v, inset 0).
+        assert(positions() == cube && snapOn() && snapTypes() == types,
+            format("%s: undo 2 should remove the haul: %d verts, snap %s, types '%s' (%s)",
+                cell, getJson("/api/model")["vertexCount"].integer, snapOn(), snapTypes(), labels()));
+        penCommand("tool.set poly.bevel off");
+    }
+    // snap-type-ui-redo-inert: a UI snap-type change records one entry whose
+    // undo and redo never write the types (K-G4 G4_C, rule 4); the script door
+    // records nothing (gap 563's door).
+    {
+        const cell = "snap-type-ui-redo-inert";
+        noTool();
+        penCommand(`tool.pipe.attr snap types "vertex"`);
+        penCommand("history.clear");
+        penCommand("snap.toggleType edge");
+        assert(depth() == 0 && snapTypes() == "vertex,edge",
+            format("%s: script door %s, types '%s'", cell, labels(), snapTypes()));
+        auto r = postJson("/api/command?origin=ui", "snap.toggleType edge");
+        assert(r["status"].str == "ok", what(cell, r.toString));
+        assert(depth() == 1 && snapTypes() == "vertex", format("%s: %s, types '%s'", cell, labels(), snapTypes()));
+        Log l; l.tap(K_Z, K_Z_SCAN, KMOD_LCTRL); l.play();
+        assert(depth() == 0 && snapTypes() == "vertex", format("%s: undo %s, types '%s'", cell, labels(), snapTypes()));
+        l.tap(K_Z, K_Z_SCAN, KMOD_LCTRL | 1); l.play();
+        assert(depth() == 1 && snapTypes() == "vertex", format("%s: redo %s, types '%s'", cell, labels(), snapTypes()));
     }
     // A non-momentary command key held 600 ms runs no key-up law ("[" =
     // select.invert, one entry that stays).

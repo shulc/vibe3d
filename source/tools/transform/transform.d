@@ -1403,11 +1403,11 @@ protected:
 
     /// P-C: the single SymmetryStage — the config source of truth for the
     /// symmetry bank. Used by the R/S commitEdit gesture-commit
-    /// hooks to snapshot the RUN-START snap + symmetry config and compose a
+    /// hooks to snapshot the RUN-START symmetry config and compose a
     /// config-restore alongside the accumulator + falloff hooks (uniform hook
     /// family). `final` + distinctly named for the same vtable-collision reason
     /// as falloffStageForHooks (the wrapper keeps its OWN
-    /// activeSnapStage/activeSymmetryStage accessors).
+    /// activeSymmetryStage accessor).
     final SymmetryStage symmetryStageForHooks() const {
         import toolpipe.pipeline : g_pipeCtx;
         import toolpipe.stage    : TaskCode;

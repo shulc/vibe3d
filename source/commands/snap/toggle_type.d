@@ -31,7 +31,13 @@ class SnapToggleTypeCommand : Command {
     override string name()  const { return "snap.toggleType"; }
     override string label() const { return "Toggle Snap Type"; }
 
-    override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
+    // A UI type change with no button held records one entry whose undo / redo
+    // never touch the types (findings_K-G4 G4_C, rule 4; script origin: none).
+    override CmdFlags cmdFlags() const {
+        import held_gesture_buttons : g_heldGestureButtons;
+        return origin == CommandOrigin.ui && !g_heldGestureButtons.any
+            ? CmdFlags.SideEffect | CmdFlags.UndoForce : CmdFlags.SideEffect;
+    }
 
     /// The declared argument, and therefore positional slot 0 (task 4062).
     override Param[] params() {
@@ -40,7 +46,10 @@ class SnapToggleTypeCommand : Command {
         );
     }
 
+    private bool applied_;
     protected override bool applyImpl() {
+        if (applied_) return true;   // redo: inert
+        applied_ = true;
         auto sn = liveSnapStage();
         if (sn is null)
             throw new Exception("snap.toggleType: SNAP stage not registered");

@@ -166,7 +166,7 @@ import toolpipe.stages.falloff : FalloffStage, FalloffSetSnapshot,
                                  restoreFalloffSetFromCombined;
 import toolpipe.stages.actcenter : ActionCenterStage;
 import toolpipe.stages.axis : AxisStage;
-import toolpipe.stages.snap : SnapStage, liveSnapStage;
+import toolpipe.stages.snap : SnapStage;
 import toolpipe.stages.symmetry : SymmetryStage;
 import toolpipe.packets  : FalloffType, ElementMode, ElementConnect,
                           FalloffConfig, FalloffPacket, SnapPacket,
@@ -1768,7 +1768,6 @@ public:
                 SnapPacket     liveSn = currentSnap(vts);
                 SymmetryPacket liveSy = currentSymmetry(vts);
                 if (!falloffPacketsEqual(liveF, dragFalloff)
-                 || !snapPacketsEqual(liveSn, dragSnap)
                  || !symmetryPacketsEqual(liveSy, dragSymmetry)) {
                     Vec3[] weightSample = mesh.vertices.dup;
                     // Re-read ALL THREE live packets before the recompute so
@@ -1811,7 +1810,6 @@ public:
                 SnapPacket     liveSn = currentSnap(vts);
                 SymmetryPacket liveSy = currentSymmetry(vts);
                 if (!falloffPacketsEqual(liveF, dragFalloff)
-                 || !snapPacketsEqual(liveSn, dragSnap)
                  || !symmetryPacketsEqual(liveSy, dragSymmetry)) {
                     // Capture the pre-recompute (post-gesture) geometry LIVE for
                     // the once-per-run anchor (OBJ-3 W1: live, never frozen).
@@ -1963,8 +1961,9 @@ public:
         p.liveFalloff = currentFalloff(vts).ownedDup();
         p.liveSnap = currentSnap(vts);
         p.liveSymmetry = currentSymmetry(vts).ownedDup();
+        // Snap settings are no run term: undo never writes them (findings_K-G4
+        // rule 4, K-BV rule 2; task 9482), so a snap change re-grades nothing.
         p.packetChanged = !falloffPacketsEqual(p.liveFalloff, dragFalloff) ||
-            !snapPacketsEqual(p.liveSnap, dragSnap) ||
             !symmetryPacketsEqual(p.liveSymmetry, dragSymmetry);
         if (!p.selectionBoundary && !p.slotBoundary && activeDrag is null &&
             p.bankHeld && p.packetChanged) {
@@ -6076,11 +6075,7 @@ public:
                     image.nextSoftPin, pinEnd);
                 FalloffSetSnapshot fSnap =
                     snapshotFalloffSet(activeFalloffStages());
-                SnapPacket snSnap; bool haveSn;
                 SymmetryPacket sySnap; bool haveSy;
-                if (auto sn = activeSnapStage()) {
-                    snSnap = sn.snapshotConfigToPacket(); haveSn = true;
-                }
                 if (auto sy = activeSymmetryStage()) {
                     sySnap = sy.snapshotConfigToPacket(); haveSy = true;
                 }
@@ -6093,15 +6088,11 @@ public:
                 if (setHooks !is null) setHooks(
                     () {
                         gh.apply(); restoreFalloffSet(fSnap);
-                        if (haveSn) if (auto sn = activeSnapStage())
-                            sn.restoreConfigFromPacket(snSnap);
                         if (haveSy) if (auto sy = activeSymmetryStage())
                             sy.restoreConfigFromPacket(sySnap);
                     },
                     () {
                         gh.revert(); restoreFalloffSet(fSnap);
-                        if (haveSn) if (auto sn = activeSnapStage())
-                            sn.restoreConfigFromPacket(snSnap);
                         if (haveSy) if (auto sy = activeSymmetryStage())
                             sy.restoreConfigFromPacket(sySnap);
                     });
@@ -6907,15 +6898,9 @@ private:
                    "frame m·mInv not identity (orthonormality violated)");
     }
 
-    // P-C: the single SNAP / SYMM stages — config sources of truth for the
-    // snap + symmetry banks. The refire entry's config-restore hooks + the
-    // gesture-commit hooks restore their config through these (mirrors
-    // activeFalloffStage). Wrapper-owned virtuals; SNAP resolves through the
-    // one finder `liveSnapStage()`; SYMM keeps the base
-    // TransformTool's `final` symmetryStageForHooks() for the R/S sub-tools.
-    SnapStage activeSnapStage() const {
-        return liveSnapStage();
-    }
+    // P-C: the single SYMM stage — the config source of truth the refire and
+    // gesture-commit hooks restore through (mirrors activeFalloffStage); the
+    // R/S sub-tools keep the base TransformTool's `final` symmetryStageForHooks().
     SymmetryStage activeSymmetryStage() const {
         if (g_pipeCtx is null) return null;
         return cast(SymmetryStage) g_pipeCtx.pipeline.findByTask(TaskCode.Symm);
@@ -7375,7 +7360,6 @@ private:
 
         const preFCopy = preF.ownedDup();
         const postFCopy = postF.ownedDup();
-        const preSnCopy = preSn, postSnCopy = postSn;
         const preSyCopy = preSy.ownedDup();
         const postSyCopy = postSy.ownedDup();
         const preElementWeightsCopy = preElementWeights.ownedDup();
@@ -7386,8 +7370,6 @@ private:
         p.command.setHooks(
             () {
                 restoreFalloffSetFromCombined(activeFalloffStages(), postFCopy);
-                if (auto sn = activeSnapStage())
-                    sn.restoreConfigFromPacket(postSnCopy);
                 if (auto sy = activeSymmetryStage())
                     sy.restoreConfigFromPacket(postSyCopy);
                 run = xfNow;
@@ -7399,8 +7381,6 @@ private:
             },
             () {
                 restoreFalloffSetFromCombined(activeFalloffStages(), preFCopy);
-                if (auto sn = activeSnapStage())
-                    sn.restoreConfigFromPacket(preSnCopy);
                 if (auto sy = activeSymmetryStage())
                     sy.restoreConfigFromPacket(preSyCopy);
                 run = xfNow;

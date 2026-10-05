@@ -326,14 +326,8 @@ double queryFalloffSizeX() {
     return v[0].floating;
 }
 
-// P-C config-restore witnesses, read from /api/toolpipe/eval (which publishes
-// the live SnapPacket.enabled + SymmetryPacket.enabled). Snap has no geometry
-// signal at idle, so its enabled flag is the ONLY observable for its
-// config-restore; symmetry's enabled flag corroborates the mirror-geometry
-// witness.
-bool querySnapEnabled() {
-    return getJson("/api/toolpipe/eval")["snap"]["enabled"].boolean;
-}
+// P-C config-restore witness, read from /api/toolpipe/eval (the live
+// SymmetryPacket.enabled); it corroborates the mirror-geometry witness.
 bool querySymmetryEnabled() {
     return getJson("/api/toolpipe/eval")["symmetry"]["enabled"].boolean;
 }
@@ -1546,60 +1540,9 @@ unittest {
     drainHistory();
 }
 
-// ===========================================================================
-// (P-C SNAP MID-RUN) A snap toggle AFTER a committed move gesture participates
-// in the generalized refire trigger + the uniform config-restore hook family.
-// Snap is a CURSOR-time op (snapCursor during the live drag), NOT part of the
-// composed absolute fold — so a snap-only toggle at idle re-grades to
-// byte-identical geometry. Its P-C role is config-restore: an in-session /
-// post-drop undo restores the snap config (enabled) together with the geometry.
-// ===========================================================================
-unittest {
-    establishCubeBaseline();
-    cmd("tool.set move");
-    configTightRadial();                         // gives a stable falloff baseline
-    cmd("tool.pipe.attr snap enabled false");    // OFF at mouse-down
-    settle();
-    long floor = undoCount();
-    assert(!querySnapEnabled(), "pre-condition: snap starts OFF");
-
-    moveArrowGesture(floor + 1);
-    assert(undoCount() == floor + 1, "move gesture records one in-session entry");
-    auto v0AfterG = vert(0);
-
-    // Toggle snap ON mid-run. The trigger fires (snap packet changed) → a
-    // re-grade entry is recorded carrying the snap config-restore hooks. Geometry
-    // is byte-identical (snap not in the fold); the witness here is the CONFIG.
-    cmd("tool.pipe.attr snap enabled true");
-    settle();
-    assert(querySnapEnabled(), "snap is now enabled");
-    assert(inSessionCount() >= 2,
-        "the snap toggle re-grade APPENDS a tagged in-session entry; got "
-        ~ inSessionCount().to!string);
-
-    // In-session Ctrl+Z: restores the snap config (enabled→false). Geometry stays
-    // at the post-gesture position (the snap-only re-grade moved nothing).
-    playAndWait(ctrlZ(50.0));
-    settle();
-    assert(!querySnapEnabled(),
-        "P-C: in-session Ctrl+Z restores the snap config (enabled 1→0)");
-    assert(vertNear(vert(0), v0AfterG),
-        "the snap-only re-grade left geometry unchanged (snap not in the fold)");
-
-    // Post-drop: drop + one undo restores the cube AND the run-start snap config.
-    cmd("tool.set move off");
-    settle();
-    postJson("/api/command", commandBody("history.undo"));
-    settle();
-    assertVertex(6, 0.5, 0.5, 0.5, "post-drop undo reverts the move run to the cube");
-    assert(!querySnapEnabled(),
-        "P-C uniform-hook: post-drop undo restores the RUN-START snap config "
-        ~ "(off) on the merged run");
-
-    cmd("tool.pipe.attr snap enabled false");
-    cmd("tool.pipe.attr falloff type none");
-    drainHistory();
-}
+// (P-C SNAP MID-RUN) retired by task 9482: undo never writes the snap enabled
+// state and an enabled toggle is no re-grade (findings_K-BV rule 2); the cells
+// live in tests/test_snap_key_held.d.
 
 // ===========================================================================
 // (P-C ACEN-MODE BOUNDARY) An action-center MODE change mid-run is a session

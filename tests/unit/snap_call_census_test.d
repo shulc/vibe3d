@@ -161,8 +161,7 @@ unittest // one packet read, one finder: the deleted copies stay deleted
                          "source/tools/edit/topology_pen/tool.d",
                          "source/tools/edit/topology_pen/tool.d", "source/tools/edit/topology_pen/tool.d",
                          "source/tools/edit/topology_pen/tool.d", "source/tools/edit/topology_pen/tool.d",
-                         "source/tools/slice/slice_tool.d", "source/tools/slice/slice_tool.d",
-                         "source/tools/transform/xfrm_transform.d"],
+                         "source/tools/slice/slice_tool.d", "source/tools/slice/slice_tool.d"],
         format("liveSnapStage() call roster (%s): %s", liveCalls.length, liveCalls));
     assert(faceCalls == ["source/tools/create/box.d", "source/tools/create/box.d"],
         format("snapFace must have exactly its two face callers: %s", faceCalls));
