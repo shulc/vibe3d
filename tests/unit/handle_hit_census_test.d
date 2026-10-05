@@ -221,9 +221,11 @@ unittest {
     int bx, by;
     Handler ring;
     bool found;
+    Vec3 boxBack;
     foreach (back; [Vec3(0.3f, 0.25f, 1), xFront, zFront, Vec3(1, 0.25f, 0.3f)]) {
         if (found) break;
         vp = camera(back);
+        boxBack = back;
         float cx, cy, cz;
         assert(projectToWindowFull(Vec3(0, 0, 0), vp, cx, cy, cz));
         foreach (Handler arc; [cast(Handler)rt.handler.arcX, rt.handler.arcY, rt.handler.arcZ])
@@ -234,6 +236,31 @@ unittest {
             }
     }
     assert(found, "rig: no press on both the centre box and a rotate ring");
+    // The view ring is not covered by the law either: a press nearer to it than
+    // to a principal ring still takes the principal ring registered before it.
+    int vx, vy;
+    found = false;
+    foreach (back; [Vec3(0.3f, 0.25f, 1), xFront, zFront, Vec3(1, 0.25f, 0.3f), Vec3(-0.5f, 0.15f, 0.866f)]) {
+        if (found) break;
+        vp = camera(back);
+        foreach (y; 100 .. 700) foreach (x; 340 .. 940) {
+            if (found || !rt.handler.arcView.isVisible() || !rt.handler.arcView.hitTest(x, y, vp)) continue;
+            foreach (Handler arc; [cast(Handler)rt.handler.arcX, rt.handler.arcY, rt.handler.arcZ])
+                if (!found && arc.isVisible() && arc.hitTest(x, y, vp)
+                    && rt.handler.arcView.aiScreenDistance(x, y, vp) + 1 < arc.aiScreenDistance(x, y, vp)) {
+                    vx = x; vy = y; found = true;
+                }
+        }
+    }
+    assert(found, "rig: no press nearer the view ring than a principal ring");
+    {
+        auto th = new ToolHandles;
+        th.begin(); rt.registerHandles(th, 10);
+        th.rule = HitRule.nearestOnScreen;
+        immutable int w = th.test(vx, vy, vp);
+        assert(w >= 10 && w <= 12, "the view ring must not out-rank a principal ring");
+    }
+    vp = camera(boxBack);
     foreach (boxFirst; [true, false]) {
         auto th = new ToolHandles;
         th.begin();

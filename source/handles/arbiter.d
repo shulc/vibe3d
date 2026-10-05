@@ -86,10 +86,11 @@ void setHandleExploreHook(HandleExploreHook hook) {
 // ---------------------------------------------------------------------------
 
 /// How the arbiter resolves an overlap. `firstRegistered` (the default): the
-/// first registered hit wins. `nearestOnScreen`: of two STROKE hits (shafts,
-/// rings) the nearer on screen wins, registration order breaking ties; an
-/// area part (box, disc, head) keeps its registration precedence. The measured
-/// law of the transform gizmo (capture K-HO, 12/12 presses, all stroke pairs),
+/// first registered hit wins. `nearestOnScreen`: of two hits that are both
+/// `rankedByScreenDistance` (axis shafts, principal rings) the nearer on screen
+/// wins, registration order breaking ties; any other part (box, disc, head,
+/// view ring) keeps its registration precedence. The measured law of the
+/// transform gizmo (capture K-HO, 12/12 presses, shaft and ring pairs only),
 /// which a client opts into; clients it was not measured on keep the default.
 enum HitRule { firstRegistered, nearestOnScreen }
 
@@ -167,7 +168,7 @@ class ToolHandles {
         aiCandidateParts.length = 0;
         int firstPart = -1;
         size_t defaultCandidate = size_t.max;
-        bool winnerIsStroke;
+        bool winnerRanked;
 
         foreach (priority, ref e; entries) {
             if (!e.h.isVisible()) continue;
@@ -181,11 +182,12 @@ class ToolHandles {
             c.priorityFromCurrentRules = cast(float)priority;
             c.hasScreenPosition = true;
             c.screenPosition = [cast(float)mx, cast(float)my];
-            if (firstPart < 0 || (rule == HitRule.nearestOnScreen && winnerIsStroke && e.h.isStroke()
+            if (firstPart < 0 || (rule == HitRule.nearestOnScreen && winnerRanked
+                                  && e.h.rankedByScreenDistance()
                                   && c.screenDist < aiCandidates[defaultCandidate].screenDist)) {
                 firstPart = e.part;
                 defaultCandidate = aiCandidates.length;
-                winnerIsStroke = e.h.isStroke();
+                winnerRanked = e.h.rankedByScreenDistance();
             }
             aiCandidates ~= c;
             aiCandidateParts ~= e.part;
