@@ -11,6 +11,9 @@ import std.math : fabs, sqrt;
 void main() {}
 
 alias baseUrl = testBaseUrl;
+// Measured (task 9445): the reset cube plus the 4-segment prim.cube put 8
+// vertices on each of the y=-0.5 and y=+0.5 rows.
+enum size_t BOTTOM_ROW = 8, TOP_ROW = 8;
 
 
 void cmd(string s) {
@@ -83,21 +86,27 @@ unittest { // push with linear falloff: top row pushes full dist,
     cmd("tool.pipe.attr falloff end \"0,-0.5,0\"");
     cmd("tool.pipe.attr falloff shape linear");
     cmd("tool.attr xfrm.push dist 0.3");
+    auto pre = dumpVerts();
     cmd("tool.doApply");
     auto verts = dumpVerts();
-    // Bottom row (y=-0.5) weight=0 → should still be on |x|=|z|=0.5.
-    foreach (v; verts) {
-        if (approxEq(v[1], -0.5)) {
-            assert(approxEq(fabs(v[0]), 0.5),
-                "y=-0.5 vert should keep |x|=0.5 (push weight 0), got "
-                ~ v[0].to!string);
-            assert(approxEq(fabs(v[2]), 0.5));
+    // Rows are classified by the PRE-push position (task 9445): selecting
+    // them by the result let an unweighted push skip the bottom-row checks.
+    size_t bottom, top;
+    // Bottom row (y=-0.5) weight=0 → must not move at all.
+    foreach (i, v; verts) {
+        if (approxEq(pre[i][1], -0.5)) {
+            ++bottom;
+            foreach (c; 0 .. 3)
+                assert(approxEq(v[c], pre[i][c]),
+                    "y=-0.5 vert " ~ i.to!string ~ " moved (push weight 0): axis "
+                    ~ c.to!string ~ " " ~ pre[i][c].to!string ~ " -> " ~ v[c].to!string);
         }
     }
     // Top row (y=+0.5) weight=1 → corners shifted along their smooth
     // normal (top corners: (sign·1/sqrt(3), 1/sqrt(3), sign·1/sqrt(3))).
-    foreach (v; verts) {
-        if (v[1] > 0.5) {
+    foreach (i, v; verts) {
+        if (approxEq(pre[i][1], 0.5)) {
+            ++top;
             // y was 0.5, push moved it in +Y direction by dist*1/sqrt(3) ≈ 0.173.
             // Expected new y = 0.5 + 0.3/sqrt(3) ≈ 0.5 + 0.1732 ≈ 0.673.
             double expectedY = 0.5 + 0.3 / sqrt(3.0);
@@ -106,6 +115,8 @@ unittest { // push with linear falloff: top row pushes full dist,
                 ~ ", got " ~ v[1].to!string);
         }
     }
+    assert(bottom == BOTTOM_ROW && top == TOP_ROW,
+        "push falloff rows: bottom " ~ bottom.to!string ~ ", top " ~ top.to!string);
 }
 
 unittest { // negative dist ⇒ inward push (collapse direction)
