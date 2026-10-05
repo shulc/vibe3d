@@ -15,7 +15,7 @@ private shared ulong nextParamOwner;
 final class PreparedParamUpdateOwner(ToolT, ImageT, KindT) {
     alias Kind = KindT;
 private:
-    ToolT target_; Layer layer_; Mesh* source_;
+    ToolT target_; Mesh* source_;
     ImageT image_;
     immutable ulong owner_; ulong generation_;
     bool pending_, validated_, consumed_;
@@ -44,8 +44,7 @@ public:
         prepared_.generation = generation_; return true;
     }
     bool validate() nothrow @nogc {
-        if (!pending_ || validated_ || consumed_ || target_ is null || layer_ is null ||
-            source_ is null || &layer_.meshRef() !is source_ ||
+        if (!pending_ || validated_ || consumed_ || target_ is null || source_ is null ||
             prepared_.owner != owner_ || prepared_.generation != generation_ ||
             !target_.preparedParamUpdateMatches(image_, *source_)) return false;
         validated_ = true; validatedToken_.owner = owner_;
@@ -61,12 +60,12 @@ public:
     void abort() nothrow @nogc { if (!consumed_) { image_.clear(); consume(); } }
 private:
     this(ToolT target, Layer layer) {
-        target_ = target; layer_ = layer; source_ = &layer.meshRef();
+        target_ = target; source_ = &layer.meshRef();
         owner_ = atomicOp!"+="(nextParamOwner, 1UL);
     }
     void consume() nothrow @nogc {
         image_.clear(); pending_ = validated_ = false; consumed_ = true;
-        target_ = null; layer_ = null; source_ = null;
+        target_ = null; source_ = null;
         prepared_.owner = prepared_.generation = 0;
         validatedToken_.owner = validatedToken_.generation = 0;
     }

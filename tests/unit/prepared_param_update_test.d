@@ -58,76 +58,59 @@ private mixin template LitRow(ToolT, KindT, EditMode m, alias pick, alias countF
     static size_t count(ref Mesh mesh) { return countFn(mesh); }
     enum previewSign = sign;
     static void stale(Tool t) { t.mutatePreparedParamForTest(staleValue); }
+    static void seed(Tool t, ref Mesh m, bool i) { t.seedPreparedParamForTest(m, i); }
+    enum builtBefore = false;   // a row's own declaration overrides it
 }
 private struct PolyInsetRow {
     mixin LitRow!(PolyInsetTool, PreparedPolyInsetParamKind, EditMode.Polygons,
         pickFace, vertexCount, 1, 17.0f);
-    static void seed(Tool t, ref Mesh m, bool i) { t.seedPreparedParamForTest(m, i); }
     static bool built(Tool t) { return t.preparedParamBuiltForTest(); }
-    enum builtBefore = false;
 }
 private struct PolyBevelRow {
     mixin LitRow!(PolyBevelTool, PreparedPolyBevelParamKind, EditMode.Polygons,
         pickFace, vertexCount, 1, 17.0f);
-    static void seed(Tool t, ref Mesh m, bool i) { t.seedPreparedParamForTest(m, i); }
     static bool built(Tool t) { return t.preparedParamInstalledForTest(); }
-    enum builtBefore = false;
 }
 private struct PolyExtrudeRow {
     mixin LitRow!(PolyExtrudeTool, PreparedPolyExtrudeParamKind, EditMode.Polygons,
         pickFace, vertexCount, 1, 17.0f);
-    static void seed(Tool t, ref Mesh m, bool i) { t.seedPreparedParamForTest(m, i); }
     static bool built(Tool t) { return t.preparedParamBuiltForTest(); }
-    enum builtBefore = false;
 }
 private struct EdgeBevelRow {
     mixin LitRow!(EdgeBevelTool, PreparedEdgeBevelParamKind, EditMode.Edges,
         pickEdge, vertexCount, 1, 17.0f);
-    static void seed(Tool t, ref Mesh m, bool i) { t.seedPreparedParamForTest(m, i); }
     static bool built(Tool t) { return t.preparedParamInstalledForTest(); }
-    enum builtBefore = false;
 }
 private struct EdgeExtrudeRow {
     mixin LitRow!(EdgeExtrudeTool, PreparedEdgeExtrudeParamKind, EditMode.Edges,
         pickEdge, vertexCount, 1, 17.0f);
-    static void seed(Tool t, ref Mesh m, bool i) { t.seedPreparedParamForTest(m, i); }
     static bool built(Tool t) { return t.preparedParamBuiltForTest(); }
-    enum builtBefore = false;
 }
 private struct ReductionRow {
     mixin LitRow!(ReductionTool, PreparedReductionParamKind, EditMode.Polygons,
         triangulateAll, faceCount, -1, 0.25f);
-    static void seed(Tool t, ref Mesh m, bool i) { t.seedPreparedParamForTest(m, i); }
     static bool built(Tool t) { return t.preparedParamBuiltForTest(); }
-    enum builtBefore = false;
 }
 private struct SmoothShiftRow {
     mixin LitRow!(SmoothShiftTool, PreparedSmoothShiftParamKind, EditMode.Polygons,
         pickFace, faceCount, 1, 17.0f);
-    static void seed(Tool t, ref Mesh m, bool i) { t.seedPreparedParamForTest(m, i); }
     static bool built(Tool t) { return t.preparedParamBuiltForTest(); }
     enum builtBefore = true;   // its seed marks an interactive preview built
 }
 private struct VertexMergeRow {
     mixin LitRow!(VertexMergeTool, PreparedVertexMergeParamKind, EditMode.Vertices,
         pickTwoVertices, vertexCount, -1, 0.25f);
-    static void seed(Tool t, ref Mesh m, bool i) { t.seedPreparedParamForTest(m, i); }
     static bool built(Tool t) { return t.preparedParamBuiltForTest(); }
-    enum builtBefore = false;
 }
 private struct VertexBevelRow {
     mixin LitRow!(VertexBevelTool, PreparedVertexBevelParamKind, EditMode.Vertices,
         pickVertex, vertexCount, 1, 0.4f);
-    static void seed(Tool t, ref Mesh m, bool i) { t.seedPreparedParamForTest(m, i); }
     static bool built(Tool t) { return t.preparedParamBuiltForTest(); }
-    enum builtBefore = false;
 }
 private struct VertexExtrudeRow {
     mixin LitRow!(VertexExtrudeTool, PreparedVertexExtrudeParamKind, EditMode.Vertices,
         pickVertex, vertexCount, 1, 0.4f);
-    static void seed(Tool t, ref Mesh m, bool i) { t.seedPreparedParamForTest(m, i); }
     static bool built(Tool t) { return t.preparedParamBuiltForTest(); }
-    enum builtBefore = false;
 }
 private struct ArrayRow {
     alias Tool = ArrayTool; alias Kind = PreparedArrayParamKind;
@@ -399,7 +382,15 @@ unittest {
     assert(!v.context.prepareParamUpdate(O.prepare(v.tool, v.layer)),
         "a validated context enlisted another slot");
 
-    // A throw while enlisting discards the whole transaction.
+    // A throw while enlisting aborts the owner and discards the whole transaction.
+    auto t = Rig!PolyInsetRow.make(true, true);
+    auto thrown = O.prepare(t.tool, t.layer);
+    PreparedRecordContext.failAfterResourceBeginForTest(true);
+    bool enlistThrew;
+    try t.context.prepareParamUpdate(thrown); catch (Exception) enlistThrew = true;
+    PreparedRecordContext.failAfterResourceBeginForTest(false);
+    assert(enlistThrew && thrown.effectKind == PreparedPolyInsetParamKind.None,
+        "a failed enlist left the owner live");
     auto x = Rig!PolyInsetRow.make(true, true);
     x.context.setResourceIdentity(7, 11);
     PreparedRecordContext.failAfterResourceBeginForTest(true);

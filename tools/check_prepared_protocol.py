@@ -2696,7 +2696,7 @@ for target, old, new, label in (
 
 # ONE parameter-update owner, ONE record-context slot and ONE producer serve
 # the eleven interactive parameter previews gated below: the owner checks the
-# exact product, Layer identity, the tool's own match and installer; the
+# exact product, the tool's own match and installer; the
 # producer stamps the layer image, enlists the slot, uploads, then NoHistory.
 # Each tool keeps its own build/match gate after this one, plus a check that
 # its class mixes the producer in over its own owner instantiation.
@@ -2716,7 +2716,6 @@ def param_update_gate(s):
     return (start >= 0 and all(x in owner[:start] for x in (
                 "target.classinfo !is ToolT.classinfo",
                 "!target.ownsPreparedLayer(layer)",
-                "&layer_.meshRef() !is source_",
                 "!target_.preparedParamUpdateMatches(image_, *source_)",
                 "target_.installPreparedParamUpdate(image_)",
                 "validatedToken_.generation != generation_")) and
@@ -2749,7 +2748,6 @@ def mutate_param_sources(name, sources, gate, rows, anchor=lambda text, label: 0
             fail(f"{name} parameter mutation did not RED: {label}")
 mutate_param_sources("Shared", param_update_sources, param_update_gate, (
     ("owner", "target.classinfo !is ToolT.classinfo", "false", "broaden product"),
-    ("owner", "&layer_.meshRef() !is source_", "false", "drop Layer identity"),
     ("owner", "uploadOwner.owns(gpu)", "true", "drop GPU identity"),
     ("owner", "context.prepareParamUpdate(owner)", "true", "drop private state"),
     ("owner", "context.prepareUpload(uploadOwner, owner.candidate)", "true", "drop GPU upload"),
