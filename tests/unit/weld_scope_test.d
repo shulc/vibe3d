@@ -9,10 +9,9 @@
 // DRUNTIME STOPS A MODULE AT ITS FIRST FAILING ASSERT: run blocks in isolation.
 module tests.unit.weld_scope_test;
 
-import std.conv   : to;
 import std.file   : readText;
 import std.format : format;
-import std.json   : JSONType, JSONValue, parseJSON;
+import std.json   : JSONValue, parseJSON;
 import std.math   : PI, abs;
 import std.path   : buildPath, dirName;
 
@@ -32,13 +31,8 @@ private JSONValue fixture() {
     return cached;
 }
 
-private double num(JSONValue v) {
-    return v.type == JSONType.integer ? cast(double) v.integer
-         : v.type == JSONType.uinteger ? cast(double) v.uinteger : v.floating;
-}
-
 private Vec3 vec(JSONValue v) {
-    return Vec3(cast(float) num(v[0]), cast(float) num(v[1]), cast(float) num(v[2]));
+    return Vec3(cast(float) v[0].get!double, cast(float) v[1].get!double, cast(float) v[2].get!double);
 }
 
 private Mesh settle(Vec3[] vs, uint[][] fs) {
@@ -87,18 +81,14 @@ private Run[] runCell(JSONValue cell) {
     case "array_linear": {
         const int count = cast(int) op["count"].integer;
         const Vec3 offset = vec(op["offset"]);
-        const float dist = cast(float) num(op["weld_distance"]);
+        const float dist = cast(float) op["weld_distance"].get!double;
         // The line array's single float is its weld switch (0 = off), so its
         // distance-0 cells are the grid array's alone.
         if (dist > 0) {
             Mesh a = inputOf(cell);
             auto mask = faceMaskOf(cell, a.faces.length);
             a.arrayFaces(mask, count, offset, dist, true);
-            // A partial selection detaches the source onto fresh vertices, so
-            // its own slots renumber (W1k keeps them in place): counts only.
-            bool partial = false;
-            foreach (b; mask) partial |= !b;
-            runs ~= Run("line", a, !partial);
+            runs ~= Run("line", a, true);
         }
         Mesh g = inputOf(cell);
         g.arrayFacesGrid(faceMaskOf(cell, g.faces.length), count, 1, 1, offset,
@@ -109,18 +99,18 @@ private Run[] runCell(JSONValue cell) {
     }
     case "array_radial": {
         const int count = cast(int) op["count"].integer;
-        assert(op["axis"].str == "Z" && num(op["start_deg"]) == 0, "fixture: radial rig changed");
+        assert(op["axis"].str == "Z" && op["start_deg"].get!double == 0, "fixture: radial rig changed");
         // Ours spaces `count` copies over the total angle; the rig's last copy
         // sits at `end_deg`, so the total is end * count / (count - 1).
-        const float total = cast(float)(num(op["end_deg"]) * count / (count - 1) * PI / 180.0);
+        const float total = cast(float)(op["end_deg"].get!double * count / (count - 1) * PI / 180.0);
         Mesh r = inputOf(cell);
         r.radialArrayFaces(faceMaskOf(cell, r.faces.length), count, 'Z', vec(op["center"]),
-                           total, Vec3(0, 0, 0), cast(float) num(op["weld_distance"]));
+                           total, Vec3(0, 0, 0), cast(float) op["weld_distance"].get!double);
         runs ~= Run("radial", r, true);
         break;
     }
     case "mirror": {
-        const float dist = cast(float) num(op["weld_distance"]);
+        const float dist = cast(float) op["weld_distance"].get!double;
         if (dist > 0) {   // the mirror's float is its weld switch too
             Mesh r = inputOf(cell);
             r.mirrorFaces(faceMaskOf(cell, r.faces.length), op["axis"].str[0],
@@ -149,7 +139,7 @@ private Run[] runCell(JSONValue cell) {
         Mesh r = inputOf(cell);
         auto all = new bool[](r.vertices.length);
         all[] = true;
-        const double d = num(op["distance"]);
+        const double d = op["distance"].get!double;
         cast(void) r.weldVerticesByMask(all, d * d, true);
         runs ~= Run("vertex_merge", r, false);
         break;
@@ -216,11 +206,34 @@ unittest { // the seed walk does not chain: 0, 0.4, 0.8 at distance 0.5 is ONE w
 }
 
 unittest { // the mask restricts both ends of a pair
-    Mesh m = settle([Vec3(0, 0, 0), Vec3(0, 0, 0), Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(0, 1, 0)],
-                    [[0u, 3u, 4u], [1u, 3u, 4u], [2u, 4u, 3u]]);
-    assert(m.weldVerticesByMask([false, true, true, false, false], 1e-12) == 1,
+    // The unmasked coincident vertex has the HIGHEST index, so it is the later
+    // end of a pair with either masked one: a seed-side-only mask would weld it.
+    Mesh m = settle([Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 0), Vec3(0, 0, 0), Vec3(0, 0, 0)],
+                    [[2u, 0u, 1u], [3u, 0u, 1u], [4u, 1u, 0u]]);
+    assert(m.weldVerticesByMask([false, false, true, true, false], 1e-12) == 1,
            "only the two masked coincident vertices weld; the unmasked one stays");
     assert(m.vertices.length == 4, format("expected 4 vertices, got %d", m.vertices.length));
+}
+
+unittest { // a partial-selection weld array keeps the source vertex: index, set, Point map
+    // Quad A (0..3) beside quad B (1,4,5,2); A arrayed 2x by +1 X lands on B
+    // and welds. The source corner (0,0,0) must survive as itself (W1k).
+    Mesh m = settle([Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 1, 0), Vec3(0, 1, 0),
+                     Vec3(2, 0, 0), Vec3(2, 1, 0)],
+                    [[0u, 1u, 2u, 3u], [1u, 4u, 5u, 2u]]);
+    m.addWeightMap("w");
+    assert(m.setVertexWeight("w", 0, 0.5f), "setup: weight written");
+    m.vertexSetNames = ["s"];
+    m.vertexSetMask = new ulong[](m.vertices.length);
+    m.vertexSetMask[0] = 1;
+    m.arrayFaces([true, false], 2, Vec3(1, 0, 0), 0.001f, true);
+    assert(m.vertices.length == 6 && m.faces.length == 3,
+           format("population: expected 6 verts 3 faces, got %d / %d", m.vertices.length, m.faces.length));
+    const v0 = m.vertices[0];
+    const w0 = m.vertexWeight("w", 0);
+    const s0 = m.vertexSetMask.length ? m.vertexSetMask[0] : 0;
+    assert(v0.x == 0 && v0.y == 0 && v0.z == 0 && w0 == 0.5f && s0 == 1,
+           format("source vertex 0: at %s W=%s set=%d, expected (0,0,0) W=0.5 set=1", v0, w0, s0));
 }
 
 unittest { // the cleanup detector reports exactly what cleanup welds (W1e_bracket)

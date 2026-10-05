@@ -7527,12 +7527,13 @@ struct Mesh {
     /// `count` independent instances. For a WHOLE-MESH array there are no
     /// unselected neighbours to share with, so keep+`count-1` and
     /// replace-with-`count` are geometrically identical and the detach is
-    /// skipped, leaving that path byte-for-byte unchanged. The flag defaults
+    /// skipped, leaving that path byte-for-byte unchanged. A welding array
+    /// (`weld > 0`) never detaches either. The flag defaults
     /// off so the interactive Clone tool / clone command keep their exact
     /// original (source-preserving) behaviour.
     ///
     /// Selection ends on the resulting copies (all `count` instances for a
-    /// detached subset — the repointed source is copy 0; otherwise the
+    /// subset source — the source is copy 0; otherwise the
     /// `count-1` marched copies with originals deselected). Vert / edge
     /// selections are cleared. Returns the number of new faces inserted.
     ///
@@ -7575,8 +7576,11 @@ struct Mesh {
         // 16 verts a shared seam produced). Whole-mesh arrays have no
         // unselected neighbour to share with, so this is a no-op there and
         // the existing keep+`count-1` path is left untouched (whole-cube
-        // array cases stay byte-for-byte exact).
-        bool detachSource = detachSubsetSource && (selCount < faces.length);
+        // array cases stay byte-for-byte exact). A WELDING array does not
+        // detach: the weld would delete the source's own slots (and their
+        // set / map values) and keep the copies; W1k keeps the source in place.
+        const bool subsetSource = detachSubsetSource && (selCount < faces.length);
+        const bool detachSource = subsetSource && !(weld > 0.0f);
         // Task 1903 Stage L6-b: the base of the DETACH round. `arrayFaces` is
         // the one member of the family with TWO append rounds, and they are
         // recorded separately for an ordering reason, not for tidiness — see
@@ -7653,10 +7657,7 @@ struct Mesh {
         // verts at offset i*step and emit cloned faces referencing them.
         // vertMap is rebuilt per step so each copy gets a fresh set of
         // verts (no accidental sharing between copies).
-        // The weld's PER-COPY scope. A detached source is copy 1 (it re-joins
-        // its unselected neighbours, as before the scope); the slots it left
-        // are unreferenced and kept out of the search.
-        size_t[] copyStarts = detachSource ? [detachVertBase] : null;
+        size_t[] copyStarts;   // the weld's PER-COPY scope
         foreach (step; 1 .. count) {
             copyStarts ~= vertices.length;
             uint[uint] vertMap;
@@ -7715,11 +7716,9 @@ struct Mesh {
             faceSetMask[idx]  = faceAttrOr(faceSetMask, srcFi);
             selectFace(cast(int)idx);
         }
-        // For a detached subset the repointed source faces are copy 0 of the
-        // array, so they join the marched copies in the resulting selection
-        // (all `count` instances end selected — the source is no longer the
-        // shared original, it now owns its duplicated verts).
-        if (detachSource) {
+        // For a subset source (detached or welded in place) the source faces
+        // are copy 0 of the array: all `count` instances end selected.
+        if (subsetSource) {
             foreach (fi; sourceFaces) selectFace(cast(int)fi);
         }
         resizeVertexSelection();
@@ -7741,8 +7740,7 @@ struct Mesh {
         if (weld > 0.0f) {
             double epsSq = cast(double)weld * cast(double)weld;
             const size_t cornersBeforeWeld = cornerCount();
-            if (weldCoincidentVertices(epsSq, copyStarts,
-                    detachSource ? computeReferencedVertexMask() : null) > 0) {
+            if (weldCoincidentVertices(epsSq, copyStarts) > 0) {
                 compactUnreferenced();
                 // What the weld did to the CORNERS is decided by the only
                 // thing it leaves behind — the total (task 0830).
