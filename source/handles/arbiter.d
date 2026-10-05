@@ -88,8 +88,8 @@ void setHandleExploreHook(HandleExploreHook hook) {
 /// How the arbiter resolves an overlap. `firstRegistered` (the default): the
 /// first registered hit wins. `nearestOnScreen`: of two hits that are both
 /// `rankedByScreenDistance` (axis shafts, principal rings) the nearer on screen
-/// wins, registration order breaking ties; any other part (box, disc, head,
-/// view ring) keeps its registration precedence. The measured law of the
+/// wins; any other part (box, disc, head, view ring) keeps its registration
+/// precedence. The measured law of the
 /// transform gizmo (capture K-HO, 12/12 presses, shaft and ring pairs only),
 /// which a client opts into; clients it was not measured on keep the default.
 enum HitRule { firstRegistered, nearestOnScreen }
@@ -148,7 +148,7 @@ class ToolHandles {
     }
 
     // Register a handle with a stable part id, in priority order (the
-    // overlap winner under `firstRegistered`, the tie-break otherwise).
+    // overlap winner under `firstRegistered`).
     void add(Handler h, int part) {
         entries ~= HandlePart(h, part);
     }

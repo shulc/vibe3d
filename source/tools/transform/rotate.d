@@ -526,7 +526,7 @@ public:
                 screenFalloffLMBBegin();
             }
         }
-        dragAxis = resolvedAxis >= 0 ? resolvedAxis : firstHitPart(e.x, e.y, cachedVp, handleParts());
+        dragAxis = resolvedAxis;   // the caller's part; -1 = off every handle
         arcballDrag = false;
         viewAxisHaulDrag = false;
         if (dragAxis < 0) {
@@ -711,7 +711,7 @@ public:
     }
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
-        return onMouseButtonDownWithResolvedAxis(e, vts, -1);
+        return onMouseButtonDownWithResolvedAxis(e, vts, firstHitPart(e.x, e.y, cachedVp, handleParts()));
     }
 
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {

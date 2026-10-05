@@ -678,10 +678,9 @@ public:
         ctrlLockActive = false;   // clear stale lock before re-deciding
         lastClickWasRelocate = false;
         lastClickWasOffGizmo = false;
-        // -1 = "hit-test here" — unless no handle is drawn (H8, gap 217: an
-        // operation-anchored handle before its operation opens).
-        dragAxis = resolvedAxis >= 0 ? resolvedAxis
-                 : (handleHittable() ? firstHitPart(e.x, e.y, cachedVp, handleParts()) : -1);
+        // The caller resolved the part (-1 = off every handle): the wrapper's
+        // arbiter, whose miss stands — the hit pass is the draw pass.
+        dragAxis = resolvedAxis;
         if (dragAxis >= 0) {
             // Ctrl constraint applies only to the most-facing plane (dragAxis==3)
             if (ctrl && dragAxis == 3) {
@@ -765,8 +764,11 @@ public:
         return true;
     }
 
+    // Standalone (Edge Extend's bank): the bank's own test — unless no handle
+    // is drawn (H8, gap 217: an operation-anchored handle before it opens).
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
-        return onMouseButtonDownWithResolvedAxis(e, vts, -1);
+        return onMouseButtonDownWithResolvedAxis(e, vts,
+            handleHittable() ? firstHitPart(e.x, e.y, cachedVp, handleParts()) : -1);
     }
 
     // Start a screen-plane drag with the gizmo positioned at `hit`.

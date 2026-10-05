@@ -626,7 +626,7 @@ public:
                 screenFalloffLMBBegin();
             }
         }
-        dragAxis = resolvedAxis >= 0 ? resolvedAxis : firstHitPart(e.x, e.y, cachedVp, handleParts());
+        dragAxis = resolvedAxis;   // the caller's part; -1 = off every handle
         if (dragAxis >= 0) {
             lastMX = e.x; lastMY = e.y;
             // Freeze the input-projection basis for the gesture (= the
@@ -808,7 +808,7 @@ public:
     }
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
-        return onMouseButtonDownWithResolvedAxis(e, vts, -1);
+        return onMouseButtonDownWithResolvedAxis(e, vts, firstHitPart(e.x, e.y, cachedVp, handleParts()));
     }
 
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
