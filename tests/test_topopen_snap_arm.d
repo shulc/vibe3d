@@ -489,7 +489,7 @@ unittest { // law-neutral: the weld ignores the snap SCOPE and reaches the whole
 /// `press`) by (`dx`,`dy`) px with the pen; `sym` turns world symmetry X on.
 void sameQuadMove(double[3][] pts, double[3] release, int dx, int dy,
                   int[][] faces = [[0, 1, 2, 3]], bool sym = false, double[] press = null,
-                  int[] hide = null) {
+                  int[] hide = null, int gestures = 1) {
     immutable bool grabV1 = press is null;
     if (grabV1) press = pts[1].dup;
     auto r = postJson("/api/command", commandBody("scene.reset", `{"empty":true}`));
@@ -520,14 +520,15 @@ void sameQuadMove(double[3][] pts, double[3] release, int dx, int dy,
     assert(projectToWindow(Vec3(cast(float)press[0], cast(float)press[1], 0), vp, sx, sy)
         && projectToWindow(Vec3(cast(float)release[0], cast(float)release[1], 0), vp, ex, ey),
         "rig: the press and the release must project");
-    immutable int x0 = cast(int)lround(sx), y0 = cast(int)lround(sy);
+    int x0 = cast(int)lround(sx), y0 = cast(int)lround(sy);
     assert(lround(ex) == x0 + dx && lround(ey) == y0 + dy,
         format("rig: the captured %s px drag must end at %s", [dx, dy], release));
+    foreach (g; 0 .. gestures)   // each next gesture, same session: the same drag on again
     foreach (i, log; [buildDragDownLog(vp.x, vp.y, vp.width, vp.height, x0, y0),
                    buildDragMotionLog(vp.x, vp.y, vp.width, vp.height, x0, y0, x0 + dx, y0 + dy, 16),
                    buildDragUpLog(vp.x, vp.y, vp.width, vp.height, x0 + dx, y0 + dy)]) {
         // Held, before the release: under symmetry the partner already follows, mirrored.
-        if (sym && i == 2 && grabV1) {
+        if (sym && i == 2 && grabV1 && g == 0) {
             size_t j;   // the grab's partner: v1's mirror image in `pts`
             foreach (k, a; pts) if (a[0] == -pts[1][0] && a[1] == pts[1][1]) j = k;
             const v = readVerticesLayer(1), p = v[1], q = v[j];
@@ -537,6 +538,7 @@ void sameQuadMove(double[3][] pts, double[3] release, int dx, int dy,
         auto pr = postJson("/api/play-events", log);
         assert("error" !in pr, "/api/play-events failed: " ~ pr.toString);
         waitPlayerIdle();
+        if (i == 2) { x0 += dx; y0 += dy; }
     }
     cmd("tool.set mesh.topoPen off");
     cmd("tool.pipe.attr symmetry enabled false");
@@ -581,6 +583,10 @@ unittest { // KW2_A symmetric move welds both sides (14); KW2_B control (15)
     assert(vertexCountLayer(1) == 14 && hasVertexNear(1, Vec3(0.5f, 0.06f, 0), 1e-4)
         && !hasVertexNear(1, Vec3(0.3f, 0, 0), 1e-3) && !hasVertexNear(1, Vec3(-0.3f, 0, 0), 1e-3),
         format("KW2_A from -X: V=%d, expected 14", vertexCountLayer(1)));
+    // A second gesture in the same session, after the weld: the pairing is re-taken.
+    sameQuadMove(pts, [0.5, 0, 0], 20, 0, quads, true, null, null, 2);
+    assert(vertexCountLayer(1) == 14 && hasVertexNear(1, Vec3(-0.705f, -0.005f, 0), 1e-3),
+        format("KW2_A then a second grab: the partner follows: %s", readVerticesLayer(1)));
     // A hidden partner neither follows nor welds (the walker's hidden guard), though
     // an unpaired v16 sits 3 px from it: only the grab welds (17 - 1).
     double[3][] tri = [[-0.33, 0, 0], [-0.33, -0.2, 0], [-0.45, -0.2, 0]];
