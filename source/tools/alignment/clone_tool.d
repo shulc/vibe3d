@@ -17,7 +17,7 @@ import mesh;
 import mesh_gpu : GpuMesh;
 import math;
 import editmode : EditMode;
-import drag : planeDragDelta;
+import drag : HandleDrag, DragFrame, DragKind;
 import overlay_space : OverlaySpace;
 import params : Param, IntEnumEntry;
 import shader : Shader;
@@ -74,8 +74,8 @@ private:
 
     bool active, built, dragging;
     MeshSnapshot before;
-    int anchorMX, anchorMY;
-    Vec3 anchorWorld, dragBaseOffset;
+    HandleDrag grab;   // the selection centroid at the press + travel
+    Vec3 dragBaseOffset;
     OverlaySpace dragSpace;
     Viewport cachedVp;
 
@@ -196,9 +196,8 @@ public:
         if (SDL_GetModState() & (KMOD_ALT | KMOD_SHIFT)) return false;
         if (*editMode != EditMode.Polygons || !mesh.hasAnySelectedFaces()) return false;
         sessionStepBegins();
-        anchorMX = e.x; anchorMY = e.y;
         dragSpace = OverlaySpace.ofPrimary();
-        anchorWorld = dragSpace.pos(mesh.selectionCentroidFaces());
+        grab.press(dragSpace.pos(mesh.selectionCentroidFaces()), e.x, e.y);
         dragBaseOffset = offsetVec();
         dragging = true;
         return true;
@@ -212,11 +211,13 @@ public:
     }
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
         if (!active || !dragging) return false;
+        // A free handle: the centroid's residual is kept (K-H3 H3_NT).
         bool skip;
-        Vec3 delta = planeDragDelta(e.x, e.y, anchorMX, anchorMY,
-                                    3, anchorWorld, cachedVp, skip);
+        DragFrame f;
+        f.kind = DragKind.viewPlane;
+        immutable Vec3 c = grab.client(e.x, e.y, f, cachedVp, skip);
         if (!skip) {
-            Vec3 local = dragSpace.toLocalDelta(delta);
+            Vec3 local = dragSpace.toLocalDelta(c - grab.point);
             offX_ = dragBaseOffset.x + local.x;
             offY_ = dragBaseOffset.y + local.y;
             offZ_ = dragBaseOffset.z + local.z;

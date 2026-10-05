@@ -251,3 +251,43 @@ unittest {
     assert(abs(a1 - a0) > 1.0, "dragging the rotate box should turn the plane, angle "
         ~ a0.to!string ~ " -> " ~ a1.to!string);
 }
+
+// ---------------------------------------------------------------------------
+// 4. The centre box is a FREE handle (K-H3 H3_MIR_b): from an off-lattice
+//    centre C the haul ends at C + q(C + T) - q(C), the residual kept. Top
+//    ortho view at 440 px/m (T = pixels / 440), q 0.005. The activating tap
+//    places C on its pixel, (5, 16) px from the origin: (0.011364, 0, 0.036364)
+//    (a typed centre is not used: an attribute write re-arms our activating
+//    press). Haul (58, 23) px: (0.146364, 0, 0.091364); ABSOLUTE ends at
+//    (0.145, 0, 0.09), RAW at (0.143182, 0, 0.088636).
+// ---------------------------------------------------------------------------
+
+unittest {
+    import pen_rig_helpers : penCameraAt, worldPixel;
+    auto r = postJson("/api/command", commandBody("scene.reset"));
+    assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
+    cmd("viewport.view Top");
+    penCameraAt(Vec3(0, 0, 0), 440.0);
+    assert(getJson("/api/camera")["projKind"].str == "Ortho",
+        "rig: the top view must be orthographic");
+    cmd("tool.set " ~ TOOL);
+    auto cam = fetchCamera(BASE);
+    const int[2] p = worldPixel(Vec3(0, 0, 0));
+    void haul(int dx, int dy, int steps) {
+        playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                                 p[0] + 5, p[1] + 16, p[0] + 5 + dx, p[1] + 16 + dy, steps), BASE);
+        import core.thread : Thread;
+        import core.time : dur;
+        Thread.sleep(dur!"msecs"(250));   // the box draws where the centre now is
+    }
+    haul(0, 0, 1);                    // activating tap: places C
+    const c0 = queriedCenter();
+    assert(approx(c0.x, 5 / 440.0, 1e-6) && c0.y == 0 && approx(c0.z, 16 / 440.0, 1e-6),
+        "rig: the tap must place C on its pixel, got (" ~ c0.x.to!string ~ ", "
+        ~ c0.z.to!string ~ ")");
+    haul(58, 23, 16);
+    const c = queriedCenter();
+    assert(approx(c.x, 0.146364, 1e-4) && approx(c.y, 0, 1e-4) && approx(c.z, 0.091364, 1e-4),
+        "mirror-centre-free: C + q(C + T) - q(C) expected (0.146364, 0, 0.091364), got ("
+        ~ c.x.to!string ~ ", " ~ c.y.to!string ~ ", " ~ c.z.to!string ~ ")");
+}

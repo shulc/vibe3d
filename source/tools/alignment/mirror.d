@@ -19,7 +19,7 @@ import snapshot : MeshSnapshot;
 import editmode : EditMode;
 import shader : Shader, LitShader;
 import handler : MoveHandler, ToolHandles, BoxHandler, HandlePart, firstHitPart, gizmoSize, drawWorldSegments;
-import drag : planeDragDelta, screenAxisDelta, gesturePrevPixel;
+import drag : HandleDrag, DragFrame, DragKind, screenAxisDelta, gesturePrevPixel;
 import eventlog : queryMouse;
 import prepared_tool_effect : PreparedToolStateDelta, PreparedToolStateKind,
     PreparedSessionActivateEffect, PreparedActivateKind,
@@ -262,6 +262,7 @@ private:
     ToolHandles toolHandles;
     int      moverDragAxis = -1;  // 0/1/2 = X/Y/Z arrow, 3 = centerBox, 4 = rotateBox, -1 = none
     int      moverLastMX, moverLastMY;
+    HandleDrag grab;              // the centre box: the centre at the press + travel
     Viewport cachedVp;
 
 public:
@@ -800,6 +801,7 @@ public:
         moverDragAxis = hit;
         moverLastMX   = e.x;
         moverLastMY   = e.y;
+        grab.press(params_.center, e.x, e.y);
         sessionStepBegins();
         stepOpen = true;
         engage();
@@ -857,13 +859,14 @@ public:
             return true;
         }
 
-        // Task 0233: with the axis arrows gone, the only remaining center
-        // drag is the center box (moverDragAxis == 3) — always a planar drag.
+        // The centre box (moverDragAxis == 3) is a free handle: its plane
+        // drag keeps the centre's residual (K-H3 H3_MIR_a / _b).
         bool skip;
-        Vec3 delta = planeDragDelta(e.x, e.y, prevMX, prevMY,
-                                    moverDragAxis, mover.center, cachedVp, skip);
+        DragFrame f;
+        f.kind = DragKind.viewPlane;
+        immutable Vec3 c = grab.client(e.x, e.y, f, cachedVp, skip);
         if (!skip) {
-            params_.center += delta;
+            params_.center = c;
             engage();
             evaluate();
         }

@@ -863,9 +863,8 @@ unittest {
     //     No face selection: Mirror's mask rule is `operandFaceMask()`, so an
     //     empty selection means the whole cube, which is what makes the drag's
     //     8 -> 16 vertices a named, checkable number.
-    //     Its positions are re-pinned BY MECHANISM on the shared map's
-    //     ten-view-pixel step (no mirror cell captured): pending K-H3 cell
-    //     H3_MIR.
+    //     The haul is the free handle law: the shared map's ten-view-pixel
+    //     step, the centre's residual kept (captured K-H3 H3_MIR_a / _b).
     cells ~= runCell("mirror/centre-box-haul", "mesh.mirrorTool",
         "source/tools/alignment/mirror.d MirrorTool.recordTopologyStep (from release)",
         "Plain", "MeshSessionEdit",

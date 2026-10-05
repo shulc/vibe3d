@@ -255,7 +255,9 @@ unittest {
     // drag's corner is a handle too (task 9473): box, radial, torus presses.
     assert(sites == ["BoxTool.onMouseButtonDown", "BoxTool.onMouseButtonDown",
                      "BoxTool.onMouseButtonDown", "BoxTool.onMouseButtonDown",
-                     "HandledCreateTool.tryGrabHandles", "MoveTool.armAxisLeg",
+                     "CloneTool.onMouseButtonDown",
+                     "HandledCreateTool.tryGrabHandles", "MirrorTool.onMouseButtonDown",
+                     "MoveTool.armAxisLeg",
                      "PrimitiveCreateTool.tryGrabMover", "SizedRadialCreateTool.onMouseButtonDown",
                      "TorusTool.onMouseButtonDown"],
         "a HandleDrag press outside the named press sites");

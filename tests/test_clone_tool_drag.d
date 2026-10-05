@@ -167,3 +167,36 @@ unittest { // captured: a 1.2 per-copy X scale grows each successive copy by 20%
     }
     cmd("tool.set " ~ TOOL ~ " off");
 }
+
+unittest { // the offset haul is a free handle, quantised (K-H3 H3_NT): top ortho
+    // view at 440 px/m (T = pixels / 440), q 0.005, the top face's centroid A
+    // (0, 0.5, 0) on the lattice; a (70, -42) px haul writes q(A + T) - q(A) =
+    // (0.16, 0, -0.095). RAW is (0.159091, 0, -0.095455).
+    import core.thread : Thread;
+    import core.time : dur;
+    import pen_rig_helpers : penCameraAt;
+    auto r = postJson("/api/command", commandBody("scene.reset"));
+    assert(r["status"].str == "ok");
+    r = postJson("/api/command", commandBody("mesh.select",
+        `{"mode":"polygons","indices":[4]}`));
+    assert(r["status"].str == "ok");
+    cmd("viewport.view Top");
+    penCameraAt(Vec3(0, 0, 0), 440.0);
+    assert(getJson("/api/camera")["projKind"].str == "Ortho",
+        "rig: the top view must be orthographic");
+    cmd("tool.set " ~ TOOL ~ " on");
+    cmd("tool.attr " ~ TOOL ~ " num 1");
+    Thread.sleep(dur!"msecs"(300));
+    immutable double[3] o0 = [attrOf("offX"), attrOf("offY"), attrOf("offZ")];
+    auto cam = fetchCamera(BASE);
+    immutable int cx = cam.vpX + cam.width / 2, cy = cam.vpY + cam.height / 2;
+    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+        cx, cy, cx + 70, cy - 42, 12), BASE);
+    Thread.sleep(dur!"msecs"(200));
+    immutable double[3] d = [attrOf("offX") - o0[0], attrOf("offY") - o0[1],
+                             attrOf("offZ") - o0[2]];
+    assert(abs(d[0] - 0.16) <= 1e-4 && abs(d[1]) <= 1e-4 && abs(d[2] + 0.095) <= 1e-4,
+        format("clone-offset-quantised: the haul expected (0.16, 0, -0.095), got (%.6f, %.6f, %.6f)",
+               d[0], d[1], d[2]));
+    cmd("tool.set " ~ TOOL ~ " off");
+}
