@@ -46,7 +46,12 @@ unittest { // snap.toggle: false → true → false
     auto a0 = snapAttrs();
     bool start = a0["enabled"] == "true";
 
+    const h0 = getJson("/api/history")["undo"].array.length;
     runCmd("snap.toggle");
+    // Script origin records nothing (only a UI toggle with no button held does,
+    // task 9470; gap row 563).
+    assert(getJson("/api/history")["undo"].array.length == h0,
+        "a script-origin snap.toggle recorded a history entry");
     auto a1 = snapAttrs();
     assert((a1["enabled"] == "true") != start,
         "first toggle should flip enabled; was " ~ a0["enabled"] ~

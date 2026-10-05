@@ -1,0 +1,51 @@
+{
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "method": "gui-gesture + debugger read of the key dispatch",
+    "captured_utc": "2026-10-05",
+    "task": "9470",
+    "notes": "Only numerical observations and the read law were copied here. The private capture cards (K-G, K-G2, K-G3) remain the source of record."
+  },
+  "_about": "The snap key while a mouse button is held: delivered iff its command reports mouse-down-OK, which the snap toggle does iff the drag holds >= 1 snap guide (the background constraint in the pipe, a tool's own guide such as a new slice line or the topology pen's point drag; never the transform tools themselves). Key-up of the momentary toggle: button still held -> re-run at once; after a press/release -> re-run iff held > 500 ms; no button -> a hold > 500 ms fires undo and the snap state is NOT restored (a probable reference defect, copied). A UI toggle with no button held records one undo entry; its undo and redo never write the state; a mid-drag toggle records nothing.",
+  "rig": {
+    "view": "top ortho, 440 px/m, focus (0.07, 1, 0)",
+    "inner_range_px": 24,
+    "outer_range_px": 40,
+    "vertex": [0.03, 1, 0.07],
+    "target": [0.25, 1, 0.07],
+    "raw_end": [0.245, 1, 0.07]
+  },
+  "move_snap_hold": { "snapped_x": 0.25, "raw_x": 0.245, "law": "LIVE: the snap state is read per motion" },
+  "topology_pen_point_drag": { "law": "PRESS: the snap state is read once at the press; the key is delivered (the pen's own guide) but the drag equals the off control" },
+  "hold_threshold_ms": 500,
+  "hold_cells_ms": { "stays": [50, 300, 450], "undo": [550, 600] },
+  "undo_depth": {
+    "toggle_mid_drag_button_held": 0,
+    "toggle_with_no_button": 1,
+    "revert_at_keyup_after_release": 1,
+    "dropped_key": 0,
+    "move_hold": [0, 1, 2],
+    "move_prepressed": [0, 1, 2, 3],
+    "_order": "move_hold: before press / after release / after key-up; move_prepressed: before key-down / after key-down / after release / after key-up (offsets from the first)"
+  },
+  "delivery": {
+    "move_constraint_in_pipe": true,
+    "move_constraint_forgotten": false,
+    "slice_new_line": true,
+    "slice_press_on_live_line": false,
+    "bevel_fresh": false,
+    "bevel_after_move_session": true,
+    "box_base_fresh": false,
+    "box_base_after_move_session": true,
+    "box_base_constraint_toggled_on": true,
+    "box_size_handle_fresh": false,
+    "other_binding_without_flag": false
+  },
+  "no_button_hold": {
+    "undo_pops": "the top entry: the armed tool's apply when one is live, the toggle's own record otherwise",
+    "state_after": true,
+    "order_with_tool_live": "the tool's apply re-pushed on top of the toggle record"
+  },
+  "redo": "inert: undo pops the record, redo re-pushes it, the state never changes"
+}

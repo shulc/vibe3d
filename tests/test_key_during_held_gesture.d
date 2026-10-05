@@ -1,7 +1,9 @@
 // test_key_during_held_gesture.d — slice M1a of the tool session model
 // (doc/tool_session_model_plan_2026-09-24.md, R4.4): while ANY mouse button is
 // held, no key press is dispatched (dropped, not queued) and no key release is
-// delivered, not even at the button's release; keys work again after it.
+// delivered, not even at the button's release; keys work again after it. The
+// one exception (task 9470): a command reporting mouse-down-OK — the snap key
+// while the drag holds a snap guide — cells (f) / (i).
 // Captured law, toolcards/tool_session_model (README M0: C-H9-move, C-H9-bev,
 // C-O5-*; M0b: C-H9-X, C-H9-X-up, C-H9-rmb; M0c: C-H9-orbit, Escape included).
 //
@@ -165,9 +167,7 @@ unittest {
 
 // ---------------------------------------------------------------------------
 // (d) MIDDLE button — Slice's middle-drag relocate: Ctrl+Z held is dropped.
-// (f) C-H9-X — X during a held LMB draw is dropped: the chord never engages.
-// (i) C-H9-X-up — an X release during the hold is never delivered: the chord
-//     stays engaged after the button's release; a free X tap clears it.
+// (f) / (i) — the snap key on a new Slice line (re-pinned, see below).
 // ---------------------------------------------------------------------------
 void sliceLinePixels(out int ax, out int ay, out int bx, out int by) {
     auto vp = viewportFromCamera(fetchCamera());
@@ -207,51 +207,53 @@ unittest { // (d)
     slKey(SL_SDLK_w, 0, "(d) W (drop Slice)");
 }
 
-bool chordOn() {
-    auto s = toolState();
-    assert(("snapTempInvert" in s.object) !is null && s["tool"].str == "slice",
-           "slice floor: /api/tool/state does not publish snapTempInvert: " ~ s.toString);
-    return flag(s, "snapTempInvert");
+/// The global snap state (the X key's `snap.toggle`).
+bool snapOn() {
+    foreach (st; getJson("/api/toolpipe")["stages"].array)
+        if (st["task"].str == "SNAP") return st["attrs"]["enabled"].str == "true";
+    assert(false, "no SNAP stage");
 }
 
-unittest { // (f) C-H9-X, the press
+// (f) / (i) re-pinned by task 9470 (fixture snap_key_drag.json, delivery
+// `slice_new_line`): both press a NEW Slice line, which holds a snap guide, so X
+// is delivered while held and its key-up with the button held reverts at once.
+// A press on a LIVE line holds none and drops X (tests/test_snap_key_held.d).
+unittest { // (f) X during a held new-line draw
     resetCube();
+    slLine("tool.pipe.attr snap enabled false");
     slLine("tool.set mesh.sliceTool on");
     int ax, ay, bx, by;
     sliceLinePixels(ax, ay, bx, by);
     string log = slMotion(10, ax, ay, 0) ~ "\n" ~ slButton(20, true, 1, ax, ay) ~ "\n";
     foreach (i; 1 .. 5) log ~= slMotion(20 + 20 * i, ax + (bx - ax) * i / 8, ay + (by - ay) * i / 8, 1) ~ "\n";
     slPlay(log, "(f) LMB press + held draw");
-    assert(!chordOn(), "(f) slice floor: the chord is engaged before X");
+    assert(!snapOn(), "(f) floor: snapping is on before X");
     keyDown(K_x, K_x_SCAN, "(f) X down while held");
-    assert(!chordOn(), "(f) C-H9-X: X pressed during a held LMB reached the Slice tool "
-                       ~ "(the snap chord engaged)");
+    assert(snapOn(), "(f) X pressed during a held new-line draw was not delivered");
     keyUp(K_x, K_x_SCAN, "(f) X up while held");
+    assert(!snapOn(), "(f) the X release with the button held did not revert at once");
     slPlay(slButton(20, false, 1, bx, by), "(f) LMB release");
-    keyDown(K_x, K_x_SCAN, "(f) X down after the release");
-    assert(chordOn(), "(f) positive control: X after the release did not engage the chord");
-    keyUp(K_x, K_x_SCAN, "(f) X up after the release");
-    assert(!chordOn(), "(f) positive control: X up after the release did not clear the chord");
+    tap(K_x, K_x_SCAN, 0, "(f) X tap after the release");
+    assert(snapOn(), "(f) positive control: a free X tap did not toggle snapping on");
     slLine("tool.set mesh.sliceTool off");
+    slLine("tool.pipe.attr snap enabled false");
 }
 
-unittest { // (i) C-H9-X-up, the release
+unittest { // (i) X down before the press, released while held
     resetCube();
+    slLine("tool.pipe.attr snap enabled false");
     slLine("tool.set mesh.sliceTool on");
     int ax, ay, bx, by;
     sliceLinePixels(ax, ay, bx, by);
     keyDown(K_x, K_x_SCAN, "(i) X down, no button");
-    assert(chordOn(), "(i) slice floor: a free X did not engage the chord");
+    assert(snapOn(), "(i) floor: a free X did not toggle snapping on");
     string log = slMotion(10, ax, ay, 0) ~ "\n" ~ slButton(20, true, 1, ax, ay) ~ "\n";
     foreach (i; 1 .. 5) log ~= slMotion(20 + 20 * i, ax + (bx - ax) * i / 8, ay + (by - ay) * i / 8, 1) ~ "\n";
     slPlay(log, "(i) LMB press + held draw");
     keyUp(K_x, K_x_SCAN, "(i) X up while held");
+    assert(!snapOn(), "(i) the X release with the button held did not revert at once");
     slPlay(slButton(20, false, 1, bx, by), "(i) LMB release");
-    assert(chordOn(), "(i) C-H9-X-up: an X release during a held button was delivered "
-                      ~ "(the chord cleared; the reference loses that release for good)");
-    keyDown(K_x, K_x_SCAN, "(i) free X down");
-    keyUp(K_x, K_x_SCAN, "(i) free X up");
-    assert(!chordOn(), "(i) positive control: a free X tap did not clear the chord");
+    assert(!snapOn(), "(i) the release re-toggled snapping");
     slLine("tool.set mesh.sliceTool off");
 }
 
