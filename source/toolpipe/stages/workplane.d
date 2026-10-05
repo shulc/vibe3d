@@ -147,6 +147,10 @@ class WorkplaneStage : Stage, Operator {
     /// attribute write here arms the slot.
     public override bool attrArmsSlot(string name) const { return true; }
 
+    /// The work plane is scene state: a new scene starts at the default plane
+    /// (fixtures/constraint_boot.json, newscene-workplane-snap).
+    override bool storedInScene() const { return true; }
+
     override void reset() {
         clearState();
         publishState(false);

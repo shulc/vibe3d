@@ -98,6 +98,10 @@ abstract class Stage : ParamProvider {
     /// overrides it (the constraint forgets itself and keeps its settings).
     void clearTask() { reset(); }
 
+    /// Whether this stage holds state stored IN the scene, which a new scene
+    /// (`file.new`) resets; every other stage keeps its values (task 9402).
+    bool storedInScene() const { return false; }
+
     /// Whether this stage is currently REGISTERED-and-live in the pipe.
     /// Disabled stages are skipped during evaluation but stay in the pipe (the
     /// E column in the tool pipe panel).

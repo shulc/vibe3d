@@ -3988,7 +3988,8 @@ void main(string[] args) {
             // did not clear its commit guard: its `deactivate()` runs here,
             // against the mesh it was actually built against, rather than 24
             // lines later against a document that replaced it.
-            dropActiveTool(ToolTransition.documentReplaceDisarm);
+            if (mode == DisarmMode.dropOnly) dropActiveTool(ToolTransition.primaryMoveDrop);
+            else dropActiveTool(ToolTransition.documentReplaceDisarm);
             return o;
         };
     }

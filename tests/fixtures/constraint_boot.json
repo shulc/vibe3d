@@ -6,8 +6,8 @@
   "reference_token": "ref-editor@11.2v3",
   "method": "gui-gesture",
   "captured_utc": "2026-10-04",
-  "task": "9355/9372",
-  "notes": "Fresh process per cell; Escape, the arm keys and the drop key are real key taps over the viewport; readback after the gesture (constraint on/off + settings, element selection, tool pipe). Neutral copy for the vibe3d-only witness tests/test_constraint_boot.d; the pen-placement cells live with the pen tests."
+  "task": "9355/9372/9376/9448",
+  "notes": "Fresh process per cell; Escape, the arm keys and the drop key are real key taps over the viewport; readback after the gesture (constraint on/off + settings, element selection, tool pipe). Neutral copy for the vibe3d-only witness tests/test_constraint_boot.d; the pen-placement cells live with the pen tests. new_scene_stages: the new-scene rows (task 9376) read by tests/test_new_scene_keeps_pipe.d. drop_doors: which other tool drops re-insert the remembered constraint (task 9448), read by tests/test_constraint_boot.d."
  },
  "rig": {
   "scene": "boot mesh holds a 64x32 sphere r=1 centre (0,1,0) built by geometry edits (no tool armed, no pipe write) and becomes the BACKGROUND layer; a new empty FOREGROUND mesh is created and one triangle is committed into it; top view",
@@ -519,5 +519,373 @@
    },
    "note": "with no tool armed the open inserts nothing"
   }
- ]
+ ],
+ "new_scene_stages": [
+  {
+   "id": "newscene-stages-boot",
+   "post_first_drop": false,
+   "set": {
+    "falloff": {
+     "type": "linear",
+     "start": [
+      0.0,
+      0.0,
+      0.5
+     ],
+     "end_z": -1.5,
+     "shape": "linear"
+    },
+    "action_centre": "origin (centre + axis stages)",
+    "symmetry": {
+     "enabled": true,
+     "axis": "z"
+    }
+   },
+   "constraint_before": {
+    "enabled": false
+   },
+   "gesture": [
+    "new scene"
+   ],
+   "after": {
+    "falloff": {
+     "type": "linear",
+     "start": [
+      0.0,
+      0.0,
+      0.5
+     ],
+     "end_z": -1.5,
+     "shape": "linear"
+    },
+    "action_centre": "origin (centre + axis stages)",
+    "symmetry": {
+     "enabled": true,
+     "axis": "z"
+    },
+    "constraint": {
+     "enabled": false
+    }
+   },
+   "extra_after_move_drop": {
+    "falloff": {
+     "type": "linear",
+     "start": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "end": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "note": "re-fitted by arming the move tool over the empty new scene"
+    },
+    "action_centre": "origin",
+    "symmetry": {
+     "enabled": true,
+     "axis": "z"
+    },
+    "constraint": {
+     "enabled": true,
+     "geometry": "off",
+     "offset": 0.0,
+     "handle": true,
+     "double_sided": false
+    }
+   }
+  },
+  {
+   "id": "newscene-stages-after-drop",
+   "post_first_drop": true,
+   "set": {
+    "falloff": {
+     "type": "linear",
+     "start": [
+      0.0,
+      0.0,
+      0.5
+     ],
+     "end_z": -1.5,
+     "shape": "linear"
+    },
+    "action_centre": "origin (centre + axis stages)",
+    "symmetry": {
+     "enabled": true,
+     "axis": "z"
+    }
+   },
+   "constraint_before": {
+    "enabled": true,
+    "geometry": "off",
+    "offset": 0.0,
+    "handle": true,
+    "double_sided": false
+   },
+   "gesture": [
+    "new scene"
+   ],
+   "after": {
+    "falloff": {
+     "type": "linear",
+     "start": [
+      0.0,
+      0.0,
+      0.5
+     ],
+     "end_z": -1.5,
+     "shape": "linear"
+    },
+    "action_centre": "origin (centre + axis stages)",
+    "symmetry": {
+     "enabled": true,
+     "axis": "z"
+    },
+    "constraint": {
+     "enabled": true,
+     "geometry": "off",
+     "offset": 0.0,
+     "handle": true,
+     "double_sided": false
+    }
+   }
+  },
+  {
+   "id": "newscene-workplane-snap",
+   "post_first_drop": false,
+   "set": {
+    "work_plane": {
+     "centre": [
+      0.2,
+      0.3,
+      0.0
+     ],
+     "rotation_deg": [
+      30.0,
+      0.0,
+      0.0
+     ]
+    },
+    "snap": {
+     "enabled": true,
+     "types": [
+      "grid",
+      "edge"
+     ]
+    }
+   },
+   "boot_snap": {
+    "enabled": false,
+    "types": [
+     "vertex",
+     "edge"
+    ]
+   },
+   "gesture": [
+    "new scene"
+   ],
+   "after": {
+    "work_plane": {
+     "centre": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "rotation_deg": [
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "snap": {
+     "enabled": true,
+     "types": [
+      "grid",
+      "edge"
+     ]
+    }
+   },
+   "extra_back_to_first_scene": {
+    "work_plane": {
+     "centre": [
+      0.2,
+      0.3,
+      0.0
+     ],
+     "rotation_deg": [
+      30.0,
+      0.0,
+      0.0
+     ]
+    },
+    "note": "the work plane is stored per scene: the new scene starts with the default plane, the first scene keeps its own"
+   }
+  },
+  {
+   "id": "newscene-element-pin",
+   "post_first_drop": false,
+   "set": {
+    "action_centre": "element",
+    "pin_written_by_pick": [
+     1.0,
+     0.0,
+     -0.2
+    ],
+    "pick": "press on a vertex of a +Y quad x[0.6,1.0] z[-0.2,0.2] with the move tool armed, then drop"
+   },
+   "gesture": [
+    "new scene",
+    "new mesh",
+    "+Y quad x[-1.0,-0.6] z[-0.2,0.2]",
+    "select all",
+    "constraint toggle off",
+    "arm rotate",
+    "empty-space press + vertical drag"
+   ],
+   "after": {
+    "pin": [
+     1.0,
+     0.0,
+     -0.2
+    ],
+    "rotation_fixed_point_xz": [
+     1.0,
+     -0.2
+    ],
+    "rotation_deg_measured": -4.63,
+    "quad_after": [
+     [
+      -0.993484,
+      0.0,
+      -0.038684
+     ],
+     [
+      -0.96122,
+      0.0,
+      0.360013
+     ],
+     [
+      -0.562524,
+      0.0,
+      0.32775
+     ],
+     [
+      -0.594787,
+      0.0,
+      -0.070947
+     ]
+    ],
+    "note": "the element pin survives a new scene: the new scene's first rotate (no pick in it) turns about the point picked in the previous scene; fixed point within 1.1e-6 of it, 1.81 m from the new quad's centre"
+   }
+  }
+ ],
+ "rig_new_scene": "fresh boot (prefs home re-seeded per cell); a new empty FOREGROUND mesh; top view; quads built by geometry edits (no primitive tool); the scene-open cells open a file saved by a separate prep boot (one mesh, one quad)",
+ "drop_doors": {
+  "rig": "boot mesh + a second mesh, one quad each, second mesh primary, top view, vertex mode; the move key arms the move tool. The constraint is remembered but absent until a drop; no drop before the door.",
+  "law": "a door re-inserts the remembered constraint iff it drops the armed tool. A primary-layer move from the item list does not drop the tool there (ours drops it; the constraint stays out either way).",
+  "cases": [
+   {
+    "id": "explicit-drop-control",
+    "cell": "K-CD Q",
+    "door": "explicitDrop",
+    "gesture": "the drop key",
+    "tool_armed_after": false,
+    "after": {
+     "enabled": true,
+     "geometry": "off",
+     "offset": 0.0,
+     "handle": true,
+     "double_sided": false
+    },
+    "verdict": "RE-INSERT"
+   },
+   {
+    "id": "same-tool-key",
+    "cell": "K-CD CD1",
+    "door": "sameIdToggleDrop",
+    "gesture": "the armed tool's own key again",
+    "tool_armed_after": false,
+    "after": {
+     "enabled": true,
+     "geometry": "off",
+     "offset": 0.0,
+     "handle": true,
+     "double_sided": false
+    },
+    "verdict": "RE-INSERT"
+   },
+   {
+    "id": "seltype-key-flip",
+    "cell": "K-CD CD2",
+    "door": "selTypeFlipDrop",
+    "gesture": "selection-type key 2 (vertex -> edge)",
+    "tool_armed_after": false,
+    "after": {
+     "enabled": true,
+     "geometry": "off",
+     "offset": 0.0,
+     "handle": true,
+     "double_sided": false
+    },
+    "verdict": "RE-INSERT"
+   },
+   {
+    "id": "seltype-key-same-type",
+    "cell": "K-CD CD2s",
+    "door": "(none: no drop in ours)",
+    "gesture": "selection-type key 1 while already vertex",
+    "tool_armed_after": false,
+    "after": {
+     "enabled": true,
+     "geometry": "off",
+     "offset": 0.0,
+     "handle": true,
+     "double_sided": false
+    },
+    "verdict": "RE-INSERT"
+   },
+   {
+    "id": "mode-button-flip",
+    "cell": "K-CD CD3",
+    "door": "panelDrop",
+    "gesture": "selection-type button Edges (vertex -> edge)",
+    "tool_armed_after": false,
+    "after": {
+     "enabled": true,
+     "geometry": "off",
+     "offset": 0.0,
+     "handle": true,
+     "double_sided": false
+    },
+    "verdict": "RE-INSERT"
+   },
+   {
+    "id": "mode-button-same-type",
+    "cell": "K-CD CD3s",
+    "door": "panelDrop",
+    "gesture": "selection-type button Vertices while already vertex",
+    "tool_armed_after": false,
+    "after": {
+     "enabled": true,
+     "geometry": "off",
+     "offset": 0.0,
+     "handle": true,
+     "double_sided": false
+    },
+    "verdict": "RE-INSERT"
+   },
+   {
+    "id": "primary-move-item-list",
+    "cell": "K-CD CD4",
+    "door": "primaryMoveDrop",
+    "gesture": "item-list click on the other mesh (the primary moves)",
+    "tool_armed_after": true,
+    "after": {
+     "enabled": false
+    },
+    "verdict": "NONE-ARMED"
+   }
+  ]
+ }
 }

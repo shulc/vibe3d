@@ -48,14 +48,15 @@ public:
 
 private CommandFactory sceneResetFactory(LiveSessionRole owner,
         LiveViewModeRole live, SceneResetEffects effects,
-        SceneLifecycleDoors doors, bool empty) {
+        SceneLifecycleDoors doors, bool newScene) {
     return () {
         auto c = new SceneReset(&owner.activeMesh(), live.view(), live.mode,
                                 live.modeCell(),
-                                () => effects.resetToolEffects(),
+                                () => effects.resetToolEffects(newScene),
                                 () => effects.resetViewport());
         c.setDocument(owner.document());
-        c.setEmpty(empty);
+        c.setEmpty(newScene);
+        c.setKeepsToolPipe(newScene);
         c.setPromoteHook(doors.promoteGeometry());
         return cast(Command) c;
     };

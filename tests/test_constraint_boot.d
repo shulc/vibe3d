@@ -15,17 +15,19 @@ import std.string : indexOf;
 
 void main() {}
 
-private JSONValue fixtureCase(string id) {
+private JSONValue fixtureRow(string list, string id) {
     static JSONValue cached;
     if (cached.type == JSONType.null_)
         cached = parseJSON(import("fixtures/constraint_boot.json"));
-    foreach (c; cached["cases"].array)
+    auto rows = list == "drop_doors" ? cached[list]["cases"] : cached[list];
+    foreach (c; rows.array)
         if (c["id"].str == id) return c;
-    assert(0, "fixture case missing: " ~ id);
+    assert(0, "fixture row missing: " ~ list ~ " " ~ id);
 }
+private JSONValue fixtureCase(string id) { return fixtureRow("cases", id); }
 
 private void cmd(string text) {
-    const body_ = text.indexOf(' ') < 0 ? commandBody(text) : text;
+    const body_ = text[0] == '{' || text.indexOf(' ') >= 0 ? text : commandBody(text);
     auto answer = postJson("/api/command", body_);
     assert(answer["status"].str == "ok",
         format("command `%s` failed: %s", text, answer.toString));
@@ -39,6 +41,7 @@ private void key(string name) {
         case "q":      sym = 113; scan = 20; break;   // tool.release (the drop key)
         case "w":      sym = 119; scan = 26; break;   // move
         case "e":      sym = 101; scan = 8;  break;   // rotate
+        case "2":      sym = 50;  scan = 31; break;   // edges (selection type)
     }
     playAndWait(
         `{"t":0.000,"type":"VIEWPORT","vpX":150,"vpY":28,"vpW":650,"vpH":544,"fovY":0.785398}` ~ "\n" ~
@@ -63,6 +66,18 @@ private JSONValue cons() {
 }
 
 private string tool() { return getJson("/api/input/context")["tool"].toString; }
+private bool armed() { return tool() != "null" && tool() != `""`; }
+
+/// One `drop_doors` door (task 9448) from the remembered-but-absent state,
+/// with the move tool armed. Where the row drops the tool, ours must too.
+private void crossDoor(string id, void delegate() gesture) {
+    auto c = fixtureRow("drop_doors", id);
+    assert(armed(), id ~ ": the rig armed no tool before the door");
+    expect(id ~ " before", parseJSON(`{"enabled":false}`));
+    gesture();
+    assert(c["tool_armed_after"].boolean || !armed(), id ~ ": the door left " ~ tool() ~ " armed");
+    expect(id, c["after"]);
+}
 
 private long selCount(string type) {
     const s = getJson("/api/selection");
@@ -235,15 +250,43 @@ unittest {
         expect("tool-switch-keeps-point arm pen", s[2]);
         ++ran;
     }
-    { // same-key-drop-keeps: the tool's own key drops it. The rig boots with
-      // the constraint already in the pipe, so this proves only that this drop
-      // keeps it (first-drop-move row "drop pen"); it cannot tell whether
-      // dropRemembersConstraint admits this door (uncaptured, left out)
-        boot(true);
+    { // same-tool-key (CD1): the tool's own key drops it and re-inserts
+        boot(false);
         key("w");
+        crossDoor("same-tool-key", () { key("w"); });
+        ++ran;
+    }
+    { // seltype-key-flip (CD2): a selection-type key that flips the front type
+        boot(false);
+        cmd("select.typeFrom vertex");
         key("w");
-        assert(tool() == "null" || tool() == `""`, "the move key left move armed: " ~ tool());
-        expect("same-key-drop-keeps", fixtureCase("first-drop-move")["steps"][5]);
+        crossDoor("seltype-key-flip", () { key("2"); });
+        ++ran;
+    }
+    { // primary-move-item-list (CD4): a primary move inserts nothing. Ours
+      // drops the tool there (the reference keeps it armed, a separate gap)
+        boot(false);
+        cmd("layer.duplicate");
+        key("w");
+        crossDoor("primary-move-item-list", () {
+            cmd(commandBody("layer.select", `{"index":0,"mode":"set"}`));
+            assert(getJson("/api/layers")["active"].integer == 0, "the primary did not move");
+        });
+        ++ran;
+    }
+    { // scene-open-with-tool-armed (E8): opening a saved scene drops the tool,
+      // which re-inserts the remembered constraint
+        import std.file : tempDir;
+        auto c = fixtureCase("scene-open-with-tool-armed");
+        const path = tempDir ~ "/vibe3d_9402_open_seed.v3d";
+        boot(false);
+        cmd(commandBody("file.save", format(`{"path":%s}`, JSONValue(path))));
+        key("w");
+        assert(armed(), "scene-open: the rig armed no tool");
+        expect("scene-open before", c["before"]);
+        cmd(commandBody("file.load", format(`{"path":%s}`, JSONValue(path))));
+        assert(armed() == c["after_tool_armed"].boolean, "scene-open: tool armed " ~ tool());
+        expect("scene-open-with-tool-armed", c["after"]);
         ++ran;
     }
     { // attr-enabled-forgets-remembers: the panel's Enabled row is the
@@ -370,5 +413,5 @@ unittest {
         ++ran;
     }
 
-    assert(ran == 24, format("constraint boot cells: ran %s, expected 24", ran));
+    assert(ran == 27, format("constraint boot cells: ran %s, expected 27", ran));
 }

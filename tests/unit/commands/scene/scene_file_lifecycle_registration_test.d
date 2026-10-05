@@ -196,7 +196,8 @@ unittest { // R2: both reset doors cross the production-shaped disarm phase firs
                 "6480 R2 " ~ door ~ "/" ~ sliceKind
                 ~ " did not apply through the production binding");
             assert(atPromote.length == 1 && atDrop.length == 2
-                    && dropTransitions.length == 2 && pipes == 1,
+                    // file.new keeps the tool pipe (task 9402, new_scene_stages)
+                    && dropTransitions.length == 2 && pipes == (door == "file.new" ? 0 : 1),
                 "6480 R2 " ~ door ~ "/" ~ sliceKind
                 ~ " phase population: promote " ~ atPromote.length.to!string
                 ~ ", drop " ~ atDrop.length.to!string ~ ", transitions "
@@ -454,11 +455,12 @@ unittest { // R3: production wiring and the retired paths, deliberately last
         "6480 R3 reset effects must be constructed exactly once");
 
     enum recipe = "auto c = new SceneReset(&owner.activeMesh(), live.view(), "
-        ~ "live.mode, live.modeCell(), () => effects.resetToolEffects(), "
+        ~ "live.mode, live.modeCell(), () => effects.resetToolEffects(newScene), "
         ~ "() => effects.resetViewport());";
     assert(lifecycleFlat.count(recipe) == 1
             && lifecycle.count("c.setDocument(owner.document());") == 1
-            && lifecycle.count("c.setEmpty(empty);") == 1
+            && lifecycle.count("c.setEmpty(newScene);") == 1
+            && lifecycle.count("c.setKeepsToolPipe(newScene);") == 1
             && lifecycle.count("c.setPromoteHook(doors.promoteGeometry());") == 1,
         "6480 R3 the named reset recipe changed or was duplicated");
     assert(lifecycleFlat.count(
@@ -485,7 +487,7 @@ unittest { // R3: production wiring and the retired paths, deliberately last
     assert(lifecycleFlat.count(loadSlots) == 1
             && lifecycleFlat.count(quitSlots) == 1,
         "6480 R3 load/quit factories lost their narrow lifecycle doors");
-    assert(lifecycle.count("effects.resetToolEffects()") == 1
+    assert(lifecycle.count("effects.resetToolEffects(newScene)") == 1
             && lifecycle.count("doors.dropForSceneLoad()") == 1,
         "6480 R3 reset and load drop capabilities are no longer separated");
 

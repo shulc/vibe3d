@@ -49,8 +49,10 @@ enum ToolTransition : ubyte {
     selTypeFlipDrop,
     /// The active-layer / primary change hook.
     activeLayerChangedDrop,
-    /// The document-replace disarm seam (`tool_disarm`).
+    /// The document-replace disarm seam (`tool_disarm`): a new document.
     documentReplaceDisarm,
+    /// The same seam before a primary-layer move (`DisarmMode.dropOnly`).
+    primaryMoveDrop,
     /// A scene reset / raw mesh load dropping whatever was armed.
     sceneResetDrop,
     /// A mesh-rebuilding command (subdivide, triple, remesh, …) dropping the
@@ -128,7 +130,7 @@ ActivationDoor activationDoorFor(ToolTransition t) pure nothrow @safe @nogc {
         // PipeGizmoHost's own, so the GL owner the prepared resource effects
         // are validated against is already torn down when it fires.
         case ToolTransition.shutdownDrop:
-        // The remaining EIGHT — counted off the `case` labels below, which is
+        // The remaining NINE — counted off the `case` labels below, which is
         // the only count that cannot drift from the rows — have no driven cell
         // of their own at all. That is a weaker position than the two above
         // rather than a stronger one: for them a door change would be green
@@ -139,6 +141,7 @@ ActivationDoor activationDoorFor(ToolTransition t) pure nothrow @safe @nogc {
         case ToolTransition.replayDrop:
         case ToolTransition.selTypeFlipDrop:
         case ToolTransition.documentReplaceDisarm:
+        case ToolTransition.primaryMoveDrop:
         case ToolTransition.sceneResetDrop:
         case ToolTransition.meshRebuildDrop:
         case ToolTransition.commandPreApplyDrop:
@@ -196,6 +199,7 @@ CloseReason closeReasonFor(ToolTransition t) pure nothrow @safe @nogc {
         case ToolTransition.selTypeFlipDrop:
         case ToolTransition.activeLayerChangedDrop:
         case ToolTransition.documentReplaceDisarm:
+        case ToolTransition.primaryMoveDrop:
         case ToolTransition.sceneResetDrop:
         case ToolTransition.meshRebuildDrop:
         case ToolTransition.commandPreApplyDrop:
@@ -224,6 +228,7 @@ bool dropWritesRowFor(ToolTransition t) pure nothrow @safe @nogc {
         case ToolTransition.replayDrop:
         case ToolTransition.activeLayerChangedDrop:
         case ToolTransition.documentReplaceDisarm:
+        case ToolTransition.primaryMoveDrop:
         case ToolTransition.sceneResetDrop:
         case ToolTransition.meshRebuildDrop:
         case ToolTransition.commandPreApplyDrop:
@@ -269,6 +274,7 @@ PipeArmScope pipeArmScopeFor(ToolTransition t, bool rearmsActiveId)
         case ToolTransition.selTypeFlipDrop:
         case ToolTransition.activeLayerChangedDrop:
         case ToolTransition.documentReplaceDisarm:
+        case ToolTransition.primaryMoveDrop:
         case ToolTransition.sceneResetDrop:
         case ToolTransition.meshRebuildDrop:
         case ToolTransition.commandPreApplyDrop:
@@ -296,6 +302,7 @@ bool armUsesAttrCache(ToolTransition t) pure nothrow @safe @nogc {
         case ToolTransition.selTypeFlipDrop:
         case ToolTransition.activeLayerChangedDrop:
         case ToolTransition.documentReplaceDisarm:
+        case ToolTransition.primaryMoveDrop:
         case ToolTransition.sceneResetDrop:
         case ToolTransition.meshRebuildDrop:
         case ToolTransition.commandPreApplyDrop:
@@ -334,6 +341,7 @@ ArmDoor armDoorFor(ToolTransition t, bool uiOrigin) pure nothrow @safe @nogc {
         case ToolTransition.selTypeFlipDrop:
         case ToolTransition.activeLayerChangedDrop:
         case ToolTransition.documentReplaceDisarm:
+        case ToolTransition.primaryMoveDrop:
         case ToolTransition.sceneResetDrop:
         case ToolTransition.meshRebuildDrop:
         case ToolTransition.commandPreApplyDrop:
@@ -346,11 +354,19 @@ ArmDoor armDoorFor(ToolTransition t, bool uiOrigin) pure nothrow @safe @nogc {
 
 /// Whether a drop of an ARMED tool by this transition puts the remembered
 /// background constraint back into the pipe (`ConstrainStage.noteToolDropped`).
-/// Captured: the drop key, `tool.set <id> off` and the Escape that drops
-/// (fixtures/constraint_boot.json); a tool switch is not a drop. The other
-/// doors are uncaptured for this law and do not.
+/// Captured law: a door re-inserts it iff it drops the armed tool; one row per
+/// door, its cell in fixtures/constraint_boot.json (`cases`, `drop_doors`). A
+/// tool switch is not a drop; the other doors are uncaptured and stay out.
 bool dropRemembersConstraint(ToolTransition t) pure nothrow @safe @nogc {
-    return t == ToolTransition.explicitDrop;
+    switch (t) {
+        case ToolTransition.explicitDrop:          // first-drop-move, K-CD Q
+        case ToolTransition.sameIdToggleDrop:      // K-CD CD1 same-tool-key
+        case ToolTransition.selTypeFlipDrop:       // K-CD CD2 seltype-key-flip
+        case ToolTransition.panelDrop:             // K-CD CD3 / CD3s mode-button-*
+        case ToolTransition.documentReplaceDisarm: // E8 newscene-armed-seeds, scene-open-with-tool-armed
+            return true;
+        default: return false;  // primaryMoveDrop: K-CD CD4 primary-move-item-list
+    }
 }
 
 /// True when the transition publishes a NEW active tool. Kept beside the table

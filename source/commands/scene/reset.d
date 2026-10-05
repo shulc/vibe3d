@@ -64,6 +64,7 @@ class SceneReset : Command {
 
     private string       primitive;     // "cube" / "diamond" / "octahedron" / "lshape" / "grid" / "subdivcube"
     private bool         emptyScene;    // true → reset to empty mesh (no primitive)
+    private bool         keepsToolPipe; // file.new: reset only storedInScene stages (task 9402)
     // Integer parameter for the dense perf meshes: grid side count (n) for
     // "grid", Catmull-Clark depth (levels) for "subdivcube". -1 → use the
     // primitive's default. Ignored by the small fixed primitives.
@@ -140,6 +141,7 @@ class SceneReset : Command {
 
     void setPrimitive(string p) { primitive = p; emptyScene = false; }
     void setEmpty(bool b) { emptyScene = b; }
+    void setKeepsToolPipe(bool b) { keepsToolPipe = b; }
     /// Install the document handle so reset collapses to one default layer.
     /// app.d sets this on the scene.reset / file.new / scene.loadMesh factories.
     void setDocument(Document* d) { document = d; }
@@ -312,7 +314,7 @@ class SceneReset : Command {
         // reset's own mesh mutation flushes after this command, so the
         // rebaseline lands on the next syncDocRevision.
         requestDocRebaseline();
-        // Reset EVERY toolpipe stage to its declaration-time defaults.
+        // Reset EVERY toolpipe stage (file.new: the scene-stored ones) to its defaults.
         // Stage state — Snap on, Symmetry plane, Falloff type, ACEN /
         // AXIS modes, Workplane tilt — is session-level UI state, and
         // a "Reset" UX promise should wipe it alongside the mesh.
@@ -327,9 +329,9 @@ class SceneReset : Command {
             // matching the pre-stacking baseline (byte-stable). The primary
             // survives and reset()s its config to None below.
             import commands.falloff : removeStackedFalloffs;
-            removeStackedFalloffs();
+            if (!keepsToolPipe) removeStackedFalloffs();
             foreach (s; g_pipeCtx.pipeline.allMut())
-                s.reset();
+                if (!keepsToolPipe || s.storedInScene()) s.reset();
         }
         // And the Coordinate Rounding setting, for exactly the reason the
         // stage loop above gives: it is session-level UI state, and without

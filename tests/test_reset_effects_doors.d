@@ -170,9 +170,11 @@ unittest {
     assert(!fileNew.previewActiveAfter && !sceneReset.previewActiveAfter,
         "6020 preview floor (not J's witness; R1/R2 are): a reset door left "
         ~ "the subpatch preview active; " ~ summary);
-    assert(fileNew.falloffAfter == "none" && sceneReset.falloffAfter == "none",
-        "6020 pipe-stage effect: a reset door kept a user-selected falloff; "
-        ~ summary);
+    // A new scene keeps the tool pipe (task 9402, fixtures/constraint_boot.json
+    // new_scene_stages); scene.reset stays a full reset.
+    assert(fileNew.falloffAfter == "linear" && sceneReset.falloffAfter == "none",
+        "6020 pipe-stage effect: file.new must keep and scene.reset must reset "
+        ~ "a user-selected falloff; " ~ summary);
     assert(fileNew.retiredByDoor == fileNew.liveBefore
             && sceneReset.retiredByDoor == sceneReset.liveBefore,
         "6020 topology-cache effect: a reset door did not retire every cached "

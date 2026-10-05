@@ -47,12 +47,12 @@ public:
         prefs_.viewportLayout = LayoutPreset.Single;
     }
 
-    /// Drop the tool, reset every pipe stage, then leave no subpatch preview
-    /// and no cached subdivision topology: the next preview build is a miss
-    /// (and no stray mutationVersion bumps; see `SubpatchPreview.deactivate`).
-    void resetToolEffects() {
+    /// Drop the tool, reset every pipe stage unless `keepPipe` (file.new, task
+    /// 9402), then leave no subpatch preview and no cached subdivision topology:
+    /// the next preview build is a miss (and no stray mutationVersion bumps).
+    void resetToolEffects(bool keepPipe = false) {
         dropActiveTool(ToolTransition.sceneResetDrop);
-        resetAllPipeStages_();
+        if (!keepPipe) resetAllPipeStages_();
         preview_.deactivate();
         preview_.dropTopologyCache();
     }
