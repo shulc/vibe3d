@@ -10,7 +10,8 @@
         "notes": "A regression golden of OUR history rows around a command meeting a live tool edit, recorded on the parent of slice M2 before its code change; the cells are compared canonicalised (see the test header). Re-recorded 2026-09-25 by slice M3b (the lifetime clause): the four poly.bevel cells only, on the M3b tip, each gaining the arm's 'Activate Tool' row (Polygon Bevel activationRow, C-H1-bev); the other eight cells are byte-identical to the M2 recording.",
         "rerecorded_m4": "slice M4 (task M4, 2026-09-25, rebased on main ccc329ca after M3b): ONLY the four edge.extend cells, re-recorded on the M4 tree after the fixture verified on its base. Each gains the script-door activation row 'Activate Tool' at the head of its undo rows (Edge Extend's arm now writes its row, H1 + gap 218; a script arm keeps it as its own step, C-H1-door-es-api). tool / verts / panel unchanged; the eight other cells as recorded before.",
         "updated_8261": "Only TransformMove x off/subdivide third undo row now carries ClosedRun (flags 2065, runId 1), measured in the 2026-09-29 suite on task 8261; remaining ten cells unchanged.",
-        "updated_9476": "Only the four TransformMove cells: verts digest (and the select / subpatch_toggle panel pivot) re-recorded by VIBE3D_RECORD_GOLDEN=1 on task 9476, whose unpinned perspective off-handle relocate now lands q-snapped (capture K-W3); every undo row is unchanged."
+        "updated_9476": "Only the four TransformMove cells: verts digest (and the select / subpatch_toggle panel pivot) re-recorded by VIBE3D_RECORD_GOLDEN=1 on task 9476, whose unpinned perspective off-handle relocate now lands q-snapped (capture K-W3); every undo row is unchanged.",
+        "updated_9471": "TransformMove x {off, select, subdivide, subpatch_toggle} and edge.extend x the same four: the Move free drag now rounds its travel by the free-drag quantum (start + q(start + T) - q(start); task 9471, captures K-C3 / K-G3), re-recorded on the 9471 branch; the four poly.bevel cells unchanged."
     },
     "TransformMove x off": {
         "panel": {},
@@ -53,12 +54,12 @@
                 "ui": false
             }
         ],
-        "verts": "8:ED57B6F1"
+        "verts": "8:0A6D1ED4"
     },
     "TransformMove x select": {
         "panel": {
             "editOpen": false,
-            "pivot": "0.2789,-0.5003,0.0000",
+            "pivot": "0.2800,-0.5000,0.0000",
             "runOpen": false,
             "sessionOpen": true
         },
@@ -113,7 +114,7 @@
                 "ui": true
             }
         ],
-        "verts": "8:ED57B6F1"
+        "verts": "8:0A6D1ED4"
     },
     "TransformMove x subdivide": {
         "panel": {},
@@ -168,12 +169,12 @@
                 "ui": false
             }
         ],
-        "verts": "26:13F401A4"
+        "verts": "26:7FF81408"
     },
     "TransformMove x subpatch_toggle": {
         "panel": {
             "editOpen": false,
-            "pivot": "0.2789,-0.5003,0.0000",
+            "pivot": "0.2800,-0.5000,0.0000",
             "runOpen": false,
             "sessionOpen": true
         },
@@ -228,7 +229,7 @@
                 "ui": false
             }
         ],
-        "verts": "8:ED57B6F1"
+        "verts": "8:0A6D1ED4"
     },
     "edge.extend x off": {
         "panel": {},
@@ -259,11 +260,11 @@
                 "ui": false
             }
         ],
-        "verts": "12:70030EC9"
+        "verts": "12:45AF33EA"
     },
     "edge.extend x select": {
         "panel": {
-            "offsetX": "0.1827",
+            "offsetX": "0.1850",
             "offsetY": "0.0000",
             "offsetZ": "0.0000"
         },
@@ -294,7 +295,7 @@
                 "ui": true
             }
         ],
-        "verts": "12:70030EC9"
+        "verts": "12:45AF33EA"
     },
     "edge.extend x subdivide": {
         "panel": {},
@@ -337,7 +338,7 @@
                 "ui": false
             }
         ],
-        "verts": "35:DF6763FB"
+        "verts": "35:0FD61B51"
     },
     "edge.extend x subpatch_toggle": {
         "panel": {},
@@ -380,7 +381,7 @@
                 "ui": false
             }
         ],
-        "verts": "12:70030EC9"
+        "verts": "12:45AF33EA"
     },
     "poly.bevel x off": {
         "panel": {},

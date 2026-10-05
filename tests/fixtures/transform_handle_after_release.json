@@ -7,7 +7,8 @@
     "captured_utc": "2026-09-15",
     "harness": "private GUI gesture and live-debug capture harness",
     "task": "6207 phases 0, 0b, 0e, and 3",
-    "notes": "The runtime handle, frame, and Element-weight observations were read during GUI gestures under a live debugger; expected vectors in this public fixture are recomputed from the captured laws."
+    "notes": "The runtime handle, frame, and Element-weight observations were read during GUI gestures under a live debugger; expected vectors in this public fixture are recomputed from the captured laws.",
+    "updated_9471": "element_weight_cache: our rig's first Element drag (+55 px, top) now lands T 0.5 (the free drag's quantum, task 9471, captures K-C3 / K-G3; was 0.502539); first/arrow translations, the four expected vectors and the regrade / bank weights recomputed by the same laws."
   },
   "parameters": {
     "schema": 1,
@@ -522,7 +523,7 @@
     "regrade_range": 1.5,
     "bank_range": 3.0,
     "first_translation": [
-      0.502539,
+      0.5,
       0.0,
       0.0
     ],
@@ -532,7 +533,7 @@
       0.0
     ],
     "arrow_translation": [
-      0.622539,
+      0.62,
       0.0,
       0.0
     ],
@@ -575,12 +576,12 @@
         -1.2
       ],
       [
-        -0.9989844,
+        -1.0,
         0.0,
         0.0
       ],
       [
-        0.0761205183471523,
+        0.07573593128807149,
         0.0,
         0.0
       ],
@@ -590,12 +591,12 @@
         0.0
       ],
       [
-        -0.697461,
+        -0.7,
         0.0,
         1.2
       ],
       [
-        0.2010156,
+        0.2,
         0.0,
         1.2
       ],
@@ -622,12 +623,12 @@
         -1.2
       ],
       [
-        -0.9509844,
+        -0.952,
         0.0,
         0.0
       ],
       [
-        0.09429714185628947,
+        0.09391255479720864,
         0.0,
         0.0
       ],
@@ -637,12 +638,12 @@
         0.0
       ],
       [
-        -0.577461,
+        -0.58,
         0.0,
         1.2
       ],
       [
-        0.2490156,
+        0.248,
         0.0,
         1.2
       ],
@@ -703,11 +704,11 @@
       0.0,
       0.0,
       0.0,
-      0.17513196725575553,
-      0.048176401607411434,
+      0.17537887487646797,
+      0.047397428073695846,
       0.0,
       1.0,
-      0.4010156,
+      0.4,
       0.0
     ],
     "regrade_expected": [
@@ -727,12 +728,12 @@
         -1.2
       ],
       [
-        -1.1119893563072598,
+        -1.112310562561766,
         0.0,
         0.0
       ],
       [
-        0.02421052068738693,
+        0.023698714036847923,
         0.0,
         0.0
       ],
@@ -742,12 +743,12 @@
         0.0
       ],
       [
-        -0.697461,
+        -0.7,
         0.0,
         1.2
       ],
       [
-        0.2015259786084,
+        0.2,
         0.0,
         1.2
       ],
@@ -774,12 +775,12 @@
         -1.2
       ],
       [
-        -1.0909735202365691,
+        -1.0912650975765898,
         0.0,
         0.0
       ],
       [
-        0.029991688880276306,
+        0.029386405405691426,
         0.0,
         0.0
       ],
@@ -789,12 +790,12 @@
         0.0
       ],
       [
-        -0.577461,
+        -0.58,
         0.0,
         1.2
       ],
       [
-        0.2496478506084,
+        0.248,
         0.0,
         1.2
       ],
@@ -805,15 +806,15 @@
       ]
     ],
     "bank_weights": [
-      0.18265025529520107,
-      0.1669032438131811,
+      0.18282328852458252,
+      0.16666666666666663,
       0.0,
-      0.5875659836278777,
-      0.5240882008037058,
-      0.25164192717055567,
+      0.587689437438234,
+      0.5236987140368479,
+      0.25092649819185897,
       1.0,
-      0.7005078,
-      0.3675130000000001
+      0.7,
+      0.3666666666666667
     ],
     "repick_weights": [
       0.0,

@@ -192,6 +192,15 @@ unittest {
         assert(!skip);
         return c;
     }
+    // No travel, no motion: the free form subtracts the two roundings first,
+    // so a press on an off-lattice point returns it bit-for-bit (a one-ulp
+    // drift is an edit, and commits a run of its own).
+    size_t still;
+    foreach (p; [Vec3(0.3023f, 0, 0.2017f), Vec3(-1.2f, 0, 1.2f), Vec3(0.2789f, 0, -0.5003f)]) {
+        assert(drag(DragKind.viewPlane, p, 0, 0) == p, "free: zero travel must return the point");
+        ++still;
+    }
+    assert(still == 3);
     immutable Vec3 free = drag(DragKind.viewPlane, Vec3(0.3023f, 0, 0.2017f), 84, 5);
     assert(abs(free.x - 0.4973f) <= 1e-4f && abs(free.z - 0.2167f) <= 1e-4f,
         "free (Move): p + q(p + T) - q(p), (0.4973, 0.2167)");

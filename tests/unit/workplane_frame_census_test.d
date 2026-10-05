@@ -121,9 +121,10 @@ unittest // W1: the folded frames, the forwarders, the axis switch, the quantum
     // (task 9404: + the free point's no-surface fallback, `backgroundPoint`).
     const string[string] want = [
         // the grid sub-step is read through `viewVectorQuantum` everywhere but
-        // its home (app.d: an import); task 9415: the pen joins (P1)
+        // its home (app.d: an import); task 9415: the pen joins (P1); drag.d: the handle drag's quantum forms
         "viewGridSubStep": "app.d:1 viewgrid.d:2",
-        "viewVectorQuantum": "create_common.d:3 http_providers.d:2 pen.d:2 poly_extrude.d:2 transform.d:2 viewgrid.d:2",
+        "viewVectorQuantum": "create_common.d:3 drag.d:2 http_providers.d:2 pen.d:2 poly_extrude.d:2 "
+            ~ "transform.d:2 viewgrid.d:2",
         "viewPrincipalAxis": "create_common.d:2 pen.d:2",
         // radial_array_tool.d: its own unrelated `axisUnit()` member (7)
         "axisUnit": "create_common.d:2 pen.d:5 radial_array_tool.d:7",

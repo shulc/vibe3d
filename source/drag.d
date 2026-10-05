@@ -1705,7 +1705,7 @@ struct HandleDrag {
         immutable float q = viewVectorQuantum(vp);
         final switch (f.kind) {
         case DragKind.axisArm:        return point + t;
-        case DragKind.viewPlane:      return point + vectorSnap(point + t, q) - vectorSnap(point, q);
+        case DragKind.viewPlane:      return point + (vectorSnap(point + t, q) - vectorSnap(point, q));
         case DragKind.principalPlane: return vectorSnap(point + t, q);
         case DragKind.screenAxis:
         case DragKind.planeHit:
