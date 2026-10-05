@@ -13,7 +13,7 @@
 
 import http_client : getJson, postJson, testBaseUrl;
 import http_command_helpers : commandBody;
-import http_client : get = keepAliveGet, post = keepAlivePost;
+import std.net.curl : get, post;
 import std.json;
 import std.math  : fabs;
 import std.conv  : to;

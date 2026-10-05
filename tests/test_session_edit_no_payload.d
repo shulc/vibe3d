@@ -22,7 +22,7 @@
 import http_client : testBaseUrl, getJson, postJson;
 import http_command_helpers : commandBody;
 import std.json;
-import http_client : get = keepAliveGet, post = keepAlivePost;
+import std.net.curl : get, post;
 import std.algorithm : canFind;
 import std.conv : to;
 

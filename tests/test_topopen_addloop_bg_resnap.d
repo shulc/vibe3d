@@ -46,7 +46,7 @@ import fixture_helpers : requireProvenance;
 import std.json;
 import std.format : format;
 import std.math   : sqrt;
-import http_client : get = keepAliveGet;
+import std.net.curl : get;
 
 void main() {}
 

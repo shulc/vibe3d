@@ -69,7 +69,7 @@ import std.conv    : to;
 import std.format  : format;
 import std.json;
 import std.math    : abs, cos, sin, sqrt, tan, PI;
-import http_client : get = keepAliveGet, post = keepAlivePost;
+import std.net.curl : get, post;
 import std.stdio   : writefln, writeln;
 
 void main() {}

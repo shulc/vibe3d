@@ -16,7 +16,7 @@
 // "panel/group/label → kind:id" breadcrumb.
 
 import http_client : testBaseUrl;
-import http_client  : get = keepAliveGet;
+import std.net.curl  : get;
 import std.json      : parseJSON, JSONValue;
 import std.conv      : to;
 import std.format    : format;

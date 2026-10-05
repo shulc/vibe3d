@@ -28,7 +28,7 @@ import view       : View;
 import editmode   : EditMode;
 import snapshot   : MeshSnapshot;
 import commands.mesh.uv_map_util;
-import http_client : post = keepAlivePost, get = keepAliveGet;
+import std.net.curl : post, get;
 
 void main() {}
 

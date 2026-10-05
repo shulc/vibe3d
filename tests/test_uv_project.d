@@ -32,7 +32,7 @@ import view     : View;
 import editmode : EditMode;
 import commands.mesh.uv_project : UvProject;
 import uv_project : UvProjMode, UvProjAxis, projectUv, dominantAxis;
-import http_client : post = keepAlivePost, get = keepAliveGet;
+import std.net.curl : post, get;
 
 void main() {}
 

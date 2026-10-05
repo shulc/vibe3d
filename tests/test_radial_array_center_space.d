@@ -67,7 +67,7 @@
 
 import http_client : testBaseUrl, getJson, postJson, quiesce;
 import http_command_helpers : commandBody;
-import http_client : get = keepAliveGet, post = keepAlivePost;
+import std.net.curl : get, post;
 import std.json;
 import std.math   : fabs, sqrt, sin, cos, PI;
 import std.format : format;

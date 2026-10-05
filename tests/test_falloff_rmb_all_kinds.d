@@ -6,7 +6,7 @@ import std.conv : to;
 import std.format : format;
 import std.json : parseJSON, JSONType;
 import std.math : fabs;
-import http_client : get = keepAliveGet, post = keepAlivePost;
+import std.net.curl : get, post;
 import std.string : split;
 import core.thread : Thread;
 import core.time : msecs;

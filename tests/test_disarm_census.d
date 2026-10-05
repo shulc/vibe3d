@@ -13,7 +13,7 @@ import std.conv : to;
 import std.digest.sha : sha1Of, toHexString;
 import std.file : exists, mkdirRecurse;
 import std.json;
-import http_client : get = keepAliveGet, post = keepAlivePost;
+import std.net.curl : get, post;
 import std.path : buildPath;
 import std.process : thisProcessID;
 import std.stdio : writefln;

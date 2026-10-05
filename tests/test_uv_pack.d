@@ -28,7 +28,7 @@ import std.file   : remove, exists, readText;
 import std.format : format;
 import std.json   : parseJSON, JSONType, JSONValue;
 import std.conv   : to;
-import http_client : post = keepAlivePost;
+import std.net.curl : post;
 
 import mesh        : Mesh, MeshMap, MapDomain, makeCube, kUvMapName;
 import math        : Vec3;

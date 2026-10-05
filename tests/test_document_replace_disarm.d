@@ -10,7 +10,7 @@ import std.conv : to;
 import std.file : exists, remove, write;
 import std.format : format;
 import std.json;
-import http_client : get = keepAliveGet, post = keepAlivePost;
+import std.net.curl : get, post;
 import std.stdio : writeln;
 import core.thread : Thread;
 import core.time : msecs;

@@ -147,7 +147,7 @@ import std.format    : format;
 import std.json;
 import std.math      : abs, sqrt, cos, sin, atan2, PI, round, floor, isNaN;
 import std.algorithm : min, max, sort;
-import http_client  : get = keepAliveGet, post = keepAlivePost;
+import std.net.curl  : get, post;
 import core.thread   : Thread;
 import core.time     : msecs;
 

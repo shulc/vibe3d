@@ -38,7 +38,7 @@
 import http_client : testBaseUrl;
 import std.stdio;
 import std.json;
-import http_client : get = keepAliveGet;
+import std.net.curl : get;
 import std.format   : format;
 import std.array    : join;
 import std.algorithm: canFind, sort;

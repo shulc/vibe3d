@@ -171,7 +171,7 @@
 import http_client : testBaseUrl, getJson, postJson, quiesce;
 import http_command_helpers : commandBody;
 import std.json;
-import http_client : get = keepAliveGet, post = keepAlivePost;
+import std.net.curl : get, post;
 import std.format   : format;
 import std.math     : fabs, sqrt;
 import core.thread  : Thread;

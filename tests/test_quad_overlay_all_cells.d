@@ -69,7 +69,7 @@ string baseUrl;
 int verifiedToolDrops;
 
 string httpGet(string path) {
-    import http_client : get = keepAliveGet;
+    import std.net.curl : get;
     return cast(string)get(baseUrl ~ path);
 }
 

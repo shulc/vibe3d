@@ -43,7 +43,7 @@ import std.algorithm : canFind, sort;
 import std.conv : to;
 import std.json;
 import std.math : abs;
-import http_client : get = keepAliveGet, post = keepAlivePost;
+import std.net.curl : get, post;
 
 import plane_diff_helpers;
 import drag_helpers;

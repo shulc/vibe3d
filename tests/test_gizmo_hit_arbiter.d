@@ -16,7 +16,7 @@ import http_command_helpers : commandBody;
 import std.format : format;
 import std.json;
 import std.math : sqrt;
-import http_client : post = keepAlivePost;
+import std.net.curl : post;
 
 import drag_helpers : playAndWait, fetchCamera, viewportFromCameraMatrices,
                       projectToWindow, gizmoSize, Vec3, Viewport;

@@ -39,7 +39,7 @@ import snapshot      : MeshSnapshot;
 import uv_project    : UvProjMode, UvProjAxis, projectUv;
 import uv_unwrap     : uvUnwrap, uvDirichletEnergy, uvAngularDistortion;
 import commands.mesh.uv_unwrap : UvUnwrap;
-import http_client  : post = keepAlivePost, get = keepAliveGet;
+import std.net.curl  : post, get;
 
 void main() {}
 

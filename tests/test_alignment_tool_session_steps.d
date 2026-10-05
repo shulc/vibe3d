@@ -3,7 +3,7 @@
 import http_client : testBaseUrl, getJson, postJson;
 import http_command_helpers : commandBody;
 import std.json;
-import http_client : get = keepAliveGet;
+import std.net.curl : get;
 import std.conv : to;
 import std.math : abs;
 import std.format : format;

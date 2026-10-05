@@ -52,7 +52,7 @@ unittest { // ThickenPresetActuallyThickens
     // exercised via the PRESET id itself (`mesh.thickenTool`), NOT base tool
     // + `tool.attr … thicken 1` (that path is already covered by the
     // topology-diff suite above and never touched the clobbered field).
-    import http_client : get = keepAliveGet;
+    import std.net.curl : get;
     import std.json     : parseJSON;
     import std.conv     : to;
 
@@ -83,7 +83,7 @@ unittest { // ThickenWindingReversed
     // a correctly reversed one. Uses shift=0.3 (base tool path, matching the
     // frozen "thicken_top_only" combo) so the cap (y=0.8) and the retained
     // face (y=0.5, unmoved original) are unambiguous by position.
-    import http_client : get = keepAliveGet;
+    import std.net.curl : get;
     import std.json     : parseJSON;
     import std.math     : abs;
     import std.format   : format;

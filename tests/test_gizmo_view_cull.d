@@ -76,7 +76,7 @@ import http_client : getJson, postRaw, testBaseUrl;
 import std.format : format;
 import std.json;
 import std.math : abs, asin, sin, cos, PI;
-import http_client : get = keepAliveGet, post = keepAlivePost;
+import std.net.curl : get, post;
 
 import drag_helpers : playAndWait;
 
