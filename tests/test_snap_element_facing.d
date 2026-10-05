@@ -807,6 +807,6 @@ unittest {
         const n = f[0 .. f.indexOf(':') < 0 ? f.length : f.indexOf(':')];
         if (!names.canFind(n)) names ~= n;
     }
-    assert(fails.length == 0, format("%d of 33 cells red (%-(%s, %)):\n  %-(%s\n  %)",
+    assert(fails.length == 0, format("%d of 36 cells red (%-(%s, %)):\n  %-(%s\n  %)",
                                      names.length, names, fails));
 }

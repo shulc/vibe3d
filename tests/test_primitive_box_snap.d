@@ -403,6 +403,6 @@ unittest { // handle drags under grid snap: not trapped; a released element snap
     assert(ran == 9, format("population: %d box handle cells ran, expected 9", ran));
     string[] names;   // the red cells by name first: the runner shows 8 lines
     foreach (f; fails) names ~= f[0 .. f.indexOf(':')];
-    assert(fails.length == 0, format("%d of 8 box handle cells red (%-(%s, %)):\n  %-(%s\n  %)",
+    assert(fails.length == 0, format("%d of 9 box handle cells red (%-(%s, %)):\n  %-(%s\n  %)",
                                      fails.length, names, fails));
 }
