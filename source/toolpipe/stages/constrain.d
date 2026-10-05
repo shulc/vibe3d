@@ -34,11 +34,16 @@ private static immutable IntEnumEntry[] constrainGeomEntries = [
 // query (`backgroundHit`), ungated, on a world ray; `rayHitAt` takes a window
 // pixel's centre;
 // `surfaceOnRay` / `surfaceAt` add the pointer gate `enabled && handle`;
-// `offsetPoint` is the offset each client applies in its captured order. The
-// stage's own hover publish (`publishSurfaceHit`) reads `rayHitAt`, UNGATED
-// as before 9403 (no capture backs a `handle` gate on the hover):
-//   * `point`  mode — the camera-ray hit, offset (the topology pen's mode);
-//   * `screen` mode — the camera-ray hit, NOT offset (as before 9403);
+// `offsetPoint` is the offset each client applies in its captured order;
+// `pass` is the constraint's own pass over a point a tool already placed
+// (`constrainPoint` under this stage's settings, task 9477, capture K-C4).
+// The stage's own hover publish (`publishSurfaceHit`) reads `rayHitAt`,
+// UNGATED by `handle` (K-C4 h0 == h1): the topology pen's placement, the hit
+// offset; then
+//   * `point`  mode — nothing more (the nearest-foot pass is the identity on
+//     an exact facet hit; K-C4's foot step is the capture's depth-read sag);
+//   * `screen` mode — `pass`: re-cast along the view, offset AGAIN (K-C4 scr,
+//     scr2: the double offset);
 //   * `vector` mode — accepted attrs, no publish (no drag consumer yet).
 //
 // HTTP setAttr keys (via tool.pipe.attr constrain <name> <value>):
@@ -149,6 +154,27 @@ public:
         return applyOffset(p, n, offset);
     }
 
+    /// The constraint's pass over `placed`, a WORLD point a tool already
+    /// placed (`motion` its edit delta, for `vector`): Point the nearest
+    /// surface foot + offset·n, Screen the view re-cast + offset·n, `placed`
+    /// itself when off or disabled (K-C4 h0d / h0d_g0, scr).
+    Vec3 pass(Vec3 placed, const ref Viewport vp, Vec3 motion = Vec3(0, 0, 0),
+              const(BackgroundSource)[] sources = backgroundSourcesFull()) const {
+        import constraint : constrainPoint;
+        const cfg = packet();
+        return constrainPoint(placed, motion, vp, sources, cfg);
+    }
+
+    private ConstrainPacket packet() const {
+        ConstrainPacket pkt;
+        pkt.enabled  = enabled;
+        pkt.geom     = geom;
+        pkt.offset   = offset;
+        pkt.handle   = handle;
+        pkt.dblSided = dblSided;
+        return pkt;
+    }
+
     private static void pixelRay(int x, int y, const ref Viewport vp, out Vec3 org, out Vec3 dir) {
         import math : screenPointToRay;
         screenPointToRay(x + 0.5f, y + 0.5f, vp, org, dir);
@@ -160,13 +186,7 @@ public:
 
     bool evaluate(ref VectorStack vts) {
         if (!enabled) return false;
-        ConstrainPacket pkt;
-        pkt.enabled  = enabled;
-        pkt.geom     = geom;
-        pkt.offset   = offset;
-        pkt.handle   = handle;
-        pkt.dblSided = dblSided;
-        _publishedPacket = pkt;
+        _publishedPacket = packet();
         vts.put(&_publishedPacket);
 
         // Point and Screen publish the surface under the cursor (Vector / Off
@@ -184,8 +204,9 @@ public:
     }
 
     // The hover publish: `rayHitAt` the cursor pixel over ONE sources
-    // snapshot (`sh.source` indexes it, task 0617); Point offsets the hit,
-    // Screen does not. The hit face's nearest vertex / edge ride along as WORLD
+    // snapshot (`sh.source` indexes it, task 0617); the hit offset, Screen's
+    // `pass` after it (at offset 0 the re-cast would start ON the surface it
+    // re-finds, a float tie, so it is skipped). The hit face's nearest vertex / edge ride along as WORLD
     // candidates, so `resolveHoverTarget` stays a function of the packet.
     private void publishSurfaceHit(ref SubjectPacket subj, ref VectorStack vts) {
         import constraint : nearestFaceVertex, nearestFaceEdge, consistentCandidateIndex;
@@ -203,7 +224,9 @@ public:
         const m  = bg.mesh;
         Vec3 world(uint v) { return bg.space.isIdentity ? m.vertices[v] : bg.space.toWorldPoint(m.vertices[v]); }
         _hitPkt.hit    = true;
-        _hitPkt.point  = geom == ConstrainGeom.Point ? offsetPoint(p, n) : p;
+        const placed   = offsetPoint(p, n);
+        _hitPkt.point  = geom == ConstrainGeom.Screen && offset != 0
+                       ? pass(placed, subj.viewport, Vec3(0, 0, 0), bgFull) : placed;
         _hitPkt.normal = n;
         _hitPkt.layer  = bg.layerIndex >= 0 ? bg.layerIndex : src;
         _hitPkt.face   = face;

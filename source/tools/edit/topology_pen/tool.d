@@ -5141,8 +5141,9 @@ public:
     // M-hit: the background hit under the vertex's pixel moved by the drag,
     // minus the vertex — gap row (q)), or of the free-plane drag delta
     // (`planeDragDelta`) when that ray finds no background; added to the
-    // vertex in world, then the nearest foot on the background. False when
-    // the drag does not convert.
+    // vertex in world, then the constraint's `pass` (geometry Point: onto the
+    // background; off or no stage: left there — K-C4 h0d / h0d_g0, task
+    // 9477). False when the drag does not convert.
     private bool vertexSlideTarget(int mx, int my, const ref Viewport vp,
                                    out Vec3 target, out int axis, out float k) {
         import std.math : abs;
@@ -5173,7 +5174,8 @@ public:
         k = sign * abs(axis == 0 ? off.x : axis == 1 ? off.y : off.z);
         const Vec3 tW = Vec3(uW.x + (axis == 0 ? k : 0.0f), uW.y + (axis == 1 ? k : 0.0f),
                              uW.z + (axis == 2 ? k : 0.0f));
-        target = footOnBackground(ms.toLocalPoint(tW));
+        auto cs = liveConstrainStage();
+        target = ms.toLocalPoint(cs is null ? tW : cs.pass(tW, vp, tW - uW));
         return true;
     }
 

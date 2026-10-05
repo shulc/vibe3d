@@ -136,10 +136,23 @@ unittest {
                   want.point, ungated.hit, ungated.point));
     cs.handle = true;
 
-    // (8) Screen mode publishes the RAW hit (no offset, as before 9403).
+    // (8) Screen mode offsets the hit, re-casts it along the view and offsets
+    // it again (task 9477, capture K-C4 scr): on this camera-facing quad the
+    // re-cast lands back on the hit, so the point is hit + 0.1 * normal (the
+    // double offset proper needs a slanted surface: suite
+    // test_topopen_constraint_modes, cells scr / scr2).
     cs.geom = ConstrainGeom.Screen;
     const screen = publish(200, 100);
-    assert(screen.hit && screen.point == want.point,
-           format("publish, Screen: the un-offset hit %s (offset 0.1 must not apply); got hit %s at %s",
-                  want.point, screen.hit, screen.point));
+    assert(screen.hit && near3(screen.point, want.point + screen.normal * 0.1f),
+           format("publish, Screen: the hit %s + 0.1 * normal %s; got hit %s at %s",
+                  want.point, screen.normal, screen.hit, screen.point));
+
+    // (9) Screen at offset 0 publishes the near quad's hit itself: a re-cast
+    // from a point ON the near quad misses it (t = 0) and would land on the
+    // FAR quad behind it (z = -1).
+    cs.offset = 0.0f;
+    const screen0 = publish(200, 100);
+    assert(screen0.hit && screen0.point == want.point,
+           format("publish, Screen, offset 0: the near quad's hit %s; got hit %s at %s",
+                  want.point, screen0.hit, screen0.point));
 }
