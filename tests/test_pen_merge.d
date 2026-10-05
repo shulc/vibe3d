@@ -281,35 +281,9 @@ unittest {
     }
     // F2: a link made AFTER a structure-silent topology bump (a Hide of an
     // unrelated face: counts unchanged; a subpatch toggle would drop the tool)
-    // is kept; the bump drops only older links.
-    {
-        rig(f0, 440);
-        clickWorld(p(0, 0.2), p(0.5, 0.2), p(0.25, -0.3));
-        enter();
-        clickWorld(p(0.4, -0.2), p(0.65, -0.2), p(0.55, -0.38));
-        enter();
-        penCommand("select.typeFrom polygon");      // drops the tool: re-armed
-        penCommand("select.element polygon set 1");
-        penCommand("tool.set pen on");
-        penCommand("tool.attr pen merge true");
-        clickWorld(kFar[0]);
-        const before = penAttrValue("points");
-        auto r = postJson("/api/command", "mesh.hide");
-        assert(r["status"].str == "ok", "F2-bump-then-link: hide failed: " ~ r.toString);
-        const after = penAttrValue("points");
-        if (before != 1 || after != 1)
-            fails ~= format("F2-bump-then-link: rig premise, the stroke has %s points "
-                ~ "before the hide and %s after; expected 1 and 1", before, after);
-        clickNear(p(0, 0.2), 6, 0);
-        clickWorld(kFar[1]);
-        enter(); ++ran;
-        auto m = model();
-        if (!(m.v.length == 8 && m.f.length == 3 && m.f[2].length == 3 &&
-              m.f[2].canFind(0L) && m.f[2].canFind(6L) && m.f[2].canFind(7L)))
-            fails ~= format("F2-bump-then-link: %s vertices, faces %s; expected 8, the "
-                ~ "third face sharing T's vertex 0 with own vertices 6 and 7; vertices %s",
-                m.v.length, m.f, m.v);
-    }
+    // is kept, at each door that writes a link; the bump drops only older links.
+    foreach (door; ["append", "insert", "drag"])
+        fails ~= bumpThenLink(door, ran);
     // F2: the session image carries the links' mesh key. p0 linked to T; a
     // script undo removes T; a click re-keys the stroke; an in-stroke Ctrl+Z
     // restores the image before that click (p0's link AND its old key), so
@@ -501,7 +475,7 @@ unittest {
     fails ~= sceneEdge("scene-edge-20px", ep["E4r_scene_edge_20px"], p(0.62, 0.255), ran);
 
     snap(null);
-    assert(ran == 65, format("pen merge population: %s cells ran, pinned 65", ran));
+    assert(ran == 67, format("pen merge population: %s cells ran, pinned 67", ran));
 
     // Blocked cells (kBlocked) must still fail; one that passes retires its mark.
     assert(kBlocked.length == 38, format("blocked marks: %s, pinned 38", kBlocked.length));
@@ -513,7 +487,7 @@ unittest {
             retired ~= cell ~ " (" ~ why ~ ")";
     assert(retired.length == 0, format("blocked cells now pass, retire their marks: %-(%s, %)",
                                        retired));
-    assert(open.length == 0, format("pen merge, %s failing:\n%-(%s\n%)", open.length, open));
+    assert(open.length == 0, format("pen merge, %s failing: %-(%s\n%)", open.length, open));
 }
 
 // Cells blocked by the S5 writer's PLAN-FINDINGs (task 9362 card): they run and
@@ -541,6 +515,46 @@ private immutable string[string] kBlocked = [
 ];
 
 // ---- cell bodies ----------------------------------------------------------
+
+/// T (vertex 0 at V) and U committed by the pen, U selected in polygon mode;
+/// a stroke starts, U is hidden (the topology counter moves, counts do not),
+/// then a link to V is written through `door`: an appended click 6 px from V,
+/// a click 6 px from V inserted after p0 (current point 0), or p1 dragged
+/// from 28 px left of V onto it. Enter: 8 vertices, the third face shares V.
+private string[] bumpThenLink(string door, ref int ran) {
+    const cell = "F2-bump-then-" ~ door;
+    rig(p(0, 0.2), 440);
+    clickWorld(p(0, 0.2), p(0.5, 0.2), p(0.25, -0.3));
+    enter();
+    clickWorld(p(0.4, -0.2), p(0.65, -0.2), p(0.55, -0.38));
+    enter();
+    penCommand("select.typeFrom polygon");      // drops the tool: re-armed
+    penCommand("select.element polygon set 1");
+    penCommand("tool.set pen on");
+    penCommand("tool.attr pen merge true");
+    const Vec3 left = p(-28 / 440.0, 0.2);
+    clickWorld(kFar[0]);
+    if (door != "append") clickWorld(door == "drag" ? left : kFar[1]);
+    const before = penAttrValue("points");
+    auto r = postJson("/api/command", "mesh.hide");
+    assert(r["status"].str == "ok", cell ~ ": hide failed: " ~ r.toString);
+    const after = penAttrValue("points");
+    string[] f;
+    if (before != after || model().v.length != 6)
+        f ~= format("%s: rig premise, the stroke has %s points before the hide and %s "
+            ~ "after, the mesh %s vertices; expected equal, 6", cell, before, after,
+            model().v.length);
+    if (door == "append") { clickNear(p(0, 0.2), 6, 0); clickWorld(kFar[1]); }
+    if (door == "insert") { typed("currentPoint", "0"); clickNear(p(0, 0.2), 6, 0); }
+    if (door == "drag") { dragWorld(left, 28); clickWorld(kFar[1]); }
+    enter(); ++ran;
+    auto m = model();
+    if (!(m.v.length == 8 && m.f.length == 3 && m.f[2].length == 3 &&
+          m.f[2].canFind(0L) && m.f[2].canFind(6L) && m.f[2].canFind(7L)))
+        f ~= format("%s: %s vertices, faces %s; expected 8, the third face sharing T's "
+            ~ "vertex 0 with own vertices 6 and 7; vertices %s", cell, m.v.length, m.f, m.v);
+    return f;
+}
 
 /// The committed mesh is exactly one stroke of 3 own vertices: one face, every
 /// index in range.
