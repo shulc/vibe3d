@@ -10,12 +10,18 @@
 // value past the door's bound and once from the cap written through the door,
 // and the two meshes must agree.
 //
+// Cell `edgeEnd`: a loop slice stored at an edge end (0 or 1, the reference's
+// bound) reads back as written and builds the cut its nearest open-interval
+// slice builds (0.001 / 0.999): an edge-end cut is degenerate in our kernel.
+// The remembered list keeps the edge end across a drop.
+//
 // Cell `axis`: an axis attribute takes its number and clamps it to [0, 2]
 // (K-A3 table b), read back as its tag.
 //
-// Run via: ./run_test.d test_tool_attr_bounds   (one block: VIBE3D_CELL=door|kernel|exponent|axis)
+// Run via: ./run_test.d test_tool_attr_bounds   (one block: VIBE3D_CELL=door|kernel|exponent|edgeEnd|axis)
 
 import http_client : getJson, postRawAllowingErrorStatus;
+import http_command_helpers : commandBody;
 import std.algorithm : splitter;
 import std.conv : to;
 import std.format : format;
@@ -235,4 +241,44 @@ unittest {
     assert(failed.length == 0, format("axis writes failed in %d:\n  %-(%s\n  %)",
                                       failed.length, failed));
     writeln("PASS axis writes, 7 tools");
+}
+
+/// The loop slice on cube edge 0 at `position`: its readback and the vertex list.
+string[2] sliceAt(string position) {
+    ok("scene.reset");
+    auto r = parseJSON(postRawAllowingErrorStatus("/api/command",
+        commandBody("mesh.select", `{"mode":"edges","indices":[0]}`)));
+    assert(r["status"].str == "ok", r.toString);
+    ok("tool.set mesh.loopSliceTool on");
+    ok("tool.attr mesh.loopSliceTool position " ~ position);
+    const read = cmd("tool.attr mesh.loopSliceTool position ?")["value"].toString;
+    ok("tool.doApply");
+    ok("tool.set mesh.loopSliceTool off");
+    return [read, getJson("/api/model")["vertices"].toString];
+}
+
+unittest {
+    if (!cell("edgeEnd")) return;
+    string[] failed;
+    foreach (end; [["0", "0.001"], ["1", "0.999"]]) {
+        const atEnd = sliceAt(end[0]), inside = sliceAt(end[1]);
+        if (num(parseJSON(atEnd[0])) != end[0].to!double)
+            failed ~= format("position %s reads %s", end[0], atEnd[0]);
+        if (atEnd[1] != inside[1])
+            failed ~= format("position %s built %s, %s built %s", end[0], atEnd[1], end[1], inside[1]);
+    }
+    // The stored list is remembered across a drop and re-fitted at activation.
+    ok("scene.reset");
+    ok("tool.set mesh.loopSliceTool on");
+    ok("tool.attr mesh.loopSliceTool position 0");
+    ok("tool.set mesh.loopSliceTool off");
+    ok("tool.set mesh.loopSliceTool on");
+    const again = cmd("tool.attr mesh.loopSliceTool position ?")["value"];
+    ok("tool.set mesh.loopSliceTool off");
+    if (num(again) != 0) failed ~= format("position 0 re-activated reads %s", again);
+    const mid = sliceAt("0.5");    // the rig cuts at all: the vertex list moves with the slice
+    if (mid[1] == sliceAt("0.001")[1]) failed ~= "rig: 0.5 and 0.001 built the same mesh";
+    assert(failed.length == 0, format("edge-end slices failed in %d:\n  %-(%s\n  %)",
+                                      failed.length, failed));
+    writeln("PASS loop slice edge ends");
 }
