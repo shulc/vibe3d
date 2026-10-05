@@ -22,6 +22,9 @@ enum double TOL = R * 0.04;   // covers the mesh-resolution note in topopen_plac
 
 unittest {
     setupSphereBg(R, LON, LAT);
+    // Every global snap type off (state stays armed): a Point lands on the
+    // surface hit, not on a sphere vertex in snap reach (task 9501, K-P P8c).
+    cmd(`tool.pipe.attr snap types ""`);
 
     // X-dominant: az=pi/2 (sin~1, cos~0), el=0.3 — a near side-on view,
     // orthogonal in character to the other place tests' camera family.
