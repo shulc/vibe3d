@@ -150,6 +150,34 @@ private Run[] runCell(JSONValue cell) {
     return runs;
 }
 
+unittest { // a partial-selection weld array keeps the source vertex: index, set, Point map
+    // Quad A (0..3) beside quad B (1,4,5,2); A arrayed 2x by +1 X lands on B
+    // and welds. The source corner (0,0,0) must survive as itself (W1k).
+    const Vec3[] quads = [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 1, 0), Vec3(0, 1, 0),
+                          Vec3(2, 0, 0), Vec3(2, 1, 0)];
+    Mesh m = settle(quads.dup, [[0u, 1u, 2u, 3u], [1u, 4u, 5u, 2u]]);
+    m.addWeightMap("w");
+    assert(m.setVertexWeight("w", 0, 0.5f), "setup: weight written");
+    m.vertexSetNames = ["s"];
+    m.vertexSetMask = new ulong[](m.vertices.length);
+    m.vertexSetMask[0] = 1;
+    m.arrayFaces([true, false], 2, Vec3(1, 0, 0), 0.001f, true);
+    assert(m.vertices.length == 6 && m.faces.length == 3,
+           format("population: expected 6 verts 3 faces, got %d / %d", m.vertices.length, m.faces.length));
+    const v0 = m.vertices[0];
+    const w0 = m.vertexWeight("w", 0);
+    const s0 = m.vertexSetMask.length ? m.vertexSetMask[0] : 0;
+    assert(v0.x == 0 && v0.y == 0 && v0.z == 0 && w0 == 0.5f && s0 == 1,
+           format("source vertex 0: at %s W=%s set=%d, expected (0,0,0) W=0.5 set=1", v0, w0, s0));
+    // Both instances end selected (the source is copy 0) when nothing welds;
+    // a weld that joins anything drops the face selection.
+    Mesh n = settle(quads.dup, [[0u, 1u, 2u, 3u], [1u, 4u, 5u, 2u]]);
+    n.arrayFaces([true, false], 2, Vec3(5, 0, 0), 0.001f, true);
+    bool[] sel;
+    foreach (fi; 0 .. n.faces.length) sel ~= n.isFaceSelected(fi);
+    assert(sel == [true, false, true], format("selection after the array: %s, expected [1,0,1]", sel));
+}
+
 unittest { // every K-W1 cell, every production entry that can express it
     string[] ran, diffs;
     foreach (cell; fixture()["cells"].array) {
@@ -213,27 +241,6 @@ unittest { // the mask restricts both ends of a pair
     assert(m.weldVerticesByMask([false, false, true, true, false], 1e-12) == 1,
            "only the two masked coincident vertices weld; the unmasked one stays");
     assert(m.vertices.length == 4, format("expected 4 vertices, got %d", m.vertices.length));
-}
-
-unittest { // a partial-selection weld array keeps the source vertex: index, set, Point map
-    // Quad A (0..3) beside quad B (1,4,5,2); A arrayed 2x by +1 X lands on B
-    // and welds. The source corner (0,0,0) must survive as itself (W1k).
-    Mesh m = settle([Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 1, 0), Vec3(0, 1, 0),
-                     Vec3(2, 0, 0), Vec3(2, 1, 0)],
-                    [[0u, 1u, 2u, 3u], [1u, 4u, 5u, 2u]]);
-    m.addWeightMap("w");
-    assert(m.setVertexWeight("w", 0, 0.5f), "setup: weight written");
-    m.vertexSetNames = ["s"];
-    m.vertexSetMask = new ulong[](m.vertices.length);
-    m.vertexSetMask[0] = 1;
-    m.arrayFaces([true, false], 2, Vec3(1, 0, 0), 0.001f, true);
-    assert(m.vertices.length == 6 && m.faces.length == 3,
-           format("population: expected 6 verts 3 faces, got %d / %d", m.vertices.length, m.faces.length));
-    const v0 = m.vertices[0];
-    const w0 = m.vertexWeight("w", 0);
-    const s0 = m.vertexSetMask.length ? m.vertexSetMask[0] : 0;
-    assert(v0.x == 0 && v0.y == 0 && v0.z == 0 && w0 == 0.5f && s0 == 1,
-           format("source vertex 0: at %s W=%s set=%d, expected (0,0,0) W=0.5 set=1", v0, w0, s0));
 }
 
 unittest { // the cleanup detector reports exactly what cleanup welds (W1e_bracket)
