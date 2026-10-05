@@ -36,7 +36,7 @@ module tools.alignment.align_kernels;
 //   circle. `angle` is a pure additive rotation of the whole slot
 //   framework (measured bit-exact as a cyclic permutation of the
 //   unrotated result). The ring's phase (which vertex starts it, and the
-//   Circle-mode turn search) is read law, task 9490 — see
+//   Circle-mode turn search) is read law — see
 //   radialAlignTargets.
 //
 //   Both tools: `weight` blends `lerp(source, aligned, weight)` — the
@@ -273,8 +273,8 @@ enum int MAX_ALIGN_SIDES = 1024;
 
 /// Edge-neighbours of every chain vertex that lie OUTSIDE the operand set
 /// (`Mesh.operandVertexMask`), as positions indexed like `chain`. These are
-/// the only points Radial Align's circle-phase search measures against
-/// (task 9490): a closed selection with no outside neighbour has an empty
+/// the only points Radial Align's circle-phase search measures against:
+/// a closed selection with no outside neighbour has an empty
 /// list everywhere, and the search keeps the start vertex at its own angle.
 Vec3[][] alignOutsideNeighbours(Mesh* mesh, EditMode editMode, const(uint)[] chain) {
     const bool[] inside = mesh.operandVertexMask(editMode);
@@ -372,7 +372,7 @@ Vec3[] radialAlignTargets(const(Vec3)[] source, bool nsideMode, int sides,
     return result;
 }
 
-/// The chain vertex the slot ring starts at (task 9490): the one whose
+/// The chain vertex the slot ring starts at: the one whose
 /// direction from `center`, read in the plane frame of `normal`, has the
 /// smallest `|angle| mod 90°`; the first such vertex wins a tie. The frame
 /// is the world plane of the normal's largest component (X → (y, z),
@@ -408,8 +408,8 @@ private size_t radialAlignStart(const(D3)[] p, D3 center, D3 normal) pure nothro
     return best;
 }
 
-/// The ring turn (radians) Circle mode applies after laying the slots
-/// (task 9490): a bounded step search on `totalDistance` from 0 — probe
+/// The ring turn (radians) Circle mode applies after laying the slots:
+/// a bounded step search on `totalDistance` from 0 — probe
 /// one degree (half a slot when a slot is narrower), the other side when
 /// the first probe does not improve, then step on while improving and
 /// back while not, halving the step at each change of verdict; stop when
