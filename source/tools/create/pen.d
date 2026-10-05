@@ -1484,9 +1484,10 @@ private:
     // A vertex hit moves the point onto it and is returned (the point shares
     // it); an edge hit moves a CLICK's point onto the edge as its own vertex
     // (K-PM2: any edge, on or off the click plane); a DRAG never takes an edge.
-    // The click's copied defect (K-PM2 rule 2): on stroke points 1-2, when the
-    // hover record at pointer (x, y) holds an edge and the placed point's
-    // pixel (truncated) is the pointer's, nothing merges.
+    // The copied defect (K-PM2 rule 2, captured on clicks; a drag's is gap
+    // row 593): on stroke points 1-2, when the hover record at pointer (x, y)
+    // holds an edge and the placed point's pixel (truncated) is the
+    // pointer's, nothing merges.
     // `snapCursor` takes an integer pixel, so it is the broad phase (r + 1)
     // and the float distance decides.
     static immutable SnapType[2] kMergeTypes = [SnapType.Vertex, SnapType.Edge];
@@ -1494,7 +1495,7 @@ private:
         immutable Vec3 placed = toWorldP(local);
         float fx, fy, ndcZ;
         if (!projectToWindowFull(placed, cachedVp, fx, fy, ndcZ)) return -1;
-        if (!drag && vertices_.length < 2 && floor(fx + kPixelEps) == x &&
+        if (vertices_.length < 2 && floor(fx + kPixelEps) == x &&
             floor(fy + kPixelEps) == y && hoverHoldsEdge(placed, x, y))
             return -1;
         float pxFrom(Vec3 w) {
@@ -1554,8 +1555,9 @@ private:
     }
 
     // The view's hover record at pointer pixel (x, y) holds an edge: the
-    // element-pick law (8 px reach, `electElement`) over the edited mesh's
-    // nearest vertex and edge, the analogue of the HOV3 hover (K-PM2 rule 2).
+    // element-pick law (`electElement`) over the edited mesh's nearest vertex
+    // and edge within its 8 px reach, the analogue of the HOV3 hover (K-PM2
+    // rule 2; the reference's reach is 6.2-8.9 px).
     bool hoverHoldsEdge(Vec3 placed, int x, int y) {
         import hover_state : electElement, kElementPickRadiusPx, pickDistances;
         immutable ms = primaryModelSpace();
@@ -1566,15 +1568,13 @@ private:
         }
         SnapResult[2] hit;
         foreach (i, t; kMergeTypes)
-            hit[i] = nearestOf(t, placed, x, y, kElementPickRadiusPx + 1);
+            hit[i] = nearestOf(t, placed, x, y, kElementPickRadiusPx);
         float[2] v = hit[0].snapped ? at(hit[0].targetIndex) : [0f, 0f];
         float[2][2] e;
         if (hit[1].snapped)
             e = [at(mesh.edges[hit[1].targetIndex][0]), at(mesh.edges[hit[1].targetIndex][1])];
-        auto g = pickDistances(x, y, hit[0].snapped ? &v : null, hit[1].snapped ? &e : null, false);
-        if (g.vertex > kElementPickRadiusPx) g.vertex = float.infinity;
-        if (g.edge > kElementPickRadiusPx) g.edge = float.infinity;
-        return electElement(g) == kCascadeEdge;
+        return electElement(pickDistances(x, y, hit[0].snapped ? &v : null,
+                                          hit[1].snapped ? &e : null, false)) == kCascadeEdge;
     }
 
     // The stroke point whose mirror image lies within `r` px of world point
