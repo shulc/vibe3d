@@ -123,8 +123,17 @@ unittest {
     assert(idleRest.length == 0 && MonoTime.currTime - idleAt < 3.seconds,
         "9461 idle expiry: a parked connection outlived clientKeepAliveIdle");
 
-    // 6. At most kMaxIdleClients stay parked: one more evicts the oldest.
+}
+
+unittest {
+    immutable port = freePort();
+    auto server = new HttpServer(port);
+    server.markProvidersWired();
     server.clientKeepAliveIdle = 60.seconds;
+    server.start();
+    scope(exit) if (server.running) server.stop();
+
+    // 6. At most kMaxIdleClients stay parked: one more evicts the oldest.
     Socket[] parked;
     scope(exit) foreach (c; parked) c.close();
     foreach (i; 0 .. HttpServer.kMaxIdleClients + 1) {

@@ -287,6 +287,7 @@ mixin template HttpServerTransport()
     enum size_t kMaxIdleClients = 32;
 
     private void serveReadable(Socket listener, SocketSet readable) {
+        import std.algorithm.searching : canFind;
         readable.reset();
         readable.add(listener);
         foreach (c; idleClients_) readable.add(c);
@@ -294,7 +295,9 @@ mixin template HttpServerTransport()
         if (!atomicLoad(isRunning)) return;
         if (n > 0) {
             foreach (c; idleClients_.dup) {
-                if (!readable.isSet(c)) continue;
+                // Skip one evicted at the cap meanwhile: its handle is closed.
+                if (!idleClients_.canFind!"a is b"(c) || !readable.isSet(c))
+                    continue;
                 dropIdleClient(c);
                 handleClient(c);
             }

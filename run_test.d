@@ -2442,8 +2442,9 @@ bool resetBetweenTests(ushort port, ref string failure) {
     // One keep-alive connection per worker thread (task 9461): a `curl`
     // process per call opened a TCP connection per status poll. Like the
     // `curl -s -m 5` it replaces, a transport failure or the 5 s budget
-    // yields "" (after one retry; the reason is kept for the failure line);
-    // a non-2xx status yields its status line, never "ok".
+    // yields "" (the reason is kept for the failure line); a non-2xx status
+    // yields its status line, never "ok". Only a failed CONNECT is retried:
+    // the request was never sent, so a retry cannot apply a command twice.
     string transportError;
     string noResponse() {
         return "(no response from the server: " ~ transportError ~ ")";
@@ -2463,7 +2464,13 @@ bool resetBetweenTests(ushort port, ref string failure) {
                 ? post(base ~ path, data, conn).idup
                 : get(base ~ path, conn).idup;
             catch (HTTPStatusException e) return e.msg;
-            catch (Exception e) transportError = e.msg;
+            catch (Exception e) {
+                transportError = e.msg;
+                // libcurl's text for CURLE_COULDNT_CONNECT (7); older
+                // releases spell it "Couldn't".
+                if (!e.msg.canFind("Could not connect to server")
+                        && !e.msg.canFind("Couldn't connect to server")) break;
+            }
         }
         return "";
     }
