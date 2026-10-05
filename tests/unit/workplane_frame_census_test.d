@@ -135,7 +135,7 @@ unittest // W1: the folded frames, the forwarders, the axis switch, the quantum
         // the grid sub-step is read through `viewVectorQuantum` everywhere but
         // its home and the pen's frozen `placementQuantum` (app.d: an import)
         "viewGridSubStep": "app.d:1 pen.d:2 viewgrid.d:2",
-        "viewVectorQuantum": "create_common.d:2 http_providers.d:2 poly_extrude.d:2 transform.d:3 viewgrid.d:2",
+        "viewVectorQuantum": "create_common.d:2 http_providers.d:2 poly_extrude.d:2 transform.d:2 viewgrid.d:2",
         "viewPrincipalAxis": "create_common.d:2",
         // radial_array_tool.d: its own unrelated `axisUnit()` member (7)
         "axisUnit": "create_common.d:2 radial_array_tool.d:7",
