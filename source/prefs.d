@@ -51,12 +51,21 @@ import trackball      : kTrackballDefault, kTrackballSpeedDefault,
 /// The schema version the writer emits and the highest the reader fully
 /// understands. A file written by a newer vibe3d (higher `version`) is read
 /// best-effort: recognized keys only.
-enum int kPrefsVersion = 1;
+enum int kPrefsVersion = 2;
+
+/// A cached tool attribute retired by a schema bump: an entry read from a file
+/// older than `since` drops it. v2 (task 9484): Smooth's `sharpThreshold`
+/// became DEGREES (v1 holds the radians sentinel "-1"); `sharpAngle` is gone.
+private struct RetiredAttr { int since; string preset, node, attr; }
+private immutable RetiredAttr[] kRetiredAttrs = [
+    RetiredAttr(2, "xfrm.smooth", kToolNode, "sharpThreshold"),
+    RetiredAttr(2, "xfrm.smooth", kToolNode, "sharpAngle"),
+];
 
 /// Cap on the recent-files MRU list.
 enum size_t kRecentFilesMax = 10;
 
-/// Persisted user preferences (schema v1). Field order mirrors the JSON
+/// Persisted user preferences (schema v2). Field order mirrors the JSON
 /// shape: `version`, `window`, `recentFiles`, `lastDir`, `toolAttrCache`,
 /// `viewportLayout`.
 struct Prefs {
@@ -463,18 +472,25 @@ Prefs loadPrefs(string dir) {
                         attrs[attrName] = valJson.str;
             return attrs;
         }
+        void storeAttrs(string presetId, string node, ref const JSONValue attrsJson) {
+            auto attrs = attrsOf(attrsJson);
+            foreach (r; kRetiredAttrs)
+                if (p.version_ < r.since && r.preset == presetId && r.node == node)
+                    attrs.remove(r.attr);
+            p.toolAttrCache.store(presetId, node, attrs);
+        }
         // Pre-M5 files: `toolDefaults` held the tool node only.
         if (auto tp = "toolDefaults" in doc)
             if (tp.type == JSONType.object)
                 foreach (presetId, attrsJson; tp.object)
-                    p.toolAttrCache.store(presetId, kToolNode, attrsOf(attrsJson));
+                    storeAttrs(presetId, kToolNode, attrsJson);
         // Read second, so the current section wins over a legacy entry.
         if (auto cp = "toolAttrCache" in doc)
             if (cp.type == JSONType.object)
                 foreach (presetId, nodesJson; cp.object)
                     if (nodesJson.type == JSONType.object)
                         foreach (node, attrsJson; nodesJson.object)
-                            p.toolAttrCache.store(presetId, node, attrsOf(attrsJson));
+                            storeAttrs(presetId, node, attrsJson);
 
         if (auto vlp = "viewportLayout" in doc)
             if (vlp.type == JSONType.string)

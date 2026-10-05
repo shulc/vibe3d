@@ -19,7 +19,7 @@ import falloff : evaluateFalloff;
 import math : ModelSpace, Vec3, aimSpace;
 import mesh : Mesh;
 import operator : VectorStack;
-import params : Param;
+import params : Param, ParamProvider;
 import toolpipe.packets : FalloffPacket, FalloffShape, FalloffType, SubjectPacket;
 import tools.edit.smooth_relax : RelaxVec3;
 import view : View;
@@ -365,3 +365,38 @@ version (PerfProbe) unittest { // preserve on a 40k-face surface tests a bounded
     assert(tests <= 3_000_000, format("triangle tests: %d (measured 2 932 256)", tests));
 }
 
+// A prefs file written before the threshold became degrees holds the radians
+// sentinel "-1" (and the former `sharpAngle`): its recall must leave the default.
+unittest {
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.path : buildPath;
+    import prefs : loadPrefs;
+    import toolpipe.attr_cache : kToolNode, recallNodeAttrs;
+    const dir = buildPath(tempDir(), "vibe3d_smooth_prefs_9484");
+    mkdirRecurse(dir);
+    scope(exit) rmdirRecurse(dir);
+    float recalled(string file) {
+        write(buildPath(dir, "prefs.json"), file);
+        auto attrs = loadPrefs(dir).toolAttrCache.lookup("xfrm.smooth", kToolNode);
+        assert(attrs !is null, "the smooth entry is kept");
+        assert("sharpAngle" !in *attrs, "the former sharpAngle attribute is dropped");
+        Mesh m;
+        View cv = new View(0, 0, 800, 600);
+        auto cmd = new MeshSmooth(&m, cv, EditMode.Vertices);
+        recallNodeAttrs(new class ParamProvider {
+            Param[] params() { return cmd.params(); }
+            bool paramEnabled(string) const { return true; }
+            void onParamChanged(string) {}
+        }, *attrs, false);
+        foreach (ref p; cmd.params()) {
+            if (p.name == "lockSharp") assert(*p.bptr, "the other attributes recall");
+            if (p.name == "sharpThreshold") return *p.fptr;
+        }
+        assert(false, "no sharpThreshold");
+    }
+    enum tool = `"toolAttrCache":{"xfrm.smooth":{"tool":{"lockSharp":"true",%s"sharpThreshold":"%s"}}}`;
+    assert(recalled(`{"version":1,` ~ format(tool, `"sharpAngle":"60",`, "-1") ~ `}`) == 60.0f,
+        "a version-1 sharpThreshold (radians) must not recall");
+    assert(recalled(`{"version":2,` ~ format(tool, "", "45") ~ `}`) == 45.0f,
+        "control: a current-version threshold recalls");
+}
