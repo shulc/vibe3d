@@ -995,14 +995,13 @@ public:
         // previous pixel and the live gizmo would restore the incremental
         // behaviour these laws replace.
         bool skip;
-        immutable Vec3 client = grab.client(e.x, e.y, moveDragFrame(mi0, mi1, mi2),
-                                            cachedVp, skip);
-        Vec3 worldDelta = client - grabApplied;
+        Vec3 client, worldDelta;
         if (dragAxis <= 2 && !axisLawPorted) {
             // LAW A, the editor's own body, incremental against the live gizmo:
-            // the `Screen` hold (see `screenActionCentre`). `lastMX/lastMY`
-            // stay written below as the fallback for a dispatch with no cooked
-            // gesture.
+            // the `Screen` hold (see `screenActionCentre`); its client is the
+            // sum it delivered, so the snap probes where the gizmo tracks.
+            // `lastMX/lastMY` stay written below as the fallback for a
+            // dispatch with no cooked gesture.
             import toolpipe.packets : GesturePacket;
             int prevMX, prevMY;
             gesturePrevPixel(vts.get!GesturePacket(), e.x, e.y,
@@ -1011,6 +1010,10 @@ public:
                                        dragAxis, handler,
                                        mi0, mi1, mi2,
                                        cachedVp, skip);
+            client = grabApplied + worldDelta;
+        } else {
+            client = grab.client(e.x, e.y, moveDragFrame(mi0, mi1, mi2), cachedVp, skip);
+            worldDelta = client - grabApplied;
         }
         if (skip) { lastMX = e.x; lastMY = e.y; return true; }
         grabApplied = client;

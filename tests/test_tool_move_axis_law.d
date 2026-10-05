@@ -478,3 +478,58 @@ unittest {  // 5. the whole term is behind the setting, and `None` is exact
                 ~ "of %.9g. A default of None would ship the measured term "
                 ~ "switched off and call it ported.", RUN, gd, nd, qd));
 }
+
+// One `Screen` Z-arm drag of vertex 6 (task 9412): the arm runs toward the
+// vanishing point, so its projection is far from affine. `snapStep > 0` turns
+// a fixed-step grid snap on for the gesture (and off again after it).
+double[3] screenZArmDrag(double snapStep) {
+    setupAxisDrag("screen");
+    // Focus away from the pivot, so its Z arm leaves the view axis.
+    post(BASE ~ "/api/camera", `{"azimuth":0.5,"elevation":0.4,"distance":4.0,`
+                             ~ `"focus":{"x":-1.5,"y":-0.5,"z":0}}`);
+    Thread.sleep(250.msecs);
+    if (snapStep > 0) {
+        cmd("tool.pipe.attr snap enabled true");
+        cmd("tool.pipe.attr snap types grid");
+        cmd("tool.pipe.attr snap fixedGrid true");
+        cmd(format("tool.pipe.attr snap fixedGridSize %g", snapStep));
+    }
+    scope (exit) {
+        cmd("tool.pipe.attr snap fixedGrid false");
+        cmd("tool.pipe.attr snap enabled false");
+    }
+    double ax, ay, cx, cy; bool foundArm, foundCentre;
+    fetchHandlePart(2, ax, ay, foundArm);
+    fetchHandlePart(3, cx, cy, foundCentre);
+    assert(foundArm && foundCentre, "the Screen Z arm (part 2) or centre (3) is not drawn");
+    double dx = ax - cx, dy = ay - cy;
+    double L = sqrt(dx*dx + dy*dy);
+    assert(L > 20.0, format("the Screen Z arm projects to %.2f px — pivot on the view axis", L));
+    auto cam = fetchCamera(BASE);
+    int x0 = cast(int)ax, y0 = cast(int)ay;
+    auto pre = vertexPos(6, BASE);
+    playAndWait(dragLog(cam, x0, y0, x0 + cast(int)(0.8 * dx), y0 + cast(int)(0.8 * dy),
+                        20, false), BASE);
+    auto post_ = vertexPos(6, BASE);
+    double[3] d;
+    foreach (k; 0 .. 3) d[k] = post_[k] - pre[k];
+    return d;
+}
+
+unittest {  // 6. under the Screen hold the snap probes the point the gizmo tracks
+    // The held body is incremental; the snap input must be the sum of what
+    // it delivered (`grabApplied + worldDelta`), not the press-plus-travel
+    // client of the other laws. A fine grid snap may move the result by at
+    // most one step from the unsnapped run; the cumulative probe misses by
+    // the perspective gap between the two conversions.
+    enum double STEP = 0.01;
+    const double[3] free_ = screenZArmDrag(0);
+    const double[3] snapped = screenZArmDrag(STEP);
+    assert(vlen3(free_) > 0.2, format("the Screen Z-arm drag barely engaged: %s", free_));
+    double[3] gap;
+    foreach (k; 0 .. 3) gap[k] = snapped[k] - free_[k];
+    assert(vlen3(gap) <= STEP,
+           format("a %.3g grid snap moved the Screen Z-arm result by %.5f "
+                ~ "(free %s, snapped %s): the snap probed a point the gizmo "
+                ~ "never sat at", STEP, vlen3(gap), free_, snapped));
+}
