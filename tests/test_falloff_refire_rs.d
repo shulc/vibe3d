@@ -1198,17 +1198,16 @@ unittest {
         "P-A: in-session Ctrl+Z restores the falloff config WITH the geometry "
         ~ "(size reverted 5→1); got " ~ queryFalloffSizeX().to!string);
 
-    // In-session Ctrl+Shift+Z (redo): re-applies BOTH — geometry re-graded AND
-    // config back to 5. The pop above did NOT consolidate the run because no
-    // boundary fired (a plain in-session undo keeps the run open for redo).
+    // In-session Ctrl+Shift+Z (redo) does nothing: the live Move's re-run
+    // apply emptied the redo (findings_K-G4 rule 3; task 9500).
     playAndWait(ctrlShiftZ(70.0));
     settle();
-    assert(vertNear(vert(0), v0Regraded),
-        "in-session redo re-applies the move re-grade geometry; got ("
+    assert(vertNear(vert(0), v0AfterG) && undoCount() == floor + 1,
+        "in-session redo after the undo does nothing; got ("
         ~ vert(0)[0].to!string ~ "," ~ vert(0)[1].to!string ~ ","
-        ~ vert(0)[2].to!string ~ ")");
-    assert(queryFalloffSizeX() == 5.0,
-        "P-A: in-session redo re-applies the falloff config (size 1→5); got "
+        ~ vert(0)[2].to!string ~ "), undo " ~ undoCount().to!string);
+    assert(queryFalloffSizeX() == 1.0,
+        "P-A: in-session redo after the undo leaves the falloff config at 1; got "
         ~ queryFalloffSizeX().to!string);
 
     cmd("tool.set move off");
@@ -1797,17 +1796,17 @@ unittest {
         ~ "falloff size (1), NOT the penultimate-frame value (6); got "
         ~ queryFalloffSizeX().to!string);
 
-    // In-session redo re-applies BOTH: geometry re-graded AND config back to the
-    // LAST scrub value (9, the coalesced entry's POST endpoint).
+    // In-session redo does nothing: the live Move's re-run apply emptied the
+    // redo (findings_K-G4 rule 3; task 9500).
     playAndWait(ctrlShiftZ(70.0));
     settle();
-    assert(vertNear(vert(0), v0Regraded),
-        "in-session redo re-applies the coalesced scrub geometry; got ("
+    assert(vertNear(vert(0), v0AfterG) && undoCount() == floor + 1,
+        "in-session redo after the undo does nothing; got ("
         ~ vert(0)[0].to!string ~ "," ~ vert(0)[1].to!string ~ ","
-        ~ vert(0)[2].to!string ~ ")");
-    assert(queryFalloffSizeX() == 9.0,
-        "in-session redo re-applies the coalesced scrub config to the LAST value "
-        ~ "(9, the POST endpoint); got " ~ queryFalloffSizeX().to!string);
+        ~ vert(0)[2].to!string ~ "), undo " ~ undoCount().to!string);
+    assert(queryFalloffSizeX() == 1.0,
+        "in-session redo after the undo leaves the run-start config (1); got "
+        ~ queryFalloffSizeX().to!string);
 
     cmd("tool.set move off");
     cmd("tool.pipe.attr falloff type none");

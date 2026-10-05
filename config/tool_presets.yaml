@@ -243,6 +243,8 @@ presets:
   - id: TransformMove
     base: xfrm.transform
     historyClose: groupUndo
+    # An undo the live tool survives empties the redo (captured for this preset).
+    undoEmptiesRedo: true
     attrs:
       T: "true"
       R: "false"

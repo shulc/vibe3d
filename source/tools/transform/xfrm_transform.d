@@ -705,6 +705,7 @@ public:
     bool activationHistoryRow = true;
     bool recordedFirstUndoEndsTool = false;
     bool postmodeStartsOnPress = false;
+    bool undoEmptiesRedo = false;
     OffGizmoRotateInput offGizmoRotateInput = OffGizmoRotateInput.arcball;
     final Mesh* preparedMeshForUpdate() const { return mesh; }
     // T/R/S flags — `T integer 0/1` etc. in the preset config.
@@ -2975,6 +2976,7 @@ public:
         policy.activationRow = activationHistoryRow;
         policy.recordedFirstUndoEndsTool = recordedFirstUndoEndsTool;
         policy.postmodeStartsOnPress = postmodeStartsOnPress;
+        policy.undoEmptiesRedo = undoEmptiesRedo;
         return policy;
     }
 

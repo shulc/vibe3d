@@ -987,13 +987,25 @@ private struct ToolSession {
     // (an activation's undo re-arms the predecessor, its redo re-arms the row's
     // tool). Task 8920, law 1; model doc §2.4.
     bool undo() {
+        auto before = tool_();
         navBefore_ = NavBefore(history_.undoEntries().length, token_,
                                boundModel_() && postmodeArmed_);
         const r = undoImpl_();
         if (r) openBlock_ = null;
         if (r && history_.undoEntries().length != navBefore_.depth)
             settleAfterNavigation_(true);
+        if (r) reapplyEmptiesRedo_(before);
         return r;
+    }
+
+    // `undoEmptiesRedo` (findings_K-G4 rule 3): an undo the live tool survives
+    // — the same instance in the same session — empties the redo; one that
+    // drops or swaps the tool keeps it.
+    private void reapplyEmptiesRedo_(Tool before) {
+        auto t = tool_();
+        if (t is null || t !is before || token_ != navBefore_.token
+                || !t.sessionPolicy().undoEmptiesRedo) return;
+        history_.invalidateRedo();
     }
 
     bool redo() {

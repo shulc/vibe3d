@@ -40,6 +40,7 @@ struct ToolPreset {
     RecordedRunBoundaryMode   runBoundaryMode;
     RunCloseScope             runCloseScope;
     ScaleInputPolicy          scaleInput;
+    bool                      undoEmptiesRedo;  // ToolSessionPolicy.undoEmptiesRedo
 }
 
 // Map YAML flag name → ToolFlag bit. Names match the enum members
@@ -120,6 +121,8 @@ ToolPreset[] loadToolPresets(string path) {
                 default: throw new Exception(format("tool_presets: unknown closeScope '%s' for '%s'", value, id));
             }
         }
+        if (node.containsKey("undoEmptiesRedo"))
+            p.undoEmptiesRedo = node["undoEmptiesRedo"].as!bool;
         if (node.containsKey("historyClose")) {
             const value = node["historyClose"].as!string;
             switch (value) {
@@ -419,6 +422,7 @@ void registerToolPresets(ref Registry reg, ToolPreset[] presets) {
                     t.activationHistoryRow = true;
                     t.recordedFirstUndoEndsTool = false;
                     t.postmodeStartsOnPress = false;
+                    t.undoEmptiesRedo = presetCopy.undoEmptiesRedo;
                     t.offGizmoRotateInput = OffGizmoRotateInput.arcball;
                     t.closedRunOwnerId = presetCopy.runCloseMode ==
                         RunCloseMode.consolidate ? "" : presetCopy.id;

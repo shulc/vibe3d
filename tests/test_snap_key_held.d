@@ -92,6 +92,11 @@ private string[] labels() {
     return r;
 }
 private long depth() { return cast(long)labels().length; }
+private string[] redoLabels() {
+    string[] r;
+    foreach (e; getJson("/api/history")["redo"].array) r ~= e["label"].str;
+    return r;
+}
 private string snapTypes() {
     foreach (st; getJson("/api/toolpipe")["stages"].array)
         if (st["task"].str == "SNAP") return st["attrs"]["types"].str;
@@ -536,16 +541,59 @@ unittest {
             format("%s: the change recorded %s (expected %d entries)", cell, labels(), d1 + (between ? 1 : 0)));
         drag(Vec3(0.12f, 1, 0.07f), Vec3(0.12f, 1, 0.16f));
         at("after drag 2", D12, changed);
+        // Rule 3: an undo the live tool survives re-runs its apply, a new
+        // command, so the redo is empty after it (the net logs' `redo=0`).
+        void redoEmpty(string step) {
+            assert(redoLabels().length == 0,
+                format("%s %s: redo %s, expected empty (the tool is still live)", cell, step, redoLabels()));
+        }
         l.tap(K_Z, K_Z_SCAN, KMOD_LCTRL); l.play();
         at("Z1 (removes drag 2)", D1, changed);
+        redoEmpty("Z1");
         l.tap(K_Z, K_Z_SCAN, KMOD_LCTRL); l.play();
         at(between ? "Z2 (removes the change)" : "Z2 (removes drag 1)", between ? D1 : O, changed);
+        redoEmpty("Z2");
         l.tap(K_Z, K_Z_SCAN, KMOD_LCTRL); l.play();
         at(between ? "Z3 (removes drag 1)" : "Z3 (removes the arming record)", O, changed);
         assert(between ? tool() == "xfrm" : tool() == "",
             format("%s Z3: tool '%s'", cell, tool()));
+        if (between) {
+            redoEmpty("Z3");
+            // Ctrl+Shift+Z x3 brings nothing back (the reference's redo is 0).
+            const after = labels();
+            foreach (i; 0 .. 3) { l.tap(K_Z, K_Z_SCAN, KMOD_LCTRL | 1); l.play(); }
+            at("Ctrl+Shift+Z x3 (nothing to redo)", O, changed);
+            assert(labels() == after && tool() == "xfrm",
+                format("%s Ctrl+Shift+Z x3: %s (expected %s), tool '%s'", cell, labels(), after, tool()));
+        } else {
+            // The undo that drops the tool re-applies nothing. Ours keeps
+            // main's empty redo here; the reference keeps the apply and the
+            // arming record (redo 2, KG4_K_net / KG4_B_net) — gap row 597.
+            assert(redoLabels().length == 0 && depth() == 0,
+                format("%s Z3: undo %s redo %s, expected both empty", cell, labels(), redoLabels()));
+        }
         if (kind == "G4_C") penCommand(`tool.pipe.attr snap types "vertex"`);
         penCommand("tool.set move off");
+    }
+    // The captured preset itself (K-G4 armed TransformMove): drag 1, drag 2,
+    // Ctrl+Z -> the redo is empty and Ctrl+Shift+Z does nothing.
+    {
+        const cell = "G4_K-TransformMove";
+        moveRig(false);
+        penCommand("tool.set TransformMove");
+        penCommand("history.clear");
+        drag(Vec3(0.03f, 1, 0.07f), Vec3(0.12f, 1, 0.07f));
+        drag(Vec3(0.12f, 1, 0.07f), Vec3(0.12f, 1, 0.16f));
+        const d2 = depth();
+        Log l; l.tap(K_Z, K_Z_SCAN, KMOD_LCTRL); l.play();
+        const got = v0xz();
+        assert(depth() == d2 - 1 && redoLabels().length == 0 && abs(got[1] - D1[1]) <= 1.5 * kPx,
+            format("%s Z1: %s redo %s, v0 z %.4f (expected drag 2 gone, redo empty)",
+                cell, labels(), redoLabels(), got[1]));
+        l.tap(K_Z, K_Z_SCAN, KMOD_LCTRL | 1); l.play();
+        assert(depth() == d2 - 1 && abs(v0xz()[1] - D1[1]) <= 1.5 * kPx,
+            format("%s Ctrl+Shift+Z: %s, v0 z %.4f (expected nothing redone)", cell, labels(), v0xz()[1]));
+        penCommand("tool.set TransformMove off");
     }
     // Polygon Bevel with a live haul, BV_B (button) and BV_X (X held 571 ms,
     // no button), findings_K-BV: undo 1 removes the toggle, the bevel stays;

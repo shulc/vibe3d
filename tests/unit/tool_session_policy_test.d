@@ -428,12 +428,14 @@ unittest { // (3) the doors reach the tool session only through EditSession
     // prune once the history is Active again — never inside the step (m18).
     // The undo door has no prune (amendment A16: it was inert).
     // Task 8920 (S2a): the depth snapshot first, the settle after a MOVED stack;
-    // task 8930 (S2b): the snapshot also holds the token and the armed model post mode.
-    assert(squeeze(bodyAt(ts, "bool undo()")) == "{navBefore_=NavBefore(history_.undoEntries().length,"
+    // task 8930 (S2b): the snapshot also holds the token and the armed model post mode;
+    // task 9500: the tool bound before, and the redo emptied after the settle.
+    assert(squeeze(bodyAt(ts, "bool undo()")) == "{autobefore=tool_();"
+           ~ "navBefore_=NavBefore(history_.undoEntries().length,"
            ~ "token_,boundModel_()&&postmodeArmed_);"
            ~ "constr=undoImpl_();if(r)openBlock_=null;"
            ~ "if(r&&history_.undoEntries().length!=navBefore_.depth)settleAfterNavigation_(true);"
-           ~ "returnr;}",
+           ~ "if(r)reapplyEmptiesRedo_(before);returnr;}",
            "S7a wiring census: ToolSession.undo body changed: " ~ squeeze(bodyAt(ts, "bool undo()")));
     inOrder(squeeze(bodyAt(ts, "bool redo()")),
             ["openBlock_=null;", "constr=redoImpl_();", "if(r)pruneRedoTop_();", "returnr;"],
@@ -1934,8 +1936,8 @@ static assert([__traits(allMembers, imported!"tool".ToolSessionPolicy)] == [
     "activationResetAttrs", "armAttr", "headlessReplacesWindow", "recordCarriesActivation",
     "keepAliveOnCancel", "rollovers", "handleAnchor", "armRestoresWholeImage", "dropWritesRow",
     "pressOpensOperation", "foldsParamRowsIntoBlock",
-    "redoPinsRefireImage", "commandEndsOpenGesture", "stepsParamWrites"],
-    "UND2 pin: ToolSessionPolicy's members changed (measured 26 since task 9428)");
+    "redoPinsRefireImage", "commandEndsOpenGesture", "undoEmptiesRedo", "stepsParamWrites"],
+    "UND2 pin: ToolSessionPolicy's members changed (measured 27 since task 9500)");
 
 /// The session type `EditSession` holds in its field `tools_`.
 private template SessionOf(ES) {
@@ -2475,11 +2477,14 @@ unittest { // Tasks 7990/8030: production topology R wiring, not a helper replic
                == ["<decl>:1", "ToolSession.settleAfterNavigation_:1"],
                format("S5 needle: cutRefireRedo_ sites %s, expected its declaration and one "
                       ~ "call in settleAfterNavigation_", identSites(esU, "cutRefireRedo_", false)));
+        // Task 9500 adds the third: an `undoEmptiesRedo` tool's surviving undo
+        // (no topology-model tool declares it, (13)).
         assert(identSites(esU, "invalidateRedo", false)
-               == ["ToolSession.pruneRedoTop_:1", "ToolSession.undoImpl_:1"],
+               == ["ToolSession.pruneRedoTop_:1", "ToolSession.reapplyEmptiesRedo_:1",
+                   "ToolSession.undoImpl_:1"],
                format("S5 needle: the session kills the redo at %s, expected the closed-run "
-                      ~ "undo and the parameter-row prune alone (law 3 cuts, never kills)",
-                      identSites(esU, "invalidateRedo", false)));
+                      ~ "undo, the parameter-row prune and the undoEmptiesRedo undo alone "
+                      ~ "(law 3 cuts, never kills)", identSites(esU, "invalidateRedo", false)));
         string[] cuts;
         size_t files;
         foreach (f; dirEntries("source", "*.d", SpanMode.depth)) {
@@ -2591,4 +2596,38 @@ unittest { // (12)
     inOrder(close, ["if(cc==CommandClose.uiDoor&&!t.hasUncommittedEdit()){",
                     "if(t.sessionPolicy().commandEndsOpenGesture)t.cancelUncommittedEdit();",
                     "returnCloseOutcome(false,true);}"], "S8 ToolSession.close step (3)");
+}
+
+// ---------------------------------------------------------------------------
+// (13) Task 9500 — an undo the live tool survives empties the redo when the
+// tool's policy DATA says so (`undoEmptiesRedo`). Provenance: CAPTURED for
+// TransformMove (findings_K-G4 rule 3); our bare `move` factory carries it (the
+// rig of test_snap_key_held's G4 cell). Every other tool keeps its redo:
+// ElementMove's in-session redo is captured the other way (6207 C4b, gap 598).
+// The datum is per instance (preset/factory data), so it is read where it is
+// written: the preset table, the factory row and the session's one reader.
+// ---------------------------------------------------------------------------
+
+static assert(ToolSessionPolicy.init.undoEmptiesRedo == false);
+
+unittest { // (13)
+    string[] declared;
+    size_t presets;
+    foreach (p; loadToolPresets("config/tool_presets.yaml")) {
+        ++presets;
+        if (p.undoEmptiesRedo) declared ~= p.id;
+    }
+    assert(presets == 23, format("9500 floor: %s presets read, measured 23", presets));
+    assert(declared == ["TransformMove"],
+           format("9500 preset table: undoEmptiesRedo declared by %s, expected TransformMove only",
+                  declared));
+    auto reg = squeeze(blankNonCode(readText("source/transform_tool_registration.d")));
+    const at = reg.indexOf("enummove=TransformFactoryDefaults(");
+    assert(reg.count("undoEmptiesRedo:true") == 1 && at >= 0
+           && reg[at .. $][0 .. reg[at .. $].indexOf(";")].canFind("undoEmptiesRedo:true"),
+           "9500 factory row: only `move` declares undoEmptiesRedo");
+    // The call is pinned by the S7a body pin of ToolSession.undo above.
+    auto session = squeeze(blankNonCode(readText("source/edit_session.d")));
+    assert(session.count("undoEmptiesRedo") == 1 && session.count("reapplyEmptiesRedo_(") == 2,
+           "9500 wiring census: one policy read, one call from ToolSession.undo");
 }
