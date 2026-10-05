@@ -146,8 +146,8 @@ struct RelaxTopology {
 /// including non-manifold ones — produced zero instances.
 ///
 /// Recorded here so this is not reopened as an oversight: for the RING the
-/// gate cannot fire. It does matter for the smooth tool's boundary scale `c`
-/// (task 9484): only a gated vertex gets c != 1, so that caller applies
+/// gate cannot fire. It does matter for the smooth tool's boundary scale `c`:
+/// only a gated vertex gets c != 1, so that caller applies
 /// `deg(v) > 2` itself when it builds `cScale`.
 bool[] deriveBoundary(const(size_t)[] offset, const(bool)[] openTo) @safe pure nothrow {
     if (offset.length == 0) return null;
@@ -199,8 +199,8 @@ struct RelaxScratch {
 
 /// ONE relaxation iteration (the law in the module header). `active` (null =
 /// every vertex) selects the vertices that receive a force and move; an
-/// inactive vertex is a FIXED neighbour and its reactions are dropped (task
-/// 9484, the selection law). `cScale` (null = 1 everywhere) is the smooth
+/// inactive vertex is a FIXED neighbour and its reactions are dropped (the
+/// selection law). `cScale` (null = 1 everywhere) is the smooth
 /// tool's boundary scale `c`: `u_i = (P_v − P_i) · c / |P_v − P_i|`. The pen's
 /// relax passes neither. Precondition: `relaxable(pos, topo, F)`.
 void relaxStep(RelaxVec3[] pos, const ref RelaxTopology topo, double F,
