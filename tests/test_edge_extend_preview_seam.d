@@ -324,3 +324,33 @@ unittest {
         "a MeshEditBatch leaked its frame during the Edge Extend commit "
       ~ "(task 1903 §2.2c).");
 }
+
+// The commit re-runs the one operation with the LIVE pivot (task 9434): on a
+// single edge the frozen bounding-box pivot is off the origin, so a rotated
+// ridge committed about any other pivot lands elsewhere. The committed mesh
+// must be the previewed one, vertex for vertex.
+unittest {
+    armOnEdgeZero();
+    firstPress();
+    interactiveAttr("tool.attr edge.extend offsetY 0.2");
+    interactiveAttr("tool.attr edge.extend rotateY 40");
+    settle();
+    auto live = model()["vertices"].array;
+    assert(live.length == 10, format("rig: the preview stands at V=%d, expected 10",
+        live.length));
+    cmd("tool.set edge.extend off");
+    settle();
+    auto committed = model()["vertices"].array;
+    assert(committed.length == live.length, format("the commit left V=%d, the "
+        ~ "preview V=%d", committed.length, live.length));
+    foreach (i; 0 .. live.length)
+        foreach (k; 0 .. 3) {
+            double num(JSONValue v) {
+                return v.type == JSONType.integer ? v.integer : v.floating;
+            }
+            const a = num(live[i].array[k]), b = num(committed[i].array[k]);
+            assert(a - b < 1e-5 && b - a < 1e-5, format("committed vertex %d is %s, "
+                ~ "the preview showed %s — the commit ran about another pivot",
+                i, committed[i], live[i]));
+        }
+}

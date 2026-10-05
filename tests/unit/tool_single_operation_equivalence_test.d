@@ -338,3 +338,47 @@ unittest {
         }
     }
 }
+
+// Radial Array at ONE copy builds nothing (the kernel's `count <= 1` refusal is
+// the only guard since task 9434): the live preview and the panel image keep
+// the source faces and the face and vertex selection. (The topology version is
+// no witness: the preview restores its cage every frame, which bumps it.)
+unittest {
+    size_t[] selectedFaces(const Mesh* m) {
+        size_t[] r; foreach (i; 0 .. m.faces.length) if (m.isFaceSelected(i)) r ~= i; return r;
+    }
+    size_t[] selectedVerts(const Mesh* m) {
+        size_t[] r; foreach (i; 0 .. m.vertices.length) if (m.isVertexSelected(i)) r ~= i; return r;
+    }
+    size_t cells;
+    foreach (panel; [false, true]) {
+        auto r = new Rig(EditMode.Polygons, (ref Mesh m) {
+            m.syncSelection(); m.selectFace(0); m.selectVertex(0); });
+        auto t = makeTool!RadialArrayTool(r);
+        seedSession(t, r.mesh);
+        foreach (n, v; ["count": 1.0f, "angle": 90.0f, "offset": 0.5f]) poke(t, n, v);
+        const verts = r.mesh.vertices.dup;
+        const faces = r.mesh.faces.length;
+        const selF = selectedFaces(&r.mesh), selV = selectedVerts(&r.mesh);
+        assert(selF == [0] && selV == [0], format("rig: selection %s / %s", selF, selV));
+        Mesh* m = &r.mesh;
+        typeof(t.buildPreparedParamImage(r.mesh)) image;
+        scope(exit) image.clear();
+        if (panel) {
+            image = t.buildPreparedParamImage(r.mesh);
+            assert(image.applies && !image.built, "radial count 1: the panel image built");
+            m = &image.candidate;
+        } else {
+            t.notifyInteractiveParamChanged("angle");
+            assert(t.preparedParamStateForTest(false), "radial count 1: the preview built");
+        }
+        const mode = panel ? "panel image" : "preview";
+        assert(m.vertices == verts && m.faces.length == faces, format("radial count 1 "
+            ~ "%s: %sv/%sf, expected the source", mode, m.vertices.length, m.faces.length));
+        assert(selectedFaces(m) == selF && selectedVerts(m) == selV, format("radial "
+            ~ "count 1 %s: selection %s / %s, expected %s / %s", mode, selectedFaces(m),
+            selectedVerts(m), selF, selV));
+        ++cells;
+    }
+    assert(cells == 2);
+}
