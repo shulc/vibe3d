@@ -158,15 +158,11 @@ unittest {
     rig(withLoose, Vec3(0.3f, 1, 0.45f)); snapTypes("vertex");
     expectAt(snapAt(leftOf(loose)), [0, 1, 0.5], kTol, "loose-vtx"); ++ran;
 
-    // 9 hidden-loose — the same L hidden: no snap.
+    // 9 hidden-loose — the same L hidden: no snap. A loose point carries its
+    // own Hide bit; the vertex-mode invert is the command that writes it.
     rig(withLoose, Vec3(0.3f, 1, 0.45f));
     penCommand("select.typeFrom vertex");
-    {
-        auto r = postJson("/api/command", commandBody("mesh.select",
-            `{"mode":"vertices","indices":[3]}`));
-        assert(r["status"].str == "ok", "select L failed: " ~ r.toString);
-    }
-    penCommand(`{"id":"mesh.hide"}`);
+    penCommand(`{"id":"mesh.hideInvert"}`);
     assert(getJson("/api/model")["vertexHidden"].array[3].type == JSONType.true_,
         "hidden-loose rig: L must be hidden");
     snapTypes("vertex");
