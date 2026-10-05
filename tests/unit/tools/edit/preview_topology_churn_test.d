@@ -705,7 +705,11 @@ unittest {
 //      prepared panel edit installs the seam's state: the next drag sample is
 //      a placement, not a second full rebuild.
 // ---------------------------------------------------------------------------
-private struct Crossing { string param; float[] values; ulong fullRebuilds; }
+/// `sweepAt` is where the sweep param stands during the crossing; 0 makes a
+/// second term of a degenerate conjunction the only one that moves.
+private struct Crossing {
+    string param; float[] values; ulong fullRebuilds; float sweepAt = 0.10f;
+}
 
 /// Write a float param WITHOUT the interactive notification: the tool's
 /// state before a gesture, not a rebuild.
@@ -789,7 +793,7 @@ private void pv2Row(T)(EditMode mode, void function(ref Mesh) select,
     foreach (ref x; crossings) {
         auto rig = rigged();
         scope(exit) rig.release();
-        auto tool = make(rig, 0.10f);
+        auto tool = make(rig, x.sweepAt);
         foreach (v; x.values) {
             setFloatParam(tool, x.param, v);
             rig.frame();
@@ -858,7 +862,8 @@ unittest {
         ["width"], [0.10f], "extrude",
         [Crossing("width", down, 3), Crossing("extrude", down, 3)]);
     pv2Row!PolyExtrudeTool(EditMode.Polygons, (ref Mesh m) { m.selectFace(0); },
-        [], [], "distance", [Crossing("distance", down, 3)]);
+        [], [], "distance",
+        [Crossing("distance", down, 3), Crossing("shiftX", down, 3, 0.0f)]);
     pv2Row!VertexBevelTool(EditMode.Vertices, (ref Mesh m) { m.selectVertex(0); },
         [], [], "inset", [Crossing("inset", down, 3)]);
     pv2Row!VertexExtrudeTool(EditMode.Vertices, (ref Mesh m) { m.selectVertex(0); },
