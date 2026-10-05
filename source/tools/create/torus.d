@@ -12,7 +12,7 @@ import shader : LitShader;
 import tools.create.primitive_create_tool : HandledCreateTool;
 import tools.create.create_common :
                                     screenToPlacementLocal, snapLocalHit,
-                                    workplaneCursorPlaneHit, baseDragPoint;
+                                    workplaneCursorPlaneHit, baseDragPoint, syncEventViewport;
 import editmode : EditMode;
 import snap_render : publishLastSnap;
 
@@ -230,6 +230,7 @@ public:
         }
 
         if (state == TorusState.Idle) {
+            syncEventViewport(cachedVp, vts);
             choosePlane(cachedVp);
             Vec3 hit = screenToPlacementLocal(
                 cast(float)e.x, cast(float)e.y, cachedVp, placementFrame);

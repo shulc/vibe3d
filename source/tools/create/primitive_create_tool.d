@@ -85,7 +85,7 @@ import tools.create.create_common : WorkplaneFrame,
                               primitivePlacementFrame, screenToPlacementLocal,
                               planeLocalViewport,
                               mostFacingAxis, transformPoint, transformDir, snapLocalHit,
-                              frameIsLeftHanded, reverseFaceWinding, baseDragPoint,
+                              frameIsLeftHanded, reverseFaceWinding, baseDragPoint, syncEventViewport,
                               workplaneCursorPlaneHit, moverDrag, heightDragNormal;
 import editmode : EditMode;
 import snap : SnapResult;
@@ -1007,6 +1007,7 @@ public:
         }
 
         if (state == RadialState.Idle) {
+            syncEventViewport(cachedVp, vts);
             choosePlane(cachedVp);
             Vec3 hit = screenToPlacementLocal(
                 cast(float)e.x, cast(float)e.y, cachedVp, placementFrame);

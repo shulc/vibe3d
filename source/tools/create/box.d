@@ -36,7 +36,7 @@ import tools.create.create_common : WorkplaneFrame,
                               mostFacingAxis,
                               transformPoint, transformDir, snapLocalHit,
                               frameIsLeftHanded, reverseFaceWinding,
-                              workplaneCursorPlaneHit, moverDrag, heightDragNormal, baseDragPoint;
+                              workplaneCursorPlaneHit, moverDrag, heightDragNormal, baseDragPoint, syncEventViewport;
 import editmode : EditMode;
 import snap : SnapResult;
 import snap_render : publishLastSnap, clearLastSnap;
@@ -589,6 +589,7 @@ public:
         }
 
         if (state == BoxState.Idle) {
+            syncEventViewport(cachedVp, vts);
             choosePlane(cachedVp);
             Vec3 hit = screenToPlacementLocal(
                 cast(float)e.x, cast(float)e.y, cachedVp, placementFrame);

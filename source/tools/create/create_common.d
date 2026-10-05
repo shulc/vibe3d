@@ -340,6 +340,12 @@ Vec3 baseDragPoint(const ref HandleDrag grab, int x, int y, Vec3 n,
     return p - n * dot(p - grab.point, n);
 }
 
+/// A press resolves under its own Quad cell's projection (the event's
+/// `SubjectPacket.viewport`, task 0209), not the last-drawn cell's (task 9473).
+void syncEventViewport(ref Viewport cached, ref VectorStack vts) {
+    if (auto sp = vts.get!SubjectPacket()) cached = sp.viewport;
+}
+
 /// The FREE point under the pointer: the click's q onto the background, then
 /// the snap, replacing all three channels (K-C2 C2i). A primitive's press is
 /// the plane point and never comes here (K-C role law).

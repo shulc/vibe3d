@@ -338,11 +338,14 @@ unittest { // all four horizontal presets, where the old floor plane was edge-on
 
 unittest { // the CONTROL: perspective was never broken and must stay accurate
     // Without this the suite cannot distinguish "the ortho arm was fixed" from
-    // "both arms were replaced by something that happens to suit ortho".
+    // "both arms were replaced by something that happens to suit ortho". The
+    // PRESS corner is the click; the release corner of an oblique perspective
+    // base drag is linearised at the press, not under the cursor (task 9473,
+    // K-C3; tests/test_create_click_surface.d, create_common_test).
     V3[2] aimed;
     auto created = createByDrag("Perspective", 0.4, 0.3, -0.5, -0.2,
                                 V3(0, 0, 0), aimed);
-    double miss = worstCornerMiss(created, aimed);
+    double miss = worstCornerMiss(created, [aimed[0], aimed[0]]);
     writefln("Perspective (control): worst corner miss %.4f", miss);
     assert(miss < TOL,
         format("Perspective: the control must stay as accurate as it was; "
@@ -366,7 +369,9 @@ unittest { // the DEPTH discriminator: the plane is anchored at the FOCUS
                 format("%s: the construction plane passes through the camera "
                      ~ "FOCUS, so every created vertex must sit at %.4f on "
                      ~ "axis %d; got %s", preset, want, k, v.toString));
-        double miss = worstCornerMiss(created, aimed);
+        // Perspective: the press corner only (the control above, task 9473).
+        V3[2] corners = preset == "Perspective" ? [aimed[0], aimed[0]] : aimed;
+        double miss = worstCornerMiss(created, corners);
         writefln("%s (focus %s): worst corner miss %.4f", preset, focus, miss);
         assert(miss < TOL,
             format("%s: displacing the focus must not displace the click; "
