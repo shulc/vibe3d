@@ -250,8 +250,8 @@ unittest {
         || wanted("vertex-surface-handle-off")) {
         const ct = cell("vertex-surface-top"), co = cell("vertex-surface-offset");
         auto r = rigOf("vertex-surface-top");
-        const px = worldPixel(v3(arr3(ct["aim_world"])));
         rig(r, "prim.vertex", 0);
+        const px = worldPixel(v3(arr3(ct["aim_world"])));
         handle(false);
         clickPixels(px);
         handle(true);
