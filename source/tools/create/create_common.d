@@ -264,8 +264,7 @@ SnapResult snapMoverCentre(ref Vec3 centre, int part, MoveHandler mover, in Work
 {
     import drag : primitiveCenterPlaneAxis;
     Vec3 s = centre;
-    auto sr = snapLocalHit(s, frame, x, y, vp, mesh, EditMode.Vertices);
-    if (!sr.snapped) return sr;
+    auto sr = snapLocalHit(s, frame, x, y, vp, mesh, EditMode.Vertices);   // unsnapped: s == centre
     if (part <= 2) {
         immutable Vec3 u = normalize(moverArrowLocal(mover, part, frame));
         centre += u * dot(s - centre, u);

@@ -6,11 +6,14 @@
 // from the snapped point by the family's handle mode (sphere / torus
 // symmetric, cylinder / cone / capsule one-sided on ours). Rig: top ortho
 // (front for the height cells) at 439.52 px/m, grid 0.1, grid bit only, every
-// drag 20 events of 2 px. Capsule's MIN extent is not asserted: the captured
+// drag 20 events of 2 px; every drag publishes its snap (the overlay). One
+// cell repeats under a work plane pinned 1 m along x (a lattice multiple, so
+// world and plane nodes agree): the handle point crosses the frame both ways.
+// Capsule's MIN extent is not asserted: the captured
 // capsule is symmetric, ours one-sided (handle mode, not this law).
 
 import drag_helpers : Vec3, buildDragDownLog, buildDragMotionLog, buildDragUpLog,
-    fetchCamera, fetchHandlePart, playAndWait;
+    fetchCamera, fetchHandlePart, fetchSnapLast, playAndWait;
 import http_client : postJson;
 import pen_rig_helpers : penCameraAt, penCommand, penSceneEmpty, worldPixel;
 import std.algorithm : canFind;
@@ -34,6 +37,7 @@ private double num(JSONValue v) {
 }
 
 private string tool;   // the armed primitive
+private float planeX = 0;  // the pinned work plane's x offset (0 = the default plane)
 private double qa(string attr) {
     auto r = postJson("/api/command", "tool.attr " ~ tool ~ " " ~ attr ~ " ?");
     assert(r["status"].str == "ok", "query " ~ attr ~ " failed: " ~ r.toString);
@@ -55,10 +59,12 @@ private double[2] yExtent() {
 private void rig(string t, JSONValue c, bool front) {
     tool = t;
     penSceneEmpty("Top");
-    penCameraAt(Vec3(0, 1, 0), kPpm);
+    if (planeX != 0)
+        penCommand(format("workplane.edit cenX:%s cenY:0 cenZ:0 rotX:0 rotY:0 rotZ:0", planeX));
+    penCameraAt(Vec3(planeX, 1, 0), kPpm);
     penCommand("tool.set " ~ t);
     penCommand("tool.pipe.attr snap enabled false");
-    const a = worldPixel(Vec3(-0.1f, 0, -0.1f)), b = worldPixel(Vec3(0.1f, 0, 0.1f));
+    const a = worldPixel(Vec3(planeX - 0.1f, 0, -0.1f)), b = worldPixel(Vec3(planeX + 0.1f, 0, 0.1f));
     auto cam = fetchCamera();
     playAndWait(buildDragDownLog(cam.vpX, cam.vpY, cam.width, cam.height, a[0], a[1]));
     playAndWait(buildDragMotionLog(cam.vpX, cam.vpY, cam.width, cam.height, a[0], a[1], b[0], b[1], 8));
@@ -76,7 +82,7 @@ private void rig(string t, JSONValue c, bool front) {
     foreach (kv; attrs) penCommand("tool.attr " ~ t ~ " " ~ kv[0] ~ " " ~ kv[1]);
     if (front) {
         penCommand("viewport.view Front");
-        penCameraAt(Vec3(0, cast(float)num(cen[1]), 0), kPpm);
+        penCameraAt(Vec3(planeX, cast(float)num(cen[1]), 0), kPpm);
     }
     penCommand("tool.pipe.attr snap enabled true");
     penCommand("tool.pipe.attr snap types grid");
@@ -110,12 +116,14 @@ private double[] drag(int part, int off, JSONValue c, int[] at, double delegate(
         done = k;
         if (k < n) got ~= probe();
     }
+    if (fetchSnapLast()["snapped"].type != JSONType.true_)
+        fails ~= format("%s part %d: the drag's snap is not published", tool, part);
     playAndWait(buildDragUpLog(cam.vpX, cam.vpY, cam.width, cam.height, p[0] + dx, p[1] + dy));
     return got;
 }
 
 private void premise(int[2] p, Vec3 w, string what) {
-    const q = worldPixel(w);
+    const q = worldPixel(Vec3(w.x + planeX, w.y, w.z));
     assert(abs(p[0] - q[0]) <= 1 && abs(p[1] - q[1]) <= 1,
         format("%s rig: %s expected at %s, found at %s", tool, what, q, p));
 }
@@ -129,6 +137,7 @@ private void expect(string cell, double got, double want) {
 /// one; the cell's step table on the extent it names.
 private void sizeCell(string id, string t, int part, bool maxOnly = false) {
     auto c = fx["cases"][id];
+    const string cell = planeX != 0 ? id ~ "@plane-x1" : id;
     const bool height = ("expect_y_extent" in c) !is null;
     rig(t, c, height);
     auto cen = c["cen"].array;
@@ -141,12 +150,13 @@ private void sizeCell(string id, string t, int part, bool maxOnly = false) {
     if (tbl in c)
         foreach (k; [5, 10, 12, 15]) { at ~= k; want ~= num(c[tbl][format("%d", k)]); }
     const got = drag(part, 0, c, at, () => height ? yExtent()[1] : xExtent()[0]);
-    foreach (i, k; at) expect(format("%s step %d", id, k), got[i], want[i]);
+    foreach (i, k; at) expect(format("%s step %d", cell, k), got[i], want[i]);
     const e = height ? yExtent() : xExtent();
     auto w = c[height ? "expect_y_extent" : "expect_x_extent"].array;
-    expect(id ~ " max", e[1], num(w[1]));
-    if (!maxOnly) expect(id ~ " min", e[0], num(w[0]));
+    expect(cell ~ " max", e[1], num(w[1]));
+    if (!maxOnly) expect(cell ~ " min", e[0], num(w[0]));
     penCommand("tool.set " ~ t ~ " off");
+    if (planeX != 0) penCommand("workplane.reset");
     ++ran;
 }
 
@@ -179,6 +189,9 @@ unittest {
     fx = parseJSON(readText("tests/fixtures/handle_grid_slow.json"));
     sizeCell("primitive-size-grid-slow", "prim.sphere", 0);
     sizeCell("primitive-size-offcentre-grid-slow", "prim.sphere", 0);
+    planeX = 1;
+    sizeCell("primitive-size-grid-slow", "prim.sphere", 0);
+    planeX = 0;
     moverCell("primitive-mover-grid-slow", "prim.sphere", 10);
     moverCell("primitive-mover-free-grid-slow", "prim.sphere", 13);
     sizeCell("cylinder-height-grid-slow", "prim.cylinder", 2);
@@ -194,7 +207,7 @@ unittest {
     moverCell("torus-mover-free-grid", "prim.torus", 13);
     moverCell("torus-mover-free-grid-pressoff", "prim.torus", 13, 2);
 
-    assert(ran == 16, format("population: %d cells ran, expected 16", ran));
+    assert(ran == 17, format("population: %d cells ran, expected 17", ran));
     string[] names;
     foreach (f; fails) {
         const n = f[0 .. f.indexOf(':') < 0 ? f.length : f.indexOf(':')];
