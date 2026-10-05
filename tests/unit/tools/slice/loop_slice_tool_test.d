@@ -12,7 +12,7 @@ import mesh;
 import math;
 import editmode : EditMode;
 import params : Param, IntEnumEntry, wireTagForValue;
-import hover_state : g_hoveredEdge;
+import hover_state : g_hoveredEdge, g_hoverIndexSpaceStale;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
@@ -242,4 +242,32 @@ unittest {
     tool.scrubPosition(0.3f);
     assert(!live() && steps() == 0,
         "loop slice: the preview dropped on a key mismatch, but the session kept its steps");
+}
+
+// Task 9439 (HOV1): the hover fallback seed reads `hoverAtPress`, so a press
+// on an edge HELD over a stale index space arms nothing; the fresh press on the
+// same held edge is the control.
+unittest {
+    loadSDL();
+    SDL_SetModState(cast(SDL_Keymod)0);
+    scope(exit) { g_hoveredEdge = -1; g_hoverIndexSpaceStale = false; }
+    SDL_MouseButtonEvent e;
+    e.button = SDL_BUTTON_LEFT;
+    VectorStack vts;
+    foreach (stale; [false, true]) {
+        Mesh m = makeCube();
+        m.buildLoops();
+        m.resetSelection();
+        EditMode em = EditMode.Edges;
+        GpuMesh gpu;
+        gpu.suppressCageUpload = true;
+        auto tool = new LoopSliceTool(() => &m, &gpu, &em, null);
+        tool.activate();
+        g_hoveredEdge = 0;
+        g_hoverIndexSpaceStale = stale;
+        const took = tool.onMouseButtonDown(e, vts);
+        if (!stale) assert(took, "loop slice control: a fresh hover did not arm");
+        else assert(!took && m.vertices.length == 8,
+                    "loop slice armed a ring from a stale hover index space");
+    }
 }

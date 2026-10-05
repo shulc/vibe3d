@@ -4,14 +4,12 @@
 module tests.unit.hover_at_press_test;
 
 import bindbc.sdl;
-import display_state : DrawPlan;
 import editmode : EditMode;
 import hover_state;
 import math;
 import mesh;
 import mesh_gpu : GpuMesh;
 import operator : VectorStack;
-import shader : Shader, LitShader;
 
 private SDL_MouseButtonEvent leftPress(int x = 0, int y = 0) {
     loadSDL();
@@ -60,61 +58,6 @@ unittest { // publishHover: HOLDS the ids while stale (task 1730); V > E > F und
     ifs.hoveredVertex = -1; ifs.hoveredEdge = 5; ifs.hoveredFace = 6;
     publishHover(ifs, true, 0, 0);
     assert(g_hoveredEdge == 5 && g_hoveredFace == -1, "publishHover: E did not beat F");
-}
-
-unittest { // loop slice: the hover fallback seed does not arm on a stale hover
-    import tools.slice.loop_slice_tool : LoopSliceTool;
-    scope(exit) clearHover();
-    auto e = leftPress();
-    VectorStack vts;
-    foreach (stale; [false, true]) {
-        Mesh m = makeCube();
-        m.buildLoops();
-        m.resetSelection();
-        EditMode em = EditMode.Edges;
-        GpuMesh gpu;
-        gpu.suppressCageUpload = true;
-        auto tool = new LoopSliceTool(() => &m, &gpu, &em, null);
-        tool.activate();
-        g_hoveredEdge = 0;
-        g_hoverIndexSpaceStale = stale;
-        const took = tool.onMouseButtonDown(e, vts);
-        if (!stale) assert(took, "loop slice control: a fresh hover did not arm");
-        else assert(!took && m.vertices.length == 8,
-                    "loop slice armed a ring from a stale hover index space");
-    }
-}
-
-unittest { // tack: a stale held target face is "nothing hovered" (safe no-op)
-    import tools.edit.tack : TackTool;
-    scope(exit) clearHover();
-    // The camera looks down -Z and the press is the centre pixel, so the ray is
-    // parallel to a side face: a press that takes the hover is consumed (true)
-    // before any commit, so no GL is reached.
-    Viewport vp;
-    vp.view = lookAt(Vec3(0, 0, 6), Vec3(0, 0, 0), Vec3(0, 1, 0));
-    vp.proj = perspectiveMatrix(0.8f, 1.0f, 0.1f, 100.0f);
-    vp.width = vp.height = 400;
-    auto e = leftPress(200, 200);
-    VectorStack vts;
-    foreach (stale; [false, true]) {
-        Mesh m = makeCube();
-        int target = -1;
-        foreach (fi; 0 .. cast(int)m.faces.length)
-            if (m.faceNormal(fi).y > 0.9f) target = fi;
-        auto tool = new TackTool(() => &m, null, LitShader.init);
-        tool.seedPreparedActivationForTest(true);   // a source face, no GL
-        Shader sh;
-        DrawPlan plan;
-        clearHover();
-        tool.draw(sh, vp, vts, plan);       // seats the viewport; no hover yet
-        g_hoveredFace = target;
-        g_hoverIndexSpaceStale = stale;
-        const took = tool.onMouseButtonDown(e, vts);
-        if (!stale) assert(took, "tack control: a fresh hover did not reach the aim");
-        else assert(!took && tool.toolStateJson()["hoveredTargetFace"].integer == -1,
-                    "tack aimed at a face from a stale hover index space");
-    }
 }
 
 unittest { // magnet: a stale held vertex starts no drag

@@ -17,7 +17,7 @@ import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import shader : Shader, LitShader, drawLitPreview;
-import hover_state : g_hoveredFace;
+import hover_state : g_hoveredFace, g_hoverIndexSpaceStale;
 import eventlog : queryMouse;
 import document : primaryModelSpace;
 import std.conv : to;
@@ -228,5 +228,45 @@ unittest { // rebuildTackPreview is NON-CUMULATIVE — 5 repeat calls land on
                     "preview drifted on repeat #" ~ i.to!string ~ " vert " ~ vi.to!string);
             }
         }
+    }
+}
+
+// Task 9439 (HOV1): the press reads `hoverAtPress`, so a target face HELD over
+// a stale index space is "nothing hovered" (the safe no-op); the fresh press on
+// the same held face is the control.
+unittest {
+    import display_state : DrawPlan;
+    loadSDL();
+    SDL_SetModState(cast(SDL_Keymod)0);
+    scope(exit) { g_hoveredFace = -1; g_hoverIndexSpaceStale = false; }
+    // The camera looks down -Z and the press is the centre pixel, so the ray is
+    // parallel to a side face: a press that takes the hover is consumed (true)
+    // before any commit, so no GL is reached.
+    Viewport vp;
+    vp.view = lookAt(Vec3(0, 0, 6), Vec3(0, 0, 0), Vec3(0, 1, 0));
+    vp.proj = perspectiveMatrix(0.8f, 1.0f, 0.1f, 100.0f);
+    vp.width = vp.height = 400;
+    SDL_MouseButtonEvent e;
+    e.button = SDL_BUTTON_LEFT;
+    e.x = e.y = 200;
+    VectorStack vts;
+    foreach (stale; [false, true]) {
+        Mesh m = makeCube();
+        int target = -1;
+        foreach (fi; 0 .. cast(int)m.faces.length)
+            if (m.faceNormal(fi).y > 0.9f) target = fi;
+        auto tool = new TackTool(() => &m, null, LitShader.init);
+        tool.seedPreparedActivationForTest(true);   // a source face, no GL
+        Shader sh;
+        DrawPlan plan;
+        g_hoveredFace = -1;
+        g_hoverIndexSpaceStale = false;
+        tool.draw(sh, vp, vts, plan);       // seats the viewport; no hover yet
+        g_hoveredFace = target;
+        g_hoverIndexSpaceStale = stale;
+        const took = tool.onMouseButtonDown(e, vts);
+        if (!stale) assert(took, "tack control: a fresh hover did not reach the aim");
+        else assert(!took && tool.toolStateJson()["hoveredTargetFace"].integer == -1,
+                    "tack aimed at a face from a stale hover index space");
     }
 }
