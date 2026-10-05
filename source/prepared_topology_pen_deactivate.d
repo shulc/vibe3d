@@ -2,7 +2,6 @@ module prepared_topology_pen_deactivate;
 
 import core.atomic : atomicOp;
 import prepared_record_context : PreparedRecordContext;
-import toolpipe.guide : SnapGuide;
 import toolpipe.pipeline : ToolPipeContext, g_pipeCtx;
 import toolpipe.stage : TaskCode;
 import toolpipe.stages.snap : SnapStage, PreparedSnapPushProjection;
@@ -23,8 +22,6 @@ private:
     PreparedTopologyPenDeactivateImage image_;
     ToolPipeContext pipe_;
     SnapStage snap_;
-    SnapGuide guide_;
-    SnapGuide[] expectedGuides_, nextGuides_;
     PreparedSnapPushProjection snapProjection_;
     string snapOwner_;
     immutable ulong owner_; ulong generation_;
@@ -42,13 +39,9 @@ public:
         if (!owner.image_.valid) return null;
         owner.pipe_ = g_pipeCtx;
         owner.snap_ = target.preparedSnapStageForDeactivate();
-        owner.guide_ = target.preparedSnapGuideForDeactivate();
         owner.snapOwner_ = target.preparedSnapArmOwner();
-        if (owner.snap_ !is null) {
+        if (owner.snap_ !is null)
             owner.snapProjection_ = owner.snap_.capturePreparedPushProjection();
-            owner.expectedGuides_ = owner.snap_.guides().dup;
-            owner.nextGuides_ = owner.snap_.prepareGuideRemoval(owner.guide_);
-        }
         return owner;
     }
     bool begin() nothrow @nogc {
@@ -61,7 +54,6 @@ public:
             target_.classinfo !is TopologyPenTool.classinfo ||
             prepared_.owner != owner_ || prepared_.generation != generation_ ||
             !target_.preparedDeactivateLocalMatches(image_) ||
-            target_.preparedSnapGuideForDeactivate() !is guide_ ||
             target_.preparedSnapArmOwner() != snapOwner_ || g_pipeCtx !is pipe_ ||
             !snapShapeValid()) return false;
         validated_ = true; validatedToken_.owner = owner_;
@@ -73,10 +65,7 @@ public:
             validatedToken_.owner != owner_ ||
             validatedToken_.generation != generation_) return;
         target_.installPreparedDeactivate(image_);
-        if (snap_ !is null) {
-            snap_.installPreparedGuides(nextGuides_);
-            snap_.installPreparedPopEnabled(snapOwner_);
-        }
+        if (snap_ !is null) snap_.installPreparedPopEnabled(snapOwner_);
         consume();
     }
     void abort() nothrow @nogc { if (!consumed_) { image_.clear(); consume(); } }
@@ -88,13 +77,10 @@ private:
     bool snapShapeValid() nothrow @nogc {
         if (pipe_ is null) return snap_ is null;
         if (!pipe_.pipeline.ownsTaskStage(TaskCode.Snap, snap_)) return false;
-        return snap_ is null ||
-            (snap_.matchesPreparedPushProjection(snapProjection_) &&
-             snap_.matchesPreparedGuides(expectedGuides_));
+        return snap_ is null || snap_.matchesPreparedPushProjection(snapProjection_);
     }
     void consume() nothrow @nogc {
-        image_.clear(); target_ = null; pipe_ = null; snap_ = null; guide_ = null;
-        expectedGuides_ = nextGuides_ = null; snapOwner_ = null;
+        image_.clear(); target_ = null; pipe_ = null; snap_ = null; snapOwner_ = null;
         pending_ = validated_ = false; consumed_ = true;
         prepared_.owner = prepared_.generation = 0;
         validatedToken_.owner = validatedToken_.generation = 0;

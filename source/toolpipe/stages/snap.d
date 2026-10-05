@@ -185,21 +185,7 @@ class SnapStage : Stage, Operator {
     /// How many guides are registered (0 outside a guide-owning gesture).
     size_t guideCount() const { return _guides.length; }
 
-    /// Detached registry image for tool-drop preparation. The caller owns the
-    /// returned arrays; install only transfers the already-built descriptor.
-    SnapGuide[] prepareGuideRemoval(SnapGuide guide) {
-        SnapGuide[] next;
-        next.reserve(_guides.length);
-        foreach (entry; _guides) if (entry !is guide) next ~= entry;
-        return next;
-    }
-
-    bool matchesPreparedGuides(const SnapGuide[] expected) const nothrow @nogc {
-        if (_guides.length != expected.length) return false;
-        foreach (i, entry; _guides) if (entry !is expected[i]) return false;
-        return true;
-    }
-
+    /// Install a prepared registry: a tool transition clears it.
     void installPreparedGuides(ref SnapGuide[] next) nothrow @nogc {
         _guides = next; next = null;
     }

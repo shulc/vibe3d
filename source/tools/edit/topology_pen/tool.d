@@ -40,7 +40,6 @@ import toolpipe.packets    : ConstrainHitPacket, HoverTarget, HoverTargetKind,
                              SubjectPacket, SnapPacket, SnapType, SymmetryPacket;
 import toolpipe.stages.constrain : liveConstrainStage, backgroundHit;
 import toolpipe.stages.snap : SnapStage, liveSnapStage;
-import toolpipe.guide       : SnapGuide, GuideDrawState, kGuidePrioritySeed;
 import constraint           : resolveHoverTarget, topoPenPressPickPx,
                               topoPenSnapAcceptPx, topoPenSnapGatherPx,
                               kTopoPenSnapAuto, closestPointOnMeshes, BackgroundSource;
@@ -374,7 +373,6 @@ private:
     // 0555) actually absorbed anything; the post-commit `resyncSession` reads
     // it (the vertex array was compacted under `moveVerts_`).
     package MoveElem     moveElem_  = MoveElem.None;
-    private SymmetryPacket* moveSym_;   // the gesture's pairing, taken before its first write
     package uint[]       moveVerts_;
     package Vec3[]       moveBase_;
     // The edge/polygon Move's shared offset at the last evaluation (zero on a
@@ -1651,7 +1649,6 @@ public:
     }
 
     final SnapStage preparedSnapStageForDeactivate() { return liveSnapStage(); }
-    final SnapGuide preparedSnapGuideForDeactivate() nothrow @nogc { return snapGuide_; }
 
     final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context) {
         if (context is null) return PreparedDeactivateEffect(
@@ -2190,7 +2187,8 @@ public:
     /// the vertices the querying GESTURE is itself moving. Without it a
     /// dragged vertex is its own nearest candidate at zero distance and every
     /// query answers "you have landed on yourself" — the same self-snap the
-    /// transform path already excludes for, at `move.d:applySnapToDelta`.
+    /// transform path already excludes for, at `move.d:applySnapToDelta`. It is
+    /// the query's `excludeVerts`, the set a confined live publish leans on.
     /// Split does not ask this query (it asks `resolveSplitTargetVert`).
     package int resolveSnapTargetVert(int mx, int my, const ref Viewport vp,
                                       const(uint)[] exclude = null) {
@@ -2198,19 +2196,18 @@ public:
         auto g = snapGuide();
         g.retarget(meshOrNull(), innerSnap_, backFace_);
         g.aimAt(vp, mx, my);
-        if (exclude.length == 0)
-            return weldTargetVertex(mx, my, vp, &g.admits);
-        // Composed, not folded into the guide: the guide states the TOOL'S
-        // admission policy (border / orientation), which is a property of the
-        // mesh and the attributes, while the moving set is a property of one
-        // gesture in flight. Keeping them separate means the guide the snap
-        // SERVICE holds keeps answering the same way for every other client.
-        scope admit = delegate bool(SnapType t, int idx, int slot) nothrow {
-            if (t == SnapType.Vertex && slot == 0)
-                foreach (x; exclude) if (cast(int)x == idx) return false;
-            return g.admits(t, idx, slot);
-        };
-        return weldTargetVertex(mx, my, vp, admit);
+        return weldTargetVertex(mx, my, vp, &g.admits, exclude);
+    }
+
+    /// The snap target at the pixel the LOCAL point `at` is drawn at (Pixel, §1.1):
+    /// the raw, unprojected position (K-W2b rule 3), shared by the live move and the
+    /// release's weld.
+    private int rawSnapTarget(Vec3 at, const ref Viewport vp, const(uint)[] exclude) {
+        import std.math : lround;
+        const AimViewport vpAim = aimSpace(vp, primaryModelSpace());
+        ImVec2 pt;
+        if (!projectLocalPt(at, vpAim, pt)) return -1;
+        return resolveSnapTargetVert(cast(int)lround(pt.x), cast(int)lround(pt.y), vp, exclude);
     }
 
     /// Split's target C (task 8690): the NEAREST admitted vertex within the
@@ -2242,11 +2239,11 @@ public:
     /// IS the gesture's policy, and the registered guide would veto the
     /// interior target Split's own guide admits.
     private int weldTargetVertex(int mx, int my, const ref Viewport vp,
-                                 scope SnapAdmit admit) {
+                                 scope SnapAdmit admit, const(uint)[] exclude = null) {
         auto m = mesh;
         if (m is null) return -1;
         return editedVertexAt(mx, my, vp, *m, primaryModelSpace(), dragSnap_,
-                              topoPenSnapAcceptPx(vp, dragSnap_), admit);
+                              topoPenSnapAcceptPx(vp, dragSnap_), admit, exclude);
     }
 
     // -----------------------------------------------------------------------
@@ -2350,7 +2347,6 @@ public:
     /// `at[i]`: vertex i's query point (the raw target); `sym`: see `symmetricWeldPairs`.
     private size_t weldMovedVertices(const(uint)[] verts, const ref Viewport vp,
                                      const(Vec3)[] at = null, const(SymmetryPacket)* sym = null) {
-        import std.math : lround;
         import symmetry : symmetricWeldPairs;
         if (verts.length == 0) return 0;
         // An EARLY-OUT on the shared enable, not the gate: the gate is
@@ -2361,21 +2357,10 @@ public:
         if (!dragSnap_.enabled) return 0;
         auto m = mesh;
         if (m is null) return 0;
-
-        // Pixel (§1.1), hoisted out of the per-moved-vertex loop (§3). The
-        // pixel this produces is fed straight back into
-        // `resolveSnapTargetVert`, which runs the SAME aiming space over the
-        // same mesh — the two must agree or a moved vertex would query at a
-        // pixel it was never drawn at.
-        const AimViewport vpAim = aimSpace(vp, primaryModelSpace());
-
         uint[2][] pairs;
         foreach (i, vi; verts) {
             if (vi >= m.vertices.length) continue;   // stale arm — defensive
-            ImVec2 pt;
-            if (!projectLocalPt(i < at.length ? at[i] : m.vertices[vi], vpAim, pt)) continue;
-            immutable int t = resolveSnapTargetVert(cast(int)lround(pt.x),
-                                                    cast(int)lround(pt.y), vp, verts);
+            immutable int t = rawSnapTarget(i < at.length ? at[i] : m.vertices[vi], vp, verts);
             if (t >= 0) pairs ~= symmetricWeldPairs(*m, sym, cast(uint)t, vi);
         }
         if (pairs.length == 0) return 0;
@@ -4121,8 +4106,12 @@ public:
     // Apply `targets` to the armed moving set in place — the live half of the
     // drag (task 0484). No history: the press step records once, at release.
     // Sets `moveDirty_` so a gesture that never actually moved anything welds
-    // nothing.
-    package void applyMoveTargets(const(Vec3)[] targets, ref VectorStack vts) {
+    // nothing. A drag step publishes CONFINED (task 9493): the moving set and its
+    // partners are the snap exclusion, so the pair table stays the press-time one;
+    // the release (`settle`) publishes once unconfined, so the weld and the next
+    // gesture judge current positions (K-W2b M4).
+    package void applyMoveTargets(const(Vec3)[] targets, ref VectorStack vts,
+                                  bool settle = false) {
         auto m = mesh;
         if (m is null || targets.length != moveVerts_.length) return;
         foreach (vi; moveVerts_)
@@ -4132,20 +4121,26 @@ public:
         bool changed = false;
         foreach (i, vi; moveVerts_)
             if ((targets[i] - m.vertices[vi]).length > kMoveEps) { changed = true; break; }
-        if (!changed) return;
+        if (!changed && !(settle && moveDirty_)) return;
 
-        // In CORNER order, each mirrored onto its visible partner (last write wins), an
-        // on-plane one projected, against the press-time pairing (task 9438, K-W2b).
+        // In CORNER order, each mirrored onto its visible partner (last write wins)
+        // (K-W2b rule 1). An on-plane one snaps from its RAW target and is projected
+        // only when nothing answers (rule 3, KW2_Nw2).
         import symmetry : mirrorPosition, projectOnPlane;
-        if (moveSym_ is null)
-            if (auto live = vts.get!SymmetryPacket()) moveSym_ = [live.ownedDup()].ptr;
-        auto sp = moveSym_ && moveSym_.pairOf.length == m.vertices.length ? moveSym_ : null;
-        foreach (i, vi; moveVerts_) {
-            m.vertices[vi] = sp && sp.onPlane[vi] ? projectOnPlane(*sp, targets[i]) : targets[i];
+        auto sp = vts.get!SymmetryPacket();
+        if (sp && sp.pairOf.length != m.vertices.length) sp = null;
+        const Viewport vp = viewportOf(vts);
+        uint[] exclude = moveVerts_.dup;
+        if (sp) foreach (vi; moveVerts_) if (sp.pairOf[vi] >= 0) exclude ~= sp.pairOf[vi];
+        if (changed) foreach (i, vi; moveVerts_) {
+            const int t = sp && sp.onPlane[vi] ? rawSnapTarget(targets[i], vp, exclude) : -1;
+            m.vertices[vi] = t >= 0 ? m.vertices[t]
+                           : sp && sp.onPlane[vi] ? projectOnPlane(*sp, targets[i]) : targets[i];
             const int pi = sp ? sp.pairOf[vi] : -1;   // -1: unpaired or on the plane
             if (pi >= 0 && !m.isVertexHidden(pi)) m.vertices[pi] = mirrorPosition(*sp, targets[i]);
         }
-        m.commitChange(MeshEditScope.Position);
+        if (settle) m.commitChange(MeshEditScope.Position);
+        else m.publishConfinedChange(MeshEditScope.Position);
         moveDirty_ = true;
 
         m.syncSelection();
@@ -4160,13 +4155,13 @@ public:
         scope(exit) clearMoveArm();
         if (!moveArmed_ || moveVerts_.length == 0) return;
         const targets = moveTargets(px, py, vp, vts);
-        applyMoveTargets(targets, vts);
+        applyMoveTargets(targets, vts, true);
         noteMoveOffset();
         // The destructive landing (task 0555), inside the same step. Gated on
         // `moveDirty_`: a grab that never moved anything cannot have been
         // "brought to within" anything, and welding on a bare click would eat
         // any vertex that merely happened to sit inside the acceptance radius.
-        if (moveDirty_ && weldMovedVertices(moveVerts_, vp, targets, moveSym_)) {
+        if (moveDirty_ && weldMovedVertices(moveVerts_, vp, targets, vts.get!SymmetryPacket())) {
             moveWelded_ = true;
             afterWeld();
         }
@@ -4294,7 +4289,6 @@ public:
         moveBase_    = null;
         moveDirty_   = false;
         moveWelded_  = false;
-        moveSym_     = null;
     }
 
     // P3 (doc/topopen_p3_plan.md), on the Shift+LMB "Duplicate" overlay slot

@@ -7473,7 +7473,7 @@ for stem, cls, owner_module, tool_source in (
 
 
 # TopologyPen drop jointly closes an optional live-move history carrier and
-# restores two SnapStage planes (guide registry + startup enable push).
+# restores the SnapStage startup enable push (the transition clears the guides).
 topopen_deact_owner = prepared_module_source("prepared_topology_pen_deactivate")
 topopen_tool = prepared_source_texts[ROOT / "source/tools/edit/topology_pen/tool.d"]
 def topopen_deact_gate(owner, context, tool_source, snap_source):
@@ -7486,12 +7486,9 @@ def topopen_deact_gate(owner, context, tool_source, snap_source):
         "target.classinfo !is TopologyPenTool.classinfo",
         "prepared_.owner != owner_", "prepared_.generation != generation_",
         "validatedToken_.owner != owner_", "validatedToken_.generation != generation_",
-        "target_.preparedSnapGuideForDeactivate() !is guide_",
         "target_.preparedSnapArmOwner() != snapOwner_", "g_pipeCtx !is pipe_",
         "snap_.matchesPreparedPushProjection(snapProjection_)",
-        "snap_.matchesPreparedGuides(expectedGuides_)",
         "target_.installPreparedDeactivate(image_);",
-        "snap_.installPreparedGuides(nextGuides_);",
         "snap_.installPreparedPopEnabled(snapOwner_);")) and \
         not any(x in production for x in (" delegate", " function(", "void*", "ubyte[]")) and \
         all(x in context for x in (
@@ -7507,12 +7504,7 @@ def topopen_deact_gate(owner, context, tool_source, snap_source):
             "bool ok = owner !is null && context.markNoHistoryInstall();",
             "context.prepareTopologyPenDeactivate(owner)",
             "if (!ok) context.discard();")) and \
-        all(x in snap_source for x in (
-            "SnapGuide[] prepareGuideRemoval(SnapGuide guide)",
-            "bool matchesPreparedGuides(const SnapGuide[] expected) const nothrow @nogc",
-            "void installPreparedGuides(ref SnapGuide[] next) nothrow @nogc",
-            "_guides = next; next = null;",
-            "void installPreparedPopEnabled(string owner) nothrow")) and \
+        "void installPreparedPopEnabled(string owner) nothrow" in snap_source and \
         "PreparedTopologyPenDeactivateOwner" not in hook_body and \
         "markHistoryInstall(" not in tool_source[
             tool_source.find("final PreparedDeactivateEffect prepareDeactivate("):
@@ -7524,19 +7516,16 @@ if not topopen_deact_gate(topopen_deact_owner, record_context,
     fail("TopologyPen deactivate owner contract drift")
 for target, old, new, label in (
     ("owner", "target.classinfo !is TopologyPenTool.classinfo", "false", "broaden exact class"),
-    ("owner", "target_.preparedSnapGuideForDeactivate() !is guide_", "false", "drop guide identity"),
     ("owner", "target_.preparedSnapArmOwner() != snapOwner_", "false", "drop snap owner"),
     ("owner", "g_pipeCtx !is pipe_", "false", "drop pipe identity"),
     ("owner", "snap_.matchesPreparedPushProjection(snapProjection_)", "true", "drop push projection"),
-    ("owner", "snap_.matchesPreparedGuides(expectedGuides_)", "true", "drop guide projection"),
     ("owner", "target_.installPreparedDeactivate(image_);", "", "drop tool install"),
-    ("owner", "snap_.installPreparedGuides(nextGuides_);", "", "drop guide install"),
     ("owner", "snap_.installPreparedPopEnabled(snapOwner_);", "", "drop pop install"),
     ("context", "e.topologyPenDeactivate.validate();", "true;", "drop context validate"),
     ("context", "e.topologyPenDeactivate.install();", "", "drop context install"),
     ("context", "e.topologyPenDeactivate.abort();", "", "drop context abort"),
     ("tool", "context.prepareTopologyPenDeactivate(owner)", "true", "drop context enlist"),
-    ("snap", "_guides = next; next = null;", "next = null;", "drop guide transfer"),
+    ("snap", "void installPreparedPopEnabled(string owner) nothrow", "", "drop pop door"),
 ):
     o, c, t, s = topopen_deact_owner, record_context, topopen_tool, snap_stage_source
     if target == "owner": o = o.replace(old, new, 1)

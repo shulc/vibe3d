@@ -173,6 +173,10 @@ private static immutable LedgerRow[] kSites = [
     LedgerRow("TransformTool.uploadToGpu|publishConfinedChange", 1,
         "uploadToGpu's per-apply publish. Exclusion: `toProcess`, the same "
       ~ "set, handed to the same query"),
+    LedgerRow("TopologyPenTool.applyMoveTargets|publishConfinedChange", 1,
+        "the topology pen's live move step (task 9493). Exclusion: `exclude`, the "
+      ~ "moving set plus its symmetry partners, the `excludeVerts` of the step's "
+      ~ "snap query; the release publishes unconfined"),
 ];
 
 private struct Hit {

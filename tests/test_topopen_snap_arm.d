@@ -27,6 +27,7 @@
 //
 // Run via: ./run_test.d topopen_snap_arm
 
+import http_client : quiesce;
 import http_command_helpers : commandBody;
 import topopen_place_helpers;
 import std.json;
@@ -486,10 +487,14 @@ unittest { // law-neutral: the weld ignores the snap SCOPE and reaches the whole
 // ---------------------------------------------------------------------------
 
 /// Load `pts` (one quad unless `faces`) in layer 1, move v1 (or the element under
-/// `press`) by (`dx`,`dy`) px with the pen; `sym` turns world symmetry X on.
+/// `press`) by (`dx`,`dy`) px with the pen; `sym` turns world symmetry X on. The first
+/// gesture's motion passes through the px offsets `stops`; `probe(k)` runs held after
+/// the press (k 0), at each stop and at the motion's end (k 1 .. stops.length + 1), and
+/// after the release (k stops.length + 2).
 void sameQuadMove(double[3][] pts, double[3] release, int dx, int dy,
                   int[][] faces = [[0, 1, 2, 3]], bool sym = false, double[] press = null,
-                  int[] hide = null, int gestures = 1) {
+                  int[] hide = null, int gestures = 1, int[2][] stops = null,
+                  void delegate(size_t) probe = null) {
     immutable bool grabV1 = press is null;
     if (grabV1) press = pts[1].dup;
     auto r = postJson("/api/command", commandBody("scene.reset", `{"empty":true}`));
@@ -523,12 +528,19 @@ void sameQuadMove(double[3][] pts, double[3] release, int dx, int dy,
     int x0 = cast(int)lround(sx), y0 = cast(int)lround(sy);
     assert(lround(ex) == x0 + dx && lround(ey) == y0 + dy,
         format("rig: the captured %s px drag must end at %s", [dx, dy], release));
-    foreach (g; 0 .. gestures)   // each next gesture, same session: the same drag on again
-    foreach (i, log; [buildDragDownLog(vp.x, vp.y, vp.width, vp.height, x0, y0),
-                   buildDragMotionLog(vp.x, vp.y, vp.width, vp.height, x0, y0, x0 + dx, y0 + dy, 16),
-                   buildDragUpLog(vp.x, vp.y, vp.width, vp.height, x0 + dx, y0 + dy)]) {
+    foreach (g; 0 .. gestures) {   // each next gesture, same session: the same drag on again
+    string[] logs = [buildDragDownLog(vp.x, vp.y, vp.width, vp.height, x0, y0)];
+    int[2] at = [0, 0], end = [dx, dy];
+    foreach (leg; (g ? null : stops) ~ end) {
+        logs ~= buildDragMotionLog(vp.x, vp.y, vp.width, vp.height, x0 + at[0], y0 + at[1],
+                                   x0 + leg[0], y0 + leg[1], 16);
+        at = leg;
+    }
+    logs ~= buildDragUpLog(vp.x, vp.y, vp.width, vp.height, x0 + dx, y0 + dy);
+    foreach (i, log; logs) {
+        if (probe !is null && g == 0 && i > 0) probe(i - 1);
         // Held, before the release: under symmetry the partner already follows, mirrored.
-        if (sym && i == 2 && grabV1 && g == 0) {
+        if (sym && i + 1 == logs.length && grabV1 && g == 0) {
             size_t j;   // the grab's partner: v1's mirror image in `pts`
             foreach (k, a; pts) if (a[0] == -pts[1][0] && a[1] == pts[1][1]) j = k;
             const v = readVerticesLayer(1), p = v[1], q = v[j];
@@ -538,7 +550,9 @@ void sameQuadMove(double[3][] pts, double[3] release, int dx, int dy,
         auto pr = postJson("/api/play-events", log);
         assert("error" !in pr, "/api/play-events failed: " ~ pr.toString);
         waitPlayerIdle();
-        if (i == 2) { x0 += dx; y0 += dy; }
+        if (i + 1 == logs.length) { x0 += dx; y0 += dy; }
+    }
+    if (probe !is null && g == 0) probe(logs.length - 1);
     }
     cmd("tool.set mesh.topoPen off");
     cmd("tool.pipe.attr symmetry enabled false");
@@ -600,9 +614,10 @@ unittest { // KW2_A symmetric move welds both sides (14); KW2_B control (15)
 /// A K-W2b cell (symmetry X, task 9438): the fixture's rig, press and px drag; asserts
 /// every position (6 mm: a vertex grab lands on its pixel's centre) and the faces.
 void kw2b(string id, double[3][] pts, int[][] faces, double[2] press, int[2] drag,
-          double[3][] pos, int[][] outFaces) {
+          double[3][] pos, int[][] outFaces, int[2][] stops = null,
+          void delegate(size_t) probe = null) {
     sameQuadMove(pts, [press[0] + drag[0] / 100.0, press[1] - drag[1] / 100.0, 0], drag[0], drag[1],
-                 faces, true, press.dup);
+                 faces, true, press.dup, null, 1, stops, probe);
     const v = readVerticesLayer(1);
     bool same = v.length == pos.length && readFacesLayer(1) == outFaces;
     foreach (i, p; pos) same = same && approxVec(Vec3(p[0], p[1], p[2]), v[i], 6e-3);
@@ -615,12 +630,18 @@ void kw2b(string id, double[3][] pts, int[][] faces, double[2] press, int[2] dra
 // projected (N) but welds from the raw cursor (Nw); a grab and its own partner within
 // reach fuse on the plane (M, M5), judged at their current positions (M4).
 unittest { // K-W2b: K L L2 L4 L5 N Nw M M4 M5
+    long[] rebuilds;   // §5c: the pair table across KW2_K's gesture
     kw2b("KW2_K", [[0.1, 0.0, 0.0], [0.4, 0.0, 0.0], [0.4, 0.4, 0.0], [0.1, 0.4, 0.0],
                    [-0.1, 0.4, 0.0], [-0.4, 0.4, 0.0], [-0.4, 0.0, 0.0], [-0.1, 0.0, 0.0]],
          [[0, 1, 2, 3], [4, 5, 6, 7]], [0.4, 0.2], [20, 0],
          [[0.1, 0.0, 0.0], [0.6, 0.0, 0.0], [0.6, 0.4, 0.0], [0.1, 0.4, 0.0],
           [-0.1, 0.4, 0.0], [-0.6, 0.4, 0.0], [-0.6, 0.0, 0.0], [-0.1, 0.0, 0.0]],
-         [[0, 1, 2, 3], [4, 5, 6, 7]]);
+         [[0, 1, 2, 3], [4, 5, 6, 7]], null, (k) { rebuilds ~= pairingRebuilds(); });
+    assert(rebuilds.length == 3, format("KW2_K rate: %d probes, expected 3", rebuilds.length));
+    assert(rebuilds[1] == rebuilds[0] && rebuilds[2] == rebuilds[0] + 1, format(
+        "KW2_K rate: pair-table rebuilds after the press / at the motion's end / after the "
+      ~ "release %s: a drag step must not rebuild it (confined publish) and the release "
+      ~ "must, once", rebuilds));
     kw2b("KW2_L", [[-0.2, 0.1, 0.0], [0.2, 0.1, 0.0], [0.2, 0.4, 0.0], [-0.2, 0.4, 0.0],
                    [0.8, 0.1, 0.0], [1.1, 0.1, 0.0], [1.1, 0.4, 0.0], [0.8, 0.4, 0.0],
                    [-0.8, 0.4, 0.0], [-1.1, 0.4, 0.0], [-1.1, 0.1, 0.0], [-0.8, 0.1, 0.0]],
@@ -691,5 +712,47 @@ unittest { // K-W2b: K L L2 L4 L5 N Nw M M4 M5
          [[0.0, 0.0, 0.0], [0.6, 0.0, 0.0], [0.6, 0.4, 0.0], [0.3, 0.4, 0.0],
           [-0.3, 0.4, 0.0], [-0.6, 0.4, 0.0], [-0.6, 0.0, 0.0]],
          [[0, 1, 2, 3], [4, 5, 6, 0]]);
+    postJson("/api/command", commandBody("scene.reset"));
+}
+
+// §5c — the live move under symmetry (tasks 9493, 9495). A drag step publishes
+// CONFINED, so the pair table built before the press serves the whole drag and the
+// release's one unconfined publish rebuilds it once (KW2_K's gesture in §5b, 16 steps).
+// An on-plane vertex snaps from its RAW position mid-drag and is projected only when
+// nothing answers (KW2_Nw2: steps 3 and 5 on x = 0, steps 8 and 10 on (0.4,-0.26)).
+long pairingRebuilds() {
+    quiesce();
+    getJson("/api/toolpipe/eval");
+    quiesce();
+    return getJson("/api/cache/rebuilds")["symmetryPairingRebuilds"].integer;
+}
+
+unittest { // KW2_Nw2: the live raw snap of an on-plane vertex
+    double[3][] seen;
+    size_t[] counts;
+    kw2b("KW2_Nw2", [[0.0, 0.0, 0.0], [0.9, 0.0, 0.0], [0.9, 0.6, 0.0], [0.0, 0.6, 0.0],
+                     [-0.9, 0.0, 0.0], [-0.9, 0.6, 0.0], [0.4, -0.56, 0.0], [0.7, -0.56, 0.0],
+                     [0.7, -0.26, 0.0], [0.4, -0.26, 0.0], [-0.4, -0.26, 0.0], [-0.7, -0.26, 0.0],
+                     [-0.7, -0.56, 0.0], [-0.4, -0.56, 0.0]],
+         [[0, 1, 2, 3], [3, 5, 4, 0], [6, 7, 8, 9], [10, 11, 12, 13]], [0.0, 0.0], [40, 20],
+         [[0.9, 0.0, 0.0], [0.9, 0.6, 0.0], [0.0, 0.6, 0.0], [-0.9, 0.0, 0.0],
+          [-0.9, 0.6, 0.0], [0.4, -0.56, 0.0], [0.7, -0.56, 0.0], [0.7, -0.26, 0.0],
+          [0.4, -0.26, 0.0], [-0.4, -0.26, 0.0], [-0.7, -0.26, 0.0], [-0.7, -0.56, 0.0],
+          [-0.4, -0.56, 0.0]],
+         [[8, 0, 1, 2], [2, 4, 3, 8], [5, 6, 7, 8], [9, 10, 11, 12]],
+         [[12, 6], [20, 10], [32, 16]], (k) {
+             const v = readVerticesLayer(1);
+             counts ~= v.length;
+             seen ~= v[0];
+         });
+    assert(counts.length == 6 && counts[0 .. 5] == [14, 14, 14, 14, 14],
+        format("KW2_Nw2: %d probes, vertex counts %s: nothing welds before the release",
+               counts.length, counts));
+    foreach (k, want; [[0.0, -0.06], [0.0, -0.1], [0.4, -0.26], [0.4, -0.26]])
+        assert(abs(seen[k + 1][0] - want[0]) <= 1e-6
+            && abs(seen[k + 1][1] - want[1]) <= (want[0] == 0 ? 6e-3 : 1e-6), format(
+            "KW2_Nw2 step %d: the on-plane vertex is at %s, expected %s (%s)", [3, 5, 8, 10][k],
+            seen[k + 1], want, want[0] == 0 ? "projected onto x = 0: nothing in reach"
+                                            : "snapped onto the in-reach target"));
     postJson("/api/command", commandBody("scene.reset"));
 }

@@ -412,7 +412,8 @@ __gshared MeshDirtyEpochs g_geomEpochs =
 ///     ELSE cannot be served from those buckets.
 ///   * `SymmetryStage.evaluate` — a drag under an ENABLED symmetry stage
 ///     applies the mirror, so the mesh stays symmetric and the pair table at
-///     step 20 is the table computed at step 1.
+///     step 20 is the table computed at step 1. The topology pen's move wants
+///     exactly the press-time table (K-W2b).
 ///
 /// A consumer that cannot make such a statement keys on `g_geomEpochs`, and
 /// that is the default. The failure mode of getting this wrong is INVISIBLE

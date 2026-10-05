@@ -231,7 +231,7 @@ unittest // one vertex finder for the topology tools (tasks 9407, 9437); the pen
         const b = body(pen, decl);
         assert(wordsAt(b, "findSourceVertex").length == 0,
             format("%s still calls the press pick", decl));
-        assert(wordsAt(b, "weldTargetVertex").length == (decl.canFind("Split") ? 1 : 2),
+        assert(wordsAt(b, "weldTargetVertex").length == 1,
             format("%s weldTargetVertex calls: %s", decl, wordsAt(b, "weldTargetVertex").length));
     }
     // Positive control: the press pick is still there, unchanged by this slice.

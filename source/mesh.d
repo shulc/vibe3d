@@ -2307,18 +2307,18 @@ struct Mesh {
     /// is inside the LIVE GESTURE'S OWN MOVING SET — the fourth publisher
     /// entry point (task 2000), and the fourth row of the table above.
     ///
-    /// WHO MAY CALL IT: the three interactive-transform apply sites, and
-    /// nothing else. What makes the claim TRUE at those three is that the same
-    /// tool hands the same set to its consumers as an exclusion —
-    /// `MoveTool.applySnapToDelta` passes the processed operand
+    /// WHO MAY CALL IT: the interactive-transform apply sites and the topology
+    /// pen's live move step, and nothing else. What makes the claim
+    /// TRUE at each is that the same tool hands the same set to its consumers as
+    /// an exclusion — `MoveTool.applySnapToDelta` passes the processed operand
     /// (`vertexIndicesToProcess`) to `snapCursor` as `excludeVerts`.
     /// A caller that cannot name the consumer-side exclusion its claim rests on
     /// wants `publishChange`.
     ///
     /// THAT CALLER SET IS AN INVARIANT AND IT IS ENFORCED, not merely asked
     /// for: `tests/unit/confined_publisher_census_test.d` scans `source/**`
-    /// for calls to this method and refuses any that is not one of the three
-    /// recorded sites. A fourth caller — or a new tool mixing in
+    /// for calls to this method and refuses any that is not one of the
+    /// recorded sites. A new caller — or a new tool mixing in
     /// `XfrmApplyImpl` — would otherwise hold a mid-gesture stale bucket grid
     /// with nothing in any suite moving, because the failure of a key that is
     /// too NARROW is a wrong answer nobody asserts and the failure of one that
