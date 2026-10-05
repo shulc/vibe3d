@@ -718,13 +718,6 @@
     {
       "aggregate": "VertexTool",
       "module": "tools.create.vertex_place",
-      "semantic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "signature": "void()",
-      "symbol": "activate"
-    },
-    {
-      "aggregate": "VertexTool",
-      "module": "tools.create.vertex_place",
       "semantic_sha256": "50b96a51fc758844cf1d9c61b7ce58730f30d06b31f5f5329190e62218080028",
       "signature": "void()",
       "symbol": "deactivate"

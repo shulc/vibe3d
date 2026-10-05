@@ -393,7 +393,7 @@ static foreach (mod; kTokenModules)
                     ~ "one-shot capability; a copy is a second consumer.");
         }
 
-// SEVEN prepared aggregates are non-copyable without being spelled `*Token`,
+// SIX prepared aggregates are non-copyable without being spelled `*Token`,
 // so the pattern above reaches none of them. Until 2026-09-04 this comment and
 // the Python gate both said TWO -- `PreparedArm` and `PreparedCandidateOwner`,
 // the only pair that had ever owned a compile-fail fixture. Nothing regressed
@@ -414,10 +414,9 @@ static assert(!__traits(isCopyable, PreparedLayerReadScope),
     "PreparedLayerReadScope became copyable: restore `@disable this(this)`");
 static assert(!__traits(isCopyable, PreparedRecordObserverImage),
     "PreparedRecordObserverImage became copyable: restore `@disable this(this)`");
-// The remaining two are `private struct`s -- `command_history.PreparedHistoryBatch`
-// and `tools.create.vertex_place.ValidatedVertexActivate` -- which this module
-// cannot import at any protection level, so no `static assert` can reach them.
-// For those two the scanner's source walk IS the check: it reads the
+// The remaining one is a `private struct` -- `command_history.PreparedHistoryBatch`
+// -- which this module cannot import at any protection level, so no
+// `static assert` can reach it. For that one the scanner's source walk IS the check: it reads the
 // `@disable this(this)` out of the declaration and reports a disagreement with
 // its roster. That is the same division of labour as the module list above --
 // the compiler states what it can see, the scanner states what is on disk.
@@ -859,4 +858,46 @@ unittest { // review of M4: the redo of a sessionSteps row survives its undo onl
     assert(plain.redoAfterUndo == 1 && emitter.redoAfterUndo == 0,
            format("M4 review: redo after undo — over an unclassified predecessor %s (want 1), over a "
                   ~ "row-writing one %s (want 0)", plain.redoAfterUndo, emitter.redoAfterUndo));
+}
+
+unittest { // Vertex door: a switch away enlists only the snap clear, an arm nothing
+    import mesh : Mesh;
+    import snap : SnapResult;
+    import snap_render : publishLastSnap, clearLastSnap, g_lastSnap;
+    import tools.create.vertex_place : VertexTool;
+    Mesh mesh; GpuMesh gpu;
+    auto tool = new VertexTool(() => &mesh, &gpu, null);
+    scope (exit) clearLastSnap();
+    SnapResult seed; seed.snapped = true; seed.targetIndex = 21;
+    auto fresh() { return new PreparedRecordContext(new CommandHistory(),
+                                                    new RecordObserverHub()); }
+    size_t model, ui;
+
+    publishLastSnap(seed);
+    auto away = fresh();
+    assert(tool.prepareDoorDeactivate(away, null, 0, 0) && away.validate());
+    assert(g_lastSnap == seed, "the snap cleared before install");
+    away.install();
+    assert(g_lastSnap == SnapResult.init, "a switch away left the snap published");
+    away.installedDepths(model, ui);
+    assert(model == 0 && ui == 0, "a switch away recorded history");
+
+    publishLastSnap(seed);
+    auto arm = fresh();
+    assert(tool.prepareDoorActivate(arm, null, 0, 0) && arm.validate());
+    arm.install();
+    assert(g_lastSnap == seed, "an arm touched the snap");
+    arm.installedDepths(model, ui);
+    assert(model == 0 && ui == 0, "an arm recorded history");
+
+    // A context already sealed with history refuses the no-history seal; the
+    // door then abandons its journal rather than leaving it to validate.
+    auto sealedAway = fresh(), sealedArm = fresh();
+    assert(sealedAway.markHistoryInstall() && sealedArm.markHistoryInstall());
+    assert(!tool.prepareDoorDeactivate(sealedAway, null, 0, 0));
+    assert(!sealedAway.validate(), "a refused switch away left its journal live");
+    assert(!tool.prepareDoorActivate(sealedArm, null, 0, 0));
+    assert(!sealedArm.validate(), "a refused arm left its journal live");
+    assert(!tool.prepareDoorDeactivate(null, null, 0, 0)
+        && !tool.prepareDoorActivate(null, null, 0, 0));
 }

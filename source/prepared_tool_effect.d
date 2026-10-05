@@ -34,12 +34,12 @@ enum PreparedDeactivateKind : ubyte {
     None, Array, Clone, RadialArray, Magnet, SmoothShift, StrokeExtrude,
     EdgeBevel, EdgeExtrude, PolyBevel, PolyExtrude, PolyInset, Reduction,
     VertexMerge, VertexBevel, VertexExtrude, Xfrm,
-    CommandWrapper, Tack, TransformNormalUpload, Vertex,
+    CommandWrapper, Tack, TransformNormalUpload,
     Mirror, Bridge, Box, Pen, Primitive, Slice, EdgeSlice, LoopSlice, EdgeExtend,
     TopologyPen,
 }
 enum PreparedActivateKind : ubyte {
-    None, Vertex, Array, Clone, Magnet, Reduction, Box, Pen, Primitive,
+    None, Array, Clone, Magnet, Reduction, Box, Pen, Primitive,
     StrokeExtrude, VertexMerge, PolyInset, PolyExtrude, SmoothShift, EdgeBevel,
     PolyBevel, VertexBevel, VertexExtrude, EdgeExtrude, EdgeSlice, LoopSlice,
     Slice, Tack, CommandWrapper, Bridge, Mirror, EdgeExtend, TopologyPen

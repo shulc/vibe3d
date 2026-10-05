@@ -9,7 +9,6 @@ import mesh_gpu : GpuMesh;
 import math;
 import params : Param;
 import shader : Shader, LitShader;
-import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
@@ -18,23 +17,10 @@ import tools.create.create_common : primitivePlacementFrame, WorkplaneFrame,
                               placeFreePoint;
 import editmode : EditMode;
 import snap : SnapResult;
-import snap_render : publishLastSnap, clearLastSnap, g_lastSnap;
+import snap_render : publishLastSnap, clearLastSnap, SnapOverlayOwner;
 import operator : VectorStack;
-import prepared_tool_effect : PreparedActivateEffect, PreparedActivateKind;
-import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
-import prepared_private_state : PreparedPrivateStateOwner;
-import snap_render : SnapOverlayOwner;
 import document : Layer;
-
-private struct ValidatedVertexActivate {
-    @disable this(this);
-    bool consumable;
-}
-static assert(!__traits(compiles, {
-    ValidatedVertexActivate first;
-    auto copied = first;
-}));
 
 // ---------------------------------------------------------------------------
 // VertexTool — interactive single-vertex placement.
@@ -76,66 +62,25 @@ public:
 
     override Param[] params() { return []; }
 
-    override void activate() {}
-
-    final PreparedActivateEffect prepareActivate() const nothrow @nogc {
-        return PreparedActivateEffect(preparedToolStateOwner,
-                                      PreparedActivateKind.Vertex);
-    }
-
-    final bool validatePreparedActivate(ref PreparedActivateEffect prepared,
-            out ValidatedVertexActivate validated) const nothrow @nogc {
-        if (prepared.owner != preparedToolStateOwner ||
-            prepared.kind != PreparedActivateKind.Vertex) return false;
-        validated.consumable = true;
-        return true;
-    }
-
-    final void installPreparedActivate(ref ValidatedVertexActivate validated)
-            nothrow @nogc {
-        if (!validated.consumable) return;
-        validated.consumable = false;
-    }
-
     override void deactivate() {
         clearLastSnap();
     }
 
-    // The tool keeps no private state since its snap went to `g_lastSnap`;
-    // the prepared kind stays for the shared transition.
-    final void installPreparedPrivateDeactivate() nothrow @nogc {}
-
-    final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context,
-            SnapOverlayOwner snapOwner, PreparedPrivateStateOwner stateOwner) {
-        bool accepted;
-        if (context !is null && snapOwner !is null && stateOwner !is null &&
-            stateOwner.owns(this)) {
-            accepted = context.prepareSnapClear(snapOwner) &&
-                       context.preparePrivateState(stateOwner) &&
-                       context.markNoHistoryInstall();
-        }
-        if (!accepted && context !is null) context.discard();
-        return PreparedDeactivateEffect(preparedToolStateOwner,
-            PreparedDeactivateKind.Vertex, accepted, accepted);
-    }
-
+    // The tool keeps no private state (its snap is `g_lastSnap`): a switch
+    // away enlists only the snap clear, an arm nothing.
     override bool prepareDoorDeactivate(PreparedRecordContext context, Layer,
             ulong, ulong) {
-        return prepareDeactivate(context, new SnapOverlayOwner(),
-            PreparedPrivateStateOwner.vertex(this)).resourceAccepted;
+        if (context is null) return false;
+        const ok = context.prepareSnapClear(new SnapOverlayOwner()) &&
+                   context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return ok;
     }
 
     override bool prepareDoorActivate(PreparedRecordContext context, Layer,
             ulong, ulong) {
         if (context is null) return false;
-        auto prepared = prepareActivate();
-        ValidatedVertexActivate validated;
-        if (!validatePreparedActivate(prepared, validated)) {
-            context.discard(); return false;
-        }
-        auto owner = PreparedPrivateStateOwner.vertex(this);
-        const ok = context.preparePrivateState(owner) &&
-            context.markNoHistoryInstall();
+        const ok = context.markNoHistoryInstall();
         if (!ok) context.discard();
         return ok;
     }
@@ -231,45 +176,4 @@ public:
         publishLastSnap(snapLocalHit(hit, f, e.x, e.y, cachedVp_, *mesh, EditMode.Vertices));
         return false;
     }
-}
-
-version (unittest) unittest {
-    import record_observer_hub : RecordObserverHub;
-    Mesh mesh = makeCube();
-    GpuMesh gpu;
-    auto tool = new VertexTool(() => &mesh, &gpu, null);
-    auto prepared = tool.prepareActivate();
-    ValidatedVertexActivate validated;
-    assert(tool.validatePreparedActivate(prepared, validated));
-    tool.installPreparedActivate(validated);
-    assert(!validated.consumable, "prepared activation was not one-shot");
-    auto wrong = new VertexTool(() => &mesh, &gpu, null);
-    auto foreign = wrong.prepareActivate();
-    assert(!tool.validatePreparedActivate(foreign, validated));
-
-    SnapResult globalSeed; globalSeed.snapped = true; globalSeed.targetIndex = 21;
-    publishLastSnap(globalSeed);
-    auto context = new PreparedRecordContext(new CommandHistory(),
-                                             new RecordObserverHub());
-    auto snapOwner = new SnapOverlayOwner();
-    auto stateOwner = PreparedPrivateStateOwner.vertex(tool);
-    auto deactivation = tool.prepareDeactivate(context, snapOwner, stateOwner);
-    assert(deactivation.historyAccepted && deactivation.resourceAccepted);
-    assert(g_lastSnap.targetIndex == 21);
-    assert(context.validate()); context.install();
-    assert(g_lastSnap == SnapResult.init);
-    size_t modelDepth, uiDepth; context.installedDepths(modelDepth, uiDepth);
-    assert(modelDepth == 0 && uiDepth == 0);
-    publishLastSnap(globalSeed);
-    context.install();
-    assert(g_lastSnap == globalSeed);
-
-    auto refusedContext = new PreparedRecordContext(new CommandHistory(),
-                                                    new RecordObserverHub());
-    auto wrongOwner = PreparedPrivateStateOwner.vertex(wrong);
-    auto refused = tool.prepareDeactivate(refusedContext, new SnapOverlayOwner(),
-                                          wrongOwner);
-    assert(!refused.historyAccepted && !refused.resourceAccepted);
-    assert(!refusedContext.validate());
-    clearLastSnap();
 }

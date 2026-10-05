@@ -13,7 +13,6 @@ import tools.create.cone : ConeTool;
 import tools.create.cylinder : CylinderTool;
 import tools.create.torus : TorusTool;
 import tools.create.tube : TubeTool;
-import tools.create.vertex_place : VertexTool;
 import tools.create.arc : ArcTool;
 import tools.alignment.array_tool : ArrayTool;
 import tools.alignment.clone_tool : CloneTool;
@@ -24,7 +23,7 @@ import mesh : Mesh;
 
 enum PreparedPrivateStateKind : ubyte {
     Box, BoxDeactivate, Pen, PenDeactivate, PenParam, Primitive, PrimitiveDeactivate,
-    Vertex, ArraySession, CloneSession,
+    ArraySession, CloneSession,
     MagnetSession, ReductionSession, ArcIdle
 }
 private enum PrimitiveProjection : ubyte {
@@ -51,7 +50,6 @@ private:
     PreparedPrimitiveDeactivateImage primitiveDeactivateImage;
     HandledCreateTool handledTarget;
     SphereTool sphereTarget;
-    VertexTool vertexTarget;
     ArrayTool arrayTarget;
     CloneTool cloneTarget;
     MagnetTool magnetTarget;
@@ -179,10 +177,6 @@ public:
     @property MeshSnapshot primitiveDeactivatePre() {
         return primitiveDeactivateImage.scene;
     }
-    static PreparedPrivateStateOwner vertex(VertexTool target) {
-        auto o = new PreparedPrivateStateOwner(PreparedPrivateStateKind.Vertex);
-        o.vertexTarget = target; return o;
-    }
     static PreparedPrivateStateOwner arraySession(ArrayTool target) {
         if (target is null) return null;
         auto o = new PreparedPrivateStateOwner(PreparedPrivateStateKind.ArraySession);
@@ -215,9 +209,6 @@ public:
         return o;
     }
     @property PreparedPrivateStateKind kind() const nothrow @nogc { return kind_; }
-    bool owns(VertexTool target) const nothrow @nogc {
-        return kind_ == PreparedPrivateStateKind.Vertex && vertexTarget is target;
-    }
     bool owns(ArrayTool target) const nothrow @nogc {
         return kind_ == PreparedPrivateStateKind.ArraySession && arrayTarget is target;
     }
@@ -254,7 +245,6 @@ private:
             }
         case PreparedPrivateStateKind.PrimitiveDeactivate:
             return primitiveTarget !is null && primitiveDeactivateImage.valid;
-        case PreparedPrivateStateKind.Vertex: return vertexTarget !is null;
         case PreparedPrivateStateKind.ArraySession:
             return arrayTarget !is null && activationBaseline.filled;
         case PreparedPrivateStateKind.CloneSession:
@@ -322,7 +312,6 @@ public:
         case PreparedPrivateStateKind.PrimitiveDeactivate:
             primitiveTarget.installPreparedDeactivateState(
                 primitiveDeactivateImage); break;
-        case PreparedPrivateStateKind.Vertex: vertexTarget.installPreparedPrivateDeactivate(); break;
         case PreparedPrivateStateKind.ArraySession:
             arrayTarget.installPreparedActivation(activationBaseline); break;
         case PreparedPrivateStateKind.CloneSession:

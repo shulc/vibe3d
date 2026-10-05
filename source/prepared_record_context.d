@@ -191,7 +191,7 @@ mixin template PreparedPrivateStateToolDoorClient(LayerT,
 private enum PreparedResourceKind : ubyte {
     HistoryInstall, NoHistoryInstall, MeshInstall, DeliveryInstall, GpuMeshDestroy,
     GpuUpload, ClickPointDestroy, BoxHandlerBatchDestroy
-    , GpuCreate, SnapOverlayClear, BoxState, PenState, PrimitiveState, VertexState,
+    , GpuCreate, SnapOverlayClear, BoxState, PenState, PrimitiveState,
     ArraySessionState, CloneSessionState, MagnetSessionState, ReductionSessionState,
     ArcState,
     RadialSweepProfileState, RadialSweepTransitionState, GestureCarrierMismatch,
@@ -498,7 +498,6 @@ public:
         case PreparedPrivateStateKind.Primitive: e.kind = PreparedResourceKind.PrimitiveState; break;
         case PreparedPrivateStateKind.PrimitiveDeactivate:
             e.kind = PreparedResourceKind.PrimitiveState; break;
-        case PreparedPrivateStateKind.Vertex: e.kind = PreparedResourceKind.VertexState; break;
         case PreparedPrivateStateKind.ArraySession: e.kind = PreparedResourceKind.ArraySessionState; break;
         case PreparedPrivateStateKind.CloneSession: e.kind = PreparedResourceKind.CloneSessionState; break;
         case PreparedPrivateStateKind.MagnetSession: e.kind = PreparedResourceKind.MagnetSessionState; break;
@@ -1243,7 +1242,6 @@ public:
             case PreparedResourceKind.BoxState:
             case PreparedResourceKind.PenState:
             case PreparedResourceKind.PrimitiveState:
-            case PreparedResourceKind.VertexState:
             case PreparedResourceKind.ArraySessionState:
             case PreparedResourceKind.CloneSessionState:
             case PreparedResourceKind.MagnetSessionState:
@@ -1460,7 +1458,6 @@ public:
         case PreparedResourceKind.BoxState:
         case PreparedResourceKind.PenState:
         case PreparedResourceKind.PrimitiveState:
-        case PreparedResourceKind.VertexState:
         case PreparedResourceKind.ArraySessionState:
         case PreparedResourceKind.CloneSessionState:
         case PreparedResourceKind.MagnetSessionState:
@@ -1717,8 +1714,7 @@ private:
         case PreparedResourceKind.SnapOverlayClear: e.snapOverlay.abortClear(); break;
         case PreparedResourceKind.BoxState:
         case PreparedResourceKind.PenState:
-        case PreparedResourceKind.PrimitiveState:
-        case PreparedResourceKind.VertexState: e.privateState.abort(); break;
+        case PreparedResourceKind.PrimitiveState: e.privateState.abort(); break;
         case PreparedResourceKind.ArraySessionState:
         case PreparedResourceKind.CloneSessionState:
         case PreparedResourceKind.MagnetSessionState:

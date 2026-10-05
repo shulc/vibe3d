@@ -288,7 +288,7 @@ module_alias = {module: f"m{i}" for i, module in enumerate(modules)}
 # set has a closed prepared admission path; this table prevents both the old
 # "there is no exact Tool product" false closure and accidental widening.
 BASE_TOOL_EFFECTIVE_PRODUCTS = {
-    "activate": {"DragWeldTool"},
+    "activate": {"DragWeldTool", "VertexTool"},
     "deactivate": {"DragWeldTool"},
     "update": {
         "ArcTool", "ArrayTool", "BendTool", "BoxTool", "BridgeTool",
@@ -376,7 +376,7 @@ param_hooks = [r for r in CURRENT_WRITERS["hooks"]
                if r["symbol"] == "onParamChanged" and r["module"] != "tool"]
 relevant_roots = [r for r in CURRENT_WRITERS["hooks"]
                   if r["symbol"] in ("activate", "update", "onParamChanged")]
-if (len(deactivations), len(param_hooks), len(relevant_roots)) != (35, 27, 73):
+if (len(deactivations), len(param_hooks), len(relevant_roots)) != (35, 27, 72):
     fail("P1.0b.0 reviewed writer cardinality changed")
 
 # P1.0b.1 exact conversion/defer ledger. The frozen writer rows remain the
@@ -418,9 +418,6 @@ B4C_PREPARED_LEGACY = {
     ("tools.common.command_wrapper", "CommandWrapperTool", "deactivate"),
     ("tools.edit.tack", "TackTool", "deactivate"),
     ("tools.transform.transform", "TransformTool", "deactivate"),
-}
-B5B_PREPARED_LEGACY = {
-    ("tools.create.vertex_place", "VertexTool", "activate"),
 }
 B5D_PREPARED_LEGACY = {
     ("tools.create.vertex_place", "VertexTool", "deactivate"),
@@ -530,7 +527,7 @@ B5Q_PREPARED_LEGACY = {
     ("tools.create.pen", "PenTool", "update"),
 }
 PREPARED_LEGACY = (B3D_PREPARED_LEGACY | B4C_PREPARED_LEGACY |
-    B5B_PREPARED_LEGACY | B5D_PREPARED_LEGACY | B5F_PREPARED_LEGACY |
+    B5D_PREPARED_LEGACY | B5F_PREPARED_LEGACY |
     B5I_PREPARED_LEGACY | B5J_PREPARED_LEGACY | B5K_PREPARED_LEGACY |
     B5L_PREPARED_LEGACY | B5M_PREPARED_LEGACY | B5N_PREPARED_LEGACY |
     B5O_PREPARED_LEGACY | B5P_PREPARED_LEGACY | B5Q_PREPARED_LEGACY)
@@ -1782,7 +1779,7 @@ for module, symbol, _ in NO_LIVE_LEAVES:
 # matched. That half is a filesystem walk, which is exactly what this scanner
 # can see and the compiler cannot. Below, the tree is walked and the D file's
 # module list, both population counts, its copyable-by-design exceptions, its
-# retired-fixture roster and the SEVEN non-`*Token` aggregates must all agree with
+# retired-fixture roster and the SIX non-`*Token` aggregates must all agree with
 # it -- in BOTH directions, so neither a missing nor a surplus row is green.
 # Cost: one pass over source/**.d, no compiler, measured at 0.06 s.
 TOKEN_CENSUS_D = ROOT / "tests/unit/prepared_tool_transition_test.d"
@@ -1836,7 +1833,8 @@ def prepared_token_declarations():
                 rows[key] = pair_template_disabled
     return rows
 
-# NON-`*Token` PREPARED AGGREGATES. Seven structs under source/ disable their
+# NON-`*Token` PREPARED AGGREGATES. Six structs under source/ (seven until
+# task 9497 retired Vertex's activation handle) disable their
 # copy without being spelled `*Token`, so the pattern above cannot reach a
 # single one of them. Until 2026-09-04 both this file and the D census claimed
 # there were TWO (`PreparedArm` and `PreparedCandidateOwner`) -- that was the
@@ -1871,7 +1869,7 @@ def prepared_non_token_noncopyable():
 # True == the D census can name the type, so the compiler states the property
 # and this scanner only checks that the assert is still there. False == a
 # `private struct`, which `unit.prepared_tool_transition_test` cannot import at
-# all; for those two the walk above IS the check, and there is no D-side row to
+# all; for that one the walk above IS the check, and there is no D-side row to
 # look for.
 NON_TOKEN_NONCOPYABLE = {
     ("command_history", "PreparedHistoryImage"): True,
@@ -1880,7 +1878,6 @@ NON_TOKEN_NONCOPYABLE = {
     ("prepared_tool_transition", "PreparedArm"): True,
     ("prepared_tool_transition", "PreparedCandidateOwner"): True,
     ("record_observer_hub", "PreparedRecordObserverImage"): True,
-    ("tools.create.vertex_place", "ValidatedVertexActivate"): False,
 }
 
 
@@ -1955,7 +1952,7 @@ def token_census_gate(source, declared, stray_fixtures, non_token):
         if orphaned:
             bad.append(f"retired copy fixtures name types the tree no longer "
                        f"declares: {orphaned}")
-    # SEVEN aggregates disable their copy without being spelled `*Token`, so the
+    # SIX aggregates disable their copy without being spelled `*Token`, so the
     # pattern above reaches none of them (roster and rationale at
     # NON_TOKEN_NONCOPYABLE). The walk is compared to the roster in both
     # directions -- a new one is surplus, one that drops `@disable this(this)`
@@ -2001,7 +1998,7 @@ if len(token_declarations) < 100:
 token_census_source = TOKEN_CENSUS_D.read_text()
 token_stray = sorted(p.name for p in ROOT.glob("tests/compile_fail/*.d"))
 # No separate floor: the roster is compared to the walk in both directions, so
-# a regex that stopped matching empties the walk and every one of the seven
+# a regex that stopped matching empties the walk and every one of the six
 # reports as missing, by name.
 token_non_token = prepared_non_token_noncopyable()
 token_drift = token_census_gate(token_census_source, token_declarations,
@@ -2348,39 +2345,6 @@ for name, old, new, label in (
     mutant[name] = mutant[name].replace(old, new, 1)
     if mutant[name] == b5_sources[name] or b5_gate(mutant):
         fail(f"P1.0b.5a named mutation did not RED: {label}")
-
-# P1.0b.5b create-family slice: Vertex.activate is the sole row with no
-# effect but the one-shot token (its snap moved to `g_lastSnap`). The other
-# eight exact rows retain mixed Mesh/GL/history/snap-overlay effects and
-# remain in the deferred ledger.
-vertex_source = (ROOT / "source/tools/create/vertex_place.d").read_text()
-b5b_contracts = (
-    "private struct ValidatedVertexActivate {\n    @disable this(this);",
-    "static assert(!__traits(compiles, {\n    ValidatedVertexActivate first;\n    auto copied = first;",
-    "final PreparedActivateEffect prepareActivate() const nothrow @nogc",
-    "prepared.owner != preparedToolStateOwner",
-    "prepared.kind != PreparedActivateKind.Vertex",
-    "final void installPreparedActivate(ref ValidatedVertexActivate validated)",
-    "if (!validated.consumable) return;\n        validated.consumable = false;",
-)
-def b5b_gate(source):
-    return all(c in source for c in b5b_contracts)
-if not b5b_gate(vertex_source):
-    fail("P1.0b.5b Vertex activation owner contract drift")
-legacy_activate = re.search(r"override\s+void\s+activate\s*\(\)\s*\{", vertex_source)
-legacy_body = vertex_source[legacy_activate.end():balanced_source(vertex_source, legacy_activate.end())-1]
-if "prepareActivate(" in legacy_body or "installPreparedActivate(" in legacy_body:
-    fail("P1.0b.5b Vertex dormant producer called by production legacy hook")
-for old, new, label in (
-    ("@disable this(this);", "", "make validated handle copyable"),
-    ("prepared.owner != preparedToolStateOwner", "false", "drop owner identity"),
-    ("prepared.kind != PreparedActivateKind.Vertex", "false", "drop closed kind"),
-    ("if (!validated.consumable) return;\n        validated.consumable = false;",
-     "if (!validated.consumable) return;", "drop one-shot consumption"),
-):
-    mutant = vertex_source.replace(old, new, 1)
-    if mutant == vertex_source or b5b_gate(mutant):
-        fail(f"P1.0b.5b named mutation did not RED: {label}")
 
 # P1.0b.5c dormant GL-create and snap-overlay owners. Created GL names remain
 # owner-private until a scalar-token validation and allocation-free header
@@ -6193,7 +6157,7 @@ expected_primitive_products = [
 def b5d1_gate(s):
     return ("enum PreparedPrivateStateKind : ubyte" in s["owner"] and
             all(kind in s["owner"] for kind in
-                ("Box, BoxDeactivate, Pen, PenDeactivate, PenParam, Primitive, PrimitiveDeactivate,", "Vertex", "ArraySession", "CloneSession",
+                ("Box, BoxDeactivate, Pen, PenDeactivate, PenParam, Primitive, PrimitiveDeactivate,", "ArraySession", "CloneSession",
                  "MagnetSession", "ReductionSession")) and
             has_prepared_token_pair(s["owner"], "PrivateState") and
             "delegate" not in s["owner"] and "void*" not in s["owner"] and
@@ -6201,11 +6165,10 @@ def b5d1_gate(s):
             "void install() nothrow @nogc" in s["owner"] and
             "validatedToken.generation != generation" in s["owner"] and
             "BoxTool boxTarget;" in s["owner"] and "PenTool penTarget;" in s["owner"] and
-            "SphereTool sphereTarget;" in s["owner"] and "VertexTool vertexTarget;" in s["owner"] and
+            "SphereTool sphereTarget;" in s["owner"] and
             "boxTarget.installPreparedPrivateActivation();" in s["owner"] and
             "penTarget.installPreparedPrivateActivation();" in s["owner"] and
             "sphereTarget.installPreparedSphereReset(sphereClearMethod, sphereAxis);" in s["owner"] and
-            "vertexTarget.installPreparedPrivateDeactivate();" in s["owner"] and
             s["owner"].count("pending = validated = false;") == 2 and
             "bool preparePrivateState(PreparedPrivateStateOwner owner)" in s["context"] and
             "bool prepareMeshImageCommit(Layer layer, ref const Mesh image, uint flags)" in s["context"] and
@@ -6247,7 +6210,6 @@ for path in (ROOT / "source/tools").rglob("*.d"):
     body = path.read_text()
     if (".preparePrivateState(" in body or ".prepareMeshImageCommit(" in body) and \
             path.relative_to(ROOT).as_posix() not in {
-                "source/tools/create/vertex_place.d",
                 "source/tools/create/arc.d",
                 "source/tools/alignment/array_tool.d",
                 "source/tools/alignment/clone_tool.d",
@@ -6259,54 +6221,30 @@ for path in (ROOT / "source/tools").rglob("*.d"):
                 "source/tools/create/primitive_create_tool.d"}:
         fail(f"P1.0b.5d.1 dormant infrastructure has hook caller: {path.relative_to(ROOT)}")
 
-# P1.0b.5d.2 first fully closed root: Vertex deactivate preserves the exact
-# snap-global -> private-field order without introducing an empty history
-# transition. The no-history marker consumes the prepared history image and is
-# mutually exclusive with HistoryInstall.
-b5d2_vertex = (ROOT / "source/tools/create/vertex_place.d").read_text()
-def b5d2_gate(context, vertex):
-    start = vertex.find("final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context,")
-    end = vertex.find("override bool prepareDoorDeactivate", start)
-    product = vertex[start:end]
+# P1.0b.5d.2 no-history seal: a transition with no history effect (the
+# Vertex door) consumes the prepared history image without an empty entry, and
+# the marker is mutually exclusive with HistoryInstall.
+def b5d2_gate(context):
     return ("HistoryInstall, NoHistoryInstall," in context and
             "bool markNoHistoryInstall()" in context and
             "if (history_ !is null) history_.discardPreparedToken(token_);\n"
             "            installedHistory = true;" in context and
             "if (historyMarker_) return true;" in context and
             "if (noHistoryMarker_) return true;" in context and
-            "history_ is null || noHistoryMarker_" in context and
-            "final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context," in vertex and
-            product.count("context.prepareSnapClear(snapOwner)") == 1 and
-            product.count("context.preparePrivateState(stateOwner)") == 1 and
-            product.count("context.markNoHistoryInstall()") == 1 and
-            product.find("context.prepareSnapClear(snapOwner)") <
-                product.find("context.preparePrivateState(stateOwner)") <
-                product.find("context.markNoHistoryInstall()") and
-            "stateOwner.owns(this)" in product and
-            "if (!accepted && context !is null) context.discard();" in product)
-if not b5d2_gate(record_context, b5d2_vertex):
-    fail("P1.0b.5d.2 Vertex deactivate contract drift")
-for target, old, new, label in (
-    ("context", "history_ is null || noHistoryMarker_", "history_ is null",
+            "history_ is null || noHistoryMarker_" in context)
+if not b5d2_gate(record_context):
+    fail("P1.0b.5d.2 no-history seal contract drift")
+for old, new, label in (
+    ("history_ is null || noHistoryMarker_", "history_ is null",
      "allow both history seals"),
-    ("context", "if (historyMarker_) return true;", "",
-     "drop idempotent history seal"),
-    ("context", "if (noHistoryMarker_) return true;", "",
-     "drop idempotent no-history seal"),
-    ("context", "if (history_ !is null) history_.discardPreparedToken(token_);\n"
+    ("if (historyMarker_) return true;", "", "drop idempotent history seal"),
+    ("if (noHistoryMarker_) return true;", "", "drop idempotent no-history seal"),
+    ("if (history_ !is null) history_.discardPreparedToken(token_);\n"
      "            installedHistory = true;",
      "installedHistory = true;", "drop empty history consumption"),
-    ("vertex", "stateOwner.owns(this)", "true", "drop Vertex owner identity"),
-    ("vertex", "context.prepareSnapClear(snapOwner)", "true", "drop snap clear"),
-    ("vertex", "context.preparePrivateState(stateOwner)", "true", "drop private reset"),
-    ("vertex", "context.markNoHistoryInstall()", "true", "drop no-history seal"),
-    ("vertex", "if (!accepted && context !is null) context.discard();", "",
-     "drop terminal refusal"),
 ):
-    c, v = record_context, b5d2_vertex
-    if target == "context": c = c.replace(old, new, 1)
-    else: v = v.replace(old, new, 1)
-    if (c == record_context and v == b5d2_vertex) or b5d2_gate(c, v):
+    c = record_context.replace(old, new, 1)
+    if c == record_context or b5d2_gate(c):
         fail(f"P1.0b.5d.2 named mutation did not RED: {label}")
 
 # P1.0b.5e isolated activation-session image infrastructure. Exactly four
@@ -8412,14 +8350,10 @@ def p10c_door_capability_gate(context, sources, xfrm):
     for path, aggregate in vertex_door_clients.items():
         body = sources[path]
         if f"class {aggregate} : Tool, PreparedToolDoorClient" not in body or \
-                not all(x in body for x in (
-                    "prepareDeactivate(context, new SnapOverlayOwner(),",
-                    "PreparedPrivateStateOwner.vertex(this)).resourceAccepted",
-                    "auto prepared = prepareActivate();",
-                    "validatePreparedActivate(prepared, validated)",
-                    "auto owner = PreparedPrivateStateOwner.vertex(this);",
-                    "context.preparePrivateState(owner)",
-                    "context.markNoHistoryInstall()")):
+                body.count("context.prepareSnapClear(new SnapOverlayOwner()) &&\n"
+                           "                   context.markNoHistoryInstall()") != 1 or \
+                body.count("const ok = context.markNoHistoryInstall();") != 1 or \
+                body.count("if (!ok) context.discard();") != 2:
             return False
     for path, (aggregate, activate, deactivate) in typed_context_door_clients.items():
         body = sources[path]
@@ -8534,9 +8468,8 @@ for target, old, new, label in (
      "override bool prepareDoorInitialPose(ref VectorStack vts,\n            PreparedRecordContext context, Layer layer,\n            ulong threadIdentity, ulong contextIdentity) {\n        auto upload = new GpuUploadOwner(null, threadIdentity, contextIdentity);",
      "drop pose GPU subject identity"),
     (next(iter(vertex_door_clients)),
-     "auto owner = PreparedPrivateStateOwner.vertex(this);",
-     "auto owner = PreparedPrivateStateOwner.vertex(null);",
-     "drop Vertex private-state subject identity"),
+     "context.prepareSnapClear(new SnapOverlayOwner()) &&", "",
+     "drop Vertex snap clear"),
     (next(iter(typed_context_door_clients)),
      "return prepareDeactivate(context).resourceAccepted;",
      "return true;",
