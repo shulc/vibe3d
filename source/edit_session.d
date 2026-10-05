@@ -999,12 +999,11 @@ private struct ToolSession {
     }
 
     // `undoEmptiesRedo` (findings_K-G4 rule 3): an undo the live tool survives
-    // — the same instance in the same session — empties the redo; one that
-    // drops or swaps the tool keeps it.
+    // — the same instance stays bound — empties the redo; one that drops or
+    // swaps the tool keeps it.
     private void reapplyEmptiesRedo_(Tool before) {
         auto t = tool_();
-        if (t is null || t !is before || token_ != navBefore_.token
-                || !t.sessionPolicy().undoEmptiesRedo) return;
+        if (t is null || t !is before || !t.sessionPolicy().undoEmptiesRedo) return;
         history_.invalidateRedo();
     }
 

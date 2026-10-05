@@ -45,7 +45,7 @@ private final class ValueEdit : Command {
 private final class RecordedTool : Tool, RefireClient {
     int amount, resyncs, refireTarget;
     ulong ownedRecordToken() { return sessionRecordToken(); }
-    bool pending, ladder, firstUndoEnds;
+    bool pending, ladder, firstUndoEnds, emptiesRedo;
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
         static immutable ToolSessionPolicy policy = {
             activationRow: true, sessionSteps: true, historyRecordedSteps: true };
@@ -55,6 +55,7 @@ private final class RecordedTool : Tool, RefireClient {
         ToolSessionPolicy selected = ladder ? ladderPolicy : policy;
         selected.recordedFirstUndoEndsTool = firstUndoEnds;
         if (firstUndoEnds) selected.activationRow = false;
+        selected.undoEmptiesRedo = emptiesRedo;
         return selected;
     }
     void gesture(CommandHistory history, int after) {
@@ -78,6 +79,55 @@ private final class RecordedTool : Tool, RefireClient {
     }
     override void setRefireDriving(bool on) {}
     override void onRefireCommitted() {}
+}
+
+/// A plain row whose undo binds another tool (an activation row's revert, reduced).
+private final class SwapEdit : Command {
+    View view_;
+    Tool* active;
+    Tool to;
+    this(Tool* active, Tool to) {
+        view_ = new View(0, 0, 1, 1);
+        super(null, view_, EditMode.Vertices);
+        this.active = active;
+        this.to = to;
+    }
+    override string name() const { return "swap"; }
+    override CmdFlags cmdFlags() const { return CmdFlags.Model; }
+    protected override bool applyImpl() { noteUndoRecorded(); return true; }
+    protected override void revertImpl() { *active = to; }
+}
+
+unittest { // 9500: an undo the flagged tool survives empties the redo; a swap keeps it.
+    foreach (flag; [true, false]) {
+        auto tool = new RecordedTool;
+        tool.emptiesRedo = flag;
+        Tool active = tool;
+        auto history = new CommandHistory;
+        auto session = new EditSession(() => active, history, () { active = null; });
+        session.noteArm("xfrm.redo-empties-test", 1);
+        tool.gesture(history, 7);
+        tool.gesture(history, 13);
+        assert(session.navigate(true) && tool.amount == 7 && active is tool);
+        assert(history.redoEntries().length == (flag ? 0 : 1),
+               format("9500 surviving undo (flag %s): redo %s", flag, history.redoEntries().length));
+    }
+    auto a = new RecordedTool, b = new RecordedTool;
+    a.emptiesRedo = b.emptiesRedo = true;
+    Tool active = a;
+    auto history = new CommandHistory;
+    auto session = new EditSession(() => active, history, () { active = null; });
+    session.noteArm("xfrm.redo-empties-test", 1);
+    auto swap = new SwapEdit(&active, b);
+    assert(swap.apply());
+    history.record(swap);
+    a.gesture(history, 7);
+    assert(history.undo() && history.redoEntries().length == 1, "9500 swap rig: raw undo");
+    assert(session.navigate(true) && active is b,
+           "9500 swap rig: the undo did not bind the other tool");
+    assert(history.redoEntries().length == 2,
+           format("9500: an undo that swaps the tool emptied the redo (%s left)",
+                  history.redoEntries().length));
 }
 
 unittest { // 8493: selected stage and running postmode are distinct states.
