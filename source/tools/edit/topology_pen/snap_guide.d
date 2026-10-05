@@ -19,7 +19,7 @@ import mesh              : Mesh, MeshTopoKey;
 import math              : Vec3, Viewport, dot, screenPointToRay, projectToWindowFull;
 import document          : primaryModelSpace;
 import toolpipe.guide    : SnapGuide, GuideDrawState, kGuidePrioritySeed;
-import toolpipe.packets  : SnapType;
+import toolpipe.packets  : SnapPacket, SnapType;
 
 /// True if edge `ei` is INTERIOR — shared by two or more polygons.
 ///
@@ -381,7 +381,7 @@ final class PenSnapGuide : SnapGuide {
     }
 
     bool proximity(Vec3 candWorld, SnapType type, int idx, int slot,
-                   out float distPx, ref int priority)
+                   ref float distPx, ref int priority)
     {
         if (!admits(type, idx, slot)) return false;
         if (!aimed_) return false;
@@ -397,6 +397,8 @@ final class PenSnapGuide : SnapGuide {
     void setDrawState(GuideDrawState s) { draw_ = s; }
 
     uint flags() const { return 0; }
+    bool propose(Vec3, int, int, const ref Viewport, const ref SnapPacket,
+                 out Vec3, out SnapType) { return false; }
 
     // ---- readback, for the tests and for a reader ---------------------
     float innerPushedPx() const { return innerPx_; }

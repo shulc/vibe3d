@@ -1,353 +1,141 @@
-// Tests for Pen guide constraints: straightLine / worldAxis / rightAngle.
+// Polygon pen guides (pen wave plan S10; interaction-layer task 9416) against
+// tests/fixtures/pen_options.json `b8`, `b8_click` and `k_b3` Gnext. The law:
+// the guides act only while DRAGGING a stroke point, anchored on its ring
+// neighbours prev / next — world axes through them (n >= 2), right angle
+// perpendicular to prev - prevprev / next - nextnext (n >= 3), straight line
+// along them (n >= 4) — gated by the global snapping state and the global guide
+// bit only; the guide is applied to the quantised cursor. A click never guides.
+// The pen's guide is a registered snap guide that proposes its point in the
+// election's constraint tier, registered only for a drag (its lifetime is
+// witnessed by the snap key, tests/test_snap_key_held.d).
 //
-// Strategy: an empty scene, pen tool active, snap master ON with a single
-// guide type enabled and a generous innerRange (100 px).  A 2- or 3-click
-// sequence fixes a reference segment, then a final click is placed a few
-// pixels OFF the guide but within innerRange.  With the guide ON the placed
-// vertex should satisfy the corresponding world-space invariant; with the
-// guide OFF (snap disabled for the negative control) the same pixel gives a
-// raw hit that clearly does NOT satisfy the invariant.
-//
-// Recording viewport: (vpX:150, vpY:28, vpW:650, vpH:544) — same as
-// test_primitive_pen.d. EventPlayer rescales to the live viewport, so these
-// pixel coordinates work regardless of window layout.
-//
-// Invariants (world-space, tolerances are loose — robust to pixel rescaling
-// and the exact innerRangePx):
-//   straightLine : cross(v2-v0, v1-v0).length / (v1-v0).length < 0.005
-//   worldAxis    : max abs(dot(normalize(v1-v0), axis)) over axes > 0.99
-//   rightAngle   : abs(dot(normalize(v2-v1), normalize(v1-v0)))  < 0.05
+// Rig: top ortho on y = 1 at 360 px/m (the fixture's `rig_ours`: the captured
+// 440 does not fit our viewport; the 0.005 m quantum is kept), snapping on with
+// ONE guide type (or none: the not-engaged twins), default ranges. A drag ends on the pixel of
+// the cell's quantised cursor (the fixture's `drag_to_xz`). Engaged points
+// compare to 1e-4 (an exact closed-form projection of lattice inputs), as do
+// the unguided ones. `VIBE3D_CELL=<id>` runs one cell alone (the population
+// floor holds for the full run only).
 
-import http_client : testBaseUrl, getJson, postJson;
-import http_command_helpers : commandBody;
-import std.net.curl;
-import std.json;
-import std.string : format;
-import std.conv   : to;
-import std.math   : fabs, sqrt;
-import core.thread : Thread;
-import core.time   : msecs;
+import drag_helpers : Vec3, buildDragLog, fetchCamera, playAndWait;
+import http_client : getJson;
+import pen_rig_helpers;
+import std.algorithm : canFind;
+import std.array : split;
+import std.format : format;
+import std.json : JSONType, JSONValue, parseJSON;
+import std.math : abs, sqrt;
+import std.process : environment;
 
 void main() {}
 
-alias baseUrl = testBaseUrl;
+private enum double kTol = 1e-4;
+private JSONValue fx;
 
-
-// ---------------------------------------------------------------------------
-// Common helpers (mirror test_primitive_pen.d).
-// ---------------------------------------------------------------------------
-
-void resetEmpty() {
-    auto resp = postJson("/api/command", commandBody("scene.reset", `{"empty":true}`));
-    assert(resp["status"].str == "ok", "reset(empty) failed: " ~ resp.toString);
+private double num(JSONValue v) {
+    return v.type == JSONType.integer ? cast(double)v.integer : v.floating;
+}
+private Vec3 xz(JSONValue p) {
+    return Vec3(cast(float)num(p[0]), 1, cast(float)num(p[1]));
 }
 
-void activatePen() {
-    auto resp = postJson("/api/command", "tool.set \"pen\" on 0");
-    assert(resp["status"].str == "ok", "tool.set pen failed: " ~ resp.toString);
+private void rig(string types, string group) {
+    penSceneEmpty("Top");
+    const r = fx["rig_ours"];
+    penCameraAt(xz(r["focus_xz"][group]), num(r["px_per_m"][group]));
+    const g = getJson("/api/viewport/display")["cells"].array[0]["grid"];
+    assert(abs(num(g["subStep"]) - num(r["q"])) <= 1e-9,
+        format("rig: our placement quantum %.9g, the fixture's %.9g", num(g["subStep"]), num(r["q"])));
+    penCommand("tool.pipe.attr snap enabled true");
+    penCommand(`tool.pipe.attr snap types "` ~ types ~ `"`);
+    penCommand("tool.set pen on");
 }
-
-void deactivateTool() {
-    postJson("/api/command", "tool.set \"pen\" off 0");
+private void drag(Vec3 from, Vec3 to) {
+    auto cam = fetchCamera();
+    const a = worldPixel(from), b = worldPixel(to);
+    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height, a[0], a[1], b[0], b[1]));
 }
-
-void cmd(string argstring) {
-    auto j = postJson("/api/command", argstring);
-    assert(j["status"].str == "ok", "cmd `" ~ argstring ~ "` failed: " ~ j.toString);
+private Vec3[] commit() {
+    penCommand("tool.set pen off");
+    penCommand("tool.pipe.attr snap enabled false");
+    return readVerts();
 }
-
-void playEvents(string events) {
-    auto resp = postJson("/api/play-events", events);
-    assert(resp["status"].str == "success", "play-events failed: " ~ resp.toString);
-}
-
-void waitForPlaybackFinish() {
-    foreach (_; 0 .. 100) {
-        auto j = getJson("/api/play-events/status");
-        if (j["finished"].type == JSONType.TRUE) return;
-        Thread.sleep(50.msecs);
+private string[] compare(string cell, Vec3[] got, JSONValue want) {
+    if (got.length != want.array.length)
+        return [format("%s: %d vertices, expected %d (got %s)", cell, got.length,
+                       want.array.length, got)];
+    string[] fails;
+    foreach (i, w; want.array) {
+        const e = [num(w[0]), num(w[1]), num(w[2])];
+        const g = [cast(double)got[i].x, got[i].y, got[i].z];
+        if (!(abs(g[0] - e[0]) <= kTol && abs(g[1] - e[1]) <= kTol && abs(g[2] - e[2]) <= kTol))
+            fails ~= format("%s: point %d at %(%.6f %), expected %(%.6f %)", cell, i, g[], e[]);
     }
-    assert(false, "playback timed out");
+    return fails;
 }
 
-// SDL keycodes.
-enum SDLK_RETURN = 13;
+unittest {
+    fx = parseJSON(import("fixtures/pen_options.json"));
+    const sel = environment.get("VIBE3D_CELL", "");
+    const only = sel.length ? sel.split(",") : null;
+    bool wanted(string name) { return only is null || only.canFind(name); }
+    string[] fails;
+    size_t ran;
 
-// Motion + LMB-down + LMB-up at (x,y).
-string clickAt(double t, int x, int y) {
-    return format(
-        `{"t":%g,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,"state":0,"mod":0}` ~ "\n"
-      ~ `{"t":%g,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n"
-      ~ `{"t":%g,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}`,
-        t,        x, y,
-        t +  5.0, x, y,
-        t + 10.0, x, y);
-}
-
-string keyDown(double t, int sym) {
-    return format(
-        `{"t":%g,"type":"SDL_KEYDOWN","sym":%d,"scan":0,"mod":0,"repeat":0}`, t, sym);
-}
-
-// Required VIEWPORT header + focus events for EventPlayer pixel rescaling.
-enum string LOG_HEADER =
-    `{"t":0,"type":"VIEWPORT","vpX":150,"vpY":28,"vpW":650,"vpH":544,"fovY":0.785398}` ~ "\n"
-  ~ `{"t":1.0,"type":"SDL_WINDOWEVENT","sub":1}` ~ "\n"
-  ~ `{"t":2.0,"type":"SDL_WINDOWEVENT","sub":3}`;
-
-// Enable snap with a single guide type and a generous innerRange.
-// outerRange is set equally large so highlights don't interfere.
-void snapGuideOnly(string typeName) {
-    cmd("tool.pipe.attr snap enabled true");
-    cmd(`tool.pipe.attr snap types "` ~ typeName ~ `"`);
-    cmd("tool.pipe.attr snap innerRange 100");
-    cmd("tool.pipe.attr snap outerRange 100");
-}
-
-// Read world positions of all vertices from /api/model.
-// Returns an array of [x, y, z] float arrays.
-float[3][] readVerts() {
-    auto m = getJson("/api/model");
-    float[3][] vs;
-    foreach (v; m["vertices"].array) {
-        auto a = v.array;
-        vs ~= [cast(float)a[0].floating,
-               cast(float)a[1].floating,
-               cast(float)a[2].floating];
+    // ---- "never on a click" first: the guide bit on, the third point clicked
+    // at the guided cell's target stays where it was clicked.
+    foreach (name, c; fx["b8_click"].object) {
+        if (c.type != JSONType.object || !wanted("B8_click_" ~ name)) continue;
+        rig(c["type"].str, "b8");
+        foreach (p; c["clicks_xz"].array) clickWorld(xz(p));
+        fails ~= compare("B8_click_" ~ name, commit(), c["expected"]);
+        ++ran;
     }
-    return vs;
-}
 
-float vecLen(float[3] v) {
-    return sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
-}
-
-float[3] vecSub(float[3] a, float[3] b) {
-    return [a[0]-b[0], a[1]-b[1], a[2]-b[2]];
-}
-
-float[3] vecNorm(float[3] v) {
-    float len = vecLen(v);
-    if (len < 1e-9f) return v;
-    return [v[0]/len, v[1]/len, v[2]/len];
-}
-
-float vecDot(float[3] a, float[3] b) {
-    return a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
-}
-
-// Cross product (a × b).
-float[3] vecCross(float[3] a, float[3] b) {
-    return [a[1]*b[2] - a[2]*b[1],
-            a[2]*b[0] - a[0]*b[2],
-            a[0]*b[1] - a[1]*b[0]];
-}
-
-// ---------------------------------------------------------------------------
-// Test 1 — straightLine
-//
-// v0 (420,300) and v1 (540,300) fix a screen-horizontal segment.
-// v2 (590,320) is 20px below the screen extension of that segment.
-// With guide ON the placed v2 must be colinear with v0-v1.
-// With guide OFF (snap disabled) the same pixel gives a raw off-line hit.
-// ---------------------------------------------------------------------------
-unittest { // straightLine ON → colinear placement
-    resetEmpty();
-    activatePen();
-    snapGuideOnly("straightLine");
-
-    string log = LOG_HEADER ~ "\n"
-        ~ clickAt(100, 420, 300) ~ "\n"    // v0
-        ~ clickAt(200, 540, 300) ~ "\n"    // v1 (same y → horizontal segment)
-        ~ clickAt(300, 590, 320) ~ "\n"    // v2: 20 px below the extension
-        ~ keyDown(400, SDLK_RETURN);
-    playEvents(log);
-    waitForPlaybackFinish();
-    deactivateTool();
-
-    auto vs = readVerts();
-    assert(vs.length == 3, "straightLine ON: expected 3 verts, got " ~ vs.length.to!string);
-
-    float[3] d01    = vecSub(vs[1], vs[0]);     // v1 - v0
-    float[3] d02    = vecSub(vs[2], vs[0]);     // v2 - v0
-    float[3] cross_ = vecCross(d01, d02);
-    float    seg    = vecLen(d01);
-    assert(seg > 1e-4f, "straightLine ON: degenerate segment");
-    float colinearity = vecLen(cross_) / seg;
-    assert(colinearity < 0.005f,
-        format("straightLine ON: v2 not colinear (%.4f >= 0.005)", colinearity));
-}
-
-unittest { // straightLine OFF → v2 NOT colinear (negative control)
-    resetEmpty();
-    activatePen();
-    // Snap disabled: free placement, no guide.
-    cmd("tool.pipe.attr snap enabled false");
-
-    string log = LOG_HEADER ~ "\n"
-        ~ clickAt(100, 420, 300) ~ "\n"
-        ~ clickAt(200, 540, 300) ~ "\n"
-        ~ clickAt(300, 590, 320) ~ "\n"    // same off-line pixel
-        ~ keyDown(400, SDLK_RETURN);
-    playEvents(log);
-    waitForPlaybackFinish();
-    deactivateTool();
-
-    auto vs = readVerts();
-    assert(vs.length == 3, "straightLine OFF: expected 3 verts");
-
-    float[3] d01    = vecSub(vs[1], vs[0]);
-    float[3] d02    = vecSub(vs[2], vs[0]);
-    float[3] cross_ = vecCross(d01, d02);
-    float    seg    = vecLen(d01);
-    assert(seg > 1e-4f, "straightLine OFF: degenerate segment");
-    float colinearity = vecLen(cross_) / seg;
-    assert(colinearity > 0.01f,
-        format("straightLine OFF: v2 is accidentally colinear (%.4f < 0.01) "
-               ~ "— negative control failed", colinearity));
-}
-
-// ---------------------------------------------------------------------------
-// Test 2 — worldAxis
-//
-// v0 (400,300), v1 (450,360): both pixel axes differ, so the free-hit
-// direction is off all world axes. With worldAxis guide ON and innerRange=100,
-// v1 snaps to the nearest world X/Y/Z axis through v0.
-// ---------------------------------------------------------------------------
-unittest { // worldAxis ON → v0→v1 segment parallel to a world axis
-    // Three-click triangle so Enter actually commits (minCommitVerts=3).
-    // The guide fires on the v1 placement (second click); the invariant checks
-    // only the v0→v1 direction regardless of where v2 lands.
-    resetEmpty();
-    activatePen();
-    snapGuideOnly("worldAxis");
-
-    string log = LOG_HEADER ~ "\n"
-        ~ clickAt(100, 400, 300) ~ "\n"    // v0
-        ~ clickAt(200, 450, 360) ~ "\n"    // v1: off-axis raw; guide snaps it
-        ~ clickAt(300, 420, 340) ~ "\n"    // v2: arbitrary third vertex
-        ~ keyDown(400, SDLK_RETURN);
-    playEvents(log);
-    waitForPlaybackFinish();
-    deactivateTool();
-
-    auto vs = readVerts();
-    assert(vs.length == 3, "worldAxis ON: expected 3 verts, got " ~ vs.length.to!string);
-
-    float[3] dir = vecNorm(vecSub(vs[1], vs[0]));
-    assert(vecLen(vecSub(vs[1], vs[0])) > 1e-4f, "worldAxis ON: degenerate segment");
-
-    // At least one world axis must be nearly parallel to the v0→v1 segment.
-    float[3][3] axes = [[1.0f,0,0], [0,1.0f,0], [0,0,1.0f]];
-    float bestDot = 0;
-    foreach (ax; axes) {
-        float d = fabs(vecDot(dir, ax));
-        if (d > bestDot) bestDot = d;
+    // ---- B8: the drag of the last point (3 points) or the fourth (4 points).
+    const b8 = fx["b8"];
+    foreach (name, c; b8["cases"].object) {
+        if (!wanted("B8_" ~ name)) continue;
+        rig(c["guide_bit"].type == JSONType.true_ ? c["type"].str : "", "b8");
+        foreach (p; b8["clicks_xz"].array) clickWorld(xz(p));
+        if (c["points"].integer == 4) clickWorld(xz(b8["click4_xz"]));
+        drag(xz(b8["press_xz"]), xz(c["drag_to_xz"]));
+        fails ~= compare("B8_" ~ name, commit(), c["expected"]);
+        ++ran;
     }
-    assert(bestDot > 0.99f,
-        format("worldAxis ON: v0→v1 not aligned to any world axis (best dot=%.4f)", bestDot));
-}
 
-unittest { // worldAxis OFF → v0→v1 NOT aligned to a world axis (negative control)
-    resetEmpty();
-    activatePen();
-    cmd("tool.pipe.attr snap enabled false");
-
-    // Same three pixels; without the guide v1 is a raw unsnapped hit.
-    string log = LOG_HEADER ~ "\n"
-        ~ clickAt(100, 400, 300) ~ "\n"
-        ~ clickAt(200, 450, 360) ~ "\n"    // same off-axis pixel, no guide
-        ~ clickAt(300, 420, 340) ~ "\n"
-        ~ keyDown(400, SDLK_RETURN);
-    playEvents(log);
-    waitForPlaybackFinish();
-    deactivateTool();
-
-    auto vs = readVerts();
-    assert(vs.length == 3, "worldAxis OFF: expected 3 verts, got " ~ vs.length.to!string);
-
-    float[3] dir = vecNorm(vecSub(vs[1], vs[0]));
-    assert(vecLen(vecSub(vs[1], vs[0])) > 1e-4f, "worldAxis OFF: degenerate segment");
-
-    float[3][3] axes = [[1.0f,0,0], [0,1.0f,0], [0,0,1.0f]];
-    float bestDot = 0;
-    foreach (ax; axes) {
-        float d = fabs(vecDot(dir, ax));
-        if (d > bestDot) bestDot = d;
+    // ---- Gnext: drag p0 of a 4-point stroke; only its NEXT side is near.
+    const kb3 = fx["k_b3"];
+    foreach (name; ["Gnext_a_line", "Gnext_b_rightangle", "Gnext_c_worldX"]) {
+        const cellName = "guide-next-" ~ ["line", "right-angle", "world-x"][
+            name == "Gnext_a_line" ? 0 : name == "Gnext_b_rightangle" ? 1 : 2];
+        if (!wanted(cellName)) continue;
+        const c = kb3[name];
+        rig(c["type"].str, "gnext");
+        foreach (p; kb3["clicks_xz"].array) clickWorld(xz(p));
+        drag(xz(kb3["clicks_xz"][0]), xz(c["drag_to_xz"]));
+        auto got = commit();
+        if (name != "Gnext_a_line") {
+            fails ~= compare(cellName, got, c["expected"]);
+        } else if (got.length != 4) {
+            fails ~= format("%s: %d vertices, expected 4", cellName, got.length);
+        } else {
+            // On the line p2 -> p1 beyond p1; the foot is not compared (the
+            // reference's sits 1.5 mm from the projection, unexplained).
+            const p1 = got[1], p2 = got[2], p = got[0];
+            const dx = p1.x - p2.x, dz = p1.z - p2.z, l = sqrt(dx * dx + dz * dz);
+            const off = abs((p.x - p1.x) * dz - (p.z - p1.z) * dx) / l;
+            const along = ((p.x - p1.x) * dx + (p.z - p1.z) * dz) / l;
+            if (!(off <= kTol && along > 0 && abs(p.y - 1) <= kTol))
+                fails ~= format("%s: p0 %s is %.6f off the line p2 -> p1 (along %.4f)",
+                                cellName, p, off, along);
+        }
+        ++ran;
     }
-    assert(bestDot < 0.95f,
-        format("worldAxis OFF: accidentally aligned to a world axis (best dot=%.4f)"
-               ~ " — negative control failed", bestDot));
-}
 
-// ---------------------------------------------------------------------------
-// Test 3 — rightAngle
-//
-// v0 (400,300), v1 (540,300) fix a screen-horizontal segment.
-// v2 (600,330): 60px right and 30px below v1 — clearly NOT perpendicular to
-// v0→v1. With rightAngle ON the guide forces v2 onto the in-plane
-// perpendicular to v0→v1 through v1.
-// ---------------------------------------------------------------------------
-unittest { // rightAngle ON → (v2-v1)·(v1-v0) ≈ 0
-    resetEmpty();
-    activatePen();
-    snapGuideOnly("rightAngle");
-
-    string log = LOG_HEADER ~ "\n"
-        ~ clickAt(100, 400, 300) ~ "\n"    // v0
-        ~ clickAt(200, 540, 300) ~ "\n"    // v1 (horizontal segment)
-        ~ clickAt(300, 600, 330) ~ "\n"    // v2: off-perpendicular raw hit
-        ~ keyDown(400, SDLK_RETURN);
-    playEvents(log);
-    waitForPlaybackFinish();
-    deactivateTool();
-
-    auto vs = readVerts();
-    assert(vs.length == 3, "rightAngle ON: expected 3 verts, got " ~ vs.length.to!string);
-
-    float[3] seg  = vecNorm(vecSub(vs[1], vs[0]));  // v1-v0 direction
-    float[3] arm  = vecNorm(vecSub(vs[2], vs[1]));  // v2-v1 direction
-    assert(vecLen(vecSub(vs[1], vs[0])) > 1e-4f, "rightAngle ON: degenerate segment");
-    assert(vecLen(vecSub(vs[2], vs[1])) > 1e-4f, "rightAngle ON: v2 == v1");
-
-    float dotVal = fabs(vecDot(seg, arm));
-    assert(dotVal < 0.05f,
-        format("rightAngle ON: v2-v1 not perpendicular to v1-v0 (|dot|=%.4f >= 0.05)", dotVal));
-    // ... and IN the stroke plane (its normal channel: the one v0 and v1
-    // share): a guide perpendicular to the plane is perpendicular to the
-    // segment too.
-    int planeCh = -1;
-    foreach (k; 0 .. 3) if (fabs(vs[1][k] - vs[0][k]) < 1e-4f) planeCh = k;
-    assert(planeCh >= 0, "rightAngle ON: v0, v1 share no plane channel");
-    assert(fabs(vs[2][planeCh] - vs[1][planeCh]) < 1e-4f,
-        format("rightAngle ON: v2 left the stroke plane (channel %d: %.5f vs %.5f)", planeCh,
-               vs[2][planeCh], vs[1][planeCh]));
-}
-
-unittest { // rightAngle OFF → (v2-v1)·(v1-v0) clearly non-zero (negative control)
-    resetEmpty();
-    activatePen();
-    cmd("tool.pipe.attr snap enabled false");
-
-    string log = LOG_HEADER ~ "\n"
-        ~ clickAt(100, 400, 300) ~ "\n"
-        ~ clickAt(200, 540, 300) ~ "\n"
-        ~ clickAt(300, 600, 330) ~ "\n"    // same off-perpendicular pixel
-        ~ keyDown(400, SDLK_RETURN);
-    playEvents(log);
-    waitForPlaybackFinish();
-    deactivateTool();
-
-    auto vs = readVerts();
-    assert(vs.length == 3, "rightAngle OFF: expected 3 verts");
-
-    float[3] seg = vecNorm(vecSub(vs[1], vs[0]));
-    float[3] arm = vecNorm(vecSub(vs[2], vs[1]));
-    assert(vecLen(vecSub(vs[1], vs[0])) > 1e-4f, "rightAngle OFF: degenerate segment");
-    assert(vecLen(vecSub(vs[2], vs[1])) > 1e-4f, "rightAngle OFF: v2 == v1");
-
-    float dotVal = fabs(vecDot(seg, arm));
-    assert(dotVal > 0.3f,
-        format("rightAngle OFF: accidentally near-perpendicular (|dot|=%.4f < 0.3)"
-               ~ " — negative control failed", dotVal));
+    // Population floor: 2 click cells + 9 drag cells + 3 next-side cells.
+    if (only is null)
+        assert(ran == 14, format("population floor: %d cells ran, expected 14", ran));
+    import std.array : join;
+    assert(fails.length == 0, "\n  " ~ fails.join("\n  "));
 }

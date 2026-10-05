@@ -40,6 +40,9 @@ import tools.create.create_common : pickWorkplane, BuildPlane,
                               workplaneCursorRay, workplaneCursorPlaneHit;
 import toolpipe.packets : SnapType, SnapPacket, SymmetryPacket;
 import toolpipe.stages.symmetry : liveSymmetryStage;
+import toolpipe.stages.snap : liveSnapStage;
+import toolpipe.stages.constrain : liveConstrainStage;
+import bvh_pick : SurfaceHit;
 import symmetry : mirrorPosition, symmetryMirrorsEqual, symmetryPacketsEqual;
 import editmode : EditMode;
 import seltype : SelType;
@@ -62,13 +65,6 @@ private bool sameSliceBytes(T)(const(T)[] a, const(T)[] b) nothrow @nogc {
     return a.length == b.length && (a.length == 0 ||
         memcmp(a.ptr, b.ptr, a.length * T.sizeof) == 0);
 }
-
-// Snap-type bits that PenTool handles via applyPenGuide (Pen-local guide
-// constraints). These bits are excluded from snapLocalHit at all Pen call
-// sites so the shared snap pipeline never applies the transform-scoped
-// WorldAxis-through-origin on top of the Pen-scoped prior-vertex variants.
-private enum uint guideBits =
-    SnapType.WorldAxis | SnapType.StraightLine | SnapType.RightAngle;
 
 // Merge after an ELEMENT snap (wave plan S5 A3, fixture pen_merge.json
 // `cells_k_b3`): screen radii, bracket midpoints — the snapped edge's own ends
@@ -721,6 +717,7 @@ private:
     int  dragVertIdx = -1;
     int  dragStartMX, dragStartMY;
     Vec3 dragAnchor;    // the dragged point's pre-drag position (its plane)
+    LineGuide guide_;   // the drag's snap guide, registered press to release
 
     enum int DRAG_THRESHOLD_PX = 4;
 
@@ -738,6 +735,7 @@ public:
         this.gpu       = gpu;
         this.litShader = litShader;
         toolHandles    = new ToolHandles();
+        guide_         = new LineGuide();
     }
 
     void destroy() {
@@ -784,6 +782,7 @@ public:
             Param.bool_("merge", "Merge", &params_.merge, true),
             Param.bool_("close", "Close", &params_.close, false),
             Param.bool_("selectNew", "Select New", &params_.selectNew, true),
+            Param.bool_("raycast", "Raycast", &params_.raycast, false),
             // Wall mode (wave plan S9): a negative offset clamps to 0.
             Param.intEnum_("wall", "Wall", &params_.wall,
                 [IntEnumEntry(PenWall.off, "off", "Off"),
@@ -943,6 +942,7 @@ public:
         dragArmed     = false;
         dragInitiated = false;
         dragVertIdx   = -1;
+        endDragGuide();
         previewGpu.init();
     }
 
@@ -1129,6 +1129,7 @@ public:
     }
 
     override void deactivate() {
+        endDragGuide();
         dropStroke();
         previewGpu.destroy();
     }
@@ -1184,6 +1185,7 @@ public:
         // the drag only "initiates" once the cursor moves > DRAG_THRESHOLD_PX
         // pixels (a release without motion just leaves the vertex selected).
         int hitIdx = findHoveredVert(e.x, e.y);
+        if (hitIdx >= 0 && params_.raycast && strokePointHidden(hitIdx, e.x, e.y)) hitIdx = -1;
         if (hitIdx >= 0) {
             params_.currentPoint = hitIdx;
             syncPosFromCurrent();
@@ -1307,6 +1309,7 @@ public:
             dragArmed     = false;
             dragInitiated = false;
             dragVertIdx   = -1;
+            endDragGuide();
         }
 
         if (!dragInitiated) {
@@ -1441,8 +1444,9 @@ private:
     // through the quantised CURRENT point, a drag's through the raw `drag`
     // point (S3a / S3c / S3q, fixture pen_placement.json); then the background
     // surface (K-B2 C1–C3, B7b), the snap (an edge snap takes the placed
-    // point's foot, S5 Q-edge), the guides when neither placed it (B6), the
-    // merge; `link` is the edited-mesh vertex the point shares, or -1.
+    // point's foot, S5 Q-edge; a drag's guide proposes in it unless the
+    // surface placed the point, B6), the merge; `link` is the edited-mesh
+    // vertex the point shares, or -1.
     bool resolvePenPoint(int x, int y, out Vec3 local, out int link, const(Vec3)* drag = null) {
         link = -1;
         immutable float q = viewVectorQuantum(cachedVp);
@@ -1462,18 +1466,16 @@ private:
         }
         immutable bool onSurface = backgroundSurfacePoint(local, cachedVp, frame, local);
         immutable Vec3 placed = local;
-        lastSnap = snapLocalHit(local, frame, x, y, cachedVp,
-                                *mesh, EditMode.Vertices, [], guideBits);
+        guide_.live = drag !is null && !onSurface;
+        lastSnap = snapLocalHit(local, frame, x, y, cachedVp, *mesh, EditMode.Vertices);
         if (elementPlaced() && lastSnap.targetType == SnapType.Edge)
             local = toLocalP(pointOnEdgeUnder(toWorldP(placed), lastSnap.targetIndex));
-        if (!discretePlaced() && !onSurface) applyPenGuide(local, x, y);
         if (params_.merge) link = mergeTarget(local);
         publishLastSnap(lastSnap);
         return true;
     }
 
-    // A discrete snap target (not a constraint) placed the point; the guide
-    // gate and the merge read this one spelling.
+    // A discrete snap target (not a constraint) placed the point.
     bool discretePlaced() const {
         return lastSnap.snapped && lastSnap.constraintType == SnapType.None;
     }
@@ -1667,8 +1669,8 @@ private:
             commandClose: CommandClose.uiDoor, commandEndsOpenGesture: true,
             rollovers: Rollover.target, sessionSteps: true,
             imageAttrs: ["type", "currentPoint", "posX", "posY", "posZ", "flip",
-                         "makeQuads", "merge", "close", "selectNew", "wall",
-                         "offset", "points", "link", "linkKey"] };
+                         "makeQuads", "merge", "close", "selectNew", "raycast",
+                         "wall", "offset", "points", "link", "linkKey"] };
         return policy;
     }
     // In-stroke undo / redo (fixture pen_instroke_undo.json): the
@@ -1769,6 +1771,26 @@ private:
         dragAnchor    = vertices_[dragVertIdx];
         dragStartMX   = mx;
         dragStartMY   = my;
+        // The drag's guide lives from this press to its release / the drop
+        // (task 9416; it counts for the snap key mid-drag, K-G3).
+        Vec3[] world;
+        foreach (v; vertices_) world ~= toWorldP(v);
+        guide_.aim(world, dragVertIdx, transformDir(frame.toWorld, axisUnit(planeAxis)));
+        if (auto st = liveSnapStage()) st.addGuide(guide_);
+    }
+    void endDragGuide() {
+        if (auto st = liveSnapStage()) st.removeGuide(guide_);
+    }
+
+    // Raycast (S10, B9 / K-B3 R-front): the background surface under the pixel
+    // lies in front of stroke point `i` — the constraint's own ray, ungated
+    // (B9 ran with it off). Only the press reads it.
+    bool strokePointHidden(int i, int x, int y) {
+        SurfaceHit sh;
+        auto cs = liveConstrainStage();
+        if (cs is null || !cs.rayHitAt(x, y, cachedVp, sh)) return false;
+        immutable Vec3 p = toWorldP(vertices_[i]);
+        return dot(p - sh.point, eyeVectorAt(cachedVp, p)) > 1e-4f;
     }
 
     // Hit-test in-progress vertex markers; returns the index of the first
@@ -1840,109 +1862,6 @@ private:
     // Minimum point count for Enter / a tool drop, per type (pen_geometry).
     size_t minCommitVerts() const { return penEnterMinimum(params_); }
     size_t minDropCommitVerts() const { return penDropMinimum(params_); }
-
-    // Apply Pen-local guide constraints: straightLine / worldAxis / rightAngle.
-    //
-    // Anchor = prior vertex (vertices_[$-1]), direction from the prior segment
-    // for straightLine/rightAngle, world X/Y/Z through the prior vertex for
-    // worldAxis (Pen-scoped, differs from snap.d's origin-based WorldAxis).
-    //
-    // All arithmetic in LOCAL workplane coordinates. Candidates are projected
-    // to screen pixels to gate against cfg.innerRangePx. The nearest in-range
-    // candidate wins; ties between guide types resolved by screen distance.
-    //
-    // Returns true and writes hitLocal to the guide point when a candidate is
-    // within tolerance; returns false (hitLocal unchanged) otherwise.
-    // Stateless beyond vertices_ / frame / cachedVp — no new persistent fields.
-    private bool applyPenGuide(ref Vec3 hitLocal, int sx, int sy) {
-        if (vertices_.length < 1) return false;
-
-        auto cfg = currentSnapPacket(*mesh, EditMode.Vertices, cachedVp);
-        if (!cfg.enabled) return false;
-
-        Vec3  anchorL  = vertices_[$-1];
-        float bestDist = cfg.innerRangePx;
-        bool  found    = false;
-        Vec3  bestP;
-
-        // The cursor ray, built ONCE and ortho-aware. Every guide below is a
-        // closest-approach between a local guide LINE and this ray, so an
-        // ortho cell that handed them the perspective pencil put the guide
-        // point at the wrong place along the line (task 0661).
-        Vec3 curO, curD;
-        workplaneCursorRay(frame, cachedVp, cast(float)sx, cast(float)sy, curO, curD);
-
-        // Project a LOCAL candidate point to screen; return pixel distance to
-        // (sx,sy). Returns float.infinity for behind-camera points.
-        float screenDist(Vec3 pL) {
-            Vec3  pW = toWorldP(pL);
-            float px_, py_, ndcZ;
-            if (!projectToWindowFull(pW, cachedVp, px_, py_, ndcZ))
-                return float.infinity;
-            float dx = px_ - cast(float)sx;
-            float dy = py_ - cast(float)sy;
-            return Vec3(dx, dy, 0).length;   // Vec3.length uses std.math.sqrt
-        }
-
-        void consider(Vec3 candL) {
-            float d = screenDist(candL);
-            if (d < bestDist) { bestDist = d; bestP = candL; found = true; }
-        }
-
-        // Segment direction in LOCAL (shared by straightLine + rightAngle).
-        // Computed only when needed and guarded against degenerate segments
-        // (nit 1: normalize has no zero-guard, a zero-length segment poisons
-        // both candidate directions via NaN).
-        Vec3 segL;
-        bool segValid = false;
-        if ((cfg.enabledTypes & (SnapType.StraightLine | SnapType.RightAngle))
-                && vertices_.length >= 2)
-        {
-            Vec3 segVec = vertices_[$-1] - vertices_[$-2];
-            if (segVec.length > 1e-6f) {
-                segL     = normalize(segVec);
-                segValid = true;
-            }
-        }
-
-        // straightLine: lock new point to the infinite extension of the prior
-        // segment (anchor = prior vertex, dir = prior-segment direction).
-        // Requires ≥2 prior vertices.
-        if ((cfg.enabledTypes & SnapType.StraightLine) && segValid)
-            consider(closestPointOnLineToRay(anchorL, segL,
-                                              curO, curD));
-
-        // worldAxis (Pen-scoped): X/Y/Z axes through the PRIOR vertex.
-        // Requires only ≥1 prior vertex (anchorL already set).
-        // The in-plane filter drops any world axis nearly parallel to the
-        // stroke plane's LOCAL normal axis (`planeAxis`, NOT always local Y):
-        // snapping to it would move the vertex off the plane.
-        if (cfg.enabledTypes & SnapType.WorldAxis) {
-            immutable Vec3[3] worldAxes = [Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1)];
-            foreach (ax; worldAxes) {
-                Vec3 axL = transformDir(frame.toLocal, ax);
-                if (abs(dot(axL, axisUnit(planeAxis))) > 0.9f) continue;   // skip the plane-normal axis
-                consider(closestPointOnLineToRay(anchorL, axL,
-                                                  curO, curD));
-            }
-        }
-
-        // rightAngle: perpendicular to the prior segment, in the construction
-        // plane. Direction = cross(axisUnit(planeAxis), segL) — both in LOCAL, result
-        // also in LOCAL. A single infinite LINE covers both ±90° senses.
-        // Requires ≥2 prior vertices.
-        if ((cfg.enabledTypes & SnapType.RightAngle) && segValid) {
-            Vec3 perpL = cross(axisUnit(planeAxis), segL);
-            if (perpL.length > 1e-6f) {
-                perpL = normalize(perpL);
-                consider(closestPointOnLineToRay(anchorL, perpL,
-                                                  curO, curD));
-            }
-        }
-
-        if (found) { hitLocal = bestP; return true; }
-        return false;
-    }
 
     bool commitPolygonWithUndo() {
         if (state != PenState.Drawing || vertices_.length < minDropCommitVerts()) return false;

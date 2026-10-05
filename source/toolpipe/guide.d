@@ -1,7 +1,7 @@
 module toolpipe.guide;
 
-import math             : Vec3;
-import toolpipe.packets : SnapType;
+import math             : Vec3, Viewport;
+import toolpipe.packets : SnapPacket, SnapType;
 
 // ---------------------------------------------------------------------------
 // The snapping guide — S4 of doc/toolpipe_architecture_plan.md.
@@ -60,8 +60,7 @@ import toolpipe.packets : SnapType;
 /// and "said 0" are different answers, and only the seed makes them so. The
 /// other two are recorded where they bite — the acceptance range in
 /// `snap.snapCursor`'s `consider`, and the per-axis write mask in its
-/// `arbitrate`, which we do not have because our guides never supply a
-/// position for a mask to select from.
+/// `arbitrate` (a guide's own position comes through `propose`, whole).
 enum int kGuidePrioritySeed = 1;
 
 /// How a registered guide should draw itself.
@@ -108,9 +107,11 @@ interface SnapGuide {
     ///
     /// `priority` is `ref`, not `out`, and that is load-bearing: the caller
     /// seeds it with `kGuidePrioritySeed` before every call, so a guide that
-    /// does not assign it has said "the default", not "zero". The argument
-    /// list is still header-derived; the arbitration rule built on `priority`
-    /// no longer is.
+    /// does not assign it has said "the default", not "zero". `distPx` is
+    /// `ref` for the same reason: it arrives holding the enumeration's own
+    /// rank, so a guide that leaves it alone re-ranks nothing (task 9416).
+    /// The argument list is still header-derived; the arbitration rule built
+    /// on `priority` no longer is.
     ///
     /// `candWorld` is the candidate's world position, `type` its discrete snap
     /// type, `idx` its source-local element index (-1 where the candidate is
@@ -128,7 +129,16 @@ interface SnapGuide {
     /// `synchronized` block in `snap.d` is closed before a candidate reaches
     /// `consider`, so an unwinding guide cannot strand the lock.
     bool proximity(Vec3 candWorld, SnapType type, int idx, int slot,
-                   out float distPx, ref int priority);
+                   ref float distPx, ref int priority);
+
+    /// A position of the guide's own for one query (the SDK guide's writable
+    /// proximity `pos`): the election offers it in the constraint tier, below
+    /// an element and a grid node; the nearest within the inner range places
+    /// the point, reported as `type`. `clientWorld` is the client's point,
+    /// (`px`, `py`) the query pixel. False = no position (a guide that only
+    /// re-ranks). Task 9416.
+    bool propose(Vec3 clientWorld, int px, int py, const ref Viewport vp,
+                 const ref SnapPacket cfg, out Vec3 pos, out SnapType type);
 
     /// Off / Suggest / Chosen — the draw protocol.
     ///

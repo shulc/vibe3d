@@ -3,7 +3,7 @@
 //   * delivered while held iff the command reports MouseDownOk — the snap
 //     toggle does iff the drag holds >= 1 snap guide: the background
 //     constraint in the pipe (a tool drop or the user's toggle puts it there),
-//     a new Slice line, the topology pen's point drag; never Move itself;
+//     a new Slice line, the topology pen's or the pen's point drag; never Move itself;
 //   * key-up: button held -> re-run now; after a press/release -> re-run iff
 //     held > 500 ms; no button -> a hold > 500 ms fires undo and the snap state
 //     stays on (a probable reference defect, copied: gap row 562);
@@ -594,5 +594,42 @@ unittest {
     path(l, a, b, 16, 30, 30); l.button(false, b); l.play();
     l.key(false, 9000); l.play();
     penCommand("tool.set mesh.topoPen off");
+    flush();
+}
+
+// Pen: a stroke point's drag holds the pen's guide whatever the guide bits
+// (K-G3: always delivered); the guide ends at the release, so after the pen's
+// clicks a held button holds no guide (task 9416).
+unittest {
+    penSceneEmpty("Top");
+    camera();
+    forgetConstraint();
+    penCommand("tool.set pen on");
+    penCommand("tool.pipe.attr snap enabled false");
+    const int[2] a = worldPixel(Vec3(-0.2f, 1, 0)), b = worldPixel(Vec3(0.2f, 1, 0.1f));
+    const int[2] e = [b[0] + 40, b[1]];
+    void twoClicks() {
+        Log l; l.motion(a, 0); l.button(true, a); l.button(false, a);
+        l.motion(b, 0); l.button(true, b); l.button(false, b); l.play();
+    }
+    void cancelStroke(int[2] at) { Log l; l.button(true, at, 3); l.button(false, at, 3); l.play(); }
+    foreach (types; ["", "worldAxis"]) {
+        twoClicks();
+        penCommand(`tool.pipe.attr snap types "` ~ types ~ `"`);
+        Log l; l.motion(b, 0); l.button(true, b); path(l, b, e, 1, 4, 8); l.key(true, 1000); l.play();
+        const on = snapOn();
+        l.key(false, 1100); path(l, b, e, 5, 8, 8); l.button(false, e); l.play();
+        penCommand("tool.pipe.attr snap enabled false");
+        cancelStroke(e);
+        assert(on, "pen-snap-key-drag (types '" ~ types ~ "'): X was not delivered to a stroke point drag");
+    }
+    twoClicks();
+    Log l; l.button(true, b, 3); l.key(true, 1000); l.play();
+    const leaked = snapOn();
+    l.key(false, 1100); l.button(false, b, 3); l.play();
+    penCommand("tool.pipe.attr snap enabled false");
+    assert(!leaked, "pen-snap-key-after-click: X was delivered under a held button after the pen's "
+        ~ "clicks (a click's guide outlived its release)");
+    penCommand("tool.set pen off");
     flush();
 }

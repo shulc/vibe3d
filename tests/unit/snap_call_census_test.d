@@ -239,14 +239,19 @@ unittest // one vertex finder for the topology tools (tasks 9407, 9437); the pen
 unittest // the signatures the clients rely on (compiler pins)
 {
     import operator : VectorStack;
-    import snap : snapPacketOf, kGuideTypes;
+    import math : Vec3, Viewport;
+    import snap : snapPacketOf;
     import toolpipe.packets : SnapPacket, SnapType;
     import toolpipe.guide : SnapGuide;
     import toolpipe.stages.snap : SnapStage, liveSnapStage, liveSnapGuides;
     static assert(is(typeof(&snapPacketOf) == SnapPacket function(ref VectorStack)));
     static assert(is(typeof(&liveSnapStage) == SnapStage function()));
     static assert(is(typeof(&liveSnapGuides) == SnapGuide[] function()));
-    static assert(kGuideTypes == (SnapType.WorldAxis | SnapType.StraightLine | SnapType.RightAngle));
+    // Task 9416: a guide may propose a position; the guide-type mask is gone
+    // (the bits reach the guide's own `propose` through the packet).
+    static assert(is(typeof((SnapGuide g, Vec3 p, ref Viewport vp, ref SnapPacket c) {
+        Vec3 o; SnapType t; bool b = g.propose(p, 1, 2, vp, c, o, t); })));
+    static assert(!__traits(compiles, { import snap : kGuideTypes; }));
     VectorStack empty;
     assert(snapPacketOf(empty) == SnapPacket.init && !snapPacketOf(empty).enabled,
         "no SNAP stage ran: the read answers the init packet, snapping off");
@@ -269,9 +274,11 @@ unittest // a guide registered on the live stage reaches a create tool's query
     static class Refuse : SnapGuide {
         size_t asked;
         void limits(float, float) {}
-        bool proximity(Vec3, SnapType, int, int, out float d, ref int) { ++asked; return false; }
+        bool proximity(Vec3, SnapType, int, int, ref float d, ref int) { ++asked; return false; }
         void setDrawState(GuideDrawState) {}
         uint flags() const { return 0; }
+        bool propose(Vec3, int, int, const ref Viewport, const ref SnapPacket,
+                     out Vec3, out SnapType) { return false; }
     }
 
     auto saved = g_pipeCtx;

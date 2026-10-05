@@ -46,7 +46,7 @@ import mesh_edit_delta : MeshEditScope;
 import tools.common.session_mesh_key : SessionMeshKey;
 import toolpipe.stages.snap : liveSnapStage;
 import toolpipe.guide : SnapGuide, GuideDrawState;
-import toolpipe.packets : SnapType;
+import toolpipe.packets : SnapPacket, SnapType;
 
 struct PreparedSliceActivationImage {
     MeshSnapshot before;
@@ -876,7 +876,7 @@ private:
     // the snap key live mid-drag (`heldDragGuideCount`).
     private final class LineGuide : SnapGuide {
         void limits(float, float) {}
-        bool proximity(Vec3 w, SnapType, int, int, out float d, ref int) {
+        bool proximity(Vec3 w, SnapType, int, int, ref float d, ref int) {
             float px, py, pz;
             int mx, my;
             if (!projectToWindowFull(w, vpWorld_, px, py, pz)) return false;
@@ -886,6 +886,8 @@ private:
         }
         void setDrawState(GuideDrawState) {}
         uint flags() const { return 0; }
+        bool propose(Vec3, int, int, const ref Viewport, const ref SnapPacket,
+                     out Vec3, out SnapType) { return false; }
     }
     private LineGuide lineGuide_;
     private void endLineGuide() { if (auto st = liveSnapStage()) st.removeGuide(lineGuide_); }

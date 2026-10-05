@@ -578,9 +578,6 @@ SnapPacket snapPacketOf(ref VectorStack vts) {
     return SnapPacket.init;
 }
 
-/// The guide snap types: the pen's own guide; `snapCursor` elects none of them (capture K-G).
-enum uint kGuideTypes = SnapType.WorldAxis | SnapType.StraightLine | SnapType.RightAngle;
-
 /// Snap the world position `cursorWorld` corresponding to screen pixel
 /// (sx, sy) according to `cfg`. `excludeVerts` lists vertex indices
 /// the candidate walk must skip — typically the dragged element's own
@@ -2645,7 +2642,7 @@ version (unittest) {
         void limits(float i, float o) { innerPx = i; outerPx = o; }
 
         bool proximity(Vec3 candWorld, SnapType type, int idx, int slot,
-                       out float distPx, ref int priority)
+                       ref float distPx, ref int priority)
         {
             if (seenCount < seen.length) seen[seenCount++] = key(type, idx, slot);
             if (!admitAll) return false;
@@ -2663,6 +2660,8 @@ version (unittest) {
 
         void setDrawState(GuideDrawState s) { draw = s; }
         uint flags() const { return 0; }
+        bool propose(Vec3, int, int, const ref Viewport, const ref SnapPacket,
+                     out Vec3, out SnapType) { return false; }
     }
 }
 
@@ -3049,7 +3048,7 @@ version (unittest) {
         void limits(float i, float o) {}
 
         bool proximity(Vec3 candWorld, SnapType type, int idx, int slot,
-                       out float distPx, ref int priority)
+                       ref float distPx, ref int priority)
         {
             float qx, qy, qz;
             if (!projectToWindowFull(candWorld, vp, qx, qy, qz)) return false;
@@ -3062,6 +3061,8 @@ version (unittest) {
 
         void setDrawState(GuideDrawState s) {}
         uint flags() const { return 0; }
+        bool propose(Vec3, int, int, const ref Viewport, const ref SnapPacket,
+                     out Vec3, out SnapType) { return false; }
     }
 }
 

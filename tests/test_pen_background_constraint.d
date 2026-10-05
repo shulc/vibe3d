@@ -371,29 +371,29 @@ unittest {
         ++ran;
     }
 
-    // ---- The guide gate on a CLICK (pen plan §9.3b step 6, by design: the
-    // capture B6 is a drag; ours' straight-line guide while dragging the last
-    // point runs through that point itself, so B6 cannot engage it). Control:
-    // handle off, the guide pulls the third click onto the line z 0; on: the
-    // surface point at q, z 0.005, the guide not consulted.
-    if (wanted("pen-guide-click-vs-surface")) {
+    // ---- The guide gate on the B6 drag, both halves (task 9416: the guide is
+    // anchored on the dragged point's ring neighbours, so the straight line
+    // z 0 through p1, p2 engages on p3's drag). Control: handle off, the guide
+    // pulls p3 onto z 0; on: the surface point at q, z 0.005, no guide.
+    if (wanted("pen-guide-drag-vs-surface")) {
         auto c = cell("B6");
         foreach (on; [false, true]) {
             rig([0, 1, 0], true, on);
             penOn();
+            clickXZ(c["clicks_xz"]);
             penCommand("tool.pipe.attr snap enabled true");
             penCommand(`tool.pipe.attr snap types "` ~ c["snap_types"].str ~ `"`);
-            clickXZ(JSONValue(c["clicks_xz"].array[1 .. 3]));
-            clickPixels(worldPixel(xz(c["drag"]["to_xz"])));
+            const k = cast(size_t)c["drag"]["point"].integer;
+            dragPixels(worldPixel(xz(c["clicks_xz"][k])), worldPixel(xz(c["drag"]["to_xz"])));
             penCommand("tool.pipe.attr snap enabled false");
             auto vs = commit();
-            if (vs.length != 3) { fails ~= format("pen-guide-click-vs-surface: %d vertices", vs.length); break; }
-            const p = d3(vs[2]);
+            if (vs.length != 4) { fails ~= format("pen-guide-drag-vs-surface: %d vertices", vs.length); break; }
+            const p = d3(vs[3]);
             if (!on && !(abs(p[2]) <= 1e-5))
-                fails ~= format("pen-guide-click-vs-surface control: the guide did not engage, "
-                                ~ "third point %(%.6f %) (expected z 0)", p[]);
+                fails ~= format("pen-guide-drag-vs-surface control: the guide did not engage, "
+                                ~ "p3 %(%.6f %) (expected z 0)", p[]);
             if (on && !(abs(p[2] - 0.005) <= 1e-5 && abs(len(sub(p, [0.0, 1.0, 0.0])) - 1) <= 2.5e-3))
-                fails ~= format("pen-guide-click-vs-surface: third point %(%.6f %), expected the "
+                fails ~= format("pen-guide-drag-vs-surface: p3 %(%.6f %), expected the "
                                 ~ "surface point at q (0.2, z 0.005)", p[]);
         }
         ++ran;

@@ -527,11 +527,12 @@ private immutable StepRow[] kStepTable = [
     // Task 9369: the polygon pen's stroke is its image — every attribute plus
     // the hidden `points` (captured in-stroke undo, fixture pen_instroke_undo);
     // task 9362 adds `merge`, the hidden per-point `link` and its mesh key;
-    // task 9365 (S8) `close` and `selectNew`; task 9366 (S9) `wall`, `offset`.
+    // task 9365 (S8) `close` and `selectNew`; task 9366 (S9) `wall`, `offset`;
+    // task 9416 `raycast`.
     StepRow("pen", OpensAt.firstPress, false,
             ["type", "currentPoint", "posX", "posY", "posZ", "flip", "makeQuads",
-             "merge", "close", "selectNew", "wall", "offset", "points", "link",
-             "linkKey"]),
+             "merge", "close", "selectNew", "raycast", "wall", "offset", "points",
+             "link", "linkKey"]),
     // Plan 8646 (S5): every published pen attribute is an image attribute (D15,
     // captured R-all); S7a adds the operation context (offsets + descriptor).
     StepRow("mesh.topoPen", OpensAt.firstPress, false,

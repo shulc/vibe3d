@@ -165,7 +165,7 @@ private final class MirrorGuide : SnapGuide {
     this(Viewport vp, int sx, int sy) { vp_ = vp; sx_ = sx; sy_ = sy; }
     void limits(float innerPx, float outerPx) {}
     bool proximity(Vec3 candWorld, SnapType type, int idx, int slot,
-                   out float distPx, ref int priority)
+                   ref float distPx, ref int priority)
     {
         float px, py, ndcZ;
         if (!projectToWindowFull(candWorld, vp_, px, py, ndcZ)) return false;
@@ -178,6 +178,8 @@ private final class MirrorGuide : SnapGuide {
     }
     void setDrawState(GuideDrawState s) {}
     uint flags() const { return 0; }
+    bool propose(Vec3, int, int, const ref Viewport, const ref SnapPacket,
+                 out Vec3, out SnapType) { return false; }
 }
 
 private final class SplitGuide : SnapGuide {
@@ -189,7 +191,7 @@ private final class SplitGuide : SnapGuide {
     }
     void limits(float innerPx, float outerPx) {}
     bool proximity(Vec3 candWorld, SnapType type, int idx, int slot,
-                   out float distPx, ref int priority)
+                   ref float distPx, ref int priority)
     {
         float px, py, ndcZ;
         if (!projectToWindowFull(candWorld, vp_, px, py, ndcZ)) return false;
@@ -201,6 +203,8 @@ private final class SplitGuide : SnapGuide {
     }
     void setDrawState(GuideDrawState s) {}
     uint flags() const { return 0; }
+    bool propose(Vec3, int, int, const ref Viewport, const ref SnapPacket,
+                 out Vec3, out SnapType) { return false; }
 }
 
 /// A guide that answers a FIXED priority and a scaled distance, optionally
@@ -227,7 +231,7 @@ private final class ConstGuide : SnapGuide {
     }
     void limits(float innerPx, float outerPx) {}
     bool proximity(Vec3 candWorld, SnapType type, int idx, int slot,
-                   out float distPx, ref int priority)
+                   ref float distPx, ref int priority)
     {
         if (rejectEven_ && idx >= 0 && (idx & 1) == 0) return false;
         float px, py, ndcZ;
@@ -240,6 +244,8 @@ private final class ConstGuide : SnapGuide {
     }
     void setDrawState(GuideDrawState s) {}
     uint flags() const { return 0; }
+    bool propose(Vec3, int, int, const ref Viewport, const ref SnapPacket,
+                 out Vec3, out SnapType) { return false; }
 }
 
 // ---------------------------------------------------------------------------

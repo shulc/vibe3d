@@ -597,29 +597,16 @@ SnapPacket currentSnapPacket(const ref Mesh mesh, EditMode editMode,
 /// don't have a "moving set" the way MoveTool's drag does, and
 /// snapping a primitive's first corner to a selected vertex is a
 /// legitimate gesture.
-///
-/// `excludeTypes` (default 0 = no change) lets callers suppress specific
-/// SnapType bits from the shared pipeline packet before `snapCursor` runs.
-/// The Pen uses this to prevent the transform-scoped WorldAxis-through-origin
-/// (snap.d Stage 2) from firing during pen clicks — the Pen handles those
-/// guide types itself via applyPenGuide. All other Create-tools pass 0 and
-/// are byte-identical to the pre-guide code path.
 SnapResult snapLocalHit(ref Vec3 hitLocal,
                         in WorkplaneFrame frame,
                         int sx, int sy,
                         const ref Viewport vp,
                         const ref Mesh mesh,
                         EditMode editMode,
-                        const(uint)[] excludeVerts = [],
-                        uint excludeTypes = 0)
+                        const(uint)[] excludeVerts = [])
 {
     SnapPacket localPkt = currentSnapPacket(mesh, editMode, vp);
     if (!localPkt.enabled) return SnapResult.init;
-
-    // Apply exclusion mask: the caller can suppress certain SnapType bits so
-    // it can handle those constraint types itself. Default 0 = no change
-    // (backward-compatible for all non-Pen Create-tools).
-    localPkt.enabledTypes &= ~excludeTypes;
 
     Vec3 hitWorld = transformPoint(frame.toWorld, hitLocal);
     auto sr = snapCursor(hitWorld, sx, sy, vp, mesh, primaryModelSpace(), localPkt, excludeVerts,

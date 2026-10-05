@@ -285,23 +285,22 @@ private:
     // `kGuidePrioritySeed`, which is why `gp` below is seeded and not left to
     // the zero an `out` parameter would have supplied.
     //
-    // The guide re-RANKS a candidate; it never introduces one. `candWorld`,
+    // Here a guide re-RANKS a candidate; it never introduces one. `candWorld`,
     // `type`, `idx` and `slot` are the enumeration's, and the winner's world
     // position is still the candidate's own — a guide that answers with a
     // different distance changes WHICH candidate wins, never WHERE it is.
-    // This is also the one arbitration detail we know about and have NOT
-    // adopted: the reference's proximity answer is a per-axis write mask,
-    // naming which of x/y/z the winning guide may overwrite. A mask needs a
-    // guide that supplies a POSITION to mask, and ours supplies only a
-    // ranking — so there is nothing here for the bits to select. If a guide
-    // ever answers with a point of its own, that is when the mask becomes a
-    // thing we are missing rather than a thing we have no use for.
+    // The distance arrives seeded with the enumeration's rank, so a guide that
+    // does not write it re-ranks nothing. A guide's own POSITION is offered
+    // whole through `propose` (in `resolve`); the reference's per-axis write
+    // mask on it is not adopted (task 9416: our one proposing guide writes a
+    // point on a line, all three axes).
     bool arbitrate(Vec3 candWorld, SnapType type, int idx, int slot,
                    ref float distPx, ref int prio)
     {
         bool admitted = false;
+        immutable float rank = distPx;
         foreach (g; guides) {
-            float gd;
+            float gd = rank;
             int   gp = kGuidePrioritySeed;
             if (!g.proximity(candWorld, type, idx, slot, gd, gp)) continue;
             if (!admitted || gp > prio) {
@@ -704,6 +703,15 @@ public:
     /// has been offered; `snapCursor` returns whatever this returns.
     SnapResult resolve() {
         SnapResult res = passThrough(cursorWorld);
+
+    // A registered guide's own position (`SnapGuide.propose`, task 9416), once
+    // per query, competes in the constraint tier: an element and a grid node
+    // still win over it.
+    foreach (g; guides) {
+        Vec3 p;
+        SnapType t;
+        if (g.propose(cursorWorld, sx, sy, vp, cfg, p, t)) considerConstraint(p, t);
+    }
 
     // -----------------------------------------------------------------------
     // Stage 2: Result merge rule (D2).

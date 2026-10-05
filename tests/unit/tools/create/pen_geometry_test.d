@@ -25,7 +25,7 @@ static assert([__traits(allMembers, PreparedPenParamKind)] ==
     ["None", "Noop", "CurrentPoint", "Position", "Preview"]);
 static assert([__traits(allMembers, PenParams)] ==
     ["type", "currentPoint", "posX", "posY", "posZ", "wall", "offset", "flip",
-     "makeQuads", "merge", "close", "selectNew"]);
+     "makeQuads", "merge", "close", "selectNew", "raycast"]);
 static assert(PenParams.sizeof == 36);
 static assert([__traits(allMembers, PenWall)] == ["off", "inner", "outer", "both"]);
 static assert([__traits(allMembers, PenType)] ==

@@ -7,11 +7,14 @@
 // `pen.d`. Design: doc/pen_parity_wave_plan_2026-10-04.md §3.2 M-BUILD, §9.1.
 module tools.create.pen_geometry;
 
-import math : Vec3, Viewport, cross, dot, eyeVectorAt, faceNormalFirst3, normalize;
+import math : Vec3, Viewport, closestPointOnLineToRay, cross, dot, eyeVectorAt,
+    faceNormalFirst3, normalize, projectToWindowFull;
 import mesh : Mesh;
+import std.math : abs;
 import seltype : SelType;
 import symmetry : mirrorPosition;
-import toolpipe.packets : SymmetryPacket;
+import toolpipe.guide : GuideDrawState, SnapGuide;
+import toolpipe.packets : SnapPacket, SnapType, SymmetryPacket;
 import tools.create.create_common : WorkplaneFrame, transformDir, transformPoint;
 
 /// The pen tool's wire schema (panel / `tool.attr` values). Compared with
@@ -34,11 +37,14 @@ struct PenParams {
     bool  close        = false;    // lines: the closing segment [n - 1, 0]
     // The commit selects what it appended (wave plan S8, pen_types.json).
     bool  selectNew    = true;
+    // A press on a stroke point hidden behind the background does not grab it
+    // (pen wave plan S10; fixture pen_options.json B9).
+    bool  raycast      = false;
 }
 // Field sizes summed by hand (a field added must be added here and to the
 // member pin in pen_geometry_test), rounded to 4: no interior padding.
 static assert(PenParams.sizeof ==
-    (3 * int.sizeof + 4 * float.sizeof + 5 * bool.sizeof + 3) / 4 * 4,
+    (3 * int.sizeof + 4 * float.sizeof + 6 * bool.sizeof + 3) / 4 * 4,
     "PenParams has interior padding that sameValueBytes would compare");
 
 /// `PenParams.type`, the panel's order (wave plan S8).
@@ -147,6 +153,65 @@ void revKeepFirst(uint[] ring) nothrow @nogc {
     foreach (i; 1 .. (ring.length + 1) / 2) {
         const t = ring[i]; ring[i] = ring[$ - i]; ring[$ - i] = t;
     }
+}
+
+/// The pen's drag guides as one registered snap guide (pen wave plan S10,
+/// interaction-layer task 9416; fixture pen_options.json B8 / Gnext). `aim`
+/// takes the stroke's WORLD points, the dragged index and the stroke plane's
+/// normal: lines through the dragged point's ring neighbours — prev / next —
+/// straight line (n >= 4) along prev - prevprev / next - nextnext, world axes
+/// (n >= 2) through prev / next, skipping the one along the plane normal, right
+/// angle (n >= 3) in the plane, perpendicular to those sides. `propose` projects
+/// the client point along the eye onto every line whose bit the packet enables
+/// and offers the nearest on screen (ties: the first); it re-ranks nothing.
+/// `live` is the pen's per-event gate: a drag point the surface did not place.
+final class LineGuide : SnapGuide {
+    struct Line { Vec3 origin, dir; SnapType type; }
+    Line[] lines;
+    bool live;
+
+    void aim(const(Vec3)[] pts, size_t i, Vec3 planeNormal) {
+        lines = null;
+        immutable n = pts.length;
+        if (n < 2) return;
+        immutable size_t[2] side = [(i + n - 1) % n, (i + 1) % n];
+        immutable size_t[2] far  = [(i + n - 2) % n, (i + 2) % n];
+        const nrm = normalize(planeNormal);
+        void add(Vec3 o, Vec3 d, SnapType t) {
+            if (d.length > 1e-6f) lines ~= Line(o, normalize(d), t);
+        }
+        foreach (k; 0 .. 2) if (n >= 4)
+            add(pts[side[k]], pts[side[k]] - pts[far[k]], SnapType.StraightLine);
+        foreach (k; 0 .. (side[0] == side[1] ? 1 : 2))
+            foreach (ax; [Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1)])
+                if (abs(dot(ax, nrm)) <= 0.9f)
+                    add(pts[side[k]], ax, SnapType.WorldAxis);
+        foreach (k; 0 .. 2) if (n >= 3) {
+            const seg = pts[side[k]] - pts[far[k]];
+            if (seg.length > 1e-6f) add(pts[side[k]], cross(nrm, normalize(seg)), SnapType.RightAngle);
+        }
+    }
+
+    bool propose(Vec3 p, int px, int py, const ref Viewport vp, const ref SnapPacket cfg,
+                 out Vec3 pos, out SnapType type) {
+        if (!live) return false;
+        const eye = eyeVectorAt(vp, p);
+        float best = float.infinity;
+        foreach (l; lines) {
+            if (!(cfg.enabledTypes & l.type)) continue;
+            const c = closestPointOnLineToRay(l.origin, l.dir, p, eye);
+            float sx, sy, sz;
+            if (!projectToWindowFull(c, vp, sx, sy, sz)) continue;
+            const d = (sx - px) * (sx - px) + (sy - py) * (sy - py);
+            if (d < best) { best = d; pos = c; type = l.type; }
+        }
+        return best < float.infinity;
+    }
+
+    bool proximity(Vec3, SnapType, int, int, ref float, ref int) { return true; }
+    void limits(float, float) {}
+    void setDrawState(GuideDrawState) {}
+    uint flags() const { return 0; }
 }
 
 /// The tool's facing decision (wave plan §9.4): flip when the triangle
