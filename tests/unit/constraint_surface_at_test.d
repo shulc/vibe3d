@@ -102,4 +102,28 @@ unittest {
     // (5) A pixel off both quads misses: (390, 10) is world (1.905, 0.895).
     assert(!cs.rayHitAt(390, 10, vp, h),
            format("pixel (390, 10) is off both quads and must miss; got source %s at %s", h.source, h.point));
+
+    // (6) The hover publish (Point mode, the topology pen's): the centre
+    // pixel's hit offset 0.1 along the normal, then a miss publishes NO hit
+    // (the packet is rebuilt per event, never the last hit kept).
+    import toolpipe.packets : ConstrainGeom, ConstrainHitPacket, SubjectPacket;
+    import operator : VectorStack;
+    cs.geom   = ConstrainGeom.Point;
+    cs.offset = 0.1f;
+    ConstrainHitPacket publish(int x, int y) {
+        SubjectPacket subj;
+        subj.viewport = vp; subj.cursorValid = true; subj.cursorX = x; subj.cursorY = y;
+        VectorStack vts;
+        vts.put(&subj);
+        assert(cs.evaluate(vts), "an enabled stage evaluates");
+        auto p = vts.get!ConstrainHitPacket();
+        assert(p !is null, format("Point mode must publish a hit packet at (%s, %s)", x, y));
+        return *p;
+    }
+    const hp = publish(200, 100);
+    assert(hp.hit && near3(hp.point, want.point + hp.normal * 0.1f) && fabs(fabs(hp.normal.z) - 1) < 1e-6f,
+           format("publish: the hit offset 0.1 along the normal (%s + 0.1 * %s); got hit %s at %s",
+                  want.point, hp.normal, hp.hit, hp.point));
+    const miss = publish(390, 10);
+    assert(!miss.hit, format("publish: a miss after a hit must publish no hit; got %s at %s", miss.hit, miss.point));
 }
