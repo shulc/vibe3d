@@ -799,7 +799,7 @@ public:
         auto sym = cast(SymmetryStage)
                    scene.pipeContext.pipeline.findByTask(TaskCode.Symm);
         if (sym !is null && sym.enabled) {
-            // The plane the stage applies (task 9410), lattice axes any
+            // The plane the stage applies; the lattice axes are any
             // in-plane pair (the unit lattice is square and centred).
             Vec3 c, n, a1, a2;
             sym.currentPlane(c, n);

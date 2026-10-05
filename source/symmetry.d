@@ -60,7 +60,7 @@ Vec3 projectOnPlane(const ref SymmetryPacket sp, Vec3 pos) pure nothrow @nogc @s
     return pos - sp.planeNormal * d;
 }
 
-/// THE side test (task 9410): 0 within `eps` of the plane, else the sign of
+/// THE side test: 0 within `eps` of the plane, else the sign of
 /// `dot(p − planePoint, planeNormal)`. The pairing passes `epsilonWorld`; Edge
 /// Extend and the authoring side pass 0 — strict, x = ±1e-4 already flips
 /// (doc/measured_laws.md §21).
@@ -436,7 +436,7 @@ private size_t upperBound(const float[] sortedCoords, float target) pure nothrow
 }
 
 // ---------------------------------------------------------------------------
-// walkMirrorPairs — THE mirror walker (task 9410): the pair write rule
+// walkMirrorPairs — THE mirror walker: the pair write rule
 // (`mirrorStepFor`) over the operand mask `selected[]`, with the client's
 // storage. `read(i)` is vertex i's current position, `write(i, p)` stores one,
 // `mirrored(i, mi, p)` is partner mi's new position from driver i at `p`. An

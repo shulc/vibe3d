@@ -351,7 +351,7 @@ public:
     /// offset / workplane state, without a pipeline pass — the head of
     /// `evaluate`. A workplane plane falls back to the last evaluated plane
     /// (world XZ before the first). Read by `authoringSide()` and the viewport's
-    /// plane overlay (overlay = applied plane, task 9410).
+    /// plane overlay (overlay = applied plane).
     public void currentPlane(out Vec3 planePt, out Vec3 planeN) const nothrow @nogc {
         if (enabled && useWorkplane) {
             if (cachedReady_) {
