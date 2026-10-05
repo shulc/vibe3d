@@ -878,7 +878,7 @@ unittest { // (4c)
     import tests.unit.production_tool_policies : productionPolicies;
     import tests.unit.census_symbols : blankUnittestBodies;
     // FLOOR: the production registry's 71 ids, the model's 13; and the raw scan
-    // reaches the whole source tree (>= 582 files: other waves add files) with
+    // reaches the whole source tree (>= 578 files: other waves add files) with
     // the session module among them. Polarity: stationary.
     size_t ids;
     auto rows = productionPolicies(ids);
@@ -898,8 +898,8 @@ unittest { // (4c)
         if (c[0] + c[1] + c[2])
             raw ~= format("raw:%s:%s/%s/%s", name, c[0], c[1], c[2]);
     }
-    assert(scanned >= 582 && sessionScanned,
-           format("S2b floor: the raw scan read %s files of source/ (floor 582), session module "
+    assert(scanned >= 578 && sessionScanned,
+           format("S2b floor: the raw scan read %s files of source/ (floor 578), session module "
                   ~ "read: %s", scanned, sessionScanned));
 
     // NEEDLE — ONE multiset, by identifier (form items 1-3): the writes of the

@@ -231,9 +231,10 @@ unittest {
     // registration closure already held the decoder, +1).
     // Pen S1: the pen reads its one stroke builder, `tools.create.pen_geometry`
     // (+1 each).
-    assert(transform.queue.length == 262 && positive.queue.length == 527,
-        format("6506 import closure census changed: transform=%d/262 "
-            ~ "registration=%d/527", transform.queue.length,
+    // Wave-2 PRM1: eleven parameter-update owner modules became one (-10 each).
+    assert(transform.queue.length == 252 && positive.queue.length == 517,
+        format("6506 import closure census changed: transform=%d/252 "
+            ~ "registration=%d/517", transform.queue.length,
             positive.queue.length));
 }
 

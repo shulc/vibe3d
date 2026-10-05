@@ -239,3 +239,4 @@ drop 3 4 M5 the dead applyStickyToolDefaults (no production caller) removed with
 drop 0 1 8220 Mirror prepared deactivate no longer records a cumulative edit; ToolSession records completed gestures, so the old drop-record undo assertion was removed
 drop 0 1 8770 pruneRedoTop_ foreign-head assertion became a guard: reachable via a session tool armed without an activation row
 drop 0 3 9363 penWorkplaneMirrorPlane returns nothing (the symmetry stage's axis is always 0..2, its result was never read): its three refusal / acceptance asserts removed
+drop 6 78 9426 the eleven in-source parameter-update owner unittests became one row table (tests/unit/prepared_param_update_test.d): each of its four cells is written once and run for all eleven tools through a collecting check, plus refusal and owner-order cells; the textual assert count fell, the executed cell count rose
