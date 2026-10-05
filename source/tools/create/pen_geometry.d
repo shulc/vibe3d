@@ -114,23 +114,19 @@ void penWorkplaneMirrorPlane(int axis, float offset, in WorkplaneFrame wp,
 /// first quad of a strip.
 size_t penFaceMinimum(bool quads) nothrow @nogc { return quads ? 4 : 3; }
 
-/// A wall of offset 0 builds nothing (S9, fixture pen_wall.json D6c), so no
-/// stroke of it commits: no history row.
-bool penBuildsNothing(in PenParams p) nothrow @nogc {
-    return p.wall != PenWall.off && !(p.offset > 0);
-}
-
 /// Fewest points Enter commits (wave plan S8: lines 2, vertices 1; polygons
 /// and subdiv the face shape).
 size_t penEnterMinimum(in PenParams p) nothrow @nogc {
-    return penBuildsNothing(p) ? size_t.max
-         : p.type == PenType.lines ? 2 : p.type == PenType.vertices ? 1
+    return p.type == PenType.lines ? 2 : p.type == PenType.vertices ? 1
          : penFaceMinimum(p.makeQuads);
 }
 /// Fewest points a tool drop commits: a polygon edge (fixture row E5pen2) or
-/// the strip's first quad; lines 2, vertices 1 (S8).
+/// the strip's first quad; lines 2, vertices 1 (S8). A wall of offset 0 builds
+/// nothing, so no stroke of it commits — no history row (S9, pen_wall.json
+/// D6c); every commit path (Enter included) passes this minimum.
 size_t penDropMinimum(in PenParams p) nothrow @nogc {
-    return penBuildsNothing(p) ? size_t.max : p.type == PenType.vertices ? 1
+    return p.wall != PenWall.off && !(p.offset > 0) ? size_t.max
+         : p.type == PenType.vertices ? 1
          : p.makeQuads && p.type != PenType.lines ? 4 : 2;
 }
 
@@ -212,7 +208,7 @@ uint[] penRingOrder(const(Vec3)[] v, bool reverse) {
 /// (1 + l_in·l_out ≈ 0, not captured) takes l_in.
 void appendPenWall(ref Mesh dst, in PenStroke s) {
     const n = s.points.length;
-    if (n < 2 || !(s.offset > 0)) return;   // the commit minimum agrees: penBuildsNothing
+    if (n < 2 || !(s.offset > 0)) return;   // penDropMinimum agrees: no commit
     const bool closed = s.close && n >= 3;
     auto p = new Vec3[n];
     foreach (i, q; s.points) p[i] = transformPoint(s.toWorld, q);

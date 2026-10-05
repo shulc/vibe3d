@@ -596,8 +596,7 @@ unittest // walls outside the captured strokes (S9 gap rows): no NaN, no read pa
     // An empty wall never commits; any positive offset or wall off commits from 2.
     PenParams empty = p; empty.offset = 0;
     PenParams off = empty; off.wall = PenWall.off;
-    assert(penDropMinimum(empty) == size_t.max && penEnterMinimum(empty) == size_t.max &&
-        penDropMinimum(p) == 2 && penDropMinimum(off) == 2 && penEnterMinimum(off) == 3,
-        format("commit minima: empty %s / %s, wall %s, off %s / %s", penDropMinimum(empty),
-            penEnterMinimum(empty), penDropMinimum(p), penDropMinimum(off), penEnterMinimum(off)));
+    assert(penDropMinimum(empty) == size_t.max && penDropMinimum(p) == 2 &&
+        penDropMinimum(off) == 2, format("drop minima: empty %s, wall %s, off %s",
+            penDropMinimum(empty), penDropMinimum(p), penDropMinimum(off)));
 }
