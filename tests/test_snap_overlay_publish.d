@@ -133,3 +133,12 @@ unittest { // a held handle drag publishes as it moves; the release clears it
     assert(released["highlighted"].type == JSONType.false_,
         "the release must clear the drag's snap: " ~ released.toString);
 }
+
+unittest { // a switch away (not a drop) clears the vertex tool's hover through its door
+    auto s = hoverWith("prim.vertex");
+    assert(isVertexSnap(s), "control: the hover published");
+    cmd("tool.set prim.cube");
+    s = fetchSnapLast(BASE);
+    assert(s["highlighted"].type == JSONType.false_,
+        "prim.vertex: a switch away must clear its snap: " ~ s.toString);
+}
