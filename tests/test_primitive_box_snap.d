@@ -107,6 +107,7 @@ unittest { // Vertex snap fires on a cube vert during box base-corner click
 
 import pen_rig_helpers : penCameraAt, penSceneEmpty, worldPixel;
 import std.math : abs;
+import std.string : indexOf;
 
 private double qf(string attr) {
     auto r = postJson("/api/command", "tool.attr prim.cube " ~ attr ~ " ?");
@@ -279,6 +280,8 @@ unittest { // handle drags under grid snap: not trapped; a released element snap
     }
 
     assert(ran == 4, format("population: %d box handle cells ran, expected 4", ran));
-    assert(fails.length == 0, format("%d of 4 box handle cells red:\n  %-(%s\n  %)",
-                                     fails.length, fails));
+    string[] names;   // the red cells by name first: the runner shows 8 lines
+    foreach (f; fails) names ~= f[0 .. f.indexOf(':')];
+    assert(fails.length == 0, format("%d of 4 box handle cells red (%-(%s, %)):\n  %-(%s\n  %)",
+                                     fails.length, names, fails));
 }
