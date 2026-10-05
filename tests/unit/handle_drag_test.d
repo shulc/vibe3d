@@ -16,7 +16,7 @@ import std.math : abs, round;
 import tests.unit.census_symbols : blankNonCode, blankUnittestBodies, containsWord,
     isIdentChar, symbolTokenHits;
 
-import math : Vec3, Viewport, lookAt, orthographicMatrix;
+import math : Vec3, Viewport, lookAt, orthographicMatrix, perspectiveMatrix;
 import drag : HandleDrag, DragFrame, DragKind, screenAxisDelta, primitiveCenterDragDelta;
 import tools.transform.move : MoveTool;
 import tools.create.box : BoxTool;
@@ -76,6 +76,24 @@ unittest {
         "a fed-back press must stay on 0.3; press + travel reaches 0.4");
     // Release: after snapped events, an unsnapped one is the client itself.
     assert(g.client(440, 300, f, vp, skip) == c, "a released snap rejoins the pointer");
+}
+
+unittest {
+    // Pure: the client reads only the press, so a detour through another pixel
+    // leaves the answer at a pixel unchanged — in a perspective view, where a
+    // per-event re-press would re-linearise and land elsewhere.
+    immutable eye = Vec3(3, 4, 5);
+    Viewport vp = Viewport(lookAt(eye, Vec3(0, 0, 0), Vec3(0, 1, 0)),
+        perspectiveMatrix(1.0471976f, 800.0f / 600.0f, 0.01f, 100.0f), 800, 600, 0, 0, eye);
+    vp.focus = Vec3(0, 0, 0);
+    DragFrame f;
+    f.kind = DragKind.screenAxis;
+    HandleDrag g;
+    g.press(Vec3(0.3f, 0, 0.1f), 400, 300);
+    bool skip;
+    immutable Vec3 first = g.client(440, 300, f, vp, skip);
+    foreach (k; 1 .. 21) g.client(400 + 4 * k, 300, f, vp, skip);
+    assert(!skip && g.client(440, 300, f, vp, skip) == first, "the client must not accumulate");
 }
 
 unittest {

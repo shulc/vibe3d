@@ -1671,7 +1671,7 @@ enum DragKind : ubyte {
     screenAxis,     // LAW A own: the segment point → point + axis, gain |axis|
     viewPlane,      // LAW B: `planeDragDelta` on `plane` (3..6) of the basis
     principalPlane, // LAW D: `primitiveCenterDragDelta` through the press point
-    planeHit,       // the pointer's hit on the plane (point, `normal`), along `axis`
+    planeHit,       // the pointer's hit on the plane (point, `normal`)
 }
 
 struct DragFrame {
@@ -1718,7 +1718,7 @@ struct HandleDrag {
             skip = !rayPlaneIntersect(o, d, point, f.normal, h0);
             screenPointToRay(cast(float)px, cast(float)py, vp, o, d);
             skip = skip || !rayPlaneIntersect(o, d, point, f.normal, h1);
-            return point + f.axis * dot(h1 - h0, f.axis);
+            return point + (h1 - h0);
         }
     }
 }
