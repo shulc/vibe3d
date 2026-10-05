@@ -676,7 +676,7 @@
     {
       "aggregate": "PenTool",
       "module": "tools.create.pen",
-      "semantic_sha256": "817a5fa6381c807915a294305ac2faba57745b534582b9ef493465581ff93d58",
+      "semantic_sha256": "2e5bc7d44f4cb2d414c994e11c1123ce9e9f29a8072700eb9a9194b5ae03b97e",
       "signature": "void()",
       "symbol": "activate"
     },

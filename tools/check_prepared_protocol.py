@@ -2588,7 +2588,8 @@ def pen_activation_gate(pen, private, context):
         "target.classinfo !is PenTool.classinfo" in before_text_anchor(
             private, "static PreparedPrivateStateOwner penDeactivate") and
         "case PreparedPrivateStateKind.Pen: penTarget.installPreparedPrivateActivation();" in private and
-        "state = PenState.Idle; vertices_.length = 0; params_.currentPoint = -1;" in installer and
+        "state = PenState.Idle; clearStroke(); params_.currentPoint = -1;" in installer and
+        "void clearStroke() nothrow @nogc { vertices_.length = 0; links_.length = 0; }" in pen and
         "params_.posX = params_.posY = params_.posZ = 0.0f;" in installer and
         "dragArmed = dragInitiated = false; dragVertIdx = -1;" in installer and
         "e.privateState.install();" in context and "e.gpuCreate.installEnlisted();" in context and
@@ -2608,8 +2609,12 @@ for target, old, new, label in (
      "            PreparedActivateKind.Pen, ok)",
      "PreparedSessionActivateEffect(OwnedId.init,\n"
      "            PreparedActivateKind.Pen, ok)", "forge effect owner"),
-    ("pen", "state = PenState.Idle; vertices_.length = 0; params_.currentPoint = -1;",
-     "state = PenState.Idle; params_.currentPoint = -1;", "drop vertices reset"),
+    ("pen", "state = PenState.Idle; clearStroke(); params_.currentPoint = -1;",
+     "state = PenState.Idle; params_.currentPoint = -1;", "drop stroke reset"),
+    ("pen", "{ vertices_.length = 0; links_.length = 0; }",
+     "{ links_.length = 0; }", "drop vertices from the stroke reset"),
+    ("pen", "{ vertices_.length = 0; links_.length = 0; }",
+     "{ vertices_.length = 0; }", "drop links from the stroke reset"),
     ("pen", "params_.posX = params_.posY = params_.posZ = 0.0f;\n"
      "        dragArmed = dragInitiated = false; dragVertIdx = -1;",
      "params_.posX = 0.0f;\n"

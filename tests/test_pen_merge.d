@@ -43,6 +43,9 @@
 //    corner) and a placed point on V links V (scene_click_exact). So 3 clicks
 //    (the third on V) make 4 points, one of them V: 3 new vertices, one quad
 //    holding index 0, V unmoved — true under our strip and S7's alike.
+//  - two-point-edge-press: a 2-point stroke has one stroke edge (0, 1); a
+//    press 9 px off it (E1's press) inserts between its ends (slot 1, current
+//    1), the same rule the 3-point E1 cell reads, at the smallest n it covers.
 // Pending cells (run, observed value pinned as a tripwire, NOT a pass; each
 // becomes a compare against its capture when that capture lands):
 //  - relink-same-vertex (PENDING-K-B10, task 9392): a click on V, then a click
@@ -504,8 +507,18 @@ unittest {
                 pts, m.v.length, m.f, m.v.length ? m.v[0] : Vec3(0, 0, 0), p(0, 0.2));
     }
 
+    // A 2-point stroke's one edge takes a press (header: two-point-edge-press).
+    {
+        rig(fE, 440);
+        clickWorld(p(-0.4, 0), p(0.4, 0), p(0.1, -0.02));
+        fails ~= current("two-point-edge-press", 1);
+        drop(); ++ran;
+        fails ~= compare("two-point-edge-press", [p(-0.4, 0), p(0.1, -0.02), p(0.4, 0)],
+                         [[0, 1, 2]]);
+    }
+
     snap(null);
-    assert(ran == 70, format("pen merge population: %s cells ran, pinned 70", ran));
+    assert(ran == 71, format("pen merge population: %s cells ran, pinned 71", ran));
 
     // ===== pending a capture (tripwires, never a pass) ======================
     string[] pending;
