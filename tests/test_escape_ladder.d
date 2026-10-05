@@ -340,16 +340,16 @@ unittest {
 
     assert(executed == expectedIds,
         format("escape ids drifted: got %s expected %s", executed, expectedIds));
-    assert(escapePresses == 31 && spacePresses == 7,
-        format("escape ladder press census: Esc=%s Space=%s, expected 31/7",
+    assert(escapePresses == 32 && spacePresses == 7,
+        format("escape ladder press census: Esc=%s Space=%s, expected 32/7",
             escapePresses, spacePresses));
     foreach (rung; ["dropTool", "clearPipe", "dropCurrentType", "dropItems", "nothing"])
         assert(rungCounts[rung] >= 1, "no executed press for rung " ~ rung);
     // A measured population literal, not an identity: `compareExpected` adds
     // leafCount(want) on every branch, so compared == expected always holds.
     // Deleting a fixture key (e.g. E2's `snap`, M18's only witness) moves this.
-    assert(expectedLeaves == 876,
-        format("escape comparison population changed: %s leaves, expected 876",
+    assert(expectedLeaves == 892,   // 876 + E6t's clear-constraint press (11 state + 5 history)
+        format("escape comparison population changed: %s leaves, expected 892",
             expectedLeaves));
     assert(comparedLeaves == expectedLeaves && comparedLeaves > 0,
         format("escape comparison leaf floor: compared %s expected %s",

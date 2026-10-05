@@ -69,7 +69,7 @@ private static immutable IntEnumEntry[] constrainGeomEntries = [
 //   `dblSided` : "true" / "false" (default false)
 // ---------------------------------------------------------------------------
 
-/// The user's remembered constraint (task 9401, fixture constraint_boot.json):
+/// The user's remembered constraint (fixtures/constraint_boot.json):
 /// `yes` = remembered, not in the pipe (boot, scene reset); `inPipe` =
 /// remembered and enabled (a tool drop or the user's toggle-on put it there);
 /// `no` = forgotten (toggle-off, the Escape clear) until the next toggle-on.
@@ -100,14 +100,15 @@ unittest {
     live.installPreparedTransientReset();
     assert(live.enabled && live.geom == ConstrainGeom.Screen && live.userLocked,
            "prepared constrain transient reset ignored the user lock");
-    live.userLocked = false;
-    live.remembered = Remembered.inPipe;
-    live.installPreparedTransientReset();
-    assert(live.enabled && live.geom == ConstrainGeom.Off,
+    auto kept = new ConstrainStage();
+    kept.remembered = Remembered.inPipe;
+    kept.geom = ConstrainGeom.Screen;
+    kept.installPreparedTransientReset();
+    assert(kept.enabled && kept.geom == ConstrainGeom.Off,
            "prepared constrain transient reset ignored the remembered constraint");
-    const before = live.capturePreparedCompositionProjection();
-    live.remembered = Remembered.no;
-    assert(!live.matchesPreparedCompositionProjection(before),
+    const before = kept.capturePreparedCompositionProjection();
+    kept.remembered = Remembered.no;
+    assert(!kept.matchesPreparedCompositionProjection(before),
            "prepared constrain projection omitted the remembered state");
 }
 
@@ -426,7 +427,7 @@ public:
     // `tool.pipe.attr constrain <attr>` write, commands/tool/pipe.d), never in
     // `onParamChanged()`: a tool's own composition (TopologyPenTool.activate)
     // calls `setAttr` directly and must revert at the next tool switch, while
-    // the user's settings survive it (review fix SF; TS-keep, task 9401).
+    // the user's settings survive it (review fix SF; cell TS-keep).
     // `remembered` is the separate fact the transient reset returns to.
     bool userLocked = false;
     Remembered remembered = Remembered.yes;
@@ -479,7 +480,7 @@ public:
     }
 
     /// A tool drop puts the remembered constraint into the pipe; a forgotten
-    /// one stays out (task 9401, cells first-drop-*, cleared-not-readded).
+    /// one stays out (cells first-drop-*, cleared-not-readded).
     void noteToolDropped() {
         if (remembered == Remembered.yes) remembered = Remembered.inPipe;
         enabled = remembered == Remembered.inPipe;

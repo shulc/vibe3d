@@ -155,7 +155,7 @@ class ToolPipeAttrCommand : Command {
 
         // Any user write of a CONS attr locks the settings while enabled
         // (TS-keep); an `enabled` write also remembers or forgets the
-        // constraint (task 9401). A tool's own composition calls the stage's
+        // constraint. A tool's own composition calls the stage's
         // setAttr directly and never reaches here (review fix SF).
         if (stageId_ == "constrain") {
             import toolpipe.stages.constrain : ConstrainStage, Remembered;

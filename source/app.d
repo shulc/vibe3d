@@ -57,7 +57,7 @@ import http_server;
 import tool_activation_ownership : ToolTransition, ActivationDoor,
     activationDoorFor, pipeArmScopeFor, armUsesAttrCache, CloseReason,
     CloseOutcome, CommandDoor, closeReasonFor, armDoorFor, postmodeArmedOnArm,
-    dropWritesRowFor, DropContext;
+    dropWritesRowFor, dropRemembersConstraint, DropContext;
 import guarded_action_controller : GuardedActionController,
     GuardedActionPorts, GuardObservationPorts;
 import ui.guard_modal_state : GuardModalState;
@@ -2822,10 +2822,9 @@ void main(string[] args) {
         }
         // Drop tool-driven pipe config (ACEN / AXIS / WGHT) so the
         // next tool starts from defaults; then a user drop puts the
-        // remembered constraint back (task 9401; a switch is not a drop).
+        // remembered constraint back (a switch is not a drop).
         resetTransientPipeStages();
-        if (hadTool && (why == ToolTransition.explicitDrop
-                        || why == ToolTransition.sceneResetDrop)) {
+        if (hadTool && dropRemembersConstraint(why)) {
             import toolpipe.stages.constrain : liveConstrainStage;
             if (auto cs = liveConstrainStage()) cs.noteToolDropped();
         }

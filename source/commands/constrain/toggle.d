@@ -15,7 +15,8 @@ import toolpipe.stages.constrain   : liveConstrainStage, Remembered;
 //
 // A user command door: it sets `ConstrainStage.userLocked` and the
 // remembered constraint (toggle-off forgets it, toggle-on remembers it with
-// its kept settings — task 9401). onParamChanged() never locks (review fix SF).
+// its kept settings; fixtures/constraint_boot.json). onParamChanged() never
+// locks (review fix SF).
 // ---------------------------------------------------------------------------
 class ConstrainToggleCommand : Command {
     this(Mesh* mesh, ref View view, EditMode editMode) {

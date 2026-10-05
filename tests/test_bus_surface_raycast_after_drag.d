@@ -41,7 +41,7 @@
 // Three properties of `ConstrainStage` decide whether that rig discriminates
 // anything at all, and each one is a way this file could have been born inert:
 //
-//   * `reset()` calls `_bgBvh.clear()`, and `resetTransient()` calls `reset()`
+//   * `resetTransient()` calls `_bgBvh.clear()` (so does `reset()`)
 //     on EVERY tool activation and every tool DROP (`app.d ::
 //     resetTransientPipeStages`, three call sites). A cleared cache rebuilds
 //     from scratch and the stale read disappears. The guard is `userLocked`,
@@ -56,8 +56,8 @@
 //     exactly such an address. A single CONS evaluate with a live cursor
 //     mid-drag would therefore delete the entry and hand raycast #2 a fresh
 //     tree. `geometry vector` for the duration of the drag is what stops that
-//     branch running (`evaluate` gates it on Point|Screen), and it does NOT
-//     touch `userLocked`.
+//     branch running (`evaluate` gates it on Point|Screen), and it keeps
+//     `userLocked` (a user attr write locks while enabled).
 //   * `geometry screen|point` would ALSO run CONS's projection post-pass over
 //     the dragged vertices (`xfrm_transform.d :: applyTRS`), i.e. the drag
 //     would land somewhere the surface dictates rather than where the arrow

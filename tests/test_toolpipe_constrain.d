@@ -2,7 +2,8 @@
 //
 // Verifies:
 // - CONS stage is registered at TaskCode.Cons; task label "CONS".
-// - Default attrs: enabled=false, geometry=point, offset=0, handle=true,
+// - Default attrs: enabled=false, geometry=off (captured: the constraint's
+//   settings at a fresh boot, fixtures/constraint_boot.json), offset=0, handle=true,
 //   dblSided=false.
 // - tool.pipe.attr constrain <name> <value> round-trips through listAttrs.
 // - constrain.toggle flips enabled false→true→false.
@@ -54,11 +55,11 @@ unittest { // CONS stage present in /api/toolpipe
 // Stage 1: default attrs.
 // -------------------------------------------------------------------------
 
-unittest { // defaults: enabled=false, geometry=point, offset=0, handle=true, dblSided=false
+unittest { // defaults: enabled=false, geometry=off, offset=0, handle=true, dblSided=false
     resetScene();
     auto a = getConsAttrs();
     assert(a["enabled"]  == "false", "default enabled: " ~ a["enabled"]);
-    assert(a["geometry"] == "point", "default geometry: " ~ a["geometry"]);
+    assert(a["geometry"] == "off",   "default geometry: " ~ a["geometry"]);
     assert(a["offset"]   == "0",     "default offset: "  ~ a["offset"]);
     assert(a["handle"]   == "true",  "default handle: "  ~ a["handle"]);
     assert(a["dblSided"] == "false", "default dblSided: " ~ a["dblSided"]);
@@ -141,14 +142,14 @@ unittest { // constrain.toggle is a true toggle (true→false)
 unittest { // /api/reset restores all attrs to defaults
     resetScene();
     postJson("/api/command", "tool.pipe.attr constrain enabled true");
-    postJson("/api/command", "tool.pipe.attr constrain geometry off");
+    postJson("/api/command", "tool.pipe.attr constrain geometry screen");
     postJson("/api/command", "tool.pipe.attr constrain offset 3.0");
     postJson("/api/command", "tool.pipe.attr constrain handle false");
     postJson("/api/command", "tool.pipe.attr constrain dblSided true");
     postJson("/api/command", commandBody("scene.reset", `{"type":"cube"}`));
     auto a = getConsAttrs();
     assert(a["enabled"]  == "false", "post-reset enabled: " ~ a["enabled"]);
-    assert(a["geometry"] == "point", "post-reset geometry: " ~ a["geometry"]);
+    assert(a["geometry"] == "off",   "post-reset geometry: " ~ a["geometry"]);
     assert(a["offset"]   == "0",     "post-reset offset: "  ~ a["offset"]);
     assert(a["handle"]   == "true",  "post-reset handle: "  ~ a["handle"]);
     assert(a["dblSided"] == "false", "post-reset dblSided: " ~ a["dblSided"]);

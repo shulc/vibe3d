@@ -231,8 +231,9 @@ void selectVert(int idx) {
 unittest { // headless doApply: moved vertex lands on background plane
     buildTwoLayerScene();
 
-    // Enable CONS on the toolpipe (geometry=point, default).
+    // Enable CONS on the toolpipe in point mode (the default is off).
     cmd("tool.pipe.attr constrain enabled true");
+    cmd("tool.pipe.attr constrain geometry point");
 
     // Activate `move` and select vertex 0 of layer A.
     cmd("tool.set move");
@@ -338,6 +339,30 @@ unittest { // headless doApply (vector): selected top vertex projected to Y=0 vi
             ~ " should not move: before=" ~ yBefore.to!string
             ~ " after=" ~ yAfter.to!string);
     }
+}
+
+// -------------------------------------------------------------------------
+// A tool drop puts the remembered constraint into the pipe with geometry off
+// (fixtures/constraint_boot.json, first-drop-move): a later transform is
+// NOT projected. Must-stay-green; a Point default would land v0 on Y≈0.
+// -------------------------------------------------------------------------
+
+unittest { // drop-added constraint (geometry off): doApply moves v0 unprojected
+    buildTwoLayerScene();
+    cmd("tool.set move on");
+    cmd("tool.set move off");                       // the first user drop
+    auto cons = postJson("/api/command", "tool.pipe.attr constrain enabled ?");
+    assert(cons["value"].type == JSONType.true_,
+        "the drop must have put the constraint into the pipe: " ~ cons.toString);
+    cmd("tool.set move on");
+    selectVert(0);
+    const y0 = readActiveVerts()[0][1];
+    cmd("tool.attr move TY 5.0");
+    cmd("tool.doApply");
+    const v0y = readActiveVerts()[0][1];
+    assert(approx(v0y, y0 + 5.0, 0.05),
+        "geometry off must not project: v0.Y want " ~ (y0 + 5.0).to!string
+        ~ " got " ~ v0y.to!string);
 }
 
 // -------------------------------------------------------------------------

@@ -95,8 +95,8 @@ unittest { // EL-a: every fixture press resolves to its recorded ladder rung.
 
     assert(cells == ids.length,
         format("EL-a: executed %s escape cells, expected %s", cells, ids.length));
-    assert(ladderPresses == 37 && nonLadderPresses == 1,
-        format("EL-a: presses were %s ladder / %s non-ladder, expected 37 / 1",
+    assert(ladderPresses == 38 && nonLadderPresses == 1,
+        format("EL-a: presses were %s ladder / %s non-ladder, expected 38 / 1",
             ladderPresses, nonLadderPresses));
     foreach (r; [EscapeRung.dropTool, EscapeRung.clearPipe,
                  EscapeRung.dropCurrentType, EscapeRung.dropItems,
