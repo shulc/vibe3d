@@ -636,6 +636,7 @@ struct PreparedPenDeactivateImage {
     SelType selMode;            // read at the candidate build (selectNew)
     Mesh previewClear;
     float[16] toWorld;
+    Vec3 wallNormal;
     size_t expectedHandlerCount;
     SnapResult expectedLastSnap;
     bool expectedMeshChanged;
@@ -655,6 +656,7 @@ struct PreparedPenParamImage {
     BoxHandler[] expectedHandlers;
     Vec3[] expectedHandlerPositions, nextHandlerPositions;
     float[16] expectedToWorld;
+    Vec3 expectedWallNormal;
     SymmetryPacket expectedMirror;
     MeshSnapshot expectedPreview;
     Mesh nextPreview;
@@ -695,8 +697,9 @@ private:
     Mesh             previewMesh;
     GpuMesh          previewGpu;
 
-    // The stroke's plane normal, a LOCAL axis of `frame`, locked per stroke.
-    Vec3 planeNormal;
+    // The stroke's plane normal, a LOCAL axis of `frame`, locked per stroke,
+    // and in WORLD signed toward the camera (wall mode's "left", S9).
+    Vec3 planeNormal, wallNormal;
     // The stroke's symmetry, latched at its first click (`latchMirror`).
     SymmetryPacket mirror_;
     /// Storage frame captured at choosePlane(). All in-progress vertices live
@@ -778,6 +781,14 @@ public:
             Param.bool_("merge", "Merge", &params_.merge, true),
             Param.bool_("close", "Close", &params_.close, false),
             Param.bool_("selectNew", "Select New", &params_.selectNew, true),
+            // Wall mode (wave plan S9): a negative offset clamps to 0.
+            Param.intEnum_("wall", "Wall", &params_.wall,
+                [IntEnumEntry(PenWall.off, "off", "Off"),
+                 IntEnumEntry(PenWall.inner, "inner", "Inner"),
+                 IntEnumEntry(PenWall.outer, "outer", "Outer"),
+                 IntEnumEntry(PenWall.both, "both", "Both")],
+                PenWall.off),
+            Param.float_("offset", "Offset", &params_.offset, 0.0f).min(0.0f).enforceBounds(),
             // The stroke itself, for the session's undo image (hidden,
             // transient, refused on every wire door).
             Param.podArray_("points", "Points", &vertices_),
@@ -793,7 +804,8 @@ public:
         if (name == "currentPoint" || name == "posX" || name == "posY" || name == "posZ")
             return state == PenState.Drawing && vertices_.length > 0;
         if (name == "makeQuads") return vertices_.length < 3;   // Idle holds none
-        if (name == "close") return params_.type == PenType.lines;
+        if (name == "close")
+            return params_.type == PenType.lines || params_.wall != PenWall.off;
         return true;
     }
 
@@ -828,7 +840,7 @@ public:
     // mid-stroke rebuilds the preview (legacy hook and prepared door alike).
     private static bool rebuildsPreview(string name) nothrow @nogc {
         return name == "flip" || name == "makeQuads" || name == "type" ||
-            name == "close";
+            name == "close" || name == "wall" || name == "offset";
     }
 
     final PreparedPenParamImage buildPreparedParamImage(string name) const {
@@ -848,6 +860,7 @@ public:
             image.nextHandlerPositions[i] = handler.pos;
         }
         image.expectedToWorld = frame.toWorld;
+        image.expectedWallNormal = wallNormal;
         image.expectedMirror = penMirror(mirror_);
         image.expectedPreview = MeshSnapshot.capture(previewMesh);
         if (state != PenState.Drawing) return image;
@@ -883,7 +896,7 @@ public:
         auto shadow = beginPreparedShadow(image.nextPreview);
         appendPenGeometry(image.nextPreview, PenStroke.of(image.nextVertices,
             frame.toWorld, image.nextParams, withoutSceneLinks(image.nextLinks),
-            mirror_), PenBuildPurpose.Preview);
+            mirror_, wallNormal: wallNormal), PenBuildPurpose.Preview);
         foreach (i, v; image.nextVertices)
             if (i < image.nextHandlerPositions.length)
                 image.nextHandlerPositions[i] = transformPoint(frame.toWorld, v);
@@ -899,6 +912,7 @@ public:
             !sameSliceBytes(vertices_, image.expectedVertices) ||
             !sameSliceBytes(links_, image.expectedLinks) ||
             !sameValueBytes(frame.toWorld, image.expectedToWorld) ||
+            !sameValueBytes(wallNormal, image.expectedWallNormal) ||
             !symmetryMirrorsEqual(mirror_, image.expectedMirror) ||
             !image.expectedPreview.matches(previewMesh) ||
             vertHandlers.length != image.expectedHandlers.length) return false;
@@ -988,7 +1002,7 @@ public:
         image.params = params_; image.vertices = vertices_.dup;
         image.links = links_.dup; image.linkKey = strokeKey_.dup;
         image.toWorld = frame.toWorld; image.mirror = penMirror(mirror_);
-        image.selMode = selMode();
+        image.wallNormal = wallNormal; image.selMode = selMode();
         image.expectedHandlerCount = vertHandlers.length;
         image.expectedLastSnap = lastSnap;
         image.expectedMeshChanged = meshChanged;
@@ -1005,6 +1019,7 @@ public:
             lastSnap == image.expectedLastSnap &&
             meshChanged == image.expectedMeshChanged &&
             (!image.willCommit || (frame.toWorld == image.toWorld &&
+                                   sameValueBytes(wallNormal, image.wallNormal) &&
                                    selMode() == image.selMode));
     }
     final void installPreparedDeactivateState(
@@ -1040,7 +1055,7 @@ public:
         appendPenGeometry(candidate, PenStroke.of(image.vertices,
             image.toWorld, image.params,
             linksUnder(image.linkKey, image.links, *mesh), image.mirror,
-            image.selMode), PenBuildPurpose.Commit);
+            image.selMode, image.wallNormal), PenBuildPurpose.Commit);
         candidate.declareCornerAppend(); candidate.buildLoops();
         candidate.syncSelection();
         drainPreparedShadowDelivery(candidate, deliveryFlags, deliveryDomains);
@@ -1180,10 +1195,11 @@ public:
         if (!resolvePenPoint(e.x, e.y, clickAnchor(), hit, link)) return true;
 
         // The press adding the 3rd point decides the facing, once, from
-        // (p0, p1, this click) in every arm below (wave plan §9.4).
+        // (p0, p1, this click) in every arm below (wave plan §9.4); a wall
+        // faces the camera by its template and writes 0 (S9, pen_wall.json D7).
         if (vertices_.length == 2)
-            params_.flip = penFacingFlip(toWorldP(vertices_[0]),
-                toWorldP(vertices_[1]), toWorldP(hit), cachedVp);
+            params_.flip = params_.wall == PenWall.off && penFacingFlip(
+                toWorldP(vertices_[0]), toWorldP(vertices_[1]), toWorldP(hit), cachedVp);
 
         // Make Quads (wave plan S7, fixture pen_quads.json): the click, then
         // the automatic corner a = L1 + (c - L0) of the strip quad it
@@ -1399,6 +1415,8 @@ private:
         Vec3 camBack = Vec3(vp.view[2], vp.view[6], vp.view[10]);
         int axis = mostFacingAxis(camBack, frame.axis1, frame.normal, frame.axis2);
         planeNormal = Vec3(axis == 0 ? 1 : 0, axis == 1 ? 1 : 0, axis == 2 ? 1 : 0);
+        wallNormal = normalize(transformDir(frame.toWorld, planeNormal));
+        if (dot(wallNormal, eyeVectorAt(vp, vp.focus)) > 0) wallNormal = -wallNormal;
     }
 
     // The live symmetry without its per-vertex pairing (the builder reads the
@@ -1681,8 +1699,8 @@ private:
             rollovers: Rollover.target, sessionSteps: true,
             refusesDisabledParamWrites: true,
             imageAttrs: ["type", "currentPoint", "posX", "posY", "posZ", "flip",
-                         "makeQuads", "merge", "close", "selectNew", "points",
-                         "link", "linkKey"] };
+                         "makeQuads", "merge", "close", "selectNew", "wall",
+                         "offset", "points", "link", "linkKey"] };
         return policy;
     }
     // In-stroke undo / redo (fixture pen_instroke_undo.json): the
@@ -1843,7 +1861,8 @@ private:
             "pen: one marker and one link per stroke point");
         previewMesh.clear();
         appendPenGeometry(previewMesh, PenStroke.of(vertices_, frame.toWorld,
-            params_, withoutSceneLinks(links_), mirror_), PenBuildPurpose.Preview);
+            params_, withoutSceneLinks(links_), mirror_, wallNormal: wallNormal),
+            PenBuildPurpose.Preview);
         previewGpu.upload(previewMesh);
         // Keep marker positions in sync (vertices_ may have been mutated by
         // a drag or a typed edit). Handlers render in WORLD.
@@ -1994,7 +2013,7 @@ private:
         // A pure tail append into the live scene mesh, declared as such for
         // the corner-append cross-check.
         appendPenGeometry(*mesh, PenStroke.of(vertices_, frame.toWorld,
-            params_, liveLinks(), mirror_, selMode()), PenBuildPurpose.Commit);
+            params_, liveLinks(), mirror_, selMode(), wallNormal), PenBuildPurpose.Commit);
         mesh.declareCornerAppend();
         mesh.buildLoops();
         gpu.upload(*mesh);

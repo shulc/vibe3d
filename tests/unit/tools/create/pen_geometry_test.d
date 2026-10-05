@@ -19,14 +19,15 @@ import tools.create.pen_geometry;
 // prepared param enum must be added here, with its cases.
 static assert([__traits(allMembers, PenStroke)] ==
     ["points", "links", "toWorld", "flip", "quads", "mirror", "type", "close",
-     "selectNew", "selMode", "of"]);
+     "selectNew", "selMode", "wall", "offset", "wallNormal", "of"]);
 static assert([__traits(allMembers, PenBuildPurpose)] == ["Preview", "Commit"]);
 static assert([__traits(allMembers, PreparedPenParamKind)] ==
     ["None", "Noop", "CurrentPoint", "Position", "Preview"]);
 static assert([__traits(allMembers, PenParams)] ==
-    ["type", "currentPoint", "posX", "posY", "posZ", "flip", "makeQuads", "merge",
-     "close", "selectNew"]);
-static assert(PenParams.sizeof == 28);
+    ["type", "currentPoint", "posX", "posY", "posZ", "wall", "offset", "flip",
+     "makeQuads", "merge", "close", "selectNew"]);
+static assert(PenParams.sizeof == 36);
+static assert([__traits(allMembers, PenWall)] == ["off", "inner", "outer", "both"]);
 static assert([__traits(allMembers, PenType)] ==
     ["polygons", "lines", "vertices", "subdiv"]);
 

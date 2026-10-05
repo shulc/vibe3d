@@ -24,6 +24,8 @@ struct PenParams {
     // through onParamChanged.
     int   currentPoint = -1;
     float posX = 0.0f, posY = 0.0f, posZ = 0.0f;
+    int   wall         = PenWall.off;
+    float offset       = 0.0f;     // the wall's width, clamped at 0 (S9)
     bool  flip         = false;    // reverse the ring (decided by the tool at point 3)
     // Make Quads: every click after the first two adds a strip quad (penStripQuad).
     bool  makeQuads    = false;
@@ -36,11 +38,14 @@ struct PenParams {
 // Field sizes summed by hand (a field added must be added here and to the
 // member pin in pen_geometry_test), rounded to 4: no interior padding.
 static assert(PenParams.sizeof ==
-    (2 * int.sizeof + 3 * float.sizeof + 5 * bool.sizeof + 3) / 4 * 4,
+    (3 * int.sizeof + 4 * float.sizeof + 5 * bool.sizeof + 3) / 4 * 4,
     "PenParams has interior padding that sameValueBytes would compare");
 
 /// `PenParams.type`, the panel's order (wave plan S8).
 enum PenType : int { polygons, lines, vertices, subdiv }
+
+/// `PenParams.wall`, the panel's order (wave plan S9).
+enum PenWall : int { off, inner, outer, both }
 
 enum PenBuildPurpose : ubyte { Preview, Commit }
 
@@ -64,15 +69,22 @@ struct PenStroke {
     // The selection mode a Commit reads (the new polygons are selected only
     // in polygon mode); a commit-time value.
     SelType       selMode;
+    int           wall;     // PenWall
+    float         offset;
+    // The stroke plane's WORLD normal toward the camera, latched with the
+    // plane (wall mode's "left of travel as seen from the camera").
+    Vec3          wallNormal;
 
     static PenStroke of(const(Vec3)[] pts, in float[16] toWorld, in PenParams p,
             const(int)[] links = null, in SymmetryPacket mirror = SymmetryPacket.init,
-            SelType selMode = SelType.Vertex) nothrow @nogc {
+            SelType selMode = SelType.Vertex, Vec3 wallNormal = Vec3(0, 0, 0))
+            nothrow @nogc {
         PenStroke s;
         s.points = pts; s.links = links; s.toWorld = toWorld;
         s.flip = p.flip; s.quads = p.makeQuads; s.mirror = penMirror(mirror);
         s.type = p.type; s.close = p.close; s.selectNew = p.selectNew;
-        s.selMode = selMode;
+        s.selMode = selMode; s.wall = p.wall; s.offset = p.offset;
+        s.wallNormal = wallNormal;
         return s;
     }
 }
@@ -102,16 +114,23 @@ void penWorkplaneMirrorPlane(int axis, float offset, in WorkplaneFrame wp,
 /// first quad of a strip.
 size_t penFaceMinimum(bool quads) nothrow @nogc { return quads ? 4 : 3; }
 
+/// A wall of offset 0 builds nothing (S9, fixture pen_wall.json D6c), so no
+/// stroke of it commits: no history row.
+bool penBuildsNothing(in PenParams p) nothrow @nogc {
+    return p.wall != PenWall.off && !(p.offset > 0);
+}
+
 /// Fewest points Enter commits (wave plan S8: lines 2, vertices 1; polygons
 /// and subdiv the face shape).
 size_t penEnterMinimum(in PenParams p) nothrow @nogc {
-    return p.type == PenType.lines ? 2 : p.type == PenType.vertices ? 1
+    return penBuildsNothing(p) ? size_t.max
+         : p.type == PenType.lines ? 2 : p.type == PenType.vertices ? 1
          : penFaceMinimum(p.makeQuads);
 }
 /// Fewest points a tool drop commits: a polygon edge (fixture row E5pen2) or
 /// the strip's first quad; lines 2, vertices 1 (S8).
 size_t penDropMinimum(in PenParams p) nothrow @nogc {
-    return p.type == PenType.vertices ? 1
+    return penBuildsNothing(p) ? size_t.max : p.type == PenType.vertices ? 1
          : p.makeQuads && p.type != PenType.lines ? 4 : 2;
 }
 
@@ -179,6 +198,53 @@ uint[] penRingOrder(const(Vec3)[] v, bool reverse) {
     return ring;
 }
 
+/// Wall mode (wave plan S9, fixture pen_wall.json): the stroke becomes a
+/// strip of quads in its plane. Per point a LEFT / RIGHT pair, left of travel
+/// as seen from the camera, l(d) = normalize(n_cam × d) (`wallNormal`); the
+/// offset direction m is the mitre (l_in + l_out) / (1 + l_in·l_out), no limit,
+/// at an interior point (every point under `close`) and the one adjacent l at
+/// an open end. inner L = p + w·m, R = p; outer L = p, R = p − w·m; both
+/// ±w·m. Vertices [L0, R0, L1, R1, …], quads [L_i, R_i, R_i+1, L_i+1], `close`
+/// (from 3 points, as lines) adds [L_n−1, R_n−1, R_0, L_0]. The template faces
+/// the camera: no ring routine, no flip. Under symmetry the mirror strip is
+/// the reflection of the built pairs listed [m(R_i), m(L_i)], same template.
+/// Offset 0 or < 2 points builds nothing; links do not apply. A U-turn
+/// (1 + l_in·l_out ≈ 0, not captured) takes l_in.
+void appendPenWall(ref Mesh dst, in PenStroke s) {
+    const n = s.points.length;
+    if (n < 2 || !(s.offset > 0)) return;   // the commit minimum agrees: penBuildsNothing
+    const bool closed = s.close && n >= 3;
+    auto p = new Vec3[n];
+    foreach (i, q; s.points) p[i] = transformPoint(s.toWorld, q);
+    Vec3 left(size_t a, size_t b) { return normalize(cross(s.wallNormal, p[b] - p[a])); }
+    auto L = new Vec3[n], R = new Vec3[n];
+    foreach (i; 0 .. n) {
+        const bool hasIn = i > 0 || closed, hasOut = i + 1 < n || closed;
+        Vec3 m = hasIn ? left((i + n - 1) % n, i) : left(i, i + 1);
+        if (hasIn && hasOut) {
+            const lOut = left(i, (i + 1) % n), c = 1 + dot(m, lOut);
+            if (c > 1e-6f) m = (m + lOut) / c;
+        }
+        const w = s.offset * m;
+        L[i] = s.wall == PenWall.outer ? p[i] : p[i] + w;
+        R[i] = s.wall == PenWall.inner ? p[i] : p[i] - w;
+    }
+    foreach (pass; 0 .. s.mirror.enabled ? 2 : 1) {
+        const uint b = cast(uint)dst.vertices.length;
+        foreach (i; 0 .. n) {
+            if (pass == 0) { dst.addVertex(L[i]); dst.addVertex(R[i]); }
+            else {
+                dst.addVertex(mirrorPosition(s.mirror, R[i]));
+                dst.addVertex(mirrorPosition(s.mirror, L[i]));
+            }
+        }
+        foreach (i; 0 .. closed ? n : n - 1) {
+            const uint j = cast(uint)((i + 1) % n);
+            dst.addFace([b + 2 * cast(uint)i, b + 2 * cast(uint)i + 1, b + 2 * j + 1, b + 2 * j]);
+        }
+    }
+}
+
 /// Append the stroke to `dst`; returns `dst`'s vertex count before the call
 /// (the index of the first new vertex, if any: a linked point appends no
 /// vertex, its faces use the shared index).
@@ -209,10 +275,36 @@ uint[] penRingOrder(const(Vec3)[] v, bool reverse) {
 /// image's vertex and its own image shares j's; their positions are the mirror
 /// images, written last (A7). A point that is its own mirror adds no image.
 ///
+/// Wall mode builds `appendPenWall` instead of all of the above (S9).
+///
 /// Precondition: a makeQuads Commit below 4 points yields ONE face of all
 /// points, not a quad; callers keep it out by gating on `minDropCommitVerts`.
 uint appendPenGeometry(ref Mesh dst, in PenStroke s, PenBuildPurpose purpose) {
     const uint base = cast(uint)dst.vertices.length;
+    const uint faceBase = cast(uint)dst.faces.length;
+    if (s.wall != PenWall.off) appendPenWall(dst, s);
+    else appendPenShapes(dst, s, purpose);
+
+    const bool selects = s.selectNew && purpose == PenBuildPurpose.Commit;
+    if (s.type != PenType.subdiv && !selects) return base;
+    dst.syncSelection();
+    foreach (f; faceBase .. dst.faces.length) {
+        if (s.type == PenType.subdiv) dst.setFaceSubpatch(f, true);
+        if (!selects) continue;
+        const face = dst.faces[f];
+        foreach (k, a; face) {
+            const e = dst.edgeIndex(a, face[(k + 1) % face.length]);
+            if (e != ~0u) dst.selectEdge(cast(int)e);
+        }
+        if (s.selMode == SelType.Polygon) dst.selectFace(cast(int)f);
+    }
+    if (selects)
+        foreach (v; base .. dst.vertices.length) dst.selectVertex(cast(int)v);
+    return base;
+}
+
+// The polygon / type shapes of a stroke and its mirror (every mode but walls).
+private void appendPenShapes(ref Mesh dst, in PenStroke s, PenBuildPurpose purpose) {
     const size_t n = s.points.length, slots = s.mirror.enabled ? 2 * n : n;
     auto world = new Vec3[2 * n];   // originals, then their mirror images
     foreach (i, p; s.points) {
@@ -235,7 +327,6 @@ uint appendPenGeometry(ref Mesh dst, in PenStroke s, PenBuildPurpose purpose) {
         else { idx[k] = cast(uint)dst.vertices.length; dst.addVertex(pos[k]); }
     }
 
-    const uint faceBase = cast(uint)dst.faces.length;
     const bool closed = n >= penFaceMinimum(s.quads);
     void shape(Vec3[] w, uint[] ix, bool reverse) {
         if (s.type == PenType.vertices) return;
@@ -265,21 +356,4 @@ uint appendPenGeometry(ref Mesh dst, in PenStroke s, PenBuildPurpose purpose) {
     }
     shape(world[0 .. n], idx[0 .. n], s.flip);
     if (slots > n) shape(world[n .. $], idx[n .. $], !s.flip);
-
-    const bool selects = s.selectNew && purpose == PenBuildPurpose.Commit;
-    if (s.type != PenType.subdiv && !selects) return base;
-    dst.syncSelection();
-    foreach (f; faceBase .. dst.faces.length) {
-        if (s.type == PenType.subdiv) dst.setFaceSubpatch(f, true);
-        if (!selects) continue;
-        const face = dst.faces[f];
-        foreach (k, a; face) {
-            const e = dst.edgeIndex(a, face[(k + 1) % face.length]);
-            if (e != ~0u) dst.selectEdge(cast(int)e);
-        }
-        if (s.selMode == SelType.Polygon) dst.selectFace(cast(int)f);
-    }
-    if (selects)
-        foreach (v; base .. dst.vertices.length) dst.selectVertex(cast(int)v);
-    return base;
 }

@@ -527,10 +527,11 @@ private immutable StepRow[] kStepTable = [
     // Task 9369: the polygon pen's stroke is its image — every attribute plus
     // the hidden `points` (captured in-stroke undo, fixture pen_instroke_undo);
     // task 9362 adds `merge`, the hidden per-point `link` and its mesh key;
-    // task 9365 (S8) `close` and `selectNew`.
+    // task 9365 (S8) `close` and `selectNew`; task 9366 (S9) `wall`, `offset`.
     StepRow("pen", OpensAt.firstPress, false,
             ["type", "currentPoint", "posX", "posY", "posZ", "flip", "makeQuads",
-             "merge", "close", "selectNew", "points", "link", "linkKey"]),
+             "merge", "close", "selectNew", "wall", "offset", "points", "link",
+             "linkKey"]),
     // Plan 8646 (S5): every published pen attribute is an image attribute (D15,
     // captured R-all); S7a adds the operation context (offsets + descriptor).
     StepRow("mesh.topoPen", OpensAt.firstPress, false,
@@ -661,7 +662,7 @@ unittest { // (4)
     assert(paramArmIds == ["edge.extend", "mesh.edgeSliceTool", "mesh.loopSliceTool",
                            "mesh.sliceTool", "pen", "poly.bevel"],
            format("UND2: the attribute arm (a parameter write is a step) is %s", paramArmIds));
-    // Image-producing population floors: 20 ids, 148 image names, 3 Action triggers
+    // Image-producing population floors: 20 ids, 152 image names, 3 Action triggers
     // on them (chainArm; insertAt, removeCurrent), 1 arm attribute (M3b).
     sort(imageStepIds);
     assert(imageStepIds == ["edge.bevel", "edge.extend", "edge.extrude",
@@ -671,7 +672,7 @@ unittest { // (4)
                        "mesh.thickenTool", "mesh.topoPen", "mesh.vertexBevel", "mesh.vertexExtrude",
                        "pen", "poly.bevel", "poly.extrude", "vert.merge"],
            format("M3 step table: image-step ids %s", imageStepIds));
-    assert(checkedNames == 150, format("M3 step table: %s image names checked, measured 150",
+    assert(checkedNames == 152, format("M3 step table: %s image names checked, measured 152",
                                       checkedNames));
     assert(armAttrs == 1, format("M3b step table: %s arm attributes, measured 1", armAttrs));
     assert(actionNames == 3, format("M3 step table: %s Action params on the session tools, "

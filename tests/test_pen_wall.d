@@ -156,8 +156,9 @@ private string[] compare(string cell, JSONValue exp) {
     }
     return bad.length ? [format("%s: %-(%s; %)", cell, bad)] : null;
 }
+// A float attribute reads back as its float value (0.1 as 0.100000001…).
 private string[] expect(string cell, string what, double got, double want) {
-    return abs(got - want) <= 1e-9 ? null
+    return abs(got - want) <= 1e-6 ? null
          : [format("%s: %s %s, expected %s", cell, what, got, want)];
 }
 
