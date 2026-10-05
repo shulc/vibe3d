@@ -85,6 +85,14 @@ unittest {
     assert(publishers == ["FrameRunner.resolveHover", "InputRouter.refreshHoverPickAt"],
            format("hover census: publishHover callers changed: %s", publishers));
 
+    // Both pass the active-tool term, which arms the V > E > F precedence
+    // (no suite cell tells a lost term apart: measured, mutations S15/S16).
+    const fr = readText(buildPath(repoRoot, "source/frame_runner.d")).replaceAll(regex(`\s+`), " ");
+    const ir = readText(buildPath(repoRoot, "source/input_router.d")).replaceAll(regex(`\s+`), " ");
+    assert(fr.indexOf("publishHover(ifs_, activeTool !is null, mouseX, mouseY);") >= 0
+           && ir.indexOf("publishHover(ifs, app.activeTool !is null, mx, my);") >= 0,
+           "hover census: a publishHover caller no longer passes the active-tool term");
+
     // Press-time readers: each named press function reads through hoverAtPress, none raw.
     assert(rawPressReads.length == 0, format("hover census: raw hover id read in a press: %s", rawPressReads));
     assert(pressSites.length == 5 && pressCalls == 5,
