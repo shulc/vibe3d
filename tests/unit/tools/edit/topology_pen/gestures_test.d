@@ -565,13 +565,14 @@ unittest {
     uint a = m.addVertex(Vec3(1, 2, 3));
 
     auto before = MeshSnapshot.capture(m);
+    VectorStack vts;
     penStep(t, SDL_BUTTON_LEFT, PenMode.Move, () {
         // Stationary grab: the target IS the vertex's own position.
         t.moveArmed_ = true;
         t.moveElem_  = MoveElem.Vertex;
         t.moveVerts_ = [a];
         t.moveBase_  = [Vec3(1, 2, 3)];
-        t.applyMoveTargets([Vec3(1, 2, 3)]);
+        t.applyMoveTargets([Vec3(1, 2, 3)], vts);
         assert(!t.moveDirty_, "a no-op apply must leave the drag clean");
     });
     auto after = MeshSnapshot.capture(m);
@@ -9766,7 +9767,7 @@ unittest {
     // The same cursor, asked twice, must answer twice the same — even after
     // the first answer has been written into the mesh.
     auto first = t.moveTargets(180, 140, vp, vts);
-    t.applyMoveTargets(first);
+    t.applyMoveTargets(first, vts);
     auto second = t.moveTargets(180, 140, vp, vts);
     assert(first.length == second.length, "target count must not depend on the live mesh");
     foreach (i, v; first)
