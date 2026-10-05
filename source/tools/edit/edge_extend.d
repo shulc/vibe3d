@@ -1292,6 +1292,7 @@ private:
     // there = no narrowing). The selection here is the operation's source:
     // the committed ridge after a Shift/middle commit.
     Vec3 extendHandleBase(ref VectorStack vts) {
+        import symmetry : symmetrySide;
         const(SymmetryPacket)* sym = vts.get!SymmetryPacket();
         if (sym !is null && sym.enabled) {
             immutable bool any = mesh.hasAnySelectedEdges();
@@ -1301,7 +1302,7 @@ private:
                 if (any && !mesh.isEdgeSelected(i)) continue;
                 foreach (vi; edge) {
                     immutable Vec3 v = mesh.vertices[vi];
-                    if (dot(v - sym.planePoint, sym.planeNormal) < 0) continue;
+                    if (symmetrySide(*sym, v, 0) < 0) continue;
                     if (!seen) { mn = mx = v; seen = true; continue; }
                     if (v.x < mn.x) mn.x = v.x; if (v.x > mx.x) mx.x = v.x;
                     if (v.y < mn.y) mn.y = v.y; if (v.y > mx.y) mx.y = v.y;

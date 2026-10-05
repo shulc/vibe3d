@@ -2930,10 +2930,11 @@ size_t extendEdgesByMask(ref MeshEditBatch ed, in bool[] maskIn,
     // so the side is stable for the whole drag.
     Vec3 ringOffset(uint v) {
         if (!mirror.enabled) return offset;
+        import symmetry : symmetrySide;
         immutable Vec3 n = mirror.planeNormal;
-        immutable float d = dot(ed.vertices[v] - mirror.planePoint, n);
-        if (d == 0) return offset - n * dot(offset, n);
-        if ((d > 0 ? 1 : -1) == mirror.pressSide) return offset;
+        immutable int side = symmetrySide(mirror.planePoint, n, ed.vertices[v], 0);
+        if (side == 0) return offset - n * dot(offset, n);
+        if (side == mirror.pressSide) return offset;
         return offset - n * (2.0f * dot(offset, n));
     }
     // ringVertOf[k] maps source vertex → its index in `vertices` for ring k.

@@ -2,7 +2,7 @@ module toolpipe.stages.symmetry;
 
 import std.format : format;
 
-import math    : Vec3, dot;
+import math    : Vec3;
 import mesh    : Mesh;
 import mesh_dirty : MeshDirtyKey, g_settledGeomEpochs;
 import editmode : EditMode;
@@ -11,7 +11,7 @@ import toolpipe.stage    : Stage, TaskCode, ordSymm;
 import toolpipe.packets  : SymmetryPacket, SymmetryConfig;
 import operator          : Operator, Task, VectorStack, PacketKind;
 import popup_state       : setStatePath;
-import symmetry          : rebuildPairing, rebuildPairingTopological;
+import symmetry          : rebuildPairing, rebuildPairingTopological, symmetrySide;
 import perf_probe        : g_perf, Cat;
 import params            : Param, IntEnumEntry;
 
@@ -194,13 +194,13 @@ class SymmetryStage : Stage, Operator {
     int authoringSide() const nothrow @nogc {
         if (!authoringBasePlaced_) return -1;
         Vec3 pp, pn;
-        currentPlaneConst(pp, pn);
+        currentPlane(pp, pn);
         return sideOfBase(pp, pn);
     }
 
     /// Strict: a base ON the plane, or no base at all, reads -1.
     private int sideOfBase(Vec3 pp, Vec3 pn) const pure nothrow @nogc {
-        return authoringBasePlaced_ && dot(authoringBase_ - pp, pn) > 0 ? +1 : -1;
+        return authoringBasePlaced_ && symmetrySide(pp, pn, authoringBase_, 0) > 0 ? +1 : -1;
     }
 
     /// The stage's user-facing config — the SAME seven fields
@@ -350,8 +350,9 @@ public:
     /// Resolve `(planePoint, planeNormal)` from the stage's current axis /
     /// offset / workplane state, without a pipeline pass — the head of
     /// `evaluate`. A workplane plane falls back to the last evaluated plane
-    /// (world XZ before the first). Read by `authoringSide()`.
-    private void currentPlaneConst(out Vec3 planePt, out Vec3 planeN) const nothrow @nogc {
+    /// (world XZ before the first). Read by `authoringSide()` and the viewport's
+    /// plane overlay (overlay = applied plane, task 9410).
+    public void currentPlane(out Vec3 planePt, out Vec3 planeN) const nothrow @nogc {
         if (enabled && useWorkplane) {
             if (cachedReady_) {
                 planePt = cachedPlanePoint_;

@@ -60,10 +60,23 @@ Vec3 projectOnPlane(const ref SymmetryPacket sp, Vec3 pos) pure nothrow @nogc @s
     return pos - sp.planeNormal * d;
 }
 
+/// THE side test (task 9410): 0 within `eps` of the plane, else the sign of
+/// `dot(p − planePoint, planeNormal)`. The pairing passes `epsilonWorld`; Edge
+/// Extend and the authoring side pass 0 — strict, x = ±1e-4 already flips
+/// (doc/measured_laws.md §21).
+int symmetrySide(Vec3 planePoint, Vec3 planeNormal, Vec3 p, float eps) pure nothrow @nogc @safe {
+    immutable float d = dot(p - planePoint, planeNormal);
+    return abs(d) <= eps ? 0 : (d > 0 ? 1 : -1);
+}
+
+/// ditto, against the packet's plane.
+int symmetrySide(const ref SymmetryPacket sp, Vec3 p, float eps) pure nothrow @nogc @safe {
+    return symmetrySide(sp.planePoint, sp.planeNormal, p, eps);
+}
+
 /// Is `pos` on the plane within `sp.epsilonWorld`?
 bool isOnPlane(const ref SymmetryPacket sp, Vec3 pos) pure nothrow @nogc @safe {
-    float d = dot(pos - sp.planePoint, sp.planeNormal);
-    return abs(d) <= sp.epsilonWorld;
+    return symmetrySide(sp, pos, sp.epsilonWorld) == 0;
 }
 
 /// Per-vertex mirror lookup. Returns -1 when the vertex is on-plane,
@@ -335,12 +348,10 @@ void rebuildPairing(const ref Mesh mesh, const ref SymmetryPacket sp,
     // push a selected vertex across the plane mid-operation.
     auto mirrored = new Vec3[](n);
     foreach (i; 0 .. n) {
-        mirrored[i]  = mirrorPosition(sp, mesh.vertices[i]);
-        outOnPlane[i] = isOnPlane(sp, mesh.vertices[i]);
-        outPairOf[i]  = -1;
-        float d = dot(mesh.vertices[i] - sp.planePoint, sp.planeNormal);
-        if (abs(d) <= sp.epsilonWorld) outVertSign[i] = 0;
-        else                           outVertSign[i] = d > 0 ? +1 : -1;
+        mirrored[i]    = mirrorPosition(sp, mesh.vertices[i]);
+        outVertSign[i] = symmetrySide(sp, mesh.vertices[i], sp.epsilonWorld);
+        outOnPlane[i]  = outVertSign[i] == 0;
+        outPairOf[i]   = -1;
     }
 
     // Pick the search axis: the dominant component of `planeNormal`.
@@ -425,31 +436,39 @@ private size_t upperBound(const float[] sortedCoords, float target) pure nothrow
 }
 
 // ---------------------------------------------------------------------------
-// applySymmetryMirror — the pair write rule (`mirrorStepFor`) over the
-// operand mask `selected[]` (the vertices the caller already computed):
-// on-plane operand vertices are projected; a pair inside the operand is made
-// an exact mirror of its `baseSide` member; nothing outside the operand is
-// written. `outAlsoTouched` (mesh-length) is OR-ed with every partner the
-// pass wrote, for GPU upload / undo snapshot sets.
+// walkMirrorPairs — THE mirror walker (task 9410): the pair write rule
+// (`mirrorStepFor`) over the operand mask `selected[]`, with the client's
+// storage. `read(i)` is vertex i's current position, `write(i, p)` stores one,
+// `mirrored(i, mi, p)` is partner mi's new position from driver i at `p`. An
+// on-plane operand vertex is projected; a pair inside the operand is written
+// from its `baseSide` member; nothing outside the operand is written.
+// `outAlsoTouched` (mesh-length) is OR-ed with every partner written. A
+// template on the three callables: the walk runs per vertex on a drag.
 // ---------------------------------------------------------------------------
-void applySymmetryMirror(Mesh* mesh, const ref SymmetryPacket sp,
-                         const(bool)[] selected,
-                         bool[] outAlsoTouched)
+void walkMirrorPairs(alias read, alias write, alias mirrored)(
+    Mesh* mesh, const ref SymmetryPacket sp, const(bool)[] selected, bool[] outAlsoTouched)
 {
-    if (!sp.enabled) return;
-    if (sp.pairOf.length != mesh.vertices.length) return;
+    if (!sp.enabled || sp.pairOf.length != mesh.vertices.length) return;
     foreach (i; 0 .. mesh.vertices.length) {
         if (i >= selected.length || !selected[i]) continue;
         immutable MirrorStep st = mirrorStepFor(sp, selected, i, partnerHidden(*mesh, sp, i));
         if (st.self == SelfStep.project) {
-            mesh.vertices[i] = projectOnPlane(sp, mesh.vertices[i]);
+            write(i, projectOnPlane(sp, read(i)));
             continue;
         }
         if (!st.copyToPartner) continue;
-        mesh.vertices[st.partner] = mirrorPosition(sp, mesh.vertices[i]);
+        write(st.partner, mirrored(i, st.partner, read(i)));
         if (st.partner < cast(int)outAlsoTouched.length)
             outAlsoTouched[st.partner] = true;
     }
+}
+
+/// The plain walk: positions in `mesh.vertices`, the partner an exact mirror.
+void applySymmetryMirror(Mesh* mesh, const ref SymmetryPacket sp,
+                         const(bool)[] selected, bool[] outAlsoTouched)
+{
+    walkMirrorPairs!(i => mesh.vertices[i], (i, p) { mesh.vertices[i] = p; },
+                     (i, mi, p) => mirrorPosition(sp, p))(mesh, sp, selected, outAlsoTouched);
 }
 
 // ---------------------------------------------------------------------------
@@ -466,48 +485,27 @@ Vec3 mirrorDirection(const ref SymmetryPacket sp, Vec3 dir) pure nothrow @nogc @
     return dir - sp.planeNormal * (2.0f * dot(dir, sp.planeNormal));
 }
 
-// ---------------------------------------------------------------------------
-// applySymmetryMirrorDelta — delta-mirror apply for topological symmetry.
-//
-// Identical structure to applySymmetryMirror (same guards, same baseSide
-// rule, same on-plane projection) but writes:
-//   mesh.vertices[mi] = baseline[mi] + mirrorDirection(sp, driver_delta)
-// instead of the absolute position-copy in applySymmetryMirror.
-//
-// This preserves the partner's pre-existing deformation (baseline[mi]) and
-// mirrors only the edit delta, so a deformed-base mesh stays deformed while
-// the edit is reflected symmetrically.
-//
-// Equivalence: on a spatially-symmetric base (baseline[mi] == mirrorPosition(
-// sp, baseline[i])), the two functions are float-exact-identical (see the
-// proof in doc/topological_symmetry_plan.md Risk 1).
-// ---------------------------------------------------------------------------
-
-/// Delta-mirror apply: the pair write rule (`mirrorStepFor`) with the copy
-/// written as `baseline[partner] + mirrorDirection(sp, vertices[i] − baseline[i])`
-/// — the partner keeps its own pre-existing deformation and takes the mirrored
-/// EDIT. `baseline` must be mesh-length; no-ops safely when lengths differ.
+/// Delta-mirror apply (topological symmetry): the partner keeps its own
+/// pre-existing deformation and takes the mirrored EDIT,
+/// `baseline[mi] + mirrorDirection(sp, vertices[i] − baseline[i])` (on a
+/// symmetric base float-identical to the plain walk, doc/topological_symmetry_plan.md
+/// Risk 1). `baseline` must be mesh-length; no-ops safely when lengths differ.
 void applySymmetryMirrorDelta(Mesh* mesh, const ref SymmetryPacket sp,
                               const(Vec3)[] baseline,
                               const(bool)[] selected,
                               bool[] outAlsoTouched)
 {
-    if (!sp.enabled) return;
-    if (sp.pairOf.length != mesh.vertices.length) return;
-    if (baseline.length  != mesh.vertices.length) return;
-    foreach (i; 0 .. mesh.vertices.length) {
-        if (i >= selected.length || !selected[i]) continue;
-        immutable MirrorStep st = mirrorStepFor(sp, selected, i, partnerHidden(*mesh, sp, i));
-        if (st.self == SelfStep.project) {
-            mesh.vertices[i] = projectOnPlane(sp, mesh.vertices[i]);
-            continue;
-        }
-        if (!st.copyToPartner) continue;
-        Vec3 delta = mesh.vertices[i] - baseline[i];
-        mesh.vertices[st.partner] = baseline[st.partner] + mirrorDirection(sp, delta);
-        if (st.partner < cast(int)outAlsoTouched.length)
-            outAlsoTouched[st.partner] = true;
-    }
+    if (baseline.length != mesh.vertices.length) return;
+    walkMirrorPairs!(i => mesh.vertices[i], (i, p) { mesh.vertices[i] = p; },
+                     (i, mi, p) => mirroredEdit(sp, baseline, i, mi, p))(mesh, sp, selected, outAlsoTouched);
+}
+
+/// The delta rule's partner position: `base[mi]` plus the driver's edit
+/// `p − base[i]` reflected (shared by the plain and the routed delta walks).
+Vec3 mirroredEdit(const ref SymmetryPacket sp, const(Vec3)[] base, size_t i, size_t mi, Vec3 p)
+    pure nothrow @nogc @safe
+{
+    return base[mi] + mirrorDirection(sp, p - base[i]);
 }
 
 // ---------------------------------------------------------------------------
@@ -573,9 +571,8 @@ void rebuildPairingTopological(const ref Mesh mesh, const ref SymmetryPacket sp,
     // Seam + side classification — identical to rebuildPairing so semantics match.
     outPairOf[] = -1;
     foreach (i; 0 .. n) {
-        float d = dot(mesh.vertices[i] - sp.planePoint, sp.planeNormal);
-        outOnPlane[i]  = (abs(d) <= sp.epsilonWorld);
-        outVertSign[i] = (abs(d) <= sp.epsilonWorld) ? 0 : (d > 0 ? +1 : -1);
+        outVertSign[i] = symmetrySide(sp, mesh.vertices[i], sp.epsilonWorld);
+        outOnPlane[i]  = outVertSign[i] == 0;
     }
 
     // BFS state. Both queues advance in lock-step (queueA[i] = driver,

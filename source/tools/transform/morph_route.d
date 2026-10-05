@@ -65,9 +65,8 @@ import math    : Vec3;
 import mesh    : Mesh, MeshMap, MapKind, isMorphKind;
 import mesh_morph : morphApply, morphRoutedStore;
 import toolpipe.packets : SymmetryPacket;
-import symmetry : mirrorPosition, mirrorDirection, projectOnPlane,
-                  applySymmetryMirror, applySymmetryMirrorDelta,
-                  mirrorStepFor, MirrorStep, SelfStep, partnerHidden;
+import symmetry : mirrorPosition, mirroredEdit, walkMirrorPairs,
+                  applySymmetryMirror, applySymmetryMirrorDelta;
 
 /// Everything the routed write needs, resolved once per apply.
 ///
@@ -179,29 +178,13 @@ void applySymmetryMirrorRouted(Mesh* mesh, const ref SymmetryPacket sp,
         applySymmetryMirror(mesh, sp, selected, outAlsoTouched);
         return;
     }
-    if (!sp.enabled) return;
-    if (sp.pairOf.length != mesh.vertices.length) return;
     auto map = mesh.morphMapForWrite(route.name);
     if (map is null) return;
-
+    // The on-plane projection reads and stores the DRAWN point (never the base).
     bool wrote = false;
-    foreach (i; 0 .. mesh.vertices.length) {
-        if (i >= selected.length || !selected[i]) continue;
-        immutable MirrorStep st = mirrorStepFor(sp, selected, i, partnerHidden(*mesh, sp, i));
-        if (st.self == SelfStep.project) {
-            // Project the DRAWN point and store the projection — never touch
-            // mesh.vertices, and never project the base.
-            wrote |= storeRouted(map, route, i,
-                                 projectOnPlane(sp, routedDisplayPos(map, route, i)));
-            continue;
-        }
-        if (!st.copyToPartner) continue;
-        immutable int mi = st.partner;
-        wrote |= storeRouted(map, route, mi,
-                             mirrorPosition(sp, routedDisplayPos(map, route, i)));
-        if (mi < cast(int) outAlsoTouched.length)
-            outAlsoTouched[mi] = true;
-    }
+    walkMirrorPairs!(i => routedDisplayPos(map, route, i),
+                     (i, p) { wrote |= storeRouted(map, route, i, p); },
+                     (i, mi, p) => mirrorPosition(sp, p))(mesh, sp, selected, outAlsoTouched);
     // ONE note per pass, never per vertex — mid-drag version stability is
     // intentional (the symmetry / falloff / snap caches key on it).
     if (wrote) {
@@ -327,30 +310,13 @@ void applySymmetryMirrorDeltaRouted(Mesh* mesh, const ref SymmetryPacket sp,
         applySymmetryMirrorDelta(mesh, sp, baseline, selected, outAlsoTouched);
         return;
     }
-    if (!sp.enabled) return;
-    if (sp.pairOf.length != mesh.vertices.length) return;
     auto map = mesh.morphMapForWrite(route.name);
     if (map is null) return;
-
+    // The driver's edit is measured on the DRAWN surface, from its run position.
     bool wrote = false;
-    foreach (i; 0 .. mesh.vertices.length) {
-        if (i >= selected.length || !selected[i]) continue;
-        immutable MirrorStep st = mirrorStepFor(sp, selected, i, partnerHidden(*mesh, sp, i));
-        if (st.self == SelfStep.project) {
-            wrote |= storeRouted(map, route, i,
-                                 projectOnPlane(sp, routedDisplayPos(map, route, i)));
-            continue;
-        }
-        if (!st.copyToPartner) continue;
-        immutable int mi = st.partner;
-        // The driver's edit displacement, measured on the DRAWN surface:
-        // routed position now, minus where it sat at run start.
-        const Vec3 delta = routedDisplayPos(map, route, i) - route.runPos[i];
-        wrote |= storeRouted(map, route, mi,
-                             route.runPos[mi] + mirrorDirection(sp, delta));
-        if (mi < cast(int) outAlsoTouched.length)
-            outAlsoTouched[mi] = true;
-    }
+    walkMirrorPairs!(i => routedDisplayPos(map, route, i),
+                     (i, p) { wrote |= storeRouted(map, route, i, p); },
+                     (i, mi, p) => mirroredEdit(sp, route.runPos, i, mi, p))(mesh, sp, selected, outAlsoTouched);
     if (wrote) {
         import mesh_edit_delta : MeshEditScope;
         mesh.noteChange(MeshEditScope.Maps);

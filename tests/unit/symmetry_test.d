@@ -166,30 +166,7 @@ unittest {
     assert(rows == 5, "(u2) row population changed");
 }
 
-// (u3) CENSUS of the mirror pass: each of the four pass bodies calls
-// `mirrorStepFor(` exactly once and keeps no comparison of its own.
-unittest {
-    string[2][] bodies = [
-        ["source/symmetry.d", "void applySymmetryMirror(Mesh* mesh,"],
-        ["source/symmetry.d", "void applySymmetryMirrorDelta(Mesh* mesh,"],
-        ["source/tools/transform/morph_route.d", "void applySymmetryMirrorRouted("],
-        ["source/tools/transform/morph_route.d", "void applySymmetryMirrorDeltaRouted("],
-    ];
-    import tests.unit.census_symbols : countOccurrences;
-    int found;
-    foreach (b; bodies) {
-        const body_ = bodyAfter(codeOf(b[0]), b[1]);
-        assert(body_.length > 200, "(u3) body not found or trivially short: " ~ b[1]);
-        ++found;
-        assert(countOccurrences(body_, "mirrorStepFor(") == 1,
-               "(u3) " ~ b[1] ~ " — mirrorStepFor( exactly 1 expected, got "
-               ~ countOccurrences(body_, "mirrorStepFor(").to!string);
-        foreach (tok; ["pairOf[", "vertSign[", "baseSide", "isVertexHidden"])
-            assert(countOccurrences(body_, tok) == 0,
-                   "(u3) " ~ b[1] ~ " keeps its own `" ~ tok ~ "` — the pair rule lives in mirrorStepFor");
-    }
-    assert(found == 4, "(u3) body population changed");
-}
+// (u3) moved to tests/unit/mirror_walker_census_test.d (c1) by task 9410.
 
 // (u4) CENSUS "a pair only at a pointer gesture".
 unittest {

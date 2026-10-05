@@ -799,32 +799,11 @@ public:
         auto sym = cast(SymmetryStage)
                    scene.pipeContext.pipeline.findByTask(TaskCode.Symm);
         if (sym !is null && sym.enabled) {
-            Vec3 n, a1, a2;
-            Vec3 c;
-            if (sym.useWorkplane) {
-                if (auto wpst = cast(WorkplaneStage)
-                                scene.pipeContext.pipeline.findByTask(TaskCode.Work)) {
-                    wpst.currentBasis(n, a1, a2);
-                    c = wpst.center;
-                } else {
-                    n = Vec3(0, 1, 0); a1 = Vec3(1, 0, 0); a2 = Vec3(0, 0, 1);
-                }
-            } else {
-                final switch (sym.axisIndex) {
-                    case 0:
-                        n  = Vec3(1, 0, 0);
-                        a1 = Vec3(0, 1, 0); a2 = Vec3(0, 0, 1);
-                        c  = Vec3(sym.offset, 0, 0); break;
-                    case 1:
-                        n  = Vec3(0, 1, 0);
-                        a1 = Vec3(1, 0, 0); a2 = Vec3(0, 0, 1);
-                        c  = Vec3(0, sym.offset, 0); break;
-                    case 2:
-                        n  = Vec3(0, 0, 1);
-                        a1 = Vec3(1, 0, 0); a2 = Vec3(0, 1, 0);
-                        c  = Vec3(0, 0, sym.offset); break;
-                }
-            }
+            // The plane the stage applies (task 9410), lattice axes any
+            // in-plane pair (the unit lattice is square and centred).
+            Vec3 c, n, a1, a2;
+            sym.currentPlane(c, n);
+            perpendicularFrame(n, a1, a2);
             float[16] symModel = [
                 a1.x, a1.y, a1.z, 0,
                 n.x,  n.y,  n.z,  0,
