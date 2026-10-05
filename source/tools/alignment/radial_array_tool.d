@@ -44,14 +44,14 @@ struct RadialArrayParamProjection {
     Vec3 center;
     float angle, offset, dist;
     bool merge;
-    // Every field, the string by value and the rest by bytes.
     bool opEquals(const RadialArrayParamProjection other) const nothrow @nogc {
-        foreach (i, ref f; this.tupleof) {
-            static if (is(typeof(f) : const(char)[])) {
-                if (f != other.tupleof[i]) return false;
-            } else if (memcmp(&f, &other.tupleof[i], typeof(f).sizeof) != 0) return false;
+        bool sameBytes(T)(ref const T a, ref const T b) nothrow @nogc {
+            return memcmp(&a, &b, T.sizeof) == 0;
         }
-        return true;
+        return count == other.count && axis == other.axis &&
+            sameBytes(center, other.center) && sameBytes(angle, other.angle) &&
+            sameBytes(offset, other.offset) && sameBytes(dist, other.dist) &&
+            merge == other.merge;
     }
 }
 struct RadialArrayTransitionImage {

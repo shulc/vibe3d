@@ -253,7 +253,7 @@ void buildStandFull(bool transformed, double sclY, double az, double el) {
 // --------------------------------------------------------------------------
 // Arming the tool. count=2 + angle=360 makes the single copy a HALF-TURN,
 // which is the configuration whose centre is recoverable in closed form (see
-// `recoverCentre`). offset=0 keeps the copy in the rotation plane; weld=0
+// `recoverCentre`). offset=0 keeps the copy in the rotation plane; merge off
 // keeps the four new vertices at indices 8..11 (the weld pass is the only
 // thing in the kernel that renumbers).
 // --------------------------------------------------------------------------
@@ -263,7 +263,7 @@ void armTool(string axis) {
     cmd("tool.attr " ~ TOOL ~ " axis " ~ axis);
     cmd("tool.attr " ~ TOOL ~ " angle 360");
     cmd("tool.attr " ~ TOOL ~ " offset 0");
-    cmd("tool.attr " ~ TOOL ~ " weld 0");
+    cmd("tool.attr " ~ TOOL ~ " merge false");
     settle();   // a draw() frame, so the press has a cached viewport + handles
 }
 
