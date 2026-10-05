@@ -227,10 +227,13 @@ unittest {
 // cannot drop the judged checkpoints. Capture 8960 (findings §16): a headless apply after a
 // scripted write stacks, Z1 takes the apply alone, Z2 reopens post mode — the fields of
 // s04…s06 are judged (`pinApplyLadder`); ours reopens post mode at Z1 (the write records no
-// row here, the P3 row of activation/command-close wave V4). Capture 8980 (§17): a typed UI
-// command KEEPS PolyExtrude's attributes and leaves the tool not armed; ours keeps them on
-// the free Z/R route (parity) and zeroes them where the operation is still open at the
-// command (no Z/R, the handle route) — declared, owner S7; `armed` at the command matches
+// row here, the P3 row of activation/command-close wave V4). PolyExtrude's s04 since task
+// 9433 (capture K-PX: the scripted apply is the gesture's operation, a zero distance with a
+// cap shift still builds): its image is new and Z1's is the write's (parity); its vcount
+// stays outside the model (ours 18, one ring on the cap; reference 23). Capture 8980
+// (§17): a typed UI command KEEPS PolyExtrude's attributes and leaves the tool not armed;
+// ours keeps them on the free Z/R route (parity) and zeroes them where the operation is
+// still open at the command (no Z/R, the handle route) — declared, owner S7; `armed` at the command matches
 // since law 6 (S7: the command close ends the post mode).
 unittest {
     const fx = parseJSON(kFixture);
