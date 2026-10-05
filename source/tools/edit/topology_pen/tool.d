@@ -3736,7 +3736,7 @@ public:
         auto m = mesh;
         if (m is null) return MoveElem.None;
 
-        // The element-pick law (`hover_state.electElement`, task 9441): the
+        // The element-pick law (`hover_state.electElement`): the
         // nearest VISIBLE vertex and edge within the reach, the polygon under
         // the cursor only under a style that draws faces (K-P P9, P10), ranked
         // by the cascade after the edge-midpoint veto.

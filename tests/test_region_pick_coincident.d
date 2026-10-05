@@ -2,7 +2,8 @@
 // Geometry and expected counts are copied from the frozen
 // `toolcards/lasso_coincident_pixel/fixture_lasso_coincident_pixel.json`.
 // The private capture is not read at test time; this remains a standalone
-// regression test.  A click is the deliberate opposite and keeps one winner.
+// regression test.  A click is a different rule: it takes the nearest vertex
+// plus its tie group (d² within 36 px² of the nearest's; capture K-OC).
 
 module test_region_pick_coincident;
 
@@ -191,16 +192,16 @@ void runClickRankingCell() {
     playAndWait(clickLog(cam, x0, y0));
     settle();
     auto selected = getJson("/api/selection")["selectedVertices"].array;
-    assert(selected.length == 1 && selected[0].integer == 0,
-        format("click/ranking: the exact-pixel candidate 0 must beat candidate "
-             ~ "1 at distance 3; selected=%s", selected.to!string));
-    writeln("CLICK_RESULT exact=0 farther=1 selected=0");
+    assert(selected.length == 2,
+        format("click/tie group: candidate 1 at 3 px (9 px² <= 36 px² over the "
+             ~ "nearest) joins the exact-pixel candidate 0; selected=%s",
+               selected.to!string));
+    writeln("CLICK_RESULT exact=0 farther=1 selected=0,1");
 }
 
 unittest {
-    // This cell is intentionally above every region assertion. Reverting the
-    // region fix must reach the first differing region row only after proving
-    // that click still picks one nearest candidate.
+    // This cell is intentionally above every region assertion: the click's
+    // own rule is proved before the first region row.
     runClickRankingCell();
 
     cmdOk(commandBody("scene.reset"));

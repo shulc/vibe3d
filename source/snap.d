@@ -375,7 +375,7 @@ bool typeEligible(SnapType t, SnapMode snapScope_)
 // ---------------------------------------------------------------------------
 
 /// The cascade constants and comparator are the element-pick law's
-/// (`hover_state`, task 9441): one pick reach and one comparator for the
+/// (`hover_state`): one pick reach and one comparator for the
 /// snap election and every element pick.
 public import hover_state : kCandidateToleranceBasePx, kVertexToleranceScale,
     kAbsentClassDist, kCascadeVertex, kCascadeEdge, kCascadePolygon, cascadeClassWins;

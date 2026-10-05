@@ -11,7 +11,7 @@
 source-files 574
 task-citation-lines 5231
 citing-files 455
-long-comment-runs 264
+long-comment-runs 263
 files-with-long-runs 141
 
 # Exact per-file task-citation allowances, sorted by path.
@@ -192,7 +192,7 @@ allow source/commands/viewport/layout_preset.d 1
 allow source/commands/viewport/master.d 1
 allow source/commands/viewport/view_preset.d 6
 allow source/commands/workplane.d 5
-allow source/constraint.d 12
+allow source/constraint.d 11
 allow source/copilot_command_registration.d 1
 allow source/copilot_overlay.d 2
 allow source/copilot_panel.d 2
@@ -228,7 +228,7 @@ allow source/handles/gizmo_metrics.d 22
 allow source/handles/gl_util.d 6
 allow source/handles/shapes.d 37
 allow source/history_macro_registration.d 1
-allow source/hover_state.d 2
+allow source/hover_state.d 3
 allow source/http_command_adapter.d 3
 allow source/http_json.d 8
 allow source/http_providers.d 69
@@ -594,7 +594,7 @@ allow-runs source/tools/edit/edge_extend.d 1
 allow-runs source/tools/edit/preview_rebuild.d 1
 allow-runs source/tools/edit/smooth_relax.d 1
 allow-runs source/tools/edit/topology_pen/snap_guide.d 2
-allow-runs source/tools/edit/topology_pen/tool.d 17
+allow-runs source/tools/edit/topology_pen/tool.d 16
 allow-runs source/tools/slice/loop_slice_tool.d 1
 allow-runs source/tools/slice/slice_tool.d 1
 allow-runs source/tools/transform/morph_route.d 1

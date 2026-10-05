@@ -191,6 +191,10 @@ final class InputFrameState {
     int hoveredVertex = -1;
     int hoveredEdge   = -1;
     int hoveredFace   = -1;
+    // `pickHover` writes these beside the ids: the comparator's distances
+    // (px from the cursor's pixel centre) and the cell's occlusion term.
+    float hoveredVertexPx = 0, hoveredEdgePx = 0, hoveredEdgeMidPx = float.infinity;
+    bool  pickOcclusion = true;
 
     // Task 0781 step 1c: the two picker-owned references, moved in with the
     // pick family below because that family is their ONLY reader -- measured
@@ -300,10 +304,14 @@ final class InputFrameState {
         import ai.element_candidates : publishElementCandidates;
         import hover_state : g_hoveredVertex, g_hoveredEdge, g_hoveredFace,
             g_hoverIndexSpaceStale, g_hoverOcclusion, kCascadeVertex, kCascadeEdge,
-            kCascadePolygon;
+            kCascadePolygon, PickGather, electElement;
         publishElementCandidates(mx, my, hoveredVertex, hoveredEdge, hoveredFace);
         if (toolActive) {
-            immutable int k = electHovered(mx, my);
+            PickGather g;
+            if (hoveredVertex >= 0) g.vertex = hoveredVertexPx;
+            if (hoveredEdge >= 0) { g.edge = hoveredEdgePx; g.edgeMid = hoveredEdgeMidPx; }
+            if (hoveredFace >= 0) g.polygon = 0.0f;
+            immutable int k = electElement(g);
             if (k != kCascadeVertex)  hoveredVertex = -1;
             if (k != kCascadeEdge)    hoveredEdge   = -1;
             if (k != kCascadePolygon) hoveredFace   = -1;
@@ -312,34 +320,7 @@ final class InputFrameState {
         g_hoveredEdge   = hoveredEdge;
         g_hoveredFace   = hoveredFace;
         g_hoverIndexSpaceStale = previewIndexSpaceStale();
-        g_hoverOcclusion = app.vpm.pickVisibility().occlusionTerm;
-    }
-
-    /// The comparator over the three hovered ids: each gathered class's
-    /// screen distance from the cursor's pixel centre, the edge's midpoint for
-    /// the veto, and 0 for a hovered polygon (it is under the cursor).
-    private int electHovered(int mx, int my) {
-        import hover_state : PickGather, electElement;
-        import math : projectionSpace, projectToWindowFull, closestOnSegment2D;
-        const m = &app.mesh();
-        Viewport vp = app.vpm.activeSnapshot();
-        const Viewport vl = projectionSpace(vp, primaryModelSpace());
-        immutable float cx = mx + 0.5f, cy = my + 0.5f;
-        bool px(uint v, out float x, out float y) {
-            float z;
-            return v < m.vertices.length && projectToWindowFull(m.vertices[v], vl, x, y, z);
-        }
-        PickGather g;
-        float x0, y0, x1, y1, t;
-        if (hoveredVertex >= 0 && px(hoveredVertex, x0, y0))
-            g.vertex = ((x0 - cx) ^^ 2 + (y0 - cy) ^^ 2) ^^ 0.5f;
-        if (hoveredEdge >= 0 && hoveredEdge < m.edges.length
-                && px(m.edges[hoveredEdge][0], x0, y0) && px(m.edges[hoveredEdge][1], x1, y1)) {
-            g.edge    = closestOnSegment2D(cx, cy, x0, y0, x1, y1, t);
-            g.edgeMid = (((x0 + x1) * 0.5f - cx) ^^ 2 + ((y0 + y1) * 0.5f - cy) ^^ 2) ^^ 0.5f;
-        }
-        if (hoveredFace >= 0) g.polygon = 0.0f;
-        return electElement(g);
+        g_hoverOcclusion = pickOcclusion;
     }
 
     /// The vertex CLICK's tie group (K-OC): besides the nearest vertex the
@@ -431,6 +412,7 @@ final class InputFrameState {
         else
             alias hovered = hoveredEdge;
         app.ensureDisplayCurrent(); // mid-batch pull-guard: VBO reader below
+        pickOcclusion = app.vpm.pickVisibility().occlusionTerm;
         // Task 1730 — the SAME freeze, for the same reason, over a different
         // window: this picker reads the ID buffer and maps it back through
         // `gpu.vertOriginGpu` / `edgeOriginGpu`, and while a rebuild is in
@@ -482,17 +464,38 @@ final class InputFrameState {
         // none (`CLAUDE.md` §Measured laws).
         import hover_state : kElementPickRadiusPx;
         int hit = app.gpuSelect.pick(sm, mx, my, cast(int)kElementPickRadiusPx,
-                                 app.mesh, app.gpu, vp,
-                                 primaryModelSpace(),
-                                 app.vpm.pickVisibility().occlusionTerm);
+                                 app.mesh, app.gpu, vp, primaryModelSpace(), pickOcclusion);
         if (hit < 0) return;
 
         hovered = hit;
+        noteHoverDistance!em(vp, mx, my);
         if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd)
             symSel(&app.mesh(), vp, app.editMode, hovered, /*deselect=*/false);
         else if (dragMode == DragMode.SelectRemove)
             symSel(&app.mesh(), vp, app.editMode, hovered, /*deselect=*/true);
     }
+    /// The hovered element's screen distances for the comparator.
+    private void noteHoverDistance(EditMode em)(ref Viewport vp, int mx, int my) {
+        import math : projectionSpace, projectToWindowFull, closestOnSegment2D;
+        const Viewport vl = projectionSpace(vp, primaryModelSpace());
+        immutable float cx = mx + 0.5f, cy = my + 0.5f;
+        const m = &app.mesh();
+        bool px(uint v, out float x, out float y) {
+            float z;
+            return v < m.vertices.length && projectToWindowFull(m.vertices[v], vl, x, y, z);
+        }
+        float x0 = cx, y0 = cy, x1 = cx, y1 = cy, t;
+        static if (em == EditMode.Vertices) {
+            px(hoveredVertex, x0, y0);
+            hoveredVertexPx = ((x0 - cx) ^^ 2 + (y0 - cy) ^^ 2) ^^ 0.5f;
+        } else {
+            if (hoveredEdge < m.edges.length)
+                px(m.edges[hoveredEdge][0], x0, y0) && px(m.edges[hoveredEdge][1], x1, y1);
+            hoveredEdgePx    = closestOnSegment2D(cx, cy, x0, y0, x1, y1, t);
+            hoveredEdgeMidPx = (((x0 + x1) * 0.5f - cx) ^^ 2 + ((y0 + y1) * 0.5f - cy) ^^ 2) ^^ 0.5f;
+        }
+    }
+
     alias pickVertices = pickHover!(SelectMode.Vertex, EditMode.Vertices,
                                     symmetricSelectVertex);
     alias pickEdges    = pickHover!(SelectMode.Edge,   EditMode.Edges,

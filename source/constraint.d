@@ -583,7 +583,7 @@ float viewPixelScale(const ref Viewport vp) pure nothrow @nogc @safe {
 /// pick math uses: how far a press (and therefore the hover highlight) reaches
 /// for a vertex or an edge before falling through to the face under the cursor.
 ///
-/// The element-pick reach (`hover_state.kElementPickRadiusPx`, task 9441: one
+/// The element-pick reach (`hover_state.kElementPickRadiusPx`: one
 /// preference with the snap cascade's tolerance base). Every mode but Fill.
 float topoPenPressPickPx(const ref Viewport vp) pure nothrow @nogc @safe {
     import hover_state : kElementPickRadiusPx;

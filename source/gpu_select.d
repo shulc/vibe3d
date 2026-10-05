@@ -703,8 +703,8 @@ private:
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
         // The (2r+1)² window's corners lie up to r·√2 away; only pixels within
-        // EUCLIDEAN distance r count, inclusive (the element-pick law, task
-        // 9441). r == 0 (face pick) considers only the exact pixel.
+        // EUCLIDEAN distance r count, inclusive (the element-pick law,
+        // `hover_state`). r == 0 (face pick) considers only the exact pixel.
         int  bestD2 = r * r + 1;
         uint bestId = 0;
         foreach (j; 0 .. rh) foreach (i; 0 .. rw) {
