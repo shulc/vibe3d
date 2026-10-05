@@ -121,8 +121,10 @@ unittest {
 
 // Construction cells, not a capture (task 9412): under the oblique plane a
 // drawn handle tracks the cursor along its own screen line (LAW A, own). The
-// Box X arrow moves only local cenX; the cylinder +X size handle ends where
-// the pointer travel along its line puts it. Each pins one local<->world
+// Box X arrow moves only local cenX; the cylinder +Y size handle ends where
+// the pointer travel along its line puts it. +Y, not +X: world X has no
+// normal component under this plane, so a local +X read as world shows the
+// same screen line and tracks anyway. Each pins one local<->world
 // conversion of the handle axis (`moverDrag`, `handleSizeDrag`).
 struct Px { double x, y; }
 
@@ -167,7 +169,7 @@ void assertTracks(string what, Px before, Px after, Px u, double travel) {
                after.x, after.y));
 }
 
-unittest { // oblique_frame: the X arrow and the +X size handle track their lines
+unittest { // oblique_frame: the X arrow and the +Y size handle track their lines
     auto fixture = parseJSON(import("fixtures/create_center_drag_frame_law.json"));
     auto cell = fixture["cells"].array[1];
     assert(cell["name"].str == "oblique_frame", "fixture cell 1 is not oblique_frame");
@@ -193,20 +195,19 @@ unittest { // oblique_frame: the X arrow and the +X size handle track their line
     assertTracks("Box mover centre on the X arrow", centre0, anchorOf(13), u, travel);
     assert(commitAndVertexCount() == 8, "Box arrow cell: expected the 8-vertex cube");
 
-    // The cylinder's +X size handle (part 0).
+    // The cylinder's +Y size handle (part 2).
     resetCreateCell(V3(0, 0, 0), true, V3(0, 0, 0), euler);
-    command("tool.set prim.cube off");
     command("tool.set prim.cylinder");
     dragPixels(cx, cy, cx + 60, cy + 50, 8);
     dragPixels(cx - 15, cy, cx - 15, cy - 80, 8);
     foreach (n; ["cenX", "cenY", "cenZ"]) command("tool.attr prim.cylinder " ~ n ~ " 0");
     foreach (n; ["sizeX", "sizeY", "sizeZ"]) command("tool.attr prim.cylinder " ~ n ~ " 1");
     Thread.sleep(dur!"msecs"(120));
-    Px handle0 = anchorOf(0);
-    immutable double size0 = primAttr("prim.cylinder", "sizeX");
-    travel = dragAlongLine(0, u, dx, dy);
-    assert(primAttr("prim.cylinder", "sizeX") > size0 + 0.05,
-        format("+X size drag (%d,%d) px did not grow sizeX from %.4f", dx, dy, size0));
-    assertTracks("cylinder +X size handle", handle0, anchorOf(0), u, travel);
+    Px handle0 = anchorOf(2);
+    immutable double size0 = primAttr("prim.cylinder", "sizeY");
+    travel = dragAlongLine(2, u, dx, dy);
+    assert(primAttr("prim.cylinder", "sizeY") > size0 + 0.05,
+        format("+Y size drag (%d,%d) px did not grow sizeY from %.4f", dx, dy, size0));
+    assertTracks("cylinder +Y size handle", handle0, anchorOf(2), u, travel);
     command("tool.set prim.cylinder off");
 }
