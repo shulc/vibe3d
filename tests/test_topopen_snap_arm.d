@@ -389,8 +389,7 @@ int weldScene(string scene, string[] snapAttrs = null) {
 }
 
 /// Press on b, drag by the captured pointer delta (+ `extraDx` px), release.
-/// Returns the plane hit (y 1) under the release pixel's centre.
-double[3] weldDrag(int bIdx, int extraDx = 0) {
+void weldDrag(int bIdx, int extraDx = 0) {
     auto vp = viewportFromCameraMatrices();
     auto b = readVerticesLayer(1)[bIdx];
     float sx, sy;
@@ -402,15 +401,12 @@ double[3] weldDrag(int bIdx, int extraDx = 0) {
         x0, y0, x1, y1, 16, 0, 1));
     assert("error" !in pr, "/api/play-events failed: " ~ pr.toString);
     waitPlayerIdle();
-    Vec3 org, dir;
-    pixelRay(x1 + 0.5f, y1 + 0.5f, vp, org, dir);   // the pixel centre the hit reads
-    immutable float t = (1.0f - org.y) / dir.y;
-    return [org.x + t * dir.x, 1.0, org.z + t * dir.z];
 }
 
-/// Assert the fixture cell's outcome on the edited layer; `landing` is where
-/// an unwelded b must sit.
-void assertWeldCell(string id, int bIdx, double[3] landing) {
+/// Assert the fixture cell's outcome on the edited layer: a refused weld
+/// leaves b where the drag put it, the captured `b_final` (the rigid grab
+/// drag, task 9510: b + the view-quantised travel, not the release pixel's hit).
+void assertWeldCell(string id, int bIdx) {
     auto c = weldCell(id);
     immutable long n1 = c["fg_vertex_count"].array[1].integer;
     assert(vertexCountLayer(1) == n1, format("%s: vertex count %d, expected %d (%s)",
@@ -421,33 +417,40 @@ void assertWeldCell(string id, int bIdx, double[3] landing) {
         return;
     }
     auto got = readVerticesLayer(1)[bIdx];
+    const want = c["b_final"].array;
     foreach (k; 0 .. 3)
-        assert(abs(got[k] - landing[k]) <= 1e-4, format(
-            "%s: a refused weld leaves b at its landing %s, got %s", id, landing, got));
+        assert(abs(got[k] - want[k].floating) <= 2e-5, format(
+            "%s: a refused weld leaves b at the captured %s, got %s", id, want, got));
 }
 
 unittest { // occluded: control (box below a) welds, box between a and the eye refuses
     int bIdx = weldScene("occctl");
-    assertWeldCell("weld-occctl", bIdx, weldDrag(bIdx));
+    weldDrag(bIdx);
+    assertWeldCell("weld-occctl", bIdx);
     bIdx = weldScene("occ");
-    assertWeldCell("weld-occ", bIdx, weldDrag(bIdx));
+    weldDrag(bIdx);
+    assertWeldCell("weld-occ", bIdx);
     cmd("tool.set mesh.topoPen off");
 }
 
 unittest { // hidden: control (bystander hidden) welds, a hidden refuses
     int bIdx = weldScene("hidctl");
-    assertWeldCell("weld-hidctl", bIdx, weldDrag(bIdx));
+    weldDrag(bIdx);
+    assertWeldCell("weld-hidctl", bIdx);
     bIdx = weldScene("hid");
-    assertWeldCell("weld-hid", bIdx, weldDrag(bIdx));
+    weldDrag(bIdx);
+    assertWeldCell("weld-hid", bIdx);
     cmd("tool.set mesh.topoPen off");
 }
 
 unittest { // background: control (a in the edited mesh) welds, a in a background mesh refuses
     int bIdx = weldScene("bgctl");
-    assertWeldCell("weld-bgctl", bIdx, weldDrag(bIdx));
+    weldDrag(bIdx);
+    assertWeldCell("weld-bgctl", bIdx);
     bIdx = weldScene("bg");
     auto bg0 = readVerticesLayer(0);
-    assertWeldCell("weld-bg", bIdx, weldDrag(bIdx));
+    weldDrag(bIdx);
+    assertWeldCell("weld-bg", bIdx);
     assert(readVerticesLayer(0) == bg0, "weld-bg: the background mesh must be unchanged");
     cmd("tool.set mesh.topoPen off");
 }
@@ -455,14 +458,16 @@ unittest { // background: control (a in the edited mesh) welds, a in a backgroun
 unittest { // law-neutral: the weld ignores the snap SCOPE and reaches the whole accept radius
     // weld-scope-item: the snap scope at Item, the occluded scene's control still welds.
     int bIdx = weldScene("occctl", ["snapMode item"]);
-    assertWeldCell("weld-occctl", bIdx, weldDrag(bIdx));
+    weldDrag(bIdx);
+    assertWeldCell("weld-occctl", bIdx);
     cmd("tool.set mesh.topoPen off");
     cmd("tool.pipe.attr snap snapMode global");
 
     // weld-accept-above-outer: an inner range (60 px) above the 40 px outer range;
     // a release 45 px from a still welds.
     bIdx = weldScene("occctl", ["innerRange 60"]);
-    assertWeldCell("weld-occctl", bIdx, weldDrag(bIdx, -39));
+    weldDrag(bIdx, -39);
+    assertWeldCell("weld-occctl", bIdx);
     cmd("tool.set mesh.topoPen off");
     cmd("tool.pipe.attr snap innerRange 24");
 
@@ -605,8 +610,11 @@ unittest { // KW2_A symmetric move welds both sides (14); KW2_B control (15)
         && !hasVertexNear(1, Vec3(0.3f, 0, 0), 1e-3) && !hasVertexNear(1, Vec3(-0.3f, 0, 0), 1e-3),
         format("KW2_A from -X: V=%d, expected 14", vertexCountLayer(1)));
     // A second gesture in the same session, after the weld: the pairing is re-taken.
+    // The press grabs the welded vertex (0.5, 0.06) and drags it rigidly 0.2 m
+    // (task 9510, the captured grab law), its partner mirrored.
     sameQuadMove(pts, [0.5, 0, 0], 20, 0, quads, true, null, null, 2);
-    assert(vertexCountLayer(1) == 14 && hasVertexNear(1, Vec3(-0.705f, -0.005f, 0), 1e-3),
+    assert(vertexCountLayer(1) == 14 && hasVertexNear(1, Vec3(0.7f, 0.06f, 0), 1e-3)
+        && hasVertexNear(1, Vec3(-0.7f, 0.06f, 0), 1e-3),
         format("KW2_A then a second grab: the partner follows: %s", readVerticesLayer(1)));
     // A hidden partner neither follows nor welds (the walker's hidden guard), though
     // an unpaired v16 sits 3 px from it: only the grab welds (17 - 1).
