@@ -91,6 +91,20 @@ unittest {
     assert(pBefore.visible(4),
         "near-occluder-front: a vertex between the eye and the near face is visible");
 
+    // --- near-occluder-backward: a ray that meets Q's plane only BEHIND the eye
+    // (t < 0, at H = (0, 1.2, 5.6), inside Q's behind-eye part) is not
+    // occluded by it. C3 = eye + (0, -2, -1) lies in front of the eye.
+    {
+        const Vec3 c3 = Vec3(0, -2, 4);
+        Mesh away = rig(c3);
+        assert(projectToWindowFull(c3, vp, sx, sy, z), "rig: C3 must project");
+        g_visCounters.reset();
+        auto pAway = visibilityProbe(away, eye, vp, ModelSpace.world());
+        assert(g_visCounters.nearOccluders == 1, "near-occluder-backward: Q is the near occluder");
+        assert(pAway.visible(4),
+            "near-occluder-backward: a plane met only behind the eye occludes nothing");
+    }
+
     // --- near-occluder-psp: the candidate BEHIND Q is hidden ------------------
     g_visCounters.reset();
     auto pBehind = visibilityProbe(behind, eye, vp, ModelSpace.world());

@@ -382,6 +382,34 @@ unittest {
     }
 }
 
+// THE HIDE SEED, directly (task 9387): a vertex whose every face is hidden, and
+// a hidden loose point, are never candidates — the seed is `!isVertexHidden`.
+// The swept corpus shows it only as a path count; this cell names it. Control
+// first: the same mesh unhidden is all visible (nothing occludes an open quad).
+unittest {
+    Mesh m;
+    m.vertices = [Vec3(-0.5f, -0.5f, 0), Vec3(0.5f, -0.5f, 0), Vec3(0.5f, 0.5f, 0),
+                  Vec3(-0.5f, 0.5f, 0), Vec3(1.2f, 0, 0)];   // 4: a loose point
+    m.addFace([0u, 1u, 2u, 3u]);
+    m.buildLoops();
+    m.resizeFaceSelection();
+    m.resizeVertexSelection();
+    m.resizeEdgeSelection();
+    Viewport vp;
+    vp.eye = Vec3(0, 0, 4);
+    vp.view = lookAt(vp.eye, Vec3(0, 0, 0), Vec3(0, 1, 0));
+    vp.proj = perspectiveMatrix(PI / 4, 4.0f / 3.0f, 0.1f, 100.0f);
+    vp.width = 640; vp.height = 480;
+    foreach (vi, b; m.visibleVertices(vp.eye, vp, ModelSpace.world()))
+        assert(b, "control: every vertex of the unhidden rig is visible");
+    m.setFaceHidden(0, true);
+    assert(m.setVertexHidden(4, true), "rig: the loose point takes its own Hide bit");
+    assert(m.isVertexHidden(0) && m.isVertexHidden(4), "rig: corner 0 and the loose point hidden");
+    auto vis = m.visibleVertices(vp.eye, vp, ModelSpace.world());
+    assert(!vis[0] && !vis[4],
+        "a hidden face's own corner and a hidden loose point are never candidates");
+}
+
 // ---------------------------------------------------------------------------
 // THE EXPECTED PATH, per fixture.
 //
