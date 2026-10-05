@@ -772,7 +772,7 @@ final class LayerDelete : LayerCommandBase {
 // deselect. Routes the selection mutation through `doc.selectItem`, which holds
 // the SET invariants. A primary move funnels through `fireSwitchIfChanged`
 // (which fires `onActiveLayerChanged` on a genuine primary-OBJECT change).
-// Task 9511 (K-CD4): the command never changes the selection type and keeps
+// K-CD4: the command never changes the selection type and keeps
 // the armed tool, whatever its origin — the reference logs an item-list click
 // as the same plain selection command a script sends.
 //
@@ -803,7 +803,7 @@ final class LayerSelect : LayerCommandBase {
     private Document.ItemSelectionState prevSelection;
     private Layer       prevPrimary;   // only for the switch-hook comparison
     private size_t      prevActiveIndex;
-    // Task 9457/9511 (K-CD4): the armed tool is kept, and each mesh leaving
+    // Task 9457 (K-CD4): the armed tool is kept, and each mesh leaving
     // the foreground under it has its component selection cleared (undo
     // restores it).
     private string              droppedTool;
@@ -860,7 +860,7 @@ final class LayerSelect : LayerCommandBase {
     /// The tail every branch shares: publication, the switch hook, then the
     /// re-arm of the tool the guard dropped. A mesh leaving the foreground
     /// loses its component selection only when a tool retargets (K-CD4 CD4back
-    /// was measured with the tool armed; without one it is uncaptured, 9511).
+    /// was measured with the tool armed; without one it is uncaptured).
     /// `wasForeground` is null on revert and for `kind:`, which the reference
     /// sends as another command.
     private void finishSelect(Layer before, size_t beforeIndex, bool[] wasForeground) {

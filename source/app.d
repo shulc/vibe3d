@@ -2869,10 +2869,10 @@ void main(string[] args) {
     }
 
     // -------------------------------------------------------------------------
-    // Makes `SelType.Item` the current type without dropping the tool. Since
-    // task 9511 its one caller is the drop row's restore of a selection type;
-    // `layer.select` never promotes (K-CD4). Mirrors switchGeometryType's
-    // front-flip contract for the item type.
+    // Makes `SelType.Item` the current type without dropping the tool. Its one
+    // caller is the drop row's restore of a selection type; `layer.select`
+    // never promotes (K-CD4). Mirrors switchGeometryType's front-flip contract
+    // for the item type.
     //
     // Unlike the geometry-type switch, `editMode` is left UNCHANGED — it stays
     // the most-recent GEOMETRY type so viewport picking/drawing keeps a defined

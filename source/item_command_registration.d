@@ -9,8 +9,8 @@ import live_registration_roles : LiveSessionRole, LiveViewModeRole;
 import registry : Registry;
 
 /// The application lifecycle door used by item commands. It is wired before
-/// command registration; a missing delegate is a composition error. Task 9511
-/// removed the item-type door: `layer.select` never changes the type (K-CD4).
+/// command registration; a missing delegate is a composition error. There is
+/// no item-type door: `layer.select` never changes the type (K-CD4).
 struct ItemLifecycleDoors {
 private:
     void delegate(size_t, size_t) onActiveLayerChanged_;
