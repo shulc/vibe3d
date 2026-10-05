@@ -22,7 +22,7 @@ import snapshot : MeshSnapshot;
 import prepared_selection_profile_image : RadialSweepProfileImage;
 import shader : Shader, LitShader, drawLitPreview;
 import handler : ToolHandles, BoxHandler, gizmoSize, drawWorldSegments;
-import drag : planeDragDelta, screenAxisDelta, gesturePrevPixel;
+import drag : HandleDrag, DragFrame, DragKind, screenAxisDelta, gesturePrevPixel;
 import eventlog : queryMouse;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
 import prepared_radial_sweep_transition : PreparedRadialSweepTransitionOwner;
@@ -338,6 +338,7 @@ private:
     ToolHandles toolHandles;
     int         dragPart = -1;
     int         lastMX, lastMY;
+    HandleDrag  grab;      // an axis end: the end at the press + travel
     Viewport    cachedVp;
 
     version(unittest) MeshSnapshot lastPreparedCommitImage_;
@@ -977,6 +978,7 @@ public:
         dragPart = hit;
         lastMX   = e.x;
         lastMY   = e.y;
+        grab.press(params_.center + (hit == 0 ? -params_.axis : params_.axis), e.x, e.y);
         return true;
     }
 
@@ -991,9 +993,27 @@ public:
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
         if (dragPart < 0) return false;
 
-        // Both branches below are per-event increments — the axis endpoints
-        // run the plane conversion, the angle handles project onto the live
-        // rotational tangent — so both take their previous pixel from the
+        if (dragPart == 0 || dragPart == 1) {
+            // Axis endpoint drag: the DRAGGED end is a free handle (K-H3
+            // H3_NT, its residual kept); the OTHER end stays planted (see
+            // the field-block comment on axisStartH/axisEndH).
+            Vec3 other = params_.center + (dragPart == 0 ? params_.axis : -params_.axis);
+            bool skip;
+            DragFrame f;
+            f.kind = DragKind.viewPlane;
+            immutable Vec3 c = grab.client(e.x, e.y, f, cachedVp, skip);
+            if (!skip) {
+                params_.center = (c + other) * 0.5f;
+                params_.axis   = (dragPart == 0 ? other - c : c - other) * 0.5f;
+                params_.axisPreset = 3;   // handle drag -> Custom
+                engaged = true;
+                evaluate();
+            }
+            return true;
+        }
+
+        // The angle handles are per-event increments along the live
+        // rotational tangent, so they take their previous pixel from the
         // cooked gesture rather than from this tool's own pair. `lastMX/MY`
         // stay written as the fallback when no gesture is published and as
         // the other half of the debug agreement check.
@@ -1001,35 +1021,6 @@ public:
         int prevMX, prevMY;
         gesturePrevPixel(vts.get!GesturePacket(), e.x, e.y,
                          lastMX, lastMY, prevMX, prevMY);
-
-        if (dragPart == 0 || dragPart == 1) {
-            // Axis endpoint drag: the DRAGGED end moves on a screen-facing
-            // plane through its current position; the OTHER end stays
-            // planted (see the field-block comment on axisStartH/axisEndH).
-            Vec3 curS = params_.center - params_.axis;
-            Vec3 curE = params_.center + params_.axis;
-            Vec3 anchor = dragPart == 0 ? curS : curE;
-
-            bool skip;
-            Vec3 delta = planeDragDelta(e.x, e.y, prevMX, prevMY, 3, anchor, cachedVp, skip);
-            if (!skip) {
-                if (dragPart == 0) {
-                    Vec3 newS = curS + delta;
-                    params_.center = (newS + curE) * 0.5f;
-                    params_.axis   = (curE - newS) * 0.5f;
-                } else {
-                    Vec3 newE = curE + delta;
-                    params_.center = (curS + newE) * 0.5f;
-                    params_.axis   = (newE - curS) * 0.5f;
-                }
-                params_.axisPreset = 3;   // handle drag -> Custom
-                engaged = true;
-                evaluate();
-            }
-            lastMX = e.x;
-            lastMY = e.y;
-            return true;
-        }
 
         // Angle-handle drag (2 = Start Angle, 3 = End Angle): single-DOF
         // drag along the handle's own live rotational tangent (mirrors

@@ -221,3 +221,45 @@ unittest { // dragging the Start Angle handle moves `startAngle` off zero
       ~ ". A dead counter passes the drag assertion above for free "
       ~ "(task 1903 §5.8).");
 }
+
+unittest { // the axis end handle is a free handle, quantised (K-H3 H3_NT): front
+    // ortho view at 440 px/m (T = pixels / 440), q 0.005; the end point E =
+    // centre + axis = (0, 1, 0) on the lattice, the start (0, -1, 0) planted. A
+    // (70, -42) px haul from E's pixel writes E' = E + q(E + T) - q(E) =
+    // (0.16, 1.095, 0). RAW is (0.159091, 1.095455, 0).
+    import core.thread : Thread;
+    import core.time : dur;
+    import std.format : format;
+    import pen_rig_helpers : penCameraAt, worldPixel;
+    auto r = postJson("/api/command", commandBody("scene.reset"));
+    assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
+    r = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
+    assert(r["status"].str == "ok", "select failed: " ~ r.toString);
+    cmd("viewport.view Front");
+    penCameraAt(Vec3(0, 0.5f, 0), 440.0);
+    assert(getJson("/api/camera")["projKind"].str == "Ortho",
+        "rig: the front view must be orthographic");
+    cmd("tool.set " ~ TOOL ~ " on");
+    Thread.sleep(dur!"msecs"(300));
+    double[3] vec(string name) {
+        auto q = postJson("/api/command", "tool.attr " ~ TOOL ~ " " ~ name ~ " ?");
+        assert(q["status"].str == "ok", "query " ~ name ~ " failed: " ~ q.toString);
+        auto a = q["value"].array;
+        return [a[0].get!double, a[1].get!double, a[2].get!double];
+    }
+    immutable int[2] p = worldPixel(Vec3(0, 1, 0));
+    auto cam = fetchCamera(BASE);
+    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+        p[0], p[1], p[0] + 70, p[1] - 42, 12), BASE);
+    Thread.sleep(dur!"msecs"(200));
+    immutable double[3] c = vec("center"), a = vec("axis");
+    immutable double[3] s = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+    immutable double[3] e = [c[0] + a[0], c[1] + a[1], c[2] + a[2]];
+    assert(abs(s[0]) <= 1e-4 && abs(s[1] + 1) <= 1e-4 && abs(s[2]) <= 1e-4,
+        format("radial-sweep-end-quantised: the start must stay at (0, -1, 0), got (%.6f, %.6f, %.6f)",
+               s[0], s[1], s[2]));
+    assert(abs(e[0] - 0.16) <= 1e-4 && abs(e[1] - 1.095) <= 1e-4 && abs(e[2]) <= 1e-4,
+        format("radial-sweep-end-quantised: the end expected (0.16, 1.095, 0), got (%.6f, %.6f, %.6f)",
+               e[0], e[1], e[2]));
+    cmd("tool.set " ~ TOOL ~ " off");
+}

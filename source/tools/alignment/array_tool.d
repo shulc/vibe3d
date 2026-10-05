@@ -22,7 +22,7 @@ import mesh;
 import mesh_gpu : GpuMesh;
 import math;
 import editmode : EditMode;
-import drag : planeDragDelta;
+import drag : HandleDrag, DragFrame, DragKind;
 import overlay_space : OverlaySpace;
 import params : Param, IntEnumEntry;
 import shader : Shader;
@@ -71,11 +71,9 @@ import core.stdc.string : memcmp;
 // in-plane axes (confirmed live: a pure horizontal screen drag moved BOTH
 // Offset X and Offset Y, Offset Z untouched — an oblique combination the
 // toolcard itself flags as camera/Work-Plane-position-dependent, not a
-// fixed rule). vibe3d has no Work Plane system, so — matching CloneTool's
-// own documented divergence ("no reference tool-model exists; we use our
-// own planeDragDelta") — this tool projects the screen delta onto the
-// most-facing world-space plane (`planeDragDelta`, dragAxis=3) and folds
-// the FULL resulting world delta into all three Offset X/Y/Z params. An
+// fixed rule). The haul is a free handle (`HandleDrag`, view plane, K-H3
+// H3_NT) like CloneTool's, and folds the FULL resulting world delta into
+// all three Offset X/Y/Z params. An
 // axis whose Count is 1 (e.g. the captured default Count Y=1) never shows
 // visible new geometry from its own offset regardless, same as the
 // reference.
@@ -202,16 +200,10 @@ private:
     bool         dragging;     // between LMB-down and LMB-up
     MeshSnapshot before;       // source cage of the current array operation
 
-    int  anchorMX, anchorMY;   // drag-start pixel coords
-    // The drag anchor, in the space the geometry is DRAWN in — the selection
-    // centroid lifted through the item matrix (task 0645). It used to be the
-    // raw LOCAL centroid under this same name, which is why the plane the drag
-    // resolved on sat where the geometry would be at the identity pose.
-    Vec3 anchorWorld;
-    // The item space, FROZEN at the press with the anchor. `planeDragDelta`'s
-    // law is "one matrix for the whole gesture"; the conversion of its answer
-    // back into layer coordinates has to be frozen with it or the two halves
-    // of the same drag could read different layers.
+    // The selection centroid at the press, lifted through the item matrix
+    // (task 0645), + travel. The item space is FROZEN with it: the drag's
+    // answer converts back to layer coordinates through the same matrix.
+    HandleDrag grab;
     OverlaySpace dragSpace;
     Vec3 dragBaseOffset;       // Offset X/Y/Z at drag start
     Viewport cachedVp;
@@ -407,10 +399,8 @@ public:
         if (mesh.faces.length == 0) return false;
 
         sessionStepBegins();
-        anchorMX       = e.x;
-        anchorMY       = e.y;
         dragSpace      = OverlaySpace.ofPrimary();
-        anchorWorld    = dragSpace.pos(mesh.selectionCentroidFaces());
+        grab.press(dragSpace.pos(mesh.selectionCentroidFaces()), e.x, e.y);
         dragBaseOffset = offsetVec();
         dragging       = true;
         return true;
@@ -427,18 +417,17 @@ public:
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
         if (!active || !dragging) return false;
+        // A free handle: the centroid's residual is kept (K-H3 H3_NT).
         bool skip;
-        // Screen delta -> most-facing world-space plane (dragAxis=3), the
-        // same projection CloneTool uses in the absence of a Work Plane
-        // system. See the module doc comment for the divergence rationale.
-        Vec3 delta = planeDragDelta(e.x, e.y, anchorMX, anchorMY,
-                                    3, anchorWorld, cachedVp, skip);
+        DragFrame f;
+        f.kind = DragKind.viewPlane;
+        immutable Vec3 c = grab.client(e.x, e.y, f, cachedVp, skip);
         if (!skip) {
             // WORLD in, LAYER out (task 0645): offX_/offY_/offZ_ are the
             // per-copy offset `arrayFacesGrid` adds to layer-space vertices.
             // A full linear inverse — a displacement elects no direction, so
             // there is no gain question as there is on the axis hauls.
-            Vec3 local = dragSpace.toLocalDelta(delta);
+            Vec3 local = dragSpace.toLocalDelta(c - grab.point);
             offX_ = dragBaseOffset.x + local.x;
             offY_ = dragBaseOffset.y + local.y;
             offZ_ = dragBaseOffset.z + local.z;

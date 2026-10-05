@@ -252,12 +252,14 @@ unittest {
     // Every handle press is a button-down path; `armAxisLeg` is also the Ctrl
     // hand-over, the axis leg's own press (nothing moved before it). The base
     // drag's corner is a handle too (task 9473): box, radial, torus presses.
-    assert(sites == ["BoxTool.onMouseButtonDown", "BoxTool.onMouseButtonDown",
+    assert(sites == ["ArrayTool.onMouseButtonDown",
+                     "BoxTool.onMouseButtonDown", "BoxTool.onMouseButtonDown",
                      "BoxTool.onMouseButtonDown", "BoxTool.onMouseButtonDown",
                      "CloneTool.onMouseButtonDown",
                      "HandledCreateTool.tryGrabHandles", "MirrorTool.onMouseButtonDown",
                      "MoveTool.armAxisLeg",
-                     "PrimitiveCreateTool.tryGrabMover", "SizedRadialCreateTool.onMouseButtonDown",
+                     "PrimitiveCreateTool.tryGrabMover", "RadialSweepTool.onMouseButtonDown",
+                     "SizedRadialCreateTool.onMouseButtonDown",
                      "TorusTool.onMouseButtonDown"],
         "a HandleDrag press outside the named press sites");
 }
