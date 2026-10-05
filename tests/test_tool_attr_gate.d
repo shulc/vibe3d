@@ -16,15 +16,23 @@
 // the tool has one. Families are collected and reported together so one run
 // names every family a mutation of the shared refusal reddens.
 //
-// Run via: ./run_test.d test_tool_attr_gate
+// Run via: ./run_test.d test_tool_attr_gate   (one block: VIBE3D_CELL=A1d|A1a|A1b|families)
 
 import http_client : getJson, postRawAllowingErrorStatus;
 import std.algorithm : canFind;
 import std.format : format;
 import std.json;
+import std.process : environment;
 import std.stdio : writeln;
 
 void main() {}
+
+/// `VIBE3D_CELL=<id>` runs one block alone (a mutation drill names the block
+/// it must redden; druntime stops a module at its first failed assert).
+bool cell(string id) {
+    const want = environment.get("VIBE3D_CELL", "");
+    return want.length == 0 || want == id;
+}
 
 JSONValue cmd(string line) {
     return parseJSON(postRawAllowingErrorStatus("/api/command", line));
@@ -83,6 +91,7 @@ string lands(string tool, string attr, string value, string expect) {
 // A1d — an unknown attribute: the write and the query are both refused. On
 // the unmodified door the write answered ok (backlog 9479).
 unittest {
+    if (!cell("A1d")) return;
     arm("prim.sphere");
     const h0 = historyLen();
     foreach (v; ["3", "?"]) {
@@ -98,6 +107,7 @@ unittest {
 // A1a / A1a_pos — sphere `order` is disabled under Globe and enabled under
 // Quad Ball: the refusal comes from the row's state, not the attribute.
 unittest {
+    if (!cell("A1a")) return;
     arm("prim.sphere");
     ok("tool.attr prim.sphere method qball");
     ok("tool.attr prim.sphere order 2");
@@ -116,10 +126,15 @@ unittest {
 // A1b2 / A1b — loop slice with no profile: Reverse Direction refuses true and
 // the current false; Inset (depth) lands, and still lands under Keep Aspect.
 unittest {
+    if (!cell("A1b")) return;
     arm("mesh.loopSliceTool");
     ok("tool.attr mesh.loopSliceTool profile flat");
     foreach (v; ["true", "false"]) {
         const why = refusedDisabled("mesh.loopSliceTool", "reversex", v);
+        assert(why == "", "A1b2: " ~ why);
+    }
+    foreach (attr; ["reversey", "aspect"]) {
+        const why = refusedDisabled("mesh.loopSliceTool", attr, "true");
         assert(why == "", "A1b2: " ~ why);
     }
     string why = lands("mesh.loopSliceTool", "depth", "0.25", "0.25");
@@ -137,6 +152,7 @@ unittest {
 // their own files: test_topopen_attr_availability, test_pen_types). `enable`
 // is the write that turns the row on ("" when the row is never enabled).
 unittest {
+    if (!cell("families")) return;
     struct Cell { string family, tool, disable, attr, value, enable, expect; }
     static immutable Cell[] cells = [
         Cell("clone", "mesh.clone", "merge false", "dist", "0.25", "merge true", "0.25"),
