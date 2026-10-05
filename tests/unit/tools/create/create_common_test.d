@@ -273,3 +273,67 @@ unittest { // box-drag-oblique: the base-drag point off the background (task 947
         && (viaFrame - viaView).length <= 1e-5f && (viaFrame - gl.point).length > 0.1f,
         "pinned plane: the base drag must read the plane-local view");
 }
+
+unittest { // centre-mover-oblique: the centre box is the planar map anchored at C (task 9502, K-CM)
+    // The K-C3 oblique perspective rig. T = C + the cumulative pixel travel
+    // through the forward-difference map at the primitive centre C (Y-normal
+    // plane, k = 10 x the view pixel scale), the TARGET rounded to q 0.05, or
+    // snapped to the 1.0 grid node. Fixture
+    // toolcards/interaction_layer/fixtures/K-CM.json: the projective ray/plane
+    // hit misses the ends by 0.10..1.0; linearising at the pointer's plane hit
+    // misses T by 5e-4..9e-4 (no end moves in the three captured cells, so the
+    // fourth cell is a construction on this camera where its end does: 4.90).
+    import std.math : atan;
+    import std.format : format;
+    import drag : HandleDrag;
+    import math : lookAt, perspectiveMatrix;
+    import viewgrid : viewVectorQuantum, viewGridSizeFor, g_viewGrid;
+    import toolpipe.pipeline : ToolPipeContext;
+    import toolpipe.packets : SnapType;
+    import toolpipe.stages.snap : SnapStage;
+    auto saved = g_pipeCtx;
+    g_pipeCtx = null;
+    scope (exit) g_pipeCtx = saved;
+    immutable eye = Vec3(0.07f, 33.959961496f, 19.029442725f);
+    Viewport vp = Viewport(lookAt(eye, Vec3(0.07f, 1, 0), Vec3(0, 1, 0)),
+        perspectiveMatrix(cast(float)(2 * atan(487 / 1004.7545726038318)), 1152.0f / 974.0f,
+                          0.1f, 1000.0f), 1152, 974, 0, 0, eye);
+    vp.focus = Vec3(0.07f, 1, 0);
+    assert(abs(viewVectorQuantum(vp) - 0.05f) < 1e-6f, "rig: the view quantum must be the record's 0.05");
+    auto f = frameFromBasis(Vec3(0, 1, 0), Vec3(1, 0, 0), Vec3(0, 0, 1), Vec3(0, 0, 0));
+    static struct Cell { string id; Vec3 c; int px, py, dx, dy; Vec3 end; }
+    immutable Cell[3] cells = [
+        Cell("KCM_T0b", Vec3(0.1234f, 0, -0.5377f), 577, 488, 60, 80, Vec3(2.45f, 0, 3.05f)),
+        Cell("KCM_B", Vec3(-0.3123f, 0, 0.4377f), 566, 510, -69, 69, Vec3(-2.95f, 0, 3.45f)),
+        Cell("anchor-at-C", Vec3(0.1234f, 0, -0.5377f), 577, 488, 123, -141, Vec3(4.95f, 0, -6.85f))];
+    size_t n;
+    foreach (c; cells) {
+        HandleDrag g;
+        g.press(c.c, c.px, c.py);
+        Vec3 got;
+        assert(moverDrag(g, 3, c.px + c.dx, c.py + c.dy, null, f, vp, got)
+            && (got - c.end).length <= 1e-5f,
+            format("%s: the centre box must end on q(T), T planar at C: expected %s, got %s",
+                   c.id, c.end, got));
+        ++n;
+    }
+    assert(n == 3);
+
+    // KCM_TGb, grid on: the node of T (z -5.38 -> -5), never of the projective
+    // target (z -5.72 -> -6).
+    auto ctx = new ToolPipeContext();
+    auto st  = new SnapStage();
+    ctx.pipeline.add(st);
+    st.enabled = true;
+    st.enabledTypes = SnapType.Grid;
+    g_pipeCtx = ctx;
+    assert(viewGridSizeFor(vp, g_viewGrid) == 1.0f, "rig: the view grid must be the record's 1.0");
+    HandleDrag g;
+    g.press(cells[0].c, 577, 488);
+    Vec3 got;
+    Mesh empty;
+    assert(moverDrag(g, 3, 577, 380, null, f, vp, got));
+    assert(snapMoverCentre(got, 3, null, f, 577, 380, vp, empty).snapped
+        && (got - Vec3(0, 0, -5)).length <= 1e-5f,
+        format("KCM_TGb: the centre box must snap T to the grid node (0, 0, -5), got %s", got));
+}

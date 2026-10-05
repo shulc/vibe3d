@@ -46,11 +46,8 @@ import coord_rounding : CoordinateRounding, kFixedIncrementDefault, coordRoundin
 //     For hauls that have no axis to project: the tool multiplies raw pixels
 //     by it.
 //
-//   LAW D — primitive centre translation (task 5360).
-//     `primitiveCenterDragDelta` asks an
-//     orthographic view for its locked world axis, or chooses the dominant
-//     eye-vector axis in perspective, and intersects each cursor ray with the
-//     corresponding principal plane through the parameter-space centre.
+//   (LAW D, the primitive centre's ray/plane intersection, is gone: the
+//     centre box runs LAW B on its principal plane, task 9502, capture K-CM.)
 //
 // LAW-CHANGE POINT — CONSUMED for LAW B (task 0520) and now for LAW A (0562).
 //
@@ -1575,29 +1572,12 @@ Vec3 planeDragDelta(int mx,     int my,
 }
 
 // ===========================================================================
-// LAW D — primitive centre translation
+// The primitive centre box's plane
 // ===========================================================================
 
-private float component(Vec3 v, int axis) {
-    final switch (axis) {
-        case 0: return v.x;
-        case 1: return v.y;
-        case 2: return v.z;
-    }
-}
-
-private Vec3 withComponent(Vec3 v, int axis, float value) {
-    final switch (axis) {
-        case 0: v.x = value; break;
-        case 1: v.y = value; break;
-        case 2: v.z = value; break;
-    }
-    return v;
-}
-
-/// Principal world-component index used by the primitive centre conversion.
-/// Orthographic views supply it directly; perspective uses the dominant
-/// component of the eye vector at the current Position-channel triple.
+/// The normal axis of the primitive centre box's plane (`DragKind.principalPlane`):
+/// a locked orthographic view's axis, else the dominant component of the eye
+/// vector at the centre (task 9502: the perspective pick is unwitnessed, gap 585).
 int primitiveCenterPlaneAxis(Vec3 reference, const ref Viewport vp) {
     int axis = lockedViewAxis(vp);
     if (axis >= 0) return axis;
@@ -1605,33 +1585,6 @@ int primitiveCenterPlaneAxis(Vec3 reference, const ref Viewport vp) {
     Vec3 eye = eyeVectorAt(vp, reference);
     float ax = abs(eye.x), ay = abs(eye.y), az = abs(eye.z);
     return ax >= ay && ax >= az ? 0 : ay >= az ? 1 : 2;
-}
-
-/// Convert a primitive centre-box drag directly into parameter-space motion.
-/// Orthographic views overwrite their locked world component. Perspective
-/// views use the principal plane whose normal is the dominant eye-vector
-/// component. The selected denominator is therefore bounded away from zero;
-/// this route has no singular-matrix or determinant failure state.
-Vec3 primitiveCenterDragDelta(int mx, int my, int lastMX, int lastMY,
-                              Vec3 reference, const ref Viewport vp)
-{
-    Vec3 currPos, currEye, prevPos, prevEye;
-    screenPointToRay(cast(float)mx,     cast(float)my,     vp, currPos, currEye);
-    screenPointToRay(cast(float)lastMX, cast(float)lastMY, vp, prevPos, prevEye);
-
-    int locked = lockedViewAxis(vp);
-    int axis = primitiveCenterPlaneAxis(reference, vp);
-    if (locked >= 0) {
-        currPos = withComponent(currPos, axis, component(reference, axis));
-        prevPos = withComponent(prevPos, axis, component(reference, axis));
-        return currPos - prevPos;
-    }
-
-    currPos += currEye * ((component(reference, axis) - component(currPos, axis)) /
-                           component(currEye, axis));
-    prevPos += prevEye * ((component(reference, axis) - component(prevPos, axis)) /
-                           component(prevEye, axis));
-    return currPos - prevPos;
 }
 
 // ===========================================================================
@@ -1667,7 +1620,7 @@ enum DragKind : ubyte {
     screenAxis,     // LAW A own: the segment point → point + axis, gain |axis|
     viewPlane,      // LAW B: `planeDragDelta` on `plane` (3..6) of the basis
     handlePlane,    // LAW B on a handle's own plane, rounded as the planar mode
-    principalPlane, // LAW D: `primitiveCenterDragDelta` through the press point
+    principalPlane, // LAW B on `plane` (4..6), the planar form (task 9502, K-CM)
     planeHit,       // the pointer's hit on the plane (point, `normal`)
 }
 
@@ -1730,11 +1683,9 @@ struct HandleDrag {
                 point, point + f.axis, vp, skip);
         case DragKind.viewPlane:
         case DragKind.handlePlane:
+        case DragKind.principalPlane:
             return planeDragDelta(px, py, pressX, pressY, f.plane, point, vp,
                 skip, f.basisX, f.basisY, f.basisZ);
-        case DragKind.principalPlane:
-            skip = false;
-            return primitiveCenterDragDelta(px, py, pressX, pressY, point, vp);
         case DragKind.planeHit:
             Vec3 o, d, h0, h1;
             screenPointToRay(cast(float)pressX, cast(float)pressY, vp, o, d);

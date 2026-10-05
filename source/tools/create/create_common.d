@@ -216,19 +216,23 @@ Viewport planeLocalViewport(const ref Viewport vp, in WorkplaneFrame frame) {
 
 /// A create tool's mover drag (M-HANDLE): the centre at the press
 /// plus the pointer travel, in `frame`'s LOCAL space (= the Position channels).
-/// Arrows 0/1/2 travel along the drawn arrow (LAW A, own); the centre box
-/// through LAW D on the plane-local view (§14 read by §23). False = skip.
+/// Arrows 0/1/2 travel along the drawn arrow (LAW A, own); the centre box by
+/// LAW B linearised at the press centre on its principal plane (task 9502,
+/// K-CM), on the plane-local view (§14 read by §23). False = skip.
 bool moverDrag(const ref HandleDrag grab, int part, int mx, int my, MoveHandler mover,
                in WorkplaneFrame frame, const ref Viewport vp, out Vec3 centre)
 {
+    import drag : primitiveCenterPlaneAxis;
+    static immutable int[3] planeOfNormal = [5, 6, 4];   // normal X / Y / Z
+    Viewport lvp = planeLocalViewport(vp, frame);
     DragFrame f;
-    f.kind = DragKind.principalPlane;
+    f.kind  = DragKind.principalPlane;
+    f.plane = planeOfNormal[primitiveCenterPlaneAxis(grab.point, lvp)];
     if (part <= 2) {
         f.kind = DragKind.screenAxis;
         f.axis = moverArrowLocal(mover, part, frame);
     }
     bool skip;
-    Viewport lvp = planeLocalViewport(vp, frame);
     centre = grab.client(mx, my, f, lvp, skip);
     return !skip;
 }

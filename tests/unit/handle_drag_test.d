@@ -17,8 +17,7 @@ import tests.unit.census_symbols : blankNonCode, blankUnittestBodies, containsWo
     isIdentChar, symbolTokenHits;
 
 import math : Vec3, Viewport, lookAt, orthographicMatrix, perspectiveMatrix, projectToWindow;
-import drag : HandleDrag, DragFrame, DragKind, screenAxisDelta, primitiveCenterDragDelta,
-    planeJacobian;
+import drag : HandleDrag, DragFrame, DragKind, screenAxisDelta, planeDragDelta, planeJacobian;
 import viewgrid : vectorSnap;
 import tools.transform.move : MoveTool;
 import tools.create.box : BoxTool;
@@ -117,7 +116,7 @@ unittest {
             const int x = 400 + 2 * k, y = 300 + k, px = x - 2, py = y - 1;
             live = live + (kind == DragKind.screenAxis
                 ? screenAxisDelta(x, y, px, py, live, f.axis, vp, skip)
-                : primitiveCenterDragDelta(x, y, px, py, live, vp));
+                : planeDragDelta(x, y, px, py, 3, live, vp, skip));
             immutable Vec3 want = kind == DragKind.screenAxis
                 ? p0 + f.axis * cast(float)(round((live.x - p0.x) / 0.005) * 0.005)
                 : vectorSnap(live, 0.005f);
