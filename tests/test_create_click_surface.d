@@ -279,6 +279,54 @@ private string baseDragCell(string name, JSONValue c, Rig r) {
                  rad, len(sub(T, [0.0, 1.0, 0.0])));
 }
 
+/// A vertex drag (task 9499, K-C5): press on the pixel nearest the record's
+/// raw press, drag `drag_px`; the one placed vertex follows the drag live to
+/// q(q(press) + travel) on the background (or the plane, or the snap), and the
+/// release pixel's own click point must differ (the cell's rig self-check).
+private string vertexDragCell(string name, JSONValue c, Rig r) {
+    string[] extra;
+    if ("foreground_vertex" in c.object) {
+        const fg = arr3(c["foreground_vertex"]);
+        extra ~= commandBody("mesh.addVertex", format(`{"pos":[%.9f,%.9f,%.9f]}`, fg[0], fg[1], fg[2]));
+    }
+    // Before the arm: a layer command drops an armed tool.
+    if ("background_hidden" in c.object) extra ~= "layer.setVisible index:1 value:false";
+    rig(r, "prim.vertex", num(c["offset"]), extra);
+    if (!c["handle"].boolean) handle(false);
+    if (!c["constraint_enabled"].boolean) penCommand("tool.pipe.attr constrain enabled false");
+    if ("snap" in c.object)
+        foreach (sc; ["tool.pipe.attr snap enabled true", "tool.pipe.attr snap types " ~ c["snap"].str])
+            penCommand(sc);
+    scope (exit) postJson("/api/command", "tool.pipe.attr snap enabled false");
+    auto vp = viewportFromCameraMatrices();
+    double[3] planeHit(int[2] px) {
+        Vec3 o, dir;
+        pixelRay(px[0], px[1], vp, o, dir);
+        const t = (1.0 - o.y) / dir.y;
+        return [o.x + dir.x * t, 1.0, o.z + dir.z * t];
+    }
+    const qs = num(r.view["q"]);
+    double[3] snapQ(double[3] v) { foreach (ref x; v) x = round(x / qs) * qs; return v; }
+    const p0 = worldPixel(v3(arr3(c["press_aim_world"])));
+    const q = arr3(c["q_point"]), want = arr3(c["expect_world"]);
+    if (auto m = within(name ~ " rig", "q of our press hit", snapQ(planeHit(p0)), q, kRay)) return m;
+    const int[2] p1 = [p0[0] + cast(int)c["drag_px"].array[0].integer,
+                       p0[1] + cast(int)c["drag_px"].array[1].integer];
+    const qR = snapQ(planeHit(p1));
+    assert(abs(qR[0] - want[0]) >= qs / 2 || abs(qR[2] - want[2]) >= qs / 2,
+        format("%s rig: the release pixel's q %(%.4f %) equals the law's; the cell cannot see the carry",
+               name, qR[]));
+    const nv = "expect_nv" in c.object ? cast(size_t)num(c["expect_nv"]) : 1;
+    auto cam = fetchCamera();
+    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height, p0[0], p0[1], p1[0], p1[1], 10));
+    penCommand("tool.set prim.vertex off");
+    auto vs = readVerts();
+    if (vs.length != nv) return format("%s: %d vertices, expected %d", name, vs.length, nv);
+    const v = d3(vs[$ - 1]);
+    if (auto m = within(name, "in-plane", v, want, kRay, [0, 2])) return m;
+    return within(name, "height", v, want, num(c["height_tol"]), [1]);
+}
+
 unittest {
     auto fx = parseJSON(import("fixtures/create_click_surface.json"));
     // VIBE3D_CELL=<name>[,<name>...] runs only those cells (mutation drills).
@@ -440,7 +488,15 @@ unittest {
         ++ran;
     }
 
-    const want = only is null ? 24 : cast(int)only.length;
+    // ---- the VERTEX DRAG (task 9499): the placed vertex follows the drag live.
+    foreach (n; ["vertex-drag-surface", "vertex-drag-diagonal", "vertex-drag-handle-off",
+                 "vertex-drag-off-control", "vertex-drag-snap-self", "vertex-drag-snap"]) {
+        if (!wanted(n)) continue;
+        note(vertexDragCell(n, cell(n), rigOf(n)));
+        ++ran;
+    }
+
+    const want = only is null ? 30 : cast(int)only.length;
     assert(ran == want, format("cell population: %d run, expected %d", ran, want));
     assert(fails.length == 0, "create click surface cells:\n" ~ fails.join("\n"));
 }

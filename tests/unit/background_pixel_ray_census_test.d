@@ -255,12 +255,13 @@ unittest { // (c) a FREE point reads the surface, a primitive's PRESS point does
     // Task 9415 (P1): the pen joins with the surface step (import + call); its
     // plane point is its own (a drag keeps the raw normal channel).
     // Task 9473 (C2d): the box, radial and torus base drags (import + call).
+    // Task 9499: the vertex tool's press and drag (import + two calls).
     enum vp = "tools/create/vertex_place.d:", pen = "tools/create/pen.d:", dp = ":baseDragPoint";
     assert(clients == ["tools/create/box.d" ~ dp, "tools/create/box.d" ~ dp,
                        pen ~ "backgroundSurfacePoint", pen ~ "backgroundSurfacePoint",
                        "tools/create/primitive_create_tool.d" ~ dp, "tools/create/primitive_create_tool.d" ~ dp,
                        "tools/create/torus.d" ~ dp, "tools/create/torus.d" ~ dp,
-                       vp ~ "placeFreePoint", vp ~ "placeFreePoint"],
+                       vp ~ "placeFreePoint", vp ~ "placeFreePoint", vp ~ "placeFreePoint"],
         format("free-point clients must be exactly the base drags, the pen's surface step and the vertex "
                ~ "tool (import + call each); a primitive press must stay the plane point; got %s", clients));
     foreach (press; ["tools/create/box.d", "tools/create/primitive_create_tool.d",

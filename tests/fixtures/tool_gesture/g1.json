@@ -370,7 +370,7 @@
     },
     {
       "name": "prim.vertex/click", "tool": "prim.vertex",
-      "recordSite": "source/tools/create/vertex_place.d VertexTool.onMouseButtonDown (inline history_.record)", "mode": "Plain", "payload": "MeshSessionEdit",
+      "recordSite": "source/tools/create/vertex_place.d VertexTool.commitVertex", "mode": "Plain", "payload": "MeshSessionEdit",
       "liveEntryNames": ["mesh.bevel_edit"],
       "entryNames": ["mesh.bevel_edit"],
       "undoDelta": 1,

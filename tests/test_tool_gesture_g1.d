@@ -868,11 +868,10 @@ unittest {
         },
         { cmd("tool.set prim.arc off"); });
 
-    // --- (e) VertexTool: the record is INLINED in `onMouseButtonDown` — there
-    //     is no commit method at all, and `hasUncommittedEdit()` is likewise
-    //     hard-coded false. One click is one entry.
+    // --- (e) VertexTool: the press places the vertex live, the release
+    //     records it (`commitVertex`, task 9499). One click is one entry.
     cells ~= runCell("prim.vertex/click", "prim.vertex",
-        "source/tools/create/vertex_place.d VertexTool.onMouseButtonDown (inline history_.record)",
+        "source/tools/create/vertex_place.d VertexTool.commitVertex",
         "Plain", "MeshSessionEdit",
         {
             resetEmpty(); cmd("history.clear");

@@ -343,25 +343,36 @@ Vec3 backgroundPoint(Vec3 planeLocal, const ref Viewport vp, in WorkplaneFrame f
 bool baseDragPoint(const ref HandleDrag grab, int x, int y, Vec3 n,
                    const ref Viewport vp, in WorkplaneFrame frame, ref Vec3 p)
 {
-    bool skip, onSurface;
-    Viewport lvp = planeLocalViewport(vp, frame);
-    immutable Vec3 t = grab.point + planeDragDelta(x, y, grab.pressX, grab.pressY, 3, grab.point,
-        lvp, skip, Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1), n);
-    if (skip) return false;
+    bool onSurface;
+    Vec3 t;
+    if (!baseDragTarget(grab, x, y, n, vp, frame, t)) return false;
     p = backgroundPoint(t, vp, frame, onSurface);
     p -= n * dot(p - grab.point, n);
     return true;
 }
 
-/// The FREE point under the pointer: the click's q onto the background, then
-/// the snap, replacing all three channels (K-C2 C2i). A primitive's press is
-/// the plane point and never comes here (K-C role law).
-Vec3 placeFreePoint(int x, int y, const ref Viewport vp, in WorkplaneFrame frame,
-                    const ref Mesh mesh, out SnapResult snap)
+/// T = `grab.point` + the pixel travel through drag.d's press-frozen map on
+/// the plane of normal `n`; false = no map at the press point.
+bool baseDragTarget(const ref HandleDrag grab, int x, int y, Vec3 n,
+                    const ref Viewport vp, in WorkplaneFrame frame, out Vec3 t)
+{
+    bool skip;
+    Viewport lvp = planeLocalViewport(vp, frame);
+    t = grab.point + planeDragDelta(x, y, grab.pressX, grab.pressY, 3, grab.point,
+        lvp, skip, Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1), n);
+    return !skip;
+}
+
+/// The FREE point at plane point `planeLocal` (the click's plane hit, or a
+/// drag's press q + travel, K-C5): its q onto the background, then the snap at
+/// pixel (x, y), replacing all three channels (K-C2 C2i). A primitive's press
+/// is the plane point and never comes here (K-C role law).
+Vec3 placeFreePoint(Vec3 planeLocal, int x, int y, const ref Viewport vp, in WorkplaneFrame frame,
+                    const ref Mesh mesh, out SnapResult snap, const(uint)[] excludeVerts = [])
 {
     bool onSurface;
-    Vec3 p = backgroundPoint(screenToPlacementLocal(x, y, vp, frame), vp, frame, onSurface);
-    snap = snapLocalHit(p, frame, x, y, vp, mesh, EditMode.Vertices);
+    Vec3 p = backgroundPoint(vectorSnap(planeLocal, viewVectorQuantum(vp)), vp, frame, onSurface);
+    snap = snapLocalHit(p, frame, x, y, vp, mesh, EditMode.Vertices, excludeVerts);
     return p;
 }
 

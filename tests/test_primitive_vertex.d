@@ -352,3 +352,137 @@ unittest { // vertex-guide-off: World Axis alone does not move a placed vertex
         format("vertex-guide-off: the vertex (%.4f, %.4f) sits on a world axis — a guide "
              ~ "type reached the Vertex tool's snap", x, y));
 }
+
+// ---------------------------------------------------------------------------
+// 7. The drag (task 9499, K-C5): the press places the vertex, every motion
+//    moves it live, the RELEASE records the one undo entry. Risk cells: undo
+//    depth mid-drag; a Ctrl+Z held under the button is dropped (control: the
+//    same keys after the release pop the entry); RMB removes the live vertex;
+//    a drop records it, a switch is refused; redo restores the dragged point;
+//    the change deliveries are the press's plus one per motion. All cells run;
+//    the failures are reported together.
+// ---------------------------------------------------------------------------
+string ev(string type, double t, int x, int y, int btn = 1, int state = 1) {
+    if (type == "motion")
+        return format(`{"t":%g,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,"state":%d,"mod":0}`,
+                      t, x, y, state);
+    return format(`{"t":%g,"type":"SDL_MOUSEBUTTON%s","btn":%d,"x":%d,"y":%d,"clicks":1,"mod":0}`,
+                  t, type == "down" ? "DOWN" : "UP", btn, x, y);
+}
+
+string ctrlZ(double t) {
+    return format(`{"t":%g,"type":"SDL_KEYDOWN","sym":122,"scan":0,"mod":64,"repeat":0}` ~ "\n"
+                ~ `{"t":%g,"type":"SDL_KEYUP","sym":122,"scan":0,"mod":64,"repeat":0}`, t, t + 5);
+}
+
+void play(string[] events...) {
+    string log = LOG_HEADER;
+    foreach (e; events) log ~= "\n" ~ e;
+    playEvents(log);
+    waitForPlaybackFinish();
+}
+
+double[][] verts() {
+    double[][] r;
+    foreach (v; getJson("/api/model")["vertices"].array) {
+        double[] p;
+        foreach (c; v.array) p ~= c.type == JSONType.float_ ? c.floating : cast(double)c.integer;
+        r ~= p;
+    }
+    return r;
+}
+
+size_t undoDepth() { return getJson("/api/history")["undo"].array.length; }
+ulong deliveries() { return getJson("/api/changes")["deliveryCount"].integer; }
+
+unittest { // the drag gesture: one record, at the release
+    enum int X = 350, Y = 280, N = 8, STEP = 10;
+    string[] fails;
+    void check(bool ok, lazy string m) { if (!ok) fails ~= m; }
+    void begin() {
+        resetEmpty();
+        setCamera(0.0, 0.2, 3.0);
+        postJson("/api/command", commandBody("history.clear"));
+        activateVertex();
+    }
+    // Press, then N motions of STEP px in x, the button held.
+    string[] pressAndDrag() {
+        string[] e = [ev("motion", 10, X, Y, 1, 0), ev("down", 20, X, Y)];
+        foreach (i; 1 .. N + 1) e ~= ev("motion", 20 + 10 * i, X + STEP * i, Y);
+        return e;
+    }
+    enum double tUp = 20 + 10 * N + 10;
+
+    // R1 + R7: mid-drag the vertex moved and nothing is recorded; the release
+    // records one entry; the deliveries are the press's plus one per motion.
+    begin();
+    immutable d0 = deliveries();
+    play(ev("motion", 10, X, Y, 1, 0), ev("down", 20, X, Y));
+    immutable pressDeliveries = deliveries() - d0;
+    const atPress = verts();
+    play(pressAndDrag()[2 .. $]);
+    const mid = verts();
+    check(atPress.length == 1 && mid.length == 1,
+          format("R1: one vertex at the press and mid-drag, got %d / %d", atPress.length, mid.length));
+    check(undoDepth() == 0, format("R1: nothing is recorded before the release, depth %d", undoDepth()));
+    check(mid.length == 1 && atPress.length == 1 && mid[0][0] - atPress[0][0] > 0.05,
+          format("R1: the vertex must follow the drag (+x), press %s, mid %s", atPress, mid));
+    check(pressDeliveries == 2, format("R7: the press delivers 2 (measured), got %d", pressDeliveries));
+    check(deliveries() - d0 == pressDeliveries + N,
+          format("R7: one delivery per motion: %d motions, %d deliveries after the press's %d",
+                 N, deliveries() - d0 - pressDeliveries, pressDeliveries));
+    play(ev("up", tUp, X + STEP * N, Y));
+    const released = verts();
+    check(undoDepth() == 1, format("R1: the release records one entry, depth %d", undoDepth()));
+    check(released == mid, format("R1: the release keeps the dragged point %s, got %s", mid, released));
+
+    // R2: undo removes it, redo restores the dragged point.
+    postJson("/api/command", commandBody("history.undo"));
+    check(verts().length == 0, format("R2: undo removes the vertex, %s", verts()));
+    postJson("/api/command", commandBody("history.redo"));
+    check(verts() == released, format("R2: redo restores %s, got %s", released, verts()));
+    deactivateTool();
+
+    // R3 + control: a Ctrl+Z under the held button is dropped; after the
+    // release the same keys pop the gesture's entry and the tool stays.
+    begin();
+    play(pressAndDrag() ~ [ctrlZ(tUp - 5), ev("up", tUp + 10, X + STEP * N, Y)]);
+    check(verts().length == 1 && undoDepth() == 1,
+          format("R3: the held Ctrl+Z is dropped: 1 vertex, depth 1; got %d, %d", verts().length, undoDepth()));
+    play(ctrlZ(10));
+    check(verts().length == 0, format("R3 control: Ctrl+Z after the release removes it, %s", verts()));
+    play(ev("motion", 10, X, Y, 1, 0), ev("down", 20, X, Y), ev("up", 30, X, Y));
+    check(verts().length == 1, "R3 control: the tool stays armed after the Ctrl+Z");
+    deactivateTool();
+
+    // R4: RMB under the held LMB removes the live vertex; nothing recorded.
+    begin();
+    play(pressAndDrag() ~ [ev("down", tUp - 6, X + STEP * N, Y, 3), ev("up", tUp - 3, X + STEP * N, Y, 3),
+                           ev("motion", tUp, X, Y), ev("up", tUp + 10, X, Y)]);
+    check(verts().length == 0 && undoDepth() == 0,
+          format("R4: RMB cancels the live vertex: 0 vertices, depth 0; got %d, %d", verts().length, undoDepth()));
+    deactivateTool();
+
+    // R5: a drop records the live vertex where it stands; later events move nothing.
+    begin();
+    play(pressAndDrag());
+    const dropped = verts();
+    auto off = postJson("/api/command", "tool.set \"prim.vertex\" off 0");
+    check(off["status"].str == "ok", "R5: the drop failed: " ~ off.toString);
+    play(ev("motion", 10, X, Y), ev("up", 20, X, Y));
+    check(undoDepth() == 1 && verts() == dropped,
+          format("R5: the drop records %s (depth 1); got %s, depth %d", dropped, verts(), undoDepth()));
+
+    // R6: a switch to another tool during the drag is refused; the release records.
+    begin();
+    play(pressAndDrag());
+    auto sw = postJson("/api/command", "tool.set prim.cube");
+    check(sw["status"].str == "error", "R6: a switch during the drag must be refused: " ~ sw.toString);
+    play(ev("up", 10, X + STEP * N, Y));
+    check(undoDepth() == 1 && verts().length == 1,
+          format("R6: the release still records: depth %d, %d vertices", undoDepth(), verts().length));
+    postJson("/api/command", "tool.set prim.cube off");
+    deactivateTool();
+
+    assert(fails.length == 0, format("%-(%s\n%)", fails));
+}

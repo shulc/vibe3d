@@ -6,7 +6,7 @@
   "method": "gui-gesture",
   "captured_utc": "2026-10-05",
   "task": "9404",
-  "notes": "Numerical observations copied from the private capture records K-C (task 9396), K-C2 (task 9460) and K-C5 (task 9483); the private findings remain the source of record. Base-drag rows (task 9473): K-C (C1a, C1a3, C1d, C1e, C1e sphere), K-C2 (C2d_top_box(_ctrl), C2e_sph / _cyl / C2e1_cone / C2e2_caps, C2f_torus, C2c_psp_box) and K-C3 (C3a / C3b corners, tests/unit)."
+  "notes": "Numerical observations copied from the private capture records K-C (task 9396), K-C2 (task 9460) and K-C5 (task 9483); the private findings remain the source of record. Base-drag rows (task 9473): K-C (C1a, C1a3, C1d, C1e, C1e sphere), K-C2 (C2d_top_box(_ctrl), C2e_sph / _cyl / C2e1_cone / C2e2_caps, C2f_torus, C2c_psp_box) and K-C3 (C3a / C3b corners, tests/unit). Vertex drag rows (task 9499): K-C5 (KC5_b_h1g0, KC5_b2_h1g0, KC5_b_h0g0, KC5_b_coff); the two snap rows are ours."
  },
  "_about": "A create click over a BACKGROUND surface with the surface constraint on (geometry off, double-sided off, snapping off unless stated). Background: a sphere of radius 1, 64 sides x 32 segments, centre (0,1,0), in a background layer; the foreground mesh starts empty. ROLE law: a FREE point (the vertex tool's click) reads the surface, a primitive's PRESS point (box corner, sphere centre) does not. The free point: q = the click's anchor-plane hit snapped to the view quantum (the create click law); the background hit on the VIEW ray through q (parallel in ortho, from the eye in perspective) wins, NOT re-quantised; offset * hit normal after it; no hit => q; then a snap target replaces all three channels. The surface height is a depth read at the reference (1/1024 lattice in ortho, ~1e-3 off a facet model; up to ~8e-3 along the ray in perspective; the offset normal 1-2 deg off the facet): compare the ray / in-plane channels to 1e-5 and heights to the cell's own scatter, floor 2e-3. BASE DRAG (box second corner; sphere / cylinder / cone / capsule / torus radius point): the press corner Pq = q(press plane hit) is carried by the pointer's pixel travel through the plane map linearised at Pq (a forward difference of ten view pixels; exact as Pq + (R - P) in top and straight-down views) to T; the constraint taking the pointer and the eye ray through T meeting the background => that hit + offset * n, NOT quantised; otherwise q(T); the base-plane channel stays Pq's; then the snap.",
  "views": {
@@ -660,6 +660,190 @@
    "tol": 0.002,
    "source": "K-C C1e sphere (KC_C1e_sphere_offset, press (677,575) -> (721,575))",
    "law": "centre on the plane (Pq); the offset reaches only the drag point: radii |D - Pq|"
+  },
+  "vertex-drag-surface": {
+   "family": "vertex",
+   "view": "top440",
+   "offset": 0.0,
+   "handle": true,
+   "constraint_enabled": true,
+   "press_aim_world": [
+    0.302273,
+    1.0,
+    0.197727
+   ],
+   "q_point": [
+    0.3,
+    1.0,
+    0.2
+   ],
+   "drag_px": [
+    80,
+    0
+   ],
+   "expect_world": [
+    0.48,
+    1.851563,
+    0.2
+   ],
+   "height_tol": 0.002,
+   "source": "K-C5 KC5_b_h1g0 (press (678,574), 20 relative steps, the vertex follows live)",
+   "law": "q(q(press) + travel) on every motion, onto the background under the same handle gate; not the release pixel's click point; surface on: the ray through q(T)"
+  },
+  "vertex-drag-diagonal": {
+   "family": "vertex",
+   "view": "top440",
+   "offset": 0.0,
+   "handle": true,
+   "constraint_enabled": true,
+   "press_aim_world": [
+    0.302273,
+    1.0,
+    0.197727
+   ],
+   "q_point": [
+    0.3,
+    1.0,
+    0.2
+   ],
+   "drag_px": [
+    40,
+    50
+   ],
+   "expect_world": [
+    0.39,
+    1.862305,
+    0.315
+   ],
+   "height_tol": 0.002,
+   "source": "K-C5 KC5_b2_h1g0 (10 steps of (+4, +5) px)",
+   "law": "q(q(press) + travel) on every motion, onto the background under the same handle gate; not the release pixel's click point; the release pixel's click point is one quantum off in x and z"
+  },
+  "vertex-drag-handle-off": {
+   "family": "vertex",
+   "view": "top440",
+   "offset": 0.0,
+   "handle": false,
+   "constraint_enabled": true,
+   "press_aim_world": [
+    0.302273,
+    1.0,
+    0.197727
+   ],
+   "q_point": [
+    0.3,
+    1.0,
+    0.2
+   ],
+   "drag_px": [
+    80,
+    0
+   ],
+   "expect_world": [
+    0.48,
+    1.0,
+    0.2
+   ],
+   "height_tol": 1e-05,
+   "source": "K-C5 KC5_b_h0g0",
+   "law": "q(q(press) + travel) on every motion, onto the background under the same handle gate; not the release pixel's click point; handle off: the plane point"
+  },
+  "vertex-drag-off-control": {
+   "family": "vertex",
+   "view": "top440",
+   "offset": 0.0,
+   "handle": true,
+   "constraint_enabled": false,
+   "press_aim_world": [
+    0.302273,
+    1.0,
+    0.197727
+   ],
+   "q_point": [
+    0.3,
+    1.0,
+    0.2
+   ],
+   "drag_px": [
+    80,
+    0
+   ],
+   "expect_world": [
+    0.48,
+    1.0,
+    0.2
+   ],
+   "height_tol": 1e-05,
+   "source": "K-C5 KC5_b_coff",
+   "law": "q(q(press) + travel) on every motion, onto the background under the same handle gate; not the release pixel's click point; constraint off: the plane point"
+  },
+  "vertex-drag-snap-self": {
+   "family": "vertex",
+   "view": "top440",
+   "offset": 0.0,
+   "handle": false,
+   "constraint_enabled": true,
+   "press_aim_world": [
+    0.302273,
+    1.0,
+    0.197727
+   ],
+   "q_point": [
+    0.3,
+    1.0,
+    0.2
+   ],
+   "snap": "vertex",
+   "drag_px": [
+    80,
+    0
+   ],
+   "expect_world": [
+    0.48,
+    1.0,
+    0.2
+   ],
+   "height_tol": 1e-05,
+   "source": "ours (task 9499): the snap runs on every motion (the base-drag family's call shape); the dragged vertex is excluded from its own candidates",
+   "law": "a vertex snap with no other vertex in reach leaves the drag law's point; the background layer hidden, so none of its vertices is a snap candidate",
+   "background_hidden": true
+  },
+  "vertex-drag-snap": {
+   "family": "vertex",
+   "view": "top440",
+   "offset": 0.0,
+   "handle": false,
+   "constraint_enabled": true,
+   "press_aim_world": [
+    0.302273,
+    1.0,
+    0.197727
+   ],
+   "q_point": [
+    0.3,
+    1.0,
+    0.2
+   ],
+   "snap": "vertex",
+   "foreground_vertex": [
+    0.48,
+    2.5,
+    0.2
+   ],
+   "drag_px": [
+    80,
+    0
+   ],
+   "expect_world": [
+    0.48,
+    2.5,
+    0.2
+   ],
+   "height_tol": 1e-05,
+   "expect_nv": 2,
+   "source": "ours (task 9499): the snap on the drag point replaces all three channels, as at the click (K-C2 C2i)",
+   "law": "SNAP-LAST at every motion; no weld; the background layer hidden, so none of its vertices is a snap candidate",
+   "background_hidden": true
   }
  }
 }

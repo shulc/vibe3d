@@ -14,7 +14,10 @@ import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
 import tools.create.create_common : primitivePlacementFrame, WorkplaneFrame,
                               transformPoint, snapLocalHit, screenToPlacementLocal,
-                              placeFreePoint;
+                              placeFreePoint, baseDragTarget, axisUnit;
+import tools.common.session_mesh_key : SessionMeshKey;
+import change_bus : MeshEditScope;
+import drag : HandleDrag;
 import editmode : EditMode;
 import snap : SnapResult;
 import snap_render : publishLastSnap, clearLastSnap, SnapOverlayOwner;
@@ -25,19 +28,15 @@ import document : Layer;
 // ---------------------------------------------------------------------------
 // VertexTool — interactive single-vertex placement.
 //
-// Each LMB click in the viewport:
-//   1. Places the FREE point (`placeFreePoint` on the parameter frame): the
-//      create click law's q (K-W W1e / W1g), read onto the background surface
-//      when the constraint takes the pointer (K-C C1b), then the snap.
-//   2. Publishes the snap.
-//   3. Converts to world and appends one isolated vertex (mesh.addVertex).
-//   4. Records a snapshot-undo entry immediately — one entry per click.
-//
-// Tool stays active across clicks (no in-progress sequence to commit or
-// cancel).  Vertices are isolated: no auto-edge, no auto-face.
-//
-// Interactive-only; no headless command path.  The headless geometry contract
-// for vertex creation is mesh.addVertex (task 0131).
+// Each LMB press places one isolated vertex at the FREE point
+// (`placeFreePoint` on the parameter frame: the create click law's q, read
+// onto the background surface when the constraint takes the pointer, then the
+// snap) and selects only it. The drag moves it live: every motion re-resolves
+// the free point at q(q(press) + travel) under the same gate (K-C5, gap 573).
+// The release records ONE undo entry for the gesture; until then the vertex is
+// the tool's uncommitted edit (Ctrl+Z / RMB remove it, a drop records it).
+// Vertices are isolated: no auto-edge, no auto-face. The headless geometry
+// contract for vertex creation is mesh.addVertex (task 0131).
 // ---------------------------------------------------------------------------
 class VertexTool : Tool, PreparedToolDoorClient {
 private:
@@ -45,6 +44,15 @@ private:
     @property Mesh* mesh() const { return meshSrc_(); }
     GpuMesh*          gpu_;
     LitShader         litShader_;
+
+    // The live gesture, press to release: its vertex (-1 = none), the press it
+    // carries, the plane frame and axis of that press, the mesh before it.
+    int            vert_ = -1;
+    HandleDrag     grab_;
+    int            axis_;
+    WorkplaneFrame frame_;
+    MeshSnapshot   pre_;
+    SessionMeshKey key_;
 
 public:
     this(Mesh* delegate() meshSrc, GpuMesh* gpu, LitShader litShader)
@@ -59,15 +67,18 @@ public:
     override Param[] params() { return []; }
 
     override void deactivate() {
+        commitVertex();
         clearLastSnap();
     }
 
-    // The tool keeps no private state (its snap is `g_lastSnap`): a switch
-    // away enlists only the snap clear, an arm nothing.
+    // Idle, the tool keeps no private state (its snap is `g_lastSnap`): a
+    // switch away enlists only the snap clear, an arm nothing. A switch during
+    // the drag (a script door; keys wait for the release) is refused.
     override bool prepareDoorDeactivate(PreparedRecordContext context, Layer,
             ulong, ulong) {
         if (context is null) return false;
-        const ok = context.prepareSnapClear(new SnapOverlayOwner()) &&
+        const ok = !hasUncommittedEdit() &&
+                   context.prepareSnapClear(new SnapOverlayOwner()) &&
                    context.markNoHistoryInstall();
         if (!ok) context.discard();
         return ok;
@@ -81,7 +92,6 @@ public:
         return ok;
     }
 
-    // Cache the viewport each frame so onMouseButtonDown has current camera.
     override void draw(const ref Shader shader, const ref Viewport vp,
                        ref VectorStack vts, const ref DrawPlan plan,
                        bool visualOnly = false)
@@ -94,8 +104,11 @@ public:
         ImGui.TextDisabled("Click in viewport to place a vertex.");
     }
 
-    // Every click is committed immediately — nothing is ever pending.
-    override bool hasUncommittedEdit() const { return false; }
+    // The press's vertex until the release records it, while the mesh is the
+    // one it was placed on.
+    override bool hasUncommittedEdit() const {
+        return vert_ >= 0 && key_.matches(*mesh);
+    }
 
     // H7 (slice M6): the flags table sets the rollover flag on this tool; it
     // picks no hover type yet (`wantsHoverForType`), so nothing is drawn.
@@ -105,71 +118,89 @@ public:
             historyRecordedSteps: true };
         return policy;
     }
-    override void cancelUncommittedEdit() {}
+
+    // Removes the live vertex: the mesh goes back to its image before the press.
+    override void cancelUncommittedEdit() {
+        if (hasUncommittedEdit()) {
+            pre_.restore(*mesh);
+            refreshDisplay(mesh, gpu_);
+        }
+        vert_ = -1;
+    }
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e,
                                     ref VectorStack vts)
     {
+        if (e.button == SDL_BUTTON_RIGHT && vert_ >= 0) {
+            cancelUncommittedEdit();
+            return true;
+        }
         if (e.button != SDL_BUTTON_LEFT) return false;
         SDL_Keymod mods = SDL_GetModState();
         // Alt is reserved for camera orbit / pan / zoom.
         if (mods & KMOD_ALT) return false;
         if (mods & (KMOD_CTRL | KMOD_SHIFT)) return false;
 
-        WorkplaneFrame frame = primitivePlacementFrame();
+        frame_ = primitivePlacementFrame();
+        grab_.press(screenToPlacementLocal(e.x, e.y, cachedVp, frame_, axis_), e.x, e.y);
+        pre_ = MeshSnapshot.capture(*mesh);
         SnapResult sr;
-        Vec3 hit = placeFreePoint(e.x, e.y, cachedVp, frame, *mesh, sr);
+        Vec3 world = transformPoint(frame_.toWorld,
+            placeFreePoint(grab_.point, e.x, e.y, cachedVp, frame_, *mesh, sr));
         publishLastSnap(sr);
 
-        // Convert local workplane hit → world position.
-        Vec3 world = transformPoint(frame.toWorld, hit);
-
-        // Capture mesh state before modification.
-        MeshSnapshot pre = MeshSnapshot.capture(*mesh);
-
-        // Append isolated vertex and fix up selection arrays.
         // CRITICAL: addVertex grows vertices[] only; resizeVertexSelection()
-        // must precede selectVertex to prevent an out-of-bounds RangeError
-        // (mirrors vertex_new.d:57-66 and pen.d:910-913).
-        uint vi = mesh.addVertex(world);
+        // must precede selectVertex to prevent an out-of-bounds RangeError.
+        vert_ = cast(int)mesh.addVertex(world);
         mesh.resizeVertexSelection();
         mesh.clearVertexSelection();    // only the NEWEST vertex selected
-        mesh.selectVertex(cast(int)vi);
-
-        // Upload geometry to GPU.  buildLoops() is intentionally omitted:
-        // an isolated vertex has no edges / faces, so loop rebuild is a
-        // no-op here — omitting it mirrors vertex_new.d (task 0131).
-        gpu_.upload(*mesh);
-
-        // Record one undo entry per click (not per session). The record sits
-        // in the RAW EVENT HANDLER, not in a commit method — this tool has no
-        // commit method at all and reports `hasUncommittedEdit() == false`
-        // unconditionally. The seam moves the record; it does NOT move that
-        // trigger (task 1905 §2).
-        if (history !is null && gestureFactory !is null && pre.filled) {
-            auto cmd = cast(MeshSessionEdit) gestureFactory();
-            if (cmd is null) noteGestureCarrierMismatch();
-            else {
-                auto post = MeshSnapshot.capture(*mesh);
-                cmd.setSnapshots(pre, post, "Add Vertex");
-                recordGestureEdit(cmd, GestureRecordMode.Plain);
-            }
-        }
-
-        // Refresh selection / picking caches (same pattern as pen.d:910-913).
+        mesh.selectVertex(vert_);
         mesh.syncSelection();
+        key_.stamp(*mesh);
         refreshDisplay(mesh, gpu_);
-
         return true;
     }
 
-    // Live snap preview — show where the next click would land.
+    override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e,
+                                  ref VectorStack vts)
+    {
+        if (e.button != SDL_BUTTON_LEFT || vert_ < 0) return false;
+        commitVertex();
+        return true;
+    }
+
+    // The drag moves the live vertex (version-silent, Position class); with no
+    // gesture, the snap preview shows where the next press would land.
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e,
                                 ref VectorStack vts)
     {
-        WorkplaneFrame f = primitivePlacementFrame();
-        Vec3 hit = screenToPlacementLocal(e.x, e.y, cachedVp, f);
-        publishLastSnap(snapLocalHit(hit, f, e.x, e.y, cachedVp, *mesh, EditMode.Vertices));
-        return false;
+        if (!hasUncommittedEdit()) {
+            WorkplaneFrame f = primitivePlacementFrame();
+            Vec3 hit = screenToPlacementLocal(e.x, e.y, cachedVp, f);
+            publishLastSnap(snapLocalHit(hit, f, e.x, e.y, cachedVp, *mesh, EditMode.Vertices));
+            return false;
+        }
+        Vec3 t;
+        if (!baseDragTarget(grab_, e.x, e.y, axisUnit(axis_), cachedVp, frame_, t)) return true;
+        SnapResult sr;
+        const uint[1] self = [cast(uint)vert_];
+        mesh.vertices[vert_] = transformPoint(frame_.toWorld,
+            placeFreePoint(t, e.x, e.y, cachedVp, frame_, *mesh, sr, self[]));
+        publishLastSnap(sr);
+        mesh.publishChange(MeshEditScope.Position);
+        refreshDisplay(mesh, gpu_);
+        return true;
+    }
+
+private:
+    // One undo entry per gesture, at its end (release or drop).
+    void commitVertex() {
+        if (!hasUncommittedEdit()) { vert_ = -1; return; }
+        vert_ = -1;
+        if (history is null || gestureFactory is null || !pre_.filled) return;
+        auto cmd = cast(MeshSessionEdit) gestureFactory();
+        if (cmd is null) { noteGestureCarrierMismatch(); return; }
+        cmd.setSnapshots(pre_, MeshSnapshot.capture(*mesh), "Add Vertex");
+        recordGestureEdit(cmd, GestureRecordMode.Plain);
     }
 }

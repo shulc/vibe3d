@@ -40,7 +40,7 @@ tool tools.create.primitive_create_tool.PrimitiveCreateTool has=tools.create.pri
 tool tools.create.sphere.SphereTool has=tools.create.primitive_create_tool.PrimitiveCreateTool cancel=tools.create.primitive_create_tool.PrimitiveCreateTool resync=tools.create.primitive_create_tool.PrimitiveCreateTool commit=tool.Tool snap=0 live=yes | PrimitiveCreateTool subclass: live primitive until drop
 tool tools.create.torus.TorusTool has=tools.create.primitive_create_tool.PrimitiveCreateTool cancel=tools.create.primitive_create_tool.PrimitiveCreateTool resync=tools.create.primitive_create_tool.PrimitiveCreateTool commit=tool.Tool snap=0 live=yes | PrimitiveCreateTool subclass: live primitive until drop
 tool tools.create.tube.TubeTool has=tools.create.primitive_create_tool.PrimitiveCreateTool cancel=tools.create.primitive_create_tool.PrimitiveCreateTool resync=tools.create.primitive_create_tool.PrimitiveCreateTool commit=tool.Tool snap=0 live=yes | PrimitiveCreateTool subclass: live primitive until drop
-tool tools.create.vertex_place.VertexTool has=tools.create.vertex_place.VertexTool cancel=tools.create.vertex_place.VertexTool resync=tool.Tool commit=tool.Tool snap=1 live=no | overrides hasUncommittedEdit to false: each placed vertex commits at the click; its MeshSnapshot is a per-click before image
+tool tools.create.vertex_place.VertexTool has=tools.create.vertex_place.VertexTool cancel=tools.create.vertex_place.VertexTool resync=tool.Tool commit=tool.Tool snap=1 live=yes | the pressed vertex is live on the document mesh until the release records it (a drop records, Ctrl+Z / RMB remove it); its MeshSnapshot is the gesture's before image
 tool tools.deform.bend.BendTool has=tool.Tool cancel=tool.Tool resync=tools.transform.transform.TransformTool commit=tool.Tool snap=0 live=no | headless-only deform: every apply is a recorded tool.doApply; no interactive gesture holds an edit
 tool tools.deform.magnet.MagnetTool has=tools.deform.magnet.MagnetTool cancel=tools.deform.magnet.MagnetTool resync=tools.deform.magnet.MagnetTool commit=tools.deform.magnet.MagnetTool snap=4 live=yes | built magnet deform over a MeshSnapshot baseline, keyed by SessionMeshKey
 tool tools.deform.push.PushTool has=tool.Tool cancel=tool.Tool resync=tools.transform.transform.TransformTool commit=tool.Tool snap=0 live=no | headless-only deform: every apply is a recorded tool.doApply; no interactive gesture holds an edit
@@ -72,6 +72,7 @@ tool tools.transform.xfrm_transform.XfrmTransformTool has=tools.transform.xfrm_t
 
 key source/tools/alignment/radial_sweep_tool.d mck=0 smk=1
 key source/tools/create/pen.d mck=0 smk=2
+key source/tools/create/vertex_place.d mck=0 smk=1
 key source/tools/deform/magnet.d mck=0 smk=1
 key source/tools/edit/bridge_tool.d mck=0 smk=3
 key source/tools/slice/edge_slice_tool.d mck=0 smk=4
