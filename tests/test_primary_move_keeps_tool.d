@@ -236,3 +236,18 @@ unittest {
     assert(selectedVerts() == [0], "A stays in the foreground and keeps its selection, got "
         ~ selectedVerts().to!string);
 }
+
+// Undoing the click keeps the tool armed AT THE UNDO, not the one the click
+// dropped: a tool armed after the click with no row of its own (tack) stays
+// armed across the undo that moves the primary back.
+unittest {
+    rig();
+    listClick(1);
+    cmd("tool.set mesh.tack on");
+    const depth = getJson("/api/history")["undo"].array.length;
+    assert(armed() && depth == 1, "rig: tack armed with no row above the click, depth "
+        ~ depth.to!string);
+    undo();
+    assert(primary() == 0, "Ctrl+Z undoes the click");
+    assert(tool() == `"mesh.tack"`, "the undo keeps the tool armed at the undo, got " ~ tool());
+}
