@@ -478,7 +478,7 @@ unittest {
     assert(ran == 67, format("pen merge population: %s cells ran, pinned 67", ran));
 
     // Blocked cells (kBlocked) must still fail; one that passes retires its mark.
-    assert(kBlocked.length == 3, format("blocked marks: %s, pinned 3", kBlocked.length));
+    assert(kBlocked.length == 4, format("blocked marks: %s, pinned 4", kBlocked.length));
     string[] open, retired;
     foreach (f; fails)
         if (!(f[0 .. f.indexOf(':')] in kBlocked)) open ~= f;
@@ -490,11 +490,15 @@ unittest {
     assert(open.length == 0, format("pen merge, %s failing: %-(%s\n%)", open.length, open));
 }
 
-// Cells blocked until the grid snap places the pen's point on the view's grid
-// node (task 9362 card, F3; waits on the snap service's grid-step part): they
-// run and must still differ (each first asserts the click snapped to G).
+// Blocked cells (task 9362 card): they run and must still differ.
+//   F3 the grid snap does not yet place the pen's point on the view's grid
+//      node (each grid cell first asserts the click snapped to G);
+//   F5 the merge search inherits the snap election's vertex veto: T's edge
+//      midpoint 6.0 px from the placed point removes V at 12.0 px, so the
+//      edge wins where the capture links V.
 private immutable string[string] kBlocked = [
     "merge_grid_far": "F3", "merge_grid_near": "F3", "merge_grid_from_placed": "F3",
+    "snap_off_isolated_v10": "F5",
 ];
 
 // ---- cell bodies ----------------------------------------------------------
