@@ -552,11 +552,7 @@ unittest { // scl.y -1e-9 — the NEGATIVE side of the same band. A mirror is a
 
 unittest { // scl.z 1e30 — the ceiling.
            //
-           // Driven as a JSON positional ON PURPOSE. The argstring number
-           // scanner (argstring.d parseNumber) has NO exponent rule: it reads
-           // `1e30` as the integer 1 and leaves `e30` behind as a separate
-           // bareword positional, so `layer.attr 0 scl.z 1e30` writes 1.0 and
-           // a test written that way would pass with the ceiling deleted.
+           // Driven as a JSON positional; the argstring form is the next cell.
     buildRig();
     cmdJson(`{"id":"layer.attr","_positional":[0,"scl.z",1e30]}`);
 
@@ -572,14 +568,11 @@ unittest { // scl.z 1e30 — the ceiling.
         "the capped xform composes to a finite matrix");
 }
 
-unittest { // the argstring exponent gap itself, pinned so the case above does
-           // not look like belt-and-braces to a future reader.
+unittest { // the argstring exponent rule (task 9492): `1e30` is one float token,
+           // so the argstring form reaches the same ceiling as the JSON case.
     buildRig();
     cmd("layer.attr 0 scl.z 1e30");
-    assert(approx(layerChannel("scl")[2], 1.0),
-        "argstring has no exponent rule: `1e30` parses as the integer 1, so "
-        ~ "this write lands 1.0. If this ever starts reading 1e6, the scanner "
-        ~ "grew exponents and the JSON-positional case above can be simplified "
-        ~ "— it is written the long way BECAUSE of this. Got "
+    assert(approx(layerChannel("scl")[2], 1e6, 1.0),
+        "argstring `1e30` must read as 1e30 and be capped at 1e6; got "
         ~ layerChannel("scl")[2].to!string);
 }
