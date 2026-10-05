@@ -233,6 +233,10 @@ unittest { // C8: layer.select never changes the selection type (9511, K-CD4)
     assert(typeBefore != SelType.Item,
         "9511 floor: Item was already the current selection type");
     auto command = commandFor(rig, "layer.select", `{"index":1,"mode":"set"}`);
+    string[] names;
+    foreach (p; command.params()) names ~= p.name;
+    assert(names == ["index", "mode", "kind"],
+        format("9511: layer.select takes no origin argument, params %s", names));
     assert(command.apply(), "9511 layer.select fixture refused");
     assert(rig.session.document.primary is rig.session.document.layers[1],
         "9511 control: layer.select did not move the primary");
