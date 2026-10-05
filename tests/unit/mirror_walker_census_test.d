@@ -6,7 +6,9 @@
 // the stage's applied plane; (w1) that plane equals the published packet's
 // under an auto work plane that a front view turns away from the stage basis;
 // (w2) the walker's refusals; (w3) the pairings' epsilon side test; (w4) the
-// routed walk's one change note.
+// routed walk's one change note. Task 9414: (c4) the work-plane symmetry plane
+// is computed only in `workplaneSymmetryPlane`, called once; (w6) its value and
+// the overlay's lattice axes under a turned plane (K-S2, K-D D6b).
 // Order: floors first, then the needles, then the pins (druntime stops a
 // module at its first red).
 module tests.unit.mirror_walker_census_test;
@@ -120,12 +122,31 @@ unittest { // (c3) the overlay draws the applied plane
     const block = balancedSpan(vr, cast(size_t)vr.indexOf('{', h), '{', '}');
     assert(block.length > 200 && countOccurrences(block, "glDrawArrays(") == 1,
            "(c3) the overlay block not found");
-    assert(countOccurrences(block, "sym.currentPlane(c, n);") == 1, "(c3) the overlay does not read currentPlane(");
-    assert(countOccurrences(block, "if (perpendicularFrame(n, a1, a2))") == 1,
-           "(c3) the overlay's lattice axes are not spanned from the applied normal");
-    foreach (tok; ["useWorkplane", "currentBasis(", "axisIndex", ".offset", "WorkplaneStage"])
+    assert(countOccurrences(block, "sym.currentPlane(c, n, a1, a2);") == 1,
+           "(c3) the overlay does not read currentPlane( with its lattice axes");
+    foreach (tok; ["useWorkplane", "currentBasis(", "axisIndex", ".offset", "WorkplaneStage", "perpendicularFrame("])
         assert(countOccurrences(block, tok) == 0,
                "(c3) the overlay derives its own plane: `" ~ tok ~ "` in its block");
+}
+
+unittest { // (c4) ONE work-plane symmetry plane function, ONE call
+    size_t scanned;
+    const hits = filesWith("workplaneSymmetryPlane(", scanned);
+    assert(scanned > 300, "(c4) floor: scanned " ~ scanned.to!string ~ " source files");
+    assert(hits == ["source/toolpipe/stages/symmetry.d"], "(c4) workplaneSymmetryPlane( outside the stage: " ~ hits.to!string);
+    const st = codeOf("source/toolpipe/stages/symmetry.d");
+    assert(countOccurrences(st, "workplaneSymmetryPlane(") == 2, "(c4) the stage does not define it and call it once");
+    const ev = bodyAfter(st, "bool evaluate(ref VectorStack vts)");
+    assert(ev.length > 400, "(c4) evaluate body not found");
+    assert(countOccurrences(ev, "currentPlane(pkt.planePoint, pkt.planeNormal);") == 1,
+           "(c4) evaluate does not publish currentPlane's plane");
+    import std.regex : matchAll, regex;
+    import std.range : walkLength;
+    // Positive control: the needle sees an assignment spelt as the old body spelt it.
+    assert(walkLength(matchAll("pkt.planePoint  = wp.center;", regex(`\bplane(Normal|Point)\s*=[^=]`))) == 1,
+           "(c4) the assignment needle is blind");
+    assert(walkLength(matchAll(ev, regex(`\bplane(Normal|Point)\s*=[^=]`))) == 0,
+           "(c4) evaluate assigns the plane itself instead of reading currentPlane");
 }
 
 unittest { // (w1) the applied plane == the published plane; the old overlay source is not
@@ -144,6 +165,7 @@ unittest { // (w1) the applied plane == the published plane; the old overlay sou
     auto sy = new SymmetryStage(() => mp, &em);
     sy.enabled = true;
     sy.useWorkplane = true;
+    sy.axisIndex = 1;                    // R·e_y = the turned plane's own normal (K-S2)
 
     SubjectPacket subj;
     subj.viewport.view = identityMatrix;  // camera back = +Z: a front view
@@ -210,13 +232,63 @@ unittest { // (w1e) an EMPTY mesh: no pair table is built, the overlay still dra
     assert(c == pk.planePoint && n == pk.planeNormal,
            "(w1e) empty mesh: overlay plane " ~ v3(c) ~ " " ~ v3(n)
            ~ " != applied " ~ v3(pk.planePoint) ~ " " ~ v3(pk.planeNormal));
-    // A reset is a fresh session: the record goes with it (world XZ until the next pass).
+    // A reset is a fresh session: the record goes with it (the world basis until
+    // the next pass: axis X maps to world X — K-S2's flag-off control's plane).
     sy.reset();
     sy.enabled = true;
     sy.useWorkplane = true;
     sy.currentPlane(c, n);
-    assert(c == Vec3(0, 0, 0) && n == Vec3(0, 1, 0),
-           "(w1e) after reset: overlay plane " ~ v3(c) ~ " " ~ v3(n) ~ ", expected world XZ");
+    assert(c == Vec3(0, 0, 0) && n == Vec3(1, 0, 0),
+           "(w1e) after reset: overlay plane " ~ v3(c) ~ " " ~ v3(n) ~ ", expected world X");
+}
+
+unittest { // (w6) the plane maps the axis and the offset through W once; the
+    // overlay lattice runs along the other two columns (K-S2 S2z, K-D D6b)
+    import math : Vec3, identityMatrix;
+    import mesh : Mesh;
+    import editmode : EditMode;
+    import operator : VectorStack;
+    import toolpipe.packets : SubjectPacket, SymmetryPacket, WorkplanePacket;
+    import toolpipe.stages.symmetry : SymmetryStage;
+    import toolpipe.stages.workplane : WorkplaneStage;
+
+    Mesh empty;
+    Mesh* mp = &empty;
+    EditMode em = EditMode.Vertices;
+    auto wp = new WorkplaneStage();
+    wp.isAuto = false;
+    wp.rotation = Vec3(30, 0, 40);
+    wp.center = Vec3(0.5f, 0.2f, -0.3f);
+    auto sy = new SymmetryStage(() => mp, &em);
+    sy.enabled = true;
+    sy.useWorkplane = true;
+    sy.offset = 0.3f;
+    SubjectPacket subj;
+    subj.viewport.view = identityMatrix;
+    const Vec3[3] lawN = [Vec3(0.766044f, 0.642788f, 0), Vec3(-0.55667f, 0.663414f, 0.5f),
+                          Vec3(0.321394f, -0.383022f, 0.866025f)];
+    int rows;
+    foreach (ax; 0 .. 3) {
+        sy.axisIndex = ax;
+        VectorStack vts;
+        vts.put(&subj);
+        assert(wp.evaluate(vts) && sy.evaluate(vts), "(w6) rig: the stages did not evaluate");
+        const pk = vts.get!SymmetryPacket();
+        const w = vts.get!WorkplanePacket();
+        const Vec3[3] col = [w.axis1, w.normal, w.axis2];
+        const Vec3 lawP = wp.center + lawN[ax] * 0.3f;
+        assert(pk.axisIndex == -1 && (pk.planeNormal - lawN[ax]).length < 1e-5
+               && (pk.planePoint - lawP).length < 1e-5,
+               "(w6) axis " ~ ax.to!string ~ ": plane " ~ v3(pk.planePoint) ~ " " ~ v3(pk.planeNormal)
+               ~ ", law " ~ v3(lawP) ~ " " ~ v3(lawN[ax]));
+        Vec3 c, n, u, v;
+        sy.currentPlane(c, n, u, v);
+        assert(c == pk.planePoint && n == pk.planeNormal
+               && u == col[ax == 0 ? 1 : 0] && v == col[ax == 2 ? 1 : 2],
+               "(w6) axis " ~ ax.to!string ~ ": overlay lattice " ~ v3(u) ~ " " ~ v3(v) ~ " is not the other two columns");
+        ++rows;
+    }
+    assert(rows == 3, "(w6) population");
 }
 
 unittest { // (w2) the walker's refusals: a disabled packet, a pair table or a

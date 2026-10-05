@@ -799,27 +799,25 @@ public:
         auto sym = cast(SymmetryStage)
                    scene.pipeContext.pipeline.findByTask(TaskCode.Symm);
         if (sym !is null && sym.enabled) {
-            // The plane the stage applies; the lattice axes are any
-            // in-plane pair (the unit lattice is square and centred).
+            // The plane the stage applies, its lattice along the plane's own
+            // in-plane basis columns (K-D D6b: R·e_y, R·e_z for axis X).
             Vec3 c, n, a1, a2;
-            sym.currentPlane(c, n);
-            if (perpendicularFrame(n, a1, a2)) {   // a degenerate normal draws nothing
-                float[16] symModel = [
-                    a1.x, a1.y, a1.z, 0,
-                    n.x,  n.y,  n.z,  0,
-                    a2.x, a2.y, a2.z, 0,
-                    c.x,  c.y,  c.z,  1,
-                ];
-                gridShader.useProgram(symModel, vp,
-                    v.camera.distance * 2.0f,
-                    cast(float)v.fbo.w, cast(float)v.fbo.h,
-                    0.0f, 0.0f);
-                glBindVertexArray(gridVao);
-                glUniform3f(gridShader.locColor, 0.85f, 0.5f, 0.15f);
-                glDrawArrays(GL_LINES, 0, gridOnlyVertCount);
-                g_fc.draw(DrawPass.symmetry, gridOnlyVertCount);
-                glBindVertexArray(0);
-            }
+            sym.currentPlane(c, n, a1, a2);
+            float[16] symModel = [
+                a1.x, a1.y, a1.z, 0,
+                n.x,  n.y,  n.z,  0,
+                a2.x, a2.y, a2.z, 0,
+                c.x,  c.y,  c.z,  1,
+            ];
+            gridShader.useProgram(symModel, vp,
+                v.camera.distance * 2.0f,
+                cast(float)v.fbo.w, cast(float)v.fbo.h,
+                0.0f, 0.0f);
+            glBindVertexArray(gridVao);
+            glUniform3f(gridShader.locColor, 0.85f, 0.5f, 0.15f);
+            glDrawArrays(GL_LINES, 0, gridOnlyVertCount);
+            g_fc.draw(DrawPass.symmetry, gridOnlyVertCount);
+            glBindVertexArray(0);
         }
     }
 

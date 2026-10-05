@@ -32,6 +32,21 @@ import params            : Param, IntEnumEntry;
 /// `perf_probe.Cat.symPairingRebuild`.
 __gshared ulong g_symPairingRebuilds;
 
+/// The work-plane symmetry plane (task 9414; law K-S / K-S2,
+/// toolcards/interaction_layer/findings_K-S2.md): the `axis` plane at `offset`
+/// in the work plane's LOCAL space, mapped to world by W ONCE — normal R·e_axis
+/// = `[axis1, normal, axis2][axis]` (the column order of `fillFrameMatrices`;
+/// NOT re-normalised, the basis is orthonormal by the frame contract) through
+/// origin + offset·R·e_axis. World symmetry is the identity basis; an axis
+/// outside 0..2 reads X. The pen's plane maps this once more (pen data).
+void workplaneSymmetryPlane(Vec3 origin, Vec3 axis1, Vec3 normal, Vec3 axis2, int axis, float offset,
+                            out Vec3 point, out Vec3 planeNormal) pure nothrow @nogc @safe {
+    planeNormal = axis == 1 ? normal : axis == 2 ? axis2 : axis1;
+    point       = origin + planeNormal * offset;
+}
+
+private enum Vec3[4] kWorldBasis = [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1)];
+
 // ---------------------------------------------------------------------------
 // SymmetryStage — phase 7.6 of doc/phase7_plan.md / doc/phase7_6_symm_plan.md.
 // Sits at ordinal 0x31 (between WORK 0x30 and SNAP 0x40).
@@ -71,24 +86,14 @@ class SymmetryStage : Stage, Operator {
         SymmetryPacket pkt;
         pkt.config = config;
 
-        // Resolve plane. `useWorkplane` overrides axisIndex+offset.
-        // WORK stage has already run (ord 0x30 < SYMM 0x31).
-        if (enabled && useWorkplane) {
-            pkt.axisIndex = -1;
-            if (auto wp = vts.get!WorkplanePacket()) {
-                pkt.planePoint  = wp.center;
-                pkt.planeNormal = wp.normal;
-            }
-        } else {
-            int ax = enabled ? axisIndex : -1;
-            pkt.axisIndex   = ax;
-            pkt.planeNormal = axisVec(axisIndex);
-            pkt.planePoint  = axisVec(axisIndex) * offset;
-        }
-
-        // Recorded on EVERY pass, pair table or none (empty mesh): `currentPlane` reads it.
-        appliedPlanePoint_  = pkt.planePoint;
-        appliedPlaneNormal_ = pkt.planeNormal;
+        // `useWorkplane` maps the axis plane through the work plane (WORK ran
+        // first, ord 0x30 < SYMM 0x31); its basis is recorded on EVERY pass,
+        // pair table or none (empty mesh): `currentPlane` reads it.
+        pkt.axisIndex = useWorkplane ? -1 : axisIndex;
+        if (useWorkplane)
+            if (auto wp = vts.get!WorkplanePacket())
+                appliedBasis_ = [wp.center, wp.axis1, wp.normal, wp.axis2];
+        currentPlane(pkt.planePoint, pkt.planeNormal);
 
         // Phase 7.6b: rebuild the pair table on cache miss.
         if (enabled && mesh_ !is null && mesh_.vertices.length > 0) {
@@ -258,9 +263,9 @@ private:
     int[]  cachedVertSign_;
     bool   cachedTopology_         = false;
     bool   cachedReady_           = false;
-    // The last applied plane (written by every enabled `evaluate`; world XZ before the first).
-    Vec3   appliedPlanePoint_     = Vec3(0, 0, 0);
-    Vec3   appliedPlaneNormal_    = Vec3(0, 1, 0);
+    // The last applied work-plane basis {origin, axis1, normal, axis2} (written by
+    // every enabled `evaluate`; the world identity before the first).
+    Vec3[4] appliedBasis_         = kWorldBasis;
 
 public:
     this(Mesh* delegate() meshSrc = null, EditMode* editMode = null) {
@@ -295,8 +300,7 @@ public:
         cachedVertSign_.length = 0;
         cachedTopology_        = false;
         cachedReady_           = false;
-        appliedPlanePoint_     = Vec3(0, 0, 0);
-        appliedPlaneNormal_    = Vec3(0, 1, 0);
+        appliedBasis_          = kWorldBasis;
         authoringBasePlaced_   = false;   // W0: a fresh session reads -X
         _publishedPacket.authoringSide = -1;
         publishState();
@@ -358,17 +362,21 @@ public:
 
     /// Resolve `(planePoint, planeNormal)` from the stage's current axis /
     /// offset / workplane state, without a pipeline pass — the head of
-    /// `evaluate`. A workplane plane falls back to the last evaluated plane
-    /// (world XZ before the first). Read by `authoringSide()` and the viewport's
-    /// plane overlay (overlay = applied plane).
+    /// `evaluate`. A workplane plane maps through the last evaluated work-plane
+    /// basis (the world identity before the first). Read by `authoringSide()`
+    /// and the viewport's plane overlay (overlay = applied plane), whose lattice
+    /// runs along the other two basis columns `u`, `v` (K-D D6b).
     public void currentPlane(out Vec3 planePt, out Vec3 planeN) const nothrow @nogc {
-        if (enabled && useWorkplane) {
-            planePt = appliedPlanePoint_;
-            planeN  = appliedPlaneNormal_;
-            return;
-        }
-        planeN  = axisVec(axisIndex);
-        planePt = axisVec(axisIndex) * offset;
+        Vec3 u, v;
+        currentPlane(planePt, planeN, u, v);
+    }
+
+    /// ditto
+    public void currentPlane(out Vec3 planePt, out Vec3 planeN, out Vec3 u, out Vec3 v) const nothrow @nogc {
+        const b = enabled && useWorkplane ? appliedBasis_ : kWorldBasis;
+        workplaneSymmetryPlane(b[0], b[1], b[2], b[3], axisIndex, offset, planePt, planeN);
+        u = axisIndex == 1 || axisIndex == 2 ? b[1] : b[2];
+        v = axisIndex == 2 ? b[2] : b[3];
     }
 
     override string[2][] listAttrs() const {
@@ -529,15 +537,6 @@ private:
             import std.string : toUpper;
             setStatePath("symmetry/displayName",
                 "Symmetry: " ~ axisLabel(axisIndex).toUpper);
-        }
-    }
-
-    static Vec3 axisVec(int ax) pure nothrow @nogc {
-        switch (ax) {
-            case 0:  return Vec3(1, 0, 0);
-            case 1:  return Vec3(0, 1, 0);
-            case 2:  return Vec3(0, 0, 1);
-            default: return Vec3(1, 0, 0);
         }
     }
 
