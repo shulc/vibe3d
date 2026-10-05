@@ -38,6 +38,10 @@ private void cmd(string line) {
 private void resetScene(string camera) {
     cmd(commandBody("scene.reset"));
     cmd("history.clear");
+    // The work plane pinned to the ground: the AUTO plane adds a second
+    // perspective lattice (task 9509) whose world-Y line lies under the
+    // Y-axis overlay lines these strips pin.
+    cmd("tool.pipe.attr workplane mode worldY");
     postRaw("/api/camera", camera);
 }
 

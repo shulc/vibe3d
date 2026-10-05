@@ -42,7 +42,9 @@ unittest {
                roster("screenToConstructionPlane"), roster("ConstructionPlaneMode")));
     assert(roster("placementPlaneHit(") == ["tools/create/create_common.d:3"],
         format("placementPlaneHit( roster: %s", roster("placementPlaneHit(")));
-    assert(roster("viewWorkPlaneAnchor(") == ["tools/create/create_common.d:1", "viewgrid.d:1"],
+    // ui/viewport_render.d: the perspective work-plane lattice's offset (task 9509, K-GR rule 3).
+    assert(roster("viewWorkPlaneAnchor(") == ["tools/create/create_common.d:1",
+                                              "ui/viewport_render.d:1", "viewgrid.d:1"],
         format("viewWorkPlaneAnchor( roster: %s", roster("viewWorkPlaneAnchor(")));
     // One body of the anchor's rounding.
     assert(roster("Vec3 niceOrigin(") == ["viewgrid.d:1"],

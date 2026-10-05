@@ -830,28 +830,31 @@ public:
         glDrawArrays(GL_LINES, gridOnlyVertCount + 2, 2);
         g_fc.draw(DrawPass.grid, 2);
         // The second lattice (capture K-GR rule 3): the auto work plane,
-        // uncoloured and lighter than the background — its two world-axis
-        // lines, majors every 10 steps, lines every 5 (colours: the
-        // near-focus readings of the GR_P_z frame). Brightest first: a
-        // coincident later line fails the depth test. The fade is ours; the
-        // reference's, and a pinned plane's grid, are uncaptured (gap rows).
+        // uncoloured and lighter than the background — lines every 5 steps,
+        // majors every 10, its two world-axis lines brightest (colours: the
+        // near-focus readings of the GR_P_z frame). An underlay like the
+        // ortho grid (rule 1, measured in ortho only), so a later line draws
+        // over a coincident earlier one. The fade is ours; the reference's,
+        // and a pinned plane's grid, are uncaptured (gap rows).
         if (workStage is null || workStage.isAuto) {
+            glDepthMask(GL_FALSE);
+            scope (exit) glDepthMask(GL_TRUE);
             immutable float[16] wpModel = workPlaneLatticeModel(vp, gridStep);
             float[16] m = wpModel;
-            m[0 .. 12] *= 10.0f;
-            glUniformMatrix4fv(gridShader.locModel, 1, GL_FALSE, m.ptr);
-            glUniform3f(gridShader.locColor, 119 / 255.0f, 129 / 255.0f, 138 / 255.0f);
-            glDrawArrays(GL_LINES, gridOnlyVertCount, 4);
-            g_fc.draw(DrawPass.grid, 4);
-            glUniform3f(gridShader.locColor, 113 / 255.0f, 123 / 255.0f, 131 / 255.0f);
-            glDrawArrays(GL_LINES, 0, gridOnlyVertCount);
-            g_fc.draw(DrawPass.grid, gridOnlyVertCount);
-            m = wpModel;
             m[0 .. 12] *= 5.0f;
             glUniformMatrix4fv(gridShader.locModel, 1, GL_FALSE, m.ptr);
             glUniform3f(gridShader.locColor, 96 / 255.0f, 106 / 255.0f, 111 / 255.0f);
             glDrawArrays(GL_LINES, 0, gridOnlyVertCount);
             g_fc.draw(DrawPass.grid, gridOnlyVertCount);
+            m = wpModel;
+            m[0 .. 12] *= 10.0f;
+            glUniformMatrix4fv(gridShader.locModel, 1, GL_FALSE, m.ptr);
+            glUniform3f(gridShader.locColor, 113 / 255.0f, 123 / 255.0f, 131 / 255.0f);
+            glDrawArrays(GL_LINES, 0, gridOnlyVertCount);
+            g_fc.draw(DrawPass.grid, gridOnlyVertCount);
+            glUniform3f(gridShader.locColor, 119 / 255.0f, 129 / 255.0f, 138 / 255.0f);
+            glDrawArrays(GL_LINES, gridOnlyVertCount, 4);
+            g_fc.draw(DrawPass.grid, 4);
         }
     }
     glBindVertexArray(0);
