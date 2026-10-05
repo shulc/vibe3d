@@ -312,3 +312,21 @@ unittest { // X-axis scale reaches zero with finite reverse drag
             "v" ~ i.to!string ~ ".z drifted in zero X-scale");
     }
 }
+
+unittest { // centre disc: a press on the pivot and a drag scale all three axes alike
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
+    auto selResp = post(testBaseUrl() ~ "/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
+    assert(parseJSON(cast(string)selResp)["status"].str == "ok", "select failed");
+    auto setResp = post(testBaseUrl() ~ "/api/script", "tool.set scale");
+    assert(parseJSON(cast(string)setResp)["status"].str == "ok", "tool.set scale failed");
+    auto cam = fetchCamera();
+    auto vp  = viewportFromCamera(cam);
+    float cx, cy;
+    assert(projectToWindow(Vec3(0, 0, 0), vp, cx, cy), "pivot projects off-camera");
+    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                             cast(int)cx, cast(int)cy, cast(int)cx + 60, cast(int)cy, 20));
+    auto p = vertexPos(6);   // a corner: all three components +-0.5
+    immutable f0 = fabs(p[0]) / 0.5, f1 = fabs(p[1]) / 0.5, f2 = fabs(p[2]) / 0.5;
+    assert(fabs(f0 - 1) > 0.05 && approx(f0, f1, 1e-3) && approx(f0, f2, 1e-3),
+        format("a centre-disc drag must scale uniformly: factors %s %s %s", f0, f1, f2));
+}
