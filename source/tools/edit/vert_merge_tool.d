@@ -289,14 +289,7 @@ public:
         if (!interactiveParamEdit || !active) return image;
         image.applies = true; image.candidate = baseline; baseline = Mesh.init;
         auto shadow = beginPreparedShadow(image.candidate);
-        if (!image.candidate.hasAnySelectedVertices()) {
-            image.nextBuilt = false;
-        } else {
-            const double epsSq = kernelEpsSq();
-            const n = image.candidate.weldVerticesByMask(
-                image.candidate.selectedVertices, epsSq, true);
-            image.nextBuilt = (n != 0);
-        }
+        image.nextBuilt = operation(image.candidate) != 0;
         drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
             image.deliveryDomains);
         if (image.deliveryFlags == 0) {
@@ -340,12 +333,7 @@ public:
             built = false;
         }
         if (mesh.vertices.length == 0) return false;
-        if (!mesh.hasAnySelectedVertices()) return false;
-        double epsSq = kernelEpsSq();
-        // average:true — survivor at per-cluster centroid, matching the
-        // vert.merge command path (source/commands/mesh/vert_merge.d).
-        size_t n = mesh.weldVerticesByMask(mesh.selectedVertices, epsSq, true);
-        if (n == 0) return false;
+        if (operation(*mesh) == 0) return false;
         gpu.upload(*mesh);
         return true;
     }
@@ -413,17 +401,16 @@ private:
         // refusals as work. See Cat.toolPreview for the decomposition.
         auto zPreview = g_perf.scope_(Cat.toolPreview);
         before.restore(*mesh);
-        if (!mesh.hasAnySelectedVertices()) {
-            built = false;
-            refreshCaches();
-            return;
-        }
-        double epsSq = kernelEpsSq();
-        // average:true — survivor at per-cluster centroid, matching the
-        // vert.merge command path (source/commands/mesh/vert_merge.d).
-        size_t n = mesh.weldVerticesByMask(mesh.selectedVertices, epsSq, true);
-        built = (n != 0);
+        built = operation(*mesh) != 0;
         refreshCaches();
+    }
+
+    // The one operation: preview, prepared image and scripted apply (wave
+    // plan PV3a). average:true — the survivor sits at the per-cluster centroid,
+    // matching the vert.merge command (source/commands/mesh/vert_merge.d).
+    size_t operation(ref Mesh target) {
+        if (!target.hasAnySelectedVertices()) return 0;
+        return target.weldVerticesByMask(target.selectedVertices, kernelEpsSq(), true);
     }
 
     final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext c) {

@@ -4277,18 +4277,17 @@ private static immutable LedgerRow[] kPreviewSeam = [
     LedgerRow("EdgeExtendTool.fillCommitCarrier|recording", 1, "recording commit"),
 ] ~ pv2PreviewSeamRows();
 
-// Wave-2 PV2: five more owners, four identical rows each; their preview and
-// prepared runs share one kernel member
-// (tests/unit/tools/edit/preview_topology_churn_test.d).
+// Wave-2 PV2: five more owners; their preview, prepared and (PV3a, task
+// 9433) scripted runs share one `operation` — Polygon Extrude's scripted apply
+// keeps its own kernel batch (an open finding of task 9433).
 private LedgerRow[] pv2PreviewSeamRows() {
-    LedgerRow[] rows;
+    LedgerRow[] rows = [LedgerRow("PolyExtrudeTool.applyHeadless|unrecorded", 1,
+        "headless kernel")];
     foreach (cls; ["EdgeExtrudeTool", "PolyExtrudeTool", "VertexBevelTool",
                    "VertexExtrudeTool", "PolyInsetTool"])
         rows ~= [LedgerRow(cls ~ "|field", 1, "PreviewRebuild owner"),
                  LedgerRow(cls ~ ".rebuildPreview|run", 1, "preview seam call"),
-                 LedgerRow(cls ~ ".applyHeadless|unrecorded", 1, "headless kernel"),
-                 LedgerRow(cls ~ ".previewKernel|unrecorded", 1,
-                           "preview + prepared kernel")];
+                 LedgerRow(cls ~ ".operation|unrecorded", 1, "the one operation")];
     return rows;
 }
 
@@ -4324,7 +4323,7 @@ unittest // Stage M - the PreviewRebuild population and batch modes are closed
     const problems = reconcile(kPreviewSeam, hits);
     assert(problems.length == 0,
         "Stage M PreviewRebuild symbol ledger changed.\n" ~ problems);
-    assert(hits.length == 35 && filesRead >= 60,
+    assert(hits.length == 31 && filesRead >= 60,
         format("PreviewRebuild census found %d sites over %d files", hits.length, filesRead));
 
     const seam = stripCommentsAndStrings(

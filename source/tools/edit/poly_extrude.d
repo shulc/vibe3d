@@ -325,7 +325,7 @@ public:
         image.nextBuilt = PreviewRebuild.runPrepared(image.preview,
             image.candidate, before,
             (ref Mesh cage) => previewKey(cage, false),
-            (ref Mesh target) => previewKernel(target, false)) != 0;
+            (ref Mesh target) => operation(target, false)) != 0;
         drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
             image.deliveryDomains);
         shadow.close(); return image;
@@ -555,7 +555,7 @@ private:
         auto zPreview = g_perf.scope_(Cat.toolPreview);
         built = preview_.run(*mesh, before,
             (ref Mesh cage) => previewKey(cage, allowCoincidentTopology),
-            (ref Mesh target) => previewKernel(target, allowCoincidentTopology)) != 0;
+            (ref Mesh target) => operation(target, allowCoincidentTopology)) != 0;
         refreshCaches();
     }
 
@@ -565,8 +565,11 @@ private:
         return PreviewTopologyKey.make(cage.operandFaceMask(), distance_ == 0.0f &&
             shiftVec() == Vec3(0, 0, 0) && !allowCoincidentTopology);
     }
-    // Unrecorded: a preview frame records nothing.
-    size_t previewKernel(ref Mesh target, bool allowCoincidentTopology) {
+    // The one operation of the preview and the prepared image; unrecorded, a
+    // preview frame records nothing. The scripted apply does NOT reach it yet:
+    // its own call keeps cap-then-walls order and drops the cap shift — an
+    // uncaptured divergence left open (wave plan PV3a finding).
+    size_t operation(ref Mesh target, bool allowCoincidentTopology) {
         const shift = shiftVec();
         auto mask = target.operandFaceMask();
         auto ed = MeshEditBatch.unrecorded(target, kExtrudeEditScope);

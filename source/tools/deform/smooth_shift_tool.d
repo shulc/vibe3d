@@ -385,10 +385,7 @@ public:
         if (!interactiveParamEdit || !active || !engaged) return image;
         image.applies = true; image.candidate = baseline; baseline = Mesh.init;
         auto shadow = beginPreparedShadow(image.candidate);
-        auto mask = image.candidate.operandFaceMask();
-        auto ed = MeshEditBatch.unrecorded(image.candidate, kExtrudeEditScope);
-        const n = ed.smoothShiftFacesByMask(mask, shift_, scale_, thicken_);
-        ed.close(); image.nextBuilt = (n != 0);
+        image.nextBuilt = operation(image.candidate) != 0;
         drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
             image.deliveryDomains);
         shadow.close(); return image;
@@ -415,17 +412,7 @@ public:
             built = false;
         }
         if (mesh.faces.length == 0) return false;
-        auto mask = currentMask();
-        // Deliberately UNCONDITIONAL — unlike PolyExtrudeTool/PolyBevelTool,
-        // the reference does not short-circuit shift==0 (see the kernel's
-        // doc comment + the frozen "base_noop" fixture).
-        // task 1903 Stage H: smoothShiftFacesByMask takes `ref MeshEditBatch`.
-        // ToolDoApplyCommand owns the headless snapshot pair, so this batch
-        // does not record an op-log.
-        auto ed = MeshEditBatch.unrecorded(*mesh, kExtrudeEditScope);
-        size_t n = ed.smoothShiftFacesByMask(mask, shift_, scale_, thicken_);
-        ed.close();
-        if (n == 0) return false;
+        if (operation(*mesh) == 0) return false;
         gpu.upload(*mesh);
         return true;
     }
@@ -562,11 +549,6 @@ public:
     }
 
 private:
-    bool[] currentMask() {
-        // L1 funnel (task 0613, S5): the selection, else every VISIBLE element.
-        return mesh.operandFaceMask();
-    }
-
     void computeGizmoFrame() {
         PreparedSmoothShiftActivationImage image;
         image.gizmoValid = gizmoValid; image.anchor = anchor;
@@ -615,14 +597,22 @@ private:
         // refusals as work. See Cat.toolPreview for the decomposition.
         auto zPreview = g_perf.scope_(Cat.toolPreview);
         before.restore(*mesh);
-        auto mask = currentMask();
-        // Deliberately UNCONDITIONAL — see applyHeadless()'s comment.
-        // task 1903 Stage H: unrecorded — the per-drag-frame preview rerun.
-        auto ed = MeshEditBatch.unrecorded(*mesh, kExtrudeEditScope);
-        size_t n = ed.smoothShiftFacesByMask(mask, shift_, scale_, thicken_);
-        ed.close();
-        built = (n != 0);
+        built = operation(*mesh) != 0;
         refreshCaches();
+    }
+
+    // The one operation (task 9433): preview, prepared image and scripted
+    // apply. Deliberately UNCONDITIONAL — unlike Polygon Extrude / Bevel, the
+    // reference does not short-circuit shift == 0 (the kernel's doc comment,
+    // the frozen "base_noop" fixture). Unrecorded: a preview frame records
+    // nothing and the apply's snapshot pair belongs to `ToolDoApplyCommand`.
+    // The mask is the L1 funnel (task 0613): the selection, else every VISIBLE face.
+    size_t operation(ref Mesh target) {
+        auto mask = target.operandFaceMask();
+        auto ed = MeshEditBatch.unrecorded(target, kExtrudeEditScope);
+        const n = ed.smoothShiftFacesByMask(mask, shift_, scale_, thicken_);
+        ed.close();
+        return n;
     }
 
     final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context) {

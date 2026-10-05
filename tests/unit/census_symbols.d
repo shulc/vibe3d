@@ -102,6 +102,21 @@ package bool isIdentChar(char c) {
         || (c >= '0' && c <= '9') || c == '_';
 }
 
+/// Whole-identifier occurrences of `ident` in `code`; an empty name counts 0.
+package size_t countIdent(string code, string ident) {
+    if (ident.length == 0) return 0;
+    size_t n = 0, i = 0;
+    while (i + ident.length <= code.length) {
+        if (code[i .. i + ident.length] == ident &&
+            (i == 0 || !isIdentChar(code[i - 1])) &&
+            (i + ident.length == code.length ||
+             !isIdentChar(code[i + ident.length]))) {
+            ++n; i += ident.length;
+        } else ++i;
+    }
+    return n;
+}
+
 /// 1-based line number of byte offset `pos` in `src`.
 package size_t lineOf(string src, size_t pos) {
     size_t n = 1;

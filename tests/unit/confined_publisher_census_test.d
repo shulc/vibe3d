@@ -124,7 +124,7 @@ import std.format    : format;
 import std.path      : buildPath, dirName;
 import std.string    : splitLines;
 
-import tests.unit.census_symbols : blankNonCode, blankUnittestBodies,
+import tests.unit.census_symbols : blankNonCode, blankUnittestBodies, countIdent,
                                    enclosingSymbols, symbolAt,
                                    LedgerRow, LedgerHit, reconcile;
 
@@ -174,26 +174,6 @@ private static immutable LedgerRow[] kSites = [
         "uploadToGpu's per-apply publish. Exclusion: `toProcess`, the same "
       ~ "set, handed to the same query"),
 ];
-
-private bool isIdentChar(char c) {
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
-        || (c >= '0' && c <= '9') || c == '_';
-}
-
-/// Whole-word occurrences of `id` in `ln`. `publishConfinedChangeTwice` must
-/// not count as `publishConfinedChange`, and neither must a longer name that
-/// merely ends with one of ours.
-private size_t countIdent(string ln, string id) {
-    if (id.length == 0 || id.length > ln.length) return 0;
-    size_t n = 0;
-    foreach (i; 0 .. ln.length - id.length + 1) {
-        if (ln[i .. i + id.length] == id
-            && (i == 0 || !isIdentChar(ln[i - 1]))
-            && (i + id.length >= ln.length || !isIdentChar(ln[i + id.length])))
-            ++n;
-    }
-    return n;
-}
 
 private struct Hit {
     string file;    // DIAGNOSTIC ONLY — never a key (task 4056)

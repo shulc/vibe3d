@@ -295,7 +295,7 @@ public:
         image.deliveryFlags = image.deliveryDomains = 0;
         image.nextBuilt = PreviewRebuild.runPrepared(image.preview,
             image.candidate, before,
-            &previewKey, &previewKernel) != 0;
+            &previewKey, &operation) != 0;
         drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
             image.deliveryDomains);
         shadow.close(); return image;
@@ -330,13 +330,7 @@ public:
         preview_.reset();   // the live mesh is rebuilt behind the seam's back
         if (mesh.vertices.length == 0) return false;
         if (width_ == 0.0f) return true;
-        auto mask = currentMask();
-        // The kernel batch is unrecorded; ToolSession records the completed
-        // gesture as a mesh image when the handle is released.
-        auto ed = MeshEditBatch.unrecorded(*mesh, kExtrudeEditScope);
-        size_t n = ed.extrudeVerticesByMask(mask, shift_, width_);
-        ed.close();
-        if (n == 0) return false;
+        if (operation(*mesh) == 0) return false;
         gpu.upload(*mesh);
         return true;
     }
@@ -458,11 +452,6 @@ public:
     }
 
 private:
-    bool[] currentMask() {
-        // L1 funnel (task 0613, S5): the selection, else every VISIBLE element.
-        return mesh.operandVertexMask(EditMode.Vertices);
-    }
-
     void computeGizmoFrame() {
         PreparedVertexExtrudeActivationImage image;
         image.gizmoValid = gizmoValid; image.anchor = anchor;
@@ -504,7 +493,7 @@ private:
         // line: an early-out must record no sample, or `count` tallies
         // refusals as work. See Cat.toolPreview for the decomposition.
         auto zPreview = g_perf.scope_(Cat.toolPreview);
-        built = preview_.run(*mesh, before, &previewKey, &previewKernel) != 0;
+        built = preview_.run(*mesh, before, &previewKey, &operation) != 0;
         refreshCaches();
     }
 
@@ -514,8 +503,11 @@ private:
         return PreviewTopologyKey.make(cage.operandVertexMask(EditMode.Vertices),
             width_ == 0.0f);
     }
-    // Unrecorded: a preview frame records nothing.
-    size_t previewKernel(ref Mesh target) {
+    // The one operation (wave plan PV3a): preview, prepared image and scripted
+    // apply. Unrecorded — a preview frame records nothing, and the scripted
+    // apply's snapshot pair belongs to `ToolDoApplyCommand`. The mask is the
+    // L1 funnel (task 0613): the selection, else every VISIBLE element.
+    size_t operation(ref Mesh target) {
         auto mask = target.operandVertexMask(EditMode.Vertices);
         auto ed = MeshEditBatch.unrecorded(target, kExtrudeEditScope);
         const n = ed.extrudeVerticesByMask(mask, shift_, width_);

@@ -291,7 +291,7 @@ public:
         image.deliveryFlags = image.deliveryDomains = 0;
         image.nextBuilt = PreviewRebuild.runPrepared(image.preview,
             image.candidate, before,
-            &previewKey, &previewKernel) != 0;
+            &previewKey, &operation) != 0;
         drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
             image.deliveryDomains);
         shadow.close(); return image;
@@ -329,19 +329,7 @@ public:
         preview_.reset();   // the live mesh is rebuilt behind the seam's back
         if (mesh.vertices.length == 0) return false;
         if (inset_ == 0.0f) return true;
-        auto mask = currentMask();
-        // Task 1903 Stage E4 — the batch opens at the TOOL boundary, for the
-        // same reason the command's does. UNRECORDED (plan §9): this tool
-        // commits through a whole-mesh `MeshSnapshot` pair, so a recording
-        // batch would build an op-log nothing reads. Stage M owns the tool
-        // pair-holders.
-        size_t n;
-        {
-            auto ed = MeshEditBatch.unrecorded(*mesh, kBevelVertexEditScope);
-            n = ed.bevelVerticesByMask(mask, inset_);
-            ed.close();
-        }
-        if (n == 0) return false;
+        if (operation(*mesh) == 0) return false;
         gpu.upload(*mesh);
         return true;
     }
@@ -456,11 +444,6 @@ public:
     }
 
 private:
-    bool[] currentMask() {
-        // L1 funnel (task 0613, S5): the selection, else every VISIBLE element.
-        return mesh.operandVertexMask(EditMode.Vertices);
-    }
-
     // Anchor = selection centroid; insetAxis = averaged normal of faces
     // incident to the selected vertices (mirrors EdgeBevelTool's
     // width-axis derivation, one level down the element hierarchy).
@@ -501,7 +484,7 @@ private:
         // line: an early-out must record no sample, or `count` tallies
         // refusals as work. See Cat.toolPreview for the decomposition.
         auto zPreview = g_perf.scope_(Cat.toolPreview);
-        built = preview_.run(*mesh, before, &previewKey, &previewKernel) != 0;
+        built = preview_.run(*mesh, before, &previewKey, &operation) != 0;
         refreshCaches();
     }
 
@@ -512,8 +495,11 @@ private:
         return PreviewTopologyKey.make(cage.operandVertexMask(EditMode.Vertices),
             !isFinite(inset_) || !(inset_ >= 1e-6f));
     }
-    // Unrecorded: a preview frame records nothing.
-    size_t previewKernel(ref Mesh target) {
+    // The one operation (task 9433): preview, prepared image and scripted
+    // apply. Unrecorded — a preview frame records nothing, and the scripted
+    // apply's snapshot pair belongs to `ToolDoApplyCommand`. The mask is the
+    // L1 funnel (task 0613): the selection, else every VISIBLE element.
+    size_t operation(ref Mesh target) {
         auto mask = target.operandVertexMask(EditMode.Vertices);
         auto ed = MeshEditBatch.unrecorded(target, kBevelVertexEditScope);
         const n = ed.bevelVerticesByMask(mask, inset_);

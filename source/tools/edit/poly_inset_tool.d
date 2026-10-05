@@ -303,7 +303,7 @@ public:
         image.deliveryFlags = image.deliveryDomains = 0;
         image.nextBuilt = PreviewRebuild.runPrepared(image.preview,
             image.candidate, before,
-            &previewKey, &previewKernel) != 0;
+            &previewKey, &operation) != 0;
         drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
             image.deliveryDomains);
         shadow.close(); return image;
@@ -338,21 +338,7 @@ public:
         }
         preview_.reset();   // the live mesh is rebuilt behind the seam's back
         if (mesh.faces.length == 0) return false;
-        auto mask = currentMask();
-        // Task 1903 Stage F2 — the batch opens at the TOOL boundary (§4.1).
-        // This is the COMMIT path (`tool.doApply` / the panel Apply button),
-        // so one deferred stamp at `close()`. UNRECORDED all the same: this
-        // ToolDoApplyCommand owns this headless edit's snapshot pair, so a
-        // recording batch would build an op-log nothing reads.
-        // Stage M owns the tool pair-holders; Stage L7 owns this family's
-        // delta undo.
-        size_t n;
-        {
-            auto ed = MeshEditBatch.unrecorded(*mesh, kPolyBevelEditScope);
-            n = ed.insetFacesByMask(mask, inset_);
-            ed.close();
-        }
-        if (n == 0) return false;
+        if (operation(*mesh) == 0) return false;
         gpu.upload(*mesh);
         return true;
     }
@@ -414,13 +400,6 @@ public:
     }
 
 private:
-    // The mask the kernel runs on: empty selection ⇒ whole mesh (matching
-    // the mesh.poly_inset command convention).
-    bool[] currentMask() {
-        // L1 funnel (task 0613, S5): the selection, else every VISIBLE element.
-        return mesh.operandFaceMask();
-    }
-
     // Re-run from the clean cage at the current `inset_` through the seam (a
     // key change restores and rebuilds; an unchanged key moves positions only).
     void rebuildPreview() {
@@ -430,7 +409,7 @@ private:
         // line: an early-out must record no sample, or `count` tallies
         // refusals as work. See Cat.toolPreview for the decomposition.
         auto zPreview = g_perf.scope_(Cat.toolPreview);
-        built = preview_.run(*mesh, before, &previewKey, &previewKernel) != 0;
+        built = preview_.run(*mesh, before, &previewKey, &operation) != 0;
         refreshCaches();
     }
 
@@ -440,8 +419,11 @@ private:
     PreviewTopologyKey previewKey(ref Mesh cage) {
         return PreviewTopologyKey.make(cage.operandFaceMask(), false);
     }
-    // Unrecorded: a preview frame records nothing.
-    size_t previewKernel(ref Mesh target) {
+    // The one operation (task 9433): preview, prepared image and scripted
+    // apply. Unrecorded — a preview frame records nothing, and the scripted
+    // apply's snapshot pair belongs to `ToolDoApplyCommand`. The mask is the
+    // L1 funnel (task 0613): the selection, else every VISIBLE element.
+    size_t operation(ref Mesh target) {
         auto mask = target.operandFaceMask();
         auto ed = MeshEditBatch.unrecorded(target, kPolyBevelEditScope);
         const n = ed.insetFacesByMask(mask, inset_);

@@ -1,6 +1,7 @@
 // One operation per tool: a tool's preview, prepared panel edit and scripted
 // apply reach the geometry kernel through ONE function, so they cannot drift
-// apart (task 9431; wave plan PV1, the first row — PV3a/PV3b add theirs).
+// apart (task 9431; wave plan PV1, the first row; task 9433, PV3a, the edit
+// family's eight; PV3b adds its own).
 //
 // The kernel set of a row comes from a RULE over the kernel module's members,
 // not from a list of today's call sites. Counting is on WHOLE IDENTIFIERS over
@@ -22,23 +23,9 @@ import std.path : buildPath, dirName;
 
 static import mesh_ops.cut;
 import tests.unit.census_symbols : blankNonCode, blankUnittestBodies,
-    countOccurrences, enclosingSymbols, isIdentChar;
+    countIdent, countOccurrences, enclosingSymbols;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
-
-/// Whole-identifier occurrences of `ident` in `code`.
-private size_t countIdent(string code, string ident) {
-    size_t n = 0, i = 0;
-    while (i + ident.length <= code.length) {
-        if (code[i .. i + ident.length] == ident &&
-            (i == 0 || !isIdentChar(code[i - 1])) &&
-            (i + ident.length == code.length ||
-             !isIdentChar(code[i + ident.length]))) {
-            ++n; i += ident.length;
-        } else ++i;
-    }
-    return n;
-}
 
 /// `ident` occurrences keyed "<enclosing path>|<ident>".
 private size_t[string] identOwners(string code, const string[] idents) {
@@ -130,4 +117,67 @@ unittest // Slice: every plane-cut kernel call lives in `sliceCut` (and its spli
     ];
     assert(callers == wantCallers, format("slice_tool.d operation callers moved:"
         ~ "\n  found    %s\n  expected %s", callers, wantCallers));
+}
+
+/// One edit-family row: the tool file, its class, its kernel, and whether the
+/// kernel module is imported by name (a module-scope occurrence).
+private struct EditRow { string file, cls, kernel; bool imported; }
+
+unittest // Edit family: each tool's kernel lives in its one `operation`, called by its three producers
+{
+    const EditRow[] rows = [
+        EditRow("source/tools/edit/edge_extrude.d", "EdgeExtrudeTool", "extrudeEdgesByMask"),
+        EditRow("source/tools/edit/poly_extrude.d", "PolyExtrudeTool", "extrudeFacesByMask"),
+        EditRow("source/tools/edit/vertex_bevel_tool.d", "VertexBevelTool",
+            "bevelVerticesByMask", true),
+        EditRow("source/tools/edit/vertex_extrude_tool.d", "VertexExtrudeTool",
+            "extrudeVerticesByMask"),
+        EditRow("source/tools/edit/poly_inset_tool.d", "PolyInsetTool", "insetFacesByMask"),
+        EditRow("source/tools/edit/vert_merge_tool.d", "VertexMergeTool", "weldVerticesByMask"),
+        EditRow("source/tools/edit/reduce.d", "ReductionTool", "reduceToTarget", true),
+        EditRow("source/tools/deform/smooth_shift_tool.d", "SmoothShiftTool",
+            "smoothShiftFacesByMask"),
+    ];
+    // FLOOR (plan PV3a: eight files; PV1's slice row is the block above).
+    assert(rows.length == 8, format("%s edit-family rows, expected 8", rows.length));
+    size_t files;
+    foreach (r; rows) {
+        string raw;
+        const code = codeOf(r.file, raw);
+        assert(code.length > 10_000, format("%s code view is %s bytes; the census "
+            ~ "would read a stub", r.file, code.length));
+        ++files;
+
+        // NEEDLE + PIN: the kernel's sites by enclosing function — `operation`
+        // only. Polygon Extrude's scripted apply keeps its own call: its order
+        // and cap shift differ from the live preview's, uncaptured (task 9433
+        // finding), so its row names that second site until it is resolved.
+        size_t[string] want = [r.cls ~ ".operation|" ~ r.kernel: 1];
+        if (r.imported) want["(module scope)|" ~ r.kernel] = 1;
+        if (r.cls == "PolyExtrudeTool") want[r.cls ~ ".applyHeadless|" ~ r.kernel] = 1;
+        auto got = identOwners(code, [r.kernel]);
+        assert(got == want, format("%s calls `%s` outside its one operation:"
+            ~ "\n  found    %s\n  expected %s", r.file, r.kernel, got, want));
+
+        // STRUCTURAL: the spellings that reach a member past the blanked view.
+        assert(countOccurrences(raw, ".tupleof") == 0 &&
+            countOccurrences(raw, "getMember") == 0 &&
+            countOccurrences(raw, "mixin(") == 0 &&
+            countOccurrences(raw, "mixin (") == 0,
+            r.file ~ " gained a .tupleof / getMember / string-mixin spelling");
+
+        // PIN: the producers. The preview rebuild, the prepared image (the
+        // five seam tools hand `&operation` to `runPrepared`) and the scripted
+        // apply each name `operation` once — Polygon Extrude's apply excepted.
+        auto callers = identOwners(code, ["operation"]);
+        size_t[string] wantCallers = [
+            r.cls ~ "|operation": 1,   // its definition
+            r.cls ~ ".rebuildPreview|operation": 1,
+            r.cls ~ ".buildPreparedParamUpdate|operation": 1,
+        ];
+        if (r.cls != "PolyExtrudeTool") wantCallers[r.cls ~ ".applyHeadless|operation"] = 1;
+        assert(callers == wantCallers, format("%s: `operation` callers moved:"
+            ~ "\n  found    %s\n  expected %s", r.file, callers, wantCallers));
+    }
+    assert(files == 8);
 }

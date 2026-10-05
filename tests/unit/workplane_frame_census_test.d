@@ -23,7 +23,7 @@ import std.path : buildPath, dirName, baseName;
 import std.regex : ctRegex, matchAll;
 import std.string : splitLines;
 
-import tests.unit.census_symbols : blankNonCode, blankUnittestBodies, isIdentChar;
+import tests.unit.census_symbols : blankNonCode, blankUnittestBodies, countIdent;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
@@ -36,19 +36,6 @@ static assert([__traits(allMembers, tools.create.create_common)].canFind("primit
 static assert([__traits(allMembers, tools.create.create_common)].canFind("viewPrincipalAxis"));
 static assert([__traits(allMembers, tools.create.create_common)].canFind("axisUnit"));
 static assert([__traits(allMembers, viewgrid)].canFind("viewVectorQuantum"));
-
-private size_t countIdent(string code, string ident) {
-    size_t n = 0, i = 0;
-    while (i + ident.length <= code.length) {
-        if (code[i .. i + ident.length] == ident &&
-            (i == 0 || !isIdentChar(code[i - 1])) &&
-            (i + ident.length == code.length ||
-             !isIdentChar(code[i + ident.length]))) {
-            ++n; i += ident.length;
-        } else ++i;
-    }
-    return n;
-}
 
 private struct Src { string rel, raw, code; }
 

@@ -352,7 +352,7 @@ public:
         image.deliveryFlags = image.deliveryDomains = 0;
         image.nextBuilt = PreviewRebuild.runPrepared(image.preview,
             image.candidate, before,
-            &previewKey, &previewKernel) != 0;
+            &previewKey, &operation) != 0;
         drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
             image.deliveryDomains);
         shadow.close(); return image;
@@ -407,15 +407,7 @@ public:
         preview_.reset();   // the live mesh is rebuilt behind the seam's back
         if (mesh.edges.length == 0) return false;
         if (extrude_ == 0.0f && width_ == 0.0f) return true;   // no-op success
-        auto mask = currentMask();
-        // task 1903 Stage H: extrudeEdgesByMask takes `ref MeshEditBatch` now.
-        // `ToolDoApplyCommand` wraps this whole call with a MeshSnapshot, so
-        // this batch is unrecorded — recording one here would build a delta
-        // no caller reads and discard it.
-        auto ed = MeshEditBatch.unrecorded(*mesh, kExtrudeEditScope);
-        size_t n = ed.extrudeEdgesByMask(mask, extrude_, width_);
-        ed.close();
-        if (n == 0) return false;
+        if (operation(*mesh) == 0) return false;
         gpu.upload(*mesh);
         return true;
     }
@@ -653,13 +645,6 @@ public:
     }
 
 private:
-    // The mask the kernel runs on: empty selection ⇒ whole mesh (matching the
-    // mesh.delete / mesh.edge_extrude convention).
-    bool[] currentMask() {
-        // L1 funnel (task 0613, S5): the selection, else every VISIBLE element.
-        return mesh.operandEdgeMask();
-    }
-
     // Rebuild from the clean cage through the seam: a key change restores the
     // live mesh and re-runs; an unchanged key transplants positions only.
     void rebuildPreview() {
@@ -669,7 +654,7 @@ private:
         // line: an early-out must record no sample, or `count` tallies
         // refusals as work. See Cat.toolPreview for the decomposition.
         auto zPreview = g_perf.scope_(Cat.toolPreview);
-        built = preview_.run(*mesh, before, &previewKey, &previewKernel) != 0;
+        built = preview_.run(*mesh, before, &previewKey, &operation) != 0;
         refreshCaches();
     }
 
@@ -681,8 +666,11 @@ private:
         return PreviewTopologyKey.make(cage.operandEdgeMask(), width_ < 1e-6f,
             abs(extrude_) < 1e-6f);
     }
-    // Unrecorded: a preview frame records nothing.
-    size_t previewKernel(ref Mesh target) {
+    // The one operation (task 9433): preview, prepared image and scripted
+    // apply. Unrecorded — a preview frame records nothing, and the scripted
+    // apply's snapshot pair belongs to `ToolDoApplyCommand`. The mask is the
+    // L1 funnel (task 0613): the selection, else every VISIBLE edge.
+    size_t operation(ref Mesh target) {
         auto mask = target.operandEdgeMask();
         auto ed = MeshEditBatch.unrecorded(target, kExtrudeEditScope);
         const n = ed.extrudeEdgesByMask(mask, extrude_, width_);
@@ -755,7 +743,7 @@ private:
         image.gizmoSelHash = source.selectionSignature(EditMode.Edges);
         if (source.edges.length == 0) return;
 
-        // L1 funnel (task 0613, S5) — same operand set as currentMask(), so the
+        // L1 funnel (task 0613, S5) — same operand set as `operation`, so the
         // gizmo is framed on exactly the edges the apply will extrude (see the
         // matching note in tools/edit/poly_extrude.d).
         auto opEdges = source.operandEdgeMask();

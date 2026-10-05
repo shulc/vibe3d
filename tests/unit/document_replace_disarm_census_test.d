@@ -13,7 +13,7 @@ import std.format : format;
 import std.path : buildPath, dirName;
 import std.string : indexOf, splitLines, strip;
 
-import tests.unit.census_symbols : blankNonCode, blankUnittestBodies,
+import tests.unit.census_symbols : blankNonCode, blankUnittestBodies, countIdent,
     enclosingSymbols, symbolAt, LedgerRow, LedgerHit, reconcile;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
@@ -116,22 +116,6 @@ private immutable LedgerRow[] kCommentSites = [
     LedgerRow("LoopSliceTool|onResetTool", 1,
         "read 2026-09-03; true: defensive reset callback after the main seam"),
 ];
-
-private bool isIdentChar(char c) {
-    return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
-        || c >= '0' && c <= '9' || c == '_';
-}
-
-private size_t countIdent(string line, string ident) {
-    if (ident.length == 0 || ident.length > line.length) return 0;
-    size_t n;
-    foreach (i; 0 .. line.length - ident.length + 1)
-        if (line[i .. i + ident.length] == ident
-            && (i == 0 || !isIdentChar(line[i - 1]))
-            && (i + ident.length == line.length
-                || !isIdentChar(line[i + ident.length]))) ++n;
-    return n;
-}
 
 private struct Hit {
     string file;

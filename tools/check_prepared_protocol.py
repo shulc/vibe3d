@@ -2863,6 +2863,7 @@ def smooth_shift_param_gate(s):
                 "image.expectedBefore = MeshSnapshot.capture(baseline);",
                 "auto shadow = beginPreparedShadow(image.candidate);",
                 "ed.smoothShiftFacesByMask(mask, shift_, scale_, thicken_)",
+                "image.nextBuilt = operation(image.candidate) != 0;",
                 "drainPreparedShadowDelivery(image.candidate",
                 "sameFloat(shift, other.shift)",
                 "image.expectedLive.matches(live)",
@@ -2874,6 +2875,7 @@ mutate_param_sources("Smooth Shift", smooth_shift_param_sources, smooth_shift_pa
     ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
     ("tool", "auto shadow = beginPreparedShadow(image.candidate);", "", "drop shadow"),
     ("tool", "sameFloat(shift, other.shift)", "true", "drop exact float"),
+    ("tool", "operation(image.candidate)", "cast(size_t)0", "drop operation"),
     ("tool", producer_mixin("SmoothShiftTool"), "", "drop producer mixin"),
 ))
 
@@ -2912,11 +2914,12 @@ mutate_param_sources("Edge Bevel", edge_bevel_param_sources, edge_bevel_param_ga
 ))
 
 # The five topology tools on the preview seam (wave-2 PV2): one text contract,
-# its rows run per tool. The kernel call stands twice (preview kernel, headless).
-def preview_rebuild_param_gate(cls, kernel, identity):
+# its rows run per tool. The kernel call stands once, in the one `operation`
+# (task 9433); Polygon Extrude's scripted apply keeps a second (an open finding).
+def preview_rebuild_param_gate(cls, kernel, identity, sites):
     def gate(s):
         tool = s["tool"]
-        return (tool.count(kernel) == 2 and all(x in tool for x in (
+        return (tool.count(kernel) == sites and all(x in tool for x in (
             "image.expectedLive = MeshSnapshot.capture(live);",
             "image.expectedBefore = before;",
             "preview_.prepareImageShadowed(image.preview);",
@@ -2933,26 +2936,26 @@ def preview_rebuild_param_gate(cls, kernel, identity):
             "runner.savePreparedNext(image);",
             "beginPreparedShadow(image.nextCage);")))
     return gate
-for label, path, cls, kernel, identity in (
+for label, path, cls, kernel, identity, sites in (
     ("Edge Extrude", "edge_extrude.d", "EdgeExtrudeTool",
      "ed.extrudeEdgesByMask(mask, extrude_, width_)",
-     "memcmp(&extrude, &other.extrude, float.sizeof) == 0"),
+     "memcmp(&extrude, &other.extrude, float.sizeof) == 0", 1),
     ("Poly Extrude", "poly_extrude.d", "PolyExtrudeTool",
      "ed.extrudeFacesByMask(mask, distance_",
-     "memcmp(&distance, &other.distance, float.sizeof) == 0"),
+     "memcmp(&distance, &other.distance, float.sizeof) == 0", 2),
     ("Poly Inset", "poly_inset_tool.d", "PolyInsetTool",
      "ed.insetFacesByMask(mask, inset_)",
-     "memcmp(&inset, &other.inset, float.sizeof) == 0"),
+     "memcmp(&inset, &other.inset, float.sizeof) == 0", 1),
     ("Vertex Extrude", "vertex_extrude_tool.d", "VertexExtrudeTool",
      "ed.extrudeVerticesByMask(mask, shift_, width_)",
-     "sameFloat(width, other.width)"),
+     "sameFloat(width, other.width)", 1),
     ("Vertex Bevel", "vertex_bevel_tool.d", "VertexBevelTool",
      "ed.bevelVerticesByMask(mask, inset_)",
-     "memcmp(&inset, &other.inset, float.sizeof) == 0"),
+     "memcmp(&inset, &other.inset, float.sizeof) == 0", 1),
 ):
     sources = {"tool": (ROOT / "source/tools/edit" / path).read_text(),
                "preview": (ROOT / "source/tools/edit/preview_rebuild.d").read_text()}
-    gate = preview_rebuild_param_gate(cls, kernel, identity)
+    gate = preview_rebuild_param_gate(cls, kernel, identity, sites)
     if not gate(sources):
         fail(f"{label} onParamChanged prepared contract drift")
     mutate_param_sources(label, sources, gate, (
@@ -3409,12 +3412,12 @@ vertex_merge_param_sources = {
 }
 def vertex_merge_param_gate(s):
     tool = s["tool"]
-    return (tool.count("image.candidate.weldVerticesByMask(") == 1 and
+    return (tool.count("weldVerticesByMask(") == 1 and
             all(x in tool for x in (
                 "image.expectedLive = MeshSnapshot.capture(live);",
                 "image.expectedBefore = MeshSnapshot.capture(baseline);",
                 "auto shadow = beginPreparedShadow(image.candidate);",
-                "image.candidate.weldVerticesByMask(",
+                "image.nextBuilt = operation(image.candidate) != 0;",
                 "drainPreparedShadowDelivery(image.candidate",
                 "memcmp(&dist, &other.dist, float.sizeof) == 0",
                 "image.expectedLive.matches(live)",
@@ -3426,7 +3429,7 @@ mutate_param_sources("Vertex Merge", vertex_merge_param_sources, vertex_merge_pa
     ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
     ("tool", "auto shadow = beginPreparedShadow(image.candidate);", "", "drop shadow"),
     ("tool", "memcmp(&dist, &other.dist, float.sizeof) == 0", "true", "drop float identity"),
-    ("tool", "image.candidate.weldVerticesByMask(", "image.candidate.hasAnySelectedVertices(", "drop kernel"),
+    ("tool", "operation(image.candidate)", "cast(size_t)0", "drop kernel"),
     ("tool", producer_mixin("VertexMergeTool"), "", "drop producer mixin"),
 ), lambda text, label: 0 if label == "drop float identity" else
     text.find("final PreparedVertexMergeParamImage buildPreparedParamUpdate"))
@@ -3436,12 +3439,12 @@ reduction_param_sources = {
 }
 def reduction_param_gate(s):
     tool = s["tool"]
-    return (tool.count("ed.reduceToTarget(target, pb_)") == 3 and
+    return (tool.count("ed.reduceToTarget(keep, pb_)") == 1 and
             all(x in tool for x in (
                 "image.expectedLive = MeshSnapshot.capture(live);",
                 "image.expectedBefore = MeshSnapshot.capture(baseline);",
                 "auto shadow = beginPreparedShadow(image.candidate);",
-                "ed.reduceToTarget(target, pb_)",
+                "image.nextBuilt = operation(image.candidate) != 0;",
                 "drainPreparedShadowDelivery(image.candidate",
                 "memcmp(&ratio, &other.ratio, float.sizeof) == 0",
                 "image.expectedLive.matches(live)",
@@ -3453,7 +3456,7 @@ mutate_param_sources("Reduction", reduction_param_sources, reduction_param_gate,
     ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
     ("tool", "auto shadow = beginPreparedShadow(image.candidate);", "", "drop shadow"),
     ("tool", "memcmp(&ratio, &other.ratio, float.sizeof) == 0", "true", "drop float identity"),
-    ("tool", "ed.reduceToTarget(target, pb_)", "cast(size_t)0", "drop kernel"),
+    ("tool", "operation(image.candidate)", "cast(size_t)0", "drop kernel"),
     ("tool", producer_mixin("ReductionTool"), "", "drop producer mixin"),
 ), lambda text, label: 0 if label == "drop float identity" else
     text.find("final PreparedReductionParamImage buildPreparedParamUpdate"))

@@ -222,21 +222,7 @@ public:
         if (!interactiveParamEdit || !active) return image;
         image.applies = true; image.candidate = baseline; baseline = Mesh.init;
         auto shadow = beginPreparedShadow(image.candidate);
-        if (image.candidate.faces.length == 0) {
-            image.nextBuilt = false;
-        } else {
-            immutable size_t origFaces = image.candidate.faces.length;
-            size_t target = cast(size_t)lround(ratio_ * cast(double)origFaces);
-            if (target < 1) target = 1;
-            if (target >= origFaces) {
-                image.nextBuilt = false;
-            } else {
-                auto ed = MeshEditBatch.unrecorded(image.candidate,
-                    kReduceEditScope);
-                const n = ed.reduceToTarget(target, pb_);
-                ed.close(); image.nextBuilt = (n != 0);
-            }
-        }
+        image.nextBuilt = operation(image.candidate) != 0;
         drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
             image.deliveryDomains);
         if (image.deliveryFlags == 0) {
@@ -281,24 +267,7 @@ public:
             before.restore(*mesh);
             built = false;
         }
-        if (mesh.faces.length == 0) return false;
-
-        immutable size_t origFaces = mesh.faces.length;
-        size_t target = cast(size_t)lround(ratio_ * cast(double)origFaces);
-        if (target < 1) target = 1;
-        if (target >= origFaces) return false;  // no-op (ratio >= 1.0 or rounding)
-
-        // TASK 1903 Stage D2 — the batch opens at the TOOL boundary, never
-        // inside the kernel (plan §4.1); see the note at rebuildPreview below
-        // for why both of this tool's batches are UNRECORDED.
-        size_t n;
-        {
-            auto ed = MeshEditBatch.unrecorded(*mesh, kReduceEditScope);
-            n = ed.reduceToTarget(target, pb_);
-            ed.close();
-        }
-        if (n == 0) return false;
-
+        if (operation(*mesh) == 0) return false;
         refreshDisplay(mesh, gpu);
         return true;
     }
@@ -313,46 +282,25 @@ private:
         // refusals as work. See Cat.toolPreview for the decomposition.
         auto zPreview = g_perf.scope_(Cat.toolPreview);
         before.restore(*mesh);
-
-        if (mesh.faces.length == 0) {
-            built = false;
-            refreshDisplay(mesh, gpu);
-            return;
-        }
-
-        immutable size_t origFaces = mesh.faces.length;
-        size_t target = cast(size_t)lround(ratio_ * cast(double)origFaces);
-        if (target < 1) target = 1;
-        if (target >= origFaces) {
-            // No-op ratio — mesh already at baseline, leave it clean.
-            built = false;
-            refreshDisplay(mesh, gpu);
-            return;
-        }
-
-        // TASK 1903 Stage D2 — UNRECORDED, and on this path that is a HARD
-        // requirement rather than a track-1 economy (plan §9). `rebuildPreview`
-        // runs once per parameter change, i.e. once per drag frame: a
-        // RECORDING batch would build and throw away a full op-log at 60 Hz,
-        // and `changeBus.opLogEntriesRecorded` would tick for an edit the user
-        // has not committed. An unrecorded frame keeps every tracker hook on
-        // its existing `if (editRecorder_ is null) return;` first line — one
-        // predictable branch, exactly today's batchless cost — while still
-        // collapsing the kernel's internal commits into ONE stamp, ONE hidden
-        // derive and ONE delivery per frame. `close()` returns
-        // `MeshEditDelta.init` and there is nothing to read.
-        //
-        // The close MUST precede `refreshDisplay`: the display refresh reads
-        // the version stamps this batch is deferring, so refreshing inside the
-        // batch would paint from the pre-edit stamps.
-        size_t n;
-        {
-            auto ed = MeshEditBatch.unrecorded(*mesh, kReduceEditScope);
-            n = ed.reduceToTarget(target, pb_);
-            ed.close();
-        }
-        built = (n != 0);
+        built = operation(*mesh) != 0;
         refreshDisplay(mesh, gpu);
+    }
+
+    // The one operation (task 9433): preview, prepared image and scripted
+    // apply. A ratio that keeps every face (or a faceless mesh) is a no-op.
+    // UNRECORDED (task 1903 D2): a preview frame must not build an op-log per
+    // drag frame, and the apply's snapshot pair belongs to `ToolDoApplyCommand`.
+    // The batch closes before the caller's `refreshDisplay`, which reads the
+    // version stamps the batch defers.
+    size_t operation(ref Mesh target) {
+        immutable size_t origFaces = target.faces.length;
+        size_t keep = cast(size_t)lround(ratio_ * cast(double)origFaces);
+        if (keep < 1) keep = 1;
+        if (keep >= origFaces) return 0;
+        auto ed = MeshEditBatch.unrecorded(target, kReduceEditScope);
+        const n = ed.reduceToTarget(keep, pb_);
+        ed.close();
+        return n;
     }
 
     // Record the interactive session as one snapshot-pair undo entry.
