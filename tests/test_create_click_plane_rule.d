@@ -245,7 +245,9 @@ private string radialArrayCell(const ref Cell c) {
     return compare(c, arr3(r["value"]), false);
 }
 
-/// Point falloff: a right-button press with no motion places the centre.
+/// Point falloff: a right-button press places the centre. A motion back onto
+/// the press pixel must leave the size at zero: the drag reads the press's
+/// plane (an inference — the right-drag motion itself is uncaptured).
 private string falloffCell(const ref Cell c) {
     rig(c, kSource);
     penCommand("tool.set move");
@@ -254,10 +256,16 @@ private string falloffCell(const ref Cell c) {
     auto cam = fetchCamera();
     playAndWait(format(`{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,`
         ~ `"vpH":%d,"fovY":0.785398}` ~ "\n" ~ `{"t":50.000,"type":"SDL_MOUSEBUTTONDOWN",`
-        ~ `"btn":3,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n" ~ `{"t":100.000,`
-        ~ `"type":"SDL_MOUSEBUTTONUP","btn":3,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
-        cam.vpX, cam.vpY, cam.width, cam.height, p[0], p[1], p[0], p[1]));
-    auto parts = stageAttrs("WGHT")["center"].split(",");
+        ~ `"btn":3,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n" ~ `{"t":80.000,`
+        ~ `"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,"state":4,"mod":0}` ~ "\n"
+        ~ `{"t":100.000,"type":"SDL_MOUSEBUTTONUP","btn":3,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
+        cam.vpX, cam.vpY, cam.width, cam.height, p[0], p[1], p[0], p[1], p[0], p[1]));
+    const attrs = stageAttrs("WGHT");
+    auto parts = attrs["center"].split(",");
+    foreach (v; attrs["size"].split(","))
+        if (abs(v.to!double) > 1e-6)
+            return format("%s: a motion onto the press pixel grew the size to %s", c.name,
+                          attrs["size"]);
     penCommand("tool.pipe.attr falloff type none");
     penCommand("tool.set move off");
     return compare(c, [parts[0].to!double, parts[1].to!double, parts[2].to!double], false);
