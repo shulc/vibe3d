@@ -249,8 +249,8 @@ unittest { // u6: Radial Array's legacy single weld float reads as merge + dist 
            && abs((*t)["dist"].to!float - 0.02f) < 1e-9 && (*t)["count"] == "8",
            format("a weld above 0 reads as merge on at that distance: %s", t is null ? null : *t));
     // Control: only the Radial Array tool node carried the single float.
-    assert((*c.lookup("mesh.radialArrayTool", "falloff"))["weld"] == "0.5"
-           && (*c.lookup("mesh.arrayTool", kToolNode))["weld"] == "0.5",
+    assert(c.lookup("mesh.radialArrayTool", "falloff").get("weld", "") == "0.5"
+           && c.lookup("mesh.arrayTool", kToolNode).get("weld", "") == "0.5",
            "another node's or tool's weld attribute is not the legacy one");
     foreach (legacy, merge; ["0": "false", "x": null]) {
         write(buildPath(dir, "prefs.json"), `{"version":2,"toolAttrCache":`

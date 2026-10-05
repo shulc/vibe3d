@@ -623,9 +623,9 @@ unittest { // (4)
                           ~ "table says {%s, %s, %s, '%s'}", row.id, pol.opensAt, pol.noClone,
                           pol.imageAttrs, pol.armAttr, sr.opensAt, sr.noClone, sr.imageAttrs,
                           sr.armAttr));
-            if (row.id == "poly.extrude")
-                assert(pol.haulAttrs == sr.imageAttrs,
-                    "M3 step table: Polygon haul image drifted from its full parameter image");
+            if (row.id == "poly.extrude" || row.id == "mesh.radialArrayTool")
+                assert(pol.haulAttrs == sr.imageAttrs, format(
+                    "M3 step table: %s haul drifted from its full parameter image", row.id));
             // Wave plan 8640 S7a: the pen's haul is its operation context, the
             // six names a press resets and M-H keeps to the recording instance.
             if (row.id == "mesh.topoPen")

@@ -232,6 +232,18 @@ unittest { // Cube reflected across plane x=0.5 with weld=0.001: verts on
     assertMembranePresent(m, "mirror weld coplanar (X)");
 }
 
+unittest { // The command's `weld` is the legacy single float: 0 is merge OFF,
+           // so the same exact seam coincidences as above stay apart (the
+           // kernel's merge-on-at-0 would weld them at the floor; task 9462).
+    resetCube();
+    postCommand(`{"id":"mesh.mirror","params":{
+        "axis":"X","center":[0.5,0,0],"weld":0,"flip_normals":true
+    }}`);
+    auto m = getModel();
+    assert(m["vertexCount"].integer == 16,
+        "weld 0: expected 16 verts (seam not welded), got " ~ m["vertexCount"].integer.to!string);
+}
+
 unittest { // Same repro mirrored on Y instead of X (axis=Y,
            // center=[0,0.5,0]) — the +y (top) face is the coplanar one
            // this time. Full-parity: the doubled on-plane membrane is kept.

@@ -161,20 +161,25 @@ unittest { // a partial-selection weld array keeps the source vertex: index, set
     // and welds. The source corner (0,0,0) must survive as itself (W1k).
     const Vec3[] quads = [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 1, 0), Vec3(0, 1, 0),
                           Vec3(2, 0, 0), Vec3(2, 1, 0)];
-    Mesh m = settle(quads.dup, [[0u, 1u, 2u, 3u], [1u, 4u, 5u, 2u]]);
-    m.addWeightMap("w");
-    assert(m.setVertexWeight("w", 0, 0.5f), "setup: weight written");
-    m.vertexSetNames = ["s"];
-    m.vertexSetMask = new ulong[](m.vertices.length);
-    m.vertexSetMask[0] = 1;
-    m.arrayFaces([true, false], 2, Vec3(1, 0, 0), CloneWeld(true, 0.001f), true);
-    assert(m.vertices.length == 6 && m.faces.length == 3,
-           format("population: expected 6 verts 3 faces, got %d / %d", m.vertices.length, m.faces.length));
-    const v0 = m.vertices[0];
-    const w0 = m.vertexWeight("w", 0);
-    const s0 = m.vertexSetMask.length ? m.vertexSetMask[0] : 0;
-    assert(v0.x == 0 && v0.y == 0 && v0.z == 0 && w0 == 0.5f && s0 == 1,
-           format("source vertex 0: at %s W=%s set=%d, expected (0,0,0) W=0.5 set=1", v0, w0, s0));
+    // Distance 0 too: merge on is the switch, not the distance (task 9462).
+    foreach (dist; [0.001f, 0.0f]) {
+        Mesh m = settle(quads.dup, [[0u, 1u, 2u, 3u], [1u, 4u, 5u, 2u]]);
+        m.addWeightMap("w");
+        assert(m.setVertexWeight("w", 0, 0.5f), "setup: weight written");
+        m.vertexSetNames = ["s"];
+        m.vertexSetMask = new ulong[](m.vertices.length);
+        m.vertexSetMask[0] = 1;
+        m.arrayFaces([true, false], 2, Vec3(1, 0, 0), CloneWeld(true, dist), true);
+        assert(m.vertices.length == 6 && m.faces.length == 3, format(
+            "distance %s population: expected 6 verts 3 faces, got %d / %d", dist,
+            m.vertices.length, m.faces.length));
+        const v0 = m.vertices[0];
+        const w0 = m.vertexWeight("w", 0);
+        const s0 = m.vertexSetMask.length ? m.vertexSetMask[0] : 0;
+        assert(v0.x == 0 && v0.y == 0 && v0.z == 0 && w0 == 0.5f && s0 == 1, format(
+            "distance %s source vertex 0: at %s W=%s set=%d, expected (0,0,0) W=0.5 set=1",
+            dist, v0, w0, s0));
+    }
     // Both instances end selected (the source is copy 0) when nothing welds;
     // a weld that joins anything drops the face selection.
     Mesh n = settle(quads.dup, [[0u, 1u, 2u, 3u], [1u, 4u, 5u, 2u]]);
@@ -227,6 +232,18 @@ unittest { // the comparison is inclusive in the coincidence search, both direct
         const welded = m.weldCoincidentVertices(0.25);
         assert(welded == (far ? 0 : 1), format("x = %.9g at distance 0.5: expected %d weld(s), got %d",
                                                x, far ? 0 : 1, welded));
+    }
+}
+
+unittest { // a duplicator's weld distance is a LENGTH: 0.6 apart at distance 0.5 stays apart
+    // The triangle's apex sits 0.3 from the mirror plane x = 0, so it and its
+    // image are 0.6 apart: no weld at 0.5 (0.36 > 0.25), one at 0.7.
+    foreach (dist; [0.5f, 0.7f]) {
+        Mesh m = settle([Vec3(0.3f, 0, 0), Vec3(2, 0, 0), Vec3(2, 1, 0)], [[0u, 1u, 2u]]);
+        m.mirrorFaces([true], 'X', Vec3(0, 0, 0), CloneWeld(true, dist), false);
+        const want = dist < 0.6f ? 6 : 5;
+        assert(m.vertices.length == want, format("mirror at distance %s: %d verts, expected %d",
+                                                 dist, m.vertices.length, want));
     }
 }
 
