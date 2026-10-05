@@ -467,7 +467,7 @@ struct ArcRotation {
     float angle = 0;
 
     /// From the rotate attrs (degrees): an arc only when exactly one is set.
-    static ArcRotation ofEuler(Vec3 eulerDeg, const ref ModelSpace ims) {
+    static ArcRotation ofEuler(Vec3 eulerDeg, const ModelSpace ims) {
         import std.math : PI;
         const float[3] e = [eulerDeg.x, eulerDeg.y, eulerDeg.z];
         if ((e[0] != 0) + (e[1] != 0) + (e[2] != 0) != 1) return ArcRotation.init;

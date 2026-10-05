@@ -605,3 +605,52 @@ unittest { // T5/7 — an out-of-range cluster id falls back; it does not index 
                "an out-of-range or absent cluster id falls back to the GLOBAL "
                ~ "pivot — it is not clamped to cluster 0 and it is not skipped");
 }
+
+unittest { // ArcRotation (register row 83, capture K-F4, task 9446): exactly one
+           // rotate attr is an arc, conjugated into the layer and turned by
+           // w·angle past any wrap; the kernel uses it for global vertices only.
+    import std.math : abs, cos, sin, PI;
+    import math : ModelSpace, pivotScaleMatrix, matrixFromEulerZYX, normalize;
+    import tools.transform.morph_route : MorphRoute;
+    bool near(const float[16] a, const float[16] b) {
+        foreach (i; 0 .. 16) if (abs(a[i] - b[i]) > 1e-4f) return false;
+        return true;
+    }
+    ModelSpace ims;   // rotation x non-uniform scale: conjugation is exact
+    const Vec3 ax = normalize(Vec3(0.3f, 1, -0.2f));
+    ims.m = matMul4(pivotRotationMatrix(Vec3(0, 0, 0), ax, 0.7f),
+                    pivotScaleMatrix(Vec3(0, 0, 0), 1.7f, 1, 0.6f));
+    ims.mInv = matMul4(pivotScaleMatrix(Vec3(0, 0, 0), 1 / 1.7f, 1, 1 / 0.6f),
+                       pivotRotationMatrix(Vec3(0, 0, 0), ax, -0.7f));
+    ims.isIdentity = false;
+    assert(ArcRotation.ofEuler(Vec3(30, 0, 40), ims).angle == 0, "two attrs are no arc");
+    assert(ArcRotation.ofEuler(Vec3(0, 0, 0), ims).angle == 0, "no attr is no arc");
+    foreach (e; [Vec3(400, 0, 0), Vec3(0, -270, 0), Vec3(0, 0, 190)]) {
+        const arc = ArcRotation.ofEuler(e, ims);
+        assert(near(arc.at(1), ims.conjugate(matrixFromEulerZYX(e))),
+               "w = 1 is not the attr's own turn in the layer");
+        assert(near(arc.at(0.5f), ims.conjugate(matrixFromEulerZYX(
+                   Vec3(e.x / 2, e.y / 2, e.z / 2)))),
+               "w = 0.5 is not half the UNWRAPPED angle");
+    }
+
+    auto m = new Mesh();
+    m.vertices = [Vec3(1, 0, 0), Vec3(1, 0, 0)];
+    auto fal = weightsFalloff([0.5f, 0.5f]);
+    auto sym = noMirror();
+    bool[] proc = [true, true];
+    TransformTool.ClusterPivots cp;
+    cp.centers = [Vec3(0, 0, 0), Vec3(0, 0, 0)];
+    cp.clusterOf = [-1, 0];   // vertex 0 global, vertex 1 in cluster 0
+    float[16][] clusterM = [identityMatrix, identityMatrix];
+    applyXformMatrix(m, [0, 1], [Vec3(1, 0, 0), Vec3(1, 0, 0)], Vec3(0, 0, 0),
+                     matrixFromEulerZYX(Vec3(0, 0, 400)), Vec3(0, 0, 0),
+                     BlendMode.PolarQuat, fal, kernelAim(), cp, noAxes(), clusterM,
+                     sym, proc, null, MorphRoute.init,
+                     ArcRotation.ofEuler(Vec3(0, 0, 400), ModelSpace.world()));
+    const float a = cast(float)(200 * PI / 180);
+    assert(abs(m.vertices[0].x - cos(a)) < 1e-5f && abs(m.vertices[0].y - sin(a)) < 1e-5f,
+           "a weight-0.5 global vertex must turn 200 degrees of a 400-degree arc");
+    assert(m.vertices[1] == Vec3(1, 0, 0),
+           "a cluster vertex keeps its own (identity) matrix, not the global arc");
+}
