@@ -2694,7 +2694,7 @@ void main(string[] args) {
         if (g_pipeCtx is null) return;
         foreach (s; g_pipeCtx.pipeline.allMut())
             if (cast(ToolSwitchTransient)s)
-                s.reset();
+                s.clearTask();
         removeStackedFalloffs();
     }
 
@@ -2788,6 +2788,7 @@ void main(string[] args) {
         // only live drag at this boundary is the no-tool one, which must be
         // dropped. This is a single cancel per drop, NOT a per-frame guard.
         pipeGizmoHost.cancelDrag();
+        const bool hadTool = activeTool !is null;
         storeDroppedToolNodes();
         // Slice M2: the session's account of the close comes FIRST (it reads
         // the undo top the door's commit will move), the commit stays in the
@@ -2820,8 +2821,14 @@ void main(string[] args) {
                 assert(0, "the arm door cannot own a drop");
         }
         // Drop tool-driven pipe config (ACEN / AXIS / WGHT) so the
-        // next tool starts from defaults.
+        // next tool starts from defaults; then a user drop puts the
+        // remembered constraint back (task 9401; a switch is not a drop).
         resetTransientPipeStages();
+        if (hadTool && (why == ToolTransition.explicitDrop
+                        || why == ToolTransition.sceneResetDrop)) {
+            import toolpipe.stages.constrain : liveConstrainStage;
+            if (auto cs = liveConstrainStage()) cs.noteToolDropped();
+        }
         activeTool   = null;
         activeToolId = "";
         if (session !is null) session.finishClose();

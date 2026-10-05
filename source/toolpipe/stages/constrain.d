@@ -69,11 +69,18 @@ private static immutable IntEnumEntry[] constrainGeomEntries = [
 //   `dblSided` : "true" / "false" (default false)
 // ---------------------------------------------------------------------------
 
+/// The user's remembered constraint (task 9401, fixture constraint_boot.json):
+/// `yes` = remembered, not in the pipe (boot, scene reset); `inPipe` =
+/// remembered and enabled (a tool drop or the user's toggle-on put it there);
+/// `no` = forgotten (toggle-off, the Escape clear) until the next toggle-on.
+enum Remembered : ubyte { yes, inPipe, no }
+
 struct PreparedConstrainCompositionProjection {
     bool enabled, userLocked;
     ConstrainGeom geom;
     float offset;
     bool handle, dblSided;
+    Remembered remembered;
 }
 
 unittest {
@@ -84,7 +91,7 @@ unittest {
     live.handle = false;
     live.dblSided = true;
     live.installPreparedTransientReset();
-    assert(!live.enabled && live.geom == ConstrainGeom.Point &&
+    assert(!live.enabled && live.geom == ConstrainGeom.Off &&
            live.offset == 0.0f && live.handle && !live.dblSided,
            "prepared constrain transient reset omitted live value state");
     live.userLocked = true;
@@ -93,6 +100,15 @@ unittest {
     live.installPreparedTransientReset();
     assert(live.enabled && live.geom == ConstrainGeom.Screen && live.userLocked,
            "prepared constrain transient reset ignored the user lock");
+    live.userLocked = false;
+    live.remembered = Remembered.inPipe;
+    live.installPreparedTransientReset();
+    assert(live.enabled && live.geom == ConstrainGeom.Off,
+           "prepared constrain transient reset ignored the remembered constraint");
+    const before = live.capturePreparedCompositionProjection();
+    live.remembered = Remembered.no;
+    assert(!live.matchesPreparedCompositionProjection(before),
+           "prepared constrain projection omitted the remembered state");
 }
 
 class ConstrainStage : Stage, Operator, ToolSwitchTransient {
@@ -401,38 +417,31 @@ public:
     // `enabled` SHADOWS Stage.enabled (which defaults true for generic stages).
     // CONS defaults OFF — the user must explicitly enable it, matching SNAP.
     bool          enabled  = false;
-    ConstrainGeom geom     = ConstrainGeom.Point;
+    ConstrainGeom geom     = ConstrainGeom.Off;
     float         offset   = 0.0f;
     bool          handle   = true;
     bool          dblSided = false;
 
-    // Set ONLY via an explicit user-facing entry point — `constrain.toggle`
-    // (ConstrainToggleCommand.apply, below) and a `tool.pipe.attr constrain
-    // enabled <v>` write (ToolPipeAttrCommand.apply's constrain special
-    // case, commands/tool/pipe.d) — mirroring ActionCenterStage/AxisStage's
-    // `setUserMode()` / FalloffStage's `tool.pipe.attr falloff type`
-    // special case: the LOCK lives at the COMMAND layer, not inside
-    // `onParamChanged()` (review fix SF — the prior onParamChanged-sets-
-    // userLocked-on-every-write design couldn't tell an explicit user edit
-    // apart from a tool's own transient composition calling `setAttr`
-    // directly on the stage, e.g. TopologyPenTool.activate(), which is
-    // exactly the SF-1 bug this refactor fixes). Consulted by
-    // `resetTransient()` (called from app.d's `resetTransientPipeStages()`)
-    // so an explicit user lock survives a tool switch while a tool's own
-    // transient CONS composition cleanly reverts. Cleared by reset() and by
-    // an explicit `enabled=false` write through either command-layer path.
+    // Set ONLY at the user's command doors (`constrain.toggle`, any
+    // `tool.pipe.attr constrain <attr>` write, commands/tool/pipe.d), never in
+    // `onParamChanged()`: a tool's own composition (TopologyPenTool.activate)
+    // calls `setAttr` directly and must revert at the next tool switch, while
+    // the user's settings survive it (review fix SF; TS-keep, task 9401).
+    // `remembered` is the separate fact the transient reset returns to.
     bool userLocked = false;
+    Remembered remembered = Remembered.yes;
 
     PreparedConstrainCompositionProjection capturePreparedCompositionProjection()
             const nothrow @nogc {
         return PreparedConstrainCompositionProjection(enabled, userLocked, geom,
-                                                       offset, handle, dblSided);
+                                                       offset, handle, dblSided, remembered);
     }
     bool matchesPreparedCompositionProjection(
             in PreparedConstrainCompositionProjection expected) const nothrow @nogc {
         return enabled == expected.enabled && userLocked == expected.userLocked &&
             geom == expected.geom && offset == expected.offset &&
-            handle == expected.handle && dblSided == expected.dblSided;
+            handle == expected.handle && dblSided == expected.dblSided &&
+            remembered == expected.remembered;
     }
     void installPreparedPointComposition() nothrow {
         enabled = true; geom = ConstrainGeom.Point;
@@ -447,44 +456,55 @@ public:
     override string   id()       const                          { return "constrain"; }
     override ubyte    ordinal()  const pure nothrow @nogc @safe { return ordCons; }
 
-    /// Restore every field to its declaration default (auto-invoked by
-    /// SceneReset via pipeline.allMut() -> s.reset()).
+    /// Every field to its declaration default (SceneReset's stage loop): the
+    /// constraint is remembered but not in the pipe until a tool drop.
     override void reset() {
-        enabled    = false;
-        geom       = ConstrainGeom.Point;
+        remembered = Remembered.yes;
+        userLocked = false;
+        resetTransient();
+    }
+
+    /// A tool switch / drop: unless the user locked the settings, back to the
+    /// defaults, in the pipe exactly when the user's constraint is.
+    override void resetTransient() {
+        if (userLocked) return;
+        enabled    = remembered == Remembered.inPipe;
+        geom       = ConstrainGeom.Off;
         offset     = 0.0f;
         handle     = true;
         dblSided   = false;
-        userLocked = false;
         _bgBvh.clear();
         _hitPkt = ConstrainHitPacket.init;
         publishState();
     }
 
-    /// Same as reset() but respects userLocked — called by
-    /// `resetTransientPipeStages()` (tool.set / tool switch) so an
-    /// EXPLICIT user constrain setting survives switching tools, while a
-    /// tool's own transient composition (e.g. TopologyPenTool enabling
-    /// CONS+Point on activate() without locking it) cleanly reverts.
-    /// Mirrors ActionCenterStage.resetTransient / AxisStage.resetTransient
-    /// (topology-pen P0 REV-2).
-    override void resetTransient() {
-        if (userLocked) return;
-        reset();
+    /// A tool drop puts the remembered constraint into the pipe; a forgotten
+    /// one stays out (task 9401, cells first-drop-*, cleared-not-readded).
+    void noteToolDropped() {
+        if (remembered == Remembered.yes) remembered = Remembered.inPipe;
+        enabled = remembered == Remembered.inPipe;
+        publishState();
+    }
+
+    /// The Escape clear forgets the constraint and keeps its settings.
+    override void clearTask() {
+        enabled    = false;
+        remembered = Remembered.no;
+        userLocked = false;
+        publishState();
     }
 
     void installPreparedTransientReset() nothrow {
         if (userLocked) return;
-        enabled    = false;
-        geom       = ConstrainGeom.Point;
+        enabled    = remembered == Remembered.inPipe;
+        geom       = ConstrainGeom.Off;
         offset     = 0.0f;
         handle     = true;
         dblSided   = false;
-        userLocked = false;
         _bgBvh.clear();
         _hitPkt = ConstrainHitPacket.init;
-        installPreparedStatePath("constrain/enabled", "false");
-        installPreparedStatePath("constrain/geometry", "point");
+        installPreparedStatePath("constrain/enabled", enabled ? "true" : "false");
+        installPreparedStatePath("constrain/geometry", "off");
     }
 
     // --- Typed params schema: fullParams() is the attr UNIVERSE, params()
@@ -501,7 +521,7 @@ public:
         return [
             Param.bool_("enabled", "Enabled", &enabled, false),
             Param.intEnum_("geometry", "Mode", cast(int*)&geom,
-                constrainGeomEntries, cast(int)ConstrainGeom.Point),
+                constrainGeomEntries, cast(int)ConstrainGeom.Off),
             Param.float_("offset",   "Offset",    &offset,   0.0f),
             Param.bool_("handle",    "Handle",    &handle,    true),
             Param.bool_("dblSided",  "Dbl Sided", &dblSided, false),
@@ -522,22 +542,8 @@ public:
     // `knownAttrs() == fullParams() names` unittest at the bottom of this
     // file for the enforcement that replaces manual verification.
 
-    // Deliberately does NOT touch `userLocked` (review fix SF). This fires
-    // for EVERY successful setAttr — both an explicit external
-    // `tool.pipe.attr constrain <name> <value>` write AND a tool's own
-    // internal composition (e.g. TopologyPenTool.activate() calling
-    // `cs.setAttr(...)` directly on the stage instance) — so it cannot tell
-    // the two apart. Locking here unconditionally is exactly the bug the
-    // prior version had: it forced every transient tool composition to
-    // immediately un-lock again afterward, which in turn let a tool's own
-    // un-lock clobber a genuine prior user lock. The lock now lives
-    // one layer up, at the explicit-user COMMAND entry points that can
-    // actually tell the two callers apart — `constrain.toggle`
-    // (commands/constrain/toggle.d) and `tool.pipe.attr constrain enabled
-    // <v>` (ToolPipeAttrCommand's constrain special case,
-    // commands/tool/pipe.d) — mirroring ActionCenterStage/AxisStage's
-    // `setUserMode()` and FalloffStage's `tool.pipe.attr falloff type`
-    // special case.
+    // Deliberately does NOT touch `userLocked` (review fix SF): it fires for a
+    // tool's own composition too; the lock lives at the command doors above.
     override void onParamChanged(string name) {
         publishState();
     }

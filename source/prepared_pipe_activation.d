@@ -294,7 +294,7 @@ unittest {
     assert(acen.mode == ActionCenterStage.Mode.Border &&
            axis.mode == AxisStage.Mode.Element,
            "prepared pipe activation omitted ACEN/Axis preset install");
-    assert(!constrain.enabled && constrain.geom == ConstrainGeom.Point &&
+    assert(!constrain.enabled && constrain.geom == ConstrainGeom.Off &&
            constrain.offset == 0.0f,
            "prepared pipe activation omitted Constrain reset");
     assert(falloff.type == FalloffType.Radial &&

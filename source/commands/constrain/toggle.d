@@ -6,18 +6,16 @@ import view;
 import editmode;
 
 import toolpipe.pipeline           : g_pipeCtx;
-import toolpipe.stages.constrain   : liveConstrainStage;
+import toolpipe.stages.constrain   : liveConstrainStage, Remembered;
 
 // ---------------------------------------------------------------------------
 // `constrain.toggle` — flip the ConstrainStage's master enable flag.
 //
 // Pipe configuration is UI state, not a mesh edit. Mirrors snap.toggle.
 //
-// This is one of the two explicit-user entry points that set
-// `ConstrainStage.userLocked` (the other is `tool.pipe.attr constrain
-// enabled <v>` — ToolPipeAttrCommand's constrain special case,
-// commands/tool/pipe.d). ConstrainStage.onParamChanged() deliberately does
-// NOT lock (topology-pen P0 review fix SF) — see its doc comment.
+// A user command door: it sets `ConstrainStage.userLocked` and the
+// remembered constraint (toggle-off forgets it, toggle-on remembers it with
+// its kept settings — task 9401). onParamChanged() never locks (review fix SF).
 // ---------------------------------------------------------------------------
 class ConstrainToggleCommand : Command {
     this(Mesh* mesh, ref View view, EditMode editMode) {
@@ -39,6 +37,7 @@ class ConstrainToggleCommand : Command {
         bool next = !cs.enabled;
         cs.setAttr("enabled", next ? "true" : "false");
         cs.userLocked = next;   // lock on, clear on disable
+        cs.remembered = next ? Remembered.inPipe : Remembered.no;
         return true;
     }
 }

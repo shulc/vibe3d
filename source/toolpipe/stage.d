@@ -93,6 +93,11 @@ abstract class Stage : ParamProvider {
     /// stateful stages override.
     void reset() {}
 
+    /// The Escape rung's clear of a held pipe task (`app.d : clearPipeTasks`).
+    /// Default: the full reset; a stage whose clear is captured otherwise
+    /// overrides it (the constraint forgets itself and keeps its settings).
+    void clearTask() { reset(); }
+
     /// Whether this stage is currently REGISTERED-and-live in the pipe.
     /// Disabled stages are skipped during evaluation but stay in the pipe (the
     /// E column in the tool pipe panel).

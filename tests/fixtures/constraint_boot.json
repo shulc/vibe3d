@@ -1,0 +1,480 @@
+{
+ "id": "constraint_boot",
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference_token": "ref-editor@11.2v3",
+  "method": "gui-gesture",
+  "captured_utc": "2026-10-04",
+  "task": "9355/9372",
+  "notes": "Fresh process per cell; Escape, the arm keys and the drop key are real key taps over the viewport; readback after the gesture (constraint on/off + settings, element selection, tool pipe). Neutral copy for the vibe3d-only witness tests/test_constraint_boot.d; the pen-placement cells live with the pen tests."
+ },
+ "rig": {
+  "scene": "boot mesh holds a 64x32 sphere r=1 centre (0,1,0) built by geometry edits (no tool armed, no pipe write) and becomes the BACKGROUND layer; a new empty FOREGROUND mesh is created and one triangle is committed into it; top view",
+  "post_first_drop": "cells marked post_first_drop=true arm the move tool and drop it (two key taps) before any other setup"
+ },
+ "law": {
+  "boot": "at a fresh boot the background constraint is DISABLED (absent from the pipe). It becomes enabled with geometry off, offset 0, handle on, double-sided off at the FIRST tool drop of the session (drop key or the Escape that drops an armed tool; any tool). Arming a tool does not add it. Once removed it is NOT re-added by later drops, nor by a new scene. A new scene keeps an enabled constraint.",
+  "escape": "with no tool armed, an ENABLED constraint is a held task whatever its settings (default, geometry point, or handle off): Escape removes it (disables it) and keeps the element selection; the next Escape drops the selection. A disabled constraint holds nothing: Escape drops the selection.",
+  "tool_switch": "arming another tool, dropping it and arming the pen keep a non-default geometry setting (point stays point).",
+  "panel": "while enabled, the tool-properties panel shows the full constraint block (offset, handle, double sided, geometry) with no tool armed and with the move tool; while disabled the panel shows no constraint rows."
+ },
+ "law_remembered": {
+  "remembered_constraint": "the editor remembers the last constraint the user turned on (fresh prefs remember the background constraint with geometry off, offset 0, handle on, double-sided off). Every tool DROP re-inserts the remembered constraint. Turning the constraint off by its own toggle, or the Escape that clears it, forgets it; turning it on by its own toggle remembers it again (the next drop re-inserts it).",
+  "what_is_a_drop": "the drop key, the Escape that drops an armed tool, and a NEW SCENE while a tool is armed (the new scene drops the tool first). A tool SWITCH (arming another tool while one is armed) is NOT a drop and inserts nothing; arming from no tool inserts nothing.",
+  "toggle_on_fields": "turning the constraint on by its own toggle uses the remembered field values: at a fresh boot geometry off, offset 0, handle on, double-sided off; a value the user set earlier in the session (geometry point) survives toggle off + toggle on",
+  "new_scene": "a new scene keeps every tool-pipe stage and its values (falloff type + values, action centre, an enabled constraint) and keeps symmetry; with no tool armed it inserts nothing; with a tool armed it drops it (see what_is_a_drop)"
+ },
+ "cases": [
+  {
+   "id": "boot-escape",
+   "post_first_drop": false,
+   "selection": {
+    "type": "polygon",
+    "count": 1
+   },
+   "before": {
+    "enabled": false
+   },
+   "gesture": [
+    "escape"
+   ],
+   "after": {
+    "enabled": false,
+    "selection_count": 0
+   }
+  },
+  {
+   "id": "first-drop-move",
+   "post_first_drop": false,
+   "selection": null,
+   "steps": [
+    {
+     "gesture": "boot",
+     "enabled": false
+    },
+    {
+     "gesture": "wait 5 s",
+     "enabled": false
+    },
+    {
+     "gesture": "arm move",
+     "enabled": false
+    },
+    {
+     "gesture": "drop",
+     "enabled": true,
+     "geometry": "off",
+     "offset": 0.0,
+     "handle": true,
+     "double_sided": false
+    },
+    {
+     "gesture": "arm pen",
+     "enabled": true
+    },
+    {
+     "gesture": "drop pen",
+     "enabled": true
+    }
+   ]
+  },
+  {
+   "id": "first-drop-primitive",
+   "post_first_drop": false,
+   "selection": null,
+   "steps": [
+    {
+     "gesture": "arm sphere primitive",
+     "enabled": false
+    },
+    {
+     "gesture": "drop",
+     "enabled": true,
+     "geometry": "off",
+     "handle": true
+    }
+   ]
+  },
+  {
+   "id": "first-drop-pen",
+   "post_first_drop": false,
+   "selection": null,
+   "steps": [
+    {
+     "gesture": "arm pen",
+     "enabled": false
+    },
+    {
+     "gesture": "drop",
+     "enabled": true,
+     "geometry": "off",
+     "handle": true
+    },
+    {
+     "gesture": "arm move",
+     "enabled": true
+    }
+   ]
+  },
+  {
+   "id": "first-drop-by-escape",
+   "post_first_drop": false,
+   "selection": null,
+   "steps": [
+    {
+     "gesture": "arm move",
+     "enabled": false
+    },
+    {
+     "gesture": "escape (drops the tool)",
+     "enabled": true,
+     "geometry": "off",
+     "handle": true
+    }
+   ]
+  },
+  {
+   "id": "default-escape-polygon",
+   "post_first_drop": true,
+   "selection": {
+    "type": "polygon",
+    "count": 1
+   },
+   "before": {
+    "enabled": true,
+    "geometry": "off",
+    "handle": true
+   },
+   "gesture": [
+    "escape"
+   ],
+   "after": {
+    "enabled": false,
+    "selection_count": 1
+   }
+  },
+  {
+   "id": "default-escape-vertex",
+   "post_first_drop": true,
+   "selection": {
+    "type": "vertex",
+    "count": 3
+   },
+   "before": {
+    "enabled": true,
+    "geometry": "off",
+    "handle": true
+   },
+   "gesture": [
+    "escape"
+   ],
+   "after": {
+    "enabled": false,
+    "selection_count": 3
+   }
+  },
+  {
+   "id": "default-escape-twice",
+   "post_first_drop": true,
+   "selection": {
+    "type": "polygon",
+    "count": 1
+   },
+   "gesture": [
+    "escape",
+    "escape"
+   ],
+   "after_each": [
+    {
+     "enabled": false,
+     "selection_count": 1
+    },
+    {
+     "enabled": false,
+     "selection_count": 0
+    }
+   ]
+  },
+  {
+   "id": "point-escape-twice",
+   "post_first_drop": true,
+   "selection": {
+    "type": "polygon",
+    "count": 1
+   },
+   "set": {
+    "geometry": "point"
+   },
+   "gesture": [
+    "escape",
+    "escape"
+   ],
+   "after_each": [
+    {
+     "enabled": false,
+     "selection_count": 1
+    },
+    {
+     "enabled": false,
+     "selection_count": 0
+    }
+   ]
+  },
+  {
+   "id": "handle-off-escape-twice",
+   "post_first_drop": true,
+   "selection": {
+    "type": "polygon",
+    "count": 1
+   },
+   "set": {
+    "handle": false
+   },
+   "gesture": [
+    "escape",
+    "escape"
+   ],
+   "after_each": [
+    {
+     "enabled": false,
+     "selection_count": 1
+    },
+    {
+     "enabled": false,
+     "selection_count": 0
+    }
+   ]
+  },
+  {
+   "id": "cleared-not-readded",
+   "post_first_drop": true,
+   "selection": {
+    "type": "polygon",
+    "count": 1
+   },
+   "gesture": [
+    "escape",
+    "arm move",
+    "drop"
+   ],
+   "after_each": [
+    {
+     "enabled": false
+    },
+    {
+     "enabled": false
+    },
+    {
+     "enabled": false
+    }
+   ]
+  },
+  {
+   "id": "cleared-point-not-readded",
+   "post_first_drop": true,
+   "selection": {
+    "type": "polygon",
+    "count": 1
+   },
+   "set": {
+    "geometry": "point"
+   },
+   "gesture": [
+    "escape",
+    "arm move",
+    "drop"
+   ],
+   "after": {
+    "enabled": false
+   }
+  },
+  {
+   "id": "tool-switch-keeps-point",
+   "post_first_drop": true,
+   "set": {
+    "geometry": "point"
+   },
+   "steps": [
+    {
+     "gesture": "arm move",
+     "enabled": true,
+     "geometry": "point"
+    },
+    {
+     "gesture": "drop",
+     "enabled": true,
+     "geometry": "point"
+    },
+    {
+     "gesture": "arm pen",
+     "enabled": true,
+     "geometry": "point",
+     "handle": true
+    }
+   ]
+  },
+  {
+   "id": "switch-no-seed",
+   "post_first_drop": false,
+   "selection": null,
+   "before": {
+    "enabled": false
+   },
+   "gesture": [
+    "arm move tool (key)",
+    "arm rotate tool (key)"
+   ],
+   "after": {
+    "enabled": false
+   },
+   "after_tool": "rotate armed",
+   "after_pen": {
+    "gesture": "arm pen",
+    "constraint": {
+     "enabled": false
+    },
+    "tool": "pen armed"
+   },
+   "after_drop": {
+    "gesture": "drop key",
+    "constraint": {
+     "enabled": true,
+     "geometry": "off",
+     "offset": 0.0,
+     "handle": true,
+     "double_sided": false
+    }
+   }
+  },
+  {
+   "id": "newscene-armed-seeds",
+   "post_first_drop": false,
+   "selection": null,
+   "before": {
+    "enabled": false
+   },
+   "gesture": [
+    "arm move tool (key)",
+    "new scene"
+   ],
+   "after": {
+    "enabled": true,
+    "geometry": "off",
+    "offset": 0.0,
+    "handle": true,
+    "double_sided": false
+   },
+   "after_tool": "none armed (the new scene dropped the move tool)",
+   "after_drop": {
+    "gesture": "arm move + drop key",
+    "constraint": {
+     "enabled": true,
+     "geometry": "off",
+     "offset": 0.0,
+     "handle": true,
+     "double_sided": false
+    }
+   }
+  },
+  {
+   "id": "toggle-off-ends",
+   "post_first_drop": true,
+   "selection": null,
+   "before": {
+    "enabled": true,
+    "geometry": "off",
+    "offset": 0.0,
+    "handle": true,
+    "double_sided": false
+   },
+   "gesture": [
+    "constraint toggle off",
+    "arm move tool (key)",
+    "drop key"
+   ],
+   "after": {
+    "enabled": false
+   },
+   "after_toggle_off": {
+    "enabled": false
+   },
+   "after_retoggle": {
+    "gesture": "constraint toggle on",
+    "constraint": {
+     "enabled": true,
+     "geometry": "off",
+     "offset": 0.0,
+     "handle": true,
+     "double_sided": false
+    },
+    "after_move_drop": {
+     "enabled": true,
+     "geometry": "off",
+     "offset": 0.0,
+     "handle": true,
+     "double_sided": false
+    }
+   }
+  },
+  {
+   "id": "toggle-on-at-boot",
+   "post_first_drop": false,
+   "selection": null,
+   "before": {
+    "enabled": false
+   },
+   "gesture": [
+    "constraint toggle on"
+   ],
+   "after": {
+    "enabled": true,
+    "geometry": "off",
+    "offset": 0.0,
+    "handle": true,
+    "double_sided": false
+   },
+   "after_drop": {
+    "gesture": "arm move + drop key",
+    "constraint": {
+     "enabled": true,
+     "geometry": "off",
+     "offset": 0.0,
+     "handle": true,
+     "double_sided": false
+    }
+   }
+  },
+  {
+   "id": "toggle-on-keeps-session-value",
+   "post_first_drop": false,
+   "selection": null,
+   "before": {
+    "enabled": false
+   },
+   "gesture": [
+    "constraint toggle on",
+    "set geometry point",
+    "constraint toggle off",
+    "constraint toggle on"
+   ],
+   "after": {
+    "enabled": true,
+    "geometry": "point",
+    "offset": 0.0,
+    "handle": true,
+    "double_sided": false
+   },
+   "after_set": {
+    "enabled": true,
+    "geometry": "point",
+    "offset": 0.0,
+    "handle": true,
+    "double_sided": false
+   },
+   "after_toggle_off": {
+    "enabled": false
+   }
+  }
+ ]
+}

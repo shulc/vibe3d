@@ -833,7 +833,7 @@ enum ConstrainGeom : int {
 /// exact semantics. Default values match the survey §2 presets.
 struct ConstrainPacket {
     bool          enabled  = false;
-    ConstrainGeom geom     = ConstrainGeom.Point;
+    ConstrainGeom geom     = ConstrainGeom.Off;
     float         offset   = 0.0f;    // standoff from surface; sign/direction capture-gated
     bool          handle   = true;    // constrain handle vs geometry; capture-gated
     bool          dblSided = false;   // project onto back faces; capture-gated
