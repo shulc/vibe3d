@@ -295,7 +295,7 @@ unittest {
     auto fx = parseJSON(import("fixtures/create_click_plane.json"));
     // VIBE3D_CELL=<name>[,<name>...] runs only those cells (mutation drills).
     const only = environment.get("VIBE3D_CELL", "").split(",");
-    bool wanted(string name) { return only == [""] || only.canFind(name); }
+    bool wanted(string name) { return only.length == 0 || only.canFind(name); }
     string[] fails;
     int ran;
     void run(string name, string function(const ref Cell) f) {
@@ -344,7 +344,7 @@ unittest {
         if (auto m = relocateCell(c, w[].dup)) fails ~= m;
         ++ran;
     }
-    const want = only == [""] ? 23 : cast(int)only.length;
+    const want = only.length == 0 ? 23 : cast(int)only.length;
     assert(ran == want, format("cell population: %d run, expected %d", ran, want));
     assert(fails.length == 0, "click plane cells:\n" ~ fails.join("\n"));
 }
