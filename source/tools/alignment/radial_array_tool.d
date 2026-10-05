@@ -516,9 +516,8 @@ public:
             before.restore(*mesh);
             built = false;
         }
-        if (mesh.faces.length == 0) return false;
-        if (count_ <= 1) return true;   // identity is a clean no-op
-        if (operation(*mesh) == 0) return false;
+        // Count 1 or an empty operand still applies: ok + one record (K-AR AR_1).
+        operation(*mesh);
         gpu.upload(*mesh);
         return true;
     }

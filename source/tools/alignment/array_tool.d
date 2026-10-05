@@ -408,13 +408,15 @@ public:
     // Headless apply (tool.doApply). Runs the grid kernel once against the
     // clean cage. MUST NOT snapshot — ToolDoApplyCommand wraps it with undo.
     // -----------------------------------------------------------------------
+    // A degenerate operand (nothing visible, a 1x1x1 grid) still applies:
+    // ok + exactly one record (K-AR AR_E / AR_E_NR, the no-op contract's
+    // real-edit branch).
     override bool applyHeadless() {
-        if (mesh.faces.length == 0) return false;
         if (built && before.filled) {
             before.restore(*mesh);
             built = false;
         }
-        if (operation(*mesh) == 0 && !replace_) return false;
+        operation(*mesh);
         gpu.upload(*mesh);
         return true;
     }

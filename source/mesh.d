@@ -7241,9 +7241,10 @@ struct Mesh {
     /// path from ever reaching this clamp in practice.
     ///
     /// Returns the number of new faces inserted.
-    size_t radialArrayFaces(in bool[] mask, int count, char axis, Vec3 center,
+    size_t radialArrayFaces(in bool[] maskIn, int count, char axis, Vec3 center,
                             float totalAngle, Vec3 extraShift, float weld) {
         import math : mulMV, pivotRotationMatrix;
+        const mask = maskMinusHiddenFaces(maskIn);  // hidden faces never enter the clone operand (K-AR)
         enum int MAX_RADIAL_ARRAY_COUNT = 256;
         if (count > MAX_RADIAL_ARRAY_COUNT) count = MAX_RADIAL_ARRAY_COUNT;
         if (mask.length != faces.length) return 0;
@@ -7694,7 +7695,7 @@ struct Mesh {
     /// Returns the number of NEW faces inserted (0 ⇒ no grid geometry was
     /// added; note this can be 0 while `replaceSource` still mutated the
     /// originals in place at a 1×1×1 count).
-    size_t arrayFacesGrid(in bool[] mask, int numX, int numY, int numZ,
+    size_t arrayFacesGrid(in bool[] maskIn, int numX, int numY, int numZ,
                           Vec3 offset, Vec3 jitter, Vec3 scale, Vec3 rotateDeg,
                           bool between, bool replaceSource, bool invertPolygons,
                           bool mergeVertices, float mergeDistance,
@@ -7703,6 +7704,7 @@ struct Mesh {
         import std.math : pow;
         import std.algorithm.mutation : reverse;
 
+        const mask = maskMinusHiddenFaces(maskIn);  // hidden faces never enter the clone operand (K-AR)
         if (mask.length != faces.length) return 0;
         if (numX < 1) numX = 1;
         if (numY < 1) numY = 1;

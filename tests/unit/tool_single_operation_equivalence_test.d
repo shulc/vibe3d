@@ -58,10 +58,6 @@ private void hideAll(ref Mesh m, Tool) {
     foreach (ref w; m.faceMarks) w |= Mesh.Marks.Hide;
 }
 
-/// The array kernels read the selection with no hidden backstop: the
-/// refusal rig clears it and hides the visible fallback.
-private void hideAllUnselected(ref Mesh m, Tool t) { m.clearFaceSelection(); hideAll(m, t); }
-
 private void poke(Tool t, string name, float v) {
     foreach (ref p; t.params()) {
         if (p.name != name) continue;
@@ -100,7 +96,7 @@ private auto panelImage(T)(T t, string name, ref Mesh m) {
 
 private void row(T)(EditMode mode, void function(ref Mesh) pick,
         string[] names, float[] values, size_t verts, size_t faces, double dig,
-        void function(ref Mesh, Tool) refuse = &hideAll) {
+        void function(ref Mesh, Tool) refuse = &hideAll, bool emptyApplies = false) {
     enum name = T.stringof;
     ++rows;
     alias make = makeTool!T;
@@ -150,17 +146,19 @@ private void row(T)(EditMode mode, void function(ref Mesh) pick,
     same("prepared", image.candidate);
     same("headless", head.mesh);
 
-    // REFUSAL: an operation that builds nothing refuses the scripted apply
-    // (the command no-op contract: no `ok`, no history entry).
+    // DEGENERATE: an operation that builds nothing refuses the scripted apply
+    // (the command no-op contract: no `ok`, no history entry) -- except the
+    // clone family, which applies an empty step (capture K-AR: ok, one record).
     auto none = new Rig(mode, pick);
     auto nt = make(none);
     nt.activate();
     foreach (i, n; names) poke(nt, n, values[i]);
     refuse(none.mesh, nt);
-    const v0 = none.mesh.vertices.length, f0 = none.mesh.faces.length;
-    assert(!nt.applyHeadless() && none.mesh.vertices.length == v0 &&
-        none.mesh.faces.length == f0, name ~ ": the scripted apply did not refuse "
-        ~ "an operation that built nothing");
+    const v0 = none.mesh.vertices.dup, f0 = none.mesh.faces.length;
+    assert(nt.applyHeadless() == emptyApplies && none.mesh.vertices == v0 &&
+        none.mesh.faces.length == f0, name ~ (emptyApplies
+        ? ": the scripted apply of an empty operand must apply and change nothing"
+        : ": the scripted apply did not refuse an operation that built nothing"));
 }
 
 // The scripted polygon extrude against the reference's scripted apply (capture
@@ -253,10 +251,10 @@ unittest {
         ["opOpen", "offsetX", "offsetY", "shift", "inset"],
         [1.0f, 0.3f, 0.1f, 0.2f, 0.1f], 10, 7, 11.9);
     row!ArrayTool(EditMode.Polygons, &pickFace, ["numX", "numZ", "offZ", "offX"],
-        [3.0f, 2.0f, 1.25f, 1.5f], 28, 11, 1105.5, &hideAllUnselected);
+        [3.0f, 2.0f, 1.25f, 1.5f], 28, 11, 1105.5, &hideAll, true);
     row!RadialArrayTool(EditMode.Polygons, &pickFace,
         ["count", "weld", "offset", "angle"], [4.0f, 0.0f, 0.5f, 90.0f], 20, 9, -74.3146,
-        &hideAllUnselected);
+        &hideAll, true);
     assert(rows == 5, format("%s rows ran, expected 5", rows));
 }
 
@@ -317,7 +315,7 @@ unittest {
         rows = 0;
         row!ArrayTool(EditMode.Polygons, &pickFace,
             ["numX", "numZ", "replace", "angB"], [1.0f, 1.0f, 1.0f, 30.0f], 8, 6, 30.4641,
-            (ref Mesh m, Tool t) { poke(t, "replace", 0.0f); hideAllUnselected(m, t); });
+            (ref Mesh m, Tool t) { poke(t, "replace", 0.0f); }, true);
         assert(rows == 1);
         foreach (panel; [false, true]) {
             auto r = new Rig(EditMode.Polygons, &pickFace);
@@ -381,4 +379,23 @@ unittest {
         ++cells;
     }
     assert(cells == 2);
+}
+
+// Loose points, no face: the clone family's scripted apply still answers ok
+// (capture K-AR AR_E0; the reference also copies the points, ours copies none).
+unittest {
+    void cell(T)() {
+        auto r = new Rig(EditMode.Polygons, (ref Mesh m) {
+            m = Mesh.init;
+            foreach (i; 0 .. 3) m.addVertex(Vec3(i, 0, 0));
+            m.syncSelection();
+        });
+        auto t = makeTool!T(r);
+        t.activate();
+        assert(r.mesh.faces.length == 0 && r.mesh.vertices.length == 3, "rig: 3 loose points");
+        assert(t.applyHeadless(), T.stringof ~ ": loose points only -- the scripted "
+            ~ "apply must answer ok");
+    }
+    cell!ArrayTool();
+    cell!RadialArrayTool();
 }
