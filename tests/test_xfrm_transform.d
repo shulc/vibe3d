@@ -67,13 +67,11 @@ double[3] actionCenter() {
 unittest { // tool.set xfrm.transform activates without error; attrs
            // round-trip through /api/command.
     postJson("/api/command", commandBody("scene.reset"));
+    // The type switch comes BEFORE the arm: a selection-mode command drops
+    // the armed tool even to the current type (K-CD CD2s).
+    cmd("select.typeFrom vertex");
     cmd("tool.set xfrm.transform on");
     cmd("tool.attr xfrm.transform TX 0.25");
-    // doApply with no selection — applyHeadless returns false (no
-    // verts to process), which surfaces as a command-status `ok`
-    // with no mutation. The /api/model below verifies the cube is
-    // untouched in that case.
-    cmd("select.typeFrom vertex");
     postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
     cmd("tool.doApply");
     auto verts = dumpVerts();
