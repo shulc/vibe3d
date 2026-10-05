@@ -87,7 +87,7 @@ class SymmetryStage : Stage, Operator {
         }
 
         // The applied plane, recorded on EVERY pass (an empty mesh builds no
-        // pair table): `currentPlane`'s workplane arm reads it (task 9410).
+        // pair table): `currentPlane`'s workplane arm reads it.
         appliedPlanePoint_  = pkt.planePoint;
         appliedPlaneNormal_ = pkt.planeNormal;
         appliedReady_       = true;
