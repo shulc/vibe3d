@@ -373,7 +373,7 @@ public:
 
     /// ditto
     public void currentPlane(out Vec3 planePt, out Vec3 planeN, out Vec3 u, out Vec3 v) const nothrow @nogc {
-        const b = enabled && useWorkplane ? appliedBasis_ : kWorldBasis;
+        const b = useWorkplane ? appliedBasis_ : kWorldBasis;
         workplaneSymmetryPlane(b[0], b[1], b[2], b[3], axisIndex, offset, planePt, planeN);
         u = axisIndex == 1 || axisIndex == 2 ? b[1] : b[2];
         v = axisIndex == 2 ? b[2] : b[3];
