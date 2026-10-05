@@ -1296,8 +1296,8 @@ struct PreparedPlaneDrag {
 // The finite-difference step, in world units, for the Jacobian below: ten
 // of the view's NOMINAL pixels (`viewWorldPerPixel`, not the pixel at the
 // anchor's depth). The step cancels to first order only: its forward bias is
-// part of the captured map (K-C3, task 9471: 1e-6 at the read targets with
-// this step, 4e-3..1.2e-2 with the anchored pixel or k -> 0).
+// part of the captured map (findings K-C3: 1e-6 at the read targets with
+// this step, 9e-4..1.2e-2 with the anchored pixel, 1.3e-2+ with k -> 0).
 private float jacobianStep(const ref Viewport vp) {
     float k = 10.0f * viewWorldPerPixel(vp);
     if (!(k > 0.0f) || isNaN(k)) return 1e-3f;
