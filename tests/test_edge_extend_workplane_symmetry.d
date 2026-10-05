@@ -10,7 +10,9 @@
 // pins the LAW against our own right-ridge displacement d: the left ridge
 // moves by d reflected about R²·eₓ = (0.5, 0, -0.866). The two candidates it
 // rules out — no mirror (left = d) and the once-mapped plane R·eₓ — are
-// computed beside it, and the cell first pins that both stand apart.
+// computed beside it, and the cell first pins that both stand apart. The
+// control (k) runs the same pinned rig with symmetry NOT through the work
+// plane: the world X plane, unmapped (the map is the flag's alone).
 
 import edge_extend_gesture_helpers;
 import http_client : getJson, postJson;
@@ -35,7 +37,10 @@ enum string kVerts = "[[0.186603,0,-0.123205],[0.386603,0,0.223205],[0.733013,0,
     ~ "[0.533013,0,-0.323205],[0.013397,0,-0.023205],[0.213397,0,0.323205],"
     ~ "[-0.133013,0,0.523205],[-0.333013,0,0.176795]]";
 
-unittest { // D4: both outer edges, work-plane symmetry X, press right of the plane
+/// The D4 rig with the work plane pinned; `useWorkplane` maps the symmetry
+/// plane through it. Returns the right (press-side) ridge displacement, the
+/// left one, and the offset.
+void d4Haul(bool useWorkplane, out V3 right, out V3 left, out V3 off) {
     auto r = postJson("/api/command", `{"id":"scene.reset"}`);
     assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
     cmdId("scene.loadMesh", `{"vertices":` ~ kVerts ~ `,"faces":[[0,1,2,3],[4,7,6,5]]}`);
@@ -43,7 +48,7 @@ unittest { // D4: both outer edges, work-plane symmetry X, press right of the pl
     setSymmetryX(false);
     selectEdges(edgesOf([[2, 3], [6, 7]]));
     cmd("workplane.edit cenX:0.2 cenY:0 cenZ:0.1 rotX:0 rotY:30 rotZ:0");
-    cmd("tool.pipe.attr symmetry useWorkplane true");
+    cmd("tool.pipe.attr symmetry useWorkplane " ~ (useWorkplane ? "true" : "false"));
     setSymmetryX(true);
     cmd("viewport.view Top");
     r = postJson("/api/camera", `{"focus":{"x":0.2,"y":0,"z":0.1},"distance":2.0}`);
@@ -77,17 +82,35 @@ unittest { // D4: both outer edges, work-plane symmetry X, press right of the pl
         return d;
     }
     immutable Offset o = offset();
-    immutable V3 off = [o.x, o.y, o.z];
+    off = [o.x, o.y, o.z];
     immutable V3 d2 = disp(2), d3 = disp(3), d6 = disp(6), d7 = disp(7);
     assert(apart(d2, off) <= 1e-4 && apart(d3, off) <= 1e-4,
         format("the right (press-side) ridge does not take the offset as is: %s %s, offset %s", d2, d3, off));
+    assert(apart(d6, d7) <= 1e-4, format("the left ridge's two vertices moved apart: %s %s", d6, d7));
+    right = d2; left = d6;
+    cmd("tool.set edge.extend off");
+}
+
+unittest { // (k) control: the same rig, the plane pinned, symmetry NOT through it — world X
+    V3 right, left, off;
+    d4Haul(false, right, left, off);
+    immutable V3 world = reflect(off, [1, 0, 0]);
+    immutable V3 once = reflect(off, [cos(PI / 6), 0, -sin(PI / 6)]);
+    assert(apart(world, once) > 0.01, format("rig cannot discriminate: world %s, once %s", world, once));
+    assert(apart(left, world) <= 1e-4,
+        format("flag off: the left ridge is not the offset reflected about world X: %s; world %s, once %s",
+            left, world, once));
+}
+
+unittest { // D4: work-plane symmetry X — the plane mapped by W twice
+    V3 right, left, off;
+    d4Haul(true, right, left, off);
     immutable double a = 30.0 * PI / 180.0;
     immutable V3 twice = reflect(off, [cos(2 * a), 0, -sin(2 * a)]);
     immutable V3 once = reflect(off, [cos(a), 0, -sin(a)]);
     assert(apart(twice, once) > 0.01 && apart(twice, off) > 0.01,
         format("rig cannot discriminate: twice %s, once %s, none %s", twice, once, off));
-    assert(apart(d6, twice) <= 1e-4 && apart(d7, twice) <= 1e-4,
-        format("the left ridge is not the offset reflected about R²·eₓ (W twice): %s %s; "
-            ~ "twice %s, once %s, unmirrored %s", d6, d7, twice, once, off));
-    cmd("tool.set edge.extend off");
+    assert(apart(left, twice) <= 1e-4,
+        format("the left ridge is not the offset reflected about R²·eₓ (W twice): %s; "
+            ~ "twice %s, once %s, unmirrored %s", left, twice, once, off));
 }
