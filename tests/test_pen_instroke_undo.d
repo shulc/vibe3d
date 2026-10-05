@@ -286,6 +286,10 @@ unittest {
     }
     if (want("long-stroke-replace")) {
         rig();
+        // The zigzag presses within the merge radius of its own stroke edges
+        // (an edge press inserts); merge is not this cell's subject, so it is
+        // written off while Idle (no step opens).
+        penCommand("tool.attr pen merge false");
         Vec3[] pts;
         foreach (i; 0 .. 70) pts ~= xz(-0.65 + 0.1 * (i % 14), -0.4 + 0.2 * (i / 14));
         clickWorld(pts);

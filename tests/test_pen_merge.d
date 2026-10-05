@@ -34,7 +34,7 @@
 //  - F2 / F2-undo-restore / F2-bump-then-link: links are edited-mesh indices,
 //    valid only on the mesh they were made on (a script history.undo removes
 //    the linked vertex; an in-stroke Ctrl+Z restores links with their key; a
-//    subpatch toggle bumps the topology counter with counts unchanged).
+//    Hide bumps the topology counter with counts unchanged).
 //  - link-undo: an in-stroke Ctrl+Z after dragging a linked point away restores
 //    the point AND its link.
 // A background slot can never link (the merge admits slot 0 only): no captured
@@ -203,6 +203,9 @@ private string[] current(string cell, double want) {
 // The K-C scene triangle: V and the two far corners (fixture `cells`).
 private Vec3[] tri(Vec3 v) { return [v, p(0.6, 0.7), p(0.3, 0.8)]; }
 private enum long[][] kTri = [[0, 1, 2]];
+// The same triangle wound to face the top view (the ours-only constructions:
+// their subject is not facing, so their geometry faces the camera).
+private enum long[][] kTriUp = [[0, 2, 1]];
 private enum Vec3[2] kFar = [Vec3(-0.4f, 1, 0.6f), Vec3(-0.6f, 1, 0.1f)];
 
 unittest {
@@ -276,28 +279,32 @@ unittest {
         drop(); ++ran;
         fails ~= fixture("scene_typed_linked", c["scene_typed_linked"]["expected"]);
     }
-    // F2: a link made AFTER a structure-silent topology bump (subpatch toggle:
-    // counts unchanged) is kept; the bump drops only older links.
+    // F2: a link made AFTER a structure-silent topology bump (a Hide of an
+    // unrelated face: counts unchanged; a subpatch toggle would drop the tool)
+    // is kept; the bump drops only older links.
     {
         rig(f0, 440);
         clickWorld(p(0, 0.2), p(0.5, 0.2), p(0.25, -0.3));
         enter();
+        clickWorld(p(0.5, -0.2), p(0.8, -0.2), p(0.65, -0.5));
+        enter();
+        penCommand("select.element polygon set 1");
         clickWorld(kFar[0]);
         const before = penAttrValue("points");
-        auto r = postJson("/api/command", "mesh.subpatch_toggle");
-        assert(r["status"].str == "ok", "F2-bump-then-link: subpatch toggle failed: " ~ r.toString);
+        auto r = postJson("/api/command", "mesh.hide");
+        assert(r["status"].str == "ok", "F2-bump-then-link: hide failed: " ~ r.toString);
         const after = penAttrValue("points");
         if (before != 1 || after != 1)
             fails ~= format("F2-bump-then-link: rig premise, the stroke has %s points "
-                ~ "before the toggle and %s after; expected 1 and 1", before, after);
+                ~ "before the hide and %s after; expected 1 and 1", before, after);
         clickNear(p(0, 0.2), 6, 0);
         clickWorld(kFar[1]);
         enter(); ++ran;
         auto m = model();
-        if (!(m.v.length == 5 && m.f.length == 2 && m.f[1].length == 3 &&
-              m.f[1].canFind(0L) && m.f[1].canFind(3L) && m.f[1].canFind(4L)))
-            fails ~= format("F2-bump-then-link: %s vertices, faces %s; expected 5, the "
-                ~ "second face sharing T's vertex 0 with own vertices 3 and 4", m.v.length, m.f);
+        if (!(m.v.length == 8 && m.f.length == 3 && m.f[2].length == 3 &&
+              m.f[2].canFind(0L) && m.f[2].canFind(6L) && m.f[2].canFind(7L)))
+            fails ~= format("F2-bump-then-link: %s vertices, faces %s; expected 8, the "
+                ~ "third face sharing T's vertex 0 with own vertices 6 and 7", m.v.length, m.f);
     }
     // F2: the session image carries the links' mesh key. p0 linked to T; a
     // script undo removes T; a click re-keys the stroke; an in-stroke Ctrl+Z
@@ -493,7 +500,7 @@ unittest {
     assert(ran == 65, format("pen merge population: %s cells ran, pinned 65", ran));
 
     // Blocked cells (kBlocked) must still fail; one that passes retires its mark.
-    assert(kBlocked.length == 40, format("blocked marks: %s, pinned 40", kBlocked.length));
+    assert(kBlocked.length == 38, format("blocked marks: %s, pinned 38", kBlocked.length));
     string[] open, retired;
     foreach (f; fails)
         if (!(f[0 .. f.indexOf(':')] in kBlocked)) open ~= f;
@@ -521,8 +528,7 @@ private immutable string[string] kBlocked = [
     "MsE_110_k12": "F1", "MsE_880_k7": "F1", "MsA_440_along2": "F1",
     "MsP_440_perp2": "F1", "half-pixel": "F1", "Mvtx": "F1", "Qedge_edge_snap": "F1",
     "snap_edge_isolated_ev5.0": "F1", "snap_edge_isolated_ev5.5": "F1",
-    "snap_off_isolated_v10": "F1", "constraint-edge-highlight": "F1",
-    "bg-edge-snap-no-reproject": "F1", "scene_radius_440_d0.045455": "F1",
+    "snap_off_isolated_v10": "F1", "scene_radius_440_d0.045455": "F1",
     "scene_screen_not_world": "F1", "scene_latched_zoom_in": "F1",
     "scene_later_click": "F1", "scene_drag_end": "F1", "scene_drag_linked_short": "F1",
     "link_undo": "F1", "merge_grid_near": "F1", "merge_grid_from_placed": "F1",
@@ -687,7 +693,7 @@ private string[] edgePressPerspective(JSONValue e, ref int ran) {
 private string[] constraintEdgeHighlight(ref int ran) {
     // T's edge A-B on z 0.3; the pointer 30 px below it at x 0.6 (> 30 px from
     // every vertex and from the box corners).
-    rig(p(0.6, 0.2), 440, meshJson([p(0.3, 0.3), p(0.9, 0.3), p(0.6, 0.8)], kTri),
+    rig(p(0.6, 0.2), 440, meshJson([p(0.3, 0.3), p(0.9, 0.3), p(0.6, 0.8)], kTriUp),
         "edge,box");
     const at = p(0.6, 0.3 - 30 / 440.0);
     clickNear(p(0.6, 0.3), 0, -30);
@@ -715,11 +721,11 @@ private string[] bgEdgeNoReproject(ref int ran) {
     // triangle far away (its edge indices exist but lie elsewhere).
     penSceneEmpty("Top");
     auto r = postJson("/api/command", commandBody("scene.loadMesh",
-        meshJson([p(0.3, 0.3), p(0.9, 0.3), p(0.6, 0.8)], kTri)));
+        meshJson([p(0.3, 0.3), p(0.9, 0.3), p(0.6, 0.8)], kTriUp)));
     assert(r["status"].str == "ok", "bg load failed: " ~ r.toString);
     penCommand("layer.add name:Edit");
     r = postJson("/api/command", commandBody("scene.loadMesh",
-        meshJson([p(-0.9, -0.9), p(-0.5, -0.9), p(-0.7, -0.5)], kTri)));
+        meshJson([p(-0.9, -0.9), p(-0.5, -0.9), p(-0.7, -0.5)], kTriUp)));
     assert(r["status"].str == "ok", "fg load failed: " ~ r.toString);
     penCommand("history.clear");
     penCommand("viewport.view Top");
@@ -738,7 +744,7 @@ private string[] bgEdgeNoReproject(ref int ran) {
     if (s["snapped"].type != JSONType.true_ || s["targetSource"].integer == 0)
         f ~= "bg-edge-snap-no-reproject: rig premise, the click did not snap to the "
             ~ "background edge: " ~ s.toString;
-    if (m.v.length != 6 || m.f.length != 2 || m.f[0] != [0L, 1, 2] ||
+    if (m.v.length != 6 || m.f.length != 2 || m.f[0] != [0L, 2, 1] ||
         !(abs(m.v[3].x - 0.62) <= 0.003 && abs(m.v[3].z - 0.3) <= 1e-4))
         f ~= format("bg-edge-snap-no-reproject: %s vertices, faces %s, p0 %s; expected 6, "
             ~ "the edited triangle intact, p0 on the background edge (0.62, 0.3)",

@@ -71,6 +71,7 @@ tool tools.transform.transform.TransformTool has=tool.Tool cancel=tool.Tool resy
 tool tools.transform.xfrm_transform.XfrmTransformTool has=tools.transform.xfrm_transform.XfrmTransformTool cancel=tools.transform.xfrm_transform.XfrmTransformTool resync=tools.transform.xfrm_transform.XfrmTransformTool commit=tool.Tool snap=1 live=yes | open transform edit (editIsOpen) across gizmo gestures within a run
 
 key source/tools/alignment/radial_sweep_tool.d mck=0 smk=1
+key source/tools/create/pen.d mck=0 smk=2
 key source/tools/deform/magnet.d mck=0 smk=2
 key source/tools/edit/bridge_tool.d mck=0 smk=3
 key source/tools/slice/edge_slice_tool.d mck=0 smk=4

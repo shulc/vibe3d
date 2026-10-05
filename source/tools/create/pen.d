@@ -803,6 +803,10 @@ public:
     version(unittest) final auto preparedOwnerForTest() const nothrow @nogc {
         return preparedToolStateOwner;
     }
+    // The viewport `draw` caches, for a GL-context rig that drives the mouse.
+    version(unittest) final void setViewportForTest(Viewport vp) nothrow @nogc {
+        cachedVp = vp;
+    }
 
     final void installPreparedPrivateActivation() nothrow @nogc {
         state = PenState.Idle; vertices_.length = 0; params_.currentPoint = -1;
@@ -1046,30 +1050,33 @@ public:
     }
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
+        // A drag that is (or on this event becomes) initiated resolves its
+        // point once, below; the hover resolve would be overwritten on the
+        // same event (one resolve per motion, task 9362 s3).
+        if (dragArmed && !dragInitiated) {
+            int dx = e.x - dragStartMX;
+            int dy = e.y - dragStartMY;
+            dragInitiated = dx * dx + dy * dy >= DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX;
+        }
         // Live snap preview — runs whenever a click would place / move
         // a vertex, so the user sees the cyan target before committing.
         // Skipped only when the user is hovering an existing in-progress
         // vertex (next click selects it, doesn't place a new one).
-        if (state == PenState.Drawing && findHoveredVert(e.x, e.y) >= 0) {
-            lastSnap = SnapResult.init;
-            clearLastSnap();
-        } else {
-            // Idle: the plane the first click would lock onto.
-            if (state == PenState.Idle) choosePlane(cachedVp);
-            Vec3 ignored;
-            int ignoredLink;
-            resolvePenPoint(e.x, e.y, clickAnchor(), ignored, ignoredLink);
+        if (!(dragArmed && dragInitiated)) {
+            if (state == PenState.Drawing && findHoveredVert(e.x, e.y) >= 0) {
+                lastSnap = SnapResult.init;
+                clearLastSnap();
+            } else {
+                // Idle: the plane the first click would lock onto.
+                if (state == PenState.Idle) choosePlane(cachedVp);
+                Vec3 ignored;
+                int ignoredLink;
+                resolvePenPoint(e.x, e.y, clickAnchor(), ignored, ignoredLink);
+            }
         }
 
         if (!dragArmed) return false;
-
-        if (!dragInitiated) {
-            int dx = e.x - dragStartMX;
-            int dy = e.y - dragStartMY;
-            if (dx * dx + dy * dy < DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX)
-                return true;     // still under threshold — consume but no-op
-            dragInitiated = true;
-        }
+        if (!dragInitiated) return true;   // still under threshold — consume but no-op
 
         // Relocate the dragged vertex to the cursor's projected plane hit; the
         // last motion decides its link (a drag away unlinks, S5 LK-break).

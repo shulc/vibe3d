@@ -135,3 +135,95 @@ unittest {
         assert(segVec.length < 1e-6f);  // guard triggers: guide inert
     }
 }
+
+// One resolve per motion event (task 9362 s3): a drag motion resolves only
+// the dragged point, never the hover point as well (the drag resolve would
+// overwrite it on the same event). A resolve is one `snapCursor` for the
+// user's snap (pipe snap stage enabled) plus one for the merge search when
+// `merge` is on, counted as `Cat.snapQuery` scopes: N motions 40 px apart on
+// an empty mesh (no target, no marker under the cursor) = 2N with merge on,
+// N with it off; the hover resolve restored during a drag doubles both.
+version (PerfProbe) unittest {
+    import perf_probe : g_perf;
+    import std.conv : to;
+    import std.format : format;
+    import std.json : parseJSON;
+    import std.process : environment;
+    import toolpipe.pipeline : g_pipeCtx, ToolPipeContext;
+    import toolpipe.stages.snap : SnapStage;
+    import mesh_gpu : GpuMesh;
+    import view : View;
+
+    const hadDriver = "SDL_VIDEODRIVER" in environment;
+    const oldDriver = environment.get("SDL_VIDEODRIVER", "");
+    environment["SDL_VIDEODRIVER"] =
+        environment.get("DISPLAY", "").length != 0 ? "x11" : "offscreen";
+    scope (exit) {
+        if (hadDriver) environment["SDL_VIDEODRIVER"] = oldDriver;
+        else environment.remove("SDL_VIDEODRIVER");
+    }
+    assert(loadSDL() == sdlSupport, "pen motion rig could not load SDL");
+    assert(SDL_Init(SDL_INIT_VIDEO) == 0,
+        "pen motion rig could not initialize SDL: " ~ SDL_GetError().to!string);
+    scope (exit) SDL_Quit();
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    auto window = SDL_CreateWindow("pen-motion-resolves",
+        SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 32, 32,
+        SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
+    assert(window !is null, "pen motion rig: no hidden window: " ~ SDL_GetError().to!string);
+    scope (exit) SDL_DestroyWindow(window);
+    auto context = SDL_GL_CreateContext(window);
+    assert(context !is null, "pen motion rig: no GL context: " ~ SDL_GetError().to!string);
+    scope (exit) SDL_GL_DeleteContext(context);
+    assert(loadOpenGL() >= glSupport, "pen motion rig could not load OpenGL 3.3");
+    SDL_SetModState(cast(SDL_Keymod)0);
+
+    auto saved = g_pipeCtx;
+    scope (exit) g_pipeCtx = saved;   // a process-wide global: restore, never null
+    auto ctx = new ToolPipeContext();
+    auto st = new SnapStage();
+    ctx.pipeline.add(st);
+    st.enabled = true;   // after the add: `add` resets the stage's config
+    g_pipeCtx = ctx;
+
+    Mesh m;
+    GpuMesh gpu;
+    auto pen = new PenTool(() => &m, &gpu, LitShader.init);
+    pen.activate();
+    scope (exit) pen.deactivate();
+    pen.setViewportForTest(new View(0, 0, 400, 400).viewport());
+    float* posX; bool* merge;
+    foreach (ref p; pen.params()) {
+        if (p.name == "posX") posX = p.fptr;
+        if (p.name == "merge") merge = p.bptr;
+    }
+    assert(posX !is null && merge !is null && *merge, "pen motion rig: params");
+    VectorStack vts;
+
+    long dragQueries(int y) {
+        SDL_MouseButtonEvent down, up;
+        down.button = up.button = SDL_BUTTON_LEFT;
+        down.x = up.x = 200; down.y = up.y = y;
+        assert(pen.onMouseButtonDown(down, vts), "pen motion rig: the press");
+        const before = *posX;
+        g_perf.reset();
+        foreach (k; 1 .. 5) {
+            SDL_MouseMotionEvent e;
+            e.x = 200 + 40 * k; e.y = y;
+            assert(pen.onMouseMotion(e, vts), "pen motion rig: a drag motion");
+        }
+        const n = g_perf.toJson().parseJSON()["snapQuery"]["count"].integer;
+        up.x = 360;
+        pen.onMouseButtonUp(up, vts);
+        assert(*posX != before, "pen motion rig: the drag did not move its point");
+        return n;
+    }
+    const withMerge = dragQueries(200);
+    *merge = false;
+    const withoutMerge = dragQueries(120);
+    assert(withMerge == 8 && withoutMerge == 4,
+        format("pen: snap queries over 4 drag motions: %s with merge, %s without; "
+            ~ "expected 8 and 4 (one resolve per motion)", withMerge, withoutMerge));
+}

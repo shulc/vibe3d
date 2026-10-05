@@ -576,7 +576,9 @@ private void pen3(string id) {
 private void pen2(string id) {
     resetCube(id);
     ok("tool.set \"pen\" on 0", id);
-    play(click(100, 425, 250) ~ "\n" ~ click(200, 525, 250), id);
+    // Clicks lie clear of the cube (>= 83 px from every projected vertex and
+    // edge) so the pen's merge cannot act; the row's subject is the short face.
+    play(click(100, 250, 450) ~ "\n" ~ click(200, 700, 480), id);
     assert(counts(model()) == "8/12/6", id ~ ": live pen wrote before its door");
     assert(hist().length == 0, id ~ ": live pen wrote history before its door");
 }
