@@ -1818,7 +1818,7 @@ public:
         // below.
         if (moveArmed_) {
             Viewport vp = viewportOf(vts);
-            applyMoveTargets(moveTargets(e.x, e.y, vp, vts), vts);
+            applyMoveTargets(moveTargets(e.x, e.y, vp, vts), vts, liveSearch(e.x, e.y));
             noteMoveOffset();
             return true;
         }
@@ -2202,12 +2202,15 @@ public:
     /// The snap target at the pixel the LOCAL point `at` is drawn at (Pixel, §1.1):
     /// the raw, unprojected position (K-W2b rule 3), shared by the live move and the
     /// release's weld.
+    /// The pixel is the one containing the point: a raw target sits on its cursor
+    /// pixel's centre, and rounding would move the reach's edge by a pixel (K-W2c O).
     private int rawSnapTarget(Vec3 at, const ref Viewport vp, const(uint)[] exclude) {
-        import std.math : lround;
+        import std.math : floor;
         const AimViewport vpAim = aimSpace(vp, primaryModelSpace());
         ImVec2 pt;
         if (!projectLocalPt(at, vpAim, pt)) return -1;
-        return resolveSnapTargetVert(cast(int)lround(pt.x), cast(int)lround(pt.y), vp, exclude);
+        return resolveSnapTargetVert(cast(int)floor(pt.x + 1e-3f), cast(int)floor(pt.y + 1e-3f),
+                                     vp, exclude);
     }
 
     /// Split's target C (task 8690): the NEAREST admitted vertex within the
@@ -2360,6 +2363,8 @@ public:
         uint[2][] pairs;
         foreach (i, vi; verts) {
             if (vi >= m.vertices.length) continue;   // stale arm — defensive
+            if (moveElem_ == MoveElem.Edge && sym && sym.pairOf.length == m.vertices.length
+                && sym.onPlane[vi]) continue;   // an edge's on-plane member never searches (K-W2c P20)
             immutable int t = rawSnapTarget(i < at.length ? at[i] : m.vertices[vi], vp, verts);
             if (t >= 0) pairs ~= symmetricWeldPairs(*m, sym, cast(uint)t, vi);
         }
@@ -3338,7 +3343,17 @@ public:
         return f();
     }
     override bool recordTopologyStep(Command cmd) {
+        settleMove();   // a switch mid-drag ends the step here, with no release
         return recordGestureEdit(cmd, GestureRecordMode.Plain);
+    }
+
+    // The end of a move that wrote positions, however it ends (release, second
+    // button, switch, cancel): ONE unconfined publish re-arms the watchers its
+    // confined steps held.
+    private void settleMove() {
+        if (!moveDirty_) return;
+        moveDirty_ = false;
+        if (auto m = meshOrNull()) m.commitChange(MeshEditScope.Position);
     }
     override string topologyStepLabel() {
         return stepOpen_ ? stepLabel_ : "Topology Attribute";
@@ -4106,12 +4121,14 @@ public:
     // Apply `targets` to the armed moving set in place — the live half of the
     // drag (task 0484). No history: the press step records once, at release.
     // Sets `moveDirty_` so a gesture that never actually moved anything welds
-    // nothing. A drag step publishes CONFINED (task 9493): the moving set and its
+    // nothing. A step publishes CONFINED (task 9493): the moving set and its
     // partners are the snap exclusion, so the pair table stays the press-time one;
-    // the release (`settle`) publishes once unconfined, so the weld and the next
-    // gesture judge current positions (K-W2b M4).
+    // the move's end (`settleMove`) publishes once unconfined. `search` (a live
+    // step, `liveSearch`) snaps members from their RAW targets; the release writes
+    // the raw targets and its weld query absorbs what would snap (a snapped write
+    // would degenerate the target's own polygons before that query judges them).
     package void applyMoveTargets(const(Vec3)[] targets, ref VectorStack vts,
-                                  bool settle = false) {
+                                  bool search = false) {
         auto m = mesh;
         if (m is null || targets.length != moveVerts_.length) return;
         foreach (vi; moveVerts_)
@@ -4121,31 +4138,46 @@ public:
         bool changed = false;
         foreach (i, vi; moveVerts_)
             if ((targets[i] - m.vertices[vi]).length > kMoveEps) { changed = true; break; }
-        if (!changed && !(settle && moveDirty_)) return;
+        if (!changed) return;
 
-        // In CORNER order, each mirrored onto its visible partner (last write wins)
-        // (K-W2b rule 1). An on-plane one snaps from its RAW target and is projected
-        // only when nothing answers (rule 3, KW2_Nw2).
+        // A member snaps from its RAW target (K-W2b rule 3; K-W2c: an edge's on-plane
+        // member never searches); once one snaps the others stay at their base (K-W2c
+        // rule 4); otherwise an on-plane one is projected. In CORNER order, each
+        // written position mirrored onto its visible partner, last write wins (rule 1).
         import symmetry : mirrorPosition, projectOnPlane;
         auto sp = vts.get!SymmetryPacket();
         if (sp && sp.pairOf.length != m.vertices.length) sp = null;
         const Viewport vp = viewportOf(vts);
         uint[] exclude = moveVerts_.dup;
         if (sp) foreach (vi; moveVerts_) if (sp.pairOf[vi] >= 0) exclude ~= sp.pairOf[vi];
+        auto t = new int[](moveVerts_.length);
+        bool snapped = false;
         foreach (i, vi; moveVerts_) {
-            const int t = sp && sp.onPlane[vi] ? rawSnapTarget(targets[i], vp, exclude) : -1;
-            m.vertices[vi] = t >= 0 ? m.vertices[t]
-                           : sp && sp.onPlane[vi] ? projectOnPlane(*sp, targets[i]) : targets[i];
-            const int pi = sp ? sp.pairOf[vi] : -1;   // -1: unpaired or on the plane
-            if (pi >= 0 && !m.isVertexHidden(pi)) m.vertices[pi] = mirrorPosition(*sp, targets[i]);
+            const bool ask = search && !(moveElem_ == MoveElem.Edge && sp && sp.onPlane[vi]);
+            t[i] = ask ? rawSnapTarget(targets[i], vp, exclude) : -1;
+            snapped = snapped || t[i] >= 0;
         }
-        if (settle) m.commitChange(MeshEditScope.Position);
-        else m.publishConfinedChange(MeshEditScope.Position);
+        foreach (i, vi; moveVerts_) {
+            const Vec3 w = t[i] >= 0 ? m.vertices[t[i]] : snapped ? moveBase_[i]
+                         : sp && sp.onPlane[vi] ? projectOnPlane(*sp, targets[i]) : targets[i];
+            m.vertices[vi] = w;
+            const int pi = sp ? sp.pairOf[vi] : -1;   // -1: unpaired or on the plane
+            if (pi >= 0 && !m.isVertexHidden(pi)) m.vertices[pi] = mirrorPosition(*sp, w);
+        }
+        m.publishConfinedChange(MeshEditScope.Position);
         moveDirty_ = true;
 
         m.syncSelection();
         if (gpu_ !is null) gpu_.upload(*m);
         refreshDisplay(m, gpu_);
+    }
+
+    // Which live drag steps search (K-W2c): a vertex grab always; an edge grab while
+    // the cursor is within 32 px of the press (rule 4); a polygon grab never (not captured).
+    private bool liveSearch(int px, int py) const {
+        immutable int dx = px - moveStartX_, dy = py - moveStartY_;
+        return moveElem_ == MoveElem.Vertex
+            || moveElem_ == MoveElem.Edge && dx * dx + dy * dy <= 32 * 32;
     }
 
     // Close an armed Move: apply the FINAL targets at the release's own
@@ -4155,7 +4187,7 @@ public:
         scope(exit) clearMoveArm();
         if (!moveArmed_ || moveVerts_.length == 0) return;
         const targets = moveTargets(px, py, vp, vts);
-        applyMoveTargets(targets, vts, true);
+        applyMoveTargets(targets, vts);
         noteMoveOffset();
         // The destructive landing (task 0555), inside the same step. Gated on
         // `moveDirty_`: a grab that never moved anything cannot have been
@@ -4282,6 +4314,7 @@ public:
     // drag here (`openPressStep`): the Move's row keeps what it wrote up to
     // that press and the second gesture is its own row (L56).
     private void clearMoveArm() {
+        settleMove();
         moveArmed_   = false;
         grabbedVert_ = -1;
         moveElem_    = MoveElem.None;

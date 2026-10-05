@@ -7504,7 +7504,10 @@ def topopen_deact_gate(owner, context, tool_source, snap_source):
             "bool ok = owner !is null && context.markNoHistoryInstall();",
             "context.prepareTopologyPenDeactivate(owner)",
             "if (!ok) context.discard();")) and \
-        "void installPreparedPopEnabled(string owner) nothrow" in snap_source and \
+        all(x in snap_source for x in (
+            "void installPreparedGuides(ref SnapGuide[] next) nothrow @nogc",
+            "_guides = next; next = null;",
+            "void installPreparedPopEnabled(string owner) nothrow")) and \
         "PreparedTopologyPenDeactivateOwner" not in hook_body and \
         "markHistoryInstall(" not in tool_source[
             tool_source.find("final PreparedDeactivateEffect prepareDeactivate("):
@@ -7526,6 +7529,7 @@ for target, old, new, label in (
     ("context", "e.topologyPenDeactivate.abort();", "", "drop context abort"),
     ("tool", "context.prepareTopologyPenDeactivate(owner)", "true", "drop context enlist"),
     ("snap", "void installPreparedPopEnabled(string owner) nothrow", "", "drop pop door"),
+    ("snap", "_guides = next; next = null;", "next = null;", "drop guide transfer"),
 ):
     o, c, t, s = topopen_deact_owner, record_context, topopen_tool, snap_stage_source
     if target == "owner": o = o.replace(old, new, 1)

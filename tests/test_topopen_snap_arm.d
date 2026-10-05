@@ -559,8 +559,15 @@ void sameQuadMove(double[3][] pts, double[3] release, int dx, int dy,
 }
 
 unittest { // KJP_A adjacent corners collapse; KJP_D diagonal corners weld to [0,2,1,2]
+    // KJP_A held: the grab is raw 30 px from v2, then live-snapped onto it (raw end 6 px off).
+    double[3][] held;
     sameQuadMove([[-0.5, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.36, 0.0], [-0.5, 0.36, 0.0]],
-                 [0.0, 0.30, 0.0], 0, -30);
+                 [0.0, 0.30, 0.0], 0, -30, [[0, 1, 2, 3]], false, null, null, 1, [[0, -6]], (k) {
+                     if (k == 1 || k == 2) held ~= readVerticesLayer(1)[1];
+                 });
+    assert(held.length == 2 && abs(held[0][0]) <= 6e-3 && abs(held[0][1] - 0.06) <= 6e-3
+        && abs(held[1][0]) <= 1e-6 && abs(held[1][1] - 0.36) <= 1e-6,
+        format("KJP_A held: the grab at %s, expected (0,0.06) raw then (0,0.36) on v2", held));
     assert(vertexCountLayer(1) == 3 && readFacesLayer(1) == [[0, 1, 2]],
         format("KJP_A: V=%d faces %s, expected 3 and [[0,1,2]]", vertexCountLayer(1),
                readFacesLayer(1)));
@@ -765,6 +772,115 @@ unittest { // KW2_Nw2: the live raw snap of an on-plane vertex
                         [-0.12, 0.2, 0.0], [-0.3, 0.35, 0.0], [-0.3, 0.2, 0.0]];
     int[][] nFaces = [[0, 1, 2, 3], [3, 5, 4, 0], [6, 7, 8, 9], [10, 11, 12, 13], [14, 15, 16]];
     double[3] nEnd = [0.0, 0.2, 0.0];
+    // A move that ends without its release (a switch mid-drag) still publishes once
+    // unconfined: the pair table is rebuilt (KW2_K's rig).
+    long[] sw;
+    sameQuadMove([[0.1, 0.0, 0.0], [0.4, 0.0, 0.0], [0.4, 0.4, 0.0], [0.1, 0.4, 0.0],
+                  [-0.1, 0.4, 0.0], [-0.4, 0.4, 0.0], [-0.4, 0.0, 0.0], [-0.1, 0.0, 0.0]],
+                 [0.6, 0.2, 0.0], 20, 0, [[0, 1, 2, 3], [4, 5, 6, 7]], true, [0.4, 0.2], null, 1,
+                 null, (k) {
+                     if (k != 1) return;
+                     sw ~= pairingRebuilds();
+                     cmd("tool.set move");
+                     sw ~= pairingRebuilds();
+                 });
+    assert(sw.length == 2 && sw[1] == sw[0] + 1, format(
+        "a switch mid-drag: pair-table rebuilds before / after %s, expected one rebuild", sw));
     kw2b("KW2_N-raw", nPts, nFaces, [0.0, 0.0], [20, -20], nEnd ~ nPts[1 .. $], nFaces);
+    postJson("/api/command", commandBody("scene.reset"));
+}
+
+// §5d — K-W2c (captured): the live snap's scope by the pressed element. A vertex grab
+// searches at its raw position, on or off the plane, and the reach (24 px) is the only
+// release; an edge grab searches at its off-plane members only while the cursor is within
+// 32 px of the press, and once one snaps the others stay at their original positions.
+// The partner's mid-drag offset under a vertex snap (rule 2) is not ported, so it is not
+// read here.
+
+/// Drag the element under `press` by `n` steps of `step` px; the layer-1 vertices after
+/// each step in `shots` (ascending, < n), at the motion's end and after the release.
+double[3][][] kw2c(double[3][] pts, int[][] faces, double[2] press, int n, int[2] step,
+                   int[] shots, bool sym) {
+    int[2][] stops;
+    foreach (k; shots) stops ~= [k * step[0], k * step[1]];
+    double[3][][] seen;
+    sameQuadMove(pts, [press[0] + n * step[0] / 100.0, press[1] - n * step[1] / 100.0, 0],
+                 n * step[0], n * step[1], faces, sym, press.dup, null, 1, stops,
+                 (k) { if (k > 0) seen ~= readVerticesLayer(1).dup; });
+    assert(seen.length == shots.length + 2, format("kw2c: %d reads", seen.length));
+    return seen;
+}
+
+bool near(double[3] v, double[2] w, double tol) {
+    return abs(v[0] - w[0]) <= tol && abs(v[1] - w[1]) <= tol;
+}
+
+unittest { // W2c_O / W2c_Oc / W2c_O4: an off-plane vertex grab snaps in reach, released out of it
+    double[3][] oPts(double ty) {
+        return [[0.1, 0.0, 0.0], [0.4, 0.0, 0.0], [0.4, 0.4, 0.0], [0.1, 0.4, 0.0],
+                [-0.1, 0.4, 0.0], [-0.4, 0.4, 0.0], [-0.4, 0.0, 0.0], [-0.1, 0.0, 0.0],
+                [0.72, ty, 0.0], [0.6, -0.4, 0.0], [0.84, -0.4, 0.0]];
+    }
+    int[][] oFaces = [[0, 1, 2, 3], [4, 5, 6, 7], [8, 9, 10]];
+    foreach (sym; [true, false]) {
+        const id = sym ? "W2c_O" : "W2c_Oc";
+        auto s = kw2c(oPts(-0.06), oFaces, [0.4, 0.0], 20, [4, 0], [2, 5, 8, 11, 16], sym);
+        foreach (k, step; [2, 5, 8, 11, 16]) {
+            const bool on = step >= 5 && step <= 11;
+            assert(near(s[k][1], on ? [0.72, -0.06] : [0.4 + 0.04 * step, 0.0], on ? 1e-6 : 6e-3),
+                format("%s step %d: the grab at %s, expected %s", id, step, s[k][1],
+                       on ? "ON the target (0.72,-0.06)" : "raw"));
+            if (!sym) assert(near(s[k][6], [-0.4, 0.0], 1e-6),
+                format("%s step %d: the -X side moved: %s", id, step, s[k][6]));
+        }
+        const d = s[$ - 1];
+        assert(d.length == 11 && near(d[1], [1.2, 0.0], 6e-3)
+            && near(d[6], sym ? [-1.2, 0.0] : [-0.4, 0.0], 6e-3),
+            format("%s drop: %s", id, d));
+    }
+    // O4: target (0.72,-0.14): steps 3 and 13 are 24.4 px out, 4 and 12 21.3 px in.
+    auto s = kw2c(oPts(-0.14), oFaces, [0.4, 0.0], 20, [4, 0], [3, 4, 12, 13], true);
+    foreach (k, step; [3, 4, 12, 13]) {
+        const bool on = step == 4 || step == 12;
+        assert(near(s[k][1], on ? [0.72, -0.14] : [0.4 + 0.04 * step, 0.0], on ? 1e-6 : 6e-3),
+            format("W2c_O4 step %d: the grab at %s (%s)", step, s[k][1],
+                   on ? "in reach: on the target" : "out of reach: raw"));
+    }
+    assert(s[$ - 1].length == 11 && near(s[$ - 1][6], [-1.2, 0.0], 6e-3),
+        format("W2c_O4 drop: %s", s[$ - 1]));
+    postJson("/api/command", commandBody("scene.reset"));
+}
+
+unittest { // W2c_P20: an edge's on-plane member never searches; W2c_E2: off-plane members do
+    auto p = kw2c([[0.0, 0.0, 0.0], [0.3, 0.2, 0.0], [0.3, 0.6, 0.0], [-0.3, 0.2, 0.0],
+                   [-0.3, 0.6, 0.0]], [[0, 1, 2], [0, 4, 3]], [0.15, 0.1], 5, [-3, 0], [1, 3], true);
+    foreach (k, step; [1, 3, 5])
+        assert(near(p[k][0], [0.0, 0.0], 6e-3) && abs(p[k][0][0]) <= 1e-6,
+            format("W2c_P20 step %d: the on-plane v0 at %s, expected projected (0,0)", step, p[k][0]));
+    const d = p[$ - 1];
+    assert(d.length == 5 && near(d[0], [0.0, 0.0], 6e-3) && near(d[1], [0.15, 0.2], 6e-3)
+        && near(d[3], [-0.15, 0.2], 6e-3) && readFacesLayer(1) == [[0, 1, 2], [0, 4, 3]],
+        format("W2c_P20 drop: %s faces %s, expected 5 vertices, v0 at (0,0), no weld", d,
+               readFacesLayer(1)));
+
+    // E2 (steps of 4 px): a (v1) on T1 at steps 3..8 with b (v2) at its original
+    // position and the mirror edge an exact mirror; step 9 (cursor 36 px) raw again.
+    // Read to step 12 only: the edge-onto-edge phase (rule 5) and its drop are not ours.
+    auto e = kw2c([[0.1, 0.0, 0.0], [0.4, 0.0, 0.0], [0.4, 0.8, 0.0], [0.1, 0.8, 0.0],
+                   [-0.1, 0.8, 0.0], [-0.4, 0.8, 0.0], [-0.4, 0.0, 0.0], [-0.1, 0.0, 0.0],
+                   [0.72, -0.08, 0.0], [0.6, -0.4, 0.0], [0.84, -0.4, 0.0], [1.12, 0.48, 0.0],
+                   [2.0, 0.35, 0.0], [2.0, 0.45, 0.0]],
+                  [[0, 1, 2, 3], [4, 5, 6, 7], [8, 9, 10], [11, 12, 13]], [0.4, 0.4], 12, [4, 0],
+                  [2, 3, 8, 9], true);
+    foreach (k, step; [2, 3, 8, 9]) {
+        const bool on = step >= 3 && step <= 8;
+        const double x = 0.4 + 0.04 * step;
+        assert(on ? near(e[k][1], [0.72, -0.08], 1e-6) && near(e[k][2], [0.4, 0.8], 1e-6)
+                    && near(e[k][6], [-0.72, -0.08], 1e-6) && near(e[k][5], [-0.4, 0.8], 1e-6)
+                  : near(e[k][1], [x, 0.0], 6e-3) && near(e[k][2], [x, 0.8], 6e-3),
+            format("W2c_E2 step %d: a %s b %s, mirror a %s b %s (%s)", step, e[k][1], e[k][2],
+                   e[k][6], e[k][5], on ? "a on T1, b and the mirror at the originals"
+                                        : "raw: out of reach or past the 32 px cutoff"));
+    }
     postJson("/api/command", commandBody("scene.reset"));
 }
