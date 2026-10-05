@@ -279,14 +279,15 @@ unittest {
         crossDoor("mode-button-same-type", () { cmd("select.vertex"); });
         ++ran;
     }
-    { // primary-move-item-list (CD4): a primary move inserts nothing. Ours
-      // drops the tool there (the reference keeps it armed, a separate gap)
+    { // primary-move-item-list (CD4): the item list's click moves the primary,
+      // keeps the tool armed (task 9457) and inserts nothing
         boot(false);
         cmd("layer.duplicate");
         key("w");
         crossDoor("primary-move-item-list", () {
-            cmd(commandBody("layer.select", `{"index":0,"mode":"set"}`));
+            cmd(commandBody("layer.select", `{"index":0,"mode":"set","list":true}`));
             assert(getJson("/api/layers")["active"].integer == 0, "the primary did not move");
+            assert(armed(), "the item list's click must keep the tool armed, got " ~ tool());
         });
         ++ran;
     }

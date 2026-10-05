@@ -2913,9 +2913,9 @@ void main(string[] args) {
     //     what makes 1/2/3 afterwards restore the SAME geometry type rather
     //     than an arbitrary one, since the recent-ordering still remembers it.
     //   * It drops the active tool like every selection-mode command, to the
-    //     current type as well as across a flip (K-CD4 CD5s / CD5b, task
-    //     9457). The promote path above deliberately does not — a selection
-    //     is not a mode change.
+    //     current type as well as across a flip (K-CD4 CD5s / CD5b). The
+    //     promote path above deliberately does not — a selection is not a
+    //     mode change.
     void switchItemType() {
         import change_bus : noteCurrentType;
         const before = currentSelType(selTypeOrder);   // S6: the drop row's restore

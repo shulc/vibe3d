@@ -440,7 +440,7 @@ unittest { // selection modifiers, short circuit and visibility keep UI dispatch
         "6030 plain selection did not make Beta the sole first row");
     assert(app.history.undoEntries().length == 1
         && app.history.undoEntries()[$ - 1].commandName == "layer.select"
-        && app.history.undoEntries()[$ - 1].args == "index:1"
+        && app.history.undoEntries()[$ - 1].args == "index:1 list:true"  // task 9457: the row click names the list
         && app.records.length == 1
         && app.records[$ - 1].id == "layer.select"
         && app.records[$ - 1].outcome == "applied",
@@ -465,7 +465,7 @@ unittest { // selection modifiers, short circuit and visibility keep UI dispatch
         && rowNamed(snapshot, "Alpha").role == RowRole.Selected,
         "6030 Ctrl role-cell selection did not toggle Alpha beside Beta");
     assert(app.history.undoEntries().length == 2
-        && app.history.undoEntries()[$ - 1].args == "mode:toggle",
+        && app.history.undoEntries()[$ - 1].args == "mode:toggle list:true",
         "6030 Ctrl role-cell did not retain mode:toggle command args");
 
     SDL_SetModState(KMOD_SHIFT);
@@ -482,7 +482,7 @@ unittest { // selection modifiers, short circuit and visibility keep UI dispatch
         && rowNamed(snapshot, "Gamma").role == RowRole.Selected,
         "6030 Shift range must replace with the contiguous Beta/Gamma span");
     assert(app.history.undoEntries().length == 3
-        && app.history.undoEntries()[$ - 1].args == "index:2 mode:range",
+        && app.history.undoEntries()[$ - 1].args == "index:2 mode:range list:true",
         "6030 Shift name-cell did not retain mode:range command args");
 
     app.binding.dispatchUi("layer.select", `{"index":1,"mode":"set"}`);

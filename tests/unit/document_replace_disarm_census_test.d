@@ -1,9 +1,13 @@
 // Closed-set censuses for the document-replace disarm seam (task 3930).
 // Behavioural coverage lives in tests/test_disarm_census.d; this module keeps
 // the mechanism single-sourced and forces every prose claim about it to be
-// read when it changes. The undo/revert path is deliberately absent: task
-// 4010 owns SessionMeshKey/resyncSession because calling this seam re-entrantly
-// from CommandHistory.undo() would violate keep-alive and can nest undo.
+// read when it changes. The undo/revert path is absent except for
+// `LayerSelect.revertImpl`, which reaches the primary-move drop through
+// `mutateGuardingPrimary` (task 9457): that drop replaces the switch hook's
+// own drop the same revert already ran, now ahead of the restore. Elsewhere
+// task 4010 owns SessionMeshKey/resyncSession because calling this seam
+// re-entrantly from CommandHistory.undo() would violate keep-alive and can
+// nest undo.
 module tests.unit.document_replace_disarm_census_test;
 
 import std.algorithm : canFind, count;
@@ -21,7 +25,9 @@ private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 private immutable string[] kCodeIdents = [
     "disarmActiveToolBeforeDocumentReplace",
     "dropActiveToolBeforePrimaryMove",
+    "rearmToolAfterPrimaryMove",
     "g_disarmActiveTool",
+    "g_rearmTool",
     "g_disarmCrossings",
     "dropsActiveToolBeforeApply",
     "commandDropsToolBeforeApply",
@@ -81,6 +87,13 @@ private immutable LedgerRow[] kCodeSites = [
         "the primary-move wrapper's call"),
     LedgerRow("(module scope)|dropActiveToolBeforePrimaryMove", 1,
         "the primary-move wrapper definition"),
+    LedgerRow("main|g_rearmTool", 2, "the app-side re-arm hook import and assignment"),
+    LedgerRow("(module scope)|g_rearmTool", 1, "re-arm hook declaration"),
+    LedgerRow("rearmToolAfterPrimaryMove|g_rearmTool", 2,
+        "the re-arm's presence check and invocation"),
+    LedgerRow("(module scope)|rearmToolAfterPrimaryMove", 1, "the re-arm definition"),
+    LedgerRow("LayerSelect.finishSelect|rearmToolAfterPrimaryMove", 2,
+        "the item-list click's re-arm import and call (task 9457)"),
 
     LedgerRow("classifyNamespace|" ~ kLayerAttrLiteral, 1,
         "namespace routing, not tool-drop policy"),

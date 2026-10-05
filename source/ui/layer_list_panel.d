@@ -20,7 +20,7 @@ import ui.panel_chrome : popPanelChromeStyle, publishPanelZone,
     pushPanelChromeStyle;
 
 /// A row click's extra `layer.select` argument: the item list keeps the
-/// selection type and the armed tool (task 9457, K-CD4 rule 1).
+/// selection type and the armed tool (K-CD4 rule 1).
 enum string kItemListClickArg = `,"list":true`;
 
 struct LayerListReadRole {

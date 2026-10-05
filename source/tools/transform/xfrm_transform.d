@@ -2971,7 +2971,7 @@ public:
         static immutable ToolSessionPolicy defaults = {
             activationRow: true, commandClose: CommandClose.allDoors,
             sessionSteps: true, historyRecordedSteps: true,
-            dropWritesRow: true };   // K-CD4 CD4cQ / CD_SAME_UNDO (task 9457)
+            dropWritesRow: true };   // K-CD4 CD4cQ / CD_SAME_UNDO
         ToolSessionPolicy policy = defaults;
         policy.activationRow = activationHistoryRow;
         policy.recordedFirstUndoEndsTool = recordedFirstUndoEndsTool;

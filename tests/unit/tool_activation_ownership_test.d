@@ -166,7 +166,7 @@ private struct SiteCount { string transition; size_t count; string why; }
 private immutable SiteCount[] kSites = [
     SiteCount("commandArm",             1, "toolHost.activatePrepared"),
     SiteCount("interactiveArm",         1, "toolHost.activate"),
-    SiteCount("replayArm",              3, "the lifecycle restore delegate, closed-run owner rearm and the drop row's restore (S6), all through armPreparedTool"),
+    SiteCount("replayArm",              4, "the lifecycle restore delegate, closed-run owner rearm, the drop row's restore (S6) and the item-list primary move's re-arm (task 9457), all through armPreparedTool"),
     SiteCount("resetRearm",             1, "tool.reset rebuilding the same id"),
     SiteCount("explicitDrop",           3, "toolHost.deactivate, Space key and Esc ladder first rung"),
     SiteCount("sameIdToggleDrop",       1, "activateToolById's already-active toggle"),
@@ -269,9 +269,9 @@ unittest {
     // through the per-row message rather than through a bare total.
     size_t total;
     foreach (r; kSites) total += r.count;
-    assert(total == 23,
-        format("task 4053: the site ledger now sums to %s, recorded 23 (task 9458: "
-               ~ "the status bar's panel drop left) — say in "
+    assert(total == 24,
+        format("task 4053: the site ledger now sums to %s, recorded 24 (task 9457: "
+               ~ "the item-list primary move's re-arm arrived) — say in "
                ~ "the commit which sites arrived or left", total));
 
     // And the total DECOMPOSES, which is what keeps 22 from being a number
@@ -312,10 +312,11 @@ unittest {
     // slice M4 removed the switch-restore replay arm (5 -> 4), then task 8261
     // added the closed-run owner replay arm (4 -> 5), and wave plan 8640 S6 the
     // drop row's restore (5 -> 6); task 9402 the primary move's drop (15 -> 16);
-    // task 9458 removed the status bar's drop, its funnel drops (16 -> 15).
-    assert(dropCalls == 15 && armCalls == 6,
+    // task 9458 removed the status bar's drop, its funnel drops (16 -> 15);
+    // task 9457 added the item-list primary move's re-arm (6 -> 7).
+    assert(dropCalls == 15 && armCalls == 7,
         format("task 4053: wired call sites moved — %s drops and %s arms, "
-               ~ "recorded 15 and 6. With the 2 shutdownDrop mentions (no call) "
+               ~ "recorded 15 and 7. With the 2 shutdownDrop mentions (no call) "
                ~ "these must sum to the ledger's %s.",
                dropCalls, armCalls, total));
     assert(dropCalls + armCalls + 2 == total,
