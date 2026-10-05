@@ -419,7 +419,8 @@ struct InputRouter {
         // reader (`handleKeyDown`'s F1 branch).
 
         // A release the window never sees must not lock the keyboard.
-        if (we.event == SDL_WINDOWEVENT_FOCUS_LOST) held_.clear();
+        // The same for the momentary key's up (task 9470).
+        if (we.event == SDL_WINDOWEVENT_FOCUS_LOST) { held_.clear(); momentary_ = MomentaryKey.init; }
 
         if (we.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
             with (app) {
@@ -536,8 +537,12 @@ struct InputRouter {
 
     void handleKeyDown(ref SDL_KeyboardEvent kev) {
         version (web) webConsumedInputMask |= webKeyDownBit;
-        // SDL autorepeat of the tracked key is no new press (vibe3d-divergence).
-        if (kev.repeat != 0 && momentary_.active && momentary_.key == kev.keysym.sym) return;
+        // SDL autorepeat of the tracked key is no new press (vibe3d-divergence);
+        // a new press of it means its up was lost: forget it before dispatch.
+        if (momentary_.active && momentary_.key == kev.keysym.sym) {
+            if (kev.repeat != 0) return;
+            momentary_ = MomentaryKey.init;
+        }
         // While a mouse button is held only a command row whose command reports
         // `MouseDownOk` runs; every other key is dropped, not queued (slice M1a,
         // narrowed by findings_K-G2). Above Escape and onKeyDown.
@@ -769,9 +774,8 @@ struct InputRouter {
         }
     }
 
-    // Key RELEASE dispatch (task 0709): the momentary key's law first, then the active tool's `onKeyUp` — no tool overrides it today, so
-    // any other release is discarded. Not wrapped in `with (app)`; `ifs.buildToolVts`
-    // is the explicit-binding rule stated at the block comment above.
+    // Key RELEASE dispatch: the momentary key's law; any other release is
+    // discarded (no tool reads a key-up since task 9470).
     void handleKeyUp(ref SDL_KeyboardEvent kev) {
         version (web) webConsumedInputMask |= webKeyUpBit;
         // The momentary key's law (findings_K-G2): button held ⇒ re-run now;
@@ -785,13 +789,7 @@ struct InputRouter {
             if (!held_.any && !long_) return;
             auto cmd = app.reg.makeCommand(m.id);
             if (!held_.any || (cmd.cmdFlags() & CmdFlags.MouseDownOk)) app.runCommand(cmd);
-            return;
         }
-        // A release during a held button is never delivered, not even at the
-        // button's release (slice M1a, verdict C-H9-X-up). ImGui still saw it.
-        if (held_.any) return;
-        SubjectPacket subj; VectorStack vts; ifs.buildToolVts(subj, vts);
-        if (app.activeTool && app.activeTool.onKeyUp(kev, vts)) return;
     }
 
     // ---- Task 0781 step 2d: the interactive-selection session ------------
@@ -2060,8 +2058,7 @@ struct InputRouter {
                 break;
             case SDL_WINDOWEVENT:     handleWindowEvent(ev.window); break;
             case SDL_KEYDOWN:         handleKeyDown(ev.key);      break;
-            // Task 0709 — the release side of the pair above. Absent until
-            // this task, which is what made `Tool.onKeyUp` unreachable.
+            // The release side of the pair above (the momentary key's law).
             case SDL_KEYUP:           handleKeyUp(ev.key);        break;
             case SDL_MOUSEBUTTONDOWN:
                 held_.press(ev.button.button);

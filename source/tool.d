@@ -596,7 +596,6 @@ public:
     bool onMouseButtonUp  (ref const SDL_MouseButtonEvent e, ref VectorStack vts) { return false; }
     bool onMouseMotion    (ref const SDL_MouseMotionEvent  e, ref VectorStack vts) { return false; }
     bool onKeyDown        (ref const SDL_KeyboardEvent     e, ref VectorStack vts) { return false; }
-    bool onKeyUp          (ref const SDL_KeyboardEvent     e, ref VectorStack vts) { return false; }
 
     // ----- Centralized tool-input / modifier dispatch
     // (doc/tool_input_dispatch_design.md) ------------------------------------
@@ -1510,17 +1509,10 @@ private enum string[] kToolVirtualWhitelist = [
     // NARROW, and each one is a standing question rather than a settled
     // answer. They are on the base today because moving them costs call-site
     // churn that task 0705 judged not worth spending in a hygiene wave:
-    //   onKeyUp                 1 overrider. Task 0709 gave it the dispatch
-    //                                          site it had never had (`app.d`
-    //                                          grew a `case SDL_KEYUP`); until
-    //                                          then the one overrider's body
-    //                                          was unreachable and its flag
-    //                                          latched. Narrow now, not broken.
-    //
+    // (`onKeyUp` left the base in task 9470 with its last overrider.)
     // Task 0709 also re-ran the "which of these has NO caller" sweep over the
     // whole list, since a virtual whose overriders never run is invisible to
-    // the compiler and `onKeyUp` had hidden in here for months. `onKeyUp` was
-    // the ONLY one. The near miss worth naming so it is not re-reported: `name`
+    // the compiler. The near miss worth naming so it is not re-reported: `name`
     // sits in the wide bucket above on 48 overriders, but it has exactly ONE
     // call site in the tree — `tool_presets.applyToolAttrs`, building the text
     // of an "unknown attr" exception. Dozens of overriders serving one cold
@@ -1537,7 +1529,7 @@ private enum string[] kToolVirtualWhitelist = [
     //                                          "TRUE for every tool in the
     //                                          build today". Read once and
     //                                          cached at registration.
-    "onKeyUp", "wantsHoverForType", "wantsEdgeLoopHover",
+    "wantsHoverForType", "wantsEdgeLoopHover",
     "edgeLoopHoverSliceRing", "renderParamsAsPanel", "needsEditTarget",
 ];
 

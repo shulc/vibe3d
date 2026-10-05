@@ -16,7 +16,6 @@ import drag_helpers : Vec3, fetchCamera, kPaceLine, playAndWait;
 import http_client : getJson, postJson;
 import http_command_helpers : commandBody;
 import pen_rig_helpers : penCameraAt, penCommand, penSceneEmpty, worldPixel;
-import std.algorithm : canFind, sort;
 import std.file : readText;
 import std.format : format;
 import std.json : JSONType, JSONValue, parseJSON;
@@ -58,6 +57,7 @@ private struct Log {
             t, down ? "SDL_KEYDOWN" : "SDL_KEYUP", sym, scan, mod, rep, ts);
         t += 10;
     }
+    void focusLost() { s ~= format(`{"t":%.1f,"type":"SDL_WINDOWEVENT","sub":13}` ~ "\n", t); t += 10; }
     void tap(int sym, int scan, int mod = 0) { key(true, 0, sym, scan, mod); key(false, 0, sym, scan, mod); }
     void play() {
         auto c = fetchCamera();
@@ -197,15 +197,15 @@ unittest {
         path(l, qPx, endPx, 8, n, n); l.button(false, endPx); l.play();
         assert(abs(qx() - snappedX) <= 1e-4,
             format("%s: the drag should snap onto T %.4f after X, got %.6f", cell, snappedX, qx()));
-        // Not asserted after the release: ours' transform re-grade records an
-        // in-run entry there (+2, captured +1) that the key-up's close folds —
-        // a shared transform record policy, PLAN-FINDING of task 9470.
+        // KNOWN DIVERGENCE (backlog 9482, the undo re-push slice): ours +2 at
+        // the release (the transform re-grade's in-run entry), captured +1.
+        expectDepth(cell, "after the release", depth(), d0 + 2);
         l.key(false, 7000); l.play();
         assert(!snapOn(), what(cell, "the key-up after the release (held 6 s) did not revert"));
         expectDepth(cell, "after the key-up", depth(), d0 + 2);
-        assert(labels().length >= 2, format("%s: entries %s", cell, labels()));
-        auto top2 = labels()[$ - 2 .. $].dup; top2.sort();
-        assert(top2 == ["Toggle Snap", "Transform 1 verts"],
+        // KNOWN DIVERGENCE (backlog 9482): ours puts the toggle on top,
+        // captured has the tool's apply on top. Pinned exactly so 9482 reddens it.
+        assert(labels().length >= 2 && labels()[$ - 2 .. $] == ["Transform 1 verts", "Toggle Snap"],
             format("%s: the top two entries are %s", cell, labels()));
     }
 
@@ -276,6 +276,22 @@ unittest {
         assert(!snapOn() && abs(qx() - off) <= 1e-6, format("%s: snap %s, x %.6f (raw %.6f)",
             cell, snapOn(), qx(), off));
         expectDepth(cell, "after the key-up", depth(), d0 + 1);
+    }
+
+    // A lost key-up leaves no stale tracker: X down (on), then focus loss
+    // and / or a dropped X down in a guide-less drag, the release, X up over
+    // 500 ms after the first down -> nothing re-runs, snap stays on.
+    foreach (c; [[1, 1], [1, 0], [0, 1]]) {
+        const cell = format("move-snap-key-lost-up-focus%d-redown%d", c[0], c[1]);
+        moveRig(false);
+        Log l; l.key(true, 1000); l.play();
+        assert(snapOn(), what(cell, "rig premise: X with no button did not toggle on"));
+        if (c[0]) l.focusLost();
+        l.motion(qPx, 0); l.button(true, qPx); path(l, qPx, endPx, 1, 7, n);
+        if (c[1]) l.key(true, 2000);
+        path(l, qPx, endPx, 8, n, n); l.button(false, endPx);
+        l.key(false, c[1] ? 2600 : 1600); l.play();
+        assert(snapOn(), what(cell, "a stale momentary tracker re-ran the toggle at the key-up"));
     }
 
     // move-snap-key-no-types: delivered with no snap type (the count is the
@@ -373,11 +389,15 @@ unittest {
         moveRig(false);
         Log l; l.motion(qPx, 0); l.button(true, qPx); path(l, qPx, endPx, 1, 5, 5);
         l.button(false, endPx); l.play();
-        const d0 = depth();
+        const before = labels();
         l.key(true, 1000); l.play();
-        expectDepth(cell, "after the key-down", depth(), d0 + 1);
+        // KNOWN DIVERGENCE (backlog 9482, the undo re-push slice): ours records
+        // the toggle on top and the undo removes it; captured removes Transform.
+        assert(labels() == before ~ "Toggle Snap",
+            format("%s: after the key-down %s, before %s", cell, labels(), before));
         l.key(false, 1600); l.play();
-        expectDepth(cell, "after the key-up", depth(), d0);
+        assert(labels() == before,
+            format("%s: the undo did not remove Toggle Snap: %s, before %s", cell, labels(), before));
         assert(snapOn(), what(cell, "the undo restored the snap state"));
     }
     // A non-momentary command key held 600 ms runs no key-up law ("[" =

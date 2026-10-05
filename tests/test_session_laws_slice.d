@@ -55,7 +55,6 @@ import std.stdio : writeln;
 void main() {}
 
 enum int[2][3] HINT_OFF = [[315, 303], [531, 355], [616, 270]];
-enum SL_SDLK_x = 120;
 
 void ctrlZ(string what)      { slKey(SL_SDLK_z, SL_KMOD_LCTRL, what); }
 void ctrlShiftZ(string what) { slKey(SL_SDLK_z, SL_KMOD_LCTRL | SL_KMOD_LSHIFT, what); }

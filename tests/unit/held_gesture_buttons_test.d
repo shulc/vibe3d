@@ -102,15 +102,15 @@ unittest { // u3: the router's order and its gates, read from production text
     assert(arm.canFind("CmdFlags.MouseDownOk") && arm.canFind("BindingKind.command")
            && !arm.canFind("onKeyDown"),
            "M1a u3: the held branch is not the binding table's MouseDownOk rows alone");
+    // A key-up reaches no tool (task 9470): only the momentary key's law.
     auto ku = bodyAt(code, "void handleKeyUp(");
-    const hu = once(ku, "if (held_.any) return;", "handleKeyUp");
-    assert(hu < ku.indexOf("activeTool.onKeyUp("),
-           "M1a u3: handleKeyUp's held gate is not above onKeyUp");
+    assert(ku.canFind("momentary_.active") && !ku.canFind("activeTool"),
+           "M1a u3: handleKeyUp delivers a key-up to the active tool");
 
-    // Focus loss clears the whole set.
-    assert(bodyAt(code, "void handleWindowEvent(")
-               .canFind("if (we.event == SDL_WINDOWEVENT_FOCUS_LOST) held_.clear();"),
-           "M1a u3: focus loss does not clear the held buttons");
+    // Focus loss clears the whole set and the momentary key's tracker.
+    assert(bodyAt(code, "void handleWindowEvent(").canFind(
+               "if (we.event == SDL_WINDOWEVENT_FOCUS_LOST) { held_.clear(); momentary_ = MomentaryKey.init; }"),
+           "M1a u3: focus loss does not clear the held buttons and the momentary key");
     assert(code.canFind("alias held_ = g_heldGestureButtons;"),
            "M1a u3: the router's held set is not the one the automation reset clears");
 }
