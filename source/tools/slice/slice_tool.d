@@ -872,15 +872,16 @@ private:
     // The new line's snap guide (task 9470, findings_K-G2 G2-SL1): registered
     // at the new-line press, removed at the release, the RMB cancel and the drop
     // (`dropPreview`). It ranks a candidate at its screen distance from the
-    // drag's pointer — the election's own distance — so it re-ranks nothing; it
-    // makes the snap key live mid-drag (`heldDragGuideCount`).
-    private static final class LineGuide : SnapGuide {
-        Viewport vp; float x = 0, y = 0;
+    // pointer — the election's own distance — so it re-ranks nothing; it makes
+    // the snap key live mid-drag (`heldDragGuideCount`).
+    private final class LineGuide : SnapGuide {
         void limits(float, float) {}
         bool proximity(Vec3 w, SnapType, int, int, out float d, ref int) {
             float px, py, pz;
-            if (!projectToWindowFull(w, vp, px, py, pz)) return false;
-            d = sqrt((px - x) ^^ 2 + (py - y) ^^ 2);
+            int mx, my;
+            if (!projectToWindowFull(w, vpWorld_, px, py, pz)) return false;
+            queryMouse(mx, my);
+            d = sqrt((px - mx) ^^ 2 + (py - my) ^^ 2);
             return true;
         }
         void setDrawState(GuideDrawState) {}
@@ -1738,7 +1739,6 @@ public:
             drawGesture_ = true;
             armCtrl(ctrl, e.x, e.y);   // Ctrl on the FIRST drag → axis-locked line
             if (lineGuide_ is null) lineGuide_ = new LineGuide;
-            lineGuide_.vp = vpWorld_; lineGuide_.x = e.x; lineGuide_.y = e.y;
             if (auto st = liveSnapStage()) st.addGuide(lineGuide_);
         } else {
             Vec3 hit;
@@ -1768,7 +1768,6 @@ public:
         }
 
         if (dragPart_ == DragNone) return false;
-        if (lineGuide_ !is null) { lineGuide_.x = e.x; lineGuide_.y = e.y; }
 
         // Custom-axis rotate ring (task 0287): tilt the Custom vector — and thus
         // the cut plane — about the drawn line. The endpoints DO NOT move (this

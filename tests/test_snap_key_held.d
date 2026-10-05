@@ -136,6 +136,12 @@ private void moveRig(bool latched, string types = "vertex") {
 private int[2] qPx() { return worldPixel(Vec3(0.03f, 1, 0.07f)); }
 private int[2] endPx() { return worldPixel(Vec3(0.245f, 1, 0.07f)); }
 
+/// A tool drop puts the remembered constraint into the pipe; a cell that needs
+/// a guide-less drag after one forgets it again (the user's toggle-off).
+private void forgetConstraint() {
+    if (consOn()) penCommand("constrain.toggle");
+    assert(!consOn(), "rig premise: the constraint is still in the pipe");
+}
 private string what(string cell, string m) { return cell ~ ": " ~ m; }
 private string[] fails;
 private void expectDepth(string cell, string moment, long got, long want) {
@@ -184,6 +190,9 @@ unittest {
         // A repeat key-down of the held X is no new press.
         l.key(true, 1100, K_X, K_X_SCAN, 0, 1); l.key(true, 1200, K_X, K_X_SCAN, 0, 1); l.play();
         assert(snapOn(), what(cell, "an autorepeat key-down toggled the snap state again"));
+        // Another key's tap (dropped while held) is not the tracked key's up.
+        l.tap(K_Z, K_Z_SCAN, KMOD_LCTRL); l.play();
+        assert(snapOn() && depth() == d0, what(cell, "a Ctrl+Z tap during the held X acted"));
         path(l, qPx, endPx, 8, n, n); l.button(false, endPx); l.play();
         assert(abs(qx() - snappedX) <= 1e-4,
             format("%s: the drag should snap onto T %.4f after X, got %.6f", cell, snappedX, qx()));
@@ -226,6 +235,17 @@ unittest {
         assert(abs(qx() - off) <= 1e-6,
             format("%s: the drag should end raw (%.6f) after the revert, got %.6f", cell, off, qx()));
         expectDepth(cell, "after the release", depth(), d0 + 1);
+    }
+
+    // move-snap-key-short-after-release: X up 300 ms after its down, after the
+    // release -> stays on (the re-run needs a hold over 500 ms).
+    {
+        const cell = "move-snap-key-short-after-release";
+        moveRig(true);
+        Log l; l.motion(qPx, 0); l.button(true, qPx); path(l, qPx, endPx, 1, 7, n);
+        l.key(true, 1000); path(l, qPx, endPx, 8, n, n); l.button(false, endPx);
+        l.key(false, 1300); l.play();
+        assert(snapOn(), what(cell, "a 300 ms hold re-ran the toggle after the release"));
     }
 
     // move-snap-key-fresh: the constraint not in the pipe, Move has no guide of
@@ -345,6 +365,15 @@ unittest {
         expectDepth(cell, "after the key-up", depth(), d0);
         assert(snapOn(), what(cell, "the undo restored the snap state"));
     }
+    // A non-momentary command key held 600 ms runs no key-up law ("[" =
+    // select.invert, one entry that stays).
+    {
+        auto r = postJson("/api/command", commandBody("scene.reset"));
+        assert(r["status"].str == "ok");
+        penCommand("history.clear");
+        Log l; l.key(true, 1000, 91, 47); l.key(false, 1600, 91, 47); l.play();
+        expectDepth("non-momentary-key-hold", "after the key-up", depth(), 1);
+    }
     // Script origin records nothing (gap row 563).
     {
         noTool();
@@ -386,7 +415,40 @@ unittest { // Slice: a new line holds a guide; a press on a live line does not.
         (ref Log l) { l.motion(m, 0); l.button(true, m); l.motion(lerp(m, m2, 1, 2), 1); },
         (ref Log l) { l.motion(m2, 1); l.button(false, m2); });
     assert(!liveLine, "slice-snap-key-live-line: X was delivered to a press on the live line");
+    // slice-snap-key-cancel: an RMB cancel of the new-line drag ends its guide.
     penCommand("tool.set mesh.sliceTool off");
+    forgetConstraint();
+    penCommand("tool.set mesh.sliceTool on");
+    {
+        Log l; l.motion(a, 0); l.button(true, a); path(l, a, b, 1, 4, 8);
+        l.button(true, lerp(a, b, 4, 8), 3); l.button(false, lerp(a, b, 4, 8), 3);
+        l.button(false, lerp(a, b, 4, 8)); l.play();
+    }
+    const afterCancel = deliveredDuring(
+        (ref Log l) { l.motion(m, 0); l.button(true, m); l.motion(lerp(m, m2, 1, 2), 1); },
+        (ref Log l) { l.motion(m2, 1); l.button(false, m2); });
+    assert(!afterCancel, "slice-snap-key-cancel: the cancelled new line's guide outlived it");
+    // slice-snap-key-drop: dropping Slice mid-drag ends its guide (a later
+    // fresh Move drag holds none).
+    {
+        penCommand("tool.set mesh.sliceTool off");
+        penCommand("tool.set mesh.sliceTool on");
+        Log l; l.motion(a, 0); l.button(true, a); path(l, a, b, 1, 4, 8); l.play();
+        penCommand("tool.set mesh.sliceTool off");
+        l.button(false, b); l.play();
+        forgetConstraint();
+    }
+    penCommand("select.typeFrom vertex");
+    auto sel = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0]}`));
+    assert(sel["status"].str == "ok");
+    penCommand("tool.set move");
+    const v0 = worldPixel(Vec3(-0.3f, 1, -0.3f));
+    const int[2] v1 = [v0[0] + 40, v0[1]];
+    const afterDrop = deliveredDuring(
+        (ref Log l) { l.motion(v0, 0); l.button(true, v0); l.motion(lerp(v0, v1, 1, 2), 1); },
+        (ref Log l) { l.motion(v1, 1); l.button(false, v1); });
+    assert(!afterDrop, "slice-snap-key-drop: the dropped Slice's guide outlived the tool");
+    penCommand("tool.set move off");
     flush();
 }
 
