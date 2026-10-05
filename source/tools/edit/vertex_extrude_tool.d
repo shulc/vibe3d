@@ -22,6 +22,8 @@ import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
+import tools.edit.preview_rebuild : PreviewRebuild, PreviewTopologyKey,
+    PreviewRebuildCounts, PreparedPreviewRebuildImage;
 
 import std.math : abs, sqrt;
 import std.json : JSONValue;
@@ -59,11 +61,12 @@ struct PreparedVertexExtrudeParamImage {
     bool valid, applies, nextBuilt;
     VertexExtrudeParamProjection expected;
     MeshSnapshot expectedLive, expectedBefore;
+    PreparedPreviewRebuildImage preview;
     Mesh candidate;
     uint deliveryFlags, deliveryDomains;
     void clear() nothrow @nogc {
         expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
-        candidate = Mesh.init; valid = applies = false;
+        preview.clear(); candidate = Mesh.init; valid = applies = false;
     }
 }
 
@@ -137,6 +140,7 @@ private:
     bool         active;
     bool         built;
     MeshSnapshot before;
+    PreviewRebuild preview_;     // the restore-and-rebuild seam (task 1620)
     Viewport     cachedVp;
 
     bool gizmoValid;
@@ -207,7 +211,7 @@ public:
             ref PreparedVertexExtrudeActivationImage image) nothrow @nogc {
         if (!image.valid) return;
         active = true; built = false; dragPart = -1;
-        image.before.moveInto(before);
+        preview_.reset(); image.before.moveInto(before);
         gizmoValid = image.gizmoValid; anchor = image.anchor;
         baseAnchor = image.baseAnchor; shiftAxis = image.shiftAxis;
         widthAxis = image.widthAxis; gizmoSelHash = image.gizmoSelHash;
@@ -229,6 +233,7 @@ public:
     private void reinitSession() {
         built    = false;
         dragPart = -1;
+        preview_.reset();          // a new clean cage ⇒ a new topology key
         before   = MeshSnapshot.capture(*mesh);
         computeGizmoFrame();
     }
@@ -238,6 +243,7 @@ public:
         built      = false;
         dragPart   = -1;
         gizmoValid = false;
+        preview_.reset();          // drop the clean-cage scratch with the session
         toolHandles.clearHaul();
     }
 
@@ -258,6 +264,7 @@ public:
     mixin SessionCommitHooks;
     mixin TopologyStepClientBody!("Vertex Extrude", before);
     mixin GizmoTopologyRebase;
+    final void afterTopologyRebase() { preview_.reset(); }
 
     override void onParamChanged(string pname) {
         if (interactiveParamEdit) rebuildPreview();
@@ -273,32 +280,31 @@ public:
         PreparedVertexExtrudeParamImage image;
         image.valid = true; image.expected = paramProjection();
         image.nextBuilt = built; image.expectedLive = MeshSnapshot.capture(live);
-        if (!before.filled) return image;
-        Mesh baseline;
-        auto baselineShadow = beginPreparedShadow(baseline);
-        before.restore(baseline);
-        uint baselineFlags, baselineDomains;
-        drainPreparedShadowDelivery(baseline, baselineFlags, baselineDomains);
-        baselineShadow.close();
-        image.expectedBefore = MeshSnapshot.capture(baseline);
-        if (!interactiveParamEdit || !active) return image;
-        image.applies = true; image.candidate = baseline; baseline = Mesh.init;
-        auto shadow = beginPreparedShadow(image.candidate);
-        if (width_ == 0.0f) {
-            image.nextBuilt = false;
-        } else {
-            auto mask = image.candidate.operandVertexMask(EditMode.Vertices);
-            auto ed = MeshEditBatch.unrecorded(image.candidate,
-                kExtrudeEditScope);
-            const n = ed.extrudeVerticesByMask(mask, shift_, width_);
-            ed.close(); image.nextBuilt = (n != 0);
+        // Above the early return: the preview conjunct below is unconditional
+        // (the cold-arm hole, task 4491).
+        {
+            auto cageShadow = beginPreparedShadow(image.preview.nextCage);
+            preview_.prepareImage(image.preview);
+            uint cageFlags, cageDomains;
+            drainPreparedShadowDelivery(image.preview.nextCage, cageFlags,
+                cageDomains);
+            cageShadow.close();
         }
+        if (!before.filled) return image;
+        image.expectedBefore = before;
+        if (!interactiveParamEdit || !active) return image;
+        image.applies = true;
+        auto shadow = beginPreparedShadow(image.candidate);
+        image.expectedLive.restore(image.candidate);
         drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
             image.deliveryDomains);
-        if (image.deliveryFlags == 0) {
-            image.deliveryFlags = baselineFlags;
-            image.deliveryDomains = baselineDomains;
-        }
+        image.deliveryFlags = image.deliveryDomains = 0;
+        PreviewRebuild preparedPreview; preparedPreview.loadPreparedNext(image.preview);
+        image.nextBuilt = preparedPreview.run(image.candidate, before,
+            &previewKey, &previewKernel) != 0;
+        preparedPreview.savePreparedNext(image.preview);
+        drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
+            image.deliveryDomains);
         shadow.close(); return image;
     }
     final bool preparedParamUpdateMatches(
@@ -306,12 +312,17 @@ public:
             nothrow @nogc {
         return image.valid && image.expected == paramProjection() &&
             image.expectedLive.matches(live) &&
-            image.expectedBefore.matches(before);
+            image.expectedBefore.matches(before) &&
+            preview_.matchesImage(image.preview);
     }
     final void installPreparedParamUpdate(
             ref PreparedVertexExtrudeParamImage image) nothrow @nogc {
         if (!image.valid) return;
-        built = image.nextBuilt; image.clear();
+        built = image.nextBuilt; preview_.installImage(image.preview); image.clear();
+    }
+    /// The preview seam's counters (task 1620; tools/edit/preview_rebuild.d).
+    public PreviewRebuildCounts previewRebuildCounts() const {
+        return preview_.counts();
     }
     mixin PreparedParamUpdateProducer!(PreparedParamUpdateOwner!(VertexExtrudeTool,
         PreparedVertexExtrudeParamImage, PreparedVertexExtrudeParamKind), PreparedVertexExtrudeParamEffect);
@@ -323,6 +334,7 @@ public:
             before.restore(*mesh);
             built = false;
         }
+        preview_.reset();   // the live mesh is rebuilt behind the seam's back
         if (mesh.vertices.length == 0) return false;
         if (width_ == 0.0f) return true;
         auto mask = currentMask();
@@ -499,19 +511,23 @@ private:
         // line: an early-out must record no sample, or `count` tallies
         // refusals as work. See Cat.toolPreview for the decomposition.
         auto zPreview = g_perf.scope_(Cat.toolPreview);
-        before.restore(*mesh);
-        if (width_ == 0.0f) {
-            built = false;
-            refreshCaches();
-            return;
-        }
-        auto mask = currentMask();
-        // task 1903 Stage H: unrecorded — the per-drag-frame preview rerun.
-        auto ed = MeshEditBatch.unrecorded(*mesh, kExtrudeEditScope);
-        size_t n = ed.extrudeVerticesByMask(mask, shift_, width_);
-        ed.close();
-        built = (n != 0);
+        built = preview_.run(*mesh, before, &previewKey, &previewKernel) != 0;
         refreshCaches();
+    }
+
+    // The topology key: the operand mask and the kernel's `width == 0` no-op
+    // (`shift` only moves the apex).
+    PreviewTopologyKey previewKey(ref Mesh cage) {
+        return PreviewTopologyKey.make(cage.operandVertexMask(EditMode.Vertices),
+            width_ == 0.0f);
+    }
+    // Unrecorded: a preview frame records nothing (task 1903 §9).
+    size_t previewKernel(ref Mesh target) {
+        auto ed = MeshEditBatch.unrecorded(target, kExtrudeEditScope);
+        const n = ed.extrudeVerticesByMask(
+            target.operandVertexMask(EditMode.Vertices), shift_, width_);
+        ed.close();
+        return n;
     }
 
     final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext c) {
@@ -524,6 +540,7 @@ private:
 
     void cancelLiveEdit() {
         if (built && before.filled) before.restore(*mesh);
+        preview_.reset();
         built    = false;
         dragPart = -1;
         toolHandles.clearHaul();

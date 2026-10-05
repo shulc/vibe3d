@@ -22,6 +22,8 @@ import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
+import tools.edit.preview_rebuild : PreviewRebuild, PreviewTopologyKey,
+    PreviewRebuildCounts, PreparedPreviewRebuildImage;
 import perf_probe : g_perf, Cat;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
     PreparedSimpleToolDoorClient;
@@ -57,11 +59,12 @@ struct PreparedPolyInsetParamImage {
     bool valid, applies, nextBuilt;
     PolyInsetParamProjection expected;
     MeshSnapshot expectedLive, expectedBefore;
+    PreparedPreviewRebuildImage preview;
     Mesh candidate;
     uint deliveryFlags, deliveryDomains;
     void clear() nothrow @nogc {
         expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
-        candidate = Mesh.init; valid = applies = false;
+        preview.clear(); candidate = Mesh.init; valid = applies = false;
     }
 }
 
@@ -138,6 +141,7 @@ private:
     bool         active;
     bool         built;
     MeshSnapshot before;
+    PreviewRebuild preview_;     // the restore-and-rebuild seam (task 1620)
     Viewport     cachedVp;
 
     // Haul drag state. No drawn handle to hit-test — any LMB press (outside
@@ -184,7 +188,7 @@ public:
             ref PreparedPolyInsetActivationImage image) nothrow @nogc {
         if (!image.valid) return;
         active = true; built = false; dragging = false;
-        image.before.moveInto(before); image.valid = false;
+        preview_.reset(); image.before.moveInto(before); image.valid = false;
     }
     final PreparedSessionActivateEffect prepareActivate(
             PreparedRecordContext context) {
@@ -236,6 +240,7 @@ public:
     private void reinitSession() {
         built    = false;
         dragging = false;
+        preview_.reset();          // a new clean cage ⇒ a new topology key
         before   = MeshSnapshot.capture(*mesh);
     }
 
@@ -244,6 +249,7 @@ public:
         active   = false;
         built    = false;
         dragging = false;
+        preview_.reset();          // drop the clean-cage scratch with the session
     }
 
     public override bool hasUncommittedEdit() const {
@@ -263,6 +269,7 @@ public:
     mixin TopologyStepClientBody!("Inset", before);
     override void rebaseTopologyStep(MeshSnapshot basis) {
         before = basis;
+        preview_.reset();
         built = !before.matches(*mesh);
         dragging = false;
         refreshCaches();
@@ -281,19 +288,29 @@ public:
         PreparedPolyInsetParamImage image;
         image.valid = true; image.expected = paramProjection();
         image.nextBuilt = built; image.expectedLive = MeshSnapshot.capture(live);
+        // Above the early return: the preview conjunct below is unconditional
+        // (the cold-arm hole, task 4491).
+        {
+            auto cageShadow = beginPreparedShadow(image.preview.nextCage);
+            preview_.prepareImage(image.preview);
+            uint cageFlags, cageDomains;
+            drainPreparedShadowDelivery(image.preview.nextCage, cageFlags,
+                cageDomains);
+            cageShadow.close();
+        }
         if (!before.filled) return image;
+        image.expectedBefore = before;
+        if (!interactiveParamEdit || !active) return image;
+        image.applies = true;
         auto shadow = beginPreparedShadow(image.candidate);
-        before.restore(image.candidate);
-        image.expectedBefore = MeshSnapshot.capture(image.candidate);
+        image.expectedLive.restore(image.candidate);
         drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
             image.deliveryDomains);
         image.deliveryFlags = image.deliveryDomains = 0;
-        if (!interactiveParamEdit || !active) { shadow.close(); return image; }
-        image.applies = true;
-        auto mask = image.candidate.operandFaceMask();
-        auto ed = MeshEditBatch.unrecorded(image.candidate, kPolyBevelEditScope);
-        const n = ed.insetFacesByMask(mask, inset_);
-        ed.close(); image.nextBuilt = (n != 0);
+        PreviewRebuild preparedPreview; preparedPreview.loadPreparedNext(image.preview);
+        image.nextBuilt = preparedPreview.run(image.candidate, before,
+            &previewKey, &previewKernel) != 0;
+        preparedPreview.savePreparedNext(image.preview);
         drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
             image.deliveryDomains);
         shadow.close(); return image;
@@ -301,12 +318,17 @@ public:
     final bool preparedParamUpdateMatches(in PreparedPolyInsetParamImage image,
             ref const Mesh live) const nothrow @nogc {
         return image.valid && image.expected == paramProjection() &&
-            image.expectedLive.matches(live) && image.expectedBefore.matches(before);
+            image.expectedLive.matches(live) && image.expectedBefore.matches(before) &&
+            preview_.matchesImage(image.preview);
     }
     final void installPreparedParamUpdate(ref PreparedPolyInsetParamImage image)
             nothrow @nogc {
         if (!image.valid) return;
-        built = image.nextBuilt; image.clear();
+        built = image.nextBuilt; preview_.installImage(image.preview); image.clear();
+    }
+    /// The preview seam's counters (task 1620; tools/edit/preview_rebuild.d).
+    public PreviewRebuildCounts previewRebuildCounts() const {
+        return preview_.counts();
     }
     mixin PreparedParamUpdateProducer!(PreparedParamUpdateOwner!(PolyInsetTool,
         PreparedPolyInsetParamImage, PreparedPolyInsetParamKind), PreparedPolyInsetParamEffect);
@@ -321,6 +343,7 @@ public:
             before.restore(*mesh);
             built = false;
         }
+        preview_.reset();   // the live mesh is rebuilt behind the seam's back
         if (mesh.faces.length == 0) return false;
         auto mask = currentMask();
         // Task 1903 Stage F2 — the batch opens at the TOOL boundary (§4.1).
@@ -405,9 +428,8 @@ private:
         return mesh.operandFaceMask();
     }
 
-    // Revert to the pre-inset cage + selection, then re-run the kernel from
-    // the current `inset_`. This is the per-tick re-evaluate: WRITE the
-    // param + RE-RUN, never vertex-transform the post-inset ridge.
+    // Re-run from the clean cage at the current `inset_` through the seam (a
+    // key change restores and rebuilds; an unchanged key moves positions only).
     void rebuildPreview() {
         if (!active) return;
         if (previewGated()) return;
@@ -415,26 +437,22 @@ private:
         // line: an early-out must record no sample, or `count` tallies
         // refusals as work. See Cat.toolPreview for the decomposition.
         auto zPreview = g_perf.scope_(Cat.toolPreview);
-        before.restore(*mesh);
-        auto mask = currentMask();
-        // Task 1903 Stage F2 — ONE UNRECORDED batch per DRAG FRAME, and
-        // unrecorded is not a convenience here: plan §9 is explicit that a
-        // recording batch opened per frame would build and throw away a full
-        // op-log at 60 Hz. This tool keeps the plain `before.restore(*mesh)`
-        // preview shape (it is not one of `preview_rebuild.d`'s three), so the
-        // batch is on the LIVE mesh and the frame's deferred stamp lands at
-        // `close()` — one per frame instead of one per appended corner vertex
-        // and ring quad. That is the STAMP; DELIVERIES are a separate count
-        // with a separate mechanism, and the drag test records the measured
-        // per-frame figure rather than assuming it follows the stamp.
-        size_t n;
-        {
-            auto ed = MeshEditBatch.unrecorded(*mesh, kPolyBevelEditScope);
-            n = ed.insetFacesByMask(mask, inset_);
-            ed.close();
-        }
-        built = (n != 0);
+        built = preview_.run(*mesh, before, &previewKey, &previewKernel) != 0;
         refreshCaches();
+    }
+
+    // The topology key: the operand mask only. The kernel has no degenerate
+    // branch (`inset == 0` still splits, mesh_ops/poly_bevel.d) and its
+    // collinear-start refusal reads the cage, not the parameter.
+    PreviewTopologyKey previewKey(ref Mesh cage) {
+        return PreviewTopologyKey.make(cage.operandFaceMask(), false);
+    }
+    // Unrecorded: a preview frame records nothing (task 1903 §9).
+    size_t previewKernel(ref Mesh target) {
+        auto ed = MeshEditBatch.unrecorded(target, kPolyBevelEditScope);
+        const n = ed.insetFacesByMask(target.operandFaceMask(), inset_);
+        ed.close();
+        return n;
     }
 
     final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext c) {
@@ -447,6 +465,7 @@ private:
 
     void cancelLiveEdit() {
         if (built && before.filled) before.restore(*mesh);
+        preview_.reset();
         built    = false;
         dragging = false;
         refreshCaches();

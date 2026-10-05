@@ -24,6 +24,8 @@ import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
+import tools.edit.preview_rebuild : PreviewRebuild, PreviewTopologyKey,
+    PreviewRebuildCounts, PreparedPreviewRebuildImage;
 
 import std.math : abs, sqrt;
 import std.json : JSONValue;
@@ -56,11 +58,12 @@ struct PreparedVertexBevelParamImage {
     bool valid, applies, nextBuilt;
     VertexBevelParamProjection expected;
     MeshSnapshot expectedLive, expectedBefore;
+    PreparedPreviewRebuildImage preview;
     Mesh candidate;
     uint deliveryFlags, deliveryDomains;
     void clear() nothrow @nogc {
         expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
-        candidate = Mesh.init; valid = applies = false;
+        preview.clear(); candidate = Mesh.init; valid = applies = false;
     }
 }
 
@@ -143,6 +146,7 @@ private:
     bool         active;
     bool         built;
     MeshSnapshot before;
+    PreviewRebuild preview_;     // the restore-and-rebuild seam (task 1620)
     Viewport     cachedVp;
 
     bool gizmoValid;
@@ -204,7 +208,7 @@ public:
             ref PreparedVertexBevelActivationImage image) nothrow @nogc {
         if (!image.valid) return;
         active = true; built = false; dragPart = -1;
-        image.before.moveInto(before);
+        preview_.reset(); image.before.moveInto(before);
         gizmoValid = image.gizmoValid; anchor = image.anchor;
         baseAnchor = image.baseAnchor; insetAxis = image.insetAxis;
         gizmoSelHash = image.gizmoSelHash; image.clear();
@@ -225,6 +229,7 @@ public:
     private void reinitSession() {
         built    = false;
         dragPart = -1;
+        preview_.reset();          // a new clean cage ⇒ a new topology key
         before   = MeshSnapshot.capture(*mesh);
         computeGizmoFrame();
     }
@@ -235,6 +240,7 @@ public:
         built      = false;
         dragPart   = -1;
         gizmoValid = false;
+        preview_.reset();          // drop the clean-cage scratch with the session
         toolHandles.clearHaul();
     }
 
@@ -254,6 +260,7 @@ public:
     mixin SessionCommitHooks;
     mixin TopologyStepClientBody!("Vertex Bevel", before);
     mixin GizmoTopologyRebase;
+    final void afterTopologyRebase() { preview_.reset(); }
 
     override void onParamChanged(string pname) {
         if (interactiveParamEdit) rebuildPreview();
@@ -269,32 +276,31 @@ public:
         PreparedVertexBevelParamImage image;
         image.valid = true; image.expected = paramProjection();
         image.nextBuilt = built; image.expectedLive = MeshSnapshot.capture(live);
-        if (!before.filled) return image;
-        Mesh baseline;
-        auto baselineShadow = beginPreparedShadow(baseline);
-        before.restore(baseline);
-        uint baselineFlags, baselineDomains;
-        drainPreparedShadowDelivery(baseline, baselineFlags, baselineDomains);
-        baselineShadow.close();
-        image.expectedBefore = MeshSnapshot.capture(baseline);
-        if (!interactiveParamEdit || !active) return image;
-        image.applies = true; image.candidate = baseline; baseline = Mesh.init;
-        auto shadow = beginPreparedShadow(image.candidate);
-        if (inset_ == 0.0f) {
-            image.nextBuilt = false;
-        } else {
-            auto mask = image.candidate.operandVertexMask(EditMode.Vertices);
-            auto ed = MeshEditBatch.unrecorded(image.candidate,
-                kBevelVertexEditScope);
-            const n = ed.bevelVerticesByMask(mask, inset_);
-            ed.close(); image.nextBuilt = (n != 0);
+        // Above the early return: the preview conjunct below is unconditional
+        // (the cold-arm hole, task 4491).
+        {
+            auto cageShadow = beginPreparedShadow(image.preview.nextCage);
+            preview_.prepareImage(image.preview);
+            uint cageFlags, cageDomains;
+            drainPreparedShadowDelivery(image.preview.nextCage, cageFlags,
+                cageDomains);
+            cageShadow.close();
         }
+        if (!before.filled) return image;
+        image.expectedBefore = before;
+        if (!interactiveParamEdit || !active) return image;
+        image.applies = true;
+        auto shadow = beginPreparedShadow(image.candidate);
+        image.expectedLive.restore(image.candidate);
         drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
             image.deliveryDomains);
-        if (image.deliveryFlags == 0) {
-            image.deliveryFlags = baselineFlags;
-            image.deliveryDomains = baselineDomains;
-        }
+        image.deliveryFlags = image.deliveryDomains = 0;
+        PreviewRebuild preparedPreview; preparedPreview.loadPreparedNext(image.preview);
+        image.nextBuilt = preparedPreview.run(image.candidate, before,
+            &previewKey, &previewKernel) != 0;
+        preparedPreview.savePreparedNext(image.preview);
+        drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
+            image.deliveryDomains);
         shadow.close(); return image;
     }
     final bool preparedParamUpdateMatches(
@@ -302,12 +308,17 @@ public:
             nothrow @nogc {
         return image.valid && image.expected == paramProjection() &&
             image.expectedLive.matches(live) &&
-            image.expectedBefore.matches(before);
+            image.expectedBefore.matches(before) &&
+            preview_.matchesImage(image.preview);
     }
     final void installPreparedParamUpdate(
             ref PreparedVertexBevelParamImage image) nothrow @nogc {
         if (!image.valid) return;
-        built = image.nextBuilt; image.clear();
+        built = image.nextBuilt; preview_.installImage(image.preview); image.clear();
+    }
+    /// The preview seam's counters (task 1620; tools/edit/preview_rebuild.d).
+    public PreviewRebuildCounts previewRebuildCounts() const {
+        return preview_.counts();
     }
     mixin PreparedParamUpdateProducer!(PreparedParamUpdateOwner!(VertexBevelTool,
         PreparedVertexBevelParamImage, PreparedVertexBevelParamKind), PreparedVertexBevelParamEffect);
@@ -322,6 +333,7 @@ public:
             before.restore(*mesh);
             built = false;
         }
+        preview_.reset();   // the live mesh is rebuilt behind the seam's back
         if (mesh.vertices.length == 0) return false;
         if (inset_ == 0.0f) return true;
         auto mask = currentMask();
@@ -496,34 +508,24 @@ private:
         // line: an early-out must record no sample, or `count` tallies
         // refusals as work. See Cat.toolPreview for the decomposition.
         auto zPreview = g_perf.scope_(Cat.toolPreview);
-        before.restore(*mesh);
-        if (inset_ == 0.0f) {
-            built = false;
-            refreshCaches();
-            return;
-        }
-        auto mask = currentMask();
-        // Task 1903 Stage E4 — one UNRECORDED batch per DRAG FRAME, and
-        // unrecorded is not a convenience here: plan §9 is explicit that a
-        // recording batch opened per frame would build and throw away a full
-        // op-log at 60 Hz. This tool is one of the 16 that keep the plain
-        // `before.restore(*mesh)` preview shape rather than
-        // `tools/edit/preview_rebuild.d`, so the batch is on the LIVE mesh and
-        // the frame's deferred stamp lands at `close()` — one per frame
-        // instead of one per split vertex. That is the STAMP; DELIVERIES are
-        // a separate count, measured at the E4 review over the 16-frame drag
-        // in tests/test_vertex_bevel_handle_drag.d: 4 per frame, down from 10
-        // — `before.restore` is 1 and the chamfer inside the batch is 3 (was
-        // 9), selection-domain deliveries the batch does not defer. Nothing
-        // pins the residual 3; do not read "one per frame" as a delivery.
-        size_t n;
-        {
-            auto ed = MeshEditBatch.unrecorded(*mesh, kBevelVertexEditScope);
-            n = ed.bevelVerticesByMask(mask, inset_);
-            ed.close();
-        }
-        built = (n != 0);
+        built = preview_.run(*mesh, before, &previewKey, &previewKernel) != 0;
         refreshCaches();
+    }
+
+    // The topology key: the operand mask and the kernel's own no-op
+    // (`!isFinite(amount) || !(amount >= 1e-6f)`, mesh_ops/bevel_vertex.d).
+    PreviewTopologyKey previewKey(ref Mesh cage) {
+        import std.math : isFinite;
+        return PreviewTopologyKey.make(cage.operandVertexMask(EditMode.Vertices),
+            !isFinite(inset_) || !(inset_ >= 1e-6f));
+    }
+    // Unrecorded: a preview frame records nothing (task 1903 §9).
+    size_t previewKernel(ref Mesh target) {
+        auto ed = MeshEditBatch.unrecorded(target, kBevelVertexEditScope);
+        const n = ed.bevelVerticesByMask(
+            target.operandVertexMask(EditMode.Vertices), inset_);
+        ed.close();
+        return n;
     }
 
     final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext c) {
@@ -536,6 +538,7 @@ private:
 
     void cancelLiveEdit() {
         if (built && before.filled) before.restore(*mesh);
+        preview_.reset();
         built    = false;
         dragPart = -1;
         toolHandles.clearHaul();

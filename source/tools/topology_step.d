@@ -30,7 +30,8 @@ mixin template TopologyStepClientBody(string label, alias basisField) {
 /// The rebase of a gizmo topology tool: the gizmo frame is computed on the
 /// basis mesh (the visible mesh is put back), `built` follows the basis, the
 /// drag state clears. A tool's own derived state goes in its declared
-/// `afterTopologyRebase()` (the one allowed hook, plan §3.3).
+/// `afterTopologyRebase()` (the one allowed hook, plan §3.3); every user
+/// declares it, so the call is unconditional and a misspelling cannot compile.
 mixin template GizmoTopologyRebase() {
     override void rebaseTopologyStep(MeshSnapshot basis) {
         before = basis;
@@ -41,8 +42,7 @@ mixin template GizmoTopologyRebase() {
             visible.restore(*mesh);
         } else computeGizmoFrame();
         built = !before.matches(*mesh);
-        static if (__traits(hasMember, typeof(this), "afterTopologyRebase"))
-            afterTopologyRebase();
+        afterTopologyRebase();
         dragPart = -1;
         toolHandles.clearHaul();
         refreshCaches();

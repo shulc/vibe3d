@@ -38,6 +38,8 @@ import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
+import tools.edit.preview_rebuild : PreviewRebuild, PreviewTopologyKey,
+    PreviewRebuildCounts, PreparedPreviewRebuildImage;
 
 import std.math : abs, sqrt;
 import std.json : JSONValue;
@@ -66,11 +68,12 @@ struct PreparedEdgeExtrudeParamImage {
     bool valid, applies, nextBuilt;
     EdgeExtrudeParamProjection expected;
     MeshSnapshot expectedLive, expectedBefore;
+    PreparedPreviewRebuildImage preview;
     Mesh candidate;
     uint deliveryFlags, deliveryDomains;
     void clear() nothrow @nogc {
         expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
-        candidate = Mesh.init; valid = applies = false;
+        preview.clear(); candidate = Mesh.init; valid = applies = false;
     }
 }
 
@@ -143,6 +146,7 @@ private:
     /// Current operation's preview basis (geometry and selection). The
     /// completed step pairs and their bases belong to CommandHistory.
     MeshSnapshot  before;
+    PreviewRebuild preview_;       // the restore-and-rebuild seam (task 1620)
     Viewport      cachedVp;        // last frame's viewport (for the gizmo handles)
 
     // Gizmo frame, computed at activate() from the ORIGINAL (pre-extrude)
@@ -232,7 +236,7 @@ public:
             ref PreparedEdgeExtrudeActivationImage image) nothrow @nogc {
         if (!image.valid) return;
         active = true; built = false; dragPart = -1;
-        image.before.moveInto(before);
+        preview_.reset(); image.before.moveInto(before);
         gizmoValid = image.gizmoValid; anchor = image.anchor;
         baseAnchor = image.baseAnchor; extrudeAxis = image.extrudeAxis;
         widthAxis = image.widthAxis; gizmoSelHash = image.gizmoSelHash;
@@ -263,6 +267,7 @@ public:
     private void reinitSession() {
         built    = false;
         dragPart = -1;
+        preview_.reset();          // a new clean cage ⇒ a new topology key
         // Snapshot the cage + selection at the start of the session. The
         // per-drag revert+reapply restores from here; the commit pairs it
         // with the final `after`.
@@ -278,6 +283,7 @@ public:
         built      = false;
         dragPart   = -1;
         gizmoValid = false;
+        preview_.reset();          // drop the clean-cage scratch with the session
         toolHandles.clearHaul();
     }
 
@@ -306,6 +312,7 @@ public:
     mixin SessionCommitHooks;
     mixin TopologyStepClientBody!("Edge Extrude", before);
     mixin GizmoTopologyRebase;
+    final void afterTopologyRebase() { preview_.reset(); }
 
     // A parameter changed. Two callers, distinguished by `interactiveParamEdit`
     // (set by PropertyPanel only):
@@ -330,22 +337,29 @@ public:
         PreparedEdgeExtrudeParamImage image;
         image.valid = true; image.expected = paramProjection();
         image.nextBuilt = built; image.expectedLive = MeshSnapshot.capture(live);
+        // Above the early return: the preview conjunct below is unconditional
+        // (the cold-arm hole, task 4491).
+        {
+            auto cageShadow = beginPreparedShadow(image.preview.nextCage);
+            preview_.prepareImage(image.preview);
+            uint cageFlags, cageDomains;
+            drainPreparedShadowDelivery(image.preview.nextCage, cageFlags,
+                cageDomains);
+            cageShadow.close();
+        }
         if (!before.filled) return image;
+        image.expectedBefore = before;
+        if (!interactiveParamEdit || !active) return image;
+        image.applies = true;
         auto shadow = beginPreparedShadow(image.candidate);
-        before.restore(image.candidate);
-        image.expectedBefore = MeshSnapshot.capture(image.candidate);
+        image.expectedLive.restore(image.candidate);
         drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
             image.deliveryDomains);
         image.deliveryFlags = image.deliveryDomains = 0;
-        if (!interactiveParamEdit || !active) { shadow.close(); return image; }
-        image.applies = true;
-        if (extrude_ == 0.0f && width_ == 0.0f) image.nextBuilt = false;
-        else {
-            auto mask = image.candidate.operandEdgeMask();
-            auto ed = MeshEditBatch.unrecorded(image.candidate, kExtrudeEditScope);
-            const n = ed.extrudeEdgesByMask(mask, extrude_, width_);
-            ed.close(); image.nextBuilt = (n != 0);
-        }
+        PreviewRebuild preparedPreview; preparedPreview.loadPreparedNext(image.preview);
+        image.nextBuilt = preparedPreview.run(image.candidate, before,
+            &previewKey, &previewKernel) != 0;
+        preparedPreview.savePreparedNext(image.preview);
         drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
             image.deliveryDomains);
         shadow.close(); return image;
@@ -353,12 +367,17 @@ public:
     final bool preparedParamUpdateMatches(in PreparedEdgeExtrudeParamImage image,
             ref const Mesh live) const nothrow @nogc {
         return image.valid && image.expected == paramProjection() &&
-            image.expectedLive.matches(live) && image.expectedBefore.matches(before);
+            image.expectedLive.matches(live) && image.expectedBefore.matches(before) &&
+            preview_.matchesImage(image.preview);
     }
     final void installPreparedParamUpdate(ref PreparedEdgeExtrudeParamImage image)
             nothrow @nogc {
         if (!image.valid) return;
-        built = image.nextBuilt; image.clear();
+        built = image.nextBuilt; preview_.installImage(image.preview); image.clear();
+    }
+    /// The preview seam's counters (task 1620; tools/edit/preview_rebuild.d).
+    public PreviewRebuildCounts previewRebuildCounts() const {
+        return preview_.counts();
     }
     mixin PreparedParamUpdateProducer!(PreparedParamUpdateOwner!(EdgeExtrudeTool,
         PreparedEdgeExtrudeParamImage, PreparedEdgeExtrudeParamKind), PreparedEdgeExtrudeParamEffect);
@@ -392,6 +411,7 @@ public:
             before.restore(*mesh);
             built = false;
         }
+        preview_.reset();   // the live mesh is rebuilt behind the seam's back
         if (mesh.edges.length == 0) return false;
         if (extrude_ == 0.0f && width_ == 0.0f) return true;   // no-op success
         auto mask = currentMask();
@@ -647,8 +667,8 @@ private:
         return mesh.operandEdgeMask();
     }
 
-    // Revert to the pre-extrude cage + selection, then rebuild from the
-    // current extrude/width. Identity params leave the mesh restored (no-op).
+    // Rebuild from the clean cage through the seam: a key change restores the
+    // live mesh and re-runs; an unchanged key transplants positions only.
     void rebuildPreview() {
         if (!active) return;
         if (previewGated()) return;
@@ -656,20 +676,24 @@ private:
         // line: an early-out must record no sample, or `count` tallies
         // refusals as work. See Cat.toolPreview for the decomposition.
         auto zPreview = g_perf.scope_(Cat.toolPreview);
-        before.restore(*mesh);
-        if (extrude_ == 0.0f && width_ == 0.0f) {
-            built = false;
-            refreshCaches();
-            return;
-        }
-        auto mask = currentMask();
-        // task 1903 Stage H: unrecorded — this is the per-drag-frame preview
-        // rerun (§9), which must stay off the op-log.
-        auto ed = MeshEditBatch.unrecorded(*mesh, kExtrudeEditScope);
-        size_t n = ed.extrudeEdgesByMask(mask, extrude_, width_);
-        ed.close();
-        built = (n != 0);
+        built = preview_.run(*mesh, before, &previewKey, &previewKernel) != 0;
         refreshCaches();
+    }
+
+    // The topology key: the operand mask, the kernel's `width < 1e-6` no-op
+    // and its `|extrude| < 1e-6` ridge reuse (fewer vertices). A width past a
+    // rim edge's length saturates per the cage's geometry; that costs a key
+    // miss, never a wrong mesh (header of tools/edit/preview_rebuild.d).
+    PreviewTopologyKey previewKey(ref Mesh cage) {
+        return PreviewTopologyKey.make(cage.operandEdgeMask(), width_ < 1e-6f,
+            abs(extrude_) < 1e-6f);
+    }
+    // Unrecorded: a preview frame records nothing (task 1903 §9).
+    size_t previewKernel(ref Mesh target) {
+        auto ed = MeshEditBatch.unrecorded(target, kExtrudeEditScope);
+        const n = ed.extrudeEdgesByMask(target.operandEdgeMask(), extrude_, width_);
+        ed.close();
+        return n;
     }
 
     // All applied images have already been handed to history at
@@ -694,6 +718,7 @@ private:
     void cancelLiveEdit() {
         if (dragPart < 0) return; // completed images belong to history
         before.restore(*mesh);
+        preview_.reset();
         refreshCaches();
         extrude_ = 0.0f;
         width_   = 0.0f;

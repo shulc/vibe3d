@@ -47,6 +47,12 @@ import tool : Tool;
 import tools.edit.edge_extend : EdgeExtendTool;
 import tools.edit.edge_bevel  : EdgeBevelTool;
 import tools.edit.poly_bevel  : PolyBevelTool;
+import tools.edit.edge_extrude : EdgeExtrudeTool;
+import tools.edit.poly_extrude : PolyExtrudeTool;
+import tools.edit.vertex_bevel_tool : VertexBevelTool;
+import tools.edit.vertex_extrude_tool : VertexExtrudeTool;
+import tools.edit.poly_inset_tool : PolyInsetTool;
+import snapshot : MeshSnapshot;
 
 import std.conv : to;
 
@@ -683,4 +689,157 @@ unittest {
     assert(accepted.revert() && rig.mesh.vertices == baseVerts,
            "M3b doApply (b): the row's undo must return the mesh UNDER the window");
     rig.frame();
+}
+
+// ---------------------------------------------------------------------------
+// Wave-2 PV2 — the five tools that joined the seam, one ROW each (the tool is
+// data: mode, selection, fixed params, the position-only sweep param, and its
+// crossings with the full-rebuild total each costs). Per row:
+//  (a) a position-only sweep keeps `topologyVersion` and the dispatch count,
+//      places every sample after the first, misses no key, and lands
+//      bit-for-bit what the old restore-and-rerun lands (a second tool whose
+//      ONE rebuild is a full one);
+//  (b) a crossing costs exactly its declared full rebuilds and no key miss —
+//      a degenerate crossing 3 (arm + two), a value with no topology branch 1;
+//  (c) a cold image matches (the preview conjunct is unconditional), and a
+//      prepared panel edit installs the seam's state: the next drag sample is
+//      a placement, not a second full rebuild.
+// ---------------------------------------------------------------------------
+private struct Crossing { string param; float[] values; ulong fullRebuilds; }
+
+/// Write a float param WITHOUT the interactive notification: the tool's
+/// state before a gesture, not a rebuild.
+private void pokeFloatParam(Tool t, string name, float v) {
+    foreach (ref p; t.params()) if (p.name == name) { *p.fptr = v; return; }
+    assert(false, "no float param named `" ~ name ~ "`");
+}
+
+private size_t pv2Rows;
+
+private void pv2Row(T)(EditMode mode, void function(ref Mesh) select,
+        string[] fixedNames, float[] fixedValues, string sweep,
+        Crossing[] crossings) {
+    enum name = T.stringof;
+    ++pv2Rows;
+    Rig rigged() {
+        auto r = new Rig(subdividedCube(), mode);
+        select(r.mesh);
+        r.frame();
+        assert(r.preview.active, name ~ ": rig must actually subdivide");
+        return r;
+    }
+    T make(Rig r, float sweepValue) {
+        auto t = new T(() => &r.mesh, &r.gpu, &r.editMode, null);
+        t.activate();
+        foreach (i, n; fixedNames) pokeFloatParam(t, n, fixedValues[i]);
+        pokeFloatParam(t, sweep, sweepValue);
+        return t;
+    }
+
+    // (a) position-only sweep.
+    {
+        auto rig = rigged();
+        scope(exit) rig.release();
+        const size_t vertsBare = rig.mesh.vertices.length;
+        auto tool = make(rig, 0.0f);
+        setFloatParam(tool, sweep, 0.10f);
+        rig.frame();
+        assert(rig.mesh.vertices.length > vertsBare,
+            name ~ ": the arming sample built nothing");
+        const ulong buildsAfterFirst = rig.preview.topologyBuilds;
+        const ulong topoAfterFirst = rig.mesh.topologyVersion;
+        auto posAfterFirst = rig.mesh.vertices.dup;
+        foreach (k; 1 .. 10) {
+            setFloatParam(tool, sweep, 0.10f + 0.01f * k);
+            rig.frame();
+        }
+        assert(positionsDiffer(rig.mesh.vertices, posAfterFirst),
+            name ~ ": the sweep moved no vertex — nothing below can fail");
+        assert(rig.mesh.topologyVersion == topoAfterFirst,
+            name ~ ": topologyVersion moved during a position-only sweep: "
+          ~ topoAfterFirst.to!string ~ " -> " ~ rig.mesh.topologyVersion.to!string);
+        assert(rig.preview.topologyBuilds == buildsAfterFirst,
+            name ~ ": a position-only sweep dispatched a subpatch build");
+        const c = tool.previewRebuildCounts();
+        assert(c.fullRebuilds == 1 && c.placements == 9 && c.keyMisses == 0,
+            name ~ ": sweep counts full/placed/missed = " ~ c.fullRebuilds.to!string
+          ~ "/" ~ c.placements.to!string ~ "/" ~ c.keyMisses.to!string ~ ", want 1/9/0");
+
+        auto refRig = rigged();
+        scope(exit) refRig.release();
+        auto oldPath = make(refRig, 0.0f);
+        setFloatParam(oldPath, sweep, 0.10f + 0.01f * 9);
+        const o = oldPath.previewRebuildCounts();
+        assert(o.fullRebuilds == 1 && o.placements == 0,
+            name ~ ": the reference tool did not take the restore-and-rerun path");
+        assert(rig.mesh.vertices == refRig.mesh.vertices &&
+               rig.mesh.faces == refRig.mesh.faces &&
+               rig.mesh.edges == refRig.mesh.edges,
+            name ~ ": the placed preview differs from the restore-and-rerun output");
+    }
+
+    // (b) crossings.
+    foreach (ref x; crossings) {
+        auto rig = rigged();
+        scope(exit) rig.release();
+        auto tool = make(rig, 0.10f);
+        foreach (v; x.values) {
+            setFloatParam(tool, x.param, v);
+            rig.frame();
+        }
+        const c = tool.previewRebuildCounts();
+        assert(c.keyMisses == 0,
+            name ~ ": crossing `" ~ x.param ~ "` missed the key "
+          ~ c.keyMisses.to!string ~ " time(s) — a topology branch the key lacks");
+        assert(c.fullRebuilds == x.fullRebuilds,
+            name ~ ": crossing `" ~ x.param ~ "` took " ~ c.fullRebuilds.to!string
+          ~ " full rebuild(s), want " ~ x.fullRebuilds.to!string);
+    }
+
+    // (c) cold image, then a prepared panel edit followed by a drag sample.
+    {
+        auto rig = rigged();
+        scope(exit) rig.release();
+        auto cold = new T(() => &rig.mesh, &rig.gpu, &rig.editMode, null);
+        auto coldImage = cold.buildPreparedParamUpdate(rig.mesh);
+        assert(coldImage.valid && !coldImage.expectedBefore.filled &&
+               cold.preparedParamUpdateMatches(coldImage, rig.mesh),
+            name ~ ": a cold prepared image refuses (task 4491's hole)");
+        coldImage.clear();
+
+        auto tool = make(rig, 0.10f);
+        tool.interactiveParamEdit = true;
+        auto image = tool.buildPreparedParamUpdate(rig.mesh);
+        assert(image.applies && tool.preparedParamUpdateMatches(image, rig.mesh),
+            name ~ ": the prepared panel edit does not validate");
+        // What the context's stamped image install lands on the layer.
+        MeshSnapshot.capture(image.candidate).restore(rig.mesh);
+        tool.installPreparedParamUpdate(image);
+        tool.interactiveParamEdit = false;
+        setFloatParam(tool, sweep, 0.12f);
+        rig.frame();
+        const c = tool.previewRebuildCounts();
+        assert(c.fullRebuilds == 1 && c.placements == 1 && c.keyMisses == 0,
+            name ~ ": after a prepared install a drag sample counts full/placed/"
+          ~ "missed = " ~ c.fullRebuilds.to!string ~ "/" ~ c.placements.to!string
+          ~ "/" ~ c.keyMisses.to!string ~ ", want 1/1/0 (the install dropped "
+          ~ "the seam state)");
+    }
+}
+
+unittest {
+    enum float[] down = [0.10f, 0.05f, 0.0f, 0.0f, 0.05f, 0.10f];
+    pv2Row!EdgeExtrudeTool(EditMode.Edges, (ref Mesh m) { m.selectEdge(0); },
+        ["width"], [0.10f], "extrude",
+        [Crossing("width", down, 3), Crossing("extrude", down, 3)]);
+    pv2Row!PolyExtrudeTool(EditMode.Polygons, (ref Mesh m) { m.selectFace(0); },
+        [], [], "distance", [Crossing("distance", down, 3)]);
+    pv2Row!VertexBevelTool(EditMode.Vertices, (ref Mesh m) { m.selectVertex(0); },
+        [], [], "inset", [Crossing("inset", down, 3)]);
+    pv2Row!VertexExtrudeTool(EditMode.Vertices, (ref Mesh m) { m.selectVertex(0); },
+        ["width"], [0.10f], "shift",
+        [Crossing("width", down, 3), Crossing("shift", down, 1)]);
+    pv2Row!PolyInsetTool(EditMode.Polygons, (ref Mesh m) { m.selectFace(0); },
+        [], [], "inset", [Crossing("inset", down, 1)]);
+    assert(pv2Rows == 5, "PV2 population: " ~ pv2Rows.to!string ~ " rows, want 5");
 }
