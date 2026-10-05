@@ -4132,7 +4132,7 @@ public:
         const Viewport vp = viewportOf(vts);
         uint[] exclude = moveVerts_.dup;
         if (sp) foreach (vi; moveVerts_) if (sp.pairOf[vi] >= 0) exclude ~= sp.pairOf[vi];
-        if (changed) foreach (i, vi; moveVerts_) {
+        foreach (i, vi; moveVerts_) {
             const int t = sp && sp.onPlane[vi] ? rawSnapTarget(targets[i], vp, exclude) : -1;
             m.vertices[vi] = t >= 0 ? m.vertices[t]
                            : sp && sp.onPlane[vi] ? projectOnPlane(*sp, targets[i]) : targets[i];

@@ -754,5 +754,20 @@ unittest { // KW2_Nw2: the live raw snap of an on-plane vertex
             "KW2_Nw2 step %d: the on-plane vertex is at %s, expected %s (%s)", [3, 5, 8, 10][k],
             seen[k + 1], want, want[0] == 0 ? "projected onto x = 0: nothing in reach"
                                             : "snapped onto the in-reach target"));
+
+    // The live snap reads CURRENT positions: an edge (0,0)-(0.3,0.2) moved by
+    // (-0.3,+0.2) carries the on-plane v0's raw target onto where v1's partner v5
+    // STARTED (-0.3,0.2), while v5 itself follows v1 to (0,0.4). Nothing is there
+    // now, so v0 is projected to (0,0.2); a grid held from before the drag that did
+    // not exclude the partners would snap it onto v5.
+    double[3] held;
+    sameQuadMove([[0.0, 0.0, 0.0], [0.3, 0.2, 0.0], [0.3, 0.8, 0.0], [0.0, 0.8, 0.0],
+                  [-0.3, 0.8, 0.0], [-0.3, 0.2, 0.0]], [-0.15, 0.3, 0.0], -30, -20,
+                 [[0, 1, 2, 3], [3, 4, 5, 0]], true, [0.15, 0.1], null, 1, null, (k) {
+                     if (k == 1) held = readVerticesLayer(1)[0];
+                 });
+    assert(abs(held[0]) <= 1e-6 && abs(held[1] - 0.2) <= 6e-3, format(
+        "a held on-plane v0 is at %s, expected (0,0.2): projected, not snapped onto the "
+      ~ "partner's pre-drag position", held));
     postJson("/api/command", commandBody("scene.reset"));
 }
