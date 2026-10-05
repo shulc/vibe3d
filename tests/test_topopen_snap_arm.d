@@ -597,8 +597,9 @@ unittest { // KW2_A symmetric move welds both sides (14); KW2_B control (15)
 unittest { // KW2_L face across the plane shifts rigidly; KW2_N on-plane grab; KW2_K edge
     sameQuadMove([[-0.2, 0, 0], [0.2, 0, 0], [0.2, 0.3, 0], [-0.2, 0.3, 0]], [0.25, 0.15, 0],
                  20, 0, [[0, 1, 2, 3]], true, [0.05, 0.15]);
-    assert(vertexCountLayer(1) == 4 && hasVertexNear(1, Vec3(0, 0, 0), 1e-3)
-        && hasVertexNear(1, Vec3(0.4f, 0.3f, 0), 1e-3),
+    const f = readVerticesLayer(1);
+    assert(f.length == 4 && approxVec(Vec3(0, 0, 0), f[0], 1e-3) && approxVec(Vec3(0.4f, 0, 0), f[1], 1e-3)
+        && approxVec(Vec3(0.4f, 0.3f, 0), f[2], 1e-3) && approxVec(Vec3(0, 0.3f, 0), f[3], 1e-3),
         format("KW2_L (main, pending K-W2b): the face shifts +0.2 rigidly: %s", readVerticesLayer(1)));
     sameQuadMove([[-0.4, 0, 0], [0.0, 0, 0], [0.4, 0, 0], [0.4, 0.4, 0], [0, 0.4, 0], [-0.4, 0.4, 0]],
                  [0.2, 0.2, 0], 20, -20, [[0, 1, 4, 5], [1, 2, 3, 4]], true, [0, 0]);
