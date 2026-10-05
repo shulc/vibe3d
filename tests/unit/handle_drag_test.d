@@ -16,8 +16,10 @@ import std.math : abs, round;
 import tests.unit.census_symbols : blankNonCode, blankUnittestBodies, containsWord,
     isIdentChar, symbolTokenHits;
 
-import math : Vec3, Viewport, lookAt, orthographicMatrix, perspectiveMatrix;
-import drag : HandleDrag, DragFrame, DragKind, screenAxisDelta, primitiveCenterDragDelta;
+import math : Vec3, Viewport, lookAt, orthographicMatrix, perspectiveMatrix, projectToWindow;
+import drag : HandleDrag, DragFrame, DragKind, screenAxisDelta, primitiveCenterDragDelta,
+    planeJacobian;
+import viewgrid : vectorSnap;
 import tools.transform.move : MoveTool;
 import tools.create.box : BoxTool;
 import tools.create.primitive_create_tool : PrimitiveCreateTool;
@@ -35,7 +37,7 @@ static assert(![__traits(allMembers, PrimitiveCreateTool)].canFind("moverHitTest
 static assert([__traits(allMembers, MoveTool)].canFind("grab"));
 static assert([__traits(allMembers, BoxTool)].canFind("grab"));
 static assert([__traits(allMembers, PrimitiveCreateTool)].canFind("grab"));
-static assert([__traits(allMembers, HandleDrag)] == ["point", "pressX", "pressY", "press", "client"]);
+static assert([__traits(allMembers, HandleDrag)] == ["point", "pressX", "pressY", "press", "client", "travel"]);
 
 // Top orthographic view at 440 px/m, the witnesses' rig: +x is +440 px right.
 private Viewport topView() {
@@ -56,12 +58,13 @@ unittest {
     f.axis = Vec3(1, 0, 0);
     HandleDrag g;
     g.press(Vec3(0.3f, 0, 0.1f), 400, 300);
-    // Press + 20 events of +2 px = press + 40 px of travel, whatever came between.
+    // Press + 20 events of +2 px = press + 40 px of travel (0.0909, rounded to
+    // the 0.005 view quantum: a line keeps its offset), whatever came between.
     Vec3 c;
     bool skip;
     foreach (k; 1 .. 21) c = g.client(400 + 2 * k, 300, f, vp, skip);
-    assert(!skip && abs(c.x - (0.3f + 40.0f / 440.0f)) < 1e-5f && c.z == 0.1f,
-        "press + 20 x 2 px must be press + 40 px of travel");
+    assert(!skip && abs(c.x - 0.39f) < 1e-5f && c.z == 0.1f,
+        "press + 20 x 2 px must be press + q(40 px of travel)");
     // The snapped answer (grid 0.1) is the client rounded; it never moves the press.
     assert(abs(gridX(c) - 0.4f) < 1e-6f);
     // Fed back (the previous snapped answer as the next press), 2 px never leaves
@@ -98,7 +101,8 @@ unittest {
 
 unittest {
     // Law-neutral in the witnesses' ortho rig: the incremental bodies H2 replaced
-    // (a live origin / reference, the previous pixel) sum to the same client.
+    // (a live origin / reference, the previous pixel) sum to the same travel,
+    // which the kind's form then rounds (a line its travel, the plane its point).
     auto vp = topView();
     foreach (kind; [DragKind.screenAxis, DragKind.principalPlane]) {
         DragFrame f;
@@ -114,11 +118,92 @@ unittest {
             live = live + (kind == DragKind.screenAxis
                 ? screenAxisDelta(x, y, px, py, live, f.axis, vp, skip)
                 : primitiveCenterDragDelta(x, y, px, py, live, vp));
-            assert((g.client(x, y, f, vp, skip) - live).length < 1e-6f);
+            immutable Vec3 want = kind == DragKind.screenAxis
+                ? p0 + f.axis * cast(float)(round((live.x - p0.x) / 0.005) * 0.005)
+                : vectorSnap(live, 0.005f);
+            assert((g.client(x, y, f, vp, skip) - want).length < 1e-6f);
             ++n;
         }
         assert(n == 20);
     }
+}
+
+// The reference's oblique perspective rig (K-C3, task 9471): pinhole focal
+// 1004.7546 px centred on (576, 487), eye (0.07, 33.96, 19.03) on the focus
+// (0.07, 1, 0); its view pixel scale 0.030303 is ours' `viewWorldPerPixel`.
+private Viewport obliqueView() {
+    import std.math : atan;
+    immutable eye = Vec3(0.07f, 33.959961496f, 19.029442725f);
+    Viewport vp = Viewport(lookAt(eye, Vec3(0.07f, 1, 0), Vec3(0, 1, 0)),
+        perspectiveMatrix(cast(float)(2 * atan(487 / 1004.7545726038318)), 1152.0f / 974.0f,
+                          0.1f, 1000.0f), 1152, 974, 0, 0, eye);
+    vp.focus = Vec3(0.07f, 1, 0);
+    return vp;
+}
+
+unittest {
+    // The map: T = H + inv(M) (pixel travel), M forward-differenced at H with a
+    // step of ten view pixels, on the base plane's (Z, X). The read targets of
+    // the four cells (capture K-C3, cells C3a / C3b / C3c / C3e) to
+    // 1e-5; the anchored pixel step misses by 9.5e-4..1.2e-2, k -> 0 by 1.3e-2+.
+    auto vp = obliqueView();
+    static struct Cell { string id; Vec3 h; int dx, dy; Vec3 t; }
+    immutable Cell[4] cells = [
+        Cell("C3a", Vec3(-8.15f, 0, 2.6f), 240, 24, Vec3(0.946016f, 0, 3.591705f)),
+        Cell("C3b", Vec3(4.05f, 0, -0.1f), 0, 240, Vec3(3.504465f, 0, 10.542967f)),
+        Cell("C3c", Vec3(-6.25f, 0, 5.4f), 168, -168, Vec3(-0.756621f, 0, -1.033932f)),
+        Cell("C3e", Vec3(0.2877f, 0, 1.2183f), 120, -90, Vec3(4.874834f, 0, -2.638698f))];
+    size_t n;
+    foreach (c; cells) {
+        auto j = planeJacobian(c.h, Vec3(0, 0, 1), Vec3(1, 0, 0), vp);
+        assert(j.valid && (c.h + j.apply(c.dx, c.dy) - c.t).length <= 1e-5f,
+            c.id ~ ": the forward-difference map misses the read target");
+        ++n;
+    }
+    assert(n == 4);
+
+    // C3e through Move's frame (the free kind): the vertex is
+    // start + q(T) - q(start) at the view quantum 0.05 (DQ in world channels).
+    float sx, sy, sz;
+    assert(projectToWindow(cells[3].h, vp, sx, sy, sz) && abs(sx - 582) < 1 && abs(sy - 528) < 1,
+        "rig: the C3e start must sit under its press pixel (582, 528)");
+    DragFrame f;
+    f.kind = DragKind.viewPlane;
+    HandleDrag g;
+    g.press(cells[3].h, 582, 528);
+    bool skip;
+    immutable Vec3 v = g.client(702, 438, f, vp, skip);
+    assert(!skip && (v - Vec3(4.8377f, 0, -2.6317f)).length <= 1e-4f,
+        "move-free-oblique: the vertex must land on start + q(T) - q(start)");
+}
+
+unittest {
+    // One form per frame kind, top view at q 0.005, off-lattice starts (K-G2,
+    // K-G3, K-H2; every pair of forms 2.3e-3+ apart at these cells).
+    auto vp = topView();
+    Vec3 drag(DragKind kind, Vec3 p, int dx, int dy) {
+        DragFrame f;
+        f.kind = kind;
+        f.normal = Vec3(0, 1, 0);
+        HandleDrag g;
+        g.press(p, 400, 300);
+        bool skip;
+        immutable Vec3 c = g.client(400 + dx, 300 + dy, f, vp, skip);
+        assert(!skip);
+        return c;
+    }
+    immutable Vec3 free = drag(DragKind.viewPlane, Vec3(0.3023f, 0, 0.2017f), 84, 5);
+    assert(abs(free.x - 0.4973f) <= 1e-4f && abs(free.z - 0.2167f) <= 1e-4f,
+        "free (Move): p + q(p + T) - q(p), (0.4973, 0.2167)");
+    assert(abs(drag(DragKind.principalPlane, Vec3(0.0523f, 0, 0), 40, 0).x - 0.145f) <= 1e-4f,
+        "planar (primitive centre mover): q(p + T), 0.145");
+    assert(abs(drag(DragKind.screenAxis, Vec3(0.3523f, 0, 0), 40, 0).x - 0.4423f) <= 1e-4f,
+        "line (size handle): p + q(t), 0.4423");
+    assert(abs(drag(DragKind.planeHit, Vec3(0.3523f, 0, 0), 40, 0).x - 0.4423f) <= 1e-4f,
+        "line (height handle): p + q(t), 0.4423");
+    assert(abs(drag(DragKind.axisArm, Vec3(0.3023f, 0, 0), 95, 0).x - 0.5173f) <= 1e-4f
+        && abs(drag(DragKind.axisArm, Vec3(0.3023f, 0, 0), 83, 0).x - 0.4923f) <= 1e-4f,
+        "line (Move axis arm): p + q(t), 0.5173 / 0.4923");
 }
 
 unittest {

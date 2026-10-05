@@ -386,9 +386,9 @@ private void gridLawCells() {
     // at y 1, loose T (0.13, 1, 0.07) 44 px right of q; q's free drag in 52
     // events of +2 px. Mid-drag (24 events, 48 px) q sits ON T; after the
     // pointer leaves the range it rejoins the pointer: q ends at the raw
-    // q + 104 px (± half a pixel; the captured 0.265 carries the reference's
-    // 0.005 free-drag quantum, ours has none), not raw minus a retained
-    // offset (≤ 0.212) nor on T (0.13).
+    // q + 104 px rounded by the free drag's quantum, q + q(q + T) − q(q) =
+    // the captured 0.265 (K-G3 / K-C3, task 9471; raw 0.2664), not raw minus
+    // a retained offset (≤ 0.212) nor on T (0.13).
     {
         moveRig(1, "vertex", ",[0.13,1,0.07]");
         auto cam = fetchCamera();
@@ -408,9 +408,9 @@ private void gridLawCells() {
             fails ~= "move-vertex-release: mid-drag q expected ON T (0.13, 1, 0.07), got "
                 ~ vstr(mid);
         else
-            check(abs(q[0] - raw) <= kHalfPx && abs(q[1] - 1) <= kTol && abs(q[2] - 0.07) <= kTol,
-                format("move-vertex-release: q expected back on the pointer (%.6f, 1, 0.07), "
-                    ~ "got %s", raw, vstr(q)));
+            check(abs(raw - 0.2664) <= kHalfPx && at(q, [0.265, 1, 0.07]),
+                format("move-vertex-release: q expected back on the pointer, quantised "
+                    ~ "(0.265, 1, 0.07) (raw %.6f), got %s", raw, vstr(q)));
         ++ran;
     }
 
@@ -540,9 +540,9 @@ private void gridLawCells() {
 /// Each raw end lies 3 px from exactly one candidate line — through the
 /// dragged element, or through the world ORIGIN (88+ px from the other) — and
 /// every client but the pen registers no guide: the reading is the raw press +
-/// travel. The captured value carries the 0.005 m placement quantum ours does
-/// not have, so a cell asserts OUR raw reading (1e-4) and, as its rig premise,
-/// that the captured value is that reading rounded (within half the quantum).
+/// travel. A Move cell asserts the captured value (1e-4): the free drag's
+/// quantum, start + q(start + T) − q(start) (K-G3 / K-C3, task 9471); its rig
+/// premise is that the capture is OUR raw reading rounded (within half q).
 /// The must-stay-green cells run before the must-redden ORIGIN ones.
 private void guideCells() {
     import std.file : readText;
@@ -577,8 +577,9 @@ private void guideCells() {
         penCommand("tool.set move off");
         const double[3] raw = [v.x + dx * kPx, v.y, v.z + dy * kPx];
         captured(cell, [raw[0], raw[2]], [num(c["expect"][0]), num(c["expect"][2])]);
-        check(at(q, raw), format("%s: no guide — q expected at the raw press + travel %s, "
-            ~ "got %s", cell, vstr(raw), vstr(q)));
+        const double[3] want = [num(c["expect"][0]), num(c["expect"][1]), num(c["expect"][2])];
+        check(at(q, want), format("%s: no guide — q expected at the quantised press + travel "
+            ~ "%s (raw %s), got %s", cell, vstr(want), vstr(raw), vstr(q)));
         ++ran;
     }
 
@@ -626,6 +627,58 @@ private void guideCells() {
     moveCell("move-guide-world-axis-origin", "worldAxis");
     // interim: C2d re-pins to the captured q_world(Pq+Δ) (K-C3 planar body / K-C2 C2d control)
     boxCell("box-guide-world-axis-origin");
+}
+
+/// Move's two quantum forms, snapping off, a lone vertex at the off-lattice
+/// (0.3023, 1, 0.2017), automatic centre (task 9471): the free drag keeps the
+/// point's residual, start + q(start + T) − q(start), whichever pixel of the
+/// centre handle is pressed (K-G2 Qa2; K-G3 G3-mv, the press 2 px off: the
+/// pointer form would end at z 0.2167); an axis arm rounds its travel,
+/// start + q(t) (K-G3 G3-ax, RAW 0.5182 / 0.4910). q = 0.005.
+private void quantumCells() {
+    const Vec3 v = Vec3(0.3023f, 1, 0.2017f);
+    double[3] drag(int part, int[2] off, int dx, int dy, int steps) {
+        rig(`{"vertices":[[0.3023,1,0.2017]],"faces":[]}`, Vec3(0.07f, 1, 0));
+        penCommand("select.typeFrom vertex");
+        auto r = postJson("/api/command", commandBody("mesh.select",
+            `{"mode":"vertices","indices":[0]}`));
+        assert(r["status"].str == "ok", "select failed: " ~ r.toString);
+        penCommand("tool.set move");
+        penCommand("tool.pipe.attr snap enabled false");
+        int[2] a = worldPixel(v);
+        if (part >= 0) {
+            import drag_helpers : fetchHandlePart;
+            import core.thread : Thread;
+            import core.time : msecs;
+            Thread.sleep(250.msecs);   // the gizmo must draw before its handles are read
+            double hx, hy; bool found;
+            fetchHandlePart(part, hx, hy, found);
+            assert(found, format("rig: Move part %d is not drawn", part));
+            a = [cast(int)(hx + 0.5), cast(int)(hy + 0.5)];
+        }
+        auto cam = fetchCamera();
+        playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height, a[0] + off[0],
+                                 a[1] + off[1], a[0] + off[0] + dx, a[1] + off[1] + dy, steps));
+        const q = vpos(0);
+        auto pv = getJson("/api/tool/state")["pivot"].array;
+        assert(abs(num(pv[0]) - q[0]) <= kTol && abs(num(pv[2]) - q[2]) <= kTol,
+            format("rig: the centre must follow the vertex (no relocate), pivot (%s, %s) "
+                ~ "vertex %s", num(pv[0]), num(pv[2]), vstr(q)));
+        penCommand("tool.set move off");
+        return q;
+    }
+    const qa = drag(-1, [0, 0], 84, 5, 30);
+    check(at(qa, [0.4973, 1, 0.2167]), "move-free-offlattice: q expected (0.4973, 1, 0.2167), got "
+        ~ vstr(qa));
+    ++ran;
+    const qo = drag(-1, [2, -1], 89, 7, 30);
+    check(at(qo, [0.5073, 1, 0.2217]), "move-free-offpoint: q expected (0.5073, 1, 0.2217), got "
+        ~ vstr(qo));
+    ++ran;
+    const x1 = drag(0, [0, 0], 95, 0, 19), x2 = drag(0, [0, 0], 83, 0, 1);
+    check(at(x1, [0.5173, 1, 0.2017]) && at(x2, [0.4923, 1, 0.2017]), "move-axis-offlattice: "
+        ~ "q expected x 0.5173 / 0.4923, got " ~ vstr(x1) ~ " / " ~ vstr(x2));
+    ++ran;
 }
 
 unittest {
@@ -725,6 +778,7 @@ unittest {
     gridCells();
     gridLawCells();
     guideCells();
+    quantumCells();
 
     // 14 Mpoly_ctrl replica (must stay green): back-facing T at y 1.3, polygon
     // snap only, the pen's first click inside T's interior lands on the click
@@ -747,7 +801,7 @@ unittest {
         ++ran;
     }
 
-    assert(ran == 33, format("population: %d cells ran, expected 33", ran));
+    assert(ran == 36, format("population: %d cells ran, expected 36", ran));
     string[] names;   // the red cells by name first: the runner shows 8 lines
     foreach (f; fails) {
         const n = f[0 .. f.indexOf(':') < 0 ? f.length : f.indexOf(':')];

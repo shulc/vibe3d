@@ -1293,17 +1293,13 @@ struct PreparedPlaneDrag {
     }
 }
 
-// The finite-difference step, in world units, for the Jacobian below.
-//
-// It is ONLY a step. The Jacobian divides the projected difference by the
-// same value, so it cancels to first order and the conversion's gain does
-// not depend on it (`unittest` below sweeps four decades and pins that).
-// It is taken from the view so that it stays a sane fraction of the anchor's
-// depth at any camera distance — too small and the projected difference is
-// float noise, too large and the perspective curvature over the step leaks
-// into the derivative.
-private float jacobianStep(Vec3 anchor, const ref Viewport vp) {
-    float k = 10.0f * haulWorldPerPixel(anchor, vp);
+// The finite-difference step, in world units, for the Jacobian below: ten
+// of the view's NOMINAL pixels (`viewWorldPerPixel`, not the pixel at the
+// anchor's depth). The step cancels to first order only: its forward bias is
+// part of the captured map (K-C3, task 9471: 1e-6 at the read targets with
+// this step, 4e-3..1.2e-2 with the anchored pixel or k -> 0).
+private float jacobianStep(const ref Viewport vp) {
+    float k = 10.0f * viewWorldPerPixel(vp);
     if (!(k > 0.0f) || isNaN(k)) return 1e-3f;
     return k;
 }
@@ -1383,7 +1379,7 @@ PlaneJacobian planeJacobian(Vec3 anchor, Vec3 axisU, Vec3 axisV,
     j.axisU = axisU;
     j.axisV = axisV;
 
-    const double k = isNaN(step) ? jacobianStep(anchor, vp) : step;
+    const double k = isNaN(step) ? jacobianStep(vp) : step;
 
     double sx, sy, ux, uy, vx, vy;
     if (!projectToWindowD(anchor,                          vp, sx, sy) ||
@@ -1688,6 +1684,11 @@ struct DragFrame {
 /// answer cannot feed the next event and a released snap rejoins the pointer
 /// (captured K-B9: Move and Box, one release law). Positions live in whatever
 /// space `vp` projects (a create tool passes its plane-local view).
+/// The travel is rounded to the view quantum q by the frame KIND, the
+/// translator's mode (K-G3 / K-H2 / K-C3, task 9471): a free plane keeps the
+/// point's residual, `p + q(p + T) - q(p)`; the principal (planar) plane
+/// rounds the position, `q(p + T)`; a line rounds its travel, `p + q(t)`.
+/// The axis arm rounds `t` itself (LAW A, the coordinate-rounding step).
 struct HandleDrag {
     Vec3 point;
     int  pressX, pressY;
@@ -1698,6 +1699,23 @@ struct HandleDrag {
 
     Vec3 client(int px, int py, DragFrame f, const ref Viewport vp,
                 out bool skip) const
+    {
+        import viewgrid : vectorSnap, viewVectorQuantum;
+        immutable Vec3 t = travel(px, py, f, vp, skip) - point;
+        immutable float q = viewVectorQuantum(vp);
+        final switch (f.kind) {
+        case DragKind.axisArm:        return point + t;
+        case DragKind.viewPlane:      return point + vectorSnap(point + t, q) - vectorSnap(point, q);
+        case DragKind.principalPlane: return vectorSnap(point + t, q);
+        case DragKind.screenAxis:
+        case DragKind.planeHit:
+            immutable Vec3 u = normalize(f.axis);
+            return point + u * snapAxisScalar(dot(t, u), q);
+        }
+    }
+
+    private Vec3 travel(int px, int py, DragFrame f, const ref Viewport vp,
+                        out bool skip) const
     {
         final switch (f.kind) {
         case DragKind.axisArm:

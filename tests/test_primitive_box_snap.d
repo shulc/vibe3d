@@ -324,17 +324,34 @@ unittest { // handle drags under grid snap: not trapped; a released element snap
 
     // 27 box-edge-release (K9c): vertex bit only, the shipped 24 px range; a
     // loose vertex V 0.05 m beyond the +X face's start. The +X handle dragged
-    // in 2 px events through V and 60 px past it ends at the raw position
-    // (start + travel, ± half a pixel of world; the captured 0.485 carries
-    // the reference's 0.005 quantum), not raw minus the offset a retained
-    // snap would leave (≤ 0.432).
+    // in 2 px events through V and 60 px past it ends on its own travel, the
+    // line's quantum start + q(travel) = the captured 0.485 (K-G3 linear form,
+    // task 9471; raw 0.4864), not raw minus the offset a retained snap would
+    // leave (≤ 0.432).
     {
         boxBaseRig("vertex", `{"vertices":[[0.35,0,0]],"faces":[]}`);
         dragSteps(plusXEdgeHandle(), 2, 0, 41);
-        const face = qf("cenX") + qf("sizeX") * 0.5, raw = 0.3 + 82.0 / 440;
-        if (!(fabs(face - raw) <= 0.5 / 440))
-            fails ~= format("box-edge-release: +X face expected the raw %.6f, got %.6f",
-                            raw, face);
+        const face = qf("cenX") + qf("sizeX") * 0.5;
+        if (!(fabs(face - 0.485) <= 1e-4))
+            fails ~= format("box-edge-release: +X face expected 0.485, got %.6f", face);
+        cmd("tool.set prim.cube off");
+        ++ran;
+    }
+
+    // 27b box-size-offlattice (K-G2 Qb): the +X face typed OFF the lattice at
+    // 0.3023, snapping off, dragged 40 px: start + q(travel) = 0.3923 (the
+    // position form would give 0.395, the raw travel 0.3932).
+    {
+        boxBaseRig("vertex");
+        cmd("tool.attr prim.cube sizeX 0.6046");
+        cmd("tool.pipe.attr snap enabled false");
+        const p = partPixel(1), want = worldPixel(Vec3(0.3023f, 0, 0));
+        assert(abs(p[0] - want[0]) <= 1 && abs(p[1] - want[1]) <= 1,
+            format("rig: edge part 1 must be the +X face handle at %s, found at %s", want, p));
+        dragSteps(p, 2, 0, 20);
+        const face = qf("cenX") + qf("sizeX") * 0.5;
+        if (!(fabs(face - 0.3923) <= 1e-4))
+            fails ~= format("box-size-offlattice: +X face expected 0.3923, got %.6f", face);
         cmd("tool.set prim.cube off");
         ++ran;
     }
@@ -383,7 +400,7 @@ unittest { // handle drags under grid snap: not trapped; a released element snap
         ++ran;
     }
 
-    assert(ran == 8, format("population: %d box handle cells ran, expected 8", ran));
+    assert(ran == 9, format("population: %d box handle cells ran, expected 9", ran));
     string[] names;   // the red cells by name first: the runner shows 8 lines
     foreach (f; fails) names ~= f[0 .. f.indexOf(':')];
     assert(fails.length == 0, format("%d of 8 box handle cells red (%-(%s, %)):\n  %-(%s\n  %)",
