@@ -337,3 +337,12 @@ unittest {
                    c.name, v0.x, v0.y, v0.z, c.v0.x, c.v0.y, c.v0.z));
     }
 }
+
+unittest { // the ring normal winds with the first two chain points, not with the
+           // fit's own sign: the cube rig walked backwards (A, E, C, B) faces +Y,
+           // takes the identity frame, and starts at B — read law (the walk
+           // direction itself is uncaptured, card RA-DIR)
+    auto r = raRig();
+    assert(startOf([r[0], r[3], r[2], r[1]]) == 3, "reversed chain starts at B");
+    assert(startOf(r) == 3, "forward chain starts at E");
+}
