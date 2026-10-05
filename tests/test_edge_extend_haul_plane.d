@@ -16,6 +16,8 @@
 //   (a) the first press, Move bank on: the bank's own off-handle press;
 //   (b) a later press off the drawn handle: the same route, an open operation;
 //   (c) the first press, Move bank off: no bank asked — the total miss.
+// (d) keeps the snap's reference: with press and first motion in one frame,
+// a vertex snap still lands the HANDLE on the target (as before 9450).
 
 import edge_extend_gesture_helpers;
 import http_client : getJson, postJson;
@@ -130,4 +132,29 @@ unittest { // (c) first press, Move bank off: the total miss
     auto c = viewCentre();
     haulAt(Px(c.x - 260, c.y + 230), "(c) total miss", Offset(0, 0, 0));
     assert(undoLen() == 0, format("(c) a haul is a live session step, no history row: %d", undoLen()));
+}
+
+unittest { // (d) a vertex snap on the haul's first motion, in the press's own frame
+    // The snap moves the HANDLE onto the target: its delta is measured from
+    // where the handle is drawn, so the press must leave the Move bank posed
+    // there even before the frame re-poses it (the haul's grab sits at the
+    // press point). Press and first motion share one frame.
+    quadRig(true);
+    cmd("tool.pipe.attr snap types vertex");
+    cmd("tool.pipe.attr snap enabled true");
+    auto vp = viewportFromCameraMatrices();
+    float tx, ty;
+    assert(projectToWindow(DV(0.3f, 0.4f, 0.3f), vp, tx, ty), "(d) rig: the target vertex is off camera");
+    auto c = viewCentre();
+    immutable Px p = Px(c.x - 260, c.y + 230), q = Px(cast(int) tx, cast(int) ty);
+    play(format(`{"t":20.000,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,"state":0,"mod":0}` ~ "\n"
+              ~ `{"t":200.000,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n"
+              ~ `{"t":200.000,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":%d,"yrel":%d,"state":1,"mod":0}` ~ "\n",
+                p.x, p.y, p.x, p.y, q.x, q.y, q.x - p.x, q.y - p.y));
+    immutable Offset o = offset();
+    release(q);
+    cmd("tool.pipe.attr snap enabled false");
+    assert(apart([o.x, o.y, o.z], [0.3, 0.0, 0.6]) <= 1e-4,
+        format("(d) the snapped haul did not land the handle (0, 0.4, -0.3) on the vertex (0.3, 0.4, 0.3): "
+            ~ "offset %s", o));
 }
