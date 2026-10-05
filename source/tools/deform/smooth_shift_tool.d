@@ -366,7 +366,7 @@ public:
         return SmoothShiftParamProjection(interactiveParamEdit, active, built,
             engaged, thicken_, sharp_, shift_, scale_, maxAngle_);
     }
-    final PreparedSmoothShiftParamImage buildPreparedParamUpdate(string, ref Mesh live) {
+    final PreparedSmoothShiftParamImage buildPreparedParamUpdate(string, ref const Mesh live) {
         PreparedSmoothShiftParamImage image;
         image.valid = true; image.expected = paramProjection();
         image.expectedLive = MeshSnapshot.capture(live);

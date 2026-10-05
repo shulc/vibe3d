@@ -271,7 +271,7 @@ public:
         return VertexMergeParamProjection(interactiveParamEdit, active, built,
             dist_);
     }
-    final PreparedVertexMergeParamImage buildPreparedParamUpdate(string, ref Mesh live) {
+    final PreparedVertexMergeParamImage buildPreparedParamUpdate(string, ref const Mesh live) {
         PreparedVertexMergeParamImage image;
         image.valid = true; image.expected = paramProjection();
         image.expectedLive = MeshSnapshot.capture(live);

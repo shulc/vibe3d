@@ -330,7 +330,7 @@ public:
         return PolyBevelParamProjection(interactiveParamEdit, active, built,
             group_, square_, opApplied_, inset_, shift_, segments_, opIndex_);
     }
-    final PreparedPolyBevelParamImage buildPreparedParamUpdate(string, ref Mesh live) {
+    final PreparedPolyBevelParamImage buildPreparedParamUpdate(string, ref const Mesh live) {
         PreparedPolyBevelParamImage image;
         image.valid = true; image.expected = paramProjection();
         image.expectedLive = MeshSnapshot.capture(live);

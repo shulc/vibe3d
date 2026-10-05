@@ -670,7 +670,7 @@ public:
     }
 
     final PreparedEdgeExtendParamImage buildPreparedParamUpdate(
-            string name, ref Mesh live) {
+            string name, ref const Mesh live) {
         PreparedEdgeExtendParamImage image; image.valid = true; image.name = name;
         image.expectedActive = active; image.expectedBuilt = built;
         image.expectedMove = moveHandle_; image.expectedRotate = rotateHandle_;

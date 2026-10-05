@@ -269,7 +269,7 @@ public:
         return VertexBevelParamProjection(interactiveParamEdit, active, built,
             inset_);
     }
-    final PreparedVertexBevelParamImage buildPreparedParamUpdate(string, ref Mesh live) {
+    final PreparedVertexBevelParamImage buildPreparedParamUpdate(string, ref const Mesh live) {
         PreparedVertexBevelParamImage image;
         image.valid = true; image.expected = paramProjection();
         image.expectedLive = MeshSnapshot.capture(live);

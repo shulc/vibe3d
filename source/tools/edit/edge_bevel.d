@@ -286,7 +286,7 @@ public:
         return EdgeBevelParamProjection(interactiveParamEdit, active, built,
             widthMode_, width_, roundLevel_);
     }
-    final PreparedEdgeBevelParamImage buildPreparedParamUpdate(string, ref Mesh live) {
+    final PreparedEdgeBevelParamImage buildPreparedParamUpdate(string, ref const Mesh live) {
         PreparedEdgeBevelParamImage image;
         image.valid = true; image.expected = paramProjection();
         image.expectedLive = MeshSnapshot.capture(live);

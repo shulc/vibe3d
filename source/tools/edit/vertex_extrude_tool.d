@@ -273,7 +273,7 @@ public:
         return VertexExtrudeParamProjection(interactiveParamEdit, active, built,
             shift_, width_);
     }
-    final PreparedVertexExtrudeParamImage buildPreparedParamUpdate(string, ref Mesh live) {
+    final PreparedVertexExtrudeParamImage buildPreparedParamUpdate(string, ref const Mesh live) {
         PreparedVertexExtrudeParamImage image;
         image.valid = true; image.expected = paramProjection();
         image.expectedLive = MeshSnapshot.capture(live);

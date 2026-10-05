@@ -265,7 +265,7 @@ public:
         image.active = false; image.built = false; image.dragPart = -1;
         image.clearHaul = true; image.valid = true; return image;
     }
-    final RadialArrayTransitionImage buildPreparedParamImage(ref Mesh live) {
+    final RadialArrayTransitionImage buildPreparedParamImage(ref const Mesh live) {
         RadialArrayTransitionImage image;
         image.kind = PreparedRadialArrayTransitionKind.Param;
         image.valid = true; image.expectedActive = active;

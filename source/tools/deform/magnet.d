@@ -268,7 +268,7 @@ public:
         if (pname == "dist" && dragging && built) rebuildPreview();
     }
     final PreparedMagnetParamImage buildPreparedParamUpdate(string,
-            ref Mesh live) {
+            ref const Mesh live) {
         PreparedMagnetParamImage image;
         image.valid = true; image.expectedActive = active;
         image.expectedDragging = dragging; image.expectedBuilt = built;

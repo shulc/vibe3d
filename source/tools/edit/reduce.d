@@ -203,7 +203,7 @@ public:
         return ReductionParamProjection(interactiveParamEdit, active, built,
             pb_, ratio_);
     }
-    final PreparedReductionParamImage buildPreparedParamUpdate(string, ref Mesh live) {
+    final PreparedReductionParamImage buildPreparedParamUpdate(string, ref const Mesh live) {
         PreparedReductionParamImage image;
         image.valid = true; image.expected = paramProjection();
         image.expectedLive = MeshSnapshot.capture(live);

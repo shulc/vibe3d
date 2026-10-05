@@ -269,6 +269,15 @@ unittest {
         check(!s.context.validate(), name ~ ": a stale image validated");
         check(R.count(s.layer.meshRef()) == staleBefore, name ~ ": stale wrote");
 
+        // Moved mesh: a mesh write after prepare is refused at validate (the
+        // image's live witness), and the install never runs.
+        auto mv = Rig!R.make(true, true);
+        mv.context.setResourceIdentity(7, 11);
+        check(mv.tool.prepareParamChanged(R.armedName, mv.context, mv.layer,
+            GpuUploadOwner.fakeForTest(&mv.gpu)).accepted, name ~ ": moved-mesh prepare");
+        mv.layer.meshRef().vertices[0].x += 0.5f;
+        check(!mv.context.validate(), name ~ ": an image over a moved mesh validated");
+
         // Refusals before the slot: no context, no layer, a layer whose mesh
         // the tool does not edit.
         auto q = Rig!R.make(true, true);

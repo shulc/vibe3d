@@ -354,7 +354,7 @@ public:
     override void onParamChanged(string pname) {
         if (interactiveParamEdit) rebuildPreview();
     }
-    final PreparedArrayParamImage buildPreparedParamUpdate(string, ref Mesh live) {
+    final PreparedArrayParamImage buildPreparedParamUpdate(string, ref const Mesh live) {
         PreparedArrayParamImage image;
         image.valid = true; image.expectedActive = active;
         image.expectedBuilt = built;

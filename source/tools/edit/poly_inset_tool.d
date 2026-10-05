@@ -281,7 +281,7 @@ public:
     private PolyInsetParamProjection paramProjection() const nothrow @nogc {
         return PolyInsetParamProjection(interactiveParamEdit, active, built, inset_);
     }
-    final PreparedPolyInsetParamImage buildPreparedParamUpdate(string, ref Mesh live) {
+    final PreparedPolyInsetParamImage buildPreparedParamUpdate(string, ref const Mesh live) {
         PreparedPolyInsetParamImage image;
         image.valid = true; image.expected = paramProjection();
         image.expectedLive = MeshSnapshot.capture(live);

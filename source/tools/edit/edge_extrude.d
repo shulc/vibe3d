@@ -330,7 +330,7 @@ public:
         return EdgeExtrudeParamProjection(interactiveParamEdit, active, built,
             extrude_, width_);
     }
-    final PreparedEdgeExtrudeParamImage buildPreparedParamUpdate(string, ref Mesh live) {
+    final PreparedEdgeExtrudeParamImage buildPreparedParamUpdate(string, ref const Mesh live) {
         PreparedEdgeExtrudeParamImage image;
         image.valid = true; image.expected = paramProjection();
         image.expectedLive = MeshSnapshot.capture(live);

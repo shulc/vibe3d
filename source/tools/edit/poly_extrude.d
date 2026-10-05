@@ -302,7 +302,7 @@ public:
             distance_, shiftX_, shiftY_, shiftZ_,
             extentFrameX, extentFrameY, extentFrameZ);
     }
-    final PreparedPolyExtrudeParamImage buildPreparedParamUpdate(string, ref Mesh live) {
+    final PreparedPolyExtrudeParamImage buildPreparedParamUpdate(string, ref const Mesh live) {
         PreparedPolyExtrudeParamImage image;
         image.valid = true; image.expected = paramProjection();
         image.expectedLive = MeshSnapshot.capture(live);

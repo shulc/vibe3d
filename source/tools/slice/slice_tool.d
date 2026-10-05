@@ -1450,7 +1450,7 @@ public:
     }
 
     final PreparedSliceParamImage buildPreparedParamUpdate(
-            string pname, ref Mesh live) {
+            string pname, ref const Mesh live) {
         PreparedSliceParamImage image;
         image.valid = true; image.pname = pname;
         image.recognized = preparedParamRecognized(pname);

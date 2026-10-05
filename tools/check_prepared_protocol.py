@@ -1626,6 +1626,30 @@ for forbidden in ("resetTransientPipeStages(", "applyStickyToolDefaults(",
     if forbidden in prepare_body:
         fail("P1.0c prepareArm contains a legacy live-write bypass: " + forbidden)
 
+# Task 9489: the param door runs only on prepareArm's FRESH candidate (no tool
+# is armed or seeded when it is built), which is why no state-only param
+# image needs a mesh. Two production calls, both in prepareArm, and the
+# candidate comes from the factory.
+DOOR_CALL = re.compile(r"(?<!bool )\bprepareDoorParamChanged\s*\(")
+def door_call_gate(texts, body):
+    calls = sum(len(DOOR_CALL.findall(without_unittests(mask_d_comments(text))))
+                for text in texts.values() if "prepareDoorParamChanged" in text)
+    return (calls == 2 and len(DOOR_CALL.findall(body)) == 2 and
+            "result.candidate_.prepareFrom(factory, retainedOld);" in body and
+            "auto candidate = result.candidate_.preparedCandidate();" in body)
+if not door_call_gate(prepared_source_texts, prepare_body):
+    fail("9489 param door reached outside prepareArm's fresh candidate")
+_door_mutant = dict(prepared_source_texts)
+_door_key = next(k for k in _door_mutant if k.name == "mirror.d")
+_door_mutant[_door_key] += ("\nvoid armedDoor(PreparedToolParamDoorClient d) {\n"
+                            "    d.prepareDoorParamChanged(\"x\", null, null, 0, 0);\n}\n")
+if door_call_gate(_door_mutant, prepare_body):
+    fail("9489 door mutation did not RED: a third production call")
+if door_call_gate(prepared_source_texts, prepare_body.replace(
+        "result.candidate_.prepareFrom(factory, retainedOld);",
+        "result.candidate_.prepare(retainedOld, retainedOld);", 1)):
+    fail("9489 door mutation did not RED: candidate not from the factory")
+
 # Retained below as the P1.0a historical scanner specimen. Its synthetic
 # stubs described the former inert seam and are intentionally not executable
 # against the production P1.0c transaction.
