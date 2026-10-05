@@ -248,3 +248,4 @@ drop 3 11 9411 posToPrincipalPlane's axis-locked no-ray arm (never reached by an
 drop 0 3 9429 topology_step_mixin_census_test: the per-file composition asserts and a weak carrier floor folded into the compile-time getLocation pin of every client (same lane, before merge)
 drop 1 2 9445 falloff plumbing census: the call-site roster and the mixin member pin (change detectors, not fences); the symmetry wiring row on the removed decomposed scale kernel body
 drop 0 1 9430 tool_session_policy_test: the session-less loop branch (an empty population, 0 rows) and its population pin removed; the command-wrapper family's session-less policy pinned beside the default one
+drop 1 4 9475 mirror_walker_census_test: the symmetry-overlay census (c3) and the overlay lattice asserts go with the overlay (the reference draws none); auto-plane cell re-pinned
