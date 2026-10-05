@@ -11,7 +11,10 @@ import math;
 import params : Param;
 import shader : LitShader;
 import tools.create.primitive_create_tool : SizedRadialCreateTool;
-import tools.create.create_common : primitivePlacementFrame;
+import tools.create.create_common : primitivePlacementFrame, ringCount;
+
+/// Kernel cap on the quad-ball / tessellation order (the captured maximum, K-A3).
+enum int MAX_SPHERE_ORDER = 32;
 import prepared_record_context : PreparedRecordContext, PreparedToolParamDoorClient;
 import document : Layer;
 
@@ -50,10 +53,8 @@ struct SphereParams {
 // ---------------------------------------------------------------------------
 private void buildSphereGlobeAxisY(Mesh* dst, const ref SphereParams p)
 {
-    int S = p.sides;
-    int N = p.segments;
-    if (S < 3) S = 3;
-    if (N < 2) N = 2;
+    const int S = ringCount(p.sides, 3);
+    const int N = ringCount(p.segments, 2);
 
     // Degenerate-radii guard (task 0315, mirrors buildTube's outerRadius
     // floor): sizeX/Y/Z are the per-world-axis ellipsoid radii. Any one
@@ -172,8 +173,7 @@ private static immutable float[] QBALL_SCALE = [
 
 void buildSphereQuadBall(Mesh* dst, const ref SphereParams p)
 {
-    int n = p.order;
-    if (n < 0) n = 0;
+    const int n = p.order < 0 ? 0 : p.order > MAX_SPHERE_ORDER ? MAX_SPHERE_ORDER : p.order;
 
     int nseg = n + 1;          // segments per cube edge
     int nv1d = n + 2;          // verts along one cube edge
@@ -329,8 +329,7 @@ private static immutable int[3][20] ICOSA_FACES = [
 
 void buildSphereTess(Mesh* dst, const ref SphereParams p)
 {
-    int n = p.order;
-    if (n < 0) n = 0;
+    const int n = p.order < 0 ? 0 : p.order > MAX_SPHERE_ORDER ? MAX_SPHERE_ORDER : p.order;
     int S = n + 1;     // subdivisions per edge
 
     Vec3[12] base;
@@ -478,8 +477,7 @@ private void buildEllipseBase(Mesh* dst, int sides,
                               Vec3 axis1, float r1,
                               Vec3 axis2, float r2)
 {
-    int S = sides;
-    if (S < 3) S = 3;
+    const int S = ringCount(sides, 3);
 
     uint[] ring;
     ring.length = S;
@@ -567,11 +565,9 @@ public:
                 Param.float_("sizeX", "Radius X",   &params_.sizeX, 0.5f).min(0.0f),
                 Param.float_("sizeY", "Radius Y",   &params_.sizeY, 0.5f).min(0.0f),
                 Param.float_("sizeZ", "Radius Z",   &params_.sizeZ, 0.5f).min(0.0f),
-                // task 0314: sides/segments feed the latitude-ring loops
-                // directly; `.enforceBounds()` makes the declared hint
-                // authoritative on the headless JSON path.
-                Param.int_("sides",    "Sides",    &params_.sides,    24).min(3).max(256).enforceBounds(),
-                Param.int_("segments", "Segments", &params_.segments, 24).min(2).max(256).enforceBounds(),
+                // The attribute doors bound these (tool_attr_bounds.d); the kernel caps them.
+                Param.int_("sides",    "Sides",    &params_.sides,    24),
+                Param.int_("segments", "Segments", &params_.segments, 24),
                 Param.intEnum_("axis", "Axis", &params_.axis,
                     [IntEnumEntry(0, "x", "X"),
                      IntEnumEntry(1, "y", "Y"),
@@ -591,20 +587,16 @@ public:
             Param.float_("sizeX", "Radius X",   &params_.sizeX, 0.5f).min(0.0f),
             Param.float_("sizeY", "Radius Y",   &params_.sizeY, 0.5f).min(0.0f),
             Param.float_("sizeZ", "Radius Z",   &params_.sizeZ, 0.5f).min(0.0f),
-            // task 0314: sides/segments feed the latitude-ring loops
-            // directly; `.enforceBounds()` makes the declared hint
-            // authoritative on the headless JSON path.
-            Param.int_("sides",    "Sides",    &params_.sides,    24).min(3).max(256).enforceBounds(),
-            Param.int_("segments", "Segments", &params_.segments, 24).min(2).max(256).enforceBounds(),
+            // The attribute doors bound these (tool_attr_bounds.d); the kernel caps them.
+            Param.int_("sides",    "Sides",    &params_.sides,    24),
+            Param.int_("segments", "Segments", &params_.segments, 24),
             Param.intEnum_("axis", "Axis", &params_.axis,
                 [IntEnumEntry(0, "x", "X"),
                  IntEnumEntry(1, "y", "Y"),
                  IntEnumEntry(2, "z", "Z")],
                 1),
-            // task 0314: order drives O(order^2) subdivision (qball/tess);
-            // `.enforceBounds()` makes the declared hint authoritative on
-            // the headless JSON path.
-            Param.int_("order", "Subdivision Level", &params_.order, 2).min(0).max(16).enforceBounds(),
+            // The attribute doors bound these (tool_attr_bounds.d); the kernel caps them.
+            Param.int_("order", "Subdivision Level", &params_.order, 2),
         ];
     }
 

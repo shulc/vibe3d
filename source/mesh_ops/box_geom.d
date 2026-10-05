@@ -32,6 +32,9 @@ import std.math : abs, sqrt, sin, cos, PI;
 // (radius/segmentsR/sharp/axis), min/max alternative spec, patch
 // (subpatch), and flip (plane normal) are added in 6.1b-e.
 // ---------------------------------------------------------------------------
+/// Kernel cap on every box segment count (DoS backstop; segmentsR is O(n^2)).
+enum int MAX_BOX_SEGMENTS = 64;
+
 struct BoxParams {
     float cenX  = 0.0f, cenY  = 0.0f, cenZ  = 0.0f;
     float sizeX = 1.0f, sizeY = 1.0f, sizeZ = 1.0f;
@@ -1173,9 +1176,17 @@ private void buildRoundedPlane(Mesh* dst, const ref BoxParams p)
 // Rounded plane (radius > 0, any size = 0): routes to buildRoundedPlane.
 // Phase 6.1d — covers XZ/YZ/XY planes.
 // ---------------------------------------------------------------------------
-void buildCuboidParametric(Mesh* dst, const ref BoxParams p)
+void buildCuboidParametric(Mesh* dst, const ref BoxParams stored)
 {
+    import std.algorithm : min;
     import std.typecons : Tuple, tuple;
+
+    // The stored counts are unbounded above (task 9492): cap them here.
+    BoxParams p = stored;
+    p.segmentsX = min(p.segmentsX, MAX_BOX_SEGMENTS);
+    p.segmentsY = min(p.segmentsY, MAX_BOX_SEGMENTS);
+    p.segmentsZ = min(p.segmentsZ, MAX_BOX_SEGMENTS);
+    p.segmentsR = min(p.segmentsR, MAX_BOX_SEGMENTS);
 
     // Task 0901: every path below (the rounded-cube/-plane delegates and the
     // flat/segmented-cuboid body) only ever calls `dst.addFace` — this is a

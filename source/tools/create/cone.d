@@ -6,6 +6,7 @@ import math;
 import params : Param;
 import shader : LitShader;
 import tools.create.primitive_create_tool : SizedRadialCreateTool;
+import tools.create.create_common : ringCount;
 
 import std.math : sin, cos, PI, abs, sqrt;
 
@@ -52,10 +53,8 @@ struct ConeParams {
 // ---------------------------------------------------------------------------
 void buildCone(Mesh* dst, const ref ConeParams p)
 {
-    int S = p.sides;
-    int N = p.segments;
-    if (S < 3) S = 3;
-    if (N < 1) N = 1;
+    const int S = ringCount(p.sides, 3);
+    const int N = ringCount(p.segments, 1);
 
     int axisIdx = p.axis;
     if (axisIdx < 0 || axisIdx > 2) axisIdx = 1;
@@ -171,12 +170,9 @@ public:
             Param.float_("sizeX", "Size X",     &params_.sizeX, 1.0f).min(0.0f),
             Param.float_("sizeY", "Size Y",     &params_.sizeY, 1.0f).min(0.0f),
             Param.float_("sizeZ", "Size Z",     &params_.sizeZ, 1.0f).min(0.0f),
-            // task 0314: sides/segments feed the ring-vertex loops directly
-            // (O(sides*segments)); `.enforceBounds()` makes the declared
-            // hint authoritative on the headless JSON path, same fix as
-            // prim.cube's segmentsR.
-            Param.int_("sides",    "Sides",    &params_.sides,    24).min(3).max(256).enforceBounds(),
-            Param.int_("segments", "Segments", &params_.segments, 1 ).min(1).max(256).enforceBounds(),
+            // The attribute doors bound these (tool_attr_bounds.d); the kernel caps them.
+            Param.int_("sides",    "Sides",    &params_.sides,    24),
+            Param.int_("segments", "Segments", &params_.segments, 1 ),
             Param.intEnum_("axis", "Axis", &params_.axis,
                 [IntEnumEntry(0, "x", "X"),
                  IntEnumEntry(1, "y", "Y"),

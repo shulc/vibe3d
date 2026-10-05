@@ -945,17 +945,13 @@ public:
             Param.float_("sizeX", "Size X",     &params_.sizeX, 1.0f).min(0.0f),
             Param.float_("sizeY", "Size Y",     &params_.sizeY, 1.0f).min(0.0f),
             Param.float_("sizeZ", "Size Z",     &params_.sizeZ, 1.0f).min(0.0f),
-            Param.int_("segmentsX", "Segments X", &params_.segmentsX, 1).min(1).max(64).enforceBounds(),
-            Param.int_("segmentsY", "Segments Y", &params_.segmentsY, 1).min(1).max(64).enforceBounds(),
-            Param.int_("segmentsZ", "Segments Z", &params_.segmentsZ, 1).min(1).max(64).enforceBounds(),
-            Param.float_("radius",    "Radius",          &params_.radius,    0.0f).min(0.0f),
-            // segmentsR (task 0314 CRITICAL): the rounded-corner builder is
-            // O(segmentsR^2) — unclamped, segmentsR:1000 allocates 8M+
-            // verts / GB-scale RSS / hangs the main thread. `.enforceBounds()`
-            // makes the already-declared `.min(1).max(64)` hint authoritative
-            // on the headless JSON path too (previously UI-slider-only).
-            Param.int_(  "segmentsR", "Radius Segments", &params_.segmentsR, 3  )
-                .min(1).max(64).enforceBounds(),
+            Param.int_("segmentsX", "Segments X", &params_.segmentsX, 1),
+            Param.int_("segmentsY", "Segments Y", &params_.segmentsY, 1),
+            Param.int_("segmentsZ", "Segments Z", &params_.segmentsZ, 1),
+            Param.float_("radius",    "Radius",          &params_.radius,    0.0f),
+            // segmentsR: the rounded-corner builder is O(segmentsR^2); its
+            // kernel caps it (MAX_BOX_SEGMENTS, box_geom.d).
+            Param.int_(  "segmentsR", "Radius Segments", &params_.segmentsR, 3  ),
             Param.bool_( "sharp",     "Sharp",           &params_.sharp,     false),
             // axis is auto-picked from the most-facing workplane normal
             // at choosePlane() time; hidden from the Property Panel but
@@ -1037,7 +1033,7 @@ public:
     /// Disable `sharp` when radius == 0 (captured K-A3: enabled at any
     /// segmentsR once the radius is non-zero).
     override bool paramEnabled(string name) const {
-        if (name == "sharp")
+        if (name == "sharp" || name == "segmentsR")
             return params_.radius > 1e-9f;
         return true;
     }

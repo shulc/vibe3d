@@ -52,6 +52,7 @@ import forms;
 // stay headless-unit-testable without dragging d_imgui into a test link).
 import forms : valueToArgToken, substituteQuery, currentEnumTag;
 import params : Param, ParamProvider, MixedValueProvider, kMixedPlaceholder;
+import tool_attr_bounds : applyToolAttrBound;
 
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
@@ -194,6 +195,9 @@ class FormsPanel {
         // rebuilds its list on every call, so snapshotting once here means the
         // whole form's controls share one rebuild rather than one-per-control.
         Param[] snapshot = provider.params();
+        // A tool's widgets range over its captured bounds (task 9492); the
+        // write itself goes through `tool.attr`, which clamps.
+        foreach (ref p; snapshot) applyToolAttrBound(activeToolId, p);
 
         if (form.showLabel && form.label.length)
             ImGui.SeparatorText(form.label);

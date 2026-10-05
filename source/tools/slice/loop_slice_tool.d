@@ -17,7 +17,7 @@ import math;
 // `bandFaces` branch, source/mesh_ops/loop_slice.d), not re-derive it.
 // `mesh.d` also imports these (privately, for its own mixin) but a private
 // import is not transitive, so this tool needs its own.
-import mesh_ops.loop_slice : bandWalk, BandCell, loopSliceRingEdges,
+import mesh_ops.loop_slice : MAX_LOOP_SLICE_COUNT, bandWalk, BandCell, loopSliceRingEdges,
     collectEdgeRing, insertEdgeLoopsMulti, kLoopSliceEditScope;
 import editmode : EditMode;
 import params : Param, IntEnumEntry, wireTagForValue;
@@ -658,16 +658,10 @@ public:
             // on-screen slider geometry is deliberately remembered.)
             Param.float_("position", "Position", &positionProxy_, 0.5f)
                  .min(0.001f).max(0.999f).transient(),
-            // `.max(256).enforceBounds()` is the PRIMARY defense here, not
-            // suspenders: `onParamChanged("count")` synchronously calls
-            // syncPositionsToCount() (below), which does O(count) work
-            // BEFORE any apply/doApply runs. injectParamsInto clamps the
-            // field first (enforceBounds), strictly before it invokes
-            // onParamChanged, so a raw `tool.attr … count 1e9` HTTP write
-            // never reaches the growth loop with an unclamped value. The
-            // bound matches Mesh.insertEdgeLoopsMulti's internal
-            // `MAX_LOOP_SLICE_COUNT` apply-time cap.
-            Param.int_("count", "Count", &count_, 1).min(1).max(256).enforceBounds(),
+            // The attribute doors bound count (tool_attr_bounds.d); the
+            // O(count) re-fit in onParamChanged caps it at the kernel's
+            // MAX_LOOP_SLICE_COUNT before it allocates.
+            Param.int_("count", "Count", &count_, 1),
             Param.int_("current", "Current", &current_, 0).min(0).transient(),
             Param.intEnum_("edit", "Edit", cast(int*)&edit_, editTable, cast(int)Edit.Move),
             Param.intEnum_("mode", "Mode", cast(int*)&mode_, modeTable, cast(int)Mode.Free),
@@ -1799,7 +1793,7 @@ private:
 
     // Fit the stored list to `count_` without the Mode law.
     void fitPositionsToCount() {
-        if (count_ < 1) count_ = 1;
+        count_ = clamp(count_, 1, MAX_LOOP_SLICE_COUNT);
         positions_ = fittedPositions(positions_, count_);
         if (current_ >= count_) current_ = count_ - 1;
         if (current_ < 0)       current_ = 0;
@@ -1810,7 +1804,8 @@ private:
     // by inserting the new slices evenly after `current` (toward 1.0 when
     // `current` is the last), shrinks by truncating, then re-mirrors.
     void syncPositionsToCount() {
-        immutable size_t len = positions_.length, n = count_ < 1 ? 1 : count_;
+        immutable size_t len = positions_.length,
+                         n = clamp(count_, 1, MAX_LOOP_SLICE_COUNT);
         if (mode_ == Mode.Symmetry && n > len && len > 0) {
             immutable size_t c = min(cast(size_t)max(current_, 0), len - 1);
             immutable float lo = positions_[c], hi = c + 1 < len ? positions_[c + 1] : 1.0f;

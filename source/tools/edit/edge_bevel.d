@@ -196,11 +196,9 @@ public:
     override EditMode[] supportedModes() const { return [EditMode.Edges]; }
 
     override Param[] params() {
-        import mesh : MAX_ROUND_LEVEL;
         return [
             Param.float_("width", "Width", &width_, 0.0f),
-            Param.int_("roundLevel", "Round Level", &roundLevel_, 0)
-                .min(0).max(MAX_ROUND_LEVEL).enforceBounds(),
+            Param.int_("roundLevel", "Round Level", &roundLevel_, 0),
             Param.bool_("widthMode", "Width Mode", &widthMode_, false),
         ];
     }

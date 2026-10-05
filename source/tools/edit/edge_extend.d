@@ -411,10 +411,8 @@ public:
             Param.float_("scaleX",  "Scale X",     &scaleX_,  1.0f),
             Param.float_("scaleY",  "Scale Y",     &scaleY_,  1.0f),
             Param.float_("scaleZ",  "Scale Z",     &scaleZ_,  1.0f),
-            // `.max(1024).enforceBounds()` matches Mesh.extendEdgesByMask's
-            // internal `MAX_EXTEND_SEGMENTS` cap — the Param bound alone is
-            // a UI-only hint and does not clamp a raw HTTP write.
-            Param.int_  ("segments","Segments",    &segments_, 1).min(1).max(1024).enforceBounds(),
+            // The attribute doors bound it (tool_attr_bounds.d); the kernel caps it (MAX_EXTEND_SEGMENTS).
+            Param.int_  ("segments","Segments",    &segments_, 1),
             // Handle banks — move ON, rotate/scale OFF (task 1610). Flipping
             // one goes straight through onParamChanged → syncBankFlags(), so
             // the panel checkbox and `tool.attr edge.extend rotateHandle true`

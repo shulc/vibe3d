@@ -762,6 +762,13 @@ SnapStage liveSnapStage() {
     return cast(SnapStage) g_pipeCtx.pipeline.findByTask(TaskCode.Snap);
 }
 
+/// The global snapping state (the snap stage's master enable); false with no
+/// pipe. A tool's own snap rows are disabled while it is off (K-A3 PF-3).
+bool snappingOn() {
+    auto st = liveSnapStage();
+    return st !is null && st.enabled;
+}
+
 /// The current drag's snap guides: the registry plus each pipe stage's own
 /// (`Stage.snapGuideSources`). ≥ 1 lets the snap key run mid-drag.
 size_t heldDragGuideCount() {

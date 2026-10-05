@@ -518,7 +518,7 @@ public:
             Param.vec3_("center", "Center", &params_.center, Vec3(0, 0, 0)),
             Param.bool_("invertPolys", "Invert Polygons", &params_.invertPolys, true),
             Param.bool_("mergeVerts", "Merge Vertices", &params_.mergeVerts, true),
-            Param.float_("distance", "Distance", &params_.distance, 0.001f).min(0.0f),
+            Param.float_("distance", "Distance", &params_.distance, 0.001f),
             // --- live as of v2 (task 0230): angle drives the rotate box + toolNormal ---
             Param.float_("angle", "Angle", &params_.angle, 180.0f).angle(),
             // Mode offers Axis only (Free-Rotation/Three-Points deferred); the

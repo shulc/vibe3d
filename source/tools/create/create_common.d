@@ -5,6 +5,15 @@ import math : Vec3, Viewport, dot, isOrtho, matMul4, matrixMirrorsWinding, norma
 import std.math : abs;
 import viewgrid : vectorSnap, viewVectorQuantum, viewWorkPlaneAnchor;
 
+/// Kernel cap on a primitive's ring counts (sides / segments): the captured
+/// maximum (K-A3), also the DoS backstop for the unclamped stored counts.
+enum int MAX_PRIM_RING = 1024;
+
+/// A stored ring count as a kernel builds it: floored at `lo`, capped.
+int ringCount(int v, int lo) pure nothrow @nogc @safe {
+    return v < lo ? lo : v > MAX_PRIM_RING ? MAX_PRIM_RING : v;
+}
+
 import toolpipe.pipeline       : g_pipeCtx;
 import toolpipe.packets        : SubjectPacket, WorkplanePacket;
 import toolpipe.stage          : TaskCode;

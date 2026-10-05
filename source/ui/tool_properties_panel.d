@@ -83,8 +83,8 @@ public:
             xf.drawProperties();
         }
     }
-    void drawToolParams(PropertyPanel panel) {
-        panel.draw(activeTool_(), session_);
+    void drawToolParams(PropertyPanel panel, string toolId) {
+        panel.draw(activeTool_(), session_, toolId);
     }
     void drawToolCustom() {
         auto tool = activeTool_();
@@ -334,7 +334,7 @@ void drawToolPropertiesPanel(ToolPropertiesReadRole read,
                 // values via the form.
                 actions.drawFormedToolCustom();
             } else {
-                actions.drawToolParams(propertyPanel); // schema-driven params first
+                actions.drawToolParams(propertyPanel, read.activeToolId()); // schema-driven params first
                 actions.drawToolCustom();              // tool-specific custom UI after
             }
             } // if (read.hasActiveTool())

@@ -10,7 +10,7 @@ import params : Param;
 import handler : gizmoSize;
 import shader : LitShader;
 import tools.create.primitive_create_tool : HandledCreateTool;
-import tools.create.create_common :
+import tools.create.create_common : ringCount,
                                     screenToPlacementLocal, snapLocalHit,
                                     workplaneCursorPlaneHit, baseDragPoint, syncEventViewport;
 import editmode : EditMode;
@@ -57,10 +57,8 @@ struct TorusParams {
 // ---------------------------------------------------------------------------
 void buildTorus(Mesh* dst, const ref TorusParams p)
 {
-    int M = p.majorSegments;
-    int N = p.minorSegments;
-    if (M < 3) M = 3;
-    if (N < 3) N = 3;
+    const int M = ringCount(p.majorSegments, 3);
+    const int N = ringCount(p.minorSegments, 3);
 
     int axisIdx = p.axis;
     if (axisIdx < 0 || axisIdx > 2) axisIdx = 1;
@@ -201,13 +199,11 @@ public:
             Param.float_("cenX",        "Position X",       &params_.cenX,         0.0f),
             Param.float_("cenY",        "Position Y",       &params_.cenY,         0.0f),
             Param.float_("cenZ",        "Position Z",       &params_.cenZ,         0.0f),
-            Param.float_("majorRadius", "Major Radius",     &params_.majorRadius,  1.0f).min(0.0f),
+            Param.float_("majorRadius", "Major Radius",     &params_.majorRadius,  1.0f),
             Param.float_("minorRadius", "Minor Radius",     &params_.minorRadius,  0.25f).min(0.0f),
-            // task 0314: majorSegments*minorSegments is the full vertex
-            // count (O(M*N)); `.enforceBounds()` makes the declared hint
-            // authoritative on the headless JSON path.
-            Param.int_("majorSegments", "Major Segments",   &params_.majorSegments, 24).min(3).max(256).enforceBounds(),
-            Param.int_("minorSegments", "Minor Segments",   &params_.minorSegments, 12).min(3).max(256).enforceBounds(),
+            // The attribute doors bound these (tool_attr_bounds.d); the kernel caps them.
+            Param.int_("majorSegments", "Major Segments",   &params_.majorSegments, 24),
+            Param.int_("minorSegments", "Minor Segments",   &params_.minorSegments, 12),
             Param.intEnum_("axis", "Axis", &params_.axis,
                 [IntEnumEntry(0, "x", "X"),
                  IntEnumEntry(1, "y", "Y"),

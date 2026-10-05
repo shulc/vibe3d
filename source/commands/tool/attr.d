@@ -8,6 +8,7 @@ import params : Param, injectParamsInto, paramToJson, wireArgs;
 import commands.tool.host : ToolHost;
 import edit_session : ParameterChangePhase, ParameterChangeSource;
 import tool : AttrImage;
+import tool_attr_bounds : applyToolAttrBound;
 
 import std.json : JSONValue, JSONType;
 
@@ -133,6 +134,8 @@ class ToolAttrCommand : Command {
             return false;
         }
 
+        // The captured bound clamps the write (task 9492, K-A3).
+        applyToolAttrBound(toolId_, ps[i]);
         // Build a single-key object and inject it.
         JSONValue pj = JSONValue(cast(JSONValue[string]) null);
         pj[attrName_] = attrValue_;

@@ -23,6 +23,7 @@ import params : Param, IntEnumEntry;
 import shader : Shader;
 import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
+import toolpipe.stages.snap : snappingOn;
 
 // mesh.clone is a linear generator followed by a clone effector. `num` is the
 // number of ADDED copies; all copies advance by the same 3-D offset. A second
@@ -91,7 +92,7 @@ public:
 
     override Param[] params() {
         return [
-            Param.int_("num", "Number of Clones", &num_, 1).min(1).max(255).enforceBounds(),
+            Param.int_("num", "Number of Clones", &num_, 1),
             Param.float_("offX", "Offset X", &offX_, 0),
             Param.float_("offY", "Offset Y", &offY_, 0),
             Param.float_("offZ", "Offset Z", &offZ_, 0),
@@ -103,11 +104,11 @@ public:
             Param.float_("angB", "Rotate Z", &angB_, 0).angle(),
             Param.bool_("between", "Between", &between_, false),
             Param.bool_("snap", "Angle Snap", &snap_, true),
-            Param.float_("snapAngle", "Angle", &snapAngle_, 45).angle().min(0),
+            Param.float_("snapAngle", "Angle", &snapAngle_, 45).angle(),
             Param.bool_("replace", "Replace Source", &replace_, false),
             Param.bool_("flip", "Invert Polygons", &flip_, false),
             Param.bool_("merge", "Merge Vertices", &merge_, false),
-            Param.float_("dist", "Distance", &dist_, 0).min(0),
+            Param.float_("dist", "Distance", &dist_, 0),
             Param.intEnum_("source", "Source", cast(int*)&source_,
                            sourceTable, cast(int)SourceMode.Active),
             Param.string_("item", "Mesh Item", &item_, ""),
@@ -116,7 +117,8 @@ public:
     override bool paramEnabled(string pname) const {
         if (pname == "dist") return merge_;
         if (pname == "item") return source_ == SourceMode.Specific;
-        if (pname == "snapAngle") return snap_;
+        if (pname == "snap") return snappingOn();
+        if (pname == "snapAngle") return snap_ && snappingOn();
         return true;
     }
 

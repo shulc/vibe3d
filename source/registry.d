@@ -296,7 +296,11 @@ public:
         foreach (id; toolKeys) {
             auto tool = toolFactories_[id]();
             toolModes[id]       = tool.supportedModes().dup;
-            toolParamsJson[id]  = paramsSchemaJson(tool.params());
+            // The door's bounds, not the declaration (task 9492).
+            import tool_attr_bounds : applyToolAttrBound;
+            auto ps = tool.params();
+            foreach (ref p; ps) applyToolAttrBound(id, p);
+            toolParamsJson[id]  = paramsSchemaJson(ps);
             toolNeedsTarget[id] = tool.needsEditTarget();
         }
     }

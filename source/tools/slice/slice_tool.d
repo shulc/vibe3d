@@ -44,7 +44,7 @@ import command_history : PreparedHistoryKind;
 import document : Layer;
 import mesh_edit_delta : MeshEditScope;
 import tools.common.session_mesh_key : SessionMeshKey;
-import toolpipe.stages.snap : liveSnapStage;
+import toolpipe.stages.snap : liveSnapStage, snappingOn;
 import toolpipe.guide : SnapGuide;
 
 struct PreparedSliceActivationImage {
@@ -1133,10 +1133,12 @@ public:
         // parallel cuts), with Split on it separates the two shells (0290). So
         // both rows stay live regardless of Split (the captured reference is not
         // split-gated for gap; task 0288).
-        // Angle (snapAngle) only matters when Angle Snap is on — grey it while
-        // snap is off (a no-op there), mirroring the reference.
+        // Angle Snap needs the global snapping state; its Angle needs both
+        // (K-A3 PF-3).
+        if (name == "snap")
+            return snappingOn();
         if (name == "snapAngle")
-            return snap_;
+            return snap_ && snappingOn();
         return true;
     }
 

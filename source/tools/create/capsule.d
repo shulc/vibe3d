@@ -6,6 +6,7 @@ import math;
 import params : Param;
 import shader : LitShader;
 import tools.create.primitive_create_tool : SizedRadialCreateTool;
+import tools.create.create_common : ringCount;
 
 import std.math : sin, cos, PI, abs, sqrt;
 
@@ -59,12 +60,9 @@ struct CapsuleParams {
 // ---------------------------------------------------------------------------
 void buildCapsule(Mesh* dst, const ref CapsuleParams p)
 {
-    int S  = p.sides;
-    int N  = p.segments;
-    int Ne = p.endsegments;
-    if (S  < 3) S  = 3;
-    if (N  < 1) N  = 1;
-    if (Ne < 2) Ne = 2;     // need at least pole + equator
+    const int S  = ringCount(p.sides, 3);
+    const int N  = ringCount(p.segments, 1);
+    const int Ne = ringCount(p.endsegments, 2);  // need at least pole + equator
 
     int axisIdx = p.axis;
     if (axisIdx < 0 || axisIdx > 2) axisIdx = 1;
@@ -217,12 +215,10 @@ public:
             Param.float_("sizeX", "Radius X",   &params_.sizeX, 1.0f).min(0.0f),
             Param.float_("sizeY", "Radius Y",   &params_.sizeY, 1.0f).min(0.0f),
             Param.float_("sizeZ", "Radius Z",   &params_.sizeZ, 1.0f).min(0.0f),
-            // task 0314: sides/segments/endsegments feed the ring-vertex
-            // loops directly; `.enforceBounds()` makes the declared hint
-            // authoritative on the headless JSON path.
-            Param.int_("sides",       "Sides",       &params_.sides,       24).min(3).max(256).enforceBounds(),
-            Param.int_("segments",    "Segments",    &params_.segments,    1 ).min(1).max(256).enforceBounds(),
-            Param.int_("endsegments", "End Segments",&params_.endsegments, 6 ).min(2).max(64).enforceBounds(),
+            // The attribute doors bound these (tool_attr_bounds.d); the kernel caps them.
+            Param.int_("sides",       "Sides",       &params_.sides,       24),
+            Param.int_("segments",    "Segments",    &params_.segments,    1 ),
+            Param.int_("endsegments", "End Segments",&params_.endsegments, 6 ),
             Param.float_("endsize",   "End Size",    &params_.endsize,     1.0f).min(0.0f),
             Param.intEnum_("axis", "Axis", &params_.axis,
                 [IntEnumEntry(0, "x", "X"),

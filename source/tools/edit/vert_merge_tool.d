@@ -164,7 +164,7 @@ public:
 
     override Param[] params() {
         return [
-            Param.float_("dist", "Distance", &dist_, 0.001f).min(0.0f).fmt("%.4f"),
+            Param.float_("dist", "Distance", &dist_, 0.001f).fmt("%.4f"),
         ];
     }
 

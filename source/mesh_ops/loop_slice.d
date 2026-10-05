@@ -7,6 +7,9 @@ import std.math : sqrt;
 import mesh_edit_delta : MeshEditScope;
 import mesh_planes : rewriteFaces, FaceSource, kNoSource;
 
+/// Kernel cap on a loop slice's cut count: the captured maximum (K-A3).
+enum int MAX_LOOP_SLICE_COUNT = 1024;
+
 // ---------------------------------------------------------------------------
 // The Loop Slice ring-walk + insertion kernel family — MODULE-LEVEL FREE
 // FUNCTIONS over the edit seam since task 1903 Stage F1 (was
@@ -666,11 +669,8 @@ bool insertEdgeLoopsMulti(ref MeshEditBatch ed, const(uint)[] seeds, const(float
 
     // DoS backstop (task 0365 P1): `positionsIn.length` scales the
     // per-position ring/vertex work below (one `addVertex` + one ring
-    // split per entry); Param `.min()` hints (loop_slice's `count`) are
-    // UI-only and do not clamp a direct/scripted caller reaching this
-    // shared kernel. Truncate rather than reject so a legitimate large
-    // request degrades to a bounded cut instead of failing outright.
-    enum size_t MAX_LOOP_SLICE_COUNT = 256;
+    // split per entry). Truncate rather than reject so a large request
+    // degrades to a bounded cut instead of failing outright.
     if (positionsIn.length > MAX_LOOP_SLICE_COUNT)
         positionsIn = positionsIn[0 .. MAX_LOOP_SLICE_COUNT];
 

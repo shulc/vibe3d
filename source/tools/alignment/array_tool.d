@@ -234,16 +234,12 @@ public:
     // three modes).
 
     override Param[] params() {
-        // Count X/Y/Z: DoS guard (code review B1) — mirrors prim.cube's
-        // segmentsR precedent (`.min(1).max(64).enforceBounds()`). Per-axis
-        // max(64) alone still lets 3 axes multiply to ~262k, so
-        // Mesh.arrayFacesGrid ALSO caps the totalSlots PRODUCT directly
-        // (defense-in-depth — it's a public Mesh method any caller can
-        // drive, not only through this panel/attr path).
+        // Count X/Y/Z are bounded at the attribute doors (tool_attr_bounds.d);
+        // Mesh.arrayFacesGrid caps their totalSlots PRODUCT.
         return [
-            Param.int_("numX", "Count X", &numX_, 2).min(1).max(64).enforceBounds(),
-            Param.int_("numY", "Count Y", &numY_, 1).min(1).max(64).enforceBounds(),
-            Param.int_("numZ", "Count Z", &numZ_, 2).min(1).max(64).enforceBounds(),
+            Param.int_("numX", "Count X", &numX_, 2),
+            Param.int_("numY", "Count Y", &numY_, 1),
+            Param.int_("numZ", "Count Z", &numZ_, 2),
             Param.float_("offX", "Offset X", &offX_, 1.0f),
             Param.float_("offY", "Offset Y", &offY_, 1.0f),
             Param.float_("offZ", "Offset Z", &offZ_, 1.0f),
@@ -260,7 +256,7 @@ public:
             Param.bool_("replace", "Replace Source", &replace_, false),
             Param.bool_("flip", "Invert Polygons", &flip_, false),
             Param.bool_("merge", "Merge Vertices", &merge_, false),
-            Param.float_("dist", "Distance", &dist_, 0.0f).min(0.0f),
+            Param.float_("dist", "Distance", &dist_, 0.0f),
             Param.intEnum_("source", "Source", cast(int*)&source_,
                            sourceTable, cast(int)SourceMode.Active),
             Param.string_("item", "Mesh Item", &item_, ""),

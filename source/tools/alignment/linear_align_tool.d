@@ -89,8 +89,7 @@ public:
             Param.enum_("mode", "Mode", &headlessMode,
                 [["line", "Line"], ["curve", "Curve"]], "line"),
             Param.bool_("uniform", "Uniform", &headlessUniform, false),
-            Param.float_("weight", "Weight", &headlessWeight, 1.0f)
-                .min(0.0f).max(1.0f).enforceBounds(),
+            Param.float_("weight", "Weight", &headlessWeight, 1.0f),
         ];
     }
 

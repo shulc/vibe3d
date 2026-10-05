@@ -3,6 +3,7 @@ module property_panel;
 import tool   : Tool, AttrImage;
 import params : Param, ParamProvider;
 import params_widgets : drawParamWidget;
+import tool_attr_bounds : applyToolAttrBound, clampStoredToBounds;
 import edit_session : EditSession, ParameterChangePhase, ParameterChangeSource;
 import toolpipe.stage : Stage;
 
@@ -23,7 +24,7 @@ import d_imgui.imgui_h;
 // lives on App alongside argsDialog.
 //
 // Usage (inside Begin/End block):
-//   propertyPanel.draw(activeTool, session);
+//   propertyPanel.draw(activeTool, session, activeToolId);
 //   activeTool.drawProperties();   // tool-specific custom UI appended after
 // ---------------------------------------------------------------------------
 
@@ -110,10 +111,10 @@ public:
     /// `renderParamsAsPanel()` returns false are skipped — those expose
     /// params() purely for the headless tool.attr path and own UI
     /// rendering via their drawProperties() override.
-    void draw(Tool tool, EditSession session) {
+    void draw(Tool tool, EditSession session, string toolId) {
         if (tool is null) return;
         if (!tool.renderParamsAsPanel()) return;
-        drawProvider(tool, session);
+        drawProvider(tool, session, toolId);
     }
 
     /// One collapsible SECTION of the Tool Properties column: its own id
@@ -167,7 +168,9 @@ public:
     /// the per-stage Tool Properties iteration in ui/tool_properties_panel.d.
     /// The session
     /// receives one ValueWritten phase per mutation and one BatchComplete.
-    void drawProvider(ParamProvider p, EditSession session) {
+    /// `toolId` names the tool whose captured attribute bounds apply (task
+    /// 9492); a stage passes none.
+    void drawProvider(ParamProvider p, EditSession session, string toolId = null) {
         if (p is null) return;
         assert(session !is null,
             "PropertyPanel parameter writes require an EditSession");
@@ -197,9 +200,11 @@ public:
                 ? AttrImage.init : t.captureAttrImage();
             // One group per row, so a multi-widget row (a Vec3) reads as held
             // while ANY of its widgets is active.
+            const bounded = applyToolAttrBound(toolId, par);
             ImGui.BeginGroup();
             bool changed = drawParamWidget(par);
             ImGui.EndGroup();
+            if (changed && bounded) clampStoredToBounds(par);
             // A topology row edited by a held widget is one step until the
             // widget lets go: a scrub is one History row.
             const held = t !is null && ImGui.IsItemActive();

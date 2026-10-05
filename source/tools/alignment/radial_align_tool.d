@@ -105,12 +105,10 @@ public:
         return [
             Param.enum_("mode", "Mode", &headlessMode,
                 [["circle", "Circle"], ["nside", "N-Sided"]], "circle"),
-            Param.int_("side", "Side", &headlessSide, 4)
-                .min(1).max(MAX_ALIGN_SIDES).enforceBounds(),
+            Param.int_("side", "Side", &headlessSide, 4),
             Param.float_("rotate", "Rotate", &headlessRotate, 0.0f).angle(),
             Param.float_("angle", "Angle", &headlessAngle, 0.0f).angle(),
-            Param.float_("weight", "Weight", &headlessWeight, 1.0f)
-                .min(0.0f).max(1.0f).enforceBounds(),
+            Param.float_("weight", "Weight", &headlessWeight, 1.0f),
         ];
     }
 

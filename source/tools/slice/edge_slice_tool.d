@@ -437,7 +437,7 @@ public:
             Param.float_("pointT", "Point t", &pointProxy_, 0.5f).min(0.0f).max(1.0f).transient(),
             Param.bool_("split", "Split Polygons", &split_, true),
             Param.bool_("middle", "Split at Middle", &middle_, false),
-            Param.float_("snap", "Snap Value", &snap_, 0.5f).min(0.0f),
+            Param.float_("snap", "Snap Value", &snap_, 0.5f),
             Param.intEnum_("show", "Show", cast(int*)&show_, showTable, cast(int)Show.Position),
         ];
     }

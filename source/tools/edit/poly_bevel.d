@@ -204,13 +204,11 @@ public:
     override EditMode[] supportedModes() const { return [EditMode.Polygons]; }
 
     override Param[] params() {
-        import mesh : MAX_BEVEL_SEGMENTS;
         return [
             Param.float_("inset", "Inset", &inset_, 0.0f),
             Param.float_("shift", "Shift", &shift_, 0.0f),
             Param.bool_("group", "Group Polygons", &group_, true),
-            Param.int_("segments", "Segments", &segments_, 0)
-                .min(0).max(MAX_BEVEL_SEGMENTS).enforceBounds(),
+            Param.int_("segments", "Segments", &segments_, 0),
             // task 0458 Phase 3: recovered Square Corner topology rewrite
             // (`bevelFacesByMask`'s `square` — findings.md §3), parity-
             // fixture-verified (Q1-Q4). Promoted out of Hidden now that
