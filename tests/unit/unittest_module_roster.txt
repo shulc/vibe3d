@@ -557,7 +557,7 @@ tests.unit.tools.transform.xform_kernels_test
 tests.unit.topology_pen_factory_bundle_test
 tests.unit.topology_pen_move_commit_guard_test
 tests.unit.topology_r_history_probe_test
-tests.unit.topology_step_mixin_census_test
+tests.unit.topology_step_mixin_test
 tests.unit.trackball_test
 tests.unit.transform_compose_order_test
 tests.unit.transform_history_ownership_census_test
