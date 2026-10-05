@@ -10281,10 +10281,12 @@ unittest {
     assert(m.isVertexHidden(0) && m.isEdgeHidden(e01) && !m.isVertexHidden(1),
         "setup: v0 and edge 0-1 must be hidden, v1 visible");
     foreach (occ; [true, false]) {
-        assert(t.resolveGrabTarget(vx, vy, vp, idx, occ) == MoveElem.None,
-            "a press on a HIDDEN vertex must grab nothing (K-D D5 HIDDEN-OUT)");
+        // The edge cell first: on v0 the hidden edges 0-1 and 0-3 pass at 0 px,
+        // so the vertex cell would also redden for an edge-filter defect.
         assert(t.resolveGrabTarget(ex, ey, vp, idx, occ) == MoveElem.None,
             "a press on a HIDDEN edge must grab nothing (K-D D5 HIDDEN-OUT)");
+        assert(t.resolveGrabTarget(vx, vy, vp, idx, occ) == MoveElem.None,
+            "a press on a HIDDEN vertex must grab nothing (K-D D5 HIDDEN-OUT)");
     }
 }
 

@@ -11,6 +11,8 @@
 //   F2, F3 sit below F1 and share M, a T-vertex on F1's bottom side that is
 //   NOT a corner of F1, 3 px from the press.
 // The hit-face-only answer would be A; the election's is M.
+// A third cell scales the rig by 10: M at 30 px is gathered (40) but not
+// accepted (24), so the point stays on the press hit.
 //
 // Run via: ./run_test.d topopen_point_snap
 
@@ -24,7 +26,8 @@ void main() {}
 
 /// Press, the front camera and the background built around the press's own
 /// pixel-centre hit. Returns the press pixel, the press hit and M.
-void setupRig(out int px, out int py, out Vec3 pressW, out Vec3 mW) {
+/// `k` scales every offset (k = 10 puts M at 30 px: gathered, not accepted).
+void setupRig(out int px, out int py, out Vec3 pressW, out Vec3 mW, float k = 1.0f) {
     postJson("/api/command", commandBody("scene.reset"));
     enum string camBody =
         `{"azimuth":0.0,"elevation":0.0,"distance":4.0,"focus":{"x":0.0,"y":0.0,"z":0.0}}`;
@@ -46,7 +49,7 @@ void setupRig(out int px, out int py, out Vec3 pressW, out Vec3 mW) {
     immutable float t = -c.eye.z / dir.z;
     pressW = Vec3(c.eye.x + dir.x * t, c.eye.y + dir.y * t, 0.0f);
 
-    Vec3 at(float x, float y) { return Vec3(pressW.x + x * u, pressW.y + y * u, 0.0f); }
+    Vec3 at(float x, float y) { return Vec3(pressW.x + x * k * u, pressW.y + y * k * u, 0.0f); }
     const Vec3[] v = [at(-6.5f, -2.6f) /*0 A*/, at(30, -2.6f) /*1 B*/, at(30, 30) /*2 C*/,
                       at(-6.5f, 30) /*3 D*/, at(1.5f, -2.6f) /*4 M*/, at(-6.5f, -30) /*5*/,
                       at(1.5f, -30) /*6*/, at(30, -30) /*7*/];
@@ -100,4 +103,16 @@ unittest { // P8c: snapping off — the point lands on the press's surface hit.
     assert(dist(got, pressW) < 1e-4f,
         format("with snapping off the placed point must be the press hit %s; got %s (M %s)",
                pressW, got, mW));
+}
+
+unittest { // the acceptance reach: M at 30 px (inside the 40 px gather, outside the
+           // 24 px acceptance) does not snap — the point lands on the press hit.
+    int px, py; Vec3 pressW, mW;
+    setupRig(px, py, pressW, mW, 10.0f);
+    cmd("tool.pipe.attr snap enabled true");
+    cmd("tool.pipe.attr snap types vertex");
+    immutable Vec3 got = placeAndRead(px, py);
+    assert(dist(got, pressW) < 1e-4f,
+        format("a vertex gathered but outside the snap acceptance must not take the point: "
+             ~ "press hit %s, got %s (M %s)", pressW, got, mW));
 }
