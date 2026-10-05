@@ -62,24 +62,24 @@ enum PreparedScaleUpdateKind : ubyte {
 enum PreparedXfrmUpdateKind : ubyte { None, InactiveNoop, Active }
 enum PreparedTopologyPenUpdateKind : ubyte { None, PacketAbsent, Packet }
 enum PreparedPenParamKind : ubyte { None, Noop, CurrentPoint, Position, Preview }
-enum PreparedArrayParamKind : ubyte { None, Noop, Preview }
-enum PreparedMagnetParamKind : ubyte { None, Noop, Preview }
-enum PreparedSmoothShiftParamKind : ubyte { None, Noop, Preview }
-enum PreparedEdgeBevelParamKind : ubyte { None, Noop, Preview }
-enum PreparedEdgeExtrudeParamKind : ubyte { None, Noop, Preview }
-enum PreparedPolyBevelParamKind : ubyte { None, Noop, Preview }
-enum PreparedPolyExtrudeParamKind : ubyte { None, Noop, Preview }
-enum PreparedPolyInsetParamKind : ubyte { None, Noop, Preview }
-enum PreparedReductionParamKind : ubyte { None, Noop, Preview }
-enum PreparedVertexMergeParamKind : ubyte { None, Noop, Preview }
-enum PreparedVertexBevelParamKind : ubyte { None, Noop, Preview }
-enum PreparedVertexExtrudeParamKind : ubyte { None, Noop, Preview }
-enum PreparedSliceParamKind : ubyte { None, Noop, AxisLatch, Preview }
+enum PreparedArrayParamKind : ubyte { None, Noop }
+enum PreparedMagnetParamKind : ubyte { None, Noop }
+enum PreparedSmoothShiftParamKind : ubyte { None, Noop }
+enum PreparedEdgeBevelParamKind : ubyte { None, Noop }
+enum PreparedEdgeExtrudeParamKind : ubyte { None, Noop }
+enum PreparedPolyBevelParamKind : ubyte { None, Noop }
+enum PreparedPolyExtrudeParamKind : ubyte { None, Noop }
+enum PreparedPolyInsetParamKind : ubyte { None, Noop }
+enum PreparedReductionParamKind : ubyte { None, Noop }
+enum PreparedVertexMergeParamKind : ubyte { None, Noop }
+enum PreparedVertexBevelParamKind : ubyte { None, Noop }
+enum PreparedVertexExtrudeParamKind : ubyte { None, Noop }
+enum PreparedSliceParamKind : ubyte { None, Noop, AxisLatch }
 enum PreparedEdgeSliceParamKind : ubyte {
     None, Noop, ChainArm, ActivePoint, Preview
 }
-enum PreparedLoopSliceParamKind : ubyte { None, Noop, State, Preview }
-enum PreparedEdgeExtendParamKind : ubyte { None, Noop, BankSwitch, Pivot, Preview }
+enum PreparedLoopSliceParamKind : ubyte { None, Noop, State }
+enum PreparedEdgeExtendParamKind : ubyte { None, Noop, BankSwitch, Pivot }
 enum PreparedInheritedNoopKind : ubyte { Activate, Deactivate, Update }
 
 @PreparedAggregate struct PreparedActivateEffect {

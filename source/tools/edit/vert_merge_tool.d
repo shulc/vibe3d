@@ -34,7 +34,6 @@ import prepared_tool_effect : PreparedVertexMergeParamEffect,
     PreparedVertexMergeParamKind;
 import document : Layer;
 import mesh_gpu : GpuUploadOwner;
-import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
 import core.stdc.string : memcmp;
 
 struct VertexMergeParamProjection {
@@ -49,14 +48,12 @@ struct VertexMergeParamProjection {
 
 struct PreparedVertexMergeParamImage {
     mixin DefaultParamEffectKind!PreparedVertexMergeParamKind;
-    bool valid, applies, nextBuilt;
+    bool valid;
     VertexMergeParamProjection expected;
     MeshSnapshot expectedLive, expectedBefore;
-    Mesh candidate;
-    uint deliveryFlags, deliveryDomains;
     void clear() nothrow @nogc {
         expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
-        candidate = Mesh.init; valid = applies = false;
+        valid = false;
     }
 }
 
@@ -277,26 +274,9 @@ public:
     final PreparedVertexMergeParamImage buildPreparedParamUpdate(string, ref Mesh live) {
         PreparedVertexMergeParamImage image;
         image.valid = true; image.expected = paramProjection();
-        image.nextBuilt = built; image.expectedLive = MeshSnapshot.capture(live);
-        if (!before.filled) return image;
-        Mesh baseline;
-        auto baselineShadow = beginPreparedShadow(baseline);
-        before.restore(baseline);
-        uint baselineFlags, baselineDomains;
-        drainPreparedShadowDelivery(baseline, baselineFlags, baselineDomains);
-        baselineShadow.close();
-        image.expectedBefore = MeshSnapshot.capture(baseline);
-        if (!interactiveParamEdit || !active) return image;
-        image.applies = true; image.candidate = baseline; baseline = Mesh.init;
-        auto shadow = beginPreparedShadow(image.candidate);
-        image.nextBuilt = operation(image.candidate) != 0;
-        drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
-            image.deliveryDomains);
-        if (image.deliveryFlags == 0) {
-            image.deliveryFlags = baselineFlags;
-            image.deliveryDomains = baselineDomains;
-        }
-        shadow.close(); return image;
+        image.expectedLive = MeshSnapshot.capture(live);
+        if (before.filled) image.expectedBefore = before;
+        return image;
     }
     final bool preparedParamUpdateMatches(
             in PreparedVertexMergeParamImage image, ref const Mesh live) const
@@ -307,8 +287,7 @@ public:
     }
     final void installPreparedParamUpdate(
             ref PreparedVertexMergeParamImage image) nothrow @nogc {
-        if (!image.valid) return;
-        built = image.nextBuilt; image.clear();
+        image.clear();
     }
     mixin PreparedParamUpdateProducer!(PreparedParamUpdateOwner!(VertexMergeTool,
         PreparedVertexMergeParamImage, PreparedVertexMergeParamKind), PreparedVertexMergeParamEffect);
@@ -405,7 +384,7 @@ private:
         refreshCaches();
     }
 
-    // The one operation: preview, prepared image and scripted apply (task
+    // The one operation: preview and scripted apply (task
     // 9433). average:true — the survivor sits at the per-cluster centroid,
     // matching the vert.merge command (source/commands/mesh/vert_merge.d).
     // No selection welds nothing (an all-false mask joins no cluster).

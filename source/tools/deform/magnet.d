@@ -34,7 +34,6 @@ import hover_state : hoverAtPress;
 import change_bus : MeshEditScope;
 import document : primaryModelSpace, Layer;
 import mesh_gpu : GpuUploadOwner;
-import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
 import core.stdc.string : memcmp;
 
 import std.math : sqrt;
@@ -42,22 +41,18 @@ import perf_probe : g_perf, Cat;
 
 struct PreparedMagnetParamImage {
     mixin DefaultParamEffectKind!PreparedMagnetParamKind;
-    bool valid, applies, expectedActive, expectedDragging, expectedBuilt;
-    bool nextBuilt, expectedSessionMatches;
+    bool valid, expectedActive, expectedDragging, expectedBuilt;
+    bool expectedSessionMatches;
     int expectedPickedVi;
     Vec3 expectedCenter, expectedTarget;
     float expectedStrength, expectedDist;
     MeshSnapshot expectedLive, expectedBefore;
-    uint[] expectedTouchedIdx, nextTouchedIdx;
-    Vec3[] expectedTouchedPrev, nextTouchedPrev;
-    SessionMeshKey nextSessionKey;
-    Mesh candidate;
-    uint deliveryFlags, deliveryDomains;
+    uint[] expectedTouchedIdx;
+    Vec3[] expectedTouchedPrev;
     void clear() nothrow @nogc {
         expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
-        expectedTouchedIdx = nextTouchedIdx = null;
-        expectedTouchedPrev = nextTouchedPrev = null;
-        candidate = Mesh.init; this.valid = this.applies = false;
+        expectedTouchedIdx = null; expectedTouchedPrev = null;
+        this.valid = false;
     }
 }
 
@@ -272,48 +267,20 @@ public:
         // dist changed while dragging — rebuild with new radius.
         if (pname == "dist" && dragging && built) rebuildPreview();
     }
-    final PreparedMagnetParamImage buildPreparedParamUpdate(string pname,
+    final PreparedMagnetParamImage buildPreparedParamUpdate(string,
             ref Mesh live) {
         PreparedMagnetParamImage image;
         image.valid = true; image.expectedActive = active;
         image.expectedDragging = dragging; image.expectedBuilt = built;
-        image.nextBuilt = built; image.expectedPickedVi = pickedVi;
+        image.expectedPickedVi = pickedVi;
         image.expectedCenter = center_; image.expectedTarget = target_;
         image.expectedStrength = strength_; image.expectedDist = dist_;
         image.expectedLive = MeshSnapshot.capture(live);
         image.expectedTouchedIdx = touchedIdx_.dup;
-        image.nextTouchedIdx = touchedIdx_.dup;
         image.expectedTouchedPrev = touchedPrev_.dup;
-        image.nextTouchedPrev = touchedPrev_.dup;
         image.expectedSessionMatches = sessionKey_.matches(live);
-        image.nextSessionKey = sessionKey_;
-        if (!before.filled) return image;
-        Mesh baseline;
-        auto baselineShadow = beginPreparedShadow(baseline);
-        before.restore(baseline);
-        drainPreparedShadowDelivery(baseline, image.deliveryFlags,
-            image.deliveryDomains);
-        baselineShadow.close();
-        image.expectedBefore = MeshSnapshot.capture(baseline);
-        image.deliveryFlags = image.deliveryDomains = 0;
-        if (pname != "dist" || !dragging || !built) return image;
-        image.applies = true; image.candidate = baseline; baseline = Mesh.init;
-        auto shadow = beginPreparedShadow(image.candidate);
-        if (strength_ <= 0.0f) image.nextBuilt = false;
-        else {
-            int[] indices = image.candidate.selectedVertexIndicesVertices();
-            const auto aim = aimSpace(vpWorld_, primaryModelSpace());
-            FalloffPacket fp = anchoredFalloff(aim);
-            image.nextBuilt = applyMagnet(&image.candidate, indices, target_,
-                strength_, fp, aim, image.nextTouchedIdx, image.nextTouchedPrev);
-            if (image.nextBuilt) {
-                image.nextSessionKey.stamp(image.candidate);
-                image.candidate.commitChange(MeshEditScope.Position);
-            }
-        }
-        drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
-            image.deliveryDomains);
-        shadow.close(); return image;
+        if (before.filled) image.expectedBefore = before;
+        return image;
     }
     final bool preparedParamUpdateMatches(in PreparedMagnetParamImage image,
             ref Mesh live) const nothrow @nogc {
@@ -339,11 +306,7 @@ public:
     }
     final void installPreparedParamUpdate(ref PreparedMagnetParamImage image)
             nothrow @nogc {
-        if (!image.valid) return;
-        built = image.nextBuilt;
-        touchedIdx_ = image.nextTouchedIdx; image.nextTouchedIdx = null;
-        touchedPrev_ = image.nextTouchedPrev; image.nextTouchedPrev = null;
-        sessionKey_ = image.nextSessionKey; image.clear();
+        image.clear();
     }
     mixin PreparedParamUpdateProducer!(PreparedParamUpdateOwner!(MagnetTool,
         PreparedMagnetParamImage, PreparedMagnetParamKind), PreparedMagnetParamEffect);

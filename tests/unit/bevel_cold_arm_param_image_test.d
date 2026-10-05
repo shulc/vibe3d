@@ -2,34 +2,14 @@ module unit.bevel_cold_arm_param_image_test;
 
 // ---------------------------------------------------------------------------
 // Task 4491 — both bevel tools refused to ARM whenever a sticky parameter
-// enlisted their param-update resource.
-//
-// The arm transaction replays every sticky parameter name into the unpublished
-// candidate (prepared_tool_transition.d, the `sticky.changedNames` loop), so
-// each name enlists the tool's PreparedParamUpdateOwner instance into the
-// params context. Validation then walks `resources_` and calls each owner's
-// `validate()`, whose last disjunct is `preparedParamUpdateMatches`.
-//
-// At that moment the tool is COLD: `prepareArm` has not published the
-// activation yet, so `before` is unfilled. `buildPreparedParamUpdate` used to
-// return early on exactly that condition WITHOUT capturing the preview image,
-// while `preparedParamUpdateMatches` checks `preview_.matchesImage(...)`
-// unconditionally — and `matchesImage` gates on the image's own `valid`. The
-// conjunct was therefore false for reasons that had nothing to do with the
-// tool's state, and the arm refused.
-//
-// WHY ONLY THE TWO BEVELS. Of the tools with sticky prefs entries, only these
-// two carry the preview conjunct UNGUARDED. `EdgeExtendTool` uses the same
-// PreviewRebuild seam but writes `(!image.applies || preview_.matchesImage
-// (image.preview))`. `PolyExtrudeTool` — the control below — took the very
-// same `!before.filled` early return with no preview conjunct at all until
-// wave-2 PV2 put it on the seam too; it now prepares its image above that
-// return like the bevels (all five PV2 tools: the churn test's cold cells).
-//
-// ORDER IS LOAD-BEARING (CLAUDE.md): the poly.extrude control sits ABOVE the
-// two bevel blocks, and the poly.bevel block above the edge.bevel one, so a
-// mutation of one builder reddens a named line while everything above it is
-// proven green by control flow in the same run.
+// enlisted their param-update resource: the arm replays every sticky name into
+// the unpublished candidate (prepared_tool_transition.d, the
+// `sticky.changedNames` loop), the tool is COLD (`before` unfilled), and the
+// image then failed a preview-cache conjunct it never prepared. Task 9489
+// deleted that conjunct with the preview half of the image; these cells keep
+// the arm-time contract: a cold image matches and its whole transaction
+// validates. ORDER IS LOAD-BEARING: the poly.extrude control sits ABOVE the two
+// bevel blocks, and the poly.bevel block above the edge.bevel one.
 // ---------------------------------------------------------------------------
 
 import document : Layer;
@@ -58,7 +38,7 @@ unittest {
         "4491 floor: the cold-arm cells need a populated cube with one face "
         ~ "selected, or every snapshot compare below is vacuous");
 
-    // ---- control: same cold state, same early return, no preview conjunct.
+    // ---- control: the same cold state on a third tool.
     {
         auto px = new PolyExtrudeTool(() => &layer.meshRef(), &gpu, &mode,
             LitShader.init);
@@ -67,8 +47,7 @@ unittest {
             "4491 control: poly.extrude must be on the COLD path (before "
             ~ "unfilled) or it is not the same cell as the bevels below");
         assert(px.preparedParamUpdateMatches(img, layer.meshRef()),
-            "4491 control: poly.extrude must match on a cold arm (since PV2 "
-            ~ "through the same unconditional preview conjunct)");
+            "4491 control: poly.extrude must match on a cold arm");
     }
 
     // ---- poly.bevel: the image must be COMPLETE on the cold path …
@@ -78,10 +57,6 @@ unittest {
         auto img = pb.buildPreparedParamUpdate("", layer.meshRef());
         assert(img.valid && !img.expectedBefore.filled,
             "4491: poly.bevel must be on the COLD path here");
-        assert(img.preview.valid,
-            "4491 poly.bevel: buildPreparedParamUpdate left the preview image "
-            ~ "unprepared on the cold-arm path; matchesImage gates on this "
-            ~ "flag, so the arm conjunct can never hold");
         assert(pb.preparedParamUpdateMatches(img, layer.meshRef()),
             "4491 poly.bevel: cold-arm image must match the live tool");
     }
@@ -107,9 +82,6 @@ unittest {
         auto img = eb.buildPreparedParamUpdate("", layer.meshRef());
         assert(img.valid && !img.expectedBefore.filled,
             "4491: edge.bevel must be on the COLD path here");
-        assert(img.preview.valid,
-            "4491 edge.bevel: buildPreparedParamUpdate left the preview image "
-            ~ "unprepared on the cold-arm path");
         assert(eb.preparedParamUpdateMatches(img, layer.meshRef()),
             "4491 edge.bevel: cold-arm image must match the live tool");
     }

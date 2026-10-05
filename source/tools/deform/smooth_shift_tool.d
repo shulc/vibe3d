@@ -39,7 +39,6 @@ import prepared_tool_effect : PreparedSmoothShiftParamEffect,
     PreparedSmoothShiftParamKind;
 import document : Layer;
 import mesh_gpu : GpuUploadOwner;
-import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
 import core.stdc.string : memcmp;
 
 struct PreparedSmoothShiftActivationImage {
@@ -69,14 +68,12 @@ struct SmoothShiftParamProjection {
 
 struct PreparedSmoothShiftParamImage {
     mixin DefaultParamEffectKind!PreparedSmoothShiftParamKind;
-    bool valid, applies, nextBuilt;
+    bool valid;
     SmoothShiftParamProjection expected;
     MeshSnapshot expectedLive, expectedBefore;
-    Mesh candidate;
-    uint deliveryFlags, deliveryDomains;
     void clear() nothrow @nogc {
         expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
-        candidate = Mesh.init; valid = applies = false;
+        valid = false;
     }
 }
 
@@ -372,23 +369,9 @@ public:
     final PreparedSmoothShiftParamImage buildPreparedParamUpdate(string, ref Mesh live) {
         PreparedSmoothShiftParamImage image;
         image.valid = true; image.expected = paramProjection();
-        image.nextBuilt = built; image.expectedLive = MeshSnapshot.capture(live);
-        if (!before.filled) return image;
-        Mesh baseline;
-        auto baselineShadow = beginPreparedShadow(baseline);
-        before.restore(baseline);
-        drainPreparedShadowDelivery(baseline, image.deliveryFlags,
-            image.deliveryDomains);
-        baselineShadow.close();
-        image.expectedBefore = MeshSnapshot.capture(baseline);
-        image.deliveryFlags = image.deliveryDomains = 0;
-        if (!interactiveParamEdit || !active || !engaged) return image;
-        image.applies = true; image.candidate = baseline; baseline = Mesh.init;
-        auto shadow = beginPreparedShadow(image.candidate);
-        image.nextBuilt = operation(image.candidate) != 0;
-        drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
-            image.deliveryDomains);
-        shadow.close(); return image;
+        image.expectedLive = MeshSnapshot.capture(live);
+        if (before.filled) image.expectedBefore = before;
+        return image;
     }
     final bool preparedParamUpdateMatches(in PreparedSmoothShiftParamImage image,
             ref const Mesh live) const nothrow @nogc {
@@ -398,8 +381,7 @@ public:
     }
     final void installPreparedParamUpdate(ref PreparedSmoothShiftParamImage image)
             nothrow @nogc {
-        if (!image.valid) return;
-        built = image.nextBuilt; image.clear();
+        image.clear();
     }
     mixin PreparedParamUpdateProducer!(PreparedParamUpdateOwner!(SmoothShiftTool,
         PreparedSmoothShiftParamImage, PreparedSmoothShiftParamKind), PreparedSmoothShiftParamEffect);
@@ -601,7 +583,7 @@ private:
         refreshCaches();
     }
 
-    // The one operation (task 9433): preview, prepared image and scripted
+    // The one operation (task 9433): preview and scripted
     // apply. Deliberately UNCONDITIONAL — unlike Polygon Extrude / Bevel, the
     // reference does not short-circuit shift == 0 (the kernel's doc comment,
     // the frozen "base_noop" fixture). Unrecorded: a preview frame records

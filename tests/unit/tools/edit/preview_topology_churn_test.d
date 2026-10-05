@@ -52,7 +52,6 @@ import tools.edit.poly_extrude : PolyExtrudeTool;
 import tools.edit.vertex_bevel_tool : VertexBevelTool;
 import tools.edit.vertex_extrude_tool : VertexExtrudeTool;
 import tools.edit.poly_inset_tool : PolyInsetTool;
-import snapshot : MeshSnapshot;
 
 import std.conv : to;
 
@@ -701,9 +700,7 @@ unittest {
 //      ONE rebuild is a full one);
 //  (b) a crossing costs exactly its declared full rebuilds and no key miss —
 //      a degenerate crossing 3 (arm + two), a value with no topology branch 1;
-//  (c) a cold image matches (the preview conjunct is unconditional), and a
-//      prepared panel edit installs the seam's state: the next drag sample is
-//      a placement, not a second full rebuild.
+//  (c) a cold image matches.
 // ---------------------------------------------------------------------------
 /// `sweepAt` is where the sweep param stands during the crossing; 0 makes a
 /// second term of a degenerate conjunction the only one that moves.
@@ -815,7 +812,7 @@ private void pv2Row(T)(EditMode mode, void function(ref Mesh) select,
           ~ " full rebuild(s), want " ~ x.fullRebuilds.to!string);
     }
 
-    // (c) cold image, then a prepared panel edit followed by a drag sample.
+    // (c) a cold image (the sticky replay of an unpublished arm) validates.
     {
         auto rig = rigged();
         scope(exit) rig.release();
@@ -824,47 +821,6 @@ private void pv2Row(T)(EditMode mode, void function(ref Mesh) select,
         assert(coldImage.valid && !coldImage.expectedBefore.filled &&
                cold.preparedParamUpdateMatches(coldImage, rig.mesh),
             name ~ ": a cold prepared image refuses (task 4491's hole)");
-        // The rig holds a delivery batch, so an unshadowed publish would only
-        // REGISTER: the clone must leave no pending entry and no residue.
-        assert(canBeginPreparedMesh(coldImage.preview.nextCage),
-            name ~ ": preparing a cold image left the cage clone publishing");
-        coldImage.clear();
-
-        auto tool = make(rig, 0.10f);
-        tool.interactiveParamEdit = true;
-        auto image = tool.buildPreparedParamUpdate("", rig.mesh);
-        assert(image.applies && tool.preparedParamUpdateMatches(image, rig.mesh),
-            name ~ ": the prepared panel edit does not validate");
-        // What the context's stamped image install lands on the layer.
-        MeshSnapshot.capture(image.candidate).restore(rig.mesh);
-        tool.installPreparedParamUpdate(image);
-        tool.interactiveParamEdit = false;
-        setFloatParam(tool, sweep, 0.12f);
-        rig.frame();
-        const c = tool.previewRebuildCounts();
-        assert(c.fullRebuilds == 1 && c.placements == 1 && c.keyMisses == 0,
-            name ~ ": after a prepared install a drag sample counts full/placed/"
-          ~ "missed = " ~ c.fullRebuilds.to!string ~ "/" ~ c.placements.to!string
-          ~ "/" ~ c.keyMisses.to!string ~ ", want 1/1/0 (the install dropped "
-          ~ "the seam state)");
-
-        // A seam frame between build and validation leaves the mesh and the
-        // params exactly as they were (a placement at the same value); only
-        // the preview conjunct can refuse the now-stale image.
-        tool.interactiveParamEdit = true;
-        auto stale = tool.buildPreparedParamUpdate("", rig.mesh);
-        assert(tool.preparedParamUpdateMatches(stale, rig.mesh),
-            name ~ ": the fresh image does not validate");
-        assert(stale.preview.nextPlacements == 2 && stale.preview.nextKeyMisses == 0,
-            name ~ ": the prepared run on a standing key was not a placement "
-          ~ "(its candidate must start as the live mesh)");
-        setFloatParam(tool, sweep, 0.12f);
-        assert(tool.previewRebuildCounts().placements == 2,
-            name ~ ": the same-value frame was not a placement");
-        assert(!tool.preparedParamUpdateMatches(stale, rig.mesh),
-            name ~ ": an image older than the seam's last frame validated");
-        stale.clear();
-        tool.interactiveParamEdit = false;
     }
 }
 

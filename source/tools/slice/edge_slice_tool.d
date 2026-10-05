@@ -967,11 +967,11 @@ public:
             auto redo = context.prepareInvalidateRedo();
             ok = redo.accepted; installHistory = redo.mustInstall;
         }
-        if (ok && owner.applies)
+        if (ok && owner.image.applies)
             ok = uploadOwner !is null && uploadOwner.owns(gpu) &&
-                context.prepareStampedMeshImage(layer, owner.candidate,
-                    owner.deliveryFlags, owner.deliveryDomains) &&
-                context.prepareUpload(uploadOwner, owner.candidate);
+                context.prepareStampedMeshImage(layer, owner.image.candidate,
+                    owner.image.deliveryFlags, owner.image.deliveryDomains) &&
+                context.prepareUpload(uploadOwner, owner.image.candidate);
         if (ok) ok = installHistory ? context.markHistoryInstall()
                                     : context.markNoHistoryInstall();
         if (ok) ok = context.prepareParamUpdate(owner);

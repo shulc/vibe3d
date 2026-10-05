@@ -1,6 +1,6 @@
 module tools.edit.preview_rebuild;
 
-import mesh : Mesh, beginPreparedShadow, drainPreparedShadowDelivery;
+import mesh : Mesh;
 import snapshot : MeshSnapshot;
 
 // ---------------------------------------------------------------------------
@@ -142,9 +142,8 @@ struct PreviewRebuildCounts {
     ulong keyMisses;
 }
 
-/// Exact two-phase image of PreviewRebuild's private cache. The expected half
-/// guards the live owner; the next half is moved through a detached local
-/// PreviewRebuild while a tool prepares its candidate.
+/// Exact image of PreviewRebuild's private cache: a prepared transaction's
+/// witness that the live owner's cache did not move before install.
 struct PreparedPreviewRebuildImage {
     bool valid;
     ulong expectedFullRebuilds, expectedPlacements, expectedKeyMisses;
@@ -152,13 +151,8 @@ struct PreparedPreviewRebuildImage {
     PreviewTopologyKey expectedLast;
     ulong expectedLastTopology;
     MeshSnapshot expectedCage;
-    ulong nextFullRebuilds, nextPlacements, nextKeyMisses;
-    bool nextHasLast;
-    PreviewTopologyKey nextLast;
-    ulong nextLastTopology;
-    Mesh nextCage;
     void clear() nothrow @nogc {
-        expectedCage = MeshSnapshot.init; nextCage = Mesh.init; valid = false;
+        expectedCage = MeshSnapshot.init; valid = false;
     }
 }
 
@@ -189,41 +183,16 @@ struct PreviewRebuild {
     /// stay standing. Dropped by `reset()` so an inactive tool holds no copy.
     private Mesh               cage_;
 
-    /// Capture an exact expected image and deep-clone the scratch cage for a
-    /// detached prepared run. Preparation may allocate; validation/install do
-    /// not. Call this while a prepared delivery shadow is active because the
-    /// snapshot restore used for the clone publishes like every restore.
+    /// Capture an exact expected image of the cache.
     void prepareImage(ref PreparedPreviewRebuildImage image) {
         image.valid = true;
-        image.expectedFullRebuilds = image.nextFullRebuilds = fullRebuilds;
-        image.expectedPlacements = image.nextPlacements = placements;
-        image.expectedKeyMisses = image.nextKeyMisses = keyMisses;
-        image.expectedHasLast = image.nextHasLast = hasLast_;
-        image.expectedLast = image.nextLast = last_;
-        image.expectedLastTopology = image.nextLastTopology = lastTopology_;
+        image.expectedFullRebuilds = fullRebuilds;
+        image.expectedPlacements = placements;
+        image.expectedKeyMisses = keyMisses;
+        image.expectedHasLast = hasLast_;
+        image.expectedLast = last_;
+        image.expectedLastTopology = lastTopology_;
         image.expectedCage = MeshSnapshot.capture(cage_);
-        image.expectedCage.restore(image.nextCage);
-    }
-
-    /// `prepareImage` with the cage clone's restore shadowed and drained: the
-    /// clone is private scratch and must not publish.
-    void prepareImageShadowed(ref PreparedPreviewRebuildImage image) {
-        auto shadow = beginPreparedShadow(image.nextCage);
-        prepareImage(image);
-        uint flags, domains;
-        drainPreparedShadowDelivery(image.nextCage, flags, domains);
-        shadow.close();
-    }
-
-    /// One `run` on a detached runner loaded from, then saved back to, `image`.
-    static size_t runPrepared(ref PreparedPreviewRebuildImage image,
-            ref Mesh candidate, ref const MeshSnapshot before,
-            scope PreviewTopologyKey delegate(ref Mesh cage) keyOf,
-            scope size_t delegate(ref Mesh target) kernel) {
-        PreviewRebuild runner; runner.loadPreparedNext(image);
-        const n = runner.run(candidate, before, keyOf, kernel);
-        runner.savePreparedNext(image);
-        return n;
     }
 
     bool matchesImage(in PreparedPreviewRebuildImage image) const
@@ -234,29 +203,6 @@ struct PreviewRebuild {
             hasLast_ == image.expectedHasLast && last_ == image.expectedLast &&
             lastTopology_ == image.expectedLastTopology &&
             image.expectedCage.matches(cage_);
-    }
-
-    /// Move the prepared next half into a detached runner.
-    void loadPreparedNext(ref PreparedPreviewRebuildImage image) nothrow @nogc {
-        fullRebuilds = image.nextFullRebuilds;
-        placements = image.nextPlacements; keyMisses = image.nextKeyMisses;
-        hasLast_ = image.nextHasLast; last_ = image.nextLast;
-        lastTopology_ = image.nextLastTopology;
-        cage_ = image.nextCage; image.nextCage = Mesh.init;
-    }
-
-    /// Move a detached runner's final cache back into the image.
-    void savePreparedNext(ref PreparedPreviewRebuildImage image) nothrow @nogc {
-        image.nextFullRebuilds = fullRebuilds;
-        image.nextPlacements = placements; image.nextKeyMisses = keyMisses;
-        image.nextHasLast = hasLast_; image.nextLast = last_;
-        image.nextLastTopology = lastTopology_;
-        image.nextCage = cage_; cage_ = Mesh.init;
-    }
-
-    void installImage(ref PreparedPreviewRebuildImage image) nothrow @nogc {
-        if (!image.valid) return;
-        loadPreparedNext(image); image.clear();
     }
 
     /// Forget the last key + release the scratch. Call from the tool's

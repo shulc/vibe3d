@@ -220,7 +220,7 @@ unittest {
     // update: its shadow's rebuildCut sees the mismatch and disarms.
     m.addVertex(Vec3(9, 9, 9));
     auto image = tool.buildPreparedParamUpdate("count", m);
-    assert(image.valid && !image.next.armed && !image.applies,
+    assert(image.valid && !image.next.armed,
         "setup: the shadow did not disarm on the key mismatch");
     tool.installPreparedParamUpdate(image);
 

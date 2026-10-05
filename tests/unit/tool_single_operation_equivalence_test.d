@@ -1,8 +1,7 @@
 // One operation per tool, behaviourally: for each edit-family tool the live
-// preview (an interactive param write → `rebuildPreview`), the prepared panel
-// image (`buildPreparedParamUpdate` → its candidate) and the scripted apply
-// (`applyHeadless`) land the SAME mesh for the same parameters (task 9433;
-// wave plan PV3a). Each mode is first pinned to its measured counts and a
+// preview (an interactive param write → `rebuildPreview`) and the scripted
+// apply (`applyHeadless`) land the SAME mesh for the same parameters (task
+// 9433; wave plan PV3a). Each mode is first pinned to its measured counts and a
 // position digest, so a change of the one operation reddens EVERY mode that
 // reaches it, not only their equality; then the modes are compared bit for bit.
 // The text half (one kernel site per tool) is tool_single_operation_census_test.
@@ -82,9 +81,8 @@ private double digest(ref const Mesh m) {
 
 private size_t rows;
 
-// The seams that differ by tool: the array tool's constructor has no shader,
-// its seed spells the session out, and the radial array's panel image is its
-// transition owner's `buildPreparedParamImage`.
+// The seams that differ by tool: the array tool's constructor has no shader
+// and its seed spells the session out.
 private T makeTool(T)(Rig r) {
     static if (is(T == ArrayTool)) return new T(() => &r.mesh, &r.gpu, &r.mode);
     else return new T(() => &r.mesh, &r.gpu, &r.mode, null);
@@ -92,10 +90,6 @@ private T makeTool(T)(Rig r) {
 private void seedSession(T)(T t, ref Mesh m) {
     static if (is(T == ArrayTool)) t.seedPreparedParamForTest(m, true, true, false);
     else t.seedPreparedParamForTest(m, true);
-}
-private auto panelImage(T)(T t, string name, ref Mesh m) {
-    static if (is(T == RadialArrayTool)) return t.buildPreparedParamImage(m);
-    else return t.buildPreparedParamUpdate(name, m);
 }
 
 private void row(T)(EditMode mode, void function(ref Mesh) pick,
@@ -113,15 +107,6 @@ private void row(T)(EditMode mode, void function(ref Mesh) pick,
     foreach (i, n; names) poke(lt, n, values[i]);
     lt.notifyInteractiveParamChanged(names[$ - 1]);
 
-    // PREPARED: the same session, the panel image built on its candidate.
-    auto prep = new Rig(mode, pick);
-    auto pt = make(prep);
-    seedSession(pt, prep.mesh);
-    foreach (i, n; names) poke(pt, n, values[i]);
-    auto image = panelImage(pt, names[$ - 1], prep.mesh);
-    scope(exit) image.clear();
-    assert(image.applies, name ~ ": the prepared image did not apply");
-
     // HEADLESS: armed, attrs written without a notification, applied.
     auto head = new Rig(mode, pick);
     auto ht = make(head);
@@ -137,7 +122,7 @@ private void row(T)(EditMode mode, void function(ref Mesh) pick,
             missed ~= format(" %s=%sv/%sf/%.4f", mode, m.vertices.length,
                 m.faces.length, digest(m));
     }
-    pin("live", live.mesh); pin("prepared", image.candidate); pin("headless", head.mesh);
+    pin("live", live.mesh); pin("headless", head.mesh);
     assert(missed.length == 0, format("%s: expected %sv/%sf/%.4f; off:%s",
         name, verts, faces, dig, missed));
 
@@ -147,7 +132,6 @@ private void row(T)(EditMode mode, void function(ref Mesh) pick,
             format("%s: %s differs from live\n  %s\n  %s\n  %s\n  %s", name, mode,
                 m.vertices, live.mesh.vertices, m.faces, live.mesh.faces));
     }
-    same("prepared", image.candidate);
     same("headless", head.mesh);
 
     // DEGENERATE: an operation that builds nothing refuses the scripted apply
@@ -213,7 +197,7 @@ unittest {
     assert(cells == 3);
 }
 
-// Pins measured on main a9192104 (task 9433 Step 0), the same in all three modes.
+// Pins measured on main a9192104 (task 9433 Step 0), the same in both modes.
 unittest {
     row!EdgeExtrudeTool(EditMode.Edges, &pickEdge, ["width", "extrude"],
         [0.1f, 0.3f], 12, 10, -85.9279);
@@ -241,7 +225,7 @@ unittest {
 }
 
 // The bevel / extend / array family (task 9434, wave plan PV3b). Pins measured
-// on main da313d9a (Step 0), the same in all three modes. Edge Extend's params
+// on main da313d9a (Step 0), the same in both modes. Edge Extend's params
 // are pivot-agnostic: the live pivot is the armed bounding-box centre, the
 // scripted one the origin (fixture case `command_path_rotate_pivot`).
 unittest {
@@ -321,29 +305,20 @@ unittest {
             ["numX", "numZ", "replace", "angB"], [1.0f, 1.0f, 1.0f, 30.0f], 8, 6, 30.4641,
             (ref Mesh m, Tool t) { poke(t, "replace", 0.0f); }, true);
         assert(rows == 1);
-        foreach (panel; [false, true]) {
-            auto r = new Rig(EditMode.Polygons, &pickFace);
-            auto t = makeTool!ArrayTool(r);
-            seedSession(t, r.mesh);
-            foreach (n, v; ["numX": 1.0f, "numZ": 1.0f, "replace": 1.0f, "angB": 30.0f])
-                poke(t, n, v);
-            if (panel) {
-                auto image = t.buildPreparedParamUpdate("angB", r.mesh);
-                scope(exit) image.clear();
-                assert(image.applies && image.nextBuilt, "array replace-in-place: "
-                    ~ "the panel image is not built");
-            } else {
-                t.notifyInteractiveParamChanged("angB");
-                assert(t.preparedParamStateForTest(true), "array replace-in-place: "
-                    ~ "the live edit is not built");
-            }
-        }
+        auto r = new Rig(EditMode.Polygons, &pickFace);
+        auto t = makeTool!ArrayTool(r);
+        seedSession(t, r.mesh);
+        foreach (n, v; ["numX": 1.0f, "numZ": 1.0f, "replace": 1.0f, "angB": 30.0f])
+            poke(t, n, v);
+        t.notifyInteractiveParamChanged("angB");
+        assert(t.preparedParamStateForTest(true), "array replace-in-place: "
+            ~ "the live edit is not built");
     }
 }
 
 // Radial Array at ONE copy builds nothing (the kernel's `count <= 1` refusal is
-// the only guard since task 9434): the live preview and the panel image keep
-// the source faces and the face and vertex selection. (The topology version is
+// the only guard since task 9434): the live preview keeps the source faces and
+// the face and vertex selection. (The topology version is
 // no witness: the preview restores its cage every frame, which bumps it.)
 unittest {
     size_t[] selectedFaces(const Mesh* m) {
@@ -352,37 +327,23 @@ unittest {
     size_t[] selectedVerts(const Mesh* m) {
         size_t[] r; foreach (i; 0 .. m.vertices.length) if (m.isVertexSelected(i)) r ~= i; return r;
     }
-    size_t cells;
-    foreach (panel; [false, true]) {
-        auto r = new Rig(EditMode.Polygons, (ref Mesh m) {
-            m.syncSelection(); m.selectFace(0); m.selectVertex(0); });
-        auto t = makeTool!RadialArrayTool(r);
-        seedSession(t, r.mesh);
-        foreach (n, v; ["count": 1.0f, "angle": 90.0f, "offset": 0.5f]) poke(t, n, v);
-        const verts = r.mesh.vertices.dup;
-        const faces = r.mesh.faces.length;
-        const selF = selectedFaces(&r.mesh), selV = selectedVerts(&r.mesh);
-        assert(selF == [0] && selV == [0], format("rig: selection %s / %s", selF, selV));
-        Mesh* m = &r.mesh;
-        typeof(t.buildPreparedParamImage(r.mesh)) image;
-        scope(exit) image.clear();
-        if (panel) {
-            image = t.buildPreparedParamImage(r.mesh);
-            assert(image.applies && !image.built, "radial count 1: the panel image built");
-            m = &image.candidate;
-        } else {
-            t.notifyInteractiveParamChanged("angle");
-            assert(t.preparedParamStateForTest(false), "radial count 1: the preview built");
-        }
-        const mode = panel ? "panel image" : "preview";
-        assert(m.vertices == verts && m.faces.length == faces, format("radial count 1 "
-            ~ "%s: %sv/%sf, expected the source", mode, m.vertices.length, m.faces.length));
-        assert(selectedFaces(m) == selF && selectedVerts(m) == selV, format("radial "
-            ~ "count 1 %s: selection %s / %s, expected %s / %s", mode, selectedFaces(m),
-            selectedVerts(m), selF, selV));
-        ++cells;
-    }
-    assert(cells == 2);
+    auto r = new Rig(EditMode.Polygons, (ref Mesh m) {
+        m.syncSelection(); m.selectFace(0); m.selectVertex(0); });
+    auto t = makeTool!RadialArrayTool(r);
+    seedSession(t, r.mesh);
+    foreach (n, v; ["count": 1.0f, "angle": 90.0f, "offset": 0.5f]) poke(t, n, v);
+    const verts = r.mesh.vertices.dup;
+    const faces = r.mesh.faces.length;
+    const selF = selectedFaces(&r.mesh), selV = selectedVerts(&r.mesh);
+    assert(selF == [0] && selV == [0], format("rig: selection %s / %s", selF, selV));
+    t.notifyInteractiveParamChanged("angle");
+    assert(t.preparedParamStateForTest(false), "radial count 1: the preview built");
+    assert(r.mesh.vertices == verts && r.mesh.faces.length == faces, format("radial "
+        ~ "count 1 preview: %sv/%sf, expected the source", r.mesh.vertices.length,
+        r.mesh.faces.length));
+    assert(selectedFaces(&r.mesh) == selF && selectedVerts(&r.mesh) == selV, format(
+        "radial count 1 preview: selection %s / %s, expected %s / %s",
+        selectedFaces(&r.mesh), selectedVerts(&r.mesh), selF, selV));
 }
 
 // Loose points, no face: the clone family's scripted apply still answers ok

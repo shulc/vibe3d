@@ -902,11 +902,11 @@ unittest {
     // one is witnessed by the scanner cell below ("expected [4, 1]"), which
     // drives the production `keyCountsOf`. This row is the FLIPPED control:
     // the migrated file reads zero MeshCacheKey fields and its measured
-    // SessionMeshKey fields (activation / deactivate / param images and the
-    // tool's own key; slice M3 moved task 7137's first-gesture payload, and
-    // its key, into the session).
-    assert(keyMeasured.get("source/tools/slice/slice_tool.d", kNoKeys) == [0, 4],
-           format("tool census: axis 2 flipped control failed: source/tools/slice/slice_tool.d reads %s, expected [0, 4]",
+    // SessionMeshKey fields (activation / deactivate images and the tool's own
+    // key; slice M3 moved task 7137's first-gesture payload, and its key, into
+    // the session; task 9489 took the param image's).
+    assert(keyMeasured.get("source/tools/slice/slice_tool.d", kNoKeys) == [0, 3],
+           format("tool census: axis 2 flipped control failed: source/tools/slice/slice_tool.d reads %s, expected [0, 3]",
                   keyMeasured.get("source/tools/slice/slice_tool.d", kNoKeys)));
     // Axis 2 scope floor: the scanner reads type heads literally, so an alias
     // of the key or its spelled-out `MeshKey!` form would escape it. Measured 0.

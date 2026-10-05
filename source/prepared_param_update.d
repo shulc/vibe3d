@@ -11,8 +11,8 @@ private shared ulong nextParamOwner;
 /// One closed owner for a tool's interactive parameter-preview transition.
 /// The tool is data: `ownsPreparedLayer`, `buildPreparedParamUpdate`,
 /// `preparedParamUpdateMatches`, `installPreparedParamUpdate` and an image with
-/// `valid` / `applies` / `effectKind` / `candidate` / `deliveryFlags` /
-/// `deliveryDomains` / `clear`.
+/// `valid` / `effectKind` / `clear`. A door param write reaches this owner only
+/// on an unarmed candidate, so no image carries a mesh.
 final class PreparedParamUpdateOwner(ToolT, ImageT, KindT) {
     alias Kind = KindT;
 private:
@@ -31,12 +31,8 @@ public:
         owner.image_ = target.buildPreparedParamUpdate(pname, layer.meshRef());
         return owner.image_.valid ? owner : null;
     }
-    @property bool applies() const nothrow @nogc { return image_.applies; }
     @property KindT effectKind() const nothrow @nogc { return image_.effectKind(); }
     ref const(ImageT) image() const return scope nothrow @nogc { return image_; }
-    ref const(Mesh) candidate() const return scope nothrow @nogc { return image_.candidate; }
-    @property uint deliveryFlags() const nothrow @nogc { return image_.deliveryFlags; }
-    @property uint deliveryDomains() const nothrow @nogc { return image_.deliveryDomains; }
     bool begin() nothrow @nogc {
         if (pending_ || consumed_ || target_ is null || source_ is null || !image_.valid)
             return false;
@@ -72,33 +68,26 @@ private:
 }
 
 /// An image's effect kind when the write has no tool-specific effect: no image
-/// is `None`, a mesh preview is `Preview`, anything else `Noop`.
+/// is `None`, anything else `Noop`.
 mixin template DefaultParamEffectKind(KindT) {
     KindT effectKind() const nothrow @nogc {
-        return !valid ? KindT.None : applies ? KindT.Preview : KindT.Noop;
+        return valid ? KindT.Noop : KindT.None;
     }
 }
 
-/// The tool's `prepareParamChanged`: stamped layer image, the owner's slot,
-/// GPU upload, then NoHistory, in that order; any refusal discards the whole
-/// transaction. Expanded in the tool's scope (it reads `gpu` and
-/// `preparedToolStateOwner` there).
+/// The tool's `prepareParamChanged`: the owner's slot, then NoHistory; any
+/// refusal discards the whole transaction. Expanded in the tool's scope (it
+/// reads `preparedToolStateOwner` there).
 mixin template PreparedParamUpdateProducer(OwnerT, EffectT) {
     final EffectT prepareParamChanged(string pname, PreparedRecordContext context,
-            Layer layer, GpuUploadOwner uploadOwner) {
+            Layer layer, GpuUploadOwner) {
         alias KindT = OwnerT.Kind;
         if (context is null) return EffectT(preparedToolStateOwner, KindT.None, false);
         scope(failure) context.discard();
         auto owner = OwnerT.prepare(this, layer, pname);
         auto kind = owner is null ? KindT.None : owner.effectKind;
         bool ok = owner !is null;
-        if (ok && owner.applies)
-            ok = uploadOwner !is null && uploadOwner.owns(gpu) &&
-                context.prepareStampedMeshImage(layer, owner.candidate,
-                    owner.deliveryFlags, owner.deliveryDomains);
         if (ok) ok = context.prepareParamUpdate(owner);
-        if (ok && owner.applies)
-            ok = context.prepareUpload(uploadOwner, owner.candidate);
         if (ok) ok = context.markNoHistoryInstall();
         if (!ok) context.discard();
         return EffectT(preparedToolStateOwner, kind, ok);

@@ -56,7 +56,7 @@ struct PreparedEdgeExtendToolActivationImage {
 }
 
 struct PreparedEdgeExtendParamImage {
-    bool valid, applies, bankSwitch, pivotUpdate;
+    bool valid, bankSwitch, pivotUpdate;
     // An armed bank switch brings the banks online (move always, rotate and
     // scale as their handles say): their activation images install with it.
     PreparedMoveActivationImage move;
@@ -69,18 +69,14 @@ struct PreparedEdgeExtendParamImage {
     float expectedInset, expectedShift;
     Vec3 expectedOffset, expectedRotateVec, expectedScaleVec;
     int expectedSegments;
-    bool nextBuilt, nextPivotActive;
+    bool nextPivotActive;
     MeshSnapshot expectedLive, expectedBefore;
-    PreparedPreviewRebuildImage preview;
-    Mesh candidate; uint deliveryFlags, deliveryDomains;
     void clear() nothrow @nogc {
-        valid = applies = bankSwitch = pivotUpdate = false;
+        valid = bankSwitch = pivotUpdate = false;
         move.clear(); rotate.clear(); scale.clear(); name = null;
         expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
-        preview.clear(); candidate = Mesh.init; deliveryFlags = deliveryDomains = 0;
     }
     PreparedEdgeExtendParamKind effectKind() const nothrow @nogc {
-        if (applies) return PreparedEdgeExtendParamKind.Preview;
         if (bankSwitch) return PreparedEdgeExtendParamKind.BankSwitch;
         if (pivotUpdate) return PreparedEdgeExtendParamKind.Pivot;
         return PreparedEdgeExtendParamKind.Noop;
@@ -686,7 +682,7 @@ public:
         image.expectedOffset = offsetVec(); image.expectedRotateVec = rotateVec();
         image.expectedScaleVec = scaleVec(); image.expectedSegments = segments_;
         image.expectedLive = MeshSnapshot.capture(live); image.expectedBefore = before;
-        image.nextBuilt = built; image.nextPivotActive = dragPivotOverride_.active;
+        image.nextPivotActive = dragPivotOverride_.active;
 
         if (name == "moveHandle" || name == "rotateHandle" ||
                 name == "scaleHandle") {
@@ -706,19 +702,6 @@ public:
             image.nextPivotActive = p.x != 0 || p.y != 0 || p.z != 0;
             return image;
         }
-        if (!interactiveParamEdit || !active || !before.filled) return image;
-
-        image.candidate = detachedPreparedMesh(live);
-        auto shadow = beginPreparedShadow(image.candidate);
-        preview_.prepareImage(image.preview);
-        drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
-            image.deliveryDomains);
-        image.deliveryFlags = image.deliveryDomains = 0;
-        const n = PreviewRebuild.runPrepared(image.preview, image.candidate, before,
-            &previewKey, &runPreviewKernel);
-        drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
-            image.deliveryDomains); shadow.close();
-        image.applies = true; image.nextBuilt = n != 0;
         return image;
     }
 
@@ -736,8 +719,7 @@ public:
             Vec3(rotateX_, rotateY_, rotateZ_) == image.expectedRotateVec &&
             Vec3(scaleX_, scaleY_, scaleZ_) == image.expectedScaleVec &&
             segments_ == image.expectedSegments &&
-            image.expectedLive.matches(live) && image.expectedBefore.matches(before) &&
-            (!image.applies || preview_.matchesImage(image.preview));
+            image.expectedLive.matches(live) && image.expectedBefore.matches(before);
     }
 
     final void installPreparedParamUpdate(ref PreparedEdgeExtendParamImage image)
@@ -751,9 +733,6 @@ public:
             xfrm.scaleBank().installPreparedProductActivation(image.scale);
         }
         if (image.pivotUpdate) dragPivotOverride_.active = image.nextPivotActive;
-        if (image.applies) {
-            built = image.nextBuilt; preview_.installImage(image.preview);
-        }
         image.clear();
     }
 
@@ -1376,7 +1355,7 @@ private:
     }
     Vec3 accumLocal_ = Vec3(0, 0, 0);   // basis-local translate accumulated this drag
 
-    // The one operation: live preview, prepared image, commit carrier and
+    // The one operation: live preview, commit carrier and
     // scripted apply. The caller owns the batch (unrecorded for a preview
     // frame and the scripted apply, recording for the commit), the pivot and
     // the symmetry mirror. The mask is the L1 funnel: the selection, else

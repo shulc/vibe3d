@@ -25,7 +25,7 @@ import command_history : CommandHistory;
 import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
 import tools.edit.preview_rebuild : PreviewRebuild, PreviewTopologyKey,
-    PreviewRebuildCounts, PreparedPreviewRebuildImage;
+    PreviewRebuildCounts;
 
 import std.math : abs, sqrt;
 import std.json : JSONValue;
@@ -41,7 +41,6 @@ import prepared_tool_effect : PreparedEdgeBevelParamEffect,
     PreparedEdgeBevelParamKind;
 import document : Layer;
 import mesh_gpu : GpuUploadOwner;
-import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
 import core.stdc.string : memcmp;
 
 struct PreparedEdgeBevelActivationImage {
@@ -68,15 +67,12 @@ struct EdgeBevelParamProjection {
 
 struct PreparedEdgeBevelParamImage {
     mixin DefaultParamEffectKind!PreparedEdgeBevelParamKind;
-    bool valid, applies, nextBuilt;
+    bool valid;
     EdgeBevelParamProjection expected;
     MeshSnapshot expectedLive, expectedBefore;
-    PreparedPreviewRebuildImage preview;
-    Mesh candidate;
-    uint deliveryFlags, deliveryDomains;
     void clear() nothrow @nogc {
         expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
-        preview.clear(); candidate = Mesh.init; valid = applies = false;
+        valid = false;
     }
 }
 
@@ -293,42 +289,18 @@ public:
     final PreparedEdgeBevelParamImage buildPreparedParamUpdate(string, ref Mesh live) {
         PreparedEdgeBevelParamImage image;
         image.valid = true; image.expected = paramProjection();
-        image.nextBuilt = built; image.expectedLive = MeshSnapshot.capture(live);
-        // Task 4491 — the same cold-arm hole as PolyBevelTool, and for the
-        // same reason: this tool's `preparedParamUpdateMatches` also carries
-        // the `preview_.matchesImage` conjunct unconditionally, so an image
-        // that skipped `prepareImage` refuses the arm outright. Single call
-        // site, above the early return, for the reason spelled out at the
-        // sibling site in tools/edit/poly_bevel.d.
-        preview_.prepareImageShadowed(image.preview);
-        if (!before.filled) return image;
-        Mesh baseline;
-        auto baselineShadow = beginPreparedShadow(baseline);
-        before.restore(baseline);
-        image.expectedBefore = MeshSnapshot.capture(baseline);
-        image.expectedLive.restore(image.candidate);
-        drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
-            image.deliveryDomains);
-        baselineShadow.close(); image.deliveryFlags = image.deliveryDomains = 0;
-        if (!interactiveParamEdit || !active) return image;
-        image.applies = true;
-        auto shadow = beginPreparedShadow(image.candidate);
-        image.nextBuilt = PreviewRebuild.runPrepared(image.preview, image.candidate,
-            before, &previewKey, &operation) != 0;
-        drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
-            image.deliveryDomains);
-        shadow.close(); return image;
+        image.expectedLive = MeshSnapshot.capture(live);
+        if (before.filled) image.expectedBefore = before;
+        return image;
     }
     final bool preparedParamUpdateMatches(in PreparedEdgeBevelParamImage image,
             ref const Mesh live) const nothrow @nogc {
         return image.valid && image.expected == paramProjection() &&
-            image.expectedLive.matches(live) && image.expectedBefore.matches(before) &&
-            preview_.matchesImage(image.preview);
+            image.expectedLive.matches(live) && image.expectedBefore.matches(before);
     }
     final void installPreparedParamUpdate(ref PreparedEdgeBevelParamImage image)
             nothrow @nogc {
-        if (!image.valid) return;
-        built = image.nextBuilt; preview_.installImage(image.preview); image.clear();
+        image.clear();
     }
     mixin PreparedParamUpdateProducer!(PreparedParamUpdateOwner!(EdgeBevelTool,
         PreparedEdgeBevelParamImage, PreparedEdgeBevelParamKind), PreparedEdgeBevelParamEffect);
@@ -619,7 +591,7 @@ private:
         return PreviewTopologyKey.make(cage.operandEdgeMask(), width_ == 0.0f,
             roundLevel_, widthMode_ ? 1 : 0);
     }
-    // The one operation: preview, prepared image and scripted apply.
+    // The one operation: preview and scripted apply.
     // Unrecorded — a preview frame records nothing, and the gesture's record
     // is the session's mesh image at release. `target` is the seam's private
     // cage on the placement path and the live mesh on a key change, so the

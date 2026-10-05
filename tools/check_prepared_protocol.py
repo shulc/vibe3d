@@ -2653,11 +2653,13 @@ for target, old, new, label in (
         fail(f"Pen parameter mutation did not RED: {label}")
 
 # ONE parameter-update owner, ONE record-context slot and ONE producer serve
-# the eleven interactive parameter previews gated below: the owner checks the
-# exact product, the tool's own match and installer; the
-# producer stamps the layer image, enlists the slot, uploads, then NoHistory.
-# Each tool keeps its own build/match gate after this one, plus a check that
-# its class mixes the producer in over its own owner instantiation.
+# the interactive parameter writes gated below: the owner checks the exact
+# product, the tool's own match and installer; the producer enlists the slot,
+# then NoHistory. A door write reaches it only on an unarmed candidate, so the
+# producer carries no mesh image and no upload (task 9489); Edge Slice keeps
+# its own producer for the one image that does. Each tool keeps its own
+# build/match gate after this one, plus a check that its class mixes the
+# producer in over its own owner instantiation.
 PARAM_UPDATE_TOOLS = ("ArrayTool", "SmoothShiftTool", "EdgeBevelTool",
     "EdgeExtrudeTool", "PolyBevelTool", "PolyExtrudeTool", "PolyInsetTool",
     "ReductionTool", "VertexMergeTool", "VertexBevelTool", "VertexExtrudeTool",
@@ -2679,15 +2681,12 @@ def param_update_gate(s):
                 "target_.installPreparedParamUpdate(image_)",
                 "validatedToken_.generation != generation_")) and
             all(x in producer for x in (
-                "uploadOwner.owns(gpu)",
-                "context.prepareStampedMeshImage(layer, owner.candidate,",
                 "context.prepareParamUpdate(owner)",
-                "context.prepareUpload(uploadOwner, owner.candidate)",
                 "context.markNoHistoryInstall()",
                 "scope(failure) context.discard();", "if (!ok) context.discard();")) and
-            0 <= producer.find("context.prepareStampedMeshImage") <
-                producer.find("context.prepareParamUpdate(owner)") <
-                producer.find("context.prepareUpload(uploadOwner") <
+            not any(x in producer for x in (
+                "prepareStampedMeshImage", "prepareUpload", "candidate")) and
+            0 <= producer.find("context.prepareParamUpdate(owner)") <
                 producer.find("context.markNoHistoryInstall()") and
             "bool prepareParamUpdate(O)(O owner)" in context and
             context.count("case PreparedResourceKind.ParamUpdateState:") == 3 and
@@ -2707,10 +2706,11 @@ def mutate_param_sources(name, sources, gate, rows, anchor=lambda text, label: 0
             fail(f"{name} parameter mutation did not RED: {label}")
 mutate_param_sources("Shared", param_update_sources, param_update_gate, (
     ("owner", "target.classinfo !is ToolT.classinfo", "false", "broaden product"),
-    ("owner", "uploadOwner.owns(gpu)", "true", "drop GPU identity"),
     ("owner", "context.prepareParamUpdate(owner)", "true", "drop private state"),
-    ("owner", "context.prepareUpload(uploadOwner, owner.candidate)", "true", "drop GPU upload"),
     ("owner", "context.markNoHistoryInstall()", "true", "drop NoHistory"),
+    ("owner", "if (ok) ok = context.markNoHistoryInstall();",
+     "if (ok) ok = context.prepareUpload(null, Mesh.init);\n"
+     "        if (ok) ok = context.markNoHistoryInstall();", "reintroduce upload"),
     ("context", "e.paramUpdate.install();", "", "drop context install"),
     ("tree", "PreparedParamUpdateOwner!(ArrayTool", "PreparedParamUpdateOwner!(CloneTool",
      "owner roster"),
@@ -2737,63 +2737,92 @@ def mutate_param_region(name, sources, gate, rows, regions):
 def producer_mixin(tool):
     return f"mixin PreparedParamUpdateProducer!(PreparedParamUpdateOwner!({tool},"
 
-# Array's interactive parameter hook is a live topology preview: baseline
-# restore + kernel + delivery are built under one detached shadow.
-array_param_sources = {
-    "tool": (ROOT / "source/tools/alignment/array_tool.d").read_text(),
-    "snapshot": (ROOT / "source/snapshot.d").read_text(),
+# The PreviewRebuild cache image (the Edge Extend deactivate product's
+# witness, gated with that product below) compares the scratch cage exactly.
+preview_image_sources = {
+    "preview": (ROOT / "source/tools/edit/preview_rebuild.d").read_text(),
 }
-def array_param_gate(s):
-    tool, snapshot = s["tool"], s["snapshot"]
-    return (tool.count("arrayFacesGrid(") == 1 and all(x in tool for x in (
-                "image.expectedLive = MeshSnapshot.capture(live);",
-                "image.expectedBefore = MeshSnapshot.capture(baseline);",
-                "auto shadow = beginPreparedShadow(image.candidate);",
-                "image.nextBuilt = operation(image.candidate) != 0 || replace_;",
-                "drainPreparedShadowDelivery(image.candidate",
-                "image.expectedLive.matches(live)",
-                "image.expectedBefore.matches(before)",
-                "sameFloat(dist, other.dist)", producer_mixin("ArrayTool"))) and
-            "bool matches(in MeshSnapshot other) const nothrow @nogc" in snapshot)
-if not array_param_gate(array_param_sources):
-    fail("Array onParamChanged prepared contract drift")
-mutate_param_sources("Array", array_param_sources, array_param_gate, (
-    ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
-    ("tool", "auto shadow = beginPreparedShadow(image.candidate);", "", "drop detached shadow"),
-    ("tool", "sameFloat(dist, other.dist)", "true", "drop byte-exact float"),
-    ("tool", "operation(image.candidate)", "cast(size_t)0", "drop operation"),
-    ("tool", producer_mixin("ArrayTool"), "", "drop producer mixin"),
-), lambda text, label: text.find("struct ArrayParamProjection"))
-
-# Magnet's radius hook rebuilds the current drag from its frozen baseline in a
-# detached mesh; the shared producer installs mesh, gesture state, upload, then
-# NoHistory.
-magnet_param_sources = {
-    "tool": (ROOT / "source/tools/deform/magnet.d").read_text(),
-}
-def magnet_param_gate(s):
-    tool = s["tool"]
-    return all(x in tool for x in (
-                "image.expectedLive = MeshSnapshot.capture(live);",
-                "image.expectedBefore = MeshSnapshot.capture(baseline);",
-                "auto shadow = beginPreparedShadow(image.candidate);",
-                "image.nextBuilt = applyMagnet(&image.candidate",
-                "drainPreparedShadowDelivery(image.candidate",
-                "sameSliceBytes(touchedPrev_, image.expectedTouchedPrev)",
-                "image.expectedLive.matches(live)",
-                "image.expectedBefore.matches(before)", producer_mixin("MagnetTool")))
-if not magnet_param_gate(magnet_param_sources):
-    fail("Magnet onParamChanged prepared contract drift")
-mutate_param_sources("Magnet", magnet_param_sources, magnet_param_gate, (
-    ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
-    ("tool", "auto shadow = beginPreparedShadow(image.candidate);", "", "drop detached shadow"),
-    ("tool", "sameSliceBytes(touchedPrev_, image.expectedTouchedPrev)", "true",
-     "drop exact touched witness"),
-    ("tool", producer_mixin("MagnetTool"), "", "drop producer mixin"),
+def preview_image_gate(s):
+    return all(x in s["preview"] for x in (
+        "struct PreparedPreviewRebuildImage",
+        "image.expectedCage = MeshSnapshot.capture(cage_);",
+        "image.expectedCage.matches(cage_)"))
+if not preview_image_gate(preview_image_sources):
+    fail("PreviewRebuild prepared image contract drift")
+mutate_param_sources("PreviewRebuild", preview_image_sources, preview_image_gate, (
+    ("preview", "image.expectedCage.matches(cage_)", "true", "drop cage witness"),
 ))
 
-# Slice's parameter write re-cuts the line from the activation baseline; its
-# image names the axis latch.
+# Twelve tools whose param image is state only: a live witness and the tool's
+# own exact projection, built with no detached mesh and no kernel run (the
+# kernel stands once, in the tool's one operation; tasks 9433/9434/9489).
+PARAM_IMAGE_REGION = ("ParamImage buildPreparedParamUpdate(", "installPreparedParamUpdate(")
+def state_param_gate(cls, kernel, identity):
+    def gate(s):
+        tool = s["tool"]
+        start = tool.find(PARAM_IMAGE_REGION[0])
+        end = tool.find(PARAM_IMAGE_REGION[1], start)
+        region = tool[start:end] if 0 <= start < end else ""
+        return (tool.count(kernel) == 1 and bool(region) and all(x in region for x in (
+                    "image.expectedLive = MeshSnapshot.capture(live);",
+                    "image.expectedLive.matches(live)",
+                    "image.expectedBefore.matches(")) and
+                identity in tool and producer_mixin(cls) in tool and
+                not any(x in region for x in (
+                    "beginPreparedShadow(", "candidate", "operation(", "applies")))
+    return gate
+for label, path, cls, kernel, identity in (
+    ("Array", "alignment/array_tool.d", "ArrayTool", "arrayFacesGrid(",
+     "sameFloat(dist, other.dist)"),
+    ("Magnet", "deform/magnet.d", "MagnetTool", "applyMagnet(mesh,",
+     "sameSliceBytes(touchedPrev_, image.expectedTouchedPrev)"),
+    ("Smooth Shift", "deform/smooth_shift_tool.d", "SmoothShiftTool",
+     "ed.smoothShiftFacesByMask(mask, shift_, scale_, thicken_)",
+     "sameFloat(shift, other.shift)"),
+    ("Edge Bevel", "edit/edge_bevel.d", "EdgeBevelTool", "bevelEdgesByMask(",
+     "memcmp(&width, &other.width, float.sizeof) == 0"),
+    ("Poly Bevel", "edit/poly_bevel.d", "PolyBevelTool", "bevelFacesByMask(",
+     "memcmp(&inset, &other.inset, float.sizeof) == 0"),
+    ("Edge Extrude", "edit/edge_extrude.d", "EdgeExtrudeTool",
+     "ed.extrudeEdgesByMask(mask, extrude_, width_)",
+     "memcmp(&extrude, &other.extrude, float.sizeof) == 0"),
+    ("Poly Extrude", "edit/poly_extrude.d", "PolyExtrudeTool",
+     "ed.extrudeFacesByMask(mask, distance_",
+     "memcmp(&distance, &other.distance, float.sizeof) == 0"),
+    ("Poly Inset", "edit/poly_inset_tool.d", "PolyInsetTool",
+     "ed.insetFacesByMask(mask, inset_)",
+     "memcmp(&inset, &other.inset, float.sizeof) == 0"),
+    ("Vertex Extrude", "edit/vertex_extrude_tool.d", "VertexExtrudeTool",
+     "ed.extrudeVerticesByMask(mask, shift_, width_)",
+     "sameFloat(width, other.width)"),
+    ("Vertex Bevel", "edit/vertex_bevel_tool.d", "VertexBevelTool",
+     "ed.bevelVerticesByMask(mask, inset_)",
+     "memcmp(&inset, &other.inset, float.sizeof) == 0"),
+    ("Vertex Merge", "edit/vert_merge_tool.d", "VertexMergeTool", "weldVerticesByMask(",
+     "memcmp(&dist, &other.dist, float.sizeof) == 0"),
+    ("Reduction", "edit/reduce.d", "ReductionTool", "ed.reduceToTarget(keep, pb_)",
+     "memcmp(&ratio, &other.ratio, float.sizeof) == 0"),
+):
+    sources = {"tool": (ROOT / "source/tools" / path).read_text()}
+    gate = state_param_gate(cls, kernel, identity)
+    if not gate(sources):
+        fail(f"{label} onParamChanged prepared contract drift")
+    in_region = lambda text, row: text.find(PARAM_IMAGE_REGION[0])
+    mutate_param_sources(label, sources, gate, (
+        ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
+        ("tool", "image.expectedLive.matches(live)", "true", "drop live match"),
+        ("tool", "        return image;\n",
+         "        auto shadow = beginPreparedShadow(image.candidate);\n        return image;\n",
+         "reintroduce detached mesh"),
+        ("tool", producer_mixin(cls), "", "drop producer mixin"),
+    ), in_region)
+    mutate_param_sources(label, sources, gate, (
+        ("tool", identity, "true", "drop exact identity"),
+        ("tool", "        return image;\n", "        " + kernel + ";\n        return image;\n",
+         "second kernel site"),
+    ))
+
+# Slice's parameter image is state only too; it names the axis latch.
 slice_param_sources = {
     "tool": (ROOT / "source/tools/slice/slice_tool.d").read_text(),
 }
@@ -2805,170 +2834,20 @@ def slice_param_gate(s):
     tool = tool[start:tool.find(SLICE_PARAM_REGION[1], start)]
     return all(x in tool for x in (
                 "image.expectedLive = MeshSnapshot.capture(live);",
-                "auto shadow = beginPreparedShadow(image.candidate);",
-                "sliceFromBaseline(image.candidate, before_",
+                "image.nextAxisLocked = axisLocked_ || pname == \"axis\";",
                 "image.expectedLive.matches(live)",
-                "image.expectedBefore.matches(before_)", producer_mixin("SliceTool")))
+                "image.expectedBefore.matches(before_)", producer_mixin("SliceTool"))) and \
+        not any(x in tool for x in ("beginPreparedShadow(", "candidate", "sliceFromBaseline("))
 if not slice_param_gate(slice_param_sources):
     fail("Slice onParamChanged prepared contract drift")
 mutate_param_region("Slice", slice_param_sources, slice_param_gate, (
     ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
-    ("tool", "auto shadow = beginPreparedShadow(image.candidate);", "", "drop detached shadow"),
+    ("tool", "image.nextAxisLocked = axisLocked_ || pname == \"axis\";", "", "drop axis latch"),
+    ("tool", "        return image;\n",
+     "        sliceFromBaseline(live, before_, start_, end_);\n        return image;\n",
+     "reintroduce re-cut"),
     ("tool", producer_mixin("SliceTool"), "", "drop producer mixin"),
 ), {"tool": SLICE_PARAM_REGION})
-
-smooth_shift_param_sources = {
-    "tool": (ROOT / "source/tools/deform/smooth_shift_tool.d").read_text(),
-}
-def smooth_shift_param_gate(s):
-    tool = s["tool"]
-    return (all(x in tool for x in (
-                "image.expectedLive = MeshSnapshot.capture(live);",
-                "image.expectedBefore = MeshSnapshot.capture(baseline);",
-                "auto shadow = beginPreparedShadow(image.candidate);",
-                "ed.smoothShiftFacesByMask(mask, shift_, scale_, thicken_)",
-                "image.nextBuilt = operation(image.candidate) != 0;",
-                "drainPreparedShadowDelivery(image.candidate",
-                "sameFloat(shift, other.shift)",
-                "image.expectedLive.matches(live)",
-                "image.expectedBefore.matches(before)",
-                producer_mixin("SmoothShiftTool"))))
-if not smooth_shift_param_gate(smooth_shift_param_sources):
-    fail("Smooth Shift onParamChanged prepared contract drift")
-mutate_param_sources("Smooth Shift", smooth_shift_param_sources, smooth_shift_param_gate, (
-    ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
-    ("tool", "auto shadow = beginPreparedShadow(image.candidate);", "", "drop shadow"),
-    ("tool", "sameFloat(shift, other.shift)", "true", "drop exact float"),
-    ("tool", "operation(image.candidate)", "cast(size_t)0", "drop operation"),
-    ("tool", producer_mixin("SmoothShiftTool"), "", "drop producer mixin"),
-))
-
-edge_bevel_param_sources = {
-    "tool": (ROOT / "source/tools/edit/edge_bevel.d").read_text(),
-    "preview": (ROOT / "source/tools/edit/preview_rebuild.d").read_text(),
-}
-def edge_bevel_param_gate(s):
-    tool = s["tool"]
-    # The kernel stands once, in `operation`; the panel image and the
-    # preview each hand it to the seam (task 9434).
-    return (tool.count("bevelEdgesByMask(") == 1 and
-            tool.count("&previewKey, &operation)") == 2 and all(x in tool for x in (
-                "image.expectedLive = MeshSnapshot.capture(live);",
-                "image.expectedBefore = MeshSnapshot.capture(baseline);",
-                "preview_.prepareImageShadowed(image.preview);",
-                "PreviewRebuild.runPrepared(image.preview, image.candidate,",
-                "preview_.matchesImage(image.preview)",
-                "memcmp(&width, &other.width, float.sizeof) == 0",
-                producer_mixin("EdgeBevelTool"))) and
-            all(x in s["preview"] for x in (
-                "struct PreparedPreviewRebuildImage",
-                "image.expectedCage = MeshSnapshot.capture(cage_);",
-                "image.expectedCage.matches(cage_)",
-                "void loadPreparedNext(",
-                "void savePreparedNext(",
-                "runner.savePreparedNext(image);",
-                "beginPreparedShadow(image.nextCage);",
-                "void installImage(")))
-if not edge_bevel_param_gate(edge_bevel_param_sources):
-    fail("Edge Bevel onParamChanged prepared contract drift")
-mutate_param_sources("Edge Bevel", edge_bevel_param_sources, edge_bevel_param_gate, (
-    ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
-    ("tool", "preview_.prepareImageShadowed(image.preview);", "", "drop preview image"),
-    ("preview", "image.expectedCage.matches(cage_)", "true", "drop cage witness"),
-    ("tool", "memcmp(&width, &other.width, float.sizeof) == 0", "true", "drop float identity"),
-    ("tool", "&previewKey, &operation)", "&previewKey, &previewKey)", "drop operation"),
-    ("tool", producer_mixin("EdgeBevelTool"), "", "drop producer mixin"),
-))
-
-# The five topology tools on the preview seam (wave-2 PV2): one text contract,
-# its rows run per tool. The kernel call stands once, in the one `operation`
-# (task 9433).
-def preview_rebuild_param_gate(cls, kernel, identity):
-    def gate(s):
-        tool = s["tool"]
-        return (tool.count(kernel) == 1 and all(x in tool for x in (
-            "image.expectedLive = MeshSnapshot.capture(live);",
-            "image.expectedBefore = before;",
-            "preview_.prepareImageShadowed(image.preview);",
-            "auto shadow = beginPreparedShadow(image.candidate);",
-            "PreviewRebuild.runPrepared(image.preview,\n            image.candidate, before,",
-            "drainPreparedShadowDelivery(image.candidate",
-            "built = preview_.run(*mesh, before,",
-            identity,
-            "image.expectedLive.matches(live)",
-            "image.expectedBefore.matches(before)",
-            "preview_.matchesImage(image.preview)",
-            "preview_.installImage(image.preview)",
-            producer_mixin(cls))) and all(x in s["preview"] for x in (
-            "runner.savePreparedNext(image);",
-            "beginPreparedShadow(image.nextCage);")))
-    return gate
-for label, path, cls, kernel, identity in (
-    ("Edge Extrude", "edge_extrude.d", "EdgeExtrudeTool",
-     "ed.extrudeEdgesByMask(mask, extrude_, width_)",
-     "memcmp(&extrude, &other.extrude, float.sizeof) == 0"),
-    ("Poly Extrude", "poly_extrude.d", "PolyExtrudeTool",
-     "ed.extrudeFacesByMask(mask, distance_",
-     "memcmp(&distance, &other.distance, float.sizeof) == 0"),
-    ("Poly Inset", "poly_inset_tool.d", "PolyInsetTool",
-     "ed.insetFacesByMask(mask, inset_)",
-     "memcmp(&inset, &other.inset, float.sizeof) == 0"),
-    ("Vertex Extrude", "vertex_extrude_tool.d", "VertexExtrudeTool",
-     "ed.extrudeVerticesByMask(mask, shift_, width_)",
-     "sameFloat(width, other.width)"),
-    ("Vertex Bevel", "vertex_bevel_tool.d", "VertexBevelTool",
-     "ed.bevelVerticesByMask(mask, inset_)",
-     "memcmp(&inset, &other.inset, float.sizeof) == 0"),
-):
-    sources = {"tool": (ROOT / "source/tools/edit" / path).read_text(),
-               "preview": (ROOT / "source/tools/edit/preview_rebuild.d").read_text()}
-    gate = preview_rebuild_param_gate(cls, kernel, identity)
-    if not gate(sources):
-        fail(f"{label} onParamChanged prepared contract drift")
-    mutate_param_sources(label, sources, gate, (
-        ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
-        ("tool", "auto shadow = beginPreparedShadow(image.candidate);", "", "drop shadow"),
-        ("tool", "preview_.prepareImageShadowed(image.preview);", "", "drop preview image"),
-        ("tool", "preview_.matchesImage(image.preview)", "true", "drop preview witness"),
-        ("tool", "preview_.installImage(image.preview)", "", "drop preview install"),
-        ("tool", identity, "true", "drop float identity"),
-        ("tool", kernel, "cast(size_t)0", "drop kernel"),
-        ("tool", producer_mixin(cls), "", "drop producer mixin"),
-    ))
-
-poly_bevel_param_sources = {
-    "tool": (ROOT / "source/tools/edit/poly_bevel.d").read_text(),
-    "preview": (ROOT / "source/tools/edit/preview_rebuild.d").read_text(),
-}
-def poly_bevel_param_gate(s):
-    tool = s["tool"]
-    # The kernel stands once, in `operation`; the panel image and the
-    # preview each hand the applied-gated `previewOperation` to the seam.
-    return (tool.count("bevelFacesByMask(") == 1 and
-            tool.count("&previewKey, &previewOperation)") == 2 and all(x in tool for x in (
-                "image.expectedLive = MeshSnapshot.capture(live);",
-                "image.expectedBefore = MeshSnapshot.capture(baseline);",
-                "preview_.prepareImageShadowed(image.preview);",
-                "PreviewRebuild.runPrepared(image.preview, image.candidate,",
-                "preview_.matchesImage(image.preview)",
-                "memcmp(&inset, &other.inset, float.sizeof) == 0",
-                producer_mixin("PolyBevelTool"))) and
-            all(x in s["preview"] for x in (
-                "struct PreparedPreviewRebuildImage",
-                "image.expectedCage.matches(cage_)",
-                "runner.savePreparedNext(image);",
-                "beginPreparedShadow(image.nextCage);",
-                "void installImage(")))
-if not poly_bevel_param_gate(poly_bevel_param_sources):
-    fail("Poly Bevel onParamChanged prepared contract drift")
-mutate_param_sources("Poly Bevel", poly_bevel_param_sources, poly_bevel_param_gate, (
-    ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
-    ("tool", "preview_.prepareImageShadowed(image.preview);", "", "drop preview image"),
-    ("preview", "image.expectedCage.matches(cage_)", "true", "drop cage witness"),
-    ("tool", "memcmp(&inset, &other.inset, float.sizeof) == 0", "true", "drop float identity"),
-    ("tool", "&previewKey, &previewOperation)", "&previewKey, &previewKey)", "drop operation"),
-    ("tool", producer_mixin("PolyBevelTool"), "", "drop producer mixin"),
-))
 
 slice_deactivate_sources = {
     "tool": (ROOT / "source/tools/slice/slice_tool.d").read_text(),
@@ -3199,8 +3078,9 @@ def edge_slice_param_gate(s):
         "detachedPreparedMesh(live)", "bakeChainInto(image.candidate",
         "image.expectedLive.matches(live)", "image.expectedBefore.matches(chainBefore_)",
         "context.prepareInvalidateRedo()", "redo.mustInstall",
-        "uploadOwner.owns(gpu)", "context.prepareStampedMeshImage(layer, owner.candidate",
-        "context.prepareUpload(uploadOwner, owner.candidate)",
+        "uploadOwner.owns(gpu)",
+        "context.prepareStampedMeshImage(layer, owner.image.candidate",
+        "context.prepareUpload(uploadOwner, owner.image.candidate)",
         "PreparedParamUpdateOwner!(EdgeSliceTool,",
         "context.prepareParamUpdate(owner)")) and all(x in history_product for x in (
         "PreparedHistoryResult prepareInvalidateRedo", "batch.history.lockout",
@@ -3232,73 +3112,55 @@ def loop_slice_param_gate(s):
     product = tool[start:end]
     return all(x in product for x in (
         "image.expectedLive = MeshSnapshot.capture(live)",
-        "image.candidate = detachedPreparedMesh(live)",
-        "shadowTool.onParamChanged(pname)", "beginPreparedShadow(image.candidate)",
-        "shadowTool.preparedRebuildAttempted_",
+        "Mesh work = detachedPreparedMesh(live)",
+        "shadowTool.onParamChanged(pname)", "beginPreparedShadow(work)",
+        "image.next.armedKey = image.expected.armedKey",
         "image.expectedLive.matches(live)", "preparedParamStateMatches(image.expected)",
-        "context.prepareInvalidateRedo()", "result.mustInstall",
-        "uploadOwner.owns(gpu)",
-        "context.prepareStampedMeshImage(layer, owner.candidate",
-        "context.prepareUpload(uploadOwner, owner.candidate)",
-        "PreparedParamUpdateOwner!(LoopSliceTool,",
-        "context.prepareParamUpdate(owner)")) and \
+        producer_mixin("LoopSliceTool"))) and \
+        "candidate" not in product and \
         "PreparedLoopSliceParamKind kind;" in effect
 if not loop_slice_param_gate(loop_slice_param_sources):
     fail("Loop Slice parameter prepared contract drift")
 mutate_param_region("Loop Slice", loop_slice_param_sources, loop_slice_param_gate, (
-    ("tool", "image.candidate = detachedPreparedMesh(live)",
-     "image.candidate = live", "drop detached target"),
+    ("tool", "Mesh work = detachedPreparedMesh(live)",
+     "Mesh work = live", "drop detached target"),
     ("tool", "shadowTool.onParamChanged(pname)", "onParamChanged(pname)",
      "run legacy hook on live owner"),
+    ("tool", "image.next.armedKey = image.expected.armedKey", "",
+     "install the scratch key"),
     ("tool", "image.expectedLive.matches(live)", "true", "drop live witness"),
-    ("tool", "context.prepareInvalidateRedo()", "PreparedHistoryResult.init",
-     "drop redo product"),
-    ("tool", "result.mustInstall", "true", "drop guarded history install"),
-    ("tool", "uploadOwner.owns(gpu)", "true", "drop GPU identity"),
-    ("tool", "context.prepareParamUpdate(owner)", "true", "drop state enlist"),
+    ("tool", producer_mixin("LoopSliceTool"), "", "drop producer mixin"),
 ), {"tool": ("final PreparedLoopSliceParamImage buildPreparedParamUpdate",
              "override void onParamChanged")})
 
 edge_extend_param_sources = {
     "tool": (ROOT / "source/tools/edit/edge_extend.d").read_text(),
-    "preview": (ROOT / "source/tools/edit/preview_rebuild.d").read_text(),
     "effect": edge_slice_deactivate_sources["effect"],
 }
 def edge_extend_param_gate(s):
-    tool, preview, effect = (s[k] for k in ("tool", "preview", "effect"))
+    tool, effect = s["tool"], s["effect"]
     start = tool.find("final PreparedEdgeExtendParamImage buildPreparedParamUpdate")
     end = tool.find("override void onParamChanged", start)
     product = tool[start:end]
     # The kernel stands once, in `operation` (task 9434).
     return tool.count("extendEdgesByMask(") == 1 and all(x in product for x in (
         "image.expectedLive = MeshSnapshot.capture(live)",
-        "image.expectedBefore = before", "detachedPreparedMesh(live)",
-        "preview_.prepareImage(image.preview)",
-        "runPrepared(image.preview, image.candidate, before",
-        "&previewKey, &runPreviewKernel)",
-        "image.expectedLive.matches(live)", "preview_.matchesImage(image.preview)",
+        "image.expectedBefore = before",
+        "image.expectedLive.matches(live)",
         "xfrm.moveBank().installPreparedProductActivation(image.move)",
-        producer_mixin("EdgeExtendTool"))) and all(x in preview for x in (
-        "void prepareImage(ref PreparedPreviewRebuildImage image)",
-        "bool matchesImage(in PreparedPreviewRebuildImage image)",
-        "void installImage(ref PreparedPreviewRebuildImage image)")) and \
+        producer_mixin("EdgeExtendTool"))) and \
+        not any(x in product for x in ("candidate", "runPrepared", "preview")) and \
         "PreparedEdgeExtendParamKind kind;" in effect
 if not edge_extend_param_gate(edge_extend_param_sources):
     fail("Edge Extend parameter prepared contract drift")
 mutate_param_region("Edge Extend", edge_extend_param_sources, edge_extend_param_gate, (
-    ("tool", "detachedPreparedMesh(live)", "live", "drop detached target"),
-    ("tool", "runPrepared(image.preview, image.candidate, before",
-     "runPrepared(image.preview, live, before",
-     "run kernel on live"),
     ("tool", "image.expectedLive.matches(live)", "true", "drop live witness"),
-    ("tool", "preview_.matchesImage(image.preview)", "true", "drop preview witness"),
-    ("tool", "&previewKey, &runPreviewKernel)", "&previewKey, &previewKey)",
-     "drop operation"),
+    ("tool", "            return image;\n        }\n        return image;\n",
+     "            return image;\n        }\n        preview_.prepareImage(image.preview);\n"
+     "        return image;\n", "reintroduce preview image"),
     ("tool", "xfrm.moveBank().installPreparedProductActivation(image.move)", "",
      "drop bank activation"),
     ("tool", producer_mixin("EdgeExtendTool"), "", "drop producer mixin"),
-    ("preview", "void installImage(ref PreparedPreviewRebuildImage image)",
-     "void skipImage(ref PreparedPreviewRebuildImage image)", "drop preview install"),
 ), {"tool": ("final PreparedEdgeExtendParamImage buildPreparedParamUpdate",
              "override void onParamChanged")})
 
@@ -3380,60 +3242,6 @@ for target, old, new, label in (
     if mutant[target] == edge_extend_deactivate_sources[target] or \
             edge_extend_deactivate_gate(mutant):
         fail(f"Edge Extend deactivate mutation did not RED: {label}")
-
-vertex_merge_param_sources = {
-    "tool": (ROOT / "source/tools/edit/vert_merge_tool.d").read_text(),
-}
-def vertex_merge_param_gate(s):
-    tool = s["tool"]
-    return (tool.count("weldVerticesByMask(") == 1 and
-            all(x in tool for x in (
-                "image.expectedLive = MeshSnapshot.capture(live);",
-                "image.expectedBefore = MeshSnapshot.capture(baseline);",
-                "auto shadow = beginPreparedShadow(image.candidate);",
-                "image.nextBuilt = operation(image.candidate) != 0;",
-                "drainPreparedShadowDelivery(image.candidate",
-                "memcmp(&dist, &other.dist, float.sizeof) == 0",
-                "image.expectedLive.matches(live)",
-                "image.expectedBefore.matches(before)",
-                producer_mixin("VertexMergeTool"))))
-if not vertex_merge_param_gate(vertex_merge_param_sources):
-    fail("Vertex Merge onParamChanged prepared contract drift")
-mutate_param_sources("Vertex Merge", vertex_merge_param_sources, vertex_merge_param_gate, (
-    ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
-    ("tool", "auto shadow = beginPreparedShadow(image.candidate);", "", "drop shadow"),
-    ("tool", "memcmp(&dist, &other.dist, float.sizeof) == 0", "true", "drop float identity"),
-    ("tool", "operation(image.candidate)", "cast(size_t)0", "drop kernel"),
-    ("tool", producer_mixin("VertexMergeTool"), "", "drop producer mixin"),
-), lambda text, label: 0 if label == "drop float identity" else
-    text.find("final PreparedVertexMergeParamImage buildPreparedParamUpdate"))
-
-reduction_param_sources = {
-    "tool": (ROOT / "source/tools/edit/reduce.d").read_text(),
-}
-def reduction_param_gate(s):
-    tool = s["tool"]
-    return (tool.count("ed.reduceToTarget(keep, pb_)") == 1 and
-            all(x in tool for x in (
-                "image.expectedLive = MeshSnapshot.capture(live);",
-                "image.expectedBefore = MeshSnapshot.capture(baseline);",
-                "auto shadow = beginPreparedShadow(image.candidate);",
-                "image.nextBuilt = operation(image.candidate) != 0;",
-                "drainPreparedShadowDelivery(image.candidate",
-                "memcmp(&ratio, &other.ratio, float.sizeof) == 0",
-                "image.expectedLive.matches(live)",
-                "image.expectedBefore.matches(before)",
-                producer_mixin("ReductionTool"))))
-if not reduction_param_gate(reduction_param_sources):
-    fail("Reduction onParamChanged prepared contract drift")
-mutate_param_sources("Reduction", reduction_param_sources, reduction_param_gate, (
-    ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
-    ("tool", "auto shadow = beginPreparedShadow(image.candidate);", "", "drop shadow"),
-    ("tool", "memcmp(&ratio, &other.ratio, float.sizeof) == 0", "true", "drop float identity"),
-    ("tool", "operation(image.candidate)", "cast(size_t)0", "drop kernel"),
-    ("tool", producer_mixin("ReductionTool"), "", "drop producer mixin"),
-), lambda text, label: 0 if label == "drop float identity" else
-    text.find("final PreparedReductionParamImage buildPreparedParamUpdate"))
 
 # PrimitiveCreateTool.activate is one inherited declaration with six exact
 # products. Its closed projection preserves each leaf's resetSession law and
@@ -6718,13 +6526,11 @@ def radial_array_param_gate(owner, tool, context):
     return (tool.count(".radialArrayFaces(") == 1 and all(x in tool for x in (
                 "PreparedRadialArrayTransitionKind : ubyte { Activate, Param, Deactivate }",
                 "image.expectedLive = MeshSnapshot.capture(live);",
-                "image.expectedBefore = MeshSnapshot.capture(baseline);",
-                "auto shadow = beginPreparedShadow(image.candidate);",
-                "image.built = operation(image.candidate) != 0;",
-                "drainPreparedShadowDelivery(image.candidate",
                 "sameBytes(center, other.center)",
                 "image.expectedLive.matches(live)",
                 "image.expectedBefore.matches(before)")) and
+            "candidate" not in tool[tool.find("buildPreparedParamImage(ref Mesh live)"):
+                                    tool.find("final bool preparedParamMatches(")] and
             all(x in owner for x in (
                 "static PreparedRadialArrayTransitionOwner param(",
                 "!target.ownsPreparedMesh(&layer.meshRef())",
@@ -6732,15 +6538,11 @@ def radial_array_param_gate(owner, tool, context):
                 "!target_.preparedParamMatches(image_, *source_)")) and
             all(x in producer for x in (
                 "PreparedRadialArrayTransitionOwner.param(this, layer)",
-                "uploadOwner.owns(gpu)",
-                "context.prepareStampedMeshImage(layer, transition.candidate,",
                 "context.prepareRadialArrayTransition(transition)",
-                "context.prepareUpload(uploadOwner, transition.candidate)",
                 "context.markNoHistoryInstall()", "scope(failure) context.discard();",
                 "if (!ok) context.discard();")) and
-            producer.find("context.prepareStampedMeshImage") <
-                producer.find("context.prepareRadialArrayTransition(transition)") <
-                producer.find("context.prepareUpload(uploadOwner") <
+            not any(x in producer for x in ("prepareStampedMeshImage", "prepareUpload")) and
+            0 <= producer.find("context.prepareRadialArrayTransition(transition)") <
                 producer.find("context.markNoHistoryInstall()") and
             "PreparedRadialArrayKind : ubyte { Activate, Param, Deactivate }" in
                 prepared_module_source("prepared_tool_effect"))
@@ -6749,14 +6551,15 @@ if not radial_array_param_gate(radial_array_owner, radial_array_tool,
     fail("RadialArray onParamChanged prepared contract drift")
 for target, old, new, label in (
     ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
-    ("tool", "auto shadow = beginPreparedShadow(image.candidate);", "", "drop detached shadow"),
     ("tool", "sameBytes(center, other.center)", "true", "drop byte-exact center"),
-    ("tool", "operation(image.candidate)", "cast(size_t)0", "drop operation"),
+    ("tool", "if (before.filled) image.expectedBefore = before;",
+     "if (before.filled) image.expectedBefore = before; Mesh candidate;", "reintroduce candidate"),
     ("owner", "!target.ownsPreparedMesh(&layer.meshRef())", "false", "drop Layer subject"),
     ("owner", "&layer_.meshRef() !is source_", "false", "drop retained subject"),
-    ("tool", "uploadOwner.owns(gpu)", "true", "drop GPU identity"),
     ("tool", "context.prepareRadialArrayTransition(transition)", "true", "drop state"),
-    ("tool", "context.prepareUpload(uploadOwner, transition.candidate)", "true", "drop upload"),
+    ("tool", "if (ok) ok = context.markNoHistoryInstall();",
+     "if (ok) ok = context.prepareUpload(null, Mesh.init);\n        if (ok) ok = context.markNoHistoryInstall();",
+     "reintroduce upload"),
     ("tool", "context.markNoHistoryInstall()", "true", "drop NoHistory"),
 ):
     o, t = radial_array_owner, radial_array_tool

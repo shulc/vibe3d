@@ -38,7 +38,7 @@ import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKin
     PreparedLoopSliceParamKind;
 import prepared_loop_slice_activation : PreparedLoopSliceActivationOwner;
 import prepared_loop_slice_deactivate : PreparedLoopSliceDeactivateOwner;
-import prepared_param_update : PreparedParamUpdateOwner;
+import prepared_param_update : PreparedParamUpdateOwner, PreparedParamUpdateProducer;
 import mesh_gpu : GpuUploadOwner;
 import mesh_edit_delta : MeshEditScope;
 
@@ -87,17 +87,15 @@ struct LoopSlicePreparedParamState {
 }
 
 struct PreparedLoopSliceParamImage {
-    bool valid, applies, invalidateRedo, stampKey;
+    bool valid;
     string pname;
     LoopSlicePreparedParamState expected, next;
     MeshSnapshot expectedLive;
-    Mesh candidate; uint deliveryFlags, deliveryDomains;
     void clear() nothrow @nogc {
-        valid = applies = invalidateRedo = stampKey = false; pname = null;
+        valid = false; pname = null;
         expected.clear(); next.clear(); expectedLive = MeshSnapshot.init;
-        candidate = Mesh.init; deliveryFlags = deliveryDomains = 0;
-    }    PreparedLoopSliceParamKind effectKind() const nothrow @nogc {
-        if (applies) return PreparedLoopSliceParamKind.Preview;
+    }
+    PreparedLoopSliceParamKind effectKind() const nothrow @nogc {
         return expected.positions == next.positions && expected.current == next.current &&
             expected.count == next.count && expected.removeTrigger == next.removeTrigger
             ? PreparedLoopSliceParamKind.Noop : PreparedLoopSliceParamKind.State;
@@ -270,7 +268,6 @@ private:
     EditMode*        editMode;
     LitShader        litShader;
     bool preparedShadow_;
-    bool preparedRebuildAttempted_;
 
 
     static immutable IntEnumEntry[3] editTable = [
@@ -1148,28 +1145,18 @@ public:
         PreparedLoopSliceParamImage image; image.valid = true; image.pname = pname;
         image.expected = capturePreparedParamState();
         image.expectedLive = MeshSnapshot.capture(live);
-        image.candidate = detachedPreparedMesh(live);
+        Mesh work = detachedPreparedMesh(live);
         GpuMesh shadowGpu; EditMode shadowMode = *editMode;
-        auto shadowTool = new LoopSliceTool(() => &image.candidate, &shadowGpu,
+        auto shadowTool = new LoopSliceTool(() => &work, &shadowGpu,
             &shadowMode, litShader);
-        copyPreparedParamInputsTo(shadowTool, image.candidate, shadowGpu, shadowMode);
-        auto delivery = beginPreparedShadow(image.candidate);
+        copyPreparedParamInputsTo(shadowTool, work, shadowGpu, shadowMode);
+        auto delivery = beginPreparedShadow(work);
         shadowTool.onParamChanged(pname);
-        drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
-            image.deliveryDomains); delivery.close();
+        delivery.close();
         image.next = shadowTool.capturePreparedParamState();
-        image.applies = shadowTool.preparedRebuildAttempted_;
-        image.invalidateRedo = image.applies && history !is null;
-        image.stampKey = image.applies && image.next.armed;
-        // The key is computed HERE, from the image that install copies whole
-        // into the live mesh, at the live address. Without a
-        // re-stamp the mesh is untouched by this update and the live key
-        // stands; the shadow's own key names the CANDIDATE and is never
-        // installed.
-        if (image.stampKey)
-            image.next.armedKey.stampAs(image.candidate, cast(size_t)mesh);
-        else
-            image.next.armedKey = image.expected.armedKey;
+        // The update never writes the live mesh, so the live key stands; the
+        // shadow's own key names the scratch copy and is never installed.
+        image.next.armedKey = image.expected.armedKey;
         return image;
     }
 
@@ -1195,32 +1182,8 @@ public:
         image.clear();
     }
 
-    final PreparedLoopSliceParamEffect prepareParamChanged(string pname,
-            PreparedRecordContext context, Layer layer, GpuUploadOwner uploadOwner) {
-        if (context is null) return PreparedLoopSliceParamEffect(
-            preparedToolStateOwner, PreparedLoopSliceParamKind.None, false);
-        scope(failure) context.discard();
-        auto owner = PreparedParamUpdateOwner!(LoopSliceTool, PreparedLoopSliceParamImage,
-            PreparedLoopSliceParamKind).prepare(this, layer, pname);
-        bool ok = owner !is null;
-        if (ok && owner.applies)
-            ok = uploadOwner !is null &&
-                uploadOwner.owns(gpu) &&
-                context.prepareStampedMeshImage(layer, owner.candidate,
-                    owner.deliveryFlags, owner.deliveryDomains) &&
-                context.prepareUpload(uploadOwner, owner.candidate);
-        bool installHistory;
-        if (ok && owner.image.invalidateRedo) {
-            auto result = context.prepareInvalidateRedo();
-            ok = result.accepted; installHistory = result.mustInstall;
-        }
-        if (ok) ok = installHistory ? context.markHistoryInstall()
-                                    : context.markNoHistoryInstall();
-        if (ok) ok = context.prepareParamUpdate(owner);
-        if (!ok) context.discard();
-        return PreparedLoopSliceParamEffect(preparedToolStateOwner,
-            owner is null ? PreparedLoopSliceParamKind.None : owner.effectKind, ok);
-    }
+    mixin PreparedParamUpdateProducer!(PreparedParamUpdateOwner!(LoopSliceTool,
+        PreparedLoopSliceParamImage, PreparedLoopSliceParamKind), PreparedLoopSliceParamEffect);
 
     override void onParamChanged(string pname) {
         // HUD geometry only — never touches the cut.
@@ -1944,7 +1907,6 @@ private:
         if (!before_.filled || seeds_.length == 0) return;
         // IDENTITY guard (topology, not position); see the `armedKey_` field note.
         if (!armedKey_.matches(*mesh)) { dropArmedPreview(); return; }
-        if (preparedShadow_) preparedRebuildAttempted_ = true;
         // Perf (task 1370) — AFTER the guard(s) above, never on the first
         // line: an early-out must record no sample, or `count` tallies
         // refusals as work. See Cat.toolPreview for the decomposition.

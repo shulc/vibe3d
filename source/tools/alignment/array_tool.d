@@ -31,7 +31,6 @@ import display_sync : refreshDisplay;
 import perf_probe : g_perf, Cat;
 import prepared_record_context : PreparedRecordContext;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
-import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
 import core.stdc.string : memcmp;
 
 
@@ -128,15 +127,13 @@ struct ArrayParamProjection {
 
 struct PreparedArrayParamImage {
     mixin DefaultParamEffectKind!PreparedArrayParamKind;
-    bool valid, applies, expectedActive, expectedBuilt, nextBuilt;
+    bool valid, expectedActive, expectedBuilt;
     ArrayParamProjection expectedParams;
     MeshSnapshot expectedLive, expectedBefore;
-    Mesh candidate;
-    uint deliveryFlags, deliveryDomains;
     void clear() nothrow @nogc {
         expectedParams.item = null;
         expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
-        candidate = Mesh.init; this.valid = this.applies = false;
+        this.valid = false;
     }
 }
 
@@ -360,28 +357,11 @@ public:
     final PreparedArrayParamImage buildPreparedParamUpdate(string, ref Mesh live) {
         PreparedArrayParamImage image;
         image.valid = true; image.expectedActive = active;
-        image.expectedBuilt = built; image.nextBuilt = built;
+        image.expectedBuilt = built;
         image.expectedParams = paramProjection();
         image.expectedParams.item = item_.dup;
         image.expectedLive = MeshSnapshot.capture(live);
-        if (!before.filled) return image;
-        Mesh baseline;
-        auto baselineShadow = beginPreparedShadow(baseline);
-        before.restore(baseline);
-        drainPreparedShadowDelivery(baseline, image.deliveryFlags,
-            image.deliveryDomains);
-        baselineShadow.close();
-        image.expectedBefore = MeshSnapshot.capture(baseline);
-        image.deliveryFlags = image.deliveryDomains = 0;
-        if (!interactiveParamEdit || !active) return image;
-        image.applies = true;
-        image.candidate = baseline;
-        baseline = Mesh.init;
-        auto shadow = beginPreparedShadow(image.candidate);
-        image.nextBuilt = operation(image.candidate) != 0 || replace_;
-        drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
-            image.deliveryDomains);
-        shadow.close();
+        if (before.filled) image.expectedBefore = before;
         return image;
     }
     final bool preparedParamUpdateMatches(in PreparedArrayParamImage image,
@@ -393,8 +373,7 @@ public:
     }
     final void installPreparedParamUpdate(ref PreparedArrayParamImage image)
             nothrow @nogc {
-        if (!image.valid) return;
-        built = image.nextBuilt; image.clear();
+        image.clear();
     }
     mixin PreparedParamUpdateProducer!(PreparedParamUpdateOwner!(ArrayTool,
         PreparedArrayParamImage, PreparedArrayParamKind), PreparedArrayParamEffect);
@@ -492,7 +471,7 @@ private:
     // notes themselves as a HARNESS artifact, not a confirmed reference
     // finding — see task 0355's capture notes §7.2 — so it is not treated
     // as a spec requirement.)
-    // The one operation: preview, prepared image and scripted apply. The
+    // The one operation: preview and scripted apply. The
     // mask is the L1 funnel: selected faces, else every VISIBLE face
     // (tasks 9434, 0613).
     size_t operation(ref Mesh target) {

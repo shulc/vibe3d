@@ -27,7 +27,7 @@ import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
 import tools.edit.preview_rebuild : PreviewRebuild, PreviewTopologyKey,
-    PreviewRebuildCounts, PreparedPreviewRebuildImage;
+    PreviewRebuildCounts;
 
 import std.math : abs, sqrt;
 import std.json : JSONValue;
@@ -43,7 +43,6 @@ import prepared_tool_effect : PreparedPolyExtrudeParamEffect,
     PreparedPolyExtrudeParamKind;
 import document : Layer;
 import mesh_gpu : GpuUploadOwner;
-import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
 import core.stdc.string : memcmp;
 import tools.create.create_common : primitivePlacementFrame, transformDir;
 import viewgrid : g_viewGrid, vectorSnap, viewVectorQuantum;
@@ -86,15 +85,12 @@ struct PolyExtrudeParamProjection {
 
 struct PreparedPolyExtrudeParamImage {
     mixin DefaultParamEffectKind!PreparedPolyExtrudeParamKind;
-    bool valid, applies, nextBuilt;
+    bool valid;
     PolyExtrudeParamProjection expected;
     MeshSnapshot expectedLive, expectedBefore;
-    PreparedPreviewRebuildImage preview;
-    Mesh candidate;
-    uint deliveryFlags, deliveryDomains;
     void clear() nothrow @nogc {
         expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
-        preview.clear(); candidate = Mesh.init; valid = applies = false;
+        valid = false;
     }
 }
 
@@ -309,37 +305,18 @@ public:
     final PreparedPolyExtrudeParamImage buildPreparedParamUpdate(string, ref Mesh live) {
         PreparedPolyExtrudeParamImage image;
         image.valid = true; image.expected = paramProjection();
-        image.nextBuilt = built; image.expectedLive = MeshSnapshot.capture(live);
-        // Above the early return: the preview conjunct below is unconditional
-        // (the cold-arm hole, task 4491).
-        preview_.prepareImageShadowed(image.preview);
-        if (!before.filled) return image;
-        image.expectedBefore = before;
-        if (!interactiveParamEdit || !active) return image;
-        image.applies = true;
-        auto shadow = beginPreparedShadow(image.candidate);
-        image.expectedLive.restore(image.candidate);
-        drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
-            image.deliveryDomains);
-        image.deliveryFlags = image.deliveryDomains = 0;
-        image.nextBuilt = PreviewRebuild.runPrepared(image.preview,
-            image.candidate, before,
-            (ref Mesh cage) => previewKey(cage, false),
-            (ref Mesh target) => operation(target, false)) != 0;
-        drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
-            image.deliveryDomains);
-        shadow.close(); return image;
+        image.expectedLive = MeshSnapshot.capture(live);
+        if (before.filled) image.expectedBefore = before;
+        return image;
     }
     final bool preparedParamUpdateMatches(in PreparedPolyExtrudeParamImage image,
             ref const Mesh live) const nothrow @nogc {
         return image.valid && image.expected == paramProjection() &&
-            image.expectedLive.matches(live) && image.expectedBefore.matches(before) &&
-            preview_.matchesImage(image.preview);
+            image.expectedLive.matches(live) && image.expectedBefore.matches(before);
     }
     final void installPreparedParamUpdate(ref PreparedPolyExtrudeParamImage image)
             nothrow @nogc {
-        if (!image.valid) return;
-        built = image.nextBuilt; preview_.installImage(image.preview); image.clear();
+        image.clear();
     }
     /// The preview seam's counters (read by the churn test).
     public PreviewRebuildCounts previewRebuildCounts() const {
@@ -556,7 +533,7 @@ private:
         return PreviewTopologyKey.make(cage.operandFaceMask(), distance_ == 0.0f &&
             shiftVec() == Vec3(0, 0, 0) && !allowCoincidentTopology);
     }
-    // The one operation of the preview, the prepared image and the scripted
+    // The one operation of the preview and the scripted
     // apply; unrecorded, a preview frame records nothing.
     size_t operation(ref Mesh target, bool allowCoincidentTopology) {
         const shift = shiftVec();
@@ -903,29 +880,18 @@ unittest { // free drag press prepares Jacobian from captured upstream-snapped B
         candidateTool.shiftX_ = extent.x;
         candidateTool.shiftY_ = extent.y;
         candidateTool.shiftZ_ = extent.z;
-        auto image = candidateTool.buildPreparedParamUpdate("", rig);
-        scope(exit) image.clear();
-        assert(image.valid && image.applies && image.candidate.vertices.length == 12 &&
-            image.candidate.faces.length == 8 && image.candidate.edges.length == 19,
-            "captured Polygon candidate lost full W2 topology");
+        const Vec3[] base = rig.vertices.dup;
+        candidateTool.rebuildPreview(true);
+        assert(rig.vertices.length == 12 && rig.faces.length == 8 &&
+            rig.edges.length == 19, "captured Polygon preview lost full W2 topology");
         Vec3 meshDelta = tilted
             ? Vec3(-0.091958761f, -0.001721144f, 0.088264525f)
             : extent;
         foreach (i; 0 .. 8)
-            assert(image.candidate.vertices[i] == rig.vertices[i]);
+            assert(rig.vertices[i] == base[i]);
         foreach (i, vi; [0u,2u,6u,4u])
-            assert(near(image.candidate.vertices[8+i], rig.vertices[vi] + meshDelta),
-                "captured Polygon candidate lost a full cap position");
-        foreach (fi; 0 .. image.candidate.faces.length)
-            assert(image.candidate.isFaceSelected(cast(uint)fi) == (fi == 7));
-
-        candidateTool.rebuildPreview(true);
-        assert(rig.vertices.length == image.candidate.vertices.length &&
-            rig.faces == image.candidate.faces && rig.edges == image.candidate.edges,
-            "live Polygon preview differs from the prepared full-state candidate");
-        foreach (i, p; image.candidate.vertices)
-            assert(near(rig.vertices[i], p),
-                "live Polygon cap position differs from the prepared candidate");
+            assert(near(rig.vertices[8+i], base[vi] + meshDelta),
+                "captured Polygon preview lost a full cap position");
         foreach (fi; 0 .. rig.faces.length)
             assert(rig.isFaceSelected(cast(uint)fi) == (fi == 7));
     }

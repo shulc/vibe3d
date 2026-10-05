@@ -34,7 +34,6 @@ import prepared_tool_effect : PreparedReductionParamEffect,
     PreparedReductionParamKind;
 import document : Layer;
 import mesh_gpu : GpuUploadOwner;
-import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
 import core.stdc.string : memcmp;
 
 struct ReductionParamProjection {
@@ -49,14 +48,12 @@ struct ReductionParamProjection {
 
 struct PreparedReductionParamImage {
     mixin DefaultParamEffectKind!PreparedReductionParamKind;
-    bool valid, applies, nextBuilt;
+    bool valid;
     ReductionParamProjection expected;
     MeshSnapshot expectedLive, expectedBefore;
-    Mesh candidate;
-    uint deliveryFlags, deliveryDomains;
     void clear() nothrow @nogc {
         expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
-        candidate = Mesh.init; valid = applies = false;
+        valid = false;
     }
 }
 
@@ -209,27 +206,9 @@ public:
     final PreparedReductionParamImage buildPreparedParamUpdate(string, ref Mesh live) {
         PreparedReductionParamImage image;
         image.valid = true; image.expected = paramProjection();
-        image.nextBuilt = built; image.expectedLive = MeshSnapshot.capture(live);
-        if (!before.filled) return image;
-        Mesh baseline;
-        auto baselineShadow = beginPreparedShadow(baseline);
-        before.restore(baseline);
-        uint baselineFlags, baselineDomains;
-        drainPreparedShadowDelivery(baseline, baselineFlags, baselineDomains);
-        baselineShadow.close();
-        image.expectedBefore = MeshSnapshot.capture(baseline);
-        image.deliveryFlags = image.deliveryDomains = 0;
-        if (!interactiveParamEdit || !active) return image;
-        image.applies = true; image.candidate = baseline; baseline = Mesh.init;
-        auto shadow = beginPreparedShadow(image.candidate);
-        image.nextBuilt = operation(image.candidate) != 0;
-        drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
-            image.deliveryDomains);
-        if (image.deliveryFlags == 0) {
-            image.deliveryFlags = baselineFlags;
-            image.deliveryDomains = baselineDomains;
-        }
-        shadow.close(); return image;
+        image.expectedLive = MeshSnapshot.capture(live);
+        if (before.filled) image.expectedBefore = before;
+        return image;
     }
     final bool preparedParamUpdateMatches(in PreparedReductionParamImage image,
             ref const Mesh live) const nothrow @nogc {
@@ -239,8 +218,7 @@ public:
     }
     final void installPreparedParamUpdate(ref PreparedReductionParamImage image)
             nothrow @nogc {
-        if (!image.valid) return;
-        built = image.nextBuilt; image.clear();
+        image.clear();
     }
     mixin PreparedParamUpdateProducer!(PreparedParamUpdateOwner!(ReductionTool,
         PreparedReductionParamImage, PreparedReductionParamKind), PreparedReductionParamEffect);
@@ -286,7 +264,7 @@ private:
         refreshDisplay(mesh, gpu);
     }
 
-    // The one operation (task 9433): preview, prepared image and scripted
+    // The one operation (task 9433): preview and scripted
     // apply. A ratio that keeps every face (or a faceless mesh) is the
     // kernel's own no-op (it returns 0 for a target at or above the count).
     // UNRECORDED (task 1903 D2): a preview frame must not build an op-log per

@@ -74,7 +74,7 @@ struct PreparedSliceDeactivateImage {
 }
 
 struct PreparedSliceParamImage {
-    bool valid, recognized, applies, nextAxisLocked, nextPreviewLive;
+    bool valid, recognized, nextAxisLocked;
     string pname;
     bool expectedActive, expectedPreviewLive, expectedHaveBefore;
     bool expectedAxisLocked, expectedHaveFrozen;
@@ -84,17 +84,13 @@ struct PreparedSliceParamImage {
     Vec3 expectedStart, expectedEnd, expectedVector, expectedFrozenNormal;
     MeshSnapshot expectedLive, expectedBefore;
     uint[] expectedRestrictFaces;
-    Mesh candidate;
-    uint deliveryFlags, deliveryDomains;
-    SessionMeshKey nextArmedKey;
     void clear() nothrow @nogc {
         pname = null; expectedLive = MeshSnapshot.init;
         expectedBefore = MeshSnapshot.init; expectedRestrictFaces = null;
-        candidate = Mesh.init; valid = recognized = applies = false;
+        valid = recognized = false;
     }
     PreparedSliceParamKind effectKind() const nothrow @nogc {
         if (!valid || !recognized) return PreparedSliceParamKind.Noop;
-        if (applies) return PreparedSliceParamKind.Preview;
         return pname == "axis" ? PreparedSliceParamKind.AxisLatch
                                : PreparedSliceParamKind.Noop;
     }
@@ -259,8 +255,8 @@ size_t sliceFromBaseline(ref Mesh mesh, const ref MeshSnapshot baseline,
 
 // ---------------------------------------------------------------------------
 // sliceCut — the ONE Slice cut operation (task 9431): the live preview and
-// commit (`sliceFromBaseline`), the prepared panel edit and the scripted
-// `applyHeadless` all cut through here, so no twin can drift. Cuts `mesh` with
+// commit (`sliceFromBaseline`) and the scripted `applyHeadless` all cut
+// through here, so no twin can drift. Cuts `mesh` with
 // the plane (p, n); `start`/`end` bound a clipped cut. Returns the faces split.
 size_t sliceCut(ref Mesh mesh, Vec3 p, Vec3 n, Vec3 start, Vec3 end,
                 bool infinite, bool split, bool caps, const uint[] restrictFaces,
@@ -1476,24 +1472,6 @@ public:
         image.expectedBefore = before_;
         image.expectedRestrictFaces = restrictFaces_.dup;
         image.nextAxisLocked = axisLocked_ || pname == "axis";
-        image.nextPreviewLive = previewLive_;
-        if (!image.recognized || !active || dragPart_ != DragNone ||
-            !previewLive_ || !haveBefore_ || !before_.filled)
-            return image;
-
-        image.applies = true;
-        image.candidate = detachedPreparedMesh(live);
-        auto shadow = beginPreparedShadow(image.candidate);
-        Vec3 normal = haveFrozen_ ? frozenNormal_ : cachedWorkplaneNormal();
-        int axisMode = image.nextAxisLocked ? cast(int)axis_ : SLICE_AXIS_DRAG;
-        const n = sliceFromBaseline(image.candidate, before_, start_, end_,
-            normal, axisMode, vector_, infinite_, split_, caps_,
-            restrictFaces_, gap_, cast(int)gapSide_);
-        image.nextPreviewLive = n > 0;
-        image.nextArmedKey.stampAs(image.candidate, cast(size_t)mesh);
-        drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
-            image.deliveryDomains);
-        shadow.close();
         return image;
     }
 
@@ -1530,10 +1508,6 @@ public:
             nothrow @nogc {
         if (!image.valid) return;
         axisLocked_ = image.nextAxisLocked;
-        if (image.applies) {
-            previewLive_ = image.nextPreviewLive;
-            armedKey_ = image.nextArmedKey;
-        }
         image.clear();
     }
 

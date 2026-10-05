@@ -35,7 +35,6 @@ import prepared_radial_array_transition : PreparedRadialArrayTransitionOwner;
 import command_history : PreparedHistoryKind;
 import document : Layer;
 import mesh_gpu : GpuUploadOwner;
-import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
 import core.stdc.string : memcmp;
 
 enum PreparedRadialArrayTransitionKind : ubyte { Activate, Param, Deactivate }
@@ -56,13 +55,11 @@ struct RadialArrayParamProjection {
 struct RadialArrayTransitionImage {
     MeshSnapshot before;
     MeshSnapshot expectedLive, expectedBefore;
-    Mesh candidate;
     RadialArrayParamProjection expectedParams;
     PreparedRadialArrayTransitionKind kind;
-    bool active, built, clearHaul, valid, applies;
+    bool active, built, clearHaul, valid;
     bool expectedActive, expectedBuilt;
     int dragPart;
-    uint deliveryFlags, deliveryDomains;
     void clear() nothrow @nogc { this = RadialArrayTransitionImage.init; }
 }
 
@@ -277,22 +274,8 @@ public:
         image.expectedParams = paramProjection();
         image.expectedParams.axis = axis_.dup;
         image.expectedLive = MeshSnapshot.capture(live);
-        if (!before.filled) return image;
-        Mesh baseline;
-        auto baselineShadow = beginPreparedShadow(baseline);
-        before.restore(baseline);
-        drainPreparedShadowDelivery(baseline, image.deliveryFlags,
-            image.deliveryDomains);
-        baselineShadow.close();
-        image.expectedBefore = MeshSnapshot.capture(baseline);
-        image.deliveryFlags = image.deliveryDomains = 0;
-        if (!interactiveParamEdit || !active) return image;
-        image.applies = true; image.candidate = baseline; baseline = Mesh.init;
-        auto shadow = beginPreparedShadow(image.candidate);
-        image.built = operation(image.candidate) != 0;
-        drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
-            image.deliveryDomains);
-        shadow.close(); return image;
+        if (before.filled) image.expectedBefore = before;
+        return image;
     }
     final bool preparedParamMatches(in RadialArrayTransitionImage image,
             ref const Mesh live) const nothrow @nogc {
@@ -483,20 +466,13 @@ public:
         if (interactiveParamEdit) rebuildPreview();
     }
     final PreparedRadialArrayEffect prepareParamChanged(
-            PreparedRecordContext context, Layer layer,
-            GpuUploadOwner uploadOwner) {
+            PreparedRecordContext context, Layer layer, GpuUploadOwner) {
         if (context is null) return PreparedRadialArrayEffect(
             preparedToolStateOwner, PreparedRadialArrayKind.Param, false);
         scope(failure) context.discard();
         auto transition = PreparedRadialArrayTransitionOwner.param(this, layer);
         bool ok = transition !is null;
-        if (ok && transition.applies)
-            ok = uploadOwner !is null && uploadOwner.owns(gpu) &&
-                context.prepareStampedMeshImage(layer, transition.candidate,
-                    transition.deliveryFlags, transition.deliveryDomains);
         if (ok) ok = context.prepareRadialArrayTransition(transition);
-        if (ok && transition.applies)
-            ok = context.prepareUpload(uploadOwner, transition.candidate);
         if (ok) ok = context.markNoHistoryInstall();
         if (!ok) context.discard();
         return PreparedRadialArrayEffect(preparedToolStateOwner,
@@ -737,7 +713,7 @@ private:
         return Vec3(0, 0, 1);
     }
 
-    // The one operation: preview, prepared image and scripted apply. One
+    // The one operation: preview and scripted apply. One
     // copy builds nothing: the kernel refuses `count <= 1` (the shift is then
     // unused; it is not divided by zero). The mask is the L1 funnel: selected
     // faces, else every VISIBLE face (tasks 9434, 0613).

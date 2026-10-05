@@ -72,11 +72,11 @@ tool tools.transform.xfrm_transform.XfrmTransformTool has=tools.transform.xfrm_t
 
 key source/tools/alignment/radial_sweep_tool.d mck=0 smk=1
 key source/tools/create/pen.d mck=0 smk=2
-key source/tools/deform/magnet.d mck=0 smk=2
+key source/tools/deform/magnet.d mck=0 smk=1
 key source/tools/edit/bridge_tool.d mck=0 smk=3
 key source/tools/slice/edge_slice_tool.d mck=0 smk=4
 key source/tools/slice/loop_slice_tool.d mck=0 smk=3
-key source/tools/slice/slice_tool.d mck=0 smk=4
+key source/tools/slice/slice_tool.d mck=0 smk=3
 
 write source/tools/alignment/radial_sweep_tool.d recordGestureEdit 1
 write source/tools/common/command_wrapper.d cacheHistory.fire 1

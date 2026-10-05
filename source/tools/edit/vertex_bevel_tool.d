@@ -25,7 +25,7 @@ import command_history : CommandHistory;
 import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
 import tools.edit.preview_rebuild : PreviewRebuild, PreviewTopologyKey,
-    PreviewRebuildCounts, PreparedPreviewRebuildImage;
+    PreviewRebuildCounts;
 
 import std.math : abs, sqrt;
 import std.json : JSONValue;
@@ -41,7 +41,6 @@ import prepared_tool_effect : PreparedVertexBevelParamEffect,
     PreparedVertexBevelParamKind;
 import document : Layer;
 import mesh_gpu : GpuUploadOwner;
-import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
 import core.stdc.string : memcmp;
 
 struct VertexBevelParamProjection {
@@ -56,15 +55,12 @@ struct VertexBevelParamProjection {
 
 struct PreparedVertexBevelParamImage {
     mixin DefaultParamEffectKind!PreparedVertexBevelParamKind;
-    bool valid, applies, nextBuilt;
+    bool valid;
     VertexBevelParamProjection expected;
     MeshSnapshot expectedLive, expectedBefore;
-    PreparedPreviewRebuildImage preview;
-    Mesh candidate;
-    uint deliveryFlags, deliveryDomains;
     void clear() nothrow @nogc {
         expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
-        preview.clear(); candidate = Mesh.init; valid = applies = false;
+        valid = false;
     }
 }
 
@@ -276,38 +272,20 @@ public:
     final PreparedVertexBevelParamImage buildPreparedParamUpdate(string, ref Mesh live) {
         PreparedVertexBevelParamImage image;
         image.valid = true; image.expected = paramProjection();
-        image.nextBuilt = built; image.expectedLive = MeshSnapshot.capture(live);
-        // Above the early return: the preview conjunct below is unconditional
-        // (the cold-arm hole, task 4491).
-        preview_.prepareImageShadowed(image.preview);
-        if (!before.filled) return image;
-        image.expectedBefore = before;
-        if (!interactiveParamEdit || !active) return image;
-        image.applies = true;
-        auto shadow = beginPreparedShadow(image.candidate);
-        image.expectedLive.restore(image.candidate);
-        drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
-            image.deliveryDomains);
-        image.deliveryFlags = image.deliveryDomains = 0;
-        image.nextBuilt = PreviewRebuild.runPrepared(image.preview,
-            image.candidate, before,
-            &previewKey, &operation) != 0;
-        drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
-            image.deliveryDomains);
-        shadow.close(); return image;
+        image.expectedLive = MeshSnapshot.capture(live);
+        if (before.filled) image.expectedBefore = before;
+        return image;
     }
     final bool preparedParamUpdateMatches(
             in PreparedVertexBevelParamImage image, ref const Mesh live) const
             nothrow @nogc {
         return image.valid && image.expected == paramProjection() &&
             image.expectedLive.matches(live) &&
-            image.expectedBefore.matches(before) &&
-            preview_.matchesImage(image.preview);
+            image.expectedBefore.matches(before);
     }
     final void installPreparedParamUpdate(
             ref PreparedVertexBevelParamImage image) nothrow @nogc {
-        if (!image.valid) return;
-        built = image.nextBuilt; preview_.installImage(image.preview); image.clear();
+        image.clear();
     }
     /// The preview seam's counters (read by the churn test).
     public PreviewRebuildCounts previewRebuildCounts() const {
@@ -495,7 +473,7 @@ private:
         return PreviewTopologyKey.make(cage.operandVertexMask(EditMode.Vertices),
             !isFinite(inset_) || !(inset_ >= 1e-6f));
     }
-    // The one operation (task 9433): preview, prepared image and scripted
+    // The one operation (task 9433): preview and scripted
     // apply. Unrecorded — a preview frame records nothing, and the scripted
     // apply's snapshot pair belongs to `ToolDoApplyCommand`. The mask is the
     // L1 funnel (task 0613): the selection, else every VISIBLE element.
