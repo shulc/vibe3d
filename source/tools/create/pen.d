@@ -1296,12 +1296,16 @@ private:
 
     // The merge (wave plan S5; fixture pen_merge.json): ONE search from the
     // PLACED point, after the snap, never part of its election. Screen radii
-    // (one value per view): 24 px over the edited mesh's vertices and edges;
-    // after an element snap the snapped edge's own ends within 17.5 px, else
-    // any vertex within 2.85 px. A vertex hit moves the point onto it and is
-    // returned (the point shares it); an edge hit moves the point onto the edge
-    // as its own vertex. `snapCursor` takes an integer pixel, so it is the
-    // broad phase (r + 1) and the float distance decides.
+    // (one value per view): 24 px over the edited mesh's vertices, THEN its
+    // edges (vertices first, §28.3 F5: one class per query, so the snap
+    // election's vertex veto never applies); after an element snap the snapped
+    // edge's own ends within 17.5 px, else any vertex within 2.85 px. A vertex
+    // hit moves the point onto it and is returned (the point shares it); an
+    // edge hit moves the point onto the edge as its own vertex. `snapCursor`
+    // takes an integer pixel, so it is the broad phase (r + 1) and the float
+    // distance decides.
+    static immutable SnapType[1] kMergeSmall = [SnapType.Vertex];
+    static immutable SnapType[2] kMergeLarge = [SnapType.Vertex, SnapType.Edge];
     int mergeTarget(ref Vec3 local) {
         immutable Vec3 placed = toWorldP(local);
         float fx, fy, ndcZ;
@@ -1329,15 +1333,18 @@ private:
         SnapPacket pkt;
         pkt.enabled = true;
         pkt.innerRangePx = r + 1;
-        pkt.enabledTypes = small ? SnapType.Vertex : SnapType.Vertex | SnapType.Edge;
-        auto hit = snapCursor(placed, cast(int)lround(fx), cast(int)lround(fy),
-            cachedVp, *mesh, ms, pkt, null, (SnapType, int, int slot) => slot == 0);
-        if (!hit.snapped || pxFrom(hit.worldPos) > r) return -1;
-        if (hit.targetType == SnapType.Vertex) {
-            local = toLocalP(hit.worldPos);
-            return hit.targetIndex;
+        foreach (t; small ? kMergeSmall[] : kMergeLarge[]) {
+            pkt.enabledTypes = t;
+            auto hit = snapCursor(placed, cast(int)lround(fx), cast(int)lround(fy),
+                cachedVp, *mesh, ms, pkt, null, (SnapType, int, int slot) => slot == 0);
+            if (!hit.snapped || pxFrom(hit.worldPos) > r) continue;
+            if (t == SnapType.Vertex) {
+                local = toLocalP(hit.worldPos);
+                return hit.targetIndex;
+            }
+            local = toLocalP(pointOnEdgeUnder(placed, hit.targetIndex));
+            return -1;
         }
-        local = toLocalP(pointOnEdgeUnder(placed, hit.targetIndex));
         return -1;
     }
 

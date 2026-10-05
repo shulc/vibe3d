@@ -430,6 +430,9 @@ unittest {
     fails ~= edgeE5Cell("merge_edge_then_vertex", c["snap_edge_e5_v6"], 0.01, ran);
     // Snapping off: an isolated V 10 px away links although an edge is nearer.
     fails ~= isolatedCell("snap_off_isolated_v10", c["snap_off_isolated_v10"], null, 6, ran);
+    // A loose V 19.8 px away links although an edge is 0.44 px away (vertices
+    // before edges; PENDING-K-B8: the expectation is the plan's prediction).
+    fails ~= vertexBeforeEdge(ran);
     // The snapped edge's own end within 17.5 px links, at three zooms.
     foreach (cell, ex; ["MsE_440_k2": 0.075, "MsE_440_k3": 0.075, "MsE_440_k12": 0.095,
                         "MsE_440_k16": 0.105, "MsE_110_k4": 0.11, "MsE_110_k12": 0.18,
@@ -475,10 +478,10 @@ unittest {
     fails ~= sceneEdge("scene-edge-20px", ep["E4r_scene_edge_20px"], p(0.62, 0.255), ran);
 
     snap(null);
-    assert(ran == 67, format("pen merge population: %s cells ran, pinned 67", ran));
+    assert(ran == 68, format("pen merge population: %s cells ran, pinned 68", ran));
 
     // Blocked cells (kBlocked) must still fail; one that passes retires its mark.
-    assert(kBlocked.length == 4, format("blocked marks: %s, pinned 4", kBlocked.length));
+    assert(kBlocked.length == 3, format("blocked marks: %s, pinned 3", kBlocked.length));
     string[] open, retired;
     foreach (f; fails)
         if (!(f[0 .. f.indexOf(':')] in kBlocked)) open ~= f;
@@ -492,13 +495,9 @@ unittest {
 
 // Blocked cells (task 9362 card): they run and must still differ.
 //   F3 the grid snap does not yet place the pen's point on the view's grid
-//      node (each grid cell first asserts the click snapped to G);
-//   F5 the merge search inherits the snap election's vertex veto: T's edge
-//      midpoint 6.0 px from the placed point removes V at 12.0 px, so the
-//      edge wins where the capture links V.
+//      node (each grid cell first asserts the click snapped to G).
 private immutable string[string] kBlocked = [
     "merge_grid_far": "F3", "merge_grid_near": "F3", "merge_grid_from_placed": "F3",
-    "snap_off_isolated_v10": "F5",
 ];
 
 // ---- cell bodies ----------------------------------------------------------
@@ -624,6 +623,18 @@ private string[] isolatedCell(string cell, JSONValue c, string types, int dz, re
     clickWorld(kFar[0], kFar[1]);
     drop(); ++ran;
     return fixture(cell, e);
+}
+
+/// K-B8 M-VE20 (wave plan §28.5), PENDING-K-B8: the expectation is the
+/// vertices-first prediction until the capture lands. T2 A (0.05, 0.284),
+/// B (0.65, 0.284), C (0.35, 0.55), a loose V (0.24, 0.24); the click on
+/// P (0.24, 0.285): V 19.8 px, edge A-B 0.44 px, its midpoint 48.4 px.
+private string[] vertexBeforeEdge(ref int ran) {
+    auto w = [p(0.24, 0.24), p(0.05, 0.284), p(0.65, 0.284), p(0.35, 0.55)];
+    rig(p(0, 0.35), 440, meshJson(w, [[1, 2, 3]]), null);
+    clickWorld(p(0.24, 0.285), kFar[0], kFar[1]);
+    drop(); ++ran;
+    return compare("merge_vtx20_edge", w ~ kFar[], [[1, 2, 3], [0, 5, 4]]);
 }
 
 /// Grid snap (grid 0.1 at 440 px/m): the grid point G (0.1, 1, 0.2) at the
