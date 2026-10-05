@@ -37,7 +37,7 @@ import document             : Layer, primaryModelSpace;
 import shader              : Shader;
 import operator            : VectorStack, viewportOf;
 import toolpipe.packets    : ConstrainHitPacket, HoverTarget, HoverTargetKind,
-                             SubjectPacket, SnapPacket, SnapType;
+                             SubjectPacket, SnapPacket, SnapType, SymmetryPacket;
 import toolpipe.stages.constrain : liveConstrainStage, backgroundHit;
 import toolpipe.stages.snap : SnapStage, liveSnapStage;
 import toolpipe.guide       : SnapGuide, GuideDrawState, kGuidePrioritySeed;
@@ -4198,24 +4198,16 @@ public:
         refreshDisplay(m, gpu_);
     }
 
-    // Under symmetry a VERTEX grab off the plane drags its mirror partner (the
-    // shared walker, the grab's side as the base) and the weld pass covers both
-    // (task 9438, KW2_A). Edge/face moves and an on-plane grab keep the plain
-    // move (uncaptured, K-W2b). Idempotent; returns the moved set.
+    // Under symmetry an off-plane VERTEX grab drags its visible mirror partner, welded
+    // too (task 9438, KW2_A); edge/face/on-plane grabs stay plain (uncaptured, K-W2b).
     private uint[] movedWithPartners(ref VectorStack vts) {
-        import symmetry : applySymmetryMirror;
-        import toolpipe.packets : SymmetryPacket;
-        SymmetryPacket* sym = vts.get!SymmetryPacket();   // off: pairOf is empty
-        if (moveElem_ != MoveElem.Vertex || sym is null
-            || sym.pairOf.length != mesh.vertices.length || sym.pairOf[moveVerts_[0]] < 0)
-            return moveVerts_;
-        SymmetryPacket sp = *sym;
-        uint vi = moveVerts_[0], pi = cast(uint)sp.pairOf[vi];
-        sp.baseSide = sp.vertSign[vi];
-        auto operand = new bool[sp.pairOf.length], touched = new bool[sp.pairOf.length];
-        operand[vi] = operand[pi] = true;
-        applySymmetryMirror(mesh, sp, operand, touched);
-        return touched[pi] ? [vi, pi] : moveVerts_;
+        import symmetry : mirrorPosition;
+        auto sp = vts.get!SymmetryPacket();   // off: pairOf is empty
+        const int pi = moveElem_ == MoveElem.Vertex && sp && sp.pairOf.length == mesh.vertices.length
+            ? sp.pairOf[moveVerts_[0]] : -1;   // -1: on the plane or unpaired
+        if (pi < 0 || mesh.isVertexHidden(pi)) return moveVerts_;
+        mesh.vertices[pi] = mirrorPosition(*sp, mesh.vertices[moveVerts_[0]]);
+        return [moveVerts_[0], cast(uint)pi];
     }
 
     // Close an armed Move: apply the FINAL targets at the release's own
