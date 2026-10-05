@@ -128,8 +128,13 @@ private double[3] acenEval() {
 
 unittest {
     size_t ran;
+    // `VIBE3D_CELL=<id>` runs one cell alone (a mutation drill names the cell
+    // it must redden); the population floor holds for the full run only.
+    import std.process : environment;
+    const only = environment.get("VIBE3D_CELL", "");
+    bool cell(string id) { return only.length == 0 || only == id; }
 
-    { // new-scene-keeps: every tool-pipe value survives; the work plane resets
+    if (cell("new-scene-keeps")) { // every tool-pipe value survives; the work plane resets
         const r = row("newscene-stages-after-drop");
         cmd("scene.reset");
         keyW();
@@ -154,7 +159,7 @@ unittest {
         want("new-scene-keeps", "snap", "types", "edge,grid");
         ++ran;
     }
-    { // new-scene-armed-seeds (E8): the new scene drops the armed tool, and
+    if (cell("new-scene-armed-seeds")) { // (E8): the new scene drops the armed tool, and
       // that drop inserts the remembered constraint
         const r = row("newscene-armed-seeds");
         cmd("scene.reset");
@@ -169,14 +174,14 @@ unittest {
         wantConstraint("new-scene-armed-seeds drop", r["after_drop"]["constraint"]);
         ++ran;
     }
-    { // new-scene-no-tool-stays-off: nothing armed, nothing inserted
+    if (cell("new-scene-no-tool-stays-off")) { // nothing armed, nothing inserted
         cmd("scene.reset");
         cmd("file.new");
         wantConstraint("new-scene-no-tool-stays-off",
             row("newscene-stages-boot")["after"]["constraint"]);
         ++ran;
     }
-    { // cleared-new-scene-not-readded: once cleared, a new scene with a tool
+    if (cell("cleared-new-scene-not-readded")) { // once cleared, a new scene with a tool
       // armed does not re-add it (law.boot)
         cmd("scene.reset");
         keyW();
@@ -188,7 +193,7 @@ unittest {
         wantConstraint("cleared-new-scene-not-readded", parseJSON(`{"enabled":false}`));
         ++ran;
     }
-    { // api-reset-still-resets: the same setup, then the full reset
+    if (cell("api-reset-still-resets")) { // the same setup, then the full reset
         cmd("scene.reset");
         keyW();
         keyQ();
@@ -205,7 +210,7 @@ unittest {
         want("api-reset-still-resets", "snap", "types", "vertex");
         ++ran;
     }
-    { // new-scene-keeps-element-pin: the pin a vertex press stored in the old
+    if (cell("new-scene-keeps-element-pin")) { // the pin a vertex press stored in the old
       // scene is the pivot of the new scene's first rotate
         const r = row("newscene-element-pin");
         const pin = r["set"]["pin_written_by_pick"];
@@ -250,5 +255,5 @@ unittest {
         ++ran;
     }
 
-    assert(ran == 6, format("new scene cells: ran %s, expected 6", ran));
+    assert(only.length ? ran == 1 : ran == 6, format("new scene cells: ran %s, expected 6", ran));
 }

@@ -64,7 +64,7 @@ class SceneReset : Command {
 
     private string       primitive;     // "cube" / "diamond" / "octahedron" / "lshape" / "grid" / "subdivcube"
     private bool         emptyScene;    // true → reset to empty mesh (no primitive)
-    private bool         keepsToolPipe; // file.new: reset only storedInScene stages (task 9402)
+    private bool         keepsToolPipe; // file.new: reset only storedInScene stages
     // Integer parameter for the dense perf meshes: grid side count (n) for
     // "grid", Catmull-Clark depth (levels) for "subdivcube". -1 → use the
     // primitive's default. Ignored by the small fixed primitives.

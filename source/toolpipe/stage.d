@@ -99,7 +99,7 @@ abstract class Stage : ParamProvider {
     void clearTask() { reset(); }
 
     /// Whether this stage holds state stored IN the scene, which a new scene
-    /// (`file.new`) resets; every other stage keeps its values (task 9402).
+    /// (`file.new`) resets; every other stage keeps its values.
     bool storedInScene() const { return false; }
 
     /// Whether this stage is currently REGISTERED-and-live in the pipe.
