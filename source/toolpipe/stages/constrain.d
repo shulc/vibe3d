@@ -360,8 +360,7 @@ public:
             Param.bool_("enabled", "Enabled", &enabled, false),
             Param.intEnum_("geometry", "Mode", cast(int*)&geom,
                 constrainGeomEntries, cast(int)ConstrainGeom.Off),
-            // Never below 0: a negative write is stored as 0 (K-SC scr_neg).
-            Param.float_("offset",   "Offset",    &offset,   0.0f).min(0.0f).enforceBounds(),
+            Param.float_("offset",   "Offset",    &offset,   0.0f),
             Param.bool_("handle",    "Handle",    &handle,    true),
             Param.bool_("dblSided",  "Dbl Sided", &dblSided, false),
         ];
@@ -384,6 +383,9 @@ public:
     // Deliberately does NOT touch `userLocked` (review fix SF): it fires for a
     // tool's own composition too; the lock lives at the command doors above.
     override void onParamChanged(string name) {
+        // The offset never goes below 0, whichever door wrote it: a negative
+        // write is accepted and stored as 0 (K-SC scr_neg).
+        if (offset < 0) offset = 0;
         publishState();
     }
 

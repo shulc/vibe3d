@@ -194,6 +194,11 @@ unittest {
     cs.offset = 0.0f;
     assert(cs.pass(Vec3(0, 0, -2), vp, Vec3(0, 0, 1)) == Vec3(0, 0, -2),
            "pass, Vector, single-sided: the far quad's back face must not take the point");
+    // ... and Vector casts FORWARD only, unlike Screen (9c): from z -0.4
+    // moving -Z the far quad 0.6 ahead, never the near quad 0.4 behind.
+    const fwd = cs.pass(Vec3(0.005f, -0.005f, -0.4f), vp, Vec3(0, 0, -1));
+    assert(near3(fwd, Vec3(0.005f, -0.005f, -1)),
+           format("pass, Vector, from z -0.4 moving -Z: the far quad ahead (z -1); got %s", fwd));
     cs.dblSided = true;
     const backFace = cs.pass(Vec3(0, 0, -2), vp, Vec3(0, 0, 1));
     assert(near3(backFace, Vec3(0, 0, -1)),
