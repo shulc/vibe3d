@@ -36,7 +36,7 @@ import tools.create.create_common : WorkplaneFrame,
                               mostFacingAxis,
                               transformPoint, transformDir, snapLocalHit,
                               frameIsLeftHanded, reverseFaceWinding,
-                              workplaneCursorPlaneHit;
+                              workplaneCursorPlaneHit, moverDrag, heightDragNormal;
 import editmode : EditMode;
 import snap : SnapResult;
 import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
@@ -165,12 +165,12 @@ private:
     // All drag handlers write into params_; rendering and handle positions
     // are derived from params_ on demand.
     BoxParams params_;
-    // The UNSNAPPED parameters of a handle drag (task 9387, wave plan §28.2
-    // D-FB): set at each handle grab; each motion event integrates its delta
-    // into this copy and only then snaps `params_`, so a snapped value never
-    // becomes the next event's input (the client point is the press plus the
-    // pointer travel).
-    BoxParams dragRaw_;
+    // The grabbed handle's press + travel (M-HANDLE, task 9412): an edge, a
+    // height handle or the mover; a handle's parameters are rebuilt from it on
+    // every event and only then snapped, so a snapped value never becomes the
+    // next event's input. `fixedFace` = the held opposite face's coordinate.
+    HandleDrag grab;
+    float      fixedFace = 0.0f;
 
     // Ephemeral drag anchors — valid only during active drag phases:
     //   startPoint / currentPoint : valid during DrawingBase only.
@@ -216,13 +216,11 @@ private:
     // Move gizmo (axis-only, no plane circles)
     MoveHandler mover;
     int         moverDragAxis = -1;   // 0/1/2 = X/Y/Z, -1 = none
-    int         moverLastMX, moverLastMY;
 
     // Edge midpoint handles (BaseSet only)
     // 0 = edge 0-1, 1 = edge 1-2, 2 = edge 2-3, 3 = edge 3-0
     BoxHandler[4] edgeH;
     int           edgeDragIdx    = -1;
-    int           edgeLastMX, edgeLastMY;
 
     BoxHandler[2] heightH;           // [0] = bottom face, [1] = top face
     int           heightHDragIdx  = -1;  // -1 = none, 0/1 = which handle is dragging
@@ -559,10 +557,9 @@ public:
                 if (!h.isVisible()) continue;
                 if (h.hitTest(e.x, e.y, cachedVp)) {
                     edgeDragIdx = cast(int)i;
-                    edgeLastMX  = e.x;
-                    edgeLastMY  = e.y;
+                    grab.press(edgeMidLocal(edgeDragIdx), e.x, e.y);
+                    fixedFace = dot(edgeMidLocal(edgeDragIdx ^ 2), edgeAxis(edgeDragIdx));
                     captureLiveDragStart();
-                    dragRaw_ = params_;
                     return true;
                 }
             }
@@ -579,29 +576,19 @@ public:
         if ((state == BoxState.BaseSet || state == BoxState.HeightSet) && heightHHitIdx >= 0) {
             heightHDragIdx = heightHHitIdx;
             captureLiveDragStart();
-            if (state == BoxState.BaseSet) {
-                // Transition from BaseSet → DrawingHeight via bottom handle.
-                // Zero out height in params_ (the plane-normal axis size) before
-                // setting up the height plane so hpOrigin is at the correct position.
-                writeSizeParam(planeNormal, 0.0f);
-            }
-            dragRaw_ = params_;
-            // Capture base anchor before setupHeightPlane (baseCentroid() is correct now).
+            // BaseSet → DrawingHeight via the bottom handle: zero the height
+            // (the plane-normal size) first so hpOrigin is the base.
+            if (state == BoxState.BaseSet) writeSizeParam(planeNormal, 0.0f);
             baseAnchor = baseCentroid();
             setupHeightPlane();
-            Vec3 hhit;
-            bool hhitOk = workplaneCursorPlaneHit(frame, cachedVp, e.x, e.y,
-                                                  hpOrigin, hpn, hhit);
-            if (heightHHitIdx == 1) {
-                // Top handle: non-incremental drag; anchor so current height is preserved.
-                heightDragStart = hhitOk
-                    ? hhit - planeNormal * currentHeight()
-                    : hpOrigin;
-            } else {
-                // Bottom handle: incremental drag; anchor at the current hit point.
-                heightDragStart = hhitOk ? hhit : hpOrigin;
-            }
+            immutable Vec3 top = baseAnchor + planeNormal * currentHeight();
+            grab.press(heightHHitIdx == 1 ? top : baseAnchor, e.x, e.y);
+            fixedFace = dot(heightHHitIdx == 1 ? baseAnchor : top, planeNormal);
             if (state == BoxState.BaseSet) {
+                Vec3 hhit;
+                heightDragStart = workplaneCursorPlaneHit(frame, cachedVp, e.x, e.y,
+                                                          hpOrigin, hpn, hhit)
+                    ? hhit : hpOrigin;
                 state = BoxState.DrawingHeight;
             }
             uploadCuboid();
@@ -610,13 +597,11 @@ public:
 
         // Move gizmo hit-test only once the base is finalized
         if (state >= BoxState.BaseSet) {
-            int hit = moverHitTest(e.x, e.y);
+            int hit = mover.hitTest(e.x, e.y, cachedVp);
             if (hit >= 0) {
                 moverDragAxis  = hit;
-                moverLastMX    = e.x;
-                moverLastMY    = e.y;
+                grab.press(cenVec(), e.x, e.y);
                 captureLiveDragStart();
-                dragRaw_ = params_;
                 return true;
             }
         }
@@ -778,105 +763,42 @@ public:
             publishLastSnap(lastSnap);
         }
         if (edgeDragIdx >= 0) {
-            params_ = dragRaw_;
-            // The handle pos lives in world (rendered via cachedVp); pass
-            // the world version of the local axis we want to project the
-            // drag onto. applyEdgeDelta receives a world-space delta and
-            // converts to local via toLocalD before mutating params_.
-            Vec3 moveAxisLocal = (edgeDragIdx == 0 || edgeDragIdx == 2) ? planeAxis2 : planeAxis1;
-            Vec3 moveAxisWorld = toWorldD(moveAxisLocal);
-            bool skip;
-            Vec3 delta = screenAxisDelta(e.x, e.y, edgeLastMX, edgeLastMY,
-                                         edgeH[edgeDragIdx].pos, moveAxisWorld, cachedVp, skip);
-            if (!skip) applyEdgeDelta(edgeDragIdx, delta);
-            dragRaw_ = params_;
-            // Snap the moved face to the nearest target on its axis (the flip
-            // inside applyEdgeDelta may have toggled edgeDragIdx, so re-read it).
+            DragFrame f;
+            f.kind = DragKind.screenAxis;
+            f.axis = edgeAxis(edgeDragIdx);
+            int side;
+            if (dragFace(f, e.x, e.y, side)) {
+                // The dragged edge is the one on the pointer's side of the held one.
+                immutable int pos = (edgeDragIdx == 1 || edgeDragIdx == 3) ? 1 : 2;
+                if (side != 0) edgeDragIdx = side > 0 ? pos : pos ^ 2;
+                uploadPreview();
+            }
             lastSnap = snapMovedEdge(edgeDragIdx, e.x, e.y);
             publishLastSnap(lastSnap);
-            edgeLastMX = e.x;
-            edgeLastMY = e.y;
             return true;
         }
 
         if (moverDragAxis >= 0) {
-            params_ = dragRaw_;
-            bool skip = false;
-            if (moverDragAxis <= 2) {
-                Vec3 delta = axisDragDelta(e.x, e.y, moverLastMX, moverLastMY,
-                                           moverDragAxis, mover, cachedVp, skip);
-                if (!skip) applyMoverDelta(delta);
-            } else {
-                Viewport lvp = planeLocalViewport(cachedVp, frame);
-                Vec3 delta = primitiveCenterDragDelta(e.x, e.y, moverLastMX,
-                                                       moverLastMY, cenVec(), lvp);
-                applyMoverParameterDelta(delta);
+            Vec3 c;
+            if (moverDrag(grab, moverDragAxis, e.x, e.y, mover, frame, cachedVp, c)) {
+                params_.cenX = c.x; params_.cenY = c.y; params_.cenZ = c.z;
+                uploadPreview();
             }
-            dragRaw_ = params_;
             lastSnap = snapMover(moverDragAxis, e.x, e.y);
             publishLastSnap(lastSnap);
-            moverLastMX = e.x;
-            moverLastMY = e.y;
             return true;
         }
 
         // heightH drag in HeightSet (re-drag without changing state)
         if (heightHDragIdx >= 0 && state == BoxState.HeightSet) {
-            params_ = dragRaw_;
-            Vec3 hit;
-            if (workplaneCursorPlaneHit(frame, cachedVp, e.x, e.y, hpOrigin, hpn, hit))
-            {
-                if (heightHDragIdx == 1) {
-                    // Top handle (non-incremental). Top follows cursor, base
-                    // stays at baseAnchor. signedH < 0 ⇒ top crossed below
-                    // base ⇒ cuboid flips. After flip the visual top handle
-                    // is on baseAnchor's side (not where cursor is); swap
-                    // to bottom-handle drag so the handle on the cursor
-                    // side continues following.
-                    float signedH = dot(hit - heightDragStart, planeNormal);
-                    float newH    = abs(signedH);
-                    Vec3 newCen   = baseAnchor + planeNormal * (signedH * 0.5f);
-                    params_.cenX = newCen.x;
-                    params_.cenY = newCen.y;
-                    params_.cenZ = newCen.z;
-                    writeSizeParam(planeNormal, newH);
-                    if (signedH < 0.0f) {
-                        // After flip: baseAnchor is now the upper face.
-                        // Switch to bottom-handle mode: incremental delta
-                        // anchored at the current hit. baseAnchor stays.
-                        heightHDragIdx = 0;
-                        heightDragStart = hit;
-                        hpOrigin = baseAnchor + planeNormal * (signedH); // = newBase
-                    }
-                } else {
-                    // Bottom handle (incremental). Base follows cursor, top
-                    // stays. signedH = oldH - delta < 0 ⇒ base crosses top
-                    // ⇒ cuboid flips; same swap logic as top handle.
-                    float delta = dot(hit - heightDragStart, planeNormal);
-                    float oldH  = currentHeight();
-                    float signedH = oldH - delta;
-                    float newH    = abs(signedH);
-                    Vec3 cenDelta = planeNormal * (delta * 0.5f);
-                    params_.cenX += cenDelta.x;
-                    params_.cenY += cenDelta.y;
-                    params_.cenZ += cenDelta.z;
-                    writeSizeParam(planeNormal, newH);
-                    hpOrigin     += planeNormal * delta;
-                    heightDragStart = hit; // incremental: advance anchor
-                    if (signedH < 0.0f) {
-                        // After flip: roles swap. Switch to top-handle mode.
-                        // Re-anchor: top handle is non-incremental; set
-                        // baseAnchor to the current top (formerly base) and
-                        // heightDragStart so projection gives current height.
-                        heightHDragIdx = 1;
-                        baseAnchor = cenVec() - planeNormal * (newH * 0.5f);
-                        heightDragStart = hit - planeNormal * newH;
-                    }
-                }
+            DragFrame f;
+            f.kind   = DragKind.planeHit;
+            f.axis   = planeNormal;
+            f.normal = hpn;
+            int side;
+            if (dragFace(f, e.x, e.y, side)) {
+                if (side != 0) heightHDragIdx = side > 0 ? 1 : 0;
                 uploadCuboid();
-                dragRaw_ = params_;
-                // Snap the moved top/bottom face to a target on the normal axis
-                // (heightHDragIdx may have flipped above, so re-read it).
                 lastSnap = snapHeightFace(heightHDragIdx, e.x, e.y);
                 publishLastSnap(lastSnap);
             }
@@ -1136,8 +1058,6 @@ public:
     }
 
     override void onParamChanged(string name) {
-        // A typed value is a new unsnapped base for a drag in progress.
-        dragRaw_ = params_;
         if (paramBeforeValid) {
             recordLiveEdit(paramBeforeParams, paramBeforeState, params_, state);
             paramBeforeValid = false;
@@ -1377,36 +1297,6 @@ private:
     // mover sits at the box center = params_ center.
     Vec3 boxCenter() const { return cenVec(); }
 
-    // -----------------------------------------------------------------------
-    // Hit-test axis arrows (0/1/2) and centerBox (3).
-    // -----------------------------------------------------------------------
-    // Delegates to the shared MoveHandler.hitTest (task 0410, dedup 0407
-    // §A.D5) — was a verbatim inline copy of the same 3=centerBox,
-    // 0/1/2=arrowX/Y/Z, -1=miss test.
-    int moverHitTest(int mx, int my) {
-        return mover.hitTest(mx, my, cachedVp);
-    }
-
-    // Apply world-space delta to box by updating params_ center.
-    // The mover gizmo lives in world (its arrows align with world XYZ),
-    // so axisDragDelta returns a world-space vector. Project it into
-    // the workplane local frame before adding to params_.
-    void applyMoverDelta(Vec3 d) {
-        Vec3 dl = toLocalD(d);
-        params_.cenX += dl.x;
-        params_.cenY += dl.y;
-        params_.cenZ += dl.z;
-        uploadPreview();
-    }
-
-    // The centre-box conversion already returns parameter-space motion.
-    void applyMoverParameterDelta(Vec3 d) {
-        params_.cenX += d.x;
-        params_.cenY += d.y;
-        params_.cenZ += d.z;
-        uploadPreview();
-    }
-
     // Snap the moved box center onto the nearest snap target on the mover's
     // free axes (free-axis projection). Arrows 0/1/2 keep their oriented
     // workplane axes. The centerBox (3) instead uses LAW D's component index
@@ -1455,14 +1345,36 @@ private:
     // t is the snap target's coordinate. The caller uploads.
     SnapResult snapFace(Vec3 axis, Vec3 movedL, float o, int sx, int sy) {
         auto sr = snapLocalHit(movedL, frame, sx, sy, cachedVp, *mesh, EditMode.Vertices);
-        if (sr.snapped) {
-            float t = dot(movedL, axis);
-            Vec3  cen = cenVec();
-            cen = cen - axis * dot(cen, axis) + axis * ((t + o) * 0.5f);
-            params_.cenX = cen.x; params_.cenY = cen.y; params_.cenZ = cen.z;
-            writeSizeParam(axis, abs(t - o));
-        }
+        if (sr.snapped) setFace(axis, dot(movedL, axis), o);
         return sr;
+    }
+
+    // The face moving along `axis` at coordinate t, the opposite one held at o:
+    // centre (t + o) / 2 and size |t − o| on that axis. The caller uploads.
+    void setFace(Vec3 axis, float t, float o) {
+        Vec3 cen = cenVec();
+        cen = cen - axis * dot(cen, axis) + axis * ((t + o) * 0.5f);
+        params_.cenX = cen.x; params_.cenY = cen.y; params_.cenZ = cen.z;
+        writeSizeParam(axis, abs(t - o));
+    }
+
+    // A face handle's drag: the face at the press plus the travel through `f`
+    // on the plane-local view, the opposite face held at `fixedFace`. `side`
+    // = which side of the held face it is on along `f.axis` (0 = on it).
+    bool dragFace(DragFrame f, int mx, int my, out int side) {
+        bool skip;
+        Viewport lvp = planeLocalViewport(cachedVp, frame);
+        immutable Vec3 c = grab.client(mx, my, f, lvp, skip);
+        if (skip) return false;
+        immutable float t = dot(c, f.axis);
+        setFace(f.axis, t, fixedFace);
+        side = t > fixedFace ? 1 : t < fixedFace ? -1 : 0;
+        return true;
+    }
+
+    // The local axis an edge handle moves along: 0/2 = planeAxis2, 1/3 = planeAxis1.
+    Vec3 edgeAxis(int idx) const {
+        return (idx == 0 || idx == 2) ? planeAxis2 : planeAxis1;
     }
 
     // Color by world axis direction — resolved from the viewport scheme, not
@@ -1527,69 +1439,6 @@ private:
             ? planeNormal * (currentHeight() * 0.5f)
             : Vec3(0, 0, 0);
         return (corners[edgePairs[idx][0]] + corners[edgePairs[idx][1]]) * 0.5f + halfH;
-    }
-
-    // Move one edge of the base rectangle along its perpendicular axis.
-    // Each edge moves along either planeAxis1 or planeAxis2; the opposite
-    // edge stays fixed, so only the moved edge's world-axis size+center changes.
-    //
-    // Edge mapping (corners 0=(-a,-b), 1=(+a,-b), 2=(+a,+b), 3=(-a,+b)):
-    //   Edge 0 (0,1): south edge → moves along -planeAxis2 (signed by delta projection)
-    //   Edge 1 (1,2): east  edge → moves along +planeAxis1
-    //   Edge 2 (2,3): north edge → moves along +planeAxis2
-    //   Edge 3 (3,0): west  edge → moves along -planeAxis1
-    //
-    // For an edge moving along `moveAxis` by signed scalar `d`:
-    //   The moved edge shifts by d; opposite stays. Center shifts by d/2;
-    //   size changes by abs(d) (one side only).
-    //   Precisely: newSize = oldSize + d*sign; newCen = oldCen + moveAxis*(d/2).
-    void applyEdgeDelta(int idx, Vec3 delta) {
-        // Incoming delta is in WORLD (axisDragDelta projects screen
-        // motion onto a world-space axis). Convert to local before
-        // running the size-+-center math, since planeAxis1/Axis2/normal
-        // are the local-frame identity.
-        Vec3 deltaL = toLocalD(delta);
-        // Determine which local axis this edge moves along and the sign convention.
-        //   Edge 0 → planeAxis2, sign = -1 (south edge: + delta means "shrink" from south side)
-        //   Edge 1 → planeAxis1, sign = +1
-        //   Edge 2 → planeAxis2, sign = +1
-        //   Edge 3 → planeAxis1, sign = -1
-        Vec3  moveAxis;
-        float sign;
-        final switch (idx) {
-            case 0: moveAxis = planeAxis2; sign = -1.0f; break;
-            case 1: moveAxis = planeAxis1; sign = +1.0f; break;
-            case 2: moveAxis = planeAxis2; sign = +1.0f; break;
-            case 3: moveAxis = planeAxis1; sign = -1.0f; break;
-        }
-
-        float d        = dot(deltaL, moveAxis) * sign;
-        float oldSize  = sizeAlong(moveAxis);
-        float signedSz = oldSize + d;
-        // signedSz < 0 ⇒ dragged edge crossed the opposite edge ⇒
-        // rectangle flips. Size is |signedSz|; cen shifts by the FULL
-        // signed drag distance (always equals dot(delta, moveAxis), no
-        // matter the sign), so the rectangle stays anchored at the
-        // un-dragged opposite edge.
-        float newSize = abs(signedSz);
-        float fullD   = dot(deltaL, moveAxis);
-
-        writeSizeParam(moveAxis, newSize);
-        Vec3 cenShift = moveAxis * (fullD * 0.5f);
-        params_.cenX += cenShift.x;
-        params_.cenY += cenShift.y;
-        params_.cenZ += cenShift.z;
-
-        // Flip detected: swap drag index so the handle on the cursor's
-        // new side becomes "the dragged one" for next frame. Without
-        // this, the handle would visually stay anchored to the un-dragged
-        // edge (the original opposite face that's now on the cursor's
-        // SIDE post-flip would have NO handle being dragged). XOR with 2
-        // toggles 0↔2 (south↔north) and 1↔3 (east↔west).
-        if (signedSz < 0.0f)
-            edgeDragIdx ^= 2;
-
-        uploadPreview();
     }
 
     void choosePlane(const ref Viewport vp) {
@@ -1755,16 +1604,9 @@ private:
 
     void setupHeightPlane() {
         hpOrigin = baseCentroid();
-        // Camera direction in LOCAL space — height-drag plane sits with
-        // its normal in the workplane (perpendicular to planeNormal),
-        // pointing roughly at the camera so the user's screen-vertical
-        // mouse motion projects cleanly onto planeNormal.
-        Vec3 toCamera = localEye() - hpOrigin;
-        Vec3 inPlane  = toCamera - planeNormal * dot(toCamera, planeNormal);
-        float len = sqrt(inPlane.x*inPlane.x + inPlane.y*inPlane.y + inPlane.z*inPlane.z);
-        hpn = len > 1e-6f
-            ? inPlane / len
-            : planeAxis1;
+        // Facing the camera within the work plane, so screen-vertical motion
+        // projects cleanly onto planeNormal.
+        hpn = heightDragNormal(hpOrigin, localEye(), planeNormal, planeAxis1);
     }
 
     // Build a cuboid preview/commit mesh directly from params_. Like

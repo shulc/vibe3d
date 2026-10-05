@@ -10,6 +10,8 @@ import toolpipe.packets        : SubjectPacket, WorkplanePacket, SnapPacket;
 import toolpipe.stage          : TaskCode;
 import toolpipe.stages.workplane : WorkplaneStage;
 import operator                : VectorStack;
+import drag                    : HandleDrag, DragFrame, DragKind;
+import handler                 : MoveHandler;
 
 import mesh : Mesh;
 import editmode : EditMode;
@@ -228,6 +230,37 @@ Viewport planeLocalViewport(const ref Viewport vp, in WorkplaneFrame frame) {
     l.eye   = transformPoint(frame.toLocal, vp.eye);
     l.focus = transformPoint(frame.toLocal, vp.focus);
     return l;
+}
+
+/// A create tool's mover drag (M-HANDLE, task 9412): the centre at the press
+/// plus the pointer travel, in `frame`'s LOCAL space (= the Position channels).
+/// Arrows 0/1/2 travel along the drawn arrow (LAW A, own); the centre box
+/// through LAW D on the plane-local view (§14 read by §23). False = skip.
+bool moverDrag(const ref HandleDrag grab, int part, int mx, int my, MoveHandler mover,
+               in WorkplaneFrame frame, const ref Viewport vp, out Vec3 centre)
+{
+    DragFrame f;
+    f.kind = DragKind.principalPlane;
+    if (part <= 2) {
+        immutable Vec3 end = part == 0 ? mover.arrowX.end
+                           : part == 1 ? mover.arrowY.end : mover.arrowZ.end;
+        f.kind = DragKind.screenAxis;
+        f.axis = transformDir(frame.toLocal, end - mover.center);
+    }
+    bool skip;
+    Viewport lvp = planeLocalViewport(vp, frame);
+    centre = grab.client(mx, my, f, lvp, skip);
+    return !skip;
+}
+
+/// A height drag's plane normal: in the work plane (perpendicular to
+/// `normal`), facing the camera from `origin`; `fallback` when the eye sits on
+/// the normal's line. The Box and the radial primitives differ only in origin.
+Vec3 heightDragNormal(Vec3 origin, Vec3 eyeLocal, Vec3 normal, Vec3 fallback) {
+    Vec3 toCamera = eyeLocal - origin;
+    Vec3 inPlane  = toCamera - normal * dot(toCamera, normal);
+    immutable float len = inPlane.length;
+    return len > 1e-6f ? inPlane / len : fallback;
 }
 
 /// Where a placement click meets the view work plane, in `frame`'s LOCAL

@@ -331,7 +331,7 @@ public:
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
         if (state == TubeState.Idle) updateIdleSnap(e.x, e.y);
 
-        if (handleMoverDrag(e.x, e.y)) return true;
+        if (dragMover(e.x, e.y)) return true;
 
         if (state == TubeState.DrawingOuter) {
             Vec3 hit = screenToPlacementLocal(

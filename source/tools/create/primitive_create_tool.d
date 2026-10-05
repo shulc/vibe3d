@@ -68,8 +68,7 @@ import math;
 import handler : MoveHandler, BoxHandler, gizmoSize, axisFacesViewer, ToolHandles;
 import viewport_scheme : axisColor;
 import eventlog : queryMouse;
-import drag : axisDragDelta, primitiveCenterDragDelta,
-              screenAxisDelta;
+import drag : HandleDrag, DragFrame, DragKind;
 import shader : Shader, LitShader, drawLitPreview;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
@@ -87,7 +86,7 @@ import tools.create.create_common : WorkplaneFrame,
                               planeLocalViewport,
                               mostFacingAxis, transformPoint, transformDir, snapLocalHit,
                               frameIsLeftHanded, reverseFaceWinding,
-                              workplaneCursorPlaneHit;
+                              workplaneCursorPlaneHit, moverDrag, heightDragNormal;
 import editmode : EditMode;
 import snap : SnapResult;
 import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap, SnapOverlayOwner;
@@ -161,7 +160,8 @@ protected:
     // Move gizmo (axis-only) — used by every leaf-group.
     MoveHandler mover;
     int         moverDragAxis = -1;
-    int         moverLastMX, moverLastMY;
+    // The grabbed handle's press + travel (M-HANDLE): the mover or a size handle.
+    HandleDrag  grab;
 
     // Single-source hover/capture arbiter for the mover (+ size handles,
     // once HandledCreateTool adds those).
@@ -604,22 +604,13 @@ protected:
 
     void setupHeightPlane() {
         hpOrigin = center();
-        Vec3 toCamera = localEye() - hpOrigin;
-        Vec3 inPlane  = toCamera - planeNormal * dot(toCamera, planeNormal);
-        float len = sqrt(inPlane.x*inPlane.x + inPlane.y*inPlane.y + inPlane.z*inPlane.z);
-        hpn = len > 1e-6f ? inPlane / len : planeAxis1;
+        hpn = heightDragNormal(hpOrigin, localEye(), planeNormal, planeAxis1);
     }
 
     static int worldAxisIdxOf(Vec3 v) {
         if (abs(v.x) > 0.5f) return 0;
         if (abs(v.y) > 0.5f) return 1;
         return 2;
-    }
-
-    // Delegates to the shared MoveHandler.hitTest (task 0410, dedup 0407
-    // sec A.D5).
-    int moverHitTest(int mx, int my) {
-        return mover.hitTest(mx, my, cachedVp);
     }
 
     // Build the preview mesh from the current params_ (via the buildInto
@@ -678,11 +669,10 @@ protected:
     // ----- Mover-only grab/release/drag (tube uses these directly; --------
     // -----  HandledCreateTool wraps them with the size-handle priority) ----
     bool tryGrabMover(int mx, int my) {
-        int hit = moverHitTest(mx, my);
+        int hit = mover.hitTest(mx, my, cachedVp);
         if (hit >= 0) {
             moverDragAxis = hit;
-            moverLastMX   = mx;
-            moverLastMY   = my;
+            grab.press(center(), mx, my);
             return true;
         }
         return false;
@@ -693,28 +683,13 @@ protected:
         return false;
     }
 
-    bool handleMoverDrag(int mx, int my) {
+    bool dragMover(int mx, int my) {
         if (moverDragAxis < 0) return false;
-        bool skip = false;
-        Vec3 delta;
-        if (moverDragAxis <= 2) {
-            delta = axisDragDelta(mx, my, moverLastMX, moverLastMY,
-                                  moverDragAxis, mover, cachedVp, skip);
-            if (!skip) delta = toLocalD(delta);
-        } else {
-            // `center()` is a channel (local), so the drag reads the
-            // plane-local view: its delta is local too (§14 read by §23).
-            Viewport lvp = planeLocalViewport(cachedVp, frame);
-            delta = primitiveCenterDragDelta(mx, my, moverLastMX, moverLastMY,
-                                             center(), lvp);
-        }
-        if (!skip) {
-            Vec3 c  = center();
-            c.x += delta.x; c.y += delta.y; c.z += delta.z;
+        Vec3 c;
+        if (moverDrag(grab, moverDragAxis, mx, my, mover, frame, cachedVp, c)) {
             setCenter(c);
             rebuildPreview();
         }
-        moverLastMX = mx; moverLastMY = my;
         return true;
     }
 
@@ -742,7 +717,7 @@ protected:
     //   0:+X  1:-X  2:+Y  3:-Y  4:+Z  5:-Z
     BoxHandler[6] sizeH;
     int           sizeDragIdx = -1;
-    int           sizeLastMX, sizeLastMY;
+    Vec3          sizeApplied;   // the size handle's client already applied (world)
 
     static immutable Vec3[6] SIZE_AXES = [
         Vec3( 1, 0, 0), Vec3(-1, 0, 0),
@@ -831,8 +806,8 @@ protected:
             if (!sizeH[i].isVisible()) continue;
             if (sizeH[i].hitTest(mx, my, cachedVp)) {
                 sizeDragIdx = cast(int)i;
-                sizeLastMX  = mx;
-                sizeLastMY  = my;
+                grab.press(sizeH[i].pos, mx, my);
+                sizeApplied = sizeH[i].pos;
                 return true;
             }
         }
@@ -844,17 +819,19 @@ protected:
         return tryReleaseMover();
     }
 
+    // The handle's world point at the press plus the travel along its outward
+    // axis; the family applies the step since the last event (its flips and
+    // clamps are incremental).
     bool handleSizeDrag(int mx, int my) {
         if (sizeDragIdx < 0) return false;
-        // SIZE_AXES are LOCAL outward directions; screenAxisDelta consumes
-        // WORLD origin + axis, so route through toWorldD.
-        Vec3 outwardWorld = toWorldD(SIZE_AXES[sizeDragIdx]);
+        DragFrame f;
+        f.kind = DragKind.screenAxis;
+        f.axis = toWorldD(SIZE_AXES[sizeDragIdx]);
         bool skip;
-        Vec3 delta = screenAxisDelta(mx, my, sizeLastMX, sizeLastMY,
-                                     sizeH[sizeDragIdx].pos, outwardWorld,
-                                     cachedVp, skip);
-        if (!skip) applySizeDelta(sizeDragIdx, delta);
-        sizeLastMX = mx; sizeLastMY = my;
+        immutable Vec3 c = grab.client(mx, my, f, cachedVp, skip);
+        if (skip) return true;
+        applySizeDelta(sizeDragIdx, c - sizeApplied);
+        sizeApplied = c;
         return true;
     }
 }
@@ -1127,7 +1104,7 @@ public:
         if (state == RadialState.Idle) updateIdleSnap(e.x, e.y);
 
         if (handleSizeDrag(e.x, e.y))  return true;
-        if (handleMoverDrag(e.x, e.y)) return true;
+        if (dragMover(e.x, e.y)) return true;
 
         if (state == RadialState.DrawingBase) {
             Vec3 hit = screenToPlacementLocal(

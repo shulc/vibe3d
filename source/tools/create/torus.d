@@ -290,7 +290,7 @@ public:
         if (state == TorusState.Idle) updateIdleSnap(e.x, e.y);
 
         if (handleSizeDrag(e.x, e.y))  return true;
-        if (handleMoverDrag(e.x, e.y)) return true;
+        if (dragMover(e.x, e.y)) return true;
 
         if (state == TorusState.DrawingMajor) {
             Vec3 hit = screenToPlacementLocal(
