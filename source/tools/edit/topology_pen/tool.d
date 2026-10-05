@@ -36,13 +36,13 @@ import math               : Vec3, Viewport, projectToWindowFull, closestOnSegmen
 import document             : Layer, primaryModelSpace;
 import shader              : Shader;
 import operator            : VectorStack, viewportOf, pickOcclusionOf;
-import toolpipe.packets    : ConstrainHitPacket, HoverTarget, HoverTargetKind,
+import toolpipe.packets    : ConstrainHitPacket, ConstrainPacket, ConstrainGeom, HoverTarget, HoverTargetKind,
                              SubjectPacket, SnapPacket, SnapType, SymmetryPacket;
 import toolpipe.stages.constrain : liveConstrainStage, backgroundHit;
 import toolpipe.stages.snap : SnapStage, liveSnapStage;
 import constraint           : resolveHoverTarget, topoPenPressPickPx,
                               topoPenSnapAcceptPx, topoPenSnapGatherPx,
-                              kTopoPenSnapAuto, closestPointOnMeshes, BackgroundSource;
+                              kTopoPenSnapAuto, closestPointOnMeshes, constrainPoint, BackgroundSource;
 import snap                  : backgroundSourcesFull, SnapAdmit, snapPacketOf, editedVertexAt,
                                snapCursor;
 import tools.edit.smooth_relax : RelaxVec3, RelaxTopology, deriveBoundary, relaxPasses;
@@ -61,7 +61,7 @@ import params                : Param, IntEnumEntry, wireTagForValue;
 import tool_input            : ToolAction, PassThrough, InputPhase, InputButton,
                                 InputMod, ResetScope, InputBinding,
                                 resolveToolAction, toButton, toMods;
-import drag                  : planeDragDelta;
+import drag                  : planeDragDelta, HandleDrag, DragFrame, DragKind;
 import eventlog               : queryMouse;
 import held_gesture_buttons   : g_heldGestureButtons;
 import prepared_tool_effect   : PreparedSessionActivateEffect,
@@ -632,6 +632,9 @@ private:
     // guide declaring itself always-on) does not exist. `resolveSnapTargetVert`
     // is where the gate reads; see its doc for what it costs at our default.
     package SnapPacket dragSnap_;
+    // The view at the last press: the constraint's geometry pass (`passLocal`)
+    // runs in it, the step's re-apply included.
+    Viewport pressVp_;
 
     // The key this tool's startup snap arming is filed under in the stage's
     // single push slot (`SnapStage.pushEnabled`). The reference keys its own
@@ -1819,7 +1822,7 @@ public:
         // below.
         if (moveArmed_) {
             Viewport vp = viewportOf(vts);
-            applyMoveTargets(moveTargets(e.x, e.y, vp, vts), vts, liveSearch(e.x, e.y));
+            applyMoveTargets(moveTargets(e.x, e.y, vp), vts, liveSearch(e.x, e.y));
             noteMoveOffset();
             return true;
         }
@@ -3244,6 +3247,7 @@ public:
         // goes on to decline, because `resetAllGestureArms()` runs INSIDE the
         // dispatch below and would otherwise be a place to lose it.
         dragSnap_ = snapPacketOf(vts);
+        pressVp_ = viewportOf(vts);
         // Task 0523: and register this gesture's snapping guide, on the same
         // unconditional press-to-release window and for the same reason. The
         // registration is NOT gated on the master snap enable — the service's
@@ -4042,79 +4046,67 @@ public:
     }
 
     // Where the armed moving set belongs for a cursor at (px,py) — the ONE
-    // place the two Move laws live, so the live preview and the release
-    // commit can never drift apart (task 0484).
-    //
-    //   Vertex — P4's measured law, unchanged: the grabbed vertex goes TO the
-    //            cursor's own constrained hit. A cursor that misses every
-    //            background surface leaves it where it started.
-    //   Edge/Face — the Move family's offset law (L17/L18/L28, wave plan
-    //            §9.8 D19): one shared offset, the background hit under the
-    //            anchor's pixel moved by the drag minus the anchor (G-delta;
-    //            the anchor is the pressed element's corner mean), and each
-    //            vertex at `nearestBG(base_i + offset)`. A ray that finds no
-    //            background moves nothing.
+    // place the Move law lives, so the live preview and the release commit
+    // can never drift apart (task 0484). Every element kind is one RIGID drag
+    // of its grab point (the corner mean; a vertex itself) by `grabOffset`,
+    // then the constraint's geometry pass on each moved vertex
+    // (`carriedTargets`; K-DW, K-SC rules 3-4). A click moves nothing (K-noop).
     //
     // Always computed from `moveBase_`, never from the live positions, so N
     // motion events produce the same answer as one — no compounding.
-    package Vec3[] moveTargets(int px, int py, const ref Viewport vp, ref VectorStack vts) {
+    package Vec3[] moveTargets(int px, int py, const ref Viewport vp) {
         immutable int dx = px - moveStartX_, dy = py - moveStartY_;
-        // A motionless click applies nothing, a vertex included (K-noop: the
-        // clicked vertex stays bit-identical, not re-placed on the hit).
-        if (moveElem_ == MoveElem.Vertex) {
-            if (releaseIsClick(dx, dy)) return moveBase_.dup;
-            Vec3[] one = [ moveBase_[0] ];
-            readHit(vts);   // the CONS-snapped hit for THIS event's pixel
-            // Landing (§1.5): `moveBase_` is LOCAL (arm-time `m.vertices[]`)
-            // and `lastHit_.point` is the CONS stage's WORLD hit, so this
-            // one array carried two spaces depending on whether the cursor
-            // was over a background surface. `applyMoveTargets` writes the
-            // result to `m.vertices[]`, so local is the space it must be in.
-            if (lastHit_.hit) one[0] = primaryModelSpace().toLocalPoint(lastHit_.point);
-            return one;
-        }
-
-        // Click-vs-drag gate, inherited WITH the screen-delta law from Move
-        // Loop (`moveLoopUp`'s own `kMinDragPx`) — every gesture in this tool
-        // that re-snaps a whole set by a shared delta carries it. Without it
-        // a bare CLICK on an edge or a face would apply a zero delta, which
-        // is NOT a no-op: each vertex would re-snap to whatever background
-        // surface sits under its own pixel, yanking the element onto the
-        // background just for being clicked. Below the threshold the set
-        // stays exactly where it is.
         moveOffset_ = Vec3(0, 0, 0);
-        if (releaseIsClick(dx, dy)) return moveBase_.dup;
-
         Vec3 off;
-        if (!gDeltaOffset(meanOf(moveBase_), dx, dy, vp, off)) return moveBase_.dup;
+        if (releaseIsClick(dx, dy) || !grabOffset(meanOf(moveBase_), dx, dy, vp, off))
+            return moveBase_.dup;
         moveOffset_ = off;
         return carriedTargets(moveBase_, off);
     }
 
-    // The Move family's shared offset (L28 G-delta, wave plan §9.8 D19):
-    // `hit(proj(anchor) + drag) - anchor`, the hit the nearest background ray
-    // hit (WORLD) under the anchor's pixel moved by the drag. Local in, local
-    // out. False when the anchor projects behind the camera or the ray finds
-    // no background.
-    package bool gDeltaOffset(Vec3 anchorLocal, int dx, int dy, const ref Viewport vp,
-                              out Vec3 offLocal) {
+    // The Move family's shared offset: the grab point `anchorLocal` dragged
+    // by the pointer travel `(dx, dy)` through the shared translator's free
+    // form with the handle on it (K-DW: in perspective it keeps its height
+    // above the work plane), then re-cast along the view onto the background
+    // under it, when there is one (K-SC rule 3), minus the anchor. Local in,
+    // local out; false when the drag does not convert.
+    package bool grabOffset(Vec3 anchorLocal, int dx, int dy, const ref Viewport vp,
+                            out Vec3 offLocal) {
         const ms = primaryModelSpace();
+        HandleDrag grab;
+        grab.press(ms.toWorldPoint(anchorLocal), 0, 0);
+        bool skip;
+        Vec3 toW = grab.client(dx, dy, DragFrame(DragKind.viewPlane), vp, skip);
+        if (skip) return false;
         float qx, qy, qz;
         Vec3 hitW;
-        if (!projectToWindowFull(ms.toWorldPoint(anchorLocal), vp, qx, qy, qz)
-            || !backgroundRayHit(qx + dx, qy + dy, vp, hitW)) return false;
-        offLocal = ms.toLocalPoint(hitW) - anchorLocal;
+        if (projectToWindowFull(toW, vp, qx, qy, qz) && backgroundRayHit(qx, qy, vp, hitW))
+            toW = hitW;
+        offLocal = ms.toLocalPoint(toW) - anchorLocal;
         return true;
     }
 
-    // Every carried vertex at `nearestBG(base_i + offset)` (L17, the nearest
-    // foot, local); exactly `base` at a zero offset (L24 Z-exact). The drag
-    // kernels and the re-apply share it.
+    // Every carried vertex at `base_i + offset` through the constraint's
+    // geometry pass (`passLocal`, K-SC rule 4); exactly `base` at a zero
+    // offset (L24 Z-exact). The drag kernels and the re-apply share it.
     private Vec3[] carriedTargets(const(Vec3)[] base, Vec3 offLocal) {
         const bool zero = offLocal.x == 0 && offLocal.y == 0 && offLocal.z == 0;
         auto t = new Vec3[](base.length);
-        foreach (i, b; base) t[i] = zero ? b : footOnBackground(b + offLocal);
+        foreach (i, b; base) t[i] = zero ? b : passLocal(b, b + offLocal);
         return t;
+    }
+
+    // The constraint's geometry pass (`ConstrainStage.pass`, in the press's
+    // view) over a primary-LOCAL point `local` placed from `fromLocal`, local
+    // again: Point the nearest foot, Screen the view re-cast, off the point
+    // itself; a pipeline-less pen runs its own composition, Point. The ONE
+    // after-placement pass of this tool.
+    private Vec3 passLocal(Vec3 fromLocal, Vec3 local) {
+        const ms = primaryModelSpace();
+        const Vec3 w = ms.toWorldPoint(local), motion = w - ms.toWorldPoint(fromLocal);
+        if (auto cs = liveConstrainStage()) return ms.toLocalPoint(cs.pass(w, pressVp_, motion));
+        const ConstrainPacket point = { enabled: true, geom: ConstrainGeom.Point };
+        return ms.toLocalPoint(constrainPoint(w, motion, pressVp_, backgroundSourcesFull(), point));
     }
 
     private static Vec3 meanOf(const(Vec3)[] ps) {
@@ -4191,7 +4183,7 @@ public:
     private void finishMove(int px, int py, const ref Viewport vp, ref VectorStack vts) {
         scope(exit) clearMoveArm();
         if (!moveArmed_ || moveVerts_.length == 0) return;
-        const targets = moveTargets(px, py, vp, vts);
+        const targets = moveTargets(px, py, vp);
         applyMoveTargets(targets, vts);
         noteMoveOffset();
         // The destructive landing (task 0555), inside the same step. Gated on
@@ -4233,8 +4225,8 @@ public:
         writeOffset((now - was) * (1.0f / moveVerts_.length));
     }
 
-    // The Move Loop's offset (L18, D19): the G-delta offset of the PRESSED
-    // edge's midpoint (not the loop's); zero on a click or a miss. Written raw
+    // The Move Loop's offset (L18, D19): the grab offset (`grabOffset`) of the PRESSED
+    // edge's midpoint (not the loop's); zero on a click. Written raw
     // as the live Offset, and the release's kernel applies it.
     private Vec3 loopOffset(int dx, int dy, const ref Viewport vp) {
         auto m = mesh;
@@ -4242,7 +4234,7 @@ public:
         if (m is null || moveLoopSeed_ < 0 || moveLoopSeed_ >= cast(int)m.edges.length
             || releaseIsClick(dx, dy)) return off;
         const e = m.edges[moveLoopSeed_];
-        if (!gDeltaOffset((m.vertices[e[0]] + m.vertices[e[1]]) * 0.5f, dx, dy, vp, off))
+        if (!grabOffset((m.vertices[e[0]] + m.vertices[e[1]]) * 0.5f, dx, dy, vp, off))
             return Vec3(0, 0, 0);
         return off;
     }
@@ -5180,8 +5172,7 @@ public:
         k = sign * abs(axis == 0 ? off.x : axis == 1 ? off.y : off.z);
         const Vec3 tW = Vec3(uW.x + (axis == 0 ? k : 0.0f), uW.y + (axis == 1 ? k : 0.0f),
                              uW.z + (axis == 2 ? k : 0.0f));
-        auto cs = liveConstrainStage();
-        target = ms.toLocalPoint(cs is null ? tW : cs.pass(tW, vp, tW - uW));
+        target = passLocal(m.vertices[slideVertex_], ms.toLocalPoint(tW));
         return true;
     }
 
@@ -6618,7 +6609,7 @@ public:
     //
     // The iteration loop is pure arithmetic on a local `double` array, so
     // `mutationVersion` never moves inside it and the CSR adjacency behind
-    // `buildRelaxTopology` is fetched exactly once. `closestPointOnMeshes`'s
+    // `buildRelaxTopology` is fetched exactly once. The geometry pass's
     // brute-force O(V·F_bg) scan now runs ONCE per gesture instead of once
     // per pass — property (2) makes the multi-pass case cheaper, not dearer.
     // Position-only, zero topology delta, so unlike P5/P6 this does NOT call
@@ -6663,8 +6654,6 @@ public:
         if (passCount < 1) passCount = 1;
         if (passCount > MAX_TOPOPEN_SMOOTH_PASSES) passCount = MAX_TOPOPEN_SMOOTH_PASSES;
 
-        auto sources = backgroundSourcesFull();   // point-in-time, fetched ONCE per commit
-        const ms = primaryModelSpace();           // read fresh, once per commit (§2.4)
         // Positions only: the press step holds the mesh image.
         const Vec3[] beforePos = m.vertices.dup;
 
@@ -6683,11 +6672,9 @@ public:
         relaxPasses(pos, topo, cast(double) smoothStrength_ / kSmoothStrengthDivisor,
                     passCount);
 
-        // ONE re-snap pass over the relaxed result (semantics (2) above),
-        // onto the NEAREST point of the background via `closestPointOnMeshes`
-        // (constraint.d; capture-verified crux — a nearest-FOOT query, NOT a
-        // camera-ray one — the same primitive the CONS Point-mode branch
-        // already uses).
+        // ONE re-snap pass over the relaxed result (semantics (2) above):
+        // the constraint's geometry pass (`passLocal`; under the pen's Point
+        // composition the nearest FOOT, the capture-verified crux).
         foreach (vi; 0 .. nV) {
             // A 0-neighbor vertex is a loose point: it can neither generate
             // nor receive a relaxation force, so it is skipped ENTIRELY,
@@ -6703,24 +6690,7 @@ public:
 
             Vec3 relaxed = Vec3(cast(float) pos[vi].x, cast(float) pos[vi].y,
                                 cast(float) pos[vi].z);
-            if (sources.length) {
-                Vec3  hit, hitN;
-                int   si, fi;
-                float d2;
-                enum bool dblSided = false;   // V1 default — matches CONS Point-mode's own default
-                // Task 0619 §1.5 (Landing): `relaxed` is a LOCAL position
-                // (the relaxation ran entirely on `m.vertices[]`), while
-                // `closestPointOnMeshes` takes and returns WORLD — it folds
-                // every background source through its own ModelSpace. So the
-                // query goes up and the foot comes back down, once each; the
-                // write below is a LOCAL vertex coordinate. Without the
-                // round trip the re-snap measured the nearest background
-                // point to where the layer would sit at identity, and then
-                // stored a world coordinate in a local array.
-                if (closestPointOnMeshes(ms.toWorldPoint(relaxed), sources,
-                                         dblSided, hit, hitN, si, fi, d2))
-                    relaxed = ms.toLocalPoint(hit);
-            }
+            relaxed = passLocal(m.vertices[vi], relaxed);
             m.vertices[vi] = relaxed;
         }
 
@@ -6769,10 +6739,10 @@ public:
     // (2) F1 (owner-observed, "концы стоят на месте" — REV1 F1 RESOLVED):
     // a loop vertex with EXACTLY 2 loop-neighbors relaxes toward the
     // shared `inverseEdgeLenRelax` kernel's inverse-edge-length-weighted
-    // point between them and re-snaps via `closestPointOnMeshes` — P8's
-    // nearest-FOOT query, NOT Move-Loop's camera-ray `resnapToBackground`:
+    // point between them and re-snaps via `passLocal` — P8's
+    // geometry pass, NOT Dup Loop's camera-ray `resnapToBackground`:
     // a relaxed point has no natural screen pixel to ray through, so the
-    // nearest-foot primitive is the correct reuse here (plan §Reuse
+    // geometry pass is the correct reuse here (plan §Reuse
     // verdict item 4). A loop vertex with `!= 2` loop-neighbors — an
     // open-loop END (1 neighbor), or a defensive/degenerate 0 or 3+ (REV1
     // FIX-3 tightens the plan's original "< 2" to "!= 2") — is HELD FIXED:
@@ -6808,8 +6778,6 @@ public:
         if (passCount < 1) passCount = 1;
         if (passCount > MAX_TOPOPEN_SMOOTH_PASSES) passCount = MAX_TOPOPEN_SMOOTH_PASSES;
 
-        auto sources = backgroundSourcesFull();   // point-in-time, fetched ONCE per commit
-        const ms = primaryModelSpace();           // read fresh, once per commit (§2.4)
         const Vec3[] beforePos = m.vertices.dup;  // positions only (the step holds the image)
 
         foreach (pass; 0 .. passCount) {
@@ -6826,18 +6794,7 @@ public:
                 bool hadNeighbors;
                 Vec3 relaxed = inverseEdgeLenRelax(read, vi, *pNbrs, hadNeighbors);
                 if (!hadNeighbors) continue;
-                if (sources.length) {
-                    Vec3  hit, hitN;
-                    int   si, fi;
-                    float d2;
-                    enum bool dblSided = false;   // V1 default -- matches P8/CONS Point-mode's own default
-                    // Same Landing round trip as `applySmoothPasses` — local
-                    // query up to world, world foot back down to local,
-                    // because the write on the next line is a local vertex.
-                    if (closestPointOnMeshes(ms.toWorldPoint(relaxed), sources,
-                                             dblSided, hit, hitN, si, fi, d2))
-                        relaxed = ms.toLocalPoint(hit);
-                }
+                relaxed = passLocal(m.vertices[vi], relaxed);
                 m.vertices[vi] = relaxed;
             }
         }
@@ -7274,52 +7231,22 @@ public:
         if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_); }
     }
 
-    // The nearest foot of a primary-LOCAL point on the background, local
-    // again; the point itself when no background face exists.
-    private Vec3 footOnBackground(Vec3 local) {
-        Vec3 foot;
-        return footOn(backgroundSourcesFull(), primaryModelSpace(), local, foot) ? foot : local;
-    }
-
-    // The one nearest-foot query behind `footOnBackground` and
-    // `snapInsertedToBackground`: `local` lifted to world through `ms`, the
-    // closest point over `sources` (single-sided, the Smooth re-snap's own
-    // default), brought back to local. False when no background face exists.
-    private static bool footOn(const(BackgroundSource)[] sources, const ModelSpace ms,
-                               Vec3 local, out Vec3 foot) {
-        if (sources.length == 0) return false;
-        Vec3  hit, hitN;
-        int   si, fi;
-        float d2;
-        enum bool dblSided = false;
-        if (!closestPointOnMeshes(ms.toWorldPoint(local), sources, dblSided, hit, hitN, si, fi, d2))
-            return false;
-        foot = ms.toLocalPoint(hit);
-        return true;
-    }
-
-    // Add Loop's inserted vertices re-snap onto the background, CLOSEST
-    // POINT (the nearest-foot query `applySmoothPasses` uses, never a camera
-    // ray), after the cut fraction is applied and inside the same batch, so
-    // the gesture stays one step. Measured on a tilted background with the
-    // fraction forced to 0.5: every inserted vertex lands on the surface and
-    // matches the perpendicular foot to ~5e-9 of the camera distance, against
-    // ~6e-3 for the view ray; original vertices never move
+    // Add Loop's inserted vertices re-snap onto the background through the
+    // constraint's geometry pass (`passLocal`), after the cut fraction is
+    // applied and inside the same batch, so the gesture stays one step.
+    // Measured under the pen's own Point composition on a tilted background
+    // with the fraction forced to 0.5: every inserted vertex lands on the
+    // perpendicular foot to ~5e-9 of the camera distance, against ~6e-3 for
+    // the view ray; original vertices never move
     // (toolcards/topology_pen/addloop_bgresnap_undo_capture.md, verdict V-1;
     // pinned by tests/test_topopen_addloop_bg_resnap.d). `addVertex` only
-    // appends, so the inserted set is every index from `firstNew` on. With no
-    // background surface this is the identity.
+    // appends, so the inserted set is every index from `firstNew` on.
     private void snapInsertedToBackground(ref MeshEditBatch ed, size_t firstNew) {
-        auto sources = backgroundSourcesFull();
-        if (sources.length == 0) return;
-        const ms = primaryModelSpace();
         uint[] idx;
         Vec3[] to;
         foreach (vi; firstNew .. ed.vertices.length) {
-            Vec3 foot;
-            if (!footOn(sources, ms, ed.vertices[vi], foot)) continue;
             idx ~= cast(uint) vi;
-            to  ~= foot;
+            to  ~= passLocal(ed.vertices[vi], ed.vertices[vi]);
         }
         if (idx.length) ed.setVertexPositions(idx, to);
     }

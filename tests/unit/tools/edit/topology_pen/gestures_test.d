@@ -9736,10 +9736,9 @@ unittest {
 // If the targets were ever computed from the LIVE positions instead, each
 // event would stack its delta onto the previous event's result and the
 // element would race away from the cursor at a rate set by the event density
-// — the classic bug this pins shut. Driven directly through the Vertex law
-// (no background surface needed: `readHit` misses, so the target is the base
-// position and the write is a no-op) plus a direct `perVertexTargetsFrom`
-// comparison for the set law.
+// — the classic bug this pins shut. Driven directly on an edge grab with no
+// background surface: the free drag of the grab point (K-DW) moves it, so the
+// first write really changes the mesh the second ask must ignore.
 // ---------------------------------------------------------------------------
 unittest {
     import mesh : makeGridPlane;
@@ -9766,9 +9765,12 @@ unittest {
 
     // The same cursor, asked twice, must answer twice the same — even after
     // the first answer has been written into the mesh.
-    auto first = t.moveTargets(180, 140, vp, vts);
-    t.applyMoveTargets(first, vts);
-    auto second = t.moveTargets(180, 140, vp, vts);
+    auto first = t.moveTargets(180, 140, vp);
+    // The live write, by hand (`applyMoveTargets` refreshes a GPU mesh this
+    // GL-free rig does not have).
+    foreach (i, vi; t.moveVerts_) m.vertices[vi] = first[i];
+    assert(first[0] != t.moveBase_[0], "premise: the first answer moved the edge");
+    auto second = t.moveTargets(180, 140, vp);
     assert(first.length == second.length, "target count must not depend on the live mesh");
     foreach (i, v; first)
         assert((v - second[i]).length < 1e-6f,
@@ -9776,11 +9778,12 @@ unittest {
           ~ "computed from the arm-time base, never from the already-moved positions");
 
     // And the delta itself is measured from the PRESS pixel, not the previous
-    // event's: the law is `perVertexTargetsFrom(base, cursor - press)`.
-    auto direct = t.perVertexTargetsFrom(t.moveBase_, 180 - 100, 140 - 100, vp);
-    foreach (i, v; direct)
-        assert((v - first[i]).length < 1e-6f,
-            "the set law must be the shared screen delta from the press pixel");
+    // event's: every vertex moves by the grab offset of the press-to-cursor travel.
+    Vec3 off;
+    assert(t.grabOffset((t.moveBase_[0] + t.moveBase_[1]) * 0.5f, 180 - 100, 140 - 100, vp, off));
+    foreach (i, v; first)
+        assert((v - (t.moveBase_[i] + off)).length < 1e-6f,
+            "the set law must be one rigid grab offset of the travel from the press pixel");
 }
 
 // ---------------------------------------------------------------------------
@@ -9814,18 +9817,18 @@ unittest {
     t.moveStartY_ = 200;
 
     // 2px away — inside the gate.
-    auto held = t.moveTargets(201, 201, vp, vts);
+    auto held = t.moveTargets(201, 201, vp);
     assert(held.length == 2);
     foreach (i, v; held)
         assert((v - t.moveBase_[i]).length < 1e-9f,
             "a sub-threshold drag must leave every vertex on its arm-time position");
 
-    // 10px away — through the gate, so the law runs (and, with no background
-    // surface in this fixture, every re-snap misses and keeps its original —
-    // which is the documented miss policy, not the gate).
+    // 10px away — through the gate, so the law runs: with no background
+    // surface in this fixture the free drag moves the edge (K-DW).
     t.moveStartX_ = 200; t.moveStartY_ = 200;
-    auto moved = t.moveTargets(210, 200, vp, vts);
-    assert(moved.length == 2, "past the gate the law still answers one target per vertex");
+    auto moved = t.moveTargets(210, 200, vp);
+    assert(moved.length == 2 && moved[0] != t.moveBase_[0],
+        "past the gate the law moves the edge; one target per vertex");
 }
 
 // The guard's CONTROL: Place must still arm on genuinely empty space. Same

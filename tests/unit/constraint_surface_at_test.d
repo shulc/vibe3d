@@ -147,16 +147,33 @@ unittest {
            format("publish, Screen: the hit %s + 0.1 * normal %s; got hit %s at %s",
                   want.point, screen.normal, screen.hit, screen.point));
 
-    // (9) OURS, pending capture K-SC cells scr0 / scr_neg: Screen at offset 0
-    // publishes the near quad's hit itself. The skip in `publishSurfaceHit`
-    // is a workaround — a re-cast from a point ON the near quad misses it
-    // (t = 0) and would land on the FAR quad behind it (z = -1); whether the
-    // re-cast starts at the point or at the eye is not captured.
+    // (9) Screen at offset 0 is the surface under the point (capture K-SC
+    // scr0): the pass runs at every offset and its re-cast takes the hit AT
+    // the point (t = 0), not the far quad behind it (z = -1).
     cs.offset = 0.0f;
     const screen0 = publish(200, 100);
-    assert(screen0.hit && screen0.point == want.point,
+    assert(screen0.hit && near3(screen0.point, want.point),
            format("publish, Screen, offset 0: the near quad's hit %s; got hit %s at %s",
                   want.point, screen0.hit, screen0.point));
+
+    // (9b) The offset never goes below 0 (K-SC scr_neg): a -0.1 write is
+    // accepted, stored as 0, and the publish is the offset-0 one bit for bit.
+    assert(cs.setAttr("offset", "-0.1") && cs.offset == 0.0f,
+           format("offset -0.1: accepted and stored as 0; got %s", cs.offset));
+    const screenNeg = publish(200, 100);
+    assert(screenNeg.point == screen0.point,
+           format("offset -0.1: the offset-0 publish %s; got %s", screen0.point, screenNeg.point));
+
+    // (9c) The Screen re-cast takes the NEAREST hit on the view line, either
+    // direction (K-SC ovh_lo, ovh_flank): from z -0.4 the near quad 0.4 back
+    // toward the eye beats the far quad 0.6 ahead (a forward-only cast reads
+    // z -1); from z -0.6 the far quad, 0.4 ahead, wins (the control).
+    const back = cs.pass(Vec3(0.005f, -0.005f, -0.4f), vp);
+    assert(near3(back, Vec3(0.005f, -0.005f, 0)),
+           format("pass, Screen, from z -0.4: the near quad behind (z 0); got %s", back));
+    const ahead = cs.pass(Vec3(0.005f, -0.005f, -0.6f), vp);
+    assert(near3(ahead, Vec3(0.005f, -0.005f, -1)),
+           format("pass, Screen, from z -0.6: the far quad ahead (z -1); got %s", ahead));
 
     // (10) Point runs the nearest-foot pass after the offset (K-C4 law, task
     // 9477): at pixel (320, 100) the hit is the FAR quad (1.205, -0.005,
@@ -178,7 +195,7 @@ unittest {
     assert(cs.pass(Vec3(0, 0, -2), vp, Vec3(0, 0, 1)) == Vec3(0, 0, -2),
            "pass, Vector, single-sided: the far quad's back face must not take the point");
     cs.dblSided = true;
-    const back = cs.pass(Vec3(0, 0, -2), vp, Vec3(0, 0, 1));
-    assert(near3(back, Vec3(0, 0, -1)),
-           format("pass, Vector, double-sided: the far quad's back face (0, 0, -1); got %s", back));
+    const backFace = cs.pass(Vec3(0, 0, -2), vp, Vec3(0, 0, 1));
+    assert(near3(backFace, Vec3(0, 0, -1)),
+           format("pass, Vector, double-sided: the far quad's back face (0, 0, -1); got %s", backFace));
 }

@@ -207,20 +207,24 @@ bool closestPointOnMeshes(Vec3 p,
 // ---------------------------------------------------------------------------
 // projectAlongDirection
 //
-// Möller-Trumbore ray-triangle intersection along `dir` (world space).
-// Finds the nearest forward hit across all source faces, each folded
-// through its OWN ModelSpace first (same reasoning as closestPointOnMeshes
-// above — `pos`/`dir` are world, `src.vertices[]` are local). Backs the
-// `vector` and `screen` modes in constrainPoint. Returns false when no
-// forward hit is found (caller keeps movingPos unchanged).
+// Möller-Trumbore line-triangle intersection along `dir` (world space).
+// Finds the hit nearest `pos` (least |t|) among those with t >= `tMin`
+// across all source faces, each folded through its OWN ModelSpace first
+// (same reasoning as closestPointOnMeshes above — `pos`/`dir` are world,
+// `src.vertices[]` are local). Backs the `vector` mode (the forward ray, the
+// default `tMin`) and the `screen` mode (the whole view line, `tMin` -inf:
+// capture K-SC ovh_lo / ovh_flank) in constrainPoint. Returns false when no
+// hit is found (caller keeps movingPos unchanged).
 // ---------------------------------------------------------------------------
 bool projectAlongDirection(Vec3 pos,
                            Vec3 dir,
                            const(BackgroundSource)[] sources,
                            bool dblSided,
                            out Vec3 hit,
-                           out Vec3 hitNormal)
+                           out Vec3 hitNormal,
+                           float tMin = 1e-7f)
 {
+    import std.math : abs;
     float eps  = 1e-7f;
     float bestT = float.infinity;
     Vec3  bestPt = pos;
@@ -254,8 +258,8 @@ bool projectAlongDirection(Vec3 pos,
                 float v = f * dot(dir, q);
                 if (v < 0.0f || u + v > 1.0f) continue;
                 float t = f * dot(e2, q);
-                if (t < eps || t >= bestT) continue;
-                bestT  = t;
+                if (t < tMin || abs(t) >= bestT) continue;
+                bestT  = abs(t);
                 bestPt = pos + dir * t;
                 Vec3 n = cross(e1, e2);
                 float nl = sqrt(dot(n, n));
@@ -775,7 +779,7 @@ HoverTarget resolveHoverTarget(const ref ConstrainHitPacket h,
 //   * no background sources are present,
 //   * vector mode: motionDelta is zero or near-zero (no meaningful direction),
 //   * screen mode: the view matrix is degenerate or uninitialised,
-//   * any mode: projectAlongDirection finds no forward hit (keep-on-miss).
+//   * any mode: projectAlongDirection finds no hit (keep-on-miss).
 //
 // Parameters:
 //   movingPos   — the vertex's final world-space position after applyFold.
@@ -823,7 +827,8 @@ Vec3 constrainPoint(Vec3 movingPos,
         }
 
         case ConstrainGeom.Screen: {
-            // Project along the camera view axis (into the scene).
+            // The nearest hit on the view line through the point, either
+            // direction (capture K-SC), then the offset.
             if (vp.width == 0 || vp.height == 0) return movingPos;  // headless / uninitialised
             // Extract camFwd from view matrix column-major layout: -f at m[2], m[6], m[10].
             // (axis.d:336 reads the same indices, though the guard there covers the right-vector
@@ -833,8 +838,9 @@ Vec3 constrainPoint(Vec3 movingPos,
             if (!(lenSq > 1e-6f)) return movingPos;   // degenerate / NaN view matrix
             Vec3 camFwd = normalize(fwdVec);
             Vec3 hit, hitN;
-            if (!projectAlongDirection(movingPos, camFwd, sources, cfg.dblSided, hit, hitN))
-                return movingPos;                      // forward miss → keep position
+            if (!projectAlongDirection(movingPos, camFwd, sources, cfg.dblSided, hit, hitN,
+                                       -float.infinity))
+                return movingPos;                      // no hit on the line → keep position
             return applyOffset(hit, hitN, cfg.offset);
         }
     }

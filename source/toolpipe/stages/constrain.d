@@ -41,14 +41,14 @@ private static immutable IntEnumEntry[] constrainGeomEntries = [
 // UNGATED by `handle` (K-C4 h0 == h1): the topology pen's placement, the hit
 // offset, then `pass` over it —
 //   * `point`  mode — the nearest foot + offset·n (K-C4 pt_off);
-//   * `screen` mode — re-cast along the view, offset AGAIN (K-C4 scr, scr2:
+//   * `screen` mode — the nearest hit on the view line, offset AGAIN (K-C4 scr, scr2:
 //     the double offset);
 //   * `vector` mode — accepted attrs, no publish (no drag consumer yet).
 //
 // HTTP setAttr keys (via tool.pipe.attr constrain <name> <value>):
 //   `enabled`  : "true" / "false"
 //   `geometry` : "off" / "screen" / "vector" / "point"
-//   `offset`   : float, world units (default 0)
+//   `offset`   : float, world units (default 0; a negative write stores 0)
 //   `handle`   : "true" / "false" (default true)
 //   `dblSided` : "true" / "false" (default false)
 // ---------------------------------------------------------------------------
@@ -203,9 +203,8 @@ public:
 
     // The hover publish: `rayHitAt` the cursor pixel over ONE sources
     // snapshot (`sh.source` indexes it, task 0617); the hit offset, `pass`
-    // after it. At offset 0 the pass is skipped: Point's foot of a surface
-    // point is the point; for Screen it is a workaround (the re-cast starts
-    // ON the surface, t = 0, a miss) pending capture K-SC. The hit face's nearest vertex / edge ride along as WORLD
+    // after it at every offset (K-SC scr0: Screen at offset 0 is the surface
+    // under the point). The hit face's nearest vertex / edge ride along as WORLD
     // candidates, so `resolveHoverTarget` stays a function of the packet.
     private void publishSurfaceHit(ref SubjectPacket subj, ref VectorStack vts) {
         import constraint : nearestFaceVertex, nearestFaceEdge, consistentCandidateIndex;
@@ -223,8 +222,7 @@ public:
         const m  = bg.mesh;
         Vec3 world(uint v) { return bg.space.isIdentity ? m.vertices[v] : bg.space.toWorldPoint(m.vertices[v]); }
         _hitPkt.hit    = true;
-        const placed   = offsetPoint(p, n);
-        _hitPkt.point  = offset != 0 ? pass(placed, subj.viewport, Vec3(0, 0, 0), bgFull) : placed;
+        _hitPkt.point  = pass(offsetPoint(p, n), subj.viewport, Vec3(0, 0, 0), bgFull);
         _hitPkt.normal = n;
         _hitPkt.layer  = bg.layerIndex >= 0 ? bg.layerIndex : src;
         _hitPkt.face   = face;
@@ -362,7 +360,8 @@ public:
             Param.bool_("enabled", "Enabled", &enabled, false),
             Param.intEnum_("geometry", "Mode", cast(int*)&geom,
                 constrainGeomEntries, cast(int)ConstrainGeom.Off),
-            Param.float_("offset",   "Offset",    &offset,   0.0f),
+            // Never below 0: a negative write is stored as 0 (K-SC scr_neg).
+            Param.float_("offset",   "Offset",    &offset,   0.0f).min(0.0f).enforceBounds(),
             Param.bool_("handle",    "Handle",    &handle,    true),
             Param.bool_("dblSided",  "Dbl Sided", &dblSided, false),
         ];
