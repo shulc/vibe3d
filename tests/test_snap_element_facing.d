@@ -1,5 +1,7 @@
-// SNAP: facing is a POLYGON term; the grid step is the view's grid (task 9387,
-// wave plan §24.2 S5v; law `doc/measured_laws.md` §3).
+// SNAP: facing is a POLYGON term; the grid step is the view's grid; the grid
+// node is the CLIENT's point with its in-plane channels rounded, it has no
+// pixel range, and it ranks below an element in range and above a constraint
+// (task 9387, wave plan §24.2 / §28.2 S5v; law `doc/measured_laws.md` §3).
 //
 // Rig: top orthographic view at 440 px/m, one snap type bit per cell, the
 // pointer 6 px from its target (inside the 5–8 px the captured edge snaps
@@ -12,12 +14,13 @@
 // cell ids neutral): `vtx-back` = V1, `loose-vtx` = V2, `grid-second-rung` =
 // G2 (label 0.5 at 110 px/m), `move-grid-step` = G3; `edge-back` = the edge
 // leg (pen, merge off) and X2 (Move). `poly-back` / `poly-front` match P1.
+// Cells 15–22 lift `cells_k_b7` (G4, G5, G6, G6b, G8, G9, G4c, G8b2, G8b3).
 
 import drag_helpers : Vec3, Viewport, buildDragLog, fetchCamera, playAndWait,
     projectToWindow, viewportFromCameraMatrices, vertexPos;
 import http_client : getJson, postJson;
 import http_command_helpers : commandBody;
-import pen_rig_helpers : penCameraAt, penCommand, penSceneEmpty, readVerts,
+import pen_rig_helpers : penAttr, penCameraAt, penCommand, penSceneEmpty, readVerts,
     worldPixel, clickPixels;
 import std.format : format;
 import std.json : JSONType, JSONValue;
@@ -30,8 +33,7 @@ private enum double kPx = 1.0 / kPpm;          // one pixel of world at the rig 
 private enum double kTol = 1e-4;               // exact channels
 private enum double kHalfPx = 0.5 * kPx;       // a channel read off a pixel
 
-private int ran, held;
-enum bool kGridStepFromView = true;    // part G — see `gridCells`
+private int ran;
 private string[] fails;   // every cell runs; the reds are reported together
 
 private void check(bool ok, lazy string msg) { if (!ok) fails ~= msg; }
@@ -56,21 +58,21 @@ private void rig(string mesh, Vec3 focus, double ppm = kPpm) {
         "rig premise: the top view must be orthographic");
 }
 
-/// One type bit. The grid cells widen the ranges: their subject is the STEP,
-/// and the captured second-rung pointer lies 25 px from its node — beyond our
-/// 24 px acceptance, which is a separate gap (grid acceptance range).
+/// The type bits (a comma list), the shipped ranges, the view's grid.
 private void snapTypes(string types) {
-    const bool grid = types == "grid";
     penCommand("tool.pipe.attr snap enabled true");
-    penCommand("tool.pipe.attr snap types " ~ types);
+    penCommand(`tool.pipe.attr snap types "` ~ types ~ `"`);
     penCommand("tool.pipe.attr snap fixedGrid false");
-    penCommand("tool.pipe.attr snap innerRange " ~ (grid ? "999999" : "24"));
-    penCommand("tool.pipe.attr snap outerRange " ~ (grid ? "999999" : "40"));
+    penCommand("tool.pipe.attr snap innerRange 24");
+    penCommand("tool.pipe.attr snap outerRange 40");
 }
 
-private JSONValue snapAt(int[2] px) {
+/// `/api/snap` at the pixel of `w`, with `w` as the client point.
+private JSONValue snapAt(Vec3 w) {
+    const px = worldPixel(w);
     return postJson("/api/snap", format(
-        `{"cursor":[0,0,0],"sx":%d,"sy":%d,"excludeVerts":[]}`, px[0], px[1]));
+        `{"cursor":[%.9f,%.9f,%.9f],"sx":%d,"sy":%d,"excludeVerts":[]}`,
+        w.x, w.y, w.z, px[0], px[1]));
 }
 
 private bool snapped(JSONValue sr) { return sr["snapped"].type == JSONType.true_; }
@@ -88,9 +90,9 @@ private string tri(bool front, string extra = "", string extraFaces = "") {
         ~ `],"faces":[` ~ (front ? "[0,2,1]" : "[0,1,2]") ~ extraFaces ~ `]}`;
 }
 
-/// The pixel 6 px to the LEFT (−x) of world point `w` (top view: +x is right).
-private int[2] leftOf(Vec3 w) {
-    return worldPixel(Vec3(cast(float)(w.x - 6 * kPx), w.y, w.z));
+/// The world point 6 px to the LEFT (−x) of `w` (top view: +x is right).
+private Vec3 leftOf(Vec3 w) {
+    return Vec3(cast(float)(w.x - 6 * kPx), w.y, w.z);
 }
 
 private void expectAt(JSONValue sr, double[3] want, double tolXZ, string cell) {
@@ -103,22 +105,59 @@ private void expectAt(JSONValue sr, double[3] want, double tolXZ, string cell) {
 }
 
 
-/// Cells 11–13, the grid step from the view. HELD (`kGridStepFromView`): the
-/// stage publishing the view's step makes the grid node land on the WORK
-/// PLANE for every client (the captured pen and Move keep the client's own
-/// height), which reddens our pen hover cells — a PLAN-FINDING for the grid's
-/// plane, not this step law. The cells run on the part-G commit.
+/// One Move drag of the selection from the pixel of `from` to the pixel of
+/// `to` in `steps` motion events (the tool must be armed).
+private void moveDrag(Vec3 from, Vec3 to, int steps) {
+    auto cam = fetchCamera();
+    const a = worldPixel(from), b = worldPixel(to);
+    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                             a[0], a[1], b[0], b[1], steps));
+}
+
+/// G3's quad (ring [0,3,2,1]) at height `y`, `extra` vertices appended; vertex
+/// 0 selected, the Move tool armed with the snap types `types`.
+private void moveRig(double y, string types, string extra = "") {
+    rig(format(`{"vertices":[[0.03,%s,0.07],[0.53,%s,0.07],[0.53,%s,0.57],`
+        ~ `[0.03,%s,0.57]%s],"faces":[[0,3,2,1]]}`, y, y, y, y, extra),
+        Vec3(0.28f, 1, 0.32f));
+    penCommand("select.typeFrom vertex");
+    auto r = postJson("/api/command", commandBody("mesh.select",
+        `{"mode":"vertices","indices":[0]}`));
+    assert(r["status"].str == "ok", "select q failed: " ~ r.toString);
+    penCommand("tool.set move");
+    snapTypes(types);
+}
+
+private string vstr(double[3] q) { return format("(%.6f, %.6f, %.6f)", q[0], q[1], q[2]); }
+private bool at(double[3] q, double[3] w, double tol = kTol) {
+    return abs(q[0] - w[0]) <= tol && abs(q[1] - w[1]) <= tol && abs(q[2] - w[2]) <= tol;
+}
+private bool at(Vec3 v, double[3] w, double tol = kTol) { return at([v.x, v.y, v.z], w, tol); }
+
+/// OUR drawn grid step in the active view.
+private double viewStep() {
+    return num(getJson("/api/viewport/display")["cells"].array[0]["grid"]["size"]);
+}
+
+/// Pixel distance between the projections of two world points.
+private double pxDist(Vec3 a, Vec3 b) {
+    auto vp = viewportFromCameraMatrices();
+    float ax, ay, bx, by;
+    assert(projectToWindow(a, vp, ax, ay) && projectToWindow(b, vp, bx, by),
+        "rig point behind the camera");
+    return ((ax - bx) ^^ 2 + (ay - by) ^^ 2) ^^ 0.5;
+}
+
+/// Cells 11–13, the grid step from the view.
 private void gridCells() {
     // 11 grid-view-step — K-C2's geometry: pointer 15.5 px from (0.1, 0.2) at
-    // 440 px/m ⇒ the 0.1 node. The node lies on the work plane (y 0 here);
-    // the in-plane channels are the law.
+    // 440 px/m ⇒ the 0.1 node, in the client point's own plane (y 1).
     rig("", Vec3(0.1f, 1, 0.2f)); snapTypes("grid");
     {
-        const g = getJson("/api/viewport/display")["cells"].array[0]["grid"];
-        assert(abs(num(g["size"]) - 0.1) < 1e-6,
-            format("grid-view-step rig: OUR drawn step at 440 px/m must be 0.1, got %s",
-                   g["size"].toString));
-        auto sr = snapAt(worldPixel(Vec3(cast(float)(0.1 + 15.5 * kPx), 1, 0.2f)));
+        const step = viewStep();
+        assert(abs(step - 0.1) < 1e-6, format("grid-view-step rig: OUR drawn "
+            ~ "step at 440 px/m must be 0.1, got %s", step));
+        auto sr = snapAt(Vec3(cast(float)(0.1 + 15.5 * kPx), 1, 0.2f));
         check(snapped(sr) && abs(pos(sr)[0] - 0.1) <= kTol && abs(pos(sr)[2] - 0.2) <= kTol,
             "grid-view-step: the pointer lands on the visible grid's (0.1, 0.2) "
             ~ "node, got " ~ sr.toString);
@@ -127,15 +166,16 @@ private void gridCells() {
 
     // 12 grid-second-rung (G2): at 110 px/m the drawn grid is 0.5 (the
     // captured label), and the captured pointer lands on its (0, 0.5) node —
-    // a constant 0.1 step would give (0, 0.3).
+    // a constant 0.1 step would give (0, 0.3). The node is 25 px away, past
+    // the 24 px element acceptance: the grid has no pixel range.
     {
         enum double kG2Ppm = 110.0, kG2Step = 0.5;
         rig("", Vec3(0.2f, 1, 0.3f), kG2Ppm); snapTypes("grid");
-        const g = getJson("/api/viewport/display")["cells"].array[0]["grid"];
-        assert(abs(num(g["size"]) - kG2Step) < 1e-6,
+        const step = viewStep();
+        assert(abs(step - kG2Step) < 1e-6,
             format("grid-second-rung rig: OUR step at %s px/m must equal the "
-                ~ "captured %s, got %s", kG2Ppm, kG2Step, g["size"].toString));
-        auto sr = snapAt(worldPixel(Vec3(0.006364f, 1, 0.272727f)));
+                ~ "captured %s, got %s", kG2Ppm, kG2Step, step));
+        auto sr = snapAt(Vec3(0.006364f, 1, 0.272727f));
         const double wx = 0, wz = 0.5;
         check(snapped(sr) && abs(pos(sr)[0] - wx) <= kTol && abs(pos(sr)[2] - wz) <= kTol,
             format("grid-second-rung: expected the (%s, %s) node of the %s step, got %s",
@@ -146,31 +186,206 @@ private void gridCells() {
     // 13 move-grid-step (G3): the Move tool, vertex mode, grid bit only; press
     // on q's pixel, drag to the pixel of (0.1252, 1, 0.1952) — the moved
     // vertex's ABSOLUTE position lands on the 0.1 node (a delta snap would
-    // give (0.13, 1, 0.17)).
+    // give (0.13, 1, 0.17)), at its own height y 1.
     {
-        rig(`{"vertices":[[0.03,1,0.07],[0.53,1,0.07],[0.53,1,0.57],[0.03,1,0.57]],`
-            ~ `"faces":[[0,3,2,1]]}`, Vec3(0.28f, 1, 0.32f));
-        penCommand("select.typeFrom vertex");
-        auto r = postJson("/api/command", commandBody("mesh.select",
-            `{"mode":"vertices","indices":[0]}`));
-        assert(r["status"].str == "ok", "select q failed: " ~ r.toString);
-        penCommand("tool.set move");
-        snapTypes("grid");
-        auto cam = fetchCamera();
-        const a = worldPixel(Vec3(0.03f, 1, 0.07f));
-        const b = worldPixel(Vec3(0.1252f, 1, 0.1952f));
-        playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
-                                 a[0], a[1], b[0], b[1]));
+        moveRig(1, "grid");
+        moveDrag(Vec3(0.03f, 1, 0.07f), Vec3(0.1252f, 1, 0.1952f), 20);
         const q = vertexPos(0);
         penCommand("tool.set move off");
-        check(abs(q[0] - 0.1) <= kTol && abs(q[2] - 0.2) <= kTol,
-            format("move-grid-step: q expected on the (0.1, 0.2) node in plane, got "
-                ~ "(%.6f, %.6f, %.6f)", q[0], q[1], q[2]));
-        // MARKED DIVERGENCE (must differ until amended): the captured q keeps
-        // y 1; ours lands on the work plane's grid (y 0). The step law above
-        // holds either way; the height is a different law, not this slice's.
-        check(abs(q[1] - 1) > kTol, format("move-grid-step: the marked y "
-            ~ "divergence closed (q.y %.6f) — retire this row", q[1]));
+        check(at(q, [0.1, 1, 0.2]), "move-grid-step: q expected on the (0.1, 1, 0.2) "
+            ~ "node, got " ~ vstr(q));
+        ++ran;
+    }
+}
+
+/// Cells 15–22 (+ 17b), `cells_k_b7`. Rig as K-B7's: top ortho, 440 px/m
+/// unless stated, all values captured; slow drags are ≤ 4 px per event.
+private void gridLawCells() {
+    // 15 move-grid-low (G4): the quad at y 0.4; q's free drag to the pixel of
+    // (0.1252, ·, 0.1952) in 35 events of ≤ 4 px (as captured) lands on the
+    // node of press + travel, at q's own height 0.4. A client fed its own
+    // snapped position back stays on the press node (0, 0.1).
+    {
+        moveRig(0.4, "grid");
+        moveDrag(Vec3(0.03f, 0.4f, 0.07f), Vec3(0.1252f, 0.4f, 0.1952f), 35);
+        const q = vertexPos(0);
+        penCommand("tool.set move off");
+        check(at(q, [0.1, 0.4, 0.2]), "move-grid-low: q expected (0.1, 0.4, 0.2), got "
+            ~ vstr(q));
+        ++ran;
+    }
+
+    // 16 pen-grid-current-plane (G5): vertex + grid; loose S (0.805, 0.5, 0.8).
+    // p0 on S's pixel = S (must stay green, asserted first); p1 at the pixel of
+    // (0.1252, ·, 0.1952) = the node in the plane through the current point,
+    // y 0.5; the two far clicks land at y 0.5 too.
+    {
+        rig(`{"vertices":[[0.805,0.5,0.8]],"faces":[]}`, Vec3(0.25f, 1, 0.45f));
+        penCommand("tool.set pen on");
+        snapTypes("vertex,grid");
+        clickPixels(worldPixel(Vec3(0.805f, 0.5f, 0.8f)),
+                    worldPixel(Vec3(0.1252f, 0.5f, 0.1952f)),
+                    worldPixel(Vec3(-0.2f, 0.5f, 0.6f)),
+                    worldPixel(Vec3(-0.3f, 0.5f, 0.2f)));
+        penCommand("tool.set pen off");
+        auto vs = readVerts();
+        if (vs.length != 5) {
+            fails ~= format("pen-grid-current-plane: 1 scene + 4 stroke vertices, got %s", vs);
+        } else if (!at(vs[1], [0.805, 0.5, 0.8])) {
+            fails ~= format("pen-grid-current-plane: p0 must be S (0.805, 0.5, 0.8), got %s",
+                            vs[1]);
+        } else {
+            check(at(vs[2], [0.1, 0.5, 0.2]), format("pen-grid-current-plane: p1 "
+                ~ "expected the node (0.1, 0.5, 0.2), got %s", vs[2]));
+            check(abs(vs[3].y - 0.5) <= kTol && abs(vs[4].y - 0.5) <= kTol,
+                format("pen-grid-current-plane: far clicks expected at y 0.5, got %s %s",
+                       vs[3], vs[4]));
+        }
+        ++ran;
+    }
+
+    // 17 pen-grid-far (G6): grid only, 123 px/m (step 0.5); the click at the
+    // pixel of (0.24, ·, 0.26) lands on the (0, 0.5) node 41.75 px away — past
+    // our 40 px outer range: the grid has none.
+    {
+        enum double kPpm6 = 123.0;
+        rig("", Vec3(0.07f, 1, 0), kPpm6);
+        penCommand("tool.set pen on");
+        snapTypes("grid");
+        const step = viewStep();
+        const Vec3 ptr = Vec3(0.24f, 1, 0.26f), node = Vec3(0, 1, 0.5f);
+        const dn = pxDist(ptr, node);
+        assert(abs(step - 0.5) < 1e-6 && dn > 40,
+            format("pen-grid-far rig: OUR step at %s px/m must be 0.5 (got %s) "
+                ~ "and the node beyond 40 px (got %.2f)", kPpm6, step, dn));
+        clickPixels(worldPixel(ptr), worldPixel(Vec3(-1, 1, -1)),
+                    worldPixel(Vec3(-1, 1, 1)));
+        penCommand("tool.set pen off");
+        auto vs = readVerts();
+        check(vs.length == 3 && at(vs[0], [0, 1, 0.5]),
+            format("pen-grid-far: p0 expected the (0, 1, 0.5) node, got %s", vs));
+        ++ran;
+    }
+
+    // 17b pen-grid-far-ladder (G6b): ladder {1, 10} (mask 0), 120 px/m (step
+    // 1); the click at the pixel of (0.45, ·, 0.55) lands on (0, 1, 1), 76 px
+    // away. The ladder is restored after.
+    {
+        const mask = cast(long)num(getJson("/api/viewport/display")["cells"]
+            .array[0]["grid"]["mask"]);
+        penCommand(`{"id":"viewport.gridSteps","params":"0"}`);
+        scope (exit) penCommand(format(`{"id":"viewport.gridSteps","params":"%d"}`, mask));
+        rig("", Vec3(0.07f, 1, 0), 120);
+        penCommand("tool.set pen on");
+        snapTypes("grid");
+        const step = viewStep();
+        const Vec3 ptr = Vec3(0.45f, 1, 0.55f);
+        const dn = pxDist(ptr, Vec3(0, 1, 1));
+        assert(abs(step - 1) < 1e-6 && dn > 70,
+            format("pen-grid-far-ladder rig: OUR step on {1, 10} at 120 px/m must "
+                ~ "be 1 (got %s) and the node ~76 px away (got %.2f)", step, dn));
+        clickPixels(worldPixel(ptr), worldPixel(Vec3(-1, 1, -1)),
+                    worldPixel(Vec3(-1, 1, 1)));
+        penCommand("tool.set pen off");
+        auto vs = readVerts();
+        check(vs.length == 3 && at(vs[0], [0, 1, 1]),
+            format("pen-grid-far-ladder: p0 expected the (0, 1, 1) node, got %s", vs));
+        ++ran;
+    }
+
+    // 18 pen-grid-vs-vertex (G8): vertex + grid; loose S8 (0.2323, 0.5, 0.3);
+    // the click at the pixel of (0.205, ·, 0.3) — node 2.2 px, S8 12 px — lands
+    // on S8: an element in range beats the nearer node.
+    {
+        rig(`{"vertices":[[0.2323,0.5,0.3]],"faces":[]}`, Vec3(0.07f, 1, 0));
+        penCommand("tool.set pen on");
+        snapTypes("vertex,grid");
+        clickPixels(worldPixel(Vec3(0.205f, 1, 0.3f)), worldPixel(Vec3(-0.4f, 1, -0.3f)),
+                    worldPixel(Vec3(-0.5f, 1, 0.1f)));
+        penCommand("tool.set pen off");
+        auto vs = readVerts();
+        check(vs.length == 4 && at(vs[1], [0.2323, 0.5, 0.3]),
+            format("pen-grid-vs-vertex: p0 expected S8 (0.2323, 0.5, 0.3), got %s", vs));
+        ++ran;
+    }
+
+    // 19 move-axis-grid (G9) — PENDING-K9a (task 9390 confirms a slow axis
+    // drag reaches the node of press + travel). q (0.03, 1, 0.07); press on
+    // OUR +X shaft 66 px right of the gizmo centre (the shaft spans 24..120
+    // px); +40 px in 20 events of 2 px. The node rounds q + travel (0.1209 →
+    // 0.1) and is held on the axis (z 0.07); the pointer's own node is 0.3, a
+    // fed-back client stays at 0.0.
+    {
+        moveRig(1, "grid");
+        auto cam = fetchCamera();
+        const c = worldPixel(Vec3(0.03f, 1, 0.07f));
+        playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                                 c[0] + 66, c[1], c[0] + 106, c[1], 20));
+        const q = vertexPos(0);
+        penCommand("tool.set move off");
+        check(at(q, [0.1, 1, 0.07]), "move-axis-grid: q expected (0.1, 1, 0.07), got "
+            ~ vstr(q));
+        ++ran;
+    }
+
+    // 20 move-vertex-offplane (G4c; a guard of ours): vertex bit only, the
+    // quad at y 0.4, loose T (0.13, 1, 0.23); q dragged onto T's pixel takes
+    // T's whole 3-D position (the free drag keeps the full snap delta).
+    {
+        moveRig(0.4, "vertex", ",[0.13,1,0.23]");
+        moveDrag(Vec3(0.03f, 0.4f, 0.07f), Vec3(0.13f, 1, 0.23f), 35);
+        const q = vertexPos(0);
+        penCommand("tool.set move off");
+        check(at(q, [0.13, 1, 0.23]), "move-vertex-offplane: q expected T "
+            ~ "(0.13, 1, 0.23), got " ~ vstr(q));
+        ++ran;
+    }
+
+    // 21 pen-grid-vs-guide (G8b2): grid + worldAxis. Our pen's world-axis
+    // guide runs through the PRIOR vertex, so the captured guide line z −0.58
+    // through p1 is built as the stroke's first point (a node click typed to
+    // z −0.58); the next click 3.9 px off that line, 13.6 px from the
+    // (0, −0.6) node, lands on the node: GRID, not AXIS (0.01, 1, −0.58) nor
+    // AXIS-THEN-GRID (0, 1, −0.58).
+    {
+        rig("", Vec3(0.1f, 1, -0.4f));
+        penCommand("tool.set pen on");
+        snapTypes("grid,worldAxis");
+        clickPixels(worldPixel(Vec3(0.2f, 1, -0.6f)));
+        penAttr("posZ", -0.58);
+        clickPixels(worldPixel(Vec3(0.010846f, 1, -0.571068f)),
+                    worldPixel(Vec3(0.3f, 1, -0.2f)));
+        penCommand("tool.set pen off");
+        auto vs = readVerts();
+        check(vs.length == 3 && at(vs[0], [0.2, 1, -0.58]) && at(vs[1], [0, 1, -0.6]),
+            format("pen-grid-vs-guide: the guide anchor (0.2, 1, -0.58) then the "
+                ~ "node (0, 1, -0.6) expected, got %s", vs));
+        ++ran;
+    }
+
+    // 22 pen-grid-far-vs-guide (G8b3): 123 px/m (step 0.5); the guide line
+    // z −1.25 through the first point (a node click typed to z −1.25); the
+    // next click 1.8 px off the line, its node (0.5, −1) beyond 40 px, lands
+    // on the node, not on the line (AXIS (0.26, 1, −1.25)).
+    {
+        enum double kPpm8 = 123.0;
+        rig("", Vec3(0.3f, 1, -1.0f), kPpm8);
+        penCommand("tool.set pen on");
+        snapTypes("grid,worldAxis");
+        const step = viewStep();
+        const Vec3 ptr = Vec3(0.262f, 1, -1.235f), node = Vec3(0.5f, 1, -1.0f);
+        const dn = pxDist(ptr, node);
+        assert(abs(step - 0.5) < 1e-6 && dn > 40,
+            format("pen-grid-far-vs-guide rig: OUR step must be 0.5 (got %s) and "
+                ~ "the node beyond 40 px (got %.2f)", step, dn));
+        clickPixels(worldPixel(Vec3(0.5f, 1, -1.5f)));
+        penAttr("posZ", -1.25);
+        clickPixels(worldPixel(ptr), worldPixel(Vec3(1.0f, 1, -0.5f)));
+        penCommand("tool.set pen off");
+        auto vs = readVerts();
+        check(vs.length == 3 && at(vs[0], [0.5, 1, -1.25]) && at(vs[1], [0.5, 1, -1.0]),
+            format("pen-grid-far-vs-guide: the guide anchor (0.5, 1, -1.25) then "
+                ~ "the node (0.5, 1, -1) expected, got %s", vs));
         ++ran;
     }
 }
@@ -207,24 +422,24 @@ unittest {
     // side away from the triangle.
     const Vec3 offEdge = Vec3(0.6f, 1, cast(float)(0.3 - 6 * kPx));
     rig(tri(true), focus); snapTypes("edge");
-    expectAt(snapAt(worldPixel(offEdge)), [0.6, 1, 0.3], kHalfPx, "edge-front"); ++ran;
+    expectAt(snapAt(offEdge), [0.6, 1, 0.3], kHalfPx, "edge-front"); ++ran;
     // 3 edge-back — captured (edge leg, pen client, merge off).
     rig(tri(false), focus); snapTypes("edge");
-    expectAt(snapAt(worldPixel(offEdge)), [0.6, 1, 0.3], kHalfPx, "edge-back"); ++ran;
+    expectAt(snapAt(offEdge), [0.6, 1, 0.3], kHalfPx, "edge-back"); ++ran;
 
     // 7 poly-front — control; 6 poly-back stays culled (the polygon leg keeps
     // its facing term).
     const Vec3 centroid = Vec3(0.6f, 1, cast(float)(1.4 / 3));
     rig(tri(true), focus); snapTypes("polygon");
     {
-        auto sr = snapAt(worldPixel(centroid));
+        auto sr = snapAt(centroid);
         check(snapped(sr) && abs(pos(sr)[1] - 1) <= kTol,
             "poly-front: the front triangle takes a polygon snap, got " ~ sr.toString);
         ++ran;
     }
     rig(tri(false), focus); snapTypes("polygon");
     {
-        auto sr = snapAt(worldPixel(centroid));
+        auto sr = snapAt(centroid);
         check(!snapped(sr), "poly-back: a back-facing polygon takes no polygon "
             ~ "snap, got " ~ sr.toString);
         ++ran;
@@ -269,7 +484,8 @@ unittest {
     snapTypes("vertex");
     expectAt(snapAt(leftOf(under)), [0.5, 0.8, 0.5], kTol, "behind-back-quad"); ++ran;
 
-    static if (kGridStepFromView) gridCells(); else held += 3;
+    gridCells();
+    gridLawCells();
 
     // 14 Mpoly_ctrl replica (must stay green): back-facing T at y 1.3, polygon
     // snap only, the pen's first click inside T's interior lands on the click
@@ -292,8 +508,7 @@ unittest {
         ++ran;
     }
 
-    assert(ran + held == 14 && held == (kGridStepFromView ? 0 : 3),
-        format("population: %d cells ran + %d held, expected 14", ran, held));
-    assert(fails.length == 0, format("%d of 14 cells red:\n  %-(%s\n  %)",
+    assert(ran == 23, format("population: %d cells ran, expected 23", ran));
+    assert(fails.length == 0, format("%d of 23 cells red:\n  %-(%s\n  %)",
                                      fails.length, fails));
 }

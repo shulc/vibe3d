@@ -605,15 +605,134 @@ unittest {
 
     // 2. THE BIT IS STILL REACHABLE. This was a default change, not a model
     //    change: the set still has a Grid bit and turning it on still works.
+    //    (a) With the vertex moved beyond the acceptance radius, the Grid
+    //    places. (b) As written, the vertex in range wins over the nearer
+    //    lattice point: an element in range ranks above the grid (task 9387,
+    //    captured on the pen, fixture `cells_k_b7` G8).
     SnapPacket withGrid = cfg;
     withGrid.enabledTypes = SnapType.Vertex | SnapType.Grid;
+    Mesh far;
+    far.vertices = [ Vec3(2.6f, 0, 0) ];
+    assert(pixDist(far.vertices[0], cursorWorld) > cfg.outerRangePx,
+        "fixture: the moved vertex must lie beyond every range");
     invalidateSnapGrids();
-    SnapResult g = snapCursor(cursorWorld, sx, sy, vp, m, ModelSpace.world(), withGrid, null);
-    assert(g.snapped && g.targetType == SnapType.Grid,
-        "enabling Grid explicitly must restore the old outcome — the nearer "
-        ~ "lattice point wins. `enabledTypes` is a SET and every bit stays "
+    SnapResult g = snapCursor(cursorWorld, sx, sy, vp, far, ModelSpace.world(), withGrid, null);
+    assert(g.snapped && g.targetType == SnapType.Grid && (g.worldPos - gridWorld).length < 1e-5f,
+        "enabling Grid explicitly must place on the lattice point when no "
+        ~ "element is in range. `enabledTypes` is a SET and every bit stays "
         ~ "reachable; only the factory contents changed");
+    invalidateSnapGrids();
+    SnapResult gv = snapCursor(cursorWorld, sx, sy, vp, m, ModelSpace.world(), withGrid, null);
+    assert(gv.snapped && gv.targetType == SnapType.Vertex && gv.targetIndex == 0,
+        "a vertex in range wins over a NEARER lattice point: the grid ranks "
+        ~ "below every element in range");
 
+    invalidateSnapGrids();
+}
+
+// ---------------------------------------------------------------------------
+// The grid tier (task 9387, wave plan §28.2). The grid node is the CLIENT's
+// point with its in-plane channels rounded; it has no pixel range; it ranks
+// below an element in range and above the constraint tier, and when it
+// places it reports ITSELF as the target. It keeps the client's admission
+// seam (a refused Grid is as if never enumerated).
+//
+// Fixture: a slightly tilted look down -Y onto the y = 0 work plane, 800 px,
+// grid step 1. Every pixel distance the cells rely on is measured, not
+// derived, and asserted as a premise first.
+// ---------------------------------------------------------------------------
+unittest {
+    import math     : lookAt, perspectiveMatrix;
+    import std.math : PI, round;
+
+    Viewport vp;
+    vp.eye    = Vec3(0, 5, 0.5f);
+    vp.view   = lookAt(vp.eye, Vec3(0, 0, 0), Vec3(0, 0, -1));
+    vp.proj   = perspectiveMatrix(PI / 2, 1.0f, 0.1f, 100.0f);
+    vp.width  = 800;
+    vp.height = 800;
+
+    float pix(Vec3 a, Vec3 b) {
+        float ax, ay, az, bx, by, bz;
+        assert(projectToWindowFull(a, vp, ax, ay, az)
+            && projectToWindowFull(b, vp, bx, by, bz),
+            "fixture: both points must project on-screen");
+        return sqrt((ax - bx) * (ax - bx) + (ay - by) * (ay - by));
+    }
+    void pixelOf(Vec3 w, out int sx, out int sy) {
+        float x, y, z;
+        assert(projectToWindowFull(w, vp, x, y, z), "fixture: off-screen point");
+        sx = cast(int)round(x); sy = cast(int)round(y);
+    }
+
+    SnapPacket cfg;
+    cfg.enabled  = true;
+    cfg.gridStep = 1.0f;
+    Mesh none;
+
+    // grid-admit-refused: Grid alone, its node 53 px away (beyond every range:
+    // the grid still places — the positive control), then an admit refusing
+    // Grid ⇒ the pass-through, field for field.
+    {
+        immutable Vec3 cur = Vec3(2.6f, 0, 0.3f), node = Vec3(2, 0, 0);
+        assert(pix(cur, node) > cfg.outerRangePx,
+            "fixture: the node must lie beyond every pixel range");
+        int sx, sy; pixelOf(cur, sx, sy);
+        SnapPacket c = cfg; c.enabledTypes = SnapType.Grid;
+        invalidateSnapGrids();
+        SnapResult on = snapCursor(cur, sx, sy, vp, none, ModelSpace.world(), c);
+        assert(on.snapped && on.targetType == SnapType.Grid && (on.worldPos - node).length < 1e-5f,
+            "grid-admit-refused control: the grid places at any distance");
+        bool refuseGrid(SnapType t, int, int) nothrow { return t != SnapType.Grid; }
+        invalidateSnapGrids();
+        SnapResult off = snapCursor(cur, sx, sy, vp, none, ModelSpace.world(), c, null,
+                                    &refuseGrid);
+        assert(!off.snapped && !off.highlighted && off.targetType == SnapType.None
+            && (off.worldPos - cur).length < 1e-5f,
+            "grid-admit-refused: a Grid refused by the client's admit must be as if "
+            ~ "never enumerated (pass-through)");
+    }
+
+    // grid-over-constraint: Grid + WorldAxis; the world X axis 4 px from the
+    // cursor, the node ~18 px ⇒ the node places, no constraint reported.
+    {
+        immutable Vec3 cur = Vec3(2.22f, 0, 0.05f), node = Vec3(2, 0, 0);
+        immutable float dAxis = pix(cur, Vec3(2.22f, 0, 0)), dNode = pix(cur, node);
+        assert(dAxis < 6 && dNode > 15 && dNode < cfg.innerRangePx,
+            "fixture: the axis line ~4 px and the node ~18 px from the cursor");
+        int sx, sy; pixelOf(cur, sx, sy);
+        SnapPacket c = cfg; c.enabledTypes = SnapType.WorldAxis;
+        invalidateSnapGrids();
+        SnapResult axisOnly = snapCursor(cur, sx, sy, vp, none, ModelSpace.world(), c);
+        assert(axisOnly.snapped && axisOnly.constraintType == SnapType.WorldAxis,
+            "fixture: alone, the world-axis constraint places here");
+        c.enabledTypes = SnapType.WorldAxis | SnapType.Grid;
+        invalidateSnapGrids();
+        SnapResult r = snapCursor(cur, sx, sy, vp, none, ModelSpace.world(), c);
+        assert(r.snapped && r.targetType == SnapType.Grid
+            && r.constraintType == SnapType.None && (r.worldPos - node).length < 1e-5f,
+            "grid-over-constraint: the grid node ranks above the constraint tier");
+    }
+
+    // grid-band-target: Vertex + Grid; the vertex 30 px away (the 24..40 px
+    // highlight band), the node beyond 40 px ⇒ the grid places AND is the
+    // reported target (no band element's fields leak through).
+    {
+        immutable Vec3 cur = Vec3(2.6f, 0, 0.3f), node = Vec3(2, 0, 0);
+        Mesh band;
+        band.vertices = [ Vec3(2.6f, 0, 0.3f + 0.375f) ];
+        immutable float dV = pix(cur, band.vertices[0]);
+        assert(dV > cfg.innerRangePx && dV < cfg.outerRangePx
+            && pix(cur, node) > cfg.outerRangePx,
+            "fixture: the vertex in the highlight band, the node beyond it");
+        int sx, sy; pixelOf(cur, sx, sy);
+        SnapPacket c = cfg; c.enabledTypes = SnapType.Vertex | SnapType.Grid;
+        invalidateSnapGrids();
+        SnapResult r = snapCursor(cur, sx, sy, vp, band, ModelSpace.world(), c);
+        assert(r.snapped && (r.worldPos - node).length < 1e-5f && (r.highlightPos - node).length < 1e-5f
+            && r.targetType == SnapType.Grid && r.targetIndex == -1,
+            "grid-band-target: the grid places and reports itself as the target");
+    }
     invalidateSnapGrids();
 }
 

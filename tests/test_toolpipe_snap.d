@@ -449,6 +449,8 @@ unittest { // Workplane snap fires; result lies on Y=0
 // -------------------------------------------------------------------------
 
 unittest { // Grid snap fixed step = 0.5
+    import drag_helpers : DVec3 = Vec3, viewportFromCameraMatrices, pixelRay;
+    import std.math : round, fabs;
     resetCube();
     postJson("/api/command", "tool.pipe.attr workplane mode worldY");
     postJson("/api/command", "tool.pipe.attr snap enabled true");
@@ -457,25 +459,31 @@ unittest { // Grid snap fixed step = 0.5
     postJson("/api/command", "tool.pipe.attr snap fixedGridSize 0.5");
     postJson("/api/command", "tool.pipe.attr snap innerRange 999999");
     postJson("/api/command", "tool.pipe.attr snap outerRange 999999");
-    auto sr = querySnap(0.0, 0.0, 0.0, 320, 240);
+    // The client point is the pixel's work-plane hit (as every pointer-driven
+    // client passes); the node is that point rounded in-plane (task 9387).
+    auto vp = viewportFromCameraMatrices();
+    DVec3 org, dir;
+    pixelRay(320.0f, 240.0f, vp, org, dir);
+    const double t = -org.y / dir.y;
+    const double hx = org.x + dir.x * t, hz = org.z + dir.z * t;
+    auto sr = querySnap(hx, 0.0, hz, 320, 240);
     assert(sr["snapped"].type == JSONType.true_,
         "expected Grid snap, got " ~ sr.toString);
-    import std.math : round, fabs;
     auto wp = sr["worldPos"].array;
     assert(approx(wp[1].floating, 0.0),
         "Grid snap Y must be 0; got " ~ sr.toString);
-    double x = wp[0].floating, z = wp[2].floating;
-    assert(fabs(x - round(x / 0.5) * 0.5) < 1e-3,
-        "Grid snap X must be multiple of 0.5; got x=" ~ x.to!string);
-    assert(fabs(z - round(z / 0.5) * 0.5) < 1e-3,
-        "Grid snap Z must be multiple of 0.5; got z=" ~ z.to!string);
+    const double ex = round(hx / 0.5) * 0.5, ez = round(hz / 0.5) * 0.5;
+    assert(fabs(wp[0].floating - ex) < 1e-3 && fabs(wp[2].floating - ez) < 1e-3,
+        "Grid snap must land on the 0.5 node (" ~ ex.to!string ~ ", " ~ ez.to!string
+        ~ ") of the hit; got " ~ sr.toString);
     postJson("/api/command", "tool.pipe.attr workplane mode auto");
 }
 
 // -------------------------------------------------------------------------
 // 7.3c: Grid snap dynamic = the VIEW's grid step (task 9387). The step is
-// read from the display endpoint (OUR drawn step at this camera), and the
-// node is the cursor ray's workplane hit rounded to it.
+// read from the display endpoint (OUR drawn step at this camera); the query's
+// client point is the cursor ray's workplane hit, and the node is that point
+// rounded to the step in-plane.
 // -------------------------------------------------------------------------
 
 unittest { // Grid snap dynamic step = the drawn grid step
@@ -498,7 +506,7 @@ unittest { // Grid snap dynamic step = the drawn grid step
     pixelRay(320.0f, 240.0f, vp, org, dir);
     const double t = -org.y / dir.y;
     const double hx = org.x + dir.x * t, hz = org.z + dir.z * t;
-    auto sr = querySnap(0.0, 0.0, 0.0, 320, 240);
+    auto sr = querySnap(hx, 0.0, hz, 320, 240);
     assert(sr["snapped"].type == JSONType.true_,
         "expected Grid snap, got " ~ sr.toString);
     auto wp = sr["worldPos"].array;

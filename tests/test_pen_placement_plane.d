@@ -151,22 +151,29 @@ unittest {
     }
 
     // Hover uses the anchor the next click would use. Idle, in a FRONT view
-    // with the focus at z 0.4: the published hover point lies on the plane
-    // through the focus (z 0.4, not the origin's 0), not a cleared result.
+    // with the focus at z 0.4: the published hover point is a snap lying on
+    // the plane through the focus (z 0.4, not the origin's 0), not a cleared
+    // result. Its in-plane x / y are the grid node's (pinned by the grid
+    // cells of test_snap_element_facing); the pointer (0.42, 1.42) sits off
+    // every rounding midpoint of OUR 0.2 step there, asserted first.
     {
         penRigEmpty(Vec3(0, 1, 0.4f), "Front");
         penCommand("tool.pipe.attr snap enabled true");
         penCommand("tool.pipe.attr snap types grid");
-        hoverWorld(Vec3(0.5, 1.5, 0.4f));
-        auto p = fetchSnapLast()["worldPos"].array;
+        const step = num(getJson("/api/viewport/display")["cells"].array[0]["grid"]["size"]);
+        assert(near(step, 0.2, 1e-6), format("idle hover rig: OUR step must be 0.2, "
+            ~ "got %s", step));
+        hoverWorld(Vec3(0.42, 1.42, 0.4f));
+        auto sl = fetchSnapLast();
+        auto p = sl["worldPos"].array;
         penCommand("tool.pipe.attr snap enabled false");
-        if (!(near(num(p[0]), 0.5, kTolXZ) && near(num(p[1]), 1.5, kTolXZ) &&
-              near(num(p[2]), 0.4, kTolY)))
-            fails ~= format("idle hover, front view: hover point (%s, %s, %s), "
-                ~ "expected (0.5, 1.5, 0.4)", num(p[0]), num(p[1]), num(p[2]));
+        if (!(sl["snapped"].type == JSONType.true_ && near(num(p[2]), 0.4, kTolY)))
+            fails ~= format("idle hover, front view: hover %s, expected a snap at "
+                ~ "z 0.4", sl.toString);
     }
     // Drawing: point 0 typed to y 0.5, the hover point lies on the plane
     // through the current point (y 0.5; the focus plane is 1, the origin 0).
+    // The grid node keeps that plane: captured, `cells_k_b7` G5 (p1 at y 0.5).
     {
         auto k = cells["A0"]["clicks_xz"].array;
         penRigEmpty(focus);
