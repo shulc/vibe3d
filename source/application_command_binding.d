@@ -97,6 +97,7 @@ public:
         auto command = registry.makeCommand(id);
         if (command is null)
             throw new Exception("unknown command id '" ~ id ~ "'");
+        command.origin = context.origin;
 
         if (context.interactive)
             if (auto attr = cast(ToolAttrCommand) command)

@@ -123,6 +123,9 @@ enum CmdFlags : uint {
     ToolLifecycle = 1 << 8, // Alters tool-lifecycle state (tool exit/entry). Undoable
                             // (lands on the stack); cursor treats it as transparent when
                             // its own-gesture Model entry sits below it.
+    MouseDownOk = 1 << 9,   // Its key runs while a mouse button is held (else dropped;
+                            // `InputRouter.handleKeyDown`, task 9470, findings_K-G2).
+    Momentary   = 1 << 10,  // Its key-up runs the hold law (`InputRouter.handleKeyUp`).
 }
 
 /// Whether the application command funnel must commit the active tool's
@@ -182,6 +185,10 @@ enum CompareResult { Different, Compatible }
 class Command {
     // Internal command id (e.g. "mesh.bevel"). Used by the dispatcher.
     string name() const { return "Command"; }
+
+    /// Who ran this command; written only by `ApplicationCommandBinding.invokeLine`
+    /// (the key path builds no context and keeps `ui`).
+    CommandOrigin origin = CommandOrigin.ui;
 
     // The tool session that wrote this record (slice M4 of the tool session
     // model; doc/tool_session_model_plan_2026-09-24.md R2.5 M4, R4.2): 0 for a

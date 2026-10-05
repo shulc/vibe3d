@@ -79,6 +79,7 @@ import tool_activation_ownership : ToolTransition, DropContext;
 import bindbc.sdl;
 import bindbc.opengl;
 import editor_app : EditorApp, Layout, kGenerateAiAvailable;
+import command : Command, CmdFlags;
 import command_history : RecordMode;
 // Task 0781 step 2a -- what the two keyboard handlers reach that EditorApp
 // does not carry. All of these were already module-level names in main()'s
@@ -506,11 +507,50 @@ struct InputRouter {
     // this handler is caught by value; see the task Log for the exact
     // assertion each one reddened with.
 
+    // The YAML shortcut row for `kev`, resolved IN CONTEXT (task 1810), or -1.
+    // The three legacy sections and the `bindings:` list are one table by the
+    // time they get here; `resolveBinding` picks the most specific row whose
+    // zone / mode / armed-tool slots accept the current context, and a row with
+    // no slots filled — every legacy row — matches everywhere.
+    private int keyBinding(ref const SDL_KeyboardEvent kev) {
+        import input_context : currentInputContext;
+        string canon = canonFromEvent(kev.keysym.sym, cast(SDL_Keymod)kev.keysym.mod);
+        if (canon.length == 0) return -1;
+        auto ictx = currentInputContext(
+            selTypeToken(currentSelType(app.selTypeOrder)), app.activeToolId);
+        return resolveBinding(app.shortcuts.bindings, canon,
+                              ictx.zone, ictx.mode, ictx.whenTool);
+    }
+
+    // The key whose command is `Momentary`, armed at its key-down for the
+    // key-up law in `handleKeyUp` (task 9470). Times are SDL / playback `ts`.
+    struct MomentaryKey { SDL_Keycode key; uint downTs; bool cycled, active; string id; }
+    MomentaryKey momentary_;
+    enum uint kMomentaryHoldMs = 500;   // findings_K-G2 G2-MT: 450 stays, 550 reverts
+
+    private void runKeyCommand(ref const SDL_KeyboardEvent kev, string id, Command cmd) {
+        if (cmd.cmdFlags() & CmdFlags.Momentary)
+            momentary_ = MomentaryKey(kev.keysym.sym, kev.timestamp, false, true, id);
+        app.runCommand(cmd);
+    }
+
     void handleKeyDown(ref SDL_KeyboardEvent kev) {
         version (web) webConsumedInputMask |= webKeyDownBit;
-        // No key dispatches while a mouse button is held: dropped, not queued
-        // (slice M1a; one input rule, above Escape and every tool's onKeyDown).
-        if (held_.any) return;
+        // SDL autorepeat of the tracked key is no new press (vibe3d-divergence).
+        if (kev.repeat != 0 && momentary_.active && momentary_.key == kev.keysym.sym) return;
+        // While a mouse button is held only a command row whose command reports
+        // `MouseDownOk` runs; every other key is dropped, not queued (slice M1a,
+        // narrowed by task 9470 / findings_K-G2). Above Escape and onKeyDown.
+        if (held_.any) {
+            immutable int hb = keyBinding(kev);
+            if (hb < 0) return;
+            auto row = app.shortcuts.bindings[hb];
+            if (row.kind != BindingKind.command || row.args.length || !app.reg.hasCommand(row.id))
+                return;
+            auto cmd = app.reg.makeCommand(row.id);
+            if (cmd.cmdFlags() & CmdFlags.MouseDownOk) runKeyCommand(kev, row.id, cmd);
+            return;
+        }
         with (app) {
             // Keyboard priority (task 5911; escape_ladder_test EL-b): pie grab,
             // focused text field, popup gate, armed tool (no Esc consumer), YAML
@@ -520,20 +560,8 @@ struct InputRouter {
             SubjectPacket subj; VectorStack vts; ifs.buildToolVts(subj, vts);
             if (activeTool && activeTool.onKeyDown(kev, vts)) return;
 
-            // YAML-driven shortcut lookup, resolved IN CONTEXT (task 1810).
-            //
-            // The three legacy sections and the `bindings:` list are one table by
-            // the time they get here; `resolveBinding` picks the most specific row
-            // whose zone / mode / armed-tool slots accept the current context, and
-            // a row with no slots filled — which is every legacy row — matches
-            // everywhere, exactly as before this task.
-            string canon = canonFromEvent(kev.keysym.sym, cast(SDL_Keymod)kev.keysym.mod);
-            if (canon.length > 0) {
-                import input_context : currentInputContext;
-                auto ictx = currentInputContext(
-                    selTypeToken(currentSelType(selTypeOrder)), activeToolId);
-                immutable int bi = resolveBinding(shortcuts.bindings, canon,
-                                                  ictx.zone, ictx.mode, ictx.whenTool);
+            {
+                immutable int bi = keyBinding(kev);
                 if (bi >= 0) {
                   auto bnd = shortcuts.bindings[bi];
                   // An explicit no-op row consumes the chord and runs nothing —
@@ -568,7 +596,7 @@ struct InputRouter {
                     {
                         if (!reg.hasCommand(*id))
                             throw new Exception("registry: '" ~ *id ~ "' is not registered");
-                        runCommand(reg.makeCommand(*id));
+                        runKeyCommand(kev, *id, reg.makeCommand(*id));
                     }
                     return;
                   }
@@ -741,31 +769,25 @@ struct InputRouter {
         }
     }
 
-    // Key RELEASE dispatch (task 0709). `Tool.onKeyUp` has existed next to
-    // `onKeyDown` since the base class was written, but until this task no
-    // `case SDL_KEYUP` existed in `processEvent`'s switch at all, so no
-    // release ever reached a tool: the single overrider (`SliceTool`'s X
-    // chord — "while X is held, snapping is temporarily inverted") set its
-    // flag on the press and had no reachable path to clear it, latching the
-    // inversion for the rest of the tool session.
-    //
-    // THE ROUTE THIS OPENS, named deliberately rather than inherited as a
-    // side effect: the active tool now gets first refusal on EVERY key
-    // release, exactly as it already does on every key press. Nothing else
-    // in this handler acts on a release — there is no shortcut lookup, no
-    // edit-mode switch, no command dispatch on key-up — so a tool that does
-    // not override `onKeyUp` (every tool but `SliceTool`) falls through to
-    // the base `return false` and the release is discarded precisely as it
-    // was before. The consuming `return` is kept symmetric with
-    // `handleKeyDown` so a future release-side consumer has the same shape
-    // to extend.
-    //
-    // Not wrapped in a `with (app)` block, unlike `handleKeyDown` above:
-    // two names in two lines, so both bindings are written out instead of
-    // inferred -- and `ifs.buildToolVts` is the same explicit-binding rule
-    // stated at the block comment above, for the same reason.
+    // Key RELEASE dispatch (task 0709): the momentary key's law first (task
+    // 9470), then the active tool's `onKeyUp` — no tool overrides it today, so
+    // any other release is discarded. Not wrapped in `with (app)`; `ifs.buildToolVts`
+    // is the explicit-binding rule stated at the block comment above.
     void handleKeyUp(ref SDL_KeyboardEvent kev) {
         version (web) webConsumedInputMask |= webKeyUpBit;
+        // The momentary key's law (findings_K-G2): button held ⇒ re-run now;
+        // after a press/release ⇒ re-run iff held > 500 ms; else a > 500 ms hold
+        // fires undo — a probable reference defect, copied (gap row 562).
+        if (momentary_.active && momentary_.key == kev.keysym.sym) {
+            auto m = momentary_;
+            momentary_ = MomentaryKey.init;
+            immutable bool long_ = cast(long)kev.timestamp - m.downTs > kMomentaryHoldMs;
+            if (!held_.any && !m.cycled) { if (long_) app.navHistory(true); return; }
+            if (!held_.any && !long_) return;
+            auto cmd = app.reg.makeCommand(m.id);
+            if (!held_.any || (cmd.cmdFlags() & CmdFlags.MouseDownOk)) app.runCommand(cmd);
+            return;
+        }
         // A release during a held button is never delivered, not even at the
         // button's release (slice M1a, verdict C-H9-X-up). ImGui still saw it.
         if (held_.any) return;
@@ -1872,7 +1894,10 @@ struct InputRouter {
         // of them may consume this release, and a bit left set would drop
         // every later key (slice M1a). Order pinned by
         // tests/unit/held_gesture_buttons_test.d.
-        if (ev.type == SDL_MOUSEBUTTONUP) held_.release(ev.button.button);
+        if (ev.type == SDL_MOUSEBUTTONUP) {
+            held_.release(ev.button.button);
+            momentary_.cycled = true;   // a press/release since the momentary key-down
+        }
 
         bool pieConsumedKeyUp;
 

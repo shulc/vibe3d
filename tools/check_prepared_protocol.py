@@ -5086,11 +5086,11 @@ def slice_activation_gate(owner, context, tool):
         "image.restrictFaces = sliceRestrictFaces(*source);" in builder and
         "image.armedKey.stamp(*source);" in builder and
         not re.search(r"(?<!\.)\b(active|dragPart_|previewLive_|haveBefore_|"
-                      r"haveRaw_|snapTempInvert_|haveFrozen_|pendingAxisClassify_|"
+                      r"haveRaw_|haveFrozen_|pendingAxisClassify_|"
                       r"hasLine_|drawGesture_|ctrlPending_|ctrlAxis_|gapDrag_|"
                       r"axisLocked_|before_|restrictFaces_|armedKey_)\s*=", builder) and
         "active = true; dragPart_ = DragNone; previewLive_ = false;" in installer and
-        "haveBefore_ = true; haveRaw_ = false; snapTempInvert_ = false;" in installer and
+        "haveBefore_ = true; haveRaw_ = false;" in installer and
         "haveFrozen_ = false; pendingAxisClassify_ = false;" in installer and
         "hasLine_ = false; drawGesture_ = false; ctrlPending_ = false;" in installer and
         "ctrlAxis_ = -1; gapDrag_ = false; axisLocked_ = false;" in installer and
@@ -5124,7 +5124,7 @@ for target, old, new, label in (
     ("tool", "image.restrictFaces = sliceRestrictFaces(*source);", "image.restrictFaces = null;", "drop restriction capture"),
     ("tool", "image.armedKey.stamp(*source);", "", "drop armed stamp"),
     ("tool", "active = true; dragPart_ = DragNone; previewLive_ = false;", "active = true;", "drop primary reset"),
-    ("tool", "haveBefore_ = true; haveRaw_ = false; snapTempInvert_ = false;", "haveBefore_ = true;", "drop raw reset"),
+    ("tool", "haveBefore_ = true; haveRaw_ = false;", "haveBefore_ = true;", "drop raw reset"),
     ("tool", "haveFrozen_ = false; pendingAxisClassify_ = false;", "haveFrozen_ = false;", "retain pending classify"),
     ("tool", "hasLine_ = false; drawGesture_ = false; ctrlPending_ = false;", "hasLine_ = false;", "drop line/ctrl reset"),
     ("tool", "ctrlAxis_ = -1; gapDrag_ = false; axisLocked_ = false;", "ctrlAxis_ = -1;", "drop remaining reset"),

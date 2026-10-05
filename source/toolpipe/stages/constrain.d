@@ -271,6 +271,9 @@ public:
 
     /// Every field to its declaration default (SceneReset's stage loop): the
     /// constraint is remembered but not in the pipe until a tool drop.
+    /// The constraint in the pipe is a guide for any drag (findings_K-G3 PIPE-ONLY).
+    override int snapGuideSources() const { return remembered == Remembered.inPipe; }
+
     override void reset() {
         remembered = Remembered.yes;
         userLocked = false;

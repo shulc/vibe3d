@@ -102,6 +102,10 @@ abstract class Stage : ParamProvider {
     /// (`file.new`) resets; every other stage keeps its values.
     bool storedInScene() const { return false; }
 
+    /// How many snap guides this stage holds for the current drag
+    /// (`heldDragGuideCount`, the snap key's mouse-down gate; task 9470).
+    int snapGuideSources() const { return 0; }
+
     /// Whether this stage is currently REGISTERED-and-live in the pipe.
     /// Disabled stages are skipped during evaluation but stay in the pipe (the
     /// E column in the tool pipe panel).

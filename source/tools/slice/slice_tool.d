@@ -44,6 +44,9 @@ import command_history : PreparedHistoryKind;
 import document : Layer;
 import mesh_edit_delta : MeshEditScope;
 import tools.common.session_mesh_key : SessionMeshKey;
+import toolpipe.stages.snap : liveSnapStage;
+import toolpipe.guide : SnapGuide, GuideDrawState;
+import toolpipe.packets : SnapType;
 
 struct PreparedSliceActivationImage {
     MeshSnapshot before;
@@ -866,15 +869,28 @@ private:
     bool  snap_      = false;
     float snapAngle_ = 45.0f;
 
-    // X-key TEMPORARY snap toggle (S5): while X is held, the effective snap state
-    // is INVERTED (the reference's "press X in-viewport to temporarily toggle
-    // snapping"). Set on X-down, cleared on X-up (onKeyDown/onKeyUp). The
-    // effective state = snap_ ^ snapTempInvert_.
-    bool snapTempInvert_ = false;
+    // The new line's snap guide (task 9470, findings_K-G2 G2-SL1): registered
+    // at the new-line press, removed at the release, the RMB cancel and the drop
+    // (`dropPreview`). It ranks a candidate at its screen distance from the
+    // drag's pointer — the election's own distance — so it re-ranks nothing; it
+    // makes the snap key live mid-drag (`heldDragGuideCount`).
+    private static final class LineGuide : SnapGuide {
+        Viewport vp; float x = 0, y = 0;
+        void limits(float, float) {}
+        bool proximity(Vec3 w, SnapType, int, int, out float d, ref int) {
+            float px, py, pz;
+            if (!projectToWindowFull(w, vp, px, py, pz)) return false;
+            d = sqrt((px - x) ^^ 2 + (py - y) ^^ 2);
+            return true;
+        }
+        void setDrawState(GuideDrawState) {}
+        uint flags() const { return 0; }
+    }
+    private LineGuide lineGuide_;
+    private void endLineGuide() { if (auto st = liveSnapStage()) st.removeGuide(lineGuide_); }
 
-    // The RAW (unsnapped) drag endpoints from the last motion, so the X toggle
-    // can re-derive the snapped line mid-drag WITHOUT a fresh mouse move (the
-    // snap is otherwise lossy — start_/end_ already hold the snapped result).
+    // The RAW (unsnapped) drag endpoints from the last motion (start_/end_ hold
+    // the angle-snapped result).
     Vec3 rawStart_, rawEnd_;
     bool haveRaw_;
 
@@ -1163,13 +1179,6 @@ public:
         // headless test observe the gap gizmo state without a screenshot).
         root["gapDragging"] = JSONValue(gapDrag_);
         root["snap"]      = JSONValue(snap_);
-        // Task 0709 — the X chord's TEMPORARY inversion, and the state the
-        // tool actually snaps by. `snap_` alone is the panel value and says
-        // nothing about whether X is currently held, so a headless test could
-        // observe neither the latch nor its release. These two make the chord
-        // a data assertion instead of a screenshot.
-        root["snapTempInvert"] = JSONValue(snapTempInvert_);
-        root["effectiveSnap"]  = JSONValue(effectiveSnap());
         root["snapAngle"] = JSONValue(snapAngle_);
         root["axis"]    = JSONValue(wireTagForValue(sliceAxisTable[], cast(int)axis_));
         root["vectorX"] = JSONValue(vector_.x);
@@ -1220,7 +1229,7 @@ public:
             nothrow @nogc {
         if (!image.valid) return;
         active = true; dragPart_ = DragNone; previewLive_ = false;
-        haveBefore_ = true; haveRaw_ = false; snapTempInvert_ = false;
+        haveBefore_ = true; haveRaw_ = false;
         haveFrozen_ = false; pendingAxisClassify_ = false;
         hasLine_ = false; drawGesture_ = false; ctrlPending_ = false;
         ctrlAxis_ = -1; gapDrag_ = false; axisLocked_ = false;
@@ -1275,7 +1284,6 @@ public:
         image.expectedHaveBefore = haveBefore_;
         image.expectedDragPart = dragPart_; image.expectedCtrlAxis = ctrlAxis_;
         image.expectedHaveRaw = haveRaw_;
-        image.expectedSnapTempInvert = snapTempInvert_;
         image.expectedHaveFrozen = haveFrozen_;
         image.expectedPendingAxisClassify = pendingAxisClassify_;
         image.expectedHasLine = hasLine_;
@@ -1297,7 +1305,6 @@ public:
             haveBefore_ == image.expectedHaveBefore &&
             dragPart_ == image.expectedDragPart && ctrlAxis_ == image.expectedCtrlAxis &&
             haveRaw_ == image.expectedHaveRaw &&
-            snapTempInvert_ == image.expectedSnapTempInvert &&
             haveFrozen_ == image.expectedHaveFrozen &&
             pendingAxisClassify_ == image.expectedPendingAxisClassify &&
             hasLine_ == image.expectedHasLine &&
@@ -1312,7 +1319,7 @@ public:
             ref PreparedSliceDeactivateImage image) nothrow @nogc {
         if (!image.valid) return;
         active = false; dragPart_ = DragNone; previewLive_ = false;
-        haveBefore_ = false; haveRaw_ = false; snapTempInvert_ = false;
+        haveBefore_ = false; haveRaw_ = false;
         haveFrozen_ = false; pendingAxisClassify_ = false;
         hasLine_ = false; drawGesture_ = false; ctrlPending_ = false;
         ctrlAxis_ = -1; gapDrag_ = false;
@@ -1362,14 +1369,14 @@ public:
         live.vertices[0].x += 0.25f;
         live.commitChange(MeshEditScope.Position);
         armedKey_.stamp(live); dragPart_ = DragRotate; haveRaw_ = true;
-        snapTempInvert_ = haveFrozen_ = pendingAxisClassify_ = true;
+        haveFrozen_ = pendingAxisClassify_ = true;
         hasLine_ = drawGesture_ = ctrlPending_ = gapDrag_ = true;
         ctrlAxis_ = 2;
     }
     version(unittest) final bool preparedDeactivateInstalledForTest() const
             nothrow @nogc {
         return !active && dragPart_ == DragNone && !previewLive_ &&
-            !haveBefore_ && !haveRaw_ && !snapTempInvert_ && !haveFrozen_ &&
+            !haveBefore_ && !haveRaw_ && !haveFrozen_ &&
             !pendingAxisClassify_ && !hasLine_ && !drawGesture_ &&
             !ctrlPending_ && ctrlAxis_ == -1 && !gapDrag_ &&
             armedKey_ == SessionMeshKey.init;
@@ -1384,7 +1391,7 @@ public:
         previewLive_    = false;
         haveBefore_     = false;
         haveRaw_        = false;
-        snapTempInvert_ = false;
+        endLineGuide();
         haveFrozen_     = false;   // owner fix 3 (0284): re-capture on the next gesture
         pendingAxisClassify_ = false;   // owner fix 1 (0284): no draw in flight to classify
         // Task 0286: a fresh session (activate → dropPreview) starts with NO line
@@ -1730,6 +1737,9 @@ public:
             hasLine_     = true;
             drawGesture_ = true;
             armCtrl(ctrl, e.x, e.y);   // Ctrl on the FIRST drag → axis-locked line
+            if (lineGuide_ is null) lineGuide_ = new LineGuide;
+            lineGuide_.vp = vpWorld_; lineGuide_.x = e.x; lineGuide_.y = e.y;
+            if (auto st = liveSnapStage()) st.addGuide(lineGuide_);
         } else {
             Vec3 hit;
             if (!workplaneHit(cast(float)e.x, cast(float)e.y, hit)) return false;
@@ -1758,6 +1768,7 @@ public:
         }
 
         if (dragPart_ == DragNone) return false;
+        if (lineGuide_ !is null) { lineGuide_.x = e.x; lineGuide_.y = e.y; }
 
         // Custom-axis rotate ring (task 0287): tilt the Custom vector — and thus
         // the cut plane — about the drawn line. The endpoints DO NOT move (this
@@ -1811,8 +1822,7 @@ public:
             haveRaw_  = true;
         } else {
             // Unconstrained: record the RAW (unsnapped) endpoints, then let Angle
-            // Snap (S5) derive the actual start_/end_. Keeping the raw pair lets
-            // the X-key toggle re-snap mid-drag without a fresh mouse move.
+            // Snap (S5) derive the actual start_/end_.
             final switch (dragPart_) {
                 case DragStart: rawStart_ = hit;    rawEnd_ = end_;  break;
                 case DragEnd:   rawStart_ = start_; rawEnd_ = hit;   break;
@@ -1845,6 +1855,7 @@ public:
         if (dragPart_ == DragNone) return false;
         if (e.button != SDL_BUTTON_LEFT && e.button != SDL_BUTTON_MIDDLE) return false;
         dragPart_ = DragNone;
+        endLineGuide();
         // Task 0286: the Ctrl lock is per-gesture — clear it so the next gesture
         // re-decides (a following non-Ctrl drag is unconstrained).
         ctrlPending_ = false;
@@ -1864,23 +1875,6 @@ public:
             classifyDrawnPlaneAxis();
         }
         sessionStepEnds();
-        return true;
-    }
-
-    // X-key TEMPORARY snap toggle (S5): while X is held the effective snap state
-    // is inverted (reference: "press X in-viewport to temporarily toggle
-    // snapping"). Consumes X so the global snap.toggle does not also fire while
-    // the Slice tool is active. Re-derives the line from the raw endpoints and
-    // re-previews so the flip is visible immediately, without a fresh mouse move.
-    override bool onKeyDown(ref const SDL_KeyboardEvent e, ref VectorStack vts) {
-        if (!active || e.keysym.sym != SDLK_x) return false;
-        if (!e.repeat && !snapTempInvert_) { snapTempInvert_ = true; retrySnapPreview(); }
-        return true;
-    }
-
-    override bool onKeyUp(ref const SDL_KeyboardEvent e, ref VectorStack vts) {
-        if (!active || e.keysym.sym != SDLK_x) return false;
-        if (snapTempInvert_) { snapTempInvert_ = false; retrySnapPreview(); }
         return true;
     }
 
@@ -2149,6 +2143,7 @@ private:
     // session stays alive — the baseline is not dropped.
     void cancelGesture() {
         dragPart_    = DragNone;
+        endLineGuide();
         ctrlPending_ = false;   // task 0286: cancel drops any in-flight Ctrl lock
         ctrlAxis_    = -1;
         start_    = gStart0_;
@@ -2255,10 +2250,6 @@ private:
         a2 = wf.axis2;
     }
 
-    // Effective Angle Snap state: the sticky `snap_` param XOR the momentary
-    // X-key inversion.
-    bool effectiveSnap() const { return snap_ ^ snapTempInvert_; }
-
     // Derive start_/end_ from the RAW drag endpoints, applying Angle Snap (S5)
     // when effective. A line-body drag (DragLine) is a pure translation — the
     // angle is unchanged, so it never snaps. The dragged endpoint rotates about
@@ -2266,22 +2257,13 @@ private:
     void applyAngleSnapFromRaw() {
         start_ = rawStart_;
         end_   = rawEnd_;
-        if (!effectiveSnap() || dragPart_ == DragLine) return;
+        if (!snap_ || dragPart_ == DragLine) return;
         Vec3 a1, a2;
         cachedWorkplaneAxes(a1, a2);
         if (dragPart_ == DragStart)
             start_ = snapLineEndpointToAngle(rawEnd_, rawStart_, a1, a2, snapAngle_);
         else   // DragEnd (and the fresh-line / shift-redraw paths, all DragEnd)
             end_   = snapLineEndpointToAngle(rawStart_, rawEnd_, a1, a2, snapAngle_);
-    }
-
-    // Re-apply Angle Snap after an X-key flip and refresh the preview, so the
-    // toggle is visible mid-drag without needing a fresh mouse move. No-op when
-    // no raw drag is in flight (nothing to re-snap).
-    void retrySnapPreview() {
-        if (!haveRaw_ || dragPart_ == DragNone) return;
-        applyAngleSnapFromRaw();
-        if (!fast_) updatePreview();
     }
 
     // Intersect the cursor ray with the current work plane; the dragged
@@ -2409,7 +2391,7 @@ public:
     version(unittest) final void seedPreparedActivationForTest() {
         mesh.syncSelection(); mesh.selectFace(0); mesh.selectFace(2);
         active = false; dragPart_ = DragRotate; previewLive_ = true;
-        haveBefore_ = false; haveRaw_ = true; snapTempInvert_ = true;
+        haveBefore_ = false; haveRaw_ = true;
         haveFrozen_ = true; pendingAxisClassify_ = true;
         hasLine_ = true; drawGesture_ = true; ctrlPending_ = true;
         ctrlAxis_ = 2; gapDrag_ = true; axisLocked_ = true;
@@ -2424,7 +2406,7 @@ public:
     }
     version(unittest) final bool preparedActivationDirtyForTest() const {
         return !active && dragPart_ == DragRotate && previewLive_ && !haveBefore_ &&
-            haveRaw_ && snapTempInvert_ && haveFrozen_ && pendingAxisClassify_ &&
+            haveRaw_ && haveFrozen_ && pendingAxisClassify_ &&
             hasLine_ && drawGesture_ && ctrlPending_ && ctrlAxis_ == 2 && gapDrag_ &&
             axisLocked_ && restrictFaces_ == [4,5] && armedKey_.matches(*mesh) &&
             before_.filled && fast_ && axis_ == SliceAxis.Custom &&
@@ -2438,7 +2420,7 @@ public:
         bool restrictOk = restricted ? restrictFaces_ == [0u,2u] :
             restrictFaces_.length == 0 && restrictFaces_.ptr is null;
         return active && dragPart_ == DragNone && !previewLive_ && haveBefore_ &&
-            !haveRaw_ && !snapTempInvert_ && !haveFrozen_ && !pendingAxisClassify_ &&
+            !haveRaw_ && !haveFrozen_ && !pendingAxisClassify_ &&
             !hasLine_ && !drawGesture_ && !ctrlPending_ && ctrlAxis_ == -1 &&
             !gapDrag_ && !axisLocked_ && restrictOk &&
             armedKey_.matches(*mesh) && before_.filled && before_.matches(*mesh) &&

@@ -800,6 +800,17 @@ SnapStage liveSnapStage() {
     return cast(SnapStage) g_pipeCtx.pipeline.findByTask(TaskCode.Snap);
 }
 
+/// The current drag's snap guides: the registry plus each pipe stage's own
+/// (`Stage.snapGuideSources`). ≥ 1 lets the snap key run mid-drag (task 9470).
+size_t heldDragGuideCount() {
+    import toolpipe.pipeline : g_pipeCtx;
+    if (g_pipeCtx is null) return 0;
+    size_t n;
+    foreach (s; g_pipeCtx.pipeline.all()) n += s.snapGuideSources();
+    if (auto st = liveSnapStage()) n += st.guideCount();
+    return n;
+}
+
 /// The guides every production `snapCursor` call consults: the live stage's
 /// registry (empty unless a gesture registered one), or none.
 SnapGuide[] liveSnapGuides() {
