@@ -21,8 +21,10 @@ module unit.bevel_cold_arm_param_image_test;
 // WHY ONLY THE TWO BEVELS. Of the tools with sticky prefs entries, only these
 // two carry the preview conjunct UNGUARDED. `EdgeExtendTool` uses the same
 // PreviewRebuild seam but writes `(!image.appliesMesh || preview_.matchesImage
-// (image.preview))`, and `PolyExtrudeTool` — the control below — takes the very
-// same `!before.filled` early return with no preview conjunct at all.
+// (image.preview))`. `PolyExtrudeTool` — the control below — took the very
+// same `!before.filled` early return with no preview conjunct at all until
+// wave-2 PV2 put it on the seam too; it now prepares its image above that
+// return like the bevels (all five PV2 tools: the churn test's cold cells).
 //
 // ORDER IS LOAD-BEARING (CLAUDE.md): the poly.extrude control sits ABOVE the
 // two bevel blocks, and the poly.bevel block above the edge.bevel one, so a
@@ -65,8 +67,8 @@ unittest {
             "4491 control: poly.extrude must be on the COLD path (before "
             ~ "unfilled) or it is not the same cell as the bevels below");
         assert(px.preparedParamUpdateMatches(img, layer.meshRef()),
-            "4491 control: poly.extrude matches on a cold arm and always did — "
-            ~ "if THIS reddened, the defect is not the preview conjunct");
+            "4491 control: poly.extrude must match on a cold arm (since PV2 "
+            ~ "through the same unconditional preview conjunct)");
     }
 
     // ---- poly.bevel: the image must be COMPLETE on the cold path …
