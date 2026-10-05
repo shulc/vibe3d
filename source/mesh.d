@@ -130,13 +130,12 @@ struct JoinWeldPolicy {
     bool keepTwoPointFaces;
 }
 
-/// `Mesh.collapseFacesThroughRemap`'s answer: `oldOfNew`/`faceRemap` are the
-/// face correspondence both ways; `srcCorner[k]` is new corner k's index
-/// within its OLD face, in `newFaces` order.
+/// `Mesh.collapseFacesThroughRemap`'s answer: `oldOfNew[n]` is new face n's
+/// old index; `srcCorner[k]` is new corner k's index within its OLD face, in
+/// `newFaces` order.
 private struct CollapsedFaces {
     uint[][] newFaces;
     uint[]   oldOfNew;
-    int[]    faceRemap;
     uint[]   srcCorner;
 }
 
@@ -3728,7 +3727,6 @@ struct Mesh {
         CollapsedFaces c;
         c.newFaces.reserve(faces.length);
         c.oldOfNew.reserve(faces.length);
-        c.faceRemap = new int[](faces.length);
         foreach (fi, ref face; faces) {
             uint[] f, src;
             f.reserve(face.length);
@@ -3739,12 +3737,9 @@ struct Mesh {
             // Wrap-around dup: the face cycles back to its start through a remapped corner.
             if (f.length > 1 && f[$ - 1] == f[0]) { f = f[0 .. $ - 1]; src = src[0 .. $ - 1]; }
             if (f.length >= minArity) {
-                c.faceRemap[fi] = cast(int) c.newFaces.length;
                 c.newFaces  ~= f;
                 c.oldOfNew  ~= cast(uint) fi;
                 c.srcCorner ~= src;
-            } else {
-                c.faceRemap[fi] = -1;
             }
         }
         return c;
@@ -4737,13 +4732,7 @@ struct Mesh {
     /// `computeWeldRemap`'s all-pairs spatial SEARCH, which that predicate
     /// does not use (it derives its remap from rebuilt-face co-membership,
     /// not from a coincidence scan).
-    ///
-    /// Returns `faceRemap`: for each OLD face index, the NEW index it lands
-    /// at after collapse, or `-1` if the face was dropped entirely. Callers
-    /// that carry face-indexed state across the call (e.g. a selection) MUST
-    /// re-derive it through this map — a dropped face that is not at the
-    /// array tail shifts every face after it.
-    private int[] applyVertexRemap(const int[] remap) {
+    private void applyVertexRemap(const int[] remap) {
         // PolyVertex remap, mechanism (b): this mutator does not call
         // buildLoops, so per-corner values follow the surviving corners here,
         // from the core's `srcCorner`, read against the OLD corner offsets
@@ -4772,7 +4761,6 @@ struct Mesh {
         // Re-asserts the Select drop and publishes the selection-domain change,
         // as every face-compaction site does.
         clearFaceSelectionResize();
-        return c.faceRemap;
     }
 
     /// Remove vertices not referenced by any face. Updates all face vertex

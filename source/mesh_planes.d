@@ -180,9 +180,9 @@ enum uint kNoSource = ~0u;
 struct FaceSource {
     const(uint)[] oldOfNew;      // length == newFaces.length; kNoSource allowed
 
-    /// Adapter for the compaction sites that already build (and in two cases
-    /// RETURN, as part of their own public contract — `Mesh.applyVertexRemap`'s
-    /// `faceRemap`, `Mesh.triangulateFacesByMask`'s `faceOriginOut`) an
+    /// Adapter for the compaction sites that already build (and in one case
+    /// RETURN, as part of its own public contract —
+    /// `Mesh.triangulateFacesByMask`'s `faceOriginOut`) an
     /// oldToNew `int[]` with `-1` for a dropped face. One pass, one
     /// allocation; the caller's existing return value is untouched — this is
     /// purely a reader that turns their oldToNew into the primitive's
