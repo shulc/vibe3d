@@ -61,15 +61,16 @@ private void loadMesh(string json) {
     assert(r["status"].str == "ok", "load-mesh failed: " ~ r.toString);
 }
 
-/// Empty scene, then `mesh`, then the top ortho view at `ppm` with the focus
-/// at `focus` (loading resets the camera, so the camera comes last).
-private void rig(string mesh, Vec3 focus, double ppm = kPpm) {
-    penSceneEmpty("Top");
+/// Empty scene, then `mesh`, then the `view` ortho view (top by default) at
+/// `ppm` with the focus at `focus` (loading resets the camera, so the camera
+/// comes last).
+private void rig(string mesh, Vec3 focus, double ppm = kPpm, string view = "Top") {
+    penSceneEmpty(view);
     if (mesh.length) loadMesh(mesh);
-    penCommand("viewport.view Top");
+    penCommand("viewport.view " ~ view);
     penCameraAt(focus, ppm);
     assert(getJson("/api/camera")["projKind"].str == "Ortho",
-        "rig premise: the top view must be orthographic");
+        "rig premise: the " ~ view ~ " view must be orthographic");
 }
 
 /// The type bits (a comma list), the shipped ranges, the view's grid.
@@ -629,17 +630,18 @@ private void guideCells() {
 /// pointer form would end at z 0.2167); an axis arm rounds its travel,
 /// start + q(t) (K-G3 G3-ax, RAW 0.5182 / 0.4910). q = 0.005.
 private void quantumCells() {
-    const Vec3 v = Vec3(0.3023f, 1, 0.2017f);
     double[3] drag(int part, int[2] off, int dx, int dy, int steps, double ppm = kPpm,
-                   string verts = "[0.3023,1,0.2017]", double[3]* second = null) {
-        rig(`{"vertices":[` ~ verts ~ `],"faces":[]}`, Vec3(0.07f, 1, 0), ppm);
+                   string verts = "[0.3023,1,0.2017]", double[3]* second = null,
+                   string view = "Top", Vec3 at0 = Vec3(0.3023f, 1, 0.2017f)) {
+        rig(`{"vertices":[` ~ verts ~ `],"faces":[]}`,
+            view == "Top" ? Vec3(0.07f, 1, 0) : at0, ppm, view);
         penCommand("select.typeFrom vertex");
         auto r = postJson("/api/command", commandBody("mesh.select",
             second ? `{"mode":"vertices","indices":[0,1]}` : `{"mode":"vertices","indices":[0]}`));
         assert(r["status"].str == "ok", "select failed: " ~ r.toString);
         penCommand("tool.set move");
         penCommand("tool.pipe.attr snap enabled false");
-        int[2] a = worldPixel(v);
+        int[2] a = worldPixel(at0);
         if (part >= 0) {
             import drag_helpers : fetchHandlePart;
             import core.thread : Thread;
@@ -692,6 +694,19 @@ private void quantumCells() {
     check(at(qc, [0.5411, 1, 0.3734]) && at(qb, [0.3489, 1, 0.2266]), "move-ring-centre: "
         ~ "A, B expected (0.5411, 1, 0.3734) / (0.3489, 1, 0.2266), got " ~ vstr(qc) ~ " / "
         ~ vstr(qb));
+    ++ran;
+    // The XY ring (part 4) in the front view, the same off-lattice pair in X, Y:
+    // the planar form is a property of every plane ring, not of the XZ one.
+    const qf = drag(4, [0, 0], 106, 75, 30, kRingPpm, "[0.3023,0.2017,1]", null, "Front",
+                    Vec3(0.3023f, 0.2017f, 1));
+    check(at(qf, [0.545, 0.03, 1]), "move-ring-front: q expected (0.545, 0.03, 1), got "
+        ~ vstr(qf));
+    ++ran;
+    // And the YZ ring (part 5) in the right view, the pair in Z, Y.
+    const qs = drag(5, [0, 0], 106, 75, 30, kRingPpm, "[1,0.2017,0.3023]", null, "Right",
+                    Vec3(1, 0.2017f, 0.3023f));
+    check(at(qs, [1, 0.03, 0.06]), "move-ring-right: q expected (1, 0.03, 0.06), got "
+        ~ vstr(qs));
     ++ran;
 }
 
@@ -815,7 +830,7 @@ unittest {
         ++ran;
     }
 
-    assert(ran == 38, format("population: %d cells ran, expected 38", ran));
+    assert(ran == 40, format("population: %d cells ran, expected 40", ran));
     string[] names;   // the red cells by name first: the runner shows 8 lines
     foreach (f; fails) {
         const n = f[0 .. f.indexOf(':') < 0 ? f.length : f.indexOf(':')];
