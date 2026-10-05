@@ -851,19 +851,27 @@ Vec3 weightedLerp(Vec3 orig, Vec3 target, float w) pure nothrow @nogc @safe {
                 orig.z + (target.z - orig.z) * w);
 }
 
-/// The magnet's own Element sphere: centre `center`, radius `dist`, smooth
-/// shape, connectivity ignored, `anchorVi` (when >= 0) weight-1 via the
-/// anchor ring. One builder for the command and both tool paths.
+/// The magnet's own Element sphere: smooth shape, connectivity ignored,
+/// anchored by `elementAnchoredAt`. The command's builder.
 FalloffPacket magnetElementPacket(Vec3 center, float dist, int anchorVi) {
     FalloffPacket fp;
-    fp.type         = FalloffType.Element;
-    fp.enabled      = true;
+    fp.type    = FalloffType.Element;
+    fp.enabled = true;
+    fp.connect = ElementConnect.Ignore;
+    fp.shape   = FalloffShape.Smooth;
+    return elementAnchoredAt(fp, center, dist, anchorVi);
+}
+
+/// An Element falloff weighs from the grabbed vertex: centre `center`, radius
+/// `dist`, `anchorVi` (when >= 0) weight-1 via the anchor ring. Any other kind
+/// passes through unchanged.
+FalloffPacket elementAnchoredAt(FalloffPacket fp, Vec3 center, float dist,
+                                int anchorVi) {
+    if (fp.type != FalloffType.Element) return fp;
     fp.pickedCenter = center;
     fp.pickedRadius = dist;
-    fp.connect      = ElementConnect.Ignore;
-    fp.shape        = FalloffShape.Smooth;
     fp.anchorPos    = [center];
-    if (anchorVi >= 0) fp.anchorRing = [cast(uint)anchorVi];
+    fp.anchorRing   = anchorVi >= 0 ? [cast(uint)anchorVi] : null;
     return fp;
 }
 

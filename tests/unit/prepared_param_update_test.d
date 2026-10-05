@@ -515,16 +515,21 @@ unittest {
         "a failed enlist left the transaction live");
 }
 
-unittest { // Magnet: the param-update rebuild keeps a falloff picked while armed
-           // (one slot, last writer wins — capture K-F1, task 9446).
-    import falloff : magnetElementPacket;
-    import math : Vec3;
-    auto own = Rig!MagnetRow.make(true, true);
-    assert(own.tool.buildPreparedParamUpdate("dist", own.layer.meshRef()).nextBuilt,
-           "control: the seeded sphere moves the cube");
-    auto picked = Rig!MagnetRow.make(true, true);
-    picked.tool.seedSlotFalloffForTest(magnetElementPacket(Vec3(9, 9, 9), 0, -1));
-    auto image = picked.tool.buildPreparedParamUpdate("dist", picked.layer.meshRef());
-    assert(image.applies && !image.nextBuilt,
-           "the param rebuild swapped the picked (zero-weight) falloff for the sphere");
+unittest { // Magnet: the param rebuild weighs the drag by the stage's Element falloff
+           // anchored at the grabbed vertex, radius `dist` (task 9491).
+    // An empty selection (re-seeded into the baseline) makes the whole mesh
+    // the moving set.
+    auto wide = Rig!MagnetRow.make(true, true);
+    wide.layer.meshRef().clearVertexSelection();
+    wide.tool.seedPreparedParamForTest(wide.layer.meshRef());
+    auto all = wide.tool.buildPreparedParamUpdate("dist", wide.layer.meshRef());
+    assert(all.nextBuilt && all.nextTouchedIdx.length == 8,
+           "control: dist 100 must move the whole cube");
+    auto narrow = Rig!MagnetRow.make(true, true);
+    narrow.layer.meshRef().clearVertexSelection();
+    narrow.tool.seedPreparedParamForTest(narrow.layer.meshRef());
+    narrow.tool.mutatePreparedParamForTest(0.0f);
+    auto one = narrow.tool.buildPreparedParamUpdate("dist", narrow.layer.meshRef());
+    assert(one.nextBuilt && one.nextTouchedIdx == [0u],
+           "dist 0 must move only the grabbed vertex (the Element anchor)");
 }

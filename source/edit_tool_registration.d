@@ -259,6 +259,10 @@ void registerEditToolCommands(ref Registry reg, LiveSessionRole owner,
         t.setGestureBindings(deps.history(), deps.vxEditFactory());
         return t;
     }));
+    // The arm installs the tool's sphere as its own Element falloff, the way a
+    // preset's pipe block does (one slot, last writer wins: capture K-F1).
+    reg.preparedPipeAttrs["xfrm.pointAttract"] =
+        ["falloff": ["type": "element", "shape": "smooth"]];
 
     // Edge Bevel — interactive + headless (width param). Topology-creating tool:
     // reuses bevelEditFactory (MeshSessionEdit snapshot undo). Gated to Edges mode.

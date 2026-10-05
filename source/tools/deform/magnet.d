@@ -29,7 +29,7 @@ import tools.common.session_mesh_key : SessionMeshKey;
 import display_sync : refreshDisplay;
 import deform_magnet : applyMagnet;
 import toolpipe.packets : FalloffPacket;
-import falloff : magnetElementPacket;
+import falloff : elementAnchoredAt;
 import hover_state : hoverAtPress;
 import change_bus : MeshEditScope;
 import document : primaryModelSpace, Layer;
@@ -116,12 +116,11 @@ private:
     // Public tool parameter.
     float        dist_     = 1.0f;
 
-    // One falloff slot, last writer wins (capture K-F1, task 9446): the
-    // slot's write count at the arm, and the falloff picked AFTER it, read at
-    // the press — that falloff replaces the sphere; one set before the arm
-    // does not weigh the drag at all. The two are never combined.
-    uint          armFalloffEpoch_;
-    FalloffPacket slotFalloff_;
+    // The falloff stage's packet, read at the press. The arm installs this
+    // tool's sphere there as its own Element falloff, so one slot holds it or
+    // the falloff picked after the arm, last writer wins (capture K-F1, task
+    // 9491); an Element falloff anchors at the grabbed vertex, radius `dist`.
+    FalloffPacket falloff_;
 
     MeshSnapshot before;
     // The WORLD-space viewport `draw()` was handed (task 0619 rename): this
@@ -179,17 +178,6 @@ public:
     final void installPreparedActivation(ref MeshSnapshot image) nothrow @nogc {
         active = true; built = false; dragging = false; pickedVi = -1;
         image.moveInto(before);
-        armFalloffEpoch_ = falloffSlotEpoch();
-    }
-    static uint falloffSlotEpoch() nothrow @nogc {
-        import toolpipe.pipeline : g_pipeCtx;
-        import toolpipe.stage : TaskCode;
-        auto s = g_pipeCtx is null ? null : g_pipeCtx.pipeline.findByTask(TaskCode.Wght);
-        return s is null ? 0 : s.slotEpoch;
-    }
-    FalloffPacket gestureFalloff() {
-        return slotFalloff_.enabled ? slotFalloff_
-                                    : magnetElementPacket(center_, dist_, pickedVi);
     }
     final PreparedSessionActivateEffect prepareActivate(PreparedRecordContext context,
             PreparedPrivateStateOwner owner) {
@@ -210,10 +198,11 @@ public:
         active = true; dragging = dragBuilt; built = dragBuilt; pickedVi = 0;
         center_ = source.vertices[0]; target_ = center_ + Vec3(1, 0, 0);
         strength_ = 1.0f; dist_ = 100.0f;
+        import falloff : magnetElementPacket;
+        falloff_ = magnetElementPacket(center_, dist_, pickedVi);
         before = MeshSnapshot.capture(source);
         touchedIdx_ = null; touchedPrev_ = null; sessionKey_.stamp(source);
     }
-    version(unittest) void seedSlotFalloffForTest(FalloffPacket fp) { slotFalloff_ = fp; }
     version(unittest) void mutatePreparedParamForTest(float value) nothrow @nogc {
         dist_ = value;
     }
@@ -307,7 +296,7 @@ public:
         if (strength_ <= 0.0f) image.nextBuilt = false;
         else {
             int[] indices = image.candidate.selectedVertexIndicesVertices();
-            FalloffPacket fp = gestureFalloff();
+            FalloffPacket fp = elementAnchoredAt(falloff_, center_, dist_, pickedVi);
             const auto aim = aimSpace(vpWorld_, primaryModelSpace());
             image.nextBuilt = applyMagnet(&image.candidate, indices, target_,
                 strength_, fp, aim, image.nextTouchedIdx, image.nextTouchedPrev);
@@ -379,8 +368,7 @@ public:
         dragging   = true;
         built      = false;
         auto picked = vts.get!FalloffPacket();
-        slotFalloff_ = picked !is null && falloffSlotEpoch() != armFalloffEpoch_
-            ? *picked : FalloffPacket.init;
+        falloff_ = picked !is null ? *picked : FalloffPacket.init;
         return true;
     }
 
@@ -456,7 +444,7 @@ private:
         // Moving set: selected verts (empty → whole mesh), vertex mode.
         int[] indices = mesh.selectedVertexIndicesVertices();
 
-        FalloffPacket fp = gestureFalloff();
+        FalloffPacket fp = elementAnchoredAt(falloff_, center_, dist_, pickedVi);
 
         // A picked falloff may project (Screen / Lasso), so the aim space is
         // the real one, built from this tool's own world viewport (task 0619).

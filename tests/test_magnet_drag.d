@@ -286,7 +286,8 @@ unittest {
 // One falloff slot, last writer wins (capture K-F1, task 9446). Range 0 makes
 // the tool's own sphere move ONLY the picked vertex, so any other vertex
 // moving says the user's linear falloff weighed the drag instead.
-//   F1a: a falloff set BEFORE the arm is replaced by the tool's sphere.
+//   F1a: a falloff set BEFORE the arm is replaced by the tool's sphere, which
+//        the arm installs in the falloff stage (task 9491).
 //   F1b: a falloff picked WHILE armed replaces the sphere.
 // ---------------------------------------------------------------------------
 size_t slotDragOthersMoved(bool falloffBeforeArm) {
@@ -298,6 +299,10 @@ size_t slotDragOthersMoved(bool falloffBeforeArm) {
     mustOk(jpost("/api/command?origin=ui", "tool.set xfrm.pointAttract on"),
            "UI arm Point Attract");
     Thread.sleep(150.msecs);
+    assert(falloffAttr("type") == "element" && falloffAttr("shape") == "smooth",
+        format("the armed tool's sphere must show in the falloff stage as its own "
+            ~ "Element falloff; the stage reads %s / %s",
+            falloffAttr("type"), falloffAttr("shape")));
     mustOk(jpost("/api/command", "tool.attr xfrm.pointAttract dist 0"), "dist 0");
     if (!falloffBeforeArm) setUserLinearFalloff();
     const long armRows = undoLen();
@@ -320,6 +325,12 @@ size_t slotDragOthersMoved(bool falloffBeforeArm) {
     size_t n;
     foreach (i; 0 .. 8) if (i != 6 && dist3(s0[i], s1[i]) > 1e-3) ++n;
     return n;
+}
+
+string falloffAttr(string name) {
+    foreach (st; jget("/api/toolpipe")["stages"].array)
+        if (st["task"].str == "WGHT") return st["attrs"][name].str;
+    assert(0, "no WGHT stage in /api/toolpipe");
 }
 
 void setUserLinearFalloff() {
