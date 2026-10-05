@@ -92,10 +92,7 @@ private bool snapped(JSONValue sr) { return sr["snapped"].type == JSONType.true_
 
 private double[3] pos(JSONValue sr) {
     auto a = sr["worldPos"].array;
-    double n(JSONValue v) {
-        return v.type == JSONType.integer ? cast(double)v.integer : v.floating;
-    }
-    return [n(a[0]), n(a[1]), n(a[2])];
+    return [num(a[0]), num(a[1]), num(a[2])];
 }
 
 private string tri(bool front, string extra = "", string extraFaces = "") {
