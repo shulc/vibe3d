@@ -456,9 +456,10 @@ private double xyAngle(double x, double y) pure nothrow @safe @nogc {
 /// double; float slots drift the search's stopping point).
 private struct D3 {
     double x = 0, y = 0, z = 0;
-    D3 opBinary(string op)(D3 o) const pure nothrow @safe @nogc
-        if (op == "+" || op == "-")
-    { return mixin("D3(x" ~ op ~ "o.x, y" ~ op ~ "o.y, z" ~ op ~ "o.z)"); }
+    D3 opBinary(string op : "+")(D3 o) const pure nothrow @safe @nogc
+    { return D3(x + o.x, y + o.y, z + o.z); }
+    D3 opBinary(string op : "-")(D3 o) const pure nothrow @safe @nogc
+    { return D3(x - o.x, y - o.y, z - o.z); }
     D3 opBinary(string op : "*")(double s) const pure nothrow @safe @nogc
     { return D3(x * s, y * s, z * s); }
     double dot(D3 o) const pure nothrow @safe @nogc { return x * o.x + y * o.y + z * o.z; }
