@@ -340,6 +340,29 @@ private void gridLawCells() {
         ++ran;
     }
 
+    // 19b move-grid-second-drag (ours): after G3's drag (q on the (0.1, 0.2)
+    // node, its client 0.0252 m right of it), a second drag in the same
+    // session, +60 px in 2 px events, starts its client at ITS press: q.x
+    // 0.1 + 0.136 → 0.2 (a client kept from the first drag gives 0.3).
+    {
+        moveRig(1, "grid");
+        moveDrag(Vec3(0.03f, 1, 0.07f), Vec3(0.1252f, 1, 0.1952f), 20);
+        const q1 = vpos(0);
+        auto cam = fetchCamera();
+        const g = worldPixel(Vec3(0.1f, 1, 0.2f));
+        playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                                 g[0], g[1], g[0] + 60, g[1], 30));
+        const q = vpos(0);
+        penCommand("tool.set move off");
+        if (!at(q1, [0.1, 1, 0.2]))
+            fails ~= "move-grid-second-drag: the first drag expected q on (0.1, 1, 0.2), got "
+                ~ vstr(q1);
+        else
+            check(at(q, [0.2, 1, 0.2]), "move-grid-second-drag: q expected (0.2, 1, 0.2), got "
+                ~ vstr(q));
+        ++ran;
+    }
+
     // 20 move-vertex-offplane (G4c; a guard of ours): vertex bit only, the
     // quad at y 0.4, loose T (0.13, 1, 0.23); q dragged onto T's pixel takes
     // T's whole 3-D position (the free drag keeps the full snap delta).
@@ -597,12 +620,12 @@ unittest {
         ++ran;
     }
 
-    assert(ran == 25, format("population: %d cells ran, expected 25", ran));
+    assert(ran == 26, format("population: %d cells ran, expected 26", ran));
     string[] names;   // the red cells by name first: the runner shows 8 lines
     foreach (f; fails) {
         const n = f[0 .. f.indexOf(':') < 0 ? f.length : f.indexOf(':')];
         if (!names.canFind(n)) names ~= n;
     }
-    assert(fails.length == 0, format("%d of 25 cells red (%-(%s, %)):\n  %-(%s\n  %)",
+    assert(fails.length == 0, format("%d of 26 cells red (%-(%s, %)):\n  %-(%s\n  %)",
                                      names.length, names, fails));
 }
