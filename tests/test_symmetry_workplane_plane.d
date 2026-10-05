@@ -59,8 +59,12 @@ void runCase(JSONValue c, double tol) {
                cen[0], cen[1], cen[2], rot[0], rot[1], rot[2]));
     cmd("tool.pipe.attr symmetry axis " ~ sy["axis"].str);
     cmd(format("tool.pipe.attr symmetry offset %.9g", num(sy["offset"])));
-    cmd("tool.pipe.attr symmetry useWorkplane " ~ (sy["use_work_plane"].boolean ? "true" : "false"));
+    // One pass with the flag ON first, so a flag-off case runs after the stage
+    // has seen the turned plane (the capture's control: the flag alone flips it).
+    cmd("tool.pipe.attr symmetry useWorkplane true");
     symmetry(true);
+    getJson("/api/toolpipe/eval");
+    cmd("tool.pipe.attr symmetry useWorkplane " ~ (sy["use_work_plane"].boolean ? "true" : "false"));
 
     // Frame the rig: focus on its centroid, a generic perspective direction.
     V3 mid = [0, 0, 0];

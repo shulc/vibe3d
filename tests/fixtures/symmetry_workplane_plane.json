@@ -1,4 +1,14 @@
 {
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "gui-gesture",
+  "captured_utc": "2026-10-05",
+  "harness": "toolcards/interaction_layer/harness/ks, harness/ks2 (private)",
+  "task": "9398, 9463, 9414",
+  "notes": "GUI worker, fresh boot per cell; plane and symmetry set by script before arming, then gestures only (focus click, selection click on v, move key, slow drag); per-case law plane self-checked against the fixture rows (<= 4.4e-7)"
+ },
  "source": "frozen reference capture (private toolcards interaction_layer, batches K-S and K-S2), converted by task 9414",
  "law": "Work-plane symmetry plane (pinned work plane W: x -> R x + o, R = Rz*Rx*Ry, Y applied first): the symmetry axis plane at the offset in plane-local space, mapped by W once -- normal R*e_axis through o + offset*R*e_axis. Flag off: normal e_axis through offset*e_axis. The plane pairs the selection click (selected_after) and mirrors the move delta about the normal.",
  "tolerance_m": 1e-05,

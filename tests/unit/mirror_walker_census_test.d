@@ -277,7 +277,8 @@ unittest { // (w6) the plane maps the axis and the offset through W once; the
         const w = vts.get!WorkplanePacket();
         const Vec3[3] col = [w.axis1, w.normal, w.axis2];
         const Vec3 lawP = wp.center + lawN[ax] * 0.3f;
-        assert(pk.axisIndex == -1 && (pk.planeNormal - lawN[ax]).length < 1e-5
+        assert(pk.axisIndex == -1, "(w6) axis " ~ ax.to!string ~ ": the packet's axisIndex is not -1 (an arbitrary plane)");
+        assert((pk.planeNormal - lawN[ax]).length < 1e-5
                && (pk.planePoint - lawP).length < 1e-5,
                "(w6) axis " ~ ax.to!string ~ ": plane " ~ v3(pk.planePoint) ~ " " ~ v3(pk.planeNormal)
                ~ ", law " ~ v3(lawP) ~ " " ~ v3(lawN[ax]));

@@ -90,9 +90,8 @@ class SymmetryStage : Stage, Operator {
         // first, ord 0x30 < SYMM 0x31); its basis is recorded on EVERY pass,
         // pair table or none (empty mesh): `currentPlane` reads it.
         pkt.axisIndex = useWorkplane ? -1 : axisIndex;
-        if (useWorkplane)
-            if (auto wp = vts.get!WorkplanePacket())
-                appliedBasis_ = [wp.center, wp.axis1, wp.normal, wp.axis2];
+        if (auto wp = vts.get!WorkplanePacket())
+            appliedBasis_ = [wp.center, wp.axis1, wp.normal, wp.axis2];
         currentPlane(pkt.planePoint, pkt.planeNormal);
 
         // Phase 7.6b: rebuild the pair table on cache miss.
