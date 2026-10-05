@@ -817,7 +817,7 @@ enum ConstrainGeom : int {
 /// when the stage is enabled. Consumed by the transform apply path to
 /// re-project each moved vertex onto the nearest background-mesh surface.
 ///
-/// `screen`/`vector` modes and the `offset`/`handle`/`dblSided` fields
+/// `screen`/`vector` modes and the `offset`/`dblSided` fields
 /// are capture-gated: they are round-trippable attrs (no-op in Stage 4)
 /// and will be wired in Stage 5 once the Stage-0 captures resolve their
 /// exact semantics. Default values match the survey §2 presets.
@@ -825,7 +825,6 @@ struct ConstrainPacket {
     bool          enabled  = false;
     ConstrainGeom geom     = ConstrainGeom.Off;
     float         offset   = 0.0f;    // standoff from surface; sign/direction capture-gated
-    bool          handle   = true;    // constrain handle vs geometry; capture-gated
     bool          dblSided = false;   // project onto back faces; capture-gated
 }
 

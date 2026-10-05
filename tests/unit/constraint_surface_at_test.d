@@ -147,9 +147,11 @@ unittest {
            format("publish, Screen: the hit %s + 0.1 * normal %s; got hit %s at %s",
                   want.point, screen.normal, screen.hit, screen.point));
 
-    // (9) Screen at offset 0 publishes the near quad's hit itself: a re-cast
-    // from a point ON the near quad misses it (t = 0) and would land on the
-    // FAR quad behind it (z = -1).
+    // (9) OURS, pending capture K-SC cells scr0 / scr_neg: Screen at offset 0
+    // publishes the near quad's hit itself. The skip in `publishSurfaceHit`
+    // is a workaround — a re-cast from a point ON the near quad misses it
+    // (t = 0) and would land on the FAR quad behind it (z = -1); whether the
+    // re-cast starts at the point or at the eye is not captured.
     cs.offset = 0.0f;
     const screen0 = publish(200, 100);
     assert(screen0.hit && screen0.point == want.point,

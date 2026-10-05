@@ -50,6 +50,7 @@ private void rig(string geometry, double offset, bool quad = false) {
     penCommand("tool.pipe.attr constrain handle false");
     penCommand("tool.pipe.attr constrain geometry " ~ geometry);
     penCommand(format("tool.pipe.attr constrain offset %.9f", offset));
+    penCommand(`tool.pipe.attr snap types ""`);   // no element snap onto the sphere's vertices
 }
 
 private double dxz(Vec3 a, double[3] b) {

@@ -169,7 +169,6 @@ public:
         pkt.enabled  = enabled;
         pkt.geom     = geom;
         pkt.offset   = offset;
-        pkt.handle   = handle;
         pkt.dblSided = dblSided;
         return pkt;
     }
@@ -205,8 +204,8 @@ public:
     // The hover publish: `rayHitAt` the cursor pixel over ONE sources
     // snapshot (`sh.source` indexes it, task 0617); the hit offset, `pass`
     // after it. At offset 0 the pass is skipped: Point's foot of a surface
-    // point is the point, and Screen's re-cast would start ON the surface it
-    // re-finds (t = 0, a miss). The hit face's nearest vertex / edge ride along as WORLD
+    // point is the point; for Screen it is a workaround (the re-cast starts
+    // ON the surface, t = 0, a miss) pending capture K-SC. The hit face's nearest vertex / edge ride along as WORLD
     // candidates, so `resolveHoverTarget` stays a function of the packet.
     private void publishSurfaceHit(ref SubjectPacket subj, ref VectorStack vts) {
         import constraint : nearestFaceVertex, nearestFaceEdge, consistentCandidateIndex;
