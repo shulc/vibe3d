@@ -92,11 +92,12 @@ unittest // every production snapCursor call consults the guide registry
     foreach (f; files)
         scanCalls(f[0], blankUnittestBodies(blankNonCode(f[1])), "snapCursor", "SnapResult",
                   calls, others);
-    // Floor, then the roster: six production calls, one per file.
-    assert(calls.length == 6, format("snapCursor production calls: %s %s", calls.length, fileRoster(calls)));
+    // Floor, then the roster: seven production calls, one per file.
+    assert(calls.length == 7, format("snapCursor production calls: %s %s", calls.length, fileRoster(calls)));
     assert(fileRoster(calls) == [
         "source/http_providers.d", "source/toolpipe/stages/snap.d",
         "source/tools/create/create_common.d", "source/tools/create/pen.d",
+        "source/tools/edit/topology_pen/tool.d",
         "source/tools/transform/move.d", "source/tools/transform/transform.d"],
         format("snapCursor call roster: %s", fileRoster(calls)));
     assert(others.length == 0, format("snapCursor reached other than by a call: %s", fileRoster(others)));
@@ -185,6 +186,32 @@ unittest // no client but the pen registers a guide: snapCursor elects no guide-
     assert(guideArgs.length == 0, format("snapCursor offers a guide-type candidate: %s", guideArgs));
     assert(wordsAt(code, "closestPointOnLineToRay").length == 0,
         "snap.d reaches the line helper again (the origin world-axis lines)");
+}
+
+unittest // the topology pen's weld target is one snap query (task 9407); the press pick stays
+{
+    const code = blankUnittestBodies(blankNonCode(readText(
+        buildPath(repoRoot, "source/tools/edit/topology_pen/tool.d"))));
+    string body(string decl) {
+        const at = code.indexOf(decl);
+        assert(at >= 0, "declaration not found: " ~ decl);
+        return balancedSpan(code, code.indexOf('{', at), '{', '}');
+    }
+    const weld = body("int weldTargetVertex(");
+    // Floor: the body is a real function, not an empty span.
+    assert(weld.length > 200, format("weldTargetVertex body: %s chars", weld.length));
+    foreach (needle; ["snapCursor(", "SnapMode.Global", "outerRangePx", "liveSnapGuides()"])
+        assert(countOccurrences(weld, needle) == 1,
+            format("weldTargetVertex must contain `%s` once", needle));
+    foreach (decl; ["int resolveSnapTargetVert(", "int resolveSplitTargetVert("]) {
+        const b = body(decl);
+        assert(wordsAt(b, "findSourceVertex").length == 0,
+            format("%s still calls the press pick", decl));
+        assert(wordsAt(b, "weldTargetVertex").length == (decl.canFind("Split") ? 1 : 2),
+            format("%s weldTargetVertex calls: %s", decl, wordsAt(b, "weldTargetVertex").length));
+    }
+    // Positive control: the press pick is still there, unchanged by this slice.
+    assert(code.indexOf("int findSourceVertex(") >= 0, "the press pick must still exist");
 }
 
 unittest // the signatures the clients rely on (compiler pins)

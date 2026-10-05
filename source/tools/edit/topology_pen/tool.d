@@ -37,14 +37,14 @@ import document             : Layer, primaryModelSpace;
 import shader              : Shader;
 import operator            : VectorStack, viewportOf;
 import toolpipe.packets    : ConstrainHitPacket, HoverTarget, HoverTargetKind,
-                             SubjectPacket, SnapPacket, SnapType;
+                             SubjectPacket, SnapPacket, SnapType, SnapMode;
 import toolpipe.stages.constrain : liveConstrainStage;
-import toolpipe.stages.snap : SnapStage, liveSnapStage;
+import toolpipe.stages.snap : SnapStage, liveSnapStage, liveSnapGuides;
 import toolpipe.guide       : SnapGuide, GuideDrawState, kGuidePrioritySeed;
 import constraint           : resolveHoverTarget, topoPenPressPickPx,
                               topoPenSnapAcceptPx, topoPenSnapGatherPx,
                               kTopoPenSnapAuto, closestPointOnMeshes, BackgroundSource;
-import snap                  : backgroundSourcesFull, SnapAdmit, snapPacketOf;
+import snap                  : backgroundSourcesFull, SnapAdmit, snapPacketOf, snapCursor;
 import tools.edit.smooth_relax : RelaxVec3, RelaxTopology, deriveBoundary, relaxPasses;
 import tools.edit.topology_pen.render : PenRenderOps;
 import tools.edit.topology_pen.snap_guide : PenSnapGuide;
@@ -2151,7 +2151,7 @@ public:
     /// its own definition the element the drag snaps to (and whose reference
     /// commit is gated on that snap succeeding). Future snap-target consumers
     /// (mid-drag Split feedback, Duplicate re-snap) must come through HERE
-    /// rather than call `findSourceVertex` directly, so the candidate set AND
+    /// rather than call `weldTargetVertex` directly, so the candidate set AND
     /// the radius stay stated in one place.
     ///
     /// Aims the guide before it asks it. The guide answers proximity for
@@ -2198,7 +2198,7 @@ public:
         g.retarget(meshOrNull(), innerSnap_, backFace_);
         g.aimAt(vp, mx, my);
         if (exclude.length == 0)
-            return findSourceVertex(mx, my, vp, topoPenSnapAcceptPx(vp, dragSnap_),
+            return weldTargetVertex(mx, my, vp, topoPenSnapAcceptPx(vp, dragSnap_),
                                     &g.admits);
         // Composed, not folded into the guide: the guide states the TOOL'S
         // admission policy (border / orientation), which is a property of the
@@ -2210,7 +2210,7 @@ public:
                 foreach (x; exclude) if (cast(int)x == idx) return false;
             return g.admits(t, idx, slot);
         };
-        return findSourceVertex(mx, my, vp, topoPenSnapAcceptPx(vp, dragSnap_), admit);
+        return weldTargetVertex(mx, my, vp, topoPenSnapAcceptPx(vp, dragSnap_), admit);
     }
 
     /// Split's target C (task 8690): the NEAREST admitted vertex within the
@@ -2233,9 +2233,28 @@ public:
             if (t == SnapType.Vertex && idx == a) return false;
             return g.admits(t, idx, slot);
         };
-        return findSourceVertex(mx, my, vp, topoPenSnapAcceptPx(vp, dragSnap_), admit);
+        return weldTargetVertex(mx, my, vp, topoPenSnapAcceptPx(vp, dragSnap_), admit);
     }
     private PenSnapGuide splitGuide_;
+
+    /// The WELD target (task 9407, capture K-T): the snap query's vertex answer
+    /// on a copy of the press-frozen packet, so the snap's occlusion and hidden
+    /// masks apply. Background sources never win: `admit` (the guide) refuses
+    /// every slot but 0 before the election. Scope Global keeps the weld
+    /// scope-blind as before; both ranges are the accept radius.
+    private int weldTargetVertex(int mx, int my, const ref Viewport vp,
+                                 float acceptPx, scope SnapAdmit admit) {
+        auto m = mesh;
+        if (m is null) return -1;
+        SnapPacket pkt = dragSnap_;
+        pkt.enabled      = true;
+        pkt.enabledTypes = SnapType.Vertex;
+        pkt.snapScope    = SnapMode.Global;
+        pkt.innerRangePx = pkt.outerRangePx = acceptPx;
+        const sr = snapCursor(Vec3(0, 0, 0), mx, my, vp, *m, primaryModelSpace(), pkt,
+                              null, admit, liveSnapGuides());
+        return sr.snapped && sr.targetType == SnapType.Vertex ? sr.targetIndex : -1;
+    }
 
     // -----------------------------------------------------------------------
     // THE DESTRUCTIVE LANDING (task 0555).
@@ -2281,10 +2300,9 @@ public:
     // quantity). It is not a vtable and not a kind tag. So the gate reads:
     // weld only if the target belongs to the SAME MESH as the grab.
     //
-    // We satisfy it by CONSTRUCTION rather than by comparing: this query walks
-    // the primary layer's mesh and `PenSnapGuide.admits` refuses every slot but
-    // 0, so a background layer can be a placement surface and never a weld
-    // target. If that admission is ever widened, an explicit owner check has to
+    // We satisfy it by CONSTRUCTION rather than by comparing: the query's admit
+    // (`PenSnapGuide.admits`) refuses every slot but 0 before the election, so
+    // a background layer can be a placement surface and never a weld target. If that admission is ever widened, an explicit owner check has to
     // arrive with it — the reference's refusal arm (differing owners fall
     // through to a plain Move) is read off the branch and has not been
     // observed, so there is no measured behaviour to lean on there either.
@@ -2295,9 +2313,8 @@ public:
     // evaluations had a target parked and only two were inside the radius, so
     // a port that asks "is there a target?" instead of "did the query answer?"
     // would have welded on the other EIGHT. Ours cannot make that mistake by
-    // shape: `findSourceVertex` returns -1 unless the winner is within
-    // `topoPenSnapAcceptPx`, so the answer IS the radius-gated one and there is
-    // no unfiltered slot to read by accident.
+    // shape: `weldTargetVertex` returns -1 unless the query SNAPPED (inside
+    // `topoPenSnapAcceptPx`), so the answer IS the radius-gated one.
     //
     // WHAT IS STILL OURS RATHER THAN MEASURED: the reference runs ONE query
     // from the cursor and, when it answers, dispatches on the TYPE OF THE HIT
@@ -2384,21 +2401,10 @@ public:
     // and a finite value for the over-mesh GATE decision (REV1 FIX-1) — two
     // distinct calls, never conflated.
     //
-    // `admit` (S1 of doc/toolpipe_architecture_plan.md) is the CLIENT'S
-    // admission rule, consulted once per candidate BEFORE the projection and
-    // the distance compare — order is load-bearing for the same reason it is
-    // in `snap.snapCursor`'s own walk: a rejected candidate must be as if it
-    // were never enumerated, or an inadmissible vertex would shrink `bestD2`
-    // and veto an admissible one further away. It defaults to NULL, which
-    // admits everything, so every press-time PICK caller stays byte-identical
-    // — the press pick is not snapping at all and has no admission policy.
-    // The one caller that passes a rule is the SNAP-TARGET resolver, and what
-    // it passes is the gesture guide's own predicate (task 0523): the
-    // border-only filter used to be a `bool` parameter here, i.e. a policy
-    // with no owner that the snapping service could not see.
+    // The press pick admits every vertex: it is not snapping and has no
+    // admission policy (the weld target is `weldTargetVertex`).
     package int findSourceVertex(int mx, int my, const ref Viewport vp,
-                                 float thresholdPx = kTopoPenSnapAuto,
-                                 scope SnapAdmit admit = null) {
+                                 float thresholdPx = kTopoPenSnapAuto) {
         if (meshSrc_ is null) return -1;
         auto m = mesh;
         if (m is null) return -1;
@@ -2408,7 +2414,6 @@ public:
         int   best   = -1;
         float bestD2 = float.infinity;
         foreach (vi; 0 .. m.vertices.length) {
-            if (admit !is null && !admit(SnapType.Vertex, cast(int)vi, 0)) continue;
             ImVec2 pt;
             if (!projectLocalPt(m.vertices[vi], vpAim, pt)) continue;
             float dx = pt.x - cast(float)mx, dy = pt.y - cast(float)my;
