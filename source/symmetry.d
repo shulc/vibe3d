@@ -276,6 +276,21 @@ bool partnerHidden(const ref Mesh mesh, const ref SymmetryPacket sp, size_t i) {
     return pi >= 0 && mesh.isVertexHidden(pi);
 }
 
+/// A weld `[keep, gone]` under symmetry (task 9438, K-W2/K-W2b): the partners weld too
+/// unless either is hidden (W2f); `gone` meeting its own partner fuses with it at their
+/// midpoint, on the plane, `gone` surviving (KW2_M, KW2_MDW). `sp` null or unsized: as is.
+uint[2][] symmetricWeldPairs(ref Mesh mesh, const(SymmetryPacket)* sp, uint keep, uint gone) {
+    if (sp is null || sp.pairOf.length != mesh.vertices.length) return [[keep, gone]];
+    const int pk = sp.pairOf[keep], pg = sp.pairOf[gone];
+    if (pk == cast(int)gone) {
+        mesh.vertices[gone] = (mesh.vertices[gone] + mesh.vertices[keep]) * 0.5f;
+        return [[gone, keep]];
+    }
+    if (pk >= 0 && pg >= 0 && !mesh.isVertexHidden(pk) && !mesh.isVertexHidden(pg))
+        return [[keep, gone], [cast(uint)pk, cast(uint)pg]];
+    return [[keep, gone]];
+}
+
 enum SelfStep : ubyte { own, project, yield }
 
 struct MirrorStep {

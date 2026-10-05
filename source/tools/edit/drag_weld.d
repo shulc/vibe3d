@@ -17,6 +17,7 @@ import editmode : EditMode;
 import operator : VectorStack;
 import snap : editedVertexAt, snapPacketOf;
 import toolpipe.packets : SnapPacket, SymmetryPacket;
+import symmetry : symmetricWeldPairs;
 import constraint : topoPenPressPickPx, topoPenSnapAcceptPx;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
 import document : Layer;
@@ -139,19 +140,9 @@ public:
                                 [cast(uint)source_]);
         if (target < 0) return true;       // no-op release
 
-        Vec3 keepPos = mesh.vertices[cast(uint)target];
         MeshSnapshot pre = MeshSnapshot.capture(*mesh);
-        uint[2][] pairs = [[cast(uint)target, cast(uint)source_]];
-        // Symmetry (task 9438): the partners weld too unless hidden (KW2_ADW, W2f); a source
-        // released on its own partner fuses with it on the plane, surviving (K-W2b KW2_MDW).
-        auto sym = vts.get!SymmetryPacket();   // off: pairOf is empty
-        const int pt = sym && sym.pairOf.length == mesh.vertices.length ? sym.pairOf[target] : -1,
-                  ps = pt >= 0 ? sym.pairOf[source_] : -1;
-        if (pt == source_) {
-            keepPos = mesh.vertices[source_] = (mesh.vertices[source_] + keepPos) * 0.5f;
-            pairs = [[cast(uint)source_, cast(uint)target]];
-        } else if (ps >= 0 && !mesh.isVertexHidden(pt) && !mesh.isVertexHidden(ps))
-            pairs ~= [cast(uint)pt, cast(uint)ps];
+        auto pairs = symmetricWeldPairs(*mesh, vts.get!SymmetryPacket(), target, source_);
+        Vec3 keepPos = mesh.vertices[pairs[0][0]];   // the survivor (an own-mirror fuse moved it)
         if (mesh.weldVertexPairs(pairs) == 0)
             return true;                   // both faceless: no-op
 
