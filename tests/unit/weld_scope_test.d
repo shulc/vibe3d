@@ -223,6 +223,17 @@ unittest { // the mask restricts both ends of a pair
     assert(m.vertices.length == 4, format("expected 4 vertices, got %d", m.vertices.length));
 }
 
+unittest { // the cleanup detector reports exactly what cleanup welds (W1e_bracket)
+    import mesh_analysis : coincidentVertexClusters;
+    JSONValue cell;
+    foreach (c; fixture()["cells"].array) if (c["cell"].str == "W1e_bracket") cell = c;
+    Mesh m = inputOf(cell);
+    const clusters = coincidentVertexClusters(m);
+    // 36 input vertices, 34 captured: the 0 and 1e-30 pairs; 1e-7 .. 0.5 stay apart.
+    assert(clusters.length == 2 && cell["reference"]["vertex_count"].integer == 34,
+           format("detector: expected the 2 captured clusters, found %s", clusters));
+}
+
 unittest { // census: one coincidence search, and the mask weld holds no copy of it
     import tests.unit.census_symbols : blankNonCode, blankUnittestBodies,
                                        enclosingSymbols, symbolAt;
