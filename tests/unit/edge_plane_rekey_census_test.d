@@ -42,8 +42,9 @@
 //     `clearEdgeSelectionResize()` in its own body, so a stale Select bit
 //     cannot outlive the renumbering on the live path. This was ASSERTED
 //     rather than assumed because the card carried it as an estimate: the
-//     three sites were read one by one (`Mesh.applyVertexRemapAndRebuild`,
-//     `Mesh.applyVertexRemap`, `Mesh.compactUnreferenced`) and all three hold.
+//     sites were read one by one (`Mesh.compactUnreferenced` and the weld
+//     re-key `Mesh.rekeyEdgeSetsThroughRemap`, which both weld remaps call
+//     since task 9435) and both hold.
 //     Pinning it matters because (A)'s tolerance depends on it — the day a
 //     fourth renumbering kernel lands without the clear, `byKey` stops being
 //     the only way a mark can move to a foreign edge.
@@ -67,7 +68,7 @@
 // floored with exact counts before the disjointness is asked, and the floors
 // sit ABOVE it: a stripper that lost its place and ate a file reports
 // "expected 2 byKey requesters, found 0" rather than passing quietly. (B) is
-// floored the same way — three declarations, named — so "every renumbering
+// floored the same way — two declarations, named — so "every renumbering
 // site clears" cannot be satisfied by finding no renumbering sites.
 //
 // ===========================================================================
@@ -263,12 +264,11 @@ unittest {
 
     // The population floor comes FIRST. "Every renumbering site clears" is
     // true over an empty set of renumbering sites, and that is exactly the
-    // vacuity this project pays for; the exact three are named so that one
+    // vacuity this project pays for; the exact two are named so that one
     // vanishing is a finding rather than a smaller true statement.
     immutable string[] kLiveRenumberers = [
-        "Mesh.applyVertexRemap",            // weld remap (mesh.d)
-        "Mesh.applyVertexRemapAndRebuild",  // the other weld remap
         "Mesh.compactUnreferenced",         // drop-and-permute
+        "Mesh.rekeyEdgeSetsThroughRemap",   // both weld remaps (task 9435)
     ];
 
     const rekeyDecls = declsWith(hits, kRekey);
@@ -372,9 +372,10 @@ unittest {
       ~ "owes the argument that this is so, and a row in `kSites`.",
         kByKey, requesters));
 
-    assert(renumberers.length == 8, format(
-        "eight declarations renumber vertices today (three live kernels in "
-      ~ "`mesh.d`, five replay twins in `mesh_edit_delta.d`). The scanner "
+    assert(renumberers.length == 7, format(
+        "seven declarations renumber vertices today (two live kernels in "
+      ~ "`mesh.d` — the weld re-key both weld remaps share and "
+      ~ "`compactUnreferenced` — five replay twins in `mesh_edit_delta.d`). The scanner "
       ~ "found %d: %s", renumberers.length, renumberers));
 }
 
@@ -405,11 +406,10 @@ private static immutable LedgerRow[] kSites = [
         "the declaration line of `selSetRekeyEdges` in `mesh_selsets.d`, "
       ~ "which sits at module scope. A declaration, not a call"),
 
-    LedgerRow("Mesh.applyVertexRemapAndRebuild|" ~ kRekey, 1,
-        "LIVE weld remap. Settles with `rebuildEdges(); "
-      ~ "clearEdgeSelectionResize();` — asserted in (B)"),
-    LedgerRow("Mesh.applyVertexRemap|" ~ kRekey, 1,
-        "LIVE weld remap. Same settle, asserted in (B)"),
+    LedgerRow("Mesh.rekeyEdgeSetsThroughRemap|" ~ kRekey, 1,
+        "LIVE weld re-key shared by both weld remaps (task 9435; its call "
+      ~ "roster is `weld_remap_core_census_test`). Settles with "
+      ~ "`rebuildEdges(); clearEdgeSelectionResize();` — asserted in (B)"),
     LedgerRow("Mesh.compactUnreferenced|" ~ kRekey, 1,
         "LIVE drop-and-permute. Same settle, asserted in (B). This is the "
       ~ "kernel (A)'s mutation arms, because it renumbers every vertex it "

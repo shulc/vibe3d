@@ -130,6 +130,16 @@ struct JoinWeldPolicy {
     bool keepTwoPointFaces;
 }
 
+/// `Mesh.collapseFacesThroughRemap`'s answer: `oldOfNew`/`faceRemap` are the
+/// face correspondence both ways; `srcCorner[k]` is new corner k's index
+/// within its OLD face, in `newFaces` order.
+private struct CollapsedFaces {
+    uint[][] newFaces;
+    uint[]   oldOfNew;
+    int[]    faceRemap;
+    uint[]   srcCorner;
+}
+
 /// A face index that is known to have been read out of a LIVE `faces` array —
 /// task 0831, the type that replaces the rule task 0703 could only write in a
 /// comment.
@@ -3711,86 +3721,69 @@ struct Mesh {
         editRecorder_.recordEdgeSetRekey(perm, keys, words);
     }
 
-    private void applyVertexRemapAndRebuild(in int[] remap,
-                                            JoinWeldPolicy join = JoinWeldPolicy.init) {
-        uint[][] newFaces;
-        uint[]   oldOfNew;   // newToOld correspondence — task 1902, mesh_planes.rewriteFaces
-                              // carries every kFacePlanes entry from this in one pass.
-        newFaces.reserve(faces.length);
-        oldOfNew.reserve(faces.length);
+    /// The face half both weld remaps share (task 9435): every corner read
+    /// through `remap` (one level deep), consecutive and wrap-around
+    /// duplicates dropped, a face kept while it has `minArity` corners.
+    private CollapsedFaces collapseFacesThroughRemap(in int[] remap, size_t minArity) const {
+        CollapsedFaces c;
+        c.newFaces.reserve(faces.length);
+        c.oldOfNew.reserve(faces.length);
+        c.faceRemap = new int[](faces.length);
         foreach (fi, ref face; faces) {
-            uint[] f;
+            uint[] f, src;
             f.reserve(face.length);
-            foreach (vid; face) {
-                uint mapped = (vid < remap.length) ? cast(uint)remap[vid] : vid;
-                if (f.length == 0 || f[$ - 1] != mapped) f ~= mapped;
+            foreach (k, vid; face) {
+                uint mapped = (vid < remap.length) ? cast(uint) remap[vid] : vid;
+                if (f.length == 0 || f[$ - 1] != mapped) { f ~= mapped; src ~= cast(uint) k; }
             }
-            if (f.length > 1 && f[$ - 1] == f[0]) f = f[0 .. $ - 1];
-            // Arity floor. 3 everywhere except a `vert.join keep:1`, which
-            // honestly keeps the TWO-POINT remnants the reference keeps — a
-            // fan hub joined to one of its ring vertices leaves the two
-            // triangles that touched both as 2-corner polygons, and the
-            // reference reports 8 faces where dropping them reports 6.
-            // The floor stops at 2: nothing measured says a ONE-corner
-            // remnant survives there, and inventing that is not this port's
-            // to invent.
-            if (f.length >= (join.keepTwoPointFaces ? 2 : 3)) {
-                newFaces ~= f;
-                oldOfNew ~= cast(uint) fi;
+            // Wrap-around dup: the face cycles back to its start through a remapped corner.
+            if (f.length > 1 && f[$ - 1] == f[0]) { f = f[0 .. $ - 1]; src = src[0 .. $ - 1]; }
+            if (f.length >= minArity) {
+                c.faceRemap[fi] = cast(int) c.newFaces.length;
+                c.newFaces  ~= f;
+                c.oldOfNew  ~= cast(uint) fi;
+                c.srcCorner ~= src;
+            } else {
+                c.faceRemap[fi] = -1;
             }
         }
-        // No corner handle here — this site declares through a bare
-        // dropCornerProvenance(WeldTailNoSource) below (task 0830, no begin*
-        // ever opened), so `rw` stays unpassed (defaults null).
-        // Task 1903 Stage K — NOT armed, and the reason is 1902 §5.4's: the
-        // VERTEX renumbering this rewrite serves is already recorded, by
-        // `Mesh.compactUnreferenced`'s `recordReindex`, which holds the
-        // oldToNew `remap[]` for free. A `FaceReindex` here would describe the
-        // same renumbering a second time, in the opposite direction.
-        // MEASURED CONSEQUENCE, and it is a real gap owned by L5/L10 rather
-        // than by K: the face-index rewrite this call performs is therefore
-        // unrecorded, so a recorded weld's revert brings its windings back
-        // REMAPPED. Pinned by the `cleanupMesh` sweep block in
-        // `tests/unit/mesh_ops/cleanup_test.d`.
-        //
-        // TASK 1903 STAGE L5-a ANSWERED THAT GAP FOR THE SIBLING AND NOT FOR
-        // THIS ONE, deliberately. `Mesh.applyVertexRemap` — the twin below,
-        // reached by `weldCoincidentVertices` and therefore by
-        // `mesh_ops/cleanup.cleanupMesh` — IS armed now, with its measurement
-        // written at its own site. THIS call is `applyVertexRemapAndRebuild`,
-        // reached by `weldVertexPairs`, and it is **L10's**: L5's green says
-        // nothing about it. Read the sibling's note before arming here — the
-        // measurement it records was taken through the OTHER function and does
-        // not transfer by inspection.
-        { auto arm = faceReindexScope();
-          rewriteFaces(this, newFaces, FaceSource(oldOfNew)); }
-        setFaceMarksFrom(faceMarks, ~Marks.Select);
-        clearFaceSelectionResize();
+        return c;
+    }
 
-        // task 1060, Stage 5b — re-key the edge-set registry through THIS
-        // weld's remap BEFORE compactUnreferenced() runs its own (separate)
-        // renumbering below. `remap` here is the same-space merge map
-        // (every vertex maps to a live survivor — itself or its weld
-        // target, never dropped), so this call carries the COLLAPSE half:
-        // an edge (5,9) whose endpoint 9 welds into 3 follows to (5,3) —
-        // exactly what `facePart` does for faces at this very site, carried
-        // by `mesh_planes.rewriteFaces`'s call above via `kFacePlanes`
-        // (task 1902). Re-keying ONLY at compactUnreferenced would instead
-        // read endpoint 9 as "gone" and drop the membership outright.
-        //
-        // TASK 2310 — and the pre-image is what makes the merge INVERTIBLE; see
-        // `captureEdgeSetImage`/`recordEdgeSetMerge` above for why the
-        // `Kind.RemoveVerts` payload cannot carry it.
+    /// The edge half both weld remaps share (tasks 1060 Stage 5b, 2310):
+    /// re-key the edge-set registry through the same-space merge map BEFORE
+    /// any later compaction (an edge (5,9) whose 9 welds into 3 follows to
+    /// (5,3) instead of being read as gone), record the pre-image that makes
+    /// the non-injective merge invertible, then settle the edges. Weld maps
+    /// have no wire-key inverse payload, so moved wires drop.
+    private void rekeyEdgeSetsThroughRemap(in int[] remap) {
         ulong[] esKeys0, esWords0;
         captureEdgeSetImage(esKeys0, esWords0);
-        // Weld maps are non-injective; there is no wire-key inverse payload.
         selSetRekeyEdges(this, (uint v) =>
             v < remap.length ? cast(uint) remap[v] : v,
             WireKeyPolicy.dropMoved);
         recordEdgeSetMerge(esKeys0, esWords0, remap);
-
         rebuildEdges();
         clearEdgeSelectionResize();
+    }
+
+    private void applyVertexRemapAndRebuild(in int[] remap,
+                                            JoinWeldPolicy join = JoinWeldPolicy.init) {
+        // Arity floor 3, except `vert.join keep:1`, which keeps the TWO-POINT
+        // remnants the reference keeps (a fan hub joined to a ring vertex:
+        // 8 faces, not 6). Nothing measured says a one-corner remnant survives.
+        auto c = collapseFacesThroughRemap(remap, join.keepTwoPointFaces ? 2 : 3);
+        // No corner handle: this tail declares a bare
+        // dropCornerProvenance(WeldTailNoSource) below (task 0830). The face
+        // reindex this rewrite performs is L10's (task 1903); the sibling
+        // `applyVertexRemap`'s L5-a measurement was taken through the OTHER
+        // function and does not transfer by inspection. Revert shape pinned by
+        // `tests/unit/face_reindex_arming_test.d` and `mesh_ops/cleanup_test.d`.
+        { auto arm = faceReindexScope();
+          rewriteFaces(this, c.newFaces, FaceSource(c.oldOfNew)); }
+        setFaceMarksFrom(faceMarks, ~Marks.Select);
+        clearFaceSelectionResize();
+        rekeyEdgeSetsThroughRemap(remap);
         // The pin (task 1210, ledger row 21a). Collapsing a whole plate leaves
         // the reference ONE FREE VERTEX at the join point; unpinned, every face
         // has just been dropped, so the survivor is unreferenced and this call
@@ -4751,103 +4744,35 @@ struct Mesh {
     /// re-derive it through this map — a dropped face that is not at the
     /// array tail shifts every face after it.
     private int[] applyVertexRemap(const int[] remap) {
-        // PolyVertex remap, mechanism (b): the corner-collapse below rewrites
-        // each face's corner LIST (consecutive-dup drop + wrap-around-dup drop +
-        // sub-3 face drop). Track which OLD corner each surviving NEW corner came
-        // from so per-corner values follow the survivors. This mutator does NOT
-        // call buildLoops, so the relocate cannot ride a tail funnel — it is done
-        // here from `oldFaceLoop` captured before `faces` is rewritten. (This is
-        // the same corner-drop logic the positional import-weld uses; getting it
-        // right here is exactly the GAP-4 keying.)
-        // Task 0830: this capture is the obligation handle. `beginCornerRelocate`
-        // takes the OFFSETS only — a relocation names each source corner by
-        // index and never looks a vertex up in an old winding — and it ARMS the
-        // drop: a path out of here that rewrites `faces` without declaring loses
-        // the plane rather than keeping values on foreign corners.
+        // PolyVertex remap, mechanism (b): this mutator does not call
+        // buildLoops, so per-corner values follow the surviving corners here,
+        // from the core's `srcCorner`, read against the OLD corner offsets
+        // (task 0830: the handle arms the drop for any path that skips it).
         auto rw = beginCornerRelocate();
         const bool remapUv = rw.active();
-        const(uint)[] oldFaceLoop = rw.oldFaceLoop();
+        auto c = collapseFacesThroughRemap(remap, 3);
         uint[] oldLoopOfNewLoop;
-
-        uint[][] newFaces;
-        // Task 0921: `faceRemap` is gathered in survivor order, keyed by each
-        // face's OLD index `fi` — the same shape the per-corner (UV) relocate
-        // just below already uses for this exact drop, and byte-identical to
-        // the weld sibling `applyVertexRemapAndRebuild`'s own gather above in
-        // this file. Without this, a face dropped anywhere but the array's
-        // tail left every survivor after it wearing a FRONT-TRUNCATED slice
-        // of the pre-collapse material/part/marks arrays instead of its own
-        // values — now `mesh_planes.rewriteFaces` below carries every plane
-        // through the SAME oldToNew `faceRemap`, via `FaceSource.fromOldToNew`
-        // (this function's own public return, untouched — plan §6 Stage B).
-        newFaces.reserve(faces.length);
-        int[] faceRemap = new int[](faces.length);
-        foreach (fi, ref face; faces) {
-            uint[] f;
-            uint[] srcCorner; // old corner index that produced each kept corner
-            f.reserve(face.length);
-            foreach (k, vid; face) {
-                uint mapped = (vid < remap.length) ? cast(uint)remap[vid] : vid;
-                if (f.length == 0 || f[$ - 1] != mapped) {
-                    f ~= mapped;
-                    if (remapUv) srcCorner ~= cast(uint)k;
-                }
-            }
-            // Wrap-around dup: last == first means the face cycles back to
-            // its start through a remapped corner.
-            if (f.length > 1 && f[$ - 1] == f[0]) {
-                f = f[0 .. $ - 1];
-                if (remapUv) srcCorner = srcCorner[0 .. $ - 1];
-            }
-            if (f.length >= 3) {
-                faceRemap[fi] = cast(int)newFaces.length;
-                newFaces    ~= f;
-                if (remapUv)
-                    foreach (sc; srcCorner)
-                        oldLoopOfNewLoop ~= oldFaceLoopIndex(oldFaceLoop, cast(uint)fi, sc);
-            } else {
-                faceRemap[fi] = -1;
-            }
+        if (remapUv) {
+            const(uint)[] oldFaceLoop = rw.oldFaceLoop();
+            size_t k = 0;
+            foreach (nf, ref f; c.newFaces)
+                foreach (_; f)
+                    oldLoopOfNewLoop ~= oldFaceLoopIndex(oldFaceLoop, c.oldOfNew[nf], c.srcCorner[k++]);
         }
         // This rewrite alone is armed for face reindexing (task 1903); sibling
         // removers record their own operations and must stay unarmed.
         // See doc/source_prose_policy.md#запись-winding-и-arming-переиндексации.
         { auto arm = faceReindexScope();
-          rewriteFaces(this, newFaces, FaceSource.fromOldToNew(faceRemap, newFaces.length)); }
+          rewriteFaces(this, c.newFaces, FaceSource(c.oldOfNew)); }
         setFaceMarksFrom(faceMarks, ~Marks.Select);
         if (remapUv) declareCornerProvenance(rw.relocated(oldLoopOfNewLoop));
-
-        // task 1060, Stage 5b — re-key the edge-set registry through THIS
-        // weld's remap, same call and same placement (between the face-mask
-        // carry and rebuildEdges()) as the sibling `applyVertexRemapAndRebuild`
-        // makes for the exact same reason: `remap` here is a same-space merge
-        // map (every vertex maps to a live survivor, itself or its weld
-        // target, never dropped) — an edge (5,9) whose endpoint 9 welds into 3
-        // must follow to (5,3) or its set membership vanishes silently on the
-        // very next `rebuildEdges()`/`edgeKey` renumbering.
-        //
-        // TASK 2310 — the merge record, the same pair as the sibling above. THIS
-        // is the funnel `mesh_ops/cleanup.cleanupMesh` runs (weld, then compact)
-        // inside `MeshCleanup`'s recording batch, so the loss it closes was live
-        // on a shipped delta path.
-        ulong[] esKeys0, esWords0;
-        captureEdgeSetImage(esKeys0, esWords0);
-        // Weld maps are non-injective; there is no wire-key inverse payload.
-        selSetRekeyEdges(this, (uint v) =>
-            v < remap.length ? cast(uint) remap[v] : v,
-            WireKeyPolicy.dropMoved);
-        recordEdgeSetMerge(esKeys0, esWords0, remap);
-
-        rebuildEdges();
-
-        clearEdgeSelectionResize();
-        // Face selection: setFaceMarksFrom above already dropped Select;
-        // this both re-asserts that and publishes the selection-domain
-        // change notification, same as every other face-compaction site
-        // (deleteFacesByMask, applyVertexRemapAndRebuild, cleanDegenerateFaces).
+        // The same edge half as the sibling; THIS is the funnel
+        // `mesh_ops/cleanup.cleanupMesh` runs inside its recording batch.
+        rekeyEdgeSetsThroughRemap(remap);
+        // Re-asserts the Select drop and publishes the selection-domain change,
+        // as every face-compaction site does.
         clearFaceSelectionResize();
-
-        return faceRemap;
+        return c.faceRemap;
     }
 
     /// Remove vertices not referenced by any face. Updates all face vertex
@@ -16095,7 +16020,7 @@ Vec3[] edgeSlidePositions(const ref Mesh m, const(Vec3)[] positions,
 // of its own: it is `weldVerticesByMask`'s own body, unchanged, and the
 // collapse/weld tests already in this file are its net. Verified by mutation —
 // dropping the post-remap consecutive-duplicate strip, and dropping the
-// head/tail wrap strip — both inside `applyVertexRemapAndRebuild` — each break
+// head/tail wrap strip — both now in `collapseFacesThroughRemap` — each break
 // `collapseFacesByMask` before any weld test is reached. (Cited by symbol, not
 // by line: the two line numbers this note carried had already rotted.)
 
