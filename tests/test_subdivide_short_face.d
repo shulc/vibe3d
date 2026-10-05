@@ -584,6 +584,18 @@ private void pen2(string id) {
     assert(hist().length == 0, id ~ ": live pen wrote history before its door");
 }
 
+// The captured pen rows (S1 / S4t / S4n programs) drop the pen with Space and
+// then clear the selection ("rig clearsel") before the door: the pen's commit
+// selects its new elements (selectNew, pen wave plan S8). The selection drop
+// writes no history row here (the labels below stay the pen's and the door's).
+private void dropAndClear(string id) {
+    key(32, 44, id ~ "/drop");
+    assert(getJson("/api/input/context")["tool"].str.length == 0,
+        id ~ ": Space did not drop the pen tool");
+    ok("select.drop polygon", id);
+    assert(sel().length == 0, id ~ ": clearsel floor failed");
+}
+
 private void selectFace(int fi, string id) {
     ok("select.element polygon set " ~ fi.to!string, id);
     assert(sel() == [fi], id ~ ": face-selection floor failed");
@@ -730,7 +742,7 @@ unittest {
     writeln("SD-C control status=", cR["status"].str, " mesh=", counts(cM));
 
     foreach (id; ["SD-T", "SD-T/flat"]) {
-        pen3(id); auto h0 = hist();
+        pen3(id); dropAndClear(id); auto h0 = hist();
         auto r = cmdJson(id == "SD-T" ? `{"id":"mesh.subdivide"}`
             : `{"id":"mesh.subdivide","params":{"mode":"flat"}}`);
         auto m = model(); auto h1 = hist();
@@ -1012,11 +1024,9 @@ unittest {
     }
 
     pen2("SD-5");
-    key(32, 44, "SD-5/drop");
+    dropAndClear("SD-5");
     assert(counts(model()) == "10/13/7",
         "SD-5: Space did not commit the two-point pen face");
-    assert(getJson("/api/input/context")["tool"].str.length == 0,
-        "SD-5: Space did not drop the pen tool");
     auto sd5PenHistory = hist();
     assert(sd5PenHistory.labels == ["Pen Polygon"],
         "SD-5: Space did not record exactly the pen commit");

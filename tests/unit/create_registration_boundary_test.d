@@ -281,6 +281,7 @@ unittest {
         Row("deps", "gpu", 16), Row("deps", "litShader", 15),
         Row("deps", "history", 16), Row("deps", "bevelEditFactory", 15),
         Row("deps", "penFactories", 1), Row("owner", "activeMesh", 18),
+        Row("owner", "subjectType", 1),
         Row("live", "view", 2), Row("live", "mode", 2),
         Row("live", "modeCell", 2),
     ];
@@ -294,9 +295,9 @@ unittest {
     const depsReceivers = countOccurrences(bodies, "deps.");
     const ownerReceivers = countOccurrences(bodies, "owner.");
     const liveReceivers = countOccurrences(bodies, "live.");
-    assert(depsReceivers == 63 && ownerReceivers == 18 && liveReceivers == 6,
+    assert(depsReceivers == 63 && ownerReceivers == 19 && liveReceivers == 6,
         format("6507 registrar receiver population changed: deps=%d/63 "
-             ~ "owner=%d/18 live=%d/6", depsReceivers, ownerReceivers,
+             ~ "owner=%d/19 live=%d/6", depsReceivers, ownerReceivers,
             liveReceivers));
     static foreach (member; [__traits(allMembers, CreateToolDeps)]) {{
         static if (member != "__ctor" && member[$ - 1] == '_')
