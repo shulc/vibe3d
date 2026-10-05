@@ -369,6 +369,8 @@ unittest // the scanner cluster's own contracts (task 0678 M10)
     assert(countOccurrences("aaaa", "aa") == 2, "occurrences are non-overlapping");
     assert(countOccurrences("aaaa", "") == 0,
            "an empty needle must return 0 — without the guard this call HANGS");
+    assert(countIdent("ab xab abx ab_ (ab) ab", "ab") == 3,
+           "countIdent counts whole identifiers only, on both boundaries");
 
     enum string probe = q{
         void owner() {

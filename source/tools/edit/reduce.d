@@ -287,7 +287,8 @@ private:
     }
 
     // The one operation (task 9433): preview, prepared image and scripted
-    // apply. A ratio that keeps every face (or a faceless mesh) is a no-op.
+    // apply. A ratio that keeps every face (or a faceless mesh) is the
+    // kernel's own no-op (it returns 0 for a target at or above the count).
     // UNRECORDED (task 1903 D2): a preview frame must not build an op-log per
     // drag frame, and the apply's snapshot pair belongs to `ToolDoApplyCommand`.
     // The batch closes before the caller's `refreshDisplay`, which reads the
@@ -296,7 +297,6 @@ private:
         immutable size_t origFaces = target.faces.length;
         size_t keep = cast(size_t)lround(ratio_ * cast(double)origFaces);
         if (keep < 1) keep = 1;
-        if (keep >= origFaces) return 0;
         auto ed = MeshEditBatch.unrecorded(target, kReduceEditScope);
         const n = ed.reduceToTarget(keep, pb_);
         ed.close();

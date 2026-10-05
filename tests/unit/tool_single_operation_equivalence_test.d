@@ -44,6 +44,14 @@ private void triangulateAll(ref Mesh m) {
     auto mask = m.operandFaceMask(); m.triangulateFacesByMask(mask);
 }
 
+/// The scripted apply's refusal rig: every element hidden leaves each
+/// kernel's operand mask empty.
+private void hideAll(ref Mesh m, Tool) {
+    foreach (ref w; m.vertexMarks) w |= Mesh.Marks.Hide;
+    foreach (ref w; m.edgeMarks) w |= Mesh.Marks.Hide;
+    foreach (ref w; m.faceMarks) w |= Mesh.Marks.Hide;
+}
+
 private void poke(Tool t, string name, float v) {
     foreach (ref p; t.params()) if (p.name == name) { *p.fptr = v; return; }
     assert(false, "no float param named `" ~ name ~ "`");
@@ -63,7 +71,7 @@ private size_t rows;
 /// DIFFER from the live ones, so the row flips when the finding is resolved.
 private void row(T)(EditMode mode, void function(ref Mesh) pick,
         string[] names, float[] values, size_t verts, size_t faces, double dig,
-        bool headlessShared = true) {
+        bool headlessShared = true, void function(ref Mesh, Tool) refuse = &hideAll) {
     enum name = T.stringof;
     ++rows;
     T make(Rig r) { return new T(() => &r.mesh, &r.gpu, &r.mode, null); }
@@ -114,6 +122,18 @@ private void row(T)(EditMode mode, void function(ref Mesh) pick,
     if (headlessShared) same("headless", head.mesh);
     else assert(head.mesh.faces != live.mesh.faces, name ~ ": the scripted apply "
         ~ "now matches the live faces — the open finding is resolved; share the row");
+
+    // REFUSAL: an operation that builds nothing refuses the scripted apply
+    // (the command no-op contract: no `ok`, no history entry).
+    auto none = new Rig(mode, pick);
+    auto nt = make(none);
+    nt.activate();
+    foreach (i, n; names) poke(nt, n, values[i]);
+    refuse(none.mesh, nt);
+    const v0 = none.mesh.vertices.length, f0 = none.mesh.faces.length;
+    assert(!nt.applyHeadless() && none.mesh.vertices.length == v0 &&
+        none.mesh.faces.length == f0, name ~ ": the scripted apply did not refuse "
+        ~ "an operation that built nothing");
 }
 
 // Pins measured on main a9192104 (task 9433 Step 0), the same in all three modes.
@@ -131,8 +151,11 @@ unittest {
     row!VertexMergeTool(EditMode.Vertices, &pickTwoVertices, ["dist"],
         [1.5f], 7, 6, 31.5);
     row!ReductionTool(EditMode.Polygons, &triangulateAll, ["ratio"],
-        [0.5f], 5, 6, 13.5);
+        [0.5f], 5, 6, 13.5, true, (ref Mesh, Tool t) { poke(t, "ratio", 1.0f); });
+    // A ratio rounding to no face keeps one (the operation's floor).
+    row!ReductionTool(EditMode.Polygons, &triangulateAll, ["ratio"],
+        [0.01f], 4, 4, 10.25, true, (ref Mesh, Tool t) { poke(t, "ratio", 1.0f); });
     row!SmoothShiftTool(EditMode.Polygons, &pickFace, ["scale", "shift"],
         [1.0f, 0.3f], 12, 10, -66.8);
-    assert(rows == 8, format("%s rows ran, expected the 8 edit-family tools", rows));
+    assert(rows == 9, format("%s rows ran, expected 9 (8 tools, reduce twice)", rows));
 }
