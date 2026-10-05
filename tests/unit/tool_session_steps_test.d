@@ -1280,23 +1280,8 @@ unittest { // a scrub (held widget) records one row; discrete writes record one 
     }
 }
 
-// ---- task 9369: parameter writes as attribute-image steps (`paramWriteSteps`) -----
+// ---- tasks 9369/9430: parameter writes as attribute-image steps (the attribute arm) -----
 
-/// StepTool whose interactive parameter writes are steps of their own.
-private final class ParamStepTool : StepTool {
-    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
-        static immutable ToolSessionPolicy p = { activationRow: true, sessionSteps: true,
-            paramWriteSteps: true, opensAt: OpensAt.firstPress, imageAttrs: ["v", "arr"] };
-        return p;
-    }
-}
-private Rig paramRig() {
-    auto r = rig();
-    r.t = new ParamStepTool;
-    r.active = r.t;
-    r.session.noteArm("t.param", 2);
-    return r;
-}
 /// One interactive write of `v`, its before-image captured by the producer.
 private void writeV(Rig r, int to, bool held) {
     auto before = r.t.captureAttrImage();
@@ -1308,7 +1293,7 @@ private void writeV(Rig r, int to, bool held) {
 }
 
 unittest { // a held widget's writes are ONE step; its undo restores the value before the first
-    auto r = paramRig();
+    auto r = rig();
     r.t.gesture(1);            // the window's first group
     r.t.gesture(2);            // a press step
     const s0 = steps(r);
@@ -1326,7 +1311,7 @@ unittest { // a held widget's writes are ONE step; its undo restores the value b
 }
 
 unittest { // discrete writes: one step each, restoring the producer's before-image
-    auto r = paramRig();
+    auto r = rig();
     r.t.gesture(1);
     foreach (i; 0 .. 3) writeV(r, 10 + i, false);
     assert(steps(r) == 3, format("9369: three writes are %s steps, expected 3", steps(r)));
@@ -1336,15 +1321,10 @@ unittest { // discrete writes: one step each, restoring the producer's before-im
 }
 
 unittest { // a write outside a live window opens nothing (an Idle write records nothing)
-    auto r = paramRig();
+    auto r = rig();
     writeV(r, 5, false);
     assert(!isLive(r) && steps(r) == 0,
         format("9369: an idle write opened the window (live %s, %s steps)", isLive(r), steps(r)));
-    // The same write on a tool without the datum is no step, live or not.
-    auto plain = rig();
-    plain.t.gesture(1);
-    writeV(plain, 7, false);
-    assert(steps(plain) == 0, "9369: a non-Action write stepped without paramWriteSteps");
 }
 
 unittest { // §19.1 #4: the polygon pen's rows are drawn by PropertyPanel.drawProvider

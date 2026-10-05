@@ -2036,8 +2036,7 @@ private struct ToolSession {
     }
 
     // An interactive parameter write as a step of its own (both arms). The
-    // attribute arm (`paramWriteSteps`) steps only inside a live
-    // window: a write never OPENS one.
+    // attribute arm steps only inside a live window: a write never OPENS one.
     bool parameterStepBegins(Tool t, AttrImage beforeWrite) {
         if (!reporting_(t)) return false;
         if (t.sessionPolicy().historyTopologySteps) {
@@ -2046,7 +2045,7 @@ private struct ToolSession {
             stepBegins(t, PressKind.plain, beforeWrite, false);
             return topologyPending_;
         }
-        if (!t.sessionPolicy().paramWriteSteps || liveSteps_() !is t) return false;
+        if (liveSteps_() !is t) return false;
         stepBegins(t, PressKind.plain, beforeWrite, false);
         return true;
     }

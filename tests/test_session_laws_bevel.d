@@ -38,7 +38,7 @@
 
 import slice_leak_helpers : slPlay, slMotion, slKey, slLine, slLineUi, slHistoryLabels,
     slHistoryLen, slMesh, SlMesh, slCmd, SL_SDLK_z, SL_KMOD_LCTRL, SL_KMOD_LSHIFT;
-import http_client : getJson;
+import http_client : getJson, postJson;
 import drag_helpers : fetchCamera;
 import std.format : format;
 import std.json;
@@ -459,4 +459,40 @@ unittest {
     assert(slMesh().canon == g1.canon,
            format("switch-rows: the first undo must return the first operation's result: mesh %s "
                   ~ "(h1 %s), rows %s", slMesh().toString, g1.toString, slHistoryLabels()));
+}
+
+// ---------------------------------------------------------------------------
+// PW — a typed value is its own step (F10r PS-all): haul, typed inset, Ctrl+Z
+// -> the haul's values, Ctrl+Z -> 0/0 with the arm's ring; the drop after both
+// undos still commits that zero-width ring (F10r: a zero-width bevel, not the
+// plain face).
+// ---------------------------------------------------------------------------
+unittest {
+    if (!cell("PW")) return;
+    const base = rig("PW");
+    armUi("PW");
+    const a0 = slMesh();
+    haul(-40, -40, "PW h1");
+    const g1 = slMesh();
+    const s1 = shiftV(), i1 = insetV();
+    assert(s1 > 0.01 && abs(i1) > 0.01, format("bevel floor (PW): the haul set shift %s, inset %s", s1, i1));
+    auto r = postJson("/api/script?interactive=true", "tool.attr poly.bevel inset 0.05");
+    assert(r["status"].str == "ok" && near(insetV(), 0.05) && slMesh().canon != g1.canon,
+           "bevel floor (PW): the typed inset did not land: " ~ r.toString);
+    ctrlZ("PW Ctrl+Z 1");
+    assert(tool() == "polyBevel" && near(shiftV(), s1) && near(insetV(), i1)
+           && slMesh().canon == g1.canon,
+           format("PW z1: Ctrl+Z after a typed value must undo the value alone (F10r PS-all): "
+                  ~ "tool '%s', shift %s inset %s (haul %s / %s), mesh %s", tool(), shiftV(),
+                  insetV(), s1, i1, slMesh().toString));
+    ctrlZ("PW Ctrl+Z 2");
+    assert(tool() == "polyBevel" && applied() && near(shiftV(), 0) && near(insetV(), 0)
+           && slMesh().canon == a0.canon,
+           format("PW z2: the second Ctrl+Z must pop the haul (0/0, the arm's ring): tool '%s', "
+                  ~ "shift %s, mesh %s", tool(), shiftV(), slMesh().toString));
+    slLine("tool.set poly.bevel off");
+    const dropped = slMesh();
+    assert(dropped.verts == 12 && dropped.faces == 10 && dropped.canon != base.canon,
+           format("PW drop: after both undos the drop must commit the zero-width ring (F10r; "
+                  ~ "measured 12 v / 10 f on the cube face): %s", dropped.toString));
 }

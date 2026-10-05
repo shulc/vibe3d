@@ -464,10 +464,6 @@ struct ToolSessionPolicy {
     /// shows its own result. Read only by the session, inside the captured
     /// model (topology-redo S7r, model doc §R13).
     bool redoPinsRefireImage;
-    /// An attribute-image tool: an interactive parameter write inside its live
-    /// window is one gesture step with its true before-image (the polygon pen's
-    /// captured in-stroke undo, fixture pen_instroke_undo: a typed field is one event).
-    bool paramWriteSteps;
     /// H3, captured for the pen: a UI-door command meeting this tool with
     /// nothing committable (`!hasUncommittedEdit()`) ends its open gesture
     /// through `cancelUncommittedEdit()` before the command applies; false —
@@ -476,9 +472,11 @@ struct ToolSessionPolicy {
     bool commandEndsOpenGesture;
 
     /// Both step arms' one predicate for "a parameter write is a step": the
-    /// producers capture the before-write image under it.
+    /// producers capture the before-write image under it. In the attribute arm
+    /// a typed value inside the live window is a step of its own in every tool
+    /// (captured on all six: pen, Polygon Bevel, Edge Extend, the slice tools).
     bool stepsParamWrites() const pure nothrow @nogc {
-        return historyTopologySteps || paramWriteSteps;
+        return historyTopologySteps || (sessionSteps && !historyRecordedSteps);
     }
 }
 

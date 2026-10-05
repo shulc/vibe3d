@@ -1678,7 +1678,7 @@ private:
         // UC1-end).
         static immutable ToolSessionPolicy policy = {
             commandClose: CommandClose.uiDoor, commandEndsOpenGesture: true,
-            rollovers: Rollover.target, sessionSteps: true, paramWriteSteps: true,
+            rollovers: Rollover.target, sessionSteps: true,
             refusesDisabledParamWrites: true,
             imageAttrs: ["type", "currentPoint", "posX", "posY", "posZ", "flip",
                          "makeQuads", "merge", "close", "selectNew", "points",

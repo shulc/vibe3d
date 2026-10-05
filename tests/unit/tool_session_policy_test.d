@@ -544,8 +544,8 @@ unittest { // (4)
     string[string] moduleOf;
     foreach (p; manifest["products"].array)
         moduleOf[p["aggregate"].str] = p["module"].str;
-    string[] stepIds, imageStepIds;
-    size_t checkedNames, actionNames, armAttrs, stepsFalse, recordedSteps;
+    string[] stepIds, imageStepIds, paramArmIds;
+    size_t checkedNames, actionNames, armAttrs, stepsFalse, recordedSteps, sessionLess;
     foreach (row; kTable) {
         auto ci = TypeInfo_Class.find(moduleOf[row.cls] ~ "." ~ row.cls);
         auto t = blit(ci);
@@ -558,10 +558,18 @@ unittest { // (4)
                "history producer policy drifted for " ~ row.id);
         assert(pol.previewHistoryLadder == (row.id == "prim.cube"),
                "Box live History ladder policy drifted for " ~ row.id);
-        // Task 9369: a parameter write is an attribute-image step for the
-        // polygon pen only (follow-up: K-F2 F10 decides whether it is general).
-        assert(pol.paramWriteSteps == (row.id == "pen"),
-               "parameter-write steps policy drifted for " ~ row.id);
+        // Task 9430 (UND2, captured K-U2 PS-all): a parameter write is a step
+        // in EVERY attribute-arm tool, by arm, never by id; never in a
+        // session-less or history-recorded tool.
+        if (pol.stepsParamWrites() && !pol.historyTopologySteps) paramArmIds ~= row.id;
+        if (!pol.sessionSteps && !pol.historyTopologySteps) {
+            ++sessionLess;
+            assert(!pol.stepsParamWrites(),
+                   "a session-less tool steps its parameter writes: " ~ row.id);
+        }
+        if (pol.historyRecordedSteps)
+            assert(!pol.stepsParamWrites(),
+                   "a history-recorded tool steps its parameter writes: " ~ row.id);
         if (!pol.sessionSteps) {
             ++stepsFalse;
             assert(pol.imageAttrs.length == 0 && pol.haulAttrs.length == 0,
@@ -645,6 +653,16 @@ unittest { // (4)
                   ~ "in the same commit", stepsFalse, kSessionStepsFalseCeiling));
     assert(recordedSteps == 51,
            format("history-owned rows %s, expected 51", recordedSteps));
+    // No registered id is session-less (measured 0, = the M7 ceiling): the
+    // session-less case is the base `Tool`'s default policy, pinned below.
+    assert(sessionLess == 0, format("UND2: %s session-less rows checked, measured 0", sessionLess));
+    assert(!ToolSessionPolicy.init.stepsParamWrites(),
+           "UND2: a tool with the default (session-less) policy steps its parameter writes — "
+           ~ "the panel would capture an attribute image for every row every frame");
+    sort(paramArmIds);
+    assert(paramArmIds == ["edge.extend", "mesh.edgeSliceTool", "mesh.loopSliceTool",
+                           "mesh.sliceTool", "pen", "poly.bevel"],
+           format("UND2: the attribute arm (a parameter write is a step) is %s", paramArmIds));
     // Image-producing population floors: 20 ids, 148 image names, 3 Action triggers
     // on them (chainArm; insertAt, removeCurrent), 1 arm attribute (M3b).
     sort(imageStepIds);
@@ -1904,7 +1922,8 @@ static assert(__traits(hasMember, imported!"tool".TopologyStepClient, "rebaseTop
 // The fence first, so a returning flag reddens by its name before the composition pin.
 static foreach (gone; ["firstTopologyRedoUsesAfterAttrs", "rebaseTopologyAfterStep",
                        "discardFirstTopologyRedoOnActivationUndo",
-                       "discardLaterTopologyRedoOnRearm", "dormantAfterClosedRedo"])
+                       "discardLaterTopologyRedoOnRearm", "dormantAfterClosedRedo",
+                       "paramWriteSteps"])   // task 9430: an arm property, not a tool datum
     static assert(!__traits(hasMember, imported!"tool".ToolSessionPolicy, gone),
                   "S8 fence: the per-tool flag " ~ gone ~ " is back");
 
@@ -1915,8 +1934,8 @@ static assert([__traits(allMembers, imported!"tool".ToolSessionPolicy)] == [
     "activationResetAttrs", "armAttr", "headlessReplacesWindow", "recordCarriesActivation",
     "keepAliveOnCancel", "rollovers", "handleAnchor", "armRestoresWholeImage", "dropWritesRow",
     "refusesDisabledParamWrites", "pressOpensOperation", "foldsParamRowsIntoBlock",
-    "redoPinsRefireImage", "paramWriteSteps", "commandEndsOpenGesture", "stepsParamWrites"],
-    "S8 pin: ToolSessionPolicy's members changed (measured 28 since pen wave S8, task 9365)");
+    "redoPinsRefireImage", "commandEndsOpenGesture", "stepsParamWrites"],
+    "UND2 pin: ToolSessionPolicy's members changed (measured 27 since task 9430)");
 
 /// The session type `EditSession` holds in its field `tools_`.
 private template SessionOf(ES) {

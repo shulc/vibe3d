@@ -624,3 +624,135 @@ unittest {
                   slMesh().toString, m2.toString, base.toString));
     slLine("tool.set mesh.edgeSliceTool off");
 }
+
+// ---------------------------------------------------------------------------
+// UND2 (K-U2 PS-all / OWN): a value typed into the panel inside the live
+// window is a step of its own — Ctrl+Z undoes the value alone, the tool stays
+// live — and a later gesture does not fold it. Each cell: the gesture, the
+// typed value (the interactive door), Ctrl+Z, Ctrl+Z.
+// ---------------------------------------------------------------------------
+void typed(string line) {
+    auto r = postJson("/api/script?interactive=true", line);
+    assert(r["status"].str == "ok", "slice rig: the typed `" ~ line ~ "` failed: " ~ r.toString);
+}
+
+double attrNum(string tool, string attr) {
+    auto r = postJson("/api/command", "tool.attr " ~ tool ~ " " ~ attr ~ " ?");
+    assert(r["status"].str == "ok", "slice rig: " ~ attr ~ " query failed: " ~ r.toString);
+    return num(r["value"]);
+}
+
+// ES-PW — Edge Slice, a two-point chain (one point cuts nothing, K-U2 addendum).
+unittest {
+    if (!cell("ES-PW")) return;
+    long Hp;
+    const base = boxRig(Hp);
+    slLineUi("tool.set mesh.edgeSliceTool on");
+    const P = slFrontRightChain();
+    latch(P, 0, "ES-PW");
+    latch(P, 1, "ES-PW");
+    const M2 = slMesh();
+    const t0 = slLatchedT();
+    typed("tool.attr mesh.edgeSliceTool pointT 0.2");
+    assert(slMesh().canon != M2.canon && abs(slLatchedT()[1] - 0.2) <= 1e-6,
+           format("slice floor (ES-PW): the typed Position did not move point 2: t %s", slLatchedT()));
+    ctrlZ("ES-PW Ctrl+Z 1");
+    assert(slTool() == "edgeSlice" && slChain().pairs.length == 2,
+           format("ES-PW: Ctrl+Z after a typed value must undo the value alone, chain live (K-U2 "
+                  ~ "PS-all): tool '%s', points %d", slTool(), slChain().pairs.length));
+    assert(abs(slLatchedT()[1] - t0[1]) <= 1e-6 && slMesh().canon == M2.canon,
+           format("ES-PW: the typed value's undo did not restore point 2's own position: t %s "
+                  ~ "(latched %s), mesh %s", slLatchedT(), t0, slMesh().toString));
+    ctrlZ("ES-PW Ctrl+Z 2");
+    assert(slTool() == "edgeSlice" && slChain().pairs.length == 1 && slMesh().canon == base.canon,
+           format("ES-PW: the second Ctrl+Z must pop point 2: tool '%s', points %d",
+                  slTool(), slChain().pairs.length));
+    slLine("tool.set mesh.edgeSliceTool off");
+}
+
+// SL-PW — Slice: one line, the typed Start Y.
+unittest {
+    if (!cell("SL-PW")) return;
+    long Hp;
+    const base = boxRig(Hp);
+    slLineUi("tool.set mesh.sliceTool on");
+    slSliceDrawLine();
+    const G1o = slMesh();
+    const y0 = attrNum("mesh.sliceTool", "startY");
+    assert(G1o.faces > base.faces, "slice floor (SL-PW): the line did not cut");
+    typed("tool.attr mesh.sliceTool startY 0");
+    assert(slMesh().canon != G1o.canon,
+           format("slice floor (SL-PW): the typed Start Y 0 did not move the cut (start Y was %s)", y0));
+    ctrlZ("SL-PW Ctrl+Z 1");
+    assert(slTool() == "slice" && slMesh().canon == G1o.canon
+           && abs(attrNum("mesh.sliceTool", "startY") - y0) <= 1e-6,
+           format("SL-PW: Ctrl+Z after a typed value must restore the line's own Start Y, tool live "
+                  ~ "(K-U2 PS-all): tool '%s', mesh %s (line %s)", slTool(), slMesh().toString,
+                  G1o.toString));
+    ctrlZ("SL-PW Ctrl+Z 2");
+    assert(slTool() != "slice" && slMesh().canon == base.canon && slHistoryLen() == Hp,
+           format("SL-PW: the second Ctrl+Z must remove the line and end the tool: tool '%s', "
+                  ~ "history %s", slTool(), slHistoryLabels()));
+}
+
+// LS-PW — Loop Slice: arm, scrub, the typed Count 2.
+unittest {
+    if (!cell("LS-PW")) return;
+    long Hp;
+    const rail = lsRig(Hp);
+    slLineUi("tool.set mesh.loopSliceTool on");
+    gesture(rail, 0.5, 0.5, "LS-PW arm (motionless)");
+    const pArm = positions();
+    gesture(rail, 0.5, 0.7, "LS-PW scrub");
+    const pScrub = positions();
+    const MS = slMesh();
+    typed("tool.attr mesh.loopSliceTool count 2");
+    assert(toolState()["count"].integer == 2 && slMesh().canon != MS.canon,
+           format("slice floor (LS-PW): the typed Count did not add a slice: count %s",
+                  toolState()["count"]));
+    ctrlZ("LS-PW Ctrl+Z 1");
+    assert(slTool() == "loopSlice" && toolState()["count"].integer == 1,
+           format("LS-PW: Ctrl+Z after a typed value must undo the value alone, tool live (K-U2 "
+                  ~ "PS-all): tool '%s', count %s", slTool(), toolState()["count"]));
+    const p1 = positions();
+    assert(p1.length == 1 && abs(p1[0] - pScrub[0]) <= 1e-6 && slMesh().canon == MS.canon,
+           format("LS-PW: the typed value's undo did not return count 1 at the scrubbed position: "
+                  ~ "positions %s (scrubbed %s)", p1, pScrub));
+    ctrlZ("LS-PW Ctrl+Z 2");
+    const p2 = positions();
+    assert(slTool() == "loopSlice" && p2.length == 1 && abs(p2[0] - pArm[0]) <= 1e-6,
+           format("LS-PW: the second Ctrl+Z must return the arm-time loop, tool live: tool '%s', "
+                  ~ "positions %s (arm-time %s)", slTool(), p2, pArm));
+    slLine("tool.set mesh.loopSliceTool off");
+}
+
+// LS-PW-co — typed Count 2, then a scrub, Ctrl+Z twice: the scrub goes, then
+// the typed value alone (K-U2 OWN: a later gesture does not fold it).
+unittest {
+    if (!cell("LS-PW-co")) return;
+    long Hp;
+    const rail = lsRig(Hp);
+    slLineUi("tool.set mesh.loopSliceTool on");
+    gesture(rail, 0.5, 0.5, "LS-PW-co arm (motionless)");
+    gesture(rail, 0.5, 0.7, "LS-PW-co scrub 1");
+    const pScrub = positions();
+    const MS = slMesh();
+    typed("tool.attr mesh.loopSliceTool count 2");
+    const MT = slMesh();
+    gesture(rail, 0.7, 0.4, "LS-PW-co scrub 2");
+    assert(toolState()["count"].integer == 2 && slMesh().canon != MT.canon,
+           format("slice floor (LS-PW-co): the scrub after the typed Count did not move the loops: "
+                  ~ "count %s", toolState()["count"]));
+    ctrlZ("LS-PW-co Ctrl+Z 1");
+    assert(toolState()["count"].integer == 2 && slMesh().canon == MT.canon,
+           format("LS-PW-co: Ctrl+Z 1 must pop the second scrub alone: count %s, mesh %s",
+                  toolState()["count"], slMesh().toString));
+    ctrlZ("LS-PW-co Ctrl+Z 2");
+    const p2 = positions();
+    assert(slTool() == "loopSlice" && toolState()["count"].integer == 1 && p2.length == 1
+           && abs(p2[0] - pScrub[0]) <= 1e-6 && slMesh().canon == MS.canon,
+           format("LS-PW-co: Ctrl+Z 2 must undo the typed value alone (K-U2 OWN): tool '%s', "
+                  ~ "count %s, positions %s (scrubbed %s)", slTool(), toolState()["count"], p2,
+                  pScrub));
+    slLine("tool.set mesh.loopSliceTool off");
+}
