@@ -6,8 +6,8 @@
 //   1. The CURRENT selection type promotes on a switch: /api/selection reports
 //      the new `selType`, and /api/changes `currentTypeChanged` ticks on a flip.
 //   2. A switch to the type ALREADY current does NOT flip (no currentTypeChanged
-//      tick) — the same-type no-op contract (so keys 1/2/3 pressed for the
-//      current mode neither tick the bus nor drop the tool).
+//      tick) — keys 1/2/3 pressed for the current mode do not tick the bus
+//      (they still drop the tool: K-CD CD2s, tests/test_constraint_boot.d).
 //   3. editMode stays the picking authority and mirrors the current geometry
 //      type in LOCKSTEP: /api/selection `mode` tracks `selType`, and a selection
 //      made for a given geometry type reads back identically whether the mode
