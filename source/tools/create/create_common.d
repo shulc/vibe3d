@@ -583,8 +583,7 @@ SnapResult snapLocalHit(ref Vec3 hitLocal,
                         EditMode editMode,
                         const(uint)[] excludeVerts = [])
 {
-    if (g_pipeCtx is null) return SnapResult.init;
-    SubjectPacket subj;     // selType frozen at Vertex (plan §1.3)
+    SubjectPacket subj;     // selType frozen at Vertex (plan §1.3); no pipe ⇒ no packet
     VectorStack   vts;
     evaluateSubject(subj, vts, SubjectSource(cast(Mesh*)&mesh, editMode, SelType.Vertex, vp));
     const localPkt = snapPacketOf(vts);

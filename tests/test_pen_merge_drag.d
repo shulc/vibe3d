@@ -14,6 +14,9 @@
 // construction from rule 2's own term, "the vertex snap PLACED the point"):
 // `SV_V1-unsnapped` — SV_V1 with the snap's inner range 5 px, so v2 (11.4 px)
 // is only highlighted; the snap places nothing and the drag links as D_V1 does.
+// `hover-stroke-point-clears` — a hover over a stroke point (the next press
+// selects it, places nothing) withdraws the published snap; the frame draws
+// only the published one.
 // Excluded: D_E1 / C_E1
 // (merge on, 6 px from the slanted edge v3-v2: the reference stays on the
 // plane, ours lands on the edge) — the captured in-plane scene-edge cells of
@@ -22,7 +25,7 @@
 // `VIBE3D_CELL=<id>` runs one cell alone (the population floor holds for the
 // full run only).
 
-import drag_helpers : Vec3, buildDragLog, fetchCamera, kPaceLine, playAndWait;
+import drag_helpers : Vec3, buildDragLog, fetchCamera, fetchSnapLast, kPaceLine, playAndWait;
 import http_client : getJson, postJson;
 import http_command_helpers : commandBody;
 import pen_rig_helpers;
@@ -161,9 +164,24 @@ unittest {
         ++ran;
     }
 
-    // Population floor: the live cell, 20 of the 22 captured cells, one ours.
+    if (wanted("hover-stroke-point-clears")) {
+        rig(fx["cells"]["SV_V1"]);
+        const k = fx["rig"]["clicks_xz"];
+        clickWorld(xz(k[0]), xz(k[1]), xz(k[2]));
+        hoverWorld(xz(fx["rig"]["targets_xz"]["V"]));
+        const before = fetchSnapLast()["snapped"].type == JSONType.true_;   // the control
+        hoverWorld(xz(k[0]));
+        const after = fetchSnapLast()["snapped"].type == JSONType.true_;
+        if (!before || after)
+            fails ~= format("hover-stroke-point-clears: snapped near v2 %s (expected true), "
+                            ~ "over p0 %s (expected false)", before, after);
+        penCommand("tool.set pen off");
+        ++ran;
+    }
+
+    // Population floor: the live cell, 20 of the 22 captured cells, two ours.
     if (only is null)
-        assert(ran == 22, format("population floor: %d cells ran, expected 22", ran));
+        assert(ran == 23, format("population floor: %d cells ran, expected 23", ran));
     // The first line names the first failing cell.
     assert(fails.length == 0, fails.join("\n  "));
 }

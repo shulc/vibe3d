@@ -380,12 +380,34 @@ unittest {
         fails ~= compare("auto-plane-mirror", o[] ~ [Vec3(-0.3f, 0.3f, 0.15f),
             Vec3(-0.3f, 0.3f, 0.45f), Vec3(-0.3f, 0.6f, 0.45f)], null);
     }
+    // Ours (the stage's flag-off plane is the world axis plane for every
+    // reader; the pen's second transform is read under the flag only): the
+    // A5-symWP2 plane pinned, use work plane OFF — the mirror is world X.
+    {
+        penSceneEmpty("Top");
+        penCommand("workplane.edit cenX:0.3 cenY:0 cenZ:0 rotX:0 rotY:0 rotZ:30");
+        penCameraAt(p(0, 0), 420);
+        penCommand("tool.pipe.attr snap enabled false");
+        symmetry("x", 0, false);
+        penCommand("tool.set pen on");
+        clickWorld(p(-0.2, -0.6, 0), p(0.3, -0.6, 0), p(0.3, 0.6, 0));
+        drop(); ++ran;
+        auto got = model().v;
+        if (got.length != 6)
+            fails ~= format("pinned-plane-flag-off: %s vertices, expected 6", got.length);
+        else foreach (i; 0 .. 3)
+            if (!(abs(got[3 + i].x + got[i].x) <= kTol && abs(got[3 + i].y - got[i].y) <= kTol &&
+                  abs(got[3 + i].z - got[i].z) <= kTol))
+                fails ~= format("pinned-plane-flag-off: m(v%s) %s, expected world X of %s",
+                                i, got[3 + i], got[i]);
+        penCommand("workplane.reset");
+    }
 
     fails ~= oursCells(ran);
     symmetry(null);
     // Floor: 1 stay-green + 27 turning cells (A8 reads three moments; one
-    // extrapolated work-plane cell) + 13 ours-only cells.
-    assert(ran == 42, format("ran %s cells, pinned 42", ran));
+    // extrapolated work-plane cell) + 14 ours-only cells.
+    assert(ran == 43, format("ran %s cells, pinned 43", ran));
     // One line, so the first red line names every failing cell.
     assert(fails.length == 0, format("%s failure(s): %-(%s | %)", fails.length, fails));
 }
