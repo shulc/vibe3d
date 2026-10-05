@@ -1,0 +1,350 @@
+{
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference_token": "ref-editor@11.2v3",
+  "method": "gui-gesture",
+  "captured_utc": "2026-10-05",
+  "task": "9404",
+  "notes": "Numerical observations copied from the private capture records K-C (task 9396) and K-C2 (task 9460); the private findings remain the source of record."
+ },
+ "_about": "A create click over a BACKGROUND surface with the surface constraint on (geometry off, double-sided off, snapping off unless stated). Background: a sphere of radius 1, 64 sides x 32 segments, centre (0,1,0), in a background layer; the foreground mesh starts empty. ROLE law: a FREE point (the vertex tool's click) reads the surface, a primitive's PRESS point (box corner, sphere centre) does not. The free point: q = the click's anchor-plane hit snapped to the view quantum (the create click law); the background hit on the VIEW ray through q (parallel in ortho, from the eye in perspective) wins, NOT re-quantised; offset * hit normal after it; no hit => q; then a snap target replaces all three channels. The surface height is a depth read at the reference (1/1024 lattice in ortho, ~1e-3 off a facet model; up to ~8e-3 along the ray in perspective; the offset normal 1-2 deg off the facet): compare the ray / in-plane channels to 1e-5 and heights to the cell's own scatter, floor 2e-3.",
+ "views": {
+  "top440": {
+   "projection": "ortho",
+   "preset": "Top",
+   "focus": [
+    0.07,
+    1.0,
+    0.0
+   ],
+   "px_per_m": 439.5272,
+   "q": 0.005
+  },
+  "persp440": {
+   "projection": "perspective",
+   "focus": [
+    0.07,
+    1.0,
+    0.0
+   ],
+   "px_per_m": 439.5272,
+   "q": 0.005,
+   "grid": 0.1,
+   "note": "straight down (the record's rig: distance 3.858); its eye is not recoverable from the record and our projection differs, so the cells assert the law on OUR camera at the record's scale (the captured press corner; the q-ray of our own control click), not the captured surface point"
+  },
+  "psp33": {
+   "projection": "perspective",
+   "focus": [
+    0.07,
+    1.0,
+    0.0
+   ],
+   "distance": 38.059,
+   "q": 0.05,
+   "plane": "the record's grid is 1, ours at this distance 2: both put the anchor plane at the recorded depth, which the control click asserts (q point, all channels)",
+   "aim": "the q point (our pixels are not the record's; the q point's own pixel rounds to it)",
+   "note": "straight down, eye (0.07, 39.059, 0); anchor plane y 0"
+  },
+  "pspax": {
+   "projection": "perspective",
+   "focus": [
+    0.5,
+    1.0,
+    -0.5
+   ],
+   "distance": 38.059,
+   "q": 0.05,
+   "plane": "the record's grid is 1, ours at this distance 2: both put the anchor plane at the recorded depth, which the control click asserts (q point, all channels)",
+   "aim": "the q point (our pixels are not the record's; the q point's own pixel rounds to it)",
+   "note": "straight down, eye (0.5, 39.059, -0.5); anchor plane y 0"
+  },
+  "pspdeep": {
+   "projection": "perspective",
+   "focus": [
+    0.07,
+    -20.0,
+    0.0
+   ],
+   "distance": 38.059,
+   "q": 0.05,
+   "plane": "the record's grid is 1, ours at this distance 2: both put the anchor plane at the recorded depth, which the control click asserts (q point, all channels)",
+   "aim": "the q point (our pixels are not the record's; the q point's own pixel rounds to it)",
+   "note": "straight down, eye (0.07, 18.059, 0); anchor plane y -20"
+  },
+  "wp30": {
+   "projection": "ortho",
+   "preset": "Top",
+   "focus": [
+    0.07,
+    1.0,
+    0.0
+   ],
+   "px_per_m": 33.0,
+   "q": 0.05,
+   "pin_rot_x_deg": 30.0,
+   "note": "work plane pinned at the origin, rotated 30 deg about X; the top preset turns with it; frame-local values"
+  }
+ },
+ "cells": {
+  "box-press-plane": {
+   "family": "box",
+   "view": "top440",
+   "offset": 0.0,
+   "handle": true,
+   "aim_world": [
+    0.2997923768995412,
+    1.0,
+    0.20021514026890713
+   ],
+   "expect_world": [
+    0.3,
+    1.0,
+    0.2
+   ],
+   "source": "K-C C1a",
+   "law": "PLANE: the press corner is the quantised plane point; the surface (y 1.930664) is not read at the press"
+  },
+  "box-press-plane-persp": {
+   "family": "box",
+   "view": "persp440",
+   "offset": 0.0,
+   "handle": true,
+   "aim_world": [
+    0.35724,
+    1.0,
+    0.250269
+   ],
+   "expect_world": [
+    0.355,
+    1.0,
+    0.25
+   ],
+   "source": "K-C C1a-persp",
+   "law": "PLANE-RAY: press corner = q(plane hit); the projected surface hit lies 0.095 m away"
+  },
+  "sphere-press-plane": {
+   "family": "sphere",
+   "view": "top440",
+   "offset": 0.0,
+   "handle": true,
+   "aim_world": [
+    0.2997923768995412,
+    1.0,
+    0.20021514026890713
+   ],
+   "expect_world": [
+    0.3,
+    1.0,
+    0.2
+   ],
+   "source": "K-C C1c",
+   "law": "PLANE: the centre is the quantised plane point"
+  },
+  "vertex-surface-top": {
+   "family": "vertex",
+   "view": "top440",
+   "offset": 0.0,
+   "handle": true,
+   "aim_world": [
+    0.2997923768995412,
+    1.0,
+    0.20021514026890713
+   ],
+   "q_point": [
+    0.3,
+    1.0,
+    0.2
+   ],
+   "expect_world": [
+    0.3,
+    1.930664,
+    0.2
+   ],
+   "height_tol": 0.002,
+   "source": "K-C C1b",
+   "law": "SURF: xz = q, height = the surface on the vertical ray through q"
+  },
+  "vertex-surface-offset": {
+   "family": "vertex",
+   "view": "top440",
+   "offset": 0.1,
+   "handle": true,
+   "aim_world": [
+    0.2997923768995412,
+    1.0,
+    0.20021514026890713
+   ],
+   "q_point": [
+    0.3,
+    1.0,
+    0.2
+   ],
+   "expect_world": [
+    0.331175,
+    2.023491,
+    0.220282
+   ],
+   "height_tol": 0.0035,
+   "source": "K-C C1e on the vertex tool",
+   "law": "OFF-AFTER-Q: the surface point on the q-ray + 0.1 * hit normal (the reference normal is a depth-read normal 1-2 deg off the facet, so every channel carries up to offset * sin(2 deg) = 3.5e-3)"
+  },
+  "vertex-surface-handle-off": {
+   "family": "vertex",
+   "view": "top440",
+   "offset": 0.0,
+   "handle": false,
+   "aim_world": [
+    0.2997923768995412,
+    1.0,
+    0.20021514026890713
+   ],
+   "expect_world": [
+    0.3,
+    1.0,
+    0.2
+   ],
+   "source": "plan inference from K-C C1d (box, handle off => PLANE)",
+   "law": "handle off: the constraint does not take the pointer; the click is the plane point"
+  },
+  "vertex-surface-persp": {
+   "family": "vertex",
+   "view": "persp440",
+   "offset": 0.0,
+   "handle": true,
+   "aim_world": [
+    0.260365,
+    1.948835,
+    0.166987
+   ],
+   "source": "K-C C1b-persp",
+   "law": "SURF on the eye ray through q, off the q lattice (captured (0.260365, 1.948835, 0.166987) on the reference camera)"
+  },
+  "outside-vertex-surface-persp-coarse-a": {
+   "outside": "at the recorded camera our pixel lattice (~0.054 m at the plane) has no pixel whose raw hit lies inside the recorded q cell (0.6, -0.8): nearest 0.0268 > q/2 on one channel, so our click cannot reach the recorded q; the two other coarse reads stand",
+   "family": "vertex",
+   "view": "psp33",
+   "offset": 0.0,
+   "handle": true,
+   "aim_world": [
+    0.575363,
+    0.0,
+    -0.777481
+   ],
+   "q_point": [
+    0.6,
+    0.0,
+    -0.8
+   ],
+   "expect_world": [
+    0.583335,
+    1.228163,
+    -0.774845
+   ],
+   "height_tol": 0.008,
+   "source": "K-C2 C2c_psp_vtxH",
+   "law": "QPLANE-RAY"
+  },
+  "vertex-surface-persp-coarse-b": {
+   "family": "vertex",
+   "view": "pspax",
+   "offset": 0.0,
+   "handle": true,
+   "aim_world": [
+    -0.121985,
+    0.0,
+    0.121985
+   ],
+   "q_point": [
+    -0.1,
+    0.0,
+    0.1
+   ],
+   "expect_world": [
+    -0.069376,
+    1.993561,
+    0.069376
+   ],
+   "height_tol": 0.008,
+   "source": "K-C2 C2c3H_pspax_vtx (the reference vertex was dragged to this pixel; ours places at the press, so the cell clicks the release pixel)",
+   "law": "QPLANE-RAY"
+  },
+  "vertex-surface-persp-coarse-c": {
+   "family": "vertex",
+   "view": "pspdeep",
+   "offset": 0.0,
+   "handle": true,
+   "aim_world": [
+    -0.119394,
+    -20.0,
+    -1.780303
+   ],
+   "q_point": [
+    -0.1,
+    -20.0,
+    -1.8
+   ],
+   "expect_world": [
+    -0.003409,
+    1.624369,
+    -0.777272
+   ],
+   "height_tol": 0.008,
+   "source": "K-C2 C2c4_deep_vtxH",
+   "law": "QPLANE-RAY"
+  },
+  "vertex-surface-turned-top": {
+   "family": "vertex",
+   "view": "wp30",
+   "offset": 0.0,
+   "handle": true,
+   "aim_frame": [
+    -0.475455,
+    0.866,
+    0.075758
+   ],
+   "q_frame_xz": [
+    -0.5,
+    0.1
+   ],
+   "expect_frame": [
+    -0.5,
+    1.485204,
+    0.099963
+   ],
+   "expect_world": [
+    -0.5,
+    1.236243,
+    0.829173
+   ],
+   "height_tol": 0.002,
+   "source": "K-C2 C2b_wp30_vtx",
+   "law": "QPLANE-RAY under a pinned plane: frame-local xz = q, the frame height = the surface on the frame-vertical ray"
+  },
+  "vertex-surface-snap": {
+   "family": "vertex",
+   "view": "top440",
+   "offset": 0.0,
+   "handle": true,
+   "snap": "vertex",
+   "foreground_vertex": [
+    0.145081,
+    2.5,
+    0.200215
+   ],
+   "aim_world": [
+    0.13142964530977833,
+    1.0,
+    0.20021514026890713
+   ],
+   "expect_world": [
+    0.145081,
+    2.5,
+    0.200215
+   ],
+   "expect_nv": 2,
+   "source": "K-C2 C2i_vtx (snapping off, C2i_vtx_ctrl lands on the surface at (0.13, 1.96875, 0.2))",
+   "law": "SNAP-LAST: a foreground vertex in range replaces all three channels of the surface point; the vertex tool does not weld (nv 2)"
+  }
+ }
+}

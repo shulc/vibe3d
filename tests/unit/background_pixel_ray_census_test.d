@@ -7,7 +7,7 @@
 // a site.
 module tests.unit.background_pixel_ray_census_test;
 
-import std.algorithm : sort;
+import std.algorithm : canFind, sort;
 import std.file : dirEntries, readText, SpanMode;
 import std.format : format;
 import std.path : buildPath, dirName, relativePath;
@@ -183,10 +183,11 @@ unittest { // (a) the ONE background query: `.nearest` in the CONS stage only; i
         format("`.nearest` outside bvh_pick.d must be exactly constrain.d's `backgroundHit`; a client "
                ~ "calling the picker builds its own query: %s", nearestHomes));
     enum pen = "tools/edit/topology_pen/tool.d:";
-    assert(clients == [pen ~ "backgroundHit", pen ~ "backgroundHit", pen ~ "rayHit"],
-        format("background ray clients outside constrain.d must be exactly the topology pen's `rayHit` "
-               ~ "(its drag rays through an exact projected point) and its pipeline-less `backgroundHit` "
-               ~ "(import + call); got %s", clients));
+    assert(clients == ["tools/create/create_common.d:surfaceOnRay", pen ~ "backgroundHit",
+                       pen ~ "backgroundHit", pen ~ "rayHit"],
+        format("background ray clients outside constrain.d must be exactly the free-point resolver's "
+               ~ "`surfaceOnRay` (task 9404), the topology pen's `rayHit` (its drag rays through an exact "
+               ~ "projected point) and its pipeline-less `backgroundHit` (import + call); got %s", clients));
 }
 
 unittest { // (b) the ONE CONS finder over g_pipeCtx: inline finders outside constrain.d
@@ -222,4 +223,40 @@ unittest { // (b) the ONE CONS finder over g_pipeCtx: inline finders outside con
         format("cast(ConstrainStage) over a findBy* result outside constrain.d must be exactly the "
                ~ "prepared pipe activation (its own pipeline) and the prepared topology-pen activation "
                ~ "(captured `pipe_`); every g_pipeCtx reader calls liveConstrainStage(): %s", castFinders));
+}
+
+unittest { // (c) a FREE point reads the surface, a primitive's PRESS point does not (task 9404)
+    // Polarity: TRUE after task 9404 (K-C role law). The resolver lives in
+    // create_common.d; its only client is the vertex tool (the pen joins in
+    // P1, the base drag in C2d). A primitive press calling it — box,
+    // sphere-family, torus or tube — appears in the roster and reddens it.
+    auto files = sourceFiles();
+    assert(files.length > 300, format("census floor: %d source files", files.length));
+    static immutable forms = ["placeFreePoint", "backgroundPoint"];
+    string[] clients;
+    size_t[string] home;
+    foreach (f; files) {
+        immutable code = blankNonCode(readText(buildPath(root, "source", f)));
+        foreach (form; forms) {
+            immutable n = tokenAt(code, form).length;
+            if (f == "tools/create/create_common.d") { home[form] = n; continue; }
+            foreach (_; 0 .. n) clients ~= f ~ ":" ~ form;
+        }
+    }
+    // Floor: placeFreePoint = its declaration; backgroundPoint = its
+    // declaration + placeFreePoint's call.
+    assert(home == ["placeFreePoint": size_t(1), "backgroundPoint": 2],
+        format("census floor: the resolver's own tokens in create_common.d (measured); got %s", home));
+    enum vp = "tools/create/vertex_place.d:";
+    assert(clients == [vp ~ "placeFreePoint", vp ~ "placeFreePoint"],
+        format("free-point clients must be exactly the vertex tool (import + call); a primitive "
+               ~ "press must stay the plane point; got %s", clients));
+    foreach (press; ["tools/create/box.d", "tools/create/primitive_create_tool.d",
+                     "tools/create/torus.d", "tools/create/tube.d"])
+        assert(files.canFind(press), "census floor: the primitive press file " ~ press ~ " moved");
+    immutable vertexTool = blankNonCode(readText(buildPath(root, "source", "tools/create/vertex_place.d")));
+    assert(tokenAt(vertexTool, "kGuideTypes").length == 0,
+        "the vertex tool passes no guide mask: after the guide-block deletion it has no candidate to strip");
+    assert(tokenAt(vertexTool, "snapLocalHit").length == 2,
+        "census floor: the vertex tool's motion preview still snaps through snapLocalHit (import + call)");
 }

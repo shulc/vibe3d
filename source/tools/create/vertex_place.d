@@ -14,10 +14,10 @@ import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
 import tools.create.create_common : primitivePlacementFrame, WorkplaneFrame,
-                              transformPoint, snapLocalHit, screenToPlacementLocal;
-import toolpipe.packets : SnapType;
+                              transformPoint, snapLocalHit, screenToPlacementLocal,
+                              placeFreePoint;
 import editmode : EditMode;
-import snap : SnapResult, kGuideTypes;
+import snap : SnapResult;
 import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap, g_lastSnap;
 import operator : VectorStack;
 import prepared_tool_effect : PreparedActivateEffect, PreparedActivateKind;
@@ -40,10 +40,10 @@ static assert(!__traits(compiles, {
 // VertexTool — interactive single-vertex placement.
 //
 // Each LMB click in the viewport:
-//   1. Places the click by the create click law (`screenToPlacementLocal`
-//      on the parameter frame: the view work-plane anchor, then the view
-//      quantum; K-W W1e / W1g).
-//   2. Applies discrete snap (pen guide bits excluded).
+//   1. Places the FREE point (`placeFreePoint` on the parameter frame): the
+//      create click law's q (K-W W1e / W1g), read onto the background surface
+//      when the constraint takes the pointer (K-C C1b), then the snap.
+//   2. Publishes the snap.
 //   3. Converts to world and appends one isolated vertex (mesh.addVertex).
 //   4. Records a snapshot-undo entry immediately — one entry per click.
 //
@@ -188,12 +188,8 @@ public:
         if (mods & (KMOD_CTRL | KMOD_SHIFT)) return false;
 
         WorkplaneFrame frame = primitivePlacementFrame();
-        Vec3 hit = screenToPlacementLocal(e.x, e.y, cachedVp_, frame);
-
-        // Discrete snap (pen guide bits excluded so only mesh-element targets
-        // fire here).
-        lastSnap_ = snapLocalHit(hit, frame, e.x, e.y, cachedVp_,
-                                  *mesh, EditMode.Vertices, [], kGuideTypes);
+        bool onSurface;
+        Vec3 hit = placeFreePoint(e.x, e.y, cachedVp_, frame, *mesh, lastSnap_, onSurface);
         publishLastSnap(lastSnap_);
 
         // Convert local workplane hit → world position.
@@ -244,8 +240,7 @@ public:
     {
         WorkplaneFrame f = primitivePlacementFrame();
         Vec3 hit = screenToPlacementLocal(e.x, e.y, cachedVp_, f);
-        lastSnap_ = snapLocalHit(hit, f, e.x, e.y, cachedVp_,
-                                  *mesh, EditMode.Vertices, [], kGuideTypes);
+        lastSnap_ = snapLocalHit(hit, f, e.x, e.y, cachedVp_, *mesh, EditMode.Vertices);
         publishLastSnap(lastSnap_);
         return false;
     }

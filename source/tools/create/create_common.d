@@ -1,7 +1,7 @@
 module tools.create.create_common;
 
-import math : Vec3, Viewport, dot, isOrtho, matMul4, matrixMirrorsWinding,
-              rayPlaneIntersect, screenPointToRay;
+import math : Vec3, Viewport, dot, isOrtho, matMul4, matrixMirrorsWinding, normalize,
+              projectToWindowFull, rayPlaneIntersect, screenPointToRay;
 import std.math : abs;
 import viewgrid : vectorSnap, viewVectorQuantum, viewWorkPlaneAnchor;
 
@@ -291,6 +291,41 @@ Vec3 screenToPlacementLocal(float sx, float sy, const ref Viewport vp,
 {
     return vectorSnap(placementPlaneHit(sx, sy, vp, frame, axisLocal),
                       viewVectorQuantum(vp));
+}
+
+/// A plane point onto the background (task 9404, K-C2 QPLANE-RAY): the
+/// constraint's surface (`surfaceOnRay`) on the VIEW ray through `planeLocal`
+/// — the ray of its own screen position, re-aimed at it (parallel in ortho,
+/// from the eye in perspective) — offset along the hit normal, NOT quantised;
+/// no hit ⇒ `planeLocal` snapped to the view quantum.
+Vec3 backgroundPoint(Vec3 planeLocal, const ref Viewport vp, in WorkplaneFrame frame,
+                     out bool onSurface)
+{
+    import toolpipe.stages.constrain : liveConstrainStage;
+    import bvh_pick : SurfaceHit;
+    auto cs = liveConstrainStage();
+    immutable Vec3 w = transformPoint(frame.toWorld, planeLocal);
+    float px, py, ndcZ;
+    Vec3 org, dir;
+    SurfaceHit sh;
+    if (cs !is null && projectToWindowFull(w, vp, px, py, ndcZ)) {
+        screenPointToRay(px, py, vp, org, dir);
+        onSurface = cs.surfaceOnRay(org, normalize(w - org), sh);
+    }
+    return onSurface ? transformPoint(frame.toLocal, cs.offsetPoint(sh.point, sh.normal))
+                     : vectorSnap(planeLocal, viewVectorQuantum(vp));
+}
+
+/// The FREE point under the pointer: the click law's q read onto
+/// the background (`backgroundPoint`), then the snap, which replaces all three
+/// channels (K-C2 C2i, SNAP-LAST). A primitive's press point is the plane
+/// point and never comes here (K-C role law).
+Vec3 placeFreePoint(int x, int y, const ref Viewport vp, in WorkplaneFrame frame,
+                    const ref Mesh mesh, out SnapResult snap, out bool onSurface)
+{
+    Vec3 p = backgroundPoint(screenToPlacementLocal(x, y, vp, frame), vp, frame, onSurface);
+    snap = snapLocalHit(p, frame, x, y, vp, mesh, EditMode.Vertices);
+    return p;
 }
 
 /// World-space basis triple for Create-tool gizmos (mover arrows / plane
