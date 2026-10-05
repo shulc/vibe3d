@@ -136,31 +136,6 @@ private void row(T)(EditMode mode, void function(ref Mesh) pick,
         ~ "an operation that built nothing");
 }
 
-// Pins measured on main a9192104 (task 9433 Step 0), the same in all three modes.
-unittest {
-    row!EdgeExtrudeTool(EditMode.Edges, &pickEdge, ["width", "extrude"],
-        [0.1f, 0.3f], 12, 10, -85.9279);
-    row!PolyExtrudeTool(EditMode.Polygons, &pickFace, ["distance"],
-        [0.3f], 12, 10, -66.8);
-    row!VertexBevelTool(EditMode.Vertices, &pickVertex, ["inset"],
-        [0.2f], 10, 7, -38.0);
-    row!VertexExtrudeTool(EditMode.Vertices, &pickVertex, ["shift", "width"],
-        [0.1f, 0.2f], 14, 12, -147.6392);
-    row!PolyInsetTool(EditMode.Polygons, &pickFace, ["inset"],
-        [0.1f], 12, 10, -29.2828);
-    row!VertexMergeTool(EditMode.Vertices, &pickTwoVertices, ["dist"],
-        [1.5f], 7, 6, 31.5, (ref Mesh m, Tool) { m.clearVertexSelection(); });
-    row!ReductionTool(EditMode.Polygons, &triangulateAll, ["ratio"],
-        [0.5f], 5, 6, 13.5, (ref Mesh, Tool t) { poke(t, "ratio", 1.0f); });
-    // A ratio rounding to no face keeps one (the operation's floor; on an open
-    // grid without boundary preservation the kernel would otherwise take all).
-    row!ReductionTool(EditMode.Polygons, &triangulatedGrid, ["preserveBoundary", "ratio"],
-        [0.0f, 0.01f], 3, 1, 3.75, (ref Mesh, Tool t) { poke(t, "ratio", 1.0f); });
-    row!SmoothShiftTool(EditMode.Polygons, &pickFace, ["scale", "shift"],
-        [1.0f, 0.3f], 12, 10, -66.8);
-    assert(rows == 9, format("%s rows ran, expected 9 (8 tools, reduce twice)", rows));
-}
-
 // The scripted polygon extrude against the reference's scripted apply (capture
 // K-PX, task 9487; fixture private): on the open box (8v/4f, polygon 0 = the
 // -Z face selected) every cell gives walls first, the cap LAST and selected,
@@ -203,8 +178,35 @@ unittest {
         }
         ++cells;
     }
-    cell("PX_Z", 0.0f, 0.0f, [0, 0, 0]);       // zero extent: coincident, not a no-op
-    cell("PX_B", 0.3f, 0.0f, [0, 0, -0.3f]);
     cell("PX_A", 0.3f, 0.2f, [0.2f, 0, -0.3f]);
+    cell("PX_B", 0.3f, 0.0f, [0, 0, -0.3f]);
+    cell("PX_Z", 0.0f, 0.0f, [0, 0, 0]);       // zero extent: coincident, not a no-op
     assert(cells == 3);
+}
+
+// Pins measured on main a9192104 (task 9433 Step 0), the same in all three modes.
+unittest {
+    row!EdgeExtrudeTool(EditMode.Edges, &pickEdge, ["width", "extrude"],
+        [0.1f, 0.3f], 12, 10, -85.9279);
+    row!PolyExtrudeTool(EditMode.Polygons, &pickFace, ["distance"],
+        [0.3f], 12, 10, -66.8);
+    row!VertexBevelTool(EditMode.Vertices, &pickVertex, ["inset"],
+        [0.2f], 10, 7, -38.0);
+    row!VertexExtrudeTool(EditMode.Vertices, &pickVertex, ["shift", "width"],
+        [0.1f, 0.2f], 14, 12, -147.6392);
+    row!PolyInsetTool(EditMode.Polygons, &pickFace, ["inset"],
+        [0.1f], 12, 10, -29.2828);
+    // Vertex Merge's operand is the selection alone (no visible fallback):
+    // a cleared selection welds nothing and refuses.
+    row!VertexMergeTool(EditMode.Vertices, &pickTwoVertices, ["dist"],
+        [1.5f], 7, 6, 31.5, (ref Mesh m, Tool) { m.clearVertexSelection(); });
+    row!ReductionTool(EditMode.Polygons, &triangulateAll, ["ratio"],
+        [0.5f], 5, 6, 13.5, (ref Mesh, Tool t) { poke(t, "ratio", 1.0f); });
+    // A ratio rounding to no face keeps one (the operation's floor; on an open
+    // grid without boundary preservation the kernel would otherwise take all).
+    row!ReductionTool(EditMode.Polygons, &triangulatedGrid, ["preserveBoundary", "ratio"],
+        [0.0f, 0.01f], 3, 1, 3.75, (ref Mesh, Tool t) { poke(t, "ratio", 1.0f); });
+    row!SmoothShiftTool(EditMode.Polygons, &pickFace, ["scale", "shift"],
+        [1.0f, 0.3f], 12, 10, -66.8);
+    assert(rows == 9, format("%s rows ran, expected 9 (8 tools, reduce twice)", rows));
 }
