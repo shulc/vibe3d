@@ -279,7 +279,7 @@ public:
         image.expectedTouchedIdx = touchedIdx_.dup;
         image.expectedTouchedPrev = touchedPrev_.dup;
         image.expectedSessionMatches = sessionKey_.matches(live);
-        if (before.filled) image.expectedBefore = before;
+        image.expectedBefore = before;
         return image;
     }
     final bool preparedParamUpdateMatches(in PreparedMagnetParamImage image,

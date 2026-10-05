@@ -274,7 +274,7 @@ public:
         image.expectedParams = paramProjection();
         image.expectedParams.axis = axis_.dup;
         image.expectedLive = MeshSnapshot.capture(live);
-        if (before.filled) image.expectedBefore = before;
+        image.expectedBefore = before;
         return image;
     }
     final bool preparedParamMatches(in RadialArrayTransitionImage image,

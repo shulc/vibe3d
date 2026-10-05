@@ -361,7 +361,7 @@ public:
         image.expectedParams = paramProjection();
         image.expectedParams.item = item_.dup;
         image.expectedLive = MeshSnapshot.capture(live);
-        if (before.filled) image.expectedBefore = before;
+        image.expectedBefore = before;
         return image;
     }
     final bool preparedParamUpdateMatches(in PreparedArrayParamImage image,

@@ -306,7 +306,7 @@ public:
         PreparedPolyExtrudeParamImage image;
         image.valid = true; image.expected = paramProjection();
         image.expectedLive = MeshSnapshot.capture(live);
-        if (before.filled) image.expectedBefore = before;
+        image.expectedBefore = before;
         return image;
     }
     final bool preparedParamUpdateMatches(in PreparedPolyExtrudeParamImage image,

@@ -334,7 +334,7 @@ public:
         PreparedPolyBevelParamImage image;
         image.valid = true; image.expected = paramProjection();
         image.expectedLive = MeshSnapshot.capture(live);
-        if (opBase().filled) image.expectedBefore = opBase();
+        image.expectedBefore = opBase();
         return image;
     }
     final bool preparedParamUpdateMatches(in PreparedPolyBevelParamImage image,
