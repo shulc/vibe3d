@@ -29,6 +29,7 @@ immutable string[] kPortGroup = [
     "tests.unit.frame_probe_owner_test",
     "tests.unit.history_http_adapter_test",
     "tests.unit.history_replay_boundary_test",
+    "tests.unit.http_keep_alive_test",
     "tests.unit.http_server_test",
     "tests.unit.model_handles_owned_transport_test",
     "tests.unit.playback_owner_test",
