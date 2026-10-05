@@ -1,6 +1,6 @@
 module tools.create.create_common;
 
-import math : Vec3, Viewport, dot, isOrtho, matMul4, matrixMirrorsWinding,
+import math : Vec3, Viewport, dot, isOrtho, matMul4, matrixMirrorsWinding, normalize,
               projectToWindowFull, rayPlaneIntersect, screenPointToRay;
 import std.math : abs;
 import viewgrid : vectorSnap, viewVectorQuantum, viewWorkPlaneAnchor;
@@ -242,15 +242,40 @@ bool moverDrag(const ref HandleDrag grab, int part, int mx, int my, MoveHandler 
     DragFrame f;
     f.kind = DragKind.principalPlane;
     if (part <= 2) {
-        immutable Vec3 end = part == 0 ? mover.arrowX.end
-                           : part == 1 ? mover.arrowY.end : mover.arrowZ.end;
         f.kind = DragKind.screenAxis;
-        f.axis = transformDir(frame.toLocal, end - mover.center);
+        f.axis = moverArrowLocal(mover, part, frame);
     }
     bool skip;
     Viewport lvp = planeLocalViewport(vp, frame);
     centre = grab.client(mx, my, f, lvp, skip);
     return !skip;
+}
+
+private Vec3 moverArrowLocal(MoveHandler mover, int part, in WorkplaneFrame frame) {
+    immutable Vec3 end = part == 0 ? mover.arrowX.end : part == 1 ? mover.arrowY.end : mover.arrowZ.end;
+    return transformDir(frame.toLocal, end - mover.center);
+}
+
+/// The mover's snap (task 9472, K-H / K-H2 CENTRE+TRAVEL): `moverDrag`'s
+/// centre snapped as a point, then only the part's free channels taken — along
+/// the arrow, or off the centre box's locked axis. Never fed back.
+SnapResult snapMoverCentre(ref Vec3 centre, int part, MoveHandler mover, in WorkplaneFrame frame,
+                           int x, int y, const ref Viewport vp, const ref Mesh mesh)
+{
+    import drag : primitiveCenterPlaneAxis;
+    Vec3 s = centre;
+    auto sr = snapLocalHit(s, frame, x, y, vp, mesh, EditMode.Vertices);
+    if (!sr.snapped) return sr;
+    if (part <= 2) {
+        immutable Vec3 u = normalize(moverArrowLocal(mover, part, frame));
+        centre += u * dot(s - centre, u);
+        return sr;
+    }
+    Viewport lvp = planeLocalViewport(vp, frame);
+    immutable int lock = primitiveCenterPlaneAxis(centre, lvp);
+    foreach (k; 0 .. 3)
+        if (k != lock) centre += axisUnit(k) * dot(s - centre, axisUnit(k));
+    return sr;
 }
 
 /// A height drag's plane normal: in the work plane (perpendicular to

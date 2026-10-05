@@ -86,7 +86,7 @@ import tools.create.create_common : WorkplaneFrame,
                               planeLocalViewport,
                               mostFacingAxis, transformPoint, transformDir, snapLocalHit,
                               frameIsLeftHanded, reverseFaceWinding, baseDragPoint, syncEventViewport,
-                              workplaneCursorPlaneHit, moverDrag, heightDragNormal;
+                              workplaneCursorPlaneHit, moverDrag, snapMoverCentre, heightDragNormal;
 import editmode : EditMode;
 import snap : SnapResult;
 import snap_render : publishLastSnap, clearLastSnap, SnapOverlayOwner;
@@ -677,11 +677,15 @@ protected:
         if (moverDragAxis < 0) return false;
         Vec3 c;
         if (moverDrag(grab, moverDragAxis, mx, my, mover, frame, cachedVp, c)) {
+            snapMoved(c, mx, my);
             setCenter(c);
             rebuildPreview();
         }
         return true;
     }
+
+    // The tube's mover has no captured counterpart (gap row 565): no snap.
+    void snapMoved(ref Vec3 c, int mx, int my) {}
 
     // Idle-state live snap preview — the published mark showing where
     // the next click would anchor the primitive.
@@ -809,19 +813,26 @@ protected:
     }
 
     // The handle's world point at the press plus the travel along its outward
-    // axis; the family applies the step since the last event (its flips and
-    // clamps are incremental).
+    // axis, snapped as a POINT and never fed back (task 9472, K-H / K-H2); the
+    // family applies the step since the last event (flips, clamps, mode).
     bool handleSizeDrag(int mx, int my) {
         if (sizeDragIdx < 0) return false;
         DragFrame f;
         f.kind = DragKind.screenAxis;
         f.axis = toWorldD(SIZE_AXES[sizeDragIdx]);
         bool skip;
-        immutable Vec3 c = grab.client(mx, my, f, cachedVp, skip);
+        Vec3 c = transformPoint(frame.toLocal, grab.client(mx, my, f, cachedVp, skip));
         if (skip) return true;
+        publishLastSnap(snapLocalHit(c, frame, mx, my, cachedVp, *mesh, EditMode.Vertices));
+        c = toWorldP(c);
         applySizeDelta(sizeDragIdx, c - sizeApplied);
         sizeApplied = c;
         return true;
+    }
+
+    // A captured handle's mover snaps centre + travel (task 9472, K-H / K-H2).
+    override void snapMoved(ref Vec3 c, int mx, int my) {
+        publishLastSnap(snapMoverCentre(c, moverDragAxis, mover, frame, mx, my, cachedVp, *mesh));
     }
 }
 

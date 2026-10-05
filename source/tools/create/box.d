@@ -36,7 +36,7 @@ import tools.create.create_common : WorkplaneFrame,
                               mostFacingAxis,
                               transformPoint, transformDir, snapLocalHit,
                               frameIsLeftHanded, reverseFaceWinding,
-                              workplaneCursorPlaneHit, moverDrag, heightDragNormal, baseDragPoint, syncEventViewport;
+                              workplaneCursorPlaneHit, moverDrag, snapMoverCentre, heightDragNormal, baseDragPoint, syncEventViewport;
 import editmode : EditMode;
 import snap : SnapResult;
 import snap_render : publishLastSnap, clearLastSnap;
@@ -760,10 +760,11 @@ public:
         if (moverDragAxis >= 0) {
             Vec3 c;
             if (moverDrag(grab, moverDragAxis, e.x, e.y, mover, frame, cachedVp, c)) {
+                publishLastSnap(snapMoverCentre(c, moverDragAxis, mover, frame, e.x, e.y,
+                                                cachedVp, *mesh));
                 params_.cenX = c.x; params_.cenY = c.y; params_.cenZ = c.z;
                 uploadPreview();
             }
-            publishLastSnap(snapMover(moverDragAxis, e.x, e.y));
             return true;
         }
 
@@ -1265,36 +1266,6 @@ private:
 
     // mover sits at the box center = params_ center.
     Vec3 boxCenter() const { return cenVec(); }
-
-    // Snap the moved box center onto the nearest snap target on the mover's
-    // free axes (free-axis projection). Arrows 0/1/2 keep their oriented
-    // workplane axes. The centerBox (3) instead uses LAW D's component index
-    // on the PLANE-LOCAL view and writes the snapped LOCAL components into
-    // Position, like the centre drag itself (task 7139).
-    // One loop over the FREE axes: the dragged arrow's, or the centre box's two
-    // local axes other than the locked one (the projection form is
-    // value-equal to a component copy on unit axes, differing only in a zero's sign).
-    SnapResult snapMover(int axisIdx, int sx, int sy) {
-        Vec3[3] axes = [planeAxis1, planeNormal, planeAxis2];
-        int lock = -1;
-        if (axisIdx > 2) {
-            axes = [Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1)];
-            const lvp = planeLocalViewport(cachedVp, frame);
-            lock = primitiveCenterPlaneAxis(cenVec(), lvp);
-        }
-        Vec3 hitLocal = boxCenter();
-        auto sr = snapLocalHit(hitLocal, frame, sx, sy, cachedVp,
-                                *mesh, EditMode.Vertices);
-        if (sr.snapped) {
-            Vec3 cen = cenVec();
-            foreach (i, a; axes)
-                if (lock >= 0 ? i != lock : i == axisIdx)
-                    cen = cen - a * dot(cen, a) + a * dot(hitLocal, a);
-            params_.cenX = cen.x; params_.cenY = cen.y; params_.cenZ = cen.z;
-            uploadPreview();
-        }
-        return sr;
-    }
 
     // Snap a height handle's moved face (idx 1 = top, idx 0 = bottom) onto the
     // nearest snap target along the plane normal — free-axis projection on the

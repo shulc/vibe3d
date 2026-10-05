@@ -1,0 +1,99 @@
+{
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference_token": "ref-editor@11.2v3",
+    "method": "gui-gesture",
+    "captured_utc": "2026-10-05",
+    "task": "9472",
+    "notes": "Only numerical observations were copied here (captures K-H, task 9394, and K-H2, task 9464). The private capture cards remain the source of record."
+  },
+  "_about": "Primitive handle drags under grid snap: each event places the handle POINT at press + travel and snaps that point to the nearest grid node; the snapped point never feeds the next event; the mover snaps centre + travel; the size follows from the snapped point by the family's handle mode.",
+  "rig": {
+    "view": "top ortho at boot, 439.52 px/m (front ortho for the height cells)",
+    "grid_m": 0.1,
+    "snap": "state on, grid bit only",
+    "drag": "20 relative steps of 2 px"
+  },
+  "cases": {
+    "primitive-size-grid-slow": {
+      "shape": "sphere", "handle": "+X size (symmetric)",
+      "cen": [0, 1, 0], "radius": 0.3, "drag_px": [40, 0],
+      "expect_x_extent": [-0.4, 0.4],
+      "min_x_at_step": {"5": -0.3, "10": -0.3, "12": -0.4, "15": -0.4, "20": -0.4}
+    },
+    "primitive-size-offcentre-grid-slow": {
+      "shape": "sphere", "handle": "+X size (symmetric)",
+      "cen": [0.05, 1, 0], "radius": 0.3, "drag_px": [40, 0],
+      "expect_x_extent": [-0.3, 0.4],
+      "note": "the handle point snaps to 0.4, radius 0.35; snapping the size value would give 0.45"
+    },
+    "primitive-mover-grid-slow": {
+      "shape": "sphere", "handle": "centre mover +X arrow",
+      "cen": [0, 1, 0], "radius": 0.3, "drag_px": [40, 0],
+      "expect_cen": [0.1, 1, 0],
+      "cen_x_at_step": {"5": 0.0, "10": 0.0, "12": 0.1, "15": 0.1, "20": 0.1}
+    },
+    "primitive-mover-free-grid-slow": {
+      "shape": "sphere", "handle": "centre free drag",
+      "cen": [0, 1, 0], "radius": 0.3, "drag_px": [40, 0],
+      "expect_cen": [0.1, 1, 0]
+    },
+    "cylinder-height-grid-slow": {
+      "shape": "cylinder axis Y, front view", "handle": "top height (one-sided)",
+      "cen": [0, 1, 0], "radius": 0.3, "drag_px": [0, -40],
+      "expect_y_extent": [0.7, 1.4],
+      "max_y_at_step": {"5": 1.3, "10": 1.3, "12": 1.4, "15": 1.4, "20": 1.4}
+    },
+    "cone-size-grid-offcentre": {
+      "shape": "cone axis Y", "handle": "+X size (one-sided)",
+      "cen": [0.0523, 1, 0], "radius": 0.3, "drag_px": [40, 0],
+      "expect_x_extent": [-0.2477, 0.4]
+    },
+    "capsule-size-grid-offcentre": {
+      "shape": "capsule axis Y", "handle": "+X size (symmetric)",
+      "cen": [0.0523, 1, 0], "radius": 0.3, "half_length": 0.6, "drag_px": [40, 0],
+      "expect_x_extent": [-0.2954, 0.4]
+    },
+    "torus-size-grid-offcentre": {
+      "shape": "torus axis Y", "handle": "+X size at the outer extent (symmetric)",
+      "cen": [0.0523, 1, 0], "outer_radius": 0.3, "cross_section": 0.1, "drag_px": [40, 0],
+      "expect_x_extent": [-0.2954, 0.4]
+    },
+    "torus-height-grid-offcentre": {
+      "shape": "torus axis Y, front view", "handle": "top height (symmetric)",
+      "cen": [0, 1.0523, 0], "height_half": 0.1, "drag_px": [0, -40],
+      "expect_y_extent": [0.9046, 1.2]
+    },
+    "cone-mover-axis-grid": {
+      "shape": "cone", "handle": "centre mover +X arrow",
+      "cen": [0.0523, 1, 0], "drag_px": [40, 0], "expect_cen": [0.1, 1, 0]
+    },
+    "capsule-mover-axis-grid": {
+      "shape": "capsule", "handle": "centre mover +X arrow",
+      "cen": [0.0523, 1, 0], "drag_px": [40, 0], "expect_cen": [0.1, 1, 0]
+    },
+    "torus-mover-axis-grid": {
+      "shape": "torus", "handle": "centre mover +X arrow",
+      "cen": [0.0523, 1, 0], "drag_px": [40, 0], "expect_cen": [0.1, 1, 0]
+    },
+    "cone-mover-free-grid": {
+      "shape": "cone", "handle": "centre free mover",
+      "cen": [0.0523, 1, 0], "drag_px": [40, 0], "expect_cen": [0.1, 1, 0]
+    },
+    "capsule-mover-free-grid": {
+      "shape": "capsule", "handle": "centre free mover",
+      "cen": [0.0523, 1, 0], "drag_px": [40, 0], "expect_cen": [0.1, 1, 0]
+    },
+    "torus-mover-free-grid": {
+      "shape": "torus", "handle": "centre free mover",
+      "cen": [0.0523, 1, 0], "drag_px": [40, 0], "expect_cen": [0.1, 1, 0]
+    },
+    "torus-mover-free-grid-pressoff": {
+      "shape": "torus", "handle": "centre free mover pressed 2.45 px right of the centre",
+      "cen": [0.0212, 1, 0], "press_offset_px": [2.45, 0], "drag_px": [40, 0],
+      "expect_cen": [0.1, 1, 0],
+      "note": "the grabbed pointer's own node minus its offset would be 0.0944"
+    }
+  }
+}
