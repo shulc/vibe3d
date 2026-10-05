@@ -1295,8 +1295,8 @@ struct PreparedPlaneDrag {
 
 // The finite-difference step, in world units, for the Jacobian below: ten
 // of the view's NOMINAL pixels (`viewWorldPerPixel`, not the pixel at the
-// anchor's depth). The step cancels to first order only: its forward bias is
-// part of the captured map (findings K-C3: 1e-6 at the read targets with
+// anchor's depth). The first-order argument bounds the SIZE of the shift
+// only, not its sign or direction: the forward bias is part of the captured map (findings K-C3: 1e-6 at the read targets with
 // this step, 9e-4..1.2e-2 with the anchored pixel, 1.3e-2+ with k -> 0).
 private float jacobianStep(const ref Viewport vp) {
     float k = 10.0f * viewWorldPerPixel(vp);
@@ -1685,7 +1685,7 @@ struct DragFrame {
 /// (captured K-B9: Move and Box, one release law). Positions live in whatever
 /// space `vp` projects (a create tool passes its plane-local view).
 /// The travel is rounded to the view quantum q by the frame KIND, the
-/// translator's mode (K-G3 / K-H2 / K-C3, task 9471): a free plane keeps the
+/// translator's mode (K-G3 / K-H2 / K-C3): a free plane keeps the
 /// point's residual, `p + q(p + T) - q(p)`; the principal (planar) plane
 /// rounds the position, `q(p + T)`; a line rounds its travel, `p + q(t)`.
 /// The axis arm rounds `t` itself (LAW A, the coordinate-rounding step).
@@ -1701,10 +1701,11 @@ struct HandleDrag {
                 out bool skip) const
     {
         import viewgrid : vectorSnap, viewVectorQuantum;
-        immutable Vec3 t = travel(px, py, f, vp, skip) - point;
+        immutable Vec3 t = travel(px, py, f, vp, skip);
         immutable float q = viewVectorQuantum(vp);
         final switch (f.kind) {
         case DragKind.axisArm:        return point + t;
+        // Move's ring planes ride this form provisionally: pending K-H3 cell H3_RING.
         case DragKind.viewPlane:      return point + (vectorSnap(point + t, q) - vectorSnap(point, q));
         case DragKind.principalPlane: return vectorSnap(point + t, q);
         case DragKind.screenAxis:
@@ -1719,24 +1720,24 @@ struct HandleDrag {
     {
         final switch (f.kind) {
         case DragKind.axisArm:
-            return point + f.axis * axisArmDelta(px, py, pressX, pressY, point, f.axis,
+            return f.axis * axisArmDelta(px, py, pressX, pressY, point, f.axis,
                 vp, skip, coordRounding(), coordRoundingFixedIncrement());
         case DragKind.screenAxis:
-            return point + f.axis * screenAxisFraction(px - pressX, py - pressY,
+            return f.axis * screenAxisFraction(px - pressX, py - pressY,
                 point, point + f.axis, vp, skip);
         case DragKind.viewPlane:
-            return point + planeDragDelta(px, py, pressX, pressY, f.plane, point, vp,
+            return planeDragDelta(px, py, pressX, pressY, f.plane, point, vp,
                 skip, f.basisX, f.basisY, f.basisZ);
         case DragKind.principalPlane:
             skip = false;
-            return point + primitiveCenterDragDelta(px, py, pressX, pressY, point, vp);
+            return primitiveCenterDragDelta(px, py, pressX, pressY, point, vp);
         case DragKind.planeHit:
             Vec3 o, d, h0, h1;
             screenPointToRay(cast(float)pressX, cast(float)pressY, vp, o, d);
             skip = !rayPlaneIntersect(o, d, point, f.normal, h0);
             screenPointToRay(cast(float)px, cast(float)py, vp, o, d);
             skip = skip || !rayPlaneIntersect(o, d, point, f.normal, h1);
-            return point + (h1 - h0);
+            return h1 - h0;
         }
     }
 }
