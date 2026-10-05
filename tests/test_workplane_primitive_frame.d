@@ -135,6 +135,24 @@ private double offRay(Vec3 world, int[2] px) {
 
 private enum Vec3 kPlacing = Vec3(0.25f, 0.25f, 0.5f);
 
+/// The view quantum q and ten grid steps. A placement is snapped to q on every
+/// channel and its plane runs through the focus rounded to ten grid steps
+/// after a q pre-snap (captured K-W W1d / W1g–W1i, tests/fixtures/
+/// create_click_plane.json), so a centre lies within q of its press ray.
+private double[2] viewSteps() {
+    auto g = getJson("/api/viewport/display")["cells"].array[0]["grid"];
+    return [number(g["subStep"]), 10 * number(g["size"])];
+}
+/// In float, as the app computes it: this rig's local focus (-0.5) is a
+/// rounding TIE, which goes half away from zero.
+private double prRound(float f) {
+    import std.math : round;
+    const st = viewSteps();
+    const float q = cast(float)st[0], step = cast(float)st[1];
+    const float snapped = round(f / q) * q;
+    return round(snapped / step) * step;
+}
+
 unittest {
     // ---- C0: identity-plane controls (green before and after the fix) ----
     rig(false);
@@ -144,7 +162,8 @@ unittest {
     drag(p, p2);
     Vec3 cyl0 = commitCentre("prim.cylinder", 8, "C0 cylinder");
     double d0 = offRay(cyl0, p);
-    assert(d0 <= 1e-3,
+    immutable double q = viewSteps()[0];
+    assert(q > 0 && d0 <= q,
         format("identity-plane control: cylinder off its press ray (d_perp %.5f, centre %s)",
                d0, s(cyl0)));
 
@@ -155,7 +174,7 @@ unittest {
     drag(p, p2, 64);
     Vec3 box0 = commitCentre("prim.cube", 8, "C0 box");
     double dbp = offRay(box0, p), dbr = offRay(box0, p2);
-    assert(dbp <= 1e-3,
+    assert(dbp <= q,
         format("identity-plane control: box centre on neither ray (press %.5f, release %.5f)",
                dbp, dbr));
 
@@ -190,15 +209,16 @@ unittest {
         : cast(int)number(av);
     Vec3 cyl = commitCentre("prim.cylinder", 8, "C cylinder");
     double dc = offRay(cyl, p);
-    assert(dc <= 1e-3,
+    assert(dc <= q,
         format("primitive not placed on the ray of its placing pixel under a pinned "
              ~ "plane (cylinder): d_perp %.5f, centre %s", dc, s(cyl)));
     Vec3 backL = toLocalD(pl, back);
     int al = argmaxAbs(backL);
     Vec3 focusL = toLocalD(pl, fw - pl.o);
-    assert(abs(comp(cen, al) - comp(focusL, al)) <= 1e-4,
-        format("placement plane is not the local principal plane through the local "
-             ~ "focus: channel %d = %.5f, local focus %s", al, comp(cen, al), s(focusL)));
+    assert(abs(comp(cen, al) - prRound(comp(focusL, al))) <= 1e-4,
+        format("placement plane is not the local principal plane through the rounded "
+             ~ "local focus %.5f: channel %d = %.5f, local focus %s, q / ten grid steps %s",
+               prRound(comp(focusL, al)), al, comp(cen, al), s(focusL), viewSteps()));
     // The construction axes follow the same local plane: the cylinder stands
     // on it (its axis is the plane's local normal index), as it does on the
     // identity plane with the world axis.
@@ -227,7 +247,7 @@ unittest {
     drag(p, p2, 64);
     Vec3 box = commitCentre("prim.cube", 8, "C box");
     double db = offRay(box, p);
-    assert(db <= 1e-3,
+    assert(db <= q,
         format("primitive not placed on the ray of its placing pixel under a pinned "
              ~ "plane (box): d_perp %.5f, centre %s", db, s(box)));
 }

@@ -12,7 +12,7 @@ import http_command_helpers : commandBody;
 import std.conv : to;
 import std.format : format;
 import std.json;
-import std.math : abs, cos, fabs, PI, sin;
+import std.math : abs, cos, fabs, PI, round, sin;
 import std.net.curl : get, post;
 
 import drag_helpers;
@@ -771,16 +771,21 @@ unittest { // Box base lands on focus plane, not origin plane, with panned AUTO 
         "panned-auto base-only commit should create exactly one polygon, got " ~
         faceCount().to!string);
 
-    // All 4 base vertices must lie at Y ≈ focus.y (on the focus plane),
-    // NOT at Y ≈ 0 (origin plane). This is the discriminating assertion:
-    // PRE-FIX → fails (Y≈0); POST-FIX → passes (Y≈0.6).
+    // All 4 base vertices must lie on the focus plane, NOT at Y ≈ 0 (origin
+    // plane). In perspective the plane runs through the focus ROUNDED to ten
+    // grid steps (captured K-W W1a, tests/fixtures/create_click_plane.json),
+    // which must not round 0.6 to 0 here or the cell sees nothing.
+    auto gs = getJson("/api/viewport/display")["cells"].array[0]["grid"]["size"];
+    immutable double step = 10 * (gs.type == JSONType.integer ? gs.integer : gs.floating);
+    immutable double want = round(0.6 / step) * step;
+    assert(want != 0, format("rig: ten grid steps %.4f round 0.6 to 0", step));
     auto m = getJson("/api/model");
     foreach (i; 0 .. 4) {
         Vec3 v = vertexAt(m, i);
-        assert(abs(v.y - 0.6f) < 0.05f,
-            format("Vertex %d Y=%.4f: expected ≈0.6 (focus plane). "
+        assert(abs(v.y - want) < 1e-4,
+            format("Vertex %d Y=%.4f: expected %.4f (the rounded focus plane). "
                    ~ "Base is on the origin plane, not the focus plane (0066 fix not applied?)",
-                   i, v.y));
+                   i, v.y, want));
         assert(abs(v.y) > 0.4f,
             format("Vertex %d Y=%.4f is near the ORIGIN plane (Y≈0), "
                    ~ "not the focus plane (Y≈0.6)", i, v.y));

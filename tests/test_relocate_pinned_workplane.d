@@ -177,60 +177,56 @@ unittest {
 }
 
 // -------------------------------------------------------------------------
-// 3. THE ROTATION, in the default perspective view.
+// 3. THE ROTATION, in the default perspective view, None and Auto modes (the
+// relocate branch is shared by both, so a fix that reached one would be half).
 //
-// `rotX:45` tilts the plane normal to (0, 0.7071, 0.7071); `cenZ:2` puts its
-// origin at (0,0,2). The plane is therefore { y + z == 2 }.
-//
-// The collapse chose the argmax of |normal| — a tie between Y and Z that
-// falls to Y — and read the origin's Y component, which is 0. So it landed
-// the pivot on the flat plane { y == 0 }: the tilt gone, and the only
-// non-zero origin component thrown away with it.
-//
-// Both facts are asserted: ON the tilted plane, and OFF the flat one. The
-// second assertion is what makes the first non-vacuous — the two planes
-// intersect along a line, and a landing that happened to fall on it would
-// satisfy either.
+// `rotX:45 cenZ:2` tilts the plane. The landing is the create click law in
+// plane-local numbers (captured K-W W2a, tests/fixtures/create_click_plane.json):
+// on the plane perpendicular to the most-facing LOCAL axis through the local
+// focus rounded to ten grid steps after a q pre-snap, every channel snapped to
+// q. The collapsed lock arm landed on the flat world plane y = 0, and the old
+// rule on the pinned plane itself (local y = 0); the rig asserts the law's
+// plane is neither.
 // -------------------------------------------------------------------------
-unittest {
-    setupPinned("", "workplane.edit rotX:45 cenZ:2", "none");
+void assertPinnedPerspLaw(string mode) {
+    import std.math : round, cos, sin, PI;
+    setupPinned("", "workplane.edit rotX:45 cenZ:2", mode);
     clickOffGizmo(fetchCamera());
     auto a = getAcenAttrs();
-    assertRelocated(a, "perspective + 45-degree tilted plane");
+    assert(a["mode"] == mode, "relocate must not change mode; got " ~ a["mode"]);
+    assertRelocated(a, mode ~ " mode + 45-degree tilted plane");
 
-    immutable float y = floatAttr(a, "cenY");
-    immutable float z = floatAttr(a, "cenZ");
-
-    assert(abs(y) > 0.1f,
-        format("the pivot landed on the AXIS-ALIGNED plane y=0, not on the "
-               ~ "45-degree plane the user pinned: (y,z)=(%.4f,%.4f). The "
-               ~ "work plane's rotation has been discarded.", y, z));
-    assert(abs(y + z - 2.0f) < 5e-2,
-        format("the pivot must lie on the pinned plane y+z=2; got "
-               ~ "(y,z)=(%.4f,%.4f), y+z=%.4f", y, z, y + z));
+    // Plane frame: world = (0,0,2) + Rx(45) * local.
+    immutable double c = cos(PI / 4), sn = sin(PI / 4);
+    double[3] toLocal(double[3] w) {
+        const d = [w[0], w[1], w[2] - 2.0];
+        return [d[0], c * d[1] + sn * d[2], -sn * d[1] + c * d[2]];
+    }
+    auto cam = getJson("/api/camera");
+    double n(JSONValue v) { return v.type == JSONType.integer ? v.integer : v.floating; }
+    const focusL = toLocal([n(cam["focus"]["x"]), n(cam["focus"]["y"]), n(cam["focus"]["z"])]);
+    const landL = toLocal([floatAttr(a, "cenX"), floatAttr(a, "cenY"), floatAttr(a, "cenZ")]);
+    auto vp = viewportFromCamera(fetchCamera());
+    const double[3] backL = [vp.view[2], c * vp.view[6] + sn * vp.view[10],
+                             -sn * vp.view[6] + c * vp.view[10]];
+    int k = 0;
+    foreach (i; 1 .. 3) if (abs(backL[i]) > abs(backL[k])) k = i;
+    auto g = getJson("/api/viewport/display")["cells"].array[0]["grid"];
+    immutable double q = n(g["subStep"]), step = 10 * n(g["size"]);
+    immutable double want = round(round(focusL[k] / q) * q / step) * step;
+    assert(k == 1 ? abs(want) > 0.1 : true,
+        format("rig: the law's plane (local %d = %.4f) must differ from the pinned plane", k, want));
+    assert(abs(landL[k] - want) <= 1e-3,
+        format("%s: the relocated centre must lie on the local plane %d = %.4f (the "
+               ~ "rounded local focus %.4f); local landing (%.4f, %.4f, %.4f)", mode, k,
+               want, focusL[k], landL[0], landL[1], landL[2]));
+    assert(abs(floatAttr(a, "cenY")) > 0.1f,
+        format("the pivot landed on the AXIS-ALIGNED plane y=0: the work plane's "
+               ~ "rotation has been discarded (cenY %.4f)", floatAttr(a, "cenY")));
 }
 
-// -------------------------------------------------------------------------
-// 4. AUTO mode takes the same pinned plane. The relocate branch is shared by
-// the None and Auto action-center modes, so a fix that only reached one of
-// them would be half a fix.
-// -------------------------------------------------------------------------
-unittest {
-    setupPinned("", "workplane.edit rotX:45 cenZ:2", "auto");
-    clickOffGizmo(fetchCamera());
-    auto a = getAcenAttrs();
-    assert(a["mode"] == "auto", "relocate must not change mode; got " ~ a["mode"]);
-    assertRelocated(a, "auto mode + 45-degree tilted plane");
-
-    immutable float y = floatAttr(a, "cenY");
-    immutable float z = floatAttr(a, "cenZ");
-    assert(abs(y) > 0.1f,
-        format("auto mode discarded the work plane's rotation too: "
-               ~ "(y,z)=(%.4f,%.4f)", y, z));
-    assert(abs(y + z - 2.0f) < 5e-2,
-        format("auto-mode pivot must lie on the pinned plane y+z=2; got "
-               ~ "(y,z)=(%.4f,%.4f), y+z=%.4f", y, z, y + z));
-}
+unittest { assertPinnedPerspLaw("none"); }
+unittest { assertPinnedPerspLaw("auto"); }
 
 // -------------------------------------------------------------------------
 // 5. THE AUTO PLANE IS NOT AFFECTED. With no plane pinned the relocate goes

@@ -290,10 +290,16 @@ private string relocateCell(const ref Cell c, double[] prior) {
 }
 
 unittest {
+    import std.algorithm : canFind;
+    import std.process : environment;
     auto fx = parseJSON(import("fixtures/create_click_plane.json"));
+    // VIBE3D_CELL=<name>[,<name>...] runs only those cells (mutation drills).
+    const only = environment.get("VIBE3D_CELL", "").split(",");
+    bool wanted(string name) { return only == [""] || only.canFind(name); }
     string[] fails;
     int ran;
     void run(string name, string function(const ref Cell) f) {
+        if (!wanted(name)) return;
         const c = cellOf(fx, name);
         if (auto m = f(c)) fails ~= m;
         ++ran;
@@ -301,7 +307,7 @@ unittest {
 
     // In-plane quantum first (W1d): our raw x of the clicked pixel must round
     // to the captured 0.305 and differ from it, or the cell sees nothing.
-    {
+    if (wanted("W1d")) {
         const c = cellOf(fx, "W1d");
         rig(c);
         const p = worldPixel(Vec3(0.30636f, 0.37f, 0.21f));
@@ -331,13 +337,14 @@ unittest {
     // relocates (test_item_panel_gizmo_sync R3) — an open gap, task 9411.
     run("W2a", function(ref const Cell c) => relocateCell(c, [-0.5, 0.0, 0.0]));
     run("W2c_ctrl", function(ref const Cell c) => relocateCell(c, [-0.5, -0.4, -0.3]));
-    {
+    if (wanted("W2b")) {
         // W2b: the prior's world centre is the captured local prior.
         const c = cellOf(fx, "W2b");
         const w = c.pin.toWorld(arr3(c.j["prior_centre_frame"]));
         if (auto m = relocateCell(c, w[].dup)) fails ~= m;
         ++ran;
     }
-    assert(ran == 23, format("cell population: %d run, expected 23", ran));
+    const want = only == [""] ? 23 : cast(int)only.length;
+    assert(ran == want, format("cell population: %d run, expected %d", ran, want));
     assert(fails.length == 0, "click plane cells:\n" ~ fails.join("\n"));
 }

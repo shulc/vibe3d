@@ -437,13 +437,16 @@ unittest { // the click that used to be dropped in silence, at its own call site
     writeln("test_create_click_workplane PASS");
 }
 
-unittest { // radial-array click retains the active-workplane (pinned-plane) branch
+unittest { // radial-array click under a pinned plane: the plane through the local focus
     // An ortho preset turns with a pinned plane (gap 187, task 7139), and a
     // turned Front looks ALONG the plane, where both candidate planes meet the
     // ray on the same edge-on fallback — so the cell lives in TOP, which a
     // turned view aims down the plane normal: the pinned plane is FACE-ON. The
     // focus is written before the pin at local y = 0.7 and keeps those numbers
-    // (C4-oa F1), so the focus-plane rival sits 0.7 m off the pinned plane.
+    // (C4-oa F1), so the focus plane sits 0.7 m off the pinned plane. The
+    // centre lands on the FOCUS plane, snapped to the view quantum (captured
+    // K-W W1h: the most-facing local axis through the local focus; the pinned
+    // plane's own origin never enters).
     // Every matrix and the plane come from the live endpoints — nothing here
     // re-derives the Euler law or the turned basis.
     import drag_helpers : DVec3 = Vec3, viewportFromCameraMatrices, pixelRay;
@@ -473,11 +476,12 @@ unittest { // radial-array click retains the active-workplane (pinned-plane) bra
     pixelRay(px, py, vp, ro, rd);
     V3 o = V3(ro.x, ro.y, ro.z), d = V3(rd.x, rd.y, rd.z);
     assert(abs(dot(d, pn)) > 0.99, "rig: the turned Top view does not face the pinned plane");
-    V3 expected = o + d * (dot(po - o, pn) / dot(d, pn));
-    V3 rival    = o + d * (dot(focus - o, pn) / dot(d, pn));
+    V3 rival    = o + d * (dot(po - o, pn) / dot(d, pn));
+    V3 expected = o + d * (dot(focus - o, pn) / dot(d, pn));
     assert((expected - rival).len > 0.3,
         format("rig: the pinned plane and the focus plane coincide (%.4f apart)",
                (expected - rival).len));
+    immutable double q = num(getJson("/api/viewport/display")["cells"].array[0]["grid"]["subStep"]);
 
     string log =
         format(`{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}`,
@@ -494,9 +498,9 @@ unittest { // radial-array click retains the active-workplane (pinned-plane) bra
     assert(r["status"].str == "ok", "centre query failed: " ~ r.toString);
     auto val = r["value"].array;
     V3 got = V3(num(val[0]), num(val[1]), num(val[2]));
-    assert((got - expected).len < 1e-4,
-        format("radial pinned-plane centre: expected %s (on the pinned plane), "
-             ~ "actual %s (focus-plane rival %s)", expected, got, rival));
+    assert(q > 0 && (got - expected).len < q,
+        format("radial pinned-plane centre: expected %s (on the focus plane, within "
+             ~ "q %s), actual %s (pinned-plane rival %s)", expected, q, got, rival));
 
     cmd("tool.set mesh.radialArrayTool off");
     cmd("workplane.reset");

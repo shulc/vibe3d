@@ -1,4 +1,13 @@
 {
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference_token": "ref-editor@11.2v3",
+  "method": "gui-gesture",
+  "captured_utc": "2026-10-05",
+  "task": "9411",
+  "notes": "Numerical observations copied from the private capture records K-W (task 9395) and K-W2 (task 9456); the private findings remain the source of record."
+ },
  "_about": "Click placement on the view work plane, captured from the reference (captures K-W and K-W2, tasks 9395 and 9456). Frame = the construction plane's local frame (identity when none is pinned; world = origin + Rx(rot_x_deg) * frame). Families: PR = the most-facing frame axis through the focus, rounded to 10*grid in perspective after a q pre-snap (exact in ortho), the hit then snapped to q = nice_up(1/px_per_m) on EVERY channel incl. the depth; AXIS-FOCUS(PR) = PR under a pin (plane-local); NICE = PR for the action-centre relocate click; FOCUS-PLANE = the ortho anchor in item selection mode; ORTHO-PRIOR / PRIOR-* = the pre-press centre's depth (component selection mode); RAW / R13 / Q / OWN = the refuted families (unrounded focus / focus to 0.05 / focus to q / the plane's own normal through its origin).",
  "rule": {
   "perspective": "offset = dnint(dnint(f/q)*q / (10*grid)) * 10*grid on the most-facing frame axis; hit = ray cap that plane; point = snap(hit, q)",
