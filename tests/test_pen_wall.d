@@ -14,10 +14,13 @@
 // 0.005 m placement quantum — asserted per cell from our pixel size — so every
 // clicked fixture position is a lattice value and positions compare to 1e-4).
 // Counts and rings are exact. The D5 inset / segments cells sit under
-// `evidence` and are not asserted (deferred). `VIBE3D_CELL=<id>` runs one cell
-// alone (the population floor holds for the full run only).
+// `evidence` and are not asserted (deferred). Ours-only cells
+// `enter-D1_open_inner_ccw` / `enter-D6c_offset_zero` end the stroke by Enter
+// (the tool's own commit) instead of the drop (the prepared door): the same
+// mesh and rows, since both call the one builder. `VIBE3D_CELL=<id>` runs one
+// cell alone (the population floor holds for the full run only).
 
-import drag_helpers : Vec3;
+import drag_helpers : Vec3, fetchCamera, kPaceLine, playAndWait;
 import http_client : getJson, postJson;
 import pen_rig_helpers;
 import std.format : format;
@@ -162,6 +165,39 @@ private string[] expect(string cell, string what, double got, double want) {
          : [format("%s: %s %s, expected %s", cell, what, got, want)];
 }
 
+/// Run one cell, ending the stroke by the tool drop (the prepared door) or
+/// by Enter (the tool's own commit); the mesh, readbacks and history rows
+/// against the fixture.
+private string[] run(JSONValue cells, in Cell c, bool byEnter) {
+    const id = (byEnter ? "enter-" : "") ~ c.id;
+    auto cell = cells[c.id];
+    auto pts = clicks(cells, c);
+    assert(pts.length == (c.close ? 4 : 5), id ~ ": fixture premise: click count");
+    rig(c, pts);
+    string[] fails = expect(id, "offset read back", attr("offset"),
+                            num(cell["readback"]["offset"]));
+    const before = depth();
+    clickWorld(pts);
+    fails ~= expect(id, "facing flag after the stroke", attr("flip"),
+                    num(cell["readback"]["facing_flag"]));
+    if (byEnter) pressEnter();
+    drop();
+    fails ~= compare(id, cell["expected"]);
+    // One history row per built stroke; an empty build records none.
+    fails ~= expect(id, "history rows", depth() - before,
+                    cell["expected"]["vertices"].array.length ? 1 : 0);
+    return fails;
+}
+
+private void pressEnter() {
+    auto cam = fetchCamera();
+    playAndWait(format(`{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,`
+        ~ `"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n" ~ kPaceLine
+        ~ `{"t":50.000,"type":"SDL_KEYDOWN","sym":13,"scan":0,"mod":0,"repeat":0}` ~ "\n"
+        ~ `{"t":100.000,"type":"SDL_KEYUP","sym":13,"scan":0,"mod":0,"repeat":0}` ~ "\n",
+        cam.vpX, cam.vpY, cam.width, cam.height));
+}
+
 unittest {
     auto cells = parseJSON(import("fixtures/pen_wall.json"))["cells"];
     const only = environment.get("VIBE3D_CELL", "");
@@ -171,21 +207,17 @@ unittest {
         ~ "cells, the table lists %s", cells.object.length, kCells.length));
     foreach (c; kCells) {
         if (only.length && only != c.id) continue;
-        auto cell = cells[c.id];
-        auto pts = clicks(cells, c);
-        assert(pts.length == (c.close ? 4 : 5), c.id ~ ": fixture premise: click count");
-        rig(c, pts);
-        fails ~= expect(c.id, "offset read back", attr("offset"),
-                        num(cell["readback"]["offset"]));
-        const before = depth();
-        clickWorld(pts);
-        fails ~= expect(c.id, "facing flag after the stroke", attr("flip"),
-                        num(cell["readback"]["facing_flag"]));
-        drop(); ++ran;
-        fails ~= compare(c.id, cell["expected"]);
-        // One history row per built stroke; an empty build records none.
-        fails ~= expect(c.id, "history rows", depth() - before,
-                        cell["expected"]["vertices"].array.length ? 1 : 0);
+        fails ~= run(cells, c, false);
+        ++ran;
+    }
+    // Ours-only: Enter commits through the tool's own commit path, the drop
+    // through the prepared door; both call the one builder, so a built and an
+    // empty wall land alike.
+    foreach (c; kCells) {
+        if (c.id != "D1_open_inner_ccw" && c.id != "D6c_offset_zero") continue;
+        if (only.length && only != "enter-" ~ c.id) continue;
+        fails ~= run(cells, c, true);
+        ++ran;
     }
 
     // Leave the remembered values as found.
@@ -194,7 +226,7 @@ unittest {
     penAttr("offset", 0);
     penCommand("tool.attr pen flip false");
     drop();
-    assert(ran == (only.length ? 1 : 20), format("ran %s cells, pinned 20 (1 under %s)",
+    assert(ran == (only.length ? 1 : 22), format("ran %s cells, pinned 22 (1 under %s)",
                                                  ran, only));
     assert(fails.length == 0, format("%s failure(s): %-(%s | %)", fails.length, fails));
 }

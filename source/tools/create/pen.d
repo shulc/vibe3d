@@ -376,6 +376,9 @@ version(unittest) unittest {
         quadPen.buildPreparedParamImage("close").kind == PreparedPenParamKind.Preview &&
         quadPen.buildPreparedParamImage("selectNew").kind == PreparedPenParamKind.Noop,
         "pen S8: type / close / selectNew preview kinds");
+    assert(quadPen.buildPreparedParamImage("wall").kind == PreparedPenParamKind.Preview &&
+        quadPen.buildPreparedParamImage("offset").kind == PreparedPenParamKind.Preview,
+        "pen S9: wall / offset preview kinds");
     auto quadContext = new PreparedRecordContext(null, new RecordObserverHub());
     quadContext.setResourceIdentity(7, 11);
     auto quadEffect = quadPen.prepareParamChanged(quadContext, "makeQuads",

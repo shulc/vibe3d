@@ -578,6 +578,21 @@ unittest // walls outside the captured strokes (S9 gap rows): no NaN, no read pa
     appendPenGeometry(one, PenStroke.of(onY1([0f, 0f]), kIdentity, p, wallNormal: up),
         PenBuildPurpose.Preview);
     assert(one.vertices.length == 0 && one.faces.length == 0, "1-point wall built geometry");
+    // Offset 0 builds nothing (pen_wall.json D6c), the preview included.
+    PenParams zero = open; zero.offset = 0;
+    Mesh none;
+    appendPenGeometry(none, PenStroke.of(onY1([0f, 0f], [1f, 0f], [1f, 1f]), kIdentity,
+        zero, wallNormal: up), PenBuildPurpose.Preview);
+    assert(none.vertices.length == 0 && none.faces.length == 0, "offset-0 wall built geometry");
+    // The wall's template faces the camera by itself: `flip` is not read (D7).
+    PenParams flipped = open; flipped.flip = true;
+    Mesh a, b;
+    appendPenGeometry(a, PenStroke.of(onY1([0f, 0f], [1f, 0f], [1f, 1f]), kIdentity,
+        open, wallNormal: up), PenBuildPurpose.Commit);
+    appendPenGeometry(b, PenStroke.of(onY1([0f, 0f], [1f, 0f], [1f, 1f]), kIdentity,
+        flipped, wallNormal: up), PenBuildPurpose.Commit);
+    assert(a.faces.length == 2 && a.faces == b.faces && a.vertices == b.vertices,
+        format("flip changed the wall: %s vs %s", a.faces, b.faces));
     // An empty wall never commits; any positive offset or wall off commits from 2.
     PenParams empty = p; empty.offset = 0;
     PenParams off = empty; off.wall = PenWall.off;
