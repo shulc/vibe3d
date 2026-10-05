@@ -17,11 +17,12 @@
 // `hover-stroke-point-clears` — a hover over a stroke point (the next press
 // selects it, places nothing) withdraws the published snap; the frame draws
 // only the published one.
-// Excluded: D_E1 / C_E1
-// (merge on, 6 px from the slanted edge v3-v2: the reference stays on the
-// plane, ours lands on the edge) — the captured in-plane scene-edge cells of
-// pen_merge.json (E4, E4r 20 px, merge_vtx20_edge) pull onto an edge, so
-// "vertex only" is not yet a law ours can take; gap row 581.
+// D_E1 / C_E1 (merge on, 6 px from the slanted edge v3-v2) stay on the plane
+// for two reasons (task 9503): a drag never takes an edge, and C_E1 is the
+// copied defect of a stroke's first two clicks — the hover holds the edge and
+// the quantised point's pixel is the pointer's. Ours: `C_E1-pixel-off` (one
+// pixel up: the pixels differ, the click pulls onto the edge's 3-D point) and
+// `C_E1-third-point` (the C_E1 pointer as point 3: pulls).
 // `VIBE3D_CELL=<id>` runs one cell alone (the population floor holds for the
 // full run only).
 
@@ -113,7 +114,7 @@ private string[] compare(string cell, JSONValue c) {
         const ex = num(e[0]), ey = num(e[1]), ez = num(e[2]);
         const onV2 = abs(ey - 1.25) <= kTol;
         const tolXZ = i == 1 && !onV2 ? kQuantum : kTol;
-        const wy = i == 1 && !onV2 && ey != 1 ? 1 + 0.5 * g.x : ey;
+        const wy = i == 1 && !onV2 && ey != 1 ? edgeV3V2YAt(g.x) : ey;
         const wz = i == 1 && ey != 1 && !onV2 ? ez : g.z;
         if (!(abs(g.x - ex) <= tolXZ && abs(g.z - ez) <= tolXZ && abs(g.y - wy) <= kTol &&
               abs(g.z - wz) <= kTol))
@@ -121,6 +122,13 @@ private string[] compare(string cell, JSONValue c) {
                           ex, ey, ez);
     }
     return bad.length ? [format("%s: %-(%s; %)", cell, bad)] : null;
+}
+
+/// The height of the quad's edge v3-v2 at `x`, from the fixture's quad.
+private double edgeV3V2YAt(double x) {
+    const q = fx["rig"]["quad"]["vertices"];
+    const x3 = num(q[3][0]), y3 = num(q[3][1]);
+    return y3 + (x - x3) * (num(q[2][1]) - y3) / (num(q[2][0]) - x3);
 }
 
 unittest {
@@ -149,12 +157,24 @@ unittest {
     }
 
     foreach (name, c; fx["cells"].object) {
-        if (name == "D_E1" || name == "C_E1" || !wanted(name)) continue;
+        if (!wanted(name)) continue;
         rig(c);
         stroke(c);
         fails ~= compare(name, c);
         ++ran;
     }
+
+    // C_E1 is the copied defect (header); one pixel off the C_E1 pointer the
+    // pixels differ and the click pulls, and so does the C_E1 pointer as the
+    // THIRD stroke point.
+    const e = worldPixel(xz(fx["rig"]["targets_xz"]["E"]));
+    const k = fx["rig"]["clicks_xz"];
+    if (wanted("C_E1-pixel-off"))
+        fails ~= edgePull("C_E1-pixel-off", [worldPixel(xz(k[0])), [e[0], e[1] - 1],
+                                              worldPixel(xz(k[2]))], 1, ran);
+    if (wanted("C_E1-third-point"))
+        fails ~= edgePull("C_E1-third-point", [worldPixel(xz(k[0])), worldPixel(xz(k[2])), e],
+                          2, ran);
 
     if (wanted("SV_V1-unsnapped")) {
         rig(fx["cells"]["SV_V1"]);
@@ -166,7 +186,6 @@ unittest {
 
     if (wanted("hover-stroke-point-clears")) {
         rig(fx["cells"]["SV_V1"]);
-        const k = fx["rig"]["clicks_xz"];
         clickWorld(xz(k[0]), xz(k[1]), xz(k[2]));
         hoverWorld(xz(fx["rig"]["targets_xz"]["V"]));
         const before = fetchSnapLast()["snapped"].type == JSONType.true_;   // the control
@@ -179,11 +198,31 @@ unittest {
         ++ran;
     }
 
-    // Population floor: the live cell, 20 of the 22 captured cells, two ours.
+    // Population floor: the live cell, the 22 captured cells, four ours.
     if (only is null)
-        assert(ran == 23, format("population floor: %d cells ran, expected 23", ran));
+        assert(ran == 27, format("population floor: %d cells ran, expected 27", ran));
     // The first line names the first failing cell.
     assert(fails.length == 0, fails.join("\n  "));
+}
+
+/// A merge-on click stroke at `pixels` whose point `at` lands on the quad's
+/// edge v3-v2 under its quantised pointer (z 0.5, x within a quantum of E's)
+/// as its own vertex.
+private string[] edgePull(string cell, int[2][] pixels, size_t at, ref size_t ran) {
+    rig(fx["cells"]["C_E1"]);
+    clickPixels(pixels);
+    penCommand("tool.set pen off");
+    ++ran;
+    auto m = getJson("/api/model");
+    const v = m["vertices"].array;
+    if (v.length != 7)
+        return [format("%s: %s vertices, expected 7", cell, v.length)];
+    const x = num(v[4 + at][0]), y = num(v[4 + at][1]), z = num(v[4 + at][2]);
+    const ex = num(fx["rig"]["targets_xz"]["E"][0]);
+    if (abs(x - ex) <= kQuantum && abs(z - 0.5) <= kTol && abs(y - edgeV3V2YAt(x)) <= kTol)
+        return null;
+    return [format("%s: p%s (%.6f, %.6f, %.6f), expected on edge v3-v2 at x %.4f",
+                   cell, at, x, y, z, ex)];
 }
 
 /// The release of a held drag at window pixel `b`.

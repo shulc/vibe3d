@@ -457,7 +457,9 @@ unittest {
     // Edge snap 4.4 px along from the end V of the snapped edge: linked.
     fails ~= edgeE5Cell("merge_edge_then_vertex", c["snap_edge_e5_v6"], 0.01, ran);
     // Snapping off: an isolated V 10 px away links although an edge is nearer.
-    fails ~= isolatedCell("snap_off_isolated_v10", c["snap_off_isolated_v10"], null, 6, ran);
+    // One pixel along the edge: the reference linked, so its placed point's
+    // pixel was not the pointer's (task 9503); ours at +0 px is.
+    fails ~= isolatedCell("snap_off_isolated_v10", c["snap_off_isolated_v10"], null, 6, ran, 1);
     // A loose V 19.8 px away loses to an edge 0.44 px away (it trails by more
     // than its 16 px tolerance); without the edge the same V links.
     fails ~= vtx20Cell("merge_vtx20_edge", b8["merge_vtx20_edge"], 3, ran);
@@ -657,11 +659,12 @@ private string[] edgeE5Cell(string cell, JSONValue c, double qx, ref int ran) {
 /// order), the pointer at x 0.35, `dz` px from A-B (z 0.279545) in z: on V's
 /// side (-10: V 5 px from the edge point) or across the edge (6: the edge
 /// 6 px, V 12 px away).
-private string[] isolatedCell(string cell, JSONValue c, string types, int dz, ref int ran) {
+private string[] isolatedCell(string cell, JSONValue c, string types, int dz, ref int ran,
+                              int dx = 0) {
     auto e = c["expected"];
     auto w = verts(e["vertices"]);
     rig(p(0, 0.35), 440, meshJson(w[0 .. 4], [[1, 2, 3]]), types);
-    clickWorld(p(0.35, 0.279545 + dz / 440.0));
+    clickWorld(p(0.35 + dx / 440.0, 0.279545 + dz / 440.0));
     clickWorld(kFar[0], kFar[1]);
     drop(); ++ran;
     return fixture(cell, e);

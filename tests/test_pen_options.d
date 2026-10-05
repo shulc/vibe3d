@@ -162,11 +162,6 @@ unittest {
         const c = b9["cases"][name];
         const fg = "foreground" in c.object ? c["foreground"] : JSONValue(null);
         rig(c["raycast"].type == JSONType.true_, fg);
-        // Merge off over the foreground: ours' merge moves the dragged point
-        // onto the quad's edge (0.4426, 1.2213, 0.5) where the capture (merge
-        // on) keeps it on the plane — the pen merge's open gap row 581,
-        // not this law's.
-        if (!fg.isNull) penCommand("tool.attr pen merge false");
         clicks("clicks_xz" in c.object ? c["clicks_xz"] : b9["clicks_xz"]);
         const k = cast(size_t)c["drag"]["point"].integer;
         const pts = "clicks_xz" in c.object ? c["clicks_xz"] : b9["clicks_xz"];

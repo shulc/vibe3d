@@ -256,7 +256,7 @@ class WorkplaneStage : Stage, Operator {
     ///
     /// In auto-mode the center isn't published in the stage state until
     /// pipeline.evaluate runs, so direct callers get center=(0,0,0); use
-    /// the WorkplaneFrame returned by `pickWorkplane` (in tools/create_
+    /// the WorkplaneFrame returned by `pickWorkplaneFrame` (in tools/create_
     /// common.d) when the auto basis matters.
     float[16] transform() const {
         Vec3 n, a1, a2;

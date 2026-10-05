@@ -165,8 +165,8 @@ bool evaluateSubject(out SubjectPacket subj, ref VectorStack vts,
 }
 
 /// The FROZEN view-only source: no mesh, and the two type fields held at
-/// the values today's two workplane pickers (`create_common.d ::
-/// pickWorkplane`, `:: pickWorkplaneFrame`) publish IMPLICITLY today by
+/// the values today's workplane picker (`create_common.d ::
+/// pickWorkplaneFrame`) publishes IMPLICITLY today by
 /// never naming them — D's `.init` for `EditMode`/`SelType`
 /// (`source/editmode.d`, `source/seltype.d`).
 ///

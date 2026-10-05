@@ -3638,7 +3638,7 @@ void main(string[] args) {
     // globally via toolpipe.g_pipeCtx. Phase 7.1 registers the
     // WorkplaneStage (mode=auto by default) — tools that previously
     // called pickMostFacingPlane(vp) now route through the pipe via
-    // pickWorkplane(vp), so the global "workplane mode" attr is honoured
+    // pickWorkplaneFrame(vp), so the global "workplane mode" attr is honoured
     // (auto / worldX / worldY / worldZ).
     g_pipeCtx = new ToolPipeContext();
     {

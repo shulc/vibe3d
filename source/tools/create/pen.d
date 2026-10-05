@@ -50,7 +50,7 @@ import document : primaryModelSpace;
 import snap_render : publishLastSnap, clearLastSnap;
 import viewgrid : viewWorldPerPixel, viewVectorQuantum, vectorSnap, withAxisComp, axisComp;
 
-import std.math : abs, fmin, lround;
+import std.math : abs, floor, fmin, lround;
 // The one stroke builder and the pen's param schema (PenParams, PenStroke).
 import tools.create.pen_geometry;
 import tools.common.session_mesh_key : SessionMeshKey;
@@ -70,6 +70,8 @@ private bool sameSliceBytes(T)(const(T)[] a, const(T)[] b) nothrow @nogc {
 // other placement merges within `SnapPacket.init.innerRangePx` (24 px).
 private enum float kMergeSnappedEdgeEndPx = 17.5f;
 private enum float kMergeAfterSnapPx = 2.85f;
+// A projection this close below a pixel boundary counts as on it (float noise).
+private enum float kPixelEps = 1e-3f;
 private enum uint kElementSnapBits = SnapType.Vertex | SnapType.Edge |
     SnapType.EdgeCenter | SnapType.Polygon | SnapType.PolyCenter;
 
@@ -1458,7 +1460,7 @@ private:
         if (element && s.targetType == SnapType.Edge)
             local = toLocalP(pointOnEdgeUnder(toWorldP(placed), s.targetIndex));
         if (params_.merge && !(drag !is null && element && s.targetType == SnapType.Vertex))
-            link = mergeTarget(local, s);
+            link = mergeTarget(local, s, x, y, drag !is null);
         publishLastSnap(s);
         return true;
     }
@@ -1479,14 +1481,21 @@ private:
     // snap cascade's comparator picks between them: the vertex wins unless it
     // trails the edge by its 16 px tolerance (cells_k_b8, snap_off_isolated_v10).
     // A vertex hit moves the point onto it and is returned (the point shares
-    // it); an edge hit moves the point onto the edge as its own vertex.
+    // it); an edge hit moves a CLICK's point onto the edge as its own vertex
+    // (K-PM2: any edge, on or off the click plane); a DRAG never takes an edge.
+    // The click's copied defect (K-PM2 rule 2): on stroke points 1-2, when the
+    // hover record at pointer (x, y) holds an edge and the placed point's
+    // pixel (truncated) is the pointer's, nothing merges.
     // `snapCursor` takes an integer pixel, so it is the broad phase (r + 1)
     // and the float distance decides.
     static immutable SnapType[2] kMergeTypes = [SnapType.Vertex, SnapType.Edge];
-    int mergeTarget(ref Vec3 local, in SnapResult s) {
+    int mergeTarget(ref Vec3 local, in SnapResult s, int x, int y, bool drag) {
         immutable Vec3 placed = toWorldP(local);
         float fx, fy, ndcZ;
         if (!projectToWindowFull(placed, cachedVp, fx, fy, ndcZ)) return -1;
+        if (!drag && vertices_.length < 2 && floor(fx + kPixelEps) == x &&
+            floor(fy + kPixelEps) == y && hoverHoldsEdge(placed, x, y))
+            return -1;
         float pxFrom(Vec3 w) {
             float x, y, z;
             return projectToWindowFull(w, cachedVp, x, y, z)
@@ -1507,16 +1516,11 @@ private:
             }
         }
         immutable float r = small ? kMergeAfterSnapPx : SnapPacket.init.innerRangePx;
-        SnapPacket pkt;
-        pkt.enabled = true;
-        pkt.innerRangePx = r + 1;
         SnapResult[2] hit;
         bool[3] has;
         float[3] d = kAbsentClassDist;
-        foreach (i, t; kMergeTypes[0 .. small ? 1 : 2]) {
-            pkt.enabledTypes = t;
-            hit[i] = snapCursor(placed, cast(int)lround(fx), cast(int)lround(fy),
-                cachedVp, *mesh, ms, pkt, null, (SnapType, int, int slot) => slot == 0);
+        foreach (i, t; kMergeTypes[0 .. small || drag ? 1 : 2]) {
+            hit[i] = nearestOf(t, placed, cast(int)lround(fx), cast(int)lround(fy), r + 1);
             immutable px = hit[i].snapped ? pxFrom(hit[i].worldPos) : float.infinity;
             if (px <= r) { has[i] = true; d[i] = px; }
         }
@@ -1536,6 +1540,40 @@ private:
         if (has[kCascadeEdge])
             local = toLocalP(pointOnEdgeUnder(placed, hit[kCascadeEdge].targetIndex));
         return -1;
+    }
+
+    // The edited mesh's element of type `t` nearest pixel (sx, sy), within `r` px.
+    SnapResult nearestOf(SnapType t, Vec3 placed, int sx, int sy, float r) {
+        SnapPacket pkt;
+        pkt.enabled = true;
+        pkt.innerRangePx = r;
+        pkt.enabledTypes = t;
+        return snapCursor(placed, sx, sy, cachedVp, *mesh, primaryModelSpace(), pkt, null,
+                          (SnapType, int, int slot) => slot == 0);
+    }
+
+    // The view's hover record at pointer pixel (x, y) holds an edge: the
+    // element-pick law (8 px reach, `electElement`) over the edited mesh's
+    // nearest vertex and edge, the analogue of the HOV3 hover (K-PM2 rule 2).
+    bool hoverHoldsEdge(Vec3 placed, int x, int y) {
+        import hover_state : electElement, kElementPickRadiusPx, pickDistances;
+        immutable ms = primaryModelSpace();
+        float[2] at(uint v) {
+            float wx, wy, wz;
+            projectToWindowFull(ms.toWorldPoint(mesh.vertices[v]), cachedVp, wx, wy, wz);
+            return [wx, wy];
+        }
+        SnapResult[2] hit;
+        foreach (i, t; kMergeTypes)
+            hit[i] = nearestOf(t, placed, x, y, kElementPickRadiusPx + 1);
+        float[2] v = hit[0].snapped ? at(hit[0].targetIndex) : [0f, 0f];
+        float[2][2] e;
+        if (hit[1].snapped)
+            e = [at(mesh.edges[hit[1].targetIndex][0]), at(mesh.edges[hit[1].targetIndex][1])];
+        auto g = pickDistances(x, y, hit[0].snapped ? &v : null, hit[1].snapped ? &e : null, false);
+        if (g.vertex > kElementPickRadiusPx) g.vertex = float.infinity;
+        if (g.edge > kElementPickRadiusPx) g.edge = float.infinity;
+        return electElement(g) == kCascadeEdge;
     }
 
     // The stroke point whose mirror image lies within `r` px of world point
