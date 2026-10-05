@@ -345,6 +345,60 @@ unittest {
         ++ran;
     }
 
+    // ---- C2i SNAP-LAST without the weld: the snapped point itself (all three
+    // channels), not the surface under it; merge off, so no link rescues it.
+    if (wanted("pen-snap-last")) {
+        auto c = cell("C2i");
+        rig([0, 1, 0], true, true, 0, "Top", num(c["focus_x"]));
+        const v = arr3(c["foreground_vertex"]);
+        auto r = postJson("/api/command", commandBody("mesh.addVertex",
+            format(`{"pos":[%.9f,%.9f,%.9f]}`, v[0], v[1], v[2])));
+        assert(r["status"].str == "ok", "pen-snap-last rig: " ~ r.toString);
+        penCommand("tool.pipe.attr snap enabled true");
+        penCommand("tool.pipe.attr snap types vertex");
+        scope (exit) postJson("/api/command", "tool.pipe.attr snap enabled false");
+        penOn();
+        penCommand("tool.attr pen merge false");
+        clickPixels(worldPixel(xz(c["aim_xz"])));
+        penCommand("tool.pipe.attr snap enabled false");
+        clickXZ(c["more_clicks_xz"]);
+        auto got = commit();
+        if (got.length != 4)
+            fails ~= format("pen-snap-last: %d vertices, expected 4 (no weld): %s", got.length, got);
+        else if (!(len(sub(d3(got[1]), v)) <= 1e-5))
+            fails ~= format("pen-snap-last: the snapped point %(%.6f %) is not the vertex %(%.6f %)",
+                            d3(got[1])[], v[]);
+        ++ran;
+    }
+
+    // ---- The guide gate on a CLICK (pen plan §9.3b step 6, by design: the
+    // capture B6 is a drag; ours' straight-line guide while dragging the last
+    // point runs through that point itself, so B6 cannot engage it). Control:
+    // handle off, the guide pulls the third click onto the line z 0; on: the
+    // surface point at q, z 0.005, the guide not consulted.
+    if (wanted("pen-guide-click-vs-surface")) {
+        auto c = cell("B6");
+        foreach (on; [false, true]) {
+            rig([0, 1, 0], true, on);
+            penOn();
+            penCommand("tool.pipe.attr snap enabled true");
+            penCommand(`tool.pipe.attr snap types "` ~ c["snap_types"].str ~ `"`);
+            clickXZ(JSONValue(c["clicks_xz"].array[1 .. 3]));
+            clickPixels(worldPixel(xz(c["drag"]["to_xz"])));
+            penCommand("tool.pipe.attr snap enabled false");
+            auto vs = commit();
+            if (vs.length != 3) { fails ~= format("pen-guide-click-vs-surface: %d vertices", vs.length); break; }
+            const p = d3(vs[2]);
+            if (!on && !(abs(p[2]) <= 1e-5))
+                fails ~= format("pen-guide-click-vs-surface control: the guide did not engage, "
+                                ~ "third point %(%.6f %) (expected z 0)", p[]);
+            if (on && !(abs(p[2] - 0.005) <= 1e-5 && abs(len(sub(p, [0.0, 1.0, 0.0])) - 1) <= 2.5e-3))
+                fails ~= format("pen-guide-click-vs-surface: third point %(%.6f %), expected the "
+                                ~ "surface point at q (0.2, z 0.005)", p[]);
+        }
+        ++ran;
+    }
+
     // ---- C2h: the pen's first point is the vertex tool's at the same pixel.
     foreach (i, view; cell("C2h")["views"].array) {
         const name = "pen-first-point-" ~ (view.str == "Top" ? "top" : "persp");
@@ -390,7 +444,7 @@ unittest {
         ++ran;
     }
 
-    const want = only is null ? 17 : cast(int)only.length;
+    const want = only is null ? 19 : cast(int)only.length;
     assert(ran == want, format("cell population: %d run, expected %d", ran, want));
     assert(fails.length == 0, "pen background constraint cells:\n" ~ fails.join("\n"));
 }

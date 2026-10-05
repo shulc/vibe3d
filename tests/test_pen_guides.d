@@ -313,6 +313,15 @@ unittest { // rightAngle ON → (v2-v1)·(v1-v0) ≈ 0
     float dotVal = fabs(vecDot(seg, arm));
     assert(dotVal < 0.05f,
         format("rightAngle ON: v2-v1 not perpendicular to v1-v0 (|dot|=%.4f >= 0.05)", dotVal));
+    // ... and IN the stroke plane (its normal channel: the one v0 and v1
+    // share): a guide perpendicular to the plane is perpendicular to the
+    // segment too.
+    int planeCh = -1;
+    foreach (k; 0 .. 3) if (fabs(vs[1][k] - vs[0][k]) < 1e-4f) planeCh = k;
+    assert(planeCh >= 0, "rightAngle ON: v0, v1 share no plane channel");
+    assert(fabs(vs[2][planeCh] - vs[1][planeCh]) < 1e-4f,
+        format("rightAngle ON: v2 left the stroke plane (channel %d: %.5f vs %.5f)", planeCh,
+               vs[2][planeCh], vs[1][planeCh]));
 }
 
 unittest { // rightAngle OFF → (v2-v1)·(v1-v0) clearly non-zero (negative control)

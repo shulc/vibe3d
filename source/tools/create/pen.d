@@ -1446,7 +1446,7 @@ private:
     bool resolvePenPoint(int x, int y, out Vec3 local, out int link, const(Vec3)* drag = null) {
         link = -1;
         immutable float q = viewVectorQuantum(cachedVp);
-        if (drag is null && vertices_.length == 0) {
+        if (vertices_.length == 0) {   // a drag always has its point
             local = screenToPlacementLocal(x, y, cachedVp, frame);
         } else {
             immutable int cur = params_.currentPoint;
