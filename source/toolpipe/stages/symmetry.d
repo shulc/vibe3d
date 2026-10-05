@@ -86,8 +86,7 @@ class SymmetryStage : Stage, Operator {
             pkt.planePoint  = axisVec(axisIndex) * offset;
         }
 
-        // The applied plane, recorded on EVERY pass (an empty mesh builds no
-        // pair table): `currentPlane`'s workplane arm reads it.
+        // Recorded on EVERY pass, pair table or none (empty mesh): `currentPlane` reads it.
         appliedPlanePoint_  = pkt.planePoint;
         appliedPlaneNormal_ = pkt.planeNormal;
 
