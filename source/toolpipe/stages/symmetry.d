@@ -37,8 +37,8 @@ __gshared ulong g_symPairingRebuilds;
 /// in the work plane's LOCAL space, mapped to world by W ONCE — normal R·e_axis
 /// = `[axis1, normal, axis2][axis]` (the column order of `fillFrameMatrices`;
 /// NOT re-normalised, the basis is orthonormal by the frame contract) through
-/// origin + offset·R·e_axis. World symmetry is the identity basis; an axis
-/// outside 0..2 reads X. The pen's plane maps this once more (pen data).
+/// origin + offset·R·e_axis. World symmetry and an AUTO plane (K-S3a) use the
+/// identity basis; an axis outside 0..2 reads X. The pen's plane maps this once more (pen data).
 void workplaneSymmetryPlane(Vec3 origin, Vec3 axis1, Vec3 normal, Vec3 axis2, int axis, float offset,
                             out Vec3 point, out Vec3 planeNormal) pure nothrow @nogc @safe {
     planeNormal = axis == 1 ? normal : axis == 2 ? axis2 : axis1;
@@ -86,12 +86,13 @@ class SymmetryStage : Stage, Operator {
         SymmetryPacket pkt;
         pkt.config = config;
 
-        // `useWorkplane` maps the axis plane through the work plane (WORK ran
-        // first, ord 0x30 < SYMM 0x31); its basis is recorded on EVERY pass,
-        // pair table or none (empty mesh): `currentPlane` reads it.
+        // `useWorkplane` maps the axis plane through a PINNED work plane (WORK
+        // ran first, ord 0x30 < SYMM 0x31); an AUTO (view-turned) plane maps it
+        // by the identity, the world axis (K-S3a). Recorded on EVERY pass, pair
+        // table or none (empty mesh): `currentPlane` reads it.
         pkt.axisIndex = useWorkplane ? -1 : axisIndex;
         if (auto wp = vts.get!WorkplanePacket())
-            appliedBasis_ = [wp.center, wp.axis1, wp.normal, wp.axis2];
+            appliedBasis_ = wp.isAuto ? kWorldBasis : [wp.center, wp.axis1, wp.normal, wp.axis2];
         currentPlane(pkt.planePoint, pkt.planeNormal);
 
         // Phase 7.6b: rebuild the pair table on cache miss.
@@ -263,7 +264,8 @@ private:
     bool   cachedTopology_         = false;
     bool   cachedReady_           = false;
     // The last applied work-plane basis {origin, axis1, normal, axis2} (written by
-    // every enabled `evaluate`; the world identity before the first).
+    // every enabled `evaluate`; the world identity before the first and under an
+    // auto plane).
     Vec3[4] appliedBasis_         = kWorldBasis;
 
 public:
@@ -361,21 +363,12 @@ public:
 
     /// Resolve `(planePoint, planeNormal)` from the stage's current axis /
     /// offset / workplane state, without a pipeline pass — the head of
-    /// `evaluate`. A workplane plane maps through the last evaluated work-plane
-    /// basis (the world identity before the first). Read by `authoringSide()`
-    /// and the viewport's plane overlay (overlay = applied plane), whose lattice
-    /// runs along the other two basis columns `u`, `v` (K-D D6b).
+    /// `evaluate`. A workplane plane maps through the last evaluated pinned
+    /// work-plane basis (the world identity before the first, and for an auto
+    /// plane). Read by `authoringSide()`.
     public void currentPlane(out Vec3 planePt, out Vec3 planeN) const nothrow @nogc {
-        Vec3 u, v;
-        currentPlane(planePt, planeN, u, v);
-    }
-
-    /// ditto
-    public void currentPlane(out Vec3 planePt, out Vec3 planeN, out Vec3 u, out Vec3 v) const nothrow @nogc {
         const b = useWorkplane ? appliedBasis_ : kWorldBasis;
         workplaneSymmetryPlane(b[0], b[1], b[2], b[3], axisIndex, offset, planePt, planeN);
-        u = axisIndex == 1 || axisIndex == 2 ? b[1] : b[2];
-        v = axisIndex == 2 ? b[2] : b[3];
     }
 
     override string[2][] listAttrs() const {

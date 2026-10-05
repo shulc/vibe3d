@@ -20,8 +20,7 @@ private void assertSchema(JSONValue counts) {
         "pipeEvals", "seq", "stageEvals", "statRebuilds", "uploadCalls",
         "uploadVerts"];
     enum passKeys = ["bgEdges", "bgFaces", "edges", "faceOverlay", "faces",
-        "grid", "handles", "idPick", "imagePlane", "subpatch", "symmetry",
-        "verts"];
+        "grid", "handles", "idPick", "imagePlane", "subpatch", "verts"];
     enum countKeys = ["calls", "verts"];
     enum handleKeys = ["generation", "ids", "receiptsDropped", "submitted", "writes"];
     foreach (name; ["lastScene", "last", "totals"]) {

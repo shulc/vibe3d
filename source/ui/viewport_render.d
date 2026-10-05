@@ -615,7 +615,7 @@ public:
     // ---- Reference-image planes (task 0612) ------------------------------
     //
     // FIRST, immediately after the clear and BEFORE the grid below: the grid,
-    // the symmetry plane, the background layers and the primary all draw over
+    // the background layers and the primary all draw over
     // it, which is what "behind the geometry" means.
     //
     // The draw contains NO placement logic. `resolvePlacement` is a pure
@@ -699,8 +699,8 @@ public:
 
     shader.useProgram(meshModel, vp);
 
-    // Deliberately UNINSTRUMENTED in v1 (task 0196): the grid +
-    // symmetry-plane draws below (tiny constant cost) and the
+    // Deliberately UNINSTRUMENTED in v1 (task 0196): the grid
+    // draws below (tiny constant cost) and the
     // background-layer faces/edges loop further down (skipped entirely
     // when document.layers.length == 1) have no Cat timer — a choice,
     // not an omission. If wanted later, background faces fold into
@@ -784,42 +784,6 @@ public:
     glDrawArrays(GL_LINES, gridOnlyVertCount + 2, 2);
     g_fc.draw(DrawPass.grid, 2);
     glBindVertexArray(0);
-
-    // ---- Symmetry plane ----
-    //
-    // DELIBERATELY NOT scaled by the grid step (task 0570), even though it
-    // borrows the same lattice buffer. This is a plane INDICATOR — it exists
-    // to show where the mirror is — not a measuring grid, and the read that
-    // makes the ground grid a screen length says nothing about it. Tying its
-    // size to zoom would be a second appearance change smuggled in on the
-    // first one's evidence. It keeps its unit lattice and its
-    // camera-distance fade until someone decides otherwise on purpose.
-    {
-        import toolpipe.stages.symmetry : SymmetryStage;
-        auto sym = cast(SymmetryStage)
-                   scene.pipeContext.pipeline.findByTask(TaskCode.Symm);
-        if (sym !is null && sym.enabled) {
-            // The plane the stage applies, its lattice along the plane's own
-            // in-plane basis columns (K-D D6b: R·e_y, R·e_z for axis X).
-            Vec3 c, n, a1, a2;
-            sym.currentPlane(c, n, a1, a2);
-            float[16] symModel = [
-                a1.x, a1.y, a1.z, 0,
-                n.x,  n.y,  n.z,  0,
-                a2.x, a2.y, a2.z, 0,
-                c.x,  c.y,  c.z,  1,
-            ];
-            gridShader.useProgram(symModel, vp,
-                v.camera.distance * 2.0f,
-                cast(float)v.fbo.w, cast(float)v.fbo.h,
-                0.0f, 0.0f);
-            glBindVertexArray(gridVao);
-            glUniform3f(gridShader.locColor, 0.85f, 0.5f, 0.15f);
-            glDrawArrays(GL_LINES, 0, gridOnlyVertCount);
-            g_fc.draw(DrawPass.symmetry, gridOnlyVertCount);
-            glBindVertexArray(0);
-        }
-    }
 
     glDisable(GL_BLEND);
 

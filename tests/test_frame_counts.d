@@ -1038,3 +1038,31 @@ unittest { // the mirror rig draws no plane rings, and nothing else witnesses it
                   ~ "planesVisible gate, which is applied inside it.",
                   mirrorHandles));
 }
+
+unittest { // symmetry draws NO overlay: on and off submit the same frame (K-S3b,
+    // toolcards/interaction_layer/findings_K-S3.md: pixel-identical on/off; task 9475)
+    resetApp();
+    JSONValue frameWith(string symmetryOn) {
+        cmd("tool.pipe.attr symmetry enabled " ~ symmetryOn);
+        settle();
+        httpPost("/api/frames/counts/reset", "");
+        settle();
+        auto w = lastScene();
+        assert(w["seq"].integer >= 1 && w["cellsRendered"].integer >= 1,
+               "symmetry " ~ symmetryOn ~ ": no scene frame rendered after the toggle");
+        return w;
+    }
+    auto off = frameWith("false");
+    auto on  = frameWith("true");
+    assert(on["drawCalls"].integer == off["drawCalls"].integer
+           && on["drawVerts"].integer == off["drawVerts"].integer,
+           format("symmetry on submitted %d draws / %d verts, off %d / %d: an overlay is drawn",
+                  on["drawCalls"].integer, on["drawVerts"].integer,
+                  off["drawCalls"].integer, off["drawVerts"].integer));
+    // Positive control: the same read sees a frame that does change.
+    cmd("mesh.subdivide");
+    auto sub = frameWith("true");
+    assert(sub["drawVerts"].integer != on["drawVerts"].integer,
+           "control: a subdivided cube submitted the cube's vertex count");
+    cmd("tool.pipe.attr symmetry enabled false");
+}

@@ -1463,7 +1463,6 @@ enum DrawPass {
                   // folding it into a mesh counter would make "the background
                   // layers stopped drawing" unreadable
     grid,         // ground grid + axis lines
-    symmetry,     // symmetry-plane overlay
     handles,      // tool gizmo / handle shapes
     subpatch,     // subpatch-preview transform-feedback evaluation (a
                   // rasteriser-discarded dispatch, NOT a visible pass —
