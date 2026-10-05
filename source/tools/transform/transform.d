@@ -57,6 +57,7 @@ import command_history : CommandHistory;
 import commands.mesh.vertex_edit : MeshVertexEdit;
 import commands.mesh.morph_edit  : MeshMorphEdit;
 import snap : SnapResult, snapPacketOf;
+import snap_render : publishLastSnap;
 import toolpipe.packets : FalloffPacket, FalloffType, SymmetryPacket, SnapPacket, SubjectPacket;
 import toolpipe.stages.falloff : FalloffStage;
 import toolpipe.stages.snap : liveSnapGuides;
@@ -408,11 +409,6 @@ protected:
     bool     centerManual;       // true = update() must not recompute handler center
     Vec3     cachedCenter;       // gizmo center, recomputed when selection hash changes
     bool     needsGpuUpdate;     // deferred GPU upload flag, flushed in draw()
-    SnapResult lastSnap;         // last snap query — drives the cyan/yellow overlay
-                                 // in draw(). Populated by drag-snap (MoveTool's
-                                 // applySnapToDelta) AND by updateLiveSnapPreview()
-                                 // — gives the user a "if you click here, gizmo
-                                 // lands HERE" hint before any drag.
     // Phase 7.5: falloff packet snapshot, captured at drag start so
     // per-vertex weight evaluation doesn't re-walk the toolpipe on
     // every motion event. Refreshed by captureFalloffForDrag(); the
@@ -1809,7 +1805,7 @@ protected:
         // We don't exclude any verts — the gizmo isn't moving anything
         // yet, so it's legal to pin it to a selected vert too.
         SnapResult sr = evaluateSnap(worldHit, sx, sy, vts);
-        publishSnap(sr);
+        publishLastSnap(sr);
         if (sr.snapped) worldHit = sr.worldPos;
         return true;
     }
@@ -1954,8 +1950,7 @@ protected:
     }
 
     // Run the SNAP stage against (rawHit, sx, sy). Returns the snap
-    // result without side-effects on lastSnap or the global publish
-    // channel — caller decides whether to publish. Empty exclude is
+    // result without publishing it — caller decides whether to publish. Empty exclude is
     // appropriate for click-relocate / live-preview paths (no drag
     // active, so no "moving set" to exclude); MoveTool's drag-time
     // path inlines its own snapCursor call with proper exclusions.
@@ -1968,19 +1963,10 @@ protected:
                           liveSnapGuides());
     }
 
-    // Mirror a SnapResult onto both the tool's local lastSnap and the
-    // global publish channel (drives /api/snap/last and the cyan
-    // overlay rendered from each tool's draw()).
-    protected void publishSnap(SnapResult sr) {
-        import snap_render : publishLastSnap;
-        lastSnap = sr;
-        publishLastSnap(sr);
-    }
-
     // Live "where would the gizmo land if I clicked right now" preview.
     // Each transform tool calls this from onMouseMotion when no drag
-    // is active. Updates lastSnap so draw() can render the cyan/yellow
-    // overlay before the user has clicked. Cleared (no-op overlay)
+    // is active. Publishes the result so the frame draws its rollover
+    // mark before the user has clicked. Cleared (no-op overlay)
     // when:
     //   - dragging (active drag owns the overlay).
     //   - cursor is ON a gizmo handle (`hitTestResult >= 0`) — clicking
@@ -1992,7 +1978,7 @@ protected:
     void updateLiveSnapPreview(int sx, int sy, int hitTestResult,
                                 ref VectorStack vts) {
         SnapResult fresh;  // default-init = highlighted=false → no overlay
-        scope(exit) publishSnap(fresh);
+        scope(exit) publishLastSnap(fresh);
         if (dragAxis >= 0)            return;
         if (hitTestResult >= 0)        return;
         if (!pressPlacesCenter())return;

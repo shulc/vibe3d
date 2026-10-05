@@ -17,7 +17,7 @@ import ai.interaction : AiIntent;
 
 // A scheme colour packed for the ImGui overlay draw lists, at an explicit
 // alpha. Rounds rather than truncates, so 1.0 lands on 255 and not 254.
-private uint packImCol(Vec3 c, ubyte alpha) {
+uint packImCol(Vec3 c, ubyte alpha) {
     static int ch(float v) {
         const int i = cast(int)(v * 255.0f + 0.5f);
         return i < 0 ? 0 : (i > 255 ? 255 : i);

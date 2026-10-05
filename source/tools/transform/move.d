@@ -30,7 +30,7 @@ import drag;
 import coord_rounding : coordRounding, coordRoundingFixedIncrement;
 import snap : snapCursor, SnapResult, snapPacketOf;
 import toolpipe.stages.snap : liveSnapGuides;
-import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
+import snap_render : publishLastSnap, clearLastSnap;
 // Task 0617 Stage 4: XfrmTransformTool drags the active/primary mesh only
 // (CLAUDE.md: "Single-primary EDITING... tools hit the primary only"), so
 // its ModelSpace is the same resolver every other picking/snap call site
@@ -280,8 +280,6 @@ class MoveTool : TransformTool {
     // (onMouseButtonUp) AND fresh button-DOWN reset so a following non-Ctrl
     // drag never inherits a stale flag.
     bool     ctrlLockActive;
-    // (lastSnap moved to TransformTool — same semantics, also drives
-    // the live click-outside snap preview now.)
 
 public:
     this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode,
@@ -503,13 +501,6 @@ public:
         if (ctrlLockActive && dragAxis >= 0 && dragAxis <= 2) {
             drawConstraintLine(shader, vp);
         }
-
-        // Phase 7.3d: snap visual feedback. Yellow ring (highlighted)
-        // + filled disc (snapped) at the snap candidate's screen pixel,
-        // plus a cyan highlight on the actual mesh element being
-        // snapped to (vertex / edge / face). No-op when no recent snap
-        // (init/cleared SnapResult has highlighted=false).
-        drawSnapOverlay(lastSnap, vp, *mesh);
         // Falloff overlay + endpoint handles are drawn ONCE at the
         // XfrmTransformTool wrapper, via the PipeGizmoHost-owned emitter.
         // The banks never touch falloff.
@@ -526,7 +517,6 @@ public:
         }
 
         handler.drawAxesOnly(shader, vp);
-        drawSnapOverlay(lastSnap, vp, *mesh);
     }
 
     void drawCompact(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false)
@@ -540,7 +530,6 @@ public:
         }
 
         handler.drawAxesAndCenter(shader, vp);
-        drawSnapOverlay(lastSnap, vp, *mesh);
     }
 
     // Draw a world-space constraint line along the locked axis through the gizmo
@@ -597,7 +586,6 @@ public:
         // drag-axis state it owns (dragAxis = -1) and clears the snap
         // overlay it published.
         dragAxis = -1;
-        lastSnap = SnapResult.init;
         clearLastSnap();
         // Sticky-pin follow: when ACEN.userPlaced is active (set by
         // click-outside-relocate at drag start), update the pin to the
@@ -869,7 +857,6 @@ public:
         // during the dispatcher's pipeline.evaluate).
         const snapPkt = snapPacketOf(vts);
         if (!snapPkt.enabled) {
-            lastSnap = SnapResult.init;
             clearLastSnap();
             return releaseSnap(worldDelta);
         }
@@ -891,7 +878,6 @@ public:
 
         SnapResult sr = snapCursor(client, sx, sy, cachedVp, *mesh, primaryModelSpace(),
                                    snapPkt, exclude, null, liveSnapGuides());
-        lastSnap = sr;
         publishLastSnap(sr);
         if (sr.snapped) {
             immutable Vec3 d = constrainSnapDelta(sr.worldPos - gizmoCenter);
@@ -1020,7 +1006,7 @@ public:
 
         // Phase 7.3a: snap the client point; the gizmo lands on the snapped
         // point and the selection moves by the same delta (the overlay's
-        // result is stashed in `lastSnap`).
+        // result is published to `g_lastSnap`).
         worldDelta = applySnapToDelta(handler.center, worldDelta, client, e.x, e.y, vts);
 
         // Phase 3 — single-source refactor.

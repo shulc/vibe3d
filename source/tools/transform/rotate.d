@@ -33,8 +33,7 @@ import d_imgui.imgui_h;
 import tools.transform.arcball : ARCBALL_RADIUS_PX, arcballRotation,
                                  arcballAxisToWorld;
 import snap : SnapResult;
-import snap_render : drawSnapOverlay, clearLastSnap;
-import falloff : evaluateFalloff;
+import snap_render : clearLastSnap;
 import toolpipe.packets : FalloffPacket, SnapPacket, SymmetryPacket;
 import params : Param;
 import prepared_record_context : PreparedRecordContext;
@@ -469,13 +468,6 @@ public:
         if (dragAxis >= 0 && (dragStartDir.x != 0 || dragStartDir.y != 0 || dragStartDir.z != 0))
             drawRotationSector(vp);
 
-        // Cyan element + yellow cursor marker for the active snap
-        // candidate. Populated by updateLiveSnapPreview(, vts) during idle
-        // hover (click-outside-relocate hint). Drag-time snap math
-        // for rotation isn't wired yet, so during a drag this overlay
-        // reflects whatever the last preview frame produced and can
-        // freeze — acceptable for now.
-        drawSnapOverlay(lastSnap, vp, *mesh);
         // Falloff overlay + endpoint handles are drawn ONCE at the
         // XfrmTransformTool wrapper, via the PipeGizmoHost-owned emitter.
         // The banks never touch falloff.
@@ -497,7 +489,6 @@ public:
 
         if (dragAxis >= 0 && (dragStartDir.x != 0 || dragStartDir.y != 0 || dragStartDir.z != 0))
             drawRotationSector(vp);
-        drawSnapOverlay(lastSnap, vp, *mesh);
     }
 
     bool onMouseButtonDownWithResolvedAxis(ref const SDL_MouseButtonEvent e,
@@ -733,7 +724,6 @@ public:
         totalAngle = 0;
         // Drop the snap overlay so it doesn't linger after the drag.
         // (No-op when the live-preview already cleared it.)
-        lastSnap = SnapResult.init;
         clearLastSnap();
         return true;
     }

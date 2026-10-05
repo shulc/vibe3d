@@ -42,8 +42,7 @@ import std.math : sqrt;
 import drag : screenAxisFraction;
 
 import snap : SnapResult;
-import snap_render : drawSnapOverlay, clearLastSnap;
-import falloff : evaluateFalloff;
+import snap_render : clearLastSnap;
 import toolpipe.packets : FalloffPacket, SnapPacket, SymmetryPacket;
 import params : Param;
 import prepared_record_context : PreparedRecordContext;
@@ -581,10 +580,6 @@ public:
         handler.activeDragAxis = dragAxis;
         handler.draw(shader, vp);
 
-        // Cyan element + yellow cursor marker for the active snap
-        // candidate. Populated by updateLiveSnapPreview(, vts) during idle
-        // hover (click-outside-relocate hint).
-        drawSnapOverlay(lastSnap, vp, *mesh);
         // Falloff overlay + endpoint handles are drawn ONCE at the
         // XfrmTransformTool wrapper, via the PipeGizmoHost-owned emitter.
         // The banks never touch falloff.
@@ -598,8 +593,6 @@ public:
         handler.setScaleAccum(dragScaleAccum);
         handler.activeDragAxis = dragAxis;
         handler.drawAxisBoxesOnly(shader, vp);
-
-        drawSnapOverlay(lastSnap, vp, *mesh);
     }
 
     bool onMouseButtonDownWithResolvedAxis(ref const SDL_MouseButtonEvent e,
@@ -832,7 +825,6 @@ public:
         dragAxis = -1;
         clearCentreInput();
         // Drop the snap overlay so it doesn't linger after the drag.
-        lastSnap = SnapResult.init;
         clearLastSnap();
         return true;
     }

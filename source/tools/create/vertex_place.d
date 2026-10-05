@@ -18,7 +18,7 @@ import tools.create.create_common : primitivePlacementFrame, WorkplaneFrame,
                               placeFreePoint;
 import editmode : EditMode;
 import snap : SnapResult;
-import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap, g_lastSnap;
+import snap_render : publishLastSnap, clearLastSnap, g_lastSnap;
 import operator : VectorStack;
 import prepared_tool_effect : PreparedActivateEffect, PreparedActivateKind;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
@@ -63,7 +63,6 @@ private:
 
 
     Viewport   cachedVp_;
-    SnapResult lastSnap_;
 
 public:
     this(Mesh* delegate() meshSrc, GpuMesh* gpu, LitShader litShader)
@@ -76,10 +75,6 @@ public:
     override string name() const { return "Vertex"; }
 
     override Param[] params() { return []; }
-
-    override void activate() {
-        lastSnap_ = SnapResult.init;
-    }
 
     final PreparedActivateEffect prepareActivate() const nothrow @nogc {
         return PreparedActivateEffect(preparedToolStateOwner,
@@ -98,17 +93,15 @@ public:
             nothrow @nogc {
         if (!validated.consumable) return;
         validated.consumable = false;
-        lastSnap_ = SnapResult.init;
     }
 
     override void deactivate() {
         clearLastSnap();
-        lastSnap_ = SnapResult.init;
     }
 
-    final void installPreparedPrivateDeactivate() nothrow @nogc {
-        lastSnap_ = SnapResult.init;
-    }
+    // The tool keeps no private state since its snap went to `g_lastSnap`
+    // (task 9444); the prepared kind stays for the shared transition.
+    final void installPreparedPrivateDeactivate() nothrow @nogc {}
 
     final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context,
             SnapOverlayOwner snapOwner, PreparedPrivateStateOwner stateOwner) {
@@ -144,12 +137,6 @@ public:
         if (!ok) context.discard();
         return ok;
     }
-    version(unittest) void seedPreparedSnapForTest(int index) nothrow @nogc {
-        lastSnap_.snapped = true; lastSnap_.targetIndex = index;
-    }
-    version(unittest) int preparedSnapIndexForTest() const nothrow @nogc {
-        return lastSnap_.targetIndex;
-    }
 
     // Cache the viewport each frame so onMouseButtonDown has current camera.
     override void draw(const ref Shader shader, const ref Viewport vp,
@@ -157,7 +144,6 @@ public:
                        bool visualOnly = false)
     {
         cachedVp_ = vp;
-        drawSnapOverlay(lastSnap_, vp, *mesh);
     }
 
     override void drawProperties() {
@@ -188,8 +174,9 @@ public:
         if (mods & (KMOD_CTRL | KMOD_SHIFT)) return false;
 
         WorkplaneFrame frame = primitivePlacementFrame();
-        Vec3 hit = placeFreePoint(e.x, e.y, cachedVp_, frame, *mesh, lastSnap_);
-        publishLastSnap(lastSnap_);
+        SnapResult sr;
+        Vec3 hit = placeFreePoint(e.x, e.y, cachedVp_, frame, *mesh, sr);
+        publishLastSnap(sr);
 
         // Convert local workplane hit → world position.
         Vec3 world = transformPoint(frame.toWorld, hit);
@@ -239,58 +226,41 @@ public:
     {
         WorkplaneFrame f = primitivePlacementFrame();
         Vec3 hit = screenToPlacementLocal(e.x, e.y, cachedVp_, f);
-        lastSnap_ = snapLocalHit(hit, f, e.x, e.y, cachedVp_, *mesh, EditMode.Vertices);
-        publishLastSnap(lastSnap_);
+        publishLastSnap(snapLocalHit(hit, f, e.x, e.y, cachedVp_, *mesh, EditMode.Vertices));
         return false;
     }
 }
 
 version (unittest) unittest {
     import record_observer_hub : RecordObserverHub;
-    EditMode mode;
     Mesh mesh = makeCube();
     GpuMesh gpu;
     auto tool = new VertexTool(() => &mesh, &gpu, null);
-    auto legacy = new VertexTool(() => &mesh, &gpu, null);
-    tool.lastSnap_.snapped = true;
-    tool.lastSnap_.targetIndex = 7;
-    legacy.lastSnap_ = tool.lastSnap_;
     auto prepared = tool.prepareActivate();
-    assert(tool.lastSnap_.snapped && tool.lastSnap_.targetIndex == 7);
     ValidatedVertexActivate validated;
     assert(tool.validatePreparedActivate(prepared, validated));
     tool.installPreparedActivate(validated);
-    legacy.activate();
-    assert(!tool.lastSnap_.snapped && tool.lastSnap_.targetIndex == -1);
-    assert(tool.lastSnap_ == legacy.lastSnap_);
-    tool.lastSnap_.snapped = true;
-    tool.installPreparedActivate(validated);
-    assert(tool.lastSnap_.snapped, "prepared activation was not one-shot");
-
+    assert(!validated.consumable, "prepared activation was not one-shot");
     auto wrong = new VertexTool(() => &mesh, &gpu, null);
     auto foreign = wrong.prepareActivate();
     assert(!tool.validatePreparedActivate(foreign, validated));
-    tool.lastSnap_.targetIndex = 9;
-    tool.installPreparedActivate(validated);
-    assert(tool.lastSnap_.targetIndex == 9,
-           "refused foreign activation gained an install handle");
 
     SnapResult globalSeed; globalSeed.snapped = true; globalSeed.targetIndex = 21;
-    publishLastSnap(globalSeed); tool.seedPreparedSnapForTest(22);
+    publishLastSnap(globalSeed);
     auto context = new PreparedRecordContext(new CommandHistory(),
                                              new RecordObserverHub());
     auto snapOwner = new SnapOverlayOwner();
     auto stateOwner = PreparedPrivateStateOwner.vertex(tool);
     auto deactivation = tool.prepareDeactivate(context, snapOwner, stateOwner);
     assert(deactivation.historyAccepted && deactivation.resourceAccepted);
-    assert(g_lastSnap.targetIndex == 21 && tool.preparedSnapIndexForTest() == 22);
+    assert(g_lastSnap.targetIndex == 21);
     assert(context.validate()); context.install();
-    assert(g_lastSnap == SnapResult.init && tool.preparedSnapIndexForTest() == -1);
+    assert(g_lastSnap == SnapResult.init);
     size_t modelDepth, uiDepth; context.installedDepths(modelDepth, uiDepth);
     assert(modelDepth == 0 && uiDepth == 0);
-    tool.seedPreparedSnapForTest(23); publishLastSnap(globalSeed);
+    publishLastSnap(globalSeed);
     context.install();
-    assert(g_lastSnap == globalSeed && tool.preparedSnapIndexForTest() == 23);
+    assert(g_lastSnap == globalSeed);
 
     auto refusedContext = new PreparedRecordContext(new CommandHistory(),
                                                     new RecordObserverHub());

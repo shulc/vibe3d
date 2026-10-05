@@ -89,7 +89,7 @@ import tools.create.create_common : WorkplaneFrame,
                               workplaneCursorPlaneHit, moverDrag, heightDragNormal;
 import editmode : EditMode;
 import snap : SnapResult;
-import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap, SnapOverlayOwner;
+import snap_render : publishLastSnap, clearLastSnap, SnapOverlayOwner;
 
 import std.math : abs, sqrt;
 import std.json : JSONValue;
@@ -98,7 +98,6 @@ struct PreparedPrimitiveDeactivateImage {
     bool valid, expectedWillCommit, expectedCommitValid;
     MeshSnapshot scene;
     MeshSnapshot candidate;
-    SnapResult expectedLastSnap;
     WorkplaneFrame expectedFrame;
     ulong expectedFrameWitness;
     ulong expectedProductWitness;
@@ -140,9 +139,6 @@ protected:
     Vec3 planeAxis2;
     WorkplaneFrame frame;
     WorkplaneFrame placementFrame;
-
-    // Last snap query — drives the Idle-state cyan/yellow overlay.
-    SnapResult lastSnap;
 
     // Drag anchors — only valid for the matching state(s). Shared field
     // set across every leaf-group's own machine (cylinder-family, torus,
@@ -372,7 +368,6 @@ public:
 
         if (wc) commitEdit(pre);
 
-        lastSnap = SnapResult.init;
         clearLastSnap();
     }
 
@@ -383,7 +378,6 @@ public:
         image.valid = true;
         image.expectedWillCommit = willCommit();
         image.expectedCommitValid = commitValid();
-        image.expectedLastSnap = lastSnap;
         image.expectedFrame = frame;
         image.expectedFrameWitness = preparedBytesWitness(&frame,
             WorkplaneFrame.sizeof);
@@ -407,8 +401,7 @@ public:
 
     final bool preparedDeactivateStateMatches(
             in PreparedPrimitiveDeactivateImage image) nothrow @nogc {
-        return image.valid && image.expectedLastSnap == lastSnap &&
-            image.expectedFrameWitness == preparedBytesWitness(&frame,
+        return image.valid && image.expectedFrameWitness == preparedBytesWitness(&frame,
                 WorkplaneFrame.sizeof) && image.expectedProductWitness ==
                 preparedDeactivateProductWitness();
     }
@@ -417,7 +410,6 @@ public:
             ref PreparedPrimitiveDeactivateImage image) nothrow @nogc {
         goIdle();
         meshChanged = image.expectedCommitValid;
-        lastSnap = SnapResult.init;
         image.clear();
     }
 
@@ -490,7 +482,6 @@ public:
     override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts,
                        const ref DrawPlan plan, bool visualOnly = false) {
         cachedVp = vp;
-        drawSnapOverlay(lastSnap, vp, *mesh);
         if (isIdle()) return;
 
         drawLitPreview(litShader, shader, vp, previewGpu, plan);
@@ -531,7 +522,7 @@ public:
     // live edit. Mirrors activate() minus previewGpu.init(); previewGpu is
     // deliberately NOT touched (draw() Idle-gates the preview,
     // rebuildPreview() clears before upload, destroy stays in
-    // deactivate()). The lastSnap drop mirrors deactivate()'s overlay drop
+    // deactivate()). The snap clear mirrors deactivate()'s overlay drop
     // so a cancelled gesture's snap overlay doesn't linger on the armed
     // tool.
     private void cancelToIdle() {
@@ -539,7 +530,6 @@ public:
         moverDragAxis = -1;
         resetSession();
         toolHandles.clearHaul();
-        lastSnap = SnapResult.init;
         clearLastSnap();
     }
 
@@ -693,15 +683,14 @@ protected:
         return true;
     }
 
-    // Idle-state live snap preview — the cyan/yellow overlay showing where
+    // Idle-state live snap preview — the published mark showing where
     // the next click would anchor the primitive.
     void updateIdleSnap(int mx, int my) {
         auto f = primitivePlacementFrame();
         Vec3 hit = screenToPlacementLocal(
             cast(float)mx, cast(float)my, cachedVp, f);
-        lastSnap = snapLocalHit(hit, f, mx, my, cachedVp,
-                                *mesh, EditMode.Vertices);
-        publishLastSnap(lastSnap);
+        publishLastSnap(snapLocalHit(hit, f, mx, my, cachedVp,
+                                     *mesh, EditMode.Vertices));
     }
 }
 
@@ -1022,9 +1011,8 @@ public:
             Vec3 hit = screenToPlacementLocal(
                 cast(float)e.x, cast(float)e.y, cachedVp, placementFrame);
             // Snap the click anchor to the closest pipeline-enabled target.
-            lastSnap = snapLocalHit(hit, placementFrame, e.x, e.y, cachedVp,
-                                    *mesh, EditMode.Vertices);
-            publishLastSnap(lastSnap);
+            publishLastSnap(snapLocalHit(hit, placementFrame, e.x, e.y, cachedVp,
+                                         *mesh, EditMode.Vertices));
             startPoint   = hit;
             currentPoint = hit;
             alignAxisOnFirstClick(planeNormal);
@@ -1110,9 +1098,8 @@ public:
             Vec3 hit = screenToPlacementLocal(
                 cast(float)e.x, cast(float)e.y, cachedVp, placementFrame);
             {
-                lastSnap = snapLocalHit(hit, placementFrame, e.x, e.y, cachedVp,
-                                         *mesh, EditMode.Vertices);
-                publishLastSnap(lastSnap);
+                publishLastSnap(snapLocalHit(hit, placementFrame, e.x, e.y, cachedVp,
+                                              *mesh, EditMode.Vertices));
                 currentPoint = hit;
                 if (dragUniform) syncParamsFromUniformDrag();
                 else             syncParamsFromBaseDrag();
@@ -1126,9 +1113,8 @@ public:
                 if (workplaneCursorPlaneHit(frame, cachedVp, e.x, e.y,
                                             baseAnchor, planeNormal, hit))
                 {
-                    lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
-                                             *mesh, EditMode.Vertices);
-                    publishLastSnap(lastSnap);
+                    publishLastSnap(snapLocalHit(hit, frame, e.x, e.y, cachedVp,
+                                                  *mesh, EditMode.Vertices));
                     Vec3  d = hit - baseAnchor;
                     float r = sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
                     params_.cenX = baseAnchor.x;
@@ -1144,9 +1130,8 @@ public:
             Vec3 hit;
             if (workplaneCursorPlaneHit(frame, cachedVp, e.x, e.y, hpOrigin, hpn, hit))
             {
-                lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
-                                         *mesh, EditMode.Vertices);
-                publishLastSnap(lastSnap);
+                publishLastSnap(snapLocalHit(hit, frame, e.x, e.y, cachedVp,
+                                              *mesh, EditMode.Vertices));
                 applyNonUniformHeightDrag(hit);
                 uploadPreview();
             }

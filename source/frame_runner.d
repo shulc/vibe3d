@@ -8,6 +8,7 @@ import document : Document;
 import edit_session : EditSession;
 import editmode : EditMode;
 import viewport_overlay_mode : OverlayMode;
+import snap_render : drawSnapOverlay, g_lastSnap;
 import eventlog : queryMouse;
 import input_frame_state : InputFrameState;
 import ImGui = d_imgui;
@@ -267,6 +268,9 @@ final class FrameRunner {
                    ToolOverlayInputs overlays, OverlayMode overlayMode) {
         sceneRenderer_.draw(scene, view, display, gpu,
                             bgGpuCache_.drawCache(), overlays, overlayMode);
+        // The one draw of the published snap, per cell (task 9444).
+        if (overlayMode != OverlayMode.None)
+            drawSnapOverlay(g_lastSnap, *view.viewport, *scene.mesh);
     }
 
     /// Complete the default-framebuffer tail after all overlays were authored.

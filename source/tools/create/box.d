@@ -39,7 +39,7 @@ import tools.create.create_common : WorkplaneFrame,
                               workplaneCursorPlaneHit, moverDrag, heightDragNormal;
 import editmode : EditMode;
 import snap : SnapResult;
-import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
+import snap_render : publishLastSnap, clearLastSnap;
 import params : Param;
 import view : View;
 
@@ -76,7 +76,6 @@ struct PreparedBoxDeactivateImage {
     bool expectedLiveRunActive, expectedDragBeforeValid,
          expectedParamBeforeValid;
     int expectedLiveUndoDepth;
-    SnapResult expectedLastSnap;
     void clear() nothrow @nogc {
         this = PreparedBoxDeactivateImage.init;
     }
@@ -207,12 +206,6 @@ private:
 
     Viewport cachedVp;
 
-    // Last snap query — drives the cyan/yellow overlay during the
-    // Idle state. Refreshed by onMouseMotion's hover preview and by
-    // the first click that moves the construction-plane hit onto a
-    // snap target.
-    SnapResult lastSnap;
-
     // Move gizmo (axis-only, no plane circles)
     MoveHandler mover;
     int         moverDragAxis = -1;   // 0/1/2 = X/Y/Z, -1 = none
@@ -341,8 +334,7 @@ public:
         image.expectedLiveRunActive = liveRunActive;
         image.expectedLiveUndoDepth = liveUndoDepth;
         image.expectedDragBeforeValid = dragBeforeValid;
-        image.expectedParamBeforeValid = paramBeforeValid;
-        image.expectedLastSnap = lastSnap; return image;
+        image.expectedParamBeforeValid = paramBeforeValid; return image;
     }
     final bool preparedDeactivateStateMatches(
             in PreparedBoxDeactivateImage image) const nothrow @nogc {
@@ -353,8 +345,7 @@ public:
             liveRunActive == image.expectedLiveRunActive &&
             liveUndoDepth == image.expectedLiveUndoDepth &&
             dragBeforeValid == image.expectedDragBeforeValid &&
-            paramBeforeValid == image.expectedParamBeforeValid &&
-            lastSnap == image.expectedLastSnap;
+            paramBeforeValid == image.expectedParamBeforeValid;
     }
     final void installPreparedDeactivateState(
             ref PreparedBoxDeactivateImage image) nothrow @nogc {
@@ -363,7 +354,7 @@ public:
             liveRunActive = false; liveUndoDepth = 0;
             dragBeforeValid = paramBeforeValid = false;
         }
-        lastSnap = SnapResult.init; image.clear();
+        image.clear();
     }
     final bool ownsPreparedMainUpload(GpuUploadOwner owner) nothrow @nogc {
         return owner !is null && owner.owns(gpu);
@@ -466,7 +457,6 @@ public:
         else clearLiveEditTracking();
 
         // Drop the snap overlay so it doesn't linger after deactivate.
-        lastSnap = SnapResult.init;
         clearLastSnap();
     }
 
@@ -612,10 +602,9 @@ public:
                 cast(float)e.x, cast(float)e.y, cachedVp, placementFrame);
             // Snap the click to the closest pipeline-enabled target.
             // hit is rewritten in place when a candidate falls within
-            // the SnapStage's innerRange; lastSnap drives the overlay.
-            lastSnap = snapLocalHit(hit, placementFrame, e.x, e.y, cachedVp,
-                                    *mesh, EditMode.Vertices);
-            publishLastSnap(lastSnap);
+            // the SnapStage's innerRange; the published result is drawn.
+            publishLastSnap(snapLocalHit(hit, placementFrame, e.x, e.y, cachedVp,
+                                         *mesh, EditMode.Vertices));
             startPoint   = hit;
             currentPoint = hit;
             // Relocate the base construction plane to the (possibly snapped)
@@ -689,7 +678,6 @@ public:
         // A drag is ending — drop the snap overlay so the highlight doesn't
         // linger frozen at the last snapped point after the mouse is released.
         // It re-appears on the next hover (Idle preview) or drag.
-        lastSnap = SnapResult.init;
         clearLastSnap();
 
         if (edgeDragIdx >= 0) {
@@ -751,16 +739,15 @@ public:
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
         // Idle-state live snap preview. Before any clicks, show the
-        // cyan target where the first click would anchor the box.
+        // snap target where the first click would anchor the box.
         // The generator frame is not captured until the first click; preview
         // with the frame the click would capture.
         if (state == BoxState.Idle) {
             auto f = primitivePlacementFrame();
             Vec3 hit = screenToPlacementLocal(
                 cast(float)e.x, cast(float)e.y, cachedVp, f);
-            lastSnap = snapLocalHit(hit, f, e.x, e.y, cachedVp,
-                                    *mesh, EditMode.Vertices);
-            publishLastSnap(lastSnap);
+            publishLastSnap(snapLocalHit(hit, f, e.x, e.y, cachedVp,
+                                         *mesh, EditMode.Vertices));
         }
         if (edgeDragIdx >= 0) {
             DragFrame f;
@@ -773,8 +760,7 @@ public:
                 if (side != 0) edgeDragIdx = side > 0 ? pos : pos ^ 2;
                 uploadPreview();
             }
-            lastSnap = snapMovedEdge(edgeDragIdx, e.x, e.y);
-            publishLastSnap(lastSnap);
+            publishLastSnap(snapMovedEdge(edgeDragIdx, e.x, e.y));
             return true;
         }
 
@@ -784,8 +770,7 @@ public:
                 params_.cenX = c.x; params_.cenY = c.y; params_.cenZ = c.z;
                 uploadPreview();
             }
-            lastSnap = snapMover(moverDragAxis, e.x, e.y);
-            publishLastSnap(lastSnap);
+            publishLastSnap(snapMover(moverDragAxis, e.x, e.y));
             return true;
         }
 
@@ -799,8 +784,7 @@ public:
             if (dragFace(f, e.x, e.y, side)) {
                 if (side != 0) heightHDragIdx = side > 0 ? 1 : 0;
                 uploadCuboid();
-                lastSnap = snapHeightFace(heightHDragIdx, e.x, e.y);
-                publishLastSnap(lastSnap);
+                publishLastSnap(snapHeightFace(heightHDragIdx, e.x, e.y));
             }
             return true;
         }
@@ -818,15 +802,15 @@ public:
                 // Snap the dragged base-corner to the closest snap
                 // target. Falls through to raw `hit` when no snap fires.
                 Vec3 hitRaw = hit;
-                lastSnap = snapLocalHit(hit, placementFrame, e.x, e.y, cachedVp,
-                                         *mesh, EditMode.Vertices);
-                publishLastSnap(lastSnap);
+                const sr = snapLocalHit(hit, placementFrame, e.x, e.y, cachedVp,
+                                        *mesh, EditMode.Vertices);
+                publishLastSnap(sr);
                 // Free-axis projection: the base corner has 2 DOF (the two
                 // in-plane axes), so adopt the snap target's in-plane coords
                 // but keep the plane-normal coord on the base plane — an edge
                 // snap must not drag the base off its plane. Matches as many
                 // of the snap point's coords as the base drag allows.
-                if (lastSnap.snapped)
+                if (sr.snapped)
                     hit -= planeNormal * dot(hit - hitRaw, planeNormal);
                 currentPoint = hit;
                 if (dragUniform) syncParamsFromUniformDrag();
@@ -849,9 +833,8 @@ public:
                     // Snap the cursor's plane hit; cube radius then
                     // becomes the distance from baseAnchor to the
                     // snap target.
-                    lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
-                                             *mesh, EditMode.Vertices);
-                    publishLastSnap(lastSnap);
+                    publishLastSnap(snapLocalHit(hit, frame, e.x, e.y, cachedVp,
+                                                  *mesh, EditMode.Vertices));
                     Vec3  d = hit - baseAnchor;
                     float r = sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
                     params_.cenX = baseAnchor.x;
@@ -869,9 +852,9 @@ public:
             {
                 // Snap the height-drag hit too — useful for matching
                 // box top/bottom to an existing vertex's height.
-                lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
-                                         *mesh, EditMode.Vertices);
-                publishLastSnap(lastSnap);
+                const sr = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
+                                        *mesh, EditMode.Vertices);
+                publishLastSnap(sr);
                 // Signed projection onto planeNormal — sign decides which side
                 // of the base the cuboid grows on; size is always positive.
                 // Free drag measures the delta from where the height drag was
@@ -879,7 +862,7 @@ public:
                 // base so the top face lands exactly on the snap target's
                 // normal level (height aligns to the snapped axis), not merely
                 // by the drag distance from the click point.
-                float signedH = lastSnap.snapped
+                float signedH = sr.snapped
                     ? dot(hit - baseAnchor,      planeNormal)
                     : dot(hit - heightDragStart, planeNormal);
                 float newH    = abs(signedH);
@@ -899,9 +882,6 @@ public:
     override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts,
                        const ref DrawPlan plan, bool visualOnly = false) {
         cachedVp = vp;
-        // Snap overlay renders even in Idle so the user sees the cyan
-        // target before the first click anchors the box.
-        drawSnapOverlay(lastSnap, vp, *mesh);
         if (state == BoxState.Idle) return;
 
         drawLitPreview(litShader, shader, vp, previewGpu, plan);
@@ -1130,14 +1110,13 @@ private:
     // the post-wipe state is lived-in, so it must equal fresh-armed
     // (activate()) for every interaction field; previewGpu is deliberately
     // NOT touched (draw() Idle-gates it, destroy stays in deactivate()).
-    // The lastSnap drop mirrors deactivate()'s overlay drop so a cancelled
+    // The snap clear mirrors deactivate()'s overlay drop so a cancelled
     // gesture's snap overlay doesn't linger on the armed tool.
     void resetTransientDragState() {
         moverDragAxis  = -1;
         edgeDragIdx    = -1;
         heightHDragIdx = -1;
         toolHandles.clearHaul();
-        lastSnap = SnapResult.init;
         clearLastSnap();
     }
 
@@ -1740,7 +1719,7 @@ version(unittest) unittest {
     commitBox.dragBeforeValid = commitBox.paramBeforeValid = true;
     commitBox.previewGpu.faceVao = 81;
     SnapResult seededSnap; seededSnap.snapped = true; seededSnap.targetIndex = 5;
-    commitBox.lastSnap = seededSnap; publishLastSnap(seededSnap);
+    publishLastSnap(seededSnap);
     auto stateImageProbe = commitBox.buildPreparedDeactivateState(true);
     assert(stateImageProbe.valid && cast(ubyte)commitBox.state ==
         stateImageProbe.expectedState);
@@ -1751,7 +1730,6 @@ version(unittest) unittest {
         commitBox.liveUndoDepth == stateImageProbe.expectedLiveUndoDepth);
     assert(commitBox.dragBeforeValid == stateImageProbe.expectedDragBeforeValid &&
         commitBox.paramBeforeValid == stateImageProbe.expectedParamBeforeValid);
-    assert(commitBox.lastSnap == stateImageProbe.expectedLastSnap);
     auto stateProbe = PreparedPrivateStateOwner.boxDeactivate(commitBox, true);
     assert(stateProbe !is null); assert(stateProbe.begin());
     assert(stateProbe.validate());

@@ -261,9 +261,8 @@ public:
             choosePlane(cachedVp);
             Vec3 hit = screenToPlacementLocal(
                 cast(float)e.x, cast(float)e.y, cachedVp, placementFrame);
-            lastSnap = snapLocalHit(hit, placementFrame, e.x, e.y, cachedVp,
-                                    *mesh, EditMode.Vertices);
-            publishLastSnap(lastSnap);
+            publishLastSnap(snapLocalHit(hit, placementFrame, e.x, e.y, cachedVp,
+                                         *mesh, EditMode.Vertices));
             startPoint          = hit;
             currentPoint        = hit;
             params_.axis        = worldAxisIdxOf(planeNormal);
@@ -337,9 +336,8 @@ public:
             Vec3 hit = screenToPlacementLocal(
                 cast(float)e.x, cast(float)e.y, cachedVp, placementFrame);
             {
-                lastSnap = snapLocalHit(hit, placementFrame, e.x, e.y, cachedVp,
-                                        *mesh, EditMode.Vertices);
-                publishLastSnap(lastSnap);
+                publishLastSnap(snapLocalHit(hit, placementFrame, e.x, e.y, cachedVp,
+                                             *mesh, EditMode.Vertices));
                 currentPoint = hit;
                 // Outer radius = distance from start to current.
                 Vec3  d = currentPoint - startPoint;
@@ -358,9 +356,8 @@ public:
             Vec3 hit;
             if (workplaneCursorPlaneHit(frame, cachedVp, e.x, e.y, hpOrigin, hpn, hit))
             {
-                lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
-                                        *mesh, EditMode.Vertices);
-                publishLastSnap(lastSnap);
+                publishLastSnap(snapLocalHit(hit, frame, e.x, e.y, cachedVp,
+                                             *mesh, EditMode.Vertices));
                 float signedH   = dot(hit - heightDragStart, planeNormal);
                 float fullH     = abs(signedH);
                 Vec3  newCen    = baseAnchor + planeNormal * (signedH * 0.5f);
@@ -377,9 +374,8 @@ public:
             if (workplaneCursorPlaneHit(frame, cachedVp, e.x, e.y,
                                         center(), planeNormal, hit))
             {
-                lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
-                                        *mesh, EditMode.Vertices);
-                publishLastSnap(lastSnap);
+                publishLastSnap(snapLocalHit(hit, frame, e.x, e.y, cachedVp,
+                                             *mesh, EditMode.Vertices));
                 updateInnerRadiusFromHit(hit);
                 uploadPreview();
             }

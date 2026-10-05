@@ -6,35 +6,22 @@ import mesh : Mesh;
 import snap : SnapResult, snapSource, snapSourceSpace;
 import document : primaryModelSpace;
 import toolpipe.packets : SnapType;
+import viewport_scheme : SchemeColor, schemeColor;
+import handles.shapes : packImCol;
+import held_gesture_buttons : g_heldGestureButtons;
 
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
 import core.atomic : atomicOp;
 
-// ---------------------------------------------------------------------------
-// Snap visual feedback — Phase 7.3d of doc/snap_plan.md.
-//
-// drawSnapOverlay() renders two layers:
-//
-//   1. CYAN element highlight — the actual mesh element snap is locked
-//      onto (vertex dot / edge segment / face outline). Drawn first so
-//      the cursor marker sits on top.
-//
-//   2. YELLOW cursor marker at the snap candidate's projected pixel:
-//      - Within `outerRangePx` (highlighted, NOT snapped) ⇒ ring only
-//        (pre-snap pulse — "if you keep going, this is what you'll
-//        snap to").
-//      - Within `innerRangePx` (snapped) ⇒ filled disc + ring.
-//
-// Tools call this from their `draw()` after capturing the most recent
-// SnapResult in their motion handler. The renderer is shared because
-// every snap-aware tool (Move now, Pen / Create-tools in 7.3f) uses
-// the same convention.
-//
-// `g_lastSnap` is the global "most recent snap result published by any
-// tool" — the /api/snap/last HTTP endpoint reads this for headless
-// test runs (the test doesn't need a screenshot, just JSON probe).
-// ---------------------------------------------------------------------------
+// Snap visual feedback. Tools publish their latest snap query through
+// `publishLastSnap` / `clearLastSnap`; the FRAME draws `g_lastSnap` once per
+// cell (`frame_runner.drawScene`), no tool draws it (task 9444). The look is
+// the captured one (findings_O, task 9425): with no mouse button held the
+// target element gets the rollover mark (`preHighlight`, a 6x6 px square on a
+// vertex); while a gesture holds a button the point gets a gapped cross,
+// `handleUnsnap` before it snaps and `handle` once snapped. `g_lastSnap` is
+// also what /api/snap/last serves to headless tests.
 
 __gshared SnapResult g_lastSnap;
 
@@ -109,20 +96,48 @@ void clearLastSnap() {
     g_lastSnap = SnapResult.init;
 }
 
-/// Draw the snap overlay for `result`. No-op when `!result.highlighted`
-/// (the cursor isn't near any snap target this frame).
+/// The captured look of a published snap (findings_O O1, O1d).
+enum SnapMark { none, rollover, unsnapped, snapped }
+
+/// Which mark `result` gets: none unless highlighted; the rollover mark with
+/// no mouse button held; during a held gesture the snapped / unsnapped cross.
+SnapMark snapMarkOf(const ref SnapResult result) nothrow @nogc {
+    if (!result.highlighted) return SnapMark.none;
+    if (!g_heldGestureButtons.any) return SnapMark.rollover;
+    return result.snapped ? SnapMark.snapped : SnapMark.unsnapped;
+}
+
+/// The scheme colour of each mark (`none` has none).
+SchemeColor snapMarkColor(SnapMark mark) pure nothrow @nogc @safe {
+    final switch (mark) {
+        case SnapMark.none, SnapMark.rollover: return SchemeColor.preHighlight;
+        case SnapMark.unsnapped: return SchemeColor.handleUnsnap;
+        case SnapMark.snapped:   return SchemeColor.handle;
+    }
+}
+
+/// Draw the snap overlay for `result`, called once per cell by the frame.
 void drawSnapOverlay(const ref SnapResult result, const ref Viewport vp,
                      const ref Mesh mesh)
 {
-    if (!result.highlighted) return;
-
+    immutable mark = snapMarkOf(result);
+    if (mark == SnapMark.none) return;
     auto dl = ImGui.GetForegroundDrawList();
-
-    drawTargetElementHighlight(dl, result, vp, mesh);
-    drawCursorMarker(dl, result, vp);
+    immutable uint col = packImCol(schemeColor(snapMarkColor(mark)), 255);
+    if (mark == SnapMark.rollover) {
+        drawRolloverMark(dl, result, vp, mesh, col);
+        return;
+    }
+    ImVec2 c;
+    if (!projectWorld(result.worldPos, vp, c)) return;
+    // Four 2 px ticks from 4 to 8 px off the point (O1d pixel read).
+    static immutable float[2][4] arms = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+    foreach (d; arms)
+        dl.AddLine(ImVec2(c.x + 4 * d[0], c.y + 4 * d[1]),
+                   ImVec2(c.x + 8 * d[0], c.y + 8 * d[1]), col, 2.0f);
 }
 
-/// The window pixels the cyan element highlight is drawn at — the whole of
+/// The window pixels the rollover mark is drawn at — the whole of
 /// this overlay's geometry, with nothing but colour and stroke width left
 /// behind in the drawing code below.
 ///
@@ -209,79 +224,24 @@ bool snapHighlightPixels(const ref SnapResult result, const ref Viewport vp,
         pts = out_;
         return true;
     }
-    // SnapType.Grid / SnapType.Workplane have no geometric element to
-    // highlight — the cursor marker alone suffices.
+    // SnapType.Grid / SnapType.Workplane have no element to mark.
     return false;
 }
 
-private void drawTargetElementHighlight(ImGui.ImDrawList* dl,
-                                        const ref SnapResult result,
-                                        const ref Viewport vp,
-                                        const ref Mesh mesh)
+private void drawRolloverMark(ImGui.ImDrawList* dl, const ref SnapResult result,
+                              const ref Viewport vp, const ref Mesh mesh, uint col)
 {
-    // Brighter cyan when actually snapped, dimmer when only highlighted —
-    // mirrors the yellow cursor marker's snapped-vs-pre-snap intensity. NOTE:
-    // the highlight is INTERACTION FEEDBACK drawn full-bright on top of the 3D
-    // scene; it is intentionally NOT dimmed to match a background layer's
-    // dimmed geometry pass — the targeted element must stay the most legible
-    // thing on screen regardless of which layer it lives on (layers Stage 5).
-    immutable uint elemCol = result.snapped
-        ? IM_COL32(0, 220, 255, 230)
-        : IM_COL32(0, 220, 255, 150);
-    immutable uint elemFill = result.snapped
-        ? IM_COL32(0, 220, 255,  60)
-        : IM_COL32(0, 220, 255,  30);
-    immutable float lineThick = result.snapped ? 2.5f : 1.8f;
-
-    // All of the geometry — including the item transform — is in
-    // `snapHighlightPixels`. What is left here is colour and stroke.
     ImVec2[] pts;
     if (!snapHighlightPixels(result, vp, mesh, pts)) return;
-
-    auto t = result.targetType;
-    if (t == SnapType.Vertex) {
-        dl.AddCircleFilled(pts[0], 5.0f, elemCol, 16);
-    }
-    else if (t == SnapType.Edge || t == SnapType.EdgeCenter) {
-        dl.AddLine(pts[0], pts[1], elemCol, lineThick);
-    }
-    else {
-        // Outline. Fill is risky for non-convex faces — skip the fill on
-        // anything but tris/quads where convexity is virtually
-        // guaranteed.
-        if (pts.length <= 4)
-            dl.AddConvexPolyFilled(pts.ptr, cast(int)pts.length, elemFill);
-        dl.AddPolyline(pts.ptr, cast(int)pts.length, elemCol,
-                       ImDrawFlags.Closed, lineThick);
-    }
-}
-
-private void drawCursorMarker(ImGui.ImDrawList* dl,
-                              const ref SnapResult result,
-                              const ref Viewport vp)
-{
-    // `SnapResult.highlightPos` is a genuine WORLD point — `snapCursor`
-    // folds every candidate through its source's ModelSpace before ranking
-    // (snap.d `walkSource`'s `toWorld`), and this is the winner it published.
-    // So it takes the plain world viewport, and the TYPE says so.
-    ImVec2 pos;
-    if (!projectWorld(result.highlightPos, vp, pos)) return;
-
-    // Yellow (matches the existing test-mode cursor-ring colour app.d draws
-    // with `dl.AddCircle(..., IM_COL32(255, 220, 0, 220), ...)`).
-    enum uint outlineCol = IM_COL32(255, 220,   0, 230);
-    enum uint fillCol    = IM_COL32(255, 220,   0, 140);
-
-    enum float outerR = 10.0f;   // ring radius
-    enum float innerR =  4.0f;   // filled-disc radius (snapped only)
-
-    if (result.snapped) {
-        dl.AddCircleFilled(pos, innerR, fillCol, 16);
-        dl.AddCircle(pos, outerR, outlineCol, 24, 2.0f);
-    } else {
-        // Pre-snap: outline only, slightly thinner.
-        dl.AddCircle(pos, outerR, outlineCol, 24, 1.5f);
-    }
+    if (pts.length == 1)        // a vertex: the 6x6 px square (-3..+2, O1)
+        dl.AddRectFilled(ImVec2(pts[0].x - 3, pts[0].y - 3),
+                         ImVec2(pts[0].x + 3, pts[0].y + 3), col);
+    else if (pts.length == 2)
+        dl.AddLine(pts[0], pts[1], col, 2.0f);
+    else if (pts.length <= 4)   // a polygon is filled solid (O2's rollover)
+        dl.AddConvexPolyFilled(pts.ptr, cast(int)pts.length, col);
+    else
+        dl.AddPolyline(pts.ptr, cast(int)pts.length, col, ImDrawFlags.Closed, 2.0f);
 }
 
 // One projection per SPACE, not one projection with a parameter named after
