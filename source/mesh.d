@@ -3730,6 +3730,7 @@ struct Mesh {
         foreach (fi, ref face; faces) {
             uint[] f, src;
             f.reserve(face.length);
+            src.reserve(face.length);
             foreach (k, vid; face) {
                 uint mapped = (vid < remap.length) ? cast(uint) remap[vid] : vid;
                 if (f.length == 0 || f[$ - 1] != mapped) { f ~= mapped; src ~= cast(uint) k; }

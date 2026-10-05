@@ -27,8 +27,8 @@ module mesh_planes;
 // §2.1 records why the primitive is NOT `applyFaceRemap(ref Mesh, in
 // FaceRemap)`: the 19 kernels do not have a remap to apply, they have NEW
 // WINDINGS with a newToOld correspondence, and `FaceRemap`/`faceRemap`
-// already names an oldToNew `int[]` at four existing call sites (two of
-// them a public return value) — a same-named newToOld struct would collide
+// already names an oldToNew `int[]` at existing call sites (today
+// `mesh_ops/extrude.d` and `mesh_ops/edge_bevel.d`) — a same-named newToOld struct would collide
 // with an established local meaning at exactly those sites.
 //
 // STAGE B (this commit) has migrated `mesh.d`'s compaction family — seven
@@ -363,7 +363,7 @@ enum string[string] kExemptPlanes = [
                        ~ "mesh_selsets.selSetRekeyEdges on a VERTEX remap only, which is "
                        ~ "the CALLER's obligation (called right after the plane carry and "
                        ~ "before rebuildEdges() at every existing site, e.g. "
-                       ~ "Mesh.applyVertexRemap) — never this primitive's, and never "
+                       ~ "Mesh.rekeyEdgeSetsThroughRemap) — never this primitive's, and never "
                        ~ "rewriteFaces's, since a face renumbering alone cannot invalidate "
                        ~ "an edge key.",
 ];
@@ -922,8 +922,8 @@ void rewriteFaces(ref Mesh m, uint[][] newFaces, in FaceSource src,
 /// a VERTEX renumbering can — an edge's key is derived from its endpoint
 /// vertex indices. Re-keying it through `mesh_selsets.selSetRekeyEdges` is
 /// the CALLER's obligation, exactly as it is today at every existing vertex
-/// remap site (e.g. `Mesh.applyVertexRemap`, which calls it right after its
-/// own hand-rolled plane carry and before `rebuildEdges()`): call it
+/// remap site (e.g. `Mesh.rekeyEdgeSetsThroughRemap`, which both weld remaps
+/// call after their plane carry; it calls `rebuildEdges()` next): call it
 /// immediately after `rewriteVertices` returns, before `rebuildEdges()` /
 /// `buildLoops()` run. This primitive deliberately does not call it, so a
 /// caller that forgets it fails exactly as loudly as one that forgets it

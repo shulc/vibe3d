@@ -5,15 +5,17 @@
 // `Mesh.rekeyEdgeSetsThroughRemap`, and each twin keeps only its own tail.
 // Behaviour is witnessed elsewhere (vert.merge / cleanup / selection-set
 // cells); this module pins the PRODUCTION WIRING those cells cannot see: who
-// calls the cores, and that no third copy of the collapse grows back.
+// calls the cores, and that no third copy of the collapse grows back. Both
+// cores are `private`: the compiler refuses a direct call from another module;
+// the string-member bypass is not text-censused here.
 // Order per assert block: scanner control, population floor, roster.
 module tests.unit.weld_remap_core_census_test;
 
 import std.algorithm : count, sort;
-import std.file      : dirEntries, readText, SpanMode;
+import std.file      : readText;
 import std.format    : format;
 import std.path      : buildPath, dirName;
-import std.string    : splitLines, indexOf;
+import std.string    : splitLines;
 
 import tests.unit.census_symbols : blankNonCode, blankUnittestBodies,
                                    enclosingSymbols, symbolAt;
@@ -35,19 +37,21 @@ private string[] declsOf(string src, string needle) {
 
 private string meshSrc() { return readText(buildPath(repoRoot, "source", "mesh.d")); }
 
-unittest { // scanner control: a call is seen with its declaration; prose is not
+unittest { // scanner control: a call and an address are seen; prose is not
     enum probe = "struct M {\n"
                ~ "    void a() {\n        core(1);\n    }\n"
-               ~ "    // core( in a comment\n"
-               ~ "    void b() {\n        auto s = \"core(\";\n    }\n"
+               ~ "    // core in a comment\n"
+               ~ "    void b() {\n        auto s = \"core\";\n    }\n"
+               ~ "    void c() {\n        auto p = &core;\n    }\n"
                ~ "}\n";
-    assert(declsOf(probe, "core(") == ["M.a"],
-           format("scanner control: expected [\"M.a\"], found %s", declsOf(probe, "core(")));
+    assert(declsOf(probe, "core") == ["M.a", "M.c"],
+           format("scanner control: expected [\"M.a\", \"M.c\"], found %s", declsOf(probe, "core")));
 }
 
 unittest { // both twins, and only they, reach the two cores
     const src = meshSrc();
-    static foreach (needle; ["collapseFacesThroughRemap(", "rekeyEdgeSetsThroughRemap("]) {{
+    // Keyed on the bare identifier, so `&core` and `core!` spellings count too.
+    static foreach (needle; ["collapseFacesThroughRemap", "rekeyEdgeSetsThroughRemap"]) {{
         const got = declsOf(src, needle);
         // Floor: the declaration line plus one call per twin.
         assert(got.length == 3, format("`%s`: expected 3 occurrences in source/mesh.d "
@@ -76,13 +80,4 @@ unittest { // the deleted copies stay deleted
             "`%s` must be called from `Mesh.rekeyEdgeSetsThroughRemap` alone; found %s",
             needle, got));
     }
-    // No module outside mesh.d names either core.
-    size_t outside;
-    foreach (de; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth)) {
-        if (de.name == buildPath(repoRoot, "source", "mesh.d")) continue;
-        const code = blankNonCode(readText(de.name));
-        if (code.indexOf("collapseFacesThroughRemap") >= 0
-            || code.indexOf("rekeyEdgeSetsThroughRemap") >= 0) ++outside;
-    }
-    assert(outside == 0, format("%d source modules besides mesh.d name a weld core", outside));
 }
