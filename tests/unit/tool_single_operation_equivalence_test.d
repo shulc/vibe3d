@@ -13,7 +13,7 @@ import std.math : abs;
 
 import editmode : EditMode;
 import math : Vec3;
-import mesh : Mesh, makeCube;
+import mesh : Mesh, makeCube, makeGridPlane;
 import mesh_gpu : GpuMesh;
 import params : Param;
 import tool : Tool;
@@ -43,6 +43,7 @@ private void pickTwoVertices(ref Mesh m) {
 private void triangulateAll(ref Mesh m) {
     auto mask = m.operandFaceMask(); m.triangulateFacesByMask(mask);
 }
+private void triangulatedGrid(ref Mesh m) { m = makeGridPlane(2); triangulateAll(m); }
 
 /// The scripted apply's refusal rig: every element hidden leaves each
 /// kernel's operand mask empty.
@@ -53,8 +54,12 @@ private void hideAll(ref Mesh m, Tool) {
 }
 
 private void poke(Tool t, string name, float v) {
-    foreach (ref p; t.params()) if (p.name == name) { *p.fptr = v; return; }
-    assert(false, "no float param named `" ~ name ~ "`");
+    foreach (ref p; t.params()) {
+        if (p.name != name) continue;
+        if (p.kind == Param.Kind.Bool) *p.bptr = v != 0; else *p.fptr = v;
+        return;
+    }
+    assert(false, "no param named `" ~ name ~ "`");
 }
 
 /// A digest that moves with any vertex position (weights break symmetry).
@@ -152,9 +157,10 @@ unittest {
         [1.5f], 7, 6, 31.5);
     row!ReductionTool(EditMode.Polygons, &triangulateAll, ["ratio"],
         [0.5f], 5, 6, 13.5, true, (ref Mesh, Tool t) { poke(t, "ratio", 1.0f); });
-    // A ratio rounding to no face keeps one (the operation's floor).
-    row!ReductionTool(EditMode.Polygons, &triangulateAll, ["ratio"],
-        [0.01f], 4, 4, 10.25, true, (ref Mesh, Tool t) { poke(t, "ratio", 1.0f); });
+    // A ratio rounding to no face keeps one (the operation's floor; on an open
+    // grid without boundary preservation the kernel would otherwise take all).
+    row!ReductionTool(EditMode.Polygons, &triangulatedGrid, ["preserveBoundary", "ratio"],
+        [0.0f, 0.01f], 3, 1, 3.75, true, (ref Mesh, Tool t) { poke(t, "ratio", 1.0f); });
     row!SmoothShiftTool(EditMode.Polygons, &pickFace, ["scale", "shift"],
         [1.0f, 0.3f], 12, 10, -66.8);
     assert(rows == 9, format("%s rows ran, expected 9 (8 tools, reduce twice)", rows));
