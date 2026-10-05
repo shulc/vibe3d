@@ -1096,7 +1096,7 @@ public:
         // An off-handle press — the Move bank's own (it arms at its pivot) or a
         // miss of every enabled bank — HAULS the Offset on the auto work plane,
         // linearised at the press's click-law point there, not at the handle
-        // (task 9450, capture K-D D2: residual 0.0006 vs 0.0198 at the handle).
+        // (capture K-D D2: residual 0.0006 vs 0.0198 at the handle).
         immutable bool offHandlePress =
             totalMiss || (picked == DragBank.Move && mv.lastClickWasOffGizmo);
         if (offHandlePress) {
@@ -1303,14 +1303,21 @@ private:
         return mesh.selectionBBoxCenterEdges();
     }
 
-    // The symmetry plane, when an AXIS plane is on (a workplane plane's
-    // normal sign is arbitrary and not captured — not mirrored).
+    // The symmetry plane; under work-plane symmetry the stage's plane mapped
+    // by the work plane once more, W twice like the pen (capture
+    // K-D D4: the offset mirrors about R²·eₓ).
     void readSymmetry(ref VectorStack vts) {
         symMirror_.enabled = false;
         if (auto sp = vts.get!SymmetryPacket()) {
-            symMirror_.enabled     = sp.enabled && sp.axisIndex >= 0;
+            symMirror_.enabled     = sp.enabled;
             symMirror_.planePoint  = sp.planePoint;
             symMirror_.planeNormal = sp.planeNormal;
+            if (sp.useWorkplane) {
+                import tools.create.create_common : primitivePlacementFrame, transformDir;
+                immutable frame = primitivePlacementFrame();
+                symMirror_.planePoint  = transformPoint(frame.toWorld, sp.planePoint);
+                symMirror_.planeNormal = normalize(transformDir(frame.toWorld, sp.planeNormal));
+            }
         }
         symMirror_.pressSide = liveAuthoringSide();
     }

@@ -7,7 +7,8 @@
 // pairings' epsilon side test; (w4) the routed walk's one change note. Task
 // 9414: (c4) the work-plane symmetry plane is computed only in
 // `workplaneSymmetryPlane`, called once by the stage and once by the pen, which
-// maps it by the work plane once more (task 9417); (w6) its value under a pinned turned
+// maps it by the work plane once more (task 9417), as Edge Extend does (task
+// 9452); (w6) its value under a pinned turned
 // plane (K-S2). No symmetry overlay is drawn (K-S3b, task 9475: the suite's
 // test_frame_counts pins it).
 // Order: floors first, then the needles, then the pins (druntime stops a
@@ -127,6 +128,12 @@ unittest { // (c4) ONE work-plane symmetry plane function, ONE call
            countOccurrences(pen, "transformPoint(frame.toWorld, mirror_.planePoint)") == 1 &&
            countOccurrences(pen, "normalize(transformDir(frame.toWorld, mirror_.planeNormal))") == 1,
            "(c4) the pen does not read the stage's plane once, mapped by W once more");
+    // Edge Extend is the second W-twice client (task 9452, K-D D4): it maps the
+    // stage's published plane by the work plane once more.
+    const ee = bodyAfter(codeOf("source/tools/edit/edge_extend.d"), "void readSymmetry(");
+    assert(countOccurrences(ee, "transformPoint(frame.toWorld, sp.planePoint)") == 1 &&
+           countOccurrences(ee, "normalize(transformDir(frame.toWorld, sp.planeNormal))") == 1,
+           "(c4) Edge Extend does not map the stage's plane by W once more");
     const st = codeOf("source/toolpipe/stages/symmetry.d");
     assert(countOccurrences(st, "workplaneSymmetryPlane(") == 2, "(c4) the stage does not define it and call it once");
     const ev = bodyAfter(st, "bool evaluate(ref VectorStack vts)");
