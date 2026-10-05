@@ -1,0 +1,230 @@
+{
+ "about": "Topology pen weld target vs the snap visibility masks: a move-mode drag of vertex b released 6 px from vertex a. Captured 2026-10-05 (batch K-T). Each scene has a control that welds and a cell that must not.",
+ "rig": "top orthographic view, 0.002275 m/px, camera focus (0.07,1,0); press on b, pointer delta (271,219) px; snap enabled, every global snap type off, backFace on",
+ "A_quad": [
+  [
+   0.3,
+   1,
+   0.3
+  ],
+  [
+   0.3,
+   1,
+   0.8
+  ],
+  [
+   0.8,
+   1,
+   0.8
+  ],
+  [
+   0.8,
+   1,
+   0.3
+  ]
+ ],
+ "B_quad": [
+  [
+   -0.33043,
+   1.0,
+   -0.19794
+  ],
+  [
+   -0.33043,
+   1.0,
+   -0.49794
+  ],
+  [
+   -0.63043,
+   1.0,
+   -0.49794
+  ],
+  [
+   -0.63043,
+   1.0,
+   -0.19794
+  ]
+ ],
+ "box_xz": [
+  0.15,
+  0.45
+ ],
+ "box_y_occluding": [
+  1.2,
+  1.5
+ ],
+ "box_y_below": [
+  0.5,
+  0.8
+ ],
+ "pointer_delta_px": [
+  271,
+  219
+ ],
+ "cells": [
+  {
+   "id": "weld-occ",
+   "scene": "a covered in screen space by a closed box (x,z 0.15..0.45, y 1.2..1.5) between it and the camera",
+   "result": "RAW",
+   "fg_vertex_count": [
+    16,
+    16
+   ],
+   "b_final": [
+    0.28457,
+    1.0,
+    0.30206
+   ],
+   "fg_faces": [
+    [
+     0,
+     1,
+     2,
+     3
+    ],
+    [
+     4,
+     5,
+     6,
+     7
+    ]
+   ]
+  },
+  {
+   "id": "weld-occctl",
+   "scene": "same box below a (y 0.5..0.8); a visible",
+   "result": "WELD",
+   "fg_vertex_count": [
+    16,
+    15
+   ],
+   "b_final": [
+    0.3,
+    1.0,
+    0.3
+   ],
+   "fg_faces": [
+    [
+     0,
+     1,
+     2,
+     3
+    ],
+    [
+     0,
+     4,
+     5,
+     6
+    ]
+   ]
+  },
+  {
+   "id": "weld-hid",
+   "scene": "a hidden (its vertex and its polygon carry the hide mark)",
+   "result": "RAW",
+   "fg_vertex_count": [
+    12,
+    12
+   ],
+   "b_final": [
+    0.28457,
+    1.0,
+    0.30206
+   ],
+   "fg_faces": [
+    [
+     0,
+     1,
+     2,
+     3
+    ],
+    [
+     4,
+     5,
+     6,
+     7
+    ]
+   ]
+  },
+  {
+   "id": "weld-hidctl",
+   "scene": "a far bystander quad's vertex hidden; a visible",
+   "result": "WELD",
+   "fg_vertex_count": [
+    12,
+    11
+   ],
+   "b_final": [
+    0.3,
+    1.0,
+    0.3
+   ],
+   "fg_faces": [
+    [
+     0,
+     1,
+     2,
+     3
+    ],
+    [
+     0,
+     4,
+     5,
+     6
+    ]
+   ]
+  },
+  {
+   "id": "weld-bg",
+   "scene": "a in a visible, unselected (background) mesh; b's quad in the edited mesh",
+   "result": "RAW",
+   "fg_vertex_count": [
+    8,
+    8
+   ],
+   "b_final": [
+    0.28457,
+    1.0,
+    0.30206
+   ],
+   "fg_faces": [
+    [
+     0,
+     1,
+     2,
+     3
+    ],
+    [
+     4,
+     5,
+     6,
+     7
+    ]
+   ]
+  },
+  {
+   "id": "weld-bgctl",
+   "scene": "a and b's quad both in the edited mesh; the bystander quad in a background mesh",
+   "result": "WELD",
+   "fg_vertex_count": [
+    8,
+    7
+   ],
+   "b_final": null,
+   "fg_faces": [
+    [
+     0,
+     1,
+     2,
+     3
+    ],
+    [
+     0,
+     4,
+     5,
+     6
+    ]
+   ]
+  }
+ ]
+}

@@ -30,8 +30,10 @@
 import http_command_helpers : commandBody;
 import topopen_place_helpers;
 import std.json;
-import std.math   : sqrt, abs;
+import std.math   : sqrt, abs, lround, tan, PI;
 import std.format : format;
+import std.file   : readText;
+import drag_helpers : viewportFromCameraMatrices;
 
 void main() {}
 
@@ -271,5 +273,192 @@ unittest {
                    i, before[i], restored[i]));
 
     cmd("tool.set mesh.topoPen off");
+    postJson("/api/command", commandBody("scene.reset"));
+}
+
+// ---------------------------------------------------------------------------
+// §3 — THE WELD TARGET OBEYS THE SNAP SERVICE'S MASKS (captured, batch K-T;
+// fixture tests/fixtures/topopen_weld_targets.json).
+//
+// A move-mode drag of vertex b released 6 px from vertex a, in a top
+// orthographic view at the capture's 0.002275 m/px. The weld target is the
+// snap query's answer (`TopologyPenTool.weldTargetVertex`): a vertex OCCLUDED
+// by a closed box, a HIDDEN vertex, and a vertex of a BACKGROUND mesh are not
+// weld targets. Each scene runs its CONTROL first (the same drag welds), so a
+// refusal below is the mask and not a broken rig. A refused weld leaves b
+// where the drag put it: the start plus the quantised pointer OFFSET (not a
+// quantised absolute position), read from the fixture to 1e-5.
+// ---------------------------------------------------------------------------
+
+enum double kWeldPs = 0.002275;   // the capture's metres per pixel
+
+JSONValue weldCell(string id) {
+    foreach (c; parseJSON(readText("tests/fixtures/topopen_weld_targets.json"))["cells"].array)
+        if (c["id"].str == id) return c;
+    assert(false, "no fixture cell " ~ id);
+}
+
+double[3][] quadAt(double x0, double x1, double z0, double z1) {
+    return [[x0, 1.0, z0], [x0, 1.0, z1], [x1, 1.0, z1], [x1, 1.0, z0]];
+}
+
+string meshBody(double[3][] v, int[][] f) {
+    string s = `{"vertices":[`;
+    foreach (i, p; v) s ~= format(`%s[%.6f,%.6f,%.6f]`, i ? "," : "", p[0], p[1], p[2]);
+    s ~= `],"faces":[`;
+    foreach (i, q; f) s ~= format(`%s%s`, i ? "," : "", q);
+    return s ~ `]}`;
+}
+
+void loadLayerMesh(double[3][] v, int[][] f) {
+    auto r = postJson("/api/command", commandBody("scene.loadMesh", meshBody(v, f)));
+    assert(r["status"].str == "ok", "load-mesh failed: " ~ r.toString);
+}
+
+/// One K-T scene, camera and pen armed; returns b's index in the edited layer.
+/// `scene`: "occ", "occctl", "hid", "hidctl", "bg", "bgctl".
+int weldScene(string scene, out int layer) {
+    double[3][] A, B, Y;
+    foreach (p; parseJSON(readText("tests/fixtures/topopen_weld_targets.json"))["A_quad"].array)
+        A ~= [p[0].get!double, p[1].get!double, p[2].get!double];
+    foreach (p; parseJSON(readText("tests/fixtures/topopen_weld_targets.json"))["B_quad"].array)
+        B ~= [p[0].get!double, p[1].get!double, p[2].get!double];
+    Y = quadAt(0.9, 1.2, -0.6, -0.3);   // a far bystander quad
+    int[][] q2 = [[0, 1, 2, 3], [4, 5, 6, 7]];
+
+    auto r = postJson("/api/command", commandBody("scene.reset", `{"empty":true}`));
+    assert(r["status"].str == "ok", "empty reset failed: " ~ r.toString);
+    int bIdx = 4;
+    layer = 0;
+    if (scene == "occ" || scene == "occctl") {
+        immutable double y0 = scene == "occ" ? 1.2 : 0.5, y1 = scene == "occ" ? 1.5 : 0.8;
+        double[3][] box = [[0.15, y0, 0.15], [0.45, y0, 0.15], [0.45, y1, 0.15], [0.15, y1, 0.15],
+                           [0.15, y0, 0.45], [0.45, y0, 0.45], [0.45, y1, 0.45], [0.15, y1, 0.45]];
+        int[][] f = q2;
+        foreach (c; [[0, 3, 2, 1], [4, 5, 6, 7], [0, 4, 7, 3], [1, 2, 6, 5], [3, 7, 6, 2], [0, 1, 5, 4]])
+            f ~= [c[0] + 8, c[1] + 8, c[2] + 8, c[3] + 8];
+        loadLayerMesh(A ~ B ~ box, f);
+    } else if (scene == "hid" || scene == "hidctl") {
+        loadLayerMesh(A ~ B ~ Y, q2 ~ [[8, 9, 10, 11]]);
+        cmd(commandBody("mesh.select", format(`{"mode":"vertices","indices":[%d]}`,
+                                               scene == "hid" ? 0 : 8)));
+        cmd(`{"id":"mesh.hide"}`);
+        cmd(commandBody("select.drop"));
+    } else {
+        loadLayerMesh(scene == "bg" ? A : Y, [[0, 1, 2, 3]]);
+        cmd("layer.add name:Edit");
+        layer = 1;
+        if (scene == "bg") { loadLayerMesh(B ~ Y, q2); bIdx = 0; }
+        else               loadLayerMesh(A ~ B, q2);
+    }
+    cmd("history.clear");
+    cmd("workplane.reset");
+    cmd("viewport.view Top");
+    immutable double dist = fetchCamera().height / (2.0 * (1.0 / kWeldPs) * tan(PI / 8));
+    auto cr = postJson("/api/camera", format(
+        `{"focus":{"x":0.07,"y":1.0,"z":0.0},"distance":%.9f}`, dist));
+    assert(cr["status"].str == "ok", "camera setup failed: " ~ cr.toString);
+    assert(getJson("/api/camera")["projKind"].str == "Ortho", "rig: the top view must be ortho");
+    cmd(`tool.pipe.attr snap types ""`);   // every global snap type OFF, as captured
+    cmd("tool.set mesh.topoPen on");
+    cmd("tool.attr mesh.topoPen mode move");
+    cmd("tool.attr mesh.topoPen backFace true");
+    assert(snapEnabled(), "rig: the pen's activation arms the snap enable");
+    return bIdx;
+}
+
+/// Press on b and drag by the captured pointer delta (+ `extraDx` px).
+void weldDrag(int layer, int bIdx, int extraDx = 0) {
+    auto vp = viewportFromCameraMatrices();
+    auto b = readVerticesLayer(layer)[bIdx];
+    float sx, sy;
+    assert(projectToWindow(Vec3(cast(float)b[0], cast(float)b[1], cast(float)b[2]), vp, sx, sy),
+        "rig: b must project");
+    immutable int x0 = cast(int)lround(sx), y0 = cast(int)lround(sy);
+    auto pr = postJson("/api/play-events", buildDragLog(vp.x, vp.y, vp.width, vp.height,
+        x0, y0, x0 + 271 + extraDx, y0 + 219, 16, 0, 1));
+    assert("error" !in pr, "/api/play-events failed: " ~ pr.toString);
+    waitPlayerIdle();
+}
+
+/// Assert the fixture cell's outcome on the edited layer.
+void assertWeldCell(string id, int layer, int bIdx) {
+    auto c = weldCell(id);
+    immutable long n1 = c["fg_vertex_count"].array[1].integer;
+    assert(vertexCountLayer(layer) == n1, format("%s: vertex count %d -> expected %d (%s)",
+        id, vertexCountLayer(layer), n1, c["result"].str));
+    if (c["result"].str == "WELD") {
+        assert(hasExactFace(layer, [0, 4, 5, 6]),
+            format("%s: the welded ring must be [0,4,5,6], got %s", id, readFacesLayer(layer)));
+        return;
+    }
+    auto bf = c["b_final"].array;
+    auto got = readVerticesLayer(layer)[bIdx];
+    foreach (k; 0 .. 3)
+        assert(abs(got[k] - bf[k].get!double) <= 1e-5, format(
+            "%s: a refused weld leaves b at the captured drag reading %s, got %s",
+            id, bf, got));
+}
+
+unittest { // occluded: control (box below a) welds, box between a and the eye refuses
+    int layer;
+    int bIdx = weldScene("occctl", layer);
+    weldDrag(layer, bIdx);
+    assertWeldCell("weld-occctl", layer, bIdx);
+    bIdx = weldScene("occ", layer);
+    weldDrag(layer, bIdx);
+    assertWeldCell("weld-occ", layer, bIdx);
+    cmd("tool.set mesh.topoPen off");
+}
+
+unittest { // hidden: control (bystander hidden) welds, a hidden refuses
+    int layer;
+    int bIdx = weldScene("hidctl", layer);
+    weldDrag(layer, bIdx);
+    assertWeldCell("weld-hidctl", layer, bIdx);
+    bIdx = weldScene("hid", layer);
+    weldDrag(layer, bIdx);
+    assertWeldCell("weld-hid", layer, bIdx);
+    cmd("tool.set mesh.topoPen off");
+}
+
+unittest { // background: control (a in the edited mesh) welds, a in a background mesh refuses
+    int layer;
+    int bIdx = weldScene("bgctl", layer);
+    weldDrag(layer, bIdx);
+    assertWeldCell("weld-bgctl", layer, bIdx);
+    bIdx = weldScene("bg", layer);
+    auto bg0 = readVerticesLayer(0);
+    weldDrag(layer, bIdx);
+    assertWeldCell("weld-bg", layer, bIdx);
+    assert(readVerticesLayer(0) == bg0, "weld-bg: the background mesh must be unchanged");
+    cmd("tool.set mesh.topoPen off");
+}
+
+unittest { // law-neutral: the weld ignores the snap SCOPE (Item) and reaches the full accept radius
+    int layer;
+    int bIdx = weldScene("occctl", layer);
+    cmd("tool.set mesh.topoPen off");
+    cmd("tool.pipe.attr snap snapMode item");
+    cmd("tool.set mesh.topoPen on");
+    cmd("tool.attr mesh.topoPen mode move");
+    cmd("tool.attr mesh.topoPen backFace true");
+    weldDrag(layer, bIdx);
+    assertWeldCell("weld-occctl", layer, bIdx);   // weld-scope-item
+    cmd("tool.set mesh.topoPen off");
+    cmd("tool.pipe.attr snap snapMode global");
+
+    // An accept radius (inner range 60 px) above the 40 px outer range: a release
+    // 45 px from a still welds.
+    bIdx = weldScene("occctl", layer);
+    cmd("tool.set mesh.topoPen off");
+    cmd("tool.pipe.attr snap innerRange 60");
+    cmd("tool.set mesh.topoPen on");
+    cmd("tool.attr mesh.topoPen mode move");
+    cmd("tool.attr mesh.topoPen backFace true");
+    weldDrag(layer, bIdx, -39);
+    assertWeldCell("weld-occctl", layer, bIdx);   // weld-accept-above-outer
+    cmd("tool.set mesh.topoPen off");
+    cmd("tool.pipe.attr snap innerRange 24");
     postJson("/api/command", commandBody("scene.reset"));
 }
