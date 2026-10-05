@@ -254,3 +254,4 @@ drop 11 34 9476 relocate_plane_test: the unsnapped perspective relocate chain (p
 drop 5 21 9437 mesh_test: the deleted Mesh.weldVertexPair's four cells and the weldVertexPairs adjacency-scratch cell (the rule it guarded is gone); the AimViewport consumer gate moved from drag_weld.d into math_test
 drop 1 6 9428 tool_session_policy_test block (11): the refusal-datum census and door wiring order removed with the datum; the suite cells of test_tool_attr_gate witness the door
 drop 0 3 9434 the operation census's two family loops share one check (four duplicated loop asserts become one)
+drop 1 13 9444 snap_overlay_test: the mark-law cell folds into the readback table (colour pins kept), the census field check goes (the static assert pins it)

@@ -2062,10 +2062,10 @@ struct InputRouter {
             // The release side of the pair above (the momentary key's law).
             case SDL_KEYUP:           handleKeyUp(ev.key);        break;
             case SDL_MOUSEBUTTONDOWN:
-                held_.press(ev.button.button);
                 // A press retires the hover's published snap; a tool that
                 // snaps on its press publishes again (orbit, lasso do not).
                 clearLastSnap();
+                held_.press(ev.button.button);
                 handleMouseButtonDown(ev.button);
                 version (web) webConsumedInputMask |= webButtonDownBit;
                 break;
