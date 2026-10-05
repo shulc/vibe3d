@@ -2970,8 +2970,7 @@ public:
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
         static immutable ToolSessionPolicy defaults = {
             activationRow: true, commandClose: CommandClose.allDoors,
-            sessionSteps: true, historyRecordedSteps: true,
-            dropWritesRow: true };   // K-CD4 CD4cQ / CD_SAME_UNDO
+            sessionSteps: true, historyRecordedSteps: true };
         ToolSessionPolicy policy = defaults;
         policy.activationRow = activationHistoryRow;
         policy.recordedFirstUndoEndsTool = recordedFirstUndoEndsTool;

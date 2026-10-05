@@ -1,5 +1,5 @@
 // Task 9457: an item-list click that moves the primary mesh keeps the armed
-// tool and the selection type; a drop is one undo step that re-arms.
+// tool and the selection type; the Items mode command drops the tool.
 // Evidence: the private capture K-CD4 (cells named per block below).
 module test_primary_move_keeps_tool;
 
@@ -38,8 +38,6 @@ private void key(int sym, int scan, int mod = 0) {
     quiesce();
 }
 private void keyW()  { key(119, 26); }      // arm move
-private void keyQ()  { key(113, 20); }      // drop the tool
-private void key1()  { key(49, 30); }       // vertices
 private void undo()  { key(122, 29, 64); }  // Ctrl+Z through the navigate chokepoint
 
 private string tool() { return getJson("/api/input/context")["tool"].toString; }
@@ -180,32 +178,6 @@ unittest {
         "Ctrl+Z 2 undoes the click; A's drag stays");
     undo();
     assert(moved(0, a0).length == 0, "Ctrl+Z 3 reverts the drag on A");
-}
-
-// CD_SAME_UNDO: the current type's key drops the tool in one step; undoing it
-// re-arms the tool and changes neither the type nor the selection.
-unittest {
-    rig();
-    keyW();
-    key1();
-    assert(!armed(), "the current type's key drops the tool");
-    undo();
-    assert(armed(), "undoing the drop re-arms the tool, got " ~ tool());
-    assert(selType() == "vertex" && selectedVerts() == [0],
-        "and keeps the type and the selection");
-}
-
-// CD4cQ: Q drops in one step; undoing it re-arms with the move kept.
-unittest {
-    rig();
-    keyW();
-    const a0 = verts(0);
-    drag();
-    keyQ();
-    assert(!armed(), "Q drops the tool");
-    undo();
-    assert(armed(), "undoing Q re-arms the tool, got " ~ tool());
-    assert(moved(0, a0) == [0], "and keeps the move");
 }
 
 // CD5s / CD5b: in Items mode the current type's command drops the tool, by

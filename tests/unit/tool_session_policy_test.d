@@ -2216,11 +2216,9 @@ unittest { // (8)
 // (10) Wave plan 8640 S6 — a user drop writes a drop row by policy DATA
 // (`dropWritesRow`). Provenance: CAPTURED for the Topology Pen (X-esc,
 // X-space, X-q, X-sel, X-bare; the gesture loss on undo is NOT ported — gap
-// row (a), L8) and for the transform tool (K-CD4 CD4cQ / CD_SAME_UNDO / CD5s,
-// task 9457: Q and the current type's mode command each write one step whose
-// undo re-arms); false for every other tool (uncaptured: no row, by data).
-// Exactly those two classes declare it, and the drop door reads the policy
-// AND the transition table before the door runs.
+// row (a), L8); false for every other tool (uncaptured: no row, by data).
+// Exactly one class declares it, and the drop door reads the policy AND the
+// transition table before the door runs.
 // ---------------------------------------------------------------------------
 
 static assert(ToolSessionPolicy.init.dropWritesRow == false);
@@ -2238,11 +2236,8 @@ unittest { // (10)
         }
     }
     assert(scanned == 48, format("S6 policy classes: scanned %s, measured 48", scanned));
-    declared.sort();
-    assert(declared == ["tools.edit.topology_pen.tool.TopologyPenTool",
-                        "tools.transform.xfrm_transform.XfrmTransformTool"],
-           format("S6 policy classes: dropWritesRow declared by %s, expected the pen and "
-                  ~ "the transform tool", declared));
+    assert(declared == ["tools.edit.topology_pen.tool.TopologyPenTool"],
+           format("S6 policy classes: dropWritesRow declared by %s, expected the pen only", declared));
     auto app = squeeze(bodyAt(blankNonCode(readText("source/app.d")),
         "void dropActiveToolWith(ToolTransition why, DropContext ctx)"));
     assert(app.count("constbooldropRow=activeTool!is"~"null&&activeTool.sessionPolicy().dropWritesRow&&dropWritesRowFor(why);") == 1,
