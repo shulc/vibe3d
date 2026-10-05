@@ -607,9 +607,9 @@ package void drawThickLines(GLuint vao, int vertCount, GLenum mode,
     glUseProgram(restoreProgram);
 }
 
-// Public thin wrapper around drawThickLines for callers outside handler.d
-// (e.g. MoveTool's constraint-line overlay).  Same semantics as the private
-// version; the `restoreProgram` is typically shader.program.
+// Public thin wrapper around drawThickLines for callers outside this module
+// that own their VAO (tests/test_thick_line_instancing.d). Same semantics;
+// tools draw world lines through drawWorldSegment(s) instead.
 void drawThickLinesExt(GLuint vao, int vertCount, GLenum mode,
                        const ref float[16] model,
                        const ref Viewport vp,
@@ -657,6 +657,41 @@ void drawWorldSegment(Vec3 a, Vec3 b, const ref Viewport vp,
     auto model = modelMatrix(right, up, fwd, Vec3(1, 1, len), a);
     drawThickLines(g_segVao, 2, GL_LINES, model, vp, color, width,
                    restoreProgram, alpha, smooth);
+}
+
+// Lazily-built dynamic VAO for drawWorldSegments' caller-built point pairs.
+private GLuint g_segsVao, g_segsVbo;
+
+/// Draw `pairs` (consecutive points, two per segment, world space) as thick
+/// GL_LINES through the shared thick-line program, then restore
+/// `restoreProgram`. The shape — one segment, a closed outline, dashes — is
+/// the caller's point list; tools own no VAO
+/// (tests/unit/tool_overlay_vao_census_test.d). The CALLER owns the
+/// depth-test state, as with drawWorldQuad.
+void drawWorldSegments(const Vec3[] pairs, const ref Viewport vp, Vec3 colour,
+                       float widthPx, GLuint restoreProgram, float alpha = 1.0f)
+{
+    static assert(Vec3.sizeof == 3 * float.sizeof);
+    assert(pairs.length % 2 == 0, "drawWorldSegments takes point PAIRS");
+    version (unittest) {
+        // No GL context under -unittest.
+    } else {
+        if (pairs.length == 0) return;
+        if (g_segsVao == 0) {
+            glGenVertexArrays(1, &g_segsVao);
+            glGenBuffers(1, &g_segsVbo);
+            glBindVertexArray(g_segsVao);
+            glBindBuffer(GL_ARRAY_BUFFER, g_segsVbo);
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, Vec3.sizeof, null);
+            glEnableVertexAttribArray(0);
+            glBindVertexArray(0);
+        }
+        glBindBuffer(GL_ARRAY_BUFFER, g_segsVbo);
+        glBufferData(GL_ARRAY_BUFFER, pairs.length * Vec3.sizeof, pairs.ptr, GL_DYNAMIC_DRAW);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+        drawThickLines(g_segsVao, cast(int)pairs.length, GL_LINES, identityMatrix, vp,
+                       colour, widthPx, restoreProgram, alpha);
+    }
 }
 
 // Register the translucent-fill program (compiled in app.d from

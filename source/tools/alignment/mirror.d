@@ -17,7 +17,7 @@ import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import editmode : EditMode;
 import shader : Shader, LitShader;
-import handler : MoveHandler, ToolHandles, Arrow, BoxHandler, gizmoSize, drawThickLinesExt;
+import handler : MoveHandler, ToolHandles, Arrow, BoxHandler, gizmoSize, drawWorldSegments;
 import drag : planeDragDelta, screenAxisDelta, gesturePrevPixel;
 import eventlog : queryMouse;
 import prepared_tool_effect : PreparedToolStateDelta, PreparedToolStateKind,
@@ -263,14 +263,6 @@ private:
     int      moverLastMX, moverLastMY;
     Viewport cachedVp;
 
-    // ----- Plane visualization (M4) — a wire quad ⟂ normal + a dashed line
-    // along the normal through center, both rebuilt (world-space vertex data
-    // re-uploaded) every draw() call — mirrors MoveTool's constraintLineVao
-    // pattern (`constraintLineVao` in tools/transform/move.d): lazy VAO init,
-    // GL_DYNAMIC_DRAW update.
-    GLuint planeQuadVao, planeQuadVbo;
-    GLuint axisLineVao,  axisLineVbo;
-
 public:
     this(Mesh* delegate() nothrow @nogc meshSrc, GpuMesh* gpu, LitShader litShader) {
         this.meshSrc_  = meshSrc;
@@ -291,8 +283,6 @@ public:
     void destroy() {
         mover.destroy();
         rotateBox.destroy();
-        if (planeQuadVao != 0) { glDeleteVertexArrays(1, &planeQuadVao); glDeleteBuffers(1, &planeQuadVbo); }
-        if (axisLineVao  != 0) { glDeleteVertexArrays(1, &axisLineVao);  glDeleteBuffers(1, &axisLineVbo); }
     }
 
     override string name() const { return "Mirror"; }
@@ -707,11 +697,8 @@ public:
     }
 
     /// Wire quad ⟂ `normal` at `center` + a dashed line along `normal` through
-    /// `center` — the mirror-plane visualization (task 0230 M4). Lazy VAO
-    /// init + `GL_DYNAMIC_DRAW` re-upload every call, mirroring MoveTool's
-    /// `constraintLineVao` pattern (tools/transform/move.d): the geometry (world
-    /// positions) changes every frame the plane tilts or moves, so there is no
-    /// static VAO to reuse — only the buffer OBJECT is cached.
+    /// `center` — the mirror-plane visualization (task 0230 M4), both as point
+    /// pairs for `drawWorldSegments`; the quad's closing edge is its last pair.
     private void drawPlaneViz(const ref Viewport vp, Vec3 center, Vec3 normal, float gs,
                               GLuint restoreProgram) {
         immutable Vec3 planeColor = Vec3(0.85f, 0.25f, 0.85f);   // magenta, matches the reference viz
@@ -728,65 +715,26 @@ public:
         Vec3 c1 = center - tA * qs + tB * qs;
         Vec3 c2 = center - tA * qs - tB * qs;
         Vec3 c3 = center + tA * qs - tB * qs;
-        float[12] quadData = [
-            c0.x, c0.y, c0.z,  c1.x, c1.y, c1.z,
-            c2.x, c2.y, c2.z,  c3.x, c3.y, c3.z,
-        ];
-
-        if (planeQuadVao == 0) {
-            glGenVertexArrays(1, &planeQuadVao);
-            glGenBuffers(1, &planeQuadVbo);
-            glBindVertexArray(planeQuadVao);
-            glBindBuffer(GL_ARRAY_BUFFER, planeQuadVbo);
-            glBufferData(GL_ARRAY_BUFFER, quadData.sizeof, quadData.ptr, GL_DYNAMIC_DRAW);
-            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3*float.sizeof, cast(void*)0);
-            glEnableVertexAttribArray(0);
-            glBindVertexArray(0);
-        } else {
-            glBindBuffer(GL_ARRAY_BUFFER, planeQuadVbo);
-            glBufferData(GL_ARRAY_BUFFER, quadData.sizeof, quadData.ptr, GL_DYNAMIC_DRAW);
-            glBindBuffer(GL_ARRAY_BUFFER, 0);
-        }
+        Vec3[8] quadPairs = [c0, c1,  c1, c2,  c2, c3,  c3, c0];
 
         // Dashed axis/normal line through center, drawn as a series of short
         // GL_LINES segments (GL 3.3 core has no glLineStipple).
         float dashLen = qs * 0.10f;
         float gapLen  = qs * 0.07f;
         float axisLen = qs * 1.3f;
-        float[] axisData;
+        Vec3[] axisPairs;
         for (float t = -axisLen; t < axisLen; t += dashLen + gapLen) {
             float t1 = t + dashLen;
             if (t1 > axisLen) t1 = axisLen;
-            Vec3 p0 = center + normal * t;
-            Vec3 p1 = center + normal * t1;
-            axisData ~= [p0.x, p0.y, p0.z, p1.x, p1.y, p1.z];
-        }
-        int axisVertCount = cast(int)(axisData.length / 3);
-
-        if (axisLineVao == 0) {
-            glGenVertexArrays(1, &axisLineVao);
-            glGenBuffers(1, &axisLineVbo);
-            glBindVertexArray(axisLineVao);
-            glBindBuffer(GL_ARRAY_BUFFER, axisLineVbo);
-            glBufferData(GL_ARRAY_BUFFER, axisData.length * float.sizeof, axisData.ptr, GL_DYNAMIC_DRAW);
-            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3*float.sizeof, cast(void*)0);
-            glEnableVertexAttribArray(0);
-            glBindVertexArray(0);
-        } else {
-            glBindBuffer(GL_ARRAY_BUFFER, axisLineVbo);
-            glBufferData(GL_ARRAY_BUFFER, axisData.length * float.sizeof, axisData.ptr, GL_DYNAMIC_DRAW);
-            glBindBuffer(GL_ARRAY_BUFFER, 0);
+            axisPairs ~= [center + normal * t, center + normal * t1];
         }
 
         glDisable(GL_DEPTH_TEST);
         // WINDOW PIXELS, both draws. Halved from 1.5f with task 0600's
         // extrusion-unit fix (see shader.thickLineVertexSrc); each still
         // renders the 0.75 px it always did.
-        drawThickLinesExt(planeQuadVao, 4, GL_LINE_LOOP, identityMatrix, vp,
-                          planeColor, 0.75f, restoreProgram);
-        if (axisVertCount > 0)
-            drawThickLinesExt(axisLineVao, axisVertCount, GL_LINES, identityMatrix, vp,
-                              planeColor, 0.75f, restoreProgram);
+        drawWorldSegments(quadPairs, vp, planeColor, 0.75f, restoreProgram);
+        drawWorldSegments(axisPairs, vp, planeColor, 0.75f, restoreProgram);
         glEnable(GL_DEPTH_TEST);
     }
 

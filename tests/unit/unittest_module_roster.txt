@@ -508,6 +508,7 @@ tests.unit.tool_gesture_runopen_g7_test
 tests.unit.tool_gesture_runopen_test
 tests.unit.tool_input_test
 tests.unit.tool_model_census_test
+tests.unit.tool_overlay_vao_census_test
 tests.unit.tool_presets_test
 tests.unit.tool_session_policy_test
 tests.unit.tool_session_recorded_steps_test

@@ -306,11 +306,6 @@ class MoveTool : TransformTool {
     // (lastSnap moved to TransformTool — same semantics, also drives
     // the live click-outside snap preview now.)
 
-    // Constraint-line VAO (lazy, 2 world-space vertices).
-    // Updated each draw when ctrlLockActive; 0 until first lock.
-    private GLuint constraintLineVao;
-    private GLuint constraintLineVbo;
-
 public:
     this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode,
          SelType delegate() selTypeSrc = null) {
@@ -321,14 +316,6 @@ public:
 
     void destroy() {
         handler.destroy();
-        version(unittest) {} else {
-            if (constraintLineVao != 0) {
-                glDeleteVertexArrays(1, &constraintLineVao);
-                glDeleteBuffers(1, &constraintLineVbo);
-                constraintLineVao = 0;
-                constraintLineVbo = 0;
-            }
-        }
     }
 
     // Returns the locked axis index (0=X 1=Y 2=Z) when a Ctrl-lock is live
@@ -547,7 +534,7 @@ public:
         // same depth-off trick — no such class exists in the tree, and
         // handler.d is now a 17-line facade over handles/*.d. The live
         // depth-off overlay primitive is `handles/gl_util.d`'s
-        // `drawWorldSegment`.)
+        // `drawWorldSegments`.)
         // No arrow setState override — the arbiter already highlights the
         // captured arrow in the scheme's active colour via setHaul+update.
         if (ctrlLockActive && dragAxis >= 0 && dragAxis <= 2) {
@@ -609,25 +596,7 @@ public:
         // the line extends clearly in both directions past the visible arrow.
         float k = (ends[dragAxis] - handler.center).length * 3.0f;
 
-        Vec3 p0 = handler.center - dir * k;
-        Vec3 p1 = handler.center + dir * k;
-        float[6] data = [p0.x, p0.y, p0.z, p1.x, p1.y, p1.z];
-
-        // Lazy VAO init + update with GL_DYNAMIC_DRAW each draw.
-        if (constraintLineVao == 0) {
-            glGenVertexArrays(1, &constraintLineVao);
-            glGenBuffers(1, &constraintLineVbo);
-            glBindVertexArray(constraintLineVao);
-            glBindBuffer(GL_ARRAY_BUFFER, constraintLineVbo);
-            glBufferData(GL_ARRAY_BUFFER, data.sizeof, data.ptr, GL_DYNAMIC_DRAW);
-            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3*float.sizeof, cast(void*)0);
-            glEnableVertexAttribArray(0);
-            glBindVertexArray(0);
-        } else {
-            glBindBuffer(GL_ARRAY_BUFFER, constraintLineVbo);
-            glBufferData(GL_ARRAY_BUFFER, data.sizeof, data.ptr, GL_DYNAMIC_DRAW);
-            glBindBuffer(GL_ARRAY_BUFFER, 0);
-        }
+        Vec3[2] pair = [handler.center - dir * k, handler.center + dir * k];
 
         // The scheme's ACTIVE-handle colour — this line is drawn only while an
         // axis is locked and hauled, which is exactly the state that colour
@@ -639,10 +608,8 @@ public:
         // (see shader.thickLineVertexSrc); renders the same 0.75 px it did.
         immutable float lineWidth = 0.75f;
 
-        import math : identityMatrix;
         glDisable(GL_DEPTH_TEST);
-        drawThickLinesExt(constraintLineVao, 2, GL_LINES, identityMatrix, vp,
-                          color, lineWidth, shader.program);
+        drawWorldSegments(pair, vp, color, lineWidth, shader.program);
         glEnable(GL_DEPTH_TEST);
     }
 

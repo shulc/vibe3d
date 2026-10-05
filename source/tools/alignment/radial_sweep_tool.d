@@ -21,7 +21,7 @@ import tools.common.session_mesh_key : SessionMeshKey;
 import snapshot : MeshSnapshot;
 import prepared_selection_profile_image : RadialSweepProfileImage;
 import shader : Shader, LitShader, drawLitPreview;
-import handler : ToolHandles, BoxHandler, gizmoSize, drawThickLinesExt;
+import handler : ToolHandles, BoxHandler, gizmoSize, drawWorldSegments;
 import drag : planeDragDelta, screenAxisDelta, gesturePrevPixel;
 import eventlog : queryMouse;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
@@ -340,7 +340,6 @@ private:
     int         lastMX, lastMY;
     Viewport    cachedVp;
 
-    GLuint axisLineVao, axisLineVbo;
     version(unittest) MeshSnapshot lastPreparedCommitImage_;
     version(unittest) ulong lastPreparedMutationVersion_, lastPreparedTopologyVersion_;
 
@@ -362,7 +361,6 @@ public:
         axisEndH.destroy();
         startAngleH.destroy();
         endAngleH.destroy();
-        if (axisLineVao != 0) { glDeleteVertexArrays(1, &axisLineVao); glDeleteBuffers(1, &axisLineVbo); }
     }
 
     override string name() const { return "Radial Sweep"; }
@@ -957,33 +955,13 @@ public:
     }
 
     /// Solid line from `s` to `e` — the visible axis line (task 0326).
-    /// Lazy VAO init + `GL_DYNAMIC_DRAW` re-upload every call, mirroring
-    /// MirrorTool's `drawPlaneViz` pattern (tools/mirror.d): the geometry
-    /// changes every frame the axis moves, so only the buffer OBJECT is
-    /// cached, not its contents.
     private void drawAxisLine(const ref Viewport vp, Vec3 s, Vec3 e, GLuint restoreProgram) {
         immutable Vec3 axisColor = Vec3(0.85f, 0.65f, 0.15f);   // amber
-        float[6] lineData = [s.x, s.y, s.z, e.x, e.y, e.z];
-
-        if (axisLineVao == 0) {
-            glGenVertexArrays(1, &axisLineVao);
-            glGenBuffers(1, &axisLineVbo);
-            glBindVertexArray(axisLineVao);
-            glBindBuffer(GL_ARRAY_BUFFER, axisLineVbo);
-            glBufferData(GL_ARRAY_BUFFER, lineData.sizeof, lineData.ptr, GL_DYNAMIC_DRAW);
-            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * float.sizeof, cast(void*)0);
-            glEnableVertexAttribArray(0);
-            glBindVertexArray(0);
-        } else {
-            glBindBuffer(GL_ARRAY_BUFFER, axisLineVbo);
-            glBufferData(GL_ARRAY_BUFFER, lineData.sizeof, lineData.ptr, GL_DYNAMIC_DRAW);
-            glBindBuffer(GL_ARRAY_BUFFER, 0);
-        }
-
+        Vec3[2] pair = [s, e];
         glDisable(GL_DEPTH_TEST);
         // 1.0f is WINDOW PIXELS — halved from 2.0f with task 0600's
         // extrusion-unit fix (see shader.thickLineVertexSrc); unchanged ink.
-        drawThickLinesExt(axisLineVao, 2, GL_LINES, identityMatrix, vp, axisColor, 1.0f, restoreProgram);
+        drawWorldSegments(pair, vp, axisColor, 1.0f, restoreProgram);
         glEnable(GL_DEPTH_TEST);
     }
 
