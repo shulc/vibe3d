@@ -146,6 +146,28 @@ unittest { // 9500: an undo that leaves a flagged tool armed empties the redo; a
         assert(history.redoEntries().length == 0,
                format("9500 swap: redo %s, expected empty", history.redoEntries().length));
     }
+    // An undone activation row whose carry rule keeps its redo (a session-steps
+    // arm over an unclassified predecessor) keeps it under the restored tool.
+    {
+        auto a = new RecordedTool, b = new RecordedTool;
+        a.emptiesRedo = b.emptiesRedo = true;
+        Tool active = a;
+        auto history = new CommandHistory;
+        auto session = new EditSession(() => active, history, () { active = null; });
+        session.noteArm("xfrm.redo-empties-test", 1);
+        auto view = new View(0, 0, 1, 1);
+        auto act = new ToolActivationCommand(null, view, EditMode.Vertices, "a", "b", true);
+        act.onActivate = (string id) { active = b; };
+        assert(act.carriesRedoAfterUndo(), "9500 activation rig: the row carries no redo");
+        history.recordToolLifecycle(act);
+        a.gesture(history, 7);
+        assert(history.undo() && history.redoEntries().length == 1, "9500 activation rig: raw undo");
+        assert(session.navigate(true) && active is b,
+               "9500 activation rig: the undo did not restore the predecessor");
+        assert(history.redoEntries().length == 2,
+               format("9500: the undone activation row lost its redo (%s left)",
+                      history.redoEntries().length));
+    }
 }
 
 unittest { // 8493: selected stage and running postmode are distinct states.

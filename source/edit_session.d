@@ -998,12 +998,16 @@ private struct ToolSession {
     }
 
     // `undoEmptiesRedo` (findings_K-G4 rule 3): an undo that leaves such a tool
-    // armed empties the redo, whichever row it popped (K-CD4 CD4d8: an undone
-    // layer click reads redo 0). An undone activation row restoring one has
-    // emptied it already: such tools write their own row (`carriesRedoAfterUndo`).
+    // armed empties the redo (K-CD4 CD4d8: an undone layer click reads redo 0),
+    // unless it popped an activation row: that undo re-arms, it does not re-apply,
+    // and the row's own carry rule decides its redo (`carriesRedoAfterUndo`).
     private void reapplyEmptiesRedo_() {
+        import commands.tool.lifecycle : ToolActivationCommand;
         auto t = tool_();
-        if (t !is null && t.sessionPolicy().undoEmptiesRedo) history_.invalidateRedo();
+        const re = history_.redoEntries();
+        if (t is null || !t.sessionPolicy().undoEmptiesRedo
+                || (re.length && cast(const ToolActivationCommand) re[0].cmd !is null)) return;
+        history_.invalidateRedo();
     }
 
     bool redo() {
