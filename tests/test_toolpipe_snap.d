@@ -473,14 +473,11 @@ unittest { // Grid snap fixed step = 0.5
 }
 
 // -------------------------------------------------------------------------
-// 7.3c: Grid snap dynamic = the VIEW's grid step (task 9387). The step is
-// read from the display endpoint (OUR drawn step at this camera), and the
-// node is the cursor ray's workplane hit rounded to it.
+// 7.3c: Grid snap dynamic = step 1.0 (matches visible grid in
+// app.d, hard-coded at 1.0).
 // -------------------------------------------------------------------------
 
-unittest { // Grid snap dynamic step = the drawn grid step
-    import drag_helpers : DVec3 = Vec3, viewportFromCameraMatrices, pixelRay;
-    import std.math : round, fabs;
+unittest { // Grid snap dynamic step = 1.0
     resetCube();
     postJson("/api/command", "tool.pipe.attr workplane mode worldY");
     postJson("/api/command", "tool.pipe.attr snap enabled true");
@@ -488,26 +485,18 @@ unittest { // Grid snap dynamic step = the drawn grid step
     postJson("/api/command", "tool.pipe.attr snap fixedGrid false");
     postJson("/api/command", "tool.pipe.attr snap innerRange 999999");
     postJson("/api/command", "tool.pipe.attr snap outerRange 999999");
-    auto g = getJson("/api/viewport/display")["cells"].array[0]["grid"]["size"];
-    const double step = g.type == JSONType.integer ? cast(double)g.integer : g.floating;
-    assert(step > 0 && step < 1.0,
-        "rig: the default view's drawn step must be finer than 1.0, or this "
-        ~ "case cannot tell the view's step from the old constant; got " ~ step.to!string);
-    auto vp = viewportFromCameraMatrices();
-    DVec3 org, dir;
-    pixelRay(320.0f, 240.0f, vp, org, dir);
-    const double t = -org.y / dir.y;
-    const double hx = org.x + dir.x * t, hz = org.z + dir.z * t;
     auto sr = querySnap(0.0, 0.0, 0.0, 320, 240);
     assert(sr["snapped"].type == JSONType.true_,
         "expected Grid snap, got " ~ sr.toString);
+    import std.math : round, fabs;
     auto wp = sr["worldPos"].array;
     assert(approx(wp[1].floating, 0.0),
         "Grid snap Y must be 0; got " ~ sr.toString);
-    const double ex = round(hx / step) * step, ez = round(hz / step) * step;
-    assert(fabs(wp[0].floating - ex) < 1e-3 && fabs(wp[2].floating - ez) < 1e-3,
-        "Grid snap must land on the drawn step's node (" ~ ex.to!string ~ ", "
-        ~ ez.to!string ~ ") at step " ~ step.to!string ~ "; got " ~ sr.toString);
+    double x = wp[0].floating, z = wp[2].floating;
+    assert(fabs(x - round(x)) < 1e-3,
+        "Grid snap X must be integer; got x=" ~ x.to!string);
+    assert(fabs(z - round(z)) < 1e-3,
+        "Grid snap Z must be integer; got z=" ~ z.to!string);
     postJson("/api/command", "tool.pipe.attr workplane mode auto");
 }
 

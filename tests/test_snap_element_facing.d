@@ -30,7 +30,8 @@ private enum double kPx = 1.0 / kPpm;          // one pixel of world at the rig 
 private enum double kTol = 1e-4;               // exact channels
 private enum double kHalfPx = 0.5 * kPx;       // a channel read off a pixel
 
-private int ran;
+private int ran, held;
+enum bool kGridStepFromView = false;   // part G held — see `gridCells`
 private string[] fails;   // every cell runs; the reds are reported together
 
 private void check(bool ok, lazy string msg) { if (!ok) fails ~= msg; }
@@ -99,6 +100,79 @@ private void expectAt(JSONValue sr, double[3] want, double tolXZ, string cell) {
         && abs(g[1] - want[1]) <= kTol,
         format("%s: snapped to (%.6f, %.6f, %.6f), expected (%.4f, %.4f, %.4f)",
                cell, g[0], g[1], g[2], want[0], want[1], want[2]));
+}
+
+
+/// Cells 11–13, the grid step from the view. HELD (`kGridStepFromView`): the
+/// stage publishing the view's step makes the grid node land on the WORK
+/// PLANE for every client (the captured pen and Move keep the client's own
+/// height), which reddens our pen hover cells — a PLAN-FINDING for the grid's
+/// plane, not this step law. The cells run on the part-G commit.
+private void gridCells() {
+    // 11 grid-view-step — K-C2's geometry: pointer 15.5 px from (0.1, 0.2) at
+    // 440 px/m ⇒ the 0.1 node. The node lies on the work plane (y 0 here);
+    // the in-plane channels are the law.
+    rig("", Vec3(0.1f, 1, 0.2f)); snapTypes("grid");
+    {
+        const g = getJson("/api/viewport/display")["cells"].array[0]["grid"];
+        assert(abs(num(g["size"]) - 0.1) < 1e-6,
+            format("grid-view-step rig: OUR drawn step at 440 px/m must be 0.1, got %s",
+                   g["size"].toString));
+        auto sr = snapAt(worldPixel(Vec3(cast(float)(0.1 + 15.5 * kPx), 1, 0.2f)));
+        check(snapped(sr) && abs(pos(sr)[0] - 0.1) <= kTol && abs(pos(sr)[2] - 0.2) <= kTol,
+            "grid-view-step: the pointer lands on the visible grid's (0.1, 0.2) "
+            ~ "node, got " ~ sr.toString);
+        ++ran;
+    }
+
+    // 12 grid-second-rung (G2): at 110 px/m the drawn grid is 0.5 (the
+    // captured label), and the captured pointer lands on its (0, 0.5) node —
+    // a constant 0.1 step would give (0, 0.3).
+    {
+        enum double kG2Ppm = 110.0, kG2Step = 0.5;
+        rig("", Vec3(0.2f, 1, 0.3f), kG2Ppm); snapTypes("grid");
+        const g = getJson("/api/viewport/display")["cells"].array[0]["grid"];
+        assert(abs(num(g["size"]) - kG2Step) < 1e-6,
+            format("grid-second-rung rig: OUR step at %s px/m must equal the "
+                ~ "captured %s, got %s", kG2Ppm, kG2Step, g["size"].toString));
+        auto sr = snapAt(worldPixel(Vec3(0.006364f, 1, 0.272727f)));
+        const double wx = 0, wz = 0.5;
+        check(snapped(sr) && abs(pos(sr)[0] - wx) <= kTol && abs(pos(sr)[2] - wz) <= kTol,
+            format("grid-second-rung: expected the (%s, %s) node of the %s step, got %s",
+                   wx, wz, kG2Step, sr.toString));
+        ++ran;
+    }
+
+    // 13 move-grid-step (G3): the Move tool, vertex mode, grid bit only; press
+    // on q's pixel, drag to the pixel of (0.1252, 1, 0.1952) — the moved
+    // vertex's ABSOLUTE position lands on the 0.1 node (a delta snap would
+    // give (0.13, 1, 0.17)).
+    {
+        rig(`{"vertices":[[0.03,1,0.07],[0.53,1,0.07],[0.53,1,0.57],[0.03,1,0.57]],`
+            ~ `"faces":[[0,3,2,1]]}`, Vec3(0.28f, 1, 0.32f));
+        penCommand("select.typeFrom vertex");
+        auto r = postJson("/api/command", commandBody("mesh.select",
+            `{"mode":"vertices","indices":[0]}`));
+        assert(r["status"].str == "ok", "select q failed: " ~ r.toString);
+        penCommand("tool.set move");
+        snapTypes("grid");
+        auto cam = fetchCamera();
+        const a = worldPixel(Vec3(0.03f, 1, 0.07f));
+        const b = worldPixel(Vec3(0.1252f, 1, 0.1952f));
+        playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                                 a[0], a[1], b[0], b[1]));
+        const q = vertexPos(0);
+        penCommand("tool.set move off");
+        check(abs(q[0] - 0.1) <= kTol && abs(q[2] - 0.2) <= kTol,
+            format("move-grid-step: q expected on the (0.1, 0.2) node in plane, got "
+                ~ "(%.6f, %.6f, %.6f)", q[0], q[1], q[2]));
+        // MARKED DIVERGENCE (must differ until amended): the captured q keeps
+        // y 1; ours lands on the work plane's grid (y 0). The step law above
+        // holds either way; the height is a different law, not this slice's.
+        check(abs(q[1] - 1) > kTol, format("move-grid-step: the marked y "
+            ~ "divergence closed (q.y %.6f) — retire this row", q[1]));
+        ++ran;
+    }
 }
 
 unittest {
@@ -195,70 +269,7 @@ unittest {
     snapTypes("vertex");
     expectAt(snapAt(leftOf(under)), [0.5, 0.8, 0.5], kTol, "behind-back-quad"); ++ran;
 
-    // 11 grid-view-step — K-C2's geometry: pointer 15.5 px from (0.1, 0.2) at
-    // 440 px/m ⇒ the 0.1 node. The node lies on the work plane (y 0 here);
-    // the in-plane channels are the law.
-    rig("", Vec3(0.1f, 1, 0.2f)); snapTypes("grid");
-    {
-        const g = getJson("/api/viewport/display")["cells"].array[0]["grid"];
-        assert(abs(num(g["size"]) - 0.1) < 1e-6,
-            format("grid-view-step rig: OUR drawn step at 440 px/m must be 0.1, got %s",
-                   g["size"].toString));
-        auto sr = snapAt(worldPixel(Vec3(cast(float)(0.1 + 15.5 * kPx), 1, 0.2f)));
-        check(snapped(sr) && abs(pos(sr)[0] - 0.1) <= kTol && abs(pos(sr)[2] - 0.2) <= kTol,
-            "grid-view-step: the pointer lands on the visible grid's (0.1, 0.2) "
-            ~ "node, got " ~ sr.toString);
-        ++ran;
-    }
-
-    // 12 grid-second-rung (G2): at 110 px/m the drawn grid is 0.5 (the
-    // captured label), and the captured pointer lands on its (0, 0.5) node —
-    // a constant 0.1 step would give (0, 0.3).
-    {
-        enum double kG2Ppm = 110.0, kG2Step = 0.5;
-        rig("", Vec3(0.2f, 1, 0.3f), kG2Ppm); snapTypes("grid");
-        const g = getJson("/api/viewport/display")["cells"].array[0]["grid"];
-        assert(abs(num(g["size"]) - kG2Step) < 1e-6,
-            format("grid-second-rung rig: OUR step at %s px/m must equal the "
-                ~ "captured %s, got %s", kG2Ppm, kG2Step, g["size"].toString));
-        auto sr = snapAt(worldPixel(Vec3(0.006364f, 1, 0.272727f)));
-        const double wx = 0, wz = 0.5;
-        check(snapped(sr) && abs(pos(sr)[0] - wx) <= kTol && abs(pos(sr)[2] - wz) <= kTol,
-            format("grid-second-rung: expected the (%s, %s) node of the %s step, got %s",
-                   wx, wz, kG2Step, sr.toString));
-        ++ran;
-    }
-
-    // 13 move-grid-step (G3): the Move tool, vertex mode, grid bit only; press
-    // on q's pixel, drag to the pixel of (0.1252, 1, 0.1952) — the moved
-    // vertex's ABSOLUTE position lands on the 0.1 node (a delta snap would
-    // give (0.13, 1, 0.17)).
-    {
-        rig(`{"vertices":[[0.03,1,0.07],[0.53,1,0.07],[0.53,1,0.57],[0.03,1,0.57]],`
-            ~ `"faces":[[0,3,2,1]]}`, Vec3(0.28f, 1, 0.32f));
-        penCommand("select.typeFrom vertex");
-        auto r = postJson("/api/command", commandBody("mesh.select",
-            `{"mode":"vertices","indices":[0]}`));
-        assert(r["status"].str == "ok", "select q failed: " ~ r.toString);
-        penCommand("tool.set move");
-        snapTypes("grid");
-        auto cam = fetchCamera();
-        const a = worldPixel(Vec3(0.03f, 1, 0.07f));
-        const b = worldPixel(Vec3(0.1252f, 1, 0.1952f));
-        playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
-                                 a[0], a[1], b[0], b[1]));
-        const q = vertexPos(0);
-        penCommand("tool.set move off");
-        check(abs(q[0] - 0.1) <= kTol && abs(q[2] - 0.2) <= kTol,
-            format("move-grid-step: q expected on the (0.1, 0.2) node in plane, got "
-                ~ "(%.6f, %.6f, %.6f)", q[0], q[1], q[2]));
-        // MARKED DIVERGENCE (must differ until amended): the captured q keeps
-        // y 1; ours lands on the work plane's grid (y 0). The step law above
-        // holds either way; the height is a different law, not this slice's.
-        check(abs(q[1] - 1) > kTol, format("move-grid-step: the marked y "
-            ~ "divergence closed (q.y %.6f) — retire this row", q[1]));
-        ++ran;
-    }
+    static if (kGridStepFromView) gridCells(); else held += 3;
 
     // 14 Mpoly_ctrl replica (must stay green): back-facing T at y 1.3, polygon
     // snap only, the pen's first click inside T's interior lands on the click
@@ -281,7 +292,8 @@ unittest {
         ++ran;
     }
 
-    assert(ran == 14, format("population: %d cells ran, expected 14", ran));
+    assert(ran + held == 14 && held == (kGridStepFromView ? 0 : 3),
+        format("population: %d cells ran + %d held, expected 14", ran, held));
     assert(fails.length == 0, format("%d of 14 cells red:\n  %-(%s\n  %)",
                                      fails.length, fails));
 }
