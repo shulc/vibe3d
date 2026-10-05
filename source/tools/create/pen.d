@@ -39,14 +39,15 @@ import tools.create.create_common : pickWorkplane, BuildPlane,
                               workplaneCursorRay, workplaneCursorPlaneHit;
 import toolpipe.packets : SnapType, SnapPacket;
 import editmode : EditMode;
-import snap : SnapResult, snapCursor;
+import snap : SnapResult, snapCursor, cascadeClassWins, kAbsentClassDist,
+    kCascadeVertex, kCascadeEdge, kCandidateToleranceBasePx, kVertexToleranceScale;
 import document : primaryModelSpace;
 import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
 import tools.transform.relocate_plane : vectorSnap, withAxisComp, axisComp, niceOrigin;
 import viewgrid : g_viewGrid, viewWorldPerPixel, viewGridSize, viewGridSubStep,
     relocateQuantum;
 
-import std.math : abs, lround;
+import std.math : abs, fmin, lround;
 // The one stroke builder and the pen's param schema (PenParams, PenStroke).
 import tools.create.pen_geometry;
 import tools.common.session_mesh_key : SessionMeshKey;
@@ -1296,15 +1297,17 @@ private:
 
     // The merge (wave plan S5; fixture pen_merge.json): ONE search from the
     // PLACED point, after the snap, never part of its election. Screen radii
-    // (one value per view): 24 px over the edited mesh's vertices, THEN its
-    // edges (vertices first, §28.3 F5: one class per query, so the snap
-    // election's vertex veto never applies); after an element snap the snapped
-    // edge's own ends within 17.5 px, else any vertex within 2.85 px. A vertex
-    // hit moves the point onto it and is returned (the point shares it); an
-    // edge hit moves the point onto the edge as its own vertex. `snapCursor`
-    // takes an integer pixel, so it is the broad phase (r + 1) and the float
-    // distance decides.
-    static immutable SnapType[2] kMergeOrder = [SnapType.Vertex, SnapType.Edge];
+    // (one value per view): 24 px over the edited mesh's vertices and edges;
+    // after an element snap the snapped edge's own ends within 17.5 px, else
+    // any vertex within 2.85 px. Vertices and edges are asked in two
+    // single-class queries (so the election's vertex veto never runs) and the
+    // snap cascade's comparator picks between them: the vertex wins unless it
+    // trails the edge by its 16 px tolerance (cells_k_b8, snap_off_isolated_v10).
+    // A vertex hit moves the point onto it and is returned (the point shares
+    // it); an edge hit moves the point onto the edge as its own vertex.
+    // `snapCursor` takes an integer pixel, so it is the broad phase (r + 1)
+    // and the float distance decides.
+    static immutable SnapType[2] kMergeTypes = [SnapType.Vertex, SnapType.Edge];
     int mergeTarget(ref Vec3 local) {
         immutable Vec3 placed = toWorldP(local);
         float fx, fy, ndcZ;
@@ -1332,18 +1335,23 @@ private:
         SnapPacket pkt;
         pkt.enabled = true;
         pkt.innerRangePx = r + 1;
-        foreach (t; kMergeOrder[0 .. small ? 1 : 2]) {
+        SnapResult[2] hit;
+        bool[3] has;
+        float[3] d = kAbsentClassDist;
+        foreach (i, t; kMergeTypes[0 .. small ? 1 : 2]) {
             pkt.enabledTypes = t;
-            auto hit = snapCursor(placed, cast(int)lround(fx), cast(int)lround(fy),
+            hit[i] = snapCursor(placed, cast(int)lround(fx), cast(int)lround(fy),
                 cachedVp, *mesh, ms, pkt, null, (SnapType, int, int slot) => slot == 0);
-            if (!hit.snapped || pxFrom(hit.worldPos) > r) continue;
-            if (t == SnapType.Vertex) {
-                local = toLocalP(hit.worldPos);
-                return hit.targetIndex;
-            }
-            local = toLocalP(pointOnEdgeUnder(placed, hit.targetIndex));
-            return -1;
+            immutable px = hit[i].snapped ? pxFrom(hit[i].worldPos) : float.infinity;
+            if (px <= r) { has[i] = true; d[i] = px; }
         }
+        immutable float tol = kVertexToleranceScale * fmin(r, kCandidateToleranceBasePx);
+        if (cascadeClassWins(kCascadeVertex, has, d, tol)) {
+            local = toLocalP(hit[kCascadeVertex].worldPos);
+            return hit[kCascadeVertex].targetIndex;
+        }
+        if (has[kCascadeEdge])
+            local = toLocalP(pointOnEdgeUnder(placed, hit[kCascadeEdge].targetIndex));
         return -1;
     }
 

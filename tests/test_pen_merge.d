@@ -211,6 +211,7 @@ private enum Vec3[2] kFar = [Vec3(-0.4f, 1, 0.6f), Vec3(-0.6f, 1, 0.1f)];
 unittest {
     auto fx = parseJSON(import("fixtures/pen_merge.json"));
     auto c = fx["cells"], b3 = fx["cells_k_b3"], ep = fx["edge_press"];
+    auto b8 = fx["cells_k_b8"];
     string[] fails;
     int ran;
     const f0 = p(0, 0.2);           // the K-C rig's focus and V
@@ -430,9 +431,10 @@ unittest {
     fails ~= edgeE5Cell("merge_edge_then_vertex", c["snap_edge_e5_v6"], 0.01, ran);
     // Snapping off: an isolated V 10 px away links although an edge is nearer.
     fails ~= isolatedCell("snap_off_isolated_v10", c["snap_off_isolated_v10"], null, 6, ran);
-    // A loose V 19.8 px away links although an edge is 0.44 px away (vertices
-    // before edges; PENDING-K-B8: the expectation is the plan's prediction).
-    fails ~= vertexBeforeEdge(ran);
+    // A loose V 19.8 px away loses to an edge 0.44 px away (it trails by more
+    // than its 16 px tolerance); without the edge the same V links.
+    fails ~= vtx20Cell("merge_vtx20_edge", b8["merge_vtx20_edge"], 3, ran);
+    fails ~= vtx20Cell("merge_vtx20_control", b8["merge_vtx20_control"], 0, ran);
     // The snapped edge's own end within 17.5 px links, at three zooms.
     foreach (cell, ex; ["MsE_440_k2": 0.075, "MsE_440_k3": 0.075, "MsE_440_k12": 0.095,
                         "MsE_440_k16": 0.105, "MsE_110_k4": 0.11, "MsE_110_k12": 0.18,
@@ -478,7 +480,7 @@ unittest {
     fails ~= sceneEdge("scene-edge-20px", ep["E4r_scene_edge_20px"], p(0.62, 0.255), ran);
 
     snap(null);
-    assert(ran == 68, format("pen merge population: %s cells ran, pinned 68", ran));
+    assert(ran == 69, format("pen merge population: %s cells ran, pinned 69", ran));
 
     // Blocked cells (kBlocked) must still fail; one that passes retires its mark.
     assert(kBlocked.length == 3, format("blocked marks: %s, pinned 3", kBlocked.length));
@@ -625,16 +627,16 @@ private string[] isolatedCell(string cell, JSONValue c, string types, int dz, re
     return fixture(cell, e);
 }
 
-/// K-B8 M-VE20 (wave plan §28.5), PENDING-K-B8: the expectation is the
-/// vertices-first prediction until the capture lands. T2 A (0.05, 0.284),
-/// B (0.65, 0.284), C (0.35, 0.55), a loose V (0.24, 0.24); the click on
-/// P (0.24, 0.285): V 19.8 px, edge A-B 0.44 px, its midpoint 48.4 px.
-private string[] vertexBeforeEdge(ref int ran) {
-    auto w = [p(0.24, 0.24), p(0.05, 0.284), p(0.65, 0.284), p(0.35, 0.55)];
-    rig(p(0, 0.35), 440, meshJson(w, [[1, 2, 3]]), null);
+/// K-B8 (fixture `cells_k_b8`): the scene is the captured vertices up to V
+/// (`vIndex`; T2 ring [0, 2, 1] before it); one click on P (0.24, 0.285), the
+/// two far clicks, drop.
+private string[] vtx20Cell(string cell, JSONValue c, size_t vIndex, ref int ran) {
+    auto e = c["expected"];
+    auto w = verts(e["vertices"]);
+    rig(p(0, 0.35), 440, meshJson(w[0 .. vIndex + 1], vIndex ? [[0L, 2, 1]] : null), null);
     clickWorld(p(0.24, 0.285), kFar[0], kFar[1]);
     drop(); ++ran;
-    return compare("merge_vtx20_edge", w ~ kFar[], [[1, 2, 3], [0, 5, 4]]);
+    return fixture(cell, e);
 }
 
 /// Grid snap (grid 0.1 at 440 px/m): the grid point G (0.1, 1, 0.2) at the

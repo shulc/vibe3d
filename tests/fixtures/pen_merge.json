@@ -5661,5 +5661,94 @@
    "law": "UNPINNED perspective: inserted at the cursor (index 1) as ortho E1"
   }
  },
- "edge_press_rig": "top orthographic, focus (0.07, 1, 0), 440 px per metre (the capture: 439.52; press pixels map to world x = 0.07 + (M - 576) / 439.52, z = (N - 487) / 439.52); points land on y = 1.0; click quantum 0.005 m"
+ "edge_press_rig": "top orthographic, focus (0.07, 1, 0), 440 px per metre (the capture: 439.52; press pixels map to world x = 0.07 + (M - 576) / 439.52, z = (N - 487) / 439.52); points land on y = 1.0; click quantum 0.005 m",
+ "cells_k_b8": {
+  "merge_vtx20_edge": {
+   "raw_cell": "KB8_M-VE20_merge_vtx20_edge",
+   "question": "snapping OFF, merge 1, top view 440 px/m; scene T2 A (0.05,1,0.284) B (0.65,1,0.284) C (0.35,1,0.55) ring [0,2,1] + a loose V (0.24,1,0.24) index 3; click on P (0.24,1,0.285): V 19.78 px, edge A-B 0.44 px, its midpoint 48.35 px; far clicks (-0.4,1,0.6), (-0.6,1,0.1); drop",
+   "expected": {
+    "vertices": [
+     [
+      0.05,
+      1.0,
+      0.284
+     ],
+     [
+      0.65,
+      1.0,
+      0.284
+     ],
+     [
+      0.35,
+      1.0,
+      0.55
+     ],
+     [
+      0.24,
+      1.0,
+      0.24
+     ],
+     [
+      0.24,
+      1.0,
+      0.284
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      2,
+      1
+     ],
+     [
+      4,
+      6,
+      5
+     ]
+    ]
+   },
+   "law": "the edge 0.44 px away wins over V 19.8 px away: p0 is the placed point projected onto A-B, its own vertex; V is not linked, T2 is not split"
+  },
+  "merge_vtx20_control": {
+   "raw_cell": "KB8_M-VE20c_control_no_T2",
+   "question": "as merge_vtx20_edge without T2: V alone 19.8 px from the placed point",
+   "expected": {
+    "vertices": [
+     [
+      0.24,
+      1.0,
+      0.24
+     ],
+     [
+      -0.4,
+      1.0,
+      0.6
+     ],
+     [
+      -0.6,
+      1.0,
+      0.1
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      2,
+      1
+     ]
+    ]
+   },
+   "law": "V links at 19.8 px (inside the 24 px merge radius)"
+  }
+ }
 }
