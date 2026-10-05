@@ -51,14 +51,15 @@ private void key(int sym, int scan) {
 private void keyW() { key(119, 26); }   // arm move
 private void keyQ() { key(113, 20); }   // the drop key
 
-private string[string] stage(string id) {
+private string[string] stage(string id, bool mustExist = true) {
     foreach (st; getJson("/api/toolpipe")["stages"].array)
         if (st["id"].str == id) {
             string[string] o;
             foreach (k, v; st["attrs"].object) o[k] = v.str;
             return o;
         }
-    assert(0, "stage missing from /api/toolpipe: " ~ id);
+    assert(!mustExist, "stage missing from /api/toolpipe: " ~ id);
+    return null;
 }
 
 private bool toolArmed() {
@@ -102,6 +103,7 @@ private void setStages() {
     cmd(format(`tool.pipe.attr falloff type %s`, s["falloff"]["type"].str));
     cmd(format(`tool.pipe.attr falloff start "%s"`, vec(s["falloff"]["start"])));
     cmd(format(`tool.pipe.attr falloff end "0,0,%g"`, s["falloff"]["end_z"].floating));
+    cmd("falloff.add radial");   // a stacked falloff is a pipe stage too (law_remembered.new_scene)
     cmd("actr.origin");
     cmd("tool.pipe.attr symmetry enabled true");
     cmd("tool.pipe.attr symmetry axis " ~ s["symmetry"]["axis"].str);
@@ -138,6 +140,7 @@ unittest {
         want("new-scene-keeps", "falloff", "type", a["falloff"]["type"].str);
         want("new-scene-keeps", "falloff", "start", vec(a["falloff"]["start"]));
         want("new-scene-keeps", "falloff", "end", format("0,0,%g", a["falloff"]["end_z"].floating));
+        want("new-scene-keeps", "falloff#1", "type", "radial");
         want("new-scene-keeps", "actionCenter", "mode", "origin");
         want("new-scene-keeps", "symmetry", "enabled", "true");
         want("new-scene-keeps", "symmetry", "axis", a["symmetry"]["axis"].str);
@@ -192,6 +195,7 @@ unittest {
         setStages();
         cmd("scene.reset");
         want("api-reset-still-resets", "falloff", "type", "none");
+        assert(stage("falloff#1", false) is null, "api-reset-still-resets: the stacked falloff survived");
         want("api-reset-still-resets", "actionCenter", "mode", "none");
         want("api-reset-still-resets", "symmetry", "enabled", "false");
         wantConstraint("api-reset-still-resets", parseJSON(`{"enabled":false,"geometry":"off"}`));
