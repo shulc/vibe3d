@@ -862,12 +862,11 @@ FalloffPacket magnetElementPacket(Vec3 center, float dist, int anchorVi) {
     return elementAnchoredAt(fp, center, dist, anchorVi);
 }
 
-/// An Element falloff weighs from the grabbed vertex: centre `center`, radius
-/// `dist`, `anchorVi` (when >= 0) weight-1 via the anchor ring. Any other kind
-/// passes through unchanged.
+/// `fp` with its Element fields anchored at the grabbed vertex: centre
+/// `center`, radius `dist`, `anchorVi` (when >= 0) weight-1 via the anchor
+/// ring. Only `elementWeight` reads them, so any other kind weighs as before.
 FalloffPacket elementAnchoredAt(FalloffPacket fp, Vec3 center, float dist,
                                 int anchorVi) {
-    if (fp.type != FalloffType.Element) return fp;
     fp.pickedCenter = center;
     fp.pickedRadius = dist;
     fp.anchorPos    = [center];
