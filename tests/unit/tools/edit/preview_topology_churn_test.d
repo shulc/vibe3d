@@ -776,6 +776,13 @@ private void pv2Row(T)(EditMode mode, void function(ref Mesh) select,
                rig.mesh.faces == refRig.mesh.faces &&
                rig.mesh.edges == refRig.mesh.edges,
             name ~ ": the placed preview differs from the restore-and-rerun output");
+
+        // A live-edit cancel puts the clean cage back behind the seam: the
+        // next sample must re-key (a full rebuild), not miss.
+        tool.cancelUncommittedEdit();
+        setFloatParam(tool, sweep, 0.12f);
+        assert(tool.previewRebuildCounts().keyMisses == 0,
+            name ~ ": the sample after a cancel missed the key");
     }
 
     // (b) crossings.
@@ -824,6 +831,21 @@ private void pv2Row(T)(EditMode mode, void function(ref Mesh) select,
           ~ "missed = " ~ c.fullRebuilds.to!string ~ "/" ~ c.placements.to!string
           ~ "/" ~ c.keyMisses.to!string ~ ", want 1/1/0 (the install dropped "
           ~ "the seam state)");
+
+        // A seam frame between build and validation leaves the mesh and the
+        // params exactly as they were (a placement at the same value); only
+        // the preview conjunct can refuse the now-stale image.
+        tool.interactiveParamEdit = true;
+        auto stale = tool.buildPreparedParamUpdate(rig.mesh);
+        assert(tool.preparedParamUpdateMatches(stale, rig.mesh),
+            name ~ ": the fresh image does not validate");
+        setFloatParam(tool, sweep, 0.12f);
+        assert(tool.previewRebuildCounts().placements == 2,
+            name ~ ": the same-value frame was not a placement");
+        assert(!tool.preparedParamUpdateMatches(stale, rig.mesh),
+            name ~ ": an image older than the seam's last frame validated");
+        stale.clear();
+        tool.interactiveParamEdit = false;
     }
 }
 
