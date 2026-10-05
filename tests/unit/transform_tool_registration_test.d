@@ -181,7 +181,7 @@ unittest {
             && t.handleFamily == row.family
             && t.handlePresentation == row.presentation,
             "6506 moved defaults changed for " ~ row.id);
-        assert(t.handleHitRuleForTest() == HitRule.nearestOnScreen,
+        assert(t.handleHitRule() == HitRule.nearestOnScreen,
             "the transform gizmo resolves overlaps by screen distance: " ~ row.id);
     }
 

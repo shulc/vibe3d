@@ -2954,7 +2954,7 @@ public:
     // The gizmo's overlap rule (handles/arbiter.d `HitRule`), set by the tool's
     // factory; an embedding host (Edge Extend) keeps the default.
     public void setHandleHitRule(HitRule rule) { toolHandles.rule = rule; }
-    version(unittest) final HitRule handleHitRuleForTest() const { return toolHandles.rule; }
+    public HitRule handleHitRule() const { return toolHandles.rule; }
     // Public forwarder to the protected TransformTool.queryActionCenter so the
     // host can read the ACEN center to FREEZE as the kernel pivot at drag-start
     // (§4.4). Pivot-agnostic for 4a's Offset path; the seam R/S needs in 4b.

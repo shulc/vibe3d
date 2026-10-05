@@ -340,7 +340,7 @@
       "product_types": [
         "XfrmTransformTool"
       ],
-      "semantic_sha256": "0280b75fa674d9ede8495e656be7442c31e02fad85b44dfe809d686625703059",
+      "semantic_sha256": "62d17f1a3e4d753247fc24e8d37ea5a3f826514ded850e0c328c1209218df873",
       "symbol": "registerTool(\"move\")"
     },
     {
@@ -349,7 +349,7 @@
       "product_types": [
         "XfrmTransformTool"
       ],
-      "semantic_sha256": "5dd210070800bfedc24ad0f34746af094080f54d867f21956aab2c789ed5e6cb",
+      "semantic_sha256": "52b115e2ad0260c9fc880fdfef95d804bc955e45fdbaa15400e9bf46648ce386",
       "symbol": "registerTool(\"rotate\")"
     },
     {
@@ -358,7 +358,7 @@
       "product_types": [
         "XfrmTransformTool"
       ],
-      "semantic_sha256": "346c8c1e5685c6773fc40a9c48ce64b3977837a8c499f4d818a6b9b1f6ddc419",
+      "semantic_sha256": "5db009c8435252739d985590a4f91d0cb9d158129c62b547dfaa1a8b36acef36",
       "symbol": "registerTool(\"scale\")"
     },
     {
@@ -367,7 +367,7 @@
       "product_types": [
         "XfrmTransformTool"
       ],
-      "semantic_sha256": "a0a10924002713a05a872af909436580a841abc936101253dc2d3f19473fcc30",
+      "semantic_sha256": "f5846ccf4a98bc3110308ae1de4a756a3b0eff5e1da62cddcd8b846e0906f73d",
       "symbol": "registerTool(\"xfrm.transform\")"
     },
     {
