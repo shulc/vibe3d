@@ -10,7 +10,7 @@ import math : Vec3;
 import params : Param;
 import change_bus : MeshEditScope;
 import commands.mesh.position_undo : PositionUndo;
-import tools.alignment.align_kernels : extractAlignChain, radialAlignTargets,
+import tools.alignment.align_kernels : extractAlignChain, radialAlignTargets, alignOutsideNeighbours,
                               MAX_ALIGN_SIDES;
 import falloff : weightedLerp;
 
@@ -104,7 +104,8 @@ class MeshRadialAlign : Command, Operator {
         foreach (i, vi; chainVerts) source[i] = mesh.vertices[vi];
 
         bool nsideMode = (mode_ == "nside");
-        auto aligned = radialAlignTargets(source, nsideMode, side_, angle_, rotate_);
+        auto aligned = radialAlignTargets(source, nsideMode, side_, angle_, rotate_,
+                                          alignOutsideNeighbours(mesh, editMode, chainVerts));
 
         // Task 1903 L0-d4 — local accumulate + ONE `ed.setVertexPositions`.
         touchedIdx.length  = 0;

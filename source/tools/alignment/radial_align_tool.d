@@ -4,7 +4,7 @@ import display_state : DrawPlan;
 import operator : VectorStack;
 
 import tools.transform.transform;
-import tools.alignment.align_kernels : extractAlignChain, radialAlignTargets,
+import tools.alignment.align_kernels : extractAlignChain, radialAlignTargets, alignOutsideNeighbours,
                               MAX_ALIGN_SIDES;
 import falloff : weightedLerp;
 import mesh;
@@ -133,7 +133,8 @@ public:
 
         bool nsideMode = (headlessMode == "nside");
         auto aligned = radialAlignTargets(source, nsideMode, headlessSide,
-                                          headlessAngle, headlessRotate);
+                                          headlessAngle, headlessRotate,
+                                          alignOutsideNeighbours(mesh, *editMode, chain.verts));
 
         if (toProcess.length != mesh.vertices.length)
             toProcess.length = mesh.vertices.length;

@@ -35,9 +35,9 @@ module tools.alignment.align_kernels;
 //   placed at equal 360/N-degree slots, in chain order, around that
 //   circle. `angle` is a pure additive rotation of the whole slot
 //   framework (measured bit-exact as a cyclic permutation of the
-//   unrotated result). See radialAlignTargets's doc comment for the
-//   UNVERIFIED base-anchor convention this implementation uses — the
-//   reference tool's actual anchor formula was not pinned by the capture.
+//   unrotated result). The ring's phase (which vertex starts it, and the
+//   Circle-mode turn search) is read law, task 9490 — see
+//   radialAlignTargets.
 //
 //   Both tools: `weight` blends `lerp(source, aligned, weight)` — the
 //   SAME per-component linear blend the rest of the deform-tool family
@@ -48,7 +48,7 @@ module tools.alignment.align_kernels;
 import mesh     : Mesh, edgeKey;
 import editmode : EditMode;
 import math     : Vec3, dot, cross;
-import std.math : sqrt, cos, sin, PI, abs;
+import std.math : sqrt, cos, sin, atan, PI, abs;
 import std.algorithm : sort;
 
 // ---------------------------------------------------------------------
@@ -271,121 +271,206 @@ Vec3[] linearAlignTargets(const(Vec3)[] source, bool uniform) pure nothrow @safe
 /// every other count-like Param in this codebase.
 enum int MAX_ALIGN_SIDES = 1024;
 
-/// Radial Align target positions — mode=circle/nside. `nsideMode==false`
-/// (Circle) always uses `effSides = source.length` (one slot per selected
-/// point); `nsideMode==true` (N-Sided) uses `sides` (clamped to
-/// `[1, MAX_ALIGN_SIDES]`) — CONFIRMED: no cylinder/sphere mode exists in
-/// the reference tool (see module doc comment).
-///
-/// `source` is the chain's CURRENT (pre-align) positions, in chain order.
-///
-/// *** BASE ANCHOR CONVENTION — UNVERIFIED (task 0361) ***
-/// The reference tool's angle=0 slot base was measured to sit at neither
-/// chain-index-0's own angle nor an obvious circular-mean fit of the
-/// source angles (no closed form matched the captured base offsets for
-/// Circle vs. N-Sided(4) on the same input — see the private toolcard's
-/// capture notes). The real anchor formula is an open follow-up, NOT
-/// guessed here. This implementation anchors chain index 0 at angle 0
-/// (plus `angleDeg` / `rotateDeg`) — the simplest well-defined
-/// convention, per task 0361's instruction to implement a documented
-/// default rather than invent a divergent formula. Only the `u` basis
-/// vector below needs to change if/when the real anchor is captured. The
-/// rotation SIGN/handedness (CW vs CCW as the offset increases) is
-/// likewise an implementation choice, not bit-verified against the
-/// reference.
-///
-/// What IS bit-exact verified (anchor-independent): `center` = mean
-/// source position, `radius` = mean distance from `center`, the N points
-/// sit at equal 360/effSides-degree slots, and `angleDeg` is a pure
-/// additive rotation of the whole slot framework (see align_kernels.d's
-/// unittests for the measured numbers).
+/// Edge-neighbours of every chain vertex that lie OUTSIDE the operand set
+/// (`Mesh.operandVertexMask`), as positions indexed like `chain`. These are
+/// the only points Radial Align's circle-phase search measures against
+/// (task 9490): a closed selection with no outside neighbour has an empty
+/// list everywhere, and the search keeps the start vertex at its own angle.
+Vec3[][] alignOutsideNeighbours(Mesh* mesh, EditMode editMode, const(uint)[] chain) {
+    const bool[] inside = mesh.operandVertexMask(editMode);
+    int[uint] slotOf;
+    foreach (k, vi; chain) slotOf[vi] = cast(int)k;
+    auto result = new Vec3[][](chain.length);
+    foreach (e; mesh.edges) {
+        foreach (s; 0 .. 2) {
+            const uint a = e[s], b = e[1 - s];
+            if (inside[b]) continue;
+            if (auto k = a in slotOf) result[*k] ~= mesh.vertices[b];
+        }
+    }
+    return result;
+}
+
+/// Radial Align target positions — mode=circle/nside, in chain order.
+/// Center = mean source position, radius = mean distance from it, equal
+/// 360/N slots in chain order about the chain's Newell normal (capture,
+/// task 0361). PHASE (task 9490, read from the reference and reproduced on
+/// its circle, N-Sided and no-outside-neighbour cells; evidence in the
+/// private toolcard `radial_align_anchor`): the slot ring starts at the
+/// chain vertex chosen by `radialAlignStart` and puts it at its OWN angle;
+/// Circle mode then turns the whole ring by `radialAlignSearch` against
+/// `outside` (`alignOutsideNeighbours`); `angleDeg` (and N-Sided's
+/// `rotateDeg`) add on top. `sides` is clamped to `[1, MAX_ALIGN_SIDES]`;
+/// with fewer points than sides the points take the first slots (the
+/// reference interpolates extra corners — not ported). Computed in double.
 Vec3[] radialAlignTargets(const(Vec3)[] source, bool nsideMode, int sides,
-                          float angleDeg, float rotateDeg) pure nothrow @safe {
+                          float angleDeg, float rotateDeg,
+                          const(Vec3[])[] outside = null) pure nothrow @safe {
     immutable size_t n = source.length;
     Vec3[] result = new Vec3[](n);
     if (n == 0) return result;
     if (n == 1) { result[0] = source[0]; return result; }
 
-    Vec3 center = Vec3(0, 0, 0);
-    foreach (p; source) center = center + p;
-    center = center * (1.0f / cast(float)n);
+    auto p = new D3[](n);
+    foreach (i, s; source) p[i] = D3(s.x, s.y, s.z);
+    D3 center = D3(0, 0, 0);
+    foreach (q; p) center = center + q;
+    center = center * (1.0 / n);
+    double radius = 0;
+    foreach (q; p) radius += (q - center).len;
+    radius /= n;
+    if (radius < 1e-9) { result[] = source[]; return result; }
 
-    float distSum = 0.0f;
-    foreach (p; source) {
-        Vec3 d = p - center;
-        distSum += sqrt(dot(d, d));
-    }
-    float radius = distSum / cast(float)n;
-    if (radius < 1e-9f) {
-        // Degenerate — every selected point already coincides with the
-        // center; there is no well-defined circle to distribute onto.
-        foreach (i; 0 .. n) result[i] = source[i];
-        return result;
-    }
-
-    // Best-fit alignment-plane normal via Newell's method over the
-    // ordered chain (wrapping cyclically regardless of open/closed — a
-    // standard robust plane-fit technique for a near-planar ordered point
-    // set; this codebase already uses the same formula for face
-    // normals). Degenerates gracefully to world-up when the fit is
-    // numerically flat (e.g. a perfectly collinear source set).
-    Vec3 normal = Vec3(0, 0, 0);
+    // Newell normal over the chain (wraps cyclically); world-up when flat.
+    D3 normal = D3(0, 0, 0);
     foreach (i; 0 .. n) {
-        Vec3 pa = source[i];
-        Vec3 pb = source[(i + 1) % n];
-        normal.x += (pa.y - pb.y) * (pa.z + pb.z);
-        normal.y += (pa.z - pb.z) * (pa.x + pb.x);
-        normal.z += (pa.x - pb.x) * (pa.y + pb.y);
+        const D3 a = p[i], b = p[(i + 1) % n];
+        normal.x += (a.y - b.y) * (a.z + b.z);
+        normal.y += (a.z - b.z) * (a.x + b.x);
+        normal.z += (a.x - b.x) * (a.y + b.y);
     }
-    float nl = sqrt(dot(normal, normal));
-    if (nl < 1e-9f) normal = Vec3(0, 1, 0);
-    else            normal = normal * (1.0f / nl);
+    normal = normal.len < 1e-9 ? D3(0, 1, 0) : normal * (1.0 / normal.len);
 
-    // In-plane basis: `u` is chain-index-0's own (plane-projected)
-    // direction from center — this is what anchors index 0 at angle 0,
-    // see the BASE ANCHOR note above. `v` completes a right-handed
-    // (normal, u, v) frame.
-    Vec3 p0 = source[0] - center;
-    Vec3 u  = p0 - normal * dot(p0, normal);
-    float ul = sqrt(dot(u, u));
-    if (ul < 1e-9f) {
-        // chain[0] sits exactly on the center (degenerate) — fall back
-        // to an arbitrary in-plane axis so the distribution stays
-        // well-defined.
-        Vec3 arb = (abs(normal.x) < 0.9f) ? Vec3(1, 0, 0) : Vec3(0, 1, 0);
-        u  = arb - normal * dot(arb, normal);
-        ul = sqrt(dot(u, u));
+    const size_t start = radialAlignStart(p, center, normal);
+    D3 u = p[start] - center;
+    u = u - normal * u.dot(normal);
+    if (u.len < 1e-9) {
+        // the start vertex sits on the center: any in-plane axis will do
+        const D3 arb = abs(normal.x) < 0.9 ? D3(1, 0, 0) : D3(0, 1, 0);
+        u = arb - normal * arb.dot(normal);
     }
-    u = u * (1.0f / ul);
-    Vec3 v = cross(normal, u);
+    u = u * (1.0 / u.len);
+    const D3 v = normal.cross(u);
 
     int effSides = nsideMode ? sides : cast(int)n;
     if (effSides < 1) effSides = 1;
     else if (effSides > MAX_ALIGN_SIDES) effSides = MAX_ALIGN_SIDES;
-    immutable float slotStepDeg = 360.0f / cast(float)effSides;
-    // `rotateDeg` is the reference's N-Sided-only slot offset ("Offsets
-    // the start position... when you select N-Sided", analogous to
-    // `angleDeg` for Circle mode per the docs' parallel wording). Composed
-    // additively with `angleDeg` for nside mode rather than choosing one
-    // exclusively — not independently verified for the nside+rotate
-    // combination (the capture only exercised nside at rotate=0).
-    immutable float offsetDeg = angleDeg + (nsideMode ? rotateDeg : 0.0f);
+    immutable double step = 2.0 * PI / effSides;
+    D3 slotAt(size_t k, double turn) {
+        const double a = k * step + turn;
+        return center + u * (radius * cos(a)) + v * (radius * sin(a));
+    }
 
-    foreach (i; 0 .. n) {
-        // side > n (fewer selected points than sides): the reference
-        // tool INSERTS interpolated points at the unused corners — not
-        // captured/implemented (untested this round per the toolcard).
-        // This implementation instead places the n selected points on
-        // the FIRST n of `effSides` equal slots — a safe, deterministic,
-        // topology-free fallback, NOT a reproduction of the reference's
-        // corner-interpolation behaviour.
-        immutable float deg = offsetDeg + cast(float)i * slotStepDeg;
-        immutable float rad = deg * cast(float)(PI / 180.0);
-        immutable float c = cos(rad), s = sin(rad);
-        result[i] = center + u * (radius * c) + v * (radius * s);
+    double turn = 0;
+    if (!nsideMode && outside.length == n) {
+        double totalDistance(double t) {
+            double acc = 0;
+            foreach (k; 0 .. n)
+                foreach (q; outside[(start + k) % n]) {
+                    const D3 d = slotAt(k, t) - D3(q.x, q.y, q.z);
+                    acc += d.dot(d);
+                }
+            return sqrt(acc);
+        }
+        turn = radialAlignSearch(&totalDistance, n, radius);
+    }
+    turn += (angleDeg + (nsideMode ? rotateDeg : 0.0f)) * (PI / 180.0);
+    foreach (k; 0 .. n) {
+        const D3 r = slotAt(k, turn);
+        result[(start + k) % n] = Vec3(cast(float)r.x, cast(float)r.y, cast(float)r.z);
     }
     return result;
 }
+
+/// The chain vertex the slot ring starts at (task 9490): the one whose
+/// direction from `center`, read in the plane frame of `normal`, has the
+/// smallest `|angle| mod 90°`; the first such vertex wins a tie. The frame
+/// is the world plane of the normal's largest component (X → (y, z),
+/// Y → (z, x), Z → (x, y)), turned by the shortest rotation that carries
+/// the normal onto that axis; a normal exactly opposite the axis turns
+/// half a revolution about world Y instead (as read — for a −Y normal that
+/// leaves the frame upside down; the reference reaches the opposite case
+/// through fit noise, see the task card).
+private size_t radialAlignStart(const(D3)[] p, D3 center, D3 normal) pure nothrow @safe {
+    const ax = [abs(normal.x), abs(normal.y), abs(normal.z)];
+    const int m = (ax[0] > ax[1] && ax[0] > ax[2]) ? 0
+                : (ax[1] >= ax[0] && ax[1] > ax[2]) ? 1 : 2;
+    static immutable int[3] firstAxis = [1, 2, 0], secondAxis = [2, 0, 1];
+    D3 e = D3(0, 0, 0);
+    e[m] = 1;
+    const D3 k = normal.cross(e);
+    const double c = normal.dot(e);
+    D3 turn(D3 d) {   // Rodrigues: rotate d about k-hat by acos(c)
+        if (k.len < 1e-12)
+            return c > 0 ? d : D3(-d.x, d.y, -d.z);
+        const D3 kh = k * (1.0 / k.len);
+        const double s = k.len;
+        return d * c + kh.cross(d) * s + kh * (kh.dot(d) * (1 - c));
+    }
+    size_t best = 0;
+    double bestKey = double.infinity;
+    foreach (i, q; p) {
+        const D3 d = turn(q - center);
+        const double a = abs(xyAngle(d[firstAxis[m]], d[secondAxis[m]]));
+        const double key = a - cast(long)(a / (PI / 2)) * (PI / 2);
+        if (key < bestKey) { bestKey = key; best = i; }
+    }
+    return best;
+}
+
+/// The ring turn (radians) Circle mode applies after laying the slots
+/// (task 9490): a bounded step search on `totalDistance` from 0 — probe
+/// one degree (half a slot when a slot is narrower), the other side when
+/// the first probe does not improve, then step on while improving and
+/// back while not, halving the step at each change of verdict; stop when
+/// two successive distances differ by at most `radius / 3_360_000`
+/// (floor 1e-10) or after 100 steps. The schedule, not just the minimum,
+/// is the law: the search stops short of the exact minimum.
+private double radialAlignSearch(scope double delegate(double) pure nothrow @safe totalDistance,
+                         size_t n, double radius) pure nothrow @safe {
+    enum int MAX_STEPS = 100;
+    const double tol = radius / 3_360_000.0 > 1e-10 ? radius / 3_360_000.0 : 1e-10;
+    const double slot = 2.0 * PI / n;
+    double probe = PI / 180.0;
+    if (probe > slot) probe = slot * 0.5;
+    double walk(double t, double d, double fp, double fc) {
+        if (abs(fp - fc) <= tol) return t;
+        foreach (_; 0 .. MAX_STEPS) {
+            const bool better = fc < fp;
+            t += better ? d : -d;
+            const double fn = totalDistance(t);
+            if (better != (fn < fc)) d *= 0.5;
+            fp = fc;
+            fc = fn;
+            if (abs(fp - fc) <= tol) break;
+        }
+        return t;
+    }
+    const double f0 = totalDistance(0);
+    const double fUp = totalDistance(probe);
+    if (f0 > fUp) return walk(probe, probe, f0, fUp);
+    const double fDown = totalDistance(-probe);
+    return f0 > fDown ? walk(-probe, -probe, f0, fDown) : 0.0;
+}
+
+/// Plane-frame angle of (x, y) in (−π, π]; on x == 0 it answers ±π/2 by
+/// the sign of y (−π/2 at the origin), as the read law does.
+private double xyAngle(double x, double y) pure nothrow @safe @nogc {
+    if (x == 0) return y > 0 ? PI / 2 : -PI / 2;
+    const double a = atan(y / x);
+    if (x > 0) return a;
+    return y < 0 ? a - PI : a + PI;
+}
+
+/// Double-precision point for the radial kernel (the read law runs in
+/// double; float slots drift the search's stopping point).
+private struct D3 {
+    double x = 0, y = 0, z = 0;
+    D3 opBinary(string op)(D3 o) const pure nothrow @safe @nogc
+        if (op == "+" || op == "-")
+    { return mixin("D3(x" ~ op ~ "o.x, y" ~ op ~ "o.y, z" ~ op ~ "o.z)"); }
+    D3 opBinary(string op : "*")(double s) const pure nothrow @safe @nogc
+    { return D3(x * s, y * s, z * s); }
+    double dot(D3 o) const pure nothrow @safe @nogc { return x * o.x + y * o.y + z * o.z; }
+    D3 cross(D3 o) const pure nothrow @safe @nogc
+    { return D3(y * o.z - z * o.y, z * o.x - x * o.z, x * o.y - y * o.x); }
+    double len() const pure nothrow @safe @nogc { return sqrt(dot(this)); }
+    ref double opIndex(size_t i) return pure nothrow @safe @nogc
+    { return i == 0 ? x : i == 1 ? y : z; }
+    double opIndex(size_t i) const pure nothrow @safe @nogc
+    { return i == 0 ? x : i == 1 ? y : z; }
+}
+
 
 // ---------------------------------------------------------------------
 // Unit tests — bit-exact / structural laws locked against the private
