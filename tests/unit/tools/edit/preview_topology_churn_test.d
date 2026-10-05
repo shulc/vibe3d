@@ -820,7 +820,7 @@ private void pv2Row(T)(EditMode mode, void function(ref Mesh) select,
         auto rig = rigged();
         scope(exit) rig.release();
         auto cold = new T(() => &rig.mesh, &rig.gpu, &rig.editMode, null);
-        auto coldImage = cold.buildPreparedParamUpdate(rig.mesh);
+        auto coldImage = cold.buildPreparedParamUpdate("", rig.mesh);
         assert(coldImage.valid && !coldImage.expectedBefore.filled &&
                cold.preparedParamUpdateMatches(coldImage, rig.mesh),
             name ~ ": a cold prepared image refuses (task 4491's hole)");
@@ -832,7 +832,7 @@ private void pv2Row(T)(EditMode mode, void function(ref Mesh) select,
 
         auto tool = make(rig, 0.10f);
         tool.interactiveParamEdit = true;
-        auto image = tool.buildPreparedParamUpdate(rig.mesh);
+        auto image = tool.buildPreparedParamUpdate("", rig.mesh);
         assert(image.applies && tool.preparedParamUpdateMatches(image, rig.mesh),
             name ~ ": the prepared panel edit does not validate");
         // What the context's stamped image install lands on the layer.
@@ -852,7 +852,7 @@ private void pv2Row(T)(EditMode mode, void function(ref Mesh) select,
         // params exactly as they were (a placement at the same value); only
         // the preview conjunct can refuse the now-stale image.
         tool.interactiveParamEdit = true;
-        auto stale = tool.buildPreparedParamUpdate(rig.mesh);
+        auto stale = tool.buildPreparedParamUpdate("", rig.mesh);
         assert(tool.preparedParamUpdateMatches(stale, rig.mesh),
             name ~ ": the fresh image does not validate");
         assert(stale.preview.nextPlacements == 2 && stale.preview.nextKeyMisses == 0,
