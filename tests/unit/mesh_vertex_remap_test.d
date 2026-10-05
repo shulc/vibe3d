@@ -167,3 +167,68 @@ unittest { // protectBelow: both-below pair must NOT weld; below/above pair must
     assert(welded == refWelded, "protectBelow weld count must match naive reference");
     assert(welded == 1, "exactly one weld (2→0) expected under protectBelow=2");
 }
+
+// ---------------------------------------------------------------------------
+// Task 9435 — the face-collapse core both weld remaps share. One cell per
+// family: the mask weld (vert.merge, collapse, decimate, join) reaches it
+// through `applyVertexRemapAndRebuild`; the coincidence weld (cleanup,
+// mirror, arrays) through `applyVertexRemap`.
+// ---------------------------------------------------------------------------
+
+/// A quad whose LAST corner sits on its FIRST: the weld leaves [0,1,2,0], and
+/// only the wrap-around trim turns it into the triangle [0,1,2].
+private Mesh wrapStand_() {
+    Mesh m;
+    m.vertices = [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 1, 0), Vec3(0, 0, 0)];
+    m.faces = [[0u, 1u, 2u, 3u]];
+    m.rebuildEdgesFromFaces();
+    m.buildLoops();
+    m.resetSelection();
+    return m;
+}
+
+unittest { // wrap-around duplicate trimmed, mask-weld family
+    import std.format : format;
+    Mesh m = wrapStand_();
+    const welded = m.weldVerticesByMask([true, true, true, true], 1e-12);
+    assert(welded == 1, format("mask weld: expected 1 weld (3 into 0), got %d", welded));
+    assert(m.faces.length == 1 && m.faces[0] == [0u, 1u, 2u], format(
+        "mask weld: the wrap-around duplicate must be trimmed to [0, 1, 2], got %s", m.faces));
+}
+
+unittest { // wrap-around duplicate trimmed, coincidence-weld family
+    import std.format : format;
+    Mesh m = wrapStand_();
+    const welded = m.weldCoincidentVertices();
+    assert(welded == 1, format("coincidence weld: expected 1 weld (3 into 0), got %d", welded));
+    assert(m.faces.length == 1 && m.faces[0] == [0u, 1u, 2u], format(
+        "coincidence weld: the wrap-around duplicate must be trimmed to [0, 1, 2], got %s", m.faces));
+}
+
+unittest { // coincidence weld: per-corner UVs follow their OLD face past a dropped one
+    import std.format : format;
+    import mesh : MapDomain, kUvMapName;
+    // A strip of three quads; the middle one collapses (2 onto 1, 6 onto 5),
+    // so old face 2 becomes new face 1 and must keep old face 2's corners.
+    Mesh m;
+    foreach (y; [0.0f, 1.0f])
+        foreach (x; [0.0f, 1.0f, 1.0f, 2.0f]) m.vertices ~= Vec3(x, y, 0);
+    m.faces = [[0u, 1u, 5u, 4u], [1u, 2u, 6u, 5u], [2u, 3u, 7u, 6u]];
+    m.rebuildEdgesFromFaces();
+    m.buildLoops();
+    m.resetSelection();
+    auto uv = m.addMeshMap(kUvMapName, 2, MapDomain.PolyVertex);
+    assert(uv !is null && uv.data.length == 24, "stand: 12 corners x 2");
+    foreach (i; 0 .. uv.data.length) uv.data[i] = cast(float) i;
+    const float[] oldFace2 = uv.data[16 .. 24].dup;   // corners 8..11
+
+    const welded = m.weldCoincidentVertices();
+    m.buildLoops();
+    assert(welded == 2, format("expected 2 welds (2 into 1, 6 into 5), got %d", welded));
+    assert(m.faces == [[0u, 1u, 5u, 4u], [1u, 3u, 7u, 5u]], format(
+        "the middle quad must drop and old face 2 become [1, 3, 7, 5], got %s", m.faces));
+    auto after = m.meshMap(kUvMapName);
+    assert(after !is null && after.data.length == 16, "UV map must survive at 8 corners x 2");
+    assert(after.data[8 .. 16] == oldFace2, format(
+        "new face 1 must carry old face 2's corner UVs %s, got %s", oldFace2, after.data[8 .. 16]));
+}
