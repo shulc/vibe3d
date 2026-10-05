@@ -186,13 +186,10 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// 5. The door is a MODE switch, so a front-flip drops the active tool — the
-//    same B2 rule keys 1/2/3 follow. Re-entering the type that is ALREADY
-//    current is not a flip and must NOT drop the tool.
-//
-//    Both halves are needed: an implementation that drops the tool
-//    unconditionally passes the first assert and fails the second, and one
-//    that never drops passes the second and fails the first.
+// 5. The door is a MODE switch, so it drops the active tool — across a
+//    front-flip (the B2 rule keys 1/2/3 follow) AND when the type is ALREADY
+//    current (task 9457: the private capture K-CD4 cells CD5s / CD5b, the
+//    command and the status-line button, both drop in Items mode).
 // ---------------------------------------------------------------------------
 
 unittest {
@@ -211,12 +208,11 @@ unittest {
         "a front-FLIP into Items must drop the active tool (B2), like the "
         ~ "geometry mode keys do");
 
-    // Already current -> no flip -> no drop.
+    // Already current -> still a selection-mode command -> drop.
     cmd("tool.set move on");
-    assert(toolArmed(), "fixture: re-arm for the no-flip half");
+    assert(toolArmed(), "fixture: re-arm for the current-type half");
     cmd("select.typeFrom item");
-    assert(toolArmed(),
-        "entering the type that is ALREADY current is not a flip and must NOT "
-        ~ "drop the tool");
-    cmd("tool.set move off");
+    assert(!toolArmed(),
+        "entering the type that is ALREADY current must drop the tool too "
+        ~ "(K-CD4 CD5s)");
 }

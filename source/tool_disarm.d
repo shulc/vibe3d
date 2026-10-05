@@ -98,6 +98,8 @@ struct DisarmOutcome {
     bool stillArmed;
     /// The mode requested by this crossing.
     DisarmMode mode;
+    /// The id of the dropped tool ("" = none), for the re-arm below.
+    string toolId;
 }
 
 /// Installed once by `app.d`. Cancels the active tool's live gesture (bounded)
@@ -135,6 +137,17 @@ DisarmOutcome disarmActiveToolBeforeDocumentReplace(DisarmMode mode) {
 /// layer selection from pretending that it replaces the whole document.
 DisarmOutcome dropActiveToolBeforePrimaryMove() {
     return disarmActiveToolBeforeDocumentReplace(DisarmMode.dropOnly);
+}
+
+/// Installed once by `app.d`: arms a tool by id through the lifecycle replay
+/// arm, writing no undo row. Null in headless / unit construction.
+__gshared void delegate(string id) g_rearmTool;
+
+/// Task 9457 (K-CD4 rule 1): an item-list primary move keeps the armed tool.
+/// The tool was dropped on its own mesh before the move; this arms it again on
+/// the new primary, after the switch hook ran. "" (nothing was armed) is a no-op.
+void rearmToolAfterPrimaryMove(string id) {
+    if (id.length && g_rearmTool !is null) g_rearmTool(id);
 }
 
 // ---------------------------------------------------------------------------

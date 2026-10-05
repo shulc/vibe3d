@@ -34,7 +34,7 @@ import layer_params : LayerPropsProvider;
 import seltype : SelMode, selModeFromToken;
 import change_bus : MeshChangeAll, noteLayerChange, LayerChange,
                     noteItemSelectionChange;
-import snapshot : MeshSnapshot;
+import snapshot : MeshSnapshot, SelectionSnapshot;
 
 import std.json : JSONValue, JSONType;
 
@@ -817,6 +817,13 @@ final class LayerSelect : LayerCommandBase {
     private Document.ItemSelectionState prevSelection;
     private Layer       prevPrimary;   // only for the switch-hook comparison
     private size_t      prevActiveIndex;
+    // Task 9457 (K-CD4): the item list's click (`list:true`) keeps the
+    // selection type and the armed tool, and clears the component selection
+    // of each mesh leaving the foreground (restored by the undo).
+    private bool                listArg;
+    private string              droppedTool;
+    private Layer[]             leaving;
+    private SelectionSnapshot[] leavingSel;
 
     this(Mesh* mesh, ref View view, EditMode editMode, Document* doc,
          void delegate(size_t, size_t) onSwitch) {
@@ -843,7 +850,8 @@ final class LayerSelect : LayerCommandBase {
                      [["set","Set"], ["add","Add"],
                       ["remove","Remove"], ["toggle","Toggle"],
                       ["clear","Clear"], ["range","Range"]], "set"),
-                 Param.enum_("kind", "Kind", &kindArg, kindChoices, "") ];
+                 Param.enum_("kind", "Kind", &kindArg, kindChoices, ""),
+                 Param.bool_("list", "Item List Click", &listArg, false) ];
     }
 
     /// Apply one item-selection mutation speculatively. If it moves the
@@ -856,13 +864,46 @@ final class LayerSelect : LayerCommandBase {
     private void mutateGuardingPrimary(scope void delegate() mutate) {
         auto before = doc.captureItemSelection();
         auto previousPrimary = doc.primary;
+        droppedTool = null;
         mutate();
         if (doc.primary !is previousPrimary) {
             doc.restoreItemSelection(before);
             import tool_disarm : dropActiveToolBeforePrimaryMove;
-            dropActiveToolBeforePrimaryMove();
+            droppedTool = dropActiveToolBeforePrimaryMove().toolId;
             mutate();
         }
+    }
+
+    /// The tail every branch shares: publication, the switch hook, then
+    /// either the `SelType.Item` promotion or — for an item-list click — the
+    /// re-arm of the tool the guard dropped. `wasForeground` is null on revert.
+    private void finishSelect(Layer before, size_t beforeIndex, bool[] wasForeground) {
+        if (listArg && wasForeground !is null) {
+            leaving = null;
+            leavingSel = null;
+            foreach (i, l; doc.layers)
+                if (wasForeground[i] && !doc.foreground(l)) {
+                    leaving ~= l;
+                    leavingSel ~= SelectionSnapshot.capture(l.meshRef());
+                    l.meshRef().clearVertexSelection();
+                    l.meshRef().clearEdgeSelection();
+                    l.meshRef().clearFaceSelection();
+                }
+        }
+        fireSwitchIfChanged(before, beforeIndex);
+        noteItemSelectionChange();
+        if (!listArg) {
+            if (onItemSelect !is null) onItemSelect();
+        } else {
+            import tool_disarm : rearmToolAfterPrimaryMove;
+            rearmToolAfterPrimaryMove(droppedTool);
+        }
+    }
+
+    private bool[] foregroundMeshes() {
+        auto r = new bool[doc.layers.length];
+        foreach (i, l; doc.layers) r[i] = l !is null && l.hasMesh && doc.foreground(l);
+        return r;
     }
 
     protected override bool applyImpl() {
@@ -871,6 +912,7 @@ final class LayerSelect : LayerCommandBase {
         prevPrimary     = doc.active();
         // Snapshot the whole item-selection state (task 0671).
         prevSelection = doc.captureItemSelection();
+        auto wasForeground = foregroundMeshes();
 
         // `mode:clear` (task 0654) — empty the item selection. It is the one
         // mode that names no target, so it resolves no index; passing one is
@@ -885,9 +927,7 @@ final class LayerSelect : LayerCommandBase {
         if (modeArg == "clear") {
             mutateGuardingPrimary(() { doc.clearItemSelection(); });
             noteUndoRecorded();   // task 2500
-            fireSwitchIfChanged(prevPrimary, prevActiveIndex);
-            noteItemSelectionChange();
-            if (onItemSelect !is null) onItemSelect();
+            finishSelect(prevPrimary, prevActiveIndex, wasForeground);
             return true;
         }
 
@@ -920,9 +960,7 @@ final class LayerSelect : LayerCommandBase {
                         doc.selectItem(l, batchMode);
             });
             noteUndoRecorded();   // task 2500
-            fireSwitchIfChanged(prevPrimary, prevActiveIndex);
-            noteItemSelectionChange();
-            if (onItemSelect !is null) onItemSelect();
+            finishSelect(prevPrimary, prevActiveIndex, wasForeground);
             return true;
         }
 
@@ -1002,9 +1040,7 @@ final class LayerSelect : LayerCommandBase {
                 }
             });
             noteUndoRecorded();   // task 2500
-            fireSwitchIfChanged(prevPrimary, prevActiveIndex);
-            noteItemSelectionChange();
-            if (onItemSelect !is null) onItemSelect();
+            finishSelect(prevPrimary, prevActiveIndex, wasForeground);
             return true;
         }
 
@@ -1012,16 +1048,10 @@ final class LayerSelect : LayerCommandBase {
 
         mutateGuardingPrimary(() { doc.selectItem(target, mode); });
         noteUndoRecorded();   // task 2500
-
-        // The primary may or may not have moved; fireSwitchIfChanged is a no-op
-        // when the active (primary) OBJECT is unchanged (e.g. a non-primary
-        // add/remove), so it does NOT re-upload / tool-drop on a pure set
-        // expansion that leaves the edit target put.
-        fireSwitchIfChanged(prevPrimary, prevActiveIndex);
-        // The item select makes SelType.Item current (app's selTypeOrder + the
-        // currentTypeChanged bus signal) and accumulates the Item sel domain.
-        noteItemSelectionChange();
-        if (onItemSelect !is null) onItemSelect();
+        // The switch hook is a no-op when the primary OBJECT is unchanged
+        // (e.g. a non-primary add/remove), so a pure set expansion that leaves
+        // the edit target put neither re-uploads nor drops the tool.
+        finishSelect(prevPrimary, prevActiveIndex, wasForeground);
         return true;
     }
 
@@ -1035,10 +1065,9 @@ final class LayerSelect : LayerCommandBase {
         // 0654 hazard the `else` arm named — `setActive(prevActiveIndex)`
         // clamping the absent-sentinel onto a real layer and selecting it — is
         // gone with the index arithmetic that produced it.
-        doc.restoreItemSelection(prevSelection);
-        fireSwitchIfChanged(prevLayer, prevIdx);
-        noteItemSelectionChange();
-        if (onItemSelect !is null) onItemSelect();
+        mutateGuardingPrimary(() { doc.restoreItemSelection(prevSelection); });
+        foreach (i, l; leaving) leavingSel[i].restore(l.meshRef());
+        finishSelect(prevLayer, prevIdx, null);
     }
 }
 

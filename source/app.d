@@ -2912,20 +2912,16 @@ void main(string[] args) {
     //     Items must therefore leave it exactly where it was — that is also
     //     what makes 1/2/3 afterwards restore the SAME geometry type rather
     //     than an arbitrary one, since the recent-ordering still remembers it.
-    //   * A flip DOES drop the active tool: pressing a MODE key/button is an
-    //     interaction-mode change. (The promote path above deliberately does
-    //     not — a selection is not a mode change.) Re-entering Items while it
-    //     is current keeps the tool: the geometry funnel's current-type drop is
-    //     captured for the geometry types only (K-CD CD2s / CD3s).
+    //   * It drops the active tool like every selection-mode command, to the
+    //     current type as well as across a flip (K-CD4 CD5s / CD5b, task
+    //     9457). The promote path above deliberately does not — a selection
+    //     is not a mode change.
     void switchItemType() {
         import change_bus : noteCurrentType;
         const before = currentSelType(selTypeOrder);   // S6: the drop row's restore
         const flipped = sessionOwner.switchItemType();
-        if (flipped) {
-            dropActiveToolWith(ToolTransition.selTypeFlipDrop,  // front-flip (B2)
-                DropContext(false, true, before));
-            noteCurrentType(SelType.Item);
-        }
+        dropActiveToolWith(ToolTransition.selTypeFlipDrop, DropContext(false, true, before));
+        if (flipped) noteCurrentType(SelType.Item);
     }
 
     // -------------------------------------------------------------------------
@@ -3942,7 +3938,7 @@ void main(string[] args) {
     // point — can only ever see the mesh the gesture was armed on.
     {
         import tool_disarm : DisarmMode, DisarmOutcome,
-            g_disarmActiveTool, kMaxDisarmSteps;
+            g_disarmActiveTool, g_rearmTool, kMaxDisarmSteps;
         g_disarmActiveTool = (DisarmMode mode) {
             DisarmOutcome o;
             if (activeTool is null) return o;
@@ -3961,6 +3957,7 @@ void main(string[] args) {
                 }
             }
             o.stillArmed = activeTool.hasUncommittedEdit();
+            o.toolId = activeToolId;
             // LAYER 1 — drop the tool outright, still ahead of the replace.
             // This is what makes the guarantee hold for a tool whose cancel
             // did not clear its commit guard: its `deactivate()` runs here,
@@ -3969,6 +3966,13 @@ void main(string[] args) {
             if (mode == DisarmMode.dropOnly) dropActiveTool(ToolTransition.primaryMoveDrop);
             else dropActiveTool(ToolTransition.documentReplaceDisarm);
             return o;
+        };
+        // Task 9457: the re-arm after an item-list primary move — the
+        // lifecycle replay arm, without an undo row of its own.
+        g_rearmTool = (string id) {
+            JSONValue noNamed = JSONValue(cast(JSONValue[string]) null);
+            history.replayWithoutRecord(() =>
+                armPreparedTool(ToolTransition.replayArm, id, noNamed, true));
         };
     }
     // EditSession wiring (task 0428): construct the session-protocol driver
