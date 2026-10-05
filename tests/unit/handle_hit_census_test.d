@@ -18,7 +18,7 @@ import tests.unit.census_symbols : blankNonCode, isIdentChar, countOccurrences;
 
 import handler : Handler, HandlePart, firstHitPart, BoxHandler;
 import math : Vec3, Viewport, lookAt, orthographicMatrix;
-import drag : ctrlLockPending, kCtrlLockWaitPx;
+import drag : ctrlLockPending, kCtrlLockWaitPx, screenAxisFraction;
 import tools.transform.move : MoveTool;
 import tools.transform.scale : ScaleTool;
 import tools.transform.rotate : RotateTool;
@@ -122,4 +122,18 @@ unittest {
     a.setVisible(false);
     assert(firstHitPart(100, 100, vp, [HandlePart(a, 7), HandlePart(b, 9)]) == 9);
     assert(firstHitPart(0, 0, vp, [HandlePart(a, 7), HandlePart(b, 9)]) == -1);
+}
+
+unittest {
+    // The unitless axis projection: the pixel drag over the projected segment,
+    // and its two refusals (an end that does not project, a sub-pixel segment).
+    immutable eye = Vec3(0, 0, 5);
+    Viewport vp = Viewport(lookAt(eye, Vec3(0, 0, 0), Vec3(0, 1, 0)),
+                           orthographicMatrix(1.0f, 1.0f, 0.01f, 100.0f), 200, 200, 0, 0, eye);
+    bool skip;
+    // 0.5 world = 50 px to the right: 25 px right of a 50 px segment = 0.5.
+    assert(screenAxisFraction(25, 7, Vec3(0, 0, 0), Vec3(0.5f, 0, 0), vp, skip) == 0.5f && !skip);
+    assert(screenAxisFraction(25, 7, Vec3(0, 0, 0), Vec3(0.005f, 0, 0), vp, skip) == 0 && skip,
+        "a sub-pixel segment must refuse");
+    assert(screenAxisFraction(25, 7, Vec3(0, 0, 0), Vec3(0, 0, 0), vp, skip) == 0 && skip);
 }

@@ -231,3 +231,23 @@ unittest {
     Thread.sleep(dur!"msecs"(250));
     assertMirrorCommitted("centre-box haul", planesBefore, u0, v0);
 }
+
+// ---------------------------------------------------------------------------
+// 3. Drag the rotate box — it turns the plane: `angle` moves off its default.
+// The box sits on the normal (default -X) at 0.55 gizmo arms from the centre;
+// its drag runs along refAxis x normal (here world Y). A press list that lost
+// the rotate box leaves `angle` at 180 (the press lands on no handle).
+// ---------------------------------------------------------------------------
+
+unittest {
+    resetForMirrorCamera();
+    dragWorldHandle(Vec3(0, 0, 0), Vec3(1, 0, 0), 0.0, 1);   // activating tap
+    immutable double a0 = qf("angle");
+    assert(approx(a0, 180.0), "rig: default angle is 180, got " ~ a0.to!string);
+    auto vp = viewportFromCamera(fetchCamera(BASE));
+    immutable float arm = gizmoSize(Vec3(0, 0, 0), vp) * 0.55f;
+    dragWorldHandle(Vec3(-arm, 0, 0), Vec3(0, 1, 0), 60.0);
+    immutable double a1 = qf("angle");
+    assert(abs(a1 - a0) > 1.0, "dragging the rotate box should turn the plane, angle "
+        ~ a0.to!string ~ " -> " ~ a1.to!string);
+}
