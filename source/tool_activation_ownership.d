@@ -46,7 +46,7 @@ enum ToolTransition : ubyte {
     /// A lifecycle redo re-dropping a tool it had restored.
     replayDrop,
     /// A selection-mode command (key, mode button, `select.typeFrom`), to a
-    /// new type or the current one (task 9458, K-CD CD2 / CD2s / CD3s).
+    /// new type or the current one (K-CD CD2 / CD2s / CD3s).
     selTypeFlipDrop,
     /// The active-layer / primary change hook.
     activeLayerChangedDrop,
@@ -209,8 +209,8 @@ CloseReason closeReasonFor(ToolTransition t) pure nothrow @safe @nogc {
 /// whose policy says `dropWritesRow` (wave plan 8640 S6, D6'): exactly the
 /// three user exits — Esc / Space / Q / `tool.set <id> off`, the armed tool's
 /// own button, a selection-mode command. Captured: X-esc, X-space, X-q, X-sel
-/// (a flip), X-button-same (B-drop); the current-type row is uncaptured (task
-/// 9458 keeps one door). A replay, a reset, a
+/// (a flip), X-button-same (B-drop); the current-type row is uncaptured (one
+/// door). A replay, a reset, a
 /// layer or document change and a command's own drop write no row.
 bool dropWritesRowFor(ToolTransition t) pure nothrow @safe @nogc {
     final switch (t) {

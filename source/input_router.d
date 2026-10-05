@@ -610,8 +610,7 @@ struct InputRouter {
                     auto id = &bnd.id;
                     // Route the selection-type keys through the selection-type
                     // funnel: it promotes the SelType, sets editMode in lockstep,
-                    // and drops the active tool, the current type's key included
-                    // (task 9458).
+                    // and drops the active tool, the current type's key included.
                     //
                     // `items` (task 0642) takes the OTHER funnel — `switchItemType`
                     // — because there is no EditMode to set in lockstep: EditMode

@@ -833,7 +833,7 @@
    {
     "id": "seltype-key-same-type",
     "cell": "K-CD CD2s",
-    "door": "(none: no drop in ours)",
+    "door": "selTypeFlipDrop",
     "gesture": "selection-type key 1 while already vertex",
     "tool_armed_after": false,
     "after": {
@@ -848,7 +848,7 @@
    {
     "id": "mode-button-flip",
     "cell": "K-CD CD3",
-    "door": "panelDrop",
+    "door": "selTypeFlipDrop (the button runs select.typeFrom)",
     "gesture": "selection-type button Edges (vertex -> edge)",
     "tool_armed_after": false,
     "after": {
@@ -863,7 +863,7 @@
    {
     "id": "mode-button-same-type",
     "cell": "K-CD CD3s",
-    "door": "panelDrop",
+    "door": "selTypeFlipDrop (the button runs select.typeFrom)",
     "gesture": "selection-type button Vertices while already vertex",
     "tool_armed_after": false,
     "after": {

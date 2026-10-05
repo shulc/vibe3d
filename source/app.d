@@ -2852,7 +2852,7 @@ void main(string[] args) {
     //     stays the picking/draw authority and always mirrors the current
     //     geometry type.
     //   * Every selection-mode command DROPS the active tool, to the current
-    //     type as well as across a flip (task 9458; K-CD CD2 / CD2s / CD3s,
+    //     type as well as across a flip (K-CD CD2 / CD2s / CD3s,
     //     toolcards/interaction_layer/findings_K-CD.md). The mode buttons reach
     //     this funnel through `select.typeFrom`, so it is the one drop door.
     //   * Only a FLIP notes the current-type change on the bus
@@ -2928,8 +2928,8 @@ void main(string[] args) {
     //     Items must therefore leave it exactly where it was — that is also
     //     what makes 1/2/3 afterwards restore the SAME geometry type rather
     //     than an arbitrary one, since the recent-ordering still remembers it.
-    //   * It drops the active tool like every selection-mode command (task
-    //     9458). The promote path above deliberately does not — a selection is
+    //   * It drops the active tool like every selection-mode command. The
+    //     promote path above deliberately does not — a selection is
     //     not a mode change. The item door itself is unmeasured: the reference's
     //     input map spells it as the same command family as 1/2/3.
     void switchItemType() {

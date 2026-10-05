@@ -41,6 +41,7 @@ private void key(string name) {
         case "q":      sym = 113; scan = 20; break;   // tool.release (the drop key)
         case "w":      sym = 119; scan = 26; break;   // move
         case "e":      sym = 101; scan = 8;  break;   // rotate
+        case "1":      sym = 49;  scan = 30; break;   // vertices (selection type)
         case "2":      sym = 50;  scan = 31; break;   // edges (selection type)
     }
     playAndWait(
