@@ -429,13 +429,13 @@ unittest { // (3) the doors reach the tool session only through EditSession
     // The undo door has no prune (amendment A16: it was inert).
     // Task 8920 (S2a): the depth snapshot first, the settle after a MOVED stack;
     // task 8930 (S2b): the snapshot also holds the token and the armed model post mode;
-    // task 9500: the tool bound before, and the redo emptied after the settle.
-    assert(squeeze(bodyAt(ts, "bool undo()")) == "{autobefore=tool_();"
+    // task 9500: the redo emptied after the settle.
+    assert(squeeze(bodyAt(ts, "bool undo()")) == "{"
            ~ "navBefore_=NavBefore(history_.undoEntries().length,"
            ~ "token_,boundModel_()&&postmodeArmed_);"
            ~ "constr=undoImpl_();if(r)openBlock_=null;"
            ~ "if(r&&history_.undoEntries().length!=navBefore_.depth)settleAfterNavigation_(true);"
-           ~ "if(r)reapplyEmptiesRedo_(before);returnr;}",
+           ~ "if(r)reapplyEmptiesRedo_();returnr;}",
            "S7a wiring census: ToolSession.undo body changed: " ~ squeeze(bodyAt(ts, "bool undo()")));
     inOrder(squeeze(bodyAt(ts, "bool redo()")),
             ["openBlock_=null;", "constr=redoImpl_();", "if(r)pruneRedoTop_();", "returnr;"],

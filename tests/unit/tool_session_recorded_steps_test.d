@@ -98,7 +98,8 @@ private final class SwapEdit : Command {
     protected override void revertImpl() { *active = to; }
 }
 
-unittest { // 9500: an undo the flagged tool survives empties the redo; a swap keeps it.
+unittest { // 9500: an undo that leaves a flagged tool armed empties the redo; a
+            // refused undo changes nothing.
     foreach (flag; [true, false]) {
         auto tool = new RecordedTool;
         tool.emptiesRedo = flag;
@@ -112,22 +113,39 @@ unittest { // 9500: an undo the flagged tool survives empties the redo; a swap k
         assert(history.redoEntries().length == (flag ? 0 : 1),
                format("9500 surviving undo (flag %s): redo %s", flag, history.redoEntries().length));
     }
-    auto a = new RecordedTool, b = new RecordedTool;
-    a.emptiesRedo = b.emptiesRedo = true;
-    Tool active = a;
-    auto history = new CommandHistory;
-    auto session = new EditSession(() => active, history, () { active = null; });
-    session.noteArm("xfrm.redo-empties-test", 1);
-    auto swap = new SwapEdit(&active, b);
-    assert(swap.apply());
-    history.record(swap);
-    a.gesture(history, 7);
-    assert(history.undo() && history.redoEntries().length == 1, "9500 swap rig: raw undo");
-    assert(session.navigate(true) && active is b,
-           "9500 swap rig: the undo did not bind the other tool");
-    assert(history.redoEntries().length == 2,
-           format("9500: an undo that swaps the tool emptied the redo (%s left)",
-                  history.redoEntries().length));
+    // A refused undo (nothing below the redo) leaves the redo alone.
+    {
+        auto tool = new RecordedTool;
+        tool.emptiesRedo = true;
+        Tool active = tool;
+        auto history = new CommandHistory;
+        auto session = new EditSession(() => active, history, () { active = null; });
+        session.noteArm("xfrm.redo-empties-test", 1);
+        tool.gesture(history, 7);
+        assert(history.undo() && history.undoEntries().length == 0
+               && history.redoEntries().length == 1, "9500 refused rig: raw undo");
+        assert(!session.navigate(true) && history.redoEntries().length == 1,
+               format("9500: a refused undo emptied the redo (%s left)", history.redoEntries().length));
+    }
+    // The row popped binds another tool (a layer click under 9457): the
+    // armed flagged tool still empties the redo.
+    {
+        auto a = new RecordedTool, b = new RecordedTool;
+        a.emptiesRedo = b.emptiesRedo = true;
+        Tool active = a;
+        auto history = new CommandHistory;
+        auto session = new EditSession(() => active, history, () { active = null; });
+        session.noteArm("xfrm.redo-empties-test", 1);
+        auto swap = new SwapEdit(&active, b);
+        assert(swap.apply());
+        history.record(swap);
+        a.gesture(history, 7);
+        assert(history.undo() && history.redoEntries().length == 1, "9500 swap rig: raw undo");
+        assert(session.navigate(true) && active is b,
+               "9500 swap rig: the undo did not bind the other tool");
+        assert(history.redoEntries().length == 0,
+               format("9500 swap: redo %s, expected empty", history.redoEntries().length));
+    }
 }
 
 unittest { // 8493: selected stage and running postmode are distinct states.
