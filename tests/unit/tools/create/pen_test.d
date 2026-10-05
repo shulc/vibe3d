@@ -32,7 +32,7 @@ import std.math : abs;
 import tools.create.pen;
 
 // Pure guide-geometry unit tests — no HTTP harness, no app loop.
-// Covers the core math used by applyPenGuide so dub test catches regressions
+// Covers the core math used by the pen's LineGuide so dub test catches regressions
 // independently of the interactive test suite.
 unittest {
     import tools.create.create_common : transformDir, frameFromBasis;
@@ -158,21 +158,20 @@ unittest {
         assert(!isUserSet(p), "pen: attribute '" ~ p.name ~ "' starts off its declared default");
         ++n;
     }
-    assert(n == 15, format("pen: %s attributes enumerated, pinned 15", n));
+    assert(n == 16, format("pen: %s attributes enumerated, pinned 16", n));
 }
 
 // Source census: the pen's "a discrete target placed the point" test has ONE
-// spelling, `discretePlaced()`, read by the guide gate and by the merge class
-// (`elementPlaced`); a second spelling could drift from the merge's.
+// spelling, in the merge class (`elementPlaced`); the guide has no gate of its
+// own on it (the election ranks an element above the guide, task 9416).
 unittest {
     import std.file : readText;
     import std.algorithm : count;
     const src = readText("source/tools/create/pen.d");
     const expr = "lastSnap.snapped && lastSnap.constraintType == SnapType.None";
-    const gate = "if (!discretePlaced() && !onSurface) applyPenGuide(local, x, y);";
-    assert(src.count(expr) == 1 && src.count(gate) == 1,
-        "pen: the discrete-placement test must be spelled once (discretePlaced) "
-        ~ "and the guide gate must read it");
+    assert(src.count(expr) == 1 && src.count("applyPenGuide") == 0,
+        "pen: the discrete-placement test must be spelled once (elementPlaced) "
+        ~ "and no private guide pass may return");
 }
 
 version (PerfProbe) unittest {

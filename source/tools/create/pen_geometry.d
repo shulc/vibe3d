@@ -155,16 +155,13 @@ void revKeepFirst(uint[] ring) nothrow @nogc {
     }
 }
 
-/// The pen's drag guides as one registered snap guide (pen wave plan S10,
-/// interaction-layer task 9416; fixture pen_options.json B8 / Gnext). `aim`
-/// takes the stroke's WORLD points, the dragged index and the stroke plane's
-/// normal: lines through the dragged point's ring neighbours — prev / next —
-/// straight line (n >= 4) along prev - prevprev / next - nextnext, world axes
-/// (n >= 2) through prev / next, skipping the one along the plane normal, right
-/// angle (n >= 3) in the plane, perpendicular to those sides. `propose` projects
-/// the client point along the eye onto every line whose bit the packet enables
-/// and offers the nearest on screen (ties: the first); it re-ranks nothing.
-/// `live` is the pen's per-event gate: a point the surface did not place.
+/// The pen's drag guide (task 9416; fixture pen_options.json B8 / Gnext): lines
+/// through the dragged point's ring neighbours prev / next (WORLD points) —
+/// straight line along prev - prevprev (n >= 4), world axes but the plane
+/// normal's (n >= 2), right angle in the plane (n >= 3). `propose` projects the
+/// client point along the eye onto each line its packet bit enables and offers
+/// the nearest on screen; it re-ranks nothing. `live`: the surface did not place
+/// the point.
 final class LineGuide : SnapGuide {
     struct Line { Vec3 origin, dir; SnapType type; }
     Line[] lines;

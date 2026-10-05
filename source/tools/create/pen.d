@@ -36,8 +36,7 @@ import tools.create.create_common : pickWorkplane, BuildPlane,
                               viewPrincipalAxis, axisUnit, screenToPlacementLocal,
                               backgroundSurfacePoint,
                               transformPoint, transformDir, snapLocalHit,
-                              currentSnapPacket,
-                              workplaneCursorRay, workplaneCursorPlaneHit;
+                              workplaneCursorPlaneHit;
 import toolpipe.packets : SnapType, SnapPacket, SymmetryPacket;
 import toolpipe.stages.symmetry : liveSymmetryStage;
 import toolpipe.stages.snap : SnapStage, liveSnapStage;
@@ -1484,14 +1483,11 @@ private:
         return true;
     }
 
-    // A discrete snap target (not a constraint) placed the point.
-    bool discretePlaced() const {
-        return lastSnap.snapped && lastSnap.constraintType == SnapType.None;
-    }
-    // ... and it was an element of the edited mesh: the merge's small radii.
+    // An element of the edited mesh (a discrete target, not a constraint)
+    // placed the point: the merge's small radii.
     bool elementPlaced() const {
-        return discretePlaced() && lastSnap.targetSource == 0 &&
-            (lastSnap.targetType & kElementSnapBits) != 0;
+        return lastSnap.snapped && lastSnap.constraintType == SnapType.None &&
+            lastSnap.targetSource == 0 && (lastSnap.targetType & kElementSnapBits) != 0;
     }
 
     // The merge (wave plan S5; fixture pen_merge.json): ONE search from the

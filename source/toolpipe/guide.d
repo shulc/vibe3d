@@ -42,13 +42,6 @@ import toolpipe.packets : SnapPacket, SnapType;
 //     * The `priority` return, and therefore the whole (priority, distance)
 //       arbitration rule built on it.
 //     * `GuideDrawState` and its three states.
-//
-// Phase (a) — this commit — wires none of it to a tool. No guide is ever
-// registered, so the registry is empty, and the arbitration path in
-// `snap.snapCursor` is unreachable. That is the entire neutrality argument
-// (technique N4 of the plan): not "the new path agrees", but "the new path
-// does not run". The unittest in `source/snap.d` proves the first anyway,
-// because that equivalence is what makes phase (b) safe.
 // ---------------------------------------------------------------------------
 
 /// The value the environment puts in a guide's priority slot BEFORE it asks
