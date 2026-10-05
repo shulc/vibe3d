@@ -7,14 +7,14 @@
   "notes": "fresh GUI worker per cell, NEW empty foreground mesh, no background geometry; clicks, drags, panel typing, panel checkbox clicks and Ctrl+Z / Ctrl+Shift+Z / Backspace are real input; no script call between the first click and the end of the stroke; stroke ended by the tool-drop key; mesh read once after it; history rows counted by a post-end walk of Ctrl+Z presses.",
   "captured_utc": "2026-10-04",
   "harness": "private capture harness (task 9370)",
-  "task": "9370"
+  "task": "9370, 9375, 9381, 9382"
  },
  "rig": {
   "view": "top orthographic, 440 px per metre, points land on y = 1.0, click quantum 0.005 m",
   "flip_flag": "the stroke's facing flag is decided at the 3rd point (see the facing fixture); A-points decide it ON, B-points OFF",
   "history_rows": "rows = number of post-end Ctrl+Z presses that change the mesh; every cell below commits exactly ONE row (the first post-end undo empties the mesh, the second changes nothing)"
  },
- "law": "While a stroke is live, Ctrl+Z restores the stroke to its state BEFORE THE LAST STROKE EVENT, one event per press, with nothing recorded in history. An event is anything that changed the stroke's state: a click adding a point, a drag of a point (the whole drag is one event), a typed panel value (each typed field is its own event, including the current-point index), and a panel checkbox write (the facing flag). The restored state includes the facing flag exactly as it was (no re-decision). Ctrl+Shift+Z re-applies the event just undone. Popping all points leaves the tool armed; the next clicks start a new stroke. Backspace is NOT handled by the stroke: it runs the editor's global delete, which is a no-op only when nothing is selected; with a selection it ends the stroke (committing it, the new element selected by the selectNew rule) and deletes the selection.",
+ "law": "While a stroke is live, Ctrl+Z restores the stroke to its state BEFORE THE LAST STROKE EVENT, one event per press, with nothing recorded in history. An event is anything that changed the stroke's state: a click adding a point, a drag of a point (the whole drag is one event), a typed panel value (each typed field is its own event, including the current-point index), and a panel checkbox write (the facing flag). The restored state includes the facing flag exactly as it was (no re-decision). Ctrl+Shift+Z re-applies the event just undone. Popping all points leaves the tool armed; the next clicks start a new stroke. Backspace is NOT handled by the stroke: it runs the editor's global delete, which ends the stroke first (committing it, the new elements selected by the selectNew rule) and deletes the selection, the whole mesh when nothing is selected (`backspace`, superseding the earlier empty-scene reading).",
  "cells": {
   "drag_then_undo": {
    "script": [
@@ -331,10 +331,33 @@
     "rows": 1
    },
    "note": "discriminating: a re-decision on the remaining three points would give [0,2,1] with the flag ON"
+  },
+  "backspace_with_selection": {
+   "script": [
+    "polygon selection mode",
+    "stroke T: click (0,0.2) (0.5,0.2) (0.25,-0.3), end stroke (T selected)",
+    "new stroke: click (-0.5,0.5) (-0.5,0.8) (-0.2,0.8)",
+    "Backspace",
+    "click (-0.2,0.5)",
+    "end stroke"
+   ],
+   "expected": {
+    "vertices": [],
+    "polygons": [],
+    "panel_after": {
+     "current": 0
+    },
+    "history_walk": [
+     "undo 1: no mesh change",
+     "undo 2: T and the 3-point triangle [3,4,5] come back, both selected",
+     "undo 3: the triangle goes, T stays selected"
+    ]
+   },
+   "note": "Backspace ended the stroke (3-point triangle committed and selected), then deleted the selection (T + it); the last click started a 1-point stroke that commits nothing"
   }
  },
  "related": {
-  "backspace_without_selection": "with nothing selected (vertex mode), Backspace leaves the live stroke untouched (facing fixture's earlier cell)",
+  "backspace_without_selection": "SUPERSEDED by `backspace` (captured in a scene with geometry): Backspace is the global delete; the earlier reading came from an empty scene",
   "one_point_stroke_undo": "see the merge fixture: Ctrl+Z on a one-point stroke removes the point and does not touch the row below",
   "redo_of_an_older_row_inside_a_stroke": "not reachable: arming the tool by command clears the history redo row (control cells), so a live stroke never sits on a redo row in this rig"
  },
@@ -392,5 +415,228 @@
    "note": "Ctrl+Z with a ONE-point live stroke removes that point and keeps the committed triangle; the next two clicks start a new stroke that commits as a 2-vertex polygon",
    "source": "the merge capture of the same wave (same rig), lifted here for the in-stroke undo witness"
   }
+ },
+ "backspace": {
+  "note": "task 9375 (live capture, gui-gesture, fresh worker per cell, NEW empty foreground mesh, top view at 440 px/m, scene geometry made before the tool is armed, every snap type off, no script call between the first gesture and the drop key; reads after the drop)",
+  "BSscene_selectNew1": {
+   "raw_cell": "KB3_BSscene_clean",
+   "question": "committed T (0.3,1,0.3) (0.9,1,0.3) (0.6,1,0.8) made before the tool is armed, nothing selected, polygon mode; pen: clicks (-0.8,-0.6) (-0.2,-0.8) (-0.5,-0.2) away from T; Backspace over the viewport; click (-0.9,0.2); drop",
+   "expected": {
+    "vertices": [
+     [
+      0.3,
+      1.0,
+      0.3
+     ],
+     [
+      0.9,
+      1.0,
+      0.3
+     ],
+     [
+      0.6,
+      1.0,
+      0.8
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      1,
+      2
+     ]
+    ]
+   },
+   "law": "Backspace mid-stroke = the global delete (command log: delete -> select.delete): the stroke ends (committed, its new elements selected by selectNew 1) and the delete removes the selection = the stroke; T intact; the tool stays; the next click starts a new stroke"
+  },
+  "BSscene_selectNew0": {
+   "raw_cell": "KB3_BSscene_sn0",
+   "question": "committed T (0.3,1,0.3) (0.9,1,0.3) (0.6,1,0.8) made before the tool is armed, nothing selected, polygon mode; selectNew off; pen: clicks (-0.8,-0.6) (-0.2,-0.8) (-0.5,-0.2) away from T; Backspace over the viewport; click (-0.9,0.2); drop",
+   "expected": {
+    "vertices": [],
+    "faces": []
+   },
+   "law": "same with selectNew 0: nothing selected at the delete -> the whole mesh (T + stroke) is deleted"
+  },
+  "BSnotool_polygon": {
+   "raw_cell": "KB3_BSnotool_polygon",
+   "question": "committed T, NO tool armed, nothing selected, polygon mode; Backspace over the viewport",
+   "expected": {
+    "vertices": [],
+    "faces": []
+   },
+   "law": "no tool, nothing selected, polygon mode: Backspace deletes the whole mesh"
+  },
+  "BSnotool_vertex": {
+   "raw_cell": "KB3_BSnotool_vertex",
+   "question": "committed T, NO tool armed, nothing selected, vertex mode; Backspace over the viewport",
+   "expected": {
+    "vertices": [],
+    "faces": []
+   },
+   "law": "no tool, nothing selected, vertex mode: Backspace deletes the whole mesh"
+  }
+ },
+ "backspace_one_click": {
+  "raw_cell": "KB4_BS_oneclick",
+  "question": "committed T (0.3,1,0.3) (0.9,1,0.3) (0.6,1,0.8) made before the tool is armed, nothing selected, polygon mode; pen: click (-0.8,-0.6); Backspace over the viewport; click (-0.9,0.2); drop",
+  "expected": {
+   "vertices": [],
+   "faces": [],
+   "selected_polygons": []
+  },
+  "law": "Backspace after ONE click: the 1-point stroke ends committing nothing, the selection is empty, the global delete removes the WHOLE mesh (scene T too); tool stays armed",
+  "note": "task 9381, same rig as `backspace`"
+ },
+ "ui_cmd": {
+  "note": "task 9381, same rig as `backspace`; the command is fired by its global key binding with the pointer over the viewport",
+  "select_invert_mid_stroke": {
+   "raw_cell": "KB4_UIcmd_invert",
+   "question": "committed T (0.3,1,0.3) (0.9,1,0.3) (0.6,1,0.8) made before the tool is armed, nothing selected, polygon mode; pen: clicks (-0.8,-0.6) (-0.2,-0.8) (-0.5,-0.2) away from T; the select-invert key ([); click (-0.9,0.2); drop",
+   "expected": {
+    "vertices": [
+     [
+      0.3,
+      1.0,
+      0.3
+     ],
+     [
+      0.9,
+      1.0,
+      0.3
+     ],
+     [
+      0.6,
+      1.0,
+      0.8
+     ],
+     [
+      -0.8,
+      1.0,
+      -0.6
+     ],
+     [
+      -0.2,
+      1.0,
+      -0.8
+     ],
+     [
+      -0.5,
+      1.0,
+      -0.2
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      5,
+      4
+     ]
+    ],
+    "selected_polygons": [
+     0
+    ]
+   },
+   "law": "a global UI command mid-stroke first ENDS the stroke (committed, its polygon selected by selectNew), then runs; the tool stays armed; the next click starts a new stroke"
+  },
+  "flip_mid_stroke": {
+   "raw_cell": "KB4_UIcmd_flip",
+   "question": "committed T (0.3,1,0.3) (0.9,1,0.3) (0.6,1,0.8) made before the tool is armed, nothing selected, polygon mode; pen: clicks (-0.8,-0.6) (-0.2,-0.8) (-0.5,-0.2) away from T; the polygon-flip key (f); click (-0.9,0.2); drop",
+   "expected": {
+    "vertices": [
+     [
+      0.3,
+      1.0,
+      0.3
+     ],
+     [
+      0.9,
+      1.0,
+      0.3
+     ],
+     [
+      0.6,
+      1.0,
+      0.8
+     ],
+     [
+      -0.8,
+      1.0,
+      -0.6
+     ],
+     [
+      -0.2,
+      1.0,
+      -0.8
+     ],
+     [
+      -0.5,
+      1.0,
+      -0.2
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      4,
+      5
+     ]
+    ],
+    "selected_polygons": [
+     1
+    ]
+   },
+   "law": "as select-invert: the flip key ends + commits the stroke (selected), then flips the SELECTION = the new polygon only (scene T unflipped); tool stays armed",
+   "stroke_ring_unflipped": [
+    3,
+    5,
+    4
+   ]
+  }
+ },
+ "ui_cmd_one_click": {
+  "raw_cell": "KB5_UIcmd1",
+  "question": "committed T (0.3,1,0.3) (0.9,1,0.3) (0.6,1,0.8) made before the tool is armed, nothing selected, polygon mode; pen: click (-0.8,-0.6); the select-invert key ([); click (-0.9,0.2); drop",
+  "expected": {
+   "vertices": [
+    [
+     0.3,
+     1.0,
+     0.3
+    ],
+    [
+     0.9,
+     1.0,
+     0.3
+    ],
+    [
+     0.6,
+     1.0,
+     0.8
+    ]
+   ],
+   "faces": [
+    [
+     0,
+     1,
+     2
+    ]
+   ],
+   "selected_polygons": [
+    0
+   ]
+  },
+  "law": "a UI command after ONE click ends the 1-point stroke first (no geometry), then runs (T inverted to selected); the next click starts a new stroke, dropped below the minimum",
+  "note": "task 9382, same rig as `backspace`"
  }
 }

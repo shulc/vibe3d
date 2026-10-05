@@ -1519,9 +1519,12 @@ private struct ToolSession {
             if (reporting_(t) && (model || t.sessionPolicy().foldsParamRowsIntoBlock))
                 endPendingOperation_(null, true, model);
             rebaseOnCurrent_(t, false);
-            // (3) an idle covered tool stays armed and is not called (R20 law).
-            if (cc == CommandClose.uiDoor && !t.hasUncommittedEdit())
+            // (3) an idle covered tool stays armed and is not called (R20 law),
+            // unless its policy says a command ends its open gesture (pen S8).
+            if (cc == CommandClose.uiDoor && !t.hasUncommittedEdit()) {
+                if (t.sessionPolicy().commandEndsOpenGesture) t.cancelUncommittedEdit();
                 return CloseOutcome(false, true);
+            }
         }
         // (4) the tool closes its own operation — before a command, or by its
         // own Enter (slice M3) — and the row (if any) is written now,

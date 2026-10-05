@@ -193,7 +193,8 @@ private void registerPrimitiveTools(ref Registry reg, LiveSessionRole owner,
     }, owner, live);
 
     reg.registerTool("pen", typedToolFactory!PenTool(() {
-        auto t = new PenTool(() => &owner.activeMesh(), deps.gpu(), deps.litShader());
+        auto t = new PenTool(() => &owner.activeMesh(), deps.gpu(), deps.litShader(),
+            () => owner.subjectType());
         t.setGestureBindings(deps.history(), deps.bevelEditFactory());
         return t;
     }));

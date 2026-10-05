@@ -99,16 +99,19 @@ private class CountingTool : Tool {
     bool commits = true;
     CommandHistory writeTo;   // commitOperation records a row here when set
     string[]* log;
-    size_t commitCalls, resumeCalls;
+    size_t commitCalls, resumeCalls, cancelCalls;
+    bool endsGesture;   // copied into `commandEndsOpenGesture` (pen S8)
     this(CommandClose cc, bool open, string[]* log = null) {
         this.cc = cc; this.open = open; this.log = log;
     }
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
         ToolSessionPolicy p;
         p.commandClose = cc;
+        p.commandEndsOpenGesture = endsGesture;
         return p;
     }
     override bool hasUncommittedEdit() const { return open; }
+    override void cancelUncommittedEdit() { ++cancelCalls; open = false; }
     override bool commitOperation() {
         ++commitCalls;
         if (log !is null) *log ~= "commit";
@@ -188,7 +191,35 @@ unittest {
     assert(es.closeOperation(CloseReason.command, CommandDoor.ui) == CloseOutcome(false, true),
            "M2 close: an idle `uiDoor` tool was not kept (R20 law, K-tab)");
     assert(ui.commitCalls == 0, "M2 close: an idle `uiDoor` tool was asked to commit");
+    assert(ui.cancelCalls == 0, "S8 close: an idle `uiDoor` tool without the policy was cancelled");
     ++cells;
+
+    // (2b) / (3b) / (4b) — pen wave S8 (A4-rev): `commandEndsOpenGesture`.
+    // (2b) idle, SCRIPT door: `uiDoor` does not cover it — not called.
+    auto ends = new CountingTool(CommandClose.uiDoor, false);
+    ends.endsGesture = true;
+    held = ends;
+    assert(es.closeOperation(CloseReason.command, CommandDoor.script) == CloseOutcome(false, false),
+           "S8 close: the script door closed an ending `uiDoor` tool");
+    assert(ends.cancelCalls == 0, "S8 close: the script door ended an idle tool's gesture");
+    ++cells;
+    // (3b) idle, UI door: kept, its open gesture ended, nothing committed.
+    assert(es.closeOperation(CloseReason.command, CommandDoor.ui) == CloseOutcome(false, true),
+           "S8 close: an idle ending tool was not kept");
+    assert(ends.cancelCalls == 1 && ends.commitCalls == 0,
+           format("S8 close: an idle ending tool: cancel %s, commit %s; expected 1, 0",
+                  ends.cancelCalls, ends.commitCalls));
+    ++cells;
+    // (4b) OPEN: committed and kept; not cancelled.
+    ends.open = true;
+    assert(es.closeOperation(CloseReason.command, CommandDoor.ui) == CloseOutcome(true, true),
+           "S8 close: an open ending tool was not committed and kept");
+    assert(ends.cancelCalls == 1 && ends.commitCalls == 1,
+           format("S8 close: an open ending tool: cancel %s, commit %s; expected 1, 1",
+                  ends.cancelCalls, ends.commitCalls));
+    es.finishClose();
+    ++cells;
+    held = ui;
 
     // (4) `uiDoor`, open: committed and kept.
     ui.open = true;
@@ -242,7 +273,7 @@ unittest {
                format("M2 close: reason %s called into the tool", r));
         ++cells;
     }
-    assert(cells == 12, format("M2 close: routine cell population %s, expected 12", cells));
+    assert(cells == 15, format("M2 close: routine cell population %s, expected 15", cells));
 }
 
 // ---- (3) the written-row account (C2) --------------------------------------------

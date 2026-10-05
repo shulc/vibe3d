@@ -1,0 +1,682 @@
+{
+ "name": "pen_types",
+ "description": "Polygon pen stroke types (lines, vertices, subdiv), lines close, and the new-element selection (selectNew) in the three selection modes.",
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "gui-gesture",
+  "notes": "fresh GUI worker per cell; type/close/select-new set before the first click; real clicks; drop by the drop-tool key; one readback.",
+  "captured_utc": "2026-10-04",
+  "harness": "private capture harness",
+  "task": "9353"
+ },
+ "rig": {
+  "view": "top orthographic unless a cell says otherwise; default zoom 440 px per metre (merge distance 3 px of world = 0.0068255 m); wheel zoom x2^(1/4) per step",
+  "focus_plane_y": 1.0,
+  "click_quantum": "a clicked position is rounded to a zoom-dependent quantum: 0.005 m at 440 px/m, 0.002 at 622, 0.01 at 110 (the earlier placement fixture's 0.01 at 440 is a coincidence of its pixels)",
+  "scene_geometry": "pre-existing vertices/triangles are created in the SAME foreground mesh before the tool activates (they stand for committed geometry); new points come only from real pointer clicks/drags and panel typing"
+ },
+ "law": "lines: n-1 two-point polygons [i,i+1] in click order, close adds [n-1,0]; mirrored segments keep the order [m(a),m(b)] with mirror vertices appended in click order. vertices: free vertices, no polygons. subdiv: one polygon of the subdivision kind (its ring faces the camera like a plain polygon). Select-new on: the new vertices and new edges are selected in every selection mode, the new polygon only in polygon mode; the prior selection is kept; the mode does not change. Select-new off: nothing new is selected and the prior selection is untouched.",
+ "cells": {
+  "lines": {
+   "script": [
+    "type lines",
+    "click (-0.4,-0.4) (0.4,-0.4) (0.4,0.4) (-0.4,0.4)",
+    "drop"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      -0.4,
+      1.0,
+      -0.4
+     ],
+     [
+      0.4,
+      1.0,
+      -0.4
+     ],
+     [
+      0.4,
+      1.0,
+      0.4
+     ],
+     [
+      -0.4,
+      1.0,
+      0.4
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1
+     ],
+     [
+      1,
+      2
+     ],
+     [
+      2,
+      3
+     ]
+    ]
+   }
+  },
+  "lines_close": {
+   "script": [
+    "type lines, close on",
+    "same 4 clicks",
+    "drop"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      -0.4,
+      1.0,
+      -0.4
+     ],
+     [
+      0.4,
+      1.0,
+      -0.4
+     ],
+     [
+      0.4,
+      1.0,
+      0.4
+     ],
+     [
+      -0.4,
+      1.0,
+      0.4
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1
+     ],
+     [
+      1,
+      2
+     ],
+     [
+      2,
+      3
+     ],
+     [
+      3,
+      0
+     ]
+    ]
+   }
+  },
+  "lines_symmetry": {
+   "script": [
+    "symmetry X",
+    "type lines",
+    "click (0.2,-0.3) (0.6,-0.3) (0.6,0.3)",
+    "drop"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.2,
+      1.0,
+      -0.3
+     ],
+     [
+      0.6,
+      1.0,
+      -0.3
+     ],
+     [
+      0.6,
+      1.0,
+      0.3
+     ],
+     [
+      -0.2,
+      1.0,
+      -0.3
+     ],
+     [
+      -0.6,
+      1.0,
+      -0.3
+     ],
+     [
+      -0.6,
+      1.0,
+      0.3
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1
+     ],
+     [
+      1,
+      2
+     ],
+     [
+      3,
+      4
+     ],
+     [
+      4,
+      5
+     ]
+    ]
+   }
+  },
+  "vertices": {
+   "script": [
+    "type vertices",
+    "click (0,0.2) (0.5,0.2) (0.25,-0.3)",
+    "drop"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.0,
+      1.0,
+      0.2
+     ],
+     [
+      0.5,
+      1.0,
+      0.2
+     ],
+     [
+      0.25,
+      1.0,
+      -0.3
+     ]
+    ],
+    "polygons": []
+   }
+  },
+  "subdiv": {
+   "script": [
+    "type subdiv",
+    "same 4 clicks as lines",
+    "drop"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      -0.4,
+      1.0,
+      -0.4
+     ],
+     [
+      0.4,
+      1.0,
+      -0.4
+     ],
+     [
+      0.4,
+      1.0,
+      0.4
+     ],
+     [
+      -0.4,
+      1.0,
+      0.4
+     ]
+    ],
+    "polygons": [
+     [
+      1,
+      0,
+      3,
+      2
+     ]
+    ],
+    "polygon_kind": [
+     "subdivision"
+    ]
+   }
+  },
+  "select_new_1_vertex_mode": {
+   "script": [
+    "scene triangle T0 (indices 0-2) with all its vertex elements selected, vertex selection mode",
+    "select-new on",
+    "click (0,0.2) (0.5,0.2) (0.25,-0.3) -> T1 (vertices 3-5, polygon 1)",
+    "drop"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      -0.6,
+      1.0,
+      -0.6
+     ],
+     [
+      -0.2,
+      1.0,
+      -0.6
+     ],
+     [
+      -0.4,
+      1.0,
+      -0.2
+     ],
+     [
+      0.0,
+      1.0,
+      0.2
+     ],
+     [
+      0.5,
+      1.0,
+      0.2
+     ],
+     [
+      0.25,
+      1.0,
+      -0.3
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      4,
+      5
+     ]
+    ],
+    "selected_vertices": [
+     0,
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "selected_edges": [
+     [
+      3,
+      4
+     ],
+     [
+      4,
+      5
+     ],
+     [
+      3,
+      5
+     ]
+    ],
+    "selected_polygons": [],
+    "selection_mode_after": "vertex"
+   }
+  },
+  "select_new_0_vertex_mode": {
+   "script": [
+    "scene triangle T0 (indices 0-2) with all its vertex elements selected, vertex selection mode",
+    "select-new off",
+    "click (0,0.2) (0.5,0.2) (0.25,-0.3) -> T1 (vertices 3-5, polygon 1)",
+    "drop"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      -0.6,
+      1.0,
+      -0.6
+     ],
+     [
+      -0.2,
+      1.0,
+      -0.6
+     ],
+     [
+      -0.4,
+      1.0,
+      -0.2
+     ],
+     [
+      0.0,
+      1.0,
+      0.2
+     ],
+     [
+      0.5,
+      1.0,
+      0.2
+     ],
+     [
+      0.25,
+      1.0,
+      -0.3
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      4,
+      5
+     ]
+    ],
+    "selected_vertices": [
+     0,
+     1,
+     2
+    ],
+    "selected_edges": [],
+    "selected_polygons": [],
+    "selection_mode_after": "vertex"
+   }
+  },
+  "select_new_1_edge_mode": {
+   "script": [
+    "scene triangle T0 (indices 0-2) with all its edge elements selected, edge selection mode",
+    "select-new on",
+    "click (0,0.2) (0.5,0.2) (0.25,-0.3) -> T1 (vertices 3-5, polygon 1)",
+    "drop"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      -0.6,
+      1.0,
+      -0.6
+     ],
+     [
+      -0.2,
+      1.0,
+      -0.6
+     ],
+     [
+      -0.4,
+      1.0,
+      -0.2
+     ],
+     [
+      0.0,
+      1.0,
+      0.2
+     ],
+     [
+      0.5,
+      1.0,
+      0.2
+     ],
+     [
+      0.25,
+      1.0,
+      -0.3
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      4,
+      5
+     ]
+    ],
+    "selected_vertices": [
+     3,
+     4,
+     5
+    ],
+    "selected_edges": [
+     [
+      0,
+      1
+     ],
+     [
+      1,
+      2
+     ],
+     [
+      0,
+      2
+     ],
+     [
+      3,
+      4
+     ],
+     [
+      4,
+      5
+     ],
+     [
+      3,
+      5
+     ]
+    ],
+    "selected_polygons": [],
+    "selection_mode_after": "edge"
+   }
+  },
+  "select_new_0_edge_mode": {
+   "script": [
+    "scene triangle T0 (indices 0-2) with all its edge elements selected, edge selection mode",
+    "select-new off",
+    "click (0,0.2) (0.5,0.2) (0.25,-0.3) -> T1 (vertices 3-5, polygon 1)",
+    "drop"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      -0.6,
+      1.0,
+      -0.6
+     ],
+     [
+      -0.2,
+      1.0,
+      -0.6
+     ],
+     [
+      -0.4,
+      1.0,
+      -0.2
+     ],
+     [
+      0.0,
+      1.0,
+      0.2
+     ],
+     [
+      0.5,
+      1.0,
+      0.2
+     ],
+     [
+      0.25,
+      1.0,
+      -0.3
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      4,
+      5
+     ]
+    ],
+    "selected_vertices": [],
+    "selected_edges": [
+     [
+      0,
+      1
+     ],
+     [
+      1,
+      2
+     ],
+     [
+      0,
+      2
+     ]
+    ],
+    "selected_polygons": [],
+    "selection_mode_after": "edge"
+   }
+  },
+  "select_new_1_polygon_mode": {
+   "script": [
+    "scene triangle T0 (indices 0-2) with all its polygon elements selected, polygon selection mode",
+    "select-new on",
+    "click (0,0.2) (0.5,0.2) (0.25,-0.3) -> T1 (vertices 3-5, polygon 1)",
+    "drop"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      -0.6,
+      1.0,
+      -0.6
+     ],
+     [
+      -0.2,
+      1.0,
+      -0.6
+     ],
+     [
+      -0.4,
+      1.0,
+      -0.2
+     ],
+     [
+      0.0,
+      1.0,
+      0.2
+     ],
+     [
+      0.5,
+      1.0,
+      0.2
+     ],
+     [
+      0.25,
+      1.0,
+      -0.3
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      4,
+      5
+     ]
+    ],
+    "selected_vertices": [
+     3,
+     4,
+     5
+    ],
+    "selected_edges": [
+     [
+      3,
+      4
+     ],
+     [
+      4,
+      5
+     ],
+     [
+      3,
+      5
+     ]
+    ],
+    "selected_polygons": [
+     0,
+     1
+    ],
+    "selection_mode_after": "polygon"
+   }
+  },
+  "select_new_0_polygon_mode": {
+   "script": [
+    "scene triangle T0 (indices 0-2) with all its polygon elements selected, polygon selection mode",
+    "select-new off",
+    "click (0,0.2) (0.5,0.2) (0.25,-0.3) -> T1 (vertices 3-5, polygon 1)",
+    "drop"
+   ],
+   "expected": {
+    "vertices": [
+     [
+      -0.6,
+      1.0,
+      -0.6
+     ],
+     [
+      -0.2,
+      1.0,
+      -0.6
+     ],
+     [
+      -0.4,
+      1.0,
+      -0.2
+     ],
+     [
+      0.0,
+      1.0,
+      0.2
+     ],
+     [
+      0.5,
+      1.0,
+      0.2
+     ],
+     [
+      0.25,
+      1.0,
+      -0.3
+     ]
+    ],
+    "polygons": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      4,
+      5
+     ]
+    ],
+    "selected_vertices": [],
+    "selected_edges": [],
+    "selected_polygons": [
+     0
+    ],
+    "selection_mode_after": "polygon"
+   }
+  }
+ }
+}

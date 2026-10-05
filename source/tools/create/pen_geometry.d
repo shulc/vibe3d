@@ -9,6 +9,7 @@ module tools.create.pen_geometry;
 
 import math : Vec3, Viewport, cross, dot, eyeVectorAt, faceNormalFirst3, normalize;
 import mesh : Mesh;
+import seltype : SelType;
 import symmetry : mirrorPosition;
 import toolpipe.packets : SymmetryPacket;
 import tools.create.create_common : WorkplaneFrame, transformDir, transformPoint;
@@ -17,7 +18,7 @@ import tools.create.create_common : WorkplaneFrame, transformDir, transformPoint
 /// `memcmp` by the prepared images, so it must stay plain data: 4-byte fields
 /// first, then `bool`s, so no interior padding exists (wave plan §7).
 struct PenParams {
-    int   type         = 0;        // 0 = polygons (the only type so far)
+    int   type         = PenType.polygons;
     // Per-gesture point-edit proxies: currentPoint = -1 means "no vertex
     // selected"; posX/Y/Z mirror vertices_[currentPoint] and are written back
     // through onParamChanged.
@@ -28,12 +29,18 @@ struct PenParams {
     bool  makeQuads    = false;
     // A gesture-placed point near an edited-mesh vertex shares it (wave plan S5).
     bool  merge        = true;
+    bool  close        = false;    // lines: the closing segment [n - 1, 0]
+    // The commit selects what it appended (wave plan S8, pen_types.json).
+    bool  selectNew    = true;
 }
 // Field sizes summed by hand (a field added must be added here and to the
 // member pin in pen_geometry_test), rounded to 4: no interior padding.
 static assert(PenParams.sizeof ==
-    (2 * int.sizeof + 3 * float.sizeof + 3 * bool.sizeof + 3) / 4 * 4,
+    (2 * int.sizeof + 3 * float.sizeof + 5 * bool.sizeof + 3) / 4 * 4,
     "PenParams has interior padding that sameValueBytes would compare");
+
+/// `PenParams.type`, the panel's order (wave plan S8).
+enum PenType : int { polygons, lines, vertices, subdiv }
 
 enum PenBuildPurpose : ubyte { Preview, Commit }
 
@@ -51,13 +58,21 @@ struct PenStroke {
     bool          quads;
     // The latched symmetry (S6): `enabled`, `planePoint`, `planeNormal` read.
     SymmetryPacket mirror;
+    int           type;     // PenType
+    bool          close;
+    bool          selectNew;
+    // The selection mode a Commit reads (the new polygons are selected only
+    // in polygon mode); a commit-time value.
+    SelType       selMode;
 
     static PenStroke of(const(Vec3)[] pts, in float[16] toWorld, in PenParams p,
-            const(int)[] links = null, in SymmetryPacket mirror = SymmetryPacket.init)
-            nothrow @nogc {
+            const(int)[] links = null, in SymmetryPacket mirror = SymmetryPacket.init,
+            SelType selMode = SelType.Vertex) nothrow @nogc {
         PenStroke s;
         s.points = pts; s.links = links; s.toWorld = toWorld;
         s.flip = p.flip; s.quads = p.makeQuads; s.mirror = penMirror(mirror);
+        s.type = p.type; s.close = p.close; s.selectNew = p.selectNew;
+        s.selMode = selMode;
         return s;
     }
 }
@@ -86,6 +101,19 @@ void penWorkplaneMirrorPlane(int axis, float offset, in WorkplaneFrame wp,
 /// Fewest points that close the stroke's face shape: a triangle, or the
 /// first quad of a strip.
 size_t penFaceMinimum(bool quads) nothrow @nogc { return quads ? 4 : 3; }
+
+/// Fewest points Enter commits (wave plan S8: lines 2, vertices 1; polygons
+/// and subdiv the face shape).
+size_t penEnterMinimum(in PenParams p) nothrow @nogc {
+    return p.type == PenType.lines ? 2 : p.type == PenType.vertices ? 1
+         : penFaceMinimum(p.makeQuads);
+}
+/// Fewest points a tool drop commits: a polygon edge (fixture row E5pen2) or
+/// the strip's first quad; lines 2, vertices 1 (S8).
+size_t penDropMinimum(in PenParams p) nothrow @nogc {
+    return p.type == PenType.vertices ? 1
+         : p.makeQuads && p.type != PenType.lines ? 4 : 2;
+}
 
 /// Quad `k` of a Make Quads strip as point indices [L1, L0, c, a], click order
 /// (wave plan S7; fixture pen_quads.json strip_7_clicks): the first two clicks
@@ -168,6 +196,13 @@ uint[] penRingOrder(const(Vec3)[] v, bool reverse) {
 /// pair (last = first), quads strips and a ring left below 2 corners (no face)
 /// are not captured — gap rows 545, 549, 550.
 ///
+/// Types (wave plan S8, fixture pen_types.json): lines emit the two-point
+/// polygons [i, i + 1] in click order (+ [n - 1, 0] under `close` from 3
+/// points), no ring order and no reversal; vertices emit no polygon; subdiv is
+/// the polygon shape with the subdivision mark. A Commit with `selectNew`
+/// selects every vertex it appended and every edge of the polygons it added,
+/// and those polygons in polygon mode only; no mark is cleared.
+///
 /// Symmetry (wave plan S6, fixture pen_symmetry.json): the reflections follow
 /// the originals in click order and take the same shape with the reverse
 /// decision toggled. A point linked to the mirror image of point j shares that
@@ -200,9 +235,14 @@ uint appendPenGeometry(ref Mesh dst, in PenStroke s, PenBuildPurpose purpose) {
         else { idx[k] = cast(uint)dst.vertices.length; dst.addVertex(pos[k]); }
     }
 
+    const uint faceBase = cast(uint)dst.faces.length;
     const bool closed = n >= penFaceMinimum(s.quads);
     void shape(Vec3[] w, uint[] ix, bool reverse) {
-        if (closed && s.quads) {
+        if (s.type == PenType.vertices) return;
+        if (s.type == PenType.lines) {
+            foreach (i; 1 .. n + (s.close && n >= 3 ? 1 : 0))
+                if (ix[i - 1] != ix[i % n]) dst.addFace([ix[i - 1], ix[i % n]]);
+        } else if (closed && s.quads) {
             foreach (k; 0 .. n / 2 - 1) {
                 uint[4] q = penStripQuad(k);
                 if (reverse) revKeepFirst(q[]);
@@ -225,5 +265,21 @@ uint appendPenGeometry(ref Mesh dst, in PenStroke s, PenBuildPurpose purpose) {
     }
     shape(world[0 .. n], idx[0 .. n], s.flip);
     if (slots > n) shape(world[n .. $], idx[n .. $], !s.flip);
+
+    const bool selects = s.selectNew && purpose == PenBuildPurpose.Commit;
+    if (s.type != PenType.subdiv && !selects) return base;
+    dst.syncSelection();
+    foreach (f; faceBase .. dst.faces.length) {
+        if (s.type == PenType.subdiv) dst.setFaceSubpatch(f, true);
+        if (!selects) continue;
+        const face = dst.faces[f];
+        foreach (k, a; face) {
+            const e = dst.edgeIndex(a, face[(k + 1) % face.length]);
+            if (e != ~0u) dst.selectEdge(cast(int)e);
+        }
+        if (s.selMode == SelType.Polygon) dst.selectFace(cast(int)f);
+    }
+    if (selects)
+        foreach (v; base .. dst.vertices.length) dst.selectVertex(cast(int)v);
     return base;
 }

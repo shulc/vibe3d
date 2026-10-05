@@ -41,6 +41,7 @@ import toolpipe.packets : SnapType, SnapPacket, SymmetryPacket;
 import toolpipe.stages.symmetry : liveSymmetryStage;
 import symmetry : mirrorPosition, symmetryMirrorsEqual, symmetryPacketsEqual;
 import editmode : EditMode;
+import seltype : SelType;
 import snap : SnapResult, snapCursor, cascadeClassWins, kAbsentClassDist,
     kCascadeVertex, kCascadeEdge, kCandidateToleranceBasePx, kVertexToleranceScale;
 import document : primaryModelSpace;
@@ -539,6 +540,23 @@ version(unittest) unittest {
     const onLink = offSym.selfMirrorOr(-1, Vec3(0, 0, 0), 0);
     assert(offLink == -1 && onLink == -2, format("pen S6: a point on x = 0 self-welds "
         ~ "%s with symmetry off, %s on; expected -1, -2", offLink, onLink));
+
+    // S8 (A4-rev): the session's cancel ends a Drawing stroke only; an idle
+    // pen's operation is not ended (its in-stroke redo survives).
+    auto guardPen = new PenTool(() => &mesh, &sceneGpu, LitShader.init);
+    size_t ended;
+    ToolSessionLink link;
+    link.operationEnded = (Tool) { ++ended; };
+    guardPen.bindSession(link);
+    guardPen.cancelUncommittedEdit();
+    const idleEnded = ended;
+    guardPen.state = PenState.Drawing; guardPen.vertices_ = [Vec3(1,2,3)];
+    guardPen.links_ = [-1];
+    guardPen.cancelUncommittedEdit();
+    assert(idleEnded == 0 && ended == 1 && guardPen.vertices_.length == 0 &&
+        guardPen.state == PenState.Idle, format("pen S8: cancel ended an idle pen %s "
+        ~ "times, a Drawing one %s; expected 0, 1 and the stroke empty", idleEnded,
+        ended - idleEnded));
 }
 
 // ---------------------------------------------------------------------------
@@ -550,11 +568,12 @@ version(unittest) unittest {
 //                                  axis locked for the stroke)
 //   Drawing ── LMB-click ─→ Drawing (vertex after the current point, on the
 //                                     plane through the current point)
-//   Drawing ── double-click / Enter ─→ commit a face from 3+ points; Idle
-//   Drawing ── Backspace ─→ pop last vertex; ─→ Idle if buffer empties
+//   Drawing ── double-click / Enter ─→ commit the stroke's shape; Idle
 //   Drawing ── tool drop (n ≥ 2) ─→ commit; back to Idle
-//   Drawing ── Ctrl+Z (n ≥ 2) ─→ cancel points and drop tool; back to Idle
-//   Drawing ── Ctrl+Z (n = 1) ─→ undo the entry below; keep stroke and tool
+//   Drawing ── a UI command (Backspace = the global delete) ─→ commit from
+//              the drop minimum (else end with nothing), then the command
+//              runs; the tool stays (wave plan S8, BD-sel / UC-close / UC1-end)
+//   Drawing ── Ctrl+Z ─→ the stroke before its last event (S12)
 //   Drawing ── RMB ─→ cancel points when no active falloff owns RMB; tool stays
 //
 // In-progress vertex markers render in cyan (Vec3(0, 0.9, 0.9)); the central
@@ -584,6 +603,7 @@ struct PreparedPenDeactivateImage {
     int[] links;
     SessionMeshKey[] linkKey;   // the mesh `links` index; read at the candidate build
     SymmetryPacket mirror;
+    SelType selMode;            // read at the candidate build (selectNew)
     Mesh previewClear;
     float[16] toWorld;
     size_t expectedHandlerCount;
@@ -623,6 +643,9 @@ class PenTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient {
 private:
     Mesh* delegate() meshSrc_;
     @property Mesh* mesh() const { return meshSrc_(); }
+    // The selection mode a commit reads (selectNew); Vertex when unwired.
+    SelType delegate() nothrow @nogc selTypeSrc_;
+    SelType selMode() const nothrow @nogc { return selTypeSrc_ ? selTypeSrc_() : SelType.Vertex; }
     GpuMesh*         gpu;
     LitShader        litShader;
 
@@ -672,8 +695,10 @@ private:
     SnapResult lastSnap;
 
 public:
-    this(Mesh* delegate() meshSrc, GpuMesh* gpu, LitShader litShader) {
+    this(Mesh* delegate() meshSrc, GpuMesh* gpu, LitShader litShader,
+         SelType delegate() nothrow @nogc selTypeSrc = null) {
         this.meshSrc_ = meshSrc;
+        this.selTypeSrc_ = selTypeSrc;
         this.gpu       = gpu;
         this.litShader = litShader;
         toolHandles    = new ToolHandles();
@@ -696,8 +721,11 @@ public:
         import params : IntEnumEntry;
         return [
             Param.intEnum_("type", "Type", &params_.type,
-                [IntEnumEntry(0, "polygons", "Polygons")],
-                0),
+                [IntEnumEntry(PenType.polygons, "polygons", "Polygons"),
+                 IntEnumEntry(PenType.lines, "lines", "Lines"),
+                 IntEnumEntry(PenType.vertices, "vertices", "Vertices"),
+                 IntEnumEntry(PenType.subdiv, "subdiv", "Subdiv")],
+                PenType.polygons),
             // currentPoint/posX/Y/Z: per-gesture point-edit proxies
             // (onParamChanged mutates vertices_[currentPoint] while
             // Drawing) — not a remembered setting. Excluded from
@@ -718,6 +746,8 @@ public:
             Param.bool_("flip", "Flip Polygon", &params_.flip, false),
             Param.bool_("makeQuads", "Make Quads", &params_.makeQuads, false),
             Param.bool_("merge", "Merge", &params_.merge, true),
+            Param.bool_("close", "Close", &params_.close, false),
+            Param.bool_("selectNew", "Select New", &params_.selectNew, true),
             // The stroke itself, for the session's undo image (hidden,
             // transient, refused on every wire door).
             Param.podArray_("points", "Points", &vertices_),
@@ -733,6 +763,7 @@ public:
         if (name == "currentPoint" || name == "posX" || name == "posY" || name == "posZ")
             return state == PenState.Drawing && vertices_.length > 0;
         if (name == "makeQuads") return vertices_.length < 3;   // Idle holds none
+        if (name == "close") return params_.type == PenType.lines;
         return true;
     }
 
@@ -766,7 +797,8 @@ public:
     // Params that change the stroke's shape but not its points: an edit
     // mid-stroke rebuilds the preview (legacy hook and prepared door alike).
     private static bool rebuildsPreview(string name) nothrow @nogc {
-        return name == "flip" || name == "makeQuads";
+        return name == "flip" || name == "makeQuads" || name == "type" ||
+            name == "close";
     }
 
     final PreparedPenParamImage buildPreparedParamImage(string name) const {
@@ -926,6 +958,7 @@ public:
         image.params = params_; image.vertices = vertices_.dup;
         image.links = links_.dup; image.linkKey = strokeKey_.dup;
         image.toWorld = frame.toWorld; image.mirror = penMirror(mirror_);
+        image.selMode = selMode();
         image.expectedHandlerCount = vertHandlers.length;
         image.expectedLastSnap = lastSnap;
         image.expectedMeshChanged = meshChanged;
@@ -941,7 +974,8 @@ public:
             vertHandlers.length == image.expectedHandlerCount &&
             lastSnap == image.expectedLastSnap &&
             meshChanged == image.expectedMeshChanged &&
-            (!image.willCommit || frame.toWorld == image.toWorld);
+            (!image.willCommit || (frame.toWorld == image.toWorld &&
+                                   selMode() == image.selMode));
     }
     final void installPreparedDeactivateState(
             ref PreparedPenDeactivateImage image) nothrow @nogc {
@@ -975,8 +1009,8 @@ public:
         auto shadow = beginPreparedShadow(candidate);
         appendPenGeometry(candidate, PenStroke.of(image.vertices,
             image.toWorld, image.params,
-            linksUnder(image.linkKey, image.links, *mesh), image.mirror),
-            PenBuildPurpose.Commit);
+            linksUnder(image.linkKey, image.links, *mesh), image.mirror,
+            image.selMode), PenBuildPurpose.Commit);
         candidate.declareCornerAppend(); candidate.buildLoops();
         candidate.syncSelection();
         drainPreparedShadowDelivery(candidate, deliveryFlags, deliveryDomains);
@@ -1260,17 +1294,6 @@ public:
                 // (no point letting it leak to other handlers).
                 return true;
 
-            case SDLK_BACKSPACE:
-                if (state == PenState.Drawing && vertices_.length > 0) {
-                    sessionStepBegins();   // interim: an undoable step
-                    popVertex();
-                    if (vertices_.length == 0) state = PenState.Idle;
-                    uploadPreview();
-                    sessionStepEnds();
-                    return true;
-                }
-                return false;
-
             default:
                 return false;
         }
@@ -1334,7 +1357,7 @@ public:
         if (state == PenState.Idle)
             ImGui.TextDisabled("Click in viewport to start a polygon.");
         else
-            ImGui.TextDisabled("Click to add vertices • Enter / dbl-click to close • Ctrl+Z undoes the last action • Backspace removes the last vertex • RMB to cancel");
+            ImGui.TextDisabled("Click to add vertices • Enter / dbl-click to close • Ctrl+Z undoes the last action • RMB to cancel");
     }
 
 private:
@@ -1605,20 +1628,6 @@ private:
             ~ vertHandlers[insertIdx .. $];
     }
 
-    void popVertex() {
-        if (vertices_.length == 0) return;
-        vertices_.length -= 1; links_.length -= 1;
-        foreach (ref l; links_) l = shiftedLink(l, cast(int)links_.length, -1);
-        if (vertHandlers.length > 0) {
-            vertHandlers[$ - 1].destroy();
-            vertHandlers.length -= 1;
-        }
-        // currentPoint may now be out of range — clamp.
-        int n = cast(int)vertices_.length;
-        if (params_.currentPoint >= n) params_.currentPoint = n - 1;
-        syncPosFromCurrent();
-    }
-
     void clearVertHandlers() {
         foreach (h; vertHandlers) h.destroy();
         vertHandlers.length = 0;
@@ -1634,11 +1643,16 @@ private:
     // H7 (slice M6): the flags table sets the rollover flag on this tool; it
     // picks no hover type yet (`wantsHoverForType`), so nothing is drawn.
     public override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        // A UI command mid-stroke commits the stroke (from the drop minimum)
+        // or ends it below, and the pen stays (wave plan S8: BD-sel, UC-close,
+        // UC1-end).
         static immutable ToolSessionPolicy policy = {
+            commandClose: CommandClose.uiDoor, commandEndsOpenGesture: true,
             rollovers: Rollover.target, sessionSteps: true, paramWriteSteps: true,
             refusesDisabledParamWrites: true,
             imageAttrs: ["type", "currentPoint", "posX", "posY", "posZ", "flip",
-                         "makeQuads", "merge", "points", "link", "linkKey"] };
+                         "makeQuads", "merge", "close", "selectNew", "points",
+                         "link", "linkKey"] };
         return policy;
     }
     // In-stroke undo / redo (fixture pen_instroke_undo.json): the
@@ -1651,8 +1665,13 @@ private:
         uploadPreview();
     }
     // Cancel: drop the in-progress sequence (cancelPolygon resets state + clears
-    // the preview / vert handlers, records nothing).
-    public override void cancelUncommittedEdit() { cancelPolygon(); }
+    // the preview / vert handlers, records nothing). An idle pen is left alone:
+    // its session's in-stroke redo survives (wave plan S8 A4-rev).
+    public override void cancelUncommittedEdit() {
+        if (state == PenState.Drawing) cancelPolygon();
+    }
+    // The close before a UI command commits the stroke as the drop does.
+    public override bool commitUncommittedEdit() { return commitPolygonWithUndo(); }
 
     // Links are edited-mesh indices, valid only on the mesh they were made on
     // (any undo door, a reset, a Marks bump may move it under a live stroke).
@@ -1796,21 +1815,13 @@ private:
             params_, withoutSceneLinks(links_), mirror_), PenBuildPurpose.Preview);
         previewGpu.upload(previewMesh);
         // Keep marker positions in sync (vertices_ may have been mutated by
-        // popVertex / future numeric edits). Handlers render in WORLD.
+        // a drag or a typed edit). Handlers render in WORLD.
         foreach (i, ref h; vertHandlers) h.pos = toWorldP(vertices_[i]);
     }
 
-    // Minimum vertex count for Enter: a triangle, or the strip's first quad
-    // (3 clicks and their corner). Tool drop uses minDropCommitVerts() below.
-    size_t minCommitVerts() const {
-        return penFaceMinimum(params_.makeQuads);
-    }
-
-    // A drop keeps any sequence that already forms a polygon edge; Enter still
-    // needs a closable face. Task 5911; fixture row E5pen2.
-    size_t minDropCommitVerts() const {
-        return params_.makeQuads ? 4 : 2;
-    }
+    // Minimum point count for Enter / a tool drop, per type (pen_geometry).
+    size_t minCommitVerts() const { return penEnterMinimum(params_); }
+    size_t minDropCommitVerts() const { return penDropMinimum(params_); }
 
     // Apply Pen-local guide constraints: straightLine / worldAxis / rightAngle.
     //
@@ -1918,8 +1929,8 @@ private:
         return false;
     }
 
-    void commitPolygonWithUndo() {
-        if (state != PenState.Drawing || vertices_.length < minDropCommitVerts()) return;
+    bool commitPolygonWithUndo() {
+        if (state != PenState.Drawing || vertices_.length < minDropCommitVerts()) return false;
         MeshSnapshot pre = MeshSnapshot.capture(*mesh);
         commitPolygon();
         if (history !is null && gestureFactory !is null && pre.filled) {
@@ -1945,13 +1956,14 @@ private:
         params_.posX = params_.posY = params_.posZ = 0.0f;
         meshChanged = true;
         sessionOperationEnded();   // the stroke's steps end with its one row
+        return true;
     }
 
     void commitPolygon() {
         // A pure tail append into the live scene mesh, declared as such for
         // the corner-append cross-check.
         appendPenGeometry(*mesh, PenStroke.of(vertices_, frame.toWorld,
-            params_, liveLinks(), mirror_), PenBuildPurpose.Commit);
+            params_, liveLinks(), mirror_, selMode()), PenBuildPurpose.Commit);
         mesh.declareCornerAppend();
         mesh.buildLoops();
         gpu.upload(*mesh);

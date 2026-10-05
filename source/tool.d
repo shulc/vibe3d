@@ -468,6 +468,12 @@ struct ToolSessionPolicy {
     /// window is one gesture step with its true before-image (the polygon pen's
     /// captured in-stroke undo, fixture pen_instroke_undo: a typed field is one event).
     bool paramWriteSteps;
+    /// H3, captured for the pen: a UI-door command meeting this tool with
+    /// nothing committable (`!hasUncommittedEdit()`) ends its open gesture
+    /// through `cancelUncommittedEdit()` before the command applies; false —
+    /// every other tool — step (3) leaves the idle tool untouched, R20 (pen
+    /// wave plan S8 A4-rev, K-B4 Backspace-1, K-B5 UC1-end).
+    bool commandEndsOpenGesture;
 
     /// Both step arms' one predicate for "a parameter write is a step": the
     /// producers capture the before-write image under it.

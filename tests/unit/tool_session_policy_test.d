@@ -104,7 +104,9 @@ private immutable Row[] kTable = [
     Row("mesh.vertexExtrude", "VertexExtrudeTool", true, Prov.inferred, CommandClose.uiDoor, CloseProv.inferred),
     Row("move", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
     Row("move.element", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
-    Row("pen", "PenTool", false, Prov.notPorted, CommandClose.none, CloseProv.notCaptured),
+    // Pen wave plan S8: BD-sel (K-B3, Backspace), UC-close (K-B4, select.invert /
+    // flip) and UC1-end (K-B5, below the commit minimum) — UI door only.
+    Row("pen", "PenTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.captured),
     Row("poly.bevel", "PolyBevelTool", true, Prov.captured, CommandClose.uiDoor, CloseProv.captured),
     Row("poly.extrude", "PolyExtrudeTool", true, Prov.captured, CommandClose.uiDoor, CloseProv.inferred),
     Row("prim.arc", "ArcTool", false, Prov.noCounterpart, CommandClose.none, CloseProv.notCaptured),
@@ -283,10 +285,11 @@ unittest { // (1) id -> policy, over every registered id
            format("M3b policy table: headlessReplacesWindow on %s, recorded [poly.bevel]",
                   replacesIds));
     // Measured on the M2 tree (`grep -c 'CommandClose.<value>, CloseProv'` over this file);
-    // S7a round 3 moved mesh.topoPen none -> uiDoor (L57, capture C5).
-    assert(closeCount == [21, 25, 25],
+    // S7a round 3 moved mesh.topoPen none -> uiDoor (L57, capture C5); pen
+    // wave S8 moved pen none -> uiDoor (BD-sel, UC-close, UC1-end).
+    assert(closeCount == [20, 26, 25],
            format("M2 policy table: commandClose none/uiDoor/allDoors on %s ids, recorded "
-                  ~ "21/25/25", closeCount));
+                  ~ "20/26/25", closeCount));
     // The M7 ratchet, only down: ids whose arm writes no activation row yet
     // (gap 369). M3b ported poly.bevel: 42 (38) -> 41 (37); M4 ported
     // edge.extend: -> 40 (36). Growth is a new id born off the H1 law, or a
@@ -523,10 +526,11 @@ private immutable StepRow[] kStepTable = [
     StepRow("vert.merge", OpensAt.firstPress, false, ["dist"]),
     // Task 9369: the polygon pen's stroke is its image — every attribute plus
     // the hidden `points` (captured in-stroke undo, fixture pen_instroke_undo);
-    // task 9362 adds `merge`, the hidden per-point `link` and its mesh key.
+    // task 9362 adds `merge`, the hidden per-point `link` and its mesh key;
+    // task 9365 (S8) `close` and `selectNew`.
     StepRow("pen", OpensAt.firstPress, false,
             ["type", "currentPoint", "posX", "posY", "posZ", "flip", "makeQuads",
-             "merge", "points", "link", "linkKey"]),
+             "merge", "close", "selectNew", "points", "link", "linkKey"]),
     // Plan 8646 (S5): every published pen attribute is an image attribute (D15,
     // captured R-all); S7a adds the operation context (offsets + descriptor).
     StepRow("mesh.topoPen", OpensAt.firstPress, false,
@@ -651,7 +655,7 @@ unittest { // (4)
                        "mesh.thickenTool", "mesh.topoPen", "mesh.vertexBevel", "mesh.vertexExtrude",
                        "pen", "poly.bevel", "poly.extrude", "vert.merge"],
            format("M3 step table: image-step ids %s", imageStepIds));
-    assert(checkedNames == 148, format("M3 step table: %s image names checked, measured 148",
+    assert(checkedNames == 150, format("M3 step table: %s image names checked, measured 150",
                                       checkedNames));
     assert(armAttrs == 1, format("M3b step table: %s arm attributes, measured 1", armAttrs));
     assert(actionNames == 3, format("M3 step table: %s Action params on the session tools, "
@@ -1293,7 +1297,8 @@ unittest { // (4f)
     inOrder(squeeze(bodyAt(ts, "CloseOutcome close(CloseReason r")),
             ["constboolcommand=r==CloseReason.command;",
              "endPendingOperation_(null,true,model);rebaseOnCurrent_(t,false);",
-             "if(cc==CommandClose.uiDoor&&!t.hasUncommittedEdit())returnCloseOutcome(false,true);",
+             "if(cc==CommandClose.uiDoor&&!t.hasUncommittedEdit()){",
+             "returnCloseOutcome(false,true);}",
              "constcommitted=t.commitOperation();"], "S7 ToolSession.close");
 }
 
@@ -1899,8 +1904,8 @@ static assert([__traits(allMembers, imported!"tool".ToolSessionPolicy)] == [
     "activationResetAttrs", "armAttr", "headlessReplacesWindow", "recordCarriesActivation",
     "keepAliveOnCancel", "rollovers", "handleAnchor", "armRestoresWholeImage", "dropWritesRow",
     "refusesDisabledParamWrites", "pressOpensOperation", "foldsParamRowsIntoBlock",
-    "redoPinsRefireImage", "paramWriteSteps", "stepsParamWrites"],
-    "S8 pin: ToolSessionPolicy's members changed (measured 27 since task 9369)");
+    "redoPinsRefireImage", "paramWriteSteps", "commandEndsOpenGesture", "stepsParamWrites"],
+    "S8 pin: ToolSessionPolicy's members changed (measured 28 since pen wave S8, task 9365)");
 
 /// The session type `EditSession` holds in its field `tools_`.
 private template SessionOf(ES) {
@@ -2539,4 +2544,43 @@ unittest { // (11)
                    "if(t.sessionPolicy().refusesDisabledParamWrites&&!t.paramEnabled(attrName_)){",
                    "returnfalse;}",
                    "injectParamsInto(t.params(),pj);"], "ToolAttrCommand.applyImpl");
+}
+
+// ---------------------------------------------------------------------------
+// (12) Pen wave plan S8 (A4-rev) — a UI-door command meeting a tool with
+// nothing committable ends its open gesture when the tool's policy DATA says
+// so (`commandEndsOpenGesture`). Provenance: CAPTURED for the polygon pen
+// (K-B4 Backspace-1: the 1-point stroke ends, nothing committed; K-B5 UC1-end:
+// the same for select.invert); false for every other tool (step (3) keeps an
+// idle uiDoor tool untouched, R20). Exactly the pen declares it, and the
+// session's step (3) reads it inside the idle arm, before its return.
+// ---------------------------------------------------------------------------
+
+static assert(ToolSessionPolicy.init.commandEndsOpenGesture == false);
+
+unittest { // (12)
+    auto manifest = parseJSON(readText("tools/prepared_writer_manifest.json"));
+    string[string] moduleOf;
+    foreach (p; manifest["products"].array)
+        moduleOf[p["aggregate"].str] = p["module"].str;
+    string[] declared;
+    size_t visited;
+    foreach (row; kTable) {
+        auto ci = TypeInfo_Class.find(moduleOf[row.cls] ~ "." ~ row.cls);
+        assert(ci !is null, "S8 policy table: class not linked: " ~ row.cls);
+        ++visited;
+        if (blit(ci).sessionPolicy().commandEndsOpenGesture) declared ~= row.id;
+    }
+    assert(visited == kTable.length && kTable.length == 71,
+           format("S8 policy table: visited %s of %s rows, measured 71", visited, kTable.length));
+    assert(declared == ["pen"],
+           format("S8 policy table: commandEndsOpenGesture declared by %s, expected the pen only",
+                  declared));
+    auto close = squeeze(bodyAt(blankNonCode(readText("source/edit_session.d")),
+                                "CloseOutcome close(CloseReason r"));
+    assert(close.count("if(t.sessionPolicy().commandEndsOpenGesture)t.cancelUncommittedEdit();") == 1,
+           "S8 wiring census: step (3) no longer ends the open gesture by the policy");
+    inOrder(close, ["if(cc==CommandClose.uiDoor&&!t.hasUncommittedEdit()){",
+                    "if(t.sessionPolicy().commandEndsOpenGesture)t.cancelUncommittedEdit();",
+                    "returnCloseOutcome(false,true);}"], "S8 ToolSession.close step (3)");
 }

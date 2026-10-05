@@ -25,7 +25,7 @@
       "product_types": [
         "PenTool"
       ],
-      "semantic_sha256": "c8ee121bd2f7339b28f8ed9700d56c25ebddfa0ce9a471cda8bf2aa3c53d7bba",
+      "semantic_sha256": "ec3ebaef52e84c84b570c731072c56907a59709b4f9e2e3dc24929dcefd4e989",
       "symbol": "registerTool(\"pen\")"
     },
     {
@@ -1540,7 +1540,7 @@
     {
       "aggregate": "PenTool",
       "module": "tools.create.pen",
-      "semantic_sha256": "d7f7bd811dc5dcc0b9d4f7937c363a2dc5151cb96d69a3d574f38c4146fe7658",
+      "semantic_sha256": "c3691851656044b3c6f03f7f5710dc01db8294977142adc34a6c2034e66f0df4",
       "signature": "Param[]()",
       "symbol": "params"
     },

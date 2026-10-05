@@ -181,8 +181,9 @@ unittest // the facing is decided at one site; the builder orders every ring ali
     assert(countOccurrences(gcode, "PenBuildPurpose.Commit &&") == 0,
         "pen_geometry.d gates the flip on the Commit purpose again");
     const purposeReads = countIdent(gcode, "purpose");
-    assert(purposeReads == 2, format("pen_geometry.d names `purpose` %s times; "
-        ~ "expected 2 (parameter + the sub-minimum Commit face)", purposeReads));
+    assert(purposeReads == 3, format("pen_geometry.d names `purpose` %s times; "
+        ~ "expected 3 (parameter + the sub-minimum Commit face + the selectNew "
+        ~ "marks, S8)", purposeReads));
     // The ring routine is the builder's: one definition, one call.
     assert(countIdent(gcode, "penRingOrder") == 2, format("pen_geometry.d names "
         ~ "penRingOrder %s times; expected 2", countIdent(gcode, "penRingOrder")));

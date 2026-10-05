@@ -9,6 +9,7 @@ import std.format : format;
 
 import math : Vec3, Viewport, cross, dot, eyeVectorAt;
 import mesh : Mesh;
+import seltype : SelType;
 import prepared_tool_effect : PreparedPenParamKind;
 import toolpipe.packets : SymmetryPacket;
 import tools.create.create_common : WorkplaneFrame;
@@ -17,13 +18,17 @@ import tools.create.pen_geometry;
 // Composition pins: a field added to the stroke or a kind added to the
 // prepared param enum must be added here, with its cases.
 static assert([__traits(allMembers, PenStroke)] ==
-    ["points", "links", "toWorld", "flip", "quads", "mirror", "of"]);
+    ["points", "links", "toWorld", "flip", "quads", "mirror", "type", "close",
+     "selectNew", "selMode", "of"]);
 static assert([__traits(allMembers, PenBuildPurpose)] == ["Preview", "Commit"]);
 static assert([__traits(allMembers, PreparedPenParamKind)] ==
     ["None", "Noop", "CurrentPoint", "Position", "Preview"]);
 static assert([__traits(allMembers, PenParams)] ==
-    ["type", "currentPoint", "posX", "posY", "posZ", "flip", "makeQuads", "merge"]);
-static assert(PenParams.sizeof == 24);
+    ["type", "currentPoint", "posX", "posY", "posZ", "flip", "makeQuads", "merge",
+     "close", "selectNew"]);
+static assert(PenParams.sizeof == 28);
+static assert([__traits(allMembers, PenType)] ==
+    ["polygons", "lines", "vertices", "subdiv"]);
 
 private enum float[16] kIdentity = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
 // Column-major translation by (10, 20, 30) — transformPoint's layout.
@@ -460,4 +465,72 @@ unittest // the work-plane mirror plane: the axis plane mapped by W twice
         assert(near(got, want[i], 1e-5f), format("A5-symWP: m(p%s) %s, expected %s",
             i, got, want[i]));
     }
+}
+
+// Types and selectNew (wave plan S8, fixture pen_types.json): lines are the
+// two-point polygons in click order (+ the closing one under close), mirror
+// segments keep [m(a), m(b)]; vertices add none; subdiv is the polygon ring
+// marked; a Commit with selectNew selects the new vertices and edges, and the
+// new polygons in polygon mode only, keeping the marks already there.
+unittest
+{
+    static immutable Vec3[] sq = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,0,1), Vec3(0,0,1)];
+    Mesh build(int type, bool close, PenBuildPurpose purpose = PenBuildPurpose.Commit,
+               bool sym = false) {
+        Mesh m;
+        PenParams p; p.type = type; p.close = close; p.selectNew = false;
+        SymmetryPacket mirror;
+        if (sym) { mirror.enabled = true; mirror.planeNormal = Vec3(1, 0, 0); }
+        appendPenGeometry(m, PenStroke.of(sq, kIdentity, p, null, mirror), purpose);
+        return m;
+    }
+    auto lines = build(PenType.lines, false);
+    assert(lines.vertices.length == 4 && lines.faces == [[0u, 1], [1u, 2], [2u, 3]],
+        format("lines: %s", lines.faces));
+    assert(build(PenType.lines, true).faces == [[0u, 1], [1u, 2], [2u, 3], [3u, 0]],
+        "lines + close: no closing segment");
+    assert(build(PenType.lines, true, PenBuildPurpose.Preview).faces.length == 4,
+        "lines preview differs from the commit");
+    const ring = build(PenType.polygons, false).faces;
+    assert(ring.length == 1 && ring[0].length == 4 &&
+        build(PenType.polygons, true).faces == ring, "close changed a polygon");
+    auto symLines = build(PenType.lines, false, PenBuildPurpose.Commit, true);
+    assert(symLines.faces[3 .. $] == [[4u, 5], [5u, 6], [6u, 7]],
+        format("mirrored segments: %s", symLines.faces));
+    auto pts = build(PenType.vertices, false);
+    assert(pts.vertices.length == 4 && pts.faces.length == 0 && pts.edges.length == 0,
+        "vertices type added a polygon or an edge");
+    auto sub = build(PenType.subdiv, false);
+    assert(sub.faces == ring && sub.isFaceSubpatch(0),
+        "subdiv: not the polygon ring with the subdivision mark");
+    auto preview = build(PenType.subdiv, false, PenBuildPurpose.Preview);
+    assert(preview.isFaceSubpatch(0), "subdiv preview lacks the mark");
+
+    // selectNew: T0 (3 vertices, one triangle, its vertex 0 selected) then a
+    // new triangle, in each selection mode.
+    foreach (mode; [SelType.Vertex, SelType.Edge, SelType.Polygon])
+        foreach (on; [true, false]) {
+            Mesh m;
+            PenParams p, t0; p.selectNew = on; t0.selectNew = false;
+            appendPenGeometry(m, PenStroke.of(kTri, kIdentity, t0), PenBuildPurpose.Commit);
+            m.syncSelection(); m.selectVertex(0);
+            static immutable Vec3[] t1 = [Vec3(5,0,0), Vec3(6,0,0), Vec3(5,1,0)];
+            appendPenGeometry(m, PenStroke.of(t1, kIdentity, p, null,
+                SymmetryPacket.init, mode), PenBuildPurpose.Commit);
+            uint nv, ne, nf;
+            foreach (i; 0 .. m.vertices.length) nv += m.isVertexSelected(i);
+            foreach (i; 0 .. m.edges.length) ne += m.isEdgeSelected(i);
+            foreach (i; 0 .. m.faces.length) nf += m.isFaceSelected(i);
+            const want = on ? [4u, 3, mode == SelType.Polygon ? 1 : 0] : [1u, 0, 0];
+            assert(m.isVertexSelected(0) && [nv, ne, nf] == want,
+                format("selectNew %s mode %s: selected v/e/f %s, expected %s",
+                       on, mode, [nv, ne, nf], want));
+        }
+    // A Preview selects nothing.
+    Mesh pv;
+    appendPenGeometry(pv, PenStroke.of(kTri, kIdentity, PenParams.init, null,
+        SymmetryPacket.init, SelType.Polygon), PenBuildPurpose.Preview);
+    uint any;
+    foreach (i; 0 .. pv.vertices.length) any += pv.isVertexSelected(i);
+    assert(any == 0, "a preview selected its vertices");
 }
