@@ -39,6 +39,7 @@ import ImGui = d_imgui;
 import d_imgui.imgui_h;
 
 import std.math : sqrt;
+import drag : screenAxisFraction;
 
 import snap : SnapResult;
 import snap_render : drawSnapOverlay, clearLastSnap;
@@ -324,28 +325,20 @@ public:
         handler.setOrientation(bX, bY, bZ);
     }
 
-    // Register this bank's gizmo handles into the shared arbiter `th`
-    // at part-id offset `base` (so overlapping handles across banks get
-    // distinct parts). Order = hitTestAxes priority (disc, plane
-    // circles, then arrows) so the highlighted handle matches the one a
-    // click grabs. Does NOT begin()/update()/suppress() — the wrapper
-    // owns the single test+update pass, and suppresses all highlight
-    // during a scale drag (the animated scale arrow is the feedback).
-    void registerHandles(ToolHandles th, int base) {
-        th.add(handler.centerDisk, base + 3);
-        th.add(handler.circleXY,   base + 4);
-        th.add(handler.circleYZ,   base + 5);
-        th.add(handler.circleXZ,   base + 6);
-        th.add(handler.arrowX,     base + 0);
-        th.add(handler.arrowY,     base + 1);
-        th.add(handler.arrowZ,     base + 2);
+    // The gizmo's parts in hit priority (disc, plane circles, then arrows).
+    // The arbiter registration (at part offset `base`) and the bank's own
+    // press / hover test read this one list, so the highlighted handle is the
+    // one a click grabs. Registration does NOT begin()/update()/suppress() —
+    // the wrapper owns the single test+update pass, and suppresses all
+    // highlight during a scale drag (the animated scale arrow is the feedback).
+    HandlePart[7] handleParts() {
+        return [HandlePart(handler.centerDisk, 3), HandlePart(handler.circleXY, 4),
+                HandlePart(handler.circleYZ, 5), HandlePart(handler.circleXZ, 6),
+                HandlePart(handler.arrowX, 0), HandlePart(handler.arrowY, 1),
+                HandlePart(handler.arrowZ, 2)];
     }
-
-    void registerAxisHandles(ToolHandles th, int base) {
-        th.add(handler.arrowX, base + 0);
-        th.add(handler.arrowY, base + 1);
-        th.add(handler.arrowZ, base + 2);
-    }
+    void registerHandles(ToolHandles th, int base) { auto p = handleParts(); th.add(p[], base); }
+    void registerAxisHandles(ToolHandles th, int base) { auto p = handleParts(); th.add(p[4 .. $], base); }
 
     void registerAxisHeadHandles(ToolHandles th, int base) {
         th.add(headX, base + 0);
@@ -634,7 +627,7 @@ public:
                 screenFalloffLMBBegin();
             }
         }
-        dragAxis = resolvedAxis >= 0 ? resolvedAxis : hitTestAxes(e.x, e.y);
+        dragAxis = resolvedAxis >= 0 ? resolvedAxis : firstHitPart(e.x, e.y, cachedVp, handleParts());
         if (dragAxis >= 0) {
             lastMX = e.x; lastMY = e.y;
             // Freeze the input-projection basis for the gesture (= the
@@ -849,9 +842,9 @@ public:
         if (!active) return false;
         if (dragAxis == -1) {
             // Live snap preview during idle hover — same convention as
-            // Move/Rotate. hitTestAxes >= 0 = on a scale handle
+            // Move/Rotate. A part >= 0 = on a scale handle
             // (would start a drag), so the preview suppresses itself.
-            updateLiveSnapPreview(e.x, e.y, hitTestAxes(e.x, e.y), vts);
+            updateLiveSnapPreview(e.x, e.y, firstHitPart(e.x, e.y, cachedVp, handleParts()), vts);
             return false;
         }
 
@@ -941,17 +934,10 @@ public:
                   : dragAxis == 1 ? inAxisY()
                                   : inAxisZ();
 
-        float cx, cy, cndcZ, ax_, ay_, andcZ;
-        if (!projectToWindowFull(center, cachedVp, cx, cy, cndcZ))
-        { lastMX = e.x; lastMY = e.y; return true; }
-        if (!projectToWindowFull(center + axis, cachedVp, ax_, ay_, andcZ))
-        { lastMX = e.x; lastMY = e.y; return true; }
-
-        float sdx = ax_ - cx, sdy = ay_ - cy;
-        float slen2 = sdx*sdx + sdy*sdy;
-        if (slen2 < 1.0f) { lastMX = e.x; lastMY = e.y; return true; }
-
-        dragScaleScalarDelta += (dxRel * sdx + dyRel * sdy) / slen2;
+        bool skip;
+        float along = screenAxisFraction(dxRel, dyRel, center, center + axis, cachedVp, skip);
+        if (skip) { lastMX = e.x; lastMY = e.y; return true; }
+        dragScaleScalarDelta += along;
         float scaleFactor = clampScaleFactor(1.0f + dragScaleScalarDelta);
         bool  axX = (dragAxis == 0), axY = (dragAxis == 1), axZ = (dragAxis == 2);
         setDragAxisScale(axX, axY, axZ, scaleFactor);
@@ -1073,26 +1059,6 @@ private:
         if (!projectToWindowFull(center,   cachedVp, cx, cy, cndcZ)) return -1.0f;
         if (!projectToWindowFull(rightEnd, cachedVp, rx, ry, rndcZ)) return -1.0f;
         return sqrt((rx-cx)*(rx-cx) + (ry-cy)*(ry-cy));
-    }
-
-    int hitTestAxes(int mx, int my) {
-        if (handler.centerDisk.hitTest(mx, my, cachedVp)) return 3;
-        if (handler.circleXY.hitTest(mx, my, cachedVp)) return 4;
-        if (handler.circleYZ.hitTest(mx, my, cachedVp)) return 5;
-        if (handler.circleXZ.hitTest(mx, my, cachedVp)) return 6;
-
-        CubicArrow[3] arrows = [handler.arrowX, handler.arrowY, handler.arrowZ];
-        foreach (i, arrow; arrows) {
-            if (!arrow.isVisible()) continue;
-            float sax, say, ndcZa, sbx, sby, ndcZb;
-            if (!projectToWindowFull(arrow.start, cachedVp, sax, say, ndcZa)) continue;
-            if (!projectToWindowFull(arrow.end,   cachedVp, sbx, sby, ndcZb)) continue;
-            float t;
-            if (closestOnSegment2D(cast(float)mx, cast(float)my,
-                                   sax, say, sbx, sby, t) < GIZMO_PICK_AXIS_PX)
-                return cast(int)i;
-        }
-        return -1;
     }
 
     public int hitTestAxisHeads(int mx, int my) {

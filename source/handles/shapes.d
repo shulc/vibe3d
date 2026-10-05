@@ -114,11 +114,6 @@ protected:
 
 public:
 
-    // Mouse events — return true to consume (stops further processing).
-    bool onMouseButtonDown(ref const SDL_MouseButtonEvent e) { return false; }
-    bool onMouseButtonUp  (ref const SDL_MouseButtonEvent e) { return false; }
-    bool onMouseMotion    (ref const SDL_MouseMotionEvent  e) { return false; }
-
     // Keyboard events — return true to consume.
     bool onKeyDown(ref const SDL_KeyboardEvent e) { return false; }
     bool onKeyUp  (ref const SDL_KeyboardEvent e) { return false; }
@@ -191,6 +186,19 @@ public:
     public AiIntent aiIntentForPart(int part) const {
         return AiIntent.handle;
     }
+}
+
+/// One registered gizmo part: a handle and its part id. A bank lists its parts
+/// ONCE, in hit priority; the arbiter registration and the bank's own press /
+/// hover test both read that list (task 9409).
+struct HandlePart { Handler h; int part; }
+
+/// The arbiter's winner rule (`ToolHandles.test`) without its trace pass: the
+/// first VISIBLE part, in list order, whose hit test passes; -1 on a miss.
+int firstHitPart(size_t N)(int mx, int my, const ref Viewport vp, HandlePart[N] parts) {
+    foreach (p; parts)
+        if (p.h.isVisible() && p.h.hitTest(mx, my, vp)) return p.part;
+    return -1;
 }
 
 // ---------------------------------------------------------------------------
@@ -861,7 +869,7 @@ class MoveHandler : Handler {
     // over the per-frame ortho-cull re-enable below (a plain setVisible(false)
     // in the ctor would be overwritten every frame); a false arrow is then
     // skipped by Arrow.draw (visible guard), by ToolHandles.test (invisible
-    // handles skipped), and by MirrorTool.moverHitTest (isVisible guard) — so
+    // handles skipped), and by `firstHitPart` (the same visibility term) — so
     // it drops from BOTH draw and hit-test.
     bool arrowsVisible = true;
 
@@ -1071,10 +1079,9 @@ class MoveHandler : Handler {
     }
 
     // Hit-test the mover rig (centerBox + 3 axis arrows): 3=centerBox,
-    // 0/1/2=arrowX/Y/Z, -1=miss. Lifted verbatim (task 0410, dedup 0407
-    // §A.D5) from the private `moverHitTest` idiom every primitive
-    // create-tool (cylinder.d, capsule.d, cone.d, torus.d, tube.d, sphere.d,
-    // box.d) repeated — diff-confirmed byte-identical bodies.
+    // 0/1/2=arrowX/Y/Z, -1=miss — the shared `firstHitPart` rule (task 9409;
+    // its centre-box visibility term is inert here: only the transform Move
+    // bank ever hides a centre box, and it hit-tests through its own list).
     //
     // `alias hitTest = Handler.hitTest;` is required: this overload has the
     // same name+params as the inherited `protected bool hitTest(int, int,
@@ -1086,19 +1093,8 @@ class MoveHandler : Handler {
     // hitTest is never reached polymorphically through a MoveHandler.
     alias hitTest = Handler.hitTest;
     int hitTest(int mx, int my, const ref Viewport vp) {
-        if (centerBox.hitTest(mx, my, vp)) return 3;
-        Arrow[3] arrows = [arrowX, arrowY, arrowZ];
-        foreach (i, arrow; arrows) {
-            if (!arrow.isVisible()) continue;
-            float sax, say, ndcZa, sbx, sby, ndcZb;
-            if (!projectToWindowFull(arrow.start, vp, sax, say, ndcZa)) continue;
-            if (!projectToWindowFull(arrow.end,   vp, sbx, sby, ndcZb)) continue;
-            float t;
-            if (closestOnSegment2D(cast(float)mx, cast(float)my,
-                                   sax, say, sbx, sby, t) < GIZMO_PICK_AXIS_PX)
-                return cast(int)i;
-        }
-        return -1;
+        return firstHitPart(mx, my, vp, [HandlePart(centerBox, 3), HandlePart(arrowX, 0),
+                                         HandlePart(arrowY, 1), HandlePart(arrowZ, 2)]);
     }
 }
 

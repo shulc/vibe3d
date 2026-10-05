@@ -1792,8 +1792,9 @@ public:
         // clear direction (the MoveTool wait-gate), resolve the locked world axis
         // via the shared chooseConstraintAxis. Until then, swallow the motion.
         if (ctrlPending_) {
+            import drag : ctrlLockPending;
             int tdx = e.x - ctrlStartMX_, tdy = e.y - ctrlStartMY_;
-            if (tdx * tdx + tdy * tdy < 25) return true;
+            if (ctrlLockPending(tdx, tdy)) return true;
             ctrlAxis_    = resolveCtrlAxis(tdx, tdy);
             ctrlPending_ = false;
         }

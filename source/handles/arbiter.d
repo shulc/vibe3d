@@ -86,9 +86,8 @@ void setHandleExploreHook(HandleExploreHook hook) {
 // ---------------------------------------------------------------------------
 
 class ToolHandles {
-    private struct Entry { Handler h; int part; }
     alias AiHoverPreviewPredicate = bool delegate(int part) const;
-    private Entry[] entries;     // registration order = test priority
+    private HandlePart[] entries; // registration order = test priority
     private AiCandidate[] aiCandidates; // last observational hit-candidate pass
     private int[] aiCandidateParts;      // candidate index -> registered part id
     int hot      = -1;           // ROLLOVER part, -1 = none
@@ -141,7 +140,12 @@ class ToolHandles {
     // Register a handle with a stable part id, in priority order (first wins
     // on overlap).
     void add(Handler h, int part) {
-        entries ~= Entry(h, part);
+        entries ~= HandlePart(h, part);
+    }
+
+    // Register a bank's part list (its hit-priority order) at part offset `base`.
+    void add(scope HandlePart[] parts, int base) {
+        foreach (p; parts) add(p.h, base + p.part);
     }
 
     // Hit-test pass: first registered handle (by priority) whose hitTest passes.

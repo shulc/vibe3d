@@ -7031,7 +7031,6 @@ private:
     // the drag session, a differing bank consolidates the prior run + bumps the
     // run id. None at session start makes the first gesture's check a harmless
     // empty-run consolidate (no-op) that just sets the bank.
-    enum DragBank { None, Move, Rotate, Scale }
     DragBank currentRunBank = DragBank.None;
 
     // P-C — ACEN-mode boundary poll. `actr.*` is a SideEffect command
@@ -7808,10 +7807,10 @@ unittest { // A detached Xfrm close carries the same ToolSession token.
         () { active = null; });
     session.noteArm("TransformMove", 52);
     xfrm.openLiveSessionForTest();
-    xfrm.editCauseBank = XfrmTransformTool.DragBank.Move;
+    xfrm.editCauseBank = DragBank.Move;
     owned.vertices[0].x += 1;
     auto projected = xfrm.projectPreparedOwnedEditClose(
-        XfrmTransformTool.DragBank.Move, false);
+        DragBank.Move, false);
     assert(projected.command !is null);
     auto context = new PreparedRecordContext(history, null);
     assert(xfrm.prepareOwnedEditClose(projected, context,
@@ -8160,7 +8159,6 @@ unittest {
     auto savedPipe = g_pipeCtx;
     scope(exit) g_pipeCtx = savedPipe;
     g_pipeCtx = null;
-    alias DragBank = XfrmTransformTool.DragBank;
     alias TransformHistoryIntent =
         XfrmTransformTool.TransformHistoryIntent;
     struct ClosePairCell {

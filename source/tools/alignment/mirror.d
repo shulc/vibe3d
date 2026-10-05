@@ -17,7 +17,7 @@ import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import editmode : EditMode;
 import shader : Shader, LitShader;
-import handler : MoveHandler, ToolHandles, Arrow, BoxHandler, gizmoSize, drawWorldSegments;
+import handler : MoveHandler, ToolHandles, BoxHandler, HandlePart, firstHitPart, gizmoSize, drawWorldSegments;
 import drag : planeDragDelta, screenAxisDelta, gesturePrevPixel;
 import eventlog : queryMouse;
 import prepared_tool_effect : PreparedToolStateDelta, PreparedToolStateKind,
@@ -763,7 +763,14 @@ public:
         // live instance off its handles places nothing (gap row 489). Unbound: as before.
         const pa = sessionPressActivation();
         const anchor = params_.center;
-        int hit = pa == PressActivation.activates ? -1 : moverHitTest(e.x, e.y);
+        // The press tests rotateBox FIRST (the smaller target, which can sit
+        // inside the enlarged centre box on screen) while the arbiter
+        // registration (draw) puts the centre box first: this order is kept as
+        // the tool's own data until the hit-order capture decides (task 9409).
+        // The mover's arrows are hidden (arrowsVisible = false): 4 = rotate box,
+        // 3 = centre box.
+        int hit = pa == PressActivation.activates ? -1 : firstHitPart(e.x, e.y, cachedVp,
+            [HandlePart(rotateBox, 4), HandlePart(mover.centerBox, 3)]);
         if (hit < 0 && pa == PressActivation.active) {
             sessionStepBegins();
             stepOpen = true;
@@ -876,30 +883,6 @@ public:
         moverLastMX = e.x;
         moverLastMY = e.y;
         return true;
-    }
-
-    /// Mirrors BoxTool.moverHitTest (box.d:2768) — Arrow.hitTest is
-    /// `protected` (see `Handler` in handles/shapes.d), so the
-    /// segment-distance test is duplicated here rather than called;
-    /// `BoxHandler.hitTest` (handles/shapes.d) is public so centerBox /
-    /// rotateBox can be hit-tested directly.
-    /// rotateBox is tested FIRST — it is the smaller target and (depending on
-    /// camera distance) can sit close to the enlarged centerBox's screen area.
-    private int moverHitTest(int mx, int my) {
-        if (rotateBox.hitTest(mx, my, cachedVp)) return 4;
-        if (mover.centerBox.hitTest(mx, my, cachedVp)) return 3;
-        Arrow[3] arrows = [mover.arrowX, mover.arrowY, mover.arrowZ];
-        foreach (i, arrow; arrows) {
-            if (!arrow.isVisible()) continue;
-            float sax, say, ndcZa, sbx, sby, ndcZb;
-            if (!projectToWindowFull(arrow.start, cachedVp, sax, say, ndcZa)) continue;
-            if (!projectToWindowFull(arrow.end,   cachedVp, sbx, sby, ndcZb)) continue;
-            float t;
-            if (closestOnSegment2D(cast(float)mx, cast(float)my,
-                                   sax, say, sbx, sby, t) < 8.0f)
-                return cast(int)i;
-        }
-        return -1;
     }
 }
 

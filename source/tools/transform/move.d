@@ -59,7 +59,7 @@ struct PreparedMoveUpdateImage {
 //
 // Phase 3 (transform-single-source plan) responsibilities:
 //   - Own the MoveHandler instance, draw it, hit-test against it
-//     (`hitTestAxes`), and run the screen-space drag math
+//     (`handleParts`), and run the screen-space drag math
 //     (`axisDragDelta` / `planeDragDelta` / `applySnapToDelta`).
 //   - On drag-axis motion, produce a basis-LOCAL gesture scalar in
 //     `pendingTranslateDelta` and return. The wrapper drains it and
@@ -439,34 +439,21 @@ public:
         super.deactivate();
     }
 
-    // Register this bank's gizmo handles into the shared arbiter `th`
-    // at part-id offset `base` (so overlapping handles across banks get
-    // distinct parts). Order = hitTestAxes priority (circles > box >
-    // arrows) so the highlighted handle matches the one a click grabs.
-    // Does NOT begin()/update()/suppress() — the wrapper owns the
-    // single test+update pass.
-    void registerHandles(ToolHandles th, int base) {
-        th.add(handler.circleXY,  base + 4);
-        th.add(handler.circleYZ,  base + 5);
-        th.add(handler.circleXZ,  base + 6);
-        th.add(handler.centerBox, base + 3);
-        th.add(handler.arrowX,    base + 0);
-        th.add(handler.arrowY,    base + 1);
-        th.add(handler.arrowZ,    base + 2);
+    // The gizmo's parts in hit priority (plane circles > centre box > arrows):
+    // 0/1/2=axis 3=most-facing plane 4/5/6=XY/YZ/XZ plane. The arbiter
+    // registration (at part offset `base`, so banks get distinct parts) and the
+    // bank's own press / hover test read this one list, so the highlighted
+    // handle is the one a click grabs. Registration does NOT begin()/update()/
+    // suppress() — the wrapper owns the single test+update pass.
+    HandlePart[7] handleParts() {
+        return [HandlePart(handler.circleXY, 4), HandlePart(handler.circleYZ, 5),
+                HandlePart(handler.circleXZ, 6), HandlePart(handler.centerBox, 3),
+                HandlePart(handler.arrowX, 0), HandlePart(handler.arrowY, 1),
+                HandlePart(handler.arrowZ, 2)];
     }
-
-    void registerAxisHandles(ToolHandles th, int base) {
-        th.add(handler.arrowX, base + 0);
-        th.add(handler.arrowY, base + 1);
-        th.add(handler.arrowZ, base + 2);
-    }
-
-    void registerCompactHandles(ToolHandles th, int base) {
-        th.add(handler.centerBox, base + 3);
-        th.add(handler.arrowX,    base + 0);
-        th.add(handler.arrowY,    base + 1);
-        th.add(handler.arrowZ,    base + 2);
-    }
+    void registerHandles(ToolHandles th, int base) { auto p = handleParts(); th.add(p[], base); }
+    void registerAxisHandles(ToolHandles th, int base) { auto p = handleParts(); th.add(p[4 .. $], base); }
+    void registerCompactHandles(ToolHandles th, int base) { auto p = handleParts(); th.add(p[3 .. $], base); }
 
     void setWrapperGizmoPose(Vec3 center, Vec3 bX, Vec3 bY, Vec3 bZ)
             nothrow @nogc {
@@ -657,33 +644,6 @@ public:
         return true;
     }
 
-    // Returns 0/1/2=axis  3=most-facing plane  4/5/6=XY/YZ/XZ plane  -1=miss
-    private int hitTestAxes(int mx, int my) {
-        // Circles checked first (larger hit area, drawn behind arrows)
-        if (handler.circleXY.hitTest(mx, my, cachedVp)) return 4;
-        if (handler.circleYZ.hitTest(mx, my, cachedVp)) return 5;
-        if (handler.circleXZ.hitTest(mx, my, cachedVp)) return 6;
-
-        // Skip the center handle when hidden (element-move flow): the wrapper
-        // hides it so a central click falls through to the element pick rather
-        // than grabbing a center-plane drag. Mirrors the arrow isVisible guard.
-        if (handler.centerBox.isVisible()
-            && handler.centerBox.hitTest(mx, my, cachedVp)) return 3;
-
-        Arrow[3] arrows = [handler.arrowX, handler.arrowY, handler.arrowZ];
-        foreach (i, arrow; arrows) {
-            if (!arrow.isVisible()) continue;
-            float sax, say, ndcZa, sbx, sby, ndcZb;
-            if (!projectToWindowFull(arrow.start, cachedVp, sax, say, ndcZa)) continue;
-            if (!projectToWindowFull(arrow.end,   cachedVp, sbx, sby, ndcZb)) continue;
-            float t;
-            if (closestOnSegment2D(cast(float)mx, cast(float)my,
-                                   sax, say, sbx, sby, t) < GIZMO_PICK_AXIS_PX)
-                return cast(int)i;
-        }
-        return -1;
-    }
-
     bool onMouseButtonDownWithResolvedAxis(ref const SDL_MouseButtonEvent e,
                                            ref VectorStack vts,
                                            int resolvedAxis,
@@ -722,7 +682,7 @@ public:
         // -1 = "hit-test here" — unless no handle is drawn (H8, gap 217: an
         // operation-anchored handle before its operation opens).
         dragAxis = resolvedAxis >= 0 ? resolvedAxis
-                 : (handleHittable() ? hitTestAxes(e.x, e.y) : -1);
+                 : (handleHittable() ? firstHitPart(e.x, e.y, cachedVp, handleParts()) : -1);
         if (dragAxis >= 0) {
             // Ctrl constraint applies only to the most-facing plane (dragAxis==3)
             if (ctrl && dragAxis == 3) {
@@ -1008,10 +968,9 @@ public:
         if (dragAxis == -1) {
             // Idle hover: refresh the live click-outside snap preview
             // so the cyan overlay shows where the gizmo would land if
-            // the user clicked right now. hitTestAxes returns >= 0
-            // when the cursor is on a gizmo handle (would start a
-            // drag, not a relocate) — preview is suppressed there.
-            updateLiveSnapPreview(e.x, e.y, hitTestAxes(e.x, e.y), vts);
+            // the user clicked right now. A part >= 0 under the cursor
+            // would start a drag, not a relocate — preview is suppressed there.
+            updateLiveSnapPreview(e.x, e.y, firstHitPart(e.x, e.y, cachedVp, handleParts()), vts);
             return false;
         }
 
@@ -1020,7 +979,7 @@ public:
         if (ctrlConstrain) {
             int tdx = e.x - constrainStartMX;
             int tdy = e.y - constrainStartMY;
-            if (tdx*tdx + tdy*tdy < 25) { lastMX = e.x; lastMY = e.y; return true; }
+            if (ctrlLockPending(tdx, tdy)) { lastMX = e.x; lastMY = e.y; return true; }
 
             // ctrlConstrain only ever runs for the center-box drag (dragAxis==3),
             // which the wrapper excludes from chaining (chained=false), so the

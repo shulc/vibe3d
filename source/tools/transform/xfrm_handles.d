@@ -19,6 +19,10 @@ module tools.transform.xfrm_handles;
 /// Same hazard as the other halves: a member declared directly in the class
 /// silently WINS over one of the same name mixed in. Never leave a copy behind.
 
+/// The gizmo bank a drag runs on — the wrapper's run bank and the Edge Extend
+/// host's drag bank (task 9409: one declaration). None = no drag.
+enum DragBank { None, Move, Rotate, Scale }
+
 mixin template XfrmHandlesImpl() {
     /// Idle T-only handles follow the translated run centre (task 6207). The
     /// anchor is the owner's policy (H8, slice M6): `acenPlusT` below, or the
@@ -126,7 +130,7 @@ mixin template XfrmHandlesImpl() {
             // as move arrows. Register scale first so hover and click prefer the
             // scale handle when they overlap.
             if (flagS) scaleSub.registerAxisHeadHandles(th, SCALE_BASE);
-            if (flagR) rotateSub.registerPrincipalHandles(th, ROT_BASE);
+            if (flagR) rotateSub.registerHandles(th, ROT_BASE);
             if (flagT) moveSub.registerCompactHandles(th, MOVE_BASE);
             return;
         }

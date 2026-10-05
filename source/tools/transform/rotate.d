@@ -200,25 +200,16 @@ public:
 
     void destroy() { handler.destroy(); }
 
-    // Register this bank's gizmo handles into the shared arbiter `th`
-    // at part-id offset `base` (so overlapping handles across banks get
-    // distinct parts). Order = hitTestAxes priority (X, Y, Z, view-ring)
-    // so the highlighted arc matches the one a click grabs. bgCircle is
-    // decorative — not registered. Does NOT begin()/update()/suppress()
-    // — the wrapper owns the single test+update pass.
-    void registerHandles(ToolHandles th, int base) {
-        th.add(handler.arcX,    base + 0);
-        th.add(handler.arcY,    base + 1);
-        th.add(handler.arcZ,    base + 2);
-        th.add(handler.arcView, base + 3);
+    // The gizmo's parts in hit priority (X, Y, Z, view-ring). The arbiter
+    // registration (at part offset `base`) and the bank's own press / hover
+    // test read this one list, so the highlighted arc is the one a click
+    // grabs. bgCircle is decorative — not registered. Registration does NOT
+    // begin()/update()/suppress() — the wrapper owns the single test+update pass.
+    HandlePart[4] handleParts() {
+        return [HandlePart(handler.arcX, 0), HandlePart(handler.arcY, 1),
+                HandlePart(handler.arcZ, 2), HandlePart(handler.arcView, 3)];
     }
-
-    void registerPrincipalHandles(ToolHandles th, int base) {
-        th.add(handler.arcX,    base + 0);
-        th.add(handler.arcY,    base + 1);
-        th.add(handler.arcZ,    base + 2);
-        th.add(handler.arcView, base + 3);
-    }
+    void registerHandles(ToolHandles th, int base) { auto p = handleParts(); th.add(p[], base); }
 
     void setWrapperGizmoPose(Vec3 center, Vec3 bX, Vec3 bY, Vec3 bZ)
             nothrow @nogc {
@@ -535,7 +526,7 @@ public:
                 screenFalloffLMBBegin();
             }
         }
-        dragAxis = resolvedAxis >= 0 ? resolvedAxis : hitTestAxes(e.x, e.y);
+        dragAxis = resolvedAxis >= 0 ? resolvedAxis : firstHitPart(e.x, e.y, cachedVp, handleParts());
         arcballDrag = false;
         viewAxisHaulDrag = false;
         if (dragAxis < 0) {
@@ -637,18 +628,22 @@ public:
             return true;
         }
 
-        // Compute drag start direction in the arc plane.
-        Vec3 hit;
+        armGrabReference(e.x, e.y);
+        return true;
+    }
+
+    // The grab reference in the arc plane (⟂ dragAxisVec through the centre):
+    // where pixel (mx, my) lands on it gives dragStartDir (sector overlay) and
+    // the fixed dragRefDir / dragRefRadius of the absolute-angle measurement.
+    private void armGrabReference(int mx, int my) {
         prevWrapped = 0;
-        Vec3 rotOrig771, rotDir771;
-        screenPointToRay(cast(float)e.x, cast(float)e.y, cachedVp, rotOrig771, rotDir771);
-        if (rayPlaneIntersect(rotOrig771, rotDir771,
-                              handler.center, dragAxisVec, hit)) {
+        Vec3 hit, ro, rd;
+        screenPointToRay(cast(float)mx, cast(float)my, cachedVp, ro, rd);
+        if (rayPlaneIntersect(ro, rd, handler.center, dragAxisVec, hit)) {
             Vec3 d = hit - handler.center;
             float draw = sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
             dragStartDir = draw * 1.05f > 1e-6f ? d / (draw * 1.05f)
                                                 : Vec3(0,0,0);
-            // Fixed reference for the absolute-angle measurement (see fields).
             dragRefDir    = draw > 1e-6f ? d / draw : Vec3(0,0,0);
             dragRefRadius = draw;
         } else {
@@ -656,7 +651,6 @@ public:
             dragRefDir    = Vec3(0,0,0);
             dragRefRadius = 0;
         }
-        return true;
     }
 
     // Wrapped-mode input-frame channel (gesture-frame unification, Phase 2) —
@@ -691,25 +685,8 @@ public:
                                     : f;
         // Re-derive the fixed grab reference in the NEW arc plane, from the same
         // grab pixel onMouseButtonDown stored (lastMX/lastMY) against the same
-        // cachedVp — so dragRefDir / dragStartDir / dragRefRadius all describe the
-        // rotated ring's plane, matching dragAxisVec.
-        prevWrapped = 0;
-        Vec3 hit;
-        Vec3 rotOrig824, rotDir824;
-        screenPointToRay(cast(float)lastMX, cast(float)lastMY, cachedVp, rotOrig824, rotDir824);
-        if (rayPlaneIntersect(rotOrig824, rotDir824,
-                              handler.center, dragAxisVec, hit)) {
-            Vec3 d = hit - handler.center;
-            float draw = sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
-            dragStartDir = draw * 1.05f > 1e-6f ? d / (draw * 1.05f)
-                                                : Vec3(0,0,0);
-            dragRefDir    = draw > 1e-6f ? d / draw : Vec3(0,0,0);
-            dragRefRadius = draw;
-        } else {
-            dragStartDir  = Vec3(0,0,0);
-            dragRefDir    = Vec3(0,0,0);
-            dragRefRadius = 0;
-        }
+        // cachedVp — so the reference describes the rotated ring's plane.
+        armGrabReference(lastMX, lastMY);
     }
 
     // DEBUG-only — input-side parity guard (gesture-frame unification, Phase 2).
@@ -765,10 +742,10 @@ public:
         if (!active) return false;
         if (dragAxis == -1) {
             // Live snap preview during idle hover — same convention as
-            // MoveTool. hitTestAxes >= 0 means cursor is over an arc
+            // MoveTool. A part >= 0 means cursor is over an arc
             // (would start a rotate drag, not a relocate), so the
             // preview suppresses itself there.
-            updateLiveSnapPreview(e.x, e.y, hitTestAxes(e.x, e.y), vts);
+            updateLiveSnapPreview(e.x, e.y, firstHitPart(e.x, e.y, cachedVp, handleParts()), vts);
             return false;
         }
 
@@ -981,15 +958,5 @@ private:
         float deg = dispAngle * 180.0f / PI;
         string label = format("%.1f°", deg);
         dl.AddText(ImVec2(cx + 8, cy - 20), IM_COL32(255, 255, 255, 220), label);
-    }
-
-    int hitTestAxes(int mx, int my) {
-        SemicircleHandler[3] arcs = [handler.arcX, handler.arcY, handler.arcZ];
-        foreach (i, arc; arcs)
-            if (arc.isVisible() && arc.hitTest(mx, my, cachedVp))
-                return cast(int)i;
-        if (handler.arcView.isVisible() && handler.arcView.hitTest(mx, my, cachedVp))
-            return 3;
-        return -1;
     }
 }

@@ -227,19 +227,31 @@ Vec3 screenAxisWorldDelta(int mx,     int my,
                           const ref Viewport vp,
                           out bool skip)
 {
-    skip = false;
+    float d = screenAxisFraction(mx - lastMX, my - lastMY, origin, axisEnd, vp, skip);
+    return skip ? Vec3(0,0,0) : axisDir * (d * axisLen);
+}
 
+// The core's unitless half: the pixel drag (dx, dy) dotted onto the projected
+// segment origin→axisEnd, over its squared screen length (1 = one segment).
+// `skip` when either end does not project or the segment is under a pixel.
+float screenAxisFraction(int dx, int dy, Vec3 origin, Vec3 axisEnd,
+                         const ref Viewport vp, out bool skip)
+{
     float ox, oy, ondcZ, tx, ty, tndcZ;
-    if (!projectToWindowFull(origin,  vp, ox, oy, ondcZ) ||
-        !projectToWindowFull(axisEnd, vp, tx, ty, tndcZ))
-    { skip = true; return Vec3(0,0,0); }
-
+    skip = !projectToWindowFull(origin,  vp, ox, oy, ondcZ) ||
+           !projectToWindowFull(axisEnd, vp, tx, ty, tndcZ);
+    if (skip) return 0;
     float sdx = tx - ox, sdy = ty - oy;
     float slen2 = sdx*sdx + sdy*sdy;
-    if (slen2 < 1.0f) { skip = true; return Vec3(0,0,0); }
+    skip = slen2 < 1.0f;
+    return skip ? 0 : (dx * sdx + dy * sdy) / slen2;
+}
 
-    float d = ((mx - lastMX) * sdx + (my - lastMY) * sdy) / slen2 * axisLen;
-    return axisDir * d;
+// The Ctrl axis-lock wait: a Ctrl drag resolves its locked axis only once the
+// pointer has left a kCtrlLockWaitPx disc around the press (Move, Slice).
+enum int kCtrlLockWaitPx = 5;
+bool ctrlLockPending(int dx, int dy) {
+    return dx * dx + dy * dy < kCtrlLockWaitPx * kCtrlLockWaitPx;
 }
 
 // Single-axis drag (dragAxis 0/1/2 = X/Y/Z).

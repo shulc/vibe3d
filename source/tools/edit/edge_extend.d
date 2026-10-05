@@ -21,6 +21,7 @@ import tools.edit.preview_rebuild : PreviewRebuild, PreviewTopologyKey,
 import mesh_edit_delta : MeshEditDelta, MeshEditScope;
 import tools.transform.xfrm_transform : XfrmTransformTool;
 import tools.transform.xfrm_transform : PreparedXfrmEmbeddedDeactivateImage;
+import tools.transform.xfrm_handles : DragBank;
 import pipe_gizmo_host : PipeGizmoHost;
 import tools.transform.move : MoveTool;
 import tools.transform.rotate : RotateTool;
@@ -274,10 +275,8 @@ private:
     PreviewRebuild preview_;
     Viewport     cachedVp;
 
-    // Which gizmo bank the shared arbiter handed this drag (mirrors how
-    // XfrmTransformTool's onMouseButtonDown picks the hot bank: try Move, then
-    // Rotate, then Scale, first real-handle grab wins). DragBank.None = no drag.
-    enum DragBank { None, Move, Rotate, Scale }
+    // Which gizmo bank owns this drag — the press's own bank probe (Move, then
+    // the principal Rotate rings, then Scale), not the arbiter. None = no drag.
     DragBank dragBank = DragBank.None;
 
     // Move-gesture drag state. While a drag is captured the host freezes the
@@ -980,14 +979,16 @@ public:
 
     // -----------------------------------------------------------------------
     // Interactive drag — driven by the three embedded gizmo banks (§4.1/§4.2/
-    // §4.3, option (b)). The host forwards the down/motion/up events to whichever
-    // bank the shared ToolHandles arbiter selected and drains that bank's pending
-    // gesture scalar into the matching Extend op param, then re-runs the kernel.
+    // §4.3, option (b)). The host forwards the down/motion/up events to the bank
+    // its own probe picked and drains that bank's pending gesture scalar into the
+    // matching Extend op param, then re-runs the kernel.
     //
-    // Bank selection mirrors XfrmTransformTool.onMouseButtonDown: try Move, then
-    // Rotate, then Scale; the first bank whose hit-test grabs a REAL handle
-    // (dragAxis>=0) owns the drag. The banks' screen radii are disjoint (move
-    // arrows vs rotate rings vs scale handles) so in practice exactly one grabs.
+    // Bank selection is NOT the arbiter: try Move, then the principal Rotate
+    // rings, then Scale; the first bank whose own hit test (its `handleParts`)
+    // grabs a REAL handle (dragAxis>=0) owns the drag. It differs from the
+    // arbiter's T→R→S registration where the view ring overlaps a scale part
+    // (the arbiter answers the ring, this probe falls through to Scale); that
+    // order waits for the hit-order capture (task 9409).
     // On a total miss, the Move bank begins a HAUL (screen-plane Offset drag).
     //   - Move   → Offset (world-axis, pivot-agnostic; haul + on-arrow share it).
     //   - Rotate → rotateDeg component (principal ring axis → X/Y/Z), about the
