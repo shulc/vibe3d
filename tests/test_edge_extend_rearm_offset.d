@@ -24,10 +24,11 @@
 
 import edge_extend_gesture_helpers;
 import http_client : getJson, postJson;
+import drag_helpers : viewportFromCameraMatrices, projectToWindow, DV = Vec3;
 import std.algorithm : sort, max;
 import std.conv : to;
 import std.format : format;
-import std.math : abs;
+import std.math : abs, sqrt;
 
 void main() {}
 
@@ -109,7 +110,7 @@ void rePressUnderSymmetry(bool perspective, Px delegate(bool second) at, string 
         assert(r["status"].str == "ok", "camera failed: " ~ r.toString);
         assert(getJson("/api/camera")["projKind"].str == "Perspective", "rig: the camera is not perspective" ~ cam);
     }
-    haul(at(false), kIncrementPx, 0, 10);
+    haul(at(false), kIncrementPx, 0, perspective ? 5 : 10);
     assert(pressAnchor()[0] < -0.05, "rig: the first press was not on the -X side" ~ cam ~ ": " ~ pressAnchor().to!string);
     immutable size_t v0 = vertexCount();
     auto before = allVertices();
@@ -155,7 +156,20 @@ unittest { // (f) item 17: orthographic top
 unittest { // (f) item 17: perspective
     rePressUnderSymmetry(true, (bool second) {
         auto c = viewCentre();
-        return second ? Px(c.x - 250, c.y - 120) : Px(c.x - 200, c.y + 120);
+        if (!second) return Px(c.x - 200, c.y + 120);
+        // The press anchor is the foot of the handle G on the press ray, so it
+        // lies on the sphere with diameter (eye, G): press where that sphere
+        // reaches farthest toward -X (the haul law of task 9450 moved G).
+        auto vp = viewportFromCameraMatrices();
+        immutable double[3] g = gizmoCentre();
+        immutable DV gv = DV(g[0], g[1], g[2]);
+        immutable DV d = gv - vp.eye;
+        immutable float r = 0.5f * sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+        immutable DV f = (vp.eye + gv) * 0.5f - DV(r, 0, 0);
+        assert(f.x < -0.08, format("rig: no press can anchor on -X with the handle at %s", g));
+        float x, y;
+        assert(projectToWindow(f, vp, x, y), "rig: the second press point is behind the camera");
+        return Px(cast(int) x, cast(int) y);
     }, " (perspective)");
 }
 

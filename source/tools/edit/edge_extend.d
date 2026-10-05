@@ -1035,6 +1035,15 @@ public:
         // the first press nothing is drawn (gap 217) — take this event's
         // viewport, as XfrmTransformTool.syncInputViewport does.
         xfrm.syncBankInputViewports(vts);
+        // The event's viewport — the one the banks just took.
+        Viewport pvp = cachedVp;
+        if (auto sp = vts.get!SubjectPacket()) pvp = sp.viewport;
+        {
+            Vec3 ro, rd;
+            screenPointToRay(e.x, e.y, pvp, ro, rd);
+            if (!rayPlaneIntersect(ro, rd, xfrm.moveGizmoCenter(), rd, pressPoint_))
+                pressPoint_ = xfrm.moveGizmoCenter();
+        }
 
         // A press that OPENS an operation: the first after an arm, after a
         // restore, or after a Shift/middle commit. It is always off the
@@ -1084,24 +1093,21 @@ public:
         } else {
             totalMiss = true;
         }
-        if (totalMiss) {
-            // Total miss across every ENABLED bank (or none enabled) → HAUL via
-            // the Move bank's screen-plane drag (world-axis Offset), anchored at
-            // the gizmo center.
-            bool ctrl = (mods & KMOD_CTRL) != 0;
-            mv.beginScreenPlaneDragAt(e.x, e.y, xfrm.moveGizmoCenter(),
-                                      ctrl, /*notifyAcen=*/false, vts);
+        // An off-handle press — the Move bank's own (it arms at its pivot) or a
+        // miss of every enabled bank — HAULS the Offset on the auto work plane,
+        // linearised at the press's click-law point there, not at the handle
+        // (task 9450, capture K-D D2: residual 0.0006 vs 0.0198 at the handle).
+        immutable bool offHandlePress =
+            totalMiss || (picked == DragBank.Move && mv.lastClickWasOffGizmo);
+        if (offHandlePress) {
+            // The bank arms its grab at the point it is posed at; the handle
+            // stays where it is drawn (Q-pose).
+            import tools.create.create_common : screenToPlacementWorld;
+            immutable Vec3 handleAt = xfrm.moveGizmoCenter();
+            mv.beginScreenPlaneDragAt(e.x, e.y, screenToPlacementWorld(e.x, e.y, pvp),
+                                      (mods & KMOD_CTRL) != 0, /*notifyAcen=*/false, vts);
+            mv.handler.setPosition(handleAt);
             picked = DragBank.Move;
-        }
-
-        {
-            // The event's viewport — the one the banks just took.
-            Viewport pvp = cachedVp;
-            if (auto sp = vts.get!SubjectPacket()) pvp = sp.viewport;
-            Vec3 ro, rd;
-            screenPointToRay(e.x, e.y, pvp, ro, rd);
-            if (!rayPlaneIntersect(ro, rd, xfrm.moveGizmoCenter(), rd, pressPoint_))
-                pressPoint_ = xfrm.moveGizmoCenter();
         }
 
         // Symmetry side (gap 212/216): every OFF-HANDLE press re-latches it
@@ -1114,8 +1120,6 @@ public:
         // no gate on symmetry being on — a placement made with symmetry off
         // still latches). `symMirror_.pressSide` is only a COPY of A.
         readSymmetry(vts);
-        immutable bool offHandlePress =
-            (picked == DragBank.Move && mv.lastClickWasOffGizmo) || totalMiss;
         if (offHandlePress) {
             if (auto ac = liveAcenStage()) ac.notePlacementAt(pressPoint_);
             immutable int side = liveAuthoringSide();
