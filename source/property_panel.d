@@ -111,7 +111,7 @@ public:
     /// `renderParamsAsPanel()` returns false are skipped — those expose
     /// params() purely for the headless tool.attr path and own UI
     /// rendering via their drawProperties() override.
-    void draw(Tool tool, EditSession session, string toolId) {
+    void draw(Tool tool, EditSession session, string toolId = null) {
         if (tool is null) return;
         if (!tool.renderParamsAsPanel()) return;
         drawProvider(tool, session, toolId);

@@ -18,7 +18,7 @@
 // Families are collected and reported together so one run names every family
 // a mutation of the shared refusal reddens.
 //
-// Run via: ./run_test.d test_tool_attr_gate   (one block: VIBE3D_CELL=A1d|A1a|A1b|lsrows|ka3|families)
+// Run via: ./run_test.d test_tool_attr_gate   (one block: VIBE3D_CELL=A1d|A1a|A1b|lsrows|ka3|families|pf3)
 
 import http_client : getJson, postRawAllowingErrorStatus;
 import std.algorithm : canFind, splitter;
@@ -243,4 +243,42 @@ unittest {
     assert(failed.length == 0, format("disabled-row gate failed in %d families:\n  %-(%s\n  %)",
                                       failed.length, failed));
     writeln("PASS disabled-row refusal, 6 families");
+}
+
+// pf3 — rows the reference disables and ours enabled before task 9492 (K-A3
+// PF-3): box Radius Segments at a zero radius; Slice and Clone Angle Snap while
+// global snapping is off, and their Angle unless both are on. Each row is
+// refused in the disabling state and lands once the enabling line runs.
+unittest {
+    if (!cell("pf3")) return;
+    enum off = "tool.pipe.attr snap enabled false", on = "tool.pipe.attr snap enabled true";
+    struct Row { string tool, disable, attr, value, enable, expect; }
+    static immutable Row[] rows = [
+        Row("prim.cube", "tool.attr prim.cube radius 0", "segmentsR", "4",
+            "tool.attr prim.cube radius 0.1", "4"),
+        Row("mesh.sliceTool", off, "snap", "true", on, "true"),
+        Row("mesh.sliceTool", on ~ "|tool.attr mesh.sliceTool snap true|" ~ off,
+            "snapAngle", "30", on, "30.0"),
+        Row("mesh.clone", off, "snap", "true", on, "true"),
+        Row("mesh.clone", on ~ "|tool.attr mesh.clone snap true|" ~ off,
+            "snapAngle", "30", on, "30.0"),
+    ];
+    string[] failed;
+    size_t visited;
+    foreach (r; rows) {
+        arm(r.tool);
+        foreach (line; r.disable.splitter('|')) ok(line);
+        ++visited;
+        auto why = refusedDisabled(r.tool, r.attr, r.value);
+        if (why == "") {
+            ok(r.enable);
+            why = lands(r.tool, r.attr, r.value, r.expect);
+        }
+        if (why != "") failed ~= why;
+    }
+    ok(off);
+    assert(visited == 5, format("PF-3 rows visited %d, expected 5", visited));
+    assert(failed.length == 0, format("PF-3 rows failed in %d rows:\n  %-(%s\n  %)",
+                                      failed.length, failed));
+    writeln("PASS K-A3 PF-3 disabled rows");
 }

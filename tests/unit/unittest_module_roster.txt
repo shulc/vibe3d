@@ -495,6 +495,7 @@ tests.unit.thread_seam_census_http_test
 tests.unit.thread_seam_census_perf_test
 tests.unit.thread_seam_census_worker_test
 tests.unit.tool_activation_ownership_test
+tests.unit.tool_attr_bounds_test
 tests.unit.tool_commit_seam_census_g1_test
 tests.unit.tool_commit_seam_census_g2_test
 tests.unit.tool_commit_seam_census_g3_test
