@@ -30,7 +30,7 @@ import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import commands.mesh.gesture_payload : GesturePayload;
 import snapshot : MeshSnapshot;
-import tools.create.create_common : WorkplaneFrame, primitiveParameterFrame,
+import tools.create.create_common : WorkplaneFrame,
                               primitivePlacementFrame, screenToPlacementLocal,
                               planeLocalViewport,
                               mostFacingAxis,
@@ -590,7 +590,8 @@ public:
             baseAnchor = baseCentroid();
             setupHeightPlane();
             Vec3 hhit;
-            bool hhitOk = localCursorPlane(e.x, e.y, hpOrigin, hpn, hhit);
+            bool hhitOk = workplaneCursorPlaneHit(frame, cachedVp, e.x, e.y,
+                                                  hpOrigin, hpn, hhit);
             if (heightHHitIdx == 1) {
                 // Top handle: non-incremental drag; anchor so current height is preserved.
                 heightDragStart = hhitOk
@@ -663,7 +664,8 @@ public:
             if (ctrlAtClick) {
                 baseAnchor = boxCenter();
                 Vec3 hit;
-                if (!localCursorPlane(e.x, e.y, baseAnchor, planeNormal, hit))
+                if (!workplaneCursorPlaneHit(frame, cachedVp, e.x, e.y,
+                                             baseAnchor, planeNormal, hit))
                     return false;
                 Vec3  d = hit - baseAnchor;
                 float r = sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
@@ -683,7 +685,7 @@ public:
             setupHeightPlane();
             baseAnchor = baseCentroid();
             Vec3 hit;
-            if (localCursorPlane(e.x, e.y, hpOrigin, hpn, hit))
+            if (workplaneCursorPlaneHit(frame, cachedVp, e.x, e.y, hpOrigin, hpn, hit))
                 heightDragStart = hit;
             else
                 heightDragStart = hpOrigin;
@@ -822,7 +824,7 @@ public:
         if (heightHDragIdx >= 0 && state == BoxState.HeightSet) {
             params_ = dragRaw_;
             Vec3 hit;
-            if (localCursorPlane(e.x, e.y, hpOrigin, hpn, hit))
+            if (workplaneCursorPlaneHit(frame, cachedVp, e.x, e.y, hpOrigin, hpn, hit))
             {
                 if (heightHDragIdx == 1) {
                     // Top handle (non-incremental). Top follows cursor, base
@@ -919,7 +921,8 @@ public:
             // Center stays put.
             if (dragUniform) {
                 Vec3 hit;
-                if (localCursorPlane(e.x, e.y, baseAnchor, planeNormal, hit))
+                if (workplaneCursorPlaneHit(frame, cachedVp, e.x, e.y,
+                                            baseAnchor, planeNormal, hit))
                 {
                     // Snap the cursor's plane hit; cube radius then
                     // becomes the distance from baseAnchor to the
@@ -940,7 +943,7 @@ public:
                 return true;
             }
             Vec3 hit;
-            if (localCursorPlane(e.x, e.y, hpOrigin, hpn, hit))
+            if (workplaneCursorPlaneHit(frame, cachedVp, e.x, e.y, hpOrigin, hpn, hit))
             {
                 // Snap the height-drag hit too — useful for matching
                 // box top/bottom to an existing vertex's height.
@@ -1164,7 +1167,7 @@ public:
         // survives — matches the interactive Append convention), so the
         // workplane transform must apply ONLY to the newly-emitted
         // vertices, not the pre-existing ones.
-        frame = primitiveParameterFrame();
+        frame = primitivePlacementFrame();
         size_t firstNewVert = mesh.vertices.length;
         size_t firstNewFace = mesh.faces.length;
         buildCuboidParametric(mesh, params_);
@@ -1598,7 +1601,7 @@ private:
         // The construction axes are read off the PLANE-LOCAL view (§23, task
         // 7139): the channels are local, so the principal plane is too.
         placementFrame = primitivePlacementFrame();
-        frame = primitiveParameterFrame();
+        frame = placementFrame;
         Viewport lvp = planeLocalViewport(vp, placementFrame);
         Vec3 camBack = Vec3(lvp.view[2], lvp.view[6], lvp.view[10]);
         final switch (mostFacingAxis(camBack, Vec3(1, 0, 0),
@@ -1644,20 +1647,11 @@ private:
 
     // Where the camera IS, in local coords. Only `setupHeightPlane` wants
     // this — a point, not a ray — so it keeps the plain eye under both
-    // projections. Every cursor RAY goes through `localCursorPlane` instead:
+    // projections. Every cursor RAY goes through `workplaneCursorPlaneHit`:
     // pairing this apex with a screen direction is the perspective law, and
     // in an ortho cell it scales the answer by the camera distance (0661).
     Vec3 localEye() const {
         return transformPoint(frame.toLocal, cachedVp.eye);
-    }
-    /// The cursor ray at pixel (x, y) against a plane in LOCAL coords.
-    /// Ortho-aware — see `create_common.workplaneCursorPlaneHit`.
-    bool localCursorPlane(int x, int y, Vec3 planeOrigin, Vec3 planeNormal,
-                          out Vec3 hitLocal) const
-    {
-        return workplaneCursorPlaneHit(frame, cachedVp,
-                                       cast(float)x, cast(float)y,
-                                       planeOrigin, planeNormal, hitLocal);
     }
     Vec3 toWorldP(Vec3 p)  const { return transformPoint(frame.toWorld, p); }
     Vec3 toWorldD(Vec3 d)  const { return transformDir  (frame.toWorld, d); }

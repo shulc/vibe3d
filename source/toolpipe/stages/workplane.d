@@ -229,7 +229,7 @@ class WorkplaneStage : Stage, Operator {
     }
 
     /// Headless frame query — no viewport, no pipeline.evaluate(). This is
-    /// the single stage-owned answer `currentWorkplaneFrame` (tools/
+    /// the single stage-owned answer `primitivePlacementFrame` (tools/
     /// create_common.d) builds on: non-auto returns the live stored basis +
     /// center; auto returns the `WorkplanePacket.init` default (world XZ,
     /// origin 0) since the camera-facing pick has no meaning without a

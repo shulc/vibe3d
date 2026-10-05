@@ -14,7 +14,7 @@ import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
 import tools.create.create_common : pickWorkplaneFrame, WorkplaneFrame,
-                              mostFacingAxis,
+                              viewPrincipalAxis, axisUnit,
                               transformPoint, transformDir, snapLocalHit,
                               workplaneCursorPlaneHit;
 import toolpipe.packets : SnapType;
@@ -209,7 +209,8 @@ public:
         // Unproject click to local workplane coords.  The plane passes through
         // the frame origin (LOCAL 0) — same anchor as pen.d:267-268.
         Vec3 hit;
-        if (!localCursorPlane(e.x, e.y, Vec3(0, 0, 0), planeNormal_, hit))
+        if (!workplaneCursorPlaneHit(frame_, cachedVp_, e.x, e.y,
+                                     Vec3(0, 0, 0), planeNormal_, hit))
             return true;   // ray parallel to plane — ignore
 
         // Discrete snap (pen guide bits excluded so only mesh-element targets
@@ -266,19 +267,9 @@ public:
     {
         WorkplaneFrame f = pickWorkplaneFrame(cachedVp_);
 
-        // Approximate plane normal for preview: most-facing local axis,
-        // same logic as choosePlane_ but using the live camera without
-        // locking to a frame.
-        Vec3 camBack = Vec3(cachedVp_.view[2], cachedVp_.view[6],
-                            cachedVp_.view[10]);
-        Vec3 pn;
-        {
-            final switch (mostFacingAxis(camBack, f.axis1, f.normal, f.axis2)) {
-                case 0: pn = Vec3(1, 0, 0); break;
-                case 1: pn = Vec3(0, 1, 0); break;
-                case 2: pn = Vec3(0, 0, 1); break;
-            }
-        }
+        // Preview plane: the most-facing local axis, as choosePlane_, read
+        // off the live camera without locking to a frame.
+        Vec3 pn = axisUnit(viewPrincipalAxis(f, cachedVp_));
         Vec3 hit;
         if (workplaneCursorPlaneHit(f, cachedVp_, cast(float)e.x, cast(float)e.y,
                                     Vec3(0, 0, 0), pn, hit)) {
@@ -298,25 +289,7 @@ private:
     // planeNormal_ is set in LOCAL workplane space (one of ±X/Y/Z unit axes).
     void choosePlane_(const ref Viewport vp) {
         frame_ = pickWorkplaneFrame(vp);
-        Vec3 camBack = Vec3(vp.view[2], vp.view[6], vp.view[10]);
-        final switch (mostFacingAxis(camBack, frame_.axis1, frame_.normal, frame_.axis2)) {
-            case 0: planeNormal_ = Vec3(1, 0, 0); break;
-            case 1: planeNormal_ = Vec3(0, 1, 0); break;
-            case 2: planeNormal_ = Vec3(0, 0, 1); break;
-        }
-    }
-
-    /// The cursor ray at pixel (x, y) against a plane in LOCAL coords.
-    /// Ortho-aware — see `create_common.workplaneCursorPlaneHit`. The
-    /// `localEye_()`/`localRay_()` pair this replaces was the perspective law
-    /// and put the placed vertex at the camera distance times the intended
-    /// offset in every ortho cell (task 0661).
-    bool localCursorPlane(int x, int y, Vec3 planeOrigin, Vec3 planeNormal,
-                          out Vec3 hitLocal) const
-    {
-        return workplaneCursorPlaneHit(frame_, cachedVp_,
-                                       cast(float)x, cast(float)y,
-                                       planeOrigin, planeNormal, hitLocal);
+        planeNormal_ = axisUnit(viewPrincipalAxis(frame_, vp));
     }
 }
 

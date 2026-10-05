@@ -13,7 +13,7 @@ import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
-import tools.create.create_common : currentWorkplaneFrame, WorkplaneFrame, transformPoint;
+import tools.create.create_common : primitivePlacementFrame, WorkplaneFrame, transformPoint;
 import editmode : EditMode;
 import prepared_tool_effect : PreparedToolStateDelta, PreparedToolStateKind;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
@@ -229,7 +229,7 @@ public:
     override void evaluate() {}
 
     override bool applyHeadless() {
-        frame = currentWorkplaneFrame();
+        frame = primitivePlacementFrame();
         size_t firstNewVert = mesh.vertices.length;
         buildArc(mesh, params_);
         applyFrameToMeshRange(mesh, firstNewVert);
@@ -255,7 +255,7 @@ public:
             // Commit: append arc into scene mesh + record undo.
             if (params_.radius > 1e-6f) {
                 MeshSnapshot pre = MeshSnapshot.capture(*mesh);
-                frame = currentWorkplaneFrame();
+                frame = primitivePlacementFrame();
                 size_t firstNewVert = mesh.vertices.length;
                 buildArc(mesh, params_);
                 applyFrameToMeshRange(mesh, firstNewVert);

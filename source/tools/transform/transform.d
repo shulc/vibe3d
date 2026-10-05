@@ -1874,11 +1874,10 @@ protected:
         import toolpipe.pipeline           : g_pipeCtx;
         import toolpipe.stages.actcenter   : ActionCenterStage;
         import toolpipe.stage              : TaskCode;
-        import tools.create.create_common         : currentWorkplaneFrame, mostFacingAxis,
-                                                    primitiveParameterFrame;
+        import tools.create.create_common         : primitivePlacementFrame, mostFacingAxis;
         import tools.transform.relocate_plane     : RelocatePlanePrefs, principalPlaneCenter;
         import viewgrid : g_viewGrid, viewWorldPerPixel, relocateQuantum,
-                          viewGridSize, viewGridSubStep;
+                          viewVectorQuantum;
         import math : rayPlaneIntersect, screenPointToRay, isOrtho;
         Vec3 crHitOrig, dir;
         screenPointToRay(cast(float)sx, cast(float)sy, cachedVp, crHitOrig, dir);
@@ -1892,9 +1891,8 @@ protected:
         final switch (mode) {
             case ActionCenterStage.Mode.Auto:
             case ActionCenterStage.Mode.None: {
-                // currentWorkplaneFrame() reads WorkplaneStage state directly
-                // (no pipeline.evaluate, no re-entrancy).
-                auto wf = currentWorkplaneFrame();
+                // Reads WorkplaneStage state directly (no pipeline.evaluate).
+                auto wf = primitivePlacementFrame();
 
                 // --- ORTHOGRAPHIC: THE VIEW PLANE THROUGH THE PRIOR CENTRE. ---
                 //
@@ -1913,8 +1911,7 @@ protected:
                     import tools.create.create_common : planeLocalViewport;
                     import tools.transform.relocate_plane : orthoRelocateThroughPrior;
                     import math : transformPoint;
-                    auto frame = primitiveParameterFrame();   // world identity unless pinned
-                    Viewport l = planeLocalViewport(cachedVp, frame);
+                    Viewport l = planeLocalViewport(cachedVp, wf);
                     Vec3 o, d;
                     screenPointToRay(cast(float)sx, cast(float)sy, l, o, d);
                     Vec3 prior = cachedVp.focus;
@@ -1922,14 +1919,12 @@ protected:
                         if (auto ac = cast(ActionCenterStage)
                                       g_pipeCtx.pipeline.findByTask(TaskCode.Acen))
                             prior = ac.currentCenter();
-                    immutable float px = viewWorldPerPixel(cachedVp);
-                    immutable float snap =
-                        viewGridSubStep(px, viewGridSize(px, g_viewGrid), g_viewGrid);
                     Vec3 cl;
                     if (!orthoRelocateThroughPrior(l, o, d,
-                            transformPoint(frame.toLocal, prior), snap, cl))
+                            transformPoint(wf.toLocal, prior),
+                            viewVectorQuantum(cachedVp), cl))
                         return false;
-                    worldHit = transformPoint(frame.toWorld, cl);
+                    worldHit = transformPoint(wf.toWorld, cl);
                     return true;
                 }
 
@@ -2002,9 +1997,7 @@ protected:
                 // Sub-pixel by construction: at most half a screen pixel of
                 // world, and it cannot disturb the quantum above, which is
                 // always a whole number of sub-steps.
-                prefs.viewSnapStep =
-                    viewGridSubStep(_relPx, viewGridSize(_relPx, g_viewGrid),
-                                    g_viewGrid);
+                prefs.viewSnapStep = viewVectorQuantum(cachedVp);
                 int usedAxis;
                 return principalPlaneCenter(cachedVp, crHitOrig, dir,
                                             argmaxAxis, prefs,

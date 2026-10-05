@@ -25,7 +25,7 @@ import eventlog : queryMouse;
 import handler : BoxHandler, FullCircleHandler, ToolHandles, gizmoSize, getGizmoPixels, drawWorldSegment, drawWorldQuad;
 import viewport_scheme : schemeColor, SchemeColor;
 import document : primaryModelSpace;
-import tools.create.create_common : currentWorkplaneFrame, pickWorkplaneFrame, WorkplaneFrame;
+import tools.create.create_common : primitivePlacementFrame, pickWorkplaneFrame, WorkplaneFrame;
 import tools.slice.slice_tool;
 
 // ---------------------------------------------------------------------------

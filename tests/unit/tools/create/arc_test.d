@@ -14,7 +14,7 @@ import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
-import tools.create.create_common : currentWorkplaneFrame, WorkplaneFrame, transformPoint;
+import tools.create.create_common : primitivePlacementFrame, WorkplaneFrame, transformPoint;
 import editmode : EditMode;
 import std.math : sin, cos, PI;
 import tools.create.arc;

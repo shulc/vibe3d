@@ -72,6 +72,19 @@ int mostFacingAxis(Vec3 camBack, Vec3 a, Vec3 b, Vec3 c) {
     else                            return 2;
 }
 
+/// The index of `f`'s axis most facing `vp`'s camera (0 = axis1 / local X,
+/// 1 = normal / local Y, 2 = axis2 / local Z): the local principal plane a
+/// placement on `f` takes (task 9408).
+int viewPrincipalAxis(in WorkplaneFrame f, const ref Viewport vp) {
+    return mostFacingAxis(Vec3(vp.view[2], vp.view[6], vp.view[10]),
+                          f.axis1, f.normal, f.axis2);
+}
+
+/// The unit local axis `k` (0 = X, 1 = Y, 2 = Z).
+Vec3 axisUnit(int k) {
+    return Vec3(k == 0 ? 1 : 0, k == 1 ? 1 : 0, k == 2 ? 1 : 0);
+}
+
 /// Select the build plane based on which world axis the camera is most
 /// directly facing. Examines the view matrix's third row (forward vector)
 /// and picks the world-aligned plane whose normal is closest to the camera's
@@ -178,65 +191,26 @@ WorkplaneFrame pickWorkplaneFrame(const ref Viewport vp) {
     return f;
 }
 
-/// The default construction frame: world XZ plane, normal +Y, origin 0,
-/// isAuto=true. This is the ONE fallback identity — used whenever the
-/// stage can't be consulted (no pipe) or is itself in auto mode (there is
-/// no headless equivalent of the camera-facing pick — see
-/// `currentWorkplaneFrame`'s doc comment).
+/// The world identity frame (world XZ, normal +Y, origin 0, isAuto) — the
+/// auto / no-pipe answer of `primitivePlacementFrame`.
 private WorkplaneFrame worldXZFrame() {
     return frameFromBasis(Vec3(0, 1, 0), Vec3(1, 0, 0), Vec3(0, 0, 1),
                            Vec3(0, 0, 0), true);
 }
 
-/// Build a WorkplaneFrame from a WorkplanePacket (stage state or its
-/// default). Shared by `currentWorkplaneFrame`'s stage-found path.
-private WorkplaneFrame frameFromPacket(const WorkplanePacket p) {
-    return frameFromBasis(p.normal, p.axis1, p.axis2, p.center, p.isAuto);
-}
-
-/// The frame accessor used by every plane-consuming tool: the `applyHeadless`
-/// of all 8 interactive Create-tools (sphere/cone/box/tube/torus/cylinder/
-/// capsule + arc), the interactive commit at `arc.d:317`, and the
-/// ACEN.Auto relocate in `transform.d` (`computeClickRelocateHitRaw`) all
-/// call this — it is a live production path, not a headless-only shim. The
-/// relocate reads its `isAuto` flag and the pinned plane; in perspective it
-/// takes its auto-mode plane NORMAL from `mostFacingAxis` directly, and in
-/// ortho it keeps the pre-press centre's depth instead (gap 364, task 7134),
-/// so no focus plane is involved there. `WorkplaneStage` is the
-/// single owner of the answer:
-///   - auto  ⇒ the `WorkplanePacket.init` default (world XZ, origin 0) —
-///     there is no headless equivalent of the camera-facing pick THROUGH
-///     THIS ACCESSOR, because it deliberately avoids `pipeline.evaluate`
-///     (re-entrancy risk on tool event-handling paths — see
-///     doc/acen_auto_port_plan.md Risk 3). A caller that needs the live
-///     camera-facing axis in auto mode (the ACEN.Auto relocate) reads it
-///     from a separate, pure `pickMostFacingPlane(vp)` call instead of
-///     from this accessor's auto branch.
-///   - non-auto ⇒ the stage's live basis + center.
-/// `g_pipeCtx is null` or the stage can't be found ⇒ the same world-XZ
-/// default (the one fallback identity, `worldXZFrame`).
-WorkplaneFrame currentWorkplaneFrame() {
-    if (g_pipeCtx is null) return worldXZFrame();
-    if (auto wp = cast(WorkplaneStage)g_pipeCtx.pipeline.findByTask(TaskCode.Work))
-        return frameFromPacket(wp.currentState());
-    return worldXZFrame();
-}
-
-/// The frame in which primitive parameters are interpreted. The automatic
-/// workplane is the unit world frame for numeric parameters; a pinned
-/// workplane keeps the stage's stored frame. This is intentionally separate
-/// from `pickWorkplaneFrame`: cursor placement still uses its camera-facing
-/// plane and focus origin.
-WorkplaneFrame primitiveParameterFrame() {
-    WorkplaneFrame f = currentWorkplaneFrame();
-    return f.isAuto ? worldXZFrame() : f;
-}
-
-/// The frame a primitive's placement GESTURE works in: the same frame the
-/// generator maps the channels through (auto: the world identity; pinned: the
-/// stage's frame), because the channels ARE plane-local. §23, task 7139.
+/// The ONE parameter frame (task 9408): primitive channels, placement gestures,
+/// the `applyHeadless` builds, arc, slice headless, the relocate and
+/// `screenToConstructionPlane` all read it. Auto, no pipe or no stage ⇒ the
+/// world identity (§10, §23); pinned ⇒ the stage's stored basis + centre. It
+/// reads the stage, never `pipeline.evaluate` (re-entrancy on event paths,
+/// doc/acen_auto_port_plan.md Risk 3); the live camera-facing basis is
+/// `pickWorkplaneFrame`'s.
 WorkplaneFrame primitivePlacementFrame() {
-    return primitiveParameterFrame();
+    auto wp = g_pipeCtx is null ? null
+            : cast(WorkplaneStage)g_pipeCtx.pipeline.findByTask(TaskCode.Work);
+    if (wp is null || wp.isAuto) return worldXZFrame();
+    const p = wp.currentState();
+    return frameFromBasis(p.normal, p.axis1, p.axis2, p.center);
 }
 
 /// The view re-expressed in `frame`'s LOCAL space: every read a gesture makes
@@ -265,9 +239,8 @@ Vec3 screenToPlacementLocal(float sx, float sy, const ref Viewport vp,
 {
     Viewport l = planeLocalViewport(vp, frame);
     Vec3 camBack = Vec3(l.view[2], l.view[6], l.view[10]);
-    axisLocal = mostFacingAxis(camBack, Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1));
-    Vec3 normal = Vec3(axisLocal == 0 ? 1 : 0, axisLocal == 1 ? 1 : 0,
-                       axisLocal == 2 ? 1 : 0);
+    axisLocal = viewPrincipalAxis(frame, vp);
+    Vec3 normal = axisUnit(axisLocal);
     Vec3 o, d, hit;
     screenPointToRay(sx, sy, l, o, d);
     if (rayPlaneIntersect(o, d, l.focus, normal, hit)) return hit;
@@ -385,7 +358,7 @@ enum ConstructionPlaneMode {
 Vec3 screenToConstructionPlane(float sx, float sy, const ref Viewport vp,
                                ConstructionPlaneMode mode)
 {
-    WorkplaneFrame wf = currentWorkplaneFrame();
+    WorkplaneFrame wf = primitivePlacementFrame();
     Vec3 planeOrigin = wf.isAuto ? vp.focus : wf.origin;
     Vec3 planeNormal = wf.isAuto ? pickMostFacingPlane(vp).normal : wf.normal;
 

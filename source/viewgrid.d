@@ -370,6 +370,13 @@ float viewWorldPerPixel(const ref Viewport vp) @safe pure nothrow @nogc {
     return 0.8f * dist / focalPx;
 }
 
+/// The view's vector-snap quantum: `viewGridSubStep` at this view's pixel
+/// size under `g_viewGrid` — the step a world vector is rounded to.
+float viewVectorQuantum(const ref Viewport vp) {
+    immutable float px = viewWorldPerPixel(vp);
+    return viewGridSubStep(px, viewGridSize(px, g_viewGrid), g_viewGrid);
+}
+
 /// The grid step for a view, end to end. The renderer's one call.
 float viewGridSizeFor(const ref Viewport vp, const ref ViewGridPrefs p)
         @safe pure nothrow @nogc {

@@ -42,9 +42,8 @@ import mesh_gpu : GpuUploadOwner;
 import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
 import core.stdc.string : memcmp;
 import tools.transform.relocate_plane : vectorSnap;
-import tools.create.create_common : primitiveParameterFrame, transformDir;
-import viewgrid : g_viewGrid, viewWorldPerPixel, viewGridSize,
-    viewGridSubStep;
+import tools.create.create_common : primitivePlacementFrame, transformDir;
+import viewgrid : g_viewGrid, viewVectorQuantum;
 
 version (unittest) {
     private enum PolyDragPressStage { upstreamB0, jacobianInput }
@@ -676,7 +675,7 @@ private:
         dragBaseShift = downExtent;
         dragOverlay = OverlaySpace.ofPrimary();
 
-        auto frame = primitiveParameterFrame();
+        auto frame = primitivePlacementFrame();
         extentFrameX = dragOverlay.toLocalDelta(
             transformDir(frame.toWorld, Vec3(1, 0, 0)));
         extentFrameY = dragOverlay.toLocalDelta(
@@ -692,9 +691,7 @@ private:
                                     ax.dir, ay.dir, az.dir))
             return false;
 
-        const float px = viewWorldPerPixel(dragVp);
-        dragSnapStep = viewGridSubStep(px,
-            viewGridSize(px, g_viewGrid), g_viewGrid);
+        dragSnapStep = viewVectorQuantum(dragVp);
         dragUpstreamBase = vectorSnap(rawHit, dragSnapStep);
         const Vec3 jacobianInput = dragUpstreamBase;
         version (unittest) {

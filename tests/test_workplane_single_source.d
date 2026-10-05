@@ -2,9 +2,9 @@
 // already pinned by test_commands_workplane.d / test_acen_auto_relocate.d /
 // test_primitive_box_interactive.d:
 //
-//   A. Headless no-pipe: currentWorkplaneFrame() returns the world-XZ
+//   A. Headless no-pipe: primitivePlacementFrame() returns the world-XZ
 //      default (the one fallback identity).
-//   B. Non-auto: currentWorkplaneFrame() reads the live WorkplaneStage
+//   B. Non-auto: primitivePlacementFrame() reads the live WorkplaneStage
 //      basis + center through the stage-owned accessor (no g_pipeCtx-side
 //      identity block left to diverge from it) — and tracks a live edit.
 //   C. Non-auto mover center-drag (dragAxis==3) stays live under an oblique
@@ -38,7 +38,7 @@ import std.net.curl : get, post;
 // to run_test.d's compile-mode detector (isSourceBackedTest scans for a
 // leading `import toolpipe.`/`tools.` line), so it gets linked against the
 // full project instead of the bare-path std-only compile line.
-import tools.create.create_common       : currentWorkplaneFrame;
+import tools.create.create_common       : primitivePlacementFrame;
 import toolpipe.pipeline         : g_pipeCtx, ToolPipeContext;
 import toolpipe.stages.workplane : WorkplaneStage;
 
@@ -56,7 +56,7 @@ private bool approxV(M.Vec3 a, M.Vec3 b, float eps = 1e-5f) {
 
 unittest { // A: headless no-pipe -> world-XZ default
     g_pipeCtx = null;   // this process never runs app.d's init — defensive
-    auto f = currentWorkplaneFrame();
+    auto f = primitivePlacementFrame();
     assert(f.isAuto, "no-pipe frame must report isAuto=true");
     assert(approxV(f.normal, M.Vec3(0, 1, 0)), "no-pipe normal should be +Y");
     assert(approxV(f.axis1,  M.Vec3(1, 0, 0)), "no-pipe axis1 should be +X");
@@ -79,7 +79,7 @@ unittest { // B: non-auto -> stage's live basis + center, via the stage accessor
     bool ok  = wp.setAttr("mode", "worldX");   // isAuto=false, rotation=(0,0,-90)
     assert(ok, "setAttr mode worldX should be accepted");
 
-    auto f = currentWorkplaneFrame();
+    auto f = primitivePlacementFrame();
     M.Vec3 en, ea1, ea2;
     wp.currentBasis(en, ea1, ea2);
 
@@ -92,7 +92,7 @@ unittest { // B: non-auto -> stage's live basis + center, via the stage accessor
     // A second edit (offset) must be visible immediately — proves the
     // accessor reads LIVE state, not a value captured at add()-time.
     wp.offsetBy(0, 0.7f);
-    auto f2 = currentWorkplaneFrame();
+    auto f2 = primitivePlacementFrame();
     assert(approxV(f2.origin, M.Vec3(0.7f, 0, 0)),
         "frame.origin must track a live stage edit");
 }

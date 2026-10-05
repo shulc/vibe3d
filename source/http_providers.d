@@ -288,7 +288,7 @@ import viewport : LayoutPreset;
 // Phase-B additions beyond editor_app.d's mirrored surface: the moved block
 // also reads these module-level symbols (app.d imports them at its own top
 // level / locally in main()).
-import viewgrid : g_viewGrid, viewGridSize, viewGridSubStep, viewWorldPerPixel,
+import viewgrid : g_viewGrid, viewGridSize, viewVectorQuantum, viewWorldPerPixel,
     viewGridFadeRadius, kGridMaskMin, kGridMaskMax, gridRungs;
 import display_state : CavityState, CompositePlan, DisplayState, DisplayStyle,
     DrawPlan, WireOverlay, resolveDrawPlan;
@@ -1109,7 +1109,7 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
             static string gridJson(const ref Viewport gv) {
                 immutable float px = viewWorldPerPixel(gv);
                 immutable float gs = viewGridSize(px, g_viewGrid);
-                immutable float ss = viewGridSubStep(px, gs, g_viewGrid);
+                immutable float ss = viewVectorQuantum(gv);
                 // `fadeRadius` is read through the same function the draw
                 // site calls, not recomputed here — a reporter with its own
                 // copy of a formula is how a dump starts lying.

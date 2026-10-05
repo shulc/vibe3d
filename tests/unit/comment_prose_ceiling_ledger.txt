@@ -9,7 +9,7 @@
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
 source-files 588
-task-citation-lines 5262
+task-citation-lines 5261
 citing-files 454
 long-comment-runs 269
 files-with-long-runs 144
@@ -384,7 +384,7 @@ allow source/tools/create/primitive_create_tool.d 23
 allow source/tools/create/sphere.d 17
 allow source/tools/create/torus.d 5
 allow source/tools/create/tube.d 3
-allow source/tools/create/vertex_place.d 4
+allow source/tools/create/vertex_place.d 3
 allow source/tools/deform/bend.d 3
 allow source/tools/deform/magnet.d 7
 allow source/tools/deform/push.d 3

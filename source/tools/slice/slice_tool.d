@@ -25,7 +25,7 @@ import eventlog : queryMouse;
 import handler : BoxHandler, FullCircleHandler, ToolHandles, gizmoSize, getGizmoPixels, drawWorldSegment, drawWorldQuad;
 import viewport_scheme : schemeColor, SchemeColor;
 import document : primaryModelSpace;
-import tools.create.create_common : currentWorkplaneFrame, pickWorkplaneFrame, WorkplaneFrame;
+import tools.create.create_common : primitivePlacementFrame, pickWorkplaneFrame, WorkplaneFrame;
 // Reuse MoveTool's dominant-axis selector for the Ctrl axis-constraint (task
 // 0286): the SAME screen-direction → world-axis math the Move gizmo's Ctrl lock
 // uses, so Slice's Ctrl constraint is byte-consistent with Move's, not reinvented.
@@ -1607,7 +1607,7 @@ public:
     // Headless apply (tool.doApply / HTTP). Builds the plane from the current
     // start/end + the DEFAULT construction plane's normal (world XZ ⇒ +Y in
     // `--test`, deterministic — the camera-facing auto pick has no headless
-    // equivalent, see create_common.currentWorkplaneFrame) and cuts. Must NOT
+    // equivalent, see create_common.primitivePlacementFrame) and cuts. Must NOT
     // snapshot itself — ToolDoApplyCommand wraps this with its own snapshot
     // pair and IS the undo entry. A single clean cut (no baseline restore —
     // headless never leaves a preview on the mesh), byte-for-byte the S0 path.
@@ -1617,7 +1617,7 @@ public:
         // (and the clip span) is built. Headless has no drag context, so the
         // snap pivots about Start and rotates End — the deterministic convention.
         // A local copy leaves the driven start_/end_ params untouched.
-        WorkplaneFrame wf = currentWorkplaneFrame();
+        WorkplaneFrame wf = primitivePlacementFrame();
         Vec3 sStart = start_, sEnd = end_;
         if (snap_)
             sEnd = snapLineEndpointToAngle(sStart, sEnd, wf.axis1, wf.axis2, snapAngle_);
@@ -2237,10 +2237,10 @@ private:
     // The work-plane normal the interactive path builds the cut plane from.
     // Uses the live workplane frame (respects a user-set non-auto workplane);
     // pickWorkplaneFrame needs a viewport, so fall back to the pipe default
-    // (currentWorkplaneFrame) when none was cached yet.
+    // (primitivePlacementFrame) when none was cached yet.
     Vec3 cachedWorkplaneNormal() {
         if (vpWorld_.width > 0) return pickWorkplaneFrame(vpWorld_).normal;
-        return currentWorkplaneFrame().normal;
+        return primitivePlacementFrame().normal;
     }
 
     // --- Frozen cut-plane orientation (owner fixes 3 + 4, task 0284) ---------
@@ -2308,7 +2308,7 @@ private:
     // source as cachedWorkplaneNormal).
     void cachedWorkplaneAxes(out Vec3 a1, out Vec3 a2) {
         WorkplaneFrame wf = vpWorld_.width > 0 ? pickWorkplaneFrame(vpWorld_)
-                                               : currentWorkplaneFrame();
+                                               : primitivePlacementFrame();
         a1 = wf.axis1;
         a2 = wf.axis2;
     }

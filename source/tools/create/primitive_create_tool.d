@@ -82,7 +82,7 @@ import mesh_gpu : GpuCreateOwner, GpuUploadOwner, GpuResourceOwner;
 import command_history : PreparedHistoryKind;
 import document : Layer;
 import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
-import tools.create.create_common : WorkplaneFrame, primitiveParameterFrame,
+import tools.create.create_common : WorkplaneFrame,
                               primitivePlacementFrame, screenToPlacementLocal,
                               planeLocalViewport,
                               mostFacingAxis, transformPoint, transformDir, snapLocalHit,
@@ -482,7 +482,7 @@ public:
     /// STATE-aware and would silently emit a flat ellipse fan headlessly
     /// (state == Idle at headless-call time) if routed through here.
     override bool applyHeadless() {
-        frame = primitiveParameterFrame();
+        frame = primitivePlacementFrame();
         appendBuildInto();
         return true;
     }
@@ -550,7 +550,7 @@ protected:
         // The construction axes are read off the PLANE-LOCAL view (§23, task
         // 7139): the channels are local, so the principal plane is too.
         placementFrame = primitivePlacementFrame();
-        frame = primitiveParameterFrame();
+        frame = placementFrame;
         Viewport lvp = planeLocalViewport(vp, placementFrame);
         Vec3 camBack = Vec3(lvp.view[2], lvp.view[6], lvp.view[10]);
         final switch (mostFacingAxis(camBack, Vec3(1, 0, 0),
@@ -576,19 +576,10 @@ protected:
     // ---- Local <-> world helpers (workplane refactor) ---------------------
     // Where the camera IS, in local coords. Only `setupHeightPlane` wants
     // this — a point, not a ray. Every cursor RAY goes through
-    // `localCursorPlane` instead: pairing this apex with a screen direction
+    // `workplaneCursorPlaneHit`: pairing this apex with a screen direction
     // is the perspective law, and in an ortho cell it scales the answer by
     // the camera distance (task 0661).
     Vec3 localEye() const { return transformPoint(frame.toLocal, cachedVp.eye); }
-    /// The cursor ray at pixel (x, y) against a plane in LOCAL coords.
-    /// Ortho-aware — see `create_common.workplaneCursorPlaneHit`.
-    bool localCursorPlane(int x, int y, Vec3 planeOrigin, Vec3 planeNormal,
-                          out Vec3 hitLocal) const
-    {
-        return workplaneCursorPlaneHit(frame, cachedVp,
-                                       cast(float)x, cast(float)y,
-                                       planeOrigin, planeNormal, hitLocal);
-    }
     Vec3 toWorldP(Vec3 p) const { return transformPoint(frame.toWorld, p); }
     Vec3 toWorldD(Vec3 d) const { return transformDir  (frame.toWorld, d); }
     Vec3 toLocalD(Vec3 d) const { return transformDir  (frame.toLocal, d); }
@@ -1071,7 +1062,8 @@ public:
             if (ctrlAtClick) {
                 baseAnchor = center();
                 Vec3 hit;
-                if (!localCursorPlane(e.x, e.y, baseAnchor, planeNormal, hit))
+                if (!workplaneCursorPlaneHit(frame, cachedVp, e.x, e.y,
+                                             baseAnchor, planeNormal, hit))
                     return false;
                 Vec3  d = hit - baseAnchor;
                 float r = sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
@@ -1086,7 +1078,7 @@ public:
             setupHeightPlane();
             baseAnchor = center();
             Vec3 hit;
-            if (localCursorPlane(e.x, e.y, hpOrigin, hpn, hit))
+            if (workplaneCursorPlaneHit(frame, cachedVp, e.x, e.y, hpOrigin, hpn, hit))
                 heightDragStart = hit;
             else
                 heightDragStart = hpOrigin;
@@ -1154,7 +1146,8 @@ public:
         if (state == RadialState.DrawingHeight) {
             if (dragUniform) {
                 Vec3 hit;
-                if (localCursorPlane(e.x, e.y, baseAnchor, planeNormal, hit))
+                if (workplaneCursorPlaneHit(frame, cachedVp, e.x, e.y,
+                                            baseAnchor, planeNormal, hit))
                 {
                     lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
                                              *mesh, EditMode.Vertices);
@@ -1172,7 +1165,7 @@ public:
                 return true;
             }
             Vec3 hit;
-            if (localCursorPlane(e.x, e.y, hpOrigin, hpn, hit))
+            if (workplaneCursorPlaneHit(frame, cachedVp, e.x, e.y, hpOrigin, hpn, hit))
             {
                 lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
                                          *mesh, EditMode.Vertices);

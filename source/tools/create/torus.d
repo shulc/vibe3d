@@ -11,7 +11,8 @@ import handler : gizmoSize;
 import shader : LitShader;
 import tools.create.primitive_create_tool : HandledCreateTool;
 import tools.create.create_common :
-                                    screenToPlacementLocal, snapLocalHit;
+                                    screenToPlacementLocal, snapLocalHit,
+                                    workplaneCursorPlaneHit;
 import editmode : EditMode;
 import snap_render : publishLastSnap;
 
@@ -249,7 +250,7 @@ public:
         if (state == TorusState.MajorSet) {
             setupHeightPlane();
             Vec3 hit;
-            if (localCursorPlane(e.x, e.y, hpOrigin, hpn, hit))
+            if (workplaneCursorPlaneHit(frame, cachedVp, e.x, e.y, hpOrigin, hpn, hit))
                 heightDragStart = hit;
             else
                 heightDragStart = hpOrigin;
@@ -310,7 +311,7 @@ public:
         }
         if (state == TorusState.DrawingMinor) {
             Vec3 hit;
-            if (localCursorPlane(e.x, e.y, hpOrigin, hpn, hit))
+            if (workplaneCursorPlaneHit(frame, cachedVp, e.x, e.y, hpOrigin, hpn, hit))
             {
                 lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
                                          *mesh, EditMode.Vertices);
