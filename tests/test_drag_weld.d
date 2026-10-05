@@ -62,8 +62,11 @@ Viewport frontView(float fx, float fy) {
     return viewportFromCamera(cam);
 }
 
+/// Snapping on with every global snap type OFF, as captured (the weld search
+/// is the tool's own vertex query); off restores the shipped types.
 void snapState(bool on) {
     ok("tool.pipe.attr snap enabled " ~ (on ? "true" : "false"));
+    ok(on ? `tool.pipe.attr snap types ""` : "tool.pipe.attr snap types vertex");
     ok("tool.pipe.attr snap innerRange 24");
 }
 
