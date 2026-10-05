@@ -46,8 +46,7 @@ import drag_helpers : Vec3, Viewport, buildDragLog, fetchCamera, fetchSnapLast,
 import http_client : getJson, postJson;
 import http_command_helpers : commandBody;
 import pen_rig_helpers;
-import std.algorithm : canFind, startsWith;
-import std.string : indexOf;
+import std.algorithm : canFind;
 import std.format : format;
 import std.json : JSONType, JSONValue, parseJSON;
 import std.math : abs, round, sqrt;
@@ -482,25 +481,8 @@ unittest {
     snap(null);
     assert(ran == 69, format("pen merge population: %s cells ran, pinned 69", ran));
 
-    // Blocked cells (kBlocked) must still fail; one that passes retires its mark.
-    assert(kBlocked.length == 3, format("blocked marks: %s, pinned 3", kBlocked.length));
-    string[] open, retired;
-    foreach (f; fails)
-        if (!(f[0 .. f.indexOf(':')] in kBlocked)) open ~= f;
-    foreach (cell, why; kBlocked)
-        if (!fails.canFind!(f => f.startsWith(cell ~ ":")))
-            retired ~= cell ~ " (" ~ why ~ ")";
-    assert(retired.length == 0, format("blocked cells now pass, retire their marks: %-(%s, %)",
-                                       retired));
-    assert(open.length == 0, format("pen merge, %s failing: %-(%s\n%)", open.length, open));
+    assert(fails.length == 0, format("pen merge, %s failing: %-(%s\n%)", fails.length, fails));
 }
-
-// Blocked cells (task 9362 card): they run and must still differ.
-//   F3 the grid snap does not yet place the pen's point on the view's grid
-//      node (each grid cell first asserts the click snapped to G).
-private immutable string[string] kBlocked = [
-    "merge_grid_far": "F3", "merge_grid_near": "F3", "merge_grid_from_placed": "F3",
-];
 
 // ---- cell bodies ----------------------------------------------------------
 

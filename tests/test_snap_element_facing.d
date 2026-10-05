@@ -115,6 +115,13 @@ private void expectAt(JSONValue sr, double[3] want, double tolXZ, string cell) {
 }
 
 
+/// The pen armed with merge off: every K-B7 pen cell was captured so, and
+/// cell 23's subject is the placement, not the merge.
+private void penMerge0() {
+    penCommand("tool.set pen on");
+    penCommand("tool.attr pen merge false");
+}
+
 /// One Move drag of the selection from the pixel of `from` to the pixel of
 /// `to` in `steps` motion events (the tool must be armed).
 private void moveDrag(Vec3 from, Vec3 to, int steps) {
@@ -208,8 +215,9 @@ private void gridCells() {
     }
 }
 
-/// Cells 15–22 (+ 17b), `cells_k_b7`. Rig as K-B7's: top ortho, 440 px/m
-/// unless stated, all values captured; slow drags are ≤ 4 px per event.
+/// Cells 15–22 (+ 17b), `cells_k_b7`, and 23 (ours). Rig as K-B7's: top
+/// ortho, 440 px/m unless stated, all values captured; slow drags are ≤ 4 px
+/// per event.
 private void gridLawCells() {
     // 15 move-grid-low (G4): the quad at y 0.4; q's free drag to the pixel of
     // (0.1252, ·, 0.1952) in 35 events of ≤ 4 px (as captured) lands on the
@@ -231,7 +239,7 @@ private void gridLawCells() {
     // y 0.5; the two far clicks land at y 0.5 too.
     {
         rig(`{"vertices":[[0.805,0.5,0.8]],"faces":[]}`, Vec3(0.25f, 1, 0.45f));
-        penCommand("tool.set pen on");
+        penMerge0();
         snapTypes("vertex,grid");
         clickPixels(worldPixel(Vec3(0.805f, 0.5f, 0.8f)),
                     worldPixel(Vec3(0.1252f, 0.5f, 0.1952f)),
@@ -260,7 +268,7 @@ private void gridLawCells() {
     {
         enum double kPpm6 = 123.0;
         rig("", Vec3(0.07f, 1, 0), kPpm6);
-        penCommand("tool.set pen on");
+        penMerge0();
         snapTypes("grid");
         const step = viewStep();
         const Vec3 ptr = Vec3(0.24f, 1, 0.26f), node = Vec3(0, 1, 0.5f);
@@ -286,7 +294,7 @@ private void gridLawCells() {
         penCommand(`{"id":"viewport.gridSteps","params":"0"}`);
         scope (exit) penCommand(format(`{"id":"viewport.gridSteps","params":"%d"}`, mask));
         rig("", Vec3(0.07f, 1, 0), 120);
-        penCommand("tool.set pen on");
+        penMerge0();
         snapTypes("grid");
         const step = viewStep();
         const Vec3 ptr = Vec3(0.45f, 1, 0.55f);
@@ -308,7 +316,7 @@ private void gridLawCells() {
     // on S8: an element in range beats the nearer node.
     {
         rig(`{"vertices":[[0.2323,0.5,0.3]],"faces":[]}`, Vec3(0.07f, 1, 0));
-        penCommand("tool.set pen on");
+        penMerge0();
         snapTypes("vertex,grid");
         clickPixels(worldPixel(Vec3(0.205f, 1, 0.3f)), worldPixel(Vec3(-0.4f, 1, -0.3f)),
                     worldPixel(Vec3(-0.5f, 1, 0.1f)));
@@ -458,7 +466,7 @@ private void gridLawCells() {
     // AXIS-THEN-GRID (0, 1, −0.58).
     {
         rig("", Vec3(0.1f, 1, -0.4f));
-        penCommand("tool.set pen on");
+        penMerge0();
         snapTypes("grid,worldAxis");
         clickPixels(worldPixel(Vec3(0.2f, 1, -0.6f)));
         penAttr("posZ", -0.58);
@@ -479,7 +487,7 @@ private void gridLawCells() {
     {
         enum double kPpm8 = 123.0;
         rig("", Vec3(0.3f, 1, -1.0f), kPpm8);
-        penCommand("tool.set pen on");
+        penMerge0();
         snapTypes("grid,worldAxis");
         const step = viewStep();
         const Vec3 ptr = Vec3(0.262f, 1, -1.235f), node = Vec3(0.5f, 1, -1.0f);
@@ -495,6 +503,33 @@ private void gridLawCells() {
         check(vs.length == 3 && at(vs[0], [0.5, 1, -1.25]) && at(vs[1], [0.5, 1, -1.0]),
             format("pen-grid-far-vs-guide: the guide anchor (0.5, 1, -1.25) then "
                 ~ "the node (0.5, 1, -1) expected, got %s", vs));
+        ++ran;
+    }
+
+    // 23 pen-grid-band-edge (ours): edge + grid; an edited-mesh edge x = E
+    // 30 px right of the pointer (the 24..40 px highlight band), 34 px from
+    // the (0.1, 0.2) node 4 px left of it. The grid places p0 on the node and
+    // reports itself as the target, so the pen does not re-project p0 onto
+    // the band edge (a band edge's target fields would select that path).
+    {
+        enum double kE = 0.1 + 34 * kPx;
+        rig(format(`{"vertices":[[%.9f,1,-0.3],[%.9f,1,0.7],[0.6,1,0.2]],`
+            ~ `"faces":[[0,1,2]]}`, kE, kE), Vec3(0.15f, 1, 0.2f));
+        penMerge0();
+        snapTypes("edge,grid");
+        const Vec3 ptr = Vec3(cast(float)(0.1 + 4 * kPx), 1, 0.2f);
+        const step = viewStep();
+        const de = pxDist(ptr, Vec3(cast(float)kE, 1, 0.2f));
+        assert(abs(step - 0.1) < 1e-6 && de > 24 && de < 40,
+            format("pen-grid-band-edge rig: OUR step must be 0.1 (got %s) and the "
+                ~ "edge in the 24..40 px band (got %.2f)", step, de));
+        clickPixels(worldPixel(ptr), worldPixel(Vec3(-0.3f, 1, -0.2f)),
+                    worldPixel(Vec3(-0.3f, 1, 0.5f)));
+        penCommand("tool.set pen off");
+        auto vs = readVerts();
+        check(vs.length == 6 && at(vs[3], [0.1, 1, 0.2]),
+            format("pen-grid-band-edge: p0 expected the (0.1, 1, 0.2) node, not the "
+                ~ "band edge x %.6f, got %s", kE, vs));
         ++ran;
     }
 }
@@ -617,12 +652,12 @@ unittest {
         ++ran;
     }
 
-    assert(ran == 26, format("population: %d cells ran, expected 26", ran));
+    assert(ran == 27, format("population: %d cells ran, expected 27", ran));
     string[] names;   // the red cells by name first: the runner shows 8 lines
     foreach (f; fails) {
         const n = f[0 .. f.indexOf(':') < 0 ? f.length : f.indexOf(':')];
         if (!names.canFind(n)) names ~= n;
     }
-    assert(fails.length == 0, format("%d of 26 cells red (%-(%s, %)):\n  %-(%s\n  %)",
+    assert(fails.length == 0, format("%d of 27 cells red (%-(%s, %)):\n  %-(%s\n  %)",
                                      names.length, names, fails));
 }
