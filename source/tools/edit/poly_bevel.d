@@ -34,7 +34,8 @@ import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_poly_bevel_activation : PreparedPolyBevelActivationOwner;
-import prepared_poly_bevel_param_update : PreparedPolyBevelParamUpdateOwner;
+import prepared_param_update : PreparedParamUpdateOwner,
+    PreparedParamUpdateProducer;
 import prepared_tool_effect : PreparedPolyBevelParamEffect,
     PreparedPolyBevelParamKind;
 import document : Layer;
@@ -396,26 +397,8 @@ public:
         if (!image.valid) return;
         built = image.nextBuilt; preview_.installImage(image.preview); image.clear();
     }
-    final PreparedPolyBevelParamEffect prepareParamChanged(
-            PreparedRecordContext context, Layer layer,
-            GpuUploadOwner uploadOwner) {
-        if (context is null) return PreparedPolyBevelParamEffect(
-            preparedToolStateOwner, PreparedPolyBevelParamKind.None, false);
-        scope(failure) context.discard();
-        auto owner = PreparedPolyBevelParamUpdateOwner.prepare(this, layer);
-        auto kind = owner is null ? PreparedPolyBevelParamKind.None : owner.effectKind;
-        bool ok = owner !is null;
-        if (ok && owner.applies)
-            ok = uploadOwner !is null && uploadOwner.owns(gpu) &&
-                context.prepareStampedMeshImage(layer, owner.candidate,
-                    owner.deliveryFlags, owner.deliveryDomains);
-        if (ok) ok = context.preparePolyBevelParamUpdate(owner);
-        if (ok && owner.applies)
-            ok = context.prepareUpload(uploadOwner, owner.candidate);
-        if (ok) ok = context.markNoHistoryInstall();
-        if (!ok) context.discard();
-        return PreparedPolyBevelParamEffect(preparedToolStateOwner, kind, ok);
-    }
+    mixin PreparedParamUpdateProducer!(PreparedParamUpdateOwner!(PolyBevelTool,
+        PreparedPolyBevelParamImage, PreparedPolyBevelParamKind), PreparedPolyBevelParamEffect);
     override void evaluate() {}
 
     /// Test/diagnostic seam (task 1620): how the preview-rebuild seam split

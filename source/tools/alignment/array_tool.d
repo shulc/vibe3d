@@ -7,7 +7,8 @@ import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
 import prepared_private_state : PreparedPrivateStateOwner;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_tool_effect : PreparedArrayParamEffect, PreparedArrayParamKind;
-import prepared_array_param_update : PreparedArrayParamUpdateOwner;
+import prepared_param_update : PreparedParamUpdateOwner,
+    PreparedParamUpdateProducer;
 import mesh_gpu : GpuUploadOwner;
 import document : Layer;
 
@@ -414,25 +415,8 @@ public:
         if (!image.valid) return;
         built = image.nextBuilt; image.clear();
     }
-    final PreparedArrayParamEffect prepareParamChanged(PreparedRecordContext context,
-            Layer layer, GpuUploadOwner uploadOwner) {
-        if (context is null) return PreparedArrayParamEffect(
-            preparedToolStateOwner, PreparedArrayParamKind.None, false);
-        scope(failure) context.discard();
-        auto owner = PreparedArrayParamUpdateOwner.prepare(this, layer);
-        auto kind = owner is null ? PreparedArrayParamKind.None : owner.effectKind;
-        bool ok = owner !is null;
-        if (ok && owner.applies)
-            ok = uploadOwner !is null && uploadOwner.owns(gpu) &&
-                context.prepareStampedMeshImage(layer, owner.candidate,
-                    owner.deliveryFlags, owner.deliveryDomains);
-        if (ok) ok = context.prepareArrayParamUpdate(owner);
-        if (ok && owner.applies)
-            ok = context.prepareUpload(uploadOwner, owner.candidate);
-        if (ok) ok = context.markNoHistoryInstall();
-        if (!ok) context.discard();
-        return PreparedArrayParamEffect(preparedToolStateOwner, kind, ok);
-    }
+    mixin PreparedParamUpdateProducer!(PreparedParamUpdateOwner!(ArrayTool,
+        PreparedArrayParamImage, PreparedArrayParamKind), PreparedArrayParamEffect);
     override void evaluate() {}
 
     // -----------------------------------------------------------------------

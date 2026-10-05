@@ -27,7 +27,8 @@ import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_vertex_merge_activation : PreparedVertexMergeActivationOwner;
-import prepared_vertex_merge_param_update : PreparedVertexMergeParamUpdateOwner;
+import prepared_param_update : PreparedParamUpdateOwner,
+    PreparedParamUpdateProducer;
 import prepared_tool_effect : PreparedVertexMergeParamEffect,
     PreparedVertexMergeParamKind;
 import document : Layer;
@@ -336,27 +337,8 @@ public:
         if (!image.valid) return;
         built = image.nextBuilt; image.clear();
     }
-    final PreparedVertexMergeParamEffect prepareParamChanged(
-            PreparedRecordContext context, Layer layer,
-            GpuUploadOwner uploadOwner) {
-        if (context is null) return PreparedVertexMergeParamEffect(
-            preparedToolStateOwner, PreparedVertexMergeParamKind.None, false);
-        scope(failure) context.discard();
-        auto owner = PreparedVertexMergeParamUpdateOwner.prepare(this, layer);
-        auto kind = owner is null ? PreparedVertexMergeParamKind.None :
-            owner.effectKind;
-        bool ok = owner !is null;
-        if (ok && owner.applies)
-            ok = uploadOwner !is null && uploadOwner.owns(gpu) &&
-                context.prepareStampedMeshImage(layer, owner.candidate,
-                    owner.deliveryFlags, owner.deliveryDomains);
-        if (ok) ok = context.prepareVertexMergeParamUpdate(owner);
-        if (ok && owner.applies)
-            ok = context.prepareUpload(uploadOwner, owner.candidate);
-        if (ok) ok = context.markNoHistoryInstall();
-        if (!ok) context.discard();
-        return PreparedVertexMergeParamEffect(preparedToolStateOwner, kind, ok);
-    }
+    mixin PreparedParamUpdateProducer!(PreparedParamUpdateOwner!(VertexMergeTool,
+        PreparedVertexMergeParamImage, PreparedVertexMergeParamKind), PreparedVertexMergeParamEffect);
     version(unittest) final void seedPreparedParamForTest(ref Mesh live,
             bool interactive = true) {
         interactiveParamEdit = interactive; active = true; built = false;

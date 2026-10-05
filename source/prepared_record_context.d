@@ -66,18 +66,7 @@ import prepared_edge_extend_tool_activation : PreparedEdgeExtendToolActivationOw
 import prepared_topology_pen_activation : PreparedTopologyPenActivationOwner;
 import prepared_topology_pen_update : PreparedTopologyPenUpdateOwner;
 import prepared_topology_pen_deactivate : PreparedTopologyPenDeactivateOwner;
-import prepared_array_param_update : PreparedArrayParamUpdateOwner;
 import prepared_magnet_param_update : PreparedMagnetParamUpdateOwner;
-import prepared_smooth_shift_param_update : PreparedSmoothShiftParamUpdateOwner;
-import prepared_edge_bevel_param_update : PreparedEdgeBevelParamUpdateOwner;
-import prepared_edge_extrude_param_update : PreparedEdgeExtrudeParamUpdateOwner;
-import prepared_poly_bevel_param_update : PreparedPolyBevelParamUpdateOwner;
-import prepared_poly_extrude_param_update : PreparedPolyExtrudeParamUpdateOwner;
-import prepared_poly_inset_param_update : PreparedPolyInsetParamUpdateOwner;
-import prepared_reduction_param_update : PreparedReductionParamUpdateOwner;
-import prepared_vertex_merge_param_update : PreparedVertexMergeParamUpdateOwner;
-import prepared_vertex_bevel_param_update : PreparedVertexBevelParamUpdateOwner;
-import prepared_vertex_extrude_param_update : PreparedVertexExtrudeParamUpdateOwner;
 import prepared_slice_deactivate : PreparedSliceDeactivateOwner;
 import prepared_slice_param_update : PreparedSliceParamUpdateOwner;
 import prepared_edge_slice_deactivate : PreparedEdgeSliceDeactivateOwner;
@@ -238,16 +227,18 @@ private enum PreparedResourceKind : ubyte {
     MirrorActivationState, EdgeExtendToolActivationPreState,
     EdgeExtendToolActivationPostState, TopologyPenActivationState,
     TopologyPenUpdateState, TopologyPenDeactivateState,
-    MirrorDeactivateState, BridgeDeactivateState, ArrayParamUpdateState,
-    MagnetParamUpdateState, SmoothShiftParamUpdateState,
-    EdgeBevelParamUpdateState, EdgeExtrudeParamUpdateState,
-    PolyBevelParamUpdateState, PolyExtrudeParamUpdateState,
-    PolyInsetParamUpdateState, ReductionParamUpdateState,
-    VertexMergeParamUpdateState, VertexBevelParamUpdateState,
-    VertexExtrudeParamUpdateState, SliceDeactivateState, SliceParamUpdateState,
+    MirrorDeactivateState, BridgeDeactivateState, ParamUpdateState,
+    MagnetParamUpdateState, SliceDeactivateState, SliceParamUpdateState,
     EdgeSliceDeactivateState, EdgeSliceParamUpdateState, LoopSliceDeactivateState,
     LoopSliceParamUpdateState, EdgeExtendParamUpdateState, EdgeExtendDeactivateState,
     PipeActivationState, BoxParamState
+}
+/// The one parameter-update slot: the owner's three transaction steps as bound
+/// method delegates (no allocation, no owner base type).
+private struct PreparedParamUpdateSlot {
+    bool delegate() nothrow @nogc validate;
+    void delegate() nothrow @nogc install;
+    void delegate() nothrow @nogc abort;
 }
 private struct PreparedResourceEntry {
     PreparedResourceKind kind;
@@ -289,18 +280,8 @@ private struct PreparedResourceEntry {
     PreparedTopologyPenActivationOwner topologyPenActivation;
     PreparedTopologyPenUpdateOwner topologyPenUpdate;
     PreparedTopologyPenDeactivateOwner topologyPenDeactivate;
-    PreparedArrayParamUpdateOwner arrayParamUpdate;
+    PreparedParamUpdateSlot paramUpdate;
     PreparedMagnetParamUpdateOwner magnetParamUpdate;
-    PreparedSmoothShiftParamUpdateOwner smoothShiftParamUpdate;
-    PreparedEdgeBevelParamUpdateOwner edgeBevelParamUpdate;
-    PreparedEdgeExtrudeParamUpdateOwner edgeExtrudeParamUpdate;
-    PreparedPolyBevelParamUpdateOwner polyBevelParamUpdate;
-    PreparedPolyExtrudeParamUpdateOwner polyExtrudeParamUpdate;
-    PreparedPolyInsetParamUpdateOwner polyInsetParamUpdate;
-    PreparedReductionParamUpdateOwner reductionParamUpdate;
-    PreparedVertexMergeParamUpdateOwner vertexMergeParamUpdate;
-    PreparedVertexBevelParamUpdateOwner vertexBevelParamUpdate;
-    PreparedVertexExtrudeParamUpdateOwner vertexExtrudeParamUpdate;
     PreparedSliceDeactivateOwner sliceDeactivate;
     PreparedSliceParamUpdateOwner sliceParamUpdate;
     PreparedEdgeSliceDeactivateOwner edgeSliceDeactivate;
@@ -978,16 +959,17 @@ public:
         e.kind = PreparedResourceKind.TopologyPenDeactivateState;
         e.topologyPenDeactivate = owner; resources_ ~= e; return true;
     }
-    bool prepareArrayParamUpdate(PreparedArrayParamUpdateOwner owner) {
+    bool prepareParamUpdate(O)(O owner) {
         if (!begun_ || validated_Once || owner is null) return false;
         resources_.reserve(1 + resources_.length);
         if (!owner.begin()) return false;
         scope(failure) owner.abort();
         version(unittest) if (failAfterResourceBegin_)
-            throw new Exception("injected Array parameter enlist failure");
-        PreparedResourceEntry e;
-        e.kind = PreparedResourceKind.ArrayParamUpdateState;
-        e.arrayParamUpdate = owner; resources_ ~= e; return true;
+            throw new Exception("injected parameter enlist failure");
+        PreparedResourceEntry e; e.kind = PreparedResourceKind.ParamUpdateState;
+        e.paramUpdate = PreparedParamUpdateSlot(&owner.validate, &owner.install,
+            &owner.abort);
+        resources_ ~= e; return true;
     }
     bool prepareMagnetParamUpdate(PreparedMagnetParamUpdateOwner owner) {
         if (!begun_ || validated_Once || owner is null) return false;
@@ -999,114 +981,6 @@ public:
         PreparedResourceEntry e;
         e.kind = PreparedResourceKind.MagnetParamUpdateState;
         e.magnetParamUpdate = owner; resources_ ~= e; return true;
-    }
-    bool prepareSmoothShiftParamUpdate(PreparedSmoothShiftParamUpdateOwner owner) {
-        if (!begun_ || validated_Once || owner is null) return false;
-        resources_.reserve(1 + resources_.length);
-        if (!owner.begin()) return false;
-        scope(failure) owner.abort();
-        version(unittest) if (failAfterResourceBegin_)
-            throw new Exception("injected Smooth Shift parameter enlist failure");
-        PreparedResourceEntry e;
-        e.kind = PreparedResourceKind.SmoothShiftParamUpdateState;
-        e.smoothShiftParamUpdate = owner; resources_ ~= e; return true;
-    }
-    bool prepareEdgeBevelParamUpdate(PreparedEdgeBevelParamUpdateOwner owner) {
-        if (!begun_ || validated_Once || owner is null) return false;
-        resources_.reserve(1 + resources_.length);
-        if (!owner.begin()) return false;
-        scope(failure) owner.abort();
-        version(unittest) if (failAfterResourceBegin_)
-            throw new Exception("injected Edge Bevel parameter enlist failure");
-        PreparedResourceEntry e;
-        e.kind = PreparedResourceKind.EdgeBevelParamUpdateState;
-        e.edgeBevelParamUpdate = owner; resources_ ~= e; return true;
-    }
-    bool prepareEdgeExtrudeParamUpdate(PreparedEdgeExtrudeParamUpdateOwner owner) {
-        if (!begun_ || validated_Once || owner is null) return false;
-        resources_.reserve(1 + resources_.length);
-        if (!owner.begin()) return false;
-        scope(failure) owner.abort();
-        version(unittest) if (failAfterResourceBegin_)
-            throw new Exception("injected Edge Extrude parameter enlist failure");
-        PreparedResourceEntry e;
-        e.kind = PreparedResourceKind.EdgeExtrudeParamUpdateState;
-        e.edgeExtrudeParamUpdate = owner; resources_ ~= e; return true;
-    }
-    bool preparePolyBevelParamUpdate(PreparedPolyBevelParamUpdateOwner owner) {
-        if (!begun_ || validated_Once || owner is null) return false;
-        resources_.reserve(1 + resources_.length);
-        if (!owner.begin()) return false;
-        scope(failure) owner.abort();
-        version(unittest) if (failAfterResourceBegin_)
-            throw new Exception("injected Poly Bevel parameter enlist failure");
-        PreparedResourceEntry e; e.kind = PreparedResourceKind.PolyBevelParamUpdateState;
-        e.polyBevelParamUpdate = owner; resources_ ~= e; return true;
-    }
-    bool preparePolyExtrudeParamUpdate(PreparedPolyExtrudeParamUpdateOwner owner) {
-        if (!begun_ || validated_Once || owner is null) return false;
-        resources_.reserve(1 + resources_.length);
-        if (!owner.begin()) return false;
-        scope(failure) owner.abort();
-        version(unittest) if (failAfterResourceBegin_)
-            throw new Exception("injected Poly Extrude parameter enlist failure");
-        PreparedResourceEntry e; e.kind = PreparedResourceKind.PolyExtrudeParamUpdateState;
-        e.polyExtrudeParamUpdate = owner; resources_ ~= e; return true;
-    }
-    bool preparePolyInsetParamUpdate(PreparedPolyInsetParamUpdateOwner owner) {
-        if (!begun_ || validated_Once || owner is null) return false;
-        resources_.reserve(1 + resources_.length);
-        if (!owner.begin()) return false;
-        scope(failure) owner.abort();
-        version(unittest) if (failAfterResourceBegin_)
-            throw new Exception("injected Poly Inset parameter enlist failure");
-        PreparedResourceEntry e; e.kind = PreparedResourceKind.PolyInsetParamUpdateState;
-        e.polyInsetParamUpdate = owner; resources_ ~= e; return true;
-    }
-    bool prepareReductionParamUpdate(PreparedReductionParamUpdateOwner owner) {
-        if (!begun_ || validated_Once || owner is null) return false;
-        resources_.reserve(1 + resources_.length);
-        if (!owner.begin()) return false;
-        scope(failure) owner.abort();
-        version(unittest) if (failAfterResourceBegin_)
-            throw new Exception("injected Reduction parameter enlist failure");
-        PreparedResourceEntry e;
-        e.kind = PreparedResourceKind.ReductionParamUpdateState;
-        e.reductionParamUpdate = owner; resources_ ~= e; return true;
-    }
-    bool prepareVertexMergeParamUpdate(PreparedVertexMergeParamUpdateOwner owner) {
-        if (!begun_ || validated_Once || owner is null) return false;
-        resources_.reserve(1 + resources_.length);
-        if (!owner.begin()) return false;
-        scope(failure) owner.abort();
-        version(unittest) if (failAfterResourceBegin_)
-            throw new Exception("injected Vertex Merge parameter enlist failure");
-        PreparedResourceEntry e;
-        e.kind = PreparedResourceKind.VertexMergeParamUpdateState;
-        e.vertexMergeParamUpdate = owner; resources_ ~= e; return true;
-    }
-    bool prepareVertexBevelParamUpdate(PreparedVertexBevelParamUpdateOwner owner) {
-        if (!begun_ || validated_Once || owner is null) return false;
-        resources_.reserve(1 + resources_.length);
-        if (!owner.begin()) return false;
-        scope(failure) owner.abort();
-        version(unittest) if (failAfterResourceBegin_)
-            throw new Exception("injected Vertex Bevel parameter enlist failure");
-        PreparedResourceEntry e;
-        e.kind = PreparedResourceKind.VertexBevelParamUpdateState;
-        e.vertexBevelParamUpdate = owner; resources_ ~= e; return true;
-    }
-    bool prepareVertexExtrudeParamUpdate(
-            PreparedVertexExtrudeParamUpdateOwner owner) {
-        if (!begun_ || validated_Once || owner is null) return false;
-        resources_.reserve(1 + resources_.length);
-        if (!owner.begin()) return false;
-        scope(failure) owner.abort();
-        version(unittest) if (failAfterResourceBegin_)
-            throw new Exception("injected Vertex Extrude parameter enlist failure");
-        PreparedResourceEntry e;
-        e.kind = PreparedResourceKind.VertexExtrudeParamUpdateState;
-        e.vertexExtrudeParamUpdate = owner; resources_ ~= e; return true;
     }
     bool prepareSliceDeactivate(PreparedSliceDeactivateOwner owner) {
         if (!begun_ || validated_Once || owner is null) return false;
@@ -1559,42 +1433,12 @@ public:
             case PreparedResourceKind.TopologyPenDeactivateState:
                 ok = e.topologyPenDeactivate !is null &&
                     e.topologyPenDeactivate.validate(); break;
-            case PreparedResourceKind.ArrayParamUpdateState:
-                ok = e.arrayParamUpdate !is null &&
-                    e.arrayParamUpdate.validate(); break;
+            case PreparedResourceKind.ParamUpdateState:
+                ok = e.paramUpdate.validate !is null && e.paramUpdate.validate();
+                break;
             case PreparedResourceKind.MagnetParamUpdateState:
                 ok = e.magnetParamUpdate !is null &&
                     e.magnetParamUpdate.validate(); break;
-            case PreparedResourceKind.SmoothShiftParamUpdateState:
-                ok = e.smoothShiftParamUpdate !is null &&
-                    e.smoothShiftParamUpdate.validate(); break;
-            case PreparedResourceKind.EdgeBevelParamUpdateState:
-                ok = e.edgeBevelParamUpdate !is null &&
-                    e.edgeBevelParamUpdate.validate(); break;
-            case PreparedResourceKind.EdgeExtrudeParamUpdateState:
-                ok = e.edgeExtrudeParamUpdate !is null &&
-                    e.edgeExtrudeParamUpdate.validate(); break;
-            case PreparedResourceKind.PolyBevelParamUpdateState:
-                ok = e.polyBevelParamUpdate !is null &&
-                    e.polyBevelParamUpdate.validate(); break;
-            case PreparedResourceKind.PolyExtrudeParamUpdateState:
-                ok = e.polyExtrudeParamUpdate !is null &&
-                    e.polyExtrudeParamUpdate.validate(); break;
-            case PreparedResourceKind.PolyInsetParamUpdateState:
-                ok = e.polyInsetParamUpdate !is null &&
-                    e.polyInsetParamUpdate.validate(); break;
-            case PreparedResourceKind.ReductionParamUpdateState:
-                ok = e.reductionParamUpdate !is null &&
-                    e.reductionParamUpdate.validate(); break;
-            case PreparedResourceKind.VertexMergeParamUpdateState:
-                ok = e.vertexMergeParamUpdate !is null &&
-                    e.vertexMergeParamUpdate.validate(); break;
-            case PreparedResourceKind.VertexBevelParamUpdateState:
-                ok = e.vertexBevelParamUpdate !is null &&
-                    e.vertexBevelParamUpdate.validate(); break;
-            case PreparedResourceKind.VertexExtrudeParamUpdateState:
-                ok = e.vertexExtrudeParamUpdate !is null &&
-                    e.vertexExtrudeParamUpdate.validate(); break;
             case PreparedResourceKind.SliceDeactivateState:
                 ok = e.sliceDeactivate !is null &&
                     e.sliceDeactivate.validate(); break;
@@ -1875,53 +1719,13 @@ public:
             e.topologyPenDeactivate.install();
             version(unittest) installTrace_[installTraceLength_++] = 58;
             break;
-        case PreparedResourceKind.ArrayParamUpdateState:
-            e.arrayParamUpdate.install();
+        case PreparedResourceKind.ParamUpdateState:
+            e.paramUpdate.install();
             version(unittest) installTrace_[installTraceLength_++] = 43;
             break;
         case PreparedResourceKind.MagnetParamUpdateState:
             e.magnetParamUpdate.install();
             version(unittest) installTrace_[installTraceLength_++] = 44;
-            break;
-        case PreparedResourceKind.SmoothShiftParamUpdateState:
-            e.smoothShiftParamUpdate.install();
-            version(unittest) installTrace_[installTraceLength_++] = 45;
-            break;
-        case PreparedResourceKind.EdgeBevelParamUpdateState:
-            e.edgeBevelParamUpdate.install();
-            version(unittest) installTrace_[installTraceLength_++] = 46;
-            break;
-        case PreparedResourceKind.EdgeExtrudeParamUpdateState:
-            e.edgeExtrudeParamUpdate.install();
-            version(unittest) installTrace_[installTraceLength_++] = 47;
-            break;
-        case PreparedResourceKind.PolyBevelParamUpdateState:
-            e.polyBevelParamUpdate.install();
-            version(unittest) installTrace_[installTraceLength_++] = 48;
-            break;
-        case PreparedResourceKind.PolyExtrudeParamUpdateState:
-            e.polyExtrudeParamUpdate.install();
-            version(unittest) installTrace_[installTraceLength_++] = 49;
-            break;
-        case PreparedResourceKind.PolyInsetParamUpdateState:
-            e.polyInsetParamUpdate.install();
-            version(unittest) installTrace_[installTraceLength_++] = 50;
-            break;
-        case PreparedResourceKind.ReductionParamUpdateState:
-            e.reductionParamUpdate.install();
-            version(unittest) installTrace_[installTraceLength_++] = 51;
-            break;
-        case PreparedResourceKind.VertexMergeParamUpdateState:
-            e.vertexMergeParamUpdate.install();
-            version(unittest) installTrace_[installTraceLength_++] = 52;
-            break;
-        case PreparedResourceKind.VertexBevelParamUpdateState:
-            e.vertexBevelParamUpdate.install();
-            version(unittest) installTrace_[installTraceLength_++] = 53;
-            break;
-        case PreparedResourceKind.VertexExtrudeParamUpdateState:
-            e.vertexExtrudeParamUpdate.install();
-            version(unittest) installTrace_[installTraceLength_++] = 54;
             break;
         case PreparedResourceKind.SliceDeactivateState:
             e.sliceDeactivate.install();
@@ -2049,30 +1853,10 @@ private:
             e.topologyPenUpdate.abort(); break;
         case PreparedResourceKind.TopologyPenDeactivateState:
             e.topologyPenDeactivate.abort(); break;
-        case PreparedResourceKind.ArrayParamUpdateState:
-            e.arrayParamUpdate.abort(); break;
+        case PreparedResourceKind.ParamUpdateState:
+            e.paramUpdate.abort(); break;
         case PreparedResourceKind.MagnetParamUpdateState:
             e.magnetParamUpdate.abort(); break;
-        case PreparedResourceKind.SmoothShiftParamUpdateState:
-            e.smoothShiftParamUpdate.abort(); break;
-        case PreparedResourceKind.EdgeBevelParamUpdateState:
-            e.edgeBevelParamUpdate.abort(); break;
-        case PreparedResourceKind.EdgeExtrudeParamUpdateState:
-            e.edgeExtrudeParamUpdate.abort(); break;
-        case PreparedResourceKind.PolyBevelParamUpdateState:
-            e.polyBevelParamUpdate.abort(); break;
-        case PreparedResourceKind.PolyExtrudeParamUpdateState:
-            e.polyExtrudeParamUpdate.abort(); break;
-        case PreparedResourceKind.PolyInsetParamUpdateState:
-            e.polyInsetParamUpdate.abort(); break;
-        case PreparedResourceKind.ReductionParamUpdateState:
-            e.reductionParamUpdate.abort(); break;
-        case PreparedResourceKind.VertexMergeParamUpdateState:
-            e.vertexMergeParamUpdate.abort(); break;
-        case PreparedResourceKind.VertexBevelParamUpdateState:
-            e.vertexBevelParamUpdate.abort(); break;
-        case PreparedResourceKind.VertexExtrudeParamUpdateState:
-            e.vertexExtrudeParamUpdate.abort(); break;
         case PreparedResourceKind.SliceDeactivateState:
             e.sliceDeactivate.abort(); break;
         case PreparedResourceKind.SliceParamUpdateState:

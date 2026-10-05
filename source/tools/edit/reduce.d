@@ -28,7 +28,8 @@ import perf_probe : g_perf, Cat;
 import prepared_record_context : PreparedRecordContext;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import command_history : PreparedHistoryKind;
-import prepared_reduction_param_update : PreparedReductionParamUpdateOwner;
+import prepared_param_update : PreparedParamUpdateOwner,
+    PreparedParamUpdateProducer;
 import prepared_tool_effect : PreparedReductionParamEffect,
     PreparedReductionParamKind;
 import document : Layer;
@@ -254,27 +255,8 @@ public:
         if (!image.valid) return;
         built = image.nextBuilt; image.clear();
     }
-    final PreparedReductionParamEffect prepareParamChanged(
-            PreparedRecordContext context, Layer layer,
-            GpuUploadOwner uploadOwner) {
-        if (context is null) return PreparedReductionParamEffect(
-            preparedToolStateOwner, PreparedReductionParamKind.None, false);
-        scope(failure) context.discard();
-        auto owner = PreparedReductionParamUpdateOwner.prepare(this, layer);
-        auto kind = owner is null ? PreparedReductionParamKind.None :
-            owner.effectKind;
-        bool ok = owner !is null;
-        if (ok && owner.applies)
-            ok = uploadOwner !is null && uploadOwner.owns(gpu) &&
-                context.prepareStampedMeshImage(layer, owner.candidate,
-                    owner.deliveryFlags, owner.deliveryDomains);
-        if (ok) ok = context.prepareReductionParamUpdate(owner);
-        if (ok && owner.applies)
-            ok = context.prepareUpload(uploadOwner, owner.candidate);
-        if (ok) ok = context.markNoHistoryInstall();
-        if (!ok) context.discard();
-        return PreparedReductionParamEffect(preparedToolStateOwner, kind, ok);
-    }
+    mixin PreparedParamUpdateProducer!(PreparedParamUpdateOwner!(ReductionTool,
+        PreparedReductionParamImage, PreparedReductionParamKind), PreparedReductionParamEffect);
     version(unittest) final void seedPreparedParamForTest(ref Mesh live,
             bool interactive = true) {
         interactiveParamEdit = interactive; active = true; built = false;

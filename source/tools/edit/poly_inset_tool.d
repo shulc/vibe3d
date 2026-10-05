@@ -27,7 +27,8 @@ import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_poly_inset_activation : PreparedPolyInsetActivationOwner;
-import prepared_poly_inset_param_update : PreparedPolyInsetParamUpdateOwner;
+import prepared_param_update : PreparedParamUpdateOwner,
+    PreparedParamUpdateProducer;
 import prepared_tool_effect : PreparedPolyInsetParamEffect,
     PreparedPolyInsetParamKind;
 import document : Layer;
@@ -329,26 +330,8 @@ public:
         if (!image.valid) return;
         built = image.nextBuilt; image.clear();
     }
-    final PreparedPolyInsetParamEffect prepareParamChanged(
-            PreparedRecordContext context, Layer layer,
-            GpuUploadOwner uploadOwner) {
-        if (context is null) return PreparedPolyInsetParamEffect(
-            preparedToolStateOwner, PreparedPolyInsetParamKind.None, false);
-        scope(failure) context.discard();
-        auto owner = PreparedPolyInsetParamUpdateOwner.prepare(this, layer);
-        auto kind = owner is null ? PreparedPolyInsetParamKind.None : owner.effectKind;
-        bool ok = owner !is null;
-        if (ok && owner.applies)
-            ok = uploadOwner !is null && uploadOwner.owns(gpu) &&
-                context.prepareStampedMeshImage(layer, owner.candidate,
-                    owner.deliveryFlags, owner.deliveryDomains);
-        if (ok) ok = context.preparePolyInsetParamUpdate(owner);
-        if (ok && owner.applies)
-            ok = context.prepareUpload(uploadOwner, owner.candidate);
-        if (ok) ok = context.markNoHistoryInstall();
-        if (!ok) context.discard();
-        return PreparedPolyInsetParamEffect(preparedToolStateOwner, kind, ok);
-    }
+    mixin PreparedParamUpdateProducer!(PreparedParamUpdateOwner!(PolyInsetTool,
+        PreparedPolyInsetParamImage, PreparedPolyInsetParamKind), PreparedPolyInsetParamEffect);
     override void evaluate() {}
 
     // Headless apply (tool.doApply) — the Post-Mode path a panel numeric

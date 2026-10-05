@@ -6,7 +6,7 @@ module unit.bevel_cold_arm_param_image_test;
 //
 // The arm transaction replays every sticky parameter name into the unpublished
 // candidate (prepared_tool_transition.d, the `sticky.changedNames` loop), so
-// each name enlists a PreparedPolyBevelParamUpdateOwner / …EdgeBevel… into the
+// each name enlists the tool's PreparedParamUpdateOwner instance into the
 // params context. Validation then walks `resources_` and calls each owner's
 // `validate()`, whose last disjunct is `preparedParamUpdateMatches`.
 //
@@ -93,7 +93,7 @@ unittest {
         assert(eff.accepted && eff.kind == PreparedPolyBevelParamKind.Noop,
             "4491 poly.bevel: a cold sticky replay is a noop param update");
         assert(ctx.validate(),
-            "4491 poly.bevel: the enlisted PolyBevelParamUpdateState must "
+            "4491 poly.bevel: the enlisted ParamUpdateState must "
             ~ "validate at arm time — this is the resource whose refusal threw "
             ~ "`prepared tool arm params validation refused`");
     }
@@ -120,7 +120,7 @@ unittest {
         assert(eff.accepted && eff.kind == PreparedEdgeBevelParamKind.Noop,
             "4491 edge.bevel: a cold sticky replay is a noop param update");
         assert(ctx.validate(),
-            "4491 edge.bevel: the enlisted EdgeBevelParamUpdateState must "
+            "4491 edge.bevel: the enlisted ParamUpdateState must "
             ~ "validate at arm time");
     }
 }

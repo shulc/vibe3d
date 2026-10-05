@@ -749,18 +749,7 @@ for path, text in prepared_source_texts.items():
             "prepared_topology_pen_activation",
             "prepared_topology_pen_update",
             "prepared_topology_pen_deactivate",
-            "prepared_array_param_update",
             "prepared_magnet_param_update",
-            "prepared_smooth_shift_param_update",
-            "prepared_edge_bevel_param_update",
-            "prepared_edge_extrude_param_update",
-            "prepared_poly_bevel_param_update",
-            "prepared_poly_extrude_param_update",
-            "prepared_poly_inset_param_update",
-            "prepared_reduction_param_update",
-            "prepared_vertex_merge_param_update",
-            "prepared_vertex_bevel_param_update",
-            "prepared_vertex_extrude_param_update",
             "prepared_slice_deactivate",
             "prepared_slice_param_update",
             "prepared_edge_slice_deactivate",
@@ -2705,32 +2694,27 @@ for target, old, new, label in (
     if pen_param_gate(p, o, e):
         fail(f"Pen parameter mutation did not RED: {label}")
 
-# Array's interactive parameter hook is a live topology preview: baseline
-# restore + kernel + delivery are built under one detached shadow, then the
-# layer image, private `built` flag, GPU upload and NoHistory install in order.
-array_param_sources = {
-    "tool": (ROOT / "source/tools/alignment/array_tool.d").read_text(),
-    "owner": prepared_module_source("prepared_array_param_update"),
+# ONE parameter-update owner, ONE record-context slot and ONE producer serve
+# the eleven interactive parameter previews gated below: the owner checks the
+# exact product, Layer identity, the tool's own match and installer; the
+# producer stamps the layer image, enlists the slot, uploads, then NoHistory.
+# Each tool keeps its own build/match gate after this one, plus a check that
+# its class mixes the producer in over its own owner instantiation.
+PARAM_UPDATE_TOOLS = ("ArrayTool", "SmoothShiftTool", "EdgeBevelTool",
+    "EdgeExtrudeTool", "PolyBevelTool", "PolyExtrudeTool", "PolyInsetTool",
+    "ReductionTool", "VertexMergeTool", "VertexBevelTool", "VertexExtrudeTool")
+param_update_sources = {
+    "owner": prepared_module_source("prepared_param_update"),
     "context": record_context,
-    "snapshot": (ROOT / "source/snapshot.d").read_text(),
+    "tree": "\n".join(mask_d_comments(text) for path, text in
+                      sorted(prepared_source_texts.items())),
 }
-def array_param_gate(s):
-    tool, owner, context, snapshot = (s[k] for k in
-        ("tool", "owner", "context", "snapshot"))
-    start = tool.find("final PreparedArrayParamEffect prepareParamChanged(")
-    end = tool.find("override void evaluate()", start)
-    producer = tool[start:end]
-    return (all(x in tool for x in (
-                "image.expectedLive = MeshSnapshot.capture(live);",
-                "image.expectedBefore = MeshSnapshot.capture(baseline);",
-                "auto shadow = beginPreparedShadow(image.candidate);",
-                "image.candidate.arrayFacesGrid(mask, numX_, numY_, numZ_",
-                "drainPreparedShadowDelivery(image.candidate",
-                "image.expectedLive.matches(live)",
-                "image.expectedBefore.matches(before)",
-                "sameFloat(dist, other.dist)")) and
-            all(x in owner for x in (
-                "target.classinfo !is ArrayTool.classinfo",
+def param_update_gate(s):
+    owner, context, tree = s["owner"], s["context"], s["tree"]
+    start = owner.find("mixin template PreparedParamUpdateProducer(")
+    producer = owner[start:]
+    return (start >= 0 and all(x in owner[:start] for x in (
+                "target.classinfo !is ToolT.classinfo",
                 "!target.ownsPreparedLayer(layer)",
                 "&layer_.meshRef() !is source_",
                 "!target_.preparedParamUpdateMatches(image_, *source_)",
@@ -2739,44 +2723,78 @@ def array_param_gate(s):
             all(x in producer for x in (
                 "uploadOwner.owns(gpu)",
                 "context.prepareStampedMeshImage(layer, owner.candidate,",
-                "context.prepareArrayParamUpdate(owner)",
+                "context.prepareParamUpdate(owner)",
                 "context.prepareUpload(uploadOwner, owner.candidate)",
                 "context.markNoHistoryInstall()",
                 "scope(failure) context.discard();", "if (!ok) context.discard();")) and
-            producer.find("context.prepareStampedMeshImage") <
-                producer.find("context.prepareArrayParamUpdate(owner)") <
+            0 <= producer.find("context.prepareStampedMeshImage") <
+                producer.find("context.prepareParamUpdate(owner)") <
                 producer.find("context.prepareUpload(uploadOwner") <
                 producer.find("context.markNoHistoryInstall()") and
-            "bool prepareArrayParamUpdate(PreparedArrayParamUpdateOwner owner)" in context and
-            context.count("case PreparedResourceKind.ArrayParamUpdateState:") == 3 and
-            "e.arrayParamUpdate.install();" in context and
+            "bool prepareParamUpdate(O)(O owner)" in context and
+            context.count("case PreparedResourceKind.ParamUpdateState:") == 3 and
+            "e.paramUpdate.install();" in context and
+            sorted(re.findall(r"\bPreparedParamUpdateOwner!\(\s*(\w+)", tree)) ==
+                sorted(PARAM_UPDATE_TOOLS))
+if not param_update_gate(param_update_sources):
+    fail("shared parameter-update owner prepared contract drift")
+def mutate_param_sources(name, sources, gate, rows, anchor=lambda text, label: 0):
+    for target, old, new, label in rows:
+        mutant = dict(sources)
+        text = mutant[target]
+        pos = text.find(old, anchor(text, label) if target == "tool" else 0)
+        if pos >= 0:
+            mutant[target] = text[:pos] + new + text[pos + len(old):]
+        if mutant[target] == sources[target] or gate(mutant):
+            fail(f"{name} parameter mutation did not RED: {label}")
+mutate_param_sources("Shared", param_update_sources, param_update_gate, (
+    ("owner", "target.classinfo !is ToolT.classinfo", "false", "broaden product"),
+    ("owner", "&layer_.meshRef() !is source_", "false", "drop Layer identity"),
+    ("owner", "uploadOwner.owns(gpu)", "true", "drop GPU identity"),
+    ("owner", "context.prepareParamUpdate(owner)", "true", "drop private state"),
+    ("owner", "context.prepareUpload(uploadOwner, owner.candidate)", "true", "drop GPU upload"),
+    ("owner", "context.markNoHistoryInstall()", "true", "drop NoHistory"),
+    ("context", "e.paramUpdate.install();", "", "drop context install"),
+    ("tree", "PreparedParamUpdateOwner!(ArrayTool", "PreparedParamUpdateOwner!(CloneTool",
+     "owner roster"),
+))
+order_mutant = dict(param_update_sources)
+order_mutant["owner"] = order_mutant["owner"].replace(
+    "if (ok) ok = context.markNoHistoryInstall();\n", "", 1).replace(
+    "if (ok) ok = context.prepareParamUpdate(owner);\n",
+    "if (ok) ok = context.markNoHistoryInstall();\n"
+    "        if (ok) ok = context.prepareParamUpdate(owner);\n", 1)
+if order_mutant["owner"] == param_update_sources["owner"] or param_update_gate(order_mutant):
+    fail("Shared parameter mutation did not RED: producer order")
+def producer_mixin(tool):
+    return f"mixin PreparedParamUpdateProducer!(PreparedParamUpdateOwner!({tool},"
+
+# Array's interactive parameter hook is a live topology preview: baseline
+# restore + kernel + delivery are built under one detached shadow.
+array_param_sources = {
+    "tool": (ROOT / "source/tools/alignment/array_tool.d").read_text(),
+    "snapshot": (ROOT / "source/snapshot.d").read_text(),
+}
+def array_param_gate(s):
+    tool, snapshot = s["tool"], s["snapshot"]
+    return (all(x in tool for x in (
+                "image.expectedLive = MeshSnapshot.capture(live);",
+                "image.expectedBefore = MeshSnapshot.capture(baseline);",
+                "auto shadow = beginPreparedShadow(image.candidate);",
+                "image.candidate.arrayFacesGrid(mask, numX_, numY_, numZ_",
+                "drainPreparedShadowDelivery(image.candidate",
+                "image.expectedLive.matches(live)",
+                "image.expectedBefore.matches(before)",
+                "sameFloat(dist, other.dist)", producer_mixin("ArrayTool"))) and
             "bool matches(in MeshSnapshot other) const nothrow @nogc" in snapshot)
 if not array_param_gate(array_param_sources):
     fail("Array onParamChanged prepared contract drift")
-for target, old, new, label in (
+mutate_param_sources("Array", array_param_sources, array_param_gate, (
     ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
     ("tool", "auto shadow = beginPreparedShadow(image.candidate);", "", "drop detached shadow"),
     ("tool", "sameFloat(dist, other.dist)", "true", "drop byte-exact float"),
-    ("owner", "target.classinfo !is ArrayTool.classinfo", "false", "broaden product"),
-    ("owner", "&layer_.meshRef() !is source_", "false", "drop Layer identity"),
-    ("tool", "uploadOwner.owns(gpu)", "true", "drop GPU identity"),
-    ("tool", "context.prepareArrayParamUpdate(owner)", "true", "drop private state"),
-    ("tool", "context.prepareUpload(uploadOwner, owner.candidate)", "true", "drop GPU upload"),
-    ("tool", "context.markNoHistoryInstall()", "true", "drop NoHistory"),
-    ("context", "e.arrayParamUpdate.install();", "", "drop context install"),
-):
-    mutant = dict(array_param_sources)
-    if target == "tool":
-        text = mutant[target]
-        producer_start = text.find("final PreparedArrayParamEffect prepareParamChanged(")
-        start = producer_start if old in text[producer_start:] else text.find(
-            "struct ArrayParamProjection")
-        pos = text.find(old, start)
-        mutant[target] = text[:pos] + new + text[pos + len(old):]
-    else:
-        mutant[target] = mutant[target].replace(old, new, 1)
-    if mutant[target] == array_param_sources[target] or array_param_gate(mutant):
-        fail(f"Array parameter mutation did not RED: {label}")
+    ("tool", producer_mixin("ArrayTool"), "", "drop producer mixin"),
+), lambda text, label: text.find("struct ArrayParamProjection"))
 
 # Magnet's radius hook rebuilds the current drag from its frozen baseline in a
 # detached mesh and installs mesh, gesture state, upload, then NoHistory.
@@ -2851,14 +2869,9 @@ for target, old, new, label in (
 
 smooth_shift_param_sources = {
     "tool": (ROOT / "source/tools/deform/smooth_shift_tool.d").read_text(),
-    "owner": prepared_module_source("prepared_smooth_shift_param_update"),
-    "context": record_context,
 }
 def smooth_shift_param_gate(s):
-    tool, owner, context = (s[k] for k in ("tool", "owner", "context"))
-    start = tool.find("final PreparedSmoothShiftParamEffect prepareParamChanged(")
-    end = tool.find("override void evaluate()", start)
-    producer = tool[start:end]
+    tool = s["tool"]
     return (all(x in tool for x in (
                 "image.expectedLive = MeshSnapshot.capture(live);",
                 "image.expectedBefore = MeshSnapshot.capture(baseline);",
@@ -2867,66 +2880,23 @@ def smooth_shift_param_gate(s):
                 "drainPreparedShadowDelivery(image.candidate",
                 "sameFloat(shift, other.shift)",
                 "image.expectedLive.matches(live)",
-                "image.expectedBefore.matches(before)")) and
-            all(x in owner for x in (
-                "target.classinfo !is SmoothShiftTool.classinfo",
-                "!target.ownsPreparedLayer(layer)",
-                "&layer_.meshRef() !is source_",
-                "!target_.preparedParamUpdateMatches(image_, *source_)",
-                "target_.installPreparedParamUpdate(image_)",
-                "validatedToken_.generation != generation_")) and
-            all(x in producer for x in (
-                "uploadOwner.owns(gpu)",
-                "context.prepareStampedMeshImage(layer, owner.candidate,",
-                "context.prepareSmoothShiftParamUpdate(owner)",
-                "context.prepareUpload(uploadOwner, owner.candidate)",
-                "context.markNoHistoryInstall()", "scope(failure) context.discard();",
-                "if (!ok) context.discard();")) and
-            producer.find("context.prepareStampedMeshImage") <
-                producer.find("context.prepareSmoothShiftParamUpdate(owner)") <
-                producer.find("context.prepareUpload(uploadOwner") <
-                producer.find("context.markNoHistoryInstall()") and
-            "bool prepareSmoothShiftParamUpdate(PreparedSmoothShiftParamUpdateOwner owner)" in context and
-            context.count("case PreparedResourceKind.SmoothShiftParamUpdateState:") == 3 and
-            "e.smoothShiftParamUpdate.install();" in context)
+                "image.expectedBefore.matches(before)",
+                producer_mixin("SmoothShiftTool"))))
 if not smooth_shift_param_gate(smooth_shift_param_sources):
     fail("Smooth Shift onParamChanged prepared contract drift")
-for target, old, new, label in (
+mutate_param_sources("Smooth Shift", smooth_shift_param_sources, smooth_shift_param_gate, (
     ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
     ("tool", "auto shadow = beginPreparedShadow(image.candidate);", "", "drop shadow"),
     ("tool", "sameFloat(shift, other.shift)", "true", "drop exact float"),
-    ("owner", "target.classinfo !is SmoothShiftTool.classinfo", "false", "broaden product"),
-    ("owner", "&layer_.meshRef() !is source_", "false", "drop Layer identity"),
-    ("tool", "uploadOwner.owns(gpu)", "true", "drop GPU identity"),
-    ("tool", "context.prepareSmoothShiftParamUpdate(owner)", "true", "drop state"),
-    ("tool", "context.prepareUpload(uploadOwner, owner.candidate)", "true", "drop upload"),
-    ("tool", "context.markNoHistoryInstall()", "true", "drop NoHistory"),
-    ("context", "e.smoothShiftParamUpdate.install();", "", "drop install"),
-):
-    mutant = dict(smooth_shift_param_sources)
-    if target == "tool":
-        text = mutant[target]
-        producer_start = text.find("final PreparedSmoothShiftParamEffect prepareParamChanged(")
-        start = producer_start if old in text[producer_start:] else 0
-        pos = text.find(old, start)
-        mutant[target] = text[:pos] + new + text[pos + len(old):]
-    else:
-        mutant[target] = mutant[target].replace(old, new, 1)
-    if mutant[target] == smooth_shift_param_sources[target] or smooth_shift_param_gate(mutant):
-        fail(f"Smooth Shift parameter mutation did not RED: {label}")
+    ("tool", producer_mixin("SmoothShiftTool"), "", "drop producer mixin"),
+))
 
 edge_bevel_param_sources = {
     "tool": (ROOT / "source/tools/edit/edge_bevel.d").read_text(),
-    "owner": prepared_module_source("prepared_edge_bevel_param_update"),
-    "context": record_context,
     "preview": (ROOT / "source/tools/edit/preview_rebuild.d").read_text(),
 }
 def edge_bevel_param_gate(s):
-    tool, owner, context, preview = (s[k] for k in
-        ("tool", "owner", "context", "preview"))
-    start = tool.find("final PreparedEdgeBevelParamEffect prepareParamChanged(")
-    end = tool.find("override void evaluate()", start)
-    producer = tool[start:end]
+    tool = s["tool"]
     return (all(x in tool for x in (
                 "image.expectedLive = MeshSnapshot.capture(live);",
                 "image.expectedBefore = MeshSnapshot.capture(baseline);",
@@ -2935,68 +2905,30 @@ def edge_bevel_param_gate(s):
                 "ed.bevelEdgesByMask(target.operandEdgeMask(),",
                 "preparedPreview.savePreparedNext(image.preview);",
                 "preview_.matchesImage(image.preview)",
-                "memcmp(&width, &other.width, float.sizeof) == 0")) and
-            all(x in preview for x in (
+                "memcmp(&width, &other.width, float.sizeof) == 0",
+                producer_mixin("EdgeBevelTool"))) and
+            all(x in s["preview"] for x in (
                 "struct PreparedPreviewRebuildImage",
                 "image.expectedCage = MeshSnapshot.capture(cage_);",
                 "image.expectedCage.matches(cage_)",
-                "void loadPreparedNext(", "void savePreparedNext(",
-                "void installImage(")) and
-            all(x in owner for x in (
-                "target.classinfo !is EdgeBevelTool.classinfo",
-                "!target.ownsPreparedLayer(layer)",
-                "&layer_.meshRef() !is source_",
-                "!target_.preparedParamUpdateMatches(image_, *source_)",
-                "target_.installPreparedParamUpdate(image_)")) and
-            all(x in producer for x in (
-                "uploadOwner.owns(gpu)",
-                "context.prepareStampedMeshImage(layer, owner.candidate,",
-                "context.prepareEdgeBevelParamUpdate(owner)",
-                "context.prepareUpload(uploadOwner, owner.candidate)",
-                "context.markNoHistoryInstall()")) and
-            producer.find("context.prepareStampedMeshImage") <
-                producer.find("context.prepareEdgeBevelParamUpdate(owner)") <
-                producer.find("context.prepareUpload(uploadOwner") <
-                producer.find("context.markNoHistoryInstall()") and
-            context.count("case PreparedResourceKind.EdgeBevelParamUpdateState:") == 3 and
-            "e.edgeBevelParamUpdate.install();" in context)
+                "void loadPreparedNext(",
+                "void savePreparedNext(",
+                "void installImage(")))
 if not edge_bevel_param_gate(edge_bevel_param_sources):
     fail("Edge Bevel onParamChanged prepared contract drift")
-for target, old, new, label in (
+mutate_param_sources("Edge Bevel", edge_bevel_param_sources, edge_bevel_param_gate, (
     ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
     ("tool", "preview_.prepareImage(image.preview);", "", "drop preview image"),
     ("preview", "image.expectedCage.matches(cage_)", "true", "drop cage witness"),
     ("tool", "memcmp(&width, &other.width, float.sizeof) == 0", "true", "drop float identity"),
-    ("owner", "target.classinfo !is EdgeBevelTool.classinfo", "false", "broaden product"),
-    ("owner", "&layer_.meshRef() !is source_", "false", "drop Layer identity"),
-    ("tool", "uploadOwner.owns(gpu)", "true", "drop GPU identity"),
-    ("tool", "context.prepareEdgeBevelParamUpdate(owner)", "true", "drop state"),
-    ("tool", "context.prepareUpload(uploadOwner, owner.candidate)", "true", "drop upload"),
-    ("tool", "context.markNoHistoryInstall()", "true", "drop NoHistory"),
-    ("context", "e.edgeBevelParamUpdate.install();", "", "drop install"),
-):
-    mutant = dict(edge_bevel_param_sources)
-    if target == "tool":
-        text = mutant[target]
-        producer_start = text.find("final PreparedEdgeBevelParamEffect prepareParamChanged(")
-        start = producer_start if old in text[producer_start:] else 0
-        pos = text.find(old, start)
-        mutant[target] = text[:pos] + new + text[pos + len(old):]
-    else:
-        mutant[target] = mutant[target].replace(old, new, 1)
-    if mutant[target] == edge_bevel_param_sources[target] or edge_bevel_param_gate(mutant):
-        fail(f"Edge Bevel parameter mutation did not RED: {label}")
+    ("tool", producer_mixin("EdgeBevelTool"), "", "drop producer mixin"),
+))
 
 edge_extrude_param_sources = {
     "tool": (ROOT / "source/tools/edit/edge_extrude.d").read_text(),
-    "owner": prepared_module_source("prepared_edge_extrude_param_update"),
-    "context": record_context,
 }
 def edge_extrude_param_gate(s):
-    tool, owner, context = (s[k] for k in ("tool", "owner", "context"))
-    start = tool.find("final PreparedEdgeExtrudeParamEffect prepareParamChanged(")
-    end = tool.find("override void evaluate()", start)
-    producer = tool[start:end]
+    tool = s["tool"]
     return (all(x in tool for x in (
                 "image.expectedLive = MeshSnapshot.capture(live);",
                 "image.expectedBefore = MeshSnapshot.capture(image.candidate);",
@@ -3005,63 +2937,23 @@ def edge_extrude_param_gate(s):
                 "drainPreparedShadowDelivery(image.candidate",
                 "memcmp(&extrude, &other.extrude, float.sizeof) == 0",
                 "image.expectedLive.matches(live)",
-                "image.expectedBefore.matches(before)")) and
-            all(x in owner for x in (
-                "target.classinfo !is EdgeExtrudeTool.classinfo",
-                "!target.ownsPreparedLayer(layer)",
-                "&layer_.meshRef() !is source_",
-                "!target_.preparedParamUpdateMatches(image_, *source_)",
-                "target_.installPreparedParamUpdate(image_)")) and
-            all(x in producer for x in (
-                "uploadOwner.owns(gpu)",
-                "context.prepareStampedMeshImage(layer, owner.candidate,",
-                "context.prepareEdgeExtrudeParamUpdate(owner)",
-                "context.prepareUpload(uploadOwner, owner.candidate)",
-                "context.markNoHistoryInstall()")) and
-            producer.find("context.prepareStampedMeshImage") <
-                producer.find("context.prepareEdgeExtrudeParamUpdate(owner)") <
-                producer.find("context.prepareUpload(uploadOwner") <
-                producer.find("context.markNoHistoryInstall()") and
-            context.count("case PreparedResourceKind.EdgeExtrudeParamUpdateState:") == 3 and
-            "e.edgeExtrudeParamUpdate.install();" in context)
+                "image.expectedBefore.matches(before)",
+                producer_mixin("EdgeExtrudeTool"))))
 if not edge_extrude_param_gate(edge_extrude_param_sources):
     fail("Edge Extrude onParamChanged prepared contract drift")
-for target, old, new, label in (
+mutate_param_sources("Edge Extrude", edge_extrude_param_sources, edge_extrude_param_gate, (
     ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
     ("tool", "auto shadow = beginPreparedShadow(image.candidate);", "", "drop shadow"),
     ("tool", "memcmp(&extrude, &other.extrude, float.sizeof) == 0", "true", "drop float identity"),
-    ("owner", "target.classinfo !is EdgeExtrudeTool.classinfo", "false", "broaden product"),
-    ("owner", "&layer_.meshRef() !is source_", "false", "drop Layer identity"),
-    ("tool", "uploadOwner.owns(gpu)", "true", "drop GPU identity"),
-    ("tool", "context.prepareEdgeExtrudeParamUpdate(owner)", "true", "drop state"),
-    ("tool", "context.prepareUpload(uploadOwner, owner.candidate)", "true", "drop upload"),
-    ("tool", "context.markNoHistoryInstall()", "true", "drop NoHistory"),
-    ("context", "e.edgeExtrudeParamUpdate.install();", "", "drop install"),
-):
-    mutant = dict(edge_extrude_param_sources)
-    if target == "tool":
-        text = mutant[target]
-        producer_start = text.find("final PreparedEdgeExtrudeParamEffect prepareParamChanged(")
-        start = producer_start if old in text[producer_start:] else 0
-        pos = text.find(old, start)
-        mutant[target] = text[:pos] + new + text[pos + len(old):]
-    else:
-        mutant[target] = mutant[target].replace(old, new, 1)
-    if mutant[target] == edge_extrude_param_sources[target] or edge_extrude_param_gate(mutant):
-        fail(f"Edge Extrude parameter mutation did not RED: {label}")
+    ("tool", producer_mixin("EdgeExtrudeTool"), "", "drop producer mixin"),
+))
 
 poly_bevel_param_sources = {
     "tool": (ROOT / "source/tools/edit/poly_bevel.d").read_text(),
-    "owner": prepared_module_source("prepared_poly_bevel_param_update"),
-    "context": record_context,
     "preview": (ROOT / "source/tools/edit/preview_rebuild.d").read_text(),
 }
 def poly_bevel_param_gate(s):
-    tool, owner, context, preview = (s[k] for k in
-        ("tool", "owner", "context", "preview"))
-    start = tool.find("final PreparedPolyBevelParamEffect prepareParamChanged(")
-    end = tool.find("override void evaluate()", start)
-    producer = tool[start:end]
+    tool = s["tool"]
     return (all(x in tool for x in (
                 "image.expectedLive = MeshSnapshot.capture(live);",
                 "image.expectedBefore = MeshSnapshot.capture(baseline);",
@@ -3070,64 +2962,27 @@ def poly_bevel_param_gate(s):
                 "ed.bevelFacesByMask(ed.operandFaceMask(), inset_",
                 "preparedPreview.savePreparedNext(image.preview);",
                 "preview_.matchesImage(image.preview)",
-                "memcmp(&inset, &other.inset, float.sizeof) == 0")) and
-            all(x in preview for x in ("struct PreparedPreviewRebuildImage",
-                "image.expectedCage.matches(cage_)", "void installImage(")) and
-            all(x in owner for x in (
-                "target.classinfo !is PolyBevelTool.classinfo",
-                "!target.ownsPreparedLayer(layer)",
-                "&layer_.meshRef() !is source_",
-                "!target_.preparedParamUpdateMatches(image_, *source_)",
-                "target_.installPreparedParamUpdate(image_)")) and
-            all(x in producer for x in (
-                "uploadOwner.owns(gpu)",
-                "context.prepareStampedMeshImage(layer, owner.candidate,",
-                "context.preparePolyBevelParamUpdate(owner)",
-                "context.prepareUpload(uploadOwner, owner.candidate)",
-                "context.markNoHistoryInstall()")) and
-            producer.find("context.prepareStampedMeshImage") <
-                producer.find("context.preparePolyBevelParamUpdate(owner)") <
-                producer.find("context.prepareUpload(uploadOwner") <
-                producer.find("context.markNoHistoryInstall()") and
-            context.count("case PreparedResourceKind.PolyBevelParamUpdateState:") == 3 and
-            "e.polyBevelParamUpdate.install();" in context)
+                "memcmp(&inset, &other.inset, float.sizeof) == 0",
+                producer_mixin("PolyBevelTool"))) and
+            all(x in s["preview"] for x in (
+                "struct PreparedPreviewRebuildImage",
+                "image.expectedCage.matches(cage_)",
+                "void installImage(")))
 if not poly_bevel_param_gate(poly_bevel_param_sources):
     fail("Poly Bevel onParamChanged prepared contract drift")
-for target, old, new, label in (
+mutate_param_sources("Poly Bevel", poly_bevel_param_sources, poly_bevel_param_gate, (
     ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
     ("tool", "preview_.prepareImage(image.preview);", "", "drop preview image"),
     ("preview", "image.expectedCage.matches(cage_)", "true", "drop cage witness"),
     ("tool", "memcmp(&inset, &other.inset, float.sizeof) == 0", "true", "drop float identity"),
-    ("owner", "target.classinfo !is PolyBevelTool.classinfo", "false", "broaden product"),
-    ("owner", "&layer_.meshRef() !is source_", "false", "drop Layer identity"),
-    ("tool", "uploadOwner.owns(gpu)", "true", "drop GPU identity"),
-    ("tool", "context.preparePolyBevelParamUpdate(owner)", "true", "drop state"),
-    ("tool", "context.prepareUpload(uploadOwner, owner.candidate)", "true", "drop upload"),
-    ("tool", "context.markNoHistoryInstall()", "true", "drop NoHistory"),
-    ("context", "e.polyBevelParamUpdate.install();", "", "drop install"),
-):
-    mutant = dict(poly_bevel_param_sources)
-    if target == "tool":
-        text = mutant[target]
-        producer_start = text.find("final PreparedPolyBevelParamEffect prepareParamChanged(")
-        start = producer_start if old in text[producer_start:] else 0
-        pos = text.find(old, start)
-        mutant[target] = text[:pos] + new + text[pos + len(old):]
-    else:
-        mutant[target] = mutant[target].replace(old, new, 1)
-    if mutant[target] == poly_bevel_param_sources[target] or poly_bevel_param_gate(mutant):
-        fail(f"Poly Bevel parameter mutation did not RED: {label}")
+    ("tool", producer_mixin("PolyBevelTool"), "", "drop producer mixin"),
+))
 
 poly_extrude_param_sources = {
     "tool": (ROOT / "source/tools/edit/poly_extrude.d").read_text(),
-    "owner": prepared_module_source("prepared_poly_extrude_param_update"),
-    "context": record_context,
 }
 def poly_extrude_param_gate(s):
-    tool, owner, context = (s[k] for k in ("tool", "owner", "context"))
-    start = tool.find("final PreparedPolyExtrudeParamEffect prepareParamChanged(")
-    end = tool.find("override void evaluate()", start)
-    producer = tool[start:end]
+    tool = s["tool"]
     return (all(x in tool for x in (
                 "image.expectedLive = MeshSnapshot.capture(live);",
                 "image.expectedBefore = MeshSnapshot.capture(image.candidate);",
@@ -3136,61 +2991,22 @@ def poly_extrude_param_gate(s):
                 "drainPreparedShadowDelivery(image.candidate",
                 "memcmp(&distance, &other.distance, float.sizeof) == 0",
                 "image.expectedLive.matches(live)",
-                "image.expectedBefore.matches(before)")) and
-            all(x in owner for x in (
-                "target.classinfo !is PolyExtrudeTool.classinfo",
-                "!target.ownsPreparedLayer(layer)",
-                "&layer_.meshRef() !is source_",
-                "!target_.preparedParamUpdateMatches(image_, *source_)",
-                "target_.installPreparedParamUpdate(image_)")) and
-            all(x in producer for x in (
-                "uploadOwner.owns(gpu)",
-                "context.prepareStampedMeshImage(layer, owner.candidate,",
-                "context.preparePolyExtrudeParamUpdate(owner)",
-                "context.prepareUpload(uploadOwner, owner.candidate)",
-                "context.markNoHistoryInstall()")) and
-            producer.find("context.prepareStampedMeshImage") <
-                producer.find("context.preparePolyExtrudeParamUpdate(owner)") <
-                producer.find("context.prepareUpload(uploadOwner") <
-                producer.find("context.markNoHistoryInstall()") and
-            context.count("case PreparedResourceKind.PolyExtrudeParamUpdateState:") == 3 and
-            "e.polyExtrudeParamUpdate.install();" in context)
+                "image.expectedBefore.matches(before)",
+                producer_mixin("PolyExtrudeTool"))))
 if not poly_extrude_param_gate(poly_extrude_param_sources):
     fail("Poly Extrude onParamChanged prepared contract drift")
-for target, old, new, label in (
+mutate_param_sources("Poly Extrude", poly_extrude_param_sources, poly_extrude_param_gate, (
     ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
     ("tool", "auto shadow = beginPreparedShadow(image.candidate);", "", "drop shadow"),
     ("tool", "memcmp(&distance, &other.distance, float.sizeof) == 0", "true", "drop float identity"),
-    ("owner", "target.classinfo !is PolyExtrudeTool.classinfo", "false", "broaden product"),
-    ("owner", "&layer_.meshRef() !is source_", "false", "drop Layer identity"),
-    ("tool", "uploadOwner.owns(gpu)", "true", "drop GPU identity"),
-    ("tool", "context.preparePolyExtrudeParamUpdate(owner)", "true", "drop state"),
-    ("tool", "context.prepareUpload(uploadOwner, owner.candidate)", "true", "drop upload"),
-    ("tool", "context.markNoHistoryInstall()", "true", "drop NoHistory"),
-    ("context", "e.polyExtrudeParamUpdate.install();", "", "drop install"),
-):
-    mutant = dict(poly_extrude_param_sources)
-    if target == "tool":
-        text = mutant[target]
-        producer_start = text.find("final PreparedPolyExtrudeParamEffect prepareParamChanged(")
-        start = producer_start if old in text[producer_start:] else 0
-        pos = text.find(old, start)
-        mutant[target] = text[:pos] + new + text[pos + len(old):]
-    else:
-        mutant[target] = mutant[target].replace(old, new, 1)
-    if mutant[target] == poly_extrude_param_sources[target] or poly_extrude_param_gate(mutant):
-        fail(f"Poly Extrude parameter mutation did not RED: {label}")
+    ("tool", producer_mixin("PolyExtrudeTool"), "", "drop producer mixin"),
+))
 
 poly_inset_param_sources = {
     "tool": (ROOT / "source/tools/edit/poly_inset_tool.d").read_text(),
-    "owner": prepared_module_source("prepared_poly_inset_param_update"),
-    "context": record_context,
 }
 def poly_inset_param_gate(s):
-    tool, owner, context = (s[k] for k in ("tool", "owner", "context"))
-    start = tool.find("final PreparedPolyInsetParamEffect prepareParamChanged(")
-    end = tool.find("override void evaluate()", start)
-    producer = tool[start:end]
+    tool = s["tool"]
     return (tool.count("ed.insetFacesByMask(mask, inset_)") == 3 and
             all(x in tool for x in (
                 "image.expectedLive = MeshSnapshot.capture(live);",
@@ -3200,53 +3016,18 @@ def poly_inset_param_gate(s):
                 "drainPreparedShadowDelivery(image.candidate",
                 "memcmp(&inset, &other.inset, float.sizeof) == 0",
                 "image.expectedLive.matches(live)",
-                "image.expectedBefore.matches(before)")) and
-            all(x in owner for x in (
-                "target.classinfo !is PolyInsetTool.classinfo",
-                "!target.ownsPreparedLayer(layer)",
-                "&layer_.meshRef() !is source_",
-                "!target_.preparedParamUpdateMatches(image_, *source_)",
-                "target_.installPreparedParamUpdate(image_)")) and
-            all(x in producer for x in (
-                "uploadOwner.owns(gpu)",
-                "context.prepareStampedMeshImage(layer, owner.candidate,",
-                "context.preparePolyInsetParamUpdate(owner)",
-                "context.prepareUpload(uploadOwner, owner.candidate)",
-                "context.markNoHistoryInstall()")) and
-            producer.find("context.prepareStampedMeshImage") <
-                producer.find("context.preparePolyInsetParamUpdate(owner)") <
-                producer.find("context.prepareUpload(uploadOwner") <
-                producer.find("context.markNoHistoryInstall()") and
-            context.count("case PreparedResourceKind.PolyInsetParamUpdateState:") == 3 and
-            "e.polyInsetParamUpdate.install();" in context)
+                "image.expectedBefore.matches(before)",
+                producer_mixin("PolyInsetTool"))))
 if not poly_inset_param_gate(poly_inset_param_sources):
     fail("Poly Inset onParamChanged prepared contract drift")
-for target, old, new, label in (
+mutate_param_sources("Poly Inset", poly_inset_param_sources, poly_inset_param_gate, (
     ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
     ("tool", "auto shadow = beginPreparedShadow(image.candidate);", "", "drop shadow"),
     ("tool", "memcmp(&inset, &other.inset, float.sizeof) == 0", "true", "drop float identity"),
     ("tool", "ed.insetFacesByMask(mask, inset_)", "cast(size_t)0", "drop zero-value kernel"),
-    ("owner", "target.classinfo !is PolyInsetTool.classinfo", "false", "broaden product"),
-    ("owner", "&layer_.meshRef() !is source_", "false", "drop Layer identity"),
-    ("tool", "uploadOwner.owns(gpu)", "true", "drop GPU identity"),
-    ("tool", "context.preparePolyInsetParamUpdate(owner)", "true", "drop state"),
-    ("tool", "context.prepareUpload(uploadOwner, owner.candidate)", "true", "drop upload"),
-    ("tool", "context.markNoHistoryInstall()", "true", "drop NoHistory"),
-    ("context", "e.polyInsetParamUpdate.install();", "", "drop install"),
-):
-    mutant = dict(poly_inset_param_sources)
-    if target == "tool":
-        text = mutant[target]
-        producer_start = text.find("final PreparedPolyInsetParamEffect prepareParamChanged(")
-        build_start = text.find("final PreparedPolyInsetParamImage buildPreparedParamUpdate")
-        start = producer_start if old in text[producer_start:] else \
-            build_start if label == "drop zero-value kernel" else 0
-        pos = text.find(old, start)
-        mutant[target] = text[:pos] + new + text[pos + len(old):]
-    else:
-        mutant[target] = mutant[target].replace(old, new, 1)
-    if mutant[target] == poly_inset_param_sources[target] or poly_inset_param_gate(mutant):
-        fail(f"Poly Inset parameter mutation did not RED: {label}")
+    ("tool", producer_mixin("PolyInsetTool"), "", "drop producer mixin"),
+), lambda text, label: text.find("final PreparedPolyInsetParamImage buildPreparedParamUpdate")
+    if label == "drop zero-value kernel" else 0)
 
 slice_deactivate_sources = {
     "tool": (ROOT / "source/tools/slice/slice_tool.d").read_text(),
@@ -3726,16 +3507,11 @@ for target, old, new, label in (
 
 vertex_extrude_param_sources = {
     "tool": (ROOT / "source/tools/edit/vertex_extrude_tool.d").read_text(),
-    "owner": prepared_module_source("prepared_vertex_extrude_param_update"),
-    "context": record_context,
 }
 def vertex_extrude_param_gate(s):
-    tool, owner, context = (s[k] for k in ("tool", "owner", "context"))
-    start = tool.find("final PreparedVertexExtrudeParamEffect prepareParamChanged(")
-    end = tool.find("override void evaluate()", start)
-    producer = tool[start:end]
+    tool = s["tool"]
     build_start = tool.find("final PreparedVertexExtrudeParamImage buildPreparedParamUpdate")
-    build = tool[build_start:start]
+    build = tool[build_start:tool.find("mixin PreparedParamUpdateProducer!(", build_start)]
     return (tool.count("ed.extrudeVerticesByMask(mask, shift_, width_)") == 3 and
             all(x in build for x in (
                 "image.expectedLive = MeshSnapshot.capture(live);",
@@ -3750,67 +3526,27 @@ def vertex_extrude_param_gate(s):
                 "sameFloat(width, other.width)",
                 "memcmp(&a, &b, float.sizeof) == 0",
                 "image.expectedLive.matches(live)",
-                "image.expectedBefore.matches(before)")) and
-            all(x in owner for x in (
-                "target.classinfo !is VertexExtrudeTool.classinfo",
-                "!target.ownsPreparedLayer(layer)",
-                "&layer_.meshRef() !is source_",
-                "!target_.preparedParamUpdateMatches(image_, *source_)",
-                "target_.installPreparedParamUpdate(image_)")) and
-            all(x in producer for x in (
-                "uploadOwner.owns(gpu)",
-                "context.prepareStampedMeshImage(layer, owner.candidate,",
-                "context.prepareVertexExtrudeParamUpdate(owner)",
-                "context.prepareUpload(uploadOwner, owner.candidate)",
-                "context.markNoHistoryInstall()")) and
-            producer.find("context.prepareStampedMeshImage") <
-                producer.find("context.prepareVertexExtrudeParamUpdate(owner)") <
-                producer.find("context.prepareUpload(uploadOwner") <
-                producer.find("context.markNoHistoryInstall()") and
-            context.count("case PreparedResourceKind.VertexExtrudeParamUpdateState:") == 3 and
-            "e.vertexExtrudeParamUpdate.install();" in context)
+                "image.expectedBefore.matches(before)",
+                producer_mixin("VertexExtrudeTool"))))
 if not vertex_extrude_param_gate(vertex_extrude_param_sources):
     fail("Vertex Extrude onParamChanged prepared contract drift")
-for target, old, new, label in (
+mutate_param_sources("Vertex Extrude", vertex_extrude_param_sources, vertex_extrude_param_gate, (
     ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
     ("tool", "auto shadow = beginPreparedShadow(image.candidate);", "", "drop shadow"),
     ("tool", "sameFloat(width, other.width)", "true", "drop width identity"),
     ("tool", "if (width_ == 0.0f)", "if (false)", "drop zero-width branch"),
     ("tool", "ed.extrudeVerticesByMask(mask, shift_, width_)", "cast(size_t)0", "drop kernel"),
-    ("owner", "target.classinfo !is VertexExtrudeTool.classinfo", "false", "broaden product"),
-    ("owner", "&layer_.meshRef() !is source_", "false", "drop Layer identity"),
-    ("tool", "uploadOwner.owns(gpu)", "true", "drop GPU identity"),
-    ("tool", "context.prepareVertexExtrudeParamUpdate(owner)", "true", "drop state"),
-    ("tool", "context.prepareUpload(uploadOwner, owner.candidate)", "true", "drop upload"),
-    ("tool", "context.markNoHistoryInstall()", "true", "drop NoHistory"),
-    ("context", "e.vertexExtrudeParamUpdate.install();", "", "drop install"),
-):
-    mutant = dict(vertex_extrude_param_sources)
-    if target == "tool":
-        text = mutant[target]
-        producer_start = text.find("final PreparedVertexExtrudeParamEffect prepareParamChanged(")
-        build_start = text.find("final PreparedVertexExtrudeParamImage buildPreparedParamUpdate")
-        start = build_start if label == "drop zero-width branch" else \
-            producer_start if old in text[producer_start:] else build_start
-        pos = text.find(old, start)
-        mutant[target] = text[:pos] + new + text[pos + len(old):]
-    else:
-        mutant[target] = mutant[target].replace(old, new, 1)
-    if mutant[target] == vertex_extrude_param_sources[target] or vertex_extrude_param_gate(mutant):
-        fail(f"Vertex Extrude parameter mutation did not RED: {label}")
+    ("tool", producer_mixin("VertexExtrudeTool"), "", "drop producer mixin"),
+), lambda text, label: 0 if label == "drop width identity" else
+    text.find("final PreparedVertexExtrudeParamImage buildPreparedParamUpdate"))
 
 vertex_bevel_param_sources = {
     "tool": (ROOT / "source/tools/edit/vertex_bevel_tool.d").read_text(),
-    "owner": prepared_module_source("prepared_vertex_bevel_param_update"),
-    "context": record_context,
 }
 def vertex_bevel_param_gate(s):
-    tool, owner, context = (s[k] for k in ("tool", "owner", "context"))
-    start = tool.find("final PreparedVertexBevelParamEffect prepareParamChanged(")
-    end = tool.find("override void evaluate()", start)
-    producer = tool[start:end]
+    tool = s["tool"]
     build_start = tool.find("final PreparedVertexBevelParamImage buildPreparedParamUpdate")
-    build = tool[build_start:start]
+    build = tool[build_start:tool.find("mixin PreparedParamUpdateProducer!(", build_start)]
     return (tool.count("ed.bevelVerticesByMask(mask, inset_)") == 3 and
             all(x in build for x in (
                 "image.expectedLive = MeshSnapshot.capture(live);",
@@ -3823,65 +3559,25 @@ def vertex_bevel_param_gate(s):
             all(x in tool for x in (
                 "memcmp(&inset, &other.inset, float.sizeof) == 0",
                 "image.expectedLive.matches(live)",
-                "image.expectedBefore.matches(before)")) and
-            all(x in owner for x in (
-                "target.classinfo !is VertexBevelTool.classinfo",
-                "!target.ownsPreparedLayer(layer)",
-                "&layer_.meshRef() !is source_",
-                "!target_.preparedParamUpdateMatches(image_, *source_)",
-                "target_.installPreparedParamUpdate(image_)")) and
-            all(x in producer for x in (
-                "uploadOwner.owns(gpu)",
-                "context.prepareStampedMeshImage(layer, owner.candidate,",
-                "context.prepareVertexBevelParamUpdate(owner)",
-                "context.prepareUpload(uploadOwner, owner.candidate)",
-                "context.markNoHistoryInstall()")) and
-            producer.find("context.prepareStampedMeshImage") <
-                producer.find("context.prepareVertexBevelParamUpdate(owner)") <
-                producer.find("context.prepareUpload(uploadOwner") <
-                producer.find("context.markNoHistoryInstall()") and
-            context.count("case PreparedResourceKind.VertexBevelParamUpdateState:") == 3 and
-            "e.vertexBevelParamUpdate.install();" in context)
+                "image.expectedBefore.matches(before)",
+                producer_mixin("VertexBevelTool"))))
 if not vertex_bevel_param_gate(vertex_bevel_param_sources):
     fail("Vertex Bevel onParamChanged prepared contract drift")
-for target, old, new, label in (
+mutate_param_sources("Vertex Bevel", vertex_bevel_param_sources, vertex_bevel_param_gate, (
     ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
     ("tool", "auto shadow = beginPreparedShadow(image.candidate);", "", "drop shadow"),
     ("tool", "memcmp(&inset, &other.inset, float.sizeof) == 0", "true", "drop float identity"),
     ("tool", "if (inset_ == 0.0f)", "if (false)", "drop zero reset branch"),
     ("tool", "ed.bevelVerticesByMask(mask, inset_)", "cast(size_t)0", "drop kernel"),
-    ("owner", "target.classinfo !is VertexBevelTool.classinfo", "false", "broaden product"),
-    ("owner", "&layer_.meshRef() !is source_", "false", "drop Layer identity"),
-    ("tool", "uploadOwner.owns(gpu)", "true", "drop GPU identity"),
-    ("tool", "context.prepareVertexBevelParamUpdate(owner)", "true", "drop state"),
-    ("tool", "context.prepareUpload(uploadOwner, owner.candidate)", "true", "drop upload"),
-    ("tool", "context.markNoHistoryInstall()", "true", "drop NoHistory"),
-    ("context", "e.vertexBevelParamUpdate.install();", "", "drop install"),
-):
-    mutant = dict(vertex_bevel_param_sources)
-    if target == "tool":
-        text = mutant[target]
-        producer_start = text.find("final PreparedVertexBevelParamEffect prepareParamChanged(")
-        build_start = text.find("final PreparedVertexBevelParamImage buildPreparedParamUpdate")
-        start = build_start if label == "drop zero reset branch" else \
-            producer_start if old in text[producer_start:] else build_start
-        pos = text.find(old, start)
-        mutant[target] = text[:pos] + new + text[pos + len(old):]
-    else:
-        mutant[target] = mutant[target].replace(old, new, 1)
-    if mutant[target] == vertex_bevel_param_sources[target] or vertex_bevel_param_gate(mutant):
-        fail(f"Vertex Bevel parameter mutation did not RED: {label}")
+    ("tool", producer_mixin("VertexBevelTool"), "", "drop producer mixin"),
+), lambda text, label: 0 if label == "drop float identity" else
+    text.find("final PreparedVertexBevelParamImage buildPreparedParamUpdate"))
 
 vertex_merge_param_sources = {
     "tool": (ROOT / "source/tools/edit/vert_merge_tool.d").read_text(),
-    "owner": prepared_module_source("prepared_vertex_merge_param_update"),
-    "context": record_context,
 }
 def vertex_merge_param_gate(s):
-    tool, owner, context = (s[k] for k in ("tool", "owner", "context"))
-    start = tool.find("final PreparedVertexMergeParamEffect prepareParamChanged(")
-    end = tool.find("override void evaluate()", start)
-    producer = tool[start:end]
+    tool = s["tool"]
     return (tool.count("image.candidate.weldVerticesByMask(") == 1 and
             all(x in tool for x in (
                 "image.expectedLive = MeshSnapshot.capture(live);",
@@ -3891,63 +3587,24 @@ def vertex_merge_param_gate(s):
                 "drainPreparedShadowDelivery(image.candidate",
                 "memcmp(&dist, &other.dist, float.sizeof) == 0",
                 "image.expectedLive.matches(live)",
-                "image.expectedBefore.matches(before)")) and
-            all(x in owner for x in (
-                "target.classinfo !is VertexMergeTool.classinfo",
-                "!target.ownsPreparedLayer(layer)",
-                "&layer_.meshRef() !is source_",
-                "!target_.preparedParamUpdateMatches(image_, *source_)",
-                "target_.installPreparedParamUpdate(image_)")) and
-            all(x in producer for x in (
-                "uploadOwner.owns(gpu)",
-                "context.prepareStampedMeshImage(layer, owner.candidate,",
-                "context.prepareVertexMergeParamUpdate(owner)",
-                "context.prepareUpload(uploadOwner, owner.candidate)",
-                "context.markNoHistoryInstall()")) and
-            producer.find("context.prepareStampedMeshImage") <
-                producer.find("context.prepareVertexMergeParamUpdate(owner)") <
-                producer.find("context.prepareUpload(uploadOwner") <
-                producer.find("context.markNoHistoryInstall()") and
-            context.count("case PreparedResourceKind.VertexMergeParamUpdateState:") == 3 and
-            "e.vertexMergeParamUpdate.install();" in context)
+                "image.expectedBefore.matches(before)",
+                producer_mixin("VertexMergeTool"))))
 if not vertex_merge_param_gate(vertex_merge_param_sources):
     fail("Vertex Merge onParamChanged prepared contract drift")
-for target, old, new, label in (
+mutate_param_sources("Vertex Merge", vertex_merge_param_sources, vertex_merge_param_gate, (
     ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
     ("tool", "auto shadow = beginPreparedShadow(image.candidate);", "", "drop shadow"),
     ("tool", "memcmp(&dist, &other.dist, float.sizeof) == 0", "true", "drop float identity"),
     ("tool", "image.candidate.weldVerticesByMask(", "image.candidate.hasAnySelectedVertices(", "drop kernel"),
-    ("owner", "target.classinfo !is VertexMergeTool.classinfo", "false", "broaden product"),
-    ("owner", "&layer_.meshRef() !is source_", "false", "drop Layer identity"),
-    ("tool", "uploadOwner.owns(gpu)", "true", "drop GPU identity"),
-    ("tool", "context.prepareVertexMergeParamUpdate(owner)", "true", "drop state"),
-    ("tool", "context.prepareUpload(uploadOwner, owner.candidate)", "true", "drop upload"),
-    ("tool", "context.markNoHistoryInstall()", "true", "drop NoHistory"),
-    ("context", "e.vertexMergeParamUpdate.install();", "", "drop install"),
-):
-    mutant = dict(vertex_merge_param_sources)
-    if target == "tool":
-        text = mutant[target]
-        producer_start = text.find("final PreparedVertexMergeParamEffect prepareParamChanged(")
-        build_start = text.find("final PreparedVertexMergeParamImage buildPreparedParamUpdate")
-        start = producer_start if old in text[producer_start:] else build_start
-        pos = text.find(old, start)
-        mutant[target] = text[:pos] + new + text[pos + len(old):]
-    else:
-        mutant[target] = mutant[target].replace(old, new, 1)
-    if mutant[target] == vertex_merge_param_sources[target] or vertex_merge_param_gate(mutant):
-        fail(f"Vertex Merge parameter mutation did not RED: {label}")
+    ("tool", producer_mixin("VertexMergeTool"), "", "drop producer mixin"),
+), lambda text, label: 0 if label == "drop float identity" else
+    text.find("final PreparedVertexMergeParamImage buildPreparedParamUpdate"))
 
 reduction_param_sources = {
     "tool": (ROOT / "source/tools/edit/reduce.d").read_text(),
-    "owner": prepared_module_source("prepared_reduction_param_update"),
-    "context": record_context,
 }
 def reduction_param_gate(s):
-    tool, owner, context = (s[k] for k in ("tool", "owner", "context"))
-    start = tool.find("final PreparedReductionParamEffect prepareParamChanged(")
-    end = tool.find("override void evaluate()", start)
-    producer = tool[start:end]
+    tool = s["tool"]
     return (tool.count("ed.reduceToTarget(target, pb_)") == 3 and
             all(x in tool for x in (
                 "image.expectedLive = MeshSnapshot.capture(live);",
@@ -3957,52 +3614,18 @@ def reduction_param_gate(s):
                 "drainPreparedShadowDelivery(image.candidate",
                 "memcmp(&ratio, &other.ratio, float.sizeof) == 0",
                 "image.expectedLive.matches(live)",
-                "image.expectedBefore.matches(before)")) and
-            all(x in owner for x in (
-                "target.classinfo !is ReductionTool.classinfo",
-                "!target.ownsPreparedLayer(layer)",
-                "&layer_.meshRef() !is source_",
-                "!target_.preparedParamUpdateMatches(image_, *source_)",
-                "target_.installPreparedParamUpdate(image_)")) and
-            all(x in producer for x in (
-                "uploadOwner.owns(gpu)",
-                "context.prepareStampedMeshImage(layer, owner.candidate,",
-                "context.prepareReductionParamUpdate(owner)",
-                "context.prepareUpload(uploadOwner, owner.candidate)",
-                "context.markNoHistoryInstall()")) and
-            producer.find("context.prepareStampedMeshImage") <
-                producer.find("context.prepareReductionParamUpdate(owner)") <
-                producer.find("context.prepareUpload(uploadOwner") <
-                producer.find("context.markNoHistoryInstall()") and
-            context.count("case PreparedResourceKind.ReductionParamUpdateState:") == 3 and
-            "e.reductionParamUpdate.install();" in context)
+                "image.expectedBefore.matches(before)",
+                producer_mixin("ReductionTool"))))
 if not reduction_param_gate(reduction_param_sources):
     fail("Reduction onParamChanged prepared contract drift")
-for target, old, new, label in (
+mutate_param_sources("Reduction", reduction_param_sources, reduction_param_gate, (
     ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
     ("tool", "auto shadow = beginPreparedShadow(image.candidate);", "", "drop shadow"),
     ("tool", "memcmp(&ratio, &other.ratio, float.sizeof) == 0", "true", "drop float identity"),
     ("tool", "ed.reduceToTarget(target, pb_)", "cast(size_t)0", "drop kernel"),
-    ("owner", "target.classinfo !is ReductionTool.classinfo", "false", "broaden product"),
-    ("owner", "&layer_.meshRef() !is source_", "false", "drop Layer identity"),
-    ("tool", "uploadOwner.owns(gpu)", "true", "drop GPU identity"),
-    ("tool", "context.prepareReductionParamUpdate(owner)", "true", "drop state"),
-    ("tool", "context.prepareUpload(uploadOwner, owner.candidate)", "true", "drop upload"),
-    ("tool", "context.markNoHistoryInstall()", "true", "drop NoHistory"),
-    ("context", "e.reductionParamUpdate.install();", "", "drop install"),
-):
-    mutant = dict(reduction_param_sources)
-    if target == "tool":
-        text = mutant[target]
-        producer_start = text.find("final PreparedReductionParamEffect prepareParamChanged(")
-        build_start = text.find("final PreparedReductionParamImage buildPreparedParamUpdate")
-        start = producer_start if old in text[producer_start:] else build_start
-        pos = text.find(old, start)
-        mutant[target] = text[:pos] + new + text[pos + len(old):]
-    else:
-        mutant[target] = mutant[target].replace(old, new, 1)
-    if mutant[target] == reduction_param_sources[target] or reduction_param_gate(mutant):
-        fail(f"Reduction parameter mutation did not RED: {label}")
+    ("tool", producer_mixin("ReductionTool"), "", "drop producer mixin"),
+), lambda text, label: 0 if label == "drop float identity" else
+    text.find("final PreparedReductionParamImage buildPreparedParamUpdate"))
 
 # PrimitiveCreateTool.activate is one inherited declaration with six exact
 # products. Its closed projection preserves each leaf's resetSession law and

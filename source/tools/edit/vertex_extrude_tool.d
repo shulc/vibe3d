@@ -32,7 +32,8 @@ import prepared_record_context : PreparedToolParamDoorClient,
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_vertex_extrude_activation : PreparedVertexExtrudeActivationOwner;
-import prepared_vertex_extrude_param_update : PreparedVertexExtrudeParamUpdateOwner;
+import prepared_param_update : PreparedParamUpdateOwner,
+    PreparedParamUpdateProducer;
 import prepared_tool_effect : PreparedVertexExtrudeParamEffect,
     PreparedVertexExtrudeParamKind;
 import document : Layer;
@@ -345,27 +346,8 @@ public:
         if (!image.valid) return;
         built = image.nextBuilt; image.clear();
     }
-    final PreparedVertexExtrudeParamEffect prepareParamChanged(
-            PreparedRecordContext context, Layer layer,
-            GpuUploadOwner uploadOwner) {
-        if (context is null) return PreparedVertexExtrudeParamEffect(
-            preparedToolStateOwner, PreparedVertexExtrudeParamKind.None, false);
-        scope(failure) context.discard();
-        auto owner = PreparedVertexExtrudeParamUpdateOwner.prepare(this, layer);
-        auto kind = owner is null ? PreparedVertexExtrudeParamKind.None :
-            owner.effectKind;
-        bool ok = owner !is null;
-        if (ok && owner.applies)
-            ok = uploadOwner !is null && uploadOwner.owns(gpu) &&
-                context.prepareStampedMeshImage(layer, owner.candidate,
-                    owner.deliveryFlags, owner.deliveryDomains);
-        if (ok) ok = context.prepareVertexExtrudeParamUpdate(owner);
-        if (ok && owner.applies)
-            ok = context.prepareUpload(uploadOwner, owner.candidate);
-        if (ok) ok = context.markNoHistoryInstall();
-        if (!ok) context.discard();
-        return PreparedVertexExtrudeParamEffect(preparedToolStateOwner, kind, ok);
-    }
+    mixin PreparedParamUpdateProducer!(PreparedParamUpdateOwner!(VertexExtrudeTool,
+        PreparedVertexExtrudeParamImage, PreparedVertexExtrudeParamKind), PreparedVertexExtrudeParamEffect);
     override void evaluate() {}
 
     override bool applyHeadless() {

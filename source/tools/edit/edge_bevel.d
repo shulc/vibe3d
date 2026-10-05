@@ -34,7 +34,8 @@ import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_edge_bevel_activation : PreparedEdgeBevelActivationOwner;
-import prepared_edge_bevel_param_update : PreparedEdgeBevelParamUpdateOwner;
+import prepared_param_update : PreparedParamUpdateOwner,
+    PreparedParamUpdateProducer;
 import prepared_tool_effect : PreparedEdgeBevelParamEffect,
     PreparedEdgeBevelParamKind;
 import document : Layer;
@@ -379,26 +380,8 @@ public:
         if (!image.valid) return;
         built = image.nextBuilt; preview_.installImage(image.preview); image.clear();
     }
-    final PreparedEdgeBevelParamEffect prepareParamChanged(
-            PreparedRecordContext context, Layer layer,
-            GpuUploadOwner uploadOwner) {
-        if (context is null) return PreparedEdgeBevelParamEffect(
-            preparedToolStateOwner, PreparedEdgeBevelParamKind.None, false);
-        scope(failure) context.discard();
-        auto owner = PreparedEdgeBevelParamUpdateOwner.prepare(this, layer);
-        auto kind = owner is null ? PreparedEdgeBevelParamKind.None : owner.effectKind;
-        bool ok = owner !is null;
-        if (ok && owner.applies)
-            ok = uploadOwner !is null && uploadOwner.owns(gpu) &&
-                context.prepareStampedMeshImage(layer, owner.candidate,
-                    owner.deliveryFlags, owner.deliveryDomains);
-        if (ok) ok = context.prepareEdgeBevelParamUpdate(owner);
-        if (ok && owner.applies)
-            ok = context.prepareUpload(uploadOwner, owner.candidate);
-        if (ok) ok = context.markNoHistoryInstall();
-        if (!ok) context.discard();
-        return PreparedEdgeBevelParamEffect(preparedToolStateOwner, kind, ok);
-    }
+    mixin PreparedParamUpdateProducer!(PreparedParamUpdateOwner!(EdgeBevelTool,
+        PreparedEdgeBevelParamImage, PreparedEdgeBevelParamKind), PreparedEdgeBevelParamEffect);
     override void evaluate() {}
 
     /// Test/diagnostic seam (task 1620): how the preview-rebuild seam split

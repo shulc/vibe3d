@@ -7,7 +7,8 @@ import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_edge_extrude_activation : PreparedEdgeExtrudeActivationOwner;
-import prepared_edge_extrude_param_update : PreparedEdgeExtrudeParamUpdateOwner;
+import prepared_param_update : PreparedParamUpdateOwner,
+    PreparedParamUpdateProducer;
 import prepared_tool_effect : PreparedEdgeExtrudeParamEffect,
     PreparedEdgeExtrudeParamKind;
 import document : Layer;
@@ -396,26 +397,8 @@ public:
         if (!image.valid) return;
         built = image.nextBuilt; image.clear();
     }
-    final PreparedEdgeExtrudeParamEffect prepareParamChanged(
-            PreparedRecordContext context, Layer layer,
-            GpuUploadOwner uploadOwner) {
-        if (context is null) return PreparedEdgeExtrudeParamEffect(
-            preparedToolStateOwner, PreparedEdgeExtrudeParamKind.None, false);
-        scope(failure) context.discard();
-        auto owner = PreparedEdgeExtrudeParamUpdateOwner.prepare(this, layer);
-        auto kind = owner is null ? PreparedEdgeExtrudeParamKind.None : owner.effectKind;
-        bool ok = owner !is null;
-        if (ok && owner.applies)
-            ok = uploadOwner !is null && uploadOwner.owns(gpu) &&
-                context.prepareStampedMeshImage(layer, owner.candidate,
-                    owner.deliveryFlags, owner.deliveryDomains);
-        if (ok) ok = context.prepareEdgeExtrudeParamUpdate(owner);
-        if (ok && owner.applies)
-            ok = context.prepareUpload(uploadOwner, owner.candidate);
-        if (ok) ok = context.markNoHistoryInstall();
-        if (!ok) context.discard();
-        return PreparedEdgeExtrudeParamEffect(preparedToolStateOwner, kind, ok);
-    }
+    mixin PreparedParamUpdateProducer!(PreparedParamUpdateOwner!(EdgeExtrudeTool,
+        PreparedEdgeExtrudeParamImage, PreparedEdgeExtrudeParamKind), PreparedEdgeExtrudeParamEffect);
     override void evaluate() {}
 
     // Read-only test/introspection seam (mirrors poly.bevel / edge.bevel):

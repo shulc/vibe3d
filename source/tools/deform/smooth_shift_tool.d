@@ -32,7 +32,8 @@ import prepared_record_context : PreparedToolParamDoorClient,
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_smooth_shift_activation : PreparedSmoothShiftActivationOwner;
-import prepared_smooth_shift_param_update : PreparedSmoothShiftParamUpdateOwner;
+import prepared_param_update : PreparedParamUpdateOwner,
+    PreparedParamUpdateProducer;
 import prepared_tool_effect : PreparedSmoothShiftParamEffect,
     PreparedSmoothShiftParamKind;
 import document : Layer;
@@ -434,27 +435,8 @@ public:
         if (!image.valid) return;
         built = image.nextBuilt; image.clear();
     }
-    final PreparedSmoothShiftParamEffect prepareParamChanged(
-            PreparedRecordContext context, Layer layer,
-            GpuUploadOwner uploadOwner) {
-        if (context is null) return PreparedSmoothShiftParamEffect(
-            preparedToolStateOwner, PreparedSmoothShiftParamKind.None, false);
-        scope(failure) context.discard();
-        auto owner = PreparedSmoothShiftParamUpdateOwner.prepare(this, layer);
-        auto kind = owner is null ? PreparedSmoothShiftParamKind.None :
-            owner.effectKind;
-        bool ok = owner !is null;
-        if (ok && owner.applies)
-            ok = uploadOwner !is null && uploadOwner.owns(gpu) &&
-                context.prepareStampedMeshImage(layer, owner.candidate,
-                    owner.deliveryFlags, owner.deliveryDomains);
-        if (ok) ok = context.prepareSmoothShiftParamUpdate(owner);
-        if (ok && owner.applies)
-            ok = context.prepareUpload(uploadOwner, owner.candidate);
-        if (ok) ok = context.markNoHistoryInstall();
-        if (!ok) context.discard();
-        return PreparedSmoothShiftParamEffect(preparedToolStateOwner, kind, ok);
-    }
+    mixin PreparedParamUpdateProducer!(PreparedParamUpdateOwner!(SmoothShiftTool,
+        PreparedSmoothShiftParamImage, PreparedSmoothShiftParamKind), PreparedSmoothShiftParamEffect);
     override void evaluate() {}
 
     override bool applyHeadless() {
