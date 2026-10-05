@@ -578,9 +578,7 @@ SnapPacket snapPacketOf(ref VectorStack vts) {
     return SnapPacket.init;
 }
 
-/// The guide snap types. `snapCursor` elects no candidate for them: a guide is
-/// the pen's own gesture-scoped line and no other client registers one (capture
-/// K-G), so a client that strips them changes nothing.
+/// The guide snap types: the pen's own guide; `snapCursor` elects none of them (capture K-G).
 enum uint kGuideTypes = SnapType.WorldAxis | SnapType.StraightLine | SnapType.RightAngle;
 
 /// Snap the world position `cursorWorld` corresponding to screen pixel
@@ -2953,9 +2951,7 @@ unittest {
     immutable int cx = cast(int)round(pxa);
     immutable int cy = cast(int)round(pya);
 
-    // The constraint tier is the item box's face planes: one box whose z = 0
-    // face lies under the pixel and whose corners project far outside the
-    // acceptance range.
+    // The constraint tier: a box whose z = 0 face is under the pixel, corners out of range.
     setItemSnapFrames([ItemSnapFrame(Vec3(0, 0, 0), Vec3(-60, -60, -60), Vec3(60, 0, 0), true)]);
     scope (exit) setItemSnapFrames(null);
     SnapPacket ccfg = cfg;
