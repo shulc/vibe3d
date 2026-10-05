@@ -8,9 +8,9 @@
 # Then READ THE DIFF. Regeneration is mechanical and will absorb an
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
-source-files 578
-task-citation-lines 5244
-citing-files 454
+source-files 579
+task-citation-lines 5243
+citing-files 455
 long-comment-runs 267
 files-with-long-runs 143
 
@@ -394,9 +394,9 @@ allow source/tools/edit/bridge_tool.d 19
 allow source/tools/edit/drag_weld.d 3
 allow source/tools/edit/edge_bevel.d 9
 allow source/tools/edit/edge_extend.d 30
-allow source/tools/edit/edge_extrude.d 11
+allow source/tools/edit/edge_extrude.d 10
 allow source/tools/edit/poly_bevel.d 15
-allow source/tools/edit/poly_extrude.d 10
+allow source/tools/edit/poly_extrude.d 9
 allow source/tools/edit/poly_inset_tool.d 10
 allow source/tools/edit/preview_rebuild.d 1
 allow source/tools/edit/reduce.d 5
@@ -414,6 +414,7 @@ allow source/tools/edit/vertex_extrude_tool.d 7
 allow source/tools/slice/edge_slice_tool.d 37
 allow source/tools/slice/loop_slice_tool.d 87
 allow source/tools/slice/slice_tool.d 91
+allow source/tools/topology_step.d 1
 allow source/tools/transform/item_xform_kernels.d 3
 allow source/tools/transform/morph_route.d 3
 allow source/tools/transform/move.d 9

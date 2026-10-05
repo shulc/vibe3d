@@ -7,6 +7,7 @@ import bindbc.sdl;
 import operator : VectorStack;
 
 import tool;
+import tools.topology_step;
 import command : Command;
 import mesh;
 import mesh_gpu : GpuMesh;
@@ -253,35 +254,13 @@ public:
         reinitSession();
     }
 
-    public override bool commitUncommittedEdit() {
-        return false;
-    }
-
-    public override bool commitOperation() {
-        if (!active) return false;
-        resyncSession();
-        return true;
-    }
-
-    public override Mesh* topologyStepMesh() { return mesh; }
-    public override MeshSnapshot topologyStepBasis() { return before; }
-    public override Command topologyStepCarrier() {
-        return gestureFactory is null ? null : gestureFactory();
-    }
-    public override bool recordTopologyStep(Command cmd) {
-        return recordGestureEdit(cmd, GestureRecordMode.Plain);
-    }
-    public override string topologyStepLabel() { return "Merge Vertices"; }
-    public override void setTopologyDormant(bool dormant) {}
-    public override void rebaseTopologyStep(MeshSnapshot basis) {
+    mixin SessionCommitHooks;
+    mixin TopologyStepClientBody!("Merge Vertices", before);
+    override void rebaseTopologyStep(MeshSnapshot basis) {
         before = basis;
         built = !before.matches(*mesh);
         dragging = false;
         refreshCaches();
-    }
-    public override void restoreTopologyStep(in AttrImage attrs, MeshSnapshot basis) {
-        restoreRecordedAttrs(attrs);
-        rebaseTopologyStep(basis);
     }
 
     override void onParamChanged(string pname) {

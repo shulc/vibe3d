@@ -219,11 +219,13 @@ unittest { // The tools that close their operation their own way, exactly.
     // Task 8180 adds Vertex Merge with a new basis after each weld. Array
     // closes a completed grid without discarding the current mesh. The pen
     // commits its stroke here so Shift+LMB stays out of apply-and-continue.
-    assert(commits == 17, "M2 override census: commitOperation overriders changed: " ~ owners.to!string);
+    // Task 9429 moves the eight history-owned re-baseline bodies (Edge/Polygon
+    // Extrude, Smooth Shift, Inset, Vertex Bevel/Extrude, Edge Bevel, Vertex
+    // Merge) into ONE `SessionCommitHooks` in topology_step.d (its census names
+    // the users).
+    assert(commits == 10, "M2 override census: commitOperation overriders changed: " ~ owners.to!string);
     foreach (want; ["xfrm_transform.d", "edge_slice_tool.d", "loop_slice_tool.d", "slice_tool.d",
-                    "poly_bevel.d", "edge_extrude.d", "poly_extrude.d",
-                    "smooth_shift_tool.d", "poly_inset_tool.d", "vertex_bevel_tool.d",
-                    "edge_bevel.d", "vertex_extrude_tool.d", "vert_merge_tool.d",
+                    "poly_bevel.d", "topology_step.d",
                     "array_tool.d", "clone_tool.d", "radial_array_tool.d", "create/pen.d"])
         assert(owners.canFind!(o => o.canFind(want)),
             "M2 override census: " ~ want ~ " no longer overrides commitOperation");

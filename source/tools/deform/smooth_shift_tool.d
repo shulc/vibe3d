@@ -5,6 +5,7 @@ import bindbc.sdl;
 import operator : VectorStack;
 
 import tool;
+import tools.topology_step;
 import command : Command;
 import mesh;
 import mesh_gpu : GpuMesh;
@@ -343,49 +344,16 @@ public:
         reinitSession();
     }
 
-    // Completed rows are already in CommandHistory.
-    public override bool commitUncommittedEdit() {
-        return false;
-    }
-
-    public override bool commitOperation() {
-        if (!active) return false;
-        resyncSession();
-        return true;
-    }
-
-    public override Mesh* topologyStepMesh() { return mesh; }
-    public override MeshSnapshot topologyStepBasis() { return before; }
-    public override Command topologyStepCarrier() {
-        return gestureFactory is null ? null : gestureFactory();
-    }
-    public override bool recordTopologyStep(Command cmd) {
-        return recordGestureEdit(cmd, GestureRecordMode.Plain);
-    }
-    public override string topologyStepLabel() { return "Smooth Shift"; }
-    public override void setTopologyDormant(bool dormant) {}
-    public override void rebaseTopologyStep(MeshSnapshot basis) {
-        before = basis;
-        if (!before.matches(*mesh)) {
-            auto visible = MeshSnapshot.capture(*mesh);
-            before.restore(*mesh);
-            computeGizmoFrame();
-            visible.restore(*mesh);
-        } else computeGizmoFrame();
-        built = !before.matches(*mesh);
+    mixin SessionCommitHooks;
+    mixin TopologyStepClientBody!("Smooth Shift", before);
+    mixin GizmoTopologyRebase;
+    // A rebased step belongs to an engaged operation; after a re-arm redo the
+    // next field write stacks one layer (captured cell F). The undo of a first
+    // haul that followed an unengaged field write is not captured and is
+    // treated the same way.
+    final void afterTopologyRebase() {
         completedGesture = before.filled && before.matches(*mesh);
-        // A rebased step belongs to an engaged operation; after a re-arm
-        // redo the next field write stacks one layer (captured cell F). The
-        // undo of a first haul that followed an unengaged field write is not
-        // captured and is treated the same way.
-        engaged  = true;
-        dragPart = -1;
-        toolHandles.clearHaul();
-        refreshCaches();
-    }
-    public override void restoreTopologyStep(in AttrImage attrs, MeshSnapshot basis) {
-        restoreRecordedAttrs(attrs);
-        rebaseTopologyStep(basis);
+        engaged = true;
     }
 
     override void onParamChanged(string pname) {

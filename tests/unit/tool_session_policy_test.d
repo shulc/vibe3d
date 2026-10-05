@@ -1138,19 +1138,24 @@ unittest { // (4d)
               .canFind("if(aModel&&!operationOpen_)rebaseOnCurrent_(tool_(),false);"),
            "S3 needle: the press or the settle rebases inside an open operation");
 
-    // STRUCTURAL: every restore body of the model's 12 classes is its attributes,
-    // then its rebase body — nothing else (the former Thicken reset was dead after S3).
+    // STRUCTURAL: the restore body of the model's 12 classes is its attributes, then
+    // its rebase body — nothing else (the former Thicken reset was dead after S3). Since
+    // task 9429 it is ONE body, the client mixin's, which every model file composes.
+    enum restoreMarker = "void restoreTopologyStep(in AttrImage attrs, MeshSnapshot basis)";
+    const home = blankNonCode(readText("source/tools/topology_step.d"));
+    assert(home.count(restoreMarker) == 1, "S3 structural: the client mixin's restore body is gone");
+    assert(squeeze(bodyAt(home, restoreMarker))
+           == "{restoreRecordedAttrs(attrs);rebaseTopologyStep(basis);}",
+           "S3 structural: the client mixin's restore body is " ~ squeeze(bodyAt(home, restoreMarker)));
     size_t bodies;
     foreach (f; kRebaseBodyFiles) {
-        const b = squeeze(bodyAt(blankNonCode(readText(f)),
-                                 "void restoreTopologyStep(in AttrImage attrs, MeshSnapshot basis)"));
+        const c = blankNonCode(readText(f));
+        assert(c.count(restoreMarker) == 0 && c.count("mixin TopologyStepClientBody!") == 1,
+               "S3 structural: " ~ f ~ " declares its own restore body or lost the client mixin");
         ++bodies;
-        enum want = "{restoreRecordedAttrs(attrs);rebaseTopologyStep(basis);}";
-        assert(b == want, format("S3 structural: the restore body in %s is %s, expected %s",
-                                 f, b, want));
     }
-    assert(bodies == 12, format("S3 structural: restore bodies of the model's tools: %s read, 12 expected",
-                                bodies));
+    assert(bodies == 12, format("S3 structural: model files composing the restore body: %s read, "
+                                ~ "12 expected", bodies));
 }
 
 // ---------------------------------------------------------------------------
@@ -1165,11 +1170,11 @@ unittest { // (4e)
     import std.file : dirEntries, readText, SpanMode;
     import tests.unit.census_symbols : blankUnittestBodies;
     // FLOOR (form item 4): the model's classes, found by the rule «a class in source
-    // with a restoreTopologyStep override, not the pen» — 12, the table's files.
+    // composing the topology-step client mixin» (task 9429; the pen keeps its own
+    // block) — 12, the table's files.
     string[] model;
     foreach (e; dirEntries("source", "*.d", SpanMode.depth))
-        if (!e.name.canFind("topology_pen")
-            && blankNonCode(readText(e.name)).canFind("override void restoreTopologyStep"))
+        if (blankNonCode(readText(e.name)).canFind("mixin TopologyStepClientBody!"))
             model ~= e.name;
     sort(model);
     assert(model == kRebaseBodyFiles.dup.sort.array, format("S6 floor: the captured model's "
@@ -1754,7 +1759,7 @@ private enum string[][string] kBuiltSites = [
         "SmoothShiftTool.installPreparedParamUpdate:1", "SmoothShiftTool.paramProjection:1",
         "SmoothShiftTool.preparedActivationDirtyForTest:1",
         "SmoothShiftTool.preparedActivationForTest:1",
-        "SmoothShiftTool.preparedParamBuiltForTest:1", "SmoothShiftTool.rebaseTopologyStep:1",
+        "SmoothShiftTool.preparedParamBuiltForTest:1",
         "SmoothShiftTool.rebuildPreview:1", "SmoothShiftTool.reinitSession:1",
         "SmoothShiftTool.seedPreparedActivationForTest:1",
         "SmoothShiftTool.seedPreparedParamForTest:1",
@@ -1769,7 +1774,7 @@ private enum string[][string] kBuiltSites = [
         "EdgeBevelTool.preparedActivationDirtyForTest:1",
         "EdgeBevelTool.preparedActivationForTest:1",
         "EdgeBevelTool.preparedParamInstalledForTest:1", "EdgeBevelTool.readInteractionForTest:1",
-        "EdgeBevelTool.rebaseTopologyStep:1", "EdgeBevelTool.rebuildPreview:1",
+        "EdgeBevelTool.rebuildPreview:1",
         "EdgeBevelTool.reinitSession:1", "EdgeBevelTool.seedPreparedActivationForTest:1",
         "EdgeBevelTool.seedPreparedParamForTest:1", "EdgeBevelTool.toolStateJson:1",
     ],
@@ -1782,7 +1787,7 @@ private enum string[][string] kBuiltSites = [
         "EdgeExtrudeTool.installPreparedParamUpdate:1", "EdgeExtrudeTool.paramProjection:1",
         "EdgeExtrudeTool.preparedActivationDirtyForTest:1",
         "EdgeExtrudeTool.preparedActivationForTest:1",
-        "EdgeExtrudeTool.preparedParamBuiltForTest:1", "EdgeExtrudeTool.rebaseTopologyStep:1",
+        "EdgeExtrudeTool.preparedParamBuiltForTest:1",
         "EdgeExtrudeTool.rebuildPreview:2", "EdgeExtrudeTool.reinitSession:1",
         "EdgeExtrudeTool.seedPreparedActivationForTest:1",
         "EdgeExtrudeTool.seedPreparedParamForTest:1", "EdgeExtrudeTool.toolStateJson:1",
@@ -1797,7 +1802,7 @@ private enum string[][string] kBuiltSites = [
         "PolyExtrudeTool.preparedActivationDirtyForTest:1",
         "PolyExtrudeTool.preparedActivationForTest:1",
         "PolyExtrudeTool.preparedInvalidActivationForTest:1",
-        "PolyExtrudeTool.preparedParamBuiltForTest:1", "PolyExtrudeTool.rebaseTopologyStep:1",
+        "PolyExtrudeTool.preparedParamBuiltForTest:1",
         "PolyExtrudeTool.rebuildPreview:2", "PolyExtrudeTool.reinitSession:1",
         "PolyExtrudeTool.seedPreparedActivationForTest:1",
         "PolyExtrudeTool.seedPreparedParamForTest:1",
@@ -1836,7 +1841,7 @@ private enum string[][string] kBuiltSites = [
         "VertexBevelTool.installPreparedParamUpdate:1", "VertexBevelTool.paramProjection:1",
         "VertexBevelTool.preparedActivationDirtyForTest:1",
         "VertexBevelTool.preparedActivationForTest:1",
-        "VertexBevelTool.preparedParamBuiltForTest:1", "VertexBevelTool.rebaseTopologyStep:1",
+        "VertexBevelTool.preparedParamBuiltForTest:1",
         "VertexBevelTool.rebuildPreview:2", "VertexBevelTool.reinitSession:1",
         "VertexBevelTool.seedPreparedActivationForTest:1",
         "VertexBevelTool.seedPreparedParamForTest:1",
@@ -1850,7 +1855,7 @@ private enum string[][string] kBuiltSites = [
         "VertexExtrudeTool.installPreparedParamUpdate:1", "VertexExtrudeTool.paramProjection:1",
         "VertexExtrudeTool.preparedActivationDirtyForTest:1",
         "VertexExtrudeTool.preparedActivationForTest:1",
-        "VertexExtrudeTool.preparedParamBuiltForTest:1", "VertexExtrudeTool.rebaseTopologyStep:1",
+        "VertexExtrudeTool.preparedParamBuiltForTest:1",
         "VertexExtrudeTool.rebuildPreview:2", "VertexExtrudeTool.reinitSession:1",
         "VertexExtrudeTool.seedPreparedActivationForTest:1",
         "VertexExtrudeTool.seedPreparedParamForTest:1",
@@ -1860,7 +1865,8 @@ private enum string[][string] kBuiltSites = [
 unittest { // (4d')
     import tests.unit.census_symbols : blankUnittestBodies;
     // FLOOR (form item 4): the census reads the 12 files and finds `built` in 11 of
-    // them (Mirror keys its preview on `engaged`), 217 enclosing-symbol sites in all.
+    // them (Mirror keys its preview on `engaged`), 211 enclosing-symbol sites in all,
+    // plus the shared gizmo rebase's one (task 9429).
     assert(kBuiltSites.length == 12, "S3 built census: the table names "
            ~ format("%s", kBuiltSites.length) ~ " files, the model has 12");
     size_t files, sites;
@@ -1873,8 +1879,13 @@ unittest { // (4d')
         if (s.length) ++files;
         sites += s.length;
     }
-    assert(files == 11 && sites == 217, format("S3 built census: %s files, %s sites; measured 11, 217",
+    assert(files == 11 && sites == 211, format("S3 built census: %s files, %s sites; measured 11, 211",
                                                 files, sites));
+    // Task 9429: the six gizmo tools' rebase write is ONE site, the shared gizmo rebase.
+    const home = identSites(blankUnittestBodies(blankNonCode(readText("source/tools/topology_step.d"))),
+                            "built", false);
+    assert(home == ["GizmoTopologyRebase.rebaseTopologyStep:1"],
+           format("S3 built census: topology_step.d reads/writes `built` at %s", home));
 }
 
 // The rebase entry point stays (its one caller is `rebaseOnCurrent_`); the per-tool flags it
@@ -2349,12 +2360,15 @@ unittest { // Tasks 7990/8030: production topology R wiring, not a helper replic
         && edgePreparedClose.count("context.markNoHistoryInstall()") == 1
         && !edgePreparedClose.canFind("markHistoryInstall("),
         "Edge drag/Middle or prepared close lost its production seam");
-    assert(edge.canFind("recordGestureEdit(cmd, GestureRecordMode.Plain)")
+    // Task 9429: the Plain record is the topology-step client mixin's, composed by both.
+    auto stepHome = blankNonCode(readText("source/tools/topology_step.d"));
+    assert(stepHome.canFind("recordGestureEdit(cmd, GestureRecordMode.Plain)")
+        && edge.canFind("mixin TopologyStepClientBody!")
         && !edge.canFind("GestureRecordMode.ReplaceRunTail"),
         "Edge topology rows must stay separate Plain records");
     assert(poly.canFind("sessionStepBegins(e.button == SDL_BUTTON_MIDDLE")
         && poly.canFind("sessionStepEnds();")
-        && poly.canFind("recordGestureEdit(cmd, GestureRecordMode.Plain)")
+        && poly.canFind("mixin TopologyStepClientBody!")
         && polyPreparedClose.count("c.markNoHistoryInstall()") == 1
         && !polyPreparedClose.canFind("markHistoryInstall(")
         && !poly.canFind("GestureRecordMode.ReplaceRunTail"),

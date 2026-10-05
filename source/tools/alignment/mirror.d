@@ -7,6 +7,7 @@ import operator : VectorStack;
 import std.math : PI;
 
 import tool;
+import tools.topology_step;
 import mesh;
 import mesh_gpu : GpuMesh;
 import math;
@@ -481,16 +482,7 @@ public:
         havePreviewCache = false;
     }
 
-    override Mesh* topologyStepMesh() { return mesh; }
-    override MeshSnapshot topologyStepBasis() { return baseSnap; }
-    override Command topologyStepCarrier() {
-        return gestureFactory is null ? null : gestureFactory();
-    }
-    override bool recordTopologyStep(Command cmd) {
-        return recordGestureEdit(cmd, GestureRecordMode.Plain);
-    }
-    override string topologyStepLabel() { return "Mirror"; }
-    override void setTopologyDormant(bool dormant) {}
+    mixin TopologyStepClientBody!("Mirror", baseSnap);
     override void rebaseTopologyStep(MeshSnapshot basis) {
         baseSnap = basis;
         Mesh source;
@@ -502,10 +494,6 @@ public:
         havePreviewCache = false;
         toolHandles.clearHaul();
         refreshDisplay(mesh, gpu);
-    }
-    override void restoreTopologyStep(in AttrImage attrs, MeshSnapshot basis) {
-        restoreRecordedAttrs(attrs);
-        rebaseTopologyStep(basis);
     }
 
     // ----- Mask (fold #4: interactive commit + applyHeadless must build the

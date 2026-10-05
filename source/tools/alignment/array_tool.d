@@ -16,6 +16,7 @@ import bindbc.sdl;
 import operator : VectorStack;
 
 import tool;
+import tools.topology_step;
 import command : Command;
 import mesh;
 import mesh_gpu : GpuMesh;
@@ -349,24 +350,11 @@ public:
         return true;
     }
 
-    override Mesh* topologyStepMesh() { return mesh; }
-    override MeshSnapshot topologyStepBasis() { return before; }
-    override Command topologyStepCarrier() {
-        return gestureFactory is null ? null : gestureFactory();
-    }
-    override bool recordTopologyStep(Command cmd) {
-        return recordGestureEdit(cmd, GestureRecordMode.Plain);
-    }
-    override string topologyStepLabel() { return "Array"; }
-    override void setTopologyDormant(bool dormant) {}
+    mixin TopologyStepClientBody!("Array", before);
     override void rebaseTopologyStep(MeshSnapshot basis) {
         before = basis;
         built = dragging = false;
         refreshCaches();
-    }
-    override void restoreTopologyStep(in AttrImage attrs, MeshSnapshot basis) {
-        restoreRecordedAttrs(attrs);
-        rebaseTopologyStep(basis);
     }
 
     override void onParamChanged(string pname) {
