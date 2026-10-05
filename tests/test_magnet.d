@@ -283,3 +283,24 @@ unittest {
                "vertex " ~ i.to!string ~ " is outside the far sphere and must not move");
     }
 }
+
+// ---------------------------------------------------------------------------
+// Turned layer (task 9491): the Element weight is world-space, so the sphere is
+// centred on the DRAWN anchor. A rigid layer transform keeps every distance,
+// so the analytic weights of Test 1 must hold unchanged; a sphere left at the
+// layer-local centre sits ~3 m from the drawn cube and moves only the anchor.
+// ---------------------------------------------------------------------------
+unittest {
+    resetCube();
+    foreach (c; ["layer.attr 0 pos.x 3", "layer.attr 0 rot.z 90"])
+        mustOk(parseJSON(cast(string)post(BASE ~ "/api/command", c)), c);
+
+    mustOk(cmd(`{"id":"mesh.magnet","target":[0.5,0.5,1.5],"center":[0.5,0.5,0.5],` ~
+               `"strength":1.0,"dist":1.2,"anchor":6}`), "mesh.magnet on a turned layer");
+    auto m = getModel();
+    assert(abs(vert(m, 6).z - 1.5) < 1e-4, "turned layer: the anchor did not land on the target");
+    immutable double z2 = vert(m, 2).z;
+    assert(abs(z2 - (-0.5 + 2.0 * 2.0 / 27.0)) < 1e-4,
+           "turned layer: v2.z must be -0.5 + 2·(2/27) as on an unturned layer (sphere on the "
+           ~ "drawn anchor), got " ~ z2.to!string);
+}

@@ -2041,7 +2041,10 @@ unittest { // (6) id -> rollovers, over every registered id
     string[string][string][string] pipeOf;       // preset id -> its pipe attrs
     foreach (p; loadToolPresets("config/tool_presets.yaml"))
         pipeOf[p.id] = p.pipeAttrs;
-    {   // A registered tool's own pipe block, read from its production source.
+    {   // A registered tool's own pipe block, read from its declaration: the
+        // registry is not built here (its deps need a live app). The armed
+        // wiring's witness is test_session_laws_display's magnet cell (no
+        // registry entry → no element node → 0 px, red).
         import tools.deform.magnet : MagnetTool;
         pipeOf["xfrm.pointAttract"] = MagnetTool.presetPipe();
     }

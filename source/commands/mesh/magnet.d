@@ -153,9 +153,10 @@ private:
         foreach (i; 0 .. cast(int)mesh.vertices.length)
             if (vmask[i]) indices ~= i;
 
-        // Build Element FalloffPacket (or use injected one from tool pipe).
+        // Build Element FalloffPacket (or use injected one from tool pipe);
+        // the weight is world-space, so the sphere sits on the DRAWN centre.
         FalloffPacket fp = hasFalloff_ ? falloff_
-                                       : magnetElementPacket(center_, dist_, anchor_);
+            : magnetElementPacket(aim.toWorld(center_), dist_, anchor_);
 
         // THE ONE FORWARD IN L0-d THAT DOES NOT CHANGE. `applyMagnet` writes
         // `mesh.vertices[i]` raw at source/deform_magnet.d:64 and its signature
