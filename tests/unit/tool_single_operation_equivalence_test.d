@@ -17,8 +17,13 @@ import mesh : Mesh, makeCube, makeGridPlane;
 import mesh_gpu : GpuMesh;
 import params : Param;
 import tool : Tool;
+import tools.alignment.array_tool : ArrayTool;
+import tools.alignment.radial_array_tool : RadialArrayTool;
 import tools.deform.smooth_shift_tool : SmoothShiftTool;
+import tools.edit.edge_bevel : EdgeBevelTool;
+import tools.edit.edge_extend : EdgeExtendTool;
 import tools.edit.edge_extrude : EdgeExtrudeTool;
+import tools.edit.poly_bevel : PolyBevelTool;
 import tools.edit.poly_extrude : PolyExtrudeTool;
 import tools.edit.poly_inset_tool : PolyInsetTool;
 import tools.edit.reduce : ReductionTool;
@@ -53,10 +58,16 @@ private void hideAll(ref Mesh m, Tool) {
     foreach (ref w; m.faceMarks) w |= Mesh.Marks.Hide;
 }
 
+/// The array kernels read the selection with no hidden backstop: the
+/// refusal rig clears it and hides the visible fallback.
+private void hideAllUnselected(ref Mesh m, Tool t) { m.clearFaceSelection(); hideAll(m, t); }
+
 private void poke(Tool t, string name, float v) {
     foreach (ref p; t.params()) {
         if (p.name != name) continue;
-        if (p.kind == Param.Kind.Bool) *p.bptr = v != 0; else *p.fptr = v;
+        if (p.kind == Param.Kind.Bool) *p.bptr = v != 0;
+        else if (p.kind == Param.Kind.Int) *p.iptr = cast(int) v;
+        else *p.fptr = v;
         return;
     }
     assert(false, "no param named `" ~ name ~ "`");
@@ -71,27 +82,43 @@ private double digest(ref const Mesh m) {
 
 private size_t rows;
 
+// The seams that differ by tool: the array tool's constructor has no shader,
+// its seed spells the session out, and the radial array's panel image is its
+// transition owner's `buildPreparedParamImage`.
+private T makeTool(T)(Rig r) {
+    static if (is(T == ArrayTool)) return new T(() => &r.mesh, &r.gpu, &r.mode);
+    else return new T(() => &r.mesh, &r.gpu, &r.mode, null);
+}
+private void seedSession(T)(T t, ref Mesh m) {
+    static if (is(T == ArrayTool)) t.seedPreparedParamForTest(m, true, true, false);
+    else t.seedPreparedParamForTest(m, true);
+}
+private auto panelImage(T)(T t, string name, ref Mesh m) {
+    static if (is(T == RadialArrayTool)) return t.buildPreparedParamImage(m);
+    else return t.buildPreparedParamUpdate(name, m);
+}
+
 private void row(T)(EditMode mode, void function(ref Mesh) pick,
         string[] names, float[] values, size_t verts, size_t faces, double dig,
         void function(ref Mesh, Tool) refuse = &hideAll) {
     enum name = T.stringof;
     ++rows;
-    T make(Rig r) { return new T(() => &r.mesh, &r.gpu, &r.mode, null); }
+    alias make = makeTool!T;
 
     // LIVE: an interactive session (the seed is the armed state a press
     // leaves), then the panel's two-step on the last name: poke, notify.
     auto live = new Rig(mode, pick);
     auto lt = make(live);
-    lt.seedPreparedParamForTest(live.mesh, true);
+    seedSession(lt, live.mesh);
     foreach (i, n; names) poke(lt, n, values[i]);
     lt.notifyInteractiveParamChanged(names[$ - 1]);
 
     // PREPARED: the same session, the panel image built on its candidate.
     auto prep = new Rig(mode, pick);
     auto pt = make(prep);
-    pt.seedPreparedParamForTest(prep.mesh, true);
+    seedSession(pt, prep.mesh);
     foreach (i, n; names) poke(pt, n, values[i]);
-    auto image = pt.buildPreparedParamUpdate(names[$ - 1], prep.mesh);
+    auto image = panelImage(pt, names[$ - 1], prep.mesh);
     scope(exit) image.clear();
     assert(image.applies, name ~ ": the prepared image did not apply");
 
@@ -209,4 +236,26 @@ unittest {
     row!SmoothShiftTool(EditMode.Polygons, &pickFace, ["scale", "shift"],
         [1.0f, 0.3f], 12, 10, -66.8);
     assert(rows == 9, format("%s rows ran, expected 9 (8 tools, reduce twice)", rows));
+}
+
+// The bevel / extend / array family (task 9434, wave plan PV3b). Pins measured
+// on main da313d9a (Step 0), the same in all three modes. Edge Extend's params
+// are pivot-agnostic: the live pivot is the armed bounding-box centre, the
+// scripted one the origin (fixture case `command_path_rotate_pivot`).
+unittest {
+    rows = 0;
+    row!EdgeBevelTool(EditMode.Edges, &pickEdge, ["roundLevel", "widthMode", "width"],
+        [1.0f, 0.0f, 0.1f], 12, 8, -72.5054);
+    row!PolyBevelTool(EditMode.Polygons, &pickFace,
+        ["group", "segments", "square", "inset", "shift"],
+        [1.0f, 1.0f, 0.0f, 0.1f, 0.2f], 12, 10, -54.6);
+    row!EdgeExtendTool(EditMode.Edges, &pickEdge,
+        ["opOpen", "offsetX", "offsetY", "shift", "inset"],
+        [1.0f, 0.3f, 0.1f, 0.2f, 0.1f], 10, 7, 11.9);
+    row!ArrayTool(EditMode.Polygons, &pickFace, ["numX", "numZ", "offZ", "offX"],
+        [3.0f, 2.0f, 1.25f, 1.5f], 28, 11, 1105.5, &hideAllUnselected);
+    row!RadialArrayTool(EditMode.Polygons, &pickFace,
+        ["count", "weld", "offset", "angle"], [4.0f, 0.0f, 0.5f, 90.0f], 20, 9, -74.3146,
+        &hideAllUnselected);
+    assert(rows == 5, format("%s rows ran, expected 5", rows));
 }
