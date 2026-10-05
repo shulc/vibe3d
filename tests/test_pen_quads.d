@@ -14,7 +14,8 @@
 // 1.4 m strips in our viewport; 360 keeps the 0.005 m placement quantum, so
 // every clicked fixture position is a lattice value and positions compare to
 // 1e-4). Counts and rings are exact. Typed fields go through the interactive
-// door (the panel's source); Ctrl+Z through /api/play-events.
+// door (the panel's source); Ctrl+Z through /api/play-events. `VIBE3D_CELL=<id>`
+// runs one cell alone (the population floor holds for the full run only).
 //
 // Ours-only cells: `B5_sym_merge_off` (no shared corner with merge off — the
 // weld is merge's, as in the polygon pen's captured B4m), and two refusals
@@ -31,6 +32,7 @@ import pen_rig_helpers;
 import std.format : format;
 import std.json : JSONType, JSONValue, parseJSON;
 import std.math : abs;
+import std.process : environment;
 
 void main() {}
 
@@ -137,6 +139,8 @@ private string[] expect(string cell, string what, double got, double want) {
 
 unittest {
     auto c = parseJSON(import("fixtures/pen_quads.json"))["cells"];
+    const only = environment.get("VIBE3D_CELL", "");
+    bool want(string cell) { return only.length == 0 || only == cell; }
     string[] fails;
     int ran;
     auto strip7 = scriptClicks(c["strip_7_clicks"], 1);
@@ -147,6 +151,7 @@ unittest {
     // lock_0_points / lock_2_points: below 3 points the panel turns Make
     // Quads on (written false first: the cells start with it off).
     foreach (n, cell; ["lock_0_points", "lock_2_points"]) {
+        if (!want(cell)) continue;
         rig(p(-0.15, 0), false);
         if (n) clickWorld(strip7[0 .. 2 * n]);
         auto r = panel("makeQuads", "true");
@@ -158,34 +163,40 @@ unittest {
 
     // ===== must turn ========================================================
     // strip_7_clicks: 12 vertices, 5 quads, flip decided 1.
-    rig(p(-0.15, 0));
-    clickWorld(strip7);
-    fails ~= expect("strip_7_clicks", "flip", attr("flip"), 1);
-    drop(); ++ran;
-    fails ~= compare("strip_7_clicks", c["strip_7_clicks"]["expected"]);
+    if (want("strip_7_clicks")) {
+        rig(p(-0.15, 0));
+        clickWorld(strip7);
+        fails ~= expect("strip_7_clicks", "flip", attr("flip"), 1);
+        drop(); ++ran;
+        fails ~= compare("strip_7_clicks", c["strip_7_clicks"]["expected"]);
+    }
 
     // strip_7_clicks_ccw: mirrored in x, flip decided 0: every ring reversed.
-    rig(p(0.15, 0));
-    clickWorld(strip7ccw);
-    fails ~= expect("strip_7_clicks_ccw", "flip", attr("flip"),
-                    num(c["strip_7_clicks_ccw"]["flip_after"]));
-    drop(); ++ran;
-    fails ~= compare("strip_7_clicks_ccw", c["strip_7_clicks_ccw"]["expected"]);
+    if (want("strip_7_clicks_ccw")) {
+        rig(p(0.15, 0));
+        clickWorld(strip7ccw);
+        fails ~= expect("strip_7_clicks_ccw", "flip", attr("flip"),
+                        num(c["strip_7_clicks_ccw"]["flip_after"]));
+        drop(); ++ran;
+        fails ~= compare("strip_7_clicks_ccw", c["strip_7_clicks_ccw"]["expected"]);
+    }
 
     // strip_7_clicks_flip_written_off: flip written 0 after quad 0 exists.
-    rig(p(-0.15, 0));
-    clickWorld(strip7[0 .. 3]);
-    auto fw = panel("flip", "false");
-    assert(fw["status"].str == "ok", "flip write failed: " ~ fw.toString);
-    clickWorld(strip7[3 .. $]);
-    drop(); ++ran;
-    fails ~= compare("strip_7_clicks_flip_written_off",
-                     c["strip_7_clicks_flip_written_off"]["expected"]);
+    if (want("strip_7_clicks_flip_written_off")) {
+        rig(p(-0.15, 0));
+        clickWorld(strip7[0 .. 3]);
+        auto fw = panel("flip", "false");
+        assert(fw["status"].str == "ok", "flip write failed: " ~ fw.toString);
+        clickWorld(strip7[3 .. $]);
+        drop(); ++ran;
+        fails ~= compare("strip_7_clicks_flip_written_off",
+                         c["strip_7_clicks_flip_written_off"]["expected"]);
+    }
 
     // strip_plane_anchor: the 4th click lands on the automatic corner and
     // selects it; typed height 0.5; the next clicks land on the plane through
     // the current point.
-    {
+    if (want("strip_plane_anchor")) {
         auto e = c["strip_plane_anchor"]["expected"]["vertices"].array;
         rig(p(0, 0.15));
         clickWorld(scriptClicks(c["strip_plane_anchor"], 1));
@@ -201,7 +212,7 @@ unittest {
     }
 
     // strip_undo_last_click / strip_undo_then_click (QU-pair).
-    {
+    if (want("strip_undo_last_click")) {
         rig(p(-0.15, 0));
         clickWorld(strip7[0 .. 4]);
         fails ~= expect("strip_undo_last_click", "current before the undo",
@@ -211,7 +222,8 @@ unittest {
             attr("currentPoint"), num(c["strip_undo_last_click"]["current_after_undo"]));
         drop(); ++ran;
         fails ~= compare("strip_undo_last_click", c["strip_undo_last_click"]["expected"]);
-
+    }
+    if (want("strip_undo_then_click")) {
         rig(p(-0.15, 0));
         clickWorld(strip7[0 .. 4]);
         ctrlZ();
@@ -225,6 +237,7 @@ unittest {
     auto b5 = [p(0.25, -0.25), p(0.75, -0.25), p(0.75, 0.25), p(0.25, 0.25), p(0.25, 0.75)];
     foreach (sym; [false, true]) {
         const cell = sym ? "B5_sym" : "B5_nosym";
+        if (!want(cell)) continue;
         rig(p(0, 0.25), true, sym);
         clickWorld(b5);
         if (!sym) {
@@ -238,7 +251,7 @@ unittest {
 
     // B5_sym with merge off (ours; the weld is merge's, as in the polygon
     // pen's B4m): no shared corner, 12 vertices, the mirror rings unwelded.
-    {
+    if (want("B5_sym_merge_off")) {
         rig(p(0, 0.25), true, true);
         penCommand("tool.attr pen merge false");
         clickWorld(b5);
@@ -255,7 +268,7 @@ unittest {
     }
 
     // lock_3_points: from 3 points the panel's write is refused, the value stays.
-    {
+    if (want("lock_3_points")) {
         rig(p(-0.15, 0), false);
         clickWorld(strip7[0 .. 3]);
         auto r = panel("makeQuads", "true");
@@ -267,7 +280,7 @@ unittest {
 
     // refuse-script-3-points: the script door refuses the locked write — the
     // command no-op contract's refusal arm.
-    {
+    if (want("refuse-script-3-points")) {
         rig(p(-0.15, 0), false);
         clickWorld(strip7[0 .. 3]);
         const before = depth();
@@ -281,7 +294,7 @@ unittest {
     }
 
     // refuse-idle-posX: no stroke, the point fields are disabled: refused.
-    {
+    if (want("refuse-idle-posX")) {
         rig(p(0, 0), false);
         const before = depth();
         auto r = postJson("/api/command", "tool.attr pen posX 1");
@@ -292,6 +305,7 @@ unittest {
 
     rig(p(0, 0), false);    // leave the remembered value as found
     drop();
-    assert(ran == 14, format("ran %s cells, pinned 14", ran));
-    assert(fails.length == 0, format("%s failure(s):\n  %-(%s\n  %)", fails.length, fails));
+    assert(ran == (only.length ? 1 : 14), format("ran %s cells, pinned 14 (1 under %s)",
+                                                 ran, only));
+    assert(fails.length == 0, format("%s failure(s): %-(%s | %)", fails.length, fails));
 }
