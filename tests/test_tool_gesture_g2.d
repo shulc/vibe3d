@@ -952,9 +952,10 @@ unittest {
 
     // --- (d) ArrayTool. Records INSIDE the gesture, at `onMouseButtonUp`, so
     //     its `liveEntryNames` is already populated before the tool is dropped
-    //     and the drop itself records nothing more. No handle at all: the haul
-    //     is anchored wherever the press lands and feeds `planeDragDelta`, so
-    //     the press is the viewport centre by construction — the same drive
+    //     and the drop itself records nothing more. No drawn handle: the haul
+    //     is the free handle law (captured K-H3 H3_NT), anchored at the
+    //     centroid wherever the press lands, so the press is the viewport
+    //     centre by construction — the same drive
     //     `tests/test_tool_overlay_item_space.d` block 5 uses.
     cells ~= runCell("array/centre-haul", "mesh.arrayTool",
         "source/tools/alignment/array_tool.d ArrayTool.recordTopologyStep (from onMouseButtonUp)",
