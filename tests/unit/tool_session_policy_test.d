@@ -2537,20 +2537,18 @@ unittest { // (9) the compile-time module list IS the runtime scan
 }
 
 // ---------------------------------------------------------------------------
-// (11) Wave plan 8640 slice 8690 (M-I / D16) — a `tool.attr` write to a param
-// the tool disables in its current state is refused by policy DATA
-// (`refusesDisabledParamWrites`). Provenance: CAPTURED for the Topology Pen
-// (L16; the Fill capture at its `kFillRangeDefault` comment) and for the
-// polygon pen (wave plan S7: the captured Make Quads lock, pen_quads.json
-// lock_3_points, under the command no-op contract's refusal arm); false for
-// every other tool (uncaptured: their greying stays panel-only). Exactly these
-// two ids declare it, and the write door reads the policy AND `paramEnabled`
-// after the query branch and before the value is written.
+// (11) Task 9428 (captured K-A) — the `tool.attr` door refuses a write to a row
+// the tool reports disabled for EVERY tool: no per-tool datum. The former
+// datum `refusesDisabledParamWrites` is read nowhere; the polygon pen's file
+// (pen wave) still declares it, so it survives as that one unread line. The
+// door resolves the attribute (unknown -> throw, for the query too), answers
+// the query, then refuses a disabled row, before anything is written.
 // ---------------------------------------------------------------------------
 
 static assert(ToolSessionPolicy.init.refusesDisabledParamWrites == false);
 
 unittest { // (11)
+    import std.file : SpanMode, dirEntries;
     auto manifest = parseJSON(readText("tools/prepared_writer_manifest.json"));
     string[string] moduleOf;
     foreach (p; manifest["products"].array)
@@ -2559,23 +2557,39 @@ unittest { // (11)
     size_t visited;
     foreach (row; kTable) {
         auto ci = TypeInfo_Class.find(moduleOf[row.cls] ~ "." ~ row.cls);
-        assert(ci !is null, "8690 policy table: class not linked: " ~ row.cls);
+        assert(ci !is null, "9428 policy table: class not linked: " ~ row.cls);
         ++visited;
         if (blit(ci).sessionPolicy().refusesDisabledParamWrites) declared ~= row.id;
     }
     assert(visited == kTable.length && kTable.length == 71,
-           format("8690 policy table: visited %s of %s rows, measured 71", visited, kTable.length));
-    assert(declared == ["mesh.topoPen", "pen"],
-           format("8690 policy table: refusesDisabledParamWrites declared by %s, expected "
-                  ~ "the two pens only", declared));
+           format("9428 policy table: visited %s of %s rows, measured 71", visited, kTable.length));
+    assert(declared == ["pen"],
+           format("9428 policy table: refusesDisabledParamWrites declared by %s, expected "
+                  ~ "the polygon pen's leftover line only", declared));
+    // Raw-text census: the identifier occurs in code only at its declaration
+    // and the pen's leftover initializer — no reader anywhere in source/.
+    string[] sites;
+    size_t files;
+    foreach (f; dirEntries("source", "*.d", SpanMode.depth)) {
+        ++files;
+        const n = blankNonCode(readText(f.name)).count("refusesDisabledParamWrites");
+        if (n) sites ~= format("%s:%d", f.name, n);
+    }
+    sort(sites);
+    assert(files > 400, format("9428 census: scanned %d source files (floor 400)", files));
+    assert(sites == ["source/tool.d:1", "source/tools/create/pen.d:1"],
+           format("9428 census: refusesDisabledParamWrites occurs at %s, expected the "
+                  ~ "declaration and the pen's initializer only", sites));
     auto attr = squeeze(bodyAt(blankNonCode(readText("source/commands/tool/attr.d")),
                                "protected override bool applyImpl()"));
-    assert(attr.count("if(t.sessionPolicy().refusesDisabledParamWrites&&!t.paramEnabled(attrName_)){") == 1,
-           "8690 wiring census: the write door no longer reads the policy and paramEnabled");
-    inOrder(attr, ["if(isQuery()){",
-                   "if(t.sessionPolicy().refusesDisabledParamWrites&&!t.paramEnabled(attrName_)){",
+    assert(attr.count("if(!t.paramEnabled(attrName_)){") == 1,
+           "9428 wiring census: the write door no longer refuses a disabled row");
+    inOrder(attr, ["autops=t.params();",
+                   "if(i==ps.length)thrownewException(",
+                   "if(isQuery()){",
+                   "if(!t.paramEnabled(attrName_)){",
                    "returnfalse;}",
-                   "injectParamsInto(t.params(),pj);"], "ToolAttrCommand.applyImpl");
+                   "injectParamsInto(ps,pj);"], "ToolAttrCommand.applyImpl");
 }
 
 // ---------------------------------------------------------------------------

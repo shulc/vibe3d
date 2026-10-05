@@ -804,8 +804,8 @@ private:
     // Fill mode (an error, not an ignore) and greys the row out in its panel;
     // likewise `smoothStrength` outside Smoothing (law L16). Ported (wave plan
     // 8640 slice 8690): `paramEnabled` below answers the mode test, the panel
-    // greys the row, and the policy's `refusesDisabledParamWrites` makes the
-    // `tool.attr` door refuse the write.
+    // greys the row, and the `tool.attr` door refuses a disabled row's write for
+    // every tool.
     private enum float kFillRangeDefault = 1.5f;
     package float fillRange_    = kFillRangeDefault;
     package bool  fillQuadOnly_ = true;
@@ -1274,7 +1274,6 @@ public:
             commandClose: CommandClose.uiDoor,
             sessionSteps: true, historyTopologySteps: true,
             dropWritesRow: true,
-            refusesDisabledParamWrites: true,
             pressOpensOperation: true, foldsParamRowsIntoBlock: true,
             imageAttrs: ["middle", "mode", "loop", "slide", "smoothStrength",
                          "showVertex", "showEdge", "innerSnap", "keepVertex",
@@ -1426,8 +1425,8 @@ public:
 
     // Attribute availability by mode (law L16, wave plan 8640 slice 8690):
     // Strength only in Smoothing, Range / Quads Only only in Fill; every other
-    // row always. The panel greys a false row and, by this tool's policy
-    // (`refusesDisabledParamWrites`), the `tool.attr` door refuses its write.
+    // row always. The panel greys a false row and the `tool.attr` door refuses
+    // its write.
     override bool paramEnabled(string name) const {
         switch (name) {
             case "smoothStrength":    return penMode_ == PenMode.Smooth;

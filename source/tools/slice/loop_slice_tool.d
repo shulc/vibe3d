@@ -708,12 +708,12 @@ public:
             // (e.g. Step) cuts in the mirrored orientation. Default OFF =
             // byte-for-byte the un-reversed profile. Only bites once a non-flat
             // Profile is chosen (Flat passes no samples), so it is greyed while
-            // Flat — same gating as Inset (see paramEnabled).
+            // Flat (see paramEnabled).
             Param.bool_("reversex", "Reverse Direction", &reverseX_, false),
             // Reverse Inset (task 0258): flip the profile's inset/displacement sign
             // (h → -h in `kernelFeed`), so the profile presses OUT of the surface
             // instead of into it (or vice-versa). Default OFF = byte-for-byte the
-            // un-reversed profile. Like Inset/Reverse Direction, it only bites once a
+            // un-reversed profile. Like Reverse Direction, it only bites once a
             // non-flat Profile is chosen, so it is greyed while Flat (paramEnabled).
             Param.bool_("reversey", "Reverse Inset", &reverseY_, false),
             // Keep Aspect (task 0259): when ON, the Inset is auto-derived from the
@@ -721,8 +721,7 @@ public:
             // proportions (effectiveDepth = cut span) instead of using the manual
             // Inset. Default OFF = byte-for-byte the raw `depth_` (0256–0258). Like
             // the other profile modifiers it is a no-op with no profile loaded, so it
-            // is greyed while Flat (paramEnabled). While ON, the manual Inset row is
-            // greyed too (it no longer drives the cut). See `effectiveDepth`.
+            // is greyed while Flat (paramEnabled). See `effectiveDepth`.
             Param.bool_("aspect", "Keep Aspect", &aspect_, false),
             // Task 0232 — HUD geometry only, see the field comments above.
             // .enforceBounds() (task 1410): min/max alone are UI HINTS -- the
@@ -1079,25 +1078,12 @@ public:
     // params stay enabled.
     override bool paramEnabled(string name) const {
         if (name == "tension") return curvature_;
-        // Inset (depth) only bites once a non-flat Profile is chosen (Flat passes
-        // no heights to the kernel, so depth is a no-op) — grey it while Flat, the
-        // way the reference greys the profile sub-controls until a Profile loads.
-        // Keep Aspect (0259) auto-derives the Inset, so the manual value no longer
-        // drives the cut while aspect is ON — grey it there too (the reference
-        // "automatically sets the Inset value from the profile's aspect ratio").
-        if (name == "depth") return profile_ != LoopProfile.Flat && !aspect_;
-        // Reverse Direction (task 0257) mirrors the profile samples, so it is a
-        // no-op with no profile loaded — grey it while Flat, like Inset (the
-        // reference greys it "until a Profile is loaded", spec.json 0244).
-        if (name == "reversex") return profile_ != LoopProfile.Flat;
-        // Reverse Inset (task 0258) flips the profile height sign — a no-op with no
-        // profile loaded (Flat passes no heights), so grey it while Flat, same as
-        // Inset/Reverse Direction (the reference greys it "until a Profile is loaded").
-        if (name == "reversey") return profile_ != LoopProfile.Flat;
-        // Keep Aspect (task 0259) auto-derives the Inset from the profile's aspect
-        // ratio — a no-op with no profile loaded (Flat passes no heights), so grey
-        // it while Flat, same as Inset/Reverse Direction/Reverse Inset.
-        if (name == "aspect") return profile_ != LoopProfile.Flat;
+        // The profile modifiers (Reverse Direction / Reverse Inset / Keep Aspect,
+        // tasks 0257-0259) are no-ops with no profile loaded, and the reference
+        // disables them until a Profile is loaded (spec.json 0244; captured K-A
+        // A1b2, task 9428). Inset (depth) stays enabled (K-A PF-1).
+        if (name == "reversex" || name == "reversey" || name == "aspect")
+            return profile_ != LoopProfile.Flat;
         return true;
     }
 

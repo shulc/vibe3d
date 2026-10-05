@@ -110,31 +110,24 @@ class ToolAttrCommand : Command {
         if (t is null)
             throw new Exception("tool.attr: no active tool");
 
-        // Query (read-back) mode: resolve attrName_ in the active tool's
-        // params() schema, box the live typed-pointer value, and return WITHOUT
-        // mutating. Crucially this never touches injectParamsInto /
-        // onParamChanged / evaluate / reEvaluate — a query is a pure read, so
-        // it moves no geometry and opens no live session (guarding the
-        // reEvaluate trigger path).
-        if (isQuery()) {
-            foreach (ref p; t.params()) {
-                if (p.name == attrName_) {
-                    queryResult_ = paramToJson(p);
-                    return true;
-                }
-            }
+        // One gate in front of every write (task 9428, captured K-A): an
+        // unknown attribute is refused for the write AND the query; a row the
+        // tool disables in its current state refuses every write, whatever
+        // the value (the command no-op contract's refusal arm: `status:error`,
+        // no history row), while its query still answers. A query is a pure
+        // read: it never reaches injectParamsInto / onParamChanged / evaluate.
+        auto ps = t.params();
+        size_t i;
+        while (i < ps.length && ps[i].name != attrName_) ++i;
+        if (i == ps.length)
             throw new Exception(
                 "tool.attr: unknown attribute '" ~ attrName_ ~
                 "' on tool '" ~ toolId_ ~ "'");
+        if (isQuery()) {
+            queryResult_ = paramToJson(ps[i]);
+            return true;
         }
-
-        // A write to a param the tool disables in its current state is
-        // refused for a tool whose policy opts in (wave plan 8640 M-I, L16):
-        // the reason, then `false` — the command no-op contract's refusal arm
-        // (script door `status:error`, no history row). After the query branch
-        // (a read is never refused), before anything is written or captured.
-        if (t.sessionPolicy().refusesDisabledParamWrites
-            && !t.paramEnabled(attrName_)) {
+        if (!t.paramEnabled(attrName_)) {
             baseRefusal_ = "attribute '" ~ attrName_ ~ "' of tool '" ~ toolId_
                 ~ "' is disabled in its current state";
             return false;
@@ -145,7 +138,7 @@ class ToolAttrCommand : Command {
         pj[attrName_] = attrValue_;
         auto beforeWrite = t.sessionPolicy().stepsParamWrites()
             ? t.captureAttrImage() : AttrImage.init;
-        injectParamsInto(t.params(), pj);
+        injectParamsInto(ps, pj);
         if (toolHost.session is null || toolHost.session() is null)
             throw new Exception("tool.attr: EditSession not wired");
         auto source = interactive_

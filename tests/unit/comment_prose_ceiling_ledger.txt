@@ -166,7 +166,7 @@ allow source/commands/select/sets.d 10
 allow source/commands/select/type_from.d 2
 allow source/commands/snap/toggle_type.d 1
 allow source/commands/test_undo_flags.d 1
-allow source/commands/tool/attr.d 3
+allow source/commands/tool/attr.d 4
 allow source/commands/tool/do_apply.d 3
 allow source/commands/tool/headless.d 3
 allow source/commands/tool/host.d 1
@@ -412,7 +412,7 @@ allow source/tools/edit/vert_merge_tool.d 7
 allow source/tools/edit/vertex_bevel_tool.d 8
 allow source/tools/edit/vertex_extrude_tool.d 8
 allow source/tools/slice/edge_slice_tool.d 37
-allow source/tools/slice/loop_slice_tool.d 87
+allow source/tools/slice/loop_slice_tool.d 86
 allow source/tools/slice/slice_tool.d 91
 allow source/tools/topology_step.d 1
 allow source/tools/transform/item_xform_kernels.d 3
