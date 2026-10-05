@@ -142,11 +142,15 @@ public:
         Vec3 keepPos = mesh.vertices[cast(uint)target];
         MeshSnapshot pre = MeshSnapshot.capture(*mesh);
         uint[2][] pairs = [[cast(uint)target, cast(uint)source_]];
-        // Symmetry (task 9438, KW2_ADW): partners weld too, unless hidden (W2f) / own mirror (KW2_M).
+        // Symmetry (task 9438): the partners weld too unless hidden (KW2_ADW, W2f); a source
+        // released on its own partner fuses with it on the plane, surviving (K-W2b KW2_MDW).
         auto sym = vts.get!SymmetryPacket();   // off: pairOf is empty
         const int pt = sym && sym.pairOf.length == mesh.vertices.length ? sym.pairOf[target] : -1,
                   ps = pt >= 0 ? sym.pairOf[source_] : -1;
-        if (ps >= 0 && ps != target && !mesh.isVertexHidden(pt) && !mesh.isVertexHidden(ps))
+        if (pt == source_) {
+            keepPos = mesh.vertices[source_] = (mesh.vertices[source_] + keepPos) * 0.5f;
+            pairs = [[cast(uint)source_, cast(uint)target]];
+        } else if (ps >= 0 && !mesh.isVertexHidden(pt) && !mesh.isVertexHidden(ps))
             pairs ~= [cast(uint)pt, cast(uint)ps];
         if (mesh.weldVertexPairs(pairs) == 0)
             return true;                   // both faceless: no-op

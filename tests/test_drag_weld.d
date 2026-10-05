@@ -321,17 +321,17 @@ unittest { // KW2_ADW: under symmetry X the mirror partner welds into the mirror
     }
 }
 
-unittest { // own mirror: main's single weld (pending K-W2b cell KW2_M)
-    if (!cell("ownMirror")) return;
-    Rig o = Rig([[0.1f, 0f, 0f], [0.6f, 0f, 0f], [0.6f, 0.5f, 0f], [0.1f, 0.5f, 0f],
-        [-0.1f, 0.5f, 0f], [-0.6f, 0.5f, 0f], [-0.6f, 0f, 0f], [-0.1f, 0f, 0f],
-        [-0.1f, -0.15f, 0f], [-0.6f, -0.15f, 0f], [-0.6f, -0.5f, 0f], [-0.1f, -0.5f, 0f]],
-        [[0u, 1, 2, 3], [4u, 5, 6, 7], [8u, 9, 10, 11]]);
-    foreach (sym; [false, true]) {
-        auto m = dragWeld(o, 0, [-0.1f, 0f, 0f], true, 0, 0, true, null, 0, sym);
-        assert(nv(m) == 11 && m["faces"].array[0].array[0].integer == 6,
-            format("own mirror (sym %s): v0 welds into v7 (now 6) alone: %s", sym, m["faces"]));
-    }
+unittest { // KW2_MDW (K-W2b): released on its own mirror, the source fuses with it on the plane
+    if (!cell("MDW")) return;
+    Rig m = Rig([[0.1f, 0f, 0f], [0.4f, 0f, 0f], [0.4f, 0.4f, 0f], [0.1f, 0.4f, 0f],
+        [-0.1f, 0.4f, 0f], [-0.4f, 0.4f, 0f], [-0.4f, 0f, 0f], [-0.1f, 0f, 0f]],
+        [[0u, 1, 2, 3], [4u, 5, 6, 7]]);
+    assertMesh(dragWeld(m, 0, [-0.1f, 0f, 0f], true),   // control, symmetry off: KEEP-TARGET
+        [[0.4f, 0f, 0f], [0.4f, 0.4f, 0f], [0.1f, 0.4f, 0f], [-0.1f, 0.4f, 0f], [-0.4f, 0.4f, 0f],
+         [-0.4f, 0f, 0f], [-0.1f, 0f, 0f]], [[6u, 0, 1, 2], [3u, 4, 5, 6]], "KW2_Mc");
+    assertMesh(dragWeld(m, 0, [-0.1f, 0f, 0f], true, 0, 0, true, null, 0, true),
+        [[0f, 0f, 0f], [0.4f, 0f, 0f], [0.4f, 0.4f, 0f], [0.1f, 0.4f, 0f], [-0.1f, 0.4f, 0f],
+         [-0.4f, 0.4f, 0f], [-0.4f, 0f, 0f]], [[0u, 1, 2, 3], [4u, 5, 6, 0]], "KW2_MDW");
 }
 
 unittest { // tool undo: one gesture is one entry that restores the rig

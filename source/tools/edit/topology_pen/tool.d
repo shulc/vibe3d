@@ -374,6 +374,7 @@ private:
     // 0555) actually absorbed anything; the post-commit `resyncSession` reads
     // it (the vertex array was compacted under `moveVerts_`).
     package MoveElem     moveElem_  = MoveElem.None;
+    private SymmetryPacket* moveSym_;   // the gesture's pairing, taken before its first write
     package uint[]       moveVerts_;
     package Vec3[]       moveBase_;
     // The edge/polygon Move's shared offset at the last evaluation (zero on a
@@ -2345,7 +2346,11 @@ public:
     /// two endpoints of a dragged edge travel together and each sits well
     /// inside the other's acceptance radius, so a self-set narrower than the
     /// whole moving set would weld the grab into itself and delete it.
-    private size_t weldMovedVertices(const(uint)[] verts, const ref Viewport vp) {
+    /// Symmetry (K-W2b): `at[i]` is vertex i's raw query point; a grab whose own
+    /// partner `own[i]` answers fuses with it at their midpoint, on the plane (KW2_M).
+    private size_t weldMovedVertices(const(uint)[] verts, const ref Viewport vp,
+                                     const(Vec3)[] at = null, const(int)[] own = null) {
+        import std.algorithm : filter; import std.array : array;
         import std.math : lround;
         if (verts.length == 0) return 0;
         // An EARLY-OUT on the shared enable, not the gate: the gate is
@@ -2365,14 +2370,17 @@ public:
         const AimViewport vpAim = aimSpace(vp, primaryModelSpace());
 
         uint[2][] pairs;
-        foreach (vi; verts) {
+        foreach (i, vi; verts) {
             if (vi >= m.vertices.length) continue;   // stale arm — defensive
             ImVec2 pt;
-            if (!projectLocalPt(m.vertices[vi], vpAim, pt)) continue;   // off-screen/behind
-            immutable int t = resolveSnapTargetVert(cast(int)lround(pt.x),
-                                                    cast(int)lround(pt.y), vp, verts);
+            if (!projectLocalPt(i < at.length ? at[i] : m.vertices[vi], vpAim, pt)) continue;
+            const int o = i < own.length ? own[i] : -1;
+            immutable int t = resolveSnapTargetVert(cast(int)lround(pt.x), cast(int)lround(pt.y), vp,
+                                                    o < 0 ? verts : verts.filter!(x => x != o).array);
             if (t < 0) continue;
-            pairs ~= [cast(uint)t, vi];
+            if (t != o) { pairs ~= [cast(uint)t, vi]; continue; }
+            m.vertices[vi] = (m.vertices[vi] + m.vertices[t]) * 0.5f;
+            pairs ~= [vi, cast(uint)t];
         }
         if (pairs.length == 0) return 0;
         return m.weldVertexPairs(pairs);
@@ -4188,8 +4196,8 @@ public:
             if ((targets[i] - m.vertices[vi]).length > kMoveEps) { changed = true; break; }
         if (!changed) return;
 
-        foreach (i, vi; moveVerts_) m.vertices[vi] = targets[i];
-        movedWithPartners(vts);
+        int[] own;
+        writeSymmetricMove(targets, vts, own);
         m.commitChange(MeshEditScope.Position);
         moveDirty_ = true;
 
@@ -4198,16 +4206,26 @@ public:
         refreshDisplay(m, gpu_);
     }
 
-    // Under symmetry an off-plane VERTEX grab drags its visible mirror partner, welded
-    // too (task 9438, KW2_A); edge/face/on-plane grabs stay plain (uncaptured, K-W2b).
-    private uint[] movedWithPartners(ref VectorStack vts) {
-        import symmetry : mirrorPosition;
-        auto sp = vts.get!SymmetryPacket();   // off: pairOf is empty
-        const int pi = moveElem_ == MoveElem.Vertex && sp && sp.pairOf.length == mesh.vertices.length
-            ? sp.pairOf[moveVerts_[0]] : -1;   // -1: on the plane or unpaired
-        if (pi < 0 || mesh.isVertexHidden(pi)) return moveVerts_;
-        mesh.vertices[pi] = mirrorPosition(*sp, mesh.vertices[moveVerts_[0]]);
-        return [moveVerts_[0], cast(uint)pi];
+    // The pressed element's vertices in CORNER order, each mirrored onto its visible partner
+    // (last write wins), an on-plane one projected (task 9438, K-W2b). Returns the moved set
+    // with the partners; `own[i]`: grab i's partner outside the element (KW2_M), or -1.
+    private uint[] writeSymmetricMove(const(Vec3)[] targets, ref VectorStack vts, out int[] own) {
+        import std.algorithm.searching : canFind;
+        import symmetry : mirrorPosition, projectOnPlane;
+        if (moveSym_ is null)   // the pairing as at the press: the first write follows
+            if (auto live = vts.get!SymmetryPacket()) moveSym_ = [live.ownedDup()].ptr;
+        auto sp = moveSym_ && moveSym_.pairOf.length == mesh.vertices.length ? moveSym_ : null;
+        uint[] moved = moveVerts_.dup;
+        own = new int[moveVerts_.length];
+        foreach (i, vi; moveVerts_) {
+            mesh.vertices[vi] = sp && sp.onPlane[vi] ? projectOnPlane(*sp, targets[i]) : targets[i];
+            const int pi = sp ? sp.pairOf[vi] : -1;   // -1: unpaired or on the plane
+            own[i] = pi < 0 || mesh.isVertexHidden(pi) || moveVerts_.canFind(pi) ? -1 : pi;
+            if (pi >= 0 && !mesh.isVertexHidden(pi))
+                mesh.vertices[pi] = mirrorPosition(*sp, targets[i]);
+            if (own[i] >= 0) moved ~= cast(uint)pi;
+        }
+        return moved;
     }
 
     // Close an armed Move: apply the FINAL targets at the release's own
@@ -4216,13 +4234,15 @@ public:
     private void finishMove(int px, int py, const ref Viewport vp, ref VectorStack vts) {
         scope(exit) clearMoveArm();
         if (!moveArmed_ || moveVerts_.length == 0) return;
-        applyMoveTargets(moveTargets(px, py, vp, vts), vts);
+        const targets = moveTargets(px, py, vp, vts);
+        applyMoveTargets(targets, vts);
         noteMoveOffset();
         // The destructive landing (task 0555), inside the same step. Gated on
         // `moveDirty_`: a grab that never moved anything cannot have been
         // "brought to within" anything, and welding on a bare click would eat
         // any vertex that merely happened to sit inside the acceptance radius.
-        if (moveDirty_ && weldMovedVertices(movedWithPartners(vts), vp) > 0) {
+        int[] own;   // the weld covers the partners; a grab may fuse with its own (KW2_M)
+        if (moveDirty_ && weldMovedVertices(writeSymmetricMove(targets, vts, own), vp, targets, own)) {
             moveWelded_ = true;
             afterWeld();
         }
@@ -4350,6 +4370,7 @@ public:
         moveBase_    = null;
         moveDirty_   = false;
         moveWelded_  = false;
+        moveSym_     = null;
     }
 
     // P3 (doc/topopen_p3_plan.md), on the Shift+LMB "Duplicate" overlay slot
