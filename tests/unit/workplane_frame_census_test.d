@@ -96,8 +96,8 @@ unittest // W1: the folded frames, the forwarders, the axis switch, the quantum
         assert(n == 0, format("%s still named %s times in %s", dead, n, where));
     }
 
-    // STRUCTURAL: the index → unit-axis construction lives in `axisUnit`, in
-    // pen_geometry.d (pen.d folded at P1, task 9415) and in
+    // STRUCTURAL: the index → unit-axis construction lives in `axisUnit` (the
+    // pen's copies folded at P1 / P3, tasks 9415 / 9417) and in
     // overlay_space.d (outside this lane: a follow-up, pinned so it cannot grow). Basis tables (a normal plus two
     // in-plane axes per case) are a different construction and not counted.
     // State: the switch row is RED before W1 (vertex_place.d); the ternary row
@@ -110,7 +110,7 @@ unittest // W1: the folded frames, the forwarders, the axis switch, the quantum
     }
     ternFiles.sort();
     assert(switchFiles.length == 0, format("axis-unit switch in %s", switchFiles));
-    assert(ternFiles == ["create_common.d", "overlay_space.d", "pen_geometry.d"],
+    assert(ternFiles == ["create_common.d", "overlay_space.d"],
            format("axis-unit ternary in %s", ternFiles));
 
     // PIN: the call-site rosters (definition + import + calls per file).
