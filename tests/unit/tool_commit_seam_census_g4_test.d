@@ -277,24 +277,12 @@ private enum LedgerRow[] kCallRoster = [
     LedgerRow("BridgeTool.commitBridgeEdit|plain", 1, "plain mode"),
     LedgerRow("DragWeldTool.onMouseButtonUp|call", 1, "tool commit"),
     LedgerRow("DragWeldTool.onMouseButtonUp|plain", 1, "plain mode"),
-    LedgerRow("EdgeBevelTool.recordTopologyStep|call", 1, "history-owned topology step"),
-    LedgerRow("EdgeBevelTool.recordTopologyStep|plain", 1, "plain row mode"),
     LedgerRow("PolyBevelTool.commitEdit|call", 1, "tool commit"),
     LedgerRow("PolyBevelTool.commitEdit|plain", 1, "plain mode"),
-    LedgerRow("PolyExtrudeTool.recordTopologyStep|call", 1, "history-owned topology step"),
-    LedgerRow("PolyExtrudeTool.recordTopologyStep|plain", 1, "plain row mode"),
-    LedgerRow("PolyInsetTool.recordTopologyStep|call", 1, "history-owned topology step"),
-    LedgerRow("PolyInsetTool.recordTopologyStep|plain", 1, "plain row mode"),
     LedgerRow("ReductionTool.commitEdit|call", 1, "tool commit"),
     LedgerRow("ReductionTool.commitEdit|plain", 1, "plain mode"),
     LedgerRow("TackTool.commitTackEdit|call", 1, "tool commit"),
     LedgerRow("TackTool.commitTackEdit|plain", 1, "plain mode"),
-    LedgerRow("VertexMergeTool.recordTopologyStep|call", 1, "history-owned topology step"),
-    LedgerRow("VertexMergeTool.recordTopologyStep|plain", 1, "plain row mode"),
-    LedgerRow("VertexBevelTool.recordTopologyStep|call", 1, "history-owned topology step"),
-    LedgerRow("VertexBevelTool.recordTopologyStep|plain", 1, "plain row mode"),
-    LedgerRow("VertexExtrudeTool.recordTopologyStep|call", 1, "history-owned topology step"),
-    LedgerRow("VertexExtrudeTool.recordTopologyStep|plain", 1, "plain row mode"),
 ];
 
 unittest {
@@ -312,7 +300,8 @@ unittest {
     const problems = reconcile(kCallRoster, hits);
     assert(problems.length == 0,
         "G4 census: the seam's call sites changed.\n" ~ problems);
-    assert(totalCalls == 12,
+    // Task 9429: six topology-step records moved to the shared mixin (G1's census).
+    assert(totalCalls == 6,
         "G4 census: recordGestureEdit population changed");
 }
 

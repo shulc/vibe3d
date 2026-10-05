@@ -285,14 +285,6 @@ private enum LedgerRow[] kCallRoster = [
     LedgerRow("Tool.recordGestureEdit|inSession", 1, "session dispatch"),
     LedgerRow("Tool.recordGestureEdit|replaceTail", 1, "tail dispatch"),
     LedgerRow("Tool.refuseGestureRecord|replaceTail", 1, "tail refusal belt"),
-    LedgerRow("ArrayTool.recordTopologyStep|call", 1, "array session step"),
-    LedgerRow("ArrayTool.recordTopologyStep|plain", 1, "array mode"),
-    LedgerRow("CloneTool.recordTopologyStep|call", 1, "clone session step"),
-    LedgerRow("CloneTool.recordTopologyStep|plain", 1, "clone mode"),
-    LedgerRow("MirrorTool.recordTopologyStep|call", 1, "mirror step"),
-    LedgerRow("MirrorTool.recordTopologyStep|plain", 1, "mirror mode"),
-    LedgerRow("RadialArrayTool.recordTopologyStep|call", 1, "radial-array step"),
-    LedgerRow("RadialArrayTool.recordTopologyStep|plain", 1, "radial-array mode"),
     LedgerRow("RadialSweepTool.commitSweepEdit|call", 1, "radial-sweep commit"),
     LedgerRow("RadialSweepTool.commitSweepEdit|plain", 1, "radial-sweep mode"),
 ];
@@ -312,8 +304,9 @@ unittest {
     const problems = reconcile(kCallRoster, hits);
     assert(problems.length == 0,
         "G2 census: the seam's call sites changed.\n" ~ problems);
-    assert(totalCalls == 6,
-        "G2 census: expected five tool sites plus the seam declaration");
+    // Task 9429: the four topology-step records moved to the shared mixin (G1's census).
+    assert(totalCalls == 2,
+        "G2 census: expected one tool site plus the seam declaration");
 }
 
 // ---------------------------------------------------------------------------

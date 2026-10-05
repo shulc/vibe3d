@@ -92,6 +92,7 @@ private enum string[] kNamedMembers = [
     "source/tools/deform/magnet.d",
     "source/tools/edit/edge_extend.d",
     "source/tools/edit/edge_extrude.d",
+    "source/tools/topology_step.d", // the topology-step record (task 9429)
     "source/tool.d",
 ];
 
@@ -246,8 +247,10 @@ private enum LedgerRow[] kCallRoster = [
     LedgerRow("MagnetTool.commitEdit|plain", 1, "magnet mode"),
     LedgerRow("EdgeExtendTool.commitEdit|call", 2, "edge-extend commit paths"),
     LedgerRow("EdgeExtendTool.commitEdit|plain", 2, "edge-extend modes"),
-    LedgerRow("EdgeExtrudeTool.recordTopologyStep|call", 1, "history-owned topology step"),
-    LedgerRow("EdgeExtrudeTool.recordTopologyStep|plain", 1, "plain row mode"),
+    // Task 9429: the twelve topology-step clients (Edge Extrude here; G2-G4 hold
+    // the rest) record through ONE mixin body; its census names the clients.
+    LedgerRow("TopologyStepClientBody.recordTopologyStep|call", 1, "shared topology step"),
+    LedgerRow("TopologyStepClientBody.recordTopologyStep|plain", 1, "plain row mode"),
 ];
 
 unittest {

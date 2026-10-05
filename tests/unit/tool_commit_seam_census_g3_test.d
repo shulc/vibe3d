@@ -255,8 +255,6 @@ private enum LedgerRow[] kCallRoster = [
     LedgerRow("Tool.recordGestureEdit|inSession", 1, "session dispatch"),
     LedgerRow("Tool.recordGestureEdit|replaceTail", 1, "tail dispatch"),
     LedgerRow("Tool.refuseGestureRecord|replaceTail", 1, "tail refusal belt"),
-    LedgerRow("SmoothShiftTool.recordTopologyStep|call", 1, "history-owned topology step"),
-    LedgerRow("SmoothShiftTool.recordTopologyStep|plain", 1, "plain row mode"),
     LedgerRow("StrokeExtrudeTool.commitEdit|call", 1, "tool commit"),
     LedgerRow("StrokeExtrudeTool.commitEdit|plain", 1, "plain mode"),
 ];
@@ -276,7 +274,8 @@ unittest {
     const problems = reconcile(kCallRoster, hits);
     assert(problems.length == 0,
         "G3 census: the seam's call sites changed.\n" ~ problems);
-    assert(totalCalls == 3,
+    // Task 9429: Smooth Shift's step record moved to the shared mixin (G1's census).
+    assert(totalCalls == 2,
         "G3 census: recordGestureEdit population changed");
 }
 
