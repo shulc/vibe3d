@@ -1575,7 +1575,7 @@ Vec3 planeDragDelta(int mx,     int my,
 // The primitive centre box's plane
 // ===========================================================================
 
-/// The normal axis of the primitive centre box's plane (`DragKind.principalPlane`):
+/// The normal axis of the primitive centre box's plane (`DragKind.handlePlane`):
 /// a locked orthographic view's axis, else the dominant component of the eye
 /// vector at the centre (the perspective pick is unwitnessed: gap 585).
 int primitiveCenterPlaneAxis(Vec3 reference, const ref Viewport vp) {
@@ -1619,8 +1619,7 @@ enum DragKind : ubyte {
     axisArm,        // LAW A ported: `axisArmDelta` along `axis` (unit)
     screenAxis,     // LAW A own: the segment point → point + axis, gain |axis|
     viewPlane,      // LAW B: `planeDragDelta` on `plane` (3..6) of the basis
-    handlePlane,    // LAW B on a handle's own plane, rounded as the planar mode
-    principalPlane, // LAW B on `plane` (4..6), the planar form (capture K-CM)
+    handlePlane,    // LAW B on the handle's `plane` (4..6), the planar form `q(p + T)`
     planeHit,       // the pointer's hit on the plane (point, `normal`)
 }
 
@@ -1640,9 +1639,9 @@ struct DragFrame {
 /// space `vp` projects (a create tool passes its plane-local view).
 /// The travel is rounded to the view quantum q by the frame KIND, the
 /// translator's mode (K-G3 / K-H2 / K-C3 / K-H3): a free plane keeps the
-/// point's residual, `p + q(p + T) - q(p)`; a planar one (the principal
-/// plane, a plane handle) rounds the position, `q(p + T)`; a line rounds its
-/// travel, `p + q(t)`.
+/// point's residual, `p + q(p + T) - q(p)`; a planar one (a Move ring, a
+/// primitive centre box: K-H3, K-CM) rounds the position, `q(p + T)`; a line
+/// rounds its travel, `p + q(t)`.
 /// The axis arm rounds `t` itself (LAW A, the coordinate-rounding step).
 struct HandleDrag {
     Vec3 point;
@@ -1661,9 +1660,8 @@ struct HandleDrag {
         final switch (f.kind) {
         case DragKind.axisArm:        return point + t;
         case DragKind.viewPlane:      return point + (vectorSnap(point + t, q) - vectorSnap(point, q));
-        // A plane handle presses at the action centre (K-H3 H3_RING).
-        case DragKind.handlePlane:
-        case DragKind.principalPlane: return vectorSnap(point + t, q);
+        // A plane handle presses at its centre (K-H3 H3_RING, K-CM).
+        case DragKind.handlePlane:    return vectorSnap(point + t, q);
         case DragKind.screenAxis:
         case DragKind.planeHit:
             immutable Vec3 u = normalize(f.axis);
@@ -1683,7 +1681,6 @@ struct HandleDrag {
                 point, point + f.axis, vp, skip);
         case DragKind.viewPlane:
         case DragKind.handlePlane:
-        case DragKind.principalPlane:
             return planeDragDelta(px, py, pressX, pressY, f.plane, point, vp,
                 skip, f.basisX, f.basisY, f.basisZ);
         case DragKind.planeHit:

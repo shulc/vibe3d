@@ -103,7 +103,7 @@ unittest {
     // (a live origin / reference, the previous pixel) sum to the same travel,
     // which the kind's form then rounds (a line its travel, the plane its point).
     auto vp = topView();
-    foreach (kind; [DragKind.screenAxis, DragKind.principalPlane]) {
+    foreach (kind; [DragKind.screenAxis, DragKind.handlePlane]) {
         DragFrame f;
         f.kind = kind;
         HandleDrag g;
@@ -204,7 +204,7 @@ unittest {
     immutable Vec3 free = drag(DragKind.viewPlane, Vec3(0.3023f, 0, 0.2017f), 84, 5);
     assert(abs(free.x - 0.4973f) <= 1e-4f && abs(free.z - 0.2167f) <= 1e-4f,
         "free (Move): p + q(p + T) - q(p), (0.4973, 0.2167)");
-    assert(abs(drag(DragKind.principalPlane, Vec3(0.0523f, 0, 0), 40, 0).x - 0.145f) <= 1e-4f,
+    assert(abs(drag(DragKind.handlePlane, Vec3(0.0523f, 0, 0), 40, 0).x - 0.145f) <= 1e-4f,
         "planar (primitive centre mover): q(p + T), 0.145");
     assert(abs(drag(DragKind.screenAxis, Vec3(0.3523f, 0, 0), 40, 0).x - 0.4423f) <= 1e-4f,
         "line (size handle): p + q(t), 0.4423");

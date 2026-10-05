@@ -226,7 +226,7 @@ bool moverDrag(const ref HandleDrag grab, int part, int mx, int my, MoveHandler 
     static immutable int[3] planeOfNormal = [5, 6, 4];   // normal X / Y / Z
     Viewport lvp = planeLocalViewport(vp, frame);
     DragFrame f;
-    f.kind  = DragKind.principalPlane;
+    f.kind  = DragKind.handlePlane;
     f.plane = planeOfNormal[primitiveCenterPlaneAxis(grab.point, lvp)];
     if (part <= 2) {
         f.kind = DragKind.screenAxis;
