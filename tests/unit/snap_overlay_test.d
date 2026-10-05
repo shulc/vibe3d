@@ -97,7 +97,7 @@ unittest // the mark law, its captured colours and shapes
     // 2n with n opaque, the cross four such lines.
     immutable roll = rgba(140, 181, 199), unsnap = rgba(230, 179, 255), handle = rgba(102, 255, 255);
     immutable Row[] rows = [
-        Row(false, false, true, SnapType.Vertex,  0,  0,  0, 0,      Box.none),
+        Row(false, true,  true, SnapType.Vertex,  0,  0,  0, 0,      Box.none),   // held: no other guard
         Row(true,  false, true, SnapType.Vertex,  0,  4,  4, roll,   Box.square),
         Row(true,  true,  true, SnapType.Vertex,  0, 16, 16, handle, Box.cross),
         Row(true,  true, false, SnapType.Vertex,  0, 16, 16, unsnap, Box.cross),
