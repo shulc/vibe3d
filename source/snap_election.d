@@ -123,6 +123,10 @@ struct SnapElection {
     long bestSeq  = long.max;   // enumeration order of `best*`'s current holder
     long seqNext  = 0;          // monotonic per accepted candidate
 
+    // The grid tier (task 9387): the node `offerGrid` was handed, if any.
+    bool     hasGrid;
+    Vec3     gridWorld;
+
     // Constraint tier accumulator (Stage 2).
     float    cBestDist  = float.infinity;
     Vec3     cBestWorld;        // = cursorWorld, in the constructor
@@ -402,6 +406,20 @@ public:
             bestSource = slot;
             bestType   = type;
         }
+    }
+
+    // The grid node (task 9387, wave plan §28.2 D-A). Not a `consider`
+    // candidate: it has no pixel range, so no projection and no distance. It
+    // keeps the client's admission seam and the guides' arbitration, in
+    // `consider`'s order, so a refused grid is as if never enumerated.
+    void offerGrid(Vec3 node) {
+        if (admit !is null && !admit(SnapType.Grid, -1, 0)) return;
+        float d = 0;
+        int prio = 0;
+        if (guides.length != 0 && !arbitrate(node, SnapType.Grid, -1, 0, d, prio))
+            return;
+        hasGrid = true;
+        gridWorld = node;
     }
 
     // Constraint-tier consider — same screen-distance check but into a
@@ -690,7 +708,8 @@ public:
     // -----------------------------------------------------------------------
     // Stage 2: Result merge rule (D2).
     //
-    // Priority: discrete snap > constraint snap > discrete highlight only.
+    // Priority: discrete snap > grid node > constraint snap > discrete
+    // highlight only (the grid tier: task 9387, captured `cells_k_b7` G8, G8b).
     // Workplane (always-wins by ~0 screen distance) is in the discrete tier
     // so it keeps its existing behaviour unchanged.
     // -----------------------------------------------------------------------
@@ -714,6 +733,16 @@ public:
         res.targetIndex  = bestIdx;
         res.targetSource = bestSource;
         // res.constraintType stays None
+    } else if (hasGrid) {
+        // The grid places and reports itself as the target — the fields an
+        // in-range Grid winner always wrote; no band element leaks through.
+        res.snapped      = true;
+        res.worldPos     = gridWorld;
+        res.highlighted  = true;
+        res.highlightPos = gridWorld;
+        res.targetType   = SnapType.Grid;
+        res.targetIndex  = -1;
+        res.targetSource = 0;
     } else if (constraintSnapped) {
         // Constraint provides the position; discrete highlight (if any) stays
         // for visual feedback — the user sees the nearby element hinted at.

@@ -1131,25 +1131,18 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
         if (e.mesh !is null)
             walkSource(*e.mesh, cast(int)(i + 1), null, e.space);
 
-    // Grid candidate (7.3c). Scope-independent.
+    // Grid node (7.3c; task 9387, captured `cells_k_b7`): the CLIENT's own
+    // point with its two in-plane channels rounded to the step on the lattice
+    // anchored at the work-plane centre; the normal channel is the client's.
+    // It has no pixel range and its own tier (`SnapElection.offerGrid`).
     if (cfg.enabledTypes & SnapType.Grid) {
-        Vec3 snapOrig1, ray;
-        screenPointToRay(cast(float)sx, cast(float)sy, vp, snapOrig1, ray);
-        Vec3 hit;
-        if (rayPlaneIntersect(snapOrig1, ray,
-                              cfg.workplaneCenter, cfg.workplaneNormal, hit))
-        {
-            Vec3 d = hit - cfg.workplaneCenter;
-            float a1 = dot(d, cfg.workplaneAxis1);
-            float a2 = dot(d, cfg.workplaneAxis2);
-            float step = cfg.gridStep > 1e-9f ? cfg.gridStep : 1.0f;
-            float sa1 = round(a1 / step) * step;
-            float sa2 = round(a2 / step) * step;
-            Vec3 snapped = cfg.workplaneCenter
-                         + cfg.workplaneAxis1 * sa1
-                         + cfg.workplaneAxis2 * sa2;
-            el.consider(snapped, -1, SnapType.Grid, 0);
-        }
+        Vec3 d = cursorWorld - cfg.workplaneCenter;
+        float a1 = dot(d, cfg.workplaneAxis1);
+        float a2 = dot(d, cfg.workplaneAxis2);
+        float step = cfg.gridStep > 1e-9f ? cfg.gridStep : 1.0f;
+        el.offerGrid(cursorWorld
+                     + cfg.workplaneAxis1 * (round(a1 / step) * step - a1)
+                     + cfg.workplaneAxis2 * (round(a2 / step) * step - a2));
     }
 
     // Workplane candidate (7.3c). Stays in discrete tier (always-wins;

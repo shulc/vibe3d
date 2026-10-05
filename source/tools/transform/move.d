@@ -268,6 +268,11 @@ class MoveTool : TransformTool {
     int      dragStartMX, dragStartMY;
     Vec3     planeAnchor;
     Vec3     planeApplied;
+    // The snap client point (task 9387, wave plan §28.2 D-FB): the gizmo at
+    // the press plus the PRE-SNAP travel since, so a snapped position never
+    // becomes the next event's input. Seeded once per gesture in
+    // `armPlaneDrag`; the Ctrl re-arm of the axis leg keeps it.
+    Vec3     snapClient;
     // LAW A state, the ported axis-arm body (task 0562), same shape as LAW B's
     // above and for the same reason: the conversion is measured from the PRESS
     // pixel against a base frozen at the press, so both are held here and
@@ -898,6 +903,7 @@ public:
         dragStartMY  = my;
         planeAnchor  = handler.center;
         planeApplied = Vec3(0, 0, 0);
+        snapClient   = handler.center;
         armAxisLeg(mx, my);
         axisLawPorted = !screenActionCentre(vts);
     }
@@ -972,8 +978,7 @@ public:
         foreach (vi; vertexIndicesToProcess[0 .. nProc])
             if (vi >= 0) exclude ~= cast(uint)vi;
 
-        Vec3 desired = gizmoCenter + worldDelta;
-        SnapResult sr = snapCursor(desired, sx, sy, cachedVp,
+        SnapResult sr = snapCursor(snapClient, sx, sy, cachedVp,
                                    *mesh, primaryModelSpace(), *snapPkt, exclude);
         lastSnap = sr;
         publishLastSnap(sr);
@@ -1144,6 +1149,7 @@ public:
         // gizmo lands at the snapped point — selection moves by the
         // same delta. Snap result for the overlay was stashed in
         // `lastSnap` inside `applySnapToDelta`.
+        snapClient = snapClient + worldDelta;
         worldDelta = applySnapToDelta(handler.center, worldDelta, e.x, e.y, vts);
 
         // Phase 3 — single-source refactor.

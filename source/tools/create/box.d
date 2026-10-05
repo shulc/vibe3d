@@ -165,6 +165,12 @@ private:
     // All drag handlers write into params_; rendering and handle positions
     // are derived from params_ on demand.
     BoxParams params_;
+    // The UNSNAPPED parameters of a handle drag (task 9387, wave plan §28.2
+    // D-FB): set at each handle grab; each motion event integrates its delta
+    // into this copy and only then snaps `params_`, so a snapped value never
+    // becomes the next event's input (the client point is the press plus the
+    // pointer travel).
+    BoxParams dragRaw_;
 
     // Ephemeral drag anchors — valid only during active drag phases:
     //   startPoint / currentPoint : valid during DrawingBase only.
@@ -556,6 +562,7 @@ public:
                     edgeLastMX  = e.x;
                     edgeLastMY  = e.y;
                     captureLiveDragStart();
+                    dragRaw_ = params_;
                     return true;
                 }
             }
@@ -578,6 +585,7 @@ public:
                 // setting up the height plane so hpOrigin is at the correct position.
                 writeSizeParam(planeNormal, 0.0f);
             }
+            dragRaw_ = params_;
             // Capture base anchor before setupHeightPlane (baseCentroid() is correct now).
             baseAnchor = baseCentroid();
             setupHeightPlane();
@@ -607,6 +615,7 @@ public:
                 moverLastMX    = e.x;
                 moverLastMY    = e.y;
                 captureLiveDragStart();
+                dragRaw_ = params_;
                 return true;
             }
         }
@@ -767,6 +776,7 @@ public:
             publishLastSnap(lastSnap);
         }
         if (edgeDragIdx >= 0) {
+            params_ = dragRaw_;
             // The handle pos lives in world (rendered via cachedVp); pass
             // the world version of the local axis we want to project the
             // drag onto. applyEdgeDelta receives a world-space delta and
@@ -777,6 +787,7 @@ public:
             Vec3 delta = screenAxisDelta(e.x, e.y, edgeLastMX, edgeLastMY,
                                          edgeH[edgeDragIdx].pos, moveAxisWorld, cachedVp, skip);
             if (!skip) applyEdgeDelta(edgeDragIdx, delta);
+            dragRaw_ = params_;
             // Snap the moved face to the nearest target on its axis (the flip
             // inside applyEdgeDelta may have toggled edgeDragIdx, so re-read it).
             lastSnap = snapMovedEdge(edgeDragIdx, e.x, e.y);
@@ -787,6 +798,7 @@ public:
         }
 
         if (moverDragAxis >= 0) {
+            params_ = dragRaw_;
             bool skip = false;
             if (moverDragAxis <= 2) {
                 Vec3 delta = axisDragDelta(e.x, e.y, moverLastMX, moverLastMY,
@@ -798,6 +810,7 @@ public:
                                                        moverLastMY, cenVec(), lvp);
                 applyMoverParameterDelta(delta);
             }
+            dragRaw_ = params_;
             lastSnap = snapMover(moverDragAxis, e.x, e.y);
             publishLastSnap(lastSnap);
             moverLastMX = e.x;
@@ -807,6 +820,7 @@ public:
 
         // heightH drag in HeightSet (re-drag without changing state)
         if (heightHDragIdx >= 0 && state == BoxState.HeightSet) {
+            params_ = dragRaw_;
             Vec3 hit;
             if (localCursorPlane(e.x, e.y, hpOrigin, hpn, hit))
             {
@@ -858,6 +872,7 @@ public:
                     }
                 }
                 uploadCuboid();
+                dragRaw_ = params_;
                 // Snap the moved top/bottom face to a target on the normal axis
                 // (heightHDragIdx may have flipped above, so re-read it).
                 lastSnap = snapHeightFace(heightHDragIdx, e.x, e.y);
@@ -1402,7 +1417,7 @@ private:
             Viewport lvp = planeLocalViewport(cachedVp, frame);
             centerLock = primitiveCenterPlaneAxis(cenVec(), lvp);
         }
-        Vec3 hitLocal = toLocalP(mover.center);
+        Vec3 hitLocal = boxCenter();
         auto sr = snapLocalHit(hitLocal, frame, sx, sy, cachedVp,
                                 *mesh, EditMode.Vertices);
         if (sr.snapped) {
@@ -1484,15 +1499,9 @@ private:
     // BaseSet: midpoints of base edges.
     // DrawingHeight/HeightSet: centers of the 4 side faces (midpoint + halfH).
     void updateEdgeHandlers(const ref Viewport vp) {
-        Vec3[4] corners = computedBaseCorners();   // local
-        Vec3 halfH = (state >= BoxState.DrawingHeight)
-            ? planeNormal * (currentHeight() * 0.5f)
-            : Vec3(0, 0, 0);
-
-        static immutable int[4][4] edgePairs = [[0,1],[1,2],[2,3],[3,0]];
         Vec3[4] mids;
-        foreach (i, pair; edgePairs)
-            mids[i] = toWorldP((corners[pair[0]] + corners[pair[1]]) * 0.5f + halfH);
+        foreach (i; 0 .. 4)
+            mids[i] = toWorldP(edgeMidLocal(cast(int)i));
 
         Vec3 c1 = toWorldD(planeAxis1);
         Vec3 c2 = toWorldD(planeAxis2);
@@ -1507,6 +1516,17 @@ private:
             edgeH[i].color = colors[i];
             edgeH[i].setVisible(!axisFacesViewer(moveAxes[i], centerWorld, vp));
         }
+    }
+
+    // Edge handle `idx`'s position in LOCAL: the midpoint of its base edge,
+    // lifted to the side face's centre once a height exists.
+    Vec3 edgeMidLocal(int idx) const {
+        static immutable int[2][4] edgePairs = [[0,1],[1,2],[2,3],[3,0]];
+        Vec3[4] corners = computedBaseCorners();
+        Vec3 halfH = (state >= BoxState.DrawingHeight)
+            ? planeNormal * (currentHeight() * 0.5f)
+            : Vec3(0, 0, 0);
+        return (corners[edgePairs[idx][0]] + corners[edgePairs[idx][1]]) * 0.5f + halfH;
     }
 
     // Move one edge of the base rectangle along its perpendicular axis.
@@ -1655,9 +1675,10 @@ private:
             case 2: moveAxis = planeAxis2; faceSign = +1.0f; break;
             case 3: moveAxis = planeAxis1; faceSign = -1.0f; break;
         }
-        // Cursor world = current moved-face position (anchors the overlay on
-        // the handle); snapLocalHit picks a candidate near the cursor pixel.
-        Vec3 hitLocal = toLocalP(edgeH[idx].pos);
+        // Client point = the moved face's midpoint from `params_` (the drag's
+        // unsnapped value, not the draw-cached handle); snapLocalHit picks a
+        // candidate near the cursor pixel.
+        Vec3 hitLocal = edgeMidLocal(idx);
         auto sr = snapLocalHit(hitLocal, frame, sx, sy, cachedVp,
                                 *mesh, EditMode.Vertices);
         if (sr.snapped) {
