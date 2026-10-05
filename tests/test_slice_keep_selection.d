@@ -111,3 +111,32 @@ unittest { // nothing selected -> nothing selected after (selectNew-style negati
     assert(selCount("selectedFaces") == 0,
            "nothing selected before the cut must still yield nothing selected after");
 }
+
+// A pinned work plane: the headless cut reads the one parameter frame
+// (`primitivePlacementFrame`, task 9408). Ours, pinned law-neutrally. Plane
+// rotX 30 about (0.2, 0.3, 0); a line along X cuts with normal line × plane
+// normal = (0, -sin30, cos30), so the y = ±0.5 edges split at z = y·tan30
+// (the world floor would split them at z = 0).
+unittest { // pinned plane: the headless slice follows the plane's normal
+    resetCube();
+    cmd("workplane.reset");
+    cmd("workplane.edit cenX:0.2 cenY:0.3 cenZ:0 rotX:30 rotY:0 rotZ:0");
+    scope(exit) cmd("workplane.reset");
+    cmd("tool.set mesh.sliceTool on");
+    cmd("tool.attr mesh.sliceTool infinite 1");
+    foreach (kv; [["startX", "-1"], ["startY", "0"], ["startZ", "0"],
+                  ["endX", "1"], ["endY", "0"], ["endZ", "0"]])
+        cmd("tool.attr mesh.sliceTool " ~ kv[0] ~ " " ~ kv[1]);
+    cmd("tool.doApply");
+    cmd("tool.set mesh.sliceTool off");
+    settle();
+    double num(JSONValue v) { return v.type == JSONType.integer ? v.integer : v.floating; }
+    import std.math : fabs;
+    auto vs = getModel()["vertices"].array;
+    assert(vs.length == 12, format("pinned slice: expected 12 verts, got %d", vs.length));
+    size_t onTilt;
+    foreach (v; vs)
+        if (fabs(fabs(num(v[1])) - 0.5) < 1e-4 && fabs(num(v[2]) - num(v[1]) * 0.57735027) < 1e-4)
+            ++onTilt;
+    assert(onTilt == 4, format("pinned slice: %d of the 4 new vertices on the tilted cut", onTilt));
+}

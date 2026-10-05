@@ -254,3 +254,34 @@ unittest { // undo restores empty
     assert(m2["edges"].array.length == 0,
         "after undo: expected 0 edges, got " ~ m2["edges"].array.length.to!string);
 }
+
+// -------------------------------------------------------------------------
+// 9. A pinned work plane: the headless build reads the one parameter frame
+//    (`primitivePlacementFrame`, task 9408) — the arc lies in the pinned
+//    plane about its origin. Ours, pinned law-neutrally. Plane: rotX 30 about
+//    (0.2, 0.3, 0), normal (0, cos30, sin30).
+// -------------------------------------------------------------------------
+
+unittest { // pinned plane: the arc is on the plane's unit circle
+    double num(JSONValue v) { return v.type == JSONType.integer ? v.integer : v.floating; }
+    resetEmpty();
+    foreach (c; ["workplane.reset", "workplane.edit cenX:0.2 cenY:0.3 cenZ:0 rotX:30 rotY:0 rotZ:0"])
+        assert(postJson("/api/command", c)["status"].str == "ok", c);
+    scope(exit) postJson("/api/command", "workplane.reset");
+    auto resp = primArcArg("segments:4 startAngle:0 endAngle:90 radius:1.0 axis:1");
+    assert(resp["status"].str == "ok", "pinned arc failed: " ~ resp.toString);
+    auto vs = getModel()["vertices"].array;
+    assert(vs.length == 5, "pinned arc: expected 5 verts, got " ~ vs.length.to!string);
+    foreach (i, v; vs) {
+        immutable double dx = num(v[0]) - 0.2, dy = num(v[1]) - 0.3, dz = num(v[2]);
+        immutable double off = dy * 0.8660254 + dz * 0.5;
+        immutable double r = sqrt(dx * dx + dy * dy + dz * dz);
+        assert(fabs(off) < 1e-4 && fabs(r - 1.0) < 1e-4,
+            "pinned arc: vertex " ~ i.to!string ~ " is off the pinned plane's unit circle ("
+            ~ off.to!string ~ ", r " ~ r.to!string ~ ")");
+    }
+    // Rig: the world floor would put every vertex at y = 0.
+    double maxY = 0;
+    foreach (v; vs) if (fabs(num(v[1])) > maxY) maxY = fabs(num(v[1]));
+    assert(maxY > 0.1, "rig: the arc did not leave the world floor");
+}
