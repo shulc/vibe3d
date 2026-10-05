@@ -485,16 +485,24 @@ unittest { // law-neutral: the weld ignores the snap SCOPE and reaches the whole
 // every global type off; a background plane at z 0 is the landing surface.
 // ---------------------------------------------------------------------------
 
-/// Load `pts` (one quad unless `faces`) in layer 1, move v1 by (`dx`,`dy`) px
-/// with the pen; `sym` turns world symmetry X on for the gesture.
+/// Load `pts` (one quad unless `faces`) in layer 1, move v1 (or the element under
+/// `press`) by (`dx`,`dy`) px with the pen; `sym` turns world symmetry X on.
 void sameQuadMove(double[3][] pts, double[3] release, int dx, int dy,
-                  int[][] faces = [[0, 1, 2, 3]], bool sym = false) {
+                  int[][] faces = [[0, 1, 2, 3]], bool sym = false, double[] press = null,
+                  int[] hide = null) {
+    immutable bool grabV1 = press is null;
+    if (grabV1) press = pts[1].dup;
     auto r = postJson("/api/command", commandBody("scene.reset", `{"empty":true}`));
     assert(r["status"].str == "ok", "empty reset failed: " ~ r.toString);
     loadLayerMesh([[-2.0, -2.0, 0.0], [2.0, -2.0, 0.0], [2.0, 2.0, 0.0], [-2.0, 2.0, 0.0]],
                   [[0, 1, 2, 3]]);
     cmd("layer.add name:Edit");
     loadLayerMesh(pts, faces);
+    if (hide.length) {
+        cmd(commandBody("mesh.select", format(`{"mode":"vertices","indices":%s}`, hide)));
+        cmd(`{"id":"mesh.hide"}`);
+        cmd(commandBody("select.drop"));
+    }
     cmd("history.clear");
     cmd("workplane.reset");
     cmd("viewport.view Front");
@@ -509,9 +517,9 @@ void sameQuadMove(double[3][] pts, double[3] release, int dx, int dy,
     assert(snapEnabled(), "rig: the pen's activation arms the snap enable");
     auto vp = viewportFromCameraMatrices();
     float sx, sy, ex, ey;
-    assert(projectToWindow(Vec3(cast(float)pts[1][0], cast(float)pts[1][1], 0), vp, sx, sy)
+    assert(projectToWindow(Vec3(cast(float)press[0], cast(float)press[1], 0), vp, sx, sy)
         && projectToWindow(Vec3(cast(float)release[0], cast(float)release[1], 0), vp, ex, ey),
-        "rig: v1 and the release must project");
+        "rig: the press and the release must project");
     immutable int x0 = cast(int)lround(sx), y0 = cast(int)lround(sy);
     assert(lround(ex) == x0 + dx && lround(ey) == y0 + dy,
         format("rig: the captured %s px drag must end at %s", [dx, dy], release));
@@ -519,7 +527,7 @@ void sameQuadMove(double[3][] pts, double[3] release, int dx, int dy,
                    buildDragMotionLog(vp.x, vp.y, vp.width, vp.height, x0, y0, x0 + dx, y0 + dy, 16),
                    buildDragUpLog(vp.x, vp.y, vp.width, vp.height, x0 + dx, y0 + dy)]) {
         // Held, before the release: under symmetry the partner already follows, mirrored.
-        if (sym && i == 2) {
+        if (sym && i == 2 && grabV1) {
             size_t j;   // the grab's partner: v1's mirror image in `pts`
             foreach (k, a; pts) if (a[0] == -pts[1][0] && a[1] == pts[1][1]) j = k;
             const v = readVerticesLayer(1), p = v[1], q = v[j];
@@ -573,5 +581,35 @@ unittest { // KW2_A symmetric move welds both sides (14); KW2_B control (15)
     assert(vertexCountLayer(1) == 14 && hasVertexNear(1, Vec3(0.5f, 0.06f, 0), 1e-4)
         && !hasVertexNear(1, Vec3(0.3f, 0, 0), 1e-3) && !hasVertexNear(1, Vec3(-0.3f, 0, 0), 1e-3),
         format("KW2_A from -X: V=%d, expected 14", vertexCountLayer(1)));
+    // A hidden partner neither follows nor welds (the walker's hidden guard), though
+    // an unpaired v16 sits 3 px from it: only the grab welds (17 - 1).
+    double[3][] tri = [[-0.33, 0, 0], [-0.33, -0.2, 0], [-0.45, -0.2, 0]];
+    sameQuadMove(pts ~ tri, [0.5, 0, 0], 20, 0,
+                 quads ~ [[16, 17, 18]], true, pts[1].dup, [10]);
+    assert(vertexCountLayer(1) == 18 && hasVertexNear(1, Vec3(-0.3f, 0, 0), 1e-4),
+        format("KW2_A hidden partner: V=%d, expected 18 with v10 unmoved, unwelded", vertexCountLayer(1)));
+    postJson("/api/command", commandBody("scene.reset"));
+}
+
+// Main's behaviour, uncaptured under symmetry: only an off-plane VERTEX grab
+// mirrors (KW2_A); a face across the plane, an on-plane vertex and an edge move
+// as without symmetry (pending K-W2b cells KW2_L / KW2_N / KW2_K).
+unittest { // KW2_L face across the plane shifts rigidly; KW2_N on-plane grab; KW2_K edge
+    sameQuadMove([[-0.2, 0, 0], [0.2, 0, 0], [0.2, 0.3, 0], [-0.2, 0.3, 0]], [0.25, 0.15, 0],
+                 20, 0, [[0, 1, 2, 3]], true, [0.05, 0.15]);
+    assert(vertexCountLayer(1) == 4 && hasVertexNear(1, Vec3(0, 0, 0), 1e-3)
+        && hasVertexNear(1, Vec3(0.4f, 0.3f, 0), 1e-3),
+        format("KW2_L (main, pending K-W2b): the face shifts +0.2 rigidly: %s", readVerticesLayer(1)));
+    sameQuadMove([[-0.4, 0, 0], [0.0, 0, 0], [0.4, 0, 0], [0.4, 0.4, 0], [0, 0.4, 0], [-0.4, 0.4, 0]],
+                 [0.2, 0.2, 0], 20, -20, [[0, 1, 4, 5], [1, 2, 3, 4]], true, [0, 0]);
+    assert(vertexCountLayer(1) == 6 && approxVec(Vec3(0.205f, 0.195f, 0), readVerticesLayer(1)[1], 1e-3),
+        format("KW2_N (main, pending K-W2b): the on-plane grab moves unprojected: V=%d %s",
+               vertexCountLayer(1), readVerticesLayer(1)));
+    double[3][] r = [[0.6, 0, 0], [1.0, 0, 0], [1, 0.4, 0], [0.6, 0.4, 0],
+                     [-0.6, 0, 0], [-1.0, 0, 0], [-1, 0.4, 0], [-0.6, 0.4, 0]];
+    sameQuadMove(r, [0.7, 0.2, 0], 10, 0, [[0, 1, 2, 3], [4, 7, 6, 5]], true, [0.6, 0.2]);
+    assert(vertexCountLayer(1) == 8 && hasVertexNear(1, Vec3(0.7f, 0, 0), 1e-3)
+        && hasVertexNear(1, Vec3(-0.6f, 0, 0), 1e-4) && hasVertexNear(1, Vec3(-0.6f, 0.4f, 0), 1e-4),
+        format("KW2_K (main, pending K-W2b): the mirror edge stays: %s", readVerticesLayer(1)));
     postJson("/api/command", commandBody("scene.reset"));
 }

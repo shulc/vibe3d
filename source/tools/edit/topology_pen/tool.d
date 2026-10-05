@@ -4198,24 +4198,24 @@ public:
         refreshDisplay(m, gpu_);
     }
 
-    // Under symmetry the move drags each grabbed vertex's mirror partner (the
+    // Under symmetry a VERTEX grab off the plane drags its mirror partner (the
     // shared walker, the grab's side as the base) and the weld pass covers both
-    // (task 9438, KW2_A). Idempotent; returns the moved set with the partners.
+    // (task 9438, KW2_A). Edge/face moves and an on-plane grab keep the plain
+    // move (uncaptured, K-W2b). Idempotent; returns the moved set.
     private uint[] movedWithPartners(ref VectorStack vts) {
         import symmetry : applySymmetryMirror;
         import toolpipe.packets : SymmetryPacket;
         SymmetryPacket* sym = vts.get!SymmetryPacket();   // off: pairOf is empty
-        if (sym is null || sym.pairOf.length != mesh.vertices.length) return moveVerts_;
+        if (moveElem_ != MoveElem.Vertex || sym is null
+            || sym.pairOf.length != mesh.vertices.length || sym.pairOf[moveVerts_[0]] < 0)
+            return moveVerts_;
         SymmetryPacket sp = *sym;
-        foreach (vi; moveVerts_) if (sp.vertSign[vi] != 0) { sp.baseSide = sp.vertSign[vi]; break; }
+        uint vi = moveVerts_[0], pi = cast(uint)sp.pairOf[vi];
+        sp.baseSide = sp.vertSign[vi];
         auto operand = new bool[sp.pairOf.length], touched = new bool[sp.pairOf.length];
-        foreach (vi; moveVerts_) operand[vi] = true;
-        foreach (vi; moveVerts_)
-            if (sp.vertSign[vi] == sp.baseSide && sp.pairOf[vi] >= 0) operand[sp.pairOf[vi]] = true;
+        operand[vi] = operand[pi] = true;
         applySymmetryMirror(mesh, sp, operand, touched);
-        uint[] all = moveVerts_.dup;
-        foreach (i, t; touched) if (t) all ~= cast(uint)i;   // a repeat: the first claim wins
-        return all;
+        return touched[pi] ? [vi, pi] : moveVerts_;
     }
 
     // Close an armed Move: apply the FINAL targets at the release's own

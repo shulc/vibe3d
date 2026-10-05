@@ -314,16 +314,24 @@ unittest { // KW2_ADW: under symmetry X the mirror partner welds into the mirror
          [1f, 0.36f, 0f], [0.5f, 0.36f, 0f], [-0.1f, 0.3f, 0f], [-0.3f, 0.3f, 0f], [-0.1f, 0f, 0f],
          [-0.5f, 0.36f, 0f], [-1f, 0.36f, 0f], [-1f, 0.06f, 0f], [-0.5f, 0.06f, 0f]],
         [[0u, 3, 1, 2], [3u, 4, 5, 6], [7u, 8, 13, 9], [10u, 11, 12, 13]], "KW2_ADW");
-    // Ours, uncaptured: the partner is MOVED, so it is no target (as in the pen's
-    // weld pass): v0 released on its own mirror v7 welds into v8, 15 px away.
+    // W2f: a hidden vertex is never a weld target, the mirror pair's included.
+    foreach (h; [15, 10]) {
+        auto m = dragWeld(r, 1, kEndC, true, 0, 0, true, [h], 0, true);
+        assert(nv(m) == 15, format("KW2_ADW hidden v%d: the mirror pair is skipped, V=%d", h, nv(m)));
+    }
+}
+
+unittest { // own mirror: main's single weld (pending K-W2b cell KW2_M)
+    if (!cell("ownMirror")) return;
     Rig o = Rig([[0.1f, 0f, 0f], [0.6f, 0f, 0f], [0.6f, 0.5f, 0f], [0.1f, 0.5f, 0f],
         [-0.1f, 0.5f, 0f], [-0.6f, 0.5f, 0f], [-0.6f, 0f, 0f], [-0.1f, 0f, 0f],
         [-0.1f, -0.15f, 0f], [-0.6f, -0.15f, 0f], [-0.6f, -0.5f, 0f], [-0.1f, -0.5f, 0f]],
         [[0u, 1, 2, 3], [4u, 5, 6, 7], [8u, 9, 10, 11]]);
-    assert(nv(dragWeld(o, 0, [-0.1f, 0f, 0f], true)) == 11, "own mirror, symmetry off: welds");
-    auto m = dragWeld(o, 0, [-0.1f, 0f, 0f], true, 0, 0, true, null, 0, true);
-    assert(nv(m) == 11 && m["faces"].array[0].array[0].integer == 7,
-        "own mirror: the moved partner is no target, v8 (now 7) is: " ~ m["faces"].toString);
+    foreach (sym; [false, true]) {
+        auto m = dragWeld(o, 0, [-0.1f, 0f, 0f], true, 0, 0, true, null, 0, sym);
+        assert(nv(m) == 11 && m["faces"].array[0].array[0].integer == 6,
+            format("own mirror (sym %s): v0 welds into v7 (now 6) alone: %s", sym, m["faces"]));
+    }
 }
 
 unittest { // tool undo: one gesture is one entry that restores the rig
