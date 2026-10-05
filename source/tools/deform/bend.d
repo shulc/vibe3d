@@ -101,9 +101,7 @@ public:
         import toolpipe.packets : SubjectPacket;
         SubjectPacket subj;
         VectorStack vts;
-        buildLocalVts(subj, vts);
-        captureFalloffForDrag(vts);
-        captureSymmetryForDrag(vts);
+        beginHeadlessDeform(subj, vts);
         vertexCacheDirty = true;
         buildVertexCacheIfNeeded();
         if (vertexProcessCount == 0) return false;

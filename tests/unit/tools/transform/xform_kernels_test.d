@@ -479,77 +479,23 @@ unittest { // T5/4 — the three modes are three DIFFERENT laws, and a/c coincid
     assert(fabs(radius(bHalf) - 0.70710678f) < 1e-5f);
 }
 
-unittest { // T5/5 — scale: s_eff = 1 + (s-1)*w, raised to compoundPasses, and the negative-base clamp
-    //
-    // `compoundPasses` appears in exactly one test in the tree and only ever
-    // at 1.0, so the pow() branch and its guard were both unexercised. The
-    // guard is not cosmetic: Selection falloff publishes a FRACTIONAL exponent
-    // (~1.91 for two steps), and pow(negative, fractional) is NaN. A negative
-    // effective factor is reachable — that is what a mirroring scale IS — so
-    // without the guard a mirrored soft scale writes NaN into the mesh.
-    //
-    // BREAK THAT MADE IT FAIL: the three `if (sx > 0)` / `if (sy > 0)` /
-    // `if (sz > 0)` guards dropped, leaving the bare `sx = pow(sx, passes);`.
-    // The mirrored vertex came back NaN and the third assertion went red (the
-    // first two stayed green — they never reach a negative base).
-    import std.math : fabs, pow, isNaN;
+unittest { // T5/5 — scale: s_eff = 1 + (s-1)*w
+    import std.math : fabs;
 
-    // (1) the blend law itself, at a fractional weight, exponent 1.
-    {
-        auto m = new Mesh();
-        m.vertices = [Vec3(2, 0, 0)];
-        auto fal = weightsFalloff([0.5f]);
-        auto sym = noMirror();
-        bool[] proc = [true];
-        applyScaleFromActivation(m, [0], [Vec3(2, 0, 0)], Vec3(0, 0, 0),
-                                 Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1),
-                                 Vec3(3, 1, 1), fal, kernelAim(),
-                                 noPivots(), noAxes(), sym, proc);
-        // s_eff = 1 + (3-1)*0.5 = 2  ⇒  x: 2 -> 4. Half the weight is HALF the
-        // excess over 1, not half the factor (which would give 1.5 -> 3).
-        assert(fabs(m.vertices[0].x - 4.0f) < 1e-5f,
-               "s_eff must be 1 + (s-1)*w");
-    }
-
-    // (2) the compound exponent, applied to the ALREADY-BLENDED factor.
-    {
-        auto m = new Mesh();
-        m.vertices = [Vec3(1, 0, 0)];
-        auto fal = plainFalloff();          // w == 1
-        fal.compoundPasses = 1.91f;         // read regardless of `enabled`
-        auto sym = noMirror();
-        bool[] proc = [true];
-        applyScaleFromActivation(m, [0], [Vec3(1, 0, 0)], Vec3(0, 0, 0),
-                                 Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1),
-                                 Vec3(2, 1, 1), fal, kernelAim(),
-                                 noPivots(), noAxes(), sym, proc);
-        assert(fabs(m.vertices[0].x - cast(float)pow(2.0f, 1.91f)) < 1e-5f,
-               "the compound pass raises the per-axis factor to compoundPasses");
-        // The untouched axes carry factor 1, and 1^1.91 is still 1 — the
-        // exponent must not leak into them as a translation or a zero.
-        assert(m.vertices[0].y == 0.0f && m.vertices[0].z == 0.0f);
-    }
-
-    // (3) a NEGATIVE effective factor with a fractional exponent: the pow is
-    //     skipped, the mirror survives, and nothing becomes NaN.
-    {
-        auto m = new Mesh();
-        m.vertices = [Vec3(2, 0, 0)];
-        auto fal = plainFalloff();
-        fal.compoundPasses = 1.91f;
-        auto sym = noMirror();
-        bool[] proc = [true];
-        applyScaleFromActivation(m, [0], [Vec3(2, 0, 0)], Vec3(0, 0, 0),
-                                 Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1),
-                                 Vec3(-1, 1, 1), fal, kernelAim(),
-                                 noPivots(), noAxes(), sym, proc);
-        assert(!isNaN(m.vertices[0].x),
-               "pow(negative, fractional) is NaN — the sx>0 guard is what keeps "
-               ~ "a mirroring scale out of the mesh as NaN");
-        assert(fabs(m.vertices[0].x - (-2.0f)) < 1e-5f,
-               "a negative factor mirrors ONCE: the compound pass is skipped, "
-               ~ "not applied and not squared");
-    }
+    // The blend law itself, at a fractional weight.
+    auto m = new Mesh();
+    m.vertices = [Vec3(2, 0, 0)];
+    auto fal = weightsFalloff([0.5f]);
+    auto sym = noMirror();
+    bool[] proc = [true];
+    applyScaleFromActivation(m, [0], [Vec3(2, 0, 0)], Vec3(0, 0, 0),
+                             Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1),
+                             Vec3(3, 1, 1), fal, kernelAim(),
+                             noPivots(), noAxes(), sym, proc);
+    // s_eff = 1 + (3-1)*0.5 = 2  ⇒  x: 2 -> 4. Half the weight is HALF the
+    // excess over 1, not half the factor (which would give 1.5 -> 3).
+    assert(fabs(m.vertices[0].x - 4.0f) < 1e-5f,
+           "s_eff must be 1 + (s-1)*w");
 }
 
 unittest { // T5/6 — two kernels, two OPPOSITE conventions for a vertex they decline

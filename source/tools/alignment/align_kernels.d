@@ -216,20 +216,6 @@ AlignChain extractAlignChain(Mesh* mesh, EditMode editMode) {
 }
 
 // ---------------------------------------------------------------------
-// Blend
-// ---------------------------------------------------------------------
-
-/// Per-component linear blend — the `weight` law shared by both align
-/// kernels (and by the per-vertex falloff-modulated effective weight the
-/// callers derive it from). Same law as the rest of the deform-tool
-/// family: `M(w) = (1-w)*source + w*target`.
-Vec3 lerp3(Vec3 a, Vec3 b, float t) pure nothrow @nogc @safe {
-    return Vec3(a.x + (b.x - a.x) * t,
-                a.y + (b.y - a.y) * t,
-                a.z + (b.z - a.z) * t);
-}
-
-// ---------------------------------------------------------------------
 // Linear Align
 // ---------------------------------------------------------------------
 

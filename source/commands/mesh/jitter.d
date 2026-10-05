@@ -12,7 +12,7 @@ import commands.mesh.position_undo : PositionUndo;
 import commands.mesh.vertex_position_result : VertexPositionResult,
     VertexPositionResultBuilder;
 import toolpipe.packets : FalloffPacket, SubjectPacket;
-import falloff : evaluateFalloff, IFalloffAware;
+import falloff : evaluateFalloff, IFalloffAware, FalloffInput;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 
 import std.random : Mt19937, uniform01;
@@ -42,11 +42,11 @@ class MeshJitter : Command, Operator, IFalloffAware,
     private bool             enableX_ = true;
     private bool             enableY_ = true;
     private bool             enableZ_ = true;
-    // Optional falloff packet — when `enabled`, per-vertex weight scales
-    // the displacement: `delta *= weight`. RNG rolls stay unweighted so
+    // Optional falloff — when `enabled`, per-vertex weight scales the
+    // displacement: `delta *= weight`. RNG rolls stay unweighted so
     // toggling falloff doesn't desync the seed sequence (same reasoning
     // as the enableX/Y/Z gates).
-    private FalloffPacket    falloff_;
+    mixin FalloffInput;
     // Recorded `Kind.SetPos` undo (task 1903 L0-d4).
     private PositionUndo undo_;
     version (unittest) {
@@ -94,21 +94,13 @@ class MeshJitter : Command, Operator, IFalloffAware,
     void setEnable(bool x, bool y, bool z) {
         enableX_ = x; enableY_ = y; enableZ_ = z;
     }
-    void setFalloff(FalloffPacket fp) { falloff_ = fp; }
 
     // Operator interface.
     mixin OperatorActrCommon;
     bool evaluate(ref VectorStack vts) {
         auto subj = vts.get!SubjectPacket();
         if (subj is null) return false;
-        if (auto fp = vts.get!FalloffPacket()) {
-            this.falloff_ = *fp;
-        } else {
-            // Command.apply() carries HTTP-injected falloff in the command
-            // field. Publish it as an explicit builder input; a direct builder
-            // call never falls back to state retained by an earlier evaluate.
-            vts.put(&falloff_);
-        }
+        captureFalloff(vts);
 
         VertexPositionResult result;
         if (!buildVertexPositionResult(mesh.vertices, vts, result)) return false;
@@ -145,8 +137,7 @@ class MeshJitter : Command, Operator, IFalloffAware,
         if (subj is null || subj.mesh is null || subj.mesh !is mesh ||
             source.length != subj.mesh.vertices.length) return false;
         Mesh* subject = subj.mesh;
-        FalloffPacket resultFalloff;
-        if (auto fp = vts.get!FalloffPacket()) resultFalloff = *fp;
+        const resultFalloff = inputFalloff(vts);
 
         // Task 0619: Screen/Lasso consume the real subject viewport. Position
         // sampling below still comes exclusively from the explicit baseline.

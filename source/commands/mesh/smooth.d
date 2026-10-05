@@ -12,7 +12,8 @@ import commands.mesh.position_undo : PositionUndo;
 import commands.mesh.vertex_position_result : VertexPositionResult,
     VertexPositionResultBuilder;
 import toolpipe.packets : FalloffPacket, SubjectPacket;
-import falloff : evaluateFalloff, IFalloffAware;
+import falloff : evaluateFalloff, IFalloffAware, FalloffInput,
+    weightedLerp;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 
 /// Laplacian vertex smoothing. Each iteration: new_pos = old_pos +
@@ -60,7 +61,7 @@ class MeshSmooth : Command, Operator, IFalloffAware,
     // each touched vert toward its smoothed position by the per-vert
     // weight. weight=1 → full smooth; weight=0 → vert stays at original.
     // Same transform×falloff blend used elsewhere.
-    private FalloffPacket    falloff_;
+    mixin FalloffInput;
     private bool             preserve_      = false; // `preserve`
     // (Preserve Volume) — after the Laplacian iterations, project
     // each moved vert's delta onto its pre-smooth tangent plane
@@ -144,7 +145,6 @@ class MeshSmooth : Command, Operator, IFalloffAware,
     void setSharpAngle(float v)       { sharpAngleDeg_ = v; }
     void setSharpThreshold(float rad) { sharpThresholdRad_ = rad; }
     void setPreserve(bool v)          { preserve_ = v; }
-    void setFalloff(FalloffPacket fp) { falloff_ = fp; }
 
     // Operator interface. Common stubs from the mixin; evaluate(vts)
     // publishes the optional FalloffPacket before invoking the deterministic
@@ -153,14 +153,7 @@ class MeshSmooth : Command, Operator, IFalloffAware,
     bool evaluate(ref VectorStack vts) {
         auto subj = vts.get!SubjectPacket();
         if (subj is null) return false;
-        if (auto fp = vts.get!FalloffPacket()) {
-            this.falloff_ = *fp;
-        } else {
-            // HTTP command injection stores the packet on the command.  Make
-            // it an explicit builder input; direct builder callers otherwise
-            // inherit no state from an earlier evaluation.
-            vts.put(&falloff_);
-        }
+        captureFalloff(vts);
 
         // §2.4 — the guard is resolved BEFORE the batch is opened; a `return`
         // out of an open batch leaves `~MeshEditBatch` to pop the frame and
@@ -210,8 +203,7 @@ class MeshSmooth : Command, Operator, IFalloffAware,
             preserveNormalSource.length != source.length ||
             sharpNormalSource.length != source.length) return false;
         Mesh* subject = subj.mesh;
-        FalloffPacket resultFalloff;
-        if (auto fp = vts.get!FalloffPacket()) resultFalloff = *fp;
+        const resultFalloff = inputFalloff(vts);
 
         // The command contract treats either zero control as a successful
         // no-op.  An empty builder value therefore means "nothing to apply",
@@ -412,9 +404,7 @@ class MeshSmooth : Command, Operator, IFalloffAware,
                 // convention evaluates at the pre-smooth snapshot
                 // positions[].
                 float w = evaluateFalloff(resultFalloff, orig, cast(int)vi, aim);
-                prev[vi].x = orig.x + (sm.x - orig.x) * w;
-                prev[vi].y = orig.y + (sm.y - orig.y) * w;
-                prev[vi].z = orig.z + (sm.z - orig.z) * w;
+                prev[vi] = weightedLerp(orig, sm, w);
             }
         }
 

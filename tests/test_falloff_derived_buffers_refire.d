@@ -4,9 +4,10 @@
 // because it is an INPUT to `elementWeight` that lives outside
 // `FalloffConfig` and so was invisible to the idle re-grade trigger
 // (xfrm_transform.d's ARM 1 / ARM 2 "mid-tool falloff re-apply"). The same
-// struct doc (source/toolpipe/packets.d) lists FIVE further fields in the
+// struct doc (source/toolpipe/packets.d) lists FOUR further fields in the
 // same "outside config, rebuilt every evaluate()" bucket: `connectMask`,
-// `anchorPos`, `selectionWeights`, `vertexMapWeights`, `compoundPasses`.
+// `anchorPos`, `selectionWeights`, `vertexMapWeights` (a fifth, a constant
+// scale exponent, was deleted as dead by task 9445).
 // Follow-up 0791 asks whether any of them has the same hole pickedCenter
 // had — reproduce per-field, or show why not, per the task's own warning
 // not to repeat the assumption that sank P9 the first time ("anchorPos is
@@ -16,11 +17,6 @@
 //
 // MEASURED per field (full trace in the task report):
 //
-//   * `compoundPasses` — always published 1.0f (source/toolpipe/stages/
-//     falloff.d, `pkt.compoundPasses = 1.0f;` unconditional; the
-//     `steps*0.955` Scale-pow path xfrm_apply.d's comments describe is
-//     dormant/unwired in the current tree). A constant cannot diverge from
-//     itself — no case to construct.
 //   * `anchorPos` / `connectMask` — both derived from `anchorRing`/
 //     `connect` (IN config, already compared) plus live mesh state. The
 //     one route that changes their CONTENT without an `anchorRing`/

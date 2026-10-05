@@ -12,7 +12,8 @@ import commands.mesh.position_undo : PositionUndo;
 import commands.mesh.vertex_position_result : VertexPositionResult,
     VertexPositionResultBuilder;
 import toolpipe.packets : FalloffPacket, SubjectPacket;
-import falloff : evaluateFalloff, IFalloffAware;
+import falloff : evaluateFalloff, IFalloffAware, FalloffInput,
+    weightedLerp;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 
 import std.math : floor;
@@ -31,9 +32,9 @@ class MeshQuantize : Command, Operator, IFalloffAware,
     private float            stepX_ = 0.1f;
     private float            stepY_ = 0.1f;
     private float            stepZ_ = 0.1f;
-    // Optional falloff packet — when enabled, each vert lerps between
-    // its original and quantised position by the per-vert weight.
-    private FalloffPacket    falloff_;
+    // Optional falloff — when enabled, each vert lerps between its
+    // original and quantised position by the per-vert weight.
+    mixin FalloffInput;
 
     // Recorded `Kind.SetPos` undo (task 1903 L0-d4).
     private PositionUndo undo_;
@@ -74,22 +75,13 @@ class MeshQuantize : Command, Operator, IFalloffAware,
     void setStepXYZ(float x, float y, float z) {
         stepX_ = x; stepY_ = y; stepZ_ = z;
     }
-    void setFalloff(FalloffPacket fp) { falloff_ = fp; }
 
     // Operator interface.
     mixin OperatorActrCommon;
     bool evaluate(ref VectorStack vts) {
         auto subj = vts.get!SubjectPacket();
         if (subj is null) return false;
-        if (auto fp = vts.get!FalloffPacket()) {
-            this.falloff_ = *fp;
-        } else {
-            // Command.apply() carries HTTP-injected falloff in the command
-            // field; make that input explicit before entering the result
-            // builder. Direct builder callers intentionally get no implicit
-            // fallback to state retained from an earlier evaluation.
-            vts.put(&falloff_);
-        }
+        captureFalloff(vts);
         // §2.4 — the step guard is resolved BEFORE the batch is opened. A
         // `return` out of an open batch leaves `~MeshEditBatch` to pop the
         // frame and tick `changeBus.batchLeaks`, asserted 0 by the suite.
@@ -116,8 +108,7 @@ class MeshQuantize : Command, Operator, IFalloffAware,
         auto subj = vts.get!SubjectPacket();
         if (subj is null || subj.mesh is null || source.length != subj.mesh.vertices.length)
             return false;
-        FalloffPacket resultFalloff;
-        if (auto fp = vts.get!FalloffPacket()) resultFalloff = *fp;
+        const resultFalloff = inputFalloff(vts);
         if (stepX_ <= 0 || stepY_ <= 0 || stepZ_ <= 0) return false;
 
         // Task 0619: Screen/Lasso falloff needs the subject's real viewport.
@@ -158,10 +149,7 @@ class MeshQuantize : Command, Operator, IFalloffAware,
                 ? evaluateFalloff(resultFalloff, source[i], cast(int)i, aim)
                 : 1.0f;
             Vec3 orig = source[i];
-            Vec3 nv;
-            nv.x = orig.x + (qx - orig.x) * fw;
-            nv.y = orig.y + (qy - orig.y) * fw;
-            nv.z = orig.z + (qz - orig.z) * fw;
+            Vec3 nv = weightedLerp(orig, Vec3(qx, qy, qz), fw);
             if (nv == orig) continue;
             result.indices ~= cast(uint)i;
             result.before ~= orig;

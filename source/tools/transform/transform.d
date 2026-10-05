@@ -1554,6 +1554,16 @@ protected:
         return SymmetryPacket.init;
     }
 
+    /// The headless-deform preamble of bend, push and the two align tools:
+    /// build the local pipe, then freeze its falloff and
+    /// symmetry packets for the apply. `subj` is the caller's storage —
+    /// `vts` holds a pointer into it.
+    protected void beginHeadlessDeform(out SubjectPacket subj, ref VectorStack vts) {
+        buildLocalVts(subj, vts);
+        captureFalloffForDrag(vts);
+        captureSymmetryForDrag(vts);
+    }
+
     /// Phase 7.6b: invoke the symmetry mirror pass on the verts that
     /// the active drag is moving (vertexIndicesToProcess). Writes
     /// mirror positions into `mesh.vertices[mi]` for every selected

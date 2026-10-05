@@ -127,3 +127,47 @@ unittest { // spine = +Y direction → bend axis = Y × Y = degenerate;
             ~ ", expected " ~ zExp.to!string);
     }
 }
+
+unittest { // bend under a linear falloff: phi = angle·(s/L)·w, w read per
+           // vertex from the stage. Falloff runs along Y from start y=+0.5
+           // (w=1) to end y=-1.5 (w=0), so the cube's bottom row sits at
+           // w=0.5 — the probe that tells a weighted bend from an unweighted
+           // one (the top row alone could not).
+    postJson("/api/command", commandBody("scene.reset"));
+    cmd("select.typeFrom polygon");
+    auto before = dumpVerts();
+
+    cmd("tool.set xfrm.bend on");
+    cmd("tool.pipe.attr falloff type linear");
+    cmd("tool.pipe.attr falloff start \"0,0.5,0\"");
+    cmd("tool.pipe.attr falloff end \"0,-1.5,0\"");
+    cmd("tool.pipe.attr falloff shape linear");
+    cmd("tool.attr xfrm.bend spineX 1");
+    cmd("tool.attr xfrm.bend spineY 0");
+    cmd("tool.attr xfrm.bend spineZ 0");
+    cmd("tool.attr xfrm.bend angle 90");
+    cmd("tool.doApply");
+
+    auto after = dumpVerts();
+    enum double HALF_EXT = 0.5;
+    enum double TOTAL    = 90.0 * (PI / 180.0);
+    int halfWeight = 0;
+    foreach (i, v; after) {
+        double ox = before[i][0], oy = before[i][1], oz = before[i][2];
+        double w   = (oy + 1.5) / 2.0;      // 1 at y=+0.5, 0.5 at y=-0.5
+        if (approxEq(w, 0.5)) ++halfWeight;
+        double phi = TOTAL * (ox / HALF_EXT) * w;
+        double c = cos(phi), sn = sin(phi);
+        double xExp = ox * c - oy * sn;
+        double yExp = ox * sn + oy * c;
+        assert(approxEq(v[0], xExp) && approxEq(v[1], yExp)
+               && approxEq(v[2], oz),
+            "vert " ~ i.to!string ~ " (w=" ~ w.to!string ~ ") bent to ("
+            ~ v[0].to!string ~ ", " ~ v[1].to!string ~ ", " ~ v[2].to!string
+            ~ "), expected (" ~ xExp.to!string ~ ", " ~ yExp.to!string
+            ~ ", " ~ oz.to!string ~ ")");
+    }
+    assert(after.length == 8 && halfWeight == 4,
+        "fixture: 8 cube verts, 4 of them on the w=0.5 row; got "
+        ~ after.length.to!string ~ " / " ~ halfWeight.to!string);
+}

@@ -2,8 +2,7 @@ module tools.transform.xfrm_apply;
 
 /// Geometry-apply half of `XfrmTransformTool` — the single apply entry point
 /// (`applyTRS`), the canonical-matrix fold it composes, its two per-pass
-/// kernels, and the dormant pow-scale chain that survives for
-/// `compoundPasses != 1`. Split out of `xfrm_transform.d` by task 0719
+/// kernels. Split out of `xfrm_transform.d` by task 0719
 /// (audit 4, finding T1).
 ///
 /// A `mixin template`, for the reason derived in `xfrm_item.d`'s header: these
@@ -14,7 +13,7 @@ module tools.transform.xfrm_apply;
 /// reason — reachable from here, and not worth publishing to move.
 ///
 /// The pure per-vertex math these bodies call — `applyXformMatrix`,
-/// `applyRotateFromOrig`, `applyScaleFromActivation`, `blendToIdentity` — is
+/// `blendToIdentity` — is
 /// NOT here: it lives in `xform_kernels.d`, is free of tool state, and is
 /// unit-tested there (task 0719, finding T5). What this file holds is the
 /// composition and ordering around those kernels.
@@ -65,8 +64,7 @@ mixin template XfrmApplyImpl() {
     //      cluster's right/up/fwd" instead of world XYZ.
     //   R: dragAxisIdx 0/1/2 enables per-cluster axis lookup in the
     //      kernel; pivotFor() already reads per-cluster centers.
-    //   S: applyScaleFromActivation already handles per-cluster via
-    //      axesFor() — no change needed.
+    //   S: the per-cluster scale matrix uses each cluster's own axes.
 
     bool applyTRS(Vec3[] baseline, Vec3 viewAxis = Vec3(0, 0, 0),
                   float viewAngleDeg = 0,
@@ -164,43 +162,21 @@ mixin template XfrmApplyImpl() {
         // `applyFold`. MS-4.1/4.2 proved this is what the reference does (one
         // composed matrix, one baseline weight; multi-axis rotate + combined
         // T+R+S + per-cluster translate-under-falloff all reproduce exactly), and
-        // it is what fixes the per-cluster-translate-falloff divergence. Only the
-        // dormant `pow(scale, passes)` path (no matrix form, F2) keeps the legacy
-        // per-pass `else` chain below.
+        // it is what fixes the per-cluster-translate-falloff divergence.
         //
         // The decomposed state fields (run.t / headlessRotate /
         // run.s) + the transient view-ring params (viewAxis / viewAngleDeg,
         // MS-3.4) remain the input attributes that BUILD the matrix.
         // `mesh.vertices` already holds the restored baseline.
         {
-            import std.math : PI, fabs;
-
             bool hasT = flagT && (run.t.x != 0
                               || run.t.y != 0
                               || run.t.z != 0);
             bool hasS = flagS && (run.s.x != 1
                               || run.s.y != 1
                               || run.s.z != 1);
-
-            // MS-4.3/4.4 — fold: compose R->S->T into ONE pivot-relative matrix
-            // (per cluster in the ACEN.Local case) and apply it once with ONE
-            // baseline-position weight (the reference model, validated in
-            // MS-4.1/4.2 globally and the per-cluster translate-weighting captured
-            // in per_cluster_translate_falloff_bug). Only the dormant pow-scale
-            // path falls through to the legacy per-pass chain below (no matrix
-            // form, F2). That dormant non-unit-pass path intentionally retains
-            // its earlier order; the canonical fold is gated directly by its
-            // composition-law witnesses.
-            float passesS = dragFalloff.compoundPasses > 0.0f
-                          ? dragFalloff.compoundPasses : 1.0f;
-            bool powScale = hasS && fabs(passesS - 1.0f) > 1e-4f;
-            if (!powScale) {
-                applyFold(baseline, pivot, bX, bY, bZ, cp, ap,
-                          hasT, hasS, viewAxis, viewAngleDeg);
-            } else {
-                applyTRSLegacyPowPath(baseline, pivot, bX, bY, bZ, cp, ap,
-                                      hasT, hasS, viewAxis, viewAngleDeg);
-            }  // MS-4.3 — legacy per-pass chain → applyTRSLegacyPowPath
+            applyFold(baseline, pivot, bX, bY, bZ, cp, ap,
+                      hasT, hasS, viewAxis, viewAngleDeg);
         }
 
         // (MS-3.6) The MS-2 measure-only per-pass shadow was retired here: it
@@ -214,7 +190,7 @@ mixin template XfrmApplyImpl() {
 
         // CONS post-pass (Stage 4 of doc/cons_constraint_plan.md):
         // Re-project each MOVED vertex's final position onto the nearest
-        // background-mesh surface. Runs AFTER applyFold / legacy chain so
+        // background-mesh surface. Runs AFTER applyFold so
         // it sees the final geometry, BEFORE `return true;`.
         //
         // Working assumptions (unverified — see plan DoD):
@@ -300,8 +276,8 @@ mixin template XfrmApplyImpl() {
         }
 
         // Task 1906 stage 1, NIT7 — WRITE-AFTER-PUBLISH, NAMED SO STAGE 3
-        // DOES NOT REDISCOVER IT. The pass above runs AFTER `applyFold` (or
-        // the legacy chain) has already published this apply's class, and on
+        // DOES NOT REDISCOVER IT. The pass above runs AFTER `applyFold` has
+        // already published this apply's class, and on
         // the UNROUTED branch it writes `mesh.vertices[vid]` and notes
         // nothing at all — only the routed branch adds a `noteChange(Maps)`.
         // So a listener is told "Position" while the positions it names are
@@ -317,250 +293,6 @@ mixin template XfrmApplyImpl() {
         // `Maps` `applyFold` published on the same routed apply, which is why
         // that deletion does not turn this into a lost class either.
         return true;
-    }
-
-    // MS-4.3/4.4 — the DORMANT legacy per-pass T→R→S chain, reached only when
-    // dragFalloff.compoundPasses != 1 (the pow-scale S pass has no matrix
-    // form, F2; compoundPasses is published 1.0 everywhere in the current
-    // tree). Cut VERBATIM from applyTRS's `else` branch (Phase B); the
-    // ordinalSrc gather moved with it (that branch was its only consumer).
-    // The parameter list is exactly the set of applyTRS locals the branch
-    // read; all mutation still goes through member state (mesh / toProcess).
-    void applyTRSLegacyPowPath(Vec3[] baseline, Vec3 pivot,
-                               Vec3 bX, Vec3 bY, Vec3 bZ,
-                               TransformTool.ClusterPivots cp,
-                               TransformTool.ClusterAxes ap,
-                               bool hasT, bool hasS,
-                               Vec3 viewAxis, float viewAngleDeg) {
-        import std.math : PI, fabs;
-        // TASK 1073 (review SF3) — this arm is entirely UNROUTED. Every pass
-        // below reads and writes `mesh.vertices` directly, so a routed
-        // gesture arriving here would move the BASE while the user believes
-        // it is authoring a morph map: silent corruption of the one surface
-        // the whole seam exists to protect, with no visible symptom until the
-        // map is cleared and the geometry does not come back.
-        //
-        // It cannot happen today — this branch is reached only when
-        // `dragFalloff.compoundPasses != 1`, and nothing in the tree
-        // publishes anything but 1.0 — which is exactly why it is worth an
-        // assert rather than a route: routing a dormant path is untestable
-        // work, while this costs one resolve and turns the failure from
-        // silent into loud the moment the branch is woken up.
-        //
-        // `morphRoutingActive()` rather than `buildMorphRouteFor(baseline)`:
-        // the latter CAPTURES the run baseline as a side effect, and a
-        // side-effecting assert changes behaviour between `-release` (where
-        // asserts are stripped entirely) and every other build. This form is
-        // a pure read and is strictly stronger — it is true whenever a target
-        // is bound, including the cases where the route would fail to build
-        // and the fold would write the base anyway.
-        assert(!morphRoutingActive(),
-            "applyTRSLegacyPowPath is unrouted: a morph target is bound and "
-          ~ "this arm would write the BASE. Route it (or refuse) before "
-          ~ "waking compoundPasses != 1 -- see tools/transform/morph_route.d");
-        // WORLD -> LAYER (task 0649), applied per pass at each kernel call
-        // rather than once up front: the passes BUILD their matrices from the
-        // world basis, so the conversion has to happen after each build. The
-        // composition of conjugated maps is the conjugate of the composition,
-        // so a chain of per-pass conversions is the same map as one conversion
-        // of the whole chain — and each pass reads the previous pass's LAYER
-        // output from `mesh.vertices`, which is what makes the chain close.
-        const auto ims = applyItemSpace();
-        // Each pass's matrix kernel takes an ORDINAL-parallel source buffer
-        // (source[k] is the current position of vertex
-        // vertexIndicesToProcess[k]) — see applyXformMatrix's array-layout
-        // contract. ordinalSrc() gathers the LIVE post-prior-pass positions
-        // for the moving set so each pass reads the previous pass's output.
-        Vec3[] ordinalSrc() {
-            auto s = new Vec3[](vertexIndicesToProcess.length);
-            foreach (k, vi; vertexIndicesToProcess)
-                s[k] = (vi >= 0 && vi < cast(int)mesh.vertices.length)
-                     ? mesh.vertices[vi] : Vec3(0, 0, 0);
-            return s;
-        }
-        // ---- T pass -------------------------------------------------------
-        if (hasT) {
-            if (cp.active && ap.active) {
-                // Per-cluster translate: falloff-EXEMPT (w==1, no falloff),
-                // signed per-cluster axes — matches applyTranslatePerCluster.
-                // One pivot-relative translation matrix per cluster from its
-                // OWN right/up/fwd frame, selected per vertex via clusterM.
-                float[16][] clusterM;
-                clusterM.length = ap.right.length;
-                foreach (cid; 0 .. ap.right.length) {
-                    Vec3 wd = ap.right[cid] * run.t.x
-                            + ap.up[cid]    * run.t.y
-                            + ap.fwd[cid]   * run.t.z;
-                    clusterM[cid] = translationMatrix(wd);
-                }
-                FalloffPacket noFo;  noFo.enabled = false;   // w==1 exempt
-                applyXformMatrix(mesh, vertexIndicesToProcess, ordinalSrc(),
-                                 ims.toLocalPoint(pivot), identityMatrix,
-                                 Vec3(0, 0, 0),
-                                 blendModeForMeasure(),
-                                 noFo, dragAimSpace(),
-                                 inItemFrame(ims, cp), ap,
-                                 inItemFrame(ims, clusterM),
-                                 dragSymmetry, toProcess);
-            } else {
-                // Global basis: delta = bX·TX + bY·TY + bZ·TZ; weight at the
-                // LIVE position (source == weightVerts == current scratch),
-                // matching applyTranslateIncremental.
-                Vec3 delta = bX * run.t.x
-                           + bY * run.t.y
-                           + bZ * run.t.z;
-                applyXformMatrix(mesh, vertexIndicesToProcess, ordinalSrc(),
-                                 ims.toLocalPoint(pivot),
-                                 ims.conjugate(translationMatrix(delta)),
-                                 Vec3(0, 0, 0),
-                                 blendModeForMeasure(),
-                                 dragFalloff, dragAimSpace(),
-                                 inItemFrame(ims, cp), ap, null,
-                                 dragSymmetry, toProcess);
-            }
-        }
-
-        // ---- R.x / R.y / R.z + view-ring passes --------------------------
-        // Each rotation about a basis axis (or per-cluster axis,
-        // dragAxisIdx 0/1/2); weight at the LIVE position. Per-cluster
-        // rotate is LIVE-weighted, NOT falloff-exempt (unlike per-cluster
-        // translate). The matrix is origin-fixing; applyXformMatrix
-        // re-applies the (possibly per-cluster) pivot.
-        if (flagR) {
-            if (headlessRotate.x != 0)
-                applyRotatePass(bX, 0,
-                    headlessRotate.x * cast(float)(PI / 180.0),
-                    pivot, cp, ap, &ordinalSrc);
-            if (headlessRotate.y != 0)
-                applyRotatePass(bY, 1,
-                    headlessRotate.y * cast(float)(PI / 180.0),
-                    pivot, cp, ap, &ordinalSrc);
-            if (headlessRotate.z != 0)
-                applyRotatePass(bZ, 2,
-                    headlessRotate.z * cast(float)(PI / 180.0),
-                    pivot, cp, ap, &ordinalSrc);
-
-            // View-ring rotation: a single rotation about the arbitrary
-            // camera-forward axis. dragAxisIdx == -1 keeps the axis as-is
-            // (no per-cluster substitution) and applies one weighted
-            // rotation about one axis (correct under falloff). A view
-            // rotation is global by definition. Nonzero only during a live
-            // view-ring drag.
-            bool hasViewRot = viewAngleDeg != 0
-                && (viewAxis.x != 0
-                 || viewAxis.y != 0
-                 || viewAxis.z != 0);
-            if (hasViewRot)
-                applyRotatePass(viewAxis, -1,
-                    viewAngleDeg * cast(float)(PI / 180.0),
-                    pivot, cp, ap, &ordinalSrc);
-        }
-
-        // ---- S pass -------------------------------------------------------
-        if (hasS) {
-            // compoundPasses != 1 (Selection/flex falloff's scale pow) has
-            // NO matrix expression (plan F2). The matrix path cannot carry
-            // it, so route this one pass through the per-component scale
-            // kernel — which applies pow(s_eff, compoundPasses) for real —
-            // exactly as the legacy chain did. compoundPasses is published
-            // 1.0 everywhere in the current tree, so the matrix branch is
-            // the live path; this preserves the dormant pow path correctly.
-            float passes = dragFalloff.compoundPasses > 0.0f
-                         ? dragFalloff.compoundPasses : 1.0f;
-            if (fabs(passes - 1.0f) > 1e-4f) {
-                Vec3[] activation = mesh.vertices.dup;
-                // THE ONE ARM WITH NO MATRIX FORM, and therefore the one
-                // place the 0649 conversion is not exact. `pow(s, passes)`
-                // has no matrix expression (F2), so this kernel takes a PIVOT
-                // and a BASIS rather than a matrix, and the basis has to be
-                // carried by `toLocalDir` instead of conjugated. That carry is
-                // exact when the item's linear part is a similarity and a
-                // declared approximation otherwise (the basis stops being
-                // orthonormal under a non-uniform item scale, and this kernel
-                // assumes it is). Reached only when `compoundPasses != 1`,
-                // which is published 1.0 everywhere in the current tree — so
-                // this arm is dormant, and it is converted at all so that the
-                // path is not left reading world coordinates against layer
-                // vertices, which is the half conversion the task refuses.
-                Vec3 nz(Vec3 v) {
-                    Vec3 d = ims.toLocalDir(v);
-                    return d.length > 1e-12f ? normalize(d) : v;
-                }
-                applyScaleFromActivation(mesh, vertexIndicesToProcess,
-                                         activation, ims.toLocalPoint(pivot),
-                                         ims.isIdentity ? bX : nz(bX),
-                                         ims.isIdentity ? bY : nz(bY),
-                                         ims.isIdentity ? bZ : nz(bZ),
-                                         run.s,
-                                         dragFalloff, dragAimSpace(),
-                                         inItemFrame(ims, cp), ap,
-                                         dragSymmetry, toProcess,
-                                         baseline);
-            } else {
-                // Matrix path. Source = current scratch (post-T/R), gathered
-                // ordinal-parallel; weight at the pre-chain BASELINE
-                // (weightVerts == baseline, mesh-length vid-indexed). The
-                // scale matrix is origin-fixing (built around Vec3(0));
-                // applyXformMatrix re-applies the pivot. Per-cluster scale
-                // uses each cluster's OWN right/up/fwd frame (matching the
-                // per-component kernel's axesFor()), selected via clusterM.
-                float[16][] clusterM = null;
-                if (cp.active && ap.active) {
-                    clusterM = new float[16][](ap.right.length);
-                    foreach (cid; 0 .. ap.right.length)
-                        clusterM[cid] = pivotScaleMatrixBasis(
-                            Vec3(0, 0, 0),
-                            ap.right[cid], ap.up[cid], ap.fwd[cid],
-                            run.s.x, run.s.y,
-                            run.s.z);
-                }
-                applyXformMatrix(mesh, vertexIndicesToProcess, ordinalSrc(),
-                                 ims.toLocalPoint(pivot),
-                                 ims.conjugate(
-                                     pivotScaleMatrixBasis(Vec3(0, 0, 0),
-                                         bX, bY, bZ,
-                                         run.s.x, run.s.y,
-                                         run.s.z)),
-                                 Vec3(0, 0, 0),
-                                 blendModeForMeasure(),
-                                 dragFalloff, dragAimSpace(),
-                                 inItemFrame(ims, cp), ap,
-                                 inItemFrame(ims, clusterM),
-                                 dragSymmetry, toProcess,
-                                 /*weightVerts=*/ baseline);
-            }
-        }
-
-        // Symmetry mirror for the DORMANT legacy pow-scale chain. The
-        // in-kernel mirror tail was deleted in Stage 2 (the live fold owns
-        // the mirror via Pass B). This branch is only reached when
-        // compoundPasses != 1 (Selection-falloff scale pow — dormant in the
-        // current tree), so it keeps the legacy POSITION-COPY mirror at its
-        // own call site (per the plan: legacy/per-cluster paths retain
-        // position-copy until their own stage). One copy after the whole
-        // chain, OR-ing mirror verts into toProcess for upload/undo.
-        if (dragSymmetry.enabled
-            && dragSymmetry.pairOf.length == mesh.vertices.length) {
-            import symmetry : applySymmetryMirror;
-            applySymmetryMirror(mesh, dragSymmetry, toProcess, toProcess);
-        }
-        // Change-notification (Stage 1): the dormant legacy per-pass /
-        // pow-scale chain also writes positions in place WITHOUT a version
-        // bump (mid-drag stability). Mirror applyFold's publish so this path
-        // publishes Position too — ONE publish for the whole T/R/S chain
-        // (never per pass, never per vertex). compoundPasses is 1.0 everywhere
-        // in the current tree, so this branch is dormant; the publish keeps it
-        // correct if the pow path is ever re-enabled.
-        //
-        // Task 1906 stage 1 — `publishChange`, not `noteChange`: DELIVER the
-        // Position class synchronously, still WITHOUT touching a version
-        // counter. See applyFold's tail for the whole rationale.
-        //
-        // Task 2000 — CONFINED. The vertices this chain moved are the tool's
-        // moving set, which the same tool passes to `snapCursor` as
-        // `excludeVerts`; see `Mesh.publishConfinedChange` for the claim and
-        // for the two caches that act on it. Delivery is otherwise identical.
-        mesh.publishConfinedChange(MeshEditScope.Position);
     }
 
     // MS-4.3/4.4 — canonical-matrix FOLD. Composes the whole R->S->T map into
@@ -581,9 +313,6 @@ mixin template XfrmApplyImpl() {
     // weight. Unlike the legacy per-cluster chain this WEIGHTS the translate too,
     // matching the reference (per-cluster translate is falloff-weighted there, not
     // exempt — the divergence this fold fixes). View-ring is global only.
-    //
-    // Scope: compoundPasses==1. The dormant `pow(scale, passes)` path keeps the
-    // legacy per-pass chain in applyTRS (no matrix form, F2).
     void applyFold(Vec3[] baseline, Vec3 pivot, Vec3 bX, Vec3 bY, Vec3 bZ,
                    TransformTool.ClusterPivots cp,
                    TransformTool.ClusterAxes ap,
@@ -894,66 +623,6 @@ mixin template XfrmApplyImpl() {
         // hands `snapCursor` as `excludeVerts`. See
         // `Mesh.publishConfinedChange`.
         mesh.publishConfinedChange(routed ? MeshEditScope.Maps : MeshEditScope.Position);
-    }
-
-    // MS-3.2 — one rotation pass of the canonical-matrix apply (called from
-    // applyTRS). Applies a single origin-fixing rotation about `axis` by
-    // `angleRad` through the MS-1 matrix kernel, weight at the LIVE position.
-    // `srcGather` re-gathers the current (post-prior-pass) scratch positions
-    // ordinal-parallel to `vertexIndicesToProcess`, so each rotate pass reads
-    // the previous pass's output. `dragAxisIdx ∈ {0,1,2}` enables per-cluster
-    // axis lookup (each cluster rotates about its OWN right/up/fwd at that
-    // index, around its OWN pivot via cp); -1 keeps `axis` as-is (global /
-    // view-ring). Per-cluster rotate is LIVE-weighted, NOT falloff-exempt
-    // (unlike per-cluster translate). Still used by the legacy pow-scale chain.
-    void applyRotatePass(Vec3 axis, int dragAxisIdx, float angleRad,
-                         Vec3 pivot,
-                         TransformTool.ClusterPivots cp,
-                         TransformTool.ClusterAxes ap,
-                         Vec3[] delegate() srcGather)
-    {
-        // WORLD -> LAYER, same conversion the live fold does (task 0649);
-        // `axis`, `pivot` and `cp` arrive in the space the pipe publishes in.
-        const auto ims = applyItemSpace();
-        if (dragAxisIdx >= 0 && dragAxisIdx <= 2 && ap.active) {
-            // Per-cluster rotate: one origin-fixing rotation matrix per cluster
-            // about that cluster's axis. The kernel resolves the per-cluster
-            // pivot via cp; M is built around the ORIGIN so
-            // pivot + M·(src - pivot) yields the cluster-pivoted rotation. The
-            // GLOBAL fallback matrix (passed as `M`) rotates any non-cluster
-            // vertex about the global `axis`/`pivot` — matching the legacy
-            // rotate kernel, whose pivotFor()/axisFor() fall back to the global
-            // axis/pivot for verts outside every cluster (NOT identity).
-            float[16][] clusterM;
-            clusterM.length = ap.right.length;
-            foreach (cid; 0 .. ap.right.length) {
-                Vec3 ca = dragAxisIdx == 0 ? ap.right[cid]
-                        : dragAxisIdx == 1 ? ap.up[cid]
-                                           : ap.fwd[cid];
-                clusterM[cid] = pivotRotationMatrix(Vec3(0, 0, 0), ca, angleRad);
-            }
-            applyXformMatrix(mesh, vertexIndicesToProcess, srcGather(),
-                             ims.toLocalPoint(pivot),
-                             ims.conjugate(
-                                 pivotRotationMatrix(Vec3(0,0,0), axis, angleRad)),
-                             Vec3(0, 0, 0),
-                             blendModeForMeasure(),
-                             dragFalloff, dragAimSpace(),
-                             inItemFrame(ims, cp), ap,
-                             inItemFrame(ims, clusterM),
-                             dragSymmetry, toProcess);
-        } else {
-            // Global / view-ring: single origin-fixing rotation about `axis`.
-            applyXformMatrix(mesh, vertexIndicesToProcess, srcGather(),
-                             ims.toLocalPoint(pivot),
-                             ims.conjugate(
-                                 pivotRotationMatrix(Vec3(0,0,0), axis, angleRad)),
-                             Vec3(0, 0, 0),
-                             blendModeForMeasure(),
-                             dragFalloff, dragAimSpace(),
-                             inItemFrame(ims, cp), ap, null,
-                             dragSymmetry, toProcess);
-        }
     }
 
     // Per-cluster translate: each vertex is displaced along its OWN

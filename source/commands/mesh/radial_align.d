@@ -10,8 +10,9 @@ import math : Vec3;
 import params : Param;
 import change_bus : MeshEditScope;
 import commands.mesh.position_undo : PositionUndo;
-import tools.alignment.align_kernels : extractAlignChain, radialAlignTargets, lerp3,
+import tools.alignment.align_kernels : extractAlignChain, radialAlignTargets,
                               MAX_ALIGN_SIDES;
+import falloff : weightedLerp;
 
 /// Distribute a selected vertex CHAIN at equal angular slots around a
 /// circle (task 0361 — replaces the previous sphere-projection algorithm,
@@ -114,7 +115,7 @@ class MeshRadialAlign : Command, Operator {
         foreach (i, vi; chainVerts) {
             touchedIdx  ~= vi;
             touchedPrev ~= mesh.vertices[vi];
-            newPos[i]    = lerp3(source[i], aligned[i], weight_);
+            newPos[i]    = weightedLerp(source[i], aligned[i], weight_);
         }
 
         ed.setVertexPositions(touchedIdx, newPos);

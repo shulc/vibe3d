@@ -223,7 +223,7 @@ unittest { // (i-R-view) View-ring rotate (dragAxisIdx==-1, arbitrary axis)
     assertClose(A.vertices, B.vertices, "i-R view-ring w==1");
 }
 
-unittest { // (i-S) Scale, per-axis factors, compoundPasses==1, falloff disabled
+unittest { // (i-S) Scale, per-axis factors, falloff disabled
     auto vp = testViewport();
     auto fp = noFalloff();
     auto sp = noSymmetry();
@@ -684,30 +684,6 @@ unittest { // (v) sparse non-identity indices, vid-indexed weightVerts (position
                      weightVerts);
 
     assertClose(A.vertices, B.vertices, "v sparse non-identity indices vid weightVerts");
-}
-
-// ---------------------------------------------------------------------------
-// compoundPasses != 1: kernel is NOT claimed to match the pow path.
-// ---------------------------------------------------------------------------
-
-unittest {
-    // The matrix kernel models ONLY compoundPasses==1 (plan F2). When a
-    // Selection falloff publishes compoundPasses != 1, the scale pow() path has
-    // no matrix expression; callers must SKIP the matrix kernel. This test just
-    // documents/exercises that the SKIP predicate the callers use is the right
-    // one — it does NOT assert matrix equality against the pow path.
-    FalloffPacket f;
-    f.enabled = true;
-    f.compoundPasses = 1.91f;     // Steps·0.955 for Steps=2
-    bool skip = fabs(f.compoundPasses - 1.0f) > 1e-4f;
-    assert(skip, "compoundPasses!=1 must trigger the matrix-kernel SKIP");
-
-    // And the common single-pass case does NOT skip.
-    FalloffPacket g;
-    g.enabled = true;
-    g.compoundPasses = 1.0f;
-    assert(!(fabs(g.compoundPasses - 1.0f) > 1e-4f),
-           "compoundPasses==1 must NOT skip");
 }
 
 // ---------------------------------------------------------------------------

@@ -765,7 +765,7 @@ float applyShape(float t, FalloffShape shape, float in_, float out_) {
 // COMPLETE set — it cannot drift again the way the hand-written list did.
 // `enabled` and the Composite `contributors` recursion stay explicit scalar
 // / recursive checks (not part of `config` — see FalloffConfig's doc for
-// what's deliberately excluded, e.g. `pickedCenter` / `compoundPasses`).
+// what's deliberately excluded, e.g. `pickedCenter`).
 // ---------------------------------------------------------------------------
 bool falloffPacketsEqual(const ref FalloffPacket a, const ref FalloffPacket b)
         pure nothrow @nogc @safe {
@@ -816,6 +816,54 @@ bool falloffPacketsEqual(const ref FalloffPacket a, const ref FalloffPacket b)
 // ---------------------------------------------------------------------------
 interface IFalloffAware {
     void setFalloff(FalloffPacket fp);
+}
+
+/// The falloff INPUT of an `IFalloffAware` command, in one place:
+/// the stored packet, `evaluate`'s capture (a live pipe packet wins, else the
+/// HTTP-injected one is published so the result builder reads ONE source) and
+/// the builder's read. `hasFalloff_` says a packet arrived at all — magnet
+/// builds its own Element sphere without one. Identifiers (`VectorStack`,
+/// `FalloffPacket`) resolve at the instantiating class, which imports both.
+mixin template FalloffInput() {
+    private FalloffPacket falloff_;
+    private bool          hasFalloff_;
+
+    void setFalloff(FalloffPacket fp) { falloff_ = fp; hasFalloff_ = true; }
+
+    private void captureFalloff(ref VectorStack vts) {
+        if (auto fp = vts.get!FalloffPacket()) setFalloff(*fp);
+        else                                   vts.put(&falloff_);
+    }
+
+    private static FalloffPacket inputFalloff(ref VectorStack vts) {
+        if (auto fp = vts.get!FalloffPacket()) return *fp;
+        return FalloffPacket.init;
+    }
+}
+
+/// The per-component blend toward a deform target, `orig + (target-orig)·w`
+/// — one body for every tool and command whose falloff law is a lerp (the
+/// blend CHOICE stays per tool, measured law §4).
+Vec3 weightedLerp(Vec3 orig, Vec3 target, float w) pure nothrow @nogc @safe {
+    return Vec3(orig.x + (target.x - orig.x) * w,
+                orig.y + (target.y - orig.y) * w,
+                orig.z + (target.z - orig.z) * w);
+}
+
+/// The magnet's own Element sphere: centre `center`, radius `dist`, smooth
+/// shape, connectivity ignored, `anchorVi` (when >= 0) weight-1 via the
+/// anchor ring. One builder for the command and both tool paths.
+FalloffPacket magnetElementPacket(Vec3 center, float dist, int anchorVi) {
+    FalloffPacket fp;
+    fp.type         = FalloffType.Element;
+    fp.enabled      = true;
+    fp.pickedCenter = center;
+    fp.pickedRadius = dist;
+    fp.connect      = ElementConnect.Ignore;
+    fp.shape        = FalloffShape.Smooth;
+    fp.anchorPos    = [center];
+    if (anchorVi >= 0) fp.anchorRing = [cast(uint)anchorVi];
+    return fp;
 }
 
 // ---------------------------------------------------------------------------

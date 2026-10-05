@@ -447,7 +447,7 @@ enum LassoStyle : int {
 /// Element-gated scalar since task 0724), or any of the derived/published
 /// buffers
 /// (`connectMask`, `anchorPos`, `selectionWeights`, `vertexMapWeights`,
-/// `compoundPasses`, `contributors`) — those stay direct members of
+/// `contributors`) — those stay direct members of
 /// `FalloffPacket` / `FalloffStage`, rebuilt every evaluate().
 struct FalloffConfig {
     FalloffType  type        = FalloffType.None;
@@ -655,19 +655,6 @@ struct FalloffPacket {
     // the un-clamped data). Empty slice degenerates to full influence.
     const(float)[] vertexMapWeights;
 
-    // Compound passes — exponent the SCALE kernel applies to
-    // the per-axis factor: `s_eff = (1 + (s-1)·w) ^ compoundPasses`.
-    // For Selection falloff this equals `Steps · 0.955`, an
-    // empirical Flex Scale saturation convergence factor (the 0.955
-    // captures the "saturation falls short of SY^Steps" property of
-    // the iterative weight smoothing). Float so the fractional
-    // 0.955 multiplier round-trips through `pow`. Every other
-    // falloff type ships 1.0 → the standard single-application
-    // `factor = 1 + (s-1)·w` path. Translate / Rotate kernels
-    // ignore this field; compounding only makes physical sense
-    // for the multiplicative Scale formula.
-    float compoundPasses = 1.0f;
-
     // Composite sub-packets. Only populated when `type == Composite`.
     // Each entry is a VALUE COPY of a contributing falloff's packet (the
     // combiner owns them outright — it never stores pointers/slices into
@@ -691,7 +678,6 @@ struct FalloffPacket {
         p.anchorPos = anchorPos.dup;
         p.selectionWeights = selectionWeights.dup;
         p.vertexMapWeights = vertexMapWeights.dup;
-        p.compoundPasses = compoundPasses;
         p.contributors.length = contributors.length;
         foreach (i, ref contributor; contributors)
             p.contributors[i] = contributor.ownedDup();

@@ -146,7 +146,6 @@ import tools.transform.xfrm_handles;
 import tools.transform.xfrm_apply;
 import tools.transform.morph_route : MorphRoute, defaultStored;
 import tools.transform.xform_kernels :
-    applyScaleFromActivation,   // dormant compoundPasses!=1 pow path only (applyTRS, F2)
     applyXformMatrix,
     BlendMode,
     composeRunMatrix,
@@ -7514,15 +7513,6 @@ private:
         r.base   = base;
         r.runPos = dragMorphBaseline;
         return r;
-    }
-
-    /// True when this apply will route — used by the commit / cancel paths to
-    /// choose the morph command over the vertex one.
-    public bool morphRoutingActive() {
-        import morph_target : resolveMorphTarget;
-        import mesh         : MapKind;
-        string nm; MapKind kind;
-        return resolveMorphTarget(mesh, nm, kind);
     }
 
     // Task 1069 — the ROUTED run baseline: every vertex's DISPLAYED position

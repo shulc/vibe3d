@@ -10,7 +10,8 @@ import math : Vec3;
 import params : Param;
 import change_bus : MeshEditScope;
 import commands.mesh.position_undo : PositionUndo;
-import tools.alignment.align_kernels : extractAlignChain, linearAlignTargets, lerp3;
+import tools.alignment.align_kernels : extractAlignChain, linearAlignTargets;
+import falloff : weightedLerp;
 
 /// Align a selected vertex CHAIN between its two fixed endpoints (task
 /// 0361 — replaces the previous bbox-collapse-to-centroid-line algorithm,
@@ -114,7 +115,7 @@ class MeshLinearAlign : Command, Operator {
         foreach (i, vi; chainVerts) {
             touchedIdx  ~= vi;
             touchedPrev ~= mesh.vertices[vi];
-            newPos[i]    = lerp3(source[i], aligned[i], weight_);
+            newPos[i]    = weightedLerp(source[i], aligned[i], weight_);
         }
 
         ed.setVertexPositions(touchedIdx, newPos);

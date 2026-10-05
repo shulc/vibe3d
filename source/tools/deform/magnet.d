@@ -27,7 +27,8 @@ import snapshot : MeshSnapshot;
 import tools.common.session_mesh_key : SessionMeshKey;
 import display_sync : refreshDisplay;
 import deform_magnet : applyMagnet;
-import toolpipe.packets : FalloffPacket, FalloffType, FalloffShape, ElementConnect;
+import toolpipe.packets : FalloffPacket;
+import falloff : magnetElementPacket;
 import hover_state : hoverAtPress;
 import change_bus : MeshEditScope;
 import document : primaryModelSpace, Layer;
@@ -285,11 +286,7 @@ public:
         if (strength_ <= 0.0f) image.nextBuilt = false;
         else {
             int[] indices = image.candidate.selectedVertexIndicesVertices();
-            FalloffPacket fp;
-            fp.type = FalloffType.Element; fp.enabled = true;
-            fp.pickedCenter = center_; fp.pickedRadius = dist_;
-            fp.connect = ElementConnect.Ignore; fp.shape = FalloffShape.Smooth;
-            fp.anchorPos = [center_]; fp.anchorRing = [cast(uint)pickedVi];
+            FalloffPacket fp = magnetElementPacket(center_, dist_, pickedVi);
             const auto aim = aimSpace(vpWorld_, primaryModelSpace());
             image.nextBuilt = applyMagnet(&image.candidate, indices, target_,
                 strength_, fp, aim, image.nextTouchedIdx, image.nextTouchedPrev);
@@ -452,15 +449,7 @@ private:
         // Moving set: selected verts (empty → whole mesh), vertex mode.
         int[] indices = mesh.selectedVertexIndicesVertices();
 
-        FalloffPacket fp;
-        fp.type         = FalloffType.Element;
-        fp.enabled      = true;
-        fp.pickedCenter = center_;
-        fp.pickedRadius = dist_;
-        fp.connect      = ElementConnect.Ignore;
-        fp.shape        = FalloffShape.Smooth;
-        fp.anchorPos    = [center_];
-        fp.anchorRing   = [cast(uint)pickedVi];
+        FalloffPacket fp = magnetElementPacket(center_, dist_, pickedVi);
 
         // The packet just above pins `FalloffType.Element`, which never
         // projects — but the aim space is a required parameter (task 0619),

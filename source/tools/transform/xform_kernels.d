@@ -362,16 +362,8 @@ void applyScaleFromActivation(
     const(Vec3)[] weightVerts = null)
 {
     import math : scaleAlongBasis;
-    import std.math : pow, fabs;
     auto zKernel = g_perf.scope_(Cat.kernelApply);
     if (activationVerts.length == 0) return;
-    // Float exponent — Selection falloff publishes
-    // `Steps · 0.955` (~1.91 for Steps=2), so the compound
-    // pass needs a non-integer pow(). Skip the pow() when
-    // very close to 1.0 to keep the common path fast.
-    float passes = dragFalloff.compoundPasses > 0.0f
-                   ? dragFalloff.compoundPasses : 1.0f;
-    bool needCompound = fabs(passes - 1.0f) > 1e-4f;
     bool useWeightVerts = (weightVerts.length == activationVerts.length);
     foreach (vi; indices) {
         const size_t fv = frameSource(dragSymmetry, vi);
@@ -387,17 +379,6 @@ void applyScaleFromActivation(
         float sx = 1.0f + (scaleAccum.x - 1.0f) * w;
         float sy = 1.0f + (scaleAccum.y - 1.0f) * w;
         float sz = 1.0f + (scaleAccum.z - 1.0f) * w;
-        // D.7: Selection falloff (xfrm.flex) publishes
-        // compoundPasses ≈ `steps · 0.955`. Scale is multiplicative,
-        // so raising the per-axis factor to that exponent reproduces
-        // the empirically observed saturation. Other falloff types
-        // ship compoundPasses=1.0, leaving single-application unchanged.
-        if (needCompound) {
-            // pow() may produce NaN for negative bases — clamp.
-            if (sx > 0) sx = pow(sx, passes);
-            if (sy > 0) sy = pow(sy, passes);
-            if (sz > 0) sz = pow(sz, passes);
-        }
         mesh.vertices[vi] = authored(dragSymmetry, vi, activationVerts[vi],
             (Vec3 q) => scaleAlongBasis(q, pivot, ax, ay, az, sx, sy, sz));
     }
@@ -425,9 +406,6 @@ void applyScaleFromActivation(
 //     such an M via translationMatrix(delta-in-basis),
 //     matrixFromQuat / pivotRotationMatrix(origin, axis, angle) (translation
 //     column zero ⇒ origin-fixing), or pivotScaleMatrixBasis(origin, ...).
-//   - This kernel models ONLY `compoundPasses == 1`. The scale `pow(s, passes)`
-//     path has no matrix expression (see plan F2); callers MUST skip the
-//     matrix kernel when `fabs(dragFalloff.compoundPasses - 1) > 1e-4`.
 //   - (C2 caveat) Decompose / PolarQuat assume `M = R · diag(s)` — i.e. scale in
 //     M's OWN column directions. A rotated-basis stretch, a symmetric (shear)
 //     stretch, or a reflection (negative-determinant M) is mis-decomposed by the
@@ -568,8 +546,7 @@ enum BlendMode { Decompose, MatrixLerp, PolarQuat }
 ///   mesh.vertices[vi] = pivot + applyAffine(blendToIdentity(Mv, w, mode),
 ///                                            baseline[vi] - pivot).
 ///
-/// Contract: models ONLY `compoundPasses == 1` (callers skip otherwise, F2).
-/// `M` / `clusterM[cid]` must be PIVOT-RELATIVE (origin-fixing) so the
+/// Contract: `M` / `clusterM[cid]` must be PIVOT-RELATIVE (origin-fixing) so the
 /// `pivot +  … · (baseline - pivot)` framing holds; see `blendToIdentity`.
 void applyXformMatrix(
     Mesh* mesh,

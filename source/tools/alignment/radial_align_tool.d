@@ -4,8 +4,9 @@ import display_state : DrawPlan;
 import operator : VectorStack;
 
 import tools.transform.transform;
-import tools.alignment.align_kernels : extractAlignChain, radialAlignTargets, lerp3,
+import tools.alignment.align_kernels : extractAlignChain, radialAlignTargets,
                               MAX_ALIGN_SIDES;
+import falloff : weightedLerp;
 import mesh;
 import mesh_gpu : GpuMesh;
 import editmode;
@@ -123,9 +124,7 @@ public:
         import toolpipe.packets : SubjectPacket;
         SubjectPacket subj;
         VectorStack vts;
-        buildLocalVts(subj, vts);
-        captureFalloffForDrag(vts);
-        captureSymmetryForDrag(vts);
+        beginHeadlessDeform(subj, vts);
 
         auto chain = extractAlignChain(mesh, *editMode);
         if (chain.verts.length < 1) return false;
@@ -147,7 +146,7 @@ public:
         foreach (i, vi; chain.verts) {
             float w = headlessWeight * falloffWeight(cast(int)vi, aim);
             if (w == 0.0f) continue;
-            mesh.vertices[vi] = lerp3(source[i], aligned[i], w);
+            mesh.vertices[vi] = weightedLerp(source[i], aligned[i], w);
             toProcess[vi] = true;
             any = true;
         }

@@ -531,7 +531,6 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient, PresetClaimable {
             vertexMapWeights_.length = 0;
         }
         pkt.vertexMapWeights = vertexMapWeights_;
-        pkt.compoundPasses   = 1.0f;
 
         // --- Multi-falloff combine (WGHT slot, last-writer-wins) ---
         //

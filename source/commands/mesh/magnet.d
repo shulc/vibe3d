@@ -10,8 +10,8 @@ import document : primaryModelSpace;
 import params : Param;
 import change_bus : MeshEditScope;
 import commands.mesh.position_undo : PositionUndo;
-import toolpipe.packets : FalloffPacket, FalloffType, FalloffShape, ElementConnect, SubjectPacket;
-import falloff : evaluateFalloff, IFalloffAware;
+import toolpipe.packets : FalloffPacket, SubjectPacket;
+import falloff : IFalloffAware, FalloffInput, magnetElementPacket;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import deform_magnet : applyMagnet;
 
@@ -35,10 +35,6 @@ private:
     float        dist_     = 1.0f;
     Vec3         center_   = Vec3(0, 0, 0);
     int          anchor_   = -1;
-
-    // Optional injected falloff (IFalloffAware path — from the tool pipe).
-    FalloffPacket falloff_;
-    bool          hasFalloff_;
 
     // Undo delta.
     uint[] touchedIdx_;
@@ -65,6 +61,9 @@ private:
     }
 
 public:
+    // Optional injected falloff (IFalloffAware path — from the tool pipe).
+    mixin FalloffInput;
+
     this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
     }
@@ -82,19 +81,12 @@ public:
         ];
     }
 
-    // IFalloffAware — lets the tool pipe inject a pre-computed falloff.
-    void setFalloff(FalloffPacket fp) {
-        falloff_    = fp;
-        hasFalloff_ = true;
-    }
-
     // Operator
     mixin OperatorActrCommon;
     bool evaluate(ref VectorStack vts) {
         auto subj = vts.get!SubjectPacket();
         if (subj is null) return false;
-        if (auto fp = vts.get!FalloffPacket())
-            setFalloff(*fp);
+        captureFalloff(vts);
         // Task 0619: the injected packet above can be Screen/Lasso, and the
         // subject packet carries the viewport it must be projected with.
         const auto aim = aimSpace(subj.viewport, primaryModelSpace());
@@ -162,20 +154,8 @@ private:
             if (vmask[i]) indices ~= i;
 
         // Build Element FalloffPacket (or use injected one from tool pipe).
-        FalloffPacket fp;
-        if (hasFalloff_) {
-            fp = falloff_;
-        } else {
-            fp.type         = FalloffType.Element;
-            fp.enabled      = true;
-            fp.pickedCenter = center_;
-            fp.pickedRadius = dist_;
-            fp.connect      = ElementConnect.Ignore;
-            fp.shape        = FalloffShape.Smooth;
-            fp.anchorPos    = [center_];
-            if (anchor_ >= 0)
-                fp.anchorRing = [cast(uint)anchor_];
-        }
+        FalloffPacket fp = hasFalloff_ ? falloff_
+                                       : magnetElementPacket(center_, dist_, anchor_);
 
         // THE ONE FORWARD IN L0-d THAT DOES NOT CHANGE. `applyMagnet` writes
         // `mesh.vertices[i]` raw at source/deform_magnet.d:64 and its signature

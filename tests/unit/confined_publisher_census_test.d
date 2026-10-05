@@ -94,8 +94,8 @@
 //
 // THE OLD TABLE'S PROSE WAS WRONG AND THE SYMBOLS SAY SO. It recorded the two
 // `xfrm_apply.d` publishes as "the applyChain tail and the applyFold tail";
-// the scanner reports `XfrmApplyImpl.applyTRSLegacyPowPath` and
-// `XfrmApplyImpl.applyFold`. A count against a path cannot be checked against
+// the scanner reported `XfrmApplyImpl.applyTRSLegacyPowPath` (deleted with the
+// dormant pow path, task 9445) and `XfrmApplyImpl.applyFold`. A count against a path cannot be checked against
 // its own description — a count against a declaration is the description.
 //
 // SELF-DEFENDING AGAINST VACUITY, in both directions. Every recorded count is
@@ -166,12 +166,10 @@ private static immutable LedgerRow[] kSites = [
         "noteMeshChange's gate — the single reader, and the whole of the "
       ~ "settled watcher's semantics"),
 
-    LedgerRow("XfrmApplyImpl.applyTRSLegacyPowPath|publishConfinedChange", 1,
-        "the legacy pow-path tail. Exclusion: the tool passes "
+    LedgerRow("XfrmApplyImpl.applyFold|publishConfinedChange", 1,
+        "the applyFold tail. Exclusion: the tool passes "
       ~ "`vertexIndicesToProcess` to `snapCursor` as `excludeVerts`, and "
       ~ "`kindExcluded` drops any element with an incident moving vertex"),
-    LedgerRow("XfrmApplyImpl.applyFold|publishConfinedChange", 1,
-        "the applyFold tail. Same exclusion, same tool"),
     LedgerRow("TransformTool.uploadToGpu|publishConfinedChange", 1,
         "uploadToGpu's per-apply publish. Exclusion: `toProcess`, the same "
       ~ "set, handed to the same query"),
