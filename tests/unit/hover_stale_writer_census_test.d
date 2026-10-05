@@ -40,7 +40,7 @@ private void hits(string code, string name, void delegate(size_t at, bool write)
 
 unittest {
     size_t files, writes, pressCalls;
-    string[] writers, pressSites, rawPressReads, frameReaders;
+    string[] writers, publishers, pressSites, rawPressReads, frameReaders;
     immutable press = ["TackTool.onMouseButtonDown", "MagnetTool.onMouseButtonDown",
         "LoopSliceTool.onMouseButtonDown", "EdgeSliceTool.onMouseButtonDown",
         "XfrmTransformTool.tryPickElement"];
@@ -60,6 +60,10 @@ unittest {
                 else if (rel != "source/hover_state.d" && !frameReaders.canFind(rel))
                     frameReaders ~= rel;
             });
+        hits(code, "publishHover", (at, write) {
+            const pre = code[0 .. at].stripRight;   // skip its declaration and imports
+            if (!pre.endsWith("void") && !pre.endsWith(":")) publishers ~= symOf(at);
+        });
         hits(code, "hoverAtPress", (at, write) {
             if (!code[at + "hoverAtPress".length .. $].stripLeft.startsWith("(")) return;
             if (code[0 .. at].stripRight.endsWith("HoverIds")) return;   // its declaration
@@ -73,8 +77,13 @@ unittest {
 
     // ONE writer: the three ids and the flag, once each, inside publishHover.
     assert(writes == 4, format("hover census: expected 4 writes (3 ids + flag), got %d in %s", writes, writers));
-    assert(writers == ["publishHover"] && writers.length == 1,
+    assert(writers == ["publishHover"],
            format("hover census: hover globals written outside publishHover: %s", writers));
+
+    // Its two callers: the frame's hover resolve and the press-time re-pick.
+    publishers.sort();
+    assert(publishers == ["FrameRunner.resolveHover", "InputRouter.refreshHoverPickAt"],
+           format("hover census: publishHover callers changed: %s", publishers));
 
     // Press-time readers: each named press function reads through hoverAtPress, none raw.
     assert(rawPressReads.length == 0, format("hover census: raw hover id read in a press: %s", rawPressReads));
