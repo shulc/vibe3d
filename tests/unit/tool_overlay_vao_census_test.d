@@ -3,9 +3,9 @@
 // go through `handles/gl_util.d : drawWorldSegments`, which owns the one
 // dynamic buffer. Raw-text census of `source/tools/**`: the GL object
 // lifecycle identifiers occur 0 times (before task 9442: glGenVertexArrays in
-// 3 files, 4 sites), beside a floor — the files naming `drawWorldSegments`
+// 3 files, 4 sites), beside a floor — the files CALLING `drawWorldSegments(`
 // are exactly the three drawers' files. Raw text, comments included: a
-// mention fails closed.
+// mention of a lifecycle identifier fails closed.
 module tests.unit.tool_overlay_vao_census_test;
 
 import std.algorithm : sort;
@@ -34,7 +34,7 @@ unittest {
     foreach (de; dirEntries(buildPath(repoRoot, "source/tools"), "*.d", SpanMode.depth)) {
         immutable rel = de.name[repoRoot.length + 1 .. $];
         immutable text = readText(de.name);
-        if (names(text, "drawWorldSegments")) callers ~= rel;
+        if (!matchFirst(text, regex(`\bdrawWorldSegments\s*\(`)).empty) callers ~= rel;
         foreach (id; kLifecycle)
             if (names(text, id)) owners ~= format("%s (%s)", rel, id);
     }

@@ -669,7 +669,7 @@ private GLuint g_segsVao, g_segsVbo;
 /// (tests/unit/tool_overlay_vao_census_test.d). The CALLER owns the
 /// depth-test state, as with drawWorldQuad.
 void drawWorldSegments(const Vec3[] pairs, const ref Viewport vp, Vec3 colour,
-                       float widthPx, GLuint restoreProgram, float alpha = 1.0f)
+                       float widthPx, GLuint restoreProgram)
 {
     static assert(Vec3.sizeof == 3 * float.sizeof);
     assert(pairs.length % 2 == 0, "drawWorldSegments takes point PAIRS");
@@ -689,7 +689,7 @@ void drawWorldSegments(const Vec3[] pairs, const ref Viewport vp, Vec3 colour,
         glBufferData(GL_ARRAY_BUFFER, pairs.length * Vec3.sizeof, pairs.ptr, GL_DYNAMIC_DRAW);
         glBindBuffer(GL_ARRAY_BUFFER, 0);
         drawThickLines(g_segsVao, cast(int)pairs.length, GL_LINES, identityMatrix, vp,
-                       colour, widthPx, restoreProgram, alpha);
+                       colour, widthPx, restoreProgram);
     }
 }
 
