@@ -334,7 +334,18 @@ unittest {
         if (viaBrute == p) ++misses; else ++hits;
     }
     assert(hits == 3106 && misses == 894, format("hit population %d / %d", hits, misses));
+    // A line inside a wall's padded box but off its plane: t = ±inf, no hit.
+    RelaxVec3[3][] wall = [[RelaxVec3(1, 0, 0), RelaxVec3(1, 1, 0), RelaxVec3(1, 0, 1)]];
+    const wallIndex = SurfaceLineIndex(wall);
+    foreach (dx; [-1e-10, 1e-10]) foreach (ny; [-1.0f, 1.0f]) {
+        const p = RelaxVec3(1 + dx, 0.5, 0.25);
+        RelaxVec3 q = p;
+        wallIndex.project(q, Vec3(0, ny, 0));
+        assert(q == p, format("a parallel wall (dx %g, n.y %g) moved the point", dx, ny));
+    }
     // The brute pass runs 4000 x 864 = 3 456 000 triangle tests.
+    // Floor: every hit came from at least one triangle test.
+    version (PerfProbe) assert(indexTests >= hits, format("index triangle tests: %d", indexTests));
     version (PerfProbe) assert(indexTests <= 45_000,
         format("index triangle tests: %d (measured 42 624)", indexTests));
 }
@@ -362,6 +373,7 @@ version (PerfProbe) unittest { // preserve on a 40k-face surface tests a bounded
     foreach (i; 0 .. got.length) if (got[i] != m.vertices[i]) ++moved;
     assert(moved == 40_328, format("population: %d vertices moved", moved));
     // 40 401 vertices x 10 projections x 80 000 triangles = 3.2e10 for the brute pass.
+    assert(tests >= moved, format("triangle tests: %d below the moved population", tests));
     assert(tests <= 3_000_000, format("triangle tests: %d (measured 2 932 256)", tests));
 }
 
@@ -399,4 +411,25 @@ unittest {
         "a version-1 sharpThreshold (radians) must not recall");
     assert(recalled(`{"version":2,` ~ format(tool, "", "45") ~ `}`) == 45.0f,
         "control: a current-version threshold recalls");
+
+    // Only the retired (preset, node, attribute) rows of a version-1 file go,
+    // the legacy `toolDefaults` section included; a saved file keeps them.
+    import prefs : Prefs, savePrefs;
+    write(buildPath(dir, "prefs.json"), `{"version":1,`
+        ~ `"toolDefaults":{"xfrm.smooth":{"sharpThreshold":"-1","iter":"3"}},`
+        ~ `"toolAttrCache":{"bevel":{"tool":{"sharpThreshold":"-1"}},`
+        ~ `"xfrm.smooth":{"falloff":{"sharpAngle":"5"}}}}`);
+    auto old = loadPrefs(dir).toolAttrCache;
+    const legacy = old.lookup("xfrm.smooth", kToolNode);
+    assert(legacy.length == 1 && (*legacy)["iter"] == "3",
+        "the legacy section drops the retired threshold");
+    assert((*old.lookup("bevel", kToolNode))["sharpThreshold"] == "-1",
+        "another preset's attribute of the same name is kept");
+    assert((*old.lookup("xfrm.smooth", "falloff"))["sharpAngle"] == "5",
+        "another node's attribute of the same name is kept");
+    Prefs cur;
+    cur.toolAttrCache.store("xfrm.smooth", kToolNode, ["sharpThreshold": "45"]);
+    savePrefs(cur, dir);
+    assert((*loadPrefs(dir).toolAttrCache.lookup("xfrm.smooth", kToolNode))["sharpThreshold"] == "45",
+        "a file this build saves keeps the threshold");
 }

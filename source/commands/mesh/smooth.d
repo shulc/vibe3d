@@ -469,10 +469,8 @@ struct SurfaceLineIndex {
         foreach (a; 0 .. 3) {
             const pa = axisOf(p, a), da = axisOf(d, a);
             const lo = axisOf(b.lo, a), hi = axisOf(b.hi, a);
-            if (da == 0) {
-                if (pa < lo || pa > hi) return false;
-                continue;
-            }
+            // da == 0 gives ±inf (outside: s0 > s1) or NaN (on a face: no
+            // constraint) — both conservative.
             double u = (lo - pa) / da, v = (hi - pa) / da;
             if (u > v) { const w = u; u = v; v = w; }
             if (u > s0) s0 = u;
