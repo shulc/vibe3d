@@ -204,8 +204,9 @@
     1.0,
     0.2
    ],
-   "source": "plan inference from K-C C1d (box, handle off => PLANE)",
-   "law": "handle off: the constraint does not take the pointer; the click is the plane point"
+   "pending": "9483",
+   "source": "plan inference from K-C C1d (box, handle off => PLANE); NOT ASSERTED until capture 9483 (vertex tool, handle 0, geometry off, constraint on, click (678,574), top440: PLANE (0.3,1,0.2) or SURF (0.3,1.930664,0.2))",
+   "law": "pending: whether the vertex tool's click with handle off is the plane point is uncaptured"
   },
   "vertex-surface-persp": {
    "family": "vertex",

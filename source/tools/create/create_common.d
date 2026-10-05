@@ -318,8 +318,9 @@ Vec3 backgroundPoint(Vec3 planeLocal, const ref Viewport vp, in WorkplaneFrame f
 /// the snap, replacing all three channels (K-C2 C2i). A primitive's press is
 /// the plane point and never comes here (K-C role law).
 Vec3 placeFreePoint(int x, int y, const ref Viewport vp, in WorkplaneFrame frame,
-                    const ref Mesh mesh, out SnapResult snap, out bool onSurface)
+                    const ref Mesh mesh, out SnapResult snap)
 {
+    bool onSurface;
     Vec3 p = backgroundPoint(screenToPlacementLocal(x, y, vp, frame), vp, frame, onSurface);
     snap = snapLocalHit(p, frame, x, y, vp, mesh, EditMode.Vertices);
     return p;

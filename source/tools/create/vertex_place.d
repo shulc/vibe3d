@@ -188,8 +188,7 @@ public:
         if (mods & (KMOD_CTRL | KMOD_SHIFT)) return false;
 
         WorkplaneFrame frame = primitivePlacementFrame();
-        bool onSurface;
-        Vec3 hit = placeFreePoint(e.x, e.y, cachedVp_, frame, *mesh, lastSnap_, onSurface);
+        Vec3 hit = placeFreePoint(e.x, e.y, cachedVp_, frame, *mesh, lastSnap_);
         publishLastSnap(lastSnap_);
 
         // Convert local workplane hit → world position.

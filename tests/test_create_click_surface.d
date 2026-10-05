@@ -6,13 +6,14 @@
 // then the snap replacing all three channels; a primitive's PRESS point (box
 // corner, sphere centre) stays the plane point.
 //
-// Every vertex rig clicks the same pixel twice: first with the constraint's
-// `handle` off — the plane point q, the control (and the handle-off cell) —
-// then with it on. A ray cell asserts the surface point within 1e-5 of the ray
-// from OUR eye through that q, and at least 1e-3 off the pixel's own ray (or
-// the cell cannot see the raw-pixel-ray mutation); a top-view cell asserts the
-// in-plane channels against q to 1e-5. Heights are the reference's depth read:
-// the cell's own tolerance, floor 2e-3 (findings: K-C2 PF-5).
+// A ray rig clicks the same pixel twice: first with the constraint off — the
+// plane point q, the control — then with it on; the cell asserts the
+// surface point within 1e-5 of the ray from OUR eye through that q, and at
+// least 1e-3 off the pixel's own ray (the raw-pixel-ray law); a top-view cell
+// asserts the in-plane channels against q to 1e-5. Heights are the reference's
+// depth read: the cell's own tolerance, floor 2e-3 (findings: K-C2 PF-5). The
+// cell marked `pending` (the vertex tool's handle-off law, capture 9483) is
+// not asserted.
 
 import drag_helpers : Vec3, Viewport, buildDragLog, fetchCamera, pixelRay,
     playAndWait, viewportFromCameraMatrices;
@@ -95,18 +96,20 @@ private void rig(const ref Rig r, string tool, double offset, string[] extra = n
             assert(abs(num(g[k[1]]) - num(v[k[0]])) <= 1e-6 * num(v[k[0]]),
                 format("%s rig: our %s %.9g, the cell's %s", r.name, k[0], num(g[k[1]]), num(v[k[0]])));
     penCommand("tool.set " ~ tool);
-    penCommand("tool.pipe.attr constrain enabled true");
     penCommand("tool.pipe.attr constrain geometry off");
+    penCommand("tool.pipe.attr constrain handle true");
     penCommand(format("tool.pipe.attr constrain offset %.9f", offset));
-    handle(true);
+    constrain(true);
 }
 
-private void handle(bool on) {
-    penCommand("tool.pipe.attr constrain handle " ~ (on ? "true" : "false"));
+/// The constraint on or off (handle on): off, the click is the create click
+/// law's plane point q — not the uncaptured handle-off law (capture 9483).
+private void constrain(bool on) {
+    penCommand("tool.pipe.attr constrain enabled " ~ (on ? "true" : "false"));
     foreach (st; getJson("/api/toolpipe")["stages"].array)
         if (st["task"].str == "CONS") {
-            assert(st["attrs"]["enabled"].str == "true"
-                && st["attrs"]["handle"].str == (on ? "true" : "false"),
+            assert(st["attrs"]["enabled"].str == (on ? "true" : "false")
+                && st["attrs"]["handle"].str == "true",
                 "rig: the constraint did not read back as written: " ~ st.toString);
             return;
         }
@@ -122,12 +125,12 @@ private string within(string cell, string what, double[3] got, double[3] want, d
     return null;
 }
 
-/// On an armed vertex rig: a handle-off click (q) then a handle-on click at
-/// the same pixel; returns the foreground vertices [q, surface].
+/// On an armed vertex rig: a constraint-off click (q) then a constraint-on
+/// click at the same pixel; returns the foreground vertices [q, surface].
 private Vec3[] vertexPair(int[2] px) {
-    handle(false);
+    constrain(false);
     clickPixels(px);
-    handle(true);
+    constrain(true);
     clickPixels(px);
     penCommand("tool.set prim.vertex off");
     return readVerts();
@@ -171,8 +174,9 @@ private string rayCell(string name, JSONValue c, Rig r) {
     Vec3 po, pd;
     pixelRay(px[0], px[1], vp, po, pd);
     const dp = rayDist(s, d3(po), d3(pd));
-    assert(dp >= 1e-3, format("%s rig: the surface point is %.2e off the pixel ray; the cell "
-        ~ "cannot tell the q-ray from it", name, dp));
+    if (!(dp >= 1e-3))
+        return format("%s: surface point %(%.6f %) is %.2e off the pixel's own ray (the "
+                      ~ "q-ray law puts it >= 1e-3 off)", name, s[], dp);
     if (!(dq <= kRay))
         return format("%s: surface point %(%.6f %) is %.2e off the eye ray through q %(%.6f %)",
                       name, s[], dq, q[]);
@@ -245,28 +249,19 @@ unittest {
         ++ran;
     }
 
-    // ---- top view: the handle-off control, the surface point, the offset.
-    if (wanted("vertex-surface-top") || wanted("vertex-surface-offset")
-        || wanted("vertex-surface-handle-off")) {
+    // ---- top view: the surface point, the offset.
+    if (wanted("vertex-surface-top") || wanted("vertex-surface-offset")) {
         const ct = cell("vertex-surface-top"), co = cell("vertex-surface-offset");
         auto r = rigOf("vertex-surface-top");
         rig(r, "prim.vertex", 0);
         const px = worldPixel(v3(arr3(ct["aim_world"])));
-        handle(false);
-        clickPixels(px);
-        handle(true);
         clickPixels(px);
         penCommand(format("tool.pipe.attr constrain offset %.9f", num(co["offset"])));
         clickPixels(px);
         penCommand("tool.set prim.vertex off");
         auto vs = readVerts();
-        assert(vs.length == 3, format("top rig: %d vertices, expected 3", vs.length));
-        const q = d3(vs[0]), s = d3(vs[1]), o = d3(vs[2]);
-        if (wanted("vertex-surface-handle-off")) {
-            note(within("vertex-surface-handle-off", "handle-off click",
-                        q, arr3(cell("vertex-surface-handle-off")["expect_world"]), kRay));
-            ++ran;
-        }
+        assert(vs.length == 2, format("top rig: %d vertices, expected 2", vs.length));
+        const s = d3(vs[0]), o = d3(vs[1]);
         if (wanted("vertex-surface-top")) {
             note(within("vertex-surface-top", "in-plane", s, arr3(ct["q_point"]), kRay, [0, 2]));
             note(within("vertex-surface-top", "height", s, arr3(ct["expect_world"]),
@@ -338,7 +333,16 @@ unittest {
         ++ran;
     }
 
-    const want = only is null ? 11 : cast(int)only.length;
+    // 12 cells: one outside, one pending (neither asserted nor selectable), 10 run.
+    string[] pending;
+    int asserted;
+    foreach (n, c; fx["cells"].object) {
+        if ("pending" in c.object) pending ~= n;
+        else if ("outside" !in c.object) ++asserted;
+    }
+    assert(asserted == 10 && pending == ["vertex-surface-handle-off"],
+           format("fixture population: %d asserted cells, pending %s", asserted, pending));
+    const want = only is null ? 10 : cast(int)only.length;
     assert(ran == want, format("cell population: %d run, expected %d", ran, want));
     assert(fails.length == 0, "create click surface cells:\n" ~ fails.join("\n"));
 }
