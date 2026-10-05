@@ -204,3 +204,86 @@ unittest { // Positive control: edge with BOTH endpoints visible MUST be selecte
         "edge (" ~ edge46.to!string ~ ") with both-visible endpoints must be "
         ~ "lasso-selected; selectedEdges=" ~ selIds.to!string);
 }
+
+// ---------------------------------------------------------------------------
+// NEAR OCCLUDER (task 9387, the lasso twin of `snap_near_occluder_test.d`).
+// A large FRONT-facing open quad Q whose two +Y corners lie behind the eye
+// (perspective, eye (0,0,5)) still hides what is behind it from a vertex
+// lasso: it has no screen ring, so the visibility probe tests it inside its
+// own plane. C sits 0.5 m behind Q on a ray through Q's interior; C2 sits in
+// front of Q on another ray. Each is owned only by a back-facing triangle.
+// ---------------------------------------------------------------------------
+unittest {
+    import drag_helpers : DVec3 = Vec3, viewportFromCameraMatrices, projectToWindow,
+        fetchCamera;
+    import std.format : format;
+    import std.math : sqrt, lround;
+
+    DVec3 onRay(DVec3 dir, double s) {
+        return DVec3(cast(float)(s * dir.x), cast(float)(s * dir.y),
+                     cast(float)(5 + s * dir.z));
+    }
+    // Both rays meet Q's plane (z = 4/3 (y + 3)) at s = 0.3, inside Q.
+    const DVec3 d1 = DVec3(0, -2, -6), d2 = DVec3(1, -2, -6);
+    const double len1 = sqrt(40.0);
+    const DVec3 c  = onRay(d1, 0.3 + 0.5 / len1);   // behind Q
+    const DVec3 c2 = onRay(d2, 0.15);               // in front of Q
+    string v(DVec3 p) { return format("[%.6f,%.6f,%.6f]", p.x, p.y, p.z); }
+    string triAt(DVec3 p) {   // p, p+x, p+y — wound [p, p+y, p+x]: back-facing
+        return v(p) ~ "," ~ v(DVec3(p.x + 0.05f, p.y, p.z)) ~ ","
+             ~ v(DVec3(p.x, p.y + 0.05f, p.z));
+    }
+    auto r = postJson("/api/command", commandBody("scene.reset"));
+    assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
+    r = postJson("/api/command", commandBody("scene.loadMesh", `{"vertices":[`
+        ~ `[-3,-3,0],[3,-3,0],[3,3,8],[-3,3,8],` ~ triAt(c) ~ "," ~ triAt(c2)
+        ~ `],"faces":[[0,1,2,3],[4,6,5],[7,9,8]]}`));
+    assert(r["status"].str == "ok", "load-mesh failed: " ~ r.toString);
+    r = postJson("/api/camera", `{"azimuth":0,"elevation":0,"distance":5,`
+        ~ `"focus":{"x":0,"y":0,"z":0}}`);
+    assert(r["status"].str == "ok", "camera failed: " ~ r.toString);
+    r = postJson("/api/command", "select.typeFrom vertex");
+    assert(r["status"].str == "ok", "vertex mode failed: " ~ r.toString);
+
+    auto vp = viewportFromCameraMatrices();
+    float qx, qy;
+    assert(vp.eye.z > 4.99f && vp.eye.z < 5.01f && vp.eye.x * vp.eye.x < 1e-6f,
+        "rig: the eye must sit at (0,0,5)");
+    assert(!projectToWindow(DVec3(3, 3, 8), vp, qx, qy)
+        && projectToWindow(DVec3(-3, -3, 0), vp, qx, qy),
+        "rig: Q must have a corner behind the eye AND one in front");
+
+    long[] lassoAround(DVec3 p) {
+        float px, py;
+        assert(projectToWindow(p, vp, px, py), "rig: the candidate must project");
+        const int x = cast(int)lround(px), y = cast(int)lround(py);
+        auto cam = fetchCamera();
+        string log = format(
+            `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}`
+            ~ "\n", cam.vpX, cam.vpY, cam.width, cam.height);
+        double t = 50.0;
+        log ~= format(`{"t":%.3f,"type":"SDL_MOUSEBUTTONDOWN","btn":3,"x":%d,"y":%d,`
+            ~ `"clicks":1,"mod":0}` ~ "\n", t, x - 6, y - 6);
+        foreach (pt; [[x + 6, y - 6], [x + 6, y + 6], [x - 6, y + 6], [x - 6, y - 6]]) {
+            t += 25.0;
+            log ~= format(`{"t":%.3f,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,`
+                ~ `"yrel":0,"state":4,"mod":0}` ~ "\n", t, pt[0], pt[1]);
+        }
+        t += 25.0;
+        log ~= format(`{"t":%.3f,"type":"SDL_MOUSEBUTTONUP","btn":3,"x":%d,"y":%d,`
+            ~ `"clicks":1,"mod":0}` ~ "\n", t, x - 6, y - 6);
+        auto pr = post(BASE ~ "/api/play-events", log);
+        assert(parseJSON(pr)["status"].str == "success", "play-events failed: " ~ cast(string)pr);
+        waitForPlaybackFinish();
+        long[] sel;
+        foreach (e; getJson("/api/selection")["selectedVertices"].array) sel ~= e.integer;
+        return sel;
+    }
+
+    // Control first: the vertex in FRONT of Q is lasso-selected.
+    assert(lassoAround(c2) == [7L], format("near-occluder-front (lasso): C2 (v7) in "
+        ~ "front of the near face must be selected, got %s", lassoAround(c2)));
+    const sel = lassoAround(c);
+    assert(sel.length == 0, format("near-occluder-psp (lasso): C (v4) 0.5 m behind a "
+        ~ "front face with corners behind the eye must not be selected, got %s", sel));
+}

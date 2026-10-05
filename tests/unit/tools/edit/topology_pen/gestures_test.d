@@ -12268,8 +12268,8 @@ unittest {
         }
     }
     // Floors first: an empty scan would satisfy both rules vacuously.
-    assert(blocks.length == 187 && histBlocks == 83 && calls == 79 && kernels == 65,
-        format("gestures census population changed: %d top-level blocks (187), %d read "
+    assert(blocks.length == 188 && histBlocks == 83 && calls == 79 && kernels == 65,
+        format("gestures census population changed: %d top-level blocks (188), %d read "
              ~ "history (83), %d bracketed-list calls in them (79), %d of them kernels (65)",
                blocks.length, histBlocks, calls, kernels));
     assert(bad.length == 0, "gestures census:\n" ~ bad.join("\n"));
@@ -12368,4 +12368,47 @@ unittest {
     TopologyPenTool.sideIncidence(&r, ra, rx, polys, dir);
     assert(polys == 1 && dir == -1,
            format("a 2-gon [x,a] is one polygon on side a-x: polys %d dir %d", polys, dir));
+}
+
+// ---------------------------------------------------------------------------
+// Snap-target ORIENTATION is this client's admit (`backFace`), never the snap
+// service's (task 9387, wave plan §24.2 TP1–TP4; `doc/measured_laws.md` §3).
+// `makeGridPlane(2)` faces -Y: the +Y camera (`makeGridPlaneTestViewport`)
+// sees its back, the -Y one (`makeGridPlaneFrontViewport`) its front. The
+// cursor sits 6 px from border vertex 0 (or from a loose vertex L).
+// TP1 / TP2 match capture K-B6 T1 / T1c; TP4 rests on the static read only.
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh : makeGridPlane;
+    import std.format : format;
+
+    int targetNear(bool backFace, bool frontView, bool withLoose) {
+        auto t = new TopologyPenTool();
+        Mesh m = makeGridPlane(2);
+        uint aim = 0;
+        if (withLoose) aim = m.addVertex(Vec3(1.5f, 0, 0));
+        t.meshSrc_ = () => &m;
+        t.backFace_ = backFace;
+        t.dragSnap_ = *penTestSnapOn();
+        auto vp = frontView ? makeGridPlaneFrontViewport() : makeGridPlaneTestViewport();
+        ImVec2 p;
+        assert(TopologyPenTool.projectWorldPt(m.vertices[aim], vp, p), "setup: aim must project");
+        immutable int r = t.resolveSnapTargetVert(cast(int)p.x + 6, cast(int)p.y, vp);
+        return r == cast(int)aim ? r : (r < 0 ? -1 : -2);
+    }
+    // TP3 tp-front-off — control: the front side at the default admits.
+    assert(targetNear(false, true, false) == 0,
+        "TP3 tp-front-off: a front-facing border vertex is the snap target");
+    // TP2 tp-back-off — the default refuses the back side (held by the admit alone).
+    assert(targetNear(false, false, false) == -1,
+        format("TP2 tp-back-off: backFace OFF refuses a back-facing vertex, got %d",
+               targetNear(false, false, false)));
+    // TP1 tp-back-on — ON admits it.
+    assert(targetNear(true, false, false) == 0,
+        format("TP1 tp-back-on: backFace ON admits a back-facing vertex, got %d",
+               targetNear(true, false, false)));
+    // TP4 tp-loose-off — a loose vertex (zero normal) is admitted at OFF.
+    const int loose = targetNear(false, false, true);
+    assert(loose >= 0, format("TP4 tp-loose-off: a loose vertex is admitted at "
+        ~ "backFace OFF, got %d", loose));
 }
