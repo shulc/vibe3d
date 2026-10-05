@@ -260,7 +260,13 @@ unittest { // handle drags under grid snap: not trapped; a released element snap
         const p = partPixel(10), c = worldPixel(Vec3(0, 0, 0));
         assert(p[0] - c[0] > 20 && abs(p[1] - c[1]) <= 1,
             format("rig: mover part 10 must be the +X arrow (centre %s, grab %s)", c, p));
-        dragSteps(p, 2, 0, 20);
+        auto cam = fetchCamera(BASE);   // held, the drag publishes its snap (the overlay)
+        playAndWait(buildDragDownLog(cam.vpX, cam.vpY, cam.width, cam.height, p[0], p[1]), BASE);
+        playAndWait(buildDragMotionLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                                       p[0], p[1], p[0] + 40, p[1], 20), BASE);
+        if (fetchSnapLast(BASE)["snapped"].type != JSONType.true_)
+            fails ~= "box-mover-grid-slow: the mover drag's snap is not published";
+        playAndWait(buildDragUpLog(cam.vpX, cam.vpY, cam.width, cam.height, p[0] + 40, p[1]), BASE);
         const cx = qf("cenX"), cz = qf("cenZ"), sx = qf("sizeX"), sz = qf("sizeZ");
         if (!(fabs(cx - 0.1) < 1e-4 && fabs(cz) < 1e-4 && fabs(sx - 0.6) < 1e-4
               && fabs(sz - 0.6) < 1e-4))
