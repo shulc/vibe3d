@@ -10,7 +10,7 @@
 # An unlisted source file has a ceiling of zero.
 source-files 574
 task-citation-lines 5231
-citing-files 454
+citing-files 455
 long-comment-runs 264
 files-with-long-runs 141
 
@@ -379,7 +379,8 @@ allow source/tools/create/capsule.d 3
 allow source/tools/create/cone.d 3
 allow source/tools/create/create_common.d 15
 allow source/tools/create/cylinder.d 3
-allow source/tools/create/pen.d 3
+allow source/tools/create/pen.d 2
+allow source/tools/create/pen_geometry.d 1
 allow source/tools/create/primitive_create_tool.d 22
 allow source/tools/create/sphere.d 17
 allow source/tools/create/torus.d 5

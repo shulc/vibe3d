@@ -973,7 +973,7 @@ unittest {
 // ---------------------------------------------------------------------------
 version (unittest) {
     private class RecordingGuide : SnapGuide {
-        import math : Vec3;
+        import math : Vec3, Viewport;
         float  innerPx = -1, outerPx = -1;
         int    pushes;
         size_t queries;

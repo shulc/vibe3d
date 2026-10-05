@@ -40,7 +40,8 @@ import tools.create.create_common : pickWorkplane, BuildPlane,
                               workplaneCursorRay, workplaneCursorPlaneHit;
 import toolpipe.packets : SnapType, SnapPacket, SymmetryPacket;
 import toolpipe.stages.symmetry : liveSymmetryStage;
-import toolpipe.stages.snap : liveSnapStage;
+import toolpipe.stages.snap : SnapStage, liveSnapStage;
+import toolpipe.guide : SnapGuide;
 import toolpipe.stages.constrain : liveConstrainStage;
 import bvh_pick : SurfaceHit;
 import symmetry : mirrorPosition, symmetryMirrorsEqual, symmetryPacketsEqual;
@@ -638,6 +639,9 @@ struct PreparedPenDeactivateImage {
     size_t expectedHandlerCount;
     SnapResult expectedLastSnap;
     bool expectedMeshChanged;
+    // A switch mid-drag ends the drag's guide (the release never comes).
+    SnapStage snap;
+    SnapGuide[] expectedGuides, nextGuides;
     void clear() nothrow @nogc {
         vertices = null; links = null; linkKey = null; previewClear = Mesh.init;
         this = PreparedPenDeactivateImage.init;
@@ -1010,6 +1014,10 @@ public:
         image.expectedMeshChanged = meshChanged;
         image.willCommit = state == PenState.Drawing &&
             vertices_.length >= minDropCommitVerts();
+        if ((image.snap = liveSnapStage()) !is null) {
+            image.expectedGuides = image.snap.guides().dup;
+            foreach (g; image.expectedGuides) if (g !is guide_) image.nextGuides ~= g;
+        }
         return image;
     }
     final bool preparedDeactivateStateMatches(
@@ -1020,6 +1028,7 @@ public:
             vertHandlers.length == image.expectedHandlerCount &&
             lastSnap == image.expectedLastSnap &&
             meshChanged == image.expectedMeshChanged &&
+            (image.snap is null || image.snap.matchesPreparedGuides(image.expectedGuides)) &&
             (!image.willCommit || (frame.toWorld == image.toWorld &&
                                    sameValueBytes(wallNormal, image.wallNormal) &&
                                    selMode() == image.selMode));
@@ -1032,6 +1041,7 @@ public:
         params_.posX = params_.posY = params_.posZ = 0.0f;
         if (image.willCommit) meshChanged = true;
         else lastSnap = SnapResult.init;
+        if (image.snap !is null) image.snap.installPreparedGuides(image.nextGuides);
         image.clear();
     }
     final bool ownsPreparedMainUpload(GpuUploadOwner owner) nothrow @nogc {
@@ -1772,7 +1782,7 @@ private:
         dragStartMX   = mx;
         dragStartMY   = my;
         // The drag's guide lives from this press to its release / the drop
-        // (task 9416; it counts for the snap key mid-drag, K-G3).
+        // (it counts for the snap key mid-drag, K-G3).
         Vec3[] world;
         foreach (v; vertices_) world ~= toWorldP(v);
         guide_.aim(world, dragVertIdx, transformDir(frame.toWorld, axisUnit(planeAxis)));

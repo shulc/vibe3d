@@ -184,11 +184,12 @@ unittest { // (a) the ONE background query: `.nearest` in the CONS stage only; i
         format("`.nearest` outside bvh_pick.d must be exactly constrain.d's `backgroundHit`; a client "
                ~ "calling the picker builds its own query: %s", nearestHomes));
     enum pen = "tools/edit/topology_pen/tool.d:";
-    assert(clients == ["tools/create/create_common.d:surfaceOnRay", pen ~ "backgroundHit",
-                       pen ~ "backgroundHit", pen ~ "rayHit"],
+    assert(clients == ["tools/create/create_common.d:surfaceOnRay", "tools/create/pen.d:rayHitAt",
+                       pen ~ "backgroundHit", pen ~ "backgroundHit", pen ~ "rayHit"],
         format("background ray clients outside constrain.d must be exactly the free-point resolver's "
-               ~ "`surfaceOnRay` (task 9404), the topology pen's `rayHit` (its drag rays through an exact "
-               ~ "projected point) and its pipeline-less `backgroundHit` (import + call); got %s", clients));
+               ~ "`surfaceOnRay` (task 9404), the pen's raycast press check `rayHitAt` (task 9416), "
+               ~ "the topology pen's `rayHit` (its drag rays through an exact projected point) and its "
+               ~ "pipeline-less `backgroundHit` (import + call); got %s", clients));
 }
 
 unittest { // (b) the ONE CONS finder over g_pipeCtx: inline finders outside constrain.d

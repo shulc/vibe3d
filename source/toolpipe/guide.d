@@ -109,7 +109,7 @@ interface SnapGuide {
     /// seeds it with `kGuidePrioritySeed` before every call, so a guide that
     /// does not assign it has said "the default", not "zero". `distPx` is
     /// `ref` for the same reason: it arrives holding the enumeration's own
-    /// rank, so a guide that leaves it alone re-ranks nothing (task 9416).
+    /// rank, so a guide that leaves it alone re-ranks nothing.
     /// The argument list is still header-derived; the arbitration rule built
     /// on `priority` no longer is.
     ///
@@ -136,7 +136,7 @@ interface SnapGuide {
     /// an element and a grid node; the nearest within the inner range places
     /// the point, reported as `type`. `clientWorld` is the client's point,
     /// (`px`, `py`) the query pixel. False = no position (a guide that only
-    /// re-ranks). Task 9416.
+    /// re-ranks).
     bool propose(Vec3 clientWorld, int px, int py, const ref Viewport vp,
                  const ref SnapPacket cfg, out Vec3 pos, out SnapType type);
 

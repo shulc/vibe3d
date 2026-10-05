@@ -155,6 +155,7 @@ unittest // one packet read, one finder: the deleted copies stay deleted
     assert(liveCalls == ["source/commands/snap/mode.d", "source/commands/snap/toggle.d",
                          "source/commands/snap/toggle_type.d", "source/editor_app.d",
                          "source/toolpipe/stages/snap.d", "source/toolpipe/stages/snap.d",
+                         "source/tools/create/pen.d", "source/tools/create/pen.d",
                          "source/tools/edit/topology_pen/tool.d",
                          "source/tools/edit/topology_pen/tool.d", "source/tools/edit/topology_pen/tool.d",
                          "source/tools/edit/topology_pen/tool.d", "source/tools/edit/topology_pen/tool.d",
@@ -272,6 +273,7 @@ unittest // a guide registered on the live stage reaches a create tool's query
     import tools.create.create_common : snapLocalHit, WorkplaneFrame;
 
     static class Refuse : SnapGuide {
+        import toolpipe.packets : SnapPacket;
         size_t asked;
         void limits(float, float) {}
         bool proximity(Vec3, SnapType, int, int, ref float d, ref int) { ++asked; return false; }

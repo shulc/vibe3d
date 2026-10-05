@@ -292,7 +292,7 @@ private:
     // The distance arrives seeded with the enumeration's rank, so a guide that
     // does not write it re-ranks nothing. A guide's own POSITION is offered
     // whole through `propose` (in `resolve`); the reference's per-axis write
-    // mask on it is not adopted (task 9416: our one proposing guide writes a
+    // mask on it is not adopted (our one proposing guide, the pen's, writes a
     // point on a line, all three axes).
     bool arbitrate(Vec3 candWorld, SnapType type, int idx, int slot,
                    ref float distPx, ref int prio)
@@ -704,7 +704,7 @@ public:
     SnapResult resolve() {
         SnapResult res = passThrough(cursorWorld);
 
-    // A registered guide's own position (`SnapGuide.propose`, task 9416), once
+    // A registered guide's own position (`SnapGuide.propose`), once
     // per query, competes in the constraint tier: an element and a grid node
     // still win over it.
     foreach (g; guides) {
