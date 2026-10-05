@@ -319,13 +319,22 @@ unittest {
             ["numX", "numZ", "replace", "angB"], [1.0f, 1.0f, 1.0f, 30.0f], 8, 6, 30.4641,
             (ref Mesh m, Tool t) { poke(t, "replace", 0.0f); hideAllUnselected(m, t); });
         assert(rows == 1);
-        auto r = new Rig(EditMode.Polygons, &pickFace);
-        auto t = makeTool!ArrayTool(r);
-        seedSession(t, r.mesh);
-        foreach (n, v; ["numX": 1.0f, "numZ": 1.0f, "replace": 1.0f, "angB": 30.0f])
-            poke(t, n, v);
-        t.notifyInteractiveParamChanged("angB");
-        assert(t.preparedParamStateForTest(true), "array replace-in-place: the live "
-            ~ "edit is not built");
+        foreach (panel; [false, true]) {
+            auto r = new Rig(EditMode.Polygons, &pickFace);
+            auto t = makeTool!ArrayTool(r);
+            seedSession(t, r.mesh);
+            foreach (n, v; ["numX": 1.0f, "numZ": 1.0f, "replace": 1.0f, "angB": 30.0f])
+                poke(t, n, v);
+            if (panel) {
+                auto image = t.buildPreparedParamUpdate("angB", r.mesh);
+                scope(exit) image.clear();
+                assert(image.applies && image.nextBuilt, "array replace-in-place: "
+                    ~ "the panel image is not built");
+            } else {
+                t.notifyInteractiveParamChanged("angB");
+                assert(t.preparedParamStateForTest(true), "array replace-in-place: "
+                    ~ "the live edit is not built");
+            }
+        }
     }
 }
