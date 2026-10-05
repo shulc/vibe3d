@@ -16,6 +16,7 @@ import editmode : EditMode;
 import math : Vec3;
 import mesh : Mesh, makeCube;
 import mesh_gpu : GpuMesh, GpuUploadOwner;
+import prepared_param_update : PreparedParamUpdateOwner;
 import prepared_record_context : PreparedRecordContext;
 import prepared_tool_effect;
 import record_observer_hub : RecordObserverHub;
@@ -26,7 +27,7 @@ import tools.edit.edge_bevel : EdgeBevelTool;
 import tools.edit.edge_extrude : EdgeExtrudeTool;
 import tools.edit.poly_bevel : PolyBevelTool;
 import tools.edit.poly_extrude : PolyExtrudeTool;
-import tools.edit.poly_inset_tool : PolyInsetTool;
+import tools.edit.poly_inset_tool : PolyInsetTool, PreparedPolyInsetParamImage;
 import tools.edit.reduce : ReductionTool;
 import tools.edit.vert_merge_tool : VertexMergeTool;
 import tools.edit.vertex_bevel_tool : VertexBevelTool;
@@ -165,8 +166,12 @@ private struct Rig(R) {
 
 static assert(kRows.length == 11, "prepared param-update table lost a row");
 
+/// Every row runs every cell; a failed cell is collected, not thrown, so ONE
+/// red line names each row a shared-owner mutation breaks.
 unittest {
-    size_t rows;
+    import std.array : join;
+    size_t rows; string[] bad;
+    void check(bool ok, string cell) { if (!ok) bad ~= cell; }
     static foreach (R; kRows) {{
         enum name = R.Tool.stringof;
         // Preview install: nothing moves until the context installs, then the
@@ -176,36 +181,36 @@ unittest {
         const before = R.count(p.layer.meshRef());
         auto effect = p.tool.prepareParamChanged(p.context, p.layer,
             GpuUploadOwner.fakeForTest(&p.gpu));
-        assert(effect.accepted && effect.kind == R.Kind.Preview, name ~ ": preview refused");
-        assert(R.count(p.layer.meshRef()) == before && R.built(p.tool) == R.builtBefore,
+        check(effect.accepted && effect.kind == R.Kind.Preview, name ~ ": preview refused");
+        check(R.count(p.layer.meshRef()) == before && R.built(p.tool) == R.builtBefore,
             name ~ ": preview wrote before install");
-        assert(p.context.validate(), name ~ ": preview did not validate");
+        check(p.context.validate(), name ~ ": preview did not validate");
         p.context.install(); p.context.install();
-        assert((R.previewSign > 0 ? R.count(p.layer.meshRef()) > before
+        check((R.previewSign > 0 ? R.count(p.layer.meshRef()) > before
                 : R.count(p.layer.meshRef()) < before) && R.built(p.tool),
             name ~ ": preview install did not land");
-        assert(p.context.installTraceForTest() == [3,4,43,2,8],
+        check(p.context.installTraceForTest() == [3,4,43,2,8],
             name ~ ": preview install trace");
 
         // Noop install: a non-interactive edit enlists the slot and NoHistory only.
         auto n = Rig!R.make(false, false);
         const cube = R.count(n.layer.meshRef());
         auto noop = n.tool.prepareParamChanged(n.context, n.layer, null);
-        assert(noop.accepted && noop.kind == R.Kind.Noop && n.context.validate(),
+        check(noop.accepted && noop.kind == R.Kind.Noop && n.context.validate(),
             name ~ ": noop refused");
         n.context.install();
-        assert(R.count(n.layer.meshRef()) == cube &&
+        check(R.count(n.layer.meshRef()) == cube &&
             n.context.installTraceForTest() == [43,8], name ~ ": noop install");
 
         // Stale image: a parameter write after prepare is refused at validate.
         auto s = Rig!R.make(true, true);
         s.context.setResourceIdentity(7, 11);
         const staleBefore = R.count(s.layer.meshRef());
-        assert(s.tool.prepareParamChanged(s.context, s.layer,
+        check(s.tool.prepareParamChanged(s.context, s.layer,
             GpuUploadOwner.fakeForTest(&s.gpu)).accepted, name ~ ": stale prepare");
         R.stale(s.tool);
-        assert(!s.context.validate(), name ~ ": a stale image validated");
-        assert(R.count(s.layer.meshRef()) == staleBefore, name ~ ": stale wrote");
+        check(!s.context.validate(), name ~ ": a stale image validated");
+        check(R.count(s.layer.meshRef()) == staleBefore, name ~ ": stale wrote");
 
         // Foreign GPU: an upload owner for another GpuMesh refuses the prepare.
         auto w = Rig!R.make(true, true);
@@ -214,11 +219,32 @@ unittest {
         GpuMesh foreignGpu;
         auto wrong = w.tool.prepareParamChanged(w.context, w.layer,
             GpuUploadOwner.fakeForTest(&foreignGpu));
-        assert(!wrong.accepted && !w.context.validate() &&
+        check(!wrong.accepted && !w.context.validate() &&
             R.count(w.layer.meshRef()) == wrongBefore, name ~ ": foreign GPU accepted");
+
+        // Refusals before the slot: no context, no upload owner for a preview,
+        // no layer, a layer whose mesh the tool does not edit.
+        auto q = Rig!R.make(true, true);
+        q.context.setResourceIdentity(7, 11);
+        auto noContext = q.tool.prepareParamChanged(null, q.layer,
+            GpuUploadOwner.fakeForTest(&q.gpu));
+        check(!noContext.accepted && noContext.kind == R.Kind.None,
+            name ~ ": accepted without a context");
+        check(!q.tool.prepareParamChanged(q.context, q.layer, null).accepted &&
+            !q.context.validate(), name ~ ": preview accepted without an upload owner");
+        auto foreignLayer = new Layer; foreignLayer.meshRef() = makeCube();
+        foreach (layer; [null, foreignLayer]) {
+            auto f = Rig!R.make(true, true);
+            f.context.setResourceIdentity(7, 11);
+            auto refused = f.tool.prepareParamChanged(f.context, layer,
+                GpuUploadOwner.fakeForTest(&f.gpu));
+            check(!refused.accepted && refused.kind == R.Kind.None && !f.context.validate(),
+                name ~ (layer is null ? ": accepted a null layer" : ": accepted a foreign layer"));
+        }
         ++rows;
     }}
     assert(rows == 11, "prepared param-update table lost a row");
+    assert(bad.length == 0, bad.join("; "));
 }
 
 
@@ -324,4 +350,33 @@ unittest {
         assert(!s.context.validate() && s.layer.meshRef().vertices.length == 8,
             "prepared Polygon parameter projection omitted " ~ shiftName);
     }
+}
+
+// The owner's own transaction order, on one instantiation (the body is shared):
+// prepare refuses a missing target or layer; validate needs begin; begin,
+// validate and install each happen once; abort and install consume the owner.
+unittest {
+    alias O = PreparedParamUpdateOwner!(PolyInsetTool, PreparedPolyInsetParamImage,
+        PreparedPolyInsetParamKind);
+    auto r = Rig!PolyInsetRow.make(true, true);
+    assert(O.prepare(null, r.layer) is null && O.prepare(r.tool, null) is null,
+        "owner prepared without a target or layer");
+    auto o = O.prepare(r.tool, r.layer);
+    assert(o !is null && o.applies && o.effectKind == PreparedPolyInsetParamKind.Preview);
+    o.install();
+    assert(!r.tool.preparedParamBuiltForTest(), "owner installed before validate");
+    assert(!o.validate(), "owner validated before begin");
+    assert(o.begin() && !o.begin(), "owner began twice");
+    assert(o.validate() && !o.validate(), "owner validated twice");
+    o.install();
+    assert(r.tool.preparedParamBuiltForTest() &&
+        o.effectKind == PreparedPolyInsetParamKind.None, "owner install did not consume");
+    assert(!o.begin(), "a consumed owner began again");
+
+    auto a = Rig!PolyInsetRow.make(true, true);
+    auto aborted = O.prepare(a.tool, a.layer);
+    assert(aborted.begin()); aborted.abort();
+    assert(!aborted.validate() && !aborted.begin(), "an aborted owner stayed live");
+    aborted.install();
+    assert(!a.tool.preparedParamBuiltForTest(), "an aborted owner installed");
 }
