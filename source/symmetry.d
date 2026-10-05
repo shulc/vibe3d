@@ -74,11 +74,6 @@ int symmetrySide(const ref SymmetryPacket sp, Vec3 p, float eps) pure nothrow @n
     return symmetrySide(sp.planePoint, sp.planeNormal, p, eps);
 }
 
-/// Is `pos` on the plane within `sp.epsilonWorld`?
-bool isOnPlane(const ref SymmetryPacket sp, Vec3 pos) pure nothrow @nogc @safe {
-    return symmetrySide(sp, pos, sp.epsilonWorld) == 0;
-}
-
 /// Per-vertex mirror lookup. Returns -1 when the vertex is on-plane,
 /// unpaired, or out of range (callers should treat all of these as
 /// "no mirror to drive").

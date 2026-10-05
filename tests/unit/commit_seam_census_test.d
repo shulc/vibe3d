@@ -3902,8 +3902,9 @@ unittest // L0-b — the two files hold no raw position write
 unittest // L0-b — the hole a zone boundary leaves: source/symmetry.d
 {
     // THE ROW THIS BLOCK EXISTS FOR, and it is `deform_magnet.d`'s shape with
-    // a wider mouth: TWO writer functions, FOUR production writes, and TWO
-    // commands depending on them.
+    // a wider mouth: TWO writer functions (each storing through the one
+    // mirror walker, task 9410), TWO production writes, and TWO commands
+    // depending on them.
     immutable path = buildPath(repoRoot, "source", "symmetry.d");
     assert(exists(path), "cannot find source/symmetry.d at " ~ path);
     immutable sy = readCode(path);
@@ -3919,12 +3920,13 @@ unittest // L0-b — the hole a zone boundary leaves: source/symmetry.d
 
     string firstHit;
     immutable size_t raw = countRawPositionWrites(sy, firstHit);
-    assert(raw == 11,
+    assert(raw == 9,
         format("source/symmetry.d: %d raw position write(s) under §5.7's "
-             ~ "predicate, expected exactly 11 — FOUR production (the two "
-             ~ "mirror writers' on-plane projection and partner write, one "
-             ~ "pair each) plus SEVEN unittest-fixture writes below the "
-             ~ "kernels. All eleven are named by text in the rows that follow. "
+             ~ "predicate, expected exactly 9 — TWO production (the plain and "
+             ~ "the delta mirror writer's store, through which the walker "
+             ~ "writes both the on-plane projection and the partner) plus SEVEN "
+             ~ "unittest-fixture writes below the kernels. All nine are named "
+             ~ "by text in the rows that follow. "
              ~ "First hit: `%s`. A TWELFTH write here would be invisible to "
              ~ "every other row in this file, because neither census zone "
              ~ "scans this module at all (task 1903 §L0-b, §L0.3 shape (D)).",
@@ -3936,10 +3938,8 @@ unittest // L0-b — the hole a zone boundary leaves: source/symmetry.d
     // one was added, would keep it green. This is the loop_slice.d idiom, run
     // over the whole file because every one of the eleven is enumerable.
     static immutable string[2][] kAllowedSymmetryWrites = [
-        // --- the four PRODUCTION writes, the ones L0-b's deltas depend on ---
-        ["mesh.vertices[i] = projectOnPlane(sp, mesh.vertices[i]);", "2"],
-        ["mesh.vertices[st.partner] = mirrorPosition(sp, mesh.vertices[i]);", "1"],
-        ["mesh.vertices[st.partner] = baseline[st.partner] + mirrorDirection(sp, delta);", "1"],
+        // --- the two PRODUCTION writes, the ones L0-b's deltas depend on ---
+        ["(i, p) { mesh.vertices[i] = p; }", "2"],
         // --- the seven unittest-FIXTURE writes, a local mesh with no batch ---
         ["m.vertices[2] = baseline[2] + delta;", "2"],
         ["m.vertices[4] = baseline[4];", "1"],
@@ -3953,8 +3953,8 @@ unittest // L0-b — the hole a zone boundary leaves: source/symmetry.d
         assert(got == want,
             format("source/symmetry.d spells `%s` %d time(s); the L0-b "
                  ~ "allowance is for exactly %d. Every one of this file's "
-                 ~ "eleven raw position writes is named here, so a count row "
-                 ~ "that still reads 11 over a DIFFERENT set of writes cannot "
+                 ~ "nine raw position writes is named here, so a count row "
+                 ~ "that still reads 9 over a DIFFERENT set of writes cannot "
                  ~ "hide behind the total.", row[0], got, want));
         named += got;
     }

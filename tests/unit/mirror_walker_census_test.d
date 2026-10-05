@@ -118,7 +118,9 @@ unittest { // (c3) the overlay draws the applied plane
     const block = balancedSpan(vr, cast(size_t)vr.indexOf('{', h), '{', '}');
     assert(block.length > 200 && countOccurrences(block, "glDrawArrays(") == 1,
            "(c3) the overlay block not found");
-    assert(countOccurrences(block, "currentPlane(") == 1, "(c3) the overlay does not read currentPlane(");
+    assert(countOccurrences(block, "sym.currentPlane(c, n);") == 1, "(c3) the overlay does not read currentPlane(");
+    assert(countOccurrences(block, "perpendicularFrame(n, a1, a2);") == 1,
+           "(c3) the overlay's lattice axes are not spanned from the applied normal");
     foreach (tok; ["useWorkplane", "currentBasis(", "axisIndex", ".offset", "WorkplaneStage"])
         assert(countOccurrences(block, tok) == 0,
                "(c3) the overlay derives its own plane: `" ~ tok ~ "` in its block");
