@@ -271,8 +271,9 @@ unittest {
     // Wave-2 PRM2: five more folded into it (-5 each).
     // Task 9429: the topology tools compose `tools.topology_step` (+1 each).
     // Task 9492: the attribute doors read `tool_attr_bounds` (+1 each).
-    assert(edit.queue.length == 249 && positive.queue.length == 514,
-        format("6670 import closure census changed: edit=%d/249 "
+    // Task 9490: the radial ring start reads `workplane_fit` (+1; registration held it).
+    assert(edit.queue.length == 250 && positive.queue.length == 514,
+        format("6670 import closure census changed: edit=%d/250 "
             ~ "registration=%d/514", edit.queue.length,
             positive.queue.length));
 }

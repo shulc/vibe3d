@@ -210,20 +210,25 @@ struct PlaneFrame {
     }
 }
 
-/// Fills `f` for unit normal `n`; false when `n` is exactly opposite its
-/// dominant axis (no shortest arc — callers decide; `f.M` stays identity).
+/// Fills `f` for unit normal `n` (identity when `n` equals `e_k` within the
+/// read relative tolerance); false only when `n` is exactly opposite `e_k`
+/// (zero cross product — callers decide; `f.M` stays identity).
 bool planeFrame(D3 n, out PlaneFrame f) pure nothrow @nogc @safe {
     static immutable int[3] A1 = [1, 2, 0], A2 = [2, 0, 1];
     const k = dominantAxis(n);
     f.k = k; f.a1 = A1[k]; f.a2 = A2[k];
     D3 e = 0; e[k] = 1;
-    bool same = true;
-    foreach (i; 0 .. 3) if (abs(n[i] - e[i]) > 1e-12) same = false;
+    bool same = true;   // per component |n - e| < max(max(|n|, |e|) / 3.36e6, 1e-10)
+    foreach (i; 0 .. 3) {
+        const t = abs(n[i]) > abs(e[i]) ? abs(n[i]) : abs(e[i]);
+        if (!(abs(n[i] - e[i]) < (t / 3_360_000.0 > 1e-10 ? t / 3_360_000.0 : 1e-10))) same = false;
+    }
     if (same) return true;
     D3 ax = [e[1] * n[2] - e[2] * n[1], e[2] * n[0] - e[0] * n[2], e[0] * n[1] - e[1] * n[0]];
-    const s = sqrt(ax[0] * ax[0] + ax[1] * ax[1] + ax[2] * ax[2]);
+    const s2 = ax[0] * ax[0] + ax[1] * ax[1] + ax[2] * ax[2];
     const cth = e[0] * n[0] + e[1] * n[1] + e[2] * n[2];
-    if (s < 1e-12) return false;
+    if (!(s2 > 0)) return false;   // exactly opposite: only a zero cross product
+    const s = sqrt(s2);
     const ang = atan2(s, cth);
     ax[] /= s;
     double[3][3] K = [[0.0, -ax[2], ax[1]], [ax[2], 0.0, -ax[0]], [-ax[1], ax[0], 0.0]];

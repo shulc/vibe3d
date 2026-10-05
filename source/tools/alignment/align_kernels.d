@@ -293,7 +293,7 @@ Vec3[][] alignOutsideNeighbours(Mesh* mesh, EditMode editMode, const(uint)[] cha
 
 /// Radial Align target positions — mode=circle/nside, in chain order.
 /// Center = mean source position, radius = mean distance from it, equal
-/// 360/N slots in chain order about the chain's Newell normal (capture,
+/// 360/N slots in chain order, turning positively about `ringNormal` (capture,
 /// task 0361). PHASE (task 9490, read from the reference and reproduced on
 /// its circle, N-Sided and no-outside-neighbour cells; evidence in the
 /// private toolcard `radial_align_anchor`): the slot ring starts at the
@@ -321,16 +321,7 @@ Vec3[] radialAlignTargets(const(Vec3)[] source, bool nsideMode, int sides,
     radius /= n;
     if (radius < 1e-9) { result[] = source[]; return result; }
 
-    // Newell normal over the chain (wraps cyclically); world-up when flat.
-    D3 normal = D3(0, 0, 0);
-    foreach (i; 0 .. n) {
-        const D3 a = p[i], b = p[(i + 1) % n];
-        normal.x += (a.y - b.y) * (a.z + b.z);
-        normal.y += (a.z - b.z) * (a.x + b.x);
-        normal.z += (a.x - b.x) * (a.y + b.y);
-    }
-    normal = normal.len < 1e-9 ? D3(0, 1, 0) : normal * (1.0 / normal.len);
-
+    const D3 normal = ringNormal(p, center);
     const size_t start = radialAlignStart(p, center, normal);
     D3 u = p[start] - center;
     u = u - normal * u.dot(normal);
@@ -370,6 +361,31 @@ Vec3[] radialAlignTargets(const(Vec3)[] source, bool nsideMode, int sides,
         result[(start + k) % n] = Vec3(cast(float)r.x, cast(float)r.y, cast(float)r.z);
     }
     return result;
+}
+
+/// The ring normal: the least-squares plane fit `n . p = 1` in double
+/// (`workplane_fit.planeFitNormal`), or — when that system is singular —
+/// the bounding box's thinnest world axis; turned so the first two chain
+/// points wind positively about it. Read law (K-RAF): the start frame's
+/// sensitivity to a normal off a world axis comes from THIS normal.
+private D3 ringNormal(const(D3)[] p, D3 center) pure nothrow @safe {
+    import workplane_fit : planeFitNormal, SkewFit;
+    auto pts = new double[3][](p.length);
+    foreach (i, q; p) pts[i] = [q.x, q.y, q.z];
+    double[3] f;
+    D3 n;
+    if (planeFitNormal(pts, f) == SkewFit.ok) n = D3(f[0], f[1], f[2]);
+    else {
+        D3 lo = p[0], hi = p[0];
+        foreach (q; p) {
+            lo = D3(q.x < lo.x ? q.x : lo.x, q.y < lo.y ? q.y : lo.y, q.z < lo.z ? q.z : lo.z);
+            hi = D3(q.x > hi.x ? q.x : hi.x, q.y > hi.y ? q.y : hi.y, q.z > hi.z ? q.z : hi.z);
+        }
+        const D3 ext = hi - lo;
+        n = (ext.x < ext.y && ext.x < ext.z) ? D3(1, 0, 0)
+          : (ext.y < ext.z) ? D3(0, 1, 0) : D3(0, 0, 1);
+    }
+    return (p[0] - center).cross(p[1] - center).dot(n) < 0 ? n * -1.0 : n;
 }
 
 /// The chain vertex the slot ring starts at: the one whose direction from

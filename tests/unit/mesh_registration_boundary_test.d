@@ -254,8 +254,9 @@ unittest {
     // Smooth kernel parity (task 9484): `commands.mesh.smooth` runs the shared
     // relax kernel, the leaf `tools.edit.smooth_relax` (+1).
     // Task 9492: the attribute doors read `tool_attr_bounds` (+1).
-    assert(meshClosure.queue.length == 184,
-        format("6509 import scanner closure=%d/184",
+    // Task 9490: the radial ring start reads `workplane_fit`'s frame (+1).
+    assert(meshClosure.queue.length == 185,
+        format("6509 import scanner closure=%d/185",
             meshClosure.queue.length));
     assert("editor_app" in positive.reached,
         "6509 positive control: registration does not reach editor_app");

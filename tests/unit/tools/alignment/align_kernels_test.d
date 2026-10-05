@@ -288,3 +288,52 @@ unittest { // the search's records: each chain vertex's edge-neighbours OUTSIDE
             "the outside neighbour is the top corner above");
     }
 }
+
+// The start vertex under float noise (capture K-RAF, private toolcard
+// shared_layer2): the cube rig exact (normal exactly −Y → the half-turn
+// about Y), tilted ±1e-6 about Z (start flips to 1) and 1e-6 about X (stays
+// 3). Each cell: the start read off N-Sided (no search: the start vertex is
+// the one left on its own ray) and the captured circle-mode end of v0.
+private struct RafCell { string name; Vec3[] chain; Vec3[] top; size_t start; Vec3 v0; }
+
+private size_t startOf(const(Vec3)[] src) {
+    auto r = radialAlignTargets(src, true, cast(int)src.length, 0, 0);
+    Vec3 c = Vec3(0, 0, 0);
+    foreach (q; src) c = c + q;
+    c = c * (1.0f / src.length);
+    size_t found = size_t.max, hits = 0;
+    foreach (i; 0 .. src.length) {
+        const Vec3 a = src[i] - c, b = r[i] - c;
+        const Vec3 x = cross(a, b);
+        if (sqrt(dot(x, x)) < 1e-5f * sqrt(dot(a, a)) * sqrt(dot(b, b)) && dot(a, b) > 0) { found = i; ++hits; }
+    }
+    assert(hits == 1, "exactly one vertex keeps its own ray in N-Sided mode");
+    return found;
+}
+
+unittest {
+    import std.format : format;
+    RafCell[] cells = [
+    RafCell("RAF_0", [Vec3(-0.5f, -0.5f, -0.5f), Vec3(0.7071067690849304f, -0.5f, 0.0f), Vec3(0.5f, -0.5f, 0.5f), Vec3(-0.5f, -0.5f, 0.5f)],
+            [Vec3(-0.5f, 0.5f, -0.5f), Vec3(0.5f, 0.5f, -0.5f), Vec3(0.5f, 0.5f, 0.5f), Vec3(-0.5f, 0.5f, 0.5f)],
+            3, Vec3(-0.44209566712379456f, -0.5f, -0.35414040088653564f)),
+    RafCell("RAF_Zp", [Vec3(-0.4999994933605194f, -0.5000004768371582f, -0.5f), Vec3(0.7071073055267334f, -0.4999992847442627f, 0.0f), Vec3(0.5000004768371582f, -0.4999994933605194f, 0.5f), Vec3(-0.4999994933605194f, -0.5000004768371582f, 0.5f)],
+            [Vec3(-0.5000004768371582f, 0.4999994933605194f, -0.5f), Vec3(0.4999994933605194f, 0.5000004768371582f, -0.5f), Vec3(0.4999994933605194f, 0.5000004768371582f, 0.5f), Vec3(-0.5000004768371582f, 0.4999994933605194f, 0.5f)],
+            1, Vec3(-0.4387267529964447f, -0.5000004172325134f, -0.35758814215660095f)),
+    RafCell("RAF_Zn", [Vec3(-0.5000004768371582f, -0.4999994933605194f, -0.5f), Vec3(0.7071062922477722f, -0.5000007152557373f, 0.0f), Vec3(0.4999994933605194f, -0.5000004768371582f, 0.5f), Vec3(-0.5000004768371582f, -0.4999994933605194f, 0.5f)],
+            [Vec3(-0.4999994933605194f, 0.5000004768371582f, -0.5f), Vec3(0.5000004768371582f, 0.4999994933605194f, -0.5f), Vec3(0.5000004768371582f, 0.4999994933605194f, 0.5f), Vec3(-0.4999994933605194f, 0.5000004768371582f, 0.5f)],
+            1, Vec3(-0.4387277364730835f, -0.4999995529651642f, -0.35758814215660095f)),
+    RafCell("RAF_X", [Vec3(-0.5f, -0.4999994933605194f, -0.5000004768371582f), Vec3(0.7071067690849304f, -0.5f, -4.999999987376214e-07f), Vec3(0.5f, -0.5000004768371582f, 0.4999994933605194f), Vec3(-0.5f, -0.5000004768371582f, 0.4999994933605194f)],
+            [Vec3(-0.5f, 0.5000004768371582f, -0.4999994933605194f), Vec3(0.5f, 0.5000004768371582f, -0.4999994933605194f), Vec3(0.5f, 0.4999994933605194f, 0.5000004768371582f), Vec3(-0.5f, 0.4999994933605194f, 0.5000004768371582f)],
+            3, Vec3(-0.44209566712379456f, -0.49999964237213135f, -0.35414090752601624f)),    ];
+    assert(cells.length == 4);
+    foreach (c; cells) {
+        const s = startOf(c.chain);
+        assert(s == c.start, format("%s: start %s, captured %s", c.name, s, c.start));
+        Vec3[][] outside = [[c.top[0]], [c.top[1]], [c.top[2]], [c.top[3]]];
+        const v0 = radialAlignTargets(c.chain, false, 4, 0, 0, outside)[0];
+        assert(abs(v0.x - c.v0.x) <= 3e-7f && abs(v0.y - c.v0.y) <= 3e-7f && abs(v0.z - c.v0.z) <= 3e-7f,
+            format("%s v0: got (%.7f, %.7f, %.7f), captured (%.7f, %.7f, %.7f)",
+                   c.name, v0.x, v0.y, v0.z, c.v0.x, c.v0.y, c.v0.z));
+    }
+}
