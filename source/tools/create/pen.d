@@ -70,8 +70,9 @@ private bool sameSliceBytes(T)(const(T)[] a, const(T)[] b) nothrow @nogc {
 // other placement merges within `SnapPacket.init.innerRangePx` (24 px).
 private enum float kMergeSnappedEdgeEndPx = 17.5f;
 private enum float kMergeAfterSnapPx = 2.85f;
-// A projection this far below a pixel boundary is ON it: an exact lattice
-// point on an exact pixel (C_E1 in our rig: x 0.4 at 440 px/m) floats just below.
+// A projection this far below a pixel boundary is ON it. At 440 px/m the
+// 0.005 m quantum is 2.2 px, so placed points sit on a 0.2 px pattern; only an
+// exact boundary hit, pushed below it by float32 rounding, comes this close.
 private enum float kPixelEps = 1e-3f;
 private enum uint kElementSnapBits = SnapType.Vertex | SnapType.Edge |
     SnapType.EdgeCenter | SnapType.Polygon | SnapType.PolyCenter;

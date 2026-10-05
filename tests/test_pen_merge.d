@@ -48,10 +48,10 @@
 //  - two-point-edge-press: a 2-point stroke has one stroke edge (0, 1); a
 //    press 9 px off it (E1's press) inserts between its ends (slot 1, current
 //    1), the same rule the 3-point E1 cell reads, at the smallest n it covers.
-//  - isolated_v10-pixel-coincident: the copied defect of a stroke's first two
+//  - hover-edge-pixel-coincident: the copied defect of a stroke's first two
 //    clicks (task 9503) — the hover holds an edge and the placed point's pixel
-//    is the pointer's: nothing merges. `snap_off_isolated_v10` itself runs one
-//    pixel along the edge, where the pixels differ (the reference linked).
+//    is the pointer's: nothing merges (the v10 scene, pointer 6 px across the
+//    edge).
 // A background slot can never link (the merge admits slot 0 only): no captured
 // rig has a background vertex inside the radius, so that is a construction
 // argument, not a cell.
@@ -460,13 +460,13 @@ unittest {
     }
     // Edge snap 4.4 px along from the end V of the snapped edge: linked.
     fails ~= edgeE5Cell("merge_edge_then_vertex", c["snap_edge_e5_v6"], 0.01, ran);
-    // Snapping off: an isolated V 10 px away links although an edge is nearer.
-    // One pixel along the edge: the reference linked, so its placed point's
-    // pixel was not the pointer's (task 9503); ours at +0 px is.
-    fails ~= isolatedCell("snap_off_isolated_v10", c["snap_off_isolated_v10"], null, 6, ran, 1);
-    // Ours, the copied defect: at +0 px the hover holds the 6 px edge (V at
-    // 10 px is outside the 8 px reach) and the pixels agree — nothing merges,
-    // the point stays on the plane (an edge pull would put z at 0.2795).
+    // Snapping off: an isolated V 10 px away links; the edge is 16 px away on
+    // the far side (the capture's pointer, outside the 8 px hover reach).
+    fails ~= isolatedCell("snap_off_isolated_v10", c["snap_off_isolated_v10"], null, -16, ran);
+    // Ours, the copied defect: the same scene with the pointer across the edge
+    // (edge 6 px, V 12 px — outside the 8 px reach), where the hover holds the
+    // edge and the pixels agree: nothing merges, the point stays on the plane
+    // (an edge pull would put z at 0.2795).
     {
         auto w = verts(c["snap_off_isolated_v10"]["expected"]["vertices"])[0 .. 4];
         const at = p(0.35, 0.279545 + 6 / 440.0);
@@ -474,12 +474,12 @@ unittest {
         clickWorld(at);
         clickWorld(kFar[0], kFar[1]);
         drop(); ++ran;
-        auto f = compare("isolated_v10-pixel-coincident", w ~ at ~ kFar[], [[1L, 2, 3], [4L, 6, 5]],
+        auto f = compare("hover-edge-pixel-coincident", w ~ at ~ kFar[], [[1L, 2, 3], [4L, 6, 5]],
                          kTol, [4]);
         const g = model().v[$ > 4 ? 4 : 0];
         if (!f.length && !(abs(g.x - at.x) <= 0.0051 && abs(g.y - 1) <= kTol &&
                            abs(g.z - at.z) <= 0.0051))
-            f ~= format("isolated_v10-pixel-coincident: p0 %s, expected the plane point near %s",
+            f ~= format("hover-edge-pixel-coincident: p0 %s, expected the plane point near %s",
                         g, at);
         fails ~= f;
     }
@@ -680,14 +680,13 @@ private string[] edgeE5Cell(string cell, JSONValue c, double qx, ref int ran) {
 
 /// K-C2 isolated-vertex cells: the edited mesh is [V, A, B, C] (fixture
 /// order), the pointer at x 0.35, `dz` px from A-B (z 0.279545) in z: on V's
-/// side (-10: V 5 px from the edge point) or across the edge (6: the edge
-/// 6 px, V 12 px away).
-private string[] isolatedCell(string cell, JSONValue c, string types, int dz, ref int ran,
-                              int dx = 0) {
+/// side (-10: V 5 px from the edge point; -16, the capture's pointer: V 10 px,
+/// the edge 16 px).
+private string[] isolatedCell(string cell, JSONValue c, string types, int dz, ref int ran) {
     auto e = c["expected"];
     auto w = verts(e["vertices"]);
     rig(p(0, 0.35), 440, meshJson(w[0 .. 4], [[1, 2, 3]]), types);
-    clickWorld(p(0.35 + dx / 440.0, 0.279545 + dz / 440.0));
+    clickWorld(p(0.35, 0.279545 + dz / 440.0));
     clickWorld(kFar[0], kFar[1]);
     drop(); ++ran;
     return fixture(cell, e);
