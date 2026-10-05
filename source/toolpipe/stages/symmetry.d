@@ -90,7 +90,6 @@ class SymmetryStage : Stage, Operator {
         // pair table): `currentPlane`'s workplane arm reads it.
         appliedPlanePoint_  = pkt.planePoint;
         appliedPlaneNormal_ = pkt.planeNormal;
-        appliedReady_       = true;
 
         // Phase 7.6b: rebuild the pair table on cache miss.
         if (enabled && mesh_ !is null && mesh_.vertices.length > 0) {
@@ -260,10 +259,9 @@ private:
     int[]  cachedVertSign_;
     bool   cachedTopology_         = false;
     bool   cachedReady_           = false;
-    // The last applied plane (written by every enabled `evaluate`).
+    // The last applied plane (written by every enabled `evaluate`; world XZ before the first).
     Vec3   appliedPlanePoint_     = Vec3(0, 0, 0);
     Vec3   appliedPlaneNormal_    = Vec3(0, 1, 0);
-    bool   appliedReady_          = false;
 
 public:
     this(Mesh* delegate() meshSrc = null, EditMode* editMode = null) {
@@ -298,7 +296,8 @@ public:
         cachedVertSign_.length = 0;
         cachedTopology_        = false;
         cachedReady_           = false;
-        appliedReady_          = false;
+        appliedPlanePoint_     = Vec3(0, 0, 0);
+        appliedPlaneNormal_    = Vec3(0, 1, 0);
         authoringBasePlaced_   = false;   // W0: a fresh session reads -X
         _publishedPacket.authoringSide = -1;
         publishState();
@@ -365,13 +364,8 @@ public:
     /// plane overlay (overlay = applied plane).
     public void currentPlane(out Vec3 planePt, out Vec3 planeN) const nothrow @nogc {
         if (enabled && useWorkplane) {
-            if (appliedReady_) {
-                planePt = appliedPlanePoint_;
-                planeN  = appliedPlaneNormal_;
-            } else {
-                planePt = Vec3(0, 0, 0);
-                planeN  = Vec3(0, 1, 0);
-            }
+            planePt = appliedPlanePoint_;
+            planeN  = appliedPlaneNormal_;
             return;
         }
         planeN  = axisVec(axisIndex);
