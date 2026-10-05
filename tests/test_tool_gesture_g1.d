@@ -931,8 +931,10 @@ unittest {
     // --- (h) edge.extend: the `setDelta` installer, a RECORDING MeshEditBatch,
     //     and the degenerate-arm site P0-a instrumented. Its REDO does not
     //     restore `edgePlanes` / `selectionOrderCounters`; that is frozen as an
-    //     exact residual list, never tolerated.
-    cells ~= runCell("edge.extend/drag", "edge.extend",
+    //     exact residual list, never tolerated. The press aimed at the arm's
+    //     shaft misses it: the gesture is the off-handle HAUL (the frozen ridge
+    //     moves off the arm's diagonal), hence the cell's name.
+    cells ~= runCell("edge.extend/haul", "edge.extend",
         "source/tools/edit/edge_extend.d EdgeExtendTool.commitEdit (cmd.setDelta)",
         "Plain", "MeshSessionEdit+delta",
         {
