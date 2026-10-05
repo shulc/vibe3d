@@ -8,7 +8,7 @@ import math : Vec3, Viewport, ModelSpace, projectionSpace, projectToWindowFull,
               screenRay, screenPointToRay,
               rayPlaneIntersect, pointInPolygon2D,
               closestOnSegment2DSquared, closestOnSegmentToRay, cross, dot,
-              closestPointOnLineToRay, isOrtho, viewPixelScale,
+              isOrtho, viewPixelScale,
               perpendicularFrame, rayTriangleIntersect,
               closestPointOnTriangle2D, triangulatePolygonEarClip;
 import mesh : Mesh, VisibilityProbe, visibilityProbe;
@@ -578,7 +578,9 @@ SnapPacket snapPacketOf(ref VectorStack vts) {
     return SnapPacket.init;
 }
 
-/// The guide-constraint snap types, which a discrete-target client strips.
+/// The guide snap types. `snapCursor` elects no candidate for them: a guide is
+/// the pen's own gesture-scoped line and no other client registers one (capture
+/// K-G), so a client that strips them changes nothing.
 enum uint kGuideTypes = SnapType.WorldAxis | SnapType.StraightLine | SnapType.RightAngle;
 
 /// Snap the world position `cursorWorld` corresponding to screen pixel
@@ -1236,31 +1238,6 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
                 if (rayPlaneIntersect(snapOrig3, ray, fpC[fpi], fpN[fpi], hit))
                     el.considerConstraint(hit, SnapType.Box);
             }
-        }
-    }
-
-    // -----------------------------------------------------------------------
-    // Stage 2: WorldAxis LINE constraints (constraint tier).
-    // Three infinite lines through origin along world X, Y, Z.
-    // Scope-independent (pass in all scope modes).
-    //
-    // vibe3d-divergence: this path anchors the lines at world origin (0,0,0),
-    // making it a transform-tool-scoped constraint available under any tool
-    // that calls snapCursor with the WorldAxis bit. The reference scopes
-    // worldAxis to Pen (and Mirror), anchored on the PRIOR vertex; that
-    // Pen-scoped variant lives in source/tools/pen.d (applyPenGuide). Both
-    // paths coexist: Pen suppresses this bit via snapLocalHit's excludeTypes
-    // so origin-based and prior-vertex-based worldAxis never double-apply.
-    // -----------------------------------------------------------------------
-    if ((cfg.enabledTypes & SnapType.WorldAxis)
-            && typeEligible(SnapType.WorldAxis, cfg.snapScope)) {
-        Vec3 snapOrig4, ray;
-        screenPointToRay(cast(float)sx, cast(float)sy, vp, snapOrig4, ray);
-        immutable Vec3[3] axes = [Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1)];
-        immutable Vec3 origin  = Vec3(0, 0, 0);
-        foreach (ax; axes) {
-            Vec3 hit = closestPointOnLineToRay(origin, ax, snapOrig4, ray);
-            el.considerConstraint(hit, SnapType.WorldAxis);
         }
     }
 
@@ -2976,12 +2953,17 @@ unittest {
     immutable int cx = cast(int)round(pxa);
     immutable int cy = cast(int)round(pya);
 
+    // The constraint tier is the item box's face planes: one box whose z = 0
+    // face lies under the pixel and whose corners project far outside the
+    // acceptance range.
+    setItemSnapFrames([ItemSnapFrame(Vec3(0, 0, 0), Vec3(-60, -60, -60), Vec3(60, 0, 0), true)]);
+    scope (exit) setItemSnapFrames(null);
     SnapPacket ccfg = cfg;
-    ccfg.enabledTypes = SnapType.WorldAxis;   // constraint tier only
+    ccfg.enabledTypes = SnapType.Box;
 
     SnapResult cBare = snapCursor(cursorWorld, cx, cy, vp, m, ModelSpace.world(), ccfg);
-    assert(cBare.snapped && cBare.constraintType == SnapType.WorldAxis,
-        "fixture: a world-axis constraint must fire at this pixel, otherwise "
+    assert(cBare.snapped && cBare.constraintType == SnapType.Box,
+        "fixture: a box-face constraint must fire at this pixel, otherwise "
         ~ "the constraint-tier assertions below are vacuous");
 
     invalidateSnapGrids();
@@ -2997,7 +2979,7 @@ unittest {
     SnapResult cNone = snapCursor(cursorWorld, cx, cy, vp, m, ModelSpace.world(), ccfg, null, null,
                                   [cRefuses]);
     assert(cRefuses.seenCount >= 1,
-        "fixture: the axis lines must be offered to the guide");
+        "fixture: the face planes must be offered to the guide");
     assert(!cNone.snapped && cNone.constraintType == SnapType.None
         && sameVec(cNone.worldPos, cursorWorld),
         "S4: a guide that rejects must be able to veto a CONSTRAINT too — "

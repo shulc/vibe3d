@@ -160,6 +160,33 @@ unittest // one packet read, one finder: the deleted copies stay deleted
         format("snapFace must have exactly its two face callers: %s", faceCalls));
 }
 
+unittest // no client but the pen registers a guide: snapCursor elects no guide-type candidate
+{
+    // Task 9406 (capture K-G): the world-axis / straight-line bits are inert on
+    // every non-pen client, so `snapCursor` offers no candidate of a guide type.
+    // Floor: the constraint tier keeps exactly its box-face call. Needle: a guide
+    // type in any `consider*` call, or the world-axis enumeration's math helper.
+    const code = blankUnittestBodies(blankNonCode(readText(buildPath(repoRoot, "source", "snap.d"))));
+    string[] constraintArgs, guideArgs;
+    size_t offered;
+    foreach (id; ["considerConstraint", "consider"])
+        foreach (at; wordsAt(code, id)) {
+            const open = at + id.length;
+            if (open >= code.length || code[open] != '(') continue;
+            const args = balancedSpan(code, open, '(', ')');
+            ++offered;
+            if (id == "considerConstraint") constraintArgs ~= args;
+            foreach (t; ["WorldAxis", "StraightLine", "RightAngle"])
+                if (wordsAt(args, t).length) guideArgs ~= args;
+        }
+    assert(offered == 8, format("consider* production calls: %s (floor 8)", offered));
+    assert(constraintArgs.length == 1 && constraintArgs[0].canFind("SnapType.Box"),
+        format("constraint-tier floor: the box-face call only, got %s", constraintArgs));
+    assert(guideArgs.length == 0, format("snapCursor offers a guide-type candidate: %s", guideArgs));
+    assert(wordsAt(code, "closestPointOnLineToRay").length == 0,
+        "snap.d reaches the line helper again (the origin world-axis lines)");
+}
+
 unittest // the signatures the clients rely on (compiler pins)
 {
     import operator : VectorStack;

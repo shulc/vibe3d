@@ -1,7 +1,7 @@
 // Tests for Stages 1–6 of doc/snap_constraint_targets_plan.md:
 //
 //  Stage 1: new SnapType bits (pivot/intersection/worldAxis/box) + SnapMode
-//  Stage 2: WorldAxis LINE constraints
+//  Stage 2: the WorldAxis bit is inert on the query (task 9406)
 //  Stage 3: Pivot discrete targets from item frames
 //  Stage 4: Box corner (discrete) + face plane (constraint) targets
 //  Stage 5: scope filtering via typeEligible
@@ -130,38 +130,35 @@ unittest { // reset clears snapMode back to global
 }
 
 // =========================================================================
-// Stage 2: WorldAxis constraint snap.
-// Camera from front (+Z). Screen center ray passes through origin.
-// The world Y-axis (line through origin, direction (0,1,0)) is
-// perpendicular to the camera ray — closest point = origin = (0,0,0).
-// With types=worldAxis + huge range the constraint snaps to (0,0,0).
-// constraintType must equal 512 (WorldAxis = 1<<9).
+// Stage 2: the WorldAxis bit is inert on the query (task 9406, capture K-G:
+// the world-axis guide is the pen's own; no other client registers one).
+// Camera from front (+Z), the screen centre ray through the origin, which
+// the world Y axis crosses. Control first: the box bit on the same pixel
+// takes the cube's face-plane constraint (4096), so the query is live there.
+// Then the world-axis bit alone: no snap, the client point passes through.
 // =========================================================================
 
-unittest { // WorldAxis constraint fires; constraintType == 512
+unittest { // WorldAxis bit alone elects nothing; the box-face control does
     postJson("/api/command", commandBody("scene.reset", `{"type":"cube"}`));
     postJson("/api/camera",
         `{"azimuth":0.0,"elevation":0.0,"distance":3.0,` ~
         `"focus":{"x":0,"y":0,"z":0}}`);
     cmd("tool.pipe.attr snap enabled true");
-    cmd("tool.pipe.attr snap types worldAxis");
     cmd("tool.pipe.attr snap innerRange 999999");
     cmd("tool.pipe.attr snap outerRange 999999");
     auto p = viewportCenter();
-    auto sr = querySnap(0, 0, 0, p[0], p[1]);
-    assert(sr["snapped"].type == JSONType.true_,
-        "WorldAxis constraint expected snapped=true; got " ~ sr.toString);
-    assert(cast(int)sr["constraintType"].integer == 512,
-        "constraintType expected 512 (WorldAxis); got " ~ sr.toString);
-    // WorldPos must be near origin (the world axis passes through origin).
+    cmd("tool.pipe.attr snap types box");
+    auto ctl = querySnap(0.03, 0.02, 0.01, p[0], p[1]);
+    assert(ctl["snapped"].type == JSONType.true_ && cast(int)ctl["constraintType"].integer == 4096,
+        "control: the box face plane must snap at the centre pixel; got " ~ ctl.toString);
+    cmd("tool.pipe.attr snap types worldAxis");
+    auto sr = querySnap(0.03, 0.02, 0.01, p[0], p[1]);
+    assert(sr["snapped"].type == JSONType.false_ && cast(int)sr["constraintType"].integer == 0,
+        "the world-axis bit alone must elect nothing; got " ~ sr.toString);
     auto wp = sr["worldPos"].array;
-    assert(approx(wp[0].floating, 0.0, 0.1)
-        && approx(wp[1].floating, 0.0, 0.1)
-        && approx(wp[2].floating, 0.0, 0.1),
-        "WorldAxis snap world pos expected near origin; got " ~ sr.toString);
-    // Discrete tier is empty (no vertex/edge types) so targetType stays 0.
-    assert(cast(int)sr["targetType"].integer == 0,
-        "WorldAxis-only snap should have targetType=0; got " ~ sr.toString);
+    assert(approx(wp[0].floating, 0.03, 1e-6) && approx(wp[1].floating, 0.02, 1e-6)
+        && approx(wp[2].floating, 0.01, 1e-6),
+        "the client point must pass through; got " ~ sr.toString);
 }
 
 unittest { // WorldAxis snap returns constraintType in JSON response

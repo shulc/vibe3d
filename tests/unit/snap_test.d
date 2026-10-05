@@ -235,19 +235,23 @@ unittest {
 
     // --- the constraint tier carries the same seam --------------------------
     // Constraint candidates are line/plane hits, not mesh elements, so the
-    // predicate sees (type, -1, 0). Aimed at a pixel where a world axis is
-    // exactly under the cursor and the view ray is not parallel to it.
+    // predicate sees (type, -1, 0). The constraint tier is the item box's
+    // face planes (task 9406 deleted the origin world-axis lines): one box
+    // whose z = 0 face lies under the pixel, its corners (discrete, an element
+    // index each) projecting far outside the acceptance range.
     float pxa, pya, ndca;
     assert(projectToWindowFull(Vec3(1, 0, 0), vp, pxa, pya, ndca));
     immutable int ax = cast(int)round(pxa);
     immutable int ay = cast(int)round(pya);
 
+    setItemSnapFrames([ItemSnapFrame(Vec3(0, 0, 0), Vec3(-60, -60, -60), Vec3(60, 0, 0), true)]);
+    scope (exit) setItemSnapFrames(null);
     SnapPacket ccfg = cfg;
-    ccfg.enabledTypes = SnapType.WorldAxis;   // constraint tier only
+    ccfg.enabledTypes = SnapType.Box;
 
     SnapResult cBare = snapCursor(cursorWorld, ax, ay, vp, m, ModelSpace.world(), ccfg);
-    assert(cBare.snapped && cBare.constraintType == SnapType.WorldAxis,
-        "fixture: a world-axis constraint must fire at this pixel, otherwise "
+    assert(cBare.snapped && cBare.constraintType == SnapType.Box,
+        "fixture: a box-face constraint must fire at this pixel, otherwise "
         ~ "the constraint-tier assertions below are vacuous");
 
     SnapResult cPermissive = snapCursor(cursorWorld, ax, ay, vp, m, ModelSpace.world(), ccfg, null,
@@ -258,12 +262,12 @@ unittest {
     int constraintOffered;
     SnapResult cNone = snapCursor(cursorWorld, ax, ay, vp, m, ModelSpace.world(), ccfg, null,
         (SnapType t, int i, int s) {
+            if (i >= 0) return false;   // a box corner: the discrete tier
             ++constraintOffered;
-            assert(i == -1 && s == 0,
-                "a constraint candidate has no element index and no source");
+            assert(s == 0, "a constraint candidate has no source");
             return false;
         });
-    assert(constraintOffered >= 1, "fixture: the axis lines must be offered");
+    assert(constraintOffered >= 1, "fixture: the face planes must be offered");
     assert(!cNone.snapped);
     assert(cNone.constraintType == SnapType.None);
     assert(sameVec(cNone.worldPos, cursorWorld));
@@ -729,20 +733,23 @@ unittest {
             ~ "enumerated");
     }
 
-    // grid-over-constraint: Grid + WorldAxis; the world X axis 4 px from the
-    // cursor, the node ~18 px ⇒ the node places, no constraint reported.
+    // grid-over-constraint: Grid + Box; the box's y = 0 face plane under the
+    // cursor (its corners far away), the node ~18 px ⇒ the node places, no
+    // constraint reported.
     {
         immutable Vec3 cur = Vec3(2.22f, 0, 0.05f), node = Vec3(2, 0, 0);
-        immutable float dAxis = pix(cur, Vec3(2.22f, 0, 0)), dNode = pix(cur, node);
-        assert(dAxis < 6 && dNode > 15 && dNode < cfg.innerRangePx,
-            "fixture: the axis line ~4 px and the node ~18 px from the cursor");
+        immutable float dNode = pix(cur, node);
+        assert(dNode > 15 && dNode < cfg.innerRangePx, "fixture: the node ~18 px from the cursor");
         int sx, sy; pixelOf(cur, sx, sy);
-        SnapPacket c = cfg; c.enabledTypes = SnapType.WorldAxis;
+        setItemSnapFrames([ItemSnapFrame(Vec3(0, 0, 0), Vec3(-60, -60, -60), Vec3(60, 0, 0),
+                                         true)]);
+        scope (exit) setItemSnapFrames(null);
+        SnapPacket c = cfg; c.enabledTypes = SnapType.Box;
         invalidateSnapGrids();
         SnapResult axisOnly = snapCursor(cur, sx, sy, vp, none, ModelSpace.world(), c);
-        assert(axisOnly.snapped && axisOnly.constraintType == SnapType.WorldAxis,
-            "fixture: alone, the world-axis constraint places here");
-        c.enabledTypes = SnapType.WorldAxis | SnapType.Grid;
+        assert(axisOnly.snapped && axisOnly.constraintType == SnapType.Box,
+            "fixture: alone, the box-face constraint places here");
+        c.enabledTypes = SnapType.Box | SnapType.Grid;
         invalidateSnapGrids();
         SnapResult r = snapCursor(cur, sx, sy, vp, none, ModelSpace.world(), c);
         assert(r.snapped && r.targetType == SnapType.Grid

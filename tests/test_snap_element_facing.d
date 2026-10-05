@@ -15,7 +15,8 @@
 // G2 (label 0.5 at 110 px/m), `move-grid-step` = G3; `edge-back` = the edge
 // leg (pen, merge off) and X2 (Move). `poly-back` / `poly-front` match P1.
 // Cells 15–22 lift `cells_k_b7` (G4, G5, G6, G6b, G8, G9, G4c, G8b2, G8b3)
-// and `cells_k_b9` (K9a, K9d).
+// and `cells_k_b9` (K9a, K9d). Cells 24–29 are the guide bits on non-pen
+// clients (`tests/fixtures/move_guides.json`, task 9406).
 
 import drag_helpers : Vec3, Viewport, buildDragDownLog, buildDragLog, buildDragMotionLog,
     buildDragUpLog, fetchCamera, playAndWait,
@@ -534,6 +535,93 @@ private void gridLawCells() {
     }
 }
 
+/// Cells 24–29, the guide bits on the Move free drag and the Box base drag
+/// (`tests/fixtures/move_guides.json`, cells G1a, G1a′, G1b, G1b′, G1c, G1c′).
+/// Each raw end lies 3 px from exactly one candidate line — through the
+/// dragged element, or through the world ORIGIN (88+ px from the other) — and
+/// every client but the pen registers no guide: the reading is the raw press +
+/// travel. The captured value carries the 0.005 m placement quantum ours does
+/// not have, so a cell asserts OUR raw reading (1e-4) and, as its rig premise,
+/// that the captured value is that reading rounded (within half the quantum).
+/// The must-stay-green cells run before the must-redden ORIGIN ones.
+private void guideCells() {
+    import std.file : readText;
+    import std.json : parseJSON;
+    auto fx = parseJSON(readText("tests/fixtures/move_guides.json"));
+    const double halfQ = 0.5 * num(fx["rig"]["placement_quantum_m"]);
+    const Vec3 focus = Vec3(0.07f, 1, 0);
+
+    void captured(string cell, double[2] ours, double[2] capturedXZ) {
+        assert(abs(ours[0] - capturedXZ[0]) <= halfQ && abs(ours[1] - capturedXZ[1]) <= halfQ,
+            format("%s rig: the captured (%.4f, %.4f) must be OUR raw (%.6f, %.6f) rounded "
+                ~ "to the quantum", cell, capturedXZ[0], capturedXZ[1], ours[0], ours[1]));
+    }
+
+    void moveCell(string cell, string types) {
+        auto c = fx["cases"][cell];
+        const v = Vec3(cast(float)num(c["vertex"][0]), cast(float)num(c["vertex"][1]),
+                       cast(float)num(c["vertex"][2]));
+        const int dx = cast(int)c["drag_px"][0].integer, dy = cast(int)c["drag_px"][1].integer;
+        rig(format(`{"vertices":[[%.9f,%.9f,%.9f]],"faces":[]}`, v.x, v.y, v.z), focus);
+        penCommand("select.typeFrom vertex");
+        auto r = postJson("/api/command", commandBody("mesh.select",
+            `{"mode":"vertices","indices":[0]}`));
+        assert(r["status"].str == "ok", "select failed: " ~ r.toString);
+        penCommand("tool.set move");
+        snapTypes(types);
+        auto cam = fetchCamera();
+        const a = worldPixel(v);
+        playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                                 a[0], a[1], a[0] + dx, a[1] + dy, 30));
+        const q = vpos(0);
+        penCommand("tool.set move off");
+        const double[3] raw = [v.x + dx * kPx, v.y, v.z + dy * kPx];
+        captured(cell, [raw[0], raw[2]], [num(c["expect"][0]), num(c["expect"][2])]);
+        check(at(q, raw), format("%s: no guide — q expected at the raw press + travel %s, "
+            ~ "got %s", cell, vstr(raw), vstr(q)));
+        ++ran;
+    }
+
+    void boxCell(string cell) {
+        auto c = fx["cases"][cell];
+        const double x0 = num(c["corner1_xz"][0]), z0 = num(c["corner1_xz"][1]);
+        const int dx = cast(int)c["drag_px"][0].integer, dy = cast(int)c["drag_px"][1].integer;
+        rig("", focus);
+        penCommand("tool.set prim.cube");
+        snapTypes("worldAxis");
+        auto cam = fetchCamera();
+        const a = worldPixel(Vec3(cast(float)x0, 1, cast(float)z0));
+        playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                                 a[0], a[1], a[0] + dx, a[1] + dy, 30));
+        double qa(string attr) {
+            auto r = postJson("/api/command", "tool.attr prim.cube " ~ attr ~ " ?");
+            assert(r["status"].str == "ok", "query " ~ attr ~ " failed: " ~ r.toString);
+            return num(r["value"]);
+        }
+        const cx = qa("cenX"), cz = qa("cenZ"), sx = qa("sizeX"), sz = qa("sizeZ");
+        penCommand("tool.set prim.cube off");
+        // Corner 2 is the corner the pointer travelled to: +x, and ±z by the drag.
+        const double c2x = cx + 0.5 * sx, c2z = dy > 0 ? cz + 0.5 * sz : cz - 0.5 * sz;
+        const double c1x = cx - 0.5 * sx, c1z = dy > 0 ? cz - 0.5 * sz : cz + 0.5 * sz;
+        const double[2] raw = [c1x + dx * kPx, c1z + dy * kPx];
+        auto e = c["expect_corners_xz"];
+        captured(cell, raw, [num(e[1][0]), num(e[1][1])]);
+        check(abs(c1x - x0) <= halfQ && abs(c1z - z0) <= halfQ
+            && abs(c2x - raw[0]) <= kTol && abs(c2z - raw[1]) <= kTol,
+            format("%s: no guide — corner 1 near (%.4f, %.4f) and corner 2 at its raw press "
+                ~ "+ travel (%.6f, %.6f) expected, got (%.6f, %.6f) / (%.6f, %.6f)", cell, x0,
+                z0, raw[0], raw[1], c1x, c1z, c2x, c2z));
+        ++ran;
+    }
+
+    moveCell("move-guide-world-axis-self", "worldAxis");
+    moveCell("move-guide-straight-line-self", "straightLine");
+    moveCell("move-guide-straight-line-origin", "straightLine");
+    boxCell("box-guide-world-axis-prior");
+    moveCell("move-guide-world-axis-origin", "worldAxis");
+    boxCell("box-guide-world-axis-origin");
+}
+
 unittest {
     // --- facing-premise: the corner rule's sign for both rings (population 2)
     {
@@ -630,6 +718,7 @@ unittest {
 
     gridCells();
     gridLawCells();
+    guideCells();
 
     // 14 Mpoly_ctrl replica (must stay green): back-facing T at y 1.3, polygon
     // snap only, the pen's first click inside T's interior lands on the click
@@ -652,12 +741,12 @@ unittest {
         ++ran;
     }
 
-    assert(ran == 27, format("population: %d cells ran, expected 27", ran));
+    assert(ran == 33, format("population: %d cells ran, expected 33", ran));
     string[] names;   // the red cells by name first: the runner shows 8 lines
     foreach (f; fails) {
         const n = f[0 .. f.indexOf(':') < 0 ? f.length : f.indexOf(':')];
         if (!names.canFind(n)) names ~= n;
     }
-    assert(fails.length == 0, format("%d of 27 cells red (%-(%s, %)):\n  %-(%s\n  %)",
+    assert(fails.length == 0, format("%d of 33 cells red (%-(%s, %)):\n  %-(%s\n  %)",
                                      names.length, names, fails));
 }

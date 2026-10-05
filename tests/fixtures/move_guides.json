@@ -1,0 +1,164 @@
+{
+  "_about": "Guide snap types on the Move free drag and the Box base drag: each raw end lies 3 px from exactly one candidate line (through the dragged element, or through the world origin); no client but the pen registers a guide, so every reading is the raw press + travel rounded to the 0.005 m placement quantum (task 9406, capture K-G cells G1a, G1a', G1b, G1b', G1c, G1c').",
+  "rig": {
+    "view": "top ortho at boot, 439.52 px/m, focus (0.07,1,0)",
+    "inner_range_px": 24,
+    "outer_range_px": 40,
+    "grid_m": 0.1,
+    "placement_quantum_m": 0.005
+  },
+  "cases": {
+    "move-guide-world-axis-self": {
+      "tool": "move (vertex, free drag from the gizmo centre)",
+      "snap": {
+        "state": "on",
+        "types": [
+          "worldAxis"
+        ]
+      },
+      "vertex": [
+        0.3,
+        1,
+        0.2
+      ],
+      "drag_px": [
+        88,
+        3
+      ],
+      "expect": [
+        0.5,
+        1,
+        0.205
+      ],
+      "law": "no guide: raw quantised press + travel"
+    },
+    "move-guide-world-axis-origin": {
+      "tool": "move",
+      "snap": {
+        "state": "on",
+        "types": [
+          "worldAxis"
+        ]
+      },
+      "vertex": [
+        0.3,
+        1,
+        0.2
+      ],
+      "drag_px": [
+        88,
+        -91
+      ],
+      "expect": [
+        0.5,
+        1,
+        -0.005
+      ],
+      "law": "no guide"
+    },
+    "move-guide-straight-line-self": {
+      "tool": "move",
+      "snap": {
+        "state": "on",
+        "types": [
+          "straightLine"
+        ]
+      },
+      "vertex": [
+        0.3,
+        1,
+        0.2
+      ],
+      "drag_px": [
+        88,
+        3
+      ],
+      "expect": [
+        0.5,
+        1,
+        0.205
+      ],
+      "law": "no guide"
+    },
+    "move-guide-straight-line-origin": {
+      "tool": "move",
+      "snap": {
+        "state": "on",
+        "types": [
+          "straightLine"
+        ]
+      },
+      "vertex": [
+        0.3,
+        1,
+        0.2
+      ],
+      "drag_px": [
+        88,
+        -91
+      ],
+      "expect": [
+        0.5,
+        1,
+        -0.005
+      ],
+      "law": "no guide"
+    },
+    "box-guide-world-axis-prior": {
+      "tool": "box base drag",
+      "snap": {
+        "state": "on",
+        "types": [
+          "worldAxis"
+        ]
+      },
+      "corner1_xz": [
+        0.3,
+        0.2
+      ],
+      "drag_px": [
+        88,
+        3
+      ],
+      "expect_corners_xz": [
+        [
+          0.3,
+          0.2
+        ],
+        [
+          0.5,
+          0.205
+        ]
+      ],
+      "law": "no guide"
+    },
+    "box-guide-world-axis-origin": {
+      "tool": "box base drag",
+      "snap": {
+        "state": "on",
+        "types": [
+          "worldAxis"
+        ]
+      },
+      "corner1_xz": [
+        0.3,
+        0.2
+      ],
+      "drag_px": [
+        88,
+        -91
+      ],
+      "expect_corners_xz": [
+        [
+          0.3,
+          0.2
+        ],
+        [
+          0.5,
+          -0.005
+        ]
+      ],
+      "law": "no guide"
+    }
+  }
+}
