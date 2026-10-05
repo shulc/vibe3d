@@ -142,6 +142,12 @@ private void forgetConstraint() {
     if (consOn()) penCommand("constrain.toggle");
     assert(!consOn(), "rig premise: the constraint is still in the pipe");
 }
+/// `VIBE3D_CELL=<id>` runs one lost-up cell alone (a mutation drill's filter).
+private bool cellOn(string id) {
+    import std.process : environment;
+    const only = environment.get("VIBE3D_CELL", "");
+    return only.length == 0 || only == id;
+}
 private string what(string cell, string m) { return cell ~ ": " ~ m; }
 private string[] fails;
 private void expectDepth(string cell, string moment, long got, long want) {
@@ -283,6 +289,7 @@ unittest {
     // 500 ms after the first down -> nothing re-runs, snap stays on.
     foreach (c; [[1, 1], [1, 0], [0, 1]]) {
         const cell = format("move-snap-key-lost-up-focus%d-redown%d", c[0], c[1]);
+        if (!cellOn(cell)) continue;
         moveRig(false);
         Log l; l.key(true, 1000); l.play();
         assert(snapOn(), what(cell, "rig premise: X with no button did not toggle on"));
