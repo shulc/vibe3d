@@ -479,8 +479,8 @@ final class InputFrameState {
     /// so none is measured (0: the comparator then keeps V > E > F).
     private void noteHoverDistance(EditMode em)(ref Viewport vp, int mx, int my) {
         import math : projectionSpace, projectToWindowFull, closestOnSegment2D;
-        hoveredVertexPx = hoveredEdgePx = 0;
-        hoveredEdgeMidPx = float.infinity;
+        static if (em == EditMode.Vertices) hoveredVertexPx = 0;
+        else { hoveredEdgePx = 0; hoveredEdgeMidPx = float.infinity; }
         if (app.subpatchPreview.active) return;
         const Viewport vl = projectionSpace(vp, primaryModelSpace());
         immutable float cx = mx + 0.5f, cy = my + 0.5f;
