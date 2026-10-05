@@ -723,6 +723,7 @@ private immutable string gridVertSrc = withShaderPreamble(q{
 });
 
 private immutable string gridFragSrc = withShaderPreamble(q{
+    uniform mat4  u_model;       // the lattice frame; column 3 = its origin
     uniform vec3  u_color;
     uniform float u_maxDist;     // world-space fade radius
     uniform vec2  u_screenSize;  // 3D viewport size in fb pixels
@@ -731,8 +732,9 @@ private immutable string gridFragSrc = withShaderPreamble(q{
     in  vec3 vWorldPos;
     out vec4 fragColor;
     void main() {
-        // Distance fade: full opacity at origin, zero at u_maxDist
-        float dist      = length(vWorldPos.xz);
+        // Distance fade: full opacity at the grid's own origin, zero at
+        // u_maxDist, measured in its plane (any plane, task 9451)
+        float dist      = length(vWorldPos - u_model[3].xyz);
         float distAlpha = 1.0 - smoothstep(0.0, u_maxDist, dist);
 
         // Screen-edge fade (all four edges): min 20%

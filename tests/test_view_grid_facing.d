@@ -106,3 +106,44 @@ unittest { // Front under a PINNED ground plane: the grid is the stage's (edge-o
         format("Front, ground plane pinned: the grid must be the pinned XZ plane "
                ~ "(edge-on, no lattice), got row %d / column %d", r[0], r[1]));
 }
+
+/// The settled whole-frame digest of cell 0 (two equal consecutive reads).
+string frameHash(string view, string[] pin = null) {
+    import core.thread : Thread;
+    import core.time : msecs;
+    cmd(commandBody("scene.reset", `{"empty":true}`));
+    foreach (a; pin) cmd("tool.pipe.attr workplane " ~ a);
+    cmd("viewport.view " ~ view);
+    frameFence(null, 3);
+    string prev;
+    foreach (i; 0 .. 8) {
+        auto j = getJson("/api/viewport/probe?cell=0&hash=1");
+        assert(j["renders"].type == JSONType.true_, "probe: cell 0 must be rendering");
+        if (i > 0 && j["hash"].str == prev) return prev;
+        prev = j["hash"].str;
+        Thread.sleep(200.msecs);
+    }
+    assert(false, view ~ ": the frame digest never settled");
+}
+
+unittest { // The fade is radial IN the grid's plane: on an empty scene, Front's
+    // facing lattice is Top's ground lattice turned about X — same lines, same
+    // axis colours (local X red, local Z blue), same fade — so the two frames
+    // are byte-identical. A fade read from world xz fades Front along x only
+    // (measured: digests differ; the top-row scan differs by 1 level).
+    immutable top = frameHash("Top"), front = frameHash("Front");
+    writefln("frame digests: Top %s Front %s", top, front);
+    assert(top == front,
+        format("Front's frame %s differs from Top's %s: the facing grid must fade "
+               ~ "radially in its own plane", front, top));
+}
+
+unittest { // ...and from the grid's own ORIGIN: a ground plane pinned 2 below the
+    // origin draws, in Top ortho, the very frame of the auto ground grid. A fade
+    // measured from the world origin would dim it by the 2-unit offset.
+    immutable top = frameHash("Top"), low = frameHash("Top", ["mode worldY", "cenY -2"]);
+    writefln("frame digests: Top %s Top pinned at y -2 %s", top, low);
+    assert(top == low,
+        format("Top with the ground plane pinned at y -2 drew %s, the auto ground grid %s: "
+               ~ "the fade must be measured from the grid's own origin", low, top));
+}
