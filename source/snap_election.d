@@ -123,7 +123,7 @@ struct SnapElection {
     long bestSeq  = long.max;   // enumeration order of `best*`'s current holder
     long seqNext  = 0;          // monotonic per accepted candidate
 
-    // The grid tier (task 9387): the node `offerGrid` was handed, if any.
+    // The grid tier: the node `offerGrid` was handed, if any.
     bool     hasGrid;
     Vec3     gridWorld;
 
@@ -709,7 +709,7 @@ public:
     // Stage 2: Result merge rule (D2).
     //
     // Priority: discrete snap > grid node > constraint snap > discrete
-    // highlight only (the grid tier: task 9387, captured `cells_k_b7` G8, G8b).
+    // highlight only (the grid tier is captured: `cells_k_b7` G8, G8b).
     // Workplane (always-wins by ~0 screen distance) is in the discrete tier
     // so it keeps its existing behaviour unchanged.
     // -----------------------------------------------------------------------

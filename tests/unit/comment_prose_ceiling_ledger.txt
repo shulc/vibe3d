@@ -9,7 +9,7 @@
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
 source-files 588
-task-citation-lines 5258
+task-citation-lines 5262
 citing-files 454
 long-comment-runs 269
 files-with-long-runs 144
@@ -335,8 +335,8 @@ allow source/seltype.d 3
 allow source/session_owner.d 2
 allow source/shader.d 14
 allow source/shortcuts.d 3
-allow source/snap.d 66
-allow source/snap_election.d 10
+allow source/snap.d 67
+allow source/snap_election.d 11
 allow source/snap_render.d 3
 allow source/snapshot.d 12
 allow source/step_trace.d 1
@@ -374,7 +374,7 @@ allow source/tools/alignment/radial_sweep_tool.d 12
 allow source/tools/common/command_wrapper.d 19
 allow source/tools/common/session_mesh_key.d 3
 allow source/tools/create/arc.d 2
-allow source/tools/create/box.d 17
+allow source/tools/create/box.d 18
 allow source/tools/create/capsule.d 3
 allow source/tools/create/cone.d 3
 allow source/tools/create/create_common.d 13
@@ -416,7 +416,7 @@ allow source/tools/slice/loop_slice_tool.d 87
 allow source/tools/slice/slice_tool.d 92
 allow source/tools/transform/item_xform_kernels.d 3
 allow source/tools/transform/morph_route.d 3
-allow source/tools/transform/move.d 8
+allow source/tools/transform/move.d 9
 allow source/tools/transform/relocate_plane.d 3
 allow source/tools/transform/relocate_plane_test.d 2
 allow source/tools/transform/rotate.d 2

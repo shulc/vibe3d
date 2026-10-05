@@ -116,9 +116,12 @@ void penAttr(string name, double value) {
     penCommand(format("tool.attr pen %s %.9f", name, value));
 }
 
+/// A JSON number; anything else (a NaN is published as null) reads as NaN,
+/// so the caller's tolerance test fails instead of the read throwing.
 private double num(JSONValue v) {
     return v.type == JSONType.integer ? cast(double)v.integer
-         : v.type == JSONType.uinteger ? cast(double)v.uinteger : v.floating;
+         : v.type == JSONType.uinteger ? cast(double)v.uinteger
+         : v.type == JSONType.float_ ? v.floating : double.nan;
 }
 
 double penAttrValue(string name) {
