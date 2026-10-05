@@ -121,28 +121,52 @@ V3[3] planeBasis() {
 
 // The oblique camera is built in the pinned plane's LOCAL frame and handed to
 // the endpoint through the plane basis: every view read under a pinned plane is
-// plane-local (§23, task 7139), so the captured perspective delta is a local
-// one. The construction below is unchanged; only its frame is.
-void setObliquePerspective() {
-    cmd("viewport.view Perspective");
-    auto c = fetchCamera(BASE);
-    immutable V3[3] B = planeBasis();
-    V3 toW(V3 l) { return B[0] * l.x + B[1] * l.y + B[2] * l.z; }
+// plane-local (§23, task 7139). Its distance was fitted so the retired ray/plane
+// map gave the captured delta (0, 2.5, 3.75); the reference camera was never
+// recorded, and K-CM (task 9502) refutes that map in perspective. The captured
+// part kept is the elected plane (X stays exactly 0); the magnitude is the
+// planar law form on THIS camera (`planarDelta`).
+struct ObliqueRig { V3 right, up, back; double distance, focalPx; }
+
+ObliqueRig obliqueRig(int height) {
     immutable V3 target = V3(0.0, 2.5, 3.75);
     V3 back = unit(V3(-4.0, 1.0, 1.0));
     V3 p = unit(target - back * dot(target, back));
     V3 t = cross(p, back);
     V3 right = p * (3.0 / sqrt(13.0)) + t * (2.0 / sqrt(13.0));
     V3 up    = p * (2.0 / sqrt(13.0)) - t * (3.0 / sqrt(13.0));
-    double k = cast(double)c.height / (2.0 * tan(PI / 8.0));
-    double distance = dot(target, back) + k * dot(target, right) / 96.0;
-    right = toW(right); up = toW(up); back = toW(back);
-    auto r = postJson("/api/camera", format(
+    double k = cast(double)height / (2.0 * tan(PI / 8.0));
+    return ObliqueRig(right, up, back, dot(target, back) + k * dot(target, right) / 96.0, k);
+}
+
+/// K-CM's planar map on the rig (plane-local, centre C = 0, X-normal plane):
+/// T = M^-1 (dx, dy), M forward-differenced at C along (Y, Z) with a step of
+/// ten view pixel scales (ours: 0.8 x distance / focal px).
+V3 planarDelta(ObliqueRig r, int dx, int dy) {
+    double[2] px(V3 q) {
+        immutable double z = r.distance - dot(q, r.back);
+        return [r.focalPx * dot(q, r.right) / z, -r.focalPx * dot(q, r.up) / z];
+    }
+    immutable double k = 10 * 0.8 * r.distance / r.focalPx;
+    immutable a = px(V3(0, k, 0)), b = px(V3(0, 0, k));
+    immutable double m00 = a[0] / k, m10 = a[1] / k, m01 = b[0] / k, m11 = b[1] / k;
+    immutable double det = m00 * m11 - m01 * m10;
+    return V3(0, (m11 * dx - m01 * dy) / det, (m00 * dy - m10 * dx) / det);
+}
+
+void setObliquePerspective() {
+    cmd("viewport.view Perspective");
+    auto c = fetchCamera(BASE);
+    immutable V3[3] B = planeBasis();
+    V3 toW(V3 l) { return B[0] * l.x + B[1] * l.y + B[2] * l.z; }
+    immutable r = obliqueRig(c.height);
+    immutable V3 right = toW(r.right), up = toW(r.up), back = toW(r.back);
+    auto res = postJson("/api/camera", format(
         `{"focus":{"x":0,"y":0,"z":0},"distance":%.9f,` ~
         `"orientation":[%.12f,%.12f,%.12f,%.12f,%.12f,%.12f,%.12f,%.12f,%.12f]}`,
-        distance, right.x, right.y, right.z, up.x, up.y, up.z,
+        r.distance, right.x, right.y, right.z, up.x, up.y, up.z,
         back.x, back.y, back.z));
-    assert(r["status"].str == "ok", "oblique camera set failed");
+    assert(res["status"].str == "ok", "oblique camera set failed");
 }
 
 struct Cell { string name, preset; V3 expected; bool perspective; }
@@ -208,8 +232,13 @@ unittest { // (+96,-64) px at 32 px/m, with world XY frozen underneath.
         }
         assert(edgeErrors.length == 0, "edge-on centre drag mismatch: " ~ edgeErrors);
 
-        assert(close(actual[3], cells[3].expected),
-            format("%s %s: expected %s, actual %s", tool, cells[3].name,
-                   cells[3].expected.toString(), actual[3].toString()));
+        // Perspective: the elected X-normal plane exactly, the travel by the
+        // planar map on this camera to half the view quantum (0.05 here) — the
+        // retired fit's (0, 2.5, 3.75) is 0.1+ away.
+        immutable V3 planar = planarDelta(obliqueRig(fetchCamera(BASE).height), 96, -64);
+        assert(!close(planar, cells[3].expected, 0.1), "rig: the planar form must separate from the retired fit");
+        assert(abs(actual[3].x) < 1e-6 && close(actual[3], planar, 0.026),
+            format("%s %s: expected the planar map %s, actual %s", tool, cells[3].name,
+                   planar.toString(), actual[3].toString()));
     }
 }
