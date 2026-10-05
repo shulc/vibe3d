@@ -313,7 +313,7 @@ class SnapStage : Stage, Operator {
         // this line would have to become a real derivation, and the packet's
         // "meaningful only when `snapped`" clause is what keeps that honest.
         // `_guides` is the registry; every tool-side `snapCursor` call passes
-        // the same registry through `liveSnapGuides()` (task 9405).
+        // the same registry through `liveSnapGuides()`.
         SnapResult sr = snapCursor(Vec3(0, 0, 0), subj.cursorX, subj.cursorY,
                                    subj.viewport, *subj.mesh, primaryModelSpace(), cfg,
                                    null, null, _guides);
@@ -792,7 +792,7 @@ private:
 }
 
 /// The live pipeline's SNAP stage, or null when there is none (unittests,
-/// headless) — the one finder every snap client calls (task 9405), the twin
+/// headless) — the one finder every snap client calls, the twin
 /// of `liveSymmetryStage` / `liveConstrainStage`.
 SnapStage liveSnapStage() {
     import toolpipe.pipeline : g_pipeCtx;

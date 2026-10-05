@@ -1413,7 +1413,7 @@ private:
     // on the PLANE-LOCAL view and writes the snapped LOCAL components into
     // Position, like the centre drag itself (task 7139).
     // One loop over the FREE axes: the dragged arrow's, or the centre box's two
-    // local axes other than the locked one (task 9405; the projection form is
+    // local axes other than the locked one (the projection form is
     // value-equal to a component copy on unit axes, differing only in a zero's sign).
     SnapResult snapMover(int axisIdx, int sx, int sy) {
         Vec3[3] axes = [planeAxis1, planeNormal, planeAxis2];
@@ -1452,7 +1452,7 @@ private:
 
     // Snap a moved face's point `movedL` along `axis`, holding the opposite face
     // at coordinate `o`: centre (t + o) / 2 and size |t − o| on that axis, where
-    // t is the snap target's coordinate. The caller uploads (task 9405).
+    // t is the snap target's coordinate. The caller uploads.
     SnapResult snapFace(Vec3 axis, Vec3 movedL, float o, int sx, int sy) {
         auto sr = snapLocalHit(movedL, frame, sx, sy, cachedVp, *mesh, EditMode.Vertices);
         if (sr.snapped) {

@@ -48,7 +48,7 @@ import toolpipe.packets    : ConstrainHitPacket, HoverTarget, HoverTargetKind,
 import toolpipe.pipeline   : g_pipeCtx;
 import toolpipe.stage      : TaskCode;
 import toolpipe.stages.constrain : ConstrainStage;
-import toolpipe.stages.snap : SnapStage;
+import toolpipe.stages.snap : SnapStage, liveSnapStage;
 import toolpipe.guide       : SnapGuide, GuideDrawState, kGuidePrioritySeed;
 import constraint           : resolveHoverTarget, topoPenPressPickPx,
                               topoPenSnapAcceptPx, topoPenSnapGatherPx,
@@ -10728,14 +10728,17 @@ unittest {
     up.x = cast(int)projectedX(mp, 2, vp);
     up.y = cast(int)projectedY(mp, 2, vp);
     assert(t.onMouseButtonUp(up, vts), "a plain-MMB release must consume");
-    assert(st.guideCount == 0, "the release must have removed it");
+    // Population assert (task 9405): every snap call consults the LIVE stage's
+    // registry, so no guide may outlive the gesture there.
+    assert(liveSnapStage() is st && liveSnapStage().guideCount == 0,
+        "the release must have removed it");
 
     // A tool switch mid-gesture ends the gesture the same way. Re-arm, then
     // deactivate without ever releasing.
     assert(t.onMouseButtonDown(down, vts), "re-arm for the deactivate case");
     assert(st.guideCount == 1, "setup: registered again");
     t.deactivate();
-    assert(st.guideCount == 0,
+    assert(liveSnapStage().guideCount == 0,
         "a tool switch mid-drag must not leave a guide in the service's registry, still "
       ~ "admitting for a mesh nobody is editing");
 

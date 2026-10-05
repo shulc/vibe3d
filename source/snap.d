@@ -572,7 +572,7 @@ alias SnapAdmit = bool delegate(SnapType type, int idx, int slot) nothrow;
 /// The SNAP packet the pipeline published into `vts`, or `SnapPacket.init`
 /// (`enabled` false) when no SNAP stage ran. The one packet read every snap
 /// client makes; WHEN it reads (per event or once at the press) stays the
-/// client's own (task 9405).
+/// client's own.
 SnapPacket snapPacketOf(ref VectorStack vts) {
     if (auto sp = vts.get!SnapPacket()) return *sp;
     return SnapPacket.init;
