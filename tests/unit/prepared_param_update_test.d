@@ -367,6 +367,8 @@ unittest {
     assert(!r.tool.preparedParamBuiltForTest(), "owner installed before validate");
     assert(!o.validate(), "owner validated before begin");
     assert(o.begin() && !o.begin(), "owner began twice");
+    o.install();
+    assert(!r.tool.preparedParamBuiltForTest(), "owner installed before validate");
     assert(o.validate() && !o.validate(), "owner validated twice");
     o.install();
     assert(r.tool.preparedParamBuiltForTest() &&
@@ -402,5 +404,6 @@ unittest {
     try x.tool.prepareParamChanged(x.context, x.layer, GpuUploadOwner.fakeForTest(&x.gpu));
     catch (Exception) threw = true;
     PreparedRecordContext.failAfterResourceBeginForTest(false);
-    assert(threw && !x.context.validate(), "a failed enlist left the transaction live");
+    assert(threw && !x.context.markNoHistoryInstall() && !x.context.validate(),
+        "a failed enlist left the transaction live");
 }
