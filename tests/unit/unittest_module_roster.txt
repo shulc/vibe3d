@@ -695,6 +695,7 @@ tools.transform.transform
 tools.transform.xfrm_transform
 trackball
 ui.availability
+ui.grid_plane_test
 ui.image_rows
 ui.item_rows
 ui.viewport_render_plan_test

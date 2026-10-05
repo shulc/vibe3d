@@ -43,6 +43,7 @@ import toolpipe.pipeline     : ToolPipeContext;
 import toolpipe.stage        : TaskCode;
 import toolpipe.packets      : SubjectPacket;
 import toolpipe.stages.workplane : WorkplaneStage;
+import tools.create.create_common : pickMostFacingPlane;
 import operator              : VectorStack;
 import viewgrid              : ViewGridPrefs, viewGridSizeFor, viewGridFadeRadius;
 import shader                : Shader, LitShader, CheckerShader, GridShader;
@@ -195,6 +196,30 @@ struct ToolOverlayInputs {
 // -------------------------------------------------------------------------
 // Phase 2 — FBO scene render
 // -------------------------------------------------------------------------
+/// The grid's model matrix: the unit XZ lattice scaled by `step` and laid in
+/// the plane the work plane stands for in this view. Pinned: the stage's basis
+/// through its centre (the translation is a world point, so it is not scaled).
+/// Auto: in ortho the most-facing world plane through the origin, the stage's
+/// own auto pick (`pickMostFacingPlane`); in perspective the world XZ ground
+/// grid. Task 9451, capture K-D cell D3 (the perspective facing lattice is
+/// uncaptured).
+float[16] gridPlaneModel(const ref Viewport vp, float step, const WorkplaneStage wp) {
+    Vec3 n = Vec3(0, 1, 0), a1 = Vec3(1, 0, 0), a2 = Vec3(0, 0, 1), c = Vec3(0, 0, 0);
+    if (wp !is null && !wp.isAuto) {
+        wp.currentBasis(n, a1, a2);
+        c = wp.center;
+    } else if (isOrtho(vp)) {
+        immutable bp = pickMostFacingPlane(vp);
+        n = bp.normal; a1 = bp.axis1; a2 = bp.axis2;
+    }
+    return [
+        a1.x * step, a1.y * step, a1.z * step, 0,
+        n.x  * step, n.y  * step, n.z  * step, 0,
+        a2.x * step, a2.y * step, a2.z * step, 0,
+        c.x,         c.y,         c.z,         1,
+    ];
+}
+
 // Renders the active viewport's scene (mesh + grid + gizmos) into v.fbo.
 // Called AFTER picking / hover-resolution (so hover state is current for
 // this frame) and BEFORE ImGui.Render() (so the ImGui.Image draw command
@@ -725,29 +750,9 @@ public:
     float gridStep = viewGridSizeFor(vp, display.grid);
     if (!(gridStep > 0)) gridStep = 1.0f;
 
-    float[16] gridModel = [
-        gridStep, 0, 0, 0,
-        0, gridStep, 0, 0,
-        0, 0, gridStep, 0,
-        0, 0, 0,        1,
-    ];
-    if (auto wp = cast(WorkplaneStage)
-                  scene.pipeContext.pipeline.findByTask(TaskCode.Work)) {
-        if (!wp.isAuto) {
-            Vec3 n, a1, a2;
-            wp.currentBasis(n, a1, a2);
-            Vec3 c = wp.center;
-            // Same scale, applied to the work plane's own basis. The
-            // translation column is NOT scaled: the plane's origin is a
-            // world point, not a lattice coordinate.
-            gridModel = [
-                a1.x * gridStep, a1.y * gridStep, a1.z * gridStep, 0,
-                n.x  * gridStep, n.y  * gridStep, n.z  * gridStep, 0,
-                a2.x * gridStep, a2.y * gridStep, a2.z * gridStep, 0,
-                c.x,             c.y,             c.z,             1,
-            ];
-        }
-    }
+    immutable float[16] gridModel = gridPlaneModel(vp, gridStep,
+        cast(WorkplaneStage) scene.pipeContext.pipeline.findByTask(TaskCode.Work));
+
     // The distance fade radius is the grid's OWN half-extent, not a multiple
     // of the camera distance.
     //

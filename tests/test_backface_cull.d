@@ -155,6 +155,9 @@ Viewport loadRig(bool asBackdrop = false, bool s1Double = true, uint b0Tag = 0) 
     cmd(commandBody("viewport.wireOverlay", `{"value":"none"}`));
     cmd(commandBody("viewport.backdropStyle", `{"value":"same"}`));
     cmd("select.typeFrom polygon");
+    // The work plane pinned to the ground: the AUTO grid of a Front view faces
+    // it (task 9451) and its lattice would cross the probes' clear background.
+    cmd("tool.pipe.attr workplane mode worldY");
     cmd("viewport.view Front");
     settle();
     auto cr = postJson("/api/camera?viewport=0", `{"focus":{"x":0,"y":1.6,"z":0},"distance":5}`);

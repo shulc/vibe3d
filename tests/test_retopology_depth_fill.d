@@ -190,6 +190,9 @@ private int[2] toPx(double[3] w, ref Viewport vp) {
 }
 
 private void frontOrtho() {
+    // The work plane pinned to the ground: the AUTO grid of a Front view faces
+    // it (task 9451) and its lattice would cross the probes' clear background.
+    cmdOk("tool.pipe.attr workplane mode worldY");
     cmdOk("viewport.view Front");
     settle();
     auto cr = postJson("/api/camera?viewport=0",
