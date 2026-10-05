@@ -1118,6 +1118,10 @@ struct InputRouter {
              || ifs.dragMode == DragMode.SelectAdd
              || ifs.dragMode == DragMode.SelectRemove) {
                 doSelectPickAt(btn.x, btn.y);
+                if (viewportPickType(app.selTypeOrder) == SelType.Vertex) {
+                    Viewport tieVp = app.vpm.activeSnapshot();
+                    ifs.selectVertexTieGroup(tieVp, btn.x, btn.y);   // the click's tie group (K-OC)
+                }
 
                 // Element apply capture (task 0027). Gated to the mouse-DOWN
                 // dispatch path ONLY — doSelectPickAt is also bound to

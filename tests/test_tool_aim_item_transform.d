@@ -1326,7 +1326,7 @@ unittest { // T7: the loop scrub elects on the DRAWN rail
 // where the guide can be constructed directly and its own aim ray read back.
 // ===========================================================================
 
-// The pen's press-pick reach — `constraint.d`'s kTopoPenPressPickNominalPx,
+// The pen's press-pick reach — the element-pick reach (`kElementPickRadiusPx`),
 // times `viewPixelScale` which is 1.0. Every fixture guard below is stated in
 // terms of it: a decoy must be INSIDE it for the wrong law, and the intended
 // element must be OUTSIDE it for the wrong law, or the case cannot separate.
@@ -1485,7 +1485,7 @@ void penSetup(out float[16] M, out ModelSpace ms, out CamInfo cam,
 //
 // ORACLE (R11): `/api/tool/state`'s `hoverIndicator.grabElem` / `.grabIndex`
 // — the pen's OWN resolution (`resolveGrabTarget` -> `findSourceVertex` /
-// `findRingSeedEdge` / `pressVertexVetoed`), not the two-sided GPU identity
+// `findRingSeedEdge` / `electElement`), not the two-sided GPU identity
 // picker, and no facing question is asked of it.
 // ===========================================================================
 

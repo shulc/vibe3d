@@ -2397,7 +2397,8 @@ public:
     // The press pick admits every vertex: it is not snapping and has no
     // admission policy (the weld target is `weldTargetVertex`).
     package int findSourceVertex(int mx, int my, const ref Viewport vp,
-                                 float thresholdPx = kTopoPenSnapAuto) {
+                                 float thresholdPx = kTopoPenSnapAuto,
+                                 scope bool delegate(Vec3) admit = null) {
         if (meshSrc_ is null) return -1;
         auto m = mesh;
         if (m is null) return -1;
@@ -2411,7 +2412,11 @@ public:
             if (!projectLocalPt(m.vertices[vi], vpAim, pt)) continue;
             float dx = pt.x - cast(float)mx, dy = pt.y - cast(float)my;
             float d2 = dx * dx + dy * dy;
-            if (d2 < bestD2) { bestD2 = d2; best = cast(int)vi; }
+            if (d2 >= bestD2) continue;
+            // `admit` (the press pick's visibility) sees only in-reach candidates.
+            if (admit !is null && (d2 > thresholdPx * thresholdPx || !admit(m.vertices[vi])))
+                continue;
+            bestD2 = d2; best = cast(int)vi;
         }
         if (best >= 0 && bestD2 <= thresholdPx * thresholdPx) return best;
         return -1;
@@ -3719,10 +3724,9 @@ public:
     // come from one function: a highlight that names a different element than
     // the press takes is worse than no highlight, because the user aims by it.
     //
-    // Proximity order — vertex within `topoPenPressPickPx` (unless the veto
-    // below clears it), else edge within the same radius, else the face under
-    // the cursor. `index` is the resolved element's own index in its own array
-    // (vertex / edge / face), or -1.
+    // Gather: vertex and edge within `topoPenPressPickPx`, the face under the
+    // cursor; the element-pick comparator elects one. `index` is the resolved
+    // element's own index in its own array (vertex / edge / face), or -1.
     //
     // `pickPrimaryFace` needs `gpu_` and answers -1 without it, so under a
     // bare `dub test` (no GL) only the vertex and edge terms are live — the
@@ -3732,117 +3736,61 @@ public:
         auto m = mesh;
         if (m is null) return MoveElem.None;
 
-        // Explicit `>= 0` on every pick, never a truthiness test: these
-        // answer -1 on a miss, and index 0 is a perfectly ordinary element.
-        //
-        // The edge is resolved BEFORE the vertex clause answers, because the
-        // veto needs the winning edge to have something to veto WITH. That
-        // costs a vertex-hit press one edge scan it did not use to pay; it is
-        // not avoidable, since the whole rule is a comparison against the
-        // winning edge.
-        immutable int vi = findSourceVertex(mx, my, vp);
-        immutable int ei = findRingSeedEdge(mx, my, vp);
+        // The element-pick law (`hover_state.electElement`, task 9441): the
+        // nearest VISIBLE vertex and edge within the reach, the polygon under
+        // the cursor only under a style that draws faces (K-P P9, P10), ranked
+        // by the cascade after the edge-midpoint veto.
+        import hover_state : PickGather, electElement, g_hoverOcclusion,
+            kCascadeVertex, kCascadeEdge, kCascadePolygon;
+        immutable bool occl = g_hoverOcclusion;
+        scope bool delegate(Vec3) admit = occl ? (Vec3 p) => pressVisible(p, vp) : null;
+        immutable int vi = findSourceVertex(mx, my, vp, kTopoPenSnapAuto, admit);
+        immutable int ei = findRingSeedEdge(mx, my, vp, kTopoPenSnapAuto, admit);
+        immutable int fi = occl ? pickPrimaryFace(mx, my, vp) : -1;
 
-        if (vi >= 0 && vi < cast(int)m.vertices.length
-                && !pressVertexVetoed(mx, my, vp, vi, ei)) {
-            index = vi;
-            return MoveElem.Vertex;
+        const AimViewport vpAim = aimSpace(vp, primaryModelSpace());
+        float dist(Vec3 p) {
+            ImVec2 q;
+            return projectLocalPt(p, vpAim, q)
+                ? hypot(q.x - cast(float)mx, q.y - cast(float)my) : float.infinity;
         }
-
-        if (ei >= 0 && ei < cast(int)m.edges.length) { index = ei; return MoveElem.Edge; }
-
-        immutable int fi = pickPrimaryFace(mx, my, vp);
-        if (fi >= 0 && fi < cast(int)m.faces.length && m.faces[fi].length >= 3) {
-            index = fi;
-            return MoveElem.Face;
+        PickGather g;
+        if (vi >= 0) g.vertex = dist(m.vertices[vi]);
+        if (ei >= 0) {
+            ImVec2 pa, pb;
+            float t;
+            if (projectLocalPt(m.vertices[m.edges[ei][0]], vpAim, pa)
+                    && projectLocalPt(m.vertices[m.edges[ei][1]], vpAim, pb))
+                g.edge = closestOnSegment2D(cast(float)mx, cast(float)my, pa.x, pa.y, pb.x, pb.y, t);
+            g.edgeMid = dist((m.vertices[m.edges[ei][0]] + m.vertices[m.edges[ei][1]]) * 0.5f);
         }
-        return MoveElem.None;
+        if (fi >= 0 && fi < cast(int)m.faces.length && m.faces[fi].length >= 3) g.polygon = 0.0f;
+
+        switch (electElement(g)) {
+            case kCascadeVertex:  index = vi; return MoveElem.Vertex;
+            case kCascadeEdge:    index = ei; return MoveElem.Edge;
+            case kCascadePolygon: index = fi; return MoveElem.Face;
+            default:              return MoveElem.None;
+        }
     }
 
-    // ------------------------------------------------------------------
-    // THE VERTEX-SLOT VETO ON THE PEN'S PRESS PICK (measured static).
-    //
-    // THE RULE: clear the vertex slot when the cursor is nearer the WINNING
-    // EDGE'S MIDPOINT than it is to the best vertex, provided that midpoint is
-    // inside the caller's range. A cleared slot is not demoted — it is removed
-    // from the cascade outright, so the next clause answers and the press
-    // grabs the EDGE.
-    //
-    // WHY IT EXISTS, since the rule does not say: the projected midpoint of an
-    // edge lies on that edge's projected segment, so "the midpoint is nearer
-    // than the vertex" is a sharper way of asking "is the cursor out along the
-    // edge rather than parked on its endpoint" than the raw vertex distance
-    // is. Near a shared corner every incident edge is within a pixel or two of
-    // the vertex, and without this a press aimed at the middle of an edge
-    // grabs the corner instead.
-    //
-    // A SEPARATE MECHANISM from the snapping service's centre refinement, and
-    // this is the correction a sibling read had to be given: it is built from
-    // the same number (the winning edge's midpoint) at a different site, with
-    // different gating and a different effect. The refinement MOVES a point
-    // and is gated on a snap type; this REMOVES a candidate and is gated on
-    // nothing. Modelling it as "edge-centre snapping" would make it switch off
-    // with a preference it has no relationship to.
-    //
-    // NOT THE SAME PORT `snap.d` ALREADY HAS. `snap.vertexSlotVetoed` is the
-    // same rule inside the snap arbitration, reached only when a snap type
-    // asked for an edge leg. This one is the PRESS PICK's, it runs on every
-    // press, and no snap setting can reach it. The two are deliberately not
-    // shared: they read different ranges (the pen's own press reach vs. the
-    // configured acceptance), from different origins, over different candidate
-    // sets.
-    //
-    // NOT PORTED INTO THE ORDINARY SELECTION CLICK, and that was checked
-    // rather than assumed: our selection click goes through a different
-    // resolver that carries no cross-type slots, so there is nothing there to
-    // veto and our view-cache/BVH pick is already the right shape.
-    //
-    // WHERE IT IS APPLIED, and the limit is named rather than left to be
-    // found. Exactly the two press picks that already hold BOTH a vertex slot
-    // and an edge slot and already run a vertex-then-edge cascade:
-    // `resolveGrabTarget` (Move / Point, and the hover indicator that must
-    // name what a press will grab) and `onShiftLmbDown` (Duplicate). The pen's
-    // vertex-ONLY press picks — Split's, and the build's source-vertex
-    // resolution — are deliberately left alone: they run no edge query at all,
-    // so applying the veto there would mean inventing an edge candidate for
-    // the sole purpose of DECLINING a press those modes currently honour.
-    // Declining is a behaviour claim nothing measured; the veto's own effect
-    // is to hand the press to an edge branch, and those modes have none.
-    //
-    // Returns true when the resolved vertex must be treated as if it had never
-    // been found.
-    private bool pressVertexVetoed(int mx, int my, const ref Viewport vp,
-                                   int vi, int ei) {
-        // Both slots must be occupied. In the reference these are two null
-        // tests on a hit record; here they are the two picks having answered,
-        // which is the same question asked one step earlier.
-        if (vi < 0 || ei < 0) return false;
+    // K-P P9: a press takes the front-most element — a candidate point is
+    // pickable unless a primary polygon lies in front of it on its own eye ray.
+    private bool pressVisible(Vec3 pLocal, const ref Viewport vp) {
         auto m = mesh;
-        if (m is null) return false;
-        if (vi >= cast(int)m.vertices.length || ei >= cast(int)m.edges.length)
-            return false;
-        auto e = m.edges[ei];
-        if (e[0] >= m.vertices.length || e[1] >= m.vertices.length) return false;
-
-        // Pixel (§1.1) — `mid` is the average of two LOCAL vertices, which
-        // is itself a local point (an affine map commutes with a midpoint),
-        // so both operands go through the same aiming space and the two
-        // pixel distances compared below are both measured against the
-        // DRAWN geometry.
-        const AimViewport vpAim = aimSpace(vp, primaryModelSpace());
-        immutable Vec3 mid = (m.vertices[e[0]] + m.vertices[e[1]]) * 0.5f;
-        ImVec2 pm, pv;
-        if (!projectLocalPt(mid, vpAim, pm)) return false;             // does not project
-        if (!projectLocalPt(m.vertices[vi], vpAim, pv)) return false;
-
-        immutable float dMid = hypot(pm.x - cast(float)mx, pm.y - cast(float)my);
-        // The RANGE clause, and it uses the pen's own single press reach —
-        // the same number that gated both picks above. The pen's press pick is
-        // type-uniform by construction, so there is exactly one range here and
-        // no question of which one the veto borrows.
-        if (dMid >= topoPenPressPickPx(vp)) return false;
-        immutable float dVert = hypot(pv.x - cast(float)mx, pv.y - cast(float)my);
-        return dMid < dVert;
+        if (m is null) return true;
+        if (removePick_ is null) removePick_ = new BvhPick();
+        const ms = primaryModelSpace();
+        const AimViewport vpAim = aimSpace(vp, ms);
+        ImVec2 q;
+        if (!projectLocalPt(pLocal, vpAim, q)) return true;
+        Vec3 org, dir;
+        screenPointToRay(q.x, q.y, vp, org, dir);
+        immutable Vec3 pw = ms.isIdentity ? pLocal : ms.toWorldPoint(pLocal);
+        immutable float tElem = dot(pw - org, dir) / dot(dir, dir);
+        SurfaceHit h;
+        if (!removePick_.pickSurfaceRay(org, dir, *m, ms, h)) return true;
+        return h.t >= tElem - 1e-4f * (1.0f + tElem);
     }
 
     // The hover indicator element `draw()` actually paints: the RESOLVED grab
@@ -4372,15 +4320,11 @@ public:
         // `dispatchInput`'s `onInputResetAll()` hook before this handler runs.
 
         Viewport vp = viewportOf(vts);
-        int src = findSourceVertex(e.x, e.y, vp);
-        // The press pick's vertex-slot veto (`pressVertexVetoed`) — the same
-        // one `resolveGrabTarget` runs, at the pen's other vertex-then-edge
-        // press cascade. The edge is resolved up front because the veto needs
-        // it, and it is the very edge the fall-through branch takes, so the
-        // scan is not duplicated — only moved ahead of a branch that used to
-        // skip it on a vertex hit.
-        immutable int seedEi = findRingSeedEdge(e.x, e.y, vp);
-        if (src >= 0 && pressVertexVetoed(e.x, e.y, vp, src, seedEi)) src = -1;
+        // The press pick (`resolveGrabTarget`); a polygon has no Duplicate gesture.
+        int picked;
+        immutable MoveElem pressed = resolveGrabTarget(e.x, e.y, vp, picked);
+        immutable int src = pressed == MoveElem.Vertex ? picked : -1;
+        immutable int seedEi = pressed == MoveElem.Edge ? picked : -1;
         if (src < 0) {
             // Not a vertex — try an EDGE (task 0485). The reference's
             // Duplicate mode "duplicates an edge as you drag it", and widens
@@ -4518,7 +4462,8 @@ public:
     // for, so it goes. A future edge snap-target asks the guide, as the
     // vertex one now does.
     package int findRingSeedEdge(int mx, int my, const ref Viewport vp,
-                                 float thresholdPx = kTopoPenSnapAuto) {
+                                 float thresholdPx = kTopoPenSnapAuto,
+                                 scope bool delegate(Vec3) admit = null) {
         if (meshSrc_ is null) return -1;
         auto m = mesh;
         if (m is null) return -1;
@@ -4534,7 +4479,11 @@ public:
             float t;
             float d = closestOnSegment2D(cast(float)mx, cast(float)my,
                                         pa.x, pa.y, pb.x, pb.y, t);
-            if (d < bestD) { bestD = d; best = cast(int)ei; }
+            if (d >= bestD) continue;
+            if (admit !is null && (d > thresholdPx
+                    || !admit(m.vertices[e[0]] + (m.vertices[e[1]] - m.vertices[e[0]]) * t)))
+                continue;
+            bestD = d; best = cast(int)ei;
         }
         if (best >= 0 && bestD <= thresholdPx) return best;
         return -1;

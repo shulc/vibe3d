@@ -314,7 +314,7 @@ bool typeEligible(SnapType t, SnapMode snapScope_)
 // reference keeps one nearest-candidate accumulator per CLASS — vertex, edge,
 // polygon — and merges them with a fixed cascade in that order, asking each
 // class in turn "do you win?" and returning the first that says yes. The
-// question is answered by `cascadeClassWins` below, which grants the class
+// question is answered by `cascadeClassWins` (hover_state), which grants the class
 // under test a distance TOLERANCE; the vertex class's tolerance is twice the
 // other two's, which is what lets a vertex beat an edge that is geometrically
 // nearer.
@@ -374,28 +374,11 @@ bool typeEligible(SnapType t, SnapMode snapScope_)
 // accepted with open eyes, not a second thing that was measured.
 // ---------------------------------------------------------------------------
 
-/// Upper bound on the cross-type tolerance base, in pixels. The base itself is
-/// `min(acceptanceRange, this)`. MEASURED: it is the shipped default of an
-/// application-wide element-picking size setting in the reference, and the
-/// reporting user's saved configuration does not override it.
-enum float kCandidateToleranceBasePx = 8.0f;
-
-/// The vertex class's tolerance multiplier — the whole of "a vertex may beat a
-/// nearer edge" is this number being greater than 1. MEASURED, and the
-/// reference ships it as a user-visible setting whose own documentation
-/// describes exactly the cursor-near-a-polygon-corner case this fixes.
-enum float kVertexToleranceScale = 2.0f;
-
-/// The distance an ABSENT class carries into the comparator. Not "infinity":
-/// the comparator subtracts it (`d[i] - d[k]`), and the sentinel's finiteness
-/// is load-bearing there — a class with no candidate makes that clause
-/// vacuously true rather than NaN.
-enum float kAbsentClassDist = 1e12f;
-
-/// The three cascade classes, in the order the merge asks them.
-enum int kCascadeVertex  = 0;
-enum int kCascadeEdge    = 1;
-enum int kCascadePolygon = 2;
+/// The cascade constants and comparator are the element-pick law's
+/// (`hover_state`, task 9441): one pick reach and one comparator for the
+/// snap election and every element pick.
+public import hover_state : kCandidateToleranceBasePx, kVertexToleranceScale,
+    kAbsentClassDist, kCascadeVertex, kCascadeEdge, kCascadePolygon, cascadeClassWins;
 
 /// Which cascade class a discrete snap type belongs to, or -1 for a type the
 /// cascade does not model (Grid, Workplane, Pivot, Box, Intersection). A -1
@@ -423,51 +406,6 @@ int cascadeClass(SnapType t) pure nothrow @nogc @safe
     return -1;
 }
 
-/// Does class `i` win the merge, given each class's nearest distance (`d`,
-/// `kAbsentClassDist` where the class has no candidate), which classes have a
-/// candidate at all (`has`), and class `i`'s own tolerance (`tol`)?
-///
-/// The clauses, and their order, are the measured ones:
-///
-///   1. no candidate of my class            -> lose
-///   2. I am the only class with one        -> win
-///   3. I am the nearest of the three       -> win
-///   4. I am inside my OWN tolerance        -> win   <-- the type priority
-///   5. I trail the next class by >= tol    -> lose
-///   6. I trail the last class by <  tol    -> win
-///   otherwise                              -> lose
-///
-/// Clauses 5 and 6 are the pair the reporting user is hitting: an edge
-/// incident to a vertex is never farther from the cursor than that vertex is,
-/// so under a bare "nearest wins" the vertex can only ever tie, never win.
-/// Here it wins as long as it does not TRAIL by its whole tolerance — and its
-/// tolerance is the doubled one.
-///
-/// Read as a whole, and given that our own distances are never negative and
-/// that an absent class carries a huge finite sentinel, the seven lines reduce
-/// to one sentence: **a class wins iff it trails each of the other two by less
-/// than its own tolerance.** Clauses 2, 3 and 4 are then early-outs rather
-/// than independent rules. They are ported verbatim anyway, for two reasons
-/// that are not stylistic: clause 2 is a null-guard in the original and the
-/// only clause that does not read a distance at all, and the reduction stops
-/// holding the moment a distance can be negative or an exact tie meets a zero
-/// tolerance — and a registered guide may answer with any `distPx` it likes,
-/// including a negative one (`snapCursor`'s inverting test guide does exactly
-/// that). A comparator that is correct only for the distances we happen to
-/// produce today is the kind of thing this file has been bitten by before.
-bool cascadeClassWins(int i, const ref bool[3] has, const ref float[3] d,
-                      float tol) pure nothrow @nogc @safe
-{
-    if (!has[i]) return false;                       // 1
-    immutable int j = (i + 1) % 3;
-    immutable int k = (i + 2) % 3;
-    if (!has[j] && !has[k]) return true;             // 2
-    if (d[j] >= d[i] && d[k] >= d[i]) return true;   // 3
-    if (tol >  d[i]) return true;                    // 4
-    if (tol <= d[i] - d[j]) return false;            // 5
-    if (tol >  d[i] - d[k]) return true;             // 6
-    return false;
-}
 
 /// Return a point-in-time copy of the background snap sources under the
 /// grid lock, for use by the CONS stage's post-pass projection loop

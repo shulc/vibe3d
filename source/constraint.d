@@ -547,31 +547,6 @@ int consistentCandidateIndex(int idx, size_t len) pure nothrow @nogc @safe {
 // and the place a future preference would plug in.
 // ---------------------------------------------------------------------------
 
-/// Nominal PRESS-PICK reach in "reference pixels" — the limit the reference
-/// printed on every press. Not to be used raw: call `topoPenPressPickPx(vp)`.
-///
-/// BRACKETED, not exact: the delivered reach was measured to lie in
-/// (7.07, 7.78] for a vertex candidate and (7.00, 8.85] for an edge candidate,
-/// both consistent with this one printed limit within the ~1.2px between the
-/// rig's geometry and the reference's own computed distance. Move this number
-/// only with a measurement that narrows those brackets.
-///
-/// THIS ONE STAYS A CONSTANT, and it is deliberately not the snap acceptance
-/// even though `SnapPacket.init.innerRangePx` once also read 8.0f and made
-/// them look interchangeable. The press pick is a different QUERY with a
-/// different OWNER: no snapping guide is registered for it, no configured
-/// range is pushed into it, and no user setting moves it — it is the tool's
-/// own closest-element reach. The drag-snap radii below, by contrast, are
-/// application-wide configuration the pen is HANDED, so they come off a
-/// `SnapPacket` and there is no `kTopoPenSnapAcceptNominalPx` to pair with
-/// this. Do not reintroduce one, and do not fold this into the packet: the
-/// numeric coincidence that briefly made 8.0 the packet's acceptance default
-/// is precisely the confusion being prevented here.
-/// SCOPE (task 0507): every mode but Fill, and only while the reference's
-/// "lazy selection" preference is off — see the MODE-DEPENDENT and PREFERENCE
-/// DEFAULT paragraphs in the block comment above before wiring this into a new
-/// call site.
-enum float kTopoPenPressPickNominalPx = 8.0f;
 
 /// Sentinel for the pen resolvers' `thresholdPx` parameter meaning "derive the
 /// threshold from the view" (`topoPenPressPickPx`). Negative, so it can never
@@ -608,9 +583,11 @@ float viewPixelScale(const ref Viewport vp) pure nothrow @nogc @safe {
 /// pick math uses: how far a press (and therefore the hover highlight) reaches
 /// for a vertex or an edge before falling through to the face under the cursor.
 ///
-/// Bracketed, not exact — see `kTopoPenPressPickNominalPx`.
+/// The element-pick reach (`hover_state.kElementPickRadiusPx`, task 9441: one
+/// preference with the snap cascade's tolerance base). Every mode but Fill.
 float topoPenPressPickPx(const ref Viewport vp) pure nothrow @nogc @safe {
-    return kTopoPenPressPickNominalPx * viewPixelScale(vp);
+    import hover_state : kElementPickRadiusPx;
+    return kElementPickRadiusPx * viewPixelScale(vp);
 }
 
 /// The Topology Pen's DRAG-SNAP acceptance radius for this view: how close a

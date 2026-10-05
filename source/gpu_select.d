@@ -702,24 +702,17 @@ private:
         readIdPixels(x0, y0, rw, rh, buf);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
-        // The (2r+1)² readback window includes corner pixels with
-        // manhattan distance up to 2r — without a cap, an element at
-        // (r, r) gets picked from `2r` pixels away even though the
-        // search radius is `r`. Cap the manhattan distance to `r`
-        // (so the effective hit-region is a diamond, not the bounding
-        // square) to match the screen-space tolerance the per-pick
-        // call site asked for. r == 0 (face pick) still works — only
-        // the exact pixel is considered.
-        int  bestDist = r + 1;
-        uint bestId   = 0;
+        // The (2r+1)² window's corners lie up to r·√2 away; only pixels within
+        // EUCLIDEAN distance r count, inclusive (the element-pick law, task
+        // 9441). r == 0 (face pick) considers only the exact pixel.
+        int  bestD2 = r * r + 1;
+        uint bestId = 0;
         foreach (j; 0 .. rh) foreach (i; 0 .. rw) {
             uint id = buf[(j * rw + i) * 4];
             if (id == 0) continue;
-            int px = x0 + i;
-            int py = y0 + j;
-            int d  = abs(px - vx) + abs(py - fbY);
-            if (d > r) continue;
-            if (d < bestDist) { bestDist = d; bestId = id; }
+            int dx = x0 + i - vx, dy = y0 + j - fbY;
+            int d2 = dx * dx + dy * dy;
+            if (d2 < bestD2) { bestD2 = d2; bestId = id; }
         }
         if (bestId == 0) return -1;
         return cast(int)(bestId - 1);
@@ -788,4 +781,3 @@ private GLuint linkProgram(string vertSrc, string fragSrc) {
 }
 
 
-private int abs(int x) { return x < 0 ? -x : x; }
