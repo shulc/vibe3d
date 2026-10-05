@@ -155,4 +155,16 @@ unittest {
     assert(screen0.hit && screen0.point == want.point,
            format("publish, Screen, offset 0: the near quad's hit %s; got hit %s at %s",
                   want.point, screen0.hit, screen0.point));
+
+    // (10) Point runs the nearest-foot pass after the offset (K-C4 law, task
+    // 9477): at pixel (320, 100) the hit is the FAR quad (1.205, -0.005,
+    // -1); offset 1.5 puts it at z 0.5, nearer the near quad's right
+    // edge (0.5) than the far quad (1.5), so the foot is that edge's point and
+    // the result (1.2025, -0.005, 1.5) — the bare offset would stay at z 0.5.
+    cs.geom   = ConstrainGeom.Point;
+    cs.offset = 1.5f;
+    const foot = publish(320, 100);
+    assert(foot.hit && near3(foot.point, Vec3(1.2025f, -0.005f, 1.5f)),
+           format("publish, Point, offset 1.5: the near quad's edge foot + 1.5 * normal "
+                  ~ "(1.2025, -0.005, 1.5); got hit %s at %s", foot.hit, foot.point));
 }
