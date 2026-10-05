@@ -441,19 +441,19 @@ unittest {
         drop();
         ++ran;
     }
-    // Ours-only: what the restored image re-derives. A Backspace (interim
-    // arm) is a step of its own; an emptied stroke is Idle again (the next
-    // click re-chooses the plane from the current view); restored points are
-    // pressable again (their markers come back).
-    if (want("backspace-then-ctrlz")) {
+    // Backspace is no stroke event: the global delete ends the stroke
+    // (committed, selected by selectNew) and deletes it, the pen stays armed
+    // with no stroke (pen wave plan S8, captured BD-sel / F7; the scene
+    // witness is tests/test_pen_types.d bs-scene-selectnew1). Ours-only below:
+    // an emptied stroke is Idle again (the next click re-chooses the plane
+    // from the current view); restored points are pressable again.
+    if (want("backspace-ends-stroke")) {
         rig();
         clickWorld(kA[]);
         backspace();
-        expectArmed("backspace-then-ctrlz", "after the Backspace", 3, fails);
-        ctrlZ();
-        expectArmed("backspace-then-ctrlz", "after the undo", 4, fails);
+        expectArmed("backspace-ends-stroke", "after the Backspace", 0, fails);
         drop();
-        expectModel("backspace-then-ctrlz", kA[], [[0L, 1, 2, 3]], fails);
+        expectModel("backspace-ends-stroke", null, null, fails);
         ++ran;
     }
     if (want("pop-to-empty-new-view")) {

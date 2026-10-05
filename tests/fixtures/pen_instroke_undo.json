@@ -331,29 +331,6 @@
     "rows": 1
    },
    "note": "discriminating: a re-decision on the remaining three points would give [0,2,1] with the flag ON"
-  },
-  "backspace_with_selection": {
-   "script": [
-    "polygon selection mode",
-    "stroke T: click (0,0.2) (0.5,0.2) (0.25,-0.3), end stroke (T selected)",
-    "new stroke: click (-0.5,0.5) (-0.5,0.8) (-0.2,0.8)",
-    "Backspace",
-    "click (-0.2,0.5)",
-    "end stroke"
-   ],
-   "expected": {
-    "vertices": [],
-    "polygons": [],
-    "panel_after": {
-     "current": 0
-    },
-    "history_walk": [
-     "undo 1: no mesh change",
-     "undo 2: T and the 3-point triangle [3,4,5] come back, both selected",
-     "undo 3: the triangle goes, T stays selected"
-    ]
-   },
-   "note": "Backspace ended the stroke (3-point triangle committed and selected), then deleted the selection (T + it); the last click started a 1-point stroke that commits nothing"
   }
  },
  "related": {
@@ -475,6 +452,29 @@
     "faces": []
    },
    "law": "no tool, nothing selected, vertex mode: Backspace deletes the whole mesh"
+  },
+  "backspace_with_selection": {
+   "script": [
+    "polygon selection mode",
+    "stroke T: click (0,0.2) (0.5,0.2) (0.25,-0.3), end stroke (T selected)",
+    "new stroke: click (-0.5,0.5) (-0.5,0.8) (-0.2,0.8)",
+    "Backspace",
+    "click (-0.2,0.5)",
+    "end stroke"
+   ],
+   "expected": {
+    "vertices": [],
+    "polygons": [],
+    "panel_after": {
+     "current": 0
+    },
+    "history_walk": [
+     "undo 1: no mesh change",
+     "undo 2: T and the 3-point triangle [3,4,5] come back, both selected",
+     "undo 3: the triangle goes, T stays selected"
+    ]
+   },
+   "note": "Backspace ended the stroke (3-point triangle committed and selected), then deleted the selection (T + it); the last click started a 1-point stroke that commits nothing"
   }
  },
  "backspace_one_click": {

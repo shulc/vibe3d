@@ -233,7 +233,7 @@ unittest {
         fails ~= axisCase(cell, fx[cell], ran);
     // The latch precedes the first click's self-weld test. Each `tool.set pen
     // on` is a fresh tool latched to the default x = 0 plane, so B4 alone
-    // cannot see the order: here one activation latches z (a point, popped),
+    // cannot see the order: here one activation latches z (a point, ended by Backspace),
     // then draws B4 under x (a test against the stale z plane: 6 vertices).
     {
         rig("z", 0, true, p(0.375, 0));
@@ -483,8 +483,10 @@ private string[] oursCells(ref int ran) {
         drop(); ++ran;
         fails ~= compare("weld-renumbers", [q[1], q[2], p(0.9, 0), p(-0.9, 0)], null);
     }
-    // A point inserted on m(p1) links p1; Backspace pops p1, dropping the link;
-    // the next point is its own (6 vertices, not the 4 of a stale link).
+    // A point inserted on m(p1) links p1; Backspace (the global delete, pen
+    // wave plan S8, captured BD-sel / F7) ends the stroke, committed and
+    // selected, and deletes it with its mirror; the next point is a new
+    // 1-point stroke the drop discards: nothing is left.
     {
         rig("x", 0, true, p(0.2, 0));
         clickWorld(q[0], q[1]);
@@ -492,8 +494,7 @@ private string[] oursCells(ref int ran) {
         key(kSymBackspace, 0);
         clickWorld(p(0.9, 0));
         drop(); ++ran;
-        fails ~= compare("pop-drops-link", [q[0], q[2], p(0.9, 0), p(-0.5, -0.5),
-            p(-0.5, 0.5), p(-0.9, 0)], null);
+        fails ~= compare("backspace-deletes-linked", null, null);
     }
     // A topology bump (Hide, then unhide all, of an unrelated face) drops the
     // stroke's scene links only: B3's crosswise link survives a bump between

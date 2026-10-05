@@ -9,7 +9,7 @@
 // Per doc/pen_plan.md, 6.9.0 covers:
 //   • LMB click adds a vertex to the in-progress polygon
 //   • Enter (or double-click) commits when ≥3 verts → n-gon face
-//   • Backspace pops the last vertex
+//   • Backspace is the editor's global delete (pen wave plan S8)
 //   • RMB cancels the in-progress sequence
 //   • Construction plane locked at the first click
 //
@@ -183,10 +183,13 @@ unittest { // 5-gon
 }
 
 // -------------------------------------------------------------------------
-// 4. Backspace removes last vertex; remaining 3 commit as triangle.
+// 4. Backspace is the global delete (pen wave plan S8, captured BD-sel /
+//    F7: tests/test_pen_types.d bs-scene-selectnew1 is the scene witness):
+//    the stroke ends (committed, selected by selectNew), the delete removes
+//    it, the pen stays armed; Enter then has no stroke to close.
 // -------------------------------------------------------------------------
 
-unittest { // 4 clicks + Backspace + Enter → triangle
+unittest { // 4 clicks + Backspace + Enter → the stroke deleted, pen armed
     resetEmpty();
     activatePen();
     string log = LOG_HEADER ~ "\n"
@@ -198,12 +201,14 @@ unittest { // 4 clicks + Backspace + Enter → triangle
         ~ keyDown(600, SDLK_RETURN);
     playEvents(log);
     waitForPlaybackFinish();
+    assert(postJson("/api/command", "tool.attr pen currentPoint ?")["status"].str == "ok",
+        "after backspace: the pen is not armed");
     deactivateTool();
 
     auto m = getJson("/api/model");
-    assert(m["vertices"].array.length == 3, "after backspace: expected 3 verts");
-    assert(m["faces"].array.length == 1);
-    assert(m["faces"].array[0].array.length == 3, "expected triangle");
+    assert(m["vertices"].array.length == 0 && m["faces"].array.length == 0,
+        "after backspace: expected the stroke deleted (0 verts); got "
+        ~ m["vertices"].array.length.to!string);
 }
 
 // The Ctrl+Z twin (captured A4d-ctrlz, tests/fixtures/pen_facing.json): the

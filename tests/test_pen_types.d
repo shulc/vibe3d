@@ -1,7 +1,7 @@
 // Polygon pen stroke types, close, selectNew and the editor's global commands
 // met mid-stroke (wave plan S8), against tests/fixtures/pen_types.json and
 // tests/fixtures/pen_instroke_undo.json (`backspace`, `backspace_one_click`,
-// `ui_cmd`, `ui_cmd_one_click`, `cells.backspace_with_selection`).
+// `ui_cmd`, `ui_cmd_one_click`; F7 is `backspace.backspace_with_selection`).
 //
 // Laws: lines = n - 1 two-point polygons in click order (+ the closing segment
 // with close), mirror segments keep [m(a), m(b)]; vertices = free vertices;
@@ -311,7 +311,7 @@ unittest {
     // polygon mode); a new stroke; Backspace deletes T and the stroke; the
     // click begins a new 1-point stroke (current 0) that the drop discards.
     if (want("backspace_with_selection")) {
-        auto f7 = undo["cells"]["backspace_with_selection"];
+        auto f7 = bs["backspace_with_selection"];
         auto c = clicksOf(f7);
         assert(c.length == 7, "fixture premise: 3 + 3 + 1 clicks");
         rig("polygon");

@@ -115,7 +115,10 @@ unittest { // 6-click hexagon commits as one 6-gon
         "expected 6-gon face; got " ~ face.length.to!string ~ "-gon");
 }
 
-unittest { // 6 clicks + Backspace × 2 + Enter commits a 4-gon
+// Backspace is the global delete (pen wave plan S8, captured BD-sel / F7): the
+// first ends the hexagon (committed, selected by selectNew) and deletes it;
+// the second meets the armed, idle pen and an empty mesh; Enter closes nothing.
+unittest { // 6 clicks + Backspace × 2 + Enter leaves nothing
     resetEmpty();
     activatePen();
     string log = LOG_HEADER ~ "\n";
@@ -124,8 +127,6 @@ unittest { // 6 clicks + Backspace × 2 + Enter commits a 4-gon
         log ~= clickAt(t, xy[0], xy[1]) ~ "\n";
         t += 100.0;
     }
-    // Pop the last 2 verts (HEX_CLICKS[5] then [4]) — the surviving
-    // boundary should be HEX_CLICKS[0..4] in order.
     log ~= keyDown(t,         SDLK_BACKSPACE) ~ "\n";
     log ~= keyDown(t + 50.0,  SDLK_BACKSPACE) ~ "\n";
     log ~= keyDown(t + 100.0, SDLK_RETURN);
@@ -134,13 +135,9 @@ unittest { // 6 clicks + Backspace × 2 + Enter commits a 4-gon
     deactivateTool();
 
     auto m = getJson("/api/model");
-    assert(m["vertices"].array.length == 4,
-        "hex - 2 backspaces should leave 4 verts; got " ~
-        m["vertices"].array.length.to!string);
-    auto face = m["faces"].array[0].array;
-    assert(face.length == 4,
-        "expected 4-gon after backspaces; got " ~
-        face.length.to!string ~ "-gon");
+    assert(m["vertices"].array.length == 0 && m["faces"].array.length == 0,
+        "hex + 2 backspaces should leave nothing; got " ~
+        m["vertices"].array.length.to!string ~ " verts");
 }
 
 unittest { // RMB + redraw in the same Pen session works
