@@ -181,9 +181,10 @@ unittest {
     // One form per frame kind, top view at q 0.005, off-lattice starts (K-G2,
     // K-G3, K-H2; every pair of forms 2.3e-3+ apart at these cells).
     auto vp = topView();
-    Vec3 drag(DragKind kind, Vec3 p, int dx, int dy) {
+    Vec3 drag(DragKind kind, Vec3 p, int dx, int dy, Vec3 axis = Vec3(1, 0, 0)) {
         DragFrame f;
         f.kind = kind;
+        f.axis = axis;
         f.normal = Vec3(0, 1, 0);
         HandleDrag g;
         g.press(p, 400, 300);
@@ -208,6 +209,9 @@ unittest {
         "planar (primitive centre mover): q(p + T), 0.145");
     assert(abs(drag(DragKind.screenAxis, Vec3(0.3523f, 0, 0), 40, 0).x - 0.4423f) <= 1e-4f,
         "line (size handle): p + q(t), 0.4423");
+    assert(abs(drag(DragKind.screenAxis, Vec3(0.0523f, 0, 0), 40, 0, Vec3(0.6f, 0, 0)).x
+               - 0.1423f) <= 1e-4f,
+        "line (centre mover arrow, gain 0.6): p + q(t) in world, 0.1423");
     assert(abs(drag(DragKind.planeHit, Vec3(0.3523f, 0, 0), 40, 0).x - 0.4423f) <= 1e-4f,
         "line (height handle): p + q(t), 0.4423");
     assert(abs(drag(DragKind.axisArm, Vec3(0.3023f, 0, 0), 95, 0).x - 0.5173f) <= 1e-4f
