@@ -946,7 +946,6 @@ public:
         dragArmed     = false;
         dragInitiated = false;
         dragVertIdx   = -1;
-        endDragGuide();
         previewGpu.init();
     }
 
@@ -1476,7 +1475,7 @@ private:
         }
         immutable bool onSurface = backgroundSurfacePoint(local, cachedVp, frame, local);
         immutable Vec3 placed = local;
-        guide_.live = drag !is null && !onSurface;
+        guide_.live = !onSurface;
         lastSnap = snapLocalHit(local, frame, x, y, cachedVp, *mesh, EditMode.Vertices);
         if (elementPlaced() && lastSnap.targetType == SnapType.Edge)
             local = toLocalP(pointOnEdgeUnder(toWorldP(placed), lastSnap.targetIndex));

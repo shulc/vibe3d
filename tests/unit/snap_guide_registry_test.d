@@ -97,6 +97,30 @@ unittest { // the tier order of a proposed position
            placed.targetType == SnapType.None && (placed.worldPos - prop).length < 1e-6f,
         format("with no element the proposed point must place: %s", placed));
 
+    // Every guide is asked with the ENUMERATION's rank: a higher-priority
+    // guide that leaves the distance alone is not handed a lower one's answer.
+    static final class FarRank : SnapGuide {
+        void limits(float, float) {}
+        bool proximity(Vec3, SnapType, int, int, ref float d, ref int) { d = 1000; return true; }
+        void setDrawState(GuideDrawState) {}
+        uint flags() const { return 0; }
+        bool propose(Vec3, int, int, const ref Viewport, const ref SnapPacket,
+                     out Vec3, out SnapType) { return false; }
+    }
+    static final class TopPassThrough : SnapGuide {
+        void limits(float, float) {}
+        bool proximity(Vec3, SnapType, int, int, ref float, ref int p) { p = 5; return true; }
+        void setDrawState(GuideDrawState) {}
+        uint flags() const { return 0; }
+        bool propose(Vec3, int, int, const ref Viewport, const ref SnapPacket,
+                     out Vec3, out SnapType) { return false; }
+    }
+    invalidateSnapGrids();
+    const ranked = snapCursor(cur, sx, sy, vp, one, ModelSpace.world(), cfg, null, null,
+                              [cast(SnapGuide)new FarRank, new TopPassThrough]);
+    assert(ranked.snapped && ranked.targetType == SnapType.Vertex,
+        format("the top guide's untouched distance is the enumeration's (5 px), not 1000: %s", ranked));
+
     // Beyond the inner range it does not place.
     g.at = Vec3(0, 0, 0.5f);
     assert(pix(g.at, sx, sy) > cfg.innerRangePx, "fixture: the far proposal is out of range");
@@ -131,6 +155,14 @@ unittest { // the pen's LineGuide: lines by point count, its two gates
     assert(count(g, SnapType.StraightLine) == 2 && count(g, SnapType.RightAngle) == 2 &&
            count(g, SnapType.WorldAxis) == 4,
         format("4 points: 2 lines, 2 right angles, 4 axes; got %s", g.lines));
+    // A degenerate side (two coincident points) offers no line along it.
+    g.aim([p4[0], p4[0], p4[2]], 2, up);
+    assert(count(g, SnapType.RightAngle) == 0 && count(g, SnapType.WorldAxis) == 4,
+        format("coincident p0 = p1 (both sides of p2 degenerate): no right angle, 4 axes; got %s",
+               g.lines));
+    foreach (l; g.lines)
+        assert(l.dir.length > 0.99f && l.dir.length < 1.01f, format("a line without a direction: %s", l));
+    g.aim(p4, 3, up);
     // The prev-side line runs through p2 along p2 - p1.
     assert((g.lines[0].origin - p4[2]).length < 1e-6f &&
            (g.lines[0].dir - (p4[2] - p4[1]) / (p4[2] - p4[1]).length).length < 1e-6f,
@@ -184,13 +216,13 @@ unittest { // the pen's guide lifetime in its production text (signalling census
     foreach (gone; ["applyPenGuide", "guideBits"])
         assert(wordsAt(pen, gone).length == 0, "pen.d names `" ~ gone ~ "` again");
     // One registration, inside the drag press; one removal, in endDragGuide,
-    // which the release, the drop and the activation reach.
+    // which the release and the drop reach.
     assert(wordsAt(pen, "addGuide").length == 1 && wordsAt(body("void armDrag("), "addGuide").length == 1,
         "pen.d registers its guide outside the drag press");
     assert(wordsAt(pen, "removeGuide").length == 1 &&
            wordsAt(body("void endDragGuide("), "removeGuide").length == 1,
         "pen.d removes its guide outside endDragGuide");
-    foreach (decl; ["bool onMouseButtonUp(", "void deactivate(", "void activate("])
+    foreach (decl; ["bool onMouseButtonUp(", "void deactivate("])
         assert(wordsAt(body(decl), "endDragGuide").length == 1, decl ~ " does not end the drag's guide");
     // A switch mid-drag (the prepared door, no release) ends it too.
     assert(wordsAt(body("PreparedPenDeactivateImage buildPreparedDeactivateState("),

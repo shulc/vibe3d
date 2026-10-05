@@ -630,6 +630,23 @@ unittest {
     penCommand("tool.pipe.attr snap enabled false");
     assert(!leaked, "pen-snap-key-after-click: X was delivered under a held button after the pen's "
         ~ "clicks (a click's guide outlived its release)");
+    // pen-snap-key-drop: dropping the pen mid-drag ends its guide.
+    twoClicks();
+    { Log m; m.motion(b, 0); m.button(true, b); path(m, b, e, 1, 4, 8); m.play(); }
+    penCommand("tool.set pen off");
+    { Log m; m.button(false, e); m.play(); }
+    forgetConstraint();
+    penCommand("tool.set move");
+    {
+        Log k; k.motion(a, 0); k.button(true, a); k.key(true, 1000); k.play();
+        const afterDrop = snapOn();
+        k.key(false, 1100); k.button(false, a); k.play();
+        penCommand("tool.pipe.attr snap enabled false");
+        penCommand("tool.set move off");
+        assert(!afterDrop, "pen-snap-key-drop: X was delivered in Move after the pen was dropped "
+            ~ "mid-drag (the pen's guide outlived its tool)");
+    }
+    penCommand("tool.set pen on");
     // pen-snap-key-switch: a switch to Move mid-drag ends the pen's guide (a
     // later held button in Move holds none).
     twoClicks();

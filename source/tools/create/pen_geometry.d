@@ -164,7 +164,7 @@ void revKeepFirst(uint[] ring) nothrow @nogc {
 /// angle (n >= 3) in the plane, perpendicular to those sides. `propose` projects
 /// the client point along the eye onto every line whose bit the packet enables
 /// and offers the nearest on screen (ties: the first); it re-ranks nothing.
-/// `live` is the pen's per-event gate: a drag point the surface did not place.
+/// `live` is the pen's per-event gate: a point the surface did not place.
 final class LineGuide : SnapGuide {
     struct Line { Vec3 origin, dir; SnapType type; }
     Line[] lines;
@@ -186,10 +186,8 @@ final class LineGuide : SnapGuide {
             foreach (ax; [Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1)])
                 if (abs(dot(ax, nrm)) <= 0.9f)
                     add(pts[side[k]], ax, SnapType.WorldAxis);
-        foreach (k; 0 .. 2) if (n >= 3) {
-            const seg = pts[side[k]] - pts[far[k]];
-            if (seg.length > 1e-6f) add(pts[side[k]], cross(nrm, normalize(seg)), SnapType.RightAngle);
-        }
+        foreach (k; 0 .. 2) if (n >= 3)
+            add(pts[side[k]], cross(nrm, pts[side[k]] - pts[far[k]]), SnapType.RightAngle);
     }
 
     bool propose(Vec3 p, int px, int py, const ref Viewport vp, const ref SnapPacket cfg,
