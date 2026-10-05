@@ -2504,7 +2504,7 @@ unittest { // Tasks 7990/8030: production topology R wiring, not a helper replic
         && carrier.canFind("stepAfterAttrs_"),
         "history command lost topology basis or attributes");
     const panelDraw = squeeze(bodyAt(panelCode,
-        "void drawProvider(ParamProvider p, EditSession session)"));
+        "void drawProvider(ParamProvider p, EditSession session, string toolId = null)"));
     inOrder(panelDraw, [
         "beforeWrite=tisnull||!t.sessionPolicy().stepsParamWrites()?AttrImage.init:t.captureAttrImage();",
         "boolchanged=drawParamWidget(par);",

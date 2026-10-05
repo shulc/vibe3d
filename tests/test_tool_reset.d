@@ -65,6 +65,8 @@ unittest {
     assert(approxEqual(d0.floating, 45.0),
         "fresh slice tool snapAngle default should be 45, got " ~ d0.toString);
 
+    cmd("tool.pipe.attr snap enabled true");     // Angle Snap needs snapping on (K-A3)
+    scope (exit) cmd("tool.pipe.attr snap enabled false");
     cmd("tool.attr mesh.sliceTool snap true");   // Angle is enabled only under Angle Snap
     cmd("tool.attr mesh.sliceTool snapAngle 30");
     auto changed = query("tool.attr mesh.sliceTool snapAngle ?");

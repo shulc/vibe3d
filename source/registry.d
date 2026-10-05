@@ -296,7 +296,7 @@ public:
         foreach (id; toolKeys) {
             auto tool = toolFactories_[id]();
             toolModes[id]       = tool.supportedModes().dup;
-            // The door's bounds, not the declaration (task 9492).
+            // The door's bounds (tool_attr_bounds), not the declaration.
             import tool_attr_bounds : applyToolAttrBound;
             auto ps = tool.params();
             foreach (ref p; ps) applyToolAttrBound(id, p);

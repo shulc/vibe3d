@@ -238,7 +238,8 @@ unittest {
     // Wave-2 PRM1: eleven parameter-update owner modules became one (-10).
     // Wave-2 PRM2: five more folded into it (-5).
     // Task 9429: the topology tools compose `tools.topology_step` (+1).
-    assert(sourceFiles >= 500 && createSeen == 1 && create.queue.length == 250,
+    // Task 9492: the attribute doors read `tool_attr_bounds` (+1).
+    assert(sourceFiles >= 500 && createSeen == 1 && create.queue.length == 251,
         format("6507 import scanner population: files=%d create=%d closure=%d",
             sourceFiles, createSeen, create.queue.length));
     assert("editor_app" in positive.reached,

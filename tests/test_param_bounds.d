@@ -165,6 +165,20 @@ immutable string[] blockAAllowlist = [
     "mesh.loopSliceTool.insertAt",
         // ditto — the tool's second position-typed reject-sentinel field
         // (drives per-gesture "current" slice placement).
+
+    // --- Unbounded above at the tool attribute doors (task 9492): the
+    //     captured executed write stores any count as given (K-A3 table b),
+    //     so the door bound has a min and no max; each kernel caps the count
+    //     (MAX_BOX_SEGMENTS, MAX_PRIM_RING, arrayFacesGrid's slot cap,
+    //     MAX_RADIAL_ARRAY_COUNT, MAX_BEVEL_SEGMENTS, MAX_EXTEND_SEGMENTS,
+    //     MAX_ALIGN_SIDES, MAX_SMOOTH_ITER). A prim.* / xfrm.smooth id is both
+    //     a tool and its scripted one-shot command, one door each. ---
+    "prim.cube.segmentsX", "prim.cube.segmentsY", "prim.cube.segmentsZ",
+    "prim.cube.segmentsR", "prim.capsule.endsegments", "prim.ellipsoid.segments",
+    "prim.torus.minorSegments", "xfrm.smooth.iter",
+    "edge.extend.segments", "mesh.arrayTool.numX", "mesh.arrayTool.numY",
+    "mesh.arrayTool.numZ", "mesh.clone.num", "mesh.radialArrayTool.count",
+    "poly.bevel.segments", "xfrm.radialAlignTool.side",
 ];
 
 unittest { // BlockA_BornClampedContract
@@ -268,8 +282,8 @@ unittest { // BlockB_LoopSliceCountSetTimeGuard
         auto q = postCommandRaw("tool.attr mesh.loopSliceTool count ?");
         assert(q["status"].str == "ok", "count read-back failed: " ~ q.toString);
         long v = q["value"].integer;
-        assert(v >= 1 && v <= 256,
-            "loopSliceTool.count should clamp to [1,256], got " ~ v.to!string ~
+        assert(v >= 1 && v <= 1024,     // the captured [1, 1024] (K-A3, task 9492)
+            "loopSliceTool.count should clamp to [1,1024], got " ~ v.to!string ~
             " for extreme " ~ extreme);
     }
     postCommand("tool.set mesh.loopSliceTool off");

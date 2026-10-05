@@ -1254,7 +1254,7 @@ unittest {
             "forms_.draw(*stageForm, stage, dispatch_, interactive_, , stage.id());";
         assert(flatActions.count(toolFormDraw) == 1
             && flatActions.count(stageFormDraw) == 1
-            && flatActions.count("panel.draw(activeTool_(), session_);") == 1
+            && flatActions.count("panel.draw(activeTool_(), session_, toolId);") == 1
             && flatActions.count("panel.drawProvider(stage, session_);") == 2
             && flatActions.count(
                 "scope(exit) xf.suppressTRSProperties = false;") == 1

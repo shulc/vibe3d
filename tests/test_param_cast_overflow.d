@@ -94,10 +94,11 @@ unittest { // BoundedIntTooLParamsSurviveWireInfinity
 
     // A sweep that swept nothing would pass silently — the inert-measurement
     // class this whole task exists to avoid. 35 subjects were live when this
-    // was written; the floor is deliberately well under that so ordinary
+    // was written, 19 once task 9492 left the captured unbounded-above counts
+    // with a min only; the floor is deliberately under that so ordinary
     // additions and removals do not trip it, and deliberately above zero.
-    assert(subjects.length >= 20,
-        format("expected >=20 bounded Int tool params, found %d — the sweep "
+    assert(subjects.length >= 15,
+        format("expected >=15 bounded Int tool params, found %d — the sweep "
              ~ "found nothing to sweep", subjects.length));
 
     string[] failures;

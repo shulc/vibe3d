@@ -71,7 +71,7 @@ unittest { // the doors that read the table — and nothing else (a stored-state
     assert(uses.get("tool_attr_bounds.d", 0) == 1, "definition not seen");
     uses.remove("tool_attr_bounds.d");
     // Each door imports the name once and calls it once.
-    size_t[string] want = ["commands/tool/attr.d": 2, "forms_render.d": 2,
-                           "property_panel.d": 2, "registry.d": 2];
+    size_t[string] want = ["commands/tool/attr.d": 2, "commands/tool/headless.d": 2,
+                           "forms_render.d": 2, "property_panel.d": 2, "registry.d": 2];
     assert(uses == want, "applyToolAttrBound readers changed");
 }

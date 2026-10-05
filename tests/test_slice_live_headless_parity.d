@@ -186,6 +186,8 @@ unittest {
     resetCube();
     cmd("tool.set mesh.sliceTool on");
     quiesce();
+    cmd("tool.pipe.attr snap enabled true");   // Angle Snap needs snapping on (K-A3)
+    scope (exit) cmd("tool.pipe.attr snap enabled false");
     foreach (a; ["snap 1", "snapAngle 45", "startX -0.9", "startY 0", "startZ 0",
                  "endX 0.2346", "endY 0", "endZ 0.3907"])
         cmd("tool.attr mesh.sliceTool " ~ a);

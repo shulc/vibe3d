@@ -7,6 +7,7 @@ import editmode;
 import tool : Tool;
 import registry : ToolFactory;
 import params : Param;
+import tool_attr_bounds : applyToolAttrBound;
 import snapshot : MeshSnapshot;
 
 // ---------------------------------------------------------------------------
@@ -52,7 +53,11 @@ public:
     /// toolInstance is reused in apply(), so injected values persist.
     override Param[] params() {
         if (toolInstance is null) toolInstance = factory();
-        return toolInstance.params();
+        // A scripted one-shot writes the attributes through the same captured
+        // bounds as `tool.attr` (tool_attr_bounds).
+        auto ps = toolInstance.params();
+        foreach (ref p; ps) applyToolAttrBound(toolId_, p);
+        return ps;
     }
 
     // TASK 0669 — this command WRITES THE MESH but overrides `apply()`, so it

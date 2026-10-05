@@ -270,9 +270,10 @@ unittest {
     // Wave-2 PRM1: eleven parameter-update owner modules became one (-10 each).
     // Wave-2 PRM2: five more folded into it (-5 each).
     // Task 9429: the topology tools compose `tools.topology_step` (+1 each).
-    assert(edit.queue.length == 248 && positive.queue.length == 513,
-        format("6670 import closure census changed: edit=%d/248 "
-            ~ "registration=%d/513", edit.queue.length,
+    // Task 9492: the attribute doors read `tool_attr_bounds` (+1 each).
+    assert(edit.queue.length == 249 && positive.queue.length == 514,
+        format("6670 import closure census changed: edit=%d/249 "
+            ~ "registration=%d/514", edit.queue.length,
             positive.queue.length));
 }
 

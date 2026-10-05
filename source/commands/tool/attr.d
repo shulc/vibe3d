@@ -134,7 +134,7 @@ class ToolAttrCommand : Command {
             return false;
         }
 
-        // The captured bound clamps the write (task 9492, K-A3).
+        // The captured bound clamps the write (tool_attr_bounds).
         applyToolAttrBound(toolId_, ps[i]);
         // Build a single-key object and inject it.
         JSONValue pj = JSONValue(cast(JSONValue[string]) null);

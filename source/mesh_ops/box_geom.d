@@ -1181,7 +1181,7 @@ void buildCuboidParametric(Mesh* dst, const ref BoxParams stored)
     import std.algorithm : min;
     import std.typecons : Tuple, tuple;
 
-    // The stored counts are unbounded above (task 9492): cap them here.
+    // The stored counts are unbounded above (tool_attr_bounds): cap them here.
     BoxParams p = stored;
     p.segmentsX = min(p.segmentsX, MAX_BOX_SEGMENTS);
     p.segmentsY = min(p.segmentsY, MAX_BOX_SEGMENTS);

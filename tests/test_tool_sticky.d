@@ -205,7 +205,9 @@ unittest {
     resetCube();
 
     cmd("tool.set mesh.sliceTool");
-    // A genuine setting (enabled only under Angle Snap).
+    // A genuine setting (enabled only under Angle Snap, which needs snapping).
+    cmd("tool.pipe.attr snap enabled true");
+    scope (exit) cmd("tool.pipe.attr snap enabled false");
     cmd("tool.attr mesh.sliceTool snap true");
     cmd("tool.attr mesh.sliceTool snapAngle 30");
     // A transient (gesture) param -- the drawn cut-line start point.

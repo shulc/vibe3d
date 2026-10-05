@@ -7,7 +7,8 @@ import params : Param, ParamFlags, paramGateFloat, paramGateInt;
 // write column — the value an out-of-range write actually stores — not the
 // declared hints: several attributes clamp with nothing declared. An absent
 // side is unbounded (the write is stored as given). Read by the `tool.attr`
-// door, the property panel, the forms panel and the registry; the
+// door, the scripted one-shot (`prim.cube` …), the property panel, the forms
+// panel and the registry; the
 // stored-state paths (presets, the attribute cache, undo) never consult it,
 // so each kernel keeps its own `MAX_` cap.
 struct ToolAttrBound {

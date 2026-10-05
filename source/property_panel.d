@@ -168,8 +168,8 @@ public:
     /// the per-stage Tool Properties iteration in ui/tool_properties_panel.d.
     /// The session
     /// receives one ValueWritten phase per mutation and one BatchComplete.
-    /// `toolId` names the tool whose captured attribute bounds apply (task
-    /// 9492); a stage passes none.
+    /// `toolId` names the tool whose captured attribute bounds apply
+    /// (tool_attr_bounds); a stage passes none.
     void drawProvider(ParamProvider p, EditSession session, string toolId = null) {
         if (p is null) return;
         assert(session !is null,
