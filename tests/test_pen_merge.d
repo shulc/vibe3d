@@ -478,7 +478,7 @@ unittest {
     assert(ran == 67, format("pen merge population: %s cells ran, pinned 67", ran));
 
     // Blocked cells (kBlocked) must still fail; one that passes retires its mark.
-    assert(kBlocked.length == 38, format("blocked marks: %s, pinned 38", kBlocked.length));
+    assert(kBlocked.length == 3, format("blocked marks: %s, pinned 3", kBlocked.length));
     string[] open, retired;
     foreach (f; fails)
         if (!(f[0 .. f.indexOf(':')] in kBlocked)) open ~= f;
@@ -490,28 +490,11 @@ unittest {
     assert(open.length == 0, format("pen merge, %s failing: %-(%s\n%)", open.length, open));
 }
 
-// Cells blocked by the S5 writer's PLAN-FINDINGs (task 9362 card): they run and
-// must still differ from the capture until the finding is resolved.
-//   F1 our snap visibility hides what the capture snaps / merges to: the
-//      captured scene triangles are wound away from the top view (culled by
-//      `frontFacingLocal`), and an isolated vertex in a mesh with faces is
-//      hidden ("no front face owns it");
-//   F3 the global grid snap does not place the pen's point on the grid point.
+// Cells blocked until the grid snap places the pen's point on the view's grid
+// node (task 9362 card, F3; waits on the snap service's grid-step part): they
+// run and must still differ (each first asserts the click snapped to G).
 private immutable string[string] kBlocked = [
-    "Msmall_440_d3p5": "F1", "Msmall_440_d4p7": "F1", "Msmall_110_d3p5": "F1",
-    "Msmall_110_d4p7": "F1", "Msmall_880_d3p5": "F1", "Msmall_880_d4p7": "F1",
-    "Msmall_440_ctrl_merge0": "F1", "Msmall_110_ctrl_merge0": "F1",
-    "Msmall_880_ctrl_merge0": "F1", "MsE_880_k30": "F1", "MsE_440_k2": "F1",
-    "MsE_440_k3": "F1", "MsE_440_k12": "F1", "MsE_440_k16": "F1", "MsE_110_k4": "F1",
-    "MsE_110_k12": "F1", "MsE_880_k7": "F1", "MsA_440_along2": "F1",
-    "MsP_440_perp2": "F1", "half-pixel": "F1", "Mvtx": "F1", "Qedge_edge_snap": "F1",
-    "snap_edge_isolated_ev5.0": "F1", "snap_edge_isolated_ev5.5": "F1",
-    "snap_off_isolated_v10": "F1", "scene_radius_440_d0.045455": "F1",
-    "scene_screen_not_world": "F1", "scene_latched_zoom_in": "F1",
-    "scene_later_click": "F1", "scene_drag_end": "F1", "scene_drag_linked_short": "F1",
-    "link_undo": "F1", "merge_grid_near": "F1", "merge_grid_from_placed": "F1",
-    "merge_no_snap_type": "F1", "E4_scene_edge_press": "F1", "scene-edge-20px": "F1",
-    "merge_grid_far": "F3",
+    "merge_grid_far": "F3", "merge_grid_near": "F3", "merge_grid_from_placed": "F3",
 ];
 
 // ---- cell bodies ----------------------------------------------------------
@@ -647,8 +630,17 @@ private string[] gridCell(string cell, JSONValue c, int dg, double dv, bool link
     const v = p(0.1 + dv / 440, 0.2);
     rig(g, 440, meshJson(tri(v), kTri), "grid");
     clickWorld(p(0.1 + dg / 440.0, 0.2));
+    // Must-stay-green premise above the link assert: the click snapped to G
+    // (without it a pointer this close links V by the merge alone).
+    auto s = fetchSnapLast();
+    const w = s["worldPos"].array;
+    const bool onG = s["snapped"].type == JSONType.true_ && abs(w[0].floating - g.x) < 1e-4
+        && abs(w[1].floating - g.y) < 1e-4 && abs(w[2].floating - g.z) < 1e-4;
     clickWorld(kFar[0], kFar[1]);
     drop(); ++ran;
+    if (!onG)
+        return [format("%s: grid premise, the click %s px from G did not snap to it: %s",
+                       cell, dg, s.toString)];
     auto want = linked ? tri(v) ~ kFar[] : tri(v) ~ g ~ kFar[];
     auto e = c["expected"];
     if (linked != (verts(e["vertices"]).length == 5))
