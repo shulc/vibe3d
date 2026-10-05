@@ -476,6 +476,7 @@ tests.unit.session_mesh_key_stamp_as_test
 tests.unit.session_ownership_test
 tests.unit.shading_assets_test
 tests.unit.snap_election_corpus_test
+tests.unit.snap_near_occluder_test
 tests.unit.snap_test
 tests.unit.snap_visibility_corpus_test
 tests.unit.snapshot_test

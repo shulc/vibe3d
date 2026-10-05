@@ -670,12 +670,10 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
     // walk, so visiting them in ascending index order with consider()'s
     // strict-`<` reproduces the old linear scan's winner + tie-break
     // (smallest pixel distance, ties → lowest index) byte-for-byte.
-    // Shared visibility gate (front-facing + unoccluded), computed once per
-    // call and consulted by every GEOMETRIC snap type so snap never cements to
-    // hidden back-facing / occluded geometry (the reported "snaps to invisible
-    // vertex" bug, and the same hole for edges / centers / faces). It's the
-    // CPU front-facing + occlusion test the selection path used before the GPU
-    // id-buffer. Empty when the mesh has no faces (nothing can occlude) so
+    // Shared visibility gate (unhidden + unoccluded; polygons also
+    // front-facing — `doc/measured_laws.md` §3), computed once per call and
+    // consulted by every GEOMETRIC snap type so snap never cements to occluded
+    // geometry. Empty when the mesh has no faces (nothing can occlude) so
     // point/edge-only geometry snaps unfiltered.
     // Per-source geometric candidate walk (layers Stage 5). `slot` keys this
     // source's candidate grids so two layers' grids never alias; `exclude`
@@ -853,27 +851,18 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
             // front-facing test says "front", and this line is the only thing
             // between the snap and a face that is not on screen.
             //
-            // Vertices and edges need no equivalent guard: `visibleVertices`
-            // drops hidden faces from its seed pass, so a derived-hidden
-            // vertex is `vis[vi] == false` and a hidden edge has such an
-            // endpoint by construction. Only the FACE plane can be hidden
-            // while all of its vertices are visible.
+            // Vertices and edges need no equivalent guard: the probe seeds
+            // `!isVertexHidden`, so a derived-hidden vertex is not visible
+            // and a hidden edge has such an endpoint by construction. Only
+            // the FACE plane can be hidden while all of its vertices are
+            // visible.
             //
             // Placed inside the named gate rather than at its one call site so
             // a second caller inherits it.
             if (m.isFaceHidden(fi)) return false;
             auto vis = &visMask();
             if (vis.admitsAll) return true;
-            // FACING — task 0832. This line used to be a THIRD spelling of the
-            // predicate (the first triangle's cross, in float, culled at
-            // `>= 0`) which disagreed with the other two on a split face. It
-            // is now `math.frontFacingLocal` — one home, carrying the
-            // reference's rule. The `< 3` guard moved in there with it.
-            //
-            // Named for what it is: applying that rule to SNAP is an
-            // ASSUMPTION. The capture (task 0726) drove the lasso, never a
-            // snap gesture, so nobody has measured that the reference culls
-            // this way here. See `frontFacingLocal`'s comment.
+            // FACING is a POLYGON term only (`doc/measured_laws.md` §3).
             if (!frontFacingLocal(m.vertices, face, vpLocal.eye)) return false;
             foreach (v; face)
                 if (!vis.visible(v)) return visAdmit(false);

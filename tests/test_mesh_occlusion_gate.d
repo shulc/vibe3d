@@ -232,9 +232,9 @@ unittest {
 // An OPEN mesh is what separates them. One quad, nothing else in the scene:
 //   * a DEPTH rule keeps its corners under either winding — nothing is in front
 //     of them;
-//   * a FACING rule drops them when the quad is wound away from the eye.
-// `visibleVertices` does the second. Reverse the winding and the same four
-// vertices at the same coordinates change answer, which is the whole point.
+//   * a FACING rule drops it when the quad is wound away from the eye.
+// Since task 9387 the vertex leg follows the first and the POLYGON leg the
+// second (`doc/measured_laws.md` §3); the cell below pins both.
 //
 // Task 0832 — WHAT THIS FIXTURE STILL PROVES, AND WHAT IT DOES NOT. The facing
 // term now has exactly one implementation, `math.frontFacingLocal`, carrying
@@ -289,23 +289,38 @@ unittest {
     assert(facingDot(away, vp.eye) > 0.0,
         "fixture: the reversed winding must be BACK-facing for this eye");
 
-    // Same four coordinates, nothing occluding them, opposite answers.
-    auto visToward = toward.visibleVertices(vp.eye, vp, ModelSpace.world());
+    // Since task 9387 facing is a POLYGON term (`doc/measured_laws.md` §3):
+    // the snap service's polygon leg culls the away quad, its vertex leg does
+    // not. Driven through `snapCursor` itself, cursor on the quad's centre.
+    import snap : snapCursor, SnapResult, invalidateSnapGrids;
+    import toolpipe.packets : SnapPacket, SnapType, SnapMode;
+    import math : projectToWindowFull;
+    float cx, cy, cz;
+    assert(projectToWindowFull(Vec3(0.2f, 0.1f, 0), vp, cx, cy, cz),
+        "fixture: the quad's interior must project");
+    SnapResult snapAt(const ref Mesh m, SnapType type) {
+        SnapPacket cfg;
+        cfg.enabled      = true;
+        cfg.enabledTypes = type;
+        cfg.snapScope    = SnapMode.Global;
+        cfg.innerRangePx = 1.0e5f;
+        cfg.outerRangePx = 1.0e5f;
+        invalidateSnapGrids();
+        return snapCursor(Vec3(0, 0, 0), cast(int)cx, cast(int)cy, vp, m,
+                          ModelSpace.world(), cfg);
+    }
+    // Must-stay-green first: the front quad snaps on both legs.
+    assert(snapAt(toward, SnapType.Polygon).snapped,
+        "control: a front-facing lone quad must take a POLYGON snap");
+    assert(snapAt(toward, SnapType.Vertex).snapped,
+        "control: a front-facing lone quad must take a VERTEX snap");
+    assert(!snapAt(away, SnapType.Polygon).snapped,
+        "the POLYGON leg HAS a facing term: a lone quad wound away from the eye "
+        ~ "takes no polygon snap even though nothing is in front of it");
+    auto awayVis = away.visibleVertices(vp.eye, vp, ModelSpace.world());
     foreach (vi; 0 .. 4)
-        assert(visToward[vi],
-            format("v%d of a front-facing lone quad must be visible", vi));
-
-    auto visAway = away.visibleVertices(vp.eye, vp, ModelSpace.world());
-    foreach (vi; 0 .. 4)
-        assert(!visAway[vi],
-            format("v%d: `Mesh.visibleVertices` HAS a facing term — a lone quad"
-                ~ " wound away from the eye is invisible even though nothing is"
-                ~ " in front of it. If this now passes as visible, the facing"
-                ~ " term was removed, and that changes what SNAP grabs"
-                ~ " (source/snap.d walkSource) — not just what a pass draws."
-                ~ " If it was removed deliberately for a wireframe rule, see"
-                ~ " doc/tasks/backlog/0577 first. Since task 0832 the predicate"
-                ~ " has ONE implementation (math.frontFacingLocal), so removing"
-                ~ " it here removes it from the lasso and the snapper in the"
-                ~ " same edit — which is the point, but say so out loud.", vi));
+        assert(awayVis[vi], format("v%d: a vertex has NO facing term — a lone "
+            ~ "quad wound away from the eye leaves its corners visible", vi));
+    assert(snapAt(away, SnapType.Vertex).snapped,
+        "the VERTEX leg has no facing term: the away quad's corner still snaps");
 }

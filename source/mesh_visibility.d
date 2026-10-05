@@ -62,12 +62,12 @@ import screen_buckets : ScreenBuckets, buildScreenBuckets, queryScreenCell,
 version (unittest) {
     struct VisibilityCounters {
         // --- clause counters ---
-        long occluded;      // seeded TRUE by pass 1, turned false by pass 2
-        long seedFalse;     // never seeded: no unhidden front-facing face owns it
+        long occluded;      // seeded TRUE, turned false by an occluder
+        long seedFalse;     // never seeded: the vertex is hidden
         long invalidProj;   // behind the camera — `projectToWindowFull` said no
         long hiddenSkip;    // faces dropped by `isFaceHidden`
         long anyValidSkip;  // faces dropped: EVERY corner is behind the eye
-        long allValidSkip;  // faces dropped: SOME corner is behind the eye
+        long nearOccluders; // faces kept as NEAR occluders: SOME corner behind the eye
         // --- PATH counters (task 1351 Ф1.5) ---
         //
         // The five clause counters above take IDENTICAL values on the linear
@@ -112,14 +112,11 @@ version (unittest) {
 // result is a bool. So evaluating on demand, in any order, and memoising,
 // returns the same array `visibleVertices` returned before.
 //
-// THE ONE ASYMMETRY WORTH SPELLING OUT, because the obvious factoring gets
-// it backwards: a vertex that IS seeded but whose projection failed comes
-// out VISIBLE, not hidden. Pass 1 seeds every corner of a front-facing
-// unhidden face BEFORE the all-corners-valid filter runs, so a face with
-// one corner behind the eye still seeds all four; pass 2 then skipped such
-// a vertex (`continue`) and left the seeded `true` standing. Writing
-// `if (!seed || !valid) return false` would flip those to hidden. The
-// corpus's `straddling` fixture is the one that says so.
+// THE ONE ASYMMETRY WORTH SPELLING OUT: a vertex that IS seeded (unhidden)
+// but whose projection failed comes out VISIBLE, not hidden — pass 2 has no
+// screen position to test it against. Writing `if (!seed || !valid) return
+// false` would flip those to hidden. The corpus's `straddling` fixture is the
+// one that says so.
 //
 // WHAT IT DOES NOT KEEP, and why (task 1351 Ф2):
 //   * the per-face `sxs` / `sys` screen-corner arrays. A face reaches the
@@ -151,6 +148,11 @@ struct VisibilityProbe {
         uint[]   frontIdx_;
         float[]  frontBox_;    // 4 per entry: minX, maxX, minY, maxY
         double[] frontN_;      // 3 per entry: the face plane's normal
+        // NEAR occluders: front-facing unhidden faces with SOME corner behind
+        // the eye. No screen ring exists for them, so they are walked
+        // unbucketed and tested inside their own plane.
+        uint[]   nearIdx_;
+        double[] nearN_;       // 3 per entry, as `frontN_`
         // Reused corner gather for `pointInPolygon2D`.
         float[]  scratchX_, scratchY_;
         // Memo: `computed_` says an answer exists, `answer_` is it. Two
@@ -229,12 +231,6 @@ struct VisibilityProbe {
     // moves what every snap client sees); see task 0539.
     // ---------------------------------------------------------------
     private bool evaluate(size_t vi) {
-        import math : pointInPolygon2D;
-        import std.math : abs, sqrt;
-
-        enum double COINCIDENCE_DIVISOR = 3_360_000.0;
-        enum double COINCIDENCE_FLOOR   = 1e-10;
-
         if (!seed_[vi]) {
             version (unittest) ++g_visCounters.seedFalse;
             return false;
@@ -243,6 +239,19 @@ struct VisibilityProbe {
         // it against and left the seed standing. See the asymmetry note on
         // the struct.
         if (!vsValid_[vi]) return true;
+        if (!hiddenByOccluder(vi)) return true;
+        version (unittest) ++g_visCounters.occluded;
+        return false;
+    }
+
+    // Does any occluder hide seeded, projected vertex `vi`? The screen walk
+    // (bucketed or linear) first, then the near occluders.
+    private bool hiddenByOccluder(size_t vi) {
+        import math : pointInPolygon2D;
+        import std.math : abs, sqrt;
+
+        enum double COINCIDENCE_DIVISOR = 3_360_000.0;
+        enum double COINCIDENCE_FLOOR   = 1e-10;
 
         immutable float vsxi = vsx_[vi], vsyi = vsy_[vi];
         const Vec3 vpos = mesh_.vertices[vi];
@@ -366,39 +375,76 @@ struct VisibilityProbe {
                     }
                 }
             }
-            if (!coincidentSurface
-                && !pointInPolygon2D(vsxi, vsyi,
+            if (coincidentSurface
+                || !pointInPolygon2D(vsxi, vsyi,
                                      scratchX_[0 .. face.length],
                                      scratchY_[0 .. face.length])) continue;
+            double t;
+            if (!hidesBehindPlane(face, frontN_[j * 3 .. j * 3 + 3], vpos,
+                                  lenDir, tol, t)) continue;
 
-            immutable size_t no = j * 3;
-            const double denom = frontN_[no] * dirX + frontN_[no + 1] * dirY
-                               + frontN_[no + 2] * dirZ;
-            if (abs(denom) < 1e-9) continue;   // ray parallel to the plane
-            const Vec3 p0 = mesh_.vertices[face[0]];
-            const double t = (frontN_[no]     * (cast(double)p0.x - localEye_.x)
-                            + frontN_[no + 1] * (cast(double)p0.y - localEye_.y)
-                            + frontN_[no + 2] * (cast(double)p0.z - localEye_.z))
-                            / denom;
-            if (t <= 0.0) continue;            // no hit in front of the eye
-
-            // t - 1, formed as dot(n, p0 - C)/denom rather than by
-            // subtracting 1 from t: the subtraction cancels catastrophically
-            // exactly where the exemption is decided (t within 1e-8 of 1).
-            const double tm1 = (frontN_[no]     * (cast(double)p0.x - cx)
-                              + frontN_[no + 1] * (cast(double)p0.y - cy)
-                              + frontN_[no + 2] * (cast(double)p0.z - cz))
-                              / denom;
-
-            // |H - C| = |t - 1| * |C - O|, since H = O + t*(C - O).
-            if (abs(tm1) * lenDir <= tol) continue;   // clause 1
-            if (tm1 >= 0.0) continue;                 // clauses 2 + 3
-            if (coincidentSurface) continue;
-
-            version (unittest) ++g_visCounters.occluded;
-            return false;
+            return true;
         }
-        return true;
+
+        // THE NEAR OCCLUDERS: a front face with a corner behind
+        // the eye has no screen ring, so its inside test runs in its own
+        // plane — H = eye + t·(C − eye), the dominant axis of its normal
+        // dropped. Same depth clauses as above, no broad phase.
+        foreach (k, fi; nearIdx_) {
+            const(uint)[] face = mesh_.faces[fi];
+            bool ownsVi = false;
+            foreach (v; face) if (v == vi) { ownsVi = true; break; }
+            if (ownsVi) continue;
+            const double[] n = nearN_[k * 3 .. k * 3 + 3];
+            double t;
+            if (!hidesBehindPlane(face, n, vpos, lenDir, tol, t)) continue;
+            immutable size_t drop = abs(n[0]) >= abs(n[1])
+                ? (abs(n[0]) >= abs(n[2]) ? 0 : 2)
+                : (abs(n[1]) >= abs(n[2]) ? 1 : 2);
+            immutable size_t ua = drop == 0 ? 1 : 0, ub = drop == 2 ? 1 : 2;
+            const double[3] h = [localEye_.x + t * dirX, localEye_.y + t * dirY,
+                                 localEye_.z + t * dirZ];
+            foreach (i, vk; face) {
+                const Vec3 q = mesh_.vertices[vk];
+                const float[3] qa = [q.x, q.y, q.z];
+                scratchX_[i] = qa[ua];
+                scratchY_[i] = qa[ub];
+            }
+            if (!pointInPolygon2D(cast(float)h[ua], cast(float)h[ub],
+                                  scratchX_[0 .. face.length],
+                                  scratchY_[0 .. face.length])) continue;
+            return true;
+        }
+        return false;
+    }
+
+    // The depth clauses of the gate (see the block above `evaluate`), for
+    // the eye→C ray against the plane of `face` with normal `n`: true when
+    // the ray meets the plane in front of the eye (`t > 0`, returned), the
+    // hit is not C itself (clause 1) and C lies strictly beyond it
+    // (clauses 2 + 3). The inside-the-polygon test is the caller's.
+    private bool hidesBehindPlane(const(uint)[] face, const double[] n, Vec3 c,
+                                  double lenDir, double tol, out double t) const {
+        import std.math : abs;
+        const double cx = c.x, cy = c.y, cz = c.z;
+        const double dirX = cx - localEye_.x, dirY = cy - localEye_.y,
+                     dirZ = cz - localEye_.z;
+        const double denom = n[0] * dirX + n[1] * dirY + n[2] * dirZ;
+        if (abs(denom) < 1e-9) return false;   // ray parallel to the plane
+        const Vec3 p0 = mesh_.vertices[face[0]];
+        t = (n[0] * (cast(double)p0.x - localEye_.x)
+           + n[1] * (cast(double)p0.y - localEye_.y)
+           + n[2] * (cast(double)p0.z - localEye_.z)) / denom;
+        if (t <= 0.0) return false;            // no hit in front of the eye
+        // t - 1, formed as dot(n, p0 - C)/denom rather than by subtracting 1
+        // from t: the subtraction cancels catastrophically exactly where the
+        // exemption is decided (t within 1e-8 of 1).
+        const double tm1 = (n[0] * (cast(double)p0.x - cx)
+                          + n[1] * (cast(double)p0.y - cy)
+                          + n[2] * (cast(double)p0.z - cz)) / denom;
+        // |H - C| = |t - 1| * |C - O|, since H = O + t*(C - O).
+        if (abs(tm1) * lenDir <= tol) return false;   // clause 1
+        return tm1 < 0.0;                              // clauses 2 + 3
     }
 }
 
@@ -419,7 +465,6 @@ private VisibilityProbe buildVisibilityProbe(const ref Mesh m, Vec3 eye,
                                               const ref Viewport vp,
                                               const ModelSpace ms,
                                               float queryPadPx,
-                                              bool seedEveryCandidate,
                                               bool exemptCoincidentSurfaces) {
     import math : projectToWindowFull, projectionSpace, ModelSpace,
                   frontFacingLocal;
@@ -478,13 +523,10 @@ private VisibilityProbe buildVisibilityProbe(const ref Mesh m, Vec3 eye,
     p.vsValid_ = new bool [](m.vertices.length);
     p.seed_    = new bool [](m.vertices.length);
     p.exemptCoincidentSurfaces_ = exemptCoincidentSurfaces;
-    // Snap asks only about vertices owned by a drawn, front-facing surface,
-    // while a region gesture asks about EVERY independently projected
-    // candidate, including loose and back-side vertices.  The latter must not
-    // be rejected merely because no face seeded it: that would be a second,
-    // unmeasured facing/ownership term before the actual occlusion predicate.
-    if (seedEveryCandidate) p.seed_[] = true;
+    // THE SEED: every unhidden vertex is a candidate, loose or back-side —
+    // facing is not a vertex/edge term (task 9387, `doc/measured_laws.md` §3).
     foreach (vi, q; m.vertices) {
+        p.seed_[vi] = !m.isVertexHidden(vi);
         float sx, sy, ndcZ;
         if (projectToWindowFull(q, vpLocal, sx, sy, ndcZ)) {
             p.vsx_[vi] = sx; p.vsy_[vi] = sy;
@@ -497,8 +539,8 @@ private VisibilityProbe buildVisibilityProbe(const ref Mesh m, Vec3 eye,
     p.computed_ = new ulong[](words);
     p.answer_   = new ulong[](words);
 
-    // Pass 1: collect front-facing faces with cached screen bboxes + plane
-    // normals, and seed the visibility mask.
+    // Pass 1: collect the OCCLUDERS — front-facing unhidden faces — with
+    // cached screen bboxes + plane normals.
     // The plane normal is carried in DOUBLE (the facing dot moved out to
     // `math.frontFacingLocal`, which carries its own in double too).
     // The depth half of this gate compares against a coincidence tolerance
@@ -525,33 +567,14 @@ private VisibilityProbe buildVisibilityProbe(const ref Mesh m, Vec3 eye,
     size_t maxRing = 0;
     foreach (fi, ref face; m.faces) {
         if (face.length < 3) continue;
-        // Hide (task 0613 S4) — a hidden face is not drawn, so it must
-        // neither SEED visibility for its corners (the `seed = true`
-        // below) nor OCCLUDE anything behind it (pass 2 walks the front
-        // list). One `continue` delivers both, and it is the only Hide
-        // read this function needs:
-        //   * a vertex whose incident faces are ALL hidden is exactly the
-        //     derived-hidden rule (§1.2), and none of them seeds it, so it
-        //     comes out false without a separate `isVertexHidden` sweep —
-        //     a sweep here would be inert, and an inert guard is a guard
-        //     nobody can test;
-        //   * a hidden EDGE has a hidden endpoint by the same rule, so
-        //     `edgeVisible` in snap.d falls out too;
-        //   * a loose vertex is in no face, so it is never seeded true.
-        // A hidden face's corners that ALSO touch a visible face stay
-        // visible, which is right: they are on screen, drawn by that face.
+        // Hide (task 0613 S4) — a hidden face is not drawn, so it does not
+        // OCCLUDE. (Its corners' candidacy is the seed's `isVertexHidden`:
+        // a vertex all of whose faces are hidden derives hidden, §1.2.)
         if (m.isFaceHidden(fi)) {
             version (unittest) ++g_visCounters.hiddenSkip;
             continue;
         }
-        // FACING — task 0832. This used to be its own copy of the rule
-        // (the plane of the first triangle, culled at `>= 0`); it is now
-        // `math.frontFacingLocal`, the one home, and the rule it applies
-        // is the reference's, adopted for parity. Read that function's
-        // comment before changing anything here — in particular, snap is
-        // the ONLY consumer of this mask, and the reference's snap gesture
-        // was never measured, so applying the rule here is a named
-        // ASSUMPTION rather than a measurement.
+        // Only a front-facing face occludes (`math.frontFacingLocal`).
         if (!frontFacingLocal(m.vertices, face, p.localEye_)) continue;
         // `fn` is now ONLY the ray-plane's plane for the depth gate in
         // `evaluate` — it no longer decides facing, and the two are
@@ -561,7 +584,7 @@ private VisibilityProbe buildVisibilityProbe(const ref Mesh m, Vec3 eye,
         // declining to occlude through it.
         double[3] fn = planeNormal(m.vertices[face[0]], m.vertices[face[1]],
                                    m.vertices[face[2]]);
-        foreach (vi; face) p.seed_[vi] = true;
+        if (face.length > maxRing) maxRing = face.length;
 
         float mnx = float.infinity, mxx = -float.infinity;
         float mny = float.infinity, mxy = -float.infinity;
@@ -574,17 +597,21 @@ private VisibilityProbe buildVisibilityProbe(const ref Mesh m, Vec3 eye,
             if (p.vsy_[vk] < mny) mny = p.vsy_[vk];
             if (p.vsy_[vk] > mxy) mxy = p.vsy_[vk];
         }
-        // A face with any corner behind the camera can't reliably act as
-        // an occluder via screen-space tests — skip it. Vertex-on-face
-        // candidacy was already seeded above, so nothing is lost.
+        // Wholly behind the eye plane: it cannot be hit at 0 < t < 1.
         if (!anyValid) {
             version (unittest) ++g_visCounters.anyValidSkip;
             continue;
         }
+        // SOME corner behind the eye: no screen ring, so a NEAR occluder,
+        // tested in its own plane by `evaluate`. GL clips at the near plane,
+        // not the eye plane, so a sliver between the two occludes while not
+        // drawn — accepted.
         bool allValid = true;
         foreach (vk; face) if (!p.vsValid_[vk]) { allValid = false; break; }
         if (!allValid) {
-            version (unittest) ++g_visCounters.allValidSkip;
+            version (unittest) ++g_visCounters.nearOccluders;
+            p.nearIdx_ ~= cast(uint)fi;
+            p.nearN_ ~= fn[0]; p.nearN_ ~= fn[1]; p.nearN_ ~= fn[2];
             continue;
         }
 
@@ -592,7 +619,6 @@ private VisibilityProbe buildVisibilityProbe(const ref Mesh m, Vec3 eye,
         p.frontBox_ ~= mnx; p.frontBox_ ~= mxx;
         p.frontBox_ ~= mny; p.frontBox_ ~= mxy;
         p.frontN_   ~= fn[0]; p.frontN_ ~= fn[1]; p.frontN_ ~= fn[2];
-        if (face.length > maxRing) maxRing = face.length;
     }
     p.scratchX_ = new float[](maxRing);
     p.scratchY_ = new float[](maxRing);
@@ -618,13 +644,13 @@ private VisibilityProbe buildVisibilityProbe(const ref Mesh m, Vec3 eye,
     return p;
 }
 
-/// Snap visibility: only vertices owned by a front-facing drawn face enter
-/// the candidate set.  The default query pad is part of the existing snap
-/// broad-phase contract.
+/// Snap visibility: every unhidden vertex is a candidate, culled only by an
+/// occluding front face (`doc/measured_laws.md` §3).  The default query pad
+/// is part of the existing snap broad-phase contract.
 VisibilityProbe visibilityProbe(const ref Mesh m, Vec3 eye,
                                 const ref Viewport vp, const ModelSpace ms,
                                 float queryPadPx = 80.0f) {
-    return buildVisibilityProbe(m, eye, vp, ms, queryPadPx, false, false);
+    return buildVisibilityProbe(m, eye, vp, ms, queryPadPx, false);
 }
 
 /// Region-gesture occlusion (task 5270): every vertex is an independent
@@ -634,7 +660,7 @@ VisibilityProbe visibilityProbe(const ref Mesh m, Vec3 eye,
 VisibilityProbe regionVisibilityProbe(const ref Mesh m, Vec3 eye,
                                       const ref Viewport vp,
                                       const ModelSpace ms) {
-    return buildVisibilityProbe(m, eye, vp, ms, 80.0f, true, true);
+    return buildVisibilityProbe(m, eye, vp, ms, 80.0f, true);
 }
 
 // Task 0617 Stage 4: `ms` is the caller's `ModelSpace` for THIS mesh

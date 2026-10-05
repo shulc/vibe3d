@@ -113,7 +113,8 @@ class SnapStage : Stage, Operator {
         // NB: SnapStage shadows Stage.enabled with its own field
         // (default false). `this.enabled` resolves to the SnapStage one.
         if (!this.enabled) return false;
-        import toolpipe.packets : WorkplanePacket;
+        import toolpipe.packets : WorkplanePacket, SubjectPacket;
+        import viewgrid : viewGridSizeFor, g_viewGrid;
         SnapPacket pkt;
         pkt.config = config;
         if (auto wp = vts.get!WorkplanePacket()) {
@@ -122,7 +123,13 @@ class SnapStage : Stage, Operator {
             pkt.workplaneAxis1  = wp.axis1;
             pkt.workplaneAxis2  = wp.axis2;
         }
-        pkt.gridStep = fixedGrid ? fixedGridSize : 1.0f;
+        // The grid step is the VIEW's drawn grid; `snap.d` keeps
+        // its 1.0 fallback for a packet built outside this stage.
+        if (fixedGrid) {
+            pkt.gridStep = fixedGridSize;
+        } else if (auto subj = vts.get!SubjectPacket()) {
+            pkt.gridStep = viewGridSizeFor(subj.viewport, g_viewGrid);
+        }
         _publishedPacket = pkt;
         vts.put(&_publishedPacket);
 

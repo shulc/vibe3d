@@ -952,9 +952,10 @@ unittest {
     // Fixture premise at IDENTITY: corner 6 (2.5,0.5,0.5) is the cube's
     // nearest corner to the eye — it sits on all three eye-facing faces
     // (+X, +Y, +Z) and nothing occludes it — so it must read visible.
-    // Corner 0 (1.5,-0.5,-0.5) is the farthest corner, sitting on all three
-    // AWAY-facing faces (min-X, -Y, -Z), so every face it belongs to is
-    // back-facing and it must read hidden.
+    // Corner 0 (1.5,-0.5,-0.5) is the farthest corner, behind the three
+    // eye-facing faces, so it must read hidden — by OCCLUSION: a vertex has
+    // no facing term of its own (task 9387), and facing decides only which
+    // faces occlude, so the mirror XOR below would still turn it visible.
     bool[] visIdentity = m.visibleVertices(vp.eye, vp, ModelSpace.world());
     assert(visIdentity[6] == true,
         "fixture: at identity the cube corner nearest the eye must be visible");

@@ -221,11 +221,10 @@ private Mesh longEdgeMesh() {
 // Vertices BEHIND the eye, and — the half that matters — a LARGE face with
 // exactly ONE corner behind it, sitting between the eye and a dense sheet.
 //
-// That face SEEDS its corners visible (the seed loop runs before the
-// all-corners-valid filter) but must never OCCLUDE, because a screen-space
-// polygon test on a corner that has no screen position is meaningless: the
-// unset corner reads (0, 0), which is a real pixel, so the polygon silently
-// becomes a different shape covering a different part of the screen.
+// That face must never occlude through a SCREEN-space polygon test: the
+// corner with no screen position reads (0, 0), a real pixel, so the polygon
+// would silently become a different shape. It occludes as a NEAR occluder,
+// inside its own plane (task 9387; `snap_near_occluder_test.d`).
 //
 // THE FIRST VERSION OF THIS FIXTURE WAS TWELVE VERTICES AND PROVED NOTHING.
 // M5 (drop the `allValid` filter) came back GREEN on it: the distorted
@@ -281,12 +280,19 @@ private Mesh hiddenMiddleMesh() {
     // factories leave un-sized — hide without this line and the call is a
     // silent no-op, which is exactly how a fixture goes inert.
     m.resizeFaceSelection();
+    // ...and the VERTEX plane too: the probe seeds `!isVertexHidden`, which
+    // reads the derived vertex Hide bit — un-sized, the lid's corners never
+    // derive hidden and the Hide seed goes untested (task 9387).
+    m.resizeVertexSelection();
+    m.resizeEdgeSelection();
     immutable size_t lidA = m.faces.length - 2, lidB = m.faces.length - 1;
     m.setFaceHidden(lidA, true);
     m.setFaceHidden(lidB, true);
     m.setFaceHidden(48 * 3 + 3, true);   // an interior quad of the sheet
     assert(m.isFaceHidden(lidA) && m.isFaceHidden(lidB) && m.isFaceHidden(48 * 3 + 3),
         "fixture: the hidden faces must actually be marked Hide");
+    assert(m.isVertexHidden(b) && m.isVertexHidden(b + 3),
+        "fixture: the lid's own corners must derive hidden");
     return m;
 }
 
@@ -327,10 +333,10 @@ private Mesh facingLawMesh() {
     return m;
 }
 
-// ONE face, wound AWAY from the eye, with nothing in front of it. Nothing can
-// occlude here, so the SEED term is the only thing that separates "not
-// visible" from "visible" — M6 (drop the seed from the per-vertex answer)
-// reddens on this fixture and on no other.
+// ONE face, wound AWAY from the eye, with nothing in front of it: every
+// corner is a candidate and visible — facing is not a vertex term, and the
+// away face occludes nothing (task 9387). (The seed's other half, Hide, is
+// `hiddenmid`'s lid.)
 private Mesh awayQuad() {
     Mesh m;
     m.vertices = [
@@ -380,14 +386,12 @@ unittest {
 // THE EXPECTED PATH, per fixture.
 //
 // `grid` = every probe resolved to a bucket; `linear` = every probe walked the
-// whole front list; `mixed` = both arms ran; `none` = pass 2 never ran at all,
-// which is a REAL state and not an omission — on a mesh whose every face is
-// back-facing nothing is seeded, so no candidate ever reaches the occluder
-// walk. Stated per fixture and asserted per fixture: a SUM over the corpus
+// whole front list; `mixed` = both arms ran. Stated per fixture and asserted
+// per fixture: a SUM over the corpus
 // would be satisfied by one fixture taking the grid arm and would say nothing
 // about the other ten.
 // ---------------------------------------------------------------------------
-private enum Path { grid, linear, mixed, none }
+private enum Path { grid, linear, mixed }
 
 unittest {
     import std.array   : appender;
@@ -416,7 +420,7 @@ unittest {
         Fixture("straddling",  heap(straddlingMesh()),      Path.mixed),
         Fixture("hiddenmid",   heap(hiddenMiddleMesh()),    Path.grid),
         Fixture("facinglaw",   heap(facingLawMesh()),       Path.mixed),
-        Fixture("awayquad",    heap(awayQuad()),            Path.none),
+        Fixture("awayquad",    heap(awayQuad()),            Path.grid),
     ];
 
     // --- the cameras -------------------------------------------------------
@@ -523,11 +527,11 @@ unittest {
                     text.length, h, outPath.length ? " -> " ~ outPath : "");
 
     stderr.writefln("snap visibility corpus: %d cases | occluded=%d seedFalse=%d "
-                  ~ "invalidProj=%d hiddenSkip=%d anyValidSkip=%d allValidSkip=%d "
+                  ~ "invalidProj=%d hiddenSkip=%d anyValidSkip=%d nearOccluders=%d "
                   ~ "grid=%d linear=%d gridOutsideVp=%d gridNegPixel=%d pairs=%d",
                     cases, g_visCounters.occluded, g_visCounters.seedFalse,
                     g_visCounters.invalidProj, g_visCounters.hiddenSkip,
-                    g_visCounters.anyValidSkip, g_visCounters.allValidSkip,
+                    g_visCounters.anyValidSkip, g_visCounters.nearOccluders,
                     g_visCounters.gridQueries, g_visCounters.linearQueries,
                     g_visCounters.gridOutsideVp, g_visCounters.gridNegPixel,
                     g_visCounters.pairsTested);
@@ -555,11 +559,6 @@ unittest {
                     format("%s: expected BOTH paths, got grid=%d linear=%d",
                            f.name, gridHere, linearHere));
                 break;
-            case Path.none:
-                assert(gridHere == 0 && linearHere == 0,
-                    format("%s: expected pass 2 never to run, got grid=%d linear=%d",
-                           f.name, gridHere, linearHere));
-                break;
         }
     }
 
@@ -583,7 +582,7 @@ unittest {
         "no vertex was ever OCCLUDED: every fixture is a flat sheet or a "
         ~ "point cloud, and the depth gate is untested");
     assert(g_visCounters.seedFalse > 0,
-        "no vertex was ever left UNSEEDED: the facing term is untested");
+        "no vertex was ever left UNSEEDED: the Hide seed is untested");
     assert(g_visCounters.invalidProj > 0,
         "no vertex ever failed to project: the behind-the-camera clause is untested");
     assert(g_visCounters.hiddenSkip > 0,
@@ -600,7 +599,6 @@ unittest {
     assert(g_visCounters.gridNegPixel > 0,
         "no probe at a NEGATIVE window pixel was ever answered from a bucket: "
         ~ "the signed cell-index arithmetic is untested");
-    assert(g_visCounters.allValidSkip > 0,
-        "no face was ever dropped for SOME corner behind the eye: seed-set and "
-        ~ "occluder-set are indistinguishable in this corpus");
+    assert(g_visCounters.nearOccluders > 0,
+        "no near occluder was ever built");
 }

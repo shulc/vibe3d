@@ -313,9 +313,11 @@ unittest { // a ring shorter than three vertices is not a face
 
 // ---------------------------------------------------------------------------
 // SITE LEVEL — the predicate is not only correct in isolation, it is what
-// `Mesh.visibleVertices` (snap's vertex/edge mask, and its only consumer) now
-// asks. These two cases are the same two fixtures as above, and they flip in
-// opposite directions, so a substituted normal cannot satisfy both.
+// `Mesh.visibleVertices` asks to build its OCCLUDER set (only a front-facing
+// face hides what lies behind it; since task 9387 a vertex has no facing term
+// of its own, `doc/measured_laws.md` §3). These two cases are the same two
+// fixtures as above, each with a loose candidate BEHIND the polygon, and they
+// flip in opposite directions, so a substituted normal cannot satisfy both.
 // ---------------------------------------------------------------------------
 
 private Viewport viewportAt(Vec3 eye) {
@@ -329,38 +331,40 @@ private Viewport viewportAt(Vec3 eye) {
     return vp;
 }
 
-unittest { // visibleVertices keeps a zero-normal face from BEHIND
-    Vec3[] vs; uint[] ring;
-    splitQuad(/*midAt=*/0, vs, ring);
+/// `vs` + `ring` as one face, plus a loose vertex at `behind` (the last index).
+private Mesh withCandidate(Vec3[] vs, uint[] ring, Vec3 behind) {
     Mesh m;
-    m.vertices = vs;
+    m.vertices = vs ~ behind;
     m.addFace(ring);
     m.buildLoops();
-
-    auto vp = viewportAt(EYE_BACK);
-    auto vis = m.visibleVertices(vp.eye, vp, ModelSpace.world());
-    foreach (vi; 0 .. vs.length)
-        assert(vis[vi],
-            format("v%d: a zero-normal polygon is not culled from either side,"
-                ~ " so snap still offers its vertices from behind. Under either"
-                ~ " rejected normal this face is back-facing here and every"
-                ~ " vertex would be false.", vi) ~ why(vs, ring, EYE_BACK));
+    return m;
 }
 
-unittest { // visibleVertices culls a reflex-first face from the FRONT
+unittest { // a zero-normal face is kept from BEHIND, so it OCCLUDES there
+    Vec3[] vs; uint[] ring;
+    splitQuad(/*midAt=*/0, vs, ring);
+    // From the -Z eye, (0, 0.5, 1) lies behind the quad's interior.
+    Mesh m = withCandidate(vs, ring, Vec3(0, 0.5f, 1));
+    auto vp = viewportAt(EYE_BACK);
+    auto vis = m.visibleVertices(vp.eye, vp, ModelSpace.world());
+    assert(vis[0], "control: a corner of the face itself is visible");
+    assert(!vis[vs.length],
+        "a zero-normal polygon is not culled from either side, so from behind "
+        ~ "it still hides the candidate behind it. Under either rejected normal "
+        ~ "this face is back-facing here and would hide nothing."
+        ~ why(vs, ring, EYE_BACK));
+}
+
+unittest { // a reflex-first face is culled from the FRONT, so it hides nothing
     Vec3[] vs; uint[] ring;
     reflexPentagon(/*start=*/1, vs, ring);
-    Mesh m;
-    m.vertices = vs;
-    m.addFace(ring);
-    m.buildLoops();
-
+    // From the +Z eye, (0.5, 0.8, -1) lies behind the pentagon's interior.
+    Mesh m = withCandidate(vs, ring, Vec3(0.5f, 0.8f, -1));
     auto vp = viewportAt(EYE_FRONT);
     auto vis = m.visibleVertices(vp.eye, vp, ModelSpace.world());
-    foreach (vi; 0 .. vs.length)
-        assert(!vis[vi],
-            format("v%d: the ring starts at the reflex corner, so the adopted"
-                ~ " rule reports this planar polygon as turned away and snap"
-                ~ " offers nothing. Both rejected normals would keep it.", vi)
-            ~ why(vs, ring, EYE_FRONT));
+    assert(vis[vs.length],
+        "the ring starts at the reflex corner, so the adopted rule reports this "
+        ~ "planar polygon as turned away and it occludes nothing. Both rejected "
+        ~ "normals would keep it and hide the candidate."
+        ~ why(vs, ring, EYE_FRONT));
 }

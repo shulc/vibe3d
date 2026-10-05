@@ -1638,16 +1638,9 @@ bool pointInPolygon2D(float px, float py, float[] xs, float[] ys) {
 //
 //   * lasso over polygons (`app.d`) — MEASURED. This is the gesture task 0726
 //     drove, and the rule is the reference's answer for it.
-//   * snap (`Mesh.visibleVertices` and `snap.d`'s `faceVisible`) — AN
-//     ASSUMPTION, and it is named as one on purpose. The capture never drove a
-//     snap gesture in the reference; nobody has measured that the reference
-//     uses THIS rule there. It is applied here because snap's two legs (the
-//     vertex/edge mask from `visibleVertices`, the face gate in `faceVisible`)
-//     must at least agree with EACH OTHER, and because a predicate with more
-//     than one implementation is the defect this function exists to remove.
-//     If snap is ever measured and the reference turns out to do something
-//     else there, this is the assumption to revisit — split it out under its
-//     own name, do not quietly widen this one.
+//   * snap — the POLYGON leg (`snap.d`'s `faceVisible`) and the occluder set
+//     of `mesh_visibility`; vertex / edge candidates have no facing term
+//     (`doc/measured_laws.md` §3).
 //   * single click — NOT this rule and not any rule. Our click path has no
 //     facing term at all (pinned by task 0576: `bvh_pick.pickFace` is a
 //     nearest-hit ray-cast; `gpu_select` decides by depth). The reference does

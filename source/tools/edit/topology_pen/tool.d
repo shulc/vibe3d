@@ -735,13 +735,8 @@ private:
     // candidate-FILTER callbacks — the same callbacks that carry `innerSnap`
     // — and nowhere else. The orientation gate is therefore the CLIENT'S, an
     // option the tool may decline; it is not a law the snapping service
-    // applies to everybody. Our snap service does apply a front-facing (plus
-    // occlusion) gate unconditionally to every one of its clients
-    // (`Mesh.visibleVertices`, consulted from `snap.snapCursor`), and that
-    // gate is deliberately NOT touched here: this row gives the PEN the
-    // ownership the measurement puts on it, and re-scoping the service's own
-    // gate for its other clients is a separate decision with its own blast
-    // radius.
+    // applies to everybody. Our snap service has no orientation term on
+    // vertex / edge candidates either (`doc/measured_laws.md` §3).
     //
     // SCOPE, narrow because that is what was measured: the flag gates the
     // pen's own snap-candidate admission (`PenSnapGuide.admits`) and nothing
