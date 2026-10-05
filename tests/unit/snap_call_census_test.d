@@ -155,9 +155,11 @@ unittest // one packet read, one finder: the deleted copies stay deleted
     liveCalls.sort();
     assert(liveCalls == ["source/commands/snap/mode.d", "source/commands/snap/toggle.d",
                          "source/commands/snap/toggle_type.d", "source/editor_app.d",
-                         "source/toolpipe/stages/snap.d", "source/tools/edit/topology_pen/tool.d",
+                         "source/toolpipe/stages/snap.d", "source/toolpipe/stages/snap.d",
+                         "source/tools/edit/topology_pen/tool.d",
                          "source/tools/edit/topology_pen/tool.d", "source/tools/edit/topology_pen/tool.d",
                          "source/tools/edit/topology_pen/tool.d", "source/tools/edit/topology_pen/tool.d",
+                         "source/tools/slice/slice_tool.d", "source/tools/slice/slice_tool.d",
                          "source/tools/transform/xfrm_transform.d"],
         format("liveSnapStage() call roster (%s): %s", liveCalls.length, liveCalls));
     assert(faceCalls == ["source/tools/create/box.d", "source/tools/create/box.d"],

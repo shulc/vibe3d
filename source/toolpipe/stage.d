@@ -103,7 +103,7 @@ abstract class Stage : ParamProvider {
     bool storedInScene() const { return false; }
 
     /// How many snap guides this stage holds for the current drag
-    /// (`heldDragGuideCount`, the snap key's mouse-down gate; task 9470).
+    /// (`heldDragGuideCount`, the snap key's mouse-down gate).
     int snapGuideSources() const { return 0; }
 
     /// Whether this stage is currently REGISTERED-and-live in the pipe.

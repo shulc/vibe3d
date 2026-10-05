@@ -801,7 +801,7 @@ SnapStage liveSnapStage() {
 }
 
 /// The current drag's snap guides: the registry plus each pipe stage's own
-/// (`Stage.snapGuideSources`). ≥ 1 lets the snap key run mid-drag (task 9470).
+/// (`Stage.snapGuideSources`). ≥ 1 lets the snap key run mid-drag.
 size_t heldDragGuideCount() {
     import toolpipe.pipeline : g_pipeCtx;
     if (g_pipeCtx is null) return 0;

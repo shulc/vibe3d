@@ -523,7 +523,7 @@ struct InputRouter {
     }
 
     // The key whose command is `Momentary`, armed at its key-down for the
-    // key-up law in `handleKeyUp` (task 9470). Times are SDL / playback `ts`.
+    // key-up law in `handleKeyUp`. Times are SDL / playback `ts`.
     struct MomentaryKey { SDL_Keycode key; uint downTs; bool cycled, active; string id; }
     MomentaryKey momentary_;
     enum uint kMomentaryHoldMs = 500;   // findings_K-G2 G2-MT: 450 stays, 550 reverts
@@ -540,7 +540,7 @@ struct InputRouter {
         if (kev.repeat != 0 && momentary_.active && momentary_.key == kev.keysym.sym) return;
         // While a mouse button is held only a command row whose command reports
         // `MouseDownOk` runs; every other key is dropped, not queued (slice M1a,
-        // narrowed by task 9470 / findings_K-G2). Above Escape and onKeyDown.
+        // narrowed by findings_K-G2). Above Escape and onKeyDown.
         if (held_.any) {
             immutable int hb = keyBinding(kev);
             if (hb < 0) return;
@@ -769,8 +769,7 @@ struct InputRouter {
         }
     }
 
-    // Key RELEASE dispatch (task 0709): the momentary key's law first (task
-    // 9470), then the active tool's `onKeyUp` — no tool overrides it today, so
+    // Key RELEASE dispatch (task 0709): the momentary key's law first, then the active tool's `onKeyUp` — no tool overrides it today, so
     // any other release is discarded. Not wrapped in `with (app)`; `ifs.buildToolVts`
     // is the explicit-binding rule stated at the block comment above.
     void handleKeyUp(ref SDL_KeyboardEvent kev) {
@@ -1894,10 +1893,9 @@ struct InputRouter {
         // of them may consume this release, and a bit left set would drop
         // every later key (slice M1a). Order pinned by
         // tests/unit/held_gesture_buttons_test.d.
-        if (ev.type == SDL_MOUSEBUTTONUP) {
-            held_.release(ev.button.button);
-            momentary_.cycled = true;   // a press/release since the momentary key-down
-        }
+        if (ev.type == SDL_MOUSEBUTTONUP) held_.release(ev.button.button);
+        // A press/release since the momentary key-down (its key-up law).
+        if (ev.type == SDL_MOUSEBUTTONUP) momentary_.cycled = true;
 
         bool pieConsumedKeyUp;
 

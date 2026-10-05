@@ -41,7 +41,7 @@ unittest { // EL-c: tool key handlers do not consume Escape.
     assert(files > 30 && createFiles >= 1 && sliceFiles >= 1,
         format("EL-c: source/tools census is under-populated: files=%s create=%s slice=%s",
             files, createFiles, sliceFiles));
-    assert(keyHandlers >= 4,
+    assert(keyHandlers >= 3,   // 3 since task 9470 removed Slice's
         format("EL-c: found only %s override bool onKeyDown handlers", keyHandlers));
     assert(escapeSites == 0,
         format("EL-c: active tools must not consume SDLK_ESCAPE; found %s site(s):%s",

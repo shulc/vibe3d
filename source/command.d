@@ -124,7 +124,7 @@ enum CmdFlags : uint {
                             // (lands on the stack); cursor treats it as transparent when
                             // its own-gesture Model entry sits below it.
     MouseDownOk = 1 << 9,   // Its key runs while a mouse button is held (else dropped;
-                            // `InputRouter.handleKeyDown`, task 9470, findings_K-G2).
+                            // `InputRouter.handleKeyDown`, findings_K-G2).
     Momentary   = 1 << 10,  // Its key-up runs the hold law (`InputRouter.handleKeyUp`).
 }
 

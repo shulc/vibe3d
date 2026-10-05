@@ -27,8 +27,8 @@ class SnapToggleCommand : Command {
 
     // Pipe configuration, not a mesh edit. Its key runs mid-drag iff the drag
     // holds a snap guide and reverts by the hold law; a UI toggle with no button
-    // held records one entry whose undo / redo never touch the state (task 9470,
-    // findings_K-G2 / K-G3 G3-s, G3-r; script origin records nothing, gap 563).
+    // held records one entry whose undo / redo never touch the state
+    // (findings_K-G2 / K-G3 G3-s, G3-r; script origin records nothing, gap 563).
     override CmdFlags cmdFlags() const {
         import held_gesture_buttons : g_heldGestureButtons;
         auto f = CmdFlags.SideEffect | CmdFlags.Momentary;

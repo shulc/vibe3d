@@ -64,16 +64,6 @@ private size_t once(string hay, string needle, string where) {
     return cast(size_t) a;
 }
 
-/// The body's statements after its opening brace, `version (web)` line skipped.
-private string firstStatement(string body_) {
-    auto rest = body_[1 .. $].strip;
-    if (rest.startsWith("version (web)")) {
-        const semi = rest.indexOf(';');
-        rest = rest[semi + 1 .. $].strip;
-    }
-    return rest;
-}
-
 unittest { // u3: the router's order and its gates, read from production text
     // Deliberately a SOURCE-TEXT check: under --test the viewport swallow gate
     // is bypassed (`!app.testMode`), so no scenario log can witness that the
@@ -100,10 +90,22 @@ unittest { // u3: the router's order and its gates, read from production text
            && pe[press + "held_.press(ev.button.button);".length .. down].strip.length == 0,
            "M1a u3: the press bit is not set right before handleMouseButtonDown");
 
-    // Both key handlers START with the gate: above Escape and onKeyDown/Up.
-    foreach (h; ["void handleKeyDown(", "void handleKeyUp("])
-        assert(firstStatement(bodyAt(code, h)).startsWith("if (held_.any) return;"),
-               "M1a u3: " ~ h ~ " does not start with the held-button gate");
+    // Both key handlers gate on the held set above Escape and onKeyDown/Up;
+    // while held only a command row whose command reports MouseDownOk runs
+    // (task 9470, narrowing M1a by findings_K-G2).
+    auto kd = bodyAt(code, "void handleKeyDown(");
+    const hk = once(kd, "if (held_.any) {", "handleKeyDown");
+    const esc = kd.indexOf("SDLK_ESCAPE"), tk = kd.indexOf("activeTool.onKeyDown(");
+    assert(esc > 0 && tk > 0 && hk < esc && hk < tk,
+           "M1a u3: handleKeyDown's held branch is not above Escape and onKeyDown");
+    const arm = kd[hk .. kd.indexOf("with (app)")];
+    assert(arm.canFind("CmdFlags.MouseDownOk") && arm.canFind("BindingKind.command")
+           && !arm.canFind("onKeyDown"),
+           "M1a u3: the held branch is not the binding table's MouseDownOk rows alone");
+    auto ku = bodyAt(code, "void handleKeyUp(");
+    const hu = once(ku, "if (held_.any) return;", "handleKeyUp");
+    assert(hu < ku.indexOf("activeTool.onKeyUp("),
+           "M1a u3: handleKeyUp's held gate is not above onKeyUp");
 
     // Focus loss clears the whole set.
     assert(bodyAt(code, "void handleWindowEvent(")
