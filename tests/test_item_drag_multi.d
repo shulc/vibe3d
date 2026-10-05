@@ -224,6 +224,7 @@ void buildRig() {
     // changes the set). Before 0671 the two pointers moved in lockstep and
     // `set 1; add 0` put both on layer 0 in one step; they are separable now,
     // and this rig wants them together.
+    cmd("select.typeFrom item");  // 9511 (K-CD4): layer.select never changes the type
     cmd("layer.select index:0 mode:set");
     cmd("layer.select index:1 mode:add");
     cmd("layer.select index:0 mode:add");
@@ -242,7 +243,7 @@ void buildRig() {
 
     auto selType = parseJSON(cast(string)get(BASE ~ "/api/selection"))["selType"].str;
     assert(selType == "item",
-        "rig: layer.select must promote SelType.Item to current, got " ~ selType);
+        "rig: the item door must make SelType.Item current, got " ~ selType);
 
     // L1 self-check on THIS rig, not a restatement of the law: the item's
     // world pivot really is `pos + pivot` even under a non-identity rotation

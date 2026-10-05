@@ -602,9 +602,10 @@ unittest { // ITEM mode: the invert touches NO component marks (M3E_item) and
            // an implementation reading it would take the polygon branch and
            // flip every face.
     invertRigPrefix("polygon");
+    runCmd("select.typeFrom item");  // 9511 (K-CD4): layer.select never changes the type
     runCmd("layer.select index:0");
     assert(currentSelTypeToken() == "item",
-        "fixture: layer.select must make Item current, got " ~ currentSelTypeToken());
+        "fixture: the item door must make Item current, got " ~ currentSelTypeToken());
     assert(getJson("/api/selection")["mode"].str == "polygons",
         "fixture: editMode must RETAIN polygons under Item — that retention is "
         ~ "what an implementation reading editMode would trip over");

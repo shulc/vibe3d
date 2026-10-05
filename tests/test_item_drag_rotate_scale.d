@@ -68,6 +68,7 @@ unittest {
     cmd("layer.attr 0 pos.x 2.0");
     cmd("layer.attr 0 pivot.y 0.75");
     cmd("layer.attr 0 rot.z 20.0");
+    cmd("select.typeFrom item");  // 9511 (K-CD4): layer.select never changes the type
     cmd("layer.select index:0");
 
     auto before = layerXform(0);
@@ -109,6 +110,7 @@ unittest {
     resetCube();
     cmd("layer.attr 0 pos.x -1.5");
     cmd("layer.attr 0 pivot.x 0.25");
+    cmd("select.typeFrom item");  // 9511 (K-CD4): layer.select never changes the type
     cmd("layer.select index:0");
 
     auto before = layerXform(0);

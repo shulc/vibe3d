@@ -45,7 +45,7 @@
 //   drop-sel-item        L8 key 5 (Items): the same, through the item door
 //   drop-bare            L32 arm, Esc: key door and raw door both refuse the redo
 //   rearm-typed              a re-typed arm while armed is a same-tool switch row
-//   non-user-drop            a layer-change drop writes no drop row
+//   non-user-drop            a primary move keeps the pen and writes no drop row
 //   chord-build-then-remove  L46 the build consumes the bare edge under its new side
 //   chord-build-consume-undo L46 undo of that build re-registers the bare edge
 //   fill-consume-then-remove L46 Fill consumes the bare edge along its new side
@@ -2201,8 +2201,9 @@ unittest {
     writeln("PASS rearm-typed");
 }
 
-// non-user-drop — the active-layer change (`activeLayerChangedDrop`) drops the
-// pen and writes NO drop row: only the layer selection's own row lands.
+// non-user-drop — a primary move drops the pen on its own mesh and re-arms it on
+// the new primary (9511, K-CD4 rule 1) with NO drop row: only the layer
+// selection's own row lands.
 unittest {
     if (!cell("non-user-drop")) return;
     const r = rig();
@@ -2212,7 +2213,7 @@ unittest {
     assert(penHistoryLen() == h, "non-user-drop rig: " ~ penHistoryLabels().join(","));
     penCmd("layer.select", `{"index":1,"mode":"set"}`);
     const labels = penHistoryLabels();
-    assert(!penArmed() && penHistoryLen() == h + 1 && !labels.canFind("Tool Drop"),
+    assert(penArmed() && penHistoryLen() == h + 1 && !labels.canFind("Tool Drop"),
            format("non-user-drop: armed %s, history %s (expected g1's rows + the layer selection, "
                   ~ "no drop row)", penArmed(), labels));
     writeln("PASS non-user-drop");

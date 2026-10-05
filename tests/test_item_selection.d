@@ -236,12 +236,17 @@ unittest { // hiding the sole selected layer is allowed and keeps the target.
         "A remains the selected edit target even while hidden");
 }
 
-unittest { // an item select makes SelType.Item the current type.
+unittest { // an item select never changes the selection type. Task 9511,
+            // K-CD4: the reference logs an item-list click as the plain
+            // selection command a script sends, and the type stays.
     threeLayers();
-    cmd("layer.select index:1 mode:add");   // any item select promotes Item
-    auto sel = selection();
-    assert(sel["selType"].str == "item",
-        "item select promotes SelType.Item to current, got " ~ sel["selType"].str);
+    const before = selection()["selType"].str;
+    assert(before != "item", "floor: Item was already the current type");
+    cmd("layer.select index:1 mode:add");
+    assert(isSelected(1), "control: the add selected B");
+    assert(selection()["selType"].str == before,
+        "an item select keeps the selection type " ~ before ~ ", got "
+        ~ selection()["selType"].str);
 }
 
 unittest { // undo of an item select (UI-undo) restores the prior SET.
@@ -272,13 +277,13 @@ unittest { // Stage 4 /api/selection final shape: selTypeOrder + items view.
     cmd("layer.select index:1 mode:add");        // A,B selected; B primary
     auto sel = selection();
     // selTypeOrder is the full most-recent-first ordering; the front matches
-    // selType (an item select made Item current).
+    // selType (an item select leaves the type alone, 9511).
     assert("selTypeOrder" in sel, "/api/selection carries selTypeOrder");
     auto order = sel["selTypeOrder"].array;
     assert(order.length == 4, "selTypeOrder lists all four types");
     assert(order[0].str == sel["selType"].str,
         "selTypeOrder front == current selType");
-    assert(order[0].str == "item", "item select promotes item to the front");
+    assert(order[0].str != "item", "an item select keeps Item off the front (9511, K-CD4)");
     // items mirrors /api/layers' per-layer {selected,primary} in layer order.
     assert("items" in sel, "/api/selection carries an items view");
     auto items = sel["items"].array;

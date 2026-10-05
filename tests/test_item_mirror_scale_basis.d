@@ -134,6 +134,7 @@ void buildRig() {
     cmd("layer.attr 0 pivot.x 0.25");
     cmd("layer.attr 0 pivot.y -0.4");
     cmd("layer.attr 0 pivot.z 0.3");
+    cmd("select.typeFrom item");  // 9511 (K-CD4): layer.select never changes the type
     cmd("layer.select index:0");
 }
 

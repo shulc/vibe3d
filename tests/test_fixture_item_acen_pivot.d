@@ -94,8 +94,10 @@ unittest {
     cmd(format("layer.attr 0 pivot.y %.17g", piv[1]));
     cmd(format("layer.attr 0 pivot.z %.17g", piv[2]));
 
-    // Selecting the item promotes the Item selection type to current — that
-    // is what puts the action centre on the item branch at all.
+    // The Item selection type must be current — that is what puts the action
+    // centre on the item branch at all. Selecting the item does not make it
+    // current (9511, K-CD4), so the rig enters the type first.
+    cmd("select.typeFrom item");  // 9511 (K-CD4): layer.select never changes the type
     cmd("layer.select index:0 mode:set");
     assert(getJson("/api/selection")["selType"].str == "item",
            "the rig must leave the Item selection type current");

@@ -306,12 +306,13 @@ unittest {
     assert(activeHasVertX(-3.0), "A's vertex moved");
     assertPrimaryInvariant("after edit A");
 
-    // Add B to the selection (multi-foreground). Item domain + current-type
-    // (geometry→Item front flip) must publish.
+    // Add B to the selection (multi-foreground). The item domain publishes;
+    // the current type does not move (9511, K-CD4: an item select never
+    // changes the selection type).
     auto afterAddB = expectPublish("select+add B (item)", c => c.totalSelItem,
         () { cmd("layer.select index:1 mode:add"); });
-    assert(afterAddB.lastCurrentType == "item",
-        "item selection makes Item the current type");
+    assert(afterAddB.lastCurrentType != "item",
+        "an item selection never makes Item the current type");
     int pAddB = assertPrimaryInvariant("after add B");
     // TASK 0671: an `add` appends to the selection queue and the edit target is
     // the queue's HEAD, so it stays on A. This line used to read `== 1`.

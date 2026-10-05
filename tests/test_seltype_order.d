@@ -155,16 +155,17 @@ unittest {
     assert(afterPrimary["items"][0]["selected"].type == JSONType.true_
         && afterPrimary["items"][1]["selected"].type == JSONType.false_,
         "next selection request after primary switch did not read the item set");
-    assert(parsedOrder(afterPrimary) == ["item", "edge", "vertex", "polygon"],
+    // 9511 (K-CD4): the item select leaves the order alone.
+    assert(parsedOrder(afterPrimary) == ["edge", "vertex", "polygon", "item"],
         "next selection request after primary switch did not read parsed live order");
     assert(afterPrimary["selTypeOrder"].array.length == 4,
         "post-primary order comparison population floor: expected four types");
     assert(afterPrimary["mode"].str == "edges",
-        "item front must preserve the derived geometry mode invariant");
+        "the primary switch must preserve the derived geometry mode invariant");
 
     cmd("select.typeFrom polygon");
     auto afterFront = getJson("/api/selection");
-    assert(parsedOrder(afterFront) == ["polygon", "item", "edge", "vertex"],
+    assert(parsedOrder(afterFront) == ["polygon", "edge", "vertex", "item"],
         "next selection request after front switch did not read parsed live order");
     assert(afterFront["selTypeOrder"].array.length == 4,
         "post-front order comparison population floor: expected four types");
@@ -181,8 +182,8 @@ unittest {
         if (item["selected"].type == JSONType.true_) ++selectedItemCount;
     assert(selectedItemCount == 2,
         "next selection request after item add must report both selected rows");
-    assert(parsedOrder(afterItemAdd) == ["item", "polygon", "edge", "vertex"],
-        "item add must promote item at the front of the parsed live order");
+    assert(parsedOrder(afterItemAdd) == ["polygon", "edge", "vertex", "item"],
+        "item add must leave the parsed live order alone (9511, K-CD4)");
     assert(afterItemAdd["selTypeOrder"].array.length == 4,
         "post-item-add order comparison population floor: expected four types");
 

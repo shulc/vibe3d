@@ -86,7 +86,8 @@ void selectFaces(int[] idx) {
 void enterItemModeWithStaleFaceSelection(int[] stale) {
     resetCube();
     selectFaces(stale);
-    cmd("layer.select index:0");        // promotes SelType.Item to current
+    cmd("select.typeFrom item");  // 9511 (K-CD4): layer.select never changes the type
+    cmd("layer.select index:0");
     assertStaleFixture(stale);
 }
 
@@ -94,7 +95,7 @@ void assertStaleFixture(int[] stale) {
     auto sel = getJson("/api/selection");
     // (a) Item really is the CURRENT type.
     assert(sel["selType"].str == "item",
-        "fixture: layer.select must make Item current, got "
+        "fixture: the item door must make Item current, got "
         ~ sel["selType"].str);
     // (b) `editMode` still reads polygons — the retained view. This is the
     // half that makes the bug reachable; if it ever cleared to something else

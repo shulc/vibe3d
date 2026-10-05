@@ -862,9 +862,8 @@ unittest {
 // same camera, so "picks again" is compared against a value this rig observed
 // rather than a constant written down.
 //
-// Both doors into the item type are driven. `layer.select`'s promote hook and
-// the deliberate `select.typeFrom item` door are different code, and a reset
-// that cleared one and not the other is representable.
+// The item type has one door, `select.typeFrom item`: since task 9511
+// `layer.select` never changes the type (K-CD4), so its former route is gone.
 // ---------------------------------------------------------------------------
 
 /// A clean single-cube scene with an empty undo stack — what `/api/reset`
@@ -910,7 +909,7 @@ private void nearestVertexPx(out int vi, out int wx, out int wy) {
 }
 
 unittest {
-    foreach (route; ["door", "layer"]) {
+    foreach (route; ["door"]) {
         // ---- the CONTROL, measured here: from a clean start a click at P
         //      selects exactly one vertex, and this is which one.
         freshCube();
@@ -931,8 +930,7 @@ unittest {
         // ---- the PAIR: enter the item type, then take exactly the reset the
         //      runner takes between test binaries, then repeat that click.
         freshCube();
-        if (route == "door") cmd("select.typeFrom item");
-        else                 cmd(`{"id":"layer.select","index":0,"mode":"set"}`);
+        cmd("select.typeFrom item");
         settle();
         assert(selType() == "item",
             format("%s: this route must make the item type current — it is %s",

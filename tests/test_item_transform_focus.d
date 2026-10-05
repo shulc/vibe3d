@@ -169,6 +169,7 @@ void planeFixture() {
     cmd("layer.attr 1 pos.y 1.5");
     cmd("layer.attr 1 pos.z -2.0");
     cmd("layer.attr 1 pivot.x 0.25");
+    cmd("select.typeFrom item");  // 9511 (K-CD4): layer.select never changes the type
     cmd("layer.select index:0 mode:set");
     cmd("layer.select index:1 mode:add");
     // Vacuity guards. Without these, every assertion below could be passing
@@ -182,8 +183,8 @@ void planeFixture() {
         ~ "unnecessary on this path too");
     assert(layerAt(1)["focused"].boolean, "vacuity: the plane holds the focus");
     assert(getJson("/api/selection")["selType"].str == "item",
-        "vacuity: selecting a layer promotes the item selection type, which "
-        ~ "is what routes the gesture to the item branch at all");
+        "vacuity: the item selection type is current, which is what routes "
+        ~ "the gesture to the item branch at all");
 }
 
 // ---------------------------------------------------------------------------

@@ -110,6 +110,7 @@ void dragMoveX(Viewport vp, int pixels = 40) {
 
 unittest {
     resetCube();
+    cmd("select.typeFrom item");  // 9511 (K-CD4): layer.select never changes the type
     cmd("layer.select index:0");
 
     auto before = layerXform(0);
@@ -154,6 +155,7 @@ unittest {
 
 unittest {
     resetCube();
+    cmd("select.typeFrom item");  // 9511 (K-CD4): layer.select never changes the type
     cmd("layer.select index:0");
 
     auto before = layerXform(0);
@@ -192,6 +194,7 @@ unittest {
 
 unittest {
     resetCube();
+    cmd("select.typeFrom item");  // 9511 (K-CD4): layer.select never changes the type
     cmd("layer.select index:0");
 
     auto initial = layerXform(0);
@@ -269,6 +272,7 @@ unittest {
 
 unittest {
     resetCube();
+    cmd("select.typeFrom item");  // 9511 (K-CD4): layer.select never changes the type
     cmd("layer.select index:0");
 
     auto before = layerXform(0);
@@ -308,6 +312,7 @@ unittest {
 
 unittest {
     resetCube();
+    cmd("select.typeFrom item");  // 9511 (K-CD4): layer.select never changes the type
     cmd("layer.select index:0");
 
     auto before = layerXform(0);

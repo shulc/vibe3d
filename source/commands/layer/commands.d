@@ -804,7 +804,8 @@ final class LayerSelect : LayerCommandBase {
     private Layer       prevPrimary;   // only for the switch-hook comparison
     private size_t      prevActiveIndex;
     // Task 9457/9511 (K-CD4): the armed tool is kept, and each mesh leaving
-    // the foreground has its component selection cleared (undo restores it).
+    // the foreground under it has its component selection cleared (undo
+    // restores it).
     private string              droppedTool;
     private Layer[]             leaving;
     private SelectionSnapshot[] leavingSel;
@@ -857,11 +858,13 @@ final class LayerSelect : LayerCommandBase {
     }
 
     /// The tail every branch shares: publication, the switch hook, then the
-    /// re-arm of the tool the guard dropped. `wasForeground` is null on revert
-    /// and for `mode:clear` / `kind:` — the reference sends those as other
-    /// commands, whose effect on component selection is uncaptured (9511).
+    /// re-arm of the tool the guard dropped. A mesh leaving the foreground
+    /// loses its component selection only when a tool retargets (K-CD4 CD4back
+    /// was measured with the tool armed; without one it is uncaptured, 9511).
+    /// `wasForeground` is null on revert and for `mode:clear` / `kind:`, which
+    /// the reference sends as other commands.
     private void finishSelect(Layer before, size_t beforeIndex, bool[] wasForeground) {
-        if (wasForeground !is null) {
+        if (wasForeground !is null && droppedTool.length) {
             leaving = null;
             leavingSel = null;
             foreach (i, l; doc.layers)

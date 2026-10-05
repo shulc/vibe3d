@@ -119,7 +119,8 @@ void runItemCase(string bank, string[][] attrVals,
     resetCube();
     cmd("actr.origin");   // R16 — the SAME pin, so both runs share one centre.
     baseVerts = fetchVerts();
-    cmd("layer.select index:0");   // promotes SelType.Item to current
+    cmd("select.typeFrom item");  // 9511 (K-CD4): layer.select never changes the type
+    cmd("layer.select index:0");
     applyGesture(bank, attrVals);
     matrix = fetchLayerMatrix(0);
 }

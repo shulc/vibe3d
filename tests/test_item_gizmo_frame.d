@@ -93,11 +93,12 @@ unittest { // Item current, unrotated item: centre = pos+pivot, axes = world.
     resetCube();
     cmd("layer.attr 0 pos.x 1.0");
     cmd("layer.attr 0 pivot.x 0.5");
-    cmd("layer.select index:0");   // promotes SelType.Item to current
+    cmd("select.typeFrom item");  // 9511 (K-CD4): layer.select never changes the type
+    cmd("layer.select index:0");
 
     auto sel = parseJSON(cast(string)get(BASE ~ "/api/selection"));
     assert(sel["selType"].str == "item",
-        "layer.select must promote item to current, got " ~ sel["selType"].str);
+        "the item door must make item current, got " ~ sel["selType"].str);
 
     auto f = readPipe();
     assert(vecEq(f.center, Vec3(1.5f, 0, 0)),

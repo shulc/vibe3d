@@ -242,9 +242,10 @@ unittest {
     assert(ls[0]["focused"].type == JSONType.false_,  "§L2: A holds no focus");
     assert(ls[1]["focused"].type == JSONType.true_,   "§L2: E holds focus but not primary");
 
-    // selType promotes to "item" (SelType.Item is kind-agnostic).
-    assert(getSelection()["selType"].str == "item",
-        "selecting a layer (of any kind) promotes SelType.Item");
+    // Selecting a layer (of any kind) never changes the selection type
+    // (9511, K-CD4).
+    assert(getSelection()["selType"].str != "item",
+        "selecting a layer (of any kind) must not make SelType.Item current");
 
     // Stage 9: /api/selection's items array carries the same "type"/"focused"
     // pair as /api/layers, independently derived — the two surfaces must agree.

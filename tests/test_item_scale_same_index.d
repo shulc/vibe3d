@@ -68,6 +68,7 @@ JSONValue layerXform(int layer = 0) {
 void runCase(float rotYdeg) {
     resetCube();
     cmd("layer.attr 0 rot.y " ~ rotYdeg.to!string);
+    cmd("select.typeFrom item");  // 9511 (K-CD4): layer.select never changes the type
     cmd("layer.select index:0");
 
     auto before = layerXform(0);

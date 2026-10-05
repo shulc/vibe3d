@@ -115,6 +115,7 @@ bool[int] readOnSubject(string subject, string ctx) {
         assert(getJson("/api/selection")["selType"].str == "vertex",
                ctx ~ ": component subject must be current");
     } else {
+        cmd("select.typeFrom item");  // 9511 (K-CD4): layer.select never changes the type
         cmd("layer.select index:0 mode:set");
         assert(getJson("/api/selection")["selType"].str == "item",
                ctx ~ ": item subject must be current");

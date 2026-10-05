@@ -149,7 +149,7 @@ int g_panelEdits, g_panelDoors;
 /// this and not `postJson("/api/script", ...)`.
 void panelEdit(){postJson("/api/script?interactive=true","tool.attr rotate RY 40");++g_panelEdits;settle();}
 void panelDoor(string line){cmd(line);++g_panelDoors;}
-void panelBaseline(){postJson("/api/script","tool.set rotate off");settle();postJson("/api/command", commandBody("scene.reset"));cmd("layer.select 0");cmd("history.clear");g_panelEdits=0;g_panelDoors=0;}
+void panelBaseline(){postJson("/api/script","tool.set rotate off");settle();postJson("/api/command", commandBody("scene.reset"));cmd("select.typeFrom item");cmd("layer.select 0");cmd("history.clear");g_panelEdits=0;g_panelDoors=0;}
 JSONValue itemRot(){auto r=getJson("/api/layers")["layers"].array[0]["xform"]["rot"];JSONValue[] v;foreach(c;r.array){auto x=c.type==JSONType.integer?cast(double)c.integer:c.floating;v~=JSONValue(round(x*1e9)/1e9+0.0);}return JSONValue(v);}
 string[] historyCommands(){string[] out_;foreach(e;getJson("/api/history")["undo"].array)out_~=e["command"].str;return out_;}
 string liveToolFamily(){auto s=getJson("/api/tool/state");if(!("tool" in s.object))return "none";auto t=s["tool"].str;return t=="xfrm"?"transform":t=="slice"?"cutting":t;}

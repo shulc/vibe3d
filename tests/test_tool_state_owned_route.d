@@ -148,6 +148,7 @@ unittest {
     command(port, "layer.attr 1 pos.y 1.5");
     command(port, "layer.attr 1 pos.z -2.0");
     command(port, "layer.attr 1 pivot.x 0.25");
+    command(port, "select.typeFrom item");  // 9511 (K-CD4): layer.select never changes the type
     command(port, "layer.select index:0 mode:set");
     command(port, "layer.select index:1 mode:add");
     auto layers = fetchJson(port, "/api/layers")["layers"].array;

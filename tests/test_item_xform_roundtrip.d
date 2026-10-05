@@ -104,10 +104,11 @@ unittest {
     scope(exit) if (exists(outp)) remove(outp);
 
     resetCube();
-    cmd("layer.select index:0");          // promotes SelType.Item to current
+    cmd("select.typeFrom item");  // 9511 (K-CD4): layer.select never changes the type
+    cmd("layer.select index:0");
 
     auto sel = parseJSON(cast(string)get(BASE ~ "/api/selection"));
-    assert(sel["selType"].str == "item", "layer.select must make item current");
+    assert(sel["selType"].str == "item", "the item door must make item current");
 
     // --- a REAL gizmo Move drag authors `pos.x` --------------------------
     post(BASE ~ "/api/script", "tool.set move");
