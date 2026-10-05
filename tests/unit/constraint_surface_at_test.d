@@ -167,4 +167,16 @@ unittest {
     assert(foot.hit && near3(foot.point, Vec3(1.2025f, -0.005f, 1.5f)),
            format("publish, Point, offset 1.5: the near quad's edge foot + 1.5 * normal "
                   ~ "(1.2025, -0.005, 1.5); got hit %s at %s", foot.hit, foot.point));
+
+    // (11) `pass` carries the stage's `dblSided`: a Vector pass from behind
+    // the far quad (z -2, moving +Z) meets its BACK face — kept single-sided,
+    // taken double-sided.
+    cs.geom   = ConstrainGeom.Vector;
+    cs.offset = 0.0f;
+    assert(cs.pass(Vec3(0, 0, -2), vp, Vec3(0, 0, 1)) == Vec3(0, 0, -2),
+           "pass, Vector, single-sided: the far quad's back face must not take the point");
+    cs.dblSided = true;
+    const back = cs.pass(Vec3(0, 0, -2), vp, Vec3(0, 0, 1));
+    assert(near3(back, Vec3(0, 0, -1)),
+           format("pass, Vector, double-sided: the far quad's back face (0, 0, -1); got %s", back));
 }
