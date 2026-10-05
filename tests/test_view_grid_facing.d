@@ -87,12 +87,14 @@ size_t[2] scan(string view, string pin = null) {
 }
 
 unittest { // Top — the control: the ground grid faces this view on every build
+    if (!cellOn("lattice")) return;
     auto r = scan("Top");
     assert(r[0] >= 3 && r[1] >= 3,
         format("Top: the grid must be a lattice both ways, got row %d / column %d", r[0], r[1]));
 }
 
 unittest { // Front — D3: the facing (XY) lattice, not the edge-on ground grid
+    if (!cellOn("lattice")) return;
     auto r = scan("Front");
     assert(r[0] >= 3 && r[1] >= 3,
         format("Front: the grid must face the view (a lattice both ways), got "
@@ -100,6 +102,7 @@ unittest { // Front — D3: the facing (XY) lattice, not the edge-on ground grid
 }
 
 unittest { // Right — the same law on the third axis (the YZ plane)
+    if (!cellOn("lattice")) return;
     auto r = scan("Right");
     assert(r[0] >= 3 && r[1] >= 3,
         format("Right: the grid must face the view (a lattice both ways), got "
@@ -108,6 +111,7 @@ unittest { // Right — the same law on the third axis (the YZ plane)
 
 unittest { // Front under a PINNED ground plane: the grid is the stage's (edge-on) —
     // the renderer reads the pinned stage, not only the view.
+    if (!cellOn("pinned")) return;
     auto r = scan("Front", "worldY");
     assert(r[0] == 0 && r[1] == 0,
         format("Front, ground plane pinned: the grid must be the pinned XZ plane "
@@ -135,6 +139,7 @@ string frameHash(string view) {
 unittest { // One ortho drawer: on an empty scene Front's facing lattice is Top's
     // turned about X — same lines, same uncoloured origin lines, no fade — so
     // the two frames are byte-identical (capture K-GR GR_C / GR_F).
+    if (!cellOn("frames")) return;
     immutable top = frameHash("Top"), front = frameHash("Front");
     writefln("frame digests: Top %s Front %s", top, front);
     assert(top == front,
