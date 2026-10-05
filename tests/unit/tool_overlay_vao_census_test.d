@@ -48,3 +48,16 @@ unittest {
     assert(owners.length == 0,
            format("source/tools owns GL objects (draw through gl_util instead): %s", owners));
 }
+
+// The contract half the census cannot see: the primitive takes PAIRS, and an
+// odd point count is refused rather than silently dropping its last point.
+unittest {
+    import core.exception : AssertError;
+    import std.exception  : assertThrown, assertNotThrown;
+    import handles.gl_util : drawWorldSegments;
+    import math : Vec3, Viewport;
+    Viewport vp;
+    Vec3[3] odd;
+    assertNotThrown!AssertError(drawWorldSegments(odd[0 .. 2], vp, Vec3(1, 1, 1), 1.0f, 0));
+    assertThrown!AssertError(drawWorldSegments(odd[], vp, Vec3(1, 1, 1), 1.0f, 0));
+}

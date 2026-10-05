@@ -676,7 +676,6 @@ void drawWorldSegments(const Vec3[] pairs, const ref Viewport vp, Vec3 colour,
     version (unittest) {
         // No GL context under -unittest.
     } else {
-        if (pairs.length == 0) return;
         if (g_segsVao == 0) {
             glGenVertexArrays(1, &g_segsVao);
             glGenBuffers(1, &g_segsVbo);
