@@ -46,7 +46,7 @@ public:
     /// Drop the tool, then leave no subpatch preview and no cached subdivision
     /// topology: the next preview build is a miss (and no stray mutationVersion
     /// bumps). The pipe stages are reset by `SceneReset.apply`'s stage loop, the
-    /// one reader of file.new's keep-pipe flag (task 9465).
+    /// one reader of file.new's keep-pipe flag.
     void resetToolEffects() {
         dropActiveTool(ToolTransition.sceneResetDrop);
         preview_.deactivate();
