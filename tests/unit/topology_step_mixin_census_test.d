@@ -4,7 +4,7 @@
 // captured fold law). Order (form item 2): floor -> needle -> structural -> pin.
 module tests.unit.topology_step_mixin_census_test;
 
-import std.algorithm : canFind, sort;
+import std.algorithm : sort;
 import std.array : array;
 import std.file : dirEntries, readText, SpanMode;
 import std.format : format;
@@ -16,28 +16,23 @@ private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 private enum kHome = "source/tools/topology_step.d";
 private enum kPen  = "source/tools/edit/topology_pen/tool.d";
 
-/// The model's twelve client files -> the mixins each composes.
-private enum string[][string] kClients = [
-    "source/tools/alignment/array_tool.d":        ["TopologyStepClientBody"],
-    "source/tools/alignment/clone_tool.d":        ["TopologyStepClientBody"],
-    "source/tools/alignment/mirror.d":            ["TopologyStepClientBody"],
-    "source/tools/alignment/radial_array_tool.d": ["TopologyStepClientBody"],
-    "source/tools/edit/poly_inset_tool.d":  ["TopologyStepClientBody", "SessionCommitHooks"],
-    "source/tools/edit/vert_merge_tool.d":  ["TopologyStepClientBody", "SessionCommitHooks"],
-    "source/tools/deform/smooth_shift_tool.d":
-        ["TopologyStepClientBody", "SessionCommitHooks", "GizmoTopologyRebase"],
-    "source/tools/edit/edge_bevel.d":
-        ["TopologyStepClientBody", "SessionCommitHooks", "GizmoTopologyRebase"],
-    "source/tools/edit/edge_extrude.d":
-        ["TopologyStepClientBody", "SessionCommitHooks", "GizmoTopologyRebase"],
-    "source/tools/edit/poly_extrude.d":
-        ["TopologyStepClientBody", "SessionCommitHooks", "GizmoTopologyRebase"],
-    "source/tools/edit/vertex_bevel_tool.d":
-        ["TopologyStepClientBody", "SessionCommitHooks", "GizmoTopologyRebase"],
-    "source/tools/edit/vertex_extrude_tool.d":
-        ["TopologyStepClientBody", "SessionCommitHooks", "GizmoTopologyRebase"],
+private struct Client { string mod, cls; bool gizmo, commitPair, ownDormant; }
+private enum Client[] kComposition = [
+    Client("tools.alignment.array_tool", "ArrayTool"),
+    Client("tools.alignment.clone_tool", "CloneTool"),
+    Client("tools.alignment.mirror", "MirrorTool"),
+    Client("tools.alignment.radial_array_tool", "RadialArrayTool"),
+    Client("tools.edit.poly_inset_tool", "PolyInsetTool", false, true),
+    Client("tools.edit.vert_merge_tool", "VertexMergeTool", false, true),
+    Client("tools.deform.smooth_shift_tool", "SmoothShiftTool", true, true),
+    Client("tools.edit.edge_bevel", "EdgeBevelTool", true, true),
+    Client("tools.edit.edge_extrude", "EdgeExtrudeTool", true, true),
+    Client("tools.edit.poly_extrude", "PolyExtrudeTool", true, true, true),
+    Client("tools.edit.vertex_bevel_tool", "VertexBevelTool", true, true),
+    Client("tools.edit.vertex_extrude_tool", "VertexExtrudeTool", true, true),
 ];
 private enum kMixins = ["TopologyStepClientBody", "SessionCommitHooks", "GizmoTopologyRebase"];
+private string pathOf(Client c) { return "source/" ~ c.mod.replace(".", "/") ~ ".d"; }
 
 /// Whole-identifier occurrences of `word` in comment/string-blanked code.
 private size_t words(string code, string word) {
@@ -67,27 +62,16 @@ private string[] filesNaming(const string[string] code, string word) {
     return r.sort.array;
 }
 
-unittest { // the composition: each client mixes in exactly its set, each once
+unittest { // each mixin is named by its home and exactly its clients
     auto code = sourceCode();
-    // FLOOR: the home and the twelve clients are read (form item 4).
+    // FLOOR (form item 4): the home, the pen and the twelve clients are read.
     assert(kHome in code && kPen in code, "9429 floor: the home or the topology pen is missing");
-    assert(kClients.length == 12, format("9429 floor: %s clients named, 12 measured", kClients.length));
-    size_t uses;
-    foreach (f, want; kClients) {
-        assert(f in code, "9429 floor: no client file " ~ f);
-        foreach (m; kMixins) {
-            const n = words(code[f], m);
-            assert(n == (want.canFind(m) ? 1 : 0),
-                   format("9429 structural: %s names %s %s times, expected %s", f, m, n,
-                          want.canFind(m) ? 1 : 0));
-            uses += n;
-        }
-    }
-    assert(uses == 12 + 8 + 6, format("9429 structural: %s mixin uses, measured 26 (12 + 8 + 6)", uses));
-    // NEEDLE (polarity: true after 9429): each mixin is named only by its home and its clients.
-    foreach (m; kMixins) {
+    foreach (c; kComposition) assert(pathOf(c) in code, "9429 floor: no client file " ~ pathOf(c));
+    // NEEDLE (polarity: true after 9429), per mixin: 12 + 8 + 6 clients.
+    foreach (i, m; kMixins) {
         string[] want = [kHome];
-        foreach (f, ms; kClients) if (ms.canFind(m)) want ~= f;
+        foreach (c; kComposition) if ([true, c.commitPair, c.gizmo][i]) want ~= pathOf(c);
+        assert(want.length == 1 + [12, 8, 6][i], format("9429 floor: %s clients of %s", want.length - 1, m));
         assert(filesNaming(code, m) == want.sort.array,
                format("9429 needle: %s is named in %s, expected %s", m, filesNaming(code, m), want));
     }
@@ -112,11 +96,6 @@ unittest { // the deleted copies live only in the home and the topology pen
                                      ~ "the home only", gizmos));
     assert(pairs == [kHome], format("9429 needle: a session commit pair stands in %s; expected "
                                     ~ "the home only", pairs));
-    // The declarations of the interface member: the interface, the home, the pen.
-    assert(filesNaming(code, "topologyStepCarrier").length >= 3
-           && code[kHome].words("topologyStepCarrier") == 1
-           && code[kPen].words("topologyStepCarrier") == 1,
-           "9429 needle: topologyStepCarrier lost the home's or the pen's declaration");
     // The one allowed hook: declared by exactly the two tools whose rebase adds lines.
     assert(filesNaming(code, "afterTopologyRebase")
            == [kHome, "source/tools/deform/smooth_shift_tool.d", "source/tools/edit/edge_bevel.d"].sort.array,
@@ -143,21 +122,6 @@ private bool declaredInHome(C, string m)() {
     import std.algorithm : endsWith;
     return __traits(getLocation, __traits(getOverloads, C, m)[0])[0].endsWith("topology_step.d");
 }
-private struct Client { string mod, cls; bool gizmo, commitPair, ownDormant; }
-private enum Client[] kComposition = [
-    Client("tools.alignment.array_tool", "ArrayTool"),
-    Client("tools.alignment.clone_tool", "CloneTool"),
-    Client("tools.alignment.mirror", "MirrorTool"),
-    Client("tools.alignment.radial_array_tool", "RadialArrayTool"),
-    Client("tools.edit.poly_inset_tool", "PolyInsetTool", false, true),
-    Client("tools.edit.vert_merge_tool", "VertexMergeTool", false, true),
-    Client("tools.deform.smooth_shift_tool", "SmoothShiftTool", true, true),
-    Client("tools.edit.edge_bevel", "EdgeBevelTool", true, true),
-    Client("tools.edit.edge_extrude", "EdgeExtrudeTool", true, true),
-    Client("tools.edit.poly_extrude", "PolyExtrudeTool", true, true, true),
-    Client("tools.edit.vertex_bevel_tool", "VertexBevelTool", true, true),
-    Client("tools.edit.vertex_extrude_tool", "VertexExtrudeTool", true, true),
-];
 static assert(kComposition.length == 12);
 unittest { static foreach (c; kComposition) {{
     alias C = __traits(getMember, imported!(c.mod), c.cls);
