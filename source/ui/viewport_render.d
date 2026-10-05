@@ -45,7 +45,8 @@ import toolpipe.packets      : SubjectPacket;
 import toolpipe.stages.workplane : WorkplaneStage;
 import tools.create.create_common : pickMostFacingPlane;
 import operator              : VectorStack;
-import viewgrid              : ViewGridPrefs, viewGridSizeFor, viewGridFadeRadius;
+import viewgrid              : ViewGridPrefs, viewGridSizeFor, viewGridFadeRadius,
+                               axisComp, viewWorkPlaneAnchor;
 import shader                : Shader, LitShader, CheckerShader, GridShader;
 import viewport_composite    : ViewportCompositor, curvatureTapPx;
 import pipe_gizmo_host       : PipeGizmoHost;
@@ -201,8 +202,7 @@ struct ToolOverlayInputs {
 /// through its centre (the translation is a world point, so it is not scaled).
 /// Auto: in ortho the most-facing world plane through the origin, the stage's
 /// own auto pick (`pickMostFacingPlane`); in perspective the world XZ ground
-/// grid. Task 9451, capture K-D cell D3 (the perspective facing lattice is
-/// uncaptured).
+/// grid, beside `workPlaneLatticeModel`. Tasks 9451, 9509 (capture K-GR).
 float[16] gridPlaneModel(const ref Viewport vp, float step, const WorkplaneStage wp) {
     Vec3 n = Vec3(0, 1, 0), a1 = Vec3(1, 0, 0), a2 = Vec3(0, 0, 1), c = Vec3(0, 0, 0);
     if (wp !is null && !wp.isAuto) {
@@ -212,6 +212,21 @@ float[16] gridPlaneModel(const ref Viewport vp, float step, const WorkplaneStage
         immutable bp = pickMostFacingPlane(vp);
         n = bp.normal; a1 = bp.axis1; a2 = bp.axis2;
     }
+    return planeModel(n, a1, a2, c, step);
+}
+
+/// The perspective work-plane lattice (capture K-GR rule 3, GR_P_*): the auto
+/// plane (`pickMostFacingPlane`) shifted along its normal to the click law's
+/// rounded focus channel (`viewWorkPlaneAnchor`, measured_laws §13); in-plane
+/// the lattice stays on the world lines (gdb: a normal-only translation).
+float[16] workPlaneLatticeModel(const ref Viewport vp, float step) {
+    immutable bp = pickMostFacingPlane(vp);
+    immutable int k = bp.normal.x != 0 ? 0 : (bp.normal.y != 0 ? 1 : 2);
+    return planeModel(bp.normal, bp.axis1, bp.axis2,
+                      bp.normal * axisComp(viewWorkPlaneAnchor(vp, k), k), step);
+}
+
+private float[16] planeModel(Vec3 n, Vec3 a1, Vec3 a2, Vec3 c, float step) {
     return [
         a1.x * step, a1.y * step, a1.z * step, 0,
         n.x  * step, n.y  * step, n.z  * step, 0,
@@ -219,6 +234,7 @@ float[16] gridPlaneModel(const ref Viewport vp, float step, const WorkplaneStage
         c.x,         c.y,         c.z,         1,
     ];
 }
+
 
 // Renders the active viewport's scene (mesh + grid + gizmos) into v.fbo.
 // Called AFTER picking / hover-resolution (so hover state is current for
@@ -750,8 +766,8 @@ public:
     float gridStep = viewGridSizeFor(vp, display.grid);
     if (!(gridStep > 0)) gridStep = 1.0f;
 
-    immutable float[16] gridModel = gridPlaneModel(vp, gridStep,
-        cast(WorkplaneStage) scene.pipeContext.pipeline.findByTask(TaskCode.Work));
+    auto workStage = cast(WorkplaneStage) scene.pipeContext.pipeline.findByTask(TaskCode.Work);
+    immutable float[16] gridModel = gridPlaneModel(vp, gridStep, workStage);
 
     // The distance fade radius is the grid's OWN half-extent, not a multiple
     // of the camera distance.
@@ -813,6 +829,30 @@ public:
         glUniform3f(gridShader.locColor, 0.15f, 0.15f, 0.5f);
         glDrawArrays(GL_LINES, gridOnlyVertCount + 2, 2);
         g_fc.draw(DrawPass.grid, 2);
+        // The second lattice (capture K-GR rule 3): the auto work plane,
+        // uncoloured and lighter than the background — its two world-axis
+        // lines, majors every 10 steps, lines every 5 (colours: the
+        // near-focus readings of the GR_P_z frame). Brightest first: a
+        // coincident later line fails the depth test. The fade is ours; the
+        // reference's, and a pinned plane's grid, are uncaptured (gap rows).
+        if (workStage is null || workStage.isAuto) {
+            immutable float[16] wpModel = workPlaneLatticeModel(vp, gridStep);
+            float[16] m = wpModel;
+            m[0 .. 12] *= 10.0f;
+            glUniformMatrix4fv(gridShader.locModel, 1, GL_FALSE, m.ptr);
+            glUniform3f(gridShader.locColor, 119 / 255.0f, 129 / 255.0f, 138 / 255.0f);
+            glDrawArrays(GL_LINES, gridOnlyVertCount, 4);
+            g_fc.draw(DrawPass.grid, 4);
+            glUniform3f(gridShader.locColor, 113 / 255.0f, 123 / 255.0f, 131 / 255.0f);
+            glDrawArrays(GL_LINES, 0, gridOnlyVertCount);
+            g_fc.draw(DrawPass.grid, gridOnlyVertCount);
+            m = wpModel;
+            m[0 .. 12] *= 5.0f;
+            glUniformMatrix4fv(gridShader.locModel, 1, GL_FALSE, m.ptr);
+            glUniform3f(gridShader.locColor, 96 / 255.0f, 106 / 255.0f, 111 / 255.0f);
+            glDrawArrays(GL_LINES, 0, gridOnlyVertCount);
+            g_fc.draw(DrawPass.grid, gridOnlyVertCount);
+        }
     }
     glBindVertexArray(0);
 

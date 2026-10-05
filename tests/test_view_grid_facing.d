@@ -5,14 +5,14 @@
 // The witness is pixels on an EMPTY scene: a scan line away from the horizon
 // crosses the lattice many times when the grid faces the view and never when
 // it is the edge-on XZ grid. The scan runs both ways (a row and a column), so
-// a lattice drawn in only one direction cannot pass. Perspective is not
-// covered here: its law (ground grid + a coarse facing lattice) is uncaptured;
+// a lattice drawn in only one direction cannot pass. Perspective (task 9509,
+// K-GR GR_P): the second, work-plane lattice — cells `persp` at the bottom;
 // the pure plane choice is pinned in tests/unit/ui/grid_plane_test.d.
 module test_view_grid_facing;
 
 import http_client : getJson, postJson, frameFence;
 import http_command_helpers : commandBody;
-import drag_helpers : viewportFromCameraMatrices, Viewport;
+import drag_helpers : viewportFromCameraMatrices, Viewport, Vec3, projectToWindow;
 
 import std.format : format;
 import std.json;
@@ -205,7 +205,6 @@ size_t faceRowRuns(double posZ) {
     cmd("viewport.view Front");
     frameFence(null, 3);
     Viewport vp = viewportFromCameraMatrices();
-    import drag_helpers : projectToWindow, Vec3;
     float x0, y0, x1, y1;
     assert(projectToWindow(Vec3(-0.4f, 0.27f, 0), vp, x0, y0)
         && projectToWindow(Vec3(0.4f, 0.27f, 0), vp, x1, y1), "rig: projection");
@@ -229,4 +228,83 @@ unittest { // GR_D — behind the plane
     immutable r = faceRowRuns(-1.0);
     assert(r == 0, format("GR_D: the grid must not show over a face behind its plane "
                           ~ "(an underlay), %d runs", r));
+}
+
+// ---------------------------------------------------------------------------
+// GR_P (task 9509): perspective draws a SECOND lattice beside the ground — the
+// auto work plane through the focus rounded to ten grid steps (1 m at the
+// 0.1 m step), uncoloured and lighter than the background, lines every 0.5 m,
+// majors every 1 m, its world-axis lines brightest (fixture K-GR.json
+// "persp-lattices-GR_P_z"). Rig: a Z-facing camera with the focus at z = 0.7,
+// so the plane is z = 1 (rounded) — not 0.7 (the raw focus) nor 0 (origin);
+// it looks slightly UP, so no probe ray above the eye meets the ground grid.
+// ---------------------------------------------------------------------------
+struct PerspRig { Viewport vp; double step; }
+
+PerspRig perspRig() {
+    cmd(commandBody("scene.reset", `{"empty":true}`));
+    cmd("workplane.reset");
+    cmd("viewport.view Perspective");
+    auto cr = postJson("/api/camera?viewport=0", `{"azimuth":0.15,"elevation":-0.1,`
+        ~ `"focus":{"x":0.07,"y":1.0,"z":0.7},"distance":3}`);
+    assert(cr["status"].str == "ok", "camera: " ~ cr.toString);
+    frameFence(null, 3);
+    PerspRig r;
+    r.vp = viewportFromCameraMatrices();
+    auto g = getJson("/api/viewport/display")["cells"].array[0]["grid"]["size"];
+    r.step = g.type == JSONType.integer ? g.integer : g.floating;
+    import std.math : abs;
+    assert(abs(r.step - 0.1) < 1e-6, format("rig: the grid step must be 0.1 m, got %s", r.step));
+    immutable bz = abs(r.vp.view[10]);
+    assert(bz > abs(r.vp.view[2]) && bz > abs(r.vp.view[6]), "rig: the camera must face Z");
+    return r;
+}
+
+/// The brightest pixel (by channel sum) within 3 px of the projection of world
+/// point `p`, along the row (or the column when `column`).
+int[3] peakNear(Vec3 p, const ref Viewport vp, bool column = false) {
+    float x, y;
+    assert(projectToWindow(p, vp, x, y), "rig: projection");
+    immutable int cx = cast(int) x - vp.x, cy = cast(int) y - vp.y;
+    int[2][] pts;
+    foreach (d; -3 .. 4) pts ~= column ? [cx, cy + d] : [cx + d, cy];
+    int[3] best = [-1, -1, -1];
+    foreach (c; probe(pts)) if (c[0] + c[1] + c[2] > best[0] + best[1] + best[2]) best = c;
+    return best;
+}
+
+unittest { // GR_P — the work-plane lattice at the rounded focus, uncoloured and light
+    if (!cellOn("persp")) return;
+    import std.math : abs;
+    auto r = perspRig();
+    // The rig separates the three candidate planes on screen.
+    float x1, y1, x7, y7, x0, y0;
+    projectToWindow(Vec3(0, 1.25f, 1), r.vp, x1, y1);
+    projectToWindow(Vec3(0, 1.25f, 0.7f), r.vp, x7, y7);
+    projectToWindow(Vec3(0, 1.25f, 0), r.vp, x0, y0);
+    writefln("x=0 line at y=1.25: z=1 -> %.1f, z=0.7 -> %.1f, z=0 -> %.1f", x1, x7, x0);
+    assert(abs(x1 - x7) > 7 && abs(x1 - x0) > 7, "rig: the candidate planes must be 7+ px apart");
+    // Four probes about (0.25, 1.25, 1), mid-screen and at one fade distance:
+    // the x = 0 world-axis line, the y = 1 major, the y = 1.5 half-metre line,
+    // and the empty point between them.
+    immutable axis  = peakNear(Vec3(0,     1.25f, 1), r.vp);
+    immutable major = peakNear(Vec3(0.25f, 1.0f,  1), r.vp, true);
+    immutable mid   = peakNear(Vec3(0.25f, 1.5f,  1), r.vp, true);
+    immutable off   = peakNear(Vec3(0.25f, 1.25f, 1), r.vp);
+    writefln("GR_P: axis %s major %s mid %s off %s (background %s)", axis, major, mid, off, kBg);
+    foreach (i; 0 .. 3)
+        assert(abs(off[i] - kBg[i]) <= 2,
+            format("GR_P: between the 0.5 m lines the plane must be background, got %s", off));
+    int[3] lift(int[3] c) { return [c[0] - kBg[0], c[1] - kBg[1], c[2] - kBg[2]]; }
+    foreach (name, c; ["axis": axis, "major": major, "mid": mid]) {
+        immutable d = lift(c);
+        assert(d[0] >= 2 && d[1] >= 2 && d[2] >= 2 && abs(d[0] - d[1]) <= 1,
+            format("GR_P: the %s line at z = 1 must be uncoloured and lighter than the "
+                 ~ "background, got %s (lift %s)", name, c, d));
+    }
+    immutable int sa = axis[0] + axis[1] + axis[2], sj = major[0] + major[1] + major[2],
+                  sm = mid[0] + mid[1] + mid[2];
+    assert(sa > sj && sj > sm,
+        format("GR_P: the world-axis line must outshine the 1 m major, the major the "
+             ~ "0.5 m line: axis %s major %s mid %s", axis, major, mid));
 }
