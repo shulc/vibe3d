@@ -2,7 +2,9 @@
  "name": "pen_options",
  "description": "Polygon pen guides and raycast. Guides (world axis, right angle, straight line) are enabled only by the global snapping state and the global guide type bit, act only while DRAGGING a stroke point, never on the click that creates one, and are anchored on the dragged point's ring neighbours prev / next: world axes through prev / next (n >= 2), right angle in the plane perpendicular to prev - prevprev / next - nextnext (n >= 3), straight line along prev - prevprev / next - nextnext (n >= 4). The guide is applied to the quantised cursor. Raycast: a press on a stroke point hidden behind the background surface does not grab it (the press acts on empty space); it never places points on a surface.",
  "provenance": {
+  "schema": 1,
   "source": "live-capture",
+  "reference_token": "ref-editor@11.2v3",
   "method": "gui-gesture",
   "captured_utc": "2026-10-04",
   "harness": "private capture harness",

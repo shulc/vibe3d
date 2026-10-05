@@ -156,6 +156,7 @@ unittest // one packet read, one finder: the deleted copies stay deleted
                          "source/commands/snap/toggle_type.d", "source/editor_app.d",
                          "source/toolpipe/stages/snap.d", "source/toolpipe/stages/snap.d",
                          "source/tools/create/pen.d", "source/tools/create/pen.d",
+                         "source/tools/create/pen.d",
                          "source/tools/edit/topology_pen/tool.d",
                          "source/tools/edit/topology_pen/tool.d", "source/tools/edit/topology_pen/tool.d",
                          "source/tools/edit/topology_pen/tool.d", "source/tools/edit/topology_pen/tool.d",
