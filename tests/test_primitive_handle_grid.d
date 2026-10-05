@@ -4,13 +4,11 @@
 // snaps THAT point to the grid node; the snapped point is never fed back; the
 // mover snaps centre + travel, not the grabbed arrow point; the size follows
 // from the snapped point by the family's handle mode (sphere / torus
-// symmetric, cylinder / cone / capsule one-sided on ours). Rig: top ortho
+// / capsule symmetric, cylinder / cone one-sided — K-H2). Rig: top ortho
 // (front for the height cells) at 439.52 px/m, grid 0.1, grid bit only, every
 // drag 20 events of 2 px; every drag publishes its snap (the overlay). One
 // cell repeats under a work plane pinned 1 m along x (a lattice multiple, so
 // world and plane nodes agree): the handle point crosses the frame both ways.
-// Capsule's MIN extent is not asserted: the captured
-// capsule is symmetric, ours one-sided (handle mode, not this law).
 
 import drag_helpers : Vec3, buildDragDownLog, buildDragMotionLog, buildDragUpLog,
     fetchCamera, fetchHandlePart, fetchSnapLast, playAndWait;
@@ -133,9 +131,9 @@ private void expect(string cell, double got, double want) {
         fails ~= format("%s: expected %.4f, got %.6f", cell, want, got);
 }
 
-/// A size / height cell: the dragged extent and (unless `maxOnly`) the held
+/// A size / height cell: the dragged extent and the held
 /// one; the cell's step table on the extent it names.
-private void sizeCell(string id, string t, int part, bool maxOnly = false) {
+private void sizeCell(string id, string t, int part) {
     auto c = fx["cases"][id];
     const string cell = planeX != 0 ? id ~ "@plane-x1" : id;
     const bool height = ("expect_y_extent" in c) !is null;
@@ -154,7 +152,7 @@ private void sizeCell(string id, string t, int part, bool maxOnly = false) {
     const e = height ? yExtent() : xExtent();
     auto w = c[height ? "expect_y_extent" : "expect_x_extent"].array;
     expect(cell ~ " max", e[1], num(w[1]));
-    if (!maxOnly) expect(cell ~ " min", e[0], num(w[0]));
+    expect(cell ~ " min", e[0], num(w[0]));
     penCommand("tool.set " ~ t ~ " off");
     if (planeX != 0) penCommand("workplane.reset");
     ++ran;
@@ -196,7 +194,7 @@ unittest {
     moverCell("primitive-mover-free-grid-slow", "prim.sphere", 13);
     sizeCell("cylinder-height-grid-slow", "prim.cylinder", 2);
     sizeCell("cone-size-grid-offcentre", "prim.cone", 0);
-    sizeCell("capsule-size-grid-offcentre", "prim.capsule", 0, true);
+    sizeCell("capsule-size-grid-offcentre", "prim.capsule", 0);
     sizeCell("torus-size-grid-offcentre", "prim.torus", 0);
     sizeCell("torus-height-grid-offcentre", "prim.torus", 2);
     moverCell("cone-mover-axis-grid", "prim.cone", 10);

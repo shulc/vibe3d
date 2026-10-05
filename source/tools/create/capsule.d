@@ -203,6 +203,7 @@ final class CapsuleTool : SizedRadialCreateTool!CapsuleParams {
 public:
     this(Mesh* delegate() meshSrc, GpuMesh* gpu, LitShader litShader) {
         super(meshSrc, gpu, litShader);
+        centreHandles = true;   // K-H2 H2b: symmetric
     }
 
     override string name() const { return "Capsule"; }

@@ -91,7 +91,7 @@ import editmode : EditMode;
 import snap : SnapResult;
 import snap_render : publishLastSnap, clearLastSnap, SnapOverlayOwner;
 
-import std.math : abs, sqrt;
+import std.math : abs, fmax, sqrt;
 import std.json : JSONValue;
 
 struct PreparedPrimitiveDeactivateImage {
@@ -864,6 +864,7 @@ private enum RadialState { Idle, DrawingBase, BaseSet, DrawingHeight, HeightSet 
 abstract class SizedRadialCreateTool(P) : HandledCreateTool {
 protected:
     P params_;
+    bool centreHandles;   // the family's size-handle mode (K-H2): centre, else resize
 
 private:
     RadialState state;
@@ -941,9 +942,8 @@ public:
         return state >= RadialState.DrawingHeight || dragUniform;
     }
 
-    // ----- HandledCreateTool hook implementations (cylinder-family default;
-    // -----  SphereTool overrides both via the worldSize/setWorldSize hooks
-    // -----  below — see applySizeDelta's own override there) ---------------
+    // ----- HandledCreateTool hook implementations (SphereTool's axis
+    // -----  permutation plugs in via the worldSize/setWorldSize hooks) ------
     protected override void updateSizeHandlers(const ref Viewport vp) {
         Vec3 cen = center();   // local
         float sx = worldSize(0);
@@ -963,29 +963,24 @@ public:
         }
     }
 
-    // Box-style anchored-opposite handle drag: the dragged face follows the
-    // cursor while the opposite face stays fixed in world space. d is the
-    // signed projection of the cursor delta on the outward face normal.
-    // Size is a half-extent, so the change in half-extent equals d/2 and
-    // the center shifts by d/2 along the outward direction — full extent
-    // changes by exactly d, not 2*d.
-    //
-    // Flip-through: if the drag pushed the size negative, the primitive
-    // has crossed the opposite face. Swap to the OPPOSITE handle so
-    // subsequent motion continues to follow the cursor on the new "front"
-    // side. SIZE_AXES is laid out in pairs (+/-) per world axis — XOR 1
-    // toggles 0<->1, 2<->3, 4<->5.
+    // A size handle's step d along its outward axis, by the family's handle
+    // mode (K-H2: data). Centre mode (`centreHandles`): the opposite extent
+    // mirrors, size += d with the centre fixed, clamped at 0. Resize mode: the
+    // opposite face stays, size += d/2 and the centre shifts d/2; past the
+    // opposite face the drag flips to the paired handle (SIZE_AXES are +/-
+    // pairs, XOR 1).
     protected override void applySizeDelta(int idx, Vec3 delta) {
         // delta arrives in WORLD; SIZE_AXES are LOCAL outward dirs.
         Vec3  outward  = SIZE_AXES[idx];
-        Vec3  deltaL   = toLocalD(delta);
-        float d        = dot(deltaL, outward);
+        float d        = dot(toLocalD(delta), outward);
         int   worldIdx = idx / 2;
-        float oldSize  = worldSize(worldIdx);
-        float signedSz = oldSize + d * 0.5f;
-        float newSize  = abs(signedSz);
-
-        setWorldSize(worldIdx, newSize);
+        if (centreHandles) {
+            setWorldSize(worldIdx, fmax(worldSize(worldIdx) + d, 0.0f));
+            rebuildPreview();
+            return;
+        }
+        float signedSz = worldSize(worldIdx) + d * 0.5f;
+        setWorldSize(worldIdx, abs(signedSz));
         Vec3 cenShift = outward * (d * 0.5f);
         params_.cenX += cenShift.x;
         params_.cenY += cenShift.y;

@@ -551,6 +551,7 @@ public:
     this(Mesh* delegate() meshSrc, GpuMesh* gpu, LitShader litShader, bool ellipsoidMode = false) {
         super(meshSrc, gpu, litShader);
         this.ellipsoidMode_ = ellipsoidMode;
+        centreHandles = true;
     }
 
     override string name() const { return ellipsoidMode_ ? "Ellipsoid" : "Sphere"; }
@@ -822,22 +823,6 @@ protected:
     }
 
     override string commitLabel() const { return "Create Sphere"; }
-
-    // Symmetric radius-handle drag (task 0414 plan sec 1): unlike the
-    // cylinder family's anchored-opposite applySizeDelta (half the drag,
-    // center shifts, flip-through), sphere grows the radius by the FULL
-    // delta with the center fixed and clamps at 0 (no flip).
-    override void applySizeDelta(int idx, Vec3 delta) {
-        // delta is in WORLD; project onto the world image of the local
-        // outward axis to get the scalar size change.
-        Vec3 outwardWorld = toWorldD(SIZE_AXES[idx]);
-        float d = dot(delta, outwardWorld);
-        int worldIdx = idx / 2;
-        float r = worldSize(worldIdx) + d;
-        if (r < 0.0f) r = 0.0f;
-        setWorldSize(worldIdx, r);
-        rebuildPreview();
-    }
 
 private:
     int worldAxisToOrig(int worldIdx) const {
