@@ -843,17 +843,19 @@ public:
         root["pivot"] = JSONValue([JSONValue(initPivot_.x),
                                    JSONValue(initPivot_.y),
                                    JSONValue(initPivot_.z)]);
-        // Test-only readouts: which bank owns the drag and which
-        // Move-bank axis the press grabbed (0/1/2 arms, 3 = centre / haul,
-        // -1 = none). A witness that drags diagonally needs these to know the
-        // press took the ARM and not the haul — both move the same channel.
+        // Test-only readouts: which bank owns the drag and which part of that
+        // bank the press grabbed (Move: 0/1/2 arms, 3 = centre / haul; Scale:
+        // 7 = the off-handle plane scale; -1 = none). A witness needs these to
+        // know the press took the HANDLE and not a fallback that moves the
+        // same channel.
         final switch (dragBank) {
             case DragBank.None:   root["dragBank"] = JSONValue("none");   break;
             case DragBank.Move:   root["dragBank"] = JSONValue("move");   break;
             case DragBank.Rotate: root["dragBank"] = JSONValue("rotate"); break;
             case DragBank.Scale:  root["dragBank"] = JSONValue("scale");  break;
         }
-        root["dragAxis"] = JSONValue(xfrm.moveDragAxisPublic());
+        root["dragAxis"] = JSONValue(dragBank == DragBank.Rotate ? xfrm.rotateDragAxisPublic()
+            : dragBank == DragBank.Scale ? xfrm.scaleDragAxisPublic() : xfrm.moveDragAxisPublic());
         // Whether the last press missed every Move-bank handle, and where the
         // bank's handler centre stood after that press: a witness pins that a
         // haul really was an off-handle press, and on which side.
@@ -877,6 +879,9 @@ public:
         }
         return root;
     }
+
+    /// The embedded banks' handle registry (GET /api/tool/handles).
+    public override JSONValue toolHandlesJson() const { return xfrm.toolHandlesJson(); }
 
     // Keep the embedded gizmo's per-frame state (pose, gizmo orientation from
     // AXIS) up to date. The handle is the TOOL's pose, not a point a press
