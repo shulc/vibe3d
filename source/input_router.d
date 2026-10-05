@@ -1825,8 +1825,7 @@ struct InputRouter {
         ifs.pickVertices(vp, false);
         ifs.pickEdges(vp, false);
         ifs.pickFaces(vp, false);
-        import hover_state : publishHover;
-        publishHover(ifs, app.activeTool !is null, mx, my);
+        ifs.publishHover(app.activeTool !is null, mx, my);
     }
 
     void pieFireSlot(string menuId, int slot) {

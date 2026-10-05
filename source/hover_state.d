@@ -1,8 +1,8 @@
 module hover_state;
 
 
-/// Cross-module hover state. `publishHover` writes the GPU-resolved
-/// hovered element indices here after each frame's pick and at a
+/// Cross-module hover state. `InputFrameState.publishHover` writes the
+/// GPU-resolved hovered element indices here after each frame's pick and at a
 /// press's re-pick; a press reads them through `hoverAtPress` to keep
 /// click-pick aligned with hover-highlight. The
 /// GPU ID-buffer is the source of truth — any CPU-projected pick
@@ -18,7 +18,7 @@ __gshared int g_hoveredFace   = -1;
 /// the live subpatch preview's index space is stale
 /// (`InputFrameState.previewIndexSpaceStale`): they then index the mesh as it
 /// was before the last edit, not the current one. Written beside them by
-/// `publishHover` alone; a PRESS reads through `hoverAtPress` (task 7114,
+/// `InputFrameState.publishHover` alone; a PRESS reads through `hoverAtPress` (task 7114,
 /// 9439; tests/unit/hover_stale_writer_census_test.d pins both).
 __gshared bool g_hoverIndexSpaceStale = false;
 
@@ -30,24 +30,6 @@ struct HoverIds { int vertex = -1, edge = -1, face = -1; }
 HoverIds hoverAtPress() {
     if (g_hoverIndexSpaceStale) return HoverIds.init;
     return HoverIds(g_hoveredVertex, g_hoveredEdge, g_hoveredFace);
-}
-
-/// The ONE hover publish, for the frame and the press-time re-pick: the
-/// candidates see the raw picks; an active tool keeps one type (V > E > F,
-/// written back into `ifs`); the globals copy `ifs`, held ids included.
-/// A template over `InputFrameState` so this leaf module imports nothing
-/// (tools import it; the registration boundary censuses forbid the edge).
-void publishHover(Ifs)(Ifs ifs, bool toolActive, int mx, int my) {
-    import ai.element_candidates : publishElementCandidates;
-    publishElementCandidates(mx, my, ifs.hoveredVertex, ifs.hoveredEdge, ifs.hoveredFace);
-    if (toolActive) {
-        if (ifs.hoveredVertex >= 0) ifs.hoveredEdge = ifs.hoveredFace = -1;
-        else if (ifs.hoveredEdge >= 0) ifs.hoveredFace = -1;
-    }
-    g_hoveredVertex = ifs.hoveredVertex;
-    g_hoveredEdge   = ifs.hoveredEdge;
-    g_hoveredFace   = ifs.hoveredFace;
-    g_hoverIndexSpaceStale = ifs.previewIndexSpaceStale();
 }
 
 

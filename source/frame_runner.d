@@ -9,7 +9,6 @@ import edit_session : EditSession;
 import editmode : EditMode;
 import viewport_overlay_mode : OverlayMode;
 import eventlog : queryMouse;
-import hover_state : publishHover;
 import input_frame_state : InputFrameState;
 import ImGui = d_imgui;
 import imgui_impl_opengl3 : ImGui_ImplOpenGL3_RenderDrawData;
@@ -248,7 +247,7 @@ final class FrameRunner {
     HoverDrawState resolveHover(Tool activeTool, EditMode editMode) {
         int mouseX, mouseY;
         queryMouse(mouseX, mouseY);
-        publishHover(ifs_, activeTool !is null, mouseX, mouseY);
+        ifs_.publishHover(activeTool !is null, mouseX, mouseY);
 
         HoverDrawState result;
         result.vertex = editMode == EditMode.Vertices

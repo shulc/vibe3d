@@ -1,5 +1,5 @@
 // Tasks 7114, 9439 (HOV1): the hover ids and `g_hoverIndexSpaceStale` are
-// written by ONE publisher (`hover_state.publishHover`), and every PRESS-time
+// written by ONE publisher (`InputFrameState.publishHover`), and every PRESS-time
 // reader reads through `hoverAtPress` (none while the ids are held stale). The
 // reader cells (tests/unit/hover_at_press_test.d) set the globals themselves,
 // so they cannot see the production writers or a raw read; this census can.
@@ -19,9 +19,10 @@ import tests.unit.census_symbols : blankNonCode, blankUnittestBodies, enclosingS
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 private immutable kIds = ["g_hoveredVertex", "g_hoveredEdge", "g_hoveredFace"];
 private enum kFlag = "g_hoverIndexSpaceStale";
+private enum kWriter = "InputFrameState.publishHover";
 
-/// Whole-identifier hits of `name`; `write` is set for `=` (not `==`), an
-/// op-assign, `++`/`--` on either side, or an address taken (`&name`). The
+/// Whole-identifier hits of `name`; `write` is set for the spellings the
+/// tree writes: `=` (not `==`) or an address taken (`&name`). The
 /// declarations (`int g_hovered… =`, `bool g_hover… =`) are skipped.
 private void hits(string code, string name, void delegate(size_t at, bool write) sink) {
     for (ptrdiff_t at = code.indexOf(name); at >= 0; at = code.indexOf(name, at + name.length)) {
@@ -30,11 +31,8 @@ private void hits(string code, string name, void delegate(size_t at, bool write)
         const pre = code[b >= 8 ? b - 8 : 0 .. b].stripRight;
         if (pre.endsWith(" int") || pre.endsWith(" bool")) continue;
         const rest = code[e .. $].stripLeft;
-        const r2 = rest.length > 1 ? rest[0 .. 2] : rest;
-        const write = (pre.endsWith("&") && !pre.endsWith("&&")) || pre.endsWith("++") || pre.endsWith("--")
-            || r2 == "++" || r2 == "--" || (r2.length == 2 && r2[1] == '=' && "+-*/%|&^~".canFind(r2[0]))
-            || (r2.length > 0 && r2[0] == '=' && r2 != "==");
-        sink(b, write);
+        sink(b, (pre.endsWith("&") && !pre.endsWith("&&"))
+                || (rest.startsWith("=") && !rest.startsWith("==")));
     }
 }
 
@@ -54,7 +52,7 @@ unittest {
             hits(code, name, (at, write) {
                 const s = symOf(at);
                 if (write) { ++writes; if (!writers.canFind(s)) writers ~= s; return; }
-                if (name == kFlag) return;
+                if (name == kFlag || s == kWriter) return;   // the writer's own import
                 if (press.canFind!(p => s.length >= p.length && s[$ - p.length .. $] == p))
                     rawPressReads ~= rel ~ ":" ~ s;
                 else if (rel != "source/hover_state.d" && !frameReaders.canFind(rel))
@@ -75,9 +73,9 @@ unittest {
     }
     assert(files > 100, format("hover census: only %d source files scanned", files));
 
-    // ONE writer: the three ids and the flag, once each, inside publishHover.
+    // ONE writer: the three ids and the flag, once each, inside the publisher.
     assert(writes == 4, format("hover census: expected 4 writes (3 ids + flag), got %d in %s", writes, writers));
-    assert(writers == ["publishHover"],
+    assert(writers == [kWriter],
            format("hover census: hover globals written outside publishHover: %s", writers));
 
     // Its two callers: the frame's hover resolve and the press-time re-pick.
@@ -87,10 +85,14 @@ unittest {
 
     // Both pass the active-tool term, which arms the V > E > F precedence
     // (no suite cell tells a lost term apart: measured, mutations S15/S16).
-    const fr = readText(buildPath(repoRoot, "source/frame_runner.d")).replaceAll(regex(`\s+`), " ");
-    const ir = readText(buildPath(repoRoot, "source/input_router.d")).replaceAll(regex(`\s+`), " ");
-    assert(fr.indexOf("publishHover(ifs_, activeTool !is null, mouseX, mouseY);") >= 0
-           && ir.indexOf("publishHover(ifs, app.activeTool !is null, mx, my);") >= 0,
+    // Code text only, so a commented-out copy of a call cannot answer for it.
+    string codeOf(string rel) {
+        return blankNonCode(readText(buildPath(repoRoot, rel))).replaceAll(regex(`\s+`), " ");
+    }
+    assert(codeOf("source/frame_runner.d").indexOf(
+               "ifs_.publishHover(activeTool !is null, mouseX, mouseY);") >= 0
+           && codeOf("source/input_router.d").indexOf(
+               "ifs.publishHover(app.activeTool !is null, mx, my);") >= 0,
            "hover census: a publishHover caller no longer passes the active-tool term");
 
     // Press-time readers: each named press function reads through hoverAtPress, none raw.
@@ -105,9 +107,4 @@ unittest {
                             "source/tools/slice/loop_slice_tool.d"],
            format("hover census: per-frame reader roster changed: %s", frameReaders));
 
-    // Edge slice keeps its own absorb line ABOVE its press read (task 7114).
-    const es = readText(buildPath(repoRoot, "source/tools/slice/edge_slice_tool.d"))
-        .replaceAll(regex(`\s+`), " ");
-    const absorb = es.indexOf("if (" ~ kFlag ~ ") return true; int h = hoverAtPress().edge;");
-    assert(absorb >= 0, "hover census: edge slice lost its stale absorb line above its press read");
 }

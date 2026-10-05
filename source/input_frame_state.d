@@ -290,6 +290,26 @@ final class InputFrameState {
             && app.gpuUploadedPreview;
     }
 
+    /// The ONE hover publish (task 9439), for the frame and the press-time
+    /// re-pick: the candidates see the raw picks; an active tool keeps one type
+    /// (V > E > F, written back here); the `hover_state` globals copy the
+    /// result, held ids included. A method here, not in the leaf `hover_state`
+    /// that tools import, so their import closures gain no edge.
+    void publishHover(bool toolActive, int mx, int my) {
+        import ai.element_candidates : publishElementCandidates;
+        import hover_state : g_hoveredVertex, g_hoveredEdge, g_hoveredFace,
+            g_hoverIndexSpaceStale;
+        publishElementCandidates(mx, my, hoveredVertex, hoveredEdge, hoveredFace);
+        if (toolActive) {
+            if (hoveredVertex >= 0) hoveredEdge = hoveredFace = -1;
+            else if (hoveredEdge >= 0) hoveredFace = -1;
+        }
+        g_hoveredVertex = hoveredVertex;
+        g_hoveredEdge   = hoveredEdge;
+        g_hoveredFace   = hoveredFace;
+        g_hoverIndexSpaceStale = previewIndexSpaceStale();
+    }
+
     // ---- Task 0781 step 1c: the PICK FAMILY ------------------------------
     //
     // `pickHover` (+ its `pickVertices`/`pickEdges` instantiations),

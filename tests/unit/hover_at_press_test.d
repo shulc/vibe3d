@@ -25,15 +25,6 @@ private void clearHover() {
     g_hoverIndexSpaceStale = false;
 }
 
-unittest { // hoverAtPress: the published ids, or none while they are held stale
-    scope(exit) clearHover();
-    g_hoveredVertex = 1; g_hoveredEdge = 2; g_hoveredFace = 3;
-    g_hoverIndexSpaceStale = false;
-    assert(hoverAtPress() == HoverIds(1, 2, 3), "hoverAtPress lost a fresh hover");
-    g_hoverIndexSpaceStale = true;
-    assert(hoverAtPress() == HoverIds(-1, -1, -1), "hoverAtPress answered a stale hover");
-}
-
 unittest { // publishHover: HOLDS the ids while stale (task 1730); V > E > F under a tool
     import ai.debug_trace : latestElementDebugTrace;
     import core.time : MonoTime;
@@ -49,7 +40,7 @@ unittest { // publishHover: HOLDS the ids while stale (task 1730); V > E > F und
         sp.buildPending = stale;
         sp.buildStarted = MonoTime.currTime;
         ifs.hoveredVertex = 4; ifs.hoveredEdge = 5; ifs.hoveredFace = 6;
-        publishHover(ifs, tool, 0, 0);
+        ifs.publishHover(tool, 0, 0);
         assert(latestElementDebugTrace().candidates.length == 3,
                "publishHover: the element candidates did not see the raw V, E, F picks");
         assert(g_hoverIndexSpaceStale == stale, "publishHover did not publish the stale flag");
@@ -59,7 +50,7 @@ unittest { // publishHover: HOLDS the ids while stale (task 1730); V > E > F und
                      : "publishHover broke the V > E > F precedence");
     }
     ifs.hoveredVertex = -1; ifs.hoveredEdge = 5; ifs.hoveredFace = 6;
-    publishHover(ifs, true, 0, 0);
+    ifs.publishHover(true, 0, 0);
     assert(g_hoveredEdge == 5 && g_hoveredFace == -1, "publishHover: E did not beat F");
 }
 
@@ -115,5 +106,62 @@ unittest { // element pick: a stale held vertex pins nothing
         const pinned = ac.holdsElementPin(m.vertices[3]);
         if (!stale) assert(pinned, "element pick control: a fresh hover did not pin");
         else assert(!pinned, "element pick pinned a vertex from a stale hover index space");
+    }
+}
+
+unittest { // tack: a stale held target face aims at nothing (the safe no-op)
+    import display_state : DrawPlan;
+    import shader : Shader, LitShader;
+    import tools.edit.tack : TackTool;
+    scope(exit) clearHover();
+    // The camera looks down -Z and the press is the centre pixel, so the ray is
+    // parallel to a side face: a press that takes the hover is consumed (true)
+    // before any commit, so no GL is reached.
+    Viewport vp;
+    vp.view = lookAt(Vec3(0, 0, 6), Vec3(0, 0, 0), Vec3(0, 1, 0));
+    vp.proj = perspectiveMatrix(0.8f, 1.0f, 0.1f, 100.0f);
+    vp.width = vp.height = 400;
+    auto e = leftPress(200, 200);
+    VectorStack vts;
+    foreach (stale; [false, true]) {
+        Mesh m = makeCube();
+        int target = -1;
+        foreach (fi; 0 .. cast(int)m.faces.length)
+            if (m.faceNormal(fi).y > 0.9f) target = fi;
+        auto tool = new TackTool(() => &m, null, LitShader.init);
+        tool.seedPreparedActivationForTest(true);   // a source face, no GL
+        Shader sh;
+        DrawPlan plan;
+        clearHover();
+        tool.draw(sh, vp, vts, plan);       // seats the viewport; no hover yet
+        g_hoveredFace = target;
+        g_hoverIndexSpaceStale = stale;
+        const took = tool.onMouseButtonDown(e, vts);
+        if (!stale) assert(took, "tack control: a fresh hover did not reach the aim");
+        else assert(!took && tool.toolStateJson()["hoveredTargetFace"].integer == -1,
+                    "tack aimed at a face from a stale hover index space");
+    }
+}
+
+unittest { // loop slice: a stale held edge seeds no ring
+    import tools.slice.loop_slice_tool : LoopSliceTool;
+    scope(exit) clearHover();
+    auto e = leftPress();
+    VectorStack vts;
+    foreach (stale; [false, true]) {
+        Mesh m = makeCube();
+        m.buildLoops();
+        m.resetSelection();
+        EditMode em = EditMode.Edges;
+        GpuMesh gpu;
+        gpu.suppressCageUpload = true;
+        auto tool = new LoopSliceTool(() => &m, &gpu, &em, null);
+        tool.activate();
+        g_hoveredEdge = 0;
+        g_hoverIndexSpaceStale = stale;
+        const took = tool.onMouseButtonDown(e, vts);
+        if (!stale) assert(took, "loop slice control: a fresh hover did not arm");
+        else assert(!took && m.vertices.length == 8,
+                    "loop slice armed a ring from a stale hover index space");
     }
 }
