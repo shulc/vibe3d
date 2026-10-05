@@ -248,7 +248,10 @@ unittest {
     row!RadialArrayTool(EditMode.Polygons, &pickFace,
         ["count", "merge", "dist", "offset", "angle"], [2.0f, 1.0f, 0.0f, 0.0f, 0.0f], 8, 7, 32.0,
         &hideAllUnselected, true);
-    assert(rows == 6, format("%s rows ran, expected 6", rows));
+    // Exact copies: the grid tail welds and drops the doubled faces, 8v/6f (merge off 20v/9f).
+    row!ArrayTool(EditMode.Polygons, &pickFace, ["numX", "offX", "offY", "offZ", "merge",
+        "dist"], [2.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f], 8, 6, 32.0, &hideAllUnselected, true);
+    assert(rows == 7, format("%s rows ran, expected 7", rows));
 }
 
 // The callers' pre-steps around the one operation (task 9434 sweep): each
