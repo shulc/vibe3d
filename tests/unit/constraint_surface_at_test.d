@@ -126,4 +126,20 @@ unittest {
                   want.point, hp.normal, hp.hit, hp.point));
     const miss = publish(390, 10);
     assert(!miss.hit, format("publish: a miss after a hit must publish no hit; got %s at %s", miss.hit, miss.point));
+
+    // (7) The publish is UNGATED by `handle` (as before 9403; no capture backs
+    // a gate): with `handle` off the hover still hits, offset in Point mode.
+    cs.handle = false;
+    const ungated = publish(200, 100);
+    assert(ungated.hit && near3(ungated.point, want.point + ungated.normal * 0.1f),
+           format("publish, handle off: the hover must still hit at %s + 0.1 * normal; got hit %s at %s",
+                  want.point, ungated.hit, ungated.point));
+    cs.handle = true;
+
+    // (8) Screen mode publishes the RAW hit (no offset, as before 9403).
+    cs.geom = ConstrainGeom.Screen;
+    const screen = publish(200, 100);
+    assert(screen.hit && screen.point == want.point,
+           format("publish, Screen: the un-offset hit %s (offset 0.1 must not apply); got hit %s at %s",
+                  want.point, screen.hit, screen.point));
 }

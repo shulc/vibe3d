@@ -174,10 +174,10 @@ unittest { // (a) the ONE background query: `.nearest` in the CONS stage only; i
     }
     // Floor: each form is declared in constrain.d and each reaches the next
     // there (backgroundHit: decl + rayHit; rayHit: decl + rayHitAt +
-    // surfaceOnRay; surfaceOnRay: decl + surfaceAt; rayHitAt: decl; surfaceAt:
-    // decl + the hover publish).
-    assert(inStage == ["backgroundHit": size_t(2), "rayHit": 3, "rayHitAt": 1, "surfaceOnRay": 2,
-                       "surfaceAt": 2],
+    // surfaceOnRay; surfaceOnRay: decl + surfaceAt; rayHitAt: decl + the hover
+    // publish; surfaceAt: decl).
+    assert(inStage == ["backgroundHit": size_t(2), "rayHit": 3, "rayHitAt": 2, "surfaceOnRay": 2,
+                       "surfaceAt": 1],
         format("census floor: the stage's own form tokens (measured); got %s", inStage));
     assert(nearestHomes == ["toolpipe/stages/constrain.d"],
         format("`.nearest` outside bvh_pick.d must be exactly constrain.d's `backgroundHit`; a client "

@@ -9,6 +9,7 @@ import params           : Param, IntEnumEntry, wireTagForValue;
 import bvh_pick         : BackgroundRayPicker, SurfaceHit;
 import math             : Vec3, Viewport;
 import constraint        : BackgroundSource;
+import snap             : backgroundSourcesFull;
 
 // Single-sourced geometry-mode token<->value table (task 0184 / audit-2 C2):
 // fullParams()'s IntEnum Param, the parse leg (via the base Stage.setAttr ->
@@ -34,11 +35,10 @@ private static immutable IntEnumEntry[] constrainGeomEntries = [
 // pixel's centre;
 // `surfaceOnRay` / `surfaceAt` add the pointer gate `enabled && handle`;
 // `offsetPoint` is the offset each client applies in its captured order. The
-// stage's own hover publish (`publishSurfaceHit`) is their first client:
-//   * `point`  mode — the hit's nearest foot (the topology pen's mode; the
-//                     camera-ray hit is the seed, live differential
-//                     toolcards/topology_pen/cross_engine_differential.md);
-//   * `screen` mode — the camera-ray hit itself;
+// stage's own hover publish (`publishSurfaceHit`) reads `rayHitAt`, UNGATED
+// as before 9403 (no capture backs a `handle` gate on the hover):
+//   * `point`  mode — the camera-ray hit, offset (the topology pen's mode);
+//   * `screen` mode — the camera-ray hit, NOT offset (as before 9403);
 //   * `vector` mode — accepted attrs, no publish (no drag consumer yet).
 //
 // HTTP setAttr keys (via tool.pipe.attr constrain <name> <value>):
@@ -115,15 +115,18 @@ private:
 public:
     /// `backgroundHit` through the stage's BVHs (the ones the hover built):
     /// the background surface on a WORLD ray, UNGATED.
-    bool rayHit(Vec3 org, Vec3 dir, out SurfaceHit hit) {
-        return backgroundHit(_bgBvh, org, dir, hit);
+    /// `hit.source` indexes `sources`.
+    bool rayHit(Vec3 org, Vec3 dir, out SurfaceHit hit,
+                const(BackgroundSource)[] sources = backgroundSourcesFull()) {
+        return backgroundHit(_bgBvh, org, dir, sources, hit);
     }
 
     /// `rayHit` through window pixel (x, y)'s CENTRE, the one pixel convention.
-    bool rayHitAt(int x, int y, const ref Viewport vp, out SurfaceHit hit) {
+    bool rayHitAt(int x, int y, const ref Viewport vp, out SurfaceHit hit,
+                  const(BackgroundSource)[] sources = backgroundSourcesFull()) {
         Vec3 org, dir;
         pixelRay(x, y, vp, org, dir);
-        return rayHit(org, dir, hit);
+        return rayHit(org, dir, hit, sources);
     }
 
     /// The background surface on the ray when the constraint takes the
@@ -180,42 +183,31 @@ public:
         return true;
     }
 
-    // The hover publish: `surfaceAt` the cursor pixel, offset at once. Point
-    // mode moves the hit to its nearest foot (`closestPointOnMeshes`; not a
-    // no-op — task 9403 step 0 measured 3482 of 3629 topology-pen hits off by
-    // up to 1.4e-6 m) and publishes the foot distance as `t`; Screen publishes
-    // the ray hit. The hit face's nearest vertex / edge ride along as WORLD
+    // The hover publish: `rayHitAt` the cursor pixel over ONE sources
+    // snapshot (`sh.source` indexes it, task 0617); Point offsets the hit,
+    // Screen does not. The hit face's nearest vertex / edge ride along as WORLD
     // candidates, so `resolveHoverTarget` stays a function of the packet.
     private void publishSurfaceHit(ref SubjectPacket subj, ref VectorStack vts) {
-        import snap       : backgroundSourcesFull;
-        import constraint : closestPointOnMeshes, nearestFaceVertex, nearestFaceEdge,
-                            consistentCandidateIndex;
-        import std.math   : sqrt;
+        import constraint : nearestFaceVertex, nearestFaceEdge, consistentCandidateIndex;
 
         _hitPkt = ConstrainHitPacket.init;
         scope(exit) vts.put(&_hitPkt);
-        SurfaceHit sh;
-        if (!surfaceAt(subj.cursorX, subj.cursorY, subj.viewport, sh)) return;
         auto bgFull = backgroundSourcesFull();
-        Vec3  p = sh.point, n = sh.normal;
-        int   src = sh.source, face = sh.face;
-        float t = sh.t;
-        if (geom == ConstrainGeom.Point) {
-            float d2;
-            if (!closestPointOnMeshes(sh.point, bgFull, dblSided, p, n, src, face, d2)) return;
-            t = sqrt(d2);
-        }
+        SurfaceHit sh;
+        if (!rayHitAt(subj.cursorX, subj.cursorY, subj.viewport, sh, bgFull)) return;
+        immutable src = sh.source, face = sh.face;
+        immutable p = sh.point, n = sh.normal;
         if (src < 0 || src >= cast(int)bgFull.length || bgFull[src].mesh is null) return;
 
         const bg = bgFull[src];
         const m  = bg.mesh;
         Vec3 world(uint v) { return bg.space.isIdentity ? m.vertices[v] : bg.space.toWorldPoint(m.vertices[v]); }
         _hitPkt.hit    = true;
-        _hitPkt.point  = offsetPoint(p, n);
+        _hitPkt.point  = geom == ConstrainGeom.Point ? offsetPoint(p, n) : p;
         _hitPkt.normal = n;
         _hitPkt.layer  = bg.layerIndex >= 0 ? bg.layerIndex : src;
         _hitPkt.face   = face;
-        _hitPkt.t      = t;
+        _hitPkt.t      = sh.t;
         // A candidate whose position cannot be filled is -1 too, so an index
         // never pairs with a default (origin) position (review NIT-1).
         _hitPkt.nearestVert = consistentCandidateIndex(
@@ -382,11 +374,11 @@ private:
 
 /// The ONE background query (task 9403, M-CONS): the nearest hit of the WORLD
 /// ray over every background source, each through its own space, cached in
-/// `bvh`; `hit.source` indexes `snap.backgroundSourcesFull()`. Pointer clients
+/// `bvh`; `hit.source` indexes `sources`. Pointer clients
 /// call the stage's forms; only a pipeline-less one passes its own `bvh`.
-bool backgroundHit(ref BackgroundRayPicker bvh, Vec3 org, Vec3 dir, out SurfaceHit hit) {
-    import snap : backgroundSourcesFull;
-    return bvh.nearest(org, dir, backgroundSourcesFull(), hit);
+bool backgroundHit(ref BackgroundRayPicker bvh, Vec3 org, Vec3 dir,
+                   const(BackgroundSource)[] sources, out SurfaceHit hit) {
+    return bvh.nearest(org, dir, sources, hit);
 }
 
 /// The live pipeline's constraint stage, or null. The ONE finder

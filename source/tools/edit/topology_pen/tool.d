@@ -5146,7 +5146,7 @@ public:
         Vec3 org, dir;
         SurfaceHit sh;
         screenPointToRay(x, y, vp, org, dir);
-        if (!(cs !is null ? cs.rayHit(org, dir, sh) : backgroundHit(bgRayPick_, org, dir, sh)))
+        if (!(cs !is null ? cs.rayHit(org, dir, sh) : backgroundHit(bgRayPick_, org, dir, backgroundSourcesFull(), sh)))
             return false;
         hitW = sh.point;
         return true;
