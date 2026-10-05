@@ -522,8 +522,7 @@ void installSnapState(EditorApp app)
     {
         import snap             : setItemSnapFrames;
         import toolpipe.packets : SnapType;
-        import toolpipe.stage   : TaskCode;
-        import toolpipe.stages.snap : SnapStage;
+        import toolpipe.stages.snap : liveSnapStage;
         import document         : kindInfo;
 
         // Does anything downstream read the BOX half of these frames this
@@ -542,9 +541,8 @@ void installSnapState(EditorApp app)
         // so pay the walk rather than assume it is clear. That is the headless
         // and unittest shape, where the meshes are small and the walk is free.
         bool wantBBox = true;
-        if (g_pipeCtx !is null)
-            if (auto ss = cast(SnapStage) g_pipeCtx.pipeline.findByTask(TaskCode.Snap))
-                wantBBox = (ss.enabledTypes & SnapType.Box) != 0;
+        if (auto ss = liveSnapStage())
+            wantBBox = (ss.enabledTypes & SnapType.Box) != 0;
 
         // Reused across frames rather than freshly appended each one:
         // `setItemSnapFrames` COPIES element-by-element into its own buffer

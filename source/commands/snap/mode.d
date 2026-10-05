@@ -6,9 +6,7 @@ import view;
 import editmode;
 import params : Param, wireArgs;
 
-import toolpipe.pipeline    : g_pipeCtx;
-import toolpipe.stages.snap : SnapStage;
-import toolpipe.stage       : TaskCode;
+import toolpipe.stages.snap : liveSnapStage;
 
 // ---------------------------------------------------------------------------
 // `snap.mode <global|component|item>` — set the SnapStage's scope mode.
@@ -37,10 +35,7 @@ class SnapModeCommand : Command {
     }
 
     protected override bool applyImpl() {
-        if (g_pipeCtx is null)
-            throw new Exception("snap.mode: pipeline not initialised");
-        auto sn = cast(SnapStage)
-                  g_pipeCtx.pipeline.findByTask(TaskCode.Snap);
+        auto sn = liveSnapStage();
         if (sn is null)
             throw new Exception("snap.mode: SNAP stage not registered");
         if (modeName_.length == 0)

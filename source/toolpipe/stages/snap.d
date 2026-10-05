@@ -312,18 +312,8 @@ class SnapStage : Stage, Operator {
         // (see SnapHitPacket's contract). Were the seed to acquire meaning,
         // this line would have to become a real derivation, and the packet's
         // "meaningful only when `snapped`" clause is what keeps that honest.
-        // `_guides` is the S4(a) registry, and it is empty: nothing in this
-        // tree registers a guide, so this argument is `null` in effect and the
-        // query takes the historical ranking. It is passed anyway because the
-        // registry has to reach the arbitration through SOMETHING, and this is
-        // the one query the stage owns.
-        //
-        // NOTE for phase (b): the four tool-side `snapCursor` call sites
-        // (`app.d`, `tools/create/create_common.d`, `tools/transform/move.d`,
-        // `tools/transform/transform.d`) do NOT consult the registry. The
-        // moment a real guide registers, they and this query would rank
-        // differently — so migrating them is part of registering the first
-        // guide, not a follow-up.
+        // `_guides` is the registry; every tool-side `snapCursor` call passes
+        // the same registry through `liveSnapGuides()` (task 9405).
         SnapResult sr = snapCursor(Vec3(0, 0, 0), subj.cursorX, subj.cursorY,
                                    subj.viewport, *subj.mesh, primaryModelSpace(), cfg,
                                    null, null, _guides);
@@ -336,10 +326,6 @@ class SnapStage : Stage, Operator {
         hit.targetSource   = sr.targetSource;
         hit.constraintType = sr.constraintType;
         // PROVENANCE, not a result: how many guides re-ranked the walk above.
-        // A consumer migrating off its own `snapCursor` (which passes no
-        // registry) must refuse this packet when it is non-zero — see the
-        // packet's own contract, and the note further up about the four
-        // tool-side call sites that do not consult the registry.
         hit.guideCount     = cast(int)_guides.length;
 
         // Paired with `highlighted` exactly as `worldPos` is paired with
@@ -805,7 +791,21 @@ private:
     }
 }
 
+/// The live pipeline's SNAP stage, or null when there is none (unittests,
+/// headless) — the one finder every snap client calls (task 9405), the twin
+/// of `liveSymmetryStage` / `liveConstrainStage`.
+SnapStage liveSnapStage() {
+    import toolpipe.pipeline : g_pipeCtx;
+    if (g_pipeCtx is null) return null;
+    return cast(SnapStage) g_pipeCtx.pipeline.findByTask(TaskCode.Snap);
+}
 
+/// The guides every production `snapCursor` call consults: the live stage's
+/// registry (empty unless a gesture registered one), or none.
+SnapGuide[] liveSnapGuides() {
+    if (auto st = liveSnapStage()) return st.guides();
+    return null;
+}
 
 // ---------------------------------------------------------------------------
 // The DEMAND gate on the per-cursor RESULT — task 0531, closing the cost that

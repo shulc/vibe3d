@@ -14,7 +14,8 @@ import mesh : Mesh;
 import editmode : EditMode;
 import seltype : SelType;
 import toolpipe.subject : evaluateSubject, viewOnlySubject, SubjectSource;
-import snap : SnapResult, snapCursor;
+import snap : SnapResult, snapCursor, snapPacketOf;
+import toolpipe.stages.snap : liveSnapGuides;
 import snap_render : publishLastSnap, clearLastSnap;
 // Task 0617 Stage 4: Create-tools always build into the active/primary
 // layer's mesh (the `mesh` argument below), so its ModelSpace is the same
@@ -509,9 +510,7 @@ SnapPacket currentSnapPacket(const ref Mesh mesh, EditMode editMode,
     VectorStack   vts;
     evaluateSubject(subj, vts,
         SubjectSource(cast(Mesh*)&mesh, editMode, SelType.Vertex, vp));
-    auto snapPkt = vts.get!SnapPacket();
-    if (snapPkt is null) return SnapPacket.init;
-    return *snapPkt;
+    return snapPacketOf(vts);
 }
 
 /// Run SNAP against a workplane-local hit. Each Create-tool computes
@@ -549,26 +548,17 @@ SnapResult snapLocalHit(ref Vec3 hitLocal,
                         const(uint)[] excludeVerts = [],
                         uint excludeTypes = 0)
 {
-    SnapResult sr;
-    if (g_pipeCtx is null) return sr;
-    // selType frozen at Vertex (plan §1.3 — one of the seven sites that
-    // never had a live SelType/SelTypeOrder to read). `mesh` cast is the
-    // same "SnapStage doesn't mutate" pointer widening the old build did.
-    SubjectPacket subj;
-    VectorStack   vts;
-    evaluateSubject(subj, vts,
-        SubjectSource(cast(Mesh*)&mesh, editMode, SelType.Vertex, vp));
-    auto snapPkt = vts.get!SnapPacket();
-    if (snapPkt is null || !snapPkt.enabled) return sr;
+    SnapPacket localPkt = currentSnapPacket(mesh, editMode, vp);
+    if (!localPkt.enabled) return SnapResult.init;
 
     // Apply exclusion mask: the caller can suppress certain SnapType bits so
     // it can handle those constraint types itself. Default 0 = no change
     // (backward-compatible for all non-Pen Create-tools).
-    SnapPacket localPkt = *snapPkt;
     localPkt.enabledTypes &= ~excludeTypes;
 
     Vec3 hitWorld = transformPoint(frame.toWorld, hitLocal);
-    sr = snapCursor(hitWorld, sx, sy, vp, mesh, primaryModelSpace(), localPkt, excludeVerts);
+    auto sr = snapCursor(hitWorld, sx, sy, vp, mesh, primaryModelSpace(), localPkt, excludeVerts,
+                         null, liveSnapGuides());
     if (sr.snapped)
         hitLocal = transformPoint(frame.toLocal, sr.worldPos);
     return sr;

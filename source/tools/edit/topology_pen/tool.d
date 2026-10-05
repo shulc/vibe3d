@@ -38,15 +38,13 @@ import shader              : Shader;
 import operator            : VectorStack, viewportOf;
 import toolpipe.packets    : ConstrainHitPacket, HoverTarget, HoverTargetKind,
                              SubjectPacket, SnapPacket, SnapType;
-import toolpipe.pipeline   : g_pipeCtx;
-import toolpipe.stage      : TaskCode;
 import toolpipe.stages.constrain : liveConstrainStage;
-import toolpipe.stages.snap : SnapStage;
+import toolpipe.stages.snap : SnapStage, liveSnapStage;
 import toolpipe.guide       : SnapGuide, GuideDrawState, kGuidePrioritySeed;
 import constraint           : resolveHoverTarget, topoPenPressPickPx,
                               topoPenSnapAcceptPx, topoPenSnapGatherPx,
                               kTopoPenSnapAuto, closestPointOnMeshes, BackgroundSource;
-import snap                  : backgroundSourcesFull, SnapAdmit;
+import snap                  : backgroundSourcesFull, SnapAdmit, snapPacketOf;
 import tools.edit.smooth_relax : RelaxVec3, RelaxTopology, deriveBoundary, relaxPasses;
 import tools.edit.topology_pen.render : PenRenderOps;
 import tools.edit.topology_pen.snap_guide : PenSnapGuide;
@@ -1652,7 +1650,7 @@ public:
         image.clear();
     }
 
-    final SnapStage preparedSnapStageForDeactivate() { return snapStageForGesture(); }
+    final SnapStage preparedSnapStageForDeactivate() { return liveSnapStage(); }
     final SnapGuide preparedSnapGuideForDeactivate() nothrow @nogc { return snapGuide_; }
 
     final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context) {
@@ -2062,14 +2060,6 @@ public:
     /// they need the guarded form.
     private Mesh* meshOrNull() { return meshSrc_ is null ? null : meshSrc_(); }
 
-    /// The SNAP stage of the live pipeline, or null when there is none —
-    /// every direct-construction unittest, and every headless path. Mirrors
-    /// `XfrmToolBase.snapStageForHooks`, same lookup, same null discipline.
-    private SnapStage snapStageForGesture() {
-        if (g_pipeCtx is null) return null;
-        return cast(SnapStage) g_pipeCtx.pipeline.findByTask(TaskCode.Snap);
-    }
-
     /// Gesture start: point the guide at this gesture's mesh + policy and
     /// register it with the service. Idempotent at both ends — the registry
     /// dedups, and `removeGuide` on an unregistered guide is a no-op — so a
@@ -2078,7 +2068,7 @@ public:
     package void registerSnapGuide() {
         auto g = snapGuide();
         g.retarget(meshOrNull(), innerSnap_, backFace_);
-        if (auto st = snapStageForGesture()) st.addGuide(g);
+        if (auto st = liveSnapStage()) st.addGuide(g);
     }
 
     /// Gesture end. Also called by `deactivate` — a tool switch mid-drag ends
@@ -2086,7 +2076,7 @@ public:
     /// for a mesh nobody is editing.
     package void unregisterSnapGuide() {
         if (snapGuide_ is null) return;
-        if (auto st = snapStageForGesture()) st.removeGuide(snapGuide_);
+        if (auto st = liveSnapStage()) st.removeGuide(snapGuide_);
     }
 
     // -----------------------------------------------------------------------
@@ -2132,7 +2122,7 @@ public:
     // (a scene reset resets the stage BEFORE it drops the tool, so a
     // tool-owned value would be restored on top of the clean slate).
     private void armStartupSnap() {
-        if (auto st = snapStageForGesture()) st.pushEnabled(kSnapArmOwner, true);
+        if (auto st = liveSnapStage()) st.pushEnabled(kSnapArmOwner, true);
     }
 
     /// The mirror, called from `deactivate` — our equivalent of the drop the
@@ -2140,7 +2130,7 @@ public:
     /// slot was cleared by a scene reset in between): the pop is keyed on
     /// `kSnapArmOwner`, so an unmatched one writes nothing.
     private void disarmStartupSnap() {
-        if (auto st = snapStageForGesture()) st.popEnabled(kSnapArmOwner);
+        if (auto st = liveSnapStage()) st.popEnabled(kSnapArmOwner);
     }
 
     /// The pen's SNAP TARGET (task 0496): which existing primary-layer vertex
@@ -3265,7 +3255,7 @@ public:
         // free of any arm bool — the capture must happen even for a press that
         // goes on to decline, because `resetAllGestureArms()` runs INSIDE the
         // dispatch below and would otherwise be a place to lose it.
-        captureSnapForGesture(vts);
+        dragSnap_ = snapPacketOf(vts);
         // Task 0523: and register this gesture's snapping guide, on the same
         // unconditional press-to-release window and for the same reason. The
         // registration is NOT gated on the master snap enable — the service's
@@ -3379,14 +3369,6 @@ public:
         basis_ = basis;
         restoreRecordedAttrs(attrs);
         resyncSession();
-    }
-
-    /// Snapshot the live SNAP configuration for the gesture that is starting.
-    /// Mirrors `XfrmToolBase.captureSnapForDrag` — same packet, same source,
-    /// same "no stage registered ⇒ the init packet's defaults" fallback.
-    private void captureSnapForGesture(ref VectorStack vts) {
-        if (auto sp = vts.get!SnapPacket()) dragSnap_ = *sp;
-        else                                dragSnap_ = SnapPacket.init;
     }
 
     // REV1 FIX-1 (opponent objection 1, cross-arm coupling — doc/topopen_p7_slide_plan.md

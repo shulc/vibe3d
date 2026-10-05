@@ -1412,33 +1412,25 @@ private:
     // workplane axes. The centerBox (3) instead uses LAW D's component index
     // on the PLANE-LOCAL view and writes the snapped LOCAL components into
     // Position, like the centre drag itself (task 7139).
+    // One loop over the FREE axes: the dragged arrow's, or the centre box's two
+    // local axes other than the locked one (task 9405; the projection form is
+    // value-equal to a component copy on unit axes, differing only in a zero's sign).
     SnapResult snapMover(int axisIdx, int sx, int sy) {
-        bool f1, fn, f2;
-        int centerLock = -1;
-        if      (axisIdx == 0) f1 = true;
-        else if (axisIdx == 1) fn = true;
-        else if (axisIdx == 2) f2 = true;
-        else {
-            Viewport lvp = planeLocalViewport(cachedVp, frame);
-            centerLock = primitiveCenterPlaneAxis(cenVec(), lvp);
+        Vec3[3] axes = [planeAxis1, planeNormal, planeAxis2];
+        int lock = -1;
+        if (axisIdx > 2) {
+            axes = [Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1)];
+            const lvp = planeLocalViewport(cachedVp, frame);
+            lock = primitiveCenterPlaneAxis(cenVec(), lvp);
         }
         Vec3 hitLocal = boxCenter();
         auto sr = snapLocalHit(hitLocal, frame, sx, sy, cachedVp,
                                 *mesh, EditMode.Vertices);
         if (sr.snapped) {
             Vec3 cen = cenVec();
-            if (centerLock >= 0) {
-                if (centerLock != 0) cen.x = hitLocal.x;
-                if (centerLock != 1) cen.y = hitLocal.y;
-                if (centerLock != 2) cen.z = hitLocal.z;
-            } else {
-                if (f1) cen = cen - planeAxis1 * dot(cen, planeAxis1)
-                                  + planeAxis1 * dot(hitLocal, planeAxis1);
-                if (fn) cen = cen - planeNormal * dot(cen, planeNormal)
-                                  + planeNormal * dot(hitLocal, planeNormal);
-                if (f2) cen = cen - planeAxis2 * dot(cen, planeAxis2)
-                                  + planeAxis2 * dot(hitLocal, planeAxis2);
-            }
+            foreach (i, a; axes)
+                if (lock >= 0 ? i != lock : i == axisIdx)
+                    cen = cen - a * dot(cen, a) + a * dot(hitLocal, a);
             params_.cenX = cen.x; params_.cenY = cen.y; params_.cenZ = cen.z;
             uploadPreview();
         }
@@ -1452,20 +1444,23 @@ private:
     SnapResult snapHeightFace(int idx, int sx, int sy) {
         Vec3 botL = baseCentroid();
         Vec3 topL = botL + planeNormal * currentHeight();
-        Vec3 movedL = (idx == 1) ? topL : botL;
-        Vec3 oppL   = (idx == 1) ? botL : topL;
-        Vec3 hitLocal = movedL;
-        auto sr = snapLocalHit(hitLocal, frame, sx, sy, cachedVp,
-                                *mesh, EditMode.Vertices);
+        auto sr = snapFace(planeNormal, idx == 1 ? topL : botL,
+                           dot(idx == 1 ? botL : topL, planeNormal), sx, sy);
+        if (sr.snapped) uploadCuboid();
+        return sr;
+    }
+
+    // Snap a moved face's point `movedL` along `axis`, holding the opposite face
+    // at coordinate `o`: centre (t + o) / 2 and size |t − o| on that axis, where
+    // t is the snap target's coordinate. The caller uploads (task 9405).
+    SnapResult snapFace(Vec3 axis, Vec3 movedL, float o, int sx, int sy) {
+        auto sr = snapLocalHit(movedL, frame, sx, sy, cachedVp, *mesh, EditMode.Vertices);
         if (sr.snapped) {
-            float t = dot(hitLocal, planeNormal);   // snap target normal coord
-            float o = dot(oppL, planeNormal);       // held opposite face
+            float t = dot(movedL, axis);
             Vec3  cen = cenVec();
-            cen = cen - planeNormal * dot(cen, planeNormal)
-                      + planeNormal * ((t + o) * 0.5f);
+            cen = cen - axis * dot(cen, axis) + axis * ((t + o) * 0.5f);
             params_.cenX = cen.x; params_.cenY = cen.y; params_.cenZ = cen.z;
-            writeSizeParam(planeNormal, abs(t - o));
-            uploadCuboid();
+            writeSizeParam(axis, abs(t - o));
         }
         return sr;
     }
@@ -1672,22 +1667,10 @@ private:
             case 3: moveAxis = planeAxis1; faceSign = -1.0f; break;
         }
         // Client point = the moved face's midpoint from `params_` (the drag's
-        // unsnapped value, not the draw-cached handle); snapLocalHit picks a
-        // candidate near the cursor pixel.
-        Vec3 hitLocal = edgeMidLocal(idx);
-        auto sr = snapLocalHit(hitLocal, frame, sx, sy, cachedVp,
-                                *mesh, EditMode.Vertices);
-        if (sr.snapped) {
-            Vec3  cen  = cenVec();
-            float size = sizeAlong(moveAxis);
-            float o    = dot(cen, moveAxis) - faceSign * size * 0.5f; // un-moved face
-            float t    = dot(hitLocal, moveAxis);                     // snap target
-            float newCenAxis = (t + o) * 0.5f;
-            cen = cen - moveAxis * dot(cen, moveAxis) + moveAxis * newCenAxis;
-            params_.cenX = cen.x; params_.cenY = cen.y; params_.cenZ = cen.z;
-            writeSizeParam(moveAxis, abs(t - o));
-            uploadPreview();
-        }
+        // unsnapped value, not the draw-cached handle); the un-moved face held.
+        auto sr = snapFace(moveAxis, edgeMidLocal(idx),
+                           dot(cenVec(), moveAxis) - faceSign * sizeAlong(moveAxis) * 0.5f, sx, sy);
+        if (sr.snapped) uploadPreview();
         return sr;
     }
 

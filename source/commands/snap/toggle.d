@@ -5,9 +5,7 @@ import mesh;
 import view;
 import editmode;
 
-import toolpipe.pipeline       : g_pipeCtx;
-import toolpipe.stages.snap    : SnapStage;
-import toolpipe.stage          : TaskCode;
+import toolpipe.stages.snap    : liveSnapStage;
 
 // ---------------------------------------------------------------------------
 // `snap.toggle` — flip the SnapStage's master enable flag. Bound to
@@ -31,10 +29,7 @@ class SnapToggleCommand : Command {
     override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
 
     protected override bool applyImpl() {
-        if (g_pipeCtx is null)
-            throw new Exception("snap.toggle: pipeline not initialised");
-        auto sn = cast(SnapStage)
-                  g_pipeCtx.pipeline.findByTask(TaskCode.Snap);
+        auto sn = liveSnapStage();
         if (sn is null)
             throw new Exception("snap.toggle: SNAP stage not registered");
         sn.setAttr("enabled", sn.enabled ? "false" : "true");

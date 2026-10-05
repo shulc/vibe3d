@@ -167,7 +167,7 @@ import toolpipe.stages.falloff : FalloffStage, FalloffSetSnapshot,
                                  restoreFalloffSetFromCombined;
 import toolpipe.stages.actcenter : ActionCenterStage;
 import toolpipe.stages.axis : AxisStage;
-import toolpipe.stages.snap : SnapStage;
+import toolpipe.stages.snap : SnapStage, liveSnapStage;
 import toolpipe.stages.symmetry : SymmetryStage;
 import toolpipe.packets  : FalloffType, ElementMode, ElementConnect,
                           FalloffConfig, FalloffPacket, SnapPacket,
@@ -6916,8 +6916,7 @@ private:
     // its own `final` snapStageForHooks()/symmetryStageForHooks() for the R/S
     // sub-tools (the same vtable-collision avoidance as falloffStageForHooks).
     SnapStage activeSnapStage() const {
-        if (g_pipeCtx is null) return null;
-        return cast(SnapStage) g_pipeCtx.pipeline.findByTask(TaskCode.Snap);
+        return liveSnapStage();
     }
     SymmetryStage activeSymmetryStage() const {
         if (g_pipeCtx is null) return null;

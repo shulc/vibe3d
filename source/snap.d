@@ -18,6 +18,7 @@ import toolpipe.guide   : SnapGuide, kGuidePrioritySeed;
 import perf_probe : g_perf, Cat;
 import constraint : BackgroundSource;
 import snap_election : SnapElection;
+import operator : VectorStack;
 
 // ---------------------------------------------------------------------------
 // Snap math — Phase 7.3 of doc/phase7_plan.md / doc/snap_plan.md.
@@ -567,6 +568,18 @@ const(BackgroundSource)[] backgroundSourcesFull() {
 /// `nothrow`: the walk runs inside a `synchronized`-adjacent hot path and
 /// must not unwind through it; a predicate that needs to fail should reject.
 alias SnapAdmit = bool delegate(SnapType type, int idx, int slot) nothrow;
+
+/// The SNAP packet the pipeline published into `vts`, or `SnapPacket.init`
+/// (`enabled` false) when no SNAP stage ran. The one packet read every snap
+/// client makes; WHEN it reads (per event or once at the press) stays the
+/// client's own (task 9405).
+SnapPacket snapPacketOf(ref VectorStack vts) {
+    if (auto sp = vts.get!SnapPacket()) return *sp;
+    return SnapPacket.init;
+}
+
+/// The guide-constraint snap types, which a discrete-target client strips.
+enum uint kGuideTypes = SnapType.WorldAxis | SnapType.StraightLine | SnapType.RightAngle;
 
 /// Snap the world position `cursorWorld` corresponding to screen pixel
 /// (sx, sy) according to `cfg`. `excludeVerts` lists vertex indices

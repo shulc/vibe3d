@@ -6,9 +6,7 @@ import view;
 import editmode;
 import params : Param, wireArgs;
 
-import toolpipe.pipeline       : g_pipeCtx;
-import toolpipe.stages.snap    : SnapStage;
-import toolpipe.stage          : TaskCode;
+import toolpipe.stages.snap    : liveSnapStage;
 
 // ---------------------------------------------------------------------------
 // `snap.toggleType <name>` — flip a single SnapType bit in the
@@ -43,10 +41,7 @@ class SnapToggleTypeCommand : Command {
     }
 
     protected override bool applyImpl() {
-        if (g_pipeCtx is null)
-            throw new Exception("snap.toggleType: pipeline not initialised");
-        auto sn = cast(SnapStage)
-                  g_pipeCtx.pipeline.findByTask(TaskCode.Snap);
+        auto sn = liveSnapStage();
         if (sn is null)
             throw new Exception("snap.toggleType: SNAP stage not registered");
         if (typeName_.length == 0)

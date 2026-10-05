@@ -2227,7 +2227,8 @@ private void wireToolpipeProviders(HttpServer httpServer, ref EditorApp app,
             import std.json        : parseJSON, JSONType, JSONValue;
             import std.conv        : to;
             import toolpipe.packets        : SnapPacket, SubjectPacket;
-            import snap                    : snapCursor, SnapResult;
+            import snap                    : snapCursor, SnapResult, snapPacketOf;
+            import toolpipe.stages.snap    : liveSnapGuides;
             import math                    : Vec3;
 
             auto buf = appender!string;
@@ -2281,7 +2282,7 @@ private void wireToolpipeProviders(HttpServer httpServer, ref EditorApp app,
                 SubjectPacket subj;
                 VectorStack vts;
                 if (evaluateSubject(subj, vts, src))
-                    if (auto sp = vts.get!SnapPacket()) cfg = *sp;
+                    cfg = snapPacketOf(vts);
             }
 
             // The just-in-time item-frame install that used to sit here is
@@ -2296,7 +2297,8 @@ private void wireToolpipeProviders(HttpServer httpServer, ref EditorApp app,
             // primaryModelSpace() — the SAME resolver the pick providers use
             // (task 0617 Stage 4), so a transformed primary snaps where it's
             // actually drawn.
-            SnapResult sr = snapCursor(cursor, sx, sy, vp, mesh, primaryModelSpace(), cfg, exclude);
+            SnapResult sr = snapCursor(cursor, sx, sy, vp, mesh, primaryModelSpace(), cfg, exclude,
+                                       null, liveSnapGuides());
 
             buf.put(format(
                 `{"snapped":%s,"highlighted":%s,"targetType":%d,`

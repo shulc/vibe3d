@@ -56,10 +56,10 @@ import command : Command;
 import command_history : CommandHistory;
 import commands.mesh.vertex_edit : MeshVertexEdit;
 import commands.mesh.morph_edit  : MeshMorphEdit;
-import snap : SnapResult;
+import snap : SnapResult, snapPacketOf;
 import toolpipe.packets : FalloffPacket, FalloffType, SymmetryPacket, SnapPacket, SubjectPacket;
 import toolpipe.stages.falloff : FalloffStage;
-import toolpipe.stages.snap : SnapStage;
+import toolpipe.stages.snap : SnapStage, liveSnapStage, liveSnapGuides;
 import toolpipe.stages.symmetry : SymmetryStage;
 import falloff : evaluateFalloff;
 import symmetry : applySymmetryMirror;
@@ -1412,10 +1412,7 @@ protected:
     /// as falloffStageForHooks (the wrapper keeps its OWN
     /// activeSnapStage/activeSymmetryStage accessors).
     final SnapStage snapStageForHooks() const {
-        import toolpipe.pipeline : g_pipeCtx;
-        import toolpipe.stage    : TaskCode;
-        if (g_pipeCtx is null) return null;
-        return cast(SnapStage) g_pipeCtx.pipeline.findByTask(TaskCode.Snap);
+        return liveSnapStage();
     }
     final SymmetryStage symmetryStageForHooks() const {
         import toolpipe.pipeline : g_pipeCtx;
@@ -1541,16 +1538,14 @@ protected:
     /// compare the live config against at idle. No-op (init packet, enabled
     /// false) when SnapStage is disabled / unregistered.
     void captureSnapForDrag(ref VectorStack vts) {
-        if (auto sp = vts.get!SnapPacket()) dragSnap = *sp;
-        else                                dragSnap = SnapPacket.init;
+        dragSnap = snapPacketOf(vts);
     }
 
     /// P-C: live SnapPacket for the idle-time refire compare (mirrors
     /// currentFalloff). Walks the toolpipe each call — cheap, and only the
     /// idle re-grade path reads it.
     SnapPacket currentSnap(ref VectorStack vts) {
-        if (auto sp = vts.get!SnapPacket()) return *sp;
-        return SnapPacket.init;
+        return snapPacketOf(vts);
     }
 
     /// P-C: live SymmetryPacket for the idle-time refire compare (mirrors
@@ -2043,12 +2038,11 @@ protected:
     // path inlines its own snapCursor call with proper exclusions.
     protected SnapResult evaluateSnap(Vec3 rawHit, int sx, int sy,
                                        ref VectorStack vts) {
-        import toolpipe.packets : SnapPacket;
-        import snap             : snapCursor;
-        SnapResult sr;
-        auto snapPkt = vts.get!SnapPacket();
-        if (snapPkt is null || !snapPkt.enabled) return sr;
-        return snapCursor(rawHit, sx, sy, cachedVp, *mesh, primaryModelSpace(), *snapPkt, []);
+        import snap : snapCursor;
+        const pkt = snapPacketOf(vts);
+        if (!pkt.enabled) return SnapResult.init;
+        return snapCursor(rawHit, sx, sy, cachedVp, *mesh, primaryModelSpace(), pkt, [], null,
+                          liveSnapGuides());
     }
 
     // Mirror a SnapResult onto both the tool's local lastSnap and the

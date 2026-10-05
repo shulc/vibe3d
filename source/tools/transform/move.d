@@ -28,7 +28,8 @@ import d_imgui.imgui_h;
 import std.math;
 import drag;
 import coord_rounding : coordRounding, coordRoundingFixedIncrement;
-import snap : snapCursor, SnapResult;
+import snap : snapCursor, SnapResult, snapPacketOf;
+import toolpipe.stages.snap : liveSnapGuides;
 import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
 // Task 0617 Stage 4: XfrmTransformTool drags the active/primary mesh only
 // (CLAUDE.md: "Single-primary EDITING... tools hit the primary only"), so
@@ -958,11 +959,10 @@ public:
     private Vec3 applySnapToDelta(Vec3 gizmoCenter, Vec3 worldDelta,
                                   int sx, int sy, ref VectorStack vts)
     {
-        import toolpipe.packets : SnapPacket;
         // SNAP packet is already published in vts (upstream stage ran
         // during the dispatcher's pipeline.evaluate).
-        auto snapPkt = vts.get!SnapPacket();
-        if (snapPkt is null || !snapPkt.enabled) {
+        const snapPkt = snapPacketOf(vts);
+        if (!snapPkt.enabled) {
             lastSnap = SnapResult.init;
             clearLastSnap();
             return releaseSnap(worldDelta);
@@ -983,8 +983,8 @@ public:
         foreach (vi; vertexIndicesToProcess[0 .. nProc])
             if (vi >= 0) exclude ~= cast(uint)vi;
 
-        SnapResult sr = snapCursor(snapClient, sx, sy, cachedVp,
-                                   *mesh, primaryModelSpace(), *snapPkt, exclude);
+        SnapResult sr = snapCursor(snapClient, sx, sy, cachedVp, *mesh, primaryModelSpace(),
+                                   snapPkt, exclude, null, liveSnapGuides());
         lastSnap = sr;
         publishLastSnap(sr);
         if (sr.snapped) {

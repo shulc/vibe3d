@@ -19,7 +19,7 @@ import tools.create.create_common : pickWorkplaneFrame, WorkplaneFrame,
                               workplaneCursorPlaneHit;
 import toolpipe.packets : SnapType;
 import editmode : EditMode;
-import snap : SnapResult;
+import snap : SnapResult, kGuideTypes;
 import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap, g_lastSnap;
 import operator : VectorStack;
 import prepared_tool_effect : PreparedActivateEffect, PreparedActivateKind;
@@ -74,11 +74,6 @@ private:
 
     Viewport   cachedVp_;
     SnapResult lastSnap_;
-
-    // Snap-type bits not handled by VertexTool.  Excluded from snapLocalHit
-    // so only discrete mesh-element snap fires (no pen guide constraints).
-    enum uint guideBits_ =
-        SnapType.WorldAxis | SnapType.StraightLine | SnapType.RightAngle;
 
 public:
     this(Mesh* delegate() meshSrc, GpuMesh* gpu, LitShader litShader)
@@ -216,7 +211,7 @@ public:
         // Discrete snap (pen guide bits excluded so only mesh-element targets
         // fire here).
         lastSnap_ = snapLocalHit(hit, frame_, e.x, e.y, cachedVp_,
-                                  *mesh, EditMode.Vertices, [], guideBits_);
+                                  *mesh, EditMode.Vertices, [], kGuideTypes);
         publishLastSnap(lastSnap_);
 
         // Convert local workplane hit → world position.
@@ -274,7 +269,7 @@ public:
         if (workplaneCursorPlaneHit(f, cachedVp_, cast(float)e.x, cast(float)e.y,
                                     Vec3(0, 0, 0), pn, hit)) {
             lastSnap_ = snapLocalHit(hit, f, e.x, e.y, cachedVp_,
-                                      *mesh, EditMode.Vertices, [], guideBits_);
+                                      *mesh, EditMode.Vertices, [], kGuideTypes);
             publishLastSnap(lastSnap_);
         } else {
             lastSnap_ = SnapResult.init;
