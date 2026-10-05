@@ -514,3 +514,17 @@ unittest {
     assert(threw && !x.context.markNoHistoryInstall() && !x.context.validate(),
         "a failed enlist left the transaction live");
 }
+
+unittest { // Magnet: the param-update rebuild keeps a falloff picked while armed
+           // (one slot, last writer wins — capture K-F1, task 9446).
+    import falloff : magnetElementPacket;
+    import math : Vec3;
+    auto own = Rig!MagnetRow.make(true, true);
+    assert(own.tool.buildPreparedParamUpdate("dist", own.layer.meshRef()).nextBuilt,
+           "control: the seeded sphere moves the cube");
+    auto picked = Rig!MagnetRow.make(true, true);
+    picked.tool.seedSlotFalloffForTest(magnetElementPacket(Vec3(9, 9, 9), 0, -1));
+    auto image = picked.tool.buildPreparedParamUpdate("dist", picked.layer.meshRef());
+    assert(image.applies && !image.nextBuilt,
+           "the param rebuild swapped the picked (zero-weight) falloff for the sphere");
+}

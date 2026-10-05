@@ -174,7 +174,6 @@ public:
         dragging  = false;
         pickedVi  = -1;
         before    = MeshSnapshot.capture(*mesh);
-        armFalloffEpoch_ = falloffSlotEpoch();
     }
     final MeshSnapshot prepareActivationBaseline() { return MeshSnapshot.capture(*mesh); }
     final void installPreparedActivation(ref MeshSnapshot image) nothrow @nogc {
@@ -214,6 +213,7 @@ public:
         before = MeshSnapshot.capture(source);
         touchedIdx_ = null; touchedPrev_ = null; sessionKey_.stamp(source);
     }
+    version(unittest) void seedSlotFalloffForTest(FalloffPacket fp) { slotFalloff_ = fp; }
     version(unittest) void mutatePreparedParamForTest(float value) nothrow @nogc {
         dist_ = value;
     }

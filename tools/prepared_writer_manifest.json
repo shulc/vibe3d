@@ -739,7 +739,7 @@
     {
       "aggregate": "MagnetTool",
       "module": "tools.deform.magnet",
-      "semantic_sha256": "802de6929713cbb212f826d08af1ce37936d209636b0d523783380a59aaff234",
+      "semantic_sha256": "72059a3265814f4c7bee64d56036309561d04fb49f849b547eb26c11bebcc165",
       "signature": "void()",
       "symbol": "activate"
     },
