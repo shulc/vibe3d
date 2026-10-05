@@ -150,6 +150,8 @@ unittest {
         Cap("prim.sphere", "", " sides:5000", "tool.attr prim.sphere sides 1024"),
         Cap("prim.sphere", "tool.attr prim.sphere method qball", " order:100",
             "tool.attr prim.sphere order 32"),
+        Cap("prim.sphere", "tool.attr prim.sphere method tess", " order:100",
+            "tool.attr prim.sphere order 32"),
         Cap("prim.ellipsoid", "", " segments:5000", "tool.attr prim.ellipsoid segments 1024"),
         Cap("prim.torus", "", " minorSegments:5000", "tool.attr prim.torus minorSegments 1024"),
         Cap("prim.cube", "", " segmentsX:500", "tool.attr prim.cube segmentsX 64"),
@@ -171,8 +173,8 @@ unittest {
     const n = cmd("tool.attr mesh.loopSliceTool count ?")["value"].integer;
     ok("tool.set mesh.loopSliceTool off");
     if (n != 1024) failed ~= format("loop slice stored count:5000 reads %s, expected 1024", n);
-    assert(caps.length == 11, "kernel cells: measured 11");
+    assert(caps.length == 12, "kernel cells: measured 12");
     assert(failed.length == 0, format("kernel caps failed in %d cells:\n  %-(%s\n  %)",
                                       failed.length, failed));
-    writeln("PASS kernel caps, 12 cells");
+    writeln("PASS kernel caps, 13 cells");
 }
