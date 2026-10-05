@@ -475,3 +475,59 @@ unittest { // law-neutral: the weld ignores the snap SCOPE and reaches the whole
     cmd("tool.set mesh.topoPen off");
     postJson("/api/command", commandBody("scene.reset"));
 }
+
+// ---------------------------------------------------------------------------
+// §4 — SAME-POLYGON CORNERS (captured, KW2J-PEN, task 9486): the move weld is
+// Drag Weld's pair weld. Adjacent corners collapse the edge (KJP_A, as KW2_I);
+// DIAGONAL corners weld anyway, the target wins and the quad keeps four corners
+// [a,T,b,T] (KJP_D, bit-equal to KW2_J). Front ortho at 0.01 m/px, snap on with
+// every global type off; a background plane at z 0 is the landing surface.
+// ---------------------------------------------------------------------------
+
+/// Load `pts` as one quad in layer 1, move v1 by (`dx`,`dy`) px with the pen.
+void sameQuadMove(double[3][] pts, double[3] release, int dx, int dy) {
+    auto r = postJson("/api/command", commandBody("scene.reset", `{"empty":true}`));
+    assert(r["status"].str == "ok", "empty reset failed: " ~ r.toString);
+    loadLayerMesh([[-2.0, -2.0, 0.0], [2.0, -2.0, 0.0], [2.0, 2.0, 0.0], [-2.0, 2.0, 0.0]],
+                  [[0, 1, 2, 3]]);
+    cmd("layer.add name:Edit");
+    loadLayerMesh(pts, [[0, 1, 2, 3]]);
+    cmd("history.clear");
+    cmd("workplane.reset");
+    cmd("viewport.view Front");
+    immutable double dist = fetchCamera().height / (2.0 * 100.0 * tan(PI / 8));
+    auto cr = postJson("/api/camera", format(
+        `{"focus":{"x":-0.15,"y":0.18,"z":0.0},"distance":%.9f}`, dist));
+    assert(cr["status"].str == "ok", "camera setup failed: " ~ cr.toString);
+    cmd(`tool.pipe.attr snap types ""`);
+    cmd("tool.set mesh.topoPen on");
+    cmd("tool.attr mesh.topoPen mode move");
+    assert(snapEnabled(), "rig: the pen's activation arms the snap enable");
+    auto vp = viewportFromCameraMatrices();
+    float sx, sy, ex, ey;
+    assert(projectToWindow(Vec3(cast(float)pts[1][0], cast(float)pts[1][1], 0), vp, sx, sy)
+        && projectToWindow(Vec3(cast(float)release[0], cast(float)release[1], 0), vp, ex, ey),
+        "rig: v1 and the release must project");
+    immutable int x0 = cast(int)lround(sx), y0 = cast(int)lround(sy);
+    assert(lround(ex) == x0 + dx && lround(ey) == y0 + dy,
+        format("rig: the captured %s px drag must end at %s", [dx, dy], release));
+    auto pr = postJson("/api/play-events", buildDragLog(vp.x, vp.y, vp.width, vp.height,
+        x0, y0, x0 + dx, y0 + dy, 16, 0, 1));
+    assert("error" !in pr, "/api/play-events failed: " ~ pr.toString);
+    waitPlayerIdle();
+    cmd("tool.set mesh.topoPen off");
+}
+
+unittest { // KJP_A adjacent corners collapse; KJP_D diagonal corners weld to [0,2,1,2]
+    sameQuadMove([[-0.5, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.36, 0.0], [-0.5, 0.36, 0.0]],
+                 [0.0, 0.30, 0.0], 0, -30);
+    assert(vertexCountLayer(1) == 3 && readFacesLayer(1) == [[0, 1, 2]],
+        format("KJP_A: V=%d faces %s, expected 3 and [[0,1,2]]", vertexCountLayer(1),
+               readFacesLayer(1)));
+    sameQuadMove([[-0.3, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.36, 0.0], [-0.3, 0.36, 0.0]],
+                 [-0.3, 0.30, 0.0], -30, -30);
+    assert(vertexCountLayer(1) == 3 && readFacesLayer(1) == [[0, 2, 1, 2]],
+        format("KJP_D: V=%d faces %s, expected 3 and [[0,2,1,2]]", vertexCountLayer(1),
+               readFacesLayer(1)));
+    postJson("/api/command", commandBody("scene.reset"));
+}
