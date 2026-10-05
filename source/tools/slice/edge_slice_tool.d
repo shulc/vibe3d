@@ -36,7 +36,7 @@ import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKin
     PreparedEdgeSliceParamKind;
 import prepared_edge_slice_activation : PreparedEdgeSliceActivationOwner;
 import prepared_edge_slice_deactivate : PreparedEdgeSliceDeactivateOwner;
-import prepared_edge_slice_param_update : PreparedEdgeSliceParamUpdateOwner;
+import prepared_param_update : PreparedParamUpdateOwner;
 import mesh_gpu : GpuUploadOwner;
 import symmetry : mirrorEdgePoint;
 import toolpipe.packets : SymmetryPacket;
@@ -82,7 +82,7 @@ struct PreparedEdgeSliceDeactivateImage {
 }
 
 struct PreparedEdgeSliceParamImage {
-    bool valid, recognized, appliesState, appliesMesh, invalidateRedo;
+    bool valid, recognized, appliesState, applies, invalidateRedo;
     string pname;
     bool expectedActive, expectedArmed, expectedScrubbing, expectedBuilt;
     int expectedPhase, expectedDragPart, expectedActivePoint;
@@ -99,13 +99,21 @@ struct PreparedEdgeSliceParamImage {
     private size_t nextMirrorSegments; private bool[] nextParked;
     Mesh candidate; uint deliveryFlags, deliveryDomains;
     void clear() nothrow @nogc {
-        valid = recognized = appliesState = appliesMesh = invalidateRedo = false;
+        valid = recognized = appliesState = applies = invalidateRedo = false;
         pname = null;
         expectedEdges = null; expectedPointVerts = null; expectedPointT = null;
         nextEdges = null; nextPointVerts = null; nextPointT = null;
         nextChainPoints = null; nextMirrorSegments = 0; nextParked = null;
         expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
         candidate = Mesh.init; deliveryFlags = deliveryDomains = 0;
+    }
+    PreparedEdgeSliceParamKind effectKind() const nothrow @nogc {
+        if (!recognized) return PreparedEdgeSliceParamKind.Noop;
+        if (pname == "chainArm") return applies
+            ? PreparedEdgeSliceParamKind.ChainArm : PreparedEdgeSliceParamKind.Noop;
+        if (pname == "activePoint") return PreparedEdgeSliceParamKind.ActivePoint;
+        return applies ? PreparedEdgeSliceParamKind.Preview
+                       : PreparedEdgeSliceParamKind.Noop;
     }
 }
 
@@ -898,7 +906,7 @@ public:
             image.nextMirrorSegments, image.nextParked);
         drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
             image.deliveryDomains); shadow.close();
-        image.appliesState = true; image.appliesMesh = true;
+        image.appliesState = true; image.applies = true;
         image.invalidateRedo = history !is null;
         image.nextBuilt = n > 0;
         image.nextArmedKey.stampAs(image.candidate, cast(size_t)mesh);
@@ -941,7 +949,7 @@ public:
         latchedPoints_ = image.nextChainPoints;
         lastMirrorSegments_ = image.nextMirrorSegments;
         parked_ = image.nextParked;
-        if (image.pname == "chainArm" && image.appliesMesh)
+        if (image.pname == "chainArm" && image.applies)
             chainBefore_ = image.expectedLive;
         image.clear();
     }
@@ -951,21 +959,22 @@ public:
         if (context is null) return PreparedEdgeSliceParamEffect(
             preparedToolStateOwner, PreparedEdgeSliceParamKind.None, false);
         scope(failure) context.discard();
-        auto owner = PreparedEdgeSliceParamUpdateOwner.prepare(this, layer, pname);
+        auto owner = PreparedParamUpdateOwner!(EdgeSliceTool, PreparedEdgeSliceParamImage,
+            PreparedEdgeSliceParamKind).prepare(this, layer, pname);
         bool ok = owner !is null;
         bool installHistory;
-        if (ok && owner.invalidateRedo) {
+        if (ok && owner.image.invalidateRedo) {
             auto redo = context.prepareInvalidateRedo();
             ok = redo.accepted; installHistory = redo.mustInstall;
         }
-        if (ok && owner.appliesMesh)
-            ok = owner.deliveryFlags != 0 && uploadOwner !is null && uploadOwner.owns(gpu) &&
+        if (ok && owner.applies)
+            ok = uploadOwner !is null && uploadOwner.owns(gpu) &&
                 context.prepareStampedMeshImage(layer, owner.candidate,
                     owner.deliveryFlags, owner.deliveryDomains) &&
                 context.prepareUpload(uploadOwner, owner.candidate);
         if (ok) ok = installHistory ? context.markHistoryInstall()
                                     : context.markNoHistoryInstall();
-        if (ok) ok = context.prepareEdgeSliceParamUpdate(owner);
+        if (ok) ok = context.prepareParamUpdate(owner);
         if (!ok) context.discard();
         return PreparedEdgeSliceParamEffect(preparedToolStateOwner,
             owner is null ? PreparedEdgeSliceParamKind.None : owner.effectKind, ok);

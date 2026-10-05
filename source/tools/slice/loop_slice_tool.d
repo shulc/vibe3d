@@ -38,7 +38,7 @@ import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKin
     PreparedLoopSliceParamKind;
 import prepared_loop_slice_activation : PreparedLoopSliceActivationOwner;
 import prepared_loop_slice_deactivate : PreparedLoopSliceDeactivateOwner;
-import prepared_loop_slice_param_update : PreparedLoopSliceParamUpdateOwner;
+import prepared_param_update : PreparedParamUpdateOwner;
 import mesh_gpu : GpuUploadOwner;
 import mesh_edit_delta : MeshEditScope;
 
@@ -87,15 +87,20 @@ struct LoopSlicePreparedParamState {
 }
 
 struct PreparedLoopSliceParamImage {
-    bool valid, appliesMesh, invalidateRedo, stampKey;
+    bool valid, applies, invalidateRedo, stampKey;
     string pname;
     LoopSlicePreparedParamState expected, next;
     MeshSnapshot expectedLive;
     Mesh candidate; uint deliveryFlags, deliveryDomains;
     void clear() nothrow @nogc {
-        valid = appliesMesh = invalidateRedo = stampKey = false; pname = null;
+        valid = applies = invalidateRedo = stampKey = false; pname = null;
         expected.clear(); next.clear(); expectedLive = MeshSnapshot.init;
         candidate = Mesh.init; deliveryFlags = deliveryDomains = 0;
+    }    PreparedLoopSliceParamKind effectKind() const nothrow @nogc {
+        if (applies) return PreparedLoopSliceParamKind.Preview;
+        return expected.positions == next.positions && expected.current == next.current &&
+            expected.count == next.count && expected.removeTrigger == next.removeTrigger
+            ? PreparedLoopSliceParamKind.Noop : PreparedLoopSliceParamKind.State;
     }
 }
 
@@ -1169,9 +1174,9 @@ public:
         drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
             image.deliveryDomains); delivery.close();
         image.next = shadowTool.capturePreparedParamState();
-        image.appliesMesh = shadowTool.preparedRebuildAttempted_;
-        image.invalidateRedo = image.appliesMesh && history !is null;
-        image.stampKey = image.appliesMesh && image.next.armed;
+        image.applies = shadowTool.preparedRebuildAttempted_;
+        image.invalidateRedo = image.applies && history !is null;
+        image.stampKey = image.applies && image.next.armed;
         // The key is computed HERE, from the image that install copies whole
         // into the live mesh, at the live address. Without a
         // re-stamp the mesh is untouched by this update and the live key
@@ -1211,22 +1216,23 @@ public:
         if (context is null) return PreparedLoopSliceParamEffect(
             preparedToolStateOwner, PreparedLoopSliceParamKind.None, false);
         scope(failure) context.discard();
-        auto owner = PreparedLoopSliceParamUpdateOwner.prepare(this, layer, pname);
+        auto owner = PreparedParamUpdateOwner!(LoopSliceTool, PreparedLoopSliceParamImage,
+            PreparedLoopSliceParamKind).prepare(this, layer, pname);
         bool ok = owner !is null;
-        if (ok && owner.appliesMesh)
-            ok = owner.deliveryFlags != 0 && uploadOwner !is null &&
+        if (ok && owner.applies)
+            ok = uploadOwner !is null &&
                 uploadOwner.owns(gpu) &&
                 context.prepareStampedMeshImage(layer, owner.candidate,
                     owner.deliveryFlags, owner.deliveryDomains) &&
                 context.prepareUpload(uploadOwner, owner.candidate);
         bool installHistory;
-        if (ok && owner.invalidateRedo) {
+        if (ok && owner.image.invalidateRedo) {
             auto result = context.prepareInvalidateRedo();
             ok = result.accepted; installHistory = result.mustInstall;
         }
         if (ok) ok = installHistory ? context.markHistoryInstall()
                                     : context.markNoHistoryInstall();
-        if (ok) ok = context.prepareLoopSliceParamUpdate(owner);
+        if (ok) ok = context.prepareParamUpdate(owner);
         if (!ok) context.discard();
         return PreparedLoopSliceParamEffect(preparedToolStateOwner,
             owner is null ? PreparedLoopSliceParamKind.None : owner.effectKind, ok);

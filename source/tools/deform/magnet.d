@@ -3,12 +3,13 @@ import display_state : DrawPlan;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
     PreparedPrivateStateToolDoorClient;
 import prepared_record_context : PreparedToolParamDoorClient,
-    PreparedContextNamedGpuParamDoorClient;
+    PreparedNamedGpuParamDoorClient;
 import prepared_private_state : PreparedPrivateStateOwner;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_tool_effect : PreparedMagnetParamEffect, PreparedMagnetParamKind;
-import prepared_magnet_param_update : PreparedMagnetParamUpdateOwner;
+import prepared_param_update : PreparedParamUpdateOwner,
+    PreparedParamUpdateProducer, DefaultParamEffectKind;
 import command_history : PreparedHistoryKind;
 
 import bindbc.sdl;
@@ -40,6 +41,7 @@ import std.math : sqrt;
 import perf_probe : g_perf, Cat;
 
 struct PreparedMagnetParamImage {
+    mixin DefaultParamEffectKind!PreparedMagnetParamKind;
     bool valid, applies, expectedActive, expectedDragging, expectedBuilt;
     bool nextBuilt, expectedSessionMatches;
     int expectedPickedVi;
@@ -84,7 +86,7 @@ class MagnetTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient {
         return policy;
     }
 
-    mixin PreparedContextNamedGpuParamDoorClient;
+    mixin PreparedNamedGpuParamDoorClient;
     mixin PreparedPrivateStateToolDoorClient!(Layer,
         PreparedPrivateStateOwner.magnetSession);
 private:
@@ -256,7 +258,7 @@ public:
         // dist changed while dragging — rebuild with new radius.
         if (pname == "dist" && dragging && built) rebuildPreview();
     }
-    final PreparedMagnetParamImage buildPreparedParamImage(string pname,
+    final PreparedMagnetParamImage buildPreparedParamUpdate(string pname,
             ref Mesh live) {
         PreparedMagnetParamImage image;
         image.valid = true; image.expectedActive = active;
@@ -299,7 +301,7 @@ public:
             image.deliveryDomains);
         shadow.close(); return image;
     }
-    final bool preparedParamMatches(in PreparedMagnetParamImage image,
+    final bool preparedParamUpdateMatches(in PreparedMagnetParamImage image,
             ref Mesh live) const nothrow @nogc {
         bool sameBytes(T)(ref const T a, ref const T b) nothrow @nogc {
             return memcmp(&a, &b, T.sizeof) == 0;
@@ -321,7 +323,7 @@ public:
             image.expectedLive.matches(live) &&
             (!before.filled || image.expectedBefore.matches(before));
     }
-    final void installPreparedParam(ref PreparedMagnetParamImage image)
+    final void installPreparedParamUpdate(ref PreparedMagnetParamImage image)
             nothrow @nogc {
         if (!image.valid) return;
         built = image.nextBuilt;
@@ -329,25 +331,8 @@ public:
         touchedPrev_ = image.nextTouchedPrev; image.nextTouchedPrev = null;
         sessionKey_ = image.nextSessionKey; image.clear();
     }
-    final PreparedMagnetParamEffect prepareParamChanged(PreparedRecordContext context,
-            string pname, Layer layer, GpuUploadOwner uploadOwner) {
-        if (context is null) return PreparedMagnetParamEffect(
-            preparedToolStateOwner, PreparedMagnetParamKind.None, false);
-        scope(failure) context.discard();
-        auto owner = PreparedMagnetParamUpdateOwner.prepare(this, pname, layer);
-        auto kind = owner is null ? PreparedMagnetParamKind.None : owner.effectKind;
-        bool ok = owner !is null;
-        if (ok && owner.applies)
-            ok = uploadOwner !is null && uploadOwner.owns(gpu) &&
-                context.prepareStampedMeshImage(layer, owner.candidate,
-                    owner.deliveryFlags, owner.deliveryDomains);
-        if (ok) ok = context.prepareMagnetParamUpdate(owner);
-        if (ok && owner.applies)
-            ok = context.prepareUpload(uploadOwner, owner.candidate);
-        if (ok) ok = context.markNoHistoryInstall();
-        if (!ok) context.discard();
-        return PreparedMagnetParamEffect(preparedToolStateOwner, kind, ok);
-    }
+    mixin PreparedParamUpdateProducer!(PreparedParamUpdateOwner!(MagnetTool,
+        PreparedMagnetParamImage, PreparedMagnetParamKind), PreparedMagnetParamEffect);
     override void evaluate() {}
 
     // -----------------------------------------------------------------------

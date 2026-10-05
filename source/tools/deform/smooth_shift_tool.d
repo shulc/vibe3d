@@ -29,12 +29,12 @@ import perf_probe : g_perf, Cat;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
     PreparedSimpleToolDoorClient;
 import prepared_record_context : PreparedToolParamDoorClient,
-    PreparedGpuParamDoorClient;
+    PreparedNamedGpuParamDoorClient;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_smooth_shift_activation : PreparedSmoothShiftActivationOwner;
 import prepared_param_update : PreparedParamUpdateOwner,
-    PreparedParamUpdateProducer;
+    PreparedParamUpdateProducer, DefaultParamEffectKind;
 import prepared_tool_effect : PreparedSmoothShiftParamEffect,
     PreparedSmoothShiftParamKind;
 import document : Layer;
@@ -68,6 +68,7 @@ struct SmoothShiftParamProjection {
 }
 
 struct PreparedSmoothShiftParamImage {
+    mixin DefaultParamEffectKind!PreparedSmoothShiftParamKind;
     bool valid, applies, nextBuilt;
     SmoothShiftParamProjection expected;
     MeshSnapshot expectedLive, expectedBefore;
@@ -151,7 +152,7 @@ class SmoothShiftTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClien
         return policy;
     }
 
-    mixin PreparedGpuParamDoorClient;
+    mixin PreparedNamedGpuParamDoorClient;
     mixin PreparedSimpleToolDoorClient!Layer;
 private:
     Mesh* delegate() nothrow @nogc meshSrc_;
@@ -368,7 +369,7 @@ public:
         return SmoothShiftParamProjection(interactiveParamEdit, active, built,
             engaged, thicken_, sharp_, shift_, scale_, maxAngle_);
     }
-    final PreparedSmoothShiftParamImage buildPreparedParamUpdate(ref Mesh live) {
+    final PreparedSmoothShiftParamImage buildPreparedParamUpdate(string, ref Mesh live) {
         PreparedSmoothShiftParamImage image;
         image.valid = true; image.expected = paramProjection();
         image.nextBuilt = built; image.expectedLive = MeshSnapshot.capture(live);

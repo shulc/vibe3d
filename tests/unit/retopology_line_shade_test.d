@@ -346,9 +346,10 @@ unittest { // 5. the rig is read and uploaded ONLY inside LitShader.useProgram
     }
     // Floor: measured 2026-10-02 —
     //   grep -rl LitShader source --include=*.d | wc -l -> 81 (shader.d and pen.d among them);
-    //   2026-10-05 (wave-2 PRM1 folds eleven owner modules): 73, light_rig.d excluded -> 72.
-    assert(files.length >= 72, format("5 floor: the lit-program domain is %d files, "
-        ~ "floor 72 — the walk lost its domain", files.length));
+    //   2026-10-05 (wave-2 PRM1 folds eleven owner modules): 73, light_rig.d excluded -> 72;
+    //   after PRM2 folds five more: 69 -> 68.
+    assert(files.length >= 68, format("5 floor: the lit-program domain is %d files, "
+        ~ "floor 68 — the walk lost its domain", files.length));
 
     string[] bad;
     size_t[string] insideReads;
@@ -423,8 +424,8 @@ unittest { // 5a. the fence: rig locations are private, and nobody spells around
         if (!matchAll(raw, rigNameRe).empty) named ~= rel;
     }
     // Floor: find source -name '*.d' | wc -l -> 582 on 2026-10-02 (581 without shader.d);
-    // 578 (577) on 2026-10-05 after wave-2 PRM1 folded eleven owner modules.
-    assert(scanned >= 577, format("5a floor: scanned %d files outside shader.d, floor 577", scanned));
+    // 578 (577) on 2026-10-05 after wave-2 PRM1 folded eleven owner modules; 574 (573) after PRM2.
+    assert(scanned >= 573, format("5a floor: scanned %d files outside shader.d, floor 573", scanned));
     // Stationary: no file outside shader.d names a rig location or uniform —
     // a `__traits(getMember, lit, "locKeyDir")` or a
     // `glGetUniformLocation(p, "u_keyDir")` would.

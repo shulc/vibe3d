@@ -1,7 +1,7 @@
 module tools.edit.poly_extrude;
 import display_state : DrawPlan;
 import prepared_record_context : PreparedToolParamDoorClient,
-    PreparedGpuParamDoorClient;
+    PreparedNamedGpuParamDoorClient;
 
 import bindbc.sdl;
 import operator : VectorStack;
@@ -38,7 +38,7 @@ import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_poly_extrude_activation : PreparedPolyExtrudeActivationOwner;
 import prepared_param_update : PreparedParamUpdateOwner,
-    PreparedParamUpdateProducer;
+    PreparedParamUpdateProducer, DefaultParamEffectKind;
 import prepared_tool_effect : PreparedPolyExtrudeParamEffect,
     PreparedPolyExtrudeParamKind;
 import document : Layer;
@@ -85,6 +85,7 @@ struct PolyExtrudeParamProjection {
 }
 
 struct PreparedPolyExtrudeParamImage {
+    mixin DefaultParamEffectKind!PreparedPolyExtrudeParamKind;
     bool valid, applies, nextBuilt;
     PolyExtrudeParamProjection expected;
     MeshSnapshot expectedLive, expectedBefore;
@@ -133,7 +134,7 @@ class PolyExtrudeTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClien
         return policy;
     }
 
-    mixin PreparedGpuParamDoorClient;
+    mixin PreparedNamedGpuParamDoorClient;
     mixin PreparedSimpleToolDoorClient!Layer;
 private:
     Mesh* delegate() nothrow @nogc meshSrc_;
@@ -305,7 +306,7 @@ public:
             distance_, shiftX_, shiftY_, shiftZ_,
             extentFrameX, extentFrameY, extentFrameZ);
     }
-    final PreparedPolyExtrudeParamImage buildPreparedParamUpdate(ref Mesh live) {
+    final PreparedPolyExtrudeParamImage buildPreparedParamUpdate(string, ref Mesh live) {
         PreparedPolyExtrudeParamImage image;
         image.valid = true; image.expected = paramProjection();
         image.nextBuilt = built; image.expectedLive = MeshSnapshot.capture(live);
@@ -910,7 +911,7 @@ unittest { // free drag press prepares Jacobian from captured upstream-snapped B
         candidateTool.shiftX_ = extent.x;
         candidateTool.shiftY_ = extent.y;
         candidateTool.shiftZ_ = extent.z;
-        auto image = candidateTool.buildPreparedParamUpdate(rig);
+        auto image = candidateTool.buildPreparedParamUpdate("", rig);
         scope(exit) image.clear();
         assert(image.valid && image.applies && image.candidate.vertices.length == 12 &&
             image.candidate.faces.length == 8 && image.candidate.edges.length == 19,

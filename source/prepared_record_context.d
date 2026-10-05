@@ -66,14 +66,9 @@ import prepared_edge_extend_tool_activation : PreparedEdgeExtendToolActivationOw
 import prepared_topology_pen_activation : PreparedTopologyPenActivationOwner;
 import prepared_topology_pen_update : PreparedTopologyPenUpdateOwner;
 import prepared_topology_pen_deactivate : PreparedTopologyPenDeactivateOwner;
-import prepared_magnet_param_update : PreparedMagnetParamUpdateOwner;
 import prepared_slice_deactivate : PreparedSliceDeactivateOwner;
-import prepared_slice_param_update : PreparedSliceParamUpdateOwner;
 import prepared_edge_slice_deactivate : PreparedEdgeSliceDeactivateOwner;
-import prepared_edge_slice_param_update : PreparedEdgeSliceParamUpdateOwner;
 import prepared_loop_slice_deactivate : PreparedLoopSliceDeactivateOwner;
-import prepared_loop_slice_param_update : PreparedLoopSliceParamUpdateOwner;
-import prepared_edge_extend_param_update : PreparedEdgeExtendParamUpdateOwner;
 import prepared_edge_extend_deactivate : PreparedEdgeExtendDeactivateOwner;
 import prepared_pipe_activation : PreparedPipeActivationOwner;
 import toolpipe.attr_cache : NodeAttrs;
@@ -131,16 +126,6 @@ mixin template PreparedNamedGpuParamDoorClient() {
             ulong threadIdentity, ulong contextIdentity) {
         auto upload = new GpuUploadOwner(gpu, threadIdentity, contextIdentity);
         return prepareParamChanged(name, context, layer, upload).accepted;
-    }
-}
-
-/// Signature-order variant used by the Magnet prepared producer.
-mixin template PreparedContextNamedGpuParamDoorClient() {
-    override bool prepareDoorParamChanged(string name,
-            PreparedRecordContext context, Layer layer,
-            ulong threadIdentity, ulong contextIdentity) {
-        auto upload = new GpuUploadOwner(gpu, threadIdentity, contextIdentity);
-        return prepareParamChanged(context, name, layer, upload).accepted;
     }
 }
 
@@ -228,9 +213,8 @@ private enum PreparedResourceKind : ubyte {
     EdgeExtendToolActivationPostState, TopologyPenActivationState,
     TopologyPenUpdateState, TopologyPenDeactivateState,
     MirrorDeactivateState, BridgeDeactivateState, ParamUpdateState,
-    MagnetParamUpdateState, SliceDeactivateState, SliceParamUpdateState,
-    EdgeSliceDeactivateState, EdgeSliceParamUpdateState, LoopSliceDeactivateState,
-    LoopSliceParamUpdateState, EdgeExtendParamUpdateState, EdgeExtendDeactivateState,
+    SliceDeactivateState, EdgeSliceDeactivateState, LoopSliceDeactivateState,
+    EdgeExtendDeactivateState,
     PipeActivationState, BoxParamState
 }
 /// The one parameter-update slot: the owner's three transaction steps as bound
@@ -281,14 +265,9 @@ private struct PreparedResourceEntry {
     PreparedTopologyPenUpdateOwner topologyPenUpdate;
     PreparedTopologyPenDeactivateOwner topologyPenDeactivate;
     PreparedParamUpdateSlot paramUpdate;
-    PreparedMagnetParamUpdateOwner magnetParamUpdate;
     PreparedSliceDeactivateOwner sliceDeactivate;
-    PreparedSliceParamUpdateOwner sliceParamUpdate;
     PreparedEdgeSliceDeactivateOwner edgeSliceDeactivate;
-    PreparedEdgeSliceParamUpdateOwner edgeSliceParamUpdate;
     PreparedLoopSliceDeactivateOwner loopSliceDeactivate;
-    PreparedLoopSliceParamUpdateOwner loopSliceParamUpdate;
-    PreparedEdgeExtendParamUpdateOwner edgeExtendParamUpdate;
     PreparedEdgeExtendDeactivateOwner edgeExtendDeactivate;
     PreparedMirrorDeactivateOwner mirrorDeactivate;
     PreparedBridgeDeactivateOwner bridgeDeactivate;
@@ -971,17 +950,6 @@ public:
             &owner.abort);
         resources_ ~= e; return true;
     }
-    bool prepareMagnetParamUpdate(PreparedMagnetParamUpdateOwner owner) {
-        if (!begun_ || validated_Once || owner is null) return false;
-        resources_.reserve(1 + resources_.length);
-        if (!owner.begin()) return false;
-        scope(failure) owner.abort();
-        version(unittest) if (failAfterResourceBegin_)
-            throw new Exception("injected Magnet parameter enlist failure");
-        PreparedResourceEntry e;
-        e.kind = PreparedResourceKind.MagnetParamUpdateState;
-        e.magnetParamUpdate = owner; resources_ ~= e; return true;
-    }
     bool prepareSliceDeactivate(PreparedSliceDeactivateOwner owner) {
         if (!begun_ || validated_Once || owner is null) return false;
         resources_.reserve(1 + resources_.length);
@@ -992,17 +960,6 @@ public:
         PreparedResourceEntry e;
         e.kind = PreparedResourceKind.SliceDeactivateState;
         e.sliceDeactivate = owner; resources_ ~= e; return true;
-    }
-    bool prepareSliceParamUpdate(PreparedSliceParamUpdateOwner owner) {
-        if (!begun_ || validated_Once || owner is null) return false;
-        resources_.reserve(1 + resources_.length);
-        if (!owner.begin()) return false;
-        scope(failure) owner.abort();
-        version(unittest) if (failAfterResourceBegin_)
-            throw new Exception("injected Slice param enlist failure");
-        PreparedResourceEntry e;
-        e.kind = PreparedResourceKind.SliceParamUpdateState;
-        e.sliceParamUpdate = owner; resources_ ~= e; return true;
     }
     bool prepareEdgeSliceDeactivate(PreparedEdgeSliceDeactivateOwner owner) {
         if (!begun_ || validated_Once || owner is null) return false;
@@ -1015,17 +972,6 @@ public:
         e.kind = PreparedResourceKind.EdgeSliceDeactivateState;
         e.edgeSliceDeactivate = owner; resources_ ~= e; return true;
     }
-    bool prepareEdgeSliceParamUpdate(PreparedEdgeSliceParamUpdateOwner owner) {
-        if (!begun_ || validated_Once || owner is null) return false;
-        resources_.reserve(1 + resources_.length);
-        if (!owner.begin()) return false;
-        scope(failure) owner.abort();
-        version(unittest) if (failAfterResourceBegin_)
-            throw new Exception("injected Edge Slice parameter enlist failure");
-        PreparedResourceEntry e;
-        e.kind = PreparedResourceKind.EdgeSliceParamUpdateState;
-        e.edgeSliceParamUpdate = owner; resources_ ~= e; return true;
-    }
     bool prepareLoopSliceDeactivate(PreparedLoopSliceDeactivateOwner owner) {
         if (!begun_ || validated_Once || owner is null) return false;
         resources_.reserve(1 + resources_.length);
@@ -1036,27 +982,6 @@ public:
         PreparedResourceEntry e;
         e.kind = PreparedResourceKind.LoopSliceDeactivateState;
         e.loopSliceDeactivate = owner; resources_ ~= e; return true;
-    }
-    bool prepareLoopSliceParamUpdate(PreparedLoopSliceParamUpdateOwner owner) {
-        if (!begun_ || validated_Once || owner is null) return false;
-        resources_.reserve(1 + resources_.length);
-        if (!owner.begin()) return false;
-        scope(failure) owner.abort();
-        version(unittest) if (failAfterResourceBegin_)
-            throw new Exception("injected Loop Slice parameter enlist failure");
-        PreparedResourceEntry e;
-        e.kind = PreparedResourceKind.LoopSliceParamUpdateState;
-        e.loopSliceParamUpdate = owner; resources_ ~= e; return true;
-    }
-    bool prepareEdgeExtendParamUpdate(PreparedEdgeExtendParamUpdateOwner owner) {
-        if (!begun_ || validated_Once || owner is null) return false;
-        resources_.reserve(1 + resources_.length);
-        if (!owner.begin()) return false;
-        scope(failure) owner.abort();
-        version(unittest) if (failAfterResourceBegin_)
-            throw new Exception("injected Edge Extend parameter enlist failure");
-        PreparedResourceEntry e; e.kind = PreparedResourceKind.EdgeExtendParamUpdateState;
-        e.edgeExtendParamUpdate = owner; resources_ ~= e; return true;
     }
     bool prepareEdgeExtendDeactivate(PreparedEdgeExtendDeactivateOwner owner) {
         if (!begun_ || validated_Once || owner is null) return false;
@@ -1436,30 +1361,15 @@ public:
             case PreparedResourceKind.ParamUpdateState:
                 ok = e.paramUpdate.validate !is null && e.paramUpdate.validate();
                 break;
-            case PreparedResourceKind.MagnetParamUpdateState:
-                ok = e.magnetParamUpdate !is null &&
-                    e.magnetParamUpdate.validate(); break;
             case PreparedResourceKind.SliceDeactivateState:
                 ok = e.sliceDeactivate !is null &&
                     e.sliceDeactivate.validate(); break;
-            case PreparedResourceKind.SliceParamUpdateState:
-                ok = e.sliceParamUpdate !is null &&
-                    e.sliceParamUpdate.validate(); break;
             case PreparedResourceKind.EdgeSliceDeactivateState:
                 ok = e.edgeSliceDeactivate !is null &&
                     e.edgeSliceDeactivate.validate(); break;
-            case PreparedResourceKind.EdgeSliceParamUpdateState:
-                ok = e.edgeSliceParamUpdate !is null &&
-                    e.edgeSliceParamUpdate.validate(); break;
             case PreparedResourceKind.LoopSliceDeactivateState:
                 ok = e.loopSliceDeactivate !is null &&
                     e.loopSliceDeactivate.validate(); break;
-            case PreparedResourceKind.LoopSliceParamUpdateState:
-                ok = e.loopSliceParamUpdate !is null &&
-                    e.loopSliceParamUpdate.validate(); break;
-            case PreparedResourceKind.EdgeExtendParamUpdateState:
-                ok = e.edgeExtendParamUpdate !is null &&
-                    e.edgeExtendParamUpdate.validate(); break;
             case PreparedResourceKind.EdgeExtendDeactivateState:
                 ok = e.edgeExtendDeactivate !is null &&
                     e.edgeExtendDeactivate.validate(); break;
@@ -1723,37 +1633,17 @@ public:
             e.paramUpdate.install();
             version(unittest) installTrace_[installTraceLength_++] = 43;
             break;
-        case PreparedResourceKind.MagnetParamUpdateState:
-            e.magnetParamUpdate.install();
-            version(unittest) installTrace_[installTraceLength_++] = 44;
-            break;
         case PreparedResourceKind.SliceDeactivateState:
             e.sliceDeactivate.install();
             version(unittest) installTrace_[installTraceLength_++] = 55;
-            break;
-        case PreparedResourceKind.SliceParamUpdateState:
-            e.sliceParamUpdate.install();
-            version(unittest) installTrace_[installTraceLength_++] = 64;
             break;
         case PreparedResourceKind.EdgeSliceDeactivateState:
             e.edgeSliceDeactivate.install();
             version(unittest) installTrace_[installTraceLength_++] = 65;
             break;
-        case PreparedResourceKind.EdgeSliceParamUpdateState:
-            e.edgeSliceParamUpdate.install();
-            version(unittest) installTrace_[installTraceLength_++] = 66;
-            break;
         case PreparedResourceKind.LoopSliceDeactivateState:
             e.loopSliceDeactivate.install();
             version(unittest) installTrace_[installTraceLength_++] = 67;
-            break;
-        case PreparedResourceKind.LoopSliceParamUpdateState:
-            e.loopSliceParamUpdate.install();
-            version(unittest) installTrace_[installTraceLength_++] = 68;
-            break;
-        case PreparedResourceKind.EdgeExtendParamUpdateState:
-            e.edgeExtendParamUpdate.install();
-            version(unittest) installTrace_[installTraceLength_++] = 69;
             break;
         case PreparedResourceKind.EdgeExtendDeactivateState:
             e.edgeExtendDeactivate.install();
@@ -1855,22 +1745,12 @@ private:
             e.topologyPenDeactivate.abort(); break;
         case PreparedResourceKind.ParamUpdateState:
             e.paramUpdate.abort(); break;
-        case PreparedResourceKind.MagnetParamUpdateState:
-            e.magnetParamUpdate.abort(); break;
         case PreparedResourceKind.SliceDeactivateState:
             e.sliceDeactivate.abort(); break;
-        case PreparedResourceKind.SliceParamUpdateState:
-            e.sliceParamUpdate.abort(); break;
         case PreparedResourceKind.EdgeSliceDeactivateState:
             e.edgeSliceDeactivate.abort(); break;
-        case PreparedResourceKind.EdgeSliceParamUpdateState:
-            e.edgeSliceParamUpdate.abort(); break;
         case PreparedResourceKind.LoopSliceDeactivateState:
             e.loopSliceDeactivate.abort(); break;
-        case PreparedResourceKind.LoopSliceParamUpdateState:
-            e.loopSliceParamUpdate.abort(); break;
-        case PreparedResourceKind.EdgeExtendParamUpdateState:
-            e.edgeExtendParamUpdate.abort(); break;
         case PreparedResourceKind.EdgeExtendDeactivateState:
             e.edgeExtendDeactivate.abort(); break;
         case PreparedResourceKind.MirrorDeactivateState:

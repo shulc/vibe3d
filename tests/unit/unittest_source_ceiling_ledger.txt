@@ -13,8 +13,8 @@
 # Counts are compiler-aware: comments and string/character literals are
 # removed before either scanner runs. `version-ceiling` is policy and is
 # carried over from the previous ledger, never re-measured.
-source-files 579
-unittest-blocks 683
+source-files 574
+unittest-blocks 678
 version-ceiling 10
 
 # Per-file unittest counts. Enforced: they sum to `unittest-blocks`, and
@@ -83,17 +83,13 @@ block source/prepared_bridge_activation.d 1
 block source/prepared_command_wrapper_activation.d 1
 block source/prepared_edge_bevel_activation.d 1
 block source/prepared_edge_extend_deactivate.d 1
-block source/prepared_edge_extend_param_update.d 1
 block source/prepared_edge_extend_tool_activation.d 1
 block source/prepared_edge_extrude_activation.d 1
 block source/prepared_edge_slice_activation.d 1
 block source/prepared_edge_slice_deactivate.d 1
-block source/prepared_edge_slice_param_update.d 1
 block source/prepared_inherited_noop.d 1
 block source/prepared_loop_slice_activation.d 1
 block source/prepared_loop_slice_deactivate.d 1
-block source/prepared_loop_slice_param_update.d 1
-block source/prepared_magnet_param_update.d 1
 block source/prepared_mirror_activation.d 1
 block source/prepared_move_update.d 1
 block source/prepared_pipe_activation.d 1
@@ -109,7 +105,6 @@ block source/prepared_scale_update.d 1
 block source/prepared_selection_profile.d 1
 block source/prepared_slice_activation.d 1
 block source/prepared_slice_deactivate.d 1
-block source/prepared_slice_param_update.d 1
 block source/prepared_smooth_shift_activation.d 1
 block source/prepared_stroke_extrude_activation.d 1
 block source/prepared_tack_activation.d 1
@@ -177,7 +172,7 @@ block source/weightmap_view.d 1
 allow-version source/mesh.d 17
 allow-version source/mesh_gpu.d 44
 allow-version source/mesh_visibility.d 13
-allow-version source/prepared_record_context.d 125
+allow-version source/prepared_record_context.d 115
 allow-version source/tools/alignment/radial_sweep_tool.d 19
 allow-version source/tools/edit/edge_extend.d 13
 allow-version source/tools/edit/poly_extrude.d 11

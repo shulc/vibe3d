@@ -1,12 +1,13 @@
 module unit.prepared_param_update_test;
 
-// Task 9426: ONE `PreparedParamUpdateOwner` and ONE record-context slot serve
-// eleven tools' interactive parameter preview. Each row is a tool as DATA
+// Tasks 9426/9427: ONE `PreparedParamUpdateOwner` and ONE record-context slot
+// serve sixteen tools' interactive parameter preview. Each row is a tool as DATA
 // (constructor, operand selection, seed, the stale write, the built probe, the
-// element count its preview moves); every row runs the same four cells that
-// each tool's own module used to carry: preview install, noop install, stale
-// image refused, foreign GPU refused. Tool-specific cells follow the table.
-// The slot's install-trace code is 43 for every row.
+// mesh measure its preview moves, the written names and the effect kinds and
+// install traces they expect); every row runs the same cells that each tool's
+// own module used to carry: preview install, noop install, stale image refused,
+// foreign GPU refused, refusals. Tool-specific cells follow the table. The
+// slot's install-trace code is 43 for every row.
 
 import std.meta : AliasSeq;
 import std.math : abs;
@@ -22,8 +23,10 @@ import prepared_tool_effect;
 import record_observer_hub : RecordObserverHub;
 import shader : LitShader;
 import tools.alignment.array_tool : ArrayTool;
+import tools.deform.magnet : MagnetTool;
 import tools.deform.smooth_shift_tool : SmoothShiftTool;
 import tools.edit.edge_bevel : EdgeBevelTool;
+import tools.edit.edge_extend : EdgeExtendTool;
 import tools.edit.edge_extrude : EdgeExtrudeTool;
 import tools.edit.poly_bevel : PolyBevelTool;
 import tools.edit.poly_extrude : PolyExtrudeTool;
@@ -32,6 +35,9 @@ import tools.edit.reduce : ReductionTool;
 import tools.edit.vert_merge_tool : VertexMergeTool;
 import tools.edit.vertex_bevel_tool : VertexBevelTool;
 import tools.edit.vertex_extrude_tool : VertexExtrudeTool;
+import tools.slice.edge_slice_tool : EdgeSliceTool;
+import tools.slice.loop_slice_tool : LoopSliceTool;
+import tools.slice.slice_tool : SliceTool;
 
 private size_t vertexCount(ref Mesh m) { return m.vertices.length; }
 private size_t faceCount(ref Mesh m) { return m.faces.length; }
@@ -44,94 +50,158 @@ private void pickTwoVertices(ref Mesh m) {
 private void triangulateAll(ref Mesh m) {
     auto mask = m.operandFaceMask(); m.triangulateFacesByMask(mask);
 }
+private void noOperand(ref Mesh) {}
+private Vec3 firstVertex(ref Mesh m) { return m.vertices[0]; }
+private Vec3[] positions(ref Mesh m) { return m.vertices.dup; }
 
 /// A row: `Tool`, `Kind`, `mode`, `operand` (the selection the preview acts
 /// on), `seed`, `stale` (a write the frozen image must refuse), `built`
-/// (`before`/`after` install expectations), `count` and its preview sign.
-private mixin template LitRow(ToolT, KindT, EditMode m, alias pick, alias countFn,
-        int sign, float staleValue) {
+/// (`before`/`after` install expectations), `count` and its preview sign (0:
+/// the measure differs), the preview / noop names with their kinds and traces.
+/// A row's own declaration overrides any of these defaults.
+private mixin template Row(ToolT, KindT, EditMode m, alias pick, alias countFn, int sign) {
     alias Tool = ToolT; alias Kind = KindT; enum mode = m;
     static Tool make(Layer l, GpuMesh* g, EditMode* e) {
-        return new Tool(() => &l.meshRef(), g, e, LitShader.init);
+        static if (__traits(compiles, new Tool(() => &l.meshRef(), g, e, LitShader.init)))
+            return new Tool(() => &l.meshRef(), g, e, LitShader.init);
+        else return new Tool(() => &l.meshRef(), g, e);
     }
     static void operand(ref Mesh mesh) { pick(mesh); }
-    static size_t count(ref Mesh mesh) { return countFn(mesh); }
+    static auto count(ref Mesh mesh) { return countFn(mesh); }
     enum previewSign = sign;
+    enum builtBefore = false;
+    enum previewName = "", noopName = "";
+    enum noopKind = KindT.Noop;
+    enum int[] previewTrace = [3,4,43,2,8], noopTrace = [43,8];
+}
+private mixin template LitRow(ToolT, KindT, EditMode m, alias pick, alias countFn,
+        int sign, float staleValue) {
+    mixin Row!(ToolT, KindT, m, pick, countFn, sign);
     static void stale(Tool t) { t.mutatePreparedParamForTest(staleValue); }
-    static void seed(Tool t, ref Mesh m, bool i) { t.seedPreparedParamForTest(m, i); }
-    enum builtBefore = false;   // a row's own declaration overrides it
+    static void seed(Tool t, ref Mesh m, bool i, CommandHistory) {
+        t.seedPreparedParamForTest(m, i);
+    }
 }
 private struct PolyInsetRow {
     mixin LitRow!(PolyInsetTool, PreparedPolyInsetParamKind, EditMode.Polygons,
         pickFace, vertexCount, 1, 17.0f);
-    static bool built(Tool t) { return t.preparedParamBuiltForTest(); }
+    static bool built(Tool t, ref Mesh) { return t.preparedParamBuiltForTest(); }
 }
 private struct PolyBevelRow {
     mixin LitRow!(PolyBevelTool, PreparedPolyBevelParamKind, EditMode.Polygons,
         pickFace, vertexCount, 1, 17.0f);
-    static bool built(Tool t) { return t.preparedParamInstalledForTest(); }
+    static bool built(Tool t, ref Mesh) { return t.preparedParamInstalledForTest(); }
 }
 private struct PolyExtrudeRow {
     mixin LitRow!(PolyExtrudeTool, PreparedPolyExtrudeParamKind, EditMode.Polygons,
         pickFace, vertexCount, 1, 17.0f);
-    static bool built(Tool t) { return t.preparedParamBuiltForTest(); }
+    static bool built(Tool t, ref Mesh) { return t.preparedParamBuiltForTest(); }
 }
 private struct EdgeBevelRow {
     mixin LitRow!(EdgeBevelTool, PreparedEdgeBevelParamKind, EditMode.Edges,
         pickEdge, vertexCount, 1, 17.0f);
-    static bool built(Tool t) { return t.preparedParamInstalledForTest(); }
+    static bool built(Tool t, ref Mesh) { return t.preparedParamInstalledForTest(); }
 }
 private struct EdgeExtrudeRow {
     mixin LitRow!(EdgeExtrudeTool, PreparedEdgeExtrudeParamKind, EditMode.Edges,
         pickEdge, vertexCount, 1, 17.0f);
-    static bool built(Tool t) { return t.preparedParamBuiltForTest(); }
+    static bool built(Tool t, ref Mesh) { return t.preparedParamBuiltForTest(); }
 }
 private struct ReductionRow {
     mixin LitRow!(ReductionTool, PreparedReductionParamKind, EditMode.Polygons,
         triangulateAll, faceCount, -1, 0.25f);
-    static bool built(Tool t) { return t.preparedParamBuiltForTest(); }
+    static bool built(Tool t, ref Mesh) { return t.preparedParamBuiltForTest(); }
 }
 private struct SmoothShiftRow {
     mixin LitRow!(SmoothShiftTool, PreparedSmoothShiftParamKind, EditMode.Polygons,
         pickFace, faceCount, 1, 17.0f);
-    static bool built(Tool t) { return t.preparedParamBuiltForTest(); }
+    static bool built(Tool t, ref Mesh) { return t.preparedParamBuiltForTest(); }
     enum builtBefore = true;   // its seed marks an interactive preview built
 }
 private struct VertexMergeRow {
     mixin LitRow!(VertexMergeTool, PreparedVertexMergeParamKind, EditMode.Vertices,
         pickTwoVertices, vertexCount, -1, 0.25f);
-    static bool built(Tool t) { return t.preparedParamBuiltForTest(); }
+    static bool built(Tool t, ref Mesh) { return t.preparedParamBuiltForTest(); }
 }
 private struct VertexBevelRow {
     mixin LitRow!(VertexBevelTool, PreparedVertexBevelParamKind, EditMode.Vertices,
         pickVertex, vertexCount, 1, 0.4f);
-    static bool built(Tool t) { return t.preparedParamBuiltForTest(); }
+    static bool built(Tool t, ref Mesh) { return t.preparedParamBuiltForTest(); }
 }
 private struct VertexExtrudeRow {
     mixin LitRow!(VertexExtrudeTool, PreparedVertexExtrudeParamKind, EditMode.Vertices,
         pickVertex, vertexCount, 1, 0.4f);
-    static bool built(Tool t) { return t.preparedParamBuiltForTest(); }
+    static bool built(Tool t, ref Mesh) { return t.preparedParamBuiltForTest(); }
 }
 private struct ArrayRow {
-    alias Tool = ArrayTool; alias Kind = PreparedArrayParamKind;
-    enum mode = EditMode.Polygons;
-    static Tool make(Layer l, GpuMesh* g, EditMode* e) {
-        return new Tool(() => &l.meshRef(), g, e);
-    }
-    static void operand(ref Mesh mesh) { pickFace(mesh); }
-    static size_t count(ref Mesh mesh) { return faceCount(mesh); }
-    enum previewSign = 1;
+    mixin Row!(ArrayTool, PreparedArrayParamKind, EditMode.Polygons, pickFace,
+        faceCount, 1);
     static void stale(Tool t) { t.mutatePreparedParamForTest(17); }
-    static void seed(Tool t, ref Mesh m, bool i) {
+    static void seed(Tool t, ref Mesh m, bool i, CommandHistory) {
         t.seedPreparedParamForTest(m, i, true, false);
     }
-    static bool built(Tool t) { return t.preparedParamStateForTest(true); }
-    enum builtBefore = false;
+    static bool built(Tool t, ref Mesh) { return t.preparedParamStateForTest(true); }
+}
+// The rows whose image names an effect beyond Preview / Noop.
+private struct MagnetRow {
+    mixin LitRow!(MagnetTool, PreparedMagnetParamKind, EditMode.Vertices,
+        pickVertex, firstVertex, 0, 17.0f);
+    enum previewName = "dist", noopName = "dist";
+    static bool built(Tool t, ref Mesh) { return t.preparedParamStateForTest(true); }
+}
+private struct SliceRow {
+    mixin Row!(SliceTool, PreparedSliceParamKind, EditMode.Polygons, noOperand,
+        faceCount, 1);
+    enum previewName = "split", noopName = "axis", noopKind = Kind.AxisLatch;
+    static void stale(Tool t) { t.mutatePreparedParamForTest(); }
+    static void seed(Tool t, ref Mesh m, bool i, CommandHistory) {
+        t.seedPreparedParamForTest(m, i);
+    }
+    static bool built(Tool t, ref Mesh m) {
+        return t.preparedParamInstalledForTest(m) && !t.preparedAxisLockedForTest();
+    }
+    enum builtBefore = true;
+}
+private struct EdgeSliceRow {   // a pointT write rebakes the armed chain
+    mixin Row!(EdgeSliceTool, PreparedEdgeSliceParamKind, EditMode.Edges,
+        noOperand, positions, 0);
+    enum previewName = "pointT", noopName = "activePoint";
+    enum noopKind = Kind.ActivePoint;
+    enum int[] previewTrace = [3,4,2,1,43], noopTrace = [8,43];
+    static void stale(Tool t) { t.mutatePreparedParamForTest(); }
+    static void seed(Tool t, ref Mesh m, bool, CommandHistory h) {
+        if (h !is null) t.setGestureBindings(h, null);
+        t.seedPreparedParamForTest(m, true); t.setPreparedPointProxyForTest(0.4f);
+    }
+    static bool built(Tool t, ref Mesh) { return t.preparedParamStateForTest(true, 1); }
+    enum builtBefore = true;
+}
+private struct LoopSliceRow {   // a position write re-cuts the armed loop
+    mixin Row!(LoopSliceTool, PreparedLoopSliceParamKind, EditMode.Edges,
+        noOperand, positions, 0);
+    enum previewName = "position", noopName = "count", noopKind = Kind.State;
+    enum int[] previewTrace = [3,4,2,1,43], noopTrace = [8,43];
+    static void stale(Tool t) { t.mutatePreparedDeactivateForTest(); }
+    static void seed(Tool t, ref Mesh m, bool i, CommandHistory h) {
+        if (h !is null) t.setGestureBindings(h, null);
+        if (i) { t.seedPreparedDeactivateForTest(m, true); t.setPreparedPositionForTest(0.3f); }
+        else t.setPreparedCountForTest(2);
+    }
+    static bool built(Tool t, ref Mesh) { return t.preparedParamStateForTest(true, 1); }
+    enum builtBefore = true;
+}
+private struct EdgeExtendRow {
+    mixin LitRow!(EdgeExtendTool, PreparedEdgeExtendParamKind, EditMode.Edges,
+        pickEdge, vertexCount, 1, 17.0f);
+    enum previewName = "inset", noopName = "rotateHandle";
+    enum noopKind = Kind.BankSwitch;
+    static bool built(Tool t, ref Mesh) { return t.preparedParamInstalledForTest(true, false); }
 }
 
 private alias kRows = AliasSeq!(ArrayRow, SmoothShiftRow, EdgeBevelRow,
     EdgeExtrudeRow, PolyBevelRow, PolyExtrudeRow, PolyInsetRow, ReductionRow,
-    VertexMergeRow, VertexBevelRow, VertexExtrudeRow);
+    VertexMergeRow, VertexBevelRow, VertexExtrudeRow, MagnetRow, SliceRow,
+    EdgeSliceRow, LoopSliceRow, EdgeExtendRow);
 
 private struct Rig(R) {
     Layer layer; GpuMesh gpu; EditMode mode = R.mode; R.Tool tool;
@@ -141,13 +211,13 @@ private struct Rig(R) {
         r.layer = new Layer; r.layer.meshRef() = makeCube();
         if (operand) R.operand(r.layer.meshRef());
         r.tool = R.make(r.layer, &r.gpu, &r.mode);
-        R.seed(r.tool, r.layer.meshRef(), interactive);
+        R.seed(r.tool, r.layer.meshRef(), interactive, history);
         r.context = new PreparedRecordContext(history, new RecordObserverHub());
         return r;
     }
 }
 
-static assert(kRows.length == 11, "prepared param-update table lost a row");
+static assert(kRows.length == 16, "prepared param-update table lost a row");
 
 /// Every row runs every cell; a failed cell is collected, not thrown, so ONE
 /// red line names each row a shared-owner mutation breaks.
@@ -165,34 +235,38 @@ unittest {
         auto p = Rig!R.make(true, true, new CommandHistory());
         p.context.setResourceIdentity(7, 11);
         const before = R.count(p.layer.meshRef());
-        auto effect = p.tool.prepareParamChanged(p.context, p.layer,
+        auto effect = p.tool.prepareParamChanged(R.previewName, p.context, p.layer,
             GpuUploadOwner.fakeForTest(&p.gpu));
         check(effect.accepted && effect.kind == R.Kind.Preview, name ~ ": preview refused");
-        check(R.count(p.layer.meshRef()) == before && R.built(p.tool) == R.builtBefore,
+        check(R.count(p.layer.meshRef()) == before &&
+            R.built(p.tool, p.layer.meshRef()) == R.builtBefore,
             name ~ ": preview wrote before install");
         check(p.context.validate(), name ~ ": preview did not validate");
         p.context.install(); p.context.install();
-        check((R.previewSign > 0 ? R.count(p.layer.meshRef()) > before
-                : R.count(p.layer.meshRef()) < before) && R.built(p.tool),
+        const after = R.count(p.layer.meshRef());
+        static if (R.previewSign == 0) const moved = after != before;
+        else const moved = R.previewSign > 0 ? after > before : after < before;
+        check(moved && R.built(p.tool, p.layer.meshRef()),
             name ~ ": preview install did not land");
-        check(p.context.installTraceForTest() == [3,4,43,2,8],
+        check(p.context.installTraceForTest() == R.previewTrace,
             name ~ ": preview install trace");
 
-        // Noop install: a non-interactive edit enlists the slot and NoHistory only.
+        // Noop install: an edit with no preview enlists the slot and NoHistory
+        // only; its kind is the image's (Noop, or the tool's own effect).
         auto n = Rig!R.make(false, false);
         const cube = R.count(n.layer.meshRef());
-        auto noop = n.tool.prepareParamChanged(n.context, n.layer, null);
-        check(noop.accepted && noop.kind == R.Kind.Noop && n.context.validate(),
+        auto noop = n.tool.prepareParamChanged(R.noopName, n.context, n.layer, null);
+        check(noop.accepted && noop.kind == R.noopKind && n.context.validate(),
             name ~ ": noop refused");
         n.context.install();
         check(R.count(n.layer.meshRef()) == cube &&
-            n.context.installTraceForTest() == [43,8], name ~ ": noop install");
+            n.context.installTraceForTest() == R.noopTrace, name ~ ": noop install");
 
         // Stale image: a parameter write after prepare is refused at validate.
         auto s = Rig!R.make(true, true);
         s.context.setResourceIdentity(7, 11);
         const staleBefore = R.count(s.layer.meshRef());
-        check(s.tool.prepareParamChanged(s.context, s.layer,
+        check(s.tool.prepareParamChanged(R.previewName, s.context, s.layer,
             GpuUploadOwner.fakeForTest(&s.gpu)).accepted, name ~ ": stale prepare");
         R.stale(s.tool);
         check(!s.context.validate(), name ~ ": a stale image validated");
@@ -203,7 +277,7 @@ unittest {
         w.context.setResourceIdentity(7, 11);
         const wrongBefore = R.count(w.layer.meshRef());
         GpuMesh foreignGpu;
-        auto wrong = w.tool.prepareParamChanged(w.context, w.layer,
+        auto wrong = w.tool.prepareParamChanged(R.previewName, w.context, w.layer,
             GpuUploadOwner.fakeForTest(&foreignGpu));
         check(!wrong.accepted && closed(w.context) &&
             R.count(w.layer.meshRef()) == wrongBefore, name ~ ": foreign GPU accepted");
@@ -212,24 +286,24 @@ unittest {
         // no layer, a layer whose mesh the tool does not edit.
         auto q = Rig!R.make(true, true);
         q.context.setResourceIdentity(7, 11);
-        auto noContext = q.tool.prepareParamChanged(null, q.layer,
+        auto noContext = q.tool.prepareParamChanged(R.previewName, null, q.layer,
             GpuUploadOwner.fakeForTest(&q.gpu));
         check(!noContext.accepted && noContext.kind == R.Kind.None,
             name ~ ": accepted without a context");
-        check(!q.tool.prepareParamChanged(q.context, q.layer, null).accepted &&
+        check(!q.tool.prepareParamChanged(R.previewName, q.context, q.layer, null).accepted &&
             closed(q.context), name ~ ": preview accepted without an upload owner");
         auto foreignLayer = new Layer; foreignLayer.meshRef() = makeCube();
         foreach (layer; [null, foreignLayer]) {
             auto f = Rig!R.make(true, true);
             f.context.setResourceIdentity(7, 11);
-            auto refused = f.tool.prepareParamChanged(f.context, layer,
+            auto refused = f.tool.prepareParamChanged(R.previewName, f.context, layer,
                 GpuUploadOwner.fakeForTest(&f.gpu));
             check(!refused.accepted && refused.kind == R.Kind.None && closed(f.context),
                 name ~ (layer is null ? ": accepted a null layer" : ": accepted a foreign layer"));
         }
         ++rows;
     }}
-    assert(rows == 11, "prepared param-update table lost a row");
+    assert(rows == 16, "prepared param-update table lost a row");
     assert(bad.length == 0, bad.join("; "));
 }
 
@@ -241,7 +315,7 @@ unittest {
     foreach (name; ["applied", "op"]) {
         auto r = Rig!PolyBevelRow.make(true, true);
         r.context.setResourceIdentity(7, 11);
-        assert(r.tool.prepareParamChanged(r.context, r.layer,
+        assert(r.tool.prepareParamChanged("", r.context, r.layer,
             GpuUploadOwner.fakeForTest(&r.gpu)).accepted);
         foreach (ref p; r.tool.params()) if (p.name == name) {
             if (name == "applied") *p.bptr = false; else *p.iptr = 1;
@@ -261,11 +335,11 @@ unittest {
         else
             z.tool.seedPreparedParamForTest(z.layer.meshRef(), true, 1.0f, 0.0f);
         z.context.setResourceIdentity(7, 11);
-        auto zero = z.tool.prepareParamChanged(z.context, z.layer,
+        auto zero = z.tool.prepareParamChanged("", z.context, z.layer,
             GpuUploadOwner.fakeForTest(&z.gpu));
         assert(zero.accepted && zero.kind == R.Kind.Preview && z.context.validate());
         z.context.install();
-        assert(z.layer.meshRef().vertices.length == 8 && !R.built(z.tool) &&
+        assert(z.layer.meshRef().vertices.length == 8 && !R.built(z.tool, z.layer.meshRef()) &&
             z.context.installTraceForTest() == [3,4,43,2,8],
             R.Tool.stringof ~ ": zero-width preview");
     }}
@@ -285,7 +359,7 @@ unittest {
         assert(found, "Polygon parameter list lost " ~ name);
     }
     void expectFullCandidate(Vec3 shift) {
-        auto image = r.tool.buildPreparedParamUpdate(r.layer.meshRef());
+        auto image = r.tool.buildPreparedParamUpdate("", r.layer.meshRef());
         scope(exit) image.clear();
         assert(image.valid && image.applies && image.candidate.vertices.length == 12 &&
             image.candidate.faces.length == 10 && image.candidate.edges.length == 20,
@@ -304,7 +378,7 @@ unittest {
     setShift(r.tool, "shiftX", 0.125f);
     expectFullCandidate(Vec3(0.125f, 0, 0));
     r.context.setResourceIdentity(7, 11);
-    assert(r.tool.prepareParamChanged(r.context, r.layer,
+    assert(r.tool.prepareParamChanged("", r.context, r.layer,
         GpuUploadOwner.fakeForTest(&r.gpu)).accepted && r.context.validate());
     r.context.install();
     assert(r.layer.meshRef().faces.length == 10 && r.layer.meshRef().isFaceSelected(9),
@@ -321,7 +395,7 @@ unittest {
 
     auto f = Rig!PolyExtrudeRow.make(true, true);
     f.context.setResourceIdentity(7, 11);
-    assert(f.tool.prepareParamChanged(f.context, f.layer,
+    assert(f.tool.prepareParamChanged("", f.context, f.layer,
         GpuUploadOwner.fakeForTest(&f.gpu)).accepted);
     f.tool.mutatePreparedFrameForTest(Vec3(0, 1, 0));
     assert(!f.context.validate() && f.layer.meshRef().vertices.length == 8,
@@ -330,12 +404,51 @@ unittest {
     foreach (shiftName; ["shiftX", "shiftY", "shiftZ"]) {
         auto s = Rig!PolyExtrudeRow.make(true, true);
         s.context.setResourceIdentity(7, 11);
-        assert(s.tool.prepareParamChanged(s.context, s.layer,
+        assert(s.tool.prepareParamChanged("", s.context, s.layer,
             GpuUploadOwner.fakeForTest(&s.gpu)).accepted);
         setShift(s.tool, shiftName, 0.25f);
         assert(!s.context.validate() && s.layer.meshRef().vertices.length == 8,
             "prepared Polygon parameter projection omitted " ~ shiftName);
     }
+}
+
+// The tool effects beyond Preview / Noop install their own state: Slice latches
+// the axis, Loop Slice takes the count, Edge Slice arms the chain from the
+// edges param, Edge Extend switches banks (activating the move bank) and
+// updates the pivot override.
+unittest {
+    auto sl = Rig!SliceRow.make(false, false);
+    assert(sl.tool.prepareParamChanged("axis", sl.context, sl.layer, null).accepted &&
+        sl.context.validate()); sl.context.install();
+    assert(sl.tool.preparedAxisLockedForTest(), "Slice: the axis write did not latch");
+    auto ls = Rig!LoopSliceRow.make(false, false);
+    assert(ls.tool.prepareParamChanged("count", ls.context, ls.layer, null).accepted &&
+        ls.context.validate()); ls.context.install();
+    assert(ls.tool.preparedParamStateForTest(false, 2), "Loop Slice: count not installed");
+
+    auto es = Rig!EdgeSliceRow.make(false, false, new CommandHistory());
+    es.tool.seedPreparedParamForTest(es.layer.meshRef(), false);
+    es.context.setResourceIdentity(7, 11);
+    auto arm = es.tool.prepareParamChanged("chainArm", es.context, es.layer,
+        GpuUploadOwner.fakeForTest(&es.gpu));
+    assert(arm.accepted && arm.kind == PreparedEdgeSliceParamKind.ChainArm &&
+        es.context.validate()); es.context.install();
+    assert(es.tool.preparedParamStateForTest(true, 1) &&
+        es.context.installTraceForTest() == [3,4,2,1,43], "Edge Slice: chainArm");
+
+    auto ee = Rig!EdgeExtendRow.make(true, true);
+    ee.tool.setPreparedRotateBankForTest(true);
+    auto bank = ee.tool.prepareParamChanged("rotateHandle", ee.context, ee.layer, null);
+    assert(bank.accepted && bank.kind == PreparedEdgeExtendParamKind.BankSwitch &&
+        ee.context.validate() && !ee.tool.preparedEmbeddedMoveInstalledForTest());
+    ee.context.install();
+    assert(ee.tool.preparedParamInstalledForTest(false, true) &&
+        ee.tool.preparedEmbeddedMoveInstalledForTest(), "Edge Extend: bank switch");
+    auto pv = Rig!EdgeExtendRow.make(true, true);
+    auto pivot = pv.tool.prepareParamChanged("_dragPivot", pv.context, pv.layer, null);
+    assert(pivot.accepted && pivot.kind == PreparedEdgeExtendParamKind.Pivot &&
+        pv.context.validate()); pv.context.install();
+    assert(pv.context.installTraceForTest() == [43,8], "Edge Extend: pivot");
 }
 
 // The owner's own transaction order, on one instantiation (the body is shared):
@@ -345,9 +458,9 @@ unittest {
     alias O = PreparedParamUpdateOwner!(PolyInsetTool, PreparedPolyInsetParamImage,
         PreparedPolyInsetParamKind);
     auto r = Rig!PolyInsetRow.make(true, true);
-    assert(O.prepare(null, r.layer) is null && O.prepare(r.tool, null) is null,
+    assert(O.prepare(null, r.layer, "") is null && O.prepare(r.tool, null, "") is null,
         "owner prepared without a target or layer");
-    auto o = O.prepare(r.tool, r.layer);
+    auto o = O.prepare(r.tool, r.layer, "");
     assert(o !is null && o.applies && o.effectKind == PreparedPolyInsetParamKind.Preview);
     o.install();
     assert(!r.tool.preparedParamBuiltForTest(), "owner installed before validate");
@@ -362,7 +475,7 @@ unittest {
     assert(!o.begin(), "a consumed owner began again");
 
     auto a = Rig!PolyInsetRow.make(true, true);
-    auto aborted = O.prepare(a.tool, a.layer);
+    auto aborted = O.prepare(a.tool, a.layer, "");
     assert(aborted.begin()); aborted.abort();
     assert(!aborted.validate() && !aborted.begin(), "an aborted owner stayed live");
     aborted.install();
@@ -371,20 +484,20 @@ unittest {
     // The context slot: discard aborts the enlisted owner; a validated
     // context takes no further slot.
     auto d = Rig!PolyInsetRow.make(true, true);
-    auto enlisted = O.prepare(d.tool, d.layer);
+    auto enlisted = O.prepare(d.tool, d.layer, "");
     assert(d.context.prepareParamUpdate(enlisted));
     d.context.discard();
     assert(enlisted.effectKind == PreparedPolyInsetParamKind.None,
         "discard left the enlisted owner live");
     auto v = Rig!PolyInsetRow.make(true, true);
-    assert(v.context.prepareParamUpdate(O.prepare(v.tool, v.layer)) &&
+    assert(v.context.prepareParamUpdate(O.prepare(v.tool, v.layer, "")) &&
         v.context.markNoHistoryInstall() && v.context.validate());
-    assert(!v.context.prepareParamUpdate(O.prepare(v.tool, v.layer)),
+    assert(!v.context.prepareParamUpdate(O.prepare(v.tool, v.layer, "")),
         "a validated context enlisted another slot");
 
     // A throw while enlisting aborts the owner and discards the whole transaction.
     auto t = Rig!PolyInsetRow.make(true, true);
-    auto thrown = O.prepare(t.tool, t.layer);
+    auto thrown = O.prepare(t.tool, t.layer, "");
     PreparedRecordContext.failAfterResourceBeginForTest(true);
     bool enlistThrew;
     try t.context.prepareParamUpdate(thrown); catch (Exception) enlistThrew = true;
@@ -395,7 +508,7 @@ unittest {
     x.context.setResourceIdentity(7, 11);
     PreparedRecordContext.failAfterResourceBeginForTest(true);
     bool threw;
-    try x.tool.prepareParamChanged(x.context, x.layer, GpuUploadOwner.fakeForTest(&x.gpu));
+    try x.tool.prepareParamChanged("", x.context, x.layer, GpuUploadOwner.fakeForTest(&x.gpu));
     catch (Exception) threw = true;
     PreparedRecordContext.failAfterResourceBeginForTest(false);
     assert(threw && !x.context.markNoHistoryInstall() && !x.context.validate(),

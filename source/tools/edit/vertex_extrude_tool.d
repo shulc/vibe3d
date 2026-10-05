@@ -31,12 +31,12 @@ import perf_probe : g_perf, Cat;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
     PreparedSimpleToolDoorClient;
 import prepared_record_context : PreparedToolParamDoorClient,
-    PreparedGpuParamDoorClient;
+    PreparedNamedGpuParamDoorClient;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_vertex_extrude_activation : PreparedVertexExtrudeActivationOwner;
 import prepared_param_update : PreparedParamUpdateOwner,
-    PreparedParamUpdateProducer;
+    PreparedParamUpdateProducer, DefaultParamEffectKind;
 import prepared_tool_effect : PreparedVertexExtrudeParamEffect,
     PreparedVertexExtrudeParamKind;
 import document : Layer;
@@ -58,6 +58,7 @@ struct VertexExtrudeParamProjection {
 }
 
 struct PreparedVertexExtrudeParamImage {
+    mixin DefaultParamEffectKind!PreparedVertexExtrudeParamKind;
     bool valid, applies, nextBuilt;
     VertexExtrudeParamProjection expected;
     MeshSnapshot expectedLive, expectedBefore;
@@ -125,7 +126,7 @@ class VertexExtrudeTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorCli
         return policy;
     }
 
-    mixin PreparedGpuParamDoorClient;
+    mixin PreparedNamedGpuParamDoorClient;
     mixin PreparedSimpleToolDoorClient!Layer;
 private:
     Mesh* delegate() nothrow @nogc meshSrc_;
@@ -276,7 +277,7 @@ public:
         return VertexExtrudeParamProjection(interactiveParamEdit, active, built,
             shift_, width_);
     }
-    final PreparedVertexExtrudeParamImage buildPreparedParamUpdate(ref Mesh live) {
+    final PreparedVertexExtrudeParamImage buildPreparedParamUpdate(string, ref Mesh live) {
         PreparedVertexExtrudeParamImage image;
         image.valid = true; image.expected = paramProjection();
         image.nextBuilt = built; image.expectedLive = MeshSnapshot.capture(live);

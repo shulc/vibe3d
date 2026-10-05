@@ -23,9 +23,9 @@ import tools.transform.xfrm_transform : XfrmTransformTool;
 import tools.transform.xfrm_transform : PreparedXfrmEmbeddedDeactivateImage;
 import tools.transform.xfrm_handles : DragBank;
 import pipe_gizmo_host : PipeGizmoHost;
-import tools.transform.move : MoveTool;
-import tools.transform.rotate : RotateTool;
-import tools.transform.scale : ScaleTool;
+import tools.transform.move : MoveTool, PreparedMoveActivationImage;
+import tools.transform.rotate : RotateTool, PreparedRotateActivationImage;
+import tools.transform.scale : ScaleTool, PreparedScaleActivationImage;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind,
     PreparedEdgeExtendParamEffect, PreparedEdgeExtendParamKind,
     PreparedDeactivateEffect, PreparedDeactivateKind;
@@ -35,9 +35,8 @@ import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
 import prepared_record_context : PreparedToolParamDoorClient,
     PreparedNamedGpuParamDoorClient;
 import prepared_edge_extend_tool_activation : PreparedEdgeExtendToolActivationOwner;
-import prepared_edge_extend_param_update : PreparedEdgeExtendParamUpdateOwner;
+import prepared_param_update : PreparedParamUpdateOwner, PreparedParamUpdateProducer;
 import prepared_edge_extend_deactivate : PreparedEdgeExtendDeactivateOwner;
-import prepared_transform_product_activation : PreparedTransformProductActivationOwner;
 import prepared_xfrm_activation_session : PreparedXfrmActivationSessionOwner;
 import document : Layer;
 import mesh_gpu : GpuUploadOwner;
@@ -58,8 +57,12 @@ struct PreparedEdgeExtendToolActivationImage {
 }
 
 struct PreparedEdgeExtendParamImage {
-    bool valid, appliesMesh, bankSwitch, pivotUpdate;
-    bool activateMove, activateRotate, activateScale;
+    bool valid, applies, bankSwitch, pivotUpdate;
+    // An armed bank switch brings the banks online (move always, rotate and
+    // scale as their handles say): their activation images install with it.
+    PreparedMoveActivationImage move;
+    PreparedRotateActivationImage rotate;
+    PreparedScaleActivationImage scale;
     string name;
     bool expectedActive, expectedBuilt, expectedMove, expectedRotate, expectedScale;
     bool expectedXfrmT, expectedXfrmR, expectedXfrmS;
@@ -72,10 +75,16 @@ struct PreparedEdgeExtendParamImage {
     PreparedPreviewRebuildImage preview;
     Mesh candidate; uint deliveryFlags, deliveryDomains;
     void clear() nothrow @nogc {
-        valid = appliesMesh = bankSwitch = pivotUpdate = false;
-        activateMove = activateRotate = activateScale = false; name = null;
+        valid = applies = bankSwitch = pivotUpdate = false;
+        move.clear(); rotate.clear(); scale.clear(); name = null;
         expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
         preview.clear(); candidate = Mesh.init; deliveryFlags = deliveryDomains = 0;
+    }
+    PreparedEdgeExtendParamKind effectKind() const nothrow @nogc {
+        if (applies) return PreparedEdgeExtendParamKind.Preview;
+        if (bankSwitch) return PreparedEdgeExtendParamKind.BankSwitch;
+        if (pivotUpdate) return PreparedEdgeExtendParamKind.Pivot;
+        return PreparedEdgeExtendParamKind.Noop;
     }
 }
 
@@ -681,9 +690,13 @@ public:
                 name == "scaleHandle") {
             image.bankSwitch = true;
             if (active) {
-                image.activateMove = true;
-                image.activateRotate = rotateHandle_;
-                image.activateScale = scaleHandle_;
+                image.move = xfrm.moveBank().buildPreparedProductActivation();
+                if (rotateHandle_)
+                    image.rotate = xfrm.rotateBank().buildPreparedProductActivation();
+                if (scaleHandle_)
+                    image.scale = xfrm.scaleBank().buildPreparedProductActivation();
+                image.valid = image.move.valid && image.rotate.valid == rotateHandle_ &&
+                    image.scale.valid == scaleHandle_;
             }
             return image;
         }
@@ -707,7 +720,7 @@ public:
             (ref Mesh target) => runPreviewKernel(target));
         drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
             image.deliveryDomains); shadow.close();
-        image.appliesMesh = true; image.nextBuilt = n != 0;
+        image.applies = true; image.nextBuilt = n != 0;
         return image;
     }
 
@@ -726,7 +739,7 @@ public:
             Vec3(scaleX_, scaleY_, scaleZ_) == image.expectedScaleVec &&
             segments_ == image.expectedSegments &&
             image.expectedLive.matches(live) && image.expectedBefore.matches(before) &&
-            (!image.appliesMesh || preview_.matchesImage(image.preview));
+            (!image.applies || preview_.matchesImage(image.preview));
     }
 
     final void installPreparedParamUpdate(ref PreparedEdgeExtendParamImage image)
@@ -735,42 +748,20 @@ public:
         if (image.bankSwitch) {
             xfrm.flagT = moveHandle_; xfrm.flagR = rotateHandle_;
             xfrm.flagS = scaleHandle_;
+            xfrm.moveBank().installPreparedProductActivation(image.move);
+            xfrm.rotateBank().installPreparedProductActivation(image.rotate);
+            xfrm.scaleBank().installPreparedProductActivation(image.scale);
         }
         if (image.pivotUpdate) dragPivotOverride_.active = image.nextPivotActive;
-        if (image.appliesMesh) {
+        if (image.applies) {
             built = image.nextBuilt; preview_.installImage(image.preview);
         }
         image.clear();
     }
 
-    final PreparedEdgeExtendParamEffect prepareParamChanged(string name,
-            PreparedRecordContext context, Layer layer, GpuUploadOwner uploadOwner) {
-        if (context is null) return PreparedEdgeExtendParamEffect(
-            preparedToolStateOwner, PreparedEdgeExtendParamKind.None, false);
-        scope(failure) context.discard();
-        auto owner = PreparedEdgeExtendParamUpdateOwner.prepare(this, layer, name);
-        bool ok = owner !is null;
-        if (ok && owner.appliesMesh)
-            ok = owner.deliveryFlags != 0 && uploadOwner !is null &&
-                uploadOwner.owns(gpu) &&
-                context.prepareStampedMeshImage(layer, owner.candidate,
-                    owner.deliveryFlags, owner.deliveryDomains) &&
-                context.prepareUpload(uploadOwner, owner.candidate);
-        if (ok) ok = context.prepareEdgeExtendParamUpdate(owner);
-        if (ok) ok = context.markNoHistoryInstall();
-        if (!ok) context.discard();
-        return PreparedEdgeExtendParamEffect(preparedToolStateOwner,
-            owner is null ? PreparedEdgeExtendParamKind.None : owner.effectKind, ok);
-    }
-    final PreparedTransformProductActivationOwner preparedParamMoveOwner() {
-        return PreparedTransformProductActivationOwner.prepare(xfrm.moveBank());
-    }
-    final PreparedTransformProductActivationOwner preparedParamRotateOwner() {
-        return PreparedTransformProductActivationOwner.prepare(xfrm.rotateBank());
-    }
-    final PreparedTransformProductActivationOwner preparedParamScaleOwner() {
-        return PreparedTransformProductActivationOwner.prepare(xfrm.scaleBank());
-    }
+    mixin PreparedParamUpdateProducer!(PreparedParamUpdateOwner!(EdgeExtendTool,
+        PreparedEdgeExtendParamImage, PreparedEdgeExtendParamKind),
+        PreparedEdgeExtendParamEffect);
 
     override void onParamChanged(string name) {
         // HIDDEN test hook: writing a NON-default _dragPivot arms the one-shot

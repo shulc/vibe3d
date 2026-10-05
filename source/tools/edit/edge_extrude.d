@@ -1,14 +1,14 @@
 module tools.edit.edge_extrude;
 import display_state : DrawPlan;
 import prepared_record_context : PreparedToolParamDoorClient,
-    PreparedGpuParamDoorClient;
+    PreparedNamedGpuParamDoorClient;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
     PreparedSimpleToolDoorClient;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_edge_extrude_activation : PreparedEdgeExtrudeActivationOwner;
 import prepared_param_update : PreparedParamUpdateOwner,
-    PreparedParamUpdateProducer;
+    PreparedParamUpdateProducer, DefaultParamEffectKind;
 import prepared_tool_effect : PreparedEdgeExtrudeParamEffect,
     PreparedEdgeExtrudeParamKind;
 import document : Layer;
@@ -65,6 +65,7 @@ struct EdgeExtrudeParamProjection {
 }
 
 struct PreparedEdgeExtrudeParamImage {
+    mixin DefaultParamEffectKind!PreparedEdgeExtrudeParamKind;
     bool valid, applies, nextBuilt;
     EdgeExtrudeParamProjection expected;
     MeshSnapshot expectedLive, expectedBefore;
@@ -125,7 +126,7 @@ class EdgeExtrudeTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClien
         return policy;
     }
 
-    mixin PreparedGpuParamDoorClient;
+    mixin PreparedNamedGpuParamDoorClient;
     mixin PreparedSimpleToolDoorClient!Layer;
 private:
     Mesh* delegate() nothrow @nogc meshSrc_;
@@ -333,7 +334,7 @@ public:
         return EdgeExtrudeParamProjection(interactiveParamEdit, active, built,
             extrude_, width_);
     }
-    final PreparedEdgeExtrudeParamImage buildPreparedParamUpdate(ref Mesh live) {
+    final PreparedEdgeExtrudeParamImage buildPreparedParamUpdate(string, ref Mesh live) {
         PreparedEdgeExtrudeParamImage image;
         image.valid = true; image.expected = paramProjection();
         image.nextBuilt = built; image.expectedLive = MeshSnapshot.capture(live);

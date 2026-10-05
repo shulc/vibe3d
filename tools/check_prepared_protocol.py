@@ -749,14 +749,9 @@ for path, text in prepared_source_texts.items():
             "prepared_topology_pen_activation",
             "prepared_topology_pen_update",
             "prepared_topology_pen_deactivate",
-            "prepared_magnet_param_update",
             "prepared_slice_deactivate",
-            "prepared_slice_param_update",
             "prepared_edge_slice_deactivate",
-            "prepared_edge_slice_param_update",
             "prepared_loop_slice_deactivate",
-            "prepared_loop_slice_param_update",
-            "prepared_edge_extend_param_update",
             "prepared_edge_extend_deactivate",
             "prepared_box_param",
             "prepared_tool_transition",
@@ -1953,9 +1948,9 @@ def token_census_gate(source, declared, stray_fixtures, non_token):
                    "\"every retired fixture has a replacement\" check is true "
                    "over an empty set")
     else:
-        if len(retired) != 75:
+        if len(retired) != 71:
             bad.append(f"the retired-fixture roster holds {len(retired)} names, "
-                       f"the 66 deleted files named 75")
+                       f"the 66 deleted files named 75 (4 folded into one, 9427)")
         orphaned = [t for t in retired if t not in names]
         if orphaned:
             bad.append(f"retired copy fixtures name types the tree no longer "
@@ -2702,7 +2697,8 @@ for target, old, new, label in (
 # its class mixes the producer in over its own owner instantiation.
 PARAM_UPDATE_TOOLS = ("ArrayTool", "SmoothShiftTool", "EdgeBevelTool",
     "EdgeExtrudeTool", "PolyBevelTool", "PolyExtrudeTool", "PolyInsetTool",
-    "ReductionTool", "VertexMergeTool", "VertexBevelTool", "VertexExtrudeTool")
+    "ReductionTool", "VertexMergeTool", "VertexBevelTool", "VertexExtrudeTool",
+    "MagnetTool", "SliceTool", "EdgeSliceTool", "LoopSliceTool", "EdgeExtendTool")
 param_update_sources = {
     "owner": prepared_module_source("prepared_param_update"),
     "context": record_context,
@@ -2764,6 +2760,17 @@ order_mutant["owner"] = order_mutant["owner"].replace(
     "        if (ok) ok = context.prepareParamUpdate(owner);\n", 1)
 if order_mutant["owner"] == param_update_sources["owner"] or param_update_gate(order_mutant):
     fail("Shared parameter mutation did not RED: producer order")
+def mutate_param_region(name, sources, gate, rows, regions):
+    """`mutate_param_sources` inside a region per target: {target: (first, last)}."""
+    for target, old, new, label in rows:
+        mutant = dict(sources)
+        text = mutant[target]
+        first, last = regions.get(target, ("", None))
+        start = text.find(first)
+        end = text.find(last, start) if last else len(text)
+        mutant[target] = text[:start] + text[start:end].replace(old, new, 1) + text[end:]
+        if mutant[target] == sources[target] or gate(mutant):
+            fail(f"{name} parameter mutation did not RED: {label}")
 def producer_mixin(tool):
     return f"mixin PreparedParamUpdateProducer!(PreparedParamUpdateOwner!({tool},"
 
@@ -2795,18 +2802,14 @@ mutate_param_sources("Array", array_param_sources, array_param_gate, (
 ), lambda text, label: text.find("struct ArrayParamProjection"))
 
 # Magnet's radius hook rebuilds the current drag from its frozen baseline in a
-# detached mesh and installs mesh, gesture state, upload, then NoHistory.
+# detached mesh; the shared producer installs mesh, gesture state, upload, then
+# NoHistory.
 magnet_param_sources = {
     "tool": (ROOT / "source/tools/deform/magnet.d").read_text(),
-    "owner": prepared_module_source("prepared_magnet_param_update"),
-    "context": record_context,
 }
 def magnet_param_gate(s):
-    tool, owner, context = (s[k] for k in ("tool", "owner", "context"))
-    start = tool.find("final PreparedMagnetParamEffect prepareParamChanged(")
-    end = tool.find("override void evaluate()", start)
-    producer = tool[start:end]
-    return (all(x in tool for x in (
+    tool = s["tool"]
+    return all(x in tool for x in (
                 "image.expectedLive = MeshSnapshot.capture(live);",
                 "image.expectedBefore = MeshSnapshot.capture(baseline);",
                 "auto shadow = beginPreparedShadow(image.candidate);",
@@ -2814,56 +2817,41 @@ def magnet_param_gate(s):
                 "drainPreparedShadowDelivery(image.candidate",
                 "sameSliceBytes(touchedPrev_, image.expectedTouchedPrev)",
                 "image.expectedLive.matches(live)",
-                "image.expectedBefore.matches(before)")) and
-            all(x in owner for x in (
-                "target.classinfo !is MagnetTool.classinfo",
-                "!target.ownsPreparedLayer(layer)",
-                "&layer_.meshRef() !is source_",
-                "!target_.preparedParamMatches(image_, *source_)",
-                "target_.installPreparedParam(image_)",
-                "validatedToken_.generation != generation_")) and
-            all(x in producer for x in (
-                "uploadOwner.owns(gpu)",
-                "context.prepareStampedMeshImage(layer, owner.candidate,",
-                "context.prepareMagnetParamUpdate(owner)",
-                "context.prepareUpload(uploadOwner, owner.candidate)",
-                "context.markNoHistoryInstall()",
-                "scope(failure) context.discard();", "if (!ok) context.discard();")) and
-            producer.find("context.prepareStampedMeshImage") <
-                producer.find("context.prepareMagnetParamUpdate(owner)") <
-                producer.find("context.prepareUpload(uploadOwner") <
-                producer.find("context.markNoHistoryInstall()") and
-            "bool prepareMagnetParamUpdate(PreparedMagnetParamUpdateOwner owner)" in context and
-            context.count("case PreparedResourceKind.MagnetParamUpdateState:") == 3 and
-            "e.magnetParamUpdate.install();" in context)
+                "image.expectedBefore.matches(before)", producer_mixin("MagnetTool")))
 if not magnet_param_gate(magnet_param_sources):
     fail("Magnet onParamChanged prepared contract drift")
-for target, old, new, label in (
+mutate_param_sources("Magnet", magnet_param_sources, magnet_param_gate, (
     ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
     ("tool", "auto shadow = beginPreparedShadow(image.candidate);", "", "drop detached shadow"),
-    ("tool", "sameSliceBytes(touchedPrev_, image.expectedTouchedPrev)", "true", "drop exact touched witness"),
-    ("owner", "target.classinfo !is MagnetTool.classinfo", "false", "broaden product"),
-    ("owner", "&layer_.meshRef() !is source_", "false", "drop Layer identity"),
-    ("tool", "uploadOwner.owns(gpu)", "true", "drop GPU identity"),
-    ("tool", "context.prepareMagnetParamUpdate(owner)", "true", "drop private state"),
-    ("tool", "context.prepareUpload(uploadOwner, owner.candidate)", "true", "drop GPU upload"),
-    ("tool", "context.markNoHistoryInstall()", "true", "drop NoHistory"),
-    ("context", "e.magnetParamUpdate.install();", "", "drop context install"),
-):
-    mutant = dict(magnet_param_sources)
-    if target == "tool":
-        text = mutant[target]
-        start = text_anchor(
-            text, "final PreparedMagnetParamEffect prepareParamChanged(") \
-            if old in from_text_anchor(
-                text, "final PreparedMagnetParamEffect prepareParamChanged(") \
-            else 0
-        pos = text.find(old, start)
-        mutant[target] = text[:pos] + new + text[pos + len(old):]
-    else:
-        mutant[target] = mutant[target].replace(old, new, 1)
-    if mutant[target] == magnet_param_sources[target] or magnet_param_gate(mutant):
-        fail(f"Magnet parameter mutation did not RED: {label}")
+    ("tool", "sameSliceBytes(touchedPrev_, image.expectedTouchedPrev)", "true",
+     "drop exact touched witness"),
+    ("tool", producer_mixin("MagnetTool"), "", "drop producer mixin"),
+))
+
+# Slice's parameter write re-cuts the line from the activation baseline; its
+# image names the axis latch.
+slice_param_sources = {
+    "tool": (ROOT / "source/tools/slice/slice_tool.d").read_text(),
+}
+SLICE_PARAM_REGION = ("final PreparedSliceParamImage buildPreparedParamUpdate",
+                      "// Tool Properties param edit")
+def slice_param_gate(s):
+    tool = s["tool"]
+    start = tool.find(SLICE_PARAM_REGION[0])
+    tool = tool[start:tool.find(SLICE_PARAM_REGION[1], start)]
+    return all(x in tool for x in (
+                "image.expectedLive = MeshSnapshot.capture(live);",
+                "auto shadow = beginPreparedShadow(image.candidate);",
+                "sliceFromBaseline(image.candidate, before_",
+                "image.expectedLive.matches(live)",
+                "image.expectedBefore.matches(before_)", producer_mixin("SliceTool")))
+if not slice_param_gate(slice_param_sources):
+    fail("Slice onParamChanged prepared contract drift")
+mutate_param_region("Slice", slice_param_sources, slice_param_gate, (
+    ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
+    ("tool", "auto shadow = beginPreparedShadow(image.candidate);", "", "drop detached shadow"),
+    ("tool", producer_mixin("SliceTool"), "", "drop producer mixin"),
+), {"tool": SLICE_PARAM_REGION})
 
 smooth_shift_param_sources = {
     "tool": (ROOT / "source/tools/deform/smooth_shift_tool.d").read_text(),
@@ -3215,16 +3203,17 @@ for target, old, new, label in (
             loop_slice_deactivate_gate(mutant):
         fail(f"Loop Slice deactivate mutation did not RED: {label}")
 
+# Edge Slice and Loop Slice keep their own producer (a redo invalidation and a
+# guarded history install) over the shared owner; Edge Extend mixes the shared
+# producer in. Each keeps its build/match checks here.
+
 edge_slice_param_sources = {
     "tool": edge_slice_deactivate_sources["tool"],
-    "owner": prepared_module_source("prepared_edge_slice_param_update"),
-    "context": record_context,
     "history": (ROOT / "source/command_history.d").read_text(),
     "effect": edge_slice_deactivate_sources["effect"],
 }
 def edge_slice_param_gate(s):
-    tool, owner, context, history, effect = (s[k] for k in
-        ("tool", "owner", "context", "history", "effect"))
+    tool, history, effect = (s[k] for k in ("tool", "history", "effect"))
     start = tool.find("final PreparedEdgeSliceParamImage buildPreparedParamUpdate")
     end = tool.find("override void onParamChanged", start)
     product = tool[start:end]
@@ -3239,57 +3228,32 @@ def edge_slice_param_gate(s):
         "context.prepareInvalidateRedo()", "redo.mustInstall",
         "uploadOwner.owns(gpu)", "context.prepareStampedMeshImage(layer, owner.candidate",
         "context.prepareUpload(uploadOwner, owner.candidate)",
-        "context.prepareEdgeSliceParamUpdate(owner)")) and all(x in owner for x in (
-        "target.classinfo !is EdgeSliceTool.classinfo", "!target.ownsPreparedLayer(layer)",
-        "&layer_.meshRef() !is source_", "prepared_.owner != owner_",
-        "prepared_.generation != generation_", "validatedToken_.owner != owner_",
-        "validatedToken_.generation != generation_",
-        "target_.installPreparedParamUpdate(image_)")) and all(x in history_product for x in (
+        "PreparedParamUpdateOwner!(EdgeSliceTool,",
+        "context.prepareParamUpdate(owner)")) and all(x in history_product for x in (
         "PreparedHistoryResult prepareInvalidateRedo", "batch.history.lockout",
         "batch.history.state == UndoState.Active", "batch.history.redoStack = null")) and \
-        context.count("case PreparedResourceKind.EdgeSliceParamUpdateState:") == 3 and \
-        "e.edgeSliceParamUpdate.install();" in context and \
         "PreparedEdgeSliceParamKind kind;" in effect
 if not edge_slice_param_gate(edge_slice_param_sources):
     fail("Edge Slice parameter prepared contract drift")
-for target, old, new, label in (
+mutate_param_region("Edge Slice", edge_slice_param_sources, edge_slice_param_gate, (
     ("tool", "pointsFromEdgesParamIn(live)", "pointsFromEdgesParam()", "drop explicit target"),
     ("tool", "bakeChainInto(image.candidate", "bakeChainFrom(", "drop detached kernel"),
     ("tool", "image.expectedLive.matches(live)", "true", "drop live witness"),
     ("tool", "context.prepareInvalidateRedo()", "PreparedHistoryResult.init", "drop redo product"),
     ("tool", "redo.mustInstall", "true", "drop guarded history install"),
     ("tool", "uploadOwner.owns(gpu)", "true", "drop GPU identity"),
-    ("tool", "context.prepareEdgeSliceParamUpdate(owner)", "true", "drop state enlist"),
-    ("owner", "&layer_.meshRef() !is source_", "false", "drop Layer identity"),
+    ("tool", "context.prepareParamUpdate(owner)", "true", "drop state enlist"),
     ("history", "batch.history.redoStack = null", "", "drop redo invalidation"),
-    ("context", "e.edgeSliceParamUpdate.install();", "", "drop context install"),
-):
-    mutant = dict(edge_slice_param_sources)
-    if target == "tool":
-        text = mutant[target]; start = text.find(
-            "final PreparedEdgeSliceParamImage buildPreparedParamUpdate")
-        end = text.find("override void onParamChanged", start)
-        product = text[start:end].replace(old, new, 1)
-        mutant[target] = text[:start] + product + text[end:]
-    elif target == "history":
-        text = mutant[target]
-        start = text.find("PreparedHistoryResult prepareInvalidateRedo")
-        end = text.find("ulong prepareNextRun", start)
-        product = text[start:end].replace(old, new, 1)
-        mutant[target] = text[:start] + product + text[end:]
-    else: mutant[target] = mutant[target].replace(old, new, 1)
-    if mutant[target] == edge_slice_param_sources[target] or edge_slice_param_gate(mutant):
-        fail(f"Edge Slice parameter mutation did not RED: {label}")
+), {"tool": ("final PreparedEdgeSliceParamImage buildPreparedParamUpdate",
+             "override void onParamChanged"),
+    "history": ("PreparedHistoryResult prepareInvalidateRedo", "ulong prepareNextRun")})
 
 loop_slice_param_sources = {
     "tool": (ROOT / "source/tools/slice/loop_slice_tool.d").read_text(),
-    "owner": prepared_module_source("prepared_loop_slice_param_update"),
-    "context": record_context,
     "effect": edge_slice_deactivate_sources["effect"],
 }
 def loop_slice_param_gate(s):
-    tool, owner, context, effect = (s[k] for k in
-        ("tool", "owner", "context", "effect"))
+    tool, effect = s["tool"], s["effect"]
     start = tool.find("final PreparedLoopSliceParamImage buildPreparedParamUpdate")
     end = tool.find("override void onParamChanged", start)
     product = tool[start:end]
@@ -3303,19 +3267,12 @@ def loop_slice_param_gate(s):
         "uploadOwner.owns(gpu)",
         "context.prepareStampedMeshImage(layer, owner.candidate",
         "context.prepareUpload(uploadOwner, owner.candidate)",
-        "context.prepareLoopSliceParamUpdate(owner)")) and all(x in owner for x in (
-        "target.classinfo !is LoopSliceTool.classinfo",
-        "!target.ownsPreparedLayer(layer)", "&layer_.meshRef() !is source_",
-        "prepared_.owner != owner_", "prepared_.generation != generation_",
-        "validatedToken_.owner != owner_",
-        "validatedToken_.generation != generation_",
-        "target_.installPreparedParamUpdate(image_)")) and \
-        context.count("case PreparedResourceKind.LoopSliceParamUpdateState:") == 3 and \
-        "e.loopSliceParamUpdate.install();" in context and \
+        "PreparedParamUpdateOwner!(LoopSliceTool,",
+        "context.prepareParamUpdate(owner)")) and \
         "PreparedLoopSliceParamKind kind;" in effect
 if not loop_slice_param_gate(loop_slice_param_sources):
     fail("Loop Slice parameter prepared contract drift")
-for target, old, new, label in (
+mutate_param_region("Loop Slice", loop_slice_param_sources, loop_slice_param_gate, (
     ("tool", "image.candidate = detachedPreparedMesh(live)",
      "image.candidate = live", "drop detached target"),
     ("tool", "shadowTool.onParamChanged(pname)", "onParamChanged(pname)",
@@ -3325,34 +3282,17 @@ for target, old, new, label in (
      "drop redo product"),
     ("tool", "result.mustInstall", "true", "drop guarded history install"),
     ("tool", "uploadOwner.owns(gpu)", "true", "drop GPU identity"),
-    ("tool", "context.prepareLoopSliceParamUpdate(owner)", "true",
-     "drop state enlist"),
-    ("owner", "&layer_.meshRef() !is source_", "false", "drop Layer identity"),
-    ("context", "e.loopSliceParamUpdate.install();", "", "drop context install"),
-):
-    mutant = dict(loop_slice_param_sources)
-    if target == "tool":
-        text = mutant[target]
-        start = text.find("final PreparedLoopSliceParamImage buildPreparedParamUpdate")
-        end = text.find("override void onParamChanged", start)
-        product = text[start:end].replace(old, new, 1)
-        mutant[target] = text[:start] + product + text[end:]
-    else:
-        mutant[target] = mutant[target].replace(old, new, 1)
-    if mutant[target] == loop_slice_param_sources[target] or \
-            loop_slice_param_gate(mutant):
-        fail(f"Loop Slice parameter mutation did not RED: {label}")
+    ("tool", "context.prepareParamUpdate(owner)", "true", "drop state enlist"),
+), {"tool": ("final PreparedLoopSliceParamImage buildPreparedParamUpdate",
+             "override void onParamChanged")})
 
 edge_extend_param_sources = {
     "tool": (ROOT / "source/tools/edit/edge_extend.d").read_text(),
-    "owner": prepared_module_source("prepared_edge_extend_param_update"),
-    "context": record_context,
     "preview": (ROOT / "source/tools/edit/preview_rebuild.d").read_text(),
     "effect": edge_slice_deactivate_sources["effect"],
 }
 def edge_extend_param_gate(s):
-    tool, owner, context, preview, effect = (s[k] for k in
-        ("tool", "owner", "context", "preview", "effect"))
+    tool, preview, effect = (s[k] for k in ("tool", "preview", "effect"))
     start = tool.find("final PreparedEdgeExtendParamImage buildPreparedParamUpdate")
     end = tool.find("override void onParamChanged", start)
     product = tool[start:end]
@@ -3362,50 +3302,28 @@ def edge_extend_param_gate(s):
         "preview_.prepareImage(image.preview)",
         "runPrepared(image.preview, image.candidate, before", "runPreviewKernel(target)",
         "image.expectedLive.matches(live)", "preview_.matchesImage(image.preview)",
-        "uploadOwner.owns(gpu)",
-        "context.prepareStampedMeshImage(layer, owner.candidate",
-        "context.prepareUpload(uploadOwner, owner.candidate)",
-        "context.prepareEdgeExtendParamUpdate(owner)")) and all(x in owner for x in (
-        "target.classinfo !is EdgeExtendTool.classinfo",
-        "!target.ownsPreparedLayer(layer)", "&layer_.meshRef() !is source_",
-        "prepared_.owner != owner_", "prepared_.generation != generation_",
-        "moveOwner_.validate()", "rotateOwner_.validate()", "scaleOwner_.validate()",
-        "target_.installPreparedParamUpdate(image_)")) and all(x in preview for x in (
+        "xfrm.moveBank().installPreparedProductActivation(image.move)",
+        producer_mixin("EdgeExtendTool"))) and all(x in preview for x in (
         "void prepareImage(ref PreparedPreviewRebuildImage image)",
         "bool matchesImage(in PreparedPreviewRebuildImage image)",
         "void installImage(ref PreparedPreviewRebuildImage image)")) and \
-        context.count("case PreparedResourceKind.EdgeExtendParamUpdateState:") == 3 and \
-        "e.edgeExtendParamUpdate.install();" in context and \
         "PreparedEdgeExtendParamKind kind;" in effect
 if not edge_extend_param_gate(edge_extend_param_sources):
     fail("Edge Extend parameter prepared contract drift")
-for target, old, new, label in (
+mutate_param_region("Edge Extend", edge_extend_param_sources, edge_extend_param_gate, (
     ("tool", "detachedPreparedMesh(live)", "live", "drop detached target"),
     ("tool", "runPrepared(image.preview, image.candidate, before",
      "runPrepared(image.preview, live, before",
      "run kernel on live"),
     ("tool", "image.expectedLive.matches(live)", "true", "drop live witness"),
     ("tool", "preview_.matchesImage(image.preview)", "true", "drop preview witness"),
-    ("tool", "uploadOwner.owns(gpu)", "true", "drop GPU identity"),
-    ("tool", "context.prepareEdgeExtendParamUpdate(owner)", "true",
-     "drop state enlist"),
-    ("owner", "&layer_.meshRef() !is source_", "false", "drop Layer identity"),
-    ("context", "e.edgeExtendParamUpdate.install();", "", "drop context install"),
+    ("tool", "xfrm.moveBank().installPreparedProductActivation(image.move)", "",
+     "drop bank activation"),
+    ("tool", producer_mixin("EdgeExtendTool"), "", "drop producer mixin"),
     ("preview", "void installImage(ref PreparedPreviewRebuildImage image)",
      "void skipImage(ref PreparedPreviewRebuildImage image)", "drop preview install"),
-):
-    mutant = dict(edge_extend_param_sources)
-    if target == "tool":
-        text = mutant[target]
-        start = text.find("final PreparedEdgeExtendParamImage buildPreparedParamUpdate")
-        end = text.find("override void onParamChanged", start)
-        product = text[start:end].replace(old, new, 1)
-        mutant[target] = text[:start] + product + text[end:]
-    else:
-        mutant[target] = mutant[target].replace(old, new, 1)
-    if mutant[target] == edge_extend_param_sources[target] or \
-            edge_extend_param_gate(mutant):
-        fail(f"Edge Extend parameter mutation did not RED: {label}")
+), {"tool": ("final PreparedEdgeExtendParamImage buildPreparedParamUpdate",
+             "override void onParamChanged")})
 
 edge_extend_deactivate_sources = {
     "tool": (ROOT / "source/tools/edit/edge_extend.d").read_text(),

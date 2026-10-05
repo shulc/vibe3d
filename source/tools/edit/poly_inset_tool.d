@@ -1,7 +1,7 @@
 module tools.edit.poly_inset_tool;
 import display_state : DrawPlan;
 import prepared_record_context : PreparedToolParamDoorClient,
-    PreparedGpuParamDoorClient;
+    PreparedNamedGpuParamDoorClient;
 
 import bindbc.sdl;
 import operator : VectorStack;
@@ -31,7 +31,7 @@ import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_poly_inset_activation : PreparedPolyInsetActivationOwner;
 import prepared_param_update : PreparedParamUpdateOwner,
-    PreparedParamUpdateProducer;
+    PreparedParamUpdateProducer, DefaultParamEffectKind;
 import prepared_tool_effect : PreparedPolyInsetParamEffect,
     PreparedPolyInsetParamKind;
 import document : Layer;
@@ -56,6 +56,7 @@ struct PolyInsetParamProjection {
 }
 
 struct PreparedPolyInsetParamImage {
+    mixin DefaultParamEffectKind!PreparedPolyInsetParamKind;
     bool valid, applies, nextBuilt;
     PolyInsetParamProjection expected;
     MeshSnapshot expectedLive, expectedBefore;
@@ -118,7 +119,7 @@ class PolyInsetTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient,
         return policy;
     }
 
-    mixin PreparedGpuParamDoorClient;
+    mixin PreparedNamedGpuParamDoorClient;
     mixin PreparedSimpleToolDoorClient!Layer;
 private:
     Mesh* delegate() nothrow @nogc meshSrc_;
@@ -284,7 +285,7 @@ public:
     private PolyInsetParamProjection paramProjection() const nothrow @nogc {
         return PolyInsetParamProjection(interactiveParamEdit, active, built, inset_);
     }
-    final PreparedPolyInsetParamImage buildPreparedParamUpdate(ref Mesh live) {
+    final PreparedPolyInsetParamImage buildPreparedParamUpdate(string, ref Mesh live) {
         PreparedPolyInsetParamImage image;
         image.valid = true; image.expected = paramProjection();
         image.nextBuilt = built; image.expectedLive = MeshSnapshot.capture(live);

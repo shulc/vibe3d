@@ -232,10 +232,11 @@ unittest {
     // Pen S1: the pen reads its one stroke builder, `tools.create.pen_geometry`
     // (+1 each).
     // Wave-2 PRM1: eleven parameter-update owner modules became one (-10 each).
+    // Wave-2 PRM2: five more folded into it (-5 each).
     // Task 9429: the topology tools compose `tools.topology_step` (+1 each).
-    assert(transform.queue.length == 253 && positive.queue.length == 518,
-        format("6506 import closure census changed: transform=%d/253 "
-            ~ "registration=%d/518", transform.queue.length,
+    assert(transform.queue.length == 248 && positive.queue.length == 513,
+        format("6506 import closure census changed: transform=%d/248 "
+            ~ "registration=%d/513", transform.queue.length,
             positive.queue.length));
 }
 

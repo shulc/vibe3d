@@ -1,7 +1,7 @@
 module tools.edit.vertex_bevel_tool;
 import display_state : DrawPlan;
 import prepared_record_context : PreparedToolParamDoorClient,
-    PreparedGpuParamDoorClient;
+    PreparedNamedGpuParamDoorClient;
 
 import bindbc.sdl;
 import operator : VectorStack;
@@ -36,7 +36,7 @@ import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_vertex_bevel_activation : PreparedVertexBevelActivationOwner;
 import prepared_param_update : PreparedParamUpdateOwner,
-    PreparedParamUpdateProducer;
+    PreparedParamUpdateProducer, DefaultParamEffectKind;
 import prepared_tool_effect : PreparedVertexBevelParamEffect,
     PreparedVertexBevelParamKind;
 import document : Layer;
@@ -55,6 +55,7 @@ struct VertexBevelParamProjection {
 }
 
 struct PreparedVertexBevelParamImage {
+    mixin DefaultParamEffectKind!PreparedVertexBevelParamKind;
     bool valid, applies, nextBuilt;
     VertexBevelParamProjection expected;
     MeshSnapshot expectedLive, expectedBefore;
@@ -132,7 +133,7 @@ class VertexBevelTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClien
         return policy;
     }
 
-    mixin PreparedGpuParamDoorClient;
+    mixin PreparedNamedGpuParamDoorClient;
     mixin PreparedSimpleToolDoorClient!Layer;
 private:
     Mesh* delegate() nothrow @nogc meshSrc_;
@@ -272,7 +273,7 @@ public:
         return VertexBevelParamProjection(interactiveParamEdit, active, built,
             inset_);
     }
-    final PreparedVertexBevelParamImage buildPreparedParamUpdate(ref Mesh live) {
+    final PreparedVertexBevelParamImage buildPreparedParamUpdate(string, ref Mesh live) {
         PreparedVertexBevelParamImage image;
         image.valid = true; image.expected = paramProjection();
         image.nextBuilt = built; image.expectedLive = MeshSnapshot.capture(live);

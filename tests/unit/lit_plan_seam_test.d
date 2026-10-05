@@ -226,10 +226,11 @@ unittest { // raw-text census of the spellings that bypass private: names, getMe
     // Floors on the two domains. Measured 2026-10-02:
     //   find source -name '*.d' | wc -l -> 582 (581 without shader.d);
     //   grep -rl LitShader source --include=*.d | grep -v '^source/shader.d$' | wc -l -> 80.
-    // 2026-10-05 (wave-2 PRM1 folds eleven owner modules): 578 (577) and 72.
-    assert(scanned >= 577, format("census: the source scan covers %d files outside shader.d, floor 577 — "
+    // 2026-10-05 (wave-2 PRM1 folds eleven owner modules): 578 (577) and 72;
+    // after PRM2 folds five more: 574 (573) and 68.
+    assert(scanned >= 573, format("census: the source scan covers %d files outside shader.d, floor 573 — "
         ~ "the walk lost its domain", scanned));
-    assert(litFiles >= 72, format("census: %d files outside shader.d mention LitShader, floor 72 — "
+    assert(litFiles >= 68, format("census: %d files outside shader.d mention LitShader, floor 68 — "
         ~ "the reflection domain shrank; re-measure", litFiles));
     // Needle 1 (stationary, true before and after any slice): nobody outside
     // shader.d names a plan-uniform location, in code, string or mixin.

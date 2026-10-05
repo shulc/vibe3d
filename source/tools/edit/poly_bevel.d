@@ -1,7 +1,7 @@
 module tools.edit.poly_bevel;
 import display_state : DrawPlan;
 import prepared_record_context : PreparedToolParamDoorClient,
-    PreparedGpuParamDoorClient;
+    PreparedNamedGpuParamDoorClient;
 
 import bindbc.sdl;
 import operator : VectorStack;
@@ -35,7 +35,7 @@ import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_poly_bevel_activation : PreparedPolyBevelActivationOwner;
 import prepared_param_update : PreparedParamUpdateOwner,
-    PreparedParamUpdateProducer;
+    PreparedParamUpdateProducer, DefaultParamEffectKind;
 import prepared_tool_effect : PreparedPolyBevelParamEffect,
     PreparedPolyBevelParamKind;
 import document : Layer;
@@ -67,6 +67,7 @@ struct PolyBevelParamProjection {
 }
 
 struct PreparedPolyBevelParamImage {
+    mixin DefaultParamEffectKind!PreparedPolyBevelParamKind;
     bool valid, applies, nextBuilt;
     PolyBevelParamProjection expected;
     MeshSnapshot expectedLive, expectedBefore;
@@ -115,7 +116,7 @@ class PolyBevelTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient 
         return policy;
     }
 
-    mixin PreparedGpuParamDoorClient;
+    mixin PreparedNamedGpuParamDoorClient;
     mixin PreparedSimpleToolDoorClient!Layer;
 private:
     Mesh* delegate() nothrow @nogc meshSrc_;
@@ -334,7 +335,7 @@ public:
         return PolyBevelParamProjection(interactiveParamEdit, active, built,
             group_, square_, opApplied_, inset_, shift_, segments_, opIndex_);
     }
-    final PreparedPolyBevelParamImage buildPreparedParamUpdate(ref Mesh live) {
+    final PreparedPolyBevelParamImage buildPreparedParamUpdate(string, ref Mesh live) {
         PreparedPolyBevelParamImage image;
         image.valid = true; image.expected = paramProjection();
         image.nextBuilt = built; image.expectedLive = MeshSnapshot.capture(live);

@@ -1,7 +1,7 @@
 module tools.edit.vert_merge_tool;
 import display_state : DrawPlan;
 import prepared_record_context : PreparedToolParamDoorClient,
-    PreparedGpuParamDoorClient;
+    PreparedNamedGpuParamDoorClient;
 
 import bindbc.sdl;
 import operator : VectorStack;
@@ -29,7 +29,7 @@ import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_vertex_merge_activation : PreparedVertexMergeActivationOwner;
 import prepared_param_update : PreparedParamUpdateOwner,
-    PreparedParamUpdateProducer;
+    PreparedParamUpdateProducer, DefaultParamEffectKind;
 import prepared_tool_effect : PreparedVertexMergeParamEffect,
     PreparedVertexMergeParamKind;
 import document : Layer;
@@ -48,6 +48,7 @@ struct VertexMergeParamProjection {
 }
 
 struct PreparedVertexMergeParamImage {
+    mixin DefaultParamEffectKind!PreparedVertexMergeParamKind;
     bool valid, applies, nextBuilt;
     VertexMergeParamProjection expected;
     MeshSnapshot expectedLive, expectedBefore;
@@ -121,7 +122,7 @@ class VertexMergeTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClien
         return policy;
     }
 
-    mixin PreparedGpuParamDoorClient;
+    mixin PreparedNamedGpuParamDoorClient;
     mixin PreparedSimpleToolDoorClient!Layer;
 private:
     Mesh* delegate() nothrow @nogc meshSrc_;
@@ -273,7 +274,7 @@ public:
         return VertexMergeParamProjection(interactiveParamEdit, active, built,
             dist_);
     }
-    final PreparedVertexMergeParamImage buildPreparedParamUpdate(ref Mesh live) {
+    final PreparedVertexMergeParamImage buildPreparedParamUpdate(string, ref Mesh live) {
         PreparedVertexMergeParamImage image;
         image.valid = true; image.expected = paramProjection();
         image.nextBuilt = built; image.expectedLive = MeshSnapshot.capture(live);

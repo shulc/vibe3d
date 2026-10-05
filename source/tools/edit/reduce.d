@@ -1,6 +1,6 @@
 module tools.edit.reduce;
 import prepared_record_context : PreparedToolParamDoorClient,
-    PreparedGpuParamDoorClient;
+    PreparedNamedGpuParamDoorClient;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
     PreparedPrivateStateToolDoorClient;
 import prepared_private_state : PreparedPrivateStateOwner;
@@ -29,7 +29,7 @@ import prepared_record_context : PreparedRecordContext;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import command_history : PreparedHistoryKind;
 import prepared_param_update : PreparedParamUpdateOwner,
-    PreparedParamUpdateProducer;
+    PreparedParamUpdateProducer, DefaultParamEffectKind;
 import prepared_tool_effect : PreparedReductionParamEffect,
     PreparedReductionParamKind;
 import document : Layer;
@@ -48,6 +48,7 @@ struct ReductionParamProjection {
 }
 
 struct PreparedReductionParamImage {
+    mixin DefaultParamEffectKind!PreparedReductionParamKind;
     bool valid, applies, nextBuilt;
     ReductionParamProjection expected;
     MeshSnapshot expectedLive, expectedBefore;
@@ -88,7 +89,7 @@ class ReductionTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient 
         return policy;
     }
 
-    mixin PreparedGpuParamDoorClient;
+    mixin PreparedNamedGpuParamDoorClient;
     mixin PreparedPrivateStateToolDoorClient!(Layer,
         PreparedPrivateStateOwner.reductionSession);
 private:
@@ -205,7 +206,7 @@ public:
         return ReductionParamProjection(interactiveParamEdit, active, built,
             pb_, ratio_);
     }
-    final PreparedReductionParamImage buildPreparedParamUpdate(ref Mesh live) {
+    final PreparedReductionParamImage buildPreparedParamUpdate(string, ref Mesh live) {
         PreparedReductionParamImage image;
         image.valid = true; image.expected = paramProjection();
         image.nextBuilt = built; image.expectedLive = MeshSnapshot.capture(live);

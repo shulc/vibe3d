@@ -62,7 +62,7 @@ unittest {
     {
         auto px = new PolyExtrudeTool(() => &layer.meshRef(), &gpu, &mode,
             LitShader.init);
-        auto img = px.buildPreparedParamUpdate(layer.meshRef());
+        auto img = px.buildPreparedParamUpdate("", layer.meshRef());
         assert(img.valid && !img.expectedBefore.filled,
             "4491 control: poly.extrude must be on the COLD path (before "
             ~ "unfilled) or it is not the same cell as the bevels below");
@@ -75,7 +75,7 @@ unittest {
     {
         auto pb = new PolyBevelTool(() => &layer.meshRef(), &gpu, &mode,
             LitShader.init);
-        auto img = pb.buildPreparedParamUpdate(layer.meshRef());
+        auto img = pb.buildPreparedParamUpdate("", layer.meshRef());
         assert(img.valid && !img.expectedBefore.filled,
             "4491: poly.bevel must be on the COLD path here");
         assert(img.preview.valid,
@@ -91,7 +91,7 @@ unittest {
             LitShader.init);
         auto ctx = new PreparedRecordContext(null, new RecordObserverHub());
         ctx.setResourceIdentity(7, 11);
-        auto eff = pb.prepareParamChanged(ctx, layer, null);
+        auto eff = pb.prepareParamChanged("", ctx, layer, null);
         assert(eff.accepted && eff.kind == PreparedPolyBevelParamKind.Noop,
             "4491 poly.bevel: a cold sticky replay is a noop param update");
         assert(ctx.validate(),
@@ -104,7 +104,7 @@ unittest {
     {
         auto eb = new EdgeBevelTool(() => &layer.meshRef(), &gpu, &mode,
             LitShader.init);
-        auto img = eb.buildPreparedParamUpdate(layer.meshRef());
+        auto img = eb.buildPreparedParamUpdate("", layer.meshRef());
         assert(img.valid && !img.expectedBefore.filled,
             "4491: edge.bevel must be on the COLD path here");
         assert(img.preview.valid,
@@ -118,7 +118,7 @@ unittest {
             LitShader.init);
         auto ctx = new PreparedRecordContext(null, new RecordObserverHub());
         ctx.setResourceIdentity(7, 11);
-        auto eff = eb.prepareParamChanged(ctx, layer, null);
+        auto eff = eb.prepareParamChanged("", ctx, layer, null);
         assert(eff.accepted && eff.kind == PreparedEdgeBevelParamKind.Noop,
             "4491 edge.bevel: a cold sticky replay is a noop param update");
         assert(ctx.validate(),

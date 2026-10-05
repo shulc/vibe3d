@@ -1,14 +1,14 @@
 module tools.alignment.array_tool;
 import display_state : DrawPlan;
 import prepared_record_context : PreparedToolParamDoorClient,
-    PreparedGpuParamDoorClient;
+    PreparedNamedGpuParamDoorClient;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
     PreparedPrivateStateToolDoorClient;
 import prepared_private_state : PreparedPrivateStateOwner;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_tool_effect : PreparedArrayParamEffect, PreparedArrayParamKind;
 import prepared_param_update : PreparedParamUpdateOwner,
-    PreparedParamUpdateProducer;
+    PreparedParamUpdateProducer, DefaultParamEffectKind;
 import mesh_gpu : GpuUploadOwner;
 import document : Layer;
 
@@ -127,6 +127,7 @@ struct ArrayParamProjection {
 }
 
 struct PreparedArrayParamImage {
+    mixin DefaultParamEffectKind!PreparedArrayParamKind;
     bool valid, applies, expectedActive, expectedBuilt, nextBuilt;
     ArrayParamProjection expectedParams;
     MeshSnapshot expectedLive, expectedBefore;
@@ -160,7 +161,7 @@ final class ArrayTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClien
         return policy;
     }
 
-    mixin PreparedGpuParamDoorClient;
+    mixin PreparedNamedGpuParamDoorClient;
     mixin PreparedPrivateStateToolDoorClient!(Layer,
         PreparedPrivateStateOwner.arraySession);
 private:
@@ -360,7 +361,7 @@ public:
     override void onParamChanged(string pname) {
         if (interactiveParamEdit) rebuildPreview();
     }
-    final PreparedArrayParamImage buildPreparedParamUpdate(ref Mesh live) {
+    final PreparedArrayParamImage buildPreparedParamUpdate(string, ref Mesh live) {
         PreparedArrayParamImage image;
         image.valid = true; image.expectedActive = active;
         image.expectedBuilt = built; image.nextBuilt = built;

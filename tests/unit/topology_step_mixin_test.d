@@ -83,9 +83,9 @@ unittest { // Smooth Shift's own hook: a rebased step belongs to an engaged oper
     EditMode mode = EditMode.Polygons;
     auto tool = new SmoothShiftTool(() => &mesh, &gpu, &mode, LitShader.init);
     tool.seedPreparedParamForTest(mesh, false);
-    assert(!tool.buildPreparedParamUpdate(mesh).expected.engaged, "9429 rig VOID: seeded engaged");
+    assert(!tool.buildPreparedParamUpdate("", mesh).expected.engaged, "9429 rig VOID: seeded engaged");
     tool.rebaseTopologyStep(MeshSnapshot.capture(mesh));
-    assert(tool.buildPreparedParamUpdate(mesh).expected.engaged,
+    assert(tool.buildPreparedParamUpdate("", mesh).expected.engaged,
            "9429 smooth shift hook: a rebased step is not engaged");
     assert(tool.topologyStepLabel() == "Smooth Shift", "9429 client body: Smooth Shift's label");
 }
@@ -111,9 +111,9 @@ unittest { // the session commit pair: re-bases an active tool in place, refuses
     assert(!tool.commitUncommittedEdit() && !tool.commitOperation(),
            "9429 commit pair: an inactive tool committed, or the in-place commit is not refused");
     tool.seedPreparedParamForTest(mesh, true);
-    const s = tool.buildPreparedParamUpdate(mesh).expected;
+    const s = tool.buildPreparedParamUpdate("", mesh).expected;
     assert(s.active && s.built && s.engaged, "9429 rig VOID: the seed is not a built, engaged tool");
     assert(tool.commitOperation(), "9429 commit pair: an active tool's close was refused");
-    const e = tool.buildPreparedParamUpdate(mesh).expected;
+    const e = tool.buildPreparedParamUpdate("", mesh).expected;
     assert(!e.built && !e.engaged, "9429 commit pair: the close did not re-base the tool in place");
 }

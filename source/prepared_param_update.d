@@ -11,7 +11,8 @@ private shared ulong nextParamOwner;
 /// One closed owner for a tool's interactive parameter-preview transition.
 /// The tool is data: `ownsPreparedLayer`, `buildPreparedParamUpdate`,
 /// `preparedParamUpdateMatches`, `installPreparedParamUpdate` and an image with
-/// `valid` / `applies` / `candidate` / `deliveryFlags` / `deliveryDomains` / `clear`.
+/// `valid` / `applies` / `effectKind` / `candidate` / `deliveryFlags` /
+/// `deliveryDomains` / `clear`.
 final class PreparedParamUpdateOwner(ToolT, ImageT, KindT) {
     alias Kind = KindT;
 private:
@@ -23,17 +24,16 @@ private:
     ValidatedParamToken validatedToken_;
 public:
     @disable this();
-    static PreparedParamUpdateOwner prepare(ToolT target, Layer layer) {
+    static PreparedParamUpdateOwner prepare(ToolT target, Layer layer, string pname) {
         if (target is null || target.classinfo !is ToolT.classinfo ||
             layer is null || !target.ownsPreparedLayer(layer)) return null;
         auto owner = new PreparedParamUpdateOwner(target, layer);
-        owner.image_ = target.buildPreparedParamUpdate(layer.meshRef());
+        owner.image_ = target.buildPreparedParamUpdate(pname, layer.meshRef());
         return owner.image_.valid ? owner : null;
     }
     @property bool applies() const nothrow @nogc { return image_.applies; }
-    @property KindT effectKind() const nothrow @nogc {
-        return !image_.valid ? KindT.None : image_.applies ? KindT.Preview : KindT.Noop;
-    }
+    @property KindT effectKind() const nothrow @nogc { return image_.effectKind(); }
+    ref const(ImageT) image() const return scope nothrow @nogc { return image_; }
     ref const(Mesh) candidate() const return scope nothrow @nogc { return image_.candidate; }
     @property uint deliveryFlags() const nothrow @nogc { return image_.deliveryFlags; }
     @property uint deliveryDomains() const nothrow @nogc { return image_.deliveryDomains; }
@@ -71,17 +71,25 @@ private:
     }
 }
 
+/// An image's effect kind when the write has no tool-specific effect: no image
+/// is `None`, a mesh preview is `Preview`, anything else `Noop`.
+mixin template DefaultParamEffectKind(KindT) {
+    KindT effectKind() const nothrow @nogc {
+        return !valid ? KindT.None : applies ? KindT.Preview : KindT.Noop;
+    }
+}
+
 /// The tool's `prepareParamChanged`: stamped layer image, the owner's slot,
 /// GPU upload, then NoHistory, in that order; any refusal discards the whole
 /// transaction. Expanded in the tool's scope (it reads `gpu` and
 /// `preparedToolStateOwner` there).
 mixin template PreparedParamUpdateProducer(OwnerT, EffectT) {
-    final EffectT prepareParamChanged(PreparedRecordContext context, Layer layer,
-            GpuUploadOwner uploadOwner) {
+    final EffectT prepareParamChanged(string pname, PreparedRecordContext context,
+            Layer layer, GpuUploadOwner uploadOwner) {
         alias KindT = OwnerT.Kind;
         if (context is null) return EffectT(preparedToolStateOwner, KindT.None, false);
         scope(failure) context.discard();
-        auto owner = OwnerT.prepare(this, layer);
+        auto owner = OwnerT.prepare(this, layer, pname);
         auto kind = owner is null ? KindT.None : owner.effectKind;
         bool ok = owner !is null;
         if (ok && owner.applies)

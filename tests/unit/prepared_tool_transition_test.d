@@ -266,17 +266,13 @@ private enum string[] kTokenModules = [
     "prepared_command_wrapper_activation",
     "prepared_edge_bevel_activation",
     "prepared_edge_extend_deactivate",
-    "prepared_edge_extend_param_update",
     "prepared_edge_extend_tool_activation",
     "prepared_edge_extrude_activation",
     "prepared_edge_slice_activation",
     "prepared_edge_slice_deactivate",
-    "prepared_edge_slice_param_update",
     "prepared_inherited_noop",
     "prepared_loop_slice_activation",
     "prepared_loop_slice_deactivate",
-    "prepared_loop_slice_param_update",
-    "prepared_magnet_param_update",
     "prepared_mirror_activation",
     "prepared_move_update",
     "prepared_param_update",
@@ -289,7 +285,6 @@ private enum string[] kTokenModules = [
     "prepared_scale_update",
     "prepared_slice_activation",
     "prepared_slice_deactivate",
-    "prepared_slice_param_update",
     "prepared_smooth_shift_activation",
     "prepared_stroke_extrude_activation",
     "prepared_tack_activation",
@@ -336,10 +331,10 @@ private enum string[] kCensusTokens = () {
 // empty census, and over a census of one. Both counts are pinned, so a module
 // dropped from the list above, or a token renamed out of the pattern, moves a
 // number rather than quietly shrinking the set the asserts run over.
-static assert(kTokenModules.length == 51,
+static assert(kTokenModules.length == 46,
     "prepared-token module list changed -- update the count and the Python "
     ~ "token_census_gate together");
-static assert(kCensusTokens.length == 114,
+static assert(kCensusTokens.length == 104,
     "prepared-token population changed -- a token was added, removed or "
     ~ "renamed out of the Prepared*Token / Validated*Token pattern");
 
@@ -431,24 +426,23 @@ static assert(!__traits(isCopyable, PreparedRecordObserverImage),
 // types the 66 deleted files named, and each must be a member of the census
 // above -- so the replacement is provably a superset of what was removed, not
 // merely something in the same area. `PreparedArm`, the 76th, is asserted by
-// name just above.
+// name just above. Four parameter-update tokens (Slice, Edge Slice, Loop
+// Slice, Edge Extend) left the roster when their owners folded into
+// `prepared_param_update.PreparedParamToken` (task 9427).
 private enum string[] kRetiredCopyFixtureTokens = [
     "PreparedBridgeActivationToken",
     "PreparedBridgeDeactivateToken",
     "PreparedCommandWrapperActivationToken",
     "PreparedEdgeBevelActivationToken",
     "PreparedEdgeExtendDeactivateToken",
-    "PreparedEdgeExtendParamToken",
     "PreparedEdgeExtendToolActivationPostToken",
     "PreparedEdgeExtendToolActivationPreToken",
     "PreparedEdgeExtrudeActivationToken",
     "PreparedEdgeSliceActivationToken",
     "PreparedEdgeSliceDeactivateToken",
-    "PreparedEdgeSliceParamToken",
     "PreparedInheritedNoopToken",
     "PreparedLoopSliceActivationToken",
     "PreparedLoopSliceDeactivateToken",
-    "PreparedLoopSliceParamToken",
     "PreparedMirrorActivationToken",
     "PreparedMirrorDeactivateToken",
     "PreparedMoveUpdateToken",
@@ -459,7 +453,6 @@ private enum string[] kRetiredCopyFixtureTokens = [
     "PreparedRotateUpdateToken",
     "PreparedScaleUpdateToken",
     "PreparedSliceActivationToken",
-    "PreparedSliceParamToken",
     "PreparedSmoothShiftActivationToken",
     "PreparedStrokeExtrudeActivationToken",
     "PreparedTackActivationToken",
@@ -519,7 +512,7 @@ private bool censusCovers(string typeName) {
     return false;
 }
 
-static assert(kRetiredCopyFixtureTokens.length == 75,
+static assert(kRetiredCopyFixtureTokens.length == 71,
     "the retired-fixture roster changed size");
 static foreach (t; kRetiredCopyFixtureTokens)
     static assert(censusCovers(t),

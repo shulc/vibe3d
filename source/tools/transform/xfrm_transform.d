@@ -2909,7 +2909,7 @@ public:
     // mesh.vertices or open the wrapper's edit session (those moved to the
     // wrapper). So the host forwards the gesture events here, drains the scalar,
     // and applies geometry through ITS OWN kernel re-run.
-    public MoveTool moveBank() { return moveSub; }
+    public MoveTool moveBank() nothrow @nogc { return moveSub; }
     // Rotate / Scale bank handles (Edge Extend Phase 4b, §4.1 option (b)). Same
     // contract as moveBank(): thin accessors so the host can forward the gesture
     // events to whichever bank the shared arbiter selected and drain the pending
@@ -2917,8 +2917,8 @@ public:
     // routing through the wrapper's drain+applyTRS. RotateTool / ScaleTool are
     // pure gesture-scalar producers (no geometry mutation, no wrapper edit
     // session) exactly like MoveTool. No apply-path change.
-    public RotateTool rotateBank() { return rotateSub; }
-    public ScaleTool  scaleBank()  { return scaleSub; }
+    public RotateTool rotateBank() nothrow @nogc { return rotateSub; }
+    public ScaleTool  scaleBank()  nothrow @nogc { return scaleSub; }
     final ubyte preparedActivationFlags() const nothrow @nogc {
         return cast(ubyte)((flagT ? 1 : 0) | (flagR ? 2 : 0) |
                            (flagS ? 4 : 0));

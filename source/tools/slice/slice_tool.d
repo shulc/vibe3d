@@ -37,7 +37,7 @@ import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKin
 import prepared_slice_activation : PreparedSliceActivationOwner;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_slice_deactivate : PreparedSliceDeactivateOwner;
-import prepared_slice_param_update : PreparedSliceParamUpdateOwner;
+import prepared_param_update : PreparedParamUpdateOwner, PreparedParamUpdateProducer;
 import prepared_tool_effect : PreparedSliceParamEffect, PreparedSliceParamKind;
 import mesh_gpu : GpuUploadOwner;
 import command_history : PreparedHistoryKind;
@@ -89,6 +89,12 @@ struct PreparedSliceParamImage {
         pname = null; expectedLive = MeshSnapshot.init;
         expectedBefore = MeshSnapshot.init; expectedRestrictFaces = null;
         candidate = Mesh.init; valid = recognized = applies = false;
+    }
+    PreparedSliceParamKind effectKind() const nothrow @nogc {
+        if (!valid || !recognized) return PreparedSliceParamKind.Noop;
+        if (applies) return PreparedSliceParamKind.Preview;
+        return pname == "axis" ? PreparedSliceParamKind.AxisLatch
+                               : PreparedSliceParamKind.Noop;
     }
 }
 
@@ -1534,27 +1540,8 @@ public:
         image.clear();
     }
 
-    final PreparedSliceParamEffect prepareParamChanged(string pname,
-            PreparedRecordContext context, Layer layer,
-            GpuUploadOwner uploadOwner) {
-        if (context is null) return PreparedSliceParamEffect(
-            preparedToolStateOwner, PreparedSliceParamKind.None, false);
-        scope(failure) context.discard();
-        auto owner = PreparedSliceParamUpdateOwner.prepare(this, layer, pname);
-        auto kind = owner is null ? PreparedSliceParamKind.None : owner.effectKind;
-        bool ok = owner !is null;
-        if (ok && owner.applies)
-            ok = owner.deliveryFlags != 0 && uploadOwner !is null &&
-                uploadOwner.owns(gpu) &&
-                context.prepareStampedMeshImage(layer, owner.candidate,
-                    owner.deliveryFlags, owner.deliveryDomains);
-        if (ok) ok = context.prepareSliceParamUpdate(owner);
-        if (ok && owner.applies)
-            ok = context.prepareUpload(uploadOwner, owner.candidate);
-        if (ok) ok = context.markNoHistoryInstall();
-        if (!ok) context.discard();
-        return PreparedSliceParamEffect(preparedToolStateOwner, kind, ok);
-    }
+    mixin PreparedParamUpdateProducer!(PreparedParamUpdateOwner!(SliceTool,
+        PreparedSliceParamImage, PreparedSliceParamKind), PreparedSliceParamEffect);
 
     // Tool Properties param edit (task 0283). A panel edit of any CUT-AFFECTING
     // param must re-apply to the CURRENT live slice immediately — not wait for

@@ -1,7 +1,7 @@
 module tools.edit.edge_bevel;
 import display_state : DrawPlan;
 import prepared_record_context : PreparedToolParamDoorClient,
-    PreparedGpuParamDoorClient;
+    PreparedNamedGpuParamDoorClient;
 
 import bindbc.sdl;
 import operator : VectorStack;
@@ -36,7 +36,7 @@ import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_edge_bevel_activation : PreparedEdgeBevelActivationOwner;
 import prepared_param_update : PreparedParamUpdateOwner,
-    PreparedParamUpdateProducer;
+    PreparedParamUpdateProducer, DefaultParamEffectKind;
 import prepared_tool_effect : PreparedEdgeBevelParamEffect,
     PreparedEdgeBevelParamKind;
 import document : Layer;
@@ -67,6 +67,7 @@ struct EdgeBevelParamProjection {
 }
 
 struct PreparedEdgeBevelParamImage {
+    mixin DefaultParamEffectKind!PreparedEdgeBevelParamKind;
     bool valid, applies, nextBuilt;
     EdgeBevelParamProjection expected;
     MeshSnapshot expectedLive, expectedBefore;
@@ -112,7 +113,7 @@ class EdgeBevelTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient,
         return policy;
     }
 
-    mixin PreparedGpuParamDoorClient;
+    mixin PreparedNamedGpuParamDoorClient;
     mixin PreparedSimpleToolDoorClient!Layer;
 private:
     Mesh* delegate() nothrow @nogc meshSrc_;
@@ -291,7 +292,7 @@ public:
         return EdgeBevelParamProjection(interactiveParamEdit, active, built,
             widthMode_, width_, roundLevel_);
     }
-    final PreparedEdgeBevelParamImage buildPreparedParamUpdate(ref Mesh live) {
+    final PreparedEdgeBevelParamImage buildPreparedParamUpdate(string, ref Mesh live) {
         PreparedEdgeBevelParamImage image;
         image.valid = true; image.expected = paramProjection();
         image.nextBuilt = built; image.expectedLive = MeshSnapshot.capture(live);
