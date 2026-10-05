@@ -33,7 +33,8 @@ import std.json;
 import std.math   : sqrt, abs, lround, tan, PI;
 import std.format : format;
 import std.file   : readText;
-import drag_helpers : viewportFromCameraMatrices, pixelRay;
+import drag_helpers : viewportFromCameraMatrices, pixelRay, buildDragDownLog,
+                     buildDragMotionLog, buildDragUpLog;
 
 void main() {}
 
@@ -514,10 +515,19 @@ void sameQuadMove(double[3][] pts, double[3] release, int dx, int dy,
     immutable int x0 = cast(int)lround(sx), y0 = cast(int)lround(sy);
     assert(lround(ex) == x0 + dx && lround(ey) == y0 + dy,
         format("rig: the captured %s px drag must end at %s", [dx, dy], release));
-    auto pr = postJson("/api/play-events", buildDragLog(vp.x, vp.y, vp.width, vp.height,
-        x0, y0, x0 + dx, y0 + dy, 16, 0, 1));
-    assert("error" !in pr, "/api/play-events failed: " ~ pr.toString);
-    waitPlayerIdle();
+    foreach (i, log; [buildDragDownLog(vp.x, vp.y, vp.width, vp.height, x0, y0),
+                   buildDragMotionLog(vp.x, vp.y, vp.width, vp.height, x0, y0, x0 + dx, y0 + dy, 16),
+                   buildDragUpLog(vp.x, vp.y, vp.width, vp.height, x0 + dx, y0 + dy)]) {
+        // Held, before the release: under symmetry the partner already follows, mirrored.
+        if (sym && i == 2) {
+            const v = readVerticesLayer(1), p = v[1], q = v[10];
+            assert(vertexCountLayer(1) == 16 && approxVec(Vec3(-p[0], p[1], p[2]), q, 1e-4),
+                format("held: partner v10 %s must mirror the grab %s", q, p));
+        }
+        auto pr = postJson("/api/play-events", log);
+        assert("error" !in pr, "/api/play-events failed: " ~ pr.toString);
+        waitPlayerIdle();
+    }
     cmd("tool.set mesh.topoPen off");
     cmd("tool.pipe.attr symmetry enabled false");
 }
