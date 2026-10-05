@@ -416,17 +416,17 @@ Vec3 niceOrigin(Vec3 focus, int k, float quantumStep, float viewSnapStep)
 
 /// The view's work-plane ANCHOR: the point the plane of a placement click
 /// passes through, perpendicular to axis `axisLocal`, in the frame `localVp`
-/// is expressed in (plane-local under a pin). Perspective: `niceOrigin` of the
-/// focus (ten grid steps on the axis); ortho: the focus; both then snapped to
-/// the view quantum. One law for every click reader (captures K-W / K-W2,
+/// is expressed in (plane-local under a pin). Ortho: the focus snapped to the
+/// view quantum (K-W2 finding 2: the ortho DEPTH lands on that lattice).
+/// Perspective: `niceOrigin` — the same snap, then ten grid steps on the
+/// axis. One law for every click reader (captures K-W / K-W2,
 /// tests/fixtures/create_click_plane.json).
 Vec3 viewWorkPlaneAnchor(const ref Viewport localVp, int axisLocal) {
-    immutable float px = viewWorldPerPixel(localVp);
     immutable float q = viewVectorQuantum(localVp);
-    Vec3 f = localVp.focus;
-    if (!isOrtho(localVp))
-        f = niceOrigin(f, axisLocal, relocateQuantum(px, g_viewGrid), q);
-    return vectorSnap(f, q);
+    return isOrtho(localVp)
+        ? vectorSnap(localVp.focus, q)
+        : niceOrigin(localVp.focus, axisLocal,
+                     relocateQuantum(viewWorldPerPixel(localVp), g_viewGrid), q);
 }
 
 /// The grid step for a view, end to end. The renderer's one call.

@@ -135,23 +135,11 @@ private double offRay(Vec3 world, int[2] px) {
 
 private enum Vec3 kPlacing = Vec3(0.25f, 0.25f, 0.5f);
 
-/// The view quantum q and ten grid steps. A placement is snapped to q on every
-/// channel and its plane runs through the focus rounded to ten grid steps
-/// after a q pre-snap (captured K-W W1d / W1g–W1i, tests/fixtures/
-/// create_click_plane.json), so a centre lies within q of its press ray.
-private double[2] viewSteps() {
-    auto g = getJson("/api/viewport/display")["cells"].array[0]["grid"];
-    return [number(g["subStep"]), 10 * number(g["size"])];
-}
-/// In float, as the app computes it: this rig's local focus (-0.5) is a
-/// rounding TIE, which goes half away from zero.
-private double prRound(float f) {
-    import std.math : round;
-    const st = viewSteps();
-    const float q = cast(float)st[0], step = cast(float)st[1];
-    const float snapped = round(f / q) * q;
-    return round(snapped / step) * step;
-}
+// A placement is snapped to q on every channel and its plane runs through the
+// focus rounded to ten grid steps after a q pre-snap (captured K-W W1d /
+// W1g–W1i, tests/fixtures/create_click_plane.json), so a centre lies within q
+// of its press ray. This rig's local focus (-0.5) is a rounding TIE.
+import create_law_helpers : anchorRound, viewAnchorSteps;
 
 unittest {
     // ---- C0: identity-plane controls (green before and after the fix) ----
@@ -162,7 +150,7 @@ unittest {
     drag(p, p2);
     Vec3 cyl0 = commitCentre("prim.cylinder", 8, "C0 cylinder");
     double d0 = offRay(cyl0, p);
-    immutable double q = viewSteps()[0];
+    immutable double q = viewAnchorSteps()[0];
     assert(q > 0 && d0 <= q,
         format("identity-plane control: cylinder off its press ray (d_perp %.5f, centre %s)",
                d0, s(cyl0)));
@@ -215,10 +203,10 @@ unittest {
     Vec3 backL = toLocalD(pl, back);
     int al = argmaxAbs(backL);
     Vec3 focusL = toLocalD(pl, fw - pl.o);
-    assert(abs(comp(cen, al) - prRound(comp(focusL, al))) <= 1e-4,
+    assert(abs(comp(cen, al) - anchorRound(comp(focusL, al))) <= 1e-4,
         format("placement plane is not the local principal plane through the rounded "
              ~ "local focus %.5f: channel %d = %.5f, local focus %s, q / ten grid steps %s",
-               prRound(comp(focusL, al)), al, comp(cen, al), s(focusL), viewSteps()));
+               anchorRound(comp(focusL, al)), al, comp(cen, al), s(focusL), viewAnchorSteps()));
     // The construction axes follow the same local plane: the cylinder stands
     // on it (its axis is the plane's local normal index), as it does on the
     // identity plane with the world axis.

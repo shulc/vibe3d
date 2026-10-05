@@ -189,7 +189,8 @@ unittest {
 // plane is neither.
 // -------------------------------------------------------------------------
 void assertPinnedPerspLaw(string mode) {
-    import std.math : round, cos, sin, PI;
+    import std.math : cos, sin, PI;
+    import create_law_helpers : anchorRound;
     setupPinned("", "workplane.edit rotX:45 cenZ:2", mode);
     clickOffGizmo(fetchCamera());
     auto a = getAcenAttrs();
@@ -211,9 +212,7 @@ void assertPinnedPerspLaw(string mode) {
                              -sn * vp.view[6] + c * vp.view[10]];
     int k = 0;
     foreach (i; 1 .. 3) if (abs(backL[i]) > abs(backL[k])) k = i;
-    auto g = getJson("/api/viewport/display")["cells"].array[0]["grid"];
-    immutable double q = n(g["subStep"]), step = 10 * n(g["size"]);
-    immutable double want = round(round(focusL[k] / q) * q / step) * step;
+    immutable double want = anchorRound(focusL[k]);
     assert(k == 1 ? abs(want) > 0.1 : true,
         format("rig: the law's plane (local %d = %.4f) must differ from the pinned plane", k, want));
     assert(abs(landL[k] - want) <= 1e-3,

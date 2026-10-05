@@ -28,8 +28,9 @@ module tools.transform.relocate_plane_test;
 version (unittest) {
 
 import math : Vec3, Viewport, lookAt, perspectiveMatrix, orthographicMatrix,
-              normalize;
+              normalize, lockedViewAxis;
 import tools.transform.relocate_plane;
+import viewgrid : dnint;
 import std.math : abs, PI, tan;
 import std.format : format;
 
@@ -246,13 +247,12 @@ unittest {
 
     // ...and the other two components never reach the answer at all: the ray
     // arm reads only component k.
-    Viewport vp = perspVp(Vec3(2, 3, 4), Vec3(0.4f, 1.7f, 0.2f));
     Vec3 c1, c2;
     immutable Vec3 qA = Vec3(11.0f, 2.0f, -7.0f);
     immutable Vec3 qB = Vec3(-99.0f, 2.0f, 42.0f);   // same k=1 component
-    assert(posToPrincipalPlane(vp, Vec3(0, 5, 0), normalize(Vec3(0.2f, -1, 0.1f)),
+    assert(posToPrincipalPlane(Vec3(0, 5, 0), normalize(Vec3(0.2f, -1, 0.1f)),
                                1, qA, false, 0.0f, c1));
-    assert(posToPrincipalPlane(vp, Vec3(0, 5, 0), normalize(Vec3(0.2f, -1, 0.1f)),
+    assert(posToPrincipalPlane(Vec3(0, 5, 0), normalize(Vec3(0.2f, -1, 0.1f)),
                                1, qB, false, 0.0f, c2));
     assert(nearV(c1, c2, 1e-9f),
            "the ray arm must read ONLY Q[k] — if this ever fails, the "
@@ -325,7 +325,7 @@ unittest {
 }
 
 // -------------------------------------------------------------------------
-// 3. The locked-axis short-circuit.
+// 3. The axis-view recogniser (`math.lockedViewAxis`).
 // -------------------------------------------------------------------------
 
 unittest { // the six axis presets are recognised, perspective is not
@@ -340,49 +340,6 @@ unittest { // the six axis presets are recognised, perspective is not
     }
     auto pv = perspVp(Vec3(2, 3, 4), Vec3(0, 0, 0));
     assert(lockedViewAxis(pv) == -1, "a perspective view has no locked axis");
-}
-
-// In an axis-locked view the landing keeps the click's other two coordinates
-// exactly (the relocate never reaches this arm: every ortho view takes
-// `orthoRelocateThroughPrior` or the create click law).
-unittest {
-    auto vp = orthoAxisVp(1, 1.0f, Vec3(0.4f, 1.7f, 0.2f));
-    PlanePoint pp = PlanePoint(vp.focus, 1);
-    // And the landing: one coordinate replaced, no ray.
-    Vec3 click = Vec3(-1.25f, 99.0f, 0.75f);   // y is the discarded depth
-    Vec3 dir   = Vec3(0, -1, 0);
-    Vec3 c;
-    assert(posToPrincipalPlane(vp, click, dir, 1, pp.q, false, 0.0f, c),
-           "the locked arm cannot fail — a refusal here means the ray arm ran");
-    assert(nearV(c, Vec3(-1.25f, 1.7f, 0.75f)),
-           format("locked arm must replace only the locked coordinate, "
-                  ~ "got (%.4f, %.4f, %.4f)", c.x, c.y, c.z));
-}
-
-// The locked arm ignores the principal axis entirely: the answer is the same
-// whichever k it is handed. That is the property that distinguishes it from a
-// ray that happens to be axis-parallel.
-unittest {
-    auto vp = orthoAxisVp(2, 1.0f, Vec3(0.4f, 1.7f, 0.2f));
-    Vec3 q  = Vec3(9.0f, 8.0f, 0.2f);
-    Vec3 click = Vec3(-1.25f, 0.5f, 42.0f);
-    Vec3 first;
-    // k=0 with a ray along -Z is UNREACHABLE by the ray arm (D[0] == 0). The
-    // locked arm answers it anyway, and that is the whole distinction.
-    assert(posToPrincipalPlane(vp, click, Vec3(0, 0, -1), 0, q, false, 0.0f, first),
-           "the locked arm must answer a k the ray arm could never reach — "
-           ~ "a refusal here means the short-circuit is gone");
-    foreach (k; 0 .. 3) {
-        Vec3 c;
-        assert(posToPrincipalPlane(vp, click, Vec3(0, 0, -1), k, q, false, 0.0f, c),
-               format("the locked arm must not refuse, but k=%d did", k));
-        assert(nearV(c, first, 1e-9f),
-               format("the locked arm must not read k, but k=%d moved the "
-                      ~ "answer", k));
-    }
-    assert(nearV(first, Vec3(-1.25f, 0.5f, 0.2f)),
-           format("locked landing must be the click with z replaced by Q[z], "
-                  ~ "got (%.4f, %.4f, %.4f)", first.x, first.y, first.z));
 }
 
 // -------------------------------------------------------------------------
@@ -457,21 +414,20 @@ unittest {
 // -------------------------------------------------------------------------
 
 unittest {
-    auto vp = perspVp(Vec3(0, 5, 0), Vec3(0, 0, 0));
     Vec3 c;
     // Ray straight down from (0.37, 5, 0.61) meets y=0 at (0.37, 0, 0.61).
-    assert(posToPrincipalPlane(vp, Vec3(0.37f, 5, 0.61f), Vec3(0, -1, 0),
+    assert(posToPrincipalPlane(Vec3(0.37f, 5, 0.61f), Vec3(0, -1, 0),
                                1, Vec3(0, 0, 0), false, 0.0f, c));
     assert(nearV(c, Vec3(0.37f, 0, 0.61f)), "unsnapped landing");
 
-    assert(posToPrincipalPlane(vp, Vec3(0.37f, 5, 0.61f), Vec3(0, -1, 0),
+    assert(posToPrincipalPlane(Vec3(0.37f, 5, 0.61f), Vec3(0, -1, 0),
                                1, Vec3(0, 0, 0), true, 0.25f, c));
     assert(nearV(c, Vec3(0.25f, 0, 0.5f)),
            format("a 0.25 snap step must round the ANSWER, got (%.4f, %.4f, %.4f)",
                   c.x, c.y, c.z));
 
     // A non-positive step returns immediately rather than rounding by zero.
-    assert(posToPrincipalPlane(vp, Vec3(0.37f, 5, 0.61f), Vec3(0, -1, 0),
+    assert(posToPrincipalPlane(Vec3(0.37f, 5, 0.61f), Vec3(0, -1, 0),
                                1, Vec3(0, 0, 0), true, 0.0f, c));
     assert(nearV(c, Vec3(0.37f, 0, 0.61f)),
            "a zero snap step must leave the answer alone");
@@ -526,44 +482,9 @@ unittest {
     }
 }
 
-// AXIS-LOCKED ORTHO: `principalPlaneCenter`'s no-ray arm equals the
-// camera-perpendicular plane through the FOCUS for all six presets. Under
-// ortho the ray is parallel to the view axis, so the intersection only ever
-// changes that one coordinate, which is the coordinate the no-ray arm
-// replaces. A property of the chain alone: since task 7134 the action-centre
-// relocate no longer reaches this arm in ortho (it keeps the PRE-PRESS
-// centre's depth, gap 364, `orthoRelocateThroughPrior`); the create tools'
-// placement click still does.
-unittest {
-    import math : rayPlaneIntersect;
-    RelocatePlanePrefs p;                       // defaults
-    foreach (axis; 0 .. 3) {
-        foreach (sign; [1.0f, -1.0f]) {
-            auto vp = orthoAxisVp(axis, sign, Vec3(0.4f, 1.7f, 0.2f));
-            Vec3 camPerp = Vec3(vp.view[2], vp.view[6], vp.view[10]);
-            // An ortho ray: parallel to the view forward, offset off-axis so
-            // the two in-plane coordinates are non-trivial.
-            Vec3 fwd = Vec3(-vp.view[2], -vp.view[6], -vp.view[10]);
-            Vec3 origin = Vec3(0.9f, -0.3f, 0.55f) + fwd * (-4.0f);
-            Vec3 lawHit, oldHit;
-            int used;
-            assert(principalPlaneCenter(vp, origin, fwd, axis, p, lawHit, used),
-                   "the no-ray arm cannot fail");
-            assert(rayPlaneIntersect(origin, fwd, vp.focus, camPerp, oldHit),
-                   "premise: the camera-perpendicular plane is always hit");
-            assert(nearV(lawHit, oldHit, 1e-4f),
-                   format("preset axis=%d sign=%.0f: the no-ray arm must "
-                          ~ "equal the camera-perpendicular focus-plane landing — "
-                          ~ "law (%.6f, %.6f, %.6f) vs old (%.6f, %.6f, %.6f)",
-                          axis, sign, lawHit.x, lawHit.y, lawHit.z,
-                          oldHit.x, oldHit.y, oldHit.z));
-        }
-    }
-}
-
 // OBLIQUE ORTHO: `principalPlaneCenter` is NOT the camera-perpendicular
 // plane through the focus on an orthographic camera that is not axis-aligned
-// — with no locked axis it takes the ray arm onto the principal plane, which
+// — it takes the ray onto the principal plane, which
 // lands elsewhere along the ray. A property of the chain only: no caller
 // feeds it such a view for a relocate any more (task 7134 routes every ortho
 // relocate through `orthoRelocateThroughPrior`, gap 366).
@@ -578,10 +499,6 @@ unittest {
     vp.width  = 1098;
     vp.height = 832;
     vp.focus  = focus;
-
-    assert(lockedViewAxis(vp) == -1,
-           "an oblique orthographic camera must NOT read as axis-locked — if "
-           ~ "it does, the ray arm is never taken and this test proves nothing");
 
     Vec3 camPerp = Vec3(vp.view[2], vp.view[6], vp.view[10]);
     Vec3 fwd     = Vec3(-vp.view[2], -vp.view[6], -vp.view[10]);
@@ -616,9 +533,8 @@ unittest { // Dnint rounds half AWAY FROM ZERO, not half-to-even
 }
 
 unittest { // the ray arm refuses a view direction lying in the plane
-    auto vp = perspVp(Vec3(5, 0, 0), Vec3(0, 0, 0));
     Vec3 c;
-    assert(!posToPrincipalPlane(vp, Vec3(5, 0, 0), Vec3(-1, 0, 0),
+    assert(!posToPrincipalPlane(Vec3(5, 0, 0), Vec3(-1, 0, 0),
                                 1, Vec3(0, 0, 0), false, 0.0f, c),
            "a ray with no component along the principal axis must refuse");
 }

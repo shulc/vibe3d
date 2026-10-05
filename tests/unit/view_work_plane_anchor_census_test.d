@@ -1,7 +1,7 @@
 // Task 9411: ONE view work-plane anchor for every click reader. The old
 // per-reader plane (the plane's own normal through its origin) is gone from
 // the tree; the click readers call the create click law; `niceOrigin` has one
-// body; the relocate's plane point has no locked-view arm. Raw source text
+// body; the relocate's plane chain has no locked-view arm. Raw source text
 // with comments and strings blanked: a renamed or aliased reader shows up as a
 // changed roster, not as a silent pass.
 module tests.unit.view_work_plane_anchor_census_test;
@@ -51,7 +51,7 @@ unittest {
     assert(roster("screenToConstructionPlane") == [] && roster("ConstructionPlaneMode") == [],
         format("the per-reader construction plane returned: %s %s",
                roster("screenToConstructionPlane"), roster("ConstructionPlaneMode")));
-    assert(roster("placementPlaneHit(") == ["tools/create/create_common.d:2"],
+    assert(roster("placementPlaneHit(") == ["tools/create/create_common.d:3"],
         format("placementPlaneHit( roster: %s", roster("placementPlaneHit(")));
     assert(roster("viewWorkPlaneAnchor(") == ["tools/create/create_common.d:1", "viewgrid.d:1"],
         format("viewWorkPlaneAnchor( roster: %s", roster("viewWorkPlaneAnchor(")));
@@ -62,6 +62,6 @@ unittest {
                                                "relocate_plane.d")));
     const wpp = bodyOf(rp, "PlanePoint workPlanePoint(");
     assert(wpp.indexOf("niceOrigin(") >= 0, "control: workPlanePoint body located");
-    assert(wpp.indexOf("lockedViewAxis") < 0,
-        "workPlanePoint regained a locked-view arm (unreachable from the relocate)");
+    assert(rp.indexOf("lockedViewAxis") < 0,
+        "relocate_plane regained a locked-view arm (unreachable from every click)");
 }

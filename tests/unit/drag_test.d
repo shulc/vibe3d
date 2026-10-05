@@ -10,8 +10,7 @@ import toolpipe.packets : GesturePacket, GestureTrack;
 import coord_rounding : CoordinateRounding, kFixedIncrementDefault;
 import std.math : PI, sin, cos, tan, atan;
 import drag;
-import tools.transform.relocate_plane : vectorSnap;
-import viewgrid : ViewGridPrefs, viewGridSize, viewGridSubStep,
+import viewgrid : vectorSnap, ViewGridPrefs, viewGridSize, viewGridSubStep,
     viewWorldPerPixel;
 
 private Viewport capturedPerspective(Vec3 eye, float pixelSize) {

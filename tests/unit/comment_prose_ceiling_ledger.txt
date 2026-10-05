@@ -9,7 +9,7 @@
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
 source-files 578
-task-citation-lines 5247
+task-citation-lines 5246
 citing-files 454
 long-comment-runs 268
 files-with-long-runs 144
@@ -418,7 +418,7 @@ allow source/tools/transform/item_xform_kernels.d 3
 allow source/tools/transform/morph_route.d 3
 allow source/tools/transform/move.d 9
 allow source/tools/transform/relocate_plane.d 3
-allow source/tools/transform/relocate_plane_test.d 2
+allow source/tools/transform/relocate_plane_test.d 1
 allow source/tools/transform/rotate.d 2
 allow source/tools/transform/scale.d 5
 allow source/tools/transform/scale_input.d 1

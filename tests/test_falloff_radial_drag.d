@@ -192,12 +192,9 @@ unittest { // radial RMB anchor follows normal camera-focus displacement
     // perspective (captured K-W2 W1j, tests/fixtures/create_click_plane.json):
     // the shift is that rounding of 0.6, which must be non-zero here or the
     // cell cannot tell the focus from the origin.
-    auto g = parseJSON(cast(string)get(testBaseUrl() ~ "/api/viewport/display"))
-                 ["cells"].array[0]["grid"]["size"];
-    immutable double step = 10 * (g.type == JSONType.integer ? g.integer : g.floating);
-    import std.math : round;
-    immutable float want = cast(float)(round(0.6 / step) * step);
-    assert(want != 0, format("rig: ten grid steps %.4f round 0.6 to 0", step));
+    import create_law_helpers : anchorRound, viewAnchorSteps;
+    immutable float want = cast(float)anchorRound(0.6);
+    assert(want != 0, format("rig: ten grid steps %s round 0.6 to 0", viewAnchorSteps()));
     assert(approx(anchorShift, want), format(
         "task 5514 focus-plane mutation: radial anchor normal shift must equal "
         ~ "the rounded focus shift %.4f; baseline=%.4f shifted=%.4f delta=%.4f",

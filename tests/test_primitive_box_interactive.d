@@ -12,7 +12,7 @@ import http_command_helpers : commandBody;
 import std.conv : to;
 import std.format : format;
 import std.json;
-import std.math : abs, cos, fabs, PI, round, sin;
+import std.math : abs, cos, fabs, PI, sin;
 import std.net.curl : get, post;
 
 import drag_helpers;
@@ -775,10 +775,9 @@ unittest { // Box base lands on focus plane, not origin plane, with panned AUTO 
     // plane). In perspective the plane runs through the focus ROUNDED to ten
     // grid steps (captured K-W W1a, tests/fixtures/create_click_plane.json),
     // which must not round 0.6 to 0 here or the cell sees nothing.
-    auto gs = getJson("/api/viewport/display")["cells"].array[0]["grid"]["size"];
-    immutable double step = 10 * (gs.type == JSONType.integer ? gs.integer : gs.floating);
-    immutable double want = round(0.6 / step) * step;
-    assert(want != 0, format("rig: ten grid steps %.4f round 0.6 to 0", step));
+    import create_law_helpers : anchorRound, viewAnchorSteps;
+    immutable double want = anchorRound(0.6);
+    assert(want != 0, format("rig: ten grid steps %s round 0.6 to 0", viewAnchorSteps()));
     auto m = getJson("/api/model");
     foreach (i; 0 .. 4) {
         Vec3 v = vertexAt(m, i);

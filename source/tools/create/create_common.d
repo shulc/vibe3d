@@ -600,42 +600,23 @@ unittest { // ortho: the in-plane answer is the click, NOT the click times dista
     assert(abs(got.z - focus.z) < 1e-5f, "and on the plane");
 }
 
-unittest { // ortho: identical to the ported law's no-ray arm, term for term
-    import std.math : abs, tan, PI;
-    import tools.transform.relocate_plane : posToPrincipalPlane;
-    import math : screenPointToRay, lockedViewAxis;
-
-    immutable float dist = 4.5f;
-    immutable Vec3  focus = Vec3(0.7f, 0.5f, 2.0f);
-    auto vp = frontOrthoViewport(dist, focus);
-    assert(lockedViewAxis(vp) == 2,
-           "rig premise: a Front ortho view is axis-locked on Z");
-
-    auto f = frameFromBasis(Vec3(0, 0, 1), Vec3(1, 0, 0), Vec3(0, 1, 0),
-                            focus, true);
-
-    foreach (px; [40.0f, 200.0f, 320.0f, 610.0f]) {
-        foreach (py; [15.0f, 190.0f, 240.0f, 470.0f]) {
-            Vec3 hitLocal;
-            assert(workplaneCursorPlaneHit(f, vp, px, py, Vec3(0, 0, 0),
-                                           Vec3(0, 1, 0), hitLocal));
-            Vec3 mine = transformPoint(f.toWorld, hitLocal);
-
-            // The ported law, driven from the same ray.
-            Vec3 o, d;
-            screenPointToRay(px, py, vp, o, d);
-            Vec3 theirs;
-            assert(posToPrincipalPlane(vp, o, d, 2, vp.focus, false, 0.0f, theirs));
-
-            assert(abs(mine.x - theirs.x) < 1e-5f
-                && abs(mine.y - theirs.y) < 1e-5f
-                && abs(mine.z - theirs.z) < 1e-5f,
-                "the ortho arm must BE the ported law's no-ray arm, not a "
-                ~ "second opinion that happens to agree at the centre pixel");
-        }
-    }
+unittest { // ortho: the plane's DEPTH is the focus snapped to q (K-W2 finding 2)
+    import std.math : abs;
+    // Focus depth OFF the q lattice; `placementPlaneHit` is UNQUANTISED, so
+    // only the anchor's own snap can put the hit's depth on the lattice.
+    auto vp = frontOrthoViewport(3.0f, Vec3(0.7f, 0.5f, 2.01234f));
+    immutable float q = viewVectorQuantum(vp);
+    immutable float want = vectorSnap(vp.focus, q).z;
+    assert(q > 0 && abs(want - vp.focus.z) > 1e-4f,
+           "rig premise: the focus depth must sit off the q lattice");
+    int axisLocal;
+    immutable Vec3 hit = placementPlaneHit(500.0f, 120.0f, vp,
+                                           primitivePlacementFrame(), axisLocal);
+    assert(axisLocal == 2, "a Front view's principal plane is the Z plane");
+    assert(abs(hit.z - want) < 1e-6f,
+           "the ortho anchor's depth must be the focus snapped to the view "
+           ~ "quantum, not the raw focus");
 }
-
 
 unittest { // the placement click is TOTAL where the old floor plane refused
     import std.math : abs;

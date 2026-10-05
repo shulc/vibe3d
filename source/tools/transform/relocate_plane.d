@@ -12,7 +12,7 @@ module tools.transform.relocate_plane;
 //     |    +- niceOrigin(...)          Q = focus, snapped, then QUANTISED on k
 //     |    |    +- vectorSnap(...)     component-wise round to a step
 //     |    +- biasedAxis(...)          the preferred-work-plane bias
-//     +- posToPrincipalPlane(...)      the ray, or the locked-axis shortcut
+//     +- posToPrincipalPlane(...)      the ray onto the principal plane
 //          +- vectorSnap(...)          the final snap of the ANSWER (dormant:
 //                                      see `RelocatePlanePrefs.answerSnapStep`)
 //
@@ -24,9 +24,9 @@ module tools.transform.relocate_plane;
 //    the world origin this is the identity, which is why every fixture we own
 //    is blind to it.
 //
-// 2. `posToPrincipalPlane` does not always cast a ray. In an axis-locked
-//    orthographic view (top/bottom/front/back/left/right) it replaces one
-//    coordinate of the unprojected click and stops.
+// 2. The reference's axis-locked ortho no-ray arm is not ported: no vibe3d
+//    caller reaches it (every ortho click takes `orthoRelocateThroughPrior`
+//    or the create click law, `viewgrid.viewWorkPlaneAnchor`).
 //
 // WHAT IS MEASURED AND WHAT IS CHOSEN. The structure below is read out of the
 // reference instruction by instruction and is not fitted. Its INPUTS are a
@@ -47,19 +47,12 @@ module tools.transform.relocate_plane;
 // it from the evidenced one moved a frozen row on no evidence at all.
 // ---------------------------------------------------------------------------
 
-import math : Vec3, Viewport, isOrtho, isAxisView, normalize, dot;
-import std.math : abs, floor, ceil;
+import math : Vec3, Viewport, isAxisView, dot, eyeVectorAt;
+import std.math : abs;
 
-/// The rounding helpers and `niceOrigin` live in `viewgrid` (the view
-/// work-plane anchor reads them); re-exported for this module's callers.
-public import viewgrid : dnint, vectorSnap, axisComp, withAxisComp, niceOrigin;
-
-/// `lockedViewAxis` and `eyeVectorAt` used to be defined HERE and are now in
-/// `math`, because the gizmo's handle-facing cull (`handles.gl_util`) needs
-/// both and `handles` must not import a tool module. They are re-exported so
-/// every existing `import tools.transform.relocate_plane : lockedViewAxis;`
-/// still resolves and this module's own law reads unchanged.
-public import math : lockedViewAxis, eyeVectorAt;
+/// `public` ONLY for the pen's frozen import of these four names; TEMPORARY —
+/// make it private at P1, when the pen imports them from `viewgrid`.
+public import viewgrid : vectorSnap, axisComp, withAxisComp, niceOrigin;
 
 /// The shipped work-plane bias preferences, the view's own snap step, and the
 /// out-of-plane quantum.
@@ -193,43 +186,19 @@ PlanePoint workPlanePoint(const ref Viewport vp, int argmaxAxis,
     return r;
 }
 
-/// Put the click on the principal plane.
+/// Put the click on the principal plane: `C = P0 + [(Q[k] - P0[k]) / D[k]]*D`.
 ///
-/// Two arms, and the first one casts NO RAY: in an axis-locked orthographic
-/// view the answer is the click with one coordinate replaced. The second is
-/// the ray, `C = P0 + [(Q[k] - P0[k]) / D[k]]*D`.
-///
-/// THE CLICK ARRIVES AS A RAY, NOT AS A POINT, AND THAT IS NOT A DEVIATION.
-/// The reference unprojects the click to a world point `P0` and then recovers
-/// `D` as the eye vector AT `P0`; vibe3d's `screenPointToRay` hands back the
-/// same line already parameterised, so `D` is read rather than recovered.
-/// Both arms are invariant to which point of the line is passed:
-///
-///   * the ray arm returns the unique point of the line whose `k` component
-///     is `Q[k]`, and that point does not depend on the parameterisation;
-///   * the locked arm only ever runs under an orthographic projection, where
-///     `screenPointToRay`'s origin IS the unprojected click, and the one
-///     component it does not preserve — the depth along the view axis — is
-///     exactly the component the locked arm overwrites.
-///
-/// Reading `D` instead of recovering it also removes a degeneracy: under a
-/// perspective projection the ray origin is the eye itself, and the eye
-/// vector AT the eye is not defined.
-///
-/// Returns false only when the ray arm degenerates (the view direction lies
-/// in the plane). The locked arm cannot fail.
-bool posToPrincipalPlane(const ref Viewport vp, Vec3 rayOrigin, Vec3 rayDir,
-                         int k, Vec3 q, bool doSnap, float snapStep, out Vec3 c)
+/// The click arrives as a RAY (`screenPointToRay`), so `D` is read rather
+/// than recovered as the eye vector at the unprojected point; the answer is
+/// the unique point of the line with `C[k] == Q[k]` either way. Returns false
+/// when the view direction lies in the plane.
+bool posToPrincipalPlane(Vec3 rayOrigin, Vec3 rayDir, int k, Vec3 q,
+                         bool doSnap, float snapStep, out Vec3 c)
         @safe pure nothrow @nogc {
-    immutable int locked = lockedViewAxis(vp);
-    if (locked >= 0) {
-        c = withAxisComp(rayOrigin, locked, axisComp(q, locked));
-    } else {
-        immutable float dk = axisComp(rayDir, k);
-        if (abs(dk) < 1e-9f) return false;
-        immutable float t = (axisComp(q, k) - axisComp(rayOrigin, k)) / dk;
-        c = rayOrigin + rayDir * t;
-    }
+    immutable float dk = axisComp(rayDir, k);
+    if (abs(dk) < 1e-9f) return false;
+    immutable float t = (axisComp(q, k) - axisComp(rayOrigin, k)) / dk;
+    c = rayOrigin + rayDir * t;
     if (doSnap) c = vectorSnap(c, snapStep);
     return true;
 }
@@ -245,7 +214,7 @@ bool principalPlaneCenter(const ref Viewport vp, Vec3 rayOrigin, Vec3 rayDir,
         @safe pure nothrow @nogc {
     immutable pp = workPlanePoint(vp, argmaxAxis, p);
     axisOut = pp.k;
-    return posToPrincipalPlane(vp, rayOrigin, rayDir, pp.k, pp.q,
+    return posToPrincipalPlane(rayOrigin, rayDir, pp.k, pp.q,
                                true, p.answerSnapStep, c);
 }
 

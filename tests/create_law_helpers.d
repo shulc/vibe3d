@@ -151,3 +151,22 @@ V3 modelCenter(out V3 extent) {
               (lo.y + hi.y) * 0.5,
               (lo.z + hi.z) * 0.5);
 }
+
+/// The view quantum q and ten grid steps, read from cell 0 of
+/// `/api/viewport/display` (the steps of the perspective work-plane anchor).
+double[2] viewAnchorSteps() {
+    auto g = getJson("/api/viewport/display")["cells"].array[0]["grid"];
+    double n(JSONValue v) { return v.type == JSONType.integer ? v.integer : v.floating; }
+    return [n(g["subStep"]), 10 * n(g["size"])];
+}
+
+/// One channel of the perspective work-plane anchor (`viewgrid.niceOrigin`,
+/// captured K-W / K-W2, tests/fixtures/create_click_plane.json): `v` snapped
+/// to q, then rounded to ten grid steps — in float and half away from zero,
+/// as the app computes it (a rig's focus can sit on a rounding tie).
+double anchorRound(double v) {
+    const st = viewAnchorSteps();
+    const float q = cast(float)st[0], step = cast(float)st[1];
+    const float snapped = round(cast(float)v / q) * q;
+    return round(snapped / step) * step;
+}

@@ -22,12 +22,13 @@ import drag_helpers : Vec3, Viewport, buildDragLog, fetchCamera, pixelRay,
     playAndWait, viewportFromCameraMatrices;
 import http_client : getJson, postJson;
 import http_command_helpers : commandBody;
-import pen_rig_helpers : clickPixels, penCameraAt, penCommand, penSceneEmpty,
+import symmetry_selection_helpers : num;
+import pen_rig_helpers : clickPixels, penCameraAt, penCommand, penSceneEmpty, readVerts,
     worldPixel;
 import std.array : join;
 import std.conv : to;
 import std.format : format;
-import std.json : JSONType, JSONValue, parseJSON;
+import std.json : JSONValue, parseJSON;
 import std.math : PI, abs, asin, atan2, cos, sin;
 import std.string : split;
 
@@ -35,11 +36,6 @@ void main() {}
 
 private enum double kTol = 1e-4;
 
-private double num(JSONValue v) {
-    return v.type == JSONType.integer ? cast(double)v.integer
-         : v.type == JSONType.uinteger ? cast(double)v.uinteger
-         : v.type == JSONType.float_ ? v.floating : double.nan;
-}
 private double[3] arr3(JSONValue a) {
     return [num(a.array[0]), num(a.array[1]), num(a.array[2])];
 }
@@ -154,19 +150,15 @@ private string compare(const ref Cell c, double[3] got, bool local) {
     return null;
 }
 
-private double[3][] modelVerts() {
-    double[3][] r;
-    foreach (v; getJson("/api/model")["vertices"].array) r ~= arr3(v);
-    return r;
-}
+private double[3] d3(Vec3 v) { return [v.x, v.y, v.z]; }
 
-private double[3] nearest(double[3][] vs, double[3] p) {
+private double[3] nearest(Vec3[] vs, double[3] p) {
     double[3] best = double.nan;
     double bd = double.infinity;
     foreach (v; vs) {
         double d = 0;
-        foreach (i; 0 .. 3) d += (v[i] - p[i]) ^^ 2;
-        if (d < bd) { bd = d; best = v; }
+        foreach (i; 0 .. 3) d += (d3(v)[i] - p[i]) ^^ 2;
+        if (d < bd) { bd = d; best = d3(v); }
     }
     return best;
 }
@@ -205,7 +197,7 @@ private string boxCell(const ref Cell c) {
     penCommand("tool.set prim.cube");
     drag(aim(c), 60);
     penCommand("tool.set prim.cube off");
-    return compare(c, nearest(modelVerts(), c.measuredWorld), false);
+    return compare(c, nearest(readVerts(), c.measuredWorld), false);
 }
 
 /// Vertex tool: one click, the created vertex.
@@ -214,9 +206,9 @@ private string vertexCell(const ref Cell c) {
     penCommand("tool.set prim.vertex");
     clickPixels(aim(c));
     penCommand("tool.set prim.vertex off");
-    auto vs = modelVerts();
+    auto vs = readVerts();
     if (vs.length != 1) return format("%s: %d vertices created, expected 1", c.name, vs.length);
-    return compare(c, vs[0], false);
+    return compare(c, d3(vs[0]), false);
 }
 
 /// Sphere / torus (press = the centre): the centre channels, plane-local.
@@ -327,7 +319,7 @@ unittest {
         penCommand("tool.set prim.cube");
         drag(p, 60);
         penCommand("tool.set prim.cube off");
-        if (auto m = compare(c, nearest(modelVerts(), c.measuredWorld), false)) fails ~= m;
+        if (auto m = compare(c, nearest(readVerts(), c.measuredWorld), false)) fails ~= m;
         ++ran;
     }
     foreach (n; ["W1a", "W1a_q", "W1b", "W1c", "W1c_40", "W1i"]) run(n, &boxCell);

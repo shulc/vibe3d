@@ -42,9 +42,8 @@ import document : Layer;
 import mesh_gpu : GpuUploadOwner;
 import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
 import core.stdc.string : memcmp;
-import tools.transform.relocate_plane : vectorSnap;
 import tools.create.create_common : primitivePlacementFrame, transformDir;
-import viewgrid : g_viewGrid, viewVectorQuantum;
+import viewgrid : g_viewGrid, vectorSnap, viewVectorQuantum;
 
 version (unittest) {
     private enum PolyDragPressStage { upstreamB0, jacobianInput }
