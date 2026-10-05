@@ -88,3 +88,69 @@ unittest {
     assert(lastWire.canFind("Connection: close"),
         "9461 close on a kept connection: " ~ lastWire);
 }
+
+unittest {
+    immutable port = freePort();
+    auto server = new HttpServer(port);
+    server.markProvidersWired();
+    server.clientKeepAliveIdle = 200.msecs;
+    server.start();
+    scope(exit) if (server.running) server.stop();
+
+    // 4. Two requests in one segment: the surplus is a pipelined request the
+    // server does not parse, so it answers the first and closes at once.
+    auto piped = connectTo(port);
+    scope(exit) piped.close();
+    immutable pipedAt = MonoTime.currTime;
+    piped.send(request("keep-alive") ~ request("keep-alive"));
+    string pipedWire;
+    receiveUntilClosed(piped, pipedWire, 5.seconds);
+    assert(pipedWire.canFind("Connection: close")
+        && MonoTime.currTime - pipedAt < 3.seconds,
+        "9461 surplus bytes: a pipelined connection must be closed: "
+        ~ pipedWire);
+
+    // 5. A parked connection idle past clientKeepAliveIdle is closed.
+    auto idle = connectTo(port);
+    scope(exit) idle.close();
+    idle.send(request("keep-alive"));
+    string idleFirst;
+    receiveOneResponse(idle, idleFirst, 5.seconds);
+    assert(idleFirst.canFind("Connection: keep-alive"), idleFirst);
+    immutable idleAt = MonoTime.currTime;
+    string idleRest;
+    receiveUntilClosed(idle, idleRest, 5.seconds);
+    assert(idleRest.length == 0 && MonoTime.currTime - idleAt < 3.seconds,
+        "9461 idle expiry: a parked connection outlived clientKeepAliveIdle");
+
+    // 6. At most kMaxIdleClients stay parked: one more evicts the oldest.
+    server.clientKeepAliveIdle = 60.seconds;
+    Socket[] parked;
+    scope(exit) foreach (c; parked) c.close();
+    foreach (i; 0 .. HttpServer.kMaxIdleClients + 1) {
+        parked ~= connectTo(port);
+        parked[$ - 1].send(request("keep-alive"));
+        string wire;
+        receiveOneResponse(parked[$ - 1], wire, 5.seconds);
+        assert(wire.canFind("Connection: keep-alive"), wire);
+    }
+    assert(parked.length == 33, "9461 eviction rig: population changed");
+    immutable evictAt = MonoTime.currTime;
+    string evicted;
+    receiveUntilClosed(parked[0], evicted, 3.seconds);
+    assert(evicted.length == 0 && MonoTime.currTime - evictAt < 2.seconds,
+        "9461 eviction: the oldest parked connection was not closed");
+    parked[1].send(request("keep-alive"));
+    string survivor;
+    receiveOneResponse(parked[1], survivor, 5.seconds);
+    assert(survivor.canFind("Connection: keep-alive"),
+        "9461 eviction: a younger parked connection was closed: " ~ survivor);
+
+    // 7. stop() closes every parked connection.
+    immutable stopAt = MonoTime.currTime;
+    server.stop();
+    string afterStop;
+    receiveUntilClosed(parked[2], afterStop, 5.seconds);
+    assert(afterStop.length == 0 && MonoTime.currTime - stopAt < 3.seconds,
+        "9461 stop: a parked connection survived the server");
+}

@@ -139,7 +139,7 @@ private __gshared bool g_announcedUnset;
 private HTTP g_keepAlive;
 private bool g_keepAliveReady;
 
-private HTTP keepAliveConnection() {
+HTTP keepAliveConnection() {
     if (!g_keepAliveReady) {
         g_keepAlive = HTTP();
         g_keepAlive.addRequestHeader("Connection", "keep-alive");

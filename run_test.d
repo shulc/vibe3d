@@ -2442,7 +2442,12 @@ bool resetBetweenTests(ushort port, ref string failure) {
     // One keep-alive connection per worker thread (task 9461): a `curl`
     // process per call opened a TCP connection per status poll. Like the
     // `curl -s -m 5` it replaces, a transport failure or the 5 s budget
-    // yields ""; a non-2xx status yields its status line, never "ok".
+    // yields "" (after one retry; the reason is kept for the failure line);
+    // a non-2xx status yields its status line, never "ok".
+    string transportError;
+    string noResponse() {
+        return "(no response from the server: " ~ transportError ~ ")";
+    }
     string curl(string verb, string path, string data = "") {
         import std.net.curl : HTTP, HTTPStatusException, get, post;
         static HTTP conn;
@@ -2453,11 +2458,14 @@ bool resetBetweenTests(ushort port, ref string failure) {
             conn.operationTimeout = 5.seconds;
             ready = true;
         }
-        try return verb == "POST"
-            ? post(base ~ path, data, conn).idup
-            : get(base ~ path, conn).idup;
-        catch (HTTPStatusException e) return e.msg;
-        catch (Exception) return "";
+        foreach (attempt; 0 .. 2) {
+            try return verb == "POST"
+                ? post(base ~ path, data, conn).idup
+                : get(base ~ path, conn).idup;
+            catch (HTTPStatusException e) return e.msg;
+            catch (Exception e) transportError = e.msg;
+        }
+        return "";
     }
     // Drive one REGISTERED command through the single generic endpoint and say
     // whether it applied. `/api/command` answers 200 `{"status":"ok"}` on
@@ -2479,7 +2487,7 @@ bool resetBetweenTests(ushort port, ref string failure) {
     lastBody = curl("POST", "/api/trace/disarm");
     if (!lastBody.canFind(`"status":"ok"`)) {
         failure = "trace disarm did not answer: " ~ (lastBody.length
-            ? lastBody[0 .. min($, 300)] : "(no response from the server)");
+            ? lastBody[0 .. min($, 300)] : noResponse());
         return false;
     }
     // Deactivate + drain-replay + reset + clear history, then VERIFY the cube
@@ -2578,7 +2586,7 @@ bool resetBetweenTests(ushort port, ref string failure) {
         // 3. Reset to the pristine startup cube.
         if (!command("scene.reset")) {
             failure = "scene.reset did not apply: " ~ (lastBody.length
-                ? lastBody[0 .. min($, 300)] : "(no response from the server)");
+                ? lastBody[0 .. min($, 300)] : noResponse());
             return false;
         }
         // 3b. Normalize the edit mode back to Vertices and keep all component
@@ -2586,7 +2594,7 @@ bool resetBetweenTests(ushort port, ref string failure) {
         //     select is a cheap guard for older/bisected app binaries.
         if (!command("mesh.select", `{"mode":"vertices","indices":[]}`)) {
             failure = "mesh.select did not apply: " ~ (lastBody.length
-                ? lastBody[0 .. min($, 300)] : "(no response from the server)");
+                ? lastBody[0 .. min($, 300)] : noResponse());
             return false;
         }
         // 4. Clear undo/redo without undoing the reset/select we just applied.
