@@ -396,11 +396,9 @@ unittest {
     {
         const k = codeOf("source/tools/transform/xform_kernels.d");
         const ax = bodyAfter(k, "void applyXformMatrix(");
-        const sc = bodyAfter(k, "void applyScaleFromActivation(");
         const mt = bodyAfter(codeOf("source/commands/mesh/transform.d"), "private bool applyKernel(");
-        assert(ax.length > 200 && sc.length > 200 && mt.length > 200, "(u6)(a) a kernel body is missing");
+        assert(ax.length > 200 && mt.length > 200, "(u6)(a) a kernel body is missing");
         assert(countOccurrences(ax, "authored(") == 2, "(u6)(a) applyXformMatrix authored( count");
-        assert(countOccurrences(sc, "authored(") == 1, "(u6)(a) applyScaleFromActivation authored( count");
         assert(countOccurrences(mt, "authored(") == 3, "(u6)(a) MeshTransform.applyKernel authored( count");
         // per loop: second `if (uniform) {` .. `goto tail;` and `goto tail;` .. `tail:`
         size_t u1 = ax.indexOf("if (uniform) {");

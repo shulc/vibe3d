@@ -3,8 +3,8 @@ module tools.transform.xform_kernels;
 // Per-mode transform kernels — pure-ish functions that mutate
 // `mesh.vertices` for a transform tool's drag step. Lifted from
 // MoveTool.applyDeltaImmediate / applyAbsoluteFromBaseline,
-// RotateTool.applyRotationVec / applyAbsoluteFromOrigCpuOnly,
-// ScaleTool.applyScaleFromActivationCpuOnly. The original method
+// RotateTool.applyRotationVec / applyAbsoluteFromOrigCpuOnly
+// (scale has only the matrix kernel below). The original method
 // bodies in the tools now delegate to these — the math lives in
 // exactly one place so future divergence between Move / Rotate /
 // Scale and the unified xfrm.transform tool is impossible.
@@ -316,81 +316,10 @@ void applyRotateFromOrig(
 }
 
 // ---------------------------------------------------------------
-// Scale
-// ---------------------------------------------------------------
-
-/// Scale from a captured activation snapshot.
-/// Mirrors ScaleTool.applyScaleFromActivationCpuOnly.
-///
-/// `weightVerts` is an optional per-vertex source for falloff
-/// evaluation. When null/empty, the kernel evaluates the falloff at
-/// `activationVerts[vi]` — fine when activation IS the baseline
-/// (standalone ScaleTool drag). When non-empty, the kernel evaluates
-/// against `weightVerts[vi]` instead — required when the scale stage
-/// runs after a translate / rotate in `XfrmTransformTool`'s TRS
-/// chain (then `activationVerts` holds POST-T/R positions, but per
-/// `xfrm.transform` semantics the per-vert weight must be
-/// snapshotted at the pre-chain BASELINE). Falloff packets like
-/// Element (sphere around `pickedCenter`) attenuate by distance —
-/// reading the weight at a post-translate position shrinks it as
-/// the vert moves away from the sphere centre.
-///
-/// Each axis factor is blended toward 1.0 by the per-vertex falloff
-/// weight evaluated at the ACTIVATION-time position so the weight
-/// doesn't drift as the slider scales the vert through the field:
-///   s_eff = 1 + (scaleAccum_a - 1) · w
-void applyScaleFromActivation(
-    Mesh* mesh,
-    const(int)[] indices,
-    const(Vec3)[] activationVerts,
-    Vec3 pivotFallback,
-    Vec3 axisXFallback,
-    Vec3 axisYFallback,
-    Vec3 axisZFallback,
-    Vec3 scaleAccum,
-    const ref FalloffPacket dragFalloff,
-    const AimViewport vp,          // task 0619: the AIM space. BY VALUE, and
-                                   // deliberately: the copy is one per kernel
-                                   // call while the falloff loop below is O(V),
-                                   // and it lets the caller write
-                                   // `dragAimSpace()` inline instead of hoisting
-                                   // a named local it could forget to refresh.
-    TransformTool.ClusterPivots clusterPivots,
-    TransformTool.ClusterAxes clusterAxes,
-    const ref SymmetryPacket dragSymmetry,
-    bool[] toProcess,
-    const(Vec3)[] weightVerts = null)
-{
-    import math : scaleAlongBasis;
-    auto zKernel = g_perf.scope_(Cat.kernelApply);
-    if (activationVerts.length == 0) return;
-    bool useWeightVerts = (weightVerts.length == activationVerts.length);
-    foreach (vi; indices) {
-        const size_t fv = frameSource(dragSymmetry, vi);
-        Vec3 pivot = pivotFor(fv, clusterPivots, pivotFallback);
-        Vec3 ax = axisXFallback, ay = axisYFallback, az = axisZFallback;
-        axesFor(fv, clusterAxes, clusterPivots, ax, ay, az);
-        float w = dragFalloff.enabled
-            ? evaluateFalloff(dragFalloff,
-                              useWeightVerts ? weightVerts[vi]
-                                             : activationVerts[vi],
-                              cast(int)vi, vp)
-            : 1.0f;
-        float sx = 1.0f + (scaleAccum.x - 1.0f) * w;
-        float sy = 1.0f + (scaleAccum.y - 1.0f) * w;
-        float sz = 1.0f + (scaleAccum.z - 1.0f) * w;
-        mesh.vertices[vi] = authored(dragSymmetry, vi, activationVerts[vi],
-            (Vec3 q) => scaleAlongBasis(q, pivot, ax, ay, az, sx, sy, sz));
-    }
-    mirrorAndCount(mesh, dragSymmetry, toProcess, toProcess,
-                   cast(long)indices.length, dragFalloff.enabled);
-}
-
-// ---------------------------------------------------------------
 // Canonical single-matrix kernel (MS-1)
 // ---------------------------------------------------------------
 //
-// The four kernels above re-express the decomposed transform state
+// The kernels above re-express the decomposed transform state
 // (separate T / R / S passes). MS-1 of the canonical-matrix plan
 // (the unified transform-model plan, a private design doc) introduces a SINGLE pivot-relative
 // matrix `M` that is applied per vertex, blended toward identity by the
@@ -582,11 +511,8 @@ void applyXformMatrix(
     //   - `baseline` is ORDINAL-parallel to `indices`: baseline[i] is the pre-edit
     //     position of the vertex `indices[i]`. (It only needs to cover the moving
     //     set, so it is sized `indices.length`.)
-    //   - `weightVerts`, when supplied, is VERTEX-ID-indexed and mesh-length, to
-    //     MATCH the live scale kernel (applyScaleFromActivation reads
-    //     weightVerts[vi]). MS-2 can therefore feed the SAME weightVerts buffer
-    //     the live scale path uses with no re-indexing. Empty / wrong-length ⇒
-    //     fall back to weighting at `baseline[i]`.
+    //   - `weightVerts`, when supplied, is VERTEX-ID-indexed and mesh-length.
+    //     Empty / wrong-length ⇒ fall back to weighting at `baseline[i]`.
     // The asymmetry (baseline ordinal, weightVerts vid) is deliberate: baseline
     // is a compact per-move-set snapshot, weightVerts mirrors a mesh-length live
     // buffer.

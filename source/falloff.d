@@ -831,6 +831,7 @@ mixin template FalloffInput() {
     void setFalloff(FalloffPacket fp) { falloff_ = fp; hasFalloff_ = true; }
 
     private void captureFalloff(ref VectorStack vts) {
+        // Production takes only the else arm; the stack arm keeps ONE falloff packet per stack (Operator contract).
         if (auto fp = vts.get!FalloffPacket()) setFalloff(*fp);
         else                                   vts.put(&falloff_);
     }

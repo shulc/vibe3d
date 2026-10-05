@@ -488,10 +488,12 @@ unittest { // T5/5 — scale: s_eff = 1 + (s-1)*w
     auto fal = weightsFalloff([0.5f]);
     auto sym = noMirror();
     bool[] proc = [true];
-    applyScaleFromActivation(m, [0], [Vec3(2, 0, 0)], Vec3(0, 0, 0),
-                             Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1),
-                             Vec3(3, 1, 1), fal, kernelAim(),
-                             noPivots(), noAxes(), sym, proc);
+    import math : pivotScaleMatrixBasis;
+    applyXformMatrix(m, [0], [Vec3(2, 0, 0)], Vec3(0, 0, 0),
+                     pivotScaleMatrixBasis(Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(0, 1, 0),
+                                           Vec3(0, 0, 1), 3, 1, 1),
+                     Vec3(0, 0, 0), BlendMode.MatrixLerp, fal, kernelAim(),
+                     noPivots(), noAxes(), null, sym, proc);
     // s_eff = 1 + (3-1)*0.5 = 2  ⇒  x: 2 -> 4. Half the weight is HALF the
     // excess over 1, not half the factor (which would give 1.5 -> 3).
     assert(fabs(m.vertices[0].x - 4.0f) < 1e-5f,

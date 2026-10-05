@@ -41,7 +41,7 @@ mixin template XfrmApplyImpl() {
     // preset's flag*/hasT/hasS gates, not an artificial per-gesture override.
     //
     // Prologue: UNCONDITIONAL whole-baseline restore. Required because
-    // `applyTranslatePerCluster` is `+=` incremental and the symmetry
+    // the incremental kernels are `+=` and the symmetry
     // mirror touches `dragSymmetry.pairOf` indices OUTSIDE
     // `vertexIndicesToProcess`. Without the restore those side effects
     // would accumulate across re-evaluates (the per-frame call pattern
@@ -623,41 +623,5 @@ mixin template XfrmApplyImpl() {
         // hands `snapCursor` as `excludeVerts`. See
         // `Mesh.publishConfinedChange`.
         mesh.publishConfinedChange(routed ? MeshEditScope.Maps : MeshEditScope.Position);
-    }
-
-    // Per-cluster translate: each vertex is displaced along its OWN
-    // cluster's axis frame (right/up/fwd from the ClusterAxes packet).
-    // `delta` is in cluster-local coordinates: x=right, y=up, z=fwd.
-    // Vertices not in any cluster (clusterOf[vi]==-1) are skipped.
-    // No falloff support — matches the behaviour of the rotate/scale
-    // kernels in Local mode (falloff + Local is an unusual combination).
-    void applyTranslatePerCluster(
-        TransformTool.ClusterPivots cp,
-        TransformTool.ClusterAxes   ap,
-        Vec3 localDelta)
-    {
-        import math : Vec3;
-        foreach (vi; vertexIndicesToProcess) {
-            if (vi < 0 || vi >= cast(int)cp.clusterOf.length) continue;
-            int cid = cp.clusterOf[vi];
-            if (cid < 0 || cid >= cast(int)ap.right.length) continue;
-            Vec3 cr = ap.right[cid];
-            Vec3 cu = ap.up   [cid];
-            Vec3 cf = ap.fwd  [cid];
-            Vec3 worldDelta = cr * localDelta.x
-                            + cu * localDelta.y
-                            + cf * localDelta.z;
-            mesh.vertices[vi].x += worldDelta.x;
-            mesh.vertices[vi].y += worldDelta.y;
-            mesh.vertices[vi].z += worldDelta.z;
-        }
-        // The per-cluster symmetry tail was DELETED here. The live per-cluster
-        // ACEN.Local drag routes through applyFold, which carries the single
-        // fixed-base position-copy mirror (the positive-axis side drives and is
-        // reflected onto the other side, copying each driver's FINAL position —
-        // cluster-agnostic). This method (now with no live caller — the wrapper
-        // accumulates run.t and folds) therefore carries no mirror; if it is
-        // ever re-wired into the live path the fixed-base position-copy in
-        // applyFold covers the mirror.
     }
 }

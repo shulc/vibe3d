@@ -3,7 +3,8 @@
 // Pure-D unit test (no HTTP, no running vibe3d): builds tiny in-process meshes
 // and asserts the new single-matrix kernel `applyXformMatrix`
 // (source/tools/xform_kernels.d) reproduces the existing per-component kernels
-// (applyTranslateIncremental / applyRotateIncremental / applyScaleFromActivation)
+// (applyTranslateIncremental / applyRotateIncremental) and the reference scale
+// law `refScale` below
 // pass-by-pass, for w==1 AND fractional-weight falloff, INCLUDING the
 // per-cluster ACEN.Local paths (plan N3). It also prints an a/b/c blend
 // divergence harness (informational, NOT asserted for equality).
@@ -30,7 +31,7 @@ import mesh : Mesh;
 import toolpipe.packets : FalloffPacket, SymmetryPacket;
 import tools.transform.transform : TransformTool;
 import tools.transform.xform_kernels :
-    applyTranslateIncremental, applyRotateIncremental, applyScaleFromActivation,
+    applyTranslateIncremental, applyRotateIncremental,
     applyXformMatrix, BlendMode, blendToIdentity;
 
 // Equality tolerance for the per-component-vs-matrix-kernel cases (see header).
@@ -125,6 +126,23 @@ private Vec3[] sampleVerts() {
         Vec3(-1,  0.5f,  1),
         Vec3( 0.3f, 0.7f, 0.2f),
     ];
+}
+
+// Reference scale law (task 9445: the decomposed scale kernel left production,
+// its law stays here as the oracle): s_eff = 1 + (s-1)*w per axis, the weight
+// read at weightVerts[vi] (VERTEX-ID-indexed) when given, else at act[vi].
+private void refScale(Mesh* m, const(int)[] idx, const(Vec3)[] act, Vec3 pivot,
+                      Vec3 bx, Vec3 by, Vec3 bz, Vec3 s, const ref FalloffPacket fp,
+                      const AimViewport vp, const(Vec3)[] weightVerts = null) {
+    import math : scaleAlongBasis;
+    import falloff : evaluateFalloff;
+    foreach (vi; idx) {
+        const float w = fp.enabled
+            ? evaluateFalloff(fp, weightVerts.length ? weightVerts[vi] : act[vi], vi, vp)
+            : 1.0f;
+        m.vertices[vi] = scaleAlongBasis(act[vi], pivot, bx, by, bz,
+            1 + (s.x - 1) * w, 1 + (s.y - 1) * w, 1 + (s.z - 1) * w);
+    }
 }
 
 private int[] allIndices(size_t n) {
@@ -235,10 +253,7 @@ unittest { // (i-S) Scale, per-axis factors, falloff disabled
     auto idx = allIndices(sampleVerts().length);
 
     auto A = makeMesh(sampleVerts());
-    bool[] tpA = new bool[A.vertices.length]; tpA[] = true;
-    auto activation = sampleVerts();
-    applyScaleFromActivation(A, idx, activation, pivot, bx, by, bz, s,
-                             fp, vp, cp, ca, sp, tpA);
+    refScale(A, idx, sampleVerts(), pivot, bx, by, bz, s, fp, vp);
 
     auto B = makeMesh(sampleVerts());
     bool[] tpB = new bool[B.vertices.length]; tpB[] = true;
@@ -594,8 +609,7 @@ unittest { // (iv-oob-scale) unclustered vert scales GLOBALLY, not fixed
 //
 // `applyXformMatrix` indexes `baseline` by loop ORDINAL (baseline[i] ↔
 // indices[i]) but `weightVerts` by VERTEX ID (weightVerts[vi], mesh-length),
-// matching the live scale kernel `applyScaleFromActivation` (weightVerts[vi]),
-// so MS-2 can feed the same buffer with no re-indexing.
+// matching the reference `refScale` (weightVerts[vi]).
 //
 // `weightVerts` is the per-vertex POSITION buffer the falloff is evaluated AT
 // (NOT a weights array — that's FalloffPacket.selectionWeights). To make the
@@ -605,7 +619,7 @@ unittest { // (iv-oob-scale) unclustered vert scales GLOBALLY, not fixed
 // distinct Y along the Linear axis. With a sparse `indices` = [2,5,1]:
 //   - correct (weightVerts[vi]): vert 2 reads weightVerts[2], 5 reads [5], …
 //   - wrong   (weightVerts[i]) : vert 2 reads weightVerts[0], 5 reads [1], …
-// Both kernels read weightVerts[vi], so they MUST agree; if either reverted to
+// Both read weightVerts[vi], so they MUST agree; if either reverted to
 // ordinal the Linear weights would differ and assertClose would fire.
 
 private Vec3[] sixVerts() {
@@ -662,13 +676,9 @@ unittest { // (v) sparse non-identity indices, vid-indexed weightVerts (position
 
     auto verts = sixVerts();
 
-    // A: live scale kernel — indexes weightVerts[vi] (vid) over the sparse idx.
+    // A: reference scale law — reads weightVerts[vi] (vid) over the sparse idx.
     auto A = makeMesh(verts);
-    bool[] tpA = new bool[A.vertices.length]; tpA[] = false;
-    foreach (vi; idx) tpA[vi] = true;
-    auto activation = sixVerts();
-    applyScaleFromActivation(A, idx, activation, pivot, bx, by, bz, s,
-                             fp, vp, cp, ca, sp, tpA, weightVerts);
+    refScale(A, idx, sixVerts(), pivot, bx, by, bz, s, fp, vp, weightVerts);
 
     // B: matrix scale path — `baseline` ordinal-parallel to idx, `weightVerts`
     //    vid-indexed mesh-length. Must reproduce A on the sparse set.
