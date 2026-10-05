@@ -48,29 +48,27 @@ void scr(Vec3 w, const ref Viewport vp, out int px, out int py) {
     py = cast(int)(fy + 0.5f);
 }
 
-// The line and options, written identically in both modes. The ORDER is for
-// the live mode: a panel edit re-cuts only while a cut sits on the mesh, so
-// every intermediate line must still cross the cube. From the dragged belt
-// (about (-0.6,0,0)..(0.6,0,0)) the steps are: Y to 0, start Z, end Z (a
-// diagonal through the cube), start X, end X (the final line x = 0.13).
-void writeLineAndOptions(string split, string gap) {
-    cmd("tool.attr mesh.sliceTool axis y");
-    cmd("tool.attr mesh.sliceTool startY 0");
-    cmd("tool.attr mesh.sliceTool endY 0");
-    cmd("tool.attr mesh.sliceTool startZ -0.9");
-    cmd("tool.attr mesh.sliceTool endZ 0.9");
-    cmd("tool.attr mesh.sliceTool startX 0.13");
-    cmd("tool.attr mesh.sliceTool endX 0.13");
-    cmd("tool.attr mesh.sliceTool split " ~ split);
-    cmd("tool.attr mesh.sliceTool gap " ~ gap);
+// One configuration: setup commands (before activation), then the tool attrs,
+// written identically in both modes. The attr ORDER is for the live mode: a
+// panel edit re-cuts only while a cut sits on the mesh, so every intermediate
+// line must still cross the mesh.
+struct Case { string name; string[] setup; string[] attrs; size_t verts, faces; }
+
+void runSetup(const Case c) {
+    resetCube();
+    foreach (s; c.setup) cmd(s);
+    cmd("history.clear");
+}
+void writeAttrs(const Case c) {
+    foreach (a; c.attrs) cmd("tool.attr mesh.sliceTool " ~ a);
 }
 
 // LIVE: a real drag lays a slice on the mesh (the session's baseline), the
-// panel edits re-cut it from that baseline, the drop commits one entry.
-JSONValue liveModel(string split, string gap) {
-    resetCube();
-    cmd("history.clear");
+// panel edits re-cut it from that baseline, the drop commits.
+JSONValue liveModel(const Case c) {
+    runSetup(c);
     const d0 = undoDepth();
+    const v0 = getModel()["vertices"].array.length;
     cmd("tool.set mesh.sliceTool on");
     settle();
     auto vp = viewportFromCamera(fetchCamera(BASE));
@@ -81,33 +79,31 @@ JSONValue liveModel(string split, string gap) {
     scr(Vec3( 0.6f, 0, 0), vp, bx, by);
     playAndWait(buildDragLog(vp.x, vp.y, vp.width, vp.height, ax, ay, bx, by, 20, 0), BASE);
     settle();
-    assert(getModel()["vertices"].array.length > 8,
-        "live: the drag laid no slice on the cube — panel edits would not re-preview");
-    writeLineAndOptions(split, gap);
+    assert(getModel()["vertices"].array.length > v0,
+        c.name ~ ": live: the drag laid no slice — panel edits would not re-preview");
+    writeAttrs(c);
     settle();
     cmd("tool.set mesh.sliceTool off");
     settle();
     // Measured: the activation and the dropped slice are two entries.
-    assert(undoDepth() == d0 + 2, format("live: recorded %s entries, expected 2 "
-                                         ~ "(activate + slice): %s", undoDepth() - d0, undoList()));
+    assert(undoDepth() == d0 + 2, format("%s: live: recorded %s entries, expected 2 "
+        ~ "(activate + slice): %s", c.name, undoDepth() - d0, undoList()));
     return getModel();
 }
 
 // HEADLESS: activate, write the same values, apply (one cut, no baseline).
-JSONValue headlessModel(string split, string gap) {
-    resetCube();
-    cmd("history.clear");
+JSONValue headlessModel(const Case c) {
+    runSetup(c);
     const d0 = undoDepth();
     cmd("tool.set mesh.sliceTool on");
     settle();
-    writeLineAndOptions(split, gap);
+    writeAttrs(c);
     cmd("tool.doApply");
     cmd("tool.set mesh.sliceTool off");
     settle();
     // Measured: the activation and the apply are two entries on this path.
-    assert(undoDepth() == d0 + 2, format("headless: recorded %s entries, expected 2 "
-                                         ~ "(activate + apply): %s",
-                                         undoDepth() - d0, undoList()));
+    assert(undoDepth() == d0 + 2, format("%s: headless: recorded %s entries, expected 2 "
+        ~ "(activate + apply): %s", c.name, undoDepth() - d0, undoList()));
     return getModel();
 }
 
@@ -130,23 +126,77 @@ void assertSameModel(JSONValue a, JSONValue b, string what) {
 
 unittest {
     // Measured counts per configuration (task 9431, both modes on main).
-    static struct Case { string split, gap; size_t verts, faces; }
     const Case[] cases = [
-        Case("1", "0.2", 16, 12),   // split + gap: the two-cut route
-        Case("0", "0.2", 16, 14),   // gap without split: two parallel cuts
+        // Split + caps + gap on a twice-subdivided cube, an oblique infinite
+        // plane (the parameters of test_fixture_slice_subdiv_gap): the
+        // two-cut route, which a cube cannot tell from the single-cut slide.
+        // The axis lock comes LAST: the dragged belt runs along X, which an
+        // X lock would make degenerate.
+        Case("split-caps-gap dense", ["mesh.subdivide", "mesh.subdivide"],
+             ["infinite 1", "split 1", "caps 1", "gap 0.415", "gapSide center",
+              "startX 0", "startY 0.4", "startZ 0.61",
+              "endX 0", "endY -1.14", "endZ -1.89", "axis x"], 92, 74),
+        // Gap without split on the cube: two parallel cuts. From the belt the
+        // line steps Y to 0, start Z, end Z (a diagonal), start X, end X.
+        Case("gap-nosplit cube", [],
+             ["axis y", "startY 0", "endY 0", "startZ -0.9", "endZ 0.9",
+              "startX 0.13", "endX 0.13", "split 0", "gap 0.2"], 16, 14),
     ];
     assert(cases.length == 2);
     foreach (c; cases) {
-        const what = format("split %s gap %s", c.split, c.gap);
-        auto live = liveModel(c.split, c.gap);
-        auto head = headlessModel(c.split, c.gap);
+        auto live = liveModel(c);
+        auto head = headlessModel(c);
         const lv = live["vertices"].array.length, lf = live["faces"].array.length;
         const hv = head["vertices"].array.length, hf = head["faces"].array.length;
         // PIN first, both modes in one message: a change of the one operation
         // must show in BOTH, which is what proves both reach it.
         assert(lv == c.verts && lf == c.faces && hv == c.verts && hf == c.faces,
             format("%s: expected %sv/%sf in both modes; live %sv/%sf, headless %sv/%sf",
-                   what, c.verts, c.faces, lv, lf, hv, hf));
-        assertSameModel(live, head, what);
+                   c.name, c.verts, c.faces, lv, lf, hv, hf));
+        assertSameModel(live, head, c.name);
     }
+}
+
+// A headless line that misses the mesh is REFUSED: no edit, no history entry.
+unittest {
+    resetCube();
+    cmd("history.clear");
+    cmd("tool.set mesh.sliceTool on");
+    settle();
+    foreach (a; ["axis y", "startX 5", "startY 0", "startZ -0.9",
+                 "endX 5", "endY 0", "endZ 0.9", "infinite 1"])
+        cmd("tool.attr mesh.sliceTool " ~ a);
+    const d0 = undoDepth();
+    auto r = parseJSON(cast(string) post(BASE ~ "/api/command", "tool.doApply"));
+    settle();
+    assert(r["status"].str == "error" && undoDepth() == d0
+           && getModel()["vertices"].array.length == 8,
+        format("a missing plane must refuse the apply: %s, depth %s -> %s, %sv",
+               r.toString, d0, undoDepth(), getModel()["vertices"].array.length));
+    cmd("tool.set mesh.sliceTool off");
+}
+
+// The headless angle snap is a pre-step of the apply: the clip span of the one
+// operation is the SNAPPED line. A short line ~19 deg off X snaps onto X (45 deg
+// quantum) and ends inside the cube at x = 0.3, so the clipped cut terminates
+// there (the unsnapped end would project to x = 0.235).
+unittest {
+    resetCube();
+    cmd("tool.set mesh.sliceTool on");
+    settle();
+    foreach (a; ["snap 1", "snapAngle 45", "startX -0.9", "startY 0", "startZ 0",
+                 "endX 0.2346", "endY 0", "endZ 0.3907"])
+        cmd("tool.attr mesh.sliceTool " ~ a);
+    cmd("tool.doApply");
+    cmd("tool.set mesh.sliceTool off");
+    settle();
+    double maxX = -9;
+    size_t onPlane;
+    foreach (v; getModel()["vertices"].array) {
+        const x = v.array[0].floating, z = v.array[2].floating;
+        if (fabs(z) < 1e-4) { ++onPlane; if (x > maxX) maxX = x; }
+    }
+    assert(onPlane > 0 && fabs(maxX - 0.3) < 1e-4,
+        format("snapped clip span: %s cut vertices, the farthest at x = %s, expected 0.3",
+               onPlane, maxX));
 }

@@ -7,6 +7,7 @@ import bindbc.sdl;
 import bindbc.opengl;
 import std.json : JSONValue;
 import std.math : sqrt, sin, cos, PI;
+import std.format : format;
 import ImGui = d_imgui;
 import d_imgui.imgui_h;   // ImDrawList / ImVec2 / IM_COL32 for the RMB gap HUD (task 0288)
 import tool;
@@ -848,4 +849,21 @@ unittest {
     // An axis-aligned line too (X-line, vector with a Y/Z tilt).
     checkTilt(Vec3(-1,0,0), Vec3(1,0,0), Vec3(0, 1, 0.5f), 0.5f);
     checkTilt(Vec3(-1,0,0), Vec3(1,0,0), Vec3(0, 1, 0.5f), -0.8f);
+}
+
+// The one cut operation keeps the kernels' on-plane tolerance (task 9431). A
+// diagonal plane 8e-6 off two cube edges: within 1e-5 those vertices are ON the
+// plane (the cut runs through them, no new vertex); with a zero tolerance the
+// plane crosses the edges beside them (measured: 12v/10f connected, 16v/10f
+// split). Clipped, so the connected arm is `cutByPlaneClipped`.
+unittest {
+    const Vec3 n = normalize(Vec3(1, 0, -1));
+    const Vec3 s = Vec3(-0.9f, 0, -0.9f), e = Vec3(0.9f, 0, 0.9f);
+    Mesh one = makeCube(), two = makeCube();
+    sliceCut(one, n * 8e-6f, n, s, e, false, false, false, null, 0.0f, 0);
+    sliceCut(two, n * 8e-6f, n, s, e, false, true, false, null, 0.0f, 0);
+    assert(one.vertices.length == 8 && one.faces.length == 8,
+        format("graze, connected: %sv/%sf, expected 8v/8f", one.vertices.length, one.faces.length));
+    assert(two.vertices.length == 12 && two.faces.length == 8,
+        format("graze, split: %sv/%sf, expected 12v/8f", two.vertices.length, two.faces.length));
 }
