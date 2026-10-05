@@ -530,6 +530,11 @@ public:
     version(unittest) final bool preparedEmbeddedMoveInstalledForTest() {
         return xfrm.moveBank().preparedProductActivationForTest();
     }
+    version(unittest) final bool preparedBanksActivatedForTest() {
+        return xfrm.moveBank().preparedActivationForTest() &&
+            xfrm.rotateBank().preparedActivationForTest() &&
+            xfrm.scaleBank().preparedActivationForTest();
+    }
     version(unittest) final bool preparedEmbeddedInputsForTest() const nothrow @nogc {
         return xfrm.preparedBankInputsForTest();
     }
@@ -695,8 +700,6 @@ public:
                     image.rotate = xfrm.rotateBank().buildPreparedProductActivation();
                 if (scaleHandle_)
                     image.scale = xfrm.scaleBank().buildPreparedProductActivation();
-                image.valid = image.move.valid && image.rotate.valid == rotateHandle_ &&
-                    image.scale.valid == scaleHandle_;
             }
             return image;
         }

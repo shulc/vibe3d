@@ -437,13 +437,13 @@ unittest {
         es.context.installTraceForTest() == [3,4,2,1,43], "Edge Slice: chainArm");
 
     auto ee = Rig!EdgeExtendRow.make(true, true);
-    ee.tool.setPreparedRotateBankForTest(true);
+    ee.tool.setPreparedBanksForTest(true, true, true);
     auto bank = ee.tool.prepareParamChanged("rotateHandle", ee.context, ee.layer, null);
     assert(bank.accepted && bank.kind == PreparedEdgeExtendParamKind.BankSwitch &&
-        ee.context.validate() && !ee.tool.preparedEmbeddedMoveInstalledForTest());
+        ee.context.validate() && !ee.tool.preparedBanksActivatedForTest());
     ee.context.install();
     assert(ee.tool.preparedParamInstalledForTest(false, true) &&
-        ee.tool.preparedEmbeddedMoveInstalledForTest(), "Edge Extend: bank switch");
+        ee.tool.preparedBanksActivatedForTest(), "Edge Extend: bank switch");
     auto pv = Rig!EdgeExtendRow.make(true, true);
     auto pivot = pv.tool.prepareParamChanged("_dragPivot", pv.context, pv.layer, null);
     assert(pivot.accepted && pivot.kind == PreparedEdgeExtendParamKind.Pivot &&
