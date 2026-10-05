@@ -290,7 +290,7 @@ void registerCommands(EditorApp app) {
         LiveSessionRole(app.sessionOwner),
         LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()),
         SceneResetEffects(app.vpm, app.subpatchPreviewPtr, &g_prefs,
-                          app.dropActiveTool, app.resetAllPipeStages),
+                          app.dropActiveTool),
         SceneLifecycleDoors(app.promoteGeometryType,
                             () { app.running = false; },
                             () => app.dropActiveTool(ToolTransition.sceneResetDrop)));

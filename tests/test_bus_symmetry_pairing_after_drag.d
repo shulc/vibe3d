@@ -38,8 +38,8 @@
 //     (`applySetAttr` writes the bool and publishes state, nothing else) and
 //     `evaluate` returns early while disabled, so the table survives the
 //     toggle untouched. That is exactly the state this file needs.
-//   * NO `/api/reset` BETWEEN THE BUILD AND THE READ. `SceneReset` runs
-//     `resetAllPipeStages()`, and `SymmetryStage.reset()` clears the pair
+//   * NO `/api/reset` BETWEEN THE BUILD AND THE READ. `SceneReset` resets
+//     every pipe stage, and `SymmetryStage.reset()` clears the pair
 //     table outright — which would rescue the broken code. Each arm resets
 //     ONCE, at its start.
 //

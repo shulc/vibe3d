@@ -40,13 +40,10 @@ unittest { // R1: the capability's effects and their order, one method at a time
     auto drop = (ToolTransition t) {
         log ~= "drop:" ~ t.to!string ~ (preview.active ? ":preview-live" : ":preview-off");
     };
-    auto pipes = () {
-        log ~= "pipes" ~ (preview.active ? ":preview-live" : ":preview-off");
-    };
     assert(viewports.cellCount == 4 && live >= 1 && preview.osdAccel.valid,
         "6020 R1 floor: four cells and one cached topology before the reset");
 
-    auto effects = SceneResetEffects(viewports, &preview, &prefs, drop, pipes);
+    auto effects = SceneResetEffects(viewports, &preview, &prefs, drop);
     effects.resetViewport();
     assert(viewports.cellCount == 1 && viewports.activeId == 0,
         "6020 R1 viewport effect did not restore the single default cell");
@@ -56,7 +53,7 @@ unittest { // R1: the capability's effects and their order, one method at a time
         "6020 R1 viewport effect reached a tool effect");
 
     effects.resetToolEffects();
-    assert(log == ["drop:sceneResetDrop:preview-live", "pipes:preview-live"],
+    assert(log == ["drop:sceneResetDrop:preview-live"],
         "6020 R1 tool effects order: " ~ log.to!string);
     assert(!preview.active && !preview.reusablePreviewReady && preview.reusablePreviewKey == 0,
         "6020 R1 tool effects left the subpatch preview live");
@@ -65,12 +62,82 @@ unittest { // R1: the capability's effects and their order, one method at a time
         "6020 R1 tool effects did not retire every cached topology");
 
     void delegate(ToolTransition) noDrop;
-    void delegate() noPipes;
     size_t refusals;
-    assertThrown!AssertError(SceneResetEffects(null, &preview, &prefs, drop, pipes)); ++refusals;
-    assertThrown!AssertError(SceneResetEffects(viewports, null, &prefs, drop, pipes)); ++refusals;
-    assertThrown!AssertError(SceneResetEffects(viewports, &preview, null, drop, pipes)); ++refusals;
-    assertThrown!AssertError(SceneResetEffects(viewports, &preview, &prefs, noDrop, pipes)); ++refusals;
-    assertThrown!AssertError(SceneResetEffects(viewports, &preview, &prefs, drop, noPipes)); ++refusals;
-    assert(refusals == 5, "6020 R1 every capability input must be required");
+    assertThrown!AssertError(SceneResetEffects(null, &preview, &prefs, drop)); ++refusals;
+    assertThrown!AssertError(SceneResetEffects(viewports, null, &prefs, drop)); ++refusals;
+    assertThrown!AssertError(SceneResetEffects(viewports, &preview, null, drop)); ++refusals;
+    assertThrown!AssertError(SceneResetEffects(viewports, &preview, &prefs, noDrop)); ++refusals;
+    assert(refusals == 4, "6020 R1 every capability input must be required");
+}
+
+/// Every `.reset()` a loop over `pipeline.allMut()` makes: the loop body (a
+/// braced block, or the single statement up to its `;`) after each `allMut()`.
+private string[] fullPipeResetSites(string code, string file, ref size_t loops) {
+    import std.format : format;
+    import std.string : indexOf;
+    import tests.unit.census_symbols : balancedSpan, countIdent, lineOf;
+    string[] sites;
+    enum needle = "allMut()";
+    for (ptrdiff_t at = code.indexOf(needle); at >= 0;
+            at = code.indexOf(needle, at + needle.length)) {
+        ++loops;
+        size_t p = at + needle.length;
+        while (p < code.length && (code[p] == ' ' || code[p] == '\n')) ++p;
+        if (p < code.length && code[p] == ')') ++p;   // the foreach header
+        while (p < code.length && (code[p] == ' ' || code[p] == '\n')) ++p;
+        string body;
+        if (p < code.length && code[p] == '{') body = balancedSpan(code, p, '{', '}');
+        else {
+            const semi = code.indexOf(';', p);
+            body = semi < 0 ? "" : code[p .. semi + 1];
+        }
+        if (countIdent(body, "reset") != 0 && body.indexOf(".reset()") >= 0)
+            sites ~= format("%s:%d", file, lineOf(code, at));
+    }
+    return sites;
+}
+
+unittest { // 9465: ONE full pipe-stage reset per scene reset, and it is SceneReset's
+    import std.algorithm : endsWith;
+    import std.file : dirEntries, readText, SpanMode;
+    import std.meta : AliasSeq;
+    import std.path : buildNormalizedPath, dirName, relativePath;
+    import std.string : indexOf;
+    import std.traits : Parameters;
+    import tests.unit.census_symbols : blankNonCode, countIdent;
+
+    // Fence: the capability holds the tool drop and nothing that resets the
+    // pipe, and its tool effects take no keep-pipe flag (SceneReset's
+    // `keepsToolPipe` is the one reader).
+    static assert(is(typeof(SceneResetEffects.tupleof) == AliasSeq!(
+        ViewportManager, SubpatchPreview*, Prefs*, void delegate(ToolTransition))));
+    static assert(Parameters!(SceneResetEffects.resetToolEffects).length == 0);
+
+    // Positive control: the retired delegate's shape is a site.
+    size_t ctlLoops;
+    const ctl = fullPipeResetSites(
+        "void f() {\n    foreach (s; g_pipeCtx.pipeline.allMut())\n        s.reset();\n}\n"
+        ~ "void g() { foreach (s; p.allMut()) { if (x) s.reset(); } }\n"
+        ~ "void h() { foreach (s; p.allMut()) s.resetCounter(); }\n", "ctl", ctlLoops);
+    assert(ctlLoops == 3 && ctl == ["ctl:2", "ctl:5"],
+        "9465 control: the scanner must see both loop shapes: " ~ ctl.to!string);
+
+    const root = buildNormalizedPath(dirName(__FILE_FULL_PATH__), "..", "..", "..", "..");
+    size_t files, loops, retiredIdent;
+    string[] sites;
+    foreach (de; dirEntries(buildNormalizedPath(root, "source"), "*.d", SpanMode.depth)) {
+        if (de.name.endsWith("_test.d")) continue;
+        const code = blankNonCode(readText(de.name));
+        ++files;
+        retiredIdent += countIdent(code, "resetAllPipeStages");
+        sites ~= fullPipeResetSites(code, relativePath(de.name, root), loops);
+    }
+    // Floor (measured 2026-10-05: `grep -rno "allMut()" source --include=*.d
+    // | wc -l` = 10: nine call sites plus the declaration in toolpipe/pipeline.d).
+    assert(files > 100 && loops == 10,
+        "9465 floor: allMut() sites scanned " ~ loops.to!string);
+    assert(retiredIdent == 0,
+        "9465: resetAllPipeStages returned — the second stage reset per scene reset");
+    assert(sites.length == 1 && sites[0].indexOf("source/commands/scene/reset.d:") == 0,
+        "9465: a full pipe-stage reset loop outside SceneReset.apply: " ~ sites.to!string);
 }

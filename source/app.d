@@ -2647,22 +2647,6 @@ void main(string[] args) {
         resetToolSwitchTransientStages(g_pipeCtx.pipeline);
     }
 
-    // FULL pipe reset used only by a SCENE / DOCUMENT reset (/api/reset,
-    // scene.reset, file.new). Unlike resetTransientPipeStages (which respects
-    // userLocked so a user-set falloff / ACEN / AXIS survives a tool switch —
-    // reference parity), this calls the unconditional reset() on EVERY stage,
-    // clearing the userLocks too. A "Reset" UX promise is a clean slate, so a
-    // prior session's locked falloff config must not bleed across the reset.
-    // (SceneReset.apply already resets every stage before onResetTool fires;
-    // this is the same guarantee made explicit at the onResetTool seam, so any
-    // future reset path that only wires onResetTool still gets the clean slate.)
-    void resetAllPipeStages() {
-        import toolpipe.pipeline : g_pipeCtx;
-        if (g_pipeCtx is null) return;
-        foreach (s; g_pipeCtx.pipeline.allMut())
-            s.reset();
-    }
-
     // The pipe rung owns ACEN/AXIS/WGHT/CONS only. Global snap, its pipe node,
     // symmetry, workplane and path stay outside this predicate/reset; those
     // omissions are captured by task 5911 rounds 2 E2 and 3 R1.
@@ -3810,7 +3794,6 @@ void main(string[] args) {
     app.promoteGeometryType  = cast(void delegate(EditMode))&promoteGeometryType;
     app.switchGeometryType   = cast(void delegate(EditMode))&switchGeometryType;
     app.onActiveLayerChanged = onActiveLayerChanged;
-    app.resetAllPipeStages   = cast(void delegate())&resetAllPipeStages;
     app.authorLayoutReset    = &layoutResetAction.authorReset;
     app.pipeHoldsTask        = cast(bool delegate())&pipeHoldsTask;
     app.clearPipeTasks       = cast(void delegate())&clearPipeTasks;

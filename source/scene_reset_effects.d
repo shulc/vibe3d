@@ -20,24 +20,20 @@ private:
     /// Deliberately call-shaped rather than suffixed: the ownership census
     /// recognizes the invocation in resetToolEffects as this capability's site.
     void delegate(ToolTransition) dropActiveTool;
-    void delegate() resetAllPipeStages_;
 
 public:
     @disable this();
 
     this(ViewportManager viewports, SubpatchPreview* preview, Prefs* prefs,
-         void delegate(ToolTransition) dropActiveTool,
-         void delegate() resetAllPipeStages) {
+         void delegate(ToolTransition) dropActiveTool) {
         assert(viewports !is null, "scene reset requires the viewport manager");
         assert(preview !is null, "scene reset requires the subpatch preview");
         assert(prefs !is null, "scene reset requires preferences storage");
         assert(dropActiveTool !is null, "scene reset requires the tool drop");
-        assert(resetAllPipeStages !is null, "scene reset requires the pipe reset");
         viewports_ = viewports;
         preview_ = preview;
         prefs_ = prefs;
         this.dropActiveTool = dropActiveTool;
-        resetAllPipeStages_ = resetAllPipeStages;
     }
 
     /// Single layout, and the persisted preset mirrors it so a clean shutdown
@@ -47,12 +43,12 @@ public:
         prefs_.viewportLayout = LayoutPreset.Single;
     }
 
-    /// Drop the tool, reset every pipe stage unless `keepPipe` (file.new, task
-    /// 9402), then leave no subpatch preview and no cached subdivision topology:
-    /// the next preview build is a miss (and no stray mutationVersion bumps).
-    void resetToolEffects(bool keepPipe = false) {
+    /// Drop the tool, then leave no subpatch preview and no cached subdivision
+    /// topology: the next preview build is a miss (and no stray mutationVersion
+    /// bumps). The pipe stages are reset by `SceneReset.apply`'s stage loop, the
+    /// one reader of file.new's keep-pipe flag (task 9465).
+    void resetToolEffects() {
         dropActiveTool(ToolTransition.sceneResetDrop);
-        if (!keepPipe) resetAllPipeStages_();
         preview_.deactivate();
         preview_.dropTopologyCache();
     }

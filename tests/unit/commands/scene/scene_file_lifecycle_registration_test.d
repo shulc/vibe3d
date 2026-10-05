@@ -73,7 +73,6 @@ private struct PhaseSnapshot {
     long cells;
     LayoutPreset prefsLayout;
     size_t drops;
-    size_t pipes;
     size_t vertices;
     bool previewActive;
     EditMode mode;
@@ -94,7 +93,7 @@ unittest { // R2: both reset doors cross the production-shaped disarm phase firs
     PhaseSnapshot[] atPromote;
     PhaseSnapshot[] atDrop;
     ToolTransition[] dropTransitions;
-    size_t drops, pipes;
+    size_t drops;
 
     PhaseSnapshot snap() {
         auto loop = cast(LoopSliceTool) rig.activeTool;
@@ -102,7 +101,7 @@ unittest { // R2: both reset doors cross the production-shaped disarm phase firs
         const dragging = loop !is null ? loop.isDragging()
             : edge !is null ? edge.isDragging() : false;
         return PhaseSnapshot(viewports.cellCount, prefs.viewportLayout, drops,
-                             pipes, rig.session.editMesh().vertices.length,
+                             rig.session.editMesh().vertices.length,
                              preview.active, rig.session.editMode,
                              morphTargetName().idup, loop !is null,
                              edge !is null, dragging);
@@ -114,14 +113,13 @@ unittest { // R2: both reset doors cross the production-shaped disarm phase firs
         ++drops;
         rig.activeTool = null;
     };
-    auto resetPipes = () { ++pipes; };
     auto promote = (EditMode mode) {
         atPromote ~= snap();
         rig.session.promoteGeometryType(mode);
     };
     registerSceneFileLifecycleCommands(rig.registry, rig.liveSession(),
         rig.liveViewMode(), SceneResetEffects(viewports, &preview, &prefs,
-            drop, resetPipes), SceneLifecycleDoors(promote, () {},
+            drop), SceneLifecycleDoors(promote, () {},
             () => drop(ToolTransition.sceneResetDrop)));
     assert(rig.registry.commandIds().length == 4
             && rig.registry.hasCommand("file.new")
@@ -156,7 +154,6 @@ unittest { // R2: both reset doors cross the production-shaped disarm phase firs
             atDrop = null;
             dropTransitions = null;
             drops = 0;
-            pipes = 0;
             rig.session.editMesh() = makeCube();
             rig.session.switchGeometryType(EditMode.Polygons);
             viewports.applyLayout(LayoutPreset.Quad);
@@ -196,15 +193,14 @@ unittest { // R2: both reset doors cross the production-shaped disarm phase firs
                 "6480 R2 " ~ door ~ "/" ~ sliceKind
                 ~ " did not apply through the production binding");
             assert(atPromote.length == 1 && atDrop.length == 2
-                    // file.new keeps the tool pipe (task 9402, new_scene_stages)
-                    && dropTransitions.length == 2 && pipes == (door == "file.new" ? 0 : 1),
+                    && dropTransitions.length == 2,
                 "6480 R2 " ~ door ~ "/" ~ sliceKind
                 ~ " phase population: promote " ~ atPromote.length.to!string
                 ~ ", drop " ~ atDrop.length.to!string ~ ", transitions "
-                ~ dropTransitions.length.to!string ~ ", pipes " ~ pipes.to!string);
+                ~ dropTransitions.length.to!string);
             assert(atDrop[0].vertices == verticesBefore
                     && atDrop[0].mode == EditMode.Polygons
-                    && atDrop[0].morph == "probe" && atDrop[0].pipes == 0
+                    && atDrop[0].morph == "probe"
                     && atDrop[0].previewActive
                     && dropTransitions[0] == ToolTransition.documentReplaceDisarm,
                 "6480 R2 " ~ door ~ "/" ~ sliceKind
@@ -223,7 +219,7 @@ unittest { // R2: both reset doors cross the production-shaped disarm phase firs
             assert(atDrop[1].mode == EditMode.Vertices
                     && atDrop[1].morph.length == 0
                     && !atDrop[1].loopSlice && !atDrop[1].edgeSlice
-                    && !atDrop[1].sliceDragging && atDrop[1].pipes == 0
+                    && !atDrop[1].sliceDragging
                     && atDrop[1].previewActive
                     && dropTransitions[1] == ToolTransition.sceneResetDrop,
                 "6480 R2 " ~ door ~ "/" ~ sliceKind
@@ -253,7 +249,7 @@ unittest { // R4: scene.loadMesh receives the narrow drop, not full reset effect
     auto viewports = new ViewportManager(0, 0, 800, 600);
     SubpatchPreview preview;
     Prefs prefs;
-    size_t drops, pipes;
+    size_t drops;
     ToolTransition[] transitions;
     auto drop = (ToolTransition transition) {
         ++drops;
@@ -262,7 +258,7 @@ unittest { // R4: scene.loadMesh receives the narrow drop, not full reset effect
     };
     registerSceneFileLifecycleCommands(rig.registry, rig.liveSession(),
         rig.liveViewMode(), SceneResetEffects(viewports, &preview, &prefs,
-            drop, () { ++pipes; }),
+            drop),
         SceneLifecycleDoors((EditMode mode) {
             rig.session.promoteGeometryType(mode);
         }, () {}, () => drop(ToolTransition.sceneResetDrop)));
@@ -284,7 +280,7 @@ unittest { // R4: scene.loadMesh receives the narrow drop, not full reset effect
             && preview.osdAccel.valid && viewports.cellCount == 4
             && prefs.viewportLayout == LayoutPreset.Quad
             && rig.session.selTypeOrder.current == SelType.Polygon
-            && rig.activeTool !is null && pipes == 0 && drops == 0,
+            && rig.activeTool !is null && drops == 0,
         "6480 R4 floor: loadMesh lacks a tool, cache, preview or Quad layout");
 
     enum meshJson = `{"vertices":[[0,0,0],[1,0,0],[1,1,0],[0,1,0]],`
@@ -302,8 +298,6 @@ unittest { // R4: scene.loadMesh receives the narrow drop, not full reset effect
             && rig.activeTool is null,
         "6480 R4 narrow load drop: expected one sceneResetDrop, got "
         ~ drops.to!string);
-    assert(pipes == 0,
-        "6480 R4 narrow load drop reset pipe stages: " ~ pipes.to!string);
     assert(preview.active && preview.reusablePreviewReady
             && preview.osdAccel.valid && viewports.cellCount == 4
             && prefs.viewportLayout == LayoutPreset.Quad,
@@ -318,7 +312,7 @@ unittest { // R5: factories resolve live roles/document and every door is requir
     size_t quitRequests;
     registerSceneFileLifecycleCommands(rig.registry, rig.liveSession(),
         rig.liveViewMode(), SceneResetEffects(viewports, &preview, &prefs,
-            (ToolTransition transition) { rig.activeTool = null; }, () {}),
+            (ToolTransition transition) { rig.activeTool = null; }),
         SceneLifecycleDoors((EditMode mode) {
             rig.session.promoteGeometryType(mode);
         }, () { ++quitRequests; }, () { rig.activeTool = null; }));
@@ -445,8 +439,8 @@ unittest { // R3: production wiring and the retired paths, deliberately last
     enum productionCall = "registerSceneFileLifecycleCommands(app.reg(), "
         ~ "LiveSessionRole(app.sessionOwner), LiveViewModeRole(app.cameraViewDg, "
         ~ "app.sessionOwner.editModePtr()), SceneResetEffects(app.vpm, "
-        ~ "app.subpatchPreviewPtr, &g_prefs, app.dropActiveTool, "
-        ~ "app.resetAllPipeStages), SceneLifecycleDoors(app.promoteGeometryType, "
+        ~ "app.subpatchPreviewPtr, &g_prefs, app.dropActiveTool), "
+        ~ "SceneLifecycleDoors(app.promoteGeometryType, "
         ~ "() { app.running = false; }, () => app.dropActiveTool("
         ~ "ToolTransition.sceneResetDrop)));";
     assert(registrationFlat.count(productionCall) == 1,
@@ -455,7 +449,7 @@ unittest { // R3: production wiring and the retired paths, deliberately last
         "6480 R3 reset effects must be constructed exactly once");
 
     enum recipe = "auto c = new SceneReset(&owner.activeMesh(), live.view(), "
-        ~ "live.mode, live.modeCell(), () => effects.resetToolEffects(newScene), "
+        ~ "live.mode, live.modeCell(), () => effects.resetToolEffects(), "
         ~ "() => effects.resetViewport());";
     assert(lifecycleFlat.count(recipe) == 1
             && lifecycle.count("c.setDocument(owner.document());") == 1
@@ -487,7 +481,7 @@ unittest { // R3: production wiring and the retired paths, deliberately last
     assert(lifecycleFlat.count(loadSlots) == 1
             && lifecycleFlat.count(quitSlots) == 1,
         "6480 R3 load/quit factories lost their narrow lifecycle doors");
-    assert(lifecycle.count("effects.resetToolEffects(newScene)") == 1
+    assert(lifecycle.count("effects.resetToolEffects()") == 1
             && lifecycle.count("doors.dropForSceneLoad()") == 1,
         "6480 R3 reset and load drop capabilities are no longer separated");
 
@@ -516,8 +510,7 @@ unittest { // R3: production wiring and the retired paths, deliberately last
                           "app.runningPtr          = &running;",
                           "app.vpm             = vpm;",
                           "app.dropActiveTool       = cast(void delegate(ToolTransition))&dropActiveTool;",
-                          "app.promoteGeometryType  = cast(void delegate(EditMode))&promoteGeometryType;",
-                          "app.resetAllPipeStages   = cast(void delegate())&resetAllPipeStages;"]) {
+                          "app.promoteGeometryType  = cast(void delegate(EditMode))&promoteGeometryType;"]) {
         const at = app.indexOf(assignment);
         assert(app.count(assignment) == 1 && at >= 0 && at < registerAt,
             "6480 R3 input is not assigned once before registerCommands: "

@@ -10,9 +10,9 @@ import registry : CommandFactory, Registry;
 import scene_reset_effects : SceneResetEffects;
 
 /// Scene/file lifecycle registration keeps reset construction in one recipe.
-/// The scene-load factory receives the narrow drop door: resetToolEffects also
-/// clears user-locked pipe stages and the subpatch preview/cache (task 6480;
-/// evidence: scene_file_lifecycle_registration_test).
+/// The scene-load factory receives the narrow drop door: a reset also clears
+/// user-locked pipe stages (its stage loop) and resetToolEffects the subpatch
+/// preview/cache (task 6480; evidence: scene_file_lifecycle_registration_test).
 struct SceneLifecycleDoors {
 private:
     void delegate(EditMode) promoteGeometry_;
@@ -52,7 +52,7 @@ private CommandFactory sceneResetFactory(LiveSessionRole owner,
     return () {
         auto c = new SceneReset(&owner.activeMesh(), live.view(), live.mode,
                                 live.modeCell(),
-                                () => effects.resetToolEffects(newScene),
+                                () => effects.resetToolEffects(),
                                 () => effects.resetViewport());
         c.setDocument(owner.document());
         c.setEmpty(newScene);

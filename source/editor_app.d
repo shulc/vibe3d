@@ -786,7 +786,6 @@ struct EditorApp {
     void delegate(EditMode)     promoteGeometryType;
     void delegate(EditMode)     switchGeometryType;
     void delegate(size_t, size_t) onActiveLayerChanged;
-    void delegate()             resetAllPipeStages;
     void delegate()             authorLayoutReset;
     bool delegate()             pipeHoldsTask;
     void delegate()             clearPipeTasks;
