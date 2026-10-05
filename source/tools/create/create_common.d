@@ -3,6 +3,7 @@ module tools.create.create_common;
 import math : Vec3, Viewport, dot, isOrtho, matMul4, matrixMirrorsWinding,
               rayPlaneIntersect, screenPointToRay;
 import std.math : abs;
+import viewgrid : vectorSnap, viewVectorQuantum, viewWorkPlaneAnchor;
 
 import toolpipe.pipeline       : g_pipeCtx;
 import toolpipe.packets        : SubjectPacket, WorkplanePacket, SnapPacket;
@@ -200,8 +201,8 @@ private WorkplaneFrame worldXZFrame() {
 }
 
 /// The ONE parameter frame (task 9408): primitive channels, placement gestures,
-/// the `applyHeadless` builds, arc, slice headless, the relocate and
-/// `screenToConstructionPlane` all read it. Auto, no pipe or no stage ⇒ the
+/// the `applyHeadless` builds, arc, slice headless and the relocate all read
+/// it. Auto, no pipe or no stage ⇒ the
 /// world identity (§10, §23); pinned ⇒ the stage's stored basis + centre. It
 /// reads the stage, never `pipeline.evaluate` (re-entrancy on event paths,
 /// doc/acen_auto_port_plan.md Risk 3); the live camera-facing basis is
@@ -229,24 +230,34 @@ Viewport planeLocalViewport(const ref Viewport vp, in WorkplaneFrame frame) {
     return l;
 }
 
-/// Where a primitive placement gesture lands, in `frame`'s LOCAL space (= the
-/// channels): the cursor ray of the plane-local view meets the local principal
-/// plane (`axisLocal` = the largest component of the local view direction)
-/// through the local camera focus (§23; task 7139). Total, like
-/// `screenToConstructionPlane`: a parallel principal plane falls back to the
-/// view-perpendicular plane through the same focus.
+/// Where a placement click meets the view work plane, in `frame`'s LOCAL
+/// space, UNQUANTISED: the cursor ray of the plane-local view meets the plane
+/// perpendicular to the most-facing local axis (`axisLocal`) through the view
+/// anchor (`viewWorkPlaneAnchor`; task 9411). Total: a parallel plane falls
+/// back to the view-perpendicular plane through the same anchor.
+Vec3 placementPlaneHit(float sx, float sy, const ref Viewport vp,
+                       in WorkplaneFrame frame, out int axisLocal)
+{
+    Viewport l = planeLocalViewport(vp, frame);
+    axisLocal = viewPrincipalAxis(frame, vp);
+    immutable Vec3 anchor = viewWorkPlaneAnchor(l, axisLocal);
+    Vec3 o, d, hit;
+    screenPointToRay(sx, sy, l, o, d);
+    if (rayPlaneIntersect(o, d, anchor, axisUnit(axisLocal), hit)) return hit;
+    if (rayPlaneIntersect(o, d, anchor, Vec3(l.view[2], l.view[6], l.view[10]), hit))
+        return hit;
+    return anchor;
+}
+
+/// Where a placement click lands, in `frame`'s LOCAL space (= the channels):
+/// `placementPlaneHit` snapped to the view quantum on every channel — the one
+/// click law of the create tools, the radial-array centre, the falloff point
+/// and the relocate click (K-W / K-W2, tests/fixtures/create_click_plane.json).
 Vec3 screenToPlacementLocal(float sx, float sy, const ref Viewport vp,
                             in WorkplaneFrame frame, out int axisLocal)
 {
-    Viewport l = planeLocalViewport(vp, frame);
-    Vec3 camBack = Vec3(l.view[2], l.view[6], l.view[10]);
-    axisLocal = viewPrincipalAxis(frame, vp);
-    Vec3 normal = axisUnit(axisLocal);
-    Vec3 o, d, hit;
-    screenPointToRay(sx, sy, l, o, d);
-    if (rayPlaneIntersect(o, d, l.focus, normal, hit)) return hit;
-    if (rayPlaneIntersect(o, d, l.focus, camBack, hit)) return hit;
-    return l.focus;
+    return vectorSnap(placementPlaneHit(sx, sy, vp, frame, axisLocal),
+                      viewVectorQuantum(vp));
 }
 
 /// World-space basis triple for Create-tool gizmos (mover arrows / plane
@@ -334,53 +345,12 @@ bool workplaneCursorPlaneHit(in WorkplaneFrame frame, const ref Viewport vp,
     return rayPlaneIntersect(o, d, planeOrigin, planeNormal, hitLocal);
 }
 
-enum ConstructionPlaneMode {
-    activeWorkplane,
-}
-
-/// Where a placement click lands, in WORLD space.
-///
-/// TOTAL — there is no "could not", and that is the point. The call sites this
-/// replaces were written `if (screenToWorkPlane(...)) handle.setPos(hit);`
-/// with no else, so a refusal kept the previous value and the click was simply
-/// not registered. A boolean nobody is forced to read turns "cannot" into
-/// "unchanged", which is indistinguishable from success at the only place a
-/// user can see it.
-///
-/// The plane FOLLOWS THE VIEW, which is the other half of the same defect: the
-/// plane those call sites projected onto was the fixed world floor (Y = 0,
-/// normal (0,1,0)), which a horizontal view's ray is exactly parallel to — so
-/// all four horizontal axis presets refused, every time, in silence.
-///
-/// Primitive placement does NOT come here: it is plane-local and lives in
-/// `screenToPlacementLocal` (task 7139, §23). The tools that still do keep the
-/// active construction plane law, which lies outside that create-only
-/// measurement.
-Vec3 screenToConstructionPlane(float sx, float sy, const ref Viewport vp,
-                               ConstructionPlaneMode mode)
-{
-    WorkplaneFrame wf = primitivePlacementFrame();
-    Vec3 planeOrigin = wf.isAuto ? vp.focus : wf.origin;
-    Vec3 planeNormal = wf.isAuto ? pickMostFacingPlane(vp).normal : wf.normal;
-
-    Vec3 o, d;
-    screenPointToRay(sx, sy, vp, o, d);
-
-    Vec3 hit;
-    if (rayPlaneIntersect(o, d, planeOrigin, planeNormal, hit))
-        return hit;
-
-    // A pinned plane can be edge-on. The camera-perpendicular fallback through
-    // the selected origin is guaranteed to meet the cursor ray.
-    Vec3 camBack = Vec3(vp.view[2], vp.view[6], vp.view[10]);
-    if (rayPlaneIntersect(o, d, planeOrigin, camBack, hit))
-        return hit;
-
-    // Unreachable: `camBack` is the ray direction itself under ortho and
-    // within one half-FOV of it under perspective. Returning the plane origin
-    // (the point under the cursor at screen centre) is a defined answer, not
-    // a silent retention of whatever the caller had before.
-    return planeOrigin;
+/// `screenToPlacementLocal` on the parameter frame, in WORLD space: the click
+/// point of a reader with no frame of its own (falloff point, radial-array
+/// centre, wrapped-command handle, relocate).
+Vec3 screenToPlacementWorld(float sx, float sy, const ref Viewport vp) {
+    auto f = primitivePlacementFrame();
+    return transformPoint(f.toWorld, screenToPlacementLocal(sx, sy, vp, f));
 }
 
 /// `screenToPlacementLocal` for a caller that does not need the axis.
@@ -667,7 +637,7 @@ unittest { // ortho: identical to the ported law's no-ray arm, term for term
 }
 
 
-unittest { // screenToConstructionPlane is TOTAL where the old floor plane refused
+unittest { // the placement click is TOTAL where the old floor plane refused
     import std.math : abs;
     import math : screenPointToRay;
 
@@ -700,10 +670,12 @@ unittest { // screenToConstructionPlane is TOTAL where the old floor plane refus
     assert(abs(got.z - focus.z) < 1e-5f,
            "the plane follows the view AND is anchored at the camera focus: "
            ~ "a Front view lands on Z = focus.z, not Z = 0");
-    // ...and in-plane it is the point under the cursor, which under ortho is
-    // the unprojected click itself.
-    assert(abs(got.x - rayO.x) < 1e-5f && abs(got.y - rayO.y) < 1e-5f,
-           "in-plane, an ortho click lands where it was made");
+    // ...and in-plane it is the point under the cursor (under ortho the
+    // unprojected click itself) snapped to the view quantum.
+    immutable float q = viewVectorQuantum(vp);
+    assert(q > 0 && abs(got.x - vectorSnap(rayO, q).x) < 1e-5f
+                 && abs(got.y - vectorSnap(rayO, q).y) < 1e-5f,
+           "in-plane, an ortho click lands where it was made, on the q lattice");
     assert(abs(got.x - focus.x) > 1e-3f || abs(got.y - focus.y) > 1e-3f,
            "rig premise: the pixel must be off-centre, or nothing is measured");
 }

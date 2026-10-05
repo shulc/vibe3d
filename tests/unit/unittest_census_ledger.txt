@@ -243,3 +243,4 @@ drop 6 78 9426 the eleven in-source parameter-update owner unittests became one 
 drop 0 1 9431 the zero pin on the retired headless split+gap guard spelling: absence of a removed twin is not a contract (review nit)
 drop 1 3 9439 the standalone hoverAtPress cell (its rule reddens every press cell) and the census's edge-slice absorb text check (edge_slice_tool_test line 75 is its witness) removed
 drop 0 6 9409 handle hit census cuts: the firstHitPart roster, two screenAxisFraction asserts already pinned elsewhere, the area-precedence cell (a suite cell reddens on the same mutation) with its rig asserts
+drop 2 7 9411 relocate_plane_test: the workPlanePoint lock arm (ported, never wired) and its locked-view arm (unreachable from the relocate) were deleted with their two unittests

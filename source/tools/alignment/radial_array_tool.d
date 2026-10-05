@@ -23,8 +23,7 @@ import command : Command;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
-import tools.create.create_common : ConstructionPlaneMode,
-                                    screenToConstructionPlane;
+import tools.create.create_common : screenToPlacementWorld;
 
 import std.math : sin, cos, atan2, PI;
 import std.json : JSONValue;
@@ -573,16 +572,10 @@ public:
         // Off-handle click: reposition the rotation center (reference
         // gesture "reposition-center" — see the class doc comment).
         //
-        // The automatic plane follows the view and the projection cannot
-        // refuse. A pinned plane retains its active frame. This was
-        // `if (screenToWorkPlane(...)) { center_ = hit; }`
-        // against the fixed world floor: in Front / Back / Left / Right the
-        // ray is parallel to that floor, so the call returned false and the
-        // missing `else` turned it into "the centre stayed put" — a click the
-        // user made and the tool never registered.
+        // The create click law (K-W W1f / W1h), total: the old floor plane
+        // refused in every horizontal view and the click was lost.
         //
-        // That construction plane is a WORLD construct however it is oriented,
-        // so the point it returns is a WORLD point — and `center_` is read by
+        // The point is a WORLD point — and `center_` is read by
         // `Mesh.radialArrayFaces`, which pivots the layer's own stored
         // coordinates. Writing it in unconverted built the array around its
         // image under the identity matrix (task 0660). `toLocalPos` is the
@@ -592,9 +585,7 @@ public:
         sessionStepBegins();
         gestureOpen = true;
         center_ = OverlaySpace.ofPrimary().toLocalPos(
-                      screenToConstructionPlane(cast(float)e.x, cast(float)e.y,
-                                                cachedVp,
-                                                ConstructionPlaneMode.activeWorkplane));
+                      screenToPlacementWorld(cast(float)e.x, cast(float)e.y, cachedVp));
         rebuildPreview();
         return true;
     }

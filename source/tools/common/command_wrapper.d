@@ -36,8 +36,7 @@ import tool   : Tool, GestureRecordMode, ToolSessionPolicy, CommandClose;
 import edit_session : FrameParameterEvalClient, RefireClient;
 import params : Param;
 import math   : Vec3, Viewport;
-import tools.create.create_common : ConstructionPlaneMode,
-                                    screenToConstructionPlane;
+import tools.create.create_common : screenToPlacementWorld;
 import shader : Shader;
 import handler : ClickPointHandler;
 import command_history : CommandHistory;
@@ -564,24 +563,12 @@ abstract class CommandWrapperTool : Tool, FrameParameterEvalClient, RefireClient
         dragStartY = e.y;
         dragging = true;
 
-        // Project the click pixel onto the camera-facing focus plane and put
-        // the handle there. Clicking in the 3D viewport sets the tool into
-        // interactive mode and draws its handle at the click point. Handle
-        // visibility is gated on `dragging`, so it appears here and
-        // disappears on LMB-up.
-        //
-        // This used to read `if (screenToWorkPlane(...)) setPos(hit);` against
-        // the fixed world floor (Y = 0). Two defects in one line, task 0661:
-        // the floor does not follow the view, so in any horizontal view the
-        // click ray is exactly parallel to it and there is no intersection;
-        // and the refusal had no `else`, so "could not" became "kept the
-        // previous position" — the click looked registered and was not.
-        // `screenToConstructionPlane` is TOTAL. Its automatic plane follows
-        // the view; a pinned plane retains the active construction frame.
+        // The handle appears at the click point (shown while `dragging`): the
+        // create click law, total (K-W2 W1k; the old floor plane refused in
+        // every horizontal view, task 0661).
         if (viewRef !is null && clickHandle !is null)
-            clickHandle.setPos(screenToConstructionPlane(
-                cast(float)e.x, cast(float)e.y, cachedVp,
-                ConstructionPlaneMode.activeWorkplane));
+            clickHandle.setPos(screenToPlacementWorld(
+                cast(float)e.x, cast(float)e.y, cachedVp));
         return true;
     }
 

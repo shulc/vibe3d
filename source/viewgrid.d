@@ -44,9 +44,9 @@ module viewgrid;
 // the grid needs it and it is a property of the VIEW rather than of a drag.
 // ---------------------------------------------------------------------------
 
-import std.math : log10, floor, pow, fabs, isFinite, sqrt, isNaN;
+import std.math : log10, floor, ceil, pow, fabs, isFinite, sqrt, isNaN;
 
-import math : Vec3, Viewport;
+import math : Vec3, Viewport, isOrtho;
 
 // ---------------------------------------------------------------------------
 // The mantissa ladder
@@ -317,11 +317,9 @@ float relocateQuantum(float pixelSize, const ref ViewGridPrefs p) @safe pure not
     return g > 0 ? cast(float)(kRelocateQuantumSteps * cast(double)g) : 0.0f;
 }
 
-/// Round half AWAY from zero. Local to this module's `fromFixed` arm; the
-/// relocate port has its own float-typed copy at its own site, deliberately
-/// (that one is part of a law being restated there and is tested there).
+/// Round half AWAY from zero, in double (the `fromFixed` arm; `dnint` below
+/// is the float form the work-plane law uses).
 private double roundHalfAwayFromZero(double x) @safe pure nothrow @nogc {
-    import std.math : ceil;
     return x >= 0 ? floor(x + 0.5) : ceil(x - 0.5);
 }
 
@@ -375,6 +373,60 @@ float viewWorldPerPixel(const ref Viewport vp) @safe pure nothrow @nogc {
 float viewVectorQuantum(const ref Viewport vp) {
     immutable float px = viewWorldPerPixel(vp);
     return viewGridSubStep(px, viewGridSize(px, g_viewGrid), g_viewGrid);
+}
+
+/// Round half AWAY FROM ZERO — Fortran's `dnint`, not C's `rint` (half to
+/// even). No captured component lands on an exact half, so the tie rule is
+/// the read's, not a measurement's.
+float dnint(float x) @safe pure nothrow @nogc {
+    return x >= 0 ? floor(x + 0.5f) : ceil(x - 0.5f);
+}
+
+/// Component-wise `dnint(v/step)*step`; a step <= 0 is "disabled" and returns
+/// `v` untouched.
+Vec3 vectorSnap(Vec3 v, float step) @safe pure nothrow @nogc {
+    if (step <= 0) return v;
+    return Vec3(dnint(v.x / step) * step,
+                dnint(v.y / step) * step,
+                dnint(v.z / step) * step);
+}
+
+/// One component of a Vec3 by index (0=x, 1=y, 2=z).
+float axisComp(Vec3 v, int i) @safe pure nothrow @nogc {
+    return i == 0 ? v.x : (i == 1 ? v.y : v.z);
+}
+
+/// `v` with component `i` replaced.
+Vec3 withAxisComp(Vec3 v, int i, float c) @safe pure nothrow @nogc {
+    if (i == 0) return Vec3(c, v.y, v.z);
+    if (i == 1) return Vec3(v.x, c, v.z);
+    return Vec3(v.x, v.y, c);
+}
+
+/// The work-plane point of a perspective view: the focus with every channel
+/// snapped to `viewSnapStep`, then its channel `k` quantised to
+/// `quantumStep` (ten grid steps; 0 disables either stage).
+Vec3 niceOrigin(Vec3 focus, int k, float quantumStep, float viewSnapStep)
+        @safe pure nothrow @nogc {
+    Vec3 q = vectorSnap(focus, viewSnapStep);
+    if (quantumStep > 0)
+        q = withAxisComp(q, k, dnint(axisComp(q, k) / quantumStep) * quantumStep);
+    return q;
+}
+
+/// The view's work-plane ANCHOR: the point the plane of a placement click
+/// passes through, perpendicular to axis `axisLocal`, in the frame `localVp`
+/// is expressed in (plane-local under a pin). Perspective: `niceOrigin` of the
+/// focus (ten grid steps on the axis); ortho: the focus; both then snapped to
+/// the view quantum. One law for every click reader (captures K-W / K-W2,
+/// tests/fixtures/create_click_plane.json).
+Vec3 viewWorkPlaneAnchor(const ref Viewport localVp, int axisLocal) {
+    immutable float px = viewWorldPerPixel(localVp);
+    immutable float q = viewVectorQuantum(localVp);
+    Vec3 f = localVp.focus;
+    if (!isOrtho(localVp))
+        f = niceOrigin(f, axisLocal, relocateQuantum(px, g_viewGrid), q);
+    return vectorSnap(f, q);
 }
 
 /// The grid step for a view, end to end. The renderer's one call.

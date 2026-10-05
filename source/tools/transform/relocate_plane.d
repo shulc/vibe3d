@@ -36,55 +36,23 @@ module tools.transform.relocate_plane;
 // step became a derived quantity — the world length of 25 screen pixels on a
 // mantissa ladder — which gave `quantumStep` and `viewSnapStep` numbers they
 // never had, so the call site supplies both and the plane point is genuinely
-// snapped and quantised. Everything else here (the bias, the lock arm, the
-// snap of the ANSWER) is still ported-but-unfed, each for a reason written at
-// its own field.
+// snapped and quantised. Everything else here (the bias, the snap of the
+// ANSWER) is still ported-but-unfed, each for a reason written at its own
+// field. (The lock arm, ported but never wired, is deleted.)
 //
-// The rule this file runs on, and the reason those three are still off: a term
+// The rule this file runs on, and the reason those two are still off: a term
 // we can RESTATE is not thereby a term we can SWITCH ON. Restating is a read;
 // switching on is a claim about behaviour, and it needs a measurement of its
 // own. `answerSnapStep` exists as a separate field precisely because feeding
 // it from the evidenced one moved a frozen row on no evidence at all.
-//
-// THE LOCK ARM IS PORTED BUT NOT WIRED, and that is deliberate. See
-// `RelocatePlanePrefs.lock`.
 // ---------------------------------------------------------------------------
 
 import math : Vec3, Viewport, isOrtho, isAxisView, normalize, dot;
 import std.math : abs, floor, ceil;
 
-/// Round half AWAY FROM ZERO — the reference's `Dnint`, which is Fortran's
-/// rounding and NOT C's `rint` (half-to-even).
-///
-/// The tie rule is NOT pinned by any measurement we hold: none of the 18
-/// components in the rig that fixed this law lands on an exact half. It is
-/// written half-away-from-zero because that is what `Dnint` means, not
-/// because a capture chose it.
-float dnint(float x) @safe pure nothrow @nogc {
-    return x >= 0 ? floor(x + 0.5f) : ceil(x - 0.5f);
-}
-
-/// Component-wise `Dnint(v/step)*step`. A step of zero or less is the
-/// reference's "disabled" value and returns `v` untouched — the function
-/// returns immediately in that case, it does not round by 0.
-Vec3 vectorSnap(Vec3 v, float step) @safe pure nothrow @nogc {
-    if (step <= 0) return v;
-    return Vec3(dnint(v.x / step) * step,
-                dnint(v.y / step) * step,
-                dnint(v.z / step) * step);
-}
-
-/// One component of a Vec3 by index (0=x, 1=y, 2=z).
-float axisComp(Vec3 v, int i) @safe pure nothrow @nogc {
-    return i == 0 ? v.x : (i == 1 ? v.y : v.z);
-}
-
-/// `v` with component `i` replaced.
-Vec3 withAxisComp(Vec3 v, int i, float c) @safe pure nothrow @nogc {
-    if (i == 0) return Vec3(c, v.y, v.z);
-    if (i == 1) return Vec3(v.x, c, v.z);
-    return Vec3(v.x, v.y, c);
-}
+/// The rounding helpers and `niceOrigin` live in `viewgrid` (the view
+/// work-plane anchor reads them); re-exported for this module's callers.
+public import viewgrid : dnint, vectorSnap, axisComp, withAxisComp, niceOrigin;
 
 /// `lockedViewAxis` and `eyeVectorAt` used to be defined HERE and are now in
 /// `math`, because the gizmo's handle-facing cull (`handles.gl_util`) needs
@@ -93,7 +61,7 @@ Vec3 withAxisComp(Vec3 v, int i, float c) @safe pure nothrow @nogc {
 /// still resolves and this module's own law reads unchanged.
 public import math : lockedViewAxis, eyeVectorAt;
 
-/// The four shipped work-plane preferences, the view's own snap step, and the
+/// The shipped work-plane bias preferences, the view's own snap step, and the
 /// out-of-plane quantum.
 ///
 /// EVERY DEFAULT HERE IS "OFF", AND THAT IS DELIBERATE. No capture in this
@@ -108,56 +76,6 @@ struct RelocatePlanePrefs {
     /// The preferred work-plane axis (0=X, 1=Y, 2=Z), or -1 for none. The
     /// reference falls through to the argmax for any value outside {0,1,2}.
     int   preferredAxis = -1;
-    /// Lock the work plane instead of letting it follow the view rotation.
-    ///
-    /// PORTED, TESTED, AND DELIBERATELY NOT WIRED TO ANYTHING. vibe3d's
-    /// pinned work plane is strictly MORE expressive than the state this arm
-    /// represents, so there is no lossless way to feed it:
-    ///
-    ///   * this arm's entire pinned state is one axis INDEX (`preferredAxis`)
-    ///     plus one SCALAR (`lockVal`) along it — in the reference those are
-    ///     two free user preferences, and the structure has no rotation and no
-    ///     other origin component anywhere;
-    ///   * ours is a full frame — `WorkplaneStage` carries `rotation` as
-    ///     Euler degrees (B = Rz·Rx·Ry) and `center` as a full `Vec3`, both
-    ///     reachable from shipped commands.
-    ///
-    /// Mapping the frame onto the pair would discard the rotation and two
-    /// thirds of the origin without telling anyone: a user who tilted the
-    /// plane would silently get the pivot of an axis-aligned one. The relocate
-    /// call site therefore keeps a pinned plane on a full-frame plane
-    /// intersection and leaves `lock` false.
-    ///
-    /// It is kept here because it is a faithful restatement of a real arm and
-    /// a reader deserves to see what the reference's lock actually is before
-    /// concluding ours is the same thing.
-    bool  lock = false;
-    /// The position along the locked plane's axis. Read only when `lock`.
-    ///
-    /// NOTE THE ASYMMETRY, IT IS THE REFERENCE'S AND IT IS VERIFIED. When the
-    /// lock arm runs, the axis assignment `k := preferredAxis` is CONDITIONAL
-    /// (it is skipped when the view has a locked axis of its own) but the
-    /// write `Q[k] = lockVal` is UNCONDITIONAL — it lands on whatever `k` is,
-    /// which in that case is still the argmax. Disassembly of the arm, with
-    /// `k` in `r12d` and `&Q` in `r14`:
-    ///
-    ///     cmp    ebx, -1              ; preferredAxis == -1?
-    ///     je     .write               ;   -> skip the assignment, STILL write
-    ///     call   <view locked axis>
-    ///     test   eax, eax
-    ///     cmovl  r12d, ebx            ; k := preferredAxis IFF no locked axis
-    ///   .write:
-    ///     movsxd r12, r12d
-    ///     mov    r13, [r13+<lockVal>]
-    ///     mov    [r14 + r12*8], r13   ; Q[k] = lockVal  -- unconditional
-    ///
-    /// So both of the "obvious fixes" — assigning `k` first, or skipping the
-    /// write with it — would be a DEVIATION from the read, not a correction of
-    /// it. This module keeps the read. The place that was wrong was the caller
-    /// that manufactured a `lockVal` by reading one component of a work-plane
-    /// origin along a DIFFERENT axis than the one it would be written to; that
-    /// caller no longer exists (see `lock`).
-    float lockVal = 0.0f;
     /// The view's own vector-snap step: EVERY component of the plane point is
     /// rounded to a multiple of it, unconditionally, before the out-of-plane
     /// quantum below — and `principalPlaneCenter` feeds the same step to the
@@ -227,28 +145,6 @@ struct RelocatePlanePrefs {
     float quantumStep = 0.0f;
 }
 
-/// The plane point: the camera focus, snapped, with its OUT-OF-PLANE
-/// coordinate quantised to one grid division.
-///
-/// The reference also pushes `Q` along the eye vector by the view's target
-/// distance for one further view type, and that branch is NOT ported. The
-/// type is the view looked THROUGH A SCENE ITEM — a camera or a light — and
-/// is distinct from both the axis-locked orthographic class and the ordinary
-/// perspective view, which is its own type and takes the plain path. So this
-/// is a gap only for a view vibe3d's relocate does not offer, not for the
-/// default viewport; an earlier note here left the type unidentified and
-/// overstated it as an open hole. (The identification is handed down rather
-/// than re-derived here; what is checked in this tree is that the six
-/// axis-preset direction names sit in one ordered table immediately ahead of
-/// the perspective and camera entries, which is consistent with it.)
-Vec3 niceOrigin(Vec3 focus, int k, float quantumStep, float viewSnapStep)
-        @safe pure nothrow @nogc {
-    Vec3 q = vectorSnap(focus, viewSnapStep);
-    if (quantumStep > 0)
-        q = withAxisComp(q, k, dnint(axisComp(q, k) / quantumStep) * quantumStep);
-    return q;
-}
-
 /// The preferred-work-plane bias: `if (strength > 1 - |D[j]|) k := j`.
 ///
 /// `1 - |D[j]|` is near zero exactly when the view looks nearly straight down
@@ -262,7 +158,6 @@ Vec3 niceOrigin(Vec3 focus, int k, float quantumStep, float viewSnapStep)
 int biasedAxis(int k, Vec3 eyeDir, const ref RelocatePlanePrefs p)
         @safe pure nothrow @nogc {
     if (p.strength <= 0) return k;
-    if (p.lock) return k;
     int j = p.preferredAxis;
     if (j < 0 || j > 2) return k;
     if (k == j) return k;
@@ -285,41 +180,15 @@ PlanePoint workPlanePoint(const ref Viewport vp, int argmaxAxis,
         @safe pure nothrow @nogc {
     PlanePoint r;
     r.k = argmaxAxis;
-    immutable int locked = lockedViewAxis(vp);
-
-    // An axis-locked orthographic view takes the RAW focus — no quantum at
-    // all — and is excluded from the bias. Both are the same condition in the
-    // reference and both are read at their own site.
-    if (locked >= 0) {
-        r.q = vp.focus;
-    } else {
+    r.q = niceOrigin(vp.focus, r.k, p.quantumStep, p.viewSnapStep);
+    // The eye vector is computed even when the bias is dormant, and is then
+    // discarded by `biasedAxis`'s first early-out — as the reference does.
+    immutable int bk = biasedAxis(r.k, eyeVectorAt(vp, r.q), p);
+    if (bk != r.k) {
+        // The quantum is applied to the OUT-OF-PLANE coordinate, so a new
+        // axis recomputes the plane point.
+        r.k = bk;
         r.q = niceOrigin(vp.focus, r.k, p.quantumStep, p.viewSnapStep);
-        // The eye vector is computed even when the bias is dormant, and is
-        // then discarded by `biasedAxis`'s first early-out. Left that way on
-        // purpose: it mirrors the reference, which also computes it before the
-        // gate, and it is one normalize per relocate CLICK. If you hoist it
-        // behind the gate, hoist the whole predicate — `biasedAxis` has four
-        // early-outs and duplicating three of them here is how they drift.
-        immutable int bk = biasedAxis(r.k, eyeVectorAt(vp, r.q), p);
-        if (bk != r.k) {
-            r.k = bk;
-            // The reference recomputes the plane point for the new axis, and
-            // it must: the quantum is applied to the OUT-OF-PLANE coordinate,
-            // so changing which one that is changes Q.
-            r.q = niceOrigin(vp.focus, r.k, p.quantumStep, p.viewSnapStep);
-        }
-    }
-
-    // The lock arm. The axis assignment is conditional, the value write is
-    // not — see `RelocatePlanePrefs.lockVal` for the instructions and for why
-    // that asymmetry is kept rather than "fixed". The reference skips the
-    // assignment only on the sentinel -1 and would happily index off the end
-    // of Q for any other out-of-range value; the `<= 2` here is a bounds guard
-    // on our side, not a difference in the rule.
-    if (p.lock) {
-        if (p.preferredAxis >= 0 && p.preferredAxis <= 2 && locked < 0)
-            r.k = p.preferredAxis;
-        r.q = withAxisComp(r.q, r.k, p.lockVal);
     }
     return r;
 }
@@ -369,7 +238,7 @@ bool posToPrincipalPlane(const ref Viewport vp, Vec3 rayOrigin, Vec3 rayDir,
 ///
 /// `argmaxAxis` is the caller's camera-most-facing axis. `axisOut` receives
 /// the principal axis actually used, which is NOT always `argmaxAxis` — the
-/// bias and the lock can both move it.
+/// bias can move it.
 bool principalPlaneCenter(const ref Viewport vp, Vec3 rayOrigin, Vec3 rayDir,
                           int argmaxAxis, const ref RelocatePlanePrefs p,
                           out Vec3 c, out int axisOut)

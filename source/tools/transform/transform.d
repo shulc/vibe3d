@@ -1886,19 +1886,16 @@ protected:
                 // Reads WorkplaneStage state directly (no pipeline.evaluate).
                 auto wf = primitivePlacementFrame();
 
-                // --- ORTHOGRAPHIC: THE VIEW PLANE THROUGH THE PRIOR CENTRE. ---
+                // --- ORTHOGRAPHIC: THE PRIOR CENTRE'S DEPTH. ---
                 //
-                // Gap 364 / task 7134 (fixture relocate_axis_view_depth.json):
-                // an off-gizmo press drags a handle standing at the centre held
-                // BEFORE the press across the view plane, so the landing keeps
-                // that centre's depth along the view axis — plane-local under a
-                // pinned plane — and never reads the camera focus. ONE rule for
-                // every ortho view, unpinned, pinned or turned; it replaces the
-                // focus-depth locked arm, the non-axis-ortho carve-out and the
-                // pinned plane-origin swap (task 0226) that stood here, all
-                // refuted by that capture. The prior centre is the action-centre
-                // stage's own answer, the single source of the pivot.
-                // Perspective keeps the chains below: nothing measured there.
+                // Gap 364 / task 7134 (fixture relocate_axis_view_depth.json;
+                // K-W2 W2c_ctrl): the press drags a handle standing at the
+                // centre held BEFORE the press across the view plane, so the
+                // landing keeps that centre's depth along the view axis —
+                // plane-local under a pinned plane. The prior centre is the
+                // action-centre stage's own answer. (Item mode, where the
+                // reference reads the click law instead — K-W2 W2c_item —
+                // never relocates here: the off-gizmo press is held back.)
                 if (isOrtho(cachedVp)) {
                     import tools.create.create_common : planeLocalViewport;
                     import tools.transform.relocate_plane : orthoRelocateThroughPrior;
@@ -1920,75 +1917,33 @@ protected:
                     return true;
                 }
 
-                // --- A USER-PINNED WORK PLANE KEEPS ITS FULL FRAME. ---
+                // --- PINNED PERSPECTIVE: THE CLICK LAW. ---
                 //
-                // This branch is deliberately NOT routed through the ported
-                // law, and the reason is a mismatch of representable state,
-                // not a shortcut. A pinned plane here is an arbitrary
-                // orientation plus an arbitrary point: WorkplaneStage carries
-                // `rotation` as Euler degrees (B = Rz·Rx·Ry) and `center` as a
-                // full Vec3, both reachable from shipped commands. The law's
-                // lock arm can hold one principal axis index plus one scalar,
-                // so collapsing our frame onto it would silently discard the
-                // rotation and two thirds of the origin. So the pinned plane
-                // keeps `rayPlaneIntersect` against the full (origin, normal)
-                // (perspective only: every ortho view took the arm above).
-                if (!wf.isAuto)
-                    return rayPlaneIntersect(crHitOrig, dir,
-                                             wf.origin, wf.normal, worldHit);
+                // The create click law, plane-local: the view work-plane
+                // anchor, the hit snapped to the view quantum (K-W W2a; the
+                // pinned plane's own origin never enters).
+                if (!wf.isAuto) {
+                    import tools.create.create_common : screenToPlacementWorld;
+                    worldHit = screenToPlacementWorld(cast(float)sx, cast(float)sy,
+                                                      cachedVp);
+                    return true;
+                }
 
                 // --- AUTO, PERSPECTIVE: the ported plane law. ---
                 //
-                // Everything about WHERE this lands lives in
-                // `tools.transform.relocate_plane` as pure functions; this
-                // call site's only job is to supply the argmax axis
-                // (`mostFacingAxis`, the same argmax and tie-break
-                // `pickMostFacingPlane` runs). Its no-ray locked arm is ortho
-                // only and so is not reached from here any more; the create
-                // tools still use it.
+                // `tools.transform.relocate_plane`: the plane through the focus
+                // with its out-of-plane coordinate quantised to ten grid steps
+                // after a q pre-snap (task 0570) — the same plane as the view
+                // anchor; the ANSWER is not snapped (`answerSnapStep`, dormant:
+                // no unpinned capture reads it). This site supplies the argmax
+                // axis (`mostFacingAxis`, `pickMostFacingPlane`'s tie-break).
                 Vec3 camBack = Vec3(cachedVp.view[2],
                                     cachedVp.view[6],
                                     cachedVp.view[10]);
                 immutable int argmaxAxis =
                     mostFacingAxis(camBack, Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1));
                 RelocatePlanePrefs prefs;
-                // THE OUT-OF-PLANE QUANTUM, SWITCHED ON (task 0570).
-                //
-                // The law rounds the plane point's out-of-plane coordinate to
-                // a multiple of ten grid steps. It shipped dormant because
-                // the step was unknown and two rigs appeared to demand
-                // incompatible constants — see `RelocatePlanePrefs.quantumStep`
-                // for how that turned out to be an axis-indexing mistake
-                // rather than a real disagreement. The step is now a derived
-                // quantity, not a constant, and the two rigs are two zooms of
-                // it.
-                //
-                // It is a pure function of this view's pixel size, so it needs
-                // no state and follows the camera automatically.
-                immutable float _relPx = viewWorldPerPixel(cachedVp);
-                prefs.quantumStep = relocateQuantum(_relPx, g_viewGrid);
-                // THE VIEW'S VECTOR SNAP, SWITCHED ON (task 0570). A second,
-                // separate and much finer term: every component is rounded to
-                // the grid's SUB-step, which is the world length of ONE screen
-                // pixel nice-ceiled — not a tenth of the drawn step. It is
-                // applied to the plane point BEFORE the quantum above, and
-                // `principalPlaneCenter` also feeds it to the final snap of
-                // the answer.
-                //
-                // ONLY THE PLANE-POINT SNAP. The reference stores one
-                // sub-step and would feed both this and the snap of the
-                // ANSWER from it, and the first cut of this change did the
-                // same — which moved a frozen characterization row by ~0.001
-                // on a term the grid read does not cover. The read traces the
-                // snap inside the plane-point routine; the answer-side snap
-                // is the plane-law port's own reading, with no measurement
-                // behind it here. So `RelocatePlanePrefs.answerSnapStep` is a
-                // separate field and stays at zero until its own read
-                // arrives. See its doc comment.
-                //
-                // Sub-pixel by construction: at most half a screen pixel of
-                // world, and it cannot disturb the quantum above, which is
-                // always a whole number of sub-steps.
+                prefs.quantumStep = relocateQuantum(viewWorldPerPixel(cachedVp), g_viewGrid);
                 prefs.viewSnapStep = viewVectorQuantum(cachedVp);
                 int usedAxis;
                 return principalPlaneCenter(cachedVp, crHitOrig, dir,

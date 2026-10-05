@@ -1,0 +1,1242 @@
+{
+ "_about": "Click placement on the view work plane, captured from the reference (captures K-W and K-W2, tasks 9395 and 9456). Frame = the construction plane's local frame (identity when none is pinned; world = origin + Rx(rot_x_deg) * frame). Families: PR = the most-facing frame axis through the focus, rounded to 10*grid in perspective after a q pre-snap (exact in ortho), the hit then snapped to q = nice_up(1/px_per_m) on EVERY channel incl. the depth; AXIS-FOCUS(PR) = PR under a pin (plane-local); NICE = PR for the action-centre relocate click; FOCUS-PLANE = the ortho anchor in item selection mode; ORTHO-PRIOR / PRIOR-* = the pre-press centre's depth (component selection mode); RAW / R13 / Q / OWN = the refuted families (unrounded focus / focus to 0.05 / focus to q / the plane's own normal through its origin).",
+ "rule": {
+  "perspective": "offset = dnint(dnint(f/q)*q / (10*grid)) * 10*grid on the most-facing frame axis; hit = ray cap that plane; point = snap(hit, q)",
+  "orthographic": "offset = f; point = snap(hit, q) on EVERY channel incl. the depth (W2c_item: f 0.7133 -> 0.715)",
+  "relocate_orthographic_component_mode": "depth = pre-press centre (unsnapped, the K-W W2b / \u00a729 law; W2c_ctrl here)",
+  "relocate_orthographic_item_mode": "the anchor plane (FOCUS-PLANE/q) even with geometry (W2c_item_ctrl); the item pivot prior is NOT read",
+  "relocate_component_mode_empty_mesh": "the move tool refuses to arm (no data) -- no relocate happens (b1 W2c / W2d void)",
+  "nice_up": "smallest m*10^e >= x, m in {1,2,5}",
+  "grid": "nice_up(25/px_per_m)",
+  "q": "nice_up(1/px_per_m)",
+  "dnint": "round half away from zero"
+ },
+ "cells": {
+  "W1a": {
+   "gesture": "box base drag (press = corner)",
+   "view": {
+    "projection": "perspective",
+    "px_per_m": 440.0,
+    "grid": 0.1,
+    "q": 0.005,
+    "focus_frame": [
+     0.07,
+     0.37,
+     0.0
+    ],
+    "camera_back_frame": [
+     -0.0,
+     1.0,
+     0.0
+    ],
+    "most_facing_axis": "Y"
+   },
+   "plane": {
+    "origin": [
+     0,
+     0,
+     0
+    ],
+    "rot_x_deg": 0.0
+   },
+   "prior_centre_frame": null,
+   "measured_frame": [
+    0.41,
+    0.0,
+    0.295
+   ],
+   "measured_world": [
+    0.41,
+    0.0,
+    0.295
+   ],
+   "winner": "PR",
+   "next_family": "R13",
+   "margin_to_next_family": 0.353023
+  },
+  "W1a_q": {
+   "gesture": "box base drag (press = corner)",
+   "view": {
+    "projection": "perspective",
+    "px_per_m": 440.0,
+    "grid": 0.1,
+    "q": 0.005,
+    "focus_frame": [
+     0.07,
+     0.3733,
+     0.0
+    ],
+    "camera_back_frame": [
+     -0.0,
+     1.0,
+     0.0
+    ],
+    "most_facing_axis": "Y"
+   },
+   "plane": {
+    "origin": [
+     0,
+     0,
+     0
+    ],
+    "rot_x_deg": 0.0
+   },
+   "prior_centre_frame": null,
+   "measured_frame": [
+    0.41,
+    0.0,
+    0.295
+   ],
+   "measured_world": [
+    0.41,
+    0.0,
+    0.295
+   ],
+   "winner": "PR",
+   "next_family": "R13",
+   "margin_to_next_family": 0.353023
+  },
+  "W1b": {
+   "gesture": "box base drag (press = corner)",
+   "view": {
+    "projection": "orthographic",
+    "px_per_m": 440.0,
+    "grid": 0.1,
+    "q": 0.005,
+    "focus_frame": [
+     0.07,
+     0.37,
+     0.0
+    ],
+    "camera_back_frame": [
+     0.0,
+     1.0,
+     0.0
+    ],
+    "most_facing_axis": "Y"
+   },
+   "plane": {
+    "origin": [
+     0,
+     0,
+     0
+    ],
+    "rot_x_deg": 0.0
+   },
+   "prior_centre_frame": null,
+   "measured_frame": [
+    0.31,
+    0.37,
+    0.21
+   ],
+   "measured_world": [
+    0.31,
+    0.37,
+    0.21
+   ],
+   "winner": "PR",
+   "next_family": "R13",
+   "margin_to_next_family": 0.02
+  },
+  "W1c": {
+   "gesture": "box base drag (press = corner)",
+   "view": {
+    "projection": "perspective",
+    "px_per_m": 440.0,
+    "grid": 0.1,
+    "q": 0.005,
+    "focus_frame": [
+     0.07,
+     5.33,
+     0.0
+    ],
+    "camera_back_frame": [
+     -0.0,
+     1.0,
+     0.0
+    ],
+    "most_facing_axis": "Y"
+   },
+   "plane": {
+    "origin": [
+     0,
+     0,
+     0
+    ],
+    "rot_x_deg": 0.0
+   },
+   "prior_centre_frame": null,
+   "measured_frame": [
+    0.405,
+    5.0,
+    0.29
+   ],
+   "measured_world": [
+    0.405,
+    5.0,
+    0.29
+   ],
+   "winner": "PR",
+   "next_family": "RAW",
+   "margin_to_next_family": 0.332967
+  },
+  "W1c_40": {
+   "gesture": "box base drag (press = corner)",
+   "view": {
+    "projection": "perspective",
+    "px_per_m": 40.0,
+    "grid": 1.0,
+    "q": 0.05,
+    "focus_frame": [
+     0.07,
+     5.33,
+     0.0
+    ],
+    "camera_back_frame": [
+     -0.0,
+     1.0,
+     0.0
+    ],
+    "most_facing_axis": "Y"
+   },
+   "plane": {
+    "origin": [
+     0,
+     0,
+     0
+    ],
+    "rot_x_deg": 0.0
+   },
+   "prior_centre_frame": null,
+   "measured_frame": [
+    2.9,
+    10.0,
+    2.45
+   ],
+   "measured_world": [
+    2.9,
+    10.0,
+    2.45
+   ],
+   "winner": "PR",
+   "next_family": "R13",
+   "margin_to_next_family": 4.693863
+  },
+  "W1d": {
+   "gesture": "box base drag (press = corner)",
+   "view": {
+    "projection": "orthographic",
+    "px_per_m": 440.0,
+    "grid": 0.1,
+    "q": 0.005,
+    "focus_frame": [
+     0.07,
+     0.37,
+     0.0
+    ],
+    "camera_back_frame": [
+     0.0,
+     1.0,
+     0.0
+    ],
+    "most_facing_axis": "Y"
+   },
+   "plane": {
+    "origin": [
+     0,
+     0,
+     0
+    ],
+    "rot_x_deg": 0.0
+   },
+   "prior_centre_frame": null,
+   "measured_frame": [
+    0.305,
+    0.37,
+    0.21
+   ],
+   "measured_world": [
+    0.305,
+    0.37,
+    0.21
+   ],
+   "winner": "PR",
+   "next_family": "R13",
+   "margin_to_next_family": 0.02
+  },
+  "W1e": {
+   "gesture": "vertex create click",
+   "view": {
+    "projection": "perspective",
+    "px_per_m": 440.0,
+    "grid": 0.1,
+    "q": 0.005,
+    "focus_frame": [
+     0.07,
+     0.37,
+     0.0
+    ],
+    "camera_back_frame": [
+     -0.0,
+     1.0,
+     0.0
+    ],
+    "most_facing_axis": "Y"
+   },
+   "plane": {
+    "origin": [
+     0,
+     0,
+     0
+    ],
+    "rot_x_deg": 0.0
+   },
+   "prior_centre_frame": null,
+   "measured_frame": [
+    0.41,
+    0.0,
+    0.295
+   ],
+   "measured_world": [
+    0.41,
+    0.0,
+    0.295
+   ],
+   "winner": "PR",
+   "next_family": "R13",
+   "margin_to_next_family": 0.353023
+  },
+  "W1e_q": {
+   "gesture": "vertex create click",
+   "view": {
+    "projection": "perspective",
+    "px_per_m": 440.0,
+    "grid": 0.1,
+    "q": 0.005,
+    "focus_frame": [
+     0.07,
+     0.3733,
+     0.0
+    ],
+    "camera_back_frame": [
+     -0.0,
+     1.0,
+     0.0
+    ],
+    "most_facing_axis": "Y"
+   },
+   "plane": {
+    "origin": [
+     0,
+     0,
+     0
+    ],
+    "rot_x_deg": 0.0
+   },
+   "prior_centre_frame": null,
+   "measured_frame": [
+    0.41,
+    0.0,
+    0.295
+   ],
+   "measured_world": [
+    0.41,
+    0.0,
+    0.295
+   ],
+   "winner": "PR",
+   "next_family": "R13",
+   "margin_to_next_family": 0.353023
+  },
+  "W1f": {
+   "gesture": "radial array centre click",
+   "view": {
+    "projection": "perspective",
+    "px_per_m": 440.0,
+    "grid": 0.1,
+    "q": 0.005,
+    "focus_frame": [
+     0.07,
+     0.37,
+     0.0
+    ],
+    "camera_back_frame": [
+     -0.0,
+     1.0,
+     0.0
+    ],
+    "most_facing_axis": "Y"
+   },
+   "plane": {
+    "origin": [
+     0,
+     0,
+     0
+    ],
+    "rot_x_deg": 0.0
+   },
+   "prior_centre_frame": null,
+   "measured_frame": [
+    0.41,
+    0.0,
+    0.295
+   ],
+   "measured_world": [
+    0.41,
+    0.0,
+    0.295
+   ],
+   "winner": "PR",
+   "next_family": "R13",
+   "margin_to_next_family": 0.353023
+  },
+  "W1f_q": {
+   "gesture": "radial array centre click",
+   "view": {
+    "projection": "perspective",
+    "px_per_m": 440.0,
+    "grid": 0.1,
+    "q": 0.005,
+    "focus_frame": [
+     0.07,
+     0.3733,
+     0.0
+    ],
+    "camera_back_frame": [
+     -0.0,
+     1.0,
+     0.0
+    ],
+    "most_facing_axis": "Y"
+   },
+   "plane": {
+    "origin": [
+     0,
+     0,
+     0
+    ],
+    "rot_x_deg": 0.0
+   },
+   "prior_centre_frame": null,
+   "measured_frame": [
+    0.41,
+    0.0,
+    0.295
+   ],
+   "measured_world": [
+    0.41,
+    0.0,
+    0.295
+   ],
+   "winner": "PR",
+   "next_family": "R13",
+   "margin_to_next_family": 0.353023
+  },
+  "W1g": {
+   "gesture": "vertex create click",
+   "view": {
+    "projection": "perspective",
+    "px_per_m": 440.0,
+    "grid": 0.1,
+    "q": 0.005,
+    "focus_frame": [
+     0.1,
+     0.6,
+     0.7
+    ],
+    "camera_back_frame": [
+     -0.0,
+     0.5,
+     0.8660254
+    ],
+    "most_facing_axis": "Z"
+   },
+   "plane": {
+    "origin": [
+     0.2,
+     0.37,
+     0.0
+    ],
+    "rot_x_deg": 30.0
+   },
+   "prior_centre_frame": null,
+   "measured_frame": [
+    0.245,
+    0.8849994,
+    0.9999999
+   ],
+   "measured_world": [
+    0.445,
+    0.636432,
+    1.308525
+   ],
+   "winner": "AXIS-FOCUS(PR)",
+   "next_family": "WORLD-PR",
+   "margin_to_next_family": 0.284165
+  },
+  "W1h": {
+   "gesture": "radial array centre click",
+   "view": {
+    "projection": "perspective",
+    "px_per_m": 440.0,
+    "grid": 0.1,
+    "q": 0.005,
+    "focus_frame": [
+     0.1,
+     0.6,
+     0.7
+    ],
+    "camera_back_frame": [
+     -0.0,
+     0.5,
+     0.8660254
+    ],
+    "most_facing_axis": "Z"
+   },
+   "plane": {
+    "origin": [
+     0.2,
+     0.37,
+     0.0
+    ],
+    "rot_x_deg": 30.0
+   },
+   "prior_centre_frame": null,
+   "measured_frame": [
+    0.245,
+    0.885,
+    1.0
+   ],
+   "measured_world": [
+    0.445,
+    0.6364325,
+    1.3085254
+   ],
+   "winner": "AXIS-FOCUS(PR)",
+   "next_family": "WORLD-PR",
+   "margin_to_next_family": 0.284165
+  },
+  "W1i": {
+   "gesture": "box base drag (press = corner)",
+   "view": {
+    "projection": "perspective",
+    "px_per_m": 440.0,
+    "grid": 0.1,
+    "q": 0.005,
+    "focus_frame": [
+     0.1,
+     0.6,
+     0.7
+    ],
+    "camera_back_frame": [
+     -0.0,
+     0.5,
+     0.8660254
+    ],
+    "most_facing_axis": "Z"
+   },
+   "plane": {
+    "origin": [
+     0.2,
+     0.37,
+     0.0
+    ],
+    "rot_x_deg": 30.0
+   },
+   "prior_centre_frame": null,
+   "measured_frame": [
+    0.245,
+    0.8849994,
+    0.9999999
+   ],
+   "measured_world": [
+    0.445,
+    0.636432,
+    1.308525
+   ],
+   "winner": "AXIS-FOCUS(PR)",
+   "next_family": "WORLD-PR",
+   "margin_to_next_family": 0.284165
+  },
+  "W2a": {
+   "gesture": "automatic action-centre relocate click (move tool, empty space)",
+   "view": {
+    "projection": "perspective",
+    "px_per_m": 440.0,
+    "grid": 0.1,
+    "q": 0.005,
+    "focus_frame": [
+     0.4,
+     0.7,
+     0.2
+    ],
+    "camera_back_frame": [
+     0.2873537,
+     0.9578245,
+     1.22e-05
+    ],
+    "most_facing_axis": "Y"
+   },
+   "plane": {
+    "origin": [
+     0.2,
+     0.37,
+     0.0
+    ],
+    "rot_x_deg": 30.0
+   },
+   "prior_centre_frame": [
+    -0.7,
+    -0.4704294,
+    -0.0748076
+   ],
+   "measured_frame": [
+    0.835,
+    1.0,
+    0.285
+   ],
+   "measured_world": [
+    1.035,
+    1.0935254,
+    0.7468172
+   ],
+   "winner": "NICE",
+   "next_family": "FOCUS-RAW",
+   "margin_to_next_family": 0.30396
+  },
+  "W2b": {
+   "gesture": "automatic action-centre relocate click (move tool, empty space)",
+   "view": {
+    "projection": "orthographic",
+    "px_per_m": 440.0,
+    "grid": 0.1,
+    "q": 0.005,
+    "focus_frame": [
+     0.4,
+     0.7,
+     0.2
+    ],
+    "camera_back_frame": [
+     0.0,
+     1.0,
+     0.0
+    ],
+    "most_facing_axis": "Y"
+   },
+   "plane": {
+    "origin": [
+     0.2,
+     0.37,
+     0.0
+    ],
+    "rot_x_deg": 30.0
+   },
+   "prior_centre_frame": [
+    -0.7,
+    -0.4704294,
+    -0.0748076
+   ],
+   "measured_frame": [
+    0.64,
+    -0.4704294,
+    0.41
+   ],
+   "measured_world": [
+    0.84,
+    -0.2424038,
+    0.1198557
+   ],
+   "winner": "ORTHO-PRIOR",
+   "next_family": "RAW-PLANE",
+   "margin_to_next_family": 0.470429
+  },
+  "W1j": {
+   "gesture": "point-falloff right-button press (no motion): the falloff centre",
+   "selection_mode": "polygon (a selected source quad off-screen)",
+   "scene": "empty foreground mesh + source quad (-1.2..-1.0, 0, 0.8..1.0)",
+   "view": {
+    "projection": "perspective",
+    "px_per_m": 440.0,
+    "grid": 0.1,
+    "q": 0.005,
+    "focus_frame": [
+     0.07,
+     0.37,
+     0.0
+    ],
+    "camera_back_frame": [
+     -0.0,
+     1.0,
+     0.0
+    ],
+    "most_facing_axis": "Y"
+   },
+   "plane": {
+    "origin": [
+     0,
+     0,
+     0
+    ],
+    "rot_x_deg": 0.0
+   },
+   "prior_centre_frame": null,
+   "measured_frame": [
+    0.41,
+    0.0,
+    0.295
+   ],
+   "measured_world": [
+    0.41,
+    0.0,
+    0.295
+   ],
+   "winner": "PR",
+   "next_family": "R13",
+   "margin_to_next_family": 0.353023
+  },
+  "W1j_obl": {
+   "gesture": "point-falloff right-button press (no motion): the falloff centre",
+   "selection_mode": "polygon (a selected source quad off-screen)",
+   "scene": "empty foreground mesh + source quad (-1.2..-1.0, 0, 0.8..1.0)",
+   "view": {
+    "projection": "perspective",
+    "px_per_m": 440.0,
+    "grid": 0.1,
+    "q": 0.005,
+    "focus_frame": [
+     0.4,
+     0.7,
+     0.2
+    ],
+    "camera_back_frame": [
+     0.2873537,
+     0.8294943,
+     0.4789228
+    ],
+    "most_facing_axis": "Y"
+   },
+   "plane": {
+    "origin": [
+     0,
+     0,
+     0
+    ],
+    "rot_x_deg": 0.0
+   },
+   "prior_centre_frame": null,
+   "measured_frame": [
+    0.85,
+    1.0,
+    0.47
+   ],
+   "measured_world": [
+    0.85,
+    1.0,
+    0.47
+   ],
+   "winner": "PR",
+   "next_family": "R13",
+   "margin_to_next_family": 0.34442
+  },
+  "W1k": {
+   "gesture": "deform-tool haul: the drawn haul centre (press, no placement attribute)",
+   "selection_mode": "polygon (a selected source quad off-screen)",
+   "scene": "empty foreground mesh + source quad (-1.2..-1.0, 0, 0.8..1.0)",
+   "view": {
+    "projection": "perspective",
+    "px_per_m": 440.0,
+    "grid": 0.1,
+    "q": 0.005,
+    "focus_frame": [
+     0.07,
+     0.37,
+     0.0
+    ],
+    "camera_back_frame": [
+     -0.0,
+     1.0,
+     0.0
+    ],
+    "most_facing_axis": "Y"
+   },
+   "plane": {
+    "origin": [
+     0,
+     0,
+     0
+    ],
+    "rot_x_deg": 0.0
+   },
+   "prior_centre_frame": null,
+   "measured_frame": [
+    0.41,
+    0.0,
+    0.295
+   ],
+   "measured_world": [
+    0.41,
+    0.0,
+    0.295
+   ],
+   "winner": "PR",
+   "next_family": "R13",
+   "margin_to_next_family": 0.353023
+  },
+  "W1l": {
+   "gesture": "sphere base drag (press = centre)",
+   "selection_mode": "item",
+   "scene": "empty foreground mesh",
+   "view": {
+    "projection": "perspective",
+    "px_per_m": 440.0,
+    "grid": 0.1,
+    "q": 0.005,
+    "focus_frame": [
+     0.07,
+     0.37,
+     0.0
+    ],
+    "camera_back_frame": [
+     -0.0,
+     1.0,
+     0.0
+    ],
+    "most_facing_axis": "Y"
+   },
+   "plane": {
+    "origin": [
+     0,
+     0,
+     0
+    ],
+    "rot_x_deg": 0.0
+   },
+   "prior_centre_frame": null,
+   "measured_frame": [
+    0.41,
+    0.0,
+    0.295
+   ],
+   "measured_world": [
+    0.41,
+    0.0,
+    0.295
+   ],
+   "winner": "PR",
+   "next_family": "R13",
+   "margin_to_next_family": 0.353023
+  },
+  "W1m": {
+   "gesture": "torus base drag (press = centre)",
+   "selection_mode": "item",
+   "scene": "empty foreground mesh",
+   "view": {
+    "projection": "perspective",
+    "px_per_m": 440.0,
+    "grid": 0.1,
+    "q": 0.005,
+    "focus_frame": [
+     0.07,
+     0.37,
+     0.0
+    ],
+    "camera_back_frame": [
+     -0.0,
+     1.0,
+     0.0
+    ],
+    "most_facing_axis": "Y"
+   },
+   "plane": {
+    "origin": [
+     0,
+     0,
+     0
+    ],
+    "rot_x_deg": 0.0
+   },
+   "prior_centre_frame": null,
+   "measured_frame": [
+    0.41,
+    0.0,
+    0.295
+   ],
+   "measured_world": [
+    0.41,
+    0.0,
+    0.295
+   ],
+   "winner": "PR",
+   "next_family": "R13",
+   "margin_to_next_family": 0.353023
+  },
+  "W1j_pin": {
+   "gesture": "point-falloff right-button press (no motion): the falloff centre",
+   "selection_mode": "polygon (a selected source quad off-screen)",
+   "scene": "empty foreground mesh + source quad (-1.2..-1.0, 0, 0.8..1.0)",
+   "view": {
+    "projection": "perspective",
+    "px_per_m": 440.0,
+    "grid": 0.1,
+    "q": 0.005,
+    "focus_frame": [
+     0.1,
+     0.6,
+     0.7
+    ],
+    "camera_back_frame": [
+     -0.0,
+     0.5,
+     0.8660254
+    ],
+    "most_facing_axis": "Z"
+   },
+   "plane": {
+    "origin": [
+     0.2,
+     0.37,
+     0.0
+    ],
+    "rot_x_deg": 30.0
+   },
+   "prior_centre_frame": null,
+   "measured_frame": [
+    0.245,
+    0.885,
+    1.0
+   ],
+   "measured_world": [
+    0.445,
+    0.6364325,
+    1.3085254
+   ],
+   "winner": "AXIS-FOCUS(PR)",
+   "next_family": "WORLD-PR",
+   "margin_to_next_family": 0.284165
+  },
+  "W1k_pin": {
+   "gesture": "deform-tool haul: the drawn haul centre (press, no placement attribute)",
+   "selection_mode": "polygon (a selected source quad off-screen)",
+   "scene": "empty foreground mesh + source quad (-1.2..-1.0, 0, 0.8..1.0)",
+   "view": {
+    "projection": "perspective",
+    "px_per_m": 440.0,
+    "grid": 0.1,
+    "q": 0.005,
+    "focus_frame": [
+     0.1,
+     0.6,
+     0.7
+    ],
+    "camera_back_frame": [
+     -0.0,
+     0.5,
+     0.8660254
+    ],
+    "most_facing_axis": "Z"
+   },
+   "plane": {
+    "origin": [
+     0.2,
+     0.37,
+     0.0
+    ],
+    "rot_x_deg": 30.0
+   },
+   "prior_centre_frame": null,
+   "measured_frame": [
+    0.245,
+    0.885,
+    1.0
+   ],
+   "measured_world": [
+    0.445,
+    0.6364325,
+    1.3085254
+   ],
+   "winner": "AXIS-FOCUS(PR)",
+   "next_family": "WORLD-PR",
+   "margin_to_next_family": 0.284165
+  },
+  "W1l_pin": {
+   "gesture": "sphere base drag (press = centre)",
+   "selection_mode": "item",
+   "scene": "empty foreground mesh",
+   "view": {
+    "projection": "perspective",
+    "px_per_m": 440.0,
+    "grid": 0.1,
+    "q": 0.005,
+    "focus_frame": [
+     0.1,
+     0.6,
+     0.7
+    ],
+    "camera_back_frame": [
+     -0.0,
+     0.5,
+     0.8660254
+    ],
+    "most_facing_axis": "Z"
+   },
+   "plane": {
+    "origin": [
+     0.2,
+     0.37,
+     0.0
+    ],
+    "rot_x_deg": 30.0
+   },
+   "prior_centre_frame": null,
+   "measured_frame": [
+    0.245,
+    0.885,
+    1.0
+   ],
+   "measured_world": [
+    0.445,
+    0.6364325,
+    1.3085254
+   ],
+   "winner": "AXIS-FOCUS(PR)",
+   "next_family": "WORLD-PR",
+   "margin_to_next_family": 0.284165
+  },
+  "W1m_pin": {
+   "gesture": "torus base drag (press = centre)",
+   "selection_mode": "item",
+   "scene": "empty foreground mesh",
+   "view": {
+    "projection": "perspective",
+    "px_per_m": 440.0,
+    "grid": 0.1,
+    "q": 0.005,
+    "focus_frame": [
+     0.1,
+     0.6,
+     0.7
+    ],
+    "camera_back_frame": [
+     -0.0,
+     0.5,
+     0.8660254
+    ],
+    "most_facing_axis": "Z"
+   },
+   "plane": {
+    "origin": [
+     0.2,
+     0.37,
+     0.0
+    ],
+    "rot_x_deg": 30.0
+   },
+   "prior_centre_frame": null,
+   "measured_frame": [
+    0.245,
+    0.885,
+    1.0
+   ],
+   "measured_world": [
+    0.445,
+    0.6364325,
+    1.3085254
+   ],
+   "winner": "AXIS-FOCUS(PR)",
+   "next_family": "WORLD-PR",
+   "margin_to_next_family": 0.284165
+  },
+  "W2c_ctrl": {
+   "gesture": "automatic action-centre relocate click (move tool, empty space)",
+   "selection_mode": "vertex",
+   "scene": "empty foreground mesh + cube centre (-0.5,-0.4,-0.3) half 0.15",
+   "view": {
+    "projection": "orthographic",
+    "px_per_m": 440.0,
+    "grid": 0.1,
+    "q": 0.005,
+    "focus_frame": [
+     0.4,
+     0.7133,
+     0.2
+    ],
+    "camera_back_frame": [
+     0.0,
+     1.0,
+     0.0
+    ],
+    "most_facing_axis": "Y"
+   },
+   "plane": {
+    "origin": [
+     0,
+     0,
+     0
+    ],
+    "rot_x_deg": 0.0
+   },
+   "prior_centre_frame": [
+    -0.5,
+    -0.4,
+    -0.3
+   ],
+   "measured_frame": [
+    0.64,
+    -0.4,
+    0.41
+   ],
+   "measured_world": [
+    0.64,
+    -0.4,
+    0.41
+   ],
+   "winner": "PRIOR-CUBE",
+   "next_family": "PRIOR-ORIGIN",
+   "margin_to_next_family": 0.4
+  },
+  "W2c_item": {
+   "gesture": "automatic action-centre relocate click (move tool, empty space)",
+   "selection_mode": "item (b1 vertex mode refused to arm on an empty mesh)",
+   "scene": "empty foreground mesh",
+   "view": {
+    "projection": "orthographic",
+    "px_per_m": 440.0,
+    "grid": 0.1,
+    "q": 0.005,
+    "focus_frame": [
+     0.4,
+     0.7133,
+     0.2
+    ],
+    "camera_back_frame": [
+     0.0,
+     1.0,
+     0.0
+    ],
+    "most_facing_axis": "Y"
+   },
+   "plane": {
+    "origin": [
+     0,
+     0,
+     0
+    ],
+    "rot_x_deg": 0.0
+   },
+   "prior_centre_frame": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "measured_frame": [
+    0.64,
+    0.715,
+    0.41
+   ],
+   "measured_world": [
+    0.64,
+    0.715,
+    0.41
+   ],
+   "winner": "FOCUS-PLANE",
+   "next_family": "PRIOR-ORIGIN",
+   "margin_to_next_family": 0.715
+  },
+  "W2d_item": {
+   "gesture": "automatic action-centre relocate click (move tool, empty space)",
+   "selection_mode": "item (b1 vertex mode refused to arm on an empty mesh)",
+   "scene": "empty foreground mesh",
+   "view": {
+    "projection": "perspective",
+    "px_per_m": 440.0,
+    "grid": 0.1,
+    "q": 0.005,
+    "focus_frame": [
+     0.4,
+     0.7,
+     0.2
+    ],
+    "camera_back_frame": [
+     0.2873537,
+     0.9578245,
+     1.22e-05
+    ],
+    "most_facing_axis": "Y"
+   },
+   "plane": {
+    "origin": [
+     0.2,
+     0.37,
+     0.0
+    ],
+    "rot_x_deg": 30.0
+   },
+   "prior_centre_frame": [
+    -0.2,
+    -0.3204294,
+    0.185
+   ],
+   "measured_frame": [
+    0.835,
+    1.0,
+    0.285
+   ],
+   "measured_world": [
+    1.035,
+    1.0935254,
+    0.7468172
+   ],
+   "winner": "NICE",
+   "next_family": "FOCUS-PLANE-RAW",
+   "margin_to_next_family": 0.30396
+  },
+  "W2c_item_ctrl": {
+   "gesture": "automatic action-centre relocate click (move tool, empty space)",
+   "selection_mode": "item",
+   "scene": "empty foreground mesh + cube centre (-0.5,-0.4,-0.3) half 0.15",
+   "view": {
+    "projection": "orthographic",
+    "px_per_m": 440.0,
+    "grid": 0.1,
+    "q": 0.005,
+    "focus_frame": [
+     0.4,
+     0.7133,
+     0.2
+    ],
+    "camera_back_frame": [
+     0.0,
+     1.0,
+     0.0
+    ],
+    "most_facing_axis": "Y"
+   },
+   "plane": {
+    "origin": [
+     0,
+     0,
+     0
+    ],
+    "rot_x_deg": 0.0
+   },
+   "prior_centre_frame": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "measured_frame": [
+    0.64,
+    0.715,
+    0.41
+   ],
+   "measured_world": [
+    0.64,
+    0.715,
+    0.41
+   ],
+   "winner": "FOCUS-PLANE",
+   "next_family": "PRIOR-ORIGIN",
+   "margin_to_next_family": 0.715
+  }
+ }
+}

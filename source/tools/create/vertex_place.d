@@ -13,10 +13,8 @@ import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
-import tools.create.create_common : pickWorkplaneFrame, WorkplaneFrame,
-                              viewPrincipalAxis, axisUnit,
-                              transformPoint, transformDir, snapLocalHit,
-                              workplaneCursorPlaneHit;
+import tools.create.create_common : primitivePlacementFrame, WorkplaneFrame,
+                              transformPoint, snapLocalHit, screenToPlacementLocal;
 import toolpipe.packets : SnapType;
 import editmode : EditMode;
 import snap : SnapResult, kGuideTypes;
@@ -42,15 +40,12 @@ static assert(!__traits(compiles, {
 // VertexTool — interactive single-vertex placement.
 //
 // Each LMB click in the viewport:
-//   1. Picks the construction plane via choosePlane_ — the workplane axis
-//      most aligned with the camera back vector (identical to PenTool's
-//      choosePlane, pen.d:564-583).  The plane passes through the frame
-//      origin (LOCAL 0), mirroring pen.d:267-268.
-//   2. Unprojects the click to local workplane coordinates via
-//      rayPlaneIntersect.
-//   3. Applies discrete snap (pen guide bits excluded).
-//   4. Converts to world and appends one isolated vertex (mesh.addVertex).
-//   5. Records a snapshot-undo entry immediately — one entry per click.
+//   1. Places the click by the create click law (`screenToPlacementLocal`
+//      on the parameter frame: the view work-plane anchor, then the view
+//      quantum; K-W W1e / W1g).
+//   2. Applies discrete snap (pen guide bits excluded).
+//   3. Converts to world and appends one isolated vertex (mesh.addVertex).
+//   4. Records a snapshot-undo entry immediately — one entry per click.
 //
 // Tool stays active across clicks (no in-progress sequence to commit or
 // cancel).  Vertices are isolated: no auto-edge, no auto-face.
@@ -66,11 +61,6 @@ private:
     LitShader         litShader_;
 
 
-
-    // Construction-plane state — refreshed on each click by choosePlane_.
-    // planeNormal_ is in LOCAL workplane coordinates (one of ±X/Y/Z).
-    Vec3           planeNormal_;
-    WorkplaneFrame frame_;
 
     Viewport   cachedVp_;
     SnapResult lastSnap_;
@@ -197,25 +187,17 @@ public:
         if (mods & KMOD_ALT) return false;
         if (mods & (KMOD_CTRL | KMOD_SHIFT)) return false;
 
-        // Select the construction plane: the workplane axis most aligned with
-        // the camera back vector (mirrors PenTool.choosePlane, pen.d:564-583).
-        choosePlane_(cachedVp_);
-
-        // Unproject click to local workplane coords.  The plane passes through
-        // the frame origin (LOCAL 0) — same anchor as pen.d:267-268.
-        Vec3 hit;
-        if (!workplaneCursorPlaneHit(frame_, cachedVp_, e.x, e.y,
-                                     Vec3(0, 0, 0), planeNormal_, hit))
-            return true;   // ray parallel to plane — ignore
+        WorkplaneFrame frame = primitivePlacementFrame();
+        Vec3 hit = screenToPlacementLocal(e.x, e.y, cachedVp_, frame);
 
         // Discrete snap (pen guide bits excluded so only mesh-element targets
         // fire here).
-        lastSnap_ = snapLocalHit(hit, frame_, e.x, e.y, cachedVp_,
+        lastSnap_ = snapLocalHit(hit, frame, e.x, e.y, cachedVp_,
                                   *mesh, EditMode.Vertices, [], kGuideTypes);
         publishLastSnap(lastSnap_);
 
         // Convert local workplane hit → world position.
-        Vec3 world = transformPoint(frame_.toWorld, hit);
+        Vec3 world = transformPoint(frame.toWorld, hit);
 
         // Capture mesh state before modification.
         MeshSnapshot pre = MeshSnapshot.capture(*mesh);
@@ -260,31 +242,12 @@ public:
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e,
                                 ref VectorStack vts)
     {
-        WorkplaneFrame f = pickWorkplaneFrame(cachedVp_);
-
-        // Preview plane: the most-facing local axis, as choosePlane_, read
-        // off the live camera without locking to a frame.
-        Vec3 pn = axisUnit(viewPrincipalAxis(f, cachedVp_));
-        Vec3 hit;
-        if (workplaneCursorPlaneHit(f, cachedVp_, cast(float)e.x, cast(float)e.y,
-                                    Vec3(0, 0, 0), pn, hit)) {
-            lastSnap_ = snapLocalHit(hit, f, e.x, e.y, cachedVp_,
-                                      *mesh, EditMode.Vertices, [], kGuideTypes);
-            publishLastSnap(lastSnap_);
-        } else {
-            lastSnap_ = SnapResult.init;
-            clearLastSnap();
-        }
+        WorkplaneFrame f = primitivePlacementFrame();
+        Vec3 hit = screenToPlacementLocal(e.x, e.y, cachedVp_, f);
+        lastSnap_ = snapLocalHit(hit, f, e.x, e.y, cachedVp_,
+                                  *mesh, EditMode.Vertices, [], kGuideTypes);
+        publishLastSnap(lastSnap_);
         return false;
-    }
-
-private:
-    // Choose the construction plane: the workplane local axis most aligned
-    // with the camera back vector.  Mirrors PenTool.choosePlane (pen.d:564-583).
-    // planeNormal_ is set in LOCAL workplane space (one of ±X/Y/Z unit axes).
-    void choosePlane_(const ref Viewport vp) {
-        frame_ = pickWorkplaneFrame(vp);
-        planeNormal_ = axisUnit(viewPrincipalAxis(frame_, vp));
     }
 }
 

@@ -342,19 +342,12 @@ unittest { // the six axis presets are recognised, perspective is not
     assert(lockedViewAxis(pv) == -1, "a perspective view has no locked axis");
 }
 
-// In an axis-locked view the plane point is the RAW focus — no quantum — and
-// the landing keeps the click's other two coordinates exactly.
+// In an axis-locked view the landing keeps the click's other two coordinates
+// exactly (the relocate never reaches this arm: every ortho view takes
+// `orthoRelocateThroughPrior` or the create click law).
 unittest {
-    // Focus deliberately off-lattice on every axis so a leaked quantum shows.
     auto vp = orthoAxisVp(1, 1.0f, Vec3(0.4f, 1.7f, 0.2f));
-    RelocatePlanePrefs p;
-    p.quantumStep = 1.0f;                 // LIVE: the point is that it must NOT apply here
-    auto pp = workPlanePoint(vp, 1, p);
-    assert(near(pp.q.y, 1.7f),
-           format("an axis-locked view takes the RAW focus; y must stay 1.7, "
-                  ~ "got %.6f (2.0 means the quantum leaked into this arm)",
-                  pp.q.y));
-
+    PlanePoint pp = PlanePoint(vp.focus, 1);
     // And the landing: one coordinate replaced, no ray.
     Vec3 click = Vec3(-1.25f, 99.0f, 0.75f);   // y is the discarded depth
     Vec3 dir   = Vec3(0, -1, 0);
@@ -399,8 +392,8 @@ unittest {
 // Disabled by default: strength 0 leaves the argmax alone whatever the view.
 unittest {
     RelocatePlanePrefs p;
-    assert(p.strength == 0.0f && p.preferredAxis == -1 && !p.lock
-           && p.lockVal == 0.0f && p.viewSnapStep == 0.0f
+    assert(p.strength == 0.0f && p.preferredAxis == -1
+           && p.viewSnapStep == 0.0f
            && p.quantumStep == 0.0f,
            "every preference must default to the value that disables it");
     foreach (k; 0 .. 3)
@@ -457,61 +450,6 @@ unittest {
     assert(near(pp.q.x, 0.4f),
            format("and the old axis must go back to being in-plane and raw: "
                   ~ "x should be 0.4, got %.6f", pp.q.x));
-}
-
-// The bias is skipped in an axis-locked view, and skipped under a lock.
-unittest {
-    RelocatePlanePrefs p;
-    p.preferredAxis = 1;
-    p.strength      = 0.99f;
-    auto lockedVp = orthoAxisVp(2, 1.0f, Vec3(0.4f, 1.7f, 0.2f));
-    assert(workPlanePoint(lockedVp, 0, p).k == 0,
-           "an axis-locked view is excluded from the bias");
-    p.lock = true;
-    assert(biasedAxis(0, Vec3(0, 1, 0), p) == 0,
-           "a locked work plane is excluded from the bias");
-}
-
-// -------------------------------------------------------------------------
-// 5. The lock — PORTED, TESTED, AND WIRED TO NOTHING.
-//
-// The relocate call site does not use this arm; a pinned vibe3d work plane
-// is a full frame and goes through a full-frame plane intersection instead
-// (see `RelocatePlanePrefs.lock`). What is tested here is that the arm is a
-// faithful restatement of the read, so that anyone who later finds a use for
-// it starts from the reference's rule rather than from a guess.
-//
-// The asymmetry in the second half of this test is the one that made the
-// first attempt at wiring it wrong, so it is stated twice — here as
-// behaviour, and at `RelocatePlanePrefs.lockVal` as instructions. The axis
-// assignment is CONDITIONAL on the view having no locked axis of its own;
-// the value write is UNCONDITIONAL and lands on whatever the axis then is.
-// Both "obvious repairs" — assign the axis first, or skip the write with it
-// — would be deviations from the read, not corrections of it.
-// -------------------------------------------------------------------------
-
-unittest {
-    auto vp = perspVp(Vec3(2, 3, 4), Vec3(0.4f, 1.7f, 0.2f));
-    RelocatePlanePrefs p;
-    p.lock          = true;
-    p.preferredAxis = 0;
-    p.lockVal       = -2.5f;
-    auto pp = workPlanePoint(vp, 1, p);
-    assert(pp.k == 0, "a lock with a preferred axis forces that axis");
-    assert(near(pp.q.x, -2.5f),
-           format("the locked coordinate must be the lock value, got %.6f",
-                  pp.q.x));
-
-    // In an axis-locked VIEW the lock does not get to move the axis (the
-    // reference gates that on the view having no locked axis of its own),
-    // but the lock VALUE is still written.
-    auto lockedVp = orthoAxisVp(2, 1.0f, Vec3(0.4f, 1.7f, 0.2f));
-    auto pp2 = workPlanePoint(lockedVp, 1, p);
-    assert(pp2.k == 1,
-           "an axis-locked view must keep the argmax axis under a lock");
-    assert(near(pp2.q.y, -2.5f),
-           format("the lock value is written to the axis in use, got %.6f",
-                  pp2.q.y));
 }
 
 // -------------------------------------------------------------------------

@@ -11,8 +11,7 @@ import toolpipe.packets  : FalloffPacket, FalloffType;
 import toolpipe.pipeline : g_pipeCtx;
 import toolpipe.stage    : TaskCode;
 import toolpipe.stages.falloff : FalloffStage;
-import tools.create.create_common : screenToConstructionPlane,
-                                    ConstructionPlaneMode;
+import tools.create.create_common : screenToPlacementWorld;
 
 import std.format : format;
 import std.math   : sqrt, abs;
@@ -652,9 +651,8 @@ bool falloffRMBDown(int x, int y, const ref Viewport vp) {
     rmbFalloffKind_ = st.type;
     final switch (discipline) {
         case FalloffRMBDiscipline.Point3D:
-            rmbPointAnchor_ = screenToConstructionPlane(
-                cast(float)x, cast(float)y, vp,
-                ConstructionPlaneMode.activeWorkplane);
+            // The create click law (K-W2 W1j / W1j_pin).
+            rmbPointAnchor_ = screenToPlacementWorld(cast(float)x, cast(float)y, vp);
             pushPointAnchor(rmbFalloffKind_, rmbPointAnchor_);
             pushPointSize(rmbFalloffKind_, rmbPointAnchor_, Vec3(0, 0, 0));
             return true;
@@ -689,9 +687,9 @@ bool falloffRMBDown(int x, int y, const ref Viewport vp) {
 void falloffRMBMotion(int x, int y, const ref Viewport vp) {
     final switch (falloffRMBDiscipline(rmbFalloffKind_)) {
         case FalloffRMBDiscipline.Point3D:
-            Vec3 current = screenToConstructionPlane(
-                cast(float)x, cast(float)y, vp,
-                ConstructionPlaneMode.activeWorkplane);
+            // Same plane as the press: an inference, the right-drag motion
+            // itself is uncaptured (K-W2 PLAN-FINDING 4).
+            Vec3 current = screenToPlacementWorld(cast(float)x, cast(float)y, vp);
             Vec3 delta = pointDragDelta(current);
             pushPointSize(rmbFalloffKind_, rmbPointAnchor_, delta);
             break;

@@ -128,19 +128,22 @@ unittest // W1: the folded frames, the forwarders, the axis switch, the quantum
 
     // PIN: the call-site rosters (definition + import + calls per file).
     // Polarity: each row is RED before W1 (the name did not exist, or had a
-    // different reader set) and GREEN after.
+    // different reader set) and GREEN after. W2 (task 9411): the vertex tool
+    // places through `screenToPlacementLocal` on `primitivePlacementFrame`,
+    // and the placement click reads `viewVectorQuantum` in create_common.
     const string[string] want = [
         // the grid sub-step is read through `viewVectorQuantum` everywhere but
         // its home and the pen's frozen `placementQuantum` (app.d: an import)
         "viewGridSubStep": "app.d:1 pen.d:2 viewgrid.d:2",
-        "viewVectorQuantum": "http_providers.d:2 poly_extrude.d:2 transform.d:3 viewgrid.d:1",
-        "viewPrincipalAxis": "create_common.d:2 vertex_place.d:3",
+        "viewVectorQuantum": "create_common.d:2 http_providers.d:2 poly_extrude.d:2 transform.d:3 viewgrid.d:2",
+        "viewPrincipalAxis": "create_common.d:2",
         // radial_array_tool.d: its own unrelated `axisUnit()` member (7)
-        "axisUnit": "create_common.d:2 radial_array_tool.d:7 vertex_place.d:3",
+        "axisUnit": "create_common.d:2 radial_array_tool.d:7",
         "primitivePlacementFrame": "arc.d:3 box.d:4 create_common.d:2 pen.d:2 "
-            ~ "poly_extrude.d:2 primitive_create_tool.d:4 slice_tool.d:4 sphere.d:2 transform.d:2",
+            ~ "poly_extrude.d:2 primitive_create_tool.d:4 slice_tool.d:4 sphere.d:2 transform.d:2 "
+            ~ "vertex_place.d:3",
         "workplaneCursorPlaneHit": "box.d:8 create_common.d:1 pen.d:2 "
-            ~ "primitive_create_tool.d:5 torus.d:3 tube.d:5 vertex_place.d:3",
+            ~ "primitive_create_tool.d:5 torus.d:3 tube.d:5",
     ];
     assert(want.length == 6, "roster table lost a row");
     string bad;

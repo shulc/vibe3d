@@ -2787,11 +2787,9 @@ Vec3 closestPointOnLineToRay(Vec3 center, Vec3 dir, Vec3 O, Vec3 D)
 //     value", which is indistinguishable from success at the only place the
 //     user can see it.
 //
-// The replacement is `tools.create.create_common.screenToConstructionPlane`:
-// it uses the camera-most-facing principal axis through the camera focus in
-// both automatic and pinned modes, and it is TOTAL — it returns a Vec3, so
-// there is no boolean left to drop. A pinned frame is applied later by the
-// primitive generator, not by placement.
+// The replacement is `tools.create.create_common.screenToPlacementWorld`: the
+// view work-plane anchor law, TOTAL — it returns a Vec3, so there is no
+// boolean left to drop.
 //
 // Nothing is left here rather than a fixed version, deliberately: a helper
 // whose DEFAULT argument is the degenerate plane is a trap that re-arms the
