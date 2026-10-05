@@ -863,6 +863,15 @@ unittest { // W2c_P20: an edge's on-plane member never searches; W2c_E2: off-pla
         format("W2c_P20 drop: %s faces %s, expected 5 vertices, v0 at (0,0), no weld", d,
                readFacesLayer(1)));
 
+    // The same with a static tri vertex (-0.15,-0.05) 5 px from v0's raw end: the
+    // on-plane member still never searches (rule 4, the search points), live or at the drop.
+    auto q = kw2c([[0.0, 0.0, 0.0], [0.3, 0.2, 0.0], [0.3, 0.6, 0.0], [-0.3, 0.2, 0.0],
+                   [-0.3, 0.6, 0.0], [-0.15, -0.05, 0.0], [-0.3, -0.05, 0.0], [-0.3, -0.2, 0.0]],
+                  [[0, 1, 2], [0, 4, 3], [5, 6, 7]], [0.15, 0.1], 5, [-3, 0], [3], true);
+    assert(near(q[1][0], [0.0, 0.0], 6e-3) && q[$ - 1].length == 8 && near(q[$ - 1][0], [0.0, 0.0], 6e-3),
+        format("W2c_P20 + static target: v0 held %s, after the drop %s (V %d): it must neither snap "
+             ~ "nor weld", q[1][0], q[$ - 1][0], q[$ - 1].length));
+
     // E2 (steps of 4 px): a (v1) on T1 at steps 3..8 with b (v2) at its original
     // position and the mirror edge an exact mirror; step 9 (cursor 36 px) raw again.
     // Read to step 12 only: the edge-onto-edge phase (rule 5) and its drop are not ours.
