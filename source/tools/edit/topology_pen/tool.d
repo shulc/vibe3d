@@ -4203,10 +4203,9 @@ public:
     // (task 9438, KW2_A). Idempotent; returns the moved set with the partners.
     private uint[] movedWithPartners(ref VectorStack vts) {
         import symmetry : applySymmetryMirror;
-        import std.algorithm.searching : canFind;
         import toolpipe.packets : SymmetryPacket;
-        SymmetryPacket* sym = vts.get!SymmetryPacket();
-        if (sym is null || !sym.enabled || sym.pairOf.length != mesh.vertices.length) return moveVerts_;
+        SymmetryPacket* sym = vts.get!SymmetryPacket();   // off: pairOf is empty
+        if (sym is null || sym.pairOf.length != mesh.vertices.length) return moveVerts_;
         SymmetryPacket sp = *sym;
         foreach (vi; moveVerts_) if (sp.vertSign[vi] != 0) { sp.baseSide = sp.vertSign[vi]; break; }
         auto operand = new bool[sp.pairOf.length], touched = new bool[sp.pairOf.length];
@@ -4214,7 +4213,7 @@ public:
         foreach (vi; moveVerts_) if (sp.vertSign[vi] == sp.baseSide && sp.pairOf[vi] >= 0) operand[sp.pairOf[vi]] = true;
         applySymmetryMirror(mesh, sp, operand, touched);
         uint[] all = moveVerts_.dup;
-        foreach (i, t; touched) if (t && !all.canFind(i)) all ~= cast(uint)i;
+        foreach (i, t; touched) if (t) all ~= cast(uint)i;   // a repeat: the first claim wins
         return all;
     }
 

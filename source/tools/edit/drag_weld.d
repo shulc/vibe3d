@@ -135,19 +135,19 @@ public:
 
         const cfg = snapPacketOf(vts);
         if (!cfg.enabled) return true;     // the target search runs only with snapping on
-        int target = findVertex(e.x, e.y, cfg, topoPenSnapAcceptPx(vpWorld_, cfg),
-                                [cast(uint)source_]);
+        // Under symmetry the moved set holds the source's mirror partner too: it
+        // is no target, and welds into the target's partner (task 9438, KW2_ADW).
+        auto sym = vts.get!SymmetryPacket();   // off: pairOf is empty
+        const int[] pairOf = sym !is null && sym.pairOf.length == mesh.vertices.length ? sym.pairOf : null;
+        uint[] moved = [cast(uint)source_];
+        if (pairOf.length && pairOf[source_] >= 0) moved ~= cast(uint)pairOf[source_];
+        int target = findVertex(e.x, e.y, cfg, topoPenSnapAcceptPx(vpWorld_, cfg), moved);
         if (target < 0) return true;       // no-op release
 
         Vec3 keepPos = mesh.vertices[cast(uint)target];
         MeshSnapshot pre = MeshSnapshot.capture(*mesh);
-        // Under symmetry the mirror partners weld too, in the same pass (task 9438, KW2_ADW).
         uint[2][] pairs = [[cast(uint)target, cast(uint)source_]];
-        if (auto sym = vts.get!SymmetryPacket())
-            if (sym.enabled && sym.pairOf.length == mesh.vertices.length) {
-                immutable int ms = sym.pairOf[source_], mt = sym.pairOf[target];
-                if (ms >= 0 && mt >= 0 && ms != target) pairs ~= [cast(uint)mt, cast(uint)ms];
-            }
+        if (moved.length == 2 && pairOf[target] >= 0) pairs ~= [cast(uint)pairOf[target], moved[1]];
         if (mesh.weldVertexPairs(pairs) == 0)
             return true;                   // both faceless: no-op
 
