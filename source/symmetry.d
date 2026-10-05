@@ -256,9 +256,7 @@ Vec3 authored(K)(const ref SymmetryPacket sp, size_t vi, Vec3 p, scope K kernel)
 
 // ---------------------------------------------------------------------------
 // THE PAIR WRITE RULE (task 7144; gap rows 73/316/318, C-plane P-proj). ONE
-// rule for the four mirror passes (`applySymmetryMirror`,
-// `applySymmetryMirrorDelta`, and their morph-routed twins in
-// `tools/transform/morph_route.d`), in this order:
+// rule, walked by `walkMirrorPairs` for the four mirror passes, in this order:
 //   1. an on-plane operand vertex is projected back onto the plane;
 //   2. a vertex whose visible partner is ALSO in the operand: the member on
 //      `sp.baseSide` (the live stage keeps +1; Symmetrize passes its own
@@ -431,14 +429,10 @@ private size_t upperBound(const float[] sortedCoords, float target) pure nothrow
 }
 
 // ---------------------------------------------------------------------------
-// walkMirrorPairs — THE mirror walker: the pair write rule
-// (`mirrorStepFor`) over the operand mask `selected[]`, with the client's
-// storage. `read(i)` is vertex i's current position, `write(i, p)` stores one,
-// `mirrored(i, mi, p)` is partner mi's new position from driver i at `p`. An
-// on-plane operand vertex is projected; a pair inside the operand is written
-// from its `baseSide` member; nothing outside the operand is written.
-// `outAlsoTouched` (mesh-length) is OR-ed with every partner written. A
-// template on the three callables: the walk runs per vertex on a drag.
+// walkMirrorPairs — THE mirror walker: the pair write rule over the operand
+// `selected[]`, with the client's storage: `read(i)` / `write(i, p)` a vertex's
+// position, `mirrored(i, mi, p)` partner mi's from driver i at `p`. Partners
+// written are OR-ed into `outAlsoTouched`. Templated: it runs per vertex on a drag.
 // ---------------------------------------------------------------------------
 void walkMirrorPairs(alias read, alias write, alias mirrored)(
     Mesh* mesh, const ref SymmetryPacket sp, const(bool)[] selected, bool[] outAlsoTouched)
@@ -495,11 +489,8 @@ void applySymmetryMirrorDelta(Mesh* mesh, const ref SymmetryPacket sp,
                      (i, mi, p) => mirroredEdit(sp, baseline, i, mi, p))(mesh, sp, selected, outAlsoTouched);
 }
 
-/// The delta rule's partner position: `base[mi]` plus the driver's edit
-/// `p − base[i]` reflected (shared by the plain and the routed delta walks).
-Vec3 mirroredEdit(const ref SymmetryPacket sp, const(Vec3)[] base, size_t i, size_t mi, Vec3 p)
-    pure nothrow @nogc @safe
-{
+/// The delta rule's partner: `base[mi]` plus the driver's edit `p − base[i]` reflected.
+Vec3 mirroredEdit(const ref SymmetryPacket sp, const(Vec3)[] base, size_t i, size_t mi, Vec3 p) {
     return base[mi] + mirrorDirection(sp, p - base[i]);
 }
 

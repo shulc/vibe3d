@@ -142,29 +142,12 @@ bool storeRouted(MeshMap* map, const ref MorphRoute route, size_t vi, Vec3 moved
 }
 
 // ---------------------------------------------------------------------------
-// Routed symmetry.
-//
-// **The reads move too, not just the writes.** Both unrouted twins compute
-// their mirror from a READ of `mesh.vertices[i]` — the driver's post-fold
-// position. Under routing `mesh.vertices[i] == base[i]` for EVERY vertex (that
-// is the entire point of the design), so a naive "copy of the twin with the
-// write substituted" would:
-//
-//   * in the position twin, mirror the driver's UNMOVED base onto the
-//     partner — and, worse, OVERWRITE any morph the partner already had with
-//     that unmoved value;
-//   * in the delta twin, compute `delta == 0` and write the partner back to
-//     its own run position — a mirror that does nothing at all.
-//
-// Both failures are invisible to an assertion of the form "the partner's entry
-// CHANGED", because absent -> present-zero is a change. The test must assert
-// the partner's stored value EQUALS the mirrored delta.
-//
-// The ON-PLANE branch needs the same treatment for a different reason: it
-// writes the DRIVER's own position (`mesh.vertices[i] = projectOnPlane(...)`).
-// Left unrouted it would be the one place a routed gesture still moves the
-// base; substituted naively it would project the base rather than the drawn
-// point and silently break the "centre stays on the plane" contract.
+// Routed symmetry: the READS move too, not just the writes. Under routing
+// `mesh.vertices[i] == base[i]`, so a walk reading `mesh.vertices` would mirror
+// the driver's UNMOVED base (position: the partner's morph overwritten; delta:
+// a zero edit) and project the base instead of the drawn point. Both walks read
+// `routedDisplayPos`. "The partner's entry CHANGED" cannot see the failure
+// (absent -> present-zero is a change): assert the stored value EQUALS the mirror.
 // ---------------------------------------------------------------------------
 
 /// Routed twin of `applySymmetryMirror` (absolute position-copy). Tail-calls
