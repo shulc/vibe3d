@@ -3,10 +3,13 @@
  "schema": 1,
  "description": "Which vertex pairs an automatic weld joins, and at what distance, for the array / radial array / mirror duplicators, the mesh cleanup merge and the vertex merge tool. Each cell: input mesh, operation, the reference's resulting vertex count and its own final positions/faces. Frozen from capture K-W1 (task 9419); read by tests/unit/weld_scope_test.d (task 9436). Duplicator cells compare counts AND final positions (the earlier vertex survives in place); cleanup / vertex-merge cells compare counts only (their survivor is appended, a separate tail).",
  "provenance": {
+  "schema": 1,
   "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
   "method": "command",
   "captured_utc": "2026-10-05",
-  "task": "9419"
+  "task": "9419",
+  "instrument": "scripted geometry + scripted tool attributes + apply; read back from the reference's own mesh dump (positions rounded to 1e-6). Fresh editor process and new mesh per cell."
  },
  "law": {
   "duplicator_scope": "PER-COPY: the vertices of copy k weld (within the weld distance) only to vertices that existed before copy k was made -- the whole mesh as it stood plus earlier copies -- never to vertices of the same copy; the earlier vertex survives in place. With one copy (count 2, mirror) this is CROSS-BOUND.",

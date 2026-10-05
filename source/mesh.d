@@ -4578,7 +4578,6 @@ struct Mesh {
         int[] remap;
         remap.length = n;
         foreach (i; 0 .. n) remap[i] = cast(int)i;
-        if (n < 2) return remap;
         assert(mask.length == 0 || mask.length == n, "computeWeldRemap: mask length");
         bool takes(size_t v) { return mask.length == 0 || mask[v]; }
         if (!(epsSq >= kCoincidentDistance ^^ 2)) epsSq = kCoincidentDistance ^^ 2;
