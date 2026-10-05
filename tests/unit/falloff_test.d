@@ -806,8 +806,11 @@ unittest { // C-elem-range0 (toolcards/tool_session_model/ M0d; gap 372): the
 unittest { // elementAnchoredAt replaces the stage's own anchor: a stale ring and
            // anchor positions far away must not weigh the drag (task 9491).
     import std.math : isClose;
-    FalloffPacket stage = magnetElementPacket(Vec3(9, 9, 9), 5.0f, 3);
-    stage.shape = FalloffShape.Linear;
+    FalloffPacket stage;          // built by hand: a stage packet, no shared builder
+    stage.enabled = true; stage.type = FalloffType.Element;
+    stage.shape = FalloffShape.Linear; stage.pickedRadius = 5.0f;
+    stage.pickedCenter = Vec3(9, 9, 9); stage.anchorPos = [Vec3(9, 9, 9)];
+    stage.anchorRing = [3u];
     auto fp = elementAnchoredAt(stage, Vec3(0, 0, 0), 1.0f, 0);
     Viewport vpW;
     auto vp = aimSpace(vpW, ModelSpace.world());
