@@ -149,11 +149,14 @@ void resetForSphere() {
     // starts from a known baseline -- AND so this test's axis-independence
     // assertions (divergence (a)) are meaningful (axis must read "y" no
     // matter which plane the camera auto-picked).
+    // `order` is disabled under Globe and `sides`/`segments`/`axis` under
+    // Quad Ball (a disabled row refuses its write), so order goes in first.
+    cmd("tool.attr " ~ TOOL ~ " method 1");
+    cmd("tool.attr " ~ TOOL ~ " order 2");
     cmd("tool.attr " ~ TOOL ~ " method 0");
     cmd("tool.attr " ~ TOOL ~ " sides 24");
     cmd("tool.attr " ~ TOOL ~ " segments 24");
     cmd("tool.attr " ~ TOOL ~ " axis 1");
-    cmd("tool.attr " ~ TOOL ~ " order 2");
 }
 
 void dragPixels(int x0, int y0, int x1, int y1, int steps = 16) {
@@ -342,7 +345,6 @@ unittest { // Tool Properties (tool.attr) round-trip for every param
     cmd("tool.attr " ~ TOOL ~ " sizeZ 1.25");
     cmd("tool.attr " ~ TOOL ~ " sides 8");
     cmd("tool.attr " ~ TOOL ~ " segments 10");
-    cmd("tool.attr " ~ TOOL ~ " order 3");
     assert(approx(qf("cenX"), 1.25), "cenX panel write failed");
     assert(approx(qf("cenY"), 0.75), "cenY panel write failed");
     assert(approx(qf("cenZ"), -0.5), "cenZ panel write failed");
@@ -351,13 +353,14 @@ unittest { // Tool Properties (tool.attr) round-trip for every param
     assert(approx(qf("sizeZ"), 1.25), "sizeZ panel write failed");
     assert(qi("sides") == 8, "sides panel write failed");
     assert(qi("segments") == 10, "segments panel write failed");
-    assert(qi("order") == 3, "order panel write failed");
 
     cmd("tool.attr " ~ TOOL ~ " axis 2");
     assert(qs("axis") == "z", "axis panel write failed, got " ~ qs("axis"));
 
     cmd("tool.attr " ~ TOOL ~ " method 1");
     assert(qs("method") == "qball", "method panel write failed, got " ~ qs("method"));
+    cmd("tool.attr " ~ TOOL ~ " order 3");   // enabled under Quad Ball only
+    assert(qi("order") == 3, "order panel write failed");
     cmd("tool.attr " ~ TOOL ~ " method 0");
     assert(qs("method") == "globe", "method panel write-back failed, got " ~ qs("method"));
 

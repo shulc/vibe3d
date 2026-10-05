@@ -299,6 +299,12 @@ unittest {
 unittest {
     slPrologue(false, "polygons", &slBackAndLeft, false);
     slKey(SL_SDLK_c, SL_KMOD_LSHIFT, "Shift+C (Slice)");
+    // The Custom extrusion vector that reproduces the drawn plane, written
+    // before the draw: the vector rows are enabled only under Custom, and a
+    // write after the draw would pass a degenerate intermediate vector.
+    slLine("tool.attr mesh.sliceTool axis custom");
+    slLine("tool.attr mesh.sliceTool vectorZ 1");
+    slLine("tool.attr mesh.sliceTool vectorY 0");
     const Ha = slHistoryLen();
     slSliceDrawLine();
     Vec3 lineEnd(string p) {
@@ -306,14 +312,10 @@ unittest {
         return Vec3(cast(float)st[p ~ "X"].floating, cast(float)st[p ~ "Y"].floating,
                     cast(float)st[p ~ "Z"].floating);
     }
-    // The Custom extrusion vector that reproduces the drawn plane (the line
-    // runs along Y; the draw classified the Z extrusion). Written without a
-    // degenerate intermediate vector.
+    // The line runs along Y; the draw classified the Z extrusion.
     const ld = normalize(lineEnd("end") - lineEnd("start"));
     assert(ld.y > 0.99f && getJson("/api/tool/state")["axis"].str == "z",
            "slice rig (block O): the drawn line is not the Y line with a Z extrusion");
-    slLine("tool.attr mesh.sliceTool vectorZ 1");
-    slLine("tool.attr mesh.sliceTool vectorY 0");
     slLine("tool.attr mesh.sliceTool axis custom");
     Vec3 vec() {
         auto s = getJson("/api/tool/state");

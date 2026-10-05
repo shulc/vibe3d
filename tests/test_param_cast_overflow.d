@@ -52,9 +52,10 @@
 // representable integer` (the 1e39 write is now refused before any cast).
 //
 // A REFUSED injection measures nothing (its read-back is the untouched value),
-// so every injection must answer ok. The pen refuses writes to its point
-// fields with no stroke (wave plan S7, `refusesDisabledParamWrites`), so its
-// subjects are injected after one click on the viewport centre.
+// so every injection must answer ok, except a row the tool disables in its
+// current state (refused by the door for every tool; counted). The pen
+// disables its point fields with no stroke, so its subjects are injected after
+// one click on the viewport centre.
 import drag_helpers : fetchCamera;
 import http_client : testBaseUrl;
 import pen_rig_helpers : clickPixels;
@@ -64,6 +65,7 @@ import std.json;
 import std.conv    : to;
 import std.format  : format;
 import std.array   : join;
+import std.algorithm : canFind;
 
 alias BASE = testBaseUrl;
 
@@ -99,7 +101,7 @@ unittest { // BoundedIntTooLParamsSurviveWireInfinity
              ~ "found nothing to sweep", subjects.length));
 
     string[] failures;
-    string[] unreadable;
+    string[] unreadable, disabled;
     int checked = 0;
 
     foreach (s; subjects) {
@@ -126,6 +128,14 @@ unittest { // BoundedIntTooLParamsSurviveWireInfinity
         auto injected = postCmd(format(
             `{"id":"tool.attr","params":{"_positional":["%s","%s",1e39]}}`,
             s.tool, s.name));
+        // A row the tool disables in its current state refuses every write
+        // (the door's gate): nothing is written, so it is in bounds by
+        // construction; counted beside the unreadable ones.
+        if (injected["status"].str == "error"
+            && injected["message"].str.canFind("disabled in its current state")) {
+            disabled ~= s.tool ~ "." ~ s.name;
+            continue;
+        }
         assert(injected["status"].str == "ok",
             format("%s.%s: the injection was refused, nothing measured: %s",
                    s.tool, s.name, injected.toString));
@@ -148,10 +158,11 @@ unittest { // BoundedIntTooLParamsSurviveWireInfinity
     postCmd(`{"id":"tool.set","params":{"_positional":["none","on"]}}`);
     post(BASE ~ "/api/command", commandBody("scene.reset"));
 
-    assert(unreadable.length * 2 < subjects.length,
-        format("%d of %d bounded Int tool params could not be read back — the "
-             ~ "sweep is measuring almost nothing: %s",
-               unreadable.length, subjects.length, unreadable.join(", ")));
+    assert((unreadable.length + disabled.length) * 2 < subjects.length,
+        format("%d of %d bounded Int tool params could not be read back or were "
+             ~ "disabled — the sweep is measuring almost nothing: %s / %s",
+               unreadable.length + disabled.length, subjects.length,
+               unreadable.join(", "), disabled.join(", ")));
 
     assert(failures.length == 0,
         "Int param(s) with declared bounds reachable outside them from the "

@@ -202,8 +202,6 @@ void armRadialSweep() {
     cmd("history.clear");
     cmd("tool.set mesh.radialSweepTool on");
     Thread.sleep(dur!"msecs"(300));
-    cmd("tool.attr mesh.radialSweepTool count 6");
-    Thread.sleep(dur!"msecs"(200));
 }
 
 /// Grab cap vertex 6 (1,1,1) and haul it 60 px, leaving the button DOWN.
