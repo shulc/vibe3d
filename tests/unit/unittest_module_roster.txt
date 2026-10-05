@@ -468,6 +468,7 @@ tests.unit.shading_assets_test
 tests.unit.snap_call_census_test
 tests.unit.snap_election_corpus_test
 tests.unit.snap_near_occluder_test
+tests.unit.snap_overlay_test
 tests.unit.snap_test
 tests.unit.snap_visibility_corpus_test
 tests.unit.snapshot_test
