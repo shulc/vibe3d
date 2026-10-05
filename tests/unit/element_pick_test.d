@@ -13,8 +13,8 @@ import std.path      : buildPath, dirName;
 import std.regex     : matchFirst, regex;
 import std.string    : indexOf;
 
-import hover_state : PickGather, electElement, kCascadeVertex, kCascadeEdge,
-    kCascadePolygon, kElementPickRadiusPx;
+import hover_state : PickGather, cascadeClassWins, electElement, kCascadeVertex,
+    kCascadeEdge, kCascadePolygon, kElementPickRadiusPx;
 import tests.unit.census_symbols : blankNonCode, blankUnittestBodies, countIdent,
     enclosingSymbols, isIdentChar, lineOf, symbolAt;
 
@@ -52,6 +52,14 @@ unittest { // the comparator, row by row (distances in px; inf = not gathered)
     // ... while a vertex at the reach keeps its DOUBLED tolerance and wins.
     assert(electElement(gather(8, inf, inf, 0)) == kCascadeVertex,
            "a vertex at the reach beats the polygon under the cursor (tolerance 16)");
+}
+
+unittest { // clause 4 (inside its own tolerance -> win) is an early-out only for
+           // non-negative distances; a guide may answer a negative one.
+    bool[3]  has = [true, true, false];
+    float[3] d   = [5.0f, -20.0f, 1e12f];
+    assert(cascadeClassWins(kCascadeVertex, has, d, 16.0f),
+           "a class inside its own tolerance wins even when another trails it negatively");
 }
 
 unittest { // production-text census
