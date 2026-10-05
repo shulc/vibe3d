@@ -13,16 +13,8 @@
 # Counts are compiler-aware: comments and string/character literals are
 # removed before either scanner runs. `version-ceiling` is policy and is
 # carried over from the previous ledger, never re-measured.
-<<<<<<< HEAD
 source-files 574
-unittest-blocks 678
-||||||| parent of f1a6644e (Relocate: the unpinned perspective click follows the click law)
-source-files 579
-unittest-blocks 683
-=======
-source-files 579
-unittest-blocks 667
->>>>>>> f1a6644e (Relocate: the unpinned perspective click follows the click law)
+unittest-blocks 662
 version-ceiling 10
 
 # Per-file unittest counts. Enforced: they sum to `unittest-blocks`, and
