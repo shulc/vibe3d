@@ -775,7 +775,7 @@ public:
     // Counting it separately from the mesh passes is what lets a reader say
     // "the model costs N draws" without the grid in the number.
     if (isOrtho(vp)) {
-        // The ortho grid (capture K-GR, task 9451): an UNDERLAY (no depth
+        // The ortho grid (capture K-GR): an UNDERLAY (no depth
         // write, so any later geometry hides it, in front of the plane or
         // behind), opaque and unfaded; minor lines every step, majors every 10
         // steps (the same lattice at 10x), the two origin lines black. The
