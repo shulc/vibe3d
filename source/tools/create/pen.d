@@ -1188,8 +1188,8 @@ public:
         // Make Quads (wave plan S7, fixture pen_quads.json): the click, then
         // the automatic corner a = L1 + (c - L0) of the strip quad it
         // completes; the click is current. The arm always appends (an insert
-        // and an odd count left by an in-stroke pop are not captured: gap row
-        // 550; the pop is S8's). A typed edit does not recompute the corner
+        // and an odd count left by a drag weld are not captured: gap row 550;
+        // there is no in-stroke pop). A typed edit does not recompute the corner
         // (row 551). The corner shares a stroke point's mirror image only
         // within the captured mirror-weld `dist`, 3 px at the focus (B5 sym is
         // an exact coincidence; C1-m4): a wider radius would move the click at
