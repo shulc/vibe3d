@@ -187,8 +187,9 @@ unittest {
         l.key(true, 1000); l.play();
         assert(snapOn(), what(cell, "X during the held drag was not delivered (snap still off)"));
         expectDepth(cell, "after the mid-drag key-down", depth(), d0);
-        // A repeat key-down of the held X is no new press.
-        l.key(true, 1100, K_X, K_X_SCAN, 0, 1); l.key(true, 1200, K_X, K_X_SCAN, 0, 1); l.play();
+        // A repeat key-down of the held X is no new press (one: an even count
+        // would toggle back and hide a second press).
+        l.key(true, 1100, K_X, K_X_SCAN, 0, 1); l.play();
         assert(snapOn(), what(cell, "an autorepeat key-down toggled the snap state again"));
         // Another key's tap (dropped while held) is not the tracked key's up.
         l.tap(K_Z, K_Z_SCAN, KMOD_LCTRL); l.play();
@@ -202,6 +203,7 @@ unittest {
         l.key(false, 7000); l.play();
         assert(!snapOn(), what(cell, "the key-up after the release (held 6 s) did not revert"));
         expectDepth(cell, "after the key-up", depth(), d0 + 2);
+        assert(labels().length >= 2, format("%s: entries %s", cell, labels()));
         auto top2 = labels()[$ - 2 .. $].dup; top2.sort();
         assert(top2 == ["Toggle Snap", "Transform 1 verts"],
             format("%s: the top two entries are %s", cell, labels()));
@@ -246,6 +248,19 @@ unittest {
         l.key(true, 1000); path(l, qPx, endPx, 8, n, n); l.button(false, endPx);
         l.key(false, 1300); l.play();
         assert(snapOn(), what(cell, "a 300 ms hold re-ran the toggle after the release"));
+    }
+
+    // move-snap-key-prepressed-no-guide: X down with no button (on), a drag
+    // holding no guide, X up while held: the held re-run needs mouse-down-OK,
+    // so nothing runs and the state stays on (fixture `_about`, key-up law).
+    {
+        const cell = "move-snap-key-prepressed-no-guide";
+        moveRig(false);
+        Log l; l.key(true, 1000); l.motion(qPx, 0); l.button(true, qPx);
+        path(l, qPx, endPx, 1, 7, n); l.key(false, 1100); l.play();
+        assert(snapOn(), what(cell, "the held key-up re-ran the toggle with no guide"));
+        path(l, qPx, endPx, 8, n, n); l.button(false, endPx); l.play();
+        penCommand("tool.pipe.attr snap enabled false");
     }
 
     // move-snap-key-fresh: the constraint not in the pipe, Move has no guide of
