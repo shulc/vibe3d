@@ -379,4 +379,18 @@ unittest {
     assert(!aborted.validate() && !aborted.begin(), "an aborted owner stayed live");
     aborted.install();
     assert(!a.tool.preparedParamBuiltForTest(), "an aborted owner installed");
+
+    // The context slot: discard aborts the enlisted owner; a validated
+    // context takes no further slot.
+    auto d = Rig!PolyInsetRow.make(true, true);
+    auto enlisted = O.prepare(d.tool, d.layer);
+    assert(d.context.prepareParamUpdate(enlisted));
+    d.context.discard();
+    assert(enlisted.effectKind == PreparedPolyInsetParamKind.None,
+        "discard left the enlisted owner live");
+    auto v = Rig!PolyInsetRow.make(true, true);
+    assert(v.context.prepareParamUpdate(O.prepare(v.tool, v.layer)) &&
+        v.context.markNoHistoryInstall() && v.context.validate());
+    assert(!v.context.prepareParamUpdate(O.prepare(v.tool, v.layer)),
+        "a validated context enlisted another slot");
 }
