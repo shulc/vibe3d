@@ -249,6 +249,17 @@ unittest { // P6: the reach is the snap acceptance, only with snapping on; the p
         "a press 12 px from the vertex must grab nothing (press reach 8)");
 }
 
+unittest { // the source is no target: a release nearer the source than the target still welds
+    if (!cell("self")) return;
+    // Target 4 is 20 px right of source 1; the release is 8 px from the source and
+    // 12 px from the target, inside the 24 px reach of both.
+    float[3][] b = [[0.2f, 0f, 0f], [0.7f, 0f, 0f], [0.7f, 0.3f, 0f], [0.2f, 0.3f, 0f]];
+    Rig r = Rig(cast(float[3][])kC.pts[0 .. 4] ~ b, [[0u, 1, 2, 3], [4u, 5, 6, 7]]);
+    auto m = dragWeld(r, 1, [0.08f, 0f, 0f], true);
+    assert(nv(m) == 7 && fabs(m["vertices"].array[3].array[0].floating - 0.2) < 1e-4,
+        "self: the target 4 must survive at slot 3: " ~ m["vertices"].toString);
+}
+
 unittest { // same polygon: adjacent corners collapse (KW2_I), diagonal ones touch (KW2_J)
     if (!cell("IJ")) return;
     assertMesh(dragWeld(Rig([[-0.5f, 0f, 0f], [0f, 0f, 0f], [0f, 0.36f, 0f], [-0.5f, 0.36f, 0f]],
