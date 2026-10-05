@@ -96,8 +96,9 @@ private void rig(Vec3 focus, double ppm, string mesh = null,
     penCameraAt(focus, ppm);
     snap(snapTypes);
     penCommand("tool.set pen on");
-    if (merge) postJson("/api/command", "tool.attr pen merge true");
-    else penCommand("tool.attr pen merge false");
+    // Merge on is the pen's DEFAULT: a merge cell writes nothing, so every
+    // linking cell also witnesses the default.
+    if (!merge) penCommand("tool.attr pen merge false");
 }
 private void snap(string types) {
     penCommand("tool.pipe.attr snap enabled " ~ (types is null ? "false" : "true"));

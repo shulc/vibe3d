@@ -145,6 +145,36 @@ unittest {
 // the cursor) = 3N with merge on, N with it off; the hover resolve restored
 // during a drag adds N + 2N. A
 // motion under the drag threshold, still on the marker, resolves nothing.
+// A fresh pen's every attribute holds its declared default (the value the
+// shift-haul reset and the user-set marker read), merge on included.
+unittest {
+    import mesh_gpu : GpuMesh;
+    import params : isUserSet;
+    import std.format : format;
+    Mesh m; GpuMesh g;
+    auto pen = new PenTool(() => &m, &g, LitShader.init);
+    int n;
+    foreach (ref p; pen.params()) {
+        assert(!isUserSet(p), "pen: attribute '" ~ p.name ~ "' starts off its declared default");
+        ++n;
+    }
+    assert(n == 11, format("pen: %s attributes enumerated, pinned 11", n));
+}
+
+// Source census: the pen's "a discrete target placed the point" test has ONE
+// spelling, `discretePlaced()`, read by the guide gate and by the merge class
+// (`elementPlaced`); a second spelling could drift from the merge's.
+unittest {
+    import std.file : readText;
+    import std.algorithm : count;
+    const src = readText("source/tools/create/pen.d");
+    const expr = "lastSnap.snapped && lastSnap.constraintType == SnapType.None";
+    const gate = "if (!discretePlaced()) applyPenGuide(local, x, y);";
+    assert(src.count(expr) == 1 && src.count(gate) == 1,
+        "pen: the discrete-placement test must be spelled once (discretePlaced) "
+        ~ "and the guide gate must read it");
+}
+
 version (PerfProbe) unittest {
     import perf_probe : g_perf;
     import std.conv : to;
