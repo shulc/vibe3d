@@ -37,7 +37,9 @@ import tools.create.create_common : pickWorkplane, BuildPlane,
                               transformPoint, transformDir, snapLocalHit,
                               currentSnapPacket,
                               workplaneCursorRay, workplaneCursorPlaneHit;
-import toolpipe.packets : SnapType, SnapPacket;
+import toolpipe.packets : SnapType, SnapPacket, SymmetryPacket;
+import toolpipe.stages.symmetry : liveSymmetryStage;
+import symmetry : mirrorPosition, symmetryPacketsEqual;
 import editmode : EditMode;
 import snap : SnapResult, snapCursor, cascadeClassWins, kAbsentClassDist,
     kCascadeVertex, kCascadeEdge, kCandidateToleranceBasePx, kVertexToleranceScale;
@@ -445,6 +447,55 @@ version(unittest) unittest {
         [Vec3(5,5,5)]) == [1u, 3, 2], "drop ignored the image's flip");
     assert(dropFace(quadPen.vertices_.dup, false, true, null) == [1u, 3, 2, 0],
         "drop ignored the image's makeQuads");
+
+    // S6: a prepared drop commits the stroke AND its mirror (plane x = 0) in
+    // one history row; a symmetry change after the prepare refuses the image
+    // (deactivate and param doors alike).
+    PreparedRecordContext symDrop(PenTool pen, Layer layer, GpuMesh* gpu,
+                                  CommandHistory history) {
+        pen.setGestureBindings(history, () => new MeshSessionEdit(&layer.meshRef(),
+            commitView, EditMode.Vertices, "test.pen", "Pen Polygon"));
+        auto context = new PreparedRecordContext(history, new RecordObserverHub());
+        context.setResourceIdentity(7,11);
+        assert(pen.prepareDeactivate(context, layer, GpuUploadOwner.fakeForTest(gpu),
+            GpuUploadOwner.fakeForTest(gpu),
+            GpuUploadOwner.fakeForTest(pen.preparedPreviewGpu()),
+            GpuResourceOwner.fakeForTest(pen.preparedPreviewGpu()),
+            new BoxHandlerBatchResourceOwner(pen.vertHandlers, 7, 11), null)
+            .historyAccepted, "mirror drop refused");
+        return context;
+    }
+    PenTool symPen(Layer layer, GpuMesh* gpu) {
+        auto pen = new PenTool(() => &layer.meshRef(), gpu, LitShader.init);
+        pen.state = PenState.Drawing; pen.links_ = [-1, -1, -1];
+        pen.vertices_ = [Vec3(1,0,0), Vec3(2,0,0), Vec3(1,1,0)];
+        pen.frame.toWorld = commitPen.frame.toWorld; pen.mirror_.enabled = true;
+        return pen;
+    }
+    auto symLayer = new Layer; GpuMesh symGpu;
+    auto symHistory = new CommandHistory();
+    auto symContext = symDrop(symPen(symLayer, &symGpu), symLayer, &symGpu, symHistory);
+    assert(symContext.validate()); symContext.install();
+    symHistory.undoDepthCounts(modelDepth, uiDepth);
+    assert(symLayer.meshRef().faces.length == 2 && modelDepth == 1 &&
+        symLayer.meshRef().vertices.length == 6, "pen S6: the drop did not commit "
+        ~ "the stroke and its mirror in one row");
+    auto staleLayer = new Layer; GpuMesh staleGpu;
+    auto staleSym = symPen(staleLayer, &staleGpu);
+    auto staleDrop = symDrop(staleSym, staleLayer, &staleGpu, new CommandHistory());
+    staleSym.mirror_.enabled = false;
+    assert(!staleDrop.validate(), "pen S6: a symmetry change after the drop's "
+        ~ "prepare was not refused");
+    staleDrop.discard();
+    auto paramSym = symPen(staleLayer, &staleGpu);
+    paramSym.params_.currentPoint = 0; paramSym.params_.posX = 3;
+    auto paramContext = new PreparedRecordContext(null, new RecordObserverHub());
+    paramContext.setResourceIdentity(7, 11);
+    assert(paramSym.prepareParamChanged(paramContext, "posX",
+        GpuUploadOwner.fakeForTest(paramSym.preparedPreviewGpu())).accepted);
+    paramSym.mirror_.planePoint = Vec3(0.5f, 0, 0);
+    assert(!paramContext.validate(), "pen S6: a symmetry change after a Position "
+        ~ "prepare was not refused");
 }
 
 // ---------------------------------------------------------------------------
@@ -489,6 +540,7 @@ struct PreparedPenDeactivateImage {
     Vec3[] vertices;
     int[] links;
     SessionMeshKey[] linkKey;   // the mesh `links` index; read at the candidate build
+    SymmetryPacket mirror;
     Mesh previewClear;
     float[16] toWorld;
     size_t expectedHandlerCount;
@@ -510,6 +562,7 @@ struct PreparedPenParamImage {
     BoxHandler[] expectedHandlers;
     Vec3[] expectedHandlerPositions, nextHandlerPositions;
     float[16] expectedToWorld;
+    SymmetryPacket expectedMirror;
     MeshSnapshot expectedPreview;
     Mesh nextPreview;
     void clear() nothrow @nogc {
@@ -548,6 +601,8 @@ private:
 
     // The stroke's plane normal, a LOCAL axis of `frame`, locked per stroke.
     Vec3 planeNormal;
+    // The stroke's symmetry, latched at its first click (`latchMirror`).
+    SymmetryPacket mirror_;
     /// Storage frame captured at choosePlane(). All in-progress vertices live
     /// in this frame's local space.
     WorkplaneFrame frame;
@@ -684,6 +739,7 @@ public:
             image.nextHandlerPositions[i] = handler.pos;
         }
         image.expectedToWorld = frame.toWorld;
+        image.expectedMirror = penMirror(mirror_);
         image.expectedPreview = MeshSnapshot.capture(previewMesh);
         if (state != PenState.Drawing) return image;
         if (name == "currentPoint") {
@@ -717,7 +773,8 @@ public:
         } else return image;
         auto shadow = beginPreparedShadow(image.nextPreview);
         appendPenGeometry(image.nextPreview, PenStroke.of(image.nextVertices,
-            frame.toWorld, image.nextParams), PenBuildPurpose.Preview);
+            frame.toWorld, image.nextParams, withoutSceneLinks(image.nextLinks),
+            mirror_), PenBuildPurpose.Preview);
         foreach (i, v; image.nextVertices)
             if (i < image.nextHandlerPositions.length)
                 image.nextHandlerPositions[i] = transformPoint(frame.toWorld, v);
@@ -733,6 +790,7 @@ public:
             !sameSliceBytes(vertices_, image.expectedVertices) ||
             !sameSliceBytes(links_, image.expectedLinks) ||
             !sameValueBytes(frame.toWorld, image.expectedToWorld) ||
+            !sameMirror(mirror_, image.expectedMirror) ||
             !image.expectedPreview.matches(previewMesh) ||
             vertHandlers.length != image.expectedHandlers.length) return false;
         foreach (i, handler; vertHandlers)
@@ -820,7 +878,7 @@ public:
         image.valid = true; image.expectedState = cast(ubyte)state;
         image.params = params_; image.vertices = vertices_.dup;
         image.links = links_.dup; image.linkKey = strokeKey_.dup;
-        image.toWorld = frame.toWorld;
+        image.toWorld = frame.toWorld; image.mirror = penMirror(mirror_);
         image.expectedHandlerCount = vertHandlers.length;
         image.expectedLastSnap = lastSnap;
         image.expectedMeshChanged = meshChanged;
@@ -832,7 +890,8 @@ public:
             in PreparedPenDeactivateImage image) const nothrow @nogc {
         return image.valid && cast(ubyte)state == image.expectedState &&
             params_ == image.params && vertices_ == image.vertices &&
-            links_ == image.links && vertHandlers.length == image.expectedHandlerCount &&
+            links_ == image.links && sameMirror(mirror_, image.mirror) &&
+            vertHandlers.length == image.expectedHandlerCount &&
             lastSnap == image.expectedLastSnap &&
             meshChanged == image.expectedMeshChanged &&
             (!image.willCommit || frame.toWorld == image.toWorld);
@@ -869,7 +928,8 @@ public:
         auto shadow = beginPreparedShadow(candidate);
         appendPenGeometry(candidate, PenStroke.of(image.vertices,
             image.toWorld, image.params,
-            linksUnder(image.linkKey, image.links, *mesh)), PenBuildPurpose.Commit);
+            linksUnder(image.linkKey, image.links, *mesh), image.mirror),
+            PenBuildPurpose.Commit);
         candidate.declareCornerAppend(); candidate.buildLoops();
         candidate.syncSelection();
         drainPreparedShadowDelivery(candidate, deliveryFlags, deliveryDomains);
@@ -941,13 +1001,17 @@ public:
     }
 
     override void deactivate() {
-        // If a valid sequence is pending, commit it on deactivate.
-        if (state == PenState.Drawing && vertices_.length >= minDropCommitVerts()) {
-            commitPolygonWithUndo();
-        } else {
-            cancelPolygon();
-        }
+        dropStroke();
         previewGpu.destroy();
+    }
+
+    // A symmetry change during a stroke closes it, by the drop rule, on the
+    // frame after the change (wave plan S6, cells A6 / A6b: the reference's
+    // toggle commits the stroke) — never under a held drag (§17.1).
+    override void update(ref VectorStack vts) {
+        if (state != PenState.Drawing || dragArmed) return;
+        auto live = liveMirror(vts);
+        if (!symmetryPacketsEqual(live, mirror_)) dropStroke();
     }
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
@@ -974,6 +1038,7 @@ public:
 
         if (state == PenState.Idle) {
             choosePlane(cachedVp);
+            latchMirror(vts);
             Vec3 hit;
             int link;
             if (!resolvePenPoint(e.x, e.y, clickAnchor(), hit, link)) return true;
@@ -1086,7 +1151,9 @@ public:
         if (resolvePenPoint(e.x, e.y, dragAnchor, hit, link)) {
             vertices_[dragVertIdx] = hit;
             refreshLinks();
-            links_[dragVertIdx] = link;
+            // A mirror link stays with the dragged point (A7: the weld holds).
+            if (links_[dragVertIdx] > -2)
+                links_[dragVertIdx] = selfMirrorOr(link, hit, dragVertIdx);
             if (params_.currentPoint == dragVertIdx) syncPosFromCurrent();
             uploadPreview();
         }
@@ -1224,6 +1291,27 @@ private:
         planeNormal = Vec3(axis == 0 ? 1 : 0, axis == 1 ? 1 : 0, axis == 2 ? 1 : 0);
     }
 
+    // The live symmetry without its per-vertex pairing (the builder reads the
+    // plane only); off when the stage publishes none.
+    static SymmetryPacket liveMirror(ref VectorStack vts) {
+        auto sp = vts.get!SymmetryPacket();
+        return sp is null ? SymmetryPacket.init : penMirror(*sp);
+    }
+    // The stroke's mirror, latched at its first click (after `choosePlane`):
+    // under the work plane the captured double transform of the STAGE's axis
+    // (the packet's reads -1 there), wave plan S6.
+    void latchMirror(ref VectorStack vts) {
+        mirror_ = liveMirror(vts);
+        auto stage = liveSymmetryStage();
+        if (mirror_.enabled && mirror_.useWorkplane && stage !is null)
+            penWorkplaneMirrorPlane(stage.axisIndex, mirror_.offset, frame,
+                                    mirror_.planePoint, mirror_.planeNormal);
+    }
+    static bool sameMirror(in SymmetryPacket a, in SymmetryPacket b) nothrow @nogc {
+        return symmetryPacketsEqual(a, b) && a.planePoint == b.planePoint &&
+            a.planeNormal == b.planeNormal;
+    }
+
     // Where a click lands (wave plan S3a / S3c, tests/fixtures/pen_placement.json
     // `cells` / `plane_rule`): on the plane through the CURRENT point, the new
     // point going right after it (append = the current point is the last); the
@@ -1344,8 +1432,22 @@ private:
             immutable px = hit[i].snapped ? pxFrom(hit[i].worldPos) : float.infinity;
             if (px <= r) { has[i] = true; d[i] = px; }
         }
+        // The stroke's own mirror images are vertex candidates too, the scene
+        // winning a tie (wave plan S6, B3 / A7); a dragged point skips its own.
+        int image = -1;
+        foreach (j, v; mirror_.enabled ? vertices_ : null) {
+            if (dragInitiated && j == dragVertIdx) continue;
+            immutable px = pxFrom(mirrorPosition(mirror_, toWorldP(v)));
+            if (px <= r && px < d[kCascadeVertex]) {
+                has[kCascadeVertex] = true; d[kCascadeVertex] = px; image = cast(int)j;
+            }
+        }
         immutable float tol = kVertexToleranceScale * fmin(r, kCandidateToleranceBasePx);
         if (cascadeClassWins(kCascadeVertex, has, d, tol)) {
+            if (image >= 0) {
+                local = toLocalP(mirrorPosition(mirror_, toWorldP(vertices_[image])));
+                return -2 - image;
+            }
             local = toLocalP(hit[kCascadeVertex].worldPos);
             return hit[kCascadeVertex].targetIndex;
         }
@@ -1383,9 +1485,25 @@ private:
         // pos is in LOCAL workplane coords; the vertex handler renders in
         // world, so hit-testing needs the world image of `pos`.
         refreshLinks();
+        links_ ~= selfMirrorOr(link, pos, vertices_.length);
         vertices_ ~= pos;
-        links_ ~= link;
         vertHandlers ~= vertMarker(pos);
+    }
+
+    // Rule 2 of the merge (wave plan S5 / S6, C1-m4): a placed point within
+    // half the merge distance of the latched mirror plane, 2|d| < 3 px of world
+    // at the focus, is its own mirror (link -2 - i for stroke index `i`).
+    int selfMirrorOr(int link, Vec3 local, size_t i) const {
+        if (link != -1 || !params_.merge || !mirror_.enabled) return link;
+        immutable float gap = 2 * abs(dot(toWorldP(local) - mirror_.planePoint,
+                                          mirror_.planeNormal));
+        return gap < 3 * viewWorldPerPixel(cachedVp) ? -2 - cast(int)i : -1;
+    }
+    // A point inserted at `at` (delta +1) or removed from it (-1) renumbers the
+    // mirror links (<= -2 name point -2 - l); a link to a removed point drops.
+    static int shiftedLink(int l, int at, int delta) nothrow @nogc {
+        if (l > -2 || -2 - l < at) return l;
+        return delta < 0 && -2 - l == at ? -1 : l - delta;
     }
 
     // Empties every per-point stroke array together (the one reset site: an
@@ -1431,8 +1549,11 @@ private:
         if (insertIdx < 0) insertIdx = 0;
         if (insertIdx > cast(int)vertices_.length) insertIdx = cast(int)vertices_.length;
         refreshLinks();
+        foreach (ref l; links_) l = shiftedLink(l, insertIdx, 1);
+        links_ = links_[0 .. insertIdx] ~
+            selfMirrorOr(shiftedLink(link, insertIdx, 1), pos, insertIdx) ~
+            links_[insertIdx .. $];
         vertices_ = vertices_[0 .. insertIdx] ~ pos ~ vertices_[insertIdx .. $];
-        links_ = links_[0 .. insertIdx] ~ link ~ links_[insertIdx .. $];
         vertHandlers = vertHandlers[0 .. insertIdx] ~ vertMarker(pos)
             ~ vertHandlers[insertIdx .. $];
     }
@@ -1440,6 +1561,7 @@ private:
     void popVertex() {
         if (vertices_.length == 0) return;
         vertices_.length -= 1; links_.length -= 1;
+        foreach (ref l; links_) l = shiftedLink(l, cast(int)links_.length, -1);
         if (vertHandlers.length > 0) {
             vertHandlers[$ - 1].destroy();
             vertHandlers.length -= 1;
@@ -1492,7 +1614,7 @@ private:
     // plan A5 F2 (§24.4, §25.1 #1); not captured — gap row.
     void refreshLinks() {
         if (keyLive(strokeKey_, *mesh)) return;
-        links_[] = -1;
+        links_ = withoutSceneLinks(links_);
         SessionMeshKey k;
         k.stamp(*mesh);
         strokeKey_ = [k];
@@ -1500,10 +1622,25 @@ private:
     const(int)[] liveLinks() const { return linksUnder(strokeKey_, links_, *mesh); }
     static const(int)[] linksUnder(const(SessionMeshKey)[] key, const(int)[] links,
                                    ref const Mesh m) {
-        return keyLive(key, m) ? links : null;
+        return keyLive(key, m) ? links : withoutSceneLinks(links);
+    }
+    // `links` with every edited-mesh link dropped (mirror links kept): the
+    // links a mesh without the scene's vertices (a preview) can take.
+    static int[] withoutSceneLinks(const(int)[] links) {
+        auto r = links.dup;
+        foreach (ref l; r) if (l >= 0) l = -1;
+        return r;
     }
     static bool keyLive(const(SessionMeshKey)[] key, ref const Mesh m) {
         return key.length == 1 && key[0].matches(m);
+    }
+
+    // The drop rule: a stroke that forms an edge commits, any other is cancelled.
+    void dropStroke() {
+        if (state == PenState.Drawing && vertices_.length >= minDropCommitVerts())
+            commitPolygonWithUndo();
+        else
+            cancelPolygon();
     }
 
     void cancelPolygon() {
@@ -1599,6 +1736,7 @@ private:
         vertices_    = vertices_[0 .. dragIdx]    ~ vertices_[dragIdx + 1 .. $];
         links_       = links_[0 .. dragIdx]       ~ links_[dragIdx + 1 .. $];
         vertHandlers = vertHandlers[0 .. dragIdx] ~ vertHandlers[dragIdx + 1 .. $];
+        foreach (ref l; links_) l = shiftedLink(l, dragIdx, -1);
     }
 
     void uploadPreview() {
@@ -1607,7 +1745,7 @@ private:
             "pen: one marker and one link per stroke point");
         previewMesh.clear();
         appendPenGeometry(previewMesh, PenStroke.of(vertices_, frame.toWorld,
-            params_), PenBuildPurpose.Preview);
+            params_, withoutSceneLinks(links_), mirror_), PenBuildPurpose.Preview);
         previewGpu.upload(previewMesh);
         // Keep marker positions in sync (vertices_ may have been mutated by
         // popVertex / future numeric edits). Handlers render in WORLD.
@@ -1767,7 +1905,7 @@ private:
         // A pure tail append into the live scene mesh, declared as such for
         // the corner-append cross-check.
         appendPenGeometry(*mesh, PenStroke.of(vertices_, frame.toWorld,
-            params_, liveLinks()), PenBuildPurpose.Commit);
+            params_, liveLinks(), mirror_), PenBuildPurpose.Commit);
         mesh.declareCornerAppend();
         mesh.buildLoops();
         gpu.upload(*mesh);

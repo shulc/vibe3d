@@ -1,0 +1,1220 @@
+{
+ "name": "pen_symmetry",
+ "description": "Polygon pen under symmetry: the stroke and its mirror (B1-B6: axis X; A5: axes Y / Z, an offset plane and the work plane; A6: a symmetry toggle during a stroke; A7: a press on a mirror image; A8: one undo entry).",
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "gui-gesture",
+  "notes": "fresh GUI worker per cell, NEW empty foreground mesh; top orthographic view, clicks on the plane y = 1 through the camera focus at 440 px per metre; positions are mesh readback after the last gesture; face rings are vertex indices, vertices numbered in click order",
+  "captured_utc": "2026-10-04",
+  "harness": "private capture harness",
+  "task": "9350"
+ },
+ "tolerance": 1e-05,
+ "cases": {
+  "A5-symWP": {
+   "symmetry_setup": {
+    "axis": "x",
+    "work_plane": {
+     "origin": [
+      0.5,
+      0.2,
+      -0.3
+     ],
+     "rot_deg_xyz": [
+      30,
+      0,
+      40
+     ],
+     "rotation_matrix": "Rz(40)*Ry(0)*Rx(30)"
+    },
+    "symmetry_in_work_plane": true
+   },
+   "clicks_xz_on_plane_y1": [
+    [
+     0.25,
+     -0.25
+    ],
+    [
+     0.75,
+     -0.25
+    ],
+    [
+     0.75,
+     0.25
+    ]
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.054492,
+      1.119866,
+      -0.016506
+     ],
+     [
+      0.437514,
+      1.44126,
+      -0.016506
+     ],
+     [
+      0.598211,
+      1.249749,
+      0.416506
+     ],
+     [
+      -0.093315,
+      0.526813,
+      -0.223946
+     ],
+     [
+      0.11428,
+      0.144336,
+      -0.470148
+     ],
+     [
+      0.274977,
+      -0.047175,
+      -0.037135
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      2,
+      1
+     ],
+     [
+      3,
+      4,
+      5
+     ]
+    ],
+    "face_normals": [
+     [
+      -0.55667,
+      0.663414,
+      0.5
+     ],
+     [
+      -0.851071,
+      -0.517822,
+      0.086824
+     ]
+    ]
+   },
+   "law": "originals land on the work-plane-local plane y_local = 1.0; the mirror plane is the local x=0 plane mapped by the work-plane transform APPLIED TWICE: normal R*R*e_x, through R*origin + origin (fit 6.7e-7); a single application misses by 0.83"
+  },
+  "A5-symWP2": {
+   "symmetry_setup": {
+    "axis": "x",
+    "work_plane": {
+     "origin": [
+      0.3,
+      0,
+      0
+     ],
+     "rot_deg_xyz": [
+      0,
+      0,
+      30
+     ]
+    },
+    "symmetry_in_work_plane": true
+   },
+   "clicks_xz_on_plane_y1": [
+    [
+     0.25,
+     -0.25
+    ],
+    [
+     0.75,
+     -0.25
+    ],
+    [
+     0.75,
+     0.25
+    ]
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.016506,
+      0.991025,
+      -0.25
+     ],
+     [
+      0.449519,
+      1.241025,
+      -0.25
+     ],
+     [
+      0.449519,
+      1.241025,
+      0.25
+     ],
+     [
+      -0.440192,
+      0.2,
+      -0.25
+     ],
+     [
+      -0.440192,
+      -0.3,
+      -0.25
+     ],
+     [
+      -0.440192,
+      -0.3,
+      0.25
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      2,
+      1
+     ],
+     [
+      3,
+      4,
+      5
+     ]
+    ],
+    "face_normals": [
+     [
+      -0.5,
+      0.866025,
+      0.0
+     ],
+     [
+      -1.0,
+      0.0,
+      0.0
+     ]
+    ]
+   },
+   "law": "same double-transform law: plane normal (0.5,0.866,0) through (0.5598,0.15,0) (fit 5e-7); single application misses by 0.79"
+  },
+  "A5-symXoff": {
+   "symmetry_setup": {
+    "axis": "x",
+    "offset": 0.3
+   },
+   "clicks_xz_on_plane_y1": [
+    [
+     0.25,
+     -0.25
+    ],
+    [
+     0.75,
+     -0.25
+    ],
+    [
+     0.75,
+     0.25
+    ]
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.25,
+      1.0,
+      -0.25
+     ],
+     [
+      0.75,
+      1.0,
+      -0.25
+     ],
+     [
+      0.75,
+      1.0,
+      0.25
+     ],
+     [
+      0.35,
+      1.0,
+      -0.25
+     ],
+     [
+      -0.15,
+      1.0,
+      -0.25
+     ],
+     [
+      -0.15,
+      1.0,
+      0.25
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      2,
+      1
+     ],
+     [
+      3,
+      4,
+      5
+     ]
+    ],
+    "face_normals": [
+     [
+      0.0,
+      1.0,
+      0.0
+     ],
+     [
+      0.0,
+      1.0,
+      0.0
+     ]
+    ]
+   },
+   "law": "mirror x' = 2*0.3 - x"
+  },
+  "A5-symY": {
+   "symmetry_setup": {
+    "axis": "y",
+    "offset": 0
+   },
+   "clicks_xz_on_plane_y1": [
+    [
+     0.25,
+     0.25
+    ],
+    [
+     0.75,
+     0.25
+    ],
+    [
+     0.75,
+     -0.25
+    ]
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.25,
+      1.0,
+      0.25
+     ],
+     [
+      0.75,
+      1.0,
+      0.25
+     ],
+     [
+      0.75,
+      1.0,
+      -0.25
+     ],
+     [
+      0.25,
+      -1.0,
+      0.25
+     ],
+     [
+      0.75,
+      -1.0,
+      0.25
+     ],
+     [
+      0.75,
+      -1.0,
+      -0.25
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      5,
+      4
+     ]
+    ],
+    "face_normals": [
+     [
+      0.0,
+      1.0,
+      0.0
+     ],
+     [
+      0.0,
+      -1.0,
+      0.0
+     ]
+    ]
+   },
+   "law": "mirror (x,-y,z); mirror ring = original ring reversed-keeping-first (mirror pass toggles the reverse decision); mirror faces -Y"
+  },
+  "A5-symZ": {
+   "symmetry_setup": {
+    "axis": "z",
+    "offset": 0
+   },
+   "clicks_xz_on_plane_y1": [
+    [
+     0.25,
+     0.75
+    ],
+    [
+     0.75,
+     0.75
+    ],
+    [
+     0.75,
+     0.25
+    ]
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.25,
+      1.0,
+      0.75
+     ],
+     [
+      0.75,
+      1.0,
+      0.75
+     ],
+     [
+      0.75,
+      1.0,
+      0.25
+     ],
+     [
+      0.25,
+      1.0,
+      -0.75
+     ],
+     [
+      0.75,
+      1.0,
+      -0.75
+     ],
+     [
+      0.75,
+      1.0,
+      -0.25
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      3,
+      5,
+      4
+     ]
+    ],
+    "face_normals": [
+     [
+      0.0,
+      1.0,
+      0.0
+     ],
+     [
+      0.0,
+      1.0,
+      0.0
+     ]
+    ]
+   },
+   "law": "mirror (x,y,-z); mirror ring [m0,m2,m1]; both face +Y"
+  },
+  "A6-toggle": {
+   "symmetry_setup": {
+    "axis": "x",
+    "enabled_at_start": false,
+    "toggled_on_by": "the symmetry toggle after the 2nd click, then a 3rd click"
+   },
+   "clicks_xz_on_plane_y1": [
+    [
+     0.25,
+     -0.25
+    ],
+    [
+     0.75,
+     -0.25
+    ],
+    [
+     0.75,
+     0.25
+    ]
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.25,
+      1.0,
+      -0.25
+     ],
+     [
+      0.75,
+      1.0,
+      -0.25
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      1
+     ]
+    ],
+    "face_normals": [
+     null
+    ]
+   },
+   "law": "the toggle commits the 2-point stroke (readback captured); what the 3rd click does is inferred, not separable from 'the 3rd click is swallowed' (same readback)"
+  },
+  "A6b-toggle-drop": {
+   "symmetry_setup": {
+    "axis": "x",
+    "enabled_at_start": false,
+    "toggled_on_by": "the symmetry toggle after the 3rd click, then drop"
+   },
+   "clicks_xz_on_plane_y1": [
+    [
+     0.25,
+     -0.25
+    ],
+    [
+     0.75,
+     -0.25
+    ],
+    [
+     0.75,
+     0.25
+    ]
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.25,
+      1.0,
+      -0.25
+     ],
+     [
+      0.75,
+      1.0,
+      -0.25
+     ],
+     [
+      0.75,
+      1.0,
+      0.25
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      2,
+      1
+     ]
+    ],
+    "face_normals": [
+     [
+      0.0,
+      1.0,
+      0.0
+     ]
+    ]
+   },
+   "law": "the symmetry toggle ENDS (commits) the stroke; no mirror is added"
+  },
+  "A7-mirror-handle": {
+   "symmetry_setup": {
+    "axis": "x"
+   },
+   "clicks_xz_on_plane_y1": [
+    [
+     0.25,
+     -0.25
+    ],
+    [
+     0.75,
+     -0.25
+    ],
+    [
+     0.75,
+     0.25
+    ]
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.25,
+      1.0,
+      -0.25
+     ],
+     [
+      0.75,
+      1.0,
+      -0.25
+     ],
+     [
+      0.66,
+      1.0,
+      0.25
+     ],
+     [
+      -0.75,
+      1.0,
+      0.25
+     ],
+     [
+      -0.25,
+      1.0,
+      -0.25
+     ],
+     [
+      -0.75,
+      1.0,
+      -0.25
+     ]
+    ],
+    "faces": [
+     [
+      1,
+      0,
+      3,
+      2
+     ],
+     [
+      5,
+      3,
+      2,
+      4
+     ]
+    ],
+    "face_normals": [
+     [
+      0.0,
+      1.0,
+      0.0
+     ],
+     [
+      0.0,
+      1.0,
+      0.0
+     ]
+    ]
+   },
+   "gesture": "after 3 clicks, press at the mirror image of point 2 (-0.75,0.25) and drag +40 px (+0.0909 m in x)",
+   "law": "a press at a mirror image adds a stroke point there (no mirror handles); the new point shares the mirror image's vertex and its own mirror shares point 2's (merge on), and the mirror positions are written last: v2 x 0.66, v3 x -0.75"
+  },
+  "A8-undo": {
+   "symmetry_setup": {
+    "axis": "x"
+   },
+   "clicks_xz_on_plane_y1": [
+    [
+     0.25,
+     -0.25
+    ],
+    [
+     0.75,
+     -0.25
+    ],
+    [
+     0.75,
+     0.25
+    ]
+   ],
+   "expected_after_drop": {
+    "vertices": [
+     [
+      0.25,
+      1.0,
+      -0.25
+     ],
+     [
+      0.75,
+      1.0,
+      -0.25
+     ],
+     [
+      0.75,
+      1.0,
+      0.25
+     ],
+     [
+      -0.25,
+      1.0,
+      -0.25
+     ],
+     [
+      -0.75,
+      1.0,
+      -0.25
+     ],
+     [
+      -0.75,
+      1.0,
+      0.25
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      2,
+      1
+     ],
+     [
+      3,
+      4,
+      5
+     ]
+    ],
+    "face_normals": [
+     [
+      0.0,
+      1.0,
+      0.0
+     ],
+     [
+      0.0,
+      1.0,
+      0.0
+     ]
+    ]
+   },
+   "expected_after_one_undo": {
+    "vertices": [],
+    "faces": [],
+    "face_normals": []
+   },
+   "expected_after_redo": {
+    "vertices": [
+     [
+      0.25,
+      1.0,
+      -0.25
+     ],
+     [
+      0.75,
+      1.0,
+      -0.25
+     ],
+     [
+      0.75,
+      1.0,
+      0.25
+     ],
+     [
+      -0.25,
+      1.0,
+      -0.25
+     ],
+     [
+      -0.75,
+      1.0,
+      -0.25
+     ],
+     [
+      -0.75,
+      1.0,
+      0.25
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      2,
+      1
+     ],
+     [
+      3,
+      4,
+      5
+     ]
+    ],
+    "face_normals": [
+     [
+      0.0,
+      1.0,
+      0.0
+     ],
+     [
+      0.0,
+      1.0,
+      0.0
+     ]
+    ]
+   },
+   "law": "one undo step removes the stroke and its mirror together (0 vertices); one redo restores both"
+  },
+  "B1": {
+   "symmetry_setup": {
+    "axis": "x"
+   },
+   "clicks_xz_on_plane_y1": [
+    [
+     0.25,
+     -0.25
+    ],
+    [
+     0.75,
+     -0.25
+    ],
+    [
+     0.75,
+     0.25
+    ]
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0.25,
+      1.0,
+      -0.25
+     ],
+     [
+      0.75,
+      1.0,
+      -0.25
+     ],
+     [
+      0.75,
+      1.0,
+      0.25
+     ],
+     [
+      -0.25,
+      1.0,
+      -0.25
+     ],
+     [
+      -0.75,
+      1.0,
+      -0.25
+     ],
+     [
+      -0.75,
+      1.0,
+      0.25
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      2,
+      1
+     ],
+     [
+      3,
+      4,
+      5
+     ]
+    ]
+   },
+   "law": "mirror points appended after the originals in click order; mirror ring [m0, m2, m1] of the flipped original"
+  },
+  "B3": {
+   "symmetry_setup": {
+    "axis": "x"
+   },
+   "clicks_xz_on_plane_y1": [
+    [
+     -0.5,
+     0.5
+    ],
+    [
+     0.5,
+     0.5
+    ],
+    [
+     0.5,
+     -0.5
+    ]
+   ],
+   "expected": {
+    "vertices": [
+     [
+      -0.5,
+      1.0,
+      0.5
+     ],
+     [
+      0.5,
+      1.0,
+      0.5
+     ],
+     [
+      0.5,
+      1.0,
+      -0.5
+     ],
+     [
+      -0.5,
+      1.0,
+      -0.5
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      1,
+      3,
+      0
+     ]
+    ]
+   },
+   "law": "a stroke straddling the plane is mirrored, not clipped; the click on the mirror image of point 0 shares vertices crosswise"
+  },
+  "B4": {
+   "symmetry_setup": {
+    "axis": "x"
+   },
+   "clicks_xz_on_plane_y1": [
+    [
+     0,
+     -0.25
+    ],
+    [
+     0.75,
+     -0.25
+    ],
+    [
+     0.75,
+     0.25
+    ]
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0,
+      1.0,
+      -0.25
+     ],
+     [
+      0.75,
+      1.0,
+      -0.25
+     ],
+     [
+      0.75,
+      1.0,
+      0.25
+     ],
+     [
+      -0.75,
+      1.0,
+      -0.25
+     ],
+     [
+      -0.75,
+      1.0,
+      0.25
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      2,
+      1
+     ],
+     [
+      0,
+      3,
+      4
+     ]
+    ]
+   },
+   "law": "an on-plane point is its own mirror (merge on)"
+  },
+  "B4m": {
+   "symmetry_setup": {
+    "axis": "x",
+    "merge": false
+   },
+   "clicks_xz_on_plane_y1": [
+    [
+     0,
+     -0.25
+    ],
+    [
+     0.75,
+     -0.25
+    ],
+    [
+     0.75,
+     0.25
+    ]
+   ],
+   "expected": {
+    "vertices": [
+     [
+      0,
+      1.0,
+      -0.25
+     ],
+     [
+      0.75,
+      1.0,
+      -0.25
+     ],
+     [
+      0.75,
+      1.0,
+      0.25
+     ],
+     [
+      0,
+      1.0,
+      -0.25
+     ],
+     [
+      -0.75,
+      1.0,
+      -0.25
+     ],
+     [
+      -0.75,
+      1.0,
+      0.25
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      2,
+      1
+     ],
+     [
+      3,
+      4,
+      5
+     ]
+    ]
+   },
+   "law": "merge off: the on-plane point and its mirror are two vertices"
+  },
+  "B6d": {
+   "symmetry_setup": {
+    "axis": "x"
+   },
+   "clicks_xz_on_plane_y1": [
+    [
+     0.25,
+     -0.25
+    ],
+    [
+     0.75,
+     -0.25
+    ],
+    [
+     0.75,
+     0.25
+    ]
+   ],
+   "gesture": "drag point 2 to (0.85, 0.35)",
+   "expected": {
+    "vertices": [
+     [
+      0.25,
+      1.0,
+      -0.25
+     ],
+     [
+      0.75,
+      1.0,
+      -0.25
+     ],
+     [
+      0.85,
+      1.0,
+      0.35
+     ],
+     [
+      -0.25,
+      1.0,
+      -0.25
+     ],
+     [
+      -0.75,
+      1.0,
+      -0.25
+     ],
+     [
+      -0.85,
+      1.0,
+      0.35
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      2,
+      1
+     ],
+     [
+      3,
+      4,
+      5
+     ]
+    ]
+   },
+   "law": "the mirror follows a drag"
+  },
+  "B6n": {
+   "symmetry_setup": {
+    "axis": "x"
+   },
+   "clicks_xz_on_plane_y1": [
+    [
+     0.25,
+     -0.25
+    ],
+    [
+     0.75,
+     -0.25
+    ],
+    [
+     0.75,
+     0.25
+    ]
+   ],
+   "gesture": "panel: Position X 0.9 (current point 2)",
+   "expected": {
+    "vertices": [
+     [
+      0.25,
+      1.0,
+      -0.25
+     ],
+     [
+      0.75,
+      1.0,
+      -0.25
+     ],
+     [
+      0.9,
+      1.0,
+      0.25
+     ],
+     [
+      -0.25,
+      1.0,
+      -0.25
+     ],
+     [
+      -0.75,
+      1.0,
+      -0.25
+     ],
+     [
+      -0.9,
+      1.0,
+      0.25
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      2,
+      1
+     ],
+     [
+      3,
+      4,
+      5
+     ]
+    ]
+   },
+   "law": "the mirror follows a typed position (first readback of the cell; its later readback is void)"
+  },
+  "B6n_cur1": {
+   "symmetry_setup": {
+    "axis": "x"
+   },
+   "clicks_xz_on_plane_y1": [
+    [
+     0.25,
+     -0.25
+    ],
+    [
+     0.75,
+     -0.25
+    ],
+    [
+     0.75,
+     0.25
+    ]
+   ],
+   "gesture": "panel: Current Point 1, Position X 0.6",
+   "expected": {
+    "vertices": [
+     [
+      0.25,
+      1.0,
+      -0.25
+     ],
+     [
+      0.6,
+      1.0,
+      -0.25
+     ],
+     [
+      0.75,
+      1.0,
+      0.25
+     ],
+     [
+      -0.25,
+      1.0,
+      -0.25
+     ],
+     [
+      -0.6,
+      1.0,
+      -0.25
+     ],
+     [
+      -0.75,
+      1.0,
+      0.25
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      2,
+      1
+     ],
+     [
+      3,
+      4,
+      5
+     ]
+    ]
+   },
+   "law": "the mirror follows a typed position of a non-last point"
+  }
+ },
+ "rejected_candidates": {
+  "S-face": "A5-symY mirror faces -Y",
+  "W-reflect (single work-plane transform)": "A5-symWP misses by 0.83 m, A5-symWP2 by 0.79 m",
+  "H-mirror": "A7 result has 4-gons (a point was added)",
+  "U-mirror / U-none": "A8 one undo -> 0 vertices",
+  "M-at-commit": "A6b no mirror"
+ },
+ "not_drivable": {
+  "A6-toggle (mirror of all points vs latched at point 0)": "the only toggle without a script call ends the stroke, so a mid-stroke symmetry change cannot be observed"
+ }
+}

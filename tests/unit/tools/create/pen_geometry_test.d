@@ -10,12 +10,14 @@ import std.format : format;
 import math : Vec3, Viewport, cross, dot, eyeVectorAt;
 import mesh : Mesh;
 import prepared_tool_effect : PreparedPenParamKind;
+import toolpipe.packets : SymmetryPacket;
+import tools.create.create_common : WorkplaneFrame;
 import tools.create.pen_geometry;
 
 // Composition pins: a field added to the stroke or a kind added to the
 // prepared param enum must be added here, with its cases.
 static assert([__traits(allMembers, PenStroke)] ==
-    ["points", "links", "toWorld", "flip", "quads", "of"]);
+    ["points", "links", "toWorld", "flip", "quads", "mirror", "of"]);
 static assert([__traits(allMembers, PenBuildPurpose)] == ["Preview", "Commit"]);
 static assert([__traits(allMembers, PreparedPenParamKind)] ==
     ["None", "Noop", "CurrentPoint", "Position", "Preview"]);
@@ -339,4 +341,116 @@ unittest // a linked point (S5 merge) emits the shared index and appends no vert
     Mesh preview;
     appendPenGeometry(preview, PenStroke.of(kTri, kIdentity, p), PenBuildPurpose.Preview);
     assert(preview.vertices.length == 3, "a link-free stroke shared a vertex");
+}
+
+// --- Symmetry (wave plan S6, task 9363) -------------------------------------
+// Literals from tests/fixtures/pen_symmetry.json (B1, A5-symY, A5-symWP / WP2,
+// A7) and pen_merge.json (mirror_gap_click_x0.002, mirror_press_drag_merge_off).
+
+private SymmetryPacket plane(Vec3 normal, Vec3 point = Vec3(0, 0, 0)) {
+    SymmetryPacket s;
+    s.enabled = true; s.planeNormal = normal; s.planePoint = point;
+    return s;
+}
+private Mesh built(const(Vec3)[] pts, bool flip, const(int)[] links,
+                   in SymmetryPacket sym, PenBuildPurpose purpose = PenBuildPurpose.Commit) {
+    PenParams p; p.flip = flip;
+    Mesh m;
+    appendPenGeometry(m, PenStroke.of(pts, kIdentity, p, links, sym), purpose);
+    return m;
+}
+
+unittest // the mirror: click order, the toggled ring, crosswise and self welds
+{
+    const symX = plane(Vec3(1, 0, 0));
+    auto b1 = onY1([0.25f, -0.25f], [0.75f, -0.25f], [0.75f, 0.25f]);
+    // B1: mirror images after the originals in click order; ring [m0, m2, m1]
+    // reversed back to [3, 4, 5] (the reverse decision toggled).
+    auto m = built(b1, true, null, symX);
+    assert(m.vertices == b1 ~ onY1([-0.25f, -0.25f], [-0.75f, -0.25f], [-0.75f, 0.25f]),
+        format("B1 vertices %s", m.vertices));
+    assert(m.faces == [[0u, 2, 1], [3u, 4, 5]], format("B1 faces %s", m.faces));
+
+    // A5-symY: the unflipped triangle's mirror ring is reversed and faces -Y.
+    auto y = onY1([0.25f, 0.25f], [0.75f, 0.25f], [0.75f, -0.25f]);
+    m = built(y, false, null, plane(Vec3(0, 1, 0)));
+    assert(m.faces == [[0u, 1, 2], [3u, 5, 4]], format("A5-symY faces %s", m.faces));
+    assert(m.vertices[3] == Vec3(0.25f, -1, 0.25f), "A5-symY: mirror not at y = -1");
+    const f = m.faces[1];
+    assert(cross(m.vertices[f[1]] - m.vertices[f[0]],
+                 m.vertices[f[2]] - m.vertices[f[0]]).y < 0, "A5-symY: mirror faces +Y");
+
+    // A flipped 4-gon (the merge-off A7 press): ring [1,0,3,2], mirror [5,6,7,4].
+    auto quad = b1 ~ onY1([-0.66f, 0.25f]);
+    m = built(quad, true, null, symX);
+    assert(m.vertices.length == 8 && m.faces == [[1u, 0, 3, 2], [5u, 6, 7, 4]],
+        format("4-gon + mirror: %s vertices, faces %s", m.vertices.length, m.faces));
+
+    // A7: point 3 shares m(p2)'s vertex, m(p3) shares p2's; the mirror images
+    // are written last (v2 x 0.66, v3 x -0.75).
+    m = built(quad, true, [-1, -1, -1, -4], symX);
+    assert(m.vertices == onY1([0.25f, -0.25f], [0.75f, -0.25f], [0.66f, 0.25f],
+        [-0.75f, 0.25f], [-0.25f, -0.25f], [-0.75f, -0.25f]), format("A7 vertices %s",
+        m.vertices));
+    assert(m.faces == [[1u, 0, 3, 2], [5u, 3, 2, 4]], format("A7 faces %s", m.faces));
+
+    // B3: point 1 on m(p0): 4 vertices.
+    m = built(onY1([-0.5f, 0.5f], [0.5f, 0.5f], [0.5f, -0.5f]), false, [-1, -2, -1], symX);
+    assert(m.vertices.length == 4 && m.faces == [[0u, 1, 2], [1u, 3, 0]],
+        format("B3: %s vertices, faces %s", m.vertices.length, m.faces));
+
+    // Self weld: point 0 is its own mirror; its position survives (x 0.002).
+    auto gap = onY1([0.002f, 0.002f], [0.588f, -0.292f], [0.588f, 0.352f]);
+    m = built(gap, true, [-2, -1, -1], symX);
+    assert(m.vertices.length == 5 && m.vertices[0] == gap[0] &&
+        m.faces == [[0u, 2, 1], [0u, 3, 4]], format("self weld: %s, faces %s",
+        m.vertices, m.faces));
+
+    // A 2-point preview mirrors its open polyline.
+    m = built(b1[0 .. 2], false, null, symX, PenBuildPurpose.Preview);
+    assert(m.vertices.length == 4 && m.faces.length == 0 && m.edges.length == 2,
+        format("2-point preview: %s vertices, %s edges", m.vertices.length, m.edges.length));
+}
+
+// Column-major frame: rotation columns then the origin (transformPoint's layout).
+private WorkplaneFrame frameOf(Vec3 x, Vec3 y, Vec3 z, Vec3 o) {
+    WorkplaneFrame f;
+    f.toWorld = [x.x, x.y, x.z, 0, y.x, y.y, y.z, 0, z.x, z.y, z.z, 0, o.x, o.y, o.z, 1];
+    return f;
+}
+private bool near(Vec3 a, Vec3 b, float tol) {
+    import std.math : abs;
+    return abs(a.x - b.x) <= tol && abs(a.y - b.y) <= tol && abs(a.z - b.z) <= tol;
+}
+
+unittest // the work-plane mirror plane: the axis plane mapped by W twice
+{
+    import std.math : cos, sin, PI;
+    // A5-symWP2: origin (0.3, 0, 0), rotZ 30.
+    const c = cos(PI / 6), s = sin(PI / 6);
+    auto wp2 = frameOf(Vec3(c, s, 0), Vec3(-s, c, 0), Vec3(0, 0, 1), Vec3(0.3f, 0, 0));
+    Vec3 pt, n;
+    assert(penWorkplaneMirrorPlane(0, 0, wp2, pt, n), "A5-symWP2: axis X refused");
+    assert(near(n, Vec3(0.5f, 0.866025f, 0), 1e-5f) &&
+        near(pt, Vec3(0.559808f, 0.15f, 0), 1e-5f),
+        format("A5-symWP2: plane n %s through %s; expected (0.5, 0.866, 0) through "
+            ~ "(0.5598, 0.15, 0)", n, pt));
+    assert(!penWorkplaneMirrorPlane(-1, 0, wp2, pt, n), "no axis must refuse");
+
+    // A5-symWP: Rz(40)·Rx(30), origin (0.5, 0.2, -0.3): the fixture's originals
+    // reflect onto its mirror points.
+    const cz = cos(40 * PI / 180), sz = sin(40 * PI / 180);
+    const cx = cos(30 * PI / 180), sx = sin(30 * PI / 180);
+    auto wp = frameOf(Vec3(cz, sz, 0), Vec3(-sz * cx, cz * cx, sx),
+                      Vec3(sz * sx, -cz * sx, cx), Vec3(0.5f, 0.2f, -0.3f));
+    assert(penWorkplaneMirrorPlane(0, 0, wp, pt, n), "A5-symWP: axis X refused");
+    const Vec3[3] orig = [Vec3(0.054492f, 1.119866f, -0.016506f),
+        Vec3(0.437514f, 1.44126f, -0.016506f), Vec3(0.598211f, 1.249749f, 0.416506f)];
+    const Vec3[3] want = [Vec3(-0.093315f, 0.526813f, -0.223946f),
+        Vec3(0.11428f, 0.144336f, -0.470148f), Vec3(0.274977f, -0.047175f, -0.037135f)];
+    foreach (i; 0 .. 3) {
+        const got = orig[i] - n * (2 * dot(orig[i] - pt, n));
+        assert(near(got, want[i], 1e-5f), format("A5-symWP: m(p%s) %s, expected %s",
+            i, got, want[i]));
+    }
 }

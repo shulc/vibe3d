@@ -20,7 +20,6 @@ import tools.alignment.linear_align_tool : LinearAlignTool;
 import tools.slice.loop_slice_tool : LoopSliceTool;
 import tools.deform.magnet : MagnetTool;
 import tools.alignment.mirror : MirrorTool;
-import tools.create.pen : PenTool;
 import tools.edit.poly_bevel : PolyBevelTool;
 import tools.edit.poly_extrude : PolyExtrudeTool;
 import tools.edit.poly_inset_tool : PolyInsetTool;
@@ -168,7 +167,6 @@ private:
             target.classinfo is LoopSliceTool.classinfo ||
             target.classinfo is MagnetTool.classinfo ||
             target.classinfo is MirrorTool.classinfo ||
-            target.classinfo is PenTool.classinfo ||
             target.classinfo is PolyBevelTool.classinfo ||
             target.classinfo is PolyExtrudeTool.classinfo ||
             target.classinfo is PolyInsetTool.classinfo ||

@@ -295,7 +295,7 @@ BASE_TOOL_EFFECTIVE_PRODUCTS = {
         "CapsuleTool", "CloneTool", "ConeTool", "CylinderTool",
         "DragWeldTool", "EdgeBevelTool", "EdgeExtrudeTool",
         "EdgeSliceTool", "EdgeSlideTool", "LinearAlignTool",
-        "LoopSliceTool", "MagnetTool", "MirrorTool", "PenTool",
+        "LoopSliceTool", "MagnetTool", "MirrorTool",
         "PolyBevelTool", "PolyExtrudeTool", "PolyInsetTool", "PushTool",
         "RadialAlignTool", "RadialArrayTool", "RadialSweepTool",
         "ReductionTool", "SliceTool", "SmoothShiftTool", "SphereTool",
@@ -376,7 +376,7 @@ param_hooks = [r for r in CURRENT_WRITERS["hooks"]
                if r["symbol"] == "onParamChanged" and r["module"] != "tool"]
 relevant_roots = [r for r in CURRENT_WRITERS["hooks"]
                   if r["symbol"] in ("activate", "update", "onParamChanged")]
-if (len(deactivations), len(param_hooks), len(relevant_roots)) != (35, 27, 72):
+if (len(deactivations), len(param_hooks), len(relevant_roots)) != (35, 27, 73):
     fail("P1.0b.0 reviewed writer cardinality changed")
 
 # P1.0b.1 exact conversion/defer ledger. The frozen writer rows remain the
@@ -525,6 +525,9 @@ B5Q_PREPARED_LEGACY = {
     # write; its param door stays the base prepared no-op (a headless write
     # re-applies nothing).
     ("tools.edit.topology_pen.tool", "TopologyPenTool", "onParamChanged"),
+    # Pen wave plan S6: a symmetry change mid-stroke closes the stroke on the
+    # next frame through the same legacy drop as `deactivate`.
+    ("tools.create.pen", "PenTool", "update"),
 }
 PREPARED_LEGACY = (B3D_PREPARED_LEGACY | B4C_PREPARED_LEGACY |
     B5B_PREPARED_LEGACY | B5D_PREPARED_LEGACY | B5F_PREPARED_LEGACY |

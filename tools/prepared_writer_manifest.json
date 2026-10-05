@@ -683,9 +683,16 @@
     {
       "aggregate": "PenTool",
       "module": "tools.create.pen",
-      "semantic_sha256": "b59946ec8b9920bcaf84eb09e5e843e03d17088592df2274d9212e2585f763ef",
+      "semantic_sha256": "69e68efb40bc4a707c98d673d996cb8abc7dca47043caef876e36f7175354d27",
       "signature": "void()",
       "symbol": "deactivate"
+    },
+    {
+      "aggregate": "PenTool",
+      "module": "tools.create.pen",
+      "semantic_sha256": "cf8704c4747b05a29397be3648c72a5a069f852b6a688f7949da5dc10fc3d41b",
+      "signature": "void(ref VectorStack vts)",
+      "symbol": "update"
     },
     {
       "aggregate": "PrimitiveCreateTool",
