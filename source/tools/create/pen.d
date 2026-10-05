@@ -832,8 +832,7 @@ public:
             in PreparedPenDeactivateImage image) const nothrow @nogc {
         return image.valid && cast(ubyte)state == image.expectedState &&
             params_ == image.params && vertices_ == image.vertices &&
-            links_ == image.links && strokeKey_ == image.linkKey &&
-            vertHandlers.length == image.expectedHandlerCount &&
+            links_ == image.links && vertHandlers.length == image.expectedHandlerCount &&
             lastSnap == image.expectedLastSnap &&
             meshChanged == image.expectedMeshChanged &&
             (!image.willCommit || frame.toWorld == image.toWorld);

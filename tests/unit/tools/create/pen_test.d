@@ -142,7 +142,8 @@ unittest {
 // user's snap (pipe snap stage enabled) plus one for the merge search when
 // `merge` is on, counted as `Cat.snapQuery` scopes: N motions 40 px apart on
 // an empty mesh (no target, no marker under the cursor) = 2N with merge on,
-// N with it off; the hover resolve restored during a drag doubles both.
+// N with it off; the hover resolve restored during a drag doubles both. A
+// motion under the drag threshold, still on the marker, resolves nothing.
 version (PerfProbe) unittest {
     import perf_probe : g_perf;
     import std.conv : to;
@@ -208,6 +209,16 @@ version (PerfProbe) unittest {
         down.x = up.x = 200; down.y = up.y = y;
         assert(pen.onMouseButtonDown(down, vts), "pen motion rig: the press");
         const before = *posX;
+        // Under the drag threshold, on the pressed point's marker: no resolve,
+        // the point stays.
+        g_perf.reset();
+        SDL_MouseMotionEvent near;
+        near.x = 202; near.y = y;
+        assert(pen.onMouseMotion(near, vts), "pen motion rig: a sub-threshold motion");
+        const hover = g_perf.toJson().parseJSON()["snapQuery"]["count"].integer;
+        assert(*posX == before && hover == 0, format("pen: a "
+            ~ "sub-threshold motion moved the point (%s -> %s) or ran %s snap queries",
+            before, *posX, hover));
         g_perf.reset();
         foreach (k; 1 .. 5) {
             SDL_MouseMotionEvent e;
