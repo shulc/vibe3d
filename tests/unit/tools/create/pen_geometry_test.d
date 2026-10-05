@@ -497,6 +497,20 @@ unittest
     auto symLines = build(PenType.lines, false, PenBuildPurpose.Commit, true);
     assert(symLines.faces[3 .. $] == [[4u, 5], [5u, 6], [6u, 7]],
         format("mirrored segments: %s", symLines.faces));
+    // Two points: no closing segment (it would repeat [0, 1]).
+    Mesh pair;
+    PenParams lp; lp.type = PenType.lines; lp.close = true; lp.selectNew = false;
+    appendPenGeometry(pair, PenStroke.of(sq[0 .. 2], kIdentity, lp), PenBuildPurpose.Commit);
+    assert(pair.faces == [[0u, 1]], format("lines + close, 2 points: %s", pair.faces));
+    // A point sharing its predecessor's vertex adds no segment: [V, V, a, b]
+    // makes [V, a] [a, b].
+    Mesh linked;
+    linked.addVertex(Vec3(9, 9, 9));
+    lp.close = false;
+    appendPenGeometry(linked, PenStroke.of(sq, kIdentity, lp, [0, 0, -1, -1]),
+        PenBuildPurpose.Commit);
+    assert(linked.faces == [[0u, 1], [1u, 2]], format("lines over a repeated link: %s",
+        linked.faces));
     auto pts = build(PenType.vertices, false);
     assert(pts.vertices.length == 4 && pts.faces.length == 0 && pts.edges.length == 0,
         "vertices type added a polygon or an edge");

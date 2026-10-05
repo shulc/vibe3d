@@ -21,6 +21,12 @@
 // UI door); `script-delete-drops-pen` is the script door's control. Counts,
 // rings and selections are exact; positions compare to 1e-4 (every click is a
 // lattice value of the 0.005 m quantum). `VIBE3D_CELL=<id>` runs one cell.
+//
+// Ours-only: `close-refused-unless-lines` — close is enabled for the lines
+// type only (wave plan S8); the pen refuses a disabled write at the door
+// (refusesDisabledParamWrites), so under the command no-op contract a close
+// write while the type is polygons is refused: status error, history depth
+// unchanged, the value read back false.
 
 import drag_helpers : Vec3, fetchCamera, kPaceLine, playAndWait;
 import http_client : getJson, postJson;
@@ -233,6 +239,20 @@ unittest {
         drop(); ++ran;
     }
 
+    // close-refused-unless-lines (ours-only, see the header).
+    if (want("close-refused-unless-lines")) {
+        rig("vertex");
+        arm();
+        const before = getJson("/api/history")["undo"].array.length;
+        auto r = postJson("/api/command", "tool.attr pen close true");
+        const after = getJson("/api/history")["undo"].array.length;
+        fails ~= check("close-refused-unless-lines", r["status"].str == "error" &&
+            before == after && attr("close") == 0,
+            format("close write under polygons: %s, history %s -> %s, close %s",
+                   r.toString, before, after, attr("close")));
+        drop(); ++ran;
+    }
+
     // ===== must turn: types and close (fixture pen_types.json) ==============
     foreach (cell; ["lines", "lines_close", "vertices", "subdiv"]) {
         if (!want(cell)) continue;
@@ -417,6 +437,6 @@ unittest {
         fails ~= selectionIs("ui-invert-one-click", exp);
     }
 
-    assert(only.length || ran == 22, format("cells ran %s, expected 22", ran));
+    assert(only.length || ran == 23, format("cells ran %s, expected 23", ran));
     assert(fails.length == 0, "pen types / selectNew / UI commands: " ~ fails.join(" | "));
 }

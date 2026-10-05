@@ -371,6 +371,11 @@ version(unittest) unittest {
         "makeQuads preview is not the builder's strip quad");
     assert(quadPen.buildPreparedParamImage("flip").kind ==
         PreparedPenParamKind.Preview, "flip edit must prepare a preview rebuild");
+    // S8: the type and close change the stroke's shape; selectNew does not.
+    assert(quadPen.buildPreparedParamImage("type").kind == PreparedPenParamKind.Preview &&
+        quadPen.buildPreparedParamImage("close").kind == PreparedPenParamKind.Preview &&
+        quadPen.buildPreparedParamImage("selectNew").kind == PreparedPenParamKind.Noop,
+        "pen S8: type / close / selectNew preview kinds");
     auto quadContext = new PreparedRecordContext(null, new RecordObserverHub());
     quadContext.setResourceIdentity(7, 11);
     auto quadEffect = quadPen.prepareParamChanged(quadContext, "makeQuads",
@@ -540,6 +545,31 @@ version(unittest) unittest {
     const onLink = offSym.selfMirrorOr(-1, Vec3(0, 0, 0), 0);
     assert(offLink == -1 && onLink == -2, format("pen S6: a point on x = 0 self-welds "
         ~ "%s with symmetry off, %s on; expected -1, -2", offLink, onLink));
+
+    // S8: the commit minimums per type (Enter / drop): polygons 3 / 2,
+    // lines 2 / 2, vertices 1 / 1, subdiv 3 / 2.
+    auto minPen = new PenTool(() => &mesh, &sceneGpu, LitShader.init);
+    size_t[2][] mins;
+    foreach (t; [PenType.polygons, PenType.lines, PenType.vertices, PenType.subdiv]) {
+        minPen.params_.type = t;
+        mins ~= [minPen.minCommitVerts(), minPen.minDropCommitVerts()];
+    }
+    assert(mins == [[3, 2], [2, 2], [1, 1], [3, 2]], format("pen S8: minimums %s", mins));
+    // S8: the selection mode is a commit-time value of the drop's image: a
+    // mode change after the prepare refuses it.
+    SelType mode = SelType.Polygon;
+    auto modeLayer = new Layer; GpuMesh modeGpu;
+    auto modePen = new PenTool(() => &modeLayer.meshRef(), &modeGpu, LitShader.init,
+        () nothrow @nogc => mode);
+    modePen.state = PenState.Drawing; modePen.links_ = [-1, -1, -1];
+    modePen.vertices_ = [Vec3(0,0,0), Vec3(1,0,0), Vec3(0,1,0)];
+    modePen.frame.toWorld = commitPen.frame.toWorld;
+    auto modeImage = modePen.buildPreparedDeactivateState();
+    assert(modeImage.selMode == SelType.Polygon && modePen.preparedDeactivateStateMatches(
+        modeImage), "pen S8: the drop image does not carry the live selection mode");
+    mode = SelType.Edge;
+    assert(!modePen.preparedDeactivateStateMatches(modeImage),
+        "pen S8: a selection-mode change after the drop's prepare was not refused");
 
     // S8 (A4-rev): the session's cancel ends a Drawing stroke only; an idle
     // pen's operation is not ended (its in-stroke redo survives).
