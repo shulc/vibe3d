@@ -1533,7 +1533,7 @@
     {
       "aggregate": "PenTool",
       "module": "tools.create.pen",
-      "semantic_sha256": "5e5df39eaae9fa3746e269f75ab6635d492069ce991781cb5661669e4b5db89d",
+      "semantic_sha256": "64e600dffb9977fec5a0effc68405b5236171743a5b239d4b36d201ee47a338f",
       "signature": "Param[]()",
       "symbol": "params"
     },
@@ -1708,7 +1708,7 @@
     {
       "aggregate": "LoopSliceTool",
       "module": "tools.slice.loop_slice_tool",
-      "semantic_sha256": "4f842d05153a2527d654834a3372979bb0e128db5694493d5065e902328e3d2f",
+      "semantic_sha256": "c65fee952d5d95f8ee1e1e8083f366b0407385b2c26def051f04f4357bec4453",
       "signature": "Param[]()",
       "symbol": "params"
     },
