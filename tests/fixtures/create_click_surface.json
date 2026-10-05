@@ -6,7 +6,7 @@
   "method": "gui-gesture",
   "captured_utc": "2026-10-05",
   "task": "9404",
-  "notes": "Numerical observations copied from the private capture records K-C (task 9396) and K-C2 (task 9460); the private findings remain the source of record."
+  "notes": "Numerical observations copied from the private capture records K-C (task 9396), K-C2 (task 9460) and K-C5 (task 9483); the private findings remain the source of record."
  },
  "_about": "A create click over a BACKGROUND surface with the surface constraint on (geometry off, double-sided off, snapping off unless stated). Background: a sphere of radius 1, 64 sides x 32 segments, centre (0,1,0), in a background layer; the foreground mesh starts empty. ROLE law: a FREE point (the vertex tool's click) reads the surface, a primitive's PRESS point (box corner, sphere centre) does not. The free point: q = the click's anchor-plane hit snapped to the view quantum (the create click law); the background hit on the VIEW ray through q (parallel in ortho, from the eye in perspective) wins, NOT re-quantised; offset * hit normal after it; no hit => q; then a snap target replaces all three channels. The surface height is a depth read at the reference (1/1024 lattice in ortho, ~1e-3 off a facet model; up to ~8e-3 along the ray in perspective; the offset normal 1-2 deg off the facet): compare the ray / in-plane channels to 1e-5 and heights to the cell's own scatter, floor 2e-3.",
  "views": {
@@ -204,9 +204,8 @@
     1.0,
     0.2
    ],
-   "pending": "9483",
-   "source": "plan inference from K-C C1d (box, handle off => PLANE); NOT ASSERTED until capture 9483 (vertex tool, handle 0, geometry off, constraint on, click (678,574), top440: PLANE (0.3,1,0.2) or SURF (0.3,1.930664,0.2))",
-   "law": "pending: whether the vertex tool's click with handle off is the plane point is uncaptured"
+   "source": "K-C5 (task 9483) on the vertex tool: handle 0 => PLANE (0.3, 1.0, 0.2) exactly, geometry off and Point alike; no surface query runs",
+   "law": "handle off: the constraint does not take the pointer; the click is the plane point"
   },
   "vertex-surface-persp": {
    "family": "vertex",
