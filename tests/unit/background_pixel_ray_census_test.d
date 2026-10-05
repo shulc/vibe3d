@@ -275,6 +275,15 @@ unittest { // (c) a FREE point reads the surface, a primitive's PRESS point does
     assert(dragSites == ["BoxTool.onMouseMotion", "SizedRadialCreateTool.onMouseMotion",
                          "TorusTool.onMouseMotion"],
         format("baseDragPoint calls must be exactly the box, radial and torus motion blocks: %s", dragSites));
+    // ...and each of those presses resolves under its own cell's viewport.
+    string[] syncSites;
+    foreach (f; ["tools/create/box.d", "tools/create/primitive_create_tool.d", "tools/create/torus.d"])
+        foreach (h; symbolTokenHits(blankNonCode(readText(buildPath(root, "source", f))), f, "syncEventViewport("))
+            syncSites ~= h.key;
+    sort(syncSites);
+    assert(syncSites == ["BoxTool.onMouseButtonDown", "SizedRadialCreateTool.onMouseButtonDown",
+                         "TorusTool.onMouseButtonDown"],
+        format("syncEventViewport calls must be exactly the three base-drag presses: %s", syncSites));
     immutable vertexTool = blankNonCode(readText(buildPath(root, "source", "tools/create/vertex_place.d")));
     assert(tokenAt(vertexTool, "kGuideTypes").length == 0,
         "the vertex tool passes no guide mask: after the guide-block deletion it has no candidate to strip");

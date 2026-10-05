@@ -471,7 +471,12 @@
    ],
    "tol": 1e-05,
    "source": "K-C2 C2d_top_box (press (581,501) -> (596,468))",
-   "law": "T = Pq + (pixel travel) / px_per_m (top view: the map is exact); surface on: T unquantised (0.654545 vs the control's 0.65)"
+   "law": "T = Pq + (pixel travel) / px_per_m (top view: the map is exact); surface on: T unquantised (0.654545 vs the control's 0.65)",
+   "press_aim_world": [
+    0.221515,
+    1.0,
+    0.424242
+   ]
   },
   "box-drag-off-control": {
    "family": "box",
@@ -494,7 +499,13 @@
    ],
    "tol": 1e-05,
    "source": "K-C2 C2d_top_box_ctrl",
-   "law": "T = Pq + (pixel travel) / px_per_m (top view: the map is exact); constraint off: q(T) = Pq + q(R - P), not q(R) = (0.7, -0.6)"
+   "law": "T = Pq + (pixel travel) / px_per_m (top view: the map is exact); constraint off: q(T) = Pq + q(R - P), not q(R) = (0.7, -0.6); the press pixel keeps the record's press residual (0.0215, 0.0242), so q(R) = (0.7, -0.6) here and the cell separates the carry from q(R)",
+   "press_aim_world": [
+    0.221515,
+    1.0,
+    0.424242
+   ],
+   "carry_witness": true
   },
   "box-drag-persp-down": {
    "family": "box",

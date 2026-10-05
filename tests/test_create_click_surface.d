@@ -207,9 +207,11 @@ private string baseDragCell(string name, JSONValue c, Rig r) {
         return [o.x + dir.x * t, y, o.z + dir.z * t];
     }
     const qs = num(r.view["q"]);
-    const p0 = "q_point" in c.object ? aimQ(arr3(c["q_point"]), qs) : worldPixel(v3(arr3(c["press_aim_world"])));
-    double[3] q = "q_point" in c.object ? arr3(c["q_point"]) : planeHit(p0, 0);
-    foreach (ref x; q) x = round(x / qs) * qs;
+    double[3] snapQ(double[3] v) { foreach (ref x; v) x = round(x / qs) * qs; return v; }
+    const p0 = "press_aim_world" in c.object ? worldPixel(v3(arr3(c["press_aim_world"])))
+                                             : aimQ(arr3(c["q_point"]), qs);
+    const double[3] q = "q_point" in c.object ? arr3(c["q_point"]) : snapQ(planeHit(p0, 0));
+    if (auto m = within(name ~ " rig", "q of our press hit", snapQ(planeHit(p0, q[1])), q, kRay)) return m;
     int[2] p1;
     if ("drag_px" in c.object) {
         // The cell's travel is the record's screen travel: our top view must
@@ -249,6 +251,12 @@ private string baseDragCell(string name, JSONValue c, Rig r) {
     const double[3] c1 = [cen[0] - gx * sx / 2, cen[1], cen[2] - gz * sz / 2],
                     d  = [cen[0] + gx * sx / 2, cen[1], cen[2] + gz * sz / 2];
     if (auto m = within(name, "corner 1 (the press)", c1, q, kRay)) return m;
+    // A carry witness: the press residual must put q(R) off q(T) (else T = R passes).
+    if ("carry_witness" in c.object) {
+        const qR = snapQ(planeHit(p1, q[1]));
+        assert(abs(qR[0] - aim[0]) >= qs / 2 || abs(qR[2] - aim[2]) >= qs / 2,
+            format("%s rig: q(R) %(%.4f %) equals q(T); the cell cannot see the press carry", name, qR[]));
+    }
     if ("expect_xz" in c.object)
         return within(name, "corner 2", d, aim, num(c["tol"]), [0, 2]);
     // Straight down: T = Pq + (R - P) from our own rays on the base plane;
