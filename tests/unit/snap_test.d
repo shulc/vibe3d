@@ -765,8 +765,9 @@ unittest {
         SnapPacket c = cfg; c.enabledTypes = SnapType.Vertex | SnapType.Grid;
         invalidateSnapGrids();
         SnapResult r = snapCursor(cur, sx, sy, vp, band, ModelSpace.world(), c);
-        assert(r.snapped && (r.worldPos - node).length < 1e-5f && (r.highlightPos - node).length < 1e-5f
-            && r.targetType == SnapType.Grid && r.targetIndex == -1,
+        assert(r.snapped && (r.worldPos - node).length < 1e-5f && r.highlighted
+            && (r.highlightPos - node).length < 1e-5f && r.targetType == SnapType.Grid
+            && r.targetIndex == -1 && r.targetSource == 0 && r.constraintType == SnapType.None,
             "grid-band-target: the grid places and reports itself as the target");
     }
     invalidateSnapGrids();

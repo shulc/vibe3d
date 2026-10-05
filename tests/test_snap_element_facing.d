@@ -376,6 +376,51 @@ private void gridLawCells() {
         ++ran;
     }
 
+    // 20c move-snap-held (ours; the K9d law at the gesture's edges): vertex
+    // bit only, the quad at y 1, loose T (0.13, 1, 0.07). (A) q dragged 24 px
+    // right (20 px short of T) snaps onto T and is released there — the drag
+    // ends holding T 20 px off its pointer. (B) A new drag from the gizmo,
+    // 40 px down in 2 px events (on T for the first 24 px), ends on its own
+    // pointer: no offset held by the previous gesture survives. (C) A drag
+    // 18 px back up (22 px from T: on T) then, with snap switched off
+    // mid-drag, 2 px more: the unsnapped event rejoins the pointer (20 px
+    // below T), not T moved 2 px up.
+    {
+        moveRig(1, "vertex", ",[0.13,1,0.07]");
+        auto cam = fetchCamera();
+        void drag(int[2] from, int dx, int dy, int steps) {
+            playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height, from[0],
+                                     from[1], from[0] + dx, from[1] + dy, steps));
+        }
+        drag(worldPixel(Vec3(0.03f, 1, 0.07f)), 24, 0, 12);
+        const qa = vertexPos(0);
+        drag(worldPixel(Vec3(0.13f, 1, 0.07f)), 0, 40, 20);
+        const qb = vertexPos(0);
+        const b = worldPixel(Vec3(0.13f, 1, cast(float)(0.07 + 40 * kPx)));
+        playAndWait(buildDragDownLog(cam.vpX, cam.vpY, cam.width, cam.height, b[0], b[1]));
+        playAndWait(buildDragMotionLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                                       b[0], b[1], b[0], b[1] - 18, 1));
+        const qc1 = vertexPos(0);
+        penCommand("tool.pipe.attr snap enabled false");
+        playAndWait(buildDragMotionLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                                       b[0], b[1] - 18, b[0], b[1] - 20, 1));
+        playAndWait(buildDragUpLog(cam.vpX, cam.vpY, cam.width, cam.height, b[0], b[1] - 20));
+        const qc = vertexPos(0);
+        penCommand("tool.set move off");
+        if (!at(qa, [0.13, 1, 0.07]))
+            fails ~= "move-snap-held: (A) q expected on T, got " ~ vstr(qa);
+        else if (!at(qb, [0.13, 1, 0.07 + 40 * kPx], kHalfPx))
+            fails ~= format("move-snap-held: (B) q expected at its own pointer "
+                ~ "(0.13, 1, %.6f), got %s", 0.07 + 40 * kPx, vstr(qb));
+        else if (!at(qc1, [0.13, 1, 0.07]))
+            fails ~= "move-snap-held: (C) q expected back on T, got " ~ vstr(qc1);
+        else
+            check(at(qc, [0.13, 1, 0.07 + 20 * kPx], kHalfPx),
+                format("move-snap-held: (C) snap off mid-drag: q expected at its pointer "
+                    ~ "(0.13, 1, %.6f), got %s", 0.07 + 20 * kPx, vstr(qc)));
+        ++ran;
+    }
+
     // 21 pen-grid-vs-guide (G8b2): grid + worldAxis. Our pen's world-axis
     // guide runs through the PRIOR vertex, so the captured guide line z −0.58
     // through p1 is built as the stroke's first point (a node click typed to
@@ -543,12 +588,12 @@ unittest {
         ++ran;
     }
 
-    assert(ran == 24, format("population: %d cells ran, expected 24", ran));
+    assert(ran == 25, format("population: %d cells ran, expected 25", ran));
     string[] names;   // the red cells by name first: the runner shows 8 lines
     foreach (f; fails) {
         const n = f[0 .. f.indexOf(':') < 0 ? f.length : f.indexOf(':')];
         if (!names.canFind(n)) names ~= n;
     }
-    assert(fails.length == 0, format("%d of 24 cells red (%-(%s, %)):\n  %-(%s\n  %)",
+    assert(fails.length == 0, format("%d of 25 cells red (%-(%s, %)):\n  %-(%s\n  %)",
                                      names.length, names, fails));
 }

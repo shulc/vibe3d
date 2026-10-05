@@ -735,14 +735,13 @@ public:
         // res.constraintType stays None
     } else if (hasGrid) {
         // The grid places and reports itself as the target — the fields an
-        // in-range Grid winner always wrote; no band element leaks through.
+        // in-range Grid winner always wrote (index -1 and source 0 are the
+        // pass-through's); no band element leaks through.
         res.snapped      = true;
         res.worldPos     = gridWorld;
         res.highlighted  = true;
         res.highlightPos = gridWorld;
         res.targetType   = SnapType.Grid;
-        res.targetIndex  = -1;
-        res.targetSource = 0;
     } else if (constraintSnapped) {
         // Constraint provides the position; discrete highlight (if any) stays
         // for visual feedback — the user sees the nearby element hinted at.
