@@ -1,8 +1,8 @@
 module tests.unit.toolpipe.view_only_subject_pin_test;
 
 // Task 1904 (doc/subject_stage_plan.md §1.3a) — the declaration-site pin
-// for `viewOnlySubject`. The two workplane pickers (`create_common.d ::
-// pickWorkplane`, `:: pickWorkplaneFrame`) publish a subject with no mesh
+// for `viewOnlySubject`. The workplane picker (`create_common.d ::
+// pickWorkplaneFrame`; its twin `pickWorkplane` went in task 9417) publishes a subject with no mesh
 // and the type fields frozen at `EditMode.Vertices` / `SelType.Vertex` --
 // today's silent `.init` behaviour, made explicit. No behavioural test can
 // see a wrong value leak in through those two call sites (§1.3a traces why:
@@ -34,15 +34,15 @@ unittest {
     auto src = viewOnlySubject(vp);
 
     assert(src.mesh is null,
-           "§1.3a: viewOnlySubject must freeze mesh == null -- pickWorkplane/"
-           ~ "pickWorkplaneFrame publish no mesh today");
+           "§1.3a: viewOnlySubject must freeze mesh == null -- "
+           ~ "pickWorkplaneFrame publishes no mesh today");
     assert(src.editMode == EditMode.Vertices,
            "§1.3a: editMode is frozen at Vertices -- the value the two "
            ~ "workplane pickers publish implicitly via .init today");
     assert(src.selType == SelType.Vertex,
            "§1.3a: selType is frozen at Vertex -- ActionCenterStage/AxisStage "
            ~ "branch on subj.selType unconditionally and no behavioural test "
-           ~ "can see a live value leak in through pickWorkplane/"
+           ~ "can see a live value leak in through "
            ~ "pickWorkplaneFrame, so the freeze is pinned here");
     assert(src.viewport == vp,
            "§1.3a: viewport is the one field the two pickers DO pass through "

@@ -88,9 +88,10 @@
 // g_pipeCtx.pipeline; ...; pl.evaluate(...)`) contains no literal
 // `pipeline.evaluate(` substring and slips past uncounted.
 //
-// Assertion (c): the two workplane pickers (plan §1.3a) —
-// `create_common.d :: pickWorkplane` / `:: pickWorkplaneFrame` — reach the
-// funnel through `viewOnlySubject(` and contain no four-argument
+// Assertion (c): the workplane picker (plan §1.3a) —
+// `create_common.d :: pickWorkplaneFrame`; its twin `pickWorkplane` lost its
+// last caller and went, task 9417 — reaches the
+// funnel through `viewOnlySubject(` and contains no four-argument
 // `SubjectSource(` literal. The frozen constant itself is pinned by
 // `tests/unit/toolpipe/view_only_subject_pin_test.d`; this is the call-site
 // half — a future edit that inlines `SubjectSource(null, EditMode.Vertices,
@@ -495,8 +496,6 @@ private static immutable LedgerRow[] kEvaluateLedger = [
 ];
 
 private static immutable LedgerRow[] kWorkplaneLedger = [
-    LedgerRow("pickWorkplane|viewOnlySubject", 1,
-        "the frozen view-only workplane source"),
     LedgerRow("pickWorkplaneFrame|viewOnlySubject", 1,
         "the frozen view-only workplane-frame source"),
 ];
@@ -538,13 +537,11 @@ unittest {
 
         foreach (h; symbolTokenHits(stripped, relPath,
                                     "viewOnlySubject(", "viewOnlySubject"))
-            if (h.key == "pickWorkplane|viewOnlySubject"
-                || h.key == "pickWorkplaneFrame|viewOnlySubject")
+            if (h.key == "pickWorkplaneFrame|viewOnlySubject")
                 workplaneHits ~= h;
         foreach (h; symbolTokenHits(stripped, relPath,
                                     "SubjectSource(", "SubjectSource"))
-            if (h.key == "pickWorkplane|SubjectSource"
-                || h.key == "pickWorkplaneFrame|SubjectSource")
+            if (h.key == "pickWorkplaneFrame|SubjectSource")
                 workplaneHits ~= h;
     }
 
@@ -574,13 +571,13 @@ unittest {
       ~ "(plan §5); a second direct call re-opens the fan-out task 1904 "
       ~ "collapsed." ~ evalProblems);
 
-    // Assertion (c): the two workplane pickers (plan §1.3a).
+    // Assertion (c): the workplane picker (plan §1.3a).
     string workplaneProblems = reconcile(kWorkplaneLedger, workplaneHits);
-    if (workplaneHits.length != 2)
-        workplaneProblems ~= format("\n    workplane population — recorded 2, "
+    if (workplaneHits.length != 1)
+        workplaneProblems ~= format("\n    workplane population — recorded 1, "
                                   ~ "scanner found %d", workplaneHits.length);
     assert(workplaneProblems.length == 0,
-        "§1.3a: the two workplane picker declarations must reach the funnel "
+        "§1.3a: the workplane picker declaration must reach the funnel "
       ~ "only through the named frozen viewOnlySubject(vp), never an inline "
       ~ "SubjectSource literal." ~ workplaneProblems);
 }

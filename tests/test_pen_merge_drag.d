@@ -10,7 +10,11 @@
 // Rig: top ortho at 440 px/m (the capture's 439.53) with the focus at
 // (0.8, 1, 0.05) so the stroke fits our viewport; positions on the plane are
 // lattice values within one 0.005 quantum of the capture's pointer (our pixel
-// rounding differs), linked or snapped positions exact. Excluded: D_E1 / C_E1
+// rounding differs), linked or snapped positions exact. Ours-only (a
+// construction from rule 2's own term, "the vertex snap PLACED the point"):
+// `SV_V1-unsnapped` — SV_V1 with the snap's inner range 5 px, so v2 (11.4 px)
+// is only highlighted; the snap places nothing and the drag links as D_V1 does.
+// Excluded: D_E1 / C_E1
 // (merge on, 6 px from the slanted edge v3-v2: the reference stays on the
 // plane, ours lands on the edge) — the captured in-plane scene-edge cells of
 // pen_merge.json (E4, E4r 20 px, merge_vtx20_edge) pull onto an edge, so
@@ -149,9 +153,17 @@ unittest {
         ++ran;
     }
 
-    // Population floor: the live cell + 20 of the 22 captured cells.
+    if (wanted("SV_V1-unsnapped")) {
+        rig(fx["cells"]["SV_V1"]);
+        penCommand("tool.pipe.attr snap innerRange 5");
+        stroke(fx["cells"]["SV_V1"]);
+        fails ~= compare("SV_V1-unsnapped", fx["cells"]["D_V1"]);
+        ++ran;
+    }
+
+    // Population floor: the live cell, 20 of the 22 captured cells, one ours.
     if (only is null)
-        assert(ran == 21, format("population floor: %d cells ran, expected 21", ran));
+        assert(ran == 22, format("population floor: %d cells ran, expected 22", ran));
     // The first line names the first failing cell.
     assert(fails.length == 0, fails.join("\n  "));
 }

@@ -18,7 +18,7 @@ import command : Command, CmdFlags;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
-import tools.create.create_common : pickWorkplane, BuildPlane,
+import tools.create.create_common : BuildPlane,
                               pickWorkplaneFrame, WorkplaneFrame,
                               primitivePlacementFrame, mostFacingAxis,
                               transformPoint, transformDir, snapLocalHit,

@@ -111,29 +111,6 @@ BuildPlane pickMostFacingPlane(const ref Viewport vp) {
 }
 
 // ---------------------------------------------------------------------------
-// pickWorkplane — phase-7.1 wrapper. Routes the construction-plane query
-// through the global ToolPipeContext so the WorkplaneStage's `mode`
-// (auto / worldX / worldY / worldZ) is honoured. Falls back to direct
-// `pickMostFacingPlane` if the pipe hasn't been initialised yet (e.g.
-// in a unittest with no app loop running).
-//
-// Tools call this instead of `pickMostFacingPlane` directly so the
-// global Tool Pipe state takes precedence over per-tool defaults.
-// ---------------------------------------------------------------------------
-BuildPlane pickWorkplane(const ref Viewport vp) {
-    if (g_pipeCtx is null) return pickMostFacingPlane(vp);
-    // Task 1904 Stage 4 / plan §1.3a: this evaluate's mesh/editMode/selType
-    // are the FROZEN view-only source (`viewOnlySubject`) — never live
-    // editor state. See the function's own doc comment for why.
-    SubjectPacket subj;
-    VectorStack   vts;
-    evaluateSubject(subj, vts, viewOnlySubject(vp));
-    if (auto wp = vts.get!WorkplanePacket())
-        return BuildPlane(wp.normal, wp.axis1, wp.axis2);
-    return pickMostFacingPlane(vp);
-}
-
-// ---------------------------------------------------------------------------
 // WorkplaneFrame — full local↔world transform for the current Tool Pipe
 // workplane state, plus the basis vectors / origin extracted from the
 // matrix columns for callers that prefer them as separate fields.
@@ -141,10 +118,6 @@ BuildPlane pickWorkplane(const ref Viewport vp) {
 // `toWorld` columns: [axis1, normal, axis2, origin]. So local-Y is the
 // workplane normal — a primitive built in local XZ (Y=0) lies ON the
 // workplane plane after `toWorld * v`.
-//
-// Step-1 of the workplane refactor (see chat) only adds this struct +
-// the picker. Tools keep calling `pickWorkplane(vp) → BuildPlane` for
-// now; per-tool migration to `pickWorkplaneFrame` is step-2 onwards.
 // ---------------------------------------------------------------------------
 struct WorkplaneFrame {
     float[16] toWorld;
@@ -156,8 +129,8 @@ struct WorkplaneFrame {
     bool      isAuto;
 }
 
-/// Same routing logic as `pickWorkplane` but returns the full transform.
-/// In auto-mode the basis comes from the camera-facing pick (via
+/// The construction plane through the global ToolPipeContext (the
+/// WorkplaneStage's mode honoured) as the full transform. In auto-mode the basis comes from the camera-facing pick (via
 /// pipeline.evaluate) and origin = (0,0,0); in non-auto mode the
 /// WorkplaneStage's stored center is used. When `g_pipeCtx` is unset
 /// (tests without an app loop) the auto-mode pick is used and the
@@ -174,8 +147,8 @@ WorkplaneFrame pickWorkplaneFrame(const ref Viewport vp) {
         f.origin = vp.focus;
         f.isAuto = true;
     } else {
-        // Task 1904 Stage 4 / plan §1.3a: FROZEN view-only source, same as
-        // `pickWorkplane` above — never live editor state.
+        // Task 1904 Stage 4 / plan §1.3a: FROZEN view-only source — never
+        // live editor state.
         SubjectPacket subj;
         VectorStack   vts;
         evaluateSubject(subj, vts, viewOnlySubject(vp));
