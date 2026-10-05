@@ -802,3 +802,20 @@ unittest { // C-elem-range0 (toolcards/tool_session_model/ M0d; gap 372): the
     check(0.2f, [0.75, 0.40, 0.0, 0.0, 0.0]);    // the control stays green on HEAD
     check(0.0f, [0.0, 0.0, 0.0, 0.0, 0.0]);      // HEAD read 1.0 everywhere
 }
+
+unittest { // elementAnchoredAt replaces the stage's own anchor: a stale ring and
+           // anchor positions far away must not weigh the drag (task 9491).
+    import std.math : isClose;
+    FalloffPacket stage = magnetElementPacket(Vec3(9, 9, 9), 5.0f, 3);
+    stage.shape = FalloffShape.Linear;
+    auto fp = elementAnchoredAt(stage, Vec3(0, 0, 0), 1.0f, 0);
+    Viewport vpW;
+    auto vp = aimSpace(vpW, ModelSpace.world());
+    assert(fp.shape == FalloffShape.Linear, "the stage's shape must survive the anchor");
+    assert(isClose(evaluateFalloff(fp, Vec3(0.5f, 0, 0), 1, vp), 0.5f),
+           "the weight must fall off from the new anchor with the new radius");
+    assert(evaluateFalloff(fp, Vec3(9, 9, 9), 3, vp) == 0.0f,
+           "the stage's stale anchor ring or position still weighs the drag");
+    assert(evaluateFalloff(fp, Vec3(5, 0, 0), 0, vp) == 1.0f,
+           "the grabbed vertex is not in the anchor ring");
+}
