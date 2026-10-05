@@ -58,6 +58,10 @@ private void hideAll(ref Mesh m, Tool) {
     foreach (ref w; m.faceMarks) w |= Mesh.Marks.Hide;
 }
 
+/// The clone family's empty operand as production reaches it (K-AR AR_E):
+/// hiding drops the selection, so nothing is selected and nothing visible.
+private void hideAllUnselected(ref Mesh m, Tool t) { m.clearFaceSelection(); hideAll(m, t); }
+
 private void poke(Tool t, string name, float v) {
     foreach (ref p; t.params()) {
         if (p.name != name) continue;
@@ -251,10 +255,10 @@ unittest {
         ["opOpen", "offsetX", "offsetY", "shift", "inset"],
         [1.0f, 0.3f, 0.1f, 0.2f, 0.1f], 10, 7, 11.9);
     row!ArrayTool(EditMode.Polygons, &pickFace, ["numX", "numZ", "offZ", "offX"],
-        [3.0f, 2.0f, 1.25f, 1.5f], 28, 11, 1105.5, &hideAll, true);
+        [3.0f, 2.0f, 1.25f, 1.5f], 28, 11, 1105.5, &hideAllUnselected, true);
     row!RadialArrayTool(EditMode.Polygons, &pickFace,
         ["count", "weld", "offset", "angle"], [4.0f, 0.0f, 0.5f, 90.0f], 20, 9, -74.3146,
-        &hideAll, true);
+        &hideAllUnselected, true);
     assert(rows == 5, format("%s rows ran, expected 5", rows));
 }
 
