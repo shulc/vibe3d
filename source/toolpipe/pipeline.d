@@ -142,7 +142,7 @@ public:
     }
 
     /// Return the stage currently in `task`'s slot, or null.
-    Stage findByTask(TaskCode task) {
+    Stage findByTask(TaskCode task) nothrow @nogc {
         foreach (s; stages_)
             if (s.taskCode() == task)
                 return s;

@@ -116,6 +116,13 @@ private:
     // Public tool parameter.
     float        dist_     = 1.0f;
 
+    // One falloff slot, last writer wins (capture K-F1, task 9446): the
+    // slot's write count at the arm, and the falloff picked AFTER it, read at
+    // the press — that falloff replaces the sphere; one set before the arm
+    // does not weigh the drag at all. The two are never combined.
+    uint          armFalloffEpoch_;
+    FalloffPacket slotFalloff_;
+
     MeshSnapshot before;
     // The WORLD-space viewport `draw()` was handed (task 0619 rename): this
     // tool's aiming kind is **RayPlane** (§1.2), which builds its ray from
@@ -167,11 +174,23 @@ public:
         dragging  = false;
         pickedVi  = -1;
         before    = MeshSnapshot.capture(*mesh);
+        armFalloffEpoch_ = falloffSlotEpoch();
     }
     final MeshSnapshot prepareActivationBaseline() { return MeshSnapshot.capture(*mesh); }
     final void installPreparedActivation(ref MeshSnapshot image) nothrow @nogc {
         active = true; built = false; dragging = false; pickedVi = -1;
         image.moveInto(before);
+        armFalloffEpoch_ = falloffSlotEpoch();
+    }
+    static uint falloffSlotEpoch() nothrow @nogc {
+        import toolpipe.pipeline : g_pipeCtx;
+        import toolpipe.stage : TaskCode;
+        auto s = g_pipeCtx is null ? null : g_pipeCtx.pipeline.findByTask(TaskCode.Wght);
+        return s is null ? 0 : s.slotEpoch;
+    }
+    FalloffPacket gestureFalloff() {
+        return slotFalloff_.enabled ? slotFalloff_
+                                    : magnetElementPacket(center_, dist_, pickedVi);
     }
     final PreparedSessionActivateEffect prepareActivate(PreparedRecordContext context,
             PreparedPrivateStateOwner owner) {
@@ -288,7 +307,7 @@ public:
         if (strength_ <= 0.0f) image.nextBuilt = false;
         else {
             int[] indices = image.candidate.selectedVertexIndicesVertices();
-            FalloffPacket fp = magnetElementPacket(center_, dist_, pickedVi);
+            FalloffPacket fp = gestureFalloff();
             const auto aim = aimSpace(vpWorld_, primaryModelSpace());
             image.nextBuilt = applyMagnet(&image.candidate, indices, target_,
                 strength_, fp, aim, image.nextTouchedIdx, image.nextTouchedPrev);
@@ -359,6 +378,9 @@ public:
         before     = MeshSnapshot.capture(*mesh);
         dragging   = true;
         built      = false;
+        auto picked = vts.get!FalloffPacket();
+        slotFalloff_ = picked !is null && falloffSlotEpoch() != armFalloffEpoch_
+            ? *picked : FalloffPacket.init;
         return true;
     }
 
@@ -434,12 +456,10 @@ private:
         // Moving set: selected verts (empty → whole mesh), vertex mode.
         int[] indices = mesh.selectedVertexIndicesVertices();
 
-        FalloffPacket fp = magnetElementPacket(center_, dist_, pickedVi);
+        FalloffPacket fp = gestureFalloff();
 
-        // The packet just above pins `FalloffType.Element`, which never
-        // projects — but the aim space is a required parameter (task 0619),
-        // so build the real one from this tool's own world viewport rather
-        // than reach for an identity that would be a placeholder.
+        // A picked falloff may project (Screen / Lasso), so the aim space is
+        // the real one, built from this tool's own world viewport (task 0619).
         const auto aim = aimSpace(vpWorld_, primaryModelSpace());
         bool displaced = applyMagnet(mesh, indices, target_, strength_, fp, aim,
                                      touchedIdx_, touchedPrev_);

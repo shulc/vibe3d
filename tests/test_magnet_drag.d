@@ -281,3 +281,58 @@ unittest {
            "UI close Point Attract");
     Thread.sleep(150.msecs);
 }
+
+// ---------------------------------------------------------------------------
+// One falloff slot, last writer wins (capture K-F1, task 9446). Range 0 makes
+// the tool's own sphere move ONLY the picked vertex, so any other vertex
+// moving says the user's linear falloff weighed the drag instead.
+//   F1a: a falloff set BEFORE the arm is replaced by the tool's sphere.
+//   F1b: a falloff picked WHILE armed replaces the sphere.
+// ---------------------------------------------------------------------------
+size_t slotDragOthersMoved(bool falloffBeforeArm) {
+    jpost("/api/command", commandBody("scene.reset", `{"type":"cube"}`));
+    mustOk(jpost("/api/command", "history.clear"), "clear history");
+    auto s0 = positions();
+    assert(s0.length == 8, "the slot cells need the eight-vertex cube");
+    if (falloffBeforeArm) setUserLinearFalloff();
+    mustOk(jpost("/api/command?origin=ui", "tool.set xfrm.pointAttract on"),
+           "UI arm Point Attract");
+    Thread.sleep(150.msecs);
+    mustOk(jpost("/api/command", "tool.attr xfrm.pointAttract dist 0"), "dist 0");
+    if (!falloffBeforeArm) setUserLinearFalloff();
+    const long armRows = undoLen();
+
+    auto cam = fetchCamera(BASE);
+    auto vp  = viewportFromCamera(cam);
+    float sx, sy;
+    assert(projectToWindow(Vec3(0.5f, 0.5f, 0.5f), vp, sx, sy),
+           "v6 must be visible from default camera");
+    playAndWait(buildHoverDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                                  cast(int)sx, cast(int)sy,
+                                  cast(int)sx + 100, cast(int)sy, 20), BASE);
+    auto s1 = positions();
+    assert(undoLen() == armRows + 1, "the drag is not exactly one History row");
+    mustOk(jpost("/api/command?origin=ui", "tool.set xfrm.pointAttract off"),
+           "UI close Point Attract");
+    Thread.sleep(150.msecs);
+    mustOk(jpost("/api/command", "tool.pipe.attr falloff type none"), "falloff none");
+    assert(dist3(s0[6], s1[6]) > 0.05, "the picked vertex 6 did not move");
+    size_t n;
+    foreach (i; 0 .. 8) if (i != 6 && dist3(s0[i], s1[i]) > 1e-3) ++n;
+    return n;
+}
+
+void setUserLinearFalloff() {
+    mustOk(jpost("/api/command", "tool.pipe.attr falloff type linear"), "falloff linear");
+    mustOk(jpost("/api/command", `tool.pipe.attr falloff start "0,1,0"`), "falloff start");
+    mustOk(jpost("/api/command", `tool.pipe.attr falloff end "0,-1,0"`), "falloff end");
+}
+
+unittest {
+    const size_t before = slotDragOthersMoved(true);
+    assert(before == 0, format("F1a: a falloff set before the arm must be replaced "
+        ~ "by the tool's sphere; %d other vertices moved", before));
+    const size_t during = slotDragOthersMoved(false);
+    assert(during > 0, "F1b: a falloff picked while armed must replace the tool's "
+        ~ "sphere; only the picked vertex moved");
+}
