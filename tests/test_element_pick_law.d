@@ -223,6 +223,10 @@ void tieCells() {
     tieGroupCell("OC_FOFF",
         `{"vertices":[[0,0,0],[0.02,0,0],[0.04,0,0],[0.075,0,0],[0.12,0,0]],"faces":[]}`,
         [0, 1, 2]);
+    // The tie group is gathered within the reach: the nearest at 7 px, a
+    // second at 8.5 px (d² 72.25 <= 49 + 36) but outside 8 px, is not taken.
+    tieGroupCell("TIE_REACH",
+        `{"vertices":[[0.07,0,0],[-0.085,0,0]],"faces":[]}`, [0]);
 }
 
 void acenCells() {

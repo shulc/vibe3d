@@ -49,6 +49,9 @@ unittest { // the comparator, row by row (distances in px; inf = not gathered)
     assert(electElement(gather(inf, 3, 25, 0)) == kCascadeEdge, "edge inside its tolerance");
     assert(electElement(gather(inf, 8, 25, 0)) == kCascadePolygon,
            "an edge at the reach loses to the polygon under the cursor");
+    // ... while a vertex at the reach keeps its DOUBLED tolerance and wins.
+    assert(electElement(gather(8, inf, inf, 0)) == kCascadeVertex,
+           "a vertex at the reach beats the polygon under the cursor (tolerance 16)");
 }
 
 unittest { // production-text census

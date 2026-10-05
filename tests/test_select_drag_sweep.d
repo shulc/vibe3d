@@ -172,16 +172,44 @@ Pivot findPivot() {
                 ~ "— the fixture cannot aim, so nothing below would mean anything");
 }
 
+// The sweep's half-extents: ±(width/8, height/10) about the pivot, scaled by
+// the first factor that leaves BOTH endpoints more than 10 px from every
+// projected vertex — the element pick reaches 8 px (Euclidean), so an
+// endpoint nearer than that is not empty space (the click controls below
+// re-check it).
+int[2] sweepHalfExtents(Pivot pivot) {
+    auto cam = fetchCamera();
+    auto vp  = viewportFromCamera(cam);
+    auto j   = parseJSON(cast(string)get(testBaseUrl() ~ "/api/model"));
+    float[2][] px;
+    foreach (v; j["vertices"].array) {
+        auto p = v.array;
+        float x, y;
+        if (projectToWindow(Vec3(cast(float)p[0].floating, cast(float)p[1].floating,
+                                 cast(float)p[2].floating), vp, x, y))
+            px ~= [x, y];
+    }
+    bool clear(int x, int y) {
+        foreach (q; px) if ((q[0] - x) ^^ 2 + (q[1] - y) ^^ 2 <= 100.0f) return false;
+        return true;
+    }
+    foreach (k; [1.0, 0.9, 1.1, 0.8, 1.2, 0.7]) {
+        immutable int dx = cast(int)(cam.width / 8 * k), dy = cast(int)(cam.height / 10 * k);
+        if (clear(pivot.px - dx, pivot.py - dy) && clear(pivot.px + dx, pivot.py + dy))
+            return [dx, dy];
+    }
+    assert(false, "no sweep extent leaves both endpoints 10 px clear of every vertex");
+}
+
 unittest { // THE SWEEP: a select-drag collects what it passes THROUGH, and
            // neither of its endpoints can account for a single vertex of it.
     resetSubdividedCube();
     auto pivot = findPivot();
     auto cam   = fetchCamera();
-    // Half-extents measured on this fixture (2026-08-25): a sweep of
-    // ±(width/8, height/10) about the pivot runs from empty space, over the
-    // pivot vertex, into empty space, collecting two vertices on the way.
-    immutable int dx = cam.width  / 8;
-    immutable int dy = cam.height / 10;
+    // The sweep runs from empty space, over the pivot vertex, into empty
+    // space (`sweepHalfExtents`).
+    immutable ext = sweepHalfExtents(pivot);
+    immutable int dx = ext[0], dy = ext[1];
     immutable int x0 = pivot.px - dx, y0 = pivot.py - dy;
     immutable int x1 = pivot.px + dx, y1 = pivot.py + dy;
 
@@ -234,9 +262,8 @@ unittest { // THE BEFORE-IMAGE: undoing a click restores the SWEPT SET.
            // unwritten one restores exactly the same thing.
     resetSubdividedCube();
     auto pivot = findPivot();
-    auto cam   = fetchCamera();
-    immutable int dx = cam.width  / 8;
-    immutable int dy = cam.height / 10;
+    immutable ext = sweepHalfExtents(pivot);
+    immutable int dx = ext[0], dy = ext[1];
 
     resetSubdividedCube();
     gesture(pivot.px - dx, pivot.py - dy, pivot.px + dx, pivot.py + dy, 60);

@@ -263,8 +263,10 @@ unittest { // task 6249: Tab-off/on after a real drag must not resurrect stale l
 
     auto toolOn = postJson("/api/script", "tool.set xfrm.elementMove on");
     assert(toolOn["status"].str == "ok", "element Move activation failed: " ~ toolOn.toString);
-    // The 0.277356 below was measured at Element range 1, the pre-M5 default
-    // (re-measured on task 9471: the free drag's travel is quantised, 0.274082 before);
+    // The 0.240090 below was measured at Element range 1, the pre-M5 default
+    // (re-measured on task 9471: the free drag's travel is quantised, 0.274082 before;
+    // on task 9441 the 8 px element-pick reach takes an edge here where the old
+    // 6 px one took the face, 0.277356 before);
     // the shipped default is 0 (gap 372), so the range is set explicitly.
     auto range = postJson("/api/script", "tool.pipe.attr falloff dist 1");
     assert(range["status"].str == "ok", "element range write failed: " ~ range.toString);
@@ -301,8 +303,8 @@ unittest { // task 6249: Tab-off/on after a real drag must not resurrect stale l
     assert(live.faceVertCount == 9_216 && live.positions.length == 9_216,
         "the interactive position edit must preserve the 9216-vertex preview population");
     immutable double liveDelta = maxDelta(before.positions, live.positions);
-    assert(fabs(liveDelta - 0.277356) < 1e-5,
-        format("the fixed 60px gizmo drag must move the limit VBO by 0.277356, got %.9f",
+    assert(fabs(liveDelta - 0.240090) < 1e-5,
+        format("the fixed 60px gizmo drag must move the limit VBO by 0.240090, got %.9f",
                liveDelta));
 
     tab = postJson("/api/play-events", LOG_HEADER ~ "\n" ~ tabKey(50));
@@ -321,8 +323,8 @@ unittest { // task 6249: Tab-off/on after a real drag must not resurrect stale l
     Thread.sleep(150.msecs);
 
     immutable double restoredDelta = maxDelta(before.positions, restored.positions);
-    assert(fabs(restoredDelta - 0.277356) < 1e-5,
-        format("Tab-on resurrected the pre-edit surface: expected VBO delta 0.277356, got %.9f",
+    assert(fabs(restoredDelta - 0.240090) < 1e-5,
+        format("Tab-on resurrected the pre-edit surface: expected VBO delta 0.240090, got %.9f",
                restoredDelta));
     immutable double continuityDelta = maxDelta(live.positions, restored.positions);
     assert(continuityDelta < 2e-5,

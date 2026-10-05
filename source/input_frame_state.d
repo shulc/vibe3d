@@ -474,9 +474,14 @@ final class InputFrameState {
         else if (dragMode == DragMode.SelectRemove)
             symSel(&app.mesh(), vp, app.editMode, hovered, /*deselect=*/true);
     }
-    /// The hovered element's screen distances for the comparator.
+    /// The hovered element's screen distances for the comparator. Over a live
+    /// subpatch preview the drawn positions are the limit's, not the cage's,
+    /// so none is measured (0: the comparator then keeps V > E > F).
     private void noteHoverDistance(EditMode em)(ref Viewport vp, int mx, int my) {
         import math : projectionSpace, projectToWindowFull, closestOnSegment2D;
+        hoveredVertexPx = hoveredEdgePx = 0;
+        hoveredEdgeMidPx = float.infinity;
+        if (app.subpatchPreview.active) return;
         const Viewport vl = projectionSpace(vp, primaryModelSpace());
         immutable float cx = mx + 0.5f, cy = my + 0.5f;
         const m = &app.mesh();

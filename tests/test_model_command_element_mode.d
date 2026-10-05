@@ -503,6 +503,7 @@ unittest { // N2 — no handle is published while the Element session is closed.
     const camera = fetchCamera();
     initialDrag(camera, original);
     const stalePart = handlePartScreen(0);
+    const staleCentre = handlePartScreen(3);
     const stalePin = vector(getJson("/api/toolpipe/eval")["actionCenter"]["center"]);
     assert(!getJson("/api/tool/state")["editOpen"].boolean,
         "6250 N2 population: completed gesture must close its edit before toggle");
@@ -520,7 +521,25 @@ unittest { // N2 — no handle is published while the Element session is closed.
     immutable int y = cast(int)(stalePart[1] + 0.5);
     assert(x == 490 && y == 431,
         format("6250 N2b population: stale part-0 pixel moved to (%s,%s)", x, y));
-    pressAt(camera, x, y);
+    // The press lands on the stale X arrow (tip toward centre) at the first
+    // pixel more than 10 px from every vertex: an element within the 8 px
+    // element-pick reach would be a legitimate pick, not stale geometry.
+    const cameraJson = getJson("/api/camera");
+    const verts = modelVertices();
+    int px = -1, py = -1;
+    foreach (i; 0 .. 41) {
+        immutable double f = i / 40.0;
+        immutable int cx = cast(int)(stalePart[0] + (staleCentre[0] - stalePart[0]) * f + 0.5);
+        immutable int cy = cast(int)(stalePart[1] + (staleCentre[1] - stalePart[1]) * f + 0.5);
+        bool clear = true;
+        foreach (v; verts) {
+            const q = topPixel(cameraJson, v);
+            if ((q[0] - cx) ^^ 2 + (q[1] - cy) ^^ 2 <= 100.0) { clear = false; break; }
+        }
+        if (clear) { px = cx; py = cy; break; }
+    }
+    assert(px >= 0, "6250 N2b population: no stale-arrow pixel is 10 px clear of every vertex");
+    pressAt(camera, px, py);
     const reopenedState = getJson("/api/tool/state");
     const pin = vector(getJson("/api/toolpipe/eval")["actionCenter"]["center"]);
     assert(reopenedState["sessionOpen"].boolean,
@@ -530,9 +549,9 @@ unittest { // N2 — no handle is published while the Element session is closed.
         && distance(pin, stalePin) <= 1e-6,
         format("6250 N2b: press at hidden part 0 (%s,%s) grabbed stale geometry; "
              ~ "bank=%s axis=%s dragging=%s pin=%s stale=%s",
-               x, y, reopenedState["activeBank"], reopenedState["dragAxis"], reopenedState["dragging"],
+               px, py, reopenedState["activeBank"], reopenedState["dragAxis"], reopenedState["dragging"],
                pin, stalePin));
-    releaseAt(camera, x, y);
+    releaseAt(camera, px, py);
     command("tool.set " ~ gPreset ~ " off");
 }
 
