@@ -1304,8 +1304,7 @@ private:
     // edge hit moves the point onto the edge as its own vertex. `snapCursor`
     // takes an integer pixel, so it is the broad phase (r + 1) and the float
     // distance decides.
-    static immutable SnapType[1] kMergeSmall = [SnapType.Vertex];
-    static immutable SnapType[2] kMergeLarge = [SnapType.Vertex, SnapType.Edge];
+    static immutable SnapType[2] kMergeOrder = [SnapType.Vertex, SnapType.Edge];
     int mergeTarget(ref Vec3 local) {
         immutable Vec3 placed = toWorldP(local);
         float fx, fy, ndcZ;
@@ -1333,7 +1332,7 @@ private:
         SnapPacket pkt;
         pkt.enabled = true;
         pkt.innerRangePx = r + 1;
-        foreach (t; small ? kMergeSmall[] : kMergeLarge[]) {
+        foreach (t; kMergeOrder[0 .. small ? 1 : 2]) {
             pkt.enabledTypes = t;
             auto hit = snapCursor(placed, cast(int)lround(fx), cast(int)lround(fy),
                 cachedVp, *mesh, ms, pkt, null, (SnapType, int, int slot) => slot == 0);
