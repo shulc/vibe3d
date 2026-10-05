@@ -793,7 +793,8 @@ public:
         glUniform3f(gridShader.locColor, 65 / 255.0f, 72 / 255.0f, 75 / 255.0f);
         glDrawArrays(GL_LINES, 0, gridOnlyVertCount);
         g_fc.draw(DrawPass.grid, gridOnlyVertCount);
-        glUniformMatrix4fv(gridShader.locModel, 1, GL_FALSE, gridModel.ptr);
+        // The origin lines pass through the lattice origin, so the major
+        // model draws them in place (only longer).
         glUniform3f(gridShader.locColor, 0.0f, 0.0f, 0.0f);
         glDrawArrays(GL_LINES, gridOnlyVertCount, 4);
         g_fc.draw(DrawPass.grid, 4);

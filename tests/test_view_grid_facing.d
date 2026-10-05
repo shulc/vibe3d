@@ -20,6 +20,13 @@ import std.stdio : writefln;
 
 void main() {}
 
+/// VIBE3D_CELL=<name> runs one cell alone (a mutation's own witness).
+bool cellOn(string id) {
+    import std.process : environment;
+    immutable e = environment.get("VIBE3D_CELL", "");
+    return e.length == 0 || e == id;
+}
+
 void cmd(string line) {
     auto r = postJson("/api/command", line);
     assert(r["status"].str == "ok", "/api/command '" ~ line ~ "' failed: " ~ r.toString);
@@ -177,9 +184,9 @@ void stylePalette(string view) {
     }
 }
 
-unittest { stylePalette("Top"); }
-unittest { stylePalette("Front"); }
-unittest { stylePalette("Right"); }
+unittest { if (cellOn("style")) stylePalette("Top"); }
+unittest { if (cellOn("style")) stylePalette("Front"); }
+unittest { if (cellOn("style")) stylePalette("Right"); }
 
 // ---------------------------------------------------------------------------
 // GR_D: the ortho grid is an UNDERLAY — geometry hides it whether it lies in
@@ -207,11 +214,13 @@ size_t faceRowRuns(double posZ) {
 }
 
 unittest { // GR_D — in front of the plane (the control: depth hid it before too)
+    if (!cellOn("underlay")) return;
     immutable r = faceRowRuns(0.0);
     assert(r == 0, format("GR_D: the grid must not show over a face in front of its plane, %d runs", r));
 }
 
 unittest { // GR_D — behind the plane
+    if (!cellOn("underlay")) return;
     immutable r = faceRowRuns(-1.0);
     assert(r == 0, format("GR_D: the grid must not show over a face behind its plane "
                           ~ "(an underlay), %d runs", r));
