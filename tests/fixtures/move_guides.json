@@ -1,4 +1,13 @@
 {
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference_token": "ref-editor@11.2v3",
+    "method": "gui-gesture",
+    "captured_utc": "2026-10-05",
+    "task": "9406",
+    "notes": "Only numerical observations were copied here. The private capture card (K-G) remains the source of record."
+  },
   "_about": "Guide snap types on the Move free drag and the Box base drag: each raw end lies 3 px from exactly one candidate line (through the dragged element, or through the world origin); no client but the pen registers a guide, so every reading is the raw press + travel rounded to the 0.005 m placement quantum (task 9406, capture K-G cells G1a, G1a', G1b, G1b', G1c, G1c').",
   "rig": {
     "view": "top ortho at boot, 439.52 px/m, focus (0.07,1,0)",
