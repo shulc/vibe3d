@@ -2639,9 +2639,9 @@ version (unittest) {
             return (cast(long)t << 40) | (cast(long)(idx + 2) << 8) | cast(long)slot;
         }
 
-        void limits(float i, float o) { innerPx = i; outerPx = o; }
+        override void limits(float i, float o) { innerPx = i; outerPx = o; }
 
-        bool proximity(Vec3 candWorld, SnapType type, int idx, int slot,
+        override bool proximity(Vec3 candWorld, SnapType type, int idx, int slot,
                        ref float distPx, ref int priority)
         {
             if (seenCount < seen.length) seen[seenCount++] = key(type, idx, slot);
@@ -2658,10 +2658,7 @@ version (unittest) {
             return true;
         }
 
-        void setDrawState(GuideDrawState s) { draw = s; }
-        uint flags() const { return 0; }
-        bool propose(Vec3, int, int, const ref Viewport, const ref SnapPacket,
-                     out Vec3, out SnapType) { return false; }
+        override void setDrawState(GuideDrawState s) { draw = s; }
     }
 }
 
@@ -3045,9 +3042,8 @@ version (unittest) {
 
         this(Viewport v, int x, int y) { vp = v; sx = x; sy = y; }
 
-        void limits(float i, float o) {}
 
-        bool proximity(Vec3 candWorld, SnapType type, int idx, int slot,
+        override bool proximity(Vec3 candWorld, SnapType type, int idx, int slot,
                        ref float distPx, ref int priority)
         {
             float qx, qy, qz;
@@ -3059,10 +3055,6 @@ version (unittest) {
             return true;
         }
 
-        void setDrawState(GuideDrawState s) {}
-        uint flags() const { return 0; }
-        bool propose(Vec3, int, int, const ref Viewport, const ref SnapPacket,
-                     out Vec3, out SnapType) { return false; }
     }
 }
 

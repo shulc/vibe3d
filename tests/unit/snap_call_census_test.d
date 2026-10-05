@@ -139,9 +139,11 @@ unittest // one packet read, one finder: the deleted copies stay deleted
     foreach (id; ["captureSnapForGesture", "snapStageForGesture", "guideBits_"])
         assert(raw[id] == 0, format("deleted copy `%s` is back: %s occurrences", id, raw[id]));
     finders.sort(); casts.sort();
-    // The finder lives in the stage module; the prepared activation builds a
-    // FRESH pipe, not the live one, so it keeps its own lookup.
-    enum kFinderRoster = ["source/prepared_topology_pen_activation.d",
+    // The finder lives in the stage module; the prepared activations read the
+    // pipe they are handed, not the live one, so they keep their own lookup
+    // (the pipe activation clears the guide registry at every arm, task 9416).
+    enum kFinderRoster = ["source/prepared_pipe_activation.d",
+                          "source/prepared_topology_pen_activation.d",
                           "source/toolpipe/stages/snap.d"];
     assert(finders == kFinderRoster, format("findByTask(TaskCode.Snap) roster: %s", finders));
     assert(casts == kFinderRoster, format("cast(SnapStage) roster: %s", casts));
@@ -156,7 +158,6 @@ unittest // one packet read, one finder: the deleted copies stay deleted
                          "source/commands/snap/toggle_type.d", "source/editor_app.d",
                          "source/toolpipe/stages/snap.d", "source/toolpipe/stages/snap.d",
                          "source/tools/create/pen.d", "source/tools/create/pen.d",
-                         "source/tools/create/pen.d",
                          "source/tools/edit/topology_pen/tool.d",
                          "source/tools/edit/topology_pen/tool.d", "source/tools/edit/topology_pen/tool.d",
                          "source/tools/edit/topology_pen/tool.d", "source/tools/edit/topology_pen/tool.d",
@@ -274,14 +275,8 @@ unittest // a guide registered on the live stage reaches a create tool's query
     import tools.create.create_common : snapLocalHit, WorkplaneFrame;
 
     static class Refuse : SnapGuide {
-        import toolpipe.packets : SnapPacket;
         size_t asked;
-        void limits(float, float) {}
-        bool proximity(Vec3, SnapType, int, int, ref float d, ref int) { ++asked; return false; }
-        void setDrawState(GuideDrawState) {}
-        uint flags() const { return 0; }
-        bool propose(Vec3, int, int, const ref Viewport, const ref SnapPacket,
-                     out Vec3, out SnapType) { return false; }
+        override bool proximity(Vec3, SnapType, int, int, ref float d, ref int) { ++asked; return false; }
     }
 
     auto saved = g_pipeCtx;

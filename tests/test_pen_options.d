@@ -164,8 +164,8 @@ unittest {
         rig(c["raycast"].type == JSONType.true_, fg);
         // Merge off over the foreground: ours' merge moves the dragged point
         // onto the quad's edge (0.4426, 1.2213, 0.5) where the capture (merge
-        // on) keeps it on the plane — the pen merge's own open row (task 9416
-        // report), not this law's.
+        // on) keeps it on the plane — the pen merge's open gap row 581,
+        // not this law's.
         if (!fg.isNull) penCommand("tool.attr pen merge false");
         clicks("clicks_xz" in c.object ? c["clicks_xz"] : b9["clicks_xz"]);
         const k = cast(size_t)c["drag"]["point"].integer;
@@ -181,5 +181,6 @@ unittest {
     // Population floor: 5 B9 cells + the two K-B3 raycast cells.
     if (only is null)
         assert(ran == 7, format("population floor: %d cells ran, expected 7", ran));
-    assert(fails.length == 0, "\n  " ~ fails.join("\n  "));
+    // The first line names the first failing cell.
+    assert(fails.length == 0, fails.join("\n  "));
 }

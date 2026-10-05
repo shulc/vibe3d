@@ -12,7 +12,9 @@ import toolpipe.stages.falloff : FalloffStage, PreparedFalloffAutoFit;
 import toolpipe.packets : FalloffType, FalloffShape, ElementMode;
 import tool_activation_ownership : PipeArmScope;
 import toolpipe.attr_cache : NodeAttrs, recallNodeAttrs;
-import toolpipe.stage : Stage;
+import toolpipe.stage : Stage, TaskCode;
+import toolpipe.stages.snap : SnapStage;
+import toolpipe.guide : SnapGuide;
 
 /// Owner-held prepared image for the universal tool-switch pipe prefix.
 /// References stay inside this final owner; no reference enters the closed
@@ -24,6 +26,7 @@ private:
     AxisStage axis_;
     ConstrainStage constrain_;
     FalloffStage falloff_;
+    SnapStage snap_;
 
     ActionCenterStage.Mode acenBefore_;
     bool acenLockedBefore_;
@@ -84,6 +87,7 @@ public:
         result.axis_ = cast(AxisStage)pipeline.findById("axis");
         result.constrain_ = cast(ConstrainStage)pipeline.findById("constrain");
         result.falloff_ = cast(FalloffStage)pipeline.findById("falloff");
+        result.snap_ = cast(SnapStage)pipeline.findByTask(TaskCode.Snap);
         if (result.acen_ is null || result.axis_ is null ||
             result.constrain_ is null || result.falloff_ is null)
             throw new Exception("prepared pipe activation requires all transient stages");
@@ -217,6 +221,10 @@ public:
 
     void install() nothrow {
         if (gizmoHost_ !is null) gizmoHost_.cancelDrag();
+        // Every arm ends the outgoing tool's gestures, so their snap guides go
+        // with them, whatever the door (a switch has no release).
+        SnapGuide[] none;
+        if (snap_ !is null) snap_.installPreparedGuides(none);
         if (armScope_ == PipeArmScope.keepPipe) return;
         if (hasAcen_) acen_.claimForPreset();
         if (hasAxis_) axis_.claimForPreset();

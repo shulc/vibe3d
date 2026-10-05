@@ -13,7 +13,7 @@ import mesh : Mesh;
 import std.math : abs;
 import seltype : SelType;
 import symmetry : mirrorPosition;
-import toolpipe.guide : GuideDrawState, SnapGuide;
+import toolpipe.guide : SnapGuide;
 import toolpipe.packets : SnapPacket, SnapType, SymmetryPacket;
 import tools.create.create_common : WorkplaneFrame, transformDir, transformPoint;
 
@@ -187,7 +187,7 @@ final class LineGuide : SnapGuide {
             add(pts[side[k]], cross(nrm, pts[side[k]] - pts[far[k]]), SnapType.RightAngle);
     }
 
-    bool propose(Vec3 p, int px, int py, const ref Viewport vp, const ref SnapPacket cfg,
+    override bool propose(Vec3 p, int px, int py, const ref Viewport vp, const ref SnapPacket cfg,
                  out Vec3 pos, out SnapType type) {
         if (!live) return false;
         const eye = eyeVectorAt(vp, p);
@@ -203,10 +203,6 @@ final class LineGuide : SnapGuide {
         return best < float.infinity;
     }
 
-    bool proximity(Vec3, SnapType, int, int, ref float, ref int) { return true; }
-    void limits(float, float) {}
-    void setDrawState(GuideDrawState) {}
-    uint flags() const { return 0; }
 }
 
 /// The tool's facing decision (wave plan §9.4): flip when the triangle

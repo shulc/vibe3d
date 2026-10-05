@@ -371,8 +371,6 @@ public:
         // extra state in front of it. A guide sees candidates ours would only
         // highlight; none of them can snap.
         //
-        // UNREACHABLE in phase (a): `guides` is empty at every call site, so
-        // `prio` stays 0 and the comparison below is the historical one.
         int prio = 0;
         if (guides.length != 0 && !arbitrate(candWorld, type, idx, slot, d, prio))
             return;

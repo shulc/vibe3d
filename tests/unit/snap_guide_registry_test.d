@@ -21,11 +21,7 @@ import tools.create.pen_geometry : LineGuide;
 private final class FixedGuide : SnapGuide {
     bool on;
     Vec3 at;
-    void limits(float, float) {}
-    bool proximity(Vec3, SnapType, int, int, ref float, ref int) { return true; }
-    void setDrawState(GuideDrawState) {}
-    uint flags() const { return 0; }
-    bool propose(Vec3, int, int, const ref Viewport, const ref SnapPacket,
+    override bool propose(Vec3, int, int, const ref Viewport, const ref SnapPacket,
                  out Vec3 pos, out SnapType type) {
         pos = at; type = SnapType.StraightLine; return on;
     }
@@ -100,20 +96,10 @@ unittest { // the tier order of a proposed position
     // Every guide is asked with the ENUMERATION's rank: a higher-priority
     // guide that leaves the distance alone is not handed a lower one's answer.
     static final class FarRank : SnapGuide {
-        void limits(float, float) {}
-        bool proximity(Vec3, SnapType, int, int, ref float d, ref int) { d = 1000; return true; }
-        void setDrawState(GuideDrawState) {}
-        uint flags() const { return 0; }
-        bool propose(Vec3, int, int, const ref Viewport, const ref SnapPacket,
-                     out Vec3, out SnapType) { return false; }
+        override bool proximity(Vec3, SnapType, int, int, ref float d, ref int) { d = 1000; return true; }
     }
     static final class TopPassThrough : SnapGuide {
-        void limits(float, float) {}
-        bool proximity(Vec3, SnapType, int, int, ref float, ref int p) { p = 5; return true; }
-        void setDrawState(GuideDrawState) {}
-        uint flags() const { return 0; }
-        bool propose(Vec3, int, int, const ref Viewport, const ref SnapPacket,
-                     out Vec3, out SnapType) { return false; }
+        override bool proximity(Vec3, SnapType, int, int, ref float, ref int p) { p = 5; return true; }
     }
     invalidateSnapGrids();
     const ranked = snapCursor(cur, sx, sy, vp, one, ModelSpace.world(), cfg, null, null,
@@ -224,9 +210,14 @@ unittest { // the pen's guide lifetime in its production text (signalling census
         "pen.d removes its guide outside endDragGuide");
     foreach (decl; ["bool onMouseButtonUp(", "void deactivate("])
         assert(wordsAt(body(decl), "endDragGuide").length == 1, decl ~ " does not end the drag's guide");
-    // A switch mid-drag (the prepared door, no release) ends it too.
-    assert(wordsAt(body("PreparedPenDeactivateImage buildPreparedDeactivateState("),
-                   "guide_").length == 1 &&
-           wordsAt(body("void installPreparedDeactivateState("), "installPreparedGuides").length == 1,
-        "pen.d's prepared deactivate no longer removes the drag's guide");
+    // A switch mid-drag (no release) is the transition's: every arm clears
+    // the registry in the prepared pipe activation's install, once.
+    const pipe = blankUnittestBodies(blankNonCode(readText(buildPath(root,
+        "source/prepared_pipe_activation.d"))));
+    const at = pipe.indexOf("void install()");
+    assert(at >= 0 && wordsAt(balancedSpan(pipe, pipe.indexOf('{', at), '{', '}'),
+                              "installPreparedGuides").length == 1,
+        "the prepared pipe activation no longer clears the guide registry at an arm");
+    assert(wordsAt(pen, "installPreparedGuides").length == 0,
+        "pen.d removes its guide on a switch again: the transition owns that");
 }

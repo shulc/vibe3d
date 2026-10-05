@@ -706,16 +706,11 @@ unittest {
     {
         static final class GridGate : SnapGuide {
             bool admitGrid;
-            void limits(float innerPx, float outerPx) {}
-            bool proximity(Vec3 candWorld, SnapType type, int idx, int slot,
+            override bool proximity(Vec3 candWorld, SnapType type, int idx, int slot,
                            ref float distPx, ref int priority) {
                 distPx = 0;
                 return type != SnapType.Grid || admitGrid;
             }
-            void setDrawState(GuideDrawState s) {}
-            uint flags() const { return 0; }
-            bool propose(Vec3, int, int, const ref Viewport, const ref SnapPacket,
-                         out Vec3, out SnapType) { return false; }
         }
         immutable Vec3 cur = Vec3(2.45f, 0, 0.45f), node = Vec3(2, 0, 0);
         int sx, sy; pixelOf(cur, sx, sy);

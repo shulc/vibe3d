@@ -4,7 +4,7 @@ import display_state : DrawPlan;
 import bindbc.sdl;
 import bindbc.opengl;
 import std.json : JSONValue;
-import std.math : sqrt, sin, cos, PI;
+import std.math : sin, cos, PI;
 import ImGui = d_imgui;
 import d_imgui.imgui_h;   // ImDrawList / ImVec2 / IM_COL32 for the RMB gap HUD (task 0288)
 
@@ -45,8 +45,7 @@ import document : Layer;
 import mesh_edit_delta : MeshEditScope;
 import tools.common.session_mesh_key : SessionMeshKey;
 import toolpipe.stages.snap : liveSnapStage;
-import toolpipe.guide : SnapGuide, GuideDrawState;
-import toolpipe.packets : SnapPacket, SnapType;
+import toolpipe.guide : SnapGuide;
 
 struct PreparedSliceActivationImage {
     MeshSnapshot before;
@@ -871,24 +870,10 @@ private:
 
     // The new line's snap guide (task 9470, findings_K-G2 G2-SL1): registered
     // at the new-line press, removed at the release, the RMB cancel and the drop
-    // (`dropPreview`). It ranks a candidate at its screen distance from the
-    // pointer — the election's own distance — so it re-ranks nothing; it makes
-    // the snap key live mid-drag (`heldDragGuideCount`).
-    private final class LineGuide : SnapGuide {
-        void limits(float, float) {}
-        bool proximity(Vec3 w, SnapType, int, int, ref float d, ref int) {
-            float px, py, pz;
-            int mx, my;
-            if (!projectToWindowFull(w, vpWorld_, px, py, pz)) return false;
-            queryMouse(mx, my);
-            d = sqrt((px - mx) ^^ 2 + (py - my) ^^ 2);
-            return true;
-        }
-        void setDrawState(GuideDrawState) {}
-        uint flags() const { return 0; }
-        bool propose(Vec3, int, int, const ref Viewport, const ref SnapPacket,
-                     out Vec3, out SnapType) { return false; }
-    }
+    // (`dropPreview`). The base guide admits every candidate at its own rank,
+    // so it re-ranks nothing; it makes the snap key live mid-drag
+    // (`heldDragGuideCount`).
+    private final class LineGuide : SnapGuide {}
     private LineGuide lineGuide_;
     private void endLineGuide() { if (auto st = liveSnapStage()) st.removeGuide(lineGuide_); }
 

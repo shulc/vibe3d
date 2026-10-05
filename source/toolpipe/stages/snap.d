@@ -973,22 +973,18 @@ unittest {
 // ---------------------------------------------------------------------------
 version (unittest) {
     private class RecordingGuide : SnapGuide {
-        import math : Vec3, Viewport;
+        import math : Vec3;
         float  innerPx = -1, outerPx = -1;
         int    pushes;
         size_t queries;
 
-        void limits(float i, float o) { innerPx = i; outerPx = o; ++pushes; }
-        bool proximity(Vec3 candWorld, SnapType type, int idx, int slot,
+        override void limits(float i, float o) { innerPx = i; outerPx = o; ++pushes; }
+        override bool proximity(Vec3 candWorld, SnapType type, int idx, int slot,
                        ref float distPx, ref int priority)
         {
             ++queries;
             return false;   // admits nothing: this guide is here to be counted
         }
-        void setDrawState(GuideDrawState s) {}
-        uint flags() const { return 0; }
-        bool propose(Vec3, int, int, const ref Viewport, const ref SnapPacket,
-                     out Vec3, out SnapType) { return false; }
     }
 }
 

@@ -163,8 +163,7 @@ private final class MirrorGuide : SnapGuide {
     private Viewport vp_;
     private int sx_, sy_;
     this(Viewport vp, int sx, int sy) { vp_ = vp; sx_ = sx; sy_ = sy; }
-    void limits(float innerPx, float outerPx) {}
-    bool proximity(Vec3 candWorld, SnapType type, int idx, int slot,
+    override bool proximity(Vec3 candWorld, SnapType type, int idx, int slot,
                    ref float distPx, ref int priority)
     {
         float px, py, ndcZ;
@@ -176,10 +175,6 @@ private final class MirrorGuide : SnapGuide {
         // guide's answer when it does not assign one (`kGuidePrioritySeed`).
         return true;
     }
-    void setDrawState(GuideDrawState s) {}
-    uint flags() const { return 0; }
-    bool propose(Vec3, int, int, const ref Viewport, const ref SnapPacket,
-                 out Vec3, out SnapType) { return false; }
 }
 
 private final class SplitGuide : SnapGuide {
@@ -189,8 +184,7 @@ private final class SplitGuide : SnapGuide {
     this(Viewport vp, int sx, int sy, SnapType favoured) {
         vp_ = vp; sx_ = sx; sy_ = sy; favoured_ = favoured;
     }
-    void limits(float innerPx, float outerPx) {}
-    bool proximity(Vec3 candWorld, SnapType type, int idx, int slot,
+    override bool proximity(Vec3 candWorld, SnapType type, int idx, int slot,
                    ref float distPx, ref int priority)
     {
         float px, py, ndcZ;
@@ -201,10 +195,6 @@ private final class SplitGuide : SnapGuide {
         priority = (type == favoured_) ? 7 : 2;
         return true;
     }
-    void setDrawState(GuideDrawState s) {}
-    uint flags() const { return 0; }
-    bool propose(Vec3, int, int, const ref Viewport, const ref SnapPacket,
-                 out Vec3, out SnapType) { return false; }
 }
 
 /// A guide that answers a FIXED priority and a scaled distance, optionally
@@ -229,8 +219,7 @@ private final class ConstGuide : SnapGuide {
         vp_ = vp; sx_ = sx; sy_ = sy;
         prio_ = prio; scale_ = scale; rejectEven_ = rejectEven;
     }
-    void limits(float innerPx, float outerPx) {}
-    bool proximity(Vec3 candWorld, SnapType type, int idx, int slot,
+    override bool proximity(Vec3 candWorld, SnapType type, int idx, int slot,
                    ref float distPx, ref int priority)
     {
         if (rejectEven_ && idx >= 0 && (idx & 1) == 0) return false;
@@ -242,10 +231,6 @@ private final class ConstGuide : SnapGuide {
         priority = prio_;
         return true;
     }
-    void setDrawState(GuideDrawState s) {}
-    uint flags() const { return 0; }
-    bool propose(Vec3, int, int, const ref Viewport, const ref SnapPacket,
-                 out Vec3, out SnapType) { return false; }
 }
 
 // ---------------------------------------------------------------------------

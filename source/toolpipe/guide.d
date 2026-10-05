@@ -73,8 +73,10 @@ enum GuideDrawState : ubyte {
 ///
 /// Registered on `SnapStage` (`addGuide` / `removeGuide`) by the tool that
 /// owns the gesture. The stage pushes the environment's ranges in; the guide
-/// answers proximity queries with its own admission rule.
-interface SnapGuide {
+/// answers proximity queries with its own admission rule. Every method has a
+/// no-op default (admit at the enumeration's rank, propose nothing); a guide
+/// overrides what it uses.
+abstract class SnapGuide {
     /// The environment's pixel ranges, pushed IN — the guide does not source
     /// them.
     ///
@@ -84,7 +86,7 @@ interface SnapGuide {
     /// measured is *when* the push happens — we push at registration and again
     /// on every pipeline evaluation, so a mid-gesture range change reaches a
     /// guide that is already registered.
-    void limits(float innerPx, float outerPx);
+    void limits(float innerPx, float outerPx) {}
 
     /// Admission + distance for one enumerated candidate. Return false to
     /// REJECT it: a rejected candidate is treated as if the enumeration had
@@ -122,7 +124,7 @@ interface SnapGuide {
     /// `synchronized` block in `snap.d` is closed before a candidate reaches
     /// `consider`, so an unwinding guide cannot strand the lock.
     bool proximity(Vec3 candWorld, SnapType type, int idx, int slot,
-                   ref float distPx, ref int priority);
+                   ref float distPx, ref int priority) { return true; }
 
     /// A position of the guide's own for one query (the SDK guide's writable
     /// proximity `pos`): the election offers it in the constraint tier, below
@@ -131,13 +133,13 @@ interface SnapGuide {
     /// (`px`, `py`) the query pixel. False = no position (a guide that only
     /// re-ranks).
     bool propose(Vec3 clientWorld, int px, int py, const ref Viewport vp,
-                 const ref SnapPacket cfg, out Vec3 pos, out SnapType type);
+                 const ref SnapPacket cfg, out Vec3 pos, out SnapType type) { return false; }
 
     /// Off / Suggest / Chosen — the draw protocol.
     ///
     /// U2 — HEADER-DERIVED, and with no caller in phase (a). See
     /// `GuideDrawState`.
-    void setDrawState(GuideDrawState s);
+    void setDrawState(GuideDrawState s) {}
 
     /// A flag word describing the guide to the framework.
     ///
@@ -146,5 +148,5 @@ interface SnapGuide {
     /// this guide even when the global snap enable is off") is a live owner
     /// fork about the topology pen's unconditional welding, and dropping the
     /// method from the interface would quietly foreclose that answer.
-    uint flags() const;
+    uint flags() const { return 0; }
 }

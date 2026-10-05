@@ -137,5 +137,6 @@ unittest {
     if (only is null)
         assert(ran == 14, format("population floor: %d cells ran, expected 14", ran));
     import std.array : join;
-    assert(fails.length == 0, "\n  " ~ fails.join("\n  "));
+    // The first line names the first failing cell.
+    assert(fails.length == 0, fails.join("\n  "));
 }
