@@ -85,7 +85,7 @@ import tools.create.create_common : WorkplaneFrame,
                               primitivePlacementFrame, screenToPlacementLocal,
                               planeLocalViewport,
                               mostFacingAxis, transformPoint, transformDir, snapLocalHit,
-                              frameIsLeftHanded, reverseFaceWinding, baseDragPoint, syncEventViewport,
+                              frameIsLeftHanded, reverseFaceWinding, baseDragPoint,
                               workplaneCursorPlaneHit, moverDrag, snapMoverCentre, heightDragNormal;
 import editmode : EditMode;
 import snap : SnapResult;
@@ -150,8 +150,6 @@ protected:
     Vec3 hpn;
     Vec3 heightDragStart;
     Vec3 baseAnchor;
-
-    Viewport cachedVp;
 
     // Move gizmo (axis-only) — used by every leaf-group.
     MoveHandler mover;
@@ -998,7 +996,6 @@ public:
     // -----  identical text for cylinder/cone/capsule and (modulo the ------
     // -----  narrow virtual hooks below) sphere) ----------------------------
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
-        syncEventViewport(cachedVp, vts);
         if (e.button == SDL_BUTTON_RIGHT && state != RadialState.Idle) {
             state = RadialState.Idle;
             return true;
@@ -1064,7 +1061,6 @@ public:
     }
 
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
-        syncEventViewport(cachedVp, vts);
         if (e.button != SDL_BUTTON_LEFT) return false;
 
         if (tryReleaseHandles()) return true;
@@ -1097,7 +1093,6 @@ public:
     }
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
-        syncEventViewport(cachedVp, vts);
         // Idle-state live snap preview.
         if (state == RadialState.Idle) updateIdleSnap(e.x, e.y);
 

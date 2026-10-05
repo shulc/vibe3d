@@ -12,6 +12,7 @@ import std.array : array;
 import std.file : dirEntries, readText, SpanMode;
 import std.format : format;
 import std.path : buildPath, dirName, relativePath;
+import std.regex : matchAll, regex;
 import std.string : replace, strip;
 
 import tests.unit.census_symbols : blankNonCode, isIdentChar, symbolTokenHits;
@@ -277,27 +278,34 @@ unittest { // (c) a FREE point reads the surface, a primitive's PRESS point does
     assert(dragSites == ["BoxTool.onMouseMotion", "SizedRadialCreateTool.onMouseMotion",
                          "TorusTool.onMouseMotion"],
         format("baseDragPoint calls must be exactly the box, radial and torus motion blocks: %s", dragSites));
-    // ...and every mouse handler of those tools resolves under the event's own
-    // cell: `syncEventViewport` is the FIRST statement of each (task 0209's rule).
-    import std.regex : matchAll, regex;
-    string[] syncSites;
-    size_t handlers;
-    foreach (f; ["tools/create/box.d", "tools/create/primitive_create_tool.d", "tools/create/torus.d"]) {
+    // ...and every mouse handler resolves under the event's own cell: the router
+    // syncs the tool's viewport once, before each dispatch (task 9498), and no
+    // tool syncs by itself. Polarity: red before 9498 (nine per-handler calls in
+    // three tools; box, radial and vertex declared their own `cachedVp`).
+    immutable router = blankNonCode(readText(buildPath(root, "source", "input_router.d")));
+    size_t dispatches;
+    foreach (h; ["onMouseButtonDown(", "onMouseButtonUp(", "onMouseMotion("])
+        dispatches += tokenAt(router, "activeTool." ~ h[0 .. $ - 1]).length;
+    assert(dispatches == 6, format("census floor: 6 active-tool mouse dispatches in the router, got %d",
+                                   dispatches));
+    assert(tokenAt(router, "toolEventVts").length == dispatches + 1,
+        format("every active-tool mouse dispatch builds its packets through toolEventVts (declaration + "
+               ~ "%d calls), got %d", dispatches, tokenAt(router, "toolEventVts").length));
+    string[] syncSites, ownViewport;
+    foreach (f; files) {
         immutable code = blankNonCode(readText(buildPath(root, "source", f)));
-        foreach (h; symbolTokenHits(code, f, "syncEventViewport(")) syncSites ~= h.key;
-        handlers += tokenAt(code, "onMouseButtonDown").length + tokenAt(code, "onMouseButtonUp").length
-                  + tokenAt(code, "onMouseMotion").length;
-        immutable first = matchAll(code, regex(`override bool onMouse(ButtonDown|ButtonUp|Motion)`
-            ~ `\([^)]*\)\s*\{\s*syncEventViewport\(cachedVp, vts\);`)).array.length;
-        assert(first == 3, format("%s: syncEventViewport must open all three mouse handlers (%d do)", f, first));
+        foreach (h; symbolTokenHits(code, f, "syncEventViewport(")) syncSites ~= f ~ ":" ~ h.key;
+        if (f.length > 13 && f[0 .. 13] == "tools/create/"
+            && matchAll(code, regex(`\bViewport\s+cachedVp\s*;`)).array.length)
+            ownViewport ~= f;
     }
     sort(syncSites);
-    assert(handlers == 9, format("census floor: 9 mouse-handler tokens in the three tools, got %d", handlers));
-    assert(syncSites == ["BoxTool.onMouseButtonDown", "BoxTool.onMouseButtonUp", "BoxTool.onMouseMotion",
-                         "SizedRadialCreateTool.onMouseButtonDown", "SizedRadialCreateTool.onMouseButtonUp",
-                         "SizedRadialCreateTool.onMouseMotion", "TorusTool.onMouseButtonDown",
-                         "TorusTool.onMouseButtonUp", "TorusTool.onMouseMotion"],
-        format("syncEventViewport calls must be exactly the three tools' mouse handlers: %s", syncSites));
+    assert(syncSites == ["input_router.d:InputRouter.toolEventVts", "tool.d:Tool"],
+        format("syncEventViewport must be the router's one call and its declaration: %s", syncSites));
+    // The pen keeps its own field (frozen file, task 9498 follow-up): it hides
+    // the synced one. Every other create tool reads the synced base field.
+    assert(ownViewport == ["tools/create/pen.d"],
+        format("a create tool declaring its own cachedVp hides the router-synced one: %s", ownViewport));
     immutable vertexTool = blankNonCode(readText(buildPath(root, "source", "tools/create/vertex_place.d")));
     assert(tokenAt(vertexTool, "kGuideTypes").length == 0,
         "the vertex tool passes no guide mask: after the guide-block deletion it has no candidate to strip");

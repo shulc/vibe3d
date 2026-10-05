@@ -703,6 +703,14 @@ public:
               ref VectorStack vts, const ref DrawPlan plan,
               bool visualOnly = false) {}
 
+    /// The viewport a tool's handlers resolve under: `draw` caches the drawn
+    /// cell's, and the router overwrites it with the event's own cell
+    /// (`SubjectPacket.viewport`) before every mouse handler, so a Quad press
+    /// never reads the last-drawn cell (tasks 0209, 9498). A subclass that
+    /// declares its own `cachedVp` hides this field and is not synced.
+    Viewport cachedVp;
+    final void syncEventViewport(const ref Viewport vp) { cachedVp = vp; }
+
     // Called inside the floating "Tool Properties" ImGui window.
     // Override to show/edit tool-specific properties.
     void drawProperties() {}

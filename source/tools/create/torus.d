@@ -12,7 +12,7 @@ import shader : LitShader;
 import tools.create.primitive_create_tool : HandledCreateTool;
 import tools.create.create_common : ringCount,
                                     screenToPlacementLocal, snapLocalHit,
-                                    workplaneCursorPlaneHit, baseDragPoint, syncEventViewport;
+                                    workplaneCursorPlaneHit, baseDragPoint;
 import editmode : EditMode;
 import snap_render : publishLastSnap;
 
@@ -213,7 +213,6 @@ public:
     }
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
-        syncEventViewport(cachedVp, vts);
         if (e.button == SDL_BUTTON_RIGHT && state != TorusState.Idle) {
             state = TorusState.Idle;
             return true;
@@ -259,7 +258,6 @@ public:
     }
 
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
-        syncEventViewport(cachedVp, vts);
         if (e.button != SDL_BUTTON_LEFT) return false;
 
         if (tryReleaseHandles()) return true;
@@ -285,7 +283,6 @@ public:
     }
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
-        syncEventViewport(cachedVp, vts);
         if (state == TorusState.Idle) updateIdleSnap(e.x, e.y);
 
         if (handleSizeDrag(e.x, e.y))  return true;

@@ -870,6 +870,15 @@ struct InputRouter {
     // `handleMouseMotion`; tests/test_pie_menu.d and
     // tests/test_command_availability.d reach `runCommandWithArgs`.
 
+    // The active tool's packets for a mouse event, its viewport synced to the
+    // event's own cell first (`Tool.syncEventViewport`): every tool mouse
+    // dispatch builds its packets here, so no handler syncs by itself.
+    private void toolEventVts(out SubjectPacket subj, ref VectorStack vts, int x, int y,
+                              GesturePacket gest) {
+        ifs.buildToolVts(subj, vts, x, y, true, gest);
+        app.activeTool.syncEventViewport(subj.viewport);
+    }
+
     void handleMouseButtonDown(ref SDL_MouseButtonEvent btn) {
         // Cook this event ONCE, before any dispatch: this handler reaches
         // buildToolVts from four different branches (RMB-to-tool, the
@@ -910,7 +919,7 @@ struct InputRouter {
             // consumes the click, fall through to the RMB lasso select as before
             // (lasso runs with NO active tool, so it is unaffected).
             if (app.activeTool) {
-                SubjectPacket subj; VectorStack vts; ifs.buildToolVts(subj, vts, btn.x, btn.y, true, gest);
+                SubjectPacket subj; VectorStack vts; toolEventVts(subj, vts, btn.x, btn.y, gest);
                 if (app.activeTool.onMouseButtonDown(btn, vts)) return;
             }
             rmbDragging = true;
@@ -948,7 +957,7 @@ struct InputRouter {
                 SDL_Keymod savedMods = SDL_GetModState();
                 SDL_SetModState(cast(SDL_Keymod)(savedMods & ~KMOD_SHIFT));
                 scope(exit) SDL_SetModState(savedMods);
-                SubjectPacket subjR; VectorStack vtsR; ifs.buildToolVts(subjR, vtsR, btn.x, btn.y, true, gest);
+                SubjectPacket subjR; VectorStack vtsR; toolEventVts(subjR, vtsR, btn.x, btn.y, gest);
                 app.session.notePointerDown();
                 app.activeTool.onMouseButtonDown(btn, vtsR);
                 return;
@@ -970,7 +979,7 @@ struct InputRouter {
                  || app.activeTool.wantsHoverForType(EditMode.Edges)
                  || app.activeTool.wantsHoverForType(EditMode.Polygons)))
                 refreshHoverPickAt(btn.x, btn.y);
-            SubjectPacket subj; VectorStack vts; ifs.buildToolVts(subj, vts, btn.x, btn.y, true, gest);
+            SubjectPacket subj; VectorStack vts; toolEventVts(subj, vts, btn.x, btn.y, gest);
             if (btn.button == SDL_BUTTON_LEFT && ifs.viewportInputAllowed()
                 && !(SDL_GetModState() & KMOD_ALT))
                 app.session.notePointerDown();
@@ -1177,7 +1186,7 @@ struct InputRouter {
             // (it consumed the RMB-down, so no lasso is in flight — rmbDragging is
             // false), let it finish its gesture (Slice bakes the final gap here).
             if (app.activeTool && !rmbDragging) {
-                SubjectPacket subj; VectorStack vts; ifs.buildToolVts(subj, vts, btn.x, btn.y, true, gest);
+                SubjectPacket subj; VectorStack vts; toolEventVts(subj, vts, btn.x, btn.y, gest);
                 if (app.activeTool.onMouseButtonUp(btn, vts)) return;
             }
             // The rubber-band is a VIEWPORT PICK, so it asks the ordering with
@@ -1537,7 +1546,7 @@ struct InputRouter {
             return;
         }
         if (app.activeTool) {
-            SubjectPacket subj; VectorStack vts; ifs.buildToolVts(subj, vts, btn.x, btn.y, true, gest);
+            SubjectPacket subj; VectorStack vts; toolEventVts(subj, vts, btn.x, btn.y, gest);
             app.activeTool.onMouseButtonUp(btn, vts);
         }
         // Release a host falloff-gizmo drag (no tool active). routeUp does NOT
@@ -1634,7 +1643,7 @@ struct InputRouter {
         if (rmbDragging)
             ifs.rmbPath ~= ImVec2(cast(float)mot.x, cast(float)mot.y);
         if (app.activeTool) {
-            SubjectPacket subj; VectorStack vts; ifs.buildToolVts(subj, vts, mot.x, mot.y, true, gest);
+            SubjectPacket subj; VectorStack vts; toolEventVts(subj, vts, mot.x, mot.y, gest);
             if (app.activeTool.onMouseMotion(mot, vts)) return;
         }
         // Host falloff-gizmo endpoint drag (no tool active). The gizmo writes

@@ -346,7 +346,7 @@ allow source/subpatch_worker.d 2
 allow source/subpatch_worker_web.d 1
 allow source/symmetry.d 13
 allow source/symmetry_pick.d 4
-allow source/tool.d 33
+allow source/tool.d 34
 allow source/tool_activation_ownership.d 6
 allow source/tool_disarm.d 3
 allow source/tool_lifecycle_registration.d 1
@@ -377,7 +377,7 @@ allow source/tools/create/arc.d 2
 allow source/tools/create/box.d 15
 allow source/tools/create/capsule.d 2
 allow source/tools/create/cone.d 2
-allow source/tools/create/create_common.d 15
+allow source/tools/create/create_common.d 14
 allow source/tools/create/cylinder.d 2
 allow source/tools/create/pen.d 2
 allow source/tools/create/pen_geometry.d 1

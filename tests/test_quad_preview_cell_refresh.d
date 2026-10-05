@@ -113,36 +113,58 @@ unittest {
             "toolPreviewKey must be identical across all four cells after the edit");
 }
 
-unittest { // a base drag in the bottom-right cell resolves under THAT cell (task 9473)
-    // The previous owner cell is Top: its projection puts this press far off
-    // the cell's own plane hit (behind the Perspective camera), so a tool that
-    // reads a stale viewport draws nothing. The press at the cell's centre
-    // lands on its focus, the origin.
-    foreach (t; [["prim.cube", "sizeX"], ["prim.torus", "majorRadius"]]) {
-        scope(exit) postJson("/api/command", "tool.set " ~ t[0] ~ " off");
+unittest { // a press in the bottom-right cell resolves under THAT cell, one per family (tasks 9473, 9498)
+    // The router syncs the tool's viewport to the event's own cell before every
+    // mouse handler. The previous owner cell is Top: its projection puts this
+    // press far off the cell's own plane hit (behind the Perspective camera),
+    // so a tool that reads a stale viewport draws nothing. The press at the
+    // cell's centre lands on its focus, the origin. A primitive drags its base;
+    // the vertex tool clicks. Every family runs; the failures are reported
+    // together.
+    string family(string tool, string size) {
+        scope(exit) postJson("/api/command", "tool.set " ~ tool ~ " off");
         scope(exit) postJson("/api/command", "viewport.layout Single");
         auto reset = postJson("/api/command", commandBody("scene.reset", `{"empty":true}`));
         assert(reset["status"].str == "ok", "empty reset failed: " ~ reset.toString);
         auto full = fetchCamera();
         command("viewport.layout Quad");
         Thread.sleep(150.msecs);
-        command("tool.set " ~ t[0]);
+        command("tool.set " ~ tool);
         const halfW = full.width / 2, halfH = full.height / 2;
         const cx = full.vpX + halfW + (full.width - halfW) / 2;
         const cy = full.vpY + halfH + (full.height - halfH) / 2;
+        const travel = size.length > 0;
         playAndWait(buildDragLog(full.vpX, full.vpY, full.width, full.height,
-                                 cx, cy, cx + 70, cy + 55, 12));
+                                 cx, cy, travel ? cx + 70 : cx, travel ? cy + 55 : cy, 12));
+        if (!travel) {
+            auto vs = getJson("/api/model")["vertices"].array;
+            if (vs.length != 1)
+                return format("%s: the click in the Perspective cell made %d vertices, expected 1",
+                              tool, vs.length);
+            double r2 = 0;
+            foreach (c; vs[0].array) {
+                immutable double v = c.type == JSONType.float_ ? c.floating : cast(double)c.integer;
+                r2 += v * v;
+            }
+            return r2 < 0.05 * 0.05 ? null
+                 : format("%s: the click must land on the cell's focus, got %s", tool, vs[0].toString);
+        }
         double attr(string a) {
-            auto r = postJson("/api/command", "tool.attr " ~ t[0] ~ " " ~ a ~ " ?");
+            auto r = postJson("/api/command", "tool.attr " ~ tool ~ " " ~ a ~ " ?");
             assert(r["status"].str == "ok", "attribute query failed: " ~ r.toString);
             return r["value"].floating;
         }
-        immutable size = attr(t[1]);
-        assert(size > 0.01, format("%s: the base drag in the Perspective cell drew nothing (%s %s)",
-                                   t[0], t[1], size));
-        if (t[0] == "prim.torus")
-            assert(attr("cenX") * attr("cenX") + attr("cenZ") * attr("cenZ") < 0.05 * 0.05,
-                format("prim.torus: the press must land on the cell's focus, got (%s, %s)",
-                       attr("cenX"), attr("cenZ")));
+        immutable s = attr(size);
+        if (!(s > 0.01))
+            return format("%s: the base drag in the Perspective cell drew nothing (%s %s)", tool, size, s);
+        if (tool != "prim.cube" && !(attr("cenX") * attr("cenX") + attr("cenZ") * attr("cenZ") < 0.05 * 0.05))
+            return format("%s: the press must land on the cell's focus, got (%s, %s)",
+                          tool, attr("cenX"), attr("cenZ"));
+        return null;
     }
+    string[] failed;
+    foreach (t; [["prim.cube", "sizeX"], ["prim.torus", "majorRadius"], ["prim.tube", "outerRadius"],
+                 ["prim.vertex", ""]])
+        if (auto m = family(t[0], t[1])) failed ~= m;
+    assert(failed.length == 0, format("%-(%s\n%)", failed));
 }

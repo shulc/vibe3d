@@ -46,10 +46,6 @@ private:
     GpuMesh*          gpu_;
     LitShader         litShader_;
 
-
-
-    Viewport   cachedVp_;
-
 public:
     this(Mesh* delegate() meshSrc, GpuMesh* gpu, LitShader litShader)
     {
@@ -90,7 +86,7 @@ public:
                        ref VectorStack vts, const ref DrawPlan plan,
                        bool visualOnly = false)
     {
-        cachedVp_ = vp;
+        cachedVp = vp;
     }
 
     override void drawProperties() {
@@ -122,7 +118,7 @@ public:
 
         WorkplaneFrame frame = primitivePlacementFrame();
         SnapResult sr;
-        Vec3 hit = placeFreePoint(e.x, e.y, cachedVp_, frame, *mesh, sr);
+        Vec3 hit = placeFreePoint(e.x, e.y, cachedVp, frame, *mesh, sr);
         publishLastSnap(sr);
 
         // Convert local workplane hit → world position.
@@ -172,8 +168,8 @@ public:
                                 ref VectorStack vts)
     {
         WorkplaneFrame f = primitivePlacementFrame();
-        Vec3 hit = screenToPlacementLocal(e.x, e.y, cachedVp_, f);
-        publishLastSnap(snapLocalHit(hit, f, e.x, e.y, cachedVp_, *mesh, EditMode.Vertices));
+        Vec3 hit = screenToPlacementLocal(e.x, e.y, cachedVp, f);
+        publishLastSnap(snapLocalHit(hit, f, e.x, e.y, cachedVp, *mesh, EditMode.Vertices));
         return false;
     }
 }

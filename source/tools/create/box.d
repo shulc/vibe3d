@@ -36,7 +36,7 @@ import tools.create.create_common : WorkplaneFrame,
                               mostFacingAxis,
                               transformPoint, transformDir, snapLocalHit,
                               frameIsLeftHanded, reverseFaceWinding,
-                              workplaneCursorPlaneHit, moverDrag, snapMoverCentre, heightDragNormal, baseDragPoint, syncEventViewport;
+                              workplaneCursorPlaneHit, moverDrag, snapMoverCentre, heightDragNormal, baseDragPoint;
 import editmode : EditMode;
 import snap : SnapResult;
 import snap_render : publishLastSnap, clearLastSnap;
@@ -195,8 +195,6 @@ private:
     /// Generator workplane transform captured at choosePlane().
     WorkplaneFrame frame;
     WorkplaneFrame placementFrame;
-
-    Viewport cachedVp;
 
     // Move gizmo (axis-only, no plane circles)
     MoveHandler mover;
@@ -521,7 +519,6 @@ public:
     }
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
-        syncEventViewport(cachedVp, vts);
         if (e.button == SDL_BUTTON_RIGHT && state != BoxState.Idle) {
             state = BoxState.Idle;
             return true;
@@ -664,7 +661,6 @@ public:
     }
 
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
-        syncEventViewport(cachedVp, vts);
         if (e.button != SDL_BUTTON_LEFT) return false;
 
         // A drag is ending — drop the snap overlay so the highlight doesn't
@@ -730,7 +726,6 @@ public:
     }
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
-        syncEventViewport(cachedVp, vts);
         // Idle-state live snap preview. Before any clicks, show the
         // snap target where the first click would anchor the box.
         // The generator frame is not captured until the first click; preview
