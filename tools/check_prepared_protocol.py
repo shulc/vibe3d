@@ -2349,9 +2349,10 @@ for name, old, new, label in (
     if mutant[name] == b5_sources[name] or b5_gate(mutant):
         fail(f"P1.0b.5a named mutation did not RED: {label}")
 
-# P1.0b.5b create-family slice: Vertex.activate is the sole row whose full
-# effect is tool-private value reset. The other eight exact rows retain mixed
-# Mesh/GL/history/snap-overlay effects and remain in the deferred ledger.
+# P1.0b.5b create-family slice: Vertex.activate is the sole row with no
+# effect but the one-shot token (its snap moved to `g_lastSnap`). The other
+# eight exact rows retain mixed Mesh/GL/history/snap-overlay effects and
+# remain in the deferred ledger.
 vertex_source = (ROOT / "source/tools/create/vertex_place.d").read_text()
 b5b_contracts = (
     "private struct ValidatedVertexActivate {\n    @disable this(this);",
@@ -2360,7 +2361,7 @@ b5b_contracts = (
     "prepared.owner != preparedToolStateOwner",
     "prepared.kind != PreparedActivateKind.Vertex",
     "final void installPreparedActivate(ref ValidatedVertexActivate validated)",
-    "validated.consumable = false;\n        lastSnap_ = SnapResult.init;",
+    "if (!validated.consumable) return;\n        validated.consumable = false;",
 )
 def b5b_gate(source):
     return all(c in source for c in b5b_contracts)
@@ -2374,10 +2375,8 @@ for old, new, label in (
     ("@disable this(this);", "", "make validated handle copyable"),
     ("prepared.owner != preparedToolStateOwner", "false", "drop owner identity"),
     ("prepared.kind != PreparedActivateKind.Vertex", "false", "drop closed kind"),
-    ("validated.consumable = false;\n        lastSnap_ = SnapResult.init;",
-     "lastSnap_ = SnapResult.init;", "drop one-shot consumption"),
-    ("validated.consumable = false;\n        lastSnap_ = SnapResult.init;",
-     "validated.consumable = false;", "drop activation reset"),
+    ("if (!validated.consumable) return;\n        validated.consumable = false;",
+     "if (!validated.consumable) return;", "drop one-shot consumption"),
 ):
     mutant = vertex_source.replace(old, new, 1)
     if mutant == vertex_source or b5b_gate(mutant):
@@ -5643,10 +5642,8 @@ def box_deactivate_gate(tool, owner, effect):
         "!boxTarget.preparedDeactivateStateMatches(boxDeactivateImage)" in owner_block and
         "boxTarget.installPreparedDeactivateState(boxDeactivateImage);" in owner_block and
         "image.expectedState = cast(ubyte)state;" in state and
-        "image.expectedLastSnap = lastSnap" in state and
         "frame.toWorld == image.frame.toWorld" in state and
         "if (image.clearTracking)" in state and
-        "lastSnap = SnapResult.init; image.clear();" in state and
         "beginPreparedShadow(candidate)" in candidate and
         "buildCuboidParametric(&candidate, image.params);" in candidate and
         "drainPreparedShadowDelivery(candidate, deliveryFlags, deliveryDomains);" in candidate and

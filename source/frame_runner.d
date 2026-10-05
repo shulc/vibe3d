@@ -268,7 +268,7 @@ final class FrameRunner {
                    ToolOverlayInputs overlays, OverlayMode overlayMode) {
         sceneRenderer_.draw(scene, view, display, gpu,
                             bgGpuCache_.drawCache(), overlays, overlayMode);
-        // The one draw of the published snap, per cell (task 9444).
+        // The one draw of the published snap, per cell (snap_render.d).
         if (overlayMode != OverlayMode.None)
             drawSnapOverlay(g_lastSnap, *view.viewport, *scene.mesh);
     }

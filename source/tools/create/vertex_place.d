@@ -76,6 +76,8 @@ public:
 
     override Param[] params() { return []; }
 
+    override void activate() {}
+
     final PreparedActivateEffect prepareActivate() const nothrow @nogc {
         return PreparedActivateEffect(preparedToolStateOwner,
                                       PreparedActivateKind.Vertex);
@@ -99,8 +101,8 @@ public:
         clearLastSnap();
     }
 
-    // The tool keeps no private state since its snap went to `g_lastSnap`
-    // (task 9444); the prepared kind stays for the shared transition.
+    // The tool keeps no private state since its snap went to `g_lastSnap`;
+    // the prepared kind stays for the shared transition.
     final void installPreparedPrivateDeactivate() nothrow @nogc {}
 
     final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context,

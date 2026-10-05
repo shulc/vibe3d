@@ -16,8 +16,8 @@ import core.atomic : atomicOp;
 
 // Snap visual feedback. Tools publish their latest snap query through
 // `publishLastSnap` / `clearLastSnap`; the FRAME draws `g_lastSnap` once per
-// cell (`frame_runner.drawScene`), no tool draws it (task 9444). The look is
-// the captured one (findings_O, task 9425): with no mouse button held the
+// cell (`frame_runner.drawScene`), no tool draws it. The look is the
+// captured one (toolcards findings_O): with no mouse button held the
 // target element gets the rollover mark (`preHighlight`, a 6x6 px square on a
 // vertex); while a gesture holds a button the point gets a gapped cross,
 // `handleUnsnap` before it snaps and `handle` once snapped. `g_lastSnap` is

@@ -655,7 +655,7 @@
     {
       "aggregate": "BoxTool",
       "module": "tools.create.box",
-      "semantic_sha256": "c503eed850d3300c38a4fa05135e19178b1b3e0340f75f1306805676aeddd085",
+      "semantic_sha256": "9e0f82bd2849840fdba786383d636fa24f0873e888435064220f5126636627d7",
       "signature": "void()",
       "symbol": "deactivate"
     },
@@ -704,7 +704,7 @@
     {
       "aggregate": "PrimitiveCreateTool",
       "module": "tools.create.primitive_create_tool",
-      "semantic_sha256": "7967cb1a52a1f94386219c821f413a933e2da8b123ab5e09cc1d84c5222ca44c",
+      "semantic_sha256": "eea4a93b550ed6d8b59ef60b337abf96cf103faf7f1916c5a111cd9e19890448",
       "signature": "void()",
       "symbol": "deactivate"
     },
@@ -718,14 +718,14 @@
     {
       "aggregate": "VertexTool",
       "module": "tools.create.vertex_place",
-      "semantic_sha256": "ccaa9182dfd33f1b2e58d143fab66008d851124e40369da37be3832703427343",
+      "semantic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "signature": "void()",
       "symbol": "activate"
     },
     {
       "aggregate": "VertexTool",
       "module": "tools.create.vertex_place",
-      "semantic_sha256": "fbbb270bb45f55d9efb1b29abeb2ca14686110236ea74b0ef304995c090c4982",
+      "semantic_sha256": "50b96a51fc758844cf1d9c61b7ce58730f30d06b31f5f5329190e62218080028",
       "signature": "void()",
       "symbol": "deactivate"
     },
