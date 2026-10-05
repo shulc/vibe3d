@@ -393,4 +393,14 @@ unittest {
         v.context.markNoHistoryInstall() && v.context.validate());
     assert(!v.context.prepareParamUpdate(O.prepare(v.tool, v.layer)),
         "a validated context enlisted another slot");
+
+    // A throw while enlisting discards the whole transaction.
+    auto x = Rig!PolyInsetRow.make(true, true);
+    x.context.setResourceIdentity(7, 11);
+    PreparedRecordContext.failAfterResourceBeginForTest(true);
+    bool threw;
+    try x.tool.prepareParamChanged(x.context, x.layer, GpuUploadOwner.fakeForTest(&x.gpu));
+    catch (Exception) threw = true;
+    PreparedRecordContext.failAfterResourceBeginForTest(false);
+    assert(threw && !x.context.validate(), "a failed enlist left the transaction live");
 }
