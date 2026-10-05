@@ -9,6 +9,7 @@ import math     : Vec3, dot, cross;
 import std.math : sqrt, cos, sin, PI, abs;
 import std.algorithm : sort;
 import tools.alignment.align_kernels;
+import falloff  : weightedLerp;
 
 unittest { // Linear Align — chain interpolation law, BIT-EXACT verified
            // against the "la_nonuniform" / "la_uniform" capture cases.
@@ -61,8 +62,8 @@ unittest { // Linear Align — weight blend, BIT-EXACT verified against
         Vec3( 0.5f,  0.5f,  0.5f),
     ];
     auto aligned = linearAlignTargets(source, false);
-    Vec3 b05 = lerp3(source[1], aligned[1], 0.5f);
-    Vec3 c05 = lerp3(source[2], aligned[2], 0.5f);
+    Vec3 b05 = weightedLerp(source[1], aligned[1], 0.5f);
+    Vec3 c05 = weightedLerp(source[2], aligned[2], 0.5f);
     assert(abs(b05.x - 0.0916667f) < 1e-4f && abs(b05.y - (-0.0833333f)) < 1e-4f
         && abs(b05.z - (-0.0583333f)) < 1e-4f, "weight=0.5 B mismatch");
     assert(abs(c05.x - 0.3333333f) < 1e-4f && abs(c05.y - (-0.1666667f)) < 1e-4f
@@ -166,7 +167,7 @@ unittest { // Radial Align — weight blend uses the same lerp law as
            // against ra_circle.json).
     Vec3 source = Vec3(0.7071f, -0.5f, 0.0f);
     Vec3 aligned = Vec3(1.0f, -0.5f, 1.0f);
-    Vec3 h = lerp3(source, aligned, 0.5f);
+    Vec3 h = weightedLerp(source, aligned, 0.5f);
     assert(abs(h.x - 0.85355f) < 1e-4f);
     assert(abs(h.y - (-0.5f))  < 1e-6f);
     assert(abs(h.z - 0.5f)     < 1e-6f);
