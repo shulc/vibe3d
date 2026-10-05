@@ -235,9 +235,10 @@ unittest {
         expect("tool-switch-keeps-point arm pen", s[2]);
         ++ran;
     }
-    { // same-key-drop-keeps: the tool's own key drops it (not a door the guard
-      // admits); a constraint already in the pipe stays (first-drop-move rows
-      // "arm pen" / "drop pen": every later tool transition keeps it)
+    { // same-key-drop-keeps: the tool's own key drops it. The rig boots with
+      // the constraint already in the pipe, so this proves only that this drop
+      // keeps it (first-drop-move row "drop pen"); it cannot tell whether
+      // dropRemembersConstraint admits this door (uncaptured, left out)
         boot(true);
         key("w");
         key("w");
@@ -270,6 +271,21 @@ unittest {
         expect("cleared-unlocks topology pen", parseJSON(`{"enabled":true,"geometry":"point"}`));
         key("q");
         expect("cleared-unlocks drop", fixtureCase("cleared-not-readded")["after_each"][2]);
+        ++ran;
+    }
+    { // forgotten-pen-attr-drop (review blocker): a user attr write on the
+      // topology pen's own point constraint locks it while the constraint is
+      // forgotten; the drop must not disable a locked stage, so the pen
+      // re-arms with its constraint (base behaviour: enabled at re-arm)
+        boot(false);
+        cmd("constrain.toggle");
+        cmd("constrain.toggle");   // on, then off: forgotten
+        cmd("tool.set mesh.topoPen on");
+        expect("forgotten-pen-attr-drop arm", parseJSON(`{"enabled":true,"geometry":"point"}`));
+        cmd("tool.pipe.attr constrain offset 0.1");
+        key("q");
+        cmd("tool.set mesh.topoPen on");
+        expect("forgotten-pen-attr-drop re-arm", parseJSON(`{"enabled":true,"geometry":"point"}`));
         ++ran;
     }
     { // load-no-tool-no-seed: a scene load with no tool armed drops nothing
@@ -354,5 +370,5 @@ unittest {
         ++ran;
     }
 
-    assert(ran == 23, format("constraint boot cells: ran %s, expected 23", ran));
+    assert(ran == 24, format("constraint boot cells: ran %s, expected 24", ran));
 }

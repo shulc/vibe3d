@@ -486,9 +486,12 @@ public:
     }
 
     /// A tool drop puts the remembered constraint into the pipe; a forgotten
-    /// one stays out (cells first-drop-*, cleared-not-readded).
+    /// one stays out (cells first-drop-*, cleared-not-readded). A user-locked
+    /// stage is the user's own setting and keeps its enable, as in
+    /// `resetTransient` (cell forgotten-pen-attr-drop).
     void noteToolDropped() {
         if (remembered == Remembered.yes) remembered = Remembered.inPipe;
+        if (userLocked) return;
         enabled = remembered == Remembered.inPipe;
         publishState();
     }

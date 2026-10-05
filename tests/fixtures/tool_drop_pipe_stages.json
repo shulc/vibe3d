@@ -10,6 +10,7 @@
     "notes": "Live GUI with a debugger attached to the same process; one fresh process per cell and door. The public payload contains only our stage, selection, history, tool and command identifiers."
   },
   "clicks_note": "E5pen2 and E5pen3 clicks lie clear of the cube (>= 76 px from every projected vertex and edge) so the pen's merge cannot act; the rows' subject is the drop.",
+  "constrain_note": "Pre-existing: the rig and armed columns read constrain:\"false\", but the raw capture of C1/drop (private toolcard net log, lines 20-23) shows the background constraint already inserted into the pipe by the setup's `tool.set prim.cube off` drop. The re-pinned after columns (task 9401) match the raw capture.",
   "law": [
     "A drop removes the transient stage values installed by the armed preset and does not restore values displaced when that preset was armed.",
     "A transient stage not written by the armed preset keeps an explicit user choice across the drop.",

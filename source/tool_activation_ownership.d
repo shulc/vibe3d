@@ -346,11 +346,11 @@ ArmDoor armDoorFor(ToolTransition t, bool uiOrigin) pure nothrow @safe @nogc {
 
 /// Whether a drop of an ARMED tool by this transition puts the remembered
 /// background constraint back into the pipe (`ConstrainStage.noteToolDropped`).
-/// Captured: the drop key, `tool.set <id> off`, the Escape that drops, and a
-/// new scene with a tool armed (fixtures/constraint_boot.json); a tool switch
-/// is not a drop. The other doors are uncaptured for this law and do not.
+/// Captured: the drop key, `tool.set <id> off` and the Escape that drops
+/// (fixtures/constraint_boot.json); a tool switch is not a drop. The other
+/// doors are uncaptured for this law and do not.
 bool dropRemembersConstraint(ToolTransition t) pure nothrow @safe @nogc {
-    return t == ToolTransition.explicitDrop || t == ToolTransition.sceneResetDrop;
+    return t == ToolTransition.explicitDrop;
 }
 
 /// True when the transition publishes a NEW active tool. Kept beside the table
