@@ -764,6 +764,11 @@ public:
             engaged = widthArrow.isEngaged();
         }
 
+        final bool previewResetForTest() const nothrow @nogc {
+            return preview_.resetForTest();
+        }
+        final ToolHandles handlesForTest() { return toolHandles; }
+
         final void resetPreparedGizmoFrameCallsForTest() nothrow @nogc {
             preparedGizmoFrameCallsForTest_ = 0;
         }
@@ -839,10 +844,6 @@ public:
             widthAxis == Vec3(7,8,9) && gizmoSelHash == 10 &&
             preview_.dirtyForTest();
     }
-    version(unittest) final bool previewResetForTest() const nothrow @nogc {
-        return preview_.resetForTest();
-    }
-    version(unittest) final ToolHandles handlesForTest() { return toolHandles; }
     version(unittest) final bool preparedActivationForTest(size_t count,
             Vec3 first, const Vec3* livePtr, bool expectedValid,
             Vec3 expectedAnchor, Vec3 expectedBase, Vec3 expectedAxis,
