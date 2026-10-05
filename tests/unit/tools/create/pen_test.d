@@ -158,7 +158,7 @@ unittest {
         assert(!isUserSet(p), "pen: attribute '" ~ p.name ~ "' starts off its declared default");
         ++n;
     }
-    assert(n == 13, format("pen: %s attributes enumerated, pinned 13", n));
+    assert(n == 15, format("pen: %s attributes enumerated, pinned 15", n));
 }
 
 // Source census: the pen's "a discrete target placed the point" test has ONE
