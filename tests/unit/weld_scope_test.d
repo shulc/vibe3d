@@ -247,6 +247,17 @@ unittest { // a duplicator's weld distance is a LENGTH: 0.6 apart at distance 0.
     }
 }
 
+unittest { // the radial array welds at distance 0 too: an exact copy folds onto its source
+    // No radial cell of K-W1 is at distance 0; a zero sweep makes the copy exact.
+    foreach (merge; [true, false]) {
+        Mesh m = settle([Vec3(1, 0, 0), Vec3(2, 0, 0), Vec3(2, 1, 0)], [[0u, 1u, 2u]]);
+        m.radialArrayFaces([true], 2, 'Z', Vec3(0, 0, 0), 0, Vec3(0, 0, 0), CloneWeld(merge, 0));
+        const want = merge ? 3 : 6;
+        assert(m.vertices.length == want, format("radial merge %s at distance 0: %d verts, expected %d",
+                                                 merge, m.vertices.length, want));
+    }
+}
+
 unittest { // the seed walk does not chain: 0, 0.4, 0.8 at distance 0.5 is ONE weld
     Mesh a = settle([Vec3(0, 0, 0), Vec3(0.4f, 0, 0), Vec3(0.8f, 0, 0), Vec3(0, 5, 0)],
                     [[0u, 3u, 1u], [1u, 3u, 2u]]);

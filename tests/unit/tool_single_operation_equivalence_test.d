@@ -255,6 +255,21 @@ unittest {
     assert(rows == 7, format("%s rows ran, expected 7", rows));
 }
 
+// A Radial Array param image goes stale when Merge flips after it was built:
+// the projection compares `merge` (task 9462), so a stale candidate never installs.
+unittest {
+    auto r = new Rig(EditMode.Polygons, &pickFace);
+    auto t = makeTool!RadialArrayTool(r);
+    seedSession(t, r.mesh);
+    poke(t, "merge", 0);
+    auto image = t.buildPreparedParamImage(r.mesh);
+    scope(exit) image.clear();
+    assert(t.preparedParamMatches(image, r.mesh), "radial: control, the fresh image matches");
+    poke(t, "merge", 1);
+    assert(!t.preparedParamMatches(image, r.mesh),
+        "radial: the image still matches after Merge flipped");
+}
+
 // Clone's scripted apply at Merge on, distance 0 (task 9462): one exact copy of
 // face 0 welds back onto the cube and the doubled face drops, 8v/6f; merge off
 // keeps the copy, 12v/7f. Clone has no prepared seed, so no `row`.

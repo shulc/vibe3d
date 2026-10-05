@@ -307,7 +307,7 @@ public:
             bool interactive) {
         before = MeshSnapshot.capture(source); active = true; built = false;
         dragPart = -1; interactiveParamEdit = interactive;
-        count_ = 4; angle_ = 90; offset_ = 2; dist_ = 0;
+        count_ = 4; angle_ = 90; offset_ = 2; merge_ = false; dist_ = 0;
     }
     version(unittest) void mutatePreparedParamForTest(float value)
             nothrow @nogc { angle_ = value; }
