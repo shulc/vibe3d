@@ -20,7 +20,7 @@ module unit.bevel_cold_arm_param_image_test;
 //
 // WHY ONLY THE TWO BEVELS. Of the tools with sticky prefs entries, only these
 // two carry the preview conjunct UNGUARDED. `EdgeExtendTool` uses the same
-// PreviewRebuild seam but writes `(!image.appliesMesh || preview_.matchesImage
+// PreviewRebuild seam but writes `(!image.applies || preview_.matchesImage
 // (image.preview))`. `PolyExtrudeTool` — the control below — took the very
 // same `!before.filled` early return with no preview conjunct at all until
 // wave-2 PV2 put it on the seam too; it now prepares its image above that
