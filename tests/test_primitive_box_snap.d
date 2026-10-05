@@ -282,14 +282,15 @@ unittest { // handle drags under grid snap: not trapped; a released element snap
     }
 
     // 28 box-centre-vertex: the centre box (part 13) dragged onto a loose
-    // vertex V = (0.1, 0.1, 0.25) under vertex snap, the identity work plane
+    // vertex V = (0.103, 0.097, 0.25) under vertex snap, the identity work plane
     // PINNED, Front ortho. Premise: the box's plane normal is local Z (axis
-    // attr 2), so its mover arrows are not the local X, Y, Z order. The centre
-    // box locks the view axis Z: the snap writes V's x and y and keeps z 0.
+    // attr z), so its mover arrows are not the local X, Y, Z order. The centre
+    // box locks the view axis Z: the snap writes V's x and y and keeps z 0. V
+    // is off the pixel lattice (440 px/m), so the raw drag end is not V.
     {
         penSceneEmpty("Front");
         auto r = postJson("/api/command", commandBody("scene.loadMesh",
-                                                      `{"vertices":[[0.1,0.1,0.25]],"faces":[]}`));
+                                                      `{"vertices":[[0.103,0.097,0.25]],"faces":[]}`));
         assert(r["status"].str == "ok", "load-mesh failed: " ~ r.toString);
         cmd("workplane.edit cenX:0 cenY:0 cenZ:0 rotX:0 rotY:0 rotZ:0");
         cmd("viewport.view Front");
@@ -309,13 +310,15 @@ unittest { // handle drags under grid snap: not trapped; a released element snap
         cmd("tool.pipe.attr snap types vertex");
         cmd("tool.pipe.attr snap innerRange 24");
         cmd("tool.pipe.attr snap outerRange 40");
-        const p = partPixel(13), c = worldPixel(Vec3(0, 0, 0)), v = worldPixel(Vec3(0.1f, 0.1f, 0.25f));
+        const p = partPixel(13), c = worldPixel(Vec3(0, 0, 0)), v = worldPixel(Vec3(0.103f, 0.097f, 0.25f));
         assert(abs(p[0] - c[0]) <= 1 && abs(p[1] - c[1]) <= 1 && v[0] - p[0] > 20 && p[1] - v[1] > 20,
             format("rig: centre part 13 at the origin %s (found %s), V up-right at %s", c, p, v));
-        dragSteps(p, 2, -2, (v[0] - p[0]) / 2);
+        cam = fetchCamera(BASE);
+        playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height, p[0], p[1], v[0], v[1], 22),
+                    BASE);
         const cx = qf("cenX"), cy = qf("cenY"), cz = qf("cenZ");
-        if (!(fabs(cx - 0.1) < 1e-4 && fabs(cy - 0.1) < 1e-4 && fabs(cz) < 1e-4))
-            fails ~= format("box-centre-vertex: centre expected (0.1, 0.1, 0), got (%.6f, %.6f, %.6f)",
+        if (!(fabs(cx - 0.103) < 1e-4 && fabs(cy - 0.097) < 1e-4 && fabs(cz) < 1e-4))
+            fails ~= format("box-centre-vertex: centre expected (0.103, 0.097, 0), got (%.6f, %.6f, %.6f)",
                             cx, cy, cz);
         cmd("tool.set prim.cube off");
         cmd("workplane.reset");

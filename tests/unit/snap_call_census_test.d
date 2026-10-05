@@ -113,7 +113,7 @@ unittest // one packet read, one finder: the deleted copies stay deleted
     const files = productionSources();
     assert(files.length >= 500, format("population floor: %s source files scanned", files.length));
     size_t[string] raw;
-    string[] finders, casts, faceCalls;
+    string[] finders, casts, faceCalls, liveCalls;
     foreach (f; files) {
         foreach (id; ["captureSnapForGesture", "snapStageForGesture", "guideBits_", "snapPacketOf"])
             raw[id] = raw.get(id, 0) + wordsAt(f[1], id).length;   // RAW text: comments count too
@@ -126,6 +126,9 @@ unittest // one packet read, one finder: the deleted copies stay deleted
         Site[] fc, fo;
         scanCalls(f[0], code, "snapFace", "SnapResult", fc, fo);
         foreach (c; fc ~ fo) faceCalls ~= c.file;
+        Site[] lc, lo;
+        scanCalls(f[0], code, "liveSnapStage", "SnapStage", lc, lo);
+        foreach (c; lc ~ lo) liveCalls ~= c.file;
     }
     // Positive control for the raw counts: the one new read is present.
     assert(raw["snapPacketOf"] >= 8, format("positive control: snapPacketOf occurs %s times", raw["snapPacketOf"]));
@@ -138,6 +141,14 @@ unittest // one packet read, one finder: the deleted copies stay deleted
                           "source/toolpipe/stages/snap.d"];
     assert(finders == kFinderRoster, format("findByTask(TaskCode.Snap) roster: %s", finders));
     assert(casts == kFinderRoster, format("cast(SnapStage) roster: %s", casts));
+    liveCalls.sort();
+    assert(liveCalls == ["source/commands/snap/mode.d", "source/commands/snap/toggle.d",
+                         "source/commands/snap/toggle_type.d", "source/editor_app.d",
+                         "source/toolpipe/stages/snap.d", "source/tools/edit/topology_pen/tool.d",
+                         "source/tools/edit/topology_pen/tool.d", "source/tools/edit/topology_pen/tool.d",
+                         "source/tools/edit/topology_pen/tool.d", "source/tools/edit/topology_pen/tool.d",
+                         "source/tools/transform/xfrm_transform.d"],
+        format("liveSnapStage() call roster (%s): %s", liveCalls.length, liveCalls));
     assert(faceCalls == ["source/tools/create/box.d", "source/tools/create/box.d"],
         format("snapFace must have exactly its two face callers: %s", faceCalls));
 }
@@ -218,7 +229,7 @@ unittest // a guide registered on the live stage reaches a create tool's query
     auto g = new Refuse();
     st.addGuide(g);
     scope (exit) st.removeGuide(g);
-    assert(liveSnapGuides() == [cast(SnapGuide)g], "the registry is what the finder hands out");
     assert(!snappedAt() && g.asked > 0,
         format("a registered refusing guide must reach snapLocalHit's query (asked %s)", g.asked));
+    assert(liveSnapGuides() == [cast(SnapGuide)g], "the registry is what the finder hands out");
 }

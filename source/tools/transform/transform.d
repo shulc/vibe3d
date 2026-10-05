@@ -59,7 +59,7 @@ import commands.mesh.morph_edit  : MeshMorphEdit;
 import snap : SnapResult, snapPacketOf;
 import toolpipe.packets : FalloffPacket, FalloffType, SymmetryPacket, SnapPacket, SubjectPacket;
 import toolpipe.stages.falloff : FalloffStage;
-import toolpipe.stages.snap : SnapStage, liveSnapStage, liveSnapGuides;
+import toolpipe.stages.snap : liveSnapGuides;
 import toolpipe.stages.symmetry : SymmetryStage;
 import falloff : evaluateFalloff;
 import symmetry : applySymmetryMirror;
@@ -1404,16 +1404,13 @@ protected:
         return set;
     }
 
-    /// P-C: the single SnapStage / SymmetryStage — the config sources of truth
-    /// for the snap + symmetry banks. Used by the R/S commitEdit gesture-commit
+    /// P-C: the single SymmetryStage — the config source of truth for the
+    /// symmetry bank. Used by the R/S commitEdit gesture-commit
     /// hooks to snapshot the RUN-START snap + symmetry config and compose a
     /// config-restore alongside the accumulator + falloff hooks (uniform hook
     /// family). `final` + distinctly named for the same vtable-collision reason
     /// as falloffStageForHooks (the wrapper keeps its OWN
     /// activeSnapStage/activeSymmetryStage accessors).
-    final SnapStage snapStageForHooks() const {
-        return liveSnapStage();
-    }
     final SymmetryStage symmetryStageForHooks() const {
         import toolpipe.pipeline : g_pipeCtx;
         import toolpipe.stage    : TaskCode;
