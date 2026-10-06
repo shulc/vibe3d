@@ -39,13 +39,21 @@ private int[2][] round2() { int[2][] p = [[6, -1], [4, -5]]; foreach (i; 0 .. 12
 
 /// The quad, the top camera centred on the grab point `h` (so the press pixel
 /// is exactly `h`), the pen in Move mode, snapping off; the press pixel.
-private int[2] rig(const double[3][4] quad, Vec3 h) {
+private int[2] rig(const double[3][4] quad, Vec3 h, bool transformed = false) {
     penSceneEmpty("Top");
     string vs;
     foreach (i, v; quad) vs ~= format("%s[%.9f,%.9f,%.9f]", i ? "," : "", v[0], v[1], v[2]);
     auto r = postJson("/api/command", commandBody("scene.loadMesh",
         `{"vertices":[` ~ vs ~ `],"faces":[[0,1,2,3]]}`));
     assert(r["status"].str == "ok", "rig: mesh load failed: " ~ r.toString);
+    if (transformed) {
+        penCommand("layer.attr 0 pos.x 0.3");
+        penCommand("layer.attr 0 pos.z 0.2");
+        penCommand("layer.attr 0 rot.y 90");
+        penCommand("layer.attr 0 scl.x 2");
+        penCommand("layer.attr 0 scl.y 3");
+        penCommand("layer.attr 0 scl.z 0.5");
+    }
     penCommand("viewport.view Top");
     penCameraAt(h, kPpm);
     penCommand("tool.set mesh.topoPen on");
@@ -122,4 +130,25 @@ unittest { // KFH_TS_ESK — the skewed edge v0-v3 at its press foot: both ends 
     ctrlDrag(at, round2());
     expect("ts_esk", [[0.4527, 0, 0.1979], [0.4977, 0, 0.2979], [0.4477, 0, 0.4979], [0.4027, 0, 0.3979]],
            "the rail slide moves the ends along (0.894, 0, 0.447)");
+}
+
+// Ours-extrapolated world-axis regression (9528), not a new reference capture.
+// Ry(90)*S(2,3,0.5): world = (0.3+0.5*local.z, 3*local.y, 0.2-2*local.x).
+// q=0.005 at H=(0.3,0,0.2): first (6,-3) gives world (0.015,0,-0.005),
+// local (0.0025,0,0.03). WORLD X wins; the mutant electing LOCAL Z differs.
+unittest {
+    if (!runs("transformed_primary")) return;
+    const at = rig([[0,0,0], [0.2,0,0], [0.2,0,0.2], [0,0,0.2]], Vec3(0.3f, 0, 0.2f), true);
+    ctrlDrag(at, [[6,-3], [64,-39]]); // total (70,-42): world DQ (0.16,0,-0.095)
+    auto local = readVerts(); // /api/model publishes the primary's layer-local mesh.
+    assert(local.length == 4, "transformed-primary: keep the quad's four vertices");
+    const Vec3 worldV0 = Vec3(0.3f + 0.5f * local[0].z, 3 * local[0].y, 0.2f - 2 * local[0].x);
+    assert((worldV0 - Vec3(0.46f, 0, 0.2f)).length < 1e-4f,
+           format("transformed-primary: elect WORLD X, v0 world (0.46,0,0.2); got %s", worldV0));
+    assert((local[0] - Vec3(0, 0, 0.32f)).length < 1e-4f,
+           format("transformed-primary: WORLD X +0.16 round-trips to LOCAL Z +0.32; got %s", local[0]));
+    const Vec3[3] unchanged = [Vec3(0.2f,0,0), Vec3(0.2f,0,0.2f), Vec3(0,0,0.2f)];
+    foreach (i, v; unchanged)
+        assert((local[i + 1] - v).length < 1e-4f,
+               format("transformed-primary: ungrabbed v%s stays LOCAL %s; got %s", i + 1, v, local[i + 1]));
 }

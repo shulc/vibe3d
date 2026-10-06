@@ -9902,6 +9902,59 @@ unittest {
                ~ "(%.6f off the plane)", off, ma, dot(ma - mean, n)));
 }
 
+// The claimed world-axis law under a transformed primary (9528, ours-extrapolated).
+// Ry(90) * S(2,3,0.5): world (dx,0,dz) = (0.5*local.z,0,-2*local.x).
+// At H=(0.3,0,0.2), q=0.005, (6,-3) px gives world (0.015,0,-0.005)
+// but local (0.0025,0,0.03): WORLD X wins while LOCAL Z would win.
+unittest {
+    import document : ItemXform, primaryModelSpaceResolver;
+    import math : lookAt, orthographicMatrix;
+    import std.format : format;
+    enum double ps = 0.002275172049;
+    ItemXform xf;
+    xf.pos = Vec3(0.3f, 0, 0.2f);
+    xf.rot = Vec3(0, 90, 0);
+    xf.scl = Vec3(2, 3, 0.5f);
+    const ms = xf.modelSpace();
+    auto saved = primaryModelSpaceResolver;
+    scope(exit) primaryModelSpaceResolver = saved;
+    primaryModelSpaceResolver = () => ms;
+    Viewport vp;
+    vp.eye = Vec3(0.3f, 5, 0.2f);
+    vp.focus = xf.pos;
+    vp.view = lookAt(vp.eye, vp.focus, Vec3(0, 0, -1));
+    vp.proj = orthographicMatrix(cast(float)(300 * ps), 800.0f / 600.0f, 0.01f, 100.0f);
+    vp.width = 800;
+    vp.height = 600;
+    auto t = new TopologyPenTool();
+    Mesh m;
+    t.meshSrc_ = () => &m;
+    t.moveAnchor_ = Vec3(0, 0, 0);
+    t.moveBase_ = [Vec3(0, 0, 0), Vec3(0.2f, 0, 0)];
+    t.moveStartX_ = 400;
+    t.moveStartY_ = 300;
+    t.moveAxisLock_ = true;
+    Vec3 freeLocal;
+    assert(t.grabOffset(t.moveAnchor_, 6, -3, vp, freeLocal));
+    assert((freeLocal - Vec3(0.0025f, 0, 0.03f)).length < 2e-6f,
+           format("transformed-primary premise: first free LOCAL delta (0.0025,0,0.03), got %s", freeLocal));
+    auto first = t.moveTargets(406, 297, vp);
+    assert(t.moveAxis_ == 0,
+           format("transformed-primary: elect WORLD X (0), not LOCAL Z (2); got %s", t.moveAxis_));
+    assert((first[0] - Vec3(0, 0, 0.03f)).length < 2e-6f,
+           format("transformed-primary: first WORLD X 0.015 round-trips to LOCAL Z 0.03; got %s", first[0]));
+    auto finalTargets = t.moveTargets(470, 258, vp);
+    assert(finalTargets.length == 2, "transformed-primary: keep both carried targets");
+    foreach (i, b; t.moveBase_) {
+        const wantLocal = b + Vec3(0, 0, 0.32f);
+        assert((finalTargets[i] - wantLocal).length < 2e-6f,
+               format("transformed-primary: corner %s LOCAL round-trip %s; got %s", i, wantLocal, finalTargets[i]));
+        const worldDelta = ms.toWorldPoint(finalTargets[i]) - ms.toWorldPoint(b);
+        assert((worldDelta - Vec3(0.16f, 0, 0)).length < 2e-6f,
+               format("transformed-primary: corner %s stays on elected WORLD X by 0.16; got %s", i, worldDelta));
+    }
+}
+
 // ---------------------------------------------------------------------------
 // The axis-held Move (task 9528, K-FH rule 5): the grab point H the capture
 // read, its drag path, top ortho at the capture's 0.002275172049 m/px (q
