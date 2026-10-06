@@ -351,10 +351,10 @@ unittest {
     // reference's answer for a faceless background.
     runCell(fx, FgXform.init, "faceless background", true);
 
-    // OURS, pending capture K-SC2: the re-snap is the constraint's geometry
-    // pass (task 9510). Geometry off runs no pass, so the cut stays on its
-    // chord (the frozen foot was taken under the pen's own Point composition);
-    // an offset lifts each foot along the background's normal.
+    // The re-snap is the constraint's geometry pass (task 9510). Geometry off
+    // runs no pass, so the cut stays on its chord — captured, K-SC2 AL3_g0
+    // (witness: test_topopen_move_law). OURS: an offset lifts each foot along
+    // the background's normal (K-SC2 drove offset 0 only).
     runCell(fx, FgXform.init, "geometry off", false, ["geometry off"]);
     runCell(fx, FgXform.init, "offset 0.05", false, ["geometry point", "offset 0.05"], 0.05);
 }

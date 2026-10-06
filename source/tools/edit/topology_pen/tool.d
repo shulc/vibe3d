@@ -636,7 +636,7 @@ private:
     package SnapPacket dragSnap_;
     // The view at the last press: the constraint's geometry pass (`passLocal`)
     // runs in it, the step's re-apply included.
-    Viewport pressVp_;
+    package Viewport pressVp_;
 
     // The key this tool's startup snap arming is filed under in the stage's
     // single push slot (`SnapStage.pushEnabled`). The reference keys its own
@@ -4052,7 +4052,7 @@ public:
     // element point UNDER the press pixel — a vertex itself, the edge point
     // nearest the press ray, the polygon's plane under it (rule 2's "probably
     // the same" for a polygon); the corner mean when that ray misses.
-    private Vec3 pressAnchor(MoveElem kind, int index, int px, int py) {
+    package Vec3 pressAnchor(MoveElem kind, int index, int px, int py) {
         auto m = mesh;
         if (kind == MoveElem.Vertex) return moveBase_[0];
         if (kind == MoveElem.Edge) {

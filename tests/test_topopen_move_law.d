@@ -237,6 +237,94 @@ unittest { // E_q1 / E_q3 — rigid by the press point's re-cast
 }
 
 // ---------------------------------------------------------------------------
+// K-SC2 AL3 / SM5: Add Loop and Smooth re-snap ONLY through the constraint's
+// geometry pass — none under off (the chord; the bare relaxation kernel), the
+// nearest surface point under Point, the view re-cast under Screen.
+// ---------------------------------------------------------------------------
+
+/// Add Loop on the K-SC2 strip: press on the boundary rung x 0.15 at z 0.05,
+/// drag 8 px down; the three inserted vertices ordered by x.
+private Vec3[3] addLoopCell(string cell, string geometry) {
+    rig("addLoop", geometry, 0, null, `{"vertices":[[0.15,1.924662,-0.35],[0.15,1.924662,0.35],`
+        ~ `[0.35,1.868907,-0.35],[0.35,1.868907,0.35],[0.55,1.758288,-0.35],[0.55,1.758288,0.35]],`
+        ~ `"faces":[[2,3,1,0],[4,5,3,2]]}`);
+    auto before = readVerts();
+    const p = worldPixel(Vec3(0.15f, 1.924662f, 0.05f));
+    const cam = fetchCamera();
+    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height, p[0], p[1], p[0], p[1] + 8, 2, 0, 1));
+    auto after = readVerts();
+    assert(before.length == 6 && after.length == 9,
+           format("%s: the loop inserts 3 vertices into the 6; got %s -> %s", cell, before.length, after.length));
+    assert(after[0 .. 6] == before, format("%s: an original vertex moved", cell));
+    Vec3[3] r = after[6 .. 9];
+    import std.algorithm : sort;
+    sort!((a, b) => a.x < b.x)(r[]);
+    return r;
+}
+
+unittest { // AL3_g0 / AL3_pt / AL3_scr
+    if (!runs("AL3")) return;
+    immutable double[3][3] g0 = [[0.15, 1.924662, 0.070054], [0.35, 1.868907, 0.070054],
+                                 [0.55, 1.758288, 0.070054]];
+    const off = addLoopCell("AL3_g0", "off");
+    foreach (i; 0 .. 3)   // the rungs are level, so the chord height is the corners'
+        near(format("AL3_g0 vertex %s", i), off[i], g0[i], 3e-3, 1e-5, "the surface foot, 6.0e-2 off");
+    immutable double[3][3] pt = [[0.159848, 1.98239, 0.074565], [0.371299, 1.923246, 0.074563],
+                                 [0.583784, 1.805368, 0.074642]];
+    const foot = addLoopCell("AL3_pt", "point");
+    foreach (i; 0 .. 3)
+        near(format("AL3_pt vertex %s", i), foot[i], pt[i], 1e-2, 5e-3, "the view re-cast, 4.3e-2 off");
+    immutable double[3][3] scr = [[0.15, 1.984305, 0.070054], [0.35, 1.931922, 0.070054],
+                                  [0.55, 1.829349, 0.070054]];
+    const cast_ = addLoopCell("AL3_scr", "screen");
+    foreach (i; 0 .. 3) {
+        near(format("AL3_scr vertex %s", i), cast_[i], scr[i], 3e-3, 5e-3, "the surface foot, 4.2e-2 off");
+        assert(cast_[i].x == off[i].x && cast_[i].z == off[i].z,
+               format("AL3_scr vertex %s: the re-cast keeps the chord's x/z %s; got %s", i, fmt(off[i]),
+                      fmt(cast_[i])));
+    }
+}
+
+/// Smooth on the K-SC2 grid (4 x 4, 0.2 above the sphere): one click on the
+/// boundary edge at (0.6, -0.2); all 16 vertices after it.
+private Vec3[] smoothCell(string cell, string geometry) {
+    string vs;
+    foreach (i, y; [2.153939, 2.132738, 2.066025, 1.94162, 2.194987, 2.174679, 2.111043, 1.993725,
+                    2.194987, 2.174679, 2.111043, 1.993725, 2.153939, 2.132738, 2.066025, 1.94162])
+        vs ~= format("%s[%s,%s,%s]", i ? "," : "", 0.2 * (i % 4), y, [-0.3, -0.1, 0.1, 0.3][i / 4]);
+    rig("smooth", geometry, 0, null, `{"vertices":[` ~ vs ~ `],"faces":[[1,5,4,0],[2,6,5,1],[3,7,6,2],`
+        ~ `[5,9,8,4],[6,10,9,5],[7,11,10,6],[9,13,12,8],[10,14,13,9],[11,15,14,10]]}`);
+    clickPixels(worldPixel(Vec3(0.6f, 1.97f, -0.2f)));
+    auto after = readVerts();
+    assert(after.length == 16, format("%s: Smooth keeps the 16 vertices; got %s", cell, after.length));
+    return after;
+}
+
+unittest { // SM5_g0 / SM5_pt
+    if (!runs("SM5")) return;
+    immutable double[3][16] raw = [
+        [0.005261, 2.156527, -0.295137], [0.199836, 2.131834, -0.305177], [0.398636, 2.064886, -0.305582],
+        [0.596631, 1.94768, -0.295706], [-0.004932, 2.195545, -0.099901], [0.199931, 2.172729, -0.099785],
+        [0.399374, 2.108786, -0.099744], [0.605263, 1.990768, -0.098968], [-0.004932, 2.195545, 0.099901],
+        [0.199931, 2.172729, 0.099785], [0.399374, 2.108786, 0.099744], [0.605263, 1.990768, 0.098968],
+        [0.005261, 2.156527, 0.295137], [0.199836, 2.131834, 0.305177], [0.398636, 2.064886, 0.305582],
+        [0.596631, 1.94768, 0.295706]];
+    const off = smoothCell("SM5_g0", "off");
+    foreach (i, w; raw)
+        near(format("SM5_g0 vertex %s", i), off[i], w, 1e-5, 1e-5, "a re-snap onto the sphere, 0.2 below");
+    immutable double[3][16] ft = [
+        [0.004648, 1.967444, -0.24521], [0.168292, 1.949587, -0.256691], [0.337912, 1.902357, -0.259381],
+        [0.513781, 1.816108, -0.25527], [-0.004086, 1.995046, -0.083173], [0.167488, 1.980334, -0.083951],
+        [0.336736, 1.935574, -0.084348], [0.518327, 1.848132, -0.08498], [-0.004086, 1.995046, 0.083173],
+        [0.167488, 1.980334, 0.083951], [0.336736, 1.935574, 0.084348], [0.518327, 1.848132, 0.08498],
+        [0.004648, 1.967444, 0.24521], [0.168292, 1.949587, 0.256691], [0.337912, 1.902357, 0.259381],
+        [0.513781, 1.816108, 0.25527]];
+    const pt = smoothCell("SM5_pt", "point");
+    foreach (i, w; ft)
+        near(format("SM5_pt vertex %s", i), pt[i], w, 1e-2, 5e-3, "the view re-cast, 0.117 off");
+}
+
+// ---------------------------------------------------------------------------
 // Move with no background (K-DW): the shared translator's free form.
 // ---------------------------------------------------------------------------
 

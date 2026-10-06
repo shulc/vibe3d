@@ -163,17 +163,18 @@ Vec3 smoothB(string[] constrain) {
     return toVec3(post[1]);
 }
 
-unittest { // OURS, pending capture K-SC2: the re-snap is the constraint's geometry pass
+unittest { // the re-snap is the constraint's geometry pass
     // Geometry off: no pass — B stays at its raw relax target, 3.2 off the
-    // sphere (before task 9510 it landed on the sphere whatever the geometry).
+    // sphere. Captured: K-SC2 SM5_g0 (witness: test_topopen_move_law).
     const Vec3 off = smoothB(["geometry off"]);
     immutable double offNorm = sqrt(cast(double)dot(off, off));
     assert(abs(offNorm - R) > 3,
         format("geometry off: B must stay at its raw relax target, off the sphere; got %s, |B| %f",
                off, offNorm));
-    // Offset 0.2 (geometry Point): the foot plus 0.2 along the facet's
-    // WINDING normal, which on this hand-built sphere points inward (K-SC
-    // could not separate winding from facing; measured |B| 1.796).
+    // OURS, open: offset 0.2 (geometry Point) puts the foot 0.2 along the
+    // facet's WINDING normal, which on this hand-built sphere points inward
+    // (measured |B| 1.796). Neither K-SC nor K-SC2 (SM5_pt runs offset 0)
+    // separates winding from facing.
     const Vec3 lifted = smoothB(["geometry point", "offset 0.2"]);
     immutable double liftNorm = sqrt(cast(double)dot(lifted, lifted));
     assert(abs(liftNorm - (R - 0.2)) < R * 0.04,

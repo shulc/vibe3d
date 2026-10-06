@@ -9760,6 +9760,7 @@ unittest {
     t.moveElem_   = MoveElem.Edge;
     t.moveVerts_  = [m.edges[0][0], m.edges[0][1]];
     t.moveBase_   = [m.vertices[t.moveVerts_[0]], m.vertices[t.moveVerts_[1]]];
+    t.moveAnchor_ = (t.moveBase_[0] + t.moveBase_[1]) * 0.5f;
     t.moveStartX_ = 100;
     t.moveStartY_ = 100;
 
@@ -9780,10 +9781,54 @@ unittest {
     // And the delta itself is measured from the PRESS pixel, not the previous
     // event's: every vertex moves by the grab offset of the press-to-cursor travel.
     Vec3 off;
-    assert(t.grabOffset((t.moveBase_[0] + t.moveBase_[1]) * 0.5f, 180 - 100, 140 - 100, vp, off));
+    assert(t.grabOffset(t.moveAnchor_, 180 - 100, 140 - 100, vp, off));
     foreach (i, v; first)
         assert((v - (t.moveBase_[i] + off)).length < 1e-6f,
             "the set law must be one rigid grab offset of the travel from the press pixel");
+}
+
+// ---------------------------------------------------------------------------
+// The grab point is the element point UNDER THE PRESS (K-SC2 rule 2, E_q1 /
+// E_q3), not the corner mean: an edge pressed at 1/4 of its length anchors
+// there; a polygon pressed off its centre anchors on its plane under the
+// press; a vertex anchors on itself. Pixels come from the mesh's own points.
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh : makeGridPlane;
+    import std.format : format;
+
+    auto t = new TopologyPenTool();
+    Mesh m = makeGridPlane(3);
+    t.meshSrc_ = () => &m;
+    auto vp = makeGridPlaneTestViewport();
+    t.pressVp_ = vp;
+    int[2] pixelOf(Vec3 w) {
+        float x, y, z;
+        assert(projectToWindowFull(w, vp, x, y, z), "the rig point must project");
+        return [cast(int)(x + 0.5f), cast(int)(y + 0.5f)];
+    }
+
+    const a = m.vertices[m.edges[0][0]], b = m.vertices[m.edges[0][1]];
+    const Vec3 q1 = a + (b - a) * 0.25f;
+    t.moveBase_ = [a, b];
+    const pe = pixelOf(q1);
+    const Vec3 ea = t.pressAnchor(MoveElem.Edge, 0, pe[0], pe[1]);
+    assert((ea - q1).length < 0.02f * (b - a).length,
+        format("an edge pressed at 1/4 anchors there (%s), not at its mean; got %s", q1, ea));
+
+    t.moveBase_ = null;
+    foreach (vi; m.faces[0]) t.moveBase_ ~= m.vertices[vi];
+    Vec3 mean = Vec3(0, 0, 0);
+    foreach (p; t.moveBase_) mean = mean + p * (1.0f / t.moveBase_.length);
+    const Vec3 off = mean + (t.moveBase_[0] - mean) * 0.6f;   // on the planar face, off its centre
+    const pf = pixelOf(off);
+    const Vec3 fa = t.pressAnchor(MoveElem.Face, 0, pf[0], pf[1]);
+    assert((fa - off).length < 0.02f * (b - a).length,
+        format("a polygon pressed off its centre anchors on its plane under the press (%s); got %s", off, fa));
+
+    t.moveBase_ = [a];
+    assert(t.pressAnchor(MoveElem.Vertex, cast(int) m.edges[0][0], pe[0], pe[1]) == a,
+        "a vertex press anchors on the vertex itself");
 }
 
 // ---------------------------------------------------------------------------
@@ -9813,6 +9858,7 @@ unittest {
     t.moveElem_   = MoveElem.Edge;
     t.moveVerts_  = [m.edges[0][0], m.edges[0][1]];
     t.moveBase_   = [m.vertices[t.moveVerts_[0]], m.vertices[t.moveVerts_[1]]];
+    t.moveAnchor_ = (t.moveBase_[0] + t.moveBase_[1]) * 0.5f;
     t.moveStartX_ = 200;
     t.moveStartY_ = 200;
 
@@ -12314,8 +12360,8 @@ unittest {
         }
     }
     // Floors first: an empty scan would satisfy both rules vacuously.
-    assert(blocks.length == 189 && histBlocks == 83 && calls == 79 && kernels == 65,
-        format("gestures census population changed: %d top-level blocks (189), %d read "
+    assert(blocks.length == 190 && histBlocks == 83 && calls == 79 && kernels == 65,
+        format("gestures census population changed: %d top-level blocks (190), %d read "
              ~ "history (83), %d bracketed-list calls in them (79), %d of them kernels (65)",
                blocks.length, histBlocks, calls, kernels));
     assert(bad.length == 0, "gestures census:\n" ~ bad.join("\n"));
