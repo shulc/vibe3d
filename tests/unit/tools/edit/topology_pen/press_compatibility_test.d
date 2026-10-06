@@ -370,3 +370,39 @@ unittest {
         "LEGACY_MIDPOINT: half-pixel midpoint veto differs from integer final cascade");
     int index;assert(t.resolveGrabTarget(300,300,vp,index,false)==MoveElem.Edge && index==0,"LEGACY_MIDPOINT: actual shared query retains old edge identity");
 }
+
+unittest {
+    import document : ItemXform, primaryModelSpaceResolver;
+    import math : closestPointOnSegmentToRay, dot;
+    const vp=viewport();ItemXform xf;xf.rot=Vec3(0,0,45);xf.scl=Vec3(3,.3,.1);const ms=xf.modelSpace();
+    const saved=primaryModelSpaceResolver;scope(exit)primaryModelSpaceResolver=saved;primaryModelSpaceResolver=()=>ms;
+    Mesh m;m.vertices=[ms.toLocalPoint(Vec3(-.5,-.7,-.2)),ms.toLocalPoint(Vec3(.5,.7,.2))];m.edges=[[0u,1u]];
+    Vec3 ro,rd;screenPointToRay(300.5f,305.5f,vp,ro,rd);auto ld=ms.toLocalDir(rd);ld=ld/ld.length;
+    const local=closestPointOnSegmentToRay(m.vertices[0],m.vertices[1],ms.toLocalPoint(ro),ld),world=ms.toWorldPoint(local);
+    assert(world.y>.09 && local.y<.07,"LEGACY_LOCAL_WORLD_DATUM: actual projected point/depth separates local and world y");
+    foreach(w;[Vec3(world.x-.008,.08,world.z-.008),Vec3(world.x+.008,.08,world.z-.008),Vec3(world.x+.008,.08,world.z+.008),Vec3(world.x-.008,.08,world.z+.008)])m.vertices~=ms.toLocalPoint(w);
+    m.faces=[[2u,3u,4u,5u]];m.rebuildEdgesFromFaces();m.addEdge(0,1);m.buildLoops();
+    auto t=new TopologyPenTool();t.meshSrc_=()=>&m;const old=t.legacyPressGather(300,305,vp,true,ToolPressSource(&m,ms));
+    assert(old.edge.index==4,"LEGACY_LOCAL_WORLD_DATUM: original local visibility projects and compares the world point ahead of its cover");
+    int index;assert(t.resolveGrabTarget(300,305,vp,index,true)==MoveElem.Edge && index==4,"LEGACY_LOCAL_WORLD_DATUM: actual press preserves admitted edge identity");
+    assert(t.resolveGrabTarget(300,305,vp,index,true,null,ToolQueryIntent.legacyHover)==MoveElem.Edge && index==4,"LEGACY_LOCAL_WORLD_DATUM: actual legacy hover preserves admitted edge identity");
+}
+
+unittest {
+    const vp=viewport();Mesh m;m.vertices=[Vec3(-.5,0,-.5),Vec3(.5,0,-.5),Vec3(.5,0,.5),Vec3(-.5,0,.5)];
+    m.faces=[[0u,3u,2u,1u]];m.rebuildEdgesFromFaces();m.buildLoops();auto t=new TopologyPenTool();t.meshSrc_=()=>&m;
+    int index;assert(t.resolveGrabTarget(300,300,vp,index,true,null,ToolQueryIntent.legacyHover)==MoveElem.None && index==-1,
+        "LEGACY_GPU_AVAILABILITY: original primary face gather is unavailable without its GPU provider");
+}
+
+unittest {
+    import toolpipe.packets : SubjectPacket;
+    const vp=viewport();auto t=new TopologyPenTool();Mesh m;t.meshSrc_=()=>&m;
+    const saved=toolPressSourcesResolver;scope(exit)toolPressSourcesResolver=saved;toolPressSourcesResolver=()=>cast(ToolPressSource[])null;
+    SubjectPacket subject;subject.pickFacing=true;subject.pickFacesDrawn=false;subject.mesh=&m;subject.viewport=vp;
+    int index;assert(t.resolveGrabTarget(300,300,vp,index,false,&subject)==MoveElem.None,"press-preparation: empty bound primary and absent foreground remain empty");
+    m=makeGridPlane(2);
+    assert(t.resolveGrabTarget(300,300,vp,index,false,&subject)==MoveElem.None && index==-1,"press-preparation: absent foreground ordinary back-FACE cannot fall through to legacy eligibility");
+    m=Mesh.init;m.vertices=[Vec3(0,0,0)];
+    assert(t.resolveGrabTarget(300,300,vp,index,false,&subject)==MoveElem.Vertex && index==0,"press-preparation: c35 primary compatibility eligibility survives absent foreground sources");
+}

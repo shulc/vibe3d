@@ -178,12 +178,12 @@ unittest {
     const centre=Vec3(.067851,.5,.0271404);
     Vec3[] cover=[Vec3(centre.x-.008,centre.y,centre.z-.008),Vec3(centre.x+.008,centre.y,centre.z-.008),
                  Vec3(centre.x+.008,centre.y,centre.z+.008),Vec3(centre.x-.008,centre.y,centre.z+.008)];
-    foreach(which;0..3) {
+    foreach(which;0..4) {
         const transformed=which!=1;Vec3[] vs=transformed?[a,b]:[aw,bw];
-        if(which>0)foreach(w;cover)vs~=transformed?toLocal(w):w;
+        if(which>0)foreach(w;cover) { auto position=w;if(which==3)position.y=.08;vs~=transformed?toLocal(position):position; }
         const at0=rig(meshText(vs,which>0?[[2u,3u,4u,5u]]:null,[[0u,1u]]),null,"shaded",transformed?transform:null);
         const int[2] at=[at0[0],at0[1]+5];
-        if(which<2) {
+        if(which<2 || which==3) {
             hover(at,"edge",which==0?0:4);arm(at,"edge",0);
             event([at[0]+20,at[1]],"SDL_MOUSEMOTION",1,20);event([at[0]+20,at[1]],"SDL_MOUSEBUTTONUP");
             const after=readVerts();const delta=transformed?toLocal(Vec3(.1,0,0)):Vec3(.1,0,0);
@@ -239,4 +239,13 @@ unittest {
     const after=readVerts();assert(after.length==3,"LEGACY_MIDPOINT: exact old gathered population");
     assert(after[0]==vs[0] && abs(after[1].x-vs[1].x-.1f)<1e-4 && abs(after[2].x-vs[2].x-.1f)<1e-4,
         "LEGACY_MIDPOINT: half-pixel veto carries the old edge, isolated vertex remains unchanged");
+}
+
+unittest {
+    if(!runs("face_availability"))return;
+    const vs=[Vec3(-.5,0,-.5),Vec3(.5,0,-.5),Vec3(.5,0,.5),Vec3(-.5,0,.5)];
+    foreach(front;[false,true])foreach(filled;[false,true]) {
+        const at=rig(meshText(vs,front?[[0u,3u,2u,1u]]:[[0u,1u,2u,3u]]),null,filled?"shaded":"wireframe");
+        hover(at,filled?"face":"none",filled?0:-1);
+    }
 }

@@ -254,6 +254,10 @@ unittest {
     assert(pen.indexOf("pickOcclusionOf(vts), null, ToolQueryIntent.legacyHover)") >= 0 &&
            pen.indexOf("policy.legacy =") >= 0 && pen.indexOf("return legacyPressGather(") >= 0,
            "press-wiring: production hover intent and old subset provider are explicit");
+    const query = blankNonCode(readText(buildPath(repoRoot, "source/hover_state.d")));
+    assert(query.indexOf("subset = support[si]; prepared = true;") >= 0 &&
+           query.indexOf("if (!prepared && policy.legacySource.mesh !is null)") >= 0,
+           "press-preparation: an empty matched source is already prepared at the actual provider call");
     assert(pen.indexOf("layer.meshOrNull()") < 0 && app.indexOf("layer.meshOrNull()") >= 0,
            "press-wiring: actual foreground provider uses cage mesh sources");
     assert(pen.indexOf("other.source >= 0 && other.owner.mesh !is mesh") >= 0,

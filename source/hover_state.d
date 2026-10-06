@@ -342,8 +342,9 @@ ToolPressTarget toolPressAt(int mx, int my, const ref Viewport vp, ToolPressPoli
     if (policy.legacy !is null) {
         ToolPressSupport subset;
         if (policy.intent == ToolQueryIntent.pressQuery) {
-            foreach (si, src; sources) if (src.mesh is policy.legacySource.mesh) { subset = support[si]; break; }
-            if (subset.vertices is null && policy.legacySource.mesh !is null)
+            bool prepared;
+            foreach (si, src; sources) if (src.mesh is policy.legacySource.mesh) { subset = support[si]; prepared = true; break; }
+            if (!prepared && policy.legacySource.mesh !is null)
                 subset = toolPressSupport(*policy.legacySource.mesh, policy.legacySource.space, vp);
         }
         const old = policy.legacy(subset.vertices, subset.edges, subset.faces);
