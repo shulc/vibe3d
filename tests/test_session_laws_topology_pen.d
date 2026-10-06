@@ -1346,6 +1346,14 @@ double[2][3] screenAxisImagesAt(double[3] p) {
 /// camera of `camera` when given (the drag scaled by our focal length over the
 /// capture's) else the rig's (the drag scaled by the v5-v6 spacing). Asserts
 /// the law and the session half, undoes it, and returns the fitted s.
+// These cells preserve the old Slide implementation through the explicit option
+// as internal compatibility controls. They claim no captured native option law;
+// the orbited Ctrl Move magnitude conflict remains in 9528 evidence.
+void enableLegacySlideOption() {
+    auto r=penPost("/api/command", "tool.attr mesh.topoPen slide true");
+    assert(r["status"].str=="ok", "legacy-slide-option: explicit option enabled");
+}
+
 double slideVertex(JSONValue fx, JSONValue g, const double[3][3][] tris, const PenMesh a0, long hist) {
     const id = g["id"].str;
     const size_t v = ("vertex" in g) ? cast(size_t)g["vertex"].integer : 5;
@@ -1431,6 +1439,7 @@ unittest {
     const tris = rigBackgroundTris();
     const r = rig();
     penArmUi(r);
+    enableLegacySlideOption();
     size_t n;
     foreach (g; fx["gestures"].array) {
         assert(penNum(g["fgRotZ"]) == 0, "chord-slide-vertex: an unturned gesture expected");
@@ -1567,6 +1576,7 @@ void slideUnderCamera(string id) {
     const tris = rigBackgroundTris();
     const r = rig();
     penArmUi(r);   // its background floor hovers a pixel of the rig's own camera
+    enableLegacySlideOption();
     penSetCamera(g["camera"]);
     slideVertex(fx, g, tris, r.a0, r.hp + 1);
     writeln("PASS " ~ id);

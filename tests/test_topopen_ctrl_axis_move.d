@@ -91,12 +91,12 @@ private int[2] rig(const double[3][4] quad, Vec3 h, bool transformed = false,
 }
 
 /// Ctrl+LMB at `at`, one motion per step of `path`, the release at the end.
-private void ctrlDrag(int[2] at, const int[2][] path) {
+private void ctrlDrag(int[2] at, const int[2][] path, bool axis = true) {
     auto cam = fetchCamera();
     string log = format(`{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,`
         ~ `"fovY":0.785398}` ~ "\n" ~ kPaceLine, cam.vpX, cam.vpY, cam.width, cam.height);
     string ev(double t, string type, int x, int y, string tail) {
-        return format(`{"t":%.1f,"type":"%s","x":%d,"y":%d,%s,"mod":%d}` ~ "\n", t, type, x, y, tail, LCTRL);
+        return format(`{"t":%.1f,"type":"%s","x":%d,"y":%d,%s,"mod":%d}` ~ "\n", t, type, x, y, tail, axis ? LCTRL : 0);
     }
     log ~= ev(20, "SDL_MOUSEMOTION", at[0], at[1], `"xrel":0,"yrel":0,"state":0`);
     log ~= ev(40, "SDL_MOUSEBUTTONDOWN", at[0], at[1], `"btn":1,"clicks":1`);
@@ -253,4 +253,39 @@ unittest {
         ++n;
     }
     assert(n == 4, "interior-controls: edge/polygon and reversible winding controls exercised");
+}
+
+// The geometry guard is reached with Ctrl held and an effective guide. The
+// ordinary recast independently supplies the geometryON expected X datum.
+unittest {
+    if (!runs("guide_geometry_scope")) return;
+    const guidedAt=rig(kSkew,Vec3(0.272742241f,0,0.297731015f),false,-0.005f,true);
+    ctrlDrag(guidedAt,round2());
+    const guided=readVerts();
+    foreach (i; [0,3]) assert(abs(guided[i].x-kSkew[i][0]-.157257759)<1e-4,
+        "guide-geometry: matching Ctrl geometryOFF guided positive");
+    Vec3[] ordinary;
+    foreach (axis; [false,true]) {
+        const at=rig(kSkew,Vec3(0.272742241f,0,0.297731015f),false,-0.005f,true);
+        penCommand("tool.pipe.attr constrain geometry screen");
+        size_t policies;
+        foreach (stage; getJson("/api/toolpipe")["stages"].array) if (stage["task"].str=="CONS") {
+            assert(stage["attrs"]["enabled"].str=="true" && stage["attrs"]["geometry"].str=="screen"
+                && stage["attrs"]["handle"].str=="true", "guide-geometry: effective geometryON/handle guide policy");
+            ++policies;
+        }
+        assert(policies==1, "guide-geometry: one live constraint policy");
+        ctrlDrag(at,round2(),axis);
+        const after=readVerts();
+        assert(after.length==4,"guide-geometry: ordinary FACE quad remains populated");
+        if (!axis) { ordinary=after.dup; continue; }
+        foreach (i; [0,3]) {
+            assert(abs(ordinary[i].x-kSkew[i][0]-.155)<1e-4,
+                "guide-geometry: ordinary geometryON recast positive X control");
+            assert(abs(after[i].x-ordinary[i].x)<1e-5 && abs(after[i].y-ordinary[i].y)<1e-5
+                && abs(after[i].z-kSkew[i][2])<1e-5,
+                format("guide-geometry: Ctrl geometryON retains ordinary recast X, v%s got %s ordinary %s",i,after[i],ordinary[i]));
+        }
+    }
+
 }

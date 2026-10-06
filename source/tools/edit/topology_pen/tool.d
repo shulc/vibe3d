@@ -5,6 +5,8 @@
 // `package.d` for why that distinction is the point.
 module tools.edit.topology_pen.tool;
 
+import hover_state;
+
 import bindbc.sdl;
 import std.json : JSONValue;
 import std.math : hypot, sqrt, SQRT2;
@@ -1747,7 +1749,7 @@ public:
                 // is the OR of the very three terms `resolveGrabTarget`
                 // tries, at the same thresholds.
                 hoverGrabElem_ = resolveGrabTarget(e.x, e.y, vp, hoverGrabIndex_,
-                                                   pickOcclusionOf(vts));
+                                                   pickOcclusionOf(vts), null, ToolQueryIntent.legacyHover);
             } else {
                 hoverNearestVert_ = hoverNearestEdge_ = hoverBoundaryFace_ = -1;
                 hoverBoundary_    = false;
@@ -3699,9 +3701,9 @@ public:
 
         Viewport vp = viewportOf(vts);
         int grabbed;
-        const kind = resolveGrabTarget(e.x, e.y, vp, grabbed, pickOcclusionOf(vts), vts.get!SubjectPacket());
-        if (kind != MoveElem.None) return armMoveOn(kind, grabbed, e, axis);
         const other = queryPressTarget(e.x, e.y, vp, pickOcclusionOf(vts), vts.get!SubjectPacket());
+        const kind = grabTargetElement(other, grabbed);
+        if (kind != MoveElem.None) return armMoveOn(kind, grabbed, e, axis);
         if (other.source >= 0 && other.owner.mesh !is mesh) return false;
         if (findSourceVertex(e.x, e.y, vp) >= 0 || overPrimaryEdgeOrFace(e.x, e.y, vp)) return false;
         if (axis) return false;   // an axis move has nothing to place
@@ -3718,10 +3720,17 @@ public:
     // and ordinary-FACE facing/border admission (9528, K-PG). The read-only
     // result retains its source; this bound-primary tool only authors its mesh.
     package MoveElem resolveGrabTarget(int mx, int my, const ref Viewport vp, out int index,
-                                       bool occlusion, const(SubjectPacket)* subject = null) {
+                                       bool occlusion, const(SubjectPacket)* subject = null,
+                                       ToolQueryIntent intent = ToolQueryIntent.pressQuery) {
         import hover_state : kCascadeVertex, kCascadeEdge, kCascadePolygon;
         index = -1;
-        const hit = queryPressTarget(mx, my, vp, occlusion, subject);
+        const hit = queryPressTarget(mx, my, vp, occlusion, subject, intent);
+        return grabTargetElement(hit, index);
+    }
+
+    package MoveElem grabTargetElement(hover_state.ToolPressTarget hit, out int index) {
+        import hover_state : kCascadeVertex, kCascadeEdge, kCascadePolygon;
+        index = -1;
         // Querying foreground sources does not widen this tool's bound authoring mesh.
         if (hit.source < 0 || hit.owner.mesh !is mesh) return MoveElem.None;
         index = hit.index;
@@ -3734,14 +3743,82 @@ public:
     }
 
     package auto queryPressTarget(int mx, int my, const ref Viewport vp, bool occlusion,
-                                  const(SubjectPacket)* subject = null) {
-        import hover_state : ToolPressSource, ToolPressTarget, toolPressSourcesResolver, toolPressAt;
+                                  const(SubjectPacket)* subject = null,
+                                  ToolQueryIntent intent = ToolQueryIntent.pressQuery) {
+        import hover_state : ToolPressSource, ToolPressTarget, ToolPressPolicy,
+            LegacyPressGather, toolPressSourcesResolver, toolPressAt;
         const m = mesh;
         if (m is null) return ToolPressTarget.init;
-        const sources = toolPressSourcesResolver is null
-            ? [ToolPressSource(m, primaryModelSpace())] : toolPressSourcesResolver();
-        return toolPressAt(mx, my, vp, sources, subject !is null && subject.pickFacing, occlusion,
-            subject is null ? gpu_ !is null && occlusion : subject.pickFacesDrawn, topoPenPressPickPx(vp));
+        auto primary = ToolPressSource(m, primaryModelSpace());
+        const sources = intent == ToolQueryIntent.legacyHover || toolPressSourcesResolver is null
+            ? [primary] : toolPressSourcesResolver();
+        int legacyIndex = cast(int)sources.length;
+        foreach (si, src; sources) if (src.mesh is m) { primary.layer = src.layer; legacyIndex = cast(int)si; break; }
+        ToolPressPolicy policy;
+        policy.sources = sources;
+        policy.facing = subject !is null && subject.pickFacing;
+        policy.occlusion = occlusion;
+        policy.facesDrawn = subject is null ? gpu_ !is null && occlusion : subject.pickFacesDrawn;
+        policy.reach = topoPenPressPickPx(vp);
+        policy.intent = intent; policy.legacySource = primary;
+        policy.legacy = (const(bool)[] ordinaryV, const(bool)[] ordinaryE, const(bool)[] ordinaryF) {
+            return legacyPressGather(mx, my, vp, occlusion, primary, ordinaryV, ordinaryE, ordinaryF, legacyIndex);
+        };
+        return toolPressAt(mx, my, vp, policy);
+    }
+
+    // The c35 gather is restricted before reduction; its integer reach and local
+    // visibility points precede the shared half-pixel cascade (9528 amendment).
+    package auto legacyPressGather(int mx, int my, const ref Viewport vp, bool occlusion,
+            hover_state.ToolPressSource primary, const(bool)[] ordinaryV = null,
+            const(bool)[] ordinaryE = null, const(bool)[] ordinaryF = null, int source = 0) {
+        import hover_state : LegacyPressGather, ToolPressTarget, pickDistances,
+            kCascadeVertex, kCascadeEdge, kCascadePolygon;
+        const m = mesh;
+        LegacyPressGather result;
+        if (m is null) return result;
+        bool shown(Vec3 p) { return !occlusion || pressVisible(p, vp); }
+        scope admitV = (int i, Vec3 p) => (ordinaryV is null || !ordinaryV[i]) && !m.isVertexHidden(i) && shown(p);
+        Vec3 edgePoint = Vec3(0, 0, 0);
+        scope admitE = (int i, Vec3 p) {
+            if ((ordinaryE !is null && ordinaryE[i]) || m.isEdgeHidden(i) || !shown(p)) return false;
+            edgePoint = p; return true;
+        };
+        const vi = findSourceVertex(mx, my, vp, kTopoPenSnapAuto, admitV);
+        const ei = findRingSeedEdge(mx, my, vp, kTopoPenSnapAuto, admitE);
+        const fi = occlusion ? pickPrimaryFace(mx, my, vp) : -1;
+        const aim = aimSpace(vp, primary.space);
+        bool at(uint v, out float[2] q) {
+            ImVec2 p;
+            if (!projectLocalPt(m.vertices[v], aim, p)) return false;
+            q = [p.x, p.y]; return true;
+        }
+        float[2] pv; float[2][2] pe;
+        const face = fi >= 0 && fi < cast(int)m.faces.length && m.faces[fi].length >= 3
+            && (ordinaryF is null || !ordinaryF[fi]);
+        result.distances = pickDistances(mx, my, vi >= 0 && at(vi, pv) ? &pv : null,
+            ei >= 0 && at(m.edges[ei][0], pe[0]) && at(m.edges[ei][1], pe[1]) ? &pe : null, face);
+        if (vi >= 0) result.vertex = ToolPressTarget(kCascadeVertex, vi, source, primary.space.toWorldPoint(m.vertices[vi]), primary);
+        if (ei >= 0) result.edge = ToolPressTarget(kCascadeEdge, ei, source, primary.space.toWorldPoint(edgePoint), primary);
+        if (face) result.polygon = ToolPressTarget(kCascadePolygon, fi, source, Vec3.init, primary);
+        return result;
+    }
+
+    private bool pressVisible(Vec3 pLocal, const ref Viewport vp) {
+        auto m = mesh;
+        if (m is null) return true;
+        if (removePick_ is null) removePick_ = new BvhPick();
+        const ms = primaryModelSpace();
+        const AimViewport vpAim = aimSpace(vp, ms);
+        ImVec2 q;
+        if (!projectLocalPt(pLocal, vpAim, q)) return true;
+        Vec3 org, dir;
+        screenPointToRay(q.x, q.y, vp, org, dir);
+        immutable Vec3 pw = ms.isIdentity ? pLocal : ms.toWorldPoint(pLocal);
+        immutable float tElem = dot(pw - org, dir) / dot(dir, dir);
+        SurfaceHit h;
+        if (!removePick_.pickSurfaceRay(org, dir, *m, ms, h)) return true;
+        return h.t >= tElem - 1e-4f * (1.0f + tElem);
     }
 
     // The hover indicator element `draw()` actually paints: the RESOLVED grab

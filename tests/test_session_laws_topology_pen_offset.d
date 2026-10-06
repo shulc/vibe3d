@@ -363,6 +363,7 @@ unittest {
     if (!cell("reapply-slide")) return;
     const r = rig();
     penArmUi(r);
+    sw("slide", "true");
     penGesture(penEdgePx(5, 6, "reapply-slide e56"), 0, -20 / kSp, 1, PEN_KMOD_LCTRL, "reapply-slide g1");
     const g1 = penMesh();
     assert(penMoved(g1, r.a0) == [5L, 6L], format("reapply-slide g1: moved %s", penIdx(penMoved(g1, r.a0))));
@@ -373,6 +374,7 @@ unittest {
     if (!cell("reapply-slide-vertex")) return;
     const r = rig();
     penArmUi(r);
+    sw("slide", "true");
     penGesture(penVertexPx(5, "reapply-slide-vertex v5"), 20 / kSp, -10 / kSp, 1, PEN_KMOD_LCTRL,
                "reapply-slide-vertex g1");
     const g1 = penMesh();
@@ -980,6 +982,8 @@ SlidePrediction predict(double[3] anchor, const int[2][] pts) {
 /// about Z by `rotZ` degrees) after asserting the moved endpoints.
 double[3] slideAlong(string id, const PenMesh a0, long a, long b, const int[2][] pts, double rotZ = 0,
                      int[2] overshoot = [0, 0]) {
+    // Internal old Slide controls use the explicit option; no native option claim.
+    sw("slide", "true");
     const e = penEdgePx(a, b, id ~ " edge");
     string log = penMotion(20, e[0], e[1], 0, PEN_KMOD_LCTRL) ~ "\n"
                ~ penButton(40, true, 1, e[0], e[1], PEN_KMOD_LCTRL) ~ "\n";

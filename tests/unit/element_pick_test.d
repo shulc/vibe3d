@@ -189,11 +189,12 @@ unittest {
 }
 
 unittest {
-    import hover_state : ToolPressSource, toolPressAt;
+    import hover_state : ToolPressSource, toolPressAt, toolPressSupport;
     import mesh : makeGridPlane;
     import math : Vec3, Viewport, ModelSpace, lookAt, orthographicMatrix;
     import std.algorithm : reverse;
     import core.time : MonoTime;
+    import core.memory : GC;
     import std.stdio : writefln;
     auto m = makeGridPlane(64);
     foreach (ref f; m.faces) reverse(f);
@@ -203,6 +204,12 @@ unittest {
     auto vp = Viewport(lookAt(Vec3(0, 5, 0), Vec3(0, 0, 0), Vec3(0, 0, -1)),
         orthographicMatrix(1.5f, 1, 0.01f, 100), 600, 600, 0, 0, Vec3(0, 5, 0));
     const sources = [ToolPressSource(&m, ModelSpace.world())];
+    const allocatedBefore = GC.stats().allocatedInCurrentThread;
+    const support = toolPressSupport(m, ModelSpace.world(), vp);
+    const supportBytes = GC.stats().allocatedInCurrentThread - allocatedBefore;
+    assert(support.faces.length == 4096 && support.edges.length == 8320 && support.vertices.length == 4225,
+        "press-cost: one populated linear source preparation");
+    writefln("PRESS-SUPPORT faces=%s edges=%s vertices=%s allocated_bytes=%s",support.faces.length,support.edges.length,support.vertices.length,supportBytes);
     size_t n;
     const start = MonoTime.currTime;
     foreach (i; 0 .. 5) {
@@ -213,6 +220,20 @@ unittest {
     assert(n == 5, "press-cost: five queries timed");
     writefln("PRESS-COST faces=4096 vertices=4225 edges=8320 queries=%s elapsed_us=%s", n,
              (MonoTime.currTime - start).total!"usecs");
+    const firstLoose = cast(uint)m.vertices.length;
+    m.vertices ~= [Vec3(0,0,0),Vec3(0,0,.1)]; m.edges ~= [firstLoose,firstLoose+1];
+    m.resizeFaceSelection(); m.setFaceSubpatch(0,true);
+    const mixedBefore = GC.stats().allocatedInCurrentThread;
+    const mixedSupport = toolPressSupport(m,ModelSpace.world(),vp);
+    const mixedBytes = GC.stats().allocatedInCurrentThread - mixedBefore;
+    assert(!mixedSupport.vertices[firstLoose] && !mixedSupport.edges[$-1] && !mixedSupport.faces[0],
+        "press-cost: actual mixed loose/subpatch support population");
+    const mixedStart=MonoTime.currTime;
+    foreach(i;0..5) assert(toolPressAt(300+i,300,vp,[ToolPressSource(&m,ModelSpace.world())],true,true,true).kind>=0,
+        "press-cost: five nonempty mixed queries");
+    writefln("PRESS-MIXED faces=%s vertices=%s edges=%s queries=5 elapsed_us=%s support_allocated_bytes=%s",
+        m.faces.length,m.vertices.length,m.edges.length,(MonoTime.currTime-mixedStart).total!"usecs",mixedBytes);
+
 }
 
 unittest {
@@ -230,6 +251,11 @@ unittest {
            "press-wiring: one subject funnel carries both tool-press terms");
     assert(pen.indexOf("hit.owner.mesh !is mesh") >= 0,
            "press-authoring: a source-aware query cannot index another mesh into the bound primary");
+    assert(pen.indexOf("pickOcclusionOf(vts), null, ToolQueryIntent.legacyHover)") >= 0 &&
+           pen.indexOf("policy.legacy =") >= 0 && pen.indexOf("return legacyPressGather(") >= 0,
+           "press-wiring: production hover intent and old subset provider are explicit");
+    assert(pen.indexOf("layer.meshOrNull()") < 0 && app.indexOf("layer.meshOrNull()") >= 0,
+           "press-wiring: actual foreground provider uses cage mesh sources");
     assert(pen.indexOf("other.source >= 0 && other.owner.mesh !is mesh") >= 0,
            "press-authoring: accepted secondary query cannot become empty-primary placement");
 }
