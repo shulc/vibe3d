@@ -451,7 +451,7 @@
         "TopologyPenTool",
         "XfrmTransformTool"
       ],
-      "semantic_sha256": "21003c109ad2c66a5a5430ffcd65c5a729d9a34ea480133022234d094f7e3c82",
+      "semantic_sha256": "7fd759f46a0377d0d70076a34feae26d3d81426cd2c661302c4d53e47dbdddfb",
       "symbol": "registerTool(p.id)"
     }
   ],
