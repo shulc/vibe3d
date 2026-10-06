@@ -697,9 +697,10 @@ private:
     //
     // `edgeSlide_` ("Edge Slide") restricts a move to the neighbouring edge
     // rails (`onCtrlLmbDown`). Ctrl+LMB with no background is NOT this: it
-    // is the Move held to one world axis (K-FH rule 5, gap rows 627/628). It applies to the Move family only (Move mode, and Point
-    // mode's move half, which the reference defines as "works as in the Move
-    // mode"); `edgeLoop_` wins when both are on (there is no slide-a-whole-
+    // is the Move held to one world axis (K-FH rule 5, gap rows 627/628). It
+    // applies to the Move family only (Move mode, and Point mode's move
+    // half, which the reference defines as "works as in the Move mode");
+    // `edgeLoop_` wins when both are on (there is no slide-a-whole-
     // loop gesture in this tool, so a loop press is the only one of the two
     // that can be honoured — see `moveOrPlaceDown`).
     //
