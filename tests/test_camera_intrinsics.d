@@ -143,10 +143,15 @@ unittest {
     rig.command("scene.reset");rig.command("select.typeFrom vertex");
     const fa=487.0/tan(cast(double)cast(float)(45.0f*PI/180.0f)*.5),fb=1004.7545731629976;
     const xa=400/fa,xb=400/fb;
-    assert(postJson("/api/camera",`{"orientation":[1,0,0,0,1,0,0,0,1],"focus":{"x":0,"y":0,"z":0},"distance":4}`,base)["status"].str=="ok");
     const body=format(`{"vertices":[[%.9g,0.002,0],[%.9g,-0.03,0],[%.9g,-0.03,0],[%.9g,0.002,0],[%.9g,-0.03,0],[%.9g,-0.03,0]],"faces":[[0,1,2],[3,4,5]]}`,
         xa,xa-.03,xa+.03,xb,xb-.03,xb+.03);
     assert(postJson("/api/command",commandBody("scene.loadMesh",body),base)["status"].str=="ok");
+    assert(postJson("/api/camera",`{"orientation":[1,0,0,0,1,0,0,0,1],"focus":{"x":0,"y":0,"z":0},"distance":4}`,base)["status"].str=="ok");
+    // loadMesh resets the camera. Seed its final pose before the counted
+    // baseline, then a reversible geometry write refreshes the upload key.
+    // There are no mesh writes between the lens-only A/B/A observations.
+    foreach(dz;[0.01,-0.01])
+        assert(postJson("/api/command",commandBody("mesh.transform",format(`{"kind":"translate","delta":[0,0,%.9g]}`,dz)),base)["status"].str=="ok");
     const model=getJson("/api/model",base);
     assert(model["vertexCount"].integer==6&&model["faceCount"].integer==2,"GPU_LENS_POPULATED_TRIANGLES");
     int row;
