@@ -253,7 +253,6 @@ unittest {
 
     // A motionless Middle press clones the current operation on the selected
     // ridge. It is a row of its own and its undo restores the prior group.
-    handlePx(0, ex, ey);
     auto cam = fetchCamera(BASE);
     playAndWaitLensControl(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
         ex, ey, ex, ey, 1, 0, 2), BASE);
