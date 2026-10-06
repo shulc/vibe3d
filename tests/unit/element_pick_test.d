@@ -230,4 +230,6 @@ unittest {
            "press-wiring: one subject funnel carries both tool-press terms");
     assert(pen.indexOf("hit.owner.mesh !is mesh") >= 0,
            "press-authoring: a source-aware query cannot index another mesh into the bound primary");
+    assert(pen.indexOf("other.source >= 0 && other.owner.mesh !is mesh") >= 0,
+           "press-authoring: accepted secondary query cannot become empty-primary placement");
 }

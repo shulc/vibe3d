@@ -9953,6 +9953,27 @@ unittest {
         assert((worldDelta - Vec3(0.16f, 0, 0)).length < 2e-6f,
                format("transformed-primary: corner %s stays on elected WORLD X by 0.16; got %s", i, worldDelta));
     }
+    // Query admission and this tool's bound mesh are independent identities.
+    import hover_state : ToolPressSource, toolPressSourcesResolver;
+    import std.algorithm : reverse;
+    auto secondary = makeGridPlane(2);
+    foreach (ref face; secondary.faces) reverse(face);
+    secondary.buildLoops();
+    auto savedSources = toolPressSourcesResolver;
+    scope(exit) toolPressSourcesResolver = savedSources;
+    toolPressSourcesResolver = () => [ToolPressSource(&m, ModelSpace.world(), 10),
+                                      ToolPressSource(&secondary, ModelSpace.world(), 20)];
+    SubjectPacket subject;
+    subject.pickFacing = subject.pickFacesDrawn = true;
+    const queried = t.queryPressTarget(400, 300, vp, true, &subject);
+    assert(queried.source == 1 && queried.owner.mesh is &secondary && queried.kind >= 0,
+           "press-bound: secondary foreground is admitted by the shared query");
+    int picked;
+    assert(t.resolveGrabTarget(400, 300, vp, picked, true, &subject) == MoveElem.None && picked == -1,
+           "press-bound: admitted secondary id cannot index the bound primary");
+    t.meshSrc_ = () => &secondary;
+    assert(t.resolveGrabTarget(400, 300, vp, picked, true, &subject) != MoveElem.None && picked >= 0,
+           "press-bound: the same query target is authorable when it is the bound mesh");
 }
 
 // ---------------------------------------------------------------------------
