@@ -172,6 +172,8 @@ unittest {
     assert(elected.kind == kCascadeEdge && elected.source == 1 && elected.index == 0 &&
         elected.owner.mesh is &edge && elected.owner.layer == 20,
         "hover transformed edge retains the elected source and identity");
+    assert(hoverRecordAtPixel(500,300,vp,sources,false,false).kind == -1,
+        "hover transformed edge does not extend beyond its transformed endpoints");
     ConstrainHitPacket miss;
     assert(resolveHoverTarget(miss,vp,8,[BackgroundSource(&edge,space,20)],300,300,false).kind == HoverTargetKind.None,
         "background hover surface miss cannot acquire a target");
